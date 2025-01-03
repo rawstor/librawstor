@@ -7,34 +7,38 @@
 
 typedef void RawstorDevice;
 
+typedef struct {
+    size_t size;
+} RawstorDeviceSpec;
 
-RawstorDevice* rawstor_alloc(size_t size);
 
-void rawstor_free(RawstorDevice *device);
+int rawstor_create(RawstorDeviceSpec spec);
+
+void rawstor_delete(int device_id);
+
+RawstorDevice* rawstor_open(int device_id);
+
+void rawstor_close(RawstorDevice *device);
 
 void rawstor_read(
-  RawstorDevice *device,
-  size_t offset, size_t size,
-  void *buf
-);
+    RawstorDevice *device,
+    size_t offset, size_t size,
+    void *buf);
 
 void rawstor_readv(
-  RawstorDevice *device,
-  size_t offset, size_t size,
-  struct iovec *iov, unsigned int niov
-);
+    RawstorDevice *device,
+    size_t offset, size_t size,
+    struct iovec *iov, unsigned int niov);
 
 void rawstor_write(
-  RawstorDevice *device,
-  size_t offset, size_t size,
-  const void *buf
-);
+    RawstorDevice *device,
+    size_t offset, size_t size,
+    const void *buf);
 
 void rawstor_writev(
-  RawstorDevice *device,
-  size_t offset, size_t size,
-  const struct iovec *iov, unsigned int niov
-);
+    RawstorDevice *device,
+    size_t offset, size_t size,
+    const struct iovec *iov, unsigned int niov);
 
 
 #endif // _RAWSTOR_H_

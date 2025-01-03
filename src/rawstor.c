@@ -1,3 +1,4 @@
+#include <assert.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
@@ -5,29 +6,54 @@
 #include "rawstor.h"
 
 
-RawstorDevice* rawstor_alloc(size_t size) {
-    return malloc(size);
+/**
+ * FIXME: Temporary workaround for rawstor_create() and rawstor_delete()
+ * methods.
+ */
+static RawstorDevice *_device = NULL;
+
+
+int rawstor_create(RawstorDeviceSpec spec) {
+    assert(_device == NULL);
+    _device = malloc(spec.size);
+    return 1;
 }
 
-void rawstor_free(RawstorDevice *device) {
-    free(device);
+
+void rawstor_delete(int device_id) {
+    assert(device_id == 1);
+    assert(_device != NULL);
+    free(_device);
+    _device = NULL;
+}
+
+
+RawstorDevice* rawstor_open(int device_id) {
+    assert(device_id == 1);
+    assert(_device != NULL);
+    return _device;
+}
+
+
+void rawstor_close(RawstorDevice *device) {
+    assert(device != NULL);
 }
 
 
 void rawstor_read(
-  RawstorDevice *device,
-  size_t offset, size_t size,
-  void *buf
-) {
+    RawstorDevice *device,
+    size_t offset, size_t size,
+    void *buf)
+{
     memcpy(buf, device + offset, size);
 }
 
 
 void rawstor_readv(
-  RawstorDevice *device,
-  size_t offset, size_t size,
-  struct iovec *iov, unsigned int niov
-) {
+    RawstorDevice *device,
+    size_t offset, size_t size,
+    struct iovec *iov, unsigned int niov)
+{
     for (unsigned int i = 0; i < niov; ++i) {
         size_t chunk_size = size < iov[i].iov_len ? size : iov[i].iov_len;
 
@@ -40,19 +66,19 @@ void rawstor_readv(
 
 
 void rawstor_write(
-  RawstorDevice *device,
-  size_t offset, size_t size,
-  const void *buf
-) {
+    RawstorDevice *device,
+    size_t offset, size_t size,
+    const void *buf)
+{
     memcpy(device + offset, buf, size);
 }
 
 
 void rawstor_writev(
-  RawstorDevice *device,
-  size_t offset, size_t size,
-  const struct iovec *iov, unsigned int niov
-) {
+    RawstorDevice *device,
+    size_t offset, size_t size,
+    const struct iovec *iov, unsigned int niov)
+{
     for (unsigned int i = 0; i < niov; ++i) {
         size_t chunk_size = size < iov[i].iov_len ? size : iov[i].iov_len;
 
