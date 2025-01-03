@@ -1,0 +1,25 @@
+IDIR =../include
+CC=gcc
+CFLAGS=-Wall -Wextra -Werror
+
+LDIR =../lib
+
+LIBS=-lm
+
+DEPS = rawstor.h
+
+OBJ = rawstor.o 
+
+
+%.o: %.c $(DEPS)
+	$(CC) -c -o $@ $< $(CFLAGS)
+
+%.a: $(OBJ)
+	ar rcs $@ $<
+
+all: librawstor.a
+
+clean:
+	rm -f *.o librawstor.a
+
+.PHONY: all clean
