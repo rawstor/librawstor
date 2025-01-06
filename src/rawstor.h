@@ -12,32 +12,32 @@ typedef struct {
 } RawstorDeviceSpec;
 
 
-int rawstor_create(RawstorDeviceSpec spec);
+int rawstor_create(RawstorDeviceSpec spec, int *device_id);
 
-void rawstor_delete(int device_id);
+int rawstor_delete(int device_id);
 
-RawstorDevice* rawstor_open(int device_id);
+int rawstor_open(int device_id, RawstorDevice **device);
 
-void rawstor_close(RawstorDevice *device);
+int rawstor_close(RawstorDevice *device);
 
 int rawstor_spec(int device_id, RawstorDeviceSpec *spec);
 
-void rawstor_read(
+int rawstor_read(
     RawstorDevice *device,
     size_t offset, size_t size,
     void *buf);
 
-void rawstor_readv(
+int rawstor_readv(
     RawstorDevice *device,
     size_t offset, size_t size,
     struct iovec *iov, unsigned int niov);
 
-void rawstor_write(
+int rawstor_write(
     RawstorDevice *device,
     size_t offset, size_t size,
     const void *buf);
 
-void rawstor_writev(
+int rawstor_writev(
     RawstorDevice *device,
     size_t offset, size_t size,
     const struct iovec *iov, unsigned int niov);

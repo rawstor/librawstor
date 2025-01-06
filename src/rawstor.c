@@ -1,6 +1,5 @@
 #include <assert.h>
 #include <stddef.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -15,31 +14,42 @@ static RawstorDeviceSpec _spec;
 static RawstorDevice *_device = NULL;
 
 
-int rawstor_create(RawstorDeviceSpec spec) {
+int rawstor_create(RawstorDeviceSpec spec, int *device_id) {
     assert(_device == NULL);
+
     _spec = spec;
     _device = malloc(_spec.size);
-    return 1;
+    *device_id = 1;
+
+    return 0;
 }
 
 
-void rawstor_delete(int device_id) {
+int rawstor_delete(int device_id) {
     assert(device_id == 1);
     assert(_device != NULL);
+
     free(_device);
     _device = NULL;
+
+    return 0;
 }
 
 
-RawstorDevice* rawstor_open(int device_id) {
+int rawstor_open(int device_id, RawstorDevice **device) {
     assert(device_id == 1);
     assert(_device != NULL);
-    return _device;
+
+    *device = _device;
+
+    return 0;
 }
 
 
-void rawstor_close(RawstorDevice *device) {
+int rawstor_close(RawstorDevice *device) {
     assert(device != NULL);
+
+    return 0;
 }
 
 
@@ -53,21 +63,22 @@ int rawstor_spec(int device_id, RawstorDeviceSpec *spec) {
 }
 
 
-void rawstor_read(
+int rawstor_read(
     RawstorDevice *device,
     size_t offset, size_t size,
     void *buf)
 {
     memcpy(buf, device + offset, size);
+
+    return 0;
 }
 
 
-void rawstor_readv(
+int rawstor_readv(
     RawstorDevice *device,
     size_t offset, size_t size,
     struct iovec *iov, unsigned int niov)
 {
-    printf("rawstor_readv(%u)\n", niov);
     for (unsigned int i = 0; i < niov; ++i) {
         size_t chunk_size = size < iov[i].iov_len ? size : iov[i].iov_len;
 
@@ -76,24 +87,27 @@ void rawstor_readv(
         size -= chunk_size;
         offset += chunk_size;
     }
+
+    return 0;
 }
 
 
-void rawstor_write(
+int rawstor_write(
     RawstorDevice *device,
     size_t offset, size_t size,
     const void *buf)
 {
     memcpy(device + offset, buf, size);
+
+    return 0;
 }
 
 
-void rawstor_writev(
+int rawstor_writev(
     RawstorDevice *device,
     size_t offset, size_t size,
     const struct iovec *iov, unsigned int niov)
 {
-    printf("rawstor_writev(%u)\n", niov);
     for (unsigned int i = 0; i < niov; ++i) {
         size_t chunk_size = size < iov[i].iov_len ? size : iov[i].iov_len;
 
@@ -102,4 +116,6 @@ void rawstor_writev(
         size -= chunk_size;
         offset += chunk_size;
     }
+
+    return 0;
 }
