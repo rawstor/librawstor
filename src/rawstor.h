@@ -20,6 +20,8 @@ RawstorDevice* rawstor_open(int device_id);
 
 void rawstor_close(RawstorDevice *device);
 
+int rawstor_spec(int device_id, RawstorDeviceSpec *spec);
+
 void rawstor_read(
     RawstorDevice *device,
     size_t offset, size_t size,
