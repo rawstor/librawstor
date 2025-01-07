@@ -9,6 +9,7 @@ typedef void RawstorDevice;
 
 typedef struct {
     size_t size;
+    char objid[64];
 } RawstorDeviceSpec;
 
 

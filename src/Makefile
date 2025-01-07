@@ -1,6 +1,6 @@
 IDIR =../include
 CC=gcc
-CFLAGS=-std=c99 -Wall -Wextra -Werror
+CFLAGS=-Wall -Wextra -Werror
 
 LDIR =../lib
 
@@ -8,7 +8,7 @@ LIBS=-lm
 
 DEPS = rawstor.h
 
-OBJ = rawstor.o 
+OBJ = rawstor.o
 
 
 %.o: %.c $(DEPS)
