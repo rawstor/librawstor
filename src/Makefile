@@ -1,10 +1,5 @@
-IDIR =../include
 CC=gcc
 CFLAGS=-std=c99 -Wall -Wextra -Werror
-
-LDIR =../lib
-
-LIBS=-lm
 
 DEPS = rawstor.h
 
