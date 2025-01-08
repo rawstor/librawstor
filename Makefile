@@ -1,4 +1,5 @@
-SUBDIRS = src
+SUBDIRS = src \
+          vhost-server
 
 
 define FOREACH
