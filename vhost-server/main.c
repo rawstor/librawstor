@@ -1,5 +1,6 @@
 #include "server.h"
 
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,6 +20,16 @@ void usage() {
         "                        vhost-user Unix domain socket.\n"
     );
 }
+
+
+void sact_handler(int s) {
+    printf("Caught signal: %d\n", s);
+}
+
+
+static struct sigaction sact = {
+    .sa_handler = sact_handler
+};
 
 
 int main(int argc, const char **argv) {
@@ -86,6 +97,9 @@ int main(int argc, const char **argv) {
         fprintf(stderr, "--socket-path argument required\n");
         return EXIT_FAILURE;
     }
+
+    sigemptyset(&sact.sa_mask);
+    sigaction(SIGINT, &sact, NULL);
 
     rawstor_server(object_id, socket_path_arg);
 
