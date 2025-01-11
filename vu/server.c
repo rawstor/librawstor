@@ -28,7 +28,7 @@ static int server_loop(int s) {
                 printf("Interrupted\n");
                 break;
             }
-            perror("socket() failed");
+            perror("accept() failed");
             continue;
         }
 
