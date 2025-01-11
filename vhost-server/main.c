@@ -83,7 +83,7 @@ int main(int argc, const char **argv) {
     }
 
     if (object_id_arg == NULL) {
-        fprintf(stderr, "--object-id argument required\n");
+        fprintf(stderr, "--object-id OBJECT_ID argument required\n");
         return EXIT_FAILURE;
     }
 
@@ -94,7 +94,7 @@ int main(int argc, const char **argv) {
     }
 
     if (socket_path_arg == NULL) {
-        fprintf(stderr, "--socket-path argument required\n");
+        fprintf(stderr, "--socket-path SOCKET_PATH argument required\n");
         return EXIT_FAILURE;
     }
 
