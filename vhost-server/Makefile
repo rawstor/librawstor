@@ -1,5 +1,5 @@
 CC=gcc
-CFLAGS=-std=c99 -Wall -Wextra -Werror
+CFLAGS=-std=gnu99 -Wall -Wextra -Werror
 
 DEPS = server.h
 
