@@ -10,12 +10,12 @@ OBJ = main.o \
 %.o: %.c $(DEPS)
 	$(CC) -c -o $@ $< $(CFLAGS)
 
-rawstor-vhost-server: $(OBJ)
+rawstor-vhost-user-server: $(OBJ)
 	$(CC) -o $@ $^
 
-all: rawstor-vhost-server
+all: rawstor-vhost-user-server
 
 clean:
-	rm -f *.o rawstor-vhost-server
+	rm -f *.o rawstor-vhost-user-server
 
 .PHONY: all clean

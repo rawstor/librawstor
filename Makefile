@@ -1,5 +1,5 @@
 SUBDIRS = src \
-          vhost-server
+          vhost-user
 
 
 define FOREACH
