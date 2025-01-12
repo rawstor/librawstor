@@ -1,5 +1,21 @@
 # rawstor-vu
 
+## Configure options
+Compile with liburing support:
+```
+make ENABLE_LIBURING=yes
+```
+
+Compile with libevent support:
+```
+make ENABLE_LIBEVENT=yes
+```
+
+Compile with both liburing and libevent support:
+```
+make ENABLE_LIBURING=yes ENABLE_LIBEVENT=yes
+```
+
 ## Troubleshooting
 
 ### Operation not permitted
