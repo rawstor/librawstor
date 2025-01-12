@@ -1,5 +1,7 @@
 #include "server.h"
 
+#include <liburing.h>
+
 #include <err.h>
 #include <errno.h>
 #include <stdio.h>
@@ -8,6 +10,8 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
+
+#define QUEUE_DEPTH 256
 
 
 static void session_loop(int session) {
@@ -20,6 +24,16 @@ static void session_loop(int session) {
 
 
 static int server_loop(int s) {
+    struct io_uring ring;
+
+    int rval;
+
+    rval = io_uring_queue_init(QUEUE_DEPTH, &ring, 0);
+    if (rval != 0) {
+        fprintf(stderr, "io_uring_queue_init() failed: %s\n", strerror(-rval));
+        return -1;
+    };
+
     while (1) {
         printf("Waiting for connection...\n");
         int session = accept(s, NULL, NULL);
@@ -38,6 +52,8 @@ static int server_loop(int s) {
             perror("close() failed");
         }
     }
+
+    io_uring_queue_exit(&ring);
 
     return 0;
 }
