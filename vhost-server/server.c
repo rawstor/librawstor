@@ -43,8 +43,13 @@ static int server_loop(int s) {
 }
 
 
-int rawstor_server(int object_id, const char *socket_path) {
+int rawstor_server(
+    int object_id,
+    const char *socket_path,
+    RawstorIOEngine io_engine)
+{
     (void)(object_id);
+    (void)(io_engine);
 
     int s = socket(AF_UNIX, SOCK_STREAM, 0);
     if (s < 0) {
