@@ -54,9 +54,12 @@ int main(int argc, const char **argv) {
             object_id_arg == NULL && (
                 strcmp(argv[i], "-o") == 0 ||
                 strcmp(argv[i], "--object-id") == 0
-            ) &&
-            i < argc - 1
+            )
         ) {
+            if (i == argc - 1) {
+                fprintf(stderr, "Expecting %s OBJECT_ID\n", argv[i]);
+                return EXIT_FAILURE;
+            }
             object_id_arg = argv[++i];
             continue;
         }
@@ -66,9 +69,12 @@ int main(int argc, const char **argv) {
             socket_path_arg == NULL && (
                 strcmp(argv[i], "-s") == 0 ||
                 strcmp(argv[i], "--socket-path") == 0
-            ) &&
-            i < argc - 1
+            )
         ) {
+            if (i == argc - 1) {
+                fprintf(stderr, "Expecting %s SOCKET_PATH\n", argv[i]);
+                return EXIT_FAILURE;
+            }
             socket_path_arg = argv[++i];
             continue;
         }
