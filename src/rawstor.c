@@ -68,7 +68,12 @@ int rawstor_read(
     size_t offset, size_t size,
     void *buf)
 {
-    memcpy(buf, device + offset, size);
+    struct iovec iov = {
+        .iov_base = buf,
+        .iov_len = size,
+    };
+
+    rawstor_readv(device, offset, size, &iov, 1);
 
     return 0;
 }
@@ -82,7 +87,7 @@ int rawstor_readv(
     for (unsigned int i = 0; i < niov; ++i) {
         size_t chunk_size = size < iov[i].iov_len ? size : iov[i].iov_len;
 
-        rawstor_read(device, offset, chunk_size, iov[i].iov_base);
+        memcpy(iov[i].iov_base, device + offset, chunk_size);
 
         size -= chunk_size;
         offset += chunk_size;
@@ -97,7 +102,12 @@ int rawstor_write(
     size_t offset, size_t size,
     const void *buf)
 {
-    memcpy(device + offset, buf, size);
+    const struct iovec iov = {
+        .iov_base = (void*)buf,
+        .iov_len = size,
+    };
+
+    rawstor_writev(device, offset, size, &iov, 1);
 
     return 0;
 }
@@ -111,7 +121,7 @@ int rawstor_writev(
     for (unsigned int i = 0; i < niov; ++i) {
         size_t chunk_size = size < iov[i].iov_len ? size : iov[i].iov_len;
 
-        rawstor_write(device, offset, chunk_size, iov[i].iov_base);
+        memcpy(device + offset, iov[i].iov_base, chunk_size);
 
         size -= chunk_size;
         offset += chunk_size;
