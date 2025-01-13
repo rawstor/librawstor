@@ -29,7 +29,7 @@ typedef struct {
 
 
 #ifdef ENABLE_LIBURING
-static int push_accept_request(struct io_uring *ring, int server_socket) {
+static int submit_accept_request(struct io_uring *ring, int server_socket) {
     Request *request = malloc(sizeof(Request));
     if (request == NULL) {
         perror("malloc() failed:");
@@ -45,7 +45,7 @@ static int push_accept_request(struct io_uring *ring, int server_socket) {
 }
 
 
-static int push_read_request(struct io_uring *ring, int client_socket) {
+static int submit_read_request(struct io_uring *ring, int client_socket) {
     Request *request = malloc(sizeof(Request));
     if (request == NULL) {
         perror("malloc() failed:");
@@ -85,7 +85,7 @@ static int server_loop(int server_socket) {
         return -1;
     };
 
-    if (push_accept_request(&ring, server_socket)) {
+    if (submit_accept_request(&ring, server_socket)) {
         io_uring_queue_exit(&ring);
         return -1;
     }
@@ -106,7 +106,7 @@ static int server_loop(int server_socket) {
             continue;
         }
 
-        Request *request = (Request*)cqe->user_data;
+        Request *request = (Request*)io_uring_cqe_get_data(cqe);
         printf("Event received: %d\n", request->event_type);
         if (cqe->res < 0) {
             fprintf(
@@ -122,14 +122,14 @@ static int server_loop(int server_socket) {
 
         switch (request->event_type) {
             case EVENT_TYPE_ACCEPT:
-                if (push_accept_request(&ring, server_socket)) {
+                if (submit_accept_request(&ring, server_socket)) {
                     // TODO: free() other requests in queue.
                     free(request);
                     io_uring_cqe_seen(&ring, cqe);
                     io_uring_queue_exit(&ring);
                     return -1;
                 }
-                if (push_read_request(&ring, cqe->res)) {
+                if (submit_read_request(&ring, cqe->res)) {
                     break;
                 }
                 break;
@@ -147,8 +147,8 @@ static int server_loop(int server_socket) {
                     request->event_type);
                 break;
         }
-        free(request);
 
+        free(request);
         io_uring_cqe_seen(&ring, cqe);
     }
 
