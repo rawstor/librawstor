@@ -15,14 +15,17 @@
 
 #define QUEUE_DEPTH 256
 
-#define EVENT_TYPE_ACCEPT 0
-#define EVENT_TYPE_READ 1
-
 #define READ_SZ 8192
 
 
+typedef enum {
+    EVENT_TYPE_ACCEPT,
+    EVENT_TYPE_READ,
+} EventType;
+
+
 typedef struct {
-    int event_type;
+    EventType event_type;
     int client_socket;
     struct iovec iov[1];
 } Request;
