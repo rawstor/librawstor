@@ -32,7 +32,7 @@ typedef struct {
 
 
 #ifdef ENABLE_LIBURING
-static int submit_accept_request(struct io_uring *ring, int server_socket) {
+static int prepare_accept_request(struct io_uring *ring, int server_socket) {
     Request *request = malloc(sizeof(Request));
     if (request == NULL) {
         perror("malloc() failed:");
@@ -43,12 +43,11 @@ static int submit_accept_request(struct io_uring *ring, int server_socket) {
     struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
     io_uring_prep_accept(sqe, server_socket, NULL, NULL, 0);
     io_uring_sqe_set_data(sqe, request);
-    io_uring_submit(ring);
     return 0;
 }
 
 
-static int submit_read_request(struct io_uring *ring, int client_socket) {
+static int prepare_read_request(struct io_uring *ring, int client_socket) {
     Request *request = malloc(sizeof(Request));
     if (request == NULL) {
         perror("malloc() failed:");
@@ -62,7 +61,6 @@ static int submit_read_request(struct io_uring *ring, int client_socket) {
     struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
     io_uring_prep_read(sqe, client_socket, request->data, READ_SZ, 0);
     io_uring_sqe_set_data(sqe, request);
-    io_uring_submit(ring);
     return 0;
 }
 
@@ -87,7 +85,7 @@ static int server_loop(int server_socket) {
         return -1;
     };
 
-    if (submit_accept_request(&ring, server_socket)) {
+    if (prepare_accept_request(&ring, server_socket)) {
         io_uring_queue_exit(&ring);
         return -1;
     }
@@ -95,11 +93,23 @@ static int server_loop(int server_socket) {
     struct io_uring_cqe *cqe;
     while (1) {
         printf("Waiting for event...\n");
-        rval = io_uring_wait_cqe(&ring, &cqe);
+        rval = io_uring_submit_and_wait(&ring, 1);
         if (rval < 0) {
             fprintf(
                 stderr,
-                "io_uring_wait_cqe() failed: %s\n",
+                "io_uring_submit_and_wait() failed: %s\n",
+                strerror(-rval));
+            if (rval == -EINTR) {
+                break;
+            }
+            // TODO: Fatal error here?
+            continue;
+        }
+        rval = io_uring_peek_cqe(&ring, &cqe);
+        if (rval < 0) {
+            fprintf(
+                stderr,
+                "io_uring_peek_cqe() failed: %s\n",
                 strerror(-rval));
             if (rval == -EINTR) {
                 break;
@@ -125,7 +135,7 @@ static int server_loop(int server_socket) {
         switch (request->event_type) {
             case EVENT_TYPE_ACCEPT:
                 printf("Connection opened: %d\n", cqe->res);
-                if (submit_read_request(&ring, cqe->res)) {
+                if (prepare_read_request(&ring, cqe->res)) {
                     break;
                 }
                 break;
@@ -141,7 +151,7 @@ static int server_loop(int server_socket) {
                 }
                 printf("Connection closed: %d\n", request->client_socket);
 
-                if (submit_accept_request(&ring, server_socket)) {
+                if (prepare_accept_request(&ring, server_socket)) {
                     free(request);
                     // TODO: free() other requests in queue.
                     io_uring_cqe_seen(&ring, cqe);
