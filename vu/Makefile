@@ -18,13 +18,13 @@ CFLAGS=-std=gnu99 -Wall -Wextra -Werror -I../include
 LIBS=-L../src -lrawstor
 
 ifeq ($(ENABLE_LIBEVENT),yes)
-	LIBS += $(shell pkg-config --cflags libevent)
+	LIBS += $(shell pkg-config --libs libevent)
 	CFLAGS += -DENABLE_LIBEVENT=1 $(shell pkg-config --cflags libevent)
 	IO_ENGINE_DEFINED = 1
 endif
 
 ifeq ($(ENABLE_LIBURING),yes)
-	LIBS += $(shell pkg-config --cflags liburing)
+	LIBS += $(shell pkg-config --libs liburing)
 	CFLAGS += -DENABLE_LIBURING=1 $(shell pkg-config --cflags liburing)
 	IO_ENGINE_DEFINED = 1
 endif
