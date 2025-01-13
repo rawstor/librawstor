@@ -27,7 +27,7 @@ typedef enum {
 typedef struct {
     EventType event_type;
     int client_socket;
-    struct iovec iov[1];
+    void *data;
 } Request;
 
 
@@ -54,14 +54,13 @@ static int submit_read_request(struct io_uring *ring, int client_socket) {
         perror("malloc() failed:");
         return -1;
     }
-    request->iov[0].iov_base = malloc(READ_SZ);
-    memset(request->iov[0].iov_base, 0, READ_SZ);
-    request->iov[0].iov_len = READ_SZ;
+    request->data = malloc(READ_SZ);
+    memset(request->data, 0, READ_SZ);
     request->event_type = EVENT_TYPE_READ;
     request->client_socket = client_socket;
 
     struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
-    io_uring_prep_readv(sqe, client_socket, &request->iov[0], 1, 0);
+    io_uring_prep_read(sqe, client_socket, request->data, READ_SZ, 0);
     io_uring_sqe_set_data(sqe, request);
     io_uring_submit(ring);
     return 0;
@@ -141,7 +140,7 @@ static int server_loop(int server_socket) {
                 if(close(request->client_socket)) {
                     perror("close() failed");
                 }
-                free(request->iov[0].iov_base);
+                free(request->data);
                 break;
             default:
                 fprintf(
