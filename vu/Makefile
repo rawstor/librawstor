@@ -2,7 +2,7 @@
 # Flags
 #
 ENABLE_LIBEVENT=yes
-ENABLE_LIBURING=no
+ENABLE_LIBURING=yes
 
 
 ##
