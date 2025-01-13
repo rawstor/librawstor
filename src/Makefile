@@ -3,7 +3,7 @@ CFLAGS=-std=gnu99 -Wall -Wextra -Werror -I../include
 
 DEPS = backend.h \
        backend_mem.h \
-       rawstor.h
+       ../include/rawstor.h
 
 OBJS = backend_mem.o \
        rawstor.o

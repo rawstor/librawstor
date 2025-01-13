@@ -2,7 +2,8 @@ CC=gcc
 CFLAGS=-std=gnu99 -Wall -Wextra -Werror -I../include
 LIBS=-L../src -lrawstor
 
-DEPS = server.h
+DEPS = server.h \
+       ../include/rawstor.h
 
 OBJS = main.o \
        server.o
