@@ -124,21 +124,29 @@ static int server_loop(int server_socket) {
 
         switch (request->event_type) {
             case EVENT_TYPE_ACCEPT:
-                if (submit_accept_request(&ring, server_socket)) {
-                    // TODO: free() other requests in queue.
-                    free(request);
-                    io_uring_cqe_seen(&ring, cqe);
-                    io_uring_queue_exit(&ring);
-                    return -1;
-                }
+                printf("Connection opened: %d\n", cqe->res);
                 if (submit_read_request(&ring, cqe->res)) {
                     break;
                 }
                 break;
             case EVENT_TYPE_READ:
-                handle_client_request(request);
+                if (cqe->res != 0) {
+                    handle_client_request(request);
+                } else {
+                    printf("Connection lost: %d\n", request->client_socket);
+                }
+
                 if(close(request->client_socket)) {
                     perror("close() failed");
+                }
+                printf("Connection closed: %d\n", request->client_socket);
+
+                if (submit_accept_request(&ring, server_socket)) {
+                    free(request);
+                    // TODO: free() other requests in queue.
+                    io_uring_cqe_seen(&ring, cqe);
+                    io_uring_queue_exit(&ring);
+                    return -1;
                 }
                 free(request->data);
                 break;
