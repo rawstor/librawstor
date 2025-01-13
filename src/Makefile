@@ -1,5 +1,5 @@
 CC=gcc
-CFLAGS=-std=gnu99 -Wall -Wextra -Werror
+CFLAGS=-std=gnu99 -Wall -Wextra -Werror -I../include
 
 DEPS = backend.h \
        backend_mem.h \

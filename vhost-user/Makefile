@@ -1,5 +1,5 @@
 CC=gcc
-CFLAGS=-std=gnu99 -Wall -Wextra -Werror -I../src
+CFLAGS=-std=gnu99 -Wall -Wextra -Werror -I../include
 LIBS=-L../src -lrawstor
 
 DEPS = server.h
