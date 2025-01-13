@@ -1,13 +1,22 @@
+##
+# Flags
+#
+USE_BACKEND=mem
+
+
 CC=gcc
 CFLAGS=-std=gnu99 -Wall -Wextra -Werror -I../include
 
-DEPS = backend.h \
-       backend_mem.h \
+DEPS = backend_mem.h \
        ../include/rawstor.h
 
-OBJS = backend_mem.o \
-       rawstor.o
+OBJS = rawstor.o
 
+ifeq ($(USE_BACKEND),mem)
+    OBJS += rawstor_mem.o
+else
+    $(error Unexpected BACKEND: $(USE_BACKEND))
+endif
 
 %.o: %.c
 	$(CC) $(CFLAGS) $< -c -o $@

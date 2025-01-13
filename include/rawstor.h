@@ -6,18 +6,12 @@
 #include <stddef.h>
 
 
-struct RawstorBackend;
-
-extern const struct RawstorBackend *rawstor_backend_mem;
-
 typedef void RawstorDevice;
 
 struct RawstorDeviceSpec {
     size_t size;
 };
 
-
-void rawstor_init(const struct RawstorBackend *backend);
 
 int rawstor_create(struct RawstorDeviceSpec spec, int *device_id);
 

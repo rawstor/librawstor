@@ -151,7 +151,6 @@ int main(int argc, const char **argv) {
     sigemptyset(&sact.sa_mask);
     sigaction(SIGINT, &sact, NULL);
 
-    rawstor_init(rawstor_backend_mem);
     rawstor_server(object_id, socket_path_arg, io_engine);
 
     return EXIT_SUCCESS;

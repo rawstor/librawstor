@@ -1,5 +1,3 @@
-#include "backend.h"
-
 #include <rawstor.h>
 
 #include <sys/uio.h>
@@ -16,7 +14,7 @@ static struct RawstorDeviceSpec _spec;
 static RawstorDevice *_device = NULL;
 
 
-static int volume_create(struct RawstorDeviceSpec spec, int *device_id) {
+int rawstor_create(struct RawstorDeviceSpec spec, int *device_id) {
     assert(_device == NULL);
 
     _spec = spec;
@@ -27,7 +25,7 @@ static int volume_create(struct RawstorDeviceSpec spec, int *device_id) {
 }
 
 
-static int volume_delete(int device_id) {
+int rawstor_delete(int device_id) {
     assert(device_id == 1);
     assert(_device != NULL);
 
@@ -38,7 +36,7 @@ static int volume_delete(int device_id) {
 }
 
 
-int volume_open(int device_id, RawstorDevice **device) {
+int rawstor_open(int device_id, RawstorDevice **device) {
     assert(device_id == 1);
     assert(_device != NULL);
 
@@ -48,14 +46,14 @@ int volume_open(int device_id, RawstorDevice **device) {
 }
 
 
-int volume_close(RawstorDevice *device) {
+int rawstor_close(RawstorDevice *device) {
     assert(device != NULL);
 
     return 0;
 }
 
 
-int volume_spec(int device_id, struct RawstorDeviceSpec *spec) {
+int rawstor_spec(int device_id, struct RawstorDeviceSpec *spec) {
     assert(device_id == 1);
     assert(_device != NULL);
 
@@ -65,7 +63,7 @@ int volume_spec(int device_id, struct RawstorDeviceSpec *spec) {
 }
 
 
-int volume_readv(
+int rawstor_readv(
     RawstorDevice *device,
     size_t offset, size_t size,
     struct iovec *iov, unsigned int niov)
@@ -83,7 +81,7 @@ int volume_readv(
 }
 
 
-static int volume_writev(
+int rawstor_writev(
     RawstorDevice *device,
     size_t offset, size_t size,
     const struct iovec *iov, unsigned int niov)
@@ -99,17 +97,3 @@ static int volume_writev(
 
     return 0;
 }
-
-
-static struct RawstorBackend backend = {
-    .volume_create = volume_create,
-    .volume_delete = volume_delete,
-    .volume_open = volume_open,
-    .volume_close = volume_close,
-    .volume_spec = volume_spec,
-    .volume_readv = volume_readv,
-    .volume_writev = volume_writev,
-};
-
-
-const struct RawstorBackend *rawstor_backend_mem = &backend;
