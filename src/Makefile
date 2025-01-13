@@ -1,16 +1,19 @@
 CC=gcc
-CFLAGS=-std=c99 -Wall -Wextra -Werror
+CFLAGS=-std=gnu99 -Wall -Wextra -Werror
 
-DEPS = rawstor.h
+DEPS = backend.h \
+       backend_mem.h \
+       rawstor.h
 
-OBJ = rawstor.o 
+OBJS = backend_mem.o \
+       rawstor.o
 
 
-%.o: %.c $(DEPS)
-	$(CC) -c -o $@ $< $(CFLAGS)
+%.o: %.c
+	$(CC) $(CFLAGS) $< -c -o $@
 
-%.a: $(OBJ)
-	ar rcs $@ $<
+%.a: $(OBJS)
+	ar rcs $@ $^
 
 all: librawstor.a
 

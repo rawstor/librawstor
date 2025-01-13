@@ -1,17 +1,18 @@
 CC=gcc
-CFLAGS=-std=gnu99 -Wall -Wextra -Werror
+CFLAGS=-std=gnu99 -Wall -Wextra -Werror -I../src
+LIBS=-L../src -lrawstor
 
 DEPS = server.h
 
-OBJ = main.o \
-      server.o
+OBJS = main.o \
+       server.o
 
 
 %.o: %.c $(DEPS)
-	$(CC) -c -o $@ $< $(CFLAGS)
+	$(CC) $(CFLAGS) $< -c -o $@
 
-rawstor-vhost-user-server: $(OBJ)
-	$(CC) -o $@ $^
+rawstor-vhost-user-server: $(OBJS)
+	$(CC) -o $@ $^ $(LIBS)
 
 all: rawstor-vhost-user-server
 

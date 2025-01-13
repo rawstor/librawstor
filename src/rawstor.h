@@ -1,18 +1,25 @@
 #ifndef _RAWSTOR_H_
 #define _RAWSTOR_H_
 
-#include <stddef.h>
 #include <sys/uio.h>
 
+#include <stddef.h>
+
+
+struct RawstorBackend;
+
+extern const struct RawstorBackend *rawstor_backend_mem;
 
 typedef void RawstorDevice;
 
-typedef struct {
+struct RawstorDeviceSpec {
     size_t size;
-} RawstorDeviceSpec;
+};
 
 
-int rawstor_create(RawstorDeviceSpec spec, int *device_id);
+void rawstor_init(const struct RawstorBackend *backend);
+
+int rawstor_create(struct RawstorDeviceSpec spec, int *device_id);
 
 int rawstor_delete(int device_id);
 
@@ -20,7 +27,7 @@ int rawstor_open(int device_id, RawstorDevice **device);
 
 int rawstor_close(RawstorDevice *device);
 
-int rawstor_spec(int device_id, RawstorDeviceSpec *spec);
+int rawstor_spec(int device_id, struct RawstorDeviceSpec *spec);
 
 int rawstor_read(
     RawstorDevice *device,

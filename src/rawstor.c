@@ -1,65 +1,42 @@
-#include <assert.h>
-#include <stddef.h>
-#include <stdlib.h>
-#include <string.h>
-
 #include "rawstor.h"
 
+#include "backend.h"
 
-/**
- * FIXME: Temporary workaround for rawstor_create() and rawstor_delete()
- * methods.
- */
-static RawstorDeviceSpec _spec;
-static RawstorDevice *_device = NULL;
+#include <sys/uio.h>
+
+#include <stddef.h>
 
 
-int rawstor_create(RawstorDeviceSpec spec, int *device_id) {
-    assert(_device == NULL);
+static const struct RawstorBackend *backend = NULL;
 
-    _spec = spec;
-    _device = malloc(_spec.size);
-    *device_id = 1;
 
-    return 0;
+void rawstor_init(const struct RawstorBackend *b) {
+    backend = b;
+}
+
+
+int rawstor_create(struct RawstorDeviceSpec spec, int *device_id) {
+    return backend->volume_create(spec, device_id);
 }
 
 
 int rawstor_delete(int device_id) {
-    assert(device_id == 1);
-    assert(_device != NULL);
-
-    free(_device);
-    _device = NULL;
-
-    return 0;
+    return backend->volume_delete(device_id);
 }
 
 
 int rawstor_open(int device_id, RawstorDevice **device) {
-    assert(device_id == 1);
-    assert(_device != NULL);
-
-    *device = _device;
-
-    return 0;
+    return backend->volume_open(device_id, device);
 }
 
 
 int rawstor_close(RawstorDevice *device) {
-    assert(device != NULL);
-
-    return 0;
+    return backend->volume_close(device);
 }
 
 
-int rawstor_spec(int device_id, RawstorDeviceSpec *spec) {
-    assert(device_id == 1);
-    assert(_device != NULL);
-
-    *spec = _spec;
-
-    return 0;
+int rawstor_spec(int device_id, struct RawstorDeviceSpec *spec) {
+    return backend->volume_spec(device_id, spec);
 }
 
 
@@ -73,9 +50,7 @@ int rawstor_read(
         .iov_len = size,
     };
 
-    rawstor_readv(device, offset, size, &iov, 1);
-
-    return 0;
+    return rawstor_readv(device, offset, size, &iov, 1);
 }
 
 
@@ -84,16 +59,7 @@ int rawstor_readv(
     size_t offset, size_t size,
     struct iovec *iov, unsigned int niov)
 {
-    for (unsigned int i = 0; i < niov; ++i) {
-        size_t chunk_size = size < iov[i].iov_len ? size : iov[i].iov_len;
-
-        memcpy(iov[i].iov_base, device + offset, chunk_size);
-
-        size -= chunk_size;
-        offset += chunk_size;
-    }
-
-    return 0;
+    return backend->volume_readv(device, offset, size, iov, niov);
 }
 
 
@@ -107,9 +73,7 @@ int rawstor_write(
         .iov_len = size,
     };
 
-    rawstor_writev(device, offset, size, &iov, 1);
-
-    return 0;
+    return rawstor_writev(device, offset, size, &iov, 1);
 }
 
 
@@ -118,14 +82,5 @@ int rawstor_writev(
     size_t offset, size_t size,
     const struct iovec *iov, unsigned int niov)
 {
-    for (unsigned int i = 0; i < niov; ++i) {
-        size_t chunk_size = size < iov[i].iov_len ? size : iov[i].iov_len;
-
-        memcpy(device + offset, iov[i].iov_base, chunk_size);
-
-        size -= chunk_size;
-        offset += chunk_size;
-    }
-
-    return 0;
+    return backend->volume_writev(device, offset, size, iov, niov);
 }
