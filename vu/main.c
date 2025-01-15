@@ -16,7 +16,7 @@ void usage() {
         "usage: rawstor-vu [-h] -o OBJECT_ID -s SOCKET_PATH\n"
         "\n"
         "options:\n"
-        "  -h, --help            show this help message and exit\n"
+        "  -h, --help            Show this help message and exit\n"
         "  -o, --object-id OBJECT_ID\n"
         "                        Rawstor object id.\n"
         "  -s, --socket-path SOCKET_PATH\n"
