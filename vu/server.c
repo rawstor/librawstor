@@ -1,5 +1,7 @@
 #include "server.h"
 
+#include "protocol.h"
+
 #include <liburing.h>
 
 #include <err.h>
@@ -62,9 +64,22 @@ static int prepare_read_request(struct io_uring *ring, int client_socket) {
 }
 
 
-static int handle_client_request(Request *request) {
-    (void)(request);
-    printf("parse client request goes here\n");
+static int dispatch_client_request(const void *data, size_t size) {
+    (void)(data);
+    printf("received: %ld\n", size);
+    printf("msg size: %ld\n", sizeof(VhostUserHeader));
+    const VhostUserHeader *header = (const VhostUserHeader *)data;
+    printf("request: %d\n", header->request);
+    if (header->flags & VHOST_USER_VERSION_MASK) {
+        printf("flag: VHOST_USER_VERSION_MASK\n");
+    }
+    if (header->flags & VHOST_USER_REPLY_MASK) {
+        printf("flag: VHOST_USER_REPLY_MASK\n");
+    }
+    if (header->flags & VHOST_USER_NEED_REPLY_MASK) {
+        printf("flag: VHOST_USER_NEED_REPLY_MASK\n");
+    }
+    printf("size: %d\n", header->size);
     return 0;
 }
 
@@ -138,7 +153,7 @@ static int server_loop(int server_socket) {
                 break;
             case EVENT_TYPE_READ:
                 if (cqe->res != 0) {
-                    handle_client_request(request);
+                    dispatch_client_request(request, cqe->res);
                 } else {
                     printf("Connection lost: %d\n", request->client_socket);
                 }

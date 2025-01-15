@@ -21,6 +21,7 @@ LIBS=-L../src -lrawstor
 # Soruces
 #
 DEPS = server.h \
+       protocol.h \
        ../include/rawstor.h
 
 OBJS = main.o
