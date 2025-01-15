@@ -12,7 +12,6 @@ void usage() {
     fprintf(
         stderr,
         "usage: rawstor-vhost-server [-h] -o OBJECT_ID -s SOCKET_PATH\n"
-        "           [--io-engine IO_ENGINE]\n"
         "\n"
         "options:\n"
         "  -h, --help            show this help message and exit\n"
@@ -21,18 +20,6 @@ void usage() {
         "  -s, --socket-path SOCKET_PATH\n"
         "                        This option specify the location of the \n"
         "                        vhost-user Unix domain socket.\n"
-        "  --io-engine IO_ENGINE\n"
-        "                        Specify engine for IO operations\n"
-        "                        use '--io-engine help' to print all \n"
-        "                        possible engines\n"
-    );
-}
-
-
-void io_engine_usage() {
-    fprintf(
-        stderr,
-        "liburing                use liburing\n"
     );
 }
 
@@ -51,7 +38,6 @@ int main(int argc, const char **argv) {
     int help = 0;
     const char *object_id_arg = NULL;
     const char *socket_path_arg = NULL;
-    const char *io_engine_arg = NULL;
 
     for (int i = 1; i < argc; ++i) {
         // --help
@@ -95,30 +81,12 @@ int main(int argc, const char **argv) {
             continue;
         }
 
-        // --io-engine
-        if (
-            io_engine_arg == NULL &&
-            strcmp(argv[i], "--io-engine") == 0
-        ) {
-            if (i == argc - 1) {
-                fprintf(stderr, "Expecting %s IO_ENGINE\n", argv[i]);
-                return EXIT_FAILURE;
-            }
-            io_engine_arg = argv[++i];
-            continue;
-        }
-
         fprintf(stderr, "Unexpected argument: %s\n", argv[i]);
         return EXIT_FAILURE;
     }
 
     if (help) {
         usage();
-        return EXIT_SUCCESS;
-    }
-
-    if (io_engine_arg != NULL && strcmp(io_engine_arg, "help") == 0) {
-        io_engine_usage();
         return EXIT_SUCCESS;
     }
 
@@ -138,20 +106,10 @@ int main(int argc, const char **argv) {
         return EXIT_FAILURE;
     }
 
-    RawstorIOEngine io_engine;
-    if (io_engine_arg == NULL) {
-        io_engine = RAWSTOR_IO_ENGINE_LIBURING;
-    } else if (strcmp(io_engine_arg, "liburing") == 0) {
-        io_engine = RAWSTOR_IO_ENGINE_LIBURING;
-    } else {
-        fprintf(stderr, "Unexpected --io-engine argument: %s\n", io_engine_arg);
-        return EXIT_FAILURE;
-    }
-
     sigemptyset(&sact.sa_mask);
     sigaction(SIGINT, &sact, NULL);
 
-    rawstor_server(object_id, socket_path_arg, io_engine);
+    rawstor_server(object_id, socket_path_arg);
 
     return EXIT_SUCCESS;
 }
