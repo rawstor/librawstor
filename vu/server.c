@@ -1,8 +1,6 @@
 #include "server.h"
 
-#ifdef ENABLE_LIBURING
 #include <liburing.h>
-#endif
 
 #include <err.h>
 #include <errno.h>
@@ -31,7 +29,6 @@ typedef struct {
 } Request;
 
 
-#ifdef ENABLE_LIBURING
 static int prepare_accept_request(struct io_uring *ring, int server_socket) {
     Request *request = malloc(sizeof(Request));
     if (request == NULL) {
@@ -176,7 +173,6 @@ static int server_loop(int server_socket) {
 
     return 0;
 }
-#endif
 
 
 int rawstor_vu_server(
@@ -215,10 +211,7 @@ int rawstor_vu_server(
         return -1;
     }
 
-    int rval = 0;
-#ifdef ENABLE_LIBURING
-    rval = server_loop(server_socket);
-#endif
+    int rval = server_loop(server_socket);
 
     if (unlink(socket_path)) {
         perror("unlink() failed");

@@ -1,8 +1,7 @@
 ##
 # Flags
 #
-ENABLE_LIBEVENT=yes
-ENABLE_LIBURING=yes
+USE_IOENGINE=liburing
 
 
 ##
@@ -17,20 +16,6 @@ CC=gcc
 CFLAGS=-std=gnu99 -Wall -Wextra -Werror -I../include
 LIBS=-L../src -lrawstor
 
-ifeq ($(ENABLE_LIBEVENT),yes)
-	LIBS += $(shell pkg-config --libs libevent)
-	CFLAGS += -DENABLE_LIBEVENT=1 $(shell pkg-config --cflags libevent)
-	IO_ENGINE_DEFINED = 1
-endif
-
-ifeq ($(ENABLE_LIBURING),yes)
-	LIBS += $(shell pkg-config --libs liburing)
-	CFLAGS += -DENABLE_LIBURING=1 $(shell pkg-config --cflags liburing)
-	IO_ENGINE_DEFINED = 1
-endif
-
-$(call assert,$(IO_ENGINE_DEFINED),No io engine defined)
-
 
 ##
 # Soruces
@@ -38,8 +23,19 @@ $(call assert,$(IO_ENGINE_DEFINED),No io engine defined)
 DEPS = server.h \
        ../include/rawstor.h
 
-OBJS = main.o \
-       server.o
+OBJS = main.o
+
+
+ifeq ($(USE_IOENGINE),liburing)
+    LIBS += $(shell pkg-config --libs liburing)
+    CFLAGS += $(shell pkg-config --cflags liburing)
+	OBJS += server.o
+else ifeq ($(USE_IOENGINE),libevent)
+    LIBS += $(shell pkg-config --libs libevent)
+    CFLAGS += $(shell pkg-config --cflags libevent)
+else
+    $(error Unexpected IOENGINE: $(USE_IOENGINE))
+endif
 
 
 ##
