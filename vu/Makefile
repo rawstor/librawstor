@@ -12,12 +12,12 @@ OBJS = main.o \
 %.o: %.c $(DEPS)
 	$(CC) $(CFLAGS) $< -c -o $@
 
-rawstor-vhost-user-server: $(OBJS)
+rawstor-vu: $(OBJS)
 	$(CC) -o $@ $^ $(LIBS)
 
-all: rawstor-vhost-user-server
+all: rawstor-vu
 
 clean:
-	rm -f *.o rawstor-vhost-user-server
+	rm -f *.o rawstor-vu
 
 .PHONY: all clean

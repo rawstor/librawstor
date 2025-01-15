@@ -1,5 +1,5 @@
 SUBDIRS = src \
-          vhost-user
+          vu
 
 
 define FOREACH

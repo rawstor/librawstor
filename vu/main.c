@@ -11,7 +11,9 @@
 void usage() {
     fprintf(
         stderr,
-        "usage: rawstor-vhost-server [-h] -o OBJECT_ID -s SOCKET_PATH\n"
+        "Rawstor vhost-user server\n"
+        "\n"
+        "usage: rawstor-vu [-h] -o OBJECT_ID -s SOCKET_PATH\n"
         "\n"
         "options:\n"
         "  -h, --help            show this help message and exit\n"
@@ -109,7 +111,7 @@ int main(int argc, const char **argv) {
     sigemptyset(&sact.sa_mask);
     sigaction(SIGINT, &sact, NULL);
 
-    rawstor_server(object_id, socket_path_arg);
+    rawstor_vu_server(object_id, socket_path_arg);
 
     return EXIT_SUCCESS;
 }

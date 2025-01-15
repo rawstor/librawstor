@@ -43,7 +43,7 @@ static int server_loop(int s) {
 }
 
 
-int rawstor_server(
+int rawstor_vu_server(
     int object_id,
     const char *socket_path)
 {
