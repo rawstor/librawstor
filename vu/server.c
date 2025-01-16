@@ -31,6 +31,15 @@ typedef struct {
 } Request;
 
 
+static void printf_raw(const void *data, size_t size) {
+    const char *cdata = data;
+    for (size_t i = 0; i < size; ++i) {
+        printf("%02hhx ", cdata[i]);
+    }
+    printf("\n");
+}
+
+
 static int prepare_accept_request(struct io_uring *ring, int server_socket) {
     Request *request = malloc(sizeof(Request));
     if (request == NULL) {
@@ -67,6 +76,8 @@ static int prepare_read_request(struct io_uring *ring, int client_socket) {
 static int dispatch_client_request(const void *data, size_t size) {
     (void)(data);
     printf("received: %ld\n", size);
+    printf("data: ");
+    printf_raw(data, size);
     printf("msg size: %ld\n", sizeof(VhostUserHeader));
     const VhostUserHeader *header = (const VhostUserHeader *)data;
     printf("request: %d\n", header->request);
@@ -79,7 +90,7 @@ static int dispatch_client_request(const void *data, size_t size) {
     if (header->flags & VHOST_USER_NEED_REPLY_MASK) {
         printf("flag: VHOST_USER_NEED_REPLY_MASK\n");
     }
-    printf("size: %d\n", header->size);
+    printf("size: %u\n", header->size);
     return 0;
 }
 
