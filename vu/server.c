@@ -31,15 +31,6 @@ typedef struct {
 } Request;
 
 
-static void printf_raw(const void *data, size_t size) {
-    const char *cdata = data;
-    for (size_t i = 0; i < size; ++i) {
-        printf("%02hhx ", cdata[i]);
-    }
-    printf("\n");
-}
-
-
 static int prepare_accept_request(struct io_uring *ring, int server_socket) {
     Request *request = malloc(sizeof(Request));
     if (request == NULL) {
@@ -73,24 +64,11 @@ static int prepare_read_request(struct io_uring *ring, int client_socket) {
 }
 
 
-static int dispatch_client_request(const void *data, size_t size) {
-    (void)(data);
-    printf("received: %ld\n", size);
-    printf("data: ");
-    printf_raw(data, size);
-    printf("msg size: %ld\n", sizeof(VhostUserHeader));
-    const VhostUserHeader *header = (const VhostUserHeader *)data;
-    printf("request: %d\n", header->request);
-    if (header->flags & VHOST_USER_VERSION_MASK) {
-        printf("flag: VHOST_USER_VERSION_MASK\n");
-    }
-    if (header->flags & VHOST_USER_REPLY_MASK) {
-        printf("flag: VHOST_USER_REPLY_MASK\n");
-    }
-    if (header->flags & VHOST_USER_NEED_REPLY_MASK) {
-        printf("flag: VHOST_USER_NEED_REPLY_MASK\n");
-    }
-    printf("size: %u\n", header->size);
+static int dispatch_client_request(const VhostUserHeader *header) {
+    printf("================ Vhost user message ================\n");
+    printf("Request: %d\n", header->request);
+    printf("Flags:   0x%x\n", header->flags);
+    printf("Size:    %u\n", header->size);
     return 0;
 }
 
@@ -163,10 +141,13 @@ static int server_loop(int server_socket) {
                 }
                 break;
             case EVENT_TYPE_READ:
-                if (cqe->res != 0) {
-                    dispatch_client_request(request, cqe->res);
-                } else {
+                if (cqe->res == sizeof(VhostUserHeader)) {
+                    dispatch_client_request(
+                        (const VhostUserHeader*)request->data);
+                } else if (cqe->res == 0) {
                     printf("Connection lost: %d\n", request->client_socket);
+                } else {
+                    printf("Unexpected request size: %d\n", cqe->res);
                 }
 
                 if(close(request->client_socket)) {
@@ -175,6 +156,7 @@ static int server_loop(int server_socket) {
                 printf("Connection closed: %d\n", request->client_socket);
 
                 if (prepare_accept_request(&ring, server_socket)) {
+                    free(request->data);
                     free(request);
                     // TODO: free() other requests in queue.
                     io_uring_cqe_seen(&ring, cqe);
