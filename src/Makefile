@@ -8,12 +8,16 @@ CC=gcc
 CFLAGS=-std=gnu99 -Wall -Wextra -Werror -I../include
 
 DEPS = backend_mem.h \
-       ../include/rawstor.h
+       ../include/rawstor.h \
+       ../include/rawstor_proto.h \
+       ../include/log.h
 
 OBJS = rawstor.o
 
 ifeq ($(USE_BACKEND),mem)
     OBJS += rawstor_mem.o
+else ifeq ($(USE_BACKEND),sync)
+    OBJS += rawstor_sync.o
 else
     $(error Unexpected BACKEND: $(USE_BACKEND))
 endif
