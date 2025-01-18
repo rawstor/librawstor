@@ -17,10 +17,14 @@
 
 #define READ_SZ 8192
 
+/* The version of the protocol we support */
+#define VHOST_USER_VERSION 1
+
 
 typedef enum {
     EVENT_TYPE_ACCEPT,
     EVENT_TYPE_READ,
+    EVENT_TYPE_WRITE,
 } EventType;
 
 
@@ -64,11 +68,72 @@ static int prepare_read_request(struct io_uring *ring, int client_socket) {
 }
 
 
-static int dispatch_client_request(const VhostUserHeader *header) {
+static int prepare_write_request(
+    struct io_uring *ring,
+    int client_socket,
+    VhostUserMsg *msg)
+{
+    Request *request = malloc(sizeof(Request));
+    if (request == NULL) {
+        perror("malloc() failed:");
+        return -1;
+    }
+    request->data = msg;
+    request->event_type = EVENT_TYPE_WRITE;
+    request->client_socket = client_socket;
+
+    struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
+    io_uring_prep_write(
+        sqe,
+        client_socket,
+        request->data,
+        VHOST_USER_HDR_SIZE + msg->size,
+        0);
+    io_uring_sqe_set_data(sqe, request);
+    return 0;
+}
+
+
+static int get_features(VhostUserMsg *msg) {
+    msg->payload.u64 =
+        /*
+         * The following VIRTIO feature bits are supported by our virtqueue
+         * implementation:
+         */
+        1ULL << VIRTIO_F_NOTIFY_ON_EMPTY |
+        1ULL << VIRTIO_RING_F_INDIRECT_DESC |
+        1ULL << VIRTIO_RING_F_EVENT_IDX |
+        1ULL << VIRTIO_F_VERSION_1 |
+
+        /* vhost-user feature bits */
+        1ULL << VHOST_F_LOG_ALL |
+        1ULL << VHOST_USER_F_PROTOCOL_FEATURES;
+
+    msg->size = sizeof(msg->payload.u64);
+    msg->fd_num = 0;
+
+    msg->flags &= ~VHOST_USER_VERSION_MASK;
+    msg->flags |= VHOST_USER_VERSION;
+    msg->flags |= VHOST_USER_REPLY_MASK;
+
+    printf("Sending back to guest u64: 0x%016"PRIx64"\n", msg->payload.u64);
+
+    return 1;
+}
+
+
+static int dispatch_client_request(VhostUserMsg *msg) {
     printf("================ Vhost user message ================\n");
-    printf("Request: %d\n", header->request);
-    printf("Flags:   0x%x\n", header->flags);
-    printf("Size:    %u\n", header->size);
+    printf("Request: %d\n", msg->request);
+    printf("Flags:   0x%x\n", msg->flags);
+    printf("Size:    %u\n", msg->size);
+
+    switch (msg->request) {
+        case VHOST_USER_GET_FEATURES:
+            return get_features(msg);
+        default:
+            printf("Unexpected request: %d\n", msg->request);
+    };
     return 0;
 }
 
@@ -141,21 +206,40 @@ static int server_loop(int server_socket) {
                 }
                 break;
             case EVENT_TYPE_READ:
-                if (cqe->res == sizeof(VhostUserHeader)) {
-                    dispatch_client_request(
-                        (const VhostUserHeader*)request->data);
+                int response = 0;
+                if (cqe->res >= (int)VHOST_USER_HDR_SIZE &&
+                    cqe->res <= (int)sizeof(VhostUserMsg))
+                {
+                    response = dispatch_client_request(
+                        (VhostUserMsg*)request->data);
                 } else if (cqe->res == 0) {
                     printf("Connection lost: %d\n", request->client_socket);
                 } else {
                     printf("Unexpected request size: %d\n", cqe->res);
                 }
 
-                if(close(request->client_socket)) {
-                    perror("close() failed");
+                if (!response) {
+                    if(close(request->client_socket)) {
+                        perror("close() failed");
+                    } else {
+                        printf("Connection closed: %d\n", request->client_socket);
+                    }
+                    free(request->data);
+                } else {
+                    if (prepare_write_request(
+                        &ring,
+                        request->client_socket,
+                        request->data))
+                    {
+                        break;
+                    }
                 }
-                printf("Connection closed: %d\n", request->client_socket);
 
-                if (prepare_accept_request(&ring, server_socket)) {
+                break;
+            case EVENT_TYPE_WRITE:
+                printf("cqe->res: %d\n", cqe->res);
+
+                if (prepare_read_request(&ring, request->client_socket)) {
                     free(request->data);
                     free(request);
                     // TODO: free() other requests in queue.
@@ -164,6 +248,7 @@ static int server_loop(int server_socket) {
                     return -1;
                 }
                 free(request->data);
+
                 break;
             default:
                 fprintf(

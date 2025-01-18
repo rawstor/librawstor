@@ -6,8 +6,10 @@
 #include <stdint.h>
 
 
-#define VU_PACKED // __attribute__((packed))
+#define VU_PACKED __attribute__((packed))
 
+/* Based on qemu/hw/virtio/vhost-user.c */
+#define VHOST_USER_F_PROTOCOL_FEATURES 30
 
 #define VHOST_MEMORY_BASELINE_NREGIONS 8
 
@@ -17,6 +19,8 @@
 #define VHOST_USER_MAX_CONFIG_SIZE 256
 
 #define UUID_LEN 16
+
+#define VHOST_USER_HDR_SIZE offsetof(VhostUserMsg, payload)
 
 
 typedef struct VhostUserMemoryRegion {
@@ -123,7 +127,7 @@ typedef enum VhostUserRequest {
 } VhostUserRequest;
 
 
-typedef struct VhostUserHeader {
+typedef struct VhostUserMsg {
     VhostUserRequest request;
 
 #define VHOST_USER_VERSION_MASK     (0x3)
@@ -131,10 +135,6 @@ typedef struct VhostUserHeader {
 #define VHOST_USER_NEED_REPLY_MASK  (0x1 << 3)
     uint32_t flags;
     uint32_t size; /* the following payload size */
-} VU_PACKED VhostUserHeader;
-
-
-typedef struct VhostUserPayload {
     union {
 #define VHOST_USER_VRING_IDX_MASK   (0xff)
 #define VHOST_USER_VRING_NOFD_MASK  (0x1 << 8)
@@ -153,12 +153,6 @@ typedef struct VhostUserPayload {
     int fds[VHOST_MEMORY_BASELINE_NREGIONS];
     int fd_num;
     uint8_t *data;
-} VU_PACKED VhostUserPayload;
-
-
-typedef struct VhostUserMsg {
-    VhostUserHeader hdr;
-    VhostUserPayload payload;
 } VU_PACKED VhostUserMsg;
 
 
