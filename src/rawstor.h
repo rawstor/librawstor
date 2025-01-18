@@ -41,7 +41,7 @@ int rawstor_write(
 int rawstor_writev(
     RawstorDevice *device,
     size_t offset, size_t size,
-    const struct iovec *iov, unsigned int niov);
+    struct iovec *iov, unsigned int niov);
 
 
 #endif // _RAWSTOR_H_

@@ -12,6 +12,6 @@
 #define LOG_INFO(...) printf(__VA_ARGS__)
 #define FLOG_INFO(...) fprintf(__VA_ARGS__)
 #else
-#define LOG_INFO()
-#define FLOG_INFO()
+#define LOG_INFO(...)
+#define FLOG_INFO(...)
 #endif
