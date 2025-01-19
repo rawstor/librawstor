@@ -80,6 +80,10 @@ static int prepare_write_request(
     int client_socket,
     VhostUserMsg *msg)
 {
+    msg->flags &= ~VHOST_USER_VERSION_MASK;
+    msg->flags |= VHOST_USER_VERSION;
+    msg->flags |= VHOST_USER_REPLY_MASK;
+
     Request *request = malloc(sizeof(Request));
     if (request == NULL) {
         perror("malloc() failed:");
@@ -119,10 +123,6 @@ static int get_features(VhostUserMsg *msg) {
     msg->size = sizeof(msg->payload.u64);
     msg->fd_num = 0;
 
-    msg->flags &= ~VHOST_USER_VERSION_MASK;
-    msg->flags |= VHOST_USER_VERSION;
-    msg->flags |= VHOST_USER_REPLY_MASK;
-
     printf("Sending back to guest u64: 0x%016"PRIx64"\n", msg->payload.u64);
 
     return 1;
@@ -151,10 +151,6 @@ static int get_protocol_features(VhostUserMsg *msg) {
 
     msg->size = sizeof(msg->payload.u64);
     msg->fd_num = 0;
-
-    msg->flags &= ~VHOST_USER_VERSION_MASK;
-    msg->flags |= VHOST_USER_VERSION;
-    msg->flags |= VHOST_USER_REPLY_MASK;
 
     printf("Sending back to guest u64: 0x%016"PRIx64"\n", msg->payload.u64);
 
