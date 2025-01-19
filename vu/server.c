@@ -281,7 +281,7 @@ static int server_loop(int server_socket) {
 
                 break;
             case EVENT_TYPE_WRITE:
-                printf("cqe->res: %d\n", cqe->res);
+                printf("Message sent: %d bytes\n", cqe->res);
 
                 if (prepare_read_request(&ring, request->client_socket)) {
                     free(request->msg);
