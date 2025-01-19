@@ -15,8 +15,6 @@
 
 #define QUEUE_DEPTH 256
 
-#define READ_SZ 8192
-
 /* The version of the protocol we support */
 #define VHOST_USER_VERSION 1
 
@@ -31,14 +29,14 @@ typedef enum {
 typedef struct {
     EventType event_type;
     int client_socket;
-    void *data;
+    VhostUserMsg *msg;
 } Request;
 
 
 static int prepare_accept_request(struct io_uring *ring, int server_socket) {
     Request *request = malloc(sizeof(Request));
     if (request == NULL) {
-        perror("malloc() failed:");
+        perror("malloc() failed");
         return -1;
     }
     request->event_type = EVENT_TYPE_ACCEPT;
@@ -53,16 +51,25 @@ static int prepare_accept_request(struct io_uring *ring, int server_socket) {
 static int prepare_read_request(struct io_uring *ring, int client_socket) {
     Request *request = malloc(sizeof(Request));
     if (request == NULL) {
-        perror("malloc() failed:");
+        perror("malloc() failed");
         return -1;
     }
-    request->data = malloc(READ_SZ);
-    memset(request->data, 0, READ_SZ);
+    request->msg = malloc(sizeof(request->msg));
+    if (request->msg == NULL) {
+        perror("malloc() failed");
+        free(request);
+        return -1;
+    }
     request->event_type = EVENT_TYPE_READ;
     request->client_socket = client_socket;
 
     struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
-    io_uring_prep_read(sqe, client_socket, request->data, READ_SZ, 0);
+    io_uring_prep_read(
+        sqe,
+        client_socket,
+        request->msg,
+        sizeof(*request->msg),
+        0);
     io_uring_sqe_set_data(sqe, request);
     return 0;
 }
@@ -78,7 +85,7 @@ static int prepare_write_request(
         perror("malloc() failed:");
         return -1;
     }
-    request->data = msg;
+    request->msg = msg;
     request->event_type = EVENT_TYPE_WRITE;
     request->client_socket = client_socket;
 
@@ -86,7 +93,7 @@ static int prepare_write_request(
     io_uring_prep_write(
         sqe,
         client_socket,
-        request->data,
+        request->msg,
         VHOST_USER_HDR_SIZE + msg->size,
         0);
     io_uring_sqe_set_data(sqe, request);
@@ -156,7 +163,6 @@ static int get_protocol_features(VhostUserMsg *msg) {
 
 
 static int dispatch_client_request(VhostUserMsg *msg) {
-    printf("================ Vhost user message ================\n");
     printf("Request: %d\n", msg->request);
     printf("Flags:   0x%x\n", msg->flags);
     printf("Size:    %u\n", msg->size);
@@ -245,8 +251,9 @@ static int server_loop(int server_socket) {
                 if (cqe->res >= (int)VHOST_USER_HDR_SIZE &&
                     cqe->res <= (int)sizeof(VhostUserMsg))
                 {
-                    response = dispatch_client_request(
-                        (VhostUserMsg*)request->data);
+                    printf("============= Vhost user message =============\n");
+                    response = dispatch_client_request(request->msg);
+                    printf("==============================================\n");
                 } else if (cqe->res == 0) {
                     printf("Connection lost: %d\n", request->client_socket);
                 } else {
@@ -257,14 +264,16 @@ static int server_loop(int server_socket) {
                     if(close(request->client_socket)) {
                         perror("close() failed");
                     } else {
-                        printf("Connection closed: %d\n", request->client_socket);
+                        printf(
+                            "Connection closed: %d\n",
+                            request->client_socket);
                     }
-                    free(request->data);
+                    free(request->msg);
                 } else {
                     if (prepare_write_request(
                         &ring,
                         request->client_socket,
-                        request->data))
+                        request->msg))
                     {
                         break;
                     }
@@ -275,14 +284,14 @@ static int server_loop(int server_socket) {
                 printf("cqe->res: %d\n", cqe->res);
 
                 if (prepare_read_request(&ring, request->client_socket)) {
-                    free(request->data);
+                    free(request->msg);
                     free(request);
                     // TODO: free() other requests in queue.
                     io_uring_cqe_seen(&ring, cqe);
                     io_uring_queue_exit(&ring);
                     return -1;
                 }
-                free(request->data);
+                free(request->msg);
 
                 break;
             default:
