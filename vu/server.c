@@ -80,9 +80,8 @@ static int prepare_write_request(
     int client_socket,
     VhostUserMsg *msg)
 {
-    msg->flags &= ~VHOST_USER_VERSION_MASK;
-    msg->flags |= VHOST_USER_VERSION;
-    msg->flags |= VHOST_USER_REPLY_MASK;
+    msg->flags = VHOST_USER_VERSION |
+                 VHOST_USER_REPLY_MASK;
 
     Request *request = malloc(sizeof(Request));
     if (request == NULL) {
@@ -254,6 +253,15 @@ static int server_loop(int server_socket) {
                     printf("Connection lost: %d\n", request->client_socket);
                 } else {
                     printf("Unexpected request size: %d\n", cqe->res);
+                }
+
+                if (!response &&
+                    request->msg->flags & VHOST_USER_NEED_REPLY_MASK)
+                {
+                    request->msg->payload.u64 = 0;
+                    request->msg->size = sizeof(request->msg->payload.u64);
+                    request->msg->fd_num = 0;
+                    response = 1;
                 }
 
                 if (!response) {
