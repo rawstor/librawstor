@@ -8,7 +8,7 @@ USE_IOENGINE=liburing
 # Setup
 #
 define assert
-	$(if $1,,$(error Assertion failed: $2))
+    $(if $1,,$(error Assertion failed: $2))
 endef
 
 
@@ -30,7 +30,7 @@ OBJS = main.o
 ifeq ($(USE_IOENGINE),liburing)
     LIBS += $(shell pkg-config --libs liburing)
     CFLAGS += $(shell pkg-config --cflags liburing)
-	OBJS += server.o
+    OBJS += server.o
 else ifeq ($(USE_IOENGINE),libevent)
     LIBS += $(shell pkg-config --libs libevent)
     CFLAGS += $(shell pkg-config --cflags libevent)
