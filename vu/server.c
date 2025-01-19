@@ -122,6 +122,39 @@ static int get_features(VhostUserMsg *msg) {
 }
 
 
+static int get_protocol_features(VhostUserMsg *msg) {
+    /*
+     * Note that we support, but intentionally do not set,
+     * VHOST_USER_PROTOCOL_F_INBAND_NOTIFICATIONS. This means that
+     * a device implementation can return it in its callback
+     * (get_protocol_features) if it wants to use this for
+     * simulation, but it is otherwise not desirable (if even
+     * implemented by the frontend.)
+     */
+    msg->payload.u64 = 1ULL << VHOST_USER_PROTOCOL_F_MQ |
+                       1ULL << VHOST_USER_PROTOCOL_F_LOG_SHMFD |
+                       1ULL << VHOST_USER_PROTOCOL_F_BACKEND_REQ |
+                       1ULL << VHOST_USER_PROTOCOL_F_HOST_NOTIFIER |
+                       1ULL << VHOST_USER_PROTOCOL_F_BACKEND_SEND_FD |
+                       1ULL << VHOST_USER_PROTOCOL_F_REPLY_ACK |
+                       1ULL << VHOST_USER_PROTOCOL_F_CONFIGURE_MEM_SLOTS |
+                       1ULL << VHOST_USER_PROTOCOL_F_CONFIG;
+
+    msg->payload.u64 &= ~(1ULL << VHOST_USER_PROTOCOL_F_INFLIGHT_SHMFD);
+
+    msg->size = sizeof(msg->payload.u64);
+    msg->fd_num = 0;
+
+    msg->flags &= ~VHOST_USER_VERSION_MASK;
+    msg->flags |= VHOST_USER_VERSION;
+    msg->flags |= VHOST_USER_REPLY_MASK;
+
+    printf("Sending back to guest u64: 0x%016"PRIx64"\n", msg->payload.u64);
+
+    return 1;
+}
+
+
 static int dispatch_client_request(VhostUserMsg *msg) {
     printf("================ Vhost user message ================\n");
     printf("Request: %d\n", msg->request);
@@ -131,6 +164,8 @@ static int dispatch_client_request(VhostUserMsg *msg) {
     switch (msg->request) {
         case VHOST_USER_GET_FEATURES:
             return get_features(msg);
+        case VHOST_USER_GET_PROTOCOL_FEATURES:
+            return get_protocol_features(msg);
         default:
             printf("Unexpected request: %d\n", msg->request);
     };
