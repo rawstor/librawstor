@@ -61,10 +61,10 @@ int rawstor_create(struct RawstorDeviceSpec spec, int *device_id) {
     strlcpy(mframe->var, OBJ_NAME, 10);
     #if LOGLEVEL > 3
     int res = write(sockfd, mframe, sizeof(proto_basic_frame_t));
+    LOG_DEBUG("Sent request to set objid, res:%i\n", res);
     #else
     write(sockfd, mframe, sizeof(proto_basic_frame_t));
     #endif
-    LOG_DEBUG("Sent request to set objid, res:%i\n", res);
     read(sockfd, buff, sizeof(buff));
     proto_resp_frame_t *rframe = malloc(sizeof(proto_resp_frame_t));
     memcpy(rframe, buff, sizeof(proto_resp_frame_t));
@@ -147,13 +147,18 @@ int rawstor_readv(
         exit(1);
       }
       if (res != rframe->res) {
-        LOG_DEBUG("Could read less than needed: %i != %i!\n", rframe->res, res);
+        LOG_DEBUG("Could not read less than needed: %i != %i!\n", rframe->res, res);
         exit(1);
       }
     } else {
+      // TODO: handle this case
       LOG_DEBUG("There was an error on server side, so no data for us\n");
-      return rframe->res;
+      exit(1);
     }
+
+    free(frame);
+    free(rframe);
+
 
     return 0;
 }
@@ -193,6 +198,9 @@ int rawstor_writev(
     proto_resp_frame_t *rframe = malloc(sizeof(proto_resp_frame_t));
     read(sockfd, rframe, sizeof(proto_resp_frame_t));
     LOG_DEBUG("Write: Response from Server: cmd:%i res:%i\n", rframe->cmd, rframe->res);
+
+    free(frame);
+    free(rframe);
 
     return 0;
 }
