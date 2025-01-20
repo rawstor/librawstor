@@ -1,5 +1,6 @@
 #include "server.h"
 
+#include "aio.h"
 #include "protocol.h"
 
 #include <liburing.h>
@@ -17,91 +18,6 @@
 
 /* The version of the protocol we support */
 #define VHOST_USER_VERSION 1
-
-
-typedef enum {
-    EVENT_TYPE_ACCEPT,
-    EVENT_TYPE_READ,
-    EVENT_TYPE_WRITE,
-} EventType;
-
-
-typedef struct {
-    EventType event_type;
-    int client_socket;
-    VhostUserMsg *msg;
-} Request;
-
-
-static int prepare_accept_request(struct io_uring *ring, int server_socket) {
-    Request *request = malloc(sizeof(Request));
-    if (request == NULL) {
-        perror("malloc() failed");
-        return -1;
-    }
-    request->event_type = EVENT_TYPE_ACCEPT;
-
-    struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
-    io_uring_prep_accept(sqe, server_socket, NULL, NULL, 0);
-    io_uring_sqe_set_data(sqe, request);
-    return 0;
-}
-
-
-static int prepare_read_request(struct io_uring *ring, int client_socket) {
-    Request *request = malloc(sizeof(Request));
-    if (request == NULL) {
-        perror("malloc() failed");
-        return -1;
-    }
-    request->msg = malloc(sizeof(request->msg));
-    if (request->msg == NULL) {
-        perror("malloc() failed");
-        free(request);
-        return -1;
-    }
-    request->event_type = EVENT_TYPE_READ;
-    request->client_socket = client_socket;
-
-    struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
-    io_uring_prep_read(
-        sqe,
-        client_socket,
-        request->msg,
-        sizeof(*request->msg),
-        0);
-    io_uring_sqe_set_data(sqe, request);
-    return 0;
-}
-
-
-static int prepare_write_request(
-    struct io_uring *ring,
-    int client_socket,
-    VhostUserMsg *msg)
-{
-    msg->flags = VHOST_USER_VERSION |
-                 VHOST_USER_REPLY_MASK;
-
-    Request *request = malloc(sizeof(Request));
-    if (request == NULL) {
-        perror("malloc() failed:");
-        return -1;
-    }
-    request->msg = msg;
-    request->event_type = EVENT_TYPE_WRITE;
-    request->client_socket = client_socket;
-
-    struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
-    io_uring_prep_write(
-        sqe,
-        client_socket,
-        request->msg,
-        VHOST_USER_HDR_SIZE + msg->size,
-        0);
-    io_uring_sqe_set_data(sqe, request);
-    return 0;
-}
 
 
 static int get_features(VhostUserMsg *msg) {
@@ -174,154 +90,201 @@ static int dispatch_client_request(VhostUserMsg *msg) {
 }
 
 
-static int server_loop(int server_socket) {
-    int rval;
-    struct io_uring ring;
+static int server_accept(
+    RawstorAIO *aio,
+    int server_sokcet,
+    ssize_t client_socket,
+    void *buf,
+    size_t size,
+    void *arg);
 
-    rval = io_uring_queue_init(QUEUE_DEPTH, &ring, 0);
-    if (rval < 0) {
-        fprintf(
-            stderr,
-            "io_uring_queue_init() failed: %s\n",
-            strerror(-rval));
-        return -1;
-    };
 
-    if (prepare_accept_request(&ring, server_socket)) {
-        io_uring_queue_exit(&ring);
+static int server_read(
+    RawstorAIO *aio,
+    int socket,
+    ssize_t request_size,
+    void *buf,
+    size_t size,
+    void *arg);
+
+
+static int server_write(
+    RawstorAIO *aio,
+    int socket,
+    ssize_t response_size,
+    void *buf,
+    size_t size,
+    void *arg);
+
+
+static int server_accept(
+    RawstorAIO *aio,
+    int,
+    ssize_t client_socket,
+    void *,
+    size_t,
+    void *arg)
+{
+    printf("Connection opened: %ld\n", client_socket);
+
+    void *msg = malloc(sizeof(VhostUserMsg));
+    if (msg == NULL) {
+        perror("malloc() failed");
+        if(close(client_socket)) {
+            perror("close() failed");
+        } else {
+            printf("Connection closed: %ld\n", client_socket);
+        }
         return -1;
     }
 
-    struct io_uring_cqe *cqe;
-    while (1) {
-        printf("Waiting for event...\n");
-        rval = io_uring_submit_and_wait(&ring, 1);
-        if (rval < 0) {
-            fprintf(
-                stderr,
-                "io_uring_submit_and_wait() failed: %s\n",
-                strerror(-rval));
-            if (rval == -EINTR) {
-                break;
-            }
-            // TODO: Fatal error here?
-            continue;
+    int rval = rawstor_aio_read(
+        aio,
+        client_socket,
+        msg,
+        sizeof(VhostUserMsg),
+        server_read,
+        arg);
+    if (rval) {
+        perror("rawstor_aio_read() failed");
+        if(close(client_socket)) {
+            perror("close() failed");
+        } else {
+            printf("Connection closed: %ld\n", client_socket);
         }
-        rval = io_uring_peek_cqe(&ring, &cqe);
-        if (rval < 0) {
-            fprintf(
-                stderr,
-                "io_uring_peek_cqe() failed: %s\n",
-                strerror(-rval));
-            if (rval == -EINTR) {
-                break;
-            }
-            // TODO: Fatal error here?
-            continue;
-        }
-
-        Request *request = (Request*)io_uring_cqe_get_data(cqe);
-        printf("Event received: %d\n", request->event_type);
-        if (cqe->res < 0) {
-            fprintf(
-                stderr,
-                "io_uring request failed for event %d: %s\n",
-                request->event_type,
-                strerror(-cqe->res));
-            free(request);
-            io_uring_cqe_seen(&ring, cqe);
-            // TODO: Fatal error here?
-            continue;
-        }
-
-        switch (request->event_type) {
-            case EVENT_TYPE_ACCEPT:
-                printf("Connection opened: %d\n", cqe->res);
-                if (prepare_read_request(&ring, cqe->res)) {
-                    break;
-                }
-                break;
-            case EVENT_TYPE_READ:
-                int response = 0;
-                if (cqe->res >= (int)VHOST_USER_HDR_SIZE &&
-                    cqe->res <= (int)sizeof(VhostUserMsg))
-                {
-                    printf("============= Vhost user message =============\n");
-                    response = dispatch_client_request(request->msg);
-                    printf("==============================================\n");
-                } else if (cqe->res == 0) {
-                    printf("Connection lost: %d\n", request->client_socket);
-                } else {
-                    printf("Unexpected request size: %d\n", cqe->res);
-                }
-
-                if (!response &&
-                    request->msg->flags & VHOST_USER_NEED_REPLY_MASK)
-                {
-                    request->msg->payload.u64 = 0;
-                    request->msg->size = sizeof(request->msg->payload.u64);
-                    request->msg->fd_num = 0;
-                    response = 1;
-                }
-
-                if (!response) {
-                    if(close(request->client_socket)) {
-                        perror("close() failed");
-                    } else {
-                        printf(
-                            "Connection closed: %d\n",
-                            request->client_socket);
-                    }
-                    free(request->msg);
-                } else {
-                    if (prepare_write_request(
-                        &ring,
-                        request->client_socket,
-                        request->msg))
-                    {
-                        break;
-                    }
-                }
-
-                break;
-            case EVENT_TYPE_WRITE:
-                printf("Message sent: %d bytes\n", cqe->res);
-
-                if (prepare_read_request(&ring, request->client_socket)) {
-                    free(request->msg);
-                    free(request);
-                    // TODO: free() other requests in queue.
-                    io_uring_cqe_seen(&ring, cqe);
-                    io_uring_queue_exit(&ring);
-                    return -1;
-                }
-                free(request->msg);
-
-                break;
-            default:
-                fprintf(
-                    stderr,
-                    "Unexpected event type: %d\n",
-                    request->event_type);
-                break;
-        }
-
-        free(request);
-        io_uring_cqe_seen(&ring, cqe);
+        return rval;
     }
-
-    io_uring_queue_exit(&ring);
 
     return 0;
 }
 
 
-int rawstor_vu_server(
-    int object_id,
-    const char *socket_path)
+static int server_read(
+    RawstorAIO *aio,
+    int socket,
+    ssize_t request_size,
+    void *buf,
+    size_t,
+    void *arg)
 {
-    (void)(object_id);
+    if (request_size == 0) {
+        printf("Connection lost: %d\n", socket);
+        free(buf);
+        return 0;
+    } else if (
+        request_size < (int)VHOST_USER_HDR_SIZE ||
+        request_size > (int)sizeof(VhostUserMsg)
+    ) {
+        printf("Unexpected request size: %ld\n", request_size);
+        free(buf);
+        return 0;
+    }
 
+    int response = 0;
+    VhostUserMsg *msg = buf;
+
+    printf("============= Vhost user message =============\n");
+    response = dispatch_client_request(msg);
+    printf("==============================================\n");
+
+    if (!response &&
+        msg->flags & VHOST_USER_NEED_REPLY_MASK)
+    {
+        msg->payload.u64 = 0;
+        msg->size = sizeof(msg->payload.u64);
+        msg->fd_num = 0;
+        response = 1;
+    }
+
+    if (!response) {
+        if(close(socket)) {
+            perror("close() failed");
+        } else {
+            printf("Connection closed: %d\n", socket);
+        }
+        free(msg);
+        return 0;
+    }
+
+    msg->flags = VHOST_USER_VERSION |
+                 VHOST_USER_REPLY_MASK;
+
+    int rval = rawstor_aio_write(
+        aio,
+        socket,
+        msg,
+        VHOST_USER_HDR_SIZE + msg->size,
+        server_write,
+        arg);
+    if (rval) {
+        perror("rawstor_aio_write() failed");
+        if(close(socket)) {
+            perror("close() failed");
+        } else {
+            printf("Connection closed: %d\n", socket);
+        }
+        free(msg);
+        return rval;
+    }
+
+    return 0;
+}
+
+
+static int server_write(
+    RawstorAIO *aio,
+    int socket,
+    ssize_t response_size,
+    void *buf,
+    size_t size,
+    void *arg)
+{
+    printf("Message sent: %ld bytes\n", response_size);
+
+    int rval = rawstor_aio_read(aio, socket, buf, size, server_read, arg);
+    if (rval) {
+        perror("rawstor_aio_read() failed");
+        return rval;
+    }
+    return 0;
+}
+
+
+static int server_loop(int server_socket) {
+    RawstorAIO *aio = rawstor_aio_create(QUEUE_DEPTH);
+    if (aio == NULL) {
+        perror("rawstor_aio_create() failed");
+        return -errno;
+    };
+
+    if (rawstor_aio_accept(aio, server_socket, server_accept, NULL)) {
+        perror("rawstor_aio_accept() failed");
+        return -errno;
+    }
+
+    while (1) {
+        printf("Waiting for event...\n");
+        RawstorAIOEvent *event = rawstor_aio_get_event(aio);
+        if (event == NULL) {
+            perror("rawstor_aio_get_event() failed");
+            break;
+        }
+
+        printf("Dispatching event...\n");
+        if (rawstor_aio_dispatch_event(aio, event)) {
+            perror("rawstor_aio_dispatch_event() failed");
+            break;
+        }
+    }
+
+
+    rawstor_aio_delete(aio); 
+
+    return 0;
+}
+
+
+int rawstor_vu_server(int, const char *socket_path) {
     int server_socket = socket(AF_UNIX, SOCK_STREAM, 0);
     if (server_socket < 0) {
         perror("socket() failed");

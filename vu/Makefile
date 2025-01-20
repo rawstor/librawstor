@@ -20,20 +20,19 @@ LIBS=-L../src -lrawstor
 ##
 # Soruces
 #
-DEPS = server.h \
+DEPS = aio.h \
        protocol.h \
+       server.h \
        ../include/rawstor.h
 
-OBJS = main.o
+OBJS = main.o \
+       server.o
 
 
 ifeq ($(USE_IOENGINE),liburing)
     LIBS += $(shell pkg-config --libs liburing)
     CFLAGS += $(shell pkg-config --cflags liburing)
-    OBJS += server.o
-else ifeq ($(USE_IOENGINE),libevent)
-    LIBS += $(shell pkg-config --libs libevent)
-    CFLAGS += $(shell pkg-config --cflags libevent)
+    OBJS += aio_liburing.o
 else
     $(error Unexpected IOENGINE: $(USE_IOENGINE))
 endif
