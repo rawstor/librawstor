@@ -1,15 +1,17 @@
 ##
 # Flags
 #
-USE_IOENGINE=liburing
 
 
 ##
 # Setup
 #
-CC=gcc
-CFLAGS=-std=gnu99 -Wall -Wextra -Werror -I../include
-LIBS=-L../src -lrawstor
+CC = gcc
+CFLAGS = -std=gnu99 -Wall -Wextra -Werror -I../include
+LIBS = 
+
+CFLAGS += $(shell PKG_CONFIG_PATH=$(CURDIR)/../src pkg-config --cflags rawstor)
+LIBS += $(shell PKG_CONFIG_PATH=$(CURDIR)/../src pkg-config --libs rawstor)
 
 
 ##
@@ -21,12 +23,6 @@ DEPS = protocol.h \
 
 OBJS = main.o \
        server.o
-
-ifeq ($(USE_IOENGINE),liburing)
-    LIBS += $(shell pkg-config --libs liburing)
-else
-    $(error Unexpected IOENGINE: $(USE_IOENGINE))
-endif
 
 
 ##

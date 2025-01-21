@@ -1,15 +1,15 @@
 ##
 # Flags
 #
-USE_BACKEND=mem
-USE_IOENGINE=liburing
+USE_BACKEND = mem
+USE_IOENGINE = liburing
 
 
 ##
 # Setup
 #
-CC=gcc
-CFLAGS=-std=gnu99 -Wall -Wextra -Werror -I../include
+CC = gcc
+CFLAGS = -std=gnu99 -Wall -Wextra -Werror -I../include
 
 
 ##
@@ -21,6 +21,8 @@ DEPS = aio.h \
 
 OBJS = rawstor.o
 
+REQUIRES =
+
 ifeq ($(USE_BACKEND),mem)
     OBJS += rawstor_mem.o
 else
@@ -30,10 +32,10 @@ endif
 ifeq ($(USE_IOENGINE),liburing)
     CFLAGS += $(shell pkg-config --cflags liburing)
     OBJS += aio_liburing.o
+	REQUIRES += liburing
 else
     $(error Unexpected IOENGINE: $(USE_IOENGINE))
 endif
-
 
 ##
 # Targets
@@ -44,9 +46,21 @@ endif
 %.a: $(OBJS)
 	ar rcs $@ $^
 
-all: librawstor.a
+all: librawstor.a rawstor.pc
 
 clean:
-	rm -f *.o librawstor.a
+	rm -f *.o librawstor.a rawstor.pc
+
+
+##
+# Templates
+#
+rawstor.pc: rawstor.pc.tpl Makefile
+	export LIBDIR=$(CURDIR); \
+	export INCLUDEDIR=$(CURDIR)/../include; \
+	export REQUIRES=$(REQUIRES); \
+	cat $< | envsubst > $@
+	cat $@
+
 
 .PHONY: all clean
