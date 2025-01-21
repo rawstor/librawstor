@@ -1,7 +1,8 @@
 #include "server.h"
 
-#include "aio.h"
 #include "protocol.h"
+
+#include <rawstor.h>
 
 #include <liburing.h>
 
@@ -251,11 +252,12 @@ static int server_write(
 
 
 static int server_loop(int server_socket) {
-    RawstorAIO *aio = rawstor_aio_create(QUEUE_DEPTH);
-    if (aio == NULL) {
-        perror("rawstor_aio_create() failed");
-        return -errno;
+    if (rawstor_initialize()) {
+        perror("rawstor_initialize() failed");
+        return -1;
     };
+
+    RawstorAIO *aio = rawstor_aio();
 
     if (rawstor_aio_accept(aio, server_socket, server_accept, NULL)) {
         perror("rawstor_aio_accept() failed");
@@ -264,21 +266,21 @@ static int server_loop(int server_socket) {
 
     while (1) {
         printf("Waiting for event...\n");
-        RawstorAIOEvent *event = rawstor_aio_get_event(aio);
+        RawstorAIOEvent *event = rawstor_get_event();
         if (event == NULL) {
             perror("rawstor_aio_get_event() failed");
             break;
         }
 
         printf("Dispatching event...\n");
-        if (rawstor_aio_dispatch_event(aio, event)) {
+        if (rawstor_dispatch_event(event)) {
             perror("rawstor_aio_dispatch_event() failed");
             break;
         }
     }
 
 
-    rawstor_aio_delete(aio); 
+    rawstor_terminate(aio);
 
     return 0;
 }

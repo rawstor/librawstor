@@ -6,6 +6,59 @@
 #include <stddef.h>
 
 
+/**
+ * AIO
+ */
+
+typedef struct RawstorAIO RawstorAIO;
+
+typedef struct RawstorAIOEvent RawstorAIOEvent;
+
+typedef int(*rawstor_aio_cb)(
+    RawstorAIO *aio,
+    int fd,
+    ssize_t rval,
+    void *buf,
+    size_t size,
+    void *arg);
+
+
+int rawstor_aio_accept(RawstorAIO *aio, int fd, rawstor_aio_cb cb, void *arg);
+
+int rawstor_aio_read(
+    RawstorAIO *aio,
+    int fd,
+    void *buf, size_t size,
+    rawstor_aio_cb cb,
+    void *arg);
+
+int rawstor_aio_write(
+    RawstorAIO *aio,
+    int fd,
+    void *buf, size_t size,
+    rawstor_aio_cb cb,
+    void *arg);
+
+
+/**
+ * Lib
+ */
+
+int rawstor_initialize();
+
+void rawstor_terminate();
+
+RawstorAIO* rawstor_aio();
+
+RawstorAIOEvent* rawstor_get_event();
+
+int rawstor_dispatch_event(RawstorAIOEvent *event);
+
+
+/**
+ * Device
+ */
+
 typedef void RawstorDevice;
 
 struct RawstorDeviceSpec {
