@@ -86,5 +86,7 @@ int rawstor_writev(
     size_t offset, size_t size,
     const struct iovec *iov, unsigned int niov);
 
+int rawstor_aio_event_fd(RawstorAIOEvent *event);
+
 
 #endif // _RAWSTOR_H_

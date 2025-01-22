@@ -235,3 +235,8 @@ int rawstor_aio_dispatch_event(RawstorAIO *aio, RawstorAIOEvent *event) {
 
     return 0;
 }
+
+
+int rawstor_aio_event_fd(RawstorAIOEvent *event) {
+    return event->fd;
+}

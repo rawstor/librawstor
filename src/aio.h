@@ -46,5 +46,7 @@ RawstorAIOEvent* rawstor_aio_get_event(RawstorAIO *aio);
 
 int rawstor_aio_dispatch_event(RawstorAIO *aio, RawstorAIOEvent *event);
 
+int rawstor_aio_event_fd(RawstorAIOEvent *event);
+
 
 #endif // _RAWSTOR_AIO_H_
