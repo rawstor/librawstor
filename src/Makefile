@@ -1,7 +1,7 @@
 ##
 # Flags
 #
-USE_BACKEND = mem
+USE_BACKEND = file
 USE_IOENGINE = liburing
 
 
@@ -25,8 +25,8 @@ OBJS = rawstor.o \
 
 REQUIRES =
 
-ifeq ($(USE_BACKEND),mem)
-    OBJS += rawstor_mem.o
+ifeq ($(USE_BACKEND),file)
+    OBJS += rawstor_file.o
 else
     $(error Unexpected BACKEND: $(USE_BACKEND))
 endif

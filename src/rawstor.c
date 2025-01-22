@@ -92,26 +92,28 @@ void rawstor_release_event(RawstorAIOEvent *event) {
 int rawstor_read(
     RawstorDevice *device,
     size_t offset, size_t size,
-    void *buf)
+    void *buf,
+    rawstor_cb cb, void *arg)
 {
     struct iovec iov = {
         .iov_base = buf,
         .iov_len = size,
     };
 
-    return rawstor_readv(device, offset, size, &iov, 1);
+    return rawstor_readv(device, offset, size, &iov, 1, cb, arg);
 }
 
 
 int rawstor_write(
     RawstorDevice *device,
     size_t offset, size_t size,
-    const void *buf)
+    void *buf,
+    rawstor_cb cb, void *arg)
 {
-    const struct iovec iov = {
-        .iov_base = (void*)buf,
+    struct iovec iov = {
+        .iov_base = buf,
         .iov_len = size,
     };
 
-    return rawstor_writev(device, offset, size, &iov, 1);
+    return rawstor_writev(device, offset, size, &iov, 1, cb, arg);
 }
