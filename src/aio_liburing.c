@@ -128,7 +128,7 @@ int rawstor_aio_accept(RawstorAIO *aio, int fd, rawstor_aio_cb cb, void *arg) {
 
 int rawstor_aio_read(
     RawstorAIO *aio,
-    int fd,
+    int fd, size_t offset,
     void *buf,
     size_t size,
     rawstor_aio_cb cb,
@@ -153,7 +153,7 @@ int rawstor_aio_read(
     event->cb = cb;
     event->arg = arg;
 
-    io_uring_prep_read(sqe, fd, buf, size, 0);
+    io_uring_prep_read(sqe, fd, buf, size, offset);
     io_uring_sqe_set_data(sqe, event);
 
     return 0;
@@ -162,7 +162,7 @@ int rawstor_aio_read(
 
 int rawstor_aio_write(
     RawstorAIO *aio,
-    int fd,
+    int fd, size_t offset,
     void *buf,
     size_t size,
     rawstor_aio_cb cb,
@@ -187,7 +187,7 @@ int rawstor_aio_write(
     event->cb = cb;
     event->arg = arg;
 
-    io_uring_prep_write(sqe, fd, buf, size, 0);
+    io_uring_prep_write(sqe, fd, buf, size, offset);
     io_uring_sqe_set_data(sqe, event);
 
     return 0;

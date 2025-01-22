@@ -141,11 +141,9 @@ static int server_accept(
 
     int rval = rawstor_aio_read(
         aio,
-        client_socket,
-        msg,
-        sizeof(VhostUserMsg),
-        server_read,
-        arg);
+        client_socket, 0,
+        msg, sizeof(VhostUserMsg),
+        server_read, arg);
     if (rval) {
         perror("rawstor_aio_read() failed");
         if(close(client_socket)) {
@@ -212,11 +210,9 @@ static int server_read(
 
     int rval = rawstor_aio_write(
         aio,
-        socket,
-        msg,
-        VHOST_USER_HDR_SIZE + msg->size,
-        server_write,
-        arg);
+        socket, 0,
+        msg, VHOST_USER_HDR_SIZE + msg->size,
+        server_write, arg);
     if (rval) {
         perror("rawstor_aio_write() failed");
         if(close(socket)) {
@@ -242,7 +238,7 @@ static int server_write(
 {
     printf("Message sent: %ld bytes\n", response_size);
 
-    int rval = rawstor_aio_read(aio, socket, buf, size, server_read, arg);
+    int rval = rawstor_aio_read(aio, socket, 0, buf, size, server_read, arg);
     if (rval) {
         perror("rawstor_aio_read() failed");
         return rval;

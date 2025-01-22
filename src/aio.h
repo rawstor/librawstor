@@ -25,14 +25,14 @@ int rawstor_aio_accept(RawstorAIO *aio, int fd, rawstor_aio_cb cb, void *arg);
 
 int rawstor_aio_read(
     RawstorAIO *aio,
-    int fd,
+    int fd, size_t offset,
     void *buf, size_t size,
     rawstor_aio_cb cb,
     void *arg);
 
 int rawstor_aio_write(
     RawstorAIO *aio,
-    int fd,
+    int fd, size_t offset,
     void *buf, size_t size,
     rawstor_aio_cb cb,
     void *arg);
