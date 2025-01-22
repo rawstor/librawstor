@@ -276,7 +276,7 @@ static int server_loop(int server_socket) {
     }
 
 
-    rawstor_terminate(aio);
+    rawstor_terminate();
 
     return 0;
 }

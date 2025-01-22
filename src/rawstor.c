@@ -16,7 +16,7 @@
 static RawstorAIO *global_aio = NULL;
 
 
-int rawstor_initialize() {
+int rawstor_initialize(void) {
     assert(global_aio == NULL);
 
     global_aio = rawstor_aio_create(QUEUE_DEPTH);
@@ -28,17 +28,17 @@ int rawstor_initialize() {
 }
 
 
-void rawstor_terminate() {
+void rawstor_terminate(void) {
     rawstor_aio_delete(global_aio); 
 }
 
 
-RawstorAIO* rawstor_aio() {
+RawstorAIO* rawstor_aio(void) {
     return global_aio;
 }
 
 
-RawstorAIOEvent* rawstor_get_event() {
+RawstorAIOEvent* rawstor_get_event(void) {
     return rawstor_aio_get_event(global_aio);
 }
 

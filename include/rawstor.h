@@ -44,13 +44,13 @@ int rawstor_aio_write(
  * Lib
  */
 
-int rawstor_initialize();
+int rawstor_initialize(void);
 
-void rawstor_terminate();
+void rawstor_terminate(void);
 
-RawstorAIO* rawstor_aio();
+RawstorAIO* rawstor_aio(void);
 
-RawstorAIOEvent* rawstor_get_event();
+RawstorAIOEvent* rawstor_get_event(void);
 
 int rawstor_dispatch_event(RawstorAIOEvent *event);
 
