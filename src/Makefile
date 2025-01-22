@@ -60,7 +60,6 @@ rawstor.pc: rawstor.pc.tpl Makefile
 	export INCLUDEDIR=$(CURDIR)/../include; \
 	export REQUIRES=$(REQUIRES); \
 	cat $< | envsubst > $@
-	cat $@
 
 
 .PHONY: all clean
