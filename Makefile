@@ -4,7 +4,7 @@ SUBDIRS = src \
 
 define FOREACH
     for dir in $(SUBDIRS); do \
-        $(MAKE) -C $${dir} $1; \
+        $(MAKE) -C $${dir} $1 || exit 1; \
     done;
 endef
 

@@ -16,6 +16,19 @@
 static RawstorAIO *global_aio = NULL;
 
 
+static int aio_cb(
+    RawstorAIO *,
+    int fd,
+    ssize_t rval,
+    void *buf, size_t size,
+    void *arg)
+{
+
+    return ((rawstor_fd_cb)arg)(fd, rval, buf, size);
+}
+
+
+
 int rawstor_initialize(void) {
     assert(global_aio == NULL);
 
@@ -33,8 +46,25 @@ void rawstor_terminate(void) {
 }
 
 
-RawstorAIO* rawstor_aio(void) {
-    return global_aio;
+int rawstor_fd_accept(int fd, rawstor_fd_cb cb) {
+    return rawstor_aio_accept(global_aio, fd, aio_cb, cb);
+}
+
+
+int rawstor_fd_read(
+    int fd, size_t offset,
+    void *buf, size_t size,
+    rawstor_fd_cb cb)
+{
+    return rawstor_aio_read(global_aio, fd, offset, buf, size, aio_cb, cb);
+}
+
+int rawstor_fd_write(
+    int fd, size_t offset,
+    void *buf, size_t size,
+    rawstor_fd_cb cb)
+{
+    return rawstor_aio_write(global_aio, fd, offset, buf, size, aio_cb, cb);
 }
 
 

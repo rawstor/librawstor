@@ -92,39 +92,31 @@ static int dispatch_client_request(VhostUserMsg *msg) {
 
 
 static int server_accept(
-    RawstorAIO *aio,
     int server_sokcet,
     ssize_t client_socket,
     void *buf,
-    size_t size,
-    void *arg);
+    size_t size);
 
 
 static int server_read(
-    RawstorAIO *aio,
     int socket,
     ssize_t request_size,
     void *buf,
-    size_t size,
-    void *arg);
+    size_t size);
 
 
 static int server_write(
-    RawstorAIO *aio,
     int socket,
     ssize_t response_size,
     void *buf,
-    size_t size,
-    void *arg);
+    size_t size);
 
 
 static int server_accept(
-    RawstorAIO *aio,
     int,
     ssize_t client_socket,
     void *,
-    size_t,
-    void *arg)
+    size_t)
 {
     printf("Connection opened: %ld\n", client_socket);
 
@@ -139,11 +131,10 @@ static int server_accept(
         return -1;
     }
 
-    int rval = rawstor_aio_read(
-        aio,
+    int rval = rawstor_fd_read(
         client_socket, 0,
         msg, sizeof(VhostUserMsg),
-        server_read, arg);
+        server_read);
     if (rval) {
         perror("rawstor_aio_read() failed");
         if(close(client_socket)) {
@@ -159,12 +150,10 @@ static int server_accept(
 
 
 static int server_read(
-    RawstorAIO *aio,
     int socket,
     ssize_t request_size,
     void *buf,
-    size_t,
-    void *arg)
+    size_t)
 {
     if (request_size == 0) {
         printf("Connection lost: %d\n", socket);
@@ -208,11 +197,10 @@ static int server_read(
     msg->flags = VHOST_USER_VERSION |
                  VHOST_USER_REPLY_MASK;
 
-    int rval = rawstor_aio_write(
-        aio,
+    int rval = rawstor_fd_write(
         socket, 0,
         msg, VHOST_USER_HDR_SIZE + msg->size,
-        server_write, arg);
+        server_write);
     if (rval) {
         perror("rawstor_aio_write() failed");
         if(close(socket)) {
@@ -229,16 +217,14 @@ static int server_read(
 
 
 static int server_write(
-    RawstorAIO *aio,
     int socket,
     ssize_t response_size,
     void *buf,
-    size_t size,
-    void *arg)
+    size_t size)
 {
     printf("Message sent: %ld bytes\n", response_size);
 
-    int rval = rawstor_aio_read(aio, socket, 0, buf, size, server_read, arg);
+    int rval = rawstor_fd_read(socket, 0, buf, size, server_read);
     if (rval) {
         perror("rawstor_aio_read() failed");
         return rval;
@@ -253,9 +239,7 @@ static int server_loop(int server_socket) {
         return -1;
     };
 
-    RawstorAIO *aio = rawstor_aio();
-
-    if (rawstor_aio_accept(aio, server_socket, server_accept, NULL)) {
+    if (rawstor_fd_accept(server_socket, server_accept)) {
         perror("rawstor_aio_accept() failed");
         return -errno;
     }
