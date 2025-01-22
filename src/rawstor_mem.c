@@ -7,18 +7,21 @@
 #include <string.h>
 
 
+typedef struct RawstorDevice {
+    void *data;
+} RawstorDevice;
+
+
 /**
  * FIXME: Temporary workaround for volume_create() and volume_delete() methods.
  */
 static struct RawstorDeviceSpec _spec;
-static RawstorDevice *_device = NULL;
+static RawstorDevice _device;
 
 
 int rawstor_create(struct RawstorDeviceSpec spec, int *device_id) {
-    assert(_device == NULL);
-
     _spec = spec;
-    _device = malloc(_spec.size);
+    _device.data = malloc(_spec.size);
     *device_id = 1;
 
     return 0;
@@ -27,10 +30,8 @@ int rawstor_create(struct RawstorDeviceSpec spec, int *device_id) {
 
 int rawstor_delete(int device_id) {
     assert(device_id == 1);
-    assert(_device != NULL);
 
-    free(_device);
-    _device = NULL;
+    free(_device.data);
 
     return 0;
 }
@@ -38,24 +39,20 @@ int rawstor_delete(int device_id) {
 
 int rawstor_open(int device_id, RawstorDevice **device) {
     assert(device_id == 1);
-    assert(_device != NULL);
 
-    *device = _device;
+    *device = &_device;
 
     return 0;
 }
 
 
-int rawstor_close(RawstorDevice *device) {
-    assert(device != NULL);
-
+int rawstor_close(RawstorDevice *) {
     return 0;
 }
 
 
 int rawstor_spec(int device_id, struct RawstorDeviceSpec *spec) {
     assert(device_id == 1);
-    assert(_device != NULL);
 
     *spec = _spec;
 

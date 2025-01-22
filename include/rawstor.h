@@ -59,7 +59,7 @@ int rawstor_dispatch_event(RawstorAIOEvent *event);
  * Device
  */
 
-typedef void RawstorDevice;
+typedef struct RawstorDevice RawstorDevice;
 
 struct RawstorDeviceSpec {
     size_t size;
