@@ -21,28 +21,22 @@ int rawstor_initialize(void);
 
 void rawstor_terminate(void);
 
-typedef int(*rawstor_fd_cb)(
-    int fd,
-    ssize_t rval,
-    void *buf,
-    size_t size);
 
+RawstorAIOEvent* rawstor_fd_accept(int fd);
 
-int rawstor_fd_accept(int fd, rawstor_fd_cb cb);
-
-int rawstor_fd_read(
+RawstorAIOEvent* rawstor_fd_read(
     int fd, size_t offset,
-    void *buf, size_t size,
-    rawstor_fd_cb cb);
+    void *buf, size_t size);
 
-int rawstor_fd_write(
+RawstorAIOEvent* rawstor_fd_write(
     int fd, size_t offset,
-    void *buf, size_t size,
-    rawstor_fd_cb cb);
+    void *buf, size_t size);
 
-RawstorAIOEvent* rawstor_get_event(void);
+RawstorAIOEvent* rawstor_wait_event(void);
 
 int rawstor_dispatch_event(RawstorAIOEvent *event);
+
+void rawstor_release_event(RawstorAIOEvent *event);
 
 
 /**
@@ -87,6 +81,16 @@ int rawstor_writev(
     const struct iovec *iov, unsigned int niov);
 
 int rawstor_aio_event_fd(RawstorAIOEvent *event);
+
+ssize_t rawstor_aio_event_res(RawstorAIOEvent *event);
+
+void* rawstor_aio_event_buf(RawstorAIOEvent *event);
+
+size_t rawstor_aio_event_size(RawstorAIOEvent *event);
+
+void* rawstor_aio_event_get_data(RawstorAIOEvent *event);
+
+void rawstor_aio_event_set_data(RawstorAIOEvent *event, void *data);
 
 
 #endif // _RAWSTOR_H_

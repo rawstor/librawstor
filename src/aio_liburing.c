@@ -12,8 +12,7 @@ typedef struct RawstorAIOEvent {
     int fd;
     void *buf;
     size_t size;
-    rawstor_aio_cb cb;
-    void *arg;
+    void *data;
     struct io_uring_cqe *cqe;
 } RawstorAIOEvent;
 
@@ -100,102 +99,90 @@ void rawstor_aio_delete(RawstorAIO *aio) {
 }
 
 
-int rawstor_aio_accept(RawstorAIO *aio, int fd, rawstor_aio_cb cb, void *arg) {
+RawstorAIOEvent* rawstor_aio_accept(RawstorAIO *aio, int fd) {
     RawstorAIOEvent *event = aio_capture_event(aio);
     if (event == NULL) {
         errno = ENOBUFS;
-        return -errno;
+        return NULL;
     }
 
     struct io_uring_sqe *sqe = io_uring_get_sqe(&aio->ring);
     if (sqe == NULL) {
         aio_release_event(event);
         errno = ENOBUFS;
-        return -errno;
+        return NULL;
     }
 
     event->fd = fd;
     event->buf = NULL;
     event->size = 0;
-    event->cb = cb;
-    event->arg = arg;
 
     io_uring_prep_accept(sqe, fd, NULL, NULL, 0);
     io_uring_sqe_set_data(sqe, event);
 
-    return 0;
+    return event;
 }
 
 
-int rawstor_aio_read(
+RawstorAIOEvent* rawstor_aio_read(
     RawstorAIO *aio,
     int fd, size_t offset,
-    void *buf,
-    size_t size,
-    rawstor_aio_cb cb,
-    void *arg)
+    void *buf, size_t size)
 {
     RawstorAIOEvent *event = aio_capture_event(aio);
     if (event == NULL) {
         errno = ENOBUFS;
-        return -errno;
+        return NULL;
     }
 
     struct io_uring_sqe *sqe = io_uring_get_sqe(&aio->ring);
     if (sqe == NULL) {
         aio_release_event(event);
         errno = ENOBUFS;
-        return -errno;
+        return NULL;
     }
 
     event->fd = fd;
     event->buf = buf;
     event->size = size;
-    event->cb = cb;
-    event->arg = arg;
 
     io_uring_prep_read(sqe, fd, buf, size, offset);
     io_uring_sqe_set_data(sqe, event);
 
-    return 0;
+    return event;
 }
 
 
-int rawstor_aio_write(
+RawstorAIOEvent* rawstor_aio_write(
     RawstorAIO *aio,
     int fd, size_t offset,
-    void *buf,
-    size_t size,
-    rawstor_aio_cb cb,
-    void *arg)
+    void *buf, size_t size)
 {
     RawstorAIOEvent *event = aio_capture_event(aio);
     if (event == NULL) {
         errno = ENOBUFS;
-        return -errno;
+        return NULL;
     }
 
     struct io_uring_sqe *sqe = io_uring_get_sqe(&aio->ring);
     if (sqe == NULL) {
         aio_release_event(event);
         errno = ENOBUFS;
-        return -errno;
+        return NULL;
     }
 
     event->fd = fd;
     event->buf = buf;
     event->size = size;
-    event->cb = cb;
-    event->arg = arg;
 
     io_uring_prep_write(sqe, fd, buf, size, offset);
     io_uring_sqe_set_data(sqe, event);
 
-    return 0;
+    return event;
 }
 
 
-RawstorAIOEvent* rawstor_aio_get_event(RawstorAIO *aio) {
+RawstorAIOEvent* rawstor_aio_wait_event(RawstorAIO *aio) {
     int rval = io_uring_submit_and_wait(&aio->ring, 1);
     if (rval < 0) {
         errno = -rval;
@@ -217,26 +204,37 @@ RawstorAIOEvent* rawstor_aio_get_event(RawstorAIO *aio) {
 }
 
 
-int rawstor_aio_dispatch_event(RawstorAIO *aio, RawstorAIOEvent *event) {
-    int rval = event->cb(
-        aio,
-        event->fd,
-        event->cqe->res,
-        event->buf,
-        event->size,
-        event->arg);
-
-    aio_release_event(event);
+void rawstor_aio_release_event(RawstorAIO *aio, RawstorAIOEvent *event) {
     io_uring_cqe_seen(&aio->ring, event->cqe);
-    if (rval) {
-        errno = -rval;
-        return rval;
-    }
-
-    return 0;
+    aio_release_event(event);
 }
 
 
 int rawstor_aio_event_fd(RawstorAIOEvent *event) {
     return event->fd;
+}
+
+
+ssize_t rawstor_aio_event_res(RawstorAIOEvent *event) {
+    return event->cqe->res;
+}
+
+
+void* rawstor_aio_event_buf(RawstorAIOEvent *event) {
+    return event->buf;
+}
+
+
+size_t rawstor_aio_event_size(RawstorAIOEvent *event) {
+    return event->size;
+}
+
+
+void* rawstor_aio_event_get_data(RawstorAIOEvent *event) {
+    return event->data;
+}
+
+
+void rawstor_aio_event_set_data(RawstorAIOEvent *event, void *data) {
+    event->data = data;
 }
