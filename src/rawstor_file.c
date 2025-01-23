@@ -13,7 +13,7 @@
 #include <unistd.h>
 
 
-#define RAWSTOR_PATH "/tmp"
+#define PREFIX "."
 
 
 typedef struct RawstorDevice {
@@ -22,28 +22,20 @@ typedef struct RawstorDevice {
 
 
 int rawstor_create(struct RawstorDeviceSpec spec, int *device_id) {
-    char path[1024];
+    char spec_path[1024];
     int fd;
     int id = 1;
     while (1) {
-        snprintf(path, sizeof(path), RAWSTOR_PATH "/rawstor-%d", id);
-
-        fd = open(path, O_EXCL | O_CREAT | O_WRONLY);
+        snprintf(spec_path, sizeof(spec_path), PREFIX "/rawstor-%d.spec", id);
+        fd = open(spec_path, O_EXCL | O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR);
         if (fd != -1) {
             break;
         }
         if (errno != EEXIST) {
             return -errno;
         }
-        ++id;
-    }
-    close(fd);
-    *device_id = id;
 
-    snprintf(path, sizeof(path), RAWSTOR_PATH "/rawstor-%d.spec", id);
-    fd = open(path, O_CREAT | O_WRONLY);
-    if (fd == -1) {
-        return -errno;
+        ++id;
     }
     ssize_t rval = write(fd, &spec, sizeof(spec));
     if (rval == -1) {
@@ -54,6 +46,28 @@ int rawstor_create(struct RawstorDeviceSpec spec, int *device_id) {
     }
     close(fd);
 
+    char dat_path[1024];
+    snprintf(dat_path, sizeof(dat_path), PREFIX "/rawstor-%d.dat", id);
+    fd = open(dat_path, O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR);
+    if (fd == -1) {
+        int errsv = errno;
+        unlink(spec_path);
+        errno = errsv;
+        return -errno;
+    }
+    rval = ftruncate(fd, spec.size);
+    if (rval) {
+        int errsv = errno;
+        close(fd);
+        unlink(dat_path);
+        unlink(spec_path);
+        errno = errsv;
+        return -errno;
+    }
+    close(fd);
+
+    *device_id = id;
+
     return 0;
 }
 
@@ -62,13 +76,13 @@ int rawstor_delete(int device_id) {
     int rval;
     char path[1024];
 
-    snprintf(path, sizeof(path), RAWSTOR_PATH "/rawstor-%d", device_id);
+    snprintf(path, sizeof(path), PREFIX "/rawstor-%d.spec", device_id);
     rval = unlink(path);
     if (rval == -1) {
         return -errno;
     }
 
-    snprintf(path, sizeof(path), RAWSTOR_PATH "/rawstor-%d.spec", device_id);
+    snprintf(path, sizeof(path), PREFIX "/rawstor-%d.dat", device_id);
     rval = unlink(path);
     if (rval == -1) {
         return -errno;
@@ -84,7 +98,7 @@ int rawstor_open(int device_id, RawstorDevice **device) {
     }
 
     char path[1024];
-    snprintf(path, sizeof(path), RAWSTOR_PATH "/rawstor-%d", device_id);
+    snprintf(path, sizeof(path), PREFIX "/rawstor-%d.dat", device_id);
     rd->fd = open(path, O_RDWR);
     if (rd->fd == -1) {
         int errsv = errno;
@@ -114,7 +128,7 @@ int rawstor_close(RawstorDevice *device) {
 int rawstor_spec(int device_id, struct RawstorDeviceSpec *spec) {
     char path[1024];
 
-    snprintf(path, sizeof(path), RAWSTOR_PATH "/rawstor-%d.spec", device_id);
+    snprintf(path, sizeof(path), PREFIX "/rawstor-%d.spec", device_id);
     int fd = open(path, O_RDONLY);
     if (fd == -1) {
         return -errno;

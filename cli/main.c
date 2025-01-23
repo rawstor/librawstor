@@ -11,7 +11,7 @@ int main() {
     }
 
     struct RawstorDeviceSpec spec = {
-        .size = 1,
+        .size = 1 << 30,
     };
 
     int device_id;
