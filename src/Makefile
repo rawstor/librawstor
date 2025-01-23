@@ -17,9 +17,11 @@ CFLAGS = -std=gnu99 -Wall -Wextra -Werror -I../include
 #
 DEPS = aio.h \
        backend_mem.h \
+       stack_buffer.h \
        ../include/rawstor.h
 
-OBJS = rawstor.o
+OBJS = rawstor.o \
+       stack_buffer.o
 
 REQUIRES =
 
@@ -32,7 +34,7 @@ endif
 ifeq ($(USE_IOENGINE),liburing)
     CFLAGS += $(shell pkg-config --cflags liburing)
     OBJS += aio_liburing.o
-	REQUIRES += liburing
+    REQUIRES += liburing
 else
     $(error Unexpected IOENGINE: $(USE_IOENGINE))
 endif
