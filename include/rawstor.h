@@ -88,22 +88,22 @@ int rawstor_spec(int device_id, struct RawstorDeviceSpec *spec);
 
 int rawstor_read(
     RawstorDevice *device,
-    size_t offset, size_t size,
-    void *buf);
+    size_t offset,
+    void *buf, size_t size);
 
 int rawstor_readv(
     RawstorDevice *device,
-    size_t offset, size_t size,
+    size_t offset,
     struct iovec *iov, unsigned int niov);
 
 int rawstor_write(
     RawstorDevice *device,
-    size_t offset, size_t size,
-    void *buf);
+    size_t offset,
+    void *buf, size_t size);
 
 int rawstor_writev(
     RawstorDevice *device,
-    size_t offset, size_t size,
+    size_t offset,
     struct iovec *iov, unsigned int niov);
 
 

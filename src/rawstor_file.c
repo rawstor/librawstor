@@ -131,46 +131,69 @@ int rawstor_spec(int device_id, struct RawstorDeviceSpec *spec) {
 }
 
 
-static int aio_callback(
-    RawstorAIO *,
-    int,
-    ssize_t,
-    void *,
-    size_t,
-    RawstorDevice *)
+int rawstor_read(
+    RawstorDevice *device,
+    size_t offset,
+    void *buf, size_t size)
 {
+    RawstorAIOEvent *event = rawstor_fd_read(
+        device->fd, offset,
+        buf, size);
+    if (event == NULL) {
+        return -1;
+    }
+    rawstor_aio_event_set_data(event, device);
+
     return 0;
 }
 
 
 int rawstor_readv(
     RawstorDevice *device,
-    size_t offset, size_t size,
+    size_t offset,
     struct iovec *iov, unsigned int niov)
 {
-    RawstorAIO *aio = rawstor_aio();
-    return rawstor_aio_readv(
-        aio,
+    RawstorAIOEvent *event = rawstor_fd_readv(
         device->fd, offset,
-        iov, niov,
-        aio_callback, device);
+        iov, niov);
+    if (event == NULL) {
+        return -1;
+    }
+    rawstor_aio_event_set_data(event, device);
+
+    return 0;
+}
+
+
+int rawstor_write(
+    RawstorDevice *device,
+    size_t offset,
+    void *buf, size_t size)
+{
+    RawstorAIOEvent *event = rawstor_fd_read(
+        device->fd, offset,
+        buf, size);
+    if (event == NULL) {
+        return -1;
+    }
+    rawstor_aio_event_set_data(event, device);
+
+    return 0;
 }
 
 
 int rawstor_writev(
     RawstorDevice *device,
-    size_t offset, size_t size,
-    struct iovec *iov, unsigned int niov,
-    rawstor_cb, void *)
+    size_t offset,
+    struct iovec *iov, unsigned int niov)
 {
-    for (unsigned int i = 0; i < niov; ++i) {
-        size_t chunk_size = size < iov[i].iov_len ? size : iov[i].iov_len;
-
-        memcpy(device + offset, iov[i].iov_base, chunk_size);
-
-        size -= chunk_size;
-        offset += chunk_size;
+    RawstorAIOEvent *event = rawstor_fd_writev(
+        device->fd, offset,
+        iov, niov);
+    if (event == NULL) {
+        return -1;
     }
+    rawstor_aio_event_set_data(event, device);
 
     return 0;
 }
