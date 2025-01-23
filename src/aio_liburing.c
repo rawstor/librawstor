@@ -10,8 +10,16 @@
 typedef struct RawstorAIOEvent {
     int captured;
     int fd;
-    void *buf;
-    size_t size;
+    union {
+        struct scalar {
+            void *data;
+            size_t size;
+        } scalar;
+        struct vector {
+            struct iovec *data;
+            unsigned int size;
+        } vector;
+    } buffer;
     void *data;
     struct io_uring_cqe *cqe;
 } RawstorAIOEvent;
@@ -114,8 +122,8 @@ RawstorAIOEvent* rawstor_aio_accept(RawstorAIO *aio, int fd) {
     }
 
     event->fd = fd;
-    event->buf = NULL;
-    event->size = 0;
+    event->buffer.scalar.data = NULL;
+    event->buffer.scalar.size = 0;
 
     io_uring_prep_accept(sqe, fd, NULL, NULL, 0);
     io_uring_sqe_set_data(sqe, event);
@@ -143,10 +151,39 @@ RawstorAIOEvent* rawstor_aio_read(
     }
 
     event->fd = fd;
-    event->buf = buf;
-    event->size = size;
+    event->buffer.scalar.data = buf;
+    event->buffer.scalar.size = size;
 
     io_uring_prep_read(sqe, fd, buf, size, offset);
+    io_uring_sqe_set_data(sqe, event);
+
+    return event;
+}
+
+
+RawstorAIOEvent* rawstor_aio_readv(
+    RawstorAIO *aio,
+    int fd, size_t offset,
+    struct iovec *iov, unsigned int niov)
+{
+    RawstorAIOEvent *event = aio_capture_event(aio);
+    if (event == NULL) {
+        errno = ENOBUFS;
+        return NULL;
+    }
+
+    struct io_uring_sqe *sqe = io_uring_get_sqe(&aio->ring);
+    if (sqe == NULL) {
+        aio_release_event(event);
+        errno = ENOBUFS;
+        return NULL;
+    }
+
+    event->fd = fd;
+    event->buffer.vector.data = iov;
+    event->buffer.vector.size = niov;
+
+    io_uring_prep_readv(sqe, fd, iov, niov, offset);
     io_uring_sqe_set_data(sqe, event);
 
     return event;
@@ -172,10 +209,39 @@ RawstorAIOEvent* rawstor_aio_write(
     }
 
     event->fd = fd;
-    event->buf = buf;
-    event->size = size;
+    event->buffer.scalar.data = buf;
+    event->buffer.scalar.size = size;
 
     io_uring_prep_write(sqe, fd, buf, size, offset);
+    io_uring_sqe_set_data(sqe, event);
+
+    return event;
+}
+
+
+RawstorAIOEvent* rawstor_aio_writev(
+    RawstorAIO *aio,
+    int fd, size_t offset,
+    struct iovec *iov, unsigned int niov)
+{
+    RawstorAIOEvent *event = aio_capture_event(aio);
+    if (event == NULL) {
+        errno = ENOBUFS;
+        return NULL;
+    }
+
+    struct io_uring_sqe *sqe = io_uring_get_sqe(&aio->ring);
+    if (sqe == NULL) {
+        aio_release_event(event);
+        errno = ENOBUFS;
+        return NULL;
+    }
+
+    event->fd = fd;
+    event->buffer.vector.data = iov;
+    event->buffer.vector.size = niov;
+
+    io_uring_prep_writev(sqe, fd, iov, niov, offset);
     io_uring_sqe_set_data(sqe, event);
 
     return event;
@@ -221,12 +287,22 @@ ssize_t rawstor_aio_event_res(RawstorAIOEvent *event) {
 
 
 void* rawstor_aio_event_buf(RawstorAIOEvent *event) {
-    return event->buf;
+    return event->buffer.scalar.data;
 }
 
 
 size_t rawstor_aio_event_size(RawstorAIOEvent *event) {
-    return event->size;
+    return event->buffer.scalar.size;
+}
+
+
+struct iovec* rawstor_aio_event_iov(RawstorAIOEvent *event) {
+    return event->buffer.vector.data;
+}
+
+
+unsigned int rawstor_aio_event_niov(RawstorAIOEvent *event) {
+    return event->buffer.vector.size;
 }
 
 

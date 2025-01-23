@@ -45,11 +45,28 @@ RawstorAIOEvent* rawstor_fd_read(
     return rawstor_aio_read(global_aio, fd, offset, buf, size);
 }
 
+
+RawstorAIOEvent* rawstor_fd_readv(
+    int fd, size_t offset,
+    struct iovec *iov, unsigned int niov)
+{
+    return rawstor_aio_readv(global_aio, fd, offset, iov, niov);
+}
+
+
 RawstorAIOEvent* rawstor_fd_write(
     int fd, size_t offset,
     void *buf, size_t size)
 {
     return rawstor_aio_write(global_aio, fd, offset, buf, size);
+}
+
+
+RawstorAIOEvent* rawstor_fd_writev(
+    int fd, size_t offset,
+    struct iovec *iov, unsigned int niov)
+{
+    return rawstor_aio_writev(global_aio, fd, offset, iov, niov);
 }
 
 
