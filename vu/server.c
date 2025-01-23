@@ -295,6 +295,7 @@ static int server_loop(int server_socket) {
 
         printf("Dispatching event...\n");
         if (event == accept_event) {
+            accept_event = NULL;
             client_event = server_dispatch(event);
             if (client_event == NULL) {
                 printf("server_accept() failed\n");
