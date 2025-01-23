@@ -146,8 +146,7 @@ static int aio_callback(
 int rawstor_readv(
     RawstorDevice *device,
     size_t offset, size_t size,
-    struct iovec *iov, unsigned int niov,
-    rawstor_cb, void *)
+    struct iovec *iov, unsigned int niov)
 {
     RawstorAIO *aio = rawstor_aio();
     return rawstor_aio_readv(
