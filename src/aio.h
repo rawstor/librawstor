@@ -13,32 +13,41 @@ typedef struct RawstorAIO RawstorAIO;
 
 typedef struct RawstorAIOEvent RawstorAIOEvent;
 
+typedef int(*rawstor_aio_cb)(RawstorAIOEvent *event, void *data);
+
 
 RawstorAIO* rawstor_aio_create(unsigned int depth);
 
 void rawstor_aio_delete(RawstorAIO *aio);
 
-RawstorAIOEvent* rawstor_aio_accept(RawstorAIO *aio, int fd);
+/**
+ * TODO: Do not support accept function in aio api.
+ */
+int rawstor_aio_accept(RawstorAIO *aio, int fd, rawstor_aio_cb cb, void *data);
 
-RawstorAIOEvent* rawstor_aio_read(
+int rawstor_aio_read(
     RawstorAIO *aio,
     int fd, size_t offset,
-    void *buf, size_t size);
+    void *buf, size_t size,
+    rawstor_aio_cb cb, void *data);
 
-RawstorAIOEvent* rawstor_aio_readv(
+int rawstor_aio_readv(
     RawstorAIO *aio,
     int fd, size_t offset,
-    struct iovec *iov, unsigned int niov);
+    struct iovec *iov, unsigned int niov,
+    rawstor_aio_cb cb, void *data);
 
-RawstorAIOEvent* rawstor_aio_write(
+int rawstor_aio_write(
     RawstorAIO *aio,
     int fd, size_t offset,
-    void *buf, size_t size);
+    void *buf, size_t size,
+    rawstor_aio_cb cb, void *data);
 
-RawstorAIOEvent* rawstor_aio_writev(
+int rawstor_aio_writev(
     RawstorAIO *aio,
     int fd, size_t offset,
-    struct iovec *iov, unsigned int niov);
+    struct iovec *iov, unsigned int niov,
+    rawstor_aio_cb cb, void *data);
 
 
 RawstorAIOEvent* rawstor_aio_wait_event(RawstorAIO *aio);
@@ -57,9 +66,7 @@ struct iovec* rawstor_aio_event_iov(RawstorAIOEvent *event);
 
 unsigned int rawstor_aio_event_niov(RawstorAIOEvent *event);
 
-void* rawstor_aio_event_get_data(RawstorAIOEvent *event);
-
-void rawstor_aio_event_set_data(RawstorAIOEvent *event, void *data);
+int rawstor_aio_event_cb(RawstorAIOEvent *event);
 
 
 #endif // _RAWSTOR_AIO_H_

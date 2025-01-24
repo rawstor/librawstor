@@ -21,12 +21,6 @@
 #define VHOST_USER_VERSION 1
 
 
-typedef enum {
-    EVENT_READ = 1,
-    EVENT_WRITE = 2,
-} EventType;
-
-
 static int get_features(VhostUserMsg *msg) {
     msg->payload.u64 =
         /*
@@ -97,41 +91,50 @@ static int dispatch_vu_request(VhostUserMsg *msg) {
 }
 
 
-static RawstorAIOEvent* client_read(
-    int socket,
-    ssize_t request_size,
-    void *buf,
-    size_t size);
+static int server_read(RawstorAIOEvent *event, void*);
 
 
-static RawstorAIOEvent* client_write(
-    int socket,
-    ssize_t response_size,
-    void *buf,
-    size_t size);
+static int server_write(RawstorAIOEvent *event, void*);
 
 
-static RawstorAIOEvent* client_read(
-    int socket,
-    ssize_t request_size,
-    void *buf,
-    size_t)
-{
-    if (request_size == 0) {
-        printf("Connection lost: %d\n", socket);
-        free(buf);
-        return NULL;
+static int server_read(RawstorAIOEvent *event, void *) {
+    int client_socket = rawstor_aio_event_fd(event);
+    ssize_t request_size = rawstor_aio_event_res(event);
+    VhostUserMsg *msg = rawstor_aio_event_buf(event);
+    if (request_size < 0) {
+        fprintf(stderr, "read() failed\n");
+        free(msg);
+        if(close(client_socket)) {
+            perror("close() failed");
+        } else {
+            printf("Connection closed: %d\n", client_socket);
+        }
+        errno = -request_size;
+        return -errno;
+    } else if (request_size == 0) {
+        printf("Connection lost: %d\n", client_socket);
+        free(msg);
+        if(close(client_socket)) {
+            perror("close() failed");
+        } else {
+            printf("Connection closed: %d\n", client_socket);
+        }
+        return 0;
     } else if (
         request_size < (int)VHOST_USER_HDR_SIZE ||
         request_size > (int)sizeof(VhostUserMsg)
     ) {
         printf("Unexpected request size: %ld\n", request_size);
-        free(buf);
-        return NULL;
+        free(msg);
+        if(close(client_socket)) {
+            perror("close() failed");
+        } else {
+            printf("Connection closed: %d\n", client_socket);
+        }
+        return -EPROTO;
     }
 
     int response = 0;
-    VhostUserMsg *msg = buf;
 
     printf("============= Vhost user message =============\n");
     response = dispatch_vu_request(msg);
@@ -147,127 +150,107 @@ static RawstorAIOEvent* client_read(
     }
 
     if (!response) {
-        if(close(socket)) {
+        if(close(client_socket)) {
             perror("close() failed");
         } else {
-            printf("Connection closed: %d\n", socket);
+            printf("Connection closed: %d\n", client_socket);
         }
         free(msg);
-        return NULL;
+        return 0;
     }
 
     msg->flags = VHOST_USER_VERSION |
                  VHOST_USER_REPLY_MASK;
 
-    RawstorAIOEvent *event = rawstor_fd_write(
-        socket, 0,
-        msg, VHOST_USER_HDR_SIZE + msg->size);
-    if (event == NULL) {
+    if (rawstor_fd_write(
+        client_socket, 0,
+        msg, VHOST_USER_HDR_SIZE + msg->size,
+        server_write, NULL))
+    {
         perror("rawstor_fd_write() failed");
-        int errsv = errno;
-        if(close(socket)) {
+        if(close(client_socket)) {
             perror("close() failed");
         } else {
-            printf("Connection closed: %d\n", socket);
+            printf("Connection closed: %d\n", client_socket);
         }
         free(msg);
-        errno = errsv;
-        return NULL;
+        return -1;
     }
-    rawstor_aio_event_set_data(event, (void*)EVENT_WRITE);
 
-    return event;
+    return 0;
 }
 
 
-static RawstorAIOEvent* client_write(
-    int socket,
-    ssize_t response_size,
-    void *buf,
-    size_t size)
-{
+static int server_write(RawstorAIOEvent *event, void *) {
+    int client_socket = rawstor_aio_event_fd(event);
+    ssize_t response_size = rawstor_aio_event_res(event);
+    VhostUserMsg *msg = rawstor_aio_event_buf(event);
+    size_t size = rawstor_aio_event_size(event);
+
+    if (response_size == -1) {
+        fprintf(stderr, "write() failed\n");
+        free(msg);
+        if(close(client_socket)) {
+            perror("close() failed");
+        } else {
+            printf("Connection closed: %d\n", client_socket);
+        }
+        return -1;
+    }
+
     printf("Message sent: %ld bytes\n", response_size);
 
-    RawstorAIOEvent *event = rawstor_fd_read(socket, 0, buf, size);
-    if (event == NULL) {
+    if (rawstor_fd_read(client_socket, 0, msg, size, server_read, NULL)) {
         perror("rawstor_fd_read() failed");
-        return NULL;
+        if(close(client_socket)) {
+            perror("close() failed");
+        } else {
+            printf("Connection closed: %d\n", client_socket);
+        }
+        return -1;
     }
-    rawstor_aio_event_set_data(event, (void*)EVENT_READ);
-    return event;
+
+    return 0;
 }
 
 
-static RawstorAIOEvent* server_accept(int client_socket) {
-    void *msg = malloc(sizeof(VhostUserMsg));
-    if (msg == NULL) {
-        perror("malloc() failed");
+static int server_accept(RawstorAIOEvent *event, void*) {
+    int client_socket = rawstor_aio_event_res(event);
+    if (client_socket == -1) {
         int errsv = errno;
-        if(close(client_socket)) {
-            perror("close() failed");
-        }
+        fprintf(stderr, "accept() failed\n");
         errno = errsv;
-        return NULL;
+        return -1;
     }
 
-    RawstorAIOEvent *event = rawstor_fd_read(
-        client_socket, 0,
-        msg, sizeof(VhostUserMsg));
-    if (event == NULL) {
-        perror("rawstor_fd_read() failed");
+    void *msg = malloc(sizeof(VhostUserMsg));
+    if (msg == NULL) {
         int errsv = errno;
+        perror("malloc() failed");
         if(close(client_socket)) {
             perror("close() failed");
         }
         errno = errsv;
-        return NULL;
+        return -1;
     }
-    rawstor_aio_event_set_data(event, (void*)EVENT_READ);
+
+    if (rawstor_fd_read(
+        client_socket, 0,
+        msg, sizeof(VhostUserMsg),
+        server_read, NULL))
+    {
+        int errsv = errno;
+        perror("rawstor_fd_read() failed");
+        if(close(client_socket)) {
+            perror("close() failed");
+        }
+        errno = errsv;
+        return -1;
+    }
 
     printf("Connection opened: %d\n", client_socket);
 
-    return event;
-}
-
-
-static RawstorAIOEvent* server_dispatch(RawstorAIOEvent *event) {
-    int client_socket = rawstor_aio_event_res(event);
-    if (client_socket == -1) {
-        fprintf(stderr, "accept() failed\n");
-        return NULL;
-    }
-
-    return server_accept(client_socket);
-}
-
-
-static RawstorAIOEvent* client_dispatch(RawstorAIOEvent *event) {
-    EventType et = (EventType)rawstor_aio_event_get_data(event);
-    int client_socket = rawstor_aio_event_fd(event);
-    ssize_t response_size = rawstor_aio_event_res(event);
-    void *buf = rawstor_aio_event_buf(event);
-    size_t size = rawstor_aio_event_size(event);
-
-    switch (et) {
-        case EVENT_READ:
-            if (response_size == -1) {
-                fprintf(stderr, "read() failed\n");
-                return NULL;
-            }
-            return client_read(client_socket, response_size, buf, size);
-            break;
-        case EVENT_WRITE:
-            if (response_size == -1) {
-                fprintf(stderr, "write() failed\n");
-                return NULL;
-            }
-            return client_write(client_socket, response_size, buf, size);
-            break;
-        default:
-            printf("Unexpected event type\n");
-    }
-
-    return NULL;
+    return 0;
 }
 
 
@@ -277,15 +260,13 @@ static int server_loop(int server_socket) {
         return -1;
     };
 
-    RawstorAIOEvent *accept_event = rawstor_fd_accept(server_socket);
-    if (accept_event == NULL) {
+    if (rawstor_fd_accept(server_socket, server_accept, NULL)) {
         perror("rawstor_fd_accept() failed");
         return -errno;
     }
 
-    RawstorAIOEvent *client_event = NULL;
-
-    while (1) {
+    int rval = 0;
+    while (!rval) {
         printf("Waiting for event...\n");
         RawstorAIOEvent *event = rawstor_wait_event();
         if (event == NULL) {
@@ -294,27 +275,7 @@ static int server_loop(int server_socket) {
         }
 
         printf("Dispatching event...\n");
-        if (event == accept_event) {
-            accept_event = NULL;
-            client_event = server_dispatch(event);
-            if (client_event == NULL) {
-                printf("server_accept() failed\n");
-                rawstor_release_event(event);
-                break;
-            }
-        } else if (event == client_event) {
-            client_event = client_dispatch(event);
-            if (client_event == NULL) {
-                printf("client_dispatch() failed\n");
-                rawstor_release_event(event);
-                break;
-            }
-        } else {
-            if (rawstor_dispatch_event(event)) {
-                rawstor_release_event(event);
-                break;
-            }
-        }
+        rval = rawstor_dispatch_event(event);
 
         rawstor_release_event(event);
     }
