@@ -51,6 +51,7 @@ void rawstor_sb_delete(RawstorSB *buffer) {
 void* rawstor_sb_acquire(RawstorSB *buffer) {
     RawstorSB *sb = buffer->next;
     if (sb == NULL) {
+        errno = ENOBUFS;
         return NULL;
     }
 

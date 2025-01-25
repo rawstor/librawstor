@@ -43,11 +43,12 @@ RawstorAIO* rawstor_aio_create(unsigned int depth) {
 
     aio->depth = depth;
 
+    /**
+     * TODO: aio operations could be much more than depth.
+     */
     aio->events_buffer = rawstor_sb_create(depth, sizeof(RawstorAIOEvent));
     if (aio->events_buffer == NULL) {
-        int errsv = errno;
         free(aio);
-        errno = errsv;
         return NULL;
     }
 
@@ -73,7 +74,6 @@ void rawstor_aio_delete(RawstorAIO *aio) {
 int rawstor_aio_accept(RawstorAIO *aio, int fd, rawstor_aio_cb cb, void *data) {
     RawstorAIOEvent *event = rawstor_sb_acquire(aio->events_buffer);
     if (event == NULL) {
-        errno = ENOBUFS;
         return -errno;
     }
 
@@ -105,7 +105,6 @@ int rawstor_aio_read(
 {
     RawstorAIOEvent *event = rawstor_sb_acquire(aio->events_buffer);
     if (event == NULL) {
-        errno = ENOBUFS;
         return -errno;
     }
 
@@ -137,7 +136,6 @@ int rawstor_aio_readv(
 {
     RawstorAIOEvent *event = rawstor_sb_acquire(aio->events_buffer);
     if (event == NULL) {
-        errno = ENOBUFS;
         return -errno;
     }
 
@@ -169,7 +167,6 @@ int rawstor_aio_write(
 {
     RawstorAIOEvent *event = rawstor_sb_acquire(aio->events_buffer);
     if (event == NULL) {
-        errno = ENOBUFS;
         return -errno;
     }
 
@@ -201,7 +198,6 @@ int rawstor_aio_writev(
 {
     RawstorAIOEvent *event = rawstor_sb_acquire(aio->events_buffer);
     if (event == NULL) {
-        errno = ENOBUFS;
         return -errno;
     }
 

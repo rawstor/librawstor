@@ -14,6 +14,7 @@ typedef struct RawstorAIOEvent RawstorAIOEvent;
 
 typedef int(*rawstor_aio_cb)(RawstorAIOEvent *event, void *data);
 
+
 int rawstor_aio_event_fd(RawstorAIOEvent *event);
 
 ssize_t rawstor_aio_event_res(RawstorAIOEvent *event);
@@ -75,6 +76,8 @@ struct RawstorDeviceSpec {
     size_t size;
 };
 
+typedef int(*rawstor_cb)(RawstorDevice *device, void *data);
+
 
 int rawstor_create(struct RawstorDeviceSpec spec, int *device_id);
 
@@ -89,22 +92,26 @@ int rawstor_spec(int device_id, struct RawstorDeviceSpec *spec);
 int rawstor_read(
     RawstorDevice *device,
     size_t offset,
-    void *buf, size_t size);
+    void *buf, size_t size,
+    rawstor_cb cb, void *data);
 
 int rawstor_readv(
     RawstorDevice *device,
     size_t offset,
-    struct iovec *iov, unsigned int niov);
+    struct iovec *iov, unsigned int niov,
+    rawstor_cb cb, void *data);
 
 int rawstor_write(
     RawstorDevice *device,
     size_t offset,
-    void *buf, size_t size);
+    void *buf, size_t size,
+    rawstor_cb cb, void *data);
 
 int rawstor_writev(
     RawstorDevice *device,
     size_t offset,
-    struct iovec *iov, unsigned int niov);
+    struct iovec *iov, unsigned int niov,
+    rawstor_cb cb, void *data);
 
 
 #endif // _RAWSTOR_H_

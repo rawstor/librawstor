@@ -1,6 +1,7 @@
 #include <rawstor.h>
 
 #include "aio.h"
+#include "stack_buffer.h"
 
 #include <sys/uio.h>
 
@@ -16,9 +17,31 @@
 #define PREFIX "."
 
 
+/**
+ * TODO: Make it global
+ */
+#define QUEUE_DEPTH 256
+
+
+typedef struct RawstorDeviceTransaction {
+    RawstorDevice *device;
+    rawstor_cb cb;
+    void *data;
+} RawstorDeviceTransaction;
+
+
 typedef struct RawstorDevice {
     int fd;
+    RawstorSB *transactions_buffer;
 } RawstorDevice;
+
+
+static int aio_cb(RawstorAIOEvent *, void *data) {
+    RawstorDeviceTransaction *t = data;
+    int rval = t->cb(t->device, t->data);
+    rawstor_sb_release(t->device->transactions_buffer, t);
+    return rval;
+}
 
 
 int rawstor_create(struct RawstorDeviceSpec spec, int *device_id) {
@@ -97,6 +120,14 @@ int rawstor_open(int device_id, RawstorDevice **device) {
         return -errno;
     }
 
+    rd->transactions_buffer = rawstor_sb_create(
+        QUEUE_DEPTH,
+        sizeof(RawstorDeviceTransaction));
+    if (rd->transactions_buffer == NULL) {
+        free(rd);
+        return -errno;
+    }
+
     char path[1024];
     snprintf(path, sizeof(path), PREFIX "/rawstor-%d.dat", device_id);
     rd->fd = open(path, O_RDWR);
@@ -148,66 +179,74 @@ int rawstor_spec(int device_id, struct RawstorDeviceSpec *spec) {
 int rawstor_read(
     RawstorDevice *device,
     size_t offset,
-    void *buf, size_t size)
+    void *buf, size_t size,
+    rawstor_cb cb, void *data)
 {
-    RawstorAIOEvent *event = rawstor_fd_read(
-        device->fd, offset,
-        buf, size);
-    if (event == NULL) {
-        return -1;
+    RawstorDeviceTransaction *t = rawstor_sb_acquire(
+        device->transactions_buffer);
+    if (t == NULL) {
+        return -errno;
     }
-    rawstor_aio_event_set_data(event, device);
+    t->device = device;
+    t->cb = cb;
+    t->data = data;
 
-    return 0;
+    return rawstor_fd_read(device->fd, offset, buf, size, aio_cb, t);
 }
 
 
 int rawstor_readv(
     RawstorDevice *device,
     size_t offset,
-    struct iovec *iov, unsigned int niov)
+    struct iovec *iov, unsigned int niov,
+    rawstor_cb cb, void *data)
 {
-    RawstorAIOEvent *event = rawstor_fd_readv(
-        device->fd, offset,
-        iov, niov);
-    if (event == NULL) {
-        return -1;
+    RawstorDeviceTransaction *t = rawstor_sb_acquire(
+        device->transactions_buffer);
+    if (t == NULL) {
+        return -errno;
     }
-    rawstor_aio_event_set_data(event, device);
+    t->device = device;
+    t->cb = cb;
+    t->data = data;
 
-    return 0;
+    return rawstor_fd_readv(device->fd, offset, iov, niov, aio_cb, t);
 }
 
 
 int rawstor_write(
     RawstorDevice *device,
     size_t offset,
-    void *buf, size_t size)
+    void *buf, size_t size,
+    rawstor_cb cb, void *data)
 {
-    RawstorAIOEvent *event = rawstor_fd_read(
-        device->fd, offset,
-        buf, size);
-    if (event == NULL) {
-        return -1;
+    RawstorDeviceTransaction *t = rawstor_sb_acquire(
+        device->transactions_buffer);
+    if (t == NULL) {
+        return -errno;
     }
-    rawstor_aio_event_set_data(event, device);
+    t->device = device;
+    t->cb = cb;
+    t->data = data;
 
-    return 0;
+    return rawstor_fd_read(device->fd, offset, buf, size, aio_cb, t);
 }
 
 
 int rawstor_writev(
     RawstorDevice *device,
     size_t offset,
-    struct iovec *iov, unsigned int niov)
+    struct iovec *iov, unsigned int niov,
+    rawstor_cb cb, void *data)
 {
-    RawstorAIOEvent *event = rawstor_fd_writev(
-        device->fd, offset,
-        iov, niov);
-    if (event == NULL) {
-        return -1;
+    RawstorDeviceTransaction *t = rawstor_sb_acquire(
+        device->transactions_buffer);
+    if (t == NULL) {
+        return -errno;
     }
-    rawstor_aio_event_set_data(event, device);
+    t->device = device;
+    t->cb = cb;
+    t->data = data;
 
-    return 0;
+    return rawstor_fd_writev(device->fd, offset, iov, niov, aio_cb, t);
 }
