@@ -59,11 +59,13 @@ int rawstor_fd_writev(
     struct iovec *iov, unsigned int niov,
     rawstor_aio_cb cb, void *data);
 
-RawstorAIOEvent* rawstor_wait_event(void);
+RawstorAIOEvent* rawstor_event_wait(void);
 
-int rawstor_dispatch_event(RawstorAIOEvent *event);
+RawstorAIOEvent* rawstor_event_wait_timeout(int timeout);
 
-void rawstor_release_event(RawstorAIOEvent *event);
+int rawstor_event_dispatch(RawstorAIOEvent *event);
+
+void rawstor_event_release(RawstorAIOEvent *event);
 
 
 /**

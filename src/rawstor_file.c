@@ -229,7 +229,7 @@ int rawstor_write(
     t->cb = cb;
     t->data = data;
 
-    return rawstor_fd_read(device->fd, offset, buf, size, aio_cb, t);
+    return rawstor_fd_write(device->fd, offset, buf, size, aio_cb, t);
 }
 
 

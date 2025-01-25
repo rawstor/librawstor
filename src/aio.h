@@ -50,9 +50,11 @@ int rawstor_aio_writev(
     rawstor_aio_cb cb, void *data);
 
 
-RawstorAIOEvent* rawstor_aio_wait_event(RawstorAIO *aio);
+RawstorAIOEvent* rawstor_aio_event_wait(RawstorAIO *aio);
 
-void rawstor_aio_release_event(RawstorAIO *aio, RawstorAIOEvent *event);
+RawstorAIOEvent* rawstor_aio_event_wait_timeout(RawstorAIO *aio, int timeout);
+
+void rawstor_aio_event_release(RawstorAIO *aio, RawstorAIOEvent *event);
 
 int rawstor_aio_event_fd(RawstorAIOEvent *event);
 

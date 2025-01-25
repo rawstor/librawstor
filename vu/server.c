@@ -268,16 +268,16 @@ static int server_loop(int server_socket) {
     int rval = 0;
     while (!rval) {
         printf("Waiting for event...\n");
-        RawstorAIOEvent *event = rawstor_wait_event();
+        RawstorAIOEvent *event = rawstor_event_wait();
         if (event == NULL) {
             perror("rawstor_wait_event() failed");
             break;
         }
 
         printf("Dispatching event...\n");
-        rval = rawstor_dispatch_event(event);
+        rval = rawstor_event_dispatch(event);
 
-        rawstor_release_event(event);
+        rawstor_event_release(event);
     }
 
     rawstor_terminate();

@@ -7,6 +7,7 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <time.h>
 
 
 typedef struct RawstorAIOEvent {
@@ -31,6 +32,8 @@ typedef struct RawstorAIOEvent {
 typedef struct RawstorAIO {
     unsigned int depth;
     RawstorSB *events_buffer;
+    int events_in_buffer;
+    int events_in_uring;
     struct io_uring ring;
 } RawstorAIO;
 
@@ -42,6 +45,8 @@ RawstorAIO* rawstor_aio_create(unsigned int depth) {
     }
 
     aio->depth = depth;
+    aio->events_in_buffer = 0;
+    aio->events_in_uring = 0;
 
     /**
      * TODO: aio operations could be much more than depth.
@@ -92,6 +97,7 @@ int rawstor_aio_accept(RawstorAIO *aio, int fd, rawstor_aio_cb cb, void *data) {
 
     io_uring_prep_accept(sqe, fd, NULL, NULL, 0);
     io_uring_sqe_set_data(sqe, event);
+    ++aio->events_in_buffer;
 
     return 0;
 }
@@ -123,6 +129,7 @@ int rawstor_aio_read(
 
     io_uring_prep_read(sqe, fd, buf, size, offset);
     io_uring_sqe_set_data(sqe, event);
+    ++aio->events_in_buffer;
 
     return 0;
 }
@@ -154,6 +161,7 @@ int rawstor_aio_readv(
 
     io_uring_prep_readv(sqe, fd, iov, niov, offset);
     io_uring_sqe_set_data(sqe, event);
+    ++aio->events_in_buffer;
 
     return 0;
 }
@@ -185,6 +193,7 @@ int rawstor_aio_write(
 
     io_uring_prep_write(sqe, fd, buf, size, offset);
     io_uring_sqe_set_data(sqe, event);
+    ++aio->events_in_buffer;
 
     return 0;
 }
@@ -216,22 +225,37 @@ int rawstor_aio_writev(
 
     io_uring_prep_writev(sqe, fd, iov, niov, offset);
     io_uring_sqe_set_data(sqe, event);
+    ++aio->events_in_buffer;
 
     return 0;
 }
 
 
-RawstorAIOEvent* rawstor_aio_wait_event(RawstorAIO *aio) {
-    int rval = io_uring_submit_and_wait(&aio->ring, 1);
-    if (rval < 0) {
-        errno = -rval;
-        return NULL;
-    }
-
+RawstorAIOEvent* rawstor_aio_event_wait(RawstorAIO *aio) {
+    int rval;
     struct io_uring_cqe *cqe;
-    rval = io_uring_peek_cqe(&aio->ring, &cqe);
-    if (rval < 0) {
-        errno = -rval;
+    if (aio->events_in_buffer > 0) {
+        rval = io_uring_submit_and_wait(&aio->ring, 1);
+        if (rval < 0) {
+            errno = -rval;
+            return NULL;
+        }
+        aio->events_in_uring = aio->events_in_buffer;
+        aio->events_in_buffer = 0;
+        rval = io_uring_peek_cqe(&aio->ring, &cqe);
+        if (rval < 0) {
+            errno = -rval;
+            return NULL;
+        }
+        --aio->events_in_uring;
+    } else if (aio->events_in_uring > 0) {
+        rval = io_uring_wait_cqe(&aio->ring, &cqe);
+        if (rval < 0) {
+            errno = -rval;
+            return NULL;
+        }
+        --aio->events_in_uring;
+    } else {
         return NULL;
     }
 
@@ -243,7 +267,53 @@ RawstorAIOEvent* rawstor_aio_wait_event(RawstorAIO *aio) {
 }
 
 
-void rawstor_aio_release_event(RawstorAIO *aio, RawstorAIOEvent *event) {
+RawstorAIOEvent* rawstor_aio_event_wait_timeout(RawstorAIO *aio, int timeout) {
+    int rval;
+    struct io_uring_cqe *cqe;
+    struct __kernel_timespec ts = {
+        .tv_sec = 0,
+        .tv_nsec = 1000000ul * timeout
+    };
+    if (aio->events_in_buffer > 0) {
+        /**
+         * TODO: Replace with io_uring_submit_wait_cqe_timeout and do something
+         * with sigmask.
+         */
+        io_uring_submit(&aio->ring);
+        rval = io_uring_wait_cqe_timeout(&aio->ring, &cqe, &ts);
+        if (rval == -ETIME) {
+            return NULL;
+        }
+        if (rval < 0) {
+            errno = -rval;
+            return NULL;
+        }
+        aio->events_in_uring = aio->events_in_buffer;
+        aio->events_in_buffer = 0;
+        --aio->events_in_uring;
+    } else if (aio->events_in_uring > 0) {
+        rval = io_uring_wait_cqe_timeout(&aio->ring, &cqe, &ts);
+        if (rval == -ETIME) {
+            return NULL;
+        }
+        if (rval < 0) {
+            errno = -rval;
+            return NULL;
+        }
+        --aio->events_in_uring;
+    } else {
+        return NULL;
+    }
+
+    RawstorAIOEvent *event = (RawstorAIOEvent*)io_uring_cqe_get_data(cqe);
+
+    event->cqe = cqe;
+
+    return event;
+}
+
+
+void rawstor_aio_event_release(RawstorAIO *aio, RawstorAIOEvent *event) {
     io_uring_cqe_seen(&aio->ring, event->cqe);
     rawstor_sb_release(aio->events_buffer, event);
 }

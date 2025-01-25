@@ -74,16 +74,21 @@ int rawstor_fd_writev(
 }
 
 
-RawstorAIOEvent* rawstor_wait_event(void) {
-    return rawstor_aio_wait_event(global_aio);
+RawstorAIOEvent* rawstor_event_wait(void) {
+    return rawstor_aio_event_wait(global_aio);
 }
 
 
-int rawstor_dispatch_event(RawstorAIOEvent *event) {
+RawstorAIOEvent* rawstor_event_wait_timeout(int timeout) {
+    return rawstor_aio_event_wait_timeout(global_aio, timeout);
+}
+
+
+int rawstor_event_dispatch(RawstorAIOEvent *event) {
     return rawstor_aio_event_cb(event);
 }
 
 
-void rawstor_release_event(RawstorAIOEvent *event) {
-    rawstor_aio_release_event(global_aio, event);
+void rawstor_event_release(RawstorAIOEvent *event) {
+    rawstor_aio_event_release(global_aio, event);
 }
