@@ -37,6 +37,13 @@ int rawstor_initialize(void);
 
 void rawstor_terminate(void);
 
+RawstorAIOEvent* rawstor_wait_event(void);
+
+RawstorAIOEvent* rawstor_wait_timeout_event(int timeout);
+
+int rawstor_dispatch_event(RawstorAIOEvent *event);
+
+void rawstor_release_event(RawstorAIOEvent *event);
 
 int rawstor_fd_accept(int fd, rawstor_aio_cb cb, void *data);
 
@@ -59,14 +66,6 @@ int rawstor_fd_writev(
     int fd, off_t offset,
     struct iovec *iov, unsigned int niov,
     rawstor_aio_cb cb, void *data);
-
-RawstorAIOEvent* rawstor_event_wait(void);
-
-RawstorAIOEvent* rawstor_event_wait_timeout(int timeout);
-
-int rawstor_event_dispatch(RawstorAIOEvent *event);
-
-void rawstor_event_release(RawstorAIOEvent *event);
 
 
 /**

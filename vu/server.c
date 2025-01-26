@@ -6,12 +6,14 @@
 
 #include <err.h>
 #include <errno.h>
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
+
 
 #define QUEUE_DEPTH 256
 
@@ -266,16 +268,16 @@ static int server_loop(int server_socket) {
     int rval = 0;
     while (!rval) {
         printf("Waiting for event...\n");
-        RawstorAIOEvent *event = rawstor_event_wait();
+        RawstorAIOEvent *event = rawstor_wait_event();
         if (event == NULL) {
             perror("rawstor_wait_event() failed");
             break;
         }
 
         printf("Dispatching event...\n");
-        rval = rawstor_event_dispatch(event);
+        rval = rawstor_dispatch_event(event);
 
-        rawstor_event_release(event);
+        rawstor_release_event(event);
     }
 
     rawstor_terminate();

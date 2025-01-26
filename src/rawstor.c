@@ -14,14 +14,14 @@
 #define QUEUE_DEPTH 256
 
 
-static RawstorAIO *global_aio = NULL;
+static RawstorAIO *rawstor_aio = NULL;
 
 
 int rawstor_initialize(void) {
-    assert(global_aio == NULL);
+    assert(rawstor_aio == NULL);
 
-    global_aio = rawstor_aio_create(QUEUE_DEPTH);
-    if (global_aio == NULL) {
+    rawstor_aio = rawstor_aio_create(QUEUE_DEPTH);
+    if (rawstor_aio == NULL) {
         return -errno;
     };
 
@@ -30,12 +30,32 @@ int rawstor_initialize(void) {
 
 
 void rawstor_terminate(void) {
-    rawstor_aio_delete(global_aio); 
+    rawstor_aio_delete(rawstor_aio); 
+}
+
+
+RawstorAIOEvent* rawstor_wait_event(void) {
+    return rawstor_aio_event_wait(rawstor_aio);
+}
+
+
+RawstorAIOEvent* rawstor_wait_timeout_event(int timeout) {
+    return rawstor_aio_event_wait_timeout(rawstor_aio, timeout);
+}
+
+
+int rawstor_dispatch_event(RawstorAIOEvent *event) {
+    return rawstor_aio_event_cb(event);
+}
+
+
+void rawstor_release_event(RawstorAIOEvent *event) {
+    rawstor_aio_event_release(rawstor_aio, event);
 }
 
 
 int rawstor_fd_accept(int fd, rawstor_aio_cb cb, void *data) {
-    return rawstor_aio_accept(global_aio, fd, cb, data);
+    return rawstor_aio_accept(rawstor_aio, fd, cb, data);
 }
 
 
@@ -44,7 +64,7 @@ int rawstor_fd_read(
     void *buf, size_t size,
     rawstor_aio_cb cb, void *data)
 {
-    return rawstor_aio_read(global_aio, fd, offset, buf, size, cb, data);
+    return rawstor_aio_read(rawstor_aio, fd, offset, buf, size, cb, data);
 }
 
 
@@ -53,7 +73,7 @@ int rawstor_fd_readv(
     struct iovec *iov, unsigned int niov,
     rawstor_aio_cb cb, void *data)
 {
-    return rawstor_aio_readv(global_aio, fd, offset, iov, niov, cb, data);
+    return rawstor_aio_readv(rawstor_aio, fd, offset, iov, niov, cb, data);
 }
 
 
@@ -62,7 +82,7 @@ int rawstor_fd_write(
     void *buf, size_t size,
     rawstor_aio_cb cb, void *data)
 {
-    return rawstor_aio_write(global_aio, fd, offset, buf, size, cb, data);
+    return rawstor_aio_write(rawstor_aio, fd, offset, buf, size, cb, data);
 }
 
 
@@ -71,25 +91,5 @@ int rawstor_fd_writev(
     struct iovec *iov, unsigned int niov,
     rawstor_aio_cb cb, void *data)
 {
-    return rawstor_aio_writev(global_aio, fd, offset, iov, niov, cb, data);
-}
-
-
-RawstorAIOEvent* rawstor_event_wait(void) {
-    return rawstor_aio_event_wait(global_aio);
-}
-
-
-RawstorAIOEvent* rawstor_event_wait_timeout(int timeout) {
-    return rawstor_aio_event_wait_timeout(global_aio, timeout);
-}
-
-
-int rawstor_event_dispatch(RawstorAIOEvent *event) {
-    return rawstor_aio_event_cb(event);
-}
-
-
-void rawstor_event_release(RawstorAIOEvent *event) {
-    rawstor_aio_event_release(global_aio, event);
+    return rawstor_aio_writev(rawstor_aio, fd, offset, iov, niov, cb, data);
 }
