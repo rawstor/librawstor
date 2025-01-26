@@ -7,6 +7,7 @@
 #include <sys/uio.h>
 
 #include <stddef.h>
+#include <stdio.h>
 
 
 typedef struct RawstorAIO RawstorAIO;
@@ -27,25 +28,25 @@ int rawstor_aio_accept(RawstorAIO *aio, int fd, rawstor_aio_cb cb, void *data);
 
 int rawstor_aio_read(
     RawstorAIO *aio,
-    int fd, size_t offset,
+    int fd, off_t offset,
     void *buf, size_t size,
     rawstor_aio_cb cb, void *data);
 
 int rawstor_aio_readv(
     RawstorAIO *aio,
-    int fd, size_t offset,
+    int fd, off_t offset,
     struct iovec *iov, unsigned int niov,
     rawstor_aio_cb cb, void *data);
 
 int rawstor_aio_write(
     RawstorAIO *aio,
-    int fd, size_t offset,
+    int fd, off_t offset,
     void *buf, size_t size,
     rawstor_aio_cb cb, void *data);
 
 int rawstor_aio_writev(
     RawstorAIO *aio,
-    int fd, size_t offset,
+    int fd, off_t offset,
     struct iovec *iov, unsigned int niov,
     rawstor_aio_cb cb, void *data);
 

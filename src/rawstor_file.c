@@ -3,6 +3,7 @@
 #include "aio.h"
 #include "stack_buffer.h"
 
+#include <sys/types.h>
 #include <sys/uio.h>
 
 #include <assert.h>
@@ -178,7 +179,7 @@ int rawstor_spec(int volume_id, struct RawstorVolumeSpec *spec) {
 
 int rawstor_read(
     RawstorVolume *volume,
-    size_t offset,
+    off_t offset,
     void *buf, size_t size,
     rawstor_cb cb, void *data)
 {
@@ -197,7 +198,7 @@ int rawstor_read(
 
 int rawstor_readv(
     RawstorVolume *volume,
-    size_t offset,
+    off_t offset,
     struct iovec *iov, unsigned int niov,
     rawstor_cb cb, void *data)
 {
@@ -216,7 +217,7 @@ int rawstor_readv(
 
 int rawstor_write(
     RawstorVolume *volume,
-    size_t offset,
+    off_t offset,
     void *buf, size_t size,
     rawstor_cb cb, void *data)
 {
@@ -235,7 +236,7 @@ int rawstor_write(
 
 int rawstor_writev(
     RawstorVolume *volume,
-    size_t offset,
+    off_t offset,
     struct iovec *iov, unsigned int niov,
     rawstor_cb cb, void *data)
 {

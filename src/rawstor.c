@@ -2,6 +2,7 @@
 
 #include "aio.h"
 
+#include <sys/types.h>
 #include <sys/uio.h>
 
 #include <assert.h>
@@ -39,7 +40,7 @@ int rawstor_fd_accept(int fd, rawstor_aio_cb cb, void *data) {
 
 
 int rawstor_fd_read(
-    int fd, size_t offset,
+    int fd, off_t offset,
     void *buf, size_t size,
     rawstor_aio_cb cb, void *data)
 {
@@ -48,7 +49,7 @@ int rawstor_fd_read(
 
 
 int rawstor_fd_readv(
-    int fd, size_t offset,
+    int fd, off_t offset,
     struct iovec *iov, unsigned int niov,
     rawstor_aio_cb cb, void *data)
 {
@@ -57,7 +58,7 @@ int rawstor_fd_readv(
 
 
 int rawstor_fd_write(
-    int fd, size_t offset,
+    int fd, off_t offset,
     void *buf, size_t size,
     rawstor_aio_cb cb, void *data)
 {
@@ -66,7 +67,7 @@ int rawstor_fd_write(
 
 
 int rawstor_fd_writev(
-    int fd, size_t offset,
+    int fd, off_t offset,
     struct iovec *iov, unsigned int niov,
     rawstor_aio_cb cb, void *data)
 {

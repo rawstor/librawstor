@@ -1,6 +1,7 @@
 #ifndef _RAWSTOR_H_
 #define _RAWSTOR_H_
 
+#include <sys/types.h>
 #include <sys/uio.h>
 
 #include <stddef.h>
@@ -40,22 +41,22 @@ void rawstor_terminate(void);
 int rawstor_fd_accept(int fd, rawstor_aio_cb cb, void *data);
 
 int rawstor_fd_read(
-    int fd, size_t offset,
+    int fd, off_t offset,
     void *buf, size_t size,
     rawstor_aio_cb cb, void *data);
 
 int rawstor_fd_readv(
-    int fd, size_t offset,
+    int fd, off_t offset,
     struct iovec *iov, unsigned int niov,
     rawstor_aio_cb cb, void *data);
 
 int rawstor_fd_write(
-    int fd, size_t offset,
+    int fd, off_t offset,
     void *buf, size_t size,
     rawstor_aio_cb cb, void *data);
 
 int rawstor_fd_writev(
-    int fd, size_t offset,
+    int fd, off_t offset,
     struct iovec *iov, unsigned int niov,
     rawstor_aio_cb cb, void *data);
 
@@ -93,25 +94,25 @@ int rawstor_spec(int volume_id, struct RawstorVolumeSpec *spec);
 
 int rawstor_read(
     RawstorVolume *volume,
-    size_t offset,
+    off_t offset,
     void *buf, size_t size,
     rawstor_cb cb, void *data);
 
 int rawstor_readv(
     RawstorVolume *volume,
-    size_t offset,
+    off_t offset,
     struct iovec *iov, unsigned int niov,
     rawstor_cb cb, void *data);
 
 int rawstor_write(
     RawstorVolume *volume,
-    size_t offset,
+    off_t offset,
     void *buf, size_t size,
     rawstor_cb cb, void *data);
 
 int rawstor_writev(
     RawstorVolume *volume,
-    size_t offset,
+    off_t offset,
     struct iovec *iov, unsigned int niov,
     rawstor_cb cb, void *data);
 
