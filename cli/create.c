@@ -18,13 +18,13 @@ int rawstor_cli_create(size_t size) {
 
     fprintf(stderr, "Creating volume with specification:\n");
     fprintf(stderr, "  size: %zu Gb\n", size);
-    int volume_id;
-    if (rawstor_create(spec, &volume_id)) {
+    int object_id;
+    if (rawstor_create(spec, &object_id)) {
         perror("rawstor_create() failed");
         return EXIT_FAILURE;
     }
     fprintf(stderr, "Volume created\n");
-    fprintf(stdout, "%d\n", volume_id);
+    fprintf(stdout, "%d\n", object_id);
 
     rawstor_terminate();
 

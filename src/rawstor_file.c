@@ -45,7 +45,7 @@ static int aio_cb(RawstorAIOEvent *, void *data) {
 }
 
 
-int rawstor_create(struct RawstorVolumeSpec spec, int *volume_id) {
+int rawstor_create(struct RawstorVolumeSpec spec, int *object_id) {
     char spec_path[1024];
     int fd;
     int id = 1;
@@ -90,23 +90,23 @@ int rawstor_create(struct RawstorVolumeSpec spec, int *volume_id) {
     }
     close(fd);
 
-    *volume_id = id;
+    *object_id = id;
 
     return 0;
 }
 
 
-int rawstor_delete(int volume_id) {
+int rawstor_delete(int object_id) {
     int rval;
     char path[1024];
 
-    snprintf(path, sizeof(path), PREFIX "/rawstor-%d.spec", volume_id);
+    snprintf(path, sizeof(path), PREFIX "/rawstor-%d.spec", object_id);
     rval = unlink(path);
     if (rval == -1) {
         return -errno;
     }
 
-    snprintf(path, sizeof(path), PREFIX "/rawstor-%d.dat", volume_id);
+    snprintf(path, sizeof(path), PREFIX "/rawstor-%d.dat", object_id);
     rval = unlink(path);
     if (rval == -1) {
         return -errno;
@@ -115,7 +115,7 @@ int rawstor_delete(int volume_id) {
 }
 
 
-int rawstor_open(int volume_id, RawstorVolume **volume) {
+int rawstor_open(int object_id, RawstorVolume **volume) {
     RawstorVolume *rd = malloc(sizeof(RawstorVolume));
     if (rd == NULL) {
         return -errno;
@@ -130,7 +130,7 @@ int rawstor_open(int volume_id, RawstorVolume **volume) {
     }
 
     char path[1024];
-    snprintf(path, sizeof(path), PREFIX "/rawstor-%d.dat", volume_id);
+    snprintf(path, sizeof(path), PREFIX "/rawstor-%d.dat", object_id);
     rd->fd = open(path, O_RDWR);
     if (rd->fd == -1) {
         int errsv = errno;
@@ -157,10 +157,10 @@ int rawstor_close(RawstorVolume *volume) {
 }
 
 
-int rawstor_spec(int volume_id, struct RawstorVolumeSpec *spec) {
+int rawstor_spec(int object_id, struct RawstorVolumeSpec *spec) {
     char path[1024];
 
-    snprintf(path, sizeof(path), PREFIX "/rawstor-%d.spec", volume_id);
+    snprintf(path, sizeof(path), PREFIX "/rawstor-%d.spec", object_id);
     int fd = open(path, O_RDONLY);
     if (fd == -1) {
         return -errno;

@@ -82,15 +82,15 @@ struct RawstorVolumeSpec {
 typedef int(*rawstor_cb)(RawstorVolume *volume, void *data);
 
 
-int rawstor_create(struct RawstorVolumeSpec spec, int *volume_id);
+int rawstor_create(struct RawstorVolumeSpec spec, int *object_id);
 
-int rawstor_delete(int volume_id);
+int rawstor_delete(int object_id);
 
-int rawstor_open(int volume_id, RawstorVolume **volume);
+int rawstor_open(int object_id, RawstorVolume **volume);
 
 int rawstor_close(RawstorVolume *volume);
 
-int rawstor_spec(int volume_id, struct RawstorVolumeSpec *spec);
+int rawstor_spec(int object_id, struct RawstorVolumeSpec *spec);
 
 int rawstor_read(
     RawstorVolume *volume,
