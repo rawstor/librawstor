@@ -12,9 +12,11 @@
 
 typedef struct RawstorAIO RawstorAIO;
 
-typedef struct RawstorAIOEvent RawstorAIOEvent;
+// defined in rawstor.h
+// typedef struct RawstorAIOEvent RawstorAIOEvent;
 
-typedef int(*rawstor_aio_cb)(RawstorAIOEvent *event, void *data);
+// defined in rawstor.h
+// typedef int(*rawstor_aio_cb)(RawstorAIOEvent *event, void *data);
 
 
 RawstorAIO* rawstor_aio_create(unsigned int depth);

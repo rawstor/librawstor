@@ -31,10 +31,10 @@ typedef struct RawstorVolumeTransaction {
 } RawstorVolumeTransaction;
 
 
-typedef struct RawstorVolume {
+struct RawstorVolume {
     int fd;
     RawstorSB *transactions_buffer;
-} RawstorVolume;
+};
 
 
 static int aio_cb(RawstorAIOEvent *, void *data) {

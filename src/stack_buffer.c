@@ -9,9 +9,9 @@
 #define RAWSTOR_DATA_TO_SB(ptr) ((void*)ptr - RAWSTOR_SB_HDR_SIZE)
 
 
-typedef struct RawstorSB {
+struct RawstorSB {
     RawstorSB *next;
-} RawstorSB;
+};
 
 
 RawstorSB* rawstor_sb_create(unsigned int depth, size_t item_size) {

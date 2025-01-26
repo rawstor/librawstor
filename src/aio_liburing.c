@@ -12,7 +12,7 @@
 #include <time.h>
 
 
-typedef struct RawstorAIOEvent {
+struct RawstorAIOEvent {
     int captured;
     int fd;
     union {
@@ -28,16 +28,16 @@ typedef struct RawstorAIOEvent {
     rawstor_aio_cb cb;
     void *data;
     struct io_uring_cqe *cqe;
-} RawstorAIOEvent;
+};
 
 
-typedef struct RawstorAIO {
+struct RawstorAIO {
     unsigned int depth;
     RawstorSB *events_buffer;
     int events_in_buffer; // TODO: Replace with io_uring_sq_ready
     int events_in_uring; // TODO: Replace with io_uring_cq_ready?
     struct io_uring ring;
-} RawstorAIO;
+};
 
 
 RawstorAIO* rawstor_aio_create(unsigned int depth) {
