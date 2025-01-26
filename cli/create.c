@@ -12,19 +12,19 @@ int rawstor_cli_create(size_t size) {
         return EXIT_FAILURE;
     }
 
-    struct RawstorDeviceSpec spec = {
+    struct RawstorVolumeSpec spec = {
         .size = size << 30,
     };
 
-    fprintf(stderr, "Creating device with specification:\n");
+    fprintf(stderr, "Creating volume with specification:\n");
     fprintf(stderr, "  size: %zu Gb\n", size);
-    int device_id;
-    if (rawstor_create(spec, &device_id)) {
+    int volume_id;
+    if (rawstor_create(spec, &volume_id)) {
         perror("rawstor_create() failed");
         return EXIT_FAILURE;
     }
-    fprintf(stderr, "Device created\n");
-    fprintf(stdout, "%d\n", device_id);
+    fprintf(stderr, "Volume created\n");
+    fprintf(stdout, "%d\n", volume_id);
 
     rawstor_terminate();
 

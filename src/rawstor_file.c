@@ -23,28 +23,28 @@
 #define QUEUE_DEPTH 256
 
 
-typedef struct RawstorDeviceTransaction {
-    RawstorDevice *device;
+typedef struct RawstorVolumeTransaction {
+    RawstorVolume *volume;
     rawstor_cb cb;
     void *data;
-} RawstorDeviceTransaction;
+} RawstorVolumeTransaction;
 
 
-typedef struct RawstorDevice {
+typedef struct RawstorVolume {
     int fd;
     RawstorSB *transactions_buffer;
-} RawstorDevice;
+} RawstorVolume;
 
 
 static int aio_cb(RawstorAIOEvent *, void *data) {
-    RawstorDeviceTransaction *t = data;
-    int rval = t->cb(t->device, t->data);
-    rawstor_sb_release(t->device->transactions_buffer, t);
+    RawstorVolumeTransaction *t = data;
+    int rval = t->cb(t->volume, t->data);
+    rawstor_sb_release(t->volume->transactions_buffer, t);
     return rval;
 }
 
 
-int rawstor_create(struct RawstorDeviceSpec spec, int *device_id) {
+int rawstor_create(struct RawstorVolumeSpec spec, int *volume_id) {
     char spec_path[1024];
     int fd;
     int id = 1;
@@ -89,23 +89,23 @@ int rawstor_create(struct RawstorDeviceSpec spec, int *device_id) {
     }
     close(fd);
 
-    *device_id = id;
+    *volume_id = id;
 
     return 0;
 }
 
 
-int rawstor_delete(int device_id) {
+int rawstor_delete(int volume_id) {
     int rval;
     char path[1024];
 
-    snprintf(path, sizeof(path), PREFIX "/rawstor-%d.spec", device_id);
+    snprintf(path, sizeof(path), PREFIX "/rawstor-%d.spec", volume_id);
     rval = unlink(path);
     if (rval == -1) {
         return -errno;
     }
 
-    snprintf(path, sizeof(path), PREFIX "/rawstor-%d.dat", device_id);
+    snprintf(path, sizeof(path), PREFIX "/rawstor-%d.dat", volume_id);
     rval = unlink(path);
     if (rval == -1) {
         return -errno;
@@ -114,22 +114,22 @@ int rawstor_delete(int device_id) {
 }
 
 
-int rawstor_open(int device_id, RawstorDevice **device) {
-    RawstorDevice *rd = malloc(sizeof(RawstorDevice));
+int rawstor_open(int volume_id, RawstorVolume **volume) {
+    RawstorVolume *rd = malloc(sizeof(RawstorVolume));
     if (rd == NULL) {
         return -errno;
     }
 
     rd->transactions_buffer = rawstor_sb_create(
         QUEUE_DEPTH,
-        sizeof(RawstorDeviceTransaction));
+        sizeof(RawstorVolumeTransaction));
     if (rd->transactions_buffer == NULL) {
         free(rd);
         return -errno;
     }
 
     char path[1024];
-    snprintf(path, sizeof(path), PREFIX "/rawstor-%d.dat", device_id);
+    snprintf(path, sizeof(path), PREFIX "/rawstor-%d.dat", volume_id);
     rd->fd = open(path, O_RDWR);
     if (rd->fd == -1) {
         int errsv = errno;
@@ -138,28 +138,28 @@ int rawstor_open(int device_id, RawstorDevice **device) {
         return -errno;
     }
 
-    *device = rd;
+    *volume = rd;
 
     return 0;
 }
 
 
-int rawstor_close(RawstorDevice *device) {
-    int rval = close(device->fd);
+int rawstor_close(RawstorVolume *volume) {
+    int rval = close(volume->fd);
     if (rval == -1) {
         return -errno;
     }
 
-    free(device);
+    free(volume);
 
     return 0;
 }
 
 
-int rawstor_spec(int device_id, struct RawstorDeviceSpec *spec) {
+int rawstor_spec(int volume_id, struct RawstorVolumeSpec *spec) {
     char path[1024];
 
-    snprintf(path, sizeof(path), PREFIX "/rawstor-%d.spec", device_id);
+    snprintf(path, sizeof(path), PREFIX "/rawstor-%d.spec", volume_id);
     int fd = open(path, O_RDONLY);
     if (fd == -1) {
         return -errno;
@@ -177,76 +177,76 @@ int rawstor_spec(int device_id, struct RawstorDeviceSpec *spec) {
 
 
 int rawstor_read(
-    RawstorDevice *device,
+    RawstorVolume *volume,
     size_t offset,
     void *buf, size_t size,
     rawstor_cb cb, void *data)
 {
-    RawstorDeviceTransaction *t = rawstor_sb_acquire(
-        device->transactions_buffer);
+    RawstorVolumeTransaction *t = rawstor_sb_acquire(
+        volume->transactions_buffer);
     if (t == NULL) {
         return -errno;
     }
-    t->device = device;
+    t->volume = volume;
     t->cb = cb;
     t->data = data;
 
-    return rawstor_fd_read(device->fd, offset, buf, size, aio_cb, t);
+    return rawstor_fd_read(volume->fd, offset, buf, size, aio_cb, t);
 }
 
 
 int rawstor_readv(
-    RawstorDevice *device,
+    RawstorVolume *volume,
     size_t offset,
     struct iovec *iov, unsigned int niov,
     rawstor_cb cb, void *data)
 {
-    RawstorDeviceTransaction *t = rawstor_sb_acquire(
-        device->transactions_buffer);
+    RawstorVolumeTransaction *t = rawstor_sb_acquire(
+        volume->transactions_buffer);
     if (t == NULL) {
         return -errno;
     }
-    t->device = device;
+    t->volume = volume;
     t->cb = cb;
     t->data = data;
 
-    return rawstor_fd_readv(device->fd, offset, iov, niov, aio_cb, t);
+    return rawstor_fd_readv(volume->fd, offset, iov, niov, aio_cb, t);
 }
 
 
 int rawstor_write(
-    RawstorDevice *device,
+    RawstorVolume *volume,
     size_t offset,
     void *buf, size_t size,
     rawstor_cb cb, void *data)
 {
-    RawstorDeviceTransaction *t = rawstor_sb_acquire(
-        device->transactions_buffer);
+    RawstorVolumeTransaction *t = rawstor_sb_acquire(
+        volume->transactions_buffer);
     if (t == NULL) {
         return -errno;
     }
-    t->device = device;
+    t->volume = volume;
     t->cb = cb;
     t->data = data;
 
-    return rawstor_fd_write(device->fd, offset, buf, size, aio_cb, t);
+    return rawstor_fd_write(volume->fd, offset, buf, size, aio_cb, t);
 }
 
 
 int rawstor_writev(
-    RawstorDevice *device,
+    RawstorVolume *volume,
     size_t offset,
     struct iovec *iov, unsigned int niov,
     rawstor_cb cb, void *data)
 {
-    RawstorDeviceTransaction *t = rawstor_sb_acquire(
-        device->transactions_buffer);
+    RawstorVolumeTransaction *t = rawstor_sb_acquire(
+        volume->transactions_buffer);
     if (t == NULL) {
         return -errno;
     }
-    t->device = device;
+    t->volume = volume;
     t->cb = cb;
     t->data = data;
 
-    return rawstor_fd_writev(device->fd, offset, iov, niov, aio_cb, t);
+    return rawstor_fd_writev(volume->fd, offset, iov, niov, aio_cb, t);
 }

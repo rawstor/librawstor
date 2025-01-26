@@ -69,48 +69,48 @@ void rawstor_event_release(RawstorAIOEvent *event);
 
 
 /**
- * Device
+ * Volume
  */
 
-typedef struct RawstorDevice RawstorDevice;
+typedef struct RawstorVolume RawstorVolume;
 
-struct RawstorDeviceSpec {
+struct RawstorVolumeSpec {
     size_t size;
 };
 
-typedef int(*rawstor_cb)(RawstorDevice *device, void *data);
+typedef int(*rawstor_cb)(RawstorVolume *volume, void *data);
 
 
-int rawstor_create(struct RawstorDeviceSpec spec, int *device_id);
+int rawstor_create(struct RawstorVolumeSpec spec, int *volume_id);
 
-int rawstor_delete(int device_id);
+int rawstor_delete(int volume_id);
 
-int rawstor_open(int device_id, RawstorDevice **device);
+int rawstor_open(int volume_id, RawstorVolume **volume);
 
-int rawstor_close(RawstorDevice *device);
+int rawstor_close(RawstorVolume *volume);
 
-int rawstor_spec(int device_id, struct RawstorDeviceSpec *spec);
+int rawstor_spec(int volume_id, struct RawstorVolumeSpec *spec);
 
 int rawstor_read(
-    RawstorDevice *device,
+    RawstorVolume *volume,
     size_t offset,
     void *buf, size_t size,
     rawstor_cb cb, void *data);
 
 int rawstor_readv(
-    RawstorDevice *device,
+    RawstorVolume *volume,
     size_t offset,
     struct iovec *iov, unsigned int niov,
     rawstor_cb cb, void *data);
 
 int rawstor_write(
-    RawstorDevice *device,
+    RawstorVolume *volume,
     size_t offset,
     void *buf, size_t size,
     rawstor_cb cb, void *data);
 
 int rawstor_writev(
-    RawstorDevice *device,
+    RawstorVolume *volume,
     size_t offset,
     struct iovec *iov, unsigned int niov,
     rawstor_cb cb, void *data);
