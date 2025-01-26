@@ -1,5 +1,5 @@
-#ifndef _RAWSTOR_STACK_BUFFER_H_
-#define _RAWSTOR_STACK_BUFFER_H_
+#ifndef RAWSTOR_STACK_BUFFER_H
+#define RAWSTOR_STACK_BUFFER_H
 
 #include <stddef.h>
 
@@ -16,4 +16,4 @@ void* rawstor_sb_acquire(RawstorSB *buffer);
 void rawstor_sb_release(RawstorSB *buffer, void *item);
 
 
-#endif // _RAWSTOR_STACK_BUFFER_H_
+#endif // RAWSTOR_STACK_BUFFER_H

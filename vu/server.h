@@ -1,5 +1,5 @@
-#ifndef _RAWSTOR_VU_SERVER_H_
-#define _RAWSTOR_VU_SERVER_H_
+#ifndef RAWSTOR_VU_SERVER_H
+#define RAWSTOR_VU_SERVER_H
 
 
 int rawstor_vu_server(
@@ -10,4 +10,4 @@ int rawstor_vu_server(
 void foo(void);
 
 
-#endif // _RAWSTOR_VU_SERVER_H_
+#endif // RAWSTOR_VU_SERVER_H

@@ -1,5 +1,5 @@
-#ifndef _RAWSTOR_AIO_H_
-#define _RAWSTOR_AIO_H_
+#ifndef RAWSTOR_AIO_H
+#define RAWSTOR_AIO_H
 
 #include <rawstor.h>
 
@@ -72,4 +72,4 @@ unsigned int rawstor_aio_event_niov(RawstorAIOEvent *event);
 int rawstor_aio_event_cb(RawstorAIOEvent *event);
 
 
-#endif // _RAWSTOR_AIO_H_
+#endif // RAWSTOR_AIO_H

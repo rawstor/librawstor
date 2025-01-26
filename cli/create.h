@@ -1,5 +1,5 @@
-#ifndef _RAWSTOR_CLI_CREATE_H_
-#define _RAWSTOR_CLI_CREATE_H_
+#ifndef RAWSTOR_CLI_CREATE_H
+#define RAWSTOR_CLI_CREATE_H
 
 #include <stddef.h>
 
@@ -7,4 +7,4 @@
 int rawstor_cli_create(size_t size);
 
 
-#endif // _RAWSTOR_CLI_CREATE_H_
+#endif // RAWSTOR_CLI_CREATE_H

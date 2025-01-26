@@ -1,5 +1,5 @@
-#ifndef _RAWSTOR_VHOST_USER_PROTOCOL_H_
-#define _RAWSTOR_VHOST_USER_PROTOCOL_H_
+#ifndef RAWSTOR_VHOST_USER_PROTOCOL_H
+#define RAWSTOR_VHOST_USER_PROTOCOL_H
 
 #include <linux/vhost.h>
 
@@ -179,4 +179,4 @@ typedef struct VhostUserMsg {
 } VU_PACKED VhostUserMsg;
 
 
-#endif // _RAWSTOR_VHOST_SERVER_H_
+#endif // RAWSTOR_VHOST_SERVER_H

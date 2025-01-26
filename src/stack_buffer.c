@@ -4,7 +4,7 @@
 #include <stdlib.h>
 
 
-#define RAWSTOR_SB_HDR_SIZE sizeof(RawstorSB)
+#define RAWSTOR_SB_HDR_SIZE (sizeof(RawstorSB))
 #define RAWSTOR_SB_TO_DATA(sb) ((void*)sb + RAWSTOR_SB_HDR_SIZE)
 #define RAWSTOR_DATA_TO_SB(ptr) ((void*)ptr - RAWSTOR_SB_HDR_SIZE)
 

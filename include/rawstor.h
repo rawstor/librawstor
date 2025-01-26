@@ -1,5 +1,5 @@
-#ifndef _RAWSTOR_H_
-#define _RAWSTOR_H_
+#ifndef RAWSTOR_H
+#define RAWSTOR_H
 
 #include <sys/types.h>
 #include <sys/uio.h>
@@ -116,4 +116,4 @@ int rawstor_writev(
     rawstor_cb cb, void *data);
 
 
-#endif // _RAWSTOR_H_
+#endif // RAWSTOR_H
