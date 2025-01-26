@@ -32,8 +32,8 @@ typedef struct RawstorAIOEvent {
 typedef struct RawstorAIO {
     unsigned int depth;
     RawstorSB *events_buffer;
-    int events_in_buffer;
-    int events_in_uring;
+    int events_in_buffer; // TODO: Replace with io_uring_sq_ready
+    int events_in_uring; // TODO: Replace with io_uring_cq_ready?
     struct io_uring ring;
 } RawstorAIO;
 
