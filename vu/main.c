@@ -2,6 +2,7 @@
 
 #include <rawstor.h>
 
+#include <getopt.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -36,75 +37,60 @@ static struct sigaction sact = {
 };
 
 
-int main(int argc, const char **argv) {
-    int help = 0;
+int main(int argc, char **argv) {
+    const char *optstring = "ho:s:";
+    struct option longopts[] = {
+        {"help", no_argument, NULL, 'h'},
+        {"object-id", required_argument, NULL, 'o'},
+        {"socket-path", required_argument, NULL, 's'},
+        {},
+    };
+
     const char *object_id_arg = NULL;
     const char *socket_path_arg = NULL;
-
-    for (int i = 1; i < argc; ++i) {
-        // --help
-        if (
-            !help && (
-                strcmp(argv[i], "-h") == 0 ||
-                strcmp(argv[i], "--help") == 0
-            )
-        ) {
-            help = 1;
-            continue;
+    while (1) {
+        int c = getopt_long(argc, argv, optstring, longopts, NULL);
+        if (c == -1) {
+            break;
         }
 
-        // --object-id
-        if (
-            object_id_arg == NULL && (
-                strcmp(argv[i], "-o") == 0 ||
-                strcmp(argv[i], "--object-id") == 0
-            )
-        ) {
-            if (i == argc - 1) {
-                fprintf(stderr, "Expecting %s OBJECT_ID\n", argv[i]);
+        switch (c) {
+            case 'h':
+                usage();
+                return EXIT_SUCCESS;
+                break;
+
+            case 'o':
+                object_id_arg = optarg;
+                break;
+
+            case 's':
+                socket_path_arg = optarg;
+                break;
+
+            default:
                 return EXIT_FAILURE;
-            }
-            object_id_arg = argv[++i];
-            continue;
         }
+    }
 
-        // --socket-path
-        if (
-            socket_path_arg == NULL && (
-                strcmp(argv[i], "-s") == 0 ||
-                strcmp(argv[i], "--socket-path") == 0
-            )
-        ) {
-            if (i == argc - 1) {
-                fprintf(stderr, "Expecting %s SOCKET_PATH\n", argv[i]);
-                return EXIT_FAILURE;
-            }
-            socket_path_arg = argv[++i];
-            continue;
-        }
-
-        fprintf(stderr, "Unexpected argument: %s\n", argv[i]);
+    if (optind < argc) {
+        fprintf(stderr, "Unexpected argument: %s\n", argv[optind]);
         return EXIT_FAILURE;
     }
 
-    if (help) {
-        usage();
-        return EXIT_SUCCESS;
-    }
-
     if (object_id_arg == NULL) {
-        fprintf(stderr, "--object-id OBJECT_ID argument required\n");
+        fprintf(stderr, "object-id argument required\n");
         return EXIT_FAILURE;
     }
 
     int object_id;
     if (sscanf(object_id_arg, "%d", &object_id) != 1) {
-        fprintf(stderr, "--object-id argument must be integer\n");
+        fprintf(stderr, "object-id argument must be integer\n");
         return EXIT_FAILURE;
     }
 
     if (socket_path_arg == NULL) {
-        fprintf(stderr, "--socket-path SOCKET_PATH argument required\n");
+        fprintf(stderr, "socket-path argument required\n");
         return EXIT_FAILURE;
     }
 

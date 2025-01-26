@@ -40,7 +40,7 @@ static void command_create_usage() {
 
 
 static int command_create(int argc, char **argv) {
-    const char *optstring = "+hs:";
+    const char *optstring = "hs:";
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
         {"size", required_argument, NULL, 's'},
@@ -49,8 +49,7 @@ static int command_create(int argc, char **argv) {
 
     char *size_arg = NULL;
     while (1) {
-        int option_index = 0;
-        int c = getopt_long(argc, argv, optstring, longopts, &option_index);
+        int c = getopt_long(argc, argv, optstring, longopts, NULL);
         if (c == -1) {
             break;
         }
@@ -70,6 +69,11 @@ static int command_create(int argc, char **argv) {
         }
     }
 
+    if (optind < argc) {
+        fprintf(stderr, "Unexpected argument: %s\n", argv[optind]);
+        return EXIT_FAILURE;
+    }
+ 
     if (size_arg == NULL) {
         fprintf(stderr, "size required\n");
         return EXIT_FAILURE;
@@ -86,15 +90,14 @@ static int command_create(int argc, char **argv) {
 
 
 int main(int argc, char **argv) {
-    const char *optstring = "+hc:";
+    const char *optstring = "+h";
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
         {},
     };
 
     while (1) {
-        int option_index = 0;
-        int c = getopt_long(argc, argv, optstring, longopts, &option_index);
+        int c = getopt_long(argc, argv, optstring, longopts, NULL);
         if (c == -1)
             break;
 
@@ -104,17 +107,6 @@ int main(int argc, char **argv) {
                 return EXIT_SUCCESS;
                 break;
 
-            case 0:
-                printf("option %s", longopts[option_index].name);
-                if (optarg)
-                    printf(" with arg %s", optarg);
-                printf("\n");
-                break;
-
-            case 'c':
-                printf("option c with value '%s'\n", optarg);
-                break;
- 
             default:
                 return EXIT_FAILURE;
         }
