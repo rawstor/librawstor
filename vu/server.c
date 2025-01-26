@@ -4,8 +4,6 @@
 
 #include <rawstor.h>
 
-#include <liburing.h>
-
 #include <err.h>
 #include <errno.h>
 #include <stdio.h>
