@@ -19,7 +19,7 @@ static void usage() {
         "  -h, --help            Show this help message and exit\n"
         "\n"
         "command:\n"
-        "  create                Create rawstor volume\n"
+        "  create                Create rawstor object\n"
         "\n"
         "command options:        Run `<command> --help` to show command usage\n"
     );
@@ -34,7 +34,7 @@ static void command_create_usage() {
         "usage: rawstor-cli create [command_options]\n"
         "\n"
         "command options:\n"
-        "  -s, --size            Volume size in Gb\n"
+        "  -s, --size            Object size in Gb\n"
     );
 };
 

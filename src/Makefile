@@ -26,7 +26,7 @@ OBJS = rawstor.o \
 REQUIRES =
 
 ifeq ($(USE_BACKEND),file)
-    OBJS += rawstor_file.o
+    OBJS += object_file.o
 else
     $(error Unexpected BACKEND: $(USE_BACKEND))
 endif
