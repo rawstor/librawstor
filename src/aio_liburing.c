@@ -13,7 +13,6 @@
 
 
 struct RawstorAIOEvent {
-    int captured;
     int fd;
     union {
         struct scalar {
