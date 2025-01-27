@@ -39,7 +39,7 @@ void rawstor_terminate(void);
 
 RawstorAIOEvent* rawstor_wait_event(void);
 
-RawstorAIOEvent* rawstor_wait_timeout_event(int timeout);
+RawstorAIOEvent* rawstor_wait_event_timeout(int timeout);
 
 int rawstor_dispatch_event(RawstorAIOEvent *event);
 

@@ -35,12 +35,12 @@ void rawstor_terminate(void) {
 
 
 RawstorAIOEvent* rawstor_wait_event(void) {
-    return rawstor_aio_event_wait(rawstor_aio);
+    return rawstor_aio_wait_event(rawstor_aio);
 }
 
 
 RawstorAIOEvent* rawstor_wait_timeout_event(int timeout) {
-    return rawstor_aio_event_wait_timeout(rawstor_aio, timeout);
+    return rawstor_aio_wait_event_timeout(rawstor_aio, timeout);
 }
 
 
@@ -50,7 +50,7 @@ int rawstor_dispatch_event(RawstorAIOEvent *event) {
 
 
 void rawstor_release_event(RawstorAIOEvent *event) {
-    rawstor_aio_event_release(rawstor_aio, event);
+    rawstor_aio_release_event(rawstor_aio, event);
 }
 
 

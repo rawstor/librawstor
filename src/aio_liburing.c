@@ -233,7 +233,7 @@ int rawstor_aio_writev(
 }
 
 
-RawstorAIOEvent* rawstor_aio_event_wait(RawstorAIO *aio) {
+RawstorAIOEvent* rawstor_aio_wait_event(RawstorAIO *aio) {
     int rval;
     struct io_uring_cqe *cqe;
     if (aio->events_in_buffer > 0) {
@@ -269,7 +269,7 @@ RawstorAIOEvent* rawstor_aio_event_wait(RawstorAIO *aio) {
 }
 
 
-RawstorAIOEvent* rawstor_aio_event_wait_timeout(RawstorAIO *aio, int timeout) {
+RawstorAIOEvent* rawstor_aio_wait_event_timeout(RawstorAIO *aio, int timeout) {
     int rval;
     struct io_uring_cqe *cqe;
     struct __kernel_timespec ts = {
@@ -315,7 +315,7 @@ RawstorAIOEvent* rawstor_aio_event_wait_timeout(RawstorAIO *aio, int timeout) {
 }
 
 
-void rawstor_aio_event_release(RawstorAIO *aio, RawstorAIOEvent *event) {
+void rawstor_aio_release_event(RawstorAIO *aio, RawstorAIOEvent *event) {
     io_uring_cqe_seen(&aio->ring, event->cqe);
     rawstor_sb_release(aio->events_buffer, event);
 }
