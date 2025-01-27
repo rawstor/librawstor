@@ -1,6 +1,7 @@
 SUBDIRS = src \
           cli \
-          vu
+          vu \
+          tests
 
 
 define FOREACH
@@ -14,8 +15,12 @@ all:
 	$(call FOREACH,all)
 
 
+test: all
+	$(MAKE) -C tests test
+
+
 clean:
 	$(call FOREACH,clean)
 
 
-.PHONY: all clean
+.PHONY: all clean test
