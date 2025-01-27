@@ -15,7 +15,7 @@ LIBS += $(shell PKG_CONFIG_PATH=$(CURDIR)/../src pkg-config --libs rawstor)
 
 
 ##
-# Soruces
+# Sources
 #
 DEPS = ../include/rawstor.h
 

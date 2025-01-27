@@ -13,7 +13,7 @@ CFLAGS = -std=gnu99 -Wall -Wextra -Werror -I../include
 
 
 ##
-# Soruces
+# Sources
 #
 DEPS = aio.h \
        backend_mem.h \
