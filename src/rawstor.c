@@ -39,7 +39,7 @@ RawstorAIOEvent* rawstor_wait_event(void) {
 }
 
 
-RawstorAIOEvent* rawstor_wait_timeout_event(int timeout) {
+RawstorAIOEvent* rawstor_wait_event_timeout(int timeout) {
     return rawstor_aio_wait_event_timeout(rawstor_aio, timeout);
 }
 
