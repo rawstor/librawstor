@@ -13,20 +13,15 @@
 
 typedef struct RawstorAIOEvent RawstorAIOEvent;
 
-typedef int(*rawstor_aio_cb)(RawstorAIOEvent *event, void *data);
+typedef int(*rawstor_aio_scalar_cb)(
+    int fd, off_t offset, ssize_t res,
+    void *buf, size_t size,
+    void *data);
 
-
-int rawstor_aio_event_fd(RawstorAIOEvent *event);
-
-ssize_t rawstor_aio_event_res(RawstorAIOEvent *event);
-
-void* rawstor_aio_event_buf(RawstorAIOEvent *event);
-
-size_t rawstor_aio_event_size(RawstorAIOEvent *event);
-
-struct iovec* rawstor_aio_event_iov(RawstorAIOEvent *event);
-
-unsigned int rawstor_aio_event_niov(RawstorAIOEvent *event);
+typedef int(*rawstor_aio_vector_cb)(
+    int fd, off_t offset, ssize_t res,
+    struct iovec *iov, unsigned int niov, size_t size,
+    void *data);
 
 
 /**
@@ -45,27 +40,27 @@ int rawstor_dispatch_event(RawstorAIOEvent *event);
 
 void rawstor_release_event(RawstorAIOEvent *event);
 
-int rawstor_fd_accept(int fd, rawstor_aio_cb cb, void *data);
+int rawstor_fd_accept(int fd, rawstor_aio_scalar_cb cb, void *data);
 
 int rawstor_fd_read(
     int fd, off_t offset,
     void *buf, size_t size,
-    rawstor_aio_cb cb, void *data);
+    rawstor_aio_scalar_cb cb, void *data);
 
 int rawstor_fd_readv(
     int fd, off_t offset,
-    struct iovec *iov, unsigned int niov,
-    rawstor_aio_cb cb, void *data);
+    struct iovec *iov, unsigned int niov, size_t size,
+    rawstor_aio_vector_cb cb, void *data);
 
 int rawstor_fd_write(
     int fd, off_t offset,
     void *buf, size_t size,
-    rawstor_aio_cb cb, void *data);
+    rawstor_aio_scalar_cb cb, void *data);
 
 int rawstor_fd_writev(
     int fd, off_t offset,
-    struct iovec *iov, unsigned int niov,
-    rawstor_aio_cb cb, void *data);
+    struct iovec *iov, unsigned int niov, size_t size,
+    rawstor_aio_vector_cb cb, void *data);
 
 
 /**
@@ -78,7 +73,15 @@ struct RawstorObjectSpec {
     size_t size;
 };
 
-typedef int(*rawstor_cb)(RawstorObject *object, void *data);
+typedef int(*rawstor_scalar_cb)(
+    RawstorObject *object, off_t offset, ssize_t res,
+    void *buf, size_t size,
+    void *data);
+
+typedef int(*rawstor_vector_cb)(
+    RawstorObject *object, off_t offset, ssize_t res,
+    struct iovec *iov, unsigned int niov, size_t size,
+    void *data);
 
 
 int rawstor_object_create(struct RawstorObjectSpec spec, int *object_id);
@@ -92,28 +95,24 @@ int rawstor_object_close(RawstorObject *object);
 int rawstor_object_spec(int object_id, struct RawstorObjectSpec *spec);
 
 int rawstor_object_read(
-    RawstorObject *object,
-    off_t offset,
+    RawstorObject *object, off_t offset,
     void *buf, size_t size,
-    rawstor_cb cb, void *data);
+    rawstor_scalar_cb cb, void *data);
 
 int rawstor_object_readv(
-    RawstorObject *object,
-    off_t offset,
-    struct iovec *iov, unsigned int niov,
-    rawstor_cb cb, void *data);
+    RawstorObject *object, off_t offset,
+    struct iovec *iov, unsigned int niov, size_t size,
+    rawstor_vector_cb cb, void *data);
 
 int rawstor_object_write(
-    RawstorObject *object,
-    off_t offset,
+    RawstorObject *object, off_t offset,
     void *buf, size_t size,
-    rawstor_cb cb, void *data);
+    rawstor_scalar_cb cb, void *data);
 
 int rawstor_object_writev(
-    RawstorObject *object,
-    off_t offset,
-    struct iovec *iov, unsigned int niov,
-    rawstor_cb cb, void *data);
+    RawstorObject *object, off_t offset,
+    struct iovec *iov, unsigned int niov, size_t size,
+    rawstor_vector_cb cb, void *data);
 
 
 #endif // RAWSTOR_H

@@ -14,17 +14,20 @@
 
 struct RawstorAIOEvent {
     int fd;
+    off_t offset;
     union {
         struct scalar {
             void *data;
             size_t size;
         } scalar;
         struct vector {
-            struct iovec *data;
-            unsigned int size;
+            struct iovec *iov;
+            unsigned int niov;
+            size_t size;
         } vector;
     } buffer;
-    rawstor_aio_cb cb;
+    rawstor_aio_scalar_cb scalar_cb;
+    rawstor_aio_vector_cb vector_cb;
     void *data;
     struct io_uring_cqe *cqe;
 };
@@ -77,7 +80,12 @@ void rawstor_aio_delete(RawstorAIO *aio) {
 }
 
 
-int rawstor_aio_accept(RawstorAIO *aio, int fd, rawstor_aio_cb cb, void *data) {
+int rawstor_aio_accept(
+    RawstorAIO *aio,
+    int fd,
+    rawstor_aio_scalar_cb cb,
+    void *data)
+{
     RawstorAIOEvent *event = rawstor_sb_acquire(aio->events_buffer);
     if (event == NULL) {
         return -errno;
@@ -91,9 +99,11 @@ int rawstor_aio_accept(RawstorAIO *aio, int fd, rawstor_aio_cb cb, void *data) {
     }
 
     event->fd = fd;
+    event->offset = 0;
     event->buffer.scalar.data = NULL;
     event->buffer.scalar.size = 0;
-    event->cb = cb;
+    event->scalar_cb = cb;
+    event->vector_cb = NULL;
     event->data = data;
 
     io_uring_prep_accept(sqe, fd, NULL, NULL, 0);
@@ -108,7 +118,7 @@ int rawstor_aio_read(
     RawstorAIO *aio,
     int fd, off_t offset,
     void *buf, size_t size,
-    rawstor_aio_cb cb, void *data)
+    rawstor_aio_scalar_cb cb, void *data)
 {
     RawstorAIOEvent *event = rawstor_sb_acquire(aio->events_buffer);
     if (event == NULL) {
@@ -123,9 +133,11 @@ int rawstor_aio_read(
     }
 
     event->fd = fd;
+    event->offset = offset;
     event->buffer.scalar.data = buf;
     event->buffer.scalar.size = size;
-    event->cb = cb;
+    event->scalar_cb = cb;
+    event->vector_cb = NULL;
     event->data = data;
 
     io_uring_prep_read(sqe, fd, buf, size, offset);
@@ -139,8 +151,8 @@ int rawstor_aio_read(
 int rawstor_aio_readv(
     RawstorAIO *aio,
     int fd, off_t offset,
-    struct iovec *iov, unsigned int niov,
-    rawstor_aio_cb cb, void *data)
+    struct iovec *iov, unsigned int niov, size_t size,
+    rawstor_aio_vector_cb cb, void *data)
 {
     RawstorAIOEvent *event = rawstor_sb_acquire(aio->events_buffer);
     if (event == NULL) {
@@ -155,9 +167,12 @@ int rawstor_aio_readv(
     }
 
     event->fd = fd;
-    event->buffer.vector.data = iov;
-    event->buffer.vector.size = niov;
-    event->cb = cb;
+    event->offset = offset;
+    event->buffer.vector.iov = iov;
+    event->buffer.vector.niov = niov;
+    event->buffer.vector.size = size;
+    event->scalar_cb = NULL;
+    event->vector_cb = cb;
     event->data = data;
 
     io_uring_prep_readv(sqe, fd, iov, niov, offset);
@@ -172,7 +187,7 @@ int rawstor_aio_write(
     RawstorAIO *aio,
     int fd, off_t offset,
     void *buf, size_t size,
-    rawstor_aio_cb cb, void *data)
+    rawstor_aio_scalar_cb cb, void *data)
 {
     RawstorAIOEvent *event = rawstor_sb_acquire(aio->events_buffer);
     if (event == NULL) {
@@ -187,9 +202,11 @@ int rawstor_aio_write(
     }
 
     event->fd = fd;
+    event->offset = offset;
     event->buffer.scalar.data = buf;
     event->buffer.scalar.size = size;
-    event->cb = cb;
+    event->scalar_cb = cb;
+    event->vector_cb = NULL;
     event->data = data;
 
     io_uring_prep_write(sqe, fd, buf, size, offset);
@@ -203,8 +220,8 @@ int rawstor_aio_write(
 int rawstor_aio_writev(
     RawstorAIO *aio,
     int fd, off_t offset,
-    struct iovec *iov, unsigned int niov,
-    rawstor_aio_cb cb, void *data)
+    struct iovec *iov, unsigned int niov, size_t size,
+    rawstor_aio_vector_cb cb, void *data)
 {
     RawstorAIOEvent *event = rawstor_sb_acquire(aio->events_buffer);
     if (event == NULL) {
@@ -219,9 +236,12 @@ int rawstor_aio_writev(
     }
 
     event->fd = fd;
-    event->buffer.vector.data = iov;
-    event->buffer.vector.size = niov;
-    event->cb = cb;
+    event->offset = offset;
+    event->buffer.vector.iov = iov;
+    event->buffer.vector.niov = niov;
+    event->buffer.vector.size = size;
+    event->scalar_cb = NULL;
+    event->vector_cb = cb;
     event->data = data;
 
     io_uring_prep_writev(sqe, fd, iov, niov, offset);
@@ -320,36 +340,22 @@ void rawstor_aio_release_event(RawstorAIO *aio, RawstorAIOEvent *event) {
 }
 
 
-int rawstor_aio_event_fd(RawstorAIOEvent *event) {
-    return event->fd;
-}
-
-
-ssize_t rawstor_aio_event_res(RawstorAIOEvent *event) {
-    return event->cqe->res;
-}
-
-
-void* rawstor_aio_event_buf(RawstorAIOEvent *event) {
-    return event->buffer.scalar.data;
-}
-
-
-size_t rawstor_aio_event_size(RawstorAIOEvent *event) {
-    return event->buffer.scalar.size;
-}
-
-
-struct iovec* rawstor_aio_event_iov(RawstorAIOEvent *event) {
-    return event->buffer.vector.data;
-}
-
-
-unsigned int rawstor_aio_event_niov(RawstorAIOEvent *event) {
-    return event->buffer.vector.size;
-}
-
-
 int rawstor_aio_event_cb(RawstorAIOEvent *event) {
-    return event->cb(event, event->data);
+    if (event->scalar_cb != NULL) {
+        return event->scalar_cb(
+            event->fd,
+            event->offset,
+            event->cqe->res,
+            event->buffer.scalar.data,
+            event->buffer.scalar.size,
+            event->data);
+    }
+    return event->vector_cb(
+        event->fd,
+        event->offset,
+        event->cqe->res,
+        event->buffer.vector.iov,
+        event->buffer.vector.niov,
+        event->buffer.vector.size,
+        event->data);
 }

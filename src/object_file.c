@@ -26,9 +26,11 @@
 
 typedef struct RawstorObjectTransaction {
     RawstorObject *object;
-    rawstor_cb cb;
+    union {
+        rawstor_scalar_cb scalar_cb;
+        rawstor_vector_cb vector_cb;
+    } cb;
     void *data;
-    size_t size;
 } RawstorObjectTransaction;
 
 
@@ -38,21 +40,31 @@ struct RawstorObject {
 };
 
 
-static int aio_cb(RawstorAIOEvent *event, void *data) {
+static int aio_scalar_cb(
+    int, off_t offset, ssize_t res,
+    void *buf, size_t size,
+    void *data)
+{
     RawstorObjectTransaction *t = data;
-    ssize_t received_size = rawstor_aio_event_res(event);
-    int rval;
-    if (received_size == -1) {
-        rval = -1;
-    } else if ((size_t)received_size == t->size) {
-        rval = t->cb(t->object, t->data);
-    } else {
-        /**
-         * TODO: We have processed partial request and have to reply it.
-         */
-        fprintf(stderr, "Partial request not suppoted yet");
-        return -errno;
-    }
+    int rval = t->cb.scalar_cb(
+        t->object, offset, res,
+        buf, size,
+        t->data);
+    rawstor_sb_release(t->object->transactions_buffer, t);
+    return rval;
+}
+
+
+static int aio_vector_cb(
+    int, off_t offset, ssize_t res,
+    struct iovec *iov, unsigned int niov, size_t size,
+    void *data)
+{
+    RawstorObjectTransaction *t = data;
+    int rval = t->cb.vector_cb(
+        t->object, offset, res,
+        iov, niov, size,
+        t->data);
     rawstor_sb_release(t->object->transactions_buffer, t);
     return rval;
 }
@@ -194,7 +206,7 @@ int rawstor_object_read(
     RawstorObject *object,
     off_t offset,
     void *buf, size_t size,
-    rawstor_cb cb, void *data)
+    rawstor_scalar_cb cb, void *data)
 {
     RawstorObjectTransaction *t = rawstor_sb_acquire(
         object->transactions_buffer);
@@ -202,19 +214,21 @@ int rawstor_object_read(
         return -errno;
     }
     t->object = object;
-    t->cb = cb;
+    t->cb.scalar_cb = cb;
     t->data = data;
-    t->size = size;
 
-    return rawstor_fd_read(object->fd, offset, buf, size, aio_cb, t);
+    return rawstor_fd_read(
+        object->fd, offset,
+        buf, size,
+        aio_scalar_cb, t);
 }
 
 
 int rawstor_object_readv(
     RawstorObject *object,
     off_t offset,
-    struct iovec *iov, unsigned int niov,
-    rawstor_cb cb, void *data)
+    struct iovec *iov, unsigned int niov, size_t size,
+    rawstor_vector_cb cb, void *data)
 {
     RawstorObjectTransaction *t = rawstor_sb_acquire(
         object->transactions_buffer);
@@ -222,14 +236,13 @@ int rawstor_object_readv(
         return -errno;
     }
     t->object = object;
-    t->cb = cb;
+    t->cb.vector_cb = cb;
     t->data = data;
-    t->size = 0;
-    for (unsigned int i = 0; i < niov; ++i) {
-        t->size += iov[i].iov_len;
-    }
 
-    return rawstor_fd_readv(object->fd, offset, iov, niov, aio_cb, t);
+    return rawstor_fd_readv(
+        object->fd, offset,
+        iov, niov, size,
+        aio_vector_cb, t);
 }
 
 
@@ -237,7 +250,7 @@ int rawstor_object_write(
     RawstorObject *object,
     off_t offset,
     void *buf, size_t size,
-    rawstor_cb cb, void *data)
+    rawstor_scalar_cb cb, void *data)
 {
     RawstorObjectTransaction *t = rawstor_sb_acquire(
         object->transactions_buffer);
@@ -245,19 +258,21 @@ int rawstor_object_write(
         return -errno;
     }
     t->object = object;
-    t->cb = cb;
+    t->cb.scalar_cb = cb;
     t->data = data;
-    t->size = size;
 
-    return rawstor_fd_write(object->fd, offset, buf, size, aio_cb, t);
+    return rawstor_fd_write(
+        object->fd, offset,
+        buf, size,
+        aio_scalar_cb, t);
 }
 
 
 int rawstor_object_writev(
     RawstorObject *object,
     off_t offset,
-    struct iovec *iov, unsigned int niov,
-    rawstor_cb cb, void *data)
+    struct iovec *iov, unsigned int niov, size_t size,
+    rawstor_vector_cb cb, void *data)
 {
     RawstorObjectTransaction *t = rawstor_sb_acquire(
         object->transactions_buffer);
@@ -265,12 +280,11 @@ int rawstor_object_writev(
         return -errno;
     }
     t->object = object;
-    t->cb = cb;
+    t->cb.vector_cb = cb;
     t->data = data;
-    t->size = 0;
-    for (unsigned int i = 0; i < niov; ++i) {
-        t->size += iov[i].iov_len;
-    }
 
-    return rawstor_fd_writev(object->fd, offset, iov, niov, aio_cb, t);
+    return rawstor_fd_writev(
+        object->fd, offset,
+        iov, niov, size,
+        aio_vector_cb, t);
 }

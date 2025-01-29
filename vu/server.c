@@ -91,16 +91,24 @@ static int dispatch_vu_request(VhostUserMsg *msg) {
 }
 
 
-static int server_read(RawstorAIOEvent *event, void*);
+static int server_read(
+    int client_socket, off_t offset, ssize_t request_size,
+    void *buf, size_t buf_size,
+    void *data);
 
 
-static int server_write(RawstorAIOEvent *event, void*);
+static int server_write(
+    int client_socket, off_t offset, ssize_t request_size,
+    void *buf, size_t buf_size,
+    void *data);
 
 
-static int server_read(RawstorAIOEvent *event, void *) {
-    int client_socket = rawstor_aio_event_fd(event);
-    ssize_t request_size = rawstor_aio_event_res(event);
-    VhostUserMsg *msg = rawstor_aio_event_buf(event);
+static int server_read(
+    int client_socket, off_t, ssize_t request_size,
+    void *buf, size_t,
+    void *)
+{
+    VhostUserMsg *msg = (VhostUserMsg*)buf;
     if (request_size < 0) {
         fprintf(stderr, "read() failed\n");
         free(msg);
@@ -181,11 +189,12 @@ static int server_read(RawstorAIOEvent *event, void *) {
 }
 
 
-static int server_write(RawstorAIOEvent *event, void *) {
-    int client_socket = rawstor_aio_event_fd(event);
-    ssize_t response_size = rawstor_aio_event_res(event);
-    VhostUserMsg *msg = rawstor_aio_event_buf(event);
-    size_t size = rawstor_aio_event_size(event);
+static int server_write(
+    int client_socket, off_t, ssize_t response_size,
+    void *buf, size_t buf_size,
+    void *)
+{
+    VhostUserMsg *msg = (VhostUserMsg*)buf;
 
     if (response_size == -1) {
         fprintf(stderr, "write() failed\n");
@@ -200,7 +209,7 @@ static int server_write(RawstorAIOEvent *event, void *) {
 
     printf("Message sent: %ld bytes\n", response_size);
 
-    if (rawstor_fd_read(client_socket, 0, msg, size, server_read, NULL)) {
+    if (rawstor_fd_read(client_socket, 0, msg, buf_size, server_read, NULL)) {
         perror("rawstor_fd_read() failed");
         if(close(client_socket)) {
             perror("close() failed");
@@ -214,8 +223,11 @@ static int server_write(RawstorAIOEvent *event, void *) {
 }
 
 
-static int server_accept(RawstorAIOEvent *event, void*) {
-    int client_socket = rawstor_aio_event_res(event);
+static int server_accept(
+    int, off_t, ssize_t client_socket,
+    void *, size_t,
+    void *)
+{
     if (client_socket == -1) {
         int errsv = errno;
         fprintf(stderr, "accept() failed\n");
@@ -248,7 +260,7 @@ static int server_accept(RawstorAIOEvent *event, void*) {
         return -1;
     }
 
-    printf("Connection opened: %d\n", client_socket);
+    printf("Connection opened: %ld\n", client_socket);
 
     return 0;
 }
