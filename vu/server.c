@@ -268,9 +268,14 @@ static int server_loop(int server_socket) {
     int rval = 0;
     while (!rval) {
         printf("Waiting for event...\n");
+        errno = 0;
         RawstorAIOEvent *event = rawstor_wait_event();
         if (event == NULL) {
-            perror("rawstor_wait_event() failed");
+            if (errno) {
+                perror("rawstor_wait_event() failed");
+            } else {
+                printf("EOF\n");
+            }
             break;
         }
 
