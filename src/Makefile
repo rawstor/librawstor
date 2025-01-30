@@ -17,10 +17,12 @@ CFLAGS = -std=gnu99 -Wall -Wextra -Werror -I../include
 #
 DEPS = aio.h \
        backend_mem.h \
+       pool.h \
        stack_buffer.h \
        ../include/rawstor.h
 
-OBJS = rawstor.o \
+OBJS = pool.o \
+       rawstor.o \
        stack_buffer.o
 
 REQUIRES =
@@ -43,7 +45,7 @@ endif
 ##
 # Targets
 #
-%.o: %.c
+%.o: %.c $(DEPS)
 	$(CC) $(CFLAGS) $< -c -o $@
 
 %.a: $(OBJS)
