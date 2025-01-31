@@ -41,10 +41,12 @@ struct RawstorObject {
 
 
 static int fd_scalar_callback(
-    int, off_t offset,
+    int fd, off_t offset,
     void *buf, size_t size,
     ssize_t res, void *data)
 {
+    (void)(fd);
+
     RawstorObjectTransaction *t = data;
     int rval = t->cb.scalar_callback(
         t->object, offset,
@@ -56,10 +58,12 @@ static int fd_scalar_callback(
 
 
 static int aio_vector_callback(
-    int, off_t offset,
+    int fd, off_t offset,
     struct iovec *iov, unsigned int niov, size_t size,
     ssize_t res, void *data)
 {
+    (void)(fd);
+
     RawstorObjectTransaction *t = data;
     int rval = t->cb.vector_callback(
         t->object, offset,

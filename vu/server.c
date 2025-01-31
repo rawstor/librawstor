@@ -104,21 +104,25 @@ static int server_write(
 
 
 static int server_read(
-    int client_socket, off_t,
-    void *buf, size_t,
-    ssize_t request_size, void *)
+    int client_socket, off_t offset,
+    void *buf, size_t size,
+    ssize_t request_size, void *data)
 {
+    (void)(offset);
+    (void)(size);
+    (void)(data);
+
     VhostUserMsg *msg = (VhostUserMsg*)buf;
     if (request_size < 0) {
-        fprintf(stderr, "read() failed\n");
+        errno = -request_size;
+        perror("read() failed");
         free(msg);
         if(close(client_socket)) {
             perror("close() failed");
         } else {
             printf("Connection closed: %d\n", client_socket);
         }
-        errno = -request_size;
-        return -errno;
+        return request_size;
     } else if (request_size == 0) {
         printf("Connection lost: %d\n", client_socket);
         free(msg);
@@ -190,21 +194,25 @@ static int server_read(
 
 
 static int server_write(
-    int client_socket, off_t,
+    int client_socket, off_t offset,
     void *buf, size_t buf_size,
-    ssize_t response_size, void *)
+    ssize_t response_size, void *data)
 {
+    (void)(offset);
+    (void)(data);
+
     VhostUserMsg *msg = (VhostUserMsg*)buf;
 
-    if (response_size == -1) {
-        fprintf(stderr, "write() failed\n");
+    if (response_size < 0) {
+        errno = -response_size;
+        perror("write() failed");
         free(msg);
         if(close(client_socket)) {
             perror("close() failed");
         } else {
             printf("Connection closed: %d\n", client_socket);
         }
-        return -1;
+        return response_size;
     }
 
     printf("Message sent: %ld bytes\n", response_size);
@@ -224,15 +232,20 @@ static int server_write(
 
 
 static int server_accept(
-    int, off_t,
-    void *, size_t,
-    ssize_t client_socket, void *)
+    int fd, off_t offset,
+    void *buf, size_t size,
+    ssize_t client_socket, void *data)
 {
-    if (client_socket == -1) {
-        int errsv = errno;
-        fprintf(stderr, "accept() failed\n");
-        errno = errsv;
-        return -1;
+    (void)(fd);
+    (void)(offset);
+    (void)(buf);
+    (void)(size);
+    (void)(data);
+
+    if (client_socket < 0) {
+        errno = -client_socket;
+        perror("accept() failed");
+        return client_socket;
     }
 
     void *msg = malloc(sizeof(VhostUserMsg));
@@ -303,7 +316,9 @@ static int server_loop(int server_socket) {
 }
 
 
-int rawstor_vu_server(int, const char *socket_path) {
+int rawstor_vu_server(int object_id, const char *socket_path) {
+    (void)(object_id);
+
     int server_socket = socket(AF_UNIX, SOCK_STREAM, 0);
     if (server_socket < 0) {
         perror("socket() failed");
