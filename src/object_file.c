@@ -1,7 +1,7 @@
 #include <rawstor.h>
 
 #include "aio.h"
-#include "stack_buffer.h"
+#include "pool.h"
 
 #include <sys/types.h>
 #include <sys/uio.h>
@@ -36,7 +36,7 @@ typedef struct RawstorObjectTransaction {
 
 struct RawstorObject {
     int fd;
-    RawstorSB *transactions_buffer;
+    RawstorPool *transactions_pool;
 };
 
 
@@ -50,7 +50,7 @@ static int aio_scalar_cb(
         t->object, offset, res,
         buf, size,
         t->data);
-    rawstor_sb_release(t->object->transactions_buffer, t);
+    rawstor_pool_free(t->object->transactions_pool, t);
     return rval;
 }
 
@@ -65,7 +65,7 @@ static int aio_vector_cb(
         t->object, offset, res,
         iov, niov, size,
         t->data);
-    rawstor_sb_release(t->object->transactions_buffer, t);
+    rawstor_pool_free(t->object->transactions_pool, t);
     return rval;
 }
 
@@ -146,10 +146,10 @@ int rawstor_object_open(int object_id, RawstorObject **object) {
         return -errno;
     }
 
-    ret->transactions_buffer = rawstor_sb_create(
+    ret->transactions_pool = rawstor_pool_create(
         QUEUE_DEPTH,
         sizeof(RawstorObjectTransaction));
-    if (ret->transactions_buffer == NULL) {
+    if (ret->transactions_pool == NULL) {
         free(ret);
         return -errno;
     }
@@ -208,11 +208,11 @@ int rawstor_object_read(
     void *buf, size_t size,
     rawstor_scalar_cb cb, void *data)
 {
-    RawstorObjectTransaction *t = rawstor_sb_acquire(
-        object->transactions_buffer);
-    if (t == NULL) {
+    if (rawstor_pool_count(object->transactions_pool) == 0) {
+        errno = ENOBUFS;
         return -errno;
     }
+    RawstorObjectTransaction *t = rawstor_pool_alloc(object->transactions_pool);
     t->object = object;
     t->cb.scalar_cb = cb;
     t->data = data;
@@ -230,11 +230,11 @@ int rawstor_object_readv(
     struct iovec *iov, unsigned int niov, size_t size,
     rawstor_vector_cb cb, void *data)
 {
-    RawstorObjectTransaction *t = rawstor_sb_acquire(
-        object->transactions_buffer);
-    if (t == NULL) {
+    if (rawstor_pool_count(object->transactions_pool) == 0) {
+        errno = ENOBUFS;
         return -errno;
     }
+    RawstorObjectTransaction *t = rawstor_pool_alloc(object->transactions_pool);
     t->object = object;
     t->cb.vector_cb = cb;
     t->data = data;
@@ -252,11 +252,11 @@ int rawstor_object_write(
     void *buf, size_t size,
     rawstor_scalar_cb cb, void *data)
 {
-    RawstorObjectTransaction *t = rawstor_sb_acquire(
-        object->transactions_buffer);
-    if (t == NULL) {
+    if (rawstor_pool_count(object->transactions_pool) == 0) {
+        errno = ENOBUFS;
         return -errno;
     }
+    RawstorObjectTransaction *t = rawstor_pool_alloc(object->transactions_pool);
     t->object = object;
     t->cb.scalar_cb = cb;
     t->data = data;
@@ -274,11 +274,11 @@ int rawstor_object_writev(
     struct iovec *iov, unsigned int niov, size_t size,
     rawstor_vector_cb cb, void *data)
 {
-    RawstorObjectTransaction *t = rawstor_sb_acquire(
-        object->transactions_buffer);
-    if (t == NULL) {
+    if (rawstor_pool_count(object->transactions_pool) == 0) {
+        errno = ENOBUFS;
         return -errno;
     }
+    RawstorObjectTransaction *t = rawstor_pool_alloc(object->transactions_pool);
     t->object = object;
     t->cb.vector_cb = cb;
     t->data = data;

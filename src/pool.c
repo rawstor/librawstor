@@ -8,6 +8,7 @@ struct RawstorPool {
     void *data;
     void **index;
     void **head;
+    void **tail;
     size_t count;
     size_t size;
 };
@@ -37,6 +38,7 @@ RawstorPool* rawstor_pool_create(size_t count, size_t size) {
     }
 
     pool->head = &pool->index[0];
+    pool->tail = &pool->index[count];
     pool->count = count;
     pool->size = size;
 
@@ -52,7 +54,7 @@ void rawstor_pool_delete(RawstorPool *pool) {
 
 
 size_t rawstor_pool_count(RawstorPool *pool) {
-    return pool->count - (pool->head - pool->index);
+    return pool->tail - pool->head;
 }
 
 

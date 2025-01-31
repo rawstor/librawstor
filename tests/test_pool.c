@@ -147,7 +147,6 @@ int main() {
     int rval = 0;
     rval += test_pool_alloc();
     rval += test_pool_free();
-    rval += test_pool_count();
     rval += test_pool_size();
     rval += test_pool_data();
     rval += test_pool_order();

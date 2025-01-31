@@ -1,6 +1,6 @@
 #include "aio.h"
 
-#include "stack_buffer.h"
+#include "pool.h"
 
 #include <liburing.h>
 
@@ -35,7 +35,7 @@ struct RawstorAIOEvent {
 
 struct RawstorAIO {
     unsigned int depth;
-    RawstorSB *events_buffer;
+    RawstorPool *events_pool;
     int events_in_buffer; // TODO: Replace with io_uring_sq_ready
     int events_in_uring; // TODO: Replace with io_uring_cq_ready?
     struct io_uring ring;
@@ -55,15 +55,15 @@ RawstorAIO* rawstor_aio_create(unsigned int depth) {
     /**
      * TODO: aio operations could be much more than depth.
      */
-    aio->events_buffer = rawstor_sb_create(depth, sizeof(RawstorAIOEvent));
-    if (aio->events_buffer == NULL) {
+    aio->events_pool = rawstor_pool_create(depth, sizeof(RawstorAIOEvent));
+    if (aio->events_pool == NULL) {
         free(aio);
         return NULL;
     }
 
     int rval = io_uring_queue_init(depth, &aio->ring, 0);
     if (rval < 0) {
-        rawstor_sb_delete(aio->events_buffer);
+        rawstor_pool_delete(aio->events_pool);
         free(aio);
         errno = -rval;
         return NULL;
@@ -75,7 +75,7 @@ RawstorAIO* rawstor_aio_create(unsigned int depth) {
 
 void rawstor_aio_delete(RawstorAIO *aio) {
     io_uring_queue_exit(&aio->ring);
-    rawstor_sb_delete(aio->events_buffer);
+    rawstor_pool_delete(aio->events_pool);
     free(aio);
 }
 
@@ -86,17 +86,22 @@ int rawstor_aio_accept(
     rawstor_aio_scalar_cb cb,
     void *data)
 {
-    RawstorAIOEvent *event = rawstor_sb_acquire(aio->events_buffer);
-    if (event == NULL) {
+    /**
+     * TODO: Since pool count is equal to sqe count, do we really have to have
+     * this check?
+     */
+    if (rawstor_pool_count(aio->events_pool) == 0) {
+        errno = ENOBUFS;
         return -errno;
     }
 
     struct io_uring_sqe *sqe = io_uring_get_sqe(&aio->ring);
     if (sqe == NULL) {
-        rawstor_sb_release(aio->events_buffer, event);
         errno = ENOBUFS;
         return -errno;
     }
+
+    RawstorAIOEvent *event = rawstor_pool_alloc(aio->events_pool);
 
     event->fd = fd;
     event->offset = 0;
@@ -120,17 +125,22 @@ int rawstor_aio_read(
     void *buf, size_t size,
     rawstor_aio_scalar_cb cb, void *data)
 {
-    RawstorAIOEvent *event = rawstor_sb_acquire(aio->events_buffer);
-    if (event == NULL) {
+    /**
+     * TODO: Since pool count is equal to sqe count, do we really have to have
+     * this check?
+     */
+    if (rawstor_pool_count(aio->events_pool) == 0) {
+        errno = ENOBUFS;
         return -errno;
     }
 
     struct io_uring_sqe *sqe = io_uring_get_sqe(&aio->ring);
     if (sqe == NULL) {
-        rawstor_sb_release(aio->events_buffer, event);
         errno = ENOBUFS;
         return -errno;
     }
+
+    RawstorAIOEvent *event = rawstor_pool_alloc(aio->events_pool);
 
     event->fd = fd;
     event->offset = offset;
@@ -154,17 +164,22 @@ int rawstor_aio_readv(
     struct iovec *iov, unsigned int niov, size_t size,
     rawstor_aio_vector_cb cb, void *data)
 {
-    RawstorAIOEvent *event = rawstor_sb_acquire(aio->events_buffer);
-    if (event == NULL) {
+    /**
+     * TODO: Since pool count is equal to sqe count, do we really have to have
+     * this check?
+     */
+    if (rawstor_pool_count(aio->events_pool) == 0) {
+        errno = ENOBUFS;
         return -errno;
     }
 
     struct io_uring_sqe *sqe = io_uring_get_sqe(&aio->ring);
     if (sqe == NULL) {
-        rawstor_sb_release(aio->events_buffer, event);
         errno = ENOBUFS;
         return -errno;
     }
+
+    RawstorAIOEvent *event = rawstor_pool_alloc(aio->events_pool);
 
     event->fd = fd;
     event->offset = offset;
@@ -189,17 +204,22 @@ int rawstor_aio_write(
     void *buf, size_t size,
     rawstor_aio_scalar_cb cb, void *data)
 {
-    RawstorAIOEvent *event = rawstor_sb_acquire(aio->events_buffer);
-    if (event == NULL) {
+    /**
+     * TODO: Since pool count is equal to sqe count, do we really have to have
+     * this check?
+     */
+    if (rawstor_pool_count(aio->events_pool) == 0) {
+        errno = ENOBUFS;
         return -errno;
     }
 
     struct io_uring_sqe *sqe = io_uring_get_sqe(&aio->ring);
     if (sqe == NULL) {
-        rawstor_sb_release(aio->events_buffer, event);
         errno = ENOBUFS;
         return -errno;
     }
+
+    RawstorAIOEvent *event = rawstor_pool_alloc(aio->events_pool);
 
     event->fd = fd;
     event->offset = offset;
@@ -223,17 +243,22 @@ int rawstor_aio_writev(
     struct iovec *iov, unsigned int niov, size_t size,
     rawstor_aio_vector_cb cb, void *data)
 {
-    RawstorAIOEvent *event = rawstor_sb_acquire(aio->events_buffer);
-    if (event == NULL) {
+    /**
+     * TODO: Since pool count is equal to sqe count, do we really have to have
+     * this check?
+     */
+    if (rawstor_pool_count(aio->events_pool) == 0) {
+        errno = ENOBUFS;
         return -errno;
     }
 
     struct io_uring_sqe *sqe = io_uring_get_sqe(&aio->ring);
     if (sqe == NULL) {
-        rawstor_sb_release(aio->events_buffer, event);
         errno = ENOBUFS;
         return -errno;
     }
+
+    RawstorAIOEvent *event = rawstor_pool_alloc(aio->events_pool);
 
     event->fd = fd;
     event->offset = offset;
@@ -336,7 +361,7 @@ RawstorAIOEvent* rawstor_aio_wait_event_timeout(RawstorAIO *aio, int timeout) {
 
 void rawstor_aio_release_event(RawstorAIO *aio, RawstorAIOEvent *event) {
     io_uring_cqe_seen(&aio->ring, event->cqe);
-    rawstor_sb_release(aio->events_buffer, event);
+    rawstor_pool_free(aio->events_pool, event);
 }
 
 
