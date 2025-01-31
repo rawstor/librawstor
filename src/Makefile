@@ -35,6 +35,8 @@ ifeq ($(USE_IOENGINE),liburing)
     CFLAGS += $(shell pkg-config --cflags liburing)
     OBJS += aio_liburing.o
     REQUIRES += liburing
+else ifeq ($(USE_IOENGINE),poll)
+    OBJS += aio_poll.o
 else
     $(error Unexpected IOENGINE: $(USE_IOENGINE))
 endif
