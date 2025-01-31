@@ -16,16 +16,16 @@ typedef struct RawstorAIO RawstorAIO;
 // typedef struct RawstorAIOEvent RawstorAIOEvent;
 
 // defined in rawstor.h
-// typedef int(*rawstor_aio_scalar_cb)(
-//     int fd, ssize_t res,
+// typedef int(*rawstor_fd_scalar_callback)(
+//     int fd, off_t offset,
 //     void *buf, size_t buf_size,
-//     void *data);
+//     ssize_t res, void *data);
 
 // defined in rawstor.h
-// typedef int(*rawstor_aio_vector_cb)(
-//     int fd, ssize_t res,
-//     struct iovec *iov, unsigned int niov,
-//     void *data);
+// typedef int(*rawstor_fd_vector_callback)(
+//     int fd, off_t offset,
+//     struct iovec *iov, unsigned int niov, size_t size,
+//     ssize_t res, void *data);
 
 
 RawstorAIO* rawstor_aio_create(unsigned int depth);
@@ -38,31 +38,31 @@ void rawstor_aio_delete(RawstorAIO *aio);
 int rawstor_aio_accept(
     RawstorAIO *aio,
     int fd,
-    rawstor_aio_scalar_cb cb, void *data);
+    rawstor_fd_scalar_callback cb, void *data);
 
 int rawstor_aio_read(
     RawstorAIO *aio,
     int fd, off_t offset,
     void *buf, size_t size,
-    rawstor_aio_scalar_cb cb, void *data);
+    rawstor_fd_scalar_callback cb, void *data);
 
 int rawstor_aio_readv(
     RawstorAIO *aio,
     int fd, off_t offset,
     struct iovec *iov, unsigned int niov, size_t size,
-    rawstor_aio_vector_cb cb, void *data);
+    rawstor_fd_vector_callback cb, void *data);
 
 int rawstor_aio_write(
     RawstorAIO *aio,
     int fd, off_t offset,
     void *buf, size_t size,
-    rawstor_aio_scalar_cb cb, void *data);
+    rawstor_fd_scalar_callback cb, void *data);
 
 int rawstor_aio_writev(
     RawstorAIO *aio,
     int fd, off_t offset,
     struct iovec *iov, unsigned int niov, size_t size,
-    rawstor_aio_vector_cb cb, void *data);
+    rawstor_fd_vector_callback cb, void *data);
 
 
 RawstorAIOEvent* rawstor_aio_wait_event(RawstorAIO *aio);
@@ -71,7 +71,7 @@ RawstorAIOEvent* rawstor_aio_wait_event_timeout(RawstorAIO *aio, int timeout);
 
 void rawstor_aio_release_event(RawstorAIO *aio, RawstorAIOEvent *event);
 
-int rawstor_aio_event_cb(RawstorAIOEvent *event);
+int rawstor_aio_event_dispatch(RawstorAIOEvent *event);
 
 
 #endif // RAWSTOR_AIO_H

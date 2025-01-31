@@ -92,21 +92,21 @@ static int dispatch_vu_request(VhostUserMsg *msg) {
 
 
 static int server_read(
-    int client_socket, off_t offset, ssize_t request_size,
+    int client_socket, off_t offset,
     void *buf, size_t buf_size,
-    void *data);
+    ssize_t request_size, void *data);
 
 
 static int server_write(
-    int client_socket, off_t offset, ssize_t request_size,
+    int client_socket, off_t offset,
     void *buf, size_t buf_size,
-    void *data);
+    ssize_t request_size, void *data);
 
 
 static int server_read(
-    int client_socket, off_t, ssize_t request_size,
+    int client_socket, off_t,
     void *buf, size_t,
-    void *)
+    ssize_t request_size, void *)
 {
     VhostUserMsg *msg = (VhostUserMsg*)buf;
     if (request_size < 0) {
@@ -190,9 +190,9 @@ static int server_read(
 
 
 static int server_write(
-    int client_socket, off_t, ssize_t response_size,
+    int client_socket, off_t,
     void *buf, size_t buf_size,
-    void *)
+    ssize_t response_size, void *)
 {
     VhostUserMsg *msg = (VhostUserMsg*)buf;
 
@@ -224,9 +224,9 @@ static int server_write(
 
 
 static int server_accept(
-    int, off_t, ssize_t client_socket,
+    int, off_t,
     void *, size_t,
-    void *)
+    ssize_t client_socket, void *)
 {
     if (client_socket == -1) {
         int errsv = errno;

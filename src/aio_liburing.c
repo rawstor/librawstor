@@ -26,8 +26,8 @@ struct RawstorAIOEvent {
             size_t size;
         } vector;
     } buffer;
-    rawstor_aio_scalar_cb scalar_cb;
-    rawstor_aio_vector_cb vector_cb;
+    rawstor_fd_scalar_callback scalar_callback;
+    rawstor_fd_vector_callback vector_callback;
     void *data;
     struct io_uring_cqe *cqe;
 };
@@ -83,7 +83,7 @@ void rawstor_aio_delete(RawstorAIO *aio) {
 int rawstor_aio_accept(
     RawstorAIO *aio,
     int fd,
-    rawstor_aio_scalar_cb cb,
+    rawstor_fd_scalar_callback cb,
     void *data)
 {
     /**
@@ -107,8 +107,8 @@ int rawstor_aio_accept(
     event->offset = 0;
     event->buffer.scalar.data = NULL;
     event->buffer.scalar.size = 0;
-    event->scalar_cb = cb;
-    event->vector_cb = NULL;
+    event->scalar_callback = cb;
+    event->vector_callback = NULL;
     event->data = data;
 
     io_uring_prep_accept(sqe, fd, NULL, NULL, 0);
@@ -123,7 +123,7 @@ int rawstor_aio_read(
     RawstorAIO *aio,
     int fd, off_t offset,
     void *buf, size_t size,
-    rawstor_aio_scalar_cb cb, void *data)
+    rawstor_fd_scalar_callback cb, void *data)
 {
     /**
      * TODO: Since pool count is equal to sqe count, do we really have to have
@@ -146,8 +146,8 @@ int rawstor_aio_read(
     event->offset = offset;
     event->buffer.scalar.data = buf;
     event->buffer.scalar.size = size;
-    event->scalar_cb = cb;
-    event->vector_cb = NULL;
+    event->scalar_callback = cb;
+    event->vector_callback = NULL;
     event->data = data;
 
     io_uring_prep_read(sqe, fd, buf, size, offset);
@@ -162,7 +162,7 @@ int rawstor_aio_readv(
     RawstorAIO *aio,
     int fd, off_t offset,
     struct iovec *iov, unsigned int niov, size_t size,
-    rawstor_aio_vector_cb cb, void *data)
+    rawstor_fd_vector_callback cb, void *data)
 {
     /**
      * TODO: Since pool count is equal to sqe count, do we really have to have
@@ -186,8 +186,8 @@ int rawstor_aio_readv(
     event->buffer.vector.iov = iov;
     event->buffer.vector.niov = niov;
     event->buffer.vector.size = size;
-    event->scalar_cb = NULL;
-    event->vector_cb = cb;
+    event->scalar_callback = NULL;
+    event->vector_callback = cb;
     event->data = data;
 
     io_uring_prep_readv(sqe, fd, iov, niov, offset);
@@ -202,7 +202,7 @@ int rawstor_aio_write(
     RawstorAIO *aio,
     int fd, off_t offset,
     void *buf, size_t size,
-    rawstor_aio_scalar_cb cb, void *data)
+    rawstor_fd_scalar_callback cb, void *data)
 {
     /**
      * TODO: Since pool count is equal to sqe count, do we really have to have
@@ -225,8 +225,8 @@ int rawstor_aio_write(
     event->offset = offset;
     event->buffer.scalar.data = buf;
     event->buffer.scalar.size = size;
-    event->scalar_cb = cb;
-    event->vector_cb = NULL;
+    event->scalar_callback = cb;
+    event->vector_callback = NULL;
     event->data = data;
 
     io_uring_prep_write(sqe, fd, buf, size, offset);
@@ -241,7 +241,7 @@ int rawstor_aio_writev(
     RawstorAIO *aio,
     int fd, off_t offset,
     struct iovec *iov, unsigned int niov, size_t size,
-    rawstor_aio_vector_cb cb, void *data)
+    rawstor_fd_vector_callback cb, void *data)
 {
     /**
      * TODO: Since pool count is equal to sqe count, do we really have to have
@@ -265,8 +265,8 @@ int rawstor_aio_writev(
     event->buffer.vector.iov = iov;
     event->buffer.vector.niov = niov;
     event->buffer.vector.size = size;
-    event->scalar_cb = NULL;
-    event->vector_cb = cb;
+    event->scalar_callback = NULL;
+    event->vector_callback = cb;
     event->data = data;
 
     io_uring_prep_writev(sqe, fd, iov, niov, offset);
@@ -365,22 +365,23 @@ void rawstor_aio_release_event(RawstorAIO *aio, RawstorAIOEvent *event) {
 }
 
 
-int rawstor_aio_event_cb(RawstorAIOEvent *event) {
-    if (event->scalar_cb != NULL) {
-        return event->scalar_cb(
+int rawstor_aio_event_dispatch(RawstorAIOEvent *event) {
+    if (event->scalar_callback != NULL) {
+        return event->scalar_callback(
             event->fd,
             event->offset,
-            event->cqe->res,
             event->buffer.scalar.data,
             event->buffer.scalar.size,
+            event->cqe->res,
+            event->data);
+    } else {
+        return event->vector_callback(
+            event->fd,
+            event->offset,
+            event->buffer.vector.iov,
+            event->buffer.vector.niov,
+            event->buffer.vector.size,
+            event->cqe->res,
             event->data);
     }
-    return event->vector_cb(
-        event->fd,
-        event->offset,
-        event->cqe->res,
-        event->buffer.vector.iov,
-        event->buffer.vector.niov,
-        event->buffer.vector.size,
-        event->data);
 }
