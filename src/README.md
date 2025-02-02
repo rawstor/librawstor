@@ -11,6 +11,11 @@ Compile with liburing io engine:
 make USE_IOENGINE=liburing
 ```
 
+Compile with poll io engine:
+```
+make USE_IOENGINE=poll
+```
+
 ## Troubleshooting
 
 ### Operation not permitted
