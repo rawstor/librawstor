@@ -16,17 +16,17 @@ struct RawstorAIOEvent {
     int fd;
     off_t offset;
     union {
-        struct scalar {
+        struct linear {
             void *data;
             size_t size;
-        } scalar;
+        } linear;
         struct vector {
             struct iovec *iov;
             unsigned int niov;
             size_t size;
         } vector;
     } buffer;
-    rawstor_fd_scalar_callback scalar_callback;
+    rawstor_fd_linear_callback linear_callback;
     rawstor_fd_vector_callback vector_callback;
     void *data;
     struct io_uring_cqe *cqe;
@@ -83,7 +83,7 @@ void rawstor_aio_delete(RawstorAIO *aio) {
 int rawstor_aio_accept(
     RawstorAIO *aio,
     int fd,
-    rawstor_fd_scalar_callback cb,
+    rawstor_fd_linear_callback cb,
     void *data)
 {
     /**
@@ -105,9 +105,9 @@ int rawstor_aio_accept(
 
     event->fd = fd;
     event->offset = 0;
-    event->buffer.scalar.data = NULL;
-    event->buffer.scalar.size = 0;
-    event->scalar_callback = cb;
+    event->buffer.linear.data = NULL;
+    event->buffer.linear.size = 0;
+    event->linear_callback = cb;
     event->vector_callback = NULL;
     event->data = data;
 
@@ -123,7 +123,7 @@ int rawstor_aio_read(
     RawstorAIO *aio,
     int fd, off_t offset,
     void *buf, size_t size,
-    rawstor_fd_scalar_callback cb, void *data)
+    rawstor_fd_linear_callback cb, void *data)
 {
     /**
      * TODO: Since pool count is equal to sqe count, do we really have to have
@@ -144,9 +144,9 @@ int rawstor_aio_read(
 
     event->fd = fd;
     event->offset = offset;
-    event->buffer.scalar.data = buf;
-    event->buffer.scalar.size = size;
-    event->scalar_callback = cb;
+    event->buffer.linear.data = buf;
+    event->buffer.linear.size = size;
+    event->linear_callback = cb;
     event->vector_callback = NULL;
     event->data = data;
 
@@ -186,7 +186,7 @@ int rawstor_aio_readv(
     event->buffer.vector.iov = iov;
     event->buffer.vector.niov = niov;
     event->buffer.vector.size = size;
-    event->scalar_callback = NULL;
+    event->linear_callback = NULL;
     event->vector_callback = cb;
     event->data = data;
 
@@ -202,7 +202,7 @@ int rawstor_aio_write(
     RawstorAIO *aio,
     int fd, off_t offset,
     void *buf, size_t size,
-    rawstor_fd_scalar_callback cb, void *data)
+    rawstor_fd_linear_callback cb, void *data)
 {
     /**
      * TODO: Since pool count is equal to sqe count, do we really have to have
@@ -223,9 +223,9 @@ int rawstor_aio_write(
 
     event->fd = fd;
     event->offset = offset;
-    event->buffer.scalar.data = buf;
-    event->buffer.scalar.size = size;
-    event->scalar_callback = cb;
+    event->buffer.linear.data = buf;
+    event->buffer.linear.size = size;
+    event->linear_callback = cb;
     event->vector_callback = NULL;
     event->data = data;
 
@@ -265,7 +265,7 @@ int rawstor_aio_writev(
     event->buffer.vector.iov = iov;
     event->buffer.vector.niov = niov;
     event->buffer.vector.size = size;
-    event->scalar_callback = NULL;
+    event->linear_callback = NULL;
     event->vector_callback = cb;
     event->data = data;
 
@@ -366,12 +366,12 @@ void rawstor_aio_release_event(RawstorAIO *aio, RawstorAIOEvent *event) {
 
 
 int rawstor_aio_event_dispatch(RawstorAIOEvent *event) {
-    if (event->scalar_callback != NULL) {
-        return event->scalar_callback(
+    if (event->linear_callback != NULL) {
+        return event->linear_callback(
             event->fd,
             event->offset,
-            event->buffer.scalar.data,
-            event->buffer.scalar.size,
+            event->buffer.linear.data,
+            event->buffer.linear.size,
             event->cqe->res,
             event->data);
     } else {

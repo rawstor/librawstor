@@ -27,7 +27,7 @@
 typedef struct RawstorObjectTransaction {
     RawstorObject *object;
     union {
-        rawstor_scalar_callback scalar_callback;
+        rawstor_linear_callback linear_callback;
         rawstor_vector_callback vector_callback;
     } cb;
     void *data;
@@ -40,7 +40,7 @@ struct RawstorObject {
 };
 
 
-static int fd_scalar_callback(
+static int fd_linear_callback(
     int fd, off_t offset,
     void *buf, size_t size,
     ssize_t res, void *data)
@@ -48,7 +48,7 @@ static int fd_scalar_callback(
     (void)(fd);
 
     RawstorObjectTransaction *t = data;
-    int rval = t->cb.scalar_callback(
+    int rval = t->cb.linear_callback(
         t->object, offset,
         buf, size,
         res, t->data);
@@ -210,7 +210,7 @@ int rawstor_object_read(
     RawstorObject *object,
     off_t offset,
     void *buf, size_t size,
-    rawstor_scalar_callback cb, void *data)
+    rawstor_linear_callback cb, void *data)
 {
     if (rawstor_pool_count(object->transactions_pool) == 0) {
         errno = ENOBUFS;
@@ -218,13 +218,13 @@ int rawstor_object_read(
     }
     RawstorObjectTransaction *t = rawstor_pool_alloc(object->transactions_pool);
     t->object = object;
-    t->cb.scalar_callback = cb;
+    t->cb.linear_callback = cb;
     t->data = data;
 
     return rawstor_fd_read(
         object->fd, offset,
         buf, size,
-        fd_scalar_callback, t);
+        fd_linear_callback, t);
 }
 
 
@@ -254,7 +254,7 @@ int rawstor_object_write(
     RawstorObject *object,
     off_t offset,
     void *buf, size_t size,
-    rawstor_scalar_callback cb, void *data)
+    rawstor_linear_callback cb, void *data)
 {
     if (rawstor_pool_count(object->transactions_pool) == 0) {
         errno = ENOBUFS;
@@ -262,13 +262,13 @@ int rawstor_object_write(
     }
     RawstorObjectTransaction *t = rawstor_pool_alloc(object->transactions_pool);
     t->object = object;
-    t->cb.scalar_callback = cb;
+    t->cb.linear_callback = cb;
     t->data = data;
 
     return rawstor_fd_write(
         object->fd, offset,
         buf, size,
-        fd_scalar_callback, t);
+        fd_linear_callback, t);
 }
 
 

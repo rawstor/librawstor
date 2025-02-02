@@ -54,7 +54,7 @@ void rawstor_release_event(RawstorAIOEvent *event) {
 }
 
 
-int rawstor_fd_accept(int fd, rawstor_fd_scalar_callback cb, void *data) {
+int rawstor_fd_accept(int fd, rawstor_fd_linear_callback cb, void *data) {
     return rawstor_aio_accept(rawstor_aio, fd, cb, data);
 }
 
@@ -62,7 +62,7 @@ int rawstor_fd_accept(int fd, rawstor_fd_scalar_callback cb, void *data) {
 int rawstor_fd_read(
     int fd, off_t offset,
     void *buf, size_t size,
-    rawstor_fd_scalar_callback cb, void *data)
+    rawstor_fd_linear_callback cb, void *data)
 {
     return rawstor_aio_read(
         rawstor_aio,
@@ -88,7 +88,7 @@ int rawstor_fd_readv(
 int rawstor_fd_write(
     int fd, off_t offset,
     void *buf, size_t size,
-    rawstor_fd_scalar_callback cb, void *data)
+    rawstor_fd_linear_callback cb, void *data)
 {
     return rawstor_aio_write(
         rawstor_aio,

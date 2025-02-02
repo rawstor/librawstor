@@ -14,17 +14,17 @@
 struct RawstorAIOEvent {
     off_t offset;
     union {
-        struct scalar {
+        struct linear {
             void *data;
             size_t size;
-        } scalar;
+        } linear;
         struct vector {
             struct iovec *iov;
             unsigned int niov;
             size_t size;
         } vector;
     } buffer;
-    rawstor_fd_scalar_callback scalar_callback;
+    rawstor_fd_linear_callback linear_callback;
     rawstor_fd_vector_callback vector_callback;
     ssize_t res;
     void *data;
@@ -52,19 +52,19 @@ static RawstorAIOEvent* aio_process_event(RawstorAIO *aio) {
         if (fd->revents & POLLIN) {
             // TODO: Assert that event is read?
             // TODO: Optimize offset = 0 check
-            if (event->scalar_callback != NULL) {
-                if (event->buffer.scalar.data != NULL) {
+            if (event->linear_callback != NULL) {
+                if (event->buffer.linear.data != NULL) {
                     if (event->offset != 0) {
                         event->res = pread(
                             fd->fd,
-                            event->buffer.scalar.data,
-                            event->buffer.scalar.size,
+                            event->buffer.linear.data,
+                            event->buffer.linear.size,
                             event->offset);
                     } else {
                         event->res = read(
                             fd->fd,
-                            event->buffer.scalar.data,
-                            event->buffer.scalar.size);
+                            event->buffer.linear.data,
+                            event->buffer.linear.size);
                     }
                 } else {
                     event->res = accept(fd->fd, NULL, NULL);
@@ -89,18 +89,18 @@ static RawstorAIOEvent* aio_process_event(RawstorAIO *aio) {
         if (fd->revents & POLLOUT) {
             // TODO: Assert that event is write?
             // TODO: Optimize offset = 0 check
-            if (event->scalar_callback != NULL) {
+            if (event->linear_callback != NULL) {
                 if (event->offset != 0) {
                     event->res = pwrite(
                         fd->fd,
-                        event->buffer.scalar.data,
-                        event->buffer.scalar.size,
+                        event->buffer.linear.data,
+                        event->buffer.linear.size,
                         event->offset);
                 } else {
                     event->res = write(
                         fd->fd,
-                        event->buffer.scalar.data,
-                        event->buffer.scalar.size);
+                        event->buffer.linear.data,
+                        event->buffer.linear.size);
                 }
             } else {
                 if (event->offset != 0) {
@@ -168,7 +168,7 @@ void rawstor_aio_delete(RawstorAIO *aio) {
 int rawstor_aio_accept(
     RawstorAIO *aio,
     int fd,
-    rawstor_fd_scalar_callback cb, void *data)
+    rawstor_fd_linear_callback cb, void *data)
 {
     if (rawstor_pool_count(aio->events_pool) == 0) {
         errno = ENOBUFS;
@@ -178,9 +178,9 @@ int rawstor_aio_accept(
     struct pollfd *pollfd = rawstor_pool_alloc(aio->fds_pool);
 
     event->offset = 0;
-    event->buffer.scalar.data = NULL;
-    event->buffer.scalar.size = 0;
-    event->scalar_callback = cb;
+    event->buffer.linear.data = NULL;
+    event->buffer.linear.size = 0;
+    event->linear_callback = cb;
     event->vector_callback = NULL;
     event->data = data;
     event->fd = pollfd;
@@ -197,7 +197,7 @@ int rawstor_aio_read(
     RawstorAIO *aio,
     int fd, off_t offset,
     void *buf, size_t size,
-    rawstor_fd_scalar_callback cb, void *data)
+    rawstor_fd_linear_callback cb, void *data)
 {
     if (rawstor_pool_count(aio->events_pool) == 0) {
         errno = ENOBUFS;
@@ -207,9 +207,9 @@ int rawstor_aio_read(
     struct pollfd *pollfd = rawstor_pool_alloc(aio->fds_pool);
 
     event->offset = offset;
-    event->buffer.scalar.data = buf;
-    event->buffer.scalar.size = size;
-    event->scalar_callback = cb;
+    event->buffer.linear.data = buf;
+    event->buffer.linear.size = size;
+    event->linear_callback = cb;
     event->vector_callback = NULL;
     event->data = data;
     event->fd = pollfd;
@@ -239,7 +239,7 @@ int rawstor_aio_readv(
     event->buffer.vector.iov = iov;
     event->buffer.vector.niov = niov;
     event->buffer.vector.size = size;
-    event->scalar_callback = NULL;
+    event->linear_callback = NULL;
     event->vector_callback = cb;
     event->data = data;
     event->fd = pollfd;
@@ -256,7 +256,7 @@ int rawstor_aio_write(
     RawstorAIO *aio,
     int fd, off_t offset,
     void *buf, size_t size,
-    rawstor_fd_scalar_callback cb, void *data)
+    rawstor_fd_linear_callback cb, void *data)
 {
     if (rawstor_pool_count(aio->events_pool) == 0) {
         errno = ENOBUFS;
@@ -266,9 +266,9 @@ int rawstor_aio_write(
     struct pollfd *pollfd = rawstor_pool_alloc(aio->fds_pool);
 
     event->offset = offset;
-    event->buffer.scalar.data = buf;
-    event->buffer.scalar.size = size;
-    event->scalar_callback = cb;
+    event->buffer.linear.data = buf;
+    event->buffer.linear.size = size;
+    event->linear_callback = cb;
     event->vector_callback = NULL;
     event->data = data;
     event->fd = pollfd;
@@ -298,7 +298,7 @@ int rawstor_aio_writev(
     event->buffer.vector.iov = iov;
     event->buffer.vector.niov = niov;
     event->buffer.vector.size = size;
-    event->scalar_callback = NULL;
+    event->linear_callback = NULL;
     event->vector_callback = cb;
     event->data = data;
     event->fd = pollfd;
@@ -346,12 +346,12 @@ RawstorAIOEvent* rawstor_aio_wait_event_timeout(RawstorAIO *aio, int timeout) {
 
 
 int rawstor_aio_event_dispatch(RawstorAIOEvent *event) {
-    if (event->scalar_callback != NULL) {
-        return event->scalar_callback(
+    if (event->linear_callback != NULL) {
+        return event->linear_callback(
             event->fd->fd,
             event->offset,
-            event->buffer.scalar.data,
-            event->buffer.scalar.size,
+            event->buffer.linear.data,
+            event->buffer.linear.size,
             event->res,
             event->data);
     } else {

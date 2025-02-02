@@ -18,7 +18,7 @@ typedef struct RawstorAIOEvent RawstorAIOEvent;
  * fd
  */
 
-typedef int(*rawstor_fd_scalar_callback)(
+typedef int(*rawstor_fd_linear_callback)(
     int fd, off_t offset,
     void *buf, size_t size,
     ssize_t res, void *data);
@@ -29,12 +29,12 @@ typedef int(*rawstor_fd_vector_callback)(
     ssize_t res, void *data);
 
 
-int rawstor_fd_accept(int fd, rawstor_fd_scalar_callback cb, void *data);
+int rawstor_fd_accept(int fd, rawstor_fd_linear_callback cb, void *data);
 
 int rawstor_fd_read(
     int fd, off_t offset,
     void *buf, size_t size,
-    rawstor_fd_scalar_callback cb, void *data);
+    rawstor_fd_linear_callback cb, void *data);
 
 int rawstor_fd_readv(
     int fd, off_t offset,
@@ -44,7 +44,7 @@ int rawstor_fd_readv(
 int rawstor_fd_write(
     int fd, off_t offset,
     void *buf, size_t size,
-    rawstor_fd_scalar_callback cb, void *data);
+    rawstor_fd_linear_callback cb, void *data);
 
 int rawstor_fd_writev(
     int fd, off_t offset,
@@ -79,7 +79,7 @@ struct RawstorObjectSpec {
     size_t size;
 };
 
-typedef int(*rawstor_scalar_callback)(
+typedef int(*rawstor_linear_callback)(
     RawstorObject *object, off_t offset,
     void *buf, size_t size,
     ssize_t res, void *data);
@@ -103,7 +103,7 @@ int rawstor_object_spec(int object_id, struct RawstorObjectSpec *spec);
 int rawstor_object_read(
     RawstorObject *object, off_t offset,
     void *buf, size_t size,
-    rawstor_scalar_callback cb, void *data);
+    rawstor_linear_callback cb, void *data);
 
 int rawstor_object_readv(
     RawstorObject *object, off_t offset,
@@ -113,7 +113,7 @@ int rawstor_object_readv(
 int rawstor_object_write(
     RawstorObject *object, off_t offset,
     void *buf, size_t size,
-    rawstor_scalar_callback cb, void *data);
+    rawstor_linear_callback cb, void *data);
 
 int rawstor_object_writev(
     RawstorObject *object, off_t offset,
