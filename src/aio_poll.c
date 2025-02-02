@@ -50,7 +50,6 @@ static RawstorAIOEvent* aio_process_event(RawstorAIO *aio) {
 
         RawstorAIOEvent *event = &aio->events[i];
         if (fd->revents & POLLIN) {
-            printf("aio_process_event(): %d POLLIN\n", fd->fd);
             // TODO: Assert that event is read?
             // TODO: Optimize offset = 0 check
             if (event->scalar_callback != NULL) {
@@ -88,7 +87,6 @@ static RawstorAIOEvent* aio_process_event(RawstorAIO *aio) {
         }
 
         if (fd->revents & POLLOUT) {
-            printf("aio_process_event(): %d POLLOUT\n", fd->fd);
             // TODO: Assert that event is write?
             // TODO: Optimize offset = 0 check
             if (event->scalar_callback != NULL) {
@@ -314,7 +312,6 @@ int rawstor_aio_writev(
 
 
 RawstorAIOEvent* rawstor_aio_wait_event(RawstorAIO *aio) {
-    printf("rawstor_aio_wait_event(): process ready event\n");
     RawstorAIOEvent *event = aio_process_event(aio);
     if (event != NULL) {
         return event;
@@ -324,13 +321,11 @@ RawstorAIOEvent* rawstor_aio_wait_event(RawstorAIO *aio) {
         return NULL;
     }
 
-    printf("rawstor_aio_wait_event(): poll()\n");
     int rval = poll(aio->fds, aio->depth, -1);
     if (rval <= 0) {
         return NULL;
     }
 
-    printf("rawstor_aio_wait_event(): process polled event\n");
     return aio_process_event(aio);
 }
 
