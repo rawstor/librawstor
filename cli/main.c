@@ -34,7 +34,8 @@ static void command_create_usage() {
         "usage: rawstor-cli create [command_options]\n"
         "\n"
         "command options:\n"
-        "  -s, --size            Object size in Gb\n"
+        "  -h, --help            Show this help message and exit\n"
+        "  -s, --size SIZE       Object size in Gb\n"
     );
 };
 
