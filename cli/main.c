@@ -1,4 +1,5 @@
 #include "create.h"
+#include "testio.h"
 
 #include <rawstor.h>
 
@@ -20,6 +21,7 @@ static void usage() {
         "\n"
         "command:\n"
         "  create                Create rawstor object\n"
+        "  testio                Test rawstor IO routines\n"
         "\n"
         "command options:        Run `<command> --help` to show command usage\n"
     );
@@ -90,6 +92,71 @@ static int command_create(int argc, char **argv) {
 }
 
 
+static void command_testio_usage() {
+    fprintf(
+        stderr,
+        "Rawstor CLI\n"
+        "\n"
+        "usage: rawstor-cli testio [command_options]\n"
+        "\n"
+        "command options:\n"
+        "  -h, --help            Show this help message and exit\n"
+        "  -o, --object-id OBJECT_ID\n"
+        "                        Rawstor object id\n"
+    );
+};
+
+
+static int command_testio(int argc, char **argv) {
+    const char *optstring = "ho:";
+    struct option longopts[] = {
+        {"help", no_argument, NULL, 'h'},
+        {"object-id", required_argument, NULL, 'o'},
+        {},
+    };
+
+    char *object_id_arg = NULL;
+    while (1) {
+        int c = getopt_long(argc, argv, optstring, longopts, NULL);
+        if (c == -1) {
+            break;
+        }
+
+        switch (c) {
+            case 'h':
+                command_testio_usage();
+                return EXIT_SUCCESS;
+                break;
+
+            case 'o':
+                object_id_arg = optarg;
+                break;
+
+            default:
+                return EXIT_FAILURE;
+        }
+    }
+
+    if (optind < argc) {
+        fprintf(stderr, "Unexpected argument: %s\n", argv[optind]);
+        return EXIT_FAILURE;
+    }
+ 
+    if (object_id_arg == NULL) {
+        fprintf(stderr, "object-id required\n");
+        return EXIT_FAILURE;
+    }
+
+    int object_id = 0;
+    if (sscanf(object_id_arg, "%d", &object_id) != 1) {
+        fprintf(stderr, "object-id argument must be integer\n");
+        return EXIT_FAILURE;
+    }
+
+    return rawstor_cli_testio(object_id);
+}
+
+
 int main(int argc, char **argv) {
     const char *optstring = "+h";
     struct option longopts[] = {
@@ -121,6 +188,10 @@ int main(int argc, char **argv) {
     char *command = argv[optind];
     if (strcmp(command, "create") == 0) {
         return command_create(argc - optind, &argv[optind]);
+    }
+
+    if (strcmp(command, "testio") == 0) {
+        return command_testio(argc - optind, &argv[optind]);
     }
 
     printf("Unexpected command: %s\n", command);

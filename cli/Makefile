@@ -19,8 +19,9 @@ LIBS += $(shell PKG_CONFIG_PATH=$(CURDIR)/../src pkg-config --libs rawstor)
 #
 DEPS = ../include/rawstor.h
 
-OBJS = create.o\
-       main.o
+OBJS = create.o \
+       main.o \
+       testio.o
 
 
 ##
