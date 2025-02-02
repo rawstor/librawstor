@@ -1,7 +1,55 @@
 #ifndef RAWSTOR_VHOST_USER_PROTOCOL_H
 #define RAWSTOR_VHOST_USER_PROTOCOL_H
 
+#if defined(__linux__)
 #include <linux/vhost.h>
+#else
+#include <stdint.h>
+
+/* Do we get callbacks when the ring is completely used, even if we've
+ * suppressed them? */
+#define VIRTIO_F_NOTIFY_ON_EMPTY    24
+
+/* We support indirect buffer descriptors */
+#define VIRTIO_RING_F_INDIRECT_DESC 28
+
+/* The Guest publishes the used index for which it expects an interrupt
+ * at the end of the avail ring. Host should ignore the avail->flags field. */
+/* The Host publishes the avail index for which it expects a kick
+ * at the end of the used ring. Guest should ignore the used->flags field. */
+#define VIRTIO_RING_F_EVENT_IDX     29
+
+/* v1.0 compliant. */
+#define VIRTIO_F_VERSION_1      32
+
+/* Log all write descriptors. Can be changed while device is active. */
+#define VHOST_F_LOG_ALL 26
+
+struct vhost_vring_state {
+    unsigned int index;
+    unsigned int num;
+};
+
+struct vhost_vring_addr {
+    unsigned int index;
+    /* Option flags. */
+    unsigned int flags;
+    /* Flag values: */
+    /* Whether log address is valid. If set enables logging. */
+#define VHOST_VRING_F_LOG 0
+
+    /* Start of array of descriptors (virtually contiguous) */
+    uint64_t desc_user_addr;
+    /* Used structure address. Must be 32 bit aligned */
+    uint64_t used_user_addr;
+    /* Available structure address. Must be 16 bit aligned */
+    uint64_t avail_user_addr;
+    /* Logging support. */
+    /* Log writes to used structure, at offset calculated from specified
+     * address. Address must be 32 bit aligned. */
+    uint64_t log_guest_addr;
+};
+#endif
 
 #include <stdint.h>
 
