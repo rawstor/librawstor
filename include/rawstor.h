@@ -7,6 +7,11 @@
 #include <stddef.h>
 
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+
 /**
  * AIO
  */
@@ -119,6 +124,11 @@ int rawstor_object_writev(
     RawstorObject *object, off_t offset,
     struct iovec *iov, unsigned int niov, size_t size,
     rawstor_vector_callback cb, void *data);
+
+
+#ifdef __cplusplus
+}
+#endif
 
 
 #endif // RAWSTOR_H
