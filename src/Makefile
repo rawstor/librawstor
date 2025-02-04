@@ -17,6 +17,7 @@ CFLAGS = -std=gnu99 -Wall -Wextra -Werror -I../include
 #
 DEPS = aio.h \
        backend_mem.h \
+       gcc.h \
        pool.h \
        ../include/rawstor.h
 

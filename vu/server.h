@@ -7,7 +7,4 @@ int rawstor_vu_server(
     const char *socket_path);
 
 
-void foo(void);
-
-
 #endif // RAWSTOR_VU_SERVER_H

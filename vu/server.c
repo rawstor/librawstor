@@ -1,5 +1,6 @@
 #include "server.h"
 
+#include "gcc.h"
 #include "protocol.h"
 
 #include <rawstor.h>
@@ -104,14 +105,10 @@ static int server_write(
 
 
 static int server_read(
-    int client_socket, off_t offset,
-    void *buf, size_t size,
-    ssize_t request_size, void *data)
+    int client_socket, off_t RAWSTOR_VU_UNUSED offset,
+    void *buf, size_t RAWSTOR_VU_UNUSED size,
+    ssize_t request_size, void RAWSTOR_VU_UNUSED *data)
 {
-    (void)(offset);
-    (void)(size);
-    (void)(data);
-
     VhostUserMsg *msg = (VhostUserMsg*)buf;
     if (request_size < 0) {
         errno = -request_size;
@@ -194,13 +191,10 @@ static int server_read(
 
 
 static int server_write(
-    int client_socket, off_t offset,
+    int client_socket, off_t RAWSTOR_VU_UNUSED offset,
     void *buf, size_t buf_size,
-    ssize_t response_size, void *data)
+    ssize_t response_size, void RAWSTOR_VU_UNUSED *data)
 {
-    (void)(offset);
-    (void)(data);
-
     VhostUserMsg *msg = (VhostUserMsg*)buf;
 
     if (response_size < 0) {
@@ -232,16 +226,10 @@ static int server_write(
 
 
 static int server_accept(
-    int fd, off_t offset,
-    void *buf, size_t size,
-    ssize_t client_socket, void *data)
+    int RAWSTOR_VU_UNUSED fd, off_t RAWSTOR_VU_UNUSED offset,
+    void RAWSTOR_VU_UNUSED *buf, size_t RAWSTOR_VU_UNUSED size,
+    ssize_t client_socket, void RAWSTOR_VU_UNUSED *data)
 {
-    (void)(fd);
-    (void)(offset);
-    (void)(buf);
-    (void)(size);
-    (void)(data);
-
     if (client_socket < 0) {
         errno = -client_socket;
         perror("accept() failed");
@@ -316,9 +304,10 @@ static int server_loop(int server_socket) {
 }
 
 
-int rawstor_vu_server(int object_id, const char *socket_path) {
-    (void)(object_id);
-
+int rawstor_vu_server(
+    int RAWSTOR_VU_UNUSED object_id,
+    const char *socket_path)
+{
     int server_socket = socket(AF_UNIX, SOCK_STREAM, 0);
     if (server_socket < 0) {
         perror("socket() failed");
