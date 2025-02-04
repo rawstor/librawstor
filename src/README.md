@@ -6,6 +6,11 @@ Compile with file backend:
 make USE_BACKEND=file
 ```
 
+Compile with ost backend:
+```
+make USE_BACKEND=ost
+```
+
 Compile with liburing io engine:
 ```
 make USE_IOENGINE=liburing

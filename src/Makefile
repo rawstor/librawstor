@@ -30,6 +30,8 @@ REQUIRES =
 
 ifeq ($(USE_BACKEND),file)
     OBJS += object_file.o
+else ifeq ($(USE_BACKEND),ost)
+    OBJS += object_ost.o
 else
     $(error Unexpected BACKEND: $(USE_BACKEND))
 endif
