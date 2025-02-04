@@ -147,7 +147,7 @@ int rawstor_object_readv(
     rawstor_vector_callback cb, void *data)
 {
     ssize_t res;
-    rawstor_debug("readv: offset:%li size:%li niov:%i\n", offset, size, niov);
+    rawstor_debug("readv: offset:%lli size:%li niov:%i\n", offset, size, niov);
     struct msghdr msg;
 
     proto_io_frame_t *frame = malloc(sizeof(proto_io_frame_t));
@@ -156,7 +156,7 @@ int rawstor_object_readv(
     frame->len = size;
     res = write(object->fd, frame, sizeof(proto_io_frame_t));
     rawstor_debug(
-        "Sent request read command offset:%li size:%li, res:%i\n",
+        "Sent request read command offset:%lli size:%li, res:%zi\n",
         offset,
         size,
         res);
@@ -187,7 +187,7 @@ int rawstor_object_readv(
       }
       if (res != rframe->res) {
         rawstor_debug(
-            "Could not read less than needed: %i != %i!\n",
+            "Could not read less than needed: %i != %zi!\n",
             rframe->res,
             res);
         exit(1);
@@ -213,7 +213,7 @@ int rawstor_object_writev(
     struct iovec *iov, unsigned int niov, size_t size,
     rawstor_vector_callback cb, void *data)
 {
-    rawstor_debug("writev: offset:%li size:%li niov:%i\n", offset, size, niov);
+    rawstor_debug("writev: offset:%lld size:%li niov:%i\n", offset, size, niov);
 
     proto_io_frame_t *frame = malloc(sizeof(proto_io_frame_t));
     frame->cmd = CMD_WRITE;
@@ -238,7 +238,7 @@ int rawstor_object_writev(
         exit(1);
     }
     rawstor_debug(
-        "Sent request write command and data, offset:%li size:%li, res:%i\n",
+        "Sent request write command and data, offset:%lld size:%li, res:%zu\n",
         offset,
         size,
         res);
