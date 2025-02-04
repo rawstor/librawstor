@@ -34,11 +34,11 @@ int rawstor_object_create(
     // socket create and verification
     int sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd == -1) {
-        LOG_INFO("socket creation failed...\n");
+        rawstor_info("socket creation failed...\n");
         exit(1);
     }
     else
-        LOG_INFO("Socket successfully created..\n");
+        rawstor_info("Socket successfully created..\n");
     bzero(&servaddr, sizeof(servaddr));
     // assign IP, PORT
     servaddr.sin_family = AF_INET;
@@ -47,11 +47,11 @@ int rawstor_object_create(
     // connect the client socket to server socket
     if (connect(sockfd, (struct sockaddr*)&servaddr, sizeof(servaddr))
         != 0) {
-        LOG_INFO("connection with the server failed...\n");
+        rawstor_info("connection with the server failed...\n");
         exit(1);
     }
     else
-        LOG_INFO("connected to the server..\n");
+        rawstor_info("connected to the server..\n");
 
     char buff[8192];
 
@@ -60,14 +60,14 @@ int rawstor_object_create(
     strlcpy(mframe->var, OBJ_NAME, 10);
     #if LOGLEVEL > 3
     int res = write(sockfd, mframe, sizeof(proto_basic_frame_t));
-    LOG_DEBUG("Sent request to set objid, res:%i\n", res);
+    rawstor_debug("Sent request to set objid, res:%i\n", res);
     #else
     write(sockfd, mframe, sizeof(proto_basic_frame_t));
     #endif
     read(sockfd, buff, sizeof(buff));
     proto_resp_frame_t *rframe = malloc(sizeof(proto_resp_frame_t));
     memcpy(rframe, buff, sizeof(proto_resp_frame_t));
-    LOG_DEBUG("Response from Server: cmd:%i res:%i\n", rframe->cmd, rframe->res);
+    rawstor_debug("Response from Server: cmd:%i res:%i\n", rframe->cmd, rframe->res);
 
     /**
      * FIXME: return real object id.
@@ -120,7 +120,7 @@ int rawstor_readv(
     struct iovec *iov, unsigned int niov)
 {
     int res;
-    LOG_DEBUG("readv: offset:%li size:%li niov:%i\n", offset, size, niov);
+    rawstor_debug("readv: offset:%li size:%li niov:%i\n", offset, size, niov);
     (void)(device);
     struct msghdr msg;
 
@@ -129,14 +129,14 @@ int rawstor_readv(
     frame->offset = offset;
     frame->len = size;
     res = write(sockfd, frame, sizeof(proto_io_frame_t));
-    LOG_DEBUG("Sent request read command offset:%li size:%li, res:%i\n", offset, size, res);
+    rawstor_debug("Sent request read command offset:%li size:%li, res:%i\n", offset, size, res);
 
     proto_resp_frame_t *rframe = malloc(sizeof(proto_resp_frame_t));
     read(sockfd, rframe, sizeof(proto_resp_frame_t));
-    LOG_DEBUG("Read: Response from Server: cmd:%i res:%i\n", rframe->cmd, rframe->res);
+    rawstor_debug("Read: Response from Server: cmd:%i res:%i\n", rframe->cmd, rframe->res);
 
     if (rframe->res != (signed)size) {
-        LOG_DEBUG("Rawstor WARN: read command returned different than asked: %i != %li!\n", rframe->res, size);
+        rawstor_debug("Rawstor WARN: read command returned different than asked: %i != %li!\n", rframe->res, size);
         exit(1);
     }
 
@@ -149,12 +149,12 @@ int rawstor_readv(
         exit(1);
       }
       if (res != rframe->res) {
-        LOG_DEBUG("Could not read less than needed: %i != %i!\n", rframe->res, res);
+        rawstor_debug("Could not read less than needed: %i != %i!\n", rframe->res, res);
         exit(1);
       }
     } else {
       // TODO: handle this case
-      LOG_DEBUG("There was an error on server side, so no data for us\n");
+      rawstor_debug("There was an error on server side, so no data for us\n");
       exit(1);
     }
 
@@ -171,7 +171,7 @@ int rawstor_writev(
     const struct iovec *iov, unsigned int niov)
 {
     (void)(device);
-    LOG_DEBUG("writev: offset:%li size:%li niov:%i\n", offset, size, niov);
+    rawstor_debug("writev: offset:%li size:%li niov:%i\n", offset, size, niov);
 
     proto_io_frame_t *frame = malloc(sizeof(proto_io_frame_t));
     frame->cmd = CMD_WRITE;
@@ -195,11 +195,11 @@ int rawstor_writev(
         perror("writev");
         exit(1);
     }
-    LOG_DEBUG("Sent request write command and data, offset:%li size:%li, res:%i\n", offset, size, res);
+    rawstor_debug("Sent request write command and data, offset:%li size:%li, res:%i\n", offset, size, res);
 
     proto_resp_frame_t *rframe = malloc(sizeof(proto_resp_frame_t));
     read(sockfd, rframe, sizeof(proto_resp_frame_t));
-    LOG_DEBUG("Write: Response from Server: cmd:%i res:%i\n", rframe->cmd, rframe->res);
+    rawstor_debug("Write: Response from Server: cmd:%i res:%i\n", rframe->cmd, rframe->res);
 
     free(frame);
     free(rframe);
