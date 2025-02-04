@@ -78,9 +78,7 @@ int rawstor_object_create(
 }
 
 
-int rawstor_object_delete(int object_id) {
-    (void)(object_id);
-
+int rawstor_object_delete(int RAWSTOR_UNUSED object_id) {
     fprintf(stderr, "rawstor_object_delete() not implemented\n");
     exit(1);
 
@@ -88,24 +86,24 @@ int rawstor_object_delete(int object_id) {
 }
 
 
-int rawstor_open(int device_id, RawstorDevice **device) {
+int rawstor_open(int device_id, RawstorObject **object) {
     assert(device_id == 1);
     assert(_device != NULL);
 
-    *device = _device;
+    *object = _device;
 
     return 0;
 }
 
 
-int rawstor_close(RawstorDevice *device) {
-    assert(device != NULL);
+int rawstor_close(RawstorObject *object) {
+    assert(object != NULL);
 
     return 0;
 }
 
 
-int rawstor_spec(int device_id, struct RawstorDeviceSpec *spec) {
+int rawstor_spec(int device_id, struct RawstorObjectSpec *spec) {
     assert(device_id == 1);
     assert(_device != NULL);
 
@@ -115,13 +113,12 @@ int rawstor_spec(int device_id, struct RawstorDeviceSpec *spec) {
 }
 
 int rawstor_readv(
-    RawstorDevice *device,
+    RawstorObject RAWSTOR_UNUSED *object,
     size_t offset, size_t size,
     struct iovec *iov, unsigned int niov)
 {
     int res;
     rawstor_debug("readv: offset:%li size:%li niov:%i\n", offset, size, niov);
-    (void)(device);
     struct msghdr msg;
 
     proto_io_frame_t *frame = malloc(sizeof(proto_io_frame_t));
@@ -166,11 +163,10 @@ int rawstor_readv(
 }
 
 int rawstor_writev(
-    RawstorDevice *device,
+    RawstorObject RAWSTOR_UNUSED *object,
     size_t offset, size_t size,
     const struct iovec *iov, unsigned int niov)
 {
-    (void)(device);
     rawstor_debug("writev: offset:%li size:%li niov:%i\n", offset, size, niov);
 
     proto_io_frame_t *frame = malloc(sizeof(proto_io_frame_t));
