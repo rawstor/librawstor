@@ -9,4 +9,7 @@
 #endif
 
 
+#define RAWSTOR_PACKED __attribute__((packed))
+
+
 #endif // RAWSTOR_GCC_H
