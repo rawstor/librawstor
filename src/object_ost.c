@@ -67,7 +67,10 @@ int rawstor_object_create(
     read(sockfd, buff, sizeof(buff));
     proto_resp_frame_t *rframe = malloc(sizeof(proto_resp_frame_t));
     memcpy(rframe, buff, sizeof(proto_resp_frame_t));
-    rawstor_debug("Response from Server: cmd:%i res:%i\n", rframe->cmd, rframe->res);
+    rawstor_debug(
+        "Response from Server: cmd:%i res:%i\n",
+        rframe->cmd,
+        rframe->res);
 
     /**
      * FIXME: return real object id.
@@ -126,14 +129,25 @@ int rawstor_readv(
     frame->offset = offset;
     frame->len = size;
     res = write(sockfd, frame, sizeof(proto_io_frame_t));
-    rawstor_debug("Sent request read command offset:%li size:%li, res:%i\n", offset, size, res);
+    rawstor_debug(
+        "Sent request read command offset:%li size:%li, res:%i\n",
+        offset,
+        size,
+        res);
 
     proto_resp_frame_t *rframe = malloc(sizeof(proto_resp_frame_t));
     read(sockfd, rframe, sizeof(proto_resp_frame_t));
-    rawstor_debug("Read: Response from Server: cmd:%i res:%i\n", rframe->cmd, rframe->res);
+    rawstor_debug(
+        "Read: Response from Server: cmd:%i res:%i\n",
+        rframe->cmd,
+        rframe->res);
 
     if (rframe->res != (signed)size) {
-        rawstor_debug("Rawstor WARN: read command returned different than asked: %i != %li!\n", rframe->res, size);
+        rawstor_debug(
+            "Rawstor WARN: read command returned different than asked: "
+            "%i != %li!\n",
+            rframe->res,
+            size);
         exit(1);
     }
 
@@ -146,7 +160,10 @@ int rawstor_readv(
         exit(1);
       }
       if (res != rframe->res) {
-        rawstor_debug("Could not read less than needed: %i != %i!\n", rframe->res, res);
+        rawstor_debug(
+            "Could not read less than needed: %i != %i!\n",
+            rframe->res,
+            res);
         exit(1);
       }
     } else {
@@ -191,11 +208,18 @@ int rawstor_writev(
         perror("writev");
         exit(1);
     }
-    rawstor_debug("Sent request write command and data, offset:%li size:%li, res:%i\n", offset, size, res);
+    rawstor_debug(
+        "Sent request write command and data, offset:%li size:%li, res:%i\n",
+        offset,
+        size,
+        res);
 
     proto_resp_frame_t *rframe = malloc(sizeof(proto_resp_frame_t));
     read(sockfd, rframe, sizeof(proto_resp_frame_t));
-    rawstor_debug("Write: Response from Server: cmd:%i res:%i\n", rframe->cmd, rframe->res);
+    rawstor_debug(
+        "Write: Response from Server: cmd:%i res:%i\n",
+        rframe->cmd,
+        rframe->res);
 
     free(frame);
     free(rframe);
