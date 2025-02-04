@@ -17,7 +17,8 @@ LIBS += $(shell PKG_CONFIG_PATH=$(CURDIR)/../src pkg-config --libs rawstor)
 ##
 # Sources
 #
-DEPS = protocol.h \
+DEPS = gcc.h \
+       protocol.h \
        server.h \
        ../include/rawstor.h
 

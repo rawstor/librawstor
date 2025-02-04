@@ -54,7 +54,7 @@ struct vhost_vring_addr {
 #include <stdint.h>
 
 
-#define VU_PACKED __attribute__((packed))
+#define RAWSTOR_VU_PACKED __attribute__((packed))
 
 /* Based on qemu/hw/virtio/vhost-user.c */
 #define VHOST_USER_F_PROTOCOL_FEATURES 30
@@ -224,7 +224,7 @@ typedef struct VhostUserMsg {
     int fds[VHOST_MEMORY_BASELINE_NREGIONS];
     int fd_num;
     uint8_t *data;
-} VU_PACKED VhostUserMsg;
+} RAWSTOR_VU_PACKED VhostUserMsg;
 
 
 #endif // RAWSTOR_VHOST_SERVER_H
