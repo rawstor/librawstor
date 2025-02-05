@@ -60,6 +60,24 @@ int rawstor_object_create(
     struct RawstorObjectSpec RAWSTOR_UNUSED spec,
     int *object_id)
 {
+    /**
+     * TODO: Implement me.
+     */
+    *object_id = 1;
+
+    return 0;
+}
+
+
+int rawstor_object_delete(int RAWSTOR_UNUSED object_id) {
+    fprintf(stderr, "rawstor_object_delete() not implemented\n");
+    exit(1);
+
+    return 0;
+}
+
+
+int rawstor_object_open(int RAWSTOR_UNUSED object_id, RawstorObject **object) {
     int fd = ost_connect();
 
     char buff[8192];
@@ -80,28 +98,6 @@ int rawstor_object_create(
         "Response from Server: cmd:%i res:%i\n",
         rframe->cmd,
         rframe->res);
-
-    close(fd);
-
-    /**
-     * FIXME: return real object id.
-     */
-    *object_id = 1;
-
-    return 0;
-}
-
-
-int rawstor_object_delete(int RAWSTOR_UNUSED object_id) {
-    fprintf(stderr, "rawstor_object_delete() not implemented\n");
-    exit(1);
-
-    return 0;
-}
-
-
-int rawstor_object_open(int RAWSTOR_UNUSED object_id, RawstorObject **object) {
-    int fd = ost_connect();
 
     RawstorObject *ret = malloc(sizeof(RawstorObject));
     ret->fd = fd;
