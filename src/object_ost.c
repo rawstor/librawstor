@@ -137,8 +137,7 @@ int rawstor_object_spec(
 
 
 int rawstor_object_readv(
-    RawstorObject *object,
-    off_t offset,
+    RawstorObject *object, off_t offset,
     struct iovec *iov, unsigned int niov, size_t size,
     rawstor_vector_callback cb, void *data)
 {
@@ -165,8 +164,8 @@ int rawstor_object_readv(
         rframe->res);
 
     if (rframe->res != (signed)size) {
-        rawstor_debug(
-            "Rawstor WARN: read command returned different than asked: "
+        rawstor_warning(
+            "read command returned different than asked: "
             "%i != %li!\n",
             rframe->res,
             size);
