@@ -16,37 +16,39 @@ typedef enum {
     CMD_READ,
     CMD_WRITE,
     CMD_DISCARD,
-} commands_t;
+} RawstorOSTCommandType;
 
 
 /* Just for basic validation only */
 typedef struct {
-    commands_t cmd;
-} RAWSTOR_PACKED proto_cmdonly_frame_t;
+    RawstorOSTCommandType cmd;
+} RAWSTOR_PACKED RawstorOSTFrameCmdOnly;
 
 
 /* Minimalistic protocol frame */
 typedef struct {
-    commands_t cmd;
-    // var is for minimal commands only, will be overridden in other command structs
+    RawstorOSTCommandType cmd;
+    // var is for minimal commands only,
+    // will be overridden in other command structs
     char var[MIN_CMD_VAR_LEN];
-} RAWSTOR_PACKED proto_basic_frame_t;
+} RAWSTOR_PACKED RawstorOSTFrameBasic;
 
 
 typedef struct {
-    commands_t cmd;
+    RawstorOSTCommandType cmd;
     u_int64_t offset;
     u_int32_t len;
     bool sync;
-} RAWSTOR_PACKED proto_io_frame_t;
+} RAWSTOR_PACKED RawstorOSTFrameIO;
 
 
 /* response frames */
 typedef struct {
-    commands_t cmd;
-    // TODO: if we send length in res - it should be the same type (signed-unsigned too)
+    RawstorOSTCommandType cmd;
+    // TODO: if we send length in res - it should be the same type
+    // (signed-unsigned too)
     int32_t res;
-} RAWSTOR_PACKED proto_resp_frame_t;
+} RAWSTOR_PACKED RawstorOSTFrameResponse;
 
 
 #endif // RAWSTOR_OST_PROTOCOL_H
