@@ -136,6 +136,76 @@ int rawstor_object_spec(
 }
 
 
+int rawstor_object_read(
+    RawstorObject *object,
+    off_t offset,
+    void *buf, size_t size,
+    rawstor_linear_callback cb, void *data)
+{
+    ssize_t res;
+    rawstor_debug("read: offset:%lli size:%li\n", offset, size);
+    struct msghdr msg;
+    struct iovec iov;
+
+    RawstorOSTFrameIO *frame = malloc(sizeof(RawstorOSTFrameIO));
+    frame->cmd = CMD_READ;
+    frame->offset = offset;
+    frame->len = size;
+    res = write(object->fd, frame, sizeof(RawstorOSTFrameIO));
+    rawstor_debug(
+        "Sent request read command offset:%lli size:%li, res:%zi\n",
+        offset,
+        size,
+        res);
+
+    RawstorOSTFrameResponse *rframe = malloc(sizeof(RawstorOSTFrameResponse));
+    res = read(object->fd, rframe, sizeof(RawstorOSTFrameResponse));
+    rawstor_debug(
+        "Read: Response from Server: cmd:%i res:%i\n",
+        rframe->cmd,
+        rframe->res);
+
+    if (rframe->res != (signed)size) {
+        rawstor_warning(
+            "read command returned different than asked: "
+            "%i != %li!\n",
+            rframe->res,
+            size);
+        exit(1);
+    }
+
+    if (rframe->res >= 0) {
+        iov.iov_base = buf;
+        iov.iov_len = size;
+        msg.msg_iov = &iov;
+        msg.msg_iovlen = 1;
+        res = recvmsg(object->fd, &msg, MSG_WAITALL);
+        if (res<=0) {
+            perror("read");
+            exit(1);
+        }
+        if (res != rframe->res) {
+            rawstor_debug(
+                "Could not read less than needed: %i != %zi!\n",
+                rframe->res,
+                res);
+            exit(1);
+        }
+    } else {
+      // TODO: handle this case
+      rawstor_debug("There was an error on server side, so no data for us\n");
+      exit(1);
+    }
+
+    free(frame);
+    free(rframe);
+
+    cb(object, offset, buf, size, res, data);
+
+    return 0;
+}
+
+
 int rawstor_object_readv(
     RawstorObject *object, off_t offset,
     struct iovec *iov, unsigned int niov, size_t size,
@@ -202,6 +272,56 @@ int rawstor_object_readv(
 }
 
 
+int rawstor_object_write(
+    RawstorObject *object,
+    off_t offset,
+    void *buf, size_t size,
+    rawstor_linear_callback cb, void *data)
+{
+    rawstor_debug("write: offset:%lld size:%li", offset, size);
+
+    RawstorOSTFrameIO *frame = malloc(sizeof(RawstorOSTFrameIO));
+    frame->cmd = CMD_WRITE;
+    frame->offset = offset;
+    frame->len = size;
+    frame->sync = 0;
+
+    //hack to prepend command frame
+    struct iovec miovecs[2];
+
+    miovecs[0].iov_base = frame;
+    miovecs[0].iov_len = sizeof(RawstorOSTFrameIO);
+
+    miovecs[1].iov_base = buf;
+    miovecs[1].iov_len = size;
+
+    ssize_t res = writev(object->fd, miovecs, 2);
+    if (res <= 0) {
+        perror("writev");
+        exit(1);
+    }
+    rawstor_debug(
+        "Sent request write command and data, offset:%lld size:%li, res:%zu\n",
+        offset,
+        size,
+        res);
+
+    RawstorOSTFrameResponse *rframe = malloc(sizeof(RawstorOSTFrameResponse));
+    read(object->fd, rframe, sizeof(RawstorOSTFrameResponse));
+    rawstor_debug(
+        "Write: Response from Server: cmd:%i res:%i\n",
+        rframe->cmd,
+        rframe->res);
+
+    free(frame);
+    free(rframe);
+
+    cb(object, offset, buf, size, res, data);
+
+    return 0;
+}
+
+
 int rawstor_object_writev(
     RawstorObject *object,
     off_t offset,
@@ -227,7 +347,7 @@ int rawstor_object_writev(
     miovecs[0].iov_base = frame;
     miovecs[0].iov_len = sizeof(RawstorOSTFrameIO);
 
-    size_t res = writev(object->fd, miovecs, niov+1);
+    ssize_t res = writev(object->fd, miovecs, niov+1);
     if (res<=0) {
         perror("writev");
         exit(1);
@@ -239,7 +359,7 @@ int rawstor_object_writev(
         res);
 
     RawstorOSTFrameResponse *rframe = malloc(sizeof(RawstorOSTFrameResponse));
-    res = read(object->fd, rframe, sizeof(RawstorOSTFrameResponse));
+    read(object->fd, rframe, sizeof(RawstorOSTFrameResponse));
     rawstor_debug(
         "Write: Response from Server: cmd:%i res:%i\n",
         rframe->cmd,
