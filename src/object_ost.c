@@ -148,6 +148,9 @@ int rawstor_object_read(
     struct iovec iov;
 
     RawstorOSTFrameIO *frame = malloc(sizeof(RawstorOSTFrameIO));
+    if (frame == NULL) {
+        return -errno;
+    }
     frame->cmd = CMD_READ;
     frame->offset = offset;
     frame->len = size;
@@ -216,6 +219,9 @@ int rawstor_object_readv(
     struct msghdr msg;
 
     RawstorOSTFrameIO *frame = malloc(sizeof(RawstorOSTFrameIO));
+    if (frame == NULL) {
+        return -errno;
+    }
     frame->cmd = CMD_READ;
     frame->offset = offset;
     frame->len = size;
@@ -278,9 +284,12 @@ int rawstor_object_write(
     void *buf, size_t size,
     rawstor_linear_callback cb, void *data)
 {
-    rawstor_debug("write: offset:%lld size:%li", offset, size);
+    rawstor_debug("write: offset:%lld size:%li\n", offset, size);
 
     RawstorOSTFrameIO *frame = malloc(sizeof(RawstorOSTFrameIO));
+    if (frame == NULL) {
+        return -errno;
+    }
     frame->cmd = CMD_WRITE;
     frame->offset = offset;
     frame->len = size;
@@ -296,9 +305,9 @@ int rawstor_object_write(
     miovecs[1].iov_len = size;
 
     ssize_t res = writev(object->fd, miovecs, 2);
-    if (res <= 0) {
-        perror("writev");
-        exit(1);
+    if (res < 0) {
+        free(frame);
+        return -errno;
     }
     rawstor_debug(
         "Sent request write command and data, offset:%lld size:%li, res:%zu\n",
@@ -307,7 +316,12 @@ int rawstor_object_write(
         res);
 
     RawstorOSTFrameResponse *rframe = malloc(sizeof(RawstorOSTFrameResponse));
+    if (rframe == NULL) {
+        free(frame);
+        return -errno;
+    }
     read(object->fd, rframe, sizeof(RawstorOSTFrameResponse));
+    // TODO: handle read rval ^^^
     rawstor_debug(
         "Write: Response from Server: cmd:%i res:%i\n",
         rframe->cmd,
@@ -331,6 +345,9 @@ int rawstor_object_writev(
     rawstor_debug("writev: offset:%lld size:%li niov:%i\n", offset, size, niov);
 
     RawstorOSTFrameIO *frame = malloc(sizeof(RawstorOSTFrameIO));
+    if (frame == NULL) {
+        return -errno;
+    }
     frame->cmd = CMD_WRITE;
     frame->offset = offset;
     frame->len = size;
@@ -339,7 +356,7 @@ int rawstor_object_writev(
     //hack to prepend command frame
     struct iovec miovecs[niov+1];
 
-    for (size_t i = 0; i < niov; i++) {
+    for (size_t i = 0; i < niov; ++i) {
         miovecs[i+1].iov_base = iov[i].iov_base;
         miovecs[i+1].iov_len = iov[i].iov_len;
     }
@@ -347,10 +364,10 @@ int rawstor_object_writev(
     miovecs[0].iov_base = frame;
     miovecs[0].iov_len = sizeof(RawstorOSTFrameIO);
 
-    ssize_t res = writev(object->fd, miovecs, niov+1);
-    if (res<=0) {
-        perror("writev");
-        exit(1);
+    ssize_t res = writev(object->fd, miovecs, niov + 1);
+    if (res < 0) {
+        free(frame);
+        return -errno;
     }
     rawstor_debug(
         "Sent request write command and data, offset:%lld size:%li, res:%zu\n",
@@ -359,6 +376,10 @@ int rawstor_object_writev(
         res);
 
     RawstorOSTFrameResponse *rframe = malloc(sizeof(RawstorOSTFrameResponse));
+    if (rframe == NULL) {
+        free(frame);
+        return -errno;
+    }
     read(object->fd, rframe, sizeof(RawstorOSTFrameResponse));
     rawstor_debug(
         "Write: Response from Server: cmd:%i res:%i\n",
