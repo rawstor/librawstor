@@ -46,6 +46,11 @@ int rawstor_fd_readv(
     struct iovec *iov, unsigned int niov, size_t size,
     rawstor_fd_vector_callback cb, void *data);
 
+int rawstor_sock_recv(
+    int sock, int flags,
+    void *buf, size_t size,
+    rawstor_fd_callback cb, void *data);
+
 int rawstor_fd_write(
     int fd, off_t offset,
     void *buf, size_t size,
@@ -55,6 +60,11 @@ int rawstor_fd_writev(
     int fd, off_t offset,
     struct iovec *iov, unsigned int niov, size_t size,
     rawstor_fd_vector_callback cb, void *data);
+
+int rawstor_sock_send(
+    int sock, int flags,
+    void *buf, size_t size,
+    rawstor_fd_callback cb, void *data);
 
 
 /**

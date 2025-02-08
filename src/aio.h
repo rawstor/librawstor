@@ -52,6 +52,12 @@ int rawstor_aio_readv(
     struct iovec *iov, unsigned int niov, size_t size,
     rawstor_fd_vector_callback cb, void *data);
 
+int rawstor_aio_recv(
+    RawstorAIO *aio,
+    int sock, int flags,
+    void *buf, size_t size,
+    rawstor_fd_callback cb, void *data);
+
 int rawstor_aio_write(
     RawstorAIO *aio,
     int fd, off_t offset,
@@ -63,6 +69,12 @@ int rawstor_aio_writev(
     int fd, off_t offset,
     struct iovec *iov, unsigned int niov, size_t size,
     rawstor_fd_vector_callback cb, void *data);
+
+int rawstor_aio_send(
+    RawstorAIO *aio,
+    int sock, int flags,
+    void *buf, size_t size,
+    rawstor_fd_callback cb, void *data);
 
 
 RawstorAIOEvent* rawstor_aio_wait_event(RawstorAIO *aio);

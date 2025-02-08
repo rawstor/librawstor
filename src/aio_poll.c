@@ -11,8 +11,25 @@
 #include <unistd.h>
 
 
+typedef enum RawstorAIOEventType {
+    RAWSTOR_AIO_ACCEPT,
+
+    RAWSTOR_AIO_READ,
+    RAWSTOR_AIO_READV,
+    RAWSTOR_AIO_RECV,
+
+    RAWSTOR_AIO_WRITE,
+    RAWSTOR_AIO_WRITEV,
+    RAWSTOR_AIO_SEND,
+} RawstorAIOEventType;
+
+
 struct RawstorAIOEvent {
+    RawstorAIOEventType type;
+    struct pollfd *fd;
     off_t offset;
+    int flags;
+
     union {
         struct {
             void *data;
@@ -24,11 +41,13 @@ struct RawstorAIOEvent {
             size_t size;
         } vector;
     } buffer;
+
     rawstor_fd_callback linear_callback;
     rawstor_fd_vector_callback vector_callback;
+
     ssize_t res;
+
     void *data;
-    struct pollfd *fd;
 };
 
 
@@ -50,10 +69,12 @@ static RawstorAIOEvent* aio_process_event(RawstorAIO *aio) {
 
         RawstorAIOEvent *event = &aio->events[i];
         if (fd->revents & POLLIN) {
-            // TODO: Assert that event is read?
-            // TODO: Optimize offset = 0 check
-            if (event->linear_callback != NULL) {
-                if (event->buffer.linear.data != NULL) {
+            switch (event->type) {
+                case RAWSTOR_AIO_ACCEPT:
+                    event->res = accept(fd->fd, NULL, NULL);
+                    break;
+                case RAWSTOR_AIO_READ:
+                    // TODO: Optimize offset = 0 check
                     if (event->offset != 0) {
                         event->res = pread(
                             fd->fd,
@@ -66,55 +87,78 @@ static RawstorAIOEvent* aio_process_event(RawstorAIO *aio) {
                             event->buffer.linear.data,
                             event->buffer.linear.size);
                     }
-                } else {
-                    event->res = accept(fd->fd, NULL, NULL);
-                }
-            } else {
-                if (event->offset != 0) {
-                    event->res = preadv(
+                    break;
+                case RAWSTOR_AIO_READV:
+                    // TODO: Optimize offset = 0 check
+                    if (event->offset != 0) {
+                        event->res = preadv(
+                            fd->fd,
+                            event->buffer.vector.iov,
+                            event->buffer.vector.niov,
+                            event->offset);
+                    } else {
+                        event->res = readv(
+                            fd->fd,
+                            event->buffer.vector.iov,
+                            event->buffer.vector.niov);
+                    }
+                    break;
+                case RAWSTOR_AIO_RECV:
+                    event->res = recv(
                         fd->fd,
-                        event->buffer.vector.iov,
-                        event->buffer.vector.niov,
-                        event->offset);
-                } else {
-                    event->res = readv(
-                        fd->fd,
-                        event->buffer.vector.iov,
-                        event->buffer.vector.niov);
-                }
+                        event->buffer.linear.data,
+                        event->buffer.linear.size,
+                        event->flags);
+                    break;
+                default:
+                    // TODO: Assert that event is read?
+                    break;
             }
             return event;
         }
 
         if (fd->revents & POLLOUT) {
-            // TODO: Assert that event is write?
-            // TODO: Optimize offset = 0 check
-            if (event->linear_callback != NULL) {
-                if (event->offset != 0) {
-                    event->res = pwrite(
+            switch (event->type) {
+                case RAWSTOR_AIO_WRITE:
+                    // TODO: Optimize offset = 0 check
+                    if (event->offset != 0) {
+                        event->res = pwrite(
+                            fd->fd,
+                            event->buffer.linear.data,
+                            event->buffer.linear.size,
+                            event->offset);
+                    } else {
+                        event->res = write(
+                            fd->fd,
+                            event->buffer.linear.data,
+                            event->buffer.linear.size);
+                    }
+                    break;
+                case RAWSTOR_AIO_WRITEV:
+                    // TODO: Optimize offset = 0 check
+                    if (event->offset != 0) {
+                        event->res = pwritev(
+                            fd->fd,
+                            event->buffer.vector.iov,
+                            event->buffer.vector.niov,
+                            event->offset);
+                    } else {
+                        event->res = writev(
+                            fd->fd,
+                            event->buffer.vector.iov,
+                            event->buffer.vector.niov);
+                    }
+                    break;
+                case RAWSTOR_AIO_SEND:
+                    event->res = send(
                         fd->fd,
                         event->buffer.linear.data,
                         event->buffer.linear.size,
-                        event->offset);
-                } else {
-                    event->res = write(
-                        fd->fd,
-                        event->buffer.linear.data,
-                        event->buffer.linear.size);
-                }
-            } else {
-                if (event->offset != 0) {
-                    event->res = pwritev(
-                        fd->fd,
-                        event->buffer.vector.iov,
-                        event->buffer.vector.niov,
-                        event->offset);
-                } else {
-                    event->res = writev(
-                        fd->fd,
-                        event->buffer.vector.iov,
-                        event->buffer.vector.niov);
-                }
+                        event->flags);
+                    break;
+                default:
+                    // TODO: Assert that event is write?
+                    break;
             }
             return event;
         }
@@ -177,17 +221,24 @@ int rawstor_aio_accept(
     RawstorAIOEvent *event = rawstor_pool_alloc(aio->events_pool);
     struct pollfd *pollfd = rawstor_pool_alloc(aio->fds_pool);
 
-    event->offset = 0;
-    event->buffer.linear.data = NULL;
-    event->buffer.linear.size = 0;
-    event->linear_callback = cb;
-    event->vector_callback = NULL;
-    event->data = data;
-    event->fd = pollfd;
+    *event = (RawstorAIOEvent) {
+        .type = RAWSTOR_AIO_ACCEPT,
+        .fd = pollfd,
+        .offset = 0,
+        .flags = 0,
+        .buffer.linear.data = NULL,
+        .buffer.linear.size = 0,
+        .linear_callback = cb,
+        .vector_callback = NULL,
+        .res = 0,
+        .data = data,
+    };
 
-    pollfd->fd = fd;
-    pollfd->events = POLLIN;
-    pollfd->revents = 0;
+    *pollfd = (struct pollfd) {
+        .fd = fd,
+        .events = POLLIN,
+        .revents = 0,
+    };
 
     return 0;
 }
@@ -206,17 +257,24 @@ int rawstor_aio_read(
     RawstorAIOEvent *event = rawstor_pool_alloc(aio->events_pool);
     struct pollfd *pollfd = rawstor_pool_alloc(aio->fds_pool);
 
-    event->offset = offset;
-    event->buffer.linear.data = buf;
-    event->buffer.linear.size = size;
-    event->linear_callback = cb;
-    event->vector_callback = NULL;
-    event->data = data;
-    event->fd = pollfd;
+    *event = (RawstorAIOEvent) {
+        .type = RAWSTOR_AIO_READ,
+        .fd = pollfd,
+        .offset = offset,
+        .flags = 0,
+        .buffer.linear.data = buf,
+        .buffer.linear.size = size,
+        .linear_callback = cb,
+        .vector_callback = NULL,
+        .res = 0,
+        .data = data,
+    };
 
-    pollfd->fd = fd;
-    pollfd->events = POLLIN;
-    pollfd->revents = 0;
+    *pollfd = (struct pollfd) {
+        .fd = fd,
+        .events = POLLIN,
+        .revents = 0,
+    };
 
     return 0;
 }
@@ -235,18 +293,61 @@ int rawstor_aio_readv(
     RawstorAIOEvent *event = rawstor_pool_alloc(aio->events_pool);
     struct pollfd *pollfd = rawstor_pool_alloc(aio->fds_pool);
 
-    event->offset = offset;
-    event->buffer.vector.iov = iov;
-    event->buffer.vector.niov = niov;
-    event->buffer.vector.size = size;
-    event->linear_callback = NULL;
-    event->vector_callback = cb;
-    event->data = data;
-    event->fd = pollfd;
+    *event = (RawstorAIOEvent) {
+        .type = RAWSTOR_AIO_READV,
+        .fd = pollfd,
+        .offset = offset,
+        .flags = 0,
+        .buffer.vector.iov = iov,
+        .buffer.vector.niov = niov,
+        .buffer.vector.size = size,
+        .linear_callback = NULL,
+        .vector_callback = cb,
+        .res = 0,
+        .data = data,
+    };
 
-    pollfd->fd = fd;
-    pollfd->events = POLLIN;
-    pollfd->revents = 0;
+    *pollfd = (struct pollfd) {
+        .fd = fd,
+        .events = POLLIN,
+        .revents = 0,
+    };
+
+    return 0;
+}
+
+
+int rawstor_aio_recv(
+    RawstorAIO *aio,
+    int sock, int flags,
+    void *buf, size_t size,
+    rawstor_fd_callback cb, void *data)
+{
+    if (rawstor_pool_count(aio->events_pool) == 0) {
+        errno = ENOBUFS;
+        return -errno;
+    }
+    RawstorAIOEvent *event = rawstor_pool_alloc(aio->events_pool);
+    struct pollfd *pollfd = rawstor_pool_alloc(aio->fds_pool);
+
+    *event = (struct RawstorAIOEvent) {
+        .type = RAWSTOR_AIO_RECV,
+        .fd = pollfd,
+        .offset = 0,
+        .flags = flags,
+        .buffer.linear.data = buf,
+        .buffer.linear.size = size,
+        .linear_callback = cb,
+        .vector_callback = NULL,
+        .res = 0,
+        .data = data,
+    };
+
+    *pollfd = (struct pollfd) {
+        .fd = sock,
+        .events = POLLIN,
+        .revents = 0,
+    };
 
     return 0;
 }
@@ -265,17 +366,24 @@ int rawstor_aio_write(
     RawstorAIOEvent *event = rawstor_pool_alloc(aio->events_pool);
     struct pollfd *pollfd = rawstor_pool_alloc(aio->fds_pool);
 
-    event->offset = offset;
-    event->buffer.linear.data = buf;
-    event->buffer.linear.size = size;
-    event->linear_callback = cb;
-    event->vector_callback = NULL;
-    event->data = data;
-    event->fd = pollfd;
+    *event = (RawstorAIOEvent) {
+        .type = RAWSTOR_AIO_WRITE,
+        .fd = pollfd,
+        .offset = offset,
+        .flags = 0,
+        .buffer.linear.data = buf,
+        .buffer.linear.size = size,
+        .linear_callback = cb,
+        .vector_callback = NULL,
+        .res = 0,
+        .data = data,
+    };
 
-    pollfd->fd = fd;
-    pollfd->events = POLLOUT;
-    pollfd->revents = 0;
+    *pollfd = (struct pollfd) {
+        .fd = fd,
+        .events = POLLOUT,
+        .revents = 0,
+    };
 
     return 0;
 }
@@ -294,18 +402,61 @@ int rawstor_aio_writev(
     RawstorAIOEvent *event = rawstor_pool_alloc(aio->events_pool);
     struct pollfd *pollfd = rawstor_pool_alloc(aio->fds_pool);
 
-    event->offset = offset;
-    event->buffer.vector.iov = iov;
-    event->buffer.vector.niov = niov;
-    event->buffer.vector.size = size;
-    event->linear_callback = NULL;
-    event->vector_callback = cb;
-    event->data = data;
-    event->fd = pollfd;
+    *event = (RawstorAIOEvent) {
+        .type = RAWSTOR_AIO_WRITEV,
+        .fd = pollfd,
+        .offset = offset,
+        .flags = 0,
+        .buffer.vector.iov = iov,
+        .buffer.vector.niov = niov,
+        .buffer.vector.size = size,
+        .linear_callback = NULL,
+        .vector_callback = cb,
+        .res = 0,
+        .data = data,
+    };
 
-    pollfd->fd = fd;
-    pollfd->events = POLLOUT;
-    pollfd->revents = 0;
+    *pollfd = (struct pollfd) {
+        .fd = fd,
+        .events = POLLOUT,
+        .revents = 0,
+    };
+
+    return 0;
+}
+
+
+int rawstor_aio_send(
+    RawstorAIO *aio,
+    int sock, int flags,
+    void *buf, size_t size,
+    rawstor_fd_callback cb, void *data)
+{
+    if (rawstor_pool_count(aio->events_pool) == 0) {
+        errno = ENOBUFS;
+        return -errno;
+    }
+    RawstorAIOEvent *event = rawstor_pool_alloc(aio->events_pool);
+    struct pollfd *pollfd = rawstor_pool_alloc(aio->fds_pool);
+
+    *event = (struct RawstorAIOEvent) {
+        .type = RAWSTOR_AIO_SEND,
+        .fd = pollfd,
+        .offset = 0,
+        .flags = flags,
+        .buffer.linear.data = buf,
+        .buffer.linear.size = size,
+        .linear_callback = cb,
+        .vector_callback = NULL,
+        .res = 0,
+        .data = data,
+    };
+
+    *pollfd = (struct pollfd) {
+        .fd = sock,
+        .events = POLLOUT,
+        .revents = 0,
+    };
 
     return 0;
 }

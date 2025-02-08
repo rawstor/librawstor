@@ -168,7 +168,7 @@ static int responsev_body_received(
 
 static int response_header_received(
     int fd, off_t RAWSTOR_UNUSED offset,
-    void *buf, size_t size,
+    void RAWSTOR_UNUSED *buf, size_t size,
     ssize_t res, void *data)
 {
     rawstor_operation_trace(fd, res, size);
@@ -177,11 +177,12 @@ static int response_header_received(
         return res;
     }
 
-    if ((size_t)res < size) {
-        return rawstor_fd_read(
-            fd, 0,
-            buf + res, size - res,
-            response_header_received, data);
+    if ((size_t)res != size) {
+        rawstor_error(
+            "Header size missmatch: %zu != %zu\n",
+            (size_t)res, size);
+        errno = EIO;
+        return -errno;
     }
 
     RawstorObjectOperation *op = (RawstorObjectOperation*)data;
@@ -247,8 +248,8 @@ static int request_body_sent(
 
     RawstorObjectOperation *op = (RawstorObjectOperation*)data;
 
-    return rawstor_fd_read(
-        fd, 0,
+    return rawstor_sock_recv(
+        fd, MSG_WAITALL,
         &op->response_frame, sizeof(op->response_frame),
         response_header_received, op);
 }

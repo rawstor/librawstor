@@ -85,6 +85,19 @@ int rawstor_fd_readv(
 }
 
 
+int rawstor_sock_recv(
+    int sock, int flags,
+    void *buf, size_t size,
+    rawstor_fd_callback cb, void *data)
+{
+    return rawstor_aio_recv(
+        rawstor_aio,
+        sock, flags,
+        buf, size,
+        cb, data);
+}
+
+
 int rawstor_fd_write(
     int fd, off_t offset,
     void *buf, size_t size,
@@ -107,5 +120,18 @@ int rawstor_fd_writev(
         rawstor_aio,
         fd, offset,
         iov, niov, size,
+        cb, data);
+}
+
+
+int rawstor_sock_send(
+    int sock, int flags,
+    void *buf, size_t size,
+    rawstor_fd_callback cb, void *data)
+{
+    return rawstor_aio_send(
+        rawstor_aio,
+        sock, flags,
+        buf, size,
         cb, data);
 }
