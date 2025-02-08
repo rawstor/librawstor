@@ -30,7 +30,7 @@ typedef struct RawstorObjectTransaction {
     union {
         rawstor_linear_callback linear_callback;
         rawstor_vector_callback vector_callback;
-    } cb;
+    } callback;
     void *data;
 } RawstorObjectTransaction;
 
@@ -47,7 +47,7 @@ static int fd_linear_callback(
     ssize_t res, void *data)
 {
     RawstorObjectTransaction *t = data;
-    int rval = t->cb.linear_callback(
+    int rval = t->callback.linear_callback(
         t->object, offset,
         buf, size,
         res, t->data);
@@ -62,7 +62,7 @@ static int aio_vector_callback(
     ssize_t res, void *data)
 {
     RawstorObjectTransaction *t = data;
-    int rval = t->cb.vector_callback(
+    int rval = t->callback.vector_callback(
         t->object, offset,
         iov, niov, size,
         res, t->data);
@@ -204,8 +204,7 @@ int rawstor_object_spec(int object_id, struct RawstorObjectSpec *spec) {
 
 
 int rawstor_object_read(
-    RawstorObject *object,
-    off_t offset,
+    RawstorObject *object, off_t offset,
     void *buf, size_t size,
     rawstor_linear_callback cb, void *data)
 {
@@ -215,7 +214,7 @@ int rawstor_object_read(
     }
     RawstorObjectTransaction *t = rawstor_pool_alloc(object->transactions_pool);
     t->object = object;
-    t->cb.linear_callback = cb;
+    t->callback.linear_callback = cb;
     t->data = data;
 
     return rawstor_fd_read(
@@ -226,8 +225,7 @@ int rawstor_object_read(
 
 
 int rawstor_object_readv(
-    RawstorObject *object,
-    off_t offset,
+    RawstorObject *object, off_t offset,
     struct iovec *iov, unsigned int niov, size_t size,
     rawstor_vector_callback cb, void *data)
 {
@@ -237,7 +235,7 @@ int rawstor_object_readv(
     }
     RawstorObjectTransaction *t = rawstor_pool_alloc(object->transactions_pool);
     t->object = object;
-    t->cb.vector_callback = cb;
+    t->callback.vector_callback = cb;
     t->data = data;
 
     return rawstor_fd_readv(
@@ -248,8 +246,7 @@ int rawstor_object_readv(
 
 
 int rawstor_object_write(
-    RawstorObject *object,
-    off_t offset,
+    RawstorObject *object, off_t offset,
     void *buf, size_t size,
     rawstor_linear_callback cb, void *data)
 {
@@ -259,7 +256,7 @@ int rawstor_object_write(
     }
     RawstorObjectTransaction *t = rawstor_pool_alloc(object->transactions_pool);
     t->object = object;
-    t->cb.linear_callback = cb;
+    t->callback.linear_callback = cb;
     t->data = data;
 
     return rawstor_fd_write(
@@ -270,8 +267,7 @@ int rawstor_object_write(
 
 
 int rawstor_object_writev(
-    RawstorObject *object,
-    off_t offset,
+    RawstorObject *object, off_t offset,
     struct iovec *iov, unsigned int niov, size_t size,
     rawstor_vector_callback cb, void *data)
 {
@@ -281,7 +277,7 @@ int rawstor_object_writev(
     }
     RawstorObjectTransaction *t = rawstor_pool_alloc(object->transactions_pool);
     t->object = object;
-    t->cb.vector_callback = cb;
+    t->callback.vector_callback = cb;
     t->data = data;
 
     return rawstor_fd_writev(

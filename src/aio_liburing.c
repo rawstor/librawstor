@@ -16,11 +16,11 @@ struct RawstorAIOEvent {
     int fd;
     off_t offset;
     union {
-        struct linear {
+        struct {
             void *data;
             size_t size;
         } linear;
-        struct vector {
+        struct {
             struct iovec *iov;
             unsigned int niov;
             size_t size;
