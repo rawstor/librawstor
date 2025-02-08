@@ -103,18 +103,21 @@ static void command_testio_usage() {
         "  -h, --help            Show this help message and exit\n"
         "  -o, --object-id OBJECT_ID\n"
         "                        Rawstor object id\n"
+        "  -v, --vector-mode     Use readv/writev\n"
     );
 };
 
 
 static int command_testio(int argc, char **argv) {
-    const char *optstring = "ho:";
+    const char *optstring = "ho:v";
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
         {"object-id", required_argument, NULL, 'o'},
+        {"vector-mode", required_argument, NULL, 'v'},
         {},
     };
 
+    int vector_mode = 0;
     char *object_id_arg = NULL;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
@@ -130,6 +133,10 @@ static int command_testio(int argc, char **argv) {
 
             case 'o':
                 object_id_arg = optarg;
+                break;
+
+            case 'v':
+                vector_mode = 1;
                 break;
 
             default:
@@ -153,7 +160,7 @@ static int command_testio(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
-    return rawstor_cli_testio(object_id);
+    return rawstor_cli_testio(object_id, vector_mode);
 }
 
 
