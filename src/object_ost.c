@@ -44,12 +44,10 @@ typedef struct RawstorObjectOperation {
     union {
         struct {
             void *data;
-            size_t size;
         } linear;
         struct {
             struct iovec *iov;
             unsigned int niov;
-            size_t size;
         } vector;
     } buffer;
 
@@ -119,8 +117,8 @@ static int response_body_received(
 
     return op->linear_callback(
         op->object, op->request_frame.offset,
-        op->buffer.linear.data, op->buffer.linear.size,
-        op->buffer.linear.size, op->data);
+        op->buffer.linear.data, op->request_frame.len,
+        op->request_frame.len, op->data);
 }
 
 
@@ -163,8 +161,8 @@ static int responsev_body_received(
 
     return op->vector_callback(
         op->object, op->request_frame.offset,
-        op->buffer.vector.iov, op->buffer.vector.niov, op->buffer.vector.size,
-        op->buffer.vector.size, op->data);
+        op->buffer.vector.iov, op->buffer.vector.niov, op->request_frame.len,
+        op->request_frame.len, op->data);
 }
 
 
@@ -189,14 +187,12 @@ static int response_header_received(
     RawstorObjectOperation *op = (RawstorObjectOperation*)data;
 
     if (op->request_frame.cmd == RAWSTOR_CMD_READ) {
-        if ((size_t)op->response_frame.res
-            != op->buffer.vector.size)
-        {
+        if ((u_int32_t)op->response_frame.res != op->request_frame.len) {
             rawstor_warning(
                 "read command returned different than asked: "
-                "%i != %li!\n",
+                "%d != %d!\n",
                 op->response_frame.res,
-                op->buffer.vector.size);
+                op->request_frame.len);
             /**
              * TODO: Find proper error here.
              */
@@ -206,26 +202,26 @@ static int response_header_received(
         return op->linear_callback != NULL ?
             rawstor_fd_read(
                 fd, 0,
-                op->buffer.linear.data, op->buffer.linear.size,
+                op->buffer.linear.data, op->request_frame.len,
                 response_body_received, op) :
             rawstor_fd_readv(
                 fd, 0,
                 op->buffer.vector.iov,
                 op->buffer.vector.niov,
-                op->buffer.vector.size,
+                op->request_frame.len,
                 responsev_body_received, op);
     } else {
         return op->linear_callback != NULL ?
             op->linear_callback(
                 op->object, op->request_frame.offset,
-                op->buffer.linear.data, op->buffer.linear.size,
-                op->buffer.linear.size, op->data
+                op->buffer.linear.data, op->request_frame.len,
+                op->request_frame.len, op->data
             ) :
             op->vector_callback(
                 op->object, op->request_frame.offset,
                 op->buffer.vector.iov, op->buffer.vector.niov,
-                op->buffer.vector.size,
-                op->buffer.vector.size, op->data
+                op->request_frame.len,
+                op->request_frame.len, op->data
             );
     }
 }
@@ -326,13 +322,13 @@ static int request_header_sent(
         return op->linear_callback != NULL ?
             rawstor_fd_write(
                 fd, 0,
-                op->buffer.linear.data, op->buffer.linear.size,
+                op->buffer.linear.data, op->request_frame.len,
                 request_body_sent, op
             ) :
             rawstor_fd_writev(
                 fd, 0,
                 op->buffer.vector.iov, op->buffer.vector.niov,
-                op->buffer.vector.size,
+                op->request_frame.len,
                 requestv_body_sent, op
             );
     } else {
@@ -464,7 +460,6 @@ int rawstor_object_read(
         },
         // .response_frame =
         .buffer.linear.data = buf,
-        .buffer.linear.size = size,
         .linear_callback = cb,
         .vector_callback = NULL,
         .data = data,
@@ -502,7 +497,6 @@ int rawstor_object_readv(
         // .response_frame
         .buffer.vector.iov = iov,
         .buffer.vector.niov = niov,
-        .buffer.vector.size = size,
         .linear_callback = NULL,
         .vector_callback = cb,
         .data = data,
@@ -540,7 +534,6 @@ int rawstor_object_write(
         },
         // .response_frame =
         .buffer.linear.data = buf,
-        .buffer.linear.size = size,
         .linear_callback = cb,
         .vector_callback = NULL,
         .data = data,
@@ -579,7 +572,6 @@ int rawstor_object_writev(
         // .response_frame =
         .buffer.vector.iov = iov,
         .buffer.vector.niov = niov,
-        .buffer.vector.size = size,
         .linear_callback = NULL,
         .vector_callback = cb,
         .data = data,
