@@ -31,9 +31,12 @@
 static char OBJ_NAME[] = "TEST_OBJ";
 
 
+#define rawstor_operation_trace(fd, res, size) \
+    rawstor_debug("[%d] %s(): %zi of %zu\n", fd, __FUNCTION__, res, size)
+
+
 typedef struct RawstorObjectOperation {
     RawstorObject *object;
-    off_t offset;
 
     RawstorOSTFrameIO request_frame;
     RawstorOSTFrameResponse response_frame;
@@ -94,11 +97,13 @@ static int ost_connect() {
 }
 
 
-static int response_linear_body_callback(
+static int response_body_received(
     int fd, off_t RAWSTOR_UNUSED offset,
     void *buf, size_t size,
     ssize_t res, void *data)
 {
+    rawstor_operation_trace(fd, res, size);
+
     if (res < 0) {
         return res;
     }
@@ -107,23 +112,25 @@ static int response_linear_body_callback(
         return rawstor_fd_read(
             fd, 0,
             buf + res, size - res,
-            response_linear_body_callback, data);
+            response_body_received, data);
     }
 
     RawstorObjectOperation *op = (RawstorObjectOperation*)data;
 
     return op->linear_callback(
-        op->object, op->offset,
+        op->object, op->request_frame.offset,
         op->buffer.linear.data, op->buffer.linear.size,
         op->buffer.linear.size, op->data);
 }
 
 
-static int response_vector_body_callback(
+static int responsev_body_received(
     int fd, off_t RAWSTOR_UNUSED offset,
     struct iovec *iov, unsigned int niov, size_t size,
     ssize_t res, void *data)
 {
+    rawstor_operation_trace(fd, res, size);
+
     if (res < 0) {
         return res;
     }
@@ -149,23 +156,25 @@ static int response_vector_body_callback(
         return rawstor_fd_readv(
             fd, 0,
             iov, niov, size,
-            response_vector_body_callback, data);
+            responsev_body_received, data);
     }
 
     RawstorObjectOperation *op = (RawstorObjectOperation*)data;
 
     return op->vector_callback(
-        op->object, op->offset,
+        op->object, op->request_frame.offset,
         op->buffer.vector.iov, op->buffer.vector.niov, op->buffer.vector.size,
         op->buffer.vector.size, op->data);
 }
 
 
-static int response_header_callback(
+static int response_header_received(
     int fd, off_t RAWSTOR_UNUSED offset,
     void *buf, size_t size,
     ssize_t res, void *data)
 {
+    rawstor_operation_trace(fd, res, size);
+
     if (res < 0) {
         return res;
     }
@@ -174,49 +183,61 @@ static int response_header_callback(
         return rawstor_fd_read(
             fd, 0,
             buf + res, size - res,
-            response_header_callback, data);
+            response_header_received, data);
     }
 
     RawstorObjectOperation *op = (RawstorObjectOperation*)data;
 
-    rawstor_debug(
-        "Read: Response from Server: cmd:%i res:%i\n",
-        op->response_frame.cmd,
-        op->response_frame.res);
+    if (op->request_frame.cmd == RAWSTOR_CMD_READ) {
+        if ((size_t)op->response_frame.res
+            != op->buffer.linear.size)
+        {
+            rawstor_warning(
+                "read command returned different than asked: "
+                "%i != %li!\n",
+                op->response_frame.res,
+                op->buffer.linear.size);
+            /**
+             * TODO: Find proper error here.
+             */
+            return -1;
+        }
 
-    if ((size_t)op->response_frame.res
-        != op->buffer.linear.size)
-    {
-        rawstor_warning(
-            "read command returned different than asked: "
-            "%i != %li!\n",
-            op->response_frame.res,
-            op->buffer.linear.size);
-        /**
-         * TODO: Find proper error here.
-         */
-        return -1;
+        return op->linear_callback != NULL ?
+            rawstor_fd_read(
+                fd, 0,
+                op->buffer.linear.data, op->buffer.linear.size,
+                response_body_received, op) :
+            rawstor_fd_readv(
+                fd, 0,
+                op->buffer.vector.iov,
+                op->buffer.vector.niov,
+                op->buffer.vector.size,
+                responsev_body_received, op);
+    } else {
+        return op->linear_callback != NULL ?
+            op->linear_callback(
+                op->object, op->request_frame.offset,
+                op->buffer.linear.data, op->buffer.linear.size,
+                op->buffer.linear.size, op->data
+            ) :
+            op->vector_callback(
+                op->object, op->request_frame.offset,
+                op->buffer.vector.iov, op->buffer.vector.niov,
+                op->buffer.vector.size,
+                op->buffer.vector.size, op->data
+            );
     }
-
-    return op->linear_callback != NULL ?
-        rawstor_fd_read(
-            fd, 0,
-            op->buffer.linear.data, op->buffer.linear.size,
-            response_linear_body_callback, op) :
-        rawstor_fd_readv(
-            fd, 0,
-            op->buffer.vector.iov,
-            op->buffer.vector.niov,
-            op->buffer.vector.size,
-            response_vector_body_callback, op);
 }
 
 
-static int request_callback(
+static int request_body_sent(
     int fd, off_t RAWSTOR_UNUSED offset,
     void *buf, size_t size,
     ssize_t res, void *data)
 {
+    rawstor_operation_trace(fd, res, size);
+
     if (res < 0) {
         return res;
     }
@@ -225,22 +246,102 @@ static int request_callback(
         return rawstor_fd_write(
             fd, 0,
             buf + res, size - res,
-            request_callback, data);
+            request_body_sent, data);
     }
 
     RawstorObjectOperation *op = (RawstorObjectOperation*)data;
 
-    rawstor_debug(
-        "Sent request read command offset:%lli, size:%u, res:%zi\n",
-        op->request_frame.offset,
-        op->request_frame.len,
-        res);
+    return rawstor_fd_read(
+        fd, 0,
+        &op->response_frame, sizeof(op->response_frame),
+        response_header_received, op);
+}
+
+
+static int requestv_body_sent(
+    int fd, off_t RAWSTOR_UNUSED offset,
+    struct iovec *iov, unsigned int niov, size_t size,
+    ssize_t res, void *data)
+{
+    rawstor_operation_trace(fd, res, size);
+
+    if (res < 0) {
+        return res;
+    }
+
+    if ((size_t)res < size) {
+        /**
+         * TODO: We have to update our iov, but save original user iov.
+         */
+        rawstor_error("Not implemented\n");
+        exit(1);
+        for (unsigned int i = 0; i < niov; ++i) {
+            if (iov[0].iov_len > res) {
+                iov[0].iov_base += res;
+                iov[0].iov_len -= res;
+                size -= res;
+                break;
+            }
+            size -= iov[0].iov_len;
+            res -= iov[0].iov_len;
+            ++iov;
+            --niov;
+        }
+        return rawstor_fd_writev(
+            fd, 0,
+            iov, niov, size,
+            requestv_body_sent, data);
+    }
+
+    RawstorObjectOperation *op = (RawstorObjectOperation*)data;
 
     return rawstor_fd_read(
         fd, 0,
         &op->response_frame, sizeof(op->response_frame),
-        response_header_callback, op);
+        response_header_received, op);
 }
+
+
+static int request_header_sent(
+    int fd, off_t RAWSTOR_UNUSED offset,
+    void *buf, size_t size,
+    ssize_t res, void *data)
+{
+    rawstor_operation_trace(fd, res, size);
+
+    if (res < 0) {
+        return res;
+    }
+
+    if ((size_t)res < size) {
+        return rawstor_fd_write(
+            fd, 0,
+            buf + res, size - res,
+            request_header_sent, data);
+    }
+
+    RawstorObjectOperation *op = (RawstorObjectOperation*)data;
+
+    if (op->request_frame.cmd == RAWSTOR_CMD_WRITE) {
+        return op->linear_callback != NULL ?
+            rawstor_fd_write(
+                fd, 0,
+                op->buffer.linear.data, op->buffer.linear.size,
+                request_body_sent, op
+            ) :
+            rawstor_fd_writev(
+                fd, 0,
+                op->buffer.vector.iov, op->buffer.vector.niov,
+                op->buffer.vector.size,
+                requestv_body_sent, op
+            );
+    } else {
+        return rawstor_fd_read(
+            fd, 0,
+            &op->response_frame, sizeof(op->response_frame),
+            response_header_received, op);
+    }
+ }
 
 
 int rawstor_object_create(
@@ -288,7 +389,7 @@ int rawstor_object_open(int RAWSTOR_UNUSED object_id, RawstorObject **object) {
     char buff[8192];
 
     RawstorOSTFrameBasic *mframe = malloc(sizeof(RawstorOSTFrameBasic));
-    mframe->cmd = CMD_SET_OBJECT;
+    mframe->cmd = RAWSTOR_CMD_SET_OBJECT;
     strlcpy(mframe->var, OBJ_NAME, 10);
     #if LOGLEVEL > 3
     int res = write(ret->fd, mframe, sizeof(RawstorOSTFrameBasic));
@@ -343,7 +444,9 @@ int rawstor_object_read(
     void *buf, size_t size,
     rawstor_linear_callback cb, void *data)
 {
-    rawstor_debug("read: offset:%lli size:%li\n", offset, size);
+    rawstor_debug(
+        "[%d] %s(): offset: = %jd, size = %zu\n",
+        object->fd, __FUNCTION__, (intmax_t)offset, size);
 
     if (rawstor_pool_count(object->operations_pool) == 0) {
         errno = ENOBUFS;
@@ -354,10 +457,12 @@ int rawstor_object_read(
     *op = (RawstorObjectOperation) {
         .object = object,
         .request_frame = (RawstorOSTFrameIO) {
-            .cmd = CMD_READ,
+            .cmd = RAWSTOR_CMD_READ,
             .offset = offset,
             .len = size,
+            .sync = 0,
         },
+        // .response_frame =
         .buffer.linear.data = buf,
         .buffer.linear.size = size,
         .linear_callback = cb,
@@ -368,7 +473,7 @@ int rawstor_object_read(
     return rawstor_fd_write(
         object->fd, 0,
         &op->request_frame, sizeof(op->request_frame),
-        request_callback, op);
+        request_header_sent, op);
 }
 
 
@@ -377,7 +482,9 @@ int rawstor_object_readv(
     struct iovec *iov, unsigned int niov, size_t size,
     rawstor_vector_callback cb, void *data)
 {
-    rawstor_debug("readv: offset:%lli size:%li niov:%i\n", offset, size, niov);
+    rawstor_debug(
+        "[%d] %s(): offset = %jd, niov = %u, size = %zu\n",
+        object->fd, __FUNCTION__, (intmax_t)offset, niov, size);
 
     if (rawstor_pool_count(object->operations_pool) == 0) {
         errno = ENOBUFS;
@@ -387,9 +494,8 @@ int rawstor_object_readv(
     RawstorObjectOperation *op = rawstor_pool_alloc(object->operations_pool);
     *op = (RawstorObjectOperation) {
         .object = object,
-        .offset = 0,
         .request_frame = (RawstorOSTFrameIO) {
-            .cmd = CMD_READ,
+            .cmd = RAWSTOR_CMD_READ,
             .offset = offset,
             .len = size,
         },
@@ -405,126 +511,82 @@ int rawstor_object_readv(
     return rawstor_fd_write(
         object->fd, 0,
         &op->request_frame, sizeof(op->request_frame),
-        request_callback, op);
+        request_header_sent, op);
 }
 
 
 int rawstor_object_write(
-    RawstorObject *object,
-    off_t offset,
+    RawstorObject *object, off_t offset,
     void *buf, size_t size,
     rawstor_linear_callback cb, void *data)
 {
-    rawstor_debug("write: offset:%lld size:%li\n", offset, size);
+     rawstor_debug(
+        "[%d] %s(): offset = %jd, size = %zu\n",
+        object->fd, __FUNCTION__, (intmax_t)offset, size);
 
-    RawstorOSTFrameIO *frame = malloc(sizeof(RawstorOSTFrameIO));
-    if (frame == NULL) {
+    if (rawstor_pool_count(object->operations_pool) == 0) {
+        errno = ENOBUFS;
         return -errno;
     }
-    frame->cmd = CMD_WRITE;
-    frame->offset = offset;
-    frame->len = size;
-    frame->sync = 0;
 
-    //hack to prepend command frame
-    struct iovec miovecs[2];
+    RawstorObjectOperation *op = rawstor_pool_alloc(object->operations_pool);
+    *op = (RawstorObjectOperation) {
+        .object = object,
+        .request_frame = (RawstorOSTFrameIO) {
+            .cmd = RAWSTOR_CMD_WRITE,
+            .offset = offset,
+            .len = size,
+            .sync = 0,
+        },
+        // .response_frame =
+        .buffer.linear.data = buf,
+        .buffer.linear.size = size,
+        .linear_callback = cb,
+        .vector_callback = NULL,
+        .data = data,
+    };
 
-    miovecs[0].iov_base = frame;
-    miovecs[0].iov_len = sizeof(RawstorOSTFrameIO);
-
-    miovecs[1].iov_base = buf;
-    miovecs[1].iov_len = size;
-
-    ssize_t res = writev(object->fd, miovecs, 2);
-    if (res < 0) {
-        free(frame);
-        return -errno;
-    }
-    rawstor_debug(
-        "Sent request write command and data, offset:%lld size:%li, res:%zu\n",
-        offset,
-        size,
-        res);
-
-    RawstorOSTFrameResponse *rframe = malloc(sizeof(RawstorOSTFrameResponse));
-    if (rframe == NULL) {
-        free(frame);
-        return -errno;
-    }
-    read(object->fd, rframe, sizeof(RawstorOSTFrameResponse));
-    // TODO: handle read rval ^^^
-    rawstor_debug(
-        "Write: Response from Server: cmd:%i res:%i\n",
-        rframe->cmd,
-        rframe->res);
-
-    res = rframe->res;
-
-    free(frame);
-    free(rframe);
-
-    cb(object, offset, buf, size, res, data);
-
-    return 0;
+    return rawstor_fd_write(
+        object->fd, 0,
+        &op->request_frame, sizeof(op->request_frame),
+        request_header_sent, op);
 }
 
 
 int rawstor_object_writev(
-    RawstorObject *object,
-    off_t offset,
+    RawstorObject *object, off_t offset,
     struct iovec *iov, unsigned int niov, size_t size,
     rawstor_vector_callback cb, void *data)
 {
-    rawstor_debug("writev: offset:%lld size:%li niov:%i\n", offset, size, niov);
-
-    RawstorOSTFrameIO *frame = malloc(sizeof(RawstorOSTFrameIO));
-    if (frame == NULL) {
-        return -errno;
-    }
-    frame->cmd = CMD_WRITE;
-    frame->offset = offset;
-    frame->len = size;
-    frame->sync = 0;
-
-    //hack to prepend command frame
-    struct iovec miovecs[niov+1];
-
-    for (size_t i = 0; i < niov; ++i) {
-        miovecs[i+1].iov_base = iov[i].iov_base;
-        miovecs[i+1].iov_len = iov[i].iov_len;
-    }
-
-    miovecs[0].iov_base = frame;
-    miovecs[0].iov_len = sizeof(RawstorOSTFrameIO);
-
-    ssize_t res = writev(object->fd, miovecs, niov + 1);
-    if (res < 0) {
-        free(frame);
-        return -errno;
-    }
     rawstor_debug(
-        "Sent request write command and data, offset:%lld size:%li, res:%zu\n",
-        offset,
-        size,
-        res);
+        "[%d] %s(): offset = %jd, niov = %u, size = %zu\n",
+        object->fd, __FUNCTION__, (intmax_t)offset, niov, size);
 
-    RawstorOSTFrameResponse *rframe = malloc(sizeof(RawstorOSTFrameResponse));
-    if (rframe == NULL) {
-        free(frame);
+    if (rawstor_pool_count(object->operations_pool) == 0) {
+        errno = ENOBUFS;
         return -errno;
     }
-    read(object->fd, rframe, sizeof(RawstorOSTFrameResponse));
-    rawstor_debug(
-        "Write: Response from Server: cmd:%i res:%i\n",
-        rframe->cmd,
-        rframe->res);
 
-    res = rframe->res;
+    RawstorObjectOperation *op = rawstor_pool_alloc(object->operations_pool);
+    *op = (RawstorObjectOperation) {
+        .object = object,
+        .request_frame = (RawstorOSTFrameIO) {
+            .cmd = RAWSTOR_CMD_WRITE,
+            .offset = offset,
+            .len = size,
+            .sync = 0,
+        },
+        // .response_frame =
+        .buffer.vector.iov = iov,
+        .buffer.vector.niov = niov,
+        .buffer.vector.size = size,
+        .linear_callback = NULL,
+        .vector_callback = cb,
+        .data = data,
+    };
 
-    free(frame);
-    free(rframe);
-
-    cb(object, offset, iov, niov, size, res, data);
-
-    return 0;
+    return rawstor_fd_write(
+        object->fd, 0,
+        &op->request_frame, sizeof(op->request_frame),
+        request_header_sent, op);
 }

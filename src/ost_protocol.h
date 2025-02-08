@@ -12,10 +12,10 @@
 
 
 typedef enum {
-    CMD_SET_OBJECT,
-    CMD_READ,
-    CMD_WRITE,
-    CMD_DISCARD,
+    RAWSTOR_CMD_SET_OBJECT,
+    RAWSTOR_CMD_READ,
+    RAWSTOR_CMD_WRITE,
+    RAWSTOR_CMD_DISCARD,
 } RawstorOSTCommandType;
 
 
