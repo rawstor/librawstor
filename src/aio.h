@@ -16,9 +16,9 @@ typedef struct RawstorAIO RawstorAIO;
 // typedef struct RawstorAIOEvent RawstorAIOEvent;
 
 // defined in rawstor.h
-// typedef int(*rawstor_fd_linear_callback)(
+// typedef int(*rawstor_fd_callback)(
 //     int fd, off_t offset,
-//     void *buf, size_t buf_size,
+//     void *buf, size_t size,
 //     ssize_t res, void *data);
 
 // defined in rawstor.h
@@ -38,13 +38,13 @@ void rawstor_aio_delete(RawstorAIO *aio);
 int rawstor_aio_accept(
     RawstorAIO *aio,
     int fd,
-    rawstor_fd_linear_callback cb, void *data);
+    rawstor_fd_callback cb, void *data);
 
 int rawstor_aio_read(
     RawstorAIO *aio,
     int fd, off_t offset,
     void *buf, size_t size,
-    rawstor_fd_linear_callback cb, void *data);
+    rawstor_fd_callback cb, void *data);
 
 int rawstor_aio_readv(
     RawstorAIO *aio,
@@ -56,7 +56,7 @@ int rawstor_aio_write(
     RawstorAIO *aio,
     int fd, off_t offset,
     void *buf, size_t size,
-    rawstor_fd_linear_callback cb, void *data);
+    rawstor_fd_callback cb, void *data);
 
 int rawstor_aio_writev(
     RawstorAIO *aio,

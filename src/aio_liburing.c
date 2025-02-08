@@ -26,7 +26,7 @@ struct RawstorAIOEvent {
             size_t size;
         } vector;
     } buffer;
-    rawstor_fd_linear_callback linear_callback;
+    rawstor_fd_callback linear_callback;
     rawstor_fd_vector_callback vector_callback;
     void *data;
     struct io_uring_cqe *cqe;
@@ -83,7 +83,7 @@ void rawstor_aio_delete(RawstorAIO *aio) {
 int rawstor_aio_accept(
     RawstorAIO *aio,
     int fd,
-    rawstor_fd_linear_callback cb,
+    rawstor_fd_callback cb,
     void *data)
 {
     /**
@@ -123,7 +123,7 @@ int rawstor_aio_read(
     RawstorAIO *aio,
     int fd, off_t offset,
     void *buf, size_t size,
-    rawstor_fd_linear_callback cb, void *data)
+    rawstor_fd_callback cb, void *data)
 {
     /**
      * TODO: Since pool count is equal to sqe count, do we really have to have
@@ -202,7 +202,7 @@ int rawstor_aio_write(
     RawstorAIO *aio,
     int fd, off_t offset,
     void *buf, size_t size,
-    rawstor_fd_linear_callback cb, void *data)
+    rawstor_fd_callback cb, void *data)
 {
     /**
      * TODO: Since pool count is equal to sqe count, do we really have to have

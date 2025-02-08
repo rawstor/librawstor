@@ -28,7 +28,7 @@
 typedef struct RawstorObjectTransaction {
     RawstorObject *object;
     union {
-        rawstor_linear_callback linear_callback;
+        rawstor_callback linear_callback;
         rawstor_vector_callback vector_callback;
     } callback;
     void *data;
@@ -41,7 +41,7 @@ struct RawstorObject {
 };
 
 
-static int fd_linear_callback(
+static int fd_callback(
     int RAWSTOR_UNUSED fd, off_t offset,
     void *buf, size_t size,
     ssize_t res, void *data)
@@ -206,7 +206,7 @@ int rawstor_object_spec(int object_id, struct RawstorObjectSpec *spec) {
 int rawstor_object_read(
     RawstorObject *object, off_t offset,
     void *buf, size_t size,
-    rawstor_linear_callback cb, void *data)
+    rawstor_callback cb, void *data)
 {
     if (rawstor_pool_count(object->transactions_pool) == 0) {
         errno = ENOBUFS;
@@ -220,7 +220,7 @@ int rawstor_object_read(
     return rawstor_fd_read(
         object->fd, offset,
         buf, size,
-        fd_linear_callback, t);
+        fd_callback, t);
 }
 
 
@@ -248,7 +248,7 @@ int rawstor_object_readv(
 int rawstor_object_write(
     RawstorObject *object, off_t offset,
     void *buf, size_t size,
-    rawstor_linear_callback cb, void *data)
+    rawstor_callback cb, void *data)
 {
     if (rawstor_pool_count(object->transactions_pool) == 0) {
         errno = ENOBUFS;
@@ -262,7 +262,7 @@ int rawstor_object_write(
     return rawstor_fd_write(
         object->fd, offset,
         buf, size,
-        fd_linear_callback, t);
+        fd_callback, t);
 }
 
 

@@ -24,7 +24,7 @@ struct RawstorAIOEvent {
             size_t size;
         } vector;
     } buffer;
-    rawstor_fd_linear_callback linear_callback;
+    rawstor_fd_callback linear_callback;
     rawstor_fd_vector_callback vector_callback;
     ssize_t res;
     void *data;
@@ -168,7 +168,7 @@ void rawstor_aio_delete(RawstorAIO *aio) {
 int rawstor_aio_accept(
     RawstorAIO *aio,
     int fd,
-    rawstor_fd_linear_callback cb, void *data)
+    rawstor_fd_callback cb, void *data)
 {
     if (rawstor_pool_count(aio->events_pool) == 0) {
         errno = ENOBUFS;
@@ -197,7 +197,7 @@ int rawstor_aio_read(
     RawstorAIO *aio,
     int fd, off_t offset,
     void *buf, size_t size,
-    rawstor_fd_linear_callback cb, void *data)
+    rawstor_fd_callback cb, void *data)
 {
     if (rawstor_pool_count(aio->events_pool) == 0) {
         errno = ENOBUFS;
@@ -256,7 +256,7 @@ int rawstor_aio_write(
     RawstorAIO *aio,
     int fd, off_t offset,
     void *buf, size_t size,
-    rawstor_fd_linear_callback cb, void *data)
+    rawstor_fd_callback cb, void *data)
 {
     if (rawstor_pool_count(aio->events_pool) == 0) {
         errno = ENOBUFS;

@@ -53,7 +53,7 @@ typedef struct RawstorObjectOperation {
         } vector;
     } buffer;
 
-    rawstor_linear_callback linear_callback;
+    rawstor_callback linear_callback;
     rawstor_vector_callback vector_callback;
 
     void *data;
@@ -442,7 +442,7 @@ int rawstor_object_spec(
 int rawstor_object_read(
     RawstorObject *object, off_t offset,
     void *buf, size_t size,
-    rawstor_linear_callback cb, void *data)
+    rawstor_callback cb, void *data)
 {
     rawstor_debug(
         "[%d] %s(): offset: = %jd, size = %zu\n",
@@ -518,7 +518,7 @@ int rawstor_object_readv(
 int rawstor_object_write(
     RawstorObject *object, off_t offset,
     void *buf, size_t size,
-    rawstor_linear_callback cb, void *data)
+    rawstor_callback cb, void *data)
 {
      rawstor_debug(
         "[%d] %s(): offset = %jd, size = %zu\n",
