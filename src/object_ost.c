@@ -190,13 +190,13 @@ static int response_header_received(
 
     if (op->request_frame.cmd == RAWSTOR_CMD_READ) {
         if ((size_t)op->response_frame.res
-            != op->buffer.linear.size)
+            != op->buffer.vector.size)
         {
             rawstor_warning(
                 "read command returned different than asked: "
                 "%i != %li!\n",
                 op->response_frame.res,
-                op->buffer.linear.size);
+                op->buffer.vector.size);
             /**
              * TODO: Find proper error here.
              */
