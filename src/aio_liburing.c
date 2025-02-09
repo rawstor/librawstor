@@ -42,6 +42,9 @@ struct RawstorAIO {
 };
 
 
+const char* rawstor_aio_engine_name = "liburing";
+
+
 RawstorAIO* rawstor_aio_create(unsigned int depth) {
     RawstorAIO *aio = malloc(sizeof(RawstorAIO));
     if (aio == NULL) {
@@ -103,13 +106,16 @@ int rawstor_aio_accept(
 
     RawstorAIOEvent *event = rawstor_pool_alloc(aio->events_pool);
 
-    event->fd = fd;
-    event->offset = 0;
-    event->buffer.linear.data = NULL;
-    event->buffer.linear.size = 0;
-    event->linear_callback = cb;
-    event->vector_callback = NULL;
-    event->data = data;
+    *event = (RawstorAIOEvent) {
+        .fd = fd,
+        .offset = 0,
+        .buffer.linear.data = NULL,
+        .buffer.linear.size = 0,
+        .linear_callback = cb,
+        .vector_callback = NULL,
+        .data = data,
+        .cqe = NULL,
+    };
 
     io_uring_prep_accept(sqe, fd, NULL, NULL, 0);
     io_uring_sqe_set_data(sqe, event);
@@ -142,13 +148,16 @@ int rawstor_aio_read(
 
     RawstorAIOEvent *event = rawstor_pool_alloc(aio->events_pool);
 
-    event->fd = fd;
-    event->offset = offset;
-    event->buffer.linear.data = buf;
-    event->buffer.linear.size = size;
-    event->linear_callback = cb;
-    event->vector_callback = NULL;
-    event->data = data;
+    *event = (RawstorAIOEvent) {
+        .fd = fd,
+        .offset = offset,
+        .buffer.linear.data = buf,
+        .buffer.linear.size = size,
+        .linear_callback = cb,
+        .vector_callback = NULL,
+        .data = data,
+        .cqe = NULL,
+    };
 
     io_uring_prep_read(sqe, fd, buf, size, offset);
     io_uring_sqe_set_data(sqe, event);
@@ -181,16 +190,61 @@ int rawstor_aio_readv(
 
     RawstorAIOEvent *event = rawstor_pool_alloc(aio->events_pool);
 
-    event->fd = fd;
-    event->offset = offset;
-    event->buffer.vector.iov = iov;
-    event->buffer.vector.niov = niov;
-    event->buffer.vector.size = size;
-    event->linear_callback = NULL;
-    event->vector_callback = cb;
-    event->data = data;
+    *event = (RawstorAIOEvent) {
+        .fd = fd,
+        .offset = offset,
+        .buffer.vector.iov = iov,
+        .buffer.vector.niov = niov,
+        .buffer.vector.size = size,
+        .linear_callback = NULL,
+        .vector_callback = cb,
+        .data = data,
+        .cqe = NULL,
+    };
 
     io_uring_prep_readv(sqe, fd, iov, niov, offset);
+    io_uring_sqe_set_data(sqe, event);
+    ++aio->events_in_buffer;
+
+    return 0;
+}
+
+
+int rawstor_aio_recv(
+    RawstorAIO *aio,
+    int sock, int flags,
+    void *buf, size_t size,
+    rawstor_fd_callback cb, void *data)
+{
+    /**
+     * TODO: Since pool count is equal to sqe count, do we really have to have
+     * this check?
+     */
+    if (rawstor_pool_count(aio->events_pool) == 0) {
+        errno = ENOBUFS;
+        return -errno;
+    }
+
+    struct io_uring_sqe *sqe = io_uring_get_sqe(&aio->ring);
+    if (sqe == NULL) {
+        errno = ENOBUFS;
+        return -errno;
+    }
+
+    RawstorAIOEvent *event = rawstor_pool_alloc(aio->events_pool);
+
+    *event = (RawstorAIOEvent) {
+        .fd = sock,
+        .offset = 0,
+        .buffer.linear.data = buf,
+        .buffer.linear.size = size,
+        .linear_callback = cb,
+        .vector_callback = NULL,
+        .data = data,
+        .cqe = NULL,
+    };
+
+    io_uring_prep_recv(sqe, sock, buf, size, flags);
     io_uring_sqe_set_data(sqe, event);
     ++aio->events_in_buffer;
 
@@ -221,13 +275,16 @@ int rawstor_aio_write(
 
     RawstorAIOEvent *event = rawstor_pool_alloc(aio->events_pool);
 
-    event->fd = fd;
-    event->offset = offset;
-    event->buffer.linear.data = buf;
-    event->buffer.linear.size = size;
-    event->linear_callback = cb;
-    event->vector_callback = NULL;
-    event->data = data;
+    *event = (RawstorAIOEvent) {
+        .fd = fd,
+        .offset = offset,
+        .buffer.linear.data = buf,
+        .buffer.linear.size = size,
+        .linear_callback = cb,
+        .vector_callback = NULL,
+        .data = data,
+        .cqe = NULL,
+    };
 
     io_uring_prep_write(sqe, fd, buf, size, offset);
     io_uring_sqe_set_data(sqe, event);
@@ -260,16 +317,61 @@ int rawstor_aio_writev(
 
     RawstorAIOEvent *event = rawstor_pool_alloc(aio->events_pool);
 
-    event->fd = fd;
-    event->offset = offset;
-    event->buffer.vector.iov = iov;
-    event->buffer.vector.niov = niov;
-    event->buffer.vector.size = size;
-    event->linear_callback = NULL;
-    event->vector_callback = cb;
-    event->data = data;
+    *event = (RawstorAIOEvent) {
+        .fd = fd,
+        .offset = offset,
+        .buffer.vector.iov = iov,
+        .buffer.vector.niov = niov,
+        .buffer.vector.size = size,
+        .linear_callback = NULL,
+        .vector_callback = cb,
+        .data = data,
+        .cqe = NULL,
+    };
 
     io_uring_prep_writev(sqe, fd, iov, niov, offset);
+    io_uring_sqe_set_data(sqe, event);
+    ++aio->events_in_buffer;
+
+    return 0;
+}
+
+
+int rawstor_aio_send(
+    RawstorAIO *aio,
+    int sock, int flags,
+    void *buf, size_t size,
+    rawstor_fd_callback cb, void *data)
+{
+    /**
+     * TODO: Since pool count is equal to sqe count, do we really have to have
+     * this check?
+     */
+    if (rawstor_pool_count(aio->events_pool) == 0) {
+        errno = ENOBUFS;
+        return -errno;
+    }
+
+    struct io_uring_sqe *sqe = io_uring_get_sqe(&aio->ring);
+    if (sqe == NULL) {
+        errno = ENOBUFS;
+        return -errno;
+    }
+
+    RawstorAIOEvent *event = rawstor_pool_alloc(aio->events_pool);
+
+    *event = (RawstorAIOEvent) {
+        .fd = sock,
+        .offset = 0,
+        .buffer.linear.data = buf,
+        .buffer.linear.size = size,
+        .linear_callback = cb,
+        .vector_callback = NULL,
+        .data = data,
+        .cqe = NULL,
+    };
+
+    io_uring_prep_send(sqe, sock, buf, size, flags);
     io_uring_sqe_set_data(sqe, event);
     ++aio->events_in_buffer;
 

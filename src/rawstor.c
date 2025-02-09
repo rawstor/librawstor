@@ -1,6 +1,8 @@
 #include <rawstor.h>
 
 #include "aio.h"
+#include "logging.h"
+#include "object.h"
 
 #include <sys/types.h>
 #include <sys/uio.h>
@@ -19,6 +21,14 @@ static RawstorAIO *rawstor_aio = NULL;
 
 int rawstor_initialize(void) {
     assert(rawstor_aio == NULL);
+
+    rawstor_info(
+        "Rawstor compiled with IO engine: %s\n",
+        rawstor_aio_engine_name);
+
+    rawstor_info(
+        "Rawstor compiled with object backend: %s\n",
+        rawstor_object_backend_name);
 
     rawstor_aio = rawstor_aio_create(QUEUE_DEPTH);
     if (rawstor_aio == NULL) {

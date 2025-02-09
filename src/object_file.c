@@ -1,3 +1,5 @@
+#include "object.h"
+
 #include <rawstor.h>
 
 #include "aio.h"
@@ -39,6 +41,9 @@ struct RawstorObject {
     int fd;
     RawstorPool *transactions_pool;
 };
+
+
+const char *rawstor_object_backend_name = "file";
 
 
 static int fd_callback(

@@ -19,6 +19,7 @@ DEPS = aio.h \
        backend_mem.h \
        gcc.h \
        logging.h \
+       object.h \
        ost_protocol.h \
        pool.h \
        ../include/rawstor.h

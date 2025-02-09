@@ -28,6 +28,8 @@ typedef struct RawstorAIO RawstorAIO;
 //     ssize_t res, void *data);
 
 
+extern const char* rawstor_aio_engine_name;
+
 RawstorAIO* rawstor_aio_create(unsigned int depth);
 
 void rawstor_aio_delete(RawstorAIO *aio);

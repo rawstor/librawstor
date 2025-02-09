@@ -69,6 +69,9 @@ struct RawstorObject {
 };
 
 
+const char *rawstor_object_backend_name = "ost";
+
+
 static int ost_connect() {
     struct sockaddr_in servaddr;
     // socket create and verification

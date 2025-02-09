@@ -60,6 +60,9 @@ struct RawstorAIO {
 };
 
 
+const char* rawstor_aio_engine_name = "poll";
+
+
 static RawstorAIOEvent* aio_process_event(RawstorAIO *aio) {
     for (size_t i = 0; i < aio->depth; ++i) {
         struct pollfd *fd = &aio->fds[i];
