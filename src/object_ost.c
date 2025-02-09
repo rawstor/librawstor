@@ -276,7 +276,7 @@ static int requestv_body_sent(
         rawstor_error("Not implemented\n");
         exit(1);
         for (unsigned int i = 0; i < niov; ++i) {
-            if (iov[0].iov_len > res) {
+            if (iov[0].iov_len > (size_t)res) {
                 iov[0].iov_base += res;
                 iov[0].iov_len -= res;
                 size -= res;
@@ -381,9 +381,11 @@ int rawstor_object_open(int RAWSTOR_UNUSED object_id, RawstorObject **object) {
 
     ret->fd = ost_connect();
     if (ret->fd < 0) {
+	int errsv = -ret->fd;
         rawstor_pool_delete(ret->operations_pool);
         free(ret);
-        return ret->fd;
+	errno = errsv;
+        return -errno;
     }
 
     char buff[8192];
