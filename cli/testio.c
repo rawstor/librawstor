@@ -168,7 +168,7 @@ int rawstor_cli_testio(int object_id, int vector_mode) {
     char read_buf[256];
     struct iovec read_iov = {
         .iov_base = read_buf,
-        .iov_len = sizeof(read_buf),
+        .iov_len = sizeof(write_buf),
     };
 
     if (!vector_mode) {
