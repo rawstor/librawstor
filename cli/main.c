@@ -100,25 +100,37 @@ static void command_testio_usage() {
         "usage: rawstor-cli testio [command_options]\n"
         "\n"
         "command options:\n"
+        "  -b, --block-size BLOCK_SIZE\n"
+        "                        Block size in bytes\n"
+        "  -c, --count COUNT\n   How many blocks are we going to be\n"
+        "                        reading/writing in bytes\n"
+        "  -d, --io-depth IO_DEPTH\n"
+        "                        IO depth\n"
         "  -h, --help            Show this help message and exit\n"
         "  -o, --object-id OBJECT_ID\n"
         "                        Rawstor object id\n"
-        "  -v, --vector-mode     Use readv/writev\n"
+        "  --vector-mode         Use readv/writev\n"
     );
 };
 
 
 static int command_testio(int argc, char **argv) {
-    const char *optstring = "ho:v";
+    const char *optstring = "b:d:ho:s:v";
     struct option longopts[] = {
+        {"block-size", required_argument, NULL, 'b'},
+        {"count", required_argument, NULL, 'c'},
         {"help", no_argument, NULL, 'h'},
+        {"io-depth", required_argument, NULL, 'd'},
         {"object-id", required_argument, NULL, 'o'},
         {"vector-mode", required_argument, NULL, 'v'},
         {},
     };
 
-    int vector_mode = 0;
+    char *block_size_arg = NULL;
+    char *count_arg = NULL;
+    char *io_depth_arg = NULL;
     char *object_id_arg = NULL;
+    int vector_mode = 0;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
         if (c == -1) {
@@ -126,6 +138,18 @@ static int command_testio(int argc, char **argv) {
         }
 
         switch (c) {
+            case 'b':
+                block_size_arg = optarg;
+                break;
+
+            case 'c':
+                count_arg = optarg;
+                break;
+
+            case 'd':
+                io_depth_arg = optarg;
+                break;
+
             case 'h':
                 command_testio_usage();
                 return EXIT_SUCCESS;
@@ -149,6 +173,39 @@ static int command_testio(int argc, char **argv) {
         return EXIT_FAILURE;
     }
  
+    if (block_size_arg == NULL) {
+        fprintf(stderr, "block-size required\n");
+        return EXIT_FAILURE;
+    }
+
+    size_t block_size = 0;
+    if (sscanf(block_size_arg, "%zu", &block_size) != 1) {
+        fprintf(stderr, "block-size argument must be unsigned integer\n");
+        return EXIT_FAILURE;
+    }
+
+    if (count_arg == NULL) {
+        fprintf(stderr, "count required\n");
+        return EXIT_FAILURE;
+    }
+
+    unsigned int count = 0;
+    if (sscanf(count_arg, "%u", &count) != 1) {
+        fprintf(stderr, "count argument must be unsigned integer\n");
+        return EXIT_FAILURE;
+    }
+
+    if (io_depth_arg == NULL) {
+        fprintf(stderr, "io-depth required\n");
+        return EXIT_FAILURE;
+    }
+
+    unsigned int io_depth = 0;
+    if (sscanf(io_depth_arg, "%u", &io_depth) != 1) {
+        fprintf(stderr, "io-depth argument must be unsigned integer\n");
+        return EXIT_FAILURE;
+    }
+
     if (object_id_arg == NULL) {
         fprintf(stderr, "object-id required\n");
         return EXIT_FAILURE;
@@ -160,7 +217,10 @@ static int command_testio(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
-    return rawstor_cli_testio(object_id, vector_mode);
+    return rawstor_cli_testio(
+        object_id,
+        block_size, count, io_depth,
+        vector_mode);
 }
 
 

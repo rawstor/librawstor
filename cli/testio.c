@@ -7,86 +7,188 @@
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 
-int read_cb(
-    RawstorObject RAWSTOR_CLI_UNUSED *object, off_t RAWSTOR_CLI_UNUSED offset,
-    void *buf, size_t RAWSTOR_CLI_UNUSED size,
-    ssize_t res, void RAWSTOR_CLI_UNUSED *data)
-{
-    printf("read_cb(): res = %zd\n", res);
+struct Worker {
+    unsigned int index;
+    struct iovec src_iov;
+    struct iovec dst_iov;
+    unsigned int count;
+};
 
-    if (res < 0) {
-        printf("read_cb(): res < 0\n");
-        errno = -res;
-        return res;
-    }
 
-    if (res == 0) {
-        printf("read_cb(): res == 0\n");
-        /**
-         * TODO: Find errno here.
-         */
-        return -1;
-    }
-
-    printf("buf: '");
-    for (ssize_t i = 0; i < res; ++i) {
-        putc(((char*)buf)[i], stdout);
+static void print_buf(const char *buf, size_t size) {
+    printf("'");
+    for (size_t i = 0; i < size; ++i) {
+        putc(buf[i], stdout);
     }
     printf("'\n");
-
-    return 0;
 }
 
 
-int readv_cb(
-    RawstorObject RAWSTOR_CLI_UNUSED *object, off_t RAWSTOR_CLI_UNUSED offset,
-    struct iovec *iov, unsigned int RAWSTOR_CLI_UNUSED niov,
-    size_t RAWSTOR_CLI_UNUSED size,
-    ssize_t res, void RAWSTOR_CLI_UNUSED *data)
-{
-    printf("readv_cb(): res = %zd\n", res);
-
-    if (res < 0) {
-        printf("readv_cb(): res < 0\n");
-        errno = -res;
-        return res;
+static void fill(char *buffer, size_t size) {
+    for (unsigned int i = 0; i < size; ++i) {
+        buffer[i] = 'a' + rand() % ('z' - 'a' + 1);
     }
-
-    if (res == 0) {
-        printf("readv_cb(): res == 0\n");
-        /**
-         * TODO: Find errno here.
-         */
-        return -1;
-    }
-
-    printf("buf: '");
-    for (ssize_t i = 0; i < res; ++i) {
-        putc(((char*)iov[0].iov_base)[i], stdout);
-    }
-    printf("'\n");
-
-    return 0;
 }
 
 
-int write_cb(
+static int src_data_sent(
+    RawstorObject *object, off_t offset,
+    void RAWSTOR_CLI_UNUSED *buf, size_t size,
+    ssize_t res, void *data);
+
+
+static int srcv_data_sent(
+    RawstorObject *object, off_t offset,
+    struct iovec RAWSTOR_CLI_UNUSED *iov, unsigned int RAWSTOR_CLI_UNUSED niov,
+    size_t size,
+    ssize_t res, void *data);
+
+
+static int dst_data_received(
     RawstorObject *object, off_t offset,
     void RAWSTOR_CLI_UNUSED *buf, size_t size,
     ssize_t res, void *data)
 {
-    printf("write_cb(): res = %zd\n", res);
+    struct Worker *worker = (struct Worker*)data;
+
+    printf("(%u) %s(): res = %zd\n", worker->index, __FUNCTION__, res);
 
     if (res < 0) {
-        printf("write_cb(): res < 0\n");
         errno = -res;
         return res;
     }
 
     if (res == 0) {
-        printf("write_cb(): res == 0\n");
+        /**
+         * TODO: Find errno here.
+         */
+        return -1;
+    }
+
+    if ((size_t)res != size) {
+        printf(
+            "(%u) %s(): Partial read: %zu != %zu\n",
+            worker->index, __FUNCTION__, (size_t)res, size);
+        /**
+         * TODO: Find errno here.
+         */
+        return -1;
+    }
+
+    if (strncmp(worker->src_iov.iov_base, worker->dst_iov.iov_base, size)) {
+        printf("(%u) %s(): src != dst\n", worker->index, __FUNCTION__);
+        printf("(%u) %s(): src = ", worker->index, __FUNCTION__);
+        print_buf(worker->src_iov.iov_base, worker->src_iov.iov_len);
+        printf("(%u) %s(): dst = ", worker->index, __FUNCTION__);
+        print_buf(worker->dst_iov.iov_base, worker->dst_iov.iov_len);
+        /**
+         * TODO: Find errno here.
+         */
+        return -1;
+    }
+
+    if (worker->count <= 1) {
+        printf("(%u) %s(): Worker done\n", worker->index, __FUNCTION__);
+        return 0;
+    }
+
+    --worker->count;
+    fill(worker->src_iov.iov_base, worker->src_iov.iov_len);
+
+    return rawstor_object_write(
+        object, offset,
+        worker->src_iov.iov_base, worker->src_iov.iov_len,
+        src_data_sent, worker);
+}
+
+
+static int dstv_data_received(
+    RawstorObject *object, off_t offset,
+    struct iovec RAWSTOR_CLI_UNUSED *iov, unsigned int RAWSTOR_CLI_UNUSED niov,
+    size_t size,
+    ssize_t res, void *data)
+{
+    struct Worker *worker = (struct Worker*)data;
+
+    printf("(%u) %s(): res = %zd\n", worker->index, __FUNCTION__, res);
+
+    if (res < 0) {
+        errno = -res;
+        return res;
+    }
+
+    if (res == 0) {
+        /**
+         * TODO: Find errno here.
+         */
+        return -1;
+    }
+
+    if ((size_t)res != size) {
+        printf(
+            "(%u) %s(): Partial read: %zu != %zu\n",
+            worker->index, __FUNCTION__, (size_t)res, size);
+        /**
+         * TODO: Find errno here.
+         */
+        return -1;
+    }
+
+    if (strncmp(worker->src_iov.iov_base, worker->dst_iov.iov_base, size)) {
+        printf("(%u) %s(): src != dst\n", worker->index, __FUNCTION__);
+        printf("(%u) %s(): src = ", worker->index, __FUNCTION__);
+        print_buf(worker->src_iov.iov_base, worker->src_iov.iov_len);
+        printf("(%u) %s(): dst = ", worker->index, __FUNCTION__);
+        print_buf(worker->dst_iov.iov_base, worker->dst_iov.iov_len);
+        /**
+         * TODO: Find errno here.
+         */
+        return -1;
+    }
+
+    if (worker->count <= 1) {
+        printf("(%u) %s(): Worker done\n", worker->index, __FUNCTION__);
+        return 0;
+    }
+
+    --worker->count;
+    fill(worker->src_iov.iov_base, worker->src_iov.iov_len);
+
+    return rawstor_object_writev(
+        object, offset,
+        &worker->src_iov, 1, size,
+        srcv_data_sent, worker);
+}
+
+
+static int src_data_sent(
+    RawstorObject *object, off_t offset,
+    void RAWSTOR_CLI_UNUSED *buf, size_t size,
+    ssize_t res, void *data)
+{
+    struct Worker *worker = (struct Worker*)data;
+
+    printf("(%u) %s(): res = %zd\n", worker->index, __FUNCTION__, res);
+
+    if (res < 0) {
+        errno = -res;
+        return res;
+    }
+
+    if (res == 0) {
+        /**
+         * TODO: Find errno here.
+         */
+        return -1;
+    }
+
+    if ((size_t)res != size) {
+        printf(
+            "(%u) %s(): Partial write: %zu != %zu\n",
+            worker->index, __FUNCTION__, (size_t)res, size);
         /**
          * TODO: Find errno here.
          */
@@ -95,8 +197,8 @@ int write_cb(
 
     if (rawstor_object_read(
         object, offset,
-        data, size,
-        read_cb, NULL))
+        worker->dst_iov.iov_base, worker->dst_iov.iov_len,
+        dst_data_received, worker))
     {
         perror("rawstor_object_read() failed");
         /**
@@ -109,22 +211,32 @@ int write_cb(
 }
 
 
-int writev_cb(
+static int srcv_data_sent(
     RawstorObject *object, off_t offset,
     struct iovec RAWSTOR_CLI_UNUSED *iov, unsigned int RAWSTOR_CLI_UNUSED niov,
     size_t size,
     ssize_t res, void *data)
 {
-    printf("writev_cb(): res = %zd\n", res);
+    struct Worker *worker = (struct Worker*)data;
+
+    printf("(%u) %s(): res = %zd\n", worker->index, __FUNCTION__, res);
 
     if (res < 0) {
-        printf("writev_cb(): res < 0\n");
         errno = -res;
         return res;
     }
 
     if (res == 0) {
-        printf("writev_cb(): res == 0\n");
+        /**
+         * TODO: Find errno here.
+         */
+        return -1;
+    }
+
+    if ((size_t)res != size) {
+        printf(
+            "(%u) %s(): Partial write: %zu != %zu\n",
+            worker->index, __FUNCTION__, (size_t)res, size);
         /**
          * TODO: Find errno here.
          */
@@ -133,8 +245,8 @@ int writev_cb(
 
     if (rawstor_object_readv(
         object, offset,
-        (struct iovec*)data, 1, size,
-        readv_cb, NULL))
+        &worker->dst_iov, 1, size,
+        dstv_data_received, worker))
     {
         perror("rawstor_object_readv() failed");
         /**
@@ -147,7 +259,11 @@ int writev_cb(
 }
 
 
-int rawstor_cli_testio(int object_id, int vector_mode) {
+int rawstor_cli_testio(
+    int object_id,
+    size_t block_size, unsigned int count, unsigned int io_depth,
+    int vector_mode)
+{
     if (rawstor_initialize()) {
         perror("rawstor_initialize() failed");
         return EXIT_FAILURE;
@@ -159,35 +275,43 @@ int rawstor_cli_testio(int object_id, int vector_mode) {
         return EXIT_FAILURE;
     }
 
-    char write_buf[] = "hello world";
-    struct iovec write_iov = {
-        .iov_base = write_buf,
-        .iov_len = sizeof(write_buf),
-    };
-
-    char read_buf[256];
-    struct iovec read_iov = {
-        .iov_base = read_buf,
-        .iov_len = sizeof(write_buf),
-    };
+    /**
+     * TODO: free workers
+     */
+    struct Worker *workers = calloc(io_depth, sizeof(struct Worker));
+    for (unsigned int i = 0; i < io_depth; ++i) {
+        workers[i] = (struct Worker) {
+            .index = i,
+            .src_iov.iov_base = malloc(block_size),
+            .src_iov.iov_len = block_size,
+            .dst_iov.iov_base = malloc(block_size),
+            .dst_iov.iov_len = block_size,
+            .count = count,
+        };
+    }
 
     if (!vector_mode) {
-        if (rawstor_object_write(
-            object, 100,
-            write_buf, sizeof(write_buf),
-            write_cb, read_buf))
-        {
-            perror("rawstor_object_write() failed");
-            return EXIT_FAILURE;
+        for (unsigned int i = 0; i < io_depth; ++i) {
+            fill(workers[i].src_iov.iov_base, workers[i].src_iov.iov_len);
+            if (rawstor_object_write(
+                object, block_size * (i + 1),
+                workers[i].src_iov.iov_base, workers[i].src_iov.iov_len,
+                src_data_sent, &workers[i]))
+            {
+                perror("rawstor_object_write() failed");
+                return EXIT_FAILURE;
+            }
         }
     } else {
-        if (rawstor_object_writev(
-            object, 100,
-            &write_iov, 1, sizeof(write_buf),
-            writev_cb, &read_iov))
-        {
-            perror("rawstor_object_writev() failed");
-            return EXIT_FAILURE;
+        for (unsigned int i = 0; i < io_depth; ++i) {
+            if (rawstor_object_writev(
+                object, 1 + block_size * i,
+                &workers[i].src_iov, 1, block_size,
+                srcv_data_sent, &workers[i]))
+            {
+                perror("rawstor_object_writev() failed");
+                return EXIT_FAILURE;
+            }
         }
     }
 
