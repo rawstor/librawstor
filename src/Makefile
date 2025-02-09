@@ -1,7 +1,7 @@
 ##
 # Flags
 #
-USE_BACKEND = file
+USE_BACKEND = ost
 USE_IOENGINE = liburing
 
 

@@ -186,7 +186,6 @@ static int response_header_received(
 
     RawstorObjectOperation *op = (RawstorObjectOperation*)data;
 
-    int ret;
     if (op->request_frame.cmd == RAWSTOR_CMD_READ) {
         if ((u_int32_t)op->response_frame.res != op->request_frame.len) {
             rawstor_warning(
@@ -200,7 +199,7 @@ static int response_header_received(
             return -1;
         }
 
-        ret = op->linear_callback != NULL ?
+        return op->linear_callback != NULL ?
             rawstor_sock_recv(
                 fd, MSG_WAITALL,
                 op->buffer.linear.data, op->request_frame.len,
@@ -211,7 +210,7 @@ static int response_header_received(
                 op->request_frame.len,
                 responsev_body_received, op);
     } else {
-        ret = op->linear_callback != NULL ?
+        int ret = op->linear_callback != NULL ?
             op->linear_callback(
                 op->object, op->request_frame.offset,
                 op->buffer.linear.data, op->request_frame.len,
@@ -223,11 +222,11 @@ static int response_header_received(
                 op->request_frame.len,
                 op->request_frame.len, op->data
             );
+
+        rawstor_pool_free(op->object->operations_pool, op);
+
+        return ret;
     }
-
-    rawstor_pool_free(op->object->operations_pool, op);
-
-    return ret;
 }
 
 
@@ -381,10 +380,10 @@ int rawstor_object_open(int RAWSTOR_UNUSED object_id, RawstorObject **object) {
 
     ret->fd = ost_connect();
     if (ret->fd < 0) {
-	int errsv = -ret->fd;
+        int errsv = -ret->fd;
         rawstor_pool_delete(ret->operations_pool);
         free(ret);
-	errno = errsv;
+        errno = errsv;
         return -errno;
     }
 
