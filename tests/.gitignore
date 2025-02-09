@@ -1,2 +1,4 @@
-test_*
-!test_*.c
+/Makefile
+/Makefile.in
+/test_*
+/!test_*.c

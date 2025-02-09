@@ -1,1 +1,3 @@
-rawstor-cli
+/Makefile
+/Makefile.in
+/rawstor-cli
