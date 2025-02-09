@@ -576,6 +576,11 @@ int rawstor_aio_event_dispatch(RawstorAIOEvent *event) {
                 event->res,
                 event->data);
     }
+
+    /**
+     * This will never happen.
+     */
+    return -1;
 }
 
 
