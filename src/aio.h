@@ -3,6 +3,7 @@
 
 #include <rawstor.h>
 
+#include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/uio.h>
 
@@ -59,6 +60,12 @@ int rawstor_aio_recv(
     int sock, int flags,
     void *buf, size_t size,
     rawstor_fd_callback cb, void *data);
+
+int rawstor_aio_recvmsg(
+    RawstorAIO *aio,
+    int sock, int flags,
+    struct msghdr *message, size_t size,
+    rawstor_fd_vector_callback cb, void *data);
 
 int rawstor_aio_write(
     RawstorAIO *aio,

@@ -4,6 +4,7 @@
 #include "logging.h"
 #include "object.h"
 
+#include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/uio.h>
 
@@ -104,6 +105,19 @@ int rawstor_sock_recv(
         rawstor_aio,
         sock, flags,
         buf, size,
+        cb, data);
+}
+
+
+int rawstor_sock_recvmsg(
+    int sock, int flags,
+    struct msghdr *message, size_t size,
+    rawstor_fd_vector_callback cb, void *data)
+{
+    return rawstor_aio_recvmsg(
+        rawstor_aio,
+        sock, flags,
+        message, size,
         cb, data);
 }
 

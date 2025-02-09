@@ -8,8 +8,28 @@
 #include <stddef.h>
 
 
-extern const char *rawstor_object_backend_name;
+// defined in rawstor.h
+// typedef struct RawstorObject RawstorObject;
 
+// defined in rawstor.h
+// struct RawstorObjectSpec {
+//     size_t size;
+// };
+
+// defined in rawstor.h
+// typedef int(*rawstor_callback)(
+//     RawstorObject *object, off_t offset,
+//     void *buf, size_t size,
+//     ssize_t res, void *data);
+
+// defined in rawstor.h
+// typedef int(*rawstor_vector_callback)(
+//     RawstorObject *object, off_t offset,
+//     struct iovec *iov, unsigned int niov, size_t size,
+//     ssize_t res, void *data);
+
+
+extern const char *rawstor_object_backend_name;
 
 int rawstor_object_create(struct RawstorObjectSpec spec, int *object_id);
 

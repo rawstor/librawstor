@@ -17,6 +17,7 @@ typedef enum RawstorAIOEventType {
     RAWSTOR_AIO_READ,
     RAWSTOR_AIO_READV,
     RAWSTOR_AIO_RECV,
+    RAWSTOR_AIO_RECVMSG,
 
     RAWSTOR_AIO_WRITE,
     RAWSTOR_AIO_WRITEV,
@@ -40,10 +41,16 @@ struct RawstorAIOEvent {
             unsigned int niov;
             size_t size;
         } vector;
+        struct {
+            struct msghdr *msg;
+            size_t size;
+        } message;
     } buffer;
 
-    rawstor_fd_callback linear_callback;
-    rawstor_fd_vector_callback vector_callback;
+    union {
+        rawstor_fd_callback linear;
+        rawstor_fd_vector_callback vector;
+    } callback;
 
     ssize_t res;
 
@@ -111,6 +118,12 @@ static RawstorAIOEvent* aio_process_event(RawstorAIO *aio) {
                         fd->fd,
                         event->buffer.linear.data,
                         event->buffer.linear.size,
+                        event->flags);
+                    break;
+                case RAWSTOR_AIO_RECVMSG:
+                    event->res = recvmsg(
+                        fd->fd,
+                        event->buffer.message.msg,
                         event->flags);
                     break;
                 default:
@@ -231,8 +244,7 @@ int rawstor_aio_accept(
         .flags = 0,
         .buffer.linear.data = NULL,
         .buffer.linear.size = 0,
-        .linear_callback = cb,
-        .vector_callback = NULL,
+        .callback.linear = cb,
         .res = 0,
         .data = data,
     };
@@ -267,8 +279,7 @@ int rawstor_aio_read(
         .flags = 0,
         .buffer.linear.data = buf,
         .buffer.linear.size = size,
-        .linear_callback = cb,
-        .vector_callback = NULL,
+        .callback.linear = cb,
         .res = 0,
         .data = data,
     };
@@ -304,8 +315,7 @@ int rawstor_aio_readv(
         .buffer.vector.iov = iov,
         .buffer.vector.niov = niov,
         .buffer.vector.size = size,
-        .linear_callback = NULL,
-        .vector_callback = cb,
+        .callback.vector = cb,
         .res = 0,
         .data = data,
     };
@@ -340,8 +350,42 @@ int rawstor_aio_recv(
         .flags = flags,
         .buffer.linear.data = buf,
         .buffer.linear.size = size,
-        .linear_callback = cb,
-        .vector_callback = NULL,
+        .callback.linear = cb,
+        .res = 0,
+        .data = data,
+    };
+
+    *pollfd = (struct pollfd) {
+        .fd = sock,
+        .events = POLLIN,
+        .revents = 0,
+    };
+
+    return 0;
+}
+
+
+int rawstor_aio_recvmsg(
+    RawstorAIO *aio,
+    int sock, int flags,
+    struct msghdr *message, size_t size,
+    rawstor_fd_vector_callback cb, void *data)
+{
+    if (rawstor_pool_count(aio->events_pool) == 0) {
+        errno = ENOBUFS;
+        return -errno;
+    }
+    RawstorAIOEvent *event = rawstor_pool_alloc(aio->events_pool);
+    struct pollfd *pollfd = rawstor_pool_alloc(aio->fds_pool);
+
+    *event = (struct RawstorAIOEvent) {
+        .type = RAWSTOR_AIO_RECVMSG,
+        .fd = pollfd,
+        .offset = 0,
+        .flags = flags,
+        .buffer.message.msg = message,
+        .buffer.message.size = size,
+        .callback.vector = cb,
         .res = 0,
         .data = data,
     };
@@ -376,8 +420,7 @@ int rawstor_aio_write(
         .flags = 0,
         .buffer.linear.data = buf,
         .buffer.linear.size = size,
-        .linear_callback = cb,
-        .vector_callback = NULL,
+        .callback.linear = cb,
         .res = 0,
         .data = data,
     };
@@ -413,8 +456,7 @@ int rawstor_aio_writev(
         .buffer.vector.iov = iov,
         .buffer.vector.niov = niov,
         .buffer.vector.size = size,
-        .linear_callback = NULL,
-        .vector_callback = cb,
+        .callback.vector = cb,
         .res = 0,
         .data = data,
     };
@@ -449,8 +491,7 @@ int rawstor_aio_send(
         .flags = flags,
         .buffer.linear.data = buf,
         .buffer.linear.size = size,
-        .linear_callback = cb,
-        .vector_callback = NULL,
+        .callback.linear = cb,
         .res = 0,
         .data = data,
     };
@@ -500,23 +541,40 @@ RawstorAIOEvent* rawstor_aio_wait_event_timeout(RawstorAIO *aio, int timeout) {
 
 
 int rawstor_aio_event_dispatch(RawstorAIOEvent *event) {
-    if (event->linear_callback != NULL) {
-        return event->linear_callback(
-            event->fd->fd,
-            event->offset,
-            event->buffer.linear.data,
-            event->buffer.linear.size,
-            event->res,
-            event->data);
-    } else {
-        return event->vector_callback(
-            event->fd->fd,
-            event->offset,
-            event->buffer.vector.iov,
-            event->buffer.vector.niov,
-            event->buffer.vector.size,
-            event->res,
-            event->data);
+    switch (event->type) {
+        case RAWSTOR_AIO_ACCEPT:
+        case RAWSTOR_AIO_READ:
+        case RAWSTOR_AIO_RECV:
+        case RAWSTOR_AIO_WRITE:
+        case RAWSTOR_AIO_SEND:
+            return event->callback.linear(
+                event->fd->fd,
+                event->offset,
+                event->buffer.linear.data,
+                event->buffer.linear.size,
+                event->res,
+                event->data);
+
+        case RAWSTOR_AIO_READV:
+        case RAWSTOR_AIO_WRITEV:
+            return event->callback.vector(
+                event->fd->fd,
+                event->offset,
+                event->buffer.vector.iov,
+                event->buffer.vector.niov,
+                event->buffer.vector.size,
+                event->res,
+                event->data);
+
+        case RAWSTOR_AIO_RECVMSG:
+            return event->callback.vector(
+                event->fd->fd,
+                event->offset,
+                event->buffer.message.msg->msg_iov,
+                event->buffer.message.msg->msg_iovlen,
+                event->buffer.message.size,
+                event->res,
+                event->data);
     }
 }
 

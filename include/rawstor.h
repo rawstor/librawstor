@@ -1,6 +1,7 @@
 #ifndef RAWSTOR_H
 #define RAWSTOR_H
 
+#include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/uio.h>
 
@@ -50,6 +51,11 @@ int rawstor_sock_recv(
     int sock, int flags,
     void *buf, size_t size,
     rawstor_fd_callback cb, void *data);
+
+int rawstor_sock_recvmsg(
+    int sock, int flags,
+    struct msghdr *message, size_t size,
+    rawstor_fd_vector_callback cb, void *data);
 
 int rawstor_fd_write(
     int fd, off_t offset,
