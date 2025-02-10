@@ -392,13 +392,17 @@ int rawstor_object_open(int RAWSTOR_UNUSED object_id, RawstorObject **object) {
     RawstorOSTFrameBasic *mframe = malloc(sizeof(RawstorOSTFrameBasic));
     mframe->cmd = RAWSTOR_CMD_SET_OBJECT;
     strlcpy(mframe->var, OBJ_NAME, 10);
-    #if LOGLEVEL > 3
     int res = write(ret->fd, mframe, sizeof(RawstorOSTFrameBasic));
     rawstor_debug("Sent request to set objid, res:%i\n", res);
-    #else
-    write(ret->fd, mframe, sizeof(RawstorOSTFrameBasic));
-    #endif
-    read(ret->fd, buff, sizeof(buff));
+    if (res < 0) {
+        free(ret);
+        return -errno;
+    }
+    res = read(ret->fd, buff, sizeof(buff));
+    if (res < 0) {
+        free(ret);
+        return -errno;
+    }
     RawstorOSTFrameResponse *rframe = malloc(sizeof(RawstorOSTFrameResponse));
     memcpy(rframe, buff, sizeof(RawstorOSTFrameResponse));
     rawstor_debug(
