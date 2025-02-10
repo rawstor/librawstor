@@ -391,7 +391,7 @@ int rawstor_object_open(int RAWSTOR_UNUSED object_id, RawstorObject **object) {
 
     RawstorOSTFrameBasic *mframe = malloc(sizeof(RawstorOSTFrameBasic));
     mframe->cmd = RAWSTOR_CMD_SET_OBJECT;
-    strlcpy(mframe->var, OBJ_NAME, 10);
+    strlcpy(mframe->obj_id, OBJ_NAME, OBJID_LEN);
     int res = write(ret->fd, mframe, sizeof(RawstorOSTFrameBasic));
     rawstor_debug("Sent request to set objid, res:%i\n", res);
     if (res < 0) {
