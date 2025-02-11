@@ -15,6 +15,7 @@
 struct RawstorAIOEvent {
     int fd;
     off_t offset;
+
     union {
         struct {
             void *data;
@@ -26,10 +27,17 @@ struct RawstorAIOEvent {
             size_t size;
         } vector;
     } buffer;
-    rawstor_fd_callback linear_callback;
-    rawstor_fd_vector_callback vector_callback;
-    void *data;
+
+    int (*dispatch)(RawstorAIOEvent *event);
+
+    union {
+        rawstor_fd_callback linear;
+        rawstor_fd_vector_callback vector;
+    } callback;
+
     struct io_uring_cqe *cqe;
+
+    void *data;
 };
 
 
@@ -43,6 +51,29 @@ struct RawstorAIO {
 
 
 const char* rawstor_aio_engine_name = "liburing";
+
+
+static int aio_event_dispatch_linear(RawstorAIOEvent *event) {
+    return event->callback.linear(
+        event->fd,
+        event->offset,
+        event->buffer.linear.data,
+        event->buffer.linear.size,
+        event->cqe->res,
+        event->data);
+}
+
+
+static int aio_event_dispatch_vector(RawstorAIOEvent *event) {
+    return event->callback.vector(
+        event->fd,
+        event->offset,
+        event->buffer.vector.iov,
+        event->buffer.vector.niov,
+        event->buffer.vector.size,
+        event->cqe->res,
+        event->data);
+}
 
 
 RawstorAIO* rawstor_aio_create(unsigned int depth) {
@@ -111,10 +142,10 @@ int rawstor_aio_accept(
         .offset = 0,
         .buffer.linear.data = NULL,
         .buffer.linear.size = 0,
-        .linear_callback = cb,
-        .vector_callback = NULL,
-        .data = data,
+        .dispatch = aio_event_dispatch_linear,
+        .callback.linear = cb,
         .cqe = NULL,
+        .data = data,
     };
 
     io_uring_prep_accept(sqe, fd, NULL, NULL, 0);
@@ -153,10 +184,10 @@ int rawstor_aio_read(
         .offset = offset,
         .buffer.linear.data = buf,
         .buffer.linear.size = size,
-        .linear_callback = cb,
-        .vector_callback = NULL,
-        .data = data,
+        .dispatch = aio_event_dispatch_linear,
+        .callback.linear = cb,
         .cqe = NULL,
+        .data = data,
     };
 
     io_uring_prep_read(sqe, fd, buf, size, offset);
@@ -196,10 +227,10 @@ int rawstor_aio_readv(
         .buffer.vector.iov = iov,
         .buffer.vector.niov = niov,
         .buffer.vector.size = size,
-        .linear_callback = NULL,
-        .vector_callback = cb,
-        .data = data,
+        .dispatch = aio_event_dispatch_vector,
+        .callback.vector = cb,
         .cqe = NULL,
+        .data = data,
     };
 
     io_uring_prep_readv(sqe, fd, iov, niov, offset);
@@ -238,10 +269,10 @@ int rawstor_aio_recv(
         .offset = 0,
         .buffer.linear.data = buf,
         .buffer.linear.size = size,
-        .linear_callback = cb,
-        .vector_callback = NULL,
-        .data = data,
+        .dispatch = aio_event_dispatch_linear,
+        .callback.linear = cb,
         .cqe = NULL,
+        .data = data,
     };
 
     io_uring_prep_recv(sqe, sock, buf, size, flags);
@@ -281,10 +312,10 @@ int rawstor_aio_recvmsg(
         .buffer.vector.iov = message->msg_iov,
         .buffer.vector.niov = message->msg_iovlen,
         .buffer.vector.size = size,
-        .linear_callback = NULL,
-        .vector_callback = cb,
-        .data = data,
+        .dispatch = aio_event_dispatch_vector,
+        .callback.vector = cb,
         .cqe = NULL,
+        .data = data,
     };
 
     io_uring_prep_recvmsg(sqe, sock, message, flags);
@@ -323,10 +354,10 @@ int rawstor_aio_write(
         .offset = offset,
         .buffer.linear.data = buf,
         .buffer.linear.size = size,
-        .linear_callback = cb,
-        .vector_callback = NULL,
-        .data = data,
+        .dispatch = aio_event_dispatch_linear,
+        .callback.linear = cb,
         .cqe = NULL,
+        .data = data,
     };
 
     io_uring_prep_write(sqe, fd, buf, size, offset);
@@ -366,10 +397,10 @@ int rawstor_aio_writev(
         .buffer.vector.iov = iov,
         .buffer.vector.niov = niov,
         .buffer.vector.size = size,
-        .linear_callback = NULL,
-        .vector_callback = cb,
-        .data = data,
+        .dispatch = aio_event_dispatch_vector,
+        .callback.vector = cb,
         .cqe = NULL,
+        .data = data,
     };
 
     io_uring_prep_writev(sqe, fd, iov, niov, offset);
@@ -408,10 +439,10 @@ int rawstor_aio_send(
         .offset = 0,
         .buffer.linear.data = buf,
         .buffer.linear.size = size,
-        .linear_callback = cb,
-        .vector_callback = NULL,
-        .data = data,
+        .dispatch = aio_event_dispatch_linear,
+        .callback.linear = cb,
         .cqe = NULL,
+        .data = data,
     };
 
     io_uring_prep_send(sqe, sock, buf, size, flags);
@@ -511,22 +542,5 @@ void rawstor_aio_release_event(RawstorAIO *aio, RawstorAIOEvent *event) {
 
 
 int rawstor_aio_event_dispatch(RawstorAIOEvent *event) {
-    if (event->linear_callback != NULL) {
-        return event->linear_callback(
-            event->fd,
-            event->offset,
-            event->buffer.linear.data,
-            event->buffer.linear.size,
-            event->cqe->res,
-            event->data);
-    } else {
-        return event->vector_callback(
-            event->fd,
-            event->offset,
-            event->buffer.vector.iov,
-            event->buffer.vector.niov,
-            event->buffer.vector.size,
-            event->cqe->res,
-            event->data);
-    }
+    return event->dispatch(event);
 }
