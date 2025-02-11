@@ -159,3 +159,16 @@ int rawstor_sock_send(
         buf, size,
         cb, data);
 }
+
+
+int rawstor_sock_sendmsg(
+    int sock, int flags,
+    struct msghdr *message, size_t size,
+    rawstor_fd_vector_callback cb, void *data)
+{
+    return rawstor_aio_sendmsg(
+        rawstor_aio,
+        sock, flags,
+        message, size,
+        cb, data);
+}

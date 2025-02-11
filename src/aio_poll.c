@@ -165,6 +165,14 @@ static void aio_event_process_send(RawstorAIOEvent *event) {
 }
 
 
+static void aio_event_process_sendmsg(RawstorAIOEvent *event) {
+    event->res = sendmsg(
+        event->fd->fd,
+        event->buffer.message.msg,
+        event->flags);
+}
+
+
 static RawstorAIOEvent* aio_process_event(RawstorAIO *aio) {
     for (size_t i = 0; i < aio->depth; ++i) {
         struct pollfd *fd = &aio->fds[i];
@@ -534,6 +542,42 @@ int rawstor_aio_send(
         .process = aio_event_process_send,
         .dispatch = aio_event_dispatch_linear,
         .callback.linear = cb,
+        .res = 0,
+        .data = data,
+    };
+
+    *pollfd = (struct pollfd) {
+        .fd = sock,
+        .events = POLLOUT,
+        .revents = 0,
+    };
+
+    return 0;
+}
+
+
+int rawstor_aio_sendmsg(
+    RawstorAIO *aio,
+    int sock, int flags,
+    struct msghdr *message, size_t size,
+    rawstor_fd_vector_callback cb, void *data)
+{
+    if (rawstor_pool_count(aio->events_pool) == 0) {
+        errno = ENOBUFS;
+        return -errno;
+    }
+    RawstorAIOEvent *event = rawstor_pool_alloc(aio->events_pool);
+    struct pollfd *pollfd = rawstor_pool_alloc(aio->fds_pool);
+
+    *event = (struct RawstorAIOEvent) {
+        .fd = pollfd,
+        .offset = 0,
+        .flags = flags,
+        .buffer.message.msg = message,
+        .buffer.message.size = size,
+        .process = aio_event_process_sendmsg,
+        .dispatch = aio_event_dispatch_message,
+        .callback.vector = cb,
         .res = 0,
         .data = data,
     };

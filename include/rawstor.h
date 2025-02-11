@@ -72,6 +72,11 @@ int rawstor_sock_send(
     void *buf, size_t size,
     rawstor_fd_callback cb, void *data);
 
+int rawstor_sock_sendmsg(
+    int sock, int flags,
+    struct msghdr *message, size_t size,
+    rawstor_fd_vector_callback cb, void *data);
+
 
 /**
  * Lib

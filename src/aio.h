@@ -85,6 +85,12 @@ int rawstor_aio_send(
     void *buf, size_t size,
     rawstor_fd_callback cb, void *data);
 
+int rawstor_aio_sendmsg(
+    RawstorAIO *aio,
+    int sock, int flags,
+    struct msghdr *message, size_t size,
+    rawstor_fd_vector_callback cb, void *data);
+
 
 RawstorAIOEvent* rawstor_aio_wait_event(RawstorAIO *aio);
 
