@@ -463,6 +463,7 @@ int rawstor_object_read(
         .object = object,
         .request_frame = (RawstorOSTFrameIO) {
             .cmd = RAWSTOR_CMD_READ,
+            .cid = 0,
             .offset = offset,
             .len = size,
             .sync = 0,
@@ -500,6 +501,7 @@ int rawstor_object_readv(
         .object = object,
         .request_frame = (RawstorOSTFrameIO) {
             .cmd = RAWSTOR_CMD_READ,
+            .cid = 0,
             .offset = offset,
             .len = size,
         },
@@ -537,6 +539,7 @@ int rawstor_object_write(
         .object = object,
         .request_frame = (RawstorOSTFrameIO) {
             .cmd = RAWSTOR_CMD_WRITE,
+            .cid = 0,
             .offset = offset,
             .len = size,
             .sync = 0,
@@ -574,6 +577,7 @@ int rawstor_object_writev(
         .object = object,
         .request_frame = (RawstorOSTFrameIO) {
             .cmd = RAWSTOR_CMD_WRITE,
+            .cid = 0,
             .offset = offset,
             .len = size,
             .sync = 0,
