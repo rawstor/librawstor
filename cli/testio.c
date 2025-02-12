@@ -305,7 +305,7 @@ int rawstor_cli_testio(
     } else {
         for (unsigned int i = 0; i < io_depth; ++i) {
             if (rawstor_object_writev(
-                object, 1 + block_size * i,
+                object, block_size * (i + 1),
                 &workers[i].src_iov, 1, block_size,
                 srcv_data_sent, &workers[i]))
             {
