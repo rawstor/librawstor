@@ -63,11 +63,6 @@ size_t rawstor_pool_size(RawstorPool *pool) {
 }
 
 
-size_t rawstor_pool_available(RawstorPool *pool) {
-    return pool->size;
-}
-
-
 void* rawstor_pool_data(RawstorPool *pool) {
     return pool->data;
 }
