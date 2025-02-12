@@ -43,6 +43,7 @@ static char OBJ_NAME[] = "TEST_OBJ";
 typedef struct RawstorObjectOperation {
     RawstorObject *object;
 
+    int cid;
     RawstorOSTFrameIO request_frame;
     RawstorOSTFrameResponse response_frame;
 
@@ -317,6 +318,10 @@ int rawstor_object_open(int RAWSTOR_UNUSED object_id, RawstorObject **object) {
         free(ret);
         return -errno;
     }
+    RawstorObjectOperation *ops = rawstor_pool_data(ret->operations_pool);
+    for (unsigned int i = 0; i < QUEUE_DEPTH; ++i) {
+        ops[i].cid = i + 1;
+    }
 
     ret->fd = ost_connect();
     if (ret->fd < 0) {
@@ -401,9 +406,10 @@ int rawstor_object_read(
     RawstorObjectOperation *op = rawstor_pool_alloc(object->operations_pool);
     *op = (RawstorObjectOperation) {
         .object = object,
+        .cid = op->cid,  // preserve cid
         .request_frame = (RawstorOSTFrameIO) {
             .cmd = RAWSTOR_CMD_READ,
-            .cid = 0,
+            .cid = op->cid,
             .offset = offset,
             .len = size,
             .sync = 0,
@@ -445,9 +451,10 @@ int rawstor_object_readv(
     RawstorObjectOperation *op = rawstor_pool_alloc(object->operations_pool);
     *op = (RawstorObjectOperation) {
         .object = object,
+        .cid = op->cid,  // preserve cid
         .request_frame = (RawstorOSTFrameIO) {
             .cmd = RAWSTOR_CMD_READ,
-            .cid = 0,
+            .cid = op->cid,
             .offset = offset,
             .len = size,
         },
@@ -483,9 +490,10 @@ int rawstor_object_write(
     RawstorObjectOperation *op = rawstor_pool_alloc(object->operations_pool);
     *op = (RawstorObjectOperation) {
         .object = object,
+        .cid = op->cid,  // preserve cid
         .request_frame = (RawstorOSTFrameIO) {
             .cmd = RAWSTOR_CMD_WRITE,
-            .cid = 0,
+            .cid = op->cid,
             .offset = offset,
             .len = size,
             .sync = 0,
@@ -539,9 +547,10 @@ int rawstor_object_writev(
     RawstorObjectOperation *op = rawstor_pool_alloc(object->operations_pool);
     *op = (RawstorObjectOperation) {
         .object = object,
+        .cid = op->cid,  // preserve cid
         .request_frame = (RawstorOSTFrameIO) {
             .cmd = RAWSTOR_CMD_WRITE,
-            .cid = 0,
+            .cid = op->cid,
             .offset = offset,
             .len = size,
             .sync = 0,
