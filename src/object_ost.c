@@ -36,13 +36,16 @@
 static char OBJ_NAME[] = "TEST_OBJ";
 
 
-#define rawstor_operation_trace(fd, cid, res, size) \
+#define operation_trace(fd, cid, res, size) \
     rawstor_debug( \
         "[%d-%u] %s(): %zi of %zu\n", \
         fd, cid, __FUNCTION__, res, size)
 
 
-typedef struct RawstorObjectOperation {
+typedef struct RawstorObjectOperation RawstorObjectOperation;
+
+
+struct RawstorObjectOperation {
     RawstorObject *object;
 
     int cid;
@@ -61,11 +64,16 @@ typedef struct RawstorObjectOperation {
     struct iovec iov[IOVEC_SIZE];
     struct msghdr message;
 
-    rawstor_callback linear_callback;
-    rawstor_vector_callback vector_callback;
+    int (*dispatch)(RawstorObjectOperation *op);
+    int (*process)(RawstorObjectOperation *op);
+
+    union {
+        rawstor_callback linear;
+        rawstor_vector_callback vector;
+    } callback;
 
     void *data;
-} RawstorObjectOperation;
+};
 
 
 typedef struct RawstorObjectResponse {
@@ -75,13 +83,108 @@ typedef struct RawstorObjectResponse {
 
 struct RawstorObject {
     int fd;
-    unsigned int operations;
+    int pending_read_response_head;
     RawstorPool *operations_pool;
     RawstorOSTFrameResponse response_frame;
 };
 
 
 const char *rawstor_object_backend_name = "ost";
+
+
+static int response_body_received(
+    int fd, off_t RAWSTOR_UNUSED offset,
+    void RAWSTOR_UNUSED *buf, size_t size,
+    ssize_t res, void *data);
+
+
+static int responsev_body_received(
+    int fd, off_t RAWSTOR_UNUSED offset,
+    struct iovec RAWSTOR_UNUSED *iov, unsigned int RAWSTOR_UNUSED niov,
+    size_t size,
+    ssize_t res, void *data);
+
+
+static int operation_dispatch_linear(RawstorObjectOperation *op) {
+    return op->callback.linear(
+        op->object, op->request_frame.offset,
+        op->buffer.linear.data, op->request_frame.len,
+        op->request_frame.len, op->data
+    );
+}
+
+
+static int operation_dispatch_vector(RawstorObjectOperation *op) {
+    return op->callback.vector(
+        op->object, op->request_frame.offset,
+        op->buffer.vector.iov, op->buffer.vector.niov, op->request_frame.len,
+        op->request_frame.len, op->data
+    );
+}
+
+
+static int operation_process_read(RawstorObjectOperation *op) {
+    return rawstor_sock_recv(
+        op->object->fd, MSG_WAITALL,
+        op->buffer.linear.data, op->request_frame.len,
+        response_body_received, op);
+}
+
+
+static int operation_process_readv(RawstorObjectOperation *op) {
+    op->message = (struct msghdr) {
+        .msg_iov = op->buffer.vector.iov,
+        .msg_iovlen = op->buffer.vector.niov,
+    };
+    return rawstor_sock_recvmsg(
+        op->object->fd, MSG_WAITALL,
+        &op->message, op->request_frame.len,
+        responsev_body_received, op);
+}
+
+
+static int object_response_head_recv(RawstorObject *object);
+
+
+static int operation_process_write(RawstorObjectOperation *op) {
+    /**
+     * Continue response loop, if there are any other pending operations.
+     */
+    if (rawstor_pool_allocated(op->object->operations_pool) > 1) {
+        rawstor_debug("call object_response_head_recv()\n");
+        if (object_response_head_recv(op->object)) {
+            rawstor_pool_free(op->object->operations_pool, op);
+            return -errno;
+        }
+    }
+
+    int ret = op->dispatch(op);
+
+    rawstor_pool_free(op->object->operations_pool, op);
+
+    return ret;
+}
+
+
+static int response_head_received(
+    int fd, off_t RAWSTOR_UNUSED offset,
+    void RAWSTOR_UNUSED *buf, size_t size,
+    ssize_t res, void *data);
+
+
+static int object_response_head_recv(RawstorObject *object) {
+    if (rawstor_sock_recv(
+        object->fd, MSG_WAITALL,
+        &object->response_frame, sizeof(object->response_frame),
+        response_head_received, object))
+    {
+        return -errno;
+    }
+
+    object->pending_read_response_head = 1;
+
+    return 0;
+}
 
 
 static int ost_connect() {
@@ -117,11 +220,10 @@ static int read_request_sent(
 {
     RawstorObjectOperation *op = (RawstorObjectOperation*)data;
 
-    rawstor_operation_trace(fd, op->cid, res, size);
+    operation_trace(fd, op->cid, res, size);
 
     if (res < 0) {
         rawstor_pool_free(op->object->operations_pool, op);
-        --op->object->operations;
         return res;
     }
 
@@ -130,6 +232,16 @@ static int read_request_sent(
             fd, 0,
             buf + res, size - res,
             read_request_sent, data);
+    }
+
+    /**
+     * Start read response loop.
+     */
+    if (rawstor_pool_allocated(op->object->operations_pool) == 1) {
+        rawstor_debug("call object_response_head_recv()\n");
+        if (object_response_head_recv(op->object)) {
+            return -errno;
+        }
     }
 
     return 0;
@@ -144,17 +256,15 @@ static int write_requestv_sent(
 {
     RawstorObjectOperation *op = (RawstorObjectOperation*)data;
 
-    rawstor_operation_trace(fd, op->cid, res, size);
+    operation_trace(fd, op->cid, res, size);
 
     if (res < 0) {
         rawstor_pool_free(op->object->operations_pool, op);
-        --op->object->operations;
         return res;
     }
 
     if ((size_t)res != size) {
         rawstor_pool_free(op->object->operations_pool, op);
-        --op->object->operations;
         rawstor_error(
             "Request size mismatch: %zu != %zu\n",
             (size_t)res, size);
@@ -162,14 +272,18 @@ static int write_requestv_sent(
         return -errno;
     }
 
+    /**
+     * Start read response loop.
+     */
+    if (op->object->pending_read_response_head == 0) {
+        rawstor_debug("call object_response_head_recv()\n");
+        if (object_response_head_recv(op->object)) {
+            return -errno;
+        }
+    }   
+
     return 0;
 }
-
-
-static int response_head_received(
-    int fd, off_t RAWSTOR_UNUSED offset,
-    void RAWSTOR_UNUSED *buf, size_t size,
-    ssize_t res, void *data);
 
 
 static int response_body_received(
@@ -183,17 +297,15 @@ static int response_body_received(
 
     RawstorObjectOperation *op = (RawstorObjectOperation*)data;
 
-    rawstor_operation_trace(fd, op->cid, res, size);
+    operation_trace(fd, op->cid, res, size);
 
     if (res < 0) {
         rawstor_pool_free(op->object->operations_pool, op);
-        --op->object->operations;
         return res;
     }
 
     if ((size_t)res != size) {
         rawstor_pool_free(op->object->operations_pool, op);
-        --op->object->operations;
         rawstor_error(
             "Response body size mismatch: %zu != %zu\n",
             (size_t)res, size);
@@ -201,24 +313,20 @@ static int response_body_received(
         return -errno;
     }
 
-    int ret = op->linear_callback(
-        op->object, op->request_frame.offset,
-        op->buffer.linear.data, op->request_frame.len,
-        op->request_frame.len, op->data
-    );
-
-    rawstor_pool_free(op->object->operations_pool, op);
-    --op->object->operations;
-
-    if (op->object->operations != 0) {
-        if (rawstor_sock_recv(
-            op->object->fd, MSG_WAITALL,
-            &op->object->response_frame, sizeof(op->object->response_frame),
-            response_head_received, op->object))
-        {
+    /**
+     * Continue response loop, if there are any other pending operations.
+     */
+    if (rawstor_pool_allocated(op->object->operations_pool) > 1) {
+        rawstor_debug("call object_response_head_recv()\n");
+        if (object_response_head_recv(op->object)) {
+            rawstor_pool_free(op->object->operations_pool, op);
             return -errno;
         }
     }
+
+    int ret = op->dispatch(op);
+
+    rawstor_pool_free(op->object->operations_pool, op);
 
     return ret;
 }
@@ -232,17 +340,15 @@ static int responsev_body_received(
 {
     RawstorObjectOperation *op = (RawstorObjectOperation*)data;
 
-    rawstor_operation_trace(fd, op->cid, res, size);
+    operation_trace(fd, op->cid, res, size);
 
     if (res < 0) {
         rawstor_pool_free(op->object->operations_pool, op);
-        --op->object->operations;
         return res;
     }
 
     if ((size_t)res != size) {
         rawstor_pool_free(op->object->operations_pool, op);
-        --op->object->operations;
         rawstor_error(
             "Response body size mismatch: %zu != %zu\n",
             (size_t)res, size);
@@ -250,25 +356,20 @@ static int responsev_body_received(
         return -errno;
     }
 
-    int ret = op->vector_callback(
-        op->object, op->request_frame.offset,
-        op->buffer.vector.iov, op->buffer.vector.niov,
-        op->request_frame.len,
-        op->request_frame.len, op->data
-    );
-
-    rawstor_pool_free(op->object->operations_pool, op);
-    --op->object->operations;
-
-    if (op->object->operations != 0) {
-        if (rawstor_sock_recv(
-            op->object->fd, MSG_WAITALL,
-            &op->object->response_frame, sizeof(op->object->response_frame),
-            response_head_received, op->object))
-        {
+    /**
+     * Continue response loop, if there are any other pending operations.
+     */
+    if (rawstor_pool_allocated(op->object->operations_pool) > 1) {
+        rawstor_debug("call object_response_head_recv()\n");
+        if (object_response_head_recv(op->object)) {
+            rawstor_pool_free(op->object->operations_pool, op);
             return -errno;
         }
     }
+
+    int ret = op->dispatch(op);
+
+    rawstor_pool_free(op->object->operations_pool, op);
 
     return ret;
 }
@@ -302,52 +403,11 @@ static int response_head_received(
     RawstorObjectOperation *ops = rawstor_pool_data(object->operations_pool);
     RawstorObjectOperation *op = &ops[object->response_frame.cid - 1];
 
-    rawstor_operation_trace(fd, op->cid, res, size);
+    operation_trace(fd, op->cid, res, size);
 
-    if (op->request_frame.cmd == RAWSTOR_CMD_READ) {
-        if (op->linear_callback != NULL) {
-            return rawstor_sock_recv(
-                fd, MSG_WAITALL,
-                op->buffer.linear.data, op->request_frame.len,
-                response_body_received, op);
-        } else {
-            op->message = (struct msghdr) {
-                .msg_iov = op->buffer.vector.iov,
-                .msg_iovlen = op->buffer.vector.niov,
-            };
-            return rawstor_sock_recvmsg(
-                fd, MSG_WAITALL,
-                &op->message, op->request_frame.len,
-                responsev_body_received, op);
-        }
-    } else {
-        int ret = op->linear_callback != NULL ?
-            op->linear_callback(
-                op->object, op->request_frame.offset,
-                op->buffer.linear.data, op->request_frame.len,
-                op->request_frame.len, op->data
-            ) : op->vector_callback(
-                op->object, op->request_frame.offset,
-                op->buffer.vector.iov, op->buffer.vector.niov,
-                op->request_frame.len,
-                op->request_frame.len, op->data
-            );
+    op->object->pending_read_response_head = 0;
 
-        rawstor_pool_free(op->object->operations_pool, op);
-        --object->operations;
-
-        if (object->operations != 0) {
-            if (rawstor_sock_recv(
-                object->fd, MSG_WAITALL,
-                &object->response_frame, sizeof(object->response_frame),
-                response_head_received, object))
-            {
-                return -errno;
-            }
-        }
-
-        return ret;
-    }
+    return op->process(op);
 }
 
 
@@ -377,7 +437,7 @@ int rawstor_object_open(int RAWSTOR_UNUSED object_id, RawstorObject **object) {
     if (ret == NULL) {
         return -errno;
     }
-    ret->operations = 0;
+    ret->pending_read_response_head = 0;
 
     ret->operations_pool = rawstor_pool_create(
         QUEUE_DEPTH,
@@ -474,22 +534,11 @@ int rawstor_object_read(
         "[%d] %s(): offset: = %jd, size = %zu\n",
         object->fd, __FUNCTION__, (intmax_t)offset, size);
 
-    if (rawstor_pool_count(object->operations_pool) == 0) {
+    if (rawstor_pool_available(object->operations_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
     }
 
-    if (object->operations == 0) {
-        if (rawstor_sock_recv(
-            object->fd, MSG_WAITALL,
-            &object->response_frame, sizeof(object->response_frame),
-            response_head_received, object))
-        {
-            return -errno;
-        }
-    }
-
-    ++object->operations;
     RawstorObjectOperation *op = rawstor_pool_alloc(object->operations_pool);
     *op = (RawstorObjectOperation) {
         .object = object,
@@ -503,8 +552,11 @@ int rawstor_object_read(
         },
         // .response_frame =
         .buffer.linear.data = buf,
-        .linear_callback = cb,
-        .vector_callback = NULL,
+        // .iov
+        // .message
+        .dispatch = operation_dispatch_linear,
+        .process = operation_process_read,
+        .callback.linear = cb,
         .data = data,
     };
 
@@ -524,7 +576,7 @@ int rawstor_object_readv(
         "[%d] %s(): offset = %jd, niov = %u, size = %zu\n",
         object->fd, __FUNCTION__, (intmax_t)offset, niov, size);
 
-    if (rawstor_pool_count(object->operations_pool) == 0) {
+    if (rawstor_pool_available(object->operations_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
     }
@@ -535,17 +587,6 @@ int rawstor_object_readv(
         return -errno;
     }
 
-    if (object->operations == 0) {
-        if (rawstor_sock_recv(
-            object->fd, MSG_WAITALL,
-            &object->response_frame, sizeof(object->response_frame),
-            response_head_received, object))
-        {
-            return -errno;
-        }
-    }
-
-    ++object->operations;
     RawstorObjectOperation *op = rawstor_pool_alloc(object->operations_pool);
     *op = (RawstorObjectOperation) {
         .object = object,
@@ -559,8 +600,11 @@ int rawstor_object_readv(
         // .response_frame
         .buffer.vector.iov = iov,
         .buffer.vector.niov = niov,
-        .linear_callback = NULL,
-        .vector_callback = cb,
+        // .iov
+        // .message
+        .dispatch = operation_dispatch_vector,
+        .process = operation_process_readv,
+        .callback.vector = cb,
         .data = data,
     };
 
@@ -580,22 +624,11 @@ int rawstor_object_write(
         "[%d] %s(): offset = %jd, size = %zu\n",
         object->fd, __FUNCTION__, (intmax_t)offset, size);
 
-    if (rawstor_pool_count(object->operations_pool) == 0) {
+    if (rawstor_pool_available(object->operations_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
     }
 
-    if (object->operations == 0) {
-        if (rawstor_sock_recv(
-            object->fd, MSG_WAITALL,
-            &object->response_frame, sizeof(object->response_frame),
-            response_head_received, object))
-        {
-            return -errno;
-        }
-    }
-
-    ++object->operations;
     RawstorObjectOperation *op = rawstor_pool_alloc(object->operations_pool);
     *op = (RawstorObjectOperation) {
         .object = object,
@@ -609,8 +642,11 @@ int rawstor_object_write(
         },
         // .response_frame =
         .buffer.linear.data = buf,
-        .linear_callback = cb,
-        .vector_callback = NULL,
+        // .iov
+        // .message
+        .dispatch = operation_dispatch_linear,
+        .process = operation_process_write,
+        .callback.linear = cb,
         .data = data,
     };
 
@@ -642,7 +678,7 @@ int rawstor_object_writev(
         "[%d] %s(): offset = %jd, niov = %u, size = %zu\n",
         object->fd, __FUNCTION__, (intmax_t)offset, niov, size);
 
-    if (rawstor_pool_count(object->operations_pool) == 0) {
+    if (rawstor_pool_available(object->operations_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
     }
@@ -653,17 +689,6 @@ int rawstor_object_writev(
         return -errno;
     }
 
-    if (object->operations == 0) {
-        if (rawstor_sock_recv(
-            object->fd, MSG_WAITALL,
-            &object->response_frame, sizeof(object->response_frame),
-            response_head_received, object))
-        {
-            return -errno;
-        }
-    }
-
-    ++object->operations;
     RawstorObjectOperation *op = rawstor_pool_alloc(object->operations_pool);
     *op = (RawstorObjectOperation) {
         .object = object,
@@ -678,8 +703,11 @@ int rawstor_object_writev(
         // .response_frame =
         .buffer.vector.iov = iov,
         .buffer.vector.niov = niov,
-        .linear_callback = NULL,
-        .vector_callback = cb,
+        // .iov
+        // .message
+        .dispatch = operation_dispatch_vector,
+        .process = operation_process_write,
+        .callback.vector = cb,
         .data = data,
     };
 

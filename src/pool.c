@@ -6,8 +6,8 @@
 
 struct RawstorPool {
     void *data;
-    void **index;
     void **head;
+    void **current;
     void **tail;
     size_t count;
     size_t size;
@@ -26,19 +26,19 @@ RawstorPool* rawstor_pool_create(size_t count, size_t size) {
         return NULL;
     }
 
-    pool->index = calloc(count, sizeof(void*));
-    if (pool->index == NULL) {
+    pool->head = calloc(count, sizeof(void*));
+    if (pool->head == NULL) {
         free(pool->data);
         free(pool);
         return NULL;
     }
 
     for (size_t i = 0; i < count; ++i) {
-        pool->index[i] = pool->data + i * size;
+        pool->head[i] = pool->data + i * size;
     }
 
-    pool->head = &pool->index[0];
-    pool->tail = &pool->index[count];
+    pool->current = &pool->head[0];
+    pool->tail = &pool->head[count];
     pool->count = count;
     pool->size = size;
 
@@ -47,14 +47,19 @@ RawstorPool* rawstor_pool_create(size_t count, size_t size) {
 
 
 void rawstor_pool_delete(RawstorPool *pool) {
-    free(pool->index);
+    free(pool->head);
     free(pool->data);
     free(pool);
 }
 
 
-size_t rawstor_pool_count(RawstorPool *pool) {
-    return pool->tail - pool->head;
+size_t rawstor_pool_available(RawstorPool *pool) {
+    return pool->tail - pool->current;
+}
+
+
+size_t rawstor_pool_allocated(RawstorPool *pool) {
+    return pool->current - pool->head;
 }
 
 
@@ -69,10 +74,10 @@ void* rawstor_pool_data(RawstorPool *pool) {
 
 
 void* rawstor_pool_alloc(RawstorPool *pool) {
-    return *(pool->head++);
+    return *(pool->current++);
 }
 
 
 void rawstor_pool_free(RawstorPool *pool, void *ptr) {
-    *(--pool->head) = ptr;
+    *(--pool->current) = ptr;
 }

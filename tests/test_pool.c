@@ -113,29 +113,36 @@ static int test_pool_order() {
 }
 
 
-static int test_pool_count() {
+static int test_pool_counters() {
     RawstorPool *p = rawstor_pool_create(3, sizeof(int));
     assertTrue(p != NULL);
 
-    assertTrue(rawstor_pool_count(p) == 3);
+    assertTrue(rawstor_pool_available(p) == 3);
+    assertTrue(rawstor_pool_allocated(p) == 0);
 
     int *v1 = rawstor_pool_alloc(p);
-    assertTrue(rawstor_pool_count(p) == 2);
+    assertTrue(rawstor_pool_available(p) == 2);
+    assertTrue(rawstor_pool_allocated(p) == 1);
 
     int *v2 = rawstor_pool_alloc(p);
-    assertTrue(rawstor_pool_count(p) == 1);
+    assertTrue(rawstor_pool_available(p) == 1);
+    assertTrue(rawstor_pool_allocated(p) == 2);
 
     int *v3 = rawstor_pool_alloc(p);
-    assertTrue(rawstor_pool_count(p) == 0);
+    assertTrue(rawstor_pool_available(p) == 0);
+    assertTrue(rawstor_pool_allocated(p) == 3);
 
     rawstor_pool_free(p, v3);
-    assertTrue(rawstor_pool_count(p) == 1);
+    assertTrue(rawstor_pool_available(p) == 1);
+    assertTrue(rawstor_pool_allocated(p) == 2);
 
     rawstor_pool_free(p, v2);
-    assertTrue(rawstor_pool_count(p) == 2);
+    assertTrue(rawstor_pool_available(p) == 2);
+    assertTrue(rawstor_pool_allocated(p) == 1);
 
     rawstor_pool_free(p, v1);
-    assertTrue(rawstor_pool_count(p) == 3);
+    assertTrue(rawstor_pool_available(p) == 3);
+    assertTrue(rawstor_pool_allocated(p) == 0);
 
     rawstor_pool_delete(p);
 
@@ -150,6 +157,6 @@ int main() {
     rval += test_pool_size();
     rval += test_pool_data();
     rval += test_pool_order();
-    rval += test_pool_count();
+    rval += test_pool_counters();
     return rval ? EXIT_FAILURE : EXIT_SUCCESS;
 }

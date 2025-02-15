@@ -13,7 +13,7 @@ test_pool_LDADD = $(top_srcdir)/src/librawstor.la
 
 
 test: all
-	@for test in $(TESTS); do \
+	@for test in $(noinst_PROGRAMS); do \
 	    echo $${test}; \
 	    ./$${test} || exit 1; \
 	done

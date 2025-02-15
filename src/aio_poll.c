@@ -272,7 +272,7 @@ int rawstor_aio_accept(
     int fd,
     rawstor_fd_callback cb, void *data)
 {
-    if (rawstor_pool_count(aio->events_pool) == 0) {
+    if (rawstor_pool_available(aio->events_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
     }
@@ -308,7 +308,7 @@ int rawstor_aio_read(
     void *buf, size_t size,
     rawstor_fd_callback cb, void *data)
 {
-    if (rawstor_pool_count(aio->events_pool) == 0) {
+    if (rawstor_pool_available(aio->events_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
     }
@@ -344,7 +344,7 @@ int rawstor_aio_readv(
     struct iovec *iov, unsigned int niov, size_t size,
     rawstor_fd_vector_callback cb, void *data)
 {
-    if (rawstor_pool_count(aio->events_pool) == 0) {
+    if (rawstor_pool_available(aio->events_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
     }
@@ -381,7 +381,7 @@ int rawstor_aio_recv(
     void *buf, size_t size,
     rawstor_fd_callback cb, void *data)
 {
-    if (rawstor_pool_count(aio->events_pool) == 0) {
+    if (rawstor_pool_available(aio->events_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
     }
@@ -417,7 +417,7 @@ int rawstor_aio_recvmsg(
     struct msghdr *message, size_t size,
     rawstor_fd_vector_callback cb, void *data)
 {
-    if (rawstor_pool_count(aio->events_pool) == 0) {
+    if (rawstor_pool_available(aio->events_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
     }
@@ -453,7 +453,7 @@ int rawstor_aio_write(
     void *buf, size_t size,
     rawstor_fd_callback cb, void *data)
 {
-    if (rawstor_pool_count(aio->events_pool) == 0) {
+    if (rawstor_pool_available(aio->events_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
     }
@@ -489,7 +489,7 @@ int rawstor_aio_writev(
     struct iovec *iov, unsigned int niov, size_t size,
     rawstor_fd_vector_callback cb, void *data)
 {
-    if (rawstor_pool_count(aio->events_pool) == 0) {
+    if (rawstor_pool_available(aio->events_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
     }
@@ -526,7 +526,7 @@ int rawstor_aio_send(
     void *buf, size_t size,
     rawstor_fd_callback cb, void *data)
 {
-    if (rawstor_pool_count(aio->events_pool) == 0) {
+    if (rawstor_pool_available(aio->events_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
     }
@@ -562,7 +562,7 @@ int rawstor_aio_sendmsg(
     struct msghdr *message, size_t size,
     rawstor_fd_vector_callback cb, void *data)
 {
-    if (rawstor_pool_count(aio->events_pool) == 0) {
+    if (rawstor_pool_available(aio->events_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
     }
@@ -598,7 +598,7 @@ RawstorAIOEvent* rawstor_aio_wait_event(RawstorAIO *aio) {
         return event;
     }
 
-    if (rawstor_pool_count(aio->fds_pool) == aio->depth) {
+    if (rawstor_pool_available(aio->fds_pool) == aio->depth) {
         return NULL;
     }
 

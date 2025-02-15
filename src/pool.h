@@ -12,7 +12,9 @@ RawstorPool* rawstor_pool_create(size_t count, size_t size);
 
 void rawstor_pool_delete(RawstorPool *pool);
 
-size_t rawstor_pool_count(RawstorPool *pool);
+size_t rawstor_pool_available(RawstorPool *pool);
+
+size_t rawstor_pool_allocated(RawstorPool *pool);
 
 size_t rawstor_pool_size(RawstorPool *pool);
 

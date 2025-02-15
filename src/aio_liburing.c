@@ -124,7 +124,7 @@ int rawstor_aio_accept(
      * TODO: Since pool count is equal to sqe count, do we really have to have
      * this check?
      */
-    if (rawstor_pool_count(aio->events_pool) == 0) {
+    if (rawstor_pool_available(aio->events_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
     }
@@ -166,7 +166,7 @@ int rawstor_aio_read(
      * TODO: Since pool count is equal to sqe count, do we really have to have
      * this check?
      */
-    if (rawstor_pool_count(aio->events_pool) == 0) {
+    if (rawstor_pool_available(aio->events_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
     }
@@ -208,7 +208,7 @@ int rawstor_aio_readv(
      * TODO: Since pool count is equal to sqe count, do we really have to have
      * this check?
      */
-    if (rawstor_pool_count(aio->events_pool) == 0) {
+    if (rawstor_pool_available(aio->events_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
     }
@@ -251,7 +251,7 @@ int rawstor_aio_recv(
      * TODO: Since pool count is equal to sqe count, do we really have to have
      * this check?
      */
-    if (rawstor_pool_count(aio->events_pool) == 0) {
+    if (rawstor_pool_available(aio->events_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
     }
@@ -293,7 +293,7 @@ int rawstor_aio_recvmsg(
      * TODO: Since pool count is equal to sqe count, do we really have to have
      * this check?
      */
-    if (rawstor_pool_count(aio->events_pool) == 0) {
+    if (rawstor_pool_available(aio->events_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
     }
@@ -336,7 +336,7 @@ int rawstor_aio_write(
      * TODO: Since pool count is equal to sqe count, do we really have to have
      * this check?
      */
-    if (rawstor_pool_count(aio->events_pool) == 0) {
+    if (rawstor_pool_available(aio->events_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
     }
@@ -378,7 +378,7 @@ int rawstor_aio_writev(
      * TODO: Since pool count is equal to sqe count, do we really have to have
      * this check?
      */
-    if (rawstor_pool_count(aio->events_pool) == 0) {
+    if (rawstor_pool_available(aio->events_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
     }
@@ -421,7 +421,7 @@ int rawstor_aio_send(
      * TODO: Since pool count is equal to sqe count, do we really have to have
      * this check?
      */
-    if (rawstor_pool_count(aio->events_pool) == 0) {
+    if (rawstor_pool_available(aio->events_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
     }
@@ -463,7 +463,7 @@ int rawstor_aio_sendmsg(
      * TODO: Since pool count is equal to sqe count, do we really have to have
      * this check?
      */
-    if (rawstor_pool_count(aio->events_pool) == 0) {
+    if (rawstor_pool_available(aio->events_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
     }
