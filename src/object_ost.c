@@ -135,7 +135,10 @@ static int operation_process_write(RawstorObjectOperation *op) {
         }
     }
 
-    int ret = op->callback(op->object, op->request_frame.len, op->data);
+    int ret = op->callback(
+        op->object,
+        op->request_frame.len, op->request_frame.len,
+        op->data);
 
     rawstor_pool_free(op->object->operations_pool, op);
 
@@ -296,7 +299,10 @@ static int response_body_received(
         }
     }
 
-    int ret = op->callback(op->object, op->request_frame.len, op->data);
+    int ret = op->callback(
+        op->object,
+        op->request_frame.len, op->request_frame.len,
+        op->data);
 
     rawstor_pool_free(op->object->operations_pool, op);
 
@@ -337,7 +343,10 @@ static int responsev_body_received(
         }
     }
 
-    int ret = op->callback(op->object, op->request_frame.len, op->data);
+    int ret = op->callback(
+        op->object,
+        op->request_frame.len, op->request_frame.len,
+        op->data);
 
     rawstor_pool_free(op->object->operations_pool, op);
 

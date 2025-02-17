@@ -111,7 +111,8 @@ struct RawstorObjectSpec {
     size_t size;
 };
 
-typedef int(*rawstor_callback)(RawstorObject *object, ssize_t res, void *data);
+typedef int(*rawstor_callback)(
+    RawstorObject *object, size_t size, ssize_t res, void *data);
 
 
 int rawstor_object_create(struct RawstorObjectSpec spec, int *object_id);

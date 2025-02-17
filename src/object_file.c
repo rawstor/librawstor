@@ -51,11 +51,11 @@ const char *rawstor_object_backend_name = "file";
 
 static int aio_callback(
     RawstorAIOEvent RAWSTOR_UNUSED *event,
-    size_t RAWSTOR_UNUSED size, ssize_t res,
+    size_t size, ssize_t res,
     void *data)
 {
     RawstorObjectOperation *op = data;
-    int rval = op->callback(op->object, res, op->data);
+    int rval = op->callback(op->object, size, res, op->data);
     rawstor_pool_free(op->object->operations_pool, op);
     return rval;
 }

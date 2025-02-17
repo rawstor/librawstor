@@ -35,13 +35,17 @@ static void fill(char *buffer, size_t size) {
 }
 
 
-static int src_data_sent(RawstorObject *object, ssize_t res, void *data);
+static int src_data_sent(
+    RawstorObject *object, size_t size, ssize_t res, void *data);
 
 
-static int srcv_data_sent(RawstorObject *object, ssize_t res, void *data);
+static int srcv_data_sent(
+    RawstorObject *object, size_t size, ssize_t res, void *data);
 
 
-static int dst_data_received(RawstorObject *object, ssize_t res, void *data) {
+static int dst_data_received(RawstorObject *object,
+    size_t size, ssize_t res, void *data)
+{
     struct Worker *worker = (struct Worker*)data;
 
     printf("(%u) %s(): res = %zd\n", worker->index, __FUNCTION__, res);
@@ -58,20 +62,17 @@ static int dst_data_received(RawstorObject *object, ssize_t res, void *data) {
         return -1;
     }
 
-    if ((size_t)res != worker->dst_iov.iov_len) {
+    if ((size_t)res != size) {
         printf(
             "(%u) %s(): Partial read: %zu != %zu\n",
-            worker->index, __FUNCTION__, (size_t)res, worker->dst_iov.iov_len);
+            worker->index, __FUNCTION__, (size_t)res, size);
         /**
          * TODO: Find errno here.
          */
         return -1;
     }
 
-    if (strncmp(
-        worker->src_iov.iov_base, worker->dst_iov.iov_base,
-        worker->dst_iov.iov_len))
-    {
+    if (strncmp(worker->src_iov.iov_base, worker->dst_iov.iov_base, size)) {
         printf("(%u) %s(): src != dst\n", worker->index, __FUNCTION__);
         printf("(%u) %s(): src = ", worker->index, __FUNCTION__);
         print_buf(worker->src_iov.iov_base, worker->src_iov.iov_len);
@@ -98,7 +99,9 @@ static int dst_data_received(RawstorObject *object, ssize_t res, void *data) {
 }
 
 
-static int dstv_data_received(RawstorObject *object, ssize_t res, void *data) {
+static int dstv_data_received(
+    RawstorObject *object, size_t size, ssize_t res, void *data)
+{
     struct Worker *worker = (struct Worker*)data;
 
     printf("(%u) %s(): res = %zd\n", worker->index, __FUNCTION__, res);
@@ -115,20 +118,17 @@ static int dstv_data_received(RawstorObject *object, ssize_t res, void *data) {
         return -1;
     }
 
-    if ((size_t)res != worker->dst_iov.iov_len) {
+    if ((size_t)res != size) {
         printf(
             "(%u) %s(): Partial read: %zu != %zu\n",
-            worker->index, __FUNCTION__, (size_t)res, worker->dst_iov.iov_len);
+            worker->index, __FUNCTION__, (size_t)res, size);
         /**
          * TODO: Find errno here.
          */
         return -1;
     }
 
-    if (strncmp(
-        worker->src_iov.iov_base, worker->dst_iov.iov_base,
-        worker->dst_iov.iov_len))
-    {
+    if (strncmp(worker->src_iov.iov_base, worker->dst_iov.iov_base, size)) {
         printf("(%u) %s(): src != dst\n", worker->index, __FUNCTION__);
         printf("(%u) %s(): src = ", worker->index, __FUNCTION__);
         print_buf(worker->src_iov.iov_base, worker->src_iov.iov_len);
@@ -159,7 +159,9 @@ static int dstv_data_received(RawstorObject *object, ssize_t res, void *data) {
 }
 
 
-static int src_data_sent(RawstorObject *object, ssize_t res, void *data) {
+static int src_data_sent(
+    RawstorObject *object, size_t size, ssize_t res, void *data)
+{
     struct Worker *worker = (struct Worker*)data;
 
     printf("(%u) %s(): res = %zd\n", worker->index, __FUNCTION__, res);
@@ -176,10 +178,10 @@ static int src_data_sent(RawstorObject *object, ssize_t res, void *data) {
         return -1;
     }
 
-    if ((size_t)res != worker->src_iov.iov_len) {
+    if ((size_t)res != size) {
         printf(
             "(%u) %s(): Partial write: %zu != %zu\n",
-            worker->index, __FUNCTION__, (size_t)res, worker->src_iov.iov_len);
+            worker->index, __FUNCTION__, (size_t)res, size);
         /**
          * TODO: Find errno here.
          */
@@ -202,7 +204,9 @@ static int src_data_sent(RawstorObject *object, ssize_t res, void *data) {
 }
 
 
-static int srcv_data_sent(RawstorObject *object, ssize_t res, void *data) {
+static int srcv_data_sent(
+    RawstorObject *object, size_t size, ssize_t res, void *data)
+{
     struct Worker *worker = (struct Worker*)data;
 
     printf("(%u) %s(): res = %zd\n", worker->index, __FUNCTION__, res);
@@ -219,10 +223,10 @@ static int srcv_data_sent(RawstorObject *object, ssize_t res, void *data) {
         return -1;
     }
 
-    if ((size_t)res != worker->src_iov.iov_len) {
+    if ((size_t)res != size) {
         printf(
             "(%u) %s(): Partial write: %zu != %zu\n",
-            worker->index, __FUNCTION__, (size_t)res, worker->src_iov.iov_len);
+            worker->index, __FUNCTION__, (size_t)res, size);
         /**
          * TODO: Find errno here.
          */

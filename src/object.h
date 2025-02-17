@@ -18,7 +18,7 @@
 
 // defined in rawstor.h
 // typedef int(*rawstor_callback)(
-//     RawstorObject *object, ssize_t res, void *data);
+//     RawstorObject *object, size_t size, ssize_t res, void *data);
 
 
 extern const char *rawstor_object_backend_name;
