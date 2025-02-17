@@ -18,15 +18,7 @@ typedef struct RawstorAIO RawstorAIO;
 
 // defined in rawstor.h
 // typedef int(*rawstor_fd_callback)(
-//     int fd, off_t offset,
-//     void *buf, size_t size,
-//     ssize_t res, void *data);
-
-// defined in rawstor.h
-// typedef int(*rawstor_fd_vector_callback)(
-//     int fd, off_t offset,
-//     struct iovec *iov, unsigned int niov, size_t size,
-//     ssize_t res, void *data);
+//     RawstorAIOEvent *event, size_t size, ssize_t res, void *data);
 
 
 extern const char* rawstor_aio_engine_name;
@@ -45,51 +37,63 @@ int rawstor_aio_accept(
 
 int rawstor_aio_read(
     RawstorAIO *aio,
-    int fd, off_t offset,
-    void *buf, size_t size,
+    int fd, void *buf, size_t size,
     rawstor_fd_callback cb, void *data);
 
 int rawstor_aio_readv(
     RawstorAIO *aio,
-    int fd, off_t offset,
-    struct iovec *iov, unsigned int niov, size_t size,
-    rawstor_fd_vector_callback cb, void *data);
+    int fd, struct iovec *iov, unsigned int niov, size_t size,
+    rawstor_fd_callback cb, void *data);
+
+int rawstor_aio_pread(
+    RawstorAIO *aio,
+    int fd, void *buf, size_t size, off_t offset,
+    rawstor_fd_callback cb, void *data);
+
+int rawstor_aio_preadv(
+    RawstorAIO *aio,
+    int fd, struct iovec *iov, unsigned int niov, size_t size, off_t offset,
+    rawstor_fd_callback cb, void *data);
 
 int rawstor_aio_recv(
     RawstorAIO *aio,
-    int sock, int flags,
-    void *buf, size_t size,
+    int sock, void *buf, size_t size, int flags,
     rawstor_fd_callback cb, void *data);
 
 int rawstor_aio_recvmsg(
     RawstorAIO *aio,
-    int sock, int flags,
-    struct msghdr *message, size_t size,
-    rawstor_fd_vector_callback cb, void *data);
+    int sock, struct msghdr *message, size_t size, int flags,
+    rawstor_fd_callback cb, void *data);
 
 int rawstor_aio_write(
     RawstorAIO *aio,
-    int fd, off_t offset,
-    void *buf, size_t size,
+    int fd, void *buf, size_t size,
+    rawstor_fd_callback cb, void *data);
+
+int rawstor_aio_pwrite(
+    RawstorAIO *aio,
+    int fd, void *buf, size_t size, off_t offset,
     rawstor_fd_callback cb, void *data);
 
 int rawstor_aio_writev(
     RawstorAIO *aio,
-    int fd, off_t offset,
-    struct iovec *iov, unsigned int niov, size_t size,
-    rawstor_fd_vector_callback cb, void *data);
+    int fd, struct iovec *iov, unsigned int niov, size_t size,
+    rawstor_fd_callback cb, void *data);
+
+int rawstor_aio_pwritev(
+    RawstorAIO *aio,
+    int fd, struct iovec *iov, unsigned int niov, size_t size, off_t offset,
+    rawstor_fd_callback cb, void *data);
 
 int rawstor_aio_send(
     RawstorAIO *aio,
-    int sock, int flags,
-    void *buf, size_t size,
+    int sock, void *buf, size_t size, int flags,
     rawstor_fd_callback cb, void *data);
 
 int rawstor_aio_sendmsg(
     RawstorAIO *aio,
-    int sock, int flags,
-    struct msghdr *message, size_t size,
-    rawstor_fd_vector_callback cb, void *data);
+    int sock, struct msghdr *message, size_t size, int flags,
+    rawstor_fd_callback cb, void *data);
 
 
 RawstorAIOEvent* rawstor_aio_wait_event(RawstorAIO *aio);
@@ -98,7 +102,8 @@ RawstorAIOEvent* rawstor_aio_wait_event_timeout(RawstorAIO *aio, int timeout);
 
 void rawstor_aio_release_event(RawstorAIO *aio, RawstorAIOEvent *event);
 
-int rawstor_aio_event_dispatch(RawstorAIOEvent *event);
+int rawstor_aio_event_fd(RawstorAIOEvent *event);
 
+int rawstor_aio_event_dispatch(RawstorAIOEvent *event);
 
 #endif // RAWSTOR_AIO_H

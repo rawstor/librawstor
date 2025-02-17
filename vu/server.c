@@ -93,25 +93,24 @@ static int dispatch_vu_request(VhostUserMsg *msg) {
 
 
 static int server_read(
-    int client_socket, off_t offset,
-    void *buf, size_t buf_size,
-    ssize_t request_size, void *data);
+    RawstorAIOEvent *event,
+    size_t RAWSTOR_VU_UNUSED size, ssize_t res, void *data);
 
 
 static int server_write(
-    int client_socket, off_t offset,
-    void *buf, size_t buf_size,
-    ssize_t request_size, void *data);
+    RawstorAIOEvent *event,
+    size_t buf_size, ssize_t response_size, void *data);
 
 
 static int server_read(
-    int client_socket, off_t RAWSTOR_VU_UNUSED offset,
-    void *buf, size_t RAWSTOR_VU_UNUSED size,
-    ssize_t request_size, void RAWSTOR_VU_UNUSED *data)
+    RawstorAIOEvent *event,
+    size_t RAWSTOR_VU_UNUSED size, ssize_t res, void *data)
 {
-    VhostUserMsg *msg = (VhostUserMsg*)buf;
-    if (request_size < 0) {
-        errno = -request_size;
+    int client_socket = rawstor_aio_event_fd(event);
+    VhostUserMsg *msg = (VhostUserMsg*)data;
+
+    if (res < 0) {
+        errno = -res;
         perror("read() failed");
         free(msg);
         if(close(client_socket)) {
@@ -119,8 +118,8 @@ static int server_read(
         } else {
             printf("Connection closed: %d\n", client_socket);
         }
-        return request_size;
-    } else if (request_size == 0) {
+        return res;
+    } else if (res == 0) {
         printf("Connection lost: %d\n", client_socket);
         free(msg);
         if(close(client_socket)) {
@@ -130,10 +129,10 @@ static int server_read(
         }
         return 0;
     } else if (
-        request_size < (int)VHOST_USER_HDR_SIZE ||
-        request_size > (int)sizeof(VhostUserMsg)
+        res < (int)VHOST_USER_HDR_SIZE ||
+        res > (int)sizeof(VhostUserMsg)
     ) {
-        printf("Unexpected request size: %ld\n", request_size);
+        printf("Unexpected request size: %ld\n", res);
         free(msg);
         if(close(client_socket)) {
             perror("close() failed");
@@ -172,9 +171,8 @@ static int server_read(
                  VHOST_USER_REPLY_MASK;
 
     if (rawstor_fd_write(
-        client_socket, 0,
-        msg, VHOST_USER_HDR_SIZE + msg->size,
-        server_write, NULL))
+        client_socket, msg, VHOST_USER_HDR_SIZE + msg->size,
+        server_write, msg))
     {
         perror("rawstor_fd_write() failed");
         if(close(client_socket)) {
@@ -191,14 +189,14 @@ static int server_read(
 
 
 static int server_write(
-    int client_socket, off_t RAWSTOR_VU_UNUSED offset,
-    void *buf, size_t buf_size,
-    ssize_t response_size, void RAWSTOR_VU_UNUSED *data)
+    RawstorAIOEvent *event,
+    size_t size, ssize_t res, void *data)
 {
-    VhostUserMsg *msg = (VhostUserMsg*)buf;
+    int client_socket = rawstor_aio_event_fd(event);
+    VhostUserMsg *msg = (VhostUserMsg*)data;
 
-    if (response_size < 0) {
-        errno = -response_size;
+    if (res < 0) {
+        errno = -res;
         perror("write() failed");
         free(msg);
         if(close(client_socket)) {
@@ -206,12 +204,12 @@ static int server_write(
         } else {
             printf("Connection closed: %d\n", client_socket);
         }
-        return response_size;
+        return res;
     }
 
-    printf("Message sent: %ld bytes\n", response_size);
+    printf("Message sent: %ld bytes\n", res);
 
-    if (rawstor_fd_read(client_socket, 0, msg, buf_size, server_read, NULL)) {
+    if (rawstor_fd_read(client_socket, msg, size, server_read, msg)) {
         perror("rawstor_fd_read() failed");
         if(close(client_socket)) {
             perror("close() failed");
@@ -226,8 +224,8 @@ static int server_write(
 
 
 static int server_accept(
-    int RAWSTOR_VU_UNUSED fd, off_t RAWSTOR_VU_UNUSED offset,
-    void RAWSTOR_VU_UNUSED *buf, size_t RAWSTOR_VU_UNUSED size,
+    RawstorAIOEvent RAWSTOR_VU_UNUSED *event,
+    size_t RAWSTOR_VU_UNUSED size,
     ssize_t client_socket, void RAWSTOR_VU_UNUSED *data)
 {
     if (client_socket < 0) {
@@ -248,9 +246,8 @@ static int server_accept(
     }
 
     if (rawstor_fd_read(
-        client_socket, 0,
-        msg, sizeof(VhostUserMsg),
-        server_read, NULL))
+        client_socket, msg, sizeof(VhostUserMsg),
+        server_read, msg))
     {
         int errsv = errno;
         perror("rawstor_fd_read() failed");

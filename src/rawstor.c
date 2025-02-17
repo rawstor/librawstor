@@ -71,104 +71,133 @@ int rawstor_fd_accept(int fd, rawstor_fd_callback cb, void *data) {
 
 
 int rawstor_fd_read(
-    int fd, off_t offset,
-    void *buf, size_t size,
+    int fd, void *buf, size_t size,
     rawstor_fd_callback cb, void *data)
 {
     return rawstor_aio_read(
         rawstor_aio,
-        fd, offset,
-        buf, size,
+        fd, buf, size,
+        cb, data);
+}
+
+
+int rawstor_fd_pread(
+    int fd, void *buf, size_t size, off_t offset,
+    rawstor_fd_callback cb, void *data)
+{
+    return rawstor_aio_pread(
+        rawstor_aio,
+        fd, buf, size, offset,
         cb, data);
 }
 
 
 int rawstor_fd_readv(
-    int fd, off_t offset,
-    struct iovec *iov, unsigned int niov, size_t size,
-    rawstor_fd_vector_callback cb, void *data)
+    int fd, struct iovec *iov, unsigned int niov, size_t size,
+    rawstor_fd_callback cb, void *data)
 {
     return rawstor_aio_readv(
         rawstor_aio,
-        fd, offset,
-        iov, niov, size,
+        fd, iov, niov, size,
+        cb, data);
+}
+
+
+int rawstor_fd_preadv(
+    int fd,
+    struct iovec *iov, unsigned int niov, size_t size, off_t offset,
+    rawstor_fd_callback cb, void *data)
+{
+    return rawstor_aio_preadv(
+        rawstor_aio,
+        fd, iov, niov, size, offset,
         cb, data);
 }
 
 
 int rawstor_sock_recv(
-    int sock, int flags,
-    void *buf, size_t size,
+    int sock, void *buf, size_t size, int flags,
     rawstor_fd_callback cb, void *data)
 {
     return rawstor_aio_recv(
         rawstor_aio,
-        sock, flags,
-        buf, size,
+        sock, buf, size, flags,
         cb, data);
 }
 
 
 int rawstor_sock_recvmsg(
-    int sock, int flags,
-    struct msghdr *message, size_t size,
-    rawstor_fd_vector_callback cb, void *data)
+    int sock, struct msghdr *message, size_t size, int flags,
+    rawstor_fd_callback cb, void *data)
 {
     return rawstor_aio_recvmsg(
         rawstor_aio,
-        sock, flags,
-        message, size,
+        sock, message, size, flags,
         cb, data);
 }
 
 
 int rawstor_fd_write(
-    int fd, off_t offset,
-    void *buf, size_t size,
+    int fd, void *buf, size_t size,
     rawstor_fd_callback cb, void *data)
 {
     return rawstor_aio_write(
         rawstor_aio,
-        fd, offset,
-        buf, size,
+        fd, buf, size,
+        cb, data);
+}
+
+
+int rawstor_fd_pwrite(
+    int fd, void *buf, size_t size, off_t offset,
+    rawstor_fd_callback cb, void *data)
+{
+    return rawstor_aio_pwrite(
+        rawstor_aio,
+        fd, buf, size, offset,
         cb, data);
 }
 
 
 int rawstor_fd_writev(
-    int fd, off_t offset,
-    struct iovec *iov, unsigned int niov, size_t size,
-    rawstor_fd_vector_callback cb, void *data)
+    int fd, struct iovec *iov, unsigned int niov, size_t size,
+    rawstor_fd_callback cb, void *data)
 {
     return rawstor_aio_writev(
         rawstor_aio,
-        fd, offset,
-        iov, niov, size,
+        fd, iov, niov, size,
+        cb, data);
+}
+
+
+int rawstor_fd_pwritev(
+    int fd, struct iovec *iov, unsigned int niov, size_t size, off_t offset,
+    rawstor_fd_callback cb, void *data)
+{
+    return rawstor_aio_pwritev(
+        rawstor_aio,
+        fd, iov, niov, size, offset,
         cb, data);
 }
 
 
 int rawstor_sock_send(
-    int sock, int flags,
-    void *buf, size_t size,
+    int sock, void *buf, size_t size, int flags,
     rawstor_fd_callback cb, void *data)
 {
     return rawstor_aio_send(
         rawstor_aio,
-        sock, flags,
-        buf, size,
+        sock, buf, size, flags,
         cb, data);
 }
 
 
 int rawstor_sock_sendmsg(
-    int sock, int flags,
-    struct msghdr *message, size_t size,
-    rawstor_fd_vector_callback cb, void *data)
+    int sock, struct msghdr *message, size_t size, int flags,
+    rawstor_fd_callback cb, void *data)
 {
     return rawstor_aio_sendmsg(
         rawstor_aio,
-        sock, flags,
-        message, size,
+        sock, message, size, flags,
         cb, data);
 }

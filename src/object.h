@@ -18,15 +18,7 @@
 
 // defined in rawstor.h
 // typedef int(*rawstor_callback)(
-//     RawstorObject *object, off_t offset,
-//     void *buf, size_t size,
-//     ssize_t res, void *data);
-
-// defined in rawstor.h
-// typedef int(*rawstor_vector_callback)(
-//     RawstorObject *object, off_t offset,
-//     struct iovec *iov, unsigned int niov, size_t size,
-//     ssize_t res, void *data);
+//     RawstorObject *object, ssize_t res, void *data);
 
 
 extern const char *rawstor_object_backend_name;
@@ -42,24 +34,24 @@ int rawstor_object_close(RawstorObject *object);
 int rawstor_object_spec(int object_id, struct RawstorObjectSpec *spec);
 
 int rawstor_object_read(
-    RawstorObject *object, off_t offset,
-    void *buf, size_t size,
+    RawstorObject *object,
+    void *buf, size_t size, off_t offset,
     rawstor_callback cb, void *data);
 
 int rawstor_object_readv(
-    RawstorObject *object, off_t offset,
-    struct iovec *iov, unsigned int niov, size_t size,
-    rawstor_vector_callback cb, void *data);
+    RawstorObject *object,
+    struct iovec *iov, unsigned int niov, size_t size, off_t offset,
+    rawstor_callback cb, void *data);
 
 int rawstor_object_write(
-    RawstorObject *object, off_t offset,
-    void *buf, size_t size,
+    RawstorObject *object,
+    void *buf, size_t size, off_t offset,
     rawstor_callback cb, void *data);
 
 int rawstor_object_writev(
-    RawstorObject *object, off_t offset,
-    struct iovec *iov, unsigned int niov, size_t size,
-    rawstor_vector_callback cb, void *data);
+    RawstorObject *object,
+    struct iovec *iov, unsigned int niov, size_t size, off_t offset,
+    rawstor_callback cb, void *data);
 
 
 #endif // RAWSTOR_OBJECT_H

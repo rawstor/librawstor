@@ -27,51 +27,36 @@
 #define QUEUE_DEPTH 256
 
 
-typedef struct RawstorObjectTransaction {
+typedef struct RawstorObjectOperation RawstorObjectOperation;
+
+struct RawstorObjectOperation {
     RawstorObject *object;
-    union {
-        rawstor_callback linear_callback;
-        rawstor_vector_callback vector_callback;
-    } callback;
+
+    int (*dispatch)(RawstorObjectOperation *op);
+
+    rawstor_callback callback;
+
     void *data;
-} RawstorObjectTransaction;
+};
 
 
 struct RawstorObject {
     int fd;
-    RawstorPool *transactions_pool;
+    RawstorPool *operations_pool;
 };
 
 
 const char *rawstor_object_backend_name = "file";
 
 
-static int fd_callback(
-    int RAWSTOR_UNUSED fd, off_t offset,
-    void *buf, size_t size,
-    ssize_t res, void *data)
+static int aio_callback(
+    RawstorAIOEvent RAWSTOR_UNUSED *event,
+    size_t RAWSTOR_UNUSED size, ssize_t res,
+    void *data)
 {
-    RawstorObjectTransaction *t = data;
-    int rval = t->callback.linear_callback(
-        t->object, offset,
-        buf, size,
-        res, t->data);
-    rawstor_pool_free(t->object->transactions_pool, t);
-    return rval;
-}
-
-
-static int aio_vector_callback(
-    int RAWSTOR_UNUSED fd, off_t offset,
-    struct iovec *iov, unsigned int niov, size_t size,
-    ssize_t res, void *data)
-{
-    RawstorObjectTransaction *t = data;
-    int rval = t->callback.vector_callback(
-        t->object, offset,
-        iov, niov, size,
-        res, t->data);
-    rawstor_pool_free(t->object->transactions_pool, t);
+    RawstorObjectOperation *op = data;
+    int rval = op->callback(op->object, res, op->data);
+    rawstor_pool_free(op->object->operations_pool, op);
     return rval;
 }
 
@@ -152,10 +137,10 @@ int rawstor_object_open(int object_id, RawstorObject **object) {
         return -errno;
     }
 
-    ret->transactions_pool = rawstor_pool_create(
+    ret->operations_pool = rawstor_pool_create(
         QUEUE_DEPTH,
-        sizeof(RawstorObjectTransaction));
-    if (ret->transactions_pool == NULL) {
+        sizeof(RawstorObjectOperation));
+    if (ret->operations_pool == NULL) {
         free(ret);
         return -errno;
     }
@@ -209,84 +194,83 @@ int rawstor_object_spec(int object_id, struct RawstorObjectSpec *spec) {
 
 
 int rawstor_object_read(
-    RawstorObject *object, off_t offset,
-    void *buf, size_t size,
+    RawstorObject *object,
+    void *buf, size_t size, off_t offset,
     rawstor_callback cb, void *data)
 {
-    if (rawstor_pool_count(object->transactions_pool) == 0) {
+    if (rawstor_pool_available(object->operations_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
     }
-    RawstorObjectTransaction *t = rawstor_pool_alloc(object->transactions_pool);
-    t->object = object;
-    t->callback.linear_callback = cb;
-    t->data = data;
+    RawstorObjectOperation *op = rawstor_pool_alloc(object->operations_pool);
+    op->object = object;
+    op->callback = cb;
+    op->data = data;
 
-    return rawstor_fd_read(
-        object->fd, offset,
-        buf, size,
-        fd_callback, t);
+    return rawstor_fd_pread(
+        object->fd, buf, size, offset,
+        aio_callback, op);
 }
 
 
 int rawstor_object_readv(
-    RawstorObject *object, off_t offset,
-    struct iovec *iov, unsigned int niov, size_t size,
-    rawstor_vector_callback cb, void *data)
+    RawstorObject *object,
+    struct iovec *iov, unsigned int niov, size_t size, off_t offset,
+    rawstor_callback cb, void *data)
 {
-    if (rawstor_pool_count(object->transactions_pool) == 0) {
+    if (rawstor_pool_available(object->operations_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
     }
-    RawstorObjectTransaction *t = rawstor_pool_alloc(object->transactions_pool);
-    t->object = object;
-    t->callback.vector_callback = cb;
-    t->data = data;
+    RawstorObjectOperation *op = rawstor_pool_alloc(object->operations_pool);
+    op->object = object;
+    op->callback = cb;
+    op->data = data;
 
-    return rawstor_fd_readv(
-        object->fd, offset,
-        iov, niov, size,
-        aio_vector_callback, t);
+    return rawstor_fd_preadv(
+        object->fd,
+        iov, niov, size, offset,
+        aio_callback, op);
 }
 
 
 int rawstor_object_write(
-    RawstorObject *object, off_t offset,
-    void *buf, size_t size,
+    RawstorObject *object,
+    void *buf, size_t size, off_t offset,
     rawstor_callback cb, void *data)
 {
-    if (rawstor_pool_count(object->transactions_pool) == 0) {
+    if (rawstor_pool_available(object->operations_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
     }
-    RawstorObjectTransaction *t = rawstor_pool_alloc(object->transactions_pool);
-    t->object = object;
-    t->callback.linear_callback = cb;
-    t->data = data;
+    RawstorObjectOperation *op = rawstor_pool_alloc(object->operations_pool);
+    op->object = object;
+    op->callback = cb;
+    op->data = data;
 
-    return rawstor_fd_write(
-        object->fd, offset,
-        buf, size,
-        fd_callback, t);
+    return rawstor_fd_pwrite(
+        object->fd,
+        buf, size, offset,
+        aio_callback, op);
 }
 
 
 int rawstor_object_writev(
-    RawstorObject *object, off_t offset,
-    struct iovec *iov, unsigned int niov, size_t size,
-    rawstor_vector_callback cb, void *data)
+    RawstorObject *object,
+    struct iovec *iov, unsigned int niov, size_t size, off_t offset,
+    rawstor_callback cb, void *data)
 {
-    if (rawstor_pool_count(object->transactions_pool) == 0) {
+    if (rawstor_pool_available(object->operations_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
     }
-    RawstorObjectTransaction *t = rawstor_pool_alloc(object->transactions_pool);
-    t->object = object;
-    t->callback.vector_callback = cb;
-    t->data = data;
+    RawstorObjectOperation *op = rawstor_pool_alloc(object->operations_pool);
+    op->object = object;
+    op->callback = cb;
+    op->data = data;
 
-    return rawstor_fd_writev(
-        object->fd, offset,
-        iov, niov, size,
-        aio_vector_callback, t);
+    return rawstor_fd_pwritev(
+        object->fd,
+        iov, niov, size, offset,
+        aio_callback, op);
 }
