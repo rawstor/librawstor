@@ -82,6 +82,10 @@ static int dst_data_received(RawstorObject *object,
          * TODO: Find errno here.
          */
         return -1;
+    } else {
+        printf(
+            "(%u) %s(): src == dst on %d\n",
+            worker->index, __FUNCTION__, worker->count);
     }
 
     if (worker->count <= 1) {
