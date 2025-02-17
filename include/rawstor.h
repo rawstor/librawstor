@@ -19,6 +19,9 @@ extern "C" {
 
 typedef struct RawstorAIOEvent RawstorAIOEvent;
 
+typedef int(*rawstor_aio_callback)(
+    RawstorAIOEvent *event, size_t size, ssize_t res, void *data);
+
 
 int rawstor_aio_event_fd(RawstorAIOEvent *event);
 
@@ -27,61 +30,57 @@ int rawstor_aio_event_fd(RawstorAIOEvent *event);
  * fd
  */
 
-typedef int(*rawstor_fd_callback)(
-    RawstorAIOEvent *event, size_t size, ssize_t res, void *data);
-
-
-int rawstor_fd_accept(int fd, rawstor_fd_callback cb, void *data);
+int rawstor_fd_accept(int fd, rawstor_aio_callback cb, void *data);
 
 int rawstor_fd_read(
     int fd, void *buf, size_t size,
-    rawstor_fd_callback cb, void *data);
+    rawstor_aio_callback cb, void *data);
 
 int rawstor_fd_pread(
     int fd, void *buf, size_t size, off_t offset,
-    rawstor_fd_callback cb, void *data);
+    rawstor_aio_callback cb, void *data);
 
 int rawstor_fd_readv(
     int fd,
     struct iovec *iov, unsigned int niov, size_t size,
-    rawstor_fd_callback cb, void *data);
+    rawstor_aio_callback cb, void *data);
 
 int rawstor_fd_preadv(
     int fd,
     struct iovec *iov, unsigned int niov, size_t size, off_t offset,
-    rawstor_fd_callback cb, void *data);
+    rawstor_aio_callback cb, void *data);
 
 int rawstor_sock_recv(
     int sock, void *buf, size_t size, int flags,
-    rawstor_fd_callback cb, void *data);
+    rawstor_aio_callback cb, void *data);
 
 int rawstor_sock_recvmsg(
     int sock, struct msghdr *message, size_t size, int flags,
-    rawstor_fd_callback cb, void *data);
+    rawstor_aio_callback cb, void *data);
 
 int rawstor_fd_write(
     int fd, void *buf, size_t size,
-    rawstor_fd_callback cb, void *data);
+    rawstor_aio_callback cb, void *data);
 
 int rawstor_fd_pwrite(
     int fd, void *buf, size_t size, off_t offset,
-    rawstor_fd_callback cb, void *data);
+    rawstor_aio_callback cb, void *data);
 
 int rawstor_fd_writev(
     int fd, struct iovec *iov, unsigned int niov, size_t size,
-    rawstor_fd_callback cb, void *data);
+    rawstor_aio_callback cb, void *data);
 
 int rawstor_fd_pwritev(
     int fd, struct iovec *iov, unsigned int niov, size_t size, off_t offset,
-    rawstor_fd_callback cb, void *data);
+    rawstor_aio_callback cb, void *data);
 
 int rawstor_sock_send(
     int sock, void *buf, size_t size, int flags,
-    rawstor_fd_callback cb, void *data);
+    rawstor_aio_callback cb, void *data);
 
 int rawstor_sock_sendmsg(
     int sock, struct msghdr *message, size_t size, int flags,
-    rawstor_fd_callback cb, void *data);
+    rawstor_aio_callback cb, void *data);
 
 
 /**
