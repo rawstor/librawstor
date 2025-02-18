@@ -72,11 +72,6 @@ struct RawstorObjectOperation {
 };
 
 
-typedef struct RawstorObjectResponse {
-
-} RawstorObjectResponse;
-
-
 struct RawstorObject {
     int fd;
     int pending_read_response_head;
@@ -128,7 +123,6 @@ static int operation_process_write(RawstorObjectOperation *op) {
      * Continue response loop, if there are any other pending operations.
      */
     if (rawstor_pool_allocated(op->object->operations_pool) > 1) {
-        rawstor_debug("call object_response_head_recv()\n");
         if (object_response_head_recv(op->object)) {
             rawstor_pool_free(op->object->operations_pool, op);
             return -errno;
@@ -216,7 +210,6 @@ static int read_request_sent(
      * Start read response loop.
      */
     if (rawstor_pool_allocated(op->object->operations_pool) == 1) {
-        rawstor_debug("call object_response_head_recv()\n");
         if (object_response_head_recv(op->object)) {
             return -errno;
         }
@@ -252,7 +245,6 @@ static int write_requestv_sent(
      * Start read response loop.
      */
     if (op->object->pending_read_response_head == 0) {
-        rawstor_debug("call object_response_head_recv()\n");
         if (object_response_head_recv(op->object)) {
             return -errno;
         }
@@ -292,7 +284,6 @@ static int response_body_received(
      * Continue response loop, if there are any other pending operations.
      */
     if (rawstor_pool_allocated(op->object->operations_pool) > 1) {
-        rawstor_debug("call object_response_head_recv()\n");
         if (object_response_head_recv(op->object)) {
             rawstor_pool_free(op->object->operations_pool, op);
             return -errno;
@@ -336,7 +327,6 @@ static int responsev_body_received(
      * Continue response loop, if there are any other pending operations.
      */
     if (rawstor_pool_allocated(op->object->operations_pool) > 1) {
-        rawstor_debug("call object_response_head_recv()\n");
         if (object_response_head_recv(op->object)) {
             rawstor_pool_free(op->object->operations_pool, op);
             return -errno;
@@ -596,7 +586,7 @@ int rawstor_object_write(
     void *buf, size_t size, off_t offset,
     rawstor_callback cb, void *data)
 {
-     rawstor_debug(
+    rawstor_debug(
         "[%d] %s(): offset = %jd, size = %zu\n",
         object->fd, __FUNCTION__, (intmax_t)offset, size);
 
