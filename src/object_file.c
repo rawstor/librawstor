@@ -203,9 +203,11 @@ int rawstor_object_read(
         return -errno;
     }
     RawstorObjectOperation *op = rawstor_pool_alloc(object->operations_pool);
-    op->object = object;
-    op->callback = cb;
-    op->data = data;
+    *op = (RawstorObjectOperation) {
+        .object = object,
+        .callback = cb,
+        .data = data,
+    };
 
     return rawstor_fd_pread(
         object->fd, buf, size, offset,
@@ -223,13 +225,14 @@ int rawstor_object_readv(
         return -errno;
     }
     RawstorObjectOperation *op = rawstor_pool_alloc(object->operations_pool);
-    op->object = object;
-    op->callback = cb;
-    op->data = data;
+    *op = (RawstorObjectOperation) {
+        .object = object,
+        .callback = cb,
+        .data = data,
+    };
 
     return rawstor_fd_preadv(
-        object->fd,
-        iov, niov, size, offset,
+        object->fd, iov, niov, size, offset,
         aio_callback, op);
 }
 
@@ -244,13 +247,14 @@ int rawstor_object_write(
         return -errno;
     }
     RawstorObjectOperation *op = rawstor_pool_alloc(object->operations_pool);
-    op->object = object;
-    op->callback = cb;
-    op->data = data;
+    *op = (RawstorObjectOperation) {
+        .object = object,
+        .callback = cb,
+        .data = data,
+    };
 
     return rawstor_fd_pwrite(
-        object->fd,
-        buf, size, offset,
+        object->fd, buf, size, offset,
         aio_callback, op);
 }
 
@@ -265,12 +269,13 @@ int rawstor_object_writev(
         return -errno;
     }
     RawstorObjectOperation *op = rawstor_pool_alloc(object->operations_pool);
-    op->object = object;
-    op->callback = cb;
-    op->data = data;
+    *op = (RawstorObjectOperation) {
+        .object = object,
+        .callback = cb,
+        .data = data,
+    };
 
     return rawstor_fd_pwritev(
-        object->fd,
-        iov, niov, size, offset,
+        object->fd, iov, niov, size, offset,
         aio_callback, op);
 }
