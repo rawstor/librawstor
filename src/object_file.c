@@ -147,7 +147,7 @@ int rawstor_object_open(int object_id, RawstorObject **object) {
 
     char path[1024];
     snprintf(path, sizeof(path), PREFIX "/rawstor-%d.dat", object_id);
-    ret->fd = open(path, O_RDWR);
+    ret->fd = open(path, O_RDWR | O_NONBLOCK);
     if (ret->fd == -1) {
         int errsv = errno;
         free(ret);
