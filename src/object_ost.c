@@ -370,8 +370,21 @@ static int response_head_received(
         return -errno;
     }
 
+    RawstorOSTFrameResponse *response = &object->response_frame;
+    if (
+        response->cid < 1 ||
+        response->cid > rawstor_pool_size(object->operations_pool)
+    ) {
+        /**
+         * FIXME: Memory leak on used RawstorObjectOperation.
+         */
+        rawstor_error("Unexpected cid in response: %u\n", response->cid);
+        errno = EIO;
+        return -errno;
+    }
+
     RawstorObjectOperation *ops = rawstor_pool_data(object->operations_pool);
-    RawstorObjectOperation *op = &ops[object->response_frame.cid - 1];
+    RawstorObjectOperation *op = &ops[response->cid - 1];
 
     operation_trace(op->cid, res, size);
 
