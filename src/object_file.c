@@ -2,8 +2,8 @@
 
 #include <rawstor.h>
 
-#include "aio.h"
 #include "gcc.h"
+#include "io.h"
 #include "pool.h"
 
 #include <sys/types.h>
@@ -49,8 +49,8 @@ struct RawstorObject {
 const char *rawstor_object_backend_name = "file";
 
 
-static int aio_callback(
-    RawstorAIOEvent RAWSTOR_UNUSED *event,
+static int io_callback(
+    RawstorIOEvent RAWSTOR_UNUSED *event,
     size_t size, ssize_t res,
     void *data)
 {
@@ -211,7 +211,7 @@ int rawstor_object_pread(
 
     return rawstor_fd_pread(
         object->fd, buf, size, offset,
-        aio_callback, op);
+        io_callback, op);
 }
 
 
@@ -233,7 +233,7 @@ int rawstor_object_preadv(
 
     return rawstor_fd_preadv(
         object->fd, iov, niov, size, offset,
-        aio_callback, op);
+        io_callback, op);
 }
 
 
@@ -255,7 +255,7 @@ int rawstor_object_pwrite(
 
     return rawstor_fd_pwrite(
         object->fd, buf, size, offset,
-        aio_callback, op);
+        io_callback, op);
 }
 
 
@@ -277,5 +277,5 @@ int rawstor_object_pwritev(
 
     return rawstor_fd_pwritev(
         object->fd, iov, niov, size, offset,
-        aio_callback, op);
+        io_callback, op);
 }

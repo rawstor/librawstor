@@ -1,7 +1,7 @@
 #include <rawstor.h>
 
-#include "aio.h"
 #include "gcc.h"
+#include "io.h"
 #include "logging.h"
 #include "ost_protocol.h"
 #include "pool.h"
@@ -84,12 +84,12 @@ const char *rawstor_object_backend_name = "ost";
 
 
 static int response_body_received(
-    RawstorAIOEvent RAWSTOR_UNUSED *event,
+    RawstorIOEvent RAWSTOR_UNUSED *event,
     size_t size, ssize_t res, void *data);
 
 
 static int responsev_body_received(
-    RawstorAIOEvent RAWSTOR_UNUSED *event,
+    RawstorIOEvent RAWSTOR_UNUSED *event,
     size_t size, ssize_t res, void *data);
 
 
@@ -141,7 +141,7 @@ static int operation_process_write(RawstorObjectOperation *op) {
 
 
 static int response_head_received(
-    RawstorAIOEvent RAWSTOR_UNUSED *event,
+    RawstorIOEvent RAWSTOR_UNUSED *event,
     size_t size, ssize_t res, void *data);
 
 
@@ -187,7 +187,7 @@ static int ost_connect() {
 
 
 static int read_request_sent(
-    RawstorAIOEvent RAWSTOR_UNUSED *event,
+    RawstorIOEvent RAWSTOR_UNUSED *event,
     size_t size, ssize_t res, void *data)
 {
     RawstorObjectOperation *op = (RawstorObjectOperation*)data;
@@ -220,7 +220,7 @@ static int read_request_sent(
 
 
 static int write_requestv_sent(
-    RawstorAIOEvent RAWSTOR_UNUSED *event,
+    RawstorIOEvent RAWSTOR_UNUSED *event,
     size_t size, ssize_t res, void *data)
 {
     RawstorObjectOperation *op = (RawstorObjectOperation*)data;
@@ -255,7 +255,7 @@ static int write_requestv_sent(
 
 
 static int response_body_received(
-    RawstorAIOEvent RAWSTOR_UNUSED *event,
+    RawstorIOEvent RAWSTOR_UNUSED *event,
     size_t size, ssize_t res, void *data)
 {
     /**
@@ -302,7 +302,7 @@ static int response_body_received(
 
 
 static int responsev_body_received(
-    RawstorAIOEvent RAWSTOR_UNUSED *event,
+    RawstorIOEvent RAWSTOR_UNUSED *event,
     size_t size, ssize_t res, void *data)
 {
     RawstorObjectOperation *op = (RawstorObjectOperation*)data;
@@ -345,7 +345,7 @@ static int responsev_body_received(
 
 
 static int response_head_received(
-    RawstorAIOEvent RAWSTOR_UNUSED *event,
+    RawstorIOEvent RAWSTOR_UNUSED *event,
     size_t size, ssize_t res, void *data)
 {
     RawstorObject *object = (RawstorObject*)data;

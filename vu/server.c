@@ -93,20 +93,20 @@ static int dispatch_vu_request(VhostUserMsg *msg) {
 
 
 static int server_read(
-    RawstorAIOEvent *event,
+    RawstorIOEvent *event,
     size_t RAWSTOR_VU_UNUSED size, ssize_t res, void *data);
 
 
 static int server_write(
-    RawstorAIOEvent *event,
+    RawstorIOEvent *event,
     size_t buf_size, ssize_t response_size, void *data);
 
 
 static int server_read(
-    RawstorAIOEvent *event,
+    RawstorIOEvent *event,
     size_t RAWSTOR_VU_UNUSED size, ssize_t res, void *data)
 {
-    int client_socket = rawstor_aio_event_fd(event);
+    int client_socket = rawstor_io_event_fd(event);
     VhostUserMsg *msg = (VhostUserMsg*)data;
 
     if (res < 0) {
@@ -189,10 +189,10 @@ static int server_read(
 
 
 static int server_write(
-    RawstorAIOEvent *event,
+    RawstorIOEvent *event,
     size_t size, ssize_t res, void *data)
 {
-    int client_socket = rawstor_aio_event_fd(event);
+    int client_socket = rawstor_io_event_fd(event);
     VhostUserMsg *msg = (VhostUserMsg*)data;
 
     if (res < 0) {
@@ -224,7 +224,7 @@ static int server_write(
 
 
 static int server_accept(
-    RawstorAIOEvent RAWSTOR_VU_UNUSED *event,
+    RawstorIOEvent RAWSTOR_VU_UNUSED *event,
     size_t RAWSTOR_VU_UNUSED size,
     ssize_t client_socket, void RAWSTOR_VU_UNUSED *data)
 {
@@ -279,7 +279,7 @@ static int server_loop(int server_socket) {
     while (!rval) {
         printf("Waiting for event...\n");
         errno = 0;
-        RawstorAIOEvent *event = rawstor_wait_event();
+        RawstorIOEvent *event = rawstor_wait_event();
         if (event == NULL) {
             if (errno) {
                 perror("rawstor_wait_event() failed");

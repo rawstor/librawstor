@@ -23,10 +23,10 @@ endif
 
 if WITH_LIBURING
 AM_CFLAGS += $(LIBURING_CFLAGS)
-librawstor_la_SOURCES += aio_liburing.c
+librawstor_la_SOURCES += io_liburing.c
 librawstor_la_LIBADD += $(LIBURING_LIBS)
 else
-librawstor_la_SOURCES += aio_poll.c
+librawstor_la_SOURCES += io_poll.c
 endif
 
 

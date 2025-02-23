@@ -314,7 +314,7 @@ int rawstor_cli_testio(
     }
 
     while (1) {
-        RawstorAIOEvent *event = rawstor_wait_event();
+        RawstorIOEvent *event = rawstor_wait_event();
         if (event == NULL) {
             printf("rawstor_wait_event(): returns NULL\n");
             break;
