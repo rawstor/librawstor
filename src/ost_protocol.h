@@ -8,7 +8,7 @@
 #include <stdint.h>
 
 
-#define OBJID_LEN 128
+#define OBJID_LEN 128/8
 
 
 typedef enum {
