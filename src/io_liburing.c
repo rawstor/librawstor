@@ -27,8 +27,6 @@ struct RawstorIOEvent {
 struct RawstorIO {
     unsigned int depth;
     RawstorPool *events_pool;
-    int events_in_buffer; // TODO: Replace with io_uring_sq_ready
-    int events_in_uring; // TODO: Replace with io_uring_cq_ready?
     struct io_uring ring;
 };
 
@@ -43,8 +41,6 @@ RawstorIO* rawstor_io_create(unsigned int depth) {
     }
 
     io->depth = depth;
-    io->events_in_buffer = 0;
-    io->events_in_uring = 0;
 
     /**
      * TODO: io operations could be much more than depth.
@@ -105,7 +101,6 @@ int rawstor_io_accept(
 
     io_uring_prep_accept(sqe, fd, NULL, NULL, 0);
     io_uring_sqe_set_data(sqe, event);
-    ++io->events_in_buffer;
 
     return 0;
 }
@@ -142,7 +137,6 @@ int rawstor_io_read(
 
     io_uring_prep_read(sqe, fd, buf, size, 0);
     io_uring_sqe_set_data(sqe, event);
-    ++io->events_in_buffer;
 
     return 0;
 }
@@ -179,7 +173,6 @@ int rawstor_io_pread(
 
     io_uring_prep_read(sqe, fd, buf, size, offset);
     io_uring_sqe_set_data(sqe, event);
-    ++io->events_in_buffer;
 
     return 0;
 }
@@ -216,7 +209,6 @@ int rawstor_io_readv(
 
     io_uring_prep_readv(sqe, fd, iov, niov, 0);
     io_uring_sqe_set_data(sqe, event);
-    ++io->events_in_buffer;
 
     return 0;
 }
@@ -253,7 +245,6 @@ int rawstor_io_preadv(
 
     io_uring_prep_readv(sqe, fd, iov, niov, offset);
     io_uring_sqe_set_data(sqe, event);
-    ++io->events_in_buffer;
 
     return 0;
 }
@@ -290,7 +281,6 @@ int rawstor_io_recv(
 
     io_uring_prep_recv(sqe, sock, buf, size, flags);
     io_uring_sqe_set_data(sqe, event);
-    ++io->events_in_buffer;
 
     return 0;
 }
@@ -327,7 +317,6 @@ int rawstor_io_recvmsg(
 
     io_uring_prep_recvmsg(sqe, sock, message, flags);
     io_uring_sqe_set_data(sqe, event);
-    ++io->events_in_buffer;
 
     return 0;
 }
@@ -364,7 +353,6 @@ int rawstor_io_write(
 
     io_uring_prep_write(sqe, fd, buf, size, 0);
     io_uring_sqe_set_data(sqe, event);
-    ++io->events_in_buffer;
 
     return 0;
 }
@@ -401,7 +389,6 @@ int rawstor_io_pwrite(
 
     io_uring_prep_write(sqe, fd, buf, size, offset);
     io_uring_sqe_set_data(sqe, event);
-    ++io->events_in_buffer;
 
     return 0;
 }
@@ -438,7 +425,6 @@ int rawstor_io_writev(
 
     io_uring_prep_writev(sqe, fd, iov, niov, 0);
     io_uring_sqe_set_data(sqe, event);
-    ++io->events_in_buffer;
 
     return 0;
 }
@@ -475,7 +461,6 @@ int rawstor_io_pwritev(
 
     io_uring_prep_writev(sqe, fd, iov, niov, offset);
     io_uring_sqe_set_data(sqe, event);
-    ++io->events_in_buffer;
 
     return 0;
 }
@@ -512,7 +497,6 @@ int rawstor_io_send(
 
     io_uring_prep_send(sqe, sock, buf, size, flags);
     io_uring_sqe_set_data(sqe, event);
-    ++io->events_in_buffer;
 
     return 0;
 }
@@ -549,7 +533,6 @@ int rawstor_io_sendmsg(
 
     io_uring_prep_sendmsg(sqe, sock, message, flags);
     io_uring_sqe_set_data(sqe, event);
-    ++io->events_in_buffer;
 
     return 0;
 }
@@ -558,27 +541,23 @@ int rawstor_io_sendmsg(
 RawstorIOEvent* rawstor_io_wait_event(RawstorIO *io) {
     int rval;
     struct io_uring_cqe *cqe;
-    if (io->events_in_buffer > 0) {
+    if (io_uring_sq_ready(&io->ring) > 0) {
         rval = io_uring_submit_and_wait(&io->ring, 1);
         if (rval < 0) {
             errno = -rval;
             return NULL;
         }
-        io->events_in_uring = io->events_in_buffer;
-        io->events_in_buffer = 0;
         rval = io_uring_peek_cqe(&io->ring, &cqe);
         if (rval < 0) {
             errno = -rval;
             return NULL;
         }
-        --io->events_in_uring;
-    } else if (io->events_in_uring > 0) {
+    } else if (rawstor_pool_allocated(io->events_pool)) {
         rval = io_uring_wait_cqe(&io->ring, &cqe);
         if (rval < 0) {
             errno = -rval;
             return NULL;
         }
-        --io->events_in_uring;
     } else {
         return NULL;
     }
@@ -598,7 +577,7 @@ RawstorIOEvent* rawstor_io_wait_event_timeout(RawstorIO *io, int timeout) {
         .tv_sec = 0,
         .tv_nsec = 1000000ul * timeout
     };
-    if (io->events_in_buffer > 0) {
+    if (io_uring_sq_ready(&io->ring) > 0) {
         /**
          * TODO: Replace with io_uring_submit_wait_cqe_timeout and do something
          * with sigmask.
@@ -612,10 +591,7 @@ RawstorIOEvent* rawstor_io_wait_event_timeout(RawstorIO *io, int timeout) {
             errno = -rval;
             return NULL;
         }
-        io->events_in_uring = io->events_in_buffer;
-        io->events_in_buffer = 0;
-        --io->events_in_uring;
-    } else if (io->events_in_uring > 0) {
+    } else if (rawstor_pool_allocated(io->events_pool)) {
         rval = io_uring_wait_cqe_timeout(&io->ring, &cqe, &ts);
         if (rval == -ETIME) {
             return NULL;
@@ -624,7 +600,6 @@ RawstorIOEvent* rawstor_io_wait_event_timeout(RawstorIO *io, int timeout) {
             errno = -rval;
             return NULL;
         }
-        --io->events_in_uring;
     } else {
         return NULL;
     }
