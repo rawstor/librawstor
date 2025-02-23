@@ -33,22 +33,22 @@ int rawstor_object_close(RawstorObject *object);
 
 int rawstor_object_spec(int object_id, struct RawstorObjectSpec *spec);
 
-int rawstor_object_read(
+int rawstor_object_pread(
     RawstorObject *object,
     void *buf, size_t size, off_t offset,
     rawstor_callback cb, void *data);
 
-int rawstor_object_readv(
+int rawstor_object_preadv(
     RawstorObject *object,
     struct iovec *iov, unsigned int niov, size_t size, off_t offset,
     rawstor_callback cb, void *data);
 
-int rawstor_object_write(
+int rawstor_object_pwrite(
     RawstorObject *object,
     void *buf, size_t size, off_t offset,
     rawstor_callback cb, void *data);
 
-int rawstor_object_writev(
+int rawstor_object_pwritev(
     RawstorObject *object,
     struct iovec *iov, unsigned int niov, size_t size, off_t offset,
     rawstor_callback cb, void *data);

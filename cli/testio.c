@@ -96,7 +96,7 @@ static int dst_data_received(RawstorObject *object,
     --worker->count;
     fill(worker->src_iov.iov_base, worker->src_iov.iov_len);
 
-    return rawstor_object_write(
+    return rawstor_object_pwrite(
         object,
         worker->src_iov.iov_base, worker->src_iov.iov_len, worker->offset,
         src_data_sent, worker);
@@ -156,7 +156,7 @@ static int dstv_data_received(
     --worker->count;
     fill(worker->src_iov.iov_base, worker->src_iov.iov_len);
 
-    return rawstor_object_writev(
+    return rawstor_object_pwritev(
         object,
         &worker->src_iov, 1, worker->src_iov.iov_len, worker->offset,
         srcv_data_sent, worker);
@@ -192,12 +192,12 @@ static int src_data_sent(
         return -1;
     }
 
-    if (rawstor_object_read(
+    if (rawstor_object_pread(
         object,
         worker->dst_iov.iov_base, worker->dst_iov.iov_len, worker->offset,
         dst_data_received, worker))
     {
-        perror("rawstor_object_read() failed");
+        perror("rawstor_object_pread() failed");
         /**
          * TODO: Find errno here.
          */
@@ -237,12 +237,12 @@ static int srcv_data_sent(
         return -1;
     }
 
-    if (rawstor_object_readv(
+    if (rawstor_object_preadv(
         object,
         &worker->dst_iov, 1, worker->dst_iov.iov_len, worker->offset,
         dstv_data_received, worker))
     {
-        perror("rawstor_object_readv() failed");
+        perror("rawstor_object_preadv() failed");
         /**
          * TODO: Find errno here.
          */
@@ -288,26 +288,26 @@ int rawstor_cli_testio(
     if (!vector_mode) {
         for (unsigned int i = 0; i < io_depth; ++i) {
             fill(workers[i].src_iov.iov_base, workers[i].src_iov.iov_len);
-            if (rawstor_object_write(
+            if (rawstor_object_pwrite(
                 object,
                 workers[i].src_iov.iov_base, workers[i].src_iov.iov_len,
                 workers[i].offset,
                 src_data_sent, &workers[i]))
             {
-                perror("rawstor_object_write() failed");
+                perror("rawstor_object_pwrite() failed");
                 return EXIT_FAILURE;
             }
         }
     } else {
         for (unsigned int i = 0; i < io_depth; ++i) {
             fill(workers[i].src_iov.iov_base, workers[i].src_iov.iov_len);
-            if (rawstor_object_writev(
+            if (rawstor_object_pwritev(
                 object,
                 &workers[i].src_iov, 1, workers[i].src_iov.iov_len,
                 workers[i].offset,
                 srcv_data_sent, &workers[i]))
             {
-                perror("rawstor_object_writev() failed");
+                perror("rawstor_object_pwritev() failed");
                 return EXIT_FAILURE;
             }
         }
