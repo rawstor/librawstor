@@ -48,7 +48,7 @@ typedef struct RawstorObjectOperation RawstorObjectOperation;
 struct RawstorObjectOperation {
     RawstorObject *object;
 
-    int cid;
+    u_int16_t cid;
     RawstorOSTFrameIO request_frame;
 
     union {
@@ -248,7 +248,7 @@ static int write_requestv_sent(
         if (object_response_head_recv(op->object)) {
             return -errno;
         }
-    }   
+    }
 
     return 0;
 }
