@@ -313,9 +313,14 @@ int rawstor_cli_testio(
         }
     }
 
+    int ret = EXIT_SUCCESS;
     while (1) {
         RawstorIOEvent *event = rawstor_wait_event();
         if (event == NULL) {
+            if (errno) {
+                perror("rawstor_wait_event() failed");
+                ret = EXIT_FAILURE;
+            }
             printf("rawstor_wait_event(): returns NULL\n");
             break;
         }
@@ -332,9 +337,10 @@ int rawstor_cli_testio(
 
     if (rawstor_object_close(object)) {
         perror("rawstor_object_close() failed");
-        return EXIT_FAILURE;
+        ret = EXIT_FAILURE;
     }
+
     rawstor_terminate();
 
-    return EXIT_SUCCESS;
+    return ret;
 }
