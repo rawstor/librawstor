@@ -514,8 +514,8 @@ int rawstor_object_pread(
     RawstorCallback *cb, void *data)
 {
     rawstor_debug(
-        "[%d] %s(): offset: = %jd, size = %zu\n",
-        object->fd, __FUNCTION__, (intmax_t)offset, size);
+        "%s(): offset: = %jd, size = %zu\n",
+        __FUNCTION__, (intmax_t)offset, size);
 
     if (rawstor_pool_available(object->operations_pool) == 0) {
         errno = ENOBUFS;
@@ -554,8 +554,8 @@ int rawstor_object_preadv(
     RawstorCallback *cb, void *data)
 {
     rawstor_debug(
-        "[%d] %s(): offset = %jd, niov = %u, size = %zu\n",
-        object->fd, __FUNCTION__, (intmax_t)offset, niov, size);
+        "%s(): offset = %jd, niov = %u, size = %zu\n",
+        __FUNCTION__, (intmax_t)offset, niov, size);
 
     if (rawstor_pool_available(object->operations_pool) == 0) {
         errno = ENOBUFS;
@@ -600,8 +600,8 @@ int rawstor_object_pwrite(
     RawstorCallback *cb, void *data)
 {
     rawstor_debug(
-        "[%d] %s(): offset = %jd, size = %zu\n",
-        object->fd, __FUNCTION__, (intmax_t)offset, size);
+        "%s(): offset = %jd, size = %zu\n",
+        __FUNCTION__, (intmax_t)offset, size);
 
     if (rawstor_pool_available(object->operations_pool) == 0) {
         errno = ENOBUFS;
@@ -653,8 +653,8 @@ int rawstor_object_pwritev(
     RawstorCallback *cb, void *data)
 {
     rawstor_debug(
-        "[%d] %s(): offset = %jd, niov = %u, size = %zu\n",
-        object->fd, __FUNCTION__, (intmax_t)offset, niov, size);
+        "%s(): offset = %jd, niov = %u, size = %zu\n",
+        __FUNCTION__, (intmax_t)offset, niov, size);
 
     if (rawstor_pool_available(object->operations_pool) == 0) {
         errno = ENOBUFS;
