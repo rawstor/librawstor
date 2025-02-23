@@ -66,7 +66,7 @@ struct RawstorObjectOperation {
 
     int (*process)(RawstorObjectOperation *op);
 
-    rawstor_callback callback;
+    rawstor_callback *callback;
 
     void *data;
 };
@@ -511,7 +511,7 @@ int rawstor_object_spec(
 int rawstor_object_pread(
     RawstorObject *object,
     void *buf, size_t size, off_t offset,
-    rawstor_callback cb, void *data)
+    rawstor_callback *cb, void *data)
 {
     rawstor_debug(
         "[%d] %s(): offset: = %jd, size = %zu\n",
@@ -551,7 +551,7 @@ int rawstor_object_pread(
 int rawstor_object_preadv(
     RawstorObject *object,
     struct iovec *iov, unsigned int niov, size_t size, off_t offset,
-    rawstor_callback cb, void *data)
+    rawstor_callback *cb, void *data)
 {
     rawstor_debug(
         "[%d] %s(): offset = %jd, niov = %u, size = %zu\n",
@@ -597,7 +597,7 @@ int rawstor_object_preadv(
 int rawstor_object_pwrite(
     RawstorObject *object,
     void *buf, size_t size, off_t offset,
-    rawstor_callback cb, void *data)
+    rawstor_callback *cb, void *data)
 {
     rawstor_debug(
         "[%d] %s(): offset = %jd, size = %zu\n",
@@ -650,7 +650,7 @@ int rawstor_object_pwrite(
 int rawstor_object_pwritev(
     RawstorObject *object,
     struct iovec *iov, unsigned int niov, size_t size, off_t offset,
-    rawstor_callback cb, void *data)
+    rawstor_callback *cb, void *data)
 {
     rawstor_debug(
         "[%d] %s(): offset = %jd, niov = %u, size = %zu\n",

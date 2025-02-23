@@ -65,14 +65,14 @@ void rawstor_release_event(RawstorAIOEvent *event) {
 }
 
 
-int rawstor_fd_accept(int fd, rawstor_aio_callback cb, void *data) {
+int rawstor_fd_accept(int fd, rawstor_aio_callback *cb, void *data) {
     return rawstor_aio_accept(rawstor_aio, fd, cb, data);
 }
 
 
 int rawstor_fd_read(
     int fd, void *buf, size_t size,
-    rawstor_aio_callback cb, void *data)
+    rawstor_aio_callback *cb, void *data)
 {
     return rawstor_aio_read(
         rawstor_aio,
@@ -83,7 +83,7 @@ int rawstor_fd_read(
 
 int rawstor_fd_pread(
     int fd, void *buf, size_t size, off_t offset,
-    rawstor_aio_callback cb, void *data)
+    rawstor_aio_callback *cb, void *data)
 {
     return rawstor_aio_pread(
         rawstor_aio,
@@ -94,7 +94,7 @@ int rawstor_fd_pread(
 
 int rawstor_fd_readv(
     int fd, struct iovec *iov, unsigned int niov, size_t size,
-    rawstor_aio_callback cb, void *data)
+    rawstor_aio_callback *cb, void *data)
 {
     return rawstor_aio_readv(
         rawstor_aio,
@@ -106,7 +106,7 @@ int rawstor_fd_readv(
 int rawstor_fd_preadv(
     int fd,
     struct iovec *iov, unsigned int niov, size_t size, off_t offset,
-    rawstor_aio_callback cb, void *data)
+    rawstor_aio_callback *cb, void *data)
 {
     return rawstor_aio_preadv(
         rawstor_aio,
@@ -117,7 +117,7 @@ int rawstor_fd_preadv(
 
 int rawstor_sock_recv(
     int sock, void *buf, size_t size, int flags,
-    rawstor_aio_callback cb, void *data)
+    rawstor_aio_callback *cb, void *data)
 {
     return rawstor_aio_recv(
         rawstor_aio,
@@ -128,7 +128,7 @@ int rawstor_sock_recv(
 
 int rawstor_sock_recvmsg(
     int sock, struct msghdr *message, size_t size, int flags,
-    rawstor_aio_callback cb, void *data)
+    rawstor_aio_callback *cb, void *data)
 {
     return rawstor_aio_recvmsg(
         rawstor_aio,
@@ -139,7 +139,7 @@ int rawstor_sock_recvmsg(
 
 int rawstor_fd_write(
     int fd, void *buf, size_t size,
-    rawstor_aio_callback cb, void *data)
+    rawstor_aio_callback *cb, void *data)
 {
     return rawstor_aio_write(
         rawstor_aio,
@@ -150,7 +150,7 @@ int rawstor_fd_write(
 
 int rawstor_fd_pwrite(
     int fd, void *buf, size_t size, off_t offset,
-    rawstor_aio_callback cb, void *data)
+    rawstor_aio_callback *cb, void *data)
 {
     return rawstor_aio_pwrite(
         rawstor_aio,
@@ -161,7 +161,7 @@ int rawstor_fd_pwrite(
 
 int rawstor_fd_writev(
     int fd, struct iovec *iov, unsigned int niov, size_t size,
-    rawstor_aio_callback cb, void *data)
+    rawstor_aio_callback *cb, void *data)
 {
     return rawstor_aio_writev(
         rawstor_aio,
@@ -172,7 +172,7 @@ int rawstor_fd_writev(
 
 int rawstor_fd_pwritev(
     int fd, struct iovec *iov, unsigned int niov, size_t size, off_t offset,
-    rawstor_aio_callback cb, void *data)
+    rawstor_aio_callback *cb, void *data)
 {
     return rawstor_aio_pwritev(
         rawstor_aio,
@@ -183,7 +183,7 @@ int rawstor_fd_pwritev(
 
 int rawstor_sock_send(
     int sock, void *buf, size_t size, int flags,
-    rawstor_aio_callback cb, void *data)
+    rawstor_aio_callback *cb, void *data)
 {
     return rawstor_aio_send(
         rawstor_aio,
@@ -194,7 +194,7 @@ int rawstor_sock_send(
 
 int rawstor_sock_sendmsg(
     int sock, struct msghdr *message, size_t size, int flags,
-    rawstor_aio_callback cb, void *data)
+    rawstor_aio_callback *cb, void *data)
 {
     return rawstor_aio_sendmsg(
         rawstor_aio,

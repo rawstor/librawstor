@@ -17,7 +17,7 @@
 // };
 
 // defined in rawstor.h
-// typedef int(*rawstor_callback)(
+// typedef int(rawstor_callback)(
 //     RawstorObject *object, size_t size, ssize_t res, void *data);
 
 
@@ -36,22 +36,22 @@ int rawstor_object_spec(int object_id, struct RawstorObjectSpec *spec);
 int rawstor_object_pread(
     RawstorObject *object,
     void *buf, size_t size, off_t offset,
-    rawstor_callback cb, void *data);
+    rawstor_callback *cb, void *data);
 
 int rawstor_object_preadv(
     RawstorObject *object,
     struct iovec *iov, unsigned int niov, size_t size, off_t offset,
-    rawstor_callback cb, void *data);
+    rawstor_callback *cb, void *data);
 
 int rawstor_object_pwrite(
     RawstorObject *object,
     void *buf, size_t size, off_t offset,
-    rawstor_callback cb, void *data);
+    rawstor_callback *cb, void *data);
 
 int rawstor_object_pwritev(
     RawstorObject *object,
     struct iovec *iov, unsigned int niov, size_t size, off_t offset,
-    rawstor_callback cb, void *data);
+    rawstor_callback *cb, void *data);
 
 
 #endif // RAWSTOR_OBJECT_H
