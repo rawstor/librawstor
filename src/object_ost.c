@@ -74,7 +74,7 @@ struct RawstorObjectOperation {
 
 struct RawstorObject {
     int fd;
-    int pending_read_response_head;
+    int response_loop;
     RawstorPool *operations_pool;
     RawstorOSTFrameResponse response_frame;
 };
@@ -127,6 +127,8 @@ static int operation_process_write(RawstorObjectOperation *op) {
             rawstor_pool_free(op->object->operations_pool, op);
             return -errno;
         }
+    } else {
+        op->object->response_loop = 0;
     }
 
     int ret = op->callback(
@@ -153,8 +155,6 @@ static int object_response_head_recv(RawstorObject *object) {
     {
         return -errno;
     }
-
-    object->pending_read_response_head = 1;
 
     return 0;
 }
@@ -209,10 +209,11 @@ static int read_request_sent(
     /**
      * Start read response loop.
      */
-    if (rawstor_pool_allocated(op->object->operations_pool) == 1) {
+    if (op->object->response_loop == 0) {
         if (object_response_head_recv(op->object)) {
             return -errno;
         }
+        op->object->response_loop = 1;
     }
 
     return 0;
@@ -244,10 +245,11 @@ static int write_requestv_sent(
     /**
      * Start read response loop.
      */
-    if (op->object->pending_read_response_head == 0) {
+    if (op->object->response_loop == 0) {
         if (object_response_head_recv(op->object)) {
             return -errno;
         }
+        op->object->response_loop = 1;
     }
 
     return 0;
@@ -288,6 +290,8 @@ static int response_body_received(
             rawstor_pool_free(op->object->operations_pool, op);
             return -errno;
         }
+    } else {
+        op->object->response_loop = 0;
     }
 
     int ret = op->callback(
@@ -331,6 +335,8 @@ static int responsev_body_received(
             rawstor_pool_free(op->object->operations_pool, op);
             return -errno;
         }
+    } else {
+        op->object->response_loop = 0;
     }
 
     int ret = op->callback(
@@ -354,7 +360,7 @@ static int response_head_received(
         /**
          * FIXME: Memory leak on used RawstorObjectOperation.
          */
-        object->pending_read_response_head = 0;
+        object->response_loop = 0;
         return res;
     }
 
@@ -365,7 +371,7 @@ static int response_head_received(
         rawstor_error(
             "Response head size mismatch: %zu != %zu\n",
             (size_t)res, size);
-        object->pending_read_response_head = 0;
+        object->response_loop = 0;
         errno = EIO;
         return -errno;
     }
@@ -387,8 +393,6 @@ static int response_head_received(
     RawstorObjectOperation *op = &ops[response->cid - 1];
 
     operation_trace(op->cid, res, size);
-
-    object->pending_read_response_head = 0;
 
     return op->process(op);
 }
@@ -420,7 +424,7 @@ int rawstor_object_open(int RAWSTOR_UNUSED object_id, RawstorObject **object) {
     if (ret == NULL) {
         return -errno;
     }
-    ret->pending_read_response_head = 0;
+    ret->response_loop = 0;
 
     ret->operations_pool = rawstor_pool_create(
         QUEUE_DEPTH,
