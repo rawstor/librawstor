@@ -13,9 +13,12 @@
 struct Worker {
     unsigned int index;
     off_t offset;
+
     struct iovec src_iov;
     struct iovec dst_iov;
-    unsigned int count;
+
+    unsigned int current;
+    unsigned int total;
 };
 
 
@@ -84,16 +87,16 @@ static int dst_data_received(RawstorObject *object,
         return -1;
     } else {
         printf(
-            "(%u) %s(): src == dst on %d\n",
-            worker->index, __FUNCTION__, worker->count);
+            "(%u) %s(): src == dst on %u of %u\n",
+            worker->index, __FUNCTION__, worker->current + 1, worker->total);
     }
 
-    if (worker->count <= 1) {
+    if (worker->current >= worker->total - 1) {
         printf("(%u) %s(): Worker done\n", worker->index, __FUNCTION__);
         return 0;
     }
 
-    --worker->count;
+    ++worker->current;
     fill(worker->src_iov.iov_base, worker->src_iov.iov_len);
 
     return rawstor_object_pwrite(
@@ -144,16 +147,16 @@ static int dstv_data_received(
         return -1;
     } else {
         printf(
-            "(%u) %s(): src == dst on %d\n",
-            worker->index, __FUNCTION__, worker->count);
+            "(%u) %s(): src == dst on %u of %u\n",
+            worker->index, __FUNCTION__, worker->current + 1, worker->total);
     }
 
-    if (worker->count <= 1) {
+    if (worker->current >= worker->total - 1) {
         printf("(%u) %s(): Worker done\n", worker->index, __FUNCTION__);
         return 0;
     }
 
-    --worker->count;
+    ++worker->current;
     fill(worker->src_iov.iov_base, worker->src_iov.iov_len);
 
     return rawstor_object_pwritev(
@@ -281,7 +284,8 @@ int rawstor_cli_testio(
             .src_iov.iov_len = block_size,
             .dst_iov.iov_base = malloc(block_size),
             .dst_iov.iov_len = block_size,
-            .count = count,
+            .current = 0,
+            .total = count,
         };
     }
 
