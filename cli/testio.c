@@ -31,9 +31,33 @@ static void print_buf(const char *buf, size_t size) {
 }
 
 
+/*
 static void fill(char *buffer, size_t size) {
     for (unsigned int i = 0; i < size; ++i) {
         buffer[i] = 'a' + rand() % ('z' - 'a' + 1);
+    }
+}
+*/
+
+
+static void fill(
+    char *buffer, size_t size, unsigned int index, unsigned int current)
+{
+    while (1) {
+        int res = snprintf(
+            buffer, size, "<worker %u iteration %u> ",
+            index, current + 1);
+        if (res < 0) {
+            break;
+        }
+        buffer += res;
+        if (size < (size_t)res) {
+            break;
+        }
+        size -= res;
+        if (size == 0) {
+            break;
+        }
     }
 }
 
@@ -97,7 +121,9 @@ static int dst_data_received(RawstorObject *object,
     }
 
     ++worker->current;
-    fill(worker->src_iov.iov_base, worker->src_iov.iov_len);
+    fill(
+        worker->src_iov.iov_base, worker->src_iov.iov_len,
+        worker->index, worker->current);
 
     return rawstor_object_pwrite(
         object,
@@ -157,7 +183,9 @@ static int dstv_data_received(
     }
 
     ++worker->current;
-    fill(worker->src_iov.iov_base, worker->src_iov.iov_len);
+    fill(
+        worker->src_iov.iov_base, worker->src_iov.iov_len,
+        worker->index, worker->current);
 
     return rawstor_object_pwritev(
         object,
@@ -291,7 +319,9 @@ int rawstor_cli_testio(
 
     if (!vector_mode) {
         for (unsigned int i = 0; i < io_depth; ++i) {
-            fill(workers[i].src_iov.iov_base, workers[i].src_iov.iov_len);
+            fill(
+                workers[i].src_iov.iov_base, workers[i].src_iov.iov_len,
+                i, 0);
             if (rawstor_object_pwrite(
                 object,
                 workers[i].src_iov.iov_base, workers[i].src_iov.iov_len,
@@ -304,7 +334,9 @@ int rawstor_cli_testio(
         }
     } else {
         for (unsigned int i = 0; i < io_depth; ++i) {
-            fill(workers[i].src_iov.iov_base, workers[i].src_iov.iov_len);
+            fill(
+                workers[i].src_iov.iov_base, workers[i].src_iov.iov_len,
+                i, 0);
             if (rawstor_object_pwritev(
                 object,
                 &workers[i].src_iov, 1, workers[i].src_iov.iov_len,
