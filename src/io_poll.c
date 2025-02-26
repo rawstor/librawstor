@@ -224,8 +224,8 @@ RawstorIO* rawstor_io_create(unsigned int depth) {
 
 
 void rawstor_io_delete(RawstorIO *io) {
-    free(io->fds);
     rawstor_pool_delete(io->events_pool);
+    free(io->fds);
     free(io);
 }
 
