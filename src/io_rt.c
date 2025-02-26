@@ -9,9 +9,13 @@
 
 
 struct RawstorIOEvent {
-    struct aiocb *cbp;
+    struct aiocb *cb;
+    struct aiocb **cbp;
 
     RawstorIOCallback *callback;
+
+    ssize_t res;
+
     void *data;
 };
 
@@ -27,6 +31,49 @@ struct RawstorIO {
 
 
 const char* rawstor_io_engine_name = "rt";
+
+
+static RawstorIOEvent* io_process_event(RawstorIO *io) {
+    for (size_t i = 0; i < io->depth; ++i) {
+        struct aiocb **cbp = &io->cbps[i];
+        if (cbp == NULL) {
+            continue;
+        }
+
+        int err = aio_error(*cbp);
+        if (err < 0) {
+            /**
+             * FIXME: This will hide potential error.
+             */
+            *cbp = NULL;
+            continue;
+        }
+
+        if (err == EINPROGRESS) {
+            continue;
+        }
+
+        RawstorIOEvent *event = &io->events[i];
+
+        if (err == 0) {
+            int res = aio_return(*cbp);
+            if (res < 0) {
+                /**
+                 * FIXME: This will hide potential error.
+                 */
+                *cbp = NULL;
+                continue;
+            }
+            event->res = res;
+        } else {
+            event->res = -err;
+        }
+
+        return event;
+    }
+
+    return NULL;
+}
 
 
 RawstorIO* rawstor_io_create(unsigned int depth) {
@@ -63,7 +110,7 @@ RawstorIO* rawstor_io_create(unsigned int depth) {
     io->events = rawstor_pool_data(io->events_pool);
 
     for (unsigned int i = 0; i < depth; ++i) {
-        io->events[i].cbp = &io->cbs[i];
+        io->events[i].cb = &io->cbs[i];
         io->cbps[i] = NULL;
     }
 
@@ -90,13 +137,7 @@ int rawstor_io_read(
     }
     RawstorIOEvent *event = rawstor_pool_alloc(io->events_pool);
 
-    *event = (RawstorIOEvent) {
-        .cbp = event->cbp,
-        .callback = cb,
-        .data = data,
-    };
-
-    *event->cbp = (struct aiocb) {
+    *event->cb = (struct aiocb) {
         .aio_fildes = fd,
         .aio_offset = 0,
         .aio_buf = buf,
@@ -105,19 +146,84 @@ int rawstor_io_read(
         // .aio_sigevent
         // .aio_lio_opcode
     };
+    event->callback = cb;
+    event->data = data;
 
-
-    if (aio_read(event->cbp)) {
+    if (aio_read(event->cb)) {
         int errsv = errno;
         rawstor_pool_free(io->events_pool, event);
         errno = errsv;
         return -errno;
     }
 
+    *event->cbp = event->cb;
+
     return 0;
 }
 
 
+int rawstor_io_pread(
+    RawstorIO *io,
+    int fd, void *buf, size_t size, off_t offset,
+    RawstorIOCallback *cb, void *data)
+{
+    if (rawstor_pool_available(io->events_pool) == 0) {
+        errno = ENOBUFS;
+        return -errno;
+    }
+    RawstorIOEvent *event = rawstor_pool_alloc(io->events_pool);
+
+    *event->cb = (struct aiocb) {
+        .aio_fildes = fd,
+        .aio_offset = offset,
+        .aio_buf = buf,
+        .aio_nbytes = size,
+        // .aio_reqprio
+        // .aio_sigevent
+        // .aio_lio_opcode
+    };
+    event->callback = cb;
+    event->data = data;
+
+    if (aio_read(event->cb)) {
+        int errsv = errno;
+        rawstor_pool_free(io->events_pool, event);
+        errno = errsv;
+        return -errno;
+    }
+
+    *event->cbp = event->cb;
+
+    return 0;
+}
+
+
+RawstorIOEvent* rawstor_io_wait_event(RawstorIO *io) {
+    RawstorIOEvent *event = io_process_event(io);
+    if (event != NULL) {
+        return event;
+    }
+
+    if (aio_suspend((const struct aiocb* const*)io->cbps, io->depth, NULL)) {
+        return NULL;
+    }
+
+    return io_process_event(io);
+}
+
+
+void rawstor_io_release_event(RawstorIO *io, RawstorIOEvent *event) {
+    *event->cbp = NULL;
+    rawstor_pool_free(io->events_pool, event);
+}
+
+
 int rawstor_io_event_fd(RawstorIOEvent *event) {
-    return event->cbp->aio_fildes;
+    return event->cb->aio_fildes;
+}
+
+
+int rawstor_io_event_dispatch(RawstorIOEvent *event) {
+    return event->callback(
+        event, event->cb->aio_nbytes, event->res, event->data);
 }
