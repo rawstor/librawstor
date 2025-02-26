@@ -405,7 +405,7 @@ int rawstor_io_recv(
     RawstorIOEvent *event = rawstor_pool_alloc(io->events_pool);
     struct pollfd *pollfd = rawstor_pool_alloc(io->fds_pool);
 
-    *event = (struct RawstorIOEvent) {
+    *event = (RawstorIOEvent) {
         .fd = pollfd,
         .payload.socket_linear.data = buf,
         .payload.socket_linear.flags = flags,
@@ -438,7 +438,7 @@ int rawstor_io_recvmsg(
     RawstorIOEvent *event = rawstor_pool_alloc(io->events_pool);
     struct pollfd *pollfd = rawstor_pool_alloc(io->fds_pool);
 
-    *event = (struct RawstorIOEvent) {
+    *event = (RawstorIOEvent) {
         .fd = pollfd,
         .payload.socket_message.msg = message,
         .payload.socket_message.flags = flags,
@@ -603,7 +603,7 @@ int rawstor_io_send(
     RawstorIOEvent *event = rawstor_pool_alloc(io->events_pool);
     struct pollfd *pollfd = rawstor_pool_alloc(io->fds_pool);
 
-    *event = (struct RawstorIOEvent) {
+    *event = (RawstorIOEvent) {
         .fd = pollfd,
         .payload.socket_linear.data = buf,
         .payload.socket_linear.flags = flags,
@@ -636,7 +636,7 @@ int rawstor_io_sendmsg(
     RawstorIOEvent *event = rawstor_pool_alloc(io->events_pool);
     struct pollfd *pollfd = rawstor_pool_alloc(io->fds_pool);
 
-    *event = (struct RawstorIOEvent) {
+    *event = (RawstorIOEvent) {
         .fd = pollfd,
         .payload.socket_message.msg = message,
         .payload.socket_message.flags = flags,
