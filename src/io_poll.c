@@ -54,9 +54,9 @@ struct RawstorIOEvent {
 
 struct RawstorIO {
     unsigned int depth;
+
     RawstorPool *events_pool;
     RawstorIOEvent *events;
-    RawstorPool *fds_pool;
     struct pollfd *fds;
 };
 
@@ -200,22 +200,22 @@ RawstorIO* rawstor_io_create(unsigned int depth) {
     /**
      * TODO: io operations could be much more than depth.
      */
+    io->fds = calloc(depth, sizeof(struct pollfd));
+    if (io->fds == NULL) {
+        free(io);
+        return NULL;
+    }
+
     io->events_pool = rawstor_pool_create(depth, sizeof(RawstorIOEvent));
     if (io->events_pool == NULL) {
+        free(io->fds);
         free(io);
         return NULL;
     }
     io->events = rawstor_pool_data(io->events_pool);
 
-    io->fds_pool = rawstor_pool_create(depth, sizeof(struct pollfd));
-    if (io->fds_pool == NULL) {
-        rawstor_pool_delete(io->events_pool);
-        free(io);
-        return NULL;
-    }
-
-    io->fds = rawstor_pool_data(io->fds_pool);
     for (unsigned int i = 0; i < depth; ++i) {
+        io->events[i].fd = &io->fds[i];
         io->fds[i].fd = -1;
     }
 
@@ -224,7 +224,7 @@ RawstorIO* rawstor_io_create(unsigned int depth) {
 
 
 void rawstor_io_delete(RawstorIO *io) {
-    rawstor_pool_delete(io->fds_pool);
+    free(io->fds);
     rawstor_pool_delete(io->events_pool);
     free(io);
 }
@@ -240,10 +240,9 @@ int rawstor_io_accept(
         return -errno;
     }
     RawstorIOEvent *event = rawstor_pool_alloc(io->events_pool);
-    struct pollfd *pollfd = rawstor_pool_alloc(io->fds_pool);
 
     *event = (RawstorIOEvent) {
-        .fd = pollfd,
+        .fd = event->fd,
         // .payload
         .process = io_event_process_accept,
         .callback = cb,
@@ -251,7 +250,7 @@ int rawstor_io_accept(
         .data = data,
     };
 
-    *pollfd = (struct pollfd) {
+    *event->fd = (struct pollfd) {
         .fd = fd,
         .events = POLLIN,
         .revents = 0,
@@ -271,10 +270,9 @@ int rawstor_io_read(
         return -errno;
     }
     RawstorIOEvent *event = rawstor_pool_alloc(io->events_pool);
-    struct pollfd *pollfd = rawstor_pool_alloc(io->fds_pool);
 
     *event = (RawstorIOEvent) {
-        .fd = pollfd,
+        .fd = event->fd,
         .payload.linear.data = buf,
         .process = io_event_process_read,
         .callback = cb,
@@ -283,7 +281,7 @@ int rawstor_io_read(
         .data = data,
     };
 
-    *pollfd = (struct pollfd) {
+    *event->fd = (struct pollfd) {
         .fd = fd,
         .events = POLLIN,
         .revents = 0,
@@ -303,10 +301,9 @@ int rawstor_io_pread(
         return -errno;
     }
     RawstorIOEvent *event = rawstor_pool_alloc(io->events_pool);
-    struct pollfd *pollfd = rawstor_pool_alloc(io->fds_pool);
 
     *event = (RawstorIOEvent) {
-        .fd = pollfd,
+        .fd = event->fd,
         .payload.pointer_linear.data = buf,
         .payload.pointer_linear.offset = offset,
         .process = io_event_process_pread,
@@ -316,7 +313,7 @@ int rawstor_io_pread(
         .data = data,
     };
 
-    *pollfd = (struct pollfd) {
+    *event->fd = (struct pollfd) {
         .fd = fd,
         .events = POLLIN,
         .revents = 0,
@@ -336,10 +333,9 @@ int rawstor_io_readv(
         return -errno;
     }
     RawstorIOEvent *event = rawstor_pool_alloc(io->events_pool);
-    struct pollfd *pollfd = rawstor_pool_alloc(io->fds_pool);
 
     *event = (RawstorIOEvent) {
-        .fd = pollfd,
+        .fd = event->fd,
         .payload.vector.iov = iov,
         .payload.vector.niov = niov,
         .process = io_event_process_readv,
@@ -349,7 +345,7 @@ int rawstor_io_readv(
         .data = data,
     };
 
-    *pollfd = (struct pollfd) {
+    *event->fd = (struct pollfd) {
         .fd = fd,
         .events = POLLIN,
         .revents = 0,
@@ -369,10 +365,9 @@ int rawstor_io_preadv(
         return -errno;
     }
     RawstorIOEvent *event = rawstor_pool_alloc(io->events_pool);
-    struct pollfd *pollfd = rawstor_pool_alloc(io->fds_pool);
 
     *event = (RawstorIOEvent) {
-        .fd = pollfd,
+        .fd = event->fd,
         .payload.pointer_vector.iov = iov,
         .payload.pointer_vector.niov = niov,
         .payload.pointer_vector.offset = offset,
@@ -383,7 +378,7 @@ int rawstor_io_preadv(
         .data = data,
     };
 
-    *pollfd = (struct pollfd) {
+    *event->fd = (struct pollfd) {
         .fd = fd,
         .events = POLLIN,
         .revents = 0,
@@ -403,10 +398,9 @@ int rawstor_io_recv(
         return -errno;
     }
     RawstorIOEvent *event = rawstor_pool_alloc(io->events_pool);
-    struct pollfd *pollfd = rawstor_pool_alloc(io->fds_pool);
 
     *event = (RawstorIOEvent) {
-        .fd = pollfd,
+        .fd = event->fd,
         .payload.socket_linear.data = buf,
         .payload.socket_linear.flags = flags,
         .process = io_event_process_recv,
@@ -416,7 +410,7 @@ int rawstor_io_recv(
         .data = data,
     };
 
-    *pollfd = (struct pollfd) {
+    *event->fd = (struct pollfd) {
         .fd = sock,
         .events = POLLIN,
         .revents = 0,
@@ -436,10 +430,9 @@ int rawstor_io_recvmsg(
         return -errno;
     }
     RawstorIOEvent *event = rawstor_pool_alloc(io->events_pool);
-    struct pollfd *pollfd = rawstor_pool_alloc(io->fds_pool);
 
     *event = (RawstorIOEvent) {
-        .fd = pollfd,
+        .fd = event->fd,
         .payload.socket_message.msg = message,
         .payload.socket_message.flags = flags,
         .process = io_event_process_recvmsg,
@@ -449,7 +442,7 @@ int rawstor_io_recvmsg(
         .data = data,
     };
 
-    *pollfd = (struct pollfd) {
+    *event->fd = (struct pollfd) {
         .fd = sock,
         .events = POLLIN,
         .revents = 0,
@@ -469,10 +462,9 @@ int rawstor_io_write(
         return -errno;
     }
     RawstorIOEvent *event = rawstor_pool_alloc(io->events_pool);
-    struct pollfd *pollfd = rawstor_pool_alloc(io->fds_pool);
 
     *event = (RawstorIOEvent) {
-        .fd = pollfd,
+        .fd = event->fd,
         .payload.linear.data = buf,
         .process = io_event_process_write,
         .callback = cb,
@@ -481,7 +473,7 @@ int rawstor_io_write(
         .data = data,
     };
 
-    *pollfd = (struct pollfd) {
+    *event->fd = (struct pollfd) {
         .fd = fd,
         .events = POLLOUT,
         .revents = 0,
@@ -501,10 +493,9 @@ int rawstor_io_pwrite(
         return -errno;
     }
     RawstorIOEvent *event = rawstor_pool_alloc(io->events_pool);
-    struct pollfd *pollfd = rawstor_pool_alloc(io->fds_pool);
 
     *event = (RawstorIOEvent) {
-        .fd = pollfd,
+        .fd = event->fd,
         .payload.pointer_linear.data = buf,
         .payload.pointer_linear.offset = offset,
         .process = io_event_process_pwrite,
@@ -514,7 +505,7 @@ int rawstor_io_pwrite(
         .data = data,
     };
 
-    *pollfd = (struct pollfd) {
+    *event->fd = (struct pollfd) {
         .fd = fd,
         .events = POLLOUT,
         .revents = 0,
@@ -534,10 +525,9 @@ int rawstor_io_writev(
         return -errno;
     }
     RawstorIOEvent *event = rawstor_pool_alloc(io->events_pool);
-    struct pollfd *pollfd = rawstor_pool_alloc(io->fds_pool);
 
     *event = (RawstorIOEvent) {
-        .fd = pollfd,
+        .fd = event->fd,
         .payload.vector.iov = iov,
         .payload.vector.niov = niov,
         .process = io_event_process_writev,
@@ -547,7 +537,7 @@ int rawstor_io_writev(
         .data = data,
     };
 
-    *pollfd = (struct pollfd) {
+    *event->fd = (struct pollfd) {
         .fd = fd,
         .events = POLLOUT,
         .revents = 0,
@@ -567,10 +557,9 @@ int rawstor_io_pwritev(
         return -errno;
     }
     RawstorIOEvent *event = rawstor_pool_alloc(io->events_pool);
-    struct pollfd *pollfd = rawstor_pool_alloc(io->fds_pool);
 
     *event = (RawstorIOEvent) {
-        .fd = pollfd,
+        .fd = event->fd,
         .payload.pointer_vector.iov = iov,
         .payload.pointer_vector.niov = niov,
         .payload.pointer_vector.offset = offset,
@@ -581,7 +570,7 @@ int rawstor_io_pwritev(
         .data = data,
     };
 
-    *pollfd = (struct pollfd) {
+    *event->fd = (struct pollfd) {
         .fd = fd,
         .events = POLLOUT,
         .revents = 0,
@@ -601,10 +590,9 @@ int rawstor_io_send(
         return -errno;
     }
     RawstorIOEvent *event = rawstor_pool_alloc(io->events_pool);
-    struct pollfd *pollfd = rawstor_pool_alloc(io->fds_pool);
 
     *event = (RawstorIOEvent) {
-        .fd = pollfd,
+        .fd = event->fd,
         .payload.socket_linear.data = buf,
         .payload.socket_linear.flags = flags,
         .process = io_event_process_send,
@@ -614,7 +602,7 @@ int rawstor_io_send(
         .data = data,
     };
 
-    *pollfd = (struct pollfd) {
+    *event->fd = (struct pollfd) {
         .fd = sock,
         .events = POLLOUT,
         .revents = 0,
@@ -634,10 +622,9 @@ int rawstor_io_sendmsg(
         return -errno;
     }
     RawstorIOEvent *event = rawstor_pool_alloc(io->events_pool);
-    struct pollfd *pollfd = rawstor_pool_alloc(io->fds_pool);
 
     *event = (RawstorIOEvent) {
-        .fd = pollfd,
+        .fd = event->fd,
         .payload.socket_message.msg = message,
         .payload.socket_message.flags = flags,
         .process = io_event_process_sendmsg,
@@ -647,7 +634,7 @@ int rawstor_io_sendmsg(
         .data = data,
     };
 
-    *pollfd = (struct pollfd) {
+    *event->fd = (struct pollfd) {
         .fd = sock,
         .events = POLLOUT,
         .revents = 0,
@@ -663,7 +650,7 @@ RawstorIOEvent* rawstor_io_wait_event(RawstorIO *io) {
         return event;
     }
 
-    if (rawstor_pool_available(io->fds_pool) == io->depth) {
+    if (rawstor_pool_available(io->events_pool) == io->depth) {
         return NULL;
     }
 
@@ -693,7 +680,6 @@ RawstorIOEvent* rawstor_io_wait_event_timeout(RawstorIO *io, int timeout) {
 
 void rawstor_io_release_event(RawstorIO *io, RawstorIOEvent *event) {
     event->fd->fd = -1;
-    rawstor_pool_free(io->fds_pool, event->fd);
     rawstor_pool_free(io->events_pool, event);
 }
 
