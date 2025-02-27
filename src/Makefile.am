@@ -16,17 +16,17 @@ librawstor_la_LIBADD =
 
 
 if ENABLE_OST
-librawstor_la_SOURCES += object_ost.c
+    librawstor_la_SOURCES += object_ost.c
 else
-librawstor_la_SOURCES += object_file.c
+    librawstor_la_SOURCES += object_file.c
 endif
 
 if WITH_LIBURING
-AM_CFLAGS += $(LIBURING_CFLAGS)
-librawstor_la_SOURCES += io_liburing.c
-librawstor_la_LIBADD += $(LIBURING_LIBS)
+    AM_CFLAGS += $(LIBURING_CFLAGS)
+    librawstor_la_SOURCES += io_liburing.c
+    librawstor_la_LIBADD += $(LIBURING_LIBS)
 else
-librawstor_la_SOURCES += io_rt.c
+    librawstor_la_SOURCES += io_aio.c
 endif
 
 

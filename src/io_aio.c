@@ -30,7 +30,7 @@ struct RawstorIO {
 };
 
 
-const char* rawstor_io_engine_name = "rt";
+const char* rawstor_io_engine_name = "aio";
 
 
 static RawstorIOEvent* io_process_event(RawstorIO *io) {
