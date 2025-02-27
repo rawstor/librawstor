@@ -43,7 +43,7 @@ static RawstorIOEvent* io_process_event(RawstorIO *io) {
         int err = aio_error(*cbp);
         if (err < 0) {
             /**
-             * FIXME: This will hide potential error.
+             * FIXME: This will hide err.
              */
             *cbp = NULL;
             continue;
@@ -59,7 +59,7 @@ static RawstorIOEvent* io_process_event(RawstorIO *io) {
             int res = aio_return(*cbp);
             if (res < 0) {
                 /**
-                 * FIXME: This will hide potential error.
+                 * FIXME: This will hide err in res.
                  */
                 *cbp = NULL;
                 continue;
@@ -137,6 +137,14 @@ int rawstor_io_read(
     }
     RawstorIOEvent *event = rawstor_pool_alloc(io->events_pool);
 
+    *event = (RawstorIOEvent) {
+        .cb = event->cb,
+        .cbp = event->cbp,
+        .callback = cb,
+        // .res
+        .data = data,
+    };
+
     *event->cb = (struct aiocb) {
         .aio_fildes = fd,
         .aio_offset = 0,
@@ -146,8 +154,6 @@ int rawstor_io_read(
         // .aio_sigevent
         // .aio_lio_opcode
     };
-    event->callback = cb;
-    event->data = data;
 
     if (aio_read(event->cb)) {
         int errsv = errno;
@@ -173,6 +179,14 @@ int rawstor_io_pread(
     }
     RawstorIOEvent *event = rawstor_pool_alloc(io->events_pool);
 
+    *event = (RawstorIOEvent) {
+        .cb = event->cb,
+        .cbp = event->cbp,
+        .callback = cb,
+        // .res
+        .data = data,
+    };
+
     *event->cb = (struct aiocb) {
         .aio_fildes = fd,
         .aio_offset = offset,
@@ -182,8 +196,6 @@ int rawstor_io_pread(
         // .aio_sigevent
         // .aio_lio_opcode
     };
-    event->callback = cb;
-    event->data = data;
 
     if (aio_read(event->cb)) {
         int errsv = errno;
