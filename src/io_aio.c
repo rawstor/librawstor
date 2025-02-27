@@ -210,6 +210,90 @@ int rawstor_io_pread(
 }
 
 
+int rawstor_io_write(
+    RawstorIO *io,
+    int fd, void *buf, size_t size,
+    RawstorIOCallback *cb, void *data)
+{
+    if (rawstor_pool_available(io->events_pool) == 0) {
+        errno = ENOBUFS;
+        return -errno;
+    }
+    RawstorIOEvent *event = rawstor_pool_alloc(io->events_pool);
+
+    *event = (RawstorIOEvent) {
+        .cb = event->cb,
+        .cbp = event->cbp,
+        .callback = cb,
+        // .res
+        .data = data,
+    };
+
+    *event->cb = (struct aiocb) {
+        .aio_fildes = fd,
+        .aio_offset = 0,
+        .aio_buf = buf,
+        .aio_nbytes = size,
+        // .aio_reqprio
+        // .aio_sigevent
+        // .aio_lio_opcode
+    };
+
+    if (aio_write(event->cb)) {
+        int errsv = errno;
+        rawstor_pool_free(io->events_pool, event);
+        errno = errsv;
+        return -errno;
+    }
+
+    *event->cbp = event->cb;
+
+    return 0;
+}
+
+
+int rawstor_io_pwrite(
+    RawstorIO *io,
+    int fd, void *buf, size_t size, off_t offset,
+    RawstorIOCallback *cb, void *data)
+{
+    if (rawstor_pool_available(io->events_pool) == 0) {
+        errno = ENOBUFS;
+        return -errno;
+    }
+    RawstorIOEvent *event = rawstor_pool_alloc(io->events_pool);
+
+    *event = (RawstorIOEvent) {
+        .cb = event->cb,
+        .cbp = event->cbp,
+        .callback = cb,
+        // .res
+        .data = data,
+    };
+
+    *event->cb = (struct aiocb) {
+        .aio_fildes = fd,
+        .aio_offset = offset,
+        .aio_buf = buf,
+        .aio_nbytes = size,
+        // .aio_reqprio
+        // .aio_sigevent
+        // .aio_lio_opcode
+    };
+
+    if (aio_write(event->cb)) {
+        int errsv = errno;
+        rawstor_pool_free(io->events_pool, event);
+        errno = errsv;
+        return -errno;
+    }
+
+    *event->cbp = event->cb;
+
+    return 0;
+}
+
+
 RawstorIOEvent* rawstor_io_wait_event(RawstorIO *io) {
     RawstorIOEvent *event = io_process_event(io);
     if (event != NULL) {
@@ -217,6 +301,25 @@ RawstorIOEvent* rawstor_io_wait_event(RawstorIO *io) {
     }
 
     if (aio_suspend((const struct aiocb* const*)io->cbps, io->depth, NULL)) {
+        return NULL;
+    }
+
+    return io_process_event(io);
+}
+
+
+RawstorIOEvent* rawstor_io_wait_event_timeout(RawstorIO *io, int timeout) {
+    struct timespec ts = {
+        .tv_sec = 0,
+        .tv_nsec = 1000000ul * timeout,
+    };
+
+    RawstorIOEvent *event = io_process_event(io);
+    if (event != NULL) {
+        return event;
+    }
+
+    if (aio_suspend((const struct aiocb* const*)io->cbps, io->depth, &ts)) {
         return NULL;
     }
 
