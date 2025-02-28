@@ -366,6 +366,9 @@ int rawstor_cli_testio(
         rawstor_release_event(event);
 
         if (rval) {
+            if (errno) {
+                perror("rawstor_dispatch_event() failed");
+            }
             printf("rawstor_dispatch_event(): returns %d\n", rval);
             ret = EXIT_FAILURE;
             break;
