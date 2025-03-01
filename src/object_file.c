@@ -49,13 +49,14 @@ struct RawstorObject {
 const char *rawstor_object_backend_name = "file";
 
 
-static int io_callback(
-    RawstorIOEvent RAWSTOR_UNUSED *event,
-    size_t size, ssize_t res,
-    void *data)
-{
+static int io_callback(RawstorIOEvent *event, void *data) {
     RawstorObjectOperation *op = data;
-    int rval = op->callback(op->object, size, res, op->data);
+    int rval = op->callback(
+        op->object,
+        rawstor_io_event_size(event),
+        rawstor_io_event_result(event),
+        rawstor_io_event_error(event),
+        op->data);
     rawstor_pool_free(op->object->operations_pool, op);
     return rval;
 }

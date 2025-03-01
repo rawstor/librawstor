@@ -623,10 +623,21 @@ int rawstor_io_event_fd(RawstorIOEvent *event) {
 }
 
 
+size_t rawstor_io_event_size(RawstorIOEvent *event) {
+    return event->size;
+}
+
+
+size_t rawstor_io_event_result(RawstorIOEvent *event) {
+    return event->cqe->res >= 0 ? event->cqe->res : 0;
+}
+
+
+int rawstor_io_event_error(RawstorIOEvent *event) {
+    return event->cqe->res < 0 ? -event->cqe->res : 0;
+}
+
+
 int rawstor_io_event_dispatch(RawstorIOEvent *event) {
-    return event->callback(
-        event,
-        event->size,
-        event->cqe->res,
-        event->data);
+    return event->callback(event, event->data);
 }

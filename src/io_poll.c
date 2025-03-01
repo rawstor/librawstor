@@ -46,7 +46,8 @@ struct RawstorIOEvent {
     RawstorIOCallback *callback;
 
     size_t size;
-    ssize_t res;
+    ssize_t result;
+    int error;
 
     void *data;
 };
@@ -65,109 +66,148 @@ const char* rawstor_io_engine_name = "poll";
 
 
 static void io_event_process_accept(RawstorIOEvent *event) {
-    event->res = accept(event->fd->fd, NULL, NULL);
+    event->result = accept(event->fd->fd, NULL, NULL);
+    if (event->result < 0) {
+        event->error = errno;
+    }
 }
 
 
 static void io_event_process_read(RawstorIOEvent *event) {
-    event->res = read(
+    event->result = read(
         event->fd->fd,
         event->payload.linear.data,
         event->size);
+    if (event->result < 0) {
+        event->error = errno;
+    }
 }
 
 
 static void io_event_process_pread(RawstorIOEvent *event) {
-    event->res = pread(
+    event->result = pread(
         event->fd->fd,
         event->payload.pointer_linear.data,
         event->size,
         event->payload.pointer_linear.offset);
+    if (event->result < 0) {
+        event->error = errno;
+    }
 }
 
 
 static void io_event_process_readv(RawstorIOEvent *event) {
-    event->res = readv(
+    event->result = readv(
         event->fd->fd,
         event->payload.vector.iov,
         event->payload.vector.niov);
+    if (event->result < 0) {
+        event->error = errno;
+    }
 }
-
+    
 
 static void io_event_process_preadv(RawstorIOEvent *event) {
-    event->res = preadv(
+    event->result = preadv(
         event->fd->fd,
         event->payload.pointer_vector.iov,
         event->payload.pointer_vector.niov,
         event->payload.pointer_vector.offset);
+    if (event->result < 0) {
+        event->error = errno;
+    }
 }
 
 
 static void io_event_process_recv(RawstorIOEvent *event) {
-    event->res = recv(
+    event->result = recv(
         event->fd->fd,
         event->payload.socket_linear.data,
         event->size,
         event->payload.socket_linear.flags);
+    if (event->result < 0) {
+        event->error = errno;
+    }
 }
 
 
 static void io_event_process_recvmsg(RawstorIOEvent *event) {
-    event->res = recvmsg(
+    event->result = recvmsg(
         event->fd->fd,
         event->payload.socket_message.msg,
         event->payload.socket_message.flags);
+    if (event->result < 0) {
+        event->error = errno;
+    }
 }
 
 
 static void io_event_process_write(RawstorIOEvent *event) {
-    event->res = write(
+    event->result = write(
         event->fd->fd,
         event->payload.linear.data,
         event->size);
+    if (event->result < 0) {
+        event->error = errno;
+    }
 }
 
 
 static void io_event_process_pwrite(RawstorIOEvent *event) {
-    event->res = pwrite(
+    event->result = pwrite(
         event->fd->fd,
         event->payload.pointer_linear.data,
         event->size,
         event->payload.pointer_linear.offset);
+    if (event->result < 0) {
+        event->error = errno;
+    }
 }
 
 
 static void io_event_process_writev(RawstorIOEvent *event) {
-    event->res = writev(
+    event->result = writev(
         event->fd->fd,
         event->payload.vector.iov,
         event->payload.vector.niov);
+    if (event->result < 0) {
+        event->error = errno;
+    }
 }
 
 
 static void io_event_process_pwritev(RawstorIOEvent *event) {
-    event->res = pwritev(
+    event->result = pwritev(
         event->fd->fd,
         event->payload.pointer_vector.iov,
         event->payload.pointer_vector.niov,
         event->payload.pointer_vector.offset);
+    if (event->result < 0) {
+        event->error = errno;
+    }
 }
 
 
 static void io_event_process_send(RawstorIOEvent *event) {
-    event->res = send(
+    event->result = send(
         event->fd->fd,
         event->payload.socket_linear.data,
         event->size,
         event->payload.socket_linear.flags);
+    if (event->result < 0) {
+        event->error = errno;
+    }
 }
 
 
 static void io_event_process_sendmsg(RawstorIOEvent *event) {
-    event->res = sendmsg(
+    event->result = sendmsg(
         event->fd->fd,
         event->payload.socket_message.msg,
         event->payload.socket_message.flags);
+    if (event->result < 0) {
+        event->error = errno;
+    }
 }
 
 
@@ -246,7 +286,9 @@ int rawstor_io_accept(
         // .payload
         .process = io_event_process_accept,
         .callback = cb,
-        // .res
+        // .size
+        // .result
+        // .error
         .data = data,
     };
 
@@ -277,7 +319,8 @@ int rawstor_io_read(
         .process = io_event_process_read,
         .callback = cb,
         .size = size,
-        // .res
+        // .result
+        // .error
         .data = data,
     };
 
@@ -309,7 +352,8 @@ int rawstor_io_pread(
         .process = io_event_process_pread,
         .callback = cb,
         .size = size,
-        // .res
+        // .result
+        // .error
         .data = data,
     };
 
@@ -341,7 +385,8 @@ int rawstor_io_readv(
         .process = io_event_process_readv,
         .callback = cb,
         .size = size,
-        // .res
+        // .result
+        // .error
         .data = data,
     };
 
@@ -374,7 +419,8 @@ int rawstor_io_preadv(
         .process = io_event_process_preadv,
         .callback = cb,
         .size = size,
-        // .res
+        // .result
+        // .error
         .data = data,
     };
 
@@ -406,7 +452,8 @@ int rawstor_io_recv(
         .process = io_event_process_recv,
         .callback = cb,
         .size = size,
-        // .res
+        // .result
+        // .error
         .data = data,
     };
 
@@ -438,7 +485,8 @@ int rawstor_io_recvmsg(
         .process = io_event_process_recvmsg,
         .callback = cb,
         .size = size,
-        // .res
+        // .result
+        // .error
         .data = data,
     };
 
@@ -469,7 +517,8 @@ int rawstor_io_write(
         .process = io_event_process_write,
         .callback = cb,
         .size = size,
-        // .res
+        // .result
+        // .error
         .data = data,
     };
 
@@ -501,7 +550,8 @@ int rawstor_io_pwrite(
         .process = io_event_process_pwrite,
         .callback = cb,
         .size = size,
-        // .res
+        // .result
+        // .error
         .data = data,
     };
 
@@ -533,7 +583,8 @@ int rawstor_io_writev(
         .process = io_event_process_writev,
         .callback = cb,
         .size = size,
-        // .res
+        // .result
+        // .error
         .data = data,
     };
 
@@ -566,7 +617,8 @@ int rawstor_io_pwritev(
         .process = io_event_process_pwritev,
         .callback = cb,
         .size = size,
-        // .res
+        // .result
+        // .error
         .data = data,
     };
 
@@ -598,7 +650,8 @@ int rawstor_io_send(
         .process = io_event_process_send,
         .callback = cb,
         .size = size,
-        // .res
+        // .result
+        // .error
         .data = data,
     };
 
@@ -630,7 +683,8 @@ int rawstor_io_sendmsg(
         .process = io_event_process_sendmsg,
         .callback = cb,
         .size = size,
-        // .res
+        // .result
+        // .error
         .data = data,
     };
 
@@ -689,6 +743,21 @@ int rawstor_io_event_fd(RawstorIOEvent *event) {
 }
 
 
+size_t rawstor_io_event_size(RawstorIOEvent *event) {
+    return event->size;
+}
+
+
+size_t rawstor_io_event_result(RawstorIOEvent *event) {
+    return event->result;
+}
+
+
+int rawstor_io_event_error(RawstorIOEvent *event) {
+    return event->error;
+}
+
+
 int rawstor_io_event_dispatch(RawstorIOEvent *event) {
-    return event->callback(event, event->size, event->res, event->data);
+    return event->callback(event, event->data);
 }

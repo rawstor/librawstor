@@ -63,36 +63,29 @@ static void fill(
 
 
 static int src_data_sent(
-    RawstorObject *object, size_t size, ssize_t res, void *data);
+    RawstorObject *object, size_t size, size_t result, int error, void *data);
 
 
 static int srcv_data_sent(
-    RawstorObject *object, size_t size, ssize_t res, void *data);
+    RawstorObject *object, size_t size, size_t res, int error, void *data);
 
 
-static int dst_data_received(RawstorObject *object,
-    size_t size, ssize_t res, void *data)
+static int dst_data_received(
+    RawstorObject *object, size_t size, size_t result, int error, void *data)
 {
     struct Worker *worker = (struct Worker*)data;
 
-    printf("(%u) %s(): res = %zd\n", worker->index, __FUNCTION__, res);
+    printf("(%u) %s(): result = %zd\n", worker->index, __FUNCTION__, result);
 
-    if (res < 0) {
-        errno = -res;
-        return res;
+    if (error != 0) {
+        errno = error;
+        return -errno;
     }
 
-    if (res == 0) {
-        /**
-         * TODO: Find errno here.
-         */
-        return -1;
-    }
-
-    if ((size_t)res != size) {
+    if (result != size) {
         printf(
             "(%u) %s(): Partial read: %zu != %zu\n",
-            worker->index, __FUNCTION__, (size_t)res, size);
+            worker->index, __FUNCTION__, result, size);
         /**
          * TODO: Find errno here.
          */
@@ -133,28 +126,21 @@ static int dst_data_received(RawstorObject *object,
 
 
 static int dstv_data_received(
-    RawstorObject *object, size_t size, ssize_t res, void *data)
+    RawstorObject *object, size_t size, size_t result, int error, void *data)
 {
     struct Worker *worker = (struct Worker*)data;
 
-    printf("(%u) %s(): res = %zd\n", worker->index, __FUNCTION__, res);
+    printf("(%u) %s(): result = %zd\n", worker->index, __FUNCTION__, result);
 
-    if (res < 0) {
-        errno = -res;
-        return res;
+    if (error != 0) {
+        errno = error;
+        return -errno;
     }
 
-    if (res == 0) {
-        /**
-         * TODO: Find errno here.
-         */
-        return -1;
-    }
-
-    if ((size_t)res != size) {
+    if (result != size) {
         printf(
             "(%u) %s(): Partial read: %zu != %zu\n",
-            worker->index, __FUNCTION__, (size_t)res, size);
+            worker->index, __FUNCTION__, result, size);
         /**
          * TODO: Find errno here.
          */
@@ -195,28 +181,21 @@ static int dstv_data_received(
 
 
 static int src_data_sent(
-    RawstorObject *object, size_t size, ssize_t res, void *data)
+    RawstorObject *object, size_t size, size_t result, int error, void *data)
 {
     struct Worker *worker = (struct Worker*)data;
 
-    printf("(%u) %s(): res = %zd\n", worker->index, __FUNCTION__, res);
+    printf("(%u) %s(): result = %zd\n", worker->index, __FUNCTION__, result);
 
-    if (res < 0) {
-        errno = -res;
-        return res;
+    if (error != 0) {
+        errno = error;
+        return -errno;
     }
 
-    if (res == 0) {
-        /**
-         * TODO: Find errno here.
-         */
-        return -1;
-    }
-
-    if ((size_t)res != size) {
+    if (result != size) {
         printf(
             "(%u) %s(): Partial write: %zu != %zu\n",
-            worker->index, __FUNCTION__, (size_t)res, size);
+            worker->index, __FUNCTION__, result, size);
         /**
          * TODO: Find errno here.
          */
@@ -240,28 +219,21 @@ static int src_data_sent(
 
 
 static int srcv_data_sent(
-    RawstorObject *object, size_t size, ssize_t res, void *data)
+    RawstorObject *object, size_t size, size_t result, int error, void *data)
 {
     struct Worker *worker = (struct Worker*)data;
 
-    printf("(%u) %s(): res = %zd\n", worker->index, __FUNCTION__, res);
+    printf("(%u) %s(): result = %zd\n", worker->index, __FUNCTION__, result);
 
-    if (res < 0) {
-        errno = -res;
-        return res;
+    if (error != 0) {
+        errno = error;
+        return -errno;
     }
 
-    if (res == 0) {
-        /**
-         * TODO: Find errno here.
-         */
-        return -1;
-    }
-
-    if ((size_t)res != size) {
+    if (result != size) {
         printf(
             "(%u) %s(): Partial write: %zu != %zu\n",
-            worker->index, __FUNCTION__, (size_t)res, size);
+            worker->index, __FUNCTION__, result, size);
         /**
          * TODO: Find errno here.
          */

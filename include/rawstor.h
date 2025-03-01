@@ -20,10 +20,16 @@ extern "C" {
 typedef struct RawstorIOEvent RawstorIOEvent;
 
 typedef int(RawstorIOCallback)(
-    RawstorIOEvent *event, size_t size, ssize_t res, void *data);
+    RawstorIOEvent *event, void *data);
 
 
 int rawstor_io_event_fd(RawstorIOEvent *event);
+
+size_t rawstor_io_event_size(RawstorIOEvent *event);
+
+size_t rawstor_io_event_result(RawstorIOEvent *event);
+
+int rawstor_io_event_error(RawstorIOEvent *event);
 
 
 /**
@@ -111,7 +117,7 @@ struct RawstorObjectSpec {
 };
 
 typedef int(RawstorCallback)(
-    RawstorObject *object, size_t size, ssize_t res, void *data);
+    RawstorObject *object, size_t size, size_t res, int error, void *data);
 
 
 int rawstor_object_create(struct RawstorObjectSpec spec, int *object_id);

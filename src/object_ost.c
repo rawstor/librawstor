@@ -36,10 +36,12 @@
 static char OBJ_NAME[] = "TEST_OBJ";
 
 
-#define operation_trace(cid, res, size) \
+#define operation_trace(cid, event) \
     rawstor_debug( \
         "[%u] %s(): %zi of %zu\n", \
-        cid, __FUNCTION__, res, size)
+        cid, __FUNCTION__, \
+        rawstor_io_event_result(event), \
+        rawstor_io_event_size(event))
 
 
 typedef struct RawstorObjectOperation RawstorObjectOperation;
@@ -83,14 +85,10 @@ struct RawstorObject {
 const char *rawstor_object_backend_name = "ost";
 
 
-static int response_body_received(
-    RawstorIOEvent RAWSTOR_UNUSED *event,
-    size_t size, ssize_t res, void *data);
+static int response_body_received(RawstorIOEvent *event, void *data);
 
 
-static int responsev_body_received(
-    RawstorIOEvent RAWSTOR_UNUSED *event,
-    size_t size, ssize_t res, void *data);
+static int responsev_body_received(RawstorIOEvent *event, void *data);
 
 
 static int operation_process_read(RawstorObjectOperation *op) {
@@ -133,7 +131,7 @@ static int operation_process_write(RawstorObjectOperation *op) {
 
     int ret = op->callback(
         op->object,
-        op->request_frame.len, op->request_frame.len,
+        op->request_frame.len, op->request_frame.len, 0,
         op->data);
 
     rawstor_pool_free(op->object->operations_pool, op);
@@ -142,9 +140,7 @@ static int operation_process_write(RawstorObjectOperation *op) {
 }
 
 
-static int response_head_received(
-    RawstorIOEvent RAWSTOR_UNUSED *event,
-    size_t size, ssize_t res, void *data);
+static int response_head_received(RawstorIOEvent *event, void *data);
 
 
 static int object_response_head_recv(RawstorObject *object) {
@@ -186,58 +182,23 @@ static int ost_connect() {
 }
 
 
-static int read_request_sent(
-    RawstorIOEvent RAWSTOR_UNUSED *event,
-    size_t size, ssize_t res, void *data)
-{
+static int read_request_sent(RawstorIOEvent *event, void *data) {
     RawstorObjectOperation *op = (RawstorObjectOperation*)data;
 
-    operation_trace(op->cid, res, size);
+    operation_trace(op->cid, event);
 
-    if (res < 0) {
+    if (rawstor_io_event_error(event) < 0) {
         rawstor_pool_free(op->object->operations_pool, op);
-        return res;
+        errno = rawstor_io_event_error(event);
+        return -errno;
     }
 
-    if ((size_t)res < size) {
-        return rawstor_fd_write(
-            op->object->fd,
-            op->buffer.linear.data + res, op->request_frame.len - res,
-            read_request_sent, data);
-    }
-
-    /**
-     * Start read response loop.
-     */
-    if (op->object->response_loop == 0) {
-        if (object_response_head_recv(op->object)) {
-            return -errno;
-        }
-        op->object->response_loop = 1;
-    }
-
-    return 0;
-}
-
-
-static int write_requestv_sent(
-    RawstorIOEvent RAWSTOR_UNUSED *event,
-    size_t size, ssize_t res, void *data)
-{
-    RawstorObjectOperation *op = (RawstorObjectOperation*)data;
-
-    operation_trace(op->cid, res, size);
-
-    if (res < 0) {
-        rawstor_pool_free(op->object->operations_pool, op);
-        return res;
-    }
-
-    if ((size_t)res != size) {
+    if (rawstor_io_event_result(event) != rawstor_io_event_size(event)) {
         rawstor_pool_free(op->object->operations_pool, op);
         rawstor_error(
             "Request size mismatch: %zu != %zu\n",
-            (size_t)res, size);
+            rawstor_io_event_result(event),
+            rawstor_io_event_size(event));
         errno = EIO;
         return -errno;
     }
@@ -256,28 +217,62 @@ static int write_requestv_sent(
 }
 
 
-static int response_body_received(
-    RawstorIOEvent RAWSTOR_UNUSED *event,
-    size_t size, ssize_t res, void *data)
-{
+static int write_requestv_sent(RawstorIOEvent *event, void *data) {
+    RawstorObjectOperation *op = (RawstorObjectOperation*)data;
+
+    operation_trace(op->cid, event);
+
+    if (rawstor_io_event_error(event) < 0) {
+        rawstor_pool_free(op->object->operations_pool, op);
+        errno = rawstor_io_event_error(event);
+        return -errno;
+    }
+
+    if (rawstor_io_event_result(event) != rawstor_io_event_size(event)) {
+        rawstor_pool_free(op->object->operations_pool, op);
+        rawstor_error(
+            "Request size mismatch: %zu != %zu\n",
+            rawstor_io_event_result(event),
+            rawstor_io_event_size(event));
+        errno = EIO;
+        return -errno;
+    }
+
+    /**
+     * Start read response loop.
+     */
+    if (op->object->response_loop == 0) {
+        if (object_response_head_recv(op->object)) {
+            return -errno;
+        }
+        op->object->response_loop = 1;
+    }
+
+    return 0;
+}
+
+
+static int response_body_received(RawstorIOEvent *event, void *data) {
     /**
      * FIXME: Proper error handling.
      */
 
     RawstorObjectOperation *op = (RawstorObjectOperation*)data;
 
-    operation_trace(op->cid, res, size);
+    operation_trace(op->cid, event);
 
-    if (res < 0) {
+    if (rawstor_io_event_error(event) < 0) {
         rawstor_pool_free(op->object->operations_pool, op);
-        return res;
+        errno = rawstor_io_event_error(event);
+        return -errno;
     }
 
-    if ((size_t)res != size) {
+    if (rawstor_io_event_result(event) != rawstor_io_event_size(event)) {
         rawstor_pool_free(op->object->operations_pool, op);
         rawstor_error(
             "Response body size mismatch: %zu != %zu\n",
-            (size_t)res, size);
+            rawstor_io_event_result(event),
+            rawstor_io_event_size(event));
         errno = EIO;
         return -errno;
     }
@@ -296,7 +291,7 @@ static int response_body_received(
 
     int ret = op->callback(
         op->object,
-        op->request_frame.len, op->request_frame.len,
+        op->request_frame.len, op->request_frame.len, 0,
         op->data);
 
     rawstor_pool_free(op->object->operations_pool, op);
@@ -305,24 +300,23 @@ static int response_body_received(
 }
 
 
-static int responsev_body_received(
-    RawstorIOEvent RAWSTOR_UNUSED *event,
-    size_t size, ssize_t res, void *data)
-{
+static int responsev_body_received(RawstorIOEvent *event, void *data) {
     RawstorObjectOperation *op = (RawstorObjectOperation*)data;
 
-    operation_trace(op->cid, res, size);
+    operation_trace(op->cid, event);
 
-    if (res < 0) {
+    if (rawstor_io_event_error(event) < 0) {
         rawstor_pool_free(op->object->operations_pool, op);
-        return res;
+        errno = rawstor_io_event_error(event);
+        return -errno;
     }
 
-    if ((size_t)res != size) {
+    if (rawstor_io_event_result(event) != rawstor_io_event_size(event)) {
         rawstor_pool_free(op->object->operations_pool, op);
         rawstor_error(
             "Response body size mismatch: %zu != %zu\n",
-            (size_t)res, size);
+            rawstor_io_event_result(event),
+            rawstor_io_event_size(event));
         errno = EIO;
         return -errno;
     }
@@ -341,7 +335,7 @@ static int responsev_body_received(
 
     int ret = op->callback(
         op->object,
-        op->request_frame.len, op->request_frame.len,
+        op->request_frame.len, op->request_frame.len, 0,
         op->data);
 
     rawstor_pool_free(op->object->operations_pool, op);
@@ -350,27 +344,26 @@ static int responsev_body_received(
 }
 
 
-static int response_head_received(
-    RawstorIOEvent RAWSTOR_UNUSED *event,
-    size_t size, ssize_t res, void *data)
-{
+static int response_head_received(RawstorIOEvent *event, void *data) {
     RawstorObject *object = (RawstorObject*)data;
 
-    if (res < 0) {
+    if (rawstor_io_event_error(event) != 0) {
         /**
          * FIXME: Memory leak on used RawstorObjectOperation.
          */
         object->response_loop = 0;
-        return res;
+        errno = rawstor_io_event_error(event);
+        return -errno;
     }
 
-    if ((size_t)res != size) {
+    if (rawstor_io_event_result(event) != rawstor_io_event_size(event)) {
         /**
          * FIXME: Memory leak on used RawstorObjectOperation.
          */
         rawstor_error(
             "Response head size mismatch: %zu != %zu\n",
-            (size_t)res, size);
+            rawstor_io_event_result(event),
+            rawstor_io_event_size(event));
         object->response_loop = 0;
         errno = EIO;
         return -errno;
@@ -392,7 +385,7 @@ static int response_head_received(
     RawstorObjectOperation *ops = rawstor_pool_data(object->operations_pool);
     RawstorObjectOperation *op = &ops[response->cid - 1];
 
-    operation_trace(op->cid, res, size);
+    operation_trace(op->cid, event);
 
     return op->process(op);
 }

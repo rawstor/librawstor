@@ -17,8 +17,7 @@ typedef struct RawstorIO RawstorIO;
 // typedef struct RawstorIOEvent RawstorIOEvent;
 
 // defined in rawstor.h
-// typedef int(RawstorIOCallback)(
-//     RawstorIOEvent *event, size_t size, ssize_t res, void *data);
+// typedef int(RawstorIOCallback)(RawstorIOEvent *event, void *data);
 
 
 extern const char* rawstor_io_engine_name;
@@ -103,6 +102,12 @@ RawstorIOEvent* rawstor_io_wait_event_timeout(RawstorIO *io, int timeout);
 void rawstor_io_release_event(RawstorIO *io, RawstorIOEvent *event);
 
 int rawstor_io_event_fd(RawstorIOEvent *event);
+
+size_t rawstor_io_event_size(RawstorIOEvent *event);
+
+size_t rawstor_io_event_result(RawstorIOEvent *event);
+
+int rawstor_io_event_error(RawstorIOEvent *event);
 
 int rawstor_io_event_dispatch(RawstorIOEvent *event);
 
