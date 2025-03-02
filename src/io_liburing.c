@@ -15,6 +15,12 @@
 struct RawstorIOEvent {
     int fd;
 
+    /**
+     * TODO: Drop or replace this with pointer, since we don't need this struct
+     * in most IO operations.
+     */
+    struct msghdr message;
+
     RawstorIOCallback *callback;
 
     size_t size;
@@ -93,6 +99,7 @@ int rawstor_io_read(
     RawstorIOEvent *event = rawstor_pool_alloc(io->events_pool);
     *event = (RawstorIOEvent) {
         .fd = fd,
+        // .message
         .callback = cb,
         .size = size,
         // .cqe
@@ -129,6 +136,7 @@ int rawstor_io_pread(
     RawstorIOEvent *event = rawstor_pool_alloc(io->events_pool);
     *event = (RawstorIOEvent) {
         .fd = fd,
+        // .message
         .callback = cb,
         .size = size,
         // .cqe
@@ -165,6 +173,7 @@ int rawstor_io_readv(
     RawstorIOEvent *event = rawstor_pool_alloc(io->events_pool);
     *event = (RawstorIOEvent) {
         .fd = fd,
+        // .message
         .callback = cb,
         .size = size,
         // .cqe
@@ -201,6 +210,7 @@ int rawstor_io_preadv(
     RawstorIOEvent *event = rawstor_pool_alloc(io->events_pool);
     *event = (RawstorIOEvent) {
         .fd = fd,
+        // .message
         .callback = cb,
         .size = size,
         // .cqe
@@ -216,7 +226,7 @@ int rawstor_io_preadv(
 
 int rawstor_io_recv(
     RawstorIO *io,
-    int sock, void *buf, size_t size, int flags,
+    int fd, void *buf, size_t size,
     RawstorIOCallback *cb, void *data)
 {
     /**
@@ -236,23 +246,24 @@ int rawstor_io_recv(
 
     RawstorIOEvent *event = rawstor_pool_alloc(io->events_pool);
     *event = (RawstorIOEvent) {
-        .fd = sock,
+        .fd = fd,
+        // .message
         .callback = cb,
         .size = size,
         // .cqe
         .data = data,
     };
 
-    io_uring_prep_recv(sqe, sock, buf, size, flags);
+    io_uring_prep_recv(sqe, fd, buf, size, MSG_WAITALL);
     io_uring_sqe_set_data(sqe, event);
 
     return 0;
 }
 
 
-int rawstor_io_recvmsg(
+int rawstor_io_recvv(
     RawstorIO *io,
-    int sock, struct msghdr *message, size_t size, int flags,
+    int fd, struct iovec *iov, unsigned int niov, size_t size,
     RawstorIOCallback *cb, void *data)
 {
     /**
@@ -272,14 +283,18 @@ int rawstor_io_recvmsg(
 
     RawstorIOEvent *event = rawstor_pool_alloc(io->events_pool);
     *event = (RawstorIOEvent) {
-        .fd = sock,
+        .fd = fd,
+        .message = {
+            .msg_iov = iov,
+            .msg_iovlen = niov,
+        },
         .callback = cb,
         .size = size,
         // .cqe
         .data = data,
     };
 
-    io_uring_prep_recvmsg(sqe, sock, message, flags);
+    io_uring_prep_recvmsg(sqe, fd, &event->message, MSG_WAITALL);
     io_uring_sqe_set_data(sqe, event);
 
     return 0;
@@ -309,6 +324,7 @@ int rawstor_io_write(
     RawstorIOEvent *event = rawstor_pool_alloc(io->events_pool);
     *event = (RawstorIOEvent) {
         .fd = fd,
+        // .message
         .callback = cb,
         .size = size,
         // .cqe
@@ -345,6 +361,7 @@ int rawstor_io_pwrite(
     RawstorIOEvent *event = rawstor_pool_alloc(io->events_pool);
     *event = (RawstorIOEvent) {
         .fd = fd,
+        // .message
         .callback = cb,
         .size = size,
         // .cqe
@@ -381,6 +398,7 @@ int rawstor_io_writev(
     RawstorIOEvent *event = rawstor_pool_alloc(io->events_pool);
     *event = (RawstorIOEvent) {
         .fd = fd,
+        // .message
         .callback = cb,
         .size = size,
         // .cqe
@@ -417,6 +435,7 @@ int rawstor_io_pwritev(
     RawstorIOEvent *event = rawstor_pool_alloc(io->events_pool);
     *event = (RawstorIOEvent) {
         .fd = fd,
+        // .message
         .callback = cb,
         .size = size,
         // .cqe
@@ -432,7 +451,7 @@ int rawstor_io_pwritev(
 
 int rawstor_io_send(
     RawstorIO *io,
-    int sock, void *buf, size_t size, int flags,
+    int fd, void *buf, size_t size, int flags,
     RawstorIOCallback *cb, void *data)
 {
     /**
@@ -452,23 +471,24 @@ int rawstor_io_send(
 
     RawstorIOEvent *event = rawstor_pool_alloc(io->events_pool);
     *event = (RawstorIOEvent) {
-        .fd = sock,
+        .fd = fd,
+        // .message
         .callback = cb,
         .size = size,
         // .cqe
         .data = data,
     };
 
-    io_uring_prep_send(sqe, sock, buf, size, flags);
+    io_uring_prep_send(sqe, fd, buf, size, flags);
     io_uring_sqe_set_data(sqe, event);
 
     return 0;
 }
 
 
-int rawstor_io_sendmsg(
+int rawstor_io_senv(
     RawstorIO *io,
-    int sock, struct msghdr *message, size_t size, int flags,
+    int fd, struct iovec *iov, unsigned int niov, size_t size, int flags,
     RawstorIOCallback *cb, void *data)
 {
     /**
@@ -488,14 +508,18 @@ int rawstor_io_sendmsg(
 
     RawstorIOEvent *event = rawstor_pool_alloc(io->events_pool);
     *event = (RawstorIOEvent) {
-        .fd = sock,
+        .fd = fd,
+        .message = {
+            .msg_iov = iov,
+            .msg_iovlen = niov,
+        },
         .callback = cb,
         .size = size,
         // .cqe
         .data = data,
     };
 
-    io_uring_prep_sendmsg(sqe, sock, message, flags);
+    io_uring_prep_sendmsg(sqe, fd, &event->message, flags);
     io_uring_sqe_set_data(sqe, event);
 
     return 0;

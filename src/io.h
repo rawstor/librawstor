@@ -48,12 +48,12 @@ int rawstor_io_preadv(
 
 int rawstor_io_recv(
     RawstorIO *io,
-    int sock, void *buf, size_t size, int flags,
+    int fd, void *buf, size_t size,
     RawstorIOCallback *cb, void *data);
 
-int rawstor_io_recvmsg(
+int rawstor_io_recvv(
     RawstorIO *io,
-    int sock, struct msghdr *message, size_t size, int flags,
+    int fd, struct iovec *iov, unsigned int niov, size_t size,
     RawstorIOCallback *cb, void *data);
 
 int rawstor_io_write(
@@ -78,12 +78,12 @@ int rawstor_io_pwritev(
 
 int rawstor_io_send(
     RawstorIO *io,
-    int sock, void *buf, size_t size, int flags,
+    int fd, void *buf, size_t size,
     RawstorIOCallback *cb, void *data);
 
-int rawstor_io_sendmsg(
+int rawstor_io_sendv(
     RawstorIO *io,
-    int sock, struct msghdr *message, size_t size, int flags,
+    int fd, struct iovec *iov, unsigned int niov, size_t size,
     RawstorIOCallback *cb, void *data);
 
 

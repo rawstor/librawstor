@@ -31,14 +31,7 @@ struct RawstorIOEvent {
             unsigned int niov;
             off_t offset;
         } pointer_vector;
-        struct {
-            void *data;
-            int flags;
-        } socket_linear;
-        struct {
-            struct msghdr *msg;
-            int flags;
-        } socket_message;
+        struct msghdr socket_message;
     } payload;
 
     void (*process)(RawstorIOEvent *event);
@@ -114,20 +107,20 @@ static void io_event_process_preadv(RawstorIOEvent *event) {
 static void io_event_process_recv(RawstorIOEvent *event) {
     event->result = recv(
         event->fd->fd,
-        event->payload.socket_linear.data,
+        event->payload.linear.data,
         event->size,
-        event->payload.socket_linear.flags);
+        MSG_WAITALL);
     if (event->result < 0) {
         event->error = errno;
     }
 }
 
 
-static void io_event_process_recvmsg(RawstorIOEvent *event) {
+static void io_event_process_recvv(RawstorIOEvent *event) {
     event->result = recvmsg(
         event->fd->fd,
-        event->payload.socket_message.msg,
-        event->payload.socket_message.flags);
+        &event->payload.socket_message,
+        MSG_WAITALL);
     if (event->result < 0) {
         event->error = errno;
     }
@@ -181,22 +174,25 @@ static void io_event_process_pwritev(RawstorIOEvent *event) {
 
 
 static void io_event_process_send(RawstorIOEvent *event) {
+    /**
+     * FIXME: implement waitall.
+     */
     event->result = send(
         event->fd->fd,
-        event->payload.socket_linear.data,
+        event->payload.linear.data,
         event->size,
-        event->payload.socket_linear.flags);
+        0);
     if (event->result < 0) {
         event->error = errno;
     }
 }
 
 
-static void io_event_process_sendmsg(RawstorIOEvent *event) {
+static void io_event_process_sendv(RawstorIOEvent *event) {
     event->result = sendmsg(
         event->fd->fd,
-        event->payload.socket_message.msg,
-        event->payload.socket_message.flags);
+        &event->payload.socket_message,
+        MSG_WAITALL);
     if (event->result < 0) {
         event->error = errno;
     }
@@ -396,7 +392,7 @@ int rawstor_io_preadv(
 
 int rawstor_io_recv(
     RawstorIO *io,
-    int sock, void *buf, size_t size, int flags,
+    int fd, void *buf, size_t size,
     RawstorIOCallback *cb, void *data)
 {
     if (rawstor_pool_available(io->events_pool) == 0) {
@@ -407,8 +403,7 @@ int rawstor_io_recv(
 
     *event = (RawstorIOEvent) {
         .fd = event->fd,
-        .payload.socket_linear.data = buf,
-        .payload.socket_linear.flags = flags,
+        .payload.linear.data = buf,
         .process = io_event_process_recv,
         .callback = cb,
         .size = size,
@@ -418,7 +413,7 @@ int rawstor_io_recv(
     };
 
     *event->fd = (struct pollfd) {
-        .fd = sock,
+        .fd = fd,
         .events = POLLIN,
         .revents = 0,
     };
@@ -427,9 +422,9 @@ int rawstor_io_recv(
 }
 
 
-int rawstor_io_recvmsg(
+int rawstor_io_recvv(
     RawstorIO *io,
-    int sock, struct msghdr *message, size_t size, int flags,
+    int fd, struct iovec *iov, unsigned int niov, size_t size,
     RawstorIOCallback *cb, void *data)
 {
     if (rawstor_pool_available(io->events_pool) == 0) {
@@ -440,9 +435,11 @@ int rawstor_io_recvmsg(
 
     *event = (RawstorIOEvent) {
         .fd = event->fd,
-        .payload.socket_message.msg = message,
-        .payload.socket_message.flags = flags,
-        .process = io_event_process_recvmsg,
+        .payload.socket_message = {
+            .msg_iov = iov,
+            .msg_iovlen = niov,
+        },
+        .process = io_event_process_recvv,
         .callback = cb,
         .size = size,
         // .result
@@ -451,7 +448,7 @@ int rawstor_io_recvmsg(
     };
 
     *event->fd = (struct pollfd) {
-        .fd = sock,
+        .fd = fd,
         .events = POLLIN,
         .revents = 0,
     };
@@ -594,7 +591,7 @@ int rawstor_io_pwritev(
 
 int rawstor_io_send(
     RawstorIO *io,
-    int sock, void *buf, size_t size, int flags,
+    int fd, void *buf, size_t size,
     RawstorIOCallback *cb, void *data)
 {
     if (rawstor_pool_available(io->events_pool) == 0) {
@@ -605,8 +602,7 @@ int rawstor_io_send(
 
     *event = (RawstorIOEvent) {
         .fd = event->fd,
-        .payload.socket_linear.data = buf,
-        .payload.socket_linear.flags = flags,
+        .payload.linear.data = buf,
         .process = io_event_process_send,
         .callback = cb,
         .size = size,
@@ -616,7 +612,7 @@ int rawstor_io_send(
     };
 
     *event->fd = (struct pollfd) {
-        .fd = sock,
+        .fd = fd,
         .events = POLLOUT,
         .revents = 0,
     };
@@ -625,9 +621,9 @@ int rawstor_io_send(
 }
 
 
-int rawstor_io_sendmsg(
+int rawstor_io_sendv(
     RawstorIO *io,
-    int sock, struct msghdr *message, size_t size, int flags,
+    int fd, struct iovec *iov, unsigned int niov, size_t size,
     RawstorIOCallback *cb, void *data)
 {
     if (rawstor_pool_available(io->events_pool) == 0) {
@@ -638,9 +634,11 @@ int rawstor_io_sendmsg(
 
     *event = (RawstorIOEvent) {
         .fd = event->fd,
-        .payload.socket_message.msg = message,
-        .payload.socket_message.flags = flags,
-        .process = io_event_process_sendmsg,
+        .payload.socket_message = {
+            .msg_iov = iov,
+            .msg_iovlen = niov,
+        },
+        .process = io_event_process_sendv,
         .callback = cb,
         .size = size,
         // .result
@@ -649,7 +647,7 @@ int rawstor_io_sendmsg(
     };
 
     *event->fd = (struct pollfd) {
-        .fd = sock,
+        .fd = fd,
         .events = POLLOUT,
         .revents = 0,
     };

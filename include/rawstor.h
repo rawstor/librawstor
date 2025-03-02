@@ -1,7 +1,6 @@
 #ifndef RAWSTOR_H
 #define RAWSTOR_H
 
-#include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/uio.h>
 
@@ -53,12 +52,12 @@ int rawstor_fd_preadv(
     struct iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data);
 
-int rawstor_sock_recv(
-    int sock, void *buf, size_t size, int flags,
+int rawstor_fd_recv(
+    int fd, void *buf, size_t size,
     RawstorIOCallback *cb, void *data);
 
-int rawstor_sock_recvmsg(
-    int sock, struct msghdr *message, size_t size, int flags,
+int rawstor_fd_recvv(
+    int fd, struct iovec *iov, unsigned int niov, size_t size,
     RawstorIOCallback *cb, void *data);
 
 int rawstor_fd_write(
@@ -77,12 +76,12 @@ int rawstor_fd_pwritev(
     int fd, struct iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data);
 
-int rawstor_sock_send(
-    int sock, void *buf, size_t size, int flags,
+int rawstor_fd_send(
+    int fd, void *buf, size_t size,
     RawstorIOCallback *cb, void *data);
 
-int rawstor_sock_sendmsg(
-    int sock, struct msghdr *message, size_t size, int flags,
+int rawstor_fd_sendv(
+    int fd, struct iovec *iov, unsigned int niov, size_t size,
     RawstorIOCallback *cb, void *data);
 
 

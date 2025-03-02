@@ -4,7 +4,6 @@
 #include "logging.h"
 #include "object.h"
 
-#include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/uio.h>
 
@@ -99,8 +98,7 @@ int rawstor_fd_readv(
 
 
 int rawstor_fd_preadv(
-    int fd,
-    struct iovec *iov, unsigned int niov, size_t size, off_t offset,
+    int fd, struct iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data)
 {
     return rawstor_io_preadv(
@@ -110,24 +108,24 @@ int rawstor_fd_preadv(
 }
 
 
-int rawstor_sock_recv(
-    int sock, void *buf, size_t size, int flags,
+int rawstor_fd_recv(
+    int fd, void *buf, size_t size,
     RawstorIOCallback *cb, void *data)
 {
     return rawstor_io_recv(
         rawstor_io,
-        sock, buf, size, flags,
+        fd, buf, size,
         cb, data);
 }
 
 
-int rawstor_sock_recvmsg(
-    int sock, struct msghdr *message, size_t size, int flags,
+int rawstor_fd_recvv(
+    int fd, struct iovec *iov, unsigned int niov, size_t size,
     RawstorIOCallback *cb, void *data)
 {
-    return rawstor_io_recvmsg(
+    return rawstor_io_recvv(
         rawstor_io,
-        sock, message, size, flags,
+        fd, iov, niov, size,
         cb, data);
 }
 
@@ -176,23 +174,23 @@ int rawstor_fd_pwritev(
 }
 
 
-int rawstor_sock_send(
-    int sock, void *buf, size_t size, int flags,
+int rawstor_fd_send(
+    int fd, void *buf, size_t size,
     RawstorIOCallback *cb, void *data)
 {
     return rawstor_io_send(
         rawstor_io,
-        sock, buf, size, flags,
+        fd, buf, size,
         cb, data);
 }
 
 
-int rawstor_sock_sendmsg(
-    int sock, struct msghdr *message, size_t size, int flags,
+int rawstor_fd_sendv(
+    int fd, struct iovec *iov, unsigned int niov, size_t size,
     RawstorIOCallback *cb, void *data)
 {
-    return rawstor_io_sendmsg(
+    return rawstor_io_sendv(
         rawstor_io,
-        sock, message, size, flags,
+        fd, iov, niov, size,
         cb, data);
 }

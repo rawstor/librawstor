@@ -8,8 +8,6 @@
 
 #include <arpa/inet.h>
 
-#include <sys/socket.h>
-
 #include <errno.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -64,7 +62,6 @@ struct RawstorObjectOperation {
     } buffer;
 
     struct iovec iov[IOVEC_SIZE];
-    struct msghdr message;
 
     int (*process)(RawstorObjectOperation *op);
 
@@ -92,23 +89,17 @@ static int responsev_body_received(RawstorIOEvent *event, void *data);
 
 
 static int operation_process_read(RawstorObjectOperation *op) {
-    return rawstor_sock_recv(
+    return rawstor_fd_recv(
         op->object->fd,
         op->buffer.linear.data, op->request_frame.len,
-        MSG_WAITALL,
         response_body_received, op);
 }
 
 
 static int operation_process_readv(RawstorObjectOperation *op) {
-    op->message = (struct msghdr) {
-        .msg_iov = op->buffer.vector.iov,
-        .msg_iovlen = op->buffer.vector.niov,
-    };
-    return rawstor_sock_recvmsg(
+    return rawstor_fd_recvv(
         op->object->fd,
-        &op->message, op->request_frame.len,
-        MSG_WAITALL,
+        op->buffer.vector.iov, op->buffer.vector.niov, op->request_frame.len,
         responsev_body_received, op);
 }
 
@@ -144,9 +135,9 @@ static int response_head_received(RawstorIOEvent *event, void *data);
 
 
 static int object_response_head_recv(RawstorObject *object) {
-    if (rawstor_sock_recv(
+    if (rawstor_fd_recv(
         object->fd,
-        &object->response_frame, sizeof(object->response_frame), MSG_WAITALL,
+        &object->response_frame, sizeof(object->response_frame),
         response_head_received, object))
     {
         return -errno;
@@ -633,13 +624,9 @@ int rawstor_object_pwrite(
         .iov_base = buf,
         .iov_len = size,
     };
-    op->message = (struct msghdr) {
-        .msg_iov = op->iov,
-        .msg_iovlen = 2,
-    };
-    return rawstor_sock_sendmsg(
+    return rawstor_fd_sendv(
         object->fd,
-        &op->message, sizeof(op->request_frame) + size, 0,
+        op->iov, 2, sizeof(op->request_frame) + size,
         write_requestv_sent, op);
 }
 
@@ -692,12 +679,8 @@ int rawstor_object_pwritev(
     for (unsigned int i = 0; i < niov; ++i) {
         op->iov[i + 1] = iov[i];
     }
-    op->message = (struct msghdr) {
-        .msg_iov = op->iov,
-        .msg_iovlen = niov + 1,
-    };
-    return rawstor_sock_sendmsg(
+    return rawstor_fd_sendv(
         object->fd,
-        &op->message, sizeof(op->request_frame) + size, 0,
+        op->iov, niov + 1, sizeof(op->request_frame) + size,
         write_requestv_sent, op);
 }
