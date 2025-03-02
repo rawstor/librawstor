@@ -6,9 +6,11 @@
 #include <arpa/inet.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdlib.h>
 
 
 #define OBJID_LEN 128/8
+#define RAWSTOR_MAGIC 0x72737472 // "rstr" as ascii
 
 
 typedef enum {
@@ -21,12 +23,14 @@ typedef enum {
 
 /* Just for basic validation only */
 typedef struct {
+    uint32_t magic;
     RawstorOSTCommandType cmd;
 } RAWSTOR_PACKED RawstorOSTFrameCmdOnly;
 
 
 /* Minimalistic protocol frame */
 typedef struct {
+    uint32_t magic;
     RawstorOSTCommandType cmd;
     // var is for minimal commands only,
     // will be overridden in other command structs
@@ -37,6 +41,7 @@ typedef struct {
 
 
 typedef struct {
+    uint32_t magic;
     RawstorOSTCommandType cmd;
     u_int16_t cid;
     u_int64_t offset;
@@ -47,12 +52,21 @@ typedef struct {
 
 /* response frames */
 typedef struct {
+    uint32_t magic;
     RawstorOSTCommandType cmd;
     u_int16_t cid;
     // TODO: if we send length in res - it should be the same type
     // (signed-unsigned too)
     int32_t res;
 } RAWSTOR_PACKED RawstorOSTFrameResponse;
+
+
+inline RawstorOSTFrameBasic* init_basic_frame()
+{
+    RawstorOSTFrameBasic *frame = malloc(sizeof(RawstorOSTFrameBasic));
+	frame->magic = RAWSTOR_MAGIC;
+	return frame;
+}
 
 
 #endif // RAWSTOR_OST_PROTOCOL_H
