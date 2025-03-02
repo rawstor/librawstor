@@ -191,6 +191,15 @@ int rawstor_io_pread(
 }
 
 
+int rawstor_io_recv(
+    RawstorIO *io,
+    int fd, void *buf, size_t size,
+    RawstorIOCallback *cb, void *data)
+{
+    return rawstor_io_read(io, fd, buf, size, cb, data);
+}
+
+
 int rawstor_io_write(
     RawstorIO *io,
     int fd, void *buf, size_t size,
@@ -270,6 +279,15 @@ int rawstor_io_pwrite(
     *event->cbp = event->cb;
 
     return 0;
+}
+
+
+int rawstor_io_send(
+    RawstorIO *io,
+    int fd, void *buf, size_t size,
+    RawstorIOCallback *cb, void *data)
+{
+    return rawstor_io_write(io, fd, buf, size, cb, data);
 }
 
 
