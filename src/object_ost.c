@@ -440,13 +440,12 @@ int rawstor_object_open(int RAWSTOR_UNUSED object_id, RawstorObject **object) {
         return -errno;
     }
 
-    char buf[8192];
-
-    RawstorOSTFrameBasic *mframe = init_basic_frame();
-    mframe->cmd = RAWSTOR_CMD_SET_OBJECT;
-    strlcpy(mframe->obj_id, OBJ_NAME, OBJID_LEN);
-    int res = write(ret->fd, mframe, sizeof(RawstorOSTFrameBasic));
-    free(mframe);
+    RawstorOSTFrameBasic mframe = {
+        .magic = RAWSTOR_MAGIC,
+        .cmd = RAWSTOR_CMD_SET_OBJECT,
+    };
+    strlcpy(mframe.obj_id, OBJ_NAME, OBJID_LEN);
+    int res = write(ret->fd, &mframe, sizeof(mframe));
     rawstor_debug("Sent request to set objid, res:%i\n", res);
     if (res < 0) {
         int errsv = errno;
@@ -456,7 +455,8 @@ int rawstor_object_open(int RAWSTOR_UNUSED object_id, RawstorObject **object) {
         errno = errsv;
         return -errno;
     }
-    res = read(ret->fd, buf, sizeof(buf));
+    RawstorOSTFrameResponse rframe;
+    res = read(ret->fd, &rframe, sizeof(rframe));
     if (res < 0) {
         int errsv = errno;
         close(ret->fd);
@@ -465,18 +465,16 @@ int rawstor_object_open(int RAWSTOR_UNUSED object_id, RawstorObject **object) {
         errno = errsv;
         return -errno;
     }
-    RawstorOSTFrameResponse *rframe = malloc(sizeof(RawstorOSTFrameResponse));
-    memcpy(rframe, buf, sizeof(RawstorOSTFrameResponse));
-    if (rframe->magic != RAWSTOR_MAGIC) {
+    if (rframe.magic != RAWSTOR_MAGIC) {
         rawstor_error("FATAL! Frame with wrong magic number: %x != %x\n",
-                      rframe->magic, RAWSTOR_MAGIC);
+                      rframe.magic, RAWSTOR_MAGIC);
         errno = EIO;
         return -errno;
     }
     rawstor_debug(
         "Response from Server: cmd:%i res:%i\n",
-        rframe->cmd,
-        rframe->res);
+        rframe.cmd,
+        rframe.res);
 
     *object = ret;
 
