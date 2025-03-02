@@ -61,12 +61,4 @@ typedef struct {
 } RAWSTOR_PACKED RawstorOSTFrameResponse;
 
 
-inline RawstorOSTFrameBasic* init_basic_frame()
-{
-    RawstorOSTFrameBasic *frame = malloc(sizeof(RawstorOSTFrameBasic));
-	frame->magic = RAWSTOR_MAGIC;
-	return frame;
-}
-
-
 #endif // RAWSTOR_OST_PROTOCOL_H
