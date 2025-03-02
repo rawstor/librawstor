@@ -25,6 +25,8 @@ struct RawstorIOEvent {
 
     size_t size;
     size_t result;
+    size_t total_result;
+    int error;
 
     void *data;
 };
@@ -44,14 +46,12 @@ const char* rawstor_io_engine_name = "aio";
 
 
 static int io_readv(RawstorIOEvent *event, void *data) {
-    if (rawstor_io_event_error(event) != 0) {
+    if (event->error != 0) {
         event->payload.callback(event, event->payload.data);
         return 0;
     }
 
-    if ((size_t)aio_return(event->cb) != 
-        event->payload.iov[event->payload.index].iov_len)
-    {
+    if (event->result != event->payload.iov[event->payload.index].iov_len) {
         event->payload.callback(event, event->payload.data);
         return 0;
     }
@@ -81,8 +81,10 @@ static int io_readv(RawstorIOEvent *event, void *data) {
             .data = event->payload.data,
         },
         .callback = io_readv,
-        .size = rawstor_io_event_size(event),
-        .result = event->result,
+        .size = event->size,
+        .result = 0,
+        .total_result = event->total_result,
+        .error = EINPROGRESS,
         .data = io,
     };
 
@@ -110,14 +112,12 @@ static int io_readv(RawstorIOEvent *event, void *data) {
 
 
 static int io_preadv(RawstorIOEvent *event, void *data) {
-    if (rawstor_io_event_error(event) != 0) {
+    if (event->error != 0) {
         event->payload.callback(event, event->payload.data);
         return 0;
     }
 
-    if ((size_t)aio_return(event->cb) != 
-        event->payload.iov[event->payload.index].iov_len)
-    {
+    if (event->result != event->payload.iov[event->payload.index].iov_len) {
         event->payload.callback(event, event->payload.data);
         return 0;
     }
@@ -147,14 +147,16 @@ static int io_preadv(RawstorIOEvent *event, void *data) {
             .data = event->payload.data,
         },
         .callback = io_readv,
-        .size = rawstor_io_event_size(event),
-        .result = event->result,
+        .size = event->size,
+        .result = 0,
+        .total_result = event->total_result,
+        .error = EINPROGRESS,
         .data = io,
     };
 
     *next_event->cb = (struct aiocb) {
         .aio_fildes = rawstor_io_event_fd(event),
-        .aio_offset = event->payload.offset + event->result,
+        .aio_offset = event->payload.offset + event->total_result,
         .aio_buf = event->payload.iov[event->payload.index + 1].iov_base,
         .aio_nbytes = event->payload.iov[event->payload.index + 1].iov_len,
         // .aio_reqprio
@@ -176,14 +178,12 @@ static int io_preadv(RawstorIOEvent *event, void *data) {
 
 
 static int io_writev(RawstorIOEvent *event, void *data) {
-    if (rawstor_io_event_error(event) != 0) {
+    if (event->error != 0) {
         event->payload.callback(event, event->payload.data);
         return 0;
     }
 
-    if ((size_t)aio_return(event->cb) != 
-        event->payload.iov[event->payload.index].iov_len)
-    {
+    if (event->result != event->payload.iov[event->payload.index].iov_len) {
         event->payload.callback(event, event->payload.data);
         return 0;
     }
@@ -213,8 +213,10 @@ static int io_writev(RawstorIOEvent *event, void *data) {
             .data = event->payload.data,
         },
         .callback = io_writev,
-        .size = rawstor_io_event_size(event),
-        .result = event->result,
+        .size = event->size,
+        .result = 0,
+        .total_result = event->total_result,
+        .error = EINPROGRESS,
         .data = io,
     };
 
@@ -242,14 +244,12 @@ static int io_writev(RawstorIOEvent *event, void *data) {
 
 
 static int io_pwritev(RawstorIOEvent *event, void *data) {
-    if (rawstor_io_event_error(event) != 0) {
+    if (event->error != 0) {
         event->payload.callback(event, event->payload.data);
         return 0;
     }
 
-    if ((size_t)aio_return(event->cb) != 
-        event->payload.iov[event->payload.index].iov_len)
-    {
+    if (event->result != event->payload.iov[event->payload.index].iov_len) {
         event->payload.callback(event, event->payload.data);
         return 0;
     }
@@ -279,8 +279,10 @@ static int io_pwritev(RawstorIOEvent *event, void *data) {
             .data = event->payload.data,
         },
         .callback = io_writev,
-        .size = rawstor_io_event_size(event),
-        .result = event->result,
+        .size = event->size,
+        .result = 0,
+        .total_result = event->total_result,
+        .error = EINPROGRESS,
         .data = io,
     };
 
@@ -310,26 +312,31 @@ static int io_pwritev(RawstorIOEvent *event, void *data) {
 static RawstorIOEvent* io_process_event(RawstorIO *io) {
     for (size_t i = 0; i < io->depth; ++i) {
         struct aiocb **cbp = &io->cbps[i];
-        if (cbp == NULL) {
+        if (*cbp == NULL) {
             continue;
         }
 
-        int err = aio_error(*cbp);
-        if (err < 0) {
-            /**
-             * FIXME: This will hide err.
-             */
+        int error = aio_error(*cbp);
+        if (error < 0) {
             *cbp = NULL;
+            return NULL;
+        }
+
+        if (error == EINPROGRESS) {
             continue;
         }
 
-        if (err == EINPROGRESS) {
-            continue;
+        int result = aio_return(*cbp);
+        if (result < 0) {
+            *cbp = NULL;
+            return NULL;
         }
 
         RawstorIOEvent *event = &io->events[i];
-        if (err == 0) {
-            event->result += aio_return(*cbp);
+        event->error = error;
+        event->result = result;
+        if (result > 0) {
+            event->total_result += result;
         }
         return event;
     }
@@ -373,6 +380,7 @@ RawstorIO* rawstor_io_create(unsigned int depth) {
 
     for (unsigned int i = 0; i < depth; ++i) {
         io->events[i].cb = &io->cbs[i];
+        io->events[i].cbp = &io->cbps[i];
         io->cbps[i] = NULL;
     }
 
@@ -406,6 +414,8 @@ int rawstor_io_read(
         .callback = cb,
         .size = size,
         .result = 0,
+        .total_result = 0,
+        .error = EINPROGRESS,
         .data = data,
     };
 
@@ -450,6 +460,8 @@ int rawstor_io_pread(
         .callback = cb,
         .size = size,
         .result = 0,
+        .total_result = 0,
+        .error = EINPROGRESS,
         .data = data,
     };
 
@@ -508,6 +520,8 @@ int rawstor_io_readv(
         .callback = io_readv,
         .size = size,
         .result = 0,
+        .total_result = 0,
+        .error = EINPROGRESS,
         .data = io,
     };
 
@@ -566,6 +580,8 @@ int rawstor_io_preadv(
         .callback = io_preadv,
         .size = size,
         .result = 0,
+        .total_result = 0,
+        .error = EINPROGRESS,
         .data = io,
     };
 
@@ -628,6 +644,8 @@ int rawstor_io_write(
         .callback = cb,
         .size = size,
         .result = 0,
+        .total_result = 0,
+        .error = EINPROGRESS,
         .data = data,
     };
 
@@ -672,6 +690,8 @@ int rawstor_io_pwrite(
         .callback = cb,
         .size = size,
         .result = 0,
+        .total_result = 0,
+        .error = EINPROGRESS,
         .data = data,
     };
 
@@ -730,6 +750,8 @@ int rawstor_io_writev(
         .callback = io_writev,
         .size = size,
         .result = 0,
+        .total_result = 0,
+        .error = EINPROGRESS,
         .data = io,
     };
 
@@ -788,6 +810,8 @@ int rawstor_io_pwritev(
         .callback = io_pwritev,
         .size = size,
         .result = 0,
+        .total_result = 0,
+        .error = EINPROGRESS,
         .data = io,
     };
 
@@ -838,6 +862,10 @@ RawstorIOEvent* rawstor_io_wait_event(RawstorIO *io) {
         return event;
     }
 
+    if (rawstor_pool_allocated(io->events_pool) == 0) {
+        return NULL;
+    }
+
     if (aio_suspend((const struct aiocb* const*)io->cbps, io->depth, NULL)) {
         return NULL;
     }
@@ -847,15 +875,19 @@ RawstorIOEvent* rawstor_io_wait_event(RawstorIO *io) {
 
 
 RawstorIOEvent* rawstor_io_wait_event_timeout(RawstorIO *io, int timeout) {
-    struct timespec ts = {
-        .tv_sec = 0,
-        .tv_nsec = 1000000ul * timeout,
-    };
-
     RawstorIOEvent *event = io_process_event(io);
     if (event != NULL) {
         return event;
     }
+
+    if (rawstor_pool_allocated(io->events_pool) == 0) {
+        return NULL;
+    }
+
+    struct timespec ts = {
+        .tv_sec = 0,
+        .tv_nsec = 1000000ul * timeout,
+    };
 
     if (aio_suspend((const struct aiocb* const*)io->cbps, io->depth, &ts)) {
         return NULL;
@@ -882,12 +914,12 @@ size_t rawstor_io_event_size(RawstorIOEvent *event) {
 
 
 size_t rawstor_io_event_result(RawstorIOEvent *event) {
-    return event->result;
+    return event->total_result;
 }
 
 
 int rawstor_io_event_error(RawstorIOEvent *event) {
-    return aio_error(event->cb);
+    return event->error;
 }
 
 
