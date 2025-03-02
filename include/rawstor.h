@@ -19,8 +19,7 @@ extern "C" {
 
 typedef struct RawstorIOEvent RawstorIOEvent;
 
-typedef int(RawstorIOCallback)(
-    RawstorIOEvent *event, void *data);
+typedef int(RawstorIOCallback)(RawstorIOEvent *event, void *data);
 
 
 int rawstor_io_event_fd(RawstorIOEvent *event);
@@ -35,8 +34,6 @@ int rawstor_io_event_error(RawstorIOEvent *event);
 /**
  * fd
  */
-
-int rawstor_fd_accept(int fd, RawstorIOCallback *cb, void *data);
 
 int rawstor_fd_read(
     int fd, void *buf, size_t size,

@@ -26,14 +26,6 @@ RawstorIO* rawstor_io_create(unsigned int depth);
 
 void rawstor_io_delete(RawstorIO *io);
 
-/**
- * TODO: Do not support accept function in io api.
- */
-int rawstor_io_accept(
-    RawstorIO *io,
-    int fd,
-    RawstorIOCallback *cb, void *data);
-
 int rawstor_io_read(
     RawstorIO *io,
     int fd, void *buf, size_t size,

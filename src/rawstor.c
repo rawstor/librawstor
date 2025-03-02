@@ -65,11 +65,6 @@ void rawstor_release_event(RawstorIOEvent *event) {
 }
 
 
-int rawstor_fd_accept(int fd, RawstorIOCallback *cb, void *data) {
-    return rawstor_io_accept(rawstor_io, fd, cb, data);
-}
-
-
 int rawstor_fd_read(
     int fd, void *buf, size_t size,
     RawstorIOCallback *cb, void *data)

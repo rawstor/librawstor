@@ -65,14 +65,6 @@ struct RawstorIO {
 const char* rawstor_io_engine_name = "poll";
 
 
-static void io_event_process_accept(RawstorIOEvent *event) {
-    event->result = accept(event->fd->fd, NULL, NULL);
-    if (event->result < 0) {
-        event->error = errno;
-    }
-}
-
-
 static void io_event_process_read(RawstorIOEvent *event) {
     event->result = read(
         event->fd->fd,
@@ -267,38 +259,6 @@ void rawstor_io_delete(RawstorIO *io) {
     rawstor_pool_delete(io->events_pool);
     free(io->fds);
     free(io);
-}
-
-
-int rawstor_io_accept(
-    RawstorIO *io,
-    int fd,
-    RawstorIOCallback *cb, void *data)
-{
-    if (rawstor_pool_available(io->events_pool) == 0) {
-        errno = ENOBUFS;
-        return -errno;
-    }
-    RawstorIOEvent *event = rawstor_pool_alloc(io->events_pool);
-
-    *event = (RawstorIOEvent) {
-        .fd = event->fd,
-        // .payload
-        .process = io_event_process_accept,
-        .callback = cb,
-        // .size
-        // .result
-        // .error
-        .data = data,
-    };
-
-    *event->fd = (struct pollfd) {
-        .fd = fd,
-        .events = POLLIN,
-        .revents = 0,
-    };
-
-    return 0;
 }
 
 

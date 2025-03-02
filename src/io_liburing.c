@@ -70,42 +70,6 @@ void rawstor_io_delete(RawstorIO *io) {
 }
 
 
-int rawstor_io_accept(
-    RawstorIO *io,
-    int fd,
-    RawstorIOCallback *cb, void *data)
-{
-    /**
-     * TODO: Since pool count is equal to sqe count, do we really have to have
-     * this check?
-     */
-    if (rawstor_pool_available(io->events_pool) == 0) {
-        errno = ENOBUFS;
-        return -errno;
-    }
-
-    struct io_uring_sqe *sqe = io_uring_get_sqe(&io->ring);
-    if (sqe == NULL) {
-        errno = ENOBUFS;
-        return -errno;
-    }
-
-    RawstorIOEvent *event = rawstor_pool_alloc(io->events_pool);
-    *event = (RawstorIOEvent) {
-        .fd = fd,
-        .callback = cb,
-        .size = 0,
-        // .cqe
-        .data = data,
-    };
-
-    io_uring_prep_accept(sqe, fd, NULL, NULL, 0);
-    io_uring_sqe_set_data(sqe, event);
-
-    return 0;
-}
-
-
 int rawstor_io_read(
     RawstorIO *io,
     int fd, void *buf, size_t size,
