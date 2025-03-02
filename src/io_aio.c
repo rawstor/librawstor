@@ -14,8 +14,6 @@ struct RawstorIOEvent {
 
     RawstorIOCallback *callback;
 
-    ssize_t res;
-
     void *data;
 };
 
@@ -54,21 +52,6 @@ static RawstorIOEvent* io_process_event(RawstorIO *io) {
         }
 
         RawstorIOEvent *event = &io->events[i];
-
-        if (err == 0) {
-            int res = aio_return(*cbp);
-            if (res < 0) {
-                /**
-                 * FIXME: This will hide err in res.
-                 */
-                *cbp = NULL;
-                continue;
-            }
-            event->res = res;
-        } else {
-            event->res = -err;
-        }
-
         return event;
     }
 
@@ -141,7 +124,6 @@ int rawstor_io_read(
         .cb = event->cb,
         .cbp = event->cbp,
         .callback = cb,
-        // .res
         .data = data,
     };
 
@@ -183,7 +165,6 @@ int rawstor_io_pread(
         .cb = event->cb,
         .cbp = event->cbp,
         .callback = cb,
-        // .res
         .data = data,
     };
 
@@ -225,7 +206,6 @@ int rawstor_io_write(
         .cb = event->cb,
         .cbp = event->cbp,
         .callback = cb,
-        // .res
         .data = data,
     };
 
@@ -267,7 +247,6 @@ int rawstor_io_pwrite(
         .cb = event->cb,
         .cbp = event->cbp,
         .callback = cb,
-        // .res
         .data = data,
     };
 
@@ -338,7 +317,21 @@ int rawstor_io_event_fd(RawstorIOEvent *event) {
 }
 
 
+size_t rawstor_io_event_size(RawstorIOEvent *event) {
+    return event->cb->aio_nbytes;
+}
+
+
+size_t rawstor_io_event_result(RawstorIOEvent *event) {
+    return aio_return(event->cb);
+}
+
+
+int rawstor_io_event_error(RawstorIOEvent *event) {
+    return aio_error(event->cb);
+}
+
+
 int rawstor_io_event_dispatch(RawstorIOEvent *event) {
-    return event->callback(
-        event, event->cb->aio_nbytes, event->res, event->data);
+    return event->callback(event, event->data);
 }
