@@ -451,7 +451,7 @@ int rawstor_io_pwritev(
 
 int rawstor_io_send(
     RawstorIO *io,
-    int fd, void *buf, size_t size, int flags,
+    int fd, void *buf, size_t size,
     RawstorIOCallback *cb, void *data)
 {
     /**
@@ -479,16 +479,16 @@ int rawstor_io_send(
         .data = data,
     };
 
-    io_uring_prep_send(sqe, fd, buf, size, flags);
+    io_uring_prep_send(sqe, fd, buf, size, MSG_WAITALL);
     io_uring_sqe_set_data(sqe, event);
 
     return 0;
 }
 
 
-int rawstor_io_senv(
+int rawstor_io_sendv(
     RawstorIO *io,
-    int fd, struct iovec *iov, unsigned int niov, size_t size, int flags,
+    int fd, struct iovec *iov, unsigned int niov, size_t size,
     RawstorIOCallback *cb, void *data)
 {
     /**
@@ -519,7 +519,7 @@ int rawstor_io_senv(
         .data = data,
     };
 
-    io_uring_prep_sendmsg(sqe, fd, &event->message, flags);
+    io_uring_prep_sendmsg(sqe, fd, &event->message, MSG_WAITALL);
     io_uring_sqe_set_data(sqe, event);
 
     return 0;
