@@ -361,6 +361,15 @@ static int response_head_received(RawstorIOEvent *event, void *data) {
     }
 
     RawstorOSTFrameResponse *response = &object->response_frame;
+    if (response->magic != RAWSTOR_MAGIC) {
+        /**
+         * FIXME: Memory leak on used RawstorObjectOperation.
+         */
+        rawstor_error("FATAL! Frame with wrong magic number: %x != %x\n",
+                      response->magic, RAWSTOR_MAGIC);
+        errno = EIO;
+        return -errno;
+    }
     if (
         response->cid < 1 ||
         response->cid > rawstor_pool_size(object->operations_pool)
@@ -433,10 +442,11 @@ int rawstor_object_open(int RAWSTOR_UNUSED object_id, RawstorObject **object) {
 
     char buf[8192];
 
-    RawstorOSTFrameBasic *mframe = malloc(sizeof(RawstorOSTFrameBasic));
+    RawstorOSTFrameBasic *mframe = init_basic_frame();
     mframe->cmd = RAWSTOR_CMD_SET_OBJECT;
     strlcpy(mframe->obj_id, OBJ_NAME, OBJID_LEN);
     int res = write(ret->fd, mframe, sizeof(RawstorOSTFrameBasic));
+    free(mframe);
     rawstor_debug("Sent request to set objid, res:%i\n", res);
     if (res < 0) {
         int errsv = errno;
@@ -457,6 +467,12 @@ int rawstor_object_open(int RAWSTOR_UNUSED object_id, RawstorObject **object) {
     }
     RawstorOSTFrameResponse *rframe = malloc(sizeof(RawstorOSTFrameResponse));
     memcpy(rframe, buf, sizeof(RawstorOSTFrameResponse));
+    if (rframe->magic != RAWSTOR_MAGIC) {
+        rawstor_error("FATAL! Frame with wrong magic number: %x != %x\n",
+                      rframe->magic, RAWSTOR_MAGIC);
+        errno = EIO;
+        return -errno;
+    }
     rawstor_debug(
         "Response from Server: cmd:%i res:%i\n",
         rframe->cmd,
@@ -515,6 +531,7 @@ int rawstor_object_pread(
         .object = object,
         .cid = op->cid,  // preserve cid
         .request_frame = (RawstorOSTFrameIO) {
+            .magic = RAWSTOR_MAGIC,
             .cmd = RAWSTOR_CMD_READ,
             .cid = op->cid,
             .offset = offset,
@@ -561,6 +578,7 @@ int rawstor_object_preadv(
         .object = object,
         .cid = op->cid,  // preserve cid
         .request_frame = (RawstorOSTFrameIO) {
+            .magic = RAWSTOR_MAGIC,
             .cmd = RAWSTOR_CMD_READ,
             .cid = op->cid,
             .offset = offset,
@@ -601,6 +619,7 @@ int rawstor_object_pwrite(
         .object = object,
         .cid = op->cid,  // preserve cid
         .request_frame = (RawstorOSTFrameIO) {
+            .magic = RAWSTOR_MAGIC,
             .cmd = RAWSTOR_CMD_WRITE,
             .cid = op->cid,
             .offset = offset,
@@ -656,6 +675,7 @@ int rawstor_object_pwritev(
         .object = object,
         .cid = op->cid,  // preserve cid
         .request_frame = (RawstorOSTFrameIO) {
+            .magic = RAWSTOR_MAGIC,
             .cmd = RAWSTOR_CMD_WRITE,
             .cid = op->cid,
             .offset = offset,
