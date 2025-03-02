@@ -13,7 +13,7 @@
 #include <stdio.h>
 
 
-#define QUEUE_DEPTH 16
+#define QUEUE_DEPTH 256
 
 
 static RawstorIO *rawstor_io = NULL;

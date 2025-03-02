@@ -1,5 +1,6 @@
 #include "io.h"
 
+#include "logging.h"
 #include "pool.h"
 
 #include <aio.h>
@@ -346,6 +347,15 @@ static RawstorIOEvent* io_process_event(RawstorIO *io) {
 
 
 RawstorIO* rawstor_io_create(unsigned int depth) {
+#ifdef AIO_LISTIO_MAX
+    if (depth > AIO_LISTIO_MAX) {
+        rawstor_warning(
+            "Unable to create Rawstor IO buffer with depth = %d, "
+            "falling back to AIO_LISTIO_MAX = %d\n",
+            depth, AIO_LISTIO_MAX);
+        depth = AIO_LISTIO_MAX;
+    }
+#endif
     RawstorIO *io = malloc(sizeof(RawstorIO));
     if (io == NULL) {
         return NULL;
