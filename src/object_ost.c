@@ -178,7 +178,7 @@ static int read_request_sent(RawstorIOEvent *event, void *data) {
 
     operation_trace(op->cid, event);
 
-    if (rawstor_io_event_error(event) < 0) {
+    if (rawstor_io_event_error(event) != 0) {
         rawstor_pool_free(op->object->operations_pool, op);
         errno = rawstor_io_event_error(event);
         return -errno;
@@ -213,7 +213,7 @@ static int write_requestv_sent(RawstorIOEvent *event, void *data) {
 
     operation_trace(op->cid, event);
 
-    if (rawstor_io_event_error(event) < 0) {
+    if (rawstor_io_event_error(event) != 0) {
         rawstor_pool_free(op->object->operations_pool, op);
         errno = rawstor_io_event_error(event);
         return -errno;
@@ -252,7 +252,7 @@ static int response_body_received(RawstorIOEvent *event, void *data) {
 
     operation_trace(op->cid, event);
 
-    if (rawstor_io_event_error(event) < 0) {
+    if (rawstor_io_event_error(event) != 0) {
         rawstor_pool_free(op->object->operations_pool, op);
         errno = rawstor_io_event_error(event);
         return -errno;
@@ -296,7 +296,7 @@ static int responsev_body_received(RawstorIOEvent *event, void *data) {
 
     operation_trace(op->cid, event);
 
-    if (rawstor_io_event_error(event) < 0) {
+    if (rawstor_io_event_error(event) != 0) {
         rawstor_pool_free(op->object->operations_pool, op);
         errno = rawstor_io_event_error(event);
         return -errno;
