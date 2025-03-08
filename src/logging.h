@@ -7,15 +7,26 @@
 #define RAWSTOR_LOGLEVEL_WARNING 2
 #define RAWSTOR_LOGLEVEL_INFO 3
 #define RAWSTOR_LOGLEVEL_DEBUG 4
+#define RAWSTOR_LOGLEVEL_TRACE 5
 
 
-#define RAWSTOR_LOGLEVEL RAWSTOR_LOGLEVEL_DEBUG
+#define RAWSTOR_LOGLEVEL RAWSTOR_LOGLEVEL_TRACE
 
 
 #define rawstor_log(level, ...) do { \
     printf("%s %s:%d ", level, __FILE__, __LINE__); \
     printf(__VA_ARGS__); \
 } while(0)
+
+
+#if RAWSTOR_LOGLEVEL >= RAWSTOR_LOGLEVEL_TRACE
+#define rawstor_trace(...) do { \
+    rawstor_log("TRACE", "%s(): ", __FUNCTION__); \
+    printf(__VA_ARGS__); \
+} while (0)
+#else
+#define rawstor_trace(...) while (0) { rawstor_log("TRACE", __VA_ARGS__); }
+#endif
 
 
 #if RAWSTOR_LOGLEVEL >= RAWSTOR_LOGLEVEL_DEBUG
