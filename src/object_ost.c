@@ -412,7 +412,7 @@ static int response_head_received(RawstorIOEvent *event, void *data) {
 
 
 int rawstor_object_create(
-    const struct RawstorObjectSpec RAWSTOR_UNUSED *spec,
+    const RawstorObjectSpec RAWSTOR_UNUSED *spec,
     int *object_id)
 {
     /**
@@ -525,13 +525,13 @@ int rawstor_object_close(RawstorObject *object) {
 
 int rawstor_object_spec(
     int RAWSTOR_UNUSED object_id,
-    struct RawstorObjectSpec *spec)
+     RawstorObjectSpec *spec)
 {
     /**
      * TODO: Implement me.
      */
 
-    *spec = (struct RawstorObjectSpec) {
+    *spec = (RawstorObjectSpec) {
         .size = 1 << 30,
     };
 

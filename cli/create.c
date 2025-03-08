@@ -12,7 +12,7 @@ int rawstor_cli_create(size_t size) {
         return EXIT_FAILURE;
     }
 
-    struct RawstorObjectSpec spec = {
+    RawstorObjectSpec spec = {
         .size = size << 30,
     };
 

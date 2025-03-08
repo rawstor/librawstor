@@ -12,9 +12,9 @@
 // typedef struct RawstorObject RawstorObject;
 
 // defined in rawstor.h
-// struct RawstorObjectSpec {
+// typedef struct {
 //     size_t size;
-// };
+// } RawstorObjectSpec;
 
 // defined in rawstor.h
 // typedef int(RawstorCallback)(
@@ -23,8 +23,7 @@
 
 extern const char *rawstor_object_backend_name;
 
-int rawstor_object_create(
-    const struct RawstorObjectSpec *spec, int *object_id);
+int rawstor_object_create(const RawstorObjectSpec *spec, int *object_id);
 
 int rawstor_object_delete(int object_id);
 
@@ -32,7 +31,7 @@ int rawstor_object_open(int object_id, RawstorObject **object);
 
 int rawstor_object_close(RawstorObject *object);
 
-int rawstor_object_spec(int object_id, struct RawstorObjectSpec *spec);
+int rawstor_object_spec(int object_id, RawstorObjectSpec *spec);
 
 int rawstor_object_pread(
     RawstorObject *object,

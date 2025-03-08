@@ -108,16 +108,15 @@ void rawstor_release_event(RawstorIOEvent *event);
 
 typedef struct RawstorObject RawstorObject;
 
-struct RawstorObjectSpec {
+typedef struct {
     size_t size;
-};
+} RawstorObjectSpec;
 
 typedef int(RawstorCallback)(
     RawstorObject *object, size_t size, size_t res, int error, void *data);
 
 
-int rawstor_object_create(
-    const struct RawstorObjectSpec *spec, int *object_id);
+int rawstor_object_create(const RawstorObjectSpec *spec, int *object_id);
 
 int rawstor_object_delete(int object_id);
 
@@ -125,7 +124,7 @@ int rawstor_object_open(int object_id, RawstorObject **object);
 
 int rawstor_object_close(RawstorObject *object);
 
-int rawstor_object_spec(int object_id, struct RawstorObjectSpec *spec);
+int rawstor_object_spec(int object_id, RawstorObjectSpec *spec);
 
 int rawstor_object_pread(
     RawstorObject *object,

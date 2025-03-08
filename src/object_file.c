@@ -62,9 +62,7 @@ static int io_callback(RawstorIOEvent *event, void *data) {
 }
 
 
-int rawstor_object_create(
-    const struct RawstorObjectSpec *spec, int *object_id)
-{
+int rawstor_object_create(const RawstorObjectSpec *spec, int *object_id) {
     char spec_path[1024];
     int fd;
     int id = 1;
@@ -176,7 +174,7 @@ int rawstor_object_close(RawstorObject *object) {
 }
 
 
-int rawstor_object_spec(int object_id, struct RawstorObjectSpec *spec) {
+int rawstor_object_spec(int object_id, RawstorObjectSpec *spec) {
     char path[1024];
 
     snprintf(path, sizeof(path), PREFIX "/rawstor-%d.spec", object_id);
