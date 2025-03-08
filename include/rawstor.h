@@ -116,7 +116,8 @@ typedef int(RawstorCallback)(
     RawstorObject *object, size_t size, size_t res, int error, void *data);
 
 
-int rawstor_object_create(struct RawstorObjectSpec spec, int *object_id);
+int rawstor_object_create(
+    const struct RawstorObjectSpec *spec, int *object_id);
 
 int rawstor_object_delete(int object_id);
 

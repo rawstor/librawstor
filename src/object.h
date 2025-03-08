@@ -23,7 +23,8 @@
 
 extern const char *rawstor_object_backend_name;
 
-int rawstor_object_create(struct RawstorObjectSpec spec, int *object_id);
+int rawstor_object_create(
+    const struct RawstorObjectSpec *spec, int *object_id);
 
 int rawstor_object_delete(int object_id);
 

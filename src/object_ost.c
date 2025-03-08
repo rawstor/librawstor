@@ -412,7 +412,7 @@ static int response_head_received(RawstorIOEvent *event, void *data) {
 
 
 int rawstor_object_create(
-    struct RawstorObjectSpec RAWSTOR_UNUSED spec,
+    const struct RawstorObjectSpec RAWSTOR_UNUSED *spec,
     int *object_id)
 {
     /**
