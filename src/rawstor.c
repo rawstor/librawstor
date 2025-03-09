@@ -28,7 +28,7 @@ static RawstorIO *_rawstor_io = NULL;
 
 static char* config_string(const char *value, const char *default_value) {
     const char *src = value != NULL ? value : default_value;
-    assert(value != NULL);
+    assert(src != NULL);
 
     size_t size = strlen(src) + 1;
     char *dst = malloc(size);
