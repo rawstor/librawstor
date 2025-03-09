@@ -53,7 +53,6 @@ static int command_create(const RawstorConfig *config, int argc, char **argv) {
     };
 
     char *size_arg = NULL;
-    optreset = 1;
     optind = 1;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
@@ -80,7 +79,7 @@ static int command_create(const RawstorConfig *config, int argc, char **argv) {
         fprintf(stderr, "Unexpected argument: %s\n", argv[optind]);
         return EXIT_FAILURE;
     }
- 
+
     if (size_arg == NULL) {
         fprintf(stderr, "size required\n");
         return EXIT_FAILURE;
@@ -138,7 +137,6 @@ static int command_testio(const RawstorConfig *config, int argc, char **argv) {
     char *io_depth_arg = NULL;
     char *object_id_arg = NULL;
     int vector_mode = 0;
-    optreset = 1;
     optind = 1;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
@@ -181,7 +179,7 @@ static int command_testio(const RawstorConfig *config, int argc, char **argv) {
         fprintf(stderr, "Unexpected argument: %s\n", argv[optind]);
         return EXIT_FAILURE;
     }
- 
+
     if (block_size_arg == NULL) {
         fprintf(stderr, "block-size required\n");
         return EXIT_FAILURE;
