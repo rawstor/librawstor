@@ -118,9 +118,6 @@ static void command_testio_usage() {
 
 
 static int command_testio(const RawstorConfig *config, int argc, char **argv) {
-    for (int i = 0; i < argc; ++i) {
-        printf("testio argv[%d] = %s\n", i, argv[i]);
-    }
     const char *optstring = "b:d:ho:s:v";
     struct option longopts[] = {
         {"block-size", required_argument, NULL, 'b'},
@@ -291,13 +288,6 @@ int main(int argc, char **argv) {
     }
 
     if (strcmp(command, "testio") == 0) {
-        printf("argc = %d\n", argc);
-        printf("optind = %d\n", optind);
-        for (int i = 0; i < argc; ++i) {
-            printf("argv[%d] = %s\n", i, argv[i]);
-        }
-        printf("new argc = %d\n", argc - optind);
-        printf("first argv = %s\n", argv[optind]);
         return command_testio(&config, argc - optind, &argv[optind]);
     }
 
