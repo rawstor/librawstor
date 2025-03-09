@@ -51,6 +51,8 @@ static int command_create(int argc, char **argv) {
     };
 
     char *size_arg = NULL;
+    optreset = 1;
+    optind = 1;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
         if (c == -1) {
@@ -131,6 +133,8 @@ static int command_testio(int argc, char **argv) {
     char *io_depth_arg = NULL;
     char *object_id_arg = NULL;
     int vector_mode = 0;
+    optreset = 1;
+    optind = 1;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
         if (c == -1) {
