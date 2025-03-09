@@ -89,9 +89,17 @@ int rawstor_fd_sendv(
  * Lib
  */
 
-int rawstor_initialize(void);
+typedef struct {
+    char *ost_host;
+    unsigned int ost_port;
+} RawstorConfig;
+
+
+int rawstor_initialize(const RawstorConfig *config);
 
 void rawstor_terminate(void);
+
+const RawstorConfig* rawstor_config(void);
 
 RawstorIOEvent* rawstor_wait_event(void);
 

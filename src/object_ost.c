@@ -167,7 +167,7 @@ static int socket_add_flag(int fd, int flag) {
 }
 
 
-static int ost_connect() {
+static int ost_connect(const char *host, unsigned int port) {
     struct sockaddr_in servaddr;
     // socket create and verification
     int fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -180,8 +180,8 @@ static int ost_connect() {
     bzero(&servaddr, sizeof(servaddr));
     // assign IP, PORT
     servaddr.sin_family = AF_INET;
-    servaddr.sin_addr.s_addr = inet_addr("127.0.0.1");
-    servaddr.sin_port = htons(8080);
+    servaddr.sin_addr.s_addr = inet_addr(host);
+    servaddr.sin_port = htons(port);
 
     if (connect(fd, (struct sockaddr*)&servaddr, sizeof(servaddr))) {
         return -errno;
@@ -433,6 +433,8 @@ int rawstor_object_delete(int RAWSTOR_UNUSED object_id) {
 
 
 int rawstor_object_open(int RAWSTOR_UNUSED object_id, RawstorObject **object) {
+    const RawstorConfig *config = rawstor_config();
+
     RawstorObject *ret = malloc(sizeof(RawstorObject));
     if (ret == NULL) {
         return -errno;
@@ -451,7 +453,7 @@ int rawstor_object_open(int RAWSTOR_UNUSED object_id, RawstorObject **object) {
         ops[i].cid = i + 1;
     }
 
-    ret->fd = ost_connect();
+    ret->fd = ost_connect(config->ost_host, config->ost_port);
     if (ret->fd < 0) {
         int errsv = -ret->fd;
         rawstor_pool_delete(ret->operations_pool);

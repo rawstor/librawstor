@@ -18,6 +18,8 @@ static void usage() {
         "\n"
         "options:\n"
         "  -h, --help            Show this help message and exit\n"
+        "  --ost-host            OST host\n"
+        "  --ost-port            OST port\n"
         "\n"
         "command:\n"
         "  create                Create rawstor object\n"
@@ -42,7 +44,7 @@ static void command_create_usage() {
 };
 
 
-static int command_create(int argc, char **argv) {
+static int command_create(const RawstorConfig *config, int argc, char **argv) {
     const char *optstring = "hs:";
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
@@ -90,7 +92,7 @@ static int command_create(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
-    return rawstor_cli_create(size);
+    return rawstor_cli_create(config, size);
 }
 
 
@@ -116,7 +118,10 @@ static void command_testio_usage() {
 };
 
 
-static int command_testio(int argc, char **argv) {
+static int command_testio(const RawstorConfig *config, int argc, char **argv) {
+    for (int i = 0; i < argc; ++i) {
+        printf("testio argv[%d] = %s\n", i, argv[i]);
+    }
     const char *optstring = "b:d:ho:s:v";
     struct option longopts[] = {
         {"block-size", required_argument, NULL, 'b'},
@@ -222,6 +227,7 @@ static int command_testio(int argc, char **argv) {
     }
 
     return rawstor_cli_testio(
+        config,
         object_id,
         block_size, count, io_depth,
         vector_mode);
@@ -231,19 +237,31 @@ static int command_testio(int argc, char **argv) {
 int main(int argc, char **argv) {
     const char *optstring = "+h";
     struct option longopts[] = {
+        {"ost-host", required_argument, NULL, 'a'},
         {"help", no_argument, NULL, 'h'},
+        {"ost-port", required_argument, NULL, 'p'},
         {},
     };
 
+    char *ost_host = NULL;
+    char *ost_port_arg = NULL;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
         if (c == -1)
             break;
 
         switch (c) {
+            case 'a':
+                ost_host = optarg;
+                break;
+
             case 'h':
                 usage();
                 return EXIT_SUCCESS;
+                break;
+
+            case 'p':
+                ost_port_arg = optarg;
                 break;
 
             default:
@@ -256,13 +274,33 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
+    unsigned int ost_port = 0;
+    if (ost_port_arg != NULL) {
+        if (sscanf(ost_port_arg, "%u", &ost_port) != 1) {
+            fprintf(stderr, "ost-port argument must be unsigned integer\n");
+            return EXIT_FAILURE;
+        }
+    }
+
+    const RawstorConfig config = {
+        .ost_host = ost_host != NULL ? ost_host : "127.0.0.1",
+        .ost_port = ost_port_arg != NULL ? ost_port : 8080,
+    };
+
     char *command = argv[optind];
     if (strcmp(command, "create") == 0) {
-        return command_create(argc - optind, &argv[optind]);
+        return command_create(&config, argc - optind, &argv[optind]);
     }
 
     if (strcmp(command, "testio") == 0) {
-        return command_testio(argc - optind, &argv[optind]);
+        printf("argc = %d\n", argc);
+        printf("optind = %d\n", optind);
+        for (int i = 0; i < argc; ++i) {
+            printf("argv[%d] = %s\n", i, argv[i]);
+        }
+        printf("new argc = %d\n", argc - optind);
+        printf("first argv = %s\n", argv[optind]);
+        return command_testio(&config, argc - optind, &argv[optind]);
     }
 
     printf("Unexpected command: %s\n", command);

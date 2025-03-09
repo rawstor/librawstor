@@ -6,8 +6,8 @@
 #include <stdlib.h>
 
 
-int rawstor_cli_create(size_t size) {
-    if (rawstor_initialize()) {
+int rawstor_cli_create(const RawstorConfig *config, size_t size) {
+    if (rawstor_initialize(config)) {
         perror("rawstor_initialize() failed");
         return EXIT_FAILURE;
     }

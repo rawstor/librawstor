@@ -179,7 +179,7 @@ static int server_write(RawstorIOEvent *event, void *data) {
 
 
 static int server_loop(int client_socket) {
-    if (rawstor_initialize()) {
+    if (rawstor_initialize(NULL)) {
         perror("rawstor_initialize() failed");
         return -1;
     };
