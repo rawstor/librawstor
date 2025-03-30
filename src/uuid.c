@@ -178,7 +178,7 @@ int rawstor_uuid7_init(rawstor_uuid *uuid) {
 }
 
 
-void rawstor_uuid_to_string(const rawstor_uuid *uuid, char (*s)[37]) {
+void rawstor_uuid_to_string(const rawstor_uuid *uuid, rawstor_uuid_string *s) {
     static const char alphabet[] = "0123456789abcdef";
     char *p = *s;
     for (int i = 0; i < 16; ++i) {

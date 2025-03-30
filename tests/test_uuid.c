@@ -56,7 +56,7 @@ static int test_variant() {
 
 
 static int test_all_at_once() {
-    char s[37];
+    rawstor_uuid_string s;
     rawstor_uuid uuid = {0};
     rawstor_uuid_set_version(&uuid, 7);
     rawstor_uuid_set_variant(&uuid, 2);
