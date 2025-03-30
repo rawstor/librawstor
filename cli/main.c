@@ -216,7 +216,7 @@ static int command_testio(const RawstorConfig *config, int argc, char **argv) {
     }
 
     RawstorUUID object_id;
-    if (rawstor_uuid_from_string(object_id_arg, &object_id)) {
+    if (rawstor_uuid_from_string(&object_id, object_id_arg)) {
         fprintf(stderr, "object-id argument must be valid UUID\n");
         return EXIT_FAILURE;
     }

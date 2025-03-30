@@ -88,7 +88,7 @@ static int test_init() {
 static int test_from_string() {
     RawstorUUID uuid;
     assertTrue(rawstor_uuid_from_string(
-        "0195e6ef-3ba8-741d-af22-e02bf9c800ec", &uuid) == 0);
+        &uuid, "0195e6ef-3ba8-741d-af22-e02bf9c800ec") == 0);
 
     assertTrue(rawstor_uuid_get_version(&uuid) == 7);
     assertTrue(rawstor_uuid_get_variant(&uuid) == 2);
@@ -102,22 +102,22 @@ static int test_from_string() {
 static int test_from_string_errors() {
     RawstorUUID uuid;
     assertTrue(rawstor_uuid_from_string(
-        "0195e6ef-3ba8-741d-af22-e02bf9c800ec", &uuid) == 0);
+        &uuid, "0195e6ef-3ba8-741d-af22-e02bf9c800ec") == 0);
 
     assertTrue(rawstor_uuid_from_string(
-        "0195E6EF-3BA8-741D-AF22-E02BF9C800EC", &uuid) == 0);
+        &uuid, "0195E6EF-3BA8-741D-AF22-E02BF9C800EC") == 0);
 
     assertTrue(rawstor_uuid_from_string(
-        "0195e6ef-3ba8-741d-af22-e02bf9c800ecX", &uuid) == 0);
+        &uuid, "0195e6ef-3ba8-741d-af22-e02bf9c800ecX") == 0);
 
     assertTrue(rawstor_uuid_from_string(
-        "0195e6efX3ba8-741d-af22-e02bf9c800ec", &uuid) == -EINVAL);
+        &uuid, "0195e6efX3ba8-741d-af22-e02bf9c800ec") == -EINVAL);
 
     assertTrue(rawstor_uuid_from_string(
-        "0195e6ef-3ba8-741d-af22-e02bf9c800e", &uuid) == -EINVAL);
+        &uuid, "0195e6ef-3ba8-741d-af22-e02bf9c800e") == -EINVAL);
 
     assertTrue(rawstor_uuid_from_string(
-        "X195e6ef-3ba8-741d-af22-e02bf9c800ec", &uuid) == -EINVAL);
+        &uuid, "X195e6ef-3ba8-741d-af22-e02bf9c800ec") == -EINVAL);
 
     return 0;
 }
@@ -125,13 +125,13 @@ static int test_from_string_errors() {
 
 static int test_from_string_debug() {
     RawstorUUID uuid;
-    assertTrue(rawstor_uuid_from_string("a", &uuid) == 0);
+    assertTrue(rawstor_uuid_from_string(&uuid, "a") == 0);
 
     RawstorUUIDString s;
     rawstor_uuid_to_string(&uuid, &s);
     assertTrue(strcmp(s, "00000000-0000-7000-8000-000a00000000") == 0);
 
-    assertTrue(rawstor_uuid_from_string("x", &uuid) == -EINVAL);
+    assertTrue(rawstor_uuid_from_string(&uuid, "x") == -EINVAL);
     return 0;
 }
 

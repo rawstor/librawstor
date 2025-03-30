@@ -23,7 +23,7 @@ typedef struct {
 typedef char RawstorUUIDString[37];
 
 
-int rawstor_uuid_from_string(const char *s, RawstorUUID *uuid);
+int rawstor_uuid_from_string(RawstorUUID *uuid, const char *s);
 
 void rawstor_uuid_to_string(const RawstorUUID *uuid, RawstorUUIDString *s);
 

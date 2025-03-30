@@ -178,22 +178,7 @@ int rawstor_uuid7_init(RawstorUUID *uuid) {
 }
 
 
-void rawstor_uuid_to_string(const RawstorUUID *uuid, RawstorUUIDString *s) {
-    static const char alphabet[] = "0123456789abcdef";
-    char *p = *s;
-    for (int i = 0; i < 16; ++i) {
-      uint_fast8_t e = uuid->bytes[i];
-      *p++ = alphabet[e >> 4];
-      *p++ = alphabet[e & 0b00001111];
-      if (i == 3 || i == 5 || i == 7 || i == 9) {
-        *p++ = '-';
-      }
-    }
-    *p = '\0';
-}
-
-
-int rawstor_uuid_from_string(const char *s, RawstorUUID *uuid) {
+int rawstor_uuid_from_string(RawstorUUID *uuid, const char *s) {
     /**
      * TODO: Delete this logic before first release.
      * This is for debug purposes only.
@@ -247,4 +232,19 @@ int rawstor_uuid_from_string(const char *s, RawstorUUID *uuid) {
         }
     }
     return 0;
+}
+
+
+void rawstor_uuid_to_string(const RawstorUUID *uuid, RawstorUUIDString *s) {
+    static const char alphabet[] = "0123456789abcdef";
+    char *p = *s;
+    for (int i = 0; i < 16; ++i) {
+      uint_fast8_t e = uuid->bytes[i];
+      *p++ = alphabet[e >> 4];
+      *p++ = alphabet[e & 0b00001111];
+      if (i == 3 || i == 5 || i == 7 || i == 9) {
+        *p++ = '-';
+      }
+    }
+    *p = '\0';
 }
