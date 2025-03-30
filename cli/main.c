@@ -215,15 +215,15 @@ static int command_testio(const RawstorConfig *config, int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
-    int object_id = 0;
-    if (sscanf(object_id_arg, "%d", &object_id) != 1) {
-        fprintf(stderr, "object-id argument must be integer\n");
+    RawstorUUID object_id;
+    if (rawstor_uuid_from_string(object_id_arg, &object_id)) {
+        fprintf(stderr, "object-id argument must be valid UUID\n");
         return EXIT_FAILURE;
     }
 
     return rawstor_cli_testio(
         config,
-        object_id,
+        &object_id,
         block_size, count, io_depth,
         vector_mode);
 }

@@ -18,13 +18,16 @@ int rawstor_cli_create(const RawstorConfig *config, size_t size) {
 
     fprintf(stderr, "Creating object with specification:\n");
     fprintf(stderr, "  size: %zu Gb\n", size);
-    int object_id;
+    RawstorUUID object_id;
     if (rawstor_object_create(&spec, &object_id)) {
         perror("rawstor_object_create() failed");
         return EXIT_FAILURE;
     }
+
+    RawstorUUIDString uuid_string;
+    rawstor_uuid_to_string(&object_id, &uuid_string);
     fprintf(stderr, "Object created\n");
-    fprintf(stdout, "%d\n", object_id);
+    fprintf(stdout, "%s\n", uuid_string);
 
     rawstor_terminate();
 

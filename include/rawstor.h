@@ -5,11 +5,27 @@
 #include <sys/uio.h>
 
 #include <stddef.h>
+#include <stdint.h>
 
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+
+/**
+ * UUID
+ */
+typedef struct {
+    uint8_t bytes[16];
+} RawstorUUID;
+
+typedef char RawstorUUIDString[37];
+
+
+int rawstor_uuid_from_string(const char *s, RawstorUUID *uuid);
+
+void rawstor_uuid_to_string(const RawstorUUID *uuid, RawstorUUIDString *s);
 
 
 /**
@@ -124,15 +140,18 @@ typedef int(RawstorCallback)(
     RawstorObject *object, size_t size, size_t res, int error, void *data);
 
 
-int rawstor_object_create(const RawstorObjectSpec *spec, int *object_id);
+int rawstor_object_create(
+    const RawstorObjectSpec *spec, RawstorUUID *object_id);
 
-int rawstor_object_delete(int object_id);
+int rawstor_object_delete(const RawstorUUID *object_id);
 
-int rawstor_object_open(int object_id, RawstorObject **object);
+int rawstor_object_open(
+    const RawstorUUID *object_id, RawstorObject **object);
 
 int rawstor_object_close(RawstorObject *object);
 
-int rawstor_object_spec(int object_id, RawstorObjectSpec *spec);
+int rawstor_object_spec(
+    const RawstorUUID *object_id, RawstorObjectSpec *spec);
 
 int rawstor_object_pread(
     RawstorObject *object,

@@ -5,6 +5,7 @@
 #include "logging.h"
 #include "ost_protocol.h"
 #include "pool.h"
+#include "uuid.h"
 
 #include <arpa/inet.h>
 
@@ -413,18 +414,18 @@ static int response_head_received(RawstorIOEvent *event, void *data) {
 
 int rawstor_object_create(
     const RawstorObjectSpec RAWSTOR_UNUSED *spec,
-    int *object_id)
+    RawstorUUID *object_id)
 {
     /**
      * TODO: Implement me.
      */
-    *object_id = 1;
+    rawstor_uuid7_init(object_id);
 
     return 0;
 }
 
 
-int rawstor_object_delete(int RAWSTOR_UNUSED object_id) {
+int rawstor_object_delete(const RawstorUUID RAWSTOR_UNUSED *object_id) {
     fprintf(stderr, "rawstor_object_delete() not implemented\n");
     exit(1);
 
@@ -432,7 +433,10 @@ int rawstor_object_delete(int RAWSTOR_UNUSED object_id) {
 }
 
 
-int rawstor_object_open(int RAWSTOR_UNUSED object_id, RawstorObject **object) {
+int rawstor_object_open(
+    const RawstorUUID RAWSTOR_UNUSED *object_id,
+    RawstorObject **object)
+{
     const RawstorConfig *config = rawstor_config();
 
     RawstorObject *ret = malloc(sizeof(RawstorObject));
@@ -526,7 +530,7 @@ int rawstor_object_close(RawstorObject *object) {
 
 
 int rawstor_object_spec(
-    int RAWSTOR_UNUSED object_id,
+    const RawstorUUID RAWSTOR_UNUSED *object_id,
      RawstorObjectSpec *spec)
 {
     /**

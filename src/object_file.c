@@ -5,6 +5,7 @@
 #include "gcc.h"
 #include "io.h"
 #include "pool.h"
+#include "uuid.h"
 
 #include <sys/types.h>
 #include <sys/uio.h>
@@ -62,12 +63,21 @@ static int io_callback(RawstorIOEvent *event, void *data) {
 }
 
 
-int rawstor_object_create(const RawstorObjectSpec *spec, int *object_id) {
+int rawstor_object_create(
+    const RawstorObjectSpec *spec, RawstorUUID *object_id)
+{
     char spec_path[1024];
     int fd;
-    int id = 1;
+    RawstorUUID uuid;
+    RawstorUUIDString uuid_string;
     while (1) {
-        snprintf(spec_path, sizeof(spec_path), PREFIX "/rawstor-%d.spec", id);
+        if (rawstor_uuid7_init(&uuid)) {
+            return -errno;
+        }
+        rawstor_uuid_to_string(&uuid, &uuid_string);
+        snprintf(
+            spec_path, sizeof(spec_path),
+            PREFIX "/rawstor-%s.spec", uuid_string);
         fd = open(spec_path, O_EXCL | O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR);
         if (fd != -1) {
             break;
@@ -75,8 +85,6 @@ int rawstor_object_create(const RawstorObjectSpec *spec, int *object_id) {
         if (errno != EEXIST) {
             return -errno;
         }
-
-        ++id;
     }
     ssize_t rval = write(fd, &spec, sizeof(spec));
     if (rval == -1) {
@@ -88,7 +96,9 @@ int rawstor_object_create(const RawstorObjectSpec *spec, int *object_id) {
     close(fd);
 
     char dat_path[1024];
-    snprintf(dat_path, sizeof(dat_path), PREFIX "/rawstor-%d.dat", id);
+    snprintf(
+        dat_path, sizeof(dat_path),
+        PREFIX "/rawstor-%s.dat", uuid_string);
     fd = open(dat_path, O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR);
     if (fd == -1) {
         int errsv = errno;
@@ -107,23 +117,26 @@ int rawstor_object_create(const RawstorObjectSpec *spec, int *object_id) {
     }
     close(fd);
 
-    *object_id = id;
+    *object_id = uuid;
 
     return 0;
 }
 
 
-int rawstor_object_delete(int object_id) {
+int rawstor_object_delete(const RawstorUUID *object_id) {
     int rval;
     char path[1024];
+    RawstorUUIDString uuid_string;
 
-    snprintf(path, sizeof(path), PREFIX "/rawstor-%d.spec", object_id);
+    rawstor_uuid_to_string(object_id, &uuid_string);
+
+    snprintf(path, sizeof(path), PREFIX "/rawstor-%s.spec", uuid_string);
     rval = unlink(path);
     if (rval == -1) {
         return -errno;
     }
 
-    snprintf(path, sizeof(path), PREFIX "/rawstor-%d.dat", object_id);
+    snprintf(path, sizeof(path), PREFIX "/rawstor-%s.dat", uuid_string);
     rval = unlink(path);
     if (rval == -1) {
         return -errno;
@@ -132,7 +145,13 @@ int rawstor_object_delete(int object_id) {
 }
 
 
-int rawstor_object_open(int object_id, RawstorObject **object) {
+int rawstor_object_open(
+    const RawstorUUID *object_id, RawstorObject **object)
+{
+    RawstorUUIDString uuid_string;
+
+    rawstor_uuid_to_string(object_id, &uuid_string);
+
     RawstorObject *ret = malloc(sizeof(RawstorObject));
     if (ret == NULL) {
         return -errno;
@@ -147,7 +166,7 @@ int rawstor_object_open(int object_id, RawstorObject **object) {
     }
 
     char path[1024];
-    snprintf(path, sizeof(path), PREFIX "/rawstor-%d.dat", object_id);
+    snprintf(path, sizeof(path), PREFIX "/rawstor-%s.dat", uuid_string);
     ret->fd = open(path, O_RDWR | O_NONBLOCK);
     if (ret->fd == -1) {
         int errsv = errno;
@@ -174,10 +193,12 @@ int rawstor_object_close(RawstorObject *object) {
 }
 
 
-int rawstor_object_spec(int object_id, RawstorObjectSpec *spec) {
+int rawstor_object_spec(const RawstorUUID *object_id, RawstorObjectSpec *spec) {
     char path[1024];
+    RawstorUUIDString uuid_string;
+    rawstor_uuid_to_string(object_id, &uuid_string);
 
-    snprintf(path, sizeof(path), PREFIX "/rawstor-%d.spec", object_id);
+    snprintf(path, sizeof(path), PREFIX "/rawstor-%s.spec", uuid_string);
     int fd = open(path, O_RDONLY);
     if (fd == -1) {
         return -errno;

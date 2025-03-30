@@ -1,15 +1,18 @@
 #ifndef RAWSTOR_UUID_H
 #define RAWSTOR_UUID_H
 
+#include <rawstor.h>
 
 #include <stdint.h>
 
 
-typedef struct {
-    uint8_t bytes[16];
-} RawstorUUID;
+// defined in rawstor.h
+// typedef struct {
+//     uint8_t bytes[16];
+// } RawstorUUID;
 
-typedef char RawstorUUIDString[37];
+// defined in rawstor.h
+// typedef char RawstorUUIDString[37];
 
 
 int rawstor_uuid7_init(RawstorUUID *uuid);
