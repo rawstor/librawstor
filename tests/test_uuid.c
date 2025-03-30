@@ -123,6 +123,19 @@ static int test_from_string_errors() {
 }
 
 
+static int test_from_string_debug() {
+    RawstorUUID uuid;
+    assertTrue(rawstor_uuid_from_string("a", &uuid) == 0);
+
+    RawstorUUIDString s;
+    rawstor_uuid_to_string(&uuid, &s);
+    assertTrue(strcmp(s, "00000000-0000-7000-8000-000a00000000") == 0);
+
+    assertTrue(rawstor_uuid_from_string("x", &uuid) == -EINVAL);
+    return 0;
+}
+
+
 int main() {
     int rval = 0;
     rval += test_timestamp();
@@ -133,5 +146,6 @@ int main() {
     rval += test_init();
     rval += test_from_string();
     rval += test_from_string_errors();
+    rval += test_from_string_debug();
     return rval ? EXIT_FAILURE : EXIT_SUCCESS;
 }

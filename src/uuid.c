@@ -194,6 +194,32 @@ void rawstor_uuid_to_string(const RawstorUUID *uuid, RawstorUUIDString *s) {
 
 
 int rawstor_uuid_from_string(const char *s, RawstorUUID *uuid) {
+    /**
+     * TODO: Delete this logic before first release.
+     * This is for debug purposes only.
+     */
+    if (s[1] == 0) {
+        char c = *s;
+        uint8_t x =
+            (c >= '0' && c <= '9') ? c - '0'
+            : (c >= 'a' && c <= 'f') ? 10 + c - 'a'
+            : (c >= 'A' && c <= 'F') ? 10 + c - 'A'
+            : 0xff;
+
+        if (x == 0xff) {
+            errno = EINVAL;
+            return -errno;
+        }
+
+        RawstorUUID ret = {0};
+        uuid_set_version(&ret, 7);
+        uuid_set_variant(&ret, 2);
+        uuid7_set_counter(&ret, x);
+        *uuid = ret;
+
+        return 0;
+    }
+
     const char *p = s;
     for (int i = 0; i < 32; i++) {
         char c = *p++;
