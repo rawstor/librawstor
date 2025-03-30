@@ -1,4 +1,5 @@
-noinst_PROGRAMS = test_pool
+noinst_PROGRAMS = test_pool \
+                  test_uuid
 
 
 AM_CFLAGS = -std=gnu99 -Wall -Wextra -Werror \
@@ -10,6 +11,12 @@ test_pool_SOURCES = test_pool.c
 
 
 test_pool_LDADD = $(top_srcdir)/src/librawstor.la
+
+
+test_uuid_SOURCES = test_uuid.c
+
+
+test_uuid_LDADD = $(top_srcdir)/src/librawstor.la
 
 
 test: all

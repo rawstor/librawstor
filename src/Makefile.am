@@ -10,7 +10,8 @@ librawstor_ladir = $(includedir)
 librawstor_la_HEADERS = $(top_srcdir)/include/rawstor.h
 
 librawstor_la_SOURCES = pool.c \
-                        rawstor.c
+                        rawstor.c \
+                        uuid.c
 
 librawstor_la_LIBADD =
 
