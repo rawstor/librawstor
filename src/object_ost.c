@@ -144,7 +144,6 @@ static int object_response_head_recv(RawstorObject *object) {
 
 
 static int socket_add_flag(int fd, int flag) {
-    return 0;
     int flags = fcntl(fd, F_GETFL);
     if (flags == -1) {
         return -errno;
