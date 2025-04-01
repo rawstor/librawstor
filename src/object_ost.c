@@ -30,12 +30,6 @@
 #define IOVEC_SIZE 256
 
 
-/**
- * FIXME: drop OBJ_NAME.
- */
-static char OBJ_NAME[] = "TEST_OBJ";
-
-
 #define operation_trace(cid, event) \
     rawstor_debug( \
         "[%u] %s(): %zi of %zu\n", \
@@ -150,6 +144,7 @@ static int object_response_head_recv(RawstorObject *object) {
 
 
 static int socket_add_flag(int fd, int flag) {
+    return 0;
     int flags = fcntl(fd, F_GETFL);
     if (flags == -1) {
         return -errno;
@@ -434,7 +429,7 @@ int rawstor_object_delete(const RawstorUUID RAWSTOR_UNUSED *object_id) {
 
 
 int rawstor_object_open(
-    const RawstorUUID RAWSTOR_UNUSED *object_id,
+    const RawstorUUID *object_id,
     RawstorObject **object)
 {
     const RawstorConfig *config = rawstor_config();
@@ -470,7 +465,7 @@ int rawstor_object_open(
         .magic = RAWSTOR_MAGIC,
         .cmd = RAWSTOR_CMD_SET_OBJECT,
     };
-    strlcpy(mframe.obj_id, OBJ_NAME, OBJID_LEN);
+    memcpy(mframe.obj_id, object_id->bytes, sizeof(mframe.obj_id));
     int res = write(ret->fd, &mframe, sizeof(mframe));
     rawstor_debug("Sent request to set objid, res:%i\n", res);
     if (res < 0) {

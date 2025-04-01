@@ -9,7 +9,6 @@
 #include <stdlib.h>
 
 
-#define OBJID_LEN 128/8
 #define RAWSTOR_MAGIC 0x72737472 // "rstr" as ascii
 
 
@@ -34,7 +33,7 @@ typedef struct {
     RawstorOSTCommandType cmd;
     // var is for minimal commands only,
     // will be overridden in other command structs
-    char obj_id[OBJID_LEN];
+    u_int8_t obj_id[16];
     u_int64_t offset;
     u_int64_t val;
 } RAWSTOR_PACKED RawstorOSTFrameBasic;
