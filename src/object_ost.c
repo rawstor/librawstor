@@ -172,6 +172,21 @@ static int ost_connect(const char *host, unsigned int port) {
 
     rawstor_info("Socket successfully created\n");
 
+    /*
+    socklen_t socketbuf_size = 4 * 1024 * 1024;
+    if (setsockopt(
+        fd, SOL_SOCKET, SO_SNDBUF, &socketbuf_size, sizeof(socketbuf_size)))
+    {
+        return -errno;
+    }
+    if (setsockopt(
+        fd, SOL_SOCKET, SO_RCVBUF, &socketbuf_size, sizeof(socketbuf_size)))
+    {
+        return -errno;
+    }
+    rawstor_info("Set new socket buffer size: %u\n", socketbuf_size);
+    */
+
     bzero(&servaddr, sizeof(servaddr));
     // assign IP, PORT
     servaddr.sin_family = AF_INET;
