@@ -9,38 +9,36 @@ struct RawstorMemPool {
     void **head;
     void **current;
     void **tail;
-    size_t count;
-    size_t size;
+    size_t object_size;
 };
 
 
-RawstorMemPool* rawstor_mempool_create(size_t count, size_t size) {
+RawstorMemPool* rawstor_mempool_create(size_t capacity, size_t object_size) {
     RawstorMemPool *mempool = malloc(sizeof(RawstorMemPool));
     if (mempool == NULL) {
         return NULL;
     }
 
-    mempool->data = calloc(count, size);
+    mempool->data = calloc(capacity, object_size);
     if (mempool->data == NULL) {
         free(mempool);
         return NULL;
     }
 
-    mempool->head = calloc(count, sizeof(void*));
+    mempool->head = calloc(capacity, sizeof(void*));
     if (mempool->head == NULL) {
         free(mempool->data);
         free(mempool);
         return NULL;
     }
 
-    for (size_t i = 0; i < count; ++i) {
-        mempool->head[i] = mempool->data + i * size;
+    for (size_t i = 0; i < capacity; ++i) {
+        mempool->head[i] = mempool->data + i * object_size;
     }
 
     mempool->current = &mempool->head[0];
-    mempool->tail = &mempool->head[count];
-    mempool->count = count;
-    mempool->size = size;
+    mempool->tail = &mempool->head[capacity];
+    mempool->object_size = object_size;
 
     return mempool;
 }
@@ -63,8 +61,13 @@ size_t rawstor_mempool_allocated(RawstorMemPool *mempool) {
 }
 
 
-size_t rawstor_mempool_size(RawstorMemPool *mempool) {
-    return mempool->size;
+size_t rawstor_mempool_capacity(RawstorMemPool *mempool) {
+    return mempool->tail - mempool->head;
+}
+
+
+size_t rawstor_mempool_object_size(RawstorMemPool *mempool) {
+    return mempool->object_size;
 }
 
 

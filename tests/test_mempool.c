@@ -50,11 +50,13 @@ static int test_mempool_free() {
 }
 
 
-static int test_mempool_size() {
+static int test_mempool_create() {
     RawstorMemPool *p = rawstor_mempool_create(3, sizeof(int));
     assertTrue(p != NULL);
 
-    assertTrue(rawstor_mempool_size(p) == sizeof(int));
+    assertTrue(rawstor_mempool_capacity(p) == 3);
+
+    assertTrue(rawstor_mempool_object_size(p) == sizeof(int));
 
     rawstor_mempool_delete(p);
 
@@ -154,7 +156,7 @@ int main() {
     int rval = 0;
     rval += test_mempool_alloc();
     rval += test_mempool_free();
-    rval += test_mempool_size();
+    rval += test_mempool_create();
     rval += test_mempool_data();
     rval += test_mempool_order();
     rval += test_mempool_counters();

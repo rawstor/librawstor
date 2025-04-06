@@ -402,7 +402,7 @@ static int response_head_received(RawstorIOEvent *event, void *data) {
     }
     if (
         response->cid < 1 ||
-        response->cid > rawstor_mempool_size(object->operations_pool)
+        response->cid > rawstor_mempool_capacity(object->operations_pool)
     ) {
         /**
          * FIXME: Memory leak on used RawstorObjectOperation.
