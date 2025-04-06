@@ -90,7 +90,7 @@ static void io_event_process_readv(RawstorIOEvent *event) {
         event->error = errno;
     }
 }
-    
+
 
 static void io_event_process_preadv(RawstorIOEvent *event) {
     event->result = preadv(
@@ -662,7 +662,7 @@ RawstorIOEvent* rawstor_io_wait_event(RawstorIO *io) {
         return event;
     }
 
-    if (rawstor_mempool_available(io->events_pool) == io->depth) {
+    if (rawstor_mempool_allocated(io->events_pool) == 0) {
         return NULL;
     }
 
@@ -679,6 +679,10 @@ RawstorIOEvent* rawstor_io_wait_event_timeout(RawstorIO *io, int timeout) {
     RawstorIOEvent *event = io_process_event(io);
     if (event != NULL) {
         return event;
+    }
+
+    if (rawstor_mempool_allocated(io->events_pool) == 0) {
+        return NULL;
     }
 
     int rval = poll(io->fds, io->depth, timeout);
