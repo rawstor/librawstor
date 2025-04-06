@@ -6,7 +6,7 @@
 #include <stdlib.h>
 
 
-static int test_pool_alloc() {
+static int test_mempool_alloc() {
     RawstorMemPool *p = rawstor_mempool_create(3, sizeof(int));
     assertTrue(p != NULL);
 
@@ -29,7 +29,7 @@ static int test_pool_alloc() {
 }
 
 
-static int test_pool_free() {
+static int test_mempool_free() {
     RawstorMemPool *p = rawstor_mempool_create(3, sizeof(int));
     assertTrue(p != NULL);
 
@@ -50,7 +50,7 @@ static int test_pool_free() {
 }
 
 
-static int test_pool_size() {
+static int test_mempool_size() {
     RawstorMemPool *p = rawstor_mempool_create(3, sizeof(int));
     assertTrue(p != NULL);
 
@@ -62,7 +62,7 @@ static int test_pool_size() {
 }
 
 
-static int test_pool_data() {
+static int test_mempool_data() {
     RawstorMemPool *p = rawstor_mempool_create(3, sizeof(int));
     assertTrue(p != NULL);
 
@@ -86,7 +86,7 @@ static int test_pool_data() {
 }
 
 
-static int test_pool_order() {
+static int test_mempool_order() {
     RawstorMemPool *p = rawstor_mempool_create(3, sizeof(int));
     assertTrue(p != NULL);
 
@@ -113,7 +113,7 @@ static int test_pool_order() {
 }
 
 
-static int test_pool_counters() {
+static int test_mempool_counters() {
     RawstorMemPool *p = rawstor_mempool_create(3, sizeof(int));
     assertTrue(p != NULL);
 
@@ -152,11 +152,11 @@ static int test_pool_counters() {
 
 int main() {
     int rval = 0;
-    rval += test_pool_alloc();
-    rval += test_pool_free();
-    rval += test_pool_size();
-    rval += test_pool_data();
-    rval += test_pool_order();
-    rval += test_pool_counters();
+    rval += test_mempool_alloc();
+    rval += test_mempool_free();
+    rval += test_mempool_size();
+    rval += test_mempool_data();
+    rval += test_mempool_order();
+    rval += test_mempool_counters();
     return rval ? EXIT_FAILURE : EXIT_SUCCESS;
 }
