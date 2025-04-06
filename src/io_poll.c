@@ -14,26 +14,11 @@
 struct RawstorIOEvent {
     struct pollfd *fd;
 
-    union {
-        struct {
-            void *data;
-        } linear;
-        struct {
-            void *data;
-            off_t offset;
-        } pointer_linear;
-        struct {
-            struct iovec *iov;
-            unsigned int niov;
-        } vector;
-        struct {
-            struct iovec *iov;
-            unsigned int niov;
-            off_t offset;
-        } pointer_vector;
-    } payload;
-
-    void (*process)(RawstorIOEvent *event);
+    unsigned int ciov;
+    struct iovec *iov;
+    unsigned int niov;
+    off_t offset;
+    ssize_t (*process)(RawstorIOEvent *event);
 
     RawstorIOCallback *callback;
 
@@ -57,95 +42,55 @@ struct RawstorIO {
 const char* rawstor_io_engine_name = "poll";
 
 
-static void io_event_process_read(RawstorIOEvent *event) {
-    event->result = read(
+static ssize_t io_event_process_readv(RawstorIOEvent *event) {
+    ssize_t ret = readv(
         event->fd->fd,
-        event->payload.linear.data,
-        event->size);
-    if (event->result < 0) {
+        &event->iov[event->ciov], event->niov - event->ciov);
+    if (ret < 0) {
         event->error = errno;
+    } else {
+        event->result += ret;
     }
+    return ret;
 }
 
 
-static void io_event_process_pread(RawstorIOEvent *event) {
-    event->result = pread(
+static ssize_t io_event_process_preadv(RawstorIOEvent *event) {
+    ssize_t ret = preadv(
         event->fd->fd,
-        event->payload.pointer_linear.data,
-        event->size,
-        event->payload.pointer_linear.offset);
-    if (event->result < 0) {
+        &event->iov[event->ciov], event->niov - event->ciov, event->offset);
+    if (ret < 0) {
         event->error = errno;
+    } else {
+        event->result += ret;
     }
+    return ret;
 }
 
 
-static void io_event_process_readv(RawstorIOEvent *event) {
-    event->result = readv(
+static ssize_t io_event_process_writev(RawstorIOEvent *event) {
+    ssize_t ret = writev(
         event->fd->fd,
-        event->payload.vector.iov,
-        event->payload.vector.niov);
-    if (event->result < 0) {
+        &event->iov[event->ciov], event->niov - event->ciov);
+    if (ret < 0) {
         event->error = errno;
+    } else {
+        event->result += ret;
     }
+    return ret;
 }
 
 
-static void io_event_process_preadv(RawstorIOEvent *event) {
-    event->result = preadv(
+static ssize_t io_event_process_pwritev(RawstorIOEvent *event) {
+    ssize_t ret = pwritev(
         event->fd->fd,
-        event->payload.pointer_vector.iov,
-        event->payload.pointer_vector.niov,
-        event->payload.pointer_vector.offset);
-    if (event->result < 0) {
+        &event->iov[event->ciov], event->niov - event->ciov, event->offset);
+    if (ret < 0) {
         event->error = errno;
+    } else {
+        event->result += ret;
     }
-}
-
-
-static void io_event_process_write(RawstorIOEvent *event) {
-    event->result = write(
-        event->fd->fd,
-        event->payload.linear.data,
-        event->size);
-    if (event->result < 0) {
-        event->error = errno;
-    }
-}
-
-
-static void io_event_process_pwrite(RawstorIOEvent *event) {
-    event->result = pwrite(
-        event->fd->fd,
-        event->payload.pointer_linear.data,
-        event->size,
-        event->payload.pointer_linear.offset);
-    if (event->result < 0) {
-        event->error = errno;
-    }
-}
-
-
-static void io_event_process_writev(RawstorIOEvent *event) {
-    event->result = writev(
-        event->fd->fd,
-        event->payload.vector.iov,
-        event->payload.vector.niov);
-    if (event->result < 0) {
-        event->error = errno;
-    }
-}
-
-
-static void io_event_process_pwritev(RawstorIOEvent *event) {
-    event->result = pwritev(
-        event->fd->fd,
-        event->payload.pointer_vector.iov,
-        event->payload.pointer_vector.niov,
-        event->payload.pointer_vector.offset);
-    if (event->result < 0) {
-        event->error = errno;
-    }
+    return ret;
 }
 
 
@@ -158,8 +103,22 @@ static RawstorIOEvent* io_process_event(RawstorIO *io) {
 
         RawstorIOEvent *event = &io->events[i];
         if (fd->revents & fd->events) {
-            event->process(event);
-            return event;
+            ssize_t res = event->process(event);
+            if (res > 0) {
+                event->offset += res;
+                while (
+                    event->ciov < event->niov
+                    && (size_t)res >= event->iov[event->ciov].iov_len)
+                {
+                    res -= event->iov[event->ciov].iov_len;
+                    ++event->ciov;
+                }
+                if (event->ciov == event->niov) {
+                    return event;
+                }
+                event->iov[event->ciov].iov_base += res;
+                event->iov[event->ciov].iov_len -= res;
+            }
         }
     }
 
@@ -217,15 +176,26 @@ int rawstor_io_read(
         errno = ENOBUFS;
         return -errno;
     }
+    struct iovec *event_iov = malloc(sizeof(struct iovec));
+    if (event_iov == NULL) {
+        return -errno;
+    }
     RawstorIOEvent *event = rawstor_mempool_alloc(io->events_pool);
 
+    event_iov[0] = (struct iovec) {
+        .iov_base = buf,
+        .iov_len = size,
+    };
     *event = (RawstorIOEvent) {
         .fd = event->fd,
-        .payload.linear.data = buf,
-        .process = io_event_process_read,
+        .ciov = 0,
+        .iov = event_iov,
+        .niov = 1,
+        // .offset
+        .process = io_event_process_readv,
         .callback = cb,
         .size = size,
-        // .result
+        .result = 0,
         // .error
         .data = data,
     };
@@ -249,13 +219,23 @@ int rawstor_io_pread(
         errno = ENOBUFS;
         return -errno;
     }
+    struct iovec *event_iov = malloc(sizeof(struct iovec));
+    if (event_iov == NULL) {
+        return -errno;
+    }
     RawstorIOEvent *event = rawstor_mempool_alloc(io->events_pool);
 
+    event_iov[0] = (struct iovec) {
+        .iov_base = buf,
+        .iov_len = size,
+    };
     *event = (RawstorIOEvent) {
         .fd = event->fd,
-        .payload.pointer_linear.data = buf,
-        .payload.pointer_linear.offset = offset,
-        .process = io_event_process_pread,
+        .ciov = 0,
+        .iov = event_iov,
+        .niov = 1,
+        .offset = offset,
+        .process = io_event_process_preadv,
         .callback = cb,
         .size = size,
         // .result
@@ -282,12 +262,21 @@ int rawstor_io_readv(
         errno = ENOBUFS;
         return -errno;
     }
+    struct iovec *event_iov = calloc(niov, sizeof(struct iovec));
+    if (iov == NULL) {
+        return -errno;
+    }
     RawstorIOEvent *event = rawstor_mempool_alloc(io->events_pool);
 
+    for (unsigned int i = 0; i < niov; ++i) {
+        event_iov[i] = iov[i];
+    }
     *event = (RawstorIOEvent) {
         .fd = event->fd,
-        .payload.vector.iov = iov,
-        .payload.vector.niov = niov,
+        .ciov = 0,
+        .iov = event_iov,
+        .niov = niov,
+        // .offset
         .process = io_event_process_readv,
         .callback = cb,
         .size = size,
@@ -315,13 +304,21 @@ int rawstor_io_preadv(
         errno = ENOBUFS;
         return -errno;
     }
+    struct iovec *event_iov = calloc(niov, sizeof(struct iovec));
+    if (iov == NULL) {
+        return -errno;
+    }
     RawstorIOEvent *event = rawstor_mempool_alloc(io->events_pool);
 
+    for (unsigned int i = 0; i < niov; ++i) {
+        event_iov[i] = iov[i];
+    }
     *event = (RawstorIOEvent) {
         .fd = event->fd,
-        .payload.pointer_vector.iov = iov,
-        .payload.pointer_vector.niov = niov,
-        .payload.pointer_vector.offset = offset,
+        .ciov = 0,
+        .iov = event_iov,
+        .niov = niov,
+        .offset = offset,
         .process = io_event_process_preadv,
         .callback = cb,
         .size = size,
@@ -349,12 +346,23 @@ int rawstor_io_write(
         errno = ENOBUFS;
         return -errno;
     }
+    struct iovec *event_iov = malloc(sizeof(struct iovec));
+    if (event_iov == NULL) {
+        return -errno;
+    }
     RawstorIOEvent *event = rawstor_mempool_alloc(io->events_pool);
 
+    event_iov[0] = (struct iovec) {
+        .iov_base = buf,
+        .iov_len = size,
+    };
     *event = (RawstorIOEvent) {
         .fd = event->fd,
-        .payload.linear.data = buf,
-        .process = io_event_process_write,
+        .ciov = 0,
+        .iov = event_iov,
+        .niov = 1,
+        // .offset
+        .process = io_event_process_writev,
         .callback = cb,
         .size = size,
         // .result
@@ -381,13 +389,23 @@ int rawstor_io_pwrite(
         errno = ENOBUFS;
         return -errno;
     }
+    struct iovec *event_iov = malloc(sizeof(struct iovec));
+    if (event_iov == NULL) {
+        return -errno;
+    }
     RawstorIOEvent *event = rawstor_mempool_alloc(io->events_pool);
 
+    event_iov[0] = (struct iovec) {
+        .iov_base = buf,
+        .iov_len = size,
+    };
     *event = (RawstorIOEvent) {
         .fd = event->fd,
-        .payload.pointer_linear.data = buf,
-        .payload.pointer_linear.offset = offset,
-        .process = io_event_process_pwrite,
+        .ciov = 0,
+        .iov = event_iov,
+        .niov = 1,
+        .offset = offset,
+        .process = io_event_process_pwritev,
         .callback = cb,
         .size = size,
         // .result
@@ -414,12 +432,21 @@ int rawstor_io_writev(
         errno = ENOBUFS;
         return -errno;
     }
+    struct iovec *event_iov = calloc(niov, sizeof(struct iovec));
+    if (event_iov == NULL) {
+        return -errno;
+    }
     RawstorIOEvent *event = rawstor_mempool_alloc(io->events_pool);
 
+    for (unsigned int i = 0; i < niov; ++i) {
+        event_iov[i] = iov[i];
+    }
     *event = (RawstorIOEvent) {
         .fd = event->fd,
-        .payload.vector.iov = iov,
-        .payload.vector.niov = niov,
+        .ciov = 0,
+        .iov = event_iov,
+        .niov = niov,
+        // .offset
         .process = io_event_process_writev,
         .callback = cb,
         .size = size,
@@ -447,13 +474,21 @@ int rawstor_io_pwritev(
         errno = ENOBUFS;
         return -errno;
     }
+    struct iovec *event_iov = calloc(niov, sizeof(struct iovec));
+    if (event_iov == NULL) {
+        return -errno;
+    }
     RawstorIOEvent *event = rawstor_mempool_alloc(io->events_pool);
 
+    for (unsigned int i = 0; i < niov; ++i) {
+        event_iov[i] = iov[i];
+    }
     *event = (RawstorIOEvent) {
         .fd = event->fd,
-        .payload.pointer_vector.iov = iov,
-        .payload.pointer_vector.niov = niov,
-        .payload.pointer_vector.offset = offset,
+        .ciov = 0,
+        .iov = event_iov,
+        .niov = niov,
+        .offset = offset,
         .process = io_event_process_pwritev,
         .callback = cb,
         .size = size,
@@ -482,12 +517,16 @@ RawstorIOEvent* rawstor_io_wait_event(RawstorIO *io) {
         return NULL;
     }
 
-    int rval = poll(io->fds, io->depth, -1);
-    if (rval <= 0) {
-        return NULL;
-    }
+    while (1) {
+        if (poll(io->fds, io->depth, -1) <= 0) {
+            return NULL;
+        }
 
-    return io_process_event(io);
+        event = io_process_event(io);
+        if (event != NULL) {
+            return event;
+        }
+    }
 }
 
 
@@ -501,17 +540,22 @@ RawstorIOEvent* rawstor_io_wait_event_timeout(RawstorIO *io, int timeout) {
         return NULL;
     }
 
-    int rval = poll(io->fds, io->depth, timeout);
-    if (rval <= 0) {
-        return NULL;
-    }
+    while (1) {
+        if (poll(io->fds, io->depth, timeout) <= 0) {
+            return NULL;
+        }
 
-    return io_process_event(io);
+        event = io_process_event(io);
+        if (event != NULL) {
+            return event;
+        }
+    }
 }
 
 
 void rawstor_io_release_event(RawstorIO *io, RawstorIOEvent *event) {
     event->fd->fd = -1;
+    free(event->iov);
     rawstor_mempool_free(io->events_pool, event);
 }
 
