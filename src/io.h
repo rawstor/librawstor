@@ -46,16 +46,6 @@ int rawstor_io_preadv(
     int fd, struct iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data);
 
-int rawstor_io_recv(
-    RawstorIO *io,
-    int fd, void *buf, size_t size,
-    RawstorIOCallback *cb, void *data);
-
-int rawstor_io_recvv(
-    RawstorIO *io,
-    int fd, struct iovec *iov, unsigned int niov, size_t size,
-    RawstorIOCallback *cb, void *data);
-
 int rawstor_io_write(
     RawstorIO *io,
     int fd, void *buf, size_t size,
@@ -74,16 +64,6 @@ int rawstor_io_writev(
 int rawstor_io_pwritev(
     RawstorIO *io,
     int fd, struct iovec *iov, unsigned int niov, size_t size, off_t offset,
-    RawstorIOCallback *cb, void *data);
-
-int rawstor_io_send(
-    RawstorIO *io,
-    int fd, void *buf, size_t size,
-    RawstorIOCallback *cb, void *data);
-
-int rawstor_io_sendv(
-    RawstorIO *io,
-    int fd, struct iovec *iov, unsigned int niov, size_t size,
     RawstorIOCallback *cb, void *data);
 
 

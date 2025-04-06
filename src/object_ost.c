@@ -85,7 +85,7 @@ static int responsev_body_received(RawstorIOEvent *event, void *data);
 
 
 static int operation_process_read(RawstorObjectOperation *op) {
-    return rawstor_fd_recv(
+    return rawstor_fd_read(
         op->object->fd,
         op->buffer.linear.data, op->request_frame.len,
         response_body_received, op);
@@ -93,7 +93,7 @@ static int operation_process_read(RawstorObjectOperation *op) {
 
 
 static int operation_process_readv(RawstorObjectOperation *op) {
-    return rawstor_fd_recvv(
+    return rawstor_fd_readv(
         op->object->fd,
         op->buffer.vector.iov, op->buffer.vector.niov, op->request_frame.len,
         responsev_body_received, op);
@@ -131,7 +131,7 @@ static int response_head_received(RawstorIOEvent *event, void *data);
 
 
 static int object_response_head_recv(RawstorObject *object) {
-    if (rawstor_fd_recv(
+    if (rawstor_fd_read(
         object->fd,
         &object->response_frame, sizeof(object->response_frame),
         response_head_received, object))
@@ -685,7 +685,7 @@ int rawstor_object_pwrite(
         .iov_base = buf,
         .iov_len = size,
     };
-    return rawstor_fd_sendv(
+    return rawstor_fd_writev(
         object->fd,
         op->iov, 2, sizeof(op->request_frame) + size,
         write_requestv_sent, op);
@@ -741,7 +741,7 @@ int rawstor_object_pwritev(
     for (unsigned int i = 0; i < niov; ++i) {
         op->iov[i + 1] = iov[i];
     }
-    return rawstor_fd_sendv(
+    return rawstor_fd_writev(
         object->fd,
         op->iov, niov + 1, sizeof(op->request_frame) + size,
         write_requestv_sent, op);

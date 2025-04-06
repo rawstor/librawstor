@@ -31,7 +31,6 @@ struct RawstorIOEvent {
             unsigned int niov;
             off_t offset;
         } pointer_vector;
-        struct msghdr socket_message;
     } payload;
 
     void (*process)(RawstorIOEvent *event);
@@ -104,29 +103,6 @@ static void io_event_process_preadv(RawstorIOEvent *event) {
 }
 
 
-static void io_event_process_recv(RawstorIOEvent *event) {
-    event->result = recv(
-        event->fd->fd,
-        event->payload.linear.data,
-        event->size,
-        MSG_WAITALL);
-    if (event->result < 0) {
-        event->error = errno;
-    }
-}
-
-
-static void io_event_process_recvv(RawstorIOEvent *event) {
-    event->result = recvmsg(
-        event->fd->fd,
-        &event->payload.socket_message,
-        MSG_WAITALL);
-    if (event->result < 0) {
-        event->error = errno;
-    }
-}
-
-
 static void io_event_process_write(RawstorIOEvent *event) {
     event->result = write(
         event->fd->fd,
@@ -167,32 +143,6 @@ static void io_event_process_pwritev(RawstorIOEvent *event) {
         event->payload.pointer_vector.iov,
         event->payload.pointer_vector.niov,
         event->payload.pointer_vector.offset);
-    if (event->result < 0) {
-        event->error = errno;
-    }
-}
-
-
-static void io_event_process_send(RawstorIOEvent *event) {
-    /**
-     * FIXME: implement waitall.
-     */
-    event->result = send(
-        event->fd->fd,
-        event->payload.linear.data,
-        event->size,
-        0);
-    if (event->result < 0) {
-        event->error = errno;
-    }
-}
-
-
-static void io_event_process_sendv(RawstorIOEvent *event) {
-    event->result = sendmsg(
-        event->fd->fd,
-        &event->payload.socket_message,
-        MSG_WAITALL);
     if (event->result < 0) {
         event->error = errno;
     }
@@ -390,73 +340,6 @@ int rawstor_io_preadv(
 }
 
 
-int rawstor_io_recv(
-    RawstorIO *io,
-    int fd, void *buf, size_t size,
-    RawstorIOCallback *cb, void *data)
-{
-    if (rawstor_mempool_available(io->events_pool) == 0) {
-        errno = ENOBUFS;
-        return -errno;
-    }
-    RawstorIOEvent *event = rawstor_mempool_alloc(io->events_pool);
-
-    *event = (RawstorIOEvent) {
-        .fd = event->fd,
-        .payload.linear.data = buf,
-        .process = io_event_process_recv,
-        .callback = cb,
-        .size = size,
-        // .result
-        // .error
-        .data = data,
-    };
-
-    *event->fd = (struct pollfd) {
-        .fd = fd,
-        .events = POLLIN,
-        .revents = 0,
-    };
-
-    return 0;
-}
-
-
-int rawstor_io_recvv(
-    RawstorIO *io,
-    int fd, struct iovec *iov, unsigned int niov, size_t size,
-    RawstorIOCallback *cb, void *data)
-{
-    if (rawstor_mempool_available(io->events_pool) == 0) {
-        errno = ENOBUFS;
-        return -errno;
-    }
-    RawstorIOEvent *event = rawstor_mempool_alloc(io->events_pool);
-
-    *event = (RawstorIOEvent) {
-        .fd = event->fd,
-        .payload.socket_message = {
-            .msg_iov = iov,
-            .msg_iovlen = niov,
-        },
-        .process = io_event_process_recvv,
-        .callback = cb,
-        .size = size,
-        // .result
-        // .error
-        .data = data,
-    };
-
-    *event->fd = (struct pollfd) {
-        .fd = fd,
-        .events = POLLIN,
-        .revents = 0,
-    };
-
-    return 0;
-}
-
-
 int rawstor_io_write(
     RawstorIO *io,
     int fd, void *buf, size_t size,
@@ -572,73 +455,6 @@ int rawstor_io_pwritev(
         .payload.pointer_vector.niov = niov,
         .payload.pointer_vector.offset = offset,
         .process = io_event_process_pwritev,
-        .callback = cb,
-        .size = size,
-        // .result
-        // .error
-        .data = data,
-    };
-
-    *event->fd = (struct pollfd) {
-        .fd = fd,
-        .events = POLLOUT,
-        .revents = 0,
-    };
-
-    return 0;
-}
-
-
-int rawstor_io_send(
-    RawstorIO *io,
-    int fd, void *buf, size_t size,
-    RawstorIOCallback *cb, void *data)
-{
-    if (rawstor_mempool_available(io->events_pool) == 0) {
-        errno = ENOBUFS;
-        return -errno;
-    }
-    RawstorIOEvent *event = rawstor_mempool_alloc(io->events_pool);
-
-    *event = (RawstorIOEvent) {
-        .fd = event->fd,
-        .payload.linear.data = buf,
-        .process = io_event_process_send,
-        .callback = cb,
-        .size = size,
-        // .result
-        // .error
-        .data = data,
-    };
-
-    *event->fd = (struct pollfd) {
-        .fd = fd,
-        .events = POLLOUT,
-        .revents = 0,
-    };
-
-    return 0;
-}
-
-
-int rawstor_io_sendv(
-    RawstorIO *io,
-    int fd, struct iovec *iov, unsigned int niov, size_t size,
-    RawstorIOCallback *cb, void *data)
-{
-    if (rawstor_mempool_available(io->events_pool) == 0) {
-        errno = ENOBUFS;
-        return -errno;
-    }
-    RawstorIOEvent *event = rawstor_mempool_alloc(io->events_pool);
-
-    *event = (RawstorIOEvent) {
-        .fd = event->fd,
-        .payload.socket_message = {
-            .msg_iov = iov,
-            .msg_iovlen = niov,
-        },
-        .process = io_event_process_sendv,
         .callback = cb,
         .size = size,
         // .result
