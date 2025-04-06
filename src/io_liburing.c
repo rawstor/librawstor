@@ -1,6 +1,6 @@
 #include "io.h"
 
-#include "pool.h"
+#include "mempool.h"
 
 #include <liburing.h>
 
@@ -82,8 +82,8 @@ int rawstor_io_read(
     RawstorIOCallback *cb, void *data)
 {
     /**
-     * TODO: Since pool count is equal to sqe count, do we really have to have
-     * this check?
+     * TODO: Since mempool count is equal to sqe count,
+     * do we really have to have this check?
      */
     if (rawstor_pool_available(io->events_pool) == 0) {
         errno = ENOBUFS;
@@ -119,8 +119,8 @@ int rawstor_io_pread(
     RawstorIOCallback *cb, void *data)
 {
     /**
-     * TODO: Since pool count is equal to sqe count, do we really have to have
-     * this check?
+     * TODO: Since mempool count is equal to sqe count,
+     * do we really have to have this check?
      */
     if (rawstor_pool_available(io->events_pool) == 0) {
         errno = ENOBUFS;
@@ -156,8 +156,8 @@ int rawstor_io_readv(
     RawstorIOCallback *cb, void *data)
 {
     /**
-     * TODO: Since pool count is equal to sqe count, do we really have to have
-     * this check?
+     * TODO: Since mempool count is equal to sqe count,
+     * do we really have to have this check?
      */
     if (rawstor_pool_available(io->events_pool) == 0) {
         errno = ENOBUFS;
@@ -193,8 +193,8 @@ int rawstor_io_preadv(
     RawstorIOCallback *cb, void *data)
 {
     /**
-     * TODO: Since pool count is equal to sqe count, do we really have to have
-     * this check?
+     * TODO: Since mempool count is equal to sqe count,
+     * do we really have to have this check?
      */
     if (rawstor_pool_available(io->events_pool) == 0) {
         errno = ENOBUFS;
@@ -230,8 +230,8 @@ int rawstor_io_recv(
     RawstorIOCallback *cb, void *data)
 {
     /**
-     * TODO: Since pool count is equal to sqe count, do we really have to have
-     * this check?
+     * TODO: Since mempool count is equal to sqe count,
+     * do we really have to have this check?
      */
     if (rawstor_pool_available(io->events_pool) == 0) {
         errno = ENOBUFS;
@@ -267,8 +267,8 @@ int rawstor_io_recvv(
     RawstorIOCallback *cb, void *data)
 {
     /**
-     * TODO: Since pool count is equal to sqe count, do we really have to have
-     * this check?
+     * TODO: Since mempool count is equal to sqe count,
+     * do we really have to have this check?
      */
     if (rawstor_pool_available(io->events_pool) == 0) {
         errno = ENOBUFS;
@@ -307,8 +307,8 @@ int rawstor_io_write(
     RawstorIOCallback *cb, void *data)
 {
     /**
-     * TODO: Since pool count is equal to sqe count, do we really have to have
-     * this check?
+     * TODO: Since mempool count is equal to sqe count,
+     * do we really have to have this check?
      */
     if (rawstor_pool_available(io->events_pool) == 0) {
         errno = ENOBUFS;
@@ -344,8 +344,8 @@ int rawstor_io_pwrite(
     RawstorIOCallback *cb, void *data)
 {
     /**
-     * TODO: Since pool count is equal to sqe count, do we really have to have
-     * this check?
+     * TODO: Since mempool count is equal to sqe count,
+     * do we really have to have this check?
      */
     if (rawstor_pool_available(io->events_pool) == 0) {
         errno = ENOBUFS;
@@ -381,8 +381,8 @@ int rawstor_io_writev(
     RawstorIOCallback *cb, void *data)
 {
     /**
-     * TODO: Since pool count is equal to sqe count, do we really have to have
-     * this check?
+     * TODO: Since mempool count is equal to sqe count,
+     * do we really have to have this check?
      */
     if (rawstor_pool_available(io->events_pool) == 0) {
         errno = ENOBUFS;
@@ -418,8 +418,8 @@ int rawstor_io_pwritev(
     RawstorIOCallback *cb, void *data)
 {
     /**
-     * TODO: Since pool count is equal to sqe count, do we really have to have
-     * this check?
+     * TODO: Since mempool count is equal to sqe count,
+     * do we really have to have this check?
      */
     if (rawstor_pool_available(io->events_pool) == 0) {
         errno = ENOBUFS;
@@ -455,8 +455,8 @@ int rawstor_io_send(
     RawstorIOCallback *cb, void *data)
 {
     /**
-     * TODO: Since pool count is equal to sqe count, do we really have to have
-     * this check?
+     * TODO: Since mempool count is equal to sqe count,
+     * do we really have to have this check?
      */
     if (rawstor_pool_available(io->events_pool) == 0) {
         errno = ENOBUFS;
@@ -492,8 +492,8 @@ int rawstor_io_sendv(
     RawstorIOCallback *cb, void *data)
 {
     /**
-     * TODO: Since pool count is equal to sqe count, do we really have to have
-     * this check?
+     * TODO: Since mempool count is equal to sqe count,
+     * do we really have to have this check?
      */
     if (rawstor_pool_available(io->events_pool) == 0) {
         errno = ENOBUFS;

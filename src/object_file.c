@@ -4,7 +4,7 @@
 
 #include "gcc.h"
 #include "io.h"
-#include "pool.h"
+#include "mempool.h"
 #include "uuid.h"
 
 #include <sys/types.h>
@@ -43,7 +43,7 @@ struct RawstorObjectOperation {
 
 struct RawstorObject {
     int fd;
-    RawstorPool *operations_pool;
+    RawstorMemPool *operations_pool;
 };
 
 
@@ -58,7 +58,7 @@ static int io_callback(RawstorIOEvent *event, void *data) {
         rawstor_io_event_result(event),
         rawstor_io_event_error(event),
         op->data);
-    rawstor_pool_free(op->object->operations_pool, op);
+    rawstor_mempool_free(op->object->operations_pool, op);
     return rval;
 }
 
@@ -157,7 +157,7 @@ int rawstor_object_open(
         return -errno;
     }
 
-    ret->operations_pool = rawstor_pool_create(
+    ret->operations_pool = rawstor_mempool_create(
         QUEUE_DEPTH,
         sizeof(RawstorObjectOperation));
     if (ret->operations_pool == NULL) {
@@ -220,11 +220,11 @@ int rawstor_object_pread(
     void *buf, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
-    if (rawstor_pool_available(object->operations_pool) == 0) {
+    if (rawstor_mempool_available(object->operations_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
     }
-    RawstorObjectOperation *op = rawstor_pool_alloc(object->operations_pool);
+    RawstorObjectOperation *op = rawstor_mempool_alloc(object->operations_pool);
     *op = (RawstorObjectOperation) {
         .object = object,
         .callback = cb,
@@ -242,11 +242,11 @@ int rawstor_object_preadv(
     struct iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
-    if (rawstor_pool_available(object->operations_pool) == 0) {
+    if (rawstor_mempool_available(object->operations_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
     }
-    RawstorObjectOperation *op = rawstor_pool_alloc(object->operations_pool);
+    RawstorObjectOperation *op = rawstor_mempool_alloc(object->operations_pool);
     *op = (RawstorObjectOperation) {
         .object = object,
         .callback = cb,
@@ -264,11 +264,11 @@ int rawstor_object_pwrite(
     void *buf, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
-    if (rawstor_pool_available(object->operations_pool) == 0) {
+    if (rawstor_mempool_available(object->operations_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
     }
-    RawstorObjectOperation *op = rawstor_pool_alloc(object->operations_pool);
+    RawstorObjectOperation *op = rawstor_mempool_alloc(object->operations_pool);
     *op = (RawstorObjectOperation) {
         .object = object,
         .callback = cb,
@@ -286,11 +286,11 @@ int rawstor_object_pwritev(
     struct iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
-    if (rawstor_pool_available(object->operations_pool) == 0) {
+    if (rawstor_mempool_available(object->operations_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
     }
-    RawstorObjectOperation *op = rawstor_pool_alloc(object->operations_pool);
+    RawstorObjectOperation *op = rawstor_mempool_alloc(object->operations_pool);
     *op = (RawstorObjectOperation) {
         .object = object,
         .callback = cb,
