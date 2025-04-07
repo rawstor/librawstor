@@ -1,5 +1,6 @@
 #include "io.h"
 
+#include "logging.h"
 #include "mempool.h"
 
 #include <poll.h>
@@ -105,6 +106,9 @@ static RawstorIOEvent* io_process_event(RawstorIO *io) {
         if (fd->revents & fd->events) {
             ssize_t res = event->process(event);
             if (res > 0) {
+                if ((size_t)res != event->size) {
+                    rawstor_debug("partial %zd of %zu\n", res, event->size);
+                }
                 event->offset += res;
                 while (
                     event->ciov < event->niov
@@ -118,6 +122,8 @@ static RawstorIOEvent* io_process_event(RawstorIO *io) {
                 }
                 event->iov[event->ciov].iov_base += res;
                 event->iov[event->ciov].iov_len -= res;
+            } else if (res == 0) {
+                return event;
             }
         }
     }
