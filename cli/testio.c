@@ -329,8 +329,9 @@ int rawstor_cli_testio(
             if (errno) {
                 perror("rawstor_wait_event() failed");
                 ret = EXIT_FAILURE;
+            } else {
+                printf("rawstor_wait_event(): returns NULL\n");
             }
-            printf("rawstor_wait_event(): returns NULL\n");
             break;
         }
 
@@ -341,8 +342,9 @@ int rawstor_cli_testio(
         if (rval) {
             if (errno) {
                 perror("rawstor_dispatch_event() failed");
+            } else {
+                printf("rawstor_dispatch_event(): returns %d\n", rval);
             }
-            printf("rawstor_dispatch_event(): returns %d\n", rval);
             ret = EXIT_FAILURE;
             break;
         }
