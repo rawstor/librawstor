@@ -55,7 +55,7 @@ struct RawstorObjectOperation {
             struct iovec *iov;
             unsigned int niov;
         } vector;
-    } buffer;
+    } payload;
 
     struct iovec iov[IOVEC_SIZE];
 
@@ -87,7 +87,7 @@ static int responsev_body_received(RawstorIOEvent *event, void *data);
 static int operation_process_read(RawstorObjectOperation *op) {
     return rawstor_fd_read(
         op->object->fd,
-        op->buffer.linear.data, op->request_frame.len,
+        op->payload.linear.data, op->request_frame.len,
         response_body_received, op);
 }
 
@@ -95,7 +95,7 @@ static int operation_process_read(RawstorObjectOperation *op) {
 static int operation_process_readv(RawstorObjectOperation *op) {
     return rawstor_fd_readv(
         op->object->fd,
-        op->buffer.vector.iov, op->buffer.vector.niov, op->request_frame.len,
+        op->payload.vector.iov, op->payload.vector.niov, op->request_frame.len,
         responsev_body_received, op);
 }
 
@@ -581,9 +581,8 @@ int rawstor_object_pread(
             .sync = 0,
         },
         // .response_frame =
-        .buffer.linear.data = buf,
+        .payload.linear.data = buf,
         // .iov
-        // .message
         .process = operation_process_read,
         .callback = cb,
         .data = data,
@@ -627,10 +626,9 @@ int rawstor_object_preadv(
             .len = size,
         },
         // .response_frame
-        .buffer.vector.iov = iov,
-        .buffer.vector.niov = niov,
+        .payload.vector.iov = iov,
+        .payload.vector.niov = niov,
         // .iov
-        // .message
         .process = operation_process_readv,
         .callback = cb,
         .data = data,
@@ -669,9 +667,8 @@ int rawstor_object_pwrite(
             .sync = 0,
         },
         // .response_frame =
-        .buffer.linear.data = buf,
+        .payload.linear.data = buf,
         // .iov
-        // .message
         .process = operation_process_write,
         .callback = cb,
         .data = data,
@@ -725,10 +722,9 @@ int rawstor_object_pwritev(
             .sync = 0,
         },
         // .response_frame =
-        .buffer.vector.iov = iov,
-        .buffer.vector.niov = niov,
+        .payload.vector.iov = iov,
+        .payload.vector.niov = niov,
         // .iov
-        // .message
         .process = operation_process_write,
         .callback = cb,
         .data = data,
