@@ -182,6 +182,9 @@ int rawstor_io_read(
         errno = ENOBUFS;
         return -errno;
     }
+    /**
+     * TODO: use event_iov from some buffer preallocated in io struct.
+     */
     struct iovec *event_iov = malloc(sizeof(struct iovec));
     if (event_iov == NULL) {
         return -errno;
@@ -225,6 +228,9 @@ int rawstor_io_pread(
         errno = ENOBUFS;
         return -errno;
     }
+    /**
+     * TODO: use event_iov from some buffer preallocated in io struct.
+     */
     struct iovec *event_iov = malloc(sizeof(struct iovec));
     if (event_iov == NULL) {
         return -errno;
@@ -268,6 +274,9 @@ int rawstor_io_readv(
         errno = ENOBUFS;
         return -errno;
     }
+    /**
+     * TODO: use event_iov from some buffer preallocated in io struct.
+     */
     struct iovec *event_iov = calloc(niov, sizeof(struct iovec));
     if (iov == NULL) {
         return -errno;
@@ -310,6 +319,9 @@ int rawstor_io_preadv(
         errno = ENOBUFS;
         return -errno;
     }
+    /**
+     * TODO: use event_iov from some buffer preallocated in io struct.
+     */
     struct iovec *event_iov = calloc(niov, sizeof(struct iovec));
     if (iov == NULL) {
         return -errno;
@@ -352,6 +364,9 @@ int rawstor_io_write(
         errno = ENOBUFS;
         return -errno;
     }
+    /**
+     * TODO: use event_iov from some buffer preallocated in io struct.
+     */
     struct iovec *event_iov = malloc(sizeof(struct iovec));
     if (event_iov == NULL) {
         return -errno;
@@ -395,6 +410,9 @@ int rawstor_io_pwrite(
         errno = ENOBUFS;
         return -errno;
     }
+    /**
+     * TODO: use event_iov from some buffer preallocated in io struct.
+     */
     struct iovec *event_iov = malloc(sizeof(struct iovec));
     if (event_iov == NULL) {
         return -errno;
@@ -438,6 +456,9 @@ int rawstor_io_writev(
         errno = ENOBUFS;
         return -errno;
     }
+    /**
+     * TODO: use event_iov from some buffer preallocated in io struct.
+     */
     struct iovec *event_iov = calloc(niov, sizeof(struct iovec));
     if (event_iov == NULL) {
         return -errno;
@@ -480,6 +501,9 @@ int rawstor_io_pwritev(
         errno = ENOBUFS;
         return -errno;
     }
+    /**
+     * TODO: use event_iov from some buffer preallocated in io struct.
+     */
     struct iovec *event_iov = calloc(niov, sizeof(struct iovec));
     if (event_iov == NULL) {
         return -errno;
