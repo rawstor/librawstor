@@ -45,6 +45,7 @@ typedef struct {
     u_int16_t cid;
     u_int64_t offset;
     u_int32_t len;
+    u_int64_t hash;
     bool sync;
 } RAWSTOR_PACKED RawstorOSTFrameIO;
 
@@ -57,6 +58,7 @@ typedef struct {
     // TODO: if we send length in res - it should be the same type
     // (signed-unsigned too)
     int32_t res;
+    u_int64_t hash;
 } RAWSTOR_PACKED RawstorOSTFrameResponse;
 
 

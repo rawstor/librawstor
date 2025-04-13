@@ -39,7 +39,7 @@
 #if RAWSTOR_LOGLEVEL >= RAWSTOR_LOGLEVEL_INFO
 #define rawstor_info(...) rawstor_log("INFO", __VA_ARGS__)
 #else
-#define rawstor_info(...) while (0) { rawstor_log("INFO", __VA_ARGS__); } 
+#define rawstor_info(...) while (0) { rawstor_log("INFO", __VA_ARGS__); }
 #endif
 
 
