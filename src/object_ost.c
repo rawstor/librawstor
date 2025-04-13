@@ -6,6 +6,7 @@
 #include "ost_protocol.h"
 #include "mempool.h"
 #include "uuid.h"
+#include "hash.h"
 
 #include <arpa/inet.h>
 
@@ -279,6 +280,17 @@ static int response_body_received(RawstorIOEvent *event, void *data) {
      */
 
     RawstorObjectOperation *op = (RawstorObjectOperation*)data;
+
+    XXH64_hash_t hash = rawstor_hash_buf(op->buffer.linear.data, op->request_frame.len);
+
+    if (op->object->response_frame.hash != hash) {
+        rawstor_error(
+            "Response hash mismatch: %zu != %lu\n",
+            op->object->response_frame.hash,
+            hash);
+        errno = EIO;
+        return -errno;
+    }
 
     operation_trace(op->cid, event);
 
@@ -664,6 +676,7 @@ int rawstor_object_pwrite(
             .cid = op->cid,
             .offset = offset,
             .len = size,
+            .hash = rawstor_hash_buf(buf, size),
             .sync = 0,
         },
         // .response_frame =
@@ -719,6 +732,7 @@ int rawstor_object_pwritev(
             .cid = op->cid,
             .offset = offset,
             .len = size,
+            .hash = rawstor_hash_vector(iov, niov),
             .sync = 0,
         },
         // .response_frame =
