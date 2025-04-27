@@ -1,5 +1,6 @@
 #include "io.h"
 
+#include "iovec_routines.h"
 #include "logging.h"
 #include "mempool.h"
 
@@ -15,8 +16,8 @@
 struct RawstorIOEvent {
     struct pollfd *fd;
 
-    unsigned int ciov;
-    struct iovec *iov;
+    struct iovec *iov_origin;
+    struct iovec *iov_at;
     unsigned int niov;
     off_t offset;
     ssize_t (*process)(RawstorIOEvent *event);
@@ -45,8 +46,7 @@ const char* rawstor_io_engine_name = "poll";
 
 static ssize_t io_event_process_readv(RawstorIOEvent *event) {
     ssize_t ret = readv(
-        event->fd->fd,
-        &event->iov[event->ciov], event->niov - event->ciov);
+        event->fd->fd, event->iov_at, event->niov);
     if (ret < 0) {
         event->error = errno;
     } else {
@@ -58,8 +58,7 @@ static ssize_t io_event_process_readv(RawstorIOEvent *event) {
 
 static ssize_t io_event_process_preadv(RawstorIOEvent *event) {
     ssize_t ret = preadv(
-        event->fd->fd,
-        &event->iov[event->ciov], event->niov - event->ciov, event->offset);
+        event->fd->fd, event->iov_at, event->niov, event->offset);
     if (ret < 0) {
         event->error = errno;
     } else {
@@ -72,7 +71,7 @@ static ssize_t io_event_process_preadv(RawstorIOEvent *event) {
 static ssize_t io_event_process_writev(RawstorIOEvent *event) {
     ssize_t ret = writev(
         event->fd->fd,
-        &event->iov[event->ciov], event->niov - event->ciov);
+        event->iov_at, event->niov);
     if (ret < 0) {
         event->error = errno;
     } else {
@@ -85,7 +84,7 @@ static ssize_t io_event_process_writev(RawstorIOEvent *event) {
 static ssize_t io_event_process_pwritev(RawstorIOEvent *event) {
     ssize_t ret = pwritev(
         event->fd->fd,
-        &event->iov[event->ciov], event->niov - event->ciov, event->offset);
+        event->iov_at, event->niov, event->offset);
     if (ret < 0) {
         event->error = errno;
     } else {
@@ -110,18 +109,10 @@ static RawstorIOEvent* io_process_event(RawstorIO *io) {
                     rawstor_debug("partial %zd of %zu\n", res, event->size);
                 }
                 event->offset += res;
-                while (
-                    event->ciov < event->niov
-                    && (size_t)res >= event->iov[event->ciov].iov_len)
-                {
-                    res -= event->iov[event->ciov].iov_len;
-                    ++event->ciov;
-                }
-                if (event->ciov == event->niov) {
+                iovec_shift(&event->iov_at, &event->niov, res);
+                if (event->niov == 0) {
                     return event;
                 }
-                event->iov[event->ciov].iov_base += res;
-                event->iov[event->ciov].iov_len -= res;
             } else if (res == 0) {
                 return event;
             }
@@ -197,8 +188,8 @@ int rawstor_io_read(
     };
     *event = (RawstorIOEvent) {
         .fd = event->fd,
-        .ciov = 0,
-        .iov = event_iov,
+        .iov_origin = event_iov,
+        .iov_at = event_iov,
         .niov = 1,
         // .offset
         .process = io_event_process_readv,
@@ -243,8 +234,8 @@ int rawstor_io_pread(
     };
     *event = (RawstorIOEvent) {
         .fd = event->fd,
-        .ciov = 0,
-        .iov = event_iov,
+        .iov_origin = event_iov,
+        .iov_at = event_iov,
         .niov = 1,
         .offset = offset,
         .process = io_event_process_preadv,
@@ -288,8 +279,8 @@ int rawstor_io_readv(
     }
     *event = (RawstorIOEvent) {
         .fd = event->fd,
-        .ciov = 0,
-        .iov = event_iov,
+        .iov_origin = event_iov,
+        .iov_at = event_iov,
         .niov = niov,
         // .offset
         .process = io_event_process_readv,
@@ -333,8 +324,8 @@ int rawstor_io_preadv(
     }
     *event = (RawstorIOEvent) {
         .fd = event->fd,
-        .ciov = 0,
-        .iov = event_iov,
+        .iov_origin = event_iov,
+        .iov_at = event_iov,
         .niov = niov,
         .offset = offset,
         .process = io_event_process_preadv,
@@ -379,8 +370,8 @@ int rawstor_io_write(
     };
     *event = (RawstorIOEvent) {
         .fd = event->fd,
-        .ciov = 0,
-        .iov = event_iov,
+        .iov_origin = event_iov,
+        .iov_at = event_iov,
         .niov = 1,
         // .offset
         .process = io_event_process_writev,
@@ -425,8 +416,8 @@ int rawstor_io_pwrite(
     };
     *event = (RawstorIOEvent) {
         .fd = event->fd,
-        .ciov = 0,
-        .iov = event_iov,
+        .iov_origin = event_iov,
+        .iov_at = event_iov,
         .niov = 1,
         .offset = offset,
         .process = io_event_process_pwritev,
@@ -470,8 +461,8 @@ int rawstor_io_writev(
     }
     *event = (RawstorIOEvent) {
         .fd = event->fd,
-        .ciov = 0,
-        .iov = event_iov,
+        .iov_origin = event_iov,
+        .iov_at = event_iov,
         .niov = niov,
         // .offset
         .process = io_event_process_writev,
@@ -515,8 +506,8 @@ int rawstor_io_pwritev(
     }
     *event = (RawstorIOEvent) {
         .fd = event->fd,
-        .ciov = 0,
-        .iov = event_iov,
+        .iov_origin = event_iov,
+        .iov_at = event_iov,
         .niov = niov,
         .offset = offset,
         .process = io_event_process_pwritev,
@@ -585,7 +576,7 @@ RawstorIOEvent* rawstor_io_wait_event_timeout(RawstorIO *io, int timeout) {
 
 void rawstor_io_release_event(RawstorIO *io, RawstorIOEvent *event) {
     event->fd->fd = -1;
-    free(event->iov);
+    free(event->iov_origin);
     rawstor_mempool_free(io->events_pool, event);
 }
 
