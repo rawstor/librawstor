@@ -20,6 +20,7 @@ librawstor_la_LIBADD =
 
 
 if ENABLE_OST
+    AM_CFLAGS += $(LIBXXHASH_CFLAGS)
     librawstor_la_SOURCES += object_ost.c
     librawstor_la_LIBADD += $(LIBXXHASH_LIBS)
 else
