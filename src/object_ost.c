@@ -285,7 +285,7 @@ static int response_body_received(RawstorIOEvent *event, void *data) {
 
     if (op->object->response_frame.hash != hash) {
         rawstor_error(
-            "Response hash mismatch: %zu != %lu\n",
+            "Response hash mismatch: %llu != %llu\n",
             op->object->response_frame.hash,
             hash);
         errno = EIO;
