@@ -7,16 +7,14 @@
 #include <assert.h>
 
 
-XXH64_hash_t rawstor_hash_vector(const struct iovec *iovecs, unsigned nr_vecs)
-{
+XXH64_hash_t rawstor_hash_vector(const struct iovec *iovecs, unsigned nr_vecs) {
     // Allocate a state struct. Do not just use malloc() or new.
     XXH3_state_t* state = XXH3_createState();
     assert(state != NULL && "Out of memory!");
     // Reset the state to start a new hashing session.
     XXH3_64bits_reset(state);
 
-    for (unsigned i = 0; i < nr_vecs; i++)
-    {
+    for (unsigned i = 0; i < nr_vecs; i++) {
         XXH3_64bits_update(state,
         iovecs[i].iov_base,
         iovecs[i].iov_len);
