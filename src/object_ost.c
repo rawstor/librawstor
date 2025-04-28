@@ -281,6 +281,8 @@ static int response_body_received(RawstorIOEvent *event, void *data) {
 
     RawstorObjectOperation *op = (RawstorObjectOperation*)data;
 
+    operation_trace(op->cid, event);
+
     XXH64_hash_t hash = rawstor_hash_buf(op->payload.linear.data, op->request_frame.len);
 
     if (op->object->response_frame.hash != hash) {
@@ -291,8 +293,6 @@ static int response_body_received(RawstorIOEvent *event, void *data) {
         errno = EIO;
         return -errno;
     }
-
-    operation_trace(op->cid, event);
 
     if (rawstor_io_event_error(event) != 0) {
         rawstor_mempool_free(op->object->operations_pool, op);
@@ -337,6 +337,18 @@ static int responsev_body_received(RawstorIOEvent *event, void *data) {
     RawstorObjectOperation *op = (RawstorObjectOperation*)data;
 
     operation_trace(op->cid, event);
+
+    XXH64_hash_t hash = rawstor_hash_vector(
+        op->payload.vector.iov, op->payload.vector.niov);
+
+    if (op->object->response_frame.hash != hash) {
+        rawstor_error(
+            "Response hash mismatch: %llu != %llu\n",
+            op->object->response_frame.hash,
+            hash);
+        errno = EIO;
+        return -errno;
+    }
 
     if (rawstor_io_event_error(event) != 0) {
         rawstor_mempool_free(op->object->operations_pool, op);
