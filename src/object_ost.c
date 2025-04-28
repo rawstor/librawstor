@@ -281,7 +281,7 @@ static int response_body_received(RawstorIOEvent *event, void *data) {
 
     RawstorObjectOperation *op = (RawstorObjectOperation*)data;
 
-    XXH64_hash_t hash = rawstor_hash_buf(op->buffer.linear.data, op->request_frame.len);
+    XXH64_hash_t hash = rawstor_hash_buf(op->payload.linear.data, op->request_frame.len);
 
     if (op->object->response_frame.hash != hash) {
         rawstor_error(
