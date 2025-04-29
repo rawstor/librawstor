@@ -1,20 +1,29 @@
 #include "io.h"
 
 #include "iovec_routines.h"
+#include "list.h"
 #include "logging.h"
-#include "mempool.h"
+#include "ringbuf.h"
 
 #include <poll.h>
 
 #include <sys/socket.h>
 
+#include <assert.h>
 #include <errno.h>
 #include <stdlib.h>
 #include <unistd.h>
 
 
+typedef struct RawstorIOSession {
+    int fd;
+    RawstorRingBuf *read_ops;
+    RawstorRingBuf *write_ops;
+} RawstorIOSession;
+
+
 struct RawstorIOEvent {
-    struct pollfd *fd;
+    RawstorIOSession *session;
 
     struct iovec *iov_origin;
     struct iovec *iov_at;
@@ -35,9 +44,7 @@ struct RawstorIOEvent {
 struct RawstorIO {
     unsigned int depth;
 
-    RawstorMemPool *events_pool;
-    RawstorIOEvent *events;
-    struct pollfd *fds;
+    RawstorList *sessions;
 };
 
 
@@ -46,7 +53,7 @@ const char* rawstor_io_engine_name = "poll";
 
 static ssize_t io_event_process_readv(RawstorIOEvent *event) {
     ssize_t ret = readv(
-        event->fd->fd, event->iov_at, event->niov);
+        event->session->fd, event->iov_at, event->niov);
     if (ret < 0) {
         event->error = errno;
     } else {
@@ -58,7 +65,7 @@ static ssize_t io_event_process_readv(RawstorIOEvent *event) {
 
 static ssize_t io_event_process_preadv(RawstorIOEvent *event) {
     ssize_t ret = preadv(
-        event->fd->fd, event->iov_at, event->niov, event->offset);
+        event->session->fd, event->iov_at, event->niov, event->offset);
     if (ret < 0) {
         event->error = errno;
     } else {
@@ -70,8 +77,7 @@ static ssize_t io_event_process_preadv(RawstorIOEvent *event) {
 
 static ssize_t io_event_process_writev(RawstorIOEvent *event) {
     ssize_t ret = writev(
-        event->fd->fd,
-        event->iov_at, event->niov);
+        event->session->fd, event->iov_at, event->niov);
     if (ret < 0) {
         event->error = errno;
     } else {
@@ -83,8 +89,7 @@ static ssize_t io_event_process_writev(RawstorIOEvent *event) {
 
 static ssize_t io_event_process_pwritev(RawstorIOEvent *event) {
     ssize_t ret = pwritev(
-        event->fd->fd,
-        event->iov_at, event->niov, event->offset);
+        event->session->fd, event->iov_at, event->niov, event->offset);
     if (ret < 0) {
         event->error = errno;
     } else {
@@ -94,32 +99,40 @@ static ssize_t io_event_process_pwritev(RawstorIOEvent *event) {
 }
 
 
-static RawstorIOEvent* io_process_event(RawstorIO *io) {
-    for (size_t i = 0; i < io->depth; ++i) {
-        struct pollfd *fd = &io->fds[i];
-        if (fd->fd < 0) {
-            continue;
-        }
-
-        RawstorIOEvent *event = &io->events[i];
-        if (fd->revents & fd->events) {
-            ssize_t res = event->process(event);
-            if (res > 0) {
-                if ((size_t)res != event->size) {
-                    rawstor_debug("partial %zd of %zu\n", res, event->size);
-                }
-                event->offset += res;
-                iovec_shift(&event->iov_at, &event->niov, res);
-                if (event->niov == 0) {
-                    return event;
-                }
-            } else if (res == 0) {
-                return event;
-            }
+static RawstorIOSession* io_get_session(RawstorIO *io, int fd) {
+    for (
+        RawstorIOSession *it = rawstor_list_iter(io->sessions);
+        it != NULL;
+        it = rawstor_list_next(it))
+    {
+        if (it->fd == fd) {
+            return it;
         }
     }
 
-    return NULL;
+    RawstorIOSession *session = rawstor_list_append(io->sessions);
+    if (session == NULL) {
+        return NULL;
+    }
+
+    session->fd = fd;
+
+    session->read_ops = rawstor_ringbuf_create(
+        io->depth, sizeof(RawstorIOEvent));
+    if (session->read_ops == NULL) {
+        rawstor_list_remove(io->sessions, session);
+        return NULL;
+    }
+
+    session->write_ops = rawstor_ringbuf_create(
+        io->depth, sizeof(RawstorIOEvent));
+    if (session->write_ops == NULL) {
+        rawstor_ringbuf_delete(session->read_ops);
+        rawstor_list_remove(io->sessions, session);
+        return NULL;
+    }
+
+    return session;
 }
 
 
@@ -131,26 +144,10 @@ RawstorIO* rawstor_io_create(unsigned int depth) {
 
     io->depth = depth;
 
-    /**
-     * TODO: io operations could be much more than depth.
-     */
-    io->fds = calloc(depth, sizeof(struct pollfd));
-    if (io->fds == NULL) {
+    io->sessions = rawstor_list_create(sizeof(RawstorIOSession));
+    if (io->sessions == NULL) {
         free(io);
         return NULL;
-    }
-
-    io->events_pool = rawstor_mempool_create(depth, sizeof(RawstorIOEvent));
-    if (io->events_pool == NULL) {
-        free(io->fds);
-        free(io);
-        return NULL;
-    }
-    io->events = rawstor_mempool_data(io->events_pool);
-
-    for (unsigned int i = 0; i < depth; ++i) {
-        io->events[i].fd = &io->fds[i];
-        io->fds[i].fd = -1;
     }
 
     return io;
@@ -158,8 +155,7 @@ RawstorIO* rawstor_io_create(unsigned int depth) {
 
 
 void rawstor_io_delete(RawstorIO *io) {
-    rawstor_mempool_delete(io->events_pool);
-    free(io->fds);
+    rawstor_list_delete(io->sessions);
     free(io);
 }
 
@@ -169,8 +165,8 @@ int rawstor_io_read(
     int fd, void *buf, size_t size,
     RawstorIOCallback *cb, void *data)
 {
-    if (rawstor_mempool_available(io->events_pool) == 0) {
-        errno = ENOBUFS;
+    RawstorIOSession *session = io_get_session(io, fd);
+    if (session == NULL) {
         return -errno;
     }
     /**
@@ -178,16 +174,26 @@ int rawstor_io_read(
      */
     struct iovec *event_iov = malloc(sizeof(struct iovec));
     if (event_iov == NULL) {
+        /**
+         * TODO: remove empty session.
+         */
         return -errno;
     }
-    RawstorIOEvent *event = rawstor_mempool_alloc(io->events_pool);
+    RawstorIOEvent *event = rawstor_ringbuf_head(session->read_ops);
+    if (rawstor_ringbuf_push(session->read_ops)) {
+        /**
+         * TODO: remove empty session.
+         */
+        free(event_iov);
+        return -errno;
+    }
 
     event_iov[0] = (struct iovec) {
         .iov_base = buf,
         .iov_len = size,
     };
     *event = (RawstorIOEvent) {
-        .fd = event->fd,
+        .session = session,
         .iov_origin = event_iov,
         .iov_at = event_iov,
         .niov = 1,
@@ -200,12 +206,6 @@ int rawstor_io_read(
         .data = data,
     };
 
-    *event->fd = (struct pollfd) {
-        .fd = fd,
-        .events = POLLIN,
-        .revents = 0,
-    };
-
     return 0;
 }
 
@@ -215,8 +215,8 @@ int rawstor_io_pread(
     int fd, void *buf, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data)
 {
-    if (rawstor_mempool_available(io->events_pool) == 0) {
-        errno = ENOBUFS;
+    RawstorIOSession *session = io_get_session(io, fd);
+    if (session == NULL) {
         return -errno;
     }
     /**
@@ -224,16 +224,26 @@ int rawstor_io_pread(
      */
     struct iovec *event_iov = malloc(sizeof(struct iovec));
     if (event_iov == NULL) {
+        /**
+         * TODO: remove empty session.
+         */
         return -errno;
     }
-    RawstorIOEvent *event = rawstor_mempool_alloc(io->events_pool);
+    RawstorIOEvent *event = rawstor_ringbuf_head(session->read_ops);
+    if (rawstor_ringbuf_push(session->read_ops)) {
+        /**
+         * TODO: remove empty session.
+         */
+        free(event_iov);
+        return -errno;
+    }
 
     event_iov[0] = (struct iovec) {
         .iov_base = buf,
         .iov_len = size,
     };
     *event = (RawstorIOEvent) {
-        .fd = event->fd,
+        .session = session,
         .iov_origin = event_iov,
         .iov_at = event_iov,
         .niov = 1,
@@ -246,12 +256,6 @@ int rawstor_io_pread(
         .data = data,
     };
 
-    *event->fd = (struct pollfd) {
-        .fd = fd,
-        .events = POLLIN,
-        .revents = 0,
-    };
-
     return 0;
 }
 
@@ -261,8 +265,8 @@ int rawstor_io_readv(
     int fd, struct iovec *iov, unsigned int niov, size_t size,
     RawstorIOCallback *cb, void *data)
 {
-    if (rawstor_mempool_available(io->events_pool) == 0) {
-        errno = ENOBUFS;
+    RawstorIOSession *session = io_get_session(io, fd);
+    if (session == NULL) {
         return -errno;
     }
     /**
@@ -270,15 +274,25 @@ int rawstor_io_readv(
      */
     struct iovec *event_iov = calloc(niov, sizeof(struct iovec));
     if (iov == NULL) {
+        /**
+         * TODO: remove empty session.
+         */
         return -errno;
     }
-    RawstorIOEvent *event = rawstor_mempool_alloc(io->events_pool);
+    RawstorIOEvent *event = rawstor_ringbuf_head(session->read_ops);
+    if (rawstor_ringbuf_push(session->read_ops)) {
+        /**
+         * TODO: remove empty session.
+         */
+        free(event_iov);
+        return -errno;
+    }
 
     for (unsigned int i = 0; i < niov; ++i) {
         event_iov[i] = iov[i];
     }
     *event = (RawstorIOEvent) {
-        .fd = event->fd,
+        .session = session,
         .iov_origin = event_iov,
         .iov_at = event_iov,
         .niov = niov,
@@ -291,12 +305,6 @@ int rawstor_io_readv(
         .data = data,
     };
 
-    *event->fd = (struct pollfd) {
-        .fd = fd,
-        .events = POLLIN,
-        .revents = 0,
-    };
-
     return 0;
 }
 
@@ -306,8 +314,8 @@ int rawstor_io_preadv(
     int fd, struct iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data)
 {
-    if (rawstor_mempool_available(io->events_pool) == 0) {
-        errno = ENOBUFS;
+    RawstorIOSession *session = io_get_session(io, fd);
+    if (session == NULL) {
         return -errno;
     }
     /**
@@ -315,15 +323,25 @@ int rawstor_io_preadv(
      */
     struct iovec *event_iov = calloc(niov, sizeof(struct iovec));
     if (iov == NULL) {
+        /**
+         * TODO: remove empty session.
+         */
         return -errno;
     }
-    RawstorIOEvent *event = rawstor_mempool_alloc(io->events_pool);
+    RawstorIOEvent *event = rawstor_ringbuf_head(session->read_ops);
+    if (rawstor_ringbuf_push(session->read_ops)) {
+        /**
+         * TODO: remove empty session.
+         */
+        free(event_iov);
+        return -errno;
+    }
 
     for (unsigned int i = 0; i < niov; ++i) {
         event_iov[i] = iov[i];
     }
     *event = (RawstorIOEvent) {
-        .fd = event->fd,
+        .session = session,
         .iov_origin = event_iov,
         .iov_at = event_iov,
         .niov = niov,
@@ -336,12 +354,6 @@ int rawstor_io_preadv(
         .data = data,
     };
 
-    *event->fd = (struct pollfd) {
-        .fd = fd,
-        .events = POLLIN,
-        .revents = 0,
-    };
-
     return 0;
 }
 
@@ -351,8 +363,8 @@ int rawstor_io_write(
     int fd, void *buf, size_t size,
     RawstorIOCallback *cb, void *data)
 {
-    if (rawstor_mempool_available(io->events_pool) == 0) {
-        errno = ENOBUFS;
+    RawstorIOSession *session = io_get_session(io, fd);
+    if (session == NULL) {
         return -errno;
     }
     /**
@@ -360,16 +372,26 @@ int rawstor_io_write(
      */
     struct iovec *event_iov = malloc(sizeof(struct iovec));
     if (event_iov == NULL) {
+        /**
+         * TODO: remove empty session.
+         */
         return -errno;
     }
-    RawstorIOEvent *event = rawstor_mempool_alloc(io->events_pool);
+    RawstorIOEvent *event = rawstor_ringbuf_head(session->write_ops);
+    if (rawstor_ringbuf_push(session->write_ops)) {
+        /**
+         * TODO: remove empty session.
+         */
+        free(event_iov);
+        return -errno;
+    }
 
     event_iov[0] = (struct iovec) {
         .iov_base = buf,
         .iov_len = size,
     };
     *event = (RawstorIOEvent) {
-        .fd = event->fd,
+        .session = session,
         .iov_origin = event_iov,
         .iov_at = event_iov,
         .niov = 1,
@@ -380,12 +402,6 @@ int rawstor_io_write(
         // .result
         // .error
         .data = data,
-    };
-
-    *event->fd = (struct pollfd) {
-        .fd = fd,
-        .events = POLLOUT,
-        .revents = 0,
     };
 
     return 0;
@@ -397,8 +413,8 @@ int rawstor_io_pwrite(
     int fd, void *buf, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data)
 {
-    if (rawstor_mempool_available(io->events_pool) == 0) {
-        errno = ENOBUFS;
+    RawstorIOSession *session = io_get_session(io, fd);
+    if (session == NULL) {
         return -errno;
     }
     /**
@@ -406,16 +422,26 @@ int rawstor_io_pwrite(
      */
     struct iovec *event_iov = malloc(sizeof(struct iovec));
     if (event_iov == NULL) {
+        /**
+         * TODO: remove empty session.
+         */
         return -errno;
     }
-    RawstorIOEvent *event = rawstor_mempool_alloc(io->events_pool);
+    RawstorIOEvent *event = rawstor_ringbuf_head(session->write_ops);
+    if (rawstor_ringbuf_push(session->write_ops)) {
+        /**
+         * TODO: remove empty session.
+         */
+        free(event_iov);
+        return -errno;
+    }
 
     event_iov[0] = (struct iovec) {
         .iov_base = buf,
         .iov_len = size,
     };
     *event = (RawstorIOEvent) {
-        .fd = event->fd,
+        .session = session,
         .iov_origin = event_iov,
         .iov_at = event_iov,
         .niov = 1,
@@ -428,12 +454,6 @@ int rawstor_io_pwrite(
         .data = data,
     };
 
-    *event->fd = (struct pollfd) {
-        .fd = fd,
-        .events = POLLOUT,
-        .revents = 0,
-    };
-
     return 0;
 }
 
@@ -443,8 +463,8 @@ int rawstor_io_writev(
     int fd, struct iovec *iov, unsigned int niov, size_t size,
     RawstorIOCallback *cb, void *data)
 {
-    if (rawstor_mempool_available(io->events_pool) == 0) {
-        errno = ENOBUFS;
+    RawstorIOSession *session = io_get_session(io, fd);
+    if (session == NULL) {
         return -errno;
     }
     /**
@@ -452,15 +472,25 @@ int rawstor_io_writev(
      */
     struct iovec *event_iov = calloc(niov, sizeof(struct iovec));
     if (event_iov == NULL) {
+        /**
+         * TODO: remove empty session.
+         */
         return -errno;
     }
-    RawstorIOEvent *event = rawstor_mempool_alloc(io->events_pool);
+    RawstorIOEvent *event = rawstor_ringbuf_head(session->write_ops);
+    if (rawstor_ringbuf_push(session->write_ops)) {
+        /**
+         * TODO: remove empty session.
+         */
+        free(event_iov);
+        return -errno;
+    }
 
     for (unsigned int i = 0; i < niov; ++i) {
         event_iov[i] = iov[i];
     }
     *event = (RawstorIOEvent) {
-        .fd = event->fd,
+        .session = session,
         .iov_origin = event_iov,
         .iov_at = event_iov,
         .niov = niov,
@@ -473,12 +503,6 @@ int rawstor_io_writev(
         .data = data,
     };
 
-    *event->fd = (struct pollfd) {
-        .fd = fd,
-        .events = POLLOUT,
-        .revents = 0,
-    };
-
     return 0;
 }
 
@@ -488,8 +512,8 @@ int rawstor_io_pwritev(
     int fd, struct iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data)
 {
-    if (rawstor_mempool_available(io->events_pool) == 0) {
-        errno = ENOBUFS;
+    RawstorIOSession *session = io_get_session(io, fd);
+    if (session == NULL) {
         return -errno;
     }
     /**
@@ -497,15 +521,25 @@ int rawstor_io_pwritev(
      */
     struct iovec *event_iov = calloc(niov, sizeof(struct iovec));
     if (event_iov == NULL) {
+        /**
+         * TODO: remove empty session.
+         */
         return -errno;
     }
-    RawstorIOEvent *event = rawstor_mempool_alloc(io->events_pool);
+    RawstorIOEvent *event = rawstor_ringbuf_head(session->write_ops);
+    if (rawstor_ringbuf_push(session->write_ops)) {
+        /**
+         * TODO: remove empty session.
+         */
+        free(event_iov);
+        return -errno;
+    }
 
     for (unsigned int i = 0; i < niov; ++i) {
         event_iov[i] = iov[i];
     }
     *event = (RawstorIOEvent) {
-        .fd = event->fd,
+        .session = session,
         .iov_origin = event_iov,
         .iov_at = event_iov,
         .niov = niov,
@@ -518,71 +552,113 @@ int rawstor_io_pwritev(
         .data = data,
     };
 
-    *event->fd = (struct pollfd) {
-        .fd = fd,
-        .events = POLLOUT,
-        .revents = 0,
-    };
-
     return 0;
 }
 
 
 RawstorIOEvent* rawstor_io_wait_event(RawstorIO *io) {
-    RawstorIOEvent *event = io_process_event(io);
-    if (event != NULL) {
-        return event;
-    }
-
-    if (rawstor_mempool_allocated(io->events_pool) == 0) {
-        return NULL;
-    }
-
-    while (1) {
-        if (poll(io->fds, io->depth, -1) <= 0) {
-            return NULL;
-        }
-
-        event = io_process_event(io);
-        if (event != NULL) {
-            return event;
-        }
-    }
+    return rawstor_io_wait_event_timeout(io, -1);
 }
 
 
 RawstorIOEvent* rawstor_io_wait_event_timeout(RawstorIO *io, int timeout) {
-    RawstorIOEvent *event = io_process_event(io);
-    if (event != NULL) {
-        return event;
-    }
-
-    if (rawstor_mempool_allocated(io->events_pool) == 0) {
-        return NULL;
-    }
-
     while (1) {
-        if (poll(io->fds, io->depth, timeout) <= 0) {
+        size_t count = rawstor_list_size(io->sessions);
+        if (count == 0) {
             return NULL;
         }
 
-        event = io_process_event(io);
-        if (event != NULL) {
-            return event;
+        struct pollfd *fds = calloc(count, sizeof(struct pollfd));
+        if (fds == NULL) {
+            return NULL;
+        }
+
+        RawstorIOSession *it;
+        size_t i;
+        for (
+            it = rawstor_list_iter(io->sessions), i = 0;
+            it != NULL;
+            it = rawstor_list_next(it), ++i)
+        {
+            fds[i] = (struct pollfd) {
+                .fd = it->fd,
+                .events = (
+                    (rawstor_ringbuf_empty(it->read_ops) ? 0 : POLLIN) |
+                    (rawstor_ringbuf_empty(it->write_ops) ? 0 : POLLOUT)
+                ),
+                .revents = 0,
+            };
+
+            assert(fds[i].events != 0);
+        }
+
+        if (poll(fds, count, timeout) <= 0) {
+            free(fds);
+            return NULL;
+        }
+
+        for (
+            it = rawstor_list_iter(io->sessions), i = 0;
+            it != NULL;
+            it = rawstor_list_next(it), ++i)
+        {
+            struct pollfd *fd = &fds[i];
+            RawstorRingBuf *ops = NULL;
+
+            if (fd->revents & POLLIN) {
+                ops = it->read_ops;
+            } else if (fd->revents & POLLOUT) {
+                ops = it->write_ops;
+            } else {
+                continue;
+            }
+
+            assert(rawstor_ringbuf_empty(ops) == 0);
+            RawstorIOEvent *event = rawstor_ringbuf_tail(ops);
+            ssize_t res = event->process(event);
+            if (res > 0) {
+                if ((size_t)res != event->size) {
+                    rawstor_debug("partial %zd of %zu\n", res, event->size);
+                }
+                event->offset += res;
+                iovec_shift(&event->iov_at, &event->niov, res);
+                if (event->niov == 0) {
+                    free(fds);
+                    return event;
+                }
+            } else if (res == 0) {
+                free(fds);
+                return event;
+            }
         }
     }
 }
 
 
 void rawstor_io_release_event(RawstorIO *io, RawstorIOEvent *event) {
-    event->fd->fd = -1;
+    RawstorIOSession *session = event->session;
+    RawstorRingBuf *ops = NULL;
+    if (event == rawstor_ringbuf_tail(session->read_ops)) {
+        ops = session->read_ops;
+    } else if (event == rawstor_ringbuf_tail(session->write_ops)) {
+        ops = session->write_ops;
+    }
+    assert(ops != NULL);
     free(event->iov_origin);
-    rawstor_mempool_free(io->events_pool, event);
+    assert(rawstor_ringbuf_pop(ops) == 0);
+    if (
+        rawstor_ringbuf_empty(session->read_ops) &&
+        rawstor_ringbuf_empty(session->write_ops))
+    {
+        rawstor_ringbuf_delete(session->read_ops);
+        rawstor_ringbuf_delete(session->write_ops);
+        rawstor_list_remove(io->sessions, session);
+    }
 }
 
 
 int rawstor_io_event_fd(RawstorIOEvent *event) {
-    return event->fd->fd;
+    return event->session->fd;
 }
 
 
