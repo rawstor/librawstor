@@ -1,10 +1,17 @@
-noinst_PROGRAMS = test_mempool \
+noinst_PROGRAMS = test_list \
+                  test_mempool \
                   test_uuid
 
 
 AM_CFLAGS = -std=gnu99 -Wall -Wextra -Werror \
             -I$(top_srcdir)/include \
             -I$(top_srcdir)/src
+
+
+test_list_SOURCES = test_list.c
+
+
+test_list_LDADD = $(top_srcdir)/src/librawstor.la
 
 
 test_mempool_SOURCES = test_mempool.c
