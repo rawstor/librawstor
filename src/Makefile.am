@@ -14,6 +14,7 @@ librawstor_la_SOURCES = hash.c \
                         list.c \
                         mempool.c \
                         rawstor.c \
+                        ringbuf.c \
                         uuid.c
 
 librawstor_la_LIBADD =
