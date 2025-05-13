@@ -287,9 +287,9 @@ static int response_body_received(RawstorIOEvent *event, void *data) {
 
     if (op->object->response_frame.hash != hash) {
         rawstor_error(
-            "Response hash mismatch: %llu != %llu\n",
-            op->object->response_frame.hash,
-            hash);
+            "Response hash mismatch: %llx != %llx\n",
+            (unsigned long long)op->object->response_frame.hash,
+            (unsigned long long)hash);
         errno = EIO;
         return -errno;
     }
@@ -343,9 +343,9 @@ static int responsev_body_received(RawstorIOEvent *event, void *data) {
 
     if (op->object->response_frame.hash != hash) {
         rawstor_error(
-            "Response hash mismatch: %llu != %llu\n",
-            op->object->response_frame.hash,
-            hash);
+            "Response hash mismatch: %llx != %llx\n",
+            (unsigned long long)op->object->response_frame.hash,
+            (unsigned long long)hash);
         errno = EIO;
         return -errno;
     }
