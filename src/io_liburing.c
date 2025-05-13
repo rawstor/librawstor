@@ -26,7 +26,7 @@ struct RawstorIOEvent {
 
 struct RawstorIO {
     unsigned int depth;
-    RawstorPool *events_pool;
+    RawstorMemPool *events_pool;
     struct io_uring ring;
 };
 
@@ -45,7 +45,7 @@ RawstorIO* rawstor_io_create(unsigned int depth) {
     /**
      * TODO: io operations could be much more than depth.
      */
-    io->events_pool = rawstor_pool_create(depth, sizeof(RawstorIOEvent));
+    io->events_pool = rawstor_mempool_create(depth, sizeof(RawstorIOEvent));
     if (io->events_pool == NULL) {
         free(io);
         return NULL;
@@ -53,7 +53,7 @@ RawstorIO* rawstor_io_create(unsigned int depth) {
 
     int rval = io_uring_queue_init(depth, &io->ring, 0);
     if (rval < 0) {
-        rawstor_pool_delete(io->events_pool);
+        rawstor_mempool_delete(io->events_pool);
         free(io);
         errno = -rval;
         return NULL;
@@ -65,7 +65,7 @@ RawstorIO* rawstor_io_create(unsigned int depth) {
 
 void rawstor_io_delete(RawstorIO *io) {
     io_uring_queue_exit(&io->ring);
-    rawstor_pool_delete(io->events_pool);
+    rawstor_mempool_delete(io->events_pool);
     free(io);
 }
 
@@ -79,7 +79,7 @@ int rawstor_io_read(
      * TODO: Since mempool count is equal to sqe count,
      * do we really have to have this check?
      */
-    if (rawstor_pool_available(io->events_pool) == 0) {
+    if (rawstor_mempool_available(io->events_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
     }
@@ -90,7 +90,7 @@ int rawstor_io_read(
         return -errno;
     }
 
-    RawstorIOEvent *event = rawstor_pool_alloc(io->events_pool);
+    RawstorIOEvent *event = rawstor_mempool_alloc(io->events_pool);
     *event = (RawstorIOEvent) {
         .fd = fd,
         .callback = cb,
@@ -115,7 +115,7 @@ int rawstor_io_pread(
      * TODO: Since mempool count is equal to sqe count,
      * do we really have to have this check?
      */
-    if (rawstor_pool_available(io->events_pool) == 0) {
+    if (rawstor_mempool_available(io->events_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
     }
@@ -126,7 +126,7 @@ int rawstor_io_pread(
         return -errno;
     }
 
-    RawstorIOEvent *event = rawstor_pool_alloc(io->events_pool);
+    RawstorIOEvent *event = rawstor_mempool_alloc(io->events_pool);
     *event = (RawstorIOEvent) {
         .fd = fd,
         .callback = cb,
@@ -151,7 +151,7 @@ int rawstor_io_readv(
      * TODO: Since mempool count is equal to sqe count,
      * do we really have to have this check?
      */
-    if (rawstor_pool_available(io->events_pool) == 0) {
+    if (rawstor_mempool_available(io->events_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
     }
@@ -162,7 +162,7 @@ int rawstor_io_readv(
         return -errno;
     }
 
-    RawstorIOEvent *event = rawstor_pool_alloc(io->events_pool);
+    RawstorIOEvent *event = rawstor_mempool_alloc(io->events_pool);
     *event = (RawstorIOEvent) {
         .fd = fd,
         .callback = cb,
@@ -187,7 +187,7 @@ int rawstor_io_preadv(
      * TODO: Since mempool count is equal to sqe count,
      * do we really have to have this check?
      */
-    if (rawstor_pool_available(io->events_pool) == 0) {
+    if (rawstor_mempool_available(io->events_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
     }
@@ -198,7 +198,7 @@ int rawstor_io_preadv(
         return -errno;
     }
 
-    RawstorIOEvent *event = rawstor_pool_alloc(io->events_pool);
+    RawstorIOEvent *event = rawstor_mempool_alloc(io->events_pool);
     *event = (RawstorIOEvent) {
         .fd = fd,
         .callback = cb,
@@ -223,7 +223,7 @@ int rawstor_io_write(
      * TODO: Since mempool count is equal to sqe count,
      * do we really have to have this check?
      */
-    if (rawstor_pool_available(io->events_pool) == 0) {
+    if (rawstor_mempool_available(io->events_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
     }
@@ -234,7 +234,7 @@ int rawstor_io_write(
         return -errno;
     }
 
-    RawstorIOEvent *event = rawstor_pool_alloc(io->events_pool);
+    RawstorIOEvent *event = rawstor_mempool_alloc(io->events_pool);
     *event = (RawstorIOEvent) {
         .fd = fd,
         .callback = cb,
@@ -259,7 +259,7 @@ int rawstor_io_pwrite(
      * TODO: Since mempool count is equal to sqe count,
      * do we really have to have this check?
      */
-    if (rawstor_pool_available(io->events_pool) == 0) {
+    if (rawstor_mempool_available(io->events_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
     }
@@ -270,7 +270,7 @@ int rawstor_io_pwrite(
         return -errno;
     }
 
-    RawstorIOEvent *event = rawstor_pool_alloc(io->events_pool);
+    RawstorIOEvent *event = rawstor_mempool_alloc(io->events_pool);
     *event = (RawstorIOEvent) {
         .fd = fd,
         .callback = cb,
@@ -295,7 +295,7 @@ int rawstor_io_writev(
      * TODO: Since mempool count is equal to sqe count,
      * do we really have to have this check?
      */
-    if (rawstor_pool_available(io->events_pool) == 0) {
+    if (rawstor_mempool_available(io->events_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
     }
@@ -306,7 +306,7 @@ int rawstor_io_writev(
         return -errno;
     }
 
-    RawstorIOEvent *event = rawstor_pool_alloc(io->events_pool);
+    RawstorIOEvent *event = rawstor_mempool_alloc(io->events_pool);
     *event = (RawstorIOEvent) {
         .fd = fd,
         .callback = cb,
@@ -331,7 +331,7 @@ int rawstor_io_pwritev(
      * TODO: Since mempool count is equal to sqe count,
      * do we really have to have this check?
      */
-    if (rawstor_pool_available(io->events_pool) == 0) {
+    if (rawstor_mempool_available(io->events_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
     }
@@ -342,7 +342,7 @@ int rawstor_io_pwritev(
         return -errno;
     }
 
-    RawstorIOEvent *event = rawstor_pool_alloc(io->events_pool);
+    RawstorIOEvent *event = rawstor_mempool_alloc(io->events_pool);
     *event = (RawstorIOEvent) {
         .fd = fd,
         .callback = cb,
@@ -372,7 +372,7 @@ RawstorIOEvent* rawstor_io_wait_event(RawstorIO *io) {
             errno = -rval;
             return NULL;
         }
-    } else if (rawstor_pool_allocated(io->events_pool)) {
+    } else if (rawstor_mempool_allocated(io->events_pool)) {
         rval = io_uring_wait_cqe(&io->ring, &cqe);
         if (rval < 0) {
             errno = -rval;
@@ -411,7 +411,7 @@ RawstorIOEvent* rawstor_io_wait_event_timeout(RawstorIO *io, int timeout) {
             errno = -rval;
             return NULL;
         }
-    } else if (rawstor_pool_allocated(io->events_pool)) {
+    } else if (rawstor_mempool_allocated(io->events_pool)) {
         rval = io_uring_wait_cqe_timeout(&io->ring, &cqe, &ts);
         if (rval == -ETIME) {
             return NULL;
@@ -434,7 +434,7 @@ RawstorIOEvent* rawstor_io_wait_event_timeout(RawstorIO *io, int timeout) {
 
 void rawstor_io_release_event(RawstorIO *io, RawstorIOEvent *event) {
     io_uring_cqe_seen(&io->ring, event->cqe);
-    rawstor_pool_free(io->events_pool, event);
+    rawstor_mempool_free(io->events_pool, event);
 }
 
 
