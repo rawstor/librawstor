@@ -24,17 +24,25 @@
 extern const char *rawstor_object_backend_name;
 
 int rawstor_object_create(
-    const RawstorObjectSpec *spec, RawstorUUID *object_id);
+    const RawstorConfig *config,
+    const RawstorObjectSpec *spec,
+    RawstorUUID *object_id);
 
-int rawstor_object_delete(const RawstorUUID *object_id);
+int rawstor_object_delete(
+    const RawstorConfig *config,
+    const RawstorUUID *object_id);
 
 int rawstor_object_open(
-    const RawstorUUID *object_id, RawstorObject **object);
+    const RawstorConfig *config,
+    const RawstorUUID *object_id,
+    RawstorObject **object);
 
 int rawstor_object_close(RawstorObject *object);
 
 int rawstor_object_spec(
-    const RawstorUUID *object_id, RawstorObjectSpec *spec);
+    const RawstorConfig *config,
+    const RawstorUUID *object_id,
+    RawstorObjectSpec *spec);
 
 int rawstor_object_pread(
     RawstorObject *object,

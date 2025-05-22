@@ -101,7 +101,9 @@ int rawstor_initialize(const RawstorConfig *config);
 
 void rawstor_terminate(void);
 
-const RawstorConfig* rawstor_config(void);
+const char* rawstor_config_ost_host(const RawstorConfig *config);
+
+unsigned int rawstor_config_ost_port(const RawstorConfig *config);
 
 RawstorIOEvent* rawstor_wait_event(void);
 
@@ -127,17 +129,25 @@ typedef int(RawstorCallback)(
 
 
 int rawstor_object_create(
-    const RawstorObjectSpec *spec, RawstorUUID *object_id);
+    const RawstorConfig *config,
+    const RawstorObjectSpec *spec,
+    RawstorUUID *object_id);
 
-int rawstor_object_delete(const RawstorUUID *object_id);
+int rawstor_object_delete(
+    const RawstorConfig *config,
+    const RawstorUUID *object_id);
 
 int rawstor_object_open(
-    const RawstorUUID *object_id, RawstorObject **object);
+    const RawstorConfig *config,
+    const RawstorUUID *object_id,
+    RawstorObject **object);
 
 int rawstor_object_close(RawstorObject *object);
 
 int rawstor_object_spec(
-    const RawstorUUID *object_id, RawstorObjectSpec *spec);
+    const RawstorConfig *config,
+    const RawstorUUID *object_id,
+    RawstorObjectSpec *spec);
 
 int rawstor_object_pread(
     RawstorObject *object,

@@ -472,6 +472,7 @@ static int response_head_received(RawstorIOEvent *event, void *data) {
 
 
 int rawstor_object_create(
+    const RawstorConfig RAWSTOR_UNUSED *config,
     const RawstorObjectSpec RAWSTOR_UNUSED *spec,
     RawstorUUID *object_id)
 {
@@ -484,7 +485,10 @@ int rawstor_object_create(
 }
 
 
-int rawstor_object_delete(const RawstorUUID RAWSTOR_UNUSED *object_id) {
+int rawstor_object_delete(
+    const RawstorConfig RAWSTOR_UNUSED *config,
+    const RawstorUUID RAWSTOR_UNUSED *object_id)
+{
     fprintf(stderr, "rawstor_object_delete() not implemented\n");
     exit(1);
 
@@ -493,11 +497,10 @@ int rawstor_object_delete(const RawstorUUID RAWSTOR_UNUSED *object_id) {
 
 
 int rawstor_object_open(
+    const RawstorConfig *config,
     const RawstorUUID *object_id,
     RawstorObject **object)
 {
-    const RawstorConfig *config = rawstor_config();
-
     RawstorObject *ret = malloc(sizeof(RawstorObject));
     if (ret == NULL) {
         return -errno;
@@ -593,6 +596,7 @@ int rawstor_object_close(RawstorObject *object) {
 
 
 int rawstor_object_spec(
+    const RawstorConfig RAWSTOR_UNUSED *config,
     const RawstorUUID RAWSTOR_UNUSED *object_id,
      RawstorObjectSpec *spec)
 {

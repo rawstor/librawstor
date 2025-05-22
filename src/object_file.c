@@ -7,19 +7,18 @@
 #include "mempool.h"
 #include "uuid.h"
 
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/uio.h>
 
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-
-
-#define PREFIX "."
 
 
 /**
@@ -63,21 +62,64 @@ static int io_callback(RawstorIOEvent *event, void *data) {
 }
 
 
-int rawstor_object_create(
-    const RawstorObjectSpec *spec, RawstorUUID *object_id)
+static void get_ost_path(
+    const char *ost_host, unsigned int ost_port,
+    char *buffer, size_t size)
 {
-    char spec_path[1024];
-    int fd;
+    static const char prefix[] = ".";
+
+    snprintf(
+        buffer, size,
+        "%s/ost-%s:%u", prefix, ost_host, ost_port);
+}
+
+
+static void get_object_spec_path(
+    const char *ost_path, const char *uuid,
+    char *buffer, size_t size)
+{
+    snprintf(
+        buffer, size,
+        "%s/rawstor-%s.spec", ost_path, uuid);
+}
+
+
+static void get_object_dat_path(
+    const char *ost_path, const char *uuid,
+    char *buffer, size_t size)
+{
+    snprintf(
+        buffer, size,
+        "%s/rawstor-%s.dat", ost_path, uuid);
+}
+
+
+int rawstor_object_create(
+    const RawstorConfig *config,
+    const RawstorObjectSpec *spec,
+    RawstorUUID *object_id)
+{
+    const char *ost_host = rawstor_config_ost_host(config);
+    unsigned int ost_port = rawstor_config_ost_port(config);
+    char ost_path[PATH_MAX];
+    get_ost_path(ost_host, ost_port, ost_path, sizeof(ost_path));
+    if (mkdir(ost_path, 0755)) {
+        if (errno != EEXIST) {
+            return -errno;
+        }
+    }
+
     RawstorUUID uuid;
     RawstorUUIDString uuid_string;
+    char spec_path[PATH_MAX];
+    int fd;
     while (1) {
         if (rawstor_uuid7_init(&uuid)) {
             return -errno;
         }
         rawstor_uuid_to_string(&uuid, &uuid_string);
-        snprintf(
-            spec_path, sizeof(spec_path),
-            PREFIX "/rawstor-%s.spec", uuid_string);
+        get_object_spec_path(
+            ost_path, uuid_string, spec_path, sizeof(spec_path));
         fd = open(spec_path, O_EXCL | O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR);
         if (fd != -1) {
             break;
@@ -95,10 +137,9 @@ int rawstor_object_create(
     }
     close(fd);
 
-    char dat_path[1024];
-    snprintf(
-        dat_path, sizeof(dat_path),
-        PREFIX "/rawstor-%s.dat", uuid_string);
+    char dat_path[PATH_MAX];
+    get_object_dat_path(
+        ost_path, uuid_string, dat_path, sizeof(dat_path));
     fd = open(dat_path, O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR);
     if (fd == -1) {
         int errsv = errno;
@@ -123,20 +164,27 @@ int rawstor_object_create(
 }
 
 
-int rawstor_object_delete(const RawstorUUID *object_id) {
-    int rval;
-    char path[1024];
-    RawstorUUIDString uuid_string;
+int rawstor_object_delete(
+    const RawstorConfig *config,
+    const RawstorUUID *object_id)
+{
+    const char *ost_host = rawstor_config_ost_host(config);
+    unsigned int ost_port = rawstor_config_ost_port(config);
+    char ost_path[PATH_MAX];
+    get_ost_path(ost_host, ost_port, ost_path, sizeof(ost_path));
 
+    RawstorUUIDString uuid_string;
     rawstor_uuid_to_string(object_id, &uuid_string);
 
-    snprintf(path, sizeof(path), PREFIX "/rawstor-%s.spec", uuid_string);
+    int rval;
+    char path[PATH_MAX];
+    get_object_spec_path(ost_path, uuid_string, path, sizeof(path));
     rval = unlink(path);
     if (rval == -1) {
         return -errno;
     }
 
-    snprintf(path, sizeof(path), PREFIX "/rawstor-%s.dat", uuid_string);
+    get_object_dat_path(ost_path, uuid_string, path, sizeof(path));
     rval = unlink(path);
     if (rval == -1) {
         return -errno;
@@ -146,10 +194,16 @@ int rawstor_object_delete(const RawstorUUID *object_id) {
 
 
 int rawstor_object_open(
-    const RawstorUUID *object_id, RawstorObject **object)
+    const RawstorConfig *config,
+    const RawstorUUID *object_id,
+    RawstorObject **object)
 {
-    RawstorUUIDString uuid_string;
+    const char *ost_host = rawstor_config_ost_host(config);
+    unsigned int ost_port = rawstor_config_ost_port(config);
+    char ost_path[PATH_MAX];
+    get_ost_path(ost_host, ost_port, ost_path, sizeof(ost_path));
 
+    RawstorUUIDString uuid_string;
     rawstor_uuid_to_string(object_id, &uuid_string);
 
     RawstorObject *ret = malloc(sizeof(RawstorObject));
@@ -165,8 +219,8 @@ int rawstor_object_open(
         return -errno;
     }
 
-    char path[1024];
-    snprintf(path, sizeof(path), PREFIX "/rawstor-%s.dat", uuid_string);
+    char path[PATH_MAX];
+    get_object_dat_path(ost_path, uuid_string, path, sizeof(path));
     ret->fd = open(path, O_RDWR | O_NONBLOCK);
     if (ret->fd == -1) {
         int errsv = errno;
@@ -193,12 +247,21 @@ int rawstor_object_close(RawstorObject *object) {
 }
 
 
-int rawstor_object_spec(const RawstorUUID *object_id, RawstorObjectSpec *spec) {
-    char path[1024];
+int rawstor_object_spec(
+    const RawstorConfig *config,
+    const RawstorUUID *object_id,
+    RawstorObjectSpec *spec)
+{
+    const char *ost_host = rawstor_config_ost_host(config);
+    unsigned int ost_port = rawstor_config_ost_port(config);
+    char ost_path[PATH_MAX];
+    get_ost_path(ost_host, ost_port, ost_path, sizeof(ost_path));
+
     RawstorUUIDString uuid_string;
     rawstor_uuid_to_string(object_id, &uuid_string);
 
-    snprintf(path, sizeof(path), PREFIX "/rawstor-%s.spec", uuid_string);
+    char path[PATH_MAX];
+    get_object_spec_path(ost_path, uuid_string, path, sizeof(path));
     int fd = open(path, O_RDONLY);
     if (fd == -1) {
         return -errno;

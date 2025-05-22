@@ -268,7 +268,7 @@ int rawstor_cli_testio(
     }
 
     RawstorObject *object;
-    if (rawstor_object_open(object_id, &object)) {
+    if (rawstor_object_open(NULL, object_id, &object)) {
         perror("rawstor_object_open() failed");
         return EXIT_FAILURE;
     }

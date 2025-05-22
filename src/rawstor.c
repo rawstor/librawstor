@@ -102,6 +102,22 @@ const RawstorConfig* rawstor_config(void) {
 }
 
 
+const char* rawstor_config_ost_host(const RawstorConfig *config) {
+    if (config != NULL && config->ost_host != NULL) {
+        return config->ost_host;
+    }
+    return _rawstor_config.ost_host;
+}
+
+
+unsigned int rawstor_config_ost_port(const RawstorConfig *config) {
+    if (config != NULL && config->ost_port != 0) {
+        return config->ost_port;
+    }
+    return _rawstor_config.ost_port;
+}
+
+
 RawstorIOEvent* rawstor_wait_event(void) {
     return rawstor_io_wait_event(_rawstor_io);
 }
