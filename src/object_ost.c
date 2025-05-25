@@ -224,7 +224,7 @@ static int ost_connect(
         return -errno;
     }
 
-    rawstor_info("Connected to the server\n");
+    rawstor_info("Connected to the server %s:%u\n", ost_host, ost_port);
 
     return fd;
 }
