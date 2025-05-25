@@ -9,8 +9,7 @@ librawstor_ladir = $(includedir)
 
 librawstor_la_HEADERS = $(top_srcdir)/include/rawstor.h
 
-librawstor_la_SOURCES = hash.c \
-                        iovec_routines.c \
+librawstor_la_SOURCES = iovec_routines.c \
                         list.c \
                         mempool.c \
                         rawstor.c \
@@ -22,7 +21,8 @@ librawstor_la_LIBADD =
 
 if ENABLE_OST
     AM_CFLAGS += $(LIBXXHASH_CFLAGS)
-    librawstor_la_SOURCES += object_ost.c
+    librawstor_la_SOURCES += hash.c \
+                             object_ost.c
     librawstor_la_LIBADD += $(LIBXXHASH_LIBS)
 else
     librawstor_la_SOURCES += object_file.c
