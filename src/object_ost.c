@@ -163,7 +163,11 @@ static int socket_add_flag(int fd, int flag) {
 }
 
 
-static int ost_connect(const char *host, unsigned int port) {
+static int ost_connect(
+    const char *ost_host, unsigned int ost_port,
+    unsigned int so_sndtimeo,
+    unsigned int so_rcvtimeo)
+{
     struct sockaddr_in servaddr;
     // socket create and verification
     int fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -188,11 +192,33 @@ static int ost_connect(const char *host, unsigned int port) {
     rawstor_info("Set new socket buffer size: %u\n", socketbuf_size);
     */
 
+    if (so_sndtimeo != 0) {
+        struct timeval timeo = {
+            .tv_sec = so_sndtimeo / 1000,
+            .tv_usec = (so_sndtimeo % 1000) * 1000,
+        };
+        if (setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeo, sizeof(timeo))) {
+            return -errno;
+        }
+        rawstor_info("SO_SNDTIMEO: %u\n", so_sndtimeo);
+    }
+
+    if (so_rcvtimeo != 0) {
+        struct timeval timeo = {
+            .tv_sec = so_rcvtimeo / 1000,
+            .tv_usec = (so_rcvtimeo % 1000) * 1000,
+        };
+        if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeo, sizeof(timeo))) {
+            return -errno;
+        }
+        rawstor_info("SO_RCVTIMEO: %u\n", so_rcvtimeo);
+    }
+
     bzero(&servaddr, sizeof(servaddr));
     // assign IP, PORT
     servaddr.sin_family = AF_INET;
-    servaddr.sin_addr.s_addr = inet_addr(host);
-    servaddr.sin_port = htons(port);
+    servaddr.sin_addr.s_addr = inet_addr(ost_host);
+    servaddr.sin_port = htons(ost_port);
 
     if (connect(fd, (struct sockaddr*)&servaddr, sizeof(servaddr))) {
         return -errno;
@@ -490,7 +516,11 @@ int rawstor_object_open(
         ops[i].cid = i + 1;
     }
 
-    ret->fd = ost_connect(config->ost_host, config->ost_port);
+    ret->fd = ost_connect(
+        config->ost_host,
+        config->ost_port,
+        config->so_sndtimeo,
+        config->so_rcvtimeo);
     if (ret->fd < 0) {
         int errsv = -ret->fd;
         rawstor_mempool_delete(ret->operations_pool);

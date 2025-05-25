@@ -92,6 +92,8 @@ int rawstor_fd_pwritev(
 typedef struct {
     char *ost_host;
     unsigned int ost_port;
+    unsigned int ost_so_sndtimeo;
+    unsigned int ost_so_rcvtimeo;
 } RawstorConfig;
 
 

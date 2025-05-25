@@ -18,10 +18,7 @@
 #define QUEUE_DEPTH 256
 
 
-static RawstorConfig _rawstor_config = {
-    .ost_host = NULL,
-    .ost_port = 0,
-};
+static RawstorConfig _rawstor_config = {};
 
 static RawstorIO *_rawstor_io = NULL;
 
@@ -49,7 +46,16 @@ static int config_init(RawstorConfig *config, const RawstorConfig *reference) {
         return -errno;
     }
 
-    config->ost_port = reference != NULL ? reference->ost_port : 8080;
+    config->ost_port = (reference != NULL && reference->ost_port != 0) ?
+        reference->ost_port : 8080;
+
+    config->ost_so_sndtimeo =
+        (reference != NULL && reference->ost_so_sndtimeo != 0) ?
+        reference->ost_so_sndtimeo : 5000;
+
+    config->ost_so_rcvtimeo =
+        (reference != NULL && reference->ost_so_rcvtimeo != 0) ?
+        reference->ost_so_rcvtimeo : 5000;
 
     return 0;
 }
