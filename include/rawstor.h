@@ -90,20 +90,16 @@ int rawstor_fd_pwritev(
  */
 
 typedef struct {
-    char *ost_host;
-    unsigned int ost_port;
-    unsigned int ost_so_sndtimeo;
-    unsigned int ost_so_rcvtimeo;
-} RawstorConfig;
+    char *host;
+    unsigned int port;
+    unsigned int so_sndtimeo;
+    unsigned int so_rcvtimeo;
+} RawstorOptsOST;
 
 
-int rawstor_initialize(const RawstorConfig *config);
+int rawstor_initialize(const RawstorOptsOST *opts_ost);
 
 void rawstor_terminate(void);
-
-const char* rawstor_config_ost_host(const RawstorConfig *config);
-
-unsigned int rawstor_config_ost_port(const RawstorConfig *config);
 
 RawstorIOEvent* rawstor_wait_event(void);
 
@@ -129,23 +125,23 @@ typedef int(RawstorCallback)(
 
 
 int rawstor_object_create(
-    const RawstorConfig *config,
+    const RawstorOptsOST *opts_ost,
     const RawstorObjectSpec *spec,
     RawstorUUID *object_id);
 
 int rawstor_object_delete(
-    const RawstorConfig *config,
+    const RawstorOptsOST *opts_ost,
     const RawstorUUID *object_id);
 
 int rawstor_object_open(
-    const RawstorConfig *config,
+    const RawstorOptsOST *opts_ost,
     const RawstorUUID *object_id,
     RawstorObject **object);
 
 int rawstor_object_close(RawstorObject *object);
 
 int rawstor_object_spec(
-    const RawstorConfig *config,
+    const RawstorOptsOST *opts_ost,
     const RawstorUUID *object_id,
     RawstorObjectSpec *spec);
 

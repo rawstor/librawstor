@@ -5,6 +5,7 @@
 #include "gcc.h"
 #include "io.h"
 #include "mempool.h"
+#include "opts.h"
 #include "uuid.h"
 
 #include <sys/stat.h>
@@ -95,12 +96,12 @@ static void get_object_dat_path(
 
 
 int rawstor_object_create(
-    const RawstorConfig *config,
+    const RawstorOptsOST *opts_ost,
     const RawstorObjectSpec *spec,
     RawstorUUID *object_id)
 {
-    const char *ost_host = rawstor_config_ost_host(config);
-    unsigned int ost_port = rawstor_config_ost_port(config);
+    const char *ost_host = rawstor_opts_ost_host(opts_ost);
+    unsigned int ost_port = rawstor_opts_ost_port(opts_ost);
     char ost_path[PATH_MAX];
     get_ost_path(ost_host, ost_port, ost_path, sizeof(ost_path));
     if (mkdir(ost_path, 0755)) {
@@ -165,11 +166,11 @@ int rawstor_object_create(
 
 
 int rawstor_object_delete(
-    const RawstorConfig *config,
+    const RawstorOptsOST *opts_ost,
     const RawstorUUID *object_id)
 {
-    const char *ost_host = rawstor_config_ost_host(config);
-    unsigned int ost_port = rawstor_config_ost_port(config);
+    const char *ost_host = rawstor_opts_ost_host(opts_ost);
+    unsigned int ost_port = rawstor_opts_ost_port(opts_ost);
     char ost_path[PATH_MAX];
     get_ost_path(ost_host, ost_port, ost_path, sizeof(ost_path));
 
@@ -194,12 +195,12 @@ int rawstor_object_delete(
 
 
 int rawstor_object_open(
-    const RawstorConfig *config,
+    const RawstorOptsOST *opts_ost,
     const RawstorUUID *object_id,
     RawstorObject **object)
 {
-    const char *ost_host = rawstor_config_ost_host(config);
-    unsigned int ost_port = rawstor_config_ost_port(config);
+    const char *ost_host = rawstor_opts_ost_host(opts_ost);
+    unsigned int ost_port = rawstor_opts_ost_port(opts_ost);
     char ost_path[PATH_MAX];
     get_ost_path(ost_host, ost_port, ost_path, sizeof(ost_path));
 
@@ -248,12 +249,12 @@ int rawstor_object_close(RawstorObject *object) {
 
 
 int rawstor_object_spec(
-    const RawstorConfig *config,
+    const RawstorOptsOST *opts_ost,
     const RawstorUUID *object_id,
     RawstorObjectSpec *spec)
 {
-    const char *ost_host = rawstor_config_ost_host(config);
-    unsigned int ost_port = rawstor_config_ost_port(config);
+    const char *ost_host = rawstor_opts_ost_host(opts_ost);
+    unsigned int ost_port = rawstor_opts_ost_port(opts_ost);
     char ost_path[PATH_MAX];
     get_ost_path(ost_host, ost_port, ost_path, sizeof(ost_path));
 

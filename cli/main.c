@@ -44,7 +44,7 @@ static void command_create_usage() {
 };
 
 
-static int command_create(const RawstorConfig *config, int argc, char **argv) {
+static int command_create(const RawstorOptsOST *opts_ost, int argc, char **argv) {
     const char *optstring = "hs:";
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
@@ -91,7 +91,7 @@ static int command_create(const RawstorConfig *config, int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
-    return rawstor_cli_create(config, size);
+    return rawstor_cli_create(opts_ost, size);
 }
 
 
@@ -117,7 +117,7 @@ static void command_testio_usage() {
 };
 
 
-static int command_testio(const RawstorConfig *config, int argc, char **argv) {
+static int command_testio(const RawstorOptsOST *opts_ost, int argc, char **argv) {
     const char *optstring = "b:d:ho:s:v";
     struct option longopts[] = {
         {"block-size", required_argument, NULL, 'b'},
@@ -222,7 +222,7 @@ static int command_testio(const RawstorConfig *config, int argc, char **argv) {
     }
 
     return rawstor_cli_testio(
-        config,
+        opts_ost,
         &object_id,
         block_size, count, io_depth,
         vector_mode);
@@ -277,9 +277,9 @@ int main(int argc, char **argv) {
         }
     }
 
-    const RawstorConfig config = {
-        .ost_host = ost_host != NULL ? ost_host : "127.0.0.1",
-        .ost_port = ost_port_arg != NULL ? ost_port : 8080,
+    const RawstorOptsOST config = {
+        .host = ost_host,
+        .port = ost_port,
     };
 
     char *command = argv[optind];

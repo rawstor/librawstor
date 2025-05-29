@@ -3,6 +3,7 @@
 #include "io.h"
 #include "logging.h"
 #include "object.h"
+#include "opts.h"
 
 #include <sys/types.h>
 #include <sys/uio.h>
@@ -18,55 +19,10 @@
 #define QUEUE_DEPTH 256
 
 
-static RawstorConfig _rawstor_config = {};
-
 static RawstorIO *_rawstor_io = NULL;
 
 
-static char* config_string(const char *value, const char *default_value) {
-    const char *src = value != NULL ? value : default_value;
-    assert(src != NULL);
-
-    size_t size = strlen(src) + 1;
-    char *dst = malloc(size);
-    if (dst == NULL) {
-        return NULL;
-    }
-
-    memcpy(dst, src, size);
-
-    return dst;
-}
-
-
-static int config_init(RawstorConfig *config, const RawstorConfig *reference) {
-    config->ost_host = config_string(
-        reference != NULL ? reference->ost_host : NULL, "127.0.0.1");
-    if (config->ost_host == NULL) {
-        return -errno;
-    }
-
-    config->ost_port = (reference != NULL && reference->ost_port != 0) ?
-        reference->ost_port : 8080;
-
-    config->ost_so_sndtimeo =
-        (reference != NULL && reference->ost_so_sndtimeo != 0) ?
-        reference->ost_so_sndtimeo : 5000;
-
-    config->ost_so_rcvtimeo =
-        (reference != NULL && reference->ost_so_rcvtimeo != 0) ?
-        reference->ost_so_rcvtimeo : 5000;
-
-    return 0;
-}
-
-
-static void config_release(RawstorConfig *config) {
-    free(config->ost_host);
-}
-
-
-int rawstor_initialize(const RawstorConfig *config) {
+int rawstor_initialize(const RawstorOptsOST *opts_ost) {
     assert(_rawstor_io == NULL);
 
     rawstor_info(
@@ -77,13 +33,13 @@ int rawstor_initialize(const RawstorConfig *config) {
         "Rawstor compiled with object backend: %s\n",
         rawstor_object_backend_name);
 
-    if (config_init(&_rawstor_config, config)) {
+    if (rawstor_opts_initialize(opts_ost)) {
         return -errno;
     }
 
     _rawstor_io = rawstor_io_create(QUEUE_DEPTH);
     if (_rawstor_io == NULL) {
-        config_release(&_rawstor_config);
+        rawstor_opts_terminate();
         return -errno;
     };
 
@@ -93,28 +49,7 @@ int rawstor_initialize(const RawstorConfig *config) {
 
 void rawstor_terminate(void) {
     rawstor_io_delete(_rawstor_io);
-    config_release(&_rawstor_config);
-}
-
-
-const RawstorConfig* rawstor_config(void) {
-    return &_rawstor_config;
-}
-
-
-const char* rawstor_config_ost_host(const RawstorConfig *config) {
-    if (config != NULL && config->ost_host != NULL) {
-        return config->ost_host;
-    }
-    return _rawstor_config.ost_host;
-}
-
-
-unsigned int rawstor_config_ost_port(const RawstorConfig *config) {
-    if (config != NULL && config->ost_port != 0) {
-        return config->ost_port;
-    }
-    return _rawstor_config.ost_port;
+    rawstor_opts_terminate();
 }
 
 

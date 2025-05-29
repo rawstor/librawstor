@@ -3,6 +3,7 @@
 #include "gcc.h"
 #include "io.h"
 #include "logging.h"
+#include "opts.h"
 #include "ost_protocol.h"
 #include "mempool.h"
 #include "uuid.h"
@@ -163,11 +164,7 @@ static int socket_add_flag(int fd, int flag) {
 }
 
 
-static int ost_connect(
-    const char *ost_host, unsigned int ost_port,
-    unsigned int so_sndtimeo,
-    unsigned int so_rcvtimeo)
-{
+static int ost_connect(const RawstorOptsOST *opts_ost) {
     struct sockaddr_in servaddr;
     // socket create and verification
     int fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -192,6 +189,7 @@ static int ost_connect(
     rawstor_info("Set new socket buffer size: %u\n", socketbuf_size);
     */
 
+    unsigned int so_sndtimeo = rawstor_opts_ost_so_sndtimeo(opts_ost);
     if (so_sndtimeo != 0) {
         struct timeval timeo = {
             .tv_sec = so_sndtimeo / 1000,
@@ -203,6 +201,7 @@ static int ost_connect(
         rawstor_info("SO_SNDTIMEO: %u\n", so_sndtimeo);
     }
 
+    unsigned int so_rcvtimeo = rawstor_opts_ost_so_rcvtimeo(opts_ost);
     if (so_rcvtimeo != 0) {
         struct timeval timeo = {
             .tv_sec = so_rcvtimeo / 1000,
@@ -214,17 +213,20 @@ static int ost_connect(
         rawstor_info("SO_RCVTIMEO: %u\n", so_rcvtimeo);
     }
 
+    const char *host = rawstor_opts_ost_host(opts_ost);
+    unsigned int port = rawstor_opts_ost_port(opts_ost);
+
     bzero(&servaddr, sizeof(servaddr));
     // assign IP, PORT
     servaddr.sin_family = AF_INET;
-    servaddr.sin_addr.s_addr = inet_addr(ost_host);
-    servaddr.sin_port = htons(ost_port);
+    servaddr.sin_addr.s_addr = inet_addr(host);
+    servaddr.sin_port = htons(port);
 
     if (connect(fd, (struct sockaddr*)&servaddr, sizeof(servaddr))) {
         return -errno;
     }
 
-    rawstor_info("Connected to the server %s:%u\n", ost_host, ost_port);
+    rawstor_info("Connected to the server %s:%u\n", host, port);
 
     return fd;
 }
@@ -472,7 +474,7 @@ static int response_head_received(RawstorIOEvent *event, void *data) {
 
 
 int rawstor_object_create(
-    const RawstorConfig RAWSTOR_UNUSED *config,
+    const RawstorOptsOST RAWSTOR_UNUSED *opts_ost,
     const RawstorObjectSpec RAWSTOR_UNUSED *spec,
     RawstorUUID *object_id)
 {
@@ -486,7 +488,7 @@ int rawstor_object_create(
 
 
 int rawstor_object_delete(
-    const RawstorConfig RAWSTOR_UNUSED *config,
+    const RawstorOptsOST RAWSTOR_UNUSED *opts_ost,
     const RawstorUUID RAWSTOR_UNUSED *object_id)
 {
     fprintf(stderr, "rawstor_object_delete() not implemented\n");
@@ -497,7 +499,7 @@ int rawstor_object_delete(
 
 
 int rawstor_object_open(
-    const RawstorConfig *config,
+    const RawstorOptsOST *opts_ost,
     const RawstorUUID *object_id,
     RawstorObject **object)
 {
@@ -519,11 +521,7 @@ int rawstor_object_open(
         ops[i].cid = i + 1;
     }
 
-    ret->fd = ost_connect(
-        config->ost_host,
-        config->ost_port,
-        config->so_sndtimeo,
-        config->so_rcvtimeo);
+    ret->fd = ost_connect(opts_ost);
     if (ret->fd < 0) {
         int errsv = -ret->fd;
         rawstor_mempool_delete(ret->operations_pool);
@@ -596,7 +594,7 @@ int rawstor_object_close(RawstorObject *object) {
 
 
 int rawstor_object_spec(
-    const RawstorConfig RAWSTOR_UNUSED *config,
+    const RawstorOptsOST RAWSTOR_UNUSED *opts_ost,
     const RawstorUUID RAWSTOR_UNUSED *object_id,
      RawstorObjectSpec *spec)
 {

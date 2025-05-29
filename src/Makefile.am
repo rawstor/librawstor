@@ -14,6 +14,7 @@ librawstor_la_SOURCES = iovec_routines.c \
                         mempool.c \
                         rawstor.c \
                         ringbuf.c \
+                        opts.c \
                         uuid.c
 
 librawstor_la_LIBADD =
