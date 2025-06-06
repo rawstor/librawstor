@@ -13,16 +13,7 @@ static char* opts_string(const char *value, const char *default_value) {
     const char *src = value != NULL ? value : default_value;
     assert(src != NULL);
 
-    size_t size = strlen(src) + 1;
-
-    char *dst = malloc(size);
-    if (dst == NULL) {
-        return NULL;
-    }
-
-    memcpy(dst, src, size);
-
-    return dst;
+    return strdup(src);
 }
 
 
