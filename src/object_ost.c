@@ -222,11 +222,10 @@ static int ost_connect(const RawstorOptsOST *opts_ost) {
     servaddr.sin_addr.s_addr = inet_addr(host);
     servaddr.sin_port = htons(port);
 
+    rawstor_info("Connecting to %s:%u\n", host, port);
     if (connect(fd, (struct sockaddr*)&servaddr, sizeof(servaddr))) {
         return -errno;
     }
-
-    rawstor_info("Connected to the server %s:%u\n", host, port);
 
     return fd;
 }
