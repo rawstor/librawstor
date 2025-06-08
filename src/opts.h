@@ -10,6 +10,7 @@
 //     unsigned int port;
 //     unsigned int so_sndtimeo;
 //     unsigned int so_rcvtimeo;
+//     unsigned int tcp_user_timeout;
 // } RawstorOptsOST;
 
 
@@ -24,6 +25,8 @@ unsigned int rawstor_opts_ost_port(const RawstorOptsOST *opts_ost);
 unsigned int rawstor_opts_ost_so_sndtimeo(const RawstorOptsOST *opts_ost);
 
 unsigned int rawstor_opts_ost_so_rcvtimeo(const RawstorOptsOST *opts_ost);
+
+unsigned int rawstor_opts_ost_tcp_user_timeout(const RawstorOptsOST *opts_ost);
 
 
 #endif  // RAWSTOR_OPTS_H

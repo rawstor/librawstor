@@ -94,6 +94,7 @@ typedef struct {
     unsigned int port;
     unsigned int so_sndtimeo;
     unsigned int so_rcvtimeo;
+    unsigned int tcp_user_timeout;
 } RawstorOptsOST;
 
 

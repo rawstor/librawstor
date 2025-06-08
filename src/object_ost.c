@@ -11,6 +11,8 @@
 
 #include <arpa/inet.h>
 
+#include <netinet/tcp.h>
+
 #include <errno.h>
 #include <fcntl.h>
 #include <stddef.h>
@@ -198,7 +200,7 @@ static int ost_connect(const RawstorOptsOST *opts_ost) {
         if (setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeo, sizeof(timeo))) {
             return -errno;
         }
-        rawstor_info("SO_SNDTIMEO: %u\n", so_sndtimeo);
+        rawstor_info("OST SO_SNDTIMEO: %u\n", so_sndtimeo);
     }
 
     unsigned int so_rcvtimeo = rawstor_opts_ost_so_rcvtimeo(opts_ost);
@@ -210,7 +212,31 @@ static int ost_connect(const RawstorOptsOST *opts_ost) {
         if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeo, sizeof(timeo))) {
             return -errno;
         }
-        rawstor_info("SO_RCVTIMEO: %u\n", so_rcvtimeo);
+        rawstor_info("OST SO_RCVTIMEO: %u\n", so_rcvtimeo);
+    }
+
+    uint32_t tcp_user_timeout = rawstor_opts_ost_tcp_user_timeout(opts_ost);
+    if (tcp_user_timeout != 0) {
+        #if defined(RAWSTOR_ON_LINUX)
+            if (setsockopt(
+                fd, IPPROTO_TCP, TCP_USER_TIMEOUT,
+                &tcp_user_timeout, sizeof(tcp_user_timeout)))
+            {
+                return -errno;
+            }
+            rawstor_info("OST TCP_USER_TIMEOUT: %u\n", tcp_user_timeout);
+        #elif defined(RAWSTOR_ON_MACOS)
+            tcp_user_timeout /= 1000;
+            if (setsockopt(
+                fd, IPPROTO_TCP, TCP_CONNECTIONTIMEOUT,
+                &tcp_user_timeout, sizeof(tcp_user_timeout)))
+            {
+                return -errno;
+            }
+            rawstor_info("OST TCP_CONNECTIONTIMEOUT: %u\n", tcp_user_timeout);
+        #else
+            #error "Unexpected platform"
+        #endif
     }
 
     const char *host = rawstor_opts_ost_host(opts_ost);

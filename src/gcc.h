@@ -12,4 +12,13 @@
 #define RAWSTOR_PACKED __attribute__((packed))
 
 
+#ifdef __APPLE__
+#define RAWSTOR_ON_MACOS
+#endif
+
+#ifdef __linux__
+#define RAWSTOR_ON_LINUX
+#endif
+
+
 #endif // RAWSTOR_GCC_H
