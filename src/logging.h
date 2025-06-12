@@ -14,6 +14,7 @@
 
 
 #define rawstor_log(level, ...) do { \
+    rawstor_trace_event_dump(); \
     printf("%s %s:%d ", level, __FILE__, __LINE__); \
     printf(__VA_ARGS__); \
 } while(0)
@@ -24,6 +25,8 @@
     rawstor_log("TRACE", "%s(): ", __FUNCTION__); \
     printf(__VA_ARGS__); \
 } while (0)
+
+#define RAWSTOR_TRACE_EVENTS
 #else
 #define rawstor_trace(...) while (0) { rawstor_log("TRACE", __VA_ARGS__); }
 #endif
@@ -54,6 +57,19 @@
 #define rawstor_error(...) rawstor_log("ERROR", __VA_ARGS__)
 #else
 #define rawstor_error(...) while (0) { rawstor_log("ERROR", __VA_ARGS__); }
+#endif
+
+
+#ifdef RAWSTOR_TRACE_EVENTS
+void* rawstor_trace_event_begin(const char *format, ...);
+
+void rawstor_trace_event_end(void* event, const char *format, ...);
+
+void rawstor_trace_event_message(void* event, const char *format, ...);
+
+void rawstor_trace_event_dump(void);
+#else
+#define rawstor_trace_event_dump() while (0) { }
 #endif
 
 

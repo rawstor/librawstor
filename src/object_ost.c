@@ -641,7 +641,7 @@ int rawstor_object_pread(
     RawstorCallback *cb, void *data)
 {
     rawstor_debug(
-        "%s(): offset: = %jd, size = %zu\n",
+        "%s(): offset = %jd, size = %zu\n",
         __FUNCTION__, (intmax_t)offset, size);
 
     if (rawstor_mempool_available(object->operations_pool) == 0) {

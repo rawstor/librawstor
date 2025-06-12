@@ -38,6 +38,10 @@ struct RawstorIOEvent {
     int error;
 
     void *data;
+
+#ifdef RAWSTOR_TRACE_EVENTS
+    void *trace_event;
+#endif
 };
 
 
@@ -54,6 +58,10 @@ const char* rawstor_io_engine_name = "poll";
 static ssize_t io_event_process_readv(RawstorIOEvent *event) {
     ssize_t ret = readv(
         event->session->fd, event->iov_at, event->niov);
+#ifdef RAWSTOR_TRACE_EVENTS
+    rawstor_trace_event_message(
+        event->trace_event, "readv() rval = %zd\n", ret);
+#endif
     if (ret < 0) {
         event->error = errno;
     } else {
@@ -66,6 +74,10 @@ static ssize_t io_event_process_readv(RawstorIOEvent *event) {
 static ssize_t io_event_process_preadv(RawstorIOEvent *event) {
     ssize_t ret = preadv(
         event->session->fd, event->iov_at, event->niov, event->offset);
+#ifdef RAWSTOR_TRACE_EVENTS
+    rawstor_trace_event_message(
+        event->trace_event, "preadv() rval = %zd\n", ret);
+#endif
     if (ret < 0) {
         event->error = errno;
     } else {
@@ -78,6 +90,10 @@ static ssize_t io_event_process_preadv(RawstorIOEvent *event) {
 static ssize_t io_event_process_writev(RawstorIOEvent *event) {
     ssize_t ret = writev(
         event->session->fd, event->iov_at, event->niov);
+#ifdef RAWSTOR_TRACE_EVENTS
+    rawstor_trace_event_message(
+        event->trace_event, "writev() rval = %zd\n", ret);
+#endif
     if (ret < 0) {
         event->error = errno;
     } else {
@@ -90,6 +106,10 @@ static ssize_t io_event_process_writev(RawstorIOEvent *event) {
 static ssize_t io_event_process_pwritev(RawstorIOEvent *event) {
     ssize_t ret = pwritev(
         event->session->fd, event->iov_at, event->niov, event->offset);
+#ifdef RAWSTOR_TRACE_EVENTS
+    rawstor_trace_event_message(
+        event->trace_event, "pwritev() rval = %zd\n", ret);
+#endif
     if (ret < 0) {
         event->error = errno;
     } else {
@@ -204,6 +224,10 @@ int rawstor_io_read(
         .result = 0,
         // .error
         .data = data,
+#ifdef RAWSTOR_TRACE_EVENTS
+        .trace_event = rawstor_trace_event_begin(
+            "readv(%d, %zu)\n", fd, size),
+#endif
     };
 
     return 0;
@@ -254,6 +278,10 @@ int rawstor_io_pread(
         // .result
         // .error
         .data = data,
+#ifdef RAWSTOR_TRACE_EVENTS
+        .trace_event = rawstor_trace_event_begin(
+            "preadv(%d, %zu)\n", fd, size),
+#endif
     };
 
     return 0;
@@ -303,6 +331,10 @@ int rawstor_io_readv(
         // .result
         // .error
         .data = data,
+#ifdef RAWSTOR_TRACE_EVENTS
+        .trace_event = rawstor_trace_event_begin(
+            "readv(%d, %zu)\n", fd, size),
+#endif
     };
 
     return 0;
@@ -352,6 +384,10 @@ int rawstor_io_preadv(
         // .result
         // .error
         .data = data,
+#ifdef RAWSTOR_TRACE_EVENTS
+        .trace_event = rawstor_trace_event_begin(
+            "preadv(%d, %zu)\n", fd, size),
+#endif
     };
 
     return 0;
@@ -402,6 +438,10 @@ int rawstor_io_write(
         // .result
         // .error
         .data = data,
+#ifdef RAWSTOR_TRACE_EVENTS
+        .trace_event = rawstor_trace_event_begin(
+            "writev(%d, %zu)\n", fd, size),
+#endif
     };
 
     return 0;
@@ -452,6 +492,10 @@ int rawstor_io_pwrite(
         // .result
         // .error
         .data = data,
+#ifdef RAWSTOR_TRACE_EVENTS
+        .trace_event = rawstor_trace_event_begin(
+            "pwritev(%d, %zu)\n", fd, size),
+#endif
     };
 
     return 0;
@@ -501,6 +545,10 @@ int rawstor_io_writev(
         // .result
         // .error
         .data = data,
+#ifdef RAWSTOR_TRACE_EVENTS
+        .trace_event = rawstor_trace_event_begin(
+            "writev(%d, %zu)\n", fd, size),
+#endif
     };
 
     return 0;
@@ -550,6 +598,10 @@ int rawstor_io_pwritev(
         // .result
         // .error
         .data = data,
+#ifdef RAWSTOR_TRACE_EVENTS
+        .trace_event = rawstor_trace_event_begin(
+            "pwritev(%d, %zu)\n", fd, size),
+#endif
     };
 
     return 0;
@@ -615,10 +667,24 @@ RawstorIOEvent* rawstor_io_wait_event_timeout(RawstorIO *io, int timeout) {
 
             assert(rawstor_ringbuf_empty(ops) == 0);
             RawstorIOEvent *event = rawstor_ringbuf_tail(ops);
+#ifdef RAWSTOR_TRACE_EVENTS
+            rawstor_trace_event_message(
+                event->trace_event, "process()\n");
+#endif
             ssize_t res = event->process(event);
+#ifdef RAWSTOR_TRACE_EVENTS
+            rawstor_trace_event_message(
+                event->trace_event, "process(): res = %zd\n", res);
+#endif
             if (res > 0) {
                 if ((size_t)res != event->size) {
+#ifdef RAWSTOR_TRACE_EVENTS
+                    rawstor_trace_event_message(
+                        event->trace_event,
+                        "partial %zd of %zu\n", res, event->size);
+#else
                     rawstor_debug("partial %zd of %zu\n", res, event->size);
+#endif
                 }
                 event->offset += res;
                 iovec_shift(&event->iov_at, &event->niov, res);
@@ -636,6 +702,9 @@ RawstorIOEvent* rawstor_io_wait_event_timeout(RawstorIO *io, int timeout) {
 
 
 void rawstor_io_release_event(RawstorIO *io, RawstorIOEvent *event) {
+#ifdef RAWSTOR_TRACE_EVENTS
+    rawstor_trace_event_end(event->trace_event, "release_event()\n");
+#endif
     RawstorIOSession *session = event->session;
     RawstorRingBuf *ops = NULL;
     if (event == rawstor_ringbuf_tail(session->read_ops)) {
@@ -678,5 +747,13 @@ int rawstor_io_event_error(RawstorIOEvent *event) {
 
 
 int rawstor_io_event_dispatch(RawstorIOEvent *event) {
-    return event->callback(event, event->data);
+#ifdef RAWSTOR_TRACE_EVENTS
+    rawstor_trace_event_message(event->trace_event, "dispatch()\n");
+#endif
+    int ret = event->callback(event, event->data);
+#ifdef RAWSTOR_TRACE_EVENTS
+    rawstor_trace_event_message(
+        event->trace_event, "dispatch(): rval = %d\n", ret);
+#endif
+    return ret;
 }
