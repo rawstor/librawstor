@@ -657,7 +657,15 @@ RawstorIOEvent* rawstor_io_wait_event_timeout(RawstorIO *io, int timeout) {
             struct pollfd *fd = &fds[i];
             RawstorRingBuf *ops = NULL;
 
-            if (fd->revents & POLLIN) {
+            if (fd->revents & POLLHUP) {
+                if (!rawstor_ringbuf_empty(it->read_ops)) {
+                    ops = it->read_ops;
+                } else if (!rawstor_ringbuf_empty(it->write_ops)) {
+                    ops = it->write_ops;
+                } else {
+                    continue;
+                }
+            } else if (fd->revents & POLLIN) {
                 ops = it->read_ops;
             } else if (fd->revents & POLLOUT) {
                 ops = it->write_ops;
@@ -697,6 +705,8 @@ RawstorIOEvent* rawstor_io_wait_event_timeout(RawstorIO *io, int timeout) {
                 return event;
             }
         }
+
+        free(fds);
     }
 }
 
