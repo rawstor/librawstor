@@ -19,6 +19,24 @@ AC_ARG_ENABLE([tests], [AS_HELP_STRING([--disable-tests],
 AM_CONDITIONAL([ENABLE_TESTS], [test "x$enable_tests" == "xyes"])
 
 
+AC_ARG_ENABLE([debug], [AS_HELP_STRING([--enable-debug],
+    [enable DEBUG logging])],
+    [enable_debug=$enableval],
+    [enable_debug="no"])
+AS_IF([test "x$enable_debug" == "xyes"], [
+    AC_DEFINE([RAWSTOR_CONFIG_ENABLE_DEBUG], 1, [Enable DEBUG logging])
+])
+
+
+AC_ARG_ENABLE([trace], [AS_HELP_STRING([--enable-trace],
+    [enable TRACE logging])],
+    [enable_trace=$enableval],
+    [enable_trace="no"])
+AS_IF([test "x$enable_trace" == "xyes"], [
+    AC_DEFINE([RAWSTOR_CONFIG_ENABLE_TRACE], 1, [Enable TRACE logging])
+])
+
+
 AC_ARG_ENABLE([ost], [AS_HELP_STRING([--disable-ost],
     [disable OST integration])],
     [enable_ost=$enableval],
@@ -30,6 +48,7 @@ AS_IF([test "x$enable_ost" == "xyes"], [
 ], [
     AC_SUBST([maybe_libxxhash], [""])
 ])
+
 
 AC_ARG_WITH([liburing], [AS_HELP_STRING([--without-liburing],
     [disable support for liburing])],
