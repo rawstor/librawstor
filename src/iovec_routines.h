@@ -6,7 +6,7 @@
 #include <stddef.h>
 
 
-void iovec_shift(struct iovec **iov, unsigned int *niov, size_t shift);
+void rawstor_iovec_shift(struct iovec **iov, unsigned int *niov, size_t shift);
 
 
 #endif // RAWSTOR_IOVEC_ROUTINES_H

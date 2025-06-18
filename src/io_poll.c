@@ -695,7 +695,7 @@ RawstorIOEvent* rawstor_io_wait_event_timeout(RawstorIO *io, int timeout) {
 #endif
                 }
                 event->offset += res;
-                iovec_shift(&event->iov_at, &event->niov, res);
+                rawstor_iovec_shift(&event->iov_at, &event->niov, res);
                 if (event->niov == 0) {
                     free(fds);
                     return event;
