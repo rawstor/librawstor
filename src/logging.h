@@ -3,6 +3,7 @@
 
 
 #include "config.h"
+#include "threading.h"
 
 #include <unistd.h>
 
@@ -24,11 +25,20 @@
 #endif
 
 
+extern RawstorMutex *rawstor_logging_mutex;
+
+
+void rawstor_logging_initialize(void);
+
+void rawstor_logging_terminate(void);
+
 
 #define rawstor_log(level, ...) do { \
+    rawstor_mutex_lock(rawstor_logging_mutex); \
     rawstor_trace_event_dump(); \
     dprintf(STDERR_FILENO, "%s %s:%d ", level, __FILE__, __LINE__); \
     dprintf(STDERR_FILENO, __VA_ARGS__); \
+    rawstor_mutex_unlock(rawstor_logging_mutex); \
 } while(0)
 
 
@@ -81,7 +91,7 @@ void rawstor_trace_event_message(void* event, const char *format, ...);
 
 void rawstor_trace_event_dump(void);
 #else
-#define rawstor_trace_event_dump() while (0) { }
+#define rawstor_trace_event_dump()
 #endif
 
 

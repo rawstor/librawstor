@@ -25,6 +25,8 @@ static RawstorIO *_rawstor_io = NULL;
 int rawstor_initialize(const RawstorOptsOST *opts_ost) {
     assert(_rawstor_io == NULL);
 
+    rawstor_logging_initialize();
+
     rawstor_info(
         "Rawstor compiled with IO engine: %s\n",
         rawstor_io_engine_name);
@@ -50,6 +52,7 @@ int rawstor_initialize(const RawstorOptsOST *opts_ost) {
 void rawstor_terminate(void) {
     rawstor_io_delete(_rawstor_io);
     rawstor_opts_terminate();
+    rawstor_logging_terminate();
 }
 
 
