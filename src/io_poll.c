@@ -5,6 +5,7 @@
 #include "logging.h"
 #include "ringbuf.h"
 #include "socket_routines.h"
+#include "threading.h"
 
 #include <poll.h>
 
@@ -25,6 +26,7 @@ typedef struct RawstorIOSession {
 
 struct RawstorIOEvent {
     RawstorIOSession *session;
+    RawstorRingBuf *ops;
 
     struct iovec *iov_origin;
     struct iovec *iov_at;
@@ -50,6 +52,7 @@ struct RawstorIO {
     unsigned int depth;
 
     RawstorList *sessions;
+    RawstorMutex *mutex;
 };
 
 
@@ -195,6 +198,7 @@ static inline RawstorIOEvent* io_create_read_event(
 
     *event = (RawstorIOEvent) {
         .session = session,
+        .ops = session->read_ops,
         .iov_origin = iov,
         .iov_at = iov,
         .niov = niov,
@@ -239,6 +243,7 @@ static inline RawstorIOEvent* io_create_write_event(
 
     *event = (RawstorIOEvent) {
         .session = session,
+        .ops = session->write_ops,
         .iov_origin = iov,
         .iov_at = iov,
         .niov = niov,
@@ -275,6 +280,13 @@ RawstorIO* rawstor_io_create(unsigned int depth) {
         goto err_sessions;
     }
 
+    io->mutex = rawstor_mutex_create();
+    if (io->mutex == NULL) {
+        rawstor_list_delete(io->sessions);
+        free(io);
+        return NULL;
+    }
+
     return io;
 
 err_sessions:
@@ -288,6 +300,7 @@ void rawstor_io_delete(RawstorIO *io) {
     /**
      * TODO: free session[i] with ops.
      */
+    rawstor_mutex_delete(io->mutex);
     rawstor_list_delete(io->sessions);
     free(io);
 }
@@ -307,6 +320,8 @@ int rawstor_io_read(
     int fd, void *buf, size_t size,
     RawstorIOCallback *cb, void *data)
 {
+    rawstor_mutex_lock(io->mutex);
+
     /**
      * TODO: use event_iov from some buffer preallocated in io struct.
      */
@@ -331,11 +346,13 @@ int rawstor_io_read(
         "readv(%d, %zu)\n", fd, size);
 #endif
 
+    rawstor_mutex_unlock(io->mutex);
     return 0;
 
 err_event:
     free(event_iov);
 err_event_iov:
+    rawstor_mutex_unlock(io->mutex);
     return -errno;
 }
 
@@ -345,6 +362,8 @@ int rawstor_io_pread(
     int fd, void *buf, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data)
 {
+    rawstor_mutex_lock(io->mutex);
+
     /**
      * TODO: use event_iov from some buffer preallocated in io struct.
      */
@@ -369,11 +388,13 @@ int rawstor_io_pread(
         "preadv(%d, %zu)\n", fd, size);
 #endif
 
+    rawstor_mutex_unlock(io->mutex);
     return 0;
 
 err_event:
     free(event_iov);
 err_event_iov:
+    rawstor_mutex_unlock(io->mutex);
     return -errno;
 }
 
@@ -383,6 +404,8 @@ int rawstor_io_readv(
     int fd, struct iovec *iov, unsigned int niov, size_t size,
     RawstorIOCallback *cb, void *data)
 {
+    rawstor_mutex_lock(io->mutex);
+
     /**
      * TODO: use event_iov from some buffer preallocated in io struct.
      */
@@ -406,11 +429,13 @@ int rawstor_io_readv(
         "readv(%d, %zu)\n", fd, size);
 #endif
 
+    rawstor_mutex_unlock(io->mutex);
     return 0;
 
 err_event:
     free(event_iov);
 err_event_iov:
+    rawstor_mutex_unlock(io->mutex);
     return -errno;
 }
 
@@ -420,6 +445,8 @@ int rawstor_io_preadv(
     int fd, struct iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data)
 {
+    rawstor_mutex_lock(io->mutex);
+
     /**
      * TODO: use event_iov from some buffer preallocated in io struct.
      */
@@ -443,11 +470,13 @@ int rawstor_io_preadv(
         "preadv(%d, %zu)\n", fd, size);
 #endif
 
+    rawstor_mutex_unlock(io->mutex);
     return 0;
 
 err_event:
     free(event_iov);
 err_event_iov:
+    rawstor_mutex_unlock(io->mutex);
     return -errno;
 }
 
@@ -457,6 +486,8 @@ int rawstor_io_write(
     int fd, void *buf, size_t size,
     RawstorIOCallback *cb, void *data)
 {
+    rawstor_mutex_lock(io->mutex);
+
     /**
      * TODO: use event_iov from some buffer preallocated in io struct.
      */
@@ -481,11 +512,13 @@ int rawstor_io_write(
         "writev(%d, %zu)\n", fd, size);
 #endif
 
+    rawstor_mutex_unlock(io->mutex);
     return 0;
 
 err_event:
     free(event_iov);
 err_event_iov:
+    rawstor_mutex_unlock(io->mutex);
     return -errno;
 }
 
@@ -495,6 +528,8 @@ int rawstor_io_pwrite(
     int fd, void *buf, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data)
 {
+    rawstor_mutex_lock(io->mutex);
+
     /**
      * TODO: use event_iov from some buffer preallocated in io struct.
      */
@@ -519,11 +554,13 @@ int rawstor_io_pwrite(
         "pwritev(%d, %zu)\n", fd, size);
 #endif
 
+    rawstor_mutex_unlock(io->mutex);
     return 0;
 
 err_event:
     free(event_iov);
 err_event_iov:
+    rawstor_mutex_unlock(io->mutex);
     return -errno;
 }
 
@@ -533,6 +570,8 @@ int rawstor_io_writev(
     int fd, struct iovec *iov, unsigned int niov, size_t size,
     RawstorIOCallback *cb, void *data)
 {
+    rawstor_mutex_lock(io->mutex);
+
     /**
      * TODO: use event_iov from some buffer preallocated in io struct.
      */
@@ -556,11 +595,13 @@ int rawstor_io_writev(
         "writev(%d, %zu)\n", fd, size);
 #endif
 
+    rawstor_mutex_unlock(io->mutex);
     return 0;
 
 err_event:
     free(event_iov);
 err_event_iov:
+    rawstor_mutex_unlock(io->mutex);
     return -errno;
 }
 
@@ -570,6 +611,8 @@ int rawstor_io_pwritev(
     int fd, struct iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data)
 {
+    rawstor_mutex_lock(io->mutex);
+
     /**
      * TODO: use event_iov from some buffer preallocated in io struct.
      */
@@ -593,11 +636,13 @@ int rawstor_io_pwritev(
         "pwritev(%d, %zu)\n", fd, size);
 #endif
 
+    rawstor_mutex_unlock(io->mutex);
     return 0;
 
 err_event:
     free(event_iov);
 err_event_iov:
+    rawstor_mutex_unlock(io->mutex);
     return -errno;
 }
 
@@ -608,14 +653,17 @@ RawstorIOEvent* rawstor_io_wait_event(RawstorIO *io) {
 
 
 RawstorIOEvent* rawstor_io_wait_event_timeout(RawstorIO *io, int timeout) {
+    rawstor_mutex_lock(io->mutex);
     while (1) {
         size_t count = rawstor_list_size(io->sessions);
         if (count == 0) {
+            rawstor_mutex_unlock(io->mutex);
             return NULL;
         }
 
         struct pollfd *fds = calloc(count, sizeof(struct pollfd));
         if (fds == NULL) {
+            rawstor_mutex_unlock(io->mutex);
             return NULL;
         }
 
@@ -651,11 +699,13 @@ RawstorIOEvent* rawstor_io_wait_event_timeout(RawstorIO *io, int timeout) {
             assert(fds[i].events != 0);
         }
 
+        rawstor_mutex_unlock(io->mutex);
         rawstor_trace("poll()\n");
         if (poll(fds, count, timeout) <= 0) {
             free(fds);
             return NULL;
         }
+        rawstor_mutex_lock(io->mutex);
 
         for (
             it = rawstor_list_iter(io->sessions), i = 0;
@@ -706,39 +756,41 @@ RawstorIOEvent* rawstor_io_wait_event_timeout(RawstorIO *io, int timeout) {
                 rawstor_iovec_shift(&event->iov_at, &event->niov, res);
                 if (event->niov == 0) {
                     free(fds);
+                    rawstor_mutex_unlock(io->mutex);
                     return event;
                 }
             } else if (res == 0) {
                 free(fds);
+                rawstor_mutex_unlock(io->mutex);
                 return event;
             }
         }
 
         free(fds);
     }
+    rawstor_mutex_unlock(io->mutex);
 }
 
 
 void rawstor_io_release_event(RawstorIO *io, RawstorIOEvent *event) {
+    rawstor_mutex_lock(io->mutex);
 #ifdef RAWSTOR_TRACE_EVENTS
     rawstor_trace_event_end(event->trace_event, "release_event()\n");
 #endif
     RawstorIOSession *session = event->session;
-    RawstorRingBuf *ops = NULL;
-    if (event == rawstor_ringbuf_tail(session->read_ops)) {
-        ops = session->read_ops;
-    } else if (event == rawstor_ringbuf_tail(session->write_ops)) {
-        ops = session->write_ops;
-    }
-    assert(ops != NULL);
+    RawstorRingBuf *ops = event->ops;
+    assert(event == rawstor_ringbuf_tail(ops));
+
     free(event->iov_origin);
-    assert(rawstor_ringbuf_pop(ops) == 0);
+    int res = rawstor_ringbuf_pop(ops);
+    assert(res == 0);
     if (
         rawstor_ringbuf_empty(session->read_ops) &&
         rawstor_ringbuf_empty(session->write_ops))
     {
         io_remove_session(io, session);
     }
+    rawstor_mutex_unlock(io->mutex);
 }
 
 
