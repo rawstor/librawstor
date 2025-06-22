@@ -641,9 +641,23 @@ RawstorIOEvent* rawstor_io_wait_event_timeout(RawstorIO *io, int timeout) {
                 .revents = 0,
             };
 
+#ifdef RAWSTOR_TRACE_EVENTS
+            if (!rawstor_ringbuf_empty(it->read_ops)) {
+                RawstorIOEvent *event = rawstor_ringbuf_tail(it->read_ops);
+                rawstor_trace_event_message(
+                    event->trace_event, "Polling this event\n");
+            }
+            if (!rawstor_ringbuf_empty(it->write_ops)) {
+                RawstorIOEvent *event = rawstor_ringbuf_tail(it->write_ops);
+                rawstor_trace_event_message(
+                    event->trace_event, "Polling this event\n");
+            }
+#endif
+
             assert(fds[i].events != 0);
         }
 
+        rawstor_trace("poll()\n");
         if (poll(fds, count, timeout) <= 0) {
             free(fds);
             return NULL;
