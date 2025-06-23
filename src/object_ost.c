@@ -1,13 +1,13 @@
 #include <rawstor.h>
 
 #include "gcc.h"
+#include "hash.h"
 #include "io.h"
 #include "logging.h"
+#include "mempool.h"
 #include "opts.h"
 #include "ost_protocol.h"
-#include "mempool.h"
 #include "uuid.h"
-#include "hash.h"
 
 #include <arpa/inet.h>
 
