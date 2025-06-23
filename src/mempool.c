@@ -1,5 +1,7 @@
 #include "mempool.h"
 
+#include "threading.h"
+
 #include <sys/errno.h>
 #include <stdlib.h>
 
@@ -10,6 +12,7 @@ struct RawstorMemPool {
     void **current;
     void **tail;
     size_t object_size;
+    RawstorMutex *mutex;
 };
 
 
@@ -27,6 +30,14 @@ RawstorMemPool* rawstor_mempool_create(size_t capacity, size_t object_size) {
     mempool->head = calloc(capacity, sizeof(void*));
     if (mempool->head == NULL) {
         goto err_head;
+    }
+
+    mempool->mutex = rawstor_mutex_create();
+    if (mempool->mutex == NULL) {
+        free(mempool->head);
+        free(mempool->data);
+        free(mempool);
+        return NULL;
     }
 
     for (size_t i = 0; i < capacity; ++i) {
@@ -49,6 +60,7 @@ err_mempool:
 
 
 void rawstor_mempool_delete(RawstorMemPool *mempool) {
+    rawstor_mutex_delete(mempool->mutex);
     free(mempool->head);
     free(mempool->data);
     free(mempool);
@@ -81,10 +93,15 @@ void* rawstor_mempool_data(RawstorMemPool *mempool) {
 
 
 void* rawstor_mempool_alloc(RawstorMemPool *mempool) {
-    return *(mempool->current++);
+    rawstor_mutex_lock(mempool->mutex);
+    void *ret = *(mempool->current++);
+    rawstor_mutex_unlock(mempool->mutex);
+    return ret;
 }
 
 
 void rawstor_mempool_free(RawstorMemPool *mempool, void *ptr) {
+    rawstor_mutex_lock(mempool->mutex);
     *(--mempool->current) = ptr;
+    rawstor_mutex_unlock(mempool->mutex);
 }
