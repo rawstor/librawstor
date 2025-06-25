@@ -340,14 +340,19 @@ int rawstor_io_read(
         goto err_event;
     }
 
+    int ret = rawstor_ringbuf_size(event->session->read_ops) == 1;
     event->process = io_event_process_readv;
 #ifdef RAWSTOR_TRACE_EVENTS
     event->trace_event = rawstor_trace_event_begin(
         "readv(%d, %zu)\n", fd, size);
 #endif
 
+#ifdef RAWSTOR_TRACE_EVENTS
+    rawstor_trace_event_message(
+        event->trace_event, "%s(): ret = %d\n", __FUNCTION__, ret);
+#endif
     rawstor_mutex_unlock(io->mutex);
-    return 0;
+    return ret;
 
 err_event:
     free(event_iov);
@@ -382,14 +387,19 @@ int rawstor_io_pread(
         goto err_event;
     }
 
+    int ret = rawstor_ringbuf_size(event->session->read_ops) == 1;
     event->process = io_event_process_preadv;
 #ifdef RAWSTOR_TRACE_EVENTS
     event->trace_event = rawstor_trace_event_begin(
         "preadv(%d, %zu)\n", fd, size);
 #endif
 
+#ifdef RAWSTOR_TRACE_EVENTS
+    rawstor_trace_event_message(
+        event->trace_event, "%s(): ret = %d\n", __FUNCTION__, ret);
+#endif
     rawstor_mutex_unlock(io->mutex);
-    return 0;
+    return ret;
 
 err_event:
     free(event_iov);
@@ -423,14 +433,19 @@ int rawstor_io_readv(
         goto err_event;
     }
 
+    int ret = rawstor_ringbuf_size(event->session->read_ops) == 1;
     event->process = io_event_process_readv;
 #ifdef RAWSTOR_TRACE_EVENTS
     event->trace_event = rawstor_trace_event_begin(
         "readv(%d, %zu)\n", fd, size);
 #endif
 
+#ifdef RAWSTOR_TRACE_EVENTS
+    rawstor_trace_event_message(
+        event->trace_event, "%s(): ret = %d\n", __FUNCTION__, ret);
+#endif
     rawstor_mutex_unlock(io->mutex);
-    return 0;
+    return ret;
 
 err_event:
     free(event_iov);
@@ -464,14 +479,19 @@ int rawstor_io_preadv(
         goto err_event;
     }
 
+    int ret = rawstor_ringbuf_size(event->session->read_ops) == 1;
     event->process = io_event_process_preadv;
 #ifdef RAWSTOR_TRACE_EVENTS
     event->trace_event = rawstor_trace_event_begin(
         "preadv(%d, %zu)\n", fd, size);
 #endif
 
+#ifdef RAWSTOR_TRACE_EVENTS
+    rawstor_trace_event_message(
+        event->trace_event, "%s(): ret = %d\n", __FUNCTION__, ret);
+#endif
     rawstor_mutex_unlock(io->mutex);
-    return 0;
+    return ret;
 
 err_event:
     free(event_iov);
@@ -506,14 +526,19 @@ int rawstor_io_write(
         goto err_event;
     }
 
+    int ret = rawstor_ringbuf_size(event->session->write_ops) == 1;
     event->process = io_event_process_writev;
 #ifdef RAWSTOR_TRACE_EVENTS
     event->trace_event = rawstor_trace_event_begin(
         "writev(%d, %zu)\n", fd, size);
 #endif
 
+#ifdef RAWSTOR_TRACE_EVENTS
+    rawstor_trace_event_message(
+        event->trace_event, "%s(): ret = %d\n", __FUNCTION__, ret);
+#endif
     rawstor_mutex_unlock(io->mutex);
-    return 0;
+    return ret;
 
 err_event:
     free(event_iov);
@@ -548,14 +573,19 @@ int rawstor_io_pwrite(
         goto err_event;
     }
 
+    int ret = rawstor_ringbuf_size(event->session->write_ops) == 1;
     event->process = io_event_process_pwritev;
 #ifdef RAWSTOR_TRACE_EVENTS
     event->trace_event = rawstor_trace_event_begin(
         "pwritev(%d, %zu)\n", fd, size);
 #endif
 
+#ifdef RAWSTOR_TRACE_EVENTS
+    rawstor_trace_event_message(
+        event->trace_event, "%s(): ret = %d\n", __FUNCTION__, ret);
+#endif
     rawstor_mutex_unlock(io->mutex);
-    return 0;
+    return ret;
 
 err_event:
     free(event_iov);
@@ -589,14 +619,19 @@ int rawstor_io_writev(
         goto err_event;
     }
 
+    int ret = rawstor_ringbuf_size(event->session->write_ops) == 1;
     event->process = io_event_process_writev;
 #ifdef RAWSTOR_TRACE_EVENTS
     event->trace_event = rawstor_trace_event_begin(
         "writev(%d, %zu)\n", fd, size);
 #endif
 
+#ifdef RAWSTOR_TRACE_EVENTS
+    rawstor_trace_event_message(
+        event->trace_event, "%s(): ret = %d\n", __FUNCTION__, ret);
+#endif
     rawstor_mutex_unlock(io->mutex);
-    return 0;
+    return ret;
 
 err_event:
     free(event_iov);
@@ -630,14 +665,19 @@ int rawstor_io_pwritev(
         goto err_event;
     }
 
+    int ret = rawstor_ringbuf_size(event->session->write_ops) == 1;
     event->process = io_event_process_pwritev;
 #ifdef RAWSTOR_TRACE_EVENTS
     event->trace_event = rawstor_trace_event_begin(
         "pwritev(%d, %zu)\n", fd, size);
 #endif
 
+#ifdef RAWSTOR_TRACE_EVENTS
+    rawstor_trace_event_message(
+        event->trace_event, "%s(): ret = %d\n", __FUNCTION__, ret);
+#endif
     rawstor_mutex_unlock(io->mutex);
-    return 0;
+    return ret;
 
 err_event:
     free(event_iov);
