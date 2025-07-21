@@ -2,9 +2,7 @@ name: librawstor unittest
 
 on:
   push:
-    branches: [ "feat/ci" ]
   pull_request:
-    branches: [ "feat/ci" ]
 
 jobs:
   test:
