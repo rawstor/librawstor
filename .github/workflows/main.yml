@@ -27,7 +27,7 @@ jobs:
     - name: make test
       run: make test
 
-  test without-liburing:
+  test-without-liburing:
 
     runs-on: ubuntu-latest
 
