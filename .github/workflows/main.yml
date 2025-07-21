@@ -1,4 +1,4 @@
-name: librawstor
+name: librawstor unittest
 
 on:
   push:
