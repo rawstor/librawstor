@@ -22,9 +22,12 @@ typedef struct RawstorIO RawstorIO;
 
 extern const char* rawstor_io_engine_name;
 
+
 RawstorIO* rawstor_io_create(unsigned int depth);
 
 void rawstor_io_delete(RawstorIO *io);
+
+int rawstor_io_setup_fd(int fd);
 
 int rawstor_io_read(
     RawstorIO *io,
@@ -82,5 +85,6 @@ size_t rawstor_io_event_result(RawstorIOEvent *event);
 int rawstor_io_event_error(RawstorIOEvent *event);
 
 int rawstor_io_event_dispatch(RawstorIOEvent *event);
+
 
 #endif // RAWSTOR_IO_H

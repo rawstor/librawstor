@@ -1,5 +1,6 @@
 #include "io.h"
 
+#include "gcc.h"
 #include "mempool.h"
 
 #include <liburing.h>
@@ -67,6 +68,10 @@ void rawstor_io_delete(RawstorIO *io) {
     io_uring_queue_exit(&io->ring);
     rawstor_mempool_delete(io->events_pool);
     free(io);
+}
+
+
+int rawstor_io_setup_fd(int RAWSTOR_UNUSED fd) {
 }
 
 
