@@ -408,6 +408,7 @@ void rawstor_io_delete(RawstorIO *io) {
 
 
 int rawstor_io_setup_fd(int RAWSTOR_UNUSED fd) {
+    return 0;
 }
 
 
