@@ -14,7 +14,6 @@
 #include <netinet/tcp.h>
 
 #include <errno.h>
-#include <fcntl.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -140,25 +139,6 @@ static int object_response_head_recv(RawstorObject *object) {
         &object->response_frame, sizeof(object->response_frame),
         response_head_received, object))
     {
-        return -errno;
-    }
-
-    return 0;
-}
-
-
-static int socket_add_flag(int fd, int flag) {
-    int flags = fcntl(fd, F_GETFL);
-    if (flags == -1) {
-        return -errno;
-    }
-
-    if (flags & flag) {
-        return 0;
-    }
-
-    flags = flags | flag;
-    if (fcntl(fd, F_SETFL, flags) == -1) {
         return -errno;
     }
 
@@ -591,7 +571,7 @@ int rawstor_object_open(
         rframe.cmd,
         rframe.res);
 
-    if (socket_add_flag(ret->fd, O_NONBLOCK)) {
+    if (rawstor_io_setup_fd(ret->fd)) {
         int errsv = errno;
         close(ret->fd);
         rawstor_mempool_delete(ret->operations_pool);

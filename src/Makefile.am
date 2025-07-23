@@ -16,6 +16,7 @@ librawstor_la_SOURCES = iovec_routines.c \
                         rawstor.c \
                         ringbuf.c \
                         opts.c \
+                        socket_routines.c \
                         uuid.c
 
 librawstor_la_LIBADD =

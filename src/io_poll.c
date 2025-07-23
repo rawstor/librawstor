@@ -4,6 +4,7 @@
 #include "list.h"
 #include "logging.h"
 #include "ringbuf.h"
+#include "socket_routines.h"
 
 #include <poll.h>
 
@@ -177,6 +178,15 @@ RawstorIO* rawstor_io_create(unsigned int depth) {
 void rawstor_io_delete(RawstorIO *io) {
     rawstor_list_delete(io->sessions);
     free(io);
+}
+
+
+int rawstor_io_setup_fd(int fd) {
+    if (rawstor_socket_set_nonblock(fd)) {
+        return -errno;
+    }
+
+    return 0;
 }
 
 

@@ -1,5 +1,6 @@
 #include "io.h"
 
+#include "gcc.h"
 #include "logging.h"
 #include "mempool.h"
 
@@ -403,6 +404,11 @@ void rawstor_io_delete(RawstorIO *io) {
     free(io->cbps);
     free(io->cbs);
     free(io);
+}
+
+
+int rawstor_io_setup_fd(int RAWSTOR_UNUSED fd) {
+    return 0;
 }
 
 
