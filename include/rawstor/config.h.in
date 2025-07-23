@@ -1,0 +1,10 @@
+#ifndef RAWSTOR_RAWSTOR_CONFIG_H
+#define RAWSTOR_RAWSTOR_CONFIG_H
+
+
+@maybe_libxxhash_define@
+
+@maybe_liburing_define@
+
+
+#endif // RAWSTOR_RAWSTOR_CONFIG_H

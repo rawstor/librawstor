@@ -45,8 +45,10 @@ AM_CONDITIONAL([ENABLE_OST], [test "x$enable_ost" == "xyes"])
 AS_IF([test "x$enable_ost" == "xyes"], [
     PKG_CHECK_MODULES([LIBXXHASH], [libxxhash])
     AC_SUBST([maybe_libxxhash], ["libxxhash"])
+    AC_SUBST([maybe_libxxhash_define], ["#define RAWSTOR_WITH_LIBXXHASH"])
 ], [
     AC_SUBST([maybe_libxxhash], [""])
+    AC_SUBST([maybe_libxxhash_define], [""])
 ])
 
 
@@ -58,13 +60,16 @@ AM_CONDITIONAL([WITH_LIBURING], [test "x$with_liburing" == "xyes"])
 AS_IF([test "x$with_liburing" == "xyes"], [
     PKG_CHECK_MODULES([LIBURING], [liburing])
     AC_SUBST([maybe_liburing], ["liburing"])
+    AC_SUBST([maybe_liburing_define], ["#define RAWSTOR_WITH_LIBURING"])
 ], [
     AC_SUBST([maybe_liburing], [""])
+    AC_SUBST([maybe_liburing_define], [""])
 ])
 
 
 AC_CONFIG_FILES(
     [Makefile]
+    [include/rawstor/config.h]
     [src/Makefile]
     [src/rawstor.pc]
     [cli/Makefile]
