@@ -3,7 +3,7 @@ AM_INIT_AUTOMAKE
 
 # AM_SILENT_RULES([yes])
 
-AC_CONFIG_HEADERS([config.h])
+AC_CONFIG_HEADERS([src/config.h])
 
 AC_PROG_CC
 
