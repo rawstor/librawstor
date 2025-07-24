@@ -7,6 +7,11 @@
 #include <string.h>
 
 
+struct RawstorThread {
+    pthread_t pthread;
+};
+
+
 struct RawstorMutex {
     pthread_mutex_t pmutex;
 };
@@ -15,6 +20,37 @@ struct RawstorMutex {
 struct RawstorCond {
     pthread_cond_t pcond;
 };
+
+
+RawstorThread* rawstor_thread_create(
+    RawstorThreadRoutine *routine, void *data)
+{
+    RawstorThread *ret = malloc(sizeof(RawstorThread));
+    if (ret == NULL) {
+        return NULL;
+    }
+
+    int res = pthread_create(&ret->pthread, NULL, routine, data);
+    if (res != 0) {
+        free(ret);
+        return NULL;
+    }
+
+    return ret;
+}
+
+
+void* rawstor_thread_join(RawstorThread *thread) {
+    void *ret;
+
+    int res = pthread_join(thread->pthread, &ret);
+    if (res != 0) {
+        perror("pthread_join() failed");
+        exit(errno);
+    }
+
+    return ret;
+}
 
 
 RawstorMutex* rawstor_mutex_create(void) {

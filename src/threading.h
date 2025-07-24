@@ -2,10 +2,18 @@
 #define RAWSTOR_THREADING
 
 
+typedef struct RawstorThread RawstorThread;
+
 typedef struct RawstorMutex RawstorMutex;
 
 typedef struct RawstorCond RawstorCond;
 
+typedef void*(RawstorThreadRoutine)(void *data);
+
+
+RawstorThread* rawstor_thread_create(RawstorThreadRoutine *routine, void *data);
+
+void* rawstor_thread_join(RawstorThread *thread);
 
 RawstorMutex* rawstor_mutex_create(void);
 
