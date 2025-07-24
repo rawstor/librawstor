@@ -5,9 +5,14 @@ AM_CFLAGS = -std=gnu99 -Wall -Wextra -Werror \
             -I$(top_srcdir)/include
 
 
-librawstor_ladir = $(includedir)
+librawstor_base_ladir = $(includedir)
 
-librawstor_la_HEADERS = $(top_srcdir)/include/rawstor.h
+librawstor_base_la_HEADERS = $(top_srcdir)/include/rawstor.h
+
+librawstor_ladir = $(includedir)/rawstor
+
+librawstor_la_HEADERS = $(top_srcdir)/include/rawstor/rawstor.h \
+                        $(top_srcdir)/include/rawstor/config.h
 
 librawstor_la_SOURCES = iovec_routines.c \
                         list.c \
