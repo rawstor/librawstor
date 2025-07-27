@@ -5,6 +5,7 @@
 #include <assert.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <unistd.h>
 
 
 #ifdef RAWSTOR_TRACE_EVENTS
@@ -58,7 +59,7 @@ void* rawstor_trace_event_begin(const char *format, ...) {
 
     rawstor_trace_event_dump();
 
-    printf("TRACE ");
+    dprintf(STDERR_FILENO, "TRACE ");
 
     va_list args;
     va_start(args, format);
@@ -78,7 +79,7 @@ void rawstor_trace_event_end(void *event, const char *format, ...) {
 
     rawstor_trace_event_dump();
 
-    printf("TRACE ");
+    dprintf(STDERR_FILENO, "TRACE ");
 
     va_list args;
     va_start(args, format);
@@ -96,7 +97,7 @@ void rawstor_trace_event_message(void *event, const char *format, ...) {
 
     rawstor_trace_event_dump();
 
-    printf("TRACE ");
+    dprintf(STDERR_FILENO, "TRACE ");
 
     va_list args;
     va_start(args, format);
@@ -133,7 +134,7 @@ void rawstor_trace_event_dump(void) {
                 ch = ' ';
                 break;
         }
-        printf("%c ", ch);
+        dprintf(STDERR_FILENO, "%c ", ch);
     }
 }
 
