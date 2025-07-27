@@ -61,11 +61,11 @@ RawstorIO* rawstor_io_create(unsigned int depth) {
 
     return io;
 
-err_queue_init;
+err_queue_init:
     errsv = errno;
     rawstor_mempool_delete(io->events_pool);
     errno = errsv;
-err_events_pool;
+err_events_pool:
     free(io);
 err_io:
     return NULL;
