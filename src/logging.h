@@ -4,6 +4,8 @@
 
 #include "config.h"
 
+#include <unistd.h>
+
 
 #define RAWSTOR_LOGLEVEL_NONE 0
 #define RAWSTOR_LOGLEVEL_ERROR 1
@@ -25,15 +27,15 @@
 
 #define rawstor_log(level, ...) do { \
     rawstor_trace_event_dump(); \
-    printf("%s %s:%d ", level, __FILE__, __LINE__); \
-    printf(__VA_ARGS__); \
+    dprintf(STDERR_FILENO, "%s %s:%d ", level, __FILE__, __LINE__); \
+    dprintf(STDERR_FILENO, __VA_ARGS__); \
 } while(0)
 
 
 #if RAWSTOR_LOGLEVEL >= RAWSTOR_LOGLEVEL_TRACE
 #define rawstor_trace(...) do { \
     rawstor_log("TRACE", "%s(): ", __FUNCTION__); \
-    printf(__VA_ARGS__); \
+    dprintf(STDERR_FILENO, __VA_ARGS__); \
 } while (0)
 
 #define RAWSTOR_TRACE_EVENTS
