@@ -356,7 +356,7 @@ int rawstor_io_readv(
      * TODO: use event_iov from some buffer preallocated in io struct.
      */
     struct iovec *event_iov = calloc(niov, sizeof(struct iovec));
-    if (iov == NULL) {
+    if (event_iov == NULL) {
         goto err_event_iov;
     }
     RawstorIOEvent *event = rawstor_ringbuf_head(session->read_ops);
@@ -417,7 +417,7 @@ int rawstor_io_preadv(
      * TODO: use event_iov from some buffer preallocated in io struct.
      */
     struct iovec *event_iov = calloc(niov, sizeof(struct iovec));
-    if (iov == NULL) {
+    if (event_iov == NULL) {
         goto err_event_iov;
     }
     RawstorIOEvent *event = rawstor_ringbuf_head(session->read_ops);
