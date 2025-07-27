@@ -508,31 +508,27 @@ int rawstor_object_open(
     const RawstorUUID *object_id,
     RawstorObject **object)
 {
-    RawstorObject *ret = malloc(sizeof(RawstorObject));
-    if (ret == NULL) {
-        return -errno;
+    int errsv;
+    RawstorObject *obj = malloc(sizeof(RawstorObject));
+    if (obj == NULL) {
+        goto err_obj;
     }
-    ret->response_loop = 0;
+    obj->response_loop = 0;
 
-    ret->operations_pool = rawstor_mempool_create(
+    obj->operations_pool = rawstor_mempool_create(
         QUEUE_DEPTH,
         sizeof(RawstorObjectOperation));
-    if (ret->operations_pool == NULL) {
-        free(ret);
-        return -errno;
+    if (obj->operations_pool == NULL) {
+        goto err_operations_pool;
     }
-    RawstorObjectOperation *ops = rawstor_mempool_data(ret->operations_pool);
+    RawstorObjectOperation *ops = rawstor_mempool_data(obj->operations_pool);
     for (unsigned int i = 0; i < QUEUE_DEPTH; ++i) {
         ops[i].cid = i + 1;
     }
 
-    ret->fd = ost_connect(opts_ost);
-    if (ret->fd < 0) {
-        int errsv = -ret->fd;
-        rawstor_mempool_delete(ret->operations_pool);
-        free(ret);
-        errno = errsv;
-        return -errno;
+    obj->fd = ost_connect(opts_ost);
+    if (obj->fd < 0) {
+        goto err_connect;
     }
 
     RawstorOSTFrameBasic mframe = {
@@ -540,49 +536,51 @@ int rawstor_object_open(
         .cmd = RAWSTOR_CMD_SET_OBJECT,
     };
     memcpy(mframe.obj_id, object_id->bytes, sizeof(mframe.obj_id));
-    int res = write(ret->fd, &mframe, sizeof(mframe));
+    int res = write(obj->fd, &mframe, sizeof(mframe));
     rawstor_debug("Sent request to set objid, res:%i\n", res);
     if (res < 0) {
-        int errsv = errno;
-        close(ret->fd);
-        rawstor_mempool_delete(ret->operations_pool);
-        free(ret);
-        errno = errsv;
-        return -errno;
+        goto err_write;
     }
     RawstorOSTFrameResponse rframe;
-    res = read(ret->fd, &rframe, sizeof(rframe));
+    res = read(obj->fd, &rframe, sizeof(rframe));
     if (res < 0) {
-        int errsv = errno;
-        close(ret->fd);
-        rawstor_mempool_delete(ret->operations_pool);
-        free(ret);
-        errno = errsv;
-        return -errno;
+        goto err_read;
     }
     if (rframe.magic != RAWSTOR_MAGIC) {
-        rawstor_error("FATAL! Frame with wrong magic number: %x != %x\n",
-                      rframe.magic, RAWSTOR_MAGIC);
+        rawstor_error(
+            "FATAL! Frame with wrong magic number: %x != %x\n",
+            rframe.magic, RAWSTOR_MAGIC);
         errno = EIO;
-        return -errno;
+        goto err_rawstor_magic;
     }
     rawstor_debug(
         "Response from Server: cmd:%i res:%i\n",
         rframe.cmd,
         rframe.res);
 
-    if (rawstor_io_setup_fd(ret->fd)) {
-        int errsv = errno;
-        close(ret->fd);
-        rawstor_mempool_delete(ret->operations_pool);
-        free(ret);
-        errno = errsv;
-        return -errno;
+    if (rawstor_io_setup_fd(obj->fd)) {
+        goto err_setup_fd;
     }
 
-    *object = ret;
+    *object = obj;
 
     return 0;
+
+err_setup_fd:
+err_rawstor_magic:
+err_read:
+err_write:
+    errsv = errno;
+    close(obj->fd);
+    errno = errsv;
+err_connect:
+    errsv = errno;
+    rawstor_mempool_delete(obj->operations_pool);
+    errno = errsv;
+err_operations_pool:
+    free(obj);
+err_obj:
+    return -errno;
 }
 
 

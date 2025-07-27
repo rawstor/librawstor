@@ -36,9 +36,11 @@ const char* rawstor_io_engine_name = "liburing";
 
 
 RawstorIO* rawstor_io_create(unsigned int depth) {
+    int errsv;
+
     RawstorIO *io = malloc(sizeof(RawstorIO));
     if (io == NULL) {
-        return NULL;
+        goto err_io;
     }
 
     io->depth = depth;
@@ -48,19 +50,25 @@ RawstorIO* rawstor_io_create(unsigned int depth) {
      */
     io->events_pool = rawstor_mempool_create(depth, sizeof(RawstorIOEvent));
     if (io->events_pool == NULL) {
-        free(io);
-        return NULL;
+        goto err_events_pool;
     }
 
     int rval = io_uring_queue_init(depth, &io->ring, 0);
     if (rval < 0) {
-        rawstor_mempool_delete(io->events_pool);
-        free(io);
         errno = -rval;
-        return NULL;
+        goto err_queue_init;
     };
 
     return io;
+
+err_queue_init:
+    errsv = errno;
+    rawstor_mempool_delete(io->events_pool);
+    errno = errsv;
+err_events_pool:
+    free(io);
+err_io:
+    return NULL;
 }
 
 
