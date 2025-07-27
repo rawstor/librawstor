@@ -63,35 +63,50 @@ static int io_callback(RawstorIOEvent *event, void *data) {
 }
 
 
-static void get_ost_path(
+static int get_ost_path(
     const char *ost_host, unsigned int ost_port,
     char *buffer, size_t size)
 {
     static const char prefix[] = ".";
 
-    snprintf(
+    int res = snprintf(
         buffer, size,
         "%s/ost-%s:%u", prefix, ost_host, ost_port);
+    if (res < 0) {
+        return -errno;
+    }
+
+    return 0;
 }
 
 
-static void get_object_spec_path(
+static int get_object_spec_path(
     const char *ost_path, const char *uuid,
     char *buffer, size_t size)
 {
-    snprintf(
+    int res = snprintf(
         buffer, size,
         "%s/rawstor-%s.spec", ost_path, uuid);
+    if (res < 0) {
+        return -errno;
+    }
+
+    return 0;
 }
 
 
-static void get_object_dat_path(
+static int get_object_dat_path(
     const char *ost_path, const char *uuid,
     char *buffer, size_t size)
 {
-    snprintf(
+    int res = snprintf(
         buffer, size,
         "%s/rawstor-%s.dat", ost_path, uuid);
+    if (res < 0) {
+        return -errno;
+    }
+
+    return 0;
 }
 
 
@@ -103,7 +118,9 @@ int rawstor_object_create(
     const char *ost_host = rawstor_opts_ost_host(opts_ost);
     unsigned int ost_port = rawstor_opts_ost_port(opts_ost);
     char ost_path[PATH_MAX];
-    get_ost_path(ost_host, ost_port, ost_path, sizeof(ost_path));
+    if (get_ost_path(ost_host, ost_port, ost_path, sizeof(ost_path))) {
+        return -errno;
+    }
     if (mkdir(ost_path, 0755)) {
         if (errno != EEXIST) {
             return -errno;
@@ -119,8 +136,11 @@ int rawstor_object_create(
             return -errno;
         }
         rawstor_uuid_to_string(&uuid, &uuid_string);
-        get_object_spec_path(
-            ost_path, uuid_string, spec_path, sizeof(spec_path));
+        if (get_object_spec_path(
+            ost_path, uuid_string, spec_path, sizeof(spec_path)))
+        {
+            return -errno;
+        }
         fd = open(spec_path, O_EXCL | O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR);
         if (fd != -1) {
             break;
@@ -139,8 +159,14 @@ int rawstor_object_create(
     close(fd);
 
     char dat_path[PATH_MAX];
-    get_object_dat_path(
-        ost_path, uuid_string, dat_path, sizeof(dat_path));
+    if (get_object_dat_path(
+        ost_path, uuid_string, dat_path, sizeof(dat_path)))
+    {
+        int errsv = errno;
+        unlink(spec_path);
+        errno = errsv;
+        return -errno;
+    }
     fd = open(dat_path, O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR);
     if (fd == -1) {
         int errsv = errno;
@@ -172,20 +198,26 @@ int rawstor_object_delete(
     const char *ost_host = rawstor_opts_ost_host(opts_ost);
     unsigned int ost_port = rawstor_opts_ost_port(opts_ost);
     char ost_path[PATH_MAX];
-    get_ost_path(ost_host, ost_port, ost_path, sizeof(ost_path));
+    if (get_ost_path(ost_host, ost_port, ost_path, sizeof(ost_path))) {
+        return -errno;
+    }
 
     RawstorUUIDString uuid_string;
     rawstor_uuid_to_string(object_id, &uuid_string);
 
     int rval;
     char path[PATH_MAX];
-    get_object_spec_path(ost_path, uuid_string, path, sizeof(path));
+    if (get_object_spec_path(ost_path, uuid_string, path, sizeof(path))) {
+        return -errno;
+    }
     rval = unlink(path);
     if (rval == -1) {
         return -errno;
     }
 
-    get_object_dat_path(ost_path, uuid_string, path, sizeof(path));
+    if (get_object_dat_path(ost_path, uuid_string, path, sizeof(path))) {
+        return -errno;
+    }
     rval = unlink(path);
     if (rval == -1) {
         return -errno;
@@ -202,7 +234,9 @@ int rawstor_object_open(
     const char *ost_host = rawstor_opts_ost_host(opts_ost);
     unsigned int ost_port = rawstor_opts_ost_port(opts_ost);
     char ost_path[PATH_MAX];
-    get_ost_path(ost_host, ost_port, ost_path, sizeof(ost_path));
+    if (get_ost_path(ost_host, ost_port, ost_path, sizeof(ost_path))) {
+        return -errno;
+    }
 
     RawstorUUIDString uuid_string;
     rawstor_uuid_to_string(object_id, &uuid_string);
@@ -221,12 +255,15 @@ int rawstor_object_open(
     }
 
     char path[PATH_MAX];
-    get_object_dat_path(ost_path, uuid_string, path, sizeof(path));
+    if (get_object_dat_path(ost_path, uuid_string, path, sizeof(path))) {
+        rawstor_mempool_delete(ret->operations_pool);
+        free(ret);
+        return -errno;
+    }
     ret->fd = open(path, O_RDWR | O_NONBLOCK);
     if (ret->fd == -1) {
-        int errsv = errno;
+        rawstor_mempool_delete(ret->operations_pool);
         free(ret);
-        errno = errsv;
         return -errno;
     }
 
@@ -256,13 +293,17 @@ int rawstor_object_spec(
     const char *ost_host = rawstor_opts_ost_host(opts_ost);
     unsigned int ost_port = rawstor_opts_ost_port(opts_ost);
     char ost_path[PATH_MAX];
-    get_ost_path(ost_host, ost_port, ost_path, sizeof(ost_path));
+    if (get_ost_path(ost_host, ost_port, ost_path, sizeof(ost_path))) {
+        return -errno;
+    }
 
     RawstorUUIDString uuid_string;
     rawstor_uuid_to_string(object_id, &uuid_string);
 
     char path[PATH_MAX];
-    get_object_spec_path(ost_path, uuid_string, path, sizeof(path));
+    if (get_object_spec_path(ost_path, uuid_string, path, sizeof(path))) {
+        return -errno;
+    }
     int fd = open(path, O_RDONLY);
     if (fd == -1) {
         return -errno;
