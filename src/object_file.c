@@ -291,7 +291,6 @@ int rawstor_object_open(
     return 0;
 
 err_open:
-    rawstor_mempool_delete(ret->operations_pool);
 err_dat_path:
     rawstor_mempool_delete(ret->operations_pool);
 err_operations_pool:
