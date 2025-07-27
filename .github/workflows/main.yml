@@ -42,3 +42,56 @@ jobs:
       run: make
     - name: make test
       run: make test
+
+  test-disable-ost:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libxxhash-dev
+        sudo apt-get install -y liburing-dev
+    - uses: actions/checkout@v4
+    - name: autogen
+      run: ./autogen.sh
+    - name: configure
+      run: ./configure --disable-ost --enable-trace --disable-shared
+    - name: make
+      run: make
+    - name: make test
+      run: make test
+    - name: make install
+      run: sudo make install
+    - name: testio
+      run: |
+        object_id=$(rawstor-cli create --size=1)
+        rawstor-cli testio --object-id=${object_id} --block-size=4096 --io-depth=1 --count=10
+        rawstor-cli testio --object-id=${object_id} --block-size=4096 --io-depth=1 --count=10 --vector-mode=1
+
+  test-disable-ost-without-liburing:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libxxhash-dev
+    - uses: actions/checkout@v4
+    - name: autogen
+      run: ./autogen.sh
+    - name: configure
+      run: ./configure --disable-ost --enable-trace --without-liburing --disable-shared
+    - name: make
+      run: make
+    - name: make test
+      run: make test
+    - name: make install
+      run: sudo make install
+    - name: testio
+      run: |
+        object_id=$(rawstor-cli create --size=1)
+        rawstor-cli testio --object-id=${object_id} --block-size=4096 --io-depth=1 --count=10
+        rawstor-cli testio --object-id=${object_id} --block-size=4096 --io-depth=1 --count=10 --vector-mode=1
