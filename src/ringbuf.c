@@ -21,7 +21,7 @@ RawstorRingBuf* rawstor_ringbuf_create(size_t capacity, size_t object_size) {
 
     RawstorRingBuf *buf = malloc(sizeof(RawstorRingBuf));
     if (buf == NULL) {
-        return NULL;
+        goto err_buf;
     }
 
     buf->capacity = capacity + 1;
@@ -30,11 +30,15 @@ RawstorRingBuf* rawstor_ringbuf_create(size_t capacity, size_t object_size) {
     buf->tail = 0;
     buf->data = calloc(buf->capacity, object_size);
     if (buf->data == NULL) {
-        free(buf);
-        return NULL;
+        goto err_data;
     }
 
     return buf;
+
+err_data:
+    free(buf);
+err_buf:
+    return NULL;
 }
 
 

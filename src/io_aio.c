@@ -101,15 +101,16 @@ static int io_readv(RawstorIOEvent *event, void *data) {
     };
 
     if (aio_read(next_event->cb)) {
-        int errsv = errno;
-        rawstor_mempool_free(io->events_pool, next_event);
-        errno = errsv;
-        return -errno;
+        goto err_read;
     }
 
     *next_event->cbp = next_event->cb;
 
     return 0;
+
+err_read:
+    rawstor_mempool_free(io->events_pool, next_event);
+    return -errno;
 }
 
 
@@ -167,15 +168,16 @@ static int io_preadv(RawstorIOEvent *event, void *data) {
     };
 
     if (aio_read(next_event->cb)) {
-        int errsv = errno;
-        rawstor_mempool_free(io->events_pool, next_event);
-        errno = errsv;
-        return -errno;
+        goto err_read;
     }
 
     *next_event->cbp = next_event->cb;
 
     return 0;
+
+err_read:
+    rawstor_mempool_free(io->events_pool, next_event);
+    return -errno;
 }
 
 
@@ -233,15 +235,16 @@ static int io_writev(RawstorIOEvent *event, void *data) {
     };
 
     if (aio_write(next_event->cb)) {
-        int errsv = errno;
-        rawstor_mempool_free(io->events_pool, next_event);
-        errno = errsv;
-        return -errno;
+        goto err_write;
     }
 
     *next_event->cbp = next_event->cb;
 
     return 0;
+
+err_write:
+    rawstor_mempool_free(io->events_pool, next_event);
+    return -errno;
 }
 
 
@@ -299,15 +302,16 @@ static int io_pwritev(RawstorIOEvent *event, void *data) {
     };
 
     if (aio_write(next_event->cb)) {
-        int errsv = errno;
-        rawstor_mempool_free(io->events_pool, next_event);
-        errno = errsv;
-        return -errno;
+        goto err_write;
     }
 
     *next_event->cbp = next_event->cb;
 
     return 0;
+
+err_write:
+    rawstor_mempool_free(io->events_pool, next_event);
+    return -errno;
 }
 
 
@@ -359,7 +363,7 @@ RawstorIO* rawstor_io_create(unsigned int depth) {
 #endif
     RawstorIO *io = malloc(sizeof(RawstorIO));
     if (io == NULL) {
-        return NULL;
+        goto err_io;
     }
 
     io->depth = depth;
@@ -369,23 +373,17 @@ RawstorIO* rawstor_io_create(unsigned int depth) {
      */
     io->cbs = calloc(depth, sizeof(struct aiocb));
     if (io->cbs == NULL) {
-        free(io);
-        return NULL;
+        goto err_cbs;
     }
 
     io->cbps = calloc(depth, sizeof(struct aiocb*));
     if (io->cbps == NULL) {
-        free(io->cbs);
-        free(io);
-        return NULL;
+        goto err_cbps;
     }
 
     io->events_pool = rawstor_mempool_create(depth, sizeof(RawstorIOEvent));
     if (io->events_pool == NULL) {
-        free(io->cbps);
-        free(io->cbs);
-        free(io);
-        return NULL;
+        goto err_events_pool;
     }
     io->events = rawstor_mempool_data(io->events_pool);
 
@@ -396,6 +394,15 @@ RawstorIO* rawstor_io_create(unsigned int depth) {
     }
 
     return io;
+
+err_events_pool:
+    free(io->cbps);
+err_cbps:
+    free(io->cbs);
+err_cbs:
+    free(io);
+err_io:
+    return NULL;
 }
 
 
@@ -446,15 +453,16 @@ int rawstor_io_read(
     };
 
     if (aio_read(event->cb)) {
-        int errsv = errno;
-        rawstor_mempool_free(io->events_pool, event);
-        errno = errsv;
-        return -errno;
+        goto err_read;
     }
 
     *event->cbp = event->cb;
 
     return 0;
+
+err_read:
+    rawstor_mempool_free(io->events_pool, event);
+    return -errno;
 }
 
 
@@ -492,15 +500,16 @@ int rawstor_io_pread(
     };
 
     if (aio_read(event->cb)) {
-        int errsv = errno;
-        rawstor_mempool_free(io->events_pool, event);
-        errno = errsv;
-        return -errno;
+        goto err_read;
     }
 
     *event->cbp = event->cb;
 
     return 0;
+
+err_read:
+    rawstor_mempool_free(io->events_pool, event);
+    return -errno;
 }
 
 
@@ -552,15 +561,16 @@ int rawstor_io_readv(
     };
 
     if (aio_read(event->cb)) {
-        int errsv = errno;
-        rawstor_mempool_free(io->events_pool, event);
-        errno = errsv;
-        return -errno;
+        goto err_read;
     }
 
     *event->cbp = event->cb;
 
     return 0;
+
+err_read:
+    rawstor_mempool_free(io->events_pool, event);
+    return -errno;
 }
 
 
@@ -612,15 +622,16 @@ int rawstor_io_preadv(
     };
 
     if (aio_read(event->cb)) {
-        int errsv = errno;
-        rawstor_mempool_free(io->events_pool, event);
-        errno = errsv;
-        return -errno;
+        goto err_read;
     }
 
     *event->cbp = event->cb;
 
     return 0;
+
+err_read:
+    rawstor_mempool_free(io->events_pool, event);
+    return -errno;
 }
 
 
@@ -658,15 +669,16 @@ int rawstor_io_write(
     };
 
     if (aio_write(event->cb)) {
-        int errsv = errno;
-        rawstor_mempool_free(io->events_pool, event);
-        errno = errsv;
-        return -errno;
+        goto err_write;
     }
 
     *event->cbp = event->cb;
 
     return 0;
+
+err_write:
+    rawstor_mempool_free(io->events_pool, event);
+    return -errno;
 }
 
 
@@ -704,15 +716,16 @@ int rawstor_io_pwrite(
     };
 
     if (aio_write(event->cb)) {
-        int errsv = errno;
-        rawstor_mempool_free(io->events_pool, event);
-        errno = errsv;
-        return -errno;
+        goto err_write;
     }
 
     *event->cbp = event->cb;
 
     return 0;
+
+err_write:
+    rawstor_mempool_free(io->events_pool, event);
+    return -errno;
 }
 
 
@@ -764,15 +777,16 @@ int rawstor_io_writev(
     };
 
     if (aio_write(event->cb)) {
-        int errsv = errno;
-        rawstor_mempool_free(io->events_pool, event);
-        errno = errsv;
-        return -errno;
+        goto err_write;
     }
 
     *event->cbp = event->cb;
 
     return 0;
+
+err_write:
+    rawstor_mempool_free(io->events_pool, event);
+    return -errno;
 }
 
 
@@ -823,16 +837,17 @@ int rawstor_io_pwritev(
         // .aio_lio_opcode
     };
 
-    if (aio_read(event->cb)) {
-        int errsv = errno;
-        rawstor_mempool_free(io->events_pool, event);
-        errno = errsv;
-        return -errno;
+    if (aio_write(event->cb)) {
+        goto err_write;
     }
 
     *event->cbp = event->cb;
 
     return 0;
+
+err_write:
+    rawstor_mempool_free(io->events_pool, event);
+    return -errno;
 }
 
 

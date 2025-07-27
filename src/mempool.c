@@ -16,20 +16,17 @@ struct RawstorMemPool {
 RawstorMemPool* rawstor_mempool_create(size_t capacity, size_t object_size) {
     RawstorMemPool *mempool = malloc(sizeof(RawstorMemPool));
     if (mempool == NULL) {
-        return NULL;
+        goto err_mempool;
     }
 
     mempool->data = calloc(capacity, object_size);
     if (mempool->data == NULL) {
-        free(mempool);
-        return NULL;
+        goto err_data;
     }
 
     mempool->head = calloc(capacity, sizeof(void*));
     if (mempool->head == NULL) {
-        free(mempool->data);
-        free(mempool);
-        return NULL;
+        goto err_head;
     }
 
     for (size_t i = 0; i < capacity; ++i) {
@@ -41,6 +38,13 @@ RawstorMemPool* rawstor_mempool_create(size_t capacity, size_t object_size) {
     mempool->object_size = object_size;
 
     return mempool;
+
+err_head:
+    free(mempool->data);
+err_data:
+    free(mempool);
+err_mempool:
+    return NULL;
 }
 
 
