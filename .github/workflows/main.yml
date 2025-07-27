@@ -57,7 +57,7 @@ jobs:
     - name: autogen
       run: ./autogen.sh
     - name: configure
-      run: ./configure --disable-ost --enable-trace
+      run: ./configure --disable-ost --enable-trace --disable-shared
     - name: make
       run: make
     - name: make test
@@ -83,7 +83,7 @@ jobs:
     - name: autogen
       run: ./autogen.sh
     - name: configure
-      run: ./configure --disable-ost --enable-trace --without-liburing
+      run: ./configure --disable-ost --enable-trace --without-liburing --disable-shared
     - name: make
       run: make
     - name: make test
