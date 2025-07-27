@@ -67,8 +67,8 @@ jobs:
     - name: testio
       run: |
         object_id=$(rawstor-cli create --size=1)
-        rawstor-cli --object-id=${object_id} --io-depth=1 --count=10
-        rawstor-cli --object-id=${object_id} --io-depth=1 --count=10 --vector-mode
+        rawstor-cli testio --object-id=${object_id} --block-size=4096 --io-depth=1 --count=10
+        rawstor-cli testio --object-id=${object_id} --block-size=4096 --io-depth=1 --count=10 --vector-mode
 
   test-disable-ost-without-liburing:
 
@@ -93,5 +93,5 @@ jobs:
     - name: testio
       run: |
         object_id=$(rawstor-cli create --size=1)
-        rawstor-cli testio --object-id=${object_id} --io-depth=1 --count=10
-        rawstor-cli testio --object-id=${object_id} --io-depth=1 --count=10 --vector-mode
+        rawstor-cli testio --object-id=${object_id} --block-size=4096 --io-depth=1 --count=10
+        rawstor-cli testio --object-id=${object_id} --block-size=4096 --io-depth=1 --count=10 --vector-mode
