@@ -351,9 +351,12 @@ int rawstor_io_read(
         goto err_event_iov;
     }
     RawstorIOEvent *event = rawstor_mempool_alloc(io->events_pool);
+    rawstor_mutex_lock(session->mutex);
     RawstorIOEvent **sqe = rawstor_ringbuf_head(session->sqes);
     *sqe = event;
-    if (rawstor_ringbuf_push(session->sqes)) {
+    int rval = rawstor_ringbuf_push(session->sqes);
+    rawstor_mutex_unlock(session->mutex);
+    if (rval) {
         goto err_sqe;
     }
 
@@ -421,9 +424,12 @@ int rawstor_io_pread(
         goto err_event_iov;
     }
     RawstorIOEvent *event = rawstor_mempool_alloc(io->events_pool);
+    rawstor_mutex_lock(session->mutex);
     RawstorIOEvent **sqe = rawstor_ringbuf_head(session->sqes);
     *sqe = event;
-    if (rawstor_ringbuf_push(session->sqes)) {
+    int rval = rawstor_ringbuf_push(session->sqes);
+    rawstor_mutex_unlock(session->mutex);
+    if (rval) {
         goto err_sqe;
     }
 
@@ -491,9 +497,12 @@ int rawstor_io_readv(
         goto err_event_iov;
     }
     RawstorIOEvent *event = rawstor_mempool_alloc(io->events_pool);
+    rawstor_mutex_lock(session->mutex);
     RawstorIOEvent **sqe = rawstor_ringbuf_head(session->sqes);
     *sqe = event;
-    if (rawstor_ringbuf_push(session->sqes)) {
+    int rval = rawstor_ringbuf_push(session->sqes);
+    rawstor_mutex_unlock(session->mutex);
+    if (rval) {
         goto err_sqe;
     }
 
@@ -560,9 +569,12 @@ int rawstor_io_preadv(
         goto err_event_iov;
     }
     RawstorIOEvent *event = rawstor_mempool_alloc(io->events_pool);
+    rawstor_mutex_lock(session->mutex);
     RawstorIOEvent **sqe = rawstor_ringbuf_head(session->sqes);
     *sqe = event;
-    if (rawstor_ringbuf_push(session->sqes)) {
+    int rval = rawstor_ringbuf_push(session->sqes);
+    rawstor_mutex_unlock(session->mutex);
+    if (rval) {
         goto err_sqe;
     }
 
@@ -629,9 +641,12 @@ int rawstor_io_write(
         goto err_event_iov;
     }
     RawstorIOEvent *event = rawstor_mempool_alloc(io->events_pool);
+    rawstor_mutex_lock(session->mutex);
     RawstorIOEvent **sqe = rawstor_ringbuf_head(session->sqes);
     *sqe = event;
-    if (rawstor_ringbuf_push(session->sqes)) {
+    int rval = rawstor_ringbuf_push(session->sqes);
+    rawstor_mutex_unlock(session->mutex);
+    if (rval) {
         goto err_sqe;
     }
 
@@ -699,9 +714,12 @@ int rawstor_io_pwrite(
         goto err_event_iov;
     }
     RawstorIOEvent *event = rawstor_mempool_alloc(io->events_pool);
+    rawstor_mutex_lock(session->mutex);
     RawstorIOEvent **sqe = rawstor_ringbuf_head(session->sqes);
     *sqe = event;
-    if (rawstor_ringbuf_push(session->sqes)) {
+    int rval = rawstor_ringbuf_push(session->sqes);
+    rawstor_mutex_unlock(session->mutex);
+    if (rval) {
         goto err_sqe;
     }
 
@@ -769,9 +787,12 @@ int rawstor_io_writev(
         goto err_event_iov;
     }
     RawstorIOEvent *event = rawstor_mempool_alloc(io->events_pool);
+    rawstor_mutex_lock(session->mutex);
     RawstorIOEvent **sqe = rawstor_ringbuf_head(session->sqes);
     *sqe = event;
-    if (rawstor_ringbuf_push(session->sqes)) {
+    int rval = rawstor_ringbuf_push(session->sqes);
+    rawstor_mutex_unlock(session->mutex);
+    if (rval) {
         goto err_sqe;
     }
 
@@ -838,9 +859,12 @@ int rawstor_io_pwritev(
         goto err_event_iov;
     }
     RawstorIOEvent *event = rawstor_mempool_alloc(io->events_pool);
+    rawstor_mutex_lock(session->mutex);
     RawstorIOEvent **sqe = rawstor_ringbuf_head(session->sqes);
     *sqe = event;
-    if (rawstor_ringbuf_push(session->sqes)) {
+    int rval = rawstor_ringbuf_push(session->sqes);
+    rawstor_mutex_unlock(session->mutex);
+    if (rval) {
         goto err_sqe;
     }
 
