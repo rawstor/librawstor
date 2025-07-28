@@ -2,11 +2,6 @@ name: functest
 
 on:
   pull_request:
-  workflow_run:
-    workflows:
-      - unittest
-    types:
-      - completed
 
 jobs:
   functest-disable-ost:
