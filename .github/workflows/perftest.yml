@@ -1,11 +1,7 @@
 name: perftest
 
 on:
-  workflow_run:
-    workflows:
-      - functest
-    types:
-      - completed
+  pull_request:
 
 jobs:
   perftest-disable-ost:
