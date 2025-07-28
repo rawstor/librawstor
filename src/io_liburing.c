@@ -41,7 +41,7 @@ struct RawstorIO {
 const char* rawstor_io_engine_name = "liburing";
 
 
-static inline RawstorIOEvent* rawstor_io_create_event(
+static inline RawstorIOEvent* io_create_event(
     RawstorIO *io,
     int fd, size_t size,
     RawstorIOCallback *cb, void *data)
@@ -131,7 +131,7 @@ int rawstor_io_read(
     int fd, void *buf, size_t size,
     RawstorIOCallback *cb, void *data)
 {
-    RawstorIOEvent *event = rawstor_io_create_event(io, fd, size, cb, data);
+    RawstorIOEvent *event = io_create_event(io, fd, size, cb, data);
     if (event == NULL) {
         return -errno;
     }
@@ -152,7 +152,7 @@ int rawstor_io_pread(
     int fd, void *buf, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data)
 {
-    RawstorIOEvent *event = rawstor_io_create_event(io, fd, size, cb, data);
+    RawstorIOEvent *event = io_create_event(io, fd, size, cb, data);
     if (event == NULL) {
         return -errno;
     }
@@ -173,7 +173,7 @@ int rawstor_io_readv(
     int fd, struct iovec *iov, unsigned int niov, size_t size,
     RawstorIOCallback *cb, void *data)
 {
-    RawstorIOEvent *event = rawstor_io_create_event(io, fd, size, cb, data);
+    RawstorIOEvent *event = io_create_event(io, fd, size, cb, data);
     if (event == NULL) {
         return -errno;
     }
@@ -194,7 +194,7 @@ int rawstor_io_preadv(
     int fd, struct iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data)
 {
-    RawstorIOEvent *event = rawstor_io_create_event(io, fd, size, cb, data);
+    RawstorIOEvent *event = io_create_event(io, fd, size, cb, data);
     if (event == NULL) {
         return -errno;
     }
@@ -215,7 +215,7 @@ int rawstor_io_write(
     int fd, void *buf, size_t size,
     RawstorIOCallback *cb, void *data)
 {
-    RawstorIOEvent *event = rawstor_io_create_event(io, fd, size, cb, data);
+    RawstorIOEvent *event = io_create_event(io, fd, size, cb, data);
     if (event == NULL) {
         return -errno;
     }
@@ -236,7 +236,7 @@ int rawstor_io_pwrite(
     int fd, void *buf, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data)
 {
-    RawstorIOEvent *event = rawstor_io_create_event(io, fd, size, cb, data);
+    RawstorIOEvent *event = io_create_event(io, fd, size, cb, data);
     if (event == NULL) {
         return -errno;
     }
@@ -257,7 +257,7 @@ int rawstor_io_writev(
     int fd, struct iovec *iov, unsigned int niov, size_t size,
     RawstorIOCallback *cb, void *data)
 {
-    RawstorIOEvent *event = rawstor_io_create_event(io, fd, size, cb, data);
+    RawstorIOEvent *event = io_create_event(io, fd, size, cb, data);
     if (event == NULL) {
         return -errno;
     }
@@ -278,7 +278,7 @@ int rawstor_io_pwritev(
     int fd, struct iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data)
 {
-    RawstorIOEvent *event = rawstor_io_create_event(io, fd, size, cb, data);
+    RawstorIOEvent *event = io_create_event(io, fd, size, cb, data);
     if (event == NULL) {
         return -errno;
     }
