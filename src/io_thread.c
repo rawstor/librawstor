@@ -32,7 +32,7 @@ typedef struct RawstorIOSession {
     RawstorRingBuf *sqes;
 
     int exit;
-    RawstorMutex *notify_session_thread_mutex;
+    RawstorMutex *mutex;
     RawstorCond *notify_session_thread_cond;
     RawstorThread *thread;
 } RawstorIOSession;
@@ -59,8 +59,6 @@ struct RawstorIOEvent {
     void *trace_event;
 #endif
 };
-
-typedef
 
 
 struct RawstorIO {
@@ -145,7 +143,7 @@ static ssize_t io_event_process_pwritev(RawstorIOEvent *event) {
 static void* io_session_thread(void *data) {
     RawstorIOSession *session = data;
 
-    rawstor_mutex_lock(session->notify_session_thread_mutex);
+    rawstor_mutex_lock(session->mutex);
     while (!session->exit) {
         if (!rawstor_ringbuf_empty(session->sqes)) {
             RawstorIOEvent **sqe = rawstor_ringbuf_tail(session->sqes);
@@ -155,9 +153,9 @@ static void* io_session_thread(void *data) {
             rawstor_trace_event_message(
                 event->trace_event, "process()\n");
 #endif
-            rawstor_mutex_unlock(session->notify_session_thread_mutex);
+            rawstor_mutex_unlock(session->mutex);
             ssize_t res = event->process(event);
-            rawstor_mutex_lock(session->notify_session_thread_mutex);
+            rawstor_mutex_lock(session->mutex);
 #ifdef RAWSTOR_TRACE_EVENTS
             rawstor_trace_event_message(
                 event->trace_event, "process(): res = %zd\n", res);
@@ -191,11 +189,10 @@ static void* io_session_thread(void *data) {
             assert(rawstor_ringbuf_pop(session->sqes) == 0);
         } else {
             rawstor_cond_wait(
-                session->notify_session_thread_cond,
-                session->notify_session_thread_mutex);
+                session->notify_session_thread_cond, session->mutex);
         }
     }
-    rawstor_mutex_unlock(session->notify_session_thread_mutex);
+    rawstor_mutex_unlock(session->mutex);
 
     return NULL;
 }
@@ -233,8 +230,8 @@ static RawstorIOSession* io_append_session(RawstorIO *io, int fd) {
         goto err_sqes;
     }
 
-    session->notify_session_thread_mutex = rawstor_mutex_create();
-    if (session->notify_session_thread_mutex == NULL) {
+    session->mutex = rawstor_mutex_create();
+    if (session->mutex == NULL) {
         goto err_mutex;
     }
 
@@ -253,26 +250,26 @@ static RawstorIOSession* io_append_session(RawstorIO *io, int fd) {
 err_thread:
     rawstor_cond_delete(session->notify_session_thread_cond);
 err_cond:
-    rawstor_mutex_delete(session->notify_session_thread_mutex);
+    rawstor_mutex_delete(session->mutex);
 err_mutex:
     rawstor_ringbuf_delete(session->sqes);
 err_sqes:
     rawstor_list_remove(io->sessions, session);
 err_session:
-    return -errno;
+    return NULL;
 }
 
 
 static void io_remove_session(RawstorIO *io, RawstorIOSession *session) {
-    rawstor_mutex_lock(session->notify_session_thread_mutex);
+    rawstor_mutex_lock(session->mutex);
     session->exit = 1;
     rawstor_cond_signal(session->notify_session_thread_cond);
-    rawstor_mutex_unlock(session->notify_session_thread_mutex);
+    rawstor_mutex_unlock(session->mutex);
 
     rawstor_thread_join(session->thread, NULL);
 
     rawstor_cond_delete(session->notify_session_thread_cond);
-    rawstor_mutex_delete(session->notify_session_thread_mutex);
+    rawstor_mutex_delete(session->mutex);
     rawstor_ringbuf_delete(session->sqes);
     rawstor_list_remove(io->sessions, session);
 }
@@ -883,6 +880,7 @@ err_session:
 }
 
 
+/*
 RawstorIOEvent* rawstor_io_wait_event(RawstorIO *io) {
     return rawstor_io_wait_event_timeout(io, -1);
 }
@@ -891,6 +889,7 @@ RawstorIOEvent* rawstor_io_wait_event(RawstorIO *io) {
 RawstorIOEvent* rawstor_io_wait_event_timeout(RawstorIO *io, int timeout) {
 
 }
+*/
 
 
 void rawstor_io_release_event(RawstorIO *io, RawstorIOEvent *event) {
@@ -898,7 +897,7 @@ void rawstor_io_release_event(RawstorIO *io, RawstorIOEvent *event) {
     rawstor_trace_event_end(event->trace_event, "release_event()\n");
 #endif
 
-    RawstorIOSession *session = event->session;
+    // RawstorIOSession *session = event->session;
 
     free(event->iov_origin);
     rawstor_mempool_free(io->events_pool, event);
