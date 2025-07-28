@@ -33,7 +33,7 @@ typedef struct RawstorIOSession {
 
     int exit;
     RawstorMutex *mutex;
-    RawstorCond *notify_session_thread_cond;
+    RawstorCond *notify_thread;
     RawstorThread *thread;
 } RawstorIOSession;
 
@@ -188,8 +188,7 @@ static void* io_session_thread(void *data) {
 
             assert(rawstor_ringbuf_pop(session->sqes) == 0);
         } else {
-            rawstor_cond_wait(
-                session->notify_session_thread_cond, session->mutex);
+            rawstor_cond_wait(session->notify_thread, session->mutex);
         }
     }
     rawstor_mutex_unlock(session->mutex);
@@ -235,8 +234,8 @@ static RawstorIOSession* io_append_session(RawstorIO *io, int fd) {
         goto err_mutex;
     }
 
-    session->notify_session_thread_cond = rawstor_cond_create();
-    if (session->notify_session_thread_cond == NULL) {
+    session->notify_thread = rawstor_cond_create();
+    if (session->notify_thread == NULL) {
         goto err_cond;
     }
 
@@ -248,7 +247,7 @@ static RawstorIOSession* io_append_session(RawstorIO *io, int fd) {
     return 0;
 
 err_thread:
-    rawstor_cond_delete(session->notify_session_thread_cond);
+    rawstor_cond_delete(session->notify_thread);
 err_cond:
     rawstor_mutex_delete(session->mutex);
 err_mutex:
@@ -263,12 +262,12 @@ err_session:
 static void io_remove_session(RawstorIO *io, RawstorIOSession *session) {
     rawstor_mutex_lock(session->mutex);
     session->exit = 1;
-    rawstor_cond_signal(session->notify_session_thread_cond);
+    rawstor_cond_signal(session->notify_thread);
     rawstor_mutex_unlock(session->mutex);
 
     rawstor_thread_join(session->thread, NULL);
 
-    rawstor_cond_delete(session->notify_session_thread_cond);
+    rawstor_cond_delete(session->notify_thread);
     rawstor_mutex_delete(session->mutex);
     rawstor_ringbuf_delete(session->sqes);
     rawstor_list_remove(io->sessions, session);
