@@ -1,7 +1,7 @@
 name: functest
 
 on:
-  pull_request:
+  push:
 
 jobs:
   functest-disable-ost:
