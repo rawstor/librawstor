@@ -1,7 +1,6 @@
 name: perftest
 
 on:
-  pull_request:
   workflow_run:
     workflows:
       - functest
