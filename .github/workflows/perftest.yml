@@ -53,5 +53,54 @@ jobs:
           --numjobs=1 \
           --runtime=60 \
           --time_based \
-          --group_reporting \
-          --eta-newline=1
+          --group_reporting >> $GITHUB_STEP_SUMMARY
+
+  perftest-disable-ost-without-liburing:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libxxhash-dev
+    - uses: actions/checkout@v4
+      with:
+        path: librawstor
+    - name: install librawstor
+      run: |
+        pushd .
+        cd ./librawstor
+        ./autogen.sh
+        ./configure --disable-ost --without-liburing --disable-shared
+        make
+        sudo make install
+        popd
+    - uses: actions/checkout@v4
+      with:
+        repository: rawstor/fio
+        path: fio
+        ref: refs/heads/rawstor
+    - name: install fio
+      run: |
+        pushd .
+        cd ./fio
+        ./configure
+        make
+        sudo make install
+        popd
+    - name: fio
+      run: |
+        object_id=$(rawstor-cli create --size=1)
+        fio \
+          --ioengine=librawstor \
+          --filename=${object_id} \
+          --name=rawstor \
+          --iodepth=1 \
+          --rw=randread \
+          --bs=4k \
+          --size=1G \
+          --numjobs=1 \
+          --runtime=60 \
+          --time_based \
+          --group_reporting >> $GITHUB_STEP_SUMMARY
