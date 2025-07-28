@@ -1,6 +1,7 @@
 #include "io.h"
 
 #include "gcc.h"
+#include "logging.h"
 #include "mempool.h"
 
 #include <liburing.h>
@@ -22,6 +23,10 @@ struct RawstorIOEvent {
     struct io_uring_cqe *cqe;
 
     void *data;
+
+#ifdef RAWSTOR_TRACE_EVENTS
+    void *trace_event;
+#endif
 };
 
 
@@ -111,6 +116,10 @@ int rawstor_io_read(
         .size = size,
         // .cqe
         .data = data,
+#ifdef RAWSTOR_TRACE_EVENTS
+        .trace_event = rawstor_trace_event_begin(
+            "read(%d, %zu)\n", fd, size),
+#endif
     };
 
     io_uring_prep_read(sqe, fd, buf, size, 0);
@@ -147,6 +156,10 @@ int rawstor_io_pread(
         .size = size,
         // .cqe
         .data = data,
+#ifdef RAWSTOR_TRACE_EVENTS
+        .trace_event = rawstor_trace_event_begin(
+            "pread(%d, %zu)\n", fd, size),
+#endif
     };
 
     io_uring_prep_read(sqe, fd, buf, size, offset);
@@ -183,6 +196,10 @@ int rawstor_io_readv(
         .size = size,
         // .cqe
         .data = data,
+#ifdef RAWSTOR_TRACE_EVENTS
+        .trace_event = rawstor_trace_event_begin(
+            "readv(%d, %zu)\n", fd, size),
+#endif
     };
 
     io_uring_prep_readv(sqe, fd, iov, niov, 0);
@@ -219,6 +236,10 @@ int rawstor_io_preadv(
         .size = size,
         // .cqe
         .data = data,
+#ifdef RAWSTOR_TRACE_EVENTS
+        .trace_event = rawstor_trace_event_begin(
+            "preadv(%d, %zu)\n", fd, size),
+#endif
     };
 
     io_uring_prep_readv(sqe, fd, iov, niov, offset);
@@ -255,6 +276,10 @@ int rawstor_io_write(
         .size = size,
         // .cqe
         .data = data,
+#ifdef RAWSTOR_TRACE_EVENTS
+        .trace_event = rawstor_trace_event_begin(
+            "write(%d, %zu)\n", fd, size),
+#endif
     };
 
     io_uring_prep_write(sqe, fd, buf, size, 0);
@@ -291,6 +316,10 @@ int rawstor_io_pwrite(
         .size = size,
         // .cqe
         .data = data,
+#ifdef RAWSTOR_TRACE_EVENTS
+        .trace_event = rawstor_trace_event_begin(
+            "pwrite(%d, %zu)\n", fd, size),
+#endif
     };
 
     io_uring_prep_write(sqe, fd, buf, size, offset);
@@ -327,6 +356,10 @@ int rawstor_io_writev(
         .size = size,
         // .cqe
         .data = data,
+#ifdef RAWSTOR_TRACE_EVENTS
+        .trace_event = rawstor_trace_event_begin(
+            "writev(%d, %zu)\n", fd, size),
+#endif
     };
 
     io_uring_prep_writev(sqe, fd, iov, niov, 0);
@@ -363,6 +396,10 @@ int rawstor_io_pwritev(
         .size = size,
         // .cqe
         .data = data,
+#ifdef RAWSTOR_TRACE_EVENTS
+        .trace_event = rawstor_trace_event_begin(
+            "pwritev(%d, %zu)\n", fd, size),
+#endif
     };
 
     io_uring_prep_writev(sqe, fd, iov, niov, offset);
@@ -447,6 +484,9 @@ RawstorIOEvent* rawstor_io_wait_event_timeout(RawstorIO *io, int timeout) {
 
 
 void rawstor_io_release_event(RawstorIO *io, RawstorIOEvent *event) {
+#ifdef RAWSTOR_TRACE_EVENTS
+    rawstor_trace_event_end(event->trace_event, "release_event()\n");
+#endif
     io_uring_cqe_seen(&io->ring, event->cqe);
     rawstor_mempool_free(io->events_pool, event);
 }
@@ -473,5 +513,13 @@ int rawstor_io_event_error(RawstorIOEvent *event) {
 
 
 int rawstor_io_event_dispatch(RawstorIOEvent *event) {
-    return event->callback(event, event->data);
+#ifdef RAWSTOR_TRACE_EVENTS
+    rawstor_trace_event_message(event->trace_event, "dispatch()\n");
+#endif
+    int ret = event->callback(event, event->data);
+#ifdef RAWSTOR_TRACE_EVENTS
+    rawstor_trace_event_message(
+        event->trace_event, "dispatch(): rval = %d\n", ret);
+#endif
+    return ret;
 }
