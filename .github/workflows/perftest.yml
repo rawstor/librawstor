@@ -47,7 +47,7 @@ jobs:
           --filename=${object_id} \
           --name=rawstor \
           --iodepth=1 \
-          --rw=randread \
+          --rw=randrw \
           --bs=4k \
           --size=1G \
           --numjobs=1 \
@@ -97,7 +97,7 @@ jobs:
           --filename=${object_id} \
           --name=rawstor \
           --iodepth=1 \
-          --rw=randread \
+          --rw=randrw \
           --bs=4k \
           --size=1G \
           --numjobs=1 \
