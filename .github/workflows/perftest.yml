@@ -49,7 +49,7 @@ jobs:
         object_id=$(rawstor-cli create --size=1)
         fio \
           --ioengine=librawstor \
-          --filename=$(object_id) \
+          --filename=${object_id} \
           --name=rawstor \
           --iodepth=1 \
           --rw=randread \
