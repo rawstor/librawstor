@@ -60,6 +60,9 @@ static int test_cond_signal() {
 
     assertTrue(context.value == 1);
 
+    rawstor_cond_delete(context.cond);
+    rawstor_mutex_delete(context.mutex);
+
     return 0;
 }
 
@@ -103,6 +106,9 @@ static int test_cond_broadcast() {
     }
 
     assertTrue(context.value == count);
+
+    rawstor_cond_delete(context.cond);
+    rawstor_mutex_delete(context.mutex);
 
     return 0;
 }
