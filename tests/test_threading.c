@@ -44,11 +44,11 @@ static int test_cond_signal() {
 
     while (1) {
         rawstor_mutex_lock(context.mutex);
-        int wait = context.wait;
-        rawstor_mutex_unlock(context.mutex);
-        if (wait == 1) {
+        if (context.wait == 1) {
+            rawstor_mutex_unlock(context.mutex);
             break;
         }
+        rawstor_mutex_unlock(context.mutex);
     }
 
     rawstor_mutex_lock(context.mutex);
@@ -86,11 +86,11 @@ static int test_cond_broadcast() {
 
     while (1) {
         rawstor_mutex_lock(context.mutex);
-        int wait = context.wait;
-        rawstor_mutex_unlock(context.mutex);
-        if (wait == count) {
+        if (context.wait == count) {
+            rawstor_mutex_unlock(context.mutex);
             break;
         }
+        rawstor_mutex_unlock(context.mutex);
     }
 
     rawstor_mutex_lock(context.mutex);
