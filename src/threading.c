@@ -32,6 +32,7 @@ RawstorThread* rawstor_thread_create(
 
     int res = pthread_create(&ret->pthread, NULL, routine, data);
     if (res != 0) {
+        errno = res;
         free(ret);
         return NULL;
     }
