@@ -1,6 +1,7 @@
 noinst_PROGRAMS = test_list \
                   test_mempool \
                   test_ringbuf \
+                  test_threading \
                   test_uuid
 
 
@@ -25,6 +26,12 @@ test_ringbuf_SOURCES = test_ringbuf.c
 
 
 test_ringbuf_LDADD = $(top_srcdir)/src/librawstor.la
+
+
+test_threading_SOURCES = test_threading.c
+
+
+test_threading_LDADD = $(top_srcdir)/src/librawstor.la
 
 
 test_uuid_SOURCES = test_uuid.c
