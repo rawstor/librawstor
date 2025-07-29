@@ -30,20 +30,20 @@ static RawstorList *events_list = NULL;
 #endif // RAWSTOR_TRACE_EVENTS
 
 
-void rawstor_logging_initialize(void) {
+int rawstor_logging_initialize(void) {
     rawstor_logging_mutex = rawstor_mutex_create();
     if (rawstor_logging_mutex == NULL) {
-        perror("rawstor_mutex_create() failed");
-        exit(errno);
+        return -errno;
     }
 
 #ifdef RAWSTOR_TRACE_EVENTS
     events_list = rawstor_list_create(sizeof(RawstorTraceEventType));
     if (events_list == NULL) {
-        perror("rawstor_list_create() failed");
-        exit(errno);
+        return -errno;
     }
 #endif // RAWSTOR_TRACE_EVENTS
+
+    return 0;
 }
 
 

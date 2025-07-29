@@ -28,7 +28,7 @@
 extern RawstorMutex *rawstor_logging_mutex;
 
 
-void rawstor_logging_initialize(void);
+int rawstor_logging_initialize(void);
 
 void rawstor_logging_terminate(void);
 

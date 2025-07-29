@@ -25,7 +25,9 @@ static RawstorIO *_rawstor_io = NULL;
 int rawstor_initialize(const RawstorOptsOST *opts_ost) {
     assert(_rawstor_io == NULL);
 
-    rawstor_logging_initialize();
+    if (rawstor_logging_initialize()) {
+        return -errno;
+    }
 
     rawstor_info(
         "Rawstor compiled with IO engine: %s\n",
