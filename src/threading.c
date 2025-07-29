@@ -49,6 +49,8 @@ void* rawstor_thread_join(RawstorThread *thread) {
         exit(errno);
     }
 
+    free(thread);
+
     return ret;
 }
 
