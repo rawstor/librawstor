@@ -133,7 +133,7 @@ void rawstor_cond_wait(RawstorCond *cond, RawstorMutex *mutex) {
 }
 
 
-void rawstor_cond_wait_timeout(
+int rawstor_cond_wait_timeout(
     RawstorCond *cond, RawstorMutex *mutex, int timeout)
 {
     struct timespec ts;
@@ -145,10 +145,14 @@ void rawstor_cond_wait_timeout(
 
     int res = pthread_cond_timedwait(&cond->pcond, &mutex->pmutex, &ts);
     if (res != 0) {
-        errno = res;
-        perror("pthread_cond_timedwait() failed");
-        exit(errno);
+        if (res != ETIMEDOUT) {
+            errno = res;
+            perror("pthread_cond_timedwait() failed");
+            exit(errno);
+        }
     }
+
+    return res;
 }
 
 

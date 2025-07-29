@@ -29,7 +29,7 @@ void rawstor_cond_delete(RawstorCond* cond);
 
 void rawstor_cond_wait(RawstorCond *cond, RawstorMutex *mutex);
 
-void rawstor_cond_wait_timeout(
+int rawstor_cond_wait_timeout(
     RawstorCond *cond, RawstorMutex *mutex, int timeout);
 
 void rawstor_cond_signal(RawstorCond *cond);
