@@ -45,8 +45,10 @@ int rawstor_logging_initialize(void) {
 
     return 0;
 
+#ifdef RAWSTOR_TRACE_EVENTS
 err_events_list:
     rawstor_mutex_delete(rawstor_logging_mutex);
+#endif // RAWSTOR_TRACE_EVENTS
 err_mutex:
     return -errno;
 }
