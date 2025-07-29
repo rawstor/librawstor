@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 
 struct RawstorThread {
@@ -135,12 +136,14 @@ void rawstor_cond_wait(RawstorCond *cond, RawstorMutex *mutex) {
 void rawstor_cond_wait_timeout(
     RawstorCond *cond, RawstorMutex *mutex, int timeout)
 {
-    struct timespec time = (struct timespec) {
-        .tv_sec = 0,
-        .tv_nsec = 1000000ul * timeout,
-    };
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    ts.tv_sec += timeout / 1000;
+    ts.tv_nsec += 1000000l * (timeout % 1000);
+    ts.tv_sec += ts.tv_nsec / 1000000000;
+    ts.tv_nsec %= 1000000000;
 
-    int res = pthread_cond_timedwait(&cond->pcond, &mutex->pmutex, &time);
+    int res = pthread_cond_timedwait(&cond->pcond, &mutex->pmutex, &ts);
     if (res != 0) {
         errno = res;
         perror("pthread_cond_timedwait() failed");
