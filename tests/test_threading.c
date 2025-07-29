@@ -4,6 +4,7 @@
 
 #include <stddef.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 
 struct TestThreadingContext {
@@ -49,6 +50,7 @@ static int test_cond_signal() {
             break;
         }
         rawstor_mutex_unlock(context.mutex);
+        usleep(1000);
     }
 
     rawstor_mutex_lock(context.mutex);
@@ -96,6 +98,7 @@ static int test_cond_broadcast() {
             break;
         }
         rawstor_mutex_unlock(context.mutex);
+        usleep(1000);
     }
 
     rawstor_mutex_lock(context.mutex);
