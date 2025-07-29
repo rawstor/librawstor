@@ -41,18 +41,12 @@ RawstorThread* rawstor_thread_create(
 }
 
 
-void* rawstor_thread_join(RawstorThread *thread) {
-    void *ret;
-
-    int res = pthread_join(thread->pthread, &ret);
-    if (res != 0) {
-        perror("pthread_join() failed");
-        exit(errno);
-    }
+int rawstor_thread_join(RawstorThread *thread, void **data) {
+    int res = pthread_join(thread->pthread, data);
 
     free(thread);
 
-    return ret;
+    return res;
 }
 
 
