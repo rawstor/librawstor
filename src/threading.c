@@ -137,7 +137,7 @@ int rawstor_cond_wait_timeout(
     RawstorCond *cond, RawstorMutex *mutex, int timeout)
 {
     struct timespec ts;
-    clock_gettime(CLOCK_REALTIME, &ts);
+    clock_gettime(CLOCK_MONOTONIC, &ts);
     ts.tv_sec += timeout / 1000;
     ts.tv_nsec += 1000000l * (timeout % 1000);
     ts.tv_sec += ts.tv_nsec / 1000000000;
