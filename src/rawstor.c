@@ -25,6 +25,10 @@ static RawstorIO *_rawstor_io = NULL;
 int rawstor_initialize(const RawstorOptsOST *opts_ost) {
     assert(_rawstor_io == NULL);
 
+    if (rawstor_logging_initialize()) {
+        goto err_logging_initialize;
+    }
+
     rawstor_info(
         "Rawstor compiled with IO engine: %s\n",
         rawstor_io_engine_name);
@@ -34,22 +38,29 @@ int rawstor_initialize(const RawstorOptsOST *opts_ost) {
         rawstor_object_backend_name);
 
     if (rawstor_opts_initialize(opts_ost)) {
-        return -errno;
+        goto err_opts_initialize;
     }
 
     _rawstor_io = rawstor_io_create(QUEUE_DEPTH);
     if (_rawstor_io == NULL) {
-        rawstor_opts_terminate();
-        return -errno;
+        goto err_io;
     };
 
     return 0;
+
+err_io:
+    rawstor_opts_terminate();
+err_opts_initialize:
+    rawstor_logging_terminate();
+err_logging_initialize:
+    return -errno;
 }
 
 
 void rawstor_terminate(void) {
     rawstor_io_delete(_rawstor_io);
     rawstor_opts_terminate();
+    rawstor_logging_terminate();
 }
 
 

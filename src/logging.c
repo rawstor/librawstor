@@ -1,14 +1,21 @@
 #include "logging.h"
 
 #include "list.h"
+#include "threading.h"
 
 #include <assert.h>
+#include <errno.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <unistd.h>
 
 
+RawstorMutex *rawstor_logging_mutex = NULL;
+
+
 #ifdef RAWSTOR_TRACE_EVENTS
+
 typedef enum {
     RAWSTOR_TRACE_EVENT_CREATING,
     RAWSTOR_TRACE_EVENT_AVAILABLE,
@@ -18,29 +25,46 @@ typedef enum {
 } RawstorTraceEventType;
 
 
-static RawstorList *_events_list = NULL;
+static RawstorList *events_list = NULL;
+
+#endif // RAWSTOR_TRACE_EVENTS
 
 
-static RawstorList* _events_list_get(void) {
-    return _events_list;
+int rawstor_logging_initialize(void) {
+    rawstor_logging_mutex = rawstor_mutex_create();
+    if (rawstor_logging_mutex == NULL) {
+        goto err_mutex;
+    }
+
+#ifdef RAWSTOR_TRACE_EVENTS
+    events_list = rawstor_list_create(sizeof(RawstorTraceEventType));
+    if (events_list == NULL) {
+        goto err_events_list;
+    }
+#endif // RAWSTOR_TRACE_EVENTS
+
+    return 0;
+
+#ifdef RAWSTOR_TRACE_EVENTS
+err_events_list:
+    rawstor_mutex_delete(rawstor_logging_mutex);
+#endif // RAWSTOR_TRACE_EVENTS
+err_mutex:
+    return -errno;
 }
 
 
-static RawstorList* _events_list_create(void);
-
-
-static RawstorList* (*events_list_get)(void) = _events_list_create;
-
-
-static RawstorList* _events_list_create(void) {
-    _events_list = rawstor_list_create(sizeof(RawstorTraceEventType));
-    events_list_get = _events_list_get;
-    return _events_list;
+void rawstor_logging_terminate(void) {
+    rawstor_mutex_delete(rawstor_logging_mutex);
 }
+
+
+#ifdef RAWSTOR_TRACE_EVENTS
 
 
 void* rawstor_trace_event_begin(const char *format, ...) {
-    RawstorList *events_list = events_list_get();
+    rawstor_mutex_lock(rawstor_logging_mutex);
+
     RawstorTraceEventType *iter = rawstor_list_iter(events_list);
     for (; iter != NULL; iter = rawstor_list_next(iter)) {
         if (*iter == RAWSTOR_TRACE_EVENT_DELETED) {
@@ -51,6 +75,7 @@ void* rawstor_trace_event_begin(const char *format, ...) {
     if (iter == NULL) {
         iter = rawstor_list_append(events_list);
         if (iter == NULL) {
+            rawstor_mutex_unlock(rawstor_logging_mutex);
             return NULL;
         }
     }
@@ -66,11 +91,14 @@ void* rawstor_trace_event_begin(const char *format, ...) {
     vprintf(format, args);
     va_end(args);
 
+    rawstor_mutex_unlock(rawstor_logging_mutex);
     return iter;
 }
 
 
 void rawstor_trace_event_end(void *event, const char *format, ...) {
+    rawstor_mutex_lock(rawstor_logging_mutex);
+
     if (event != NULL) {
         RawstorTraceEventType *iter = event;
         assert(*iter == RAWSTOR_TRACE_EVENT_AVAILABLE);
@@ -85,10 +113,14 @@ void rawstor_trace_event_end(void *event, const char *format, ...) {
     va_start(args, format);
     vprintf(format, args);
     va_end(args);
+
+    rawstor_mutex_unlock(rawstor_logging_mutex);
 }
 
 
 void rawstor_trace_event_message(void *event, const char *format, ...) {
+    rawstor_mutex_lock(rawstor_logging_mutex);
+
     if (event != NULL) {
         RawstorTraceEventType *iter = event;
         assert(*iter == RAWSTOR_TRACE_EVENT_AVAILABLE);
@@ -103,11 +135,12 @@ void rawstor_trace_event_message(void *event, const char *format, ...) {
     va_start(args, format);
     vprintf(format, args);
     va_end(args);
+
+    rawstor_mutex_unlock(rawstor_logging_mutex);
 }
 
 
 void rawstor_trace_event_dump(void) {
-    RawstorList *events_list = events_list_get();
     for (
         RawstorTraceEventType *iter = rawstor_list_iter(events_list);
         iter != NULL;
@@ -137,5 +170,6 @@ void rawstor_trace_event_dump(void) {
         dprintf(STDERR_FILENO, "%c ", ch);
     }
 }
+
 
 #endif // RAWSTOR_TRACE_EVENTS
