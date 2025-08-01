@@ -21,7 +21,5 @@ if WITH_LIBURING
                                queue_liburing.c
     librawstorio_la_LIBADD += $(LIBURING_LIBS)
 else
-    librawstorio_la_SOURCES += event_poll.c \
-                               queue_poll.c \
-                               session_poll.c
+    librawstorio_la_SOURCES += io_thread.c
 endif
