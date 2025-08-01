@@ -42,11 +42,33 @@ jobs:
     - name: fio
       run: |
         object_id=$(rawstor-cli create --size=1)
+
+        echo "# fio --disable-ost" >> $GITHUB_STEP_SUMMARY
+
+        echo "## bs=4k, iodepth=1, numjobs=1" >> $GITHUB_STEP_SUMMARY
         fio \
           --ioengine=librawstor \
           --filename=${object_id} \
           --name=rawstor \
           --iodepth=1 \
+          --rw=randrw \
+          --bs=4k \
+          --size=1G \
+          --numjobs=1 \
+          --runtime=60 \
+          --time_based \
+          --group_reporting \
+          --output=fio.txt
+        echo \`\`\` >> $GITHUB_STEP_SUMMARY
+        cat fio.txt >> $GITHUB_STEP_SUMMARY
+        echo \`\`\` >> $GITHUB_STEP_SUMMARY
+
+        echo "## bs=4k, iodepth=2, numjobs=1" >> $GITHUB_STEP_SUMMARY
+        fio \
+          --ioengine=librawstor \
+          --filename=${object_id} \
+          --name=rawstor \
+          --iodepth=2 \
           --rw=randrw \
           --bs=4k \
           --size=1G \
@@ -96,6 +118,10 @@ jobs:
     - name: fio
       run: |
         object_id=$(rawstor-cli create --size=1)
+
+        echo "# fio --disable-ost --without-liburing" >> $GITHUB_STEP_SUMMARY
+
+        echo "## bs=4k, iodepth=1, numjobs=1" >> $GITHUB_STEP_SUMMARY
         fio \
           --ioengine=librawstor \
           --filename=${object_id} \
@@ -113,3 +139,20 @@ jobs:
         cat fio.txt >> $GITHUB_STEP_SUMMARY
         echo \`\`\` >> $GITHUB_STEP_SUMMARY
 
+        echo "## bs=4k, iodepth=2, numjobs=1" >> $GITHUB_STEP_SUMMARY
+        fio \
+          --ioengine=librawstor \
+          --filename=${object_id} \
+          --name=rawstor \
+          --iodepth=2 \
+          --rw=randrw \
+          --bs=4k \
+          --size=1G \
+          --numjobs=1 \
+          --runtime=60 \
+          --time_based \
+          --group_reporting \
+          --output=fio.txt
+        echo \`\`\` >> $GITHUB_STEP_SUMMARY
+        cat fio.txt >> $GITHUB_STEP_SUMMARY
+        echo \`\`\` >> $GITHUB_STEP_SUMMARY
