@@ -42,7 +42,7 @@ if WITH_LIBURING
     librawstor_la_SOURCES += io_liburing.c
     librawstor_la_LIBADD += $(LIBURING_LIBS)
 else
-    librawstor_la_SOURCES += io_poll.c
+    librawstor_la_SOURCES += io_thread.c
 endif
 
 
