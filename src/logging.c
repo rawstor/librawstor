@@ -88,7 +88,7 @@ void* rawstor_trace_event_begin(const char *format, ...) {
 
     va_list args;
     va_start(args, format);
-    vprintf(format, args);
+    vdprintf(STDERR_FILENO, format, args);
     va_end(args);
 
     rawstor_mutex_unlock(rawstor_logging_mutex);
@@ -111,7 +111,7 @@ void rawstor_trace_event_end(void *event, const char *format, ...) {
 
     va_list args;
     va_start(args, format);
-    vprintf(format, args);
+    vdprintf(STDERR_FILENO, format, args);
     va_end(args);
 
     rawstor_mutex_unlock(rawstor_logging_mutex);
@@ -133,7 +133,7 @@ void rawstor_trace_event_message(void *event, const char *format, ...) {
 
     va_list args;
     va_start(args, format);
-    vprintf(format, args);
+    vdprintf(STDERR_FILENO, format, args);
     va_end(args);
 
     rawstor_mutex_unlock(rawstor_logging_mutex);
