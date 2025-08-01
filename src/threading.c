@@ -42,12 +42,19 @@ RawstorThread* rawstor_thread_create(
 }
 
 
-int rawstor_thread_join(RawstorThread *thread, void **data) {
-    int res = pthread_join(thread->pthread, data);
+void* rawstor_thread_join(RawstorThread *thread) {
+    void *data;
+
+    int res = pthread_join(thread->pthread, &data);
+    if (res != 0) {
+        errno = res;
+        perror("pthread_join() failed");
+        exit(errno);
+    }
 
     free(thread);
 
-    return res;
+    return data;
 }
 
 
@@ -59,8 +66,8 @@ RawstorMutex* rawstor_mutex_create(void) {
 
     int res = pthread_mutex_init(&ret->pmutex, NULL);
     if (res != 0) {
-        free(ret);
         errno = res;
+        free(ret);
         return NULL;
     }
 
@@ -71,6 +78,7 @@ RawstorMutex* rawstor_mutex_create(void) {
 void rawstor_mutex_delete(RawstorMutex *mutex) {
     int res = pthread_mutex_destroy(&mutex->pmutex);
     if (res != 0) {
+        errno = res;
         perror("pthread_mutex_destroy() failed");
         exit(errno);
     }
@@ -104,8 +112,8 @@ RawstorCond* rawstor_cond_create(void) {
 
     int res = pthread_cond_init(&ret->pcond, NULL);
     if (res != 0) {
-        free(ret);
         errno = res;
+        free(ret);
         return NULL;
     }
 
@@ -116,6 +124,7 @@ RawstorCond* rawstor_cond_create(void) {
 void rawstor_cond_delete(RawstorCond* cond) {
     int res = pthread_cond_destroy(&cond->pcond);
     if (res != 0) {
+        errno = res;
         perror("pthread_cond_destroy() failed");
         exit(errno);
     }
@@ -150,9 +159,10 @@ int rawstor_cond_wait_timeout(
             perror("pthread_cond_timedwait() failed");
             exit(errno);
         }
+        return 0;
     }
 
-    return res;
+    return 1;
 }
 
 

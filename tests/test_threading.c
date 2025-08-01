@@ -57,9 +57,7 @@ static int test_cond_signal() {
     rawstor_cond_signal(context.cond);
     rawstor_mutex_unlock(context.mutex);
 
-    void *data;
-    int res = rawstor_thread_join(thread, &data);
-    assertTrue(res == 0);
+    void *data = rawstor_thread_join(thread);
     assertTrue(data == &context);
 
     assertTrue(context.value == 1);
@@ -106,8 +104,7 @@ static int test_cond_broadcast() {
     rawstor_mutex_unlock(context.mutex);
 
     for (int i = 0; i < count; ++i) {
-        int res = rawstor_thread_join(threads[i], NULL);
-        assertTrue(res == 0);
+        rawstor_thread_join(threads[i]);
     }
 
     assertTrue(context.value == count);

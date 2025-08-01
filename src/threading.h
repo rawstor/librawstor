@@ -13,7 +13,7 @@ typedef void*(RawstorThreadRoutine)(void *data);
 
 RawstorThread* rawstor_thread_create(RawstorThreadRoutine *routine, void *data);
 
-int rawstor_thread_join(RawstorThread *thread, void **data);
+void* rawstor_thread_join(RawstorThread *thread);
 
 RawstorMutex* rawstor_mutex_create(void);
 
