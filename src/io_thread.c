@@ -625,7 +625,7 @@ err_event_iov:
 
 
 RawstorIOEvent* rawstor_io_wait_event(RawstorIO *io) {
-    if (rawstor_list_empty(io->sessions)) {
+    if (rawstor_mempool_allocated(io->events_pool) == 0) {
         return NULL;
     }
 
@@ -645,7 +645,7 @@ RawstorIOEvent* rawstor_io_wait_event(RawstorIO *io) {
 
 
 RawstorIOEvent* rawstor_io_wait_event_timeout(RawstorIO *io, int timeout) {
-    if (rawstor_list_empty(io->sessions)) {
+    if (rawstor_mempool_allocated(io->events_pool) == 0) {
         return NULL;
     }
 
