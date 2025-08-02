@@ -2,8 +2,10 @@
 
 #include "utils.h"
 
+#include <assert.h>
 #include <stddef.h>
 #include <stdlib.h>
+#include <time.h>
 #include <unistd.h>
 
 
@@ -116,9 +118,57 @@ static int test_cond_broadcast() {
 }
 
 
+static void* test_wait_thread(void *data) {
+    int *timeout = data;
+
+    RawstorMutex *mutex = rawstor_mutex_create();
+    RawstorCond *cond = rawstor_cond_create();
+
+    assert(mutex != NULL);
+    assert(cond != NULL);
+
+    rawstor_mutex_lock(mutex);
+    rawstor_cond_wait_timeout(cond, mutex, *timeout);
+    rawstor_mutex_unlock(mutex);
+
+    rawstor_cond_delete(cond);
+    rawstor_mutex_delete(mutex);
+
+    return NULL;
+}
+
+
+static int test_cond_wait_timeout() {
+    static int timeout = 100;
+
+    struct timespec ts_start;
+    clock_gettime(CLOCK_MONOTONIC, &ts_start);
+
+    RawstorThread *thread = rawstor_thread_create(test_wait_thread, &timeout);
+    assertTrue(thread != NULL);
+    rawstor_thread_join(thread);
+
+    struct timespec ts_end;
+    clock_gettime(CLOCK_MONOTONIC, &ts_end);
+
+    long dsec = ts_end.tv_sec - ts_start.tv_sec;
+    long dnsec = ts_end.tv_nsec - ts_start.tv_nsec;
+    if (dnsec < 0) {
+        dnsec += 1000000000;
+        dsec -= 1;
+    }
+    long dmsec = dsec * 1000 + dnsec / 1000000;
+
+    assertTrue(dmsec >= timeout);
+
+    return 0;
+}
+
+
 int main() {
     int rval = 0;
     rval += test_cond_signal();
     rval += test_cond_broadcast();
+    rval += test_cond_wait_timeout();
     return rval ? EXIT_FAILURE : EXIT_SUCCESS;
 }
