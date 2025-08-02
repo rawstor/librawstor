@@ -23,7 +23,7 @@ typedef struct RawstorIOSession {
     int exit;
     RawstorMutex *mutex;
     RawstorCond *cond;
-    RawstorThread **threads;
+    RawstorList *threads;
 } RawstorIOSession;
 
 
@@ -241,34 +241,46 @@ static RawstorIOSession* io_append_session(RawstorIO *io, int fd) {
         goto err_cond;
     }
 
-    session->threads = calloc(io->depth, sizeof(RawstorThread*));
+    session->threads = rawstor_list_create(sizeof(RawstorThread*));
     if (session->threads == NULL) {
         goto err_threads;
     }
 
+    RawstorThread **it = NULL;
     for (size_t i = 0; i < io->depth; ++i) {
-        session->threads[i] = rawstor_thread_create(
-            io_session_thread, session);
-        if (session->threads[i] == NULL) {
-            goto err_thread;
+        it = rawstor_list_append(session->threads);
+        if (it == NULL) {
+            goto err_thread_append;
         }
+        *it = NULL;
+        RawstorThread *thread = rawstor_thread_create(
+            io_session_thread, session);
+        if (thread == NULL) {
+            goto err_thread_create;
+        }
+        *it = thread;
     }
 
     return session;
 
-err_thread:
-    for (size_t i = 0; i < io->depth; ++i) {
-        if (session->threads[i] == NULL) {
+err_thread_create:
+err_thread_append:
+    rawstor_mutex_lock(session->mutex);
+    session->exit = 1;
+    rawstor_cond_broadcast(session->cond);
+    rawstor_mutex_unlock(session->mutex);
+
+    for (
+        it = rawstor_list_iter(session->threads);
+        it != NULL;
+        it = rawstor_list_next(it))
+    {
+        if (*it == NULL) {
             continue;
         }
-        rawstor_mutex_lock(session->mutex);
-        session->exit = 1;
-        rawstor_cond_broadcast(session->cond);
-        rawstor_mutex_unlock(session->mutex);
-
-        rawstor_thread_join(session->threads[i]);
+        rawstor_thread_join(*it);
     }
-    free(session->threads);
+    rawstor_list_delete(session->threads);
 err_threads:
     rawstor_cond_delete(session->cond);
 err_cond:
@@ -290,10 +302,17 @@ static void io_remove_session(RawstorIO *io, RawstorIOSession *session) {
     rawstor_cond_broadcast(session->cond);
     rawstor_mutex_unlock(session->mutex);
 
-    for (size_t i = 0; i < io->depth; ++i) {
-        rawstor_thread_join(session->threads[i]);
+    for (
+        RawstorThread **it = rawstor_list_iter(session->threads);
+        it != NULL;
+        it = rawstor_list_next(it))
+    {
+        if (*it == NULL) {
+            continue;
+        }
+        rawstor_thread_join(*it);
     }
-    free(session->threads);
+    rawstor_list_delete(session->threads);
     rawstor_cond_delete(session->cond);
     rawstor_mutex_delete(session->mutex);
     rawstor_ringbuf_delete(session->sqes);
