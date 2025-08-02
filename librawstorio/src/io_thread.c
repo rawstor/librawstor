@@ -94,14 +94,16 @@ static ssize_t io_event_process_pwritev(RawstorIOEvent *event) {
 
 
 static RawstorIOSession* io_get_session(RawstorIO *io, int fd) {
-    for (
-        RawstorIOSession *it = rawstor_list_iter(io->sessions);
-        it != NULL;
-        it = rawstor_list_next(it))
-    {
+    RawstorIOSession *it = rawstor_list_iter(io->sessions);
+    while (it != NULL) {
+        if (it->fd == -1) {
+            it = rawstor_list_remove(io->sessions, it);
+            continue;
+        }
         if (it->fd == fd) {
             return it;
         }
+        it = rawstor_list_next(it);
     }
 
     return NULL;
@@ -147,12 +149,9 @@ static void* io_session_thread(void *data) {
                 event->trace_event, "process(): res = %zd\n", res);
 #endif
 
+            int done = 1;
             if (res > 0) {
-                assert((size_t)res == event->size);
                 if ((size_t)res != event->size) {
-                    /**
-                     * TODO: How to handle partial event.
-                     */
 #ifdef RAWSTOR_TRACE_EVENTS
                     rawstor_trace_event_message(
                         event->trace_event,
@@ -165,12 +164,26 @@ static void* io_session_thread(void *data) {
                 rawstor_iovec_shift(&event->iov_at, &event->niov_at, res);
                 if (event->niov_at == 0) {
                     io_push_cqe(session->io, event);
+                } else {
+                    done = 0;
                 }
             } else {
                 io_push_cqe(session->io, event);
             }
 
             rawstor_mutex_lock(session->mutex);
+            if (!done) {
+                RawstorIOEvent **sqe = rawstor_ringbuf_head(session->sqes);
+                if (rawstor_ringbuf_push(session->sqes)) {
+                    /**
+                     * TODO: Wait somehow for space in ringbuf.
+                     */
+                    rawstor_error("No space in ringbuf for partial IO\n");
+                } else {
+                    *sqe = event;
+                }
+                rawstor_mutex_unlock(session->mutex);
+            }
         } else {
             if (!rawstor_cond_wait_timeout(
                 session->cond, session->mutex, 1000))
