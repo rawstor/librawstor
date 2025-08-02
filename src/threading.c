@@ -58,6 +58,18 @@ void* rawstor_thread_join(RawstorThread *thread) {
 }
 
 
+void rawstor_thread_detach(RawstorThread *thread) {
+    int res = pthread_detach(thread->pthread);
+    if (res != 0) {
+        errno = res;
+        perror("pthread_detach() failed");
+        exit(errno);
+    }
+
+    free(thread);
+}
+
+
 RawstorMutex* rawstor_mutex_create(void) {
     RawstorMutex *ret = malloc(sizeof(RawstorMutex));
     if (ret == NULL) {
