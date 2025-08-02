@@ -15,6 +15,8 @@ RawstorThread* rawstor_thread_create(RawstorThreadRoutine *routine, void *data);
 
 void* rawstor_thread_join(RawstorThread *thread);
 
+void rawstor_thread_deatach(RawstorThread *thread);
+
 RawstorMutex* rawstor_mutex_create(void);
 
 void rawstor_mutex_delete(RawstorMutex *mutex);
