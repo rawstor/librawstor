@@ -11,6 +11,7 @@
 #include <errno.h>
 #include <stddef.h>
 #include <stdlib.h>
+#include <string.h>
 
 
 typedef struct RawstorIOSession {
@@ -128,6 +129,39 @@ err_cqe:
 }
 
 
+static inline int io_event_process(RawstorIOEvent *event) {
+#ifdef RAWSTOR_TRACE_EVENTS
+    rawstor_trace_event_message(event->trace_event, "process()\n");
+#endif
+
+    ssize_t res = event->process(event);
+
+#ifdef RAWSTOR_TRACE_EVENTS
+    rawstor_trace_event_message(
+        event->trace_event, "process(): res = %zd\n", res);
+#endif
+
+    if (res > 0) {
+        if ((size_t)res != event->size) {
+#ifdef RAWSTOR_TRACE_EVENTS
+            rawstor_trace_event_message(
+                event->trace_event,
+                "partial %zd of %zu\n", res, event->size);
+#else
+            rawstor_debug("partial %zd of %zu\n", res, event->size);
+#endif
+        }
+        event->offset_at += res;
+        rawstor_iovec_shift(&event->iov_at, &event->niov_at, res);
+        if (event->niov_at != 0) {
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
+
 static void* io_session_thread(void *data) {
     RawstorIOSession *session = data;
 
@@ -137,52 +171,33 @@ static void* io_session_thread(void *data) {
             RawstorIOEvent **sqe = rawstor_ringbuf_tail(session->sqes);
             RawstorIOEvent *event = *sqe;
             assert(rawstor_ringbuf_pop(session->sqes) == 0);
+
             rawstor_mutex_unlock(session->mutex);
 
-#ifdef RAWSTOR_TRACE_EVENTS
-            rawstor_trace_event_message(
-                event->trace_event, "process()\n");
-#endif
-            ssize_t res = event->process(event);
-#ifdef RAWSTOR_TRACE_EVENTS
-            rawstor_trace_event_message(
-                event->trace_event, "process(): res = %zd\n", res);
-#endif
-
-            int done = 1;
-            if (res > 0) {
-                if ((size_t)res != event->size) {
-#ifdef RAWSTOR_TRACE_EVENTS
-                    rawstor_trace_event_message(
-                        event->trace_event,
-                        "partial %zd of %zu\n", res, event->size);
-#else
-                    rawstor_debug("partial %zd of %zu\n", res, event->size);
-#endif
+            int done = io_event_process(event);
+            if (done) {
+                if (io_push_cqe(session->io, event)) {
+                    /**
+                     * TODO: Wait somehow for space in ringbuf.
+                     */
+                    rawstor_error(
+                        "io_push_cqe(): %s\n", strerror(errno));
                 }
-                event->offset_at += res;
-                rawstor_iovec_shift(&event->iov_at, &event->niov_at, res);
-                if (event->niov_at == 0) {
-                    io_push_cqe(session->io, event);
-                } else {
-                    done = 0;
-                }
-            } else {
-                io_push_cqe(session->io, event);
             }
 
             rawstor_mutex_lock(session->mutex);
+
             if (!done) {
                 RawstorIOEvent **sqe = rawstor_ringbuf_head(session->sqes);
                 if (rawstor_ringbuf_push(session->sqes)) {
                     /**
                      * TODO: Wait somehow for space in ringbuf.
                      */
-                    rawstor_error("No space in ringbuf for partial IO\n");
+                    rawstor_error(
+                        "rawstor_ringbuf_push(): %s\n", strerror(errno));
                 } else {
                     *sqe = event;
                 }
-                rawstor_mutex_unlock(session->mutex);
             }
         } else {
             if (!rawstor_cond_wait_timeout(
