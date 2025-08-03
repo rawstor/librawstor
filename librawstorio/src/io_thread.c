@@ -65,10 +65,14 @@ struct RawstorIO {
 
 static int is_seekable(int fd) {
     if (lseek(fd, 0, SEEK_CUR) == -1) {
+        if (errno == ESPIPE) {
+            errno = 0;
+            return 0;
+        }
         return -errno;
     }
 
-    return 0;
+    return 1;
 }
 
 
@@ -258,14 +262,64 @@ static void* io_seekable_session_thread(void *data) {
 }
 
 
-static RawstorIOSession* io_append_session(RawstorIO *io, int fd) {
-    int seekable = 1;
-    if (is_seekable(fd)) {
-        if (errno == ESPIPE) {
-            seekable = 0;
+static void* io_unseekable_session_thread(void *data) {
+    RawstorIOSession *session = data;
+
+    rawstor_mutex_lock(session->mutex);
+    while (!session->exit) {
+        if (!rawstor_ringbuf_empty(session->sqes)) {
+            RawstorIOEvent **sqe = rawstor_ringbuf_tail(session->sqes);
+            RawstorIOEvent *event = *sqe;
+            assert(rawstor_ringbuf_pop(session->sqes) == 0);
+
+            rawstor_mutex_unlock(session->mutex);
+
+            int done = io_event_process(event);
+            if (done) {
+                if (io_push_cqe(session->io, event)) {
+                    /**
+                     * TODO: Wait somehow for space in ringbuf.
+                     */
+                    rawstor_error(
+                        "io_push_cqe(): %s\n", strerror(errno));
+                }
+            }
+
+            rawstor_mutex_lock(session->mutex);
+
+            if (!done) {
+                RawstorIOEvent **sqe = rawstor_ringbuf_head(session->sqes);
+                if (rawstor_ringbuf_push(session->sqes)) {
+                    /**
+                     * TODO: Wait somehow for space in ringbuf.
+                     */
+                    rawstor_error(
+                        "rawstor_ringbuf_push(): %s\n", strerror(errno));
+                } else {
+                    *sqe = event;
+                }
+            }
         } else {
-            goto err_seekable;
+            if (!rawstor_cond_wait_timeout(
+                session->cond, session->mutex, 1000))
+            {
+                if (rawstor_ringbuf_empty(session->sqes)) {
+                    break;
+                }
+            }
         }
+    }
+    session->fd = -1;
+    rawstor_mutex_unlock(session->mutex);
+
+    return session;
+}
+
+
+static RawstorIOSession* io_append_session(RawstorIO *io, int fd) {
+    int seekable = is_seekable(fd);
+    if (seekable < 0) {
+        goto err_seekable;
     }
 
     RawstorIOSession *session = rawstor_list_append(io->sessions);
@@ -312,8 +366,19 @@ static RawstorIOSession* io_append_session(RawstorIO *io, int fd) {
             *it = thread;
         }
     } else {
-        errno = EBADF;
-        goto err_thread_create;
+        RawstorThread **it = rawstor_list_append(session->threads);
+        if (it == NULL) {
+            goto err_thread_append;
+        }
+        *it = NULL;
+
+        RawstorThread *thread = rawstor_thread_create(
+            io_unseekable_session_thread, session);
+
+        if (thread == NULL) {
+            goto err_thread_create;
+        }
+        *it = thread;
     }
 
     return session;
@@ -610,7 +675,7 @@ int rawstor_io_readv(
     /**
      * TODO: use event_iov from some buffer preallocated in io struct.
      */
-    struct iovec *event_iov = malloc(sizeof(struct iovec));
+    struct iovec *event_iov = calloc(niov, sizeof(struct iovec));
     if (event_iov == NULL) {
         goto err_event_iov;
     }
@@ -653,7 +718,7 @@ int rawstor_io_preadv(
     /**
      * TODO: use event_iov from some buffer preallocated in io struct.
      */
-    struct iovec *event_iov = malloc(sizeof(struct iovec));
+    struct iovec *event_iov = calloc(niov, sizeof(struct iovec));
     if (event_iov == NULL) {
         goto err_event_iov;
     }
@@ -784,7 +849,7 @@ int rawstor_io_writev(
     /**
      * TODO: use event_iov from some buffer preallocated in io struct.
      */
-    struct iovec *event_iov = malloc(sizeof(struct iovec));
+    struct iovec *event_iov = calloc(niov, sizeof(struct iovec));
     if (event_iov == NULL) {
         goto err_event_iov;
     }
@@ -827,7 +892,7 @@ int rawstor_io_pwritev(
     /**
      * TODO: use event_iov from some buffer preallocated in io struct.
      */
-    struct iovec *event_iov = malloc(sizeof(struct iovec));
+    struct iovec *event_iov = calloc(niov, sizeof(struct iovec));
     if (event_iov == NULL) {
         goto err_event_iov;
     }
