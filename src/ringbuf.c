@@ -3,8 +3,6 @@
 #include <errno.h>
 #include <stdlib.h>
 
-#include <stdio.h>
-
 
 struct RawstorRingBuf {
     void *data;
