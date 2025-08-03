@@ -140,11 +140,41 @@ static ssize_t io_event_process_pwritev(RawstorIOEvent *event) {
 }
 
 
+static RawstorIOSession* io_remove_session(
+    RawstorIO *io, RawstorIOSession *session)
+{
+    int errsv = errno;
+
+    rawstor_mutex_lock(session->mutex);
+    session->exit = 1;
+    rawstor_cond_broadcast(session->cond);
+    rawstor_mutex_unlock(session->mutex);
+
+    for (
+        RawstorThread **it = rawstor_list_iter(session->threads);
+        it != NULL;
+        it = rawstor_list_next(it))
+    {
+        if (*it == NULL) {
+            continue;
+        }
+        rawstor_thread_join(*it);
+    }
+    rawstor_list_delete(session->threads);
+    rawstor_cond_delete(session->cond);
+    rawstor_mutex_delete(session->mutex);
+    rawstor_ringbuf_delete(session->sqes);
+    RawstorIOSession *it = rawstor_list_remove(io->sessions, session);
+    errno = errsv;
+    return it;
+}
+
+
 static RawstorIOSession* io_get_session(RawstorIO *io, int fd) {
     RawstorIOSession *it = rawstor_list_iter(io->sessions);
     while (it != NULL) {
         if (it->fd == -1) {
-            it = rawstor_list_remove(io->sessions, it);
+            it = io_remove_session(io, it);
             continue;
         }
         if (it->fd == fd) {
@@ -412,33 +442,6 @@ err_sqes:
 err_session:
 err_seekable:
     return NULL;
-}
-
-
-static void io_remove_session(RawstorIO *io, RawstorIOSession *session) {
-    int errsv = errno;
-
-    rawstor_mutex_lock(session->mutex);
-    session->exit = 1;
-    rawstor_cond_broadcast(session->cond);
-    rawstor_mutex_unlock(session->mutex);
-
-    for (
-        RawstorThread **it = rawstor_list_iter(session->threads);
-        it != NULL;
-        it = rawstor_list_next(it))
-    {
-        if (*it == NULL) {
-            continue;
-        }
-        rawstor_thread_join(*it);
-    }
-    rawstor_list_delete(session->threads);
-    rawstor_cond_delete(session->cond);
-    rawstor_mutex_delete(session->mutex);
-    rawstor_ringbuf_delete(session->sqes);
-    rawstor_list_remove(io->sessions, session);
-    errno = errsv;
 }
 
 
