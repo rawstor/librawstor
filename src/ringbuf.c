@@ -3,6 +3,8 @@
 #include <errno.h>
 #include <stdlib.h>
 
+#include <stdio.h>
+
 
 struct RawstorRingBuf {
     void *data;
@@ -90,4 +92,24 @@ int rawstor_ringbuf_empty(RawstorRingBuf *buf) {
 
 size_t rawstor_ringbuf_size(RawstorRingBuf *buf) {
     return (buf->capacity + buf->head - buf->tail) % buf->capacity;
+}
+
+
+void* rawstor_ringbuf_iter(RawstorRingBuf *buf) {
+    return rawstor_ringbuf_tail(buf);
+}
+
+
+void* rawstor_ringbuf_next(RawstorRingBuf *buf, void *iter) {
+    iter += buf->object_size;
+
+    if (iter >= buf->data + buf->capacity * buf->object_size) {
+        iter = buf->data;
+    }
+
+    if (iter == rawstor_ringbuf_head(buf)) {
+        return NULL;
+    }
+
+    return iter;
 }

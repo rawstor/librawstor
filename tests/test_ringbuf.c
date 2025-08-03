@@ -106,11 +106,80 @@ static int test_ringbuf_overlap() {
 }
 
 
+static int test_ringbuf_iter() {
+    RawstorRingBuf *buf = rawstor_ringbuf_create(3, sizeof(int));
+
+    *(int*)rawstor_ringbuf_head(buf) = 1;
+    assertTrue(rawstor_ringbuf_push(buf) == 0);
+
+    *(int*)rawstor_ringbuf_head(buf) = 2;
+    assertTrue(rawstor_ringbuf_push(buf) == 0);
+
+    *(int*)rawstor_ringbuf_head(buf) = 3;
+    assertTrue(rawstor_ringbuf_push(buf) == 0);
+
+    void *it = rawstor_ringbuf_iter(buf);
+    assertTrue(it != NULL);
+    assertTrue(*(int*)it == 1);
+
+    it = rawstor_ringbuf_next(buf, it);
+    assertTrue(it != NULL);
+    assertTrue(*(int*)it == 2);
+
+    it = rawstor_ringbuf_next(buf, it);
+    assertTrue(it != NULL);
+    assertTrue(*(int*)it == 3);
+
+    it = rawstor_ringbuf_next(buf, it);
+    assertTrue(it == NULL);
+
+    rawstor_ringbuf_delete(buf);
+    return 0;
+}
+
+
+static int test_ringbuf_iter_shifted() {
+    RawstorRingBuf *buf = rawstor_ringbuf_create(3, sizeof(int));
+
+    assertTrue(rawstor_ringbuf_push(buf) == 0);
+    assertTrue(rawstor_ringbuf_pop(buf) == 0);
+
+    *(int*)rawstor_ringbuf_head(buf) = 1;
+    assertTrue(rawstor_ringbuf_push(buf) == 0);
+
+    *(int*)rawstor_ringbuf_head(buf) = 2;
+    assertTrue(rawstor_ringbuf_push(buf) == 0);
+
+    *(int*)rawstor_ringbuf_head(buf) = 3;
+    assertTrue(rawstor_ringbuf_push(buf) == 0);
+
+    void *it = rawstor_ringbuf_iter(buf);
+    assertTrue(it != NULL);
+    assertTrue(*(int*)it == 1);
+
+    it = rawstor_ringbuf_next(buf, it);
+    assertTrue(it != NULL);
+    assertTrue(*(int*)it == 2);
+
+    it = rawstor_ringbuf_next(buf, it);
+    assertTrue(it != NULL);
+    assertTrue(*(int*)it == 3);
+
+    it = rawstor_ringbuf_next(buf, it);
+    assertTrue(it == NULL);
+
+    rawstor_ringbuf_delete(buf);
+    return 0;
+}
+
+
 int main() {
     int rval = 0;
     rval += test_ringbuf_empty();
     rval += test_ringbuf_invalid();
     rval += test_ringbuf_basics();
     rval += test_ringbuf_overlap();
+    rval += test_ringbuf_iter();
+    rval += test_ringbuf_iter_shifted();
     return rval ? EXIT_FAILURE : EXIT_SUCCESS;
 }
