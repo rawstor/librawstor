@@ -12,6 +12,7 @@
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 
 typedef struct RawstorIOSession {
@@ -60,6 +61,15 @@ struct RawstorIO {
     RawstorMutex *mutex;
     RawstorCond *cond;
 };
+
+
+static int is_seekable(int fd) {
+    if (lseek(fd, 0, SEEK_CUR) == -1) {
+        return -errno;
+    }
+
+    return 0;
+}
 
 
 static ssize_t io_event_process_readv(RawstorIOEvent *event) {
@@ -194,7 +204,7 @@ static inline int io_event_process(RawstorIOEvent *event) {
 }
 
 
-static void* io_session_thread(void *data) {
+static void* io_seekable_session_thread(void *data) {
     RawstorIOSession *session = data;
 
     rawstor_mutex_lock(session->mutex);
@@ -249,6 +259,15 @@ static void* io_session_thread(void *data) {
 
 
 static RawstorIOSession* io_append_session(RawstorIO *io, int fd) {
+    int seekable = 1;
+    if (is_seekable(fd)) {
+        if (errno == ESPIPE) {
+            seekable = 0;
+        } else {
+            goto err_seekable;
+        }
+    }
+
     RawstorIOSession *session = rawstor_list_append(io->sessions);
     if (session == NULL) {
         goto err_session;
@@ -278,19 +297,23 @@ static RawstorIOSession* io_append_session(RawstorIO *io, int fd) {
         goto err_threads;
     }
 
-    RawstorThread **it = NULL;
-    for (size_t i = 0; i < io->depth; ++i) {
-        it = rawstor_list_append(session->threads);
-        if (it == NULL) {
-            goto err_thread_append;
+    if (seekable) {
+        for (size_t i = 0; i < io->depth; ++i) {
+            RawstorThread **it = rawstor_list_append(session->threads);
+            if (it == NULL) {
+                goto err_thread_append;
+            }
+            *it = NULL;
+            RawstorThread *thread = rawstor_thread_create(
+                io_seekable_session_thread, session);
+            if (thread == NULL) {
+                goto err_thread_create;
+            }
+            *it = thread;
         }
-        *it = NULL;
-        RawstorThread *thread = rawstor_thread_create(
-            io_session_thread, session);
-        if (thread == NULL) {
-            goto err_thread_create;
-        }
-        *it = thread;
+    } else {
+        errno = EBADF;
+        goto err_thread_create;
     }
 
     return session;
@@ -303,7 +326,7 @@ err_thread_append:
     rawstor_mutex_unlock(session->mutex);
 
     for (
-        it = rawstor_list_iter(session->threads);
+        RawstorThread **it = rawstor_list_iter(session->threads);
         it != NULL;
         it = rawstor_list_next(it))
     {
@@ -322,6 +345,7 @@ err_mutex:
 err_sqes:
     rawstor_list_remove(io->sessions, session);
 err_session:
+err_seekable:
     return NULL;
 }
 
