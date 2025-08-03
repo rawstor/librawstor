@@ -18,6 +18,7 @@
 typedef struct RawstorIOSession {
     RawstorIO *io;
     int fd;
+    int write;
 
     RawstorRingBuf *sqes;
 
@@ -170,14 +171,14 @@ static RawstorIOSession* io_remove_session(
 }
 
 
-static RawstorIOSession* io_get_session(RawstorIO *io, int fd) {
+static RawstorIOSession* io_get_session(RawstorIO *io, int fd, int write) {
     RawstorIOSession *it = rawstor_list_iter(io->sessions);
     while (it != NULL) {
         if (it->fd == -1) {
             it = io_remove_session(io, it);
             continue;
         }
-        if (it->fd == fd) {
+        if (it->fd == fd && it->write == write) {
             return it;
         }
         it = rawstor_list_next(it);
@@ -346,7 +347,7 @@ static void* io_unseekable_session_thread(void *data) {
 }
 
 
-static RawstorIOSession* io_append_session(RawstorIO *io, int fd) {
+static RawstorIOSession* io_append_session(RawstorIO *io, int fd, int write) {
     int seekable = is_seekable(fd);
     if (seekable < 0) {
         goto err_seekable;
@@ -359,6 +360,7 @@ static RawstorIOSession* io_append_session(RawstorIO *io, int fd) {
 
     session->io = io;
     session->fd = fd;
+    session->write = write;
     session->exit = 0;
 
     session->sqes = rawstor_ringbuf_create(io->depth, sizeof(RawstorIOEvent*));
@@ -445,10 +447,12 @@ err_seekable:
 }
 
 
-static inline int io_push_sqe(RawstorIO *io, int fd, RawstorIOEvent *event) {
-    RawstorIOSession *session = io_get_session(io, fd);
+static inline int io_push_sqe(
+    RawstorIO *io, int fd, RawstorIOEvent *event, int write)
+{
+    RawstorIOSession *session = io_get_session(io, fd, write);
     if (session == NULL) {
-        session = io_append_session(io, fd);
+        session = io_append_session(io, fd, write);
         if (session == NULL) {
             goto err_session;
         }
@@ -457,7 +461,7 @@ static inline int io_push_sqe(RawstorIO *io, int fd, RawstorIOEvent *event) {
     rawstor_mutex_lock(session->mutex);
     if (session->fd == -1) {
         rawstor_mutex_unlock(session->mutex);
-        return io_push_sqe(io, fd, event);
+        return io_push_sqe(io, fd, event, write);
     }
     RawstorIOEvent **sqe = rawstor_ringbuf_head(session->sqes);
     if (rawstor_ringbuf_push(session->sqes)) {
@@ -611,7 +615,7 @@ int rawstor_io_read(
         "readv(%d, %zu)\n", fd, size);
 #endif
 
-    if (io_push_sqe(io, fd, event)) {
+    if (io_push_sqe(io, fd, event, 0)) {
         goto err_push_sqe;
     }
 
@@ -655,7 +659,7 @@ int rawstor_io_pread(
         "preadv(%d, %zu)\n", fd, size);
 #endif
 
-    if (io_push_sqe(io, fd, event)) {
+    if (io_push_sqe(io, fd, event, 0)) {
         goto err_push_sqe;
     }
 
@@ -698,7 +702,7 @@ int rawstor_io_readv(
         "readv(%d, %zu)\n", fd, size);
 #endif
 
-    if (io_push_sqe(io, fd, event)) {
+    if (io_push_sqe(io, fd, event, 0)) {
         goto err_push_event;
     }
 
@@ -741,7 +745,7 @@ int rawstor_io_preadv(
         "preadv(%d, %zu)\n", fd, size);
 #endif
 
-    if (io_push_sqe(io, fd, event)) {
+    if (io_push_sqe(io, fd, event, 0)) {
         goto err_push_event;
     }
 
@@ -785,7 +789,7 @@ int rawstor_io_write(
         "writev(%d, %zu)\n", fd, size);
 #endif
 
-    if (io_push_sqe(io, fd, event)) {
+    if (io_push_sqe(io, fd, event, 1)) {
         goto err_push_event;
     }
 
@@ -829,7 +833,7 @@ int rawstor_io_pwrite(
         "pwritev(%d, %zu)\n", fd, size);
 #endif
 
-    if (io_push_sqe(io, fd, event)) {
+    if (io_push_sqe(io, fd, event, 1)) {
         goto err_push_event;
     }
 
@@ -872,7 +876,7 @@ int rawstor_io_writev(
         "writev(%d, %zu)\n", fd, size);
 #endif
 
-    if (io_push_sqe(io, fd, event)) {
+    if (io_push_sqe(io, fd, event, 1)) {
         goto err_push_event;
     }
 
@@ -915,7 +919,7 @@ int rawstor_io_pwritev(
         "pwritev(%d, %zu)\n", fd, size);
 #endif
 
-    if (io_push_sqe(io, fd, event)) {
+    if (io_push_sqe(io, fd, event, 1)) {
         goto err_push_event;
     }
 
