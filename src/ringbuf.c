@@ -94,6 +94,9 @@ size_t rawstor_ringbuf_size(RawstorRingBuf *buf) {
 
 
 void* rawstor_ringbuf_iter(RawstorRingBuf *buf) {
+    if (rawstor_ringbuf_empty(buf)) {
+        return NULL;
+    }
     return rawstor_ringbuf_tail(buf);
 }
 

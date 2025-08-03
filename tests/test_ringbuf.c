@@ -15,6 +15,7 @@ static int test_ringbuf_empty() {
 
     assertTrue(rawstor_ringbuf_empty(buf) != 0);
     assertTrue(rawstor_ringbuf_size(buf) == 0);
+    assertTrue(rawstor_ringbuf_iter(buf) == NULL);
 
     rawstor_ringbuf_delete(buf);
     return 0;
