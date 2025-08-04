@@ -26,8 +26,8 @@ fio \
   --output-format=normal,json \
   --output=${_FIO_OUTPUT}
 
-_FIO_TXT=fio.txt
-_FIO_JSON=fio.json
+_FIO_TXT=_fio.txt
+_FIO_JSON=_fio.json
 
 rm -f ${_FIO_TXT} ${_FIO_JSON}
 output=fio.txt
