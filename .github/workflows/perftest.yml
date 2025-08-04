@@ -46,37 +46,13 @@ jobs:
         echo "# fio --disable-ost" >> $GITHUB_STEP_SUMMARY
 
         echo "## bs=4k, iodepth=1, numjobs=1" >> $GITHUB_STEP_SUMMARY
-        fio \
-          --ioengine=librawstor \
-          --filename=${object_id} \
-          --name=rawstor \
-          --iodepth=1 \
-          --rw=randrw \
-          --bs=4k \
-          --size=1G \
-          --numjobs=1 \
-          --runtime=60 \
-          --time_based \
-          --group_reporting \
-          --output=fio.txt
+        ./librawstor/.github/tools/fio.sh ${object_id} 4k 1 1 fio.txt fio.json
         echo \`\`\` >> $GITHUB_STEP_SUMMARY
         cat fio.txt >> $GITHUB_STEP_SUMMARY
         echo \`\`\` >> $GITHUB_STEP_SUMMARY
 
         echo "## bs=4k, iodepth=2, numjobs=1" >> $GITHUB_STEP_SUMMARY
-        fio \
-          --ioengine=librawstor \
-          --filename=${object_id} \
-          --name=rawstor \
-          --iodepth=2 \
-          --rw=randrw \
-          --bs=4k \
-          --size=1G \
-          --numjobs=1 \
-          --runtime=60 \
-          --time_based \
-          --group_reporting \
-          --output=fio.txt
+        ./librawstor/.github/tools/fio.sh ${object_id} 4k 2 1 fio.txt fio.json
         echo \`\`\` >> $GITHUB_STEP_SUMMARY
         cat fio.txt >> $GITHUB_STEP_SUMMARY
         echo \`\`\` >> $GITHUB_STEP_SUMMARY
@@ -122,37 +98,13 @@ jobs:
         echo "# fio --disable-ost --without-liburing" >> $GITHUB_STEP_SUMMARY
 
         echo "## bs=4k, iodepth=1, numjobs=1" >> $GITHUB_STEP_SUMMARY
-        fio \
-          --ioengine=librawstor \
-          --filename=${object_id} \
-          --name=rawstor \
-          --iodepth=1 \
-          --rw=randrw \
-          --bs=4k \
-          --size=1G \
-          --numjobs=1 \
-          --runtime=60 \
-          --time_based \
-          --group_reporting \
-          --output=fio.txt
+        ./librawstor/.github/tools/fio.sh ${object_id} 4k 1 1 fio.txt fio.json
         echo \`\`\` >> $GITHUB_STEP_SUMMARY
         cat fio.txt >> $GITHUB_STEP_SUMMARY
         echo \`\`\` >> $GITHUB_STEP_SUMMARY
 
         echo "## bs=4k, iodepth=2, numjobs=1" >> $GITHUB_STEP_SUMMARY
-        fio \
-          --ioengine=librawstor \
-          --filename=${object_id} \
-          --name=rawstor \
-          --iodepth=2 \
-          --rw=randrw \
-          --bs=4k \
-          --size=1G \
-          --numjobs=1 \
-          --runtime=60 \
-          --time_based \
-          --group_reporting \
-          --output=fio.txt
+        ./librawstor/.github/tools/fio.sh ${object_id} 4k 2 1 fio.txt fio.json
         echo \`\`\` >> $GITHUB_STEP_SUMMARY
         cat fio.txt >> $GITHUB_STEP_SUMMARY
         echo \`\`\` >> $GITHUB_STEP_SUMMARY
