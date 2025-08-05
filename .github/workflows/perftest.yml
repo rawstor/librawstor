@@ -67,7 +67,7 @@ jobs:
           --prefix=./rawstor_bench \
           --suite=librawstor \
           --name=perftest-disable-ost-4k-1-1 \
-          --branch=$GITHUB_REF \
+          --branch="$GITHUB_REF" \
           --commit=$GITHUB_SHA \
           --date='$(date +"%Y-%m-%dT%H:%M:%S%z")' \
           fio fio-4k-1-1.txt fio-4k-1-1.json
@@ -76,7 +76,7 @@ jobs:
           --prefix=./rawstor_bench \
           --suite=librawstor \
           --name=perftest-disable-ost-4k-2-1 \
-          --branch=$GITHUB_REF \
+          --branch="$GITHUB_REF" \
           --commit=$GITHUB_SHA \
           --date='$(date +"%Y-%m-%dT%H:%M:%S%z")' \
           fio fio-4k-2-1.txt fio-4k-2-1.json
@@ -147,7 +147,7 @@ jobs:
           --prefix=./rawstor_bench \
           --suite=librawstor \
           --name=perftest-disable-ost-without-liburing-4k-1-1 \
-          --branch=$GITHUB_REF \
+          --branch="$GITHUB_REF" \
           --commit=$GITHUB_SHA \
           --date='$(date +"%Y-%m-%dT%H:%M:%S%z")' \
           fio fio-4k-1-1.txt fio-4k-1-1.json
@@ -156,7 +156,7 @@ jobs:
           --prefix=./rawstor_bench \
           --suite=librawstor \
           --name=perftest-disable-ost-without-liburing-4k-2-1 \
-          --branch=$GITHUB_REF \
+          --branch="$GITHUB_REF" \
           --commit=$GITHUB_SHA \
           --date='$(date +"%Y-%m-%dT%H:%M:%S%z")' \
           fio fio-4k-2-1.txt fio-4k-2-1.json
