@@ -43,6 +43,7 @@ jobs:
       with:
         repository: rawstor/rawstor_bench
         path: rawstor_bench
+        ref: refs/heads/main
     - name: fio
       run: |
         object_id=$(rawstor-cli create --size=1)
@@ -118,6 +119,11 @@ jobs:
         make
         sudo make install
         popd
+    - uses: actions/checkout@v4
+      with:
+        repository: rawstor/rawstor_bench
+        path: rawstor_bench
+        ref: refs/heads/main
     - name: fio
       run: |
         object_id=$(rawstor-cli create --size=1)
