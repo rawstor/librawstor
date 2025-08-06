@@ -17,13 +17,6 @@ jobs:
     - uses: actions/checkout@v4
       with:
         path: librawstor
-    - name: git config
-      run: |
-        pushd .
-        cd ./librawstor
-        git config --global user.name "$(git log -1 --pretty=%an)"
-        git config --global user.email "$(git log -1 --pretty=%ae)"
-        popd
     - name: install librawstor
       run: |
         pushd .
@@ -89,7 +82,7 @@ jobs:
           --date="$(date +'%Y-%m-%dT%H:%M:%S%z')" \
           fio fio-4k-2-1.txt fio-4k-2-1.json
 
-        ./librawstor/.github/tools/git-config.sh ./librawstor \
+        ./librawstor/.github/tools/git-config.sh ./librawstor
         ./librawstor/.github/tools/git-commit-and-push.sh \
           ./rawstor_bench \
           "add: perftest-disable-ost benchmarks"
@@ -106,13 +99,6 @@ jobs:
     - uses: actions/checkout@v4
       with:
         path: librawstor
-    - name: git config
-      run: |
-        pushd .
-        cd ./librawstor
-        git config --global user.name "$(git log -1 --pretty=%an)"
-        git config --global user.email "$(git log -1 --pretty=%ae)"
-        popd
     - name: install librawstor
       run: |
         pushd .
@@ -178,7 +164,7 @@ jobs:
           --date="$(date +'%Y-%m-%dT%H:%M:%S%z')" \
           fio fio-4k-2-1.txt fio-4k-2-1.json
 
-        ./librawstor/.github/tools/git-config.sh ./librawstor \
+        ./librawstor/.github/tools/git-config.sh ./librawstor
         ./librawstor/.github/tools/git-commit-and-push.sh \
           ./rawstor_bench \
           "add: perftest-disable-ost-without-liburing benchmarks"
