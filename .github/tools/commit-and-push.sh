@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -ex
+
 REPO=$1
 MESSAGE=$2
 
