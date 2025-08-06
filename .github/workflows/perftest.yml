@@ -89,7 +89,8 @@ jobs:
           --date="$(date +'%Y-%m-%dT%H:%M:%S%z')" \
           fio fio-4k-2-1.txt fio-4k-2-1.json
 
-        ./librawstor/.github/tools/commit-and-push.sh \
+        ./librawstor/.github/tools/git-config.sh ./librawstor \
+        ./librawstor/.github/tools/git-commit-and-push.sh \
           ./rawstor_bench \
           "add: perftest-disable-ost benchmarks"
 
@@ -177,6 +178,7 @@ jobs:
           --date="$(date +'%Y-%m-%dT%H:%M:%S%z')" \
           fio fio-4k-2-1.txt fio-4k-2-1.json
 
-        ./librawstor/.github/tools/commit-and-push.sh \
+        ./librawstor/.github/tools/git-config.sh ./librawstor \
+        ./librawstor/.github/tools/git-commit-and-push.sh \
           ./rawstor_bench \
           "add: perftest-disable-ost-without-liburing benchmarks"

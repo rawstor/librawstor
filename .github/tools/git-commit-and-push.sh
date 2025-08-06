@@ -1,6 +1,6 @@
 #!/bin/bash
 
-set -ex
+set -e
 
 REPO=$1
 MESSAGE=$2
@@ -9,4 +9,7 @@ cd ${REPO}
 
 git add .
 git commit -m "${MESSAGE}"
-git push
+while [ ! git push ]; do
+  git fetch
+  git rebase
+done
