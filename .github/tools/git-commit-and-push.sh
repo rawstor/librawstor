@@ -9,7 +9,7 @@ cd ${REPO}
 
 git add .
 git commit -m "${MESSAGE}"
-while [ ! git push ]; do
-  git fetch
-  git rebase
+while ! git push; do
+    git fetch
+    git rebase
 done
