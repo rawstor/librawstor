@@ -17,6 +17,13 @@ jobs:
     - uses: actions/checkout@v4
       with:
         path: librawstor
+    - name: git config
+      run: |
+        pushd .
+        cd ./librawstor
+        git config --global user.name "$(git log -1 --pretty=%an)"
+        git config --global user.email "$(git log -1 --pretty=%ae)"
+        popd
     - name: install librawstor
       run: |
         pushd .
@@ -44,6 +51,7 @@ jobs:
         repository: rawstor/rawstor_bench
         path: rawstor_bench
         ref: refs/heads/main
+        token: ${{ secrets.RAWSTOR_BENCH_TOKEN }}
     - name: fio
       run: |
         object_id=$(rawstor-cli create --size=1)
@@ -97,6 +105,13 @@ jobs:
     - uses: actions/checkout@v4
       with:
         path: librawstor
+    - name: git config
+      run: |
+        pushd .
+        cd ./librawstor
+        git config --global user.name "$(git log -1 --pretty=%an)"
+        git config --global user.email "$(git log -1 --pretty=%ae)"
+        popd
     - name: install librawstor
       run: |
         pushd .
