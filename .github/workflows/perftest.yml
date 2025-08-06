@@ -124,6 +124,7 @@ jobs:
         repository: rawstor/rawstor_bench
         path: rawstor_bench
         ref: refs/heads/main
+        token: ${{ secrets.RAWSTOR_BENCH_TOKEN }}
     - name: fio
       run: |
         object_id=$(rawstor-cli create --size=1)
