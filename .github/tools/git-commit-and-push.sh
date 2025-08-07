@@ -20,6 +20,5 @@ while ! git push; do
     if [[ $count -gt $MAXRETRY ]]; then
         echo "Retry exceeded"
         exit 1
-        break
     fi
 done
