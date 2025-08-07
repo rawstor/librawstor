@@ -20,7 +20,7 @@ jobs:
         - 4k
         iodepth:
         - 1
-        - 16
+        - 2
         numjobs:
         - 1
         include:
