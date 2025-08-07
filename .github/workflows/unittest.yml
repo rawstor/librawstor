@@ -57,7 +57,7 @@ jobs:
     - name: autogen
       run: ./autogen.sh
     - name: configure
-      run: ./configure --enable-trace --disable-shared ${{ matrix.packages }}
+      run: ./configure --enable-trace --disable-shared ${{ matrix.flags }}
     - name: make
       run: make
     - name: make install
