@@ -73,13 +73,6 @@ jobs:
         echo \`\`\` >> $GITHUB_STEP_SUMMARY
         cat fio-${{ matrix.bs }}-${{ matrix.iodepth }}-${{ matrix.numjobs }}.txt >> $GITHUB_STEP_SUMMARY
         echo \`\`\` >> $GITHUB_STEP_SUMMARY
-    - name: upload fio result
-      uses: actions/upload-artifact@v4
-      with:
-        name: perftest${{ matrix.without-liburing }}${{ matrix.disable-ost }}
-        path: |
-          fio-${{ matrix.bs }}-${{ matrix.iodepth }}-${{ matrix.numjobs }}.txt
-          fio-${{ matrix.bs }}-${{ matrix.iodepth }}-${{ matrix.numjobs }}.json
     - uses: actions/checkout@v4
       with:
         repository: rawstor/rawstor_bench
@@ -98,8 +91,8 @@ jobs:
           --commit=$GITHUB_SHA \
           --date="$(date +'%Y-%m-%dT%H:%M:%S%z')" \
           fio \
-          ./perftest${{ matrix.without-liburing }}${{ matrix.disable-ost }}/fio-${{ matrix.bs }}-${{ matrix.iodepth }}-${{ matrix.numjobs }}.txt \
-          ./perftest${{ matrix.without-liburing }}${{ matrix.disable-ost }}/fio-${{ matrix.bs }}-${{ matrix.iodepth }}-${{ matrix.numjobs }}.json
+          fio-${{ matrix.bs }}-${{ matrix.iodepth }}-${{ matrix.numjobs }}.txt \
+          fio-${{ matrix.bs }}-${{ matrix.iodepth }}-${{ matrix.numjobs }}.json
 
         ./rawstor_bench/tools/rawstor-bench-compile \
           --prefix=./rawstor_bench fio
