@@ -73,6 +73,7 @@ jobs:
       with:
         repository: rawstor/rawstor_ost
         path: rawstor_ost
+        ssh-key: ${{ secrets.RAWSTOR_OST_TOKEN }}
     - name: install rawstor_ost
       if: "${{ matrix.disable-ost == '' }}"
       run: |
