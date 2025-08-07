@@ -84,7 +84,7 @@ jobs:
         mkdir /tmp/objects
         truncate -s 2G /tmp/objects/01988675-e1e5-7788-9ed4-2f2d30910d23
         ost 8080 /tmp/objects/ &
-        sleep 5
+        sleep 10
     - name: create object
       if: "${{ matrix.disable-ost != '' }}"
       run: |
