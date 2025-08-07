@@ -41,12 +41,14 @@ jobs:
 
     strategy:
       matrix:
-        flags:
+        without-liburing:
+        - 
+        - --without-liburing
+        disable-ost:
         - --disable-ost
-        - --disable-ost --without-liburing
         include:
         - packages: liburing-dev
-          flags: --disable-ost
+          without-liburing:
 
     steps:
     - name: install dependencies
@@ -57,7 +59,7 @@ jobs:
     - name: autogen
       run: ./autogen.sh
     - name: configure
-      run: ./configure --enable-trace --disable-shared ${{ matrix.flags }}
+      run: ./configure --enable-trace --disable-shared ${{ matrix.without-liburing }} ${{ matrix.disable-ost }}
     - name: make
       run: make
     - name: make install
