@@ -14,7 +14,7 @@ git add .
 git commit -m "${MESSAGE}"
 count=1
 while ! git push; do
-    git pull -X ours --no-edit
+    git pull --rebase -X ours --no-edit
     ((count++))
     sleep $((RANDOM % MAXWAIT))
     if [[ $count -gt $MAXRETRY ]]; then
