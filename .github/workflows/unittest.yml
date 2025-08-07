@@ -50,6 +50,9 @@ jobs:
         include:
         - packages: liburing-dev
           without-liburing:
+        - packages: liburing-dev
+          disable-ost:
+          without-liburing: --without-liburing
 
     steps:
     - name: install dependencies
