@@ -14,6 +14,7 @@ jobs:
         - 
         - --without-liburing
         disable-ost:
+        -
         - --disable-ost
         bs:
         - 4k
@@ -25,6 +26,9 @@ jobs:
         include:
         - packages: liburing-dev
           without-liburing:
+        - packages: liburing-dev
+          disable-ost:
+          without-liburing: --without-liburing
 
     steps:
     - name: install dependencies
@@ -44,6 +48,23 @@ jobs:
         sudo make install
         popd
     - uses: actions/checkout@v4
+      if: "${{ matrix.disable-ost == '' }}"
+      with:
+        repository: rawstor/rawstor_ost
+        path: rawstor_ost
+        ref: refs/heads/fix/logging
+        ssh-key: ${{ secrets.RAWSTOR_OST_TOKEN }}
+    - name: (rawstor_ost) install rawstor_ost
+      if: "${{ matrix.disable-ost == '' }}"
+      run: |
+        pushd .
+        cd ./rawstor_ost
+        ./autogen.sh
+        ./configure --disable-shared
+        make
+        sudo make install
+        popd
+    - uses: actions/checkout@v4
       with:
         repository: rawstor/fio
         path: fio
@@ -56,15 +77,29 @@ jobs:
         make
         sudo make install
         popd
-    - name: fio
+    - name: (rawstor_ost) start rawstor_ost
+      if: "${{ matrix.disable-ost == '' }}"
+      run: |
+        mkdir /tmp/objects
+        truncate -s 2G /tmp/objects/01988675-e1e5-7788-9ed4-2f2d30910d23
+        ost 8080 /tmp/objects/ &
+        sleep 1
+    - name: create object
+      if: "${{ matrix.disable-ost != '' }}"
       run: |
         object_id=$(rawstor-cli create --size=1)
-
+        echo "OBJECT_ID=${object_id}" >> $GITHUB_ENV
+    - name: (rawstor_ost) create object
+      if: "${{ matrix.disable-ost == '' }}"
+      run: |
+        object_id=01988675-e1e5-7788-9ed4-2f2d30910d23
+        echo "OBJECT_ID=${object_id}" >> $GITHUB_ENV
+    - name: fio
+      run: |
         echo "# fio ${{ matrix.without-liburing }} ${{ matrix.disable-ost }}" >> $GITHUB_STEP_SUMMARY
-
         echo "## bs=${{ matrix.bs }}, iodepth=${{ matrix.iodepth }}, numjobs=${{ matrix.numjobs }}" >> $GITHUB_STEP_SUMMARY
         ./librawstor/.github/tools/fio.sh \
-          ${object_id} \
+          ${OBJECT_ID} \
           ${{ matrix.bs }} \
           ${{ matrix.iodepth }} \
           ${{ matrix.numjobs }} \
@@ -73,6 +108,9 @@ jobs:
         echo \`\`\` >> $GITHUB_STEP_SUMMARY
         cat fio-${{ matrix.bs }}-${{ matrix.iodepth }}-${{ matrix.numjobs }}.txt >> $GITHUB_STEP_SUMMARY
         echo \`\`\` >> $GITHUB_STEP_SUMMARY
+    - name: (rawstor_ost) stop rawstor_ost
+      if: "${{ matrix.disable-ost == '' }}"
+      run: killall ost
     - uses: actions/checkout@v4
       with:
         repository: rawstor/rawstor_bench

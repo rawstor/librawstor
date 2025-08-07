@@ -41,12 +41,18 @@ jobs:
 
     strategy:
       matrix:
-        flags:
+        without-liburing:
+        - 
+        - --without-liburing
+        disable-ost:
+        - 
         - --disable-ost
-        - --disable-ost --without-liburing
         include:
         - packages: liburing-dev
-          flags: --disable-ost
+          without-liburing:
+        - packages: liburing-dev
+          disable-ost:
+          without-liburing: --without-liburing
 
     steps:
     - name: install dependencies
@@ -54,16 +60,55 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y libxxhash-dev ${{ matrix.packages }}
     - uses: actions/checkout@v4
-    - name: autogen
-      run: ./autogen.sh
-    - name: configure
-      run: ./configure --enable-trace --disable-shared ${{ matrix.flags }}
-    - name: make
-      run: make
-    - name: make install
-      run: sudo make install
-    - name: testio
+      with:
+        path: librawstor
+    - name: install librawstor
+      run: |
+        pushd .
+        cd ./librawstor
+        ./autogen.sh
+        ./configure --disable-shared ${{ matrix.without-liburing }} ${{ matrix.disable-ost }}
+        make
+        sudo make install
+        popd
+    - uses: actions/checkout@v4
+      if: "${{ matrix.disable-ost == '' }}"
+      with:
+        repository: rawstor/rawstor_ost
+        path: rawstor_ost
+        ref: refs/heads/fix/logging
+        ssh-key: ${{ secrets.RAWSTOR_OST_TOKEN }}
+    - name: (rawstor_ost) install rawstor_ost
+      if: "${{ matrix.disable-ost == '' }}"
+      run: |
+        pushd .
+        cd ./rawstor_ost
+        ./autogen.sh
+        ./configure --disable-shared
+        make
+        sudo make install
+        popd
+    - name: (rawstor_ost) start rawstor_ost
+      if: "${{ matrix.disable-ost == '' }}"
+      run: |
+        mkdir /tmp/objects
+        truncate -s 2G /tmp/objects/01988675-e1e5-7788-9ed4-2f2d30910d23
+        ost 8080 /tmp/objects/ &
+        sleep 1
+    - name: create object
+      if: "${{ matrix.disable-ost != '' }}"
       run: |
         object_id=$(rawstor-cli create --size=1)
-        rawstor-cli testio --object-id=${object_id} --block-size=4096 --io-depth=1 --count=10
-        rawstor-cli testio --object-id=${object_id} --block-size=4096 --io-depth=1 --count=10 --vector-mode=1
+        echo "OBJECT_ID=${object_id}" >> $GITHUB_ENV
+    - name: (rawstor_ost) create object
+      if: "${{ matrix.disable-ost == '' }}"
+      run: |
+        object_id=01988675-e1e5-7788-9ed4-2f2d30910d23
+        echo "OBJECT_ID=${object_id}" >> $GITHUB_ENV
+    - name: testio
+      run: |
+        rawstor-cli testio --object-id=${OBJECT_ID} --block-size=4096 --io-depth=1 --count=10
+        rawstor-cli testio --object-id=${OBJECT_ID} --block-size=4096 --io-depth=1 --count=10 --vector-mode=1
+    - name: (rawstor_ost) stop rawstor_ost
+      if: "${{ matrix.disable-ost == '' }}"
+      run: killall ost
