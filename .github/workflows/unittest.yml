@@ -78,7 +78,7 @@ jobs:
         path: rawstor_ost
         ref: refs/heads/fix/logging
         ssh-key: ${{ secrets.RAWSTOR_OST_TOKEN }}
-    - name: (rawstor_ost_ install rawstor_ost
+    - name: (rawstor_ost) install rawstor_ost
       if: "${{ matrix.disable-ost == '' }}"
       run: |
         pushd .
