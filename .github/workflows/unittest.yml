@@ -8,42 +8,34 @@ jobs:
 
     runs-on: ubuntu-latest
 
-    steps:
-    - name: install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y libxxhash-dev
-        sudo apt-get install -y liburing-dev
-    - uses: actions/checkout@v4
-    - name: autogen
-      run: ./autogen.sh
-    - name: configure
-      run: ./configure --enable-trace
-    - name: make
-      run: make
-    - name: make test
-      run: make test
-
-  unittest-without-liburing:
-
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        without-liburing:
+        - 
+        - --without-liburing
+        disable-ost:
+        - 
+        - --disable-ost
+        include:
+        - packages: liburing-dev
+          without-liburing:
 
     steps:
     - name: install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libxxhash-dev
+        sudo apt-get install -y libxxhash-dev ${{ matrix.packages }}
     - uses: actions/checkout@v4
     - name: autogen
       run: ./autogen.sh
     - name: configure
-      run: ./configure --without-liburing --enable-trace
+      run: ./configure --enable-trace ${{ matrix.without-liburing }} ${{ matrix.disable-ost }}
     - name: make
       run: make
     - name: make test
       run: make test
 
-  unittest-disable-ost:
+  testio-disable-ost:
 
     runs-on: ubuntu-latest
 
@@ -60,8 +52,6 @@ jobs:
       run: ./configure --disable-ost --enable-trace --disable-shared
     - name: make
       run: make
-    - name: make test
-      run: make test
     - name: make install
       run: sudo make install
     - name: testio
@@ -70,7 +60,7 @@ jobs:
         rawstor-cli testio --object-id=${object_id} --block-size=4096 --io-depth=1 --count=10
         rawstor-cli testio --object-id=${object_id} --block-size=4096 --io-depth=1 --count=10 --vector-mode=1
 
-  unittest-disable-ost-without-liburing:
+  testio-disable-ost-without-liburing:
 
     runs-on: ubuntu-latest
 
@@ -86,8 +76,6 @@ jobs:
       run: ./configure --disable-ost --enable-trace --without-liburing --disable-shared
     - name: make
       run: make
-    - name: make test
-      run: make test
     - name: make install
       run: sudo make install
     - name: testio
