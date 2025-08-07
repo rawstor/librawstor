@@ -45,6 +45,7 @@ jobs:
         - 
         - --without-liburing
         disable-ost:
+        - 
         - --disable-ost
         include:
         - packages: liburing-dev
@@ -56,14 +57,32 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y libxxhash-dev ${{ matrix.packages }}
     - uses: actions/checkout@v4
-    - name: autogen
-      run: ./autogen.sh
-    - name: configure
-      run: ./configure --enable-trace --disable-shared ${{ matrix.without-liburing }} ${{ matrix.disable-ost }}
-    - name: make
-      run: make
-    - name: make install
-      run: sudo make install
+      with:
+        path: librawstor
+    - name: install librawstor
+      run: |
+        pushd .
+        cd ./librawstor
+        ./autogen.sh
+        ./configure --disable-shared ${{ matrix.without-liburing }} ${{ matrix.disable-ost }}
+        make
+        sudo make install
+        popd
+    - uses: actions/checkout@v4
+      if: "${{ matrix.disable-ost == '' }}"
+      with:
+        repository: rawstor/rawstor_ost
+        path: rawstor_ost
+    - name: install rawstor_ost
+      if: "${{ matrix.disable-ost == '' }}"
+      run: |
+        pushd .
+        cd ./rawstor_ost
+        ./autogen.sh
+        ./configure --disable-shared
+        make
+        sudo make install
+        popd
     - name: testio
       run: |
         object_id=$(rawstor-cli create --size=1)
