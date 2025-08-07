@@ -88,8 +88,25 @@ jobs:
         make
         sudo make install
         popd
-    - name: testio
+    - name: start rawstor_ost
+      if: "${{ matrix.disable-ost == '' }}"
+      run: |
+        mkdir /tmp/objects
+        truncate -s 2G /tmp/objects/01988675-e1e5-7788-9ed4-2f2d30910d23
+        ost 8080 /tmp/objects/ &
+        sleep 1
+    - name: create object
+      if: "${{ matrix.disable-ost != '' }}"
       run: |
         object_id=$(rawstor-cli create --size=1)
+    - name: create object
+      if: "${{ matrix.disable-ost == '' }}"
+      run: |
+        object_id=01988675-e1e5-7788-9ed4-2f2d30910d23
+    - name: testio
+      run: |
         rawstor-cli testio --object-id=${object_id} --block-size=4096 --io-depth=1 --count=10
         rawstor-cli testio --object-id=${object_id} --block-size=4096 --io-depth=1 --count=10 --vector-mode=1
+    - name: stop rawstor_ost
+      if: "${{ matrix.disable-ost == '' }}"
+      run: killall ost
