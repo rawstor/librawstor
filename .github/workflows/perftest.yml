@@ -103,10 +103,10 @@ jobs:
           ${{ matrix.bs }} \
           ${{ matrix.iodepth }} \
           ${{ matrix.numjobs }} \
-          fio-${{ matrix.bs }}-${{ matrix.iodepth }}-${{ matrix.numjobs }}.txt \
-          fio-${{ matrix.bs }}-${{ matrix.iodepth }}-${{ matrix.numjobs }}.json
+          fio.txt \
+          fio.json
         echo \`\`\` >> $GITHUB_STEP_SUMMARY
-        cat fio-${{ matrix.bs }}-${{ matrix.iodepth }}-${{ matrix.numjobs }}.txt >> $GITHUB_STEP_SUMMARY
+        cat fio.txt >> $GITHUB_STEP_SUMMARY
         echo \`\`\` >> $GITHUB_STEP_SUMMARY
     - name: (rawstor_ost) stop rawstor_ost
       if: "${{ matrix.disable-ost == '' }}"
@@ -129,8 +129,8 @@ jobs:
           --commit=$GITHUB_SHA \
           --date="$(date +'%Y-%m-%dT%H:%M:%S%z')" \
           fio \
-          fio-${{ matrix.bs }}-${{ matrix.iodepth }}-${{ matrix.numjobs }}.txt \
-          fio-${{ matrix.bs }}-${{ matrix.iodepth }}-${{ matrix.numjobs }}.json
+          fio.txt \
+          fio.json
 
         ./rawstor_bench/tools/rawstor-bench-compile \
           --prefix=./rawstor_bench fio
