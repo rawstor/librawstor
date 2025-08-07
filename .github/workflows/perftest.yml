@@ -46,40 +46,25 @@ jobs:
         echo "# fio --disable-ost" >> $GITHUB_STEP_SUMMARY
 
         echo "## bs=4k, iodepth=1, numjobs=1" >> $GITHUB_STEP_SUMMARY
-        fio \
-          --ioengine=librawstor \
-          --filename=${object_id} \
-          --name=rawstor \
-          --iodepth=1 \
-          --rw=randrw \
-          --bs=4k \
-          --size=1G \
-          --numjobs=1 \
-          --runtime=60 \
-          --time_based \
-          --group_reporting \
-          --output=fio.txt
+        ./librawstor/.github/tools/fio.sh ${object_id} 4k 1 1 fio-4k-1-1.txt fio-4k-1-1.json
         echo \`\`\` >> $GITHUB_STEP_SUMMARY
-        cat fio.txt >> $GITHUB_STEP_SUMMARY
+        cat fio-4k-1-1.txt >> $GITHUB_STEP_SUMMARY
         echo \`\`\` >> $GITHUB_STEP_SUMMARY
 
         echo "## bs=4k, iodepth=2, numjobs=1" >> $GITHUB_STEP_SUMMARY
-        fio \
-          --ioengine=librawstor \
-          --filename=${object_id} \
-          --name=rawstor \
-          --iodepth=2 \
-          --rw=randrw \
-          --bs=4k \
-          --size=1G \
-          --numjobs=1 \
-          --runtime=60 \
-          --time_based \
-          --group_reporting \
-          --output=fio.txt
+        ./librawstor/.github/tools/fio.sh ${object_id} 4k 2 1 fio-4k-2-1.txt fio-4k-2-1.json
         echo \`\`\` >> $GITHUB_STEP_SUMMARY
-        cat fio.txt >> $GITHUB_STEP_SUMMARY
+        cat fio-4k-2-1.txt >> $GITHUB_STEP_SUMMARY
         echo \`\`\` >> $GITHUB_STEP_SUMMARY
+    - name: upload fio result
+      uses: actions/upload-artifact@v4
+      with:
+        name: perftest-disable-ost
+        path: |
+          fio-4k-1-1.txt
+          fio-4k-1-1.json
+          fio-4k-2-1.txt
+          fio-4k-2-1.json
 
   perftest-disable-ost-without-liburing:
 
@@ -115,6 +100,12 @@ jobs:
         make
         sudo make install
         popd
+    - uses: actions/checkout@v4
+      with:
+        repository: rawstor/rawstor_bench
+        path: rawstor_bench
+        ref: refs/heads/main
+        ssh-key: ${{ secrets.RAWSTOR_BENCH_TOKEN }}
     - name: fio
       run: |
         object_id=$(rawstor-cli create --size=1)
@@ -122,37 +113,102 @@ jobs:
         echo "# fio --disable-ost --without-liburing" >> $GITHUB_STEP_SUMMARY
 
         echo "## bs=4k, iodepth=1, numjobs=1" >> $GITHUB_STEP_SUMMARY
-        fio \
-          --ioengine=librawstor \
-          --filename=${object_id} \
-          --name=rawstor \
-          --iodepth=1 \
-          --rw=randrw \
-          --bs=4k \
-          --size=1G \
-          --numjobs=1 \
-          --runtime=60 \
-          --time_based \
-          --group_reporting \
-          --output=fio.txt
+        ./librawstor/.github/tools/fio.sh ${object_id} 4k 1 1 fio-4k-1-1.txt fio-4k-1-1.json
         echo \`\`\` >> $GITHUB_STEP_SUMMARY
-        cat fio.txt >> $GITHUB_STEP_SUMMARY
+        cat fio-4k-1-1.txt >> $GITHUB_STEP_SUMMARY
         echo \`\`\` >> $GITHUB_STEP_SUMMARY
 
         echo "## bs=4k, iodepth=2, numjobs=1" >> $GITHUB_STEP_SUMMARY
-        fio \
-          --ioengine=librawstor \
-          --filename=${object_id} \
-          --name=rawstor \
-          --iodepth=2 \
-          --rw=randrw \
-          --bs=4k \
-          --size=1G \
-          --numjobs=1 \
-          --runtime=60 \
-          --time_based \
-          --group_reporting \
-          --output=fio.txt
+        ./librawstor/.github/tools/fio.sh ${object_id} 4k 2 1 fio-4k-2-1.txt fio-4k-2-1.json
         echo \`\`\` >> $GITHUB_STEP_SUMMARY
-        cat fio.txt >> $GITHUB_STEP_SUMMARY
+        cat fio-4k-2-1.txt >> $GITHUB_STEP_SUMMARY
         echo \`\`\` >> $GITHUB_STEP_SUMMARY
+    - name: upload fio result
+      uses: actions/upload-artifact@v4
+      with:
+        name: perftest-disable-ost-without-liburing
+        path: |
+          fio-4k-1-1.txt
+          fio-4k-1-1.json
+          fio-4k-2-1.txt
+          fio-4k-2-1.json
+
+  publish:
+
+    runs-on: ubuntu-latest
+
+    needs:
+    - perftest-disable-ost
+    - perftest-disable-ost-without-liburing
+
+    steps:
+    - uses: actions/download-artifact@v5
+      with:
+        name: perftest-disable-ost
+        path: ./perftest-disable-ost
+    - uses: actions/download-artifact@v5
+      with:
+        name: perftest-disable-ost-without-liburing
+        path: ./perftest-disable-ost-without-liburing
+    - uses: actions/checkout@v4
+      with:
+        path: librawstor
+    - uses: actions/checkout@v4
+      with:
+        repository: rawstor/rawstor_bench
+        path: rawstor_bench
+        ref: refs/heads/main
+        ssh-key: ${{ secrets.RAWSTOR_BENCH_TOKEN }}
+    - name: publish
+      run: |
+        ./rawstor_bench/tools/rawstor-bench-import \
+          --prefix=./rawstor_bench \
+          --suite=librawstor \
+          --name=perftest-disable-ost-4k-1-1 \
+          --branch="$GITHUB_REF" \
+          --commit=$GITHUB_SHA \
+          --date="$(date +'%Y-%m-%dT%H:%M:%S%z')" \
+          fio \
+          ./perftest-disable-ost/fio-4k-1-1.txt \
+          ./perftest-disable-ost/fio-4k-1-1.json
+
+        ./rawstor_bench/tools/rawstor-bench-import \
+          --prefix=./rawstor_bench \
+          --suite=librawstor \
+          --name=perftest-disable-ost-4k-2-1 \
+          --branch="$GITHUB_REF" \
+          --commit=$GITHUB_SHA \
+          --date="$(date +'%Y-%m-%dT%H:%M:%S%z')" \
+          fio \
+          ./perftest-disable-ost/fio-4k-2-1.txt \
+          ./perftest-disable-ost/fio-4k-2-1.json
+
+        ./rawstor_bench/tools/rawstor-bench-import \
+          --prefix=./rawstor_bench \
+          --suite=librawstor \
+          --name=perftest-disable-ost-without-liburing-4k-1-1 \
+          --branch="$GITHUB_REF" \
+          --commit=$GITHUB_SHA \
+          --date="$(date +'%Y-%m-%dT%H:%M:%S%z')" \
+          fio \
+          ./perftest-disable-ost-without-liburing/fio-4k-1-1.txt \
+          ./perftest-disable-ost-without-liburing/fio-4k-1-1.json
+
+        ./rawstor_bench/tools/rawstor-bench-import \
+          --prefix=./rawstor_bench \
+          --suite=librawstor \
+          --name=perftest-disable-ost-without-liburing-4k-2-1 \
+          --branch="$GITHUB_REF" \
+          --commit=$GITHUB_SHA \
+          --date="$(date +'%Y-%m-%dT%H:%M:%S%z')" \
+          fio \
+          ./perftest-disable-ost-without-liburing/fio-4k-2-1.txt \
+          ./perftest-disable-ost-without-liburing/fio-4k-2-1.json
+
+        ./rawstor_bench/tools/rawstor-bench-compile \
+          --prefix=./rawstor_bench fio
+
+        ./librawstor/.github/tools/git-config.sh ./librawstor
+        ./librawstor/.github/tools/git-commit-and-push.sh \
+          ./rawstor_bench \
+          "add: perftest benchmarks"

@@ -62,6 +62,13 @@ jobs:
       run: make
     - name: make test
       run: make test
+    - name: make install
+      run: sudo make install
+    - name: testio
+      run: |
+        object_id=$(rawstor-cli create --size=1)
+        rawstor-cli testio --object-id=${object_id} --block-size=4096 --io-depth=1 --count=10
+        rawstor-cli testio --object-id=${object_id} --block-size=4096 --io-depth=1 --count=10 --vector-mode=1
 
   unittest-disable-ost-without-liburing:
 
@@ -81,3 +88,10 @@ jobs:
       run: make
     - name: make test
       run: make test
+    - name: make install
+      run: sudo make install
+    - name: testio
+      run: |
+        object_id=$(rawstor-cli create --size=1)
+        rawstor-cli testio --object-id=${object_id} --block-size=4096 --io-depth=1 --count=10
+        rawstor-cli testio --object-id=${object_id} --block-size=4096 --io-depth=1 --count=10 --vector-mode=1
