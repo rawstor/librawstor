@@ -152,6 +152,9 @@ jobs:
         path: ./perftest-disable-ost-without-liburing
     - uses: actions/checkout@v4
       with:
+        path: librawstor
+    - uses: actions/checkout@v4
+      with:
         repository: rawstor/rawstor_bench
         path: rawstor_bench
         ref: refs/heads/main
@@ -209,4 +212,3 @@ jobs:
         ./librawstor/.github/tools/git-commit-and-push.sh \
           ./rawstor_bench \
           "add: perftest benchmarks"
-
