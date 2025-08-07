@@ -97,14 +97,18 @@ jobs:
         sleep 1
     - name: create object
       if: "${{ matrix.disable-ost != '' }}"
-      run: export object_id=$(rawstor-cli create --size=1)
+      run: |
+        object_id=$(rawstor-cli create --size=1)
+        echo "OBJECT_ID=${object_id}" >> $GITHUB_ENV
     - name: (rawstor_ost) create object
       if: "${{ matrix.disable-ost == '' }}"
-      run: export object_id=01988675-e1e5-7788-9ed4-2f2d30910d23
+      run: |
+        object_id=01988675-e1e5-7788-9ed4-2f2d30910d23
+        echo "OBJECT_ID=${object_id}" >> $GITHUB_ENV
     - name: testio
       run: |
-        rawstor-cli testio --object-id=${object_id} --block-size=4096 --io-depth=1 --count=10
-        rawstor-cli testio --object-id=${object_id} --block-size=4096 --io-depth=1 --count=10 --vector-mode=1
+        rawstor-cli testio --object-id=${OBJECT_ID} --block-size=4096 --io-depth=1 --count=10
+        rawstor-cli testio --object-id=${OBJECT_ID} --block-size=4096 --io-depth=1 --count=10 --vector-mode=1
     - name: (rawstor_ost) stop rawstor_ost
       if: "${{ matrix.disable-ost == '' }}"
       run: killall ost
