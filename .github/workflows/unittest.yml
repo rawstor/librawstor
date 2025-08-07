@@ -78,7 +78,7 @@ jobs:
         path: rawstor_ost
         ref: refs/heads/fix/logging
         ssh-key: ${{ secrets.RAWSTOR_OST_TOKEN }}
-    - name: rawstor_ost: install rawstor_ost
+    - name: (rawstor_ost_ install rawstor_ost
       if: "${{ matrix.disable-ost == '' }}"
       run: |
         pushd .
@@ -88,7 +88,7 @@ jobs:
         make
         sudo make install
         popd
-    - name: rawstor_ost: start rawstor_ost
+    - name: (rawstor_ost) start rawstor_ost
       if: "${{ matrix.disable-ost == '' }}"
       run: |
         mkdir /tmp/objects
@@ -98,13 +98,13 @@ jobs:
     - name: create object
       if: "${{ matrix.disable-ost != '' }}"
       run: export object_id=$(rawstor-cli create --size=1)
-    - name: rawstor_ost: create object
+    - name: (rawstor_ost) create object
       if: "${{ matrix.disable-ost == '' }}"
       run: export object_id=01988675-e1e5-7788-9ed4-2f2d30910d23
     - name: testio
       run: |
         rawstor-cli testio --object-id=${object_id} --block-size=4096 --io-depth=1 --count=10
         rawstor-cli testio --object-id=${object_id} --block-size=4096 --io-depth=1 --count=10 --vector-mode=1
-    - name: rawstor_ost: stop rawstor_ost
+    - name: (rawstor_ost) stop rawstor_ost
       if: "${{ matrix.disable-ost == '' }}"
       run: killall ost
