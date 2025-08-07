@@ -5,11 +5,21 @@ set -ex
 REPO=$1
 MESSAGE=$2
 
+MAXWAIT=10
+MAXRETRY=5
+
 cd ${REPO}
 
 git add .
 git commit -m "${MESSAGE}"
+count=1
 while ! git push; do
-    git fetch
-    git rebase
+    git pull -X ours --no-edit
+    ((count++))
+    sleep $((RANDOM % MAXWAIT))
+    if [[ $count -gt $MAXRETRY ]]; then
+        echo "Retry exceeded"
+        exit 1
+        break
+    fi
 done
