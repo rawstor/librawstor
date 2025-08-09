@@ -1,12 +1,11 @@
-if ENABLE_TESTS
-    MAYBE_TESTS = tests
-endif
-
 SUBDIRS = rawstorstd\
           src \
           cli \
-          vu \
-          $(MAYBE_TESTS)
+          vu
+
+if ENABLE_TESTS
+    SUBDIRS += tests
+endif
 
 
 ACLOCAL_AMFLAGS = -I m4
