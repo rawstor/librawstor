@@ -70,6 +70,9 @@ AS_IF([test "x$with_liburing" == "xyes"], [
 AC_CONFIG_FILES(
     [Makefile]
     [include/rawstor/config.h]
+    [rawstorstd/Makefile]
+    [rawstorstd/src/Makefile]
+    [rawstorstd/tests/Makefile]
     [src/Makefile]
     [src/rawstor.pc]
     [cli/Makefile]
