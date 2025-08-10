@@ -1,6 +1,5 @@
 #include <rawstor.h>
 
-#include "gcc.h"
 #include "hash.h"
 #include "io.h"
 #include "logging.h"
@@ -8,6 +7,8 @@
 #include "opts.h"
 #include "ost_protocol.h"
 #include "uuid.h"
+
+#include "rawstorstd/gcc.h"
 
 #include <arpa/inet.h>
 

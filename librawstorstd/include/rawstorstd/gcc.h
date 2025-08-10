@@ -1,5 +1,5 @@
-#ifndef RAWSTOR_GCC_H
-#define RAWSTOR_GCC_H
+#ifndef RAWSTOR_STD_GCC_H
+#define RAWSTOR_STD_GCC_H
 
 
 #if defined(__GNUC__) && (__GNUC__ >= 3)
@@ -21,4 +21,4 @@
 #endif
 
 
-#endif // RAWSTOR_GCC_H
+#endif // RAWSTOR_STD_GCC_H

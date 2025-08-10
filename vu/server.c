@@ -1,7 +1,8 @@
 #include "server.h"
 
-#include "gcc.h"
 #include "protocol.h"
+
+#include "rawstorstd/gcc.h"
 
 #include <rawstor.h>
 
@@ -220,7 +221,7 @@ static int server_loop(int client_socket) {
 
 
 int rawstor_vu_server(
-    int RAWSTOR_VU_UNUSED object_id,
+    int RAWSTOR_UNUSED object_id,
     const char *socket_path)
 {
     int server_socket = socket(AF_UNIX, SOCK_STREAM, 0);

@@ -1,7 +1,7 @@
 #ifndef RAWSTOR_OST_PROTOCOL_H
 #define RAWSTOR_OST_PROTOCOL_H
 
-#include "gcc.h"
+#include "rawstorstd/gcc.h"
 
 #include <arpa/inet.h>
 #include <stdbool.h>
