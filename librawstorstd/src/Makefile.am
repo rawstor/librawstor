@@ -9,5 +9,5 @@ AM_CFLAGS = -std=gnu99 -Wall -Wextra -Werror \
 librawstorstd_la_SOURCES = iovec_routines.c \
                            list.c \
                            mempool.c \
-                           ringbuf.c
-
+                           ringbuf.c \
+                           socket_routines.c
