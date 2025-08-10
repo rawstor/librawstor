@@ -13,7 +13,10 @@ librawstor_base_la_HEADERS = $(top_srcdir)/include/rawstor.h
 
 librawstor_ladir = $(includedir)/rawstor
 
-librawstor_la_HEADERS = $(top_srcdir)/include/rawstor/rawstor.h
+librawstor_la_HEADERS = $(top_srcdir)/include/rawstor/io.h \
+                        $(top_srcdir)/include/rawstor/object.h \
+                        $(top_srcdir)/include/rawstor/rawstor.h \
+                        $(top_srcdir)/include/rawstor/uuid.h
 
 librawstor_la_SOURCES = rawstor.c \
                         opts.c
