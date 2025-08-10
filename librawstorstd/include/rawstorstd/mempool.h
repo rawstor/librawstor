@@ -1,7 +1,6 @@
 #ifndef RAWSTOR_STD_MEMPOOL_H
 #define RAWSTOR_STD_MEMPOOL_H
 
-
 #include <stddef.h>
 
 

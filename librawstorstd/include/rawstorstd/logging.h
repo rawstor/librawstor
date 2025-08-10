@@ -1,29 +1,10 @@
 #ifndef RAWSTOR_LOGGING_H
 #define RAWSTOR_LOGGING_H
 
-
-#include "config.h"
-
+#include <rawstorstd/logging_config.h>
 #include <rawstorstd/threading.h>
 
 #include <unistd.h>
-
-
-#define RAWSTOR_LOGLEVEL_NONE 0
-#define RAWSTOR_LOGLEVEL_ERROR 1
-#define RAWSTOR_LOGLEVEL_WARNING 2
-#define RAWSTOR_LOGLEVEL_INFO 3
-#define RAWSTOR_LOGLEVEL_DEBUG 4
-#define RAWSTOR_LOGLEVEL_TRACE 5
-
-
-#if defined(RAWSTOR_CONFIG_ENABLE_TRACE)
-#define RAWSTOR_LOGLEVEL RAWSTOR_LOGLEVEL_TRACE
-#elif defined(RAWSTOR_CONFIG_ENABLE_DEBUG)
-#define RAWSTOR_LOGLEVEL RAWSTOR_LOGLEVEL_DEBUG
-#else
-#define RAWSTOR_LOGLEVEL RAWSTOR_LOGLEVEL_INFO
-#endif
 
 
 extern RawstorMutex *rawstor_logging_mutex;
@@ -86,9 +67,9 @@ void rawstor_logging_terminate(void);
 #ifdef RAWSTOR_TRACE_EVENTS
 void* rawstor_trace_event_begin(const char *format, ...);
 
-void rawstor_trace_event_end(void* event, const char *format, ...);
+void rawstor_trace_event_end(void *event, const char *format, ...);
 
-void rawstor_trace_event_message(void* event, const char *format, ...);
+void rawstor_trace_event_message(void *event, const char *format, ...);
 
 void rawstor_trace_event_dump(void);
 #else

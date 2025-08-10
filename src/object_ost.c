@@ -1,12 +1,12 @@
 #include <rawstor.h>
 
 #include "io.h"
-#include "logging.h"
 #include "opts.h"
 #include "ost_protocol.h"
 
 #include <rawstorstd/gcc.h>
 #include <rawstorstd/hash.h>
+#include <rawstorstd/logging.h>
 #include <rawstorstd/mempool.h>
 #include <rawstorstd/uuid.h>
 

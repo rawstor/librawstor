@@ -1,9 +1,8 @@
 #include "io.h"
 
-#include "logging.h"
-
 #include <rawstorstd/iovec_routines.h>
 #include <rawstorstd/list.h>
+#include <rawstorstd/logging.h>
 #include <rawstorstd/ringbuf.h>
 #include <rawstorstd/socket_routines.h>
 
