@@ -1,5 +1,5 @@
-#ifndef RAWSTOR_LIST_H
-#define RAWSTOR_LIST_H
+#ifndef RAWSTOR_STD_LIST_H
+#define RAWSTOR_STD_LIST_H
 
 #include <stddef.h>
 
@@ -24,5 +24,4 @@ int rawstor_list_empty(RawstorList *list);
 size_t rawstor_list_size(RawstorList *list);
 
 
-
-#endif // RAWSTOR_LIST_H
+#endif // RAWSTOR_STD_LIST_H

@@ -1,6 +1,6 @@
 #include "threading.h"
 
-#include "utils.h"
+#include "unittest.h"
 
 #include <assert.h>
 #include <stddef.h>

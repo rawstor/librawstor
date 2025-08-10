@@ -1,5 +1,5 @@
-#ifndef RAWSTOR_TEST_UTILS_H
-#define RAWSTOR_TEST_UTILS_H
+#ifndef RAWSTOR_TEST_UNITTEST_H
+#define RAWSTOR_TEST_UNITTEST_H
 
 
 #include <stdio.h>
@@ -15,4 +15,4 @@
 } while (0)
 
 
-#endif // RAWSTOR_TEST_UTILS_H
+#endif // RAWSTOR_TEST_UNITTEST_H

@@ -1,6 +1,6 @@
 #include "ringbuf.h"
 
-#include "utils.h"
+#include "unittest.h"
 
 #include <errno.h>
 #include <stdlib.h>

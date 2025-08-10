@@ -2,6 +2,7 @@ lib_LTLIBRARIES = librawstor.la
 
 
 AM_CFLAGS = -std=gnu99 -Wall -Wextra -Werror \
+            -I$(top_srcdir)/librawstorstd/include \
             -I$(top_srcdir)/include
 
 
@@ -15,7 +16,6 @@ librawstor_la_HEADERS = $(top_srcdir)/include/rawstor/rawstor.h \
                         $(top_srcdir)/include/rawstor/config.h
 
 librawstor_la_SOURCES = iovec_routines.c \
-                        list.c \
                         logging.c \
                         mempool.c \
                         rawstor.c \
@@ -25,7 +25,7 @@ librawstor_la_SOURCES = iovec_routines.c \
                         threading.c \
                         uuid.c
 
-librawstor_la_LIBADD =
+librawstor_la_LIBADD = $(top_srcdir)/librawstorstd/src/librawstorstd.la
 
 
 if ENABLE_OST

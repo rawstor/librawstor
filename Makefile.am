@@ -1,4 +1,4 @@
-SUBDIRS = rawstorstd\
+SUBDIRS = librawstorstd \
           src \
           cli \
           vu
@@ -16,6 +16,7 @@ README: README.md
 
 if ENABLE_TESTS
 test: all
+	make -C librawstorstd test
 	make -C tests test
 
 .PHONY: test

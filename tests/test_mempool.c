@@ -1,6 +1,6 @@
 #include "mempool.h"
 
-#include "utils.h"
+#include "unittest.h"
 
 #include <errno.h>
 #include <stdlib.h>

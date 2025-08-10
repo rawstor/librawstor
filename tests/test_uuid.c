@@ -1,7 +1,7 @@
 #include "uuid.h"
 #include "uuid_internals.h"
 
-#include "utils.h"
+#include "unittest.h"
 
 #include <errno.h>
 #include <stdio.h>
