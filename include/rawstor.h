@@ -2,7 +2,6 @@
 #define RAWSTOR_H
 
 
-#include <rawstor/config.h>
 #include <rawstor/rawstor.h>
 
 

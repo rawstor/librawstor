@@ -52,10 +52,8 @@ AM_CONDITIONAL([WITH_LIBURING], [test "x$with_liburing" == "xyes"])
 AS_IF([test "x$with_liburing" == "xyes"], [
     PKG_CHECK_MODULES([LIBURING], [liburing])
     AC_SUBST([maybe_liburing], ["liburing"])
-    AC_SUBST([maybe_liburing_define], ["#define RAWSTOR_WITH_LIBURING"])
 ], [
     AC_SUBST([maybe_liburing], [""])
-    AC_SUBST([maybe_liburing_define], [""])
 ])
 
 
@@ -68,10 +66,8 @@ AS_IF([test "x$with_libxxhash" == "xyes"], [
     AC_DEFINE([WITH_LIBXXHASH], 1, [With libxxhash])
     PKG_CHECK_MODULES([LIBXXHASH], [libxxhash])
     AC_SUBST([maybe_libxxhash], ["libxxhash"])
-    AC_SUBST([maybe_libxxhash_define], ["#define RAWSTOR_WITH_LIBXXHASH"])
 ], [
     AC_SUBST([maybe_libxxhash], [""])
-    AC_SUBST([maybe_libxxhash_define], [""])
 ])
 
 
@@ -80,7 +76,6 @@ AC_CONFIG_FILES(
     [librawstorstd/Makefile]
     [librawstorstd/src/Makefile]
     [librawstorstd/tests/Makefile]
-    [include/rawstor/config.h]
     [src/Makefile]
     [src/rawstor.pc]
     [cli/Makefile]
