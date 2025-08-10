@@ -1,10 +1,11 @@
 #include <rawstor.h>
 
-#include "io.h"
 #include "object.h"
 #include "opts.h"
 
 #include <rawstorstd/logging.h>
+
+#include <rawstorio/io.h>
 
 #include <sys/types.h>
 #include <sys/uio.h>

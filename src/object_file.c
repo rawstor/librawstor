@@ -2,12 +2,13 @@
 
 #include <rawstor.h>
 
-#include "io.h"
 #include "opts.h"
 
 #include <rawstorstd/gcc.h>
 #include <rawstorstd/mempool.h>
 #include <rawstorstd/uuid.h>
+
+#include <rawstorio/io.h>
 
 #include <sys/stat.h>
 #include <sys/types.h>
