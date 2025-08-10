@@ -1,5 +1,7 @@
 #include "rawstorstd/hash.h"
 
+#include "config.h"
+
 #include "unittest.h"
 
 #include <stdlib.h>
@@ -10,7 +12,11 @@
 static int test_hash_scalar() {
     const char *buf = "hello world";
     uint64_t hash = rawstor_hash_scalar((void*)buf, strlen(buf));
+#ifdef WITH_LIBXXHASH
     assertTrue(hash == 0xd447b1ea40e6988b);
+#else
+    assertTrue(hash == 0);
+#endif
     return 0;
 }
 
@@ -31,7 +37,11 @@ static int test_hash_vector() {
         }
     };
     uint64_t hash = rawstor_hash_vector(iov, 3);
+#ifdef WITH_LIBXXHASH
     assertTrue(hash == 0xd447b1ea40e6988b);
+#else
+    assertTrue(hash == 0);
+#endif
     return 0;
 }
 

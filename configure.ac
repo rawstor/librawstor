@@ -65,6 +65,7 @@ AC_ARG_WITH([libxxhash], [AS_HELP_STRING([--without-libxxhash],
     [with_libxxhash="yes"])
 AM_CONDITIONAL([WITH_LIBXXHASH], [test "x$with_libxxhash" == "xyes"])
 AS_IF([test "x$with_libxxhash" == "xyes"], [
+    AC_DEFINE([WITH_LIBXXHASH], 1, [With libxxhash])
     PKG_CHECK_MODULES([LIBXXHASH], [libxxhash])
     AC_SUBST([maybe_libxxhash], ["libxxhash"])
     AC_SUBST([maybe_libxxhash_define], ["#define RAWSTOR_WITH_LIBXXHASH"])
