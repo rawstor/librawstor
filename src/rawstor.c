@@ -6,6 +6,7 @@
 #include <rawstorstd/logging.h>
 
 #include <rawstorio/io.h>
+#include <rawstorio/event.h>
 
 #include <sys/types.h>
 #include <sys/uio.h>
