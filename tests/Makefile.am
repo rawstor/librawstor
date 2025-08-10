@@ -1,13 +1,6 @@
-noinst_PROGRAMS = test_uuid
-
-
 AM_CFLAGS = -std=gnu99 -Wall -Wextra -Werror \
             -I$(top_srcdir)/include \
             -I$(top_srcdir)/src
-
-
-test_uuid_SOURCES = test_uuid.c
-test_uuid_LDADD = $(top_srcdir)/src/librawstor.la
 
 
 test: all

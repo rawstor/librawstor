@@ -5,10 +5,10 @@
 #include "logging.h"
 #include "opts.h"
 #include "ost_protocol.h"
-#include "uuid.h"
 
 #include <rawstorstd/gcc.h>
 #include <rawstorstd/mempool.h>
+#include <rawstorstd/uuid.h>
 
 #include <arpa/inet.h>
 

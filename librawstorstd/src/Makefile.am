@@ -11,4 +11,5 @@ librawstorstd_la_SOURCES = iovec_routines.c \
                            mempool.c \
                            ringbuf.c \
                            socket_routines.c \
-                           threading.c
+                           threading.c \
+                           uuid.c

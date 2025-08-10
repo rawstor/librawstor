@@ -1,8 +1,7 @@
 #include "logging.h"
 
-#include "rawstorstd/threading.h"
-
 #include <rawstorstd/list.h>
+#include <rawstorstd/threading.h>
 
 #include <assert.h>
 #include <errno.h>

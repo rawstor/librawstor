@@ -1,8 +1,8 @@
-#ifndef RAWSTOR_UUID_INTERNALS_H
-#define RAWSTOR_UUID_INTERNALS_H
+#ifndef RAWSTOR_UUID_STD_INTERNALS_H
+#define RAWSTOR_UUID_STD_INTERNALS_H
 
 
-#include "uuid.h"
+#include "rawstorstd/uuid.h"
 
 #include <stdint.h>
 
@@ -24,4 +24,4 @@ uint8_t rawstor_uuid_get_variant(RawstorUUID *uuid);
 void rawstor_uuid_set_variant(RawstorUUID *uuid, uint8_t variant);
 
 
-#endif // RAWSTOR_UUID_INTERNALS_H
+#endif // RAWSTOR_UUID_STD_INTERNALS_H

@@ -1,4 +1,4 @@
-#include "uuid.h"
+#include "rawstorstd/uuid.h"
 #include "uuid_internals.h"
 
 #include <sys/random.h>
