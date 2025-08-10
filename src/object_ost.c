@@ -317,7 +317,7 @@ static int response_body_received(RawstorIOEvent *event, void *data) {
 
     operation_trace(op->cid, event);
 
-    uint64_t hash = rawstor_hash_buf(
+    uint64_t hash = rawstor_hash_scalar(
         op->payload.linear.data, op->request_frame.len);
 
     if (op->object->response_frame.hash != hash) {
@@ -725,7 +725,7 @@ int rawstor_object_pwrite(
             .cid = op->cid,
             .offset = offset,
             .len = size,
-            .hash = rawstor_hash_buf(buf, size),
+            .hash = rawstor_hash_scalar(buf, size),
             .sync = 0,
         },
         // .response_frame =
