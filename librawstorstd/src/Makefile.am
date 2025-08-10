@@ -7,4 +7,5 @@ AM_CFLAGS = -std=gnu99 -Wall -Wextra -Werror \
 
 
 librawstorstd_la_SOURCES = iovec_routines.c \
-                           list.c
+                           list.c \
+                           mempool.c

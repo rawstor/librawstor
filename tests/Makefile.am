@@ -1,5 +1,4 @@
-noinst_PROGRAMS = test_mempool \
-                  test_ringbuf \
+noinst_PROGRAMS = test_ringbuf \
                   test_threading \
                   test_uuid
 
@@ -7,10 +6,6 @@ noinst_PROGRAMS = test_mempool \
 AM_CFLAGS = -std=gnu99 -Wall -Wextra -Werror \
             -I$(top_srcdir)/include \
             -I$(top_srcdir)/src
-
-
-test_mempool_SOURCES = test_mempool.c
-test_mempool_LDADD = $(top_srcdir)/src/librawstor.la
 
 
 test_ringbuf_SOURCES = test_ringbuf.c

@@ -1,5 +1,5 @@
-#ifndef RAWSTOR_MEMPOOL_H
-#define RAWSTOR_MEMPOOL_H
+#ifndef RAWSTOR_STD_MEMPOOL_H
+#define RAWSTOR_STD_MEMPOOL_H
 
 
 #include <stddef.h>
@@ -27,4 +27,4 @@ void* rawstor_mempool_alloc(RawstorMemPool *mempool);
 void rawstor_mempool_free(RawstorMemPool *mempool, void *ptr);
 
 
-#endif // RAWSTOR_MEMPOOL_H
+#endif // RAWSTOR_STD_MEMPOOL_H

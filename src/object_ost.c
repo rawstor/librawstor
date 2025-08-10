@@ -3,12 +3,12 @@
 #include "hash.h"
 #include "io.h"
 #include "logging.h"
-#include "mempool.h"
 #include "opts.h"
 #include "ost_protocol.h"
 #include "uuid.h"
 
 #include "rawstorstd/gcc.h"
+#include "rawstorstd/mempool.h"
 
 #include <arpa/inet.h>
 

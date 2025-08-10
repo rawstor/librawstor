@@ -3,11 +3,11 @@
 #include <rawstor.h>
 
 #include "io.h"
-#include "mempool.h"
 #include "opts.h"
 #include "uuid.h"
 
 #include "rawstorstd/gcc.h"
+#include "rawstorstd/mempool.h"
 
 #include <sys/stat.h>
 #include <sys/types.h>
