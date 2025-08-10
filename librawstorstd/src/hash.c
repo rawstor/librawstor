@@ -53,6 +53,9 @@ err_state:
 #else
     (void)(iov);
     (void)(niov);
+
+    *hash = 0;
+
     return 0;
 #endif
 }
