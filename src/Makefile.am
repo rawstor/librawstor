@@ -24,8 +24,7 @@ librawstor_la_LIBADD = $(top_srcdir)/librawstorstd/src/librawstorstd.la
 
 if ENABLE_OST
     AM_CFLAGS += $(LIBXXHASH_CFLAGS)
-    librawstor_la_SOURCES += hash.c \
-                             object_ost.c
+    librawstor_la_SOURCES += object_ost.c
     librawstor_la_LIBADD += $(LIBXXHASH_LIBS)
 else
     librawstor_la_SOURCES += object_file.c

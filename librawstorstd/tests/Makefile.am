@@ -1,4 +1,5 @@
-noinst_PROGRAMS = test_iovec_routines \
+noinst_PROGRAMS = test_hash \
+                  test_iovec_routines \
                   test_list \
                   test_mempool \
                   test_ringbuf \
@@ -11,6 +12,10 @@ AM_CFLAGS = -std=gnu99 -Wall -Wextra -Werror \
             -I$(top_srcdir)/librawstorstd/include \
             -I$(top_srcdir)/tests \
             -I$(top_srcdir)/include
+
+
+test_hash_SOURCES = test_hash.c
+test_hash_LDADD = $(top_srcdir)/librawstorstd/src/librawstorstd.la
 
 
 test_iovec_routines_SOURCES = test_iovec_routines.c

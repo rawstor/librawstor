@@ -3,7 +3,7 @@ AM_INIT_AUTOMAKE
 
 # AM_SILENT_RULES([yes])
 
-AC_CONFIG_HEADERS([src/config.h])
+AC_CONFIG_HEADERS([config.h])
 
 AC_PROG_CC
 
@@ -42,14 +42,6 @@ AC_ARG_ENABLE([ost], [AS_HELP_STRING([--disable-ost],
     [enable_ost=$enableval],
     [enable_ost="yes"])
 AM_CONDITIONAL([ENABLE_OST], [test "x$enable_ost" == "xyes"])
-AS_IF([test "x$enable_ost" == "xyes"], [
-    PKG_CHECK_MODULES([LIBXXHASH], [libxxhash])
-    AC_SUBST([maybe_libxxhash], ["libxxhash"])
-    AC_SUBST([maybe_libxxhash_define], ["#define RAWSTOR_WITH_LIBXXHASH"])
-], [
-    AC_SUBST([maybe_libxxhash], [""])
-    AC_SUBST([maybe_libxxhash_define], [""])
-])
 
 
 AC_ARG_WITH([liburing], [AS_HELP_STRING([--without-liburing],
@@ -67,12 +59,27 @@ AS_IF([test "x$with_liburing" == "xyes"], [
 ])
 
 
+AC_ARG_WITH([libxxhash], [AS_HELP_STRING([--without-libxxhash],
+    [disable support for libxxhash])],
+    [with_libxxhash=$withval],
+    [with_libxxhash="yes"])
+AM_CONDITIONAL([WITH_LIBXXHASH], [test "x$with_libxxhash" == "xyes"])
+AS_IF([test "x$with_libxxhash" == "xyes"], [
+    PKG_CHECK_MODULES([LIBXXHASH], [libxxhash])
+    AC_SUBST([maybe_libxxhash], ["libxxhash"])
+    AC_SUBST([maybe_libxxhash_define], ["#define RAWSTOR_WITH_LIBXXHASH"])
+], [
+    AC_SUBST([maybe_libxxhash], [""])
+    AC_SUBST([maybe_libxxhash_define], [""])
+])
+
+
 AC_CONFIG_FILES(
     [Makefile]
-    [include/rawstor/config.h]
     [librawstorstd/Makefile]
     [librawstorstd/src/Makefile]
     [librawstorstd/tests/Makefile]
+    [include/rawstor/config.h]
     [src/Makefile]
     [src/rawstor.pc]
     [cli/Makefile]

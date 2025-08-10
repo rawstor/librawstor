@@ -5,9 +5,15 @@
 #include <sys/uio.h>
 
 #include <assert.h>
+#include <stdint.h>
 
 
-XXH64_hash_t rawstor_hash_vector(const struct iovec *iovecs, unsigned nr_vecs) {
+uint64_t rawstor_hash_scalar(void* buf, size_t length) {
+    return XXH3_64bits(buf, length);
+}
+
+
+uint64_t rawstor_hash_vector(const struct iovec *iovecs, unsigned nr_vecs) {
     // Allocate a state struct. Do not just use malloc() or new.
     XXH3_state_t* state = XXH3_createState();
     assert(state != NULL && "Out of memory!");
