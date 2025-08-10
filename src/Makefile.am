@@ -18,7 +18,6 @@ librawstor_la_HEADERS = $(top_srcdir)/include/rawstor/rawstor.h \
 librawstor_la_SOURCES = logging.c \
                         rawstor.c \
                         opts.c \
-                        threading.c \
                         uuid.c
 
 librawstor_la_LIBADD = $(top_srcdir)/librawstorstd/src/librawstorstd.la

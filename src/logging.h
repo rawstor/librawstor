@@ -3,7 +3,8 @@
 
 
 #include "config.h"
-#include "threading.h"
+
+#include <rawstorstd/threading.h>
 
 #include <unistd.h>
 
