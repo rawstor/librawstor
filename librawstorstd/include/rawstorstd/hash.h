@@ -1,5 +1,5 @@
-#ifndef RAWSTOR_HASH_H
-#define RAWSTOR_HASH_H
+#ifndef RAWSTOR_STD_HASH_H
+#define RAWSTOR_STD_HASH_H
 
 #include <xxhash.h>
 
@@ -13,4 +13,4 @@ inline XXH64_hash_t rawstor_hash_buf(void* buf, size_t length) {
 XXH64_hash_t rawstor_hash_vector(const struct iovec *iovecs, unsigned nr_vecs);
 
 
-#endif // RAWSTOR_HASH_H
+#endif // RAWSTOR_STD_HASH_H
