@@ -317,7 +317,8 @@ static int response_body_received(RawstorIOEvent *event, void *data) {
 
     operation_trace(op->cid, event);
 
-    XXH64_hash_t hash = rawstor_hash_buf(op->payload.linear.data, op->request_frame.len);
+    uint64_t hash = rawstor_hash_buf(
+        op->payload.linear.data, op->request_frame.len);
 
     if (op->object->response_frame.hash != hash) {
         rawstor_error(
@@ -372,7 +373,7 @@ static int responsev_body_received(RawstorIOEvent *event, void *data) {
 
     operation_trace(op->cid, event);
 
-    XXH64_hash_t hash = rawstor_hash_vector(
+    uint64_t hash = rawstor_hash_vector(
         op->payload.vector.iov, op->payload.vector.niov);
 
     if (op->object->response_frame.hash != hash) {
