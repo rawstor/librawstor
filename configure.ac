@@ -24,7 +24,6 @@ AC_ARG_ENABLE([debug], [AS_HELP_STRING([--enable-debug],
     [enable_debug=$enableval],
     [enable_debug="no"])
 AS_IF([test "x$enable_debug" == "xyes"], [
-    AC_DEFINE([RAWSTOR_CONFIG_ENABLE_DEBUG], 1, [Enable DEBUG logging])
     AC_SUBST([maybe_loglevel_define], ["#define RAWSTOR_LOGLEVEL RAWSTOR_LOGLEVEL_DEBUG"])
 ])
 
