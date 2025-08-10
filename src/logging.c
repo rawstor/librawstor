@@ -2,7 +2,7 @@
 
 #include "threading.h"
 
-#include "rawstorstd/list.h"
+#include <rawstorstd/list.h>
 
 #include <assert.h>
 #include <errno.h>

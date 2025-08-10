@@ -2,7 +2,7 @@
 
 #include "protocol.h"
 
-#include "rawstorstd/gcc.h"
+#include <rawstorstd/gcc.h>
 
 #include <rawstor.h>
 

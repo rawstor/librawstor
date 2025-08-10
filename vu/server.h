@@ -2,7 +2,7 @@
 #define RAWSTOR_VU_SERVER_H
 
 
-#include "rawstorstd/gcc.h"
+#include <rawstorstd/gcc.h>
 
 
 int rawstor_vu_server(

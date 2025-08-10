@@ -2,8 +2,8 @@
 
 #include "logging.h"
 
-#include "rawstorstd/gcc.h"
-#include "rawstorstd/mempool.h"
+#include <rawstorstd/gcc.h>
+#include <rawstorstd/mempool.h>
 
 #include <aio.h>
 

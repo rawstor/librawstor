@@ -7,8 +7,8 @@
 #include "ost_protocol.h"
 #include "uuid.h"
 
-#include "rawstorstd/gcc.h"
-#include "rawstorstd/mempool.h"
+#include <rawstorstd/gcc.h>
+#include <rawstorstd/mempool.h>
 
 #include <arpa/inet.h>
 
