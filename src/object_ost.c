@@ -1,13 +1,14 @@
 #include <rawstor.h>
 
-#include "gcc.h"
-#include "hash.h"
 #include "io.h"
-#include "logging.h"
-#include "mempool.h"
 #include "opts.h"
 #include "ost_protocol.h"
-#include "uuid.h"
+
+#include <rawstorstd/gcc.h>
+#include <rawstorstd/hash.h>
+#include <rawstorstd/logging.h>
+#include <rawstorstd/mempool.h>
+#include <rawstorstd/uuid.h>
 
 #include <arpa/inet.h>
 
@@ -316,7 +317,8 @@ static int response_body_received(RawstorIOEvent *event, void *data) {
 
     operation_trace(op->cid, event);
 
-    XXH64_hash_t hash = rawstor_hash_buf(op->payload.linear.data, op->request_frame.len);
+    uint64_t hash = rawstor_hash_scalar(
+        op->payload.linear.data, op->request_frame.len);
 
     if (op->object->response_frame.hash != hash) {
         rawstor_error(
@@ -371,8 +373,12 @@ static int responsev_body_received(RawstorIOEvent *event, void *data) {
 
     operation_trace(op->cid, event);
 
-    XXH64_hash_t hash = rawstor_hash_vector(
-        op->payload.vector.iov, op->payload.vector.niov);
+    uint64_t hash;
+    if (rawstor_hash_vector(
+        op->payload.vector.iov, op->payload.vector.niov, &hash))
+    {
+        return -errno;
+    }
 
     if (op->object->response_frame.hash != hash) {
         rawstor_error(
@@ -723,7 +729,7 @@ int rawstor_object_pwrite(
             .cid = op->cid,
             .offset = offset,
             .len = size,
-            .hash = rawstor_hash_buf(buf, size),
+            .hash = rawstor_hash_scalar(buf, size),
             .sync = 0,
         },
         // .response_frame =
@@ -758,6 +764,11 @@ int rawstor_object_pwritev(
         "%s(): offset = %jd, niov = %u, size = %zu\n",
         __FUNCTION__, (intmax_t)offset, niov, size);
 
+    uint64_t hash;
+    if (rawstor_hash_vector(iov, niov, &hash)) {
+        return -errno;
+    }
+
     if (rawstor_mempool_available(object->operations_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
@@ -779,7 +790,7 @@ int rawstor_object_pwritev(
             .cid = op->cid,
             .offset = offset,
             .len = size,
-            .hash = rawstor_hash_vector(iov, niov),
+            .hash = hash,
             .sync = 0,
         },
         // .response_frame =

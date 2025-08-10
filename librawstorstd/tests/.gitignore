@@ -1,4 +1,4 @@
 /Makefile
 /Makefile.in
-/rawstor.pc
-/stamp-h1
+/test_*
+!/test_*.c

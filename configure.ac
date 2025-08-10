@@ -3,7 +3,7 @@ AM_INIT_AUTOMAKE
 
 # AM_SILENT_RULES([yes])
 
-AC_CONFIG_HEADERS([src/config.h])
+AC_CONFIG_HEADERS([config.h])
 
 AC_PROG_CC
 
@@ -24,7 +24,7 @@ AC_ARG_ENABLE([debug], [AS_HELP_STRING([--enable-debug],
     [enable_debug=$enableval],
     [enable_debug="no"])
 AS_IF([test "x$enable_debug" == "xyes"], [
-    AC_DEFINE([RAWSTOR_CONFIG_ENABLE_DEBUG], 1, [Enable DEBUG logging])
+    AC_SUBST([maybe_loglevel_define], ["#define RAWSTOR_LOGLEVEL RAWSTOR_LOGLEVEL_DEBUG"])
 ])
 
 
@@ -33,7 +33,7 @@ AC_ARG_ENABLE([trace], [AS_HELP_STRING([--enable-trace],
     [enable_trace=$enableval],
     [enable_trace="no"])
 AS_IF([test "x$enable_trace" == "xyes"], [
-    AC_DEFINE([RAWSTOR_CONFIG_ENABLE_TRACE], 1, [Enable TRACE logging])
+    AC_SUBST([maybe_loglevel_define], ["#define RAWSTOR_LOGLEVEL RAWSTOR_LOGLEVEL_TRACE"])
 ])
 
 
@@ -42,14 +42,6 @@ AC_ARG_ENABLE([ost], [AS_HELP_STRING([--disable-ost],
     [enable_ost=$enableval],
     [enable_ost="yes"])
 AM_CONDITIONAL([ENABLE_OST], [test "x$enable_ost" == "xyes"])
-AS_IF([test "x$enable_ost" == "xyes"], [
-    PKG_CHECK_MODULES([LIBXXHASH], [libxxhash])
-    AC_SUBST([maybe_libxxhash], ["libxxhash"])
-    AC_SUBST([maybe_libxxhash_define], ["#define RAWSTOR_WITH_LIBXXHASH"])
-], [
-    AC_SUBST([maybe_libxxhash], [""])
-    AC_SUBST([maybe_libxxhash_define], [""])
-])
 
 
 AC_ARG_WITH([liburing], [AS_HELP_STRING([--without-liburing],
@@ -60,16 +52,31 @@ AM_CONDITIONAL([WITH_LIBURING], [test "x$with_liburing" == "xyes"])
 AS_IF([test "x$with_liburing" == "xyes"], [
     PKG_CHECK_MODULES([LIBURING], [liburing])
     AC_SUBST([maybe_liburing], ["liburing"])
-    AC_SUBST([maybe_liburing_define], ["#define RAWSTOR_WITH_LIBURING"])
 ], [
     AC_SUBST([maybe_liburing], [""])
-    AC_SUBST([maybe_liburing_define], [""])
+])
+
+
+AC_ARG_WITH([libxxhash], [AS_HELP_STRING([--without-libxxhash],
+    [disable support for libxxhash])],
+    [with_libxxhash=$withval],
+    [with_libxxhash="yes"])
+AM_CONDITIONAL([WITH_LIBXXHASH], [test "x$with_libxxhash" == "xyes"])
+AS_IF([test "x$with_libxxhash" == "xyes"], [
+    AC_DEFINE([WITH_LIBXXHASH], 1, [With libxxhash])
+    PKG_CHECK_MODULES([LIBXXHASH], [libxxhash])
+    AC_SUBST([maybe_libxxhash], ["libxxhash"])
+], [
+    AC_SUBST([maybe_libxxhash], [""])
 ])
 
 
 AC_CONFIG_FILES(
     [Makefile]
-    [include/rawstor/config.h]
+    [librawstorstd/include/rawstorstd/logging_config.h]
+    [librawstorstd/Makefile]
+    [librawstorstd/src/Makefile]
+    [librawstorstd/tests/Makefile]
     [src/Makefile]
     [src/rawstor.pc]
     [cli/Makefile]

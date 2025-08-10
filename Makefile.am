@@ -1,11 +1,11 @@
-if ENABLE_TESTS
-    MAYBE_TESTS = tests
-endif
-
-SUBDIRS = src \
+SUBDIRS = librawstorstd \
+          src \
           cli \
-          vu \
-          $(MAYBE_TESTS)
+          vu
+
+if ENABLE_TESTS
+    SUBDIRS += tests
+endif
 
 
 ACLOCAL_AMFLAGS = -I m4
@@ -16,6 +16,7 @@ README: README.md
 
 if ENABLE_TESTS
 test: all
+	make -C librawstorstd test
 	make -C tests test
 
 .PHONY: test

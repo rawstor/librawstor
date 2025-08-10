@@ -1,6 +1,7 @@
 bin_PROGRAMS = rawstor-vu
 
 AM_CFLAGS = -std=gnu99 -Wall -Wextra -Werror \
+            -I$(top_srcdir)/librawstorstd/include \
             -I$(top_srcdir)/include
 
 
