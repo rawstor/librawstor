@@ -8,7 +8,8 @@
 
 uint64_t rawstor_hash_scalar(void* buf, size_t size);
 
-uint64_t rawstor_hash_vector(const struct iovec *iov, unsigned niov);
+int rawstor_hash_vector(
+    const struct iovec *iov, unsigned int niov, uint64_t *hash);
 
 
 #endif // RAWSTOR_STD_HASH_H

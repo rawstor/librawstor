@@ -373,8 +373,12 @@ static int responsev_body_received(RawstorIOEvent *event, void *data) {
 
     operation_trace(op->cid, event);
 
-    uint64_t hash = rawstor_hash_vector(
-        op->payload.vector.iov, op->payload.vector.niov);
+    uint64_t hash;
+    if (rawstor_hash_vector(
+        op->payload.vector.iov, op->payload.vector.niov, &hash))
+    {
+        return -errno;
+    }
 
     if (op->object->response_frame.hash != hash) {
         rawstor_error(
@@ -760,6 +764,11 @@ int rawstor_object_pwritev(
         "%s(): offset = %jd, niov = %u, size = %zu\n",
         __FUNCTION__, (intmax_t)offset, niov, size);
 
+    uint64_t hash;
+    if (rawstor_hash_vector(iov, niov, &hash)) {
+        return -errno;
+    }
+
     if (rawstor_mempool_available(object->operations_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
@@ -781,7 +790,7 @@ int rawstor_object_pwritev(
             .cid = op->cid,
             .offset = offset,
             .len = size,
-            .hash = rawstor_hash_vector(iov, niov),
+            .hash = hash,
             .sync = 0,
         },
         // .response_frame =

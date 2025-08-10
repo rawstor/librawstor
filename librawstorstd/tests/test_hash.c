@@ -36,7 +36,9 @@ static int test_hash_vector() {
             .iov_len = strlen("world"),
         }
     };
-    uint64_t hash = rawstor_hash_vector(iov, 3);
+    uint64_t hash;
+    int res = rawstor_hash_vector(iov, 3, &hash);
+    assertTrue(res == 0);
 #ifdef WITH_LIBXXHASH
     assertTrue(hash == 0xd447b1ea40e6988b);
 #else
