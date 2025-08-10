@@ -1,6 +1,7 @@
 noinst_PROGRAMS = test_iovec_routines \
                   test_list \
-                  test_mempool
+                  test_mempool \
+                  test_ringbuf
 
 
 AM_CFLAGS = -std=gnu99 -Wall -Wextra -Werror \
@@ -19,6 +20,10 @@ test_list_LDADD = $(top_srcdir)/librawstorstd/src/librawstorstd.la
 
 test_mempool_SOURCES = test_mempool.c
 test_mempool_LDADD = $(top_srcdir)/librawstorstd/src/librawstorstd.la
+
+
+test_ringbuf_SOURCES = test_ringbuf.c
+test_ringbuf_LDADD = $(top_srcdir)/librawstorstd/src/librawstorstd.la
 
 
 test: all

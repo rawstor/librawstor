@@ -1,5 +1,5 @@
-#ifndef RAWSTOR_RINGBUF_H
-#define RAWSTOR_RINGBUF_H
+#ifndef RAWSTOR_STD_RINGBUF_H
+#define RAWSTOR_STD_RINGBUF_H
 
 #include <stddef.h>
 
@@ -27,4 +27,4 @@ void* rawstor_ringbuf_iter(RawstorRingBuf *buf);
 void* rawstor_ringbuf_next(RawstorRingBuf *buf, void *iter);
 
 
-#endif // RAWSTOR_RINGBUF_H
+#endif // RAWSTOR_STD_RINGBUF_H

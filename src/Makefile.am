@@ -17,7 +17,6 @@ librawstor_la_HEADERS = $(top_srcdir)/include/rawstor/rawstor.h \
 
 librawstor_la_SOURCES = logging.c \
                         rawstor.c \
-                        ringbuf.c \
                         opts.c \
                         socket_routines.c \
                         threading.c \
