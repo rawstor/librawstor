@@ -15,8 +15,7 @@ librawstor_ladir = $(includedir)/rawstor
 librawstor_la_HEADERS = $(top_srcdir)/include/rawstor/rawstor.h \
                         $(top_srcdir)/include/rawstor/config.h
 
-librawstor_la_SOURCES = iovec_routines.c \
-                        logging.c \
+librawstor_la_SOURCES = logging.c \
                         mempool.c \
                         rawstor.c \
                         ringbuf.c \

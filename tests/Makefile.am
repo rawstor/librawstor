@@ -1,5 +1,4 @@
-noinst_PROGRAMS = test_iovec_routines \
-                  test_mempool \
+noinst_PROGRAMS = test_mempool \
                   test_ringbuf \
                   test_threading \
                   test_uuid
@@ -8,10 +7,6 @@ noinst_PROGRAMS = test_iovec_routines \
 AM_CFLAGS = -std=gnu99 -Wall -Wextra -Werror \
             -I$(top_srcdir)/include \
             -I$(top_srcdir)/src
-
-
-test_iovec_routines_SOURCES = test_iovec_routines.c
-test_iovec_routines_LDADD = $(top_srcdir)/src/librawstor.la
 
 
 test_mempool_SOURCES = test_mempool.c

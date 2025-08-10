@@ -1,10 +1,15 @@
-noinst_PROGRAMS = test_list
+noinst_PROGRAMS = test_iovec_routines \
+                  test_list
 
 
 AM_CFLAGS = -std=gnu99 -Wall -Wextra -Werror \
             -I$(top_srcdir)/tests \
             -I$(top_srcdir)/librawstorstd/include \
             -I$(top_srcdir)/include
+
+
+test_iovec_routines_SOURCES = test_iovec_routines.c
+test_iovec_routines_LDADD = $(top_srcdir)/src/librawstor.la
 
 
 test_list_SOURCES = test_list.c
