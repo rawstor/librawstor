@@ -31,6 +31,7 @@ int rawstor_hash_vector(
     // Allocate a state struct. Do not just use malloc() or new.
     XXH3_state_t *state = XXH3_createState();
     if (state == NULL) {
+        errno = ENOMEM;
         goto err_state;
     }
     // Reset the state to start a new hashing session.
