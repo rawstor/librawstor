@@ -1,10 +1,12 @@
 #include <rawstor.h>
 
-#include "io.h"
-#include "object.h"
+#include "object_internals.h"
 #include "opts.h"
 
 #include <rawstorstd/logging.h>
+
+#include <rawstorio/io.h>
+#include <rawstorio/io_event.h>
 
 #include <sys/types.h>
 #include <sys/uio.h>
@@ -32,11 +34,11 @@ int rawstor_initialize(const RawstorOptsOST *opts_ost) {
 
     rawstor_info(
         "Rawstor compiled with IO engine: %s\n",
-        rawstor_io_engine_name);
+        rawstor_io_engine_name());
 
     rawstor_info(
         "Rawstor compiled with object backend: %s\n",
-        rawstor_object_backend_name);
+        rawstor_object_backend_name());
 
     if (rawstor_opts_initialize(opts_ost)) {
         goto err_opts_initialize;

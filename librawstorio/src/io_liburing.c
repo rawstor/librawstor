@@ -1,4 +1,6 @@
-#include "io.h"
+#include "rawstorio/io.h"
+
+#include "io_event_liburing.h"
 
 #include <rawstorstd/gcc.h>
 #include <rawstorstd/logging.h>
@@ -14,31 +16,11 @@
 #include <time.h>
 
 
-struct RawstorIOEvent {
-    int fd;
-
-    RawstorIOCallback *callback;
-
-    size_t size;
-    struct io_uring_sqe *sqe;
-    struct io_uring_cqe *cqe;
-
-    void *data;
-
-#ifdef RAWSTOR_TRACE_EVENTS
-    void *trace_event;
-#endif
-};
-
-
 struct RawstorIO {
     unsigned int depth;
     RawstorMemPool *events_pool;
     struct io_uring ring;
 };
-
-
-const char* rawstor_io_engine_name = "liburing";
 
 
 static inline RawstorIOEvent* io_create_event(
@@ -74,6 +56,11 @@ static inline RawstorIOEvent* io_create_event(
     io_uring_sqe_set_data(sqe, event);
 
     return event;
+}
+
+
+const char* rawstor_io_engine_name() {
+    return "liburing";
 }
 
 

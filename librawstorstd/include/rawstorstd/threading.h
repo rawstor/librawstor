@@ -1,5 +1,5 @@
-#ifndef RAWSTOR_STD_THREADING
-#define RAWSTOR_STD_THREADING
+#ifndef RAWSTORSTD_THREADING
+#define RAWSTORSTD_THREADING
 
 
 typedef struct RawstorThread RawstorThread;
@@ -39,4 +39,4 @@ void rawstor_cond_signal(RawstorCond *cond);
 void rawstor_cond_broadcast(RawstorCond *cond);
 
 
-#endif // RAWSTOR_STD_THREADING
+#endif // RAWSTORSTD_THREADING

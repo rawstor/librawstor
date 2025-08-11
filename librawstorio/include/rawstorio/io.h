@@ -1,5 +1,5 @@
-#ifndef RAWSTOR_IO_H
-#define RAWSTOR_IO_H
+#ifndef RAWSTORIO_IO_H
+#define RAWSTORIO_IO_H
 
 #include <rawstor.h>
 
@@ -20,8 +20,7 @@ typedef struct RawstorIO RawstorIO;
 // typedef int(RawstorIOCallback)(RawstorIOEvent *event, void *data);
 
 
-extern const char* rawstor_io_engine_name;
-
+const char* rawstor_io_engine_name(void);
 
 RawstorIO* rawstor_io_create(unsigned int depth);
 
@@ -76,15 +75,5 @@ RawstorIOEvent* rawstor_io_wait_event_timeout(RawstorIO *io, int timeout);
 
 void rawstor_io_release_event(RawstorIO *io, RawstorIOEvent *event);
 
-int rawstor_io_event_fd(RawstorIOEvent *event);
 
-size_t rawstor_io_event_size(RawstorIOEvent *event);
-
-size_t rawstor_io_event_result(RawstorIOEvent *event);
-
-int rawstor_io_event_error(RawstorIOEvent *event);
-
-int rawstor_io_event_dispatch(RawstorIOEvent *event);
-
-
-#endif // RAWSTOR_IO_H
+#endif // RAWSTORIO_IO_H

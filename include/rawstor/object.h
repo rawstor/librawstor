@@ -1,27 +1,30 @@
 #ifndef RAWSTOR_OBJECT_H
 #define RAWSTOR_OBJECT_H
 
-#include <rawstor.h>
+#include <rawstor/rawstor.h>
+#include <rawstor/uuid.h>
 
+#include <sys/types.h>
 #include <sys/uio.h>
 
 #include <stddef.h>
+#include <stdint.h>
 
 
-// defined in rawstor.h
-// typedef struct RawstorObject RawstorObject;
-
-// defined in rawstor.h
-// typedef struct {
-//     size_t size;
-// } RawstorObjectSpec;
-
-// defined in rawstor.h
-// typedef int(RawstorCallback)(
-//     RawstorObject *object, size_t size, size_t res, int error, void *data);
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 
-extern const char *rawstor_object_backend_name;
+typedef struct RawstorObject RawstorObject;
+
+typedef struct {
+    size_t size;
+} RawstorObjectSpec;
+
+typedef int(RawstorCallback)(
+    RawstorObject *object, size_t size, size_t res, int error, void *data);
+
 
 int rawstor_object_create(
     const RawstorOptsOST *opts_ost,
@@ -63,6 +66,11 @@ int rawstor_object_pwritev(
     RawstorObject *object,
     struct iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorCallback *cb, void *data);
+
+
+#ifdef __cplusplus
+}
+#endif
 
 
 #endif // RAWSTOR_OBJECT_H

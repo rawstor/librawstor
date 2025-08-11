@@ -1,6 +1,6 @@
-#include <rawstor.h>
+#include <rawstor/object.h>
+#include "object_internals.h"
 
-#include "io.h"
 #include "opts.h"
 #include "ost_protocol.h"
 
@@ -9,6 +9,8 @@
 #include <rawstorstd/logging.h>
 #include <rawstorstd/mempool.h>
 #include <rawstorstd/uuid.h>
+
+#include <rawstorio/io.h>
 
 #include <arpa/inet.h>
 
@@ -77,9 +79,6 @@ struct RawstorObject {
     RawstorMemPool *operations_pool;
     RawstorOSTFrameResponse response_frame;
 };
-
-
-const char *rawstor_object_backend_name = "ost";
 
 
 static int response_body_received(RawstorIOEvent *event, void *data);
@@ -482,6 +481,11 @@ static int response_head_received(RawstorIOEvent *event, void *data) {
 
     return op->process(op);
 }
+
+
+const char *rawstor_object_backend_name(void) {
+    return "ost";
+};
 
 
 int rawstor_object_create(
