@@ -22,4 +22,13 @@ typedef struct RawstorIOSession {
 } RawstorIOSession;
 
 
+RawstorIOSession* rawstor_io_session_create(
+    RawstorIO *io, size_t depth, int fd, int write);
+
+void rawstor_io_session_delete(RawstorIOSession *session);
+
+int rawstor_io_session_push_sqe(
+    RawstorIOSession *session, RawstorIOEvent *event);
+
+
 #endif // RAWSTORIO_IO_SESSION_THREAD_H
