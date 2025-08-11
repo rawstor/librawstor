@@ -1,5 +1,7 @@
 #include "rawstorio/io.h"
 
+#include "io_event_liburing.h"
+
 #include <rawstorstd/gcc.h>
 #include <rawstorstd/logging.h>
 #include <rawstorstd/mempool.h>
@@ -12,23 +14,6 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <time.h>
-
-
-struct RawstorIOEvent {
-    int fd;
-
-    RawstorIOCallback *callback;
-
-    size_t size;
-    struct io_uring_sqe *sqe;
-    struct io_uring_cqe *cqe;
-
-    void *data;
-
-#ifdef RAWSTOR_TRACE_EVENTS
-    void *trace_event;
-#endif
-};
 
 
 struct RawstorIO {
