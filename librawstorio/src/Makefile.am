@@ -17,6 +17,8 @@ if WITH_LIBURING
     librawstorio_la_SOURCES += io_liburing.c
     librawstorio_la_LIBADD += $(LIBURING_LIBS)
 else
-    librawstorio_la_SOURCES += io_thread.c
+    librawstorio_la_SOURCES += io_event_thread.c \
+                               io_session_thread.c \
+                               io_thread.c
 
 endif
