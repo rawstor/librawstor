@@ -44,11 +44,11 @@ static RawstorIOSession** io_get_session(RawstorIO *io, int fd, int write) {
     RawstorIOSession **it = rawstor_list_iter(io->sessions);
     while (it != NULL) {
         RawstorIOSession *session = *it;
-        if (session->fd == -1) {
+        if (!rawstor_io_session_alive(session)) {
             it = io_remove_session(io, it);
             continue;
         }
-        if (session->fd == fd && session->write == write) {
+        if (rawstor_io_session_compare(session, fd, write)) {
             return it;
         }
         it = rawstor_list_next(it);
