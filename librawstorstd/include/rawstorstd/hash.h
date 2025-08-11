@@ -1,5 +1,5 @@
-#ifndef RAWSTOR_STD_HASH_H
-#define RAWSTOR_STD_HASH_H
+#ifndef RAWSTORSTD_HASH_H
+#define RAWSTORSTD_HASH_H
 
 #include <sys/uio.h>
 
@@ -12,4 +12,4 @@ int rawstor_hash_vector(
     const struct iovec *iov, unsigned int niov, uint64_t *hash);
 
 
-#endif // RAWSTOR_STD_HASH_H
+#endif // RAWSTORSTD_HASH_H

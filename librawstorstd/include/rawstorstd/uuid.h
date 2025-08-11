@@ -1,5 +1,5 @@
-#ifndef RAWSTOR_STD_UUID_H
-#define RAWSTOR_STD_UUID_H
+#ifndef RAWSTORSTD_UUID_H
+#define RAWSTORSTD_UUID_H
 
 #include <rawstor.h>
 
@@ -22,4 +22,4 @@ int rawstor_uuid_from_string(RawstorUUID *uuid, const char *s);
 void rawstor_uuid_to_string(const RawstorUUID *uuid, RawstorUUIDString *s);
 
 
-#endif // RAWSTOR_STD_UUID_H
+#endif // RAWSTORSTD_UUID_H

@@ -1,5 +1,5 @@
-#ifndef RAWSTOR_IO_EVENT_H
-#define RAWSTOR_IO_EVENT_H
+#ifndef RAWSTORIO_EVENT_H
+#define RAWSTORIO_EVENT_H
 
 #include <rawstor.h>
 
@@ -21,4 +21,4 @@ int rawstor_io_event_error(RawstorIOEvent *event);
 int rawstor_io_event_dispatch(RawstorIOEvent *event);
 
 
-#endif // RAWSTOR_IO_IO_H
+#endif // RAWSTORIO_IO_H

@@ -1,5 +1,5 @@
-#ifndef RAWSTOR_IO_IO_H
-#define RAWSTOR_IO_IO_H
+#ifndef RAWSTORIO_IO_H
+#define RAWSTORIO_IO_H
 
 #include <rawstor.h>
 
@@ -76,4 +76,4 @@ RawstorIOEvent* rawstor_io_wait_event_timeout(RawstorIO *io, int timeout);
 void rawstor_io_release_event(RawstorIO *io, RawstorIOEvent *event);
 
 
-#endif // RAWSTOR_IO_IO_H
+#endif // RAWSTORIO_IO_H

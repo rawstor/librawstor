@@ -1,5 +1,5 @@
-#ifndef RAWSTOR_STD_CONFIG_H
-#define RAWSTOR_STD_CONFIG_H
+#ifndef RAWSTORSTD_CONFIG_H
+#define RAWSTORSTD_CONFIG_H
 
 
 #define RAWSTOR_LOGLEVEL_NONE 0
@@ -18,4 +18,4 @@
 #endif
 
 
-#endif // RAWSTOR_STD_CONFIG_H
+#endif // RAWSTORSTD_CONFIG_H
