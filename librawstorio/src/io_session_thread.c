@@ -8,6 +8,8 @@
 #include <rawstorstd/ringbuf.h>
 #include <rawstorstd/threading.h>
 
+#include <sys/socket.h>
+
 #include <assert.h>
 #include <errno.h>
 #include <stdlib.h>
@@ -84,7 +86,6 @@ static void* io_seekable_session_thread(void *data) {
             RawstorIOEvent **sqe = rawstor_ringbuf_tail(session->sqes);
             RawstorIOEvent *event = *sqe;
             assert(rawstor_ringbuf_pop(session->sqes) == 0);
-
             rawstor_mutex_unlock(session->mutex);
 
             int done = io_event_process(event);
@@ -99,7 +100,6 @@ static void* io_seekable_session_thread(void *data) {
             }
 
             rawstor_mutex_lock(session->mutex);
-
             if (!done) {
                 RawstorIOEvent **sqe = rawstor_ringbuf_head(session->sqes);
                 if (rawstor_ringbuf_push(session->sqes)) {
@@ -135,37 +135,73 @@ static void* io_unseekable_session_thread(void *data) {
     rawstor_mutex_lock(session->mutex);
     while (!session->exit) {
         if (!rawstor_ringbuf_empty(session->sqes)) {
-            RawstorIOEvent **sqe = rawstor_ringbuf_tail(session->sqes);
-            RawstorIOEvent *event = *sqe;
-            assert(rawstor_ringbuf_pop(session->sqes) == 0);
+            struct msghdr msg = {};
+            size_t nevents = rawstor_ringbuf_size(session->sqes);
+            RawstorIOEvent **events = calloc(nevents, sizeof(RawstorIOEvent*));
+            if (events == NULL) {
+                rawstor_mutex_unlock(session->mutex);
+                return NULL;
+            }
+
+            unsigned int event_at = 0;
+            while (!rawstor_ringbuf_empty(session->sqes)) {
+                RawstorIOEvent **sqe = rawstor_ringbuf_tail(session->sqes);
+                RawstorIOEvent *event = *sqe;
+                assert(rawstor_ringbuf_pop(session->sqes) == 0);
+                msg.msg_iovlen += event->niov_at;
+                events[event_at++] = event;
+            }
+
+            msg.msg_iov = calloc(msg.msg_iovlen, sizeof(struct iovec));
+            if (msg.msg_iov == NULL) {
+                free(events);
+                rawstor_mutex_unlock(session->mutex);
+                return NULL;
+            }
+
+            size_t size = 0;
+            unsigned int niov_at = 0;
+            for (event_at = 0; event_at < nevents; ++event_at) {
+                RawstorIOEvent *event = events[event_at];
+                for (
+                    unsigned int i = 0;
+                    i < event->niov_at;
+                    ++i, ++niov_at)
+                {
+                    msg.msg_iov[niov_at] = event->iov_at[i];
+                    size += event->iov_at[i].iov_len;
+                }
+            }
 
             rawstor_mutex_unlock(session->mutex);
 
-            int done = io_event_process(event);
-            if (done) {
-                if (rawstor_io_push_cqe(session->io, event)) {
-                    /**
-                     * TODO: Wait somehow for space in ringbuf.
-                     */
-                    rawstor_error(
-                        "rawstor_io_push_cqe(): %s\n", strerror(errno));
-                }
+            ssize_t res;
+            if (session->write) {
+                res = sendmsg(session->fd, &msg, 0);
+            } else {
+                res = recvmsg(session->fd, &msg, MSG_WAITALL);
+            }
+
+            assert(res >= 0);
+            assert((size_t)res == size);
+
+            for (event_at = 0; event_at < nevents; ++event_at) {
+                RawstorIOEvent *event = events[event_at];
+                event->result = event->size;
+            }
+
+            if (rawstor_io_push_cqes(session->io, events, nevents)) {
+                /**
+                 * TODO: Wait somehow for space in ringbuf.
+                 */
+                rawstor_error(
+                    "rawstor_io_push_cqe(): %s\n", strerror(errno));
             }
 
             rawstor_mutex_lock(session->mutex);
 
-            if (!done) {
-                RawstorIOEvent **sqe = rawstor_ringbuf_head(session->sqes);
-                if (rawstor_ringbuf_push(session->sqes)) {
-                    /**
-                     * TODO: Wait somehow for space in ringbuf.
-                     */
-                    rawstor_error(
-                        "rawstor_ringbuf_push(): %s\n", strerror(errno));
-                } else {
-                    *sqe = event;
-                }
-            }
+            free(msg.msg_iov);
+            free(events);
         } else {
             if (!rawstor_cond_wait_timeout(
                 session->cond, session->mutex, 1000))
@@ -329,6 +365,7 @@ int rawstor_io_session_push_sqe(
     event->session = session;
     event->fd = session->fd;
     *sqe = event;
+
     rawstor_cond_signal(session->cond);
     rawstor_mutex_unlock(session->mutex);
 
