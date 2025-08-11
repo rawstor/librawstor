@@ -193,8 +193,6 @@ static void* io_unseekable_session_thread(void *data) {
                 rawstor_iovec_shift(&iov_at, &niov_at, res);
             }
 
-            // assert((size_t)res == size);
-
             for (event_i = 0; event_i < nevents; ++event_i) {
                 RawstorIOEvent *event = events[event_i];
                 event->result = event->size;
@@ -242,10 +240,16 @@ RawstorIOSession* rawstor_io_session_create(
         goto err_session;
     }
 
-    session->io = io;
-    session->fd = fd;
-    session->write = write;
-    session->exit = 0;
+    *session = (RawstorIOSession) {
+        .io = io,
+        .fd = fd,
+        .write = write,
+        // .sqes
+        .exit = 0,
+        // .mutex
+        // .cond
+        // .threads
+    };
 
     session->sqes = rawstor_ringbuf_create(depth, sizeof(RawstorIOEvent*));
     if (session->sqes == NULL) {
