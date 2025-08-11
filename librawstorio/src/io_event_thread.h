@@ -11,6 +11,7 @@
 struct RawstorIOEvent {
     RawstorIOSession *session;
 
+    int fd;
     struct iovec *iov_origin;
     struct iovec *iov_at;
     unsigned int niov_at;
