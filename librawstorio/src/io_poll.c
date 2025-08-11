@@ -651,36 +651,3 @@ void rawstor_io_release_event(RawstorIO *io, RawstorIOEvent *event) {
         io_remove_session(io, session);
     }
 }
-
-
-int rawstor_io_event_fd(RawstorIOEvent *event) {
-    return event->session->fd;
-}
-
-
-size_t rawstor_io_event_size(RawstorIOEvent *event) {
-    return event->size;
-}
-
-
-size_t rawstor_io_event_result(RawstorIOEvent *event) {
-    return event->result;
-}
-
-
-int rawstor_io_event_error(RawstorIOEvent *event) {
-    return event->error;
-}
-
-
-int rawstor_io_event_dispatch(RawstorIOEvent *event) {
-#ifdef RAWSTOR_TRACE_EVENTS
-    rawstor_trace_event_message(event->trace_event, "dispatch()\n");
-#endif
-    int ret = event->callback(event, event->data);
-#ifdef RAWSTOR_TRACE_EVENTS
-    rawstor_trace_event_message(
-        event->trace_event, "dispatch(): rval = %d\n", ret);
-#endif
-    return ret;
-}
