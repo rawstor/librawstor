@@ -1,13 +1,15 @@
-#ifndef RAWSTORIO_EVENT_H
-#define RAWSTORIO_EVENT_H
-
-#include <rawstor.h>
+#ifndef RAWSTOR_IO_EVENT_H
+#define RAWSTOR_IO_EVENT_H
 
 #include <stddef.h>
 
 
-// defined in rawstor.h
-// typedef struct RawstorIOEvent RawstorIOEvent;
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+
+typedef struct RawstorIOEvent RawstorIOEvent;
 
 
 int rawstor_io_event_fd(RawstorIOEvent *event);
@@ -18,7 +20,10 @@ size_t rawstor_io_event_result(RawstorIOEvent *event);
 
 int rawstor_io_event_error(RawstorIOEvent *event);
 
-int rawstor_io_event_dispatch(RawstorIOEvent *event);
+
+#ifdef __cplusplus
+}
+#endif
 
 
-#endif // RAWSTORIO_IO_H
+#endif // RAWSTOR_IO_EVENT_H

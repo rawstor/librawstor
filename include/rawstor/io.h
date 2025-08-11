@@ -1,7 +1,7 @@
 #ifndef RAWSTOR_IO_H
 #define RAWSTOR_IO_H
 
-#include <rawstor/event.h>
+#include <rawstor/io_event.h>
 
 #include <stddef.h>
 
