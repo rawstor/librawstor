@@ -135,7 +135,6 @@ static void* io_unseekable_session_thread(void *data) {
     rawstor_mutex_lock(session->mutex);
     while (!session->exit) {
         if (!rawstor_ringbuf_empty(session->sqes)) {
-            struct msghdr msg = {};
             size_t nevents = rawstor_ringbuf_size(session->sqes);
             RawstorIOEvent **events = calloc(nevents, sizeof(RawstorIOEvent*));
             if (events == NULL) {
@@ -143,50 +142,61 @@ static void* io_unseekable_session_thread(void *data) {
                 return NULL;
             }
 
-            unsigned int event_at = 0;
+            unsigned int niov_at = 0;
+            unsigned int event_i = 0;
             while (!rawstor_ringbuf_empty(session->sqes)) {
                 RawstorIOEvent **sqe = rawstor_ringbuf_tail(session->sqes);
                 RawstorIOEvent *event = *sqe;
                 assert(rawstor_ringbuf_pop(session->sqes) == 0);
-                msg.msg_iovlen += event->niov_at;
-                events[event_at++] = event;
+                niov_at += event->niov_at;
+                events[event_i++] = event;
             }
 
-            msg.msg_iov = calloc(msg.msg_iovlen, sizeof(struct iovec));
-            if (msg.msg_iov == NULL) {
+            struct iovec *iov = calloc(niov_at, sizeof(struct iovec));
+            if (iov == NULL) {
                 free(events);
                 rawstor_mutex_unlock(session->mutex);
                 return NULL;
             }
+            struct iovec *iov_at = iov;
 
             size_t size = 0;
-            unsigned int niov_at = 0;
-            for (event_at = 0; event_at < nevents; ++event_at) {
-                RawstorIOEvent *event = events[event_at];
+            unsigned int niov_i = 0;
+            for (event_i = 0; event_i < nevents; ++event_i) {
+                RawstorIOEvent *event = events[event_i];
                 for (
                     unsigned int i = 0;
                     i < event->niov_at;
-                    ++i, ++niov_at)
+                    ++i, ++niov_i)
                 {
-                    msg.msg_iov[niov_at] = event->iov_at[i];
+                    iov[niov_i] = event->iov_at[i];
                     size += event->iov_at[i].iov_len;
                 }
             }
 
             rawstor_mutex_unlock(session->mutex);
 
-            ssize_t res;
-            if (session->write) {
-                res = sendmsg(session->fd, &msg, 0);
-            } else {
-                res = recvmsg(session->fd, &msg, MSG_WAITALL);
+            while (niov_at != 0) {
+                ssize_t res;
+                if (session->write) {
+                    res = writev(session->fd, iov_at, niov_at);
+                } else {
+                    res = readv(session->fd, iov_at, niov_at);
+                }
+
+                assert(res >= 0);
+
+                if ((size_t)res != size) {
+                    rawstor_debug("partial %zd of %zu\n", res, size);
+                }
+
+                rawstor_iovec_shift(&iov_at, &niov_at, res);
             }
 
-            assert(res >= 0);
-            assert((size_t)res == size);
+            // assert((size_t)res == size);
 
-            for (event_at = 0; event_at < nevents; ++event_at) {
-                RawstorIOEvent *event = events[event_at];
+            for (event_i = 0; event_i < nevents; ++event_i) {
+                RawstorIOEvent *event = events[event_i];
                 event->result = event->size;
             }
 
@@ -200,7 +210,7 @@ static void* io_unseekable_session_thread(void *data) {
 
             rawstor_mutex_lock(session->mutex);
 
-            free(msg.msg_iov);
+            free(iov);
             free(events);
         } else {
             if (!rawstor_cond_wait_timeout(
