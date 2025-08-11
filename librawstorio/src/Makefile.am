@@ -16,6 +16,9 @@ if WITH_LIBURING
     AM_CFLAGS += $(LIBURING_CFLAGS)
     librawstorio_la_SOURCES += io_liburing.c
     librawstorio_la_LIBADD += $(LIBURING_LIBS)
+
 else
-    librawstorio_la_SOURCES += io_poll.c
+    librawstorio_la_SOURCES += io_event_poll.c \
+                               io_poll.c
+
 endif
