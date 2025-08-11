@@ -1,6 +1,5 @@
-#include "object.h"
-
-#include <rawstor.h>
+#include <rawstor/object.h>
+#include "object_internals.h"
 
 #include "opts.h"
 
@@ -47,9 +46,6 @@ struct RawstorObject {
     int fd;
     RawstorMemPool *operations_pool;
 };
-
-
-const char *rawstor_object_backend_name = "file";
 
 
 static int io_callback(RawstorIOEvent *event, void *data) {
@@ -147,6 +143,11 @@ err_ftruncate:
 err_open:
 err_object_dat_path:
     return -errno;
+}
+
+
+const char *rawstor_object_backend_name() {
+    return "file";
 }
 
 

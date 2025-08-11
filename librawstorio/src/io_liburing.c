@@ -38,9 +38,6 @@ struct RawstorIO {
 };
 
 
-const char* rawstor_io_engine_name = "liburing";
-
-
 static inline RawstorIOEvent* io_create_event(
     RawstorIO *io,
     int fd, size_t size,
@@ -74,6 +71,11 @@ static inline RawstorIOEvent* io_create_event(
     io_uring_sqe_set_data(sqe, event);
 
     return event;
+}
+
+
+const char* rawstor_io_engine_name() {
+    return "liburing";
 }
 
 

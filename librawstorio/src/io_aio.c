@@ -44,9 +44,6 @@ struct RawstorIO {
 };
 
 
-const char* rawstor_io_engine_name = "aio";
-
-
 static int io_readv(RawstorIOEvent *event, void *data) {
     if (event->error != 0) {
         event->payload.callback(event, event->payload.data);
@@ -348,6 +345,11 @@ static RawstorIOEvent* io_process_event(RawstorIO *io) {
     }
 
     return NULL;
+}
+
+
+const char* rawstor_io_engine_name(void) {
+    return  "aio";
 }
 
 

@@ -1,5 +1,5 @@
-#ifndef LIBRAWSTOR_UUID_H
-#define LIBRAWSTOR_UUID_H
+#ifndef RAWSTOR_UUID_H
+#define RAWSTOR_UUID_H
 
 #include <stdint.h>
 
@@ -26,4 +26,4 @@ void rawstor_uuid_to_string(const RawstorUUID *uuid, RawstorUUIDString *s);
 #endif
 
 
-#endif // LIBRAWSTOR_UUID_H
+#endif // RAWSTOR_UUID_H

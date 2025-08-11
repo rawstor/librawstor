@@ -1,5 +1,7 @@
-#ifndef LIBRAWSTOR_IO_H
-#define LIBRAWSTOR_IO_H
+#ifndef RAWSTOR_IO_H
+#define RAWSTOR_IO_H
+
+#include <rawstor/event.h>
 
 #include <stddef.h>
 
@@ -9,18 +11,7 @@ extern "C" {
 #endif
 
 
-typedef struct RawstorIOEvent RawstorIOEvent;
-
 typedef int(RawstorIOCallback)(RawstorIOEvent *event, void *data);
-
-
-int rawstor_io_event_fd(RawstorIOEvent *event);
-
-size_t rawstor_io_event_size(RawstorIOEvent *event);
-
-size_t rawstor_io_event_result(RawstorIOEvent *event);
-
-int rawstor_io_event_error(RawstorIOEvent *event);
 
 
 #ifdef __cplusplus
@@ -28,4 +19,4 @@ int rawstor_io_event_error(RawstorIOEvent *event);
 #endif
 
 
-#endif // LIBRAWSTOR_RAWSTOR_H
+#endif // RAWSTOR_EVENT_H

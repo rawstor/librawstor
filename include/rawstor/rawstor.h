@@ -1,5 +1,5 @@
-#ifndef LIBRAWSTOR_RAWSTOR_H
-#define LIBRAWSTOR_RAWSTOR_H
+#ifndef RAWSTOR_RAWSTOR_H
+#define RAWSTOR_RAWSTOR_H
 
 #include <rawstor/io.h>
 #include <rawstor/uuid.h>
@@ -86,4 +86,4 @@ void rawstor_release_event(RawstorIOEvent *event);
 #endif
 
 
-#endif // LIBRAWSTOR_RAWSTOR_H
+#endif // RAWSTOR_RAWSTOR_H

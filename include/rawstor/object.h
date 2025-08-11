@@ -1,5 +1,5 @@
-#ifndef LIBRAWSTOR_OBJECT_H
-#define LIBRAWSTOR_OBJECT_H
+#ifndef RAWSTOR_OBJECT_H
+#define RAWSTOR_OBJECT_H
 
 #include <rawstor/rawstor.h>
 #include <rawstor/uuid.h>
@@ -73,4 +73,4 @@ int rawstor_object_pwritev(
 #endif
 
 
-#endif // LIBRAWSTOR_OBJECT_H
+#endif // RAWSTOR_OBJECT_H

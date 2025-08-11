@@ -20,8 +20,7 @@ typedef struct RawstorIO RawstorIO;
 // typedef int(RawstorIOCallback)(RawstorIOEvent *event, void *data);
 
 
-extern const char* rawstor_io_engine_name;
-
+const char* rawstor_io_engine_name(void);
 
 RawstorIO* rawstor_io_create(unsigned int depth);
 

@@ -53,9 +53,6 @@ struct RawstorIO {
 };
 
 
-const char* rawstor_io_engine_name = "poll";
-
-
 static ssize_t io_event_process_readv(RawstorIOEvent *event) {
     ssize_t ret = readv(
         event->session->fd, event->iov_at, event->niov);
@@ -259,6 +256,11 @@ err_event:
     }
 err_session:
     return NULL;
+}
+
+
+const char* rawstor_io_engine_name() {
+    return "poll";
 }
 
 
