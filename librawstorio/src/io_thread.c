@@ -227,6 +227,28 @@ err_cqe:
 }
 
 
+int rawstor_io_push_cqes(
+    RawstorIO *io, RawstorIOEvent **events, size_t nevents)
+{
+    rawstor_mutex_lock(io->mutex);
+    for (size_t i = 0; i < nevents; ++i) {
+        RawstorIOEvent **cqe = rawstor_ringbuf_head(io->cqes);
+        if (rawstor_ringbuf_push(io->cqes)) {
+            rawstor_mutex_unlock(io->mutex);
+            goto err_cqe;
+        }
+        *cqe = events[i];
+    }
+    rawstor_cond_signal(io->cond);
+    rawstor_mutex_unlock(io->mutex);
+
+    return 0;
+
+err_cqe:
+    return -errno;
+}
+
+
 int rawstor_io_setup_fd(int RAWSTOR_UNUSED fd) {
     return 0;
 }
