@@ -4,12 +4,29 @@
 #include "io_thread.h"
 
 #include <rawstorstd/iovec.h>
+#include <rawstorstd/list.h>
+#include <rawstorstd/ringbuf.h>
+#include <rawstorstd/threading.h>
 
 #include <assert.h>
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+
+
+struct RawstorIOSession {
+    RawstorIO *io;
+    int fd;
+    int write;
+
+    RawstorRingBuf *sqes;
+
+    int exit;
+    RawstorMutex *mutex;
+    RawstorCond *cond;
+    RawstorList *threads;
+};
 
 
 static int is_seekable(int fd) {
@@ -310,6 +327,7 @@ int rawstor_io_session_push_sqe(
         goto err_sqe;
     }
     event->session = session;
+    event->fd = session->fd;
     *sqe = event;
     rawstor_cond_signal(session->cond);
     rawstor_mutex_unlock(session->mutex);
@@ -318,4 +336,14 @@ int rawstor_io_session_push_sqe(
 
 err_sqe:
     return -errno;
+}
+
+
+int rawstor_io_session_alive(RawstorIOSession *session) {
+    return session->fd >= 0;
+}
+
+
+int rawstor_io_session_compare(RawstorIOSession *session, int fd, int write) {
+    return session->fd == fd && session->write == write;
 }
