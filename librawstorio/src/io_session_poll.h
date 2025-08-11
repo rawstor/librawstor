@@ -11,4 +11,4 @@ typedef struct RawstorIOSession {
 } RawstorIOSession;
 
 
-#endif // RAWSTORIO_IO_EVENT_POLL_H
+#endif // RAWSTORIO_IO_SESSION_POLL_H

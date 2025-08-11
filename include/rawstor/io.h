@@ -19,4 +19,4 @@ typedef int(RawstorIOCallback)(RawstorIOEvent *event, void *data);
 #endif
 
 
-#endif // RAWSTOR_EVENT_H
+#endif // RAWSTOR_IO_H
