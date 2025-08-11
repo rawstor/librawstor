@@ -30,57 +30,25 @@ struct RawstorIO {
 };
 
 
-static int is_seekable(int fd) {
-    if (lseek(fd, 0, SEEK_CUR) == -1) {
-        if (errno == ESPIPE) {
-            errno = 0;
-            return 0;
-        }
-        return -errno;
-    }
-
-    return 1;
-}
-
-
-static RawstorIOSession* io_remove_session(
-    RawstorIO *io, RawstorIOSession *session)
+static RawstorIOSession** io_remove_session(
+    RawstorIO *io, RawstorIOSession **it)
 {
-    int errsv = errno;
-
-    rawstor_mutex_lock(session->mutex);
-    session->exit = 1;
-    rawstor_cond_broadcast(session->cond);
-    rawstor_mutex_unlock(session->mutex);
-
-    for (
-        RawstorThread **it = rawstor_list_iter(session->threads);
-        it != NULL;
-        it = rawstor_list_next(it))
-    {
-        if (*it == NULL) {
-            continue;
-        }
-        rawstor_thread_join(*it);
-    }
-    rawstor_list_delete(session->threads);
-    rawstor_cond_delete(session->cond);
-    rawstor_mutex_delete(session->mutex);
-    rawstor_ringbuf_delete(session->sqes);
-    RawstorIOSession *it = rawstor_list_remove(io->sessions, session);
-    errno = errsv;
-    return it;
+    RawstorIOSession *session = *it;
+    RawstorIOSession **ret = rawstor_list_remove(io->sessions, it);
+    rawstor_io_session_delete(session);
+    return ret;
 }
 
 
-static RawstorIOSession* io_get_session(RawstorIO *io, int fd, int write) {
-    RawstorIOSession *it = rawstor_list_iter(io->sessions);
+static RawstorIOSession** io_get_session(RawstorIO *io, int fd, int write) {
+    RawstorIOSession **it = rawstor_list_iter(io->sessions);
     while (it != NULL) {
-        if (it->fd == -1) {
+        RawstorIOSession *session = *it;
+        if (session->fd == -1) {
             it = io_remove_session(io, it);
             continue;
         }
-        if (it->fd == fd && it->write == write) {
+        if (session->fd == fd && session->write == write) {
             return it;
         }
         it = rawstor_list_next(it);
@@ -90,261 +58,25 @@ static RawstorIOSession* io_get_session(RawstorIO *io, int fd, int write) {
 }
 
 
-static int io_push_cqe(RawstorIO *io, RawstorIOEvent *event) {
-    rawstor_mutex_lock(io->mutex);
-    RawstorIOEvent **cqe = rawstor_ringbuf_head(io->cqes);
-    if (rawstor_ringbuf_push(io->cqes)) {
-        rawstor_mutex_unlock(io->mutex);
-        goto err_cqe;
-    }
-    *cqe = event;
-    rawstor_cond_signal(io->cond);
-    rawstor_mutex_unlock(io->mutex);
-
-    return 0;
-
-err_cqe:
-    return -errno;
-}
-
-
-static inline int io_event_process(RawstorIOEvent *event) {
-#ifdef RAWSTOR_TRACE_EVENTS
-    rawstor_trace_event_message(event->trace_event, "process()\n");
-#endif
-
-    ssize_t res = event->process(event);
-
-#ifdef RAWSTOR_TRACE_EVENTS
-    rawstor_trace_event_message(
-        event->trace_event, "process(): res = %zd\n", res);
-#endif
-
-    if (res > 0) {
-        if ((size_t)res != event->size) {
-#ifdef RAWSTOR_TRACE_EVENTS
-            rawstor_trace_event_message(
-                event->trace_event,
-                "partial %zd of %zu\n", res, event->size);
-#else
-            rawstor_debug("partial %zd of %zu\n", res, event->size);
-#endif
-        }
-        event->offset_at += res;
-        rawstor_iovec_shift(&event->iov_at, &event->niov_at, res);
-        if (event->niov_at != 0) {
-            return 0;
-        }
+static RawstorIOSession** io_append_session(RawstorIO *io, int fd, int write) {
+    RawstorIOSession **it = rawstor_list_append(io->sessions);
+    if (it == NULL) {
+        goto err_list_append;
     }
 
-    return 1;
-}
-
-
-static void* io_seekable_session_thread(void *data) {
-    RawstorIOSession *session = data;
-
-    rawstor_mutex_lock(session->mutex);
-    while (!session->exit) {
-        if (!rawstor_ringbuf_empty(session->sqes)) {
-            RawstorIOEvent **sqe = rawstor_ringbuf_tail(session->sqes);
-            RawstorIOEvent *event = *sqe;
-            assert(rawstor_ringbuf_pop(session->sqes) == 0);
-
-            rawstor_mutex_unlock(session->mutex);
-
-            int done = io_event_process(event);
-            if (done) {
-                if (io_push_cqe(session->io, event)) {
-                    /**
-                     * TODO: Wait somehow for space in ringbuf.
-                     */
-                    rawstor_error(
-                        "io_push_cqe(): %s\n", strerror(errno));
-                }
-            }
-
-            rawstor_mutex_lock(session->mutex);
-
-            if (!done) {
-                RawstorIOEvent **sqe = rawstor_ringbuf_head(session->sqes);
-                if (rawstor_ringbuf_push(session->sqes)) {
-                    /**
-                     * TODO: Wait somehow for space in ringbuf.
-                     */
-                    rawstor_error(
-                        "rawstor_ringbuf_push(): %s\n", strerror(errno));
-                } else {
-                    *sqe = event;
-                }
-            }
-        } else {
-            if (!rawstor_cond_wait_timeout(
-                session->cond, session->mutex, 1000))
-            {
-                if (rawstor_ringbuf_empty(session->sqes)) {
-                    break;
-                }
-            }
-        }
-    }
-    session->fd = -1;
-    rawstor_mutex_unlock(session->mutex);
-
-    return session;
-}
-
-
-static void* io_unseekable_session_thread(void *data) {
-    RawstorIOSession *session = data;
-
-    rawstor_mutex_lock(session->mutex);
-    while (!session->exit) {
-        if (!rawstor_ringbuf_empty(session->sqes)) {
-            RawstorIOEvent **sqe = rawstor_ringbuf_tail(session->sqes);
-            RawstorIOEvent *event = *sqe;
-            assert(rawstor_ringbuf_pop(session->sqes) == 0);
-
-            rawstor_mutex_unlock(session->mutex);
-
-            int done = io_event_process(event);
-            if (done) {
-                if (io_push_cqe(session->io, event)) {
-                    /**
-                     * TODO: Wait somehow for space in ringbuf.
-                     */
-                    rawstor_error(
-                        "io_push_cqe(): %s\n", strerror(errno));
-                }
-            }
-
-            rawstor_mutex_lock(session->mutex);
-
-            if (!done) {
-                RawstorIOEvent **sqe = rawstor_ringbuf_head(session->sqes);
-                if (rawstor_ringbuf_push(session->sqes)) {
-                    /**
-                     * TODO: Wait somehow for space in ringbuf.
-                     */
-                    rawstor_error(
-                        "rawstor_ringbuf_push(): %s\n", strerror(errno));
-                } else {
-                    *sqe = event;
-                }
-            }
-        } else {
-            if (!rawstor_cond_wait_timeout(
-                session->cond, session->mutex, 1000))
-            {
-                if (rawstor_ringbuf_empty(session->sqes)) {
-                    break;
-                }
-            }
-        }
-    }
-    session->fd = -1;
-    rawstor_mutex_unlock(session->mutex);
-
-    return session;
-}
-
-
-static RawstorIOSession* io_append_session(RawstorIO *io, int fd, int write) {
-    int seekable = is_seekable(fd);
-    if (seekable < 0) {
-        goto err_seekable;
-    }
-
-    RawstorIOSession *session = rawstor_list_append(io->sessions);
+    RawstorIOSession *session = rawstor_io_session_create(
+        io, io->depth, fd, write);
     if (session == NULL) {
         goto err_session;
     }
 
-    session->io = io;
-    session->fd = fd;
-    session->write = write;
-    session->exit = 0;
+    *it = session;
 
-    session->sqes = rawstor_ringbuf_create(io->depth, sizeof(RawstorIOEvent*));
-    if (session->sqes == NULL) {
-        goto err_sqes;
-    }
+    return it;
 
-    session->mutex = rawstor_mutex_create();
-    if (session->mutex == NULL) {
-        goto err_mutex;
-    }
-
-    session->cond = rawstor_cond_create();
-    if (session->cond == NULL) {
-        goto err_cond;
-    }
-
-    session->threads = rawstor_list_create(sizeof(RawstorThread*));
-    if (session->threads == NULL) {
-        goto err_threads;
-    }
-
-    if (seekable) {
-        for (size_t i = 0; i < io->depth; ++i) {
-            RawstorThread **it = rawstor_list_append(session->threads);
-            if (it == NULL) {
-                goto err_thread_append;
-            }
-            *it = NULL;
-            RawstorThread *thread = rawstor_thread_create(
-                io_seekable_session_thread, session);
-            if (thread == NULL) {
-                goto err_thread_create;
-            }
-            *it = thread;
-        }
-    } else {
-        RawstorThread **it = rawstor_list_append(session->threads);
-        if (it == NULL) {
-            goto err_thread_append;
-        }
-        *it = NULL;
-
-        RawstorThread *thread = rawstor_thread_create(
-            io_unseekable_session_thread, session);
-
-        if (thread == NULL) {
-            goto err_thread_create;
-        }
-        *it = thread;
-    }
-
-    return session;
-
-err_thread_create:
-err_thread_append:
-    rawstor_mutex_lock(session->mutex);
-    session->exit = 1;
-    rawstor_cond_broadcast(session->cond);
-    rawstor_mutex_unlock(session->mutex);
-
-    for (
-        RawstorThread **it = rawstor_list_iter(session->threads);
-        it != NULL;
-        it = rawstor_list_next(it))
-    {
-        if (*it == NULL) {
-            continue;
-        }
-        rawstor_thread_join(*it);
-    }
-    rawstor_list_delete(session->threads);
-err_threads:
-    rawstor_cond_delete(session->cond);
-err_cond:
-    rawstor_mutex_delete(session->mutex);
-err_mutex:
-    rawstor_ringbuf_delete(session->sqes);
-err_sqes:
-    rawstor_list_remove(io->sessions, session);
 err_session:
-err_seekable:
+    rawstor_list_remove(io->sessions, it);
+err_list_append:
     return NULL;
 }
 
@@ -352,32 +84,26 @@ err_seekable:
 static inline int io_push_sqe(
     RawstorIO *io, int fd, RawstorIOEvent *event, int write)
 {
-    RawstorIOSession *session = io_get_session(io, fd, write);
-    if (session == NULL) {
-        session = io_append_session(io, fd, write);
-        if (session == NULL) {
+    RawstorIOSession **it = io_get_session(io, fd, write);
+    if (it == NULL) {
+        it = io_append_session(io, fd, write);
+        if (it == NULL) {
             goto err_session;
         }
     }
 
-    rawstor_mutex_lock(session->mutex);
-    if (session->fd == -1) {
-        rawstor_mutex_unlock(session->mutex);
-        return io_push_sqe(io, fd, event, write);
+    RawstorIOSession *session = *it;
+
+    if (rawstor_io_session_push_sqe(session, event)) {
+        if (errno == EBADF) {
+            return io_push_sqe(io, fd, event, write);
+        }
+        goto err_push_sqe;
     }
-    RawstorIOEvent **sqe = rawstor_ringbuf_head(session->sqes);
-    if (rawstor_ringbuf_push(session->sqes)) {
-        rawstor_mutex_unlock(session->mutex);
-        goto err_sqe;
-    }
-    event->session = session;
-    *sqe = event;
-    rawstor_cond_signal(session->cond);
-    rawstor_mutex_unlock(session->mutex);
 
     return 0;
 
-err_sqe:
+err_push_sqe:
 err_session:
     return -errno;
 }
@@ -436,7 +162,7 @@ RawstorIO* rawstor_io_create(unsigned int depth) {
         goto err_cqes;
     }
 
-    io->sessions = rawstor_list_create(sizeof(RawstorIOSession));
+    io->sessions = rawstor_list_create(sizeof(RawstorIOSession*));
     if (io->sessions == NULL) {
         goto err_sessions;
     }
@@ -470,8 +196,8 @@ err_io:
 
 void rawstor_io_delete(RawstorIO *io) {
     while (!rawstor_list_empty(io->sessions)) {
-        RawstorIOSession *session = rawstor_list_iter(io->sessions);
-        io_remove_session(io, session);
+        RawstorIOSession **it = rawstor_list_iter(io->sessions);
+        io_remove_session(io, it);
     }
     rawstor_list_delete(io->sessions);
 
@@ -480,6 +206,24 @@ void rawstor_io_delete(RawstorIO *io) {
     rawstor_ringbuf_delete(io->cqes);
     rawstor_mempool_delete(io->events_pool);
     free(io);
+}
+
+
+int rawstor_io_push_cqe(RawstorIO *io, RawstorIOEvent *event) {
+    rawstor_mutex_lock(io->mutex);
+    RawstorIOEvent **cqe = rawstor_ringbuf_head(io->cqes);
+    if (rawstor_ringbuf_push(io->cqes)) {
+        rawstor_mutex_unlock(io->mutex);
+        goto err_cqe;
+    }
+    *cqe = event;
+    rawstor_cond_signal(io->cond);
+    rawstor_mutex_unlock(io->mutex);
+
+    return 0;
+
+err_cqe:
+    return -errno;
 }
 
 
@@ -885,35 +629,4 @@ void rawstor_io_release_event(RawstorIO *io, RawstorIOEvent *event) {
 #endif
     free(event->iov_origin);
     rawstor_mempool_free(io->events_pool, event);
-}
-
-
-int rawstor_io_event_fd(RawstorIOEvent *event) {
-    return event->session->fd;
-}
-
-
-size_t rawstor_io_event_size(RawstorIOEvent *event) {
-    return event->size;
-}
-
-
-size_t rawstor_io_event_result(RawstorIOEvent *event) {
-    return event->result;
-}
-
-int rawstor_io_event_error(RawstorIOEvent *event) {
-    return event->error;
-}
-
-int rawstor_io_event_dispatch(RawstorIOEvent *event) {
-#ifdef RAWSTOR_TRACE_EVENTS
-    rawstor_trace_event_message(event->trace_event, "dispatch()\n");
-#endif
-    int ret = event->callback(event, event->data);
-#ifdef RAWSTOR_TRACE_EVENTS
-    rawstor_trace_event_message(
-        event->trace_event, "dispatch(): rval = %d\n", ret);
-#endif
-    return ret;
 }
