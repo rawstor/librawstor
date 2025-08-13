@@ -3,11 +3,11 @@
 #include "io_event_poll.h"
 #include "io_session_poll.h"
 
-#include <rawstorstd/iovec_routines.h>
+#include <rawstorstd/iovec.h>
 #include <rawstorstd/list.h>
 #include <rawstorstd/logging.h>
 #include <rawstorstd/ringbuf.h>
-#include <rawstorstd/socket_routines.h>
+#include <rawstorstd/socket.h>
 
 #include <poll.h>
 

@@ -7,12 +7,12 @@ AM_CFLAGS = -std=gnu99 -Wall -Wextra -Werror \
 
 
 librawstorstd_la_SOURCES = hash.c \
-                           iovec_routines.c \
+                           iovec.c \
                            list.c \
                            logging.c \
                            mempool.c \
                            ringbuf.c \
-                           socket_routines.c \
+                           socket.c \
                            threading.c \
                            uuid.c
 
