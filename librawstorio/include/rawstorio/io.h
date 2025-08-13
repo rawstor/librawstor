@@ -26,6 +26,8 @@ RawstorIO* rawstor_io_create(unsigned int depth);
 
 void rawstor_io_delete(RawstorIO *io);
 
+unsigned int rawstor_io_depth(RawstorIO *io);
+
 int rawstor_io_setup_fd(int fd);
 
 int rawstor_io_read(
