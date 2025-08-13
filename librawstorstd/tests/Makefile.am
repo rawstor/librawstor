@@ -1,5 +1,5 @@
 noinst_PROGRAMS = test_hash \
-                  test_iovec_routines \
+                  test_iovec \
                   test_list \
                   test_mempool \
                   test_ringbuf \
@@ -18,8 +18,8 @@ test_hash_SOURCES = test_hash.c
 test_hash_LDADD = $(top_srcdir)/librawstorstd/src/librawstorstd.la
 
 
-test_iovec_routines_SOURCES = test_iovec_routines.c
-test_iovec_routines_LDADD = $(top_srcdir)/librawstorstd/src/librawstorstd.la
+test_iovec_SOURCES = test_iovec.c
+test_iovec_LDADD = $(top_srcdir)/librawstorstd/src/librawstorstd.la
 
 
 test_list_SOURCES = test_list.c
