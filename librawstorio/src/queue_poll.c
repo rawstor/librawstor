@@ -258,6 +258,11 @@ int rawstor_io_queue_setup_fd(int fd) {
 }
 
 
+unsigned int rawstor_io_depth(RawstorIO *io) {
+    return io->depth;
+}
+
+
 int rawstor_io_queue_read(
     RawstorIOQueue *queue,
     int fd, void *buf, size_t size,

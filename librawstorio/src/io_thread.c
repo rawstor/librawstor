@@ -64,8 +64,7 @@ static RawstorIOSession** io_append_session(RawstorIO *io, int fd, int write) {
         goto err_list_append;
     }
 
-    RawstorIOSession *session = rawstor_io_session_create(
-        io, io->depth, fd, write);
+    RawstorIOSession *session = rawstor_io_session_create(io, fd, write);
     if (session == NULL) {
         goto err_session;
     }
@@ -251,6 +250,11 @@ err_cqe:
 
 int rawstor_io_setup_fd(int RAWSTOR_UNUSED fd) {
     return 0;
+}
+
+
+unsigned int rawstor_io_queue_depth(RawstorIO *io) {
+    return io->depth;
 }
 
 
