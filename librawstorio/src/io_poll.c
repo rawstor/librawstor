@@ -213,6 +213,11 @@ int rawstor_io_setup_fd(int fd) {
 }
 
 
+unsigned int rawstor_io_depth(RawstorIO *io) {
+    return io->depth;
+}
+
+
 int rawstor_io_read(
     RawstorIO *io,
     int fd, void *buf, size_t size,
