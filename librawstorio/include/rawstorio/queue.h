@@ -31,6 +31,8 @@ RawstorIOQueue* rawstor_io_queue_create(unsigned int depth);
 
 void rawstor_io_queue_delete(RawstorIOQueue *queue);
 
+unsigned int rawstor_io_queue_depth(RawstorIO *io);
+
 int rawstor_io_queue_setup_fd(int fd);
 
 int rawstor_io_queue_read(

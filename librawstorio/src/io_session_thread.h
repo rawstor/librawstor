@@ -8,12 +8,20 @@ typedef struct RawstorIOSession RawstorIOSession;
 
 
 RawstorIOSession* rawstor_io_session_create(
-    RawstorIO *io, size_t depth, int fd, int write);
+    RawstorIO *io, int fd, int write);
 
 void rawstor_io_session_delete(RawstorIOSession *session);
 
+RawstorIO* rawstor_io_session_io(RawstorIOSession *session);
+
+int rawstor_io_session_fd(RawstorIOSession *session);
+
+int rawstor_io_session_write(RawstorIOSession *session);
+
 int rawstor_io_session_push_sqe(
     RawstorIOSession *session, RawstorIOEvent *event);
+
+int rawstor_io_session_kill(RawstorIOSession *session);
 
 int rawstor_io_session_alive(RawstorIOSession *session);
 

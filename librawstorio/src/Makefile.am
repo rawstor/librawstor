@@ -22,6 +22,8 @@ if WITH_LIBURING
     librawstorio_la_LIBADD += $(LIBURING_LIBS)
 else
     librawstorio_la_SOURCES += io_event_thread.c \
+                               io_session_seekable_thread.c \
                                io_session_thread.c \
+                               io_session_unseekable_thread.c \
                                io_thread.c
 endif
