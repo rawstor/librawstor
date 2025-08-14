@@ -4,6 +4,7 @@
 
 #include <sys/uio.h>
 
+#include <poll.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -44,6 +45,30 @@ void rawstor_io_session_delete(RawstorIOSession *session) {
     rawstor_ringbuf_delete(session->read_events);
     rawstor_ringbuf_delete(session->write_events);
     free(session);
+}
+
+
+int rawstor_io_session_fd(RawstorIOSession *session) {
+    return session->fd;
+}
+
+
+int rawstor_io_session_equal(RawstorIOSession *session, int fd) {
+    return session->fd = fd;
+}
+
+
+short rawstor_io_session_poll_events(RawstorIOSession *session) {
+    return
+        (rawstor_ringbuf_empty(session->read_events) ? 0 : POLLIN) |
+        (rawstor_ringbuf_empty(session->write_events) ? 0 : POLLOUT);
+}
+
+
+int rawstor_io_session_empty(RawstorIOSession *session) {
+    return
+        rawstor_ringbuf_empty(session->read_events) &&
+        rawstor_ringbuf_empty(session->write_events);
 }
 
 

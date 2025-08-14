@@ -32,9 +32,8 @@ static RawstorIOSession* io_get_session(RawstorIO *io, int fd) {
         it != NULL;
         it = rawstor_list_next(it))
     {
-        RawstorIOSession *session = *it;
-        if (session->fd == fd) {
-            return session;
+        if (rawstor_io_session_equal(*it, fd)) {
+            return *it;
         }
     }
 
@@ -556,11 +555,8 @@ RawstorIOEvent* rawstor_io_wait_event_timeout(RawstorIO *io, int timeout) {
         {
             RawstorIOSession *session = *it;
             fds[i] = (struct pollfd) {
-                .fd = session->fd,
-                .events = (
-                    (rawstor_ringbuf_empty(session->read_events) ? 0 : POLLIN) |
-                    (rawstor_ringbuf_empty(session->write_events) ? 0 : POLLOUT)
-                ),
+                .fd = rawstor_io_session_fd(session),
+                .events = rawstor_io_session_poll_events(session),
                 .revents = 0,
             };
 
@@ -663,10 +659,7 @@ void rawstor_io_release_event(RawstorIO *io, RawstorIOEvent *event) {
     assert(ops != NULL);
     free(event->iov_origin);
     assert(rawstor_ringbuf_pop(ops) == 0);
-    if (
-        rawstor_ringbuf_empty(session->read_events) &&
-        rawstor_ringbuf_empty(session->write_events))
-    {
+    if (rawstor_io_session_empty(session)) {
         for (
             RawstorIOSession **it = rawstor_list_iter(io->sessions);
             it != NULL;
