@@ -13,8 +13,8 @@
 
 typedef struct RawstorIOSession {
     int fd;
-    RawstorRingBuf *read_events;
-    RawstorRingBuf *write_events;
+    RawstorRingBuf *read_sqes;
+    RawstorRingBuf *write_sqes;
 } RawstorIOSession;
 
 
@@ -30,15 +30,37 @@ short rawstor_io_session_poll_events(RawstorIOSession *session);
 
 int rawstor_io_session_empty(RawstorIOSession *session);
 
-RawstorIOEvent* rawstor_io_session_push_read_event(
-    RawstorIOSession *session,
-    struct iovec *iov, unsigned int niov, size_t size, off_t offset,
-    RawstorIOCallback *cb, void *data);
+int rawstor_io_session_read(
+    RawstorIOSession *session, RawstorIOEvent *event,
+    void *buf);
 
-RawstorIOEvent* rawstor_io_session_push_write_event(
-    RawstorIOSession *session,
-    struct iovec *iov, unsigned int niov, size_t size, off_t offset,
-    RawstorIOCallback *cb, void *data);
+int rawstor_io_session_pread(
+    RawstorIOSession *session, RawstorIOEvent *event,
+    void *buf);
+
+int rawstor_io_session_readv(
+    RawstorIOSession *session, RawstorIOEvent *event,
+    struct iovec *iov, unsigned int niov);
+
+int rawstor_io_session_preadv(
+    RawstorIOSession *session, RawstorIOEvent *event,
+    struct iovec *iov, unsigned int niov);
+
+int rawstor_io_session_write(
+    RawstorIOSession *session, RawstorIOEvent *event,
+    void *buf);
+
+int rawstor_io_session_pwrite(
+    RawstorIOSession *session, RawstorIOEvent *event,
+    void *buf);
+
+int rawstor_io_session_writev(
+    RawstorIOSession *session, RawstorIOEvent *event,
+    struct iovec *iov, unsigned int niov);
+
+int rawstor_io_session_pwritev(
+    RawstorIOSession *session, RawstorIOEvent *event,
+    struct iovec *iov, unsigned int niov);
 
 
 #endif // RAWSTORIO_IO_SESSION_POLL_H

@@ -2,8 +2,11 @@
 
 #include "io_event_poll.h"
 
+#include <rawstorstd/logging.h>
+
 #include <sys/uio.h>
 
+#include <errno.h>
 #include <poll.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -18,23 +21,23 @@ RawstorIOSession* rawstor_io_session_create(int fd, int depth) {
 
     session->fd = fd;
 
-    session->read_events = rawstor_ringbuf_create(
-        depth, sizeof(RawstorIOEvent));
-    if (session->read_events == NULL) {
-        goto err_read_events;
+    session->read_sqes = rawstor_ringbuf_create(
+        depth, sizeof(RawstorIOEvent*));
+    if (session->read_sqes == NULL) {
+        goto err_read_sqes;
     }
 
-    session->write_events = rawstor_ringbuf_create(
-        depth, sizeof(RawstorIOEvent));
-    if (session->write_events == NULL) {
-        goto err_write_events;
+    session->write_sqes = rawstor_ringbuf_create(
+        depth, sizeof(RawstorIOEvent*));
+    if (session->write_sqes == NULL) {
+        goto err_write_sqes;
     }
 
     return session;
 
-err_write_events:
-    rawstor_ringbuf_delete(session->read_events);
-err_read_events:
+err_write_sqes:
+    rawstor_ringbuf_delete(session->read_sqes);
+err_read_sqes:
     free(session);
 err_session:
     return NULL;
@@ -42,8 +45,8 @@ err_session:
 
 
 void rawstor_io_session_delete(RawstorIOSession *session) {
-    rawstor_ringbuf_delete(session->read_events);
-    rawstor_ringbuf_delete(session->write_events);
+    rawstor_ringbuf_delete(session->read_sqes);
+    rawstor_ringbuf_delete(session->write_sqes);
     free(session);
 }
 
@@ -60,76 +63,345 @@ int rawstor_io_session_equal(RawstorIOSession *session, int fd) {
 
 short rawstor_io_session_poll_events(RawstorIOSession *session) {
     return
-        (rawstor_ringbuf_empty(session->read_events) ? 0 : POLLIN) |
-        (rawstor_ringbuf_empty(session->write_events) ? 0 : POLLOUT);
+        (rawstor_ringbuf_empty(session->read_sqes) ? 0 : POLLIN) |
+        (rawstor_ringbuf_empty(session->write_sqes) ? 0 : POLLOUT);
 }
 
 
 int rawstor_io_session_empty(RawstorIOSession *session) {
     return
-        rawstor_ringbuf_empty(session->read_events) &&
-        rawstor_ringbuf_empty(session->write_events);
+        rawstor_ringbuf_empty(session->read_sqes) &&
+        rawstor_ringbuf_empty(session->write_sqes);
 }
 
 
-RawstorIOEvent* rawstor_io_session_push_read_event(
-    RawstorIOSession *session,
-    struct iovec *iov, unsigned int niov, size_t size, off_t offset,
-    RawstorIOCallback *cb, void *data)
+int rawstor_io_session_read(
+    RawstorIOSession *session, RawstorIOEvent *event,
+    void *buf)
 {
-    RawstorIOEvent *event = rawstor_ringbuf_head(session->read_events);
-    if (rawstor_ringbuf_push(session->read_events)) {
-        goto err_event;
+    /**
+     * TODO: use event_iov from some buffer preallocated in io struct.
+     */
+    struct iovec *event_iov = malloc(sizeof(struct iovec));
+    if (event_iov == NULL) {
+        goto err_event_iov;
     }
-
-    *event = (RawstorIOEvent) {
-        .session = session,
-        .iov_origin = iov,
-        .iov_at = iov,
-        .niov = niov,
-        .offset = offset,
-        .callback = cb,
-        .size = size,
-        .result = 0,
-        // .error
-        .data = data,
+    event_iov[0] = (struct iovec) {
+        .iov_base = buf,
+        .iov_len = event->size,
     };
 
-    return event;
-
-err_event:
-    return NULL;
-}
-
-
-RawstorIOEvent* rawstor_io_session_push_write_event(
-    RawstorIOSession *session,
-    struct iovec *iov, unsigned int niov, size_t size, off_t offset,
-    RawstorIOCallback *cb, void *data)
-{
-    RawstorIOEvent *event = rawstor_ringbuf_head(session->write_events);
-    if (rawstor_ringbuf_push(session->write_events)) {
-        goto err_event;
+    RawstorIOEvent **it = rawstor_ringbuf_head(session->read_sqes);
+    if (rawstor_ringbuf_push(session->read_sqes)) {
+        goto err_push;
     }
 
-    *event = (RawstorIOEvent) {
-        .session = session,
-        .iov_origin = iov,
-        .iov_at = iov,
-        .niov = niov,
-        .offset = offset,
-        // .process
-        .callback = cb,
-        .size = size,
-        .result = 0,
-        // .error
-        .data = data,
-    };
+    event->session = session;
+    event->iov_origin = event_iov;
+    event->iov_at = event_iov;
+    event->niov = 1;
+    event->process = rawstor_io_event_process_readv;
+#ifdef RAWSTOR_TRACE_EVENTS
+    event->trace_event = rawstor_trace_event_begin(
+        "readv(%d, %zu)\n", session->fd, event->size);
+#endif
 
-    return event;
+    *it = event;
 
-err_event:
-    return NULL;
+    return 0;
+
+err_event_iov:
+err_push:
+    free(event_iov);
+    return -errno;
 }
 
 
+int rawstor_io_session_pread(
+    RawstorIOSession *session, RawstorIOEvent *event,
+    void *buf)
+{
+    /**
+     * TODO: use event_iov from some buffer preallocated in io struct.
+     */
+    struct iovec *event_iov = malloc(sizeof(struct iovec));
+    if (event_iov == NULL) {
+        goto err_event_iov;
+    }
+    event_iov[0] = (struct iovec) {
+        .iov_base = buf,
+        .iov_len = event->size,
+    };
+
+    RawstorIOEvent **it = rawstor_ringbuf_head(session->read_sqes);
+    if (rawstor_ringbuf_push(session->read_sqes)) {
+        goto err_push;
+    }
+
+    event->session = session;
+    event->iov_origin = event_iov;
+    event->iov_at = event_iov;
+    event->niov = 1;
+    event->process = rawstor_io_event_process_preadv;
+#ifdef RAWSTOR_TRACE_EVENTS
+    event->trace_event = rawstor_trace_event_begin(
+        "preadv(%d, %zu)\n", session->fd, event->size);
+#endif
+
+    *it = event;
+
+    return 0;
+
+err_event_iov:
+err_push:
+    free(event_iov);
+    return -errno;
+}
+
+
+int rawstor_io_session_readv(
+    RawstorIOSession *session, RawstorIOEvent *event,
+    struct iovec *iov, unsigned int niov)
+{
+    /**
+     * TODO: use event_iov from some buffer preallocated in io struct.
+     */
+    struct iovec *event_iov = calloc(niov, sizeof(struct iovec));
+    if (event_iov == NULL) {
+        goto err_event_iov;
+    }
+    for (unsigned int i = 0; i < niov; ++i) {
+        event_iov[i] = iov[i];
+    }
+
+    RawstorIOEvent **it = rawstor_ringbuf_head(session->read_sqes);
+    if (rawstor_ringbuf_push(session->read_sqes)) {
+        goto err_push;
+    }
+
+    event->session = session;
+    event->iov_origin = event_iov;
+    event->iov_at = event_iov;
+    event->niov = niov;
+    event->process = rawstor_io_event_process_readv;
+#ifdef RAWSTOR_TRACE_EVENTS
+    event->trace_event = rawstor_trace_event_begin(
+        "readv(%d, %zu)\n", session->fd, event->size);
+#endif
+
+    *it = event;
+
+    return 0;
+
+err_event_iov:
+err_push:
+    free(event_iov);
+    return -errno;
+}
+
+
+int rawstor_io_session_preadv(
+    RawstorIOSession *session, RawstorIOEvent *event,
+    struct iovec *iov, unsigned int niov)
+{
+    /**
+     * TODO: use event_iov from some buffer preallocated in io struct.
+     */
+    struct iovec *event_iov = calloc(niov, sizeof(struct iovec));
+    if (event_iov == NULL) {
+        goto err_event_iov;
+    }
+    for (unsigned int i = 0; i < niov; ++i) {
+        event_iov[i] = iov[i];
+    }
+
+    RawstorIOEvent **it = rawstor_ringbuf_head(session->read_sqes);
+    if (rawstor_ringbuf_push(session->read_sqes)) {
+        goto err_push;
+    }
+
+    event->session = session;
+    event->iov_origin = event_iov;
+    event->iov_at = event_iov;
+    event->niov = niov;
+    event->process = rawstor_io_event_process_preadv;
+#ifdef RAWSTOR_TRACE_EVENTS
+    event->trace_event = rawstor_trace_event_begin(
+        "preadv(%d, %zu)\n", session->fd, event->size);
+#endif
+
+    *it = event;
+
+    return 0;
+
+err_event_iov:
+err_push:
+    free(event_iov);
+    return -errno;
+}
+
+
+int rawstor_io_session_write(
+    RawstorIOSession *session, RawstorIOEvent *event,
+    void *buf)
+{
+    /**
+     * TODO: use event_iov from some buffer preallocated in io struct.
+     */
+    struct iovec *event_iov = malloc(sizeof(struct iovec));
+    if (event_iov == NULL) {
+        goto err_event_iov;
+    }
+    event_iov[0] = (struct iovec) {
+        .iov_base = buf,
+        .iov_len = event->size,
+    };
+
+    RawstorIOEvent **it = rawstor_ringbuf_head(session->write_sqes);
+    if (rawstor_ringbuf_push(session->write_sqes)) {
+        goto err_push;
+    }
+
+    event->session = session;
+    event->iov_origin = event_iov;
+    event->iov_at = event_iov;
+    event->niov = 1;
+    event->process = rawstor_io_event_process_writev;
+#ifdef RAWSTOR_TRACE_EVENTS
+    event->trace_event = rawstor_trace_event_begin(
+        "writev(%d, %zu)\n", session->fd, event->size);
+#endif
+
+    *it = event;
+
+    return 0;
+
+err_event_iov:
+err_push:
+    free(event_iov);
+    return -errno;
+}
+
+
+int rawstor_io_session_pwrite(
+    RawstorIOSession *session, RawstorIOEvent *event,
+    void *buf)
+{
+    /**
+     * TODO: use event_iov from some buffer preallocated in io struct.
+     */
+    struct iovec *event_iov = malloc(sizeof(struct iovec));
+    if (event_iov == NULL) {
+        goto err_event_iov;
+    }
+    event_iov[0] = (struct iovec) {
+        .iov_base = buf,
+        .iov_len = event->size,
+    };
+
+    RawstorIOEvent **it = rawstor_ringbuf_head(session->write_sqes);
+    if (rawstor_ringbuf_push(session->write_sqes)) {
+        goto err_push;
+    }
+
+    event->session = session;
+    event->iov_origin = event_iov;
+    event->iov_at = event_iov;
+    event->niov = 1;
+    event->process = rawstor_io_event_process_pwritev;
+#ifdef RAWSTOR_TRACE_EVENTS
+    event->trace_event = rawstor_trace_event_begin(
+        "pwritev(%d, %zu)\n", session->fd, event->size);
+#endif
+
+    *it = event;
+
+    return 0;
+
+err_event_iov:
+err_push:
+    free(event_iov);
+    return -errno;
+}
+
+
+int rawstor_io_session_writev(
+    RawstorIOSession *session, RawstorIOEvent *event,
+    struct iovec *iov, unsigned int niov)
+{
+    /**
+     * TODO: use event_iov from some buffer preallocated in io struct.
+     */
+    struct iovec *event_iov = calloc(niov, sizeof(struct iovec));
+    if (event_iov == NULL) {
+        goto err_event_iov;
+    }
+    for (unsigned int i = 0; i < niov; ++i) {
+        event_iov[i] = iov[i];
+    }
+
+    RawstorIOEvent **it = rawstor_ringbuf_head(session->write_sqes);
+    if (rawstor_ringbuf_push(session->write_sqes)) {
+        goto err_push;
+    }
+
+    event->session = session;
+    event->iov_origin = event_iov;
+    event->iov_at = event_iov;
+    event->niov = niov;
+    event->process = rawstor_io_event_process_writev;
+#ifdef RAWSTOR_TRACE_EVENTS
+    event->trace_event = rawstor_trace_event_begin(
+        "writev(%d, %zu)\n", session->fd, event->size);
+#endif
+
+    *it = event;
+
+    return 0;
+
+err_event_iov:
+err_push:
+    free(event_iov);
+    return -errno;
+}
+
+
+int rawstor_io_session_pwritev(
+    RawstorIOSession *session, RawstorIOEvent *event,
+    struct iovec *iov, unsigned int niov)
+{
+    /**
+     * TODO: use event_iov from some buffer preallocated in io struct.
+     */
+    struct iovec *event_iov = calloc(niov, sizeof(struct iovec));
+    if (event_iov == NULL) {
+        goto err_event_iov;
+    }
+    for (unsigned int i = 0; i < niov; ++i) {
+        event_iov[i] = iov[i];
+    }
+
+    RawstorIOEvent **it = rawstor_ringbuf_head(session->write_sqes);
+    if (rawstor_ringbuf_push(session->write_sqes)) {
+        goto err_push;
+    }
+
+    event->session = session;
+    event->iov_origin = event_iov;
+    event->iov_at = event_iov;
+    event->niov = niov;
+    event->process = rawstor_io_event_process_pwritev;
+#ifdef RAWSTOR_TRACE_EVENTS
+    event->trace_event = rawstor_trace_event_begin(
+        "pwritev(%d, %zu)\n", session->fd, event->size);
+#endif
+
+    *it = event;
+
+    return 0;
+
+err_event_iov:
+err_push:
+    free(event_iov);
+    return -errno;
+}
