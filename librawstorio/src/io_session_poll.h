@@ -22,6 +22,14 @@ RawstorIOSession* rawstor_io_session_create(int fd, int depth);
 
 void rawstor_io_session_delete(RawstorIOSession *session);
 
+int rawstor_io_session_fd(RawstorIOSession *session);
+
+int rawstor_io_session_equal(RawstorIOSession *session, int fd);
+
+short rawstor_io_session_poll_events(RawstorIOSession *session);
+
+int rawstor_io_session_empty(RawstorIOSession *session);
+
 RawstorIOEvent* rawstor_io_session_push_read_event(
     RawstorIOSession *session,
     struct iovec *iov, unsigned int niov, size_t size, off_t offset,
