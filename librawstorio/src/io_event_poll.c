@@ -11,7 +11,8 @@
 
 ssize_t rawstor_io_event_process_readv(RawstorIOEvent *event) {
     ssize_t ret = readv(
-        event->session->fd, event->iov_at, event->niov);
+        rawstor_io_session_fd(event->session),
+        event->iov_at, event->niov);
 #ifdef RAWSTOR_TRACE_EVENTS
     rawstor_trace_event_message(
         event->trace_event, "readv() rval = %zd\n", ret);
@@ -27,7 +28,8 @@ ssize_t rawstor_io_event_process_readv(RawstorIOEvent *event) {
 
 ssize_t rawstor_io_event_process_preadv(RawstorIOEvent *event) {
     ssize_t ret = preadv(
-        event->session->fd, event->iov_at, event->niov, event->offset);
+        rawstor_io_session_fd(event->session),
+        event->iov_at, event->niov, event->offset);
 #ifdef RAWSTOR_TRACE_EVENTS
     rawstor_trace_event_message(
         event->trace_event, "preadv() rval = %zd\n", ret);
@@ -43,7 +45,8 @@ ssize_t rawstor_io_event_process_preadv(RawstorIOEvent *event) {
 
 ssize_t rawstor_io_event_process_writev(RawstorIOEvent *event) {
     ssize_t ret = writev(
-        event->session->fd, event->iov_at, event->niov);
+        rawstor_io_session_fd(event->session),
+        event->iov_at, event->niov);
 #ifdef RAWSTOR_TRACE_EVENTS
     rawstor_trace_event_message(
         event->trace_event, "writev() rval = %zd\n", ret);
@@ -59,7 +62,8 @@ ssize_t rawstor_io_event_process_writev(RawstorIOEvent *event) {
 
 ssize_t rawstor_io_event_process_pwritev(RawstorIOEvent *event) {
     ssize_t ret = pwritev(
-        event->session->fd, event->iov_at, event->niov, event->offset);
+        rawstor_io_session_fd(event->session),
+        event->iov_at, event->niov, event->offset);
 #ifdef RAWSTOR_TRACE_EVENTS
     rawstor_trace_event_message(
         event->trace_event, "pwritev() rval = %zd\n", ret);
@@ -74,7 +78,7 @@ ssize_t rawstor_io_event_process_pwritev(RawstorIOEvent *event) {
 
 
 int rawstor_io_event_fd(RawstorIOEvent *event) {
-    return event->session->fd;
+    return rawstor_io_session_fd(event->session);
 }
 
 

@@ -50,7 +50,7 @@ static RawstorIOSession** io_append_session(RawstorIO *io, int fd) {
         goto err_list_append;
     }
 
-    RawstorIOSession *session = rawstor_io_session_create(fd, io->depth);
+    RawstorIOSession *session = rawstor_io_session_create(io, fd);
     if (session == NULL) {
         goto err_session;
     }
@@ -531,6 +531,7 @@ RawstorIOEvent* rawstor_io_wait_event_timeout(RawstorIO *io, int timeout) {
             RawstorRingBuf *sqes = NULL;
 
             if (fd->revents & POLLHUP) {
+                rawstor_io_session_
                 if (!rawstor_ringbuf_empty(session->read_sqes)) {
                     sqes = session->read_sqes;
                 } else if (!rawstor_ringbuf_empty(session->write_sqes)) {

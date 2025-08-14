@@ -13,22 +13,33 @@
 #include <stdlib.h>
 
 
-RawstorIOSession* rawstor_io_session_create(int fd, int depth) {
+struct RawstorIOSession {
+    RawstorIO *io;
+    int fd;
+    RawstorRingBuf *read_sqes;
+    RawstorRingBuf *write_sqes;
+};
+
+
+RawstorIOSession* rawstor_io_session_create(RawstorIO *io, int fd) {
     RawstorIOSession *session = malloc(sizeof(RawstorIOSession));
     if (session == NULL) {
         goto err_session;
     }
 
-    session->fd = fd;
+    *session = (RawstorIOSession) {
+        .io = io,
+        .fd = fd,
+    };
 
     session->read_sqes = rawstor_ringbuf_create(
-        depth, sizeof(RawstorIOEvent*));
+        rawstor_io_depth(io), sizeof(RawstorIOEvent*));
     if (session->read_sqes == NULL) {
         goto err_read_sqes;
     }
 
     session->write_sqes = rawstor_ringbuf_create(
-        depth, sizeof(RawstorIOEvent*));
+        rawstor_io_depth(io), sizeof(RawstorIOEvent*));
     if (session->write_sqes == NULL) {
         goto err_write_sqes;
     }

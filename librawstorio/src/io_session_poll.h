@@ -3,6 +3,8 @@
 
 #include <rawstor/io.h>
 
+#include <rawstorio/io.h>
+
 #include <rawstorstd/ringbuf.h>
 
 #include <sys/uio.h>
@@ -11,14 +13,10 @@
 #include <stdio.h>
 
 
-typedef struct RawstorIOSession {
-    int fd;
-    RawstorRingBuf *read_sqes;
-    RawstorRingBuf *write_sqes;
-} RawstorIOSession;
+typedef struct RawstorIOSession RawstorIOSession;
 
 
-RawstorIOSession* rawstor_io_session_create(int fd, int depth);
+RawstorIOSession* rawstor_io_session_create(RawstorIO *io, int fd);
 
 void rawstor_io_session_delete(RawstorIOSession *session);
 
