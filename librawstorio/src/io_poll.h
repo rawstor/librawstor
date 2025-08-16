@@ -7,5 +7,7 @@
 
 int rawstor_io_push_cqe(RawstorIO *io, RawstorIOEvent *event);
 
+int rawstor_io_depth(RawstorIO *io);
+
 
 #endif // RAWSTORIO_IO_POLL_H

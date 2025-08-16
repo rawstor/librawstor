@@ -1,16 +1,20 @@
 #include "io_session_poll.h"
 
+#include "io_poll.h"
 #include "io_event_poll.h"
 
 #include <rawstorstd/logging.h>
+#include <rawstorstd/iovec.h>
 
 #include <sys/uio.h>
 
+#include <assert.h>
 #include <errno.h>
 #include <poll.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 
 struct RawstorIOSession {
@@ -19,6 +23,57 @@ struct RawstorIOSession {
     RawstorRingBuf *read_sqes;
     RawstorRingBuf *write_sqes;
 };
+
+
+static void io_session_process_sqes(
+    RawstorIOSession *session, RawstorRingBuf *sqes)
+{
+    assert(rawstor_ringbuf_empty(sqes) == 0);
+    RawstorIOEvent **it = rawstor_ringbuf_tail(sqes);
+    RawstorIOEvent *event = *it;
+
+#ifdef RAWSTOR_TRACE_EVENTS
+    rawstor_trace_event_message(
+        event->trace_event, "process()\n");
+#endif
+    ssize_t res = event->process(event);
+#ifdef RAWSTOR_TRACE_EVENTS
+    rawstor_trace_event_message(
+        event->trace_event, "process(): res = %zd\n", res);
+#endif
+    if (res > 0) {
+        if ((size_t)res != event->size) {
+#ifdef RAWSTOR_TRACE_EVENTS
+            rawstor_trace_event_message(
+                event->trace_event,
+                "partial %zd of %zu\n", res, event->size);
+#else
+            rawstor_debug("partial %zd of %zu\n", res, event->size);
+#endif
+        }
+        event->offset += res;
+        rawstor_iovec_shift(&event->iov_at, &event->niov, res);
+        if (event->niov == 0) {
+            if (rawstor_io_push_cqe(session->io, event)) {
+                /**
+                 * TODO: How to handle cqes overflow?
+                 */
+                rawstor_error(
+                    "rawstor_ringbuf_push(): %s", strerror(errno));
+            }
+            rawstor_ringbuf_pop(sqes);
+        }
+    } else if (res == 0) {
+        if (rawstor_io_push_cqe(session->io, event)) {
+            /**
+             * TODO: How to handle cqes overflow?
+             */
+            rawstor_error(
+                "rawstor_ringbuf_push(): %s", strerror(errno));
+        }
+        rawstor_ringbuf_pop(sqes);
+    }
+}
 
 
 RawstorIOSession* rawstor_io_session_create(RawstorIO *io, int fd) {
@@ -415,4 +470,14 @@ err_event_iov:
 err_push:
     free(event_iov);
     return -errno;
+}
+
+
+void rawstor_io_session_process_read(RawstorIOSession *session) {
+    io_session_process_sqes(session, session->read_sqes);
+}
+
+
+void rawstor_io_session_process_write(RawstorIOSession *session) {
+    io_session_process_sqes(session, session->write_sqes);
 }

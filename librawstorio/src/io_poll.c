@@ -1,3 +1,4 @@
+#include "io_poll.h"
 #include "rawstorio/io.h"
 
 #include "io_event_poll.h"
@@ -466,6 +467,26 @@ err_session:
 }
 
 
+int rawstor_io_push_cqe(RawstorIO *io, RawstorIOEvent *event) {
+    RawstorIOEvent **it = rawstor_ringbuf_head(io->cqes);
+    if (rawstor_ringbuf_push(io->cqes)) {
+        /**
+         * TODO: How to handle cqes overflow?
+         */
+        rawstor_error(
+            "rawstor_ringbuf_push(): %s", strerror(errno));
+        return -errno;
+    }
+    *it = event;
+    return 0;
+}
+
+
+int rawstor_io_depth(RawstorIO *io) {
+    return io->depth;
+}
+
+
 RawstorIOEvent* rawstor_io_wait_event(RawstorIO *io) {
     return rawstor_io_wait_event_timeout(io, -1);
 }
@@ -496,22 +517,6 @@ RawstorIOEvent* rawstor_io_wait_event_timeout(RawstorIO *io, int timeout) {
                 .events = rawstor_io_session_poll_events(session),
                 .revents = 0,
             };
-
-#ifdef RAWSTOR_TRACE_EVENTS
-            if (!rawstor_ringbuf_empty(session->read_sqes)) {
-                RawstorIOEvent **event = rawstor_ringbuf_tail(
-                    session->read_sqes);
-                rawstor_trace_event_message(
-                    (*event)->trace_event, "Polling this event\n");
-            }
-            if (!rawstor_ringbuf_empty(session->write_sqes)) {
-                RawstorIOEvent **event = rawstor_ringbuf_tail(
-                    session->write_sqes);
-                rawstor_trace_event_message(
-                    (*event)->trace_event, "Polling this event\n");
-            }
-#endif
-
             assert(fds[i].events != 0);
         }
 
@@ -528,73 +533,16 @@ RawstorIOEvent* rawstor_io_wait_event_timeout(RawstorIO *io, int timeout) {
         {
             RawstorIOSession *session = *it;
             struct pollfd *fd = &fds[i];
-            RawstorRingBuf *sqes = NULL;
 
             if (fd->revents & POLLHUP) {
-                rawstor_io_session_
-                if (!rawstor_ringbuf_empty(session->read_sqes)) {
-                    sqes = session->read_sqes;
-                } else if (!rawstor_ringbuf_empty(session->write_sqes)) {
-                    sqes = session->write_sqes;
-                } else {
-                    continue;
-                }
+                rawstor_io_session_process_read(session);
+                rawstor_io_session_process_write(session);
             } else if (fd->revents & POLLIN) {
-                sqes = session->read_sqes;
+                rawstor_io_session_process_read(session);
             } else if (fd->revents & POLLOUT) {
-                sqes = session->write_sqes;
+                rawstor_io_session_process_write(session);
             } else {
                 continue;
-            }
-
-            assert(rawstor_ringbuf_empty(sqes) == 0);
-            RawstorIOEvent **it = rawstor_ringbuf_tail(sqes);
-            RawstorIOEvent *event = *it;
-
-#ifdef RAWSTOR_TRACE_EVENTS
-            rawstor_trace_event_message(
-                event->trace_event, "process()\n");
-#endif
-            ssize_t res = event->process(event);
-#ifdef RAWSTOR_TRACE_EVENTS
-            rawstor_trace_event_message(
-                event->trace_event, "process(): res = %zd\n", res);
-#endif
-            if (res > 0) {
-                if ((size_t)res != event->size) {
-#ifdef RAWSTOR_TRACE_EVENTS
-                    rawstor_trace_event_message(
-                        event->trace_event,
-                        "partial %zd of %zu\n", res, event->size);
-#else
-                    rawstor_debug("partial %zd of %zu\n", res, event->size);
-#endif
-                }
-                event->offset += res;
-                rawstor_iovec_shift(&event->iov_at, &event->niov, res);
-                if (event->niov == 0) {
-                    RawstorIOEvent **it = rawstor_ringbuf_head(io->cqes);
-                    if (rawstor_ringbuf_push(io->cqes)) {
-                        /**
-                         * TODO: How to handle cqes overflow?
-                         */
-                        rawstor_error(
-                            "rawstor_ringbuf_push(): %s", strerror(errno));
-                    }
-                    *it = event;
-                    rawstor_ringbuf_pop(sqes);
-                }
-            } else if (res == 0) {
-                RawstorIOEvent **it = rawstor_ringbuf_head(io->cqes);
-                if (rawstor_ringbuf_push(io->cqes)) {
-                    /**
-                     * TODO: How to handle cqes overflow?
-                     */
-                    rawstor_error(
-                        "rawstor_ringbuf_push(): %s", strerror(errno));
-                }
-                *it = event;
-                rawstor_ringbuf_pop(sqes);
             }
         }
 

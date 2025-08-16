@@ -60,5 +60,8 @@ int rawstor_io_session_pwritev(
     RawstorIOSession *session, RawstorIOEvent *event,
     struct iovec *iov, unsigned int niov);
 
+void rawstor_io_session_process_read(RawstorIOSession *session);
+
+void rawstor_io_session_process_write(RawstorIOSession *session);
 
 #endif // RAWSTORIO_IO_SESSION_POLL_H
