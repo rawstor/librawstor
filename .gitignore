@@ -4,7 +4,7 @@
 *.o
 .deps/
 .libs/
-.vscode/
+/.vscode/
 /Makefile
 /Makefile.in
 /aclocal.m4
