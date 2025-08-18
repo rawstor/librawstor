@@ -15,7 +15,7 @@ struct RawstorIOEvent {
 
     struct iovec *iov_origin;
     struct iovec *iov_at;
-    unsigned int niov;
+    unsigned int niov_at;
     off_t offset;
     ssize_t (*process)(RawstorIOEvent *event);
 

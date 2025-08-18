@@ -493,6 +493,7 @@ RawstorIOEvent* rawstor_io_wait_event(RawstorIO *io) {
 
 
 RawstorIOEvent* rawstor_io_wait_event_timeout(RawstorIO *io, int timeout) {
+    struct pollfd *fds = NULL;
     while (rawstor_ringbuf_empty(io->cqes)) {
         size_t count = rawstor_list_size(io->sessions);
         if (count == 0) {
@@ -501,7 +502,7 @@ RawstorIOEvent* rawstor_io_wait_event_timeout(RawstorIO *io, int timeout) {
 
         struct pollfd *fds = calloc(count, sizeof(struct pollfd));
         if (fds == NULL) {
-            return NULL;
+            goto err;
         }
 
         RawstorIOSession **it;
@@ -522,8 +523,7 @@ RawstorIOEvent* rawstor_io_wait_event_timeout(RawstorIO *io, int timeout) {
 
         rawstor_trace("poll()\n");
         if (poll(fds, count, timeout) <= 0) {
-            free(fds);
-            return NULL;
+            goto err;
         }
 
         for (
@@ -535,12 +535,20 @@ RawstorIOEvent* rawstor_io_wait_event_timeout(RawstorIO *io, int timeout) {
             struct pollfd *fd = &fds[i];
 
             if (fd->revents & POLLHUP) {
-                rawstor_io_session_process_read(session);
-                rawstor_io_session_process_write(session);
+                if (rawstor_io_session_process_read(session)) {
+                    goto err;
+                }
+                if (rawstor_io_session_process_write(session)) {
+                    goto err;
+                }
             } else if (fd->revents & POLLIN) {
-                rawstor_io_session_process_read(session);
+                if (rawstor_io_session_process_read(session)) {
+                    goto err;
+                }
             } else if (fd->revents & POLLOUT) {
-                rawstor_io_session_process_write(session);
+                if (rawstor_io_session_process_write(session)) {
+                    goto err;
+                }
             } else {
                 continue;
             }
@@ -553,6 +561,10 @@ RawstorIOEvent* rawstor_io_wait_event_timeout(RawstorIO *io, int timeout) {
     RawstorIOEvent *event = *it;
     rawstor_ringbuf_pop(io->cqes);
     return event;
+
+err:
+    free(fds);
+    return NULL;
 }
 
 
