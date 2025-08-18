@@ -123,7 +123,7 @@ jobs:
 
         ./rawstor_bench/tools/rawstor-bench-import \
           --prefix=./rawstor_bench \
-          --suite=librawstor \
+          --repo=librawstor \
           --name=perftest${{ matrix.without-liburing }}${{ matrix.disable-ost }}-${{ matrix.bs }}-${{ matrix.iodepth }}-${{ matrix.numjobs }} \
           --branch="$GITHUB_REF" \
           --commit=$GITHUB_SHA \
