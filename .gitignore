@@ -1,10 +1,12 @@
-.deps/
-.libs/
-.vscode/
 *.a
 *.la
 *.lo
 *.o
+.deps/
+.libs/
+.vscode/
+/Makefile
+/Makefile.in
 /aclocal.m4
 /autom4te.cache/
 /compile
@@ -22,7 +24,5 @@
 /libtool
 /ltmain.sh
 /m4/
-/Makefile
-/Makefile.in
 /missing
 /stamp-h1
