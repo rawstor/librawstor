@@ -500,7 +500,7 @@ RawstorIOEvent* rawstor_io_wait_event_timeout(RawstorIO *io, int timeout) {
             return NULL;
         }
 
-        struct pollfd *fds = calloc(count, sizeof(struct pollfd));
+        fds = calloc(count, sizeof(struct pollfd));
         if (fds == NULL) {
             goto err;
         }
