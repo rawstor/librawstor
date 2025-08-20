@@ -371,7 +371,7 @@ int rawstor_io_session_fd(RawstorIOSession *session) {
 
 
 int rawstor_io_session_equal(RawstorIOSession *session, int fd) {
-    return session->fd = fd;
+    return session->fd == fd;
 }
 
 
