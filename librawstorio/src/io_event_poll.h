@@ -33,13 +33,4 @@ struct RawstorIOEvent {
 };
 
 
-ssize_t rawstor_io_event_process_readv(RawstorIOEvent *event);
-
-ssize_t rawstor_io_event_process_preadv(RawstorIOEvent *event);
-
-ssize_t rawstor_io_event_process_writev(RawstorIOEvent *event);
-
-ssize_t rawstor_io_event_process_pwritev(RawstorIOEvent *event);
-
-
 #endif // RAWSTORIO_IO_EVENT_POLL_H

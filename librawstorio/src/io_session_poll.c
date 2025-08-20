@@ -42,6 +42,74 @@ static int is_seekable(int fd) {
 }
 
 
+static ssize_t io_event_process_readv(RawstorIOEvent *event) {
+    ssize_t ret = readv(
+        rawstor_io_session_fd(event->session),
+        event->iov_at, event->niov_at);
+#ifdef RAWSTOR_TRACE_EVENTS
+    rawstor_trace_event_message(
+        event->trace_event, "readv() rval = %zd\n", ret);
+#endif
+    if (ret < 0) {
+        event->error = errno;
+    } else {
+        event->result += ret;
+    }
+    return ret;
+}
+
+
+static ssize_t io_event_process_preadv(RawstorIOEvent *event) {
+    ssize_t ret = preadv(
+        rawstor_io_session_fd(event->session),
+        event->iov_at, event->niov_at, event->offset);
+#ifdef RAWSTOR_TRACE_EVENTS
+    rawstor_trace_event_message(
+        event->trace_event, "preadv() rval = %zd\n", ret);
+#endif
+    if (ret < 0) {
+        event->error = errno;
+    } else {
+        event->result += ret;
+    }
+    return ret;
+}
+
+
+static ssize_t io_event_process_writev(RawstorIOEvent *event) {
+    ssize_t ret = writev(
+        rawstor_io_session_fd(event->session),
+        event->iov_at, event->niov_at);
+#ifdef RAWSTOR_TRACE_EVENTS
+    rawstor_trace_event_message(
+        event->trace_event, "writev() rval = %zd\n", ret);
+#endif
+    if (ret < 0) {
+        event->error = errno;
+    } else {
+        event->result += ret;
+    }
+    return ret;
+}
+
+
+static ssize_t io_event_process_pwritev(RawstorIOEvent *event) {
+    ssize_t ret = pwritev(
+        rawstor_io_session_fd(event->session),
+        event->iov_at, event->niov_at, event->offset);
+#ifdef RAWSTOR_TRACE_EVENTS
+    rawstor_trace_event_message(
+        event->trace_event, "pwritev() rval = %zd\n", ret);
+#endif
+    if (ret < 0) {
+        event->error = errno;
+    } else {
+        event->result += ret;
+    }
+    return ret;
+}
+
+
 static int io_session_seekable_process_sqes(
     RawstorIOSession *session, RawstorRingBuf *sqes, int RAWSTOR_UNUSED write)
 {
@@ -346,7 +414,7 @@ int rawstor_io_session_read(
     event->iov_origin = event_iov;
     event->iov_at = event_iov;
     event->niov_at = 1;
-    event->process = rawstor_io_event_process_readv;
+    event->process = io_event_process_readv;
 #ifdef RAWSTOR_TRACE_EVENTS
     event->trace_event = rawstor_trace_event_begin(
         "readv(%d, %zu)\n", session->fd, event->size);
@@ -388,7 +456,7 @@ int rawstor_io_session_pread(
     event->iov_origin = event_iov;
     event->iov_at = event_iov;
     event->niov_at = 1;
-    event->process = rawstor_io_event_process_preadv;
+    event->process = io_event_process_preadv;
 #ifdef RAWSTOR_TRACE_EVENTS
     event->trace_event = rawstor_trace_event_begin(
         "preadv(%d, %zu)\n", session->fd, event->size);
@@ -429,7 +497,7 @@ int rawstor_io_session_readv(
     event->iov_origin = event_iov;
     event->iov_at = event_iov;
     event->niov_at = niov;
-    event->process = rawstor_io_event_process_readv;
+    event->process = io_event_process_readv;
 #ifdef RAWSTOR_TRACE_EVENTS
     event->trace_event = rawstor_trace_event_begin(
         "readv(%d, %zu)\n", session->fd, event->size);
@@ -470,7 +538,7 @@ int rawstor_io_session_preadv(
     event->iov_origin = event_iov;
     event->iov_at = event_iov;
     event->niov_at = niov;
-    event->process = rawstor_io_event_process_preadv;
+    event->process = io_event_process_preadv;
 #ifdef RAWSTOR_TRACE_EVENTS
     event->trace_event = rawstor_trace_event_begin(
         "preadv(%d, %zu)\n", session->fd, event->size);
@@ -512,7 +580,7 @@ int rawstor_io_session_write(
     event->iov_origin = event_iov;
     event->iov_at = event_iov;
     event->niov_at = 1;
-    event->process = rawstor_io_event_process_writev;
+    event->process = io_event_process_writev;
 #ifdef RAWSTOR_TRACE_EVENTS
     event->trace_event = rawstor_trace_event_begin(
         "writev(%d, %zu)\n", session->fd, event->size);
@@ -554,7 +622,7 @@ int rawstor_io_session_pwrite(
     event->iov_origin = event_iov;
     event->iov_at = event_iov;
     event->niov_at = 1;
-    event->process = rawstor_io_event_process_pwritev;
+    event->process = io_event_process_pwritev;
 #ifdef RAWSTOR_TRACE_EVENTS
     event->trace_event = rawstor_trace_event_begin(
         "pwritev(%d, %zu)\n", session->fd, event->size);
@@ -595,7 +663,7 @@ int rawstor_io_session_writev(
     event->iov_origin = event_iov;
     event->iov_at = event_iov;
     event->niov_at = niov;
-    event->process = rawstor_io_event_process_writev;
+    event->process = io_event_process_writev;
 #ifdef RAWSTOR_TRACE_EVENTS
     event->trace_event = rawstor_trace_event_begin(
         "writev(%d, %zu)\n", session->fd, event->size);
@@ -636,7 +704,7 @@ int rawstor_io_session_pwritev(
     event->iov_origin = event_iov;
     event->iov_at = event_iov;
     event->niov_at = niov;
-    event->process = rawstor_io_event_process_pwritev;
+    event->process = io_event_process_pwritev;
 #ifdef RAWSTOR_TRACE_EVENTS
     event->trace_event = rawstor_trace_event_begin(
         "pwritev(%d, %zu)\n", session->fd, event->size);
