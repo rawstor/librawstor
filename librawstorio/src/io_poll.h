@@ -1,0 +1,13 @@
+#ifndef RAWSTORIO_IO_POLL_H
+#define RAWSTORIO_IO_POLL_H
+
+#include <rawstorio/io.h>
+#include <rawstorio/io_event.h>
+
+
+int rawstor_io_push_cqe(RawstorIO *io, RawstorIOEvent *event);
+
+int rawstor_io_depth(RawstorIO *io);
+
+
+#endif // RAWSTORIO_IO_POLL_H
