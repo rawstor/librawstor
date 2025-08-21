@@ -28,40 +28,15 @@ short rawstor_io_session_poll_events(RawstorIOSession *session);
 
 int rawstor_io_session_empty(RawstorIOSession *session);
 
-int rawstor_io_session_read(
-    RawstorIOSession *session, RawstorIOEvent *event,
-    void *buf);
+int rawstor_io_session_push_read_sqe(
+    RawstorIOSession *session, RawstorIOEvent *event);
 
-int rawstor_io_session_pread(
-    RawstorIOSession *session, RawstorIOEvent *event,
-    void *buf);
-
-int rawstor_io_session_readv(
-    RawstorIOSession *session, RawstorIOEvent *event,
-    struct iovec *iov, unsigned int niov);
-
-int rawstor_io_session_preadv(
-    RawstorIOSession *session, RawstorIOEvent *event,
-    struct iovec *iov, unsigned int niov);
-
-int rawstor_io_session_write(
-    RawstorIOSession *session, RawstorIOEvent *event,
-    void *buf);
-
-int rawstor_io_session_pwrite(
-    RawstorIOSession *session, RawstorIOEvent *event,
-    void *buf);
-
-int rawstor_io_session_writev(
-    RawstorIOSession *session, RawstorIOEvent *event,
-    struct iovec *iov, unsigned int niov);
-
-int rawstor_io_session_pwritev(
-    RawstorIOSession *session, RawstorIOEvent *event,
-    struct iovec *iov, unsigned int niov);
+int rawstor_io_session_push_write_sqe(
+    RawstorIOSession *session, RawstorIOEvent *event);
 
 int rawstor_io_session_process_read(RawstorIOSession *session);
 
 int rawstor_io_session_process_write(RawstorIOSession *session);
+
 
 #endif // RAWSTORIO_IO_SESSION_POLL_H

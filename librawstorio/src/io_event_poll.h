@@ -11,7 +11,7 @@
 
 
 struct RawstorIOEvent {
-    RawstorIOSession *session;
+    int fd;
 
     struct iovec *iov_origin;
     struct iovec *iov_at;
@@ -19,18 +19,26 @@ struct RawstorIOEvent {
     off_t offset;
     ssize_t (*process)(RawstorIOEvent *event);
 
-    RawstorIOCallback *callback;
-
     size_t size;
     ssize_t result;
     int error;
 
+    RawstorIOCallback *callback;
     void *data;
 
 #ifdef RAWSTOR_TRACE_EVENTS
     void *trace_event;
 #endif
 };
+
+
+ssize_t rawstor_io_event_process_readv(RawstorIOEvent *event);
+
+ssize_t rawstor_io_event_process_preadv(RawstorIOEvent *event);
+
+ssize_t rawstor_io_event_process_writev(RawstorIOEvent *event);
+
+ssize_t rawstor_io_event_process_pwritev(RawstorIOEvent *event);
 
 
 #endif // RAWSTORIO_IO_EVENT_POLL_H
