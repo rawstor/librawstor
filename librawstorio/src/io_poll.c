@@ -74,25 +74,37 @@ static void io_remove_session(RawstorIO *io, RawstorIOSession **it) {
 
 static RawstorIOEvent* io_create_event(
     RawstorIO *io,
-    size_t size, off_t offset,
+    int fd,
+    struct iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data)
 {
     if (!rawstor_mempool_available(io->events_pool)) {
         errno = ENOBUFS;
         return NULL;
     }
+
+    RawstorIOSession **new_session = NULL;
+    RawstorIOSession *session = io_get_session(io, fd);
+    if (session == NULL) {
+        new_session = io_append_session(io, fd);
+        if (new_session == NULL) {
+            return NULL;
+        }
+        session = *new_session;
+    }
+
     RawstorIOEvent *event = rawstor_mempool_alloc(io->events_pool);
     *event = (RawstorIOEvent) {
-        // .session
-        // .iov_origin
-        // .iov_at
-        // .niov
+        .session = session,
+        .iov_origin = iov,
+        .iov_at = iov,
+        .niov_at = niov,
         .offset = offset,
-        // .process
-        .callback = cb,
+        .process = NULL,
         .size = size,
         .result = 0,
-        // .error
+        .error = 0,
+        .callback = cb,
         .data = data,
     };
 
@@ -101,7 +113,21 @@ static RawstorIOEvent* io_create_event(
 
 
 static void io_delete_event(RawstorIO *io, RawstorIOEvent *event) {
+    RawstorIOSession *session = event->session;
+    free(event->iov_origin);
     rawstor_mempool_free(io->events_pool, event);
+    if (rawstor_io_session_empty(session)) {
+        for (
+            RawstorIOSession **it = rawstor_list_iter(io->sessions);
+            it != NULL;
+            it = rawstor_list_next(it))
+        {
+            if (*it == session) {
+                io_remove_session(io, it);
+                break;
+            }
+        }
+    }
 }
 
 
@@ -176,22 +202,31 @@ int rawstor_io_read(
     int fd, void *buf, size_t size,
     RawstorIOCallback *cb, void *data)
 {
-    RawstorIOSession **new_session = NULL;
-    RawstorIOSession *session = io_get_session(io, fd);
-    if (session == NULL) {
-        new_session = io_append_session(io, fd);
-        if (new_session == NULL) {
-            goto err_session;
-        }
-        session = *new_session;
+    /**
+     * TODO: use event_iov from some buffer preallocated in io struct.
+     */
+    struct iovec *event_iov = malloc(sizeof(struct iovec));
+    if (event_iov == NULL) {
+        goto err_event_iov;
     }
+    event_iov[0] = (struct iovec) {
+        .iov_base = buf,
+        .iov_len = size,
+    };
 
-    RawstorIOEvent *event = io_create_event(io, size, 0, cb, data);
+    RawstorIOEvent *event = io_create_event(
+        io, fd, event_iov, 1, size, 0, cb, data);
     if (event == NULL) {
         goto err_create_event;
     }
 
-    if (rawstor_io_session_read(session, event, buf)) {
+    event->process = rawstor_io_event_process_readv;
+#ifdef RAWSTOR_TRACE_EVENTS
+    event->trace_event = rawstor_trace_event_begin(
+        "readv(%d, %zu)\n", session->fd, event->size);
+#endif
+
+    if (rawstor_io_session_push_read_sqe(event->session, event)) {
         goto err_push_event;
     }
 
@@ -200,10 +235,8 @@ int rawstor_io_read(
 err_push_event:
     io_delete_event(io, event);
 err_create_event:
-    if (new_session != NULL) {
-        io_remove_session(io, new_session);
-    }
-err_session:
+    free(event_iov);
+err_event_iov:
     return -errno;
 }
 
@@ -213,22 +246,31 @@ int rawstor_io_pread(
     int fd, void *buf, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data)
 {
-    RawstorIOSession **new_session = NULL;
-    RawstorIOSession *session = io_get_session(io, fd);
-    if (session == NULL) {
-        new_session = io_append_session(io, fd);
-        if (new_session == NULL) {
-            goto err_session;
-        }
-        session = *new_session;
+    /**
+     * TODO: use event_iov from some buffer preallocated in io struct.
+     */
+    struct iovec *event_iov = malloc(sizeof(struct iovec));
+    if (event_iov == NULL) {
+        goto err_event_iov;
     }
+    event_iov[0] = (struct iovec) {
+        .iov_base = buf,
+        .iov_len = size,
+    };
 
-    RawstorIOEvent *event = io_create_event(io, size, offset, cb, data);
+    RawstorIOEvent *event = io_create_event(
+        io, fd, event_iov, 1, size, offset, cb, data);
     if (event == NULL) {
         goto err_create_event;
     }
 
-    if (rawstor_io_session_pread(session, event, buf)) {
+    event->process = rawstor_io_event_process_preadv;
+#ifdef RAWSTOR_TRACE_EVENTS
+    event->trace_event = rawstor_trace_event_begin(
+        "readv(%d, %zu)\n", session->fd, event->size);
+#endif
+
+    if (rawstor_io_session_push_read_sqe(event->session, event)) {
         goto err_push_event;
     }
 
@@ -237,10 +279,8 @@ int rawstor_io_pread(
 err_push_event:
     io_delete_event(io, event);
 err_create_event:
-    if (new_session != NULL) {
-        io_remove_session(io, new_session);
-    }
-err_session:
+    free(event_iov);
+err_event_iov:
     return -errno;
 }
 
@@ -250,22 +290,30 @@ int rawstor_io_readv(
     int fd, struct iovec *iov, unsigned int niov, size_t size,
     RawstorIOCallback *cb, void *data)
 {
-    RawstorIOSession **new_session = NULL;
-    RawstorIOSession *session = io_get_session(io, fd);
-    if (session == NULL) {
-        new_session = io_append_session(io, fd);
-        if (new_session == NULL) {
-            goto err_session;
-        }
-        session = *new_session;
+    /**
+     * TODO: use event_iov from some buffer preallocated in io struct.
+     */
+    struct iovec *event_iov = calloc(niov, sizeof(struct iovec));
+    if (event_iov == NULL) {
+        goto err_event_iov;
+    }
+    for (unsigned int i = 0; i < niov; ++i) {
+        event_iov[i] = iov[i];
     }
 
-    RawstorIOEvent *event = io_create_event(io, size, 0, cb, data);
+    RawstorIOEvent *event = io_create_event(
+        io, fd, event_iov, niov, size, 0, cb, data);
     if (event == NULL) {
         goto err_create_event;
     }
 
-    if (rawstor_io_session_readv(session, event, iov, niov)) {
+    event->process = rawstor_io_event_process_readv;
+#ifdef RAWSTOR_TRACE_EVENTS
+    event->trace_event = rawstor_trace_event_begin(
+        "readv(%d, %zu)\n", session->fd, event->size);
+#endif
+
+    if (rawstor_io_session_push_read_sqe(event->session, event)) {
         goto err_push_event;
     }
 
@@ -274,10 +322,8 @@ int rawstor_io_readv(
 err_push_event:
     io_delete_event(io, event);
 err_create_event:
-    if (new_session != NULL) {
-        io_remove_session(io, new_session);
-    }
-err_session:
+    free(event_iov);
+err_event_iov:
     return -errno;
 }
 
@@ -287,22 +333,30 @@ int rawstor_io_preadv(
     int fd, struct iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data)
 {
-    RawstorIOSession **new_session = NULL;
-    RawstorIOSession *session = io_get_session(io, fd);
-    if (session == NULL) {
-        new_session = io_append_session(io, fd);
-        if (new_session == NULL) {
-            goto err_session;
-        }
-        session = *new_session;
+    /**
+     * TODO: use event_iov from some buffer preallocated in io struct.
+     */
+    struct iovec *event_iov = calloc(niov, sizeof(struct iovec));
+    if (event_iov == NULL) {
+        goto err_event_iov;
+    }
+    for (unsigned int i = 0; i < niov; ++i) {
+        event_iov[i] = iov[i];
     }
 
-    RawstorIOEvent *event = io_create_event(io, size, offset, cb, data);
+    RawstorIOEvent *event = io_create_event(
+        io, fd, event_iov, niov, size, offset, cb, data);
     if (event == NULL) {
         goto err_create_event;
     }
 
-    if (rawstor_io_session_preadv(session, event, iov, niov)) {
+    event->process = rawstor_io_event_process_preadv;
+#ifdef RAWSTOR_TRACE_EVENTS
+    event->trace_event = rawstor_trace_event_begin(
+        "preadv(%d, %zu)\n", session->fd, event->size);
+#endif
+
+    if (rawstor_io_session_push_read_sqe(event->session, event)) {
         goto err_push_event;
     }
 
@@ -311,10 +365,8 @@ int rawstor_io_preadv(
 err_push_event:
     io_delete_event(io, event);
 err_create_event:
-    if (new_session != NULL) {
-        io_remove_session(io, new_session);
-    }
-err_session:
+    free(event_iov);
+err_event_iov:
     return -errno;
 }
 
@@ -324,22 +376,31 @@ int rawstor_io_write(
     int fd, void *buf, size_t size,
     RawstorIOCallback *cb, void *data)
 {
-    RawstorIOSession **new_session = NULL;
-    RawstorIOSession *session = io_get_session(io, fd);
-    if (session == NULL) {
-        new_session = io_append_session(io, fd);
-        if (new_session == NULL) {
-            goto err_session;
-        }
-        session = *new_session;
+    /**
+     * TODO: use event_iov from some buffer preallocated in io struct.
+     */
+    struct iovec *event_iov = malloc(sizeof(struct iovec));
+    if (event_iov == NULL) {
+        goto err_event_iov;
     }
+    event_iov[0] = (struct iovec) {
+        .iov_base = buf,
+        .iov_len = size,
+    };
 
-    RawstorIOEvent *event = io_create_event(io, size, 0, cb, data);
+    RawstorIOEvent *event = io_create_event(
+        io, fd, event_iov, 1, size, 0, cb, data);
     if (event == NULL) {
         goto err_create_event;
     }
 
-    if (rawstor_io_session_write(session, event, buf)) {
+    event->process = rawstor_io_event_process_writev;
+#ifdef RAWSTOR_TRACE_EVENTS
+    event->trace_event = rawstor_trace_event_begin(
+        "writev(%d, %zu)\n", session->fd, event->size);
+#endif
+
+    if (rawstor_io_session_push_write_sqe(event->session, event)) {
         goto err_push_event;
     }
 
@@ -348,10 +409,8 @@ int rawstor_io_write(
 err_push_event:
     io_delete_event(io, event);
 err_create_event:
-    if (new_session != NULL) {
-        io_remove_session(io, new_session);
-    }
-err_session:
+    free(event_iov);
+err_event_iov:
     return -errno;
 }
 
@@ -361,22 +420,31 @@ int rawstor_io_pwrite(
     int fd, void *buf, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data)
 {
-    RawstorIOSession **new_session = NULL;
-    RawstorIOSession *session = io_get_session(io, fd);
-    if (session == NULL) {
-        new_session = io_append_session(io, fd);
-        if (new_session == NULL) {
-            goto err_session;
-        }
-        session = *new_session;
+    /**
+     * TODO: use event_iov from some buffer preallocated in io struct.
+     */
+    struct iovec *event_iov = malloc(sizeof(struct iovec));
+    if (event_iov == NULL) {
+        goto err_event_iov;
     }
+    event_iov[0] = (struct iovec) {
+        .iov_base = buf,
+        .iov_len = size,
+    };
 
-    RawstorIOEvent *event = io_create_event(io, size, offset, cb, data);
+    RawstorIOEvent *event = io_create_event(
+        io, fd, event_iov, 1, size, offset, cb, data);
     if (event == NULL) {
         goto err_create_event;
     }
 
-    if (rawstor_io_session_pwrite(session, event, buf)) {
+    event->process = rawstor_io_event_process_pwritev;
+#ifdef RAWSTOR_TRACE_EVENTS
+    event->trace_event = rawstor_trace_event_begin(
+        "pwritev(%d, %zu)\n", session->fd, event->size);
+#endif
+
+    if (rawstor_io_session_push_write_sqe(event->session, event)) {
         goto err_push_event;
     }
 
@@ -385,10 +453,8 @@ int rawstor_io_pwrite(
 err_push_event:
     io_delete_event(io, event);
 err_create_event:
-    if (new_session != NULL) {
-        io_remove_session(io, new_session);
-    }
-err_session:
+    free(event_iov);
+err_event_iov:
     return -errno;
 }
 
@@ -398,22 +464,30 @@ int rawstor_io_writev(
     int fd, struct iovec *iov, unsigned int niov, size_t size,
     RawstorIOCallback *cb, void *data)
 {
-    RawstorIOSession **new_session = NULL;
-    RawstorIOSession *session = io_get_session(io, fd);
-    if (session == NULL) {
-        new_session = io_append_session(io, fd);
-        if (new_session == NULL) {
-            goto err_session;
-        }
-        session = *new_session;
+    /**
+     * TODO: use event_iov from some buffer preallocated in io struct.
+     */
+    struct iovec *event_iov = calloc(niov, sizeof(struct iovec));
+    if (event_iov == NULL) {
+        goto err_event_iov;
+    }
+    for (unsigned int i = 0; i < niov; ++i) {
+        event_iov[i] = iov[i];
     }
 
-    RawstorIOEvent *event = io_create_event(io, size, 0, cb, data);
+    RawstorIOEvent *event = io_create_event(
+        io, fd, event_iov, niov, size, 0, cb, data);
     if (event == NULL) {
         goto err_create_event;
     }
 
-    if (rawstor_io_session_writev(session, event, iov, niov)) {
+    event->process = rawstor_io_event_process_writev;
+#ifdef RAWSTOR_TRACE_EVENTS
+    event->trace_event = rawstor_trace_event_begin(
+        "writev(%d, %zu)\n", session->fd, event->size);
+#endif
+
+    if (rawstor_io_session_push_write_sqe(event->session, event)) {
         goto err_push_event;
     }
 
@@ -422,10 +496,8 @@ int rawstor_io_writev(
 err_push_event:
     io_delete_event(io, event);
 err_create_event:
-    if (new_session != NULL) {
-        io_remove_session(io, new_session);
-    }
-err_session:
+    free(event_iov);
+err_event_iov:
     return -errno;
 }
 
@@ -435,22 +507,30 @@ int rawstor_io_pwritev(
     int fd, struct iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data)
 {
-    RawstorIOSession **new_session = NULL;
-    RawstorIOSession *session = io_get_session(io, fd);
-    if (session == NULL) {
-        new_session = io_append_session(io, fd);
-        if (new_session == NULL) {
-            goto err_session;
-        }
-        session = *new_session;
+    /**
+     * TODO: use event_iov from some buffer preallocated in io struct.
+     */
+    struct iovec *event_iov = calloc(niov, sizeof(struct iovec));
+    if (event_iov == NULL) {
+        goto err_event_iov;
+    }
+    for (unsigned int i = 0; i < niov; ++i) {
+        event_iov[i] = iov[i];
     }
 
-    RawstorIOEvent *event = io_create_event(io, size, offset, cb, data);
+    RawstorIOEvent *event = io_create_event(
+        io, fd, event_iov, niov, size, offset, cb, data);
     if (event == NULL) {
         goto err_create_event;
     }
 
-    if (rawstor_io_session_pwritev(session, event, iov, niov)) {
+    event->process = rawstor_io_event_process_pwritev;
+#ifdef RAWSTOR_TRACE_EVENTS
+    event->trace_event = rawstor_trace_event_begin(
+        "pwritev(%d, %zu)\n", session->fd, event->size);
+#endif
+
+    if (rawstor_io_session_push_write_sqe(event->session, event)) {
         goto err_push_event;
     }
 
@@ -459,10 +539,8 @@ int rawstor_io_pwritev(
 err_push_event:
     io_delete_event(io, event);
 err_create_event:
-    if (new_session != NULL) {
-        io_remove_session(io, new_session);
-    }
-err_session:
+    free(event_iov);
+err_event_iov:
     return -errno;
 }
 
@@ -572,19 +650,5 @@ void rawstor_io_release_event(RawstorIO *io, RawstorIOEvent *event) {
 #ifdef RAWSTOR_TRACE_EVENTS
     rawstor_trace_event_end(event->trace_event, "release_event()\n");
 #endif
-    RawstorIOSession *session = event->session;
-    free(event->iov_origin);
-    rawstor_mempool_free(io->events_pool, event);
-    if (rawstor_io_session_empty(session)) {
-        for (
-            RawstorIOSession **it = rawstor_list_iter(io->sessions);
-            it != NULL;
-            it = rawstor_list_next(it))
-        {
-            if (*it == session) {
-                io_remove_session(io, it);
-                break;
-            }
-        }
-    }
+    io_delete_event(io, event);
 }
