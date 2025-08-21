@@ -301,7 +301,7 @@ int rawstor_io_pread(
     event->process = rawstor_io_event_process_preadv;
 #ifdef RAWSTOR_TRACE_EVENTS
     event->trace_event = rawstor_trace_event_begin(
-        "readv(%d, %zu)\n", fd, event->size);
+        "preadv(%d, %zu)\n", fd, event->size);
 #endif
 
     if (rawstor_io_session_push_read_sqe(session, event)) {
