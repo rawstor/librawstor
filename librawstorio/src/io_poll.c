@@ -223,7 +223,7 @@ int rawstor_io_read(
     event->process = rawstor_io_event_process_readv;
 #ifdef RAWSTOR_TRACE_EVENTS
     event->trace_event = rawstor_trace_event_begin(
-        "readv(%d, %zu)\n", session->fd, event->size);
+        "readv(%d, %zu)\n", fd, event->size);
 #endif
 
     if (rawstor_io_session_push_read_sqe(event->session, event)) {
@@ -267,7 +267,7 @@ int rawstor_io_pread(
     event->process = rawstor_io_event_process_preadv;
 #ifdef RAWSTOR_TRACE_EVENTS
     event->trace_event = rawstor_trace_event_begin(
-        "readv(%d, %zu)\n", session->fd, event->size);
+        "readv(%d, %zu)\n", fd, event->size);
 #endif
 
     if (rawstor_io_session_push_read_sqe(event->session, event)) {
@@ -310,7 +310,7 @@ int rawstor_io_readv(
     event->process = rawstor_io_event_process_readv;
 #ifdef RAWSTOR_TRACE_EVENTS
     event->trace_event = rawstor_trace_event_begin(
-        "readv(%d, %zu)\n", session->fd, event->size);
+        "readv(%d, %zu)\n", fd, event->size);
 #endif
 
     if (rawstor_io_session_push_read_sqe(event->session, event)) {
@@ -353,7 +353,7 @@ int rawstor_io_preadv(
     event->process = rawstor_io_event_process_preadv;
 #ifdef RAWSTOR_TRACE_EVENTS
     event->trace_event = rawstor_trace_event_begin(
-        "preadv(%d, %zu)\n", session->fd, event->size);
+        "preadv(%d, %zu)\n", fd, event->size);
 #endif
 
     if (rawstor_io_session_push_read_sqe(event->session, event)) {
@@ -397,7 +397,7 @@ int rawstor_io_write(
     event->process = rawstor_io_event_process_writev;
 #ifdef RAWSTOR_TRACE_EVENTS
     event->trace_event = rawstor_trace_event_begin(
-        "writev(%d, %zu)\n", session->fd, event->size);
+        "writev(%d, %zu)\n", fd, event->size);
 #endif
 
     if (rawstor_io_session_push_write_sqe(event->session, event)) {
@@ -441,7 +441,7 @@ int rawstor_io_pwrite(
     event->process = rawstor_io_event_process_pwritev;
 #ifdef RAWSTOR_TRACE_EVENTS
     event->trace_event = rawstor_trace_event_begin(
-        "pwritev(%d, %zu)\n", session->fd, event->size);
+        "pwritev(%d, %zu)\n", fd, event->size);
 #endif
 
     if (rawstor_io_session_push_write_sqe(event->session, event)) {
@@ -484,7 +484,7 @@ int rawstor_io_writev(
     event->process = rawstor_io_event_process_writev;
 #ifdef RAWSTOR_TRACE_EVENTS
     event->trace_event = rawstor_trace_event_begin(
-        "writev(%d, %zu)\n", session->fd, event->size);
+        "writev(%d, %zu)\n", fd, event->size);
 #endif
 
     if (rawstor_io_session_push_write_sqe(event->session, event)) {
@@ -527,7 +527,7 @@ int rawstor_io_pwritev(
     event->process = rawstor_io_event_process_pwritev;
 #ifdef RAWSTOR_TRACE_EVENTS
     event->trace_event = rawstor_trace_event_begin(
-        "pwritev(%d, %zu)\n", session->fd, event->size);
+        "pwritev(%d, %zu)\n", fd, event->size);
 #endif
 
     if (rawstor_io_session_push_write_sqe(event->session, event)) {
