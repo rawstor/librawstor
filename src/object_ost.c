@@ -156,17 +156,23 @@ static int ost_connect(const RawstorOptsOST *opts_ost) {
 
     unsigned int so_sndtimeo = rawstor_opts_ost_so_sndtimeo(opts_ost);
     if (so_sndtimeo != 0) {
-        rawstor_socket_set_snd_timeout(fd, so_sndtimeo);
+        if (rawstor_socket_set_snd_timeout(fd, so_sndtimeo)) {
+            return -errno;
+        }
     }
 
     unsigned int so_rcvtimeo = rawstor_opts_ost_so_rcvtimeo(opts_ost);
     if (so_rcvtimeo != 0) {
-        rawstor_socket_set_rcv_timeout(fd, so_sndtimeo);
+        if (rawstor_socket_set_rcv_timeout(fd, so_sndtimeo)) {
+            return -errno;
+        }
     }
 
     unsigned int tcp_user_timeo = rawstor_opts_ost_tcp_user_timeout(opts_ost);
     if (tcp_user_timeo != 0) {
-        rawstor_socket_set_user_timeout(fd, tcp_user_timeo);
+        if (rawstor_socket_set_user_timeout(fd, tcp_user_timeo)) {
+            return -errno;
+        }
     }
 
     const char *host = rawstor_opts_ost_host(opts_ost);
