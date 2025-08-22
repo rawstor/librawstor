@@ -12,6 +12,9 @@
 
 #include <poll.h>
 
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+
 #include <sys/socket.h>
 
 #include <assert.h>
@@ -226,6 +229,10 @@ void rawstor_io_delete(RawstorIO *io) {
 
 int rawstor_io_setup_fd(int fd) {
     if (rawstor_socket_set_nonblock(fd)) {
+        return -errno;
+    }
+
+    if (rawstor_socket_set_nodelay(fd)) {
         return -errno;
     }
 

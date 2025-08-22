@@ -4,6 +4,7 @@
 #include <rawstorstd/logging_config.h>
 #include <rawstorstd/threading.h>
 
+#include <stdio.h>
 #include <unistd.h>
 
 
