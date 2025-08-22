@@ -12,9 +12,6 @@
 
 #include <poll.h>
 
-#include <netinet/in.h>
-#include <netinet/tcp.h>
-
 #include <sys/socket.h>
 
 #include <assert.h>
