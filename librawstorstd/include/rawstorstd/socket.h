@@ -12,5 +12,9 @@ int rawstor_socket_set_rcv_timeout(int fd, unsigned int timeout);
 
 int rawstor_socket_set_user_timeout(int fd, unsigned int timeout);
 
+int rawstor_socket_set_snd_bufsize(int fd, unsigned int size);
+
+int rawstor_socket_set_rcv_bufsize(int fd, unsigned int size);
+
 
 #endif // RAWSTORSTD_SOCKET_ROUTINES_H

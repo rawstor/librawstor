@@ -225,7 +225,17 @@ void rawstor_io_delete(RawstorIO *io) {
 
 
 int rawstor_io_setup_fd(int fd) {
+    static unsigned int bufsize = 4096 * 64 * 4;
+
     if (rawstor_socket_set_nonblock(fd)) {
+        return -errno;
+    }
+
+    if (rawstor_socket_set_snd_bufsize(fd, bufsize)) {
+        return -errno;
+    }
+
+    if (rawstor_socket_set_rcv_bufsize(fd, bufsize)) {
         return -errno;
     }
 

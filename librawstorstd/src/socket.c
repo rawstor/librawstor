@@ -110,3 +110,24 @@ int rawstor_socket_set_user_timeout(int fd, unsigned int timeout) {
     return 0;
 }
 
+
+int rawstor_socket_set_snd_bufsize(int fd, unsigned int size) {
+    if (setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &size, sizeof(size))) {
+        return -errno;
+    }
+
+    rawstor_info("fd %d: SOL_SOCKET/SO_SNDBUF = %u\n", fd, size);
+
+    return 0;
+}
+
+
+int rawstor_socket_set_rcv_bufsize(int fd, unsigned int size) {
+    if (setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &size, sizeof(size))) {
+        return -errno;
+    }
+
+    rawstor_info("fd %d: SOL_SOCKET/SO_RCVBUF = %u\n", fd, size);
+
+    return 0;
+}
