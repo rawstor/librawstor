@@ -163,7 +163,7 @@ static int ost_connect(const RawstorOptsOST *opts_ost) {
 
     unsigned int so_rcvtimeo = rawstor_opts_ost_so_rcvtimeo(opts_ost);
     if (so_rcvtimeo != 0) {
-        if (rawstor_socket_set_rcv_timeout(fd, so_sndtimeo)) {
+        if (rawstor_socket_set_rcv_timeout(fd, so_rcvtimeo)) {
             return -errno;
         }
     }
