@@ -4,5 +4,13 @@
 
 int rawstor_socket_set_nonblock(int fd);
 
+int rawstor_socket_set_nodelay(int fd);
+
+int rawstor_socket_set_snd_timeout(int fd, unsigned int timeout);
+
+int rawstor_socket_set_rcv_timeout(int fd, unsigned int timeout);
+
+int rawstor_socket_set_user_timeout(int fd, unsigned int timeout);
+
 
 #endif // RAWSTORSTD_SOCKET_ROUTINES_H

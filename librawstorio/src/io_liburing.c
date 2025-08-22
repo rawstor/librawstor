@@ -5,6 +5,7 @@
 #include <rawstorstd/gcc.h>
 #include <rawstorstd/logging.h>
 #include <rawstorstd/mempool.h>
+#include <rawstorstd/socket.h>
 
 #include <liburing.h>
 
@@ -109,6 +110,10 @@ void rawstor_io_delete(RawstorIO *io) {
 
 
 int rawstor_io_setup_fd(int RAWSTOR_UNUSED fd) {
+    if (rawstor_socket_set_nodelay(fd)) {
+        return -errno;
+    }
+
     return 0;
 }
 

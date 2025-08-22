@@ -229,6 +229,10 @@ int rawstor_io_setup_fd(int fd) {
         return -errno;
     }
 
+    if (rawstor_socket_set_nodelay(fd)) {
+        return -errno;
+    }
+
     return 0;
 }
 

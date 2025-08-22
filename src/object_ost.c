@@ -4,17 +4,15 @@
 #include "opts.h"
 #include "ost_protocol.h"
 
-#include <rawstorstd/gcc.h>
 #include <rawstorstd/hash.h>
 #include <rawstorstd/logging.h>
 #include <rawstorstd/mempool.h>
+#include <rawstorstd/socket.h>
 #include <rawstorstd/uuid.h>
 
 #include <rawstorio/io.h>
 
 #include <arpa/inet.h>
-
-#include <netinet/tcp.h>
 
 #include <errno.h>
 #include <stddef.h>
@@ -156,67 +154,25 @@ static int ost_connect(const RawstorOptsOST *opts_ost) {
 
     rawstor_info("Socket successfully created\n");
 
-    /*
-    socklen_t socketbuf_size = 4 * 1024 * 1024;
-    if (setsockopt(
-        fd, SOL_SOCKET, SO_SNDBUF, &socketbuf_size, sizeof(socketbuf_size)))
-    {
-        return -errno;
-    }
-    if (setsockopt(
-        fd, SOL_SOCKET, SO_RCVBUF, &socketbuf_size, sizeof(socketbuf_size)))
-    {
-        return -errno;
-    }
-    rawstor_info("Set new socket buffer size: %u\n", socketbuf_size);
-    */
-
     unsigned int so_sndtimeo = rawstor_opts_ost_so_sndtimeo(opts_ost);
     if (so_sndtimeo != 0) {
-        struct timeval timeo = {
-            .tv_sec = so_sndtimeo / 1000,
-            .tv_usec = (so_sndtimeo % 1000) * 1000,
-        };
-        if (setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeo, sizeof(timeo))) {
+        if (rawstor_socket_set_snd_timeout(fd, so_sndtimeo)) {
             return -errno;
         }
-        rawstor_info("OST SO_SNDTIMEO: %u\n", so_sndtimeo);
     }
 
     unsigned int so_rcvtimeo = rawstor_opts_ost_so_rcvtimeo(opts_ost);
     if (so_rcvtimeo != 0) {
-        struct timeval timeo = {
-            .tv_sec = so_rcvtimeo / 1000,
-            .tv_usec = (so_rcvtimeo % 1000) * 1000,
-        };
-        if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeo, sizeof(timeo))) {
+        if (rawstor_socket_set_rcv_timeout(fd, so_rcvtimeo)) {
             return -errno;
         }
-        rawstor_info("OST SO_RCVTIMEO: %u\n", so_rcvtimeo);
     }
 
-    uint32_t tcp_user_timeout = rawstor_opts_ost_tcp_user_timeout(opts_ost);
-    if (tcp_user_timeout != 0) {
-        #if defined(RAWSTOR_ON_LINUX)
-            if (setsockopt(
-                fd, IPPROTO_TCP, TCP_USER_TIMEOUT,
-                &tcp_user_timeout, sizeof(tcp_user_timeout)))
-            {
-                return -errno;
-            }
-            rawstor_info("OST TCP_USER_TIMEOUT: %u\n", tcp_user_timeout);
-        #elif defined(RAWSTOR_ON_MACOS)
-            tcp_user_timeout /= 1000;
-            if (setsockopt(
-                fd, IPPROTO_TCP, TCP_CONNECTIONTIMEOUT,
-                &tcp_user_timeout, sizeof(tcp_user_timeout)))
-            {
-                return -errno;
-            }
-            rawstor_info("OST TCP_CONNECTIONTIMEOUT: %u\n", tcp_user_timeout);
-        #else
-            #error "Unexpected platform"
-        #endif
+    unsigned int tcp_user_timeo = rawstor_opts_ost_tcp_user_timeout(opts_ost);
+    if (tcp_user_timeo != 0) {
+        if (rawstor_socket_set_user_timeout(fd, tcp_user_timeo)) {
+            return -errno;
+        }
     }
 
     const char *host = rawstor_opts_ost_host(opts_ost);
