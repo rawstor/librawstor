@@ -37,7 +37,6 @@ static Worker* worker_create(
         .index = index,
         .offset = block_size * index,
         .src_iov.iov_len = block_size,
-        .dst_iov.iov_base = malloc(block_size),
         .dst_iov.iov_len = block_size,
         .counter = counter,
         .iteration = 0,
@@ -390,7 +389,6 @@ int rawstor_cli_testio(
 
     if (rawstor_object_close(object)) {
         perror("rawstor_object_close() failed");
-        goto err_close;
     }
 
     for (unsigned int i = 0; i < io_depth; ++i) {
@@ -404,7 +402,6 @@ int rawstor_cli_testio(
 
     return EXIT_SUCCESS;
 
-err_close:
 err_dispatch:
 err_wait:
 err_pwrite:
