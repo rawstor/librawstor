@@ -19,6 +19,7 @@ static void usage() {
         "options:\n"
         "  -h, --help            Show this help message and exit\n"
         "  --ost                 OST host:port\n"
+        "  --wait-timeout        IO wait timeout\n"
         "\n"
         "command:\n"
         "  create                Create rawstor object\n"
@@ -43,7 +44,11 @@ static void command_create_usage() {
 };
 
 
-static int command_create(const RawstorOptsOST *opts_ost, int argc, char **argv) {
+static int command_create(
+    const struct RawstorOptsIO *opts_io,
+    const struct RawstorOptsOST *opts_ost,
+    int argc, char **argv)
+{
     const char *optstring = "hs:";
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
@@ -90,7 +95,7 @@ static int command_create(const RawstorOptsOST *opts_ost, int argc, char **argv)
         return EXIT_FAILURE;
     }
 
-    return rawstor_cli_create(opts_ost, size);
+    return rawstor_cli_create(opts_io, opts_ost, size);
 }
 
 
@@ -116,7 +121,11 @@ static void command_testio_usage() {
 };
 
 
-static int command_testio(const RawstorOptsOST *opts_ost, int argc, char **argv) {
+static int command_testio(
+    const struct RawstorOptsIO *opts_io,
+    const struct RawstorOptsOST *opts_ost,
+    int argc, char **argv)
+{
     const char *optstring = "b:c:d:ho:s:";
     struct option longopts[] = {
         {"block-size", required_argument, NULL, 'b'},
@@ -221,6 +230,7 @@ static int command_testio(const RawstorOptsOST *opts_ost, int argc, char **argv)
     }
 
     return rawstor_cli_testio(
+        opts_io,
         opts_ost,
         &object_id,
         block_size, count, io_depth,
@@ -231,12 +241,14 @@ static int command_testio(const RawstorOptsOST *opts_ost, int argc, char **argv)
 int main(int argc, char **argv) {
     const char *optstring = "+h";
     struct option longopts[] = {
+        {"wait-timeout", required_argument, NULL, 't'},
         {"ost", required_argument, NULL, 'o'},
         {"help", no_argument, NULL, 'h'},
         {},
     };
 
     char *ost_arg = NULL;
+    char *wait_timeout_arg = NULL;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
         if (c == -1)
@@ -245,6 +257,10 @@ int main(int argc, char **argv) {
         switch (c) {
             case 'o':
                 ost_arg = optarg;
+                break;
+
+            case 't':
+                wait_timeout_arg = optarg;
                 break;
 
             case 'h':
@@ -262,32 +278,42 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
-    RawstorOptsOST config = {};
+    struct RawstorOptsIO opts_io = {};
+    struct RawstorOptsOST opts_ost = {};
 
     if (ost_arg != NULL) {
         const char *comma = strchr(ost_arg, ':');
         if (comma != NULL) {
-            if (sscanf(comma + 1, "%u", &config.port) != 1) {
+            if (sscanf(comma + 1, "%u", &opts_ost.port) != 1) {
                 fprintf(stderr, "ost port argument must be unsigned integer");
                 return EXIT_FAILURE;
             }
         }
-        config.host = comma != NULL ?
+        opts_ost.host = comma != NULL ?
             strndup(ost_arg, comma - ost_arg) :
             strdup(ost_arg);
-        if (config.host == NULL) {
+        if (opts_ost.host == NULL) {
             perror("strdup() failed");
+            return EXIT_FAILURE;
+        }
+    }
+
+    if (wait_timeout_arg != NULL) {
+        if (sscanf(wait_timeout_arg, "%u", &opts_io.wait_timeout) != 1) {
+            fprintf(stderr, "wait-timeout argument must be unsigned integer\n");
             return EXIT_FAILURE;
         }
     }
 
     char *command = argv[optind];
     if (strcmp(command, "create") == 0) {
-        return command_create(&config, argc - optind, &argv[optind]);
+        return command_create(
+            &opts_io, &opts_ost, argc - optind, &argv[optind]);
     }
 
     if (strcmp(command, "testio") == 0) {
-        return command_testio(&config, argc - optind, &argv[optind]);
+        return command_testio(
+            &opts_io, &opts_ost, argc - optind, &argv[optind]);
     }
 
     printf("Unexpected command: %s\n", command);

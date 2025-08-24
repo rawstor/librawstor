@@ -152,7 +152,7 @@ const char *rawstor_object_backend_name() {
 
 
 int rawstor_object_create(
-    const RawstorOptsOST *opts_ost,
+    const struct RawstorOptsOST *opts_ost,
     const RawstorObjectSpec *spec,
     RawstorUUID *object_id)
 {
@@ -219,7 +219,7 @@ err_write:
 
 
 int rawstor_object_delete(
-    const RawstorOptsOST *opts_ost,
+    const struct RawstorOptsOST *opts_ost,
     const RawstorUUID *object_id)
 {
     const char *ost_host = rawstor_opts_ost_host(opts_ost);
@@ -254,7 +254,7 @@ int rawstor_object_delete(
 
 
 int rawstor_object_open(
-    const RawstorOptsOST *opts_ost,
+    const struct RawstorOptsOST *opts_ost,
     const RawstorUUID *object_id,
     RawstorObject **object)
 {
@@ -317,7 +317,7 @@ int rawstor_object_close(RawstorObject *object) {
 
 
 int rawstor_object_spec(
-    const RawstorOptsOST *opts_ost,
+    const struct RawstorOptsOST *opts_ost,
     const RawstorUUID *object_id,
     RawstorObjectSpec *spec)
 {

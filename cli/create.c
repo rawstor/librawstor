@@ -6,8 +6,12 @@
 #include <stdlib.h>
 
 
-int rawstor_cli_create(const RawstorOptsOST *opts_ost, size_t size) {
-    if (rawstor_initialize(opts_ost)) {
+int rawstor_cli_create(
+    const struct RawstorOptsIO *opts_io,
+    const struct RawstorOptsOST *opts_ost,
+    size_t size)
+{
+    if (rawstor_initialize(opts_io, opts_ost)) {
         perror("rawstor_initialize() failed");
         return EXIT_FAILURE;
     }

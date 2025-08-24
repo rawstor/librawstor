@@ -257,12 +257,13 @@ static int srcv_data_sent(
 
 
 int rawstor_cli_testio(
-    const RawstorOptsOST *opts_ost,
+    const struct RawstorOptsIO *opts_io,
+    const struct RawstorOptsOST *opts_ost,
     const RawstorUUID *object_id,
     size_t block_size, unsigned int count, unsigned int io_depth,
     int vector_mode)
 {
-    if (rawstor_initialize(opts_ost)) {
+    if (rawstor_initialize(opts_io, opts_ost)) {
         perror("rawstor_initialize() failed");
         return EXIT_FAILURE;
     }
