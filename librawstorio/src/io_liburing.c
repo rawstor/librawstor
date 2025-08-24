@@ -296,39 +296,9 @@ int rawstor_io_pwritev(
 }
 
 
-RawstorIOEvent* rawstor_io_wait_event(RawstorIO *io) {
-    int rval;
-    struct io_uring_cqe *cqe;
-    if (io_uring_sq_ready(&io->ring) > 0) {
-        rval = io_uring_submit_and_wait(&io->ring, 1);
-        if (rval < 0) {
-            errno = -rval;
-            return NULL;
-        }
-        rval = io_uring_peek_cqe(&io->ring, &cqe);
-        if (rval < 0) {
-            errno = -rval;
-            return NULL;
-        }
-    } else if (rawstor_mempool_allocated(io->events_pool)) {
-        rval = io_uring_wait_cqe(&io->ring, &cqe);
-        if (rval < 0) {
-            errno = -rval;
-            return NULL;
-        }
-    } else {
-        return NULL;
-    }
-
-    RawstorIOEvent *event = (RawstorIOEvent*)io_uring_cqe_get_data(cqe);
-
-    event->cqe = cqe;
-
-    return event;
-}
-
-
-RawstorIOEvent* rawstor_io_wait_event_timeout(RawstorIO *io, int timeout) {
+RawstorIOEvent* rawstor_io_wait_event_timeout(
+    RawstorIO *io, unsigned int timeout)
+{
     int rval;
     struct io_uring_cqe *cqe;
     struct __kernel_timespec ts = {
@@ -340,7 +310,11 @@ RawstorIOEvent* rawstor_io_wait_event_timeout(RawstorIO *io, int timeout) {
          * TODO: Replace with io_uring_submit_wait_cqe_timeout and do something
          * with sigmask.
          */
-        io_uring_submit(&io->ring);
+        rval = io_uring_submit(&io->ring);
+        if (rval < 0) {
+            errno = -rval;
+            return NULL;
+        }
         rval = io_uring_wait_cqe_timeout(&io->ring, &cqe, &ts);
         if (rval == -ETIME) {
             return NULL;

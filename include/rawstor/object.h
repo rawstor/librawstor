@@ -27,23 +27,23 @@ typedef int(RawstorCallback)(
 
 
 int rawstor_object_create(
-    const RawstorOptsOST *opts_ost,
+    const struct RawstorOptsOST *opts_ost,
     const RawstorObjectSpec *spec,
     RawstorUUID *object_id);
 
 int rawstor_object_delete(
-    const RawstorOptsOST *opts_ost,
+    const struct RawstorOptsOST *opts_ost,
     const RawstorUUID *object_id);
 
 int rawstor_object_open(
-    const RawstorOptsOST *opts_ost,
+    const struct RawstorOptsOST *opts_ost,
     const RawstorUUID *object_id,
     RawstorObject **object);
 
 int rawstor_object_close(RawstorObject *object);
 
 int rawstor_object_spec(
-    const RawstorOptsOST *opts_ost,
+    const struct RawstorOptsOST *opts_ost,
     const RawstorUUID *object_id,
     RawstorObjectSpec *spec);
 

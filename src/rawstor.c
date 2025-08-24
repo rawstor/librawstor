@@ -25,7 +25,10 @@
 static RawstorIO *_rawstor_io = NULL;
 
 
-int rawstor_initialize(const RawstorOptsOST *opts_ost) {
+int rawstor_initialize(
+    const struct RawstorOptsIO *opts_io,
+    const struct RawstorOptsOST *opts_ost)
+{
     assert(_rawstor_io == NULL);
 
     if (rawstor_logging_initialize()) {
@@ -40,7 +43,7 @@ int rawstor_initialize(const RawstorOptsOST *opts_ost) {
         "Rawstor compiled with object backend: %s\n",
         rawstor_object_backend_name());
 
-    if (rawstor_opts_initialize(opts_ost)) {
+    if (rawstor_opts_initialize(opts_io, opts_ost)) {
         goto err_opts_initialize;
     }
 
@@ -68,12 +71,9 @@ void rawstor_terminate(void) {
 
 
 RawstorIOEvent* rawstor_wait_event(void) {
-    return rawstor_io_wait_event(_rawstor_io);
-}
-
-
-RawstorIOEvent* rawstor_wait_event_timeout(int timeout) {
-    return rawstor_io_wait_event_timeout(_rawstor_io, timeout);
+    return rawstor_io_wait_event_timeout(
+        _rawstor_io,
+        rawstor_opts_io_wait_timeout(NULL));
 }
 
 

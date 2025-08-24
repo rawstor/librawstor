@@ -619,12 +619,9 @@ int rawstor_io_depth(RawstorIO *io) {
 }
 
 
-RawstorIOEvent* rawstor_io_wait_event(RawstorIO *io) {
-    return rawstor_io_wait_event_timeout(io, -1);
-}
-
-
-RawstorIOEvent* rawstor_io_wait_event_timeout(RawstorIO *io, int timeout) {
+RawstorIOEvent* rawstor_io_wait_event_timeout(
+    RawstorIO *io, unsigned int timeout)
+{
     struct pollfd *fds = NULL;
     while (rawstor_ringbuf_empty(io->cqes)) {
         size_t count = rawstor_list_size(io->sessions);

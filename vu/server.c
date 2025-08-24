@@ -108,7 +108,7 @@ static int server_read(RawstorIOEvent *event, void *data) {
         perror("read() failed");
         return -errno;
     }
-    
+
     size_t result = rawstor_io_event_result(event);
     if (result == 0) {
         printf("Connection lost: %d\n", client_socket);
@@ -180,7 +180,7 @@ static int server_write(RawstorIOEvent *event, void *data) {
 
 
 static int server_loop(int client_socket) {
-    if (rawstor_initialize(NULL)) {
+    if (rawstor_initialize(NULL, NULL)) {
         perror("rawstor_initialize() failed");
         return -1;
     };

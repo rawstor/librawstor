@@ -853,25 +853,9 @@ err_write:
 }
 
 
-RawstorIOEvent* rawstor_io_wait_event(RawstorIO *io) {
-    RawstorIOEvent *event = io_process_event(io);
-    if (event != NULL) {
-        return event;
-    }
-
-    if (rawstor_mempool_allocated(io->events_pool) == 0) {
-        return NULL;
-    }
-
-    if (aio_suspend((const struct aiocb* const*)io->cbps, io->depth, NULL)) {
-        return NULL;
-    }
-
-    return io_process_event(io);
-}
-
-
-RawstorIOEvent* rawstor_io_wait_event_timeout(RawstorIO *io, int timeout) {
+RawstorIOEvent* rawstor_io_wait_event_timeout(
+    RawstorIO *io, unsigned int timeout)
+{
     RawstorIOEvent *event = io_process_event(io);
     if (event != NULL) {
         return event;
