@@ -312,22 +312,25 @@ int rawstor_cli_testio(
 {
     if (rawstor_initialize(opts_io, opts_ost)) {
         perror("rawstor_initialize() failed");
-        return EXIT_FAILURE;
+        goto err_initialize;
     }
 
     RawstorObject *object;
     if (rawstor_object_open(NULL, object_id, &object)) {
         perror("rawstor_object_open() failed");
-        return EXIT_FAILURE;
+        goto err_open;
     }
 
     unsigned int counter = count * io_depth;
     Worker **workers = calloc(io_depth, sizeof(Worker*));
+    if (workers == NULL) {
+        goto err_workers;
+    }
     for (unsigned int i = 0; i < io_depth; ++i) {
         workers[i] = worker_create(i, block_size, &counter, count);
         if (workers[i] == NULL) {
             perror("worker_create() failed");
-            return EXIT_FAILURE;
+            goto err_worker_create;
         }
     }
 
@@ -343,7 +346,7 @@ int rawstor_cli_testio(
                 src_data_sent, workers[i]))
             {
                 perror("rawstor_object_pwrite() failed");
-                return EXIT_FAILURE;
+                goto err_pwrite;
             }
         }
     } else {
@@ -358,19 +361,17 @@ int rawstor_cli_testio(
                 srcv_data_sent, workers[i]))
             {
                 perror("rawstor_object_pwritev() failed");
-                return EXIT_FAILURE;
+                goto err_pwrite;
             }
         }
     }
 
-    int ret = EXIT_SUCCESS;
     while (counter > 0) {
         RawstorIOEvent *event = rawstor_wait_event();
         if (event == NULL) {
             assert(errno != 0);
             perror("rawstor_wait_event() failed");
-            ret = EXIT_FAILURE;
-            break;
+            goto err_wait;
         }
 
         int rval = rawstor_dispatch_event(event);
@@ -383,14 +384,13 @@ int rawstor_cli_testio(
             } else {
                 printf("rawstor_dispatch_event(): returns %d\n", rval);
             }
-            ret = EXIT_FAILURE;
-            break;
+            goto err_dispatch;
         }
     }
 
     if (rawstor_object_close(object)) {
         perror("rawstor_object_close() failed");
-        ret = EXIT_FAILURE;
+        goto err_close;
     }
 
     for (unsigned int i = 0; i < io_depth; ++i) {
@@ -400,9 +400,27 @@ int rawstor_cli_testio(
 
     rawstor_terminate();
 
-    if (ret == EXIT_SUCCESS) {
-        printf("Success!\n");
-    }
+    printf("Success!\n");
 
-    return ret;
+    return EXIT_SUCCESS;
+
+err_close:
+err_dispatch:
+err_wait:
+err_pwrite:
+err_worker_create:
+    for (unsigned int i = 0; i < io_depth; ++i) {
+        if (workers[i] != NULL) {
+            worker_delete(workers[i]);
+        }
+    }
+    free(workers);
+err_workers:
+    if (rawstor_object_close(object)) {
+        perror("rawstor_object_close() failed");
+    }
+err_open:
+    rawstor_terminate();
+err_initialize:
+    return EXIT_FAILURE;
 }
