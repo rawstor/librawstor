@@ -18,9 +18,9 @@ extern "C" {
 
 typedef struct RawstorObject RawstorObject;
 
-typedef struct {
+struct RawstorObjectSpec {
     size_t size;
-} RawstorObjectSpec;
+};
 
 typedef int(RawstorCallback)(
     RawstorObject *object, size_t size, size_t res, int error, void *data);
@@ -28,7 +28,7 @@ typedef int(RawstorCallback)(
 
 int rawstor_object_create(
     const struct RawstorOptsOST *opts_ost,
-    const RawstorObjectSpec *spec,
+    const struct RawstorObjectSpec *spec,
     struct RawstorUUID *object_id);
 
 int rawstor_object_delete(
@@ -45,7 +45,7 @@ int rawstor_object_close(RawstorObject *object);
 int rawstor_object_spec(
     const struct RawstorOptsOST *opts_ost,
     const struct RawstorUUID *object_id,
-    RawstorObjectSpec *spec);
+    struct RawstorObjectSpec *spec);
 
 int rawstor_object_pread(
     RawstorObject *object,
