@@ -71,12 +71,9 @@ void rawstor_terminate(void) {
 
 
 RawstorIOEvent* rawstor_wait_event(void) {
-    return rawstor_io_wait_event(_rawstor_io);
-}
-
-
-RawstorIOEvent* rawstor_wait_event_timeout(int timeout) {
-    return rawstor_io_wait_event_timeout(_rawstor_io, timeout);
+    return rawstor_io_wait_event_timeout(
+        _rawstor_io,
+        rawstor_opts_io_wait_timeout(NULL));
 }
 
 

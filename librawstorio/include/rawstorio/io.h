@@ -69,9 +69,8 @@ int rawstor_io_pwritev(
     RawstorIOCallback *cb, void *data);
 
 
-RawstorIOEvent* rawstor_io_wait_event(RawstorIO *io);
-
-RawstorIOEvent* rawstor_io_wait_event_timeout(RawstorIO *io, int timeout);
+RawstorIOEvent* rawstor_io_wait_event_timeout(
+    RawstorIO *io, unsigned int timeout);
 
 void rawstor_io_release_event(RawstorIO *io, RawstorIOEvent *event);
 

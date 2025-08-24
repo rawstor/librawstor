@@ -80,8 +80,6 @@ void rawstor_terminate(void);
 
 RawstorIOEvent* rawstor_wait_event(void);
 
-RawstorIOEvent* rawstor_wait_event_timeout(int timeout);
-
 int rawstor_dispatch_event(RawstorIOEvent *event);
 
 void rawstor_release_event(RawstorIOEvent *event);
