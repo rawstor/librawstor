@@ -9,16 +9,17 @@ extern "C" {
 #endif
 
 
-typedef struct {
+struct RawstorUUID {
     uint8_t bytes[16];
-} RawstorUUID;
+};
 
 typedef char RawstorUUIDString[37];
 
 
-int rawstor_uuid_from_string(RawstorUUID *uuid, const char *s);
+int rawstor_uuid_from_string(struct RawstorUUID *uuid, const char *s);
 
-void rawstor_uuid_to_string(const RawstorUUID *uuid, RawstorUUIDString *s);
+void rawstor_uuid_to_string(
+    const struct RawstorUUID *uuid, RawstorUUIDString *s);
 
 
 #ifdef __cplusplus

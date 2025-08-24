@@ -12,7 +12,7 @@
 
 
 static int test_timestamp() {
-    RawstorUUID uuid;
+    struct RawstorUUID uuid;
     assertTrue(rawstor_uuid7_set_timestamp(&uuid, 100) == 0);
     assertTrue(rawstor_uuid7_get_timestamp(&uuid) == 100);
     assertTrue(rawstor_uuid7_set_timestamp(&uuid, (1ull << 48) - 1) == 0);
@@ -24,7 +24,7 @@ static int test_timestamp() {
 
 
 static int test_counter() {
-    RawstorUUID uuid;
+    struct RawstorUUID uuid;
     assertTrue(rawstor_uuid7_set_counter(&uuid, 100) == 0);
     assertTrue(rawstor_uuid7_get_counter(&uuid) == 100);
     assertTrue(rawstor_uuid7_set_counter(&uuid, (1ull << 42) - 1) == 0);
@@ -37,7 +37,7 @@ static int test_counter() {
 
 static int test_version() {
     for (int version = 0; version < 16; ++version) {
-        RawstorUUID uuid;
+        struct RawstorUUID uuid;
         rawstor_uuid_set_version(&uuid, version);
         assertTrue(rawstor_uuid_get_version(&uuid) == version);
     }
@@ -47,7 +47,7 @@ static int test_version() {
 
 static int test_variant() {
     for (int variant = 0; variant < 4; ++variant) {
-        RawstorUUID uuid;
+        struct RawstorUUID uuid;
         rawstor_uuid_set_variant(&uuid, variant);
         assertTrue(rawstor_uuid_get_variant(&uuid) == variant);
     }
@@ -57,7 +57,7 @@ static int test_variant() {
 
 static int test_all_at_once() {
     RawstorUUIDString s;
-    RawstorUUID uuid = {0};
+    struct RawstorUUID uuid = {0};
     rawstor_uuid_set_version(&uuid, 7);
     rawstor_uuid_set_variant(&uuid, 2);
     rawstor_uuid7_set_counter(&uuid, (1ull << 42) - 1);
@@ -75,7 +75,7 @@ static int test_all_at_once() {
 
 
 static int test_init() {
-    RawstorUUID uuid;
+    struct RawstorUUID uuid;
     assertTrue(rawstor_uuid7_init(&uuid) == 0);
 
     assertTrue(rawstor_uuid_get_version(&uuid) == 7);
@@ -86,7 +86,7 @@ static int test_init() {
 
 
 static int test_from_string() {
-    RawstorUUID uuid;
+    struct RawstorUUID uuid;
     assertTrue(rawstor_uuid_from_string(
         &uuid, "0195e6ef-3ba8-741d-af22-e02bf9c800ec") == 0);
 
@@ -100,7 +100,7 @@ static int test_from_string() {
 
 
 static int test_from_string_errors() {
-    RawstorUUID uuid;
+    struct RawstorUUID uuid;
     assertTrue(rawstor_uuid_from_string(
         &uuid, "0195e6ef-3ba8-741d-af22-e02bf9c800ec") == 0);
 
@@ -124,7 +124,7 @@ static int test_from_string_errors() {
 
 
 static int test_from_string_debug() {
-    RawstorUUID uuid;
+    struct RawstorUUID uuid;
     assertTrue(rawstor_uuid_from_string(&uuid, "a") == 0);
 
     RawstorUUIDString s;

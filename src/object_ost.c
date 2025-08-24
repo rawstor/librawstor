@@ -446,8 +446,8 @@ const char *rawstor_object_backend_name(void) {
 
 int rawstor_object_create(
     const struct RawstorOptsOST RAWSTOR_UNUSED *opts_ost,
-    const RawstorObjectSpec RAWSTOR_UNUSED *spec,
-    RawstorUUID *object_id)
+    const struct RawstorObjectSpec RAWSTOR_UNUSED *spec,
+    struct RawstorUUID *object_id)
 {
     /**
      * TODO: Implement me.
@@ -460,7 +460,7 @@ int rawstor_object_create(
 
 int rawstor_object_delete(
     const struct RawstorOptsOST RAWSTOR_UNUSED *opts_ost,
-    const RawstorUUID RAWSTOR_UNUSED *object_id)
+    const struct RawstorUUID RAWSTOR_UNUSED *object_id)
 {
     fprintf(stderr, "rawstor_object_delete() not implemented\n");
     exit(1);
@@ -471,7 +471,7 @@ int rawstor_object_delete(
 
 int rawstor_object_open(
     const struct RawstorOptsOST *opts_ost,
-    const RawstorUUID *object_id,
+    const struct RawstorUUID *object_id,
     RawstorObject **object)
 {
     int errsv;
@@ -564,14 +564,14 @@ int rawstor_object_close(RawstorObject *object) {
 
 int rawstor_object_spec(
     const struct RawstorOptsOST RAWSTOR_UNUSED *opts_ost,
-    const RawstorUUID RAWSTOR_UNUSED *object_id,
-     RawstorObjectSpec *spec)
+    const struct RawstorUUID RAWSTOR_UNUSED *object_id,
+    struct RawstorObjectSpec *spec)
 {
     /**
      * TODO: Implement me.
      */
 
-    *spec = (RawstorObjectSpec) {
+    *spec = (struct RawstorObjectSpec) {
         .size = 1 << 30,
     };
 

@@ -8,7 +8,7 @@
 #include <time.h>
 
 
-static inline uint64_t uuid7_get_timestamp(const RawstorUUID *uuid) {
+static inline uint64_t uuid7_get_timestamp(const struct RawstorUUID *uuid) {
     uint64_t ts = 0;
     ts = uuid->bytes[0];
     ts = (ts << 8) | uuid->bytes[1];
@@ -20,7 +20,7 @@ static inline uint64_t uuid7_get_timestamp(const RawstorUUID *uuid) {
 }
 
 
-static inline int uuid7_set_timestamp(RawstorUUID *uuid, uint64_t ts) {
+static inline int uuid7_set_timestamp(struct RawstorUUID *uuid, uint64_t ts) {
     static const uint64_t MAX_TIMESTAMP = (1ull << 48) - 1;
 
     if (ts > MAX_TIMESTAMP) {
@@ -39,7 +39,7 @@ static inline int uuid7_set_timestamp(RawstorUUID *uuid, uint64_t ts) {
 }
 
 
-static inline uint64_t uuid7_get_counter(const RawstorUUID *uuid) {
+static inline uint64_t uuid7_get_counter(const struct RawstorUUID *uuid) {
     uint64_t counter = uuid->bytes[6] & 0b00001111;
     counter = (counter << 8) | uuid->bytes[7];
     counter = (counter << 6) | (uuid->bytes[8] & 0b00111111);
@@ -50,7 +50,9 @@ static inline uint64_t uuid7_get_counter(const RawstorUUID *uuid) {
 }
 
 
-static inline int uuid7_set_counter(RawstorUUID *uuid, uint64_t counter) {
+static inline int uuid7_set_counter(
+    struct RawstorUUID *uuid, uint64_t counter)
+{
     static const uint64_t MAX_COUNTER = (1ull << 42) - 1;
 
     if (counter > MAX_COUNTER) {
@@ -70,27 +72,33 @@ static inline int uuid7_set_counter(RawstorUUID *uuid, uint64_t counter) {
 }
 
 
-static inline uint8_t uuid_get_version(RawstorUUID *uuid) {
+static inline uint8_t uuid_get_version(struct RawstorUUID *uuid) {
     return uuid->bytes[6] >> 4;
 }
 
 
-static inline void uuid_set_version(RawstorUUID *uuid, uint8_t version) {
+static inline void uuid_set_version(
+    struct RawstorUUID *uuid, uint8_t version)
+{
     uuid->bytes[6] = (version << 4) | (uuid->bytes[6] & 0b00001111);
 }
 
 
-static inline uint8_t uuid_get_variant(RawstorUUID *uuid) {
+static inline uint8_t uuid_get_variant(struct RawstorUUID *uuid) {
     return uuid->bytes[8] >> 6;
 }
 
 
-static inline void uuid_set_variant(RawstorUUID *uuid, uint8_t variant) {
+static inline void uuid_set_variant(
+    struct RawstorUUID *uuid, uint8_t variant)
+{
     uuid->bytes[8] = (variant << 6) | (uuid->bytes[8] & 0b00111111);
 }
 
 
-static inline int uuid_add_entropy(RawstorUUID *uuid, unsigned int size) {
+static inline int uuid_add_entropy(
+    struct RawstorUUID *uuid, unsigned int size)
+{
     if (getentropy(&uuid->bytes[16 - size], size)) {
         return -errno;
     }
@@ -98,47 +106,47 @@ static inline int uuid_add_entropy(RawstorUUID *uuid, unsigned int size) {
 }
 
 
-uint64_t rawstor_uuid7_get_timestamp(const RawstorUUID *uuid) {
+uint64_t rawstor_uuid7_get_timestamp(const struct RawstorUUID *uuid) {
     return uuid7_get_timestamp(uuid);
 }
 
 
-int rawstor_uuid7_set_timestamp(RawstorUUID *uuid, uint64_t ts) {
+int rawstor_uuid7_set_timestamp(struct RawstorUUID *uuid, uint64_t ts) {
     return uuid7_set_timestamp(uuid, ts);
 }
 
 
-uint64_t rawstor_uuid7_get_counter(const RawstorUUID *uuid) {
+uint64_t rawstor_uuid7_get_counter(const struct RawstorUUID *uuid) {
     return uuid7_get_counter(uuid);
 }
 
 
-int rawstor_uuid7_set_counter(RawstorUUID *uuid, uint64_t counter) {
+int rawstor_uuid7_set_counter(struct RawstorUUID *uuid, uint64_t counter) {
     return uuid7_set_counter(uuid, counter);
 }
 
-uint8_t rawstor_uuid_get_version(RawstorUUID *uuid) {
+uint8_t rawstor_uuid_get_version(struct RawstorUUID *uuid) {
     return uuid_get_version(uuid);
 }
 
 
-void rawstor_uuid_set_version(RawstorUUID *uuid, uint8_t version) {
+void rawstor_uuid_set_version(struct RawstorUUID *uuid, uint8_t version) {
     return uuid_set_version(uuid, version);
 }
 
 
-uint8_t rawstor_uuid_get_variant(RawstorUUID *uuid) {
+uint8_t rawstor_uuid_get_variant(struct RawstorUUID *uuid) {
     return uuid_get_variant(uuid);
 }
 
 
-void rawstor_uuid_set_variant(RawstorUUID *uuid, uint8_t variant) {
+void rawstor_uuid_set_variant(struct RawstorUUID *uuid, uint8_t variant) {
     uuid_set_variant(uuid, variant);
 }
 
 
-int rawstor_uuid7_init(RawstorUUID *uuid) {
-    static RawstorUUID prev_uuid = {0};
+int rawstor_uuid7_init(struct RawstorUUID *uuid) {
+    static struct RawstorUUID prev_uuid = {0};
 
     struct timespec tp;
     if (clock_gettime(CLOCK_REALTIME, &tp)) {
@@ -178,7 +186,7 @@ int rawstor_uuid7_init(RawstorUUID *uuid) {
 }
 
 
-int rawstor_uuid_from_string(RawstorUUID *uuid, const char *s) {
+int rawstor_uuid_from_string(struct RawstorUUID *uuid, const char *s) {
     /**
      * TODO: Delete this logic before first release.
      * This is for debug purposes only.
@@ -196,7 +204,7 @@ int rawstor_uuid_from_string(RawstorUUID *uuid, const char *s) {
             return -errno;
         }
 
-        RawstorUUID ret = {0};
+        struct RawstorUUID ret = {0};
         uuid_set_version(&ret, 7);
         uuid_set_variant(&ret, 2);
         uuid7_set_counter(&ret, x);
@@ -235,7 +243,9 @@ int rawstor_uuid_from_string(RawstorUUID *uuid, const char *s) {
 }
 
 
-void rawstor_uuid_to_string(const RawstorUUID *uuid, RawstorUUIDString *s) {
+void rawstor_uuid_to_string(
+    const struct RawstorUUID *uuid, RawstorUUIDString *s)
+{
     static const char alphabet[] = "0123456789abcdef";
     char *p = *s;
     for (int i = 0; i < 16; ++i) {
