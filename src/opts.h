@@ -25,7 +25,7 @@ int rawstor_opts_initialize(
 
 void rawstor_opts_terminate(void);
 
-unsigned int rawstor_opts_io_wait_timtout(
+unsigned int rawstor_opts_io_wait_timeout(
     const struct RawstorOptsIO *opts_io);
 
 const char* rawstor_opts_ost_host(
