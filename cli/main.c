@@ -285,7 +285,7 @@ int main(int argc, char **argv) {
         const char *comma = strchr(ost_arg, ':');
         if (comma != NULL) {
             if (sscanf(comma + 1, "%u", &opts_ost.port) != 1) {
-                fprintf(stderr, "ost port argument must be unsigned integer");
+                fprintf(stderr, "ost port argument must be unsigned integer\n");
                 return EXIT_FAILURE;
             }
         }
