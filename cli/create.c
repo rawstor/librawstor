@@ -22,7 +22,7 @@ int rawstor_cli_create(
 
     fprintf(stderr, "Creating object with specification:\n");
     fprintf(stderr, "  size: %zu Gb\n", size);
-    RawstorUUID object_id;
+    struct RawstorUUID object_id;
     if (rawstor_object_create(NULL, &spec, &object_id)) {
         perror("rawstor_object_create() failed");
         return EXIT_FAILURE;

@@ -223,7 +223,7 @@ static int command_testio(
         return EXIT_FAILURE;
     }
 
-    RawstorUUID object_id;
+    struct RawstorUUID object_id;
     if (rawstor_uuid_from_string(&object_id, object_id_arg)) {
         fprintf(stderr, "object-id argument must be valid UUID\n");
         return EXIT_FAILURE;

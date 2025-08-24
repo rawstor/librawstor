@@ -111,7 +111,7 @@ static int get_object_dat_path(
 static int object_write_dat(
     const char *ost_path,
     const RawstorObjectSpec *spec,
-    RawstorUUID *object_id)
+    struct RawstorUUID *object_id)
 {
     int errsv;
     RawstorUUIDString uuid_string;
@@ -154,7 +154,7 @@ const char *rawstor_object_backend_name() {
 int rawstor_object_create(
     const struct RawstorOptsOST *opts_ost,
     const RawstorObjectSpec *spec,
-    RawstorUUID *object_id)
+    struct RawstorUUID *object_id)
 {
     int errsv;
     const char *ost_host = rawstor_opts_ost_host(opts_ost);
@@ -169,7 +169,7 @@ int rawstor_object_create(
         }
     }
 
-    RawstorUUID uuid;
+    struct RawstorUUID uuid;
     RawstorUUIDString uuid_string;
     char spec_path[PATH_MAX];
     int fd;
@@ -220,7 +220,7 @@ err_write:
 
 int rawstor_object_delete(
     const struct RawstorOptsOST *opts_ost,
-    const RawstorUUID *object_id)
+    const struct RawstorUUID *object_id)
 {
     const char *ost_host = rawstor_opts_ost_host(opts_ost);
     unsigned int ost_port = rawstor_opts_ost_port(opts_ost);
@@ -255,7 +255,7 @@ int rawstor_object_delete(
 
 int rawstor_object_open(
     const struct RawstorOptsOST *opts_ost,
-    const RawstorUUID *object_id,
+    const struct RawstorUUID *object_id,
     RawstorObject **object)
 {
     const char *ost_host = rawstor_opts_ost_host(opts_ost);
@@ -318,7 +318,7 @@ int rawstor_object_close(RawstorObject *object) {
 
 int rawstor_object_spec(
     const struct RawstorOptsOST *opts_ost,
-    const RawstorUUID *object_id,
+    const struct RawstorUUID *object_id,
     RawstorObjectSpec *spec)
 {
     int errsv;
