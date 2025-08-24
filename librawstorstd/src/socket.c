@@ -94,7 +94,7 @@ int rawstor_socket_set_user_timeout(int fd, unsigned int timeout) {
         }
         rawstor_info("fd %d: IPPROTO_TCP/TCP_USER_TIMEOUT = %u ms\n", fd, timeout);
     #elif defined(RAWSTOR_ON_MACOS)
-        timeout /= 1000;
+        timeout = (timeout + 999) / 1000;
         if (setsockopt(
             fd, IPPROTO_TCP, TCP_CONNECTIONTIMEOUT,
             &timeout, sizeof(timeout)))
