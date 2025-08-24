@@ -4,22 +4,71 @@
 
 #include <rawstor.h>
 
+#include <assert.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 
-struct Worker {
+typedef struct {
     unsigned int index;
     off_t offset;
 
     struct iovec src_iov;
     struct iovec dst_iov;
 
-    unsigned int current;
-    unsigned int total;
-};
+    unsigned int *counter;
+    unsigned int iteration;
+    unsigned int niterations;
+} Worker;
+
+
+static Worker* worker_create(
+    unsigned int index, size_t block_size,
+    unsigned int *counter, unsigned int niterations)
+{
+    Worker *worker = malloc(sizeof(Worker));
+    if (worker == NULL) {
+        goto err_worker;
+    }
+
+    *worker = (Worker) {
+        .index = index,
+        .offset = block_size * index,
+        .src_iov.iov_len = block_size,
+        .dst_iov.iov_len = block_size,
+        .counter = counter,
+        .iteration = 0,
+        .niterations = niterations,
+    };
+
+    worker->src_iov.iov_base = malloc(block_size);
+    if (worker->src_iov.iov_base == NULL) {
+        goto err_src_iov;
+    }
+
+    worker->dst_iov.iov_base = malloc(block_size);
+    if (worker->dst_iov.iov_base == NULL) {
+        goto err_dst_iov;
+    }
+
+    return worker;
+
+err_dst_iov:
+    free(worker->src_iov.iov_base);
+err_src_iov:
+    free(worker);
+err_worker:
+    return NULL;
+}
+
+
+static void worker_delete(Worker *worker) {
+    free(worker->dst_iov.iov_base);
+    free(worker->src_iov.iov_base);
+    free(worker);
+}
 
 
 static void print_buf(const char *buf, size_t size) {
@@ -31,22 +80,13 @@ static void print_buf(const char *buf, size_t size) {
 }
 
 
-/*
-static void fill(char *buffer, size_t size) {
-    for (unsigned int i = 0; i < size; ++i) {
-        buffer[i] = 'a' + rand() % ('z' - 'a' + 1);
-    }
-}
-*/
-
-
 static void fill(
-    char *buffer, size_t size, unsigned int index, unsigned int current)
+    char *buffer, size_t size, unsigned int index, unsigned int iteration)
 {
     while (1) {
         int res = snprintf(
             buffer, size, "<worker %u iteration %u> ",
-            index, current + 1);
+            index, iteration + 1);
         if (res < 0) {
             break;
         }
@@ -73,7 +113,7 @@ static int srcv_data_sent(
 static int dst_data_received(
     RawstorObject *object, size_t size, size_t result, int error, void *data)
 {
-    struct Worker *worker = (struct Worker*)data;
+    Worker *worker = (Worker*)data;
 
     printf("(%u) %s(): result = %zd\n", worker->index, __FUNCTION__, result);
 
@@ -105,18 +145,21 @@ static int dst_data_received(
     } else {
         printf(
             "(%u) %s(): src == dst on %u of %u\n",
-            worker->index, __FUNCTION__, worker->current + 1, worker->total);
+            worker->index, __FUNCTION__,
+            worker->iteration + 1, worker->niterations);
     }
 
-    if (worker->current >= worker->total - 1) {
+    --(*worker->counter);
+    ++worker->iteration;
+
+    if (worker->iteration >= worker->niterations) {
         printf("(%u) %s(): Worker done\n", worker->index, __FUNCTION__);
         return 0;
     }
 
-    ++worker->current;
     fill(
         worker->src_iov.iov_base, worker->src_iov.iov_len,
-        worker->index, worker->current);
+        worker->index, worker->iteration);
 
     return rawstor_object_pwrite(
         object,
@@ -128,7 +171,7 @@ static int dst_data_received(
 static int dstv_data_received(
     RawstorObject *object, size_t size, size_t result, int error, void *data)
 {
-    struct Worker *worker = (struct Worker*)data;
+    Worker *worker = (Worker*)data;
 
     printf("(%u) %s(): result = %zd\n", worker->index, __FUNCTION__, result);
 
@@ -160,18 +203,21 @@ static int dstv_data_received(
     } else {
         printf(
             "(%u) %s(): src == dst on %u of %u\n",
-            worker->index, __FUNCTION__, worker->current + 1, worker->total);
+            worker->index, __FUNCTION__,
+            worker->iteration + 1, worker->niterations);
     }
 
-    if (worker->current >= worker->total - 1) {
+    --(*worker->counter);
+    ++worker->iteration;
+
+    if (worker->iteration >= worker->niterations) {
         printf("(%u) %s(): Worker done\n", worker->index, __FUNCTION__);
         return 0;
     }
 
-    ++worker->current;
     fill(
         worker->src_iov.iov_base, worker->src_iov.iov_len,
-        worker->index, worker->current);
+        worker->index, worker->iteration);
 
     return rawstor_object_pwritev(
         object,
@@ -183,7 +229,7 @@ static int dstv_data_received(
 static int src_data_sent(
     RawstorObject *object, size_t size, size_t result, int error, void *data)
 {
-    struct Worker *worker = (struct Worker*)data;
+    Worker *worker = (Worker*)data;
 
     printf("(%u) %s(): result = %zd\n", worker->index, __FUNCTION__, result);
 
@@ -221,7 +267,7 @@ static int src_data_sent(
 static int srcv_data_sent(
     RawstorObject *object, size_t size, size_t result, int error, void *data)
 {
-    struct Worker *worker = (struct Worker*)data;
+    Worker *worker = (Worker*)data;
 
     printf("(%u) %s(): result = %zd\n", worker->index, __FUNCTION__, result);
 
@@ -265,75 +311,66 @@ int rawstor_cli_testio(
 {
     if (rawstor_initialize(opts_io, opts_ost)) {
         perror("rawstor_initialize() failed");
-        return EXIT_FAILURE;
+        goto err_initialize;
     }
 
     RawstorObject *object;
     if (rawstor_object_open(NULL, object_id, &object)) {
         perror("rawstor_object_open() failed");
-        return EXIT_FAILURE;
+        goto err_open;
     }
 
-    /**
-     * TODO: free workers
-     */
-    struct Worker *workers = calloc(io_depth, sizeof(struct Worker));
+    unsigned int counter = count * io_depth;
+    Worker **workers = calloc(io_depth, sizeof(Worker*));
+    if (workers == NULL) {
+        goto err_workers;
+    }
     for (unsigned int i = 0; i < io_depth; ++i) {
-        workers[i] = (struct Worker) {
-            .index = i,
-            .offset = block_size * i,
-            .src_iov.iov_base = malloc(block_size),
-            .src_iov.iov_len = block_size,
-            .dst_iov.iov_base = malloc(block_size),
-            .dst_iov.iov_len = block_size,
-            .current = 0,
-            .total = count,
-        };
+        workers[i] = worker_create(i, block_size, &counter, count);
+        if (workers[i] == NULL) {
+            perror("worker_create() failed");
+            goto err_worker_create;
+        }
     }
 
     if (!vector_mode) {
         for (unsigned int i = 0; i < io_depth; ++i) {
             fill(
-                workers[i].src_iov.iov_base, workers[i].src_iov.iov_len,
+                workers[i]->src_iov.iov_base, workers[i]->src_iov.iov_len,
                 i, 0);
             if (rawstor_object_pwrite(
                 object,
-                workers[i].src_iov.iov_base, workers[i].src_iov.iov_len,
-                workers[i].offset,
-                src_data_sent, &workers[i]))
+                workers[i]->src_iov.iov_base, workers[i]->src_iov.iov_len,
+                workers[i]->offset,
+                src_data_sent, workers[i]))
             {
                 perror("rawstor_object_pwrite() failed");
-                return EXIT_FAILURE;
+                goto err_pwrite;
             }
         }
     } else {
         for (unsigned int i = 0; i < io_depth; ++i) {
             fill(
-                workers[i].src_iov.iov_base, workers[i].src_iov.iov_len,
+                workers[i]->src_iov.iov_base, workers[i]->src_iov.iov_len,
                 i, 0);
             if (rawstor_object_pwritev(
                 object,
-                &workers[i].src_iov, 1, workers[i].src_iov.iov_len,
-                workers[i].offset,
-                srcv_data_sent, &workers[i]))
+                &workers[i]->src_iov, 1, workers[i]->src_iov.iov_len,
+                workers[i]->offset,
+                srcv_data_sent, workers[i]))
             {
                 perror("rawstor_object_pwritev() failed");
-                return EXIT_FAILURE;
+                goto err_pwrite;
             }
         }
     }
 
-    int ret = EXIT_SUCCESS;
-    while (1) {
+    while (counter > 0) {
         RawstorIOEvent *event = rawstor_wait_event();
         if (event == NULL) {
-            if (errno) {
-                perror("rawstor_wait_event() failed");
-                ret = EXIT_FAILURE;
-            } else {
-                printf("rawstor_wait_event(): returns NULL\n");
-            }
-            break;
+            assert(errno != 0);
+            perror("rawstor_wait_event() failed");
+            goto err_wait;
         }
 
         int rval = rawstor_dispatch_event(event);
@@ -346,17 +383,41 @@ int rawstor_cli_testio(
             } else {
                 printf("rawstor_dispatch_event(): returns %d\n", rval);
             }
-            ret = EXIT_FAILURE;
-            break;
+            goto err_dispatch;
         }
     }
 
     if (rawstor_object_close(object)) {
         perror("rawstor_object_close() failed");
-        ret = EXIT_FAILURE;
     }
+
+    for (unsigned int i = 0; i < io_depth; ++i) {
+        worker_delete(workers[i]);
+    }
+    free(workers);
 
     rawstor_terminate();
 
-    return ret;
+    printf("Success!\n");
+
+    return EXIT_SUCCESS;
+
+err_dispatch:
+err_wait:
+err_pwrite:
+err_worker_create:
+    for (unsigned int i = 0; i < io_depth; ++i) {
+        if (workers[i] != NULL) {
+            worker_delete(workers[i]);
+        }
+    }
+    free(workers);
+err_workers:
+    if (rawstor_object_close(object)) {
+        perror("rawstor_object_close() failed");
+    }
+err_open:
+    rawstor_terminate();
+err_initialize:
+    return EXIT_FAILURE;
 }
