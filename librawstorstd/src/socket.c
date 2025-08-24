@@ -92,7 +92,7 @@ int rawstor_socket_set_user_timeout(int fd, unsigned int timeout) {
         {
             return -errno;
         }
-        rawstor_info("fd %d: IPPROTO_TCP/TCP_USER_TIMEOUT = %u\n", fd, timeout);
+        rawstor_info("fd %d: IPPROTO_TCP/TCP_USER_TIMEOUT = %ums\n", fd, timeout);
     #elif defined(RAWSTOR_ON_MACOS)
         timeout /= 1000;
         if (setsockopt(
@@ -116,7 +116,7 @@ int rawstor_socket_set_snd_bufsize(int fd, unsigned int size) {
         return -errno;
     }
 
-    rawstor_info("fd %d: SOL_SOCKET/SO_SNDBUF = %u\n", fd, size);
+    rawstor_info("fd %d: SOL_SOCKET/SO_SNDBUF = %ub\n", fd, size);
 
     return 0;
 }
@@ -127,7 +127,7 @@ int rawstor_socket_set_rcv_bufsize(int fd, unsigned int size) {
         return -errno;
     }
 
-    rawstor_info("fd %d: SOL_SOCKET/SO_RCVBUF = %u\n", fd, size);
+    rawstor_info("fd %d: SOL_SOCKET/SO_RCVBUF = %ub\n", fd, size);
 
     return 0;
 }
