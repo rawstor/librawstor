@@ -1,6 +1,6 @@
 #!/bin/bash
 
-set -e
+set -ex
 
 OBJECT_URI=$1
 BS=$2
