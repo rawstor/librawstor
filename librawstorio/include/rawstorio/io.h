@@ -11,6 +11,11 @@
 #include <stdio.h>
 
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+
 typedef struct RawstorIO RawstorIO;
 
 // defined in rawstor.h
@@ -73,6 +78,11 @@ RawstorIOEvent* rawstor_io_wait_event_timeout(
     RawstorIO *io, unsigned int timeout);
 
 void rawstor_io_release_event(RawstorIO *io, RawstorIOEvent *event);
+
+
+#ifdef __cplusplus
+}
+#endif
 
 
 #endif // RAWSTORIO_IO_H

@@ -4,6 +4,11 @@
 #include <stddef.h>
 
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+
 typedef struct RawstorRingBuf RawstorRingBuf;
 
 RawstorRingBuf* rawstor_ringbuf_create(size_t capacity, size_t object_size);
@@ -25,6 +30,11 @@ size_t rawstor_ringbuf_size(RawstorRingBuf *buf);
 void* rawstor_ringbuf_iter(RawstorRingBuf *buf);
 
 void* rawstor_ringbuf_next(RawstorRingBuf *buf, void *iter);
+
+
+#ifdef __cplusplus
+}
+#endif
 
 
 #endif // RAWSTORSTD_RINGBUF_H

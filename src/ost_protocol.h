@@ -9,6 +9,11 @@
 #include <stdlib.h>
 
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+
 #define RAWSTOR_MAGIC 0x72737472 // "rstr" as ascii
 
 
@@ -60,6 +65,11 @@ typedef struct {
     int32_t res;
     u_int64_t hash;
 } RAWSTOR_PACKED RawstorOSTFrameResponse;
+
+
+#ifdef __cplusplus
+}
+#endif
 
 
 #endif // RAWSTOR_OST_PROTOCOL_H

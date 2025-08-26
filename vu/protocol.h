@@ -6,6 +6,12 @@
 #else
 #include <stdint.h>
 
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+
 /* Do we get callbacks when the ring is completely used, even if we've
  * suppressed them? */
 #define VIRTIO_F_NOTIFY_ON_EMPTY    24
@@ -225,6 +231,11 @@ typedef struct VhostUserMsg {
     int fd_num;
     uint8_t *data;
 } RAWSTOR_VU_PACKED VhostUserMsg;
+
+
+#ifdef __cplusplus
+}
+#endif
 
 
 #endif // RAWSTOR_VHOST_SERVER_H

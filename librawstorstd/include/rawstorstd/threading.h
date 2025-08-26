@@ -2,6 +2,11 @@
 #define RAWSTORSTD_THREADING
 
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+
 typedef struct RawstorThread RawstorThread;
 
 typedef struct RawstorMutex RawstorMutex;
@@ -37,6 +42,11 @@ int rawstor_cond_wait_timeout(
 void rawstor_cond_signal(RawstorCond *cond);
 
 void rawstor_cond_broadcast(RawstorCond *cond);
+
+
+#ifdef __cplusplus
+}
+#endif
 
 
 #endif // RAWSTORSTD_THREADING

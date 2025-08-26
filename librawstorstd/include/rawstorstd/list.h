@@ -4,6 +4,11 @@
 #include <stddef.h>
 
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+
 typedef struct RawstorList RawstorList;
 
 
@@ -22,6 +27,11 @@ void* rawstor_list_remove(RawstorList *list, void *iter);
 int rawstor_list_empty(RawstorList *list);
 
 size_t rawstor_list_size(RawstorList *list);
+
+
+#ifdef __cplusplus
+}
+#endif
 
 
 #endif // RAWSTORSTD_LIST_H

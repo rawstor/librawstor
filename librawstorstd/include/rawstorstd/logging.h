@@ -8,6 +8,11 @@
 #include <unistd.h>
 
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+
 extern RawstorMutex *rawstor_logging_mutex;
 
 
@@ -75,6 +80,11 @@ void rawstor_trace_event_message(void *event, const char *format, ...);
 void rawstor_trace_event_dump(void);
 #else
 #define rawstor_trace_event_dump()
+#endif
+
+
+#ifdef __cplusplus
+}
 #endif
 
 
