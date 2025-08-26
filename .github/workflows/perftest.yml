@@ -96,8 +96,9 @@ jobs:
         echo "OBJECT_ID=${object_id}" >> $GITHUB_ENV
     - name: fio
       run: |
-        echo "# fio ${{ matrix.without-liburing }} ${{ matrix.disable-ost }}" >> $GITHUB_STEP_SUMMARY
-        echo "## bs=${{ matrix.bs }}, iodepth=${{ matrix.iodepth }}, numjobs=${{ matrix.numjobs }}" >> $GITHUB_STEP_SUMMARY
+        echo "# perftest" >> $GITHUB_STEP_SUMMARY
+        echo "## fio ${{ matrix.without-liburing }} ${{ matrix.disable-ost }}" >> $GITHUB_STEP_SUMMARY
+        echo "### bs=${{ matrix.bs }}, iodepth=${{ matrix.iodepth }}, numjobs=${{ matrix.numjobs }}" >> $GITHUB_STEP_SUMMARY
         ./librawstor/.github/tools/fio.sh \
           ${OBJECT_ID} \
           ${{ matrix.bs }} \
@@ -232,8 +233,9 @@ jobs:
         echo "OBJECT_ID=${object_id}" >> $GITHUB_ENV
     - name: fio
       run: |
-        echo "# fio ${{ matrix.without-liburing }} ${{ matrix.disable-ost }}" >> $GITHUB_STEP_SUMMARY
-        echo "## bs=${{ matrix.bs }}, iodepth=${{ matrix.iodepth }}, numjobs=${{ matrix.numjobs }}" >> $GITHUB_STEP_SUMMARY
+        echo "# perftest-hw-runner" >> $GITHUB_STEP_SUMMARY
+        echo "## fio ${{ matrix.without-liburing }} ${{ matrix.disable-ost }}" >> $GITHUB_STEP_SUMMARY
+        echo "### bs=${{ matrix.bs }}, iodepth=${{ matrix.iodepth }}, numjobs=${{ matrix.numjobs }}" >> $GITHUB_STEP_SUMMARY
         ./librawstor/.github/tools/fio.sh \
           ${OBJECT_ID} \
           ${{ matrix.bs }} \
@@ -247,30 +249,3 @@ jobs:
     - name: (rawstor_ost) stop rawstor_ost
       if: "${{ matrix.disable-ost == '' }}"
       run: killall ost
-    - uses: actions/checkout@v4
-      with:
-        repository: rawstor/rawstor_bench
-        path: rawstor_bench
-        ref: refs/heads/main
-        ssh-key: ${{ secrets.RAWSTOR_BENCH_TOKEN }}
-    - name: publish
-      run: |
-        ./librawstor/.github/tools/git-config.sh ./librawstor
-
-        ./rawstor_bench/tools/rawstor-bench-import \
-          --prefix=./rawstor_bench \
-          --repo=librawstor \
-          --name=perftest-hw-runner${{ matrix.without-liburing }}${{ matrix.disable-ost }}-${{ matrix.bs }}-${{ matrix.iodepth }}-${{ matrix.numjobs }} \
-          --branch="$GITHUB_REF" \
-          --commit=$GITHUB_SHA \
-          --date="$(date +'%Y-%m-%dT%H:%M:%S%z')" \
-          fio \
-          fio.txt \
-          fio.json
-
-        ./rawstor_bench/tools/rawstor-bench-compile \
-          --prefix=./rawstor_bench fio
-
-        ./librawstor/.github/tools/git-commit-and-push.sh \
-          ./rawstor_bench \
-          "add: perftest-hw-runner ${{ matrix.without-liburing }} ${{ matrix.disable-ost }} benchmarks"
