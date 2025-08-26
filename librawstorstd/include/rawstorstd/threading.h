@@ -45,7 +45,7 @@ void rawstor_cond_broadcast(RawstorCond *cond);
 
 
 #ifdef __cplusplus
-extern "C" {
+}
 #endif
 
 
