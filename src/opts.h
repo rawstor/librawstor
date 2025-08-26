@@ -4,6 +4,11 @@
 #include <rawstor.h>
 
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+
 // defined in rawstor.h
 // struct RawstorOptsIO {
 //     unsigned int wait_timeout;
@@ -42,6 +47,11 @@ unsigned int rawstor_opts_ost_so_rcvtimeo(
 
 unsigned int rawstor_opts_ost_tcp_user_timeout(
     const struct RawstorOptsOST *opts_ost);
+
+
+#ifdef __cplusplus
+}
+#endif
 
 
 #endif  // RAWSTOR_OPTS_H

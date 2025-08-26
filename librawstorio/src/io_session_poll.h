@@ -13,6 +13,11 @@
 #include <stdio.h>
 
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+
 typedef struct RawstorIOSession RawstorIOSession;
 
 
@@ -37,6 +42,11 @@ int rawstor_io_session_push_write_sqe(
 int rawstor_io_session_process_read(RawstorIOSession *session);
 
 int rawstor_io_session_process_write(RawstorIOSession *session);
+
+
+#ifdef __cplusplus
+}
+#endif
 
 
 #endif // RAWSTORIO_IO_SESSION_POLL_H

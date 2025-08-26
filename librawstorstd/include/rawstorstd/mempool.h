@@ -4,6 +4,11 @@
 #include <stddef.h>
 
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+
 typedef struct RawstorMemPool RawstorMemPool;
 
 
@@ -24,6 +29,11 @@ void* rawstor_mempool_data(RawstorMemPool *mempool);
 void* rawstor_mempool_alloc(RawstorMemPool *mempool);
 
 void rawstor_mempool_free(RawstorMemPool *mempool, void *ptr);
+
+
+#ifdef __cplusplus
+}
+#endif
 
 
 #endif // RAWSTORSTD_MEMPOOL_H

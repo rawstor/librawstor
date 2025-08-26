@@ -6,10 +6,20 @@
 #include <stddef.h>
 
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+
 int rawstor_cli_create(
     const struct RawstorOptsIO *opts_io,
     const struct RawstorOptsOST *opts_ost,
     size_t size);
+
+
+#ifdef __cplusplus
+}
+#endif
 
 
 #endif // RAWSTOR_CLI_CREATE_H

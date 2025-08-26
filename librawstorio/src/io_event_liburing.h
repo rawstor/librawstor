@@ -10,6 +10,11 @@
 #include <stddef.h>
 
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+
 struct RawstorIOEvent {
     int fd;
 
@@ -25,6 +30,11 @@ struct RawstorIOEvent {
     void *trace_event;
 #endif
 };
+
+
+#ifdef __cplusplus
+}
+#endif
 
 
 #endif // RAWSTORIO_IO_EVENT_LIBURING_H
