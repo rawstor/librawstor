@@ -1,4 +1,5 @@
 #include "create.h"
+#include "delete.h"
 #include "testio.h"
 
 #include <rawstor.h>
@@ -23,6 +24,7 @@ static void usage() {
         "\n"
         "command:\n"
         "  create                Create rawstor object\n"
+        "  delete                Delete rawstor object\n"
         "  testio                Test rawstor IO routines\n"
         "\n"
         "command options:        Run `<command> --help` to show command usage\n"
@@ -96,6 +98,77 @@ static int command_create(
     }
 
     return rawstor_cli_create(opts_io, opts_ost, size);
+}
+
+
+static void command_delete_usage() {
+    fprintf(
+        stderr,
+        "Rawstor CLI\n"
+        "\n"
+        "usage: rawstor-cli [options] delete [command_options]\n"
+        "\n"
+        "command options:\n"
+        "  -o, --object-id OBJECT_ID\n"
+        "                        Rawstor object id\n"
+    );
+};
+
+
+static int command_delete(
+    const struct RawstorOptsIO *opts_io,
+    const struct RawstorOptsOST *opts_ost,
+    int argc, char **argv)
+{
+    const char *optstring = "ho:";
+    struct option longopts[] = {
+        {"object-id", required_argument, NULL, 'o'},
+        {},
+    };
+
+    char *object_id_arg = NULL;
+    optind = 1;
+    while (1) {
+        int c = getopt_long(argc, argv, optstring, longopts, NULL);
+        if (c == -1) {
+            break;
+        }
+
+        switch (c) {
+            case 'h':
+                command_delete_usage();
+                return EXIT_SUCCESS;
+                break;
+
+            case 'o':
+                object_id_arg = optarg;
+                break;
+
+            default:
+                return EXIT_FAILURE;
+        }
+    }
+
+    if (optind < argc) {
+        fprintf(stderr, "Unexpected argument: %s\n", argv[optind]);
+        return EXIT_FAILURE;
+    }
+
+    if (object_id_arg == NULL) {
+        fprintf(stderr, "object-id required\n");
+        return EXIT_FAILURE;
+    }
+
+    struct RawstorUUID object_id;
+    if (rawstor_uuid_from_string(&object_id, object_id_arg)) {
+        fprintf(stderr, "object-id argument must be valid UUID\n");
+        return EXIT_FAILURE;
+    }
+
+    return rawstor_cli_delete(
+        opts_io,
+        opts_ost,
+        &object_id);
 }
 
 
@@ -308,6 +381,11 @@ int main(int argc, char **argv) {
     char *command = argv[optind];
     if (strcmp(command, "create") == 0) {
         return command_create(
+            &opts_io, &opts_ost, argc - optind, &argv[optind]);
+    }
+
+    if (strcmp(command, "delete") == 0) {
+        return command_delete(
             &opts_io, &opts_ost, argc - optind, &argv[optind]);
     }
 

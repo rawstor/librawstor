@@ -13,7 +13,7 @@ int rawstor_cli_create(
 {
     if (rawstor_initialize(opts_io, opts_ost)) {
         perror("rawstor_initialize() failed");
-        return EXIT_FAILURE;
+        goto err_initialize;
     }
 
     struct RawstorObjectSpec spec = {
@@ -25,7 +25,7 @@ int rawstor_cli_create(
     struct RawstorUUID object_id;
     if (rawstor_object_create(NULL, &spec, &object_id)) {
         perror("rawstor_object_create() failed");
-        return EXIT_FAILURE;
+        goto err_create;
     }
 
     RawstorUUIDString uuid_string;
@@ -36,4 +36,9 @@ int rawstor_cli_create(
     rawstor_terminate();
 
     return EXIT_SUCCESS;
+
+err_create:
+    rawstor_terminate();
+err_initialize:
+    return EXIT_FAILURE;
 }

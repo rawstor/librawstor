@@ -5,6 +5,7 @@ AM_CFLAGS = -std=gnu99 -Wall -Wextra -Werror \
 
 
 rawstor_cli_SOURCES = create.c \
+                      delete.c \
                       main.c \
                       testio.c
 
