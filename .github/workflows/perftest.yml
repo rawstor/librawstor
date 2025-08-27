@@ -183,9 +183,9 @@ jobs:
         pushd .
         cd ./librawstor
         ./autogen.sh
-        ./configure --disable-shared ${{ matrix.without-liburing }} ${{ matrix.disable-ost }}
+        ./configure --prefix=../local --disable-shared ${{ matrix.without-liburing }} ${{ matrix.disable-ost }}
         make
-        sudo make install
+        make install
         popd
     - uses: actions/checkout@v4
       if: "${{ matrix.disable-ost == '' }}"
@@ -200,9 +200,9 @@ jobs:
         pushd .
         cd ./rawstor_ost
         ./autogen.sh
-        ./configure --disable-shared
+        ./configure --prefix=../local --disable-shared
         make
-        sudo make install
+        make install
         popd
     - uses: actions/checkout@v4
       with:
@@ -213,16 +213,16 @@ jobs:
       run: |
         pushd .
         cd ./fio
-        ./configure
+        PKG_CONFIG_PATH=../local ./configure --prefix=../local
         make -j$(nproc)
-        sudo make install
+        make install
         popd
     - name: (rawstor_ost) start rawstor_ost
       if: "${{ matrix.disable-ost == '' }}"
       run: |
-        mkdir -p /tmp/objects
+        mkdir /tmp/objects
         truncate -s 2G /tmp/objects/01988675-e1e5-7788-9ed4-2f2d30910d23
-        ost 8080 /tmp/objects/ &
+        ./local/bin/ost 8080 /tmp/objects/ &
         sleep 10
     - name: create object
       if: "${{ matrix.disable-ost != '' }}"
@@ -239,7 +239,7 @@ jobs:
         echo "# perftest-hw-runner" >> $GITHUB_STEP_SUMMARY
         echo "## fio ${{ matrix.without-liburing }} ${{ matrix.disable-ost }}" >> $GITHUB_STEP_SUMMARY
         echo "### bs=${{ matrix.bs }}, iodepth=${{ matrix.iodepth }}, numjobs=${{ matrix.numjobs }}" >> $GITHUB_STEP_SUMMARY
-        ./librawstor/.github/tools/fio.sh \
+        PATH=./local/bin ./librawstor/.github/tools/fio.sh \
           ${OBJECT_ID} \
           ${{ matrix.bs }} \
           ${{ matrix.iodepth }} \
