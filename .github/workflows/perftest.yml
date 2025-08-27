@@ -175,6 +175,8 @@ jobs:
     - uses: actions/checkout@v4
       with:
         path: librawstor
+    - name: cleanup local
+      run: rm -rf ./local
     - name: install librawstor
       run: |
         pushd .
@@ -248,8 +250,7 @@ jobs:
         echo \`\`\` >> $GITHUB_STEP_SUMMARY
     - name: delete object
       if: "${{ matrix.disable-ost != '' }}"
-      run: |
-        rawstor-cli delete --object-id=${OBJECT_ID}
+      run: rawstor-cli delete --object-id=${OBJECT_ID}
     - name: (rawstor_ost) stop rawstor_ost
       if: "${{ matrix.disable-ost == '' }}"
       run: killall ost
