@@ -122,6 +122,7 @@ static int command_delete(
 {
     const char *optstring = "ho:";
     struct option longopts[] = {
+        {"help", no_argument, NULL, 'h'},
         {"object-id", required_argument, NULL, 'o'},
         {},
     };
