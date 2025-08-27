@@ -241,7 +241,7 @@ jobs:
         echo "# perftest-hw-runner" >> $GITHUB_STEP_SUMMARY
         echo "## fio ${{ matrix.without-liburing }} ${{ matrix.disable-ost }}" >> $GITHUB_STEP_SUMMARY
         echo "### bs=${{ matrix.bs }}, iodepth=${{ matrix.iodepth }}, numjobs=${{ matrix.numjobs }}" >> $GITHUB_STEP_SUMMARY
-        PATH={GITHUB_WORKSPACE}/local/bin ./librawstor/.github/tools/fio.sh \
+        PATH=${GITHUB_WORKSPACE}/local/bin ./librawstor/.github/tools/fio.sh \
           ${OBJECT_ID} \
           ${{ matrix.bs }} \
           ${{ matrix.iodepth }} \
