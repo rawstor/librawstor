@@ -182,7 +182,7 @@ jobs:
         pushd .
         cd ./librawstor
         ./autogen.sh
-        ./configure --prefix=../local --disable-shared ${{ matrix.without-liburing }} ${{ matrix.disable-ost }}
+        ./configure --prefix=${GITHUB_WORKSPACE}/local --disable-shared ${{ matrix.without-liburing }} ${{ matrix.disable-ost }}
         make
         make install
         popd
@@ -199,7 +199,7 @@ jobs:
         pushd .
         cd ./rawstor_ost
         ./autogen.sh
-        ./configure --prefix=../local --disable-shared
+        ./configure --prefix=${GITHUB_WORKSPACE}/local --disable-shared
         make
         make install
         popd
@@ -212,7 +212,7 @@ jobs:
       run: |
         pushd .
         cd ./fio
-        PKG_CONFIG_PATH=../local ./configure --prefix=../local
+        PKG_CONFIG_PATH=${GITHUB_WORKSPACE}/local ./configure --prefix=${GITHUB_WORKSPACE}/local
         make -j$(nproc)
         make install
         popd
@@ -238,7 +238,7 @@ jobs:
         echo "# perftest-hw-runner" >> $GITHUB_STEP_SUMMARY
         echo "## fio ${{ matrix.without-liburing }} ${{ matrix.disable-ost }}" >> $GITHUB_STEP_SUMMARY
         echo "### bs=${{ matrix.bs }}, iodepth=${{ matrix.iodepth }}, numjobs=${{ matrix.numjobs }}" >> $GITHUB_STEP_SUMMARY
-        PATH=./local/bin ./librawstor/.github/tools/fio.sh \
+        PATH={GITHUB_WORKSPACE}/local/bin ./librawstor/.github/tools/fio.sh \
           ${OBJECT_ID} \
           ${{ matrix.bs }} \
           ${{ matrix.iodepth }} \
