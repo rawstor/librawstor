@@ -74,7 +74,7 @@ jobs:
         pushd .
         cd ./fio
         ./configure
-        make
+        make -j$(nproc)
         sudo make install
         popd
     - name: (rawstor_ost) start rawstor_ost
@@ -211,7 +211,7 @@ jobs:
         pushd .
         cd ./fio
         ./configure
-        make
+        make -j$(nproc)
         sudo make install
         popd
     - name: (rawstor_ost) start rawstor_ost
