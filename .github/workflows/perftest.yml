@@ -80,7 +80,7 @@ jobs:
     - name: (rawstor_ost) start rawstor_ost
       if: "${{ matrix.disable-ost == '' }}"
       run: |
-        mkdir /tmp/objects
+        mkdir -p /tmp/objects
         truncate -s 2G /tmp/objects/01988675-e1e5-7788-9ed4-2f2d30910d23
         ost 8080 /tmp/objects/ &
         sleep 10
@@ -171,7 +171,7 @@ jobs:
     - name: install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libxxhash-dev libtool pkg-config ${{ matrix.packages }}
+        sudo apt-get install -y libxxhash-dev ${{ matrix.packages }}
     - uses: actions/checkout@v4
       with:
         path: librawstor
@@ -217,7 +217,7 @@ jobs:
     - name: (rawstor_ost) start rawstor_ost
       if: "${{ matrix.disable-ost == '' }}"
       run: |
-        mkdir /tmp/objects
+        mkdir -p /tmp/objects
         truncate -s 2G /tmp/objects/01988675-e1e5-7788-9ed4-2f2d30910d23
         ost 8080 /tmp/objects/ &
         sleep 10
