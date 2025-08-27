@@ -222,7 +222,7 @@ jobs:
     - name: (rawstor_ost) start rawstor_ost
       if: "${{ matrix.disable-ost == '' }}"
       run: |
-        mkdir /tmp/objects
+        mkdir -p /tmp/objects
         truncate -s 2G /tmp/objects/01988675-e1e5-7788-9ed4-2f2d30910d23
         ./local/bin/ost 8080 /tmp/objects/ &
         sleep 10
@@ -256,4 +256,6 @@ jobs:
       run: rawstor-cli delete --object-id=${OBJECT_ID}
     - name: (rawstor_ost) stop rawstor_ost
       if: "${{ matrix.disable-ost == '' }}"
-      run: killall ost
+      run: |
+        killall ost
+        rm -rf /tmp/objects
