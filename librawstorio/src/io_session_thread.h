@@ -4,6 +4,11 @@
 #include "rawstorio/io.h"
 
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+
 typedef struct RawstorIOSession RawstorIOSession;
 
 
@@ -26,6 +31,11 @@ int rawstor_io_session_kill(RawstorIOSession *session);
 int rawstor_io_session_alive(RawstorIOSession *session);
 
 int rawstor_io_session_compare(RawstorIOSession *session, int fd, int write);
+
+
+#ifdef __cplusplus
+}
+#endif
 
 
 #endif // RAWSTORIO_IO_SESSION_THREAD_H
