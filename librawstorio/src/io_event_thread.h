@@ -8,6 +8,11 @@
 #include <stdio.h>
 
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+
 struct RawstorIOEvent {
     RawstorIOSession *session;
 
@@ -39,6 +44,11 @@ ssize_t rawstor_io_event_process_preadv(RawstorIOEvent *event);
 ssize_t rawstor_io_event_process_writev(RawstorIOEvent *event);
 
 ssize_t rawstor_io_event_process_pwritev(RawstorIOEvent *event);
+
+
+#ifdef __cplusplus
+}
+#endif
 
 
 #endif // RAWSTORIO_IO_EVENT_THREAD_H

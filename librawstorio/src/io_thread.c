@@ -606,27 +606,7 @@ err_event_iov:
 }
 
 
-RawstorIOEvent* rawstor_io_wait_event(RawstorIO *io) {
-    if (rawstor_mempool_allocated(io->events_pool) == 0) {
-        return NULL;
-    }
-
-    rawstor_mutex_lock(io->mutex);
-    if (rawstor_ringbuf_empty(io->cqes)) {
-        rawstor_cond_wait(io->cond, io->mutex);
-    }
-
-    assert(!rawstor_ringbuf_empty(io->cqes));
-    RawstorIOEvent **cqe = rawstor_ringbuf_tail(io->cqes);
-    RawstorIOEvent *event = *cqe;
-    assert(rawstor_ringbuf_pop(io->cqes) == 0);
-    rawstor_mutex_unlock(io->mutex);
-
-    return event;
-}
-
-
-RawstorIOEvent* rawstor_io_wait_event_timeout(RawstorIO *io, int timeout) {
+RawstorIOEvent* rawstor_io_wait_event_timeout(RawstorIO *io, unsigned int timeout) {
     if (rawstor_mempool_allocated(io->events_pool) == 0) {
         return NULL;
     }

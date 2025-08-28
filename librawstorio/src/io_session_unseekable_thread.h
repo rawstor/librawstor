@@ -6,6 +6,11 @@
 #include <stddef.h>
 
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+
 typedef struct RawstorIOSessionUnseekable RawstorIOSessionUnseekable;
 
 
@@ -16,6 +21,11 @@ void rawstor_io_session_unseekable_delete(RawstorIOSessionUnseekable *session);
 
 int rawstor_io_session_unseekable_push_sqe(
     RawstorIOSessionUnseekable *session, RawstorIOEvent *event);
+
+
+#ifdef __cplusplus
+}
+#endif
 
 
 #endif // RAWSTORIO_IO_SESSION_UNSEEKABLE_THREAD_H
