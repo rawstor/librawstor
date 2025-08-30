@@ -258,8 +258,8 @@ int rawstor_io_queue_setup_fd(int fd) {
 }
 
 
-unsigned int rawstor_io_depth(RawstorIO *io) {
-    return io->depth;
+unsigned int rawstor_io_depth(RawstorIOQueue *queue) {
+    return queue->depth;
 }
 
 

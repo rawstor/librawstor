@@ -1,7 +1,7 @@
-#include "io_session_unseekable_thread.h"
+#include "session_unseekable_thread.h"
 
-#include "io_event_thread.h"
-#include "io_thread.h"
+#include "event_thread.h"
+#include "queue_thread.h"
 
 #include <rawstorstd/iovec.h>
 #include <rawstorstd/list.h>
@@ -29,7 +29,7 @@ struct RawstorIOSessionUnseekable {
 
 static void* io_unseekable_session_thread(void *data) {
     RawstorIOSessionUnseekable *session = data;
-    RawstorIO *io = rawstor_io_session_io(session->base);
+    RawstorIOQueue *queue = rawstor_io_session_queue(session->base);
 
     rawstor_mutex_lock(session->mutex);
     while (!session->exit) {
@@ -99,7 +99,7 @@ static void* io_unseekable_session_thread(void *data) {
                 event->result = event->size;
             }
 
-            if (rawstor_io_push_cqes(io, events, nevents)) {
+            if (rawstor_io_queue_push_cqes(queue, events, nevents)) {
                 /**
                  * TODO: Wait somehow for space in ringbuf.
                  */
@@ -131,8 +131,8 @@ static void* io_unseekable_session_thread(void *data) {
 RawstorIOSessionUnseekable* rawstor_io_session_unseekable_create(
     RawstorIOSession *base)
 {
-    RawstorIO *io = rawstor_io_session_io(base);
-    int depth = rawstor_io_depth(io);
+    RawstorIOQueue *queue = rawstor_io_session_queue(base);
+    int depth = rawstor_io_queue_depth(queue);
 
     RawstorIOSessionUnseekable *session =
         malloc(sizeof(RawstorIOSessionUnseekable));

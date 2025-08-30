@@ -1,5 +1,5 @@
-#include "io_event_thread.h"
-#include <rawstorio/io_event.h>
+#include "event_thread.h"
+#include <rawstorio/event.h>
 
 #include <rawstorstd/logging.h>
 

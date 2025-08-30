@@ -21,9 +21,9 @@ if WITH_LIBURING
                                queue_liburing.c
     librawstorio_la_LIBADD += $(LIBURING_LIBS)
 else
-    librawstorio_la_SOURCES += io_event_thread.c \
-                               io_session_seekable_thread.c \
-                               io_session_thread.c \
-                               io_session_unseekable_thread.c \
-                               io_thread.c
+    librawstorio_la_SOURCES += event_thread.c \
+                               queue_thread.c \
+                               session_seekable_thread.c \
+                               session_thread.c \
+                               session_unseekable_thread.c
 endif

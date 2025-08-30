@@ -1,7 +1,7 @@
-#ifndef RAWSTORIO_IO_SESSION_UNSEEKABLE_THREAD_H
-#define RAWSTORIO_IO_SESSION_UNSEEKABLE_THREAD_H
+#ifndef RAWSTORIO_SESSION_UNSEEKABLE_THREAD_H
+#define RAWSTORIO_SESSION_UNSEEKABLE_THREAD_H
 
-#include "io_session_thread.h"
+#include "session_thread.h"
 
 #include <stddef.h>
 
@@ -28,4 +28,4 @@ int rawstor_io_session_unseekable_push_sqe(
 #endif
 
 
-#endif // RAWSTORIO_IO_SESSION_UNSEEKABLE_THREAD_H
+#endif // RAWSTORIO_SESSION_UNSEEKABLE_THREAD_H
