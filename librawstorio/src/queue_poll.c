@@ -513,7 +513,7 @@ err_new_session:
 }
 
 
-int rawstor_io_writev(
+int rawstor_io_queue_writev(
     RawstorIOQueue *queue,
     int fd, struct iovec *iov, unsigned int niov, size_t size,
     RawstorIOCallback *cb, void *data)
