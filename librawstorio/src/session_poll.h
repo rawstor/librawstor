@@ -1,11 +1,11 @@
-#ifndef RAWSTORIO_IO_SESSION_POLL_H
-#define RAWSTORIO_IO_SESSION_POLL_H
+#ifndef RAWSTORIO_SESSION_POLL_H
+#define RAWSTORIO_SESSION_POLL_H
 
-#include <rawstor/io.h>
-
-#include <rawstorio/io.h>
+#include <rawstorio/queue.h>
 
 #include <rawstorstd/ringbuf.h>
+
+#include <rawstor/io_queue.h>
 
 #include <sys/uio.h>
 
@@ -21,7 +21,7 @@ extern "C" {
 typedef struct RawstorIOSession RawstorIOSession;
 
 
-RawstorIOSession* rawstor_io_session_create(RawstorIO *io, int fd);
+RawstorIOSession* rawstor_io_session_create(RawstorIOQueue *queue, int fd);
 
 void rawstor_io_session_delete(RawstorIOSession *session);
 
@@ -49,4 +49,4 @@ int rawstor_io_session_process_write(RawstorIOSession *session);
 #endif
 
 
-#endif // RAWSTORIO_IO_SESSION_POLL_H
+#endif // RAWSTORIO_SESSION_POLL_H

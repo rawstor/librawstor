@@ -10,7 +10,8 @@
 #include <rawstorstd/socket.h>
 #include <rawstorstd/uuid.h>
 
-#include <rawstorio/io.h>
+#include <rawstorio/event.h>
+#include <rawstorio/queue.h>
 
 #include <arpa/inet.h>
 
@@ -524,7 +525,7 @@ int rawstor_object_open(
         rframe.cmd,
         rframe.res);
 
-    if (rawstor_io_setup_fd(obj->fd)) {
+    if (rawstor_io_queue_setup_fd(obj->fd)) {
         goto err_setup_fd;
     }
 

@@ -1,6 +1,6 @@
-#include "rawstorio/io.h"
+#include "rawstorio/queue.h"
 
-#include "io_event_liburing.h"
+#include "event_liburing.h"
 
 #include <rawstorstd/gcc.h>
 #include <rawstorstd/logging.h>
@@ -17,15 +17,15 @@
 #include <time.h>
 
 
-struct RawstorIO {
+struct RawstorIOQueue {
     unsigned int depth;
     RawstorMemPool *events_pool;
     struct io_uring ring;
 };
 
 
-static inline RawstorIOEvent* io_create_event(
-    RawstorIO *io,
+static inline RawstorIOEvent* io_queue_create_event(
+    RawstorIOQueue *queue,
     int fd, size_t size,
     RawstorIOCallback *cb, void *data)
 {
@@ -33,18 +33,18 @@ static inline RawstorIOEvent* io_create_event(
      * TODO: Since mempool count is equal to sqe count,
      * do we really have to have this check?
      */
-    if (rawstor_mempool_available(io->events_pool) == 0) {
+    if (rawstor_mempool_available(queue->events_pool) == 0) {
         errno = ENOBUFS;
         return NULL;
     }
 
-    struct io_uring_sqe *sqe = io_uring_get_sqe(&io->ring);
+    struct io_uring_sqe *sqe = io_uring_get_sqe(&queue->ring);
     if (sqe == NULL) {
         errno = ENOBUFS;
         return NULL;
     }
 
-    RawstorIOEvent *event = rawstor_mempool_alloc(io->events_pool);
+    RawstorIOEvent *event = rawstor_mempool_alloc(queue->events_pool);
     *event = (RawstorIOEvent) {
         .fd = fd,
         .callback = cb,
@@ -60,56 +60,56 @@ static inline RawstorIOEvent* io_create_event(
 }
 
 
-const char* rawstor_io_engine_name() {
+const char* rawstor_io_queue_engine_name() {
     return "liburing";
 }
 
 
-RawstorIO* rawstor_io_create(unsigned int depth) {
+RawstorIOQueue* rawstor_io_queue_create(unsigned int depth) {
     int errsv;
 
-    RawstorIO *io = malloc(sizeof(RawstorIO));
-    if (io == NULL) {
-        goto err_io;
+    RawstorIOQueue *queue = malloc(sizeof(RawstorIOQueue));
+    if (queue == NULL) {
+        goto err_queue;
     }
 
-    io->depth = depth;
+    queue->depth = depth;
 
     /**
      * TODO: io operations could be much more than depth.
      */
-    io->events_pool = rawstor_mempool_create(depth, sizeof(RawstorIOEvent));
-    if (io->events_pool == NULL) {
+    queue->events_pool = rawstor_mempool_create(depth, sizeof(RawstorIOEvent));
+    if (queue->events_pool == NULL) {
         goto err_events_pool;
     }
 
-    int rval = io_uring_queue_init(depth, &io->ring, 0);
+    int rval = io_uring_queue_init(depth, &queue->ring, 0);
     if (rval < 0) {
         errno = -rval;
         goto err_queue_init;
     };
 
-    return io;
+    return queue;
 
 err_queue_init:
     errsv = errno;
-    rawstor_mempool_delete(io->events_pool);
+    rawstor_mempool_delete(queue->events_pool);
     errno = errsv;
 err_events_pool:
-    free(io);
-err_io:
+    free(queue);
+err_queue:
     return NULL;
 }
 
 
-void rawstor_io_delete(RawstorIO *io) {
-    io_uring_queue_exit(&io->ring);
-    rawstor_mempool_delete(io->events_pool);
-    free(io);
+void rawstor_io_queue_delete(RawstorIOQueue *queue) {
+    io_uring_queue_exit(&queue->ring);
+    rawstor_mempool_delete(queue->events_pool);
+    free(queue);
 }
 
 
-int rawstor_io_setup_fd(int fd) {
+int rawstor_io_queue_setup_fd(int fd) {
     static unsigned int bufsize = 4096 * 64 * 4;
 
     if (rawstor_socket_set_snd_bufsize(fd, bufsize)) {
@@ -128,12 +128,12 @@ int rawstor_io_setup_fd(int fd) {
 }
 
 
-int rawstor_io_read(
-    RawstorIO *io,
+int rawstor_io_queue_read(
+    RawstorIOQueue *queue,
     int fd, void *buf, size_t size,
     RawstorIOCallback *cb, void *data)
 {
-    RawstorIOEvent *event = io_create_event(io, fd, size, cb, data);
+    RawstorIOEvent *event = io_create_event(queue, fd, size, cb, data);
     if (event == NULL) {
         return -errno;
     }
@@ -149,12 +149,12 @@ int rawstor_io_read(
 }
 
 
-int rawstor_io_pread(
-    RawstorIO *io,
+int rawstor_io_queue_pread(
+    RawstorIOQueue *queue,
     int fd, void *buf, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data)
 {
-    RawstorIOEvent *event = io_create_event(io, fd, size, cb, data);
+    RawstorIOEvent *event = io_create_event(queue, fd, size, cb, data);
     if (event == NULL) {
         return -errno;
     }
@@ -170,12 +170,12 @@ int rawstor_io_pread(
 }
 
 
-int rawstor_io_readv(
-    RawstorIO *io,
+int rawstor_io_queue_readv(
+    RawstorIOQueue *queue,
     int fd, struct iovec *iov, unsigned int niov, size_t size,
     RawstorIOCallback *cb, void *data)
 {
-    RawstorIOEvent *event = io_create_event(io, fd, size, cb, data);
+    RawstorIOEvent *event = io_create_event(queue, fd, size, cb, data);
     if (event == NULL) {
         return -errno;
     }
@@ -191,12 +191,12 @@ int rawstor_io_readv(
 }
 
 
-int rawstor_io_preadv(
-    RawstorIO *io,
+int rawstor_io_queue_preadv(
+    RawstorIOQueue *queue,
     int fd, struct iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data)
 {
-    RawstorIOEvent *event = io_create_event(io, fd, size, cb, data);
+    RawstorIOEvent *event = io_create_event(queue, fd, size, cb, data);
     if (event == NULL) {
         return -errno;
     }
@@ -212,12 +212,12 @@ int rawstor_io_preadv(
 }
 
 
-int rawstor_io_write(
-    RawstorIO *io,
+int rawstor_io_queue_write(
+    RawstorIOQueue *queue,
     int fd, void *buf, size_t size,
     RawstorIOCallback *cb, void *data)
 {
-    RawstorIOEvent *event = io_create_event(io, fd, size, cb, data);
+    RawstorIOEvent *event = io_create_event(queue, fd, size, cb, data);
     if (event == NULL) {
         return -errno;
     }
@@ -233,12 +233,12 @@ int rawstor_io_write(
 }
 
 
-int rawstor_io_pwrite(
-    RawstorIO *io,
+int rawstor_io_queue_pwrite(
+    RawstorIOQueue *queue,
     int fd, void *buf, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data)
 {
-    RawstorIOEvent *event = io_create_event(io, fd, size, cb, data);
+    RawstorIOEvent *event = io_create_event(queue, fd, size, cb, data);
     if (event == NULL) {
         return -errno;
     }
@@ -254,12 +254,12 @@ int rawstor_io_pwrite(
 }
 
 
-int rawstor_io_writev(
-    RawstorIO *io,
+int rawstor_io_queue_writev(
+    RawstorIOQueue *queue,
     int fd, struct iovec *iov, unsigned int niov, size_t size,
     RawstorIOCallback *cb, void *data)
 {
-    RawstorIOEvent *event = io_create_event(io, fd, size, cb, data);
+    RawstorIOEvent *event = io_create_event(queue, fd, size, cb, data);
     if (event == NULL) {
         return -errno;
     }
@@ -275,12 +275,12 @@ int rawstor_io_writev(
 }
 
 
-int rawstor_io_pwritev(
-    RawstorIO *io,
+int rawstor_io_queue_pwritev(
+    RawstorIOQueue *queue,
     int fd, struct iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data)
 {
-    RawstorIOEvent *event = io_create_event(io, fd, size, cb, data);
+    RawstorIOEvent *event = io_create_event(queue, fd, size, cb, data);
     if (event == NULL) {
         return -errno;
     }
@@ -296,8 +296,8 @@ int rawstor_io_pwritev(
 }
 
 
-RawstorIOEvent* rawstor_io_wait_event_timeout(
-    RawstorIO *io, unsigned int timeout)
+RawstorIOEvent* rawstor_io_queue_wait_event_timeout(
+    RawstorIOQueue *queue, unsigned int timeout)
 {
     int rval;
     struct io_uring_cqe *cqe;
@@ -305,17 +305,17 @@ RawstorIOEvent* rawstor_io_wait_event_timeout(
         .tv_sec = 0,
         .tv_nsec = 1000000ul * timeout
     };
-    if (io_uring_sq_ready(&io->ring) > 0) {
+    if (io_uring_sq_ready(&queue->ring) > 0) {
         /**
          * TODO: Replace with io_uring_submit_wait_cqe_timeout and do something
          * with sigmask.
          */
-        rval = io_uring_submit(&io->ring);
+        rval = io_uring_submit(&queue->ring);
         if (rval < 0) {
             errno = -rval;
             return NULL;
         }
-        rval = io_uring_wait_cqe_timeout(&io->ring, &cqe, &ts);
+        rval = io_uring_wait_cqe_timeout(&queue->ring, &cqe, &ts);
         if (rval == -ETIME) {
             return NULL;
         }
@@ -323,8 +323,8 @@ RawstorIOEvent* rawstor_io_wait_event_timeout(
             errno = -rval;
             return NULL;
         }
-    } else if (rawstor_mempool_allocated(io->events_pool)) {
-        rval = io_uring_wait_cqe_timeout(&io->ring, &cqe, &ts);
+    } else if (rawstor_mempool_allocated(queue->events_pool)) {
+        rval = io_uring_wait_cqe_timeout(&queue->ring, &cqe, &ts);
         if (rval == -ETIME) {
             return NULL;
         }
@@ -344,43 +344,12 @@ RawstorIOEvent* rawstor_io_wait_event_timeout(
 }
 
 
-void rawstor_io_release_event(RawstorIO *io, RawstorIOEvent *event) {
+void rawstor_io_queue_release_event(
+    RawstorIOQueue *queue, RawstorIOEvent *event)
+{
 #ifdef RAWSTOR_TRACE_EVENTS
     rawstor_trace_event_end(event->trace_event, "release_event()\n");
 #endif
-    io_uring_cqe_seen(&io->ring, event->cqe);
-    rawstor_mempool_free(io->events_pool, event);
-}
-
-
-int rawstor_io_event_fd(RawstorIOEvent *event) {
-    return event->fd;
-}
-
-
-size_t rawstor_io_event_size(RawstorIOEvent *event) {
-    return event->size;
-}
-
-
-size_t rawstor_io_event_result(RawstorIOEvent *event) {
-    return event->cqe->res >= 0 ? event->cqe->res : 0;
-}
-
-
-int rawstor_io_event_error(RawstorIOEvent *event) {
-    return event->cqe->res < 0 ? -event->cqe->res : 0;
-}
-
-
-int rawstor_io_event_dispatch(RawstorIOEvent *event) {
-#ifdef RAWSTOR_TRACE_EVENTS
-    rawstor_trace_event_message(event->trace_event, "dispatch()\n");
-#endif
-    int ret = event->callback(event, event->data);
-#ifdef RAWSTOR_TRACE_EVENTS
-    rawstor_trace_event_message(
-        event->trace_event, "dispatch(): rval = %d\n", ret);
-#endif
-    return ret;
+    io_uring_cqe_seen(&queue->ring, event->cqe);
+    rawstor_mempool_free(queue->events_pool, event);
 }

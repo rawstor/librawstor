@@ -1,5 +1,5 @@
-#include "io_event_poll.h"
-#include <rawstorio/io_event.h>
+#include "event_poll.h"
+#include <rawstorio/event.h>
 
 #include <sys/types.h>
 #include <sys/uio.h>
