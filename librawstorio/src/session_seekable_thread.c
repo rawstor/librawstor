@@ -1,9 +1,9 @@
-#include "io_session_seekable_thread.h"
+#include "session_seekable_thread.h"
 
-#include "io_event_thread.h"
-#include "io_thread.h"
+#include "event_thread.h"
+#include "queue_thread.h"
 
-#include "rawstorio/io.h"
+#include "rawstorio/queue.h"
 
 #include <rawstorstd/iovec.h>
 #include <rawstorstd/list.h>
@@ -63,10 +63,8 @@ static inline int io_event_process(RawstorIOEvent *event) {
 
 
 static void* io_seekable_session_thread(void *data) {
-    printf("HERE1\n");
     RawstorIOSessionSeekable *session = data;
-    RawstorIO *io = rawstor_io_session_io(session->base);
-    printf("HERE2\n");
+    RawstorIOQueue *queue = rawstor_io_session_queue(session->base);
 
     rawstor_mutex_lock(session->mutex);
     while (!session->exit) {
@@ -78,7 +76,7 @@ static void* io_seekable_session_thread(void *data) {
 
             int done = io_event_process(event);
             if (done) {
-                if (rawstor_io_push_cqe(io, event)) {
+                if (rawstor_io_queue_push_cqe(queue, event)) {
                     /**
                      * TODO: Wait somehow for space in ringbuf.
                      */
@@ -120,8 +118,8 @@ static void* io_seekable_session_thread(void *data) {
 RawstorIOSessionSeekable* rawstor_io_session_seekable_create(
     RawstorIOSession *base)
 {
-    RawstorIO *io = rawstor_io_session_io(base);
-    unsigned int depth = rawstor_io_depth(io);
+    RawstorIOQueue *queue = rawstor_io_session_queue(base);
+    unsigned int depth = rawstor_io_queue_depth(queue);
 
     RawstorIOSessionSeekable *session =
         malloc(sizeof(RawstorIOSessionSeekable));
