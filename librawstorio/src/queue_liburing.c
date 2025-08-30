@@ -133,7 +133,7 @@ int rawstor_io_queue_read(
     int fd, void *buf, size_t size,
     RawstorIOCallback *cb, void *data)
 {
-    RawstorIOEvent *event = io_create_event(queue, fd, size, cb, data);
+    RawstorIOEvent *event = io_queue_create_event(queue, fd, size, cb, data);
     if (event == NULL) {
         return -errno;
     }
@@ -154,7 +154,7 @@ int rawstor_io_queue_pread(
     int fd, void *buf, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data)
 {
-    RawstorIOEvent *event = io_create_event(queue, fd, size, cb, data);
+    RawstorIOEvent *event = io_queue_create_event(queue, fd, size, cb, data);
     if (event == NULL) {
         return -errno;
     }
@@ -175,7 +175,7 @@ int rawstor_io_queue_readv(
     int fd, struct iovec *iov, unsigned int niov, size_t size,
     RawstorIOCallback *cb, void *data)
 {
-    RawstorIOEvent *event = io_create_event(queue, fd, size, cb, data);
+    RawstorIOEvent *event = io_queue_create_event(queue, fd, size, cb, data);
     if (event == NULL) {
         return -errno;
     }
@@ -196,7 +196,7 @@ int rawstor_io_queue_preadv(
     int fd, struct iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data)
 {
-    RawstorIOEvent *event = io_create_event(queue, fd, size, cb, data);
+    RawstorIOEvent *event = io_queue_create_event(queue, fd, size, cb, data);
     if (event == NULL) {
         return -errno;
     }
@@ -217,7 +217,7 @@ int rawstor_io_queue_write(
     int fd, void *buf, size_t size,
     RawstorIOCallback *cb, void *data)
 {
-    RawstorIOEvent *event = io_create_event(queue, fd, size, cb, data);
+    RawstorIOEvent *event = io_queue_create_event(queue, fd, size, cb, data);
     if (event == NULL) {
         return -errno;
     }
@@ -238,7 +238,7 @@ int rawstor_io_queue_pwrite(
     int fd, void *buf, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data)
 {
-    RawstorIOEvent *event = io_create_event(queue, fd, size, cb, data);
+    RawstorIOEvent *event = io_queue_create_event(queue, fd, size, cb, data);
     if (event == NULL) {
         return -errno;
     }
@@ -259,7 +259,7 @@ int rawstor_io_queue_writev(
     int fd, struct iovec *iov, unsigned int niov, size_t size,
     RawstorIOCallback *cb, void *data)
 {
-    RawstorIOEvent *event = io_create_event(queue, fd, size, cb, data);
+    RawstorIOEvent *event = io_queue_create_event(queue, fd, size, cb, data);
     if (event == NULL) {
         return -errno;
     }
@@ -280,7 +280,7 @@ int rawstor_io_queue_pwritev(
     int fd, struct iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data)
 {
-    RawstorIOEvent *event = io_create_event(queue, fd, size, cb, data);
+    RawstorIOEvent *event = io_queue_create_event(queue, fd, size, cb, data);
     if (event == NULL) {
         return -errno;
     }
