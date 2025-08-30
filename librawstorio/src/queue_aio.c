@@ -348,7 +348,7 @@ static RawstorIOEvent* io_process_event(RawstorIOQueue *queue) {
 }
 
 
-const char* rawstor_io_engine_name(void) {
+const char* rawstor_io_queue_engine_name(void) {
     return  "aio";
 }
 
