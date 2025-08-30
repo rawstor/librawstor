@@ -1,11 +1,11 @@
-#ifndef RAWSTORIO_IO_EVENT_POLL_H
-#define RAWSTORIO_IO_EVENT_POLL_H
+#ifndef RAWSTORIO_EVENT_POLL_H
+#define RAWSTORIO_EVENT_POLL_H
 
-#include "io_session_poll.h"
+#include "session_poll.h"
 
 #include <rawstorstd/logging.h>
 
-#include <rawstor/io.h>
+#include <rawstor/io_event.h>
 
 #include <stdio.h>
 
@@ -51,4 +51,4 @@ ssize_t rawstor_io_event_process_pwritev(RawstorIOEvent *event);
 #endif
 
 
-#endif // RAWSTORIO_IO_EVENT_POLL_H
+#endif // RAWSTORIO_EVENT_POLL_H

@@ -1,4 +1,4 @@
-#include "rawstorio/io.h"
+#include "rawstorio/queue.h"
 
 #include <rawstorstd/gcc.h>
 #include <rawstorstd/logging.h>
@@ -34,7 +34,7 @@ struct RawstorIOEvent {
 };
 
 
-struct RawstorIO {
+struct RawstorIOQueue {
     unsigned int depth;
 
     RawstorMemPool *events_pool;
@@ -44,7 +44,7 @@ struct RawstorIO {
 };
 
 
-static int io_readv(RawstorIOEvent *event, void *data) {
+static int io_event_readv(RawstorIOEvent *event, void *data) {
     if (event->error != 0) {
         event->payload.callback(event, event->payload.data);
         return 0;
@@ -60,13 +60,13 @@ static int io_readv(RawstorIOEvent *event, void *data) {
         return 0;
     }
 
-    RawstorIO *io = (RawstorIO*)data;
+    RawstorIOQueue *queue = (RawstorIOQueue*)data;
 
-    if (rawstor_mempool_available(io->events_pool) == 0) {
+    if (rawstor_mempool_available(queue->events_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
     }
-    RawstorIOEvent *next_event = rawstor_mempool_alloc(io->events_pool);
+    RawstorIOEvent *next_event = rawstor_mempool_alloc(queue->events_pool);
 
     *next_event = (RawstorIOEvent) {
         .cb = next_event->cb,
@@ -79,12 +79,12 @@ static int io_readv(RawstorIOEvent *event, void *data) {
             .callback = event->payload.callback,
             .data = event->payload.data,
         },
-        .callback = io_readv,
+        .callback = io_event_readv,
         .size = event->size,
         .result = 0,
         .total_result = event->total_result,
         .error = EINPROGRESS,
-        .data = io,
+        .data = queue,
     };
 
     *next_event->cb = (struct aiocb) {
@@ -106,12 +106,12 @@ static int io_readv(RawstorIOEvent *event, void *data) {
     return 0;
 
 err_read:
-    rawstor_mempool_free(io->events_pool, next_event);
+    rawstor_mempool_free(queue->events_pool, next_event);
     return -errno;
 }
 
 
-static int io_preadv(RawstorIOEvent *event, void *data) {
+static int io_event_preadv(RawstorIOEvent *event, void *data) {
     if (event->error != 0) {
         event->payload.callback(event, event->payload.data);
         return 0;
@@ -127,13 +127,13 @@ static int io_preadv(RawstorIOEvent *event, void *data) {
         return 0;
     }
 
-    RawstorIO *io = (RawstorIO*)data;
+    RawstorIOQueue *queue = (RawstorIOQueue*)data;
 
-    if (rawstor_mempool_available(io->events_pool) == 0) {
+    if (rawstor_mempool_available(queue->events_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
     }
-    RawstorIOEvent *next_event = rawstor_mempool_alloc(io->events_pool);
+    RawstorIOEvent *next_event = rawstor_mempool_alloc(queue->events_pool);
 
     *next_event = (RawstorIOEvent) {
         .cb = next_event->cb,
@@ -146,12 +146,12 @@ static int io_preadv(RawstorIOEvent *event, void *data) {
             .callback = event->payload.callback,
             .data = event->payload.data,
         },
-        .callback = io_readv,
+        .callback = io_event_readv,
         .size = event->size,
         .result = 0,
         .total_result = event->total_result,
         .error = EINPROGRESS,
-        .data = io,
+        .data = queue,
     };
 
     *next_event->cb = (struct aiocb) {
@@ -173,12 +173,12 @@ static int io_preadv(RawstorIOEvent *event, void *data) {
     return 0;
 
 err_read:
-    rawstor_mempool_free(io->events_pool, next_event);
+    rawstor_mempool_free(queue->events_pool, next_event);
     return -errno;
 }
 
 
-static int io_writev(RawstorIOEvent *event, void *data) {
+static int io_event_writev(RawstorIOEvent *event, void *data) {
     if (event->error != 0) {
         event->payload.callback(event, event->payload.data);
         return 0;
@@ -194,13 +194,13 @@ static int io_writev(RawstorIOEvent *event, void *data) {
         return 0;
     }
 
-    RawstorIO *io = (RawstorIO*)data;
+    RawstorIOQueue *queue = (RawstorIOQueue*)data;
 
-    if (rawstor_mempool_available(io->events_pool) == 0) {
+    if (rawstor_mempool_available(queue->events_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
     }
-    RawstorIOEvent *next_event = rawstor_mempool_alloc(io->events_pool);
+    RawstorIOEvent *next_event = rawstor_mempool_alloc(queue->events_pool);
 
     *next_event = (RawstorIOEvent) {
         .cb = next_event->cb,
@@ -213,12 +213,12 @@ static int io_writev(RawstorIOEvent *event, void *data) {
             .callback = event->payload.callback,
             .data = event->payload.data,
         },
-        .callback = io_writev,
+        .callback = io_event_writev,
         .size = event->size,
         .result = 0,
         .total_result = event->total_result,
         .error = EINPROGRESS,
-        .data = io,
+        .data = queue,
     };
 
     *next_event->cb = (struct aiocb) {
@@ -240,12 +240,12 @@ static int io_writev(RawstorIOEvent *event, void *data) {
     return 0;
 
 err_write:
-    rawstor_mempool_free(io->events_pool, next_event);
+    rawstor_mempool_free(queue->events_pool, next_event);
     return -errno;
 }
 
 
-static int io_pwritev(RawstorIOEvent *event, void *data) {
+static int io_event_pwritev(RawstorIOEvent *event, void *data) {
     if (event->error != 0) {
         event->payload.callback(event, event->payload.data);
         return 0;
@@ -261,13 +261,13 @@ static int io_pwritev(RawstorIOEvent *event, void *data) {
         return 0;
     }
 
-    RawstorIO *io = (RawstorIO*)data;
+    RawstorIOQueue *queue = (RawstorIOQueue*)data;
 
-    if (rawstor_mempool_available(io->events_pool) == 0) {
+    if (rawstor_mempool_available(queue->events_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
     }
-    RawstorIOEvent *next_event = rawstor_mempool_alloc(io->events_pool);
+    RawstorIOEvent *next_event = rawstor_mempool_alloc(queue->events_pool);
 
     *next_event = (RawstorIOEvent) {
         .cb = next_event->cb,
@@ -280,12 +280,12 @@ static int io_pwritev(RawstorIOEvent *event, void *data) {
             .callback = event->payload.callback,
             .data = event->payload.data,
         },
-        .callback = io_writev,
+        .callback = io_event_writev,
         .size = event->size,
         .result = 0,
         .total_result = event->total_result,
         .error = EINPROGRESS,
-        .data = io,
+        .data = queue,
     };
 
     *next_event->cb = (struct aiocb) {
@@ -307,14 +307,14 @@ static int io_pwritev(RawstorIOEvent *event, void *data) {
     return 0;
 
 err_write:
-    rawstor_mempool_free(io->events_pool, next_event);
+    rawstor_mempool_free(queue->events_pool, next_event);
     return -errno;
 }
 
 
-static RawstorIOEvent* io_process_event(RawstorIO *io) {
-    for (size_t i = 0; i < io->depth; ++i) {
-        struct aiocb **cbp = &io->cbps[i];
+static RawstorIOEvent* io_process_event(RawstorIOQueue *queue) {
+    for (size_t i = 0; i < queue->depth; ++i) {
+        struct aiocb **cbp = &queue->cbps[i];
         if (*cbp == NULL) {
             continue;
         }
@@ -335,7 +335,7 @@ static RawstorIOEvent* io_process_event(RawstorIO *io) {
             return NULL;
         }
 
-        RawstorIOEvent *event = &io->events[i];
+        RawstorIOEvent *event = &queue->events[i];
         event->error = error;
         event->result = result;
         if (result > 0) {
@@ -348,12 +348,12 @@ static RawstorIOEvent* io_process_event(RawstorIO *io) {
 }
 
 
-const char* rawstor_io_engine_name(void) {
+const char* rawstor_io_queue_engine_name(void) {
     return  "aio";
 }
 
 
-RawstorIO* rawstor_io_create(unsigned int depth) {
+RawstorIOQueue* rawstor_io_queue_create(unsigned int depth) {
 #ifdef AIO_LISTIO_MAX
     if (depth > AIO_LISTIO_MAX) {
         rawstor_warning(
@@ -363,74 +363,74 @@ RawstorIO* rawstor_io_create(unsigned int depth) {
         depth = AIO_LISTIO_MAX;
     }
 #endif
-    RawstorIO *io = malloc(sizeof(RawstorIO));
-    if (io == NULL) {
-        goto err_io;
+    RawstorIOQueue *queue = malloc(sizeof(RawstorIOQueue));
+    if (queue == NULL) {
+        goto err_queue;
     }
 
-    io->depth = depth;
+    queue->depth = depth;
 
     /**
      * TODO: io operations could be much more than depth.
      */
-    io->cbs = calloc(depth, sizeof(struct aiocb));
-    if (io->cbs == NULL) {
+    queue->cbs = calloc(depth, sizeof(struct aiocb));
+    if (queue->cbs == NULL) {
         goto err_cbs;
     }
 
-    io->cbps = calloc(depth, sizeof(struct aiocb*));
-    if (io->cbps == NULL) {
+    queue->cbps = calloc(depth, sizeof(struct aiocb*));
+    if (queue->cbps == NULL) {
         goto err_cbps;
     }
 
-    io->events_pool = rawstor_mempool_create(depth, sizeof(RawstorIOEvent));
-    if (io->events_pool == NULL) {
+    queue->events_pool = rawstor_mempool_create(depth, sizeof(RawstorIOEvent));
+    if (queue->events_pool == NULL) {
         goto err_events_pool;
     }
-    io->events = rawstor_mempool_data(io->events_pool);
+    queue->events = rawstor_mempool_data(queue->events_pool);
 
     for (unsigned int i = 0; i < depth; ++i) {
-        io->events[i].cb = &io->cbs[i];
-        io->events[i].cbp = &io->cbps[i];
-        io->cbps[i] = NULL;
+        queue->events[i].cb = &queue->cbs[i];
+        queue->events[i].cbp = &queue->cbps[i];
+        queue->cbps[i] = NULL;
     }
 
-    return io;
+    return queue;
 
 err_events_pool:
-    free(io->cbps);
+    free(queue->cbps);
 err_cbps:
-    free(io->cbs);
+    free(queue->cbs);
 err_cbs:
-    free(io);
-err_io:
+    free(queue);
+err_queue:
     return NULL;
 }
 
 
-void rawstor_io_delete(RawstorIO *io) {
-    rawstor_mempool_delete(io->events_pool);
-    free(io->cbps);
-    free(io->cbs);
-    free(io);
+void rawstor_io_queue_delete(RawstorIOQueue *queue) {
+    rawstor_mempool_delete(queue->events_pool);
+    free(queue->cbps);
+    free(queue->cbs);
+    free(queue);
 }
 
 
-int rawstor_io_setup_fd(int RAWSTOR_UNUSED fd) {
+int rawstor_io_queue_setup_fd(int RAWSTOR_UNUSED fd) {
     return 0;
 }
 
 
-int rawstor_io_read(
-    RawstorIO *io,
+int rawstor_io_queue_read(
+    RawstorIOQueue *queue,
     int fd, void *buf, size_t size,
     RawstorIOCallback *cb, void *data)
 {
-    if (rawstor_mempool_available(io->events_pool) == 0) {
+    if (rawstor_mempool_available(queue->events_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
     }
-    RawstorIOEvent *event = rawstor_mempool_alloc(io->events_pool);
+    RawstorIOEvent *event = rawstor_mempool_alloc(queue->events_pool);
 
     *event = (RawstorIOEvent) {
         .cb = event->cb,
@@ -463,21 +463,21 @@ int rawstor_io_read(
     return 0;
 
 err_read:
-    rawstor_mempool_free(io->events_pool, event);
+    rawstor_mempool_free(queue->events_pool, event);
     return -errno;
 }
 
 
-int rawstor_io_pread(
-    RawstorIO *io,
+int rawstor_io_queue_pread(
+    RawstorIOQueue *queue,
     int fd, void *buf, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data)
 {
-    if (rawstor_mempool_available(io->events_pool) == 0) {
+    if (rawstor_mempool_available(queue->events_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
     }
-    RawstorIOEvent *event = rawstor_mempool_alloc(io->events_pool);
+    RawstorIOEvent *event = rawstor_mempool_alloc(queue->events_pool);
 
     *event = (RawstorIOEvent) {
         .cb = event->cb,
@@ -510,13 +510,13 @@ int rawstor_io_pread(
     return 0;
 
 err_read:
-    rawstor_mempool_free(io->events_pool, event);
+    rawstor_mempool_free(queue->events_pool, event);
     return -errno;
 }
 
 
-int rawstor_io_readv(
-    RawstorIO *io,
+int rawstor_io_queue_readv(
+    RawstorIOQueue *queue,
     int fd, struct iovec *iov, unsigned int niov, size_t size,
     RawstorIOCallback *cb, void *data)
 {
@@ -527,11 +527,11 @@ int rawstor_io_readv(
         return 0;
     }
 
-    if (rawstor_mempool_available(io->events_pool) == 0) {
+    if (rawstor_mempool_available(queue->events_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
     }
-    RawstorIOEvent *event = rawstor_mempool_alloc(io->events_pool);
+    RawstorIOEvent *event = rawstor_mempool_alloc(queue->events_pool);
 
     *event = (RawstorIOEvent) {
         .cb = event->cb,
@@ -544,12 +544,12 @@ int rawstor_io_readv(
             .callback = cb,
             .data = data,
         },
-        .callback = io_readv,
+        .callback = io_event_readv,
         .size = size,
         .result = 0,
         .total_result = 0,
         .error = EINPROGRESS,
-        .data = io,
+        .data = queue,
     };
 
     *event->cb = (struct aiocb) {
@@ -571,13 +571,13 @@ int rawstor_io_readv(
     return 0;
 
 err_read:
-    rawstor_mempool_free(io->events_pool, event);
+    rawstor_mempool_free(queue->events_pool, event);
     return -errno;
 }
 
 
-int rawstor_io_preadv(
-    RawstorIO *io,
+int rawstor_io_queue_preadv(
+    RawstorIOQueue *queue,
     int fd, struct iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data)
 {
@@ -588,11 +588,11 @@ int rawstor_io_preadv(
         return 0;
     }
 
-    if (rawstor_mempool_available(io->events_pool) == 0) {
+    if (rawstor_mempool_available(queue->events_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
     }
-    RawstorIOEvent *event = rawstor_mempool_alloc(io->events_pool);
+    RawstorIOEvent *event = rawstor_mempool_alloc(queue->events_pool);
 
     *event = (RawstorIOEvent) {
         .cb = event->cb,
@@ -605,12 +605,12 @@ int rawstor_io_preadv(
             .callback = cb,
             .data = data,
         },
-        .callback = io_preadv,
+        .callback = io_event_preadv,
         .size = size,
         .result = 0,
         .total_result = 0,
         .error = EINPROGRESS,
-        .data = io,
+        .data = queue,
     };
 
     *event->cb = (struct aiocb) {
@@ -632,21 +632,21 @@ int rawstor_io_preadv(
     return 0;
 
 err_read:
-    rawstor_mempool_free(io->events_pool, event);
+    rawstor_mempool_free(queue->events_pool, event);
     return -errno;
 }
 
 
-int rawstor_io_write(
-    RawstorIO *io,
+int rawstor_io_queue_write(
+    RawstorIOQueue *queue,
     int fd, void *buf, size_t size,
     RawstorIOCallback *cb, void *data)
 {
-    if (rawstor_mempool_available(io->events_pool) == 0) {
+    if (rawstor_mempool_available(queue->events_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
     }
-    RawstorIOEvent *event = rawstor_mempool_alloc(io->events_pool);
+    RawstorIOEvent *event = rawstor_mempool_alloc(queue->events_pool);
 
     *event = (RawstorIOEvent) {
         .cb = event->cb,
@@ -679,21 +679,21 @@ int rawstor_io_write(
     return 0;
 
 err_write:
-    rawstor_mempool_free(io->events_pool, event);
+    rawstor_mempool_free(queue->events_pool, event);
     return -errno;
 }
 
 
-int rawstor_io_pwrite(
-    RawstorIO *io,
+int rawstor_io_queue_pwrite(
+    RawstorIOQueue *queue,
     int fd, void *buf, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data)
 {
-    if (rawstor_mempool_available(io->events_pool) == 0) {
+    if (rawstor_mempool_available(queue->events_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
     }
-    RawstorIOEvent *event = rawstor_mempool_alloc(io->events_pool);
+    RawstorIOEvent *event = rawstor_mempool_alloc(queue->events_pool);
 
     *event = (RawstorIOEvent) {
         .cb = event->cb,
@@ -726,13 +726,13 @@ int rawstor_io_pwrite(
     return 0;
 
 err_write:
-    rawstor_mempool_free(io->events_pool, event);
+    rawstor_mempool_free(queue->events_pool, event);
     return -errno;
 }
 
 
-int rawstor_io_writev(
-    RawstorIO *io,
+int rawstor_io_queue_writev(
+    RawstorIOQueue *queue,
     int fd, struct iovec *iov, unsigned int niov, size_t size,
     RawstorIOCallback *cb, void *data)
 {
@@ -743,11 +743,11 @@ int rawstor_io_writev(
         return 0;
     }
 
-    if (rawstor_mempool_available(io->events_pool) == 0) {
+    if (rawstor_mempool_available(queue->events_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
     }
-    RawstorIOEvent *event = rawstor_mempool_alloc(io->events_pool);
+    RawstorIOEvent *event = rawstor_mempool_alloc(queue->events_pool);
 
     *event = (RawstorIOEvent) {
         .cb = event->cb,
@@ -760,12 +760,12 @@ int rawstor_io_writev(
             .callback = cb,
             .data = data,
         },
-        .callback = io_writev,
+        .callback = io_event_writev,
         .size = size,
         .result = 0,
         .total_result = 0,
         .error = EINPROGRESS,
-        .data = io,
+        .data = queue,
     };
 
     *event->cb = (struct aiocb) {
@@ -787,13 +787,13 @@ int rawstor_io_writev(
     return 0;
 
 err_write:
-    rawstor_mempool_free(io->events_pool, event);
+    rawstor_mempool_free(queue->events_pool, event);
     return -errno;
 }
 
 
-int rawstor_io_pwritev(
-    RawstorIO *io,
+int rawstor_io_queue_pwritev(
+    RawstorIOQueue *queue,
     int fd, struct iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data)
 {
@@ -804,11 +804,11 @@ int rawstor_io_pwritev(
         return 0;
     }
 
-    if (rawstor_mempool_available(io->events_pool) == 0) {
+    if (rawstor_mempool_available(queue->events_pool) == 0) {
         errno = ENOBUFS;
         return -errno;
     }
-    RawstorIOEvent *event = rawstor_mempool_alloc(io->events_pool);
+    RawstorIOEvent *event = rawstor_mempool_alloc(queue->events_pool);
 
     *event = (RawstorIOEvent) {
         .cb = event->cb,
@@ -821,12 +821,12 @@ int rawstor_io_pwritev(
             .callback = cb,
             .data = data,
         },
-        .callback = io_pwritev,
+        .callback = io_event_pwritev,
         .size = size,
         .result = 0,
         .total_result = 0,
         .error = EINPROGRESS,
-        .data = io,
+        .data = queue,
     };
 
     *event->cb = (struct aiocb) {
@@ -848,20 +848,20 @@ int rawstor_io_pwritev(
     return 0;
 
 err_write:
-    rawstor_mempool_free(io->events_pool, event);
+    rawstor_mempool_free(queue->events_pool, event);
     return -errno;
 }
 
 
-RawstorIOEvent* rawstor_io_wait_event_timeout(
-    RawstorIO *io, unsigned int timeout)
+RawstorIOEvent* rawstor_io_queue_wait_event_timeout(
+    RawstorIOQueue *queue, unsigned int timeout)
 {
-    RawstorIOEvent *event = io_process_event(io);
+    RawstorIOEvent *event = io_process_event(queue);
     if (event != NULL) {
         return event;
     }
 
-    if (rawstor_mempool_allocated(io->events_pool) == 0) {
+    if (rawstor_mempool_allocated(queue->events_pool) == 0) {
         return NULL;
     }
 
@@ -870,17 +870,20 @@ RawstorIOEvent* rawstor_io_wait_event_timeout(
         .tv_nsec = 1000000ul * timeout,
     };
 
-    if (aio_suspend((const struct aiocb* const*)io->cbps, io->depth, &ts)) {
+    if (
+        aio_suspend(
+            (const struct aiocb* const*)queue->cbps, queue->depth, &ts))
+    {
         return NULL;
     }
 
-    return io_process_event(io);
+    return io_process_event(queue);
 }
 
 
-void rawstor_io_release_event(RawstorIO *io, RawstorIOEvent *event) {
+void rawstor_io_queue_release_event(RawstorIOQueue *queue, RawstorIOEvent *event) {
     *event->cbp = NULL;
-    rawstor_mempool_free(io->events_pool, event);
+    rawstor_mempool_free(queue->events_pool, event);
 }
 
 

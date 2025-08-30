@@ -7,7 +7,7 @@
 #include <rawstorstd/mempool.h>
 #include <rawstorstd/uuid.h>
 
-#include <rawstorio/io.h>
+#include <rawstorio/event.h>
 
 #include <sys/stat.h>
 #include <sys/types.h>

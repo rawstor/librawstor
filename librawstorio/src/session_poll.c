@@ -1,7 +1,7 @@
-#include "io_session_poll.h"
+#include "session_poll.h"
 
-#include "io_poll.h"
-#include "io_event_poll.h"
+#include "event_poll.h"
+#include "queue_poll.h"
 
 #include <rawstorstd/gcc.h>
 #include <rawstorstd/iovec.h>
@@ -20,7 +20,7 @@
 
 
 struct RawstorIOSession {
-    RawstorIO *io;
+    RawstorIOQueue *queue;
     int fd;
     RawstorRingBuf *read_sqes;
     RawstorRingBuf *write_sqes;
@@ -71,7 +71,7 @@ static int io_session_seekable_process_sqes(
         event->offset += res;
         rawstor_iovec_shift(&event->iov_at, &event->niov_at, res);
         if (event->niov_at == 0) {
-            if (rawstor_io_push_cqe(session->io, event)) {
+            if (rawstor_io_queue_push_cqe(session->queue, event)) {
                 /**
                  * TODO: How to handle cqes overflow?
                  */
@@ -81,7 +81,7 @@ static int io_session_seekable_process_sqes(
             rawstor_ringbuf_pop(sqes);
         }
     } else if (res == 0) {
-        if (rawstor_io_push_cqe(session->io, event)) {
+        if (rawstor_io_queue_push_cqe(session->queue, event)) {
             /**
              * TODO: How to handle cqes overflow?
              */
@@ -168,7 +168,7 @@ static int io_session_unseekable_process_sqes(
             }
 
             if (event->niov_at == 0) {
-                if (rawstor_io_push_cqe(session->io, event)) {
+                if (rawstor_io_queue_push_cqe(session->queue, event)) {
                     /**
                      * TODO: How to handle cqes overflow?
                      */
@@ -202,7 +202,7 @@ static int io_session_unseekable_process_sqes(
             rawstor_trace_event_message(
                 event->trace_event, "event->error = %zd\n", event->error);
 #endif
-            if (rawstor_io_push_cqe(session->io, event)) {
+            if (rawstor_io_queue_push_cqe(session->queue, event)) {
                 /**
                  * TODO: How to handle cqes overflow?
                  */
@@ -220,7 +220,7 @@ static int io_session_unseekable_process_sqes(
             rawstor_trace_event_message(
                 event->trace_event, "event->error = %zd\n", event->error);
 #endif
-            if (rawstor_io_push_cqe(session->io, event)) {
+            if (rawstor_io_queue_push_cqe(session->queue, event)) {
                 /**
                  * TODO: How to handle cqes overflow?
                  */
@@ -247,7 +247,7 @@ err_events:
 }
 
 
-RawstorIOSession* rawstor_io_session_create(RawstorIO *io, int fd) {
+RawstorIOSession* rawstor_io_session_create(RawstorIOQueue *queue, int fd) {
     int seekable = is_seekable(fd);
     if (seekable < 0) {
         goto err_seekable;
@@ -259,7 +259,7 @@ RawstorIOSession* rawstor_io_session_create(RawstorIO *io, int fd) {
     }
 
     *session = (RawstorIOSession) {
-        .io = io,
+        .queue = queue,
         .fd = fd,
         .process_sqes = seekable ?
             io_session_seekable_process_sqes :
@@ -267,13 +267,13 @@ RawstorIOSession* rawstor_io_session_create(RawstorIO *io, int fd) {
     };
 
     session->read_sqes = rawstor_ringbuf_create(
-        rawstor_io_depth(io), sizeof(RawstorIOEvent*));
+        rawstor_io_queue_depth(queue), sizeof(RawstorIOEvent*));
     if (session->read_sqes == NULL) {
         goto err_read_sqes;
     }
 
     session->write_sqes = rawstor_ringbuf_create(
-        rawstor_io_depth(io), sizeof(RawstorIOEvent*));
+        rawstor_io_queue_depth(queue), sizeof(RawstorIOEvent*));
     if (session->write_sqes == NULL) {
         goto err_write_sqes;
     }

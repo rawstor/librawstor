@@ -1,5 +1,5 @@
-#ifndef RAWSTORIO_IO_H
-#define RAWSTORIO_IO_H
+#ifndef RAWSTORIO_QUEUE_H
+#define RAWSTORIO_QUEUE_H
 
 #include <rawstor.h>
 
@@ -16,7 +16,7 @@ extern "C" {
 #endif
 
 
-typedef struct RawstorIO RawstorIO;
+typedef struct RawstorIOQueue RawstorIOQueue;
 
 // defined in rawstor.h
 // typedef struct RawstorIOEvent RawstorIOEvent;
@@ -25,59 +25,60 @@ typedef struct RawstorIO RawstorIO;
 // typedef int(RawstorIOCallback)(RawstorIOEvent *event, void *data);
 
 
-const char* rawstor_io_engine_name(void);
+const char* rawstor_io_queue_engine_name(void);
 
-RawstorIO* rawstor_io_create(unsigned int depth);
+RawstorIOQueue* rawstor_io_queue_create(unsigned int depth);
 
-void rawstor_io_delete(RawstorIO *io);
+void rawstor_io_queue_delete(RawstorIOQueue *queue);
 
-int rawstor_io_setup_fd(int fd);
+int rawstor_io_queue_setup_fd(int fd);
 
-int rawstor_io_read(
-    RawstorIO *io,
+int rawstor_io_queue_read(
+    RawstorIOQueue *queue,
     int fd, void *buf, size_t size,
     RawstorIOCallback *cb, void *data);
 
-int rawstor_io_readv(
-    RawstorIO *io,
+int rawstor_io_queue_readv(
+    RawstorIOQueue *queue,
     int fd, struct iovec *iov, unsigned int niov, size_t size,
     RawstorIOCallback *cb, void *data);
 
-int rawstor_io_pread(
-    RawstorIO *io,
+int rawstor_io_queue_pread(
+    RawstorIOQueue *queue,
     int fd, void *buf, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data);
 
-int rawstor_io_preadv(
-    RawstorIO *io,
+int rawstor_io_queue_preadv(
+    RawstorIOQueue *queue,
     int fd, struct iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data);
 
-int rawstor_io_write(
-    RawstorIO *io,
+int rawstor_io_queue_write(
+    RawstorIOQueue *queue,
     int fd, void *buf, size_t size,
     RawstorIOCallback *cb, void *data);
 
-int rawstor_io_pwrite(
-    RawstorIO *io,
+int rawstor_io_queue_pwrite(
+    RawstorIOQueue *queue,
     int fd, void *buf, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data);
 
-int rawstor_io_writev(
-    RawstorIO *io,
+int rawstor_io_queue_writev(
+    RawstorIOQueue *queue,
     int fd, struct iovec *iov, unsigned int niov, size_t size,
     RawstorIOCallback *cb, void *data);
 
-int rawstor_io_pwritev(
-    RawstorIO *io,
+int rawstor_io_queue_pwritev(
+    RawstorIOQueue *queue,
     int fd, struct iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data);
 
 
-RawstorIOEvent* rawstor_io_wait_event_timeout(
-    RawstorIO *io, unsigned int timeout);
+RawstorIOEvent* rawstor_io_queue_wait_event_timeout(
+    RawstorIOQueue *queue, unsigned int timeout);
 
-void rawstor_io_release_event(RawstorIO *io, RawstorIOEvent *event);
+void rawstor_io_queue_release_event(
+    RawstorIOQueue *queue, RawstorIOEvent *event);
 
 
 #ifdef __cplusplus
@@ -85,4 +86,4 @@ void rawstor_io_release_event(RawstorIO *io, RawstorIOEvent *event);
 #endif
 
 
-#endif // RAWSTORIO_IO_H
+#endif // RAWSTORIO_QUEUE_H
