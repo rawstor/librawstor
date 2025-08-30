@@ -1,7 +1,8 @@
-#include "rawstorio/io.h"
+#include "queue_thread.h"
+#include "rawstorio/queue.h"
 
-#include "io_event_thread.h"
-#include "io_session_thread.h"
+#include "event_thread.h"
+#include "session_thread.h"
 
 #include <rawstorstd/gcc.h>
 #include <rawstorstd/iovec.h>
@@ -18,7 +19,7 @@
 #include <unistd.h>
 
 
-struct RawstorIO {
+struct RawstorIOQueue {
     unsigned int depth;
 
     RawstorMemPool *events_pool;
@@ -30,22 +31,24 @@ struct RawstorIO {
 };
 
 
-static RawstorIOSession** io_remove_session(
-    RawstorIO *io, RawstorIOSession **it)
+static RawstorIOSession** io_queue_remove_session(
+    RawstorIOQueue *queue, RawstorIOSession **it)
 {
     RawstorIOSession *session = *it;
-    RawstorIOSession **ret = rawstor_list_remove(io->sessions, it);
+    RawstorIOSession **ret = rawstor_list_remove(queue->sessions, it);
     rawstor_io_session_delete(session);
     return ret;
 }
 
 
-static RawstorIOSession** io_get_session(RawstorIO *io, int fd, int write) {
-    RawstorIOSession **it = rawstor_list_iter(io->sessions);
+static RawstorIOSession** io_queue_get_session(
+    RawstorIOQueue *queue, int fd, int write)
+{
+    RawstorIOSession **it = rawstor_list_iter(queue->sessions);
     while (it != NULL) {
         RawstorIOSession *session = *it;
         if (!rawstor_io_session_alive(session)) {
-            it = io_remove_session(io, it);
+            it = io_queue_remove_session(queue, it);
             continue;
         }
         if (rawstor_io_session_compare(session, fd, write)) {
@@ -58,13 +61,15 @@ static RawstorIOSession** io_get_session(RawstorIO *io, int fd, int write) {
 }
 
 
-static RawstorIOSession** io_append_session(RawstorIO *io, int fd, int write) {
-    RawstorIOSession **it = rawstor_list_append(io->sessions);
+static RawstorIOSession** io_queue_append_session(
+    RawstorIOQueue *queue, int fd, int write)
+{
+    RawstorIOSession **it = rawstor_list_append(queue->sessions);
     if (it == NULL) {
         goto err_list_append;
     }
 
-    RawstorIOSession *session = rawstor_io_session_create(io, fd, write);
+    RawstorIOSession *session = rawstor_io_session_create(queue, fd, write);
     if (session == NULL) {
         goto err_session;
     }
@@ -74,18 +79,18 @@ static RawstorIOSession** io_append_session(RawstorIO *io, int fd, int write) {
     return it;
 
 err_session:
-    rawstor_list_remove(io->sessions, it);
+    rawstor_list_remove(queue->sessions, it);
 err_list_append:
     return NULL;
 }
 
 
-static inline int io_push_sqe(
-    RawstorIO *io, int fd, RawstorIOEvent *event, int write)
+static inline int io_queue_push_sqe(
+    RawstorIOQueue *queue, int fd, RawstorIOEvent *event, int write)
 {
-    RawstorIOSession **it = io_get_session(io, fd, write);
+    RawstorIOSession **it = io_queue_get_session(queue, fd, write);
     if (it == NULL) {
-        it = io_append_session(io, fd, write);
+        it = io_queue_append_session(queue, fd, write);
         if (it == NULL) {
             goto err_session;
         }
@@ -95,7 +100,7 @@ static inline int io_push_sqe(
 
     if (rawstor_io_session_push_sqe(session, event)) {
         if (errno == EBADF) {
-            return io_push_sqe(io, fd, event, write);
+            return io_queue_push_sqe(queue, fd, event, write);
         }
         goto err_push_sqe;
     }
@@ -108,16 +113,16 @@ err_session:
 }
 
 
-static inline RawstorIOEvent* io_create_event(
-    RawstorIO *io,
+static inline RawstorIOEvent* io_queue_create_event(
+    RawstorIOQueue *queue,
     struct iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data)
 {
-    if (rawstor_mempool_available(io->events_pool) == 0) {
+    if (rawstor_mempool_available(queue->events_pool) == 0) {
         errno = ENOBUFS;
         return NULL;
     }
-    RawstorIOEvent *event = rawstor_mempool_alloc(io->events_pool);
+    RawstorIOEvent *event = rawstor_mempool_alloc(queue->events_pool);
 
     *event = (RawstorIOEvent) {
         // .session
@@ -137,87 +142,88 @@ static inline RawstorIOEvent* io_create_event(
 }
 
 
-const char* rawstor_io_engine_name(void) {
+const char* rawstor_io_queue_engine_name(void) {
     return "thread";
 }
 
 
-RawstorIO* rawstor_io_create(unsigned int depth) {
-    RawstorIO *io = malloc(sizeof(RawstorIO));
-    if (io == NULL) {
-        goto err_io;
+RawstorIOQueue* rawstor_io_queue_create(unsigned int depth) {
+    RawstorIOQueue *queue = malloc(sizeof(RawstorIOQueue));
+    if (queue == NULL) {
+        goto err_queue;
     }
 
-    io->depth = depth;
+    queue->depth = depth;
 
-    io->events_pool = rawstor_mempool_create(
+    queue->events_pool = rawstor_mempool_create(
         depth * 2, sizeof(RawstorIOEvent));
-    if (io->events_pool == NULL) {
+    if (queue->events_pool == NULL) {
         goto err_events_pool;
     }
 
-    io->cqes = rawstor_ringbuf_create(io->depth, sizeof(RawstorIOEvent*));
-    if (io->cqes == NULL) {
+    queue->cqes = rawstor_ringbuf_create(
+        queue->depth, sizeof(RawstorIOEvent*));
+    if (queue->cqes == NULL) {
         goto err_cqes;
     }
 
-    io->sessions = rawstor_list_create(sizeof(RawstorIOSession*));
-    if (io->sessions == NULL) {
+    queue->sessions = rawstor_list_create(sizeof(RawstorIOSession*));
+    if (queue->sessions == NULL) {
         goto err_sessions;
     }
 
-    io->mutex = rawstor_mutex_create();
-    if (io->mutex == NULL) {
+    queue->mutex = rawstor_mutex_create();
+    if (queue->mutex == NULL) {
         goto err_mutex;
     }
 
-    io->cond = rawstor_cond_create();
-    if (io->cond == NULL) {
+    queue->cond = rawstor_cond_create();
+    if (queue->cond == NULL) {
         goto err_cond;
     }
 
-    return io;
+    return queue;
 
 err_cond:
-    rawstor_mutex_delete(io->mutex);
+    rawstor_mutex_delete(queue->mutex);
 err_mutex:
-    rawstor_list_delete(io->sessions);
+    rawstor_list_delete(queue->sessions);
 err_sessions:
-    rawstor_ringbuf_delete(io->cqes);
+    rawstor_ringbuf_delete(queue->cqes);
 err_cqes:
-    rawstor_mempool_delete(io->events_pool);
+    rawstor_mempool_delete(queue->events_pool);
 err_events_pool:
-    free(io);
-err_io:
+    free(queue);
+err_queue:
     return NULL;
 }
 
 
-void rawstor_io_delete(RawstorIO *io) {
-    while (!rawstor_list_empty(io->sessions)) {
-        RawstorIOSession **it = rawstor_list_iter(io->sessions);
-        io_remove_session(io, it);
+void rawstor_io_queue_delete(RawstorIOQueue *queue) {
+    while (!rawstor_list_empty(queue->sessions)) {
+        RawstorIOSession **it = rawstor_list_iter(queue->sessions);
+        io_queue_remove_session(queue, it);
     }
-    rawstor_list_delete(io->sessions);
+    rawstor_list_delete(queue->sessions);
 
-    rawstor_cond_delete(io->cond);
-    rawstor_mutex_delete(io->mutex);
-    rawstor_ringbuf_delete(io->cqes);
-    rawstor_mempool_delete(io->events_pool);
-    free(io);
+    rawstor_cond_delete(queue->cond);
+    rawstor_mutex_delete(queue->mutex);
+    rawstor_ringbuf_delete(queue->cqes);
+    rawstor_mempool_delete(queue->events_pool);
+    free(queue);
 }
 
 
-int rawstor_io_push_cqe(RawstorIO *io, RawstorIOEvent *event) {
-    rawstor_mutex_lock(io->mutex);
-    RawstorIOEvent **cqe = rawstor_ringbuf_head(io->cqes);
-    if (rawstor_ringbuf_push(io->cqes)) {
-        rawstor_mutex_unlock(io->mutex);
+int rawstor_io_queue_push_cqe(RawstorIOQueue *queue, RawstorIOEvent *event) {
+    rawstor_mutex_lock(queue->mutex);
+    RawstorIOEvent **cqe = rawstor_ringbuf_head(queue->cqes);
+    if (rawstor_ringbuf_push(queue->cqes)) {
+        rawstor_mutex_unlock(queue->mutex);
         goto err_cqe;
     }
     *cqe = event;
-    rawstor_cond_signal(io->cond);
-    rawstor_mutex_unlock(io->mutex);
+    rawstor_cond_signal(queue->cond);
+    rawstor_mutex_unlock(queue->mutex);
 
     return 0;
 
@@ -226,20 +232,20 @@ err_cqe:
 }
 
 
-int rawstor_io_push_cqes(
-    RawstorIO *io, RawstorIOEvent **events, size_t nevents)
+int rawstor_io_queue_push_cqes(
+    RawstorIOQueue *queue, RawstorIOEvent **events, size_t nevents)
 {
-    rawstor_mutex_lock(io->mutex);
+    rawstor_mutex_lock(queue->mutex);
     for (size_t i = 0; i < nevents; ++i) {
-        RawstorIOEvent **cqe = rawstor_ringbuf_head(io->cqes);
-        if (rawstor_ringbuf_push(io->cqes)) {
-            rawstor_mutex_unlock(io->mutex);
+        RawstorIOEvent **cqe = rawstor_ringbuf_head(queue->cqes);
+        if (rawstor_ringbuf_push(queue->cqes)) {
+            rawstor_mutex_unlock(queue->mutex);
             goto err_cqe;
         }
         *cqe = events[i];
     }
-    rawstor_cond_signal(io->cond);
-    rawstor_mutex_unlock(io->mutex);
+    rawstor_cond_signal(queue->cond);
+    rawstor_mutex_unlock(queue->mutex);
 
     return 0;
 
@@ -248,18 +254,18 @@ err_cqe:
 }
 
 
-int rawstor_io_setup_fd(int RAWSTOR_UNUSED fd) {
+int rawstor_io_queue_setup_fd(int RAWSTOR_UNUSED fd) {
     return 0;
 }
 
 
-unsigned int rawstor_io_queue_depth(RawstorIO *io) {
-    return io->depth;
+unsigned int rawstor_io_queue_depth(RawstorIOQueue *queue) {
+    return queue->depth;
 }
 
 
-int rawstor_io_read(
-    RawstorIO *io,
+int rawstor_io_queue_read(
+    RawstorIOQueue *queue,
     int fd, void *buf, size_t size,
     RawstorIOCallback *cb, void *data)
 {
@@ -275,8 +281,8 @@ int rawstor_io_read(
         .iov_len = size,
     };
 
-    RawstorIOEvent *event = io_create_event(
-        io, event_iov, 1, size, 0, cb, data);
+    RawstorIOEvent *event = io_queue_create_event(
+        queue, event_iov, 1, size, 0, cb, data);
     if (event == NULL) {
         goto err_event;
     }
@@ -287,14 +293,14 @@ int rawstor_io_read(
         "readv(%d, %zu)\n", fd, size);
 #endif
 
-    if (io_push_sqe(io, fd, event, 0)) {
+    if (io_queue_push_sqe(queue, fd, event, 0)) {
         goto err_push_sqe;
     }
 
     return 0;
 
 err_push_sqe:
-    rawstor_mempool_free(io->events_pool, event);
+    rawstor_mempool_free(queue->events_pool, event);
 err_event:
     free(event_iov);
 err_event_iov:
@@ -302,8 +308,8 @@ err_event_iov:
 }
 
 
-int rawstor_io_pread(
-    RawstorIO *io,
+int rawstor_io_queue_pread(
+    RawstorIOQueue *queue,
     int fd, void *buf, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data)
 {
@@ -319,8 +325,8 @@ int rawstor_io_pread(
         .iov_len = size,
     };
 
-    RawstorIOEvent *event = io_create_event(
-        io, event_iov, 1, size, offset, cb, data);
+    RawstorIOEvent *event = io_queue_create_event(
+        queue, event_iov, 1, size, offset, cb, data);
     if (event == NULL) {
         goto err_event;
     }
@@ -331,14 +337,14 @@ int rawstor_io_pread(
         "preadv(%d, %zu)\n", fd, size);
 #endif
 
-    if (io_push_sqe(io, fd, event, 0)) {
+    if (io_queue_push_sqe(queue, fd, event, 0)) {
         goto err_push_sqe;
     }
 
     return 0;
 
 err_push_sqe:
-    rawstor_mempool_free(io->events_pool, event);
+    rawstor_mempool_free(queue->events_pool, event);
 err_event:
     free(event_iov);
 err_event_iov:
@@ -346,8 +352,8 @@ err_event_iov:
 }
 
 
-int rawstor_io_readv(
-    RawstorIO *io,
+int rawstor_io_queue_readv(
+    RawstorIOQueue *queue,
     int fd, struct iovec *iov, unsigned int niov, size_t size,
     RawstorIOCallback *cb, void *data)
 {
@@ -362,8 +368,8 @@ int rawstor_io_readv(
         event_iov[i] = iov[i];
     }
 
-    RawstorIOEvent *event = io_create_event(
-        io, event_iov, niov, size, 0, cb, data);
+    RawstorIOEvent *event = io_queue_create_event(
+        queue, event_iov, niov, size, 0, cb, data);
     if (event == NULL) {
         goto err_event;
     }
@@ -374,14 +380,14 @@ int rawstor_io_readv(
         "readv(%d, %zu)\n", fd, size);
 #endif
 
-    if (io_push_sqe(io, fd, event, 0)) {
+    if (io_queue_push_sqe(queue, fd, event, 0)) {
         goto err_push_event;
     }
 
     return 0;
 
 err_push_event:
-    rawstor_mempool_free(io->events_pool, event);
+    rawstor_mempool_free(queue->events_pool, event);
 err_event:
     free(event_iov);
 err_event_iov:
@@ -389,8 +395,8 @@ err_event_iov:
 }
 
 
-int rawstor_io_preadv(
-    RawstorIO *io,
+int rawstor_io_queue_preadv(
+    RawstorIOQueue *queue,
     int fd, struct iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data)
 {
@@ -405,8 +411,8 @@ int rawstor_io_preadv(
         event_iov[i] = iov[i];
     }
 
-    RawstorIOEvent *event = io_create_event(
-        io, event_iov, niov, size, offset, cb, data);
+    RawstorIOEvent *event = io_queue_create_event(
+        queue, event_iov, niov, size, offset, cb, data);
     if (event == NULL) {
         goto err_event;
     }
@@ -417,14 +423,14 @@ int rawstor_io_preadv(
         "preadv(%d, %zu)\n", fd, size);
 #endif
 
-    if (io_push_sqe(io, fd, event, 0)) {
+    if (io_queue_push_sqe(queue, fd, event, 0)) {
         goto err_push_event;
     }
 
     return 0;
 
 err_push_event:
-    rawstor_mempool_free(io->events_pool, event);
+    rawstor_mempool_free(queue->events_pool, event);
 err_event:
     free(event_iov);
 err_event_iov:
@@ -432,8 +438,8 @@ err_event_iov:
 }
 
 
-int rawstor_io_write(
-    RawstorIO *io,
+int rawstor_io_queue_write(
+    RawstorIOQueue *queue,
     int fd, void *buf, size_t size,
     RawstorIOCallback *cb, void *data)
 {
@@ -449,8 +455,8 @@ int rawstor_io_write(
         .iov_len = size,
     };
 
-    RawstorIOEvent *event = io_create_event(
-        io, event_iov, 1, size, 0, cb, data);
+    RawstorIOEvent *event = io_queue_create_event(
+        queue, event_iov, 1, size, 0, cb, data);
     if (event == NULL) {
         goto err_event;
     }
@@ -461,14 +467,14 @@ int rawstor_io_write(
         "writev(%d, %zu)\n", fd, size);
 #endif
 
-    if (io_push_sqe(io, fd, event, 1)) {
+    if (io_queue_push_sqe(queue, fd, event, 1)) {
         goto err_push_event;
     }
 
     return 0;
 
 err_push_event:
-    rawstor_mempool_free(io->events_pool, event);
+    rawstor_mempool_free(queue->events_pool, event);
 err_event:
     free(event_iov);
 err_event_iov:
@@ -476,8 +482,8 @@ err_event_iov:
 }
 
 
-int rawstor_io_pwrite(
-    RawstorIO *io,
+int rawstor_io_queue_pwrite(
+    RawstorIOQueue *queue,
     int fd, void *buf, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data)
 {
@@ -493,8 +499,8 @@ int rawstor_io_pwrite(
         .iov_len = size,
     };
 
-    RawstorIOEvent *event = io_create_event(
-        io, event_iov, 1, size, offset, cb, data);
+    RawstorIOEvent *event = io_queue_create_event(
+        queue, event_iov, 1, size, offset, cb, data);
     if (event == NULL) {
         goto err_event;
     }
@@ -505,14 +511,14 @@ int rawstor_io_pwrite(
         "pwritev(%d, %zu)\n", fd, size);
 #endif
 
-    if (io_push_sqe(io, fd, event, 1)) {
+    if (io_queue_push_sqe(queue, fd, event, 1)) {
         goto err_push_event;
     }
 
     return 0;
 
 err_push_event:
-    rawstor_mempool_free(io->events_pool, event);
+    rawstor_mempool_free(queue->events_pool, event);
 err_event:
     free(event_iov);
 err_event_iov:
@@ -520,8 +526,8 @@ err_event_iov:
 }
 
 
-int rawstor_io_writev(
-    RawstorIO *io,
+int rawstor_io_queue_writev(
+    RawstorIOQueue *io,
     int fd, struct iovec *iov, unsigned int niov, size_t size,
     RawstorIOCallback *cb, void *data)
 {
@@ -536,7 +542,7 @@ int rawstor_io_writev(
         event_iov[i] = iov[i];
     }
 
-    RawstorIOEvent *event = io_create_event(
+    RawstorIOEvent *event = io_queue_create_event(
         io, event_iov, niov, size, 0, cb, data);
     if (event == NULL) {
         goto err_event;
@@ -548,7 +554,7 @@ int rawstor_io_writev(
         "writev(%d, %zu)\n", fd, size);
 #endif
 
-    if (io_push_sqe(io, fd, event, 1)) {
+    if (io_queue_push_sqe(io, fd, event, 1)) {
         goto err_push_event;
     }
 
@@ -563,8 +569,8 @@ err_event_iov:
 }
 
 
-int rawstor_io_pwritev(
-    RawstorIO *io,
+int rawstor_io_queue_pwritev(
+    RawstorIOQueue *queue,
     int fd, struct iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data)
 {
@@ -579,8 +585,8 @@ int rawstor_io_pwritev(
         event_iov[i] = iov[i];
     }
 
-    RawstorIOEvent *event = io_create_event(
-        io, event_iov, niov, size, offset, cb, data);
+    RawstorIOEvent *event = io_queue_create_event(
+        queue, event_iov, niov, size, offset, cb, data);
     if (event == NULL) {
         goto err_event;
     }
@@ -591,14 +597,14 @@ int rawstor_io_pwritev(
         "pwritev(%d, %zu)\n", fd, size);
 #endif
 
-    if (io_push_sqe(io, fd, event, 1)) {
+    if (io_queue_push_sqe(queue, fd, event, 1)) {
         goto err_push_event;
     }
 
     return 0;
 
 err_push_event:
-    rawstor_mempool_free(io->events_pool, event);
+    rawstor_mempool_free(queue->events_pool, event);
 err_event:
     free(event_iov);
 err_event_iov:
@@ -606,33 +612,37 @@ err_event_iov:
 }
 
 
-RawstorIOEvent* rawstor_io_wait_event_timeout(RawstorIO *io, unsigned int timeout) {
-    if (rawstor_mempool_allocated(io->events_pool) == 0) {
+RawstorIOEvent* rawstor_io_queue_wait_event_timeout(
+    RawstorIOQueue *queue, unsigned int timeout)
+{
+    if (rawstor_mempool_allocated(queue->events_pool) == 0) {
         return NULL;
     }
 
-    rawstor_mutex_lock(io->mutex);
-    if (rawstor_ringbuf_empty(io->cqes)) {
-        if (rawstor_cond_wait_timeout(io->cond, io->mutex, timeout) == 0) {
-            rawstor_mutex_unlock(io->mutex);
+    rawstor_mutex_lock(queue->mutex);
+    if (rawstor_ringbuf_empty(queue->cqes)) {
+        if (rawstor_cond_wait_timeout(
+            queue->cond, queue->mutex, timeout) == 0)
+        {
+            rawstor_mutex_unlock(queue->mutex);
             return NULL;
         }
     }
 
-    assert(!rawstor_ringbuf_empty(io->cqes));
-    RawstorIOEvent **cqe = rawstor_ringbuf_tail(io->cqes);
+    assert(!rawstor_ringbuf_empty(queue->cqes));
+    RawstorIOEvent **cqe = rawstor_ringbuf_tail(queue->cqes);
     RawstorIOEvent *event = *cqe;
-    assert(rawstor_ringbuf_pop(io->cqes) == 0);
-    rawstor_mutex_unlock(io->mutex);
+    assert(rawstor_ringbuf_pop(queue->cqes) == 0);
+    rawstor_mutex_unlock(queue->mutex);
 
     return event;
 }
 
 
-void rawstor_io_release_event(RawstorIO *io, RawstorIOEvent *event) {
+void rawstor_io_queue_release_event(RawstorIOQueue *queue, RawstorIOEvent *event) {
 #ifdef RAWSTOR_TRACE_EVENTS
     rawstor_trace_event_end(event->trace_event, "release_event()\n");
 #endif
     free(event->iov_origin);
-    rawstor_mempool_free(io->events_pool, event);
+    rawstor_mempool_free(queue->events_pool, event);
 }
