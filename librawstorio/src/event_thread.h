@@ -1,7 +1,7 @@
-#ifndef RAWSTORIO_IO_EVENT_THREAD_H
-#define RAWSTORIO_IO_EVENT_THREAD_H
+#ifndef RAWSTORIO_EVENT_THREAD_H
+#define RAWSTORIO_EVENT_THREAD_H
 
-#include "io_session_thread.h"
+#include "session_thread.h"
 
 #include <rawstorstd/logging.h>
 
@@ -51,4 +51,4 @@ ssize_t rawstor_io_event_process_pwritev(RawstorIOEvent *event);
 #endif
 
 
-#endif // RAWSTORIO_IO_EVENT_THREAD_H
+#endif // RAWSTORIO_EVENT_THREAD_H

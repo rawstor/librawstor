@@ -1,7 +1,7 @@
-#ifndef RAWSTORIO_IO_SESSION_THREAD_H
-#define RAWSTORIO_IO_SESSION_THREAD_H
+#ifndef RAWSTORIO_SESSION_THREAD_H
+#define RAWSTORIO_SESSION_THREAD_H
 
-#include "rawstorio/io.h"
+#include "rawstorio/queue.h"
 
 
 #ifdef __cplusplus
@@ -13,11 +13,11 @@ typedef struct RawstorIOSession RawstorIOSession;
 
 
 RawstorIOSession* rawstor_io_session_create(
-    RawstorIO *io, int fd, int write);
+    RawstorIOQueue *queue, int fd, int write);
 
 void rawstor_io_session_delete(RawstorIOSession *session);
 
-RawstorIO* rawstor_io_session_io(RawstorIOSession *session);
+RawstorIOQueue* rawstor_io_session_queue(RawstorIOSession *session);
 
 int rawstor_io_session_fd(RawstorIOSession *session);
 
@@ -38,4 +38,4 @@ int rawstor_io_session_compare(RawstorIOSession *session, int fd, int write);
 #endif
 
 
-#endif // RAWSTORIO_IO_SESSION_THREAD_H
+#endif // RAWSTORIO_SESSION_THREAD_H
