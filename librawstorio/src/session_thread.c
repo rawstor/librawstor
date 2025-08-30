@@ -1,9 +1,9 @@
-#include "io_session_thread.h"
+#include "session_thread.h"
 
-#include "io_event_thread.h"
-#include "io_session_seekable_thread.h"
-#include "io_session_unseekable_thread.h"
-#include "io_thread.h"
+#include "event_thread.h"
+#include "queue_thread.h"
+#include "session_seekable_thread.h"
+#include "session_unseekable_thread.h"
 
 #include <rawstorstd/iovec.h>
 #include <rawstorstd/list.h>
@@ -20,7 +20,7 @@
 
 
 struct RawstorIOSession {
-    RawstorIO *io;
+    RawstorIOQueue *queue;
 
     int fd;
     int write;
@@ -45,7 +45,7 @@ static int is_seekable(int fd) {
 
 
 RawstorIOSession* rawstor_io_session_create(
-    RawstorIO *io, int fd, int write)
+    RawstorIOQueue *queue, int fd, int write)
 {
     int seekable = is_seekable(fd);
     if (seekable < 0) {
@@ -59,7 +59,7 @@ RawstorIOSession* rawstor_io_session_create(
 
     if (seekable) {
         *session = (RawstorIOSession) {
-            .io = io,
+            .queue = queue,
             .fd = fd,
             .write = write,
             // .impl
@@ -74,7 +74,7 @@ RawstorIOSession* rawstor_io_session_create(
         }
     } else {
         *session = (RawstorIOSession) {
-            .io = io,
+            .queue = queue,
             .fd = fd,
             .write = write,
             // .impl
@@ -105,8 +105,8 @@ void rawstor_io_session_delete(RawstorIOSession *session) {
 }
 
 
-RawstorIO* rawstor_io_session_io(RawstorIOSession *session) {
-    return session->io;
+RawstorIOQueue* rawstor_io_session_queue(RawstorIOSession *session) {
+    return session->queue;
 }
 
 
