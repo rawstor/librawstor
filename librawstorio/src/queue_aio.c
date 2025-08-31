@@ -62,11 +62,10 @@ static int io_event_readv(RawstorIOEvent *event, void *data) {
 
     RawstorIOQueue *queue = (RawstorIOQueue*)data;
 
-    if (rawstor_mempool_available(queue->events_pool) == 0) {
-        errno = ENOBUFS;
+    RawstorIOEvent *next_event = rawstor_mempool_alloc(queue->events_pool);
+    if (next_event == NULL) {
         return -errno;
     }
-    RawstorIOEvent *next_event = rawstor_mempool_alloc(queue->events_pool);
 
     *next_event = (RawstorIOEvent) {
         .cb = next_event->cb,
@@ -129,11 +128,10 @@ static int io_event_preadv(RawstorIOEvent *event, void *data) {
 
     RawstorIOQueue *queue = (RawstorIOQueue*)data;
 
-    if (rawstor_mempool_available(queue->events_pool) == 0) {
-        errno = ENOBUFS;
+    RawstorIOEvent *next_event = rawstor_mempool_alloc(queue->events_pool);
+    if (next_event == NULL) {
         return -errno;
     }
-    RawstorIOEvent *next_event = rawstor_mempool_alloc(queue->events_pool);
 
     *next_event = (RawstorIOEvent) {
         .cb = next_event->cb,
@@ -196,11 +194,10 @@ static int io_event_writev(RawstorIOEvent *event, void *data) {
 
     RawstorIOQueue *queue = (RawstorIOQueue*)data;
 
-    if (rawstor_mempool_available(queue->events_pool) == 0) {
-        errno = ENOBUFS;
+    RawstorIOEvent *next_event = rawstor_mempool_alloc(queue->events_pool);
+    if (next_event == NULL) {
         return -errno;
     }
-    RawstorIOEvent *next_event = rawstor_mempool_alloc(queue->events_pool);
 
     *next_event = (RawstorIOEvent) {
         .cb = next_event->cb,
@@ -263,11 +260,10 @@ static int io_event_pwritev(RawstorIOEvent *event, void *data) {
 
     RawstorIOQueue *queue = (RawstorIOQueue*)data;
 
-    if (rawstor_mempool_available(queue->events_pool) == 0) {
-        errno = ENOBUFS;
+    RawstorIOEvent *next_event = rawstor_mempool_alloc(queue->events_pool);
+    if (next_event == NULL) {
         return -errno;
     }
-    RawstorIOEvent *next_event = rawstor_mempool_alloc(queue->events_pool);
 
     *next_event = (RawstorIOEvent) {
         .cb = next_event->cb,
@@ -312,7 +308,7 @@ err_write:
 }
 
 
-static RawstorIOEvent* io_process_event(RawstorIOQueue *queue) {
+static RawstorIOEvent* io_queue_process_event(RawstorIOQueue *queue) {
     for (size_t i = 0; i < queue->depth; ++i) {
         struct aiocb **cbp = &queue->cbps[i];
         if (*cbp == NULL) {
@@ -426,11 +422,10 @@ int rawstor_io_queue_read(
     int fd, void *buf, size_t size,
     RawstorIOCallback *cb, void *data)
 {
-    if (rawstor_mempool_available(queue->events_pool) == 0) {
-        errno = ENOBUFS;
+    RawstorIOEvent *event = rawstor_mempool_alloc(queue->events_pool);
+    if (event == NULL) {
         return -errno;
     }
-    RawstorIOEvent *event = rawstor_mempool_alloc(queue->events_pool);
 
     *event = (RawstorIOEvent) {
         .cb = event->cb,
@@ -473,11 +468,10 @@ int rawstor_io_queue_pread(
     int fd, void *buf, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data)
 {
-    if (rawstor_mempool_available(queue->events_pool) == 0) {
-        errno = ENOBUFS;
+    RawstorIOEvent *event = rawstor_mempool_alloc(queue->events_pool);
+    if (event == NULL) {
         return -errno;
     }
-    RawstorIOEvent *event = rawstor_mempool_alloc(queue->events_pool);
 
     *event = (RawstorIOEvent) {
         .cb = event->cb,
@@ -527,11 +521,10 @@ int rawstor_io_queue_readv(
         return 0;
     }
 
-    if (rawstor_mempool_available(queue->events_pool) == 0) {
-        errno = ENOBUFS;
+    RawstorIOEvent *event = rawstor_mempool_alloc(queue->events_pool);
+    if (event == NULL) {
         return -errno;
     }
-    RawstorIOEvent *event = rawstor_mempool_alloc(queue->events_pool);
 
     *event = (RawstorIOEvent) {
         .cb = event->cb,
@@ -588,11 +581,10 @@ int rawstor_io_queue_preadv(
         return 0;
     }
 
-    if (rawstor_mempool_available(queue->events_pool) == 0) {
-        errno = ENOBUFS;
+    RawstorIOEvent *event = rawstor_mempool_alloc(queue->events_pool);
+    if (event == NULL) {
         return -errno;
     }
-    RawstorIOEvent *event = rawstor_mempool_alloc(queue->events_pool);
 
     *event = (RawstorIOEvent) {
         .cb = event->cb,
@@ -642,11 +634,10 @@ int rawstor_io_queue_write(
     int fd, void *buf, size_t size,
     RawstorIOCallback *cb, void *data)
 {
-    if (rawstor_mempool_available(queue->events_pool) == 0) {
-        errno = ENOBUFS;
+    RawstorIOEvent *event = rawstor_mempool_alloc(queue->events_pool);
+    if (event == NULL) {
         return -errno;
     }
-    RawstorIOEvent *event = rawstor_mempool_alloc(queue->events_pool);
 
     *event = (RawstorIOEvent) {
         .cb = event->cb,
@@ -689,11 +680,10 @@ int rawstor_io_queue_pwrite(
     int fd, void *buf, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data)
 {
-    if (rawstor_mempool_available(queue->events_pool) == 0) {
-        errno = ENOBUFS;
+    RawstorIOEvent *event = rawstor_mempool_alloc(queue->events_pool);
+    if (event == NULL) {
         return -errno;
     }
-    RawstorIOEvent *event = rawstor_mempool_alloc(queue->events_pool);
 
     *event = (RawstorIOEvent) {
         .cb = event->cb,
@@ -743,11 +733,10 @@ int rawstor_io_queue_writev(
         return 0;
     }
 
-    if (rawstor_mempool_available(queue->events_pool) == 0) {
-        errno = ENOBUFS;
+    RawstorIOEvent *event = rawstor_mempool_alloc(queue->events_pool);
+    if (event == NULL) {
         return -errno;
     }
-    RawstorIOEvent *event = rawstor_mempool_alloc(queue->events_pool);
 
     *event = (RawstorIOEvent) {
         .cb = event->cb,
@@ -804,11 +793,10 @@ int rawstor_io_queue_pwritev(
         return 0;
     }
 
-    if (rawstor_mempool_available(queue->events_pool) == 0) {
-        errno = ENOBUFS;
+    RawstorIOEvent *event = rawstor_mempool_alloc(queue->events_pool);
+    if (event == NULL) {
         return -errno;
     }
-    RawstorIOEvent *event = rawstor_mempool_alloc(queue->events_pool);
 
     *event = (RawstorIOEvent) {
         .cb = event->cb,
@@ -856,7 +844,7 @@ err_write:
 RawstorIOEvent* rawstor_io_queue_wait_event_timeout(
     RawstorIOQueue *queue, unsigned int timeout)
 {
-    RawstorIOEvent *event = io_process_event(queue);
+    RawstorIOEvent *event = io_queue_process_event(queue);
     if (event != NULL) {
         return event;
     }
@@ -877,7 +865,7 @@ RawstorIOEvent* rawstor_io_queue_wait_event_timeout(
         return NULL;
     }
 
-    return io_process_event(queue);
+    return io_queue_process_event(queue);
 }
 
 

@@ -589,12 +589,11 @@ int rawstor_object_pread(
         "%s(): offset = %jd, size = %zu\n",
         __FUNCTION__, (intmax_t)offset, size);
 
-    if (rawstor_mempool_available(object->operations_pool) == 0) {
-        errno = ENOBUFS;
+    RawstorObjectOperation *op = rawstor_mempool_alloc(object->operations_pool);
+    if (op == NULL) {
         return -errno;
     }
 
-    RawstorObjectOperation *op = rawstor_mempool_alloc(object->operations_pool);
     *op = (RawstorObjectOperation) {
         .object = object,
         .cid = op->cid,  // preserve cid
@@ -629,11 +628,6 @@ int rawstor_object_preadv(
         "%s(): offset = %jd, niov = %u, size = %zu\n",
         __FUNCTION__, (intmax_t)offset, niov, size);
 
-    if (rawstor_mempool_available(object->operations_pool) == 0) {
-        errno = ENOBUFS;
-        return -errno;
-    }
-
     if (niov >= IOVEC_SIZE) {
         rawstor_error("Large iovecs not supported: %u", niov);
         errno = EIO;
@@ -641,6 +635,10 @@ int rawstor_object_preadv(
     }
 
     RawstorObjectOperation *op = rawstor_mempool_alloc(object->operations_pool);
+    if (op == NULL) {
+        return -errno;
+    }
+
     *op = (RawstorObjectOperation) {
         .object = object,
         .cid = op->cid,  // preserve cid
@@ -675,12 +673,11 @@ int rawstor_object_pwrite(
         "%s(): offset = %jd, size = %zu\n",
         __FUNCTION__, (intmax_t)offset, size);
 
-    if (rawstor_mempool_available(object->operations_pool) == 0) {
-        errno = ENOBUFS;
+    RawstorObjectOperation *op = rawstor_mempool_alloc(object->operations_pool);
+    if (op == NULL) {
         return -errno;
     }
 
-    RawstorObjectOperation *op = rawstor_mempool_alloc(object->operations_pool);
     *op = (RawstorObjectOperation) {
         .object = object,
         .cid = op->cid,  // preserve cid
@@ -730,11 +727,6 @@ int rawstor_object_pwritev(
         return -errno;
     }
 
-    if (rawstor_mempool_available(object->operations_pool) == 0) {
-        errno = ENOBUFS;
-        return -errno;
-    }
-
     if (niov > IOVEC_SIZE) {
         rawstor_error("Large iovecs not supported: %u", niov);
         errno = EIO;
@@ -742,6 +734,10 @@ int rawstor_object_pwritev(
     }
 
     RawstorObjectOperation *op = rawstor_mempool_alloc(object->operations_pool);
+    if (op == NULL) {
+        return -errno;
+    }
+
     *op = (RawstorObjectOperation) {
         .object = object,
         .cid = op->cid,  // preserve cid
