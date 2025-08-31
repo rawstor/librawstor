@@ -557,6 +557,8 @@ int rawstor_object_close(RawstorObject *object) {
         return -errno;
     }
 
+    rawstor_mempool_delete(object->operations_pool);
+
     free(object);
 
     return 0;
