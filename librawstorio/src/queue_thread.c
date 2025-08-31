@@ -118,11 +118,10 @@ static inline RawstorIOEvent* io_queue_create_event(
     struct iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data)
 {
-    if (rawstor_mempool_available(queue->events_pool) == 0) {
-        errno = ENOBUFS;
+    RawstorIOEvent *event = rawstor_mempool_alloc(queue->events_pool);
+    if (event == NULL) {
         return NULL;
     }
-    RawstorIOEvent *event = rawstor_mempool_alloc(queue->events_pool);
 
     *event = (RawstorIOEvent) {
         // .session
