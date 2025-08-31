@@ -364,11 +364,11 @@ int rawstor_object_pread(
     void *buf, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
-    if (rawstor_mempool_available(object->operations_pool) == 0) {
-        errno = ENOBUFS;
+    RawstorObjectOperation *op = rawstor_mempool_alloc(object->operations_pool);
+    if (op == NULL) {
         return -errno;
     }
-    RawstorObjectOperation *op = rawstor_mempool_alloc(object->operations_pool);
+
     *op = (RawstorObjectOperation) {
         .object = object,
         .callback = cb,
@@ -386,11 +386,11 @@ int rawstor_object_preadv(
     struct iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
-    if (rawstor_mempool_available(object->operations_pool) == 0) {
-        errno = ENOBUFS;
+    RawstorObjectOperation *op = rawstor_mempool_alloc(object->operations_pool);
+    if (op == NULL) {
         return -errno;
     }
-    RawstorObjectOperation *op = rawstor_mempool_alloc(object->operations_pool);
+
     *op = (RawstorObjectOperation) {
         .object = object,
         .callback = cb,
@@ -408,11 +408,11 @@ int rawstor_object_pwrite(
     void *buf, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
-    if (rawstor_mempool_available(object->operations_pool) == 0) {
-        errno = ENOBUFS;
+    RawstorObjectOperation *op = rawstor_mempool_alloc(object->operations_pool);
+    if (op == NULL) {
         return -errno;
     }
-    RawstorObjectOperation *op = rawstor_mempool_alloc(object->operations_pool);
+
     *op = (RawstorObjectOperation) {
         .object = object,
         .callback = cb,
@@ -430,11 +430,11 @@ int rawstor_object_pwritev(
     struct iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
-    if (rawstor_mempool_available(object->operations_pool) == 0) {
-        errno = ENOBUFS;
+    RawstorObjectOperation *op = rawstor_mempool_alloc(object->operations_pool);
+    if (op == NULL) {
         return -errno;
     }
-    RawstorObjectOperation *op = rawstor_mempool_alloc(object->operations_pool);
+
     *op = (RawstorObjectOperation) {
         .object = object,
         .callback = cb,

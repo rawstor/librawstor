@@ -1,6 +1,7 @@
 #include "rawstorstd/mempool.h"
 
 #include <sys/errno.h>
+
 #include <stdlib.h>
 
 
@@ -81,6 +82,10 @@ void* rawstor_mempool_data(RawstorMemPool *mempool) {
 
 
 void* rawstor_mempool_alloc(RawstorMemPool *mempool) {
+    if (mempool->current == mempool->tail) {
+        errno = ENOBUFS;
+        return NULL;
+    }
     return *(mempool->current++);
 }
 

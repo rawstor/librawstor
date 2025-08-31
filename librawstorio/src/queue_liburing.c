@@ -29,22 +29,17 @@ static inline RawstorIOEvent* io_queue_create_event(
     int fd, size_t size,
     RawstorIOCallback *cb, void *data)
 {
-    /**
-     * TODO: Since mempool count is equal to sqe count,
-     * do we really have to have this check?
-     */
-    if (rawstor_mempool_available(queue->events_pool) == 0) {
-        errno = ENOBUFS;
-        return NULL;
+    RawstorIOEvent *event = rawstor_mempool_alloc(queue->events_pool);
+    if (event == NULL) {
+        goto err_event;
     }
 
     struct io_uring_sqe *sqe = io_uring_get_sqe(&queue->ring);
     if (sqe == NULL) {
         errno = ENOBUFS;
-        return NULL;
+        goto err_sqe;
     }
 
-    RawstorIOEvent *event = rawstor_mempool_alloc(queue->events_pool);
     *event = (RawstorIOEvent) {
         .fd = fd,
         .callback = cb,
@@ -57,6 +52,11 @@ static inline RawstorIOEvent* io_queue_create_event(
     io_uring_sqe_set_data(sqe, event);
 
     return event;
+
+err_sqe:
+    rawstor_mempool_free(queue->events_pool, event);
+err_event:
+    return NULL;
 }
 
 

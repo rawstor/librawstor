@@ -81,11 +81,6 @@ static RawstorIOEvent* io_queue_create_event(
     int fd, void *buf, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data)
 {
-    if (!rawstor_mempool_available(queue->events_pool)) {
-        errno = ENOBUFS;
-        return NULL;
-    }
-
     /**
      * TODO: use event_iov from some buffer preallocated in queue struct.
      */
@@ -99,6 +94,10 @@ static RawstorIOEvent* io_queue_create_event(
     };
 
     RawstorIOEvent *event = rawstor_mempool_alloc(queue->events_pool);
+    if (event == NULL) {
+        goto err_event;
+    }
+
     *event = (RawstorIOEvent) {
         .fd = fd,
         .iov_origin = event_iov,
@@ -115,6 +114,8 @@ static RawstorIOEvent* io_queue_create_event(
 
     return event;
 
+err_event:
+    free(event_iov);
 err_event_iov:
     return NULL;
 }
@@ -125,11 +126,6 @@ static RawstorIOEvent* io_queue_create_eventv(
     int fd, struct iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data)
 {
-    if (!rawstor_mempool_available(queue->events_pool)) {
-        errno = ENOBUFS;
-        return NULL;
-    }
-
     /**
      * TODO: use event_iov from some buffer preallocated in queue struct.
      */
@@ -142,6 +138,10 @@ static RawstorIOEvent* io_queue_create_eventv(
     }
 
     RawstorIOEvent *event = rawstor_mempool_alloc(queue->events_pool);
+    if (event == NULL) {
+        goto err_event;
+    }
+
     *event = (RawstorIOEvent) {
         .fd = fd,
         .iov_origin = event_iov,
@@ -158,6 +158,8 @@ static RawstorIOEvent* io_queue_create_eventv(
 
     return event;
 
+err_event:
+    free(event_iov);
 err_event_iov:
     return NULL;
 }
