@@ -1,6 +1,7 @@
 #include <rawstor/object.h>
 #include "object_internals.h"
 
+#include "connection_ost.h"
 #include "opts.h"
 #include "ost_protocol.h"
 #include "rawstor_internals.h"
@@ -76,7 +77,10 @@ struct RawstorObjectOp {
 
 struct RawstorObject {
     struct RawstorUUID id;
-    int fd;
+
+    RawstorConnection *cns;
+    size_t ncns;
+
     int response_loop;
     RawstorObjectOp **ops_array;
     RawstorRingBuf *ops;
