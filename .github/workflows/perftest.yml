@@ -215,7 +215,7 @@ jobs:
       run: |
         pushd .
         cd ./fio
-        PKG_CONFIG_PATH=${GITHUB_WORKSPACE}/local ./configure --prefix=${GITHUB_WORKSPACE}/local
+        PKG_CONFIG_PATH=${GITHUB_WORKSPACE}/local/lib/pkgconfig ./configure --prefix=${GITHUB_WORKSPACE}/local
         make -j$(nproc)
         make install
         popd
