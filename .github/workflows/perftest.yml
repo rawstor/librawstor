@@ -229,7 +229,7 @@ jobs:
     - name: create object
       if: "${{ matrix.disable-ost != '' }}"
       run: |
-        object_id=$(rawstor-cli create --size=1)
+        object_id=$(./local/bin/rawstor-cli create --size=1)
         echo "OBJECT_ID=${object_id}" >> $GITHUB_ENV
     - name: (rawstor_ost) create object
       if: "${{ matrix.disable-ost == '' }}"
@@ -253,7 +253,7 @@ jobs:
         echo \`\`\` >> $GITHUB_STEP_SUMMARY
     - name: delete object
       if: "${{ matrix.disable-ost != '' }}"
-      run: rawstor-cli delete --object-id=${OBJECT_ID}
+      run: ./local/bin/rawstor-cli delete --object-id=${OBJECT_ID}
     - name: (rawstor_ost) stop rawstor_ost
       if: "${{ matrix.disable-ost == '' }}"
       run: |
