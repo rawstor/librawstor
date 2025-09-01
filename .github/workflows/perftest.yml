@@ -34,7 +34,7 @@ jobs:
     - name: install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libxxhash-dev ${{ matrix.packages }}
+        sudo apt-get install -y libxxhash-dev libtool pkg-config ${{ matrix.packages }}
     - uses: actions/checkout@v4
       with:
         path: librawstor
@@ -174,7 +174,7 @@ jobs:
     - name: install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libxxhash-dev ${{ matrix.packages }}
+        sudo apt-get install -y libxxhash-dev libtool pkg-config ${{ matrix.packages }}
     - uses: actions/checkout@v4
       with:
         path: librawstor
