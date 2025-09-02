@@ -30,13 +30,13 @@ int rawstor_opts_initialize(
 
 void rawstor_opts_terminate(void);
 
-unsigned int rawstor_opts_wait_timeout(const struct RawstorOpts *opts);
+unsigned int rawstor_opts_wait_timeout(void);
 
-unsigned int rawstor_opts_so_sndtimeo(const struct RawstorOpts *opts);
+unsigned int rawstor_opts_so_sndtimeo(void);
 
-unsigned int rawstor_opts_so_rcvtimeo(const struct RawstorOpts *opts);
+unsigned int rawstor_opts_so_rcvtimeo(void);
 
-unsigned int rawstor_opts_tcp_user_timeout(const struct RawstorOpts *opts);
+unsigned int rawstor_opts_tcp_user_timeout(void);
 
 const char* rawstor_opts_ost_host(const struct RawstorOptsOST *opts_ost);
 

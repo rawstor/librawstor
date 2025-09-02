@@ -152,10 +152,7 @@ static int object_response_head_recv(RawstorObject *object) {
 }
 
 
-static int ost_connect(
-    const struct RawstorOpts *opts,
-    const struct RawstorOptsOST *opts_ost)
-{
+static int ost_connect(const struct RawstorOptsOST *opts_ost) {
     struct sockaddr_in servaddr;
     // socket create and verification
     int fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -165,21 +162,21 @@ static int ost_connect(
 
     rawstor_info("Socket successfully created\n");
 
-    unsigned int so_sndtimeo = rawstor_opts_so_sndtimeo(opts);
+    unsigned int so_sndtimeo = rawstor_opts_so_sndtimeo();
     if (so_sndtimeo != 0) {
         if (rawstor_socket_set_snd_timeout(fd, so_sndtimeo)) {
             return -errno;
         }
     }
 
-    unsigned int so_rcvtimeo = rawstor_opts_so_rcvtimeo(opts);
+    unsigned int so_rcvtimeo = rawstor_opts_so_rcvtimeo();
     if (so_rcvtimeo != 0) {
         if (rawstor_socket_set_rcv_timeout(fd, so_rcvtimeo)) {
             return -errno;
         }
     }
 
-    unsigned int tcp_user_timeo = rawstor_opts_tcp_user_timeout(opts);
+    unsigned int tcp_user_timeo = rawstor_opts_tcp_user_timeout();
     if (tcp_user_timeo != 0) {
         if (rawstor_socket_set_user_timeout(fd, tcp_user_timeo)) {
             return -errno;
@@ -549,7 +546,7 @@ int rawstor_object_open(
         *it = op;
     }
 
-    obj->fd = ost_connect(NULL, opts_ost);
+    obj->fd = ost_connect(opts_ost);
     if (obj->fd < 0) {
         goto err_connect;
     }

@@ -65,34 +65,22 @@ void rawstor_opts_terminate(void) {
 }
 
 
-unsigned int rawstor_opts_wait_timeout(const struct RawstorOpts *opts) {
-    if (opts != NULL && opts->wait_timeout != 0) {
-        return opts->wait_timeout;
-    }
+unsigned int rawstor_opts_wait_timeout(void) {
     return _rawstor_opts.wait_timeout;
 }
 
 
-unsigned int rawstor_opts_ost_so_sndtimeo(const struct RawstorOpts *opts) {
-    if (opts != NULL && opts->so_sndtimeo != 0) {
-        return opts->so_sndtimeo;
-    }
+unsigned int rawstor_opts_so_sndtimeo(void) {
     return _rawstor_opts.so_sndtimeo;
 }
 
 
-unsigned int rawstor_opts_so_rcvtimeo(const struct RawstorOpts *opts) {
-    if (opts != NULL && opts->so_rcvtimeo != 0) {
-        return opts->so_rcvtimeo;
-    }
+unsigned int rawstor_opts_so_rcvtimeo(void) {
     return _rawstor_opts.so_rcvtimeo;
 }
 
 
-unsigned int rawstor_opts_tcp_user_timeout(const struct RawstorOpts *opts) {
-    if (opts != NULL && opts->tcp_user_timeout != 0) {
-        return opts->tcp_user_timeout;
-    }
+unsigned int rawstor_opts_tcp_user_timeout(void) {
     return _rawstor_opts.tcp_user_timeout;
 }
 
