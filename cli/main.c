@@ -47,7 +47,7 @@ static void command_create_usage() {
 
 
 static int command_create(
-    const struct RawstorOptsIO *opts_io,
+    const struct RawstorOpts *opts,
     const struct RawstorOptsOST *opts_ost,
     int argc, char **argv)
 {
@@ -97,7 +97,7 @@ static int command_create(
         return EXIT_FAILURE;
     }
 
-    return rawstor_cli_create(opts_io, opts_ost, size);
+    return rawstor_cli_create(opts, opts_ost, size);
 }
 
 
@@ -116,7 +116,7 @@ static void command_delete_usage() {
 
 
 static int command_delete(
-    const struct RawstorOptsIO *opts_io,
+    const struct RawstorOpts *opts,
     const struct RawstorOptsOST *opts_ost,
     int argc, char **argv)
 {
@@ -166,10 +166,7 @@ static int command_delete(
         return EXIT_FAILURE;
     }
 
-    return rawstor_cli_delete(
-        opts_io,
-        opts_ost,
-        &object_id);
+    return rawstor_cli_delete(opts, opts_ost, &object_id);
 }
 
 
@@ -196,7 +193,7 @@ static void command_testio_usage() {
 
 
 static int command_testio(
-    const struct RawstorOptsIO *opts_io,
+    const struct RawstorOpts *opts,
     const struct RawstorOptsOST *opts_ost,
     int argc, char **argv)
 {
@@ -304,7 +301,7 @@ static int command_testio(
     }
 
     return rawstor_cli_testio(
-        opts_io,
+        opts,
         opts_ost,
         &object_id,
         block_size, count, io_depth,
@@ -352,7 +349,7 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
-    struct RawstorOptsIO opts_io = {};
+    struct RawstorOpts opts = {};
     struct RawstorOptsOST opts_ost = {};
 
     if (ost_arg != NULL) {
@@ -373,7 +370,7 @@ int main(int argc, char **argv) {
     }
 
     if (wait_timeout_arg != NULL) {
-        if (sscanf(wait_timeout_arg, "%u", &opts_io.wait_timeout) != 1) {
+        if (sscanf(wait_timeout_arg, "%u", &opts.wait_timeout) != 1) {
             fprintf(stderr, "wait-timeout argument must be unsigned integer\n");
             return EXIT_FAILURE;
         }
@@ -382,17 +379,17 @@ int main(int argc, char **argv) {
     char *command = argv[optind];
     if (strcmp(command, "create") == 0) {
         return command_create(
-            &opts_io, &opts_ost, argc - optind, &argv[optind]);
+            &opts, &opts_ost, argc - optind, &argv[optind]);
     }
 
     if (strcmp(command, "delete") == 0) {
         return command_delete(
-            &opts_io, &opts_ost, argc - optind, &argv[optind]);
+            &opts, &opts_ost, argc - optind, &argv[optind]);
     }
 
     if (strcmp(command, "testio") == 0) {
         return command_testio(
-            &opts_io, &opts_ost, argc - optind, &argv[optind]);
+            &opts, &opts_ost, argc - optind, &argv[optind]);
     }
 
     printf("Unexpected command: %s\n", command);

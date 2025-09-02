@@ -12,11 +12,11 @@
 
 
 int rawstor_cli_delete(
-    const struct RawstorOptsIO *opts_io,
+    const struct RawstorOpts *opts,
     const struct RawstorOptsOST *opts_ost,
     const struct RawstorUUID *object_id)
 {
-    if (rawstor_initialize(opts_io, opts_ost)) {
+    if (rawstor_initialize(opts, opts_ost)) {
         perror("rawstor_initialize() failed");
         goto err_initialize;
     }

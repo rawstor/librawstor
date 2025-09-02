@@ -7,11 +7,11 @@
 
 
 int rawstor_cli_create(
-    const struct RawstorOptsIO *opts_io,
+    const struct RawstorOpts *opts,
     const struct RawstorOptsOST *opts_ost,
     size_t size)
 {
-    if (rawstor_initialize(opts_io, opts_ost)) {
+    if (rawstor_initialize(opts, opts_ost)) {
         perror("rawstor_initialize() failed");
         goto err_initialize;
     }
