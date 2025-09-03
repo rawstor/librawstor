@@ -351,22 +351,27 @@ int main(int argc, char **argv) {
 
     struct RawstorOpts opts = {};
     struct RawstorSocketAddress ost = {};
+    struct RawstorSocketAddress *ost_ptr = NULL;
 
     if (ost_arg != NULL) {
         const char *comma = strchr(ost_arg, ':');
-        if (comma != NULL) {
-            if (sscanf(comma + 1, "%u", &ost.port) != 1) {
-                fprintf(stderr, "ost port argument must be unsigned integer\n");
-                return EXIT_FAILURE;
-            }
+        if (comma == NULL) {
+            fprintf(stderr, "host:port format expected for ost argument\n");
+            return EXIT_FAILURE;
         }
-        ost.host = comma != NULL ?
-            strndup(ost_arg, comma - ost_arg) :
-            strdup(ost_arg);
+
+        if (sscanf(comma + 1, "%u", &ost.port) != 1) {
+            fprintf(stderr, "ost port argument must be unsigned integer\n");
+            return EXIT_FAILURE;
+        }
+
+        ost.host = strndup(ost_arg, comma - ost_arg);
         if (ost.host == NULL) {
             perror("strdup() failed");
             return EXIT_FAILURE;
         }
+
+        ost_ptr = &ost;
     }
 
     if (wait_timeout_arg != NULL) {
@@ -376,22 +381,25 @@ int main(int argc, char **argv) {
         }
     }
 
+    int ret;
     char *command = argv[optind];
     if (strcmp(command, "create") == 0) {
-        return command_create(
-            &opts, &ost, argc - optind, &argv[optind]);
+        ret = command_create(
+            &opts, ost_ptr, argc - optind, &argv[optind]);
+    } else if (strcmp(command, "delete") == 0) {
+        ret = command_delete(
+            &opts, ost_ptr, argc - optind, &argv[optind]);
+    } else if (strcmp(command, "testio") == 0) {
+        ret = command_testio(
+            &opts, ost_ptr, argc - optind, &argv[optind]);
+    } else {
+        printf("Unexpected command: %s\n", command);
+        ret = EXIT_FAILURE;
     }
 
-    if (strcmp(command, "delete") == 0) {
-        return command_delete(
-            &opts, &ost, argc - optind, &argv[optind]);
+    if (ost_ptr != NULL) {
+        free(ost_ptr->host);
     }
 
-    if (strcmp(command, "testio") == 0) {
-        return command_testio(
-            &opts, &ost, argc - optind, &argv[optind]);
-    }
-
-    printf("Unexpected command: %s\n", command);
-    return EXIT_FAILURE;
+    return ret;
 }

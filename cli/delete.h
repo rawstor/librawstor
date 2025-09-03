@@ -13,7 +13,7 @@ extern "C" {
 
 int rawstor_cli_delete(
     const struct RawstorOpts *opts,
-    const struct RawstorSocketAddress *ost,
+    const struct RawstorSocketAddress *default_ost,
     const struct RawstorUUID *object_id);
 
 

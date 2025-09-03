@@ -13,10 +13,10 @@
 
 int rawstor_cli_delete(
     const struct RawstorOpts *opts,
-    const struct RawstorSocketAddress *ost,
+    const struct RawstorSocketAddress *default_ost,
     const struct RawstorUUID *object_id)
 {
-    if (rawstor_initialize(opts, ost)) {
+    if (rawstor_initialize(opts, default_ost)) {
         perror("rawstor_initialize() failed");
         goto err_initialize;
     }

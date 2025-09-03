@@ -8,10 +8,10 @@
 
 int rawstor_cli_create(
     const struct RawstorOpts *opts,
-    const struct RawstorSocketAddress *ost,
+    const struct RawstorSocketAddress *default_ost,
     size_t size)
 {
-    if (rawstor_initialize(opts, ost)) {
+    if (rawstor_initialize(opts, default_ost)) {
         perror("rawstor_initialize() failed");
         goto err_initialize;
     }
