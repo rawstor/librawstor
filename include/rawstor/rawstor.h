@@ -67,7 +67,7 @@ struct RawstorOpts {
 };
 
 
-struct RawstorOptsOST {
+struct RawstorSocketAddress {
     char *host;
     unsigned int port;
 };
@@ -75,7 +75,7 @@ struct RawstorOptsOST {
 
 int rawstor_initialize(
     const struct RawstorOpts *opts,
-    const struct RawstorOptsOST *opts_ost);
+    const struct RawstorSocketAddress *default_ost);
 
 void rawstor_terminate(void);
 

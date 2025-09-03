@@ -3,6 +3,7 @@
 
 #include "opts.h"
 #include "ost_protocol.h"
+#include "rawstor_internals.h"
 
 #include <rawstorstd/hash.h>
 #include <rawstorstd/logging.h>
@@ -152,7 +153,7 @@ static int object_response_head_recv(RawstorObject *object) {
 }
 
 
-static int ost_connect(const struct RawstorOptsOST *opts_ost) {
+static int ost_connect(const struct RawstorSocketAddress *ost) {
     struct sockaddr_in servaddr;
     // socket create and verification
     int fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -183,16 +184,13 @@ static int ost_connect(const struct RawstorOptsOST *opts_ost) {
         }
     }
 
-    const char *host = rawstor_opts_ost_host(opts_ost);
-    unsigned int port = rawstor_opts_ost_port(opts_ost);
-
     bzero(&servaddr, sizeof(servaddr));
     // assign IP, PORT
     servaddr.sin_family = AF_INET;
-    servaddr.sin_addr.s_addr = inet_addr(host);
-    servaddr.sin_port = htons(port);
+    servaddr.sin_addr.s_addr = inet_addr(ost->host);
+    servaddr.sin_port = htons(ost->port);
 
-    rawstor_info("Connecting to %s:%u\n", host, port);
+    rawstor_info("Connecting to %s:%u\n", ost->host, ost->port);
     if (connect(fd, (struct sockaddr*)&servaddr, sizeof(servaddr))) {
         return -errno;
     }
@@ -478,13 +476,21 @@ static int response_head_received(RawstorIOEvent *event, void *data) {
 }
 
 
-const char *rawstor_object_backend_name(void) {
+const char* rawstor_object_backend_name(void) {
     return "ost";
 };
 
 
 int rawstor_object_create(
-    const struct RawstorOptsOST RAWSTOR_UNUSED *opts_ost,
+    const struct RawstorObjectSpec *spec,
+    struct RawstorUUID *object_id)
+{
+    return rawstor_object_create_ost(rawstor_default_ost(), spec, object_id);
+}
+
+
+int rawstor_object_create_ost(
+    const struct RawstorSocketAddress RAWSTOR_UNUSED *ost,
     const struct RawstorObjectSpec RAWSTOR_UNUSED *spec,
     struct RawstorUUID *object_id)
 {
@@ -497,8 +503,13 @@ int rawstor_object_create(
 }
 
 
-int rawstor_object_delete(
-    const struct RawstorOptsOST RAWSTOR_UNUSED *opts_ost,
+int rawstor_object_delete(const struct RawstorUUID *object_id) {
+    return rawstor_object_delete_ost(rawstor_default_ost(), object_id);
+}
+
+
+int rawstor_object_delete_ost(
+    const struct RawstorSocketAddress RAWSTOR_UNUSED *ost,
     const struct RawstorUUID RAWSTOR_UNUSED *object_id)
 {
     fprintf(stderr, "rawstor_object_delete() not implemented\n");
@@ -509,7 +520,15 @@ int rawstor_object_delete(
 
 
 int rawstor_object_open(
-    const struct RawstorOptsOST *opts_ost,
+    const struct RawstorUUID *object_id,
+    RawstorObject **object)
+{
+    return rawstor_object_open_ost(rawstor_default_ost(), object_id, object);
+}
+
+
+int rawstor_object_open_ost(
+    const struct RawstorSocketAddress *ost,
     const struct RawstorUUID *object_id,
     RawstorObject **object)
 {
@@ -546,7 +565,7 @@ int rawstor_object_open(
         *it = op;
     }
 
-    obj->fd = ost_connect(opts_ost);
+    obj->fd = ost_connect(ost);
     if (obj->fd < 0) {
         goto err_connect;
     }
@@ -629,7 +648,15 @@ int rawstor_object_close(RawstorObject *object) {
 
 
 int rawstor_object_spec(
-    const struct RawstorOptsOST RAWSTOR_UNUSED *opts_ost,
+    const struct RawstorUUID *object_id,
+    struct RawstorObjectSpec *spec)
+{
+    return rawstor_object_spec_ost(rawstor_default_ost(), object_id, spec);
+}
+
+
+int rawstor_object_spec_ost(
+    const struct RawstorSocketAddress RAWSTOR_UNUSED *ost,
     const struct RawstorUUID RAWSTOR_UNUSED *object_id,
     struct RawstorObjectSpec *spec)
 {

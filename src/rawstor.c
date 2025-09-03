@@ -20,14 +20,44 @@
 
 
 #define QUEUE_DEPTH 256
+#define DEFAULT_OST_HOST "127.0.0.1"
+#define DEFAULT_OST_PORT 8080
 
 
 static RawstorIOQueue *_rawstor_io_queue = NULL;
 
+static struct RawstorSocketAddress _default_ost = {};
+
+
+static int default_ost_initialize(
+    const struct RawstorSocketAddress *default_ost)
+{
+    _default_ost.host = (default_ost != NULL && default_ost->host != NULL) ?
+        strdup(default_ost->host) :
+        strdup(DEFAULT_OST_HOST);
+    if (_default_ost.host == NULL) {
+        goto err_host;
+    }
+
+    _default_ost.port = (default_ost != NULL && default_ost->port != 0) ?
+        default_ost->port :
+        DEFAULT_OST_PORT;
+
+    return 0;
+
+err_host:
+    return -errno;
+}
+
+
+static void default_ost_terminate(void) {
+    free(_default_ost.host);
+}
+
 
 int rawstor_initialize(
     const struct RawstorOpts *opts,
-    const struct RawstorOptsOST *opts_ost)
+    const struct RawstorSocketAddress *default_ost)
 {
     assert(_rawstor_io_queue == NULL);
 
@@ -43,8 +73,12 @@ int rawstor_initialize(
         "Rawstor compiled with object backend: %s\n",
         rawstor_object_backend_name());
 
-    if (rawstor_opts_initialize(opts, opts_ost)) {
+    if (rawstor_opts_initialize(opts)) {
         goto err_opts_initialize;
+    }
+
+    if (default_ost_initialize(default_ost)) {
+        goto err_default_ost_initialize;
     }
 
     _rawstor_io_queue = rawstor_io_queue_create(QUEUE_DEPTH);
@@ -55,6 +89,8 @@ int rawstor_initialize(
     return 0;
 
 err_io_queue:
+    default_ost_terminate();
+err_default_ost_initialize:
     rawstor_opts_terminate();
 err_opts_initialize:
     rawstor_logging_terminate();
@@ -65,8 +101,14 @@ err_logging_initialize:
 
 void rawstor_terminate(void) {
     rawstor_io_queue_delete(_rawstor_io_queue);
+    default_ost_terminate();
     rawstor_opts_terminate();
     rawstor_logging_terminate();
+}
+
+
+const struct RawstorSocketAddress* rawstor_default_ost(void) {
+    return &_default_ost;
 }
 
 

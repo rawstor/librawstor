@@ -2,6 +2,7 @@
 #include "object_internals.h"
 
 #include "opts.h"
+#include "rawstor_internals.h"
 
 #include <rawstorstd/gcc.h>
 #include <rawstorstd/mempool.h>
@@ -146,21 +147,27 @@ err_object_dat_path:
 }
 
 
-const char *rawstor_object_backend_name() {
+const char* rawstor_object_backend_name() {
     return "file";
 }
 
 
 int rawstor_object_create(
-    const struct RawstorOptsOST *opts_ost,
+    const struct RawstorObjectSpec *spec,
+    struct RawstorUUID *object_id)
+{
+    return rawstor_object_create_ost(rawstor_default_ost(), spec, object_id);
+}
+
+
+int rawstor_object_create_ost(
+    const struct RawstorSocketAddress *ost,
     const struct RawstorObjectSpec *spec,
     struct RawstorUUID *object_id)
 {
     int errsv;
-    const char *ost_host = rawstor_opts_ost_host(opts_ost);
-    unsigned int ost_port = rawstor_opts_ost_port(opts_ost);
     char ost_path[PATH_MAX];
-    if (get_ost_path(ost_host, ost_port, ost_path, sizeof(ost_path))) {
+    if (get_ost_path(ost->host, ost->port, ost_path, sizeof(ost_path))) {
         return -errno;
     }
     if (mkdir(ost_path, 0755)) {
@@ -218,14 +225,17 @@ err_write:
 }
 
 
-int rawstor_object_delete(
-    const struct RawstorOptsOST *opts_ost,
+int rawstor_object_delete(const struct RawstorUUID *object_id) {
+    return rawstor_object_delete_ost(rawstor_default_ost(), object_id);
+}
+
+
+int rawstor_object_delete_ost(
+    const struct RawstorSocketAddress *ost,
     const struct RawstorUUID *object_id)
 {
-    const char *ost_host = rawstor_opts_ost_host(opts_ost);
-    unsigned int ost_port = rawstor_opts_ost_port(opts_ost);
     char ost_path[PATH_MAX];
-    if (get_ost_path(ost_host, ost_port, ost_path, sizeof(ost_path))) {
+    if (get_ost_path(ost->host, ost->port, ost_path, sizeof(ost_path))) {
         return -errno;
     }
 
@@ -254,14 +264,20 @@ int rawstor_object_delete(
 
 
 int rawstor_object_open(
-    const struct RawstorOptsOST *opts_ost,
     const struct RawstorUUID *object_id,
     RawstorObject **object)
 {
-    const char *ost_host = rawstor_opts_ost_host(opts_ost);
-    unsigned int ost_port = rawstor_opts_ost_port(opts_ost);
+    return rawstor_object_open_ost(rawstor_default_ost(), object_id, object);
+}
+
+
+int rawstor_object_open_ost(
+    const struct RawstorSocketAddress *ost,
+    const struct RawstorUUID *object_id,
+    RawstorObject **object)
+{
     char ost_path[PATH_MAX];
-    if (get_ost_path(ost_host, ost_port, ost_path, sizeof(ost_path))) {
+    if (get_ost_path(ost->host, ost->port, ost_path, sizeof(ost_path))) {
         goto err_ost_path;
     }
 
@@ -317,15 +333,21 @@ int rawstor_object_close(RawstorObject *object) {
 
 
 int rawstor_object_spec(
-    const struct RawstorOptsOST *opts_ost,
+    const struct RawstorUUID *object_id,
+    struct RawstorObjectSpec *spec)
+{
+    return rawstor_object_spec_ost(rawstor_default_ost(), object_id, spec);
+}
+
+
+int rawstor_object_spec_ost(
+    const struct RawstorSocketAddress *ost,
     const struct RawstorUUID *object_id,
     struct RawstorObjectSpec *spec)
 {
     int errsv;
-    const char *ost_host = rawstor_opts_ost_host(opts_ost);
-    unsigned int ost_port = rawstor_opts_ost_port(opts_ost);
     char ost_path[PATH_MAX];
-    if (get_ost_path(ost_host, ost_port, ost_path, sizeof(ost_path))) {
+    if (get_ost_path(ost->host, ost->port, ost_path, sizeof(ost_path))) {
         goto err_ost_path;
     }
 

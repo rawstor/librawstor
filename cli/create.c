@@ -8,10 +8,10 @@
 
 int rawstor_cli_create(
     const struct RawstorOpts *opts,
-    const struct RawstorOptsOST *opts_ost,
+    const struct RawstorSocketAddress *ost,
     size_t size)
 {
-    if (rawstor_initialize(opts, opts_ost)) {
+    if (rawstor_initialize(opts, ost)) {
         perror("rawstor_initialize() failed");
         goto err_initialize;
     }
@@ -23,7 +23,7 @@ int rawstor_cli_create(
     fprintf(stderr, "Creating object with specification:\n");
     fprintf(stderr, "  size: %zu Gb\n", size);
     struct RawstorUUID object_id;
-    if (rawstor_object_create(NULL, &spec, &object_id)) {
+    if (rawstor_object_create(&spec, &object_id)) {
         perror("rawstor_object_create() failed");
         goto err_create;
     }

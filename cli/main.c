@@ -48,7 +48,7 @@ static void command_create_usage() {
 
 static int command_create(
     const struct RawstorOpts *opts,
-    const struct RawstorOptsOST *opts_ost,
+    const struct RawstorSocketAddress *ost,
     int argc, char **argv)
 {
     const char *optstring = "hs:";
@@ -97,7 +97,7 @@ static int command_create(
         return EXIT_FAILURE;
     }
 
-    return rawstor_cli_create(opts, opts_ost, size);
+    return rawstor_cli_create(opts, ost, size);
 }
 
 
@@ -117,7 +117,7 @@ static void command_delete_usage() {
 
 static int command_delete(
     const struct RawstorOpts *opts,
-    const struct RawstorOptsOST *opts_ost,
+    const struct RawstorSocketAddress *ost,
     int argc, char **argv)
 {
     const char *optstring = "ho:";
@@ -166,7 +166,7 @@ static int command_delete(
         return EXIT_FAILURE;
     }
 
-    return rawstor_cli_delete(opts, opts_ost, &object_id);
+    return rawstor_cli_delete(opts, ost, &object_id);
 }
 
 
@@ -194,7 +194,7 @@ static void command_testio_usage() {
 
 static int command_testio(
     const struct RawstorOpts *opts,
-    const struct RawstorOptsOST *opts_ost,
+    const struct RawstorSocketAddress *ost,
     int argc, char **argv)
 {
     const char *optstring = "b:c:d:ho:s:";
@@ -302,7 +302,7 @@ static int command_testio(
 
     return rawstor_cli_testio(
         opts,
-        opts_ost,
+        ost,
         &object_id,
         block_size, count, io_depth,
         vector_mode);
@@ -350,20 +350,20 @@ int main(int argc, char **argv) {
     }
 
     struct RawstorOpts opts = {};
-    struct RawstorOptsOST opts_ost = {};
+    struct RawstorSocketAddress ost = {};
 
     if (ost_arg != NULL) {
         const char *comma = strchr(ost_arg, ':');
         if (comma != NULL) {
-            if (sscanf(comma + 1, "%u", &opts_ost.port) != 1) {
+            if (sscanf(comma + 1, "%u", &ost.port) != 1) {
                 fprintf(stderr, "ost port argument must be unsigned integer\n");
                 return EXIT_FAILURE;
             }
         }
-        opts_ost.host = comma != NULL ?
+        ost.host = comma != NULL ?
             strndup(ost_arg, comma - ost_arg) :
             strdup(ost_arg);
-        if (opts_ost.host == NULL) {
+        if (ost.host == NULL) {
             perror("strdup() failed");
             return EXIT_FAILURE;
         }
@@ -379,17 +379,17 @@ int main(int argc, char **argv) {
     char *command = argv[optind];
     if (strcmp(command, "create") == 0) {
         return command_create(
-            &opts, &opts_ost, argc - optind, &argv[optind]);
+            &opts, &ost, argc - optind, &argv[optind]);
     }
 
     if (strcmp(command, "delete") == 0) {
         return command_delete(
-            &opts, &opts_ost, argc - optind, &argv[optind]);
+            &opts, &ost, argc - optind, &argv[optind]);
     }
 
     if (strcmp(command, "testio") == 0) {
         return command_testio(
-            &opts, &opts_ost, argc - optind, &argv[optind]);
+            &opts, &ost, argc - optind, &argv[optind]);
     }
 
     printf("Unexpected command: %s\n", command);

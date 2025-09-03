@@ -13,10 +13,10 @@
 
 int rawstor_cli_delete(
     const struct RawstorOpts *opts,
-    const struct RawstorOptsOST *opts_ost,
+    const struct RawstorSocketAddress *ost,
     const struct RawstorUUID *object_id)
 {
-    if (rawstor_initialize(opts, opts_ost)) {
+    if (rawstor_initialize(opts, ost)) {
         perror("rawstor_initialize() failed");
         goto err_initialize;
     }
@@ -24,7 +24,7 @@ int rawstor_cli_delete(
     RawstorUUIDString uuid_string;
     rawstor_uuid_to_string(object_id, &uuid_string);
     fprintf(stderr, "Deleting object with id: %s\n", uuid_string);
-    if (rawstor_object_delete(NULL, object_id)) {
+    if (rawstor_object_delete(object_id)) {
         perror("rawstor_object_delete() failed");
         goto err_delete;
     }

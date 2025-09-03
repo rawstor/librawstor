@@ -304,18 +304,18 @@ static int srcv_data_sent(
 
 int rawstor_cli_testio(
     const struct RawstorOpts *opts,
-    const struct RawstorOptsOST *opts_ost,
+    const struct RawstorSocketAddress *ost,
     const struct RawstorUUID *object_id,
     size_t block_size, unsigned int count, unsigned int io_depth,
     int vector_mode)
 {
-    if (rawstor_initialize(opts, opts_ost)) {
+    if (rawstor_initialize(opts, ost)) {
         perror("rawstor_initialize() failed");
         goto err_initialize;
     }
 
     RawstorObject *object;
-    if (rawstor_object_open(NULL, object_id, &object)) {
+    if (rawstor_object_open(object_id, &object)) {
         perror("rawstor_object_open() failed");
         goto err_open;
     }
