@@ -200,26 +200,32 @@ static int ost_connect(const struct RawstorSocketAddress *ost) {
 
 
 static int ost_set_object_id(int fd, const struct RawstorUUID *object_id) {
-    RawstorOSTFrameBasic mframe = {
+    RawstorOSTFrameBasic request_frame = {
         .magic = RAWSTOR_MAGIC,
         .cmd = RAWSTOR_CMD_SET_OBJECT,
     };
-    memcpy(mframe.obj_id, object_id->bytes, sizeof(mframe.obj_id));
+    memcpy(
+        request_frame.obj_id,
+        object_id->bytes,
+        sizeof(request_frame.obj_id));
 
-    int res = write(fd, &mframe, sizeof(mframe));
+    int res = write(fd, &request_frame, sizeof(request_frame));
     if (res < 0) {
         return -errno;
     }
+    assert(res == sizeof(request_frame));
 
-    RawstorOSTFrameResponse rframe;
-    res = read(fd, &rframe, sizeof(rframe));
+    RawstorOSTFrameResponse response_frame;
+    res = read(fd, &response_frame, sizeof(response_frame));
     if (res < 0) {
         return -errno;
     }
-    if (rframe.magic != RAWSTOR_MAGIC) {
+    assert(res == sizeof(response_frame));
+
+    if (response_frame.magic != RAWSTOR_MAGIC) {
         rawstor_error(
             "Unexpected magic number: %x != %x\n",
-            rframe.magic, RAWSTOR_MAGIC);
+            response_frame.magic, RAWSTOR_MAGIC);
         errno = EIO;
         return -errno;
     }
