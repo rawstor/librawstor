@@ -199,6 +199,64 @@ static int ost_connect(const struct RawstorSocketAddress *ost) {
 }
 
 
+/**
+ * TODO: Do it async or solve partial IO issue.
+ */
+static int ost_set_object_id(int fd, const struct RawstorUUID *object_id) {
+    RawstorOSTFrameBasic request_frame = {
+        .magic = RAWSTOR_MAGIC,
+        .cmd = RAWSTOR_CMD_SET_OBJECT,
+    };
+    memcpy(
+        request_frame.obj_id,
+        object_id->bytes,
+        sizeof(request_frame.obj_id));
+
+    int res = write(fd, &request_frame, sizeof(request_frame));
+    if (res < 0) {
+        return -errno;
+    }
+    assert(res == sizeof(request_frame));
+
+    RawstorOSTFrameResponse response_frame;
+    res = read(fd, &response_frame, sizeof(response_frame));
+    if (res < 0) {
+        return -errno;
+    }
+    assert(res == sizeof(response_frame));
+
+    if (response_frame.magic != RAWSTOR_MAGIC) {
+        rawstor_error(
+            "Unexpected magic number: %x != %x\n",
+            response_frame.magic, RAWSTOR_MAGIC);
+        errno = EPROTO;
+        return -errno;
+    }
+
+    if (response_frame.res < 0) {
+        rawstor_error(
+            "Server failed to set object id: %s\n",
+            strerror(-response_frame.res));
+        errno = EPROTO;
+        return -errno;
+    }
+
+    if (response_frame.cmd != RAWSTOR_CMD_SET_OBJECT) {
+        rawstor_error(
+            "Unexpected command in response: %d\n",
+            response_frame.cmd);
+        errno = EPROTO;
+        return -errno;
+    }
+
+    if (rawstor_io_queue_setup_fd(fd)) {
+        return -errno;
+    }
+
+    return 0;
+}
+
+
 static int read_request_sent(RawstorIOEvent *event, void *data) {
     RawstorObjectOperation *op = (RawstorObjectOperation*)data;
 
@@ -532,11 +590,11 @@ int rawstor_object_open_ost(
     const struct RawstorUUID *object_id,
     RawstorObject **object)
 {
-    int errsv;
     RawstorObject *obj = malloc(sizeof(RawstorObject));
     if (obj == NULL) {
         goto err_obj;
     }
+
     obj->response_loop = 0;
 
     obj->operations_array = calloc(
@@ -556,6 +614,7 @@ int rawstor_object_open_ost(
         if (op == NULL) {
             goto err_operation;
         }
+
         op->cid = i + 1;
 
         obj->operations_array[i] = op;
@@ -570,45 +629,16 @@ int rawstor_object_open_ost(
         goto err_connect;
     }
 
-    RawstorOSTFrameBasic mframe = {
-        .magic = RAWSTOR_MAGIC,
-        .cmd = RAWSTOR_CMD_SET_OBJECT,
-    };
-    memcpy(mframe.obj_id, object_id->bytes, sizeof(mframe.obj_id));
-    int res = write(obj->fd, &mframe, sizeof(mframe));
-    rawstor_debug("Sent request to set objid, res:%i\n", res);
-    if (res < 0) {
-        goto err_write;
-    }
-    RawstorOSTFrameResponse rframe;
-    res = read(obj->fd, &rframe, sizeof(rframe));
-    if (res < 0) {
-        goto err_read;
-    }
-    if (rframe.magic != RAWSTOR_MAGIC) {
-        rawstor_error(
-            "FATAL! Frame with wrong magic number: %x != %x\n",
-            rframe.magic, RAWSTOR_MAGIC);
-        errno = EIO;
-        goto err_rawstor_magic;
-    }
-    rawstor_debug(
-        "Response from Server: cmd:%i res:%i\n",
-        rframe.cmd,
-        rframe.res);
-
-    if (rawstor_io_queue_setup_fd(obj->fd)) {
-        goto err_setup_fd;
+    if (ost_set_object_id(obj->fd, object_id)) {
+        goto err_set_object_id;
     }
 
     *object = obj;
 
     return 0;
 
-err_setup_fd:
-err_rawstor_magic:
-err_read:
-err_write:
+    int errsv;
+err_set_object_id:
     errsv = errno;
     close(obj->fd);
     errno = errsv;
