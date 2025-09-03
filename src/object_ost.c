@@ -226,7 +226,23 @@ static int ost_set_object_id(int fd, const struct RawstorUUID *object_id) {
         rawstor_error(
             "Unexpected magic number: %x != %x\n",
             response_frame.magic, RAWSTOR_MAGIC);
-        errno = EIO;
+        errno = EPROTO;
+        return -errno;
+    }
+
+    if (response_frame.res < 0) {
+        rawstor_error(
+            "Server failed to set object id: %s\n",
+            strerror(-response_frame.res));
+        errno = EPROTO;
+        return -errno;
+    }
+
+    if (response_frame.cmd != RAWSTOR_CMD_SET_OBJECT) {
+        rawstor_error(
+            "Unexpected command in response: %d\n",
+            response_frame.cmd);
+        errno = EPROTO;
         return -errno;
     }
 
