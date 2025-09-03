@@ -199,6 +199,9 @@ static int ost_connect(const struct RawstorSocketAddress *ost) {
 }
 
 
+/**
+ * TODO: Do it async or solve partial IO issue.
+ */
 static int ost_set_object_id(int fd, const struct RawstorUUID *object_id) {
     RawstorOSTFrameBasic request_frame = {
         .magic = RAWSTOR_MAGIC,
