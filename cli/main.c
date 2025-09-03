@@ -47,8 +47,8 @@ static void command_create_usage() {
 
 
 static int command_create(
-    const struct RawstorOptsIO *opts_io,
-    const struct RawstorOptsOST *opts_ost,
+    const struct RawstorOpts *opts,
+    const struct RawstorSocketAddress *ost,
     int argc, char **argv)
 {
     const char *optstring = "hs:";
@@ -97,7 +97,7 @@ static int command_create(
         return EXIT_FAILURE;
     }
 
-    return rawstor_cli_create(opts_io, opts_ost, size);
+    return rawstor_cli_create(opts, ost, size);
 }
 
 
@@ -116,8 +116,8 @@ static void command_delete_usage() {
 
 
 static int command_delete(
-    const struct RawstorOptsIO *opts_io,
-    const struct RawstorOptsOST *opts_ost,
+    const struct RawstorOpts *opts,
+    const struct RawstorSocketAddress *ost,
     int argc, char **argv)
 {
     const char *optstring = "ho:";
@@ -166,10 +166,7 @@ static int command_delete(
         return EXIT_FAILURE;
     }
 
-    return rawstor_cli_delete(
-        opts_io,
-        opts_ost,
-        &object_id);
+    return rawstor_cli_delete(opts, ost, &object_id);
 }
 
 
@@ -196,8 +193,8 @@ static void command_testio_usage() {
 
 
 static int command_testio(
-    const struct RawstorOptsIO *opts_io,
-    const struct RawstorOptsOST *opts_ost,
+    const struct RawstorOpts *opts,
+    const struct RawstorSocketAddress *ost,
     int argc, char **argv)
 {
     const char *optstring = "b:c:d:ho:s:";
@@ -304,8 +301,8 @@ static int command_testio(
     }
 
     return rawstor_cli_testio(
-        opts_io,
-        opts_ost,
+        opts,
+        ost,
         &object_id,
         block_size, count, io_depth,
         vector_mode);
@@ -352,49 +349,57 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
-    struct RawstorOptsIO opts_io = {};
-    struct RawstorOptsOST opts_ost = {};
+    struct RawstorOpts opts = {};
+    struct RawstorSocketAddress ost = {};
+    struct RawstorSocketAddress *ost_ptr = NULL;
 
     if (ost_arg != NULL) {
         const char *comma = strchr(ost_arg, ':');
-        if (comma != NULL) {
-            if (sscanf(comma + 1, "%u", &opts_ost.port) != 1) {
-                fprintf(stderr, "ost port argument must be unsigned integer\n");
-                return EXIT_FAILURE;
-            }
+        if (comma == NULL) {
+            fprintf(stderr, "host:port format expected for ost argument\n");
+            return EXIT_FAILURE;
         }
-        opts_ost.host = comma != NULL ?
-            strndup(ost_arg, comma - ost_arg) :
-            strdup(ost_arg);
-        if (opts_ost.host == NULL) {
+
+        if (sscanf(comma + 1, "%u", &ost.port) != 1) {
+            fprintf(stderr, "ost port argument must be unsigned integer\n");
+            return EXIT_FAILURE;
+        }
+
+        ost.host = strndup(ost_arg, comma - ost_arg);
+        if (ost.host == NULL) {
             perror("strdup() failed");
             return EXIT_FAILURE;
         }
+
+        ost_ptr = &ost;
     }
 
     if (wait_timeout_arg != NULL) {
-        if (sscanf(wait_timeout_arg, "%u", &opts_io.wait_timeout) != 1) {
+        if (sscanf(wait_timeout_arg, "%u", &opts.wait_timeout) != 1) {
             fprintf(stderr, "wait-timeout argument must be unsigned integer\n");
             return EXIT_FAILURE;
         }
     }
 
+    int ret;
     char *command = argv[optind];
     if (strcmp(command, "create") == 0) {
-        return command_create(
-            &opts_io, &opts_ost, argc - optind, &argv[optind]);
+        ret = command_create(
+            &opts, ost_ptr, argc - optind, &argv[optind]);
+    } else if (strcmp(command, "delete") == 0) {
+        ret = command_delete(
+            &opts, ost_ptr, argc - optind, &argv[optind]);
+    } else if (strcmp(command, "testio") == 0) {
+        ret = command_testio(
+            &opts, ost_ptr, argc - optind, &argv[optind]);
+    } else {
+        printf("Unexpected command: %s\n", command);
+        ret = EXIT_FAILURE;
     }
 
-    if (strcmp(command, "delete") == 0) {
-        return command_delete(
-            &opts_io, &opts_ost, argc - optind, &argv[optind]);
+    if (ost_ptr != NULL) {
+        free(ost_ptr->host);
     }
 
-    if (strcmp(command, "testio") == 0) {
-        return command_testio(
-            &opts_io, &opts_ost, argc - optind, &argv[optind]);
-    }
-
-    printf("Unexpected command: %s\n", command);
-    return EXIT_FAILURE;
+    return ret;
 }

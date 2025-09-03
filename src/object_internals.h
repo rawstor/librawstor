@@ -9,7 +9,7 @@ extern "C" {
 #endif
 
 
-const char *rawstor_object_backend_name(void);
+const char* rawstor_object_backend_name(void);
 
 
 #ifdef __cplusplus

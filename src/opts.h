@@ -10,43 +10,25 @@ extern "C" {
 
 
 // defined in rawstor.h
-// struct RawstorOptsIO {
+// struct RawstorOpts {
 //     unsigned int wait_timeout;
-// };
-
-// defined in rawstor.h
-// struct RawstorOptsOST {
-//     const char *host;
-//     unsigned int port;
 //     unsigned int so_sndtimeo;
 //     unsigned int so_rcvtimeo;
 //     unsigned int tcp_user_timeout;
 // };
 
 
-int rawstor_opts_initialize(
-    const struct RawstorOptsIO *opts_io,
-    const struct RawstorOptsOST *opts_ost);
+int rawstor_opts_initialize(const struct RawstorOpts *opts);
 
 void rawstor_opts_terminate(void);
 
-unsigned int rawstor_opts_io_wait_timeout(
-    const struct RawstorOptsIO *opts_io);
+unsigned int rawstor_opts_wait_timeout(void);
 
-const char* rawstor_opts_ost_host(
-    const struct RawstorOptsOST *opts_ost);
+unsigned int rawstor_opts_so_sndtimeo(void);
 
-unsigned int rawstor_opts_ost_port(
-    const struct RawstorOptsOST *opts_ost);
+unsigned int rawstor_opts_so_rcvtimeo(void);
 
-unsigned int rawstor_opts_ost_so_sndtimeo(
-    const struct RawstorOptsOST *opts_ost);
-
-unsigned int rawstor_opts_ost_so_rcvtimeo(
-    const struct RawstorOptsOST *opts_ost);
-
-unsigned int rawstor_opts_ost_tcp_user_timeout(
-    const struct RawstorOptsOST *opts_ost);
+unsigned int rawstor_opts_tcp_user_timeout(void);
 
 
 #ifdef __cplusplus

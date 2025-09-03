@@ -59,22 +59,23 @@ int rawstor_fd_pwritev(
  * Lib
  */
 
-struct RawstorOptsIO {
+struct RawstorOpts {
     unsigned int wait_timeout;
-};
-
-struct RawstorOptsOST {
-    char *host;
-    unsigned int port;
     unsigned int so_sndtimeo;
     unsigned int so_rcvtimeo;
     unsigned int tcp_user_timeout;
 };
 
 
+struct RawstorSocketAddress {
+    char *host;
+    unsigned int port;
+};
+
+
 int rawstor_initialize(
-    const struct RawstorOptsIO *opts_io,
-    const struct RawstorOptsOST *opts_ost);
+    const struct RawstorOpts *opts,
+    const struct RawstorSocketAddress *default_ost);
 
 void rawstor_terminate(void);
 
