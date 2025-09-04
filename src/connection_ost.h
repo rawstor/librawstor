@@ -2,6 +2,7 @@
 #define RAWSTOR_CONNECTION_OST_H
 
 #include <rawstor/rawstor.h>
+#include <rawstor/uuid.h>
 
 #include <stddef.h>
 
@@ -13,9 +14,11 @@ typedef struct RawstorConnection RawstorConnection;
 
 
 RawstorConnection* rawstor_connection_create(
-    const struct RawstorSocketAddress *ost, size_t count);
+    const struct RawstorSocketAddress *ost,
+    const struct RawstorUUID *object_id,
+    size_t count);
 
-void rawstor_connection_delete(RawstorConnection *cn);
+int rawstor_connection_delete(RawstorConnection *cn);
 
 
 #ifdef __cplusplus
