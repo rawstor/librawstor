@@ -45,10 +45,10 @@
         rawstor_io_event_size(event))
 
 
-typedef struct RawstorObjectOperation RawstorObjectOperation;
+typedef struct RawstorObjectOp RawstorObjectOp;
 
 
-struct RawstorObjectOperation {
+struct RawstorObjectOp {
     RawstorObject *object;
 
     u_int16_t cid;
@@ -66,7 +66,7 @@ struct RawstorObjectOperation {
 
     struct iovec iov[IOVEC_SIZE];
 
-    int (*process)(RawstorObjectOperation *op);
+    int (*process)(RawstorObjectOp *op);
 
     RawstorCallback *callback;
 
@@ -77,8 +77,8 @@ struct RawstorObjectOperation {
 struct RawstorObject {
     int fd;
     int response_loop;
-    RawstorObjectOperation **operations_array;
-    RawstorRingBuf *operations;
+    RawstorObjectOp **ops_array;
+    RawstorRingBuf *ops;
     RawstorOSTFrameResponse response_frame;
 };
 
@@ -89,7 +89,7 @@ static int response_body_received(RawstorIOEvent *event, void *data);
 static int responsev_body_received(RawstorIOEvent *event, void *data);
 
 
-static int operation_process_read(RawstorObjectOperation *op) {
+static int operation_process_read(RawstorObjectOp *op) {
     return rawstor_fd_read(
         op->object->fd,
         op->payload.linear.data, op->request_frame.len,
@@ -97,7 +97,7 @@ static int operation_process_read(RawstorObjectOperation *op) {
 }
 
 
-static int operation_process_readv(RawstorObjectOperation *op) {
+static int operation_process_readv(RawstorObjectOp *op) {
     return rawstor_fd_readv(
         op->object->fd,
         op->payload.vector.iov, op->payload.vector.niov, op->request_frame.len,
@@ -108,15 +108,15 @@ static int operation_process_readv(RawstorObjectOperation *op) {
 static int object_response_head_recv(RawstorObject *object);
 
 
-static int operation_process_write(RawstorObjectOperation *op) {
+static int operation_process_write(RawstorObjectOp *op) {
     /**
      * Continue response loop, if there are any other pending operations.
      */
-    if (rawstor_ringbuf_size(op->object->operations) < QUEUE_DEPTH - 1) {
+    if (rawstor_ringbuf_size(op->object->ops) < QUEUE_DEPTH - 1) {
         if (object_response_head_recv(op->object)) {
-            RawstorObjectOperation **it = rawstor_ringbuf_head(
-                op->object->operations);
-            assert(rawstor_ringbuf_push(op->object->operations) == 0);
+            RawstorObjectOp **it = rawstor_ringbuf_head(
+                op->object->ops);
+            assert(rawstor_ringbuf_push(op->object->ops) == 0);
             *it = op;
             return -errno;
         }
@@ -129,8 +129,8 @@ static int operation_process_write(RawstorObjectOperation *op) {
         op->request_frame.len, op->request_frame.len, 0,
         op->data);
 
-    RawstorObjectOperation **it = rawstor_ringbuf_head(op->object->operations);
-    assert(rawstor_ringbuf_push(op->object->operations) == 0);
+    RawstorObjectOp **it = rawstor_ringbuf_head(op->object->ops);
+    assert(rawstor_ringbuf_push(op->object->ops) == 0);
     *it = op;
 
     return ret;
@@ -258,23 +258,23 @@ static int ost_set_object_id(int fd, const struct RawstorUUID *object_id) {
 
 
 static int read_request_sent(RawstorIOEvent *event, void *data) {
-    RawstorObjectOperation *op = (RawstorObjectOperation*)data;
+    RawstorObjectOp *op = (RawstorObjectOp*)data;
 
     operation_trace(op->cid, event);
 
     if (rawstor_io_event_error(event) != 0) {
-        RawstorObjectOperation **it = rawstor_ringbuf_head(
-            op->object->operations);
-        assert(rawstor_ringbuf_push(op->object->operations) == 0);
+        RawstorObjectOp **it = rawstor_ringbuf_head(
+            op->object->ops);
+        assert(rawstor_ringbuf_push(op->object->ops) == 0);
         *it = op;
         errno = rawstor_io_event_error(event);
         return -errno;
     }
 
     if (rawstor_io_event_result(event) != rawstor_io_event_size(event)) {
-        RawstorObjectOperation **it = rawstor_ringbuf_head(
-            op->object->operations);
-        assert(rawstor_ringbuf_push(op->object->operations) == 0);
+        RawstorObjectOp **it = rawstor_ringbuf_head(
+            op->object->ops);
+        assert(rawstor_ringbuf_push(op->object->ops) == 0);
         *it = op;
         rawstor_error(
             "Request size mismatch: %zu != %zu\n",
@@ -299,23 +299,23 @@ static int read_request_sent(RawstorIOEvent *event, void *data) {
 
 
 static int write_requestv_sent(RawstorIOEvent *event, void *data) {
-    RawstorObjectOperation *op = (RawstorObjectOperation*)data;
+    RawstorObjectOp *op = (RawstorObjectOp*)data;
 
     operation_trace(op->cid, event);
 
     if (rawstor_io_event_error(event) != 0) {
-        RawstorObjectOperation **it = rawstor_ringbuf_head(
-            op->object->operations);
-        assert(rawstor_ringbuf_push(op->object->operations) == 0);
+        RawstorObjectOp **it = rawstor_ringbuf_head(
+            op->object->ops);
+        assert(rawstor_ringbuf_push(op->object->ops) == 0);
         *it = op;
         errno = rawstor_io_event_error(event);
         return -errno;
     }
 
     if (rawstor_io_event_result(event) != rawstor_io_event_size(event)) {
-        RawstorObjectOperation **it = rawstor_ringbuf_head(
-            op->object->operations);
-        assert(rawstor_ringbuf_push(op->object->operations) == 0);
+        RawstorObjectOp **it = rawstor_ringbuf_head(
+            op->object->ops);
+        assert(rawstor_ringbuf_push(op->object->ops) == 0);
         *it = op;
         rawstor_error(
             "Request size mismatch: %zu != %zu\n",
@@ -344,7 +344,7 @@ static int response_body_received(RawstorIOEvent *event, void *data) {
      * FIXME: Proper error handling.
      */
 
-    RawstorObjectOperation *op = (RawstorObjectOperation*)data;
+    RawstorObjectOp *op = (RawstorObjectOp*)data;
 
     operation_trace(op->cid, event);
 
@@ -361,18 +361,18 @@ static int response_body_received(RawstorIOEvent *event, void *data) {
     }
 
     if (rawstor_io_event_error(event) != 0) {
-        RawstorObjectOperation **it = rawstor_ringbuf_head(
-            op->object->operations);
-        assert(rawstor_ringbuf_push(op->object->operations) == 0);
+        RawstorObjectOp **it = rawstor_ringbuf_head(
+            op->object->ops);
+        assert(rawstor_ringbuf_push(op->object->ops) == 0);
         *it = op;
         errno = rawstor_io_event_error(event);
         return -errno;
     }
 
     if (rawstor_io_event_result(event) != rawstor_io_event_size(event)) {
-        RawstorObjectOperation **it = rawstor_ringbuf_head(
-            op->object->operations);
-        assert(rawstor_ringbuf_push(op->object->operations) == 0);
+        RawstorObjectOp **it = rawstor_ringbuf_head(
+            op->object->ops);
+        assert(rawstor_ringbuf_push(op->object->ops) == 0);
         *it = op;
         rawstor_error(
             "Response body size mismatch: %zu != %zu\n",
@@ -385,11 +385,11 @@ static int response_body_received(RawstorIOEvent *event, void *data) {
     /**
      * Continue response loop, if there are any other pending operations.
      */
-    if (rawstor_ringbuf_size(op->object->operations) < QUEUE_DEPTH - 1) {
+    if (rawstor_ringbuf_size(op->object->ops) < QUEUE_DEPTH - 1) {
         if (object_response_head_recv(op->object)) {
-            RawstorObjectOperation **it = rawstor_ringbuf_head(
-                op->object->operations);
-            assert(rawstor_ringbuf_push(op->object->operations) == 0);
+            RawstorObjectOp **it = rawstor_ringbuf_head(
+                op->object->ops);
+            assert(rawstor_ringbuf_push(op->object->ops) == 0);
             *it = op;
             return -errno;
         }
@@ -402,8 +402,8 @@ static int response_body_received(RawstorIOEvent *event, void *data) {
         op->request_frame.len, op->request_frame.len, 0,
         op->data);
 
-    RawstorObjectOperation **it = rawstor_ringbuf_head(op->object->operations);
-    assert(rawstor_ringbuf_push(op->object->operations) == 0);
+    RawstorObjectOp **it = rawstor_ringbuf_head(op->object->ops);
+    assert(rawstor_ringbuf_push(op->object->ops) == 0);
     *it = op;
 
     return ret;
@@ -411,7 +411,7 @@ static int response_body_received(RawstorIOEvent *event, void *data) {
 
 
 static int responsev_body_received(RawstorIOEvent *event, void *data) {
-    RawstorObjectOperation *op = (RawstorObjectOperation*)data;
+    RawstorObjectOp *op = (RawstorObjectOp*)data;
 
     operation_trace(op->cid, event);
 
@@ -432,18 +432,18 @@ static int responsev_body_received(RawstorIOEvent *event, void *data) {
     }
 
     if (rawstor_io_event_error(event) != 0) {
-        RawstorObjectOperation **it = rawstor_ringbuf_head(
-            op->object->operations);
-        assert(rawstor_ringbuf_push(op->object->operations) == 0);
+        RawstorObjectOp **it = rawstor_ringbuf_head(
+            op->object->ops);
+        assert(rawstor_ringbuf_push(op->object->ops) == 0);
         *it = op;
         errno = rawstor_io_event_error(event);
         return -errno;
     }
 
     if (rawstor_io_event_result(event) != rawstor_io_event_size(event)) {
-        RawstorObjectOperation **it = rawstor_ringbuf_head(
-            op->object->operations);
-        assert(rawstor_ringbuf_push(op->object->operations) == 0);
+        RawstorObjectOp **it = rawstor_ringbuf_head(
+            op->object->ops);
+        assert(rawstor_ringbuf_push(op->object->ops) == 0);
         *it = op;
         rawstor_error(
             "Response body size mismatch: %zu != %zu\n",
@@ -456,11 +456,11 @@ static int responsev_body_received(RawstorIOEvent *event, void *data) {
     /**
      * Continue response loop, if there are any other pending operations.
      */
-    if (rawstor_ringbuf_size(op->object->operations) < QUEUE_DEPTH - 1) {
+    if (rawstor_ringbuf_size(op->object->ops) < QUEUE_DEPTH - 1) {
         if (object_response_head_recv(op->object)) {
-            RawstorObjectOperation **it = rawstor_ringbuf_head(
-                op->object->operations);
-            assert(rawstor_ringbuf_push(op->object->operations) == 0);
+            RawstorObjectOp **it = rawstor_ringbuf_head(
+                op->object->ops);
+            assert(rawstor_ringbuf_push(op->object->ops) == 0);
             *it = op;
             return -errno;
         }
@@ -473,9 +473,9 @@ static int responsev_body_received(RawstorIOEvent *event, void *data) {
         op->request_frame.len, op->request_frame.len, 0,
         op->data);
 
-    RawstorObjectOperation **it = rawstor_ringbuf_head(
-        op->object->operations);
-    assert(rawstor_ringbuf_push(op->object->operations) == 0);
+    RawstorObjectOp **it = rawstor_ringbuf_head(
+        op->object->ops);
+    assert(rawstor_ringbuf_push(op->object->ops) == 0);
     *it = op;
 
     return ret;
@@ -526,7 +526,7 @@ static int response_head_received(RawstorIOEvent *event, void *data) {
         return -errno;
     }
 
-    RawstorObjectOperation *op = object->operations_array[response->cid - 1];
+    RawstorObjectOp *op = object->ops_array[response->cid - 1];
 
     operation_trace(op->cid, event);
 
@@ -597,30 +597,30 @@ int rawstor_object_open_ost(
 
     obj->response_loop = 0;
 
-    obj->operations_array = calloc(
-        QUEUE_DEPTH, sizeof(RawstorObjectOperation*));
-    if (obj->operations_array == NULL) {
+    obj->ops_array = calloc(
+        QUEUE_DEPTH, sizeof(RawstorObjectOp*));
+    if (obj->ops_array == NULL) {
         goto err_operations_array;
     }
 
-    obj->operations = rawstor_ringbuf_create(
-        QUEUE_DEPTH, sizeof(RawstorObjectOperation*));
-    if (obj->operations == NULL) {
+    obj->ops = rawstor_ringbuf_create(
+        QUEUE_DEPTH, sizeof(RawstorObjectOp*));
+    if (obj->ops == NULL) {
         goto err_operations;
     }
 
     for (unsigned int i = 0; i < QUEUE_DEPTH; ++i) {
-        RawstorObjectOperation *op = malloc(sizeof(RawstorObjectOperation));
+        RawstorObjectOp *op = malloc(sizeof(RawstorObjectOp));
         if (op == NULL) {
             goto err_operation;
         }
 
         op->cid = i + 1;
 
-        obj->operations_array[i] = op;
+        obj->ops_array[i] = op;
 
-        RawstorObjectOperation **it = rawstor_ringbuf_head(obj->operations);
-        assert(rawstor_ringbuf_push(obj->operations) == 0);
+        RawstorObjectOp **it = rawstor_ringbuf_head(obj->ops);
+        assert(rawstor_ringbuf_push(obj->ops) == 0);
         *it = op;
     }
 
@@ -645,11 +645,11 @@ err_set_object_id:
 err_connect:
 err_operation:
     for (unsigned int i = 0; i < QUEUE_DEPTH; ++i) {
-        free(obj->operations_array[i]);
+        free(obj->ops_array[i]);
     }
-    rawstor_ringbuf_delete(obj->operations);
+    rawstor_ringbuf_delete(obj->ops);
 err_operations:
-    free(obj->operations_array);
+    free(obj->ops_array);
 err_operations_array:
     free(obj);
 err_obj:
@@ -664,12 +664,12 @@ int rawstor_object_close(RawstorObject *object) {
     }
 
     for (unsigned int i = 0; i < QUEUE_DEPTH; ++i) {
-        free(object->operations_array[i]);
+        free(object->ops_array[i]);
     }
 
-    free(object->operations_array);
+    free(object->ops_array);
 
-    rawstor_ringbuf_delete(object->operations);
+    rawstor_ringbuf_delete(object->ops);
 
     free(object);
 
@@ -711,14 +711,14 @@ int rawstor_object_pread(
         "%s(): offset = %jd, size = %zu\n",
         __FUNCTION__, (intmax_t)offset, size);
 
-    RawstorObjectOperation **it = rawstor_ringbuf_tail(object->operations);
-    if (rawstor_ringbuf_pop(object->operations)) {
+    RawstorObjectOp **it = rawstor_ringbuf_tail(object->ops);
+    if (rawstor_ringbuf_pop(object->ops)) {
         errno = ENOBUFS;
         return -errno;
     }
-    RawstorObjectOperation *op = *it;
+    RawstorObjectOp *op = *it;
 
-    *op = (RawstorObjectOperation) {
+    *op = (RawstorObjectOp) {
         .object = object,
         .cid = op->cid,  // preserve cid
         .request_frame = (RawstorOSTFrameIO) {
@@ -758,14 +758,14 @@ int rawstor_object_preadv(
         return -errno;
     }
 
-    RawstorObjectOperation **it = rawstor_ringbuf_tail(object->operations);
-    if (rawstor_ringbuf_pop(object->operations)) {
+    RawstorObjectOp **it = rawstor_ringbuf_tail(object->ops);
+    if (rawstor_ringbuf_pop(object->ops)) {
         errno = ENOBUFS;
         return -errno;
     }
-    RawstorObjectOperation *op = *it;
+    RawstorObjectOp *op = *it;
 
-    *op = (RawstorObjectOperation) {
+    *op = (RawstorObjectOp) {
         .object = object,
         .cid = op->cid,  // preserve cid
         .request_frame = (RawstorOSTFrameIO) {
@@ -799,14 +799,14 @@ int rawstor_object_pwrite(
         "%s(): offset = %jd, size = %zu\n",
         __FUNCTION__, (intmax_t)offset, size);
 
-    RawstorObjectOperation **it = rawstor_ringbuf_tail(object->operations);
-    if (rawstor_ringbuf_pop(object->operations)) {
+    RawstorObjectOp **it = rawstor_ringbuf_tail(object->ops);
+    if (rawstor_ringbuf_pop(object->ops)) {
         errno = ENOBUFS;
         return -errno;
     }
-    RawstorObjectOperation *op = *it;
+    RawstorObjectOp *op = *it;
 
-    *op = (RawstorObjectOperation) {
+    *op = (RawstorObjectOp) {
         .object = object,
         .cid = op->cid,  // preserve cid
         .request_frame = (RawstorOSTFrameIO) {
@@ -861,14 +861,14 @@ int rawstor_object_pwritev(
         return -errno;
     }
 
-    RawstorObjectOperation **it = rawstor_ringbuf_tail(object->operations);
-    if (rawstor_ringbuf_pop(object->operations)) {
+    RawstorObjectOp **it = rawstor_ringbuf_tail(object->ops);
+    if (rawstor_ringbuf_pop(object->ops)) {
         errno = ENOBUFS;
         return -errno;
     }
-    RawstorObjectOperation *op = *it;
+    RawstorObjectOp *op = *it;
 
-    *op = (RawstorObjectOperation) {
+    *op = (RawstorObjectOp) {
         .object = object,
         .cid = op->cid,  // preserve cid
         .request_frame = (RawstorOSTFrameIO) {
