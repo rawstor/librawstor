@@ -559,7 +559,7 @@ RawstorConnection* rawstor_connection_open(
             goto err_connect;
         }
 
-        if (ost_set_object_id(cn->fds[i], object_id)) {
+        if (ost_set_object_id(cn->fds[i], rawstor_object_get_id(object))) {
             goto err_set_object_id;
         }
     }
@@ -621,7 +621,7 @@ err_cn:
 }
 
 
-int rawstor_connection_delete(RawstorConnection *cn) {
+int rawstor_connection_close(RawstorConnection *cn) {
     for (size_t i = 0; i < cn->nfds; ++i) {
         if (cn->fds[i] >= 0) {
             int rval = close(cn->fds[i]);
