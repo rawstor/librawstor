@@ -8,7 +8,7 @@
 
 #include <rawstorstd/hash.h>
 #include <rawstorstd/logging.h>
-#include <rawstorstd/ringbuf.h>
+#include <rawstorstd/mempool.h>
 #include <rawstorstd/socket.h>
 #include <rawstorstd/uuid.h>
 
@@ -31,42 +31,9 @@
  */
 #define QUEUE_DEPTH 256
 
-/**
- * FIXME: iovec should be dynamically allocated at runtime.
- */
-#define IOVEC_SIZE 256
-
-
-#define operation_trace(cid, event) \
-    rawstor_debug( \
-        "[%u] %s(): %zi of %zu\n", \
-        cid, __FUNCTION__, \
-        rawstor_io_event_result(event), \
-        rawstor_io_event_size(event))
-
-
-typedef struct RawstorObjectOp RawstorObjectOp;
-
 
 struct RawstorObjectOp {
     RawstorObject *object;
-
-    u_int16_t cid;
-    RawstorOSTFrameIO request_frame;
-
-    union {
-        struct {
-            void *data;
-        } linear;
-        struct {
-            struct iovec *iov;
-            unsigned int niov;
-        } vector;
-    } payload;
-
-    struct iovec iov[IOVEC_SIZE];
-
-    int (*process)(RawstorObjectOp *op);
 
     RawstorCallback *callback;
 
@@ -79,10 +46,7 @@ struct RawstorObject {
 
     RawstorConnection *cn;
 
-    int response_loop;
-    RawstorObjectOp **ops_array;
-    RawstorRingBuf *ops;
-    RawstorOSTFrameResponse response_frame;
+    struct RawstorObjectOp *ops_pool;
 };
 
 
@@ -496,36 +460,13 @@ int rawstor_object_open_ost(
 
     obj->id = *object_id;
 
-    obj->response_loop = 0;
-
-    obj->ops_array = calloc(
-        QUEUE_DEPTH, sizeof(RawstorObjectOp*));
-    if (obj->ops_array == NULL) {
-        goto err_operations_array;
+    obj->ops_pool = rawstor_mempool_create(
+        QUEUE_DEPTH, sizeof(struct RawstorObjectOp));
+    if (obj->ops_pool == NULL) {
+        goto err_ops_pool;
     }
 
-    obj->ops = rawstor_ringbuf_create(
-        QUEUE_DEPTH, sizeof(RawstorObjectOp*));
-    if (obj->ops == NULL) {
-        goto err_operations;
-    }
-
-    for (unsigned int i = 0; i < QUEUE_DEPTH; ++i) {
-        RawstorObjectOp *op = malloc(sizeof(RawstorObjectOp));
-        if (op == NULL) {
-            goto err_operation;
-        }
-
-        op->cid = i + 1;
-
-        obj->ops_array[i] = op;
-
-        RawstorObjectOp **it = rawstor_ringbuf_head(obj->ops);
-        assert(rawstor_ringbuf_push(obj->ops) == 0);
-        *it = op;
-    }
-
-    obj->cn = rawstor_connection_create(ost, &obj->id, 1);
+    obj->cn = rawstor_connection_create(obj, ost, &obj->id, 1, QUEUE_DEPTH);
     if (obj->cn == NULL) {
         goto err_cn;
     }
@@ -535,14 +476,8 @@ int rawstor_object_open_ost(
     return 0;
 
 err_cn:
-err_operation:
-    for (unsigned int i = 0; i < QUEUE_DEPTH; ++i) {
-        free(obj->ops_array[i]);
-    }
-    rawstor_ringbuf_delete(obj->ops);
-err_operations:
-    free(obj->ops_array);
-err_operations_array:
+    rawstor_mempool_delete(obj->ops_pool);
+err_ops_pool:
     free(obj);
 err_obj:
     return -errno;
@@ -550,18 +485,13 @@ err_obj:
 
 
 int rawstor_object_close(RawstorObject *object) {
-    int rval = close(object->fd);
-    if (rval == -1) {
-        return -errno;
-    }
-
     for (unsigned int i = 0; i < QUEUE_DEPTH; ++i) {
         free(object->ops_array[i]);
     }
 
     free(object->ops_array);
 
-    rawstor_ringbuf_delete(object->ops);
+    rawstor_mempool_delete(object->ops_pool);
 
     free(object);
 
