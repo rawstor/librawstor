@@ -75,6 +75,7 @@ struct RawstorObjectOp {
 
 
 struct RawstorObject {
+    struct RawstorUUID id;
     int fd;
     int response_loop;
     RawstorObjectOp **ops_array;
@@ -595,6 +596,8 @@ int rawstor_object_open_ost(
         goto err_obj;
     }
 
+    obj->id = *object_id;
+
     obj->response_loop = 0;
 
     obj->ops_array = calloc(
@@ -629,7 +632,7 @@ int rawstor_object_open_ost(
         goto err_connect;
     }
 
-    if (ost_set_object_id(obj->fd, object_id)) {
+    if (ost_set_object_id(obj->fd, &obj->id)) {
         goto err_set_object_id;
     }
 
@@ -674,6 +677,11 @@ int rawstor_object_close(RawstorObject *object) {
     free(object);
 
     return 0;
+}
+
+
+const struct RawstorUUID* rawstor_object_get_id(RawstorObject *object) {
+    return &object->id;
 }
 
 

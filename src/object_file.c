@@ -44,6 +44,7 @@ struct RawstorObjectOperation {
 
 
 struct RawstorObject {
+    struct RawstorUUID id;
     int fd;
     RawstorMemPool *operations_pool;
 };
@@ -281,18 +282,20 @@ int rawstor_object_open_ost(
         goto err_ost_path;
     }
 
-    RawstorUUIDString uuid_string;
-    rawstor_uuid_to_string(object_id, &uuid_string);
-
-    RawstorObject *ret = malloc(sizeof(RawstorObject));
-    if (ret == NULL) {
+    RawstorObject *obj = malloc(sizeof(RawstorObject));
+    if (obj == NULL) {
         goto err_object;
     }
 
-    ret->operations_pool = rawstor_mempool_create(
+    obj->id = *object_id;
+
+    RawstorUUIDString uuid_string;
+    rawstor_uuid_to_string(&obj->id, &uuid_string);
+
+    obj->operations_pool = rawstor_mempool_create(
         QUEUE_DEPTH,
         sizeof(RawstorObjectOperation));
-    if (ret->operations_pool == NULL) {
+    if (obj->operations_pool == NULL) {
         goto err_operations_pool;
     }
 
@@ -300,20 +303,20 @@ int rawstor_object_open_ost(
     if (get_object_dat_path(ost_path, uuid_string, path, sizeof(path))) {
         goto err_dat_path;
     }
-    ret->fd = open(path, O_RDWR | O_NONBLOCK);
-    if (ret->fd == -1) {
+    obj->fd = open(path, O_RDWR | O_NONBLOCK);
+    if (obj->fd == -1) {
         goto err_open;
     }
 
-    *object = ret;
+    *object = obj;
 
     return 0;
 
 err_open:
 err_dat_path:
-    rawstor_mempool_delete(ret->operations_pool);
+    rawstor_mempool_delete(obj->operations_pool);
 err_operations_pool:
-    free(ret);
+    free(obj);
 err_object:
 err_ost_path:
     return -errno;
@@ -329,6 +332,11 @@ int rawstor_object_close(RawstorObject *object) {
     free(object);
 
     return 0;
+}
+
+
+const struct RawstorUUID* rawstor_object_get_id(RawstorObject *object) {
+    return &object->id;
 }
 
 

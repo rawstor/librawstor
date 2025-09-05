@@ -52,6 +52,8 @@ int rawstor_object_open_ost(
 
 int rawstor_object_close(RawstorObject *object);
 
+const struct RawstorUUID* rawstor_object_get_id(RawstorObject *object);
+
 int rawstor_object_spec(
     const struct RawstorUUID *object_id,
     struct RawstorObjectSpec *spec);
