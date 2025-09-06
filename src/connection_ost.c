@@ -632,6 +632,12 @@ int rawstor_connection_close(RawstorConnection *cn) {
         }
     }
 
+    for (unsigned int i = 0; i < cn->depth; ++i) {
+        free(cn->ops_array[i]);
+    }
+    rawstor_ringbuf_delete(cn->ops);
+    free(cn->ops_array);
+
     free(cn->fds);
     free(cn);
 
