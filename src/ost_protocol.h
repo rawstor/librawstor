@@ -3,7 +3,6 @@
 
 #include <rawstorstd/gcc.h>
 
-#include <arpa/inet.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -38,19 +37,19 @@ typedef struct {
     RawstorOSTCommandType cmd;
     // var is for minimal commands only,
     // will be overridden in other command structs
-    u_int8_t obj_id[16];
-    u_int64_t offset;
-    u_int64_t val;
+    uint8_t obj_id[16];
+    uint64_t offset;
+    uint64_t val;
 } RAWSTOR_PACKED RawstorOSTFrameBasic;
 
 
 typedef struct {
     uint32_t magic;
     RawstorOSTCommandType cmd;
-    u_int16_t cid;
-    u_int64_t offset;
-    u_int32_t len;
-    u_int64_t hash;
+    uint16_t cid;
+    uint64_t offset;
+    uint32_t len;
+    uint64_t hash;
     bool sync;
 } RAWSTOR_PACKED RawstorOSTFrameIO;
 
@@ -59,11 +58,11 @@ typedef struct {
 typedef struct {
     uint32_t magic;
     RawstorOSTCommandType cmd;
-    u_int16_t cid;
+    uint16_t cid;
     // TODO: if we send length in res - it should be the same type
     // (signed-unsigned too)
     int32_t res;
-    u_int64_t hash;
+    uint64_t hash;
 } RAWSTOR_PACKED RawstorOSTFrameResponse;
 
 
