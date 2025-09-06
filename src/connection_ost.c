@@ -13,6 +13,8 @@
 
 #include <rawstor/object.h>
 
+#include <arpa/inet.h>
+
 #include <assert.h>
 #include <errno.h>
 #include <stddef.h>
@@ -36,7 +38,7 @@
 struct RawstorConnectionOp {
     RawstorConnection *cn;
 
-    u_int16_t cid;
+    uint16_t cid;
     RawstorOSTFrameIO request_frame;
 
     union {
