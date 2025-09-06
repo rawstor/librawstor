@@ -546,7 +546,7 @@ RawstorConnection* rawstor_connection_open(
     };
 
     cn->fds = calloc(count, sizeof(int));
-    if (cn->fds) {
+    if (cn->fds == NULL) {
         goto err_fds;
     }
     for (size_t i = 0; i < cn->nfds; ++i) {

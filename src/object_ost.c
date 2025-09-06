@@ -27,10 +27,7 @@
 
 
 struct RawstorObjectOp {
-    RawstorObject *object;
-
     RawstorCallback *callback;
-
     void *data;
 };
 
@@ -49,7 +46,11 @@ static int object_op_process(
 {
     struct RawstorObjectOp *op = (struct RawstorObjectOp*)data;
 
-    return op->callback(object, size, res, error, op->data);
+    int ret = op->callback(object, size, res, error, op->data);
+
+    rawstor_mempool_free(object->ops_pool, op);
+
+    return ret;
 }
 
 
@@ -200,7 +201,6 @@ int rawstor_object_pread(
     }
 
     *op = (struct RawstorObjectOp) {
-        .object = object,
         .callback = cb,
         .data = data,
     };
@@ -227,7 +227,6 @@ int rawstor_object_preadv(
     }
 
     *op = (struct RawstorObjectOp) {
-        .object = object,
         .callback = cb,
         .data = data,
     };
@@ -254,7 +253,6 @@ int rawstor_object_pwrite(
     }
 
     *op = (struct RawstorObjectOp) {
-        .object = object,
         .callback = cb,
         .data = data,
     };
@@ -281,7 +279,6 @@ int rawstor_object_pwritev(
     }
 
     *op = (struct RawstorObjectOp) {
-        .object = object,
         .callback = cb,
         .data = data,
     };
