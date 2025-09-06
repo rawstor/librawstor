@@ -36,7 +36,7 @@
 struct RawstorConnectionOp {
     RawstorConnection *cn;
 
-    u_int16_t cid;
+    uint16_t cid;
     RawstorOSTFrameIO request_frame;
 
     union {
