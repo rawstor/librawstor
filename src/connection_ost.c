@@ -711,12 +711,6 @@ int rawstor_connection_preadv(
         "%s(): offset = %jd, niov = %u, size = %zu\n",
         __FUNCTION__, (intmax_t)offset, niov, size);
 
-    if (niov >= IOVEC_SIZE) {
-        rawstor_error("Large iovecs not supported: %u", niov);
-        errno = EIO;
-        return -errno;
-    }
-
     struct RawstorConnectionOp **it = rawstor_ringbuf_tail(cn->ops);
     if (rawstor_ringbuf_pop(cn->ops)) {
         errno = ENOBUFS;
