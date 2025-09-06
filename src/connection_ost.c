@@ -78,27 +78,27 @@ struct RawstorConnection {
 static int ost_connect(const struct RawstorSocketAddress *ost) {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd == -1) {
-        return -errno;
+        goto err_socket;
     }
 
     unsigned int so_sndtimeo = rawstor_opts_so_sndtimeo();
     if (so_sndtimeo != 0) {
         if (rawstor_socket_set_snd_timeout(fd, so_sndtimeo)) {
-            return -errno;
+            goto err_set;
         }
     }
 
     unsigned int so_rcvtimeo = rawstor_opts_so_rcvtimeo();
     if (so_rcvtimeo != 0) {
         if (rawstor_socket_set_rcv_timeout(fd, so_rcvtimeo)) {
-            return -errno;
+            goto err_set;
         }
     }
 
     unsigned int tcp_user_timeo = rawstor_opts_tcp_user_timeout();
     if (tcp_user_timeo != 0) {
         if (rawstor_socket_set_user_timeout(fd, tcp_user_timeo)) {
-            return -errno;
+            goto err_set;
         }
     }
 
@@ -109,10 +109,16 @@ static int ost_connect(const struct RawstorSocketAddress *ost) {
 
     rawstor_info("Connecting to %s:%u\n", ost->host, ost->port);
     if (connect(fd, (struct sockaddr*)&servaddr, sizeof(servaddr))) {
-        return -errno;
+        goto err_connect;
     }
 
     return fd;
+
+err_connect:
+err_set:
+    close(fd);
+err_socket:
+    return -errno;
 }
 
 
