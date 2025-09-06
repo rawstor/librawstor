@@ -3,8 +3,6 @@
 
 #include <rawstorstd/gcc.h>
 
-#include <arpa/inet.h>
-
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
