@@ -104,8 +104,16 @@ static int ost_connect(const struct RawstorSocketAddress *ost) {
 
     struct sockaddr_in servaddr = {};
     servaddr.sin_family = AF_INET;
-    servaddr.sin_addr.s_addr = inet_addr(ost->host);
     servaddr.sin_port = htons(ost->port);
+
+    int res = inet_pton(AF_INET, ost->host, &servaddr.sin_addr);
+    if (res == 0) {
+        errno = EINVAL;
+        goto err_pton;
+    }
+    if (res < 0) {
+        goto err_pton;
+    }
 
     rawstor_info("Connecting to %s:%u\n", ost->host, ost->port);
     if (connect(fd, (struct sockaddr*)&servaddr, sizeof(servaddr))) {
@@ -115,6 +123,7 @@ static int ost_connect(const struct RawstorSocketAddress *ost) {
     return fd;
 
 err_connect:
+err_pton:
 err_set:
     close(fd);
 err_socket:
