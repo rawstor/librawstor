@@ -16,54 +16,54 @@ extern "C" {
 #define RAWSTOR_MAGIC 0x72737472 // "rstr" as ascii
 
 
-typedef enum {
+enum RawstorOSTCommandType {
     RAWSTOR_CMD_SET_OBJECT,
     RAWSTOR_CMD_READ,
     RAWSTOR_CMD_WRITE,
     RAWSTOR_CMD_DISCARD,
-} RawstorOSTCommandType;
+};
 
 
 /* Just for basic validation only */
-typedef struct {
+struct RawstorOSTFrameCmdOnly {
     uint32_t magic;
-    RawstorOSTCommandType cmd;
-} RAWSTOR_PACKED RawstorOSTFrameCmdOnly;
+    enum RawstorOSTCommandType cmd;
+} RAWSTOR_PACKED;
 
 
 /* Minimalistic protocol frame */
-typedef struct {
+struct RawstorOSTFrameBasic {
     uint32_t magic;
-    RawstorOSTCommandType cmd;
+    enum RawstorOSTCommandType cmd;
     // var is for minimal commands only,
     // will be overridden in other command structs
     uint8_t obj_id[16];
     uint64_t offset;
     uint64_t val;
-} RAWSTOR_PACKED RawstorOSTFrameBasic;
+} RAWSTOR_PACKED;
 
 
-typedef struct {
+struct RawstorOSTFrameIO {
     uint32_t magic;
-    RawstorOSTCommandType cmd;
+    enum RawstorOSTCommandType cmd;
     uint16_t cid;
     uint64_t offset;
     uint32_t len;
     uint64_t hash;
     bool sync;
-} RAWSTOR_PACKED RawstorOSTFrameIO;
+} RAWSTOR_PACKED;
 
 
 /* response frames */
-typedef struct {
+struct RawstorOSTFrameResponse {
     uint32_t magic;
-    RawstorOSTCommandType cmd;
+    enum RawstorOSTCommandType cmd;
     uint16_t cid;
     // TODO: if we send length in res - it should be the same type
     // (signed-unsigned too)
     int32_t res;
     uint64_t hash;
-} RAWSTOR_PACKED RawstorOSTFrameResponse;
+} RAWSTOR_PACKED;
 
 
 #ifdef __cplusplus

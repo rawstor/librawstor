@@ -39,7 +39,7 @@ struct RawstorConnectionOp {
     RawstorConnection *cn;
 
     uint16_t cid;
-    RawstorOSTFrameIO request_frame;
+    struct RawstorOSTFrameIO request_frame;
 
     union {
         struct {
@@ -73,7 +73,7 @@ struct RawstorConnection {
     int response_loop;
     struct RawstorConnectionOp **ops_array;
     RawstorRingBuf *ops;
-    RawstorOSTFrameResponse response_frame;
+    struct RawstorOSTFrameResponse response_frame;
 };
 
 
@@ -137,7 +137,7 @@ err_socket:
  * TODO: Do it async or solve partial IO issue.
  */
 static int ost_set_object_id(int fd, const struct RawstorUUID *object_id) {
-    RawstorOSTFrameBasic request_frame = {
+    struct RawstorOSTFrameBasic request_frame = {
         .magic = RAWSTOR_MAGIC,
         .cmd = RAWSTOR_CMD_SET_OBJECT,
     };
@@ -152,7 +152,7 @@ static int ost_set_object_id(int fd, const struct RawstorUUID *object_id) {
     }
     assert(res == sizeof(request_frame));
 
-    RawstorOSTFrameResponse response_frame;
+    struct RawstorOSTFrameResponse response_frame;
     res = read(fd, &response_frame, sizeof(response_frame));
     if (res < 0) {
         return -errno;
@@ -371,7 +371,7 @@ static int response_head_received(RawstorIOEvent *event, void *data) {
         return -errno;
     }
 
-    RawstorOSTFrameResponse *response = &cn->response_frame;
+    struct RawstorOSTFrameResponse *response = &cn->response_frame;
     if (response->magic != RAWSTOR_MAGIC) {
         /**
          * FIXME: Memory leak on used RawstorObjectOperation.
@@ -681,7 +681,7 @@ int rawstor_connection_pread(
     *op = (struct RawstorConnectionOp) {
         .cn = cn,
         .cid = op->cid,  // preserve cid
-        .request_frame = (RawstorOSTFrameIO) {
+        .request_frame = (struct RawstorOSTFrameIO) {
             .magic = RAWSTOR_MAGIC,
             .cmd = RAWSTOR_CMD_READ,
             .cid = op->cid,
@@ -723,7 +723,7 @@ int rawstor_connection_preadv(
     *op = (struct RawstorConnectionOp) {
         .cn = cn,
         .cid = op->cid,  // preserve cid
-        .request_frame = (RawstorOSTFrameIO) {
+        .request_frame = (struct RawstorOSTFrameIO) {
             .magic = RAWSTOR_MAGIC,
             .cmd = RAWSTOR_CMD_READ,
             .cid = op->cid,
@@ -765,7 +765,7 @@ int rawstor_connection_pwrite(
     *op = (struct RawstorConnectionOp) {
         .cn = cn,
         .cid = op->cid,  // preserve cid
-        .request_frame = (RawstorOSTFrameIO) {
+        .request_frame = (struct RawstorOSTFrameIO) {
             .magic = RAWSTOR_MAGIC,
             .cmd = RAWSTOR_CMD_WRITE,
             .cid = op->cid,
@@ -827,7 +827,7 @@ int rawstor_connection_pwritev(
     *op = (struct RawstorConnectionOp) {
         .cn = cn,
         .cid = op->cid,  // preserve cid
-        .request_frame = (RawstorOSTFrameIO) {
+        .request_frame = (struct RawstorOSTFrameIO) {
             .magic = RAWSTOR_MAGIC,
             .cmd = RAWSTOR_CMD_WRITE,
             .cid = op->cid,
