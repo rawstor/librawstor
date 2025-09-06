@@ -800,7 +800,7 @@ int rawstor_connection_pwritev(
         return -errno;
     }
 
-    if (niov > IOVEC_SIZE) {
+    if (niov >= IOVEC_SIZE) {
         rawstor_error("Large iovecs not supported: %u", niov);
         errno = EIO;
         return -errno;
