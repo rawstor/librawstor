@@ -52,8 +52,8 @@ struct RawstorObject {
 namespace rawstor {
 
 
-Object::Object(const RawstorUUID *object_id) :
-    _id(*object_id),
+Object::Object(const RawstorUUID &id) :
+    _id(id),
     _ops_pool(NULL),
     _cn(NULL)
 {
@@ -205,7 +205,7 @@ void Object::pwritev(
 }
 
 
-} // unnamed namespace
+} // rawstor
 
 
 const char* rawstor_object_backend_name(void) {
@@ -215,57 +215,54 @@ const char* rawstor_object_backend_name(void) {
 
 int rawstor_object_create(
     const RawstorObjectSpec *spec,
-    RawstorUUID *object_id)
+    RawstorUUID *id)
 {
-    return rawstor_object_create_ost(rawstor_default_ost(), spec, object_id);
+    return rawstor_object_create_ost(rawstor_default_ost(), spec, id);
 }
 
 
 int rawstor_object_create_ost(
     const RawstorSocketAddress RAWSTOR_UNUSED *ost,
     const RawstorObjectSpec RAWSTOR_UNUSED *spec,
-    RawstorUUID *object_id)
+    RawstorUUID *id)
 {
     /**
      * TODO: Implement me.
      */
-    rawstor_uuid7_init(object_id);
+    rawstor_uuid7_init(id);
 
     return 0;
 }
 
 
-int rawstor_object_delete(const RawstorUUID *object_id) {
-    return rawstor_object_delete_ost(rawstor_default_ost(), object_id);
+int rawstor_object_remove(const RawstorUUID *id) {
+    return rawstor_object_remove_ost(rawstor_default_ost(), id);
 }
 
 
-int rawstor_object_delete_ost(
+int rawstor_object_remove_ost(
     const RawstorSocketAddress RAWSTOR_UNUSED *ost,
-    const RawstorUUID RAWSTOR_UNUSED *object_id)
+    const RawstorUUID RAWSTOR_UNUSED *id)
 {
-    fprintf(stderr, "rawstor_object_delete() not implemented\n");
+    fprintf(stderr, "rawstor_object_remove_ost() not implemented\n");
     exit(1);
 
     return 0;
 }
 
 
-int rawstor_object_open(
-    const RawstorUUID *object_id,
-    RawstorObject **object)
-{
-    return rawstor_object_open_ost(rawstor_default_ost(), object_id, object);
+int rawstor_object_open(const RawstorUUID *id, RawstorObject **object) {
+    return rawstor_object_open_ost(rawstor_default_ost(), id, object);
 }
 
 
 int rawstor_object_open_ost(
     const RawstorSocketAddress *ost,
-    const RawstorUUID *object_id,
+    const RawstorUUID *id,
     RawstorObject **object)
 {
     try {
-        rawstor::Object *impl = new rawstor::Object(object_id);
+        rawstor::Object *impl = new rawstor::Object(*id);
 
         impl->open(*ost);
 
@@ -301,17 +298,14 @@ const RawstorUUID* rawstor_object_get_id(RawstorObject *object) {
 }
 
 
-int rawstor_object_spec(
-    const RawstorUUID *object_id,
-    RawstorObjectSpec *spec)
-{
-    return rawstor_object_spec_ost(rawstor_default_ost(), object_id, spec);
+int rawstor_object_spec(const RawstorUUID *id, RawstorObjectSpec *spec) {
+    return rawstor_object_spec_ost(rawstor_default_ost(), id, spec);
 }
 
 
 int rawstor_object_spec_ost(
     const RawstorSocketAddress RAWSTOR_UNUSED *ost,
-    const RawstorUUID RAWSTOR_UNUSED *object_id,
+    const RawstorUUID RAWSTOR_UNUSED *id,
     RawstorObjectSpec *spec)
 {
     /**

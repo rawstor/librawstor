@@ -37,7 +37,7 @@ if ENABLE_OST
     librawstor_la_LIBADD += $(LIBXXHASH_LIBS) \
                             -lstdc++
 else
-    librawstor_la_SOURCES += object_file.c
+    librawstor_la_SOURCES += object_file.cpp
 endif
 
 

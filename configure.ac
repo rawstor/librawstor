@@ -43,11 +43,6 @@ AC_ARG_ENABLE([ost], [AS_HELP_STRING([--disable-ost],
     [enable_ost=$enableval],
     [enable_ost="yes"])
 AM_CONDITIONAL([ENABLE_OST], [test "x$enable_ost" == "xyes"])
-AS_IF([test "x$enable_ost" == "xyes"], [
-    AC_SUBST([maybe_lstdcpp], ["-lstdc++"])
-], [
-    AC_SUBST([maybe_lstdcpp], [""])
-])
 
 
 AC_ARG_WITH([liburing], [AS_HELP_STRING([--without-liburing],

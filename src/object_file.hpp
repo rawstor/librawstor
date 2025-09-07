@@ -1,5 +1,5 @@
-#ifndef RAWSTOR_OBJECT_OST_HPP
-#define RAWSTOR_OBJECT_OST_HPP
+#ifndef RAWSTOR_OBJECT_FILE_HPP
+#define RAWSTOR_OBJECT_FILE_HPP
 
 #include "connection_ost.hpp"
 
@@ -13,14 +13,26 @@ namespace rawstor {
 class Object {
     private:
         RawstorUUID _id;
+        int _fd;
         RawstorMemPool *_ops_pool;
-        Connection *_cn;
 
-        static int _process(
-            RawstorObject *object,
-            size_t size, size_t res, int error, void *data) noexcept;
+        static int _process(RawstorIOEvent *event, void *data) noexcept;
 
     public:
+        static void create(
+            const RawstorSocketAddress &ost,
+            const RawstorObjectSpec &spec,
+            RawstorUUID *id);
+
+        static void remove(
+            const RawstorSocketAddress &ost,
+            const RawstorUUID &id);
+
+        static void spec(
+            const RawstorSocketAddress &ost,
+            const RawstorUUID &id,
+            RawstorObjectSpec *spec);
+
         Object(const RawstorUUID &id);
         Object(const Object&) = delete;
 
@@ -49,11 +61,10 @@ class Object {
         void pwritev(
             iovec *iov, unsigned int niov, size_t size, off_t offset,
             RawstorCallback *cb, void *data);
-
 };
 
 
 } // rawstor
 
 
-#endif // RAWSTOR_OBJECT_OST_HPP
+#endif // RAWSTOR_OBJECT_FILE_HPP
