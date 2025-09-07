@@ -34,7 +34,8 @@ if ENABLE_OST
     AM_CFLAGS += $(LIBXXHASH_CFLAGS)
     librawstor_la_SOURCES += connection_ost.c \
                              object_ost.cpp
-    librawstor_la_LIBADD += $(LIBXXHASH_LIBS)
+    librawstor_la_LIBADD += $(LIBXXHASH_LIBS) \
+                            -lstdc++
 else
     librawstor_la_SOURCES += object_file.c
 endif
