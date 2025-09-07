@@ -1,5 +1,6 @@
-#include <rawstor/object.h>
+#include "object_ost.hpp"
 #include "object_internals.h"
+#include <rawstor/object.h>
 
 #include "connection_ost.h"
 #include "rawstor_internals.h"
@@ -39,58 +40,15 @@ struct ObjectOp {
 };
 
 
-class Object {
-    private:
-        RawstorUUID _id;
-        RawstorMemPool *_ops_pool;
-        RawstorConnection *_cn;
-
-        static int _process(
-            RawstorObject *object,
-            size_t size, size_t res, int error, void *data) noexcept;
-
-    public:
-        Object(const RawstorUUID *object_id);
-        Object(const Object&) = delete;
-
-        ~Object();
-
-        Object& operator=(const Object&) = delete;
-
-        void open(const RawstorSocketAddress *ost);
-
-        void close();
-
-        const RawstorUUID* id() const noexcept;
-
-        void pread(
-            void *buf, size_t size, off_t offset,
-            RawstorCallback *cb, void *data);
-
-        void preadv(
-            struct iovec *iov, unsigned int niov, size_t size, off_t offset,
-            RawstorCallback *cb, void *data);
-
-        void pwrite(
-            void *buf, size_t size, off_t offset,
-            RawstorCallback *cb, void *data);
-
-        void pwritev(
-            struct iovec *iov, unsigned int niov, size_t size, off_t offset,
-            RawstorCallback *cb, void *data);
-
-};
-
-
 } // unnamed namespace
 
 
 struct RawstorObject {
-    Object impl;
+    rawstor::Object impl;
 };
 
 
-namespace {
+namespace rawstor {
 
 
 Object::Object(const RawstorUUID *object_id) :
@@ -330,7 +288,7 @@ int rawstor_object_open_ost(
     RawstorObject **object)
 {
     try {
-        Object *impl = new Object(object_id);
+        rawstor::Object *impl = new rawstor::Object(object_id);
 
         impl->open(ost);
 
