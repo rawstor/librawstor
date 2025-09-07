@@ -1,7 +1,7 @@
 #ifndef RAWSTOR_OBJECT_OST_HPP
 #define RAWSTOR_OBJECT_OST_HPP
 
-#include "connection_ost.h"
+#include "connection_ost.hpp"
 
 #include <rawstorstd/mempool.h>
 
@@ -14,7 +14,7 @@ class Object {
     private:
         RawstorUUID _id;
         RawstorMemPool *_ops_pool;
-        RawstorConnection *_cn;
+        Connection *_cn;
 
         static int _process(
             RawstorObject *object,
@@ -28,18 +28,18 @@ class Object {
 
         Object& operator=(const Object&) = delete;
 
-        void open(const RawstorSocketAddress *ost);
+        void open(const RawstorSocketAddress &ost);
 
         void close();
 
-        const RawstorUUID* id() const noexcept;
+        const RawstorUUID& id() const noexcept;
 
         void pread(
             void *buf, size_t size, off_t offset,
             RawstorCallback *cb, void *data);
 
         void preadv(
-            struct iovec *iov, unsigned int niov, size_t size, off_t offset,
+            iovec *iov, unsigned int niov, size_t size, off_t offset,
             RawstorCallback *cb, void *data);
 
         void pwrite(
@@ -47,7 +47,7 @@ class Object {
             RawstorCallback *cb, void *data);
 
         void pwritev(
-            struct iovec *iov, unsigned int niov, size_t size, off_t offset,
+            iovec *iov, unsigned int niov, size_t size, off_t offset,
             RawstorCallback *cb, void *data);
 
 };

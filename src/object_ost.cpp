@@ -2,7 +2,7 @@
 #include "object_internals.h"
 #include <rawstor/object.h>
 
-#include "connection_ost.h"
+#include "connection_ost.hpp"
 #include "rawstor_internals.h"
 
 #include <rawstorstd/gcc.h>
@@ -58,7 +58,7 @@ Object::Object(const RawstorUUID *object_id) :
 {
     _ops_pool = rawstor_mempool_create(QUEUE_DEPTH, sizeof(ObjectOp));
     if (_ops_pool == NULL) {
-        THROW_ERRNO(errno);
+        RAWSTOR_THROW_ERRNO(errno);
     }
 }
 
@@ -89,14 +89,13 @@ int Object::_process(
 }
 
 
-void Object::open(const RawstorSocketAddress *ost) {
+void Object::open(const RawstorSocketAddress &ost) {
     if (_cn != NULL) {
         throw std::runtime_error("Object already opened");
     }
-    _cn = rawstor_connection_open((RawstorObject*)this, ost, 1, QUEUE_DEPTH);
-    if (_cn == NULL) {
-        THROW_ERRNO(errno);
-    }
+
+    _cn = new rawstor::Connection(*this, QUEUE_DEPTH);
+    _cn->open(ost, 1);
 }
 
 
@@ -105,17 +104,15 @@ void Object::close() {
         throw std::runtime_error("Object not opened");
     }
 
-    int res = rawstor_connection_close(_cn);
-    if (res) {
-        THROW_ERRNO(errno);
-    }
+    _cn->close();
+    delete _cn;
 
     _cn = NULL;
 }
 
 
-const RawstorUUID* Object::id() const noexcept {
-    return &_id;
+const RawstorUUID& Object::id() const noexcept {
+    return _id;
 }
 
 
@@ -129,7 +126,7 @@ void Object::pread(
 
     ObjectOp *op = (ObjectOp*)rawstor_mempool_alloc(_ops_pool);
     if (op == NULL) {
-        THROW_ERRNO(ENOBUFS);
+        RAWSTOR_THROW_ERRNO(ENOBUFS);
     }
 
     *op = (ObjectOp) {
@@ -137,18 +134,12 @@ void Object::pread(
         .data = data,
     };
 
-    if (rawstor_connection_pread(
-        _cn, buf, size, offset,
-        _process, op))
-    {
-        THROW_ERRNO(errno);
-    }
-
+    _cn->pread(buf, size, offset, _process, op);
 }
 
 
 void Object::preadv(
-    struct iovec *iov, unsigned int niov, size_t size, off_t offset,
+    iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
     rawstor_debug(
@@ -157,7 +148,7 @@ void Object::preadv(
 
     ObjectOp *op = (ObjectOp*)rawstor_mempool_alloc(_ops_pool);
     if (op == NULL) {
-        THROW_ERRNO(ENOBUFS);
+        RAWSTOR_THROW_ERRNO(ENOBUFS);
     }
 
     *op = (ObjectOp) {
@@ -165,12 +156,7 @@ void Object::preadv(
         .data = data,
     };
 
-    if (rawstor_connection_preadv(
-        _cn, iov, niov, size, offset,
-        _process, op))
-    {
-        THROW_ERRNO(errno);
-    }
+    _cn->preadv(iov, niov, size, offset, _process, op);
 }
 
 
@@ -184,7 +170,7 @@ void Object::pwrite(
 
     ObjectOp *op = (ObjectOp*)rawstor_mempool_alloc(_ops_pool);
     if (op == NULL) {
-        THROW_ERRNO(ENOBUFS);
+        RAWSTOR_THROW_ERRNO(ENOBUFS);
     }
 
     *op = (ObjectOp) {
@@ -192,17 +178,12 @@ void Object::pwrite(
         .data = data,
     };
 
-    if (rawstor_connection_pwrite(
-        _cn, buf, size, offset,
-        _process, op))
-    {
-        THROW_ERRNO(errno);
-    }
+    _cn->pwrite(buf, size, offset, _process, op);
 }
 
 
 void Object::pwritev(
-    struct iovec *iov, unsigned int niov, size_t size, off_t offset,
+    iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
     rawstor_debug(
@@ -211,7 +192,7 @@ void Object::pwritev(
 
     ObjectOp *op = (ObjectOp*)rawstor_mempool_alloc(_ops_pool);
     if (op == NULL) {
-        THROW_ERRNO(ENOBUFS);
+        RAWSTOR_THROW_ERRNO(ENOBUFS);
     }
 
     *op = (ObjectOp) {
@@ -219,12 +200,7 @@ void Object::pwritev(
         .data = data,
     };
 
-    if (rawstor_connection_pwritev(
-        _cn, iov, niov, size, offset,
-        _process, op))
-    {
-        THROW_ERRNO(errno);
-    }
+    _cn->pwritev(iov, niov, size, offset, _process, op);
 }
 
 
@@ -290,7 +266,7 @@ int rawstor_object_open_ost(
     try {
         rawstor::Object *impl = new rawstor::Object(object_id);
 
-        impl->open(ost);
+        impl->open(*ost);
 
         *object = (RawstorObject*)impl;
 
@@ -320,7 +296,7 @@ int rawstor_object_close(RawstorObject *object) {
 
 
 const RawstorUUID* rawstor_object_get_id(RawstorObject *object) {
-    return object->impl.id();
+    return &object->impl.id();
 }
 
 
@@ -366,7 +342,7 @@ int rawstor_object_pread(
 
 int rawstor_object_preadv(
     RawstorObject *object,
-    struct iovec *iov, unsigned int niov, size_t size, off_t offset,
+    iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
     try {
@@ -396,7 +372,7 @@ int rawstor_object_pwrite(
 
 int rawstor_object_pwritev(
     RawstorObject *object,
-    struct iovec *iov, unsigned int niov, size_t size, off_t offset,
+    iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
     try {
