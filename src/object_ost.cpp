@@ -41,27 +41,27 @@ struct ObjectOp {
 
 class Object {
     private:
-        struct RawstorUUID _id;
-        struct RawstorMemPool *_ops_pool;
+        RawstorUUID _id;
+        RawstorMemPool *_ops_pool;
         RawstorConnection *_cn;
 
         static int _process(
-            Object *object,
+            RawstorObject *object,
             size_t size, size_t res, int error, void *data) noexcept;
 
     public:
-        Object(const struct RawstorUUID *object_id);
+        Object(const RawstorUUID *object_id);
         Object(const Object&) = delete;
 
         ~Object();
 
         Object& operator=(const Object&) = delete;
 
-        void open(const struct RawstorSocketAddress *ost);
+        void open(const RawstorSocketAddress *ost);
 
         void close();
 
-        const struct RawstorUUID* id() const noexcept;
+        const RawstorUUID* id() const noexcept;
 
         void pread(
             void *buf, size_t size, off_t offset,
@@ -82,13 +82,23 @@ class Object {
 };
 
 
-Object::Object(const struct RawstorUUID *object_id) :
+} // unnamed namespace
+
+
+struct RawstorObject {
+    Object impl;
+};
+
+
+namespace {
+
+
+Object::Object(const RawstorUUID *object_id) :
     _id(*object_id),
     _ops_pool(NULL),
     _cn(NULL)
 {
-    _ops_pool = rawstor_mempool_create(
-        QUEUE_DEPTH, sizeof(struct ObjectOp));
+    _ops_pool = rawstor_mempool_create(QUEUE_DEPTH, sizeof(ObjectOp));
     if (_ops_pool == NULL) {
         THROW_ERRNO(errno);
     }
@@ -108,20 +118,20 @@ Object::~Object() {
 
 
 int Object::_process(
-    Object *object,
+    RawstorObject *object,
     size_t size, size_t res, int error, void *data) noexcept
 {
-    struct ObjectOp *op = (struct ObjectOp*)data;
+    ObjectOp *op = (ObjectOp*)data;
 
     int ret = op->callback((RawstorObject*)object, size, res, error, op->data);
 
-    rawstor_mempool_free(object->_ops_pool, op);
+    rawstor_mempool_free(object->impl._ops_pool, op);
 
     return ret;
 }
 
 
-void Object::open(const struct RawstorSocketAddress *ost) {
+void Object::open(const RawstorSocketAddress *ost) {
     if (_cn != NULL) {
         throw std::runtime_error("Object already opened");
     }
@@ -146,7 +156,7 @@ void Object::close() {
 }
 
 
-const struct RawstorUUID* Object::id() const noexcept {
+const RawstorUUID* Object::id() const noexcept {
     return &_id;
 }
 
@@ -159,19 +169,19 @@ void Object::pread(
         "%s(): offset = %jd, size = %zu\n",
         __FUNCTION__, (intmax_t)offset, size);
 
-    struct ObjectOp *op = (struct ObjectOp*)rawstor_mempool_alloc(_ops_pool);
+    ObjectOp *op = (ObjectOp*)rawstor_mempool_alloc(_ops_pool);
     if (op == NULL) {
         THROW_ERRNO(ENOBUFS);
     }
 
-    *op = (struct ObjectOp) {
+    *op = (ObjectOp) {
         .callback = cb,
         .data = data,
     };
 
     if (rawstor_connection_pread(
         _cn, buf, size, offset,
-        (RawstorCallback*)_process, op))
+        _process, op))
     {
         THROW_ERRNO(errno);
     }
@@ -187,19 +197,19 @@ void Object::preadv(
         "%s(): offset = %jd, niov = %u, size = %zu\n",
         __FUNCTION__, (intmax_t)offset, niov, size);
 
-    struct ObjectOp *op = (struct ObjectOp*)rawstor_mempool_alloc(_ops_pool);
+    ObjectOp *op = (ObjectOp*)rawstor_mempool_alloc(_ops_pool);
     if (op == NULL) {
         THROW_ERRNO(ENOBUFS);
     }
 
-    *op = (struct ObjectOp) {
+    *op = (ObjectOp) {
         .callback = cb,
         .data = data,
     };
 
     if (rawstor_connection_preadv(
         _cn, iov, niov, size, offset,
-        (RawstorCallback*)_process, op))
+        _process, op))
     {
         THROW_ERRNO(errno);
     }
@@ -214,19 +224,19 @@ void Object::pwrite(
         "%s(): offset = %jd, size = %zu\n",
         __FUNCTION__, (intmax_t)offset, size);
 
-    struct ObjectOp *op = (struct ObjectOp*)rawstor_mempool_alloc(_ops_pool);
+    ObjectOp *op = (ObjectOp*)rawstor_mempool_alloc(_ops_pool);
     if (op == NULL) {
         THROW_ERRNO(ENOBUFS);
     }
 
-    *op = (struct ObjectOp) {
+    *op = (ObjectOp) {
         .callback = cb,
         .data = data,
     };
 
     if (rawstor_connection_pwrite(
         _cn, buf, size, offset,
-        (RawstorCallback*)_process, op))
+        _process, op))
     {
         THROW_ERRNO(errno);
     }
@@ -241,20 +251,19 @@ void Object::pwritev(
         "%s(): offset = %jd, niov = %u, size = %zu\n",
         __FUNCTION__, (intmax_t)offset, niov, size);
 
-    struct ObjectOp *op =
-        (struct ObjectOp*)rawstor_mempool_alloc(_ops_pool);
+    ObjectOp *op = (ObjectOp*)rawstor_mempool_alloc(_ops_pool);
     if (op == NULL) {
         THROW_ERRNO(ENOBUFS);
     }
 
-    *op = (struct ObjectOp) {
+    *op = (ObjectOp) {
         .callback = cb,
         .data = data,
     };
 
     if (rawstor_connection_pwritev(
         _cn, iov, niov, size, offset,
-        (RawstorCallback*)_process, op))
+        _process, op))
     {
         THROW_ERRNO(errno);
     }
@@ -264,28 +273,23 @@ void Object::pwritev(
 } // unnamed namespace
 
 
-struct RawstorObject {
-    Object impl;
-};
-
-
 const char* rawstor_object_backend_name(void) {
     return "ost";
 };
 
 
 int rawstor_object_create(
-    const struct RawstorObjectSpec *spec,
-    struct RawstorUUID *object_id)
+    const RawstorObjectSpec *spec,
+    RawstorUUID *object_id)
 {
     return rawstor_object_create_ost(rawstor_default_ost(), spec, object_id);
 }
 
 
 int rawstor_object_create_ost(
-    const struct RawstorSocketAddress RAWSTOR_UNUSED *ost,
-    const struct RawstorObjectSpec RAWSTOR_UNUSED *spec,
-    struct RawstorUUID *object_id)
+    const RawstorSocketAddress RAWSTOR_UNUSED *ost,
+    const RawstorObjectSpec RAWSTOR_UNUSED *spec,
+    RawstorUUID *object_id)
 {
     /**
      * TODO: Implement me.
@@ -296,14 +300,14 @@ int rawstor_object_create_ost(
 }
 
 
-int rawstor_object_delete(const struct RawstorUUID *object_id) {
+int rawstor_object_delete(const RawstorUUID *object_id) {
     return rawstor_object_delete_ost(rawstor_default_ost(), object_id);
 }
 
 
 int rawstor_object_delete_ost(
-    const struct RawstorSocketAddress RAWSTOR_UNUSED *ost,
-    const struct RawstorUUID RAWSTOR_UNUSED *object_id)
+    const RawstorSocketAddress RAWSTOR_UNUSED *ost,
+    const RawstorUUID RAWSTOR_UNUSED *object_id)
 {
     fprintf(stderr, "rawstor_object_delete() not implemented\n");
     exit(1);
@@ -313,7 +317,7 @@ int rawstor_object_delete_ost(
 
 
 int rawstor_object_open(
-    const struct RawstorUUID *object_id,
+    const RawstorUUID *object_id,
     RawstorObject **object)
 {
     return rawstor_object_open_ost(rawstor_default_ost(), object_id, object);
@@ -321,8 +325,8 @@ int rawstor_object_open(
 
 
 int rawstor_object_open_ost(
-    const struct RawstorSocketAddress *ost,
-    const struct RawstorUUID *object_id,
+    const RawstorSocketAddress *ost,
+    const RawstorUUID *object_id,
     RawstorObject **object)
 {
     try {
@@ -357,29 +361,29 @@ int rawstor_object_close(RawstorObject *object) {
 }
 
 
-const struct RawstorUUID* rawstor_object_get_id(RawstorObject *object) {
+const RawstorUUID* rawstor_object_get_id(RawstorObject *object) {
     return object->impl.id();
 }
 
 
 int rawstor_object_spec(
-    const struct RawstorUUID *object_id,
-    struct RawstorObjectSpec *spec)
+    const RawstorUUID *object_id,
+    RawstorObjectSpec *spec)
 {
     return rawstor_object_spec_ost(rawstor_default_ost(), object_id, spec);
 }
 
 
 int rawstor_object_spec_ost(
-    const struct RawstorSocketAddress RAWSTOR_UNUSED *ost,
-    const struct RawstorUUID RAWSTOR_UNUSED *object_id,
-    struct RawstorObjectSpec *spec)
+    const RawstorSocketAddress RAWSTOR_UNUSED *ost,
+    const RawstorUUID RAWSTOR_UNUSED *object_id,
+    RawstorObjectSpec *spec)
 {
     /**
      * TODO: Implement me.
      */
 
-    *spec = (struct RawstorObjectSpec) {
+    *spec = (RawstorObjectSpec) {
         .size = 1 << 30,
     };
 
