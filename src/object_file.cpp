@@ -318,6 +318,11 @@ void Object::close() {
 }
 
 
+const RawstorUUID& Object::id() const noexcept {
+    return _id;
+}
+
+
 void Object::pread(
     void *buf, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
