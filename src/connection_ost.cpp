@@ -195,6 +195,7 @@ void Connection::_set_object_id(int fd) {
     struct RawstorOSTFrameBasic request_frame = {
         .magic = RAWSTOR_MAGIC,
         .cmd = RAWSTOR_CMD_SET_OBJECT,
+        .obj_id = {},
     };
     memcpy(
         request_frame.obj_id,
