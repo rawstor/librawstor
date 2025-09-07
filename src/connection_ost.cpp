@@ -626,9 +626,12 @@ void Connection::pread(
             .hash = 0,
             .sync = 0,
         },
-        // .response_frame =
-        .payload.linear.data = buf,
-        // .iov
+        .payload = {
+            .linear = {
+                .data = buf,
+            },
+        },
+        .iov = {},
         .process = _op_process_read,
         .callback = cb,
         .data = data,
@@ -667,13 +670,16 @@ void Connection::preadv(
             .cid = op->cid,
             .offset = (uint64_t)offset,
             .len = (uint32_t)size,
-            // .hash
+            .hash = 0,
             .sync = 0,
         },
-        // .response_frame
-        .payload.vector.iov = iov,
-        .payload.vector.niov = niov,
-        // .iov
+        .payload = {
+            .vector = {
+                .iov = iov,
+                .niov = niov,
+            },
+        },
+        .iov = {},
         .process = _op_process_readv,
         .callback = cb,
         .data = data,
@@ -715,9 +721,12 @@ void Connection::pwrite(
             .hash = rawstor_hash_scalar(buf, size),
             .sync = 0,
         },
-        // .response_frame =
-        .payload.linear.data = buf,
-        // .iov
+        .payload = {
+            .linear = {
+                .data = buf,
+            },
+        },
+        .iov = {},
         .process = _op_process_write,
         .callback = cb,
         .data = data,
@@ -777,10 +786,13 @@ void Connection::pwritev(
             .hash = hash,
             .sync = 0,
         },
-        // .response_frame =
-        .payload.vector.iov = iov,
-        .payload.vector.niov = niov,
-        // .iov
+        .payload = {
+            .vector = {
+                .iov = iov,
+                .niov = niov,
+            },
+        },
+        .iov = {},
         .process = _op_process_write,
         .callback = cb,
         .data = data,
