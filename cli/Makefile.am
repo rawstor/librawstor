@@ -9,4 +9,4 @@ rawstor_cli_SOURCES = create.c \
                       main.c \
                       testio.c
 
-rawstor_cli_LDADD = $(top_srcdir)/src/librawstor.la
+rawstor_cli_LDADD = $(top_srcdir)/src/librawstor.la -lstdc++

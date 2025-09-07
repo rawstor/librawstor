@@ -8,4 +8,4 @@ AM_CFLAGS = -std=gnu99 -Wall -Wextra -Werror \
 rawstor_vu_SOURCES = main.c \
                      server.c
 
-rawstor_vu_LDADD = $(top_srcdir)/src/librawstor.la
+rawstor_vu_LDADD = $(top_srcdir)/src/librawstor.la -lstdc++
