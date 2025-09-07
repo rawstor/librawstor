@@ -39,9 +39,6 @@ namespace {
 
 struct ObjectOp {
     rawstor::Object *object;
-
-    int (*dispatch)(ObjectOp *op);
-
     RawstorCallback *callback;
     void *data;
 };
