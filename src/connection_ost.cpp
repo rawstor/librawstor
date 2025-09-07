@@ -45,19 +45,19 @@ struct ConnectionOp {
     rawstor::Connection *cn;
 
     uint16_t cid;
-    struct RawstorOSTFrameIO request_frame;
+    RawstorOSTFrameIO request_frame;
 
     union {
         struct {
             void *data;
         } linear;
         struct {
-            struct iovec *iov;
+            iovec *iov;
             unsigned int niov;
         } vector;
     } payload;
 
-    struct iovec iov[IOVEC_SIZE];
+    iovec iov[IOVEC_SIZE];
 
     int (*process)(ConnectionOp *op, int fd);
 
@@ -134,7 +134,7 @@ int Connection::_get_next_fd() {
 }
 
 
-int Connection::_connect(const struct RawstorSocketAddress &ost) {
+int Connection::_connect(const RawstorSocketAddress &ost) {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd == -1) {
         RAWSTOR_THROW_ERRNO(errno);
@@ -162,7 +162,7 @@ int Connection::_connect(const struct RawstorSocketAddress &ost) {
             }
         }
 
-        struct sockaddr_in servaddr = {};
+        sockaddr_in servaddr = {};
         servaddr.sin_family = AF_INET;
         servaddr.sin_port = htons(ost.port);
 
@@ -175,7 +175,7 @@ int Connection::_connect(const struct RawstorSocketAddress &ost) {
         }
 
         rawstor_info("Connecting to %s:%u\n", ost.host, ost.port);
-        if (connect(fd, (struct sockaddr*)&servaddr, sizeof(servaddr))) {
+        if (connect(fd, (sockaddr*)&servaddr, sizeof(servaddr))) {
             RAWSTOR_THROW_ERRNO(errno);
         }
 
@@ -210,7 +210,7 @@ void Connection::_set_object_id(int fd) {
     }
     assert(res == sizeof(request_frame));
 
-    struct RawstorOSTFrameResponse response_frame;
+    RawstorOSTFrameResponse response_frame;
     res = read(fd, &response_frame, sizeof(response_frame));
     if (res < 0) {
         RAWSTOR_THROW_ERRNO(errno);
@@ -614,16 +614,16 @@ void Connection::pread(
     }
     ConnectionOp *op = *it;
 
-    *op = (ConnectionOp) {
+    *op = {
         .cn = this,
         .cid = op->cid,  // preserve cid
-        .request_frame = (struct RawstorOSTFrameIO) {
+        .request_frame = {
             .magic = RAWSTOR_MAGIC,
             .cmd = RAWSTOR_CMD_READ,
             .cid = op->cid,
             .offset = (uint64_t)offset, // TODO: Think about this.
             .len = (uint32_t)size,
-            // .hash
+            .hash = 0,
             .sync = 0,
         },
         // .response_frame =
@@ -645,7 +645,7 @@ void Connection::pread(
 
 
 void Connection::preadv(
-    struct iovec *iov, unsigned int niov, size_t size, off_t offset,
+    iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
     rawstor_debug(
@@ -658,10 +658,10 @@ void Connection::preadv(
     }
     ConnectionOp *op = *it;
 
-    *op = (ConnectionOp) {
+    *op = {
         .cn = this,
         .cid = op->cid,  // preserve cid
-        .request_frame = (RawstorOSTFrameIO) {
+        .request_frame = {
             .magic = RAWSTOR_MAGIC,
             .cmd = RAWSTOR_CMD_READ,
             .cid = op->cid,
@@ -703,10 +703,10 @@ void Connection::pwrite(
     }
     ConnectionOp *op = *it;
 
-    *op = (ConnectionOp) {
+    *op = {
         .cn = this,
         .cid = op->cid,  // preserve cid
-        .request_frame = (struct RawstorOSTFrameIO) {
+        .request_frame = {
             .magic = RAWSTOR_MAGIC,
             .cmd = RAWSTOR_CMD_WRITE,
             .cid = op->cid,
@@ -723,11 +723,11 @@ void Connection::pwrite(
         .data = data,
     };
 
-    op->iov[0] = (struct iovec) {
+    op->iov[0] = {
         .iov_base = &op->request_frame,
         .iov_len = sizeof(op->request_frame),
     };
-    op->iov[1] = (struct iovec) {
+    op->iov[1] = {
         .iov_base = buf,
         .iov_len = size,
     };
@@ -743,7 +743,7 @@ void Connection::pwrite(
 
 
 void Connection::pwritev(
-    struct iovec *iov, unsigned int niov, size_t size, off_t offset,
+    iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
     rawstor_debug(
@@ -765,10 +765,10 @@ void Connection::pwritev(
     }
     ConnectionOp *op = *it;
 
-    *op = (ConnectionOp) {
+    *op = {
         .cn = this,
         .cid = op->cid,  // preserve cid
-        .request_frame = (struct RawstorOSTFrameIO) {
+        .request_frame = {
             .magic = RAWSTOR_MAGIC,
             .cmd = RAWSTOR_CMD_WRITE,
             .cid = op->cid,
@@ -786,7 +786,7 @@ void Connection::pwritev(
         .data = data,
     };
 
-    op->iov[0] = (struct iovec) {
+    op->iov[0] = {
         .iov_base = &op->request_frame,
         .iov_len = sizeof(op->request_frame),
     };

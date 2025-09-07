@@ -130,7 +130,7 @@ void Object::pread(
         RAWSTOR_THROW_ERRNO(ENOBUFS);
     }
 
-    *op = (ObjectOp) {
+    *op = {
         .callback = cb,
         .data = data,
     };
@@ -152,7 +152,7 @@ void Object::preadv(
         RAWSTOR_THROW_ERRNO(ENOBUFS);
     }
 
-    *op = (ObjectOp) {
+    *op = {
         .callback = cb,
         .data = data,
     };
@@ -174,7 +174,7 @@ void Object::pwrite(
         RAWSTOR_THROW_ERRNO(ENOBUFS);
     }
 
-    *op = (ObjectOp) {
+    *op = {
         .callback = cb,
         .data = data,
     };
@@ -196,7 +196,7 @@ void Object::pwritev(
         RAWSTOR_THROW_ERRNO(ENOBUFS);
     }
 
-    *op = (ObjectOp) {
+    *op = {
         .callback = cb,
         .data = data,
     };
@@ -318,7 +318,7 @@ int rawstor_object_spec_ost(
      * TODO: Implement me.
      */
 
-    *spec = (RawstorObjectSpec) {
+    *spec = {
         .size = 1 << 30,
     };
 

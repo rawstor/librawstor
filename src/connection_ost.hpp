@@ -37,7 +37,7 @@ class Connection {
 
         int _get_next_fd();
 
-        int _connect(const struct RawstorSocketAddress &ost);
+        int _connect(const RawstorSocketAddress &ost);
 
         void _set_object_id(int fd);
 
