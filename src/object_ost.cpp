@@ -6,6 +6,7 @@
 #include "rawstor_internals.h"
 
 #include <rawstorstd/gcc.h>
+#include <rawstorstd/gpp.hpp>
 #include <rawstorstd/logging.h>
 #include <rawstorstd/mempool.h>
 #include <rawstorstd/uuid.h>

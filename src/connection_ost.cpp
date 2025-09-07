@@ -7,6 +7,7 @@
 #include <rawstorio/queue.h>
 
 #include <rawstorstd/gcc.h>
+#include <rawstorstd/gpp.hpp>
 #include <rawstorstd/hash.h>
 #include <rawstorstd/logging.h>
 #include <rawstorstd/ringbuf.h>

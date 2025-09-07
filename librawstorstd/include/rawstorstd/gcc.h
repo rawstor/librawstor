@@ -7,17 +7,6 @@ extern "C" {
 #endif
 
 
-#ifdef __cplusplus
-#define STRINGIZE_DETAIL(x) #x
-#define STRINGIZE(x) STRINGIZE_DETAIL(x)
-
-#define RAWSTOR_THROW_ERRNO(err) \
-    throw std::system_error( \
-        err, std::generic_category(), \
-        __FILE__ ":" STRINGIZE(__LINE__));
-#endif
-
-
 #if defined(__GNUC__) && (__GNUC__ >= 3)
 #define RAWSTOR_UNUSED  __attribute__((unused))
 #else
