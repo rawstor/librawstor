@@ -192,10 +192,12 @@ int Connection::_connect(const struct RawstorSocketAddress &ost) {
  * TODO: Do it async or solve partial IO issue.
  */
 void Connection::_set_object_id(int fd) {
-    struct RawstorOSTFrameBasic request_frame = {
+    RawstorOSTFrameBasic request_frame = {
         .magic = RAWSTOR_MAGIC,
         .cmd = RAWSTOR_CMD_SET_OBJECT,
         .obj_id = {},
+        .offset = 0,
+        .val = 0,
     };
     memcpy(
         request_frame.obj_id,
