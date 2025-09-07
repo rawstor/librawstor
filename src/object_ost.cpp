@@ -19,6 +19,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <new>
 #include <stdexcept>
 #include <system_error>
 
@@ -50,12 +51,11 @@ class Object {
 
     public:
         Object(const struct RawstorUUID *object_id);
+        Object(const Object&) = delete;
 
         ~Object();
 
-        /**
-         * TODO: Prevent class from copying.
-         */
+        Object& operator=(const Object&) = delete;
 
         void open(const struct RawstorSocketAddress *ost);
 
@@ -63,21 +63,21 @@ class Object {
 
         const struct RawstorUUID* id() const noexcept;
 
-        int pread(
+        void pread(
             void *buf, size_t size, off_t offset,
-            RawstorCallback *cb, void *data) noexcept;
+            RawstorCallback *cb, void *data);
 
-        int preadv(
+        void preadv(
             struct iovec *iov, unsigned int niov, size_t size, off_t offset,
-            RawstorCallback *cb, void *data) noexcept;
+            RawstorCallback *cb, void *data);
 
-        int pwrite(
+        void pwrite(
             void *buf, size_t size, off_t offset,
-            RawstorCallback *cb, void *data) noexcept;
+            RawstorCallback *cb, void *data);
 
-        int pwritev(
+        void pwritev(
             struct iovec *iov, unsigned int niov, size_t size, off_t offset,
-            RawstorCallback *cb, void *data) noexcept;
+            RawstorCallback *cb, void *data);
 
 };
 
@@ -90,7 +90,7 @@ Object::Object(const struct RawstorUUID *object_id) :
     _ops_pool = rawstor_mempool_create(
         QUEUE_DEPTH, sizeof(struct ObjectOp));
     if (_ops_pool == NULL) {
-        throw std::system_error(errno, std::generic_category(), __FILE__);
+        THROW_ERRNO(errno);
     }
 }
 
@@ -99,10 +99,8 @@ Object::~Object() {
     if (_cn != NULL) {
         try {
             close();
-        } catch (...) {
-            /**
-             * TODO: Handle errors on close.
-             */
+        } catch (const std::system_error &e) {
+            rawstor_error("Object::close(): %s\n", e.what());
         }
     }
     rawstor_mempool_delete(_ops_pool);
@@ -129,7 +127,7 @@ void Object::open(const struct RawstorSocketAddress *ost) {
     }
     _cn = rawstor_connection_open((RawstorObject*)this, ost, 1, QUEUE_DEPTH);
     if (_cn == NULL) {
-        throw std::system_error(errno, std::generic_category(), __FILE__);
+        THROW_ERRNO(errno);
     }
 }
 
@@ -138,10 +136,12 @@ void Object::close() {
     if (_cn == NULL) {
         throw std::runtime_error("Object not opened");
     }
+
     int res = rawstor_connection_close(_cn);
     if (res) {
-        throw std::system_error(errno, std::generic_category(), __FILE__);
+        THROW_ERRNO(errno);
     }
+
     _cn = NULL;
 }
 
@@ -151,9 +151,9 @@ const struct RawstorUUID* Object::id() const noexcept {
 }
 
 
-int Object::pread(
+void Object::pread(
     void *buf, size_t size, off_t offset,
-    RawstorCallback *cb, void *data) noexcept
+    RawstorCallback *cb, void *data)
 {
     rawstor_debug(
         "%s(): offset = %jd, size = %zu\n",
@@ -161,8 +161,7 @@ int Object::pread(
 
     struct ObjectOp *op = (struct ObjectOp*)rawstor_mempool_alloc(_ops_pool);
     if (op == NULL) {
-        errno = ENOBUFS;
-        return -errno;
+        THROW_ERRNO(ENOBUFS);
     }
 
     *op = (struct ObjectOp) {
@@ -170,15 +169,19 @@ int Object::pread(
         .data = data,
     };
 
-    return rawstor_connection_pread(
+    if (rawstor_connection_pread(
         _cn, buf, size, offset,
-        (RawstorCallback*)_process, op);
+        (RawstorCallback*)_process, op))
+    {
+        THROW_ERRNO(errno);
+    }
+
 }
 
 
-int Object::preadv(
+void Object::preadv(
     struct iovec *iov, unsigned int niov, size_t size, off_t offset,
-    RawstorCallback *cb, void *data) noexcept
+    RawstorCallback *cb, void *data)
 {
     rawstor_debug(
         "%s(): offset = %jd, niov = %u, size = %zu\n",
@@ -186,8 +189,7 @@ int Object::preadv(
 
     struct ObjectOp *op = (struct ObjectOp*)rawstor_mempool_alloc(_ops_pool);
     if (op == NULL) {
-        errno = ENOBUFS;
-        return -errno;
+        THROW_ERRNO(ENOBUFS);
     }
 
     *op = (struct ObjectOp) {
@@ -195,15 +197,18 @@ int Object::preadv(
         .data = data,
     };
 
-    return rawstor_connection_preadv(
+    if (rawstor_connection_preadv(
         _cn, iov, niov, size, offset,
-        (RawstorCallback*)_process, op);
+        (RawstorCallback*)_process, op))
+    {
+        THROW_ERRNO(errno);
+    }
 }
 
 
-int Object::pwrite(
+void Object::pwrite(
     void *buf, size_t size, off_t offset,
-    RawstorCallback *cb, void *data) noexcept
+    RawstorCallback *cb, void *data)
 {
     rawstor_debug(
         "%s(): offset = %jd, size = %zu\n",
@@ -211,8 +216,7 @@ int Object::pwrite(
 
     struct ObjectOp *op = (struct ObjectOp*)rawstor_mempool_alloc(_ops_pool);
     if (op == NULL) {
-        errno = ENOBUFS;
-        return -errno;
+        THROW_ERRNO(ENOBUFS);
     }
 
     *op = (struct ObjectOp) {
@@ -220,15 +224,18 @@ int Object::pwrite(
         .data = data,
     };
 
-    return rawstor_connection_pwrite(
+    if (rawstor_connection_pwrite(
         _cn, buf, size, offset,
-        (RawstorCallback*)_process, op);
+        (RawstorCallback*)_process, op))
+    {
+        THROW_ERRNO(errno);
+    }
 }
 
 
-int Object::pwritev(
+void Object::pwritev(
     struct iovec *iov, unsigned int niov, size_t size, off_t offset,
-    RawstorCallback *cb, void *data) noexcept
+    RawstorCallback *cb, void *data)
 {
     rawstor_debug(
         "%s(): offset = %jd, niov = %u, size = %zu\n",
@@ -237,8 +244,7 @@ int Object::pwritev(
     struct ObjectOp *op =
         (struct ObjectOp*)rawstor_mempool_alloc(_ops_pool);
     if (op == NULL) {
-        errno = ENOBUFS;
-        return -errno;
+        THROW_ERRNO(ENOBUFS);
     }
 
     *op = (struct ObjectOp) {
@@ -246,9 +252,12 @@ int Object::pwritev(
         .data = data,
     };
 
-    return rawstor_connection_pwritev(
+    if (rawstor_connection_pwritev(
         _cn, iov, niov, size, offset,
-        (RawstorCallback*)_process, op);
+        (RawstorCallback*)_process, op))
+    {
+        THROW_ERRNO(errno);
+    }
 }
 
 
@@ -318,17 +327,19 @@ int rawstor_object_open_ost(
 {
     try {
         Object *impl = new Object(object_id);
+
         impl->open(ost);
 
         *object = (RawstorObject*)impl;
 
         return 0;
     } catch (const std::system_error &e) {
-        return -e.code().value();
+        errno = e.code().value();
+        return -errno;
+    } catch (const std::bad_alloc &e) {
+        errno = ENOMEM;
+        return -errno;
     }
-    /**
-     * TODO: Handle other errors.
-     */
 }
 
 
@@ -340,11 +351,9 @@ int rawstor_object_close(RawstorObject *object) {
 
         return 0;
     } catch (const std::system_error &e) {
-        return -e.code().value();
+        errno = e.code().value();
+        return -errno;
     }
-    /**
-     * TODO: Handle other errors.
-     */
 }
 
 
@@ -383,7 +392,13 @@ int rawstor_object_pread(
     void *buf, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
-    return object->impl.pread(buf, size, offset, cb, data);
+    try {
+        object->impl.pread(buf, size, offset, cb, data);
+        return 0;
+    } catch (const std::system_error &e) {
+        errno = e.code().value();
+        return -errno;
+    }
 }
 
 
@@ -392,7 +407,13 @@ int rawstor_object_preadv(
     struct iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
-    return object->impl.preadv(iov, niov, size, offset, cb, data);
+    try {
+        object->impl.preadv(iov, niov, size, offset, cb, data);
+        return 0;
+    } catch (const std::system_error &e) {
+        errno = e.code().value();
+        return -errno;
+    }
 }
 
 
@@ -401,7 +422,13 @@ int rawstor_object_pwrite(
     void *buf, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
-    return object->impl.pwrite(buf, size, offset, cb, data);
+    try {
+        object->impl.pwrite(buf, size, offset, cb, data);
+        return 0;
+    } catch (const std::system_error &e) {
+        errno = e.code().value();
+        return -errno;
+    }
 }
 
 
@@ -410,5 +437,11 @@ int rawstor_object_pwritev(
     struct iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
-    return object->impl.pwritev(iov, niov, size, offset, cb, data);
+    try {
+        object->impl.pwritev(iov, niov, size, offset, cb, data);
+        return 0;
+    } catch (const std::system_error &e) {
+        errno = e.code().value();
+        return -errno;
+    }
 }
