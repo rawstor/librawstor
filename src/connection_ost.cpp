@@ -94,8 +94,12 @@ Connection::Connection(rawstor::Object &object, unsigned int depth):
             *it = op;
         }
     } catch (...) {
-        for (unsigned int i = 0; i < _ops_array.size(); ++i) {
-            delete _ops_array[i];
+        for (
+            std::vector<ConnectionOp*>::iterator it = _ops_array.begin();
+            it != _ops_array.end();
+            ++it)
+        {
+            delete *it;
         }
         rawstor_ringbuf_delete(_ops);
         throw;
@@ -111,12 +115,15 @@ Connection::~Connection() {
             rawstor_error("Connection::close(): %s\n", e.what());
         }
     }
-    /**
-     * TODO: Replace with iterator
-     */
-    for (unsigned int i = 0; i < _ops_array.size(); ++i) {
-        delete _ops_array[i];
+
+    for (
+        std::vector<ConnectionOp*>::iterator it = _ops_array.begin();
+        it != _ops_array.end();
+        ++it)
+    {
+        delete *it;
     }
+
     rawstor_ringbuf_delete(_ops);
 }
 
@@ -621,7 +628,7 @@ void Connection::pread(
             .magic = RAWSTOR_MAGIC,
             .cmd = RAWSTOR_CMD_READ,
             .cid = op->cid,
-            .offset = (uint64_t)offset, // TODO: Think about this.
+            .offset = (uint64_t)offset,
             .len = (uint32_t)size,
             .hash = 0,
             .sync = 0,
