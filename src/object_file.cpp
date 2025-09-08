@@ -336,14 +336,19 @@ void Object::pread(
         RAWSTOR_THROW_ERRNO(errno);
     }
 
-    *op = {
-        .object = this,
-        .callback = cb,
-        .data = data,
-    };
+    try {
+        *op = {
+            .object = this,
+            .callback = cb,
+            .data = data,
+        };
 
-    if (rawstor_fd_pread(_fd, buf, size, offset, _process, op)) {
-        RAWSTOR_THROW_ERRNO(errno);
+        if (rawstor_fd_pread(_fd, buf, size, offset, _process, op)) {
+            RAWSTOR_THROW_ERRNO(errno);
+        }
+    } catch (...) {
+        rawstor_mempool_free(_ops_pool, op);
+        throw;
     }
 }
 
@@ -357,14 +362,19 @@ void Object::preadv(
         RAWSTOR_THROW_ERRNO(errno);
     }
 
-    *op = {
-        .object = this,
-        .callback = cb,
-        .data = data,
-    };
+    try {
+        *op = {
+            .object = this,
+            .callback = cb,
+            .data = data,
+        };
 
-    if (rawstor_fd_preadv(_fd, iov, niov, size, offset, _process, op)) {
-        RAWSTOR_THROW_ERRNO(errno);
+        if (rawstor_fd_preadv(_fd, iov, niov, size, offset, _process, op)) {
+            RAWSTOR_THROW_ERRNO(errno);
+        }
+    } catch (...) {
+        rawstor_mempool_free(_ops_pool, op);
+        throw;
     }
 }
 
@@ -378,14 +388,19 @@ void Object::pwrite(
         RAWSTOR_THROW_ERRNO(errno);
     }
 
-    *op = {
-        .object = this,
-        .callback = cb,
-        .data = data,
-    };
+    try {
+        *op = {
+            .object = this,
+            .callback = cb,
+            .data = data,
+        };
 
-    if (rawstor_fd_pwrite(_fd, buf, size, offset, _process, op)) {
-        RAWSTOR_THROW_ERRNO(errno);
+        if (rawstor_fd_pwrite(_fd, buf, size, offset, _process, op)) {
+            RAWSTOR_THROW_ERRNO(errno);
+        }
+    } catch (...) {
+        rawstor_mempool_free(_ops_pool, op);
+        throw;
     }
 }
 
@@ -399,19 +414,24 @@ void Object::pwritev(
         RAWSTOR_THROW_ERRNO(errno);
     }
 
-    *op = {
-        .object = this,
-        .callback = cb,
-        .data = data,
-    };
+    try {
+        *op = {
+            .object = this,
+            .callback = cb,
+            .data = data,
+        };
 
-    if (rawstor_fd_pwritev(_fd, iov, niov, size, offset, _process, op)) {
-        RAWSTOR_THROW_ERRNO(errno);
+        if (rawstor_fd_pwritev(_fd, iov, niov, size, offset, _process, op)) {
+            RAWSTOR_THROW_ERRNO(errno);
+        }
+    } catch (...) {
+        rawstor_mempool_free(_ops_pool, op);
+        throw;
     }
 }
 
 
-}
+} // rawstor
 
 
 const char* rawstor_object_backend_name() {
