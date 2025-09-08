@@ -51,8 +51,8 @@ struct RawstorObject {
 namespace rawstor {
 
 
-void Object::create(const RawstorObjectSpec &spec, RawstorUUID *id) {
-    create(*rawstor_default_ost(), spec, id);
+void Object::create(const RawstorObjectSpec &sp, RawstorUUID *id) {
+    create(*rawstor_default_ost(), sp, id);
 }
 
 
@@ -284,12 +284,12 @@ int rawstor_object_create(
 
 
 int rawstor_object_create_ost(
-    const RawstorSocketAddress RAWSTOR_UNUSED *ost,
-    const RawstorObjectSpec RAWSTOR_UNUSED *spec,
+    const RawstorSocketAddress *ost,
+    const RawstorObjectSpec *spec,
     RawstorUUID *id)
 {
     try {
-        rawstor::Object::create(*ost, *spec, id);
+        rawstor::Object::create(*ost, *sp, id);
         return 0;
     } catch (const std::system_error &e) {
         errno = e.code().value();
@@ -310,8 +310,8 @@ int rawstor_object_remove(const RawstorUUID *id) {
 
 
 int rawstor_object_remove_ost(
-    const RawstorSocketAddress RAWSTOR_UNUSED *ost,
-    const RawstorUUID RAWSTOR_UNUSED *id)
+    const RawstorSocketAddress *ost,
+    const RawstorUUID *id)
 {
     try {
         rawstor::Object::remove(*ost, *id);
@@ -384,9 +384,9 @@ const RawstorUUID* rawstor_object_get_id(RawstorObject *object) {
 }
 
 
-int rawstor_object_spec(const RawstorUUID *id, RawstorObjectSpec *spec) {
+int rawstor_object_spec(const RawstorUUID *id, RawstorObjectSpec *sp) {
     try {
-        rawstor::Object::spec(*id, spec);
+        rawstor::Object::spec(*id, sp);
         return 0;
     } catch (const std::system_error &e) {
         errno = e.code().value();
@@ -398,10 +398,10 @@ int rawstor_object_spec(const RawstorUUID *id, RawstorObjectSpec *spec) {
 int rawstor_object_spec_ost(
     const RawstorSocketAddress *ost,
     const RawstorUUID *id,
-    RawstorObjectSpec *spec)
+    RawstorObjectSpec *sp)
 {
     try {
-        rawstor::Object::spec(*ost, *id, spec);
+        rawstor::Object::spec(*ost, *id, sp);
         return 0;
     } catch (const std::system_error &e) {
         errno = e.code().value();

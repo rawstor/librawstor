@@ -21,10 +21,10 @@ class Object {
             size_t size, size_t res, int error, void *data) noexcept;
 
     public:
-        static void create(const RawstorObjectSpec &spec, RawstorUUID *id);
+        static void create(const RawstorObjectSpec &sp, RawstorUUID *id);
         static void create(
             const RawstorSocketAddress &ost,
-            const RawstorObjectSpec &spec,
+            const RawstorObjectSpec &sp,
             RawstorUUID *id);
 
         static void remove(const RawstorUUID &id);
@@ -36,7 +36,7 @@ class Object {
         static void spec(
             const RawstorSocketAddress &ost,
             const RawstorUUID &id,
-            RawstorObjectSpec *spec);
+            RawstorObjectSpec *sp);
 
         Object(const RawstorUUID &id);
         Object(const Object&) = delete;
