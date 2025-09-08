@@ -47,8 +47,7 @@ class Connection {
 
         static int _op_process_readv(ConnectionOp *op, int fd) noexcept;
 
-        static int _op_process_write(
-            ConnectionOp *op, int RAWSTOR_UNUSED fd) noexcept;
+        static int _op_process_write(ConnectionOp *op, int fd) noexcept;
 
         static int _read_request_sent(
             RawstorIOEvent *event, void *data) noexcept;

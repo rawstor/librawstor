@@ -19,15 +19,18 @@ class Object {
         static int _process(RawstorIOEvent *event, void *data) noexcept;
 
     public:
+        static void create(const RawstorObjectSpec &spec, RawstorUUID *id);
         static void create(
             const RawstorSocketAddress &ost,
             const RawstorObjectSpec &spec,
             RawstorUUID *id);
 
+        static void remove(const RawstorUUID &id);
         static void remove(
             const RawstorSocketAddress &ost,
             const RawstorUUID &id);
 
+        static void spec(const RawstorUUID &id, RawstorObjectSpec *sp);
         static void spec(
             const RawstorSocketAddress &ost,
             const RawstorUUID &id,

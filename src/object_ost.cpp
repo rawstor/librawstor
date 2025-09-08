@@ -5,7 +5,6 @@
 #include "connection_ost.hpp"
 #include "rawstor_internals.h"
 
-#include <rawstorstd/gcc.h>
 #include <rawstorstd/gpp.hpp>
 #include <rawstorstd/logging.h>
 #include <rawstorstd/mempool.h>
@@ -52,6 +51,58 @@ struct RawstorObject {
 namespace rawstor {
 
 
+void Object::create(const RawstorObjectSpec &spec, RawstorUUID *id) {
+    create(*rawstor_default_ost(), spec, id);
+}
+
+
+void Object::create(
+    const RawstorSocketAddress&,
+    const RawstorObjectSpec&,
+    RawstorUUID *id)
+{
+    /**
+     * TODO: Implement me.
+     */
+    if (rawstor_uuid7_init(id)) {
+        RAWSTOR_THROW_ERRNO(errno);
+    }
+}
+
+
+void Object::remove(const RawstorUUID &id) {
+    remove(*rawstor_default_ost(), id);
+}
+
+
+void Object::remove(
+    const RawstorSocketAddress&,
+    const RawstorUUID&)
+{
+    throw std::runtime_error("Object::remove() not implemented\n");
+}
+
+
+void Object::spec(const RawstorUUID &id, RawstorObjectSpec *sp) {
+    spec(*rawstor_default_ost(), id, sp);
+}
+
+
+void Object::spec(
+    const RawstorSocketAddress&,
+    const RawstorUUID&,
+    RawstorObjectSpec *sp)
+{
+    /**
+     * TODO: Implement me.
+     */
+
+    *sp = {
+        .size = 1 << 30,
+    };
+}
+
+
 Object::Object(const RawstorUUID &id) :
     _id(id),
     _ops_pool(NULL),
@@ -90,6 +141,11 @@ int Object::_process(
 }
 
 
+void Object::open() {
+    open(*rawstor_default_ost());
+}
+
+
 void Object::open(const RawstorSocketAddress &ost) {
     if (_cn != NULL) {
         throw std::runtime_error("Object already opened");
@@ -97,11 +153,6 @@ void Object::open(const RawstorSocketAddress &ost) {
 
     _cn = new rawstor::Connection(*this, QUEUE_DEPTH);
     _cn->open(ost, 1);
-}
-
-
-void Object::open() {
-    open(*rawstor_default_ost());
 }
 
 
@@ -222,7 +273,13 @@ int rawstor_object_create(
     const RawstorObjectSpec *spec,
     RawstorUUID *id)
 {
-    return rawstor_object_create_ost(rawstor_default_ost(), spec, id);
+    try {
+        rawstor::Object::create(*spec, id);
+        return 0;
+    } catch (const std::system_error &e) {
+        errno = e.code().value();
+        return -errno;
+    }
 }
 
 
@@ -231,17 +288,24 @@ int rawstor_object_create_ost(
     const RawstorObjectSpec RAWSTOR_UNUSED *spec,
     RawstorUUID *id)
 {
-    /**
-     * TODO: Implement me.
-     */
-    rawstor_uuid7_init(id);
-
-    return 0;
+    try {
+        rawstor::Object::create(*ost, *spec, id);
+        return 0;
+    } catch (const std::system_error &e) {
+        errno = e.code().value();
+        return -errno;
+    }
 }
 
 
 int rawstor_object_remove(const RawstorUUID *id) {
-    return rawstor_object_remove_ost(rawstor_default_ost(), id);
+    try {
+        rawstor::Object::remove(*id);
+        return 0;
+    } catch (const std::system_error &e) {
+        errno = e.code().value();
+        return -errno;
+    }
 }
 
 
@@ -249,10 +313,13 @@ int rawstor_object_remove_ost(
     const RawstorSocketAddress RAWSTOR_UNUSED *ost,
     const RawstorUUID RAWSTOR_UNUSED *id)
 {
-    fprintf(stderr, "rawstor_object_remove_ost() not implemented\n");
-    exit(1);
-
-    return 0;
+    try {
+        rawstor::Object::remove(*ost, *id);
+        return 0;
+    } catch (const std::system_error &e) {
+        errno = e.code().value();
+        return -errno;
+    }
 }
 
 
@@ -318,24 +385,28 @@ const RawstorUUID* rawstor_object_get_id(RawstorObject *object) {
 
 
 int rawstor_object_spec(const RawstorUUID *id, RawstorObjectSpec *spec) {
-    return rawstor_object_spec_ost(rawstor_default_ost(), id, spec);
+    try {
+        rawstor::Object::spec(*id, spec);
+        return 0;
+    } catch (const std::system_error &e) {
+        errno = e.code().value();
+        return -errno;
+    }
 }
 
 
 int rawstor_object_spec_ost(
-    const RawstorSocketAddress RAWSTOR_UNUSED *ost,
-    const RawstorUUID RAWSTOR_UNUSED *id,
+    const RawstorSocketAddress *ost,
+    const RawstorUUID *id,
     RawstorObjectSpec *spec)
 {
-    /**
-     * TODO: Implement me.
-     */
-
-    *spec = {
-        .size = 1 << 30,
-    };
-
-    return 0;
+    try {
+        rawstor::Object::spec(*ost, *id, spec);
+        return 0;
+    } catch (const std::system_error &e) {
+        errno = e.code().value();
+        return -errno;
+    }
 }
 
 

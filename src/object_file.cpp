@@ -129,6 +129,11 @@ void write_dat(
 namespace rawstor {
 
 
+void Object::create(const RawstorObjectSpec &spec, RawstorUUID *id) {
+    create(*rawstor_default_ost(), spec, id);
+}
+
+
 void Object::create(
     const RawstorSocketAddress &ost,
     const RawstorObjectSpec &spec,
@@ -184,6 +189,11 @@ void Object::create(
 }
 
 
+void Object::remove(const RawstorUUID &id) {
+    remove(*rawstor_default_ost(), id);
+}
+
+
 void Object::remove(
     const RawstorSocketAddress &ost,
     const RawstorUUID &id)
@@ -209,10 +219,15 @@ void Object::remove(
 }
 
 
+void Object::spec(const RawstorUUID &id, RawstorObjectSpec *sp) {
+    spec(*rawstor_default_ost(), id, sp);
+}
+
+
 void Object::spec(
     const RawstorSocketAddress &ost,
     const RawstorUUID &id,
-    RawstorObjectSpec *spec)
+    RawstorObjectSpec *sp)
 {
     char ost_path[PATH_MAX];
     get_ost_path(ost.host, ost.port, ost_path, sizeof(ost_path));
@@ -228,7 +243,7 @@ void Object::spec(
         RAWSTOR_THROW_ERRNO(errno);
     }
     try {
-        ssize_t rval = read(fd, spec, sizeof(*spec));
+        ssize_t rval = read(fd, sp, sizeof(*sp));
         if (rval == -1) {
             RAWSTOR_THROW_ERRNO(errno);
         }
@@ -283,6 +298,11 @@ int Object::_process(RawstorIOEvent *event, void *data) noexcept {
 }
 
 
+void Object::open() {
+    open(*rawstor_default_ost());
+}
+
+
 void Object::open(const RawstorSocketAddress &ost) {
     if (_fd != -1) {
         throw std::runtime_error("Object already opened");
@@ -301,11 +321,6 @@ void Object::open(const RawstorSocketAddress &ost) {
     if (_fd == -1) {
         RAWSTOR_THROW_ERRNO(errno);
     }
-}
-
-
-void Object::open() {
-    open(*rawstor_default_ost());
 }
 
 
@@ -421,7 +436,13 @@ const char* rawstor_object_backend_name() {
 
 
 int rawstor_object_create(const RawstorObjectSpec *spec, RawstorUUID *id) {
-    return rawstor_object_create_ost(rawstor_default_ost(), spec, id);
+    try {
+        rawstor::Object::create(*spec, id);
+        return 0;
+    } catch (const std::system_error &e) {
+        errno = e.code().value();
+        return -errno;
+    }
 }
 
 
@@ -441,7 +462,13 @@ int rawstor_object_create_ost(
 
 
 int rawstor_object_remove(const RawstorUUID *id) {
-    return rawstor_object_remove_ost(rawstor_default_ost(), id);
+    try {
+        rawstor::Object::remove(*id);
+        return 0;
+    } catch (const std::system_error &e) {
+        errno = e.code().value();
+        return -errno;
+    }
 }
 
 
@@ -521,7 +548,13 @@ const RawstorUUID* rawstor_object_get_id(RawstorObject *object) {
 
 
 int rawstor_object_spec(const RawstorUUID *id, RawstorObjectSpec *spec) {
-    return rawstor_object_spec_ost(rawstor_default_ost(), id, spec);
+    try {
+        rawstor::Object::spec(*id, spec);
+        return 0;
+    } catch (const std::system_error &e) {
+        errno = e.code().value();
+        return -errno;
+    }
 }
 
 

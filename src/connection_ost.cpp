@@ -6,7 +6,6 @@
 
 #include <rawstorio/queue.h>
 
-#include <rawstorstd/gcc.h>
 #include <rawstorstd/gpp.hpp>
 #include <rawstorstd/hash.h>
 #include <rawstorstd/logging.h>
@@ -279,7 +278,7 @@ int Connection::_op_process_readv(ConnectionOp *op, int fd) noexcept {
 
 
 int Connection::_op_process_write(
-    ConnectionOp *op, int RAWSTOR_UNUSED fd) noexcept
+    ConnectionOp *op, int) noexcept
 {
     Connection *cn = op->cn;
     int ret = 0;
