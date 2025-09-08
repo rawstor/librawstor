@@ -28,26 +28,26 @@ typedef int(RawstorCallback)(
 
 int rawstor_object_create(
     const struct RawstorObjectSpec *spec,
-    struct RawstorUUID *object_id);
+    struct RawstorUUID *id);
 
 int rawstor_object_create_ost(
     const struct RawstorSocketAddress *ost,
     const struct RawstorObjectSpec *spec,
-    struct RawstorUUID *object_id);
+    struct RawstorUUID *id);
 
-int rawstor_object_delete(const struct RawstorUUID *object_id);
+int rawstor_object_remove(const struct RawstorUUID *id);
 
-int rawstor_object_delete_ost(
+int rawstor_object_remove_ost(
     const struct RawstorSocketAddress *ost,
-    const struct RawstorUUID *object_id);
+    const struct RawstorUUID *id);
 
 int rawstor_object_open(
-    const struct RawstorUUID *object_id,
+    const struct RawstorUUID *id,
     RawstorObject **object);
 
 int rawstor_object_open_ost(
     const struct RawstorSocketAddress *ost,
-    const struct RawstorUUID *object_id,
+    const struct RawstorUUID *id,
     RawstorObject **object);
 
 int rawstor_object_close(RawstorObject *object);
@@ -55,12 +55,12 @@ int rawstor_object_close(RawstorObject *object);
 const struct RawstorUUID* rawstor_object_get_id(RawstorObject *object);
 
 int rawstor_object_spec(
-    const struct RawstorUUID *object_id,
+    const struct RawstorUUID *id,
     struct RawstorObjectSpec *spec);
 
 int rawstor_object_spec_ost(
     const struct RawstorSocketAddress *ost,
-    const struct RawstorUUID *object_id,
+    const struct RawstorUUID *id,
     struct RawstorObjectSpec *spec);
 
 int rawstor_object_pread(

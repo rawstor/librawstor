@@ -1,5 +1,5 @@
 #include "create.h"
-#include "delete.h"
+#include "remove.h"
 #include "testio.h"
 
 #include <rawstor.h>
@@ -24,7 +24,7 @@ static void usage() {
         "\n"
         "command:\n"
         "  create                Create rawstor object\n"
-        "  delete                Delete rawstor object\n"
+        "  remove                Remove rawstor object\n"
         "  testio                Test rawstor IO routines\n"
         "\n"
         "command options:        Run `<command> --help` to show command usage\n"
@@ -101,12 +101,12 @@ static int command_create(
 }
 
 
-static void command_delete_usage() {
+static void command_remove_usage() {
     fprintf(
         stderr,
         "Rawstor CLI\n"
         "\n"
-        "usage: rawstor-cli [options] delete [command_options]\n"
+        "usage: rawstor-cli [options] remove [command_options]\n"
         "\n"
         "command options:\n"
         "  -o, --object-id OBJECT_ID\n"
@@ -115,7 +115,7 @@ static void command_delete_usage() {
 };
 
 
-static int command_delete(
+static int command_remove(
     const struct RawstorOpts *opts,
     const struct RawstorSocketAddress *ost,
     int argc, char **argv)
@@ -137,7 +137,7 @@ static int command_delete(
 
         switch (c) {
             case 'h':
-                command_delete_usage();
+                command_remove_usage();
                 return EXIT_SUCCESS;
                 break;
 
@@ -166,7 +166,7 @@ static int command_delete(
         return EXIT_FAILURE;
     }
 
-    return rawstor_cli_delete(opts, ost, &object_id);
+    return rawstor_cli_remove(opts, ost, &object_id);
 }
 
 
@@ -386,8 +386,8 @@ int main(int argc, char **argv) {
     if (strcmp(command, "create") == 0) {
         ret = command_create(
             &opts, ost_ptr, argc - optind, &argv[optind]);
-    } else if (strcmp(command, "delete") == 0) {
-        ret = command_delete(
+    } else if (strcmp(command, "remove") == 0) {
+        ret = command_remove(
             &opts, ost_ptr, argc - optind, &argv[optind]);
     } else if (strcmp(command, "testio") == 0) {
         ret = command_testio(

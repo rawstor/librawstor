@@ -1,4 +1,4 @@
-#include "delete.h"
+#include "remove.h"
 
 #include "gcc.h"
 
@@ -11,7 +11,7 @@
 #include <string.h>
 
 
-int rawstor_cli_delete(
+int rawstor_cli_remove(
     const struct RawstorOpts *opts,
     const struct RawstorSocketAddress *default_ost,
     const struct RawstorUUID *object_id)
@@ -23,19 +23,19 @@ int rawstor_cli_delete(
 
     RawstorUUIDString uuid_string;
     rawstor_uuid_to_string(object_id, &uuid_string);
-    fprintf(stderr, "Deleting object with id: %s\n", uuid_string);
-    if (rawstor_object_delete(object_id)) {
-        perror("rawstor_object_delete() failed");
-        goto err_delete;
+    fprintf(stderr, "Removing object with id: %s\n", uuid_string);
+    if (rawstor_object_remove(object_id)) {
+        perror("rawstor_object_remove() failed");
+        goto err_remove;
     }
 
-    fprintf(stderr, "Object deleted\n");
+    fprintf(stderr, "Object removed\n");
 
     rawstor_terminate();
 
     return EXIT_SUCCESS;
 
-err_delete:
+err_remove:
     rawstor_terminate();
 err_initialize:
     return EXIT_FAILURE;

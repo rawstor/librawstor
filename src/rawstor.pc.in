@@ -7,5 +7,5 @@ Name: rawstor
 Description: Rawstor client library
 Requires: @maybe_liburing@ @maybe_libxxhash@
 Version: 0.0.0
-Libs: -L${libdir} -lrawstor
+Libs: -L${libdir} -lrawstor -lstdc++
 Cflags: -I${includedir}

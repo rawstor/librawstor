@@ -1,10 +1,14 @@
 lib_LTLIBRARIES = librawstor.la
 
 
-AM_CFLAGS = -std=gnu99 -Wall -Wextra -Werror \
+GENERIC_FLAGS = -Wall -Wextra -Werror \
             -I$(top_srcdir)/librawstorstd/include \
             -I$(top_srcdir)/librawstorio/include \
             -I$(top_srcdir)/include
+
+AM_CFLAGS = -std=gnu99 $(GENERIC_FLAGS)
+
+AM_CXXFLAGS = -std=c++20 $(GENERIC_FLAGS)
 
 
 librawstor_base_ladir = $(includedir)
@@ -28,11 +32,12 @@ librawstor_la_LIBADD = $(top_srcdir)/librawstorstd/src/librawstorstd.la \
 
 if ENABLE_OST
     AM_CFLAGS += $(LIBXXHASH_CFLAGS)
-    librawstor_la_SOURCES += connection_ost.c \
-                             object_ost.c
-    librawstor_la_LIBADD += $(LIBXXHASH_LIBS)
+    librawstor_la_SOURCES += connection_ost.cpp \
+                             object_ost.cpp
+    librawstor_la_LIBADD += $(LIBXXHASH_LIBS) \
+                            -lstdc++
 else
-    librawstor_la_SOURCES += object_file.c
+    librawstor_la_SOURCES += object_file.cpp
 endif
 
 
