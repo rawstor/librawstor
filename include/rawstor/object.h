@@ -26,6 +26,15 @@ typedef int(RawstorCallback)(
     RawstorObject *object, size_t size, size_t res, int error, void *data);
 
 
+int rawstor_object_spec(
+    const struct RawstorUUID *id,
+    struct RawstorObjectSpec *spec);
+
+int rawstor_object_spec_ost(
+    const struct RawstorSocketAddress *ost,
+    const struct RawstorUUID *id,
+    struct RawstorObjectSpec *spec);
+
 int rawstor_object_create(
     const struct RawstorObjectSpec *spec,
     struct RawstorUUID *id);
@@ -53,15 +62,6 @@ int rawstor_object_open_ost(
 int rawstor_object_close(RawstorObject *object);
 
 const struct RawstorUUID* rawstor_object_get_id(RawstorObject *object);
-
-int rawstor_object_spec(
-    const struct RawstorUUID *id,
-    struct RawstorObjectSpec *spec);
-
-int rawstor_object_spec_ost(
-    const struct RawstorSocketAddress *ost,
-    const struct RawstorUUID *id,
-    struct RawstorObjectSpec *spec);
 
 int rawstor_object_pread(
     RawstorObject *object,

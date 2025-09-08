@@ -23,7 +23,7 @@ class Object;
 
 class Connection {
     private:
-        rawstor::Object &_object;
+        rawstor::Object *_object;
 
         std::vector<int> _fds;
         size_t _ifds;
@@ -65,11 +65,20 @@ class Connection {
             RawstorIOEvent *event, void *data) noexcept;
 
     public:
-        Connection(rawstor::Object &object, unsigned int depth);
-        Connection(const Object&) = delete;
+        Connection(rawstor::Object *object, unsigned int depth);
+        Connection(const Connection &) = delete;
         ~Connection();
 
         Connection& operator=(const Connection&) = delete;
+
+        void create(
+            const RawstorSocketAddress &ost,
+            const RawstorObjectSpec &sp,
+            RawstorUUID *id);
+
+        void remove(const RawstorSocketAddress &ost);
+
+        void spec(const RawstorSocketAddress &ost, RawstorObjectSpec *sp);
 
         void open(const RawstorSocketAddress &ost, size_t count);
 
