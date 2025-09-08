@@ -12,6 +12,7 @@ namespace rawstor {
 
 class Object {
     private:
+        RawstorObject *_c_ptr;
         RawstorUUID _id;
         RawstorMemPool *_ops_pool;
         Connection *_cn;
@@ -45,12 +46,14 @@ class Object {
 
         Object& operator=(const Object&) = delete;
 
+        RawstorObject* c_ptr() noexcept;
+
+        const RawstorUUID& id() const noexcept;
+
         void open();
         void open(const RawstorSocketAddress &ost);
 
         void close();
-
-        const RawstorUUID& id() const noexcept;
 
         void pread(
             void *buf, size_t size, off_t offset,

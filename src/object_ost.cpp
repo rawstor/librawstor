@@ -45,7 +45,9 @@ struct ObjectOp {
 
 
 struct RawstorObject {
-    rawstor::Object impl;
+    rawstor::Object *impl;
+
+    RawstorObject(rawstor::Object *impl): impl(impl) {}
 };
 
 
@@ -105,6 +107,7 @@ void Object::spec(
 
 
 Object::Object(const RawstorUUID &id) :
+    _c_ptr(new RawstorObject(this)),
     _id(id),
     _ops_pool(NULL),
     _cn(NULL)
@@ -125,6 +128,7 @@ Object::~Object() {
         }
     }
     rawstor_mempool_delete(_ops_pool);
+    delete _c_ptr;
 }
 
 
@@ -134,11 +138,21 @@ int Object::_process(
 {
     ObjectOp *op = (ObjectOp*)data;
 
-    int ret = op->callback((RawstorObject*)object, size, res, error, op->data);
+    int ret = op->callback(object, size, res, error, op->data);
 
-    rawstor_mempool_free(object->impl._ops_pool, op);
+    rawstor_mempool_free(object->impl->_ops_pool, op);
 
     return ret;
+}
+
+
+const RawstorUUID& Object::id() const noexcept {
+    return _id;
+}
+
+
+RawstorObject* Object::c_ptr() noexcept {
+    return _c_ptr;
 }
 
 
@@ -168,11 +182,6 @@ void Object::close() {
     delete _cn;
 
     _cn = NULL;
-}
-
-
-const RawstorUUID& Object::id() const noexcept {
-    return _id;
 }
 
 
@@ -352,7 +361,9 @@ int rawstor_object_open(const RawstorUUID *id, RawstorObject **object) {
 
         impl->open();
 
-        *object = (RawstorObject*)impl.release();
+        *object = impl->c_ptr();
+
+        impl.release();
 
         return 0;
     } catch (const std::system_error &e) {
@@ -375,7 +386,9 @@ int rawstor_object_open_ost(
 
         impl->open(*ost);
 
-        *object = (RawstorObject*)impl.release();;
+        *object = impl->c_ptr();
+
+        impl.release();
 
         return 0;
     } catch (const std::system_error &e) {
@@ -390,9 +403,11 @@ int rawstor_object_open_ost(
 
 int rawstor_object_close(RawstorObject *object) {
     try {
-        object->impl.close();
+        rawstor::Object *impl = object->impl;
 
-        delete &object->impl;
+        impl->close();
+
+        delete impl;
 
         return 0;
     } catch (const std::system_error &e) {
@@ -403,7 +418,7 @@ int rawstor_object_close(RawstorObject *object) {
 
 
 const RawstorUUID* rawstor_object_get_id(RawstorObject *object) {
-    return &object->impl.id();
+    return &object->impl->id();
 }
 
 
@@ -439,7 +454,7 @@ int rawstor_object_pread(
     RawstorCallback *cb, void *data)
 {
     try {
-        object->impl.pread(buf, size, offset, cb, data);
+        object->impl->pread(buf, size, offset, cb, data);
         return 0;
     } catch (const std::system_error &e) {
         errno = e.code().value();
@@ -454,7 +469,7 @@ int rawstor_object_preadv(
     RawstorCallback *cb, void *data)
 {
     try {
-        object->impl.preadv(iov, niov, size, offset, cb, data);
+        object->impl->preadv(iov, niov, size, offset, cb, data);
         return 0;
     } catch (const std::system_error &e) {
         errno = e.code().value();
@@ -469,7 +484,7 @@ int rawstor_object_pwrite(
     RawstorCallback *cb, void *data)
 {
     try {
-        object->impl.pwrite(buf, size, offset, cb, data);
+        object->impl->pwrite(buf, size, offset, cb, data);
         return 0;
     } catch (const std::system_error &e) {
         errno = e.code().value();
@@ -484,7 +499,7 @@ int rawstor_object_pwritev(
     RawstorCallback *cb, void *data)
 {
     try {
-        object->impl.pwritev(iov, niov, size, offset, cb, data);
+        object->impl->pwritev(iov, niov, size, offset, cb, data);
         return 0;
     } catch (const std::system_error &e) {
         errno = e.code().value();

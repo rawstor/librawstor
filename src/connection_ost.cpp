@@ -294,7 +294,7 @@ int Connection::_op_process_write(
         }
 
         ret = op->callback(
-            (RawstorObject*)&cn->_object,
+            cn->_object.c_ptr(),
             op->request_frame.len, op->request_frame.len, 0,
             op->data);
     } catch (const std::system_error &e) {
@@ -440,7 +440,7 @@ int Connection::_response_body_received(
         }
 
         ret = op->callback(
-            (RawstorObject*)&cn->_object,
+            cn->_object.c_ptr(),
             op->request_frame.len, op->request_frame.len, 0,
             op->data);
     } catch (const std::system_error &e) {
@@ -502,7 +502,7 @@ int Connection::_responsev_body_received(
         }
 
         ret = op->callback(
-            (RawstorObject*)&cn->_object,
+            cn->_object.c_ptr(),
             op->request_frame.len, op->request_frame.len, 0,
             op->data);
     } catch (const std::system_error &e) {

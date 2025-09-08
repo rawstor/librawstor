@@ -26,7 +26,7 @@ int rawstor_cli_remove(
     fprintf(stderr, "Removing object with id: %s\n", uuid_string);
     if (rawstor_object_remove(object_id)) {
         perror("rawstor_object_remove() failed");
-        goto err_delete;
+        goto err_remove;
     }
 
     fprintf(stderr, "Object removed\n");
@@ -35,7 +35,7 @@ int rawstor_cli_remove(
 
     return EXIT_SUCCESS;
 
-err_delete:
+err_remove:
     rawstor_terminate();
 err_initialize:
     return EXIT_FAILURE;
