@@ -34,7 +34,7 @@ jobs:
     - name: install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libxxhash-dev ${{ matrix.packages }}
+        sudo apt-get install -y libxxhash-dev libtool pkg-config ${{ matrix.packages }}
     - uses: actions/checkout@v4
       with:
         path: librawstor
@@ -74,15 +74,15 @@ jobs:
         pushd .
         cd ./fio
         ./configure
-        make
+        make -j$(nproc)
         sudo make install
         popd
     - name: (rawstor_ost) start rawstor_ost
       if: "${{ matrix.disable-ost == '' }}"
       run: |
-        mkdir /tmp/objects
-        truncate -s 2G /tmp/objects/01988675-e1e5-7788-9ed4-2f2d30910d23
-        ost 8080 /tmp/objects/ &
+        mkdir ${GITHUB_WORKSPACE}/objects
+        truncate -s 2G ${GITHUB_WORKSPACE}/objects/01988675-e1e5-7788-9ed4-2f2d30910d23
+        ost 8080 ${GITHUB_WORKSPACE}/objects/ &
         sleep 10
     - name: create object
       if: "${{ matrix.disable-ost != '' }}"
@@ -96,8 +96,9 @@ jobs:
         echo "OBJECT_ID=${object_id}" >> $GITHUB_ENV
     - name: fio
       run: |
-        echo "# fio ${{ matrix.without-liburing }} ${{ matrix.disable-ost }}" >> $GITHUB_STEP_SUMMARY
-        echo "## bs=${{ matrix.bs }}, iodepth=${{ matrix.iodepth }}, numjobs=${{ matrix.numjobs }}" >> $GITHUB_STEP_SUMMARY
+        echo "# perftest" >> $GITHUB_STEP_SUMMARY
+        echo "## fio ${{ matrix.without-liburing }} ${{ matrix.disable-ost }}" >> $GITHUB_STEP_SUMMARY
+        echo "### bs=${{ matrix.bs }}, iodepth=${{ matrix.iodepth }}, numjobs=${{ matrix.numjobs }}" >> $GITHUB_STEP_SUMMARY
         ./librawstor/.github/tools/fio.sh \
           ${OBJECT_ID} \
           ${{ matrix.bs }} \
@@ -108,6 +109,9 @@ jobs:
         echo \`\`\` >> $GITHUB_STEP_SUMMARY
         cat fio.txt >> $GITHUB_STEP_SUMMARY
         echo \`\`\` >> $GITHUB_STEP_SUMMARY
+    - name: remove object
+      if: "${{ matrix.disable-ost != '' }}"
+      run: rawstor-cli remove --object-id=${OBJECT_ID}
     - name: (rawstor_ost) stop rawstor_ost
       if: "${{ matrix.disable-ost == '' }}"
       run: killall ost
