@@ -26,6 +26,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
+#include <string>
+#include <sstream>
 
 
 /**
@@ -44,44 +47,34 @@ struct ObjectOp {
 };
 
 
-void get_ost_path(
-    const char *ost_host, unsigned int ost_port,
-    char *buffer, size_t size)
-{
-    static const char prefix[] = ".";
+std::string get_ost_path(const RawstorSocketAddress &ost) {
+    std::ostringstream oss;
 
-    int res = snprintf(
-        buffer, size,
-        "%s/ost-%s:%u", prefix, ost_host, ost_port);
-    if (res < 0) {
-        RAWSTOR_THROW_ERRNO(errno);
-    }
+    oss << "./ost-" << ost.host << ":" << ost.port;
+
+    return oss.str();
 }
 
 
-void get_object_spec_path(
-    const char *ost_path, const char *uuid,
-    char *buffer, size_t size)
+std::string get_object_spec_path(
+    const std::string &ost_path, const RawstorUUIDString &uuid)
 {
-    int res = snprintf(
-        buffer, size,
-        "%s/rawstor-%s.spec", ost_path, uuid);
-    if (res < 0) {
-        RAWSTOR_THROW_ERRNO(errno);
-    }
+    std::ostringstream oss;
+
+    oss << ost_path << "/rawstor-" << uuid << ".spec";
+
+    return oss.str();
 }
 
 
-void get_object_dat_path(
-    const char *ost_path, const char *uuid,
-    char *buffer, size_t size)
+std::string get_object_dat_path(
+    const std::string &ost_path, const RawstorUUIDString &uuid)
 {
-    int res = snprintf(
-        buffer, size,
-        "%s/rawstor-%s.dat", ost_path, uuid);
-    if (res < 0) {
-        RAWSTOR_THROW_ERRNO(errno);
-    }
+    std::ostringstream oss;
+
+    oss << ost_path << "/rawstor-" << uuid << ".dat";
+
+    return oss.str();
 }
 
 
@@ -94,17 +87,16 @@ struct RawstorObject {
 
 
 void write_dat(
-    const char *ost_path,
+    const std:: string &ost_path,
     const RawstorObjectSpec &spec,
     RawstorUUID &id)
 {
     RawstorUUIDString uuid_string;
     rawstor_uuid_to_string(&id, &uuid_string);
 
-    char dat_path[PATH_MAX];
-    get_object_dat_path(ost_path, uuid_string, dat_path, sizeof(dat_path));
+    std::string dat_path = get_object_dat_path(ost_path, uuid_string);
 
-    int fd = open(dat_path, O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR);
+    int fd = open(dat_path.c_str(), O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR);
     if (fd == -1) {
         RAWSTOR_THROW_ERRNO(errno);
     }
@@ -120,7 +112,7 @@ void write_dat(
         }
     } catch (const std::system_error &e) {
         close(fd);
-        unlink(dat_path);
+        unlink(dat_path.c_str());
         throw;
     }
 }
@@ -139,9 +131,8 @@ void Object::create(
     const RawstorObjectSpec &spec,
     RawstorUUID *id)
 {
-    char ost_path[PATH_MAX];
-    get_ost_path(ost.host, ost.port, ost_path, sizeof(ost_path));
-    if (mkdir(ost_path, 0755)) {
+    std::string ost_path = get_ost_path(ost);
+    if (mkdir(ost_path.c_str(), 0755)) {
         if (errno != EEXIST) {
             RAWSTOR_THROW_ERRNO(errno);
         }
@@ -149,16 +140,15 @@ void Object::create(
 
     RawstorUUID uuid;
     RawstorUUIDString uuid_string;
-    char spec_path[PATH_MAX];
+    std::string spec_path;
     int fd;
     while (1) {
         if (rawstor_uuid7_init(&uuid)) {
             RAWSTOR_THROW_ERRNO(errno);
         }
         rawstor_uuid_to_string(&uuid, &uuid_string);
-        get_object_spec_path(
-            ost_path, uuid_string, spec_path, sizeof(spec_path));
-        fd = ::open(spec_path, O_EXCL | O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR);
+        spec_path = get_object_spec_path(ost_path, uuid_string);
+        fd = ::open(spec_path.c_str(), O_EXCL | O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR);
         if (fd != -1) {
             break;
         }
@@ -182,7 +172,7 @@ void Object::create(
 
         return;
     } catch (...) {
-        unlink(spec_path);
+        unlink(spec_path.c_str());
         ::close(fd);
         throw;
     }
@@ -198,21 +188,19 @@ void Object::remove(
     const RawstorSocketAddress &ost,
     const RawstorUUID &id)
 {
-    char ost_path[PATH_MAX];
-    get_ost_path(ost.host, ost.port, ost_path, sizeof(ost_path));
+    std::string ost_path = get_ost_path(ost);
 
     RawstorUUIDString uuid_string;
     rawstor_uuid_to_string(&id, &uuid_string);
 
-    char path[PATH_MAX];
-    get_object_spec_path(ost_path, uuid_string, path, sizeof(path));
-    int rval = unlink(path);
+    std::string spec_path = get_object_spec_path(ost_path, uuid_string);
+    int rval = unlink(spec_path.c_str());
     if (rval == -1) {
         RAWSTOR_THROW_ERRNO(errno);
     }
 
-    get_object_dat_path(ost_path, uuid_string, path, sizeof(path));
-    rval = unlink(path);
+    std::string dat_path = get_object_dat_path(ost_path, uuid_string);
+    rval = unlink(dat_path.c_str());
     if (rval == -1) {
         RAWSTOR_THROW_ERRNO(errno);
     }
@@ -229,16 +217,14 @@ void Object::spec(
     const RawstorUUID &id,
     RawstorObjectSpec *sp)
 {
-    char ost_path[PATH_MAX];
-    get_ost_path(ost.host, ost.port, ost_path, sizeof(ost_path));
+    std::string ost_path = get_ost_path(ost);
 
     RawstorUUIDString uuid_string;
     rawstor_uuid_to_string(&id, &uuid_string);
 
-    char path[PATH_MAX];
-    get_object_spec_path(ost_path, uuid_string, path, sizeof(path));
+    std::string spec_path = get_object_spec_path(ost_path, uuid_string);
 
-    int fd = ::open(path, O_RDONLY);
+    int fd = ::open(spec_path.c_str(), O_RDONLY);
     if (fd == -1) {
         RAWSTOR_THROW_ERRNO(errno);
     }
@@ -308,16 +294,14 @@ void Object::open(const RawstorSocketAddress &ost) {
         throw std::runtime_error("Object already opened");
     }
 
-    char ost_path[PATH_MAX];
-    get_ost_path(ost.host, ost.port, ost_path, sizeof(ost_path));
+    std::string ost_path = get_ost_path(ost);
 
     RawstorUUIDString uuid_string;
     rawstor_uuid_to_string(&_id, &uuid_string);
 
-    char path[PATH_MAX];
-    get_object_dat_path(ost_path, uuid_string, path, sizeof(path));
+    std::string dat_path = get_object_dat_path(ost_path, uuid_string);
 
-    _fd = ::open(path, O_RDWR | O_NONBLOCK);
+    _fd = ::open(dat_path.c_str(), O_RDWR | O_NONBLOCK);
     if (_fd == -1) {
         RAWSTOR_THROW_ERRNO(errno);
     }
@@ -488,11 +472,11 @@ int rawstor_object_remove_ost(
 
 int rawstor_object_open(const RawstorUUID *id, RawstorObject **object) {
     try {
-        rawstor::Object *impl = new rawstor::Object(*id);
+        std::unique_ptr<rawstor::Object> impl(new rawstor::Object(*id));
 
         impl->open();
 
-        *object = (RawstorObject*)impl;
+        *object = (RawstorObject*)impl.release();
 
         return 0;
     } catch (const std::system_error &e) {
@@ -511,11 +495,11 @@ int rawstor_object_open_ost(
     RawstorObject **object)
 {
     try {
-        rawstor::Object *impl = new rawstor::Object(*id);
+        std::unique_ptr<rawstor::Object> impl(new rawstor::Object(*id));
 
         impl->open(*ost);
 
-        *object = (RawstorObject*)impl;
+        *object = (RawstorObject*)impl.release();
 
         return 0;
     } catch (const std::system_error &e) {

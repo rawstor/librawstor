@@ -21,6 +21,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <new>
+#include <memory>
 #include <stdexcept>
 #include <system_error>
 
@@ -151,8 +152,10 @@ void Object::open(const RawstorSocketAddress &ost) {
         throw std::runtime_error("Object already opened");
     }
 
-    _cn = new rawstor::Connection(*this, QUEUE_DEPTH);
-    _cn->open(ost, 1);
+    std::unique_ptr<rawstor::Connection> cn(
+        new rawstor::Connection(*this, QUEUE_DEPTH));
+    cn->open(ost, 1);
+    _cn = cn.release();
 }
 
 
@@ -325,11 +328,11 @@ int rawstor_object_remove_ost(
 
 int rawstor_object_open(const RawstorUUID *id, RawstorObject **object) {
     try {
-        rawstor::Object *impl = new rawstor::Object(*id);
+        std::unique_ptr<rawstor::Object> impl(new rawstor::Object(*id));
 
         impl->open();
 
-        *object = (RawstorObject*)impl;
+        *object = (RawstorObject*)impl.release();
 
         return 0;
     } catch (const std::system_error &e) {
@@ -348,11 +351,11 @@ int rawstor_object_open_ost(
     RawstorObject **object)
 {
     try {
-        rawstor::Object *impl = new rawstor::Object(*id);
+        std::unique_ptr<rawstor::Object> impl(new rawstor::Object(*id));
 
         impl->open(*ost);
 
-        *object = (RawstorObject*)impl;
+        *object = (RawstorObject*)impl.release();;
 
         return 0;
     } catch (const std::system_error &e) {
