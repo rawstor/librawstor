@@ -270,11 +270,11 @@ const char* rawstor_object_backend_name(void) {
 
 
 int rawstor_object_create(
-    const RawstorObjectSpec *spec,
+    const RawstorObjectSpec *sp,
     RawstorUUID *id)
 {
     try {
-        rawstor::Object::create(*spec, id);
+        rawstor::Object::create(*sp, id);
         return 0;
     } catch (const std::system_error &e) {
         errno = e.code().value();
@@ -285,7 +285,7 @@ int rawstor_object_create(
 
 int rawstor_object_create_ost(
     const RawstorSocketAddress *ost,
-    const RawstorObjectSpec *spec,
+    const RawstorObjectSpec *sp,
     RawstorUUID *id)
 {
     try {
