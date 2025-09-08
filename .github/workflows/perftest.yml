@@ -251,9 +251,9 @@ jobs:
         echo \`\`\` >> $GITHUB_STEP_SUMMARY
         cat fio.txt >> $GITHUB_STEP_SUMMARY
         echo \`\`\` >> $GITHUB_STEP_SUMMARY
-    - name: delete object
+    - name: remove object
       if: "${{ matrix.disable-ost != '' }}"
-      run: ./local/bin/rawstor-cli delete --object-id=${OBJECT_ID}
+      run: ./local/bin/rawstor-cli remove --object-id=${OBJECT_ID}
     - name: (rawstor_ost) stop rawstor_ost
       if: "${{ matrix.disable-ost == '' }}"
       run: |
