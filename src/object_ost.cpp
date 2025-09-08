@@ -189,12 +189,17 @@ void Object::pread(
         RAWSTOR_THROW_ERRNO(ENOBUFS);
     }
 
-    *op = {
-        .callback = cb,
-        .data = data,
-    };
+    try {
+        *op = {
+            .callback = cb,
+            .data = data,
+        };
 
-    _cn->pread(buf, size, offset, _process, op);
+        _cn->pread(buf, size, offset, _process, op);
+    } catch (...) {
+        rawstor_mempool_free(_ops_pool, op);
+        throw;
+    }
 }
 
 
@@ -211,12 +216,17 @@ void Object::preadv(
         RAWSTOR_THROW_ERRNO(ENOBUFS);
     }
 
-    *op = {
-        .callback = cb,
-        .data = data,
-    };
+    try {
+        *op = {
+            .callback = cb,
+            .data = data,
+        };
 
-    _cn->preadv(iov, niov, size, offset, _process, op);
+        _cn->preadv(iov, niov, size, offset, _process, op);
+    } catch (...) {
+        rawstor_mempool_free(_ops_pool, op);
+        throw;
+    }
 }
 
 
@@ -233,12 +243,17 @@ void Object::pwrite(
         RAWSTOR_THROW_ERRNO(ENOBUFS);
     }
 
-    *op = {
-        .callback = cb,
-        .data = data,
-    };
+    try {
+        *op = {
+            .callback = cb,
+            .data = data,
+        };
 
-    _cn->pwrite(buf, size, offset, _process, op);
+        _cn->pwrite(buf, size, offset, _process, op);
+    } catch (...) {
+        rawstor_mempool_free(_ops_pool, op);
+        throw;
+    }
 }
 
 
@@ -255,12 +270,17 @@ void Object::pwritev(
         RAWSTOR_THROW_ERRNO(ENOBUFS);
     }
 
-    *op = {
-        .callback = cb,
-        .data = data,
-    };
+    try {
+        *op = {
+            .callback = cb,
+            .data = data,
+        };
 
-    _cn->pwritev(iov, niov, size, offset, _process, op);
+        _cn->pwritev(iov, niov, size, offset, _process, op);
+    } catch (...) {
+        rawstor_mempool_free(_ops_pool, op);
+        throw;
+    }
 }
 
 
