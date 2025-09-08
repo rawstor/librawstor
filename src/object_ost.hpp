@@ -28,6 +28,7 @@ class Object {
 
         Object& operator=(const Object&) = delete;
 
+        void open();
         void open(const RawstorSocketAddress &ost);
 
         void close();

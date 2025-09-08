@@ -304,6 +304,11 @@ void Object::open(const RawstorSocketAddress &ost) {
 }
 
 
+void Object::open() {
+    open(*rawstor_default_ost());
+}
+
+
 void Object::close() {
     if (_fd == -1) {
         throw std::runtime_error("Object not opened");
@@ -455,7 +460,21 @@ int rawstor_object_remove_ost(
 
 
 int rawstor_object_open(const RawstorUUID *id, RawstorObject **object) {
-    return rawstor_object_open_ost(rawstor_default_ost(), id, object);
+    try {
+        rawstor::Object *impl = new rawstor::Object(*id);
+
+        impl->open();
+
+        *object = (RawstorObject*)impl;
+
+        return 0;
+    } catch (const std::system_error &e) {
+        errno = e.code().value();
+        return -errno;
+    } catch (const std::bad_alloc &e) {
+        errno = ENOMEM;
+        return -errno;
+    }
 }
 
 
