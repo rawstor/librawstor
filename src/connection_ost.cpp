@@ -620,35 +620,42 @@ void Connection::pread(
     }
     ConnectionOp *op = *it;
 
-    *op = {
-        .cn = this,
-        .cid = op->cid,  // preserve cid
-        .request_frame = {
-            .magic = RAWSTOR_MAGIC,
-            .cmd = RAWSTOR_CMD_READ,
-            .cid = op->cid,
-            .offset = (uint64_t)offset,
-            .len = (uint32_t)size,
-            .hash = 0,
-            .sync = 0,
-        },
-        .payload = {
-            .linear = {
-                .data = buf,
+    try {
+        *op = {
+            .cn = this,
+            .cid = op->cid,  // preserve cid
+            .request_frame = {
+                .magic = RAWSTOR_MAGIC,
+                .cmd = RAWSTOR_CMD_READ,
+                .cid = op->cid,
+                .offset = (uint64_t)offset,
+                .len = (uint32_t)size,
+                .hash = 0,
+                .sync = 0,
             },
-        },
-        .iov = {},
-        .process = _op_process_read,
-        .callback = cb,
-        .data = data,
-    };
+            .payload = {
+                .linear = {
+                    .data = buf,
+                },
+            },
+            .iov = {},
+            .process = _op_process_read,
+            .callback = cb,
+            .data = data,
+        };
 
-    if (rawstor_fd_write(
-        _get_next_fd(),
-        &op->request_frame, sizeof(op->request_frame),
-        _read_request_sent, op))
-    {
-        RAWSTOR_THROW_ERRNO(errno);
+        if (rawstor_fd_write(
+            _get_next_fd(),
+            &op->request_frame, sizeof(op->request_frame),
+            _read_request_sent, op))
+        {
+            RAWSTOR_THROW_ERRNO(errno);
+        }
+    } catch (...) {
+        ConnectionOp **it = (ConnectionOp**)rawstor_ringbuf_head(_ops);
+        assert(rawstor_ringbuf_push(_ops) == 0);
+        *it = op;
+        throw;
     }
 }
 
@@ -667,36 +674,43 @@ void Connection::preadv(
     }
     ConnectionOp *op = *it;
 
-    *op = {
-        .cn = this,
-        .cid = op->cid,  // preserve cid
-        .request_frame = {
-            .magic = RAWSTOR_MAGIC,
-            .cmd = RAWSTOR_CMD_READ,
-            .cid = op->cid,
-            .offset = (uint64_t)offset,
-            .len = (uint32_t)size,
-            .hash = 0,
-            .sync = 0,
-        },
-        .payload = {
-            .vector = {
-                .iov = iov,
-                .niov = niov,
+    try {
+        *op = {
+            .cn = this,
+            .cid = op->cid,  // preserve cid
+            .request_frame = {
+                .magic = RAWSTOR_MAGIC,
+                .cmd = RAWSTOR_CMD_READ,
+                .cid = op->cid,
+                .offset = (uint64_t)offset,
+                .len = (uint32_t)size,
+                .hash = 0,
+                .sync = 0,
             },
-        },
-        .iov = {},
-        .process = _op_process_readv,
-        .callback = cb,
-        .data = data,
-    };
+            .payload = {
+                .vector = {
+                    .iov = iov,
+                    .niov = niov,
+                },
+            },
+            .iov = {},
+            .process = _op_process_readv,
+            .callback = cb,
+            .data = data,
+        };
 
-    if (rawstor_fd_write(
-        _get_next_fd(),
-        &op->request_frame, sizeof(op->request_frame),
-        _read_request_sent, op))
-    {
-        RAWSTOR_THROW_ERRNO(errno);
+        if (rawstor_fd_write(
+            _get_next_fd(),
+            &op->request_frame, sizeof(op->request_frame),
+            _read_request_sent, op))
+        {
+            RAWSTOR_THROW_ERRNO(errno);
+        }
+    } catch (...) {
+        ConnectionOp **it = (ConnectionOp**)rawstor_ringbuf_head(_ops);
+        assert(rawstor_ringbuf_push(_ops) == 0);
+        *it = op;
+        throw;
     }
 }
 
@@ -715,44 +729,51 @@ void Connection::pwrite(
     }
     ConnectionOp *op = *it;
 
-    *op = {
-        .cn = this,
-        .cid = op->cid,  // preserve cid
-        .request_frame = {
-            .magic = RAWSTOR_MAGIC,
-            .cmd = RAWSTOR_CMD_WRITE,
-            .cid = op->cid,
-            .offset = (uint64_t)offset,
-            .len = (uint32_t)size,
-            .hash = rawstor_hash_scalar(buf, size),
-            .sync = 0,
-        },
-        .payload = {
-            .linear = {
-                .data = buf,
+    try {
+        *op = {
+            .cn = this,
+            .cid = op->cid,  // preserve cid
+            .request_frame = {
+                .magic = RAWSTOR_MAGIC,
+                .cmd = RAWSTOR_CMD_WRITE,
+                .cid = op->cid,
+                .offset = (uint64_t)offset,
+                .len = (uint32_t)size,
+                .hash = rawstor_hash_scalar(buf, size),
+                .sync = 0,
             },
-        },
-        .iov = {},
-        .process = _op_process_write,
-        .callback = cb,
-        .data = data,
-    };
+            .payload = {
+                .linear = {
+                    .data = buf,
+                },
+            },
+            .iov = {},
+            .process = _op_process_write,
+            .callback = cb,
+            .data = data,
+        };
 
-    op->iov[0] = {
-        .iov_base = &op->request_frame,
-        .iov_len = sizeof(op->request_frame),
-    };
-    op->iov[1] = {
-        .iov_base = buf,
-        .iov_len = size,
-    };
+        op->iov[0] = {
+            .iov_base = &op->request_frame,
+            .iov_len = sizeof(op->request_frame),
+        };
+        op->iov[1] = {
+            .iov_base = buf,
+            .iov_len = size,
+        };
 
-    if (rawstor_fd_writev(
-        _get_next_fd(),
-        op->iov, 2, sizeof(op->request_frame) + size,
-        _write_requestv_sent, op))
-    {
-        RAWSTOR_THROW_ERRNO(errno);
+        if (rawstor_fd_writev(
+            _get_next_fd(),
+            op->iov, 2, sizeof(op->request_frame) + size,
+            _write_requestv_sent, op))
+        {
+            RAWSTOR_THROW_ERRNO(errno);
+        }
+    } catch (...) {
+        ConnectionOp **it = (ConnectionOp**)rawstor_ringbuf_head(_ops);
+        assert(rawstor_ringbuf_push(_ops) == 0);
+        *it = op;
+        throw;
     }
 }
 
@@ -780,44 +801,51 @@ void Connection::pwritev(
     }
     ConnectionOp *op = *it;
 
-    *op = {
-        .cn = this,
-        .cid = op->cid,  // preserve cid
-        .request_frame = {
-            .magic = RAWSTOR_MAGIC,
-            .cmd = RAWSTOR_CMD_WRITE,
-            .cid = op->cid,
-            .offset = (uint64_t)offset,
-            .len = (uint32_t)size,
-            .hash = hash,
-            .sync = 0,
-        },
-        .payload = {
-            .vector = {
-                .iov = iov,
-                .niov = niov,
+    try {
+        *op = {
+            .cn = this,
+            .cid = op->cid,  // preserve cid
+            .request_frame = {
+                .magic = RAWSTOR_MAGIC,
+                .cmd = RAWSTOR_CMD_WRITE,
+                .cid = op->cid,
+                .offset = (uint64_t)offset,
+                .len = (uint32_t)size,
+                .hash = hash,
+                .sync = 0,
             },
-        },
-        .iov = {},
-        .process = _op_process_write,
-        .callback = cb,
-        .data = data,
-    };
+            .payload = {
+                .vector = {
+                    .iov = iov,
+                    .niov = niov,
+                },
+            },
+            .iov = {},
+            .process = _op_process_write,
+            .callback = cb,
+            .data = data,
+        };
 
-    op->iov[0] = {
-        .iov_base = &op->request_frame,
-        .iov_len = sizeof(op->request_frame),
-    };
-    for (unsigned int i = 0; i < niov; ++i) {
-        op->iov[i + 1] = iov[i];
-    }
+        op->iov[0] = {
+            .iov_base = &op->request_frame,
+            .iov_len = sizeof(op->request_frame),
+        };
+        for (unsigned int i = 0; i < niov; ++i) {
+            op->iov[i + 1] = iov[i];
+        }
 
-    if (rawstor_fd_writev(
-        _get_next_fd(),
-        op->iov, niov + 1, sizeof(op->request_frame) + size,
-        _write_requestv_sent, op))
-    {
-        RAWSTOR_THROW_ERRNO(errno);
+        if (rawstor_fd_writev(
+            _get_next_fd(),
+            op->iov, niov + 1, sizeof(op->request_frame) + size,
+            _write_requestv_sent, op))
+        {
+            RAWSTOR_THROW_ERRNO(errno);
+        }
+    } catch (...) {
+        ConnectionOp **it = (ConnectionOp**)rawstor_ringbuf_head(_ops);
+        assert(rawstor_ringbuf_push(_ops) == 0);
+        *it = op;
+        throw;
     }
 }
 
