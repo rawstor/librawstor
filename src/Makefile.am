@@ -8,7 +8,7 @@ GENERIC_FLAGS = -Wall -Wextra -Werror \
 
 AM_CFLAGS = -std=gnu99 $(GENERIC_FLAGS)
 
-AM_CPPFLAGS = $(GENERIC_FLAGS)
+AM_CXXFLAGS = $(GENERIC_FLAGS)
 
 
 librawstor_base_ladir = $(includedir)
