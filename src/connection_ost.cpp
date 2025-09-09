@@ -11,6 +11,7 @@
 #include <rawstorstd/logging.h>
 #include <rawstorstd/ringbuf.h>
 #include <rawstorstd/socket.h>
+#include <rawstorstd/uuid.h>
 
 #include <rawstor/object.h>
 
@@ -66,18 +67,32 @@ struct ConnectionOp {
 };
 
 
-Connection::Connection(rawstor::Object &object, unsigned int depth):
-    _object(object),
+void Connection::create(
+    const RawstorSocketAddress &,
+    const RawstorObjectSpec &,
+    RawstorUUID *id)
+{
+    /**
+     * TODO: Implement me.
+     */
+    if (rawstor_uuid7_init(id)) {
+        RAWSTOR_THROW_ERRNO(errno);
+    }
+}
+
+
+Connection::Connection(unsigned int depth):
+    _object(nullptr),
     _ifds(0),
     _depth(depth),
     _response_loop(0),
     _ops_array(),
-    _ops(NULL)
+    _ops(nullptr)
 {
     try {
         _ops = rawstor_ringbuf_create(
             _depth, sizeof(ConnectionOp*));
-        if (_ops == NULL) {
+        if (_ops == nullptr) {
             RAWSTOR_THROW_ERRNO(errno);
         }
 
@@ -207,7 +222,7 @@ void Connection::_set_object_id(int fd) {
     };
     memcpy(
         request_frame.obj_id,
-        _object.id().bytes,
+        _object->id().bytes,
         sizeof(request_frame.obj_id));
 
     int res = write(fd, &request_frame, sizeof(request_frame));
@@ -294,7 +309,7 @@ int Connection::_op_process_write(
         }
 
         ret = op->callback(
-            cn->_object.c_ptr(),
+            cn->_object->c_ptr(),
             op->request_frame.len, op->request_frame.len, 0,
             op->data);
     } catch (const std::system_error &e) {
@@ -440,7 +455,7 @@ int Connection::_response_body_received(
         }
 
         ret = op->callback(
-            cn->_object.c_ptr(),
+            cn->_object->c_ptr(),
             op->request_frame.len, op->request_frame.len, 0,
             op->data);
     } catch (const std::system_error &e) {
@@ -502,7 +517,7 @@ int Connection::_responsev_body_received(
         }
 
         ret = op->callback(
-            cn->_object.c_ptr(),
+            cn->_object->c_ptr(),
             op->request_frame.len, op->request_frame.len, 0,
             op->data);
     } catch (const std::system_error &e) {
@@ -572,10 +587,35 @@ int Connection::_response_head_received(
 }
 
 
-void Connection::open(const RawstorSocketAddress &ost, size_t count) {
-    if (!_fds.empty()) {
+void Connection::remove(rawstor::Object *, const RawstorSocketAddress &) {
+    throw std::runtime_error("Connection::remove() not implemented\n");
+}
+
+
+void Connection::spec(
+    rawstor::Object *,
+    const RawstorSocketAddress &,
+    RawstorObjectSpec *sp)
+{
+    /**
+     * TODO: Implement me.
+     */
+
+    *sp = {
+        .size = 1 << 30,
+    };
+}
+
+
+void Connection::open(
+    rawstor::Object *object,
+    const RawstorSocketAddress &ost,
+    size_t count)
+{
+    if (_object != nullptr) {
         throw std::runtime_error("Connection already opened");
     }
+    _object = object;
 
     try {
         _fds.reserve(count);
@@ -603,6 +643,7 @@ void Connection::close() {
         }
         _fds.pop_back();
     }
+    _object = nullptr;
 }
 
 

@@ -15,7 +15,7 @@ class Object {
         RawstorObject *_c_ptr;
         RawstorUUID _id;
         RawstorMemPool *_ops_pool;
-        Connection *_cn;
+        Connection _cn;
 
         static int _process(
             RawstorObject *object,
@@ -28,19 +28,8 @@ class Object {
             const RawstorObjectSpec &sp,
             RawstorUUID *id);
 
-        static void remove(const RawstorUUID &id);
-        static void remove(
-            const RawstorSocketAddress &ost,
-            const RawstorUUID &id);
-
-        static void spec(const RawstorUUID &id, RawstorObjectSpec *sp);
-        static void spec(
-            const RawstorSocketAddress &ost,
-            const RawstorUUID &id,
-            RawstorObjectSpec *sp);
-
         Object(const RawstorUUID &id);
-        Object(const Object&) = delete;
+        Object(const Object &) = delete;
 
         ~Object();
 
@@ -49,6 +38,12 @@ class Object {
         RawstorObject* c_ptr() noexcept;
 
         const RawstorUUID& id() const noexcept;
+
+        void remove();
+        void remove(const RawstorSocketAddress &ost);
+
+        void spec(RawstorObjectSpec *sp);
+        void spec(const RawstorSocketAddress &ost, RawstorObjectSpec *sp);
 
         void open();
         void open(const RawstorSocketAddress &ost);
