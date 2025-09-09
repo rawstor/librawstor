@@ -56,7 +56,7 @@ namespace rawstor {
 
 
 void Object::create(const RawstorObjectSpec &sp, RawstorUUID *id) {
-    return create(*rawstor_default_ost(), sp, id);
+    create(*rawstor_default_ost(), sp, id);
 }
 
 
