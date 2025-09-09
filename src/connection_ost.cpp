@@ -81,8 +81,8 @@ void Connection::create(
 }
 
 
-Connection::Connection(rawstor::Object *object, unsigned int depth):
-    _object(object),
+Connection::Connection(unsigned int depth):
+    _object(nullptr),
     _ifds(0),
     _depth(depth),
     _response_loop(0),
@@ -587,12 +587,16 @@ int Connection::_response_head_received(
 }
 
 
-void Connection::remove(const RawstorSocketAddress &) {
+void Connection::remove(rawstor::Object *, const RawstorSocketAddress &) {
     throw std::runtime_error("Connection::remove() not implemented\n");
 }
 
 
-void Connection::spec(const RawstorSocketAddress &, RawstorObjectSpec *sp) {
+void Connection::spec(
+    rawstor::Object *,
+    const RawstorSocketAddress &,
+    RawstorObjectSpec *sp)
+{
     /**
      * TODO: Implement me.
      */
@@ -603,10 +607,15 @@ void Connection::spec(const RawstorSocketAddress &, RawstorObjectSpec *sp) {
 }
 
 
-void Connection::open(const RawstorSocketAddress &ost, size_t count) {
-    if (!_fds.empty()) {
+void Connection::open(
+    rawstor::Object *object,
+    const RawstorSocketAddress &ost,
+    size_t count)
+{
+    if (_object != nullptr) {
         throw std::runtime_error("Connection already opened");
     }
+    _object = object;
 
     try {
         _fds.reserve(count);
@@ -634,6 +643,7 @@ void Connection::close() {
         }
         _fds.pop_back();
     }
+    _object = nullptr;
 }
 
 

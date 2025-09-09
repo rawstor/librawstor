@@ -65,7 +65,7 @@ class Connection {
             RawstorIOEvent *event, void *data) noexcept;
 
     public:
-        Connection(rawstor::Object *object, unsigned int depth);
+        Connection(unsigned int depth);
         Connection(const Connection &) = delete;
         ~Connection();
 
@@ -76,11 +76,19 @@ class Connection {
             const RawstorObjectSpec &sp,
             RawstorUUID *id);
 
-        void remove(const RawstorSocketAddress &ost);
+        void remove(
+            rawstor::Object *object,
+            const RawstorSocketAddress &ost);
 
-        void spec(const RawstorSocketAddress &ost, RawstorObjectSpec *sp);
+        void spec(
+            rawstor::Object *object,
+            const RawstorSocketAddress &ost,
+            RawstorObjectSpec *sp);
 
-        void open(const RawstorSocketAddress &ost, size_t count);
+        void open(
+            rawstor::Object *object,
+            const RawstorSocketAddress &ost,
+            size_t count);
 
         void close();
 
