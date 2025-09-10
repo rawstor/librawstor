@@ -25,6 +25,8 @@ int rawstor_ringbuf_pop(RawstorRingBuf *buf);
 
 int rawstor_ringbuf_empty(RawstorRingBuf *buf);
 
+size_t rawstor_ringbuf_capacity(RawstorRingBuf *buf);
+
 size_t rawstor_ringbuf_size(RawstorRingBuf *buf);
 
 void* rawstor_ringbuf_iter(RawstorRingBuf *buf);

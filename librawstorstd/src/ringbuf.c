@@ -88,6 +88,11 @@ int rawstor_ringbuf_empty(RawstorRingBuf *buf) {
 }
 
 
+size_t rawstor_ringbuf_capacity(RawstorRingBuf *buf) {
+    return buf->capacity - 1;
+}
+
+
 size_t rawstor_ringbuf_size(RawstorRingBuf *buf) {
     return (buf->capacity + buf->head - buf->tail) % buf->capacity;
 }
