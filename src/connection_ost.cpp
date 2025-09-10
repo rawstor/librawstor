@@ -102,11 +102,11 @@ void Connection::spec(
 void Connection::open(
     rawstor::Object *object,
     const RawstorSocketAddress &ost,
-    size_t count)
+    size_t sockets)
 {
-    _sockets.reserve(count);
+    _sockets.reserve(sockets);
     try {
-        for (size_t i = 0; i < count; ++i) {
+        for (size_t i = 0; i < sockets; ++i) {
             _sockets.emplace_back(*this);
             _sockets.back().open(object, ost);
         }
