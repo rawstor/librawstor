@@ -36,7 +36,7 @@ class Socket {
 
         int _connect(const RawstorSocketAddress &ost);
 
-        void _set_object_id(int fd);
+        void _set_object_id(int fd, const RawstorUUID &id);
 
         void _response_head_read();
 

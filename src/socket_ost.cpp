@@ -196,7 +196,7 @@ int Socket::_connect(const RawstorSocketAddress &ost) {
 /**
  * TODO: Do it async or solve partial IO issue.
  */
-void Socket::_set_object_id(int fd) {
+void Socket::_set_object_id(int fd, const RawstorUUID &id) {
     RawstorOSTFrameBasic request_frame = {
         .magic = RAWSTOR_MAGIC,
         .cmd = RAWSTOR_CMD_SET_OBJECT,
@@ -204,10 +204,7 @@ void Socket::_set_object_id(int fd) {
         .offset = 0,
         .val = 0,
     };
-    memcpy(
-        request_frame.obj_id,
-        _object->id().bytes,
-        sizeof(request_frame.obj_id));
+    memcpy(request_frame.obj_id, id.bytes, sizeof(request_frame.obj_id));
 
     int res = write(fd, &request_frame, sizeof(request_frame));
     if (res < 0) {
@@ -612,13 +609,13 @@ void Socket::open(
     rawstor::Object *object,
     const RawstorSocketAddress &ost)
 {
-    if (_object != nullptr) {
+    if (_fd != -1) {
         throw std::runtime_error("Socket already opened");
     }
 
     try {
         _fd = _connect(ost);
-        _set_object_id(_fd);
+        _set_object_id(_fd, object->id());
     } catch (...) {
         try {
             close();
