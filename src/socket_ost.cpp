@@ -115,7 +115,11 @@ Socket::Socket(Socket &&other):
     _ops_array(std::move(other._ops_array)),
     _ops(std::exchange(other._ops, nullptr)),
     _response_frame(std::move(other._response_frame))
-{}
+{
+    for (SocketOp *op: _ops_array) {
+        op->s = this;
+    }
+}
 
 
 Socket::~Socket() {
@@ -127,12 +131,8 @@ Socket::~Socket() {
         }
     }
 
-    for (
-        std::vector<SocketOp*>::iterator it = _ops_array.begin();
-        it != _ops_array.end();
-        ++it)
-    {
-        delete *it;
+    for (SocketOp *op: _ops_array) {
+        delete op;
     }
 
     rawstor_ringbuf_delete(_ops);
