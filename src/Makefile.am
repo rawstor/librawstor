@@ -33,7 +33,8 @@ librawstor_la_LIBADD = $(top_srcdir)/librawstorstd/src/librawstorstd.la \
 if ENABLE_OST
     AM_CFLAGS += $(LIBXXHASH_CFLAGS)
     librawstor_la_SOURCES += connection_ost.cpp \
-                             object_ost.cpp
+                             object_ost.cpp \
+                             socket_ost.cpp
     librawstor_la_LIBADD += $(LIBXXHASH_LIBS) \
                             -lstdc++
 else
