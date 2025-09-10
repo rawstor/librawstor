@@ -42,19 +42,16 @@ namespace rawstor {
 
 
 Connection::Connection(unsigned int depth):
-    _object(nullptr),
     _depth(depth),
     _socket_index(0)
 {}
 
 
 Connection::~Connection() {
-    if (_object != nullptr) {
-        try {
-            close();
-        } catch (const std::system_error &e) {
-            rawstor_error("Connection::close(): %s\n", e.what());
-        }
+    try {
+        close();
+    } catch (const std::system_error &e) {
+        rawstor_error("Connection::close(): %s\n", e.what());
     }
 }
 
@@ -107,10 +104,6 @@ void Connection::open(
     const RawstorSocketAddress &ost,
     size_t count)
 {
-    if (_object != nullptr) {
-        throw std::runtime_error("Connection already opened");
-    }
-
     _sockets.reserve(count);
     try {
         for (size_t i = 0; i < count; ++i) {
@@ -121,19 +114,11 @@ void Connection::open(
         _sockets.clear();
         throw;
     }
-
-    _object = object;
 }
 
 
 void Connection::close() {
-    if (_object == nullptr) {
-        throw std::runtime_error("Connection not opened");
-    }
-
     _sockets.clear();
-
-    _object = nullptr;
 }
 
 

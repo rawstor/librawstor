@@ -17,8 +17,6 @@ class Object;
 
 class Connection {
     private:
-        rawstor::Object *_object;
-
         unsigned int _depth;
 
         std::vector<Socket> _sockets;

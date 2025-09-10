@@ -615,7 +615,6 @@ void Socket::open(
     if (_object != nullptr) {
         throw std::runtime_error("Socket already opened");
     }
-    _object = object;
 
     try {
         _fd = _connect(ost);
@@ -627,16 +626,19 @@ void Socket::open(
             rawstor_error("Socket::close(): %s\n", e.what());
         }
     }
+
+    _object = object;
 }
 
 
 void Socket::close() {
-    if (_object == nullptr) {
+    if (_fd == -1) {
         throw std::runtime_error("Socket not opened");
     }
     if (::close(_fd) == -1) {
         RAWSTOR_THROW_ERRNO(errno);
     }
+    _fd = -1;
     _object = nullptr;
 }
 
