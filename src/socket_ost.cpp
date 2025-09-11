@@ -613,17 +613,22 @@ void Socket::open(
         throw std::runtime_error("Socket already opened");
     }
 
+    int fd = _connect(ost);
+
     try {
-        _fd = _connect(ost);
-        _set_object_id(_fd, object->id());
+        _set_object_id(fd, object->id());
     } catch (...) {
         try {
-            close();
+            if (::close(fd) == -1) {
+                RAWSTOR_THROW_ERRNO(errno);
+            }
         } catch (const std::system_error &e) {
             rawstor_error("Socket::close(): %s\n", e.what());
         }
+        throw;
     }
 
+    _fd = fd;
     _object = object;
 }
 
@@ -632,9 +637,11 @@ void Socket::close() {
     if (_fd == -1) {
         throw std::runtime_error("Socket not opened");
     }
+
     if (::close(_fd) == -1) {
         RAWSTOR_THROW_ERRNO(errno);
     }
+
     _fd = -1;
     _object = nullptr;
 }
