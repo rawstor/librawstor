@@ -95,12 +95,8 @@ Socket::Socket(const RawstorSocketAddress &ost, unsigned int depth):
             *it = op;
         }
     } catch (...) {
-        for (
-            std::vector<SocketOp*>::iterator it = _ops_array.begin();
-            it != _ops_array.end();
-            ++it)
-        {
-            delete *it;
+        for (SocketOp *op: _ops_array) {
+            delete op;
         }
         rawstor_ringbuf_delete(_ops);
 
