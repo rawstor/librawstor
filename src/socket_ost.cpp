@@ -100,12 +100,9 @@ Socket::Socket(const RawstorSocketAddress &ost, unsigned int depth):
         }
         rawstor_ringbuf_delete(_ops);
 
-        try {
-            if (::close(_fd) == -1) {
-                RAWSTOR_THROW_ERRNO(errno);
-            }
-        } catch (const std::system_error &e) {
-            rawstor_error("Socket::close(): %s\n", e.what());
+        if (::close(_fd) == -1) {
+            rawstor_error(
+                "Socket::Socket(): close failed: %s\n", strerror(errno));
         }
         _fd = -1;
 
