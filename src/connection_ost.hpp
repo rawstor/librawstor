@@ -1,11 +1,8 @@
 #ifndef RAWSTOR_CONNECTION_OST_HPP
 #define RAWSTOR_CONNECTION_OST_HPP
 
-#include "ost_protocol.h"
+#include "socket_ost.hpp"
 
-#include <rawstorstd/ringbuf.h>
-
-#include <rawstor/io_event.h>
 #include <rawstor/object.h>
 #include <rawstor/rawstor.h>
 
@@ -15,54 +12,17 @@
 namespace rawstor {
 
 
-struct ConnectionOp;
-
-
 class Object;
 
 
 class Connection {
     private:
-        rawstor::Object *_object;
-
-        std::vector<int> _fds;
-        size_t _ifds;
-
         unsigned int _depth;
 
-        int _response_loop;
-        std::vector<ConnectionOp*> _ops_array;
-        RawstorRingBuf *_ops;
-        RawstorOSTFrameResponse _response_frame;
+        std::vector<Socket> _sockets;
+        size_t _socket_index;
 
-        int _get_next_fd();
-
-        int _connect(const RawstorSocketAddress &ost);
-
-        void _set_object_id(int fd);
-
-        void _response_head_read();
-
-        static int _op_process_read(ConnectionOp *op, int fd) noexcept;
-
-        static int _op_process_readv(ConnectionOp *op, int fd) noexcept;
-
-        static int _op_process_write(ConnectionOp *op, int fd) noexcept;
-
-        static int _read_request_sent(
-            RawstorIOEvent *event, void *data) noexcept;
-
-        static int _write_requestv_sent(
-            RawstorIOEvent *event, void *data) noexcept;
-
-        static int _response_body_received(
-            RawstorIOEvent *event, void *data) noexcept;
-
-        static int _responsev_body_received(
-            RawstorIOEvent *event, void *data) noexcept;
-
-        static int _response_head_received(
-            RawstorIOEvent *event, void *data) noexcept;
+        Socket& _get_next_socket();
 
     public:
         Connection(unsigned int depth);
@@ -71,24 +31,10 @@ class Connection {
 
         Connection& operator=(const Connection&) = delete;
 
-        void create(
-            const RawstorSocketAddress &ost,
-            const RawstorObjectSpec &sp,
-            RawstorUUID *id);
-
-        void remove(
-            rawstor::Object *object,
-            const RawstorSocketAddress &ost);
-
-        void spec(
-            rawstor::Object *object,
-            const RawstorSocketAddress &ost,
-            RawstorObjectSpec *sp);
-
         void open(
-            rawstor::Object *object,
             const RawstorSocketAddress &ost,
-            size_t count);
+            rawstor::Object *object,
+            size_t sockets);
 
         void close();
 
