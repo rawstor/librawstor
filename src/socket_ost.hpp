@@ -67,9 +67,9 @@ class Socket {
 
         void create(const RawstorObjectSpec &sp, RawstorUUID *id);
 
-        void remove(rawstor::Object *object);
+        void remove(const RawstorUUID &id);
 
-        void spec(rawstor::Object *object, RawstorObjectSpec *sp);
+        void spec(const RawstorUUID &id, RawstorObjectSpec *sp);
 
         void open(rawstor::Object *object);
 

@@ -70,32 +70,9 @@ Socket& Connection::_get_next_socket() {
 }
 
 
-void Connection::create(
-    const RawstorSocketAddress &ost,
-    const RawstorObjectSpec &sp,
-    RawstorUUID *id)
-{
-    Socket(ost, _depth).create(sp, id);
-}
-
-
-void Connection::remove(rawstor::Object *object, const RawstorSocketAddress &ost) {
-    Socket(ost, _depth).remove(object);
-}
-
-
-void Connection::spec(
-    rawstor::Object *object,
-    const RawstorSocketAddress &ost,
-    RawstorObjectSpec *sp)
-{
-    Socket(ost, _depth).spec(object, sp);
-}
-
-
 void Connection::open(
-    rawstor::Object *object,
     const RawstorSocketAddress &ost,
+    rawstor::Object *object,
     size_t sockets)
 {
     _sockets.reserve(sockets);

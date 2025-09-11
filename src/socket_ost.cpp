@@ -590,12 +590,12 @@ void Socket::create(const RawstorObjectSpec &, RawstorUUID *id) {
 }
 
 
-void Socket::remove(rawstor::Object *) {
+void Socket::remove(const RawstorUUID &) {
     throw std::runtime_error("Socket::remove() not implemented\n");
 }
 
 
-void Socket::spec(rawstor::Object *, RawstorObjectSpec *sp) {
+void Socket::spec(const RawstorUUID &, RawstorObjectSpec *sp) {
     /**
      * TODO: Implement me.
      */

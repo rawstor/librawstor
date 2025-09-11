@@ -31,23 +31,9 @@ class Connection {
 
         Connection& operator=(const Connection&) = delete;
 
-        void create(
-            const RawstorSocketAddress &ost,
-            const RawstorObjectSpec &sp,
-            RawstorUUID *id);
-
-        void remove(
-            rawstor::Object *object,
-            const RawstorSocketAddress &ost);
-
-        void spec(
-            rawstor::Object *object,
-            const RawstorSocketAddress &ost,
-            RawstorObjectSpec *sp);
-
         void open(
-            rawstor::Object *object,
             const RawstorSocketAddress &ost,
+            rawstor::Object *object,
             size_t sockets);
 
         void close();
