@@ -111,7 +111,7 @@ Socket::Socket(const RawstorSocketAddress &ost, unsigned int depth):
 }
 
 
-Socket::Socket(Socket &&other):
+Socket::Socket(Socket &&other) noexcept:
     _fd(std::exchange(other._fd, -1)),
     _object(std::exchange(other._object, nullptr)),
     _response_loop(std::exchange(other._response_loop, 0)),

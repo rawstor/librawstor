@@ -60,7 +60,7 @@ class Socket {
     public:
         Socket(const RawstorSocketAddress &ost, unsigned int depth);
         Socket(const Socket &) = delete;
-        Socket(Socket &&other);
+        Socket(Socket &&other) noexcept;
         ~Socket();
 
         Socket& operator=(const Socket&) = delete;
