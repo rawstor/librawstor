@@ -22,9 +22,8 @@ class Object;
 
 class Socket {
     private:
-        Object *_object;
-
         int _fd;
+        Object *_object;
 
         int _response_loop;
         std::vector<SocketOp*> _ops_array;
@@ -59,30 +58,20 @@ class Socket {
             RawstorIOEvent *event, void *data) noexcept;
 
     public:
-        Socket(unsigned int depth);
+        Socket(const RawstorSocketAddress &ost, unsigned int depth);
         Socket(const Socket &) = delete;
         Socket(Socket &&other);
         ~Socket();
 
         Socket& operator=(const Socket&) = delete;
 
-        void create(
-            const RawstorSocketAddress &ost,
-            const RawstorObjectSpec &sp,
-            RawstorUUID *id);
+        void create(const RawstorObjectSpec &sp, RawstorUUID *id);
 
-        void remove(
-            rawstor::Object *object,
-            const RawstorSocketAddress &ost);
+        void remove(rawstor::Object *object);
 
-        void spec(
-            rawstor::Object *object,
-            const RawstorSocketAddress &ost,
-            RawstorObjectSpec *sp);
+        void spec(rawstor::Object *object, RawstorObjectSpec *sp);
 
-        void open(
-            rawstor::Object *object,
-            const RawstorSocketAddress &ost);
+        void open(rawstor::Object *object);
 
         void close();
 

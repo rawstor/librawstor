@@ -68,13 +68,15 @@ struct SocketOp {
 };
 
 
-Socket::Socket(unsigned int depth):
-    _object(nullptr),
+Socket::Socket(const RawstorSocketAddress &ost, unsigned int depth):
     _fd(-1),
+    _object(nullptr),
     _response_loop(0),
     _ops_array(),
     _ops(nullptr)
 {
+    _fd = _connect(ost);
+
     try {
         _ops = rawstor_ringbuf_create(depth, sizeof(SocketOp*));
         if (_ops == nullptr) {
@@ -101,14 +103,23 @@ Socket::Socket(unsigned int depth):
             delete *it;
         }
         rawstor_ringbuf_delete(_ops);
+
+        try {
+            if (::close(_fd) == -1) {
+                RAWSTOR_THROW_ERRNO(errno);
+            }
+        } catch (const std::system_error &e) {
+            rawstor_error("Socket::close(): %s\n", e.what());
+        }
+
         throw;
     }
 }
 
 
 Socket::Socket(Socket &&other):
-    _object(std::exchange(other._object, nullptr)),
     _fd(std::exchange(other._fd, -1)),
+    _object(std::exchange(other._object, nullptr)),
     _response_loop(std::exchange(other._response_loop, 0)),
     _ops_array(std::move(other._ops_array)),
     _ops(std::exchange(other._ops, nullptr)),
@@ -569,11 +580,7 @@ int Socket::_response_head_received(
 }
 
 
-void Socket::create(
-    const RawstorSocketAddress &,
-    const RawstorObjectSpec &,
-    RawstorUUID *id)
-{
+void Socket::create(const RawstorObjectSpec &, RawstorUUID *id) {
     /**
      * TODO: Implement me.
      */
@@ -583,16 +590,12 @@ void Socket::create(
 }
 
 
-void Socket::remove(rawstor::Object *, const RawstorSocketAddress &) {
+void Socket::remove(rawstor::Object *) {
     throw std::runtime_error("Socket::remove() not implemented\n");
 }
 
 
-void Socket::spec(
-    rawstor::Object *,
-    const RawstorSocketAddress &,
-    RawstorObjectSpec *sp)
-{
+void Socket::spec(rawstor::Object *, RawstorObjectSpec *sp) {
     /**
      * TODO: Implement me.
      */
@@ -603,44 +606,22 @@ void Socket::spec(
 }
 
 
-void Socket::open(
-    rawstor::Object *object,
-    const RawstorSocketAddress &ost)
-{
-    if (_fd != -1) {
+void Socket::open(rawstor::Object *object) {
+    if (_object != nullptr) {
         throw std::runtime_error("Socket already opened");
     }
 
-    int fd = _connect(ost);
+    _set_object_id(_fd, object->id());
 
-    try {
-        _set_object_id(fd, object->id());
-    } catch (...) {
-        try {
-            if (::close(fd) == -1) {
-                RAWSTOR_THROW_ERRNO(errno);
-            }
-        } catch (const std::system_error &e) {
-            rawstor_error("Socket::close(): %s\n", e.what());
-        }
-        throw;
-    }
-
-    _fd = fd;
     _object = object;
 }
 
 
 void Socket::close() {
-    if (_fd == -1) {
+    if (_object == nullptr) {
         throw std::runtime_error("Socket not opened");
     }
 
-    if (::close(_fd) == -1) {
-        RAWSTOR_THROW_ERRNO(errno);
-    }
-
-    _fd = -1;
     _object = nullptr;
 }
 
