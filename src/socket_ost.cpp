@@ -130,12 +130,9 @@ Socket::Socket(Socket &&other):
 
 Socket::~Socket() {
     if (_fd != -1) {
-        try {
-            if (::close(_fd) == -1) {
-                RAWSTOR_THROW_ERRNO(errno);
-            }
-        } catch (const std::system_error &e) {
-            rawstor_error("Socket::~Socket(): %s\n", e.what());
+        if (::close(_fd) == -1) {
+            rawstor_error(
+                "Socket::~Socket(): close failed: %s\n", strerror(errno));
         }
     }
 
@@ -605,23 +602,10 @@ void Socket::spec(const RawstorUUID &, RawstorObjectSpec *sp) {
 }
 
 
-void Socket::open(rawstor::Object *object) {
-    if (_object != nullptr) {
-        throw std::runtime_error("Socket already opened");
-    }
-
+void Socket::set_object(rawstor::Object *object) {
     _set_object_id(_fd, object->id());
 
     _object = object;
-}
-
-
-void Socket::close() {
-    if (_object == nullptr) {
-        throw std::runtime_error("Socket not opened");
-    }
-
-    _object = nullptr;
 }
 
 

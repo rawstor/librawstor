@@ -79,7 +79,7 @@ void Connection::open(
     try {
         for (size_t i = 0; i < sockets; ++i) {
             _sockets.emplace_back(ost, _depth);
-            _sockets.back().open(object);
+            _sockets.back().set_object(object);
         }
     } catch (...) {
         _sockets.clear();

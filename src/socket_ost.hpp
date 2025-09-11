@@ -71,9 +71,7 @@ class Socket {
 
         void spec(const RawstorUUID &id, RawstorObjectSpec *sp);
 
-        void open(rawstor::Object *object);
-
-        void close();
+        void set_object(rawstor::Object *object);
 
         void pread(
             void *buf, size_t size, off_t offset,
