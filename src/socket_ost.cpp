@@ -107,6 +107,7 @@ Socket::Socket(const RawstorSocketAddress &ost, unsigned int depth):
         } catch (const std::system_error &e) {
             rawstor_error("Socket::close(): %s\n", e.what());
         }
+        _fd = -1;
 
         throw;
     }
@@ -130,9 +131,11 @@ Socket::Socket(Socket &&other):
 Socket::~Socket() {
     if (_fd != -1) {
         try {
-            close();
+            if (::close(_fd) == -1) {
+                RAWSTOR_THROW_ERRNO(errno);
+            }
         } catch (const std::system_error &e) {
-            rawstor_error("Socket::close(): %s\n", e.what());
+            rawstor_error("Socket::~Socket(): %s\n", e.what());
         }
     }
 
