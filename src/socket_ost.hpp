@@ -19,12 +19,9 @@ struct SocketOp;
 
 class Object;
 
-class Connection;
-
 
 class Socket {
     private:
-        Connection &_cn;
         Object *_object;
 
         int _fd;
@@ -62,7 +59,7 @@ class Socket {
             RawstorIOEvent *event, void *data) noexcept;
 
     public:
-        Socket(Connection &cn);
+        Socket(unsigned int depth);
         Socket(const Socket &) = delete;
         Socket(Socket &&other);
         ~Socket();

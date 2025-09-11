@@ -70,23 +70,17 @@ Socket& Connection::_get_next_socket() {
 }
 
 
-unsigned int Connection::depth() const noexcept {
-    return _depth;
-}
-
-
 void Connection::create(
     const RawstorSocketAddress &ost,
     const RawstorObjectSpec &sp,
     RawstorUUID *id)
 {
-    Socket(*this).create(ost, sp, id);
+    Socket(_depth).create(ost, sp, id);
 }
 
 
 void Connection::remove(rawstor::Object *object, const RawstorSocketAddress &ost) {
-    Socket s(*this);
-    s.remove(object, ost);
+    Socket(_depth).remove(object, ost);
 }
 
 
@@ -95,7 +89,7 @@ void Connection::spec(
     const RawstorSocketAddress &ost,
     RawstorObjectSpec *sp)
 {
-    Socket(*this).spec(object, ost, sp);
+    Socket(_depth).spec(object, ost, sp);
 }
 
 
@@ -107,7 +101,7 @@ void Connection::open(
     _sockets.reserve(sockets);
     try {
         for (size_t i = 0; i < sockets; ++i) {
-            _sockets.emplace_back(*this);
+            _sockets.emplace_back(_depth);
             _sockets.back().open(object, ost);
         }
     } catch (...) {

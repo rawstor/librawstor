@@ -65,8 +65,7 @@ void Object::create(
     const RawstorObjectSpec &sp,
     RawstorUUID *id)
 {
-    Connection cn(QUEUE_DEPTH);
-    cn.create(ost, sp, id);
+    Connection(QUEUE_DEPTH).create(ost, sp, id);
 }
 
 
@@ -122,8 +121,7 @@ void Object::remove(const RawstorSocketAddress &ost) {
     /**
      * TODO: Can I use here _cn? What should I do if _cn is opened?
      */
-    Connection cn(QUEUE_DEPTH);
-    cn.remove(this, ost);
+    Connection(QUEUE_DEPTH).remove(this, ost);
 }
 
 
@@ -136,8 +134,7 @@ void Object::spec(const RawstorSocketAddress &ost, RawstorObjectSpec *sp) {
     /**
      * TODO: Can I use here _cn? What should I do if _cn is opened?
      */
-    Connection cn(QUEUE_DEPTH);
-    cn.spec(this, ost, sp);
+    Connection(QUEUE_DEPTH).spec(this, ost, sp);
 }
 
 

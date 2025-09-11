@@ -31,8 +31,6 @@ class Connection {
 
         Connection& operator=(const Connection&) = delete;
 
-        unsigned int depth() const noexcept;
-
         void create(
             const RawstorSocketAddress &ost,
             const RawstorObjectSpec &sp,

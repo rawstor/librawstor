@@ -68,8 +68,7 @@ struct SocketOp {
 };
 
 
-Socket::Socket(Connection &cn):
-    _cn(cn),
+Socket::Socket(unsigned int depth):
     _object(nullptr),
     _fd(-1),
     _response_loop(0),
@@ -77,13 +76,13 @@ Socket::Socket(Connection &cn):
     _ops(nullptr)
 {
     try {
-        _ops = rawstor_ringbuf_create(_cn.depth(), sizeof(SocketOp*));
+        _ops = rawstor_ringbuf_create(depth, sizeof(SocketOp*));
         if (_ops == nullptr) {
             RAWSTOR_THROW_ERRNO(errno);
         }
 
-        _ops_array.reserve(_cn.depth());
-        for (unsigned int i = 0; i < _cn.depth(); ++i) {
+        _ops_array.reserve(depth);
+        for (unsigned int i = 0; i < depth; ++i) {
             SocketOp *op = new SocketOp();
             op->cid = i + 1;
 
@@ -108,7 +107,6 @@ Socket::Socket(Connection &cn):
 
 
 Socket::Socket(Socket &&other):
-    _cn(other._cn),
     _object(std::exchange(other._object, nullptr)),
     _fd(std::exchange(other._fd, -1)),
     _response_loop(std::exchange(other._response_loop, 0)),
