@@ -99,6 +99,7 @@ static RawstorIOEvent* io_queue_create_event(
     }
 
     *event = (RawstorIOEvent) {
+        .queue = queue,
         .fd = fd,
         .iov_origin = event_iov,
         .iov_at = event_iov,
@@ -143,6 +144,7 @@ static RawstorIOEvent* io_queue_create_eventv(
     }
 
     *event = (RawstorIOEvent) {
+        .queue = queue,
         .fd = fd,
         .iov_origin = event_iov,
         .iov_at = event_iov,

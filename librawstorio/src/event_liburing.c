@@ -6,6 +6,11 @@
 #include <stddef.h>
 
 
+RawstorIOQueue* rawstor_io_event_queue(RawstorIOEvent *event) {
+    return event->queue;
+}
+
+
 int rawstor_io_event_fd(RawstorIOEvent *event) {
     return event->fd;
 }

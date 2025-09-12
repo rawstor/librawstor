@@ -11,6 +11,8 @@
 
 
 struct RawstorIOEvent {
+    RawstorIOQueue *queue;
+
     struct aiocb *cb;
     struct aiocb **cbp;
 
@@ -23,13 +25,12 @@ struct RawstorIOEvent {
         void *data;
     } payload;
 
-    RawstorIOCallback *callback;
-
     size_t size;
     size_t result;
     size_t total_result;
     int error;
 
+    RawstorIOCallback *callback;
     void *data;
 };
 
@@ -68,6 +69,7 @@ static int io_event_readv(RawstorIOEvent *event, void *data) {
     }
 
     *next_event = (RawstorIOEvent) {
+        .queue = event->queue,
         .cb = next_event->cb,
         .cbp = next_event->cbp,
         .payload = {
@@ -78,11 +80,11 @@ static int io_event_readv(RawstorIOEvent *event, void *data) {
             .callback = event->payload.callback,
             .data = event->payload.data,
         },
-        .callback = io_event_readv,
         .size = event->size,
         .result = 0,
         .total_result = event->total_result,
         .error = EINPROGRESS,
+        .callback = io_event_readv,
         .data = queue,
     };
 
@@ -134,6 +136,7 @@ static int io_event_preadv(RawstorIOEvent *event, void *data) {
     }
 
     *next_event = (RawstorIOEvent) {
+        .queue = event->queue,
         .cb = next_event->cb,
         .cbp = next_event->cbp,
         .payload = {
@@ -144,11 +147,11 @@ static int io_event_preadv(RawstorIOEvent *event, void *data) {
             .callback = event->payload.callback,
             .data = event->payload.data,
         },
-        .callback = io_event_readv,
         .size = event->size,
         .result = 0,
         .total_result = event->total_result,
         .error = EINPROGRESS,
+        .callback = io_event_preadv,
         .data = queue,
     };
 
@@ -200,6 +203,7 @@ static int io_event_writev(RawstorIOEvent *event, void *data) {
     }
 
     *next_event = (RawstorIOEvent) {
+        .queue = event->queue,
         .cb = next_event->cb,
         .cbp = next_event->cbp,
         .payload = {
@@ -210,11 +214,11 @@ static int io_event_writev(RawstorIOEvent *event, void *data) {
             .callback = event->payload.callback,
             .data = event->payload.data,
         },
-        .callback = io_event_writev,
         .size = event->size,
         .result = 0,
         .total_result = event->total_result,
         .error = EINPROGRESS,
+        .callback = io_event_writev,
         .data = queue,
     };
 
@@ -266,6 +270,7 @@ static int io_event_pwritev(RawstorIOEvent *event, void *data) {
     }
 
     *next_event = (RawstorIOEvent) {
+        .queue = event->queue,
         .cb = next_event->cb,
         .cbp = next_event->cbp,
         .payload = {
@@ -276,11 +281,11 @@ static int io_event_pwritev(RawstorIOEvent *event, void *data) {
             .callback = event->payload.callback,
             .data = event->payload.data,
         },
-        .callback = io_event_writev,
         .size = event->size,
         .result = 0,
         .total_result = event->total_result,
         .error = EINPROGRESS,
+        .callback = io_event_pwritev,
         .data = queue,
     };
 
@@ -428,6 +433,7 @@ int rawstor_io_queue_read(
     }
 
     *event = (RawstorIOEvent) {
+        .queue = queue,
         .cb = event->cb,
         .cbp = event->cbp,
         // .payload
@@ -474,14 +480,15 @@ int rawstor_io_queue_pread(
     }
 
     *event = (RawstorIOEvent) {
+        .queue = queue,
         .cb = event->cb,
         .cbp = event->cbp,
         // .payload
-        .callback = cb,
         .size = size,
         .result = 0,
         .total_result = 0,
         .error = EINPROGRESS,
+        .callback = cb,
         .data = data,
     };
 
@@ -527,6 +534,7 @@ int rawstor_io_queue_readv(
     }
 
     *event = (RawstorIOEvent) {
+        .queue = queue,
         .cb = event->cb,
         .cbp = event->cbp,
         .payload = {
@@ -537,11 +545,11 @@ int rawstor_io_queue_readv(
             .callback = cb,
             .data = data,
         },
-        .callback = io_event_readv,
         .size = size,
         .result = 0,
         .total_result = 0,
         .error = EINPROGRESS,
+        .callback = io_event_readv,
         .data = queue,
     };
 
@@ -587,6 +595,7 @@ int rawstor_io_queue_preadv(
     }
 
     *event = (RawstorIOEvent) {
+        .queue = queue,
         .cb = event->cb,
         .cbp = event->cbp,
         .payload = {
@@ -597,11 +606,11 @@ int rawstor_io_queue_preadv(
             .callback = cb,
             .data = data,
         },
-        .callback = io_event_preadv,
         .size = size,
         .result = 0,
         .total_result = 0,
         .error = EINPROGRESS,
+        .callback = io_event_preadv,
         .data = queue,
     };
 
@@ -640,14 +649,15 @@ int rawstor_io_queue_write(
     }
 
     *event = (RawstorIOEvent) {
+        .queue = queue,
         .cb = event->cb,
         .cbp = event->cbp,
         // .payload
-        .callback = cb,
         .size = size,
         .result = 0,
         .total_result = 0,
         .error = EINPROGRESS,
+        .callback = cb,
         .data = data,
     };
 
@@ -686,14 +696,15 @@ int rawstor_io_queue_pwrite(
     }
 
     *event = (RawstorIOEvent) {
+        .queue = queue,
         .cb = event->cb,
         .cbp = event->cbp,
         // .payload
-        .callback = cb,
         .size = size,
         .result = 0,
         .total_result = 0,
         .error = EINPROGRESS,
+        .callback = cb,
         .data = data,
     };
 
@@ -739,6 +750,7 @@ int rawstor_io_queue_writev(
     }
 
     *event = (RawstorIOEvent) {
+        .queue = queue,
         .cb = event->cb,
         .cbp = event->cbp,
         .payload = {
@@ -749,11 +761,11 @@ int rawstor_io_queue_writev(
             .callback = cb,
             .data = data,
         },
-        .callback = io_event_writev,
         .size = size,
         .result = 0,
         .total_result = 0,
         .error = EINPROGRESS,
+        .callback = io_event_writev,
         .data = queue,
     };
 
@@ -799,6 +811,7 @@ int rawstor_io_queue_pwritev(
     }
 
     *event = (RawstorIOEvent) {
+        .queue = queue,
         .cb = event->cb,
         .cbp = event->cbp,
         .payload = {
@@ -809,11 +822,11 @@ int rawstor_io_queue_pwritev(
             .callback = cb,
             .data = data,
         },
-        .callback = io_event_pwritev,
         .size = size,
         .result = 0,
         .total_result = 0,
         .error = EINPROGRESS,
+        .callback = io_event_pwritev,
         .data = queue,
     };
 
@@ -872,6 +885,11 @@ RawstorIOEvent* rawstor_io_queue_wait_event_timeout(
 void rawstor_io_queue_release_event(RawstorIOQueue *queue, RawstorIOEvent *event) {
     *event->cbp = NULL;
     rawstor_mempool_free(queue->events_pool, event);
+}
+
+
+RawstorIOQueue* rawstor_io_event_queue(RawstorIOEvent *event) {
+    return event->queue;
 }
 
 

@@ -41,11 +41,12 @@ static inline RawstorIOEvent* io_queue_create_event(
     }
 
     *event = (RawstorIOEvent) {
+        .queue = queue,
         .fd = fd,
-        .callback = cb,
         .size = size,
         .sqe = sqe,
         // .cqe
+        .callback = cb,
         .data = data,
     };
 

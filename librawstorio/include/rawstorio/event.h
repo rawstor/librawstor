@@ -1,7 +1,9 @@
 #ifndef RAWSTORIO_EVENT_H
 #define RAWSTORIO_EVENT_H
 
-#include <rawstor.h>
+#include <rawstorio/queue.h>
+
+#include <rawstor/io_event.h>
 
 #include <stddef.h>
 
@@ -11,9 +13,11 @@ extern "C" {
 #endif
 
 
-// defined in rawstor.h
+// defined in rawstor/io_event.h
 // typedef struct RawstorIOEvent RawstorIOEvent;
 
+
+RawstorIOQueue* rawstor_io_event_queue(RawstorIOEvent *event);
 
 int rawstor_io_event_fd(RawstorIOEvent *event);
 

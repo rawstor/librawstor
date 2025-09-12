@@ -18,10 +18,10 @@ extern "C" {
 
 typedef struct RawstorIOQueue RawstorIOQueue;
 
-// defined in rawstor.h
+// defined in rawstor/io_event.h
 // typedef struct RawstorIOEvent RawstorIOEvent;
 
-// defined in rawstor.h
+// defined in rawstor/io_queue.h
 // typedef int(RawstorIOCallback)(RawstorIOEvent *event, void *data);
 
 
