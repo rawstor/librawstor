@@ -31,6 +31,9 @@ class Socket {
         RawstorRingBuf *_ops;
         RawstorOSTFrameResponse _response;
 
+        SocketOp* _pop_op();
+        void _push_op(SocketOp *op);
+
         int _connect(const RawstorSocketAddress &ost);
 
         void _writev_request(RawstorIOQueue *queue, SocketOp *op);
