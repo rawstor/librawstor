@@ -65,7 +65,6 @@ struct SocketOp {
     int (*process)(SocketOp *op);
 
     RawstorCallback *callback;
-
     void *data;
 };
 
@@ -73,7 +72,6 @@ struct SocketOp {
 Socket::Socket(const RawstorSocketAddress &ost, unsigned int depth):
     _fd(-1),
     _object(nullptr),
-    _response_loop(0),
     _ops_array(),
     _ops(nullptr)
 {
@@ -96,6 +94,9 @@ Socket::Socket(const RawstorSocketAddress &ost, unsigned int depth):
             assert(rawstor_ringbuf_push(_ops) == 0);
             *it = op;
         }
+
+        _read_response_head();
+
     } catch (...) {
         for (SocketOp *op: _ops_array) {
             delete op;
@@ -116,7 +117,6 @@ Socket::Socket(const RawstorSocketAddress &ost, unsigned int depth):
 Socket::Socket(Socket &&other) noexcept:
     _fd(std::exchange(other._fd, -1)),
     _object(std::exchange(other._object, nullptr)),
-    _response_loop(std::exchange(other._response_loop, 0)),
     _ops_array(std::move(other._ops_array)),
     _ops(std::exchange(other._ops, nullptr)),
     _response(std::move(other._response))
@@ -250,11 +250,44 @@ void Socket::_set_object_id(int fd, const RawstorUUID &id) {
 }
 
 
-void Socket::_response_head_read() {
+void Socket::_writev_request(SocketOp *op) {
+    if (rawstor_fd_writev(
+        _fd,
+        op->iov, op->niov, op->size,
+        _writev_request_cb, op))
+    {
+        RAWSTOR_THROW_ERRNO(errno);
+    }
+}
+
+
+void Socket::_read_response_head() {
     if (rawstor_fd_read(
         _fd,
         &_response, sizeof(_response),
-        _response_head_received, this))
+        _read_response_head_cb, this))
+    {
+        RAWSTOR_THROW_ERRNO(errno);
+    }
+}
+
+
+void Socket::_read_response_body(SocketOp *op) {
+    if (rawstor_fd_read(
+        _fd,
+        op->payload.linear.data, op->request.len,
+        _read_response_body_cb, op))
+    {
+        RAWSTOR_THROW_ERRNO(errno);
+    }
+}
+
+
+void Socket::_readv_response_body(SocketOp *op) {
+    if (rawstor_fd_readv(
+        _fd,
+        op->payload.vector.iov, op->payload.vector.niov, op->request.len,
+        _readv_response_body_cb, op))
     {
         RAWSTOR_THROW_ERRNO(errno);
     }
@@ -262,18 +295,22 @@ void Socket::_response_head_read() {
 
 
 int Socket::_op_process_read(SocketOp *op) noexcept {
-    return rawstor_fd_read(
-        op->s->_fd,
-        op->payload.linear.data, op->request.len,
-        _response_body_received, op);
+    try {
+        op->s->_read_response_body(op);
+        return 0;
+    } catch (const std::system_error &e) {
+        return -e.code().value();
+    }
 }
 
 
 int Socket::_op_process_readv(SocketOp *op) noexcept {
-    return rawstor_fd_readv(
-        op->s->_fd,
-        op->payload.vector.iov, op->payload.vector.niov, op->request.len,
-        _responsev_body_received, op);
+    try {
+        op->s->_readv_response_body(op);
+        return 0;
+    } catch (const std::system_error &e) {
+        return -e.code().value();
+    }
 }
 
 
@@ -282,17 +319,7 @@ int Socket::_op_process_write(SocketOp *op) noexcept {
     int ret = 0;
 
     try {
-        /**
-         * Continue response loop, if there are any other pending operations.
-         */
-        if (
-            rawstor_ringbuf_size(s->_ops) <
-            rawstor_ringbuf_capacity(s->_ops) - 1)
-        {
-            s->_response_head_read();
-        } else {
-            s->_response_loop = 0;
-        }
+        s->_read_response_head();
 
         ret = op->callback(
             s->_object->c_ptr(),
@@ -310,9 +337,7 @@ int Socket::_op_process_write(SocketOp *op) noexcept {
 }
 
 
-int Socket::_read_request_sent(
-    RawstorIOEvent *event, void *data) noexcept
-{
+int Socket::_writev_request_cb(RawstorIOEvent *event, void *data) noexcept {
     SocketOp *op = (SocketOp*)data;
     Socket *s = op->s;
 
@@ -331,14 +356,6 @@ int Socket::_read_request_sent(
             RAWSTOR_THROW_ERRNO(EIO);
         }
 
-        /**
-         * Start read response loop.
-         */
-        if (s->_response_loop == 0) {
-            s->_response_head_read();
-            s->_response_loop = 1;
-        }
-
         return 0;
     } catch (const std::system_error &e) {
         SocketOp **it = (SocketOp**)rawstor_ringbuf_head(s->_ops);
@@ -349,46 +366,7 @@ int Socket::_read_request_sent(
 }
 
 
-int Socket::_write_requestv_sent(
-    RawstorIOEvent *event, void *data) noexcept
-{
-    SocketOp *op = (SocketOp*)data;
-    Socket *s = op->s;
-
-    try {
-        op_trace(op->cid, event);
-
-        if (rawstor_io_event_error(event) != 0) {
-            RAWSTOR_THROW_ERRNO(rawstor_io_event_error(event));
-        }
-
-        if (rawstor_io_event_result(event) != rawstor_io_event_size(event)) {
-            rawstor_error(
-                "Request size mismatch: %zu != %zu\n",
-                rawstor_io_event_result(event),
-                rawstor_io_event_size(event));
-            RAWSTOR_THROW_ERRNO(EIO);
-        }
-
-        /**
-         * Start read response loop.
-         */
-        if (s->_response_loop == 0) {
-            s->_response_head_read();
-            s->_response_loop = 1;
-        }
-
-        return 0;
-    } catch (const std::system_error &e) {
-        SocketOp **it = (SocketOp**)rawstor_ringbuf_head(s->_ops);
-        assert(rawstor_ringbuf_push(s->_ops) == 0);
-        *it = op;
-        return -e.code().value();
-    }
-}
-
-
-int Socket::_response_body_received(
+int Socket::_read_response_body_cb(
     RawstorIOEvent *event, void *data) noexcept
 {
     /**
@@ -425,17 +403,7 @@ int Socket::_response_body_received(
             RAWSTOR_THROW_ERRNO(EIO);
         }
 
-        /**
-         * Continue response loop, if there are any other pending operations.
-         */
-        if (
-            rawstor_ringbuf_size(s->_ops) <
-            rawstor_ringbuf_capacity(s->_ops) - 1)
-        {
-            s->_response_head_read();
-        } else {
-            s->_response_loop = 0;
-        }
+        s->_read_response_head();
 
         ret = op->callback(
             s->_object->c_ptr(),
@@ -453,7 +421,7 @@ int Socket::_response_body_received(
 }
 
 
-int Socket::_responsev_body_received(
+int Socket::_readv_response_body_cb(
     RawstorIOEvent *event, void *data) noexcept
 {
     SocketOp *op = (SocketOp*)data;
@@ -490,17 +458,7 @@ int Socket::_responsev_body_received(
             RAWSTOR_THROW_ERRNO(EIO);
         }
 
-        /**
-         * Continue response loop, if there are any other pending operations.
-         */
-        if (
-            rawstor_ringbuf_size(s->_ops) <
-            rawstor_ringbuf_capacity(s->_ops) - 1)
-        {
-            s->_response_head_read();
-        } else {
-            s->_response_loop = 0;
-        }
+        s->_read_response_head();
 
         ret = op->callback(
             s->_object->c_ptr(),
@@ -518,7 +476,7 @@ int Socket::_responsev_body_received(
 }
 
 
-int Socket::_response_head_received(
+int Socket::_read_response_head_cb(
     RawstorIOEvent *event, void *data) noexcept
 {
     Socket *s = (Socket*)data;
@@ -528,7 +486,6 @@ int Socket::_response_head_received(
             /**
              * FIXME: Memory leak on used RawstorObjectOperation.
              */
-            s->_response_loop = 0;
             RAWSTOR_THROW_ERRNO(rawstor_io_event_error(event));
         }
 
@@ -540,29 +497,28 @@ int Socket::_response_head_received(
                 "Response head size mismatch: %zu != %zu\n",
                 rawstor_io_event_result(event),
                 rawstor_io_event_size(event));
-            s->_response_loop = 0;
             RAWSTOR_THROW_ERRNO(EIO);
         }
 
-        RawstorOSTFrameResponse *response = &s->_response;
-        if (response->magic != RAWSTOR_MAGIC) {
+        RawstorOSTFrameResponse &response = s->_response;
+        if (response.magic != RAWSTOR_MAGIC) {
             /**
              * FIXME: Memory leak on used RawstorObjectOperation.
              */
             rawstor_error(
                 "FATAL! Frame with wrong magic number: %x != %x\n",
-                response->magic, RAWSTOR_MAGIC);
+                response.magic, RAWSTOR_MAGIC);
             RAWSTOR_THROW_ERRNO(EIO);
         }
-        if (response->cid < 1 || response->cid > s->_ops_array.size()) {
+        if (response.cid < 1 || response.cid > s->_ops_array.size()) {
             /**
              * FIXME: Memory leak on used RawstorObjectOperation.
              */
-            rawstor_error("Unexpected cid in response: %u\n", response->cid);
+            rawstor_error("Unexpected cid in response: %u\n", response.cid);
             RAWSTOR_THROW_ERRNO(EIO);
         }
 
-        SocketOp *op = s->_ops_array[response->cid - 1];
+        SocketOp *op = s->_ops_array[response.cid - 1];
 
         op_trace(op->cid, event);
 
@@ -646,13 +602,14 @@ void Socket::pread(
             .data = data,
         };
 
-        if (rawstor_fd_write(
-            _fd,
-            &op->request, sizeof(op->request),
-            _read_request_sent, op))
-        {
-            RAWSTOR_THROW_ERRNO(errno);
-        }
+        op->iov[0] = {
+            .iov_base = &op->request,
+            .iov_len = sizeof(op->request),
+        };
+        op->niov = 1;
+        op->size = sizeof(op->request);
+
+        _writev_request(op);
     } catch (...) {
         SocketOp **it = (SocketOp**)rawstor_ringbuf_head(_ops);
         assert(rawstor_ringbuf_push(_ops) == 0);
@@ -703,13 +660,14 @@ void Socket::preadv(
             .data = data,
         };
 
-        if (rawstor_fd_write(
-            _fd,
-            &op->request, sizeof(op->request),
-            _read_request_sent, op))
-        {
-            RAWSTOR_THROW_ERRNO(errno);
-        }
+        op->iov[0] = {
+            .iov_base = &op->request,
+            .iov_len = sizeof(op->request),
+        };
+        op->niov = 1;
+        op->size = sizeof(op->request);
+
+        _writev_request(op);
     } catch (...) {
         SocketOp **it = (SocketOp**)rawstor_ringbuf_head(_ops);
         assert(rawstor_ringbuf_push(_ops) == 0);
@@ -770,13 +728,7 @@ void Socket::pwrite(
         op->niov = 2;
         op->size = sizeof(op->request) + size;
 
-        if (rawstor_fd_writev(
-            _fd,
-            op->iov, op->niov, op->size,
-            _write_requestv_sent, op))
-        {
-            RAWSTOR_THROW_ERRNO(errno);
-        }
+        _writev_request(op);
     } catch (...) {
         SocketOp **it = (SocketOp**)rawstor_ringbuf_head(_ops);
         assert(rawstor_ringbuf_push(_ops) == 0);
@@ -846,13 +798,7 @@ void Socket::pwritev(
         op->niov = niov + 1;
         op->size = sizeof(op->request) + size;
 
-        if (rawstor_fd_writev(
-            _fd,
-            op->iov, op->niov, op->size,
-            _write_requestv_sent, op))
-        {
-            RAWSTOR_THROW_ERRNO(errno);
-        }
+        _writev_request(op);
     } catch (...) {
         SocketOp **it = (SocketOp**)rawstor_ringbuf_head(_ops);
         assert(rawstor_ringbuf_push(_ops) == 0);
