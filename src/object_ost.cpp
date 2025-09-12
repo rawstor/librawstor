@@ -10,16 +10,11 @@
 #include <rawstorstd/mempool.h>
 #include <rawstorstd/uuid.h>
 
-#include <rawstorio/event.h>
-#include <rawstorio/queue.h>
-
 #include <unistd.h>
 
 #include <cerrno>
 #include <cstddef>
-#include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <new>
 #include <memory>
 #include <stdexcept>

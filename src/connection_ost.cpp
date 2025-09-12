@@ -1,27 +1,12 @@
 #include "connection_ost.hpp"
 
-#include "object_ost.hpp"
-#include "opts.h"
-#include "ost_protocol.h"
-
 #include <rawstorio/queue.h>
 
 #include <rawstorstd/gpp.hpp>
-#include <rawstorstd/hash.h>
 #include <rawstorstd/logging.h>
-#include <rawstorstd/ringbuf.h>
-#include <rawstorstd/socket.h>
-#include <rawstorstd/uuid.h>
 
 #include <rawstor/object.h>
 
-#include <arpa/inet.h>
-
-#include <cassert>
-#include <cerrno>
-#include <cstddef>
-#include <cstdlib>
-#include <cstring>
 #include <stdexcept>
 
 /**
