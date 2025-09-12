@@ -5,6 +5,8 @@
 
 #include <rawstorstd/ringbuf.h>
 
+#include <rawstorio/queue.h>
+
 #include <rawstor/io_event.h>
 #include <rawstor/object.h>
 #include <rawstor/rawstor.h>
@@ -31,12 +33,10 @@ class Socket {
 
         int _connect(const RawstorSocketAddress &ost);
 
-        void _set_object_id(int fd, const RawstorUUID &id);
-
-        void _writev_request(SocketOp *op);
-        void _read_response_head();
-        void _read_response_body(SocketOp *op);
-        void _readv_response_body(SocketOp *op);
+        void _writev_request(RawstorIOQueue *queue, SocketOp *op);
+        void _read_response_head(RawstorIOQueue *queue);
+        void _read_response_body(RawstorIOQueue *queue, SocketOp *op);
+        void _readv_response_body(RawstorIOQueue *queue, SocketOp *op);
 
         static int _writev_request_cb(
             RawstorIOEvent *event, void *data) noexcept;
@@ -47,6 +47,7 @@ class Socket {
         static int _readv_response_body_cb(
             RawstorIOEvent *event, void *data) noexcept;
 
+        static int _op_process_set_object_id(SocketOp *op) noexcept;
         static int _op_process_read(SocketOp *op) noexcept;
         static int _op_process_readv(SocketOp *op) noexcept;
         static int _op_process_write(SocketOp *op) noexcept;
@@ -65,7 +66,10 @@ class Socket {
 
         void spec(const RawstorUUID &id, RawstorObjectSpec *sp);
 
-        void set_object(rawstor::Object *object);
+        void set_object(
+            RawstorIOQueue *queue,
+            rawstor::Object *object,
+            RawstorCallback *cb, void *data);
 
         void pread(
             void *buf, size_t size, off_t offset,

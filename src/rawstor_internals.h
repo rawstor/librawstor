@@ -9,6 +9,8 @@ extern "C" {
 #endif
 
 
+extern RawstorIOQueue *rawstor_io_queue;
+
 const struct RawstorSocketAddress* rawstor_default_ost(void);
 
 

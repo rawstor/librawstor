@@ -24,6 +24,10 @@ class Connection {
 
         Socket& _get_next_socket();
 
+        static int _set_object_cb(
+            RawstorObject *object,
+            size_t size, size_t res, int error, void *data) noexcept;
+
     public:
         Connection(unsigned int depth);
         Connection(const Connection &) = delete;
