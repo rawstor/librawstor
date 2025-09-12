@@ -74,6 +74,11 @@ ssize_t rawstor_io_event_process_pwritev(RawstorIOEvent *event) {
 }
 
 
+RawstorIOQueue* rawstor_io_event_queue(RawstorIOEvent *event) {
+    return event->queue;
+}
+
+
 int rawstor_io_event_fd(RawstorIOEvent *event) {
     return event->fd;
 }

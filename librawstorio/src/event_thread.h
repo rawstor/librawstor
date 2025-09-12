@@ -3,6 +3,8 @@
 
 #include "session_thread.h"
 
+#include <rawstorio/queue.h>
+
 #include <rawstorstd/logging.h>
 
 #include <stdio.h>
@@ -14,6 +16,7 @@ extern "C" {
 
 
 struct RawstorIOEvent {
+    RawstorIOQueue *queue;
     RawstorIOSession *session;
 
     int fd;
