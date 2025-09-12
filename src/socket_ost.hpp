@@ -28,7 +28,7 @@ class Socket {
         int _response_loop;
         std::vector<SocketOp*> _ops_array;
         RawstorRingBuf *_ops;
-        RawstorOSTFrameResponse _response_frame;
+        RawstorOSTFrameResponse _response;
 
         int _connect(const RawstorSocketAddress &ost);
 
