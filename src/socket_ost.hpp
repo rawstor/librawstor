@@ -36,11 +36,11 @@ class Socket {
 
         void _response_head_read();
 
-        static int _op_process_read(SocketOp *op, int fd) noexcept;
+        static int _op_process_read(SocketOp *op) noexcept;
 
-        static int _op_process_readv(SocketOp *op, int fd) noexcept;
+        static int _op_process_readv(SocketOp *op) noexcept;
 
-        static int _op_process_write(SocketOp *op, int fd) noexcept;
+        static int _op_process_write(SocketOp *op) noexcept;
 
         static int _read_request_sent(
             RawstorIOEvent *event, void *data) noexcept;
