@@ -25,7 +25,6 @@ class Socket {
         int _fd;
         Object *_object;
 
-        int _response_loop;
         std::vector<SocketOp*> _ops_array;
         RawstorRingBuf *_ops;
         RawstorOSTFrameResponse _response;
@@ -34,28 +33,23 @@ class Socket {
 
         void _set_object_id(int fd, const RawstorUUID &id);
 
-        void _response_head_read();
+        void _writev_request(SocketOp *op);
+        void _read_response_head();
+        void _read_response_body(SocketOp *op);
+        void _readv_response_body(SocketOp *op);
+
+        static int _writev_request_cb(
+            RawstorIOEvent *event, void *data) noexcept;
+        static int _read_response_head_cb(
+            RawstorIOEvent *event, void *data) noexcept;
+        static int _read_response_body_cb(
+            RawstorIOEvent *event, void *data) noexcept;
+        static int _readv_response_body_cb(
+            RawstorIOEvent *event, void *data) noexcept;
 
         static int _op_process_read(SocketOp *op) noexcept;
-
         static int _op_process_readv(SocketOp *op) noexcept;
-
         static int _op_process_write(SocketOp *op) noexcept;
-
-        static int _read_request_sent(
-            RawstorIOEvent *event, void *data) noexcept;
-
-        static int _write_requestv_sent(
-            RawstorIOEvent *event, void *data) noexcept;
-
-        static int _response_body_received(
-            RawstorIOEvent *event, void *data) noexcept;
-
-        static int _responsev_body_received(
-            RawstorIOEvent *event, void *data) noexcept;
-
-        static int _response_head_received(
-            RawstorIOEvent *event, void *data) noexcept;
 
     public:
         Socket(const RawstorSocketAddress &ost, unsigned int depth);
