@@ -1,9 +1,11 @@
 #ifndef RAWSTORIO_EVENT_LIBURING_H
 #define RAWSTORIO_EVENT_LIBURING_H
 
-#include <rawstor/io_queue.h>
+#include <rawstorio/queue.h>
 
 #include <rawstorstd/logging.h>
+
+#include <rawstor/io_queue.h>
 
 #include <liburing.h>
 
@@ -16,14 +18,15 @@ extern "C" {
 
 
 struct RawstorIOEvent {
-    int fd;
+    RawstorIOQueue *queue;
 
-    RawstorIOCallback *callback;
+    int fd;
 
     size_t size;
     struct io_uring_sqe *sqe;
     struct io_uring_cqe *cqe;
 
+    RawstorIOCallback *callback;
     void *data;
 
 #ifdef RAWSTOR_TRACE_EVENTS

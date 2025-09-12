@@ -1,12 +1,19 @@
 #include "event_poll.h"
 #include <rawstorio/event.h>
 
+#include <rawstorio/queue.h>
+
 #include <sys/types.h>
 #include <sys/uio.h>
 
 #include <errno.h>
 #include <unistd.h>
 
+
+
+RawstorIOQueue* rawstor_io_event_queue(RawstorIOEvent *event) {
+    return event->queue;
+}
 
 
 int rawstor_io_event_fd(RawstorIOEvent *event) {

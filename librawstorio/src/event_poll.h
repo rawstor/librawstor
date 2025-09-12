@@ -3,6 +3,8 @@
 
 #include "session_poll.h"
 
+#include <rawstorio/queue.h>
+
 #include <rawstorstd/logging.h>
 
 #include <rawstor/io_event.h>
@@ -16,6 +18,8 @@ extern "C" {
 
 
 struct RawstorIOEvent {
+    RawstorIOQueue *queue;
+
     int fd;
 
     struct iovec *iov_origin;
