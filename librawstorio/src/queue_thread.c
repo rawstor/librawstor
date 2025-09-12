@@ -124,6 +124,7 @@ static inline RawstorIOEvent* io_queue_create_event(
     }
 
     *event = (RawstorIOEvent) {
+        .queue = queue,
         // .session
         .iov_origin = iov,
         .iov_at = iov,
