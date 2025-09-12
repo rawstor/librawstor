@@ -10,7 +10,7 @@
 #define RAWSTOR_THROW_ERRNO(err) \
     throw std::system_error( \
         err, std::generic_category(), \
-        __FILE__ ":" RAWSTOR_STRINGIZE(__LINE__));
+        __FILE__ ":" RAWSTOR_STRINGIZE(__LINE__))
 
 
 #endif // RAWSTORSTD_GPP_HPP
