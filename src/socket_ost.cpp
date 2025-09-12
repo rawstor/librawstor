@@ -60,7 +60,7 @@ struct SocketOp {
 
     iovec iov[IOVEC_SIZE];
 
-    int (*process)(SocketOp *op, int fd);
+    int (*process)(SocketOp *op);
 
     RawstorCallback *callback;
 
@@ -259,25 +259,23 @@ void Socket::_response_head_read() {
 }
 
 
-int Socket::_op_process_read(SocketOp *op, int fd) noexcept {
+int Socket::_op_process_read(SocketOp *op) noexcept {
     return rawstor_fd_read(
-        fd,
+        op->s->_fd,
         op->payload.linear.data, op->request.len,
         _response_body_received, op);
 }
 
 
-int Socket::_op_process_readv(SocketOp *op, int fd) noexcept {
+int Socket::_op_process_readv(SocketOp *op) noexcept {
     return rawstor_fd_readv(
-        fd,
+        op->s->_fd,
         op->payload.vector.iov, op->payload.vector.niov, op->request.len,
         _responsev_body_received, op);
 }
 
 
-int Socket::_op_process_write(
-    SocketOp *op, int) noexcept
-{
+int Socket::_op_process_write(SocketOp *op) noexcept {
     Socket *s = op->s;
     int ret = 0;
 
@@ -566,7 +564,7 @@ int Socket::_response_head_received(
 
         op_trace(op->cid, event);
 
-        return op->process(op, rawstor_io_event_fd(event));
+        return op->process(op);
     } catch (const std::system_error &e) {
         return -e.code().value();
     }
