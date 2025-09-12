@@ -34,11 +34,14 @@ class Socket {
         int _connect(const RawstorSocketAddress &ost);
 
         void _writev_request(RawstorIOQueue *queue, SocketOp *op);
+        void _read_response_set_object_id(RawstorIOQueue *queue, SocketOp *op);
         void _read_response_head(RawstorIOQueue *queue);
         void _read_response_body(RawstorIOQueue *queue, SocketOp *op);
         void _readv_response_body(RawstorIOQueue *queue, SocketOp *op);
 
         static int _writev_request_cb(
+            RawstorIOEvent *event, void *data) noexcept;
+        static int _read_response_set_object_id_cb(
             RawstorIOEvent *event, void *data) noexcept;
         static int _read_response_head_cb(
             RawstorIOEvent *event, void *data) noexcept;
