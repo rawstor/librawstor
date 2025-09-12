@@ -98,9 +98,6 @@ Socket::Socket(const RawstorSocketAddress &ost, unsigned int depth):
             assert(rawstor_ringbuf_push(_ops) == 0);
             *it = op;
         }
-
-        _read_response_head(rawstor_io_queue);
-
     } catch (...) {
         for (SocketOp *op: _ops_array) {
             delete op;
@@ -209,6 +206,17 @@ void Socket::_writev_request(RawstorIOQueue *queue, SocketOp *op) {
         queue, _fd,
         op->iov, op->niov, op->size,
         _writev_request_cb, op))
+    {
+        RAWSTOR_THROW_ERRNO(errno);
+    }
+}
+
+
+void Socket::_read_response_set_object_id(RawstorIOQueue *queue, SocketOp *op) {
+    if (rawstor_io_queue_read(
+        queue, _fd,
+        &_response, sizeof(_response),
+        _read_response_set_object_id_cb, op))
     {
         RAWSTOR_THROW_ERRNO(errno);
     }
@@ -451,6 +459,71 @@ int Socket::_readv_response_body_cb(
 }
 
 
+int Socket::_read_response_set_object_id_cb(
+    RawstorIOEvent *event, void *data) noexcept
+{
+    SocketOp *op = (SocketOp*)data;
+    Socket *s = op->s;
+
+    try {
+        op_trace(op->cid, event);
+
+        if (rawstor_io_event_error(event) != 0) {
+            RAWSTOR_THROW_ERRNO(rawstor_io_event_error(event));
+        }
+
+        if (rawstor_io_event_result(event) != rawstor_io_event_size(event)) {
+            rawstor_error(
+                "Response set object id size mismatch: %zu != %zu\n",
+                rawstor_io_event_result(event),
+                rawstor_io_event_size(event));
+            RAWSTOR_THROW_ERRNO(EIO);
+        }
+
+        RawstorOSTFrameResponse &response = s->_response;
+        if (response.magic != RAWSTOR_MAGIC) {
+            /**
+             * FIXME: Memory leak on used RawstorObjectOperation.
+             */
+            rawstor_error(
+                "FATAL! Frame with wrong magic number: %x != %x\n",
+                response.magic, RAWSTOR_MAGIC);
+            RAWSTOR_THROW_ERRNO(EIO);
+        }
+
+        if (response.res < 0) {
+            rawstor_error(
+                "Server error: %s\n",
+                strerror(-response.res));
+            RAWSTOR_THROW_ERRNO(EPROTO);
+        }
+
+        if (response.cmd != RAWSTOR_CMD_SET_OBJECT) {
+            rawstor_error(
+                "Unexpected command in response: %d\n",
+                response.cmd);
+            RAWSTOR_THROW_ERRNO(EPROTO);
+        }
+
+        if (op->process(op)) {
+            RAWSTOR_THROW_ERRNO(errno);
+        }
+
+        s->_read_response_head(rawstor_io_queue);
+
+        return 0;
+
+    } catch (const std::system_error &e) {
+        return -e.code().value();
+    }
+
+    SocketOp **it = (SocketOp**)rawstor_ringbuf_head(s->_ops);
+    assert(rawstor_ringbuf_push(s->_ops) == 0);
+    *it = op;
+
+}
+
+
 int Socket::_read_response_head_cb(
     RawstorIOEvent *event, void *data) noexcept
 {
@@ -493,12 +566,7 @@ int Socket::_read_response_head_cb(
             RAWSTOR_THROW_ERRNO(EPROTO);
         }
 
-        if (response.cid == 0 && response.cmd == RAWSTOR_CMD_SET_OBJECT) {
-            /**
-             * FIXME: add cids to all ost commands.
-             */
-            response.cid = 1;
-        } else if (response.cid < 1 || response.cid > s->_ops_array.size()) {
+        if (response.cid < 1 || response.cid > s->_ops_array.size()) {
             /**
              * FIXME: Memory leak on used RawstorObjectOperation.
              */
@@ -589,7 +657,7 @@ void Socket::set_object(
         op->size = sizeof(op->request.basic);
 
         _writev_request(queue, op);
-        _read_response_head(queue);
+        _read_response_set_object_id(queue, op);
     } catch (...) {
         SocketOp **it = (SocketOp**)rawstor_ringbuf_head(_ops);
         assert(rawstor_ringbuf_push(_ops) == 0);
