@@ -320,7 +320,7 @@ int Socket::_read_request_sent(
         op_trace(op->cid, event);
 
         if (rawstor_io_event_error(event) != 0) {
-            RAWSTOR_THROW_ERRNO(rawstor_io_event_error(event))
+            RAWSTOR_THROW_ERRNO(rawstor_io_event_error(event));
         }
 
         if (rawstor_io_event_result(event) != rawstor_io_event_size(event)) {
@@ -328,7 +328,7 @@ int Socket::_read_request_sent(
                 "Request size mismatch: %zu != %zu\n",
                 rawstor_io_event_result(event),
                 rawstor_io_event_size(event));
-            RAWSTOR_THROW_ERRNO(EIO)
+            RAWSTOR_THROW_ERRNO(EIO);
         }
 
         /**
@@ -359,7 +359,7 @@ int Socket::_write_requestv_sent(
         op_trace(op->cid, event);
 
         if (rawstor_io_event_error(event) != 0) {
-            RAWSTOR_THROW_ERRNO(rawstor_io_event_error(event))
+            RAWSTOR_THROW_ERRNO(rawstor_io_event_error(event));
         }
 
         if (rawstor_io_event_result(event) != rawstor_io_event_size(event)) {
