@@ -66,7 +66,7 @@ struct SocketOp {
     unsigned int niov;
     size_t size;
 
-    int (*process)(SocketOp *op);
+    void (*process)(SocketOp *op);
 
     RawstorCallback *callback;
     void *data;
@@ -256,67 +256,49 @@ void Socket::_readv_response_body(RawstorIOQueue *queue, SocketOp *op) {
 }
 
 
-int Socket::_op_process_set_object_id(SocketOp *op) noexcept {
+void Socket::_op_process_set_object_id(SocketOp *op) {
     Socket *s = op->s;
-    int ret = 0;
 
-    try {
-        ret = op->callback(
-            s->_object->c_ptr(),
-            0, 0, 0,
-            op->data);
-    } catch (const std::system_error &e) {
-        ret = -e.code().value();
+    if(op->callback(
+        s->_object->c_ptr(),
+        0, 0, 0,
+        op->data))
+    {
+        RAWSTOR_THROW_ERRNO(errno);
     }
 
     SocketOp **it = (SocketOp**)rawstor_ringbuf_head(s->_ops);
     assert(rawstor_ringbuf_push(s->_ops) == 0);
     *it = op;
-
-    return ret;
 }
 
 
-int Socket::_op_process_read(SocketOp *op) noexcept {
-    try {
-        op->s->_read_response_body(rawstor_io_queue, op);
-        return 0;
-    } catch (const std::system_error &e) {
-        return -e.code().value();
-    }
+void Socket::_op_process_read(SocketOp *op) {
+    op->s->_read_response_body(rawstor_io_queue, op);
 }
 
 
-int Socket::_op_process_readv(SocketOp *op) noexcept {
-    try {
-        op->s->_readv_response_body(rawstor_io_queue, op);
-        return 0;
-    } catch (const std::system_error &e) {
-        return -e.code().value();
-    }
+void Socket::_op_process_readv(SocketOp *op) {
+    op->s->_readv_response_body(rawstor_io_queue, op);
 }
 
 
-int Socket::_op_process_write(SocketOp *op) noexcept {
+void Socket::_op_process_write(SocketOp *op) {
     Socket *s = op->s;
-    int ret = 0;
 
-    try {
-        s->_read_response_head(rawstor_io_queue);
+    s->_read_response_head(rawstor_io_queue);
 
-        ret = op->callback(
-            s->_object->c_ptr(),
-            op->request.io.len, op->request.io.len, 0,
-            op->data);
-    } catch (const std::system_error &e) {
-        ret = -e.code().value();
+    if(op->callback(
+        s->_object->c_ptr(),
+        op->request.io.len, op->request.io.len, 0,
+        op->data))
+    {
+        RAWSTOR_THROW_ERRNO(errno);
     }
 
     SocketOp **it = (SocketOp**)rawstor_ringbuf_head(s->_ops);
     assert(rawstor_ringbuf_push(s->_ops) == 0);
     *it = op;
-
-    return ret;
 }
 
 
@@ -505,9 +487,7 @@ int Socket::_read_response_set_object_id_cb(
             RAWSTOR_THROW_ERRNO(EPROTO);
         }
 
-        if (op->process(op)) {
-            RAWSTOR_THROW_ERRNO(errno);
-        }
+        op->process(op);
 
         s->_read_response_head(rawstor_io_queue);
 
@@ -578,7 +558,9 @@ int Socket::_read_response_head_cb(
 
         op_trace(op->cid, event);
 
-        return op->process(op);
+        op->process(op);
+
+        return 0;
     } catch (const std::system_error &e) {
         return -e.code().value();
     }
