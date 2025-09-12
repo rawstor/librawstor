@@ -60,6 +60,7 @@ struct SocketOp {
 
     iovec iov[IOVEC_SIZE];
     unsigned int niov;
+    size_t size;
 
     int (*process)(SocketOp *op);
 
@@ -639,6 +640,7 @@ void Socket::pread(
             },
             .iov = {},
             .niov = 0,
+            .size = 0,
             .process = _op_process_read,
             .callback = cb,
             .data = data,
@@ -695,6 +697,7 @@ void Socket::preadv(
             },
             .iov = {},
             .niov = 0,
+            .size = 0,
             .process = _op_process_readv,
             .callback = cb,
             .data = data,
@@ -750,6 +753,7 @@ void Socket::pwrite(
             },
             .iov = {},
             .niov = 0,
+            .size = 0,
             .process = _op_process_write,
             .callback = cb,
             .data = data,
@@ -764,10 +768,11 @@ void Socket::pwrite(
             .iov_len = size,
         };
         op->niov = 2;
+        op->size = sizeof(op->request) + size;
 
         if (rawstor_fd_writev(
             _fd,
-            op->iov, op->niov, sizeof(op->request) + size,
+            op->iov, op->niov, op->size,
             _write_requestv_sent, op))
         {
             RAWSTOR_THROW_ERRNO(errno);
@@ -825,6 +830,7 @@ void Socket::pwritev(
             },
             .iov = {},
             .niov = 0,
+            .size = 0,
             .process = _op_process_write,
             .callback = cb,
             .data = data,
@@ -838,10 +844,11 @@ void Socket::pwritev(
             op->iov[i + 1] = iov[i];
         }
         op->niov = niov + 1;
+        op->size = sizeof(op->request) + size;
 
         if (rawstor_fd_writev(
             _fd,
-            op->iov, op->niov, sizeof(op->request) + size,
+            op->iov, op->niov, op->size,
             _write_requestv_sent, op))
         {
             RAWSTOR_THROW_ERRNO(errno);
