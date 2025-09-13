@@ -91,6 +91,7 @@ void Connection::open(
 
     try {
         int completion = sockets;
+
         _sockets.reserve(sockets);
         for (size_t i = 0; i < sockets; ++i) {
             _sockets.emplace_back(ost, _depth);
@@ -117,7 +118,7 @@ void Connection::open(
         }
 
         if (completion > 0) {
-            throw std::runtime_error("Falied to set object id");
+            throw std::runtime_error("Failed to set object id");
         }
 
         rawstor_io_queue_delete(queue);
