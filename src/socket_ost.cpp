@@ -5,6 +5,7 @@
 #include "ost_protocol.h"
 #include "rawstor_internals.h"
 
+#include <rawstorio/event.h>
 #include <rawstorio/queue.h>
 
 #include <rawstorstd/gpp.hpp>
@@ -66,7 +67,7 @@ struct SocketOp {
     unsigned int niov;
     size_t size;
 
-    void (*process)(SocketOp *op);
+    void (*process)(RawstorIOQueue *queue, SocketOp *op);
 
     RawstorCallback *callback;
     void *data;
@@ -272,7 +273,7 @@ void Socket::_readv_response_body(RawstorIOQueue *queue, SocketOp *op) {
 }
 
 
-void Socket::_op_process_set_object_id(SocketOp *op) {
+void Socket::_op_process_set_object_id(RawstorIOQueue *, SocketOp *op) {
     Socket *s = op->s;
 
     if(op->callback(
@@ -287,20 +288,20 @@ void Socket::_op_process_set_object_id(SocketOp *op) {
 }
 
 
-void Socket::_op_process_read(SocketOp *op) {
-    op->s->_read_response_body(rawstor_io_queue, op);
+void Socket::_op_process_read(RawstorIOQueue *queue, SocketOp *op) {
+    op->s->_read_response_body(queue, op);
 }
 
 
-void Socket::_op_process_readv(SocketOp *op) {
-    op->s->_readv_response_body(rawstor_io_queue, op);
+void Socket::_op_process_readv(RawstorIOQueue *queue, SocketOp *op) {
+    op->s->_readv_response_body(queue, op);
 }
 
 
-void Socket::_op_process_write(SocketOp *op) {
+void Socket::_op_process_write(RawstorIOQueue *queue, SocketOp *op) {
     Socket *s = op->s;
 
-    s->_read_response_head(rawstor_io_queue);
+    s->_read_response_head(queue);
 
     if(op->callback(
         s->_object->c_ptr(),
@@ -378,7 +379,7 @@ int Socket::_read_response_body_cb(
             RAWSTOR_THROW_ERRNO(EIO);
         }
 
-        s->_read_response_head(rawstor_io_queue);
+        s->_read_response_head(rawstor_io_event_queue(event));
 
         ret = op->callback(
             s->_object->c_ptr(),
@@ -431,7 +432,7 @@ int Socket::_readv_response_body_cb(
             RAWSTOR_THROW_ERRNO(EIO);
         }
 
-        s->_read_response_head(rawstor_io_queue);
+        s->_read_response_head(rawstor_io_event_queue(event));
 
         ret = op->callback(
             s->_object->c_ptr(),
@@ -493,7 +494,7 @@ int Socket::_read_response_set_object_id_cb(
             RAWSTOR_THROW_ERRNO(EPROTO);
         }
 
-        op->process(op);
+        op->process(rawstor_io_event_queue(event), op);
 
         s->_read_response_head(rawstor_io_queue);
 
@@ -561,7 +562,7 @@ int Socket::_read_response_head_cb(
 
         op_trace(op->cid, event);
 
-        op->process(op);
+        op->process(rawstor_io_event_queue(event), op);
 
         return 0;
     } catch (const std::system_error &e) {
@@ -581,7 +582,7 @@ void Socket::create(const RawstorObjectSpec &, RawstorUUID *id) {
 
 
 void Socket::remove(const RawstorUUID &) {
-    throw std::runtime_error("Socket::remove() not implemented\n");
+    throw std::runtime_error("Socket::remove() not implemented");
 }
 
 
@@ -597,7 +598,8 @@ void Socket::spec(const RawstorUUID &, RawstorObjectSpec *sp) {
 
 
 void Socket::set_object(
-    RawstorIOQueue *queue, rawstor::Object *object,
+    RawstorIOQueue *queue,
+    rawstor::Object *object,
     RawstorCallback *cb, void *data)
 {
     rawstor_debug("%s(): set object id\n", __FUNCTION__);
@@ -638,6 +640,7 @@ void Socket::set_object(
         op->size = sizeof(op->request.basic);
 
         _writev_request(queue, op);
+
         _read_response_set_object_id(queue, op);
     } catch (...) {
         _push_op(op);
