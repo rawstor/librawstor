@@ -20,6 +20,8 @@ class Queue {
         Queue(const Queue &) = delete;
         ~Queue();
 
+        Queue& operator=(const Queue &) = delete;
+
         void read(
             int fd,
             void *buf, size_t size,
