@@ -58,14 +58,14 @@ int rawstor_io_queue_write(
     int fd, void *buf, size_t size,
     RawstorIOCallback *cb, void *data);
 
-int rawstor_io_queue_pwrite(
-    RawstorIOQueue *queue,
-    int fd, void *buf, size_t size, off_t offset,
-    RawstorIOCallback *cb, void *data);
-
 int rawstor_io_queue_writev(
     RawstorIOQueue *queue,
     int fd, struct iovec *iov, unsigned int niov, size_t size,
+    RawstorIOCallback *cb, void *data);
+
+int rawstor_io_queue_pwrite(
+    RawstorIOQueue *queue,
+    int fd, void *buf, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data);
 
 int rawstor_io_queue_pwritev(

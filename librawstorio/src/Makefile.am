@@ -1,13 +1,17 @@
 noinst_LTLIBRARIES = librawstorio.la
 
 
-AM_CFLAGS = -std=gnu99 -Wall -Wextra -Werror \
-            -I$(top_srcdir)/librawstorio/include \
-            -I$(top_srcdir)/librawstorstd/include \
-            -I$(top_srcdir)/include
+GENERIC_FLAGS = -Wall -Wextra -Werror \
+                -I$(top_srcdir)/librawstorio/include \
+                -I$(top_srcdir)/librawstorstd/include \
+                -I$(top_srcdir)/include
+
+AM_CFLAGS = -std=gnu99 $(GENERIC_FLAGS)
+
+AM_CXXFLAGS = -std=c++20 $(GENERIC_FLAGS)
 
 
-librawstorio_la_SOURCES =
+librawstorio_la_SOURCES = queue.cpp
 
 librawstorio_la_LIBADD =
 

@@ -150,27 +150,6 @@ int rawstor_io_queue_read(
 }
 
 
-int rawstor_io_queue_pread(
-    RawstorIOQueue *queue,
-    int fd, void *buf, size_t size, off_t offset,
-    RawstorIOCallback *cb, void *data)
-{
-    RawstorIOEvent *event = io_queue_create_event(queue, fd, size, cb, data);
-    if (event == NULL) {
-        return -errno;
-    }
-
-    io_uring_prep_read(event->sqe, fd, buf, size, offset);
-
-#ifdef RAWSTOR_TRACE_EVENTS
-    event->trace_event = rawstor_trace_event_begin(
-        "pread(%d, %zu)\n", fd, size);
-#endif
-
-    return 0;
-}
-
-
 int rawstor_io_queue_readv(
     RawstorIOQueue *queue,
     int fd, struct iovec *iov, unsigned int niov, size_t size,
@@ -186,6 +165,27 @@ int rawstor_io_queue_readv(
 #ifdef RAWSTOR_TRACE_EVENTS
     event->trace_event = rawstor_trace_event_begin(
         "readv(%d, %zu)\n", fd, size);
+#endif
+
+    return 0;
+}
+
+
+int rawstor_io_queue_pread(
+    RawstorIOQueue *queue,
+    int fd, void *buf, size_t size, off_t offset,
+    RawstorIOCallback *cb, void *data)
+{
+    RawstorIOEvent *event = io_queue_create_event(queue, fd, size, cb, data);
+    if (event == NULL) {
+        return -errno;
+    }
+
+    io_uring_prep_read(event->sqe, fd, buf, size, offset);
+
+#ifdef RAWSTOR_TRACE_EVENTS
+    event->trace_event = rawstor_trace_event_begin(
+        "pread(%d, %zu)\n", fd, size);
 #endif
 
     return 0;
@@ -234,27 +234,6 @@ int rawstor_io_queue_write(
 }
 
 
-int rawstor_io_queue_pwrite(
-    RawstorIOQueue *queue,
-    int fd, void *buf, size_t size, off_t offset,
-    RawstorIOCallback *cb, void *data)
-{
-    RawstorIOEvent *event = io_queue_create_event(queue, fd, size, cb, data);
-    if (event == NULL) {
-        return -errno;
-    }
-
-    io_uring_prep_write(event->sqe, fd, buf, size, offset);
-
-#ifdef RAWSTOR_TRACE_EVENTS
-    event->trace_event = rawstor_trace_event_begin(
-        "pwrite(%d, %zu)\n", fd, size);
-#endif
-
-    return 0;
-}
-
-
 int rawstor_io_queue_writev(
     RawstorIOQueue *queue,
     int fd, struct iovec *iov, unsigned int niov, size_t size,
@@ -270,6 +249,27 @@ int rawstor_io_queue_writev(
 #ifdef RAWSTOR_TRACE_EVENTS
     event->trace_event = rawstor_trace_event_begin(
         "writev(%d, %zu)\n", fd, size);
+#endif
+
+    return 0;
+}
+
+
+int rawstor_io_queue_pwrite(
+    RawstorIOQueue *queue,
+    int fd, void *buf, size_t size, off_t offset,
+    RawstorIOCallback *cb, void *data)
+{
+    RawstorIOEvent *event = io_queue_create_event(queue, fd, size, cb, data);
+    if (event == NULL) {
+        return -errno;
+    }
+
+    io_uring_prep_write(event->sqe, fd, buf, size, offset);
+
+#ifdef RAWSTOR_TRACE_EVENTS
+    event->trace_event = rawstor_trace_event_begin(
+        "pwrite(%d, %zu)\n", fd, size);
 #endif
 
     return 0;
