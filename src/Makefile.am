@@ -2,9 +2,9 @@ lib_LTLIBRARIES = librawstor.la
 
 
 GENERIC_FLAGS = -Wall -Wextra -Werror \
-            -I$(top_srcdir)/librawstorstd/include \
-            -I$(top_srcdir)/librawstorio/include \
-            -I$(top_srcdir)/include
+                -I$(top_srcdir)/librawstorstd/include \
+                -I$(top_srcdir)/librawstorio/include \
+                -I$(top_srcdir)/include
 
 AM_CFLAGS = -std=gnu99 $(GENERIC_FLAGS)
 
