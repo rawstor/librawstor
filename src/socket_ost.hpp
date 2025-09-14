@@ -63,6 +63,8 @@ class Socket {
             RawstorIOQueue *queue, SocketOp *op);
 
     public:
+        static const char* engine_name() noexcept;
+
         Socket(const RawstorSocketAddress &ost, unsigned int depth);
         Socket(const Socket &) = delete;
         Socket(Socket &&other) noexcept;

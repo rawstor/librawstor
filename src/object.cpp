@@ -3,6 +3,7 @@
 #include <rawstor/object.h>
 
 #include "connection.hpp"
+#include "socket.hpp"
 #include "rawstor_internals.h"
 
 #include <rawstorstd/gpp.hpp>
@@ -251,6 +252,11 @@ void Object::pwritev(
 
 
 } // rawstor
+
+
+const char* rawstor_object_backend_name(void) {
+    return rawstor::Socket::engine_name();
+}
 
 
 int rawstor_object_create(

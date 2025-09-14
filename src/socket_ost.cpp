@@ -510,6 +510,11 @@ int Socket::_read_response_set_object_id_cb(
 }
 
 
+const char* Socket::engine_name() noexcept {
+    return "ost";
+}
+
+
 int Socket::_read_response_head_cb(
     RawstorIOEvent *event, void *data) noexcept
 {
@@ -900,8 +905,3 @@ void Socket::pwritev(
 
 
 } // rawstor
-
-
-const char* rawstor_object_backend_name() {
-    return "ost";
-}

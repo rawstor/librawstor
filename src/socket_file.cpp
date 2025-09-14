@@ -1,11 +1,8 @@
 #include "socket_file.hpp"
-#include "object_internals.h"
 
 #include "object.hpp"
 #include "opts.h"
-#include "rawstor_internals.h"
 
-#include <rawstorstd/gcc.h>
 #include <rawstorstd/gpp.hpp>
 #include <rawstorstd/logging.h>
 #include <rawstorstd/mempool.h>
@@ -173,6 +170,11 @@ int Socket::_io_cb(RawstorIOEvent *event, void *data) noexcept {
     op->s->_push_op(op);
 
     return ret;
+}
+
+
+const char* Socket::engine_name() noexcept {
+    return "file";
 }
 
 
@@ -396,8 +398,3 @@ void Socket::pwritev(
 
 
 } // rawstor
-
-
-const char* rawstor_object_backend_name() {
-    return "file";
-}
