@@ -95,7 +95,7 @@ Socket::Socket(const RawstorSocketAddress &ost, unsigned int depth):
 
             _ops_array.push_back(op);
 
-            SocketOp **it = (SocketOp**)rawstor_ringbuf_head(_ops);
+            SocketOp **it = static_cast<SocketOp**>(rawstor_ringbuf_head(_ops));
             assert(rawstor_ringbuf_push(_ops) == 0);
             *it = op;
         }
@@ -147,8 +147,8 @@ Socket::~Socket() {
 }
 
 
-SocketOp* Socket::_pop_op() {
-    SocketOp **it = (SocketOp**)rawstor_ringbuf_tail(_ops);
+SocketOp* Socket::_acquire_op() {
+    SocketOp **it = static_cast<SocketOp**>(rawstor_ringbuf_tail(_ops));
     if (rawstor_ringbuf_pop(_ops)) {
         RAWSTOR_THROW_ERRNO(ENOBUFS);
     }
@@ -156,8 +156,8 @@ SocketOp* Socket::_pop_op() {
 }
 
 
-void Socket::_push_op(SocketOp *op) {
-    SocketOp **it = (SocketOp**)rawstor_ringbuf_head(_ops);
+void Socket::_release_op(SocketOp *op) noexcept {
+    SocketOp **it = static_cast<SocketOp**>(rawstor_ringbuf_head(_ops);
     assert(rawstor_ringbuf_push(_ops) == 0);
     *it = op;
 }
@@ -286,7 +286,7 @@ void Socket::_op_process_set_object_id(RawstorIOQueue *, SocketOp *op) {
         RAWSTOR_THROW_ERRNO(errno);
     }
 
-    s->_push_op(op);
+    s->_release_op(op);
 }
 
 
@@ -313,12 +313,12 @@ void Socket::_op_process_write(RawstorIOQueue *queue, SocketOp *op) {
         RAWSTOR_THROW_ERRNO(errno);
     }
 
-    s->_push_op(op);
+    s->_release_op(op);
 }
 
 
 int Socket::_writev_request_cb(RawstorIOEvent *event, void *data) noexcept {
-    SocketOp *op = (SocketOp*)data;
+    SocketOp *op = static_cast<SocketOp*>(data);
     Socket *s = op->s;
 
     try {
@@ -338,7 +338,7 @@ int Socket::_writev_request_cb(RawstorIOEvent *event, void *data) noexcept {
 
         return 0;
     } catch (const std::system_error &e) {
-        s->_push_op(op);
+        s->_release_op(op);
         return -e.code().value();
     }
 }
@@ -351,7 +351,7 @@ int Socket::_read_response_body_cb(
      * FIXME: Proper error handling.
      */
 
-    SocketOp *op = (SocketOp*)data;
+    SocketOp *op = static_cast<SocketOp*>(data);
     Socket *s = op->s;
     int ret = 0;
 
@@ -391,7 +391,7 @@ int Socket::_read_response_body_cb(
         ret = -e.code().value();
     }
 
-    s->_push_op(op);
+    s->_release_op(op);
 
     return ret;
 }
@@ -400,7 +400,7 @@ int Socket::_read_response_body_cb(
 int Socket::_readv_response_body_cb(
     RawstorIOEvent *event, void *data) noexcept
 {
-    SocketOp *op = (SocketOp*)data;
+    SocketOp *op = static_cast<SocketOp*>(data);
     Socket *s = op->s;
     int ret = 0;
 
@@ -444,7 +444,7 @@ int Socket::_readv_response_body_cb(
         ret = -e.code().value();
     }
 
-    s->_push_op(op);
+    s->_release_op(op);
 
     return ret;
 }
@@ -453,7 +453,7 @@ int Socket::_readv_response_body_cb(
 int Socket::_read_response_set_object_id_cb(
     RawstorIOEvent *event, void *data) noexcept
 {
-    SocketOp *op = (SocketOp*)data;
+    SocketOp *op = static_cast<SocketOp*>(data);
     Socket *s = op->s;
 
     try {
@@ -506,7 +506,7 @@ int Socket::_read_response_set_object_id_cb(
         return -e.code().value();
     }
 
-    s->_push_op(op);
+    s->_release_op(op);
 }
 
 
@@ -518,7 +518,7 @@ const char* Socket::engine_name() noexcept {
 int Socket::_read_response_head_cb(
     RawstorIOEvent *event, void *data) noexcept
 {
-    Socket *s = (Socket*)data;
+    Socket *s = static_cast<Socket*>(data);
 
     try {
         if (rawstor_io_event_error(event) != 0) {
@@ -627,7 +627,7 @@ void Socket::set_object(
 {
     rawstor_debug("%s(): set object id\n", __FUNCTION__);
 
-    SocketOp *op = _pop_op();
+    SocketOp *op = _acquire_op();
 
     try {
         *op = {
@@ -666,7 +666,7 @@ void Socket::set_object(
 
         _read_response_set_object_id(queue, op);
     } catch (...) {
-        _push_op(op);
+        _release_op(op);
         throw;
     }
 
@@ -682,7 +682,7 @@ void Socket::pread(
         "%s(): offset = %jd, size = %zu\n",
         __FUNCTION__, (intmax_t)offset, size);
 
-    SocketOp *op = _pop_op();
+    SocketOp *op = _acquire_op();
 
     try {
         *op = {
@@ -721,7 +721,7 @@ void Socket::pread(
 
         _writev_request(rawstor_io_queue, op);
     } catch (...) {
-        _push_op(op);
+        _release_op(op);
         throw;
     }
 }
@@ -735,7 +735,7 @@ void Socket::preadv(
         "%s(): offset = %jd, niov = %u, size = %zu\n",
         __FUNCTION__, (intmax_t)offset, niov, size);
 
-    SocketOp *op = _pop_op();
+    SocketOp *op = _acquire_op();
 
     try {
         *op = {
@@ -775,7 +775,7 @@ void Socket::preadv(
 
         _writev_request(rawstor_io_queue, op);
     } catch (...) {
-        _push_op(op);
+        _release_op(op);
         throw;
     }
 }
@@ -789,7 +789,7 @@ void Socket::pwrite(
         "%s(): offset = %jd, size = %zu\n",
         __FUNCTION__, (intmax_t)offset, size);
 
-    SocketOp *op = _pop_op();
+    SocketOp *op = _acquire_op();
 
     try {
         *op = {
@@ -832,7 +832,7 @@ void Socket::pwrite(
 
         _writev_request(rawstor_io_queue, op);
     } catch (...) {
-        _push_op(op);
+        _release_op(op);
         throw;
     }
 }
@@ -855,7 +855,7 @@ void Socket::pwritev(
         throw std::runtime_error("Large iovecs not supported");
     }
 
-    SocketOp *op = _pop_op();
+    SocketOp *op = _acquire_op();
 
     try {
         *op = {
@@ -898,7 +898,7 @@ void Socket::pwritev(
 
         _writev_request(rawstor_io_queue, op);
     } catch (...) {
-        _push_op(op);
+        _release_op(op);
         throw;
     }
 }

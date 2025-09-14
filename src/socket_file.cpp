@@ -2,6 +2,7 @@
 
 #include "object.hpp"
 #include "opts.h"
+#include "rawstor_internals.h"
 
 #include <rawstorstd/gpp.hpp>
 #include <rawstorstd/logging.h>
@@ -9,6 +10,7 @@
 #include <rawstorstd/uuid.h>
 
 #include <rawstorio/event.h>
+#include <rawstorio/queue.h>
 
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -94,6 +96,7 @@ namespace rawstor {
 
 struct SocketOp {
     rawstor::Socket *s;
+
     RawstorCallback *callback;
     void *data;
 };
@@ -142,7 +145,7 @@ Socket::~Socket() {
 }
 
 
-SocketOp* Socket::_pop_op() {
+SocketOp* Socket::_acquire_op() {
     SocketOp *op = static_cast<SocketOp*>(rawstor_mempool_alloc(_ops_pool));
     if (op == NULL) {
         RAWSTOR_THROW_ERRNO(errno);
@@ -152,7 +155,7 @@ SocketOp* Socket::_pop_op() {
 }
 
 
-void Socket::_push_op(SocketOp *op) {
+void Socket::_release_op(SocketOp *op) noexcept {
     rawstor_mempool_free(_ops_pool, op);
 }
 
@@ -167,7 +170,26 @@ int Socket::_io_cb(RawstorIOEvent *event, void *data) noexcept {
         rawstor_io_event_error(event),
         op->data);
 
-    op->s->_push_op(op);
+    op->s->_release_op(op);
+
+    return ret;
+}
+
+
+int Socket::_spec_cb(RawstorIOEvent *event, void *data) noexcept {
+    SocketOp *op = static_cast<SocketOp*>(data);
+
+    int ret = op->callback(
+        nullptr,
+        rawstor_io_event_size(event),
+        rawstor_io_event_result(event),
+        rawstor_io_event_error(event),
+        op->data);
+
+    op->s->_release_op(op);
+
+    ::close(op->s->_fd);
+    op->s->_fd = -1;
 
     return ret;
 }
@@ -193,7 +215,9 @@ void Socket::create(
         }
         rawstor_uuid_to_string(&uuid, &uuid_string);
         spec_path = get_object_spec_path(_ost_path, uuid_string);
-        fd = ::open(spec_path.c_str(), O_EXCL | O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR);
+        fd = ::open(
+            spec_path.c_str(),
+            O_EXCL | O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR);
         if (fd != -1) {
             break;
         }
@@ -249,7 +273,7 @@ void Socket::remove(
 
 
 void Socket::spec(
-    RawstorIOQueue *,
+    RawstorIOQueue *queue,
     const RawstorUUID &id, RawstorObjectSpec *sp,
     RawstorCallback *cb, void *data)
 {
@@ -262,21 +286,25 @@ void Socket::spec(
     if (fd == -1) {
         RAWSTOR_THROW_ERRNO(errno);
     }
-    try {
-        ssize_t rval = read(fd, sp, sizeof(*sp));
-        if (rval == -1) {
-            RAWSTOR_THROW_ERRNO(errno);
-        }
 
-        if (::close(fd)) {
+    SocketOp *op = _acquire_op();
+    try {
+        *op = {
+            .s = this,
+            .callback = cb,
+            .data = data,
+        };
+
+        if (rawstor_io_queue_read(queue, fd, sp, sizeof(*sp), _spec_cb, op)) {
             RAWSTOR_THROW_ERRNO(errno);
         }
     } catch (...) {
-        ::close(fd);
+        _release_op(op);
+        ::close(_fd);
         throw;
     }
 
-    cb(nullptr, 0, 0, 0, data);
+    _fd = fd;
 }
 
 
@@ -309,7 +337,7 @@ void Socket::pread(
     void *buf, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
-    SocketOp *op = _pop_op();
+    SocketOp *op = _acquire_op();
 
     try {
         *op = {
@@ -318,11 +346,15 @@ void Socket::pread(
             .data = data,
         };
 
-        if (rawstor_fd_pread(_fd, buf, size, offset, _io_cb, op)) {
+        if (rawstor_io_queue_pread(
+            rawstor_io_queue, _fd,
+            buf, size, offset,
+            _io_cb, op))
+        {
             RAWSTOR_THROW_ERRNO(errno);
         }
     } catch (...) {
-        _push_op(op);
+        _release_op(op);
         throw;
     }
 }
@@ -332,7 +364,7 @@ void Socket::preadv(
     iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
-    SocketOp *op = _pop_op();
+    SocketOp *op = _acquire_op();
 
     try {
         *op = {
@@ -341,11 +373,15 @@ void Socket::preadv(
             .data = data,
         };
 
-        if (rawstor_fd_preadv(_fd, iov, niov, size, offset, _io_cb, op)) {
+        if (rawstor_io_queue_preadv(
+            rawstor_io_queue, _fd,
+            iov, niov, size, offset,
+            _io_cb, op))
+        {
             RAWSTOR_THROW_ERRNO(errno);
         }
     } catch (...) {
-        _push_op(op);
+        _release_op(op);
         throw;
     }
 }
@@ -355,7 +391,7 @@ void Socket::pwrite(
     void *buf, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
-    SocketOp *op = _pop_op();
+    SocketOp *op = _acquire_op();
 
     try {
         *op = {
@@ -364,11 +400,15 @@ void Socket::pwrite(
             .data = data,
         };
 
-        if (rawstor_fd_pwrite(_fd, buf, size, offset, _io_cb, op)) {
+        if (rawstor_io_queue_pwrite(
+            rawstor_io_queue, _fd,
+            buf, size, offset,
+            _io_cb, op))
+        {
             RAWSTOR_THROW_ERRNO(errno);
         }
     } catch (...) {
-        _push_op(op);
+        _release_op(op);
         throw;
     }
 }
@@ -378,7 +418,7 @@ void Socket::pwritev(
     iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
-    SocketOp *op = _pop_op();
+    SocketOp *op = _acquire_op();
 
     try {
         *op = {
@@ -387,11 +427,15 @@ void Socket::pwritev(
             .data = data,
         };
 
-        if (rawstor_fd_pwritev(_fd, iov, niov, size, offset, _io_cb, op)) {
+        if (rawstor_io_queue_pwritev(
+            rawstor_io_queue, _fd,
+            iov, niov, size, offset,
+            _io_cb, op))
+        {
             RAWSTOR_THROW_ERRNO(errno);
         }
     } catch (...) {
-        _push_op(op);
+        _release_op(op);
         throw;
     }
 }

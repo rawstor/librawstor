@@ -1,5 +1,5 @@
-#ifndef RAWSTOR_CLI_REMOVE_H
-#define RAWSTOR_CLI_REMOVE_H
+#ifndef RAWSTOR_CLI_SHOW_H
+#define RAWSTOR_CLI_SHOW_H
 
 #include <rawstor.h>
 
@@ -11,7 +11,7 @@ extern "C" {
 #endif
 
 
-int rawstor_cli_remove(
+int rawstor_cli_show(
     const struct RawstorOpts *opts,
     const struct RawstorSocketAddress *default_ost,
     const struct RawstorUUID *object_id);
@@ -22,4 +22,4 @@ int rawstor_cli_remove(
 #endif
 
 
-#endif // RAWSTOR_CLI_REMOVE_H
+#endif // RAWSTOR_CLI_SHOW_H

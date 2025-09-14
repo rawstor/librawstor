@@ -31,8 +31,8 @@ class Socket {
         RawstorRingBuf *_ops;
         RawstorOSTFrameResponse _response;
 
-        SocketOp* _pop_op();
-        void _push_op(SocketOp *op);
+        SocketOp* _acquire_op();
+        void _release_op(SocketOp *op) noexcept;
 
         int _connect(const RawstorSocketAddress &ost);
 

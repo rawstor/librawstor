@@ -26,10 +26,11 @@ class Socket {
         RawstorMemPool *_ops_pool;
         std::string _ost_path;
 
-        SocketOp* _pop_op();
-        void _push_op(SocketOp *op);
+        SocketOp* _acquire_op();
+        void _release_op(SocketOp *op) noexcept;
 
         static int _io_cb(RawstorIOEvent *event, void *data) noexcept;
+        static int _spec_cb(RawstorIOEvent *event, void *data) noexcept;
 
     public:
         static const char* engine_name() noexcept;
