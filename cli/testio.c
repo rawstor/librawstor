@@ -303,17 +303,10 @@ static int srcv_data_sent(
 
 
 int rawstor_cli_testio(
-    const struct RawstorOpts *opts,
-    const struct RawstorSocketAddress *default_ost,
     const struct RawstorUUID *object_id,
     size_t block_size, unsigned int count, unsigned int io_depth,
     int vector_mode)
 {
-    if (rawstor_initialize(opts, default_ost)) {
-        perror("rawstor_initialize() failed");
-        goto err_initialize;
-    }
-
     RawstorObject *object;
     if (rawstor_object_open(object_id, &object)) {
         perror("rawstor_object_open() failed");
@@ -396,8 +389,6 @@ int rawstor_cli_testio(
     }
     free(workers);
 
-    rawstor_terminate();
-
     printf("Success!\n");
 
     return EXIT_SUCCESS;
@@ -417,7 +408,5 @@ err_workers:
         perror("rawstor_object_close() failed");
     }
 err_open:
-    rawstor_terminate();
-err_initialize:
     return EXIT_FAILURE;
 }
