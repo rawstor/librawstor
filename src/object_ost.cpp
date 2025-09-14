@@ -10,16 +10,11 @@
 #include <rawstorstd/mempool.h>
 #include <rawstorstd/uuid.h>
 
-#include <rawstorio/event.h>
-#include <rawstorio/queue.h>
-
 #include <unistd.h>
 
 #include <cerrno>
 #include <cstddef>
-#include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <new>
 #include <memory>
 #include <stdexcept>
@@ -65,7 +60,7 @@ void Object::create(
     const RawstorObjectSpec &sp,
     RawstorUUID *id)
 {
-    Socket(ost, QUEUE_DEPTH).create(sp, id);
+    Connection(QUEUE_DEPTH).create(ost, sp, id);
 }
 
 
@@ -118,7 +113,7 @@ void Object::remove() {
 
 
 void Object::remove(const RawstorSocketAddress &ost) {
-    Socket(ost, QUEUE_DEPTH).remove(_id);
+    Connection(QUEUE_DEPTH).remove(ost, _id);
 }
 
 
@@ -128,7 +123,7 @@ void Object::spec(RawstorObjectSpec *sp) {
 
 
 void Object::spec(const RawstorSocketAddress &ost, RawstorObjectSpec *sp) {
-    Socket(ost, QUEUE_DEPTH).spec(_id, sp);
+    Connection(QUEUE_DEPTH).spec(ost, _id, sp);
 }
 
 

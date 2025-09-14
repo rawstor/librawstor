@@ -23,13 +23,24 @@ class Connection {
         size_t _socket_index;
 
         Socket& _get_next_socket();
-
     public:
         Connection(unsigned int depth);
         Connection(const Connection &) = delete;
         ~Connection();
 
         Connection& operator=(const Connection&) = delete;
+
+        void create(
+            const RawstorSocketAddress &ost,
+            const RawstorObjectSpec &sp, RawstorUUID *id);
+
+        void remove(
+            const RawstorSocketAddress &ost,
+            const RawstorUUID &id);
+
+        void spec(
+            const RawstorSocketAddress &ost,
+            const RawstorUUID &id, RawstorObjectSpec *sp);
 
         void open(
             const RawstorSocketAddress &ost,

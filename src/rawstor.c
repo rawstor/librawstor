@@ -24,7 +24,7 @@
 #define DEFAULT_OST_PORT 8080
 
 
-static RawstorIOQueue *_rawstor_io_queue = NULL;
+RawstorIOQueue *rawstor_io_queue = NULL;
 
 static struct RawstorSocketAddress _default_ost = {};
 
@@ -59,7 +59,7 @@ int rawstor_initialize(
     const struct RawstorOpts *opts,
     const struct RawstorSocketAddress *default_ost)
 {
-    assert(_rawstor_io_queue == NULL);
+    assert(rawstor_io_queue == NULL);
 
     if (rawstor_logging_initialize()) {
         goto err_logging_initialize;
@@ -81,8 +81,8 @@ int rawstor_initialize(
         goto err_default_ost_initialize;
     }
 
-    _rawstor_io_queue = rawstor_io_queue_create(QUEUE_DEPTH);
-    if (_rawstor_io_queue == NULL) {
+    rawstor_io_queue = rawstor_io_queue_create(QUEUE_DEPTH);
+    if (rawstor_io_queue == NULL) {
         goto err_io_queue;
     };
 
@@ -100,7 +100,7 @@ err_logging_initialize:
 
 
 void rawstor_terminate(void) {
-    rawstor_io_queue_delete(_rawstor_io_queue);
+    rawstor_io_queue_delete(rawstor_io_queue);
     default_ost_terminate();
     rawstor_opts_terminate();
     rawstor_logging_terminate();
@@ -114,7 +114,7 @@ const struct RawstorSocketAddress* rawstor_default_ost(void) {
 
 RawstorIOEvent* rawstor_wait_event(void) {
     return rawstor_io_queue_wait_event_timeout(
-        _rawstor_io_queue,
+        rawstor_io_queue,
         rawstor_opts_wait_timeout());
 }
 
@@ -125,7 +125,7 @@ int rawstor_dispatch_event(RawstorIOEvent *event) {
 
 
 void rawstor_release_event(RawstorIOEvent *event) {
-    rawstor_io_queue_release_event(_rawstor_io_queue, event);
+    rawstor_io_queue_release_event(rawstor_io_queue, event);
 }
 
 
@@ -134,7 +134,7 @@ int rawstor_fd_read(
     RawstorIOCallback *cb, void *data)
 {
     return rawstor_io_queue_read(
-        _rawstor_io_queue,
+        rawstor_io_queue,
         fd, buf, size,
         cb, data);
 }
@@ -145,7 +145,7 @@ int rawstor_fd_pread(
     RawstorIOCallback *cb, void *data)
 {
     return rawstor_io_queue_pread(
-        _rawstor_io_queue,
+        rawstor_io_queue,
         fd, buf, size, offset,
         cb, data);
 }
@@ -156,7 +156,7 @@ int rawstor_fd_readv(
     RawstorIOCallback *cb, void *data)
 {
     return rawstor_io_queue_readv(
-        _rawstor_io_queue,
+        rawstor_io_queue,
         fd, iov, niov, size,
         cb, data);
 }
@@ -167,7 +167,7 @@ int rawstor_fd_preadv(
     RawstorIOCallback *cb, void *data)
 {
     return rawstor_io_queue_preadv(
-        _rawstor_io_queue,
+        rawstor_io_queue,
         fd, iov, niov, size, offset,
         cb, data);
 }
@@ -178,7 +178,7 @@ int rawstor_fd_write(
     RawstorIOCallback *cb, void *data)
 {
     return rawstor_io_queue_write(
-        _rawstor_io_queue,
+        rawstor_io_queue,
         fd, buf, size,
         cb, data);
 }
@@ -189,7 +189,7 @@ int rawstor_fd_pwrite(
     RawstorIOCallback *cb, void *data)
 {
     return rawstor_io_queue_pwrite(
-        _rawstor_io_queue,
+        rawstor_io_queue,
         fd, buf, size, offset,
         cb, data);
 }
@@ -200,7 +200,7 @@ int rawstor_fd_writev(
     RawstorIOCallback *cb, void *data)
 {
     return rawstor_io_queue_writev(
-        _rawstor_io_queue,
+        rawstor_io_queue,
         fd, iov, niov, size,
         cb, data);
 }
@@ -211,7 +211,7 @@ int rawstor_fd_pwritev(
     RawstorIOCallback *cb, void *data)
 {
     return rawstor_io_queue_pwritev(
-        _rawstor_io_queue,
+        rawstor_io_queue,
         fd, iov, niov, size, offset,
         cb, data);
 }

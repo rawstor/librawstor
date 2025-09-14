@@ -5,6 +5,8 @@
 
 #include <rawstorstd/ringbuf.h>
 
+#include <rawstorio/queue.h>
+
 #include <rawstor/io_event.h>
 #include <rawstor/object.h>
 #include <rawstor/rawstor.h>
@@ -25,37 +27,40 @@ class Socket {
         int _fd;
         Object *_object;
 
-        int _response_loop;
         std::vector<SocketOp*> _ops_array;
         RawstorRingBuf *_ops;
-        RawstorOSTFrameResponse _response_frame;
+        RawstorOSTFrameResponse _response;
+
+        SocketOp* _pop_op();
+        void _push_op(SocketOp *op);
 
         int _connect(const RawstorSocketAddress &ost);
 
-        void _set_object_id(int fd, const RawstorUUID &id);
+        void _writev_request(RawstorIOQueue *queue, SocketOp *op);
+        void _read_response_set_object_id(RawstorIOQueue *queue, SocketOp *op);
+        void _read_response_head(RawstorIOQueue *queue);
+        void _read_response_body(RawstorIOQueue *queue, SocketOp *op);
+        void _readv_response_body(RawstorIOQueue *queue, SocketOp *op);
 
-        void _response_head_read();
-
-        static int _op_process_read(SocketOp *op, int fd) noexcept;
-
-        static int _op_process_readv(SocketOp *op, int fd) noexcept;
-
-        static int _op_process_write(SocketOp *op, int fd) noexcept;
-
-        static int _read_request_sent(
+        static int _writev_request_cb(
+            RawstorIOEvent *event, void *data) noexcept;
+        static int _read_response_set_object_id_cb(
+            RawstorIOEvent *event, void *data) noexcept;
+        static int _read_response_head_cb(
+            RawstorIOEvent *event, void *data) noexcept;
+        static int _read_response_body_cb(
+            RawstorIOEvent *event, void *data) noexcept;
+        static int _readv_response_body_cb(
             RawstorIOEvent *event, void *data) noexcept;
 
-        static int _write_requestv_sent(
-            RawstorIOEvent *event, void *data) noexcept;
-
-        static int _response_body_received(
-            RawstorIOEvent *event, void *data) noexcept;
-
-        static int _responsev_body_received(
-            RawstorIOEvent *event, void *data) noexcept;
-
-        static int _response_head_received(
-            RawstorIOEvent *event, void *data) noexcept;
+        static void _op_process_set_object_id(
+            RawstorIOQueue *queue, SocketOp *op);
+        static void _op_process_read(
+            RawstorIOQueue *queue, SocketOp *op);
+        static void _op_process_readv(
+            RawstorIOQueue *queue, SocketOp *op);
+        static void _op_process_write(
+            RawstorIOQueue *queue, SocketOp *op);
 
     public:
         Socket(const RawstorSocketAddress &ost, unsigned int depth);
@@ -65,13 +70,25 @@ class Socket {
 
         Socket& operator=(const Socket&) = delete;
 
-        void create(const RawstorObjectSpec &sp, RawstorUUID *id);
+        void create(
+            RawstorIOQueue *queue,
+            const RawstorObjectSpec &sp, RawstorUUID *id,
+            RawstorCallback *cb, void *data);
 
-        void remove(const RawstorUUID &id);
+        void remove(
+            RawstorIOQueue *queue,
+            const RawstorUUID &id,
+            RawstorCallback *cb, void *data);
 
-        void spec(const RawstorUUID &id, RawstorObjectSpec *sp);
+        void spec(
+            RawstorIOQueue *queue,
+            const RawstorUUID &id, RawstorObjectSpec *sp,
+            RawstorCallback *cb, void *data);
 
-        void set_object(rawstor::Object *object);
+        void set_object(
+            RawstorIOQueue *queue,
+            rawstor::Object *object,
+            RawstorCallback *cb, void *data);
 
         void pread(
             void *buf, size_t size, off_t offset,
