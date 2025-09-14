@@ -70,11 +70,20 @@ class Socket {
 
         Socket& operator=(const Socket&) = delete;
 
-        void create(const RawstorObjectSpec &sp, RawstorUUID *id);
+        void create(
+            RawstorIOQueue *queue,
+            const RawstorObjectSpec &sp, RawstorUUID *id,
+            RawstorCallback *cb, void *data);
 
-        void remove(const RawstorUUID &id);
+        void remove(
+            RawstorIOQueue *queue,
+            const RawstorUUID &id,
+            RawstorCallback *cb, void *data);
 
-        void spec(const RawstorUUID &id, RawstorObjectSpec *sp);
+        void spec(
+            RawstorIOQueue *queue,
+            const RawstorUUID &id, RawstorObjectSpec *sp,
+            RawstorCallback *cb, void *data);
 
         void set_object(
             RawstorIOQueue *queue,

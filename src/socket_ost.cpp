@@ -571,22 +571,36 @@ int Socket::_read_response_head_cb(
 }
 
 
-void Socket::create(const RawstorObjectSpec &, RawstorUUID *id) {
+void Socket::create(
+    RawstorIOQueue *,
+    const RawstorObjectSpec &, RawstorUUID *id,
+    RawstorCallback *cb, void *data)
+{
     /**
      * TODO: Implement me.
      */
     if (rawstor_uuid7_init(id)) {
         RAWSTOR_THROW_ERRNO(errno);
     }
+
+    cb(nullptr, 0, 0, 0, data);
 }
 
 
-void Socket::remove(const RawstorUUID &) {
+void Socket::remove(
+    RawstorIOQueue *,
+    const RawstorUUID &,
+    RawstorCallback *, void *)
+{
     throw std::runtime_error("Socket::remove() not implemented");
 }
 
 
-void Socket::spec(const RawstorUUID &, RawstorObjectSpec *sp) {
+void Socket::spec(
+    RawstorIOQueue *,
+    const RawstorUUID &, RawstorObjectSpec *sp,
+    RawstorCallback *cb, void *data)
+{
     /**
      * TODO: Implement me.
      */
@@ -594,6 +608,8 @@ void Socket::spec(const RawstorUUID &, RawstorObjectSpec *sp) {
     *sp = {
         .size = 1 << 30,
     };
+
+    cb(nullptr, 0, 0, 0, data);
 }
 
 

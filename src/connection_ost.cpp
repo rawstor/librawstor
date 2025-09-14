@@ -26,14 +26,53 @@
         rawstor_io_event_size(event))
 
 
-namespace rawstor {
+namespace {
 
 
-int Connection::_set_object_cb(
+class Queue {
+    private:
+        int _operations;
+        RawstorIOQueue *_impl;
+
+    public:
+        static int callback(
+            RawstorObject *,
+            size_t size, size_t res, int error, void *data) noexcept;
+
+        Queue(int operations, unsigned int depth);
+        Queue(const Queue &) = delete;
+        ~Queue();
+
+        Queue& operator=(const Queue &) = delete;
+
+        explicit operator RawstorIOQueue*() noexcept;
+
+        void wait();
+};
+
+
+Queue::Queue(int operations, unsigned int depth):
+    _operations(operations),
+    _impl(nullptr)
+{
+    _impl = rawstor_io_queue_create(depth);
+    if (_impl == nullptr) {
+        RAWSTOR_THROW_ERRNO(errno);
+    }
+}
+
+Queue::~Queue() {
+    rawstor_io_queue_delete(_impl);
+}
+
+
+int Queue::callback(
     RawstorObject *,
     size_t size, size_t res, int error, void *data) noexcept
 {
-    int *completion = (int*)data;
+    Queue *queue = static_cast<Queue*>(data);
+
+    --queue->_operations;
 
     if (error) {
         return error;
@@ -44,10 +83,43 @@ int Connection::_set_object_cb(
         return -errno;
     }
 
-    --*completion;
-
     return 0;
 }
+
+
+Queue::operator RawstorIOQueue*() noexcept {
+    return _impl;
+}
+
+
+void Queue::wait() {
+    while (_operations > 0) {
+        RawstorIOEvent *event = rawstor_io_queue_wait_event_timeout(
+            _impl, rawstor_opts_wait_timeout());
+        if (event == NULL) {
+            if (errno) {
+                RAWSTOR_THROW_ERRNO(errno);
+            }
+            break;
+        }
+
+        if (rawstor_io_event_dispatch(event)) {
+            RAWSTOR_THROW_ERRNO(errno);
+        }
+
+        rawstor_io_queue_release_event(_impl, event);
+    }
+
+    if (_operations > 0) {
+        throw std::runtime_error("Queue not completed");
+    }
+}
+
+
+} // unnamed namespace
+
+
+namespace rawstor {
 
 
 Connection::Connection(unsigned int depth):
@@ -79,55 +151,63 @@ Socket& Connection::_get_next_socket() {
 }
 
 
+void Connection::create(
+    const RawstorSocketAddress &ost,
+    const RawstorObjectSpec &sp, RawstorUUID *id)
+{
+    Queue q(1, _depth);
+
+    Socket s(ost, _depth);
+    s.create(static_cast<RawstorIOQueue*>(q), sp, id, q.callback, &q);
+
+    q.wait();
+}
+
+
+void Connection::remove(
+    const RawstorSocketAddress &ost,
+    const RawstorUUID &id)
+{
+    Queue q(1, _depth);
+
+    Socket s(ost, _depth);
+    s.remove(static_cast<RawstorIOQueue*>(q), id, q.callback, &q);
+
+    q.wait();
+}
+
+
+void Connection::spec(
+    const RawstorSocketAddress &ost,
+    const RawstorUUID &id, RawstorObjectSpec *sp)
+{
+    Queue q(1, _depth);
+
+    Socket s(ost, _depth);
+    s.spec(static_cast<RawstorIOQueue*>(q), id, sp, q.callback, &q);
+
+    q.wait();
+}
+
+
 void Connection::open(
     const RawstorSocketAddress &ost,
     rawstor::Object *object,
     size_t sockets)
 {
-    RawstorIOQueue *queue = rawstor_io_queue_create(_depth);
-    if (queue == NULL) {
-        RAWSTOR_THROW_ERRNO(errno);
-    }
+    Queue q(sockets, _depth);
 
     try {
-        int completion = sockets;
-
         _sockets.reserve(sockets);
         for (size_t i = 0; i < sockets; ++i) {
             _sockets.emplace_back(ost, _depth);
             _sockets.back().set_object(
-                queue, object,
-                _set_object_cb, &completion);
+                static_cast<RawstorIOQueue*>(q), object, q.callback, &q);
         }
 
-        while (completion > 0) {
-            RawstorIOEvent *event = rawstor_io_queue_wait_event_timeout(
-                queue, rawstor_opts_wait_timeout());
-            if (event == NULL) {
-                if (errno) {
-                    RAWSTOR_THROW_ERRNO(errno);
-                }
-                break;
-            }
-
-            if (rawstor_io_event_dispatch(event)) {
-                RAWSTOR_THROW_ERRNO(errno);
-            }
-
-            rawstor_io_queue_release_event(queue, event);
-        }
-
-        if (completion > 0) {
-            throw std::runtime_error("Failed to set object id");
-        }
-
-        rawstor_io_queue_delete(queue);
-        queue = NULL;
+        q.wait();
     } catch (...) {
         _sockets.clear();
-        if (queue != NULL) {
-            rawstor_io_queue_delete(queue);
-        }
         throw;
     }
 }
