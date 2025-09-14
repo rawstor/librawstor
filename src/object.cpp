@@ -1,8 +1,8 @@
-#include "object_ost.hpp"
+#include "object.hpp"
 #include "object_internals.h"
 #include <rawstor/object.h>
 
-#include "connection_ost.hpp"
+#include "connection.hpp"
 #include "rawstor_internals.h"
 
 #include <rawstorstd/gpp.hpp>

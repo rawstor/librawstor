@@ -1,7 +1,7 @@
 #ifndef RAWSTOR_CONNECTION_OST_HPP
 #define RAWSTOR_CONNECTION_OST_HPP
 
-#include "socket_ost.hpp"
+#include "socket.hpp"
 
 #include <rawstor/object.h>
 #include <rawstor/rawstor.h>

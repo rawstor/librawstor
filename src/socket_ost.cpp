@@ -1,6 +1,6 @@
 #include "socket_ost.hpp"
 
-#include "object_ost.hpp"
+#include "object.hpp"
 #include "opts.h"
 #include "ost_protocol.h"
 #include "rawstor_internals.h"

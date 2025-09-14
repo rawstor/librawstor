@@ -1,7 +1,7 @@
 #ifndef RAWSTOR_OBJECT_OST_HPP
 #define RAWSTOR_OBJECT_OST_HPP
 
-#include "connection_ost.hpp"
+#include "connection.hpp"
 
 #include <rawstorstd/mempool.h>
 

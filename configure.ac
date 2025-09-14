@@ -43,6 +43,9 @@ AC_ARG_ENABLE([ost], [AS_HELP_STRING([--disable-ost],
     [enable_ost=$enableval],
     [enable_ost="yes"])
 AM_CONDITIONAL([ENABLE_OST], [test "x$enable_ost" == "xyes"])
+AS_IF([test "x$enable_ost" == "xyes"], [
+    AC_DEFINE([RAWSTOR_ENABLE_OST], 1, [Enable OST integration])
+])
 
 
 AC_ARG_WITH([liburing], [AS_HELP_STRING([--without-liburing],
@@ -64,7 +67,7 @@ AC_ARG_WITH([libxxhash], [AS_HELP_STRING([--without-libxxhash],
     [with_libxxhash="yes"])
 AM_CONDITIONAL([WITH_LIBXXHASH], [test "x$with_libxxhash" == "xyes"])
 AS_IF([test "x$with_libxxhash" == "xyes"], [
-    AC_DEFINE([WITH_LIBXXHASH], 1, [With libxxhash])
+    AC_DEFINE([RAWSTOR_WITH_LIBXXHASH], 1, [With libxxhash])
     PKG_CHECK_MODULES([LIBXXHASH], [libxxhash])
     AC_SUBST([maybe_libxxhash], ["libxxhash"])
 ], [
