@@ -855,7 +855,7 @@ void Socket::pwritev(
             .s = this,
             .cid = op->cid,  // preserve cid
             .request = {
-                .io {
+                .io = {
                     .magic = RAWSTOR_MAGIC,
                     .cmd = RAWSTOR_CMD_WRITE,
                     .cid = op->cid,
