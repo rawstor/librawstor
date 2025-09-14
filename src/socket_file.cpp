@@ -1,7 +1,7 @@
-#include "object_file.hpp"
+#include "socket_file.hpp"
 #include "object_internals.h"
-#include <rawstor/object.h>
 
+#include "object.hpp"
 #include "opts.h"
 #include "rawstor_internals.h"
 
@@ -31,29 +31,7 @@
 #include <sstream>
 
 
-/**
- * TODO: Make it global
- */
-#define QUEUE_DEPTH 256
-
-
 namespace {
-
-
-struct ObjectOp {
-    rawstor::Object *object;
-    RawstorCallback *callback;
-    void *data;
-};
-
-
-std::string get_ost_path(const RawstorSocketAddress &ost) {
-    std::ostringstream oss;
-
-    oss << "./ost-" << ost.host << ":" << ost.port;
-
-    return oss.str();
-}
 
 
 std::string get_object_spec_path(
@@ -76,16 +54,6 @@ std::string get_object_dat_path(
 
     return oss.str();
 }
-
-
-} // unnamed namespace
-
-
-struct RawstorObject {
-    rawstor::Object *impl;
-
-    RawstorObject(rawstor::Object *impl): impl(impl) {}
-};
 
 
 void write_dat(
@@ -120,26 +88,98 @@ void write_dat(
 }
 
 
+} // unnamed namespace
+
+
 namespace rawstor {
 
 
-void Object::create(const RawstorObjectSpec &spec, RawstorUUID *id) {
-    create(*rawstor_default_ost(), spec, id);
-}
+struct SocketOp {
+    rawstor::Socket *s;
+    RawstorCallback *callback;
+    void *data;
+};
 
 
-void Object::create(
-    const RawstorSocketAddress &ost,
-    const RawstorObjectSpec &spec,
-    RawstorUUID *id)
+Socket::Socket(const RawstorSocketAddress &ost, unsigned int depth):
+    _fd(-1),
+    _object(nullptr),
+    _ops_pool(nullptr)
 {
-    std::string ost_path = get_ost_path(ost);
-    if (mkdir(ost_path.c_str(), 0755)) {
+    std::ostringstream oss;
+    oss << "./ost-" << ost.host << ":" << ost.port;
+    _ost_path = oss.str();
+
+    _ops_pool = rawstor_mempool_create(depth, sizeof(SocketOp));
+    if (_ops_pool == NULL) {
+        RAWSTOR_THROW_ERRNO(errno);
+    }
+
+    if (mkdir(_ost_path.c_str(), 0755)) {
         if (errno != EEXIST) {
             RAWSTOR_THROW_ERRNO(errno);
         }
     }
+}
 
+
+Socket::Socket(Socket &&other) noexcept:
+    _fd(std::exchange(other._fd, -1)),
+    _object(std::exchange(other._object, nullptr)),
+    _ops_pool(std::exchange(other._ops_pool, nullptr)),
+    _ost_path(std::move(other._ost_path))
+{}
+
+
+Socket::~Socket() {
+    if (_fd != -1) {
+        if (::close(_fd) == -1) {
+            rawstor_error(
+                "Socket::~Socket(): close failed: %s\n", strerror(errno));
+        }
+    }
+    if (_ops_pool) {
+        rawstor_mempool_delete(_ops_pool);
+    }
+}
+
+
+SocketOp* Socket::_pop_op() {
+    SocketOp *op = static_cast<SocketOp*>(rawstor_mempool_alloc(_ops_pool));
+    if (op == NULL) {
+        RAWSTOR_THROW_ERRNO(errno);
+    }
+
+    return op;
+}
+
+
+void Socket::_push_op(SocketOp *op) {
+    rawstor_mempool_free(_ops_pool, op);
+}
+
+
+int Socket::_io_cb(RawstorIOEvent *event, void *data) noexcept {
+    SocketOp *op = static_cast<SocketOp*>(data);
+
+    int ret = op->callback(
+        op->s->_object->c_ptr(),
+        rawstor_io_event_size(event),
+        rawstor_io_event_result(event),
+        rawstor_io_event_error(event),
+        op->data);
+
+    op->s->_push_op(op);
+
+    return ret;
+}
+
+
+void Socket::create(
+    RawstorIOQueue *,
+    const RawstorObjectSpec &sp, RawstorUUID *id,
+    RawstorCallback *cb, void *data)
+{
     RawstorUUID uuid;
     RawstorUUIDString uuid_string;
     std::string spec_path;
@@ -149,7 +189,7 @@ void Object::create(
             RAWSTOR_THROW_ERRNO(errno);
         }
         rawstor_uuid_to_string(&uuid, &uuid_string);
-        spec_path = get_object_spec_path(ost_path, uuid_string);
+        spec_path = get_object_spec_path(_ost_path, uuid_string);
         fd = ::open(spec_path.c_str(), O_EXCL | O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR);
         if (fd != -1) {
             break;
@@ -159,72 +199,61 @@ void Object::create(
         }
     }
     try {
-        ssize_t rval = write(fd, &spec, sizeof(spec));
+        ssize_t rval = write(fd, &sp, sizeof(sp));
         if (rval == -1) {
             RAWSTOR_THROW_ERRNO(errno);
         }
 
-        write_dat(ost_path, spec, uuid);
+        write_dat(_ost_path, sp, uuid);
 
         if (::close(fd)) {
             RAWSTOR_THROW_ERRNO(errno);
         }
-
-        *id = uuid;
-
-        return;
     } catch (...) {
         unlink(spec_path.c_str());
         ::close(fd);
         throw;
     }
+
+    *id = uuid;
+
+    cb(nullptr, 0, 0, 0, data);
 }
 
 
-void Object::remove(const RawstorUUID &id) {
-    remove(*rawstor_default_ost(), id);
-}
-
-
-void Object::remove(
-    const RawstorSocketAddress &ost,
-    const RawstorUUID &id)
+void Socket::remove(
+    RawstorIOQueue *,
+    const RawstorUUID &id,
+    RawstorCallback *cb, void *data)
 {
-    std::string ost_path = get_ost_path(ost);
-
     RawstorUUIDString uuid_string;
     rawstor_uuid_to_string(&id, &uuid_string);
 
-    std::string spec_path = get_object_spec_path(ost_path, uuid_string);
+    std::string spec_path = get_object_spec_path(_ost_path, uuid_string);
     int rval = unlink(spec_path.c_str());
     if (rval == -1) {
         RAWSTOR_THROW_ERRNO(errno);
     }
 
-    std::string dat_path = get_object_dat_path(ost_path, uuid_string);
+    std::string dat_path = get_object_dat_path(_ost_path, uuid_string);
     rval = unlink(dat_path.c_str());
     if (rval == -1) {
         RAWSTOR_THROW_ERRNO(errno);
     }
+
+    cb(nullptr, 0, 0, 0, data);
 }
 
 
-void Object::spec(const RawstorUUID &id, RawstorObjectSpec *sp) {
-    spec(*rawstor_default_ost(), id, sp);
-}
-
-
-void Object::spec(
-    const RawstorSocketAddress &ost,
-    const RawstorUUID &id,
-    RawstorObjectSpec *sp)
+void Socket::spec(
+    RawstorIOQueue *,
+    const RawstorUUID &id, RawstorObjectSpec *sp,
+    RawstorCallback *cb, void *data)
 {
-    std::string ost_path = get_ost_path(ost);
-
     RawstorUUIDString uuid_string;
     rawstor_uuid_to_string(&id, &uuid_string);
 
-    std::string spec_path = get_object_spec_path(ost_path, uuid_string);
+    std::string spec_path = get_object_spec_path(_ost_path, uuid_string);
 
     int fd = ::open(spec_path.c_str(), O_RDONLY);
     if (fd == -1) {
@@ -243,198 +272,123 @@ void Object::spec(
         ::close(fd);
         throw;
     }
+
+    cb(nullptr, 0, 0, 0, data);
 }
 
 
-Object::Object(const RawstorUUID &id):
-    _c_ptr(new RawstorObject(this)),
-    _id(id),
-    _fd(-1),
-    _ops_pool(NULL)
+void Socket::set_object(
+    RawstorIOQueue *,
+    rawstor::Object *object,
+    RawstorCallback *cb, void *data)
 {
-    _ops_pool = rawstor_mempool_create(QUEUE_DEPTH, sizeof(ObjectOp));
-    if (_ops_pool == NULL) {
-        RAWSTOR_THROW_ERRNO(errno);
-    }
-}
-
-
-Object::~Object() {
     if (_fd != -1) {
-        try {
-            close();
-        } catch (const std::system_error &e) {
-            rawstor_error("Object::close(): %s\n", e.what());
-        }
+        throw std::runtime_error("Object already set");
     }
-    rawstor_mempool_delete(_ops_pool);
-    delete _c_ptr;
-}
-
-
-int Object::_process(RawstorIOEvent *event, void *data) noexcept {
-    ObjectOp *op = (ObjectOp*)data;
-
-    int ret = op->callback(
-        op->object->c_ptr(),
-        rawstor_io_event_size(event),
-        rawstor_io_event_result(event),
-        rawstor_io_event_error(event),
-        op->data);
-
-    rawstor_mempool_free(op->object->_ops_pool, op);
-
-    return ret;
-}
-
-
-RawstorObject* Object::c_ptr() noexcept {
-    return _c_ptr;
-}
-
-
-const RawstorUUID& Object::id() const noexcept {
-    return _id;
-}
-
-
-void Object::open() {
-    open(*rawstor_default_ost());
-}
-
-
-void Object::open(const RawstorSocketAddress &ost) {
-    if (_fd != -1) {
-        throw std::runtime_error("Object already opened");
-    }
-
-    std::string ost_path = get_ost_path(ost);
 
     RawstorUUIDString uuid_string;
-    rawstor_uuid_to_string(&_id, &uuid_string);
+    rawstor_uuid_to_string(&object->id(), &uuid_string);
 
-    std::string dat_path = get_object_dat_path(ost_path, uuid_string);
+    std::string dat_path = get_object_dat_path(_ost_path, uuid_string);
 
     _fd = ::open(dat_path.c_str(), O_RDWR | O_NONBLOCK);
     if (_fd == -1) {
         RAWSTOR_THROW_ERRNO(errno);
     }
+
+    _object = object;
+
+    cb(object->c_ptr(), 0, 0, 0, data);
 }
 
 
-void Object::close() {
-    if (_fd == -1) {
-        throw std::runtime_error("Object not opened");
-    }
-
-    int rval = ::close(_fd);
-    if (rval == -1) {
-        RAWSTOR_THROW_ERRNO(errno);
-    }
-
-    _fd = -1;
-}
-
-
-void Object::pread(
+void Socket::pread(
     void *buf, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
-    ObjectOp *op = (ObjectOp*)rawstor_mempool_alloc(_ops_pool);
-    if (op == NULL) {
-        RAWSTOR_THROW_ERRNO(errno);
-    }
+    SocketOp *op = _pop_op();
 
     try {
         *op = {
-            .object = this,
+            .s = this,
             .callback = cb,
             .data = data,
         };
 
-        if (rawstor_fd_pread(_fd, buf, size, offset, _process, op)) {
+        if (rawstor_fd_pread(_fd, buf, size, offset, _io_cb, op)) {
             RAWSTOR_THROW_ERRNO(errno);
         }
     } catch (...) {
-        rawstor_mempool_free(_ops_pool, op);
+        _push_op(op);
         throw;
     }
 }
 
 
-void Object::preadv(
+void Socket::preadv(
     iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
-    ObjectOp *op = (ObjectOp*)rawstor_mempool_alloc(_ops_pool);
-    if (op == NULL) {
-        RAWSTOR_THROW_ERRNO(errno);
-    }
+    SocketOp *op = _pop_op();
 
     try {
         *op = {
-            .object = this,
+            .s = this,
             .callback = cb,
             .data = data,
         };
 
-        if (rawstor_fd_preadv(_fd, iov, niov, size, offset, _process, op)) {
+        if (rawstor_fd_preadv(_fd, iov, niov, size, offset, _io_cb, op)) {
             RAWSTOR_THROW_ERRNO(errno);
         }
     } catch (...) {
-        rawstor_mempool_free(_ops_pool, op);
+        _push_op(op);
         throw;
     }
 }
 
 
-void Object::pwrite(
+void Socket::pwrite(
     void *buf, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
-    ObjectOp *op = (ObjectOp*)rawstor_mempool_alloc(_ops_pool);
-    if (op == NULL) {
-        RAWSTOR_THROW_ERRNO(errno);
-    }
+    SocketOp *op = _pop_op();
 
     try {
         *op = {
-            .object = this,
+            .s = this,
             .callback = cb,
             .data = data,
         };
 
-        if (rawstor_fd_pwrite(_fd, buf, size, offset, _process, op)) {
+        if (rawstor_fd_pwrite(_fd, buf, size, offset, _io_cb, op)) {
             RAWSTOR_THROW_ERRNO(errno);
         }
     } catch (...) {
-        rawstor_mempool_free(_ops_pool, op);
+        _push_op(op);
         throw;
     }
 }
 
 
-void Object::pwritev(
+void Socket::pwritev(
     iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
-    ObjectOp *op = (ObjectOp*)rawstor_mempool_alloc(_ops_pool);
-    if (op == NULL) {
-        RAWSTOR_THROW_ERRNO(errno);
-    }
+    SocketOp *op = _pop_op();
 
     try {
         *op = {
-            .object = this,
+            .s = this,
             .callback = cb,
             .data = data,
         };
 
-        if (rawstor_fd_pwritev(_fd, iov, niov, size, offset, _process, op)) {
+        if (rawstor_fd_pwritev(_fd, iov, niov, size, offset, _io_cb, op)) {
             RAWSTOR_THROW_ERRNO(errno);
         }
     } catch (...) {
-        rawstor_mempool_free(_ops_pool, op);
+        _push_op(op);
         throw;
     }
 }
@@ -445,208 +399,4 @@ void Object::pwritev(
 
 const char* rawstor_object_backend_name() {
     return "file";
-}
-
-
-int rawstor_object_create(const RawstorObjectSpec *spec, RawstorUUID *id) {
-    try {
-        rawstor::Object::create(*spec, id);
-        return 0;
-    } catch (const std::system_error &e) {
-        errno = e.code().value();
-        return -errno;
-    }
-}
-
-
-int rawstor_object_create_ost(
-    const RawstorSocketAddress *ost,
-    const RawstorObjectSpec *spec,
-    RawstorUUID *id)
-{
-    try {
-        rawstor::Object::create(*ost, *spec, id);
-        return 0;
-    } catch (const std::system_error &e) {
-        errno = e.code().value();
-        return -errno;
-    }
-}
-
-
-int rawstor_object_remove(const RawstorUUID *id) {
-    try {
-        rawstor::Object::remove(*id);
-        return 0;
-    } catch (const std::system_error &e) {
-        errno = e.code().value();
-        return -errno;
-    }
-}
-
-
-int rawstor_object_remove_ost(
-    const RawstorSocketAddress *ost,
-    const RawstorUUID *id)
-{
-    try {
-        rawstor::Object::remove(*ost, *id);
-        return 0;
-    } catch (const std::system_error &e) {
-        errno = e.code().value();
-        return -errno;
-    }
-}
-
-
-int rawstor_object_open(const RawstorUUID *id, RawstorObject **object) {
-    try {
-        std::unique_ptr<rawstor::Object> impl(new rawstor::Object(*id));
-
-        impl->open();
-
-        *object = impl->c_ptr();
-
-        impl.release();
-
-        return 0;
-    } catch (const std::system_error &e) {
-        errno = e.code().value();
-        return -errno;
-    } catch (const std::bad_alloc &e) {
-        errno = ENOMEM;
-        return -errno;
-    }
-}
-
-
-int rawstor_object_open_ost(
-    const RawstorSocketAddress *ost,
-    const RawstorUUID *id,
-    RawstorObject **object)
-{
-    try {
-        std::unique_ptr<rawstor::Object> impl(new rawstor::Object(*id));
-
-        impl->open(*ost);
-
-        *object = impl->c_ptr();
-
-        impl.release();
-
-        return 0;
-    } catch (const std::system_error &e) {
-        errno = e.code().value();
-        return -errno;
-    } catch (const std::bad_alloc &e) {
-        errno = ENOMEM;
-        return -errno;
-    }
-}
-
-
-int rawstor_object_close(RawstorObject *object) {
-    try {
-        rawstor::Object *impl = object->impl;
-
-        impl->close();
-
-        delete impl;
-
-        return 0;
-    } catch (const std::system_error &e) {
-        errno = e.code().value();
-        return -errno;
-    }
-}
-
-
-const RawstorUUID* rawstor_object_get_id(RawstorObject *object) {
-    return &object->impl->id();
-}
-
-
-int rawstor_object_spec(const RawstorUUID *id, RawstorObjectSpec *spec) {
-    try {
-        rawstor::Object::spec(*id, spec);
-        return 0;
-    } catch (const std::system_error &e) {
-        errno = e.code().value();
-        return -errno;
-    }
-}
-
-
-int rawstor_object_spec_ost(
-    const RawstorSocketAddress *ost,
-    const RawstorUUID *id,
-    RawstorObjectSpec *spec)
-{
-    try {
-        rawstor::Object::spec(*ost, *id, spec);
-        return 0;
-    } catch (const std::system_error &e) {
-        errno = e.code().value();
-        return -errno;
-    }
-}
-
-
-int rawstor_object_pread(
-    RawstorObject *object,
-    void *buf, size_t size, off_t offset,
-    RawstorCallback *cb, void *data)
-{
-    try {
-        object->impl->pread(buf, size, offset, cb, data);
-        return 0;
-    } catch (const std::system_error &e) {
-        errno = e.code().value();
-        return -errno;
-    }
-}
-
-
-int rawstor_object_preadv(
-    RawstorObject *object,
-    iovec *iov, unsigned int niov, size_t size, off_t offset,
-    RawstorCallback *cb, void *data)
-{
-    try {
-        object->impl->preadv(iov, niov, size, offset, cb, data);
-        return 0;
-    } catch (const std::system_error &e) {
-        errno = e.code().value();
-        return -errno;
-    }
-}
-
-
-int rawstor_object_pwrite(
-    RawstorObject *object,
-    void *buf, size_t size, off_t offset,
-    RawstorCallback *cb, void *data)
-{
-    try {
-        object->impl->pwrite(buf, size, offset, cb, data);
-        return 0;
-    } catch (const std::system_error &e) {
-        errno = e.code().value();
-        return -errno;
-    }
-}
-
-
-int rawstor_object_pwritev(
-    RawstorObject *object,
-    iovec *iov, unsigned int niov, size_t size, off_t offset,
-    RawstorCallback *cb, void *data)
-{
-    try {
-        object->impl->pwritev(iov, niov, size, offset, cb, data);
-        return 0;
-    } catch (const std::system_error &e) {
-        errno = e.code().value();
-        return -errno;
-    }
 }

@@ -1,5 +1,5 @@
-#ifndef RAWSTOR_OBJECT_OST_HPP
-#define RAWSTOR_OBJECT_OST_HPP
+#ifndef RAWSTOR_OBJECT_HPP
+#define RAWSTOR_OBJECT_HPP
 
 #include "connection.hpp"
 
@@ -72,4 +72,4 @@ class Object {
 } // rawstor
 
 
-#endif // RAWSTOR_OBJECT_OST_HPP
+#endif // RAWSTOR_OBJECT_HPP

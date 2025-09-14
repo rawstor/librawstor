@@ -253,11 +253,6 @@ void Object::pwritev(
 } // rawstor
 
 
-const char* rawstor_object_backend_name(void) {
-    return "ost";
-};
-
-
 int rawstor_object_create(
     const RawstorObjectSpec *sp,
     RawstorUUID *id)

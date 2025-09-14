@@ -141,7 +141,9 @@ Socket::~Socket() {
         delete op;
     }
 
-    rawstor_ringbuf_delete(_ops);
+    if (_ops != nullptr) {
+        rawstor_ringbuf_delete(_ops);
+    }
 }
 
 
@@ -898,3 +900,8 @@ void Socket::pwritev(
 
 
 } // rawstor
+
+
+const char* rawstor_object_backend_name() {
+    return "ost";
+}
