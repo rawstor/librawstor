@@ -22,7 +22,5 @@ int rawstor_cli_remove(const struct RawstorUUID *object_id) {
 
     fprintf(stderr, "Object removed\n");
 
-    rawstor_terminate();
-
     return EXIT_SUCCESS;
 }
