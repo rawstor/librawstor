@@ -54,15 +54,6 @@ class Socket {
         static int _readv_response_body_cb(
             RawstorIOEvent *event, void *data) noexcept;
 
-        static void _op_process_set_object_id(
-            RawstorIOEvent *event, SocketOp *op);
-        static void _op_process_read(
-            RawstorIOEvent *event, SocketOp *op);
-        static void _op_process_readv(
-            RawstorIOEvent *event, SocketOp *op);
-        static void _op_process_write(
-            RawstorIOEvent *event, SocketOp *op);
-
     public:
         static const char* engine_name() noexcept;
 

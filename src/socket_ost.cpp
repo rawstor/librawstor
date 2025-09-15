@@ -111,12 +111,11 @@ struct SocketOp {
             unsigned int niov;
         } vector;
     } payload;
+    int vector;
 
     iovec iov[IOVEC_SIZE];
     unsigned int niov;
     size_t size;
-
-    void (*process)(RawstorIOEvent *event, SocketOp *op);
 
     RawstorCallback *callback;
     void *data;
@@ -339,65 +338,8 @@ void Socket::_readv_response_body(RawstorIOQueue *queue, SocketOp *op) {
 }
 
 
-void Socket::_op_process_set_object_id(RawstorIOEvent *, SocketOp *op) {
-    Socket *s = op->s;
-
-    validate_cmd(s->_response.cmd, RAWSTOR_CMD_SET_OBJECT);
-
-    int res = op->callback(
-        s->_object->c_ptr(),
-        0, 0, 0,
-        op->data);
-
-    s->_release_op(op);
-
-    if (res < 0) {
-        RAWSTOR_THROW_ERRNO(-res);
-    }
-}
-
-
-void Socket::_op_process_read(RawstorIOEvent *event, SocketOp *op) {
-    Socket *s = op->s;
-
-    validate_cmd(s->_response.cmd, RAWSTOR_CMD_READ);
-
-    s->_read_response_body(rawstor_io_event_queue(event), op);
-}
-
-
-void Socket::_op_process_readv(RawstorIOEvent *event, SocketOp *op) {
-    Socket *s = op->s;
-
-    validate_cmd(s->_response.cmd, RAWSTOR_CMD_READ);
-
-    s->_readv_response_body(rawstor_io_event_queue(event), op);
-}
-
-
-void Socket::_op_process_write(RawstorIOEvent *event, SocketOp *op) {
-    Socket *s = op->s;
-
-    s->_read_response_head(rawstor_io_event_queue(event));
-
-    validate_cmd(s->_response.cmd, RAWSTOR_CMD_WRITE);
-
-    int res = op->callback(
-        s->_object->c_ptr(),
-        op->request.io.len, op->request.io.len, 0,
-        op->data);
-
-    s->_release_op(op);
-
-    if (res < 0) {
-        RAWSTOR_THROW_ERRNO(-res);
-    }
-}
-
-
 int Socket::_writev_request_cb(RawstorIOEvent *event, void *data) noexcept {
     SocketOp *op = static_cast<SocketOp*>(data);
-    Socket *s = op->s;
 
     try {
         op_trace(op->cid, event);
@@ -406,7 +348,6 @@ int Socket::_writev_request_cb(RawstorIOEvent *event, void *data) noexcept {
 
         return 0;
     } catch (const std::system_error &e) {
-        s->_release_op(op);
         return -e.code().value();
     }
 }
@@ -428,13 +369,22 @@ int Socket::_read_response_set_object_id_cb(
 
         ::validate_response(response);
 
-        op->process(event, op);
+        validate_cmd(response.cmd, RAWSTOR_CMD_SET_OBJECT);
+
+        int res = op->callback(
+            s->_object->c_ptr(),
+            0, 0, 0,
+            op->data);
+        if (res < 0) {
+            RAWSTOR_THROW_ERRNO(-res);
+        }
 
         s->_read_response_head(rawstor_io_queue);
     } catch (const std::system_error &e) {
-        s->_release_op(op);
         ret = -e.code().value();
     }
+
+    s->_release_op(op);
 
     return ret;
 }
@@ -535,7 +485,10 @@ const char* Socket::engine_name() noexcept {
 int Socket::_read_response_head_cb(
     RawstorIOEvent *event, void *data) noexcept
 {
+    int res;
     Socket *s = static_cast<Socket*>(data);
+    SocketOp *op = nullptr;
+    int ret = 0;
 
     try {
         /**
@@ -549,12 +502,44 @@ int Socket::_read_response_head_cb(
         SocketOp *op = s->_find_op(response.cid);
         op_trace(op->cid, event);
 
-        op->process(event, op);
+        validate_cmd(s->_response.cmd, op->request.io.cmd);
 
-        return 0;
+        switch (s->_response.cmd) {
+            case RAWSTOR_CMD_READ:
+                if (!op->vector) {
+                    s->_read_response_body(
+                        rawstor_io_event_queue(event), op);
+                } else {
+                      s->_readv_response_body(
+                        rawstor_io_event_queue(event), op);
+                }
+                op = nullptr;
+                break;
+            case RAWSTOR_CMD_WRITE:
+                s->_read_response_head(rawstor_io_event_queue(event));
+                res = op->callback(
+                    s->_object->c_ptr(),
+                    op->request.io.len, op->request.io.len, 0,
+                    op->data);
+                if (res < 0) {
+                    RAWSTOR_THROW_ERRNO(-res);
+                }
+                break;
+            case RAWSTOR_CMD_SET_OBJECT:
+            case RAWSTOR_CMD_DISCARD:
+                break;
+        }
+
+        ret = 0;
     } catch (const std::system_error &e) {
-        return -e.code().value();
+        ret = -e.code().value();
     }
+
+    if (op != nullptr) {
+        s->_release_op(op);
+    }
+
+    return ret;
 }
 
 
@@ -624,10 +609,10 @@ void Socket::set_object(
                 },
             },
             .payload = {},
+            .vector = 0,
             .iov = {},
             .niov = 0,
             .size = 0,
-            .process = _op_process_set_object_id,
             .callback = cb,
             .data = data,
         };
@@ -685,10 +670,10 @@ void Socket::pread(
                     .data = buf,
                 },
             },
+            .vector = 0,
             .iov = {},
             .niov = 0,
             .size = 0,
-            .process = _op_process_read,
             .callback = cb,
             .data = data,
         };
@@ -739,10 +724,10 @@ void Socket::preadv(
                     .niov = niov,
                 },
             },
+            .vector = 1,
             .iov = {},
             .niov = 0,
             .size = 0,
-            .process = _op_process_readv,
             .callback = cb,
             .data = data,
         };
@@ -792,10 +777,10 @@ void Socket::pwrite(
                     .data = buf,
                 },
             },
+            .vector = 0,
             .iov = {},
             .niov = 0,
             .size = 0,
-            .process = _op_process_write,
             .callback = cb,
             .data = data,
         };
@@ -860,10 +845,10 @@ void Socket::pwritev(
                     .niov = niov,
                 },
             },
+            .vector = 1,
             .iov = {},
             .niov = 0,
             .size = 0,
-            .process = _op_process_write,
             .callback = cb,
             .data = data,
         };
