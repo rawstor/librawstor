@@ -33,6 +33,7 @@ class Socket {
 
         SocketOp* _acquire_op();
         void _release_op(SocketOp *op) noexcept;
+        SocketOp* _find_op(unsigned int cid);
 
         int _connect(const RawstorSocketAddress &ost);
 
@@ -52,15 +53,6 @@ class Socket {
             RawstorIOEvent *event, void *data) noexcept;
         static int _readv_response_body_cb(
             RawstorIOEvent *event, void *data) noexcept;
-
-        static void _op_process_set_object_id(
-            RawstorIOQueue *queue, SocketOp *op);
-        static void _op_process_read(
-            RawstorIOQueue *queue, SocketOp *op);
-        static void _op_process_readv(
-            RawstorIOQueue *queue, SocketOp *op);
-        static void _op_process_write(
-            RawstorIOQueue *queue, SocketOp *op);
 
     public:
         static const char* engine_name() noexcept;

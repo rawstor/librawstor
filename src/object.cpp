@@ -3,6 +3,7 @@
 #include <rawstor/object.h>
 
 #include "connection.hpp"
+#include "opts.h"
 #include "socket.hpp"
 #include "rawstor_internals.h"
 
@@ -88,7 +89,7 @@ int Object::_process(
     RawstorObject *object,
     size_t size, size_t res, int error, void *data) noexcept
 {
-    ObjectOp *op = (ObjectOp*)data;
+    ObjectOp *op = static_cast<ObjectOp*>(data);
 
     int ret = op->callback(object, size, res, error, op->data);
 
@@ -134,7 +135,7 @@ void Object::open() {
 
 
 void Object::open(const RawstorSocketAddress &ost) {
-    _cn.open(ost, this, 1);
+    _cn.open(ost, this, rawstor_opts_sessions());
 }
 
 
@@ -151,7 +152,7 @@ void Object::pread(
         "%s(): offset = %jd, size = %zu\n",
         __FUNCTION__, (intmax_t)offset, size);
 
-    ObjectOp *op = (ObjectOp*)rawstor_mempool_alloc(_ops_pool);
+    ObjectOp *op = static_cast<ObjectOp*>(rawstor_mempool_alloc(_ops_pool));
     if (op == nullptr) {
         RAWSTOR_THROW_ERRNO(ENOBUFS);
     }
@@ -178,7 +179,7 @@ void Object::preadv(
         "%s(): offset = %jd, niov = %u, size = %zu\n",
         __FUNCTION__, (intmax_t)offset, niov, size);
 
-    ObjectOp *op = (ObjectOp*)rawstor_mempool_alloc(_ops_pool);
+    ObjectOp *op = static_cast<ObjectOp*>(rawstor_mempool_alloc(_ops_pool));
     if (op == nullptr) {
         RAWSTOR_THROW_ERRNO(ENOBUFS);
     }
@@ -205,7 +206,7 @@ void Object::pwrite(
         "%s(): offset = %jd, size = %zu\n",
         __FUNCTION__, (intmax_t)offset, size);
 
-    ObjectOp *op = (ObjectOp*)rawstor_mempool_alloc(_ops_pool);
+    ObjectOp *op = static_cast<ObjectOp*>(rawstor_mempool_alloc(_ops_pool));
     if (op == nullptr) {
         RAWSTOR_THROW_ERRNO(ENOBUFS);
     }
@@ -232,7 +233,7 @@ void Object::pwritev(
         "%s(): offset = %jd, niov = %u, size = %zu\n",
         __FUNCTION__, (intmax_t)offset, niov, size);
 
-    ObjectOp *op = (ObjectOp*)rawstor_mempool_alloc(_ops_pool);
+    ObjectOp *op = static_cast<ObjectOp*>(rawstor_mempool_alloc(_ops_pool));
     if (op == nullptr) {
         RAWSTOR_THROW_ERRNO(ENOBUFS);
     }

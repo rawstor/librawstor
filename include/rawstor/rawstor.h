@@ -61,6 +61,7 @@ int rawstor_fd_pwritev(
 
 struct RawstorOpts {
     unsigned int wait_timeout;
+    unsigned int sessions;
     unsigned int so_sndtimeo;
     unsigned int so_rcvtimeo;
     unsigned int tcp_user_timeout;
