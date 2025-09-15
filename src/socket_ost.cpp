@@ -41,6 +41,55 @@
         rawstor_io_event_size(event))
 
 
+namespace {
+
+
+inline void validate_event(RawstorIOEvent *event) {
+    int error = rawstor_io_event_error(event);
+    if (error != 0) {
+        RAWSTOR_THROW_ERRNO(error);
+    }
+
+    if (rawstor_io_event_result(event) != rawstor_io_event_size(event)) {
+        rawstor_error(
+            "Partial event: %zu != %zu\n",
+            rawstor_io_event_result(event),
+            rawstor_io_event_size(event));
+        RAWSTOR_THROW_ERRNO(EIO);
+    }
+}
+
+
+inline void validate_response(const RawstorOSTFrameResponse &response) {
+    if (response.magic != RAWSTOR_MAGIC) {
+        rawstor_error(
+            "FATAL! Frame with wrong magic number: %x != %x\n",
+            response.magic, RAWSTOR_MAGIC);
+        RAWSTOR_THROW_ERRNO(EIO);
+    }
+
+    if (response.res < 0) {
+        rawstor_error(
+            "Server error: %s\n",
+            strerror(-response.res));
+        RAWSTOR_THROW_ERRNO(EPROTO);
+    }
+}
+
+
+inline void validate_cmd(
+    enum RawstorOSTCommandType cmd, enum RawstorOSTCommandType expected)
+{
+    if (cmd != expected) {
+        rawstor_error("Unexpected command in response: %d\n", cmd);
+        RAWSTOR_THROW_ERRNO(EPROTO);
+    }
+}
+
+
+} // unnamed
+
+
 namespace rawstor {
 
 
@@ -163,6 +212,16 @@ void Socket::_release_op(SocketOp *op) noexcept {
 }
 
 
+SocketOp* Socket::_find_op(unsigned int cid) {
+    if (cid < 1 || cid > _ops_array.size()) {
+        rawstor_error("Unexpected cid in response: %u\n", cid);
+        RAWSTOR_THROW_ERRNO(EIO);
+    }
+
+    return _ops_array[cid - 1];
+}
+
+
 int Socket::_connect(const RawstorSocketAddress &ost) {
     int res;
 
@@ -280,12 +339,14 @@ void Socket::_readv_response_body(RawstorIOQueue *queue, SocketOp *op) {
 }
 
 
-void Socket::_op_process_set_object_id(RawstorIOEvent *event, SocketOp *op) {
+void Socket::_op_process_set_object_id(RawstorIOEvent *, SocketOp *op) {
     Socket *s = op->s;
+
+    validate_cmd(s->_response.cmd, RAWSTOR_CMD_SET_OBJECT);
 
     int res = op->callback(
         s->_object->c_ptr(),
-        0, 0, rawstor_io_event_error(event),
+        0, 0, 0,
         op->data);
 
     s->_release_op(op);
@@ -297,12 +358,20 @@ void Socket::_op_process_set_object_id(RawstorIOEvent *event, SocketOp *op) {
 
 
 void Socket::_op_process_read(RawstorIOEvent *event, SocketOp *op) {
-    op->s->_read_response_body(rawstor_io_event_queue(event), op);
+    Socket *s = op->s;
+
+    validate_cmd(s->_response.cmd, RAWSTOR_CMD_READ);
+
+    s->_read_response_body(rawstor_io_event_queue(event), op);
 }
 
 
 void Socket::_op_process_readv(RawstorIOEvent *event, SocketOp *op) {
-    op->s->_readv_response_body(rawstor_io_event_queue(event), op);
+    Socket *s = op->s;
+
+    validate_cmd(s->_response.cmd, RAWSTOR_CMD_READ);
+
+    s->_readv_response_body(rawstor_io_event_queue(event), op);
 }
 
 
@@ -311,9 +380,11 @@ void Socket::_op_process_write(RawstorIOEvent *event, SocketOp *op) {
 
     s->_read_response_head(rawstor_io_event_queue(event));
 
+    validate_cmd(s->_response.cmd, RAWSTOR_CMD_WRITE);
+
     int res = op->callback(
         s->_object->c_ptr(),
-        op->request.io.len, op->request.io.len, rawstor_io_event_error(event),
+        op->request.io.len, op->request.io.len, 0,
         op->data);
 
     s->_release_op(op);
@@ -331,17 +402,7 @@ int Socket::_writev_request_cb(RawstorIOEvent *event, void *data) noexcept {
     try {
         op_trace(op->cid, event);
 
-        if (rawstor_io_event_error(event) != 0) {
-            RAWSTOR_THROW_ERRNO(rawstor_io_event_error(event));
-        }
-
-        if (rawstor_io_event_result(event) != rawstor_io_event_size(event)) {
-            rawstor_error(
-                "Request size mismatch: %zu != %zu\n",
-                rawstor_io_event_result(event),
-                rawstor_io_event_size(event));
-            RAWSTOR_THROW_ERRNO(EIO);
-        }
+        ::validate_event(event);
 
         return 0;
     } catch (const std::system_error &e) {
@@ -361,43 +422,17 @@ int Socket::_read_response_set_object_id_cb(
     try {
         op_trace(op->cid, event);
 
-        if (rawstor_io_event_result(event) != rawstor_io_event_size(event)) {
-            rawstor_error(
-                "Response set object id size mismatch: %zu != %zu\n",
-                rawstor_io_event_result(event),
-                rawstor_io_event_size(event));
-            RAWSTOR_THROW_ERRNO(EIO);
-        }
+        ::validate_event(event);
 
         RawstorOSTFrameResponse &response = s->_response;
-        if (response.magic != RAWSTOR_MAGIC) {
-            /**
-             * FIXME: Memory leak on used RawstorObjectOperation.
-             */
-            rawstor_error(
-                "FATAL! Frame with wrong magic number: %x != %x\n",
-                response.magic, RAWSTOR_MAGIC);
-            RAWSTOR_THROW_ERRNO(EIO);
-        }
 
-        if (response.res < 0) {
-            rawstor_error(
-                "Server error: %s\n",
-                strerror(-response.res));
-            RAWSTOR_THROW_ERRNO(EPROTO);
-        }
-
-        if (response.cmd != RAWSTOR_CMD_SET_OBJECT) {
-            rawstor_error(
-                "Unexpected command in response: %d\n",
-                response.cmd);
-            RAWSTOR_THROW_ERRNO(EPROTO);
-        }
+        ::validate_response(response);
 
         op->process(event, op);
 
         s->_read_response_head(rawstor_io_queue);
     } catch (const std::system_error &e) {
+        s->_release_op(op);
         ret = -e.code().value();
     }
 
@@ -419,6 +454,8 @@ int Socket::_read_response_body_cb(
     try {
         op_trace(op->cid, event);
 
+        ::validate_event(event);
+
         uint64_t hash = rawstor_hash_scalar(
             op->payload.linear.data, op->request.io.len);
 
@@ -427,14 +464,6 @@ int Socket::_read_response_body_cb(
                 "Response hash mismatch: %llx != %llx\n",
                 (unsigned long long)s->_response.hash,
                 (unsigned long long)hash);
-            RAWSTOR_THROW_ERRNO(EIO);
-        }
-
-        if (rawstor_io_event_result(event) != rawstor_io_event_size(event)) {
-            rawstor_error(
-                "Response body size mismatch: %zu != %zu\n",
-                rawstor_io_event_result(event),
-                rawstor_io_event_size(event));
             RAWSTOR_THROW_ERRNO(EIO);
         }
 
@@ -465,6 +494,8 @@ int Socket::_readv_response_body_cb(
     try {
         op_trace(op->cid, event);
 
+        ::validate_event(event);
+
         uint64_t hash;
         res = rawstor_hash_vector(
             op->payload.vector.iov, op->payload.vector.niov, &hash);
@@ -477,14 +508,6 @@ int Socket::_readv_response_body_cb(
                 "Response hash mismatch: %llx != %llx\n",
                 (unsigned long long)s->_response.hash,
                 (unsigned long long)hash);
-            RAWSTOR_THROW_ERRNO(EIO);
-        }
-
-        if (rawstor_io_event_result(event) != rawstor_io_event_size(event)) {
-            rawstor_error(
-                "Response body size mismatch: %zu != %zu\n",
-                rawstor_io_event_result(event),
-                rawstor_io_event_size(event));
             RAWSTOR_THROW_ERRNO(EIO);
         }
 
@@ -515,45 +538,15 @@ int Socket::_read_response_head_cb(
     Socket *s = static_cast<Socket*>(data);
 
     try {
-        if (rawstor_io_event_result(event) != rawstor_io_event_size(event)) {
-            /**
-             * FIXME: Memory leak on used RawstorObjectOperation.
-             */
-            rawstor_error(
-                "Response head size mismatch: %zu != %zu\n",
-                rawstor_io_event_result(event),
-                rawstor_io_event_size(event));
-            RAWSTOR_THROW_ERRNO(EIO);
-        }
+        /**
+         * FIXME: Memory leak on used RawstorObjectOperation.
+         */
+        ::validate_event(event);
 
         RawstorOSTFrameResponse &response = s->_response;
-        if (response.magic != RAWSTOR_MAGIC) {
-            /**
-             * FIXME: Memory leak on used RawstorObjectOperation.
-             */
-            rawstor_error(
-                "FATAL! Frame with wrong magic number: %x != %x\n",
-                response.magic, RAWSTOR_MAGIC);
-            RAWSTOR_THROW_ERRNO(EIO);
-        }
+        ::validate_response(s->_response);
 
-        if (response.res < 0) {
-            rawstor_error(
-                "Server error: %s\n",
-                strerror(-response.res));
-            RAWSTOR_THROW_ERRNO(EPROTO);
-        }
-
-        if (response.cid < 1 || response.cid > s->_ops_array.size()) {
-            /**
-             * FIXME: Memory leak on used RawstorObjectOperation.
-             */
-            rawstor_error("Unexpected cid in response: %u\n", response.cid);
-            RAWSTOR_THROW_ERRNO(EIO);
-        }
-
-        SocketOp *op = s->_ops_array[response.cid - 1];
-
+        SocketOp *op = s->_find_op(response.cid);
         op_trace(op->cid, event);
 
         op->process(event, op);

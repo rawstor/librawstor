@@ -33,6 +33,7 @@ class Socket {
 
         SocketOp* _acquire_op();
         void _release_op(SocketOp *op) noexcept;
+        SocketOp* _find_op(unsigned int cid);
 
         int _connect(const RawstorSocketAddress &ost);
 
