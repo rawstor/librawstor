@@ -75,7 +75,8 @@ int Queue::callback(
     --queue->_operations;
 
     if (error) {
-        return error;
+        errno = error;
+        return -errno;
     }
 
     if (size != res) {
@@ -103,8 +104,9 @@ void Queue::wait() {
             break;
         }
 
-        if (rawstor_io_event_dispatch(event)) {
-            RAWSTOR_THROW_ERRNO(errno);
+        int res = rawstor_io_event_dispatch(event);
+        if (res < 0) {
+            RAWSTOR_THROW_ERRNO(-res);
         }
 
         rawstor_io_queue_release_event(_impl, event);
@@ -201,7 +203,10 @@ void Connection::open(
         _sockets.reserve(sockets);
         for (size_t i = 0; i < sockets; ++i) {
             _sockets.emplace_back(ost, _depth);
-            _sockets.back().set_object(
+        }
+
+        for (Socket &s: _sockets) {
+            s.set_object(
                 static_cast<RawstorIOQueue*>(q), object, q.callback, &q);
         }
 

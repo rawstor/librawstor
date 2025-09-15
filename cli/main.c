@@ -21,6 +21,7 @@ static void usage() {
         "options:\n"
         "  -h, --help            Show this help message and exit\n"
         "  --ost                 OST host:port\n"
+        "  --sessions            Number of opened sessions per object\n"
         "  --wait-timeout        IO wait timeout\n"
         "\n"
         "command:\n"
@@ -396,13 +397,15 @@ static int run_command(
 int main(int argc, char **argv) {
     const char *optstring = "+h";
     struct option longopts[] = {
-        {"wait-timeout", required_argument, NULL, 't'},
-        {"ost", required_argument, NULL, 'o'},
         {"help", no_argument, NULL, 'h'},
+        {"ost", required_argument, NULL, 'o'},
+        {"sessions", required_argument, NULL, 's'},
+        {"wait-timeout", required_argument, NULL, 't'},
         {},
     };
 
     char *ost_arg = NULL;
+    char *sessions_arg = NULL;
     char *wait_timeout_arg = NULL;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
@@ -410,17 +413,21 @@ int main(int argc, char **argv) {
             break;
 
         switch (c) {
+            case 'h':
+                usage();
+                return EXIT_SUCCESS;
+                break;
+
             case 'o':
                 ost_arg = optarg;
                 break;
 
-            case 't':
-                wait_timeout_arg = optarg;
+            case 's':
+                sessions_arg = optarg;
                 break;
 
-            case 'h':
-                usage();
-                return EXIT_SUCCESS;
+            case 't':
+                wait_timeout_arg = optarg;
                 break;
 
             default:
@@ -456,6 +463,13 @@ int main(int argc, char **argv) {
         }
 
         ost_ptr = &ost;
+    }
+
+    if (sessions_arg != NULL) {
+        if (sscanf(sessions_arg, "%u", &opts.sessions) != 1) {
+            fprintf(stderr, "sessions argument must be unsigned integer\n");
+            return EXIT_FAILURE;
+        }
     }
 
     if (wait_timeout_arg != NULL) {

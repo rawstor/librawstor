@@ -54,13 +54,13 @@ class Socket {
             RawstorIOEvent *event, void *data) noexcept;
 
         static void _op_process_set_object_id(
-            RawstorIOQueue *queue, SocketOp *op);
+            RawstorIOEvent *event, SocketOp *op);
         static void _op_process_read(
-            RawstorIOQueue *queue, SocketOp *op);
+            RawstorIOEvent *event, SocketOp *op);
         static void _op_process_readv(
-            RawstorIOQueue *queue, SocketOp *op);
+            RawstorIOEvent *event, SocketOp *op);
         static void _op_process_write(
-            RawstorIOQueue *queue, SocketOp *op);
+            RawstorIOEvent *event, SocketOp *op);
 
     public:
         static const char* engine_name() noexcept;
