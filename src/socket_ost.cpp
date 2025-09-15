@@ -390,6 +390,69 @@ int Socket::_read_response_set_object_id_cb(
 }
 
 
+int Socket::_read_response_head_cb(
+    RawstorIOEvent *event, void *data) noexcept
+{
+    int res;
+    Socket *s = static_cast<Socket*>(data);
+    SocketOp *op = nullptr;
+    int ret = 0;
+
+    try {
+        /**
+         * FIXME: Memory leak on used RawstorObjectOperation.
+         */
+        ::validate_event(event);
+
+        RawstorOSTFrameResponse &response = s->_response;
+        ::validate_response(s->_response);
+
+        op = s->_find_op(response.cid);
+        op_trace(op->cid, event);
+
+        switch (s->_response.cmd) {
+            case RAWSTOR_CMD_READ:
+                validate_cmd(s->_response.cmd, RAWSTOR_CMD_READ);
+
+                if (!op->vector) {
+                    s->_read_response_body(
+                        rawstor_io_event_queue(event), op);
+                } else {
+                      s->_readv_response_body(
+                        rawstor_io_event_queue(event), op);
+                }
+                op = nullptr;
+                break;
+            case RAWSTOR_CMD_WRITE:
+                validate_cmd(s->_response.cmd, RAWSTOR_CMD_WRITE);
+
+                s->_read_response_head(rawstor_io_event_queue(event));
+                res = op->callback(
+                    s->_object->c_ptr(),
+                    op->request.io.len, op->request.io.len, 0,
+                    op->data);
+                if (res < 0) {
+                    RAWSTOR_THROW_ERRNO(-res);
+                }
+                break;
+            case RAWSTOR_CMD_SET_OBJECT:
+            case RAWSTOR_CMD_DISCARD:
+                break;
+        }
+
+        ret = 0;
+    } catch (const std::system_error &e) {
+        ret = -e.code().value();
+    }
+
+    if (op != nullptr) {
+        s->_release_op(op);
+    }
+
+    return ret;
+}
+
+
 int Socket::_read_response_body_cb(
     RawstorIOEvent *event, void *data) noexcept
 {
@@ -479,67 +542,6 @@ int Socket::_readv_response_body_cb(
 
 const char* Socket::engine_name() noexcept {
     return "ost";
-}
-
-
-int Socket::_read_response_head_cb(
-    RawstorIOEvent *event, void *data) noexcept
-{
-    int res;
-    Socket *s = static_cast<Socket*>(data);
-    SocketOp *op = nullptr;
-    int ret = 0;
-
-    try {
-        /**
-         * FIXME: Memory leak on used RawstorObjectOperation.
-         */
-        ::validate_event(event);
-
-        RawstorOSTFrameResponse &response = s->_response;
-        ::validate_response(s->_response);
-
-        SocketOp *op = s->_find_op(response.cid);
-        op_trace(op->cid, event);
-
-        validate_cmd(s->_response.cmd, op->request.io.cmd);
-
-        switch (s->_response.cmd) {
-            case RAWSTOR_CMD_READ:
-                if (!op->vector) {
-                    s->_read_response_body(
-                        rawstor_io_event_queue(event), op);
-                } else {
-                      s->_readv_response_body(
-                        rawstor_io_event_queue(event), op);
-                }
-                op = nullptr;
-                break;
-            case RAWSTOR_CMD_WRITE:
-                s->_read_response_head(rawstor_io_event_queue(event));
-                res = op->callback(
-                    s->_object->c_ptr(),
-                    op->request.io.len, op->request.io.len, 0,
-                    op->data);
-                if (res < 0) {
-                    RAWSTOR_THROW_ERRNO(-res);
-                }
-                break;
-            case RAWSTOR_CMD_SET_OBJECT:
-            case RAWSTOR_CMD_DISCARD:
-                break;
-        }
-
-        ret = 0;
-    } catch (const std::system_error &e) {
-        ret = -e.code().value();
-    }
-
-    if (op != nullptr) {
-        s->_release_op(op);
-    }
-
-    return ret;
 }
 
 

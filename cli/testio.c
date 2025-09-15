@@ -118,18 +118,14 @@ static int dst_data_received(
     printf("(%u) %s(): result = %zd\n", worker->index, __FUNCTION__, result);
 
     if (error != 0) {
-        errno = error;
-        return -errno;
+        return -error;
     }
 
     if (result != size) {
         printf(
             "(%u) %s(): Partial read: %zu != %zu\n",
             worker->index, __FUNCTION__, result, size);
-        /**
-         * TODO: Find errno here.
-         */
-        return -1;
+        return -EIO;
     }
 
     if (strncmp(worker->src_iov.iov_base, worker->dst_iov.iov_base, size)) {
@@ -138,10 +134,7 @@ static int dst_data_received(
         print_buf(worker->src_iov.iov_base, worker->src_iov.iov_len);
         printf("(%u) %s(): dst = ", worker->index, __FUNCTION__);
         print_buf(worker->dst_iov.iov_base, worker->dst_iov.iov_len);
-        /**
-         * TODO: Find errno here.
-         */
-        return -1;
+        return -EIO;
     } else {
         printf(
             "(%u) %s(): src == dst on %u of %u\n",
@@ -176,18 +169,14 @@ static int dstv_data_received(
     printf("(%u) %s(): result = %zd\n", worker->index, __FUNCTION__, result);
 
     if (error != 0) {
-        errno = error;
-        return -errno;
+        return -error;
     }
 
     if (result != size) {
         printf(
             "(%u) %s(): Partial read: %zu != %zu\n",
             worker->index, __FUNCTION__, result, size);
-        /**
-         * TODO: Find errno here.
-         */
-        return -1;
+        return -EIO;
     }
 
     if (strncmp(worker->src_iov.iov_base, worker->dst_iov.iov_base, size)) {
@@ -196,10 +185,7 @@ static int dstv_data_received(
         print_buf(worker->src_iov.iov_base, worker->src_iov.iov_len);
         printf("(%u) %s(): dst = ", worker->index, __FUNCTION__);
         print_buf(worker->dst_iov.iov_base, worker->dst_iov.iov_len);
-        /**
-         * TODO: Find errno here.
-         */
-        return -1;
+        return -EIO;
     } else {
         printf(
             "(%u) %s(): src == dst on %u of %u\n",
@@ -234,33 +220,20 @@ static int src_data_sent(
     printf("(%u) %s(): result = %zd\n", worker->index, __FUNCTION__, result);
 
     if (error != 0) {
-        errno = error;
-        return -errno;
+        return -error;
     }
 
     if (result != size) {
         printf(
             "(%u) %s(): Partial write: %zu != %zu\n",
             worker->index, __FUNCTION__, result, size);
-        /**
-         * TODO: Find errno here.
-         */
-        return -1;
+        return -EIO;
     }
 
-    if (rawstor_object_pread(
+    return rawstor_object_pread(
         object,
         worker->dst_iov.iov_base, worker->dst_iov.iov_len, worker->offset,
-        dst_data_received, worker))
-    {
-        perror("rawstor_object_pread() failed");
-        /**
-         * TODO: Find errno here.
-         */
-        return -1;
-    }
-
-    return 0;
+        dst_data_received, worker);
 }
 
 
@@ -272,33 +245,20 @@ static int srcv_data_sent(
     printf("(%u) %s(): result = %zd\n", worker->index, __FUNCTION__, result);
 
     if (error != 0) {
-        errno = error;
-        return -errno;
+        return -error;
     }
 
     if (result != size) {
         printf(
             "(%u) %s(): Partial write: %zu != %zu\n",
             worker->index, __FUNCTION__, result, size);
-        /**
-         * TODO: Find errno here.
-         */
-        return -1;
+        return -EIO;
     }
 
-    if (rawstor_object_preadv(
+    return rawstor_object_preadv(
         object,
         &worker->dst_iov, 1, worker->dst_iov.iov_len, worker->offset,
-        dstv_data_received, worker))
-    {
-        perror("rawstor_object_preadv() failed");
-        /**
-         * TODO: Find errno here.
-         */
-        return -1;
-    }
-
-    return 0;
+        dstv_data_received, worker);
 }
 
 
@@ -307,21 +267,24 @@ int rawstor_cli_testio(
     size_t block_size, unsigned int count, unsigned int io_depth,
     int vector_mode)
 {
+    int res;
     RawstorObject *object;
-    if (rawstor_object_open(object_id, &object)) {
-        perror("rawstor_object_open() failed");
+    res = rawstor_object_open(object_id, &object);
+    if (res < 0) {
+        fprintf(stderr, "rawstor_object_open() failed: %s\n", strerror(-res));
         goto err_open;
     }
 
     unsigned int counter = count * io_depth;
     Worker **workers = calloc(io_depth, sizeof(Worker*));
     if (workers == NULL) {
+        fprintf(stderr, "calloc() failed: %s\n", strerror(errno));
         goto err_workers;
     }
     for (unsigned int i = 0; i < io_depth; ++i) {
         workers[i] = worker_create(i, block_size, &counter, count);
         if (workers[i] == NULL) {
-            perror("worker_create() failed");
+            fprintf(stderr, "worker_create() failed: %s\n", strerror(errno));
             goto err_worker_create;
         }
     }
@@ -331,13 +294,15 @@ int rawstor_cli_testio(
             fill(
                 workers[i]->src_iov.iov_base, workers[i]->src_iov.iov_len,
                 i, 0);
-            if (rawstor_object_pwrite(
+            res = rawstor_object_pwrite(
                 object,
                 workers[i]->src_iov.iov_base, workers[i]->src_iov.iov_len,
                 workers[i]->offset,
-                src_data_sent, workers[i]))
-            {
-                perror("rawstor_object_pwrite() failed");
+                src_data_sent, workers[i]);
+            if (res < 0) {
+                fprintf(
+                    stderr,
+                    "rawstor_object_pwrite() failed: %s\n", strerror(-res));
                 goto err_pwrite;
             }
         }
@@ -346,13 +311,15 @@ int rawstor_cli_testio(
             fill(
                 workers[i]->src_iov.iov_base, workers[i]->src_iov.iov_len,
                 i, 0);
-            if (rawstor_object_pwritev(
+            res = rawstor_object_pwritev(
                 object,
                 &workers[i]->src_iov, 1, workers[i]->src_iov.iov_len,
                 workers[i]->offset,
-                srcv_data_sent, workers[i]))
-            {
-                perror("rawstor_object_pwritev() failed");
+                srcv_data_sent, workers[i]);
+            if (res < 0) {
+                fprintf(
+                    stderr,
+                    "rawstor_object_pwritev() failed: %s\n", strerror(-res));
                 goto err_pwrite;
             }
         }
@@ -362,26 +329,26 @@ int rawstor_cli_testio(
         RawstorIOEvent *event = rawstor_wait_event();
         if (event == NULL) {
             assert(errno != 0);
-            perror("rawstor_wait_event() failed");
+            fprintf(
+                stderr, "rawstor_wait_event() failed: %s\n", strerror(errno));
             goto err_wait;
         }
 
-        int rval = rawstor_dispatch_event(event);
+        int res = rawstor_dispatch_event(event);
 
         rawstor_release_event(event);
 
-        if (rval) {
-            if (errno) {
-                perror("rawstor_dispatch_event() failed");
-            } else {
-                printf("rawstor_dispatch_event(): returns %d\n", rval);
-            }
+        if (res < 0) {
+            fprintf(
+                stderr,
+                "rawstor_dispatch_event() failed: %s\n", strerror(-res));
             goto err_dispatch;
         }
     }
 
-    if (rawstor_object_close(object)) {
-        perror("rawstor_object_close() failed");
+    res = rawstor_object_close(object);
+    if (res < 0) {
+        fprintf(stderr, "rawstor_object_close() failed: %s\n", strerror(-res));
     }
 
     for (unsigned int i = 0; i < io_depth; ++i) {
@@ -404,8 +371,11 @@ err_worker_create:
     }
     free(workers);
 err_workers:
-    if (rawstor_object_close(object)) {
-        perror("rawstor_object_close() failed");
+    res = rawstor_object_close(object);
+    if (res < 0) {
+        fprintf(
+            stderr,
+            "rawstor_object_close() failed: %s\n", strerror(res));
     }
 err_open:
     return EXIT_FAILURE;
