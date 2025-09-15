@@ -157,7 +157,7 @@ SocketOp* Socket::_acquire_op() {
 
 
 void Socket::_release_op(SocketOp *op) noexcept {
-    SocketOp **it = static_cast<SocketOp**>(rawstor_ringbuf_head(_ops);
+    SocketOp **it = static_cast<SocketOp**>(rawstor_ringbuf_head(_ops));
     assert(rawstor_ringbuf_push(_ops) == 0);
     *it = op;
 }
