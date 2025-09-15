@@ -82,4 +82,4 @@ class Socket {
 } // rawstor
 
 
-#endif // RAWSTOR_OBJECT_SOCKET_HPP
+#endif // RAWSTOR_SOCKET_FILE_HPP
