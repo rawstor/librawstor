@@ -237,15 +237,13 @@ void Socket::remove(
     RawstorUUIDString uuid_string;
     rawstor_uuid_to_string(&id, &uuid_string);
 
-    std::string spec_path = get_object_spec_path(_ost_path, uuid_string);
-    int rval = unlink(spec_path.c_str());
-    if (rval == -1) {
+    std::string dat_path = get_object_dat_path(_ost_path, uuid_string);
+    if (unlink(dat_path.c_str()) == -1 && errno != ENOENT) {
         RAWSTOR_THROW_ERRNO(errno);
     }
 
-    std::string dat_path = get_object_dat_path(_ost_path, uuid_string);
-    rval = unlink(dat_path.c_str());
-    if (rval == -1) {
+    std::string spec_path = get_object_spec_path(_ost_path, uuid_string);
+    if (unlink(spec_path.c_str()) == -1 && errno != ENOENT) {
         RAWSTOR_THROW_ERRNO(errno);
     }
 
