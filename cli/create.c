@@ -6,16 +6,7 @@
 #include <stdlib.h>
 
 
-int rawstor_cli_create(
-    const struct RawstorOpts *opts,
-    const struct RawstorSocketAddress *default_ost,
-    size_t size)
-{
-    if (rawstor_initialize(opts, default_ost)) {
-        perror("rawstor_initialize() failed");
-        goto err_initialize;
-    }
-
+int rawstor_cli_create(size_t size){
     struct RawstorObjectSpec spec = {
         .size = size << 30,
     };
@@ -25,7 +16,7 @@ int rawstor_cli_create(
     struct RawstorUUID object_id;
     if (rawstor_object_create(&spec, &object_id)) {
         perror("rawstor_object_create() failed");
-        goto err_create;
+        return EXIT_FAILURE;
     }
 
     RawstorUUIDString uuid_string;
@@ -33,12 +24,5 @@ int rawstor_cli_create(
     fprintf(stderr, "Object created\n");
     fprintf(stdout, "%s\n", uuid_string);
 
-    rawstor_terminate();
-
     return EXIT_SUCCESS;
-
-err_create:
-    rawstor_terminate();
-err_initialize:
-    return EXIT_FAILURE;
 }

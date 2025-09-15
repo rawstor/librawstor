@@ -11,10 +11,7 @@ extern "C" {
 #endif
 
 
-int rawstor_cli_create(
-    const struct RawstorOpts *opts,
-    const struct RawstorSocketAddress *default_ost,
-    size_t size);
+int rawstor_cli_create(size_t size);
 
 
 #ifdef __cplusplus

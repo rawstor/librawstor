@@ -1,9 +1,7 @@
-#ifndef RAWSTOR_SOCKET_OST_HPP
-#define RAWSTOR_SOCKET_OST_HPP
+#ifndef RAWSTOR_SOCKET_FILE_HPP
+#define RAWSTOR_SOCKET_FILE_HPP
 
-#include "ost_protocol.h"
-
-#include <rawstorstd/ringbuf.h>
+#include <rawstorstd/mempool.h>
 
 #include <rawstorio/queue.h>
 
@@ -11,8 +9,7 @@
 #include <rawstor/object.h>
 #include <rawstor/rawstor.h>
 
-#include <cstddef>
-#include <vector>
+#include <string>
 
 namespace rawstor {
 
@@ -26,41 +23,13 @@ class Socket {
     private:
         int _fd;
         Object *_object;
-
-        std::vector<SocketOp*> _ops_array;
-        RawstorRingBuf *_ops;
-        RawstorOSTFrameResponse _response;
+        RawstorMemPool *_ops_pool;
+        std::string _ost_path;
 
         SocketOp* _acquire_op();
         void _release_op(SocketOp *op) noexcept;
 
-        int _connect(const RawstorSocketAddress &ost);
-
-        void _writev_request(RawstorIOQueue *queue, SocketOp *op);
-        void _read_response_set_object_id(RawstorIOQueue *queue, SocketOp *op);
-        void _read_response_head(RawstorIOQueue *queue);
-        void _read_response_body(RawstorIOQueue *queue, SocketOp *op);
-        void _readv_response_body(RawstorIOQueue *queue, SocketOp *op);
-
-        static int _writev_request_cb(
-            RawstorIOEvent *event, void *data) noexcept;
-        static int _read_response_set_object_id_cb(
-            RawstorIOEvent *event, void *data) noexcept;
-        static int _read_response_head_cb(
-            RawstorIOEvent *event, void *data) noexcept;
-        static int _read_response_body_cb(
-            RawstorIOEvent *event, void *data) noexcept;
-        static int _readv_response_body_cb(
-            RawstorIOEvent *event, void *data) noexcept;
-
-        static void _op_process_set_object_id(
-            RawstorIOQueue *queue, SocketOp *op);
-        static void _op_process_read(
-            RawstorIOQueue *queue, SocketOp *op);
-        static void _op_process_readv(
-            RawstorIOQueue *queue, SocketOp *op);
-        static void _op_process_write(
-            RawstorIOQueue *queue, SocketOp *op);
+        static int _io_cb(RawstorIOEvent *event, void *data) noexcept;
 
     public:
         static const char* engine_name() noexcept;
@@ -112,4 +81,5 @@ class Socket {
 
 } // rawstor
 
-#endif // RAWSTOR_SOCKET_OST_HPP
+
+#endif // RAWSTOR_SOCKET_FILE_HPP

@@ -5,8 +5,9 @@ AM_CFLAGS = -std=gnu99 -Wall -Wextra -Werror \
 
 
 rawstor_cli_SOURCES = create.c \
-                      remove.c \
                       main.c \
+                      remove.c \
+                      show.c \
                       testio.c
 
 rawstor_cli_LDADD = $(top_srcdir)/src/librawstor.la -lstdc++

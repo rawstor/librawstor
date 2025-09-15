@@ -1,5 +1,6 @@
 #include "create.h"
 #include "remove.h"
+#include "show.h"
 #include "testio.h"
 
 #include <rawstor.h>
@@ -25,6 +26,7 @@ static void usage() {
         "command:\n"
         "  create                Create rawstor object\n"
         "  remove                Remove rawstor object\n"
+        "  show                  Show rawstor object\n"
         "  testio                Test rawstor IO routines\n"
         "\n"
         "command options:        Run `<command> --help` to show command usage\n"
@@ -46,11 +48,7 @@ static void command_create_usage() {
 };
 
 
-static int command_create(
-    const struct RawstorOpts *opts,
-    const struct RawstorSocketAddress *ost,
-    int argc, char **argv)
-{
+static int command_create(int argc, char **argv) {
     const char *optstring = "hs:";
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
@@ -97,7 +95,7 @@ static int command_create(
         return EXIT_FAILURE;
     }
 
-    return rawstor_cli_create(opts, ost, size);
+    return rawstor_cli_create(size);
 }
 
 
@@ -115,11 +113,7 @@ static void command_remove_usage() {
 };
 
 
-static int command_remove(
-    const struct RawstorOpts *opts,
-    const struct RawstorSocketAddress *ost,
-    int argc, char **argv)
-{
+static int command_remove(int argc, char **argv) {
     const char *optstring = "ho:";
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
@@ -166,7 +160,72 @@ static int command_remove(
         return EXIT_FAILURE;
     }
 
-    return rawstor_cli_remove(opts, ost, &object_id);
+    return rawstor_cli_remove(&object_id);
+}
+
+
+static void command_show_usage() {
+    fprintf(
+        stderr,
+        "Rawstor CLI\n"
+        "\n"
+        "usage: rawstor-cli [options] show [command_options]\n"
+        "\n"
+        "command options:\n"
+        "  -o, --object-id OBJECT_ID\n"
+        "                        Rawstor object id\n"
+    );
+};
+
+
+static int command_show(int argc, char **argv) {
+    const char *optstring = "ho:";
+    struct option longopts[] = {
+        {"help", no_argument, NULL, 'h'},
+        {"object-id", required_argument, NULL, 'o'},
+        {},
+    };
+
+    char *object_id_arg = NULL;
+    optind = 1;
+    while (1) {
+        int c = getopt_long(argc, argv, optstring, longopts, NULL);
+        if (c == -1) {
+            break;
+        }
+
+        switch (c) {
+            case 'h':
+                command_show_usage();
+                return EXIT_SUCCESS;
+                break;
+
+            case 'o':
+                object_id_arg = optarg;
+                break;
+
+            default:
+                return EXIT_FAILURE;
+        }
+    }
+
+    if (optind < argc) {
+        fprintf(stderr, "Unexpected argument: %s\n", argv[optind]);
+        return EXIT_FAILURE;
+    }
+
+    if (object_id_arg == NULL) {
+        fprintf(stderr, "object-id required\n");
+        return EXIT_FAILURE;
+    }
+
+    struct RawstorUUID object_id;
+    if (rawstor_uuid_from_string(&object_id, object_id_arg)) {
+        fprintf(stderr, "object-id argument must be valid UUID\n");
+        return EXIT_FAILURE;
+    }
+
+    return rawstor_cli_show(&object_id);
 }
 
 
@@ -192,11 +251,7 @@ static void command_testio_usage() {
 };
 
 
-static int command_testio(
-    const struct RawstorOpts *opts,
-    const struct RawstorSocketAddress *ost,
-    int argc, char **argv)
-{
+static int command_testio(int argc, char **argv) {
     const char *optstring = "b:c:d:ho:s:";
     struct option longopts[] = {
         {"block-size", required_argument, NULL, 'b'},
@@ -301,11 +356,40 @@ static int command_testio(
     }
 
     return rawstor_cli_testio(
-        opts,
-        ost,
         &object_id,
         block_size, count, io_depth,
         vector_mode);
+}
+
+
+static int run_command(
+    const char *command,
+    const struct RawstorOpts *opts,
+    const struct RawstorSocketAddress *default_ost,
+    int argc, char **argv)
+{
+    if (rawstor_initialize(opts, default_ost)) {
+        perror("rawstor_initialize() failed");
+        return EXIT_FAILURE;
+    }
+
+    int ret;
+    if (strcmp(command, "create") == 0) {
+        ret = command_create(argc, argv);
+    } else if (strcmp(command, "remove") == 0) {
+        ret = command_remove(argc, argv);
+    } else if (strcmp(command, "show") == 0) {
+        ret = command_show(argc, argv);
+    } else if (strcmp(command, "testio") == 0) {
+        ret = command_testio(argc, argv);
+    } else {
+        printf("Unexpected command: %s\n", command);
+        ret = EXIT_FAILURE;
+    }
+
+    rawstor_terminate();
+
+    return ret;
 }
 
 
@@ -381,21 +465,8 @@ int main(int argc, char **argv) {
         }
     }
 
-    int ret;
-    char *command = argv[optind];
-    if (strcmp(command, "create") == 0) {
-        ret = command_create(
-            &opts, ost_ptr, argc - optind, &argv[optind]);
-    } else if (strcmp(command, "remove") == 0) {
-        ret = command_remove(
-            &opts, ost_ptr, argc - optind, &argv[optind]);
-    } else if (strcmp(command, "testio") == 0) {
-        ret = command_testio(
-            &opts, ost_ptr, argc - optind, &argv[optind]);
-    } else {
-        printf("Unexpected command: %s\n", command);
-        ret = EXIT_FAILURE;
-    }
+    int ret = run_command(
+        argv[optind], &opts, ost_ptr, argc - optind, &argv[optind]);
 
     if (ost_ptr != NULL) {
         free(ost_ptr->host);

@@ -23,22 +23,22 @@ librawstor_la_HEADERS = $(top_srcdir)/include/rawstor/io_event.h \
                         $(top_srcdir)/include/rawstor/rawstor.h \
                         $(top_srcdir)/include/rawstor/uuid.h
 
-librawstor_la_SOURCES = rawstor.c \
-                        opts.c
+librawstor_la_SOURCES = connection.cpp \
+                        object.cpp \
+                        opts.c \
+                        rawstor.c
 
 librawstor_la_LIBADD = $(top_srcdir)/librawstorstd/src/librawstorstd.la \
-                       $(top_srcdir)/librawstorio/src/librawstorio.la
+                       $(top_srcdir)/librawstorio/src/librawstorio.la \
+                       -lstdc++
 
 
 if ENABLE_OST
     AM_CFLAGS += $(LIBXXHASH_CFLAGS)
-    librawstor_la_SOURCES += connection_ost.cpp \
-                             object_ost.cpp \
-                             socket_ost.cpp
-    librawstor_la_LIBADD += $(LIBXXHASH_LIBS) \
-                            -lstdc++
+    librawstor_la_SOURCES += socket_ost.cpp
+    librawstor_la_LIBADD += $(LIBXXHASH_LIBS)
 else
-    librawstor_la_SOURCES += object_file.cpp
+    librawstor_la_SOURCES += socket_file.cpp
 endif
 
 

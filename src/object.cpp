@@ -1,8 +1,9 @@
-#include "object_ost.hpp"
+#include "object.hpp"
 #include "object_internals.h"
 #include <rawstor/object.h>
 
-#include "connection_ost.hpp"
+#include "connection.hpp"
+#include "socket.hpp"
 #include "rawstor_internals.h"
 
 #include <rawstorstd/gpp.hpp>
@@ -254,8 +255,8 @@ void Object::pwritev(
 
 
 const char* rawstor_object_backend_name(void) {
-    return "ost";
-};
+    return rawstor::Socket::engine_name();
+}
 
 
 int rawstor_object_create(

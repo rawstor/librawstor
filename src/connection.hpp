@@ -1,7 +1,7 @@
-#ifndef RAWSTOR_CONNECTION_OST_HPP
-#define RAWSTOR_CONNECTION_OST_HPP
+#ifndef RAWSTOR_CONNECTION_HPP
+#define RAWSTOR_CONNECTION_HPP
 
-#include "socket_ost.hpp"
+#include "socket.hpp"
 
 #include <rawstor/object.h>
 #include <rawstor/rawstor.h>
@@ -69,4 +69,4 @@ class Connection {
 
 } // rawstor
 
-#endif // RAWSTOR_CONNECTION_OST_HPP
+#endif // RAWSTOR_CONNECTION_HPP
