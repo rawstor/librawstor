@@ -30,7 +30,6 @@ class Socket {
         void _release_op(SocketOp *op) noexcept;
 
         static int _io_cb(RawstorIOEvent *event, void *data) noexcept;
-        static int _spec_cb(RawstorIOEvent *event, void *data) noexcept;
 
     public:
         static const char* engine_name() noexcept;

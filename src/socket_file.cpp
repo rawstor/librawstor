@@ -176,25 +176,6 @@ int Socket::_io_cb(RawstorIOEvent *event, void *data) noexcept {
 }
 
 
-int Socket::_spec_cb(RawstorIOEvent *event, void *data) noexcept {
-    SocketOp *op = static_cast<SocketOp*>(data);
-
-    int ret = op->callback(
-        nullptr,
-        rawstor_io_event_size(event),
-        rawstor_io_event_result(event),
-        rawstor_io_event_error(event),
-        op->data);
-
-    op->s->_release_op(op);
-
-    ::close(op->s->_fd);
-    op->s->_fd = -1;
-
-    return ret;
-}
-
-
 const char* Socket::engine_name() noexcept {
     return "file";
 }
@@ -273,7 +254,7 @@ void Socket::remove(
 
 
 void Socket::spec(
-    RawstorIOQueue *queue,
+    RawstorIOQueue *,
     const RawstorUUID &id, RawstorObjectSpec *sp,
     RawstorCallback *cb, void *data)
 {
@@ -287,24 +268,21 @@ void Socket::spec(
         RAWSTOR_THROW_ERRNO(errno);
     }
 
-    SocketOp *op = _acquire_op();
     try {
-        *op = {
-            .s = this,
-            .callback = cb,
-            .data = data,
-        };
+        ssize_t rval = read(fd, sp, sizeof(*sp));
+        if (rval == -1) {
+            RAWSTOR_THROW_ERRNO(errno);
+        }
 
-        if (rawstor_io_queue_read(queue, fd, sp, sizeof(*sp), _spec_cb, op)) {
+        if (::close(fd)) {
             RAWSTOR_THROW_ERRNO(errno);
         }
     } catch (...) {
-        _release_op(op);
-        ::close(_fd);
+        ::close(fd);
         throw;
     }
 
-    _fd = fd;
+    cb(nullptr, 0, 0, 0, data);
 }
 
 
