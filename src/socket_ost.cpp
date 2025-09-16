@@ -420,7 +420,7 @@ int Socket::_read_response_head_cb(
         RawstorOSTFrameResponse &response = s->_response;
         ::validate_response(s->_response);
 
-        SocketOp *op = op = s->_find_op(response.cid);
+        SocketOp *op = s->_find_op(response.cid);
         op_trace(op->cid, event);
 
         try {
