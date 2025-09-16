@@ -43,6 +43,11 @@ class Socket {
         void _read_response_body(RawstorIOQueue *queue, SocketOp *op);
         void _readv_response_body(RawstorIOQueue *queue, SocketOp *op);
 
+        static void _next_read_response_body(
+            RawstorIOQueue *queue, SocketOp *op);
+        static void _next_readv_response_body(
+            RawstorIOQueue *queue, SocketOp *op);
+
         static int _writev_request_cb(
             RawstorIOEvent *event, void *data) noexcept;
         static int _read_response_set_object_id_cb(
