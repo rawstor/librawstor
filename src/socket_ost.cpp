@@ -111,7 +111,8 @@ struct SocketOp {
             unsigned int niov;
         } vector;
     } payload;
-    int vector;
+
+    void (*next)(RawstorIOQueue *queue, SocketOp *op);
 
     iovec iov[IOVEC_SIZE];
     unsigned int niov;
@@ -338,6 +339,20 @@ void Socket::_readv_response_body(RawstorIOQueue *queue, SocketOp *op) {
 }
 
 
+void Socket::_next_read_response_body(
+    RawstorIOQueue *queue, SocketOp *op)
+{
+    op->s->_read_response_body(queue, op);
+}
+
+
+void Socket::_next_readv_response_body(
+    RawstorIOQueue *queue, SocketOp *op)
+{
+    op->s->_readv_response_body(queue, op);
+}
+
+
 int Socket::_writev_request_cb(RawstorIOEvent *event, void *data) noexcept {
     SocketOp *op = static_cast<SocketOp*>(data);
 
@@ -395,8 +410,6 @@ int Socket::_read_response_head_cb(
 {
     int res;
     Socket *s = static_cast<Socket*>(data);
-    SocketOp *op = nullptr;
-    int ret = 0;
 
     try {
         /**
@@ -407,26 +420,17 @@ int Socket::_read_response_head_cb(
         RawstorOSTFrameResponse &response = s->_response;
         ::validate_response(s->_response);
 
-        op = s->_find_op(response.cid);
+        SocketOp *op = s->_find_op(response.cid);
         op_trace(op->cid, event);
 
-        switch (s->_response.cmd) {
-            case RAWSTOR_CMD_READ:
-                validate_cmd(s->_response.cmd, RAWSTOR_CMD_READ);
+        try {
+            validate_cmd(s->_response.cmd, op->request.io.cmd);
 
-                if (!op->vector) {
-                    s->_read_response_body(
-                        rawstor_io_event_queue(event), op);
-                } else {
-                      s->_readv_response_body(
-                        rawstor_io_event_queue(event), op);
-                }
-                op = nullptr;
-                break;
-            case RAWSTOR_CMD_WRITE:
-                validate_cmd(s->_response.cmd, RAWSTOR_CMD_WRITE);
-
+            if (op->next != nullptr) {
+                op->next(rawstor_io_event_queue(event), op);
+            } else {
                 s->_read_response_head(rawstor_io_event_queue(event));
+
                 res = op->callback(
                     s->_object->c_ptr(),
                     op->request.io.len, op->request.io.len, 0,
@@ -434,22 +438,18 @@ int Socket::_read_response_head_cb(
                 if (res < 0) {
                     RAWSTOR_THROW_ERRNO(-res);
                 }
-                break;
-            case RAWSTOR_CMD_SET_OBJECT:
-            case RAWSTOR_CMD_DISCARD:
-                break;
+
+                s->_release_op(op);
+            }
+        } catch (...) {
+            s->_release_op(op);
+            throw;
         }
-
-        ret = 0;
     } catch (const std::system_error &e) {
-        ret = -e.code().value();
+        return -e.code().value();
     }
 
-    if (op != nullptr) {
-        s->_release_op(op);
-    }
-
-    return ret;
+    return 0;
 }
 
 
@@ -611,7 +611,7 @@ void Socket::set_object(
                 },
             },
             .payload = {},
-            .vector = 0,
+            .next = nullptr,
             .iov = {},
             .niov = 0,
             .size = 0,
@@ -672,7 +672,7 @@ void Socket::pread(
                     .data = buf,
                 },
             },
-            .vector = 0,
+            .next = _next_read_response_body,
             .iov = {},
             .niov = 0,
             .size = 0,
@@ -726,7 +726,7 @@ void Socket::preadv(
                     .niov = niov,
                 },
             },
-            .vector = 1,
+            .next = _next_readv_response_body,
             .iov = {},
             .niov = 0,
             .size = 0,
@@ -779,7 +779,7 @@ void Socket::pwrite(
                     .data = buf,
                 },
             },
-            .vector = 0,
+            .next = nullptr,
             .iov = {},
             .niov = 0,
             .size = 0,
@@ -847,7 +847,7 @@ void Socket::pwritev(
                     .niov = niov,
                 },
             },
-            .vector = 1,
+            .next = nullptr,
             .iov = {},
             .niov = 0,
             .size = 0,
