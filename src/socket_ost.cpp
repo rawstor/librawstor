@@ -47,7 +47,7 @@ namespace {
 inline void validate_event(RawstorIOEvent *event) {
     int error = rawstor_io_event_error(event);
     if (error != 0) {
-        RAWSTOR_THROW_ERRNO(error);
+        RAWSTOR_THROW_SYSTEM_ERROR(error);
     }
 
     if (rawstor_io_event_result(event) != rawstor_io_event_size(event)) {
@@ -55,7 +55,7 @@ inline void validate_event(RawstorIOEvent *event) {
             "Partial event: %zu != %zu\n",
             rawstor_io_event_result(event),
             rawstor_io_event_size(event));
-        RAWSTOR_THROW_ERRNO(EIO);
+        RAWSTOR_THROW_SYSTEM_ERROR(EIO);
     }
 }
 
@@ -65,14 +65,14 @@ inline void validate_response(const RawstorOSTFrameResponse &response) {
         rawstor_error(
             "FATAL! Frame with wrong magic number: %x != %x\n",
             response.magic, RAWSTOR_MAGIC);
-        RAWSTOR_THROW_ERRNO(EIO);
+        RAWSTOR_THROW_SYSTEM_ERROR(EIO);
     }
 
     if (response.res < 0) {
         rawstor_error(
             "Server error: %s\n",
             strerror(-response.res));
-        RAWSTOR_THROW_ERRNO(EPROTO);
+        RAWSTOR_THROW_SYSTEM_ERROR(EPROTO);
     }
 }
 
@@ -82,7 +82,7 @@ inline void validate_cmd(
 {
     if (cmd != expected) {
         rawstor_error("Unexpected command in response: %d\n", cmd);
-        RAWSTOR_THROW_ERRNO(EPROTO);
+        RAWSTOR_THROW_SYSTEM_ERROR(EPROTO);
     }
 }
 
@@ -134,7 +134,7 @@ Socket::Socket(const RawstorSocketAddress &ost, unsigned int depth):
     try {
         _ops = rawstor_ringbuf_create(depth, sizeof(SocketOp*));
         if (_ops == nullptr) {
-            RAWSTOR_THROW_ERRNO(errno);
+            RAWSTOR_THROW_ERRNO();
         }
 
         _ops_array.reserve(depth);
@@ -199,7 +199,7 @@ Socket::~Socket() {
 SocketOp* Socket::_acquire_op() {
     SocketOp **it = static_cast<SocketOp**>(rawstor_ringbuf_tail(_ops));
     if (rawstor_ringbuf_pop(_ops)) {
-        RAWSTOR_THROW_ERRNO(ENOBUFS);
+        RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
     return *it;
 }
@@ -214,8 +214,8 @@ void Socket::_release_op(SocketOp *op) noexcept {
 
 SocketOp* Socket::_find_op(unsigned int cid) {
     if (cid < 1 || cid > _ops_array.size()) {
-        rawstor_error("Unexpected cid in response: %u\n", cid);
-        RAWSTOR_THROW_ERRNO(EIO);
+        rawstor_error("Unexpected cid: %u\n", cid);
+        RAWSTOR_THROW_SYSTEM_ERROR(EIO);
     }
 
     return _ops_array[cid - 1];
@@ -227,7 +227,7 @@ int Socket::_connect(const RawstorSocketAddress &ost) {
 
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd == -1) {
-        RAWSTOR_THROW_ERRNO(errno);
+        RAWSTOR_THROW_ERRNO();
     }
 
     try {
@@ -235,7 +235,7 @@ int Socket::_connect(const RawstorSocketAddress &ost) {
         if (so_sndtimeo != 0) {
             res = rawstor_socket_set_snd_timeout(fd, so_sndtimeo);
             if (res < 0) {
-                RAWSTOR_THROW_ERRNO(-res);
+                RAWSTOR_THROW_SYSTEM_ERROR(-res);
             }
         }
 
@@ -243,7 +243,7 @@ int Socket::_connect(const RawstorSocketAddress &ost) {
         if (so_rcvtimeo != 0) {
             res = rawstor_socket_set_rcv_timeout(fd, so_rcvtimeo);
             if (res < 0) {
-                RAWSTOR_THROW_ERRNO(-res);
+                RAWSTOR_THROW_SYSTEM_ERROR(-res);
             }
         }
 
@@ -251,7 +251,7 @@ int Socket::_connect(const RawstorSocketAddress &ost) {
         if (tcp_user_timeo != 0) {
             res = rawstor_socket_set_user_timeout(fd, tcp_user_timeo);
             if (res < 0) {
-                RAWSTOR_THROW_ERRNO(-res);
+                RAWSTOR_THROW_SYSTEM_ERROR(-res);
             }
         }
 
@@ -261,19 +261,19 @@ int Socket::_connect(const RawstorSocketAddress &ost) {
 
         res = inet_pton(AF_INET, ost.host, &servaddr.sin_addr);
         if (res == 0) {
-            RAWSTOR_THROW_ERRNO(EINVAL);
+            RAWSTOR_THROW_SYSTEM_ERROR(EINVAL);
         } else if (res == -1) {
-            RAWSTOR_THROW_ERRNO(errno);
+            RAWSTOR_THROW_ERRNO();
         }
 
         rawstor_info("Connecting to %s:%u\n", ost.host, ost.port);
         if (connect(fd, (sockaddr*)&servaddr, sizeof(servaddr)) == -1) {
-            RAWSTOR_THROW_ERRNO(errno);
+            RAWSTOR_THROW_ERRNO();
         }
 
         res = rawstor_io_queue_setup_fd(fd);
         if (res < 0) {
-            RAWSTOR_THROW_ERRNO(-res);
+            RAWSTOR_THROW_SYSTEM_ERROR(-res);
         }
     } catch (...) {
         ::close(fd);
@@ -290,7 +290,7 @@ void Socket::_writev_request(RawstorIOQueue *queue, SocketOp *op) {
         op->iov, op->niov, op->size,
         _writev_request_cb, op);
     if (res < 0) {
-        RAWSTOR_THROW_ERRNO(-res);
+        RAWSTOR_THROW_SYSTEM_ERROR(-res);
     }
 }
 
@@ -301,7 +301,7 @@ void Socket::_read_response_set_object_id(RawstorIOQueue *queue, SocketOp *op) {
         &_response, sizeof(_response),
         _read_response_set_object_id_cb, op);
     if (res < 0) {
-        RAWSTOR_THROW_ERRNO(-res);
+        RAWSTOR_THROW_SYSTEM_ERROR(-res);
     }
 }
 
@@ -312,7 +312,7 @@ void Socket::_read_response_head(RawstorIOQueue *queue) {
         &_response, sizeof(_response),
         _read_response_head_cb, this);
     if (res < 0) {
-        RAWSTOR_THROW_ERRNO(-res);
+        RAWSTOR_THROW_SYSTEM_ERROR(-res);
     }
 }
 
@@ -323,7 +323,7 @@ void Socket::_read_response_body(RawstorIOQueue *queue, SocketOp *op) {
         op->payload.linear.data, op->request.io.len,
         _read_response_body_cb, op);
     if (res < 0) {
-        RAWSTOR_THROW_ERRNO(-res);
+        RAWSTOR_THROW_SYSTEM_ERROR(-res);
     }
 }
 
@@ -334,7 +334,7 @@ void Socket::_readv_response_body(RawstorIOQueue *queue, SocketOp *op) {
         op->payload.vector.iov, op->payload.vector.niov, op->request.io.len,
         _readv_response_body_cb, op);
     if (res < 0) {
-        RAWSTOR_THROW_ERRNO(-res);
+        RAWSTOR_THROW_SYSTEM_ERROR(-res);
     }
 }
 
@@ -391,7 +391,7 @@ int Socket::_read_response_set_object_id_cb(
             0, 0, 0,
             op->data);
         if (res < 0) {
-            RAWSTOR_THROW_ERRNO(-res);
+            RAWSTOR_THROW_SYSTEM_ERROR(-res);
         }
 
         s->_read_response_head(rawstor_io_queue);
@@ -436,7 +436,7 @@ int Socket::_read_response_head_cb(
                     op->request.io.len, op->request.io.len, 0,
                     op->data);
                 if (res < 0) {
-                    RAWSTOR_THROW_ERRNO(-res);
+                    RAWSTOR_THROW_SYSTEM_ERROR(-res);
                 }
 
                 s->_release_op(op);
@@ -477,7 +477,7 @@ int Socket::_read_response_body_cb(
                 "Response hash mismatch: %llx != %llx\n",
                 (unsigned long long)s->_response.hash,
                 (unsigned long long)hash);
-            RAWSTOR_THROW_ERRNO(EIO);
+            RAWSTOR_THROW_SYSTEM_ERROR(EIO);
         }
 
         s->_read_response_head(rawstor_io_event_queue(event));
@@ -513,7 +513,7 @@ int Socket::_readv_response_body_cb(
         res = rawstor_hash_vector(
             op->payload.vector.iov, op->payload.vector.niov, &hash);
         if (res < 0) {
-            RAWSTOR_THROW_ERRNO(-res);
+            RAWSTOR_THROW_SYSTEM_ERROR(-res);
         }
 
         if (s->_response.hash != hash) {
@@ -521,7 +521,7 @@ int Socket::_readv_response_body_cb(
                 "Response hash mismatch: %llx != %llx\n",
                 (unsigned long long)s->_response.hash,
                 (unsigned long long)hash);
-            RAWSTOR_THROW_ERRNO(EIO);
+            RAWSTOR_THROW_SYSTEM_ERROR(EIO);
         }
 
         s->_read_response_head(rawstor_io_event_queue(event));
@@ -555,7 +555,7 @@ void Socket::create(
      */
     int res = rawstor_uuid7_init(id);
     if (res < 0) {
-        RAWSTOR_THROW_ERRNO(-res);
+        RAWSTOR_THROW_SYSTEM_ERROR(-res);
     }
 
     cb(nullptr, 0, 0, 0, data);
@@ -817,7 +817,7 @@ void Socket::pwritev(
     uint64_t hash;
     int res = rawstor_hash_vector(iov, niov, &hash);
     if (res < 0) {
-        RAWSTOR_THROW_ERRNO(-res);
+        RAWSTOR_THROW_SYSTEM_ERROR(-res);
     }
 
     if (niov >= IOVEC_SIZE) {

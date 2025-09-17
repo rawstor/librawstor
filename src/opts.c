@@ -1,7 +1,6 @@
 #include "opts.h"
 
 #include <assert.h>
-#include <errno.h>
 #include <stdlib.h>
 
 #define RAWSTOR_OPTS_WAIT_TIMEOUT 5000

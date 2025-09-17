@@ -32,10 +32,13 @@ static struct RawstorSocketAddress _default_ost = {};
 static int default_ost_initialize(
     const struct RawstorSocketAddress *default_ost)
 {
+    int res;
+
     _default_ost.host = (default_ost != NULL && default_ost->host != NULL) ?
         strdup(default_ost->host) :
         strdup(DEFAULT_OST_HOST);
     if (_default_ost.host == NULL) {
+        res = -errno;
         goto err_host;
     }
 
@@ -46,7 +49,7 @@ static int default_ost_initialize(
     return 0;
 
 err_host:
-    return -errno;
+    return res;
 }
 
 
