@@ -12,6 +12,8 @@
 
 #include <stdexcept>
 
+#include <cerrno>
+
 /**
  * FIXME: iovec should be dynamically allocated at runtime.
  */
@@ -75,13 +77,11 @@ int Queue::callback(
     --queue->_operations;
 
     if (error) {
-        errno = error;
-        return -errno;
+        return -error;
     }
 
     if (size != res) {
-        errno = EIO;
-        return -errno;
+        return -EIO;
     }
 
     return 0;
