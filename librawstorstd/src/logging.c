@@ -31,26 +31,32 @@ static RawstorList *events_list = NULL;
 
 
 int rawstor_logging_initialize(void) {
+    int ret = 0;
+
     rawstor_logging_mutex = rawstor_mutex_create();
     if (rawstor_logging_mutex == NULL) {
+        ret = errno;
+        errno = 0;
         goto err_mutex;
     }
 
 #ifdef RAWSTOR_TRACE_EVENTS
     events_list = rawstor_list_create(sizeof(RawstorTraceEventType));
     if (events_list == NULL) {
+        ret = errno;
+        errno = 0;
         goto err_events_list;
     }
 #endif // RAWSTOR_TRACE_EVENTS
 
-    return 0;
+    return ret;
 
 #ifdef RAWSTOR_TRACE_EVENTS
 err_events_list:
     rawstor_mutex_delete(rawstor_logging_mutex);
 #endif // RAWSTOR_TRACE_EVENTS
 err_mutex:
-    return -errno;
+    return -ret;
 }
 
 

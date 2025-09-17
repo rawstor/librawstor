@@ -155,8 +155,10 @@ Socket::Socket(const RawstorSocketAddress &ost, unsigned int depth):
         rawstor_ringbuf_delete(_ops);
 
         if (::close(_fd) == -1) {
+            int error = errno;
+            errno = 0;
             rawstor_error(
-                "Socket::Socket(): close failed: %s\n", strerror(errno));
+                "Socket::Socket(): close failed: %s\n", strerror(error));
         }
         _fd = -1;
 
@@ -181,8 +183,10 @@ Socket::Socket(Socket &&other) noexcept:
 Socket::~Socket() {
     if (_fd != -1) {
         if (::close(_fd) == -1) {
+            int error = errno;
+            errno = 0;
             rawstor_error(
-                "Socket::~Socket(): close failed: %s\n", strerror(errno));
+                "Socket::~Socket(): close failed: %s\n", strerror(error));
         }
     }
 

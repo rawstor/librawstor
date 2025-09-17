@@ -61,8 +61,7 @@ void* rawstor_ringbuf_tail(RawstorRingBuf *buf) {
 int rawstor_ringbuf_push(RawstorRingBuf *buf) {
     size_t next = (buf->head + 1) % buf->capacity;
     if (next == buf->tail) {
-        errno = ENOBUFS;
-        return -errno;
+        return -ENOBUFS;
     }
 
     buf->head = next;
@@ -73,8 +72,7 @@ int rawstor_ringbuf_push(RawstorRingBuf *buf) {
 
 int rawstor_ringbuf_pop(RawstorRingBuf *buf) {
     if (buf->tail == buf->head) {
-        errno = ENOBUFS;
-        return -errno;
+        return -ENOBUFS;
     }
 
     buf->tail = (buf->tail + 1) % buf->capacity;

@@ -11,7 +11,6 @@ static int test_ringbuf_empty() {
     RawstorRingBuf *buf = rawstor_ringbuf_create(3, sizeof(int));
 
     assertTrue(rawstor_ringbuf_pop(buf) == -ENOBUFS);
-    assertTrue(errno == ENOBUFS);
 
     assertTrue(rawstor_ringbuf_empty(buf) != 0);
     assertTrue(rawstor_ringbuf_size(buf) == 0);
@@ -60,7 +59,6 @@ static int test_ringbuf_basics() {
     assertTrue(rawstor_ringbuf_push(buf) == -ENOBUFS);
     assertTrue(rawstor_ringbuf_size(buf) == 3);
     assertTrue(rawstor_ringbuf_capacity(buf) == 3);
-    assertTrue(errno == ENOBUFS);
 
     assertTrue(*(int*)rawstor_ringbuf_tail(buf) == 1);
     assertTrue(rawstor_ringbuf_pop(buf) == 0);
@@ -83,7 +81,6 @@ static int test_ringbuf_basics() {
     assertTrue(rawstor_ringbuf_pop(buf) == -ENOBUFS);
     assertTrue(rawstor_ringbuf_size(buf) == 0);
     assertTrue(rawstor_ringbuf_capacity(buf) == 3);
-    assertTrue(errno == ENOBUFS);
 
     rawstor_ringbuf_delete(buf);
     return 0;

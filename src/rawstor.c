@@ -39,6 +39,7 @@ static int default_ost_initialize(
         strdup(DEFAULT_OST_HOST);
     if (_default_ost.host == NULL) {
         res = -errno;
+        errno = 0;
         goto err_host;
     }
 
@@ -92,6 +93,7 @@ int rawstor_initialize(
     rawstor_io_queue = rawstor_io_queue_create(QUEUE_DEPTH);
     if (rawstor_io_queue == NULL) {
         res = -errno;
+        errno = 0;
         goto err_io_queue;
     };
 
