@@ -12,6 +12,8 @@
 
 #include <stdexcept>
 
+#include <cerrno>
+
 /**
  * FIXME: iovec should be dynamically allocated at runtime.
  */
@@ -57,7 +59,7 @@ Queue::Queue(int operations, unsigned int depth):
 {
     _impl = rawstor_io_queue_create(depth);
     if (_impl == nullptr) {
-        RAWSTOR_THROW_ERRNO(errno);
+        RAWSTOR_THROW_ERRNO();
     }
 }
 
@@ -75,13 +77,11 @@ int Queue::callback(
     --queue->_operations;
 
     if (error) {
-        errno = error;
-        return -errno;
+        return -error;
     }
 
     if (size != res) {
-        errno = EIO;
-        return -errno;
+        return -EIO;
     }
 
     return 0;
@@ -99,14 +99,14 @@ void Queue::wait() {
             _impl, rawstor_opts_wait_timeout());
         if (event == NULL) {
             if (errno) {
-                RAWSTOR_THROW_ERRNO(errno);
+                RAWSTOR_THROW_ERRNO();
             }
             break;
         }
 
         int res = rawstor_io_event_dispatch(event);
         if (res < 0) {
-            RAWSTOR_THROW_ERRNO(-res);
+            RAWSTOR_THROW_SYSTEM_ERROR(-res);
         }
 
         rawstor_io_queue_release_event(_impl, event);

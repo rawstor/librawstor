@@ -24,8 +24,7 @@ static inline int uuid7_set_timestamp(struct RawstorUUID *uuid, uint64_t ts) {
     static const uint64_t MAX_TIMESTAMP = (1ull << 48) - 1;
 
     if (ts > MAX_TIMESTAMP) {
-        errno = ERANGE;
-        return -errno;
+        return -ERANGE;
     }
 
     uuid->bytes[0] = ts >> 40;
@@ -56,8 +55,7 @@ static inline int uuid7_set_counter(
     static const uint64_t MAX_COUNTER = (1ull << 42) - 1;
 
     if (counter > MAX_COUNTER) {
-        errno = ERANGE;
-        return -errno;
+        return -ERANGE;
     }
 
     uuid->bytes[6] = (uuid->bytes[6] & 0b11110000) | counter >> 38;
@@ -99,9 +97,14 @@ static inline void uuid_set_variant(
 static inline int uuid_add_entropy(
     struct RawstorUUID *uuid, unsigned int size)
 {
-    if (getentropy(&uuid->bytes[16 - size], size)) {
-        return -errno;
+    int error;
+
+    if (getentropy(&uuid->bytes[16 - size], size) == -1) {
+        error = errno;
+        errno = 0;
+        return -error;
     }
+
     return 0;
 }
 
@@ -146,11 +149,15 @@ void rawstor_uuid_set_variant(struct RawstorUUID *uuid, uint8_t variant) {
 
 
 int rawstor_uuid7_init(struct RawstorUUID *uuid) {
+    int res;
+
     static struct RawstorUUID prev_uuid = {0};
 
     struct timespec tp;
-    if (clock_gettime(CLOCK_REALTIME, &tp)) {
-        return -errno;
+    if (clock_gettime(CLOCK_REALTIME, &tp) == -1) {
+        res = errno;
+        errno = 0;
+        return -res;
     }
     uint64_t ts = 1000ull * tp.tv_sec + tp.tv_nsec / 1000000l;
 
@@ -159,22 +166,25 @@ int rawstor_uuid7_init(struct RawstorUUID *uuid) {
     int entropy_size = 10;
     if (ts >= prev_ts - 10000 && ts <= prev_ts) {
         uint64_t counter = uuid7_get_counter(&prev_uuid);
-        if (uuid7_set_counter(uuid, counter + 1) == 0) {
+        res = uuid7_set_counter(uuid, counter + 1);
+        if (res == 0) {
             entropy_size = 4;
         } else {
-            if (errno != ERANGE) {
-                return -errno;
+            if (res != -ERANGE) {
+                return res;
             }
             ++ts;
         }
     }
 
-    if (uuid_add_entropy(uuid, entropy_size)) {
-        return -errno;
+    res = uuid_add_entropy(uuid, entropy_size);
+    if (res) {
+        return res;
     }
 
-    if (uuid7_set_timestamp(uuid, ts)) {
-        return -errno;
+    res = uuid7_set_timestamp(uuid, ts);
+    if (res) {
+        return res;
     }
 
     uuid_set_version(uuid, 7);
@@ -187,32 +197,6 @@ int rawstor_uuid7_init(struct RawstorUUID *uuid) {
 
 
 int rawstor_uuid_from_string(struct RawstorUUID *uuid, const char *s) {
-    /**
-     * TODO: Delete this logic before first release.
-     * This is for debug purposes only.
-     */
-    if (s[1] == 0) {
-        char c = *s;
-        uint8_t x =
-            (c >= '0' && c <= '9') ? c - '0'
-            : (c >= 'a' && c <= 'f') ? 10 + c - 'a'
-            : (c >= 'A' && c <= 'F') ? 10 + c - 'A'
-            : 0xff;
-
-        if (x == 0xff) {
-            errno = EINVAL;
-            return -errno;
-        }
-
-        struct RawstorUUID ret = {0};
-        uuid_set_version(&ret, 7);
-        uuid_set_variant(&ret, 2);
-        uuid7_set_counter(&ret, x);
-        *uuid = ret;
-
-        return 0;
-    }
-
     const char *p = s;
     for (int i = 0; i < 32; i++) {
         char c = *p++;
@@ -224,8 +208,7 @@ int rawstor_uuid_from_string(struct RawstorUUID *uuid, const char *s) {
             : 0xff;
 
         if (x == 0xff) {
-            errno = EINVAL;
-            return -errno;
+            return -EINVAL;
         }
 
         if ((i & 1) == 0) {
@@ -235,8 +218,7 @@ int rawstor_uuid_from_string(struct RawstorUUID *uuid, const char *s) {
         }
 
         if ((i == 7 || i == 11 || i == 15 || i == 19) && (*p++ != '-')) {
-            errno = EINVAL;
-            return -errno;
+            return -EINVAL;
         }
     }
     return 0;

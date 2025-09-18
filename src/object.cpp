@@ -14,7 +14,6 @@
 
 #include <unistd.h>
 
-#include <cerrno>
 #include <cstddef>
 #include <cstdlib>
 #include <new>
@@ -74,7 +73,7 @@ Object::Object(const RawstorUUID &id) :
 {
     _ops_pool = rawstor_mempool_create(QUEUE_DEPTH, sizeof(ObjectOp));
     if (_ops_pool == nullptr) {
-        RAWSTOR_THROW_ERRNO(errno);
+        RAWSTOR_THROW_ERRNO();
     }
 }
 
@@ -154,7 +153,7 @@ void Object::pread(
 
     ObjectOp *op = static_cast<ObjectOp*>(rawstor_mempool_alloc(_ops_pool));
     if (op == nullptr) {
-        RAWSTOR_THROW_ERRNO(ENOBUFS);
+        RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
 
     try {
@@ -181,7 +180,7 @@ void Object::preadv(
 
     ObjectOp *op = static_cast<ObjectOp*>(rawstor_mempool_alloc(_ops_pool));
     if (op == nullptr) {
-        RAWSTOR_THROW_ERRNO(ENOBUFS);
+        RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
 
     try {
@@ -208,7 +207,7 @@ void Object::pwrite(
 
     ObjectOp *op = static_cast<ObjectOp*>(rawstor_mempool_alloc(_ops_pool));
     if (op == nullptr) {
-        RAWSTOR_THROW_ERRNO(ENOBUFS);
+        RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
 
     try {
@@ -235,7 +234,7 @@ void Object::pwritev(
 
     ObjectOp *op = static_cast<ObjectOp*>(rawstor_mempool_alloc(_ops_pool));
     if (op == nullptr) {
-        RAWSTOR_THROW_ERRNO(ENOBUFS);
+        RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
 
     try {
@@ -268,8 +267,7 @@ int rawstor_object_create(
         rawstor::Object::create(*sp, id);
         return 0;
     } catch (const std::system_error &e) {
-        errno = e.code().value();
-        return -errno;
+        return -e.code().value();
     }
 }
 
@@ -283,8 +281,7 @@ int rawstor_object_create_ost(
         rawstor::Object::create(*ost, *sp, id);
         return 0;
     } catch (const std::system_error &e) {
-        errno = e.code().value();
-        return -errno;
+        return -e.code().value();
     }
 }
 
@@ -297,8 +294,7 @@ int rawstor_object_remove(const RawstorUUID *id) {
 
         return 0;
     } catch (const std::system_error &e) {
-        errno = e.code().value();
-        return -errno;
+        return -e.code().value();
     }
 }
 
@@ -314,8 +310,7 @@ int rawstor_object_remove_ost(
 
         return 0;
     } catch (const std::system_error &e) {
-        errno = e.code().value();
-        return -errno;
+        return -e.code().value();
     }
 }
 
@@ -326,8 +321,7 @@ int rawstor_object_spec(const RawstorUUID *id, RawstorObjectSpec *sp) {
         object.spec(sp);
         return 0;
     } catch (const std::system_error &e) {
-        errno = e.code().value();
-        return -errno;
+        return -e.code().value();
     }
 }
 
@@ -344,8 +338,7 @@ int rawstor_object_spec_ost(
 
         return 0;
     } catch (const std::system_error &e) {
-        errno = e.code().value();
-        return -errno;
+        return -e.code().value();
     }
 }
 
@@ -362,11 +355,9 @@ int rawstor_object_open(const RawstorUUID *id, RawstorObject **object) {
 
         return 0;
     } catch (const std::system_error &e) {
-        errno = e.code().value();
-        return -errno;
+        return -e.code().value();
     } catch (const std::bad_alloc &e) {
-        errno = ENOMEM;
-        return -errno;
+        return -ENOMEM;
     }
 }
 
@@ -387,11 +378,9 @@ int rawstor_object_open_ost(
 
         return 0;
     } catch (const std::system_error &e) {
-        errno = e.code().value();
-        return -errno;
+        return -e.code().value();
     } catch (const std::bad_alloc &e) {
-        errno = ENOMEM;
-        return -errno;
+        return -ENOMEM;
     }
 }
 
@@ -406,8 +395,7 @@ int rawstor_object_close(RawstorObject *object) {
 
         return 0;
     } catch (const std::system_error &e) {
-        errno = e.code().value();
-        return -errno;
+        return -e.code().value();
     }
 }
 
@@ -426,8 +414,7 @@ int rawstor_object_pread(
         object->impl->pread(buf, size, offset, cb, data);
         return 0;
     } catch (const std::system_error &e) {
-        errno = e.code().value();
-        return -errno;
+        return -e.code().value();
     }
 }
 
@@ -441,8 +428,7 @@ int rawstor_object_preadv(
         object->impl->preadv(iov, niov, size, offset, cb, data);
         return 0;
     } catch (const std::system_error &e) {
-        errno = e.code().value();
-        return -errno;
+        return -e.code().value();
     }
 }
 
@@ -456,8 +442,7 @@ int rawstor_object_pwrite(
         object->impl->pwrite(buf, size, offset, cb, data);
         return 0;
     } catch (const std::system_error &e) {
-        errno = e.code().value();
-        return -errno;
+        return -e.code().value();
     }
 }
 
@@ -471,7 +456,6 @@ int rawstor_object_pwritev(
         object->impl->pwritev(iov, niov, size, offset, cb, data);
         return 0;
     } catch (const std::system_error &e) {
-        errno = e.code().value();
-        return -errno;
+        return -e.code().value();
     }
 }

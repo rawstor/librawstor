@@ -32,10 +32,14 @@ static struct RawstorSocketAddress _default_ost = {};
 static int default_ost_initialize(
     const struct RawstorSocketAddress *default_ost)
 {
+    int res = 0;
+
     _default_ost.host = (default_ost != NULL && default_ost->host != NULL) ?
         strdup(default_ost->host) :
         strdup(DEFAULT_OST_HOST);
     if (_default_ost.host == NULL) {
+        res = -errno;
+        errno = 0;
         goto err_host;
     }
 
@@ -46,7 +50,7 @@ static int default_ost_initialize(
     return 0;
 
 err_host:
-    return -errno;
+    return res;
 }
 
 
@@ -59,9 +63,12 @@ int rawstor_initialize(
     const struct RawstorOpts *opts,
     const struct RawstorSocketAddress *default_ost)
 {
+    int res = 0;
+
     assert(rawstor_io_queue == NULL);
 
-    if (rawstor_logging_initialize()) {
+    res = rawstor_logging_initialize();
+    if (res) {
         goto err_logging_initialize;
     }
 
@@ -73,16 +80,20 @@ int rawstor_initialize(
         "Rawstor compiled with object backend: %s\n",
         rawstor_object_backend_name());
 
-    if (rawstor_opts_initialize(opts)) {
+    res = rawstor_opts_initialize(opts);
+    if (res) {
         goto err_opts_initialize;
     }
 
-    if (default_ost_initialize(default_ost)) {
+    res = default_ost_initialize(default_ost);
+    if (res) {
         goto err_default_ost_initialize;
     }
 
     rawstor_io_queue = rawstor_io_queue_create(QUEUE_DEPTH);
     if (rawstor_io_queue == NULL) {
+        res = -errno;
+        errno = 0;
         goto err_io_queue;
     };
 
@@ -95,7 +106,7 @@ err_default_ost_initialize:
 err_opts_initialize:
     rawstor_logging_terminate();
 err_logging_initialize:
-    return -errno;
+    return res;
 }
 
 

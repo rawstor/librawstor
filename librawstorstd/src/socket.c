@@ -14,9 +14,13 @@
 
 
 static int socket_add_flag(int fd, int flag) {
+    int error;
+
     int flags = fcntl(fd, F_GETFL);
     if (flags == -1) {
-        return -errno;
+        error = errno;
+        errno = 0;
+        return -error;
     }
 
     if (flags & flag) {
@@ -25,7 +29,9 @@ static int socket_add_flag(int fd, int flag) {
 
     flags = flags | flag;
     if (fcntl(fd, F_SETFL, flags) == -1) {
-        return -errno;
+        error = errno;
+        errno = 0;
+        return -error;
     }
 
     return 0;
@@ -33,8 +39,9 @@ static int socket_add_flag(int fd, int flag) {
 
 
 int rawstor_socket_set_nonblock(int fd) {
-    if (socket_add_flag(fd, O_NONBLOCK)) {
-        return -errno;
+    int res = socket_add_flag(fd, O_NONBLOCK);
+    if (res) {
+        return res;
     }
 
     rawstor_info("fd %d: O_NONBLOCK\n", fd);
@@ -43,9 +50,13 @@ int rawstor_socket_set_nonblock(int fd) {
 }
 
 int rawstor_socket_set_nodelay(int fd) {
+    int error;
+
     int onoff = 1;
     if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &onoff, sizeof(onoff))) {
-        return -errno;
+        error = errno;
+        errno = 0;
+        return -error;
     }
 
     rawstor_info("fd %d: IPPROTO_TCP/TCP_NODELAY\n", fd);
@@ -55,12 +66,16 @@ int rawstor_socket_set_nodelay(int fd) {
 
 
 int rawstor_socket_set_snd_timeout(int fd, unsigned int timeout) {
+    int error;
+
     struct timeval timeo = {
         .tv_sec = timeout / 1000,
         .tv_usec = (timeout % 1000) * 1000,
     };
     if (setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeo, sizeof(timeo))) {
-        return -errno;
+        error = errno;
+        errno = 0;
+        return -error;
     }
 
     rawstor_info("fd %d: SOL_SOCKET/SO_SNDTIMEO = %u ms\n", fd, timeout);
@@ -70,12 +85,16 @@ int rawstor_socket_set_snd_timeout(int fd, unsigned int timeout) {
 
 
 int rawstor_socket_set_rcv_timeout(int fd, unsigned int timeout) {
+    int error;
+
     struct timeval timeo = {
         .tv_sec = timeout / 1000,
         .tv_usec = (timeout % 1000) * 1000,
     };
     if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeo, sizeof(timeo))) {
-        return -errno;
+        error = errno;
+        errno = 0;
+        return -error;
     }
 
     rawstor_info("fd %d: SOL_SOCKET/SO_RCVTIMEO = %u ms\n", fd, timeout);
@@ -85,12 +104,16 @@ int rawstor_socket_set_rcv_timeout(int fd, unsigned int timeout) {
 
 
 int rawstor_socket_set_user_timeout(int fd, unsigned int timeout) {
+    int error;
+
     #if defined(RAWSTOR_ON_LINUX)
         if (setsockopt(
             fd, IPPROTO_TCP, TCP_USER_TIMEOUT,
             &timeout, sizeof(timeout)))
         {
-            return -errno;
+            error = errno;
+            errno = 0;
+            return -error;
         }
         rawstor_info("fd %d: IPPROTO_TCP/TCP_USER_TIMEOUT = %u ms\n", fd, timeout);
     #elif defined(RAWSTOR_ON_MACOS)
@@ -99,7 +122,9 @@ int rawstor_socket_set_user_timeout(int fd, unsigned int timeout) {
             fd, IPPROTO_TCP, TCP_CONNECTIONTIMEOUT,
             &timeout, sizeof(timeout)))
         {
-            return -errno;
+            error = errno;
+            errno = 0;
+            return -error;
         }
         rawstor_info(
             "fd %d: IPPROTO_TCP/TCP_CONNECTIONTIMEOUT = %u s\n", fd, timeout);
@@ -112,8 +137,12 @@ int rawstor_socket_set_user_timeout(int fd, unsigned int timeout) {
 
 
 int rawstor_socket_set_snd_bufsize(int fd, unsigned int size) {
+    int error;
+
     if (setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &size, sizeof(size))) {
-        return -errno;
+        error = errno;
+        errno = 0;
+        return -error;
     }
 
     rawstor_info("fd %d: SOL_SOCKET/SO_SNDBUF = %u bytes\n", fd, size);
@@ -123,8 +152,12 @@ int rawstor_socket_set_snd_bufsize(int fd, unsigned int size) {
 
 
 int rawstor_socket_set_rcv_bufsize(int fd, unsigned int size) {
+    int error;
+
     if (setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &size, sizeof(size))) {
-        return -errno;
+        error = errno;
+        errno = 0;
+        return -error;
     }
 
     rawstor_info("fd %d: SOL_SOCKET/SO_RCVBUF = %u bytes\n", fd, size);
