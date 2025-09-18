@@ -63,9 +63,12 @@ static int io_event_readv(RawstorIOEvent *event, void *data) {
 
     RawstorIOQueue *queue = (RawstorIOQueue*)data;
 
+    int error = 0;
     RawstorIOEvent *next_event = rawstor_mempool_alloc(queue->events_pool);
     if (next_event == NULL) {
-        return -errno;
+        error = errno;
+        errno = 0;
+        return -error;
     }
 
     *next_event = (RawstorIOEvent) {
@@ -98,7 +101,9 @@ static int io_event_readv(RawstorIOEvent *event, void *data) {
         // .aio_lio_opcode
     };
 
-    if (aio_read(next_event->cb)) {
+    if (aio_read(next_event->cb) == -1) {
+        error = errno;
+        errno = 0;
         goto err_read;
     }
 
@@ -108,7 +113,7 @@ static int io_event_readv(RawstorIOEvent *event, void *data) {
 
 err_read:
     rawstor_mempool_free(queue->events_pool, next_event);
-    return -errno;
+    return -error;
 }
 
 
@@ -130,9 +135,12 @@ static int io_event_preadv(RawstorIOEvent *event, void *data) {
 
     RawstorIOQueue *queue = (RawstorIOQueue*)data;
 
+    int error = 0;
     RawstorIOEvent *next_event = rawstor_mempool_alloc(queue->events_pool);
     if (next_event == NULL) {
-        return -errno;
+        error = errno;
+        errno = 0;
+        return -error;
     }
 
     *next_event = (RawstorIOEvent) {
@@ -165,7 +173,9 @@ static int io_event_preadv(RawstorIOEvent *event, void *data) {
         // .aio_lio_opcode
     };
 
-    if (aio_read(next_event->cb)) {
+    if (aio_read(next_event->cb) == -1) {
+        error = errno;
+        errno = 0;
         goto err_read;
     }
 
@@ -175,7 +185,7 @@ static int io_event_preadv(RawstorIOEvent *event, void *data) {
 
 err_read:
     rawstor_mempool_free(queue->events_pool, next_event);
-    return -errno;
+    return -error;
 }
 
 
@@ -197,9 +207,12 @@ static int io_event_writev(RawstorIOEvent *event, void *data) {
 
     RawstorIOQueue *queue = (RawstorIOQueue*)data;
 
+    int error = 0;
     RawstorIOEvent *next_event = rawstor_mempool_alloc(queue->events_pool);
     if (next_event == NULL) {
-        return -errno;
+        error = -errno;
+        errno = 0;
+        return error;
     }
 
     *next_event = (RawstorIOEvent) {
@@ -232,7 +245,9 @@ static int io_event_writev(RawstorIOEvent *event, void *data) {
         // .aio_lio_opcode
     };
 
-    if (aio_write(next_event->cb)) {
+    if (aio_write(next_event->cb) == -1) {
+        error = -errno;
+        errno = 0;
         goto err_write;
     }
 
@@ -242,7 +257,7 @@ static int io_event_writev(RawstorIOEvent *event, void *data) {
 
 err_write:
     rawstor_mempool_free(queue->events_pool, next_event);
-    return -errno;
+    return -error;
 }
 
 
@@ -264,9 +279,12 @@ static int io_event_pwritev(RawstorIOEvent *event, void *data) {
 
     RawstorIOQueue *queue = (RawstorIOQueue*)data;
 
+    int error = 0;
     RawstorIOEvent *next_event = rawstor_mempool_alloc(queue->events_pool);
     if (next_event == NULL) {
-        return -errno;
+        error = errno;
+        errno = 0;
+        return -error;
     }
 
     *next_event = (RawstorIOEvent) {
@@ -299,7 +317,9 @@ static int io_event_pwritev(RawstorIOEvent *event, void *data) {
         // .aio_lio_opcode
     };
 
-    if (aio_write(next_event->cb)) {
+    if (aio_write(next_event->cb) == -1) {
+        error = errno;
+        errno = 0;
         goto err_write;
     }
 
@@ -309,7 +329,7 @@ static int io_event_pwritev(RawstorIOEvent *event, void *data) {
 
 err_write:
     rawstor_mempool_free(queue->events_pool, next_event);
-    return -errno;
+    return -error;
 }
 
 
@@ -427,9 +447,13 @@ int rawstor_io_queue_read(
     int fd, void *buf, size_t size,
     RawstorIOCallback *cb, void *data)
 {
+    int error = 0;
+
     RawstorIOEvent *event = rawstor_mempool_alloc(queue->events_pool);
     if (event == NULL) {
-        return -errno;
+        error = errno;
+        errno = 0;
+        return -error;
     }
 
     *event = (RawstorIOEvent) {
@@ -455,7 +479,9 @@ int rawstor_io_queue_read(
         // .aio_lio_opcode
     };
 
-    if (aio_read(event->cb)) {
+    if (aio_read(event->cb) == -1) {
+        error = errno;
+        errno = 0;
         goto err_read;
     }
 
@@ -465,7 +491,7 @@ int rawstor_io_queue_read(
 
 err_read:
     rawstor_mempool_free(queue->events_pool, event);
-    return -errno;
+    return -error;
 }
 
 
@@ -474,9 +500,13 @@ int rawstor_io_queue_pread(
     int fd, void *buf, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data)
 {
+    int error = 0;
+
     RawstorIOEvent *event = rawstor_mempool_alloc(queue->events_pool);
     if (event == NULL) {
-        return -errno;
+        error = errno;
+        errno = 0;
+        return -error;
     }
 
     *event = (RawstorIOEvent) {
@@ -502,7 +532,9 @@ int rawstor_io_queue_pread(
         // .aio_lio_opcode
     };
 
-    if (aio_read(event->cb)) {
+    if (aio_read(event->cb) == -1) {
+        error = errno;
+        errno = 0;
         goto err_read;
     }
 
@@ -512,7 +544,7 @@ int rawstor_io_queue_pread(
 
 err_read:
     rawstor_mempool_free(queue->events_pool, event);
-    return -errno;
+    return -error;
 }
 
 
@@ -521,16 +553,13 @@ int rawstor_io_queue_readv(
     int fd, struct iovec *iov, unsigned int niov, size_t size,
     RawstorIOCallback *cb, void *data)
 {
-    /**
-     * TODO: Do we really need this check?
-     */
-    if (niov == 0) {
-        return 0;
-    }
+    int error = 0;
 
     RawstorIOEvent *event = rawstor_mempool_alloc(queue->events_pool);
     if (event == NULL) {
-        return -errno;
+        error = errno;
+        errno = 0;
+        return -error;
     }
 
     *event = (RawstorIOEvent) {
@@ -563,7 +592,9 @@ int rawstor_io_queue_readv(
         // .aio_lio_opcode
     };
 
-    if (aio_read(event->cb)) {
+    if (aio_read(event->cb) == -1) {
+        error = errno;
+        errno = 0;
         goto err_read;
     }
 
@@ -573,7 +604,7 @@ int rawstor_io_queue_readv(
 
 err_read:
     rawstor_mempool_free(queue->events_pool, event);
-    return -errno;
+    return -error;
 }
 
 
@@ -582,16 +613,13 @@ int rawstor_io_queue_preadv(
     int fd, struct iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data)
 {
-    /**
-     * TODO: Do we really need this check?
-     */
-    if (niov == 0) {
-        return 0;
-    }
+    int error = 0;
 
     RawstorIOEvent *event = rawstor_mempool_alloc(queue->events_pool);
     if (event == NULL) {
-        return -errno;
+        error = errno;
+        errno = 0;
+        return -error;
     }
 
     *event = (RawstorIOEvent) {
@@ -624,7 +652,9 @@ int rawstor_io_queue_preadv(
         // .aio_lio_opcode
     };
 
-    if (aio_read(event->cb)) {
+    if (aio_read(event->cb) == -1) {
+        error = errno;
+        errno = 0;
         goto err_read;
     }
 
@@ -634,7 +664,7 @@ int rawstor_io_queue_preadv(
 
 err_read:
     rawstor_mempool_free(queue->events_pool, event);
-    return -errno;
+    return -error;
 }
 
 
@@ -643,9 +673,13 @@ int rawstor_io_queue_write(
     int fd, void *buf, size_t size,
     RawstorIOCallback *cb, void *data)
 {
+    int error = 0;
+
     RawstorIOEvent *event = rawstor_mempool_alloc(queue->events_pool);
     if (event == NULL) {
-        return -errno;
+        error = errno;
+        errno = 0;
+        return -error;
     }
 
     *event = (RawstorIOEvent) {
@@ -671,7 +705,9 @@ int rawstor_io_queue_write(
         // .aio_lio_opcode
     };
 
-    if (aio_write(event->cb)) {
+    if (aio_write(event->cb) == -1) {
+        error = errno;
+        errno = 0;
         goto err_write;
     }
 
@@ -681,7 +717,7 @@ int rawstor_io_queue_write(
 
 err_write:
     rawstor_mempool_free(queue->events_pool, event);
-    return -errno;
+    return -error;
 }
 
 
@@ -690,9 +726,13 @@ int rawstor_io_queue_pwrite(
     int fd, void *buf, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data)
 {
+    int error = 0;
+
     RawstorIOEvent *event = rawstor_mempool_alloc(queue->events_pool);
     if (event == NULL) {
-        return -errno;
+        error = errno;
+        errno = 0;
+        return -error;
     }
 
     *event = (RawstorIOEvent) {
@@ -718,7 +758,9 @@ int rawstor_io_queue_pwrite(
         // .aio_lio_opcode
     };
 
-    if (aio_write(event->cb)) {
+    if (aio_write(event->cb) == -1) {
+        error = errno;
+        errno = 0;
         goto err_write;
     }
 
@@ -728,7 +770,7 @@ int rawstor_io_queue_pwrite(
 
 err_write:
     rawstor_mempool_free(queue->events_pool, event);
-    return -errno;
+    return -error;
 }
 
 
@@ -737,16 +779,13 @@ int rawstor_io_queue_writev(
     int fd, struct iovec *iov, unsigned int niov, size_t size,
     RawstorIOCallback *cb, void *data)
 {
-    /**
-     * TODO: Do we really need this check?
-     */
-    if (niov == 0) {
-        return 0;
-    }
+    int error = 0;
 
     RawstorIOEvent *event = rawstor_mempool_alloc(queue->events_pool);
     if (event == NULL) {
-        return -errno;
+        error = errno;
+        errno = 0;
+        return -error;
     }
 
     *event = (RawstorIOEvent) {
@@ -779,7 +818,9 @@ int rawstor_io_queue_writev(
         // .aio_lio_opcode
     };
 
-    if (aio_write(event->cb)) {
+    if (aio_write(event->cb) == -1) {
+        error = errno;
+        errno = 0;
         goto err_write;
     }
 
@@ -789,7 +830,7 @@ int rawstor_io_queue_writev(
 
 err_write:
     rawstor_mempool_free(queue->events_pool, event);
-    return -errno;
+    return -error;
 }
 
 
@@ -798,16 +839,13 @@ int rawstor_io_queue_pwritev(
     int fd, struct iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data)
 {
-    /**
-     * TODO: Do we really need this check?
-     */
-    if (niov == 0) {
-        return 0;
-    }
+    int error = 0;
 
     RawstorIOEvent *event = rawstor_mempool_alloc(queue->events_pool);
     if (event == NULL) {
-        return -errno;
+        error = errno;
+        errno = 0;
+        return -error;
     }
 
     *event = (RawstorIOEvent) {
@@ -840,7 +878,9 @@ int rawstor_io_queue_pwritev(
         // .aio_lio_opcode
     };
 
-    if (aio_write(event->cb)) {
+    if (aio_write(event->cb) == -1) {
+        error = errno;
+        errno = 0;
         goto err_write;
     }
 
@@ -850,7 +890,7 @@ int rawstor_io_queue_pwritev(
 
 err_write:
     rawstor_mempool_free(queue->events_pool, event);
-    return -errno;
+    return -error;
 }
 
 
@@ -873,7 +913,7 @@ RawstorIOEvent* rawstor_io_queue_wait_event_timeout(
 
     if (
         aio_suspend(
-            (const struct aiocb* const*)queue->cbps, queue->depth, &ts))
+            (const struct aiocb* const*)queue->cbps, queue->depth, &ts) == -1)
     {
         return NULL;
     }
