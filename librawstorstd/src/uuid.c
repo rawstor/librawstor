@@ -166,15 +166,12 @@ int rawstor_uuid7_init(struct RawstorUUID *uuid) {
     int entropy_size = 10;
     if (ts >= prev_ts - 10000 && ts <= prev_ts) {
         uint64_t counter = uuid7_get_counter(&prev_uuid);
-        if (uuid7_set_counter(uuid, counter + 1) == 0) {
+        res = uuid7_set_counter(uuid, counter + 1);
+        if (res == 0) {
             entropy_size = 4;
         } else {
-            if (errno == ERANGE) {
-                errno = 0;
-            } else {
-                res = errno;
-                errno = 0;
-                return -res;
+            if (res != -ERANGE) {
+                return res;
             }
             ++ts;
         }
