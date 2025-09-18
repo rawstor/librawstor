@@ -690,6 +690,8 @@ int rawstor_io_queue_depth(RawstorIOQueue *queue) {
 RawstorIOEvent* rawstor_io_queue_wait_event_timeout(
     RawstorIOQueue *queue, unsigned int timeout)
 {
+    int res;
+
     struct pollfd *fds = NULL;
     while (rawstor_ringbuf_empty(queue->cqes)) {
         size_t count = rawstor_list_size(queue->sessions);
@@ -726,7 +728,12 @@ RawstorIOEvent* rawstor_io_queue_wait_event_timeout(
         }
 
         rawstor_trace("poll()\n");
-        if (poll(fds, count, timeout) <= 0) {
+        res = poll(fds, count, timeout);
+        if (res < 0) {
+            goto err;
+        }
+        if (res == 0) {
+            errno = ETIME;
             goto err;
         }
 
