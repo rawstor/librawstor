@@ -4,6 +4,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 
 int rawstor_cli_create(size_t size){
@@ -14,8 +15,12 @@ int rawstor_cli_create(size_t size){
     fprintf(stderr, "Creating object with specification:\n");
     fprintf(stderr, "  size: %zu Gb\n", size);
     struct RawstorUUID object_id;
-    if (rawstor_object_create(&spec, &object_id)) {
-        perror("rawstor_object_create() failed");
+
+    int res = rawstor_object_create(&spec, &object_id);
+    if (res) {
+        fprintf(
+            stderr,
+            "rawstor_object_create() failed: %s\n", strerror(-res));
         return EXIT_FAILURE;
     }
 
