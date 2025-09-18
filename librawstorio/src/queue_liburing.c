@@ -110,7 +110,7 @@ int rawstor_io_queue_setup_fd(int fd) {
     int res;
     static unsigned int bufsize = 4096 * 64 * 4;
 
-    res = rawstor_socket_set_snd_bufsize(fd, bufsize)
+    res = rawstor_socket_set_snd_bufsize(fd, bufsize);
     if (res) {
         return res;
     }
