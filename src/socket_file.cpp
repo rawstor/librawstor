@@ -261,7 +261,6 @@ void Socket::remove(
         } else {
             RAWSTOR_THROW_ERRNO();
         }
-        RAWSTOR_THROW_ERRNO();
     }
 
     cb(nullptr, 0, 0, 0, data);
