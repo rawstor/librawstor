@@ -371,7 +371,7 @@ static int run_command(
 {
     int res = rawstor_initialize(opts, default_ost);
     if (res) {
-        fprintf(stderr, "rawstor_initialize() failed: %s", strerror(-res));
+        fprintf(stderr, "rawstor_initialize() failed: %s\n", strerror(-res));
         return EXIT_FAILURE;
     }
 
