@@ -210,9 +210,9 @@ static int io_event_writev(RawstorIOEvent *event, void *data) {
     int error = 0;
     RawstorIOEvent *next_event = rawstor_mempool_alloc(queue->events_pool);
     if (next_event == NULL) {
-        error = -errno;
+        error = errno;
         errno = 0;
-        return error;
+        return -error;
     }
 
     *next_event = (RawstorIOEvent) {
@@ -246,7 +246,7 @@ static int io_event_writev(RawstorIOEvent *event, void *data) {
     };
 
     if (aio_write(next_event->cb) == -1) {
-        error = -errno;
+        error = errno;
         errno = 0;
         goto err_write;
     }
