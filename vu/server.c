@@ -103,21 +103,25 @@ static int server_read(RawstorIOEvent *event, void *data) {
     int client_socket = rawstor_io_event_fd(event);
     VhostUserMsg *msg = (VhostUserMsg*)data;
 
-    if (rawstor_io_event_error(event) != 0) {
-        errno = rawstor_io_event_error(event);
-        perror("read() failed");
-        return -errno;
+    int error = rawstor_io_event_error(event);
+    if (error != 0) {
+        fprintf(stderr, "read() failed: %s\n", strerror(error));
+        return -error;
     }
 
     size_t result = rawstor_io_event_result(event);
     if (result == 0) {
-        printf("Connection lost: %d\n", client_socket);
+        fprintf(
+            stderr,
+            "Connection lost: %d\n", client_socket);
         return 0;
     } else if (
         result < (int)VHOST_USER_HDR_SIZE ||
         result > (int)sizeof(VhostUserMsg)
     ) {
-        printf("Unexpected request size: %zu\n", result);
+        fprintf(
+            stderr,
+            "Unexpected request size: %zu\n", result);
         return -EPROTO;
     }
 
@@ -143,12 +147,13 @@ static int server_read(RawstorIOEvent *event, void *data) {
     msg->flags = VHOST_USER_VERSION |
                  VHOST_USER_REPLY_MASK;
 
-    if (rawstor_fd_write(
+    int res = rawstor_fd_write(
         client_socket, msg, VHOST_USER_HDR_SIZE + msg->size,
-        server_write, msg))
+        server_write, msg);
+    if (res)
     {
-        perror("rawstor_fd_write() failed");
-        return -1;
+        fprintf(stderr, "rawstor_fd_write() failed: %s\n", strerror(-res));
+        return res;
     }
 
     return 0;
@@ -159,20 +164,20 @@ static int server_write(RawstorIOEvent *event, void *data) {
     int client_socket = rawstor_io_event_fd(event);
     VhostUserMsg *msg = (VhostUserMsg*)data;
 
-    if (rawstor_io_event_error(event) != 0) {
-        errno = rawstor_io_event_error(event);
-        perror("write() failed");
-        return -errno;
+    int error = rawstor_io_event_error(event);
+    if (error != 0) {
+        fprintf(stderr, "write() failed: %s\n", strerror(error));
+        return -error;
     }
 
     printf("Message sent: %ld bytes\n", rawstor_io_event_result(event));
 
-    if (rawstor_fd_read(
+    int res = rawstor_fd_read(
         client_socket, msg, rawstor_io_event_size(event),
-        server_read, msg))
-    {
-        perror("rawstor_fd_read() failed");
-        return -1;
+        server_read, msg);
+    if (res) {
+        fprintf(stderr, "rawstor_fd_read() failed: %s\n", strerror(-res));
+        return res;
     }
 
     return 0;
@@ -180,19 +185,20 @@ static int server_write(RawstorIOEvent *event, void *data) {
 
 
 static int server_loop(int client_socket) {
-    if (rawstor_initialize(NULL, NULL)) {
-        perror("rawstor_initialize() failed");
-        return -1;
+    int res = rawstor_initialize(NULL, NULL);
+    if (res) {
+        fprintf(stderr, "rawstor_initialize() failed: %s\n", strerror(-res));
+        return res;
     };
 
     VhostUserMsg msg;
 
-    if (rawstor_fd_read(
+    res = rawstor_fd_read(
         client_socket, &msg, sizeof(VhostUserMsg),
-        server_read, &msg))
-    {
-        perror("rawstor_fd_read() failed");
-        return -1;
+        server_read, &msg);
+    if (res) {
+        fprintf(stderr, "rawstor_fd_read() failed: %s\n", strerror(-res));
+        return res;
     }
 
     int rval = 0;
@@ -202,6 +208,7 @@ static int server_loop(int client_socket) {
         if (event == NULL) {
             if (errno) {
                 perror("rawstor_wait_event() failed");
+                errno = 0;
             } else {
                 printf("EOF\n");
             }

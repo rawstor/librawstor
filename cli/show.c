@@ -16,8 +16,9 @@ int rawstor_cli_show(const struct RawstorUUID *object_id) {
     rawstor_uuid_to_string(object_id, &uuid_string);
 
     struct RawstorObjectSpec spec;
-    if (rawstor_object_spec(object_id, &spec)) {
-        perror("rawstor_object_spec() failed");
+    int res = rawstor_object_spec(object_id, &spec);
+    if (res) {
+        fprintf(stderr, "rawstor_object_spec() failed: %s\n", strerror(-res));
         return EXIT_FAILURE;
     }
 
