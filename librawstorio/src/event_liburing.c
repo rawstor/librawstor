@@ -3,6 +3,7 @@
 
 #include <rawstorstd/logging.h>
 
+#include <errno.h>
 #include <stddef.h>
 
 
@@ -27,7 +28,13 @@ size_t rawstor_io_event_result(RawstorIOEvent *event) {
 
 
 int rawstor_io_event_error(RawstorIOEvent *event) {
-    return event->cqe->res < 0 ? -event->cqe->res : 0;
+    if (event->cqe->res < 0) {
+        return -event->cqe->res;
+    } else if (event->cqe->res == 0) {
+        return ECONNRESET;
+    } else {
+        return 0;
+    }
 }
 
 

@@ -212,6 +212,7 @@ static int io_session_unseekable_process_sqes(
             rawstor_trace_event_message(
                 event->trace_event, "event->error = %zd\n", event->error);
 #endif
+            event->error = ECONNRESET;
             int res2 = rawstor_io_queue_push_cqe(session->queue, event);
             if (res2) {
                 /**

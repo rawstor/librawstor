@@ -46,6 +46,8 @@ ssize_t rawstor_io_event_process_readv(RawstorIOEvent *event) {
     if (ret < 0) {
         event->error = errno;
         errno = 0;
+    } else if (ret == 0) {
+        event->error = ECONNRESET;
     } else {
         event->result += ret;
     }
@@ -63,6 +65,8 @@ ssize_t rawstor_io_event_process_preadv(RawstorIOEvent *event) {
     if (ret < 0) {
         event->error = errno;
         errno = 0;
+    } else if (ret == 0) {
+        event->error = ECONNRESET;
     } else {
         event->result += ret;
     }
