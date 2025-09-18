@@ -915,6 +915,9 @@ RawstorIOEvent* rawstor_io_queue_wait_event_timeout(
         aio_suspend(
             (const struct aiocb* const*)queue->cbps, queue->depth, &ts) == -1)
     {
+        if (errno == EAGAIN) {
+            errno = ETIME;
+        }
         return NULL;
     }
 
