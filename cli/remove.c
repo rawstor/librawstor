@@ -15,8 +15,12 @@ int rawstor_cli_remove(const struct RawstorUUID *object_id) {
     RawstorUUIDString uuid_string;
     rawstor_uuid_to_string(object_id, &uuid_string);
     fprintf(stderr, "Removing object with id: %s\n", uuid_string);
-    if (rawstor_object_remove(object_id)) {
-        perror("rawstor_object_remove() failed");
+
+    int res = rawstor_object_remove(object_id);
+    if (res) {
+        fprintf(
+            stderr,
+            "rawstor_object_remove() failed: %s\n", strerror(-res));
         return EXIT_FAILURE;
     }
 

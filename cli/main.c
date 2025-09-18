@@ -369,8 +369,9 @@ static int run_command(
     const struct RawstorSocketAddress *default_ost,
     int argc, char **argv)
 {
-    if (rawstor_initialize(opts, default_ost)) {
-        perror("rawstor_initialize() failed");
+    int res = rawstor_initialize(opts, default_ost);
+    if (res) {
+        fprintf(stderr, "rawstor_initialize() failed: %s\n", strerror(-res));
         return EXIT_FAILURE;
     }
 
