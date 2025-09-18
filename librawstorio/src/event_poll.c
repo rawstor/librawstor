@@ -45,6 +45,7 @@ ssize_t rawstor_io_event_process_readv(RawstorIOEvent *event) {
 #endif
     if (ret < 0) {
         event->error = errno;
+        errno = 0;
     } else {
         event->result += ret;
     }
@@ -61,6 +62,7 @@ ssize_t rawstor_io_event_process_preadv(RawstorIOEvent *event) {
 #endif
     if (ret < 0) {
         event->error = errno;
+        errno = 0;
     } else {
         event->result += ret;
     }
@@ -77,6 +79,7 @@ ssize_t rawstor_io_event_process_writev(RawstorIOEvent *event) {
 #endif
     if (ret < 0) {
         event->error = errno;
+        errno = 0;
     } else {
         event->result += ret;
     }
@@ -93,6 +96,7 @@ ssize_t rawstor_io_event_process_pwritev(RawstorIOEvent *event) {
 #endif
     if (ret < 0) {
         event->error = errno;
+        errno = 0;
     } else {
         event->result += ret;
     }
