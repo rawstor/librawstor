@@ -115,7 +115,7 @@ Socket::Socket(const RawstorSocketAddress &ost, unsigned int depth):
         RAWSTOR_THROW_ERRNO();
     }
 
-    if (mkdir(_ost_path.c_str(), 0755) > 0) {
+    if (mkdir(_ost_path.c_str(), 0755) == -1) {
         if (errno == EEXIST) {
             errno = 0;
         } else {
