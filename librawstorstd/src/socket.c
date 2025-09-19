@@ -44,7 +44,7 @@ int rawstor_socket_set_nonblock(int fd) {
         return res;
     }
 
-    rawstor_info("fd %d: O_NONBLOCK\n", fd);
+    rawstor_debug("fd %d: O_NONBLOCK\n", fd);
 
     return 0;
 }
@@ -59,7 +59,7 @@ int rawstor_socket_set_nodelay(int fd) {
         return -error;
     }
 
-    rawstor_info("fd %d: IPPROTO_TCP/TCP_NODELAY\n", fd);
+    rawstor_debug("fd %d: IPPROTO_TCP/TCP_NODELAY\n", fd);
 
     return 0;
 }
@@ -78,7 +78,7 @@ int rawstor_socket_set_snd_timeout(int fd, unsigned int timeout) {
         return -error;
     }
 
-    rawstor_info("fd %d: SOL_SOCKET/SO_SNDTIMEO = %u ms\n", fd, timeout);
+    rawstor_debug("fd %d: SOL_SOCKET/SO_SNDTIMEO = %ums\n", fd, timeout);
 
     return 0;
 }
@@ -97,7 +97,7 @@ int rawstor_socket_set_rcv_timeout(int fd, unsigned int timeout) {
         return -error;
     }
 
-    rawstor_info("fd %d: SOL_SOCKET/SO_RCVTIMEO = %u ms\n", fd, timeout);
+    rawstor_debug("fd %d: SOL_SOCKET/SO_RCVTIMEO = %ums\n", fd, timeout);
 
     return 0;
 }
@@ -115,7 +115,7 @@ int rawstor_socket_set_user_timeout(int fd, unsigned int timeout) {
             errno = 0;
             return -error;
         }
-        rawstor_info("fd %d: IPPROTO_TCP/TCP_USER_TIMEOUT = %u ms\n", fd, timeout);
+        rawstor_debug("fd %d: IPPROTO_TCP/TCP_USER_TIMEOUT = %ums\n", fd, timeout);
     #elif defined(RAWSTOR_ON_MACOS)
         timeout = (timeout + 999) / 1000;
         if (setsockopt(
@@ -126,8 +126,8 @@ int rawstor_socket_set_user_timeout(int fd, unsigned int timeout) {
             errno = 0;
             return -error;
         }
-        rawstor_info(
-            "fd %d: IPPROTO_TCP/TCP_CONNECTIONTIMEOUT = %u s\n", fd, timeout);
+        rawstor_debug(
+            "fd %d: IPPROTO_TCP/TCP_CONNECTIONTIMEOUT = %us\n", fd, timeout);
     #else
         #error "Unexpected platform"
     #endif
@@ -145,7 +145,7 @@ int rawstor_socket_set_snd_bufsize(int fd, unsigned int size) {
         return -error;
     }
 
-    rawstor_info("fd %d: SOL_SOCKET/SO_SNDBUF = %u bytes\n", fd, size);
+    rawstor_debug("fd %d: SOL_SOCKET/SO_SNDBUF = %u bytes\n", fd, size);
 
     return 0;
 }
@@ -160,7 +160,7 @@ int rawstor_socket_set_rcv_bufsize(int fd, unsigned int size) {
         return -error;
     }
 
-    rawstor_info("fd %d: SOL_SOCKET/SO_RCVBUF = %u bytes\n", fd, size);
+    rawstor_debug("fd %d: SOL_SOCKET/SO_RCVBUF = %u bytes\n", fd, size);
 
     return 0;
 }
