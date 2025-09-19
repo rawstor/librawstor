@@ -188,6 +188,7 @@ Socket::~Socket() {
             rawstor_error(
                 "Socket::~Socket(): close failed: %s\n", strerror(error));
         }
+        rawstor_info("fd %d: Socket closed\n", _fd);
     }
 
     for (SocketOp *op: _ops_array) {
@@ -270,10 +271,12 @@ int Socket::_connect(const RawstorSocketAddress &ost) {
             RAWSTOR_THROW_ERRNO();
         }
 
-        rawstor_info("Connecting to %s:%u\n", ost.host, ost.port);
+        rawstor_info(
+            "fd %d: Connecting to %s:%u...\n", fd, ost.host, ost.port);
         if (connect(fd, (sockaddr*)&servaddr, sizeof(servaddr)) == -1) {
             RAWSTOR_THROW_ERRNO();
         }
+        rawstor_info("fd %d: Connected\n", fd);
 
         res = rawstor_io_queue_setup_fd(fd);
         if (res < 0) {
@@ -299,7 +302,9 @@ void Socket::_writev_request(RawstorIOQueue *queue, SocketOp *op) {
 }
 
 
-void Socket::_read_response_set_object_id(RawstorIOQueue *queue, SocketOp *op) {
+void Socket::_read_response_set_object_id(
+    RawstorIOQueue *queue, SocketOp *op)
+{
     int res = rawstor_io_queue_read(
         queue, _fd,
         &_response, sizeof(_response),
@@ -398,6 +403,7 @@ int Socket::_read_response_set_object_id_cb(
             RAWSTOR_THROW_SYSTEM_ERROR(-res);
         }
 
+        rawstor_info("fd %d: Object id successfully set\n", s->_fd);
         s->_read_response_head(rawstor_io_queue);
     } catch (const std::system_error &e) {
         ret = -e.code().value();
@@ -580,13 +586,17 @@ void Socket::spec(
     const RawstorUUID &, RawstorObjectSpec *sp,
     RawstorCallback *cb, void *data)
 {
+    rawstor_info("fd %d: Reading object specification...\n", _fd);
+
     /**
      * TODO: Implement me.
      */
-
     *sp = {
         .size = 1 << 30,
     };
+
+    rawstor_info(
+        "fd %d: Object specification successfully received(emulated)\n", _fd);
 
     cb(nullptr, 0, 0, 0, data);
 }
@@ -597,7 +607,7 @@ void Socket::set_object(
     rawstor::Object *object,
     RawstorCallback *cb, void *data)
 {
-    rawstor_debug("%s(): set object id\n", __FUNCTION__);
+    rawstor_info("fd %d: Setting object id\n", _fd);
 
     SocketOp *op = _acquire_op();
 
