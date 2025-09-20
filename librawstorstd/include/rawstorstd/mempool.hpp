@@ -35,7 +35,7 @@ class MemPool {
 
         MemPool<T>& operator=(const MemPool<T> &) = delete;
 
-        MemPool<T>& operator=(MemPool<T> &&other) {
+        MemPool<T>& operator=(MemPool<T> &&other) noexcept {
             if (&other != this) {
                 if (_impl != nullptr) {
                     rawstor_mempool_delete(_impl);
