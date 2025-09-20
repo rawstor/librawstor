@@ -5,6 +5,7 @@
 
 #include <rawstorstd/gpp.hpp>
 
+#include <type_traits>
 #include <utility>
 
 #include <cstddef>
@@ -68,8 +69,13 @@ class RingBufIter {
 
 template <typename T>
 class RingBuf {
+    static_assert(
+        std::is_trivially_destructible<T>::value,
+        "RingBuf only supports trivially destructible types");
+
     private:
         RawstorRingBuf *_impl;
+
     public:
         typedef RingBufIter<T> Iterator;
 
@@ -136,12 +142,12 @@ class RingBuf {
             return std::move(*tail);
         }
 
-        inline RingBufIter<T> begin() {
-            return RingBufIter<T>(_impl, rawstor_ringbuf_iter(_impl));
+        inline RingBuf<T>::Iterator begin() {
+            return RingBuf<T>::Iterator(_impl, rawstor_ringbuf_iter(_impl));
         }
 
-        inline RingBufIter<T> end() {
-            return RingBufIter<T>(_impl, nullptr);
+        inline RingBuf<T>::Iterator end() {
+            return RingBuf<T>::Iterator(_impl, nullptr);
         }
 };
 
