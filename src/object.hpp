@@ -3,18 +3,21 @@
 
 #include "connection.hpp"
 
-#include <rawstorstd/mempool.h>
+#include <rawstorstd/mempool.hpp>
 
 #include <rawstor.h>
 
 namespace rawstor {
 
 
+struct ObjectOp;
+
+
 class Object {
     private:
         RawstorObject *_c_ptr;
         RawstorUUID _id;
-        RawstorMemPool *_ops_pool;
+        MemPool<ObjectOp> _ops_pool;
         Connection _cn;
 
         static int _process(

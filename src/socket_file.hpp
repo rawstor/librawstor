@@ -1,7 +1,7 @@
 #ifndef RAWSTOR_SOCKET_FILE_HPP
 #define RAWSTOR_SOCKET_FILE_HPP
 
-#include <rawstorstd/mempool.h>
+#include <rawstorstd/mempool.hpp>
 
 #include <rawstorio/queue.h>
 
@@ -23,7 +23,7 @@ class Socket {
     private:
         int _fd;
         Object *_object;
-        RawstorMemPool *_ops_pool;
+        MemPool<SocketOp> _ops_pool;
         std::string _ost_path;
 
         SocketOp* _acquire_op();

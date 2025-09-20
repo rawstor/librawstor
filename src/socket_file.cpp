@@ -104,16 +104,11 @@ struct SocketOp {
 Socket::Socket(const RawstorSocketAddress &ost, unsigned int depth):
     _fd(-1),
     _object(nullptr),
-    _ops_pool(nullptr)
+    _ops_pool(depth)
 {
     std::ostringstream oss;
     oss << "./ost-" << ost.host << ":" << ost.port;
     _ost_path = oss.str();
-
-    _ops_pool = rawstor_mempool_create(depth, sizeof(SocketOp));
-    if (_ops_pool == NULL) {
-        RAWSTOR_THROW_ERRNO();
-    }
 
     if (mkdir(_ost_path.c_str(), 0755) == -1) {
         if (errno == EEXIST) {
@@ -128,7 +123,7 @@ Socket::Socket(const RawstorSocketAddress &ost, unsigned int depth):
 Socket::Socket(Socket &&other) noexcept:
     _fd(std::exchange(other._fd, -1)),
     _object(std::exchange(other._object, nullptr)),
-    _ops_pool(std::exchange(other._ops_pool, nullptr)),
+    _ops_pool(std::move(other._ops_pool)),
     _ost_path(std::move(other._ost_path))
 {}
 
@@ -142,24 +137,16 @@ Socket::~Socket() {
                 "Socket::~Socket(): close failed: %s\n", strerror(error));
         }
     }
-    if (_ops_pool) {
-        rawstor_mempool_delete(_ops_pool);
-    }
 }
 
 
 SocketOp* Socket::_acquire_op() {
-    SocketOp *op = static_cast<SocketOp*>(rawstor_mempool_alloc(_ops_pool));
-    if (op == NULL) {
-        RAWSTOR_THROW_ERRNO();
-    }
-
-    return op;
+    return _ops_pool.alloc();
 }
 
 
 void Socket::_release_op(SocketOp *op) noexcept {
-    rawstor_mempool_free(_ops_pool, op);
+    return _ops_pool.free(op);
 }
 
 
@@ -330,7 +317,6 @@ void Socket::pread(
     RawstorCallback *cb, void *data)
 {
     SocketOp *op = _acquire_op();
-
     try {
         *op = {
             .s = this,
@@ -357,7 +343,6 @@ void Socket::preadv(
     RawstorCallback *cb, void *data)
 {
     SocketOp *op = _acquire_op();
-
     try {
         *op = {
             .s = this,
@@ -384,7 +369,6 @@ void Socket::pwrite(
     RawstorCallback *cb, void *data)
 {
     SocketOp *op = _acquire_op();
-
     try {
         *op = {
             .s = this,
@@ -411,7 +395,6 @@ void Socket::pwritev(
     RawstorCallback *cb, void *data)
 {
     SocketOp *op = _acquire_op();
-
     try {
         *op = {
             .s = this,
