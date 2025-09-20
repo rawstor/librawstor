@@ -128,7 +128,7 @@ class RingBuf {
             return *static_cast<T*>(rawstor_ringbuf_head(_impl));
         }
 
-        inline T& tail() {
+        inline T& tail() noexcept {
             return *static_cast<T*>(rawstor_ringbuf_tail(_impl));
         }
 
