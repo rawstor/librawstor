@@ -77,7 +77,7 @@ class RingBuf {
         RawstorRingBuf *_impl;
 
     public:
-        typedef RingBufIter<T> Iterator;
+        using Iterator = RingBufIter<T>;
 
         RingBuf(size_t capacity):
             _impl(rawstor_ringbuf_create(capacity, sizeof(T)))
@@ -159,4 +159,4 @@ class RingBuf {
 } // rawstor
 
 
-#endif // RAWSTORSTD_RINGBUF_H
+#endif // RAWSTORSTD_RINGBUF_HPP

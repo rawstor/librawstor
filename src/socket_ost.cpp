@@ -197,7 +197,7 @@ SocketOp* Socket::_acquire_op() {
 }
 
 
-void Socket::_release_op(SocketOp *op) noexcept {
+void Socket::_release_op(SocketOp *op) {
     SocketOp *&head = _ops.head();
     _ops.push();
     head = op;

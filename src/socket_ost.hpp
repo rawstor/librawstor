@@ -32,7 +32,7 @@ class Socket {
         RawstorOSTFrameResponse _response;
 
         SocketOp* _acquire_op();
-        void _release_op(SocketOp *op) noexcept;
+        void _release_op(SocketOp *op);
         SocketOp* _find_op(unsigned int cid);
 
         int _connect(const RawstorSocketAddress &ost);
