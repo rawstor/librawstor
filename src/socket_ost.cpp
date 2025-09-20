@@ -127,16 +127,11 @@ Socket::Socket(const RawstorSocketAddress &ost, unsigned int depth):
     _fd(-1),
     _object(nullptr),
     _ops_array(),
-    _ops(nullptr)
+    _ops(depth)
 {
     _fd = _connect(ost);
 
     try {
-        _ops = rawstor_ringbuf_create(depth, sizeof(SocketOp*));
-        if (_ops == nullptr) {
-            RAWSTOR_THROW_ERRNO();
-        }
-
         _ops_array.reserve(depth);
         for (unsigned int i = 0; i < depth; ++i) {
             SocketOp *op = new SocketOp();
@@ -144,15 +139,12 @@ Socket::Socket(const RawstorSocketAddress &ost, unsigned int depth):
 
             _ops_array.push_back(op);
 
-            SocketOp **it = static_cast<SocketOp**>(rawstor_ringbuf_head(_ops));
-            assert(rawstor_ringbuf_push(_ops) == 0);
-            *it = op;
+            _ops.push(std::move(op));
         }
     } catch (...) {
         for (SocketOp *op: _ops_array) {
             delete op;
         }
-        rawstor_ringbuf_delete(_ops);
 
         if (::close(_fd) == -1) {
             int error = errno;
@@ -171,7 +163,7 @@ Socket::Socket(Socket &&other) noexcept:
     _fd(std::exchange(other._fd, -1)),
     _object(std::exchange(other._object, nullptr)),
     _ops_array(std::move(other._ops_array)),
-    _ops(std::exchange(other._ops, nullptr)),
+    _ops(std::move(other._ops)),
     _response(std::move(other._response))
 {
     for (SocketOp *op: _ops_array) {
@@ -194,26 +186,16 @@ Socket::~Socket() {
     for (SocketOp *op: _ops_array) {
         delete op;
     }
-
-    if (_ops != nullptr) {
-        rawstor_ringbuf_delete(_ops);
-    }
 }
 
 
 SocketOp* Socket::_acquire_op() {
-    SocketOp **it = static_cast<SocketOp**>(rawstor_ringbuf_tail(_ops));
-    if (rawstor_ringbuf_pop(_ops)) {
-        RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
-    }
-    return *it;
+    return _ops.pop();
 }
 
 
 void Socket::_release_op(SocketOp *op) noexcept {
-    SocketOp **it = static_cast<SocketOp**>(rawstor_ringbuf_head(_ops));
-    assert(rawstor_ringbuf_push(_ops) == 0);
-    *it = op;
+    _ops.push(std::move(op));
 }
 
 
