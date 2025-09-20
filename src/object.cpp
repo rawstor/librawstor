@@ -29,18 +29,6 @@
 #define QUEUE_DEPTH 256
 
 
-namespace {
-
-
-struct ObjectOp {
-    RawstorCallback *callback;
-    void *data;
-};
-
-
-} // unnamed namespace
-
-
 struct RawstorObject {
     rawstor::Object *impl;
 
@@ -49,6 +37,12 @@ struct RawstorObject {
 
 
 namespace rawstor {
+
+
+struct ObjectOp {
+    RawstorCallback *callback;
+    void *data;
+};
 
 
 void Object::create(const RawstorObjectSpec &sp, RawstorUUID *id) {
@@ -68,18 +62,12 @@ void Object::create(
 Object::Object(const RawstorUUID &id) :
     _c_ptr(new RawstorObject(this)),
     _id(id),
-    _ops_pool(nullptr),
+    _ops_pool(QUEUE_DEPTH),
     _cn(QUEUE_DEPTH)
-{
-    _ops_pool = rawstor_mempool_create(QUEUE_DEPTH, sizeof(ObjectOp));
-    if (_ops_pool == nullptr) {
-        RAWSTOR_THROW_ERRNO();
-    }
-}
+{}
 
 
 Object::~Object() {
-    rawstor_mempool_delete(_ops_pool);
     delete _c_ptr;
 }
 
@@ -92,7 +80,7 @@ int Object::_process(
 
     int ret = op->callback(object, size, res, error, op->data);
 
-    rawstor_mempool_free(object->impl->_ops_pool, op);
+    object->impl->_ops_pool.free(op);
 
     return ret;
 }
@@ -151,11 +139,7 @@ void Object::pread(
         "%s(): offset = %jd, size = %zu\n",
         __FUNCTION__, (intmax_t)offset, size);
 
-    ObjectOp *op = static_cast<ObjectOp*>(rawstor_mempool_alloc(_ops_pool));
-    if (op == nullptr) {
-        RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
-    }
-
+    ObjectOp *op = _ops_pool.alloc();
     try {
         *op = {
             .callback = cb,
@@ -164,7 +148,7 @@ void Object::pread(
 
         _cn.pread(buf, size, offset, _process, op);
     } catch (...) {
-        rawstor_mempool_free(_ops_pool, op);
+        _ops_pool.free(op);
         throw;
     }
 }
@@ -178,11 +162,7 @@ void Object::preadv(
         "%s(): offset = %jd, niov = %u, size = %zu\n",
         __FUNCTION__, (intmax_t)offset, niov, size);
 
-    ObjectOp *op = static_cast<ObjectOp*>(rawstor_mempool_alloc(_ops_pool));
-    if (op == nullptr) {
-        RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
-    }
-
+    ObjectOp *op = _ops_pool.alloc();
     try {
         *op = {
             .callback = cb,
@@ -191,7 +171,7 @@ void Object::preadv(
 
         _cn.preadv(iov, niov, size, offset, _process, op);
     } catch (...) {
-        rawstor_mempool_free(_ops_pool, op);
+        _ops_pool.free(op);
         throw;
     }
 }
@@ -205,11 +185,7 @@ void Object::pwrite(
         "%s(): offset = %jd, size = %zu\n",
         __FUNCTION__, (intmax_t)offset, size);
 
-    ObjectOp *op = static_cast<ObjectOp*>(rawstor_mempool_alloc(_ops_pool));
-    if (op == nullptr) {
-        RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
-    }
-
+    ObjectOp *op = _ops_pool.alloc();
     try {
         *op = {
             .callback = cb,
@@ -218,7 +194,7 @@ void Object::pwrite(
 
         _cn.pwrite(buf, size, offset, _process, op);
     } catch (...) {
-        rawstor_mempool_free(_ops_pool, op);
+        _ops_pool.free(op);
         throw;
     }
 }
@@ -232,11 +208,7 @@ void Object::pwritev(
         "%s(): offset = %jd, niov = %u, size = %zu\n",
         __FUNCTION__, (intmax_t)offset, niov, size);
 
-    ObjectOp *op = static_cast<ObjectOp*>(rawstor_mempool_alloc(_ops_pool));
-    if (op == nullptr) {
-        RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
-    }
-
+    ObjectOp *op = _ops_pool.alloc();
     try {
         *op = {
             .callback = cb,
@@ -245,7 +217,7 @@ void Object::pwritev(
 
         _cn.pwritev(iov, niov, size, offset, _process, op);
     } catch (...) {
-        rawstor_mempool_free(_ops_pool, op);
+        _ops_pool.free(op);
         throw;
     }
 }
