@@ -139,7 +139,8 @@ Socket::Socket(const RawstorSocketAddress &ost, unsigned int depth):
 
             _ops_array.push_back(op);
 
-            _ops.push(std::move(op));
+            _ops.head() = op;
+            _ops.push();
         }
     } catch (...) {
         for (SocketOp *op: _ops_array) {
@@ -190,12 +191,16 @@ Socket::~Socket() {
 
 
 SocketOp* Socket::_acquire_op() {
-    return _ops.pop();
+    SocketOp *tail = _ops.tail();
+    _ops.pop();
+    return tail;
 }
 
 
 void Socket::_release_op(SocketOp *op) noexcept {
-    _ops.push(std::move(op));
+    SocketOp *&head = _ops.head();
+    _ops.push();
+    head = op;
 }
 
 
