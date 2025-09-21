@@ -3,7 +3,7 @@
 
 #include "ost_protocol.h"
 
-#include <rawstorstd/ringbuf.h>
+#include <rawstorstd/ringbuf.hpp>
 
 #include <rawstorio/queue.h>
 
@@ -28,7 +28,7 @@ class Socket {
         Object *_object;
 
         std::vector<SocketOp*> _ops_array;
-        RawstorRingBuf *_ops;
+        RingBuf<SocketOp*> _ops;
         RawstorOSTFrameResponse _response;
 
         SocketOp* _acquire_op();
