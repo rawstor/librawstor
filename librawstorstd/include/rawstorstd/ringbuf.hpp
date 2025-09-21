@@ -145,10 +145,6 @@ class RingBuf {
             return rawstor_ringbuf_size(_impl);
         }
 
-        inline T& tail() noexcept {
-            return *static_cast<T*>(rawstor_ringbuf_tail(_impl));
-        }
-
         inline void push(const T &item) {
             T *head = static_cast<T*>(rawstor_ringbuf_head(_impl));
             int res = rawstor_ringbuf_push(_impl);
@@ -167,11 +163,13 @@ class RingBuf {
             *head = item;
         }
 
-        inline void pop() {
+        inline T pop() {
+            T *tail = static_cast<T*>(rawstor_ringbuf_tail(_impl));
             int res = rawstor_ringbuf_pop(_impl);
             if (res) {
                 RAWSTOR_THROW_SYSTEM_ERROR(-res);
             }
+            return std::move(*tail);
         }
 
         inline RingBuf<T>::iterator begin() {

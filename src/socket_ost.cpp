@@ -190,9 +190,7 @@ Socket::~Socket() {
 
 
 SocketOp* Socket::_acquire_op() {
-    SocketOp *tail = _ops.tail();
-    _ops.pop();
-    return tail;
+    return _ops.pop();
 }
 
 
