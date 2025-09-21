@@ -73,7 +73,9 @@ class RingBufIter {
         }
 
         inline RingBufIter<T> operator++(int) noexcept {
-            return RingBufIter<T>(_buf, rawstor_ringbuf_next(_buf, _iter));
+            RingBufIter<T> old = *this;
+            _iter = rawstor_ringbuf_next(_buf, _iter);
+            return old;
         }
 
         inline T& operator*() noexcept {
