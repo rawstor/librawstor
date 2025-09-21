@@ -82,8 +82,8 @@ class RingBufIter {
             return *static_cast<T*>(_iter);
         }
 
-        inline T& operator->() noexcept {
-            return *static_cast<T*>(_iter);
+        inline T* operator->() noexcept {
+            return static_cast<T*>(_iter);
         }
 };
 
