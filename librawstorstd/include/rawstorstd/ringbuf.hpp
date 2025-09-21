@@ -160,7 +160,7 @@ class RingBuf {
             if (res) {
                 RAWSTOR_THROW_SYSTEM_ERROR(-res);
             }
-            *head = item;
+            *head = std::move(item);
         }
 
         inline T pop() {
