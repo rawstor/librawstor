@@ -197,7 +197,7 @@ SocketOp* Socket::_acquire_op() {
 
 
 void Socket::_release_op(SocketOp *op) noexcept {
-    assert(!_ops.empty());
+    assert(_ops.size() < _ops.capacity());
 
     _ops.push(op);
 }
