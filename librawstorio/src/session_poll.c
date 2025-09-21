@@ -48,7 +48,7 @@ static int is_seekable(int fd) {
 static int io_session_seekable_process_sqes(
     RawstorIOSession *session, RawstorRingBuf *sqes, int RAWSTOR_UNUSED write)
 {
-    if (rawstor_ringbuf_empty(sqes) == 0) {
+    if (rawstor_ringbuf_empty(sqes)) {
         return 0;
     }
 
