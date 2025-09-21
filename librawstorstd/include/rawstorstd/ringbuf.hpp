@@ -39,7 +39,7 @@ class RingBufIter {
         {}
 
         RingBufIter(RingBufIter &&other) noexcept:
-            _buf(std::exchange(other._buf, nullptr)),
+            _buf(other._buf),
             _iter(std::exchange(other._iter, nullptr))
         {}
 
@@ -53,7 +53,7 @@ class RingBufIter {
 
         inline RingBufIter<T>& operator=(RingBufIter<T> &&other) noexcept {
             if (&other != this) {
-                _buf = std::exchange(other._buf, nullptr);
+                _buf = other._buf;
                 _iter = std::exchange(other._iter, nullptr);
             }
             return *this;
