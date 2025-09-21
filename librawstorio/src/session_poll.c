@@ -48,7 +48,10 @@ static int is_seekable(int fd) {
 static int io_session_seekable_process_sqes(
     RawstorIOSession *session, RawstorRingBuf *sqes, int RAWSTOR_UNUSED write)
 {
-    assert(rawstor_ringbuf_empty(sqes) == 0);
+    if (rawstor_ringbuf_empty(sqes)) {
+        return 0;
+    }
+
     RawstorIOEvent **it = rawstor_ringbuf_tail(sqes);
     RawstorIOEvent *event = *it;
 
@@ -106,6 +109,10 @@ static int io_session_unseekable_process_sqes(
     int ret = 0;
 
     size_t nevents = rawstor_ringbuf_size(sqes);
+    if (nevents == 0) {
+        return 0;
+    }
+
     RawstorIOEvent **events = calloc(nevents, sizeof(RawstorIOEvent*));
     if (events == NULL) {
         ret = -errno;
