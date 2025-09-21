@@ -142,3 +142,120 @@ jobs:
         ./librawstor/.github/tools/git-commit-and-push.sh \
           ./rawstor_bench \
           "add: perftest ${{ matrix.without-liburing }} ${{ matrix.disable-ost }} benchmarks"
+
+  perftest-hw-runner:
+    needs: perftest
+
+    runs-on: hw-runner
+
+    strategy:
+      matrix:
+        without-liburing:
+        - 
+        - --without-liburing
+        disable-ost:
+        -
+        - --disable-ost
+        bs:
+        - 4k
+        iodepth:
+        - 1
+        - 2
+        numjobs:
+        - 1
+        include:
+        - packages: liburing-dev
+          without-liburing:
+        - packages: liburing-dev
+          disable-ost:
+          without-liburing: --without-liburing
+
+    steps:
+    - name: install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libxxhash-dev libtool pkg-config ${{ matrix.packages }}
+    - uses: actions/checkout@v4
+      with:
+        path: librawstor
+    - name: cleanup local
+      run: rm -rf ./local
+    - name: install librawstor
+      run: |
+        pushd .
+        cd ./librawstor
+        ./autogen.sh
+        ./configure --prefix=${GITHUB_WORKSPACE}/local --disable-shared ${{ matrix.without-liburing }} ${{ matrix.disable-ost }}
+        make
+        make install
+        popd
+    - uses: actions/checkout@v4
+      if: "${{ matrix.disable-ost == '' }}"
+      with:
+        repository: rawstor/rawstor_ost
+        path: rawstor_ost
+        ref: refs/heads/main
+        ssh-key: ${{ secrets.RAWSTOR_OST_TOKEN }}
+    - name: (rawstor_ost) install rawstor_ost
+      if: "${{ matrix.disable-ost == '' }}"
+      run: |
+        pushd .
+        cd ./rawstor_ost
+        ./autogen.sh
+        ./configure --prefix=${GITHUB_WORKSPACE}/local --disable-shared
+        make
+        make install
+        popd
+    - uses: actions/checkout@v4
+      with:
+        repository: rawstor/fio
+        path: fio
+        ref: refs/heads/rawstor
+    - name: install fio
+      run: |
+        pushd .
+        cd ./fio
+        PKG_CONFIG_PATH=${GITHUB_WORKSPACE}/local/lib/pkgconfig ./configure --prefix=${GITHUB_WORKSPACE}/local
+        make -j$(nproc)
+        make install
+        popd
+    - name: (rawstor_ost) start rawstor_ost
+      if: "${{ matrix.disable-ost == '' }}"
+      run: |
+        mkdir -p ${GITHUB_WORKSPACE}/objects
+        truncate -s 2G ${GITHUB_WORKSPACE}/objects/01988675-e1e5-7788-9ed4-2f2d30910d23
+        ./local/bin/ost 8080 ${GITHUB_WORKSPACE}/objects/ &
+        sleep 10
+    - name: create object
+      if: "${{ matrix.disable-ost != '' }}"
+      run: |
+        object_id=$(./local/bin/rawstor-cli create --size=1)
+        echo "OBJECT_ID=${object_id}" >> $GITHUB_ENV
+    - name: (rawstor_ost) create object
+      if: "${{ matrix.disable-ost == '' }}"
+      run: |
+        object_id=01988675-e1e5-7788-9ed4-2f2d30910d23
+        echo "OBJECT_ID=${object_id}" >> $GITHUB_ENV
+    - name: fio
+      run: |
+        echo "# perftest-hw-runner" >> $GITHUB_STEP_SUMMARY
+        echo "## fio ${{ matrix.without-liburing }} ${{ matrix.disable-ost }}" >> $GITHUB_STEP_SUMMARY
+        echo "### bs=${{ matrix.bs }}, iodepth=${{ matrix.iodepth }}, numjobs=${{ matrix.numjobs }}" >> $GITHUB_STEP_SUMMARY
+        PATH=${GITHUB_WORKSPACE}/local/bin:${PATH} ./librawstor/.github/tools/fio.sh \
+          ${OBJECT_ID} \
+          ${{ matrix.bs }} \
+          ${{ matrix.iodepth }} \
+          ${{ matrix.numjobs }} \
+          fio.txt \
+          fio.json
+        echo \`\`\` >> $GITHUB_STEP_SUMMARY
+        cat fio.txt >> $GITHUB_STEP_SUMMARY
+        echo \`\`\` >> $GITHUB_STEP_SUMMARY
+    - name: remove object
+      if: "${{ matrix.disable-ost != '' }}"
+      run: ./local/bin/rawstor-cli remove --object-id=${OBJECT_ID}
+    - name: (rawstor_ost) stop rawstor_ost
+      if: "${{ matrix.disable-ost == '' }}"
+      run: |
+        killall ost
+        rm -rf ${GITHUB_WORKSPACE}/objects

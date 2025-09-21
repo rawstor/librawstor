@@ -1,6 +1,6 @@
 #!/bin/bash
 
-set -e
+set -ex
 
 FILENAME=$1
 BS=$2
