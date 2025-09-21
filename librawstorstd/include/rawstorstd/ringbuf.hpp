@@ -59,11 +59,11 @@ class RingBufIter {
             return *this;
         }
 
-        inline bool operator==(const RingBufIter<T> &other) noexcept {
+        inline bool operator==(const RingBufIter<T> &other) const noexcept {
             return _iter == other._iter;
         }
 
-        inline bool operator!=(const RingBufIter<T> &other) noexcept {
+        inline bool operator!=(const RingBufIter<T> &other) const noexcept {
             return _iter != other._iter;
         }
 
