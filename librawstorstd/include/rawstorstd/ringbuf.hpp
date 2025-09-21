@@ -5,6 +5,7 @@
 
 #include <rawstorstd/gpp.hpp>
 
+#include <iterator>
 #include <type_traits>
 #include <utility>
 
@@ -21,6 +22,12 @@ class RingBufIter {
         void *_iter;
 
     public:
+        using iterator_category = std::forward_iterator_tag;
+        using value_type = T;
+        using difference_type = std::ptrdiff_t;
+        using pointer = T*;
+        using reference = T&;
+
         RingBufIter(RawstorRingBuf *buf, void *iter) noexcept:
             _buf(buf),
             _iter(iter)
@@ -52,6 +59,10 @@ class RingBufIter {
             return *this;
         }
 
+        inline bool operator==(const RingBufIter<T> &other) noexcept {
+            return _iter == other._iter;
+        }
+
         inline bool operator!=(const RingBufIter<T> &other) noexcept {
             return _iter != other._iter;
         }
@@ -61,7 +72,15 @@ class RingBufIter {
             return *this;
         }
 
+        inline RingBufIter<T> operator++(int) noexcept {
+            return RingBufIter<T>(_buf, rawstor_ringbuf_next(_buf, _iter));
+        }
+
         inline T& operator*() noexcept {
+            return *static_cast<T*>(_iter);
+        }
+
+        inline T& operator->() noexcept {
             return *static_cast<T*>(_iter);
         }
 };
@@ -77,7 +96,7 @@ class RingBuf {
         RawstorRingBuf *_impl;
 
     public:
-        using Iterator = RingBufIter<T>;
+        using iterator = RingBufIter<T>;
 
         RingBuf(size_t capacity):
             _impl(rawstor_ringbuf_create(capacity, sizeof(T)))
@@ -146,12 +165,12 @@ class RingBuf {
             }
         }
 
-        inline RingBuf<T>::Iterator begin() {
-            return RingBuf<T>::Iterator(_impl, rawstor_ringbuf_iter(_impl));
+        inline RingBuf<T>::iterator begin() {
+            return RingBuf<T>::iterator(_impl, rawstor_ringbuf_iter(_impl));
         }
 
-        inline RingBuf<T>::Iterator end() {
-            return RingBuf<T>::Iterator(_impl, nullptr);
+        inline RingBuf<T>::iterator end() {
+            return RingBuf<T>::iterator(_impl, nullptr);
         }
 };
 
