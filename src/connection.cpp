@@ -124,8 +124,17 @@ void Queue::wait() {
 namespace rawstor {
 
 
+struct ConnectionOp {
+    Connection *cn;
+
+    RawstorCallback *callback;
+    void *data;
+};
+
+
 Connection::Connection(unsigned int depth):
     _depth(depth),
+    _ops(_depth),
     _socket_index(0)
 {}
 
@@ -150,6 +159,20 @@ Socket& Connection::_get_next_socket() {
     }
 
     return s;
+}
+
+
+int Connection::_process(
+    RawstorObject *object,
+    size_t size, size_t res, int error, void *data) noexcept
+{
+    ConnectionOp *op = static_cast<ConnectionOp*>(data);
+
+    int ret = op->callback(object, size, res, error, op->data);
+
+    op->cn->_ops.free(op);
+
+    return ret;
 }
 
 
@@ -227,7 +250,18 @@ void Connection::pread(
     void *buf, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
-    _get_next_socket().pread(buf, size, offset, cb, data);
+    ConnectionOp *op = _ops.alloc();
+    try {
+        *op = {
+            .cn = this,
+            .callback = cb,
+            .data = data,
+        };
+        _get_next_socket().pread(buf, size, offset, _process, op);
+    } catch (...) {
+        _ops.free(op);
+        throw;
+    }
 }
 
 
@@ -235,7 +269,18 @@ void Connection::preadv(
     iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
-    _get_next_socket().preadv(iov, niov, size, offset, cb, data);
+    ConnectionOp *op = _ops.alloc();
+    try {
+        *op = {
+            .cn = this,
+            .callback = cb,
+            .data = data,
+        };
+        _get_next_socket().preadv(iov, niov, size, offset, _process, op);
+    } catch (...) {
+        _ops.free(op);
+        throw;
+    }
 }
 
 
@@ -243,7 +288,18 @@ void Connection::pwrite(
     void *buf, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
-    _get_next_socket().pwrite(buf, size, offset, cb, data);
+    ConnectionOp *op = _ops.alloc();
+    try {
+        *op = {
+            .cn = this,
+            .callback = cb,
+            .data = data,
+        };
+        _get_next_socket().pwrite(buf, size, offset, _process, op);
+    } catch (...) {
+        _ops.free(op);
+        throw;
+    }
 }
 
 
@@ -251,7 +307,18 @@ void Connection::pwritev(
     iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
-    _get_next_socket().pwritev(iov, niov, size, offset, cb, data);
+    ConnectionOp *op = _ops.alloc();
+    try {
+        *op = {
+            .cn = this,
+            .callback = cb,
+            .data = data,
+        };
+        _get_next_socket().pwritev(iov, niov, size, offset, _process, op);
+    } catch (...) {
+        _ops.free(op);
+        throw;
+    }
 }
 
 

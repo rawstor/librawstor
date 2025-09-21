@@ -62,7 +62,7 @@ void Object::create(
 Object::Object(const RawstorUUID &id) :
     _c_ptr(new RawstorObject(this)),
     _id(id),
-    _ops_pool(QUEUE_DEPTH),
+    _ops(QUEUE_DEPTH),
     _cn(QUEUE_DEPTH)
 {}
 
@@ -80,7 +80,7 @@ int Object::_process(
 
     int ret = op->callback(object, size, res, error, op->data);
 
-    object->impl->_ops_pool.free(op);
+    object->impl->_ops.free(op);
 
     return ret;
 }
@@ -139,7 +139,7 @@ void Object::pread(
         "%s(): offset = %jd, size = %zu\n",
         __FUNCTION__, (intmax_t)offset, size);
 
-    ObjectOp *op = _ops_pool.alloc();
+    ObjectOp *op = _ops.alloc();
     try {
         *op = {
             .callback = cb,
@@ -148,7 +148,7 @@ void Object::pread(
 
         _cn.pread(buf, size, offset, _process, op);
     } catch (...) {
-        _ops_pool.free(op);
+        _ops.free(op);
         throw;
     }
 }
@@ -162,7 +162,7 @@ void Object::preadv(
         "%s(): offset = %jd, niov = %u, size = %zu\n",
         __FUNCTION__, (intmax_t)offset, niov, size);
 
-    ObjectOp *op = _ops_pool.alloc();
+    ObjectOp *op = _ops.alloc();
     try {
         *op = {
             .callback = cb,
@@ -171,7 +171,7 @@ void Object::preadv(
 
         _cn.preadv(iov, niov, size, offset, _process, op);
     } catch (...) {
-        _ops_pool.free(op);
+        _ops.free(op);
         throw;
     }
 }
@@ -185,7 +185,7 @@ void Object::pwrite(
         "%s(): offset = %jd, size = %zu\n",
         __FUNCTION__, (intmax_t)offset, size);
 
-    ObjectOp *op = _ops_pool.alloc();
+    ObjectOp *op = _ops.alloc();
     try {
         *op = {
             .callback = cb,
@@ -194,7 +194,7 @@ void Object::pwrite(
 
         _cn.pwrite(buf, size, offset, _process, op);
     } catch (...) {
-        _ops_pool.free(op);
+        _ops.free(op);
         throw;
     }
 }
@@ -208,7 +208,7 @@ void Object::pwritev(
         "%s(): offset = %jd, niov = %u, size = %zu\n",
         __FUNCTION__, (intmax_t)offset, niov, size);
 
-    ObjectOp *op = _ops_pool.alloc();
+    ObjectOp *op = _ops.alloc();
     try {
         *op = {
             .callback = cb,
@@ -217,7 +217,7 @@ void Object::pwritev(
 
         _cn.pwritev(iov, niov, size, offset, _process, op);
     } catch (...) {
-        _ops_pool.free(op);
+        _ops.free(op);
         throw;
     }
 }

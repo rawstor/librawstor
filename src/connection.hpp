@@ -3,6 +3,8 @@
 
 #include "socket.hpp"
 
+#include <rawstorstd/mempool.hpp>
+
 #include <rawstor/object.h>
 #include <rawstor/rawstor.h>
 
@@ -12,6 +14,9 @@
 namespace rawstor {
 
 
+struct ConnectionOp;
+
+
 class Object;
 
 
@@ -19,10 +24,16 @@ class Connection {
     private:
         unsigned int _depth;
 
+        MemPool<ConnectionOp> _ops;
         std::vector<Socket> _sockets;
         size_t _socket_index;
 
         Socket& _get_next_socket();
+
+        static int _process(
+            RawstorObject *object,
+            size_t size, size_t res, int error, void *data) noexcept;
+
     public:
         Connection(unsigned int depth);
         Connection(const Connection &) = delete;

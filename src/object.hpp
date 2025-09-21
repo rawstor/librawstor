@@ -17,7 +17,7 @@ class Object {
     private:
         RawstorObject *_c_ptr;
         RawstorUUID _id;
-        MemPool<ObjectOp> _ops_pool;
+        MemPool<ObjectOp> _ops;
         Connection _cn;
 
         static int _process(
