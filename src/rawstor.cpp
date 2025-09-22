@@ -25,7 +25,7 @@
 #define DEFAULT_OST_PORT 8080
 
 
-RawstorIOQueue *rawstor_io_queue = NULL;
+RawstorIOQueue *rawstor_io_queue = nullptr;
 
 
 namespace {
@@ -39,16 +39,16 @@ int default_ost_initialize(
 {
     int res = 0;
 
-    _default_ost.host = (default_ost != NULL && default_ost->host != NULL) ?
+    _default_ost.host = (default_ost != nullptr && default_ost->host != nullptr) ?
         strdup(default_ost->host) :
         strdup(DEFAULT_OST_HOST);
-    if (_default_ost.host == NULL) {
+    if (_default_ost.host == nullptr) {
         res = -errno;
         errno = 0;
         goto err_host;
     }
 
-    _default_ost.port = (default_ost != NULL && default_ost->port != 0) ?
+    _default_ost.port = (default_ost != nullptr && default_ost->port != 0) ?
         default_ost->port :
         DEFAULT_OST_PORT;
 
@@ -73,7 +73,7 @@ int rawstor_initialize(
 {
     int res = 0;
 
-    assert(rawstor_io_queue == NULL);
+    assert(rawstor_io_queue == nullptr);
 
     res = rawstor_logging_initialize();
     if (res) {
@@ -99,7 +99,7 @@ int rawstor_initialize(
     }
 
     rawstor_io_queue = rawstor_io_queue_create(QUEUE_DEPTH);
-    if (rawstor_io_queue == NULL) {
+    if (rawstor_io_queue == nullptr) {
         res = -errno;
         errno = 0;
         goto err_io_queue;
