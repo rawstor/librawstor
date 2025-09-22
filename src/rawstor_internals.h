@@ -1,6 +1,8 @@
 #ifndef RAWSTOR_INTERNALS_H
 #define RAWSTOR_INTERNALS_H
 
+#include <rawstorio/queue.h>
+
 #include <rawstor.h>
 
 
