@@ -128,16 +128,25 @@ namespace rawstor {
 
 class ConnectionOp {
     private:
-        std::shared_ptr<Socket> _s;
-
         RawstorCallback *_cb;
         void *_data;
 
+    protected:
+        static int _process(
+            RawstorObject *object,
+            size_t size, size_t res, int error, void *data) noexcept
+        {
+            ConnectionOp *op = static_cast<ConnectionOp*>(data);
+
+            int ret = op->callback(object, size, res, error);
+
+            delete op;
+
+            return ret;
+        }
+
     public:
-        ConnectionOp(
-            std::shared_ptr<Socket> s,
-            RawstorCallback *cb, void *data):
-            _s(s),
+        ConnectionOp(RawstorCallback *cb, void *data):
             _cb(cb),
             _data(data)
         {}
@@ -145,11 +154,114 @@ class ConnectionOp {
         ConnectionOp(ConnectionOp &&) = delete;
         ConnectionOp& operator=(const ConnectionOp &) = delete;
         ConnectionOp& operator=(ConnectionOp &&) = delete;
+        virtual ~ConnectionOp() {}
+
+        virtual void operator()(const std::shared_ptr<Socket> &s) = 0;
 
         inline int callback(
             RawstorObject *object, size_t size, size_t res, int error)
         {
             return _cb(object, size, res, error, _data);
+        }
+};
+
+
+class ConnectionOpPRead: public ConnectionOp {
+    private:
+        void *_buf;
+        size_t _size;
+        size_t _offset;
+        std::shared_ptr<Socket> _s;
+
+    public:
+        ConnectionOpPRead(
+            void *buf, size_t size, size_t offset,
+            RawstorCallback *cb, void *data):
+            ConnectionOp(cb, data),
+            _buf(buf),
+            _size(size),
+            _offset(offset)
+        {}
+
+        void operator()(const std::shared_ptr<Socket> &s) {
+            _s = s;
+            _s->pread(_buf, _size, _offset, _process, this);
+        }
+};
+
+
+class ConnectionOpPReadV: public ConnectionOp {
+    private:
+        iovec *_iov;
+        unsigned int _niov;
+        size_t _size;
+        off_t _offset;
+        std::shared_ptr<Socket> _s;
+
+    public:
+        ConnectionOpPReadV(
+            iovec *iov, unsigned int niov, size_t size, off_t offset,
+            RawstorCallback *cb, void *data):
+            ConnectionOp(cb, data),
+            _iov(iov),
+            _niov(niov),
+            _size(size),
+            _offset(offset)
+        {}
+
+        void operator()(const std::shared_ptr<Socket> &s) {
+            _s = s;
+            _s->preadv(_iov, _niov, _size, _offset, _process, this);
+        }
+};
+
+
+class ConnectionOpPWrite: public ConnectionOp {
+    private:
+        void *_buf;
+        size_t _size;
+        size_t _offset;
+        std::shared_ptr<Socket> _s;
+
+    public:
+        ConnectionOpPWrite(
+            void *buf, size_t size, size_t offset,
+            RawstorCallback *cb, void *data):
+            ConnectionOp(cb, data),
+            _buf(buf),
+            _size(size),
+            _offset(offset)
+        {}
+
+        void operator()(const std::shared_ptr<Socket> &s) {
+            _s = s;
+            _s->pwrite(_buf, _size, _offset, _process, this);
+        }
+};
+
+
+class ConnectionOpPWriteV: public ConnectionOp {
+    private:
+        iovec *_iov;
+        unsigned int _niov;
+        size_t _size;
+        off_t _offset;
+        std::shared_ptr<Socket> _s;
+
+    public:
+        ConnectionOpPWriteV(
+            iovec *iov, unsigned int niov, size_t size, off_t offset,
+            RawstorCallback *cb, void *data):
+            ConnectionOp(cb, data),
+            _iov(iov),
+            _niov(niov),
+            _size(size),
+            _offset(offset)
+        {}
+
+        void operator()(const std::shared_ptr<Socket> &s) {
+            _s = s;
+            _s->pwritev(_iov, _niov, _size, _offset, _process, this);
         }
 };
 
@@ -180,20 +292,6 @@ std::shared_ptr<Socket> Connection::_get_next_socket() {
     }
 
     return s;
-}
-
-
-int Connection::_process(
-    RawstorObject *object,
-    size_t size, size_t res, int error, void *data) noexcept
-{
-    ConnectionOp *op = static_cast<ConnectionOp*>(data);
-
-    int ret = op->callback(object, size, res, error);
-
-    delete op;
-
-    return ret;
 }
 
 
@@ -273,9 +371,9 @@ void Connection::pread(
     RawstorCallback *cb, void *data)
 {
     std::shared_ptr<Socket> s = _get_next_socket();
-    std::unique_ptr<ConnectionOp> op = std::unique_ptr<ConnectionOp>(
-        new ConnectionOp(s, cb, data));
-    s->pread(buf, size, offset, _process, op.get());
+    std::unique_ptr<ConnectionOpPRead> op(
+        new ConnectionOpPRead(buf, size, offset, cb, data));
+    (*op)(s);
     op.release();
 }
 
@@ -285,9 +383,9 @@ void Connection::preadv(
     RawstorCallback *cb, void *data)
 {
     std::shared_ptr<Socket> s = _get_next_socket();
-    std::unique_ptr<ConnectionOp> op = std::unique_ptr<ConnectionOp>(
-        new ConnectionOp(s, cb, data));
-    s->preadv(iov, niov, size, offset, _process, op.get());
+    std::unique_ptr<ConnectionOpPReadV> op(
+        new ConnectionOpPReadV(iov, niov, size, offset, cb, data));
+    (*op)(s);
     op.release();
 }
 
@@ -297,9 +395,9 @@ void Connection::pwrite(
     RawstorCallback *cb, void *data)
 {
     std::shared_ptr<Socket> s = _get_next_socket();
-    std::unique_ptr<ConnectionOp> op = std::unique_ptr<ConnectionOp>(
-        new ConnectionOp(s, cb, data));
-    s->pwrite(buf, size, offset, _process, op.get());
+    std::unique_ptr<ConnectionOpPWrite> op(
+        new ConnectionOpPWrite(buf, size, offset, cb, data));
+    (*op)(s);
     op.release();
 }
 
@@ -309,9 +407,9 @@ void Connection::pwritev(
     RawstorCallback *cb, void *data)
 {
     std::shared_ptr<Socket> s = _get_next_socket();
-    std::unique_ptr<ConnectionOp> op = std::unique_ptr<ConnectionOp>(
-        new ConnectionOp(s, cb, data));
-    s->pwritev(iov, niov, size, offset, _process, op.get());
+    std::unique_ptr<ConnectionOpPWriteV> op(
+        new ConnectionOpPWriteV(iov, niov, size, offset, cb, data));
+    (*op)(s);
     op.release();
 }
 
