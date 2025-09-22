@@ -14,6 +14,8 @@
 #include <sys/types.h>
 #include <sys/uio.h>
 
+#include <stdexcept>
+
 #include <cassert>
 #include <cerrno>
 #include <cstddef>
@@ -98,7 +100,12 @@ int rawstor_initialize(
         goto err_opts_initialize;
     }
 
-    default_ost_initialize(default_ost);
+    try {
+        default_ost_initialize(default_ost);
+    } catch (std::bad_alloc &) {
+        res = -ENOMEM;
+        goto err_default_ost_initialize;
+    }
 
     rawstor_io_queue = rawstor_io_queue_create(QUEUE_DEPTH);
     if (rawstor_io_queue == nullptr) {
@@ -111,6 +118,7 @@ int rawstor_initialize(
 
 err_io_queue:
     default_ost_terminate();
+err_default_ost_initialize:
     rawstor_opts_terminate();
 err_opts_initialize:
     rawstor_logging_terminate();
