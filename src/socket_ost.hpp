@@ -4,6 +4,7 @@
 #include "ost_protocol.h"
 
 #include <rawstorstd/ringbuf.hpp>
+#include <rawstorstd/socket_address.hpp>
 
 #include <rawstorio/queue.h>
 
@@ -35,7 +36,7 @@ class Socket {
         void _release_op(SocketOp *op) noexcept;
         SocketOp* _find_op(unsigned int cid);
 
-        int _connect(const RawstorSocketAddress &ost);
+        int _connect(const SocketAddress &ost);
 
         void _writev_request(RawstorIOQueue *queue, SocketOp *op);
         void _read_response_set_object_id(RawstorIOQueue *queue, SocketOp *op);
@@ -62,7 +63,7 @@ class Socket {
     public:
         static const char* engine_name() noexcept;
 
-        Socket(const RawstorSocketAddress &ost, unsigned int depth);
+        Socket(const SocketAddress &ost, unsigned int depth);
         Socket(const Socket &) = delete;
         Socket(Socket &&other) noexcept;
         ~Socket();

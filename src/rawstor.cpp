@@ -3,8 +3,10 @@
 #include "object_internals.h"
 #include "opts.h"
 #include "rawstor_internals.h"
+#include "rawstor_internals.hpp"
 
 #include <rawstorstd/logging.h>
+#include <rawstorstd/socket_address.hpp>
 
 #include <rawstorio/queue.h>
 #include <rawstorio/event.h>
@@ -31,40 +33,43 @@ RawstorIOQueue *rawstor_io_queue = nullptr;
 namespace {
 
 
-struct RawstorSocketAddress _default_ost = {};
+class rawstor::SocketAddress *_default_ost = nullptr;
 
 
-int default_ost_initialize(
+void default_ost_initialize(
     const struct RawstorSocketAddress *default_ost)
 {
-    int res = 0;
-
-    _default_ost.host = (default_ost != nullptr && default_ost->host != nullptr) ?
-        strdup(default_ost->host) :
-        strdup(DEFAULT_OST_HOST);
-    if (_default_ost.host == nullptr) {
-        res = -errno;
-        errno = 0;
-        goto err_host;
-    }
-
-    _default_ost.port = (default_ost != nullptr && default_ost->port != 0) ?
-        default_ost->port :
-        DEFAULT_OST_PORT;
-
-    return 0;
-
-err_host:
-    return res;
+    _default_ost = new rawstor::SocketAddress(
+        (default_ost != nullptr && default_ost->host != nullptr) ?
+            default_ost->host :
+            DEFAULT_OST_HOST,
+        (default_ost != nullptr && default_ost->port != 0) ?
+            default_ost->port :
+            DEFAULT_OST_PORT
+    );
 }
 
 
 void default_ost_terminate() {
-    free(_default_ost.host);
+    if (_default_ost != nullptr) {
+        delete _default_ost;
+        _default_ost = nullptr;
+    }
 }
 
 
 } // unnamed
+
+
+namespace rawstor {
+
+
+const SocketAddress& default_ost() {
+    return *_default_ost;
+}
+
+
+} // rawstor
 
 
 int rawstor_initialize(
@@ -93,10 +98,7 @@ int rawstor_initialize(
         goto err_opts_initialize;
     }
 
-    res = default_ost_initialize(default_ost);
-    if (res) {
-        goto err_default_ost_initialize;
-    }
+    default_ost_initialize(default_ost);
 
     rawstor_io_queue = rawstor_io_queue_create(QUEUE_DEPTH);
     if (rawstor_io_queue == nullptr) {
@@ -109,7 +111,6 @@ int rawstor_initialize(
 
 err_io_queue:
     default_ost_terminate();
-err_default_ost_initialize:
     rawstor_opts_terminate();
 err_opts_initialize:
     rawstor_logging_terminate();
@@ -124,11 +125,6 @@ void rawstor_terminate() {
     default_ost_terminate();
     rawstor_opts_terminate();
     rawstor_logging_terminate();
-}
-
-
-const struct RawstorSocketAddress* rawstor_default_ost() {
-    return &_default_ost;
 }
 
 

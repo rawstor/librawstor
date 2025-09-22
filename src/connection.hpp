@@ -4,6 +4,7 @@
 #include "socket.hpp"
 
 #include <rawstorstd/mempool.hpp>
+#include <rawstorstd/socket_address.hpp>
 
 #include <rawstor/object.h>
 #include <rawstor/rawstor.h>
@@ -42,19 +43,19 @@ class Connection {
         Connection& operator=(const Connection&) = delete;
 
         void create(
-            const RawstorSocketAddress &ost,
+            const SocketAddress &ost,
             const RawstorObjectSpec &sp, RawstorUUID *id);
 
         void remove(
-            const RawstorSocketAddress &ost,
+            const SocketAddress &ost,
             const RawstorUUID &id);
 
         void spec(
-            const RawstorSocketAddress &ost,
+            const SocketAddress &ost,
             const RawstorUUID &id, RawstorObjectSpec *sp);
 
         void open(
-            const RawstorSocketAddress &ost,
+            const SocketAddress &ost,
             rawstor::Object *object,
             size_t sockets);
 
