@@ -14,7 +14,7 @@ class SocketAddress {
         unsigned int _port;
 
     public:
-        SocketAddress(const RawstorSocketAddress *address):
+        explicit SocketAddress(const RawstorSocketAddress *address):
             _host(address->host),
             _port(address->port)
         {}
