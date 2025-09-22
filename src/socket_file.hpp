@@ -2,6 +2,7 @@
 #define RAWSTOR_SOCKET_FILE_HPP
 
 #include <rawstorstd/mempool.hpp>
+#include <rawstorstd/socket_address.hpp>
 
 #include <rawstorio/queue.h>
 
@@ -34,7 +35,7 @@ class Socket {
     public:
         static const char* engine_name() noexcept;
 
-        Socket(const RawstorSocketAddress &ost, unsigned int depth);
+        Socket(const SocketAddress &ost, unsigned int depth);
         Socket(const Socket &) = delete;
         Socket(Socket &&other) noexcept;
         ~Socket();

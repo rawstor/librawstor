@@ -4,6 +4,7 @@
 #include "connection.hpp"
 
 #include <rawstorstd/mempool.hpp>
+#include <rawstorstd/socket_address.hpp>
 
 #include <rawstor.h>
 
@@ -27,7 +28,7 @@ class Object {
     public:
         static void create(const RawstorObjectSpec &sp, RawstorUUID *id);
         static void create(
-            const RawstorSocketAddress &ost,
+            const SocketAddress &ost,
             const RawstorObjectSpec &sp,
             RawstorUUID *id);
 
@@ -43,13 +44,13 @@ class Object {
         const RawstorUUID& id() const noexcept;
 
         void remove();
-        void remove(const RawstorSocketAddress &ost);
+        void remove(const SocketAddress &ost);
 
         void spec(RawstorObjectSpec *sp);
-        void spec(const RawstorSocketAddress &ost, RawstorObjectSpec *sp);
+        void spec(const SocketAddress &ost, RawstorObjectSpec *sp);
 
         void open();
-        void open(const RawstorSocketAddress &ost);
+        void open(const SocketAddress &ost);
 
         void close();
 

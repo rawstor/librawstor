@@ -135,7 +135,7 @@ struct SocketOp {
 };
 
 
-Socket::Socket(const RawstorSocketAddress &ost, unsigned int depth):
+Socket::Socket(const SocketAddress &ost, unsigned int depth):
     _fd(-1),
     _object(nullptr),
     _ops_array(),
@@ -223,7 +223,7 @@ SocketOp* Socket::_find_op(unsigned int cid) {
 }
 
 
-int Socket::_connect(const RawstorSocketAddress &ost) {
+int Socket::_connect(const SocketAddress &ost) {
     int res;
 
     int fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -258,9 +258,9 @@ int Socket::_connect(const RawstorSocketAddress &ost) {
 
         sockaddr_in servaddr = {};
         servaddr.sin_family = AF_INET;
-        servaddr.sin_port = htons(ost.port);
+        servaddr.sin_port = htons(ost.port());
 
-        res = inet_pton(AF_INET, ost.host, &servaddr.sin_addr);
+        res = inet_pton(AF_INET, ost.host().c_str(), &servaddr.sin_addr);
         if (res == 0) {
             RAWSTOR_THROW_SYSTEM_ERROR(EINVAL);
         } else if (res == -1) {
@@ -268,7 +268,8 @@ int Socket::_connect(const RawstorSocketAddress &ost) {
         }
 
         rawstor_info(
-            "fd %d: Connecting to %s:%u...\n", fd, ost.host, ost.port);
+            "fd %d: Connecting to %s:%u...\n",
+            fd, ost.host().c_str(), ost.port());
         if (connect(fd, (sockaddr*)&servaddr, sizeof(servaddr)) == -1) {
             RAWSTOR_THROW_ERRNO();
         }

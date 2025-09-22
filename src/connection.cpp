@@ -177,7 +177,7 @@ int Connection::_process(
 
 
 void Connection::create(
-    const RawstorSocketAddress &ost,
+    const SocketAddress &ost,
     const RawstorObjectSpec &sp, RawstorUUID *id)
 {
     Queue q(1, _depth);
@@ -190,7 +190,7 @@ void Connection::create(
 
 
 void Connection::remove(
-    const RawstorSocketAddress &ost,
+    const SocketAddress &ost,
     const RawstorUUID &id)
 {
     Queue q(1, _depth);
@@ -203,7 +203,7 @@ void Connection::remove(
 
 
 void Connection::spec(
-    const RawstorSocketAddress &ost,
+    const SocketAddress &ost,
     const RawstorUUID &id, RawstorObjectSpec *sp)
 {
     Queue q(1, _depth);
@@ -216,7 +216,7 @@ void Connection::spec(
 
 
 void Connection::open(
-    const RawstorSocketAddress &ost,
+    const SocketAddress &ost,
     rawstor::Object *object,
     size_t sockets)
 {
