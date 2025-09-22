@@ -1,7 +1,6 @@
 #ifndef RAWSTOR_CONNECTION_HPP
 #define RAWSTOR_CONNECTION_HPP
 
-#include <rawstorstd/mempool.hpp>
 #include <rawstorstd/socket_address.hpp>
 
 #include <rawstor/object.h>
@@ -15,7 +14,7 @@
 namespace rawstor {
 
 
-struct ConnectionOp;
+class ConnectionOp;
 
 class Object;
 
@@ -26,14 +25,10 @@ class Connection {
     private:
         unsigned int _depth;
 
-        MemPool<ConnectionOp> _ops;
         std::vector<std::shared_ptr<Socket>> _sockets;
         size_t _socket_index;
 
         std::shared_ptr<Socket> _get_next_socket();
-
-        ConnectionOp* _acquire_op();
-        void _release_op(ConnectionOp* op) noexcept;
 
         static int _process(
             RawstorObject *object,

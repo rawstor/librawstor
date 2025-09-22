@@ -11,6 +11,7 @@
 
 #include <rawstor/object.h>
 
+#include <memory>
 #include <stdexcept>
 
 #include <cerrno>
@@ -125,18 +126,36 @@ void Queue::wait() {
 namespace rawstor {
 
 
-struct ConnectionOp {
-    Connection *cn;
-    std::shared_ptr<Socket> s;
+class ConnectionOp {
+    private:
+        std::shared_ptr<Socket> _s;
 
-    RawstorCallback *callback;
-    void *data;
+        RawstorCallback *_cb;
+        void *_data;
+
+    public:
+        ConnectionOp(
+            std::shared_ptr<Socket> s,
+            RawstorCallback *cb, void *data):
+            _s(s),
+            _cb(cb),
+            _data(data)
+        {}
+        ConnectionOp(const ConnectionOp &) = delete;
+        ConnectionOp(ConnectionOp &&) = delete;
+        ConnectionOp& operator=(const ConnectionOp &) = delete;
+        ConnectionOp& operator=(ConnectionOp &&) = delete;
+
+        inline int callback(
+            RawstorObject *object, size_t size, size_t res, int error)
+        {
+            return _cb(object, size, res, error, _data);
+        }
 };
 
 
 Connection::Connection(unsigned int depth):
     _depth(depth),
-    _ops(_depth),
     _socket_index(0)
 {}
 
@@ -164,26 +183,15 @@ std::shared_ptr<Socket> Connection::_get_next_socket() {
 }
 
 
-ConnectionOp* Connection::_acquire_op() {
-    return _ops.alloc();
-}
-
-
-void Connection::_release_op(ConnectionOp* op) noexcept {
-    op->s.reset();
-    _ops.free(op);
-}
-
-
 int Connection::_process(
     RawstorObject *object,
     size_t size, size_t res, int error, void *data) noexcept
 {
     ConnectionOp *op = static_cast<ConnectionOp*>(data);
 
-    int ret = op->callback(object, size, res, error, op->data);
+    int ret = op->callback(object, size, res, error);
 
-    op->cn->_release_op(op);
+    delete op;
 
     return ret;
 }
@@ -265,19 +273,10 @@ void Connection::pread(
     RawstorCallback *cb, void *data)
 {
     std::shared_ptr<Socket> s = _get_next_socket();
-    ConnectionOp *op = _acquire_op();
-    try {
-        *op = {
-            .cn = this,
-            .s = s,
-            .callback = cb,
-            .data = data,
-        };
-        s->pread(buf, size, offset, _process, op);
-    } catch (...) {
-        _release_op(op);
-        throw;
-    }
+    std::unique_ptr<ConnectionOp> op = std::unique_ptr<ConnectionOp>(
+        new ConnectionOp(s, cb, data));
+    s->pread(buf, size, offset, _process, op.get());
+    op.release();
 }
 
 
@@ -286,19 +285,10 @@ void Connection::preadv(
     RawstorCallback *cb, void *data)
 {
     std::shared_ptr<Socket> s = _get_next_socket();
-    ConnectionOp *op = _acquire_op();
-    try {
-        *op = {
-            .cn = this,
-            .s = s,
-            .callback = cb,
-            .data = data,
-        };
-        s->preadv(iov, niov, size, offset, _process, op);
-    } catch (...) {
-        _release_op(op);
-        throw;
-    }
+    std::unique_ptr<ConnectionOp> op = std::unique_ptr<ConnectionOp>(
+        new ConnectionOp(s, cb, data));
+    s->preadv(iov, niov, size, offset, _process, op.get());
+    op.release();
 }
 
 
@@ -307,19 +297,10 @@ void Connection::pwrite(
     RawstorCallback *cb, void *data)
 {
     std::shared_ptr<Socket> s = _get_next_socket();
-    ConnectionOp *op = _acquire_op();
-    try {
-        *op = {
-            .cn = this,
-            .s = s,
-            .callback = cb,
-            .data = data,
-        };
-        s->pwrite(buf, size, offset, _process, op);
-    } catch (...) {
-        _release_op(op);
-        throw;
-    }
+    std::unique_ptr<ConnectionOp> op = std::unique_ptr<ConnectionOp>(
+        new ConnectionOp(s, cb, data));
+    s->pwrite(buf, size, offset, _process, op.get());
+    op.release();
 }
 
 
@@ -328,19 +309,10 @@ void Connection::pwritev(
     RawstorCallback *cb, void *data)
 {
     std::shared_ptr<Socket> s = _get_next_socket();
-    ConnectionOp *op = _acquire_op();
-    try {
-        *op = {
-            .cn = this,
-            .s = s,
-            .callback = cb,
-            .data = data,
-        };
-        s->pwritev(iov, niov, size, offset, _process, op);
-    } catch (...) {
-        _release_op(op);
-        throw;
-    }
+    std::unique_ptr<ConnectionOp> op = std::unique_ptr<ConnectionOp>(
+        new ConnectionOp(s, cb, data));
+    s->pwritev(iov, niov, size, offset, _process, op.get());
+    op.release();
 }
 
 
