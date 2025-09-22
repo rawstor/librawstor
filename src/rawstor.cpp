@@ -49,8 +49,7 @@ void default_ost_initialize(
                 DEFAULT_OST_HOST,
             (default_ost != nullptr && default_ost->port != 0) ?
                 default_ost->port :
-                DEFAULT_OST_PORT
-    ));
+                DEFAULT_OST_PORT));
 }
 
 
