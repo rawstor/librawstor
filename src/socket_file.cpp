@@ -101,13 +101,13 @@ struct SocketOp {
 };
 
 
-Socket::Socket(const RawstorSocketAddress &ost, unsigned int depth):
+Socket::Socket(const SocketAddress &ost, unsigned int depth):
     _fd(-1),
     _object(nullptr),
     _ops_pool(depth)
 {
     std::ostringstream oss;
-    oss << "./ost-" << ost.host << ":" << ost.port;
+    oss << "./ost-" << ost.host() << ":" << ost.port();
     _ost_path = oss.str();
 
     if (mkdir(_ost_path.c_str(), 0755) == -1) {
