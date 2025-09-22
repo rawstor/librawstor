@@ -36,25 +36,25 @@ RawstorIOQueue *rawstor_io_queue = nullptr;
 namespace {
 
 
-std::unique_ptr<rawstor::SocketAddress> _default_ost;
+rawstor::SocketAddress* _default_ost = nullptr;
 
 
 void default_ost_initialize(
     const struct RawstorSocketAddress *default_ost)
 {
-    _default_ost = std::unique_ptr<rawstor::SocketAddress>(
-        new rawstor::SocketAddress(
-            (default_ost != nullptr && default_ost->host != nullptr) ?
-                default_ost->host :
-                DEFAULT_OST_HOST,
-            (default_ost != nullptr && default_ost->port != 0) ?
-                default_ost->port :
-                DEFAULT_OST_PORT));
+    _default_ost = new rawstor::SocketAddress(
+        (default_ost != nullptr && default_ost->host != nullptr) ?
+            default_ost->host :
+            DEFAULT_OST_HOST,
+        (default_ost != nullptr && default_ost->port != 0) ?
+            default_ost->port :
+            DEFAULT_OST_PORT);
 }
 
 
 void default_ost_terminate() {
-    _default_ost.reset();
+    delete _default_ost;
+    _default_ost = nullptr;
 }
 
 
