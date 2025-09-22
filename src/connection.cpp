@@ -1,6 +1,7 @@
 #include "connection.hpp"
 
 #include "opts.h"
+#include "socket.hpp"
 
 #include <rawstorio/event.h>
 #include <rawstorio/queue.h>
@@ -126,6 +127,7 @@ namespace rawstor {
 
 struct ConnectionOp {
     Connection *cn;
+    std::shared_ptr<Socket> s;
 
     RawstorCallback *callback;
     void *data;
@@ -148,17 +150,28 @@ Connection::~Connection() {
 }
 
 
-Socket& Connection::_get_next_socket() {
+std::shared_ptr<Socket> Connection::_get_next_socket() {
     if (_sockets.empty()) {
         throw std::runtime_error("Empty sockets list");
     }
 
-    Socket &s = _sockets[_socket_index++];
+    std::shared_ptr<Socket> s = _sockets[_socket_index++];
     if (_socket_index >= _sockets.size()) {
         _socket_index = 0;
     }
 
     return s;
+}
+
+
+ConnectionOp* Connection::_acquire_op() {
+    return _ops.alloc();
+}
+
+
+void Connection::_release_op(ConnectionOp* op) noexcept {
+    op->s.reset();
+    _ops.free(op);
 }
 
 
@@ -170,7 +183,7 @@ int Connection::_process(
 
     int ret = op->callback(object, size, res, error, op->data);
 
-    op->cn->_ops.free(op);
+    op->cn->_release_op(op);
 
     return ret;
 }
@@ -225,11 +238,12 @@ void Connection::open(
     try {
         _sockets.reserve(sockets);
         for (size_t i = 0; i < sockets; ++i) {
-            _sockets.emplace_back(ost, _depth);
+            _sockets.push_back(
+                std::shared_ptr<Socket>(new Socket(ost, _depth)));
         }
 
-        for (Socket &s: _sockets) {
-            s.set_object(
+        for (std::shared_ptr<Socket> s: _sockets) {
+            s->set_object(
                 static_cast<RawstorIOQueue*>(q), object, q.callback, &q);
         }
 
@@ -250,16 +264,18 @@ void Connection::pread(
     void *buf, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
-    ConnectionOp *op = _ops.alloc();
+    std::shared_ptr<Socket> s = _get_next_socket();
+    ConnectionOp *op = _acquire_op();
     try {
         *op = {
             .cn = this,
+            .s = s,
             .callback = cb,
             .data = data,
         };
-        _get_next_socket().pread(buf, size, offset, _process, op);
+        s->pread(buf, size, offset, _process, op);
     } catch (...) {
-        _ops.free(op);
+        _release_op(op);
         throw;
     }
 }
@@ -269,16 +285,18 @@ void Connection::preadv(
     iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
-    ConnectionOp *op = _ops.alloc();
+    std::shared_ptr<Socket> s = _get_next_socket();
+    ConnectionOp *op = _acquire_op();
     try {
         *op = {
             .cn = this,
+            .s = s,
             .callback = cb,
             .data = data,
         };
-        _get_next_socket().preadv(iov, niov, size, offset, _process, op);
+        s->preadv(iov, niov, size, offset, _process, op);
     } catch (...) {
-        _ops.free(op);
+        _release_op(op);
         throw;
     }
 }
@@ -288,16 +306,18 @@ void Connection::pwrite(
     void *buf, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
-    ConnectionOp *op = _ops.alloc();
+    std::shared_ptr<Socket> s = _get_next_socket();
+    ConnectionOp *op = _acquire_op();
     try {
         *op = {
             .cn = this,
+            .s = s,
             .callback = cb,
             .data = data,
         };
-        _get_next_socket().pwrite(buf, size, offset, _process, op);
+        s->pwrite(buf, size, offset, _process, op);
     } catch (...) {
-        _ops.free(op);
+        _release_op(op);
         throw;
     }
 }
@@ -307,16 +327,18 @@ void Connection::pwritev(
     iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
-    ConnectionOp *op = _ops.alloc();
+    std::shared_ptr<Socket> s = _get_next_socket();
+    ConnectionOp *op = _acquire_op();
     try {
         *op = {
             .cn = this,
+            .s = s,
             .callback = cb,
             .data = data,
         };
-        _get_next_socket().pwritev(iov, niov, size, offset, _process, op);
+        s->pwritev(iov, niov, size, offset, _process, op);
     } catch (...) {
-        _ops.free(op);
+        _release_op(op);
         throw;
     }
 }
