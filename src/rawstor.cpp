@@ -2,6 +2,7 @@
 
 #include "object_internals.h"
 #include "opts.h"
+#include "rawstor_internals.h"
 
 #include <rawstorstd/logging.h>
 
@@ -11,12 +12,12 @@
 #include <sys/types.h>
 #include <sys/uio.h>
 
-#include <assert.h>
-#include <errno.h>
-#include <stddef.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+#include <cassert>
+#include <cerrno>
+#include <cstddef>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 
 
 #define QUEUE_DEPTH 256
@@ -24,26 +25,30 @@
 #define DEFAULT_OST_PORT 8080
 
 
-RawstorIOQueue *rawstor_io_queue = NULL;
-
-static struct RawstorSocketAddress _default_ost = {};
+RawstorIOQueue *rawstor_io_queue = nullptr;
 
 
-static int default_ost_initialize(
+namespace {
+
+
+struct RawstorSocketAddress _default_ost = {};
+
+
+int default_ost_initialize(
     const struct RawstorSocketAddress *default_ost)
 {
     int res = 0;
 
-    _default_ost.host = (default_ost != NULL && default_ost->host != NULL) ?
+    _default_ost.host = (default_ost != nullptr && default_ost->host != nullptr) ?
         strdup(default_ost->host) :
         strdup(DEFAULT_OST_HOST);
-    if (_default_ost.host == NULL) {
+    if (_default_ost.host == nullptr) {
         res = -errno;
         errno = 0;
         goto err_host;
     }
 
-    _default_ost.port = (default_ost != NULL && default_ost->port != 0) ?
+    _default_ost.port = (default_ost != nullptr && default_ost->port != 0) ?
         default_ost->port :
         DEFAULT_OST_PORT;
 
@@ -54,9 +59,12 @@ err_host:
 }
 
 
-static void default_ost_terminate(void) {
+void default_ost_terminate() {
     free(_default_ost.host);
 }
+
+
+} // unnamed
 
 
 int rawstor_initialize(
@@ -65,7 +73,7 @@ int rawstor_initialize(
 {
     int res = 0;
 
-    assert(rawstor_io_queue == NULL);
+    assert(rawstor_io_queue == nullptr);
 
     res = rawstor_logging_initialize();
     if (res) {
@@ -91,7 +99,7 @@ int rawstor_initialize(
     }
 
     rawstor_io_queue = rawstor_io_queue_create(QUEUE_DEPTH);
-    if (rawstor_io_queue == NULL) {
+    if (rawstor_io_queue == nullptr) {
         res = -errno;
         errno = 0;
         goto err_io_queue;
@@ -110,20 +118,21 @@ err_logging_initialize:
 }
 
 
-void rawstor_terminate(void) {
+void rawstor_terminate() {
     rawstor_io_queue_delete(rawstor_io_queue);
+    rawstor_io_queue = nullptr;
     default_ost_terminate();
     rawstor_opts_terminate();
     rawstor_logging_terminate();
 }
 
 
-const struct RawstorSocketAddress* rawstor_default_ost(void) {
+const struct RawstorSocketAddress* rawstor_default_ost() {
     return &_default_ost;
 }
 
 
-RawstorIOEvent* rawstor_wait_event(void) {
+RawstorIOEvent* rawstor_wait_event() {
     return rawstor_io_queue_wait_event_timeout(
         rawstor_io_queue,
         rawstor_opts_wait_timeout());
