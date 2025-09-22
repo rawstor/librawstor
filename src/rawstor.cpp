@@ -120,6 +120,7 @@ err_logging_initialize:
 
 void rawstor_terminate() {
     rawstor_io_queue_delete(rawstor_io_queue);
+    rawstor_io_queue = nullptr;
     default_ost_terminate();
     rawstor_opts_terminate();
     rawstor_logging_terminate();
