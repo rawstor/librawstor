@@ -25,6 +25,8 @@ class Object;
 
 class Socket {
     private:
+        SocketAddress _ost;
+
         int _fd;
         Object *_object;
 
@@ -36,7 +38,7 @@ class Socket {
         void _release_op(SocketOp *op) noexcept;
         SocketOp* _find_op(unsigned int cid);
 
-        int _connect(const SocketAddress &ost);
+        int _connect();
 
         void _writev_request(RawstorIOQueue *queue, SocketOp *op);
         void _read_response_set_object_id(RawstorIOQueue *queue, SocketOp *op);
@@ -69,6 +71,8 @@ class Socket {
         ~Socket();
 
         Socket& operator=(const Socket&) = delete;
+
+        const SocketAddress& ost() const noexcept;
 
         void create(
             RawstorIOQueue *queue,

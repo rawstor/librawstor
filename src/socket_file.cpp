@@ -102,12 +102,13 @@ struct SocketOp {
 
 
 Socket::Socket(const SocketAddress &ost, unsigned int depth):
+    _ost(ost),
     _fd(-1),
     _object(nullptr),
     _ops_pool(depth)
 {
     std::ostringstream oss;
-    oss << "./ost-" << ost.host() << ":" << ost.port();
+    oss << "./ost-" << _ost.host() << ":" << _ost.port();
     _ost_path = oss.str();
 
     if (mkdir(_ost_path.c_str(), 0755) == -1) {
@@ -121,6 +122,7 @@ Socket::Socket(const SocketAddress &ost, unsigned int depth):
 
 
 Socket::Socket(Socket &&other) noexcept:
+    _ost(std::move(other._ost)),
     _fd(std::exchange(other._fd, -1)),
     _object(std::exchange(other._object, nullptr)),
     _ops_pool(std::move(other._ops_pool)),
@@ -168,6 +170,11 @@ int Socket::_io_cb(RawstorIOEvent *event, void *data) noexcept {
 
 const char* Socket::engine_name() noexcept {
     return "file";
+}
+
+
+const SocketAddress& Socket::ost() const noexcept {
+    return _ost;
 }
 
 

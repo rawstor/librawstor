@@ -136,12 +136,13 @@ struct SocketOp {
 
 
 Socket::Socket(const SocketAddress &ost, unsigned int depth):
+    _ost(ost),
     _fd(-1),
     _object(nullptr),
     _ops_array(),
     _ops(depth)
 {
-    _fd = _connect(ost);
+    _fd = _connect();
 
     try {
         _ops_array.reserve(depth);
@@ -172,6 +173,7 @@ Socket::Socket(const SocketAddress &ost, unsigned int depth):
 
 
 Socket::Socket(Socket &&other) noexcept:
+    _ost(std::move(other._ost)),
     _fd(std::exchange(other._fd, -1)),
     _object(std::exchange(other._object, nullptr)),
     _ops_array(std::move(other._ops_array)),
@@ -223,7 +225,7 @@ SocketOp* Socket::_find_op(unsigned int cid) {
 }
 
 
-int Socket::_connect(const SocketAddress &ost) {
+int Socket::_connect() {
     int res;
 
     int fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -258,9 +260,9 @@ int Socket::_connect(const SocketAddress &ost) {
 
         sockaddr_in servaddr = {};
         servaddr.sin_family = AF_INET;
-        servaddr.sin_port = htons(ost.port());
+        servaddr.sin_port = htons(_ost.port());
 
-        res = inet_pton(AF_INET, ost.host().c_str(), &servaddr.sin_addr);
+        res = inet_pton(AF_INET, _ost.host().c_str(), &servaddr.sin_addr);
         if (res == 0) {
             RAWSTOR_THROW_SYSTEM_ERROR(EINVAL);
         } else if (res == -1) {
@@ -269,7 +271,7 @@ int Socket::_connect(const SocketAddress &ost) {
 
         rawstor_info(
             "fd %d: Connecting to %s:%u...\n",
-            fd, ost.host().c_str(), ost.port());
+            fd, _ost.host().c_str(), _ost.port());
         if (connect(fd, (sockaddr*)&servaddr, sizeof(servaddr)) == -1) {
             RAWSTOR_THROW_ERRNO();
         }
@@ -569,6 +571,11 @@ int Socket::_readv_response_body_cb(
 
 const char* Socket::engine_name() noexcept {
     return "ost";
+}
+
+
+const SocketAddress& Socket::ost() const noexcept {
+    return _ost;
 }
 
 

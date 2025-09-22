@@ -22,6 +22,7 @@ class Object;
 
 class Socket {
     private:
+        SocketAddress _ost;
         int _fd;
         Object *_object;
         MemPool<SocketOp> _ops_pool;
@@ -41,6 +42,8 @@ class Socket {
         ~Socket();
 
         Socket& operator=(const Socket&) = delete;
+
+        const SocketAddress& ost() const noexcept;
 
         void create(
             RawstorIOQueue *queue,
