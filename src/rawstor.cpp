@@ -14,6 +14,7 @@
 #include <sys/types.h>
 #include <sys/uio.h>
 
+#include <memory>
 #include <stdexcept>
 
 #include <cassert>
@@ -35,28 +36,26 @@ RawstorIOQueue *rawstor_io_queue = nullptr;
 namespace {
 
 
-class rawstor::SocketAddress *_default_ost = nullptr;
+std::unique_ptr<rawstor::SocketAddress> _default_ost;
 
 
 void default_ost_initialize(
     const struct RawstorSocketAddress *default_ost)
 {
-    _default_ost = new rawstor::SocketAddress(
-        (default_ost != nullptr && default_ost->host != nullptr) ?
-            default_ost->host :
-            DEFAULT_OST_HOST,
-        (default_ost != nullptr && default_ost->port != 0) ?
-            default_ost->port :
-            DEFAULT_OST_PORT
-    );
+    _default_ost = std::unique_ptr<rawstor::SocketAddress>(
+        new rawstor::SocketAddress(
+            (default_ost != nullptr && default_ost->host != nullptr) ?
+                default_ost->host :
+                DEFAULT_OST_HOST,
+            (default_ost != nullptr && default_ost->port != 0) ?
+                default_ost->port :
+                DEFAULT_OST_PORT
+    ));
 }
 
 
 void default_ost_terminate() {
-    if (_default_ost != nullptr) {
-        delete _default_ost;
-        _default_ost = nullptr;
-    }
+    _default_ost.reset();
 }
 
 
