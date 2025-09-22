@@ -22,12 +22,16 @@ class Socket;
 
 
 class Connection {
+    friend class ConnectionOp;
+
     private:
+        Object *_object;
         unsigned int _depth;
 
         std::vector<std::shared_ptr<Socket>> _sockets;
         size_t _socket_index;
 
+        void _replace_socket(const std::shared_ptr<Socket> &s);
         std::shared_ptr<Socket> _get_next_socket();
 
     public:

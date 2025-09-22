@@ -15,6 +15,7 @@
 #include <stdexcept>
 
 #include <cerrno>
+#include <cstring>
 
 /**
  * FIXME: iovec should be dynamically allocated at runtime.
@@ -128,15 +129,41 @@ namespace rawstor {
 
 class ConnectionOp {
     private:
+        Connection &_cn;
+        int _attempts;
         RawstorCallback *_cb;
         void *_data;
 
     protected:
+        std::shared_ptr<Socket> _s;
+
         static int _process(
             RawstorObject *object,
             size_t size, size_t res, int error, void *data) noexcept
         {
+            static int max_attempts = 3;
+
             ConnectionOp *op = static_cast<ConnectionOp*>(data);
+
+            if (error) {
+                if (op->_attempts < max_attempts) {
+                    ++op->_attempts;
+                    rawstor_error(
+                        "IO error: %s, attempt %d of %d, retrying...\n",
+                        strerror(error), op->_attempts, max_attempts);
+                    try {
+                        op->_cn._replace_socket(op->_s);
+                        (*op)(op->_cn._get_next_socket());
+                    } catch (const std::system_error &e) {
+                        return -e.code().value();
+                    }
+                    return 0;
+                } else {
+                    rawstor_error(
+                        "IO error: %s, attempt %d of %d, failing...\n",
+                        strerror(error), op->_attempts, max_attempts);
+                }
+            }
 
             int ret = op->callback(object, size, res, error);
 
@@ -146,7 +173,9 @@ class ConnectionOp {
         }
 
     public:
-        ConnectionOp(RawstorCallback *cb, void *data):
+        ConnectionOp(Connection &cn, RawstorCallback *cb, void *data):
+            _cn(cn),
+            _attempts(0),
             _cb(cb),
             _data(data)
         {}
@@ -171,13 +200,13 @@ class ConnectionOpPRead: public ConnectionOp {
         void *_buf;
         size_t _size;
         size_t _offset;
-        std::shared_ptr<Socket> _s;
 
     public:
         ConnectionOpPRead(
+            Connection &cn,
             void *buf, size_t size, size_t offset,
             RawstorCallback *cb, void *data):
-            ConnectionOp(cb, data),
+            ConnectionOp(cn, cb, data),
             _buf(buf),
             _size(size),
             _offset(offset)
@@ -196,13 +225,13 @@ class ConnectionOpPReadV: public ConnectionOp {
         unsigned int _niov;
         size_t _size;
         off_t _offset;
-        std::shared_ptr<Socket> _s;
 
     public:
         ConnectionOpPReadV(
+            Connection &cn,
             iovec *iov, unsigned int niov, size_t size, off_t offset,
             RawstorCallback *cb, void *data):
-            ConnectionOp(cb, data),
+            ConnectionOp(cn, cb, data),
             _iov(iov),
             _niov(niov),
             _size(size),
@@ -221,13 +250,13 @@ class ConnectionOpPWrite: public ConnectionOp {
         void *_buf;
         size_t _size;
         size_t _offset;
-        std::shared_ptr<Socket> _s;
 
     public:
         ConnectionOpPWrite(
+            Connection &cn,
             void *buf, size_t size, size_t offset,
             RawstorCallback *cb, void *data):
-            ConnectionOp(cb, data),
+            ConnectionOp(cn, cb, data),
             _buf(buf),
             _size(size),
             _offset(offset)
@@ -246,13 +275,13 @@ class ConnectionOpPWriteV: public ConnectionOp {
         unsigned int _niov;
         size_t _size;
         off_t _offset;
-        std::shared_ptr<Socket> _s;
 
     public:
         ConnectionOpPWriteV(
+            Connection &cn,
             iovec *iov, unsigned int niov, size_t size, off_t offset,
             RawstorCallback *cb, void *data):
-            ConnectionOp(cb, data),
+            ConnectionOp(cn, cb, data),
             _iov(iov),
             _niov(niov),
             _size(size),
@@ -267,6 +296,7 @@ class ConnectionOpPWriteV: public ConnectionOp {
 
 
 Connection::Connection(unsigned int depth):
+    _object(nullptr),
     _depth(depth),
     _socket_index(0)
 {}
@@ -277,6 +307,36 @@ Connection::~Connection() {
         close();
     } catch (const std::system_error &e) {
         rawstor_error("Connection::close(): %s\n", e.what());
+    }
+}
+
+
+void Connection::_replace_socket(const std::shared_ptr<Socket> &s) {
+    bool found = false;
+
+    std::vector<std::shared_ptr<Socket>>::iterator end = _sockets.end();
+    for (
+        std::vector<std::shared_ptr<Socket>>::iterator it = _sockets.begin();
+        it != end;
+        ++it)
+    {
+        if (*it == s) {
+            found = true;
+            _sockets.erase(it);
+            break;
+        }
+    }
+
+    if (found) {
+        Queue q(1, _depth);
+        std::shared_ptr<Socket> new_socket(new Socket(s->ost(), _depth));
+
+        new_socket->set_object(
+            static_cast<RawstorIOQueue*>(q), _object, q.callback, &q);
+
+        q.wait();
+
+        _sockets.push_back(new_socket);
     }
 }
 
@@ -358,11 +418,14 @@ void Connection::open(
         _sockets.clear();
         throw;
     }
+
+    _object = object;
 }
 
 
 void Connection::close() {
     _sockets.clear();
+    _object = nullptr;
 }
 
 
@@ -371,8 +434,8 @@ void Connection::pread(
     RawstorCallback *cb, void *data)
 {
     std::shared_ptr<Socket> s = _get_next_socket();
-    std::unique_ptr<ConnectionOpPRead> op(
-        new ConnectionOpPRead(buf, size, offset, cb, data));
+    std::unique_ptr<ConnectionOp> op(
+        new ConnectionOpPRead(*this, buf, size, offset, cb, data));
     (*op)(s);
     op.release();
 }
@@ -383,8 +446,8 @@ void Connection::preadv(
     RawstorCallback *cb, void *data)
 {
     std::shared_ptr<Socket> s = _get_next_socket();
-    std::unique_ptr<ConnectionOpPReadV> op(
-        new ConnectionOpPReadV(iov, niov, size, offset, cb, data));
+    std::unique_ptr<ConnectionOp> op(
+        new ConnectionOpPReadV(*this, iov, niov, size, offset, cb, data));
     (*op)(s);
     op.release();
 }
@@ -395,8 +458,8 @@ void Connection::pwrite(
     RawstorCallback *cb, void *data)
 {
     std::shared_ptr<Socket> s = _get_next_socket();
-    std::unique_ptr<ConnectionOpPWrite> op(
-        new ConnectionOpPWrite(buf, size, offset, cb, data));
+    std::unique_ptr<ConnectionOp> op(
+        new ConnectionOpPWrite(*this, buf, size, offset, cb, data));
     (*op)(s);
     op.release();
 }
@@ -407,8 +470,8 @@ void Connection::pwritev(
     RawstorCallback *cb, void *data)
 {
     std::shared_ptr<Socket> s = _get_next_socket();
-    std::unique_ptr<ConnectionOpPWriteV> op(
-        new ConnectionOpPWriteV(iov, niov, size, offset, cb, data));
+    std::unique_ptr<ConnectionOp> op(
+        new ConnectionOpPWriteV(*this, iov, niov, size, offset, cb, data));
     (*op)(s);
     op.release();
 }
