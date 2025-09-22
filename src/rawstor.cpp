@@ -31,7 +31,7 @@ RawstorIOQueue *rawstor_io_queue = nullptr;
 namespace {
 
 
-static struct RawstorSocketAddress _default_ost = {};
+struct RawstorSocketAddress _default_ost = {};
 
 
 int default_ost_initialize(
