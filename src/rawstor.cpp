@@ -14,7 +14,6 @@
 #include <sys/types.h>
 #include <sys/uio.h>
 
-#include <memory>
 #include <stdexcept>
 
 #include <cassert>
@@ -53,8 +52,10 @@ void default_ost_initialize(
 
 
 void default_ost_terminate() {
-    delete _default_ost;
-    _default_ost = nullptr;
+    if (_default_ost != nullptr) {
+        delete _default_ost;
+        _default_ost = nullptr;
+    }
 }
 
 
