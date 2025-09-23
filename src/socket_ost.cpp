@@ -400,12 +400,12 @@ int Socket::_read_response_set_object_id_cb(
         error = e.code().value();
     }
 
-    int res = op->callback(
+    SocketOp op_copy = *op;
+    s->_release_op(op);
+    int res = op_copy.callback(
         s->_object->c_ptr(),
         0, 0, error,
-        op->data);
-
-    s->_release_op(op);
+        op_copy.data);
 
     if (!error && res == 0) {
         rawstor_info("fd %d: Object id successfully set\n", s->_fd);
@@ -450,19 +450,18 @@ int Socket::_read_response_head_cb(
                 error = e.code().value();
             }
         } else {
-            res = op->callback(
-                s->_object->c_ptr(),
-                op->request.io.len, s->_response.res, error,
-                op->data);
-
+            SocketOp op_copy = *op;
             s->_release_op(op);
-        }
-
-        if (!error && res == 0 && op->next == nullptr) {
-            try {
-                s->_read_response_head(rawstor_io_event_queue(event));
-            } catch (const std::system_error &e) {
-                return -e.code().value();
+            res = op_copy.callback(
+                s->_object->c_ptr(),
+                op_copy.request.io.len, s->_response.res, error,
+                op_copy.data);
+            if (res == 0) {
+                try {
+                    s->_read_response_head(rawstor_io_event_queue(event));
+                } catch (const std::system_error &e) {
+                    return -e.code().value();
+                }
             }
         }
     } else {
@@ -471,14 +470,15 @@ int Socket::_read_response_head_cb(
                 continue;
             }
             op->flight = 0;
-            res = op->callback(
+            SocketOp op_copy = *op;
+            s->_release_op(op);
+            res = op_copy.callback(
                 s->_object->c_ptr(),
-                op->request.io.len, 0, error,
-                op->data);
+                op_copy.request.io.len, 0, error,
+                op_copy.data);
             if (res) {
                 return res;
             }
-            s->_release_op(op);
         }
     }
 
@@ -506,12 +506,12 @@ int Socket::_read_response_body_cb(
         error = e.code().value();
     }
 
-    int res = op->callback(
-        s->_object->c_ptr(),
-        op->request.io.len, s->_response.res, error,
-        op->data);
-
+    SocketOp op_copy = *op;
     s->_release_op(op);
+    int res = op_copy.callback(
+        s->_object->c_ptr(),
+        op_copy.request.io.len, s->_response.res, error,
+        op_copy.data);
 
     if (!error && res == 0) {
         try {
@@ -550,12 +550,12 @@ int Socket::_readv_response_body_cb(
         error = e.code().value();
     }
 
-    int res = op->callback(
-        s->_object->c_ptr(),
-        op->request.io.len, s->_response.res, error,
-        op->data);
-
+    SocketOp op_copy = *op;
     s->_release_op(op);
+    int res = op_copy.callback(
+        s->_object->c_ptr(),
+        op_copy.request.io.len, s->_response.res, error,
+        op_copy.data);
 
     if (!error && res == 0) {
         try {
