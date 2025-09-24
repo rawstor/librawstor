@@ -440,8 +440,7 @@ void Connection::open(
     try {
         _sockets.reserve(sockets);
         for (size_t i = 0; i < sockets; ++i) {
-            _sockets.push_back(
-                std::shared_ptr<Socket>(new Socket(ost, _depth)));
+            _sockets.push_back(std::make_shared<Socket>(ost, _depth));
         }
 
         for (std::shared_ptr<Socket> s: _sockets) {
@@ -470,8 +469,8 @@ void Connection::pread(
     RawstorCallback *cb, void *data)
 {
     std::shared_ptr<Socket> s = _get_next_socket();
-    std::unique_ptr<ConnectionOp> op(
-        new ConnectionOpPRead(*this, buf, size, offset, cb, data));
+    std::unique_ptr<ConnectionOp> op = std::make_unique<ConnectionOpPRead>(
+        *this, buf, size, offset, cb, data);
     (*op)(s);
     op.release();
 }
@@ -494,8 +493,8 @@ void Connection::pwrite(
     RawstorCallback *cb, void *data)
 {
     std::shared_ptr<Socket> s = _get_next_socket();
-    std::unique_ptr<ConnectionOp> op(
-        new ConnectionOpPWrite(*this, buf, size, offset, cb, data));
+    std::unique_ptr<ConnectionOp> op = std::make_unique<ConnectionOpPWrite>(
+        *this, buf, size, offset, cb, data);
     (*op)(s);
     op.release();
 }
@@ -506,8 +505,8 @@ void Connection::pwritev(
     RawstorCallback *cb, void *data)
 {
     std::shared_ptr<Socket> s = _get_next_socket();
-    std::unique_ptr<ConnectionOp> op(
-        new ConnectionOpPWriteV(*this, iov, niov, size, offset, cb, data));
+    std::unique_ptr<ConnectionOp> op = std::make_unique<ConnectionOpPWriteV>(
+        *this, iov, niov, size, offset, cb, data);
     (*op)(s);
     op.release();
 }
