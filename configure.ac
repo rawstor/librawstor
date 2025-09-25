@@ -50,6 +50,10 @@ AS_IF([test "x$enable_asan" == "xyes"], [
     AC_SUBST([ASAN_CFLAGS], ["-fsanitize=address"])
     AC_SUBST([ASAN_LDFLAGS], ["-fsanitize=address"])
     AC_SUBST([maybe_asan], ["-fsanitize=address"])
+], [
+    AC_SUBST([ASAN_CFLAGS], [""])
+    AC_SUBST([ASAN_LDFLAGS], [""])
+    AC_SUBST([maybe_asan], [""])
 ])
 
 
