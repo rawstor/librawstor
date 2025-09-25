@@ -7,11 +7,14 @@ noinst_PROGRAMS = test_hash \
                   test_uuid
 
 
-AM_CFLAGS = -std=gnu99 -Wall -Wextra -Werror \
+AM_CFLAGS = $(GENERIC_CFLAGS) \
+            $(ASAN_CFLAGS) \
             -I$(top_srcdir)/librawstorstd/src \
             -I$(top_srcdir)/librawstorstd/include \
             -I$(top_srcdir)/tests \
             -I$(top_srcdir)/include
+
+AM_LDFLAGS = $(ASAN_LDFLAGS)
 
 
 test_hash_SOURCES = test_hash.c

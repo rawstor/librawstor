@@ -13,6 +13,10 @@ LT_INIT
 AC_CONFIG_MACRO_DIRS([m4])
 
 
+AC_SUBST([GENERIC_CFLAGS], ["-std=gnu99 -Wall -Wextra -Werror"])
+AC_SUBST([GENERIC_CXXFLAGS], ["-std=c++20 -Wall -Wextra -Werror"])
+
+
 AC_ARG_ENABLE([tests], [AS_HELP_STRING([--disable-tests],
     [enable testing code])],
     [enable_tests=$enableval],
@@ -35,6 +39,21 @@ AC_ARG_ENABLE([trace], [AS_HELP_STRING([--enable-trace],
     [enable_trace="no"])
 AS_IF([test "x$enable_trace" == "xyes"], [
     AC_SUBST([maybe_loglevel_define], ["#define RAWSTOR_LOGLEVEL RAWSTOR_LOGLEVEL_TRACE"])
+])
+
+
+AC_ARG_ENABLE([asan], [AS_HELP_STRING([--enable-asan],
+    [Enable address sanitizer])],
+    [enable_asan=$enableval],
+    [enable_asan="no"])
+AS_IF([test "x$enable_asan" == "xyes"], [
+    AC_SUBST([ASAN_CFLAGS], ["-fsanitize=address"])
+    AC_SUBST([ASAN_LDFLAGS], ["-fsanitize=address"])
+    AC_SUBST([maybe_asan], ["-fsanitize=address"])
+], [
+    AC_SUBST([ASAN_CFLAGS], [""])
+    AC_SUBST([ASAN_LDFLAGS], [""])
+    AC_SUBST([maybe_asan], [""])
 ])
 
 

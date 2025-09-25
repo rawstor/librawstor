@@ -1,14 +1,19 @@
 lib_LTLIBRARIES = librawstor.la
 
 
-GENERIC_FLAGS = -Wall -Wextra -Werror \
-                -I$(top_srcdir)/librawstorstd/include \
-                -I$(top_srcdir)/librawstorio/include \
-                -I$(top_srcdir)/include
+AM_CFLAGS = $(GENERIC_CFLAGS) \
+            $(ASAN_CFLAGS) \
+            -I$(top_srcdir)/librawstorstd/include \
+            -I$(top_srcdir)/librawstorio/include \
+            -I$(top_srcdir)/include
 
-AM_CFLAGS = -std=gnu99 $(GENERIC_FLAGS)
+AM_CXXFLAGS = $(GENERIC_CXXFLAGS) \
+              $(ASAN_CFLAGS) \
+              -I$(top_srcdir)/librawstorstd/include \
+              -I$(top_srcdir)/librawstorio/include \
+              -I$(top_srcdir)/include
 
-AM_CXXFLAGS = -std=c++20 $(GENERIC_FLAGS)
+AM_LDFLAGS = $(ASAN_LDFLAGS)
 
 
 librawstor_base_ladir = $(includedir)
@@ -35,6 +40,7 @@ librawstor_la_LIBADD = $(top_srcdir)/librawstorstd/src/librawstorstd.la \
 
 if ENABLE_OST
     AM_CFLAGS += $(LIBXXHASH_CFLAGS)
+    AM_CXXFLAGS += $(LIBXXHASH_CFLAGS)
     librawstor_la_SOURCES += socket_ost.cpp
     librawstor_la_LIBADD += $(LIBXXHASH_LIBS)
 else
