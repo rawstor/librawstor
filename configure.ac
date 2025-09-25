@@ -13,8 +13,8 @@ LT_INIT
 AC_CONFIG_MACRO_DIRS([m4])
 
 
-GENERIC_CFLAGS="-std=gnu99 -Wall -Wextra -Werror"
-GENERIC_CXXFLAGS="-std=c++20 -Wall -Wextra -Werror"
+AC_SUBST([GENERIC_CFLAGS], ["-std=gnu99 -Wall -Wextra -Werror"])
+AC_SUBST([GENERIC_CXXFLAGS], ["-std=c++20 -Wall -Wextra -Werror"])
 
 
 AC_ARG_ENABLE([tests], [AS_HELP_STRING([--disable-tests],
@@ -47,8 +47,8 @@ AC_ARG_ENABLE([asan], [AS_HELP_STRING([--enable-asan],
     [enable_asan=$enableval],
     [enable_asan="no"])
 AS_IF([test "x$enable_asan" == "xyes"], [
-    ASAN_CFLAGS="-fsanitize=address"
-    ASAN_LDFLAGS="-fsanitize=address"
+    AC_SUBST([ASAN_CFLAGS], ["-fsanitize=address"])
+    AC_SUBST([ASAN_LDFLAGS], ["-fsanitize=address"])
     AC_SUBST([maybe_asan], ["-fsanitize=address"])
 ])
 
