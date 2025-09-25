@@ -19,6 +19,8 @@
 
 #include <arpa/inet.h>
 
+#include <algorithm>
+
 #include <cassert>
 #include <cerrno>
 #include <cstddef>
@@ -465,10 +467,18 @@ int Socket::_read_response_head_cb(
             }
         }
     } else {
-        for (SocketOp *op: s->_ops_array) {
-            if (!op->flight) {
-                continue;
-            }
+        std::vector<SocketOp*> ops_array(s->_ops_array.size());
+        ops_array.resize(std::distance(
+            ops_array.begin(),
+            std::copy_if(
+                s->_ops_array.begin(),
+                s->_ops_array.end(),
+                ops_array.begin(),
+                [](SocketOp *op){return !op->flight;}
+            )
+        ));
+
+        for (SocketOp *op: ops_array) {
             op->flight = 0;
             SocketOp op_copy = *op;
             s->_release_op(op);
