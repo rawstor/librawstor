@@ -1,10 +1,13 @@
 noinst_LTLIBRARIES = librawstorio.la
 
 
-AM_CFLAGS = -std=gnu99 -Wall -Wextra -Werror \
+AM_CFLAGS = $(GENERIC_CFLAGS) \
+            $(ASAN_CFLAGS) \
             -I$(top_srcdir)/librawstorio/include \
             -I$(top_srcdir)/librawstorstd/include \
             -I$(top_srcdir)/include
+
+AM_LDFLAGS = $(ASAN_LDFLAGS)
 
 
 librawstorio_la_SOURCES =

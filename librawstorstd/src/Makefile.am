@@ -1,9 +1,12 @@
 noinst_LTLIBRARIES = librawstorstd.la
 
 
-AM_CFLAGS = -std=gnu99 -Wall -Wextra -Werror \
+AM_CFLAGS = $(GENERIC_CFLAGS) \
+            $(ASAN_CFLAGS) \
             -I$(top_srcdir)/librawstorstd/include \
             -I$(top_srcdir)/include
+
+AM_LDFLAGS = $(ASAN_LDFLAGS)
 
 
 librawstorstd_la_SOURCES = hash.c \

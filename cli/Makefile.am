@@ -1,7 +1,10 @@
 bin_PROGRAMS = rawstor-cli
 
-AM_CFLAGS = -std=gnu99 -Wall -Wextra -Werror \
+AM_CFLAGS = $(GENERIC_CFLAGS) \
+            $(ASAN_CFLAGS) \
             -I$(top_srcdir)/include
+
+AM_LDFLAGS = $(ASAN_LDFLAGS)
 
 
 rawstor_cli_SOURCES = create.c \
