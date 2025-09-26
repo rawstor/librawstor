@@ -359,7 +359,8 @@ void Connection::_replace_socket(const std::shared_ptr<Socket> &s) {
         _sockets.erase(it);
 
         Queue q(1, _depth);
-        std::shared_ptr<Socket> new_socket(new Socket(s->ost(), _depth));
+        std::shared_ptr<Socket> new_socket = std::make_shared<Socket>(
+            s->ost(), _depth);
 
         new_socket->set_object(
             static_cast<RawstorIOQueue*>(q), _object, q.callback, &q);
