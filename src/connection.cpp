@@ -150,7 +150,7 @@ class ConnectionOp {
                     rawstor_warning(
                         "%s; error on %s: %s; attempt: %d of %d; retrying...\n",
                         op->str().c_str(), op->_s->str().c_str(),
-                        strerror(error),
+                        std::strerror(error),
                         op->_attempts, rawstor_opts_io_attempts());
                     try {
                         op->_cn._replace_socket(op->_s);
@@ -163,7 +163,7 @@ class ConnectionOp {
                     rawstor_error(
                         "%s; error on %s: %s; attempt %d of %d; failing...\n",
                         op->str().c_str(), op->_s->str().c_str(),
-                        strerror(error),
+                        std::strerror(error),
                         op->_attempts, rawstor_opts_io_attempts());
                 }
             } else {
