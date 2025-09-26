@@ -11,6 +11,7 @@
 
 #include <rawstor/object.h>
 
+#include <algorithm>
 #include <memory>
 #include <sstream>
 #include <stdexcept>
