@@ -146,7 +146,7 @@ class ConnectionOp {
             ConnectionOp *op = static_cast<ConnectionOp*>(data);
 
             if (error) {
-                if (op->_attempts <= rawstor_opts_io_attempts()) {
+                if (op->_attempts < rawstor_opts_io_attempts()) {
                     rawstor_warning(
                         "%s; error on %s: %s; attempt: %d of %d; retrying...\n",
                         op->str().c_str(), op->_s->str().c_str(),
