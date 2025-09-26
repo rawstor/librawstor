@@ -110,7 +110,7 @@ struct SocketOp {
     rawstor::Socket *s;
 
     uint16_t cid;
-    int flight;
+    bool in_flight;
     void (*next)(RawstorIOQueue *queue, SocketOp *op);
 
     union {
@@ -371,7 +371,7 @@ int Socket::_writev_request_cb(RawstorIOEvent *event, void *data) noexcept {
 
         ::validate_event(event);
 
-        op->flight = 1;
+        op->in_flight = true;
 
         return 0;
     } catch (const std::system_error &e) {
@@ -389,7 +389,7 @@ int Socket::_read_response_set_object_id_cb(
 
     try {
         op_trace(op->cid, event);
-        op->flight = 0;
+        op->in_flight = false;
 
         ::validate_event(event);
 
@@ -436,7 +436,7 @@ int Socket::_read_response_head_cb(
 
         op = s->_find_op(s->_response.cid);
         op_trace(op->cid, event);
-        op->flight = 0;
+        op->in_flight = false;
 
         ::validate_cmd(s->_response.cmd, op->request.io.cmd);
     } catch (const std::system_error &e) {
@@ -474,12 +474,12 @@ int Socket::_read_response_head_cb(
                 s->_ops_array.begin(),
                 s->_ops_array.end(),
                 ops_array.begin(),
-                [](SocketOp *op){return !op->flight;}
+                [](SocketOp *op){return op->in_flight;}
             )
         ));
 
         for (SocketOp *op: ops_array) {
-            op->flight = 0;
+            op->in_flight = false;
             SocketOp op_copy = *op;
             s->_release_op(op);
             res = op_copy.callback(
@@ -649,7 +649,7 @@ void Socket::set_object(
         *op = {
             .s = this,
             .cid = op->cid,  // preserve cid
-            .flight = 0,
+            .in_flight = false,
             .next = nullptr,
             .request = {
                 .basic = {
@@ -705,7 +705,7 @@ void Socket::pread(
         *op = {
             .s = this,
             .cid = op->cid,  // preserve cid
-            .flight = 0,
+            .in_flight = false,
             .next = _next_read_response_body,
             .request = {
                 .io = {
@@ -759,7 +759,7 @@ void Socket::preadv(
         *op = {
             .s = this,
             .cid = op->cid,  // preserve cid
-            .flight = 0,
+            .in_flight = false,
             .next = _next_readv_response_body,
             .request = {
                 .io = {
@@ -814,7 +814,7 @@ void Socket::pwrite(
         *op = {
             .s = this,
             .cid = op->cid,  // preserve cid
-            .flight = 0,
+            .in_flight = false,
             .next = nullptr,
             .request = {
                 .io = {
@@ -882,7 +882,7 @@ void Socket::pwritev(
         *op = {
             .s = this,
             .cid = op->cid,  // preserve cid
-            .flight = 0,
+            .in_flight = false,
             .next = nullptr,
             .request = {
                 .io = {
