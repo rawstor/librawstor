@@ -5,6 +5,7 @@
 #include <stdlib.h>
 
 #define RAWSTOR_OPTS_WAIT_TIMEOUT 5000
+#define RAWSTOR_OPTS_IO_ATTEMPTS 3
 #define RAWSTOR_OPTS_SESSIONS 1
 #define RAWSTOR_OPTS_SO_SNDTIMEO 5000
 #define RAWSTOR_OPTS_SO_RCVTIMEO 5000
@@ -35,6 +36,12 @@ int rawstor_opts_initialize(const struct RawstorOpts *opts) {
         opts->wait_timeout : get_env_uint(
             "RAWSTOR_OPTS_WAIT_TIMEOUT",
             RAWSTOR_OPTS_WAIT_TIMEOUT);
+
+    _rawstor_opts.io_attempts =
+        (opts != NULL && opts->io_attempts != 0) ?
+        opts->io_attempts : get_env_uint(
+            "RAWSTOR_OPTS_IO_ATTEMPTS",
+            RAWSTOR_OPTS_IO_ATTEMPTS);
 
     _rawstor_opts.sessions =
         (opts != NULL && opts->sessions != 0) ?
@@ -73,6 +80,11 @@ void rawstor_opts_terminate(void) {
 
 unsigned int rawstor_opts_wait_timeout(void) {
     return _rawstor_opts.wait_timeout;
+}
+
+
+unsigned int rawstor_opts_io_attempts(void) {
+    return _rawstor_opts.io_attempts;
 }
 
 

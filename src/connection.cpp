@@ -137,22 +137,21 @@ class ConnectionOp {
 
     protected:
         std::shared_ptr<Socket> _s;
-        int _attempts;
+        unsigned int _attempts;
 
         static int _process(
             RawstorObject *object,
             size_t size, size_t res, int error, void *data) noexcept
         {
-            static int max_attempts = 3;
-
             ConnectionOp *op = static_cast<ConnectionOp*>(data);
 
             if (error) {
-                if (op->_attempts <= max_attempts) {
+                if (op->_attempts <= rawstor_opts_io_attempts()) {
                     rawstor_warning(
                         "%s; error on %s: %s; attempt: %d of %d; retrying...\n",
                         op->str().c_str(), op->_s->str().c_str(),
-                        strerror(error), op->_attempts, max_attempts);
+                        strerror(error),
+                        op->_attempts, rawstor_opts_io_attempts());
                     try {
                         op->_cn._replace_socket(op->_s);
                         (*op)(op->_cn._get_next_socket());
@@ -164,14 +163,15 @@ class ConnectionOp {
                     rawstor_error(
                         "%s; error on %s: %s; attempt %d of %d; failing...\n",
                         op->str().c_str(), op->_s->str().c_str(),
-                        strerror(error), op->_attempts, max_attempts);
+                        strerror(error),
+                        op->_attempts, rawstor_opts_io_attempts());
                 }
             } else {
                 if (op->_attempts > 1) {
                     rawstor_warning(
                         "%s; success on %s; attempt: %d of %d\n",
                         op->str().c_str(), op->_s->str().c_str(),
-                        op->_attempts, max_attempts);
+                        op->_attempts, rawstor_opts_io_attempts());
                 }
             }
 
