@@ -150,8 +150,8 @@ class ConnectionOp {
             if (error) {
                 if (op->_attempts <= max_attempts) {
                     rawstor_warning(
-                        "%s; error: %s; attempt: %d of %d; retrying...\n",
-                        op->str().c_str(),
+                        "%s; error on %s: %s; attempt: %d of %d; retrying...\n",
+                        op->str().c_str(), op->_s->str().c_str(),
                         strerror(error), op->_attempts, max_attempts);
                     try {
                         op->_cn._replace_socket(op->_s);
@@ -162,15 +162,16 @@ class ConnectionOp {
                     return 0;
                 } else {
                     rawstor_error(
-                        "%s; error: %s; attempt %d of %d; failing...\n",
-                        op->str().c_str(),
+                        "%s; error on %s: %s; attempt %d of %d; failing...\n",
+                        op->str().c_str(), op->_s->str().c_str(),
                         strerror(error), op->_attempts, max_attempts);
                 }
             } else {
                 if (op->_attempts > 1) {
                     rawstor_warning(
-                        "%s; success after attempt: %d of %d\n",
-                        op->str().c_str(), op->_attempts, max_attempts);
+                        "%s; success on %s; attempt: %d of %d\n",
+                        op->str().c_str(), op->_s->str().c_str(),
+                        op->_attempts, max_attempts);
                 }
             }
 

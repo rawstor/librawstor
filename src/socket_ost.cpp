@@ -20,6 +20,8 @@
 #include <arpa/inet.h>
 
 #include <algorithm>
+#include <sstream>
+#include <string>
 
 #include <cassert>
 #include <cerrno>
@@ -196,7 +198,7 @@ Socket::~Socket() {
             rawstor_error(
                 "Socket::~Socket(): close failed: %s\n", strerror(error));
         }
-        rawstor_info("fd %d: Socket closed\n", _fd);
+        rawstor_info("%s: Socket closed\n", str().c_str());
     }
 
     for (SocketOp *op: _ops_array) {
@@ -424,7 +426,7 @@ int Socket::_read_response_set_object_id_cb(
         op_copy.data);
 
     if (!error && res == 0) {
-        rawstor_info("fd %d: Object id successfully set\n", s->_fd);
+        rawstor_info("%s: Object id successfully set\n", s->str().c_str());
         try {
             s->_read_response_head(rawstor_io_queue);
         } catch (const std::system_error &e) {
@@ -598,6 +600,13 @@ const char* Socket::engine_name() noexcept {
 }
 
 
+std::string Socket::str() const {
+    std::ostringstream oss;
+    oss << "fd " << _fd;
+    return oss.str();
+}
+
+
 const SocketAddress& Socket::ost() const noexcept {
     return _ost;
 }
@@ -634,7 +643,7 @@ void Socket::spec(
     const RawstorUUID &, RawstorObjectSpec *sp,
     RawstorCallback *cb, void *data)
 {
-    rawstor_info("fd %d: Reading object specification...\n", _fd);
+    rawstor_info("%s: Reading object specification...\n", str().c_str());
 
     /**
      * TODO: Implement me.
@@ -644,7 +653,8 @@ void Socket::spec(
     };
 
     rawstor_info(
-        "fd %d: Object specification successfully received(emulated)\n", _fd);
+        "%s: Object specification successfully received (emulated)\n",
+        str().c_str());
 
     cb(nullptr, 0, 0, 0, data);
 }
@@ -655,7 +665,7 @@ void Socket::set_object(
     rawstor::Object *object,
     RawstorCallback *cb, void *data)
 {
-    rawstor_info("fd %d: Setting object id\n", _fd);
+    rawstor_info("%s: Setting object id\n", str().c_str());
 
     SocketOp *op = _acquire_op();
 

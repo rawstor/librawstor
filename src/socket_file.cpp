@@ -173,6 +173,13 @@ const char* Socket::engine_name() noexcept {
 }
 
 
+std::string Socket::str() const {
+    std::ostringstream oss;
+    oss << "fd " << _fd;
+    return oss.str();
+}
+
+
 const SocketAddress& Socket::ost() const noexcept {
     return _ost;
 }

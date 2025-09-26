@@ -43,6 +43,8 @@ class Socket {
 
         Socket& operator=(const Socket&) = delete;
 
+        std::string str() const;
+
         const SocketAddress& ost() const noexcept;
 
         void create(

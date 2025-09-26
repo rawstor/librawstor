@@ -13,6 +13,7 @@
 #include <rawstor/rawstor.h>
 
 #include <cstddef>
+#include <string>
 #include <vector>
 
 namespace rawstor {
@@ -71,6 +72,8 @@ class Socket {
         ~Socket();
 
         Socket& operator=(const Socket&) = delete;
+
+        std::string str() const;
 
         const SocketAddress& ost() const noexcept;
 
