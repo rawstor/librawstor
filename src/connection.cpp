@@ -156,10 +156,10 @@ class ConnectionOp {
                     try {
                         op->_cn._replace_socket(op->_s);
                         (*op)(op->_cn._get_next_socket());
+                        return 0;
                     } catch (const std::system_error &e) {
-                        return -e.code().value();
+                        error = e.code().value();
                     }
-                    return 0;
                 } else {
                     rawstor_error(
                         "%s; error on %s: %s; attempt %d of %d; failing...\n",
@@ -352,6 +352,57 @@ Connection::~Connection() {
 }
 
 
+std::vector<std::shared_ptr<Socket>> Connection::_open(
+    const SocketAddress &ost,
+    rawstor::Object *object,
+    size_t nsockets)
+{
+    std::vector<std::shared_ptr<Socket>> sockets;
+
+    for (
+        unsigned int attempt = 1;
+        attempt <= rawstor_opts_io_attempts();
+        ++attempt)
+    {
+        try {
+            Queue q(nsockets, _depth);
+
+            sockets.clear();
+            sockets.reserve(nsockets);
+            for (size_t i = 0; i < nsockets; ++i) {
+                sockets.push_back(std::make_shared<Socket>(ost, _depth));
+            }
+
+            for (std::shared_ptr<Socket> s: sockets) {
+                s->set_object(
+                    static_cast<RawstorIOQueue*>(q), object, q.callback, &q);
+            }
+
+            q.wait();
+
+            break;
+        } catch (const std::system_error &e) {
+            if (attempt != rawstor_opts_io_attempts()) {
+                rawstor_warning(
+                    "Open socket failed; error: %s; "
+                    "attempt: %d of %d; retrying...\n",
+                    e.what(),
+                    attempt, rawstor_opts_io_attempts());
+            } else {
+                rawstor_warning(
+                    "Open socket failed; error: %s; "
+                    "attempt: %d of %d; failing...\n",
+                    e.what(),
+                    attempt, rawstor_opts_io_attempts());
+                throw;
+            }
+        }
+    }
+
+    return sockets;
+}
+
+
 void Connection::_replace_socket(const std::shared_ptr<Socket> &s) {
     std::vector<std::shared_ptr<Socket>>::iterator it = std::find(
         _sockets.begin(), _sockets.end(), s);
@@ -359,16 +410,10 @@ void Connection::_replace_socket(const std::shared_ptr<Socket> &s) {
     if (it != _sockets.end()) {
         _sockets.erase(it);
 
-        Queue q(1, _depth);
-        std::shared_ptr<Socket> new_socket = std::make_shared<Socket>(
-            s->ost(), _depth);
+        std::vector<std::shared_ptr<Socket>> new_sockets = _open(
+            s->ost(), _object, 1);
 
-        new_socket->set_object(
-            static_cast<RawstorIOQueue*>(q), _object, q.callback, &q);
-
-        q.wait();
-
-        _sockets.push_back(new_socket);
+        _sockets.push_back(new_sockets.front());
     }
 }
 
@@ -429,27 +474,9 @@ void Connection::spec(
 void Connection::open(
     const SocketAddress &ost,
     rawstor::Object *object,
-    size_t sockets)
+    size_t nsockets)
 {
-    Queue q(sockets, _depth);
-
-    try {
-        _sockets.reserve(sockets);
-        for (size_t i = 0; i < sockets; ++i) {
-            _sockets.push_back(std::make_shared<Socket>(ost, _depth));
-        }
-
-        for (std::shared_ptr<Socket> s: _sockets) {
-            s->set_object(
-                static_cast<RawstorIOQueue*>(q), object, q.callback, &q);
-        }
-
-        q.wait();
-    } catch (...) {
-        _sockets.clear();
-        throw;
-    }
-
+    _sockets = _open(ost, object, nsockets);
     _object = object;
 }
 

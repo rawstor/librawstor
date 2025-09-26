@@ -31,6 +31,11 @@ class Connection {
         std::vector<std::shared_ptr<Socket>> _sockets;
         size_t _socket_index;
 
+        std::vector<std::shared_ptr<Socket>> _open(
+            const SocketAddress &ost,
+            rawstor::Object *object,
+            size_t nsockets);
+
         void _replace_socket(const std::shared_ptr<Socket> &s);
         std::shared_ptr<Socket> _get_next_socket();
 
@@ -56,7 +61,7 @@ class Connection {
         void open(
             const SocketAddress &ost,
             rawstor::Object *object,
-            size_t sockets);
+            size_t nsockets);
 
         void close();
 
