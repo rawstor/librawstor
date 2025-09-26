@@ -132,12 +132,12 @@ namespace rawstor {
 class ConnectionOp {
     private:
         Connection &_cn;
-        int _attempts;
         RawstorCallback *_cb;
         void *_data;
 
     protected:
         std::shared_ptr<Socket> _s;
+        int _attempts;
 
         static int _process(
             RawstorObject *object,
@@ -148,8 +148,7 @@ class ConnectionOp {
             ConnectionOp *op = static_cast<ConnectionOp*>(data);
 
             if (error) {
-                if (op->_attempts < max_attempts) {
-                    ++op->_attempts;
+                if (op->_attempts <= max_attempts) {
                     rawstor_warning(
                         "%s; error: %s; attempt: %d of %d; retrying...\n",
                         op->str().c_str(),
@@ -168,8 +167,8 @@ class ConnectionOp {
                         strerror(error), op->_attempts, max_attempts);
                 }
             } else {
-                if (op->_attempts > 0) {
-                    rawstor_info(
+                if (op->_attempts > 1) {
+                    rawstor_warning(
                         "%s; success after attempt: %d of %d\n",
                         op->str().c_str(), op->_attempts, max_attempts);
                 }
@@ -185,9 +184,9 @@ class ConnectionOp {
     public:
         ConnectionOp(Connection &cn, RawstorCallback *cb, void *data):
             _cn(cn),
-            _attempts(0),
             _cb(cb),
-            _data(data)
+            _data(data),
+            _attempts(0)
         {}
         ConnectionOp(const ConnectionOp &) = delete;
         ConnectionOp(ConnectionOp &&) = delete;
@@ -226,12 +225,13 @@ class ConnectionOpPRead: public ConnectionOp {
 
         void operator()(const std::shared_ptr<Socket> &s) {
             _s = s;
+            ++_attempts;
             _s->pread(_buf, _size, _offset, _process, this);
         }
 
         std::string str() const {
             std::ostringstream oss;
-            oss << "pread: size = " << _size << ", offset = " << _offset;
+            oss << "IO pread: size = " << _size << ", offset = " << _offset;
             return oss.str();
         }
 };
@@ -258,12 +258,13 @@ class ConnectionOpPReadV: public ConnectionOp {
 
         void operator()(const std::shared_ptr<Socket> &s) {
             _s = s;
+            ++_attempts;
             _s->preadv(_iov, _niov, _size, _offset, _process, this);
         }
 
         std::string str() const {
             std::ostringstream oss;
-            oss << "preadv: size = " << _size << ", offset = " << _offset;
+            oss << "IO preadv: size = " << _size << ", offset = " << _offset;
             return oss.str();
         }
 };
@@ -288,12 +289,13 @@ class ConnectionOpPWrite: public ConnectionOp {
 
         void operator()(const std::shared_ptr<Socket> &s) {
             _s = s;
+            ++_attempts;
             _s->pwrite(_buf, _size, _offset, _process, this);
         }
 
         std::string str() const {
             std::ostringstream oss;
-            oss << "pwrite: size = " << _size << ", offset = " << _offset;
+            oss << "IO pwrite: size = " << _size << ", offset = " << _offset;
             return oss.str();
         }
 };
@@ -320,12 +322,13 @@ class ConnectionOpPWriteV: public ConnectionOp {
 
         void operator()(const std::shared_ptr<Socket> &s) {
             _s = s;
+            ++_attempts;
             _s->pwritev(_iov, _niov, _size, _offset, _process, this);
         }
 
         std::string str() const {
             std::ostringstream oss;
-            oss << "pwritev: size = " << _size << ", offset = " << _offset;
+            oss << "IO pwritev: size = " << _size << ", offset = " << _offset;
             return oss.str();
         }
 };
