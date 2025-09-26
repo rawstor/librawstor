@@ -746,18 +746,26 @@ RawstorIOEvent* rawstor_io_queue_wait_event_timeout(
             struct pollfd *fd = &fds[i];
 
             if (fd->revents & POLLHUP) {
-                if (rawstor_io_session_process_read(session)) {
+                res = rawstor_io_session_process_read(session);
+                if (res) {
+                    errno = -res;
                     goto err;
                 }
-                if (rawstor_io_session_process_write(session)) {
+                res = rawstor_io_session_process_write(session);
+                if (res) {
+                    errno = -res;
                     goto err;
                 }
             } else if (fd->revents & POLLIN) {
-                if (rawstor_io_session_process_read(session)) {
+                res = rawstor_io_session_process_read(session);
+                if (res) {
+                    errno = -res;
                     goto err;
                 }
             } else if (fd->revents & POLLOUT) {
-                if (rawstor_io_session_process_write(session)) {
+                res = rawstor_io_session_process_write(session);
+                if (res) {
+                    errno = -res;
                     goto err;
                 }
             } else {

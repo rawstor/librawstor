@@ -135,6 +135,8 @@ static int io_session_unseekable_process_sqes(
 
     struct iovec *iov = calloc(niov, sizeof(struct iovec));
     if (iov == NULL) {
+        ret = -errno;
+        errno = 0;
         goto err_iov;
     }
 
