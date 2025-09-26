@@ -20,16 +20,17 @@
 #include <arpa/inet.h>
 
 #include <algorithm>
+#include <iterator>
 #include <sstream>
+#include <stdexcept>
 #include <string>
+#include <utility>
 
 #include <cassert>
 #include <cerrno>
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
-#include <stdexcept>
-#include <utility>
 
 /**
  * FIXME: iovec should be dynamically allocated at runtime.
@@ -483,16 +484,14 @@ int Socket::_read_response_head_cb(
             }
         }
     } else {
-        std::vector<SocketOp*> ops_array(s->_ops_array.size());
-        ops_array.resize(std::distance(
-            ops_array.begin(),
-            std::copy_if(
-                s->_ops_array.begin(),
-                s->_ops_array.end(),
-                ops_array.begin(),
-                [](SocketOp *op){return op->in_flight;}
-            )
-        ));
+        std::vector<SocketOp*> ops_array;
+        ops_array.reserve(s->_ops_array.size());
+        std::copy_if(
+            s->_ops_array.begin(),
+            s->_ops_array.end(),
+            std::back_inserter(ops_array),
+            [](SocketOp *op){return op->in_flight;}
+        );
 
         for (SocketOp *op: ops_array) {
             op->in_flight = false;

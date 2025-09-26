@@ -12,9 +12,10 @@
 #include <rawstor/object.h>
 #include <rawstor/rawstor.h>
 
-#include <cstddef>
 #include <string>
 #include <vector>
+
+#include <cstddef>
 
 namespace rawstor {
 
