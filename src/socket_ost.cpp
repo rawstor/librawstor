@@ -365,6 +365,8 @@ void Socket::_next_readv_response_body(
 
 int Socket::_writev_request_cb(RawstorIOEvent *event, void *data) noexcept {
     SocketOp *op = static_cast<SocketOp*>(data);
+    Socket *s = op->s;
+    int error = 0;
 
     try {
         op_trace(op->cid, event);
@@ -375,8 +377,20 @@ int Socket::_writev_request_cb(RawstorIOEvent *event, void *data) noexcept {
 
         return 0;
     } catch (const std::system_error &e) {
-        return -e.code().value();
+        error = e.code().value();
     }
+
+    int res = 0;
+    if (error) {
+        SocketOp op_copy = *op;
+        s->_release_op(op);
+        res = op_copy.callback(
+            s->_object->c_ptr(),
+            op_copy.request.io.len, 0, error,
+            op_copy.data);
+    }
+
+    return res;
 }
 
 
