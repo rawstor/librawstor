@@ -476,8 +476,8 @@ void Connection::preadv(
     RawstorCallback *cb, void *data)
 {
     std::shared_ptr<Socket> s = _get_next_socket();
-    std::unique_ptr<ConnectionOp> op(
-        new ConnectionOpPReadV(*this, iov, niov, size, offset, cb, data));
+    std::unique_ptr<ConnectionOp> op = std::make_unique<ConnectionOpPReadV>(
+        *this, iov, niov, size, offset, cb, data);
     (*op)(s);
     op.release();
 }
