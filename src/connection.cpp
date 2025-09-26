@@ -352,22 +352,12 @@ Connection::~Connection() {
 
 
 void Connection::_replace_socket(const std::shared_ptr<Socket> &s) {
-    bool found = false;
+    std::vector<std::shared_ptr<Socket>>::iterator it = std::find(
+        _sockets.begin(), _sockets.end(), s);
 
-    std::vector<std::shared_ptr<Socket>>::iterator end = _sockets.end();
-    for (
-        std::vector<std::shared_ptr<Socket>>::iterator it = _sockets.begin();
-        it != end;
-        ++it)
-    {
-        if (*it == s) {
-            found = true;
-            _sockets.erase(it);
-            break;
-        }
-    }
+    if (it != _sockets.end()) {
+        _sockets.erase(it);
 
-    if (found) {
         Queue q(1, _depth);
         std::shared_ptr<Socket> new_socket(new Socket(s->ost(), _depth));
 
