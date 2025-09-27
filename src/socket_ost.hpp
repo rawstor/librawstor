@@ -36,6 +36,13 @@ class Socket {
         RingBuf<SocketOp*> _ops;
         RawstorOSTFrameResponse _response;
 
+        void _validate_event(RawstorIOEvent *event);
+        void _validate_response(const RawstorOSTFrameResponse &response);
+        void _validate_cmd(
+            enum RawstorOSTCommandType cmd,
+            enum RawstorOSTCommandType expected);
+        void _validate_hash(uint64_t hash, uint64_t expected);
+
         SocketOp* _acquire_op();
         void _release_op(SocketOp *op) noexcept;
         SocketOp* _find_op(unsigned int cid);

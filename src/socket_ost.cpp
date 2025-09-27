@@ -49,60 +49,6 @@
 namespace {
 
 
-inline void validate_event(RawstorIOEvent *event) {
-    int error = rawstor_io_event_error(event);
-    if (error != 0) {
-        RAWSTOR_THROW_SYSTEM_ERROR(error);
-    }
-
-    if (rawstor_io_event_result(event) != rawstor_io_event_size(event)) {
-        rawstor_error(
-            "Unexpected event size: %zu != %zu\n",
-            rawstor_io_event_result(event),
-            rawstor_io_event_size(event));
-        RAWSTOR_THROW_SYSTEM_ERROR(EAGAIN);
-    }
-}
-
-
-inline void validate_response(const RawstorOSTFrameResponse &response) {
-    if (response.magic != RAWSTOR_MAGIC) {
-        rawstor_error(
-            "Unexpected magic number: %x != %x\n",
-            response.magic, RAWSTOR_MAGIC);
-        RAWSTOR_THROW_SYSTEM_ERROR(EPROTO);
-    }
-
-    if (response.res < 0) {
-        rawstor_error(
-            "Server error: %s\n",
-            strerror(-response.res));
-        RAWSTOR_THROW_SYSTEM_ERROR(EPROTO);
-    }
-}
-
-
-inline void validate_cmd(
-    enum RawstorOSTCommandType cmd, enum RawstorOSTCommandType expected)
-{
-    if (cmd != expected) {
-        rawstor_error("Unexpected command: %d\n", cmd);
-        RAWSTOR_THROW_SYSTEM_ERROR(EPROTO);
-    }
-}
-
-
-inline void validate_hash(uint64_t hash, uint64_t expected) {
-    if (hash != expected) {
-        rawstor_error(
-            "Hash mismatch: %llx != %llx\n",
-            (unsigned long long)hash,
-            (unsigned long long)expected);
-        RAWSTOR_THROW_SYSTEM_ERROR(EPROTO);
-    }
-}
-
-
 } // unnamed
 
 
@@ -204,6 +150,64 @@ Socket::~Socket() {
 
     for (SocketOp *op: _ops_array) {
         delete op;
+    }
+}
+
+
+void Socket::_validate_event(RawstorIOEvent *event) {
+    int error = rawstor_io_event_error(event);
+    if (error != 0) {
+        RAWSTOR_THROW_SYSTEM_ERROR(error);
+    }
+
+    if (rawstor_io_event_result(event) != rawstor_io_event_size(event)) {
+        rawstor_error(
+            "%s: Unexpected event size: %zu != %zu\n",
+            str().c_str(),
+            rawstor_io_event_result(event),
+            rawstor_io_event_size(event));
+        RAWSTOR_THROW_SYSTEM_ERROR(EAGAIN);
+    }
+}
+
+
+void Socket::_validate_response(const RawstorOSTFrameResponse &response) {
+    if (response.magic != RAWSTOR_MAGIC) {
+        rawstor_error(
+            "%s: Unexpected magic number: %x != %x\n",
+            str().c_str(),
+            response.magic, RAWSTOR_MAGIC);
+        RAWSTOR_THROW_SYSTEM_ERROR(EPROTO);
+    }
+
+    if (response.res < 0) {
+        rawstor_error(
+            "%s: Server error: %s\n",
+            str().c_str(),
+            strerror(-response.res));
+        RAWSTOR_THROW_SYSTEM_ERROR(EPROTO);
+    }
+}
+
+
+void Socket::_validate_cmd(
+    enum RawstorOSTCommandType cmd, enum RawstorOSTCommandType expected)
+{
+    if (cmd != expected) {
+        rawstor_error("%s: Unexpected command: %d\n", str().c_str(), cmd);
+        RAWSTOR_THROW_SYSTEM_ERROR(EPROTO);
+    }
+}
+
+
+void Socket::_validate_hash(uint64_t hash, uint64_t expected) {
+    if (hash != expected) {
+        rawstor_error(
+            "%s: Hash mismatch: %llx != %llx\n",
+            str().c_str(),
+            (unsigned long long)hash,
+            (unsigned long long)expected);
+        RAWSTOR_THROW_SYSTEM_ERROR(EPROTO);
     }
 }
 
@@ -374,7 +378,7 @@ int Socket::_writev_request_cb(RawstorIOEvent *event, void *data) noexcept {
     try {
         op_trace(op->cid, event);
 
-        ::validate_event(event);
+        s->_validate_event(event);
 
         op->in_flight = true;
 
@@ -408,13 +412,13 @@ int Socket::_read_response_set_object_id_cb(
         op_trace(op->cid, event);
         op->in_flight = false;
 
-        ::validate_event(event);
+        s->_validate_event(event);
 
         RawstorOSTFrameResponse &response = s->_response;
 
-        ::validate_response(response);
+        s->_validate_response(response);
 
-        ::validate_cmd(response.cmd, RAWSTOR_CMD_SET_OBJECT);
+        s->_validate_cmd(response.cmd, RAWSTOR_CMD_SET_OBJECT);
     } catch (const std::system_error &e) {
         error = e.code().value();
     }
@@ -447,15 +451,15 @@ int Socket::_read_response_head_cb(
     int error = 0;
 
     try {
-        ::validate_event(event);
+        s->_validate_event(event);
 
-        ::validate_response(s->_response);
+        s->_validate_response(s->_response);
 
         op = s->_find_op(s->_response.cid);
         op_trace(op->cid, event);
         op->in_flight = false;
 
-        ::validate_cmd(s->_response.cmd, op->request.io.cmd);
+        s->_validate_cmd(s->_response.cmd, op->request.io.cmd);
     } catch (const std::system_error &e) {
         error = e.code().value();
     }
@@ -522,12 +526,12 @@ int Socket::_read_response_body_cb(
     try {
         op_trace(op->cid, event);
 
-        ::validate_event(event);
+        s->_validate_event(event);
 
         uint64_t hash = rawstor_hash_scalar(
             op->payload.linear.data, op->request.io.len);
 
-        ::validate_hash(s->_response.hash, hash);
+        s->_validate_hash(s->_response.hash, hash);
     } catch (const std::system_error &e) {
         error = e.code().value();
     }
@@ -561,7 +565,7 @@ int Socket::_readv_response_body_cb(
     try {
         op_trace(op->cid, event);
 
-        ::validate_event(event);
+        s->_validate_event(event);
 
         uint64_t hash;
         int res = rawstor_hash_vector(
@@ -570,7 +574,7 @@ int Socket::_readv_response_body_cb(
             RAWSTOR_THROW_SYSTEM_ERROR(-res);
         }
 
-        ::validate_hash(s->_response.hash, hash);
+        s->_validate_hash(s->_response.hash, hash);
 
     } catch (const std::system_error &e) {
         error = e.code().value();
