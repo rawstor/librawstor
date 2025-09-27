@@ -468,7 +468,8 @@ int Socket::_read_response_head_cb(
             } catch (const std::system_error &e) {
                 error = e.code().value();
             }
-        } else {
+        }
+        if (error || op->next == nullptr) {
             SocketOp op_copy = *op;
             s->_release_op(op);
             res = op_copy.callback(
