@@ -787,7 +787,9 @@ err:
 }
 
 
-void rawstor_io_queue_release_event(RawstorIOQueue *queue, RawstorIOEvent *event) {
+void rawstor_io_queue_release_event(
+    RawstorIOQueue *queue, RawstorIOEvent *event)
+{
 #ifdef RAWSTOR_TRACE_EVENTS
     rawstor_trace_event_end(event->trace_event, "release_event()\n");
 #endif

@@ -19,13 +19,18 @@
 
 #include <arpa/inet.h>
 
+#include <algorithm>
+#include <iterator>
+#include <sstream>
+#include <stdexcept>
+#include <string>
+#include <utility>
+
 #include <cassert>
 #include <cerrno>
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
-#include <stdexcept>
-#include <utility>
 
 /**
  * FIXME: iovec should be dynamically allocated at runtime.
@@ -108,7 +113,7 @@ struct SocketOp {
     rawstor::Socket *s;
 
     uint16_t cid;
-    int flight;
+    bool in_flight;
     void (*next)(RawstorIOQueue *queue, SocketOp *op);
 
     union {
@@ -136,12 +141,13 @@ struct SocketOp {
 
 
 Socket::Socket(const SocketAddress &ost, unsigned int depth):
+    _ost(ost),
     _fd(-1),
     _object(nullptr),
     _ops_array(),
     _ops(depth)
 {
-    _fd = _connect(ost);
+    _fd = _connect();
 
     try {
         _ops_array.reserve(depth);
@@ -172,6 +178,7 @@ Socket::Socket(const SocketAddress &ost, unsigned int depth):
 
 
 Socket::Socket(Socket &&other) noexcept:
+    _ost(std::move(other._ost)),
     _fd(std::exchange(other._fd, -1)),
     _object(std::exchange(other._object, nullptr)),
     _ops_array(std::move(other._ops_array)),
@@ -192,7 +199,7 @@ Socket::~Socket() {
             rawstor_error(
                 "Socket::~Socket(): close failed: %s\n", strerror(error));
         }
-        rawstor_info("fd %d: Socket closed\n", _fd);
+        rawstor_info("%s: Socket closed\n", str().c_str());
     }
 
     for (SocketOp *op: _ops_array) {
@@ -223,7 +230,7 @@ SocketOp* Socket::_find_op(unsigned int cid) {
 }
 
 
-int Socket::_connect(const SocketAddress &ost) {
+int Socket::_connect() {
     int res;
 
     int fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -258,9 +265,9 @@ int Socket::_connect(const SocketAddress &ost) {
 
         sockaddr_in servaddr = {};
         servaddr.sin_family = AF_INET;
-        servaddr.sin_port = htons(ost.port());
+        servaddr.sin_port = htons(_ost.port());
 
-        res = inet_pton(AF_INET, ost.host().c_str(), &servaddr.sin_addr);
+        res = inet_pton(AF_INET, _ost.host().c_str(), &servaddr.sin_addr);
         if (res == 0) {
             RAWSTOR_THROW_SYSTEM_ERROR(EINVAL);
         } else if (res == -1) {
@@ -269,7 +276,7 @@ int Socket::_connect(const SocketAddress &ost) {
 
         rawstor_info(
             "fd %d: Connecting to %s:%u...\n",
-            fd, ost.host().c_str(), ost.port());
+            fd, _ost.host().c_str(), _ost.port());
         if (connect(fd, (sockaddr*)&servaddr, sizeof(servaddr)) == -1) {
             RAWSTOR_THROW_ERRNO();
         }
@@ -361,18 +368,32 @@ void Socket::_next_readv_response_body(
 
 int Socket::_writev_request_cb(RawstorIOEvent *event, void *data) noexcept {
     SocketOp *op = static_cast<SocketOp*>(data);
+    Socket *s = op->s;
+    int error = 0;
 
     try {
         op_trace(op->cid, event);
 
         ::validate_event(event);
 
-        op->flight = 1;
+        op->in_flight = true;
 
         return 0;
     } catch (const std::system_error &e) {
-        return -e.code().value();
+        error = e.code().value();
     }
+
+    int res = 0;
+    if (error) {
+        SocketOp op_copy = *op;
+        s->_release_op(op);
+        res = op_copy.callback(
+            s->_object->c_ptr(),
+            op_copy.request.io.len, 0, error,
+            op_copy.data);
+    }
+
+    return res;
 }
 
 
@@ -385,7 +406,7 @@ int Socket::_read_response_set_object_id_cb(
 
     try {
         op_trace(op->cid, event);
-        op->flight = 0;
+        op->in_flight = false;
 
         ::validate_event(event);
 
@@ -398,15 +419,15 @@ int Socket::_read_response_set_object_id_cb(
         error = e.code().value();
     }
 
-    int res = op->callback(
+    SocketOp op_copy = *op;
+    s->_release_op(op);
+    int res = op_copy.callback(
         s->_object->c_ptr(),
         0, 0, error,
-        op->data);
-
-    s->_release_op(op);
+        op_copy.data);
 
     if (!error && res == 0) {
-        rawstor_info("fd %d: Object id successfully set\n", s->_fd);
+        rawstor_info("%s: Object id successfully set\n", s->str().c_str());
         try {
             s->_read_response_head(rawstor_io_queue);
         } catch (const std::system_error &e) {
@@ -432,7 +453,7 @@ int Socket::_read_response_head_cb(
 
         op = s->_find_op(s->_response.cid);
         op_trace(op->cid, event);
-        op->flight = 0;
+        op->in_flight = false;
 
         ::validate_cmd(s->_response.cmd, op->request.io.cmd);
     } catch (const std::system_error &e) {
@@ -447,36 +468,43 @@ int Socket::_read_response_head_cb(
             } catch (const std::system_error &e) {
                 error = e.code().value();
             }
-        } else {
-            res = op->callback(
-                s->_object->c_ptr(),
-                op->request.io.len, s->_response.res, error,
-                op->data);
-
-            s->_release_op(op);
         }
-
-        if (!error && res == 0 && op->next == nullptr) {
-            try {
-                s->_read_response_head(rawstor_io_event_queue(event));
-            } catch (const std::system_error &e) {
-                return -e.code().value();
+        if (error || op->next == nullptr) {
+            SocketOp op_copy = *op;
+            s->_release_op(op);
+            res = op_copy.callback(
+                s->_object->c_ptr(),
+                op_copy.request.io.len, s->_response.res, error,
+                op_copy.data);
+            if (res == 0) {
+                try {
+                    s->_read_response_head(rawstor_io_event_queue(event));
+                } catch (const std::system_error &e) {
+                    return -e.code().value();
+                }
             }
         }
     } else {
-        for (SocketOp *op: s->_ops_array) {
-            if (!op->flight) {
-                continue;
-            }
-            op->flight = 0;
-            res = op->callback(
+        std::vector<SocketOp*> ops_array;
+        ops_array.reserve(s->_ops_array.size());
+        std::copy_if(
+            s->_ops_array.begin(),
+            s->_ops_array.end(),
+            std::back_inserter(ops_array),
+            [](SocketOp *op){return op->in_flight;}
+        );
+
+        for (SocketOp *op: ops_array) {
+            op->in_flight = false;
+            SocketOp op_copy = *op;
+            s->_release_op(op);
+            res = op_copy.callback(
                 s->_object->c_ptr(),
-                op->request.io.len, 0, error,
-                op->data);
+                op_copy.request.io.len, 0, error,
+                op_copy.data);
             if (res) {
                 return res;
             }
-            s->_release_op(op);
         }
     }
 
@@ -504,12 +532,12 @@ int Socket::_read_response_body_cb(
         error = e.code().value();
     }
 
-    int res = op->callback(
-        s->_object->c_ptr(),
-        op->request.io.len, s->_response.res, error,
-        op->data);
-
+    SocketOp op_copy = *op;
     s->_release_op(op);
+    int res = op_copy.callback(
+        s->_object->c_ptr(),
+        op_copy.request.io.len, s->_response.res, error,
+        op_copy.data);
 
     if (!error && res == 0) {
         try {
@@ -548,12 +576,12 @@ int Socket::_readv_response_body_cb(
         error = e.code().value();
     }
 
-    int res = op->callback(
-        s->_object->c_ptr(),
-        op->request.io.len, s->_response.res, error,
-        op->data);
-
+    SocketOp op_copy = *op;
     s->_release_op(op);
+    int res = op_copy.callback(
+        s->_object->c_ptr(),
+        op_copy.request.io.len, s->_response.res, error,
+        op_copy.data);
 
     if (!error && res == 0) {
         try {
@@ -569,6 +597,18 @@ int Socket::_readv_response_body_cb(
 
 const char* Socket::engine_name() noexcept {
     return "ost";
+}
+
+
+std::string Socket::str() const {
+    std::ostringstream oss;
+    oss << "fd " << _fd;
+    return oss.str();
+}
+
+
+const SocketAddress& Socket::ost() const noexcept {
+    return _ost;
 }
 
 
@@ -603,7 +643,7 @@ void Socket::spec(
     const RawstorUUID &, RawstorObjectSpec *sp,
     RawstorCallback *cb, void *data)
 {
-    rawstor_info("fd %d: Reading object specification...\n", _fd);
+    rawstor_info("%s: Reading object specification...\n", str().c_str());
 
     /**
      * TODO: Implement me.
@@ -613,7 +653,8 @@ void Socket::spec(
     };
 
     rawstor_info(
-        "fd %d: Object specification successfully received(emulated)\n", _fd);
+        "%s: Object specification successfully received (emulated)\n",
+        str().c_str());
 
     cb(nullptr, 0, 0, 0, data);
 }
@@ -624,7 +665,7 @@ void Socket::set_object(
     rawstor::Object *object,
     RawstorCallback *cb, void *data)
 {
-    rawstor_info("fd %d: Setting object id\n", _fd);
+    rawstor_info("%s: Setting object id\n", str().c_str());
 
     SocketOp *op = _acquire_op();
 
@@ -632,7 +673,7 @@ void Socket::set_object(
         *op = {
             .s = this,
             .cid = op->cid,  // preserve cid
-            .flight = 0,
+            .in_flight = false,
             .next = nullptr,
             .request = {
                 .basic = {
@@ -688,7 +729,7 @@ void Socket::pread(
         *op = {
             .s = this,
             .cid = op->cid,  // preserve cid
-            .flight = 0,
+            .in_flight = false,
             .next = _next_read_response_body,
             .request = {
                 .io = {
@@ -742,7 +783,7 @@ void Socket::preadv(
         *op = {
             .s = this,
             .cid = op->cid,  // preserve cid
-            .flight = 0,
+            .in_flight = false,
             .next = _next_readv_response_body,
             .request = {
                 .io = {
@@ -797,7 +838,7 @@ void Socket::pwrite(
         *op = {
             .s = this,
             .cid = op->cid,  // preserve cid
-            .flight = 0,
+            .in_flight = false,
             .next = nullptr,
             .request = {
                 .io = {
@@ -865,7 +906,7 @@ void Socket::pwritev(
         *op = {
             .s = this,
             .cid = op->cid,  // preserve cid
-            .flight = 0,
+            .in_flight = false,
             .next = nullptr,
             .request = {
                 .io = {
