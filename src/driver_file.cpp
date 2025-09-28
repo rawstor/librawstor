@@ -305,13 +305,6 @@ void DriverFile::set_object(
         throw std::runtime_error("Object already set");
     }
 
-    std::string ost_path = get_ost_path(_ost);
-
-    RawstorUUIDString uuid_string;
-    rawstor_uuid_to_string(&object->id(), &uuid_string);
-
-    std::string dat_path = get_object_dat_path(ost_path, uuid_string);
-
     _fd = _connect(object->id());
     if (_fd == -1) {
         RAWSTOR_THROW_ERRNO();
