@@ -1,4 +1,4 @@
-#include "socket_ost.hpp"
+#include "driver_ost.hpp"
 
 #include "object.hpp"
 #include "opts.h"
@@ -55,12 +55,12 @@ namespace {
 namespace rawstor {
 
 
-struct SocketOp {
-    rawstor::Socket *s;
+struct DriverOp {
+    rawstor::DriverOST *s;
 
     uint16_t cid;
     bool in_flight;
-    void (*next)(RawstorIOQueue *queue, SocketOp *op);
+    void (*next)(RawstorIOQueue *queue, DriverOp *op);
 
     union {
         RawstorOSTFrameBasic basic;
@@ -86,9 +86,8 @@ struct SocketOp {
 };
 
 
-Socket::Socket(const SocketAddress &ost, unsigned int depth):
-    _ost(ost),
-    _fd(-1),
+DriverOST::DriverOST(const SocketAddress &ost, unsigned int depth):
+    Driver(ost),
     _object(nullptr),
     _ops_array(),
     _ops(depth)
@@ -98,7 +97,7 @@ Socket::Socket(const SocketAddress &ost, unsigned int depth):
     try {
         _ops_array.reserve(depth);
         for (unsigned int i = 0; i < depth; ++i) {
-            SocketOp *op = new SocketOp();
+            DriverOp *op = new DriverOp();
             op->cid = i + 1;
 
             _ops_array.push_back(op);
@@ -106,7 +105,7 @@ Socket::Socket(const SocketAddress &ost, unsigned int depth):
             _ops.push(op);
         }
     } catch (...) {
-        for (SocketOp *op: _ops_array) {
+        for (DriverOp *op: _ops_array) {
             delete op;
         }
 
@@ -114,7 +113,7 @@ Socket::Socket(const SocketAddress &ost, unsigned int depth):
             int error = errno;
             errno = 0;
             rawstor_error(
-                "Socket::Socket(): close failed: %s\n", strerror(error));
+                "DriverOST::DriverOST(): close failed: %s\n", strerror(error));
         }
         _fd = -1;
 
@@ -123,38 +122,27 @@ Socket::Socket(const SocketAddress &ost, unsigned int depth):
 }
 
 
-Socket::Socket(Socket &&other) noexcept:
-    _ost(std::move(other._ost)),
-    _fd(std::exchange(other._fd, -1)),
+DriverOST::DriverOST(DriverOST &&other) noexcept:
+    Driver(std::move(other)),
     _object(std::exchange(other._object, nullptr)),
     _ops_array(std::move(other._ops_array)),
     _ops(std::move(other._ops)),
     _response(std::move(other._response))
 {
-    for (SocketOp *op: _ops_array) {
+    for (DriverOp *op: _ops_array) {
         op->s = this;
     }
 }
 
 
-Socket::~Socket() {
-    if (_fd != -1) {
-        if (::close(_fd) == -1) {
-            int error = errno;
-            errno = 0;
-            rawstor_error(
-                "Socket::~Socket(): close failed: %s\n", strerror(error));
-        }
-        rawstor_info("%s: Socket closed\n", str().c_str());
-    }
-
-    for (SocketOp *op: _ops_array) {
+DriverOST::~DriverOST() {
+    for (DriverOp *op: _ops_array) {
         delete op;
     }
 }
 
 
-void Socket::_validate_event(RawstorIOEvent *event) {
+void DriverOST::_validate_event(RawstorIOEvent *event) {
     int error = rawstor_io_event_error(event);
     if (error != 0) {
         RAWSTOR_THROW_SYSTEM_ERROR(error);
@@ -171,7 +159,7 @@ void Socket::_validate_event(RawstorIOEvent *event) {
 }
 
 
-void Socket::_validate_response(const RawstorOSTFrameResponse &response) {
+void DriverOST::_validate_response(const RawstorOSTFrameResponse &response) {
     if (response.magic != RAWSTOR_MAGIC) {
         rawstor_error(
             "%s: Unexpected magic number: %x != %x\n",
@@ -190,7 +178,7 @@ void Socket::_validate_response(const RawstorOSTFrameResponse &response) {
 }
 
 
-void Socket::_validate_cmd(
+void DriverOST::_validate_cmd(
     enum RawstorOSTCommandType cmd, enum RawstorOSTCommandType expected)
 {
     if (cmd != expected) {
@@ -200,7 +188,7 @@ void Socket::_validate_cmd(
 }
 
 
-void Socket::_validate_hash(uint64_t hash, uint64_t expected) {
+void DriverOST::_validate_hash(uint64_t hash, uint64_t expected) {
     if (hash != expected) {
         rawstor_error(
             "%s: Hash mismatch: %llx != %llx\n",
@@ -212,19 +200,19 @@ void Socket::_validate_hash(uint64_t hash, uint64_t expected) {
 }
 
 
-SocketOp* Socket::_acquire_op() {
+DriverOp* DriverOST::_acquire_op() {
     return _ops.pop();
 }
 
 
-void Socket::_release_op(SocketOp *op) noexcept {
+void DriverOST::_release_op(DriverOp *op) noexcept {
     assert(_ops.size() < _ops.capacity());
 
     _ops.push(op);
 }
 
 
-SocketOp* Socket::_find_op(unsigned int cid) {
+DriverOp* DriverOST::_find_op(unsigned int cid) {
     if (cid < 1 || cid > _ops_array.size()) {
         rawstor_error("Unexpected cid: %u\n", cid);
         RAWSTOR_THROW_SYSTEM_ERROR(EIO);
@@ -234,7 +222,7 @@ SocketOp* Socket::_find_op(unsigned int cid) {
 }
 
 
-int Socket::_connect() {
+int DriverOST::_connect() {
     int res;
 
     int fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -279,7 +267,7 @@ int Socket::_connect() {
         }
 
         rawstor_info(
-            "fd %d: Connecting to %s:%u...\n",
+            "fd %d: Connecting to %s:%u using OST driver...\n",
             fd, _ost.host().c_str(), _ost.port());
         if (connect(fd, (sockaddr*)&servaddr, sizeof(servaddr)) == -1) {
             RAWSTOR_THROW_ERRNO();
@@ -299,7 +287,7 @@ int Socket::_connect() {
 }
 
 
-void Socket::_writev_request(RawstorIOQueue *queue, SocketOp *op) {
+void DriverOST::_writev_request(RawstorIOQueue *queue, DriverOp *op) {
     int res = rawstor_io_queue_writev(
         queue, _fd,
         op->iov, op->niov, op->size,
@@ -310,8 +298,8 @@ void Socket::_writev_request(RawstorIOQueue *queue, SocketOp *op) {
 }
 
 
-void Socket::_read_response_set_object_id(
-    RawstorIOQueue *queue, SocketOp *op)
+void DriverOST::_read_response_set_object_id(
+    RawstorIOQueue *queue, DriverOp *op)
 {
     int res = rawstor_io_queue_read(
         queue, _fd,
@@ -323,7 +311,7 @@ void Socket::_read_response_set_object_id(
 }
 
 
-void Socket::_read_response_head(RawstorIOQueue *queue) {
+void DriverOST::_read_response_head(RawstorIOQueue *queue) {
     int res = rawstor_io_queue_read(
         queue, _fd,
         &_response, sizeof(_response),
@@ -334,7 +322,7 @@ void Socket::_read_response_head(RawstorIOQueue *queue) {
 }
 
 
-void Socket::_read_response_body(RawstorIOQueue *queue, SocketOp *op) {
+void DriverOST::_read_response_body(RawstorIOQueue *queue, DriverOp *op) {
     int res = rawstor_io_queue_read(
         queue, _fd,
         op->payload.linear.data, op->request.io.len,
@@ -345,7 +333,7 @@ void Socket::_read_response_body(RawstorIOQueue *queue, SocketOp *op) {
 }
 
 
-void Socket::_readv_response_body(RawstorIOQueue *queue, SocketOp *op) {
+void DriverOST::_readv_response_body(RawstorIOQueue *queue, DriverOp *op) {
     int res = rawstor_io_queue_readv(
         queue, _fd,
         op->payload.vector.iov, op->payload.vector.niov, op->request.io.len,
@@ -356,23 +344,23 @@ void Socket::_readv_response_body(RawstorIOQueue *queue, SocketOp *op) {
 }
 
 
-void Socket::_next_read_response_body(
-    RawstorIOQueue *queue, SocketOp *op)
+void DriverOST::_next_read_response_body(
+    RawstorIOQueue *queue, DriverOp *op)
 {
     op->s->_read_response_body(queue, op);
 }
 
 
-void Socket::_next_readv_response_body(
-    RawstorIOQueue *queue, SocketOp *op)
+void DriverOST::_next_readv_response_body(
+    RawstorIOQueue *queue, DriverOp *op)
 {
     op->s->_readv_response_body(queue, op);
 }
 
 
-int Socket::_writev_request_cb(RawstorIOEvent *event, void *data) noexcept {
-    SocketOp *op = static_cast<SocketOp*>(data);
-    Socket *s = op->s;
+int DriverOST::_writev_request_cb(RawstorIOEvent *event, void *data) noexcept {
+    DriverOp *op = static_cast<DriverOp*>(data);
+    DriverOST *s = op->s;
     int error = 0;
 
     try {
@@ -389,7 +377,7 @@ int Socket::_writev_request_cb(RawstorIOEvent *event, void *data) noexcept {
 
     int res = 0;
     if (error) {
-        SocketOp op_copy = *op;
+        DriverOp op_copy = *op;
         s->_release_op(op);
         res = op_copy.callback(
             s->_object->c_ptr(),
@@ -401,11 +389,11 @@ int Socket::_writev_request_cb(RawstorIOEvent *event, void *data) noexcept {
 }
 
 
-int Socket::_read_response_set_object_id_cb(
+int DriverOST::_read_response_set_object_id_cb(
     RawstorIOEvent *event, void *data) noexcept
 {
-    SocketOp *op = static_cast<SocketOp*>(data);
-    Socket *s = op->s;
+    DriverOp *op = static_cast<DriverOp*>(data);
+    DriverOST *s = op->s;
     int error = 0;
 
     try {
@@ -423,7 +411,7 @@ int Socket::_read_response_set_object_id_cb(
         error = e.code().value();
     }
 
-    SocketOp op_copy = *op;
+    DriverOp op_copy = *op;
     s->_release_op(op);
     int res = op_copy.callback(
         s->_object->c_ptr(),
@@ -443,11 +431,11 @@ int Socket::_read_response_set_object_id_cb(
 }
 
 
-int Socket::_read_response_head_cb(
+int DriverOST::_read_response_head_cb(
     RawstorIOEvent *event, void *data) noexcept
 {
-    Socket *s = static_cast<Socket*>(data);
-    SocketOp *op = nullptr;
+    DriverOST *s = static_cast<DriverOST*>(data);
+    DriverOp *op = nullptr;
     int error = 0;
 
     try {
@@ -474,7 +462,7 @@ int Socket::_read_response_head_cb(
             }
         }
         if (error || op->next == nullptr) {
-            SocketOp op_copy = *op;
+            DriverOp op_copy = *op;
             s->_release_op(op);
             res = op_copy.callback(
                 s->_object->c_ptr(),
@@ -489,18 +477,18 @@ int Socket::_read_response_head_cb(
             }
         }
     } else {
-        std::vector<SocketOp*> ops_array;
+        std::vector<DriverOp*> ops_array;
         ops_array.reserve(s->_ops_array.size());
         std::copy_if(
             s->_ops_array.begin(),
             s->_ops_array.end(),
             std::back_inserter(ops_array),
-            [](SocketOp *op){return op->in_flight;}
+            [](DriverOp *op){return op->in_flight;}
         );
 
-        for (SocketOp *op: ops_array) {
+        for (DriverOp *op: ops_array) {
             op->in_flight = false;
-            SocketOp op_copy = *op;
+            DriverOp op_copy = *op;
             s->_release_op(op);
             res = op_copy.callback(
                 s->_object->c_ptr(),
@@ -516,11 +504,11 @@ int Socket::_read_response_head_cb(
 }
 
 
-int Socket::_read_response_body_cb(
+int DriverOST::_read_response_body_cb(
     RawstorIOEvent *event, void *data) noexcept
 {
-    SocketOp *op = static_cast<SocketOp*>(data);
-    Socket *s = op->s;
+    DriverOp *op = static_cast<DriverOp*>(data);
+    DriverOST *s = op->s;
     int error = 0;
 
     try {
@@ -536,7 +524,7 @@ int Socket::_read_response_body_cb(
         error = e.code().value();
     }
 
-    SocketOp op_copy = *op;
+    DriverOp op_copy = *op;
     s->_release_op(op);
     int res = op_copy.callback(
         s->_object->c_ptr(),
@@ -555,11 +543,11 @@ int Socket::_read_response_body_cb(
 }
 
 
-int Socket::_readv_response_body_cb(
+int DriverOST::_readv_response_body_cb(
     RawstorIOEvent *event, void *data) noexcept
 {
-    SocketOp *op = static_cast<SocketOp*>(data);
-    Socket *s = op->s;
+    DriverOp *op = static_cast<DriverOp*>(data);
+    DriverOST *s = op->s;
     int error = 0;
 
     try {
@@ -580,7 +568,7 @@ int Socket::_readv_response_body_cb(
         error = e.code().value();
     }
 
-    SocketOp op_copy = *op;
+    DriverOp op_copy = *op;
     s->_release_op(op);
     int res = op_copy.callback(
         s->_object->c_ptr(),
@@ -599,24 +587,7 @@ int Socket::_readv_response_body_cb(
 }
 
 
-const char* Socket::engine_name() noexcept {
-    return "ost";
-}
-
-
-std::string Socket::str() const {
-    std::ostringstream oss;
-    oss << "fd " << _fd;
-    return oss.str();
-}
-
-
-const SocketAddress& Socket::ost() const noexcept {
-    return _ost;
-}
-
-
-void Socket::create(
+void DriverOST::create(
     RawstorIOQueue *,
     const RawstorObjectSpec &, RawstorUUID *id,
     RawstorCallback *cb, void *data)
@@ -633,16 +604,16 @@ void Socket::create(
 }
 
 
-void Socket::remove(
+void DriverOST::remove(
     RawstorIOQueue *,
     const RawstorUUID &,
     RawstorCallback *, void *)
 {
-    throw std::runtime_error("Socket::remove() not implemented");
+    throw std::runtime_error("DriverOST::remove() not implemented");
 }
 
 
-void Socket::spec(
+void DriverOST::spec(
     RawstorIOQueue *,
     const RawstorUUID &, RawstorObjectSpec *sp,
     RawstorCallback *cb, void *data)
@@ -664,14 +635,14 @@ void Socket::spec(
 }
 
 
-void Socket::set_object(
+void DriverOST::set_object(
     RawstorIOQueue *queue,
     rawstor::Object *object,
     RawstorCallback *cb, void *data)
 {
     rawstor_info("%s: Setting object id\n", str().c_str());
 
-    SocketOp *op = _acquire_op();
+    DriverOp *op = _acquire_op();
 
     try {
         *op = {
@@ -719,7 +690,7 @@ void Socket::set_object(
 }
 
 
-void Socket::pread(
+void DriverOST::pread(
     void *buf, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
@@ -727,7 +698,7 @@ void Socket::pread(
         "%s(): offset = %jd, size = %zu\n",
         __FUNCTION__, (intmax_t)offset, size);
 
-    SocketOp *op = _acquire_op();
+    DriverOp *op = _acquire_op();
 
     try {
         *op = {
@@ -773,7 +744,7 @@ void Socket::pread(
 }
 
 
-void Socket::preadv(
+void DriverOST::preadv(
     iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
@@ -781,7 +752,7 @@ void Socket::preadv(
         "%s(): offset = %jd, niov = %u, size = %zu\n",
         __FUNCTION__, (intmax_t)offset, niov, size);
 
-    SocketOp *op = _acquire_op();
+    DriverOp *op = _acquire_op();
 
     try {
         *op = {
@@ -828,7 +799,7 @@ void Socket::preadv(
 }
 
 
-void Socket::pwrite(
+void DriverOST::pwrite(
     void *buf, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
@@ -836,7 +807,7 @@ void Socket::pwrite(
         "%s(): offset = %jd, size = %zu\n",
         __FUNCTION__, (intmax_t)offset, size);
 
-    SocketOp *op = _acquire_op();
+    DriverOp *op = _acquire_op();
 
     try {
         *op = {
@@ -886,7 +857,7 @@ void Socket::pwrite(
 }
 
 
-void Socket::pwritev(
+void DriverOST::pwritev(
     iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
@@ -904,7 +875,7 @@ void Socket::pwritev(
         throw std::runtime_error("Large iovecs not supported");
     }
 
-    SocketOp *op = _acquire_op();
+    DriverOp *op = _acquire_op();
 
     try {
         *op = {

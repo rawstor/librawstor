@@ -1,6 +1,5 @@
 #include <rawstor.h>
 
-#include "object_internals.h"
 #include "opts.h"
 #include "rawstor_internals.h"
 #include "rawstor_internals.hpp"
@@ -89,10 +88,6 @@ int rawstor_initialize(
     rawstor_info(
         "Rawstor compiled with IO queue engine: %s\n",
         rawstor_io_queue_engine_name());
-
-    rawstor_info(
-        "Rawstor compiled with object backend: %s\n",
-        rawstor_object_backend_name());
 
     res = rawstor_opts_initialize(opts);
     if (res) {

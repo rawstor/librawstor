@@ -1,6 +1,7 @@
-#ifndef RAWSTOR_SOCKET_OST_HPP
-#define RAWSTOR_SOCKET_OST_HPP
+#ifndef RAWSTOR_DRIVER_OST_HPP
+#define RAWSTOR_DRIVER_OST_HPP
 
+#include "driver.hpp"
 #include "ost_protocol.h"
 
 #include <rawstorstd/ringbuf.hpp>
@@ -20,20 +21,17 @@
 namespace rawstor {
 
 
-struct SocketOp;
+struct DriverOp;
 
 class Object;
 
 
-class Socket {
+class DriverOST: public Driver {
     private:
-        SocketAddress _ost;
-
-        int _fd;
         Object *_object;
 
-        std::vector<SocketOp*> _ops_array;
-        RingBuf<SocketOp*> _ops;
+        std::vector<DriverOp*> _ops_array;
+        RingBuf<DriverOp*> _ops;
         RawstorOSTFrameResponse _response;
 
         void _validate_event(RawstorIOEvent *event);
@@ -43,22 +41,22 @@ class Socket {
             enum RawstorOSTCommandType expected);
         void _validate_hash(uint64_t hash, uint64_t expected);
 
-        SocketOp* _acquire_op();
-        void _release_op(SocketOp *op) noexcept;
-        SocketOp* _find_op(unsigned int cid);
+        DriverOp* _acquire_op();
+        void _release_op(DriverOp *op) noexcept;
+        DriverOp* _find_op(unsigned int cid);
 
         int _connect();
 
-        void _writev_request(RawstorIOQueue *queue, SocketOp *op);
-        void _read_response_set_object_id(RawstorIOQueue *queue, SocketOp *op);
+        void _writev_request(RawstorIOQueue *queue, DriverOp *op);
+        void _read_response_set_object_id(RawstorIOQueue *queue, DriverOp *op);
         void _read_response_head(RawstorIOQueue *queue);
-        void _read_response_body(RawstorIOQueue *queue, SocketOp *op);
-        void _readv_response_body(RawstorIOQueue *queue, SocketOp *op);
+        void _read_response_body(RawstorIOQueue *queue, DriverOp *op);
+        void _readv_response_body(RawstorIOQueue *queue, DriverOp *op);
 
         static void _next_read_response_body(
-            RawstorIOQueue *queue, SocketOp *op);
+            RawstorIOQueue *queue, DriverOp *op);
         static void _next_readv_response_body(
-            RawstorIOQueue *queue, SocketOp *op);
+            RawstorIOQueue *queue, DriverOp *op);
 
         static int _writev_request_cb(
             RawstorIOEvent *event, void *data) noexcept;
@@ -72,18 +70,9 @@ class Socket {
             RawstorIOEvent *event, void *data) noexcept;
 
     public:
-        static const char* engine_name() noexcept;
-
-        Socket(const SocketAddress &ost, unsigned int depth);
-        Socket(const Socket &) = delete;
-        Socket(Socket &&other) noexcept;
-        ~Socket();
-
-        Socket& operator=(const Socket&) = delete;
-
-        std::string str() const;
-
-        const SocketAddress& ost() const noexcept;
+        DriverOST(const SocketAddress &ost, unsigned int depth);
+        DriverOST(DriverOST &&other) noexcept;
+        ~DriverOST();
 
         void create(
             RawstorIOQueue *queue,
@@ -125,4 +114,4 @@ class Socket {
 
 } // rawstor
 
-#endif // RAWSTOR_SOCKET_OST_HPP
+#endif // RAWSTOR_DRIVER_OST_HPP

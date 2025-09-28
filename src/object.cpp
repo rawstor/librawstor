@@ -1,11 +1,12 @@
 #include "object.hpp"
-#include "object_internals.h"
 #include <rawstor/object.h>
 
+#include "config.h"
 #include "connection.hpp"
 #include "opts.h"
-#include "socket.hpp"
 #include "rawstor_internals.hpp"
+#include "driver_file.hpp"
+#include "driver_ost.hpp"
 
 #include <rawstorstd/gpp.hpp>
 #include <rawstorstd/logging.h>
@@ -57,7 +58,7 @@ void Object::create(
     const RawstorObjectSpec &sp,
     RawstorUUID *id)
 {
-    Connection(QUEUE_DEPTH).create(ost, sp, id);
+    Connection<DriverImpl>(QUEUE_DEPTH).create(ost, sp, id);
 }
 
 
@@ -104,7 +105,7 @@ void Object::remove() {
 
 
 void Object::remove(const SocketAddress &ost) {
-    Connection(QUEUE_DEPTH).remove(ost, _id);
+    Connection<DriverImpl>(QUEUE_DEPTH).remove(ost, _id);
 }
 
 
@@ -114,7 +115,7 @@ void Object::spec(RawstorObjectSpec *sp) {
 
 
 void Object::spec(const SocketAddress &ost, RawstorObjectSpec *sp) {
-    Connection(QUEUE_DEPTH).spec(ost, _id, sp);
+    Connection<DriverImpl>(QUEUE_DEPTH).spec(ost, _id, sp);
 }
 
 
@@ -226,11 +227,6 @@ void Object::pwritev(
 
 
 } // rawstor
-
-
-const char* rawstor_object_backend_name(void) {
-    return rawstor::Socket::engine_name();
-}
 
 
 int rawstor_object_create(

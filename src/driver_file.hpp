@@ -1,5 +1,7 @@
-#ifndef RAWSTOR_SOCKET_FILE_HPP
-#define RAWSTOR_SOCKET_FILE_HPP
+#ifndef RAWSTOR_DRIVER_FILE_HPP
+#define RAWSTOR_DRIVER_FILE_HPP
+
+#include "driver.hpp"
 
 #include <rawstorstd/mempool.hpp>
 #include <rawstorstd/socket_address.hpp>
@@ -15,37 +17,26 @@
 namespace rawstor {
 
 
-struct SocketOp;
+struct DriverOp;
 
 class Object;
 
 
-class Socket {
+class DriverFile: public Driver {
     private:
-        SocketAddress _ost;
-        int _fd;
         Object *_object;
-        MemPool<SocketOp> _ops_pool;
-        std::string _ost_path;
+        MemPool<DriverOp> _ops_pool;
 
-        SocketOp* _acquire_op();
-        void _release_op(SocketOp *op) noexcept;
+        DriverOp* _acquire_op();
+        void _release_op(DriverOp *op) noexcept;
+
+        int _connect(const RawstorUUID &id);
 
         static int _io_cb(RawstorIOEvent *event, void *data) noexcept;
 
     public:
-        static const char* engine_name() noexcept;
-
-        Socket(const SocketAddress &ost, unsigned int depth);
-        Socket(const Socket &) = delete;
-        Socket(Socket &&other) noexcept;
-        ~Socket();
-
-        Socket& operator=(const Socket&) = delete;
-
-        std::string str() const;
-
-        const SocketAddress& ost() const noexcept;
+        DriverFile(const SocketAddress &ost, unsigned int depth);
+        DriverFile(DriverFile &&other) noexcept;
 
         void create(
             RawstorIOQueue *queue,
@@ -88,4 +79,4 @@ class Socket {
 } // rawstor
 
 
-#endif // RAWSTOR_SOCKET_FILE_HPP
+#endif // RAWSTOR_DRIVER_FILE_HPP

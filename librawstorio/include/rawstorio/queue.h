@@ -1,7 +1,7 @@
 #ifndef RAWSTORIO_QUEUE_H
 #define RAWSTORIO_QUEUE_H
 
-#include <rawstor.h>
+#include <rawstor/io_queue.h>
 
 #include <sys/socket.h>
 #include <sys/types.h>
