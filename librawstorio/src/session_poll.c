@@ -156,7 +156,7 @@ static int io_session_unseekable_process_sqes(
         if (!pollhup) {
             res = writev(session->fd, iov, niov);
         } else {
-            res = 0;
+            res = -1;
             errno = ECONNRESET;
         }
     } else {
