@@ -12,8 +12,10 @@
 #include <rawstor/object.h>
 #include <rawstor/rawstor.h>
 
-#include <cstddef>
+#include <string>
 #include <vector>
+
+#include <cstddef>
 
 namespace rawstor {
 
@@ -25,6 +27,8 @@ class Object;
 
 class Socket {
     private:
+        SocketAddress _ost;
+
         int _fd;
         Object *_object;
 
@@ -32,11 +36,18 @@ class Socket {
         RingBuf<SocketOp*> _ops;
         RawstorOSTFrameResponse _response;
 
+        void _validate_event(RawstorIOEvent *event);
+        void _validate_response(const RawstorOSTFrameResponse &response);
+        void _validate_cmd(
+            enum RawstorOSTCommandType cmd,
+            enum RawstorOSTCommandType expected);
+        void _validate_hash(uint64_t hash, uint64_t expected);
+
         SocketOp* _acquire_op();
         void _release_op(SocketOp *op) noexcept;
         SocketOp* _find_op(unsigned int cid);
 
-        int _connect(const SocketAddress &ost);
+        int _connect();
 
         void _writev_request(RawstorIOQueue *queue, SocketOp *op);
         void _read_response_set_object_id(RawstorIOQueue *queue, SocketOp *op);
@@ -69,6 +80,10 @@ class Socket {
         ~Socket();
 
         Socket& operator=(const Socket&) = delete;
+
+        std::string str() const;
+
+        const SocketAddress& ost() const noexcept;
 
         void create(
             RawstorIOQueue *queue,

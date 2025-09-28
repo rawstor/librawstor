@@ -25,7 +25,8 @@ struct RawstorIOSession {
     RawstorRingBuf *read_sqes;
     RawstorRingBuf *write_sqes;
     int (*process_sqes)(
-        RawstorIOSession *session, RawstorRingBuf *sqes, int write);
+        RawstorIOSession *session,
+        RawstorRingBuf *sqes, int write, int pollhup);
 };
 
 
@@ -46,7 +47,8 @@ static int is_seekable(int fd) {
 
 
 static int io_session_seekable_process_sqes(
-    RawstorIOSession *session, RawstorRingBuf *sqes, int RAWSTOR_UNUSED write)
+    RawstorIOSession *session,
+    RawstorRingBuf *sqes, int RAWSTOR_UNUSED write, int RAWSTOR_UNUSED pollhup)
 {
     if (rawstor_ringbuf_empty(sqes)) {
         return 0;
@@ -104,7 +106,8 @@ static int io_session_seekable_process_sqes(
 
 
 static int io_session_unseekable_process_sqes(
-    RawstorIOSession *session, RawstorRingBuf *sqes, int write)
+    RawstorIOSession *session,
+    RawstorRingBuf *sqes, int write, int pollhup)
 {
     int ret = 0;
 
@@ -150,7 +153,12 @@ static int io_session_unseekable_process_sqes(
 
     ssize_t res;
     if (write) {
-        res = writev(session->fd, iov, niov);
+        if (!pollhup) {
+            res = writev(session->fd, iov, niov);
+        } else {
+            res = 0;
+            errno = ECONNRESET;
+        }
     } else {
         res = readv(session->fd, iov, niov);
     }
@@ -372,11 +380,11 @@ int rawstor_io_session_push_write_sqe(
 }
 
 
-int rawstor_io_session_process_read(RawstorIOSession *session) {
-    return session->process_sqes(session, session->read_sqes, 0);
+int rawstor_io_session_process_read(RawstorIOSession *session, int pollhup) {
+    return session->process_sqes(session, session->read_sqes, 0, pollhup);
 }
 
 
-int rawstor_io_session_process_write(RawstorIOSession *session) {
-    return session->process_sqes(session, session->write_sqes, 1);
+int rawstor_io_session_process_write(RawstorIOSession *session, int pollhup) {
+    return session->process_sqes(session, session->write_sqes, 1, pollhup);
 }
