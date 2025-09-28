@@ -267,7 +267,7 @@ int SocketOST::_connect() {
         }
 
         rawstor_info(
-            "fd %d: Connecting to %s:%u...\n",
+            "fd %d: Connecting to %s:%u using OST driver...\n",
             fd, _ost.host().c_str(), _ost.port());
         if (connect(fd, (sockaddr*)&servaddr, sizeof(servaddr)) == -1) {
             RAWSTOR_THROW_ERRNO();
@@ -584,11 +584,6 @@ int SocketOST::_readv_response_body_cb(
     }
 
     return res;
-}
-
-
-const char* SocketOST::engine_name() noexcept {
-    return "ost";
 }
 
 

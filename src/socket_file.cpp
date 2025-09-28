@@ -34,6 +34,13 @@
 namespace {
 
 
+std::string get_ost_path(const rawstor::SocketAddress &ost) {
+    std::ostringstream oss;
+    oss << "./ost-" << ost.host() << ":" << ost.port();
+    return oss.str();
+}
+
+
 std::string get_object_spec_path(
     const std::string &ost_path, const RawstorUUIDString &uuid)
 {
@@ -104,27 +111,16 @@ struct SocketOp {
 SocketFile::SocketFile(const SocketAddress &ost, unsigned int depth):
     Socket(ost),
     _object(nullptr),
-    _ops_pool(depth)
-{
-    std::ostringstream oss;
-    oss << "./ost-" << _ost.host() << ":" << _ost.port();
-    _ost_path = oss.str();
-
-    if (mkdir(_ost_path.c_str(), 0755) == -1) {
-        if (errno == EEXIST) {
-            errno = 0;
-        } else {
-            RAWSTOR_THROW_ERRNO();
-        }
-    }
-}
+    _ops_pool(depth),
+    _ost(ost)
+{}
 
 
 SocketFile::SocketFile(SocketFile &&other) noexcept:
     Socket(std::move(other)),
     _object(std::exchange(other._object, nullptr)),
     _ops_pool(std::move(other._ops_pool)),
-    _ost_path(std::move(other._ost_path))
+    _ost(std::move(other._ost))
 {}
 
 
@@ -135,6 +131,25 @@ SocketOp* SocketFile::_acquire_op() {
 
 void SocketFile::_release_op(SocketOp *op) noexcept {
     return _ops_pool.free(op);
+}
+
+
+int SocketFile::_connect(const RawstorUUID &id) {
+    std::string ost_path = get_ost_path(_ost);
+
+    RawstorUUIDString uuid_string;
+    rawstor_uuid_to_string(&id, &uuid_string);
+    std::string dat_path = get_object_dat_path(ost_path, uuid_string);
+
+    rawstor_info(
+        "Connecting to %s:%u using File driver...\n",
+        _ost.host().c_str(), _ost.port());
+    int fd = open(dat_path.c_str(), O_RDWR | O_NONBLOCK);
+    if (fd == -1) {
+        RAWSTOR_THROW_ERRNO();
+    }
+    rawstor_info("fd %d: Connected\n", fd);
+    return fd;
 }
 
 
@@ -154,21 +169,25 @@ int SocketFile::_io_cb(RawstorIOEvent *event, void *data) noexcept {
 }
 
 
-const char* SocketFile::engine_name() noexcept {
-    return "file";
-}
-
-
 void SocketFile::create(
     RawstorIOQueue *,
     const RawstorObjectSpec &sp, RawstorUUID *id,
     RawstorCallback *cb, void *data)
 {
+    std::string ost_path = get_ost_path(_ost);
     RawstorUUID uuid;
     RawstorUUIDString uuid_string;
     std::string spec_path;
     int fd;
     while (1) {
+        if (mkdir(ost_path.c_str(), 0755) == -1) {
+            if (errno == EEXIST) {
+                errno = 0;
+            } else {
+                RAWSTOR_THROW_ERRNO();
+            }
+        }
+
         int res;
 
         res = rawstor_uuid7_init(&uuid);
@@ -176,7 +195,7 @@ void SocketFile::create(
             RAWSTOR_THROW_SYSTEM_ERROR(-res);
         }
         rawstor_uuid_to_string(&uuid, &uuid_string);
-        spec_path = get_object_spec_path(_ost_path, uuid_string);
+        spec_path = get_object_spec_path(ost_path, uuid_string);
         fd = ::open(
             spec_path.c_str(),
             O_EXCL | O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR);
@@ -195,7 +214,7 @@ void SocketFile::create(
             RAWSTOR_THROW_ERRNO();
         }
 
-        write_dat(_ost_path, sp, uuid);
+        write_dat(ost_path, sp, uuid);
 
         if (::close(fd) == -1) {
             RAWSTOR_THROW_ERRNO();
@@ -217,10 +236,12 @@ void SocketFile::remove(
     const RawstorUUID &id,
     RawstorCallback *cb, void *data)
 {
+    std::string ost_path = get_ost_path(_ost);
+
     RawstorUUIDString uuid_string;
     rawstor_uuid_to_string(&id, &uuid_string);
 
-    std::string dat_path = get_object_dat_path(_ost_path, uuid_string);
+    std::string dat_path = get_object_dat_path(ost_path, uuid_string);
     if (unlink(dat_path.c_str()) == -1) {
         if (errno == ENOENT) {
             errno = 0;
@@ -229,7 +250,7 @@ void SocketFile::remove(
         }
     }
 
-    std::string spec_path = get_object_spec_path(_ost_path, uuid_string);
+    std::string spec_path = get_object_spec_path(ost_path, uuid_string);
     if (unlink(spec_path.c_str()) == -1) {
         if (errno == ENOENT) {
             errno = 0;
@@ -247,10 +268,12 @@ void SocketFile::spec(
     const RawstorUUID &id, RawstorObjectSpec *sp,
     RawstorCallback *cb, void *data)
 {
+    std::string ost_path = get_ost_path(_ost);
+
     RawstorUUIDString uuid_string;
     rawstor_uuid_to_string(&id, &uuid_string);
 
-    std::string spec_path = get_object_spec_path(_ost_path, uuid_string);
+    std::string spec_path = get_object_spec_path(ost_path, uuid_string);
 
     int fd = ::open(spec_path.c_str(), O_RDONLY);
     if (fd == -1) {
@@ -284,12 +307,14 @@ void SocketFile::set_object(
         throw std::runtime_error("Object already set");
     }
 
+    std::string ost_path = get_ost_path(_ost);
+
     RawstorUUIDString uuid_string;
     rawstor_uuid_to_string(&object->id(), &uuid_string);
 
-    std::string dat_path = get_object_dat_path(_ost_path, uuid_string);
+    std::string dat_path = get_object_dat_path(ost_path, uuid_string);
 
-    _fd = ::open(dat_path.c_str(), O_RDWR | O_NONBLOCK);
+    _fd = _connect(object->id());
     if (_fd == -1) {
         RAWSTOR_THROW_ERRNO();
     }

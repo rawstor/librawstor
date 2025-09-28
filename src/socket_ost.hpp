@@ -70,8 +70,6 @@ class SocketOST: public Socket {
             RawstorIOEvent *event, void *data) noexcept;
 
     public:
-        static const char* engine_name() noexcept;
-
         SocketOST(const SocketAddress &ost, unsigned int depth);
         SocketOST(SocketOST &&other) noexcept;
         ~SocketOST();

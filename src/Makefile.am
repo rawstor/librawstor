@@ -32,7 +32,9 @@ librawstor_la_SOURCES = connection.cpp \
                         object.cpp \
                         opts.c \
                         rawstor.cpp \
-                        socket.cpp
+                        socket.cpp \
+                        socket_file.cpp \
+                        socket_ost.cpp
 
 librawstor_la_LIBADD = $(top_srcdir)/librawstorstd/src/librawstorstd.la \
                        $(top_srcdir)/librawstorio/src/librawstorio.la \
@@ -42,10 +44,7 @@ librawstor_la_LIBADD = $(top_srcdir)/librawstorstd/src/librawstorstd.la \
 if ENABLE_OST
     AM_CFLAGS += $(LIBXXHASH_CFLAGS)
     AM_CXXFLAGS += $(LIBXXHASH_CFLAGS)
-    librawstor_la_SOURCES += socket_ost.cpp
     librawstor_la_LIBADD += $(LIBXXHASH_LIBS)
-else
-    librawstor_la_SOURCES += socket_file.cpp
 endif
 
 

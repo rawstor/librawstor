@@ -1,16 +1,12 @@
 #include "object.hpp"
-#include "object_internals.h"
 #include <rawstor/object.h>
 
 #include "config.h"
 #include "connection.hpp"
 #include "opts.h"
-#ifdef RAWSTOR_ENABLE_OST
-#include "socket_ost.hpp"
-#else
-#include "socket_file.hpp"
-#endif
 #include "rawstor_internals.hpp"
+#include "socket_file.hpp"
+#include "socket_ost.hpp"
 
 #include <rawstorstd/gpp.hpp>
 #include <rawstorstd/logging.h>
@@ -231,15 +227,6 @@ void Object::pwritev(
 
 
 } // rawstor
-
-
-const char* rawstor_object_backend_name(void) {
-#ifdef RAWSTOR_ENABLE_OST
-    return rawstor::SocketOST::engine_name();
-#else
-    return rawstor::SocketFile::engine_name();
-#endif
-}
 
 
 int rawstor_object_create(

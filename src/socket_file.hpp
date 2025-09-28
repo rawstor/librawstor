@@ -26,16 +26,16 @@ class SocketFile: public Socket {
     private:
         Object *_object;
         MemPool<SocketOp> _ops_pool;
-        std::string _ost_path;
+        SocketAddress _ost;
 
         SocketOp* _acquire_op();
         void _release_op(SocketOp *op) noexcept;
 
+        int _connect(const RawstorUUID &id);
+
         static int _io_cb(RawstorIOEvent *event, void *data) noexcept;
 
     public:
-        static const char* engine_name() noexcept;
-
         SocketFile(const SocketAddress &ost, unsigned int depth);
         SocketFile(SocketFile &&other) noexcept;
 
