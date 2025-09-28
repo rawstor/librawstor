@@ -55,7 +55,7 @@ jobs:
         pushd .
         cd ./librawstor
         ./autogen.sh
-        ./configure --enable-trace --disable-shared ${{ matrix.without-liburing }}
+        ./configure --enable-trace --disable-shared --enable-asan ${{ matrix.without-liburing }}
         make -j$(nproc)
         sudo make install
         popd
