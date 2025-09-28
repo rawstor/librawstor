@@ -29,12 +29,12 @@ librawstor_la_HEADERS = $(top_srcdir)/include/rawstor/io_event.h \
                         $(top_srcdir)/include/rawstor/uuid.h
 
 librawstor_la_SOURCES = connection.cpp \
+                        driver.cpp \
+                        driver_file.cpp \
+                        driver_ost.cpp \
                         object.cpp \
                         opts.c \
-                        rawstor.cpp \
-                        socket.cpp \
-                        socket_file.cpp \
-                        socket_ost.cpp
+                        rawstor.cpp
 
 librawstor_la_LIBADD = $(top_srcdir)/librawstorstd/src/librawstorstd.la \
                        $(top_srcdir)/librawstorio/src/librawstorio.la \

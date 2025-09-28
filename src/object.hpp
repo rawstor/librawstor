@@ -12,8 +12,8 @@
 namespace rawstor {
 
 
-class SocketOST;
-class SocketFile;
+class DriverOST;
+class DriverFile;
 
 
 struct ObjectOp;
@@ -22,14 +22,14 @@ struct ObjectOp;
 class Object {
     private:
 #ifdef RAWSTOR_ENABLE_OST
-        using SocketImpl = SocketOST;
+        using DriverImpl = DriverOST;
 #else
-        using SocketImpl = SocketFile;
+        using DriverImpl = DriverFile;
 #endif
         RawstorObject *_c_ptr;
         RawstorUUID _id;
         MemPool<ObjectOp> _ops;
-        Connection<SocketImpl> _cn;
+        Connection<DriverImpl> _cn;
 
         static int _process(
             RawstorObject *object,

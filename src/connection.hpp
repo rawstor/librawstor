@@ -49,30 +49,30 @@ class Queue {
 };
 
 
-template <class SocketImpl>
+template <class DriverImpl>
 class ConnectionOp;
 
 class Object;
 
 
-template <class SocketImpl>
+template <class DriverImpl>
 class Connection {
-    friend class ConnectionOp<SocketImpl>;
+    friend class ConnectionOp<DriverImpl>;
 
     private:
         Object *_object;
         unsigned int _depth;
 
-        std::vector<std::shared_ptr<SocketImpl>> _sockets;
-        size_t _socket_index;
+        std::vector<std::shared_ptr<DriverImpl>> _sessions;
+        size_t _session_index;
 
-        std::vector<std::shared_ptr<SocketImpl>> _open(
+        std::vector<std::shared_ptr<DriverImpl>> _open(
             const SocketAddress &ost,
             rawstor::Object *object,
-            size_t nsockets);
+            size_t nsessions);
 
-        void _replace_socket(const std::shared_ptr<SocketImpl> &s);
-        std::shared_ptr<SocketImpl> _get_next_socket();
+        void _replace_session(const std::shared_ptr<DriverImpl> &s);
+        std::shared_ptr<DriverImpl> _get_next_session();
 
     public:
         Connection(unsigned int depth);
@@ -96,7 +96,7 @@ class Connection {
         void open(
             const SocketAddress &ost,
             rawstor::Object *object,
-            size_t nsockets);
+            size_t nsessions);
 
         void close();
 
@@ -118,15 +118,15 @@ class Connection {
 };
 
 
-template <class SocketImpl>
+template <class DriverImpl>
 class ConnectionOp {
     private:
-        Connection<SocketImpl> &_cn;
+        Connection<DriverImpl> &_cn;
         RawstorCallback *_cb;
         void *_data;
 
     protected:
-        std::shared_ptr<SocketImpl> _s;
+        std::shared_ptr<DriverImpl> _s;
         unsigned int _attempts;
 
         static int _process(
@@ -144,8 +144,8 @@ class ConnectionOp {
                         std::strerror(error),
                         op->_attempts, rawstor_opts_io_attempts());
                     try {
-                        op->_cn._replace_socket(op->_s);
-                        (*op)(op->_cn._get_next_socket());
+                        op->_cn._replace_session(op->_s);
+                        (*op)(op->_cn._get_next_session());
                         return 0;
                     } catch (const std::system_error &e) {
                         error = e.code().value();
@@ -184,7 +184,7 @@ class ConnectionOp {
 
     public:
         ConnectionOp(
-            Connection<SocketImpl> &cn, RawstorCallback *cb, void *data):
+            Connection<DriverImpl> &cn, RawstorCallback *cb, void *data):
             _cn(cn),
             _cb(cb),
             _data(data),
@@ -196,7 +196,7 @@ class ConnectionOp {
         ConnectionOp& operator=(ConnectionOp &&) = delete;
         virtual ~ConnectionOp() {}
 
-        virtual void operator()(const std::shared_ptr<SocketImpl> &s) = 0;
+        virtual void operator()(const std::shared_ptr<DriverImpl> &s) = 0;
 
         virtual std::string str() const = 0;
 
@@ -208,12 +208,12 @@ class ConnectionOp {
 };
 
 
-template <class SocketImpl>
-class ConnectionOpPRead: public ConnectionOp<SocketImpl> {
+template <class DriverImpl>
+class ConnectionOpPRead: public ConnectionOp<DriverImpl> {
     private:
-        using ConnectionOp<SocketImpl>::_s;
-        using ConnectionOp<SocketImpl>::_attempts;
-        using ConnectionOp<SocketImpl>::_process;
+        using ConnectionOp<DriverImpl>::_s;
+        using ConnectionOp<DriverImpl>::_attempts;
+        using ConnectionOp<DriverImpl>::_process;
 
         void *_buf;
         size_t _size;
@@ -221,16 +221,16 @@ class ConnectionOpPRead: public ConnectionOp<SocketImpl> {
 
     public:
         ConnectionOpPRead(
-            Connection<SocketImpl> &cn,
+            Connection<DriverImpl> &cn,
             void *buf, size_t size, size_t offset,
             RawstorCallback *cb, void *data):
-            ConnectionOp<SocketImpl>(cn, cb, data),
+            ConnectionOp<DriverImpl>(cn, cb, data),
             _buf(buf),
             _size(size),
             _offset(offset)
         {}
 
-        void operator()(const std::shared_ptr<SocketImpl> &s) {
+        void operator()(const std::shared_ptr<DriverImpl> &s) {
             _s = s;
             ++_attempts;
             _s->pread(_buf, _size, _offset, _process, this);
@@ -244,12 +244,12 @@ class ConnectionOpPRead: public ConnectionOp<SocketImpl> {
 };
 
 
-template <class SocketImpl>
-class ConnectionOpPReadV: public ConnectionOp<SocketImpl> {
+template <class DriverImpl>
+class ConnectionOpPReadV: public ConnectionOp<DriverImpl> {
     private:
-        using ConnectionOp<SocketImpl>::_s;
-        using ConnectionOp<SocketImpl>::_attempts;
-        using ConnectionOp<SocketImpl>::_process;
+        using ConnectionOp<DriverImpl>::_s;
+        using ConnectionOp<DriverImpl>::_attempts;
+        using ConnectionOp<DriverImpl>::_process;
 
         iovec *_iov;
         unsigned int _niov;
@@ -258,17 +258,17 @@ class ConnectionOpPReadV: public ConnectionOp<SocketImpl> {
 
     public:
         ConnectionOpPReadV(
-            Connection<SocketImpl> &cn,
+            Connection<DriverImpl> &cn,
             iovec *iov, unsigned int niov, size_t size, off_t offset,
             RawstorCallback *cb, void *data):
-            ConnectionOp<SocketImpl>(cn, cb, data),
+            ConnectionOp<DriverImpl>(cn, cb, data),
             _iov(iov),
             _niov(niov),
             _size(size),
             _offset(offset)
         {}
 
-        void operator()(const std::shared_ptr<SocketImpl> &s) {
+        void operator()(const std::shared_ptr<DriverImpl> &s) {
             _s = s;
             ++_attempts;
             _s->preadv(_iov, _niov, _size, _offset, _process, this);
@@ -282,12 +282,12 @@ class ConnectionOpPReadV: public ConnectionOp<SocketImpl> {
 };
 
 
-template <class SocketImpl>
-class ConnectionOpPWrite: public ConnectionOp<SocketImpl> {
+template <class DriverImpl>
+class ConnectionOpPWrite: public ConnectionOp<DriverImpl> {
     private:
-        using ConnectionOp<SocketImpl>::_s;
-        using ConnectionOp<SocketImpl>::_attempts;
-        using ConnectionOp<SocketImpl>::_process;
+        using ConnectionOp<DriverImpl>::_s;
+        using ConnectionOp<DriverImpl>::_attempts;
+        using ConnectionOp<DriverImpl>::_process;
 
         void *_buf;
         size_t _size;
@@ -295,16 +295,16 @@ class ConnectionOpPWrite: public ConnectionOp<SocketImpl> {
 
     public:
         ConnectionOpPWrite(
-            Connection<SocketImpl> &cn,
+            Connection<DriverImpl> &cn,
             void *buf, size_t size, size_t offset,
             RawstorCallback *cb, void *data):
-            ConnectionOp<SocketImpl>(cn, cb, data),
+            ConnectionOp<DriverImpl>(cn, cb, data),
             _buf(buf),
             _size(size),
             _offset(offset)
         {}
 
-        void operator()(const std::shared_ptr<SocketImpl> &s) {
+        void operator()(const std::shared_ptr<DriverImpl> &s) {
             _s = s;
             ++_attempts;
             _s->pwrite(_buf, _size, _offset, _process, this);
@@ -318,12 +318,12 @@ class ConnectionOpPWrite: public ConnectionOp<SocketImpl> {
 };
 
 
-template <class SocketImpl>
-class ConnectionOpPWriteV: public ConnectionOp<SocketImpl> {
+template <class DriverImpl>
+class ConnectionOpPWriteV: public ConnectionOp<DriverImpl> {
     private:
-        using ConnectionOp<SocketImpl>::_s;
-        using ConnectionOp<SocketImpl>::_attempts;
-        using ConnectionOp<SocketImpl>::_process;
+        using ConnectionOp<DriverImpl>::_s;
+        using ConnectionOp<DriverImpl>::_attempts;
+        using ConnectionOp<DriverImpl>::_process;
 
         iovec *_iov;
         unsigned int _niov;
@@ -332,17 +332,17 @@ class ConnectionOpPWriteV: public ConnectionOp<SocketImpl> {
 
     public:
         ConnectionOpPWriteV(
-            Connection<SocketImpl> &cn,
+            Connection<DriverImpl> &cn,
             iovec *iov, unsigned int niov, size_t size, off_t offset,
             RawstorCallback *cb, void *data):
-            ConnectionOp<SocketImpl>(cn, cb, data),
+            ConnectionOp<DriverImpl>(cn, cb, data),
             _iov(iov),
             _niov(niov),
             _size(size),
             _offset(offset)
         {}
 
-        void operator()(const std::shared_ptr<SocketImpl> &s) {
+        void operator()(const std::shared_ptr<DriverImpl> &s) {
             _s = s;
             ++_attempts;
             _s->pwritev(_iov, _niov, _size, _offset, _process, this);
@@ -356,16 +356,16 @@ class ConnectionOpPWriteV: public ConnectionOp<SocketImpl> {
 };
 
 
-template <class SocketImpl>
-Connection<SocketImpl>::Connection(unsigned int depth):
+template <class DriverImpl>
+Connection<DriverImpl>::Connection(unsigned int depth):
     _object(nullptr),
     _depth(depth),
-    _socket_index(0)
+    _session_index(0)
 {}
 
 
-template <class SocketImpl>
-Connection<SocketImpl>::~Connection() {
+template <class DriverImpl>
+Connection<DriverImpl>::~Connection() {
     try {
         close();
     } catch (const std::system_error &e) {
@@ -374,13 +374,13 @@ Connection<SocketImpl>::~Connection() {
 }
 
 
-template <class SocketImpl>
-std::vector<std::shared_ptr<SocketImpl>> Connection<SocketImpl>::_open(
+template <class DriverImpl>
+std::vector<std::shared_ptr<DriverImpl>> Connection<DriverImpl>::_open(
     const SocketAddress &ost,
     rawstor::Object *object,
-    size_t nsockets)
+    size_t nsessions)
 {
-    std::vector<std::shared_ptr<SocketImpl>> sockets;
+    std::vector<std::shared_ptr<DriverImpl>> sessions;
 
     for (
         unsigned int attempt = 1;
@@ -388,15 +388,15 @@ std::vector<std::shared_ptr<SocketImpl>> Connection<SocketImpl>::_open(
         ++attempt)
     {
         try {
-            Queue q(nsockets, _depth);
+            Queue q(nsessions, _depth);
 
-            sockets.clear();
-            sockets.reserve(nsockets);
-            for (size_t i = 0; i < nsockets; ++i) {
-                sockets.push_back(std::make_shared<SocketImpl>(ost, _depth));
+            sessions.clear();
+            sessions.reserve(nsessions);
+            for (size_t i = 0; i < nsessions; ++i) {
+                sessions.push_back(std::make_shared<DriverImpl>(ost, _depth));
             }
 
-            for (std::shared_ptr<SocketImpl> s: sockets) {
+            for (std::shared_ptr<DriverImpl> s: sessions) {
                 s->set_object(
                     static_cast<RawstorIOQueue*>(q), object, q.callback, &q);
             }
@@ -407,13 +407,13 @@ std::vector<std::shared_ptr<SocketImpl>> Connection<SocketImpl>::_open(
         } catch (const std::system_error &e) {
             if (attempt != rawstor_opts_io_attempts()) {
                 rawstor_warning(
-                    "Open socket failed; error: %s; "
+                    "Open session failed; error: %s; "
                     "attempt: %d of %d; retrying...\n",
                     e.what(),
                     attempt, rawstor_opts_io_attempts());
             } else {
                 rawstor_warning(
-                    "Open socket failed; error: %s; "
+                    "Open session failed; error: %s; "
                     "attempt: %d of %d; failing...\n",
                     e.what(),
                     attempt, rawstor_opts_io_attempts());
@@ -422,153 +422,153 @@ std::vector<std::shared_ptr<SocketImpl>> Connection<SocketImpl>::_open(
         }
     }
 
-    return sockets;
+    return sessions;
 }
 
 
-template <class SocketImpl>
-void Connection<SocketImpl>::_replace_socket(
-    const std::shared_ptr<SocketImpl> &s)
+template <class DriverImpl>
+void Connection<DriverImpl>::_replace_session(
+    const std::shared_ptr<DriverImpl> &s)
 {
-    typename std::vector<std::shared_ptr<SocketImpl>>::iterator it = std::find(
-        _sockets.begin(), _sockets.end(), s);
+    typename std::vector<std::shared_ptr<DriverImpl>>::iterator it = std::find(
+        _sessions.begin(), _sessions.end(), s);
 
-    if (it != _sockets.end()) {
-        _sockets.erase(it);
+    if (it != _sessions.end()) {
+        _sessions.erase(it);
 
-        std::vector<std::shared_ptr<SocketImpl>> new_sockets = _open(
+        std::vector<std::shared_ptr<DriverImpl>> new_sessions = _open(
             s->ost(), _object, 1);
 
-        _sockets.push_back(new_sockets.front());
+        _sessions.push_back(new_sessions.front());
     }
 }
 
 
-template <class SocketImpl>
-std::shared_ptr<SocketImpl> Connection<SocketImpl>::_get_next_socket() {
-    if (_sockets.empty()) {
-        throw std::runtime_error("Empty sockets list");
+template <class DriverImpl>
+std::shared_ptr<DriverImpl> Connection<DriverImpl>::_get_next_session() {
+    if (_sessions.empty()) {
+        throw std::runtime_error("Empty sessions list");
     }
 
-    std::shared_ptr<SocketImpl> s = _sockets[_socket_index++];
-    if (_socket_index >= _sockets.size()) {
-        _socket_index = 0;
+    std::shared_ptr<DriverImpl> s = _sessions[_session_index++];
+    if (_session_index >= _sessions.size()) {
+        _session_index = 0;
     }
 
     return s;
 }
 
 
-template <class SocketImpl>
-void Connection<SocketImpl>::create(
+template <class DriverImpl>
+void Connection<DriverImpl>::create(
     const SocketAddress &ost,
     const RawstorObjectSpec &sp, RawstorUUID *id)
 {
     Queue q(1, _depth);
 
-    SocketImpl s(ost, _depth);
+    DriverImpl s(ost, _depth);
     s.create(static_cast<RawstorIOQueue*>(q), sp, id, q.callback, &q);
 
     q.wait();
 }
 
 
-template <class SocketImpl>
-void Connection<SocketImpl>::remove(
+template <class DriverImpl>
+void Connection<DriverImpl>::remove(
     const SocketAddress &ost,
     const RawstorUUID &id)
 {
     Queue q(1, _depth);
 
-    SocketImpl s(ost, _depth);
+    DriverImpl s(ost, _depth);
     s.remove(static_cast<RawstorIOQueue*>(q), id, q.callback, &q);
 
     q.wait();
 }
 
 
-template <class SocketImpl>
-void Connection<SocketImpl>::spec(
+template <class DriverImpl>
+void Connection<DriverImpl>::spec(
     const SocketAddress &ost,
     const RawstorUUID &id, RawstorObjectSpec *sp)
 {
     Queue q(1, _depth);
 
-    SocketImpl s(ost, _depth);
+    DriverImpl s(ost, _depth);
     s.spec(static_cast<RawstorIOQueue*>(q), id, sp, q.callback, &q);
 
     q.wait();
 }
 
 
-template <class SocketImpl>
-void Connection<SocketImpl>::open(
+template <class DriverImpl>
+void Connection<DriverImpl>::open(
     const SocketAddress &ost,
     rawstor::Object *object,
-    size_t nsockets)
+    size_t nsessions)
 {
-    _sockets = _open(ost, object, nsockets);
+    _sessions = _open(ost, object, nsessions);
     _object = object;
 }
 
 
-template <class SocketImpl>
-void Connection<SocketImpl>::close() {
-    _sockets.clear();
+template <class DriverImpl>
+void Connection<DriverImpl>::close() {
+    _sessions.clear();
     _object = nullptr;
 }
 
 
-template <class SocketImpl>
-void Connection<SocketImpl>::pread(
+template <class DriverImpl>
+void Connection<DriverImpl>::pread(
     void *buf, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
-    std::shared_ptr<SocketImpl> s = _get_next_socket();
-    std::unique_ptr<ConnectionOp<SocketImpl>> op =
-        std::make_unique<ConnectionOpPRead<SocketImpl>>(
+    std::shared_ptr<DriverImpl> s = _get_next_session();
+    std::unique_ptr<ConnectionOp<DriverImpl>> op =
+        std::make_unique<ConnectionOpPRead<DriverImpl>>(
             *this, buf, size, offset, cb, data);
             (*op)(s);
     op.release();
 }
 
 
-template <class SocketImpl>
-void Connection<SocketImpl>::preadv(
+template <class DriverImpl>
+void Connection<DriverImpl>::preadv(
     iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
-    std::shared_ptr<SocketImpl> s = _get_next_socket();
-    std::unique_ptr<ConnectionOp<SocketImpl>> op =
-        std::make_unique<ConnectionOpPReadV<SocketImpl>>(
+    std::shared_ptr<DriverImpl> s = _get_next_session();
+    std::unique_ptr<ConnectionOp<DriverImpl>> op =
+        std::make_unique<ConnectionOpPReadV<DriverImpl>>(
             *this, iov, niov, size, offset, cb, data);
     (*op)(s);
     op.release();
 }
 
 
-template <class SocketImpl>
-void Connection<SocketImpl>::pwrite(
+template <class DriverImpl>
+void Connection<DriverImpl>::pwrite(
     void *buf, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
-    std::shared_ptr<SocketImpl> s = _get_next_socket();
-    std::unique_ptr<ConnectionOp<SocketImpl>> op =
-        std::make_unique<ConnectionOpPWrite<SocketImpl>>(
+    std::shared_ptr<DriverImpl> s = _get_next_session();
+    std::unique_ptr<ConnectionOp<DriverImpl>> op =
+        std::make_unique<ConnectionOpPWrite<DriverImpl>>(
             *this, buf, size, offset, cb, data);
     (*op)(s);
     op.release();
 }
 
 
-template <class SocketImpl>
-void Connection<SocketImpl>::pwritev(
+template <class DriverImpl>
+void Connection<DriverImpl>::pwritev(
     iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
-    std::shared_ptr<SocketImpl> s = _get_next_socket();
-    std::unique_ptr<ConnectionOp<SocketImpl>> op =
-        std::make_unique<ConnectionOpPWriteV<SocketImpl>>(
+    std::shared_ptr<DriverImpl> s = _get_next_session();
+    std::unique_ptr<ConnectionOp<DriverImpl>> op =
+        std::make_unique<ConnectionOpPWriteV<DriverImpl>>(
             *this, iov, niov, size, offset, cb, data);
     (*op)(s);
     op.release();

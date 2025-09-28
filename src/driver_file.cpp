@@ -1,4 +1,4 @@
-#include "socket_file.hpp"
+#include "driver_file.hpp"
 
 #include "object.hpp"
 #include "opts.h"
@@ -100,41 +100,41 @@ void write_dat(
 namespace rawstor {
 
 
-struct SocketOp {
-    SocketFile *s;
+struct DriverOp {
+    DriverFile *s;
 
     RawstorCallback *callback;
     void *data;
 };
 
 
-SocketFile::SocketFile(const SocketAddress &ost, unsigned int depth):
-    Socket(ost),
+DriverFile::DriverFile(const SocketAddress &ost, unsigned int depth):
+    Driver(ost),
     _object(nullptr),
     _ops_pool(depth),
     _ost(ost)
 {}
 
 
-SocketFile::SocketFile(SocketFile &&other) noexcept:
-    Socket(std::move(other)),
+DriverFile::DriverFile(DriverFile &&other) noexcept:
+    Driver(std::move(other)),
     _object(std::exchange(other._object, nullptr)),
     _ops_pool(std::move(other._ops_pool)),
     _ost(std::move(other._ost))
 {}
 
 
-SocketOp* SocketFile::_acquire_op() {
+DriverOp* DriverFile::_acquire_op() {
     return _ops_pool.alloc();
 }
 
 
-void SocketFile::_release_op(SocketOp *op) noexcept {
+void DriverFile::_release_op(DriverOp *op) noexcept {
     return _ops_pool.free(op);
 }
 
 
-int SocketFile::_connect(const RawstorUUID &id) {
+int DriverFile::_connect(const RawstorUUID &id) {
     std::string ost_path = get_ost_path(_ost);
 
     RawstorUUIDString uuid_string;
@@ -153,8 +153,8 @@ int SocketFile::_connect(const RawstorUUID &id) {
 }
 
 
-int SocketFile::_io_cb(RawstorIOEvent *event, void *data) noexcept {
-    SocketOp *op = static_cast<SocketOp*>(data);
+int DriverFile::_io_cb(RawstorIOEvent *event, void *data) noexcept {
+    DriverOp *op = static_cast<DriverOp*>(data);
 
     int ret = op->callback(
         op->s->_object->c_ptr(),
@@ -169,7 +169,7 @@ int SocketFile::_io_cb(RawstorIOEvent *event, void *data) noexcept {
 }
 
 
-void SocketFile::create(
+void DriverFile::create(
     RawstorIOQueue *,
     const RawstorObjectSpec &sp, RawstorUUID *id,
     RawstorCallback *cb, void *data)
@@ -231,7 +231,7 @@ void SocketFile::create(
 }
 
 
-void SocketFile::remove(
+void DriverFile::remove(
     RawstorIOQueue *,
     const RawstorUUID &id,
     RawstorCallback *cb, void *data)
@@ -263,7 +263,7 @@ void SocketFile::remove(
 }
 
 
-void SocketFile::spec(
+void DriverFile::spec(
     RawstorIOQueue *,
     const RawstorUUID &id, RawstorObjectSpec *sp,
     RawstorCallback *cb, void *data)
@@ -298,7 +298,7 @@ void SocketFile::spec(
 }
 
 
-void SocketFile::set_object(
+void DriverFile::set_object(
     RawstorIOQueue *,
     rawstor::Object *object,
     RawstorCallback *cb, void *data)
@@ -325,11 +325,11 @@ void SocketFile::set_object(
 }
 
 
-void SocketFile::pread(
+void DriverFile::pread(
     void *buf, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
-    SocketOp *op = _acquire_op();
+    DriverOp *op = _acquire_op();
     try {
         *op = {
             .s = this,
@@ -351,11 +351,11 @@ void SocketFile::pread(
 }
 
 
-void SocketFile::preadv(
+void DriverFile::preadv(
     iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
-    SocketOp *op = _acquire_op();
+    DriverOp *op = _acquire_op();
     try {
         *op = {
             .s = this,
@@ -377,11 +377,11 @@ void SocketFile::preadv(
 }
 
 
-void SocketFile::pwrite(
+void DriverFile::pwrite(
     void *buf, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
-    SocketOp *op = _acquire_op();
+    DriverOp *op = _acquire_op();
     try {
         *op = {
             .s = this,
@@ -403,11 +403,11 @@ void SocketFile::pwrite(
 }
 
 
-void SocketFile::pwritev(
+void DriverFile::pwritev(
     iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
-    SocketOp *op = _acquire_op();
+    DriverOp *op = _acquire_op();
     try {
         *op = {
             .s = this,

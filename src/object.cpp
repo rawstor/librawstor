@@ -5,8 +5,8 @@
 #include "connection.hpp"
 #include "opts.h"
 #include "rawstor_internals.hpp"
-#include "socket_file.hpp"
-#include "socket_ost.hpp"
+#include "driver_file.hpp"
+#include "driver_ost.hpp"
 
 #include <rawstorstd/gpp.hpp>
 #include <rawstorstd/logging.h>
@@ -58,7 +58,7 @@ void Object::create(
     const RawstorObjectSpec &sp,
     RawstorUUID *id)
 {
-    Connection<SocketImpl>(QUEUE_DEPTH).create(ost, sp, id);
+    Connection<DriverImpl>(QUEUE_DEPTH).create(ost, sp, id);
 }
 
 
@@ -105,7 +105,7 @@ void Object::remove() {
 
 
 void Object::remove(const SocketAddress &ost) {
-    Connection<SocketImpl>(QUEUE_DEPTH).remove(ost, _id);
+    Connection<DriverImpl>(QUEUE_DEPTH).remove(ost, _id);
 }
 
 
@@ -115,7 +115,7 @@ void Object::spec(RawstorObjectSpec *sp) {
 
 
 void Object::spec(const SocketAddress &ost, RawstorObjectSpec *sp) {
-    Connection<SocketImpl>(QUEUE_DEPTH).spec(ost, _id, sp);
+    Connection<DriverImpl>(QUEUE_DEPTH).spec(ost, _id, sp);
 }
 
 

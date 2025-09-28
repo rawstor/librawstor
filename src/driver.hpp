@@ -1,5 +1,5 @@
-#ifndef RAWSTOR_SOCKET_HPP
-#define RAWSTOR_SOCKET_HPP
+#ifndef RAWSTOR_DRIVER_HPP
+#define RAWSTOR_DRIVER_HPP
 
 #include "object.hpp"
 
@@ -13,18 +13,18 @@
 namespace rawstor {
 
 
-class Socket {
+class Driver {
     protected:
         SocketAddress _ost;
         int _fd;
 
     public:
-        Socket(const SocketAddress &ost);
-        Socket(const Socket &) = delete;
-        Socket(Socket &&other) noexcept;
-        virtual ~Socket();
+        Driver(const SocketAddress &ost);
+        Driver(const Driver &) = delete;
+        Driver(Driver &&other) noexcept;
+        virtual ~Driver();
 
-        Socket& operator=(const Socket&) = delete;
+        Driver& operator=(const Driver&) = delete;
 
         std::string str() const;
 
@@ -70,4 +70,4 @@ class Socket {
 
 } //rawstor
 
-#endif // RAWSTOR_SOCKET_HPP
+#endif // RAWSTOR_DRIVER_HPP
