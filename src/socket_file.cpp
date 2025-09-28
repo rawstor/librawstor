@@ -94,16 +94,15 @@ namespace rawstor {
 
 
 struct SocketOp {
-    rawstor::Socket *s;
+    SocketFile *s;
 
     RawstorCallback *callback;
     void *data;
 };
 
 
-Socket::Socket(const SocketAddress &ost, unsigned int depth):
-    _ost(ost),
-    _fd(-1),
+SocketFile::SocketFile(const SocketAddress &ost, unsigned int depth):
+    Socket(ost),
     _object(nullptr),
     _ops_pool(depth)
 {
@@ -121,38 +120,25 @@ Socket::Socket(const SocketAddress &ost, unsigned int depth):
 }
 
 
-Socket::Socket(Socket &&other) noexcept:
-    _ost(std::move(other._ost)),
-    _fd(std::exchange(other._fd, -1)),
+SocketFile::SocketFile(SocketFile &&other) noexcept:
+    Socket(std::move(other)),
     _object(std::exchange(other._object, nullptr)),
     _ops_pool(std::move(other._ops_pool)),
     _ost_path(std::move(other._ost_path))
 {}
 
 
-Socket::~Socket() {
-    if (_fd != -1) {
-        if (::close(_fd) == -1) {
-            int error = errno;
-            errno = 0;
-            rawstor_error(
-                "Socket::~Socket(): close failed: %s\n", strerror(error));
-        }
-    }
-}
-
-
-SocketOp* Socket::_acquire_op() {
+SocketOp* SocketFile::_acquire_op() {
     return _ops_pool.alloc();
 }
 
 
-void Socket::_release_op(SocketOp *op) noexcept {
+void SocketFile::_release_op(SocketOp *op) noexcept {
     return _ops_pool.free(op);
 }
 
 
-int Socket::_io_cb(RawstorIOEvent *event, void *data) noexcept {
+int SocketFile::_io_cb(RawstorIOEvent *event, void *data) noexcept {
     SocketOp *op = static_cast<SocketOp*>(data);
 
     int ret = op->callback(
@@ -168,24 +154,12 @@ int Socket::_io_cb(RawstorIOEvent *event, void *data) noexcept {
 }
 
 
-const char* Socket::engine_name() noexcept {
+const char* SocketFile::engine_name() noexcept {
     return "file";
 }
 
 
-std::string Socket::str() const {
-    std::ostringstream oss;
-    oss << "fd " << _fd;
-    return oss.str();
-}
-
-
-const SocketAddress& Socket::ost() const noexcept {
-    return _ost;
-}
-
-
-void Socket::create(
+void SocketFile::create(
     RawstorIOQueue *,
     const RawstorObjectSpec &sp, RawstorUUID *id,
     RawstorCallback *cb, void *data)
@@ -238,7 +212,7 @@ void Socket::create(
 }
 
 
-void Socket::remove(
+void SocketFile::remove(
     RawstorIOQueue *,
     const RawstorUUID &id,
     RawstorCallback *cb, void *data)
@@ -268,7 +242,7 @@ void Socket::remove(
 }
 
 
-void Socket::spec(
+void SocketFile::spec(
     RawstorIOQueue *,
     const RawstorUUID &id, RawstorObjectSpec *sp,
     RawstorCallback *cb, void *data)
@@ -301,7 +275,7 @@ void Socket::spec(
 }
 
 
-void Socket::set_object(
+void SocketFile::set_object(
     RawstorIOQueue *,
     rawstor::Object *object,
     RawstorCallback *cb, void *data)
@@ -326,7 +300,7 @@ void Socket::set_object(
 }
 
 
-void Socket::pread(
+void SocketFile::pread(
     void *buf, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
@@ -352,7 +326,7 @@ void Socket::pread(
 }
 
 
-void Socket::preadv(
+void SocketFile::preadv(
     iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
@@ -378,7 +352,7 @@ void Socket::preadv(
 }
 
 
-void Socket::pwrite(
+void SocketFile::pwrite(
     void *buf, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
@@ -404,7 +378,7 @@ void Socket::pwrite(
 }
 
 
-void Socket::pwritev(
+void SocketFile::pwritev(
     iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {

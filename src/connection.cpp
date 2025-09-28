@@ -1,7 +1,12 @@
 #include "connection.hpp"
 
+#include "config.h"
 #include "opts.h"
-#include "socket.hpp"
+#ifdef RAWSTOR_ENABLE_OST
+#include "socket_ost.hpp"
+#else
+#include "socket_file.hpp"
+#endif
 
 #include <rawstorio/event.h>
 #include <rawstorio/queue.h>
@@ -377,7 +382,11 @@ std::vector<std::shared_ptr<Socket>> Connection::_open(
             sockets.clear();
             sockets.reserve(nsockets);
             for (size_t i = 0; i < nsockets; ++i) {
-                sockets.push_back(std::make_shared<Socket>(ost, _depth));
+#ifdef RAWSTOR_ENABLE_OST
+                sockets.push_back(std::make_shared<SocketOST>(ost, _depth));
+#else
+                sockets.push_back(std::make_shared<SocketFile>(ost, _depth));
+#endif
             }
 
             for (std::shared_ptr<Socket> s: sockets) {
@@ -445,7 +454,11 @@ void Connection::create(
 {
     Queue q(1, _depth);
 
-    Socket s(ost, _depth);
+#ifdef RAWSTOR_ENABLE_OST
+    SocketOST s(ost, _depth);
+#else
+    SocketFile s(ost, _depth);
+#endif
     s.create(static_cast<RawstorIOQueue*>(q), sp, id, q.callback, &q);
 
     q.wait();
@@ -458,7 +471,11 @@ void Connection::remove(
 {
     Queue q(1, _depth);
 
-    Socket s(ost, _depth);
+#ifdef RAWSTOR_ENABLE_OST
+    SocketOST s(ost, _depth);
+#else
+    SocketFile s(ost, _depth);
+#endif
     s.remove(static_cast<RawstorIOQueue*>(q), id, q.callback, &q);
 
     q.wait();
@@ -471,7 +488,11 @@ void Connection::spec(
 {
     Queue q(1, _depth);
 
-    Socket s(ost, _depth);
+#ifdef RAWSTOR_ENABLE_OST
+    SocketOST s(ost, _depth);
+#else
+    SocketFile s(ost, _depth);
+#endif
     s.spec(static_cast<RawstorIOQueue*>(q), id, sp, q.callback, &q);
 
     q.wait();

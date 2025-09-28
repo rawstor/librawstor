@@ -1,6 +1,7 @@
 #ifndef RAWSTOR_SOCKET_OST_HPP
 #define RAWSTOR_SOCKET_OST_HPP
 
+#include "socket.hpp"
 #include "ost_protocol.h"
 
 #include <rawstorstd/ringbuf.hpp>
@@ -25,11 +26,8 @@ struct SocketOp;
 class Object;
 
 
-class Socket {
+class SocketOST: public Socket {
     private:
-        SocketAddress _ost;
-
-        int _fd;
         Object *_object;
 
         std::vector<SocketOp*> _ops_array;
@@ -74,16 +72,9 @@ class Socket {
     public:
         static const char* engine_name() noexcept;
 
-        Socket(const SocketAddress &ost, unsigned int depth);
-        Socket(const Socket &) = delete;
-        Socket(Socket &&other) noexcept;
-        ~Socket();
-
-        Socket& operator=(const Socket&) = delete;
-
-        std::string str() const;
-
-        const SocketAddress& ost() const noexcept;
+        SocketOST(const SocketAddress &ost, unsigned int depth);
+        SocketOST(SocketOST &&other) noexcept;
+        ~SocketOST();
 
         void create(
             RawstorIOQueue *queue,

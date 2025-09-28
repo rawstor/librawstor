@@ -1,6 +1,8 @@
 #ifndef RAWSTOR_SOCKET_FILE_HPP
 #define RAWSTOR_SOCKET_FILE_HPP
 
+#include "socket.hpp"
+
 #include <rawstorstd/mempool.hpp>
 #include <rawstorstd/socket_address.hpp>
 
@@ -20,10 +22,8 @@ struct SocketOp;
 class Object;
 
 
-class Socket {
+class SocketFile: public Socket {
     private:
-        SocketAddress _ost;
-        int _fd;
         Object *_object;
         MemPool<SocketOp> _ops_pool;
         std::string _ost_path;
@@ -36,16 +36,8 @@ class Socket {
     public:
         static const char* engine_name() noexcept;
 
-        Socket(const SocketAddress &ost, unsigned int depth);
-        Socket(const Socket &) = delete;
-        Socket(Socket &&other) noexcept;
-        ~Socket();
-
-        Socket& operator=(const Socket&) = delete;
-
-        std::string str() const;
-
-        const SocketAddress& ost() const noexcept;
+        SocketFile(const SocketAddress &ost, unsigned int depth);
+        SocketFile(SocketFile &&other) noexcept;
 
         void create(
             RawstorIOQueue *queue,

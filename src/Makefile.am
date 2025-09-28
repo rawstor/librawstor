@@ -31,7 +31,8 @@ librawstor_la_HEADERS = $(top_srcdir)/include/rawstor/io_event.h \
 librawstor_la_SOURCES = connection.cpp \
                         object.cpp \
                         opts.c \
-                        rawstor.cpp
+                        rawstor.cpp \
+                        socket.cpp
 
 librawstor_la_LIBADD = $(top_srcdir)/librawstorstd/src/librawstorstd.la \
                        $(top_srcdir)/librawstorio/src/librawstorio.la \
