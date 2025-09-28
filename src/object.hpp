@@ -1,6 +1,7 @@
 #ifndef RAWSTOR_OBJECT_HPP
 #define RAWSTOR_OBJECT_HPP
 
+#include "config.h"
 #include "connection.hpp"
 
 #include <rawstorstd/mempool.hpp>
@@ -11,15 +12,24 @@
 namespace rawstor {
 
 
+class SocketOST;
+class SocketFile;
+
+
 struct ObjectOp;
 
 
 class Object {
     private:
+#ifdef RAWSTOR_ENABLE_OST
+        using SocketImpl = SocketOST;
+#else
+        using SocketImpl = SocketFile;
+#endif
         RawstorObject *_c_ptr;
         RawstorUUID _id;
         MemPool<ObjectOp> _ops;
-        Connection _cn;
+        Connection<SocketImpl> _cn;
 
         static int _process(
             RawstorObject *object,

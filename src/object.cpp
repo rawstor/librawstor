@@ -62,7 +62,7 @@ void Object::create(
     const RawstorObjectSpec &sp,
     RawstorUUID *id)
 {
-    Connection(QUEUE_DEPTH).create(ost, sp, id);
+    Connection<SocketImpl>(QUEUE_DEPTH).create(ost, sp, id);
 }
 
 
@@ -109,7 +109,7 @@ void Object::remove() {
 
 
 void Object::remove(const SocketAddress &ost) {
-    Connection(QUEUE_DEPTH).remove(ost, _id);
+    Connection<SocketImpl>(QUEUE_DEPTH).remove(ost, _id);
 }
 
 
@@ -119,7 +119,7 @@ void Object::spec(RawstorObjectSpec *sp) {
 
 
 void Object::spec(const SocketAddress &ost, RawstorObjectSpec *sp) {
-    Connection(QUEUE_DEPTH).spec(ost, _id, sp);
+    Connection<SocketImpl>(QUEUE_DEPTH).spec(ost, _id, sp);
 }
 
 
