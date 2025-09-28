@@ -173,19 +173,19 @@ void DriverFile::create(
     RawstorCallback *cb, void *data)
 {
     std::string ost_path = get_ost_path(_ost);
+    if (mkdir(ost_path.c_str(), 0755) == -1) {
+        if (errno == EEXIST) {
+            errno = 0;
+        } else {
+            RAWSTOR_THROW_ERRNO();
+        }
+    }
+
     RawstorUUID uuid;
     RawstorUUIDString uuid_string;
     std::string spec_path;
     int fd;
     while (1) {
-        if (mkdir(ost_path.c_str(), 0755) == -1) {
-            if (errno == EEXIST) {
-                errno = 0;
-            } else {
-                RAWSTOR_THROW_ERRNO();
-            }
-        }
-
         int res;
 
         res = rawstor_uuid7_init(&uuid);
