@@ -39,9 +39,9 @@ int rawstor_io_session_push_read_sqe(
 int rawstor_io_session_push_write_sqe(
     RawstorIOSession *session, RawstorIOEvent *event);
 
-int rawstor_io_session_process_read(RawstorIOSession *session);
+int rawstor_io_session_process_read(RawstorIOSession *session, int pollhup);
 
-int rawstor_io_session_process_write(RawstorIOSession *session);
+int rawstor_io_session_process_write(RawstorIOSession *session, int pollhup);
 
 
 #ifdef __cplusplus
