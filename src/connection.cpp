@@ -6,32 +6,10 @@
 #include <rawstorio/queue.h>
 
 #include <rawstorstd/gpp.hpp>
-#include <rawstorstd/logging.h>
 
 #include <rawstor/object.h>
 
-#include <algorithm>
-#include <memory>
-#include <sstream>
 #include <stdexcept>
-#include <string>
-
-#include <cerrno>
-#include <cstring>
-
-/**
- * FIXME: iovec should be dynamically allocated at runtime.
- */
-#define IOVEC_SIZE 256
-
-
-#define op_trace(cid, event) \
-    rawstor_debug( \
-        "[%u] %s(): %zi of %zu\n", \
-        cid, __FUNCTION__, \
-        rawstor_io_event_result(event), \
-        rawstor_io_event_size(event))
-
 
 namespace rawstor {
 
