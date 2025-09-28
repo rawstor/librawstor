@@ -67,7 +67,7 @@ jobs:
         pushd .
         cd ./librawstor
         ./autogen.sh
-        ./configure --disable-shared ${{ matrix.without-liburing }} ${{ matrix.disable-ost }}
+        ./configure --disable-shared --enable-asan ${{ matrix.without-liburing }} ${{ matrix.disable-ost }}
         make
         sudo make install
         popd
