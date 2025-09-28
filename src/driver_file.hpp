@@ -26,7 +26,6 @@ class DriverFile: public Driver {
     private:
         Object *_object;
         MemPool<DriverOp> _ops_pool;
-        SocketAddress _ost;
 
         DriverOp* _acquire_op();
         void _release_op(DriverOp *op) noexcept;

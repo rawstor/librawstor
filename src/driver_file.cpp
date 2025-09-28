@@ -111,16 +111,14 @@ struct DriverOp {
 DriverFile::DriverFile(const SocketAddress &ost, unsigned int depth):
     Driver(ost),
     _object(nullptr),
-    _ops_pool(depth),
-    _ost(ost)
+    _ops_pool(depth)
 {}
 
 
 DriverFile::DriverFile(DriverFile &&other) noexcept:
     Driver(std::move(other)),
     _object(std::exchange(other._object, nullptr)),
-    _ops_pool(std::move(other._ops_pool)),
-    _ost(std::move(other._ost))
+    _ops_pool(std::move(other._ops_pool))
 {}
 
 
