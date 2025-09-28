@@ -528,7 +528,7 @@ void Connection<DriverImpl>::pread(
     std::unique_ptr<ConnectionOp<DriverImpl>> op =
         std::make_unique<ConnectionOpPRead<DriverImpl>>(
             *this, buf, size, offset, cb, data);
-            (*op)(s);
+    (*op)(s);
     op.release();
 }
 
