@@ -113,7 +113,7 @@ DriverOST::DriverOST(const SocketAddress &ost, unsigned int depth):
             int error = errno;
             errno = 0;
             rawstor_error(
-                "DriverOST::Driver(): close failed: %s\n", strerror(error));
+                "DriverOST::DriverOST(): close failed: %s\n", strerror(error));
         }
         _fd = -1;
 
