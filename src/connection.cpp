@@ -159,6 +159,13 @@ class ConnectionOp {
                         return 0;
                     } catch (const std::system_error &e) {
                         error = e.code().value();
+                    } catch (const std::exception &e) {
+                        rawstor_error(
+                            "%s; exception on %s: %s; attempt %d of %d; failing...\n",
+                            op->str().c_str(), op->_s->str().c_str(),
+                            e.what(),
+                            op->_attempts, rawstor_opts_io_attempts());
+                        error = EIO;
                     }
                 } else {
                     rawstor_error(
