@@ -22,6 +22,6 @@ if WITH_LIBURING
     librawstorio_la_LIBADD += $(LIBURING_LIBS)
 else
     librawstorio_la_SOURCES += event_poll.c \
-                               queue_poll.c \
+                               queue_poll.cpp \
                                session_poll.c
 endif
