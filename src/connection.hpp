@@ -6,7 +6,7 @@
 #include <rawstorstd/logging.h>
 #include <rawstorstd/socket_address.hpp>
 
-#include <rawstorio/queue.h>
+#include <rawstorio/queue.hpp>
 
 #include <rawstor/object.h>
 #include <rawstor/rawstor.h>
@@ -30,7 +30,7 @@ namespace rawstor {
 class Queue {
     private:
         int _operations;
-        RawstorIOQueue *_impl;
+        rawstor::io::Queue _q;
 
     public:
         static int callback(
@@ -39,11 +39,12 @@ class Queue {
 
         Queue(int operations, unsigned int depth);
         Queue(const Queue &) = delete;
-        ~Queue();
 
         Queue& operator=(const Queue &) = delete;
 
-        explicit operator RawstorIOQueue*() noexcept;
+        inline rawstor::io::Queue& queue() noexcept {
+            return _q;
+        }
 
         void wait();
 };
@@ -397,8 +398,7 @@ std::vector<std::shared_ptr<DriverImpl>> Connection<DriverImpl>::_open(
             }
 
             for (std::shared_ptr<DriverImpl> s: sessions) {
-                s->set_object(
-                    static_cast<RawstorIOQueue*>(q), object, q.callback, &q);
+                s->set_object(q.queue(), object, q.callback, &q);
             }
 
             q.wait();
@@ -467,7 +467,7 @@ void Connection<DriverImpl>::create(
     Queue q(1, _depth);
 
     DriverImpl s(ost, _depth);
-    s.create(static_cast<RawstorIOQueue*>(q), sp, id, q.callback, &q);
+    s.create(q.queue(), sp, id, q.callback, &q);
 
     q.wait();
 }
@@ -481,7 +481,7 @@ void Connection<DriverImpl>::remove(
     Queue q(1, _depth);
 
     DriverImpl s(ost, _depth);
-    s.remove(static_cast<RawstorIOQueue*>(q), id, q.callback, &q);
+    s.remove(q.queue(), id, q.callback, &q);
 
     q.wait();
 }
@@ -495,7 +495,7 @@ void Connection<DriverImpl>::spec(
     Queue q(1, _depth);
 
     DriverImpl s(ost, _depth);
-    s.spec(static_cast<RawstorIOQueue*>(q), id, sp, q.callback, &q);
+    s.spec(q.queue(), id, sp, q.callback, &q);
 
     q.wait();
 }

@@ -1,14 +1,13 @@
 #include <rawstor.h>
 
 #include "opts.h"
-#include "rawstor_internals.h"
 #include "rawstor_internals.hpp"
 
 #include <rawstorstd/logging.h>
 #include <rawstorstd/socket_address.hpp>
 
-#include <rawstorio/queue.h>
-#include <rawstorio/event.h>
+#include <rawstorio/queue.hpp>
+#include <rawstorio/event.hpp>
 
 #include <sys/types.h>
 #include <sys/uio.h>
@@ -26,9 +25,6 @@
 #define QUEUE_DEPTH 256
 #define DEFAULT_OST_HOST "127.0.0.1"
 #define DEFAULT_OST_PORT 8080
-
-
-RawstorIOQueue *rawstor_io_queue = nullptr;
 
 
 namespace {
@@ -64,6 +60,9 @@ void default_ost_terminate() {
 namespace rawstor {
 
 
+rawstor::io::Queue *io_queue = nullptr;
+
+
 const SocketAddress& default_ost() {
     return *_default_ost;
 }
@@ -78,7 +77,7 @@ int rawstor_initialize(
 {
     int res = 0;
 
-    assert(rawstor_io_queue == nullptr);
+    assert(rawstor::io_queue == nullptr);
 
     res = rawstor_logging_initialize();
     if (res) {
@@ -87,7 +86,7 @@ int rawstor_initialize(
 
     rawstor_info(
         "Rawstor compiled with IO queue engine: %s\n",
-        rawstor_io_queue_engine_name());
+        rawstor::io::Queue::engine_name().c_str());
 
     res = rawstor_opts_initialize(opts);
     if (res) {
@@ -101,12 +100,12 @@ int rawstor_initialize(
         goto err_default_ost_initialize;
     }
 
-    rawstor_io_queue = rawstor_io_queue_create(QUEUE_DEPTH);
-    if (rawstor_io_queue == nullptr) {
-        res = -errno;
-        errno = 0;
+    try {
+        rawstor::io_queue = new rawstor::io::Queue(QUEUE_DEPTH);
+    } catch (std::bad_alloc &) {
+        res = -ENOMEM;
         goto err_io_queue;
-    };
+    }
 
     return 0;
 
@@ -122,8 +121,8 @@ err_logging_initialize:
 
 
 void rawstor_terminate() {
-    rawstor_io_queue_delete(rawstor_io_queue);
-    rawstor_io_queue = nullptr;
+    delete rawstor::io_queue;
+    rawstor::io_queue = nullptr;
     default_ost_terminate();
     rawstor_opts_terminate();
     rawstor_logging_terminate();
@@ -131,19 +130,29 @@ void rawstor_terminate() {
 
 
 RawstorIOEvent* rawstor_wait_event() {
-    return rawstor_io_queue_wait_event_timeout(
-        rawstor_io_queue,
-        rawstor_opts_wait_timeout());
+    try {
+        return rawstor::io_queue->wait_event(
+            rawstor_opts_wait_timeout())->c_ptr();
+    } catch (std::system_error &e) {
+        errno = e.code().value();
+        return nullptr;
+    }
 }
 
 
 int rawstor_dispatch_event(RawstorIOEvent *event) {
-    return rawstor_io_event_dispatch(event);
+    try {
+        event->impl->dispatch();
+        return 0;
+    } catch (std::system_error &e) {
+        return -e.code().value();
+    }
 }
 
 
 void rawstor_release_event(RawstorIOEvent *event) {
-    rawstor_io_queue_release_event(rawstor_io_queue, event);
+    rawstor::io_queue->release_event(
+        static_cast<rawstor::io::Event*>(event->impl));
 }
 
 
@@ -151,10 +160,14 @@ int rawstor_fd_read(
     int fd, void *buf, size_t size,
     RawstorIOCallback *cb, void *data)
 {
-    return rawstor_io_queue_read(
-        rawstor_io_queue,
-        fd, buf, size,
-        cb, data);
+    try {
+        rawstor::io_queue->read(
+            fd, buf, size,
+            cb, data);
+        return 0;
+    } catch (std::system_error &e) {
+        return -e.code().value();
+    }
 }
 
 
@@ -162,10 +175,14 @@ int rawstor_fd_pread(
     int fd, void *buf, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data)
 {
-    return rawstor_io_queue_pread(
-        rawstor_io_queue,
-        fd, buf, size, offset,
-        cb, data);
+    try {
+        rawstor::io_queue->pread(
+            fd, buf, size, offset,
+            cb, data);
+        return 0;
+    } catch (std::system_error &e) {
+        return -e.code().value();
+    }
 }
 
 
@@ -173,10 +190,14 @@ int rawstor_fd_readv(
     int fd, struct iovec *iov, unsigned int niov, size_t size,
     RawstorIOCallback *cb, void *data)
 {
-    return rawstor_io_queue_readv(
-        rawstor_io_queue,
-        fd, iov, niov, size,
-        cb, data);
+    try {
+        rawstor::io_queue->readv(
+            fd, iov, niov, size,
+            cb, data);
+        return 0;
+    } catch (std::system_error &e) {
+        return -e.code().value();
+    }
 }
 
 
@@ -184,10 +205,14 @@ int rawstor_fd_preadv(
     int fd, struct iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data)
 {
-    return rawstor_io_queue_preadv(
-        rawstor_io_queue,
-        fd, iov, niov, size, offset,
-        cb, data);
+    try {
+        rawstor::io_queue->preadv(
+            fd, iov, niov, size, offset,
+            cb, data);
+        return 0;
+    } catch (std::system_error &e) {
+        return -e.code().value();
+    }
 }
 
 
@@ -195,10 +220,14 @@ int rawstor_fd_write(
     int fd, void *buf, size_t size,
     RawstorIOCallback *cb, void *data)
 {
-    return rawstor_io_queue_write(
-        rawstor_io_queue,
-        fd, buf, size,
-        cb, data);
+    try {
+        rawstor::io_queue->write(
+            fd, buf, size,
+            cb, data);
+        return 0;
+    } catch (std::system_error &e) {
+        return -e.code().value();
+    }
 }
 
 
@@ -206,10 +235,14 @@ int rawstor_fd_pwrite(
     int fd, void *buf, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data)
 {
-    return rawstor_io_queue_pwrite(
-        rawstor_io_queue,
-        fd, buf, size, offset,
-        cb, data);
+    try {
+        rawstor::io_queue->pwrite(
+            fd, buf, size, offset,
+            cb, data);
+        return 0;
+    } catch (std::system_error &e) {
+        return -e.code().value();
+    }
 }
 
 
@@ -217,10 +250,14 @@ int rawstor_fd_writev(
     int fd, struct iovec *iov, unsigned int niov, size_t size,
     RawstorIOCallback *cb, void *data)
 {
-    return rawstor_io_queue_writev(
-        rawstor_io_queue,
-        fd, iov, niov, size,
-        cb, data);
+    try {
+        rawstor::io_queue->writev(
+            fd, iov, niov, size,
+            cb, data);
+        return 0;
+    } catch (std::system_error &e) {
+        return -e.code().value();
+    }
 }
 
 
@@ -228,8 +265,12 @@ int rawstor_fd_pwritev(
     int fd, struct iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data)
 {
-    return rawstor_io_queue_pwritev(
-        rawstor_io_queue,
-        fd, iov, niov, size, offset,
-        cb, data);
+    try {
+        rawstor::io_queue->pwritev(
+            fd, iov, niov, size, offset,
+            cb, data);
+        return 0;
+    } catch (std::system_error &e) {
+        return -e.code().value();
+    }
 }

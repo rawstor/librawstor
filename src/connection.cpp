@@ -2,8 +2,8 @@
 
 #include "opts.h"
 
-#include <rawstorio/event.h>
-#include <rawstorio/queue.h>
+#include <rawstorio/event.hpp>
+#include <rawstorio/queue.hpp>
 
 #include <rawstorstd/gpp.hpp>
 
@@ -16,17 +16,8 @@ namespace rawstor {
 
 Queue::Queue(int operations, unsigned int depth):
     _operations(operations),
-    _impl(nullptr)
-{
-    _impl = rawstor_io_queue_create(depth);
-    if (_impl == nullptr) {
-        RAWSTOR_THROW_ERRNO();
-    }
-}
-
-Queue::~Queue() {
-    rawstor_io_queue_delete(_impl);
-}
+    _q(depth)
+{}
 
 
 int Queue::callback(
@@ -49,28 +40,16 @@ int Queue::callback(
 }
 
 
-Queue::operator RawstorIOQueue*() noexcept {
-    return _impl;
-}
-
-
 void Queue::wait() {
     while (_operations > 0) {
-        RawstorIOEvent *event = rawstor_io_queue_wait_event_timeout(
-            _impl, rawstor_opts_wait_timeout());
+        rawstor::io::Event *event = _q.wait_event(rawstor_opts_wait_timeout());
         if (event == NULL) {
-            if (errno) {
-                RAWSTOR_THROW_ERRNO();
-            }
             break;
         }
 
-        int res = rawstor_io_event_dispatch(event);
-        if (res < 0) {
-            RAWSTOR_THROW_SYSTEM_ERROR(-res);
-        }
+        event->dispatch();
 
-        rawstor_io_queue_release_event(_impl, event);
+        _q.release_event(event);
     }
 
     if (_operations > 0) {

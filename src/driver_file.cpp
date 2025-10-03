@@ -2,15 +2,15 @@
 
 #include "object.hpp"
 #include "opts.h"
-#include "rawstor_internals.h"
+#include "rawstor_internals.hpp"
 
 #include <rawstorstd/gpp.hpp>
 #include <rawstorstd/logging.h>
 #include <rawstorstd/mempool.h>
 #include <rawstorstd/uuid.h>
 
-#include <rawstorio/event.h>
-#include <rawstorio/queue.h>
+#include <rawstorio/event.hpp>
+#include <rawstorio/queue.hpp>
 
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -168,7 +168,7 @@ int DriverFile::_io_cb(RawstorIOEvent *event, void *data) noexcept {
 
 
 void DriverFile::create(
-    RawstorIOQueue *,
+    rawstor::io::Queue &,
     const RawstorObjectSpec &sp, RawstorUUID *id,
     RawstorCallback *cb, void *data)
 {
@@ -230,7 +230,7 @@ void DriverFile::create(
 
 
 void DriverFile::remove(
-    RawstorIOQueue *,
+    rawstor::io::Queue &,
     const RawstorUUID &id,
     RawstorCallback *cb, void *data)
 {
@@ -262,7 +262,7 @@ void DriverFile::remove(
 
 
 void DriverFile::spec(
-    RawstorIOQueue *,
+    rawstor::io::Queue &,
     const RawstorUUID &id, RawstorObjectSpec *sp,
     RawstorCallback *cb, void *data)
 {
@@ -297,7 +297,7 @@ void DriverFile::spec(
 
 
 void DriverFile::set_object(
-    RawstorIOQueue *,
+    rawstor::io::Queue &,
     rawstor::Object *object,
     RawstorCallback *cb, void *data)
 {
@@ -328,13 +328,7 @@ void DriverFile::pread(
             .data = data,
         };
 
-        int res = rawstor_io_queue_pread(
-            rawstor_io_queue, _fd,
-            buf, size, offset,
-            _io_cb, op);
-        if (res) {
-            RAWSTOR_THROW_SYSTEM_ERROR(-res);
-        }
+        io_queue->pread(_fd, buf, size, offset, _io_cb, op);
     } catch (...) {
         _release_op(op);
         throw;
@@ -354,13 +348,7 @@ void DriverFile::preadv(
             .data = data,
         };
 
-        int res = rawstor_io_queue_preadv(
-            rawstor_io_queue, _fd,
-            iov, niov, size, offset,
-            _io_cb, op);
-        if (res) {
-            RAWSTOR_THROW_SYSTEM_ERROR(-res);
-        }
+        io_queue->preadv(_fd, iov, niov, size, offset, _io_cb, op);
     } catch (...) {
         _release_op(op);
         throw;
@@ -380,13 +368,7 @@ void DriverFile::pwrite(
             .data = data,
         };
 
-        int res = rawstor_io_queue_pwrite(
-            rawstor_io_queue, _fd,
-            buf, size, offset,
-            _io_cb, op);
-        if (res) {
-            RAWSTOR_THROW_SYSTEM_ERROR(-res);
-        }
+        io_queue->pwrite(_fd, buf, size, offset, _io_cb, op);
     } catch (...) {
         _release_op(op);
         throw;
@@ -406,13 +388,7 @@ void DriverFile::pwritev(
             .data = data,
         };
 
-        int res = rawstor_io_queue_pwritev(
-            rawstor_io_queue, _fd,
-            iov, niov, size, offset,
-            _io_cb, op);
-        if (res) {
-            RAWSTOR_THROW_SYSTEM_ERROR(-res);
-        }
+        io_queue->pwritev(_fd, iov, niov, size, offset, _io_cb, op);
     } catch (...) {
         _release_op(op);
         throw;

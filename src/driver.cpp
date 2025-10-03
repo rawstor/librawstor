@@ -25,11 +25,12 @@ Driver::Driver(Driver &&other) noexcept:
 
 Driver::~Driver() {
     if (_fd != -1) {
+        rawstor_info("fd %d: Close\n", _fd);
         if (::close(_fd) == -1) {
             int error = errno;
             errno = 0;
             rawstor_error(
-                "Driver::~Driver(): close failed: %s\n", strerror(error));
+                "Driver::~Driver(): Close failed: %s\n", strerror(error));
         }
     }
 }
