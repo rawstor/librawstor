@@ -1,9 +1,8 @@
 #ifndef RAWSTORSTD_RINGBUF_HPP
 #define RAWSTORSTD_RINGBUF_HPP
 
-#include <rawstorstd/ringbuf.h>
-
 #include <rawstorstd/gpp.hpp>
+#include <rawstorstd/ringbuf.h>
 
 #include <iterator>
 #include <type_traits>
