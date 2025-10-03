@@ -1,6 +1,6 @@
 # Rawstor client library
 
-[![UnitTest Status](https://github.com/rawstor/librawstor/actions/workflows/unittest.yml/badge.svg)](https://github.com/rawstor/librawstor/actions/workflows/unittest.yml)
+[![UnitTest Status](https://github.com/rawstor/librawstor/actions/workflows/unittest.yml/badge.svg?branch=main)](https://github.com/rawstor/librawstor/actions/workflows/unittest.yml)
 
 ## TL;DR
 ```
