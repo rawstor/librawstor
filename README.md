@@ -1,3 +1,5 @@
+[![unittest](https://github.com/rawstor/librawstor/actions/workflows/unittest.yml/badge.svg)](https://github.com/rawstor/librawstor/actions/workflows/unittest.yml)
+
 # Rawstor client library
 
 ## TL;DR
