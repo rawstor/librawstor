@@ -5,11 +5,13 @@
 
 #include <rawstorstd/socket_address.hpp>
 
+#include <memory>
+
 
 namespace rawstor {
 
 
-extern rawstor::io::Queue *io_queue;
+extern std::shared_ptr<rawstor::io::Queue> io_queue;
 
 
 const SocketAddress& default_ost();

@@ -13,6 +13,7 @@
 #include <sys/uio.h>
 
 #include <stdexcept>
+#include <system_error>
 
 #include <cassert>
 #include <cerrno>
@@ -60,7 +61,7 @@ void default_ost_terminate() {
 namespace rawstor {
 
 
-rawstor::io::Queue *io_queue = nullptr;
+std::shared_ptr<rawstor::io::Queue> io_queue;
 
 
 const SocketAddress& default_ost() {
@@ -77,7 +78,7 @@ int rawstor_initialize(
 {
     int res = 0;
 
-    assert(rawstor::io_queue == nullptr);
+    assert(rawstor::io_queue.get() == nullptr);
 
     res = rawstor_logging_initialize();
     if (res) {
@@ -101,7 +102,7 @@ int rawstor_initialize(
     }
 
     try {
-        rawstor::io_queue = new rawstor::io::Queue(QUEUE_DEPTH);
+        rawstor::io_queue = rawstor::io::Queue::create(QUEUE_DEPTH);
     } catch (std::bad_alloc &) {
         res = -ENOMEM;
         goto err_io_queue;
@@ -121,7 +122,7 @@ err_logging_initialize:
 
 
 void rawstor_terminate() {
-    delete rawstor::io_queue;
+    rawstor::io_queue.reset();
     rawstor::io_queue = nullptr;
     default_ost_terminate();
     rawstor_opts_terminate();

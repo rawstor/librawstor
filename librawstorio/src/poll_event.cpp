@@ -1,4 +1,4 @@
-#include <rawstorio/poll_event.hpp>
+#include "poll_event.hpp"
 
 #include <rawstorstd/iovec.h>
 #include <rawstorstd/logging.h>
@@ -24,12 +24,12 @@ void Event::add_iov(std::vector<iovec> &iov) {
 
 size_t Event::shift(size_t shift) {
     size_t ret;
-    if (shift >= _size) {
-        ret = shift - _size;
-        _result += _size;
+    if (shift >= size()) {
+        ret = shift - size();
+        _result += size();
         _niov_at = 0;
     } else {
-        rawstor_debug("partial %zd of %zu\n", shift, _size);
+        rawstor_debug("partial %zd of %zu\n", shift, size());
         ret = rawstor_iovec_shift(&_iov_at, &_niov_at, shift);
         _result += shift;
     }

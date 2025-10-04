@@ -1,7 +1,7 @@
 #ifndef RAWSTORIO_POLL_SESSION_HPP
 #define RAWSTORIO_POLL_SESSION_HPP
 
-#include <rawstorio/poll_queue.hpp>
+#include "poll_queue.hpp"
 
 #include <rawstorstd/ringbuf.hpp>
 

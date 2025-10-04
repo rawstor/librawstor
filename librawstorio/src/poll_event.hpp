@@ -1,8 +1,9 @@
 #ifndef RAWSTORIO_POLL_EVENT_HPP
 #define RAWSTORIO_POLL_EVENT_HPP
 
-#include <rawstorio/base_event.hpp>
-#include <rawstorio/poll_queue.hpp>
+#include "poll_queue.hpp"
+
+#include <rawstorio/event.hpp>
 
 #include <rawstorstd/logging.h>
 
@@ -21,9 +22,8 @@ namespace io {
 namespace poll {
 
 
-class Event: public rawstor::io::base::Event {
+class Event: public rawstor::io::Event {
     protected:
-        Queue &_q;
         std::vector<iovec> _iov;
         iovec *_iov_at;
         unsigned int _niov_at;
@@ -35,8 +35,7 @@ class Event: public rawstor::io::base::Event {
             Queue &q, int fd,
             void *buf, size_t size,
             RawstorIOCallback *cb, void *data):
-            rawstor::io::base::Event(fd, size, cb, data),
-            _q(q),
+            rawstor::io::Event(q, fd, size, cb, data),
             _iov(1, (iovec){.iov_base = buf, .iov_len = size}),
             _iov_at(_iov.data()),
             _niov_at(1),
@@ -48,8 +47,7 @@ class Event: public rawstor::io::base::Event {
             Queue &q, int fd,
             iovec *iov, unsigned int niov, size_t size,
             RawstorIOCallback *cb, void *data):
-            rawstor::io::base::Event(fd, size, cb, data),
-            _q(q),
+            rawstor::io::Event(q, fd, size, cb, data),
             _niov_at(niov),
             _result(0),
             _error(0)
@@ -66,10 +64,6 @@ class Event: public rawstor::io::base::Event {
 #ifdef RAWSTOR_TRACE_EVENTS
         virtual void trace(const std::string &message) = 0;
 #endif
-
-        inline Queue& queue() noexcept {
-            return _q;
-        }
 
         inline size_t result() const noexcept {
             return _result;

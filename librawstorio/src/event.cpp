@@ -1,17 +1,19 @@
-#include <rawstorio/base_event.hpp>
+#include <rawstorio/event.hpp>
+
+#include <rawstorstd/gpp.hpp>
 
 
 namespace rawstor {
 namespace io {
-namespace base {
 
 
-Event::Event(int fd, size_t size, RawstorIOCallback *cb, void *data):
+Event::Event(Queue &q, int fd, size_t size, RawstorIOCallback *cb, void *data):
     _c_ptr(new RawstorIOEvent()),
-    _cb(cb),
-    _data(data),
+    _q(q),
     _fd(fd),
-    _size(size)
+    _size(size),
+    _cb(cb),
+    _data(data)
 {
     _c_ptr->impl = this;
 }
@@ -22,7 +24,15 @@ Event::~Event() {
 }
 
 
-}}} // rawstor::io::base
+void Event::dispatch() {
+    int res = _cb(_c_ptr, _data);
+    if (res) {
+        RAWSTOR_THROW_SYSTEM_ERROR(-res);
+    }
+}
+
+
+}} // rawstor::io
 
 
 int rawstor_io_event_fd(RawstorIOEvent *event) {

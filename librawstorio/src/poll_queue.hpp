@@ -1,7 +1,7 @@
 #ifndef RAWSTORIO_POLL_QUEUE_HPP
 #define RAWSTORIO_POLL_QUEUE_HPP
 
-#include <rawstorio/base_queue.hpp>
+#include <rawstorio/queue.hpp>
 
 #include <rawstorstd/ringbuf.hpp>
 
@@ -22,7 +22,7 @@ class Event;
 class Session;
 
 
-class Queue: public rawstor::io::base::Queue<Event> {
+class Queue: public rawstor::io::Queue {
     private:
         std::list<std::shared_ptr<Session>> _sessions;
         rawstor::RingBuf<Event*> _cqes;
@@ -34,7 +34,7 @@ class Queue: public rawstor::io::base::Queue<Event> {
         static void setup_fd(int fd);
 
         Queue(unsigned int depth):
-            rawstor::io::base::Queue<Event>(depth),
+            rawstor::io::Queue(depth),
             _cqes(depth)
         {}
 
@@ -78,13 +78,13 @@ class Queue: public rawstor::io::base::Queue<Event> {
             struct iovec *iov, unsigned int niov, size_t size, off_t offset,
             RawstorIOCallback *cb, void *data);
 
-        Event* wait_event(unsigned int timeout);
+        rawstor::io::Event* wait_event(unsigned int timeout);
 
-        void release_event(Event *event) noexcept;
+        void release_event(rawstor::io::Event *event) noexcept;
 };
 
 
-}}} // rawstor::io
+}}} // rawstor::io::poll
 
 
 #endif // RAWSTORIO_POLL_QUEUE_HPP

@@ -1,8 +1,7 @@
-#include <rawstorio/poll_queue.hpp>
+#include "poll_queue.hpp"
 
+#include "poll_event.hpp"
 #include "poll_session.hpp"
-
-#include <rawstorio/poll_event.hpp>
 
 #include <rawstorstd/gpp.hpp>
 #include <rawstorstd/logging.h>
@@ -136,7 +135,7 @@ void Queue::pwritev(
 }
 
 
-Event* Queue::wait_event(unsigned int timeout) {
+rawstor::io::Event* Queue::wait_event(unsigned int timeout) {
     std::vector<pollfd> fds;
     while (_cqes.empty()) {
         size_t count = _sessions.size();
@@ -197,7 +196,7 @@ Event* Queue::wait_event(unsigned int timeout) {
 }
 
 
-void Queue::release_event(Event *event) noexcept {
+void Queue::release_event(rawstor::io::Event *event) noexcept {
     delete event;
 }
 

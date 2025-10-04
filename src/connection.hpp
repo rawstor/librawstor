@@ -30,7 +30,7 @@ namespace rawstor {
 class Queue {
     private:
         int _operations;
-        rawstor::io::Queue _q;
+        std::shared_ptr<rawstor::io::Queue> _q;
 
     public:
         static int callback(
@@ -43,7 +43,7 @@ class Queue {
         Queue& operator=(const Queue &) = delete;
 
         inline rawstor::io::Queue& queue() noexcept {
-            return _q;
+            return *_q;
         }
 
         void wait();

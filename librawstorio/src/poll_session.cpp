@@ -1,7 +1,7 @@
 #include "poll_session.hpp"
 
-#include <rawstorio/poll_event.hpp>
-#include <rawstorio/poll_queue.hpp>
+#include "poll_event.hpp"
+#include "poll_queue.hpp"
 
 #include <rawstorstd/gpp.hpp>
 

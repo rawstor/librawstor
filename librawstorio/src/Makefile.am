@@ -16,7 +16,8 @@ AM_CXXFLAGS = $(GENERIC_CXXFLAGS) \
 AM_LDFLAGS = $(ASAN_LDFLAGS)
 
 
-librawstorio_la_SOURCES = base_event.cpp
+librawstorio_la_SOURCES = event.cpp \
+                          queue.cpp
 
 librawstorio_la_LIBADD =
 

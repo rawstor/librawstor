@@ -16,7 +16,7 @@ namespace rawstor {
 
 Queue::Queue(int operations, unsigned int depth):
     _operations(operations),
-    _q(depth)
+    _q(rawstor::io::Queue::create(depth))
 {}
 
 
@@ -42,14 +42,14 @@ int Queue::callback(
 
 void Queue::wait() {
     while (_operations > 0) {
-        rawstor::io::Event *event = _q.wait_event(rawstor_opts_wait_timeout());
+        rawstor::io::Event *event = _q->wait_event(rawstor_opts_wait_timeout());
         if (event == NULL) {
             break;
         }
 
         event->dispatch();
 
-        _q.release_event(event);
+        _q->release_event(event);
     }
 
     if (_operations > 0) {
