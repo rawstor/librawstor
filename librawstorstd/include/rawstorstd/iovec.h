@@ -11,7 +11,8 @@ extern "C" {
 #endif
 
 
-size_t rawstor_iovec_shift(struct iovec **iov, unsigned int *niov, size_t shift);
+size_t rawstor_iovec_shift(
+    struct iovec **iov, unsigned int *niov, size_t shift);
 
 
 #ifdef __cplusplus

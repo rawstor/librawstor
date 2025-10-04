@@ -3,7 +3,7 @@
 
 #include "object.hpp"
 
-#include <rawstorio/queue.h>
+#include <rawstorio/queue.hpp>
 
 #include <rawstor/object.h>
 
@@ -31,22 +31,22 @@ class Driver {
         const SocketAddress& ost() const noexcept;
 
         virtual void create(
-            RawstorIOQueue *queue,
+            rawstor::io::Queue &queue,
             const RawstorObjectSpec &sp, RawstorUUID *id,
             RawstorCallback *cb, void *data) = 0;
 
         virtual void remove(
-            RawstorIOQueue *queue,
+            rawstor::io::Queue &queue,
             const RawstorUUID &id,
             RawstorCallback *cb, void *data) = 0;
 
         virtual void spec(
-            RawstorIOQueue *queue,
+            rawstor::io::Queue &queue,
             const RawstorUUID &id, RawstorObjectSpec *sp,
             RawstorCallback *cb, void *data) = 0;
 
         virtual void set_object(
-            RawstorIOQueue *queue,
+            rawstor::io::Queue &queue,
             rawstor::Object *object,
             RawstorCallback *cb, void *data) = 0;
 

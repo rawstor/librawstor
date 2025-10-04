@@ -75,6 +75,7 @@ AM_CONDITIONAL([WITH_LIBURING], [test "x$with_liburing" == "xyes"])
 AS_IF([test "x$with_liburing" == "xyes"], [
     PKG_CHECK_MODULES([LIBURING], [liburing])
     AC_SUBST([maybe_liburing], ["liburing"])
+    AC_DEFINE([RAWSTOR_WITH_LIBURING], 1, [Enable liburing integration])
 ], [
     AC_SUBST([maybe_liburing], [""])
 ])

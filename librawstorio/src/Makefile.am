@@ -7,10 +7,17 @@ AM_CFLAGS = $(GENERIC_CFLAGS) \
             -I$(top_srcdir)/librawstorstd/include \
             -I$(top_srcdir)/include
 
+AM_CXXFLAGS = $(GENERIC_CXXFLAGS) \
+              $(ASAN_CFLAGS) \
+              -I$(top_srcdir)/librawstorstd/include \
+              -I$(top_srcdir)/librawstorio/include \
+              -I$(top_srcdir)/include
+
 AM_LDFLAGS = $(ASAN_LDFLAGS)
 
 
-librawstorio_la_SOURCES =
+librawstorio_la_SOURCES = event.cpp \
+                          queue.cpp
 
 librawstorio_la_LIBADD =
 
@@ -21,7 +28,7 @@ if WITH_LIBURING
                                queue_liburing.c
     librawstorio_la_LIBADD += $(LIBURING_LIBS)
 else
-    librawstorio_la_SOURCES += event_poll.c \
-                               queue_poll.c \
-                               session_poll.c
+    librawstorio_la_SOURCES += poll_event.cpp \
+                               poll_queue.cpp \
+                               poll_session.cpp
 endif
