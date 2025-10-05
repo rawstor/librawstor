@@ -7,7 +7,7 @@
 #include <rawstorstd/ringbuf.hpp>
 #include <rawstorstd/socket_address.hpp>
 
-#include <rawstorio/queue.h>
+#include <rawstorio/queue.hpp>
 
 #include <rawstor/io_event.h>
 #include <rawstor/object.h>
@@ -47,16 +47,17 @@ class DriverOST: public Driver {
 
         int _connect();
 
-        void _writev_request(RawstorIOQueue *queue, DriverOp *op);
-        void _read_response_set_object_id(RawstorIOQueue *queue, DriverOp *op);
-        void _read_response_head(RawstorIOQueue *queue);
-        void _read_response_body(RawstorIOQueue *queue, DriverOp *op);
-        void _readv_response_body(RawstorIOQueue *queue, DriverOp *op);
+        void _writev_request(rawstor::io::Queue &queue, DriverOp *op);
+        void _read_response_set_object_id(
+            rawstor::io::Queue &queue, DriverOp *op);
+        void _read_response_head(rawstor::io::Queue &queue);
+        void _read_response_body(rawstor::io::Queue &queue, DriverOp *op);
+        void _readv_response_body(rawstor::io::Queue &queue, DriverOp *op);
 
         static void _next_read_response_body(
-            RawstorIOQueue *queue, DriverOp *op);
+            rawstor::io::Queue &queue, DriverOp *op);
         static void _next_readv_response_body(
-            RawstorIOQueue *queue, DriverOp *op);
+            rawstor::io::Queue &queue, DriverOp *op);
 
         static int _writev_request_cb(
             RawstorIOEvent *event, void *data) noexcept;
@@ -75,22 +76,22 @@ class DriverOST: public Driver {
         ~DriverOST();
 
         void create(
-            RawstorIOQueue *queue,
+            rawstor::io::Queue &queue,
             const RawstorObjectSpec &sp, RawstorUUID *id,
             RawstorCallback *cb, void *data);
 
         void remove(
-            RawstorIOQueue *queue,
+            rawstor::io::Queue &queue,
             const RawstorUUID &id,
             RawstorCallback *cb, void *data);
 
         void spec(
-            RawstorIOQueue *queue,
+            rawstor::io::Queue &queue,
             const RawstorUUID &id, RawstorObjectSpec *sp,
             RawstorCallback *cb, void *data);
 
         void set_object(
-            RawstorIOQueue *queue,
+            rawstor::io::Queue &queue,
             rawstor::Object *object,
             RawstorCallback *cb, void *data);
 

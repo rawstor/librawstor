@@ -3,10 +3,10 @@
 
 #include "driver.hpp"
 
+#include <rawstorio/queue.hpp>
+
 #include <rawstorstd/mempool.hpp>
 #include <rawstorstd/socket_address.hpp>
-
-#include <rawstorio/queue.h>
 
 #include <rawstor/io_event.h>
 #include <rawstor/object.h>
@@ -39,22 +39,22 @@ class DriverFile: public Driver {
         DriverFile(DriverFile &&other) noexcept;
 
         void create(
-            RawstorIOQueue *queue,
+            rawstor::io::Queue &queue,
             const RawstorObjectSpec &sp, RawstorUUID *id,
             RawstorCallback *cb, void *data);
 
         void remove(
-            RawstorIOQueue *queue,
+            rawstor::io::Queue &queue,
             const RawstorUUID &id,
             RawstorCallback *cb, void *data);
 
         void spec(
-            RawstorIOQueue *queue,
+            rawstor::io::Queue &queue,
             const RawstorUUID &id, RawstorObjectSpec *sp,
             RawstorCallback *cb, void *data);
 
         void set_object(
-            RawstorIOQueue *queue,
+            rawstor::io::Queue &queue,
             rawstor::Object *object,
             RawstorCallback *cb, void *data);
 
