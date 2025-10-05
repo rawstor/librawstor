@@ -61,7 +61,7 @@ void default_ost_terminate() {
 namespace rawstor {
 
 
-std::shared_ptr<rawstor::io::Queue> io_queue;
+rawstor::io::Queue *io_queue;
 
 
 const SocketAddress& default_ost() {
@@ -78,7 +78,7 @@ int rawstor_initialize(
 {
     int res = 0;
 
-    assert(rawstor::io_queue.get() == nullptr);
+    assert(rawstor::io_queue == nullptr);
 
     res = rawstor_logging_initialize();
     if (res) {
@@ -122,8 +122,7 @@ err_logging_initialize:
 
 
 void rawstor_terminate() {
-    rawstor::io_queue.reset();
-    rawstor::io_queue = nullptr;
+    delete rawstor::io_queue;
     default_ost_terminate();
     rawstor_opts_terminate();
     rawstor_logging_terminate();

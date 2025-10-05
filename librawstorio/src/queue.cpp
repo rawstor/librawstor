@@ -12,11 +12,11 @@ namespace rawstor {
 namespace io {
 
 
-std::shared_ptr<Queue> Queue::create(unsigned int depth) {
+Queue* Queue::create(unsigned int depth) {
 #ifdef RAWSTOR_WITH_LIBURING
-    return std::make_shared<rawstor::io::uring::Queue>(depth);
+    return new rawstor::io::uring::Queue(depth);
 #else
-    return std::make_shared<rawstor::io::poll::Queue>(depth);
+    return new rawstor::io::poll::Queue(depth);
 #endif
 }
 

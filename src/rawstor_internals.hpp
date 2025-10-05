@@ -11,7 +11,7 @@
 namespace rawstor {
 
 
-extern std::shared_ptr<rawstor::io::Queue> io_queue;
+extern rawstor::io::Queue *io_queue;
 
 
 const SocketAddress& default_ost();
