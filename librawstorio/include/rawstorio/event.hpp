@@ -1,7 +1,11 @@
 #ifndef RAWSTORIO_EVENT_HPP
 #define RAWSTORIO_EVENT_HPP
 
+#include <rawstorstd/logging.h>
+
 #include <rawstor/io_queue.h>
+
+#include <string>
 
 #include <cstddef>
 #include <cstdio>
@@ -26,6 +30,10 @@ struct RawstorIOEvent {
         RawstorIOCallback *_cb;
         void *_data;
 
+#ifdef RAWSTOR_TRACE_EVENTS
+        void *_trace_id;
+#endif
+
     public:
         RawstorIOEvent(
             rawstor::io::Queue &q,
@@ -35,7 +43,13 @@ struct RawstorIOEvent {
         RawstorIOEvent(RawstorIOEvent &&) = delete;
         RawstorIOEvent& operator=(const RawstorIOEvent &) = delete;
         RawstorIOEvent& operator=(RawstorIOEvent &&) = delete;
-        virtual ~RawstorIOEvent() {}
+        virtual ~RawstorIOEvent();
+
+#ifdef RAWSTOR_TRACE_EVENTS
+        void trace(const std::string &message) {
+            rawstor_trace_event_message(_trace_id, "%s\n", message.c_str());
+        }
+#endif
 
         inline rawstor::io::Queue& queue() noexcept {
             return _q;

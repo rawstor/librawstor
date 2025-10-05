@@ -3,8 +3,6 @@
 
 #include <rawstorio/event.hpp>
 
-#include <rawstorstd/logging.h>
-
 #include <sys/types.h>
 #include <sys/uio.h>
 
@@ -27,9 +25,6 @@ class Event: public RawstorIOEvent {
         unsigned int _niov_at;
         ssize_t _result;
         int _error;
-#ifdef RAWSTOR_TRACE_EVENTS
-        void *_trace_id;
-#endif
 
     public:
         Event(
@@ -42,10 +37,6 @@ class Event: public RawstorIOEvent {
             _niov_at(1),
             _result(0),
             _error(0)
-#ifdef RAWSTOR_TRACE_EVENTS
-            , _trace_id(rawstor_trace_event_begin(
-                "Event(%d, %zu)\n", fd, size))
-#endif
         {}
 
         Event(
@@ -56,10 +47,6 @@ class Event: public RawstorIOEvent {
             _niov_at(niov),
             _result(0),
             _error(0)
-#ifdef RAWSTOR_TRACE_EVENTS
-            , _trace_id(rawstor_trace_event_begin(
-                "Event(%d, %zu)\n", fd, size))
-#endif
         {
             _iov.reserve(niov);
             for (unsigned int i = 0; i < niov; ++i) {
@@ -68,18 +55,7 @@ class Event: public RawstorIOEvent {
             _iov_at = _iov.data();
         }
 
-        virtual ~Event() {
-#ifdef RAWSTOR_TRACE_EVENTS
-            rawstor_trace_event_end(
-                _trace_id, "Event::~Event()\n");
-#endif
-        }
-
-#ifdef RAWSTOR_TRACE_EVENTS
-        void trace(const std::string &message) {
-            rawstor_trace_event_message(_trace_id, "%s\n", message.c_str());
-        }
-#endif
+        virtual ~Event() {}
 
         inline size_t result() const noexcept {
             return _result;
@@ -91,10 +67,6 @@ class Event: public RawstorIOEvent {
 
         inline virtual void set_error(int error) noexcept {
             _error = error;
-#ifdef RAWSTOR_TRACE_EVENTS
-            rawstor_trace_event_message(
-                _trace_id, "error = %zd\n", _error);
-#endif
         }
 
         inline iovec* iov() const noexcept {
@@ -112,21 +84,6 @@ class Event: public RawstorIOEvent {
         void add_iov(std::vector<iovec> &iov);
 
         virtual size_t shift(size_t shift);
-
-#ifdef RAWSTOR_TRACE_EVENTS
-        inline void dispatch() {
-            rawstor_trace_event_message(_trace_id, "dispatch()\n");
-            try {
-                RawstorIOEvent::dispatch();
-            } catch (std::exception &e) {
-                rawstor_trace_event_message(
-                    _trace_id, "dispatch(): error: %s\n", e.what());
-            }
-            rawstor_trace_event_message(
-                _trace_id, "dispatch(): success\n");
-        }
-#endif
-
 };
 
 
