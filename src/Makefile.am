@@ -30,9 +30,9 @@ librawstor_la_HEADERS = $(top_srcdir)/include/rawstor/io_event.h \
 
 librawstor_la_SOURCES = connection.cpp \
                         driver.cpp \
-                        driver_file.cpp \
-                        driver_ost.cpp \
+                        file_driver.cpp \
                         object.cpp \
+                        ost_driver.cpp \
                         opts.c \
                         rawstor.cpp
 

@@ -3,10 +3,10 @@
 
 #include "config.h"
 #include "connection.hpp"
+#include "file_driver.hpp"
 #include "opts.h"
+#include "ost_driver.hpp"
 #include "rawstor_internals.hpp"
-#include "driver_file.hpp"
-#include "driver_ost.hpp"
 
 #include <rawstorstd/gpp.hpp>
 #include <rawstorstd/logging.h>
@@ -58,7 +58,7 @@ void Object::create(
     const RawstorObjectSpec &sp,
     RawstorUUID *id)
 {
-    Connection<DriverImpl>(QUEUE_DEPTH).create(ost, sp, id);
+    Connection(QUEUE_DEPTH).create(ost, sp, id);
 }
 
 
@@ -105,7 +105,7 @@ void Object::remove() {
 
 
 void Object::remove(const SocketAddress &ost) {
-    Connection<DriverImpl>(QUEUE_DEPTH).remove(ost, _id);
+    Connection(QUEUE_DEPTH).remove(ost, _id);
 }
 
 
@@ -115,7 +115,7 @@ void Object::spec(RawstorObjectSpec *sp) {
 
 
 void Object::spec(const SocketAddress &ost, RawstorObjectSpec *sp) {
-    Connection<DriverImpl>(QUEUE_DEPTH).spec(ost, _id, sp);
+    Connection(QUEUE_DEPTH).spec(ost, _id, sp);
 }
 
 
@@ -149,7 +149,10 @@ void Object::pread(
             .data = data,
         };
 
-        _cn.pread(buf, size, offset, _process, op);
+        std::unique_ptr<ConnectionOp> e = _cn.pread(
+            buf, size, offset, _process, op);
+        _cn.submit(e.get());
+        e.release();
     } catch (...) {
         _ops.free(op);
         throw;
@@ -172,7 +175,10 @@ void Object::preadv(
             .data = data,
         };
 
-        _cn.preadv(iov, niov, size, offset, _process, op);
+        std::unique_ptr<ConnectionOp> e = _cn.preadv(
+            iov, niov, size, offset, _process, op);
+        _cn.submit(e.get());
+        e.release();
     } catch (...) {
         _ops.free(op);
         throw;
@@ -195,7 +201,10 @@ void Object::pwrite(
             .data = data,
         };
 
-        _cn.pwrite(buf, size, offset, _process, op);
+        std::unique_ptr<ConnectionOp> e = _cn.pwrite(
+            buf, size, offset, _process, op);
+        _cn.submit(e.get());
+        e.release();
     } catch (...) {
         _ops.free(op);
         throw;
@@ -218,7 +227,10 @@ void Object::pwritev(
             .data = data,
         };
 
-        _cn.pwritev(iov, niov, size, offset, _process, op);
+        std::unique_ptr<ConnectionOp> e = _cn.pwritev(
+            iov, niov, size, offset, _process, op);
+        _cn.submit(e.get());
+        e.release();
     } catch (...) {
         _ops.free(op);
         throw;

@@ -6,6 +6,12 @@ AM_CFLAGS = $(GENERIC_CFLAGS) \
             -I$(top_srcdir)/librawstorstd/include \
             -I$(top_srcdir)/include
 
+AM_CXXFLAGS = $(GENERIC_CXXFLAGS) \
+              $(ASAN_CFLAGS) \
+              -I$(top_srcdir)/librawstorstd/include \
+              -I$(top_srcdir)/librawstorio/include \
+              -I$(top_srcdir)/include
+
 AM_LDFLAGS = $(ASAN_LDFLAGS)
 
 
@@ -16,6 +22,7 @@ librawstorstd_la_SOURCES = hash.c \
                            mempool.c \
                            ringbuf.c \
                            socket.c \
+                           socket_address.cpp \
                            threading.c \
                            uuid.c
 
