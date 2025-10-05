@@ -1,8 +1,6 @@
 #ifndef RAWSTORIO_POLL_EVENT_HPP
 #define RAWSTORIO_POLL_EVENT_HPP
 
-#include "poll_queue.hpp"
-
 #include <rawstorio/event.hpp>
 
 #include <rawstorstd/logging.h>
