@@ -136,12 +136,11 @@ void Queue::pwritev(
 RawstorIOEvent* Queue::wait_event(unsigned int timeout) {
     std::vector<pollfd> fds;
     while (_cqes.empty()) {
-        size_t count = _sessions.size();
-        if (count == 0) {
+        if (_sessions.empty()) {
             return nullptr;
         }
 
-        fds.resize(count);
+        fds.reserve(_sessions.size());
 
         std::unordered_map<int, std::shared_ptr<Session>>::iterator it =
             _sessions.begin();
@@ -149,11 +148,11 @@ RawstorIOEvent* Queue::wait_event(unsigned int timeout) {
         size_t i = 0;
         while (it != _sessions.end()) {
             if (!it->second->empty()) {
-                fds[i] = {
+                fds.push_back({
                     .fd = it->second->fd(),
                     .events = it->second->events(),
                     .revents = 0,
-                };
+                });
                 assert(fds[i].events != 0);
                 ++it;
                 ++i;
@@ -167,7 +166,7 @@ RawstorIOEvent* Queue::wait_event(unsigned int timeout) {
         }
 
         rawstor_trace("poll()\n");
-        int res = ::poll(fds.data(), _sessions.size(), timeout);
+        int res = ::poll(fds.data(), fds.size(), timeout);
         rawstor_trace("poll(): res = %d\n", res);
         if (res == -1) {
             RAWSTOR_THROW_ERRNO();
