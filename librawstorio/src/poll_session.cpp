@@ -331,8 +331,7 @@ void UnseekableSession::_process(
     rawstor::RingBuf<rawstor::io::poll::Event*> &cqes,
     bool write, bool pollhup)
 {
-    size_t nevents = sqes.size();
-    if (nevents == 0) {
+    if (sqes.empty()) {
         return;
     }
 
