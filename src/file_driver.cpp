@@ -1,4 +1,4 @@
-#include "driver_file.hpp"
+#include "file_driver.hpp"
 
 #include "object.hpp"
 #include "opts.h"
@@ -98,50 +98,51 @@ void write_dat(
 
 
 namespace rawstor {
+namespace file {
 
 
 struct DriverOp {
-    DriverFile *s;
+    Driver *s;
 
     RawstorCallback *callback;
     void *data;
 };
 
 
-DriverFile::DriverFile(const SocketAddress &ost, unsigned int depth):
-    Driver(ost),
+Driver::Driver(const SocketAddress &ost, unsigned int depth):
+    rawstor::Driver(ost, depth),
     _object(nullptr),
     _ops_pool(depth)
 {}
 
 
-DriverFile::DriverFile(DriverFile &&other) noexcept:
-    Driver(std::move(other)),
+Driver::Driver(Driver &&other) noexcept:
+    rawstor::Driver(std::move(other)),
     _object(std::exchange(other._object, nullptr)),
     _ops_pool(std::move(other._ops_pool))
 {}
 
 
-DriverOp* DriverFile::_acquire_op() {
+DriverOp* Driver::_acquire_op() {
     return _ops_pool.alloc();
 }
 
 
-void DriverFile::_release_op(DriverOp *op) noexcept {
+void Driver::_release_op(DriverOp *op) noexcept {
     return _ops_pool.free(op);
 }
 
 
-int DriverFile::_connect(const RawstorUUID &id) {
-    std::string ost_path = get_ost_path(_ost);
+int Driver::_connect(const RawstorUUID &id) {
+    std::string ost_path = get_ost_path(ost());
 
     RawstorUUIDString uuid_string;
     rawstor_uuid_to_string(&id, &uuid_string);
     std::string dat_path = get_object_dat_path(ost_path, uuid_string);
 
     rawstor_info(
-        "Connecting to %s:%u using File driver...\n",
-        _ost.host().c_str(), _ost.port());
+        "Connecting to %s using File driver...\n",
+        ost().str().c_str());
     int fd = open(dat_path.c_str(), O_RDWR | O_NONBLOCK);
     if (fd == -1) {
         RAWSTOR_THROW_ERRNO();
@@ -151,7 +152,7 @@ int DriverFile::_connect(const RawstorUUID &id) {
 }
 
 
-int DriverFile::_io_cb(RawstorIOEvent *event, void *data) noexcept {
+int Driver::_io_cb(RawstorIOEvent *event, void *data) noexcept {
     DriverOp *op = static_cast<DriverOp*>(data);
 
     int ret = op->callback(
@@ -167,12 +168,12 @@ int DriverFile::_io_cb(RawstorIOEvent *event, void *data) noexcept {
 }
 
 
-void DriverFile::create(
+void Driver::create(
     rawstor::io::Queue &,
     const RawstorObjectSpec &sp, RawstorUUID *id,
     RawstorCallback *cb, void *data)
 {
-    std::string ost_path = get_ost_path(_ost);
+    std::string ost_path = get_ost_path(ost());
     if (mkdir(ost_path.c_str(), 0755) == -1) {
         if (errno == EEXIST) {
             errno = 0;
@@ -229,12 +230,12 @@ void DriverFile::create(
 }
 
 
-void DriverFile::remove(
+void Driver::remove(
     rawstor::io::Queue &,
     const RawstorUUID &id,
     RawstorCallback *cb, void *data)
 {
-    std::string ost_path = get_ost_path(_ost);
+    std::string ost_path = get_ost_path(ost());
 
     RawstorUUIDString uuid_string;
     rawstor_uuid_to_string(&id, &uuid_string);
@@ -261,12 +262,12 @@ void DriverFile::remove(
 }
 
 
-void DriverFile::spec(
+void Driver::spec(
     rawstor::io::Queue &,
     const RawstorUUID &id, RawstorObjectSpec *sp,
     RawstorCallback *cb, void *data)
 {
-    std::string ost_path = get_ost_path(_ost);
+    std::string ost_path = get_ost_path(ost());
 
     RawstorUUIDString uuid_string;
     rawstor_uuid_to_string(&id, &uuid_string);
@@ -296,19 +297,21 @@ void DriverFile::spec(
 }
 
 
-void DriverFile::set_object(
+void Driver::set_object(
     rawstor::io::Queue &,
     rawstor::Object *object,
     RawstorCallback *cb, void *data)
 {
-    if (_fd != -1) {
+    if (fd() != -1) {
         throw std::runtime_error("Object already set");
     }
 
-    _fd = _connect(object->id());
-    if (_fd == -1) {
+    int fd = _connect(object->id());
+    if (fd == -1) {
         RAWSTOR_THROW_ERRNO();
     }
+
+    set_fd(fd);
 
     _object = object;
 
@@ -316,7 +319,7 @@ void DriverFile::set_object(
 }
 
 
-void DriverFile::pread(
+void Driver::pread(
     void *buf, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
@@ -328,7 +331,7 @@ void DriverFile::pread(
             .data = data,
         };
 
-        io_queue->pread(_fd, buf, size, offset, _io_cb, op);
+        io_queue->pread(fd(), buf, size, offset, _io_cb, op);
     } catch (...) {
         _release_op(op);
         throw;
@@ -336,7 +339,7 @@ void DriverFile::pread(
 }
 
 
-void DriverFile::preadv(
+void Driver::preadv(
     iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
@@ -348,7 +351,7 @@ void DriverFile::preadv(
             .data = data,
         };
 
-        io_queue->preadv(_fd, iov, niov, size, offset, _io_cb, op);
+        io_queue->preadv(fd(), iov, niov, size, offset, _io_cb, op);
     } catch (...) {
         _release_op(op);
         throw;
@@ -356,7 +359,7 @@ void DriverFile::preadv(
 }
 
 
-void DriverFile::pwrite(
+void Driver::pwrite(
     void *buf, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
@@ -368,7 +371,7 @@ void DriverFile::pwrite(
             .data = data,
         };
 
-        io_queue->pwrite(_fd, buf, size, offset, _io_cb, op);
+        io_queue->pwrite(fd(), buf, size, offset, _io_cb, op);
     } catch (...) {
         _release_op(op);
         throw;
@@ -376,7 +379,7 @@ void DriverFile::pwrite(
 }
 
 
-void DriverFile::pwritev(
+void Driver::pwritev(
     iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
@@ -388,7 +391,7 @@ void DriverFile::pwritev(
             .data = data,
         };
 
-        io_queue->pwritev(_fd, iov, niov, size, offset, _io_cb, op);
+        io_queue->pwritev(fd(), iov, niov, size, offset, _io_cb, op);
     } catch (...) {
         _release_op(op);
         throw;
@@ -396,4 +399,4 @@ void DriverFile::pwritev(
 }
 
 
-} // rawstor
+}} // rawstor::file

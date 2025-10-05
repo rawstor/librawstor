@@ -24,6 +24,8 @@ class SocketAddress {
             _port(port)
         {}
 
+        std::string str() const;
+
         inline const std::string& host() const noexcept {
             return _host;
         }

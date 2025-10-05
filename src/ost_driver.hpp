@@ -1,5 +1,5 @@
-#ifndef RAWSTOR_DRIVER_OST_HPP
-#define RAWSTOR_DRIVER_OST_HPP
+#ifndef RAWSTOR_OST_DRIVER_HPP
+#define RAWSTOR_OST_DRIVER_HPP
 
 #include "driver.hpp"
 #include "ost_protocol.h"
@@ -19,14 +19,13 @@
 #include <cstddef>
 
 namespace rawstor {
+namespace ost {
 
 
 struct DriverOp;
 
-class Object;
 
-
-class DriverOST: public Driver {
+class Driver: public rawstor::Driver {
     private:
         Object *_object;
 
@@ -71,9 +70,9 @@ class DriverOST: public Driver {
             RawstorIOEvent *event, void *data) noexcept;
 
     public:
-        DriverOST(const SocketAddress &ost, unsigned int depth);
-        DriverOST(DriverOST &&other) noexcept;
-        ~DriverOST();
+        Driver(const SocketAddress &ost, unsigned int depth);
+        Driver(Driver &&other) noexcept;
+        ~Driver();
 
         void create(
             rawstor::io::Queue &queue,
@@ -113,6 +112,6 @@ class DriverOST: public Driver {
 };
 
 
-} // rawstor
+}} // rawstor::ost
 
-#endif // RAWSTOR_DRIVER_OST_HPP
+#endif // RAWSTOR_OST_DRIVER_HPP

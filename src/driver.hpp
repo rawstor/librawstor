@@ -7,6 +7,7 @@
 
 #include <rawstor/object.h>
 
+#include <memory>
 #include <sstream>
 
 
@@ -14,12 +15,21 @@ namespace rawstor {
 
 
 class Driver {
-    protected:
+    private:
+        unsigned int _depth;
         SocketAddress _ost;
         int _fd;
 
+    protected:
+        inline void set_fd(int fd) noexcept {
+            _fd = fd;
+        }
+
     public:
-        Driver(const SocketAddress &ost);
+        static std::unique_ptr<Driver> create(
+            const SocketAddress &ost, unsigned int depth);
+
+        Driver(const SocketAddress &ost, unsigned int depth);
         Driver(const Driver &) = delete;
         Driver(Driver &&other) noexcept;
         virtual ~Driver();
@@ -28,7 +38,17 @@ class Driver {
 
         std::string str() const;
 
-        const SocketAddress& ost() const noexcept;
+        inline const SocketAddress& ost() const noexcept {
+            return _ost;
+        }
+
+        inline unsigned int depth() const noexcept {
+            return _depth;
+        }
+
+        inline int fd() const noexcept {
+            return _fd;
+        }
 
         virtual void create(
             rawstor::io::Queue &queue,

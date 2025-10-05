@@ -1,5 +1,5 @@
-#ifndef RAWSTOR_DRIVER_FILE_HPP
-#define RAWSTOR_DRIVER_FILE_HPP
+#ifndef RAWSTOR_FILE_DRIVER_HPP
+#define RAWSTOR_FILE_DRIVER_HPP
 
 #include "driver.hpp"
 
@@ -15,14 +15,13 @@
 #include <string>
 
 namespace rawstor {
+namespace file {
 
 
 struct DriverOp;
 
-class Object;
 
-
-class DriverFile: public Driver {
+class Driver: public rawstor::Driver {
     private:
         Object *_object;
         MemPool<DriverOp> _ops_pool;
@@ -35,8 +34,8 @@ class DriverFile: public Driver {
         static int _io_cb(RawstorIOEvent *event, void *data) noexcept;
 
     public:
-        DriverFile(const SocketAddress &ost, unsigned int depth);
-        DriverFile(DriverFile &&other) noexcept;
+        Driver(const SocketAddress &ost, unsigned int depth);
+        Driver(Driver &&other) noexcept;
 
         void create(
             rawstor::io::Queue &queue,
@@ -76,7 +75,7 @@ class DriverFile: public Driver {
 };
 
 
-} // rawstor
+}} // rawstor::file
 
 
-#endif // RAWSTOR_DRIVER_FILE_HPP
+#endif // RAWSTOR_FILE_DRIVER_HPP

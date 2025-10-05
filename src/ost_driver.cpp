@@ -1,4 +1,4 @@
-#include "driver_ost.hpp"
+#include "ost_driver.hpp"
 
 #include "object.hpp"
 #include "opts.h"
@@ -53,10 +53,11 @@ namespace {
 
 
 namespace rawstor {
+namespace ost {
 
 
 struct DriverOp {
-    rawstor::DriverOST *s;
+    Driver *s;
 
     uint16_t cid;
     bool in_flight;
@@ -86,13 +87,13 @@ struct DriverOp {
 };
 
 
-DriverOST::DriverOST(const SocketAddress &ost, unsigned int depth):
-    Driver(ost),
+Driver::Driver(const SocketAddress &ost, unsigned int depth):
+    rawstor::Driver(ost, depth),
     _object(nullptr),
     _ops_array(),
     _ops(depth)
 {
-    _fd = _connect();
+    int fd = _connect();
 
     try {
         _ops_array.reserve(depth);
@@ -109,21 +110,22 @@ DriverOST::DriverOST(const SocketAddress &ost, unsigned int depth):
             delete op;
         }
 
-        if (::close(_fd) == -1) {
+        if (::close(fd) == -1) {
             int error = errno;
             errno = 0;
             rawstor_error(
-                "DriverOST::DriverOST(): close failed: %s\n", strerror(error));
+                "Driver::Driver(): close failed: %s\n", strerror(error));
         }
-        _fd = -1;
 
         throw;
     }
+
+    set_fd(fd);
 }
 
 
-DriverOST::DriverOST(DriverOST &&other) noexcept:
-    Driver(std::move(other)),
+Driver::Driver(Driver &&other) noexcept:
+    rawstor::Driver(std::move(other)),
     _object(std::exchange(other._object, nullptr)),
     _ops_array(std::move(other._ops_array)),
     _ops(std::move(other._ops)),
@@ -135,14 +137,14 @@ DriverOST::DriverOST(DriverOST &&other) noexcept:
 }
 
 
-DriverOST::~DriverOST() {
+Driver::~Driver() {
     for (DriverOp *op: _ops_array) {
         delete op;
     }
 }
 
 
-void DriverOST::_validate_event(RawstorIOEvent *event) {
+void Driver::_validate_event(RawstorIOEvent *event) {
     int error = rawstor_io_event_error(event);
     if (error != 0) {
         RAWSTOR_THROW_SYSTEM_ERROR(error);
@@ -159,7 +161,7 @@ void DriverOST::_validate_event(RawstorIOEvent *event) {
 }
 
 
-void DriverOST::_validate_response(const RawstorOSTFrameResponse &response) {
+void Driver::_validate_response(const RawstorOSTFrameResponse &response) {
     if (response.magic != RAWSTOR_MAGIC) {
         rawstor_error(
             "%s: Unexpected magic number: %x != %x\n",
@@ -178,7 +180,7 @@ void DriverOST::_validate_response(const RawstorOSTFrameResponse &response) {
 }
 
 
-void DriverOST::_validate_cmd(
+void Driver::_validate_cmd(
     enum RawstorOSTCommandType cmd, enum RawstorOSTCommandType expected)
 {
     if (cmd != expected) {
@@ -188,7 +190,7 @@ void DriverOST::_validate_cmd(
 }
 
 
-void DriverOST::_validate_hash(uint64_t hash, uint64_t expected) {
+void Driver::_validate_hash(uint64_t hash, uint64_t expected) {
     if (hash != expected) {
         rawstor_error(
             "%s: Hash mismatch: %llx != %llx\n",
@@ -200,19 +202,19 @@ void DriverOST::_validate_hash(uint64_t hash, uint64_t expected) {
 }
 
 
-DriverOp* DriverOST::_acquire_op() {
+DriverOp* Driver::_acquire_op() {
     return _ops.pop();
 }
 
 
-void DriverOST::_release_op(DriverOp *op) noexcept {
+void Driver::_release_op(DriverOp *op) noexcept {
     assert(_ops.size() < _ops.capacity());
 
     _ops.push(op);
 }
 
 
-DriverOp* DriverOST::_find_op(unsigned int cid) {
+DriverOp* Driver::_find_op(unsigned int cid) {
     if (cid < 1 || cid > _ops_array.size()) {
         rawstor_error("Unexpected cid: %u\n", cid);
         RAWSTOR_THROW_SYSTEM_ERROR(EIO);
@@ -222,7 +224,7 @@ DriverOp* DriverOST::_find_op(unsigned int cid) {
 }
 
 
-int DriverOST::_connect() {
+int Driver::_connect() {
     int res;
 
     int fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -257,9 +259,9 @@ int DriverOST::_connect() {
 
         sockaddr_in servaddr = {};
         servaddr.sin_family = AF_INET;
-        servaddr.sin_port = htons(_ost.port());
+        servaddr.sin_port = htons(ost().port());
 
-        res = inet_pton(AF_INET, _ost.host().c_str(), &servaddr.sin_addr);
+        res = inet_pton(AF_INET, ost().host().c_str(), &servaddr.sin_addr);
         if (res == 0) {
             RAWSTOR_THROW_SYSTEM_ERROR(EINVAL);
         } else if (res == -1) {
@@ -267,8 +269,8 @@ int DriverOST::_connect() {
         }
 
         rawstor_info(
-            "fd %d: Connecting to %s:%u using OST driver...\n",
-            fd, _ost.host().c_str(), _ost.port());
+            "fd %d: Connecting to %s using OST driver...\n",
+            fd, ost().str().c_str());
         if (connect(fd, (sockaddr*)&servaddr, sizeof(servaddr)) == -1) {
             RAWSTOR_THROW_ERRNO();
         }
@@ -285,67 +287,67 @@ int DriverOST::_connect() {
 }
 
 
-void DriverOST::_writev_request(rawstor::io::Queue &queue, DriverOp *op) {
+void Driver::_writev_request(rawstor::io::Queue &queue, DriverOp *op) {
     queue.writev(
-        _fd,
+        fd(),
         op->iov, op->niov, op->size,
         _writev_request_cb, op);
 }
 
 
-void DriverOST::_read_response_set_object_id(
+void Driver::_read_response_set_object_id(
     rawstor::io::Queue &queue, DriverOp *op)
 {
     queue.read(
-        _fd,
+        fd(),
         &_response, sizeof(_response),
         _read_response_set_object_id_cb, op);
 }
 
 
-void DriverOST::_read_response_head(rawstor::io::Queue &queue) {
+void Driver::_read_response_head(rawstor::io::Queue &queue) {
     queue.read(
-        _fd,
+        fd(),
         &_response, sizeof(_response),
         _read_response_head_cb, this);
 }
 
 
-void DriverOST::_read_response_body(rawstor::io::Queue &queue, DriverOp *op) {
+void Driver::_read_response_body(rawstor::io::Queue &queue, DriverOp *op) {
     queue.read(
-        _fd,
+        fd(),
         op->payload.linear.data, op->request.io.len,
         _read_response_body_cb, op);
 }
 
 
-void DriverOST::_readv_response_body(rawstor::io::Queue &queue, DriverOp *op) {
+void Driver::_readv_response_body(rawstor::io::Queue &queue, DriverOp *op) {
     queue.readv(
-        _fd,
+        fd(),
         op->payload.vector.iov, op->payload.vector.niov, op->request.io.len,
         _readv_response_body_cb, op);
 }
 
 
-void DriverOST::_next_read_response_body(
+void Driver::_next_read_response_body(
     rawstor::io::Queue &queue, DriverOp *op)
 {
     op->s->_read_response_body(queue, op);
 }
 
 
-void DriverOST::_next_readv_response_body(
+void Driver::_next_readv_response_body(
     rawstor::io::Queue &queue, DriverOp *op)
 {
     op->s->_readv_response_body(queue, op);
 }
 
 
-int DriverOST::_writev_request_cb(
+int Driver::_writev_request_cb(
     RawstorIOEvent *event, void *data) noexcept
 {
     DriverOp *op = static_cast<DriverOp*>(data);
-    DriverOST *s = op->s;
+    Driver *s = op->s;
     int error = 0;
 
     try {
@@ -374,11 +376,11 @@ int DriverOST::_writev_request_cb(
 }
 
 
-int DriverOST::_read_response_set_object_id_cb(
+int Driver::_read_response_set_object_id_cb(
     RawstorIOEvent *event, void *data) noexcept
 {
     DriverOp *op = static_cast<DriverOp*>(data);
-    DriverOST *s = op->s;
+    Driver *s = op->s;
     int error = 0;
 
     try {
@@ -416,10 +418,10 @@ int DriverOST::_read_response_set_object_id_cb(
 }
 
 
-int DriverOST::_read_response_head_cb(
+int Driver::_read_response_head_cb(
     RawstorIOEvent *event, void *data) noexcept
 {
-    DriverOST *s = static_cast<DriverOST*>(data);
+    Driver *s = static_cast<Driver*>(data);
     DriverOp *op = nullptr;
     int error = 0;
 
@@ -489,11 +491,11 @@ int DriverOST::_read_response_head_cb(
 }
 
 
-int DriverOST::_read_response_body_cb(
+int Driver::_read_response_body_cb(
     RawstorIOEvent *event, void *data) noexcept
 {
     DriverOp *op = static_cast<DriverOp*>(data);
-    DriverOST *s = op->s;
+    Driver *s = op->s;
     int error = 0;
 
     try {
@@ -528,11 +530,11 @@ int DriverOST::_read_response_body_cb(
 }
 
 
-int DriverOST::_readv_response_body_cb(
+int Driver::_readv_response_body_cb(
     RawstorIOEvent *event, void *data) noexcept
 {
     DriverOp *op = static_cast<DriverOp*>(data);
-    DriverOST *s = op->s;
+    Driver *s = op->s;
     int error = 0;
 
     try {
@@ -572,7 +574,7 @@ int DriverOST::_readv_response_body_cb(
 }
 
 
-void DriverOST::create(
+void Driver::create(
     rawstor::io::Queue &,
     const RawstorObjectSpec &, RawstorUUID *id,
     RawstorCallback *cb, void *data)
@@ -589,16 +591,16 @@ void DriverOST::create(
 }
 
 
-void DriverOST::remove(
+void Driver::remove(
     rawstor::io::Queue &,
     const RawstorUUID &,
     RawstorCallback *, void *)
 {
-    throw std::runtime_error("DriverOST::remove() not implemented");
+    throw std::runtime_error("Driver::remove() not implemented");
 }
 
 
-void DriverOST::spec(
+void Driver::spec(
     rawstor::io::Queue &,
     const RawstorUUID &, RawstorObjectSpec *sp,
     RawstorCallback *cb, void *data)
@@ -620,7 +622,7 @@ void DriverOST::spec(
 }
 
 
-void DriverOST::set_object(
+void Driver::set_object(
     rawstor::io::Queue &queue,
     rawstor::Object *object,
     RawstorCallback *cb, void *data)
@@ -675,7 +677,7 @@ void DriverOST::set_object(
 }
 
 
-void DriverOST::pread(
+void Driver::pread(
     void *buf, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
@@ -729,7 +731,7 @@ void DriverOST::pread(
 }
 
 
-void DriverOST::preadv(
+void Driver::preadv(
     iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
@@ -784,7 +786,7 @@ void DriverOST::preadv(
 }
 
 
-void DriverOST::pwrite(
+void Driver::pwrite(
     void *buf, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
@@ -842,7 +844,7 @@ void DriverOST::pwrite(
 }
 
 
-void DriverOST::pwritev(
+void Driver::pwritev(
     iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
@@ -910,4 +912,4 @@ void DriverOST::pwritev(
 }
 
 
-} // rawstor
+}} // rawstor::ost

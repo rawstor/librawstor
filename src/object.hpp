@@ -29,7 +29,7 @@ class Object {
         RawstorObject *_c_ptr;
         RawstorUUID _id;
         MemPool<ObjectOp> _ops;
-        Connection<DriverImpl> _cn;
+        Connection _cn;
 
         static int _process(
             RawstorObject *object,
