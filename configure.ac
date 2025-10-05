@@ -47,7 +47,7 @@ AC_ARG_ENABLE([asan], [AS_HELP_STRING([--enable-asan],
     [enable_asan=$enableval],
     [enable_asan="no"])
 AS_IF([test "x$enable_asan" == "xyes"], [
-    AC_SUBST([ASAN_CFLAGS], ["-fsanitize=address"])
+    AC_SUBST([ASAN_CFLAGS], ["-fsanitize=address -g"])
     AC_SUBST([ASAN_LDFLAGS], ["-fsanitize=address"])
     AC_SUBST([maybe_asan], ["-fsanitize=address"])
 ], [

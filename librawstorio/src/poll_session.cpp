@@ -35,6 +35,17 @@ class SeekableSession: public rawstor::io::poll::Session {
             _write_sqes(q.depth())
         {}
 
+        ~SeekableSession() {
+            while (!_read_sqes.empty()) {
+                rawstor::io::poll::EventP *event = _read_sqes.pop();
+                delete event;
+            }
+            while (!_write_sqes.empty()) {
+                rawstor::io::poll::EventP *event = _write_sqes.pop();
+                delete event;
+            }
+        }
+
         short events() const noexcept {
             return
                 (_read_sqes.empty() ? 0 : POLLIN) |
@@ -159,6 +170,17 @@ class UnseekableSession: public rawstor::io::poll::Session {
             _read_sqes(q.depth()),
             _write_sqes(q.depth())
         {}
+
+        ~UnseekableSession() {
+            while (!_read_sqes.empty()) {
+                rawstor::io::poll::Event *event = _read_sqes.pop();
+                delete event;
+            }
+            while (!_write_sqes.empty()) {
+                rawstor::io::poll::Event *event = _write_sqes.pop();
+                delete event;
+            }
+        }
 
         short events() const noexcept {
             return
