@@ -77,7 +77,7 @@ class Queue {
 
         virtual RawstorIOEvent* wait_event(unsigned int timeout) = 0;
 
-        virtual void release_event(RawstorIOEvent *event) = 0;
+        virtual void release_event(RawstorIOEvent *event) noexcept = 0;
 };
 
 
