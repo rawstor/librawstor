@@ -14,11 +14,12 @@ namespace io {
 class Queue;
 
 
-class Event {
-    private:
-        RawstorIOEvent *_c_ptr;
+}} // rawstor::io
 
-        Queue &_q;
+
+struct RawstorIOEvent {
+    private:
+        rawstor::io::Queue &_q;
         int _fd;
         size_t _size;
 
@@ -26,15 +27,17 @@ class Event {
         void *_data;
 
     public:
-        Event(
-            Queue &q, int fd, size_t size, RawstorIOCallback *cb, void *data);
-        Event(const Event &) = delete;
-        Event(Event &&) = delete;
-        Event& operator=(const Event &) = delete;
-        Event& operator=(Event &&) = delete;
-        virtual ~Event();
+        RawstorIOEvent(
+            rawstor::io::Queue &q,
+            int fd, size_t size,
+            RawstorIOCallback *cb, void *data);
+        RawstorIOEvent(const RawstorIOEvent &) = delete;
+        RawstorIOEvent(RawstorIOEvent &&) = delete;
+        RawstorIOEvent& operator=(const RawstorIOEvent &) = delete;
+        RawstorIOEvent& operator=(RawstorIOEvent &&) = delete;
+        virtual ~RawstorIOEvent() {}
 
-        inline Queue& queue() noexcept {
+        inline rawstor::io::Queue& queue() noexcept {
             return _q;
         }
 
@@ -49,20 +52,8 @@ class Event {
         virtual size_t result() const noexcept = 0;
         virtual int error() const noexcept = 0;
 
-        inline RawstorIOEvent* c_ptr() const noexcept {
-            return _c_ptr;
-        }
-
         void dispatch();
 };
 
 
-}} // rawstor::io
-
-
-struct RawstorIOEvent {
-    rawstor::io::Event *impl;
-};
-
-
-#endif // RAWSTORIO_BASE_EVENT_HPP
+#endif // RAWSTORIO_EVENT_HPP

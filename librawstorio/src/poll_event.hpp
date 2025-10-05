@@ -22,7 +22,7 @@ namespace io {
 namespace poll {
 
 
-class Event: public rawstor::io::Event {
+class Event: public RawstorIOEvent {
     protected:
         std::vector<iovec> _iov;
         iovec *_iov_at;
@@ -38,7 +38,7 @@ class Event: public rawstor::io::Event {
             Queue &q, int fd,
             void *buf, size_t size,
             RawstorIOCallback *cb, void *data):
-            rawstor::io::Event(q, fd, size, cb, data),
+            RawstorIOEvent(q, fd, size, cb, data),
             _iov(1, (iovec){.iov_base = buf, .iov_len = size}),
             _iov_at(_iov.data()),
             _niov_at(1),
@@ -54,7 +54,7 @@ class Event: public rawstor::io::Event {
             Queue &q, int fd,
             iovec *iov, unsigned int niov, size_t size,
             RawstorIOCallback *cb, void *data):
-            rawstor::io::Event(q, fd, size, cb, data),
+            RawstorIOEvent(q, fd, size, cb, data),
             _niov_at(niov),
             _result(0),
             _error(0)
@@ -119,7 +119,7 @@ class Event: public rawstor::io::Event {
         inline void dispatch() {
             rawstor_trace_event_message(_trace_id, "dispatch()\n");
             try {
-                rawstor::io::Event::dispatch();
+                RawstorIOEvent::dispatch();
             } catch (std::exception &e) {
                 rawstor_trace_event_message(
                     _trace_id, "dispatch(): error: %s\n", e.what());

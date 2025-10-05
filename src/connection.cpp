@@ -42,7 +42,7 @@ int Queue::callback(
 
 void Queue::wait() {
     while (_operations > 0) {
-        rawstor::io::Event *event = _q->wait_event(rawstor_opts_wait_timeout());
+        RawstorIOEvent *event = _q->wait_event(rawstor_opts_wait_timeout());
         if (event == NULL) {
             break;
         }

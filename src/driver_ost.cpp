@@ -441,9 +441,7 @@ int DriverOST::_read_response_head_cb(
     if (op != nullptr) {
         if (!error && op->next != nullptr) {
             try {
-                op->next(
-                    static_cast<rawstor::io::Event*>(event->impl)->queue(),
-                    op);
+                op->next(event->queue(), op);
             } catch (const std::system_error &e) {
                 error = e.code().value();
             }
@@ -457,8 +455,7 @@ int DriverOST::_read_response_head_cb(
                 op_copy.data);
             if (res == 0) {
                 try {
-                    s->_read_response_head(
-                        static_cast<rawstor::io::Event*>(event->impl)->queue());
+                    s->_read_response_head(event->queue());
                 } catch (const std::system_error &e) {
                     return -e.code().value();
                 }
@@ -521,8 +518,7 @@ int DriverOST::_read_response_body_cb(
 
     if (!error && res == 0) {
         try {
-            s->_read_response_head(
-                static_cast<rawstor::io::Event*>(event->impl)->queue());
+            s->_read_response_head(event->queue());
         } catch (const std::system_error &e) {
             return -e.code().value();
         }
@@ -566,8 +562,7 @@ int DriverOST::_readv_response_body_cb(
 
     if (!error && res == 0) {
         try {
-            s->_read_response_head(
-                static_cast<rawstor::io::Event*>(event->impl)->queue());
+            s->_read_response_head(event->queue());
         } catch (const std::system_error &e) {
             return -e.code().value();
         }

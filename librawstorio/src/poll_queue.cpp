@@ -135,7 +135,7 @@ void Queue::pwritev(
 }
 
 
-rawstor::io::Event* Queue::wait_event(unsigned int timeout) {
+RawstorIOEvent* Queue::wait_event(unsigned int timeout) {
     std::vector<pollfd> fds;
     while (_cqes.empty()) {
         size_t count = _sessions.size();
@@ -196,7 +196,7 @@ rawstor::io::Event* Queue::wait_event(unsigned int timeout) {
 }
 
 
-void Queue::release_event(rawstor::io::Event *event) noexcept {
+void Queue::release_event(RawstorIOEvent *event) noexcept {
     delete event;
 }
 

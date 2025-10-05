@@ -15,11 +15,8 @@ namespace rawstor {
 namespace io {
 
 
-class Event;
-
-
 class Queue {
-    protected:
+    private:
         unsigned int _depth;
 
     public:
@@ -78,9 +75,9 @@ class Queue {
             iovec *iov, unsigned int niov, size_t size, off_t offset,
             RawstorIOCallback *cb, void *data) = 0;
 
-        virtual Event* wait_event(unsigned int timeout) = 0;
+        virtual RawstorIOEvent* wait_event(unsigned int timeout) = 0;
 
-        virtual void release_event(Event *event) = 0;
+        virtual void release_event(RawstorIOEvent *event) = 0;
 };
 
 

@@ -78,9 +78,9 @@ class Queue: public rawstor::io::Queue {
             struct iovec *iov, unsigned int niov, size_t size, off_t offset,
             RawstorIOCallback *cb, void *data);
 
-        rawstor::io::Event* wait_event(unsigned int timeout);
+        RawstorIOEvent* wait_event(unsigned int timeout);
 
-        void release_event(rawstor::io::Event *event) noexcept;
+        void release_event(RawstorIOEvent *event) noexcept;
 };
 
 

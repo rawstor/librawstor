@@ -132,8 +132,7 @@ void rawstor_terminate() {
 
 RawstorIOEvent* rawstor_wait_event() {
     try {
-        return rawstor::io_queue->wait_event(
-            rawstor_opts_wait_timeout())->c_ptr();
+        return rawstor::io_queue->wait_event(rawstor_opts_wait_timeout());
     } catch (std::system_error &e) {
         errno = e.code().value();
         return nullptr;
@@ -143,7 +142,7 @@ RawstorIOEvent* rawstor_wait_event() {
 
 int rawstor_dispatch_event(RawstorIOEvent *event) {
     try {
-        event->impl->dispatch();
+        event->dispatch();
         return 0;
     } catch (std::system_error &e) {
         return -e.code().value();
@@ -152,8 +151,7 @@ int rawstor_dispatch_event(RawstorIOEvent *event) {
 
 
 void rawstor_release_event(RawstorIOEvent *event) {
-    rawstor::io_queue->release_event(
-        static_cast<rawstor::io::Event*>(event->impl));
+    rawstor::io_queue->release_event(event);
 }
 
 
