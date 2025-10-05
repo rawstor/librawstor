@@ -1,7 +1,6 @@
 #include "poll_event.hpp"
 
 #include <rawstorstd/iovec.h>
-#include <rawstorstd/logging.h>
 
 #include <vector>
 
@@ -29,7 +28,6 @@ size_t Event::shift(size_t shift) {
         _result += size();
         _niov_at = 0;
     } else {
-        rawstor_debug("partial %zd of %zu\n", shift, size());
         ret = rawstor_iovec_shift(&_iov_at, &_niov_at, shift);
         _result += shift;
     }

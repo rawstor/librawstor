@@ -4,6 +4,7 @@
 #include "poll_queue.hpp"
 
 #include <rawstorstd/gpp.hpp>
+#include <rawstorstd/logging.h>
 
 #include <memory>
 #include <vector>
@@ -65,7 +66,7 @@ class SeekableSession: public rawstor::io::poll::Session {
             RawstorIOCallback *cb, void *data)
         {
             std::unique_ptr<rawstor::io::poll::EventP> event =
-                std::make_unique<rawstor::io::poll::EventPReadV>(
+                std::make_unique<rawstor::io::poll::EventP>(
                     _q, _fd, buf, size, offset, cb, data);
 
             _read_sqes.push(event.get());
@@ -78,7 +79,7 @@ class SeekableSession: public rawstor::io::poll::Session {
             RawstorIOCallback *cb, void *data)
         {
             std::unique_ptr<rawstor::io::poll::EventP> event =
-                std::make_unique<rawstor::io::poll::EventPReadV>(
+                std::make_unique<rawstor::io::poll::EventP>(
                     _q, _fd, iov, niov, size, offset, cb, data);
 
             _read_sqes.push(event.get());
@@ -107,7 +108,7 @@ class SeekableSession: public rawstor::io::poll::Session {
             RawstorIOCallback *cb, void *data)
         {
             std::unique_ptr<rawstor::io::poll::EventP> event =
-                std::make_unique<rawstor::io::poll::EventPWriteV>(
+                std::make_unique<rawstor::io::poll::EventP>(
                     _q, _fd, buf, size, offset, cb, data);
 
             _write_sqes.push(event.get());
@@ -120,7 +121,7 @@ class SeekableSession: public rawstor::io::poll::Session {
             RawstorIOCallback *cb, void *data)
         {
             std::unique_ptr<rawstor::io::poll::EventP> event =
-                std::make_unique<rawstor::io::poll::EventPWriteV>(
+                std::make_unique<rawstor::io::poll::EventP>(
                     _q, _fd, iov, niov, size, offset, cb, data);
 
             _write_sqes.push(event.get());
@@ -174,7 +175,7 @@ class UnseekableSession: public rawstor::io::poll::Session {
             RawstorIOCallback *cb, void *data)
         {
             std::unique_ptr<rawstor::io::poll::Event> event =
-                std::make_unique<rawstor::io::poll::EventReadV>(
+                std::make_unique<rawstor::io::poll::Event>(
                     _q, _fd, buf, size, cb, data);
 
             _read_sqes.push(event.get());
@@ -187,7 +188,7 @@ class UnseekableSession: public rawstor::io::poll::Session {
             RawstorIOCallback *cb, void *data)
         {
             std::unique_ptr<rawstor::io::poll::Event> event =
-                std::make_unique<rawstor::io::poll::EventReadV>(
+                std::make_unique<rawstor::io::poll::Event>(
                     _q, _fd, iov, niov, size, cb, data);
 
             _read_sqes.push(event.get());
@@ -216,7 +217,7 @@ class UnseekableSession: public rawstor::io::poll::Session {
             RawstorIOCallback *cb, void *data)
         {
             std::unique_ptr<rawstor::io::poll::Event> event =
-                std::make_unique<rawstor::io::poll::EventWriteV>(
+                std::make_unique<rawstor::io::poll::Event>(
                     _q, _fd, buf, size, cb, data);
 
             _write_sqes.push(event.get());
@@ -229,7 +230,7 @@ class UnseekableSession: public rawstor::io::poll::Session {
             RawstorIOCallback *cb, void *data)
         {
             std::unique_ptr<rawstor::io::poll::Event> event =
-                std::make_unique<rawstor::io::poll::EventWriteV>(
+                std::make_unique<rawstor::io::poll::Event>(
                     _q, _fd, iov, niov, size, cb, data);
 
             _write_sqes.push(event.get());
@@ -309,6 +310,9 @@ void SeekableSession::_process(
         if (event->completed()) {
             cqes.push(event);
         } else {
+#ifdef RAWSTOR_TRACE_EVENTS
+            event->trace("partial");
+#endif
             sqes.push(event);
         }
     } else if (res == 0) {
@@ -370,6 +374,9 @@ void UnseekableSession::_process(
                 if (event->completed()) {
                     cqes.push(event);
                 } else {
+#ifdef RAWSTOR_TRACE_EVENTS
+                    event->trace("partial");
+#endif
                     sqes.push(event);
                 }
             }
