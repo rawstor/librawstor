@@ -41,6 +41,7 @@ void RawstorIOEvent::dispatch() {
     } catch (std::exception &e) {
         rawstor_trace_event_message(
             _trace_id, "dispatch(): error: %s\n", e.what());
+        throw;
     }
     rawstor_trace_event_message(
         _trace_id, "dispatch(): success\n");
