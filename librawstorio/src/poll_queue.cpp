@@ -26,7 +26,7 @@ std::shared_ptr<Session> Queue::_get_session(int fd) {
      */
     std::list<std::shared_ptr<Session>>::iterator it = std::find_if(
         _sessions.begin(), _sessions.end(),
-        [fd](std::shared_ptr<Session> it){return it->fd() == fd;}
+        [fd](std::shared_ptr<Session> &it){return it->fd() == fd;}
     );
     if (it != _sessions.end()) {
         return *it;
