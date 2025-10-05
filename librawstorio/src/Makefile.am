@@ -24,6 +24,7 @@ librawstorio_la_LIBADD =
 
 if WITH_LIBURING
     AM_CFLAGS += $(LIBURING_CFLAGS)
+    AM_CXXFLAGS += $(LIBURING_CFLAGS)
     librawstorio_la_SOURCES += uring_event.cpp \
                                uring_queue.cpp
     librawstorio_la_LIBADD += $(LIBURING_LIBS)
