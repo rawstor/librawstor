@@ -16,7 +16,7 @@ namespace io {
 
 std::unique_ptr<Queue> Queue::create(unsigned int depth) {
 #ifdef RAWSTOR_WITH_LIBURING
-    return std::make_unique<rawstor::io::uring::Queue>(depth)
+    return std::make_unique<rawstor::io::uring::Queue>(depth);
 #else
     return std::make_unique<rawstor::io::poll::Queue>(depth);
 #endif
