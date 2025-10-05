@@ -24,16 +24,14 @@ std::shared_ptr<Session> Queue::_get_session(int fd) {
     /**
      * TODO: replace list with map or hash.
      */
-    std::list<std::shared_ptr<Session>>::iterator it = std::find_if(
-        _sessions.begin(), _sessions.end(),
-        [fd](std::shared_ptr<Session> &it){return it->fd() == fd;}
-    );
+    std::unordered_map<int, std::shared_ptr<Session>>::iterator it =
+        _sessions.find(fd);
     if (it != _sessions.end()) {
-        return *it;
+        return it->second;
     }
 
     std::shared_ptr<Session> session = Session::create(*this, fd);
-    _sessions.push_back(session);
+    _sessions[fd] = session;
 
     return session;
 }
@@ -145,15 +143,15 @@ RawstorIOEvent* Queue::wait_event(unsigned int timeout) {
 
         fds.resize(count);
 
-        std::list<std::shared_ptr<Session>>::iterator it =
+        std::unordered_map<int, std::shared_ptr<Session>>::iterator it =
             _sessions.begin();
 
         size_t i = 0;
         while (it != _sessions.end()) {
-            if (!(**it).empty()) {
+            if (!it->second->empty()) {
                 fds[i] = {
-                    .fd = (**it).fd(),
-                    .events = (**it).events(),
+                    .fd = it->second->fd(),
+                    .events = it->second->events(),
                     .revents = 0,
                 };
                 assert(fds[i].events != 0);
@@ -180,12 +178,12 @@ RawstorIOEvent* Queue::wait_event(unsigned int timeout) {
 
         for (it = _sessions.begin(), i = 0; it != _sessions.end(); ++it, ++i) {
             if (fds[i].revents & POLLHUP) {
-                (**it).process_read(_cqes, true);
-                (**it).process_write(_cqes, true);
+                it->second->process_read(_cqes, true);
+                it->second->process_write(_cqes, true);
             } else if (fds[i].revents & POLLIN) {
-                (**it).process_read(_cqes, false);
+                it->second->process_read(_cqes, false);
             } else if (fds[i].revents & POLLOUT) {
-                (**it).process_write(_cqes, false);
+                it->second->process_write(_cqes, false);
             } else {
                 continue;
             }
