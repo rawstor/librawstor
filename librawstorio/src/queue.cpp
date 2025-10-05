@@ -8,15 +8,17 @@
 #include "poll_queue.hpp"
 #endif
 
+#include <memory>
+
 namespace rawstor {
 namespace io {
 
 
-Queue* Queue::create(unsigned int depth) {
+std::unique_ptr<Queue> Queue::create(unsigned int depth) {
 #ifdef RAWSTOR_WITH_LIBURING
-    return new rawstor::io::uring::Queue(depth);
+    return std::make_unique<rawstor::io::uring::Queue>(depth)
 #else
-    return new rawstor::io::poll::Queue(depth);
+    return std::make_unique<rawstor::io::poll::Queue>(depth);
 #endif
 }
 

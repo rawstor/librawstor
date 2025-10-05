@@ -12,6 +12,7 @@
 #include <sys/types.h>
 #include <sys/uio.h>
 
+#include <memory>
 #include <stdexcept>
 #include <system_error>
 
@@ -102,7 +103,10 @@ int rawstor_initialize(
     }
 
     try {
-        rawstor::io_queue = rawstor::io::Queue::create(QUEUE_DEPTH);
+        std::unique_ptr<rawstor::io::Queue> q = rawstor::io::Queue::create(
+            QUEUE_DEPTH);
+        rawstor::io_queue = q.get();
+        q.release();
     } catch (std::bad_alloc &) {
         res = -ENOMEM;
         goto err_io_queue;

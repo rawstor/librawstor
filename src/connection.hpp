@@ -30,7 +30,7 @@ namespace rawstor {
 class Queue {
     private:
         int _operations;
-        std::shared_ptr<rawstor::io::Queue> _q;
+        std::unique_ptr<rawstor::io::Queue> _q;
 
     public:
         static int callback(

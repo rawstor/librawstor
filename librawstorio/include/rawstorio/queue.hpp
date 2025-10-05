@@ -3,6 +3,7 @@
 
 #include <rawstor/io_queue.h>
 
+#include <memory>
 #include <string>
 
 #include <sys/types.h>
@@ -21,7 +22,7 @@ class Queue {
     public:
         static std::string engine_name();
         static void setup_fd(int fd);
-        static Queue* create(unsigned int depth);
+        static std::unique_ptr<Queue> create(unsigned int depth);
 
         Queue(unsigned int depth): _depth(depth) {}
         Queue(const Queue &) = delete;
