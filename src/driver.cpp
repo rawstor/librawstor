@@ -12,6 +12,9 @@
 
 #include <unistd.h>
 
+#include <cstring>
+
+
 namespace rawstor {
 
 
