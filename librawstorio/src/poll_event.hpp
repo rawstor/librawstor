@@ -21,7 +21,7 @@ namespace poll {
 
 
 class Event: public RawstorIOEvent {
-    protected:
+    private:
         std::vector<iovec> _iov;
         iovec *_iov_at;
         unsigned int _niov_at;
@@ -131,7 +131,7 @@ class Event: public RawstorIOEvent {
 
 
 class EventP: public Event {
-    protected:
+    private:
         off_t _offset;
 
     public:
