@@ -176,14 +176,15 @@ RawstorIOEvent* Queue::wait_event(unsigned int timeout) {
             RAWSTOR_THROW_SYSTEM_ERROR(ETIME);
         }
 
-        for (it = _sessions.begin(), i = 0; it != _sessions.end(); ++it, ++i) {
-            if (fds[i].revents & POLLHUP) {
-                it->second->process_read(_cqes, true);
-                it->second->process_write(_cqes, true);
-            } else if (fds[i].revents & POLLIN) {
-                it->second->process_read(_cqes, false);
-            } else if (fds[i].revents & POLLOUT) {
-                it->second->process_write(_cqes, false);
+        for (const pollfd &fd: fds) {
+            std::shared_ptr<Session> &s = _sessions[fd.fd];
+            if (fd.revents & POLLHUP) {
+                s->process_read(_cqes, true);
+                s->process_write(_cqes, true);
+            } else if (fd.revents & POLLIN) {
+                s->process_read(_cqes, false);
+            } else if (fd.revents & POLLOUT) {
+                s->process_write(_cqes, false);
             } else {
                 continue;
             }
