@@ -27,7 +27,7 @@ struct DriverOp;
 
 class Driver: public rawstor::Driver {
     private:
-        Object *_object;
+        RawstorObject *_object;
 
         std::vector<DriverOp*> _ops_array;
         RingBuf<DriverOp*> _ops;
@@ -90,7 +90,7 @@ class Driver: public rawstor::Driver {
 
         void set_object(
             rawstor::io::Queue &queue,
-            rawstor::Object *object,
+            RawstorObject *object,
             RawstorCallback *cb, void *data);
 
         void pread(

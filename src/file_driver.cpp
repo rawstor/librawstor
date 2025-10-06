@@ -45,12 +45,12 @@ std::string get_ost_path(const rawstor::URI &uri) {
         oss << "Empty host expected: " << uri.str();
         throw std::runtime_error(oss.str());
     }
-    if (uri.path().empty()) {
+    if (uri.path().str().empty()) {
         std::ostringstream oss;
         oss << "Empty path unexpected: " << uri.str();
         throw std::runtime_error(oss.str());
     }
-    return uri.path();
+    return uri.path().str();
 }
 
 
@@ -160,7 +160,7 @@ int Driver::_io_cb(RawstorIOEvent *event, void *data) noexcept {
     DriverOp *op = static_cast<DriverOp*>(data);
 
     int ret = op->callback(
-        op->s->_object->c_ptr(),
+        op->s->_object,
         rawstor_io_event_size(event),
         rawstor_io_event_result(event),
         rawstor_io_event_error(event),
@@ -303,7 +303,7 @@ void Driver::spec(
 
 void Driver::set_object(
     rawstor::io::Queue &,
-    rawstor::Object *object,
+    RawstorObject *object,
     RawstorCallback *cb, void *data)
 {
     if (fd() != -1) {
@@ -319,7 +319,7 @@ void Driver::set_object(
 
     _object = object;
 
-    cb(object->c_ptr(), 0, 0, 0, data);
+    cb(object, 0, 0, 0, data);
 }
 
 

@@ -242,7 +242,7 @@ Connection::~Connection() {
 
 std::vector<std::shared_ptr<Driver>> Connection::_open(
     const URI &uri,
-    rawstor::Object *object,
+    RawstorObject *object,
     size_t nsessions)
 {
     std::vector<std::shared_ptr<Driver>> sessions;
@@ -332,26 +332,32 @@ void Connection::create(
 }
 
 
-void Connection::remove(
-    const URI &uri,
-    const RawstorUUID &id)
-{
+void Connection::remove(const URI &uri) {
+    RawstorUUID id;
+    int res = rawstor_uuid_from_string(&id, uri.path().filename().c_str());
+    if (res) {
+        RAWSTOR_THROW_SYSTEM_ERROR(-res);
+    }
+
     Queue q(1, _depth);
 
-    std::unique_ptr<Driver> s = Driver::create(uri, _depth);
+    std::unique_ptr<Driver> s = Driver::create(uri.up(), _depth);
     s->remove(q.queue(), id, q.callback, &q);
 
     q.wait();
 }
 
 
-void Connection::spec(
-    const URI &uri,
-    const RawstorUUID &id, RawstorObjectSpec *sp)
-{
+void Connection::spec(const URI &uri, RawstorObjectSpec *sp) {
+    RawstorUUID id;
+    int res = rawstor_uuid_from_string(&id, uri.path().filename().c_str());
+    if (res) {
+        RAWSTOR_THROW_SYSTEM_ERROR(-res);
+    }
+
     Queue q(1, _depth);
 
-    std::unique_ptr<Driver> s = Driver::create(uri, _depth);
+    std::unique_ptr<Driver> s = Driver::create(uri.up(), _depth);
     s->spec(q.queue(), id, sp, q.callback, &q);
 
     q.wait();
@@ -360,7 +366,7 @@ void Connection::spec(
 
 void Connection::open(
     const URI &uri,
-    rawstor::Object *object,
+    RawstorObject *object,
     size_t nsessions)
 {
     _sessions = _open(uri, object, nsessions);

@@ -1,8 +1,6 @@
 #ifndef RAWSTOR_CLI_TESTIO_H
 #define RAWSTOR_CLI_TESTIO_H
 
-#include <rawstor.h>
-
 #include <stddef.h>
 
 
@@ -13,7 +11,6 @@ extern "C" {
 
 int rawstor_cli_testio(
     const char *uri,
-    const struct RawstorUUID *object_id,
     size_t block_size, unsigned int count, unsigned int io_depth,
     int vector_mode);
 

@@ -19,12 +19,10 @@ class ConnectionOp;
 
 class Driver;
 
-class Object;
-
 
 class Connection {
     private:
-        Object *_object;
+        RawstorObject *_object;
         unsigned int _depth;
 
         std::vector<std::shared_ptr<Driver>> _sessions;
@@ -32,7 +30,7 @@ class Connection {
 
         std::vector<std::shared_ptr<Driver>> _open(
             const URI &uri,
-            rawstor::Object *object,
+            RawstorObject *object,
             size_t nsessions);
 
         std::shared_ptr<Driver> _get_next_session();
@@ -50,18 +48,11 @@ class Connection {
             const URI &uri,
             const RawstorObjectSpec &sp, RawstorUUID *id);
 
-        void remove(
-            const URI &uri,
-            const RawstorUUID &id);
+        void remove(const URI &uri);
 
-        void spec(
-            const URI &uri,
-            const RawstorUUID &id, RawstorObjectSpec *sp);
+        void spec(const URI &uri, RawstorObjectSpec *sp);
 
-        void open(
-            const URI &uri,
-            rawstor::Object *object,
-            size_t nsessions);
+        void open(const URI &uri, RawstorObject *object, size_t nsessions);
 
         void close();
 

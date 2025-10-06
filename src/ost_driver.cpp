@@ -212,7 +212,7 @@ DriverOp* Driver::_find_op(unsigned int cid) {
 
 
 int Driver::_connect() {
-    if (!uri().path().empty()) {
+    if (!uri().path().str().empty()) {
         std::ostringstream oss;
         oss << "Empty path expected: " << uri().str();
         throw std::runtime_error(oss.str());
@@ -358,7 +358,7 @@ int Driver::_writev_request_cb(
         DriverOp op_copy = *op;
         s->_release_op(op);
         res = op_copy.callback(
-            s->_object->c_ptr(),
+            s->_object,
             op_copy.request.io.len, 0, error,
             op_copy.data);
     }
@@ -392,7 +392,7 @@ int Driver::_read_response_set_object_id_cb(
     DriverOp op_copy = *op;
     s->_release_op(op);
     int res = op_copy.callback(
-        s->_object->c_ptr(),
+        s->_object,
         0, 0, error,
         op_copy.data);
 
@@ -443,7 +443,7 @@ int Driver::_read_response_head_cb(
             DriverOp op_copy = *op;
             s->_release_op(op);
             res = op_copy.callback(
-                s->_object->c_ptr(),
+                s->_object,
                 op_copy.request.io.len, s->_response.res, error,
                 op_copy.data);
             if (res == 0) {
@@ -469,7 +469,7 @@ int Driver::_read_response_head_cb(
             DriverOp op_copy = *op;
             s->_release_op(op);
             res = op_copy.callback(
-                s->_object->c_ptr(),
+                s->_object,
                 op_copy.request.io.len, 0, error,
                 op_copy.data);
             if (res) {
@@ -505,7 +505,7 @@ int Driver::_read_response_body_cb(
     DriverOp op_copy = *op;
     s->_release_op(op);
     int res = op_copy.callback(
-        s->_object->c_ptr(),
+        s->_object,
         op_copy.request.io.len, s->_response.res, error,
         op_copy.data);
 
@@ -549,7 +549,7 @@ int Driver::_readv_response_body_cb(
     DriverOp op_copy = *op;
     s->_release_op(op);
     int res = op_copy.callback(
-        s->_object->c_ptr(),
+        s->_object,
         op_copy.request.io.len, s->_response.res, error,
         op_copy.data);
 
@@ -615,7 +615,7 @@ void Driver::spec(
 
 void Driver::set_object(
     rawstor::io::Queue &queue,
-    rawstor::Object *object,
+    RawstorObject *object,
     RawstorCallback *cb, void *data)
 {
     rawstor_info("%s: Setting object id\n", str().c_str());

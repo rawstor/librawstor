@@ -69,7 +69,7 @@ class Driver {
 
         virtual void set_object(
             rawstor::io::Queue &queue,
-            rawstor::Object *object,
+            RawstorObject *object,
             RawstorCallback *cb, void *data) = 0;
 
         virtual void pread(

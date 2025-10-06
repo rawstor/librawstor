@@ -1,8 +1,6 @@
 #ifndef RAWSTOR_CLI_SHOW_H
 #define RAWSTOR_CLI_SHOW_H
 
-#include <rawstor.h>
-
 #include <stddef.h>
 
 
@@ -11,7 +9,7 @@ extern "C" {
 #endif
 
 
-int rawstor_cli_show(const char *uri, const struct RawstorUUID *object_id);
+int rawstor_cli_show(const char *uri);
 
 
 #ifdef __cplusplus
