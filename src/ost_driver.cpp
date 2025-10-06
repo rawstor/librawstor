@@ -212,7 +212,7 @@ DriverOp* Driver::_find_op(unsigned int cid) {
 
 
 int Driver::_connect() {
-    if (!uri().path().str().empty()) {
+    if (uri().path().str() != "/") {
         std::ostringstream oss;
         oss << "Empty path expected: " << uri().str();
         throw std::runtime_error(oss.str());

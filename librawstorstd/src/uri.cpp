@@ -110,11 +110,15 @@ void parse_path(
 {
     size_t path_delim = path.rfind('/');
     if (path_delim != path.npos) {
-        *dirname = path.substr(0, path_delim);
+        if (path_delim != 0) {
+            *dirname = path.substr(0, path_delim);
+        } else {
+            *dirname = "/";
+        }
         path_delim += 1;
         *filename = path.substr(path_delim);
     } else {
-        *dirname = "";
+        *dirname = "/";
         *filename = path;
     }
 }

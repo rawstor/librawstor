@@ -45,11 +45,6 @@ std::string get_ost_path(const rawstor::URI &uri) {
         oss << "Empty host expected: " << uri.str();
         throw std::runtime_error(oss.str());
     }
-    if (uri.path().str().empty()) {
-        std::ostringstream oss;
-        oss << "Empty path unexpected: " << uri.str();
-        throw std::runtime_error(oss.str());
-    }
     return uri.path().str();
 }
 

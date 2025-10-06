@@ -19,7 +19,7 @@ int test_uri_empty() {
     assertTrue(uri.hostname() == "");
     assertTrue(uri.port() == 0);
     assertTrue(uri.path().str() == "");
-    assertTrue(uri.path().dirname() == "");
+    assertTrue(uri.path().dirname() == "/");
     assertTrue(uri.path().filename() == "");
 
     return 0;
@@ -39,7 +39,7 @@ int test_uri_http() {
     assertTrue(uri.hostname() == "example.com");
     assertTrue(uri.port() == 80);
     assertTrue(uri.path().str() == "/foo");
-    assertTrue(uri.path().dirname() == "");
+    assertTrue(uri.path().dirname() == "/");
     assertTrue(uri.path().filename() == "foo");
 
     return 0;
@@ -79,7 +79,7 @@ int test_uri_empty_path() {
     assertTrue(uri.hostname() == "127.0.0.1");
     assertTrue(uri.port() == 8080);
     assertTrue(uri.path().str() == "");
-    assertTrue(uri.path().dirname() == "");
+    assertTrue(uri.path().dirname() == "/");
     assertTrue(uri.path().filename() == "");
 
     return 0;
@@ -165,11 +165,11 @@ int test_uri_up() {
 
     uri = uri.up();
     assertTrue(
-        uri.str() == "http://user:password@example.com:80");
+        uri.str() == "http://user:password@example.com:80/");
 
     uri = uri.up();
     assertTrue(
-        uri.str() == "http://user:password@example.com:80");
+        uri.str() == "http://user:password@example.com:80/");
 
     return 0;
 }
