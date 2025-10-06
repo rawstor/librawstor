@@ -7,7 +7,7 @@
 namespace {
 
 
-void parse(
+void parse_uri(
     const std::string &uri,
     std::string *scheme,
     std::string *username, std::string *password,
@@ -105,19 +105,79 @@ std::string get_authority(
 }
 
 
+void parse_path(
+    const std::string &path, std::string *dirname, std::string *filename)
+{
+    size_t path_delim = path.rfind('/');
+    if (path_delim != path.npos) {
+        *dirname = path.substr(0, path_delim);
+        path_delim += 1;
+        *filename = path.substr(path_delim);
+    } else {
+        *dirname = "";
+        *filename = path;
+    }
+}
+
+
 } // unnamed
 
 namespace rawstor {
 
 
+URIPath::URIPath(const std::string &path):
+    _path(path)
+{
+    parse_path(path, &_dirname, &_filename);
+}
+
+
+URIPath::URIPath(const URIPath &other):
+    _path(other._path),
+    _dirname(other._dirname),
+    _filename(other._filename)
+{}
+
+
+URIPath::URIPath(URIPath &&other) noexcept:
+    _path(std::move(other._path)),
+    _dirname(std::move(other._dirname)),
+    _filename(std::move(other._filename))
+{}
+
+
+URIPath& URIPath::operator=(const URIPath &other) {
+    if (this != &other) {
+        URIPath copy(other);
+
+        _path = std::move(copy._path);
+        _dirname = std::move(copy._dirname);
+        _filename = std::move(copy._filename);
+    }
+    return *this;
+}
+
+
+URIPath& URIPath::operator=(URIPath &&other) noexcept {
+    if (this != &other) {
+        _path = std::move(other._path);
+        _dirname = std::move(other._dirname);
+        _filename = std::move(other._filename);
+    }
+    return *this;
+}
+
+
 URI::URI(const std::string &uri):
     _uri(uri)
 {
-    parse(_uri, &_scheme, &_username, &_password, &_hostname, &_port, &_path);
+    std::string path;
+    parse_uri(_uri, &_scheme, &_username, &_password, &_hostname, &_port, &path);
 
     _userinfo = get_userinfo(_username, _password);
     _host = get_host(_hostname, _port);
     _authority = get_authority(_userinfo, _host);
+    _path = URIPath(path);
 }
 
 

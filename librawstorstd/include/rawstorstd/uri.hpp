@@ -7,6 +7,35 @@
 namespace rawstor {
 
 
+class URIPath {
+    private:
+        std::string _path;
+        std::string _dirname;
+        std::string _filename;
+
+    public:
+        URIPath() {}
+        explicit URIPath(const std::string &path);
+        URIPath(const URIPath &other);
+        URIPath(URIPath &&other) noexcept;
+        URIPath& operator=(const URIPath &other);
+        URIPath& operator=(URIPath &&other) noexcept;
+
+        inline const std::string& str() const noexcept {
+            return _path;
+        }
+
+        inline const std::string& dirname() const noexcept {
+            return _dirname;
+        }
+
+        inline const std::string& filename() const noexcept {
+            return _filename;
+        }
+
+};
+
+
 class URI {
     private:
         std::string _uri;
@@ -18,7 +47,7 @@ class URI {
         std::string _host;
         std::string _hostname;
         unsigned int _port;
-        std::string _path;
+        URIPath _path;
 
     public:
         explicit URI(const std::string &uri);
@@ -63,7 +92,7 @@ class URI {
             return _port;
         }
 
-        inline const std::string& path() const noexcept {
+        inline const URIPath& path() const noexcept {
             return _path;
         }
 };
