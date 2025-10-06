@@ -11,12 +11,12 @@
 #include <string.h>
 
 
-int rawstor_cli_show(const struct RawstorUUID *object_id) {
+int rawstor_cli_show(const char *uri, const struct RawstorUUID *object_id) {
     RawstorUUIDString uuid_string;
     rawstor_uuid_to_string(object_id, &uuid_string);
 
     struct RawstorObjectSpec spec;
-    int res = rawstor_object_spec(object_id, &spec);
+    int res = rawstor_object_spec(uri, object_id, &spec);
     if (res) {
         fprintf(stderr, "rawstor_object_spec() failed: %s\n", strerror(-res));
         return EXIT_FAILURE;

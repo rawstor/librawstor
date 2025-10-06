@@ -13,7 +13,7 @@
 #include <rawstorstd/mempool.h>
 #include <rawstorstd/uuid.h>
 
-#include <rawstorstd/socket_address.hpp>
+#include <rawstorstd/uri.hpp>
 
 #include <unistd.h>
 
@@ -48,17 +48,12 @@ struct ObjectOp {
 };
 
 
-void Object::create(const RawstorObjectSpec &sp, RawstorUUID *id) {
-    create(default_ost(), sp, id);
-}
-
-
 void Object::create(
-    const SocketAddress &ost,
+    const URI &uri,
     const RawstorObjectSpec &sp,
     RawstorUUID *id)
 {
-    Connection(QUEUE_DEPTH).create(ost, sp, id);
+    Connection(QUEUE_DEPTH).create(uri, sp, id);
 }
 
 
@@ -99,33 +94,18 @@ RawstorObject* Object::c_ptr() noexcept {
 }
 
 
-void Object::remove() {
-    remove(default_ost());
+void Object::remove(const URI &uri) {
+    Connection(QUEUE_DEPTH).remove(uri, _id);
 }
 
 
-void Object::remove(const SocketAddress &ost) {
-    Connection(QUEUE_DEPTH).remove(ost, _id);
+void Object::spec(const URI &uri, RawstorObjectSpec *sp) {
+    Connection(QUEUE_DEPTH).spec(uri, _id, sp);
 }
 
 
-void Object::spec(RawstorObjectSpec *sp) {
-    spec(default_ost(), sp);
-}
-
-
-void Object::spec(const SocketAddress &ost, RawstorObjectSpec *sp) {
-    Connection(QUEUE_DEPTH).spec(ost, _id, sp);
-}
-
-
-void Object::open() {
-    open(default_ost());
-}
-
-
-void Object::open(const SocketAddress &ost) {
-    _cn.open(ost, this, rawstor_opts_sessions());
+void Object::open(const URI &uri) {
+    _cn.open(uri, this, rawstor_opts_sessions());
 }
 
 
@@ -242,11 +222,12 @@ void Object::pwritev(
 
 
 int rawstor_object_create(
+    const char *uri,
     const RawstorObjectSpec *sp,
     RawstorUUID *id)
 {
     try {
-        rawstor::Object::create(*sp, id);
+        rawstor::Object::create(rawstor::URI(uri), *sp, id);
         return 0;
     } catch (const std::system_error &e) {
         return -e.code().value();
@@ -254,25 +235,11 @@ int rawstor_object_create(
 }
 
 
-int rawstor_object_create_ost(
-    const RawstorSocketAddress *ost,
-    const RawstorObjectSpec *sp,
-    RawstorUUID *id)
-{
-    try {
-        rawstor::Object::create(rawstor::SocketAddress(ost), *sp, id);
-        return 0;
-    } catch (const std::system_error &e) {
-        return -e.code().value();
-    }
-}
-
-
-int rawstor_object_remove(const RawstorUUID *id) {
+int rawstor_object_remove(const char *uri, const RawstorUUID *id) {
     try {
         rawstor::Object object(*id);
 
-        object.remove();
+        object.remove(rawstor::URI(uri));
 
         return 0;
     } catch (const std::system_error &e) {
@@ -281,42 +248,15 @@ int rawstor_object_remove(const RawstorUUID *id) {
 }
 
 
-int rawstor_object_remove_ost(
-    const RawstorSocketAddress *ost,
-    const RawstorUUID *id)
-{
-    try {
-        rawstor::Object object(*id);
-
-        object.remove(rawstor::SocketAddress(ost));
-
-        return 0;
-    } catch (const std::system_error &e) {
-        return -e.code().value();
-    }
-}
-
-
-int rawstor_object_spec(const RawstorUUID *id, RawstorObjectSpec *sp) {
-    try {
-        rawstor::Object object(*id);
-        object.spec(sp);
-        return 0;
-    } catch (const std::system_error &e) {
-        return -e.code().value();
-    }
-}
-
-
-int rawstor_object_spec_ost(
-    const RawstorSocketAddress *ost,
+int rawstor_object_spec(
+    const char *uri,
     const RawstorUUID *id,
     RawstorObjectSpec *sp)
 {
     try {
         rawstor::Object object(*id);
 
-        object.spec(rawstor::SocketAddress(ost), sp);
+        object.spec(rawstor::URI(uri), sp);
 
         return 0;
     } catch (const std::system_error &e) {
@@ -325,34 +265,16 @@ int rawstor_object_spec_ost(
 }
 
 
-int rawstor_object_open(const RawstorUUID *id, RawstorObject **object) {
-    try {
-        std::unique_ptr<rawstor::Object> impl(new rawstor::Object(*id));
-
-        impl->open();
-
-        *object = impl->c_ptr();
-
-        impl.release();
-
-        return 0;
-    } catch (const std::system_error &e) {
-        return -e.code().value();
-    } catch (const std::bad_alloc &e) {
-        return -ENOMEM;
-    }
-}
-
-
-int rawstor_object_open_ost(
-    const RawstorSocketAddress *ost,
+int rawstor_object_open(
+    const char *uri,
     const RawstorUUID *id,
     RawstorObject **object)
 {
     try {
-        std::unique_ptr<rawstor::Object> impl(new rawstor::Object(*id));
+        std::unique_ptr<rawstor::Object> impl =
+            std::make_unique<rawstor::Object>(*id);
 
-        impl->open(rawstor::SocketAddress(ost));
+        impl->open(rawstor::URI(uri));
 
         *object = impl->c_ptr();
 

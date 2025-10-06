@@ -11,12 +11,12 @@
 #include <string.h>
 
 
-int rawstor_cli_remove(const struct RawstorUUID *object_id) {
+int rawstor_cli_remove(const char *uri, const struct RawstorUUID *object_id) {
     RawstorUUIDString uuid_string;
     rawstor_uuid_to_string(object_id, &uuid_string);
     fprintf(stderr, "Removing object with id: %s\n", uuid_string);
 
-    int res = rawstor_object_remove(object_id);
+    int res = rawstor_object_remove(uri, object_id);
     if (res) {
         fprintf(
             stderr,

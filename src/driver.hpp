@@ -5,6 +5,8 @@
 
 #include <rawstorio/queue.hpp>
 
+#include <rawstorstd/uri.hpp>
+
 #include <rawstor/object.h>
 
 #include <memory>
@@ -17,7 +19,7 @@ namespace rawstor {
 class Driver {
     private:
         unsigned int _depth;
-        SocketAddress _ost;
+        URI _uri;
         int _fd;
 
     protected:
@@ -27,9 +29,9 @@ class Driver {
 
     public:
         static std::unique_ptr<Driver> create(
-            const SocketAddress &ost, unsigned int depth);
+            const URI &uri, unsigned int depth);
 
-        Driver(const SocketAddress &ost, unsigned int depth);
+        Driver(const URI &uri, unsigned int depth);
         Driver(const Driver &) = delete;
         Driver(Driver &&) noexcept = delete;
         virtual ~Driver();
@@ -38,8 +40,8 @@ class Driver {
 
         std::string str() const;
 
-        inline const SocketAddress& ost() const noexcept {
-            return _ost;
+        inline const URI& uri() const noexcept {
+            return _uri;
         }
 
         inline unsigned int depth() const noexcept {

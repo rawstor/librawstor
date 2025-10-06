@@ -43,22 +43,20 @@ void parse(
     }
 
     size_t path_delim = uri.find('/', at_delim);
-    if (path_delim != uri.npos) {
-        size_t colon_delim = uri.find(":", at_delim);
-        if (colon_delim != uri.npos && colon_delim < path_delim) {
-            *hostname = uri.substr(at_delim, colon_delim - at_delim);
-            colon_delim += 1;
-            std::istringstream iss(
-                uri.substr(colon_delim, path_delim - colon_delim));
-            iss >> *port;
-        } else {
-            *hostname = uri.substr(at_delim, path_delim - at_delim);
-            *port = 0;
-        }
+    if (path_delim == uri.npos) {
+        path_delim = uri.length();
+    }
+
+    size_t colon_delim = uri.find(":", at_delim);
+    if (colon_delim != uri.npos && colon_delim < path_delim) {
+        *hostname = uri.substr(at_delim, colon_delim - at_delim);
+        colon_delim += 1;
+        std::istringstream iss(
+            uri.substr(colon_delim, path_delim - colon_delim));
+        iss >> *port;
     } else {
-        *hostname = "";
+        *hostname = uri.substr(at_delim, path_delim - at_delim);
         *port = 0;
-        path_delim = at_delim;
     }
 
     *path = uri.substr(path_delim);

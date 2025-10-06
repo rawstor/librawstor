@@ -16,12 +16,12 @@ static void usage() {
         stderr,
         "Rawstor CLI\n"
         "\n"
-        "usage: rawstor-cli [options] <command> [command_options]\n"
+        "usage: rawstor-cli <--uri URI> [options] <command> [command_options]\n"
         "\n"
         "options:\n"
         "  -h, --help            Show this help message and exit\n"
-        "  --ost                 OST host:port\n"
         "  --sessions            Number of opened sessions per object\n"
+        "  --uri                 Rawstor URI\n"
         "  --wait-timeout        IO wait timeout\n"
         "\n"
         "command:\n"
@@ -49,7 +49,7 @@ static void command_create_usage() {
 };
 
 
-static int command_create(int argc, char **argv) {
+static int command_create(const char *uri, int argc, char **argv) {
     const char *optstring = "hs:";
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
@@ -96,7 +96,7 @@ static int command_create(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
-    return rawstor_cli_create(size);
+    return rawstor_cli_create(uri, size);
 }
 
 
@@ -114,7 +114,7 @@ static void command_remove_usage() {
 };
 
 
-static int command_remove(int argc, char **argv) {
+static int command_remove(const char *uri, int argc, char **argv) {
     const char *optstring = "ho:";
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
@@ -161,7 +161,7 @@ static int command_remove(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
-    return rawstor_cli_remove(&object_id);
+    return rawstor_cli_remove(uri, &object_id);
 }
 
 
@@ -179,7 +179,7 @@ static void command_show_usage() {
 };
 
 
-static int command_show(int argc, char **argv) {
+static int command_show(const char *uri, int argc, char **argv) {
     const char *optstring = "ho:";
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
@@ -226,7 +226,7 @@ static int command_show(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
-    return rawstor_cli_show(&object_id);
+    return rawstor_cli_show(uri, &object_id);
 }
 
 
@@ -252,7 +252,7 @@ static void command_testio_usage() {
 };
 
 
-static int command_testio(int argc, char **argv) {
+static int command_testio(const char *uri, int argc, char **argv) {
     const char *optstring = "b:c:d:ho:s:";
     struct option longopts[] = {
         {"block-size", required_argument, NULL, 'b'},
@@ -357,6 +357,7 @@ static int command_testio(int argc, char **argv) {
     }
 
     return rawstor_cli_testio(
+        uri,
         &object_id,
         block_size, count, io_depth,
         vector_mode);
@@ -366,10 +367,10 @@ static int command_testio(int argc, char **argv) {
 static int run_command(
     const char *command,
     const struct RawstorOpts *opts,
-    const struct RawstorSocketAddress *default_ost,
+    const char *uri,
     int argc, char **argv)
 {
-    int res = rawstor_initialize(opts, default_ost);
+    int res = rawstor_initialize(opts);
     if (res) {
         fprintf(stderr, "rawstor_initialize() failed: %s\n", strerror(-res));
         return EXIT_FAILURE;
@@ -377,13 +378,13 @@ static int run_command(
 
     int ret;
     if (strcmp(command, "create") == 0) {
-        ret = command_create(argc, argv);
+        ret = command_create(uri, argc, argv);
     } else if (strcmp(command, "remove") == 0) {
-        ret = command_remove(argc, argv);
+        ret = command_remove(uri, argc, argv);
     } else if (strcmp(command, "show") == 0) {
-        ret = command_show(argc, argv);
+        ret = command_show(uri, argc, argv);
     } else if (strcmp(command, "testio") == 0) {
-        ret = command_testio(argc, argv);
+        ret = command_testio(uri, argc, argv);
     } else {
         printf("Unexpected command: %s\n", command);
         ret = EXIT_FAILURE;
@@ -399,13 +400,13 @@ int main(int argc, char **argv) {
     const char *optstring = "+h";
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
-        {"ost", required_argument, NULL, 'o'},
+        {"uri", required_argument, NULL, 'u'},
         {"sessions", required_argument, NULL, 's'},
         {"wait-timeout", required_argument, NULL, 't'},
         {},
     };
 
-    char *ost_arg = NULL;
+    char *uri_arg = NULL;
     char *sessions_arg = NULL;
     char *wait_timeout_arg = NULL;
     while (1) {
@@ -419,16 +420,16 @@ int main(int argc, char **argv) {
                 return EXIT_SUCCESS;
                 break;
 
-            case 'o':
-                ost_arg = optarg;
-                break;
-
             case 's':
                 sessions_arg = optarg;
                 break;
 
             case 't':
                 wait_timeout_arg = optarg;
+                break;
+
+            case 'u':
+                uri_arg = optarg;
                 break;
 
             default:
@@ -442,28 +443,10 @@ int main(int argc, char **argv) {
     }
 
     struct RawstorOpts opts = {};
-    struct RawstorSocketAddress ost = {};
-    struct RawstorSocketAddress *ost_ptr = NULL;
 
-    if (ost_arg != NULL) {
-        const char *comma = strchr(ost_arg, ':');
-        if (comma == NULL) {
-            fprintf(stderr, "host:port format expected for ost argument\n");
-            return EXIT_FAILURE;
-        }
-
-        if (sscanf(comma + 1, "%u", &ost.port) != 1) {
-            fprintf(stderr, "ost port argument must be unsigned integer\n");
-            return EXIT_FAILURE;
-        }
-
-        ost.host = strndup(ost_arg, comma - ost_arg);
-        if (ost.host == NULL) {
-            perror("strdup() failed");
-            return EXIT_FAILURE;
-        }
-
-        ost_ptr = &ost;
+    if (uri_arg == NULL) {
+        fprintf(stderr, "uri argument required\n");
+        return EXIT_FAILURE;
     }
 
     if (sessions_arg != NULL) {
@@ -481,11 +464,7 @@ int main(int argc, char **argv) {
     }
 
     int ret = run_command(
-        argv[optind], &opts, ost_ptr, argc - optind, &argv[optind]);
-
-    if (ost_ptr != NULL) {
-        free(ost_ptr->host);
-    }
+        argv[optind], &opts, uri_arg, argc - optind, &argv[optind]);
 
     return ret;
 }

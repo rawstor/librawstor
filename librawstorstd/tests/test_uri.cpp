@@ -60,6 +60,24 @@ int test_uri_file() {
 }
 
 
+int test_uri_empty_path() {
+    rawstor::URI uri("ost://127.0.0.1:8080");
+
+    assertTrue(uri.str() == "ost://127.0.0.1:8080");
+    assertTrue(uri.scheme() == "ost");
+    assertTrue(uri.userinfo() == "");
+    assertTrue(uri.username() == "");
+    assertTrue(uri.password() == "");
+    assertTrue(uri.authority() == "127.0.0.1:8080");
+    assertTrue(uri.host() == "127.0.0.1:8080");
+    assertTrue(uri.hostname() == "127.0.0.1");
+    assertTrue(uri.port() == 8080);
+    assertTrue(uri.path() == "");
+
+    return 0;
+}
+
+
 } // unnamed
 
 
@@ -68,5 +86,6 @@ int main() {
     rval += test_uri_empty();
     rval += test_uri_http();
     rval += test_uri_file();
+    rval += test_uri_empty_path();
     return rval ? EXIT_FAILURE : EXIT_SUCCESS;
 }

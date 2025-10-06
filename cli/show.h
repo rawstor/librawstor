@@ -11,7 +11,7 @@ extern "C" {
 #endif
 
 
-int rawstor_cli_show(const struct RawstorUUID *object_id);
+int rawstor_cli_show(const char *uri, const struct RawstorUUID *object_id);
 
 
 #ifdef __cplusplus

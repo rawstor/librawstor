@@ -1,11 +1,10 @@
 #ifndef RAWSTOR_OBJECT_HPP
 #define RAWSTOR_OBJECT_HPP
 
-#include "config.h"
 #include "connection.hpp"
 
 #include <rawstorstd/mempool.hpp>
-#include <rawstorstd/socket_address.hpp>
+#include <rawstorstd/uri.hpp>
 
 #include <rawstor.h>
 
@@ -21,11 +20,6 @@ struct ObjectOp;
 
 class Object {
     private:
-#ifdef RAWSTOR_ENABLE_OST
-        using DriverImpl = DriverOST;
-#else
-        using DriverImpl = DriverFile;
-#endif
         RawstorObject *_c_ptr;
         RawstorUUID _id;
         MemPool<ObjectOp> _ops;
@@ -36,9 +30,8 @@ class Object {
             size_t size, size_t res, int error, void *data) noexcept;
 
     public:
-        static void create(const RawstorObjectSpec &sp, RawstorUUID *id);
         static void create(
-            const SocketAddress &ost,
+            const URI &uri,
             const RawstorObjectSpec &sp,
             RawstorUUID *id);
 
@@ -53,14 +46,11 @@ class Object {
 
         const RawstorUUID& id() const noexcept;
 
-        void remove();
-        void remove(const SocketAddress &ost);
+        void remove(const URI &uri);
 
-        void spec(RawstorObjectSpec *sp);
-        void spec(const SocketAddress &ost, RawstorObjectSpec *sp);
+        void spec(const URI &uri, RawstorObjectSpec *sp);
 
-        void open();
-        void open(const SocketAddress &ost);
+        void open(const URI &uri);
 
         void close();
 

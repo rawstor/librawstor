@@ -21,7 +21,6 @@ librawstorstd_la_SOURCES = hash.c \
                            mempool.c \
                            ringbuf.c \
                            socket.c \
-                           socket_address.cpp \
                            threading.c \
                            uri.cpp \
                            uuid.c

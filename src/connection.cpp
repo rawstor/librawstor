@@ -241,7 +241,7 @@ Connection::~Connection() {
 
 
 std::vector<std::shared_ptr<Driver>> Connection::_open(
-    const SocketAddress &ost,
+    const URI &uri,
     rawstor::Object *object,
     size_t nsessions)
 {
@@ -258,7 +258,7 @@ std::vector<std::shared_ptr<Driver>> Connection::_open(
             sessions.clear();
             sessions.reserve(nsessions);
             for (size_t i = 0; i < nsessions; ++i) {
-                sessions.push_back(Driver::create(ost, _depth));
+                sessions.push_back(Driver::create(uri, _depth));
             }
 
             for (std::shared_ptr<Driver> s: sessions) {
@@ -312,7 +312,7 @@ void Connection::invalidate_session(const std::shared_ptr<Driver> &s) {
         _sessions.erase(it);
 
         std::vector<std::shared_ptr<Driver>> new_sessions = _open(
-            s->ost(), _object, 1);
+            s->uri(), _object, 1);
 
         _sessions.push_back(new_sessions.front());
     }
@@ -320,12 +320,12 @@ void Connection::invalidate_session(const std::shared_ptr<Driver> &s) {
 
 
 void Connection::create(
-    const SocketAddress &ost,
+    const URI &uri,
     const RawstorObjectSpec &sp, RawstorUUID *id)
 {
     Queue q(1, _depth);
 
-    std::unique_ptr<Driver> s = Driver::create(ost, _depth);
+    std::unique_ptr<Driver> s = Driver::create(uri, _depth);
     s->create(q.queue(), sp, id, q.callback, &q);
 
     q.wait();
@@ -333,12 +333,12 @@ void Connection::create(
 
 
 void Connection::remove(
-    const SocketAddress &ost,
+    const URI &uri,
     const RawstorUUID &id)
 {
     Queue q(1, _depth);
 
-    std::unique_ptr<Driver> s = Driver::create(ost, _depth);
+    std::unique_ptr<Driver> s = Driver::create(uri, _depth);
     s->remove(q.queue(), id, q.callback, &q);
 
     q.wait();
@@ -346,12 +346,12 @@ void Connection::remove(
 
 
 void Connection::spec(
-    const SocketAddress &ost,
+    const URI &uri,
     const RawstorUUID &id, RawstorObjectSpec *sp)
 {
     Queue q(1, _depth);
 
-    std::unique_ptr<Driver> s = Driver::create(ost, _depth);
+    std::unique_ptr<Driver> s = Driver::create(uri, _depth);
     s->spec(q.queue(), id, sp, q.callback, &q);
 
     q.wait();
@@ -359,11 +359,11 @@ void Connection::spec(
 
 
 void Connection::open(
-    const SocketAddress &ost,
+    const URI &uri,
     rawstor::Object *object,
     size_t nsessions)
 {
-    _sessions = _open(ost, object, nsessions);
+    _sessions = _open(uri, object, nsessions);
     _object = object;
 }
 

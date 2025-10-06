@@ -7,7 +7,7 @@
 #include <string.h>
 
 
-int rawstor_cli_create(size_t size){
+int rawstor_cli_create(const char *uri, size_t size){
     struct RawstorObjectSpec spec = {
         .size = size << 30,
     };
@@ -16,7 +16,7 @@ int rawstor_cli_create(size_t size){
     fprintf(stderr, "  size: %zu Gb\n", size);
     struct RawstorUUID object_id;
 
-    int res = rawstor_object_create(&spec, &object_id);
+    int res = rawstor_object_create(uri, &spec, &object_id);
     if (res) {
         fprintf(
             stderr,

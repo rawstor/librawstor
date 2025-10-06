@@ -263,13 +263,14 @@ static int srcv_data_sent(
 
 
 int rawstor_cli_testio(
+    const char *uri,
     const struct RawstorUUID *object_id,
     size_t block_size, unsigned int count, unsigned int io_depth,
     int vector_mode)
 {
     int res;
     RawstorObject *object;
-    res = rawstor_object_open(object_id, &object);
+    res = rawstor_object_open(uri, object_id, &object);
     if (res < 0) {
         fprintf(stderr, "rawstor_object_open() failed: %s\n", strerror(-res));
         goto err_open;

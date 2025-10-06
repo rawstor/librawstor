@@ -87,8 +87,8 @@ struct DriverOp {
 };
 
 
-Driver::Driver(const SocketAddress &ost, unsigned int depth):
-    rawstor::Driver(ost, depth),
+Driver::Driver(const URI &uri, unsigned int depth):
+    rawstor::Driver(uri, depth),
     _object(nullptr),
     _ops_array(),
     _ops(depth)
@@ -212,6 +212,12 @@ DriverOp* Driver::_find_op(unsigned int cid) {
 
 
 int Driver::_connect() {
+    if (!uri().path().empty()) {
+        std::ostringstream oss;
+        oss << "Empty path expected: " << uri().str();
+        throw std::runtime_error(oss.str());
+    }
+
     int res;
 
     int fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -246,18 +252,16 @@ int Driver::_connect() {
 
         sockaddr_in servaddr = {};
         servaddr.sin_family = AF_INET;
-        servaddr.sin_port = htons(ost().port());
+        servaddr.sin_port = htons(uri().port());
 
-        res = inet_pton(AF_INET, ost().host().c_str(), &servaddr.sin_addr);
+        res = inet_pton(AF_INET, uri().hostname().c_str(), &servaddr.sin_addr);
         if (res == 0) {
             RAWSTOR_THROW_SYSTEM_ERROR(EINVAL);
         } else if (res == -1) {
             RAWSTOR_THROW_ERRNO();
         }
 
-        rawstor_info(
-            "fd %d: Connecting to %s using OST driver...\n",
-            fd, ost().str().c_str());
+        rawstor_info("fd %d: Connecting to %s...\n", fd, uri().str().c_str());
         if (connect(fd, (sockaddr*)&servaddr, sizeof(servaddr)) == -1) {
             RAWSTOR_THROW_ERRNO();
         }

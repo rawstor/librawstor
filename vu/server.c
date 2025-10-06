@@ -185,7 +185,7 @@ static int server_write(RawstorIOEvent *event, void *data) {
 
 
 static int server_loop(int client_socket) {
-    int res = rawstor_initialize(NULL, NULL);
+    int res = rawstor_initialize(NULL);
     if (res) {
         fprintf(stderr, "rawstor_initialize() failed: %s\n", strerror(-res));
         return res;
@@ -228,6 +228,7 @@ static int server_loop(int client_socket) {
 
 
 int rawstor_vu_server(
+    const char RAWSTOR_UNUSED *uri,
     int RAWSTOR_UNUSED object_id,
     const char *socket_path)
 {
