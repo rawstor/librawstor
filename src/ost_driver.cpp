@@ -90,44 +90,10 @@ struct DriverOp {
 Driver::Driver(const URI &uri, unsigned int depth):
     rawstor::Driver(uri, depth),
     _object(nullptr),
-    _ops_array(),
-    _ops(depth)
+    _cid_counter(0)
 {
     int fd = _connect();
-
-    try {
-        _ops_array.reserve(depth);
-        for (unsigned int i = 0; i < depth; ++i) {
-            DriverOp *op = new DriverOp();
-            op->cid = i + 1;
-
-            _ops_array.push_back(op);
-
-            _ops.push(op);
-        }
-    } catch (...) {
-        for (DriverOp *op: _ops_array) {
-            delete op;
-        }
-
-        if (::close(fd) == -1) {
-            int error = errno;
-            errno = 0;
-            rawstor_error(
-                "Driver::Driver(): close failed: %s\n", strerror(error));
-        }
-
-        throw;
-    }
-
     set_fd(fd);
-}
-
-
-Driver::~Driver() {
-    for (DriverOp *op: _ops_array) {
-        delete op;
-    }
 }
 
 
@@ -189,25 +155,22 @@ void Driver::_validate_hash(uint64_t hash, uint64_t expected) {
 }
 
 
-DriverOp* Driver::_acquire_op() {
-    return _ops.pop();
+void Driver::_release_op(DriverOp *op) {
+    std::unordered_map<uint16_t, DriverOp*>::iterator it = _ops.find(op->cid);
+    if (it != _ops.end()) {
+        _ops.erase(it);
+    }
 }
 
 
-void Driver::_release_op(DriverOp *op) noexcept {
-    assert(_ops.size() < _ops.capacity());
-
-    _ops.push(op);
-}
-
-
-DriverOp* Driver::_find_op(unsigned int cid) {
-    if (cid < 1 || cid > _ops_array.size()) {
+DriverOp* Driver::_find_op(uint16_t cid) {
+    std::unordered_map<uint16_t, DriverOp*>::iterator it = _ops.find(cid);
+    if (it == _ops.end()) {
         rawstor_error("Unexpected cid: %u\n", cid);
-        RAWSTOR_THROW_SYSTEM_ERROR(EIO);
+        RAWSTOR_THROW_SYSTEM_ERROR(EPROTO);
     }
 
-    return _ops_array[cid - 1];
+    return it->second;
 }
 
 
@@ -355,12 +318,12 @@ int Driver::_writev_request_cb(
 
     int res = 0;
     if (error) {
-        DriverOp op_copy = *op;
         s->_release_op(op);
-        res = op_copy.callback(
+        res = op->callback(
             s->_object,
-            op_copy.request.io.len, 0, error,
-            op_copy.data);
+            op->request.io.len, 0, error,
+            op->data);
+        delete op;
     }
 
     return res;
@@ -389,12 +352,12 @@ int Driver::_read_response_set_object_id_cb(
         error = e.code().value();
     }
 
-    DriverOp op_copy = *op;
     s->_release_op(op);
-    int res = op_copy.callback(
+    int res = op->callback(
         s->_object,
         0, 0, error,
-        op_copy.data);
+        op->data);
+    delete op;
 
     if (!error && res == 0) {
         rawstor_info("%s: Object id successfully set\n", s->str().c_str());
@@ -440,12 +403,12 @@ int Driver::_read_response_head_cb(
             }
         }
         if (error || op->next == nullptr) {
-            DriverOp op_copy = *op;
             s->_release_op(op);
-            res = op_copy.callback(
+            res = op->callback(
                 s->_object,
-                op_copy.request.io.len, s->_response.res, error,
-                op_copy.data);
+                op->request.io.len, s->_response.res, error,
+                op->data);
+            delete op;
             if (res == 0) {
                 try {
                     s->_read_response_head(event->queue());
@@ -455,23 +418,25 @@ int Driver::_read_response_head_cb(
             }
         }
     } else {
-        std::vector<DriverOp*> ops_array;
-        ops_array.reserve(s->_ops_array.size());
-        std::copy_if(
-            s->_ops_array.begin(),
-            s->_ops_array.end(),
-            std::back_inserter(ops_array),
-            [](DriverOp *op){return op->in_flight;}
-        );
+        std::vector<DriverOp*> ops;
+        ops.reserve(s->_ops.size());
+        std::unordered_map<uint16_t, DriverOp*>::iterator it = s->_ops.begin();
+        while (it != s->_ops.end()) {
+            if (it->second->in_flight) {
+                ops.push_back(it->second);
+                it = s->_ops.erase(it);
+            } else {
+                ++it;
+            }
+        }
 
-        for (DriverOp *op: ops_array) {
+        for (DriverOp *op: ops) {
             op->in_flight = false;
-            DriverOp op_copy = *op;
-            s->_release_op(op);
-            res = op_copy.callback(
+            res = op->callback(
                 s->_object,
-                op_copy.request.io.len, 0, error,
-                op_copy.data);
+                op->request.io.len, 0, error,
+                op->data);
+            delete op;
             if (res) {
                 return res;
             }
@@ -502,12 +467,12 @@ int Driver::_read_response_body_cb(
         error = e.code().value();
     }
 
-    DriverOp op_copy = *op;
     s->_release_op(op);
-    int res = op_copy.callback(
+    int res = op->callback(
         s->_object,
-        op_copy.request.io.len, s->_response.res, error,
-        op_copy.data);
+        op->request.io.len, s->_response.res, error,
+        op->data);
+    delete op;
 
     if (!error && res == 0) {
         try {
@@ -546,12 +511,12 @@ int Driver::_readv_response_body_cb(
         error = e.code().value();
     }
 
-    DriverOp op_copy = *op;
     s->_release_op(op);
-    int res = op_copy.callback(
+    int res = op->callback(
         s->_object,
-        op_copy.request.io.len, s->_response.res, error,
-        op_copy.data);
+        op->request.io.len, s->_response.res, error,
+        op->data);
+    delete op;
 
     if (!error && res == 0) {
         try {
@@ -620,51 +585,49 @@ void Driver::set_object(
 {
     rawstor_info("%s: Setting object id\n", str().c_str());
 
-    DriverOp *op = _acquire_op();
+    std::unique_ptr<DriverOp> op = std::make_unique<DriverOp>();
 
-    try {
-        *op = {
-            .s = this,
-            .cid = op->cid,  // preserve cid
-            .in_flight = false,
-            .next = nullptr,
-            .request = {
-                .basic = {
-                    .magic = RAWSTOR_MAGIC,
-                    .cmd = RAWSTOR_CMD_SET_OBJECT,
-                    .obj_id = {},
-                    .offset = 0,
-                    .val = 0,
-                },
+    ++_cid_counter;
+    *op = {
+        .s = this,
+        .cid = _cid_counter,
+        .in_flight = false,
+        .next = nullptr,
+        .request = {
+            .basic = {
+                .magic = RAWSTOR_MAGIC,
+                .cmd = RAWSTOR_CMD_SET_OBJECT,
+                .obj_id = {},
+                .offset = 0,
+                .val = 0,
             },
-            .payload = {},
-            .iov = {},
-            .niov = 0,
-            .size = 0,
-            .callback = cb,
-            .data = data,
-        };
+        },
+        .payload = {},
+        .iov = {},
+        .niov = 0,
+        .size = 0,
+        .callback = cb,
+        .data = data,
+    };
 
-        memcpy(
-            op->request.basic.obj_id,
-            object->id().bytes, sizeof(op->request.basic.obj_id));
+    memcpy(
+        op->request.basic.obj_id,
+        object->id().bytes, sizeof(op->request.basic.obj_id));
 
-        op->iov[0] = {
-            .iov_base = &op->request.basic,
-            .iov_len = sizeof(op->request.basic),
-        };
-        op->niov = 1;
-        op->size = sizeof(op->request.basic);
+    op->iov[0] = {
+        .iov_base = &op->request.basic,
+        .iov_len = sizeof(op->request.basic),
+    };
+    op->niov = 1;
+    op->size = sizeof(op->request.basic);
 
-        _writev_request(queue, op);
+    _writev_request(queue, op.get());
 
-        _read_response_set_object_id(queue, op);
-    } catch (...) {
-        _release_op(op);
-        throw;
-    }
+    _read_response_set_object_id(queue, op.get());
 
+    _ops[op->cid] = op.get();
     _object = object;
+    op.release();
 }
 
 
@@ -676,49 +639,48 @@ void Driver::pread(
         "%s(): offset = %jd, size = %zu\n",
         __FUNCTION__, (intmax_t)offset, size);
 
-    DriverOp *op = _acquire_op();
+    std::unique_ptr<DriverOp> op = std::make_unique<DriverOp>();
 
-    try {
-        *op = {
-            .s = this,
-            .cid = op->cid,  // preserve cid
-            .in_flight = false,
-            .next = _next_read_response_body,
-            .request = {
-                .io = {
-                    .magic = RAWSTOR_MAGIC,
-                    .cmd = RAWSTOR_CMD_READ,
-                    .cid = op->cid,
-                    .offset = (uint64_t)offset,
-                    .len = (uint32_t)size,
-                    .hash = 0,
-                    .sync = 0,
-                },
+    ++_cid_counter;
+    *op = {
+        .s = this,
+        .cid = _cid_counter,
+        .in_flight = false,
+        .next = _next_read_response_body,
+        .request = {
+            .io = {
+                .magic = RAWSTOR_MAGIC,
+                .cmd = RAWSTOR_CMD_READ,
+                .cid = _cid_counter,
+                .offset = (uint64_t)offset,
+                .len = (uint32_t)size,
+                .hash = 0,
+                .sync = 0,
             },
-            .payload = {
-                .linear = {
-                    .data = buf,
-                },
+        },
+        .payload = {
+            .linear = {
+                .data = buf,
             },
-            .iov = {},
-            .niov = 0,
-            .size = 0,
-            .callback = cb,
-            .data = data,
-        };
+        },
+        .iov = {},
+        .niov = 0,
+        .size = 0,
+        .callback = cb,
+        .data = data,
+    };
 
-        op->iov[0] = {
-            .iov_base = &op->request.io,
-            .iov_len = sizeof(op->request.io),
-        };
-        op->niov = 1;
-        op->size = sizeof(op->request.io);
+    op->iov[0] = {
+        .iov_base = &op->request.io,
+        .iov_len = sizeof(op->request.io),
+    };
+    op->niov = 1;
+    op->size = sizeof(op->request.io);
 
-        _writev_request(*io_queue, op);
-    } catch (...) {
-        _release_op(op);
-        throw;
-    }
+    _writev_request(*io_queue, op.get());
+
+    _ops[op->cid] = op.get();
+    op.release();
 }
 
 
@@ -730,50 +692,49 @@ void Driver::preadv(
         "%s(): offset = %jd, niov = %u, size = %zu\n",
         __FUNCTION__, (intmax_t)offset, niov, size);
 
-    DriverOp *op = _acquire_op();
+    std::unique_ptr<DriverOp> op = std::make_unique<DriverOp>();
 
-    try {
-        *op = {
-            .s = this,
-            .cid = op->cid,  // preserve cid
-            .in_flight = false,
-            .next = _next_readv_response_body,
-            .request = {
-                .io = {
-                    .magic = RAWSTOR_MAGIC,
-                    .cmd = RAWSTOR_CMD_READ,
-                    .cid = op->cid,
-                    .offset = (uint64_t)offset,
-                    .len = (uint32_t)size,
-                    .hash = 0,
-                    .sync = 0,
-                },
+    ++_cid_counter;
+    *op = {
+        .s = this,
+        .cid = _cid_counter,
+        .in_flight = false,
+        .next = _next_readv_response_body,
+        .request = {
+            .io = {
+                .magic = RAWSTOR_MAGIC,
+                .cmd = RAWSTOR_CMD_READ,
+                .cid = _cid_counter,
+                .offset = (uint64_t)offset,
+                .len = (uint32_t)size,
+                .hash = 0,
+                .sync = 0,
             },
-            .payload = {
-                .vector = {
-                    .iov = iov,
-                    .niov = niov,
-                },
+        },
+        .payload = {
+            .vector = {
+                .iov = iov,
+                .niov = niov,
             },
-            .iov = {},
-            .niov = 0,
-            .size = 0,
-            .callback = cb,
-            .data = data,
-        };
+        },
+        .iov = {},
+        .niov = 0,
+        .size = 0,
+        .callback = cb,
+        .data = data,
+    };
 
-        op->iov[0] = {
-            .iov_base = &op->request.io,
-            .iov_len = sizeof(op->request.io),
-        };
-        op->niov = 1;
-        op->size = sizeof(op->request.io);
+    op->iov[0] = {
+        .iov_base = &op->request.io,
+        .iov_len = sizeof(op->request.io),
+    };
+    op->niov = 1;
+    op->size = sizeof(op->request.io);
 
-        _writev_request(*io_queue, op);
-    } catch (...) {
-        _release_op(op);
-        throw;
-    }
+    _writev_request(*io_queue, op.get());
+
+    _ops[op->cid] = op.get();
+    op.release();
 }
 
 
@@ -785,53 +746,52 @@ void Driver::pwrite(
         "%s(): offset = %jd, size = %zu\n",
         __FUNCTION__, (intmax_t)offset, size);
 
-    DriverOp *op = _acquire_op();
+    std::unique_ptr<DriverOp> op = std::make_unique<DriverOp>();
 
-    try {
-        *op = {
-            .s = this,
-            .cid = op->cid,  // preserve cid
-            .in_flight = false,
-            .next = nullptr,
-            .request = {
-                .io = {
-                    .magic = RAWSTOR_MAGIC,
-                    .cmd = RAWSTOR_CMD_WRITE,
-                    .cid = op->cid,
-                    .offset = (uint64_t)offset,
-                    .len = (uint32_t)size,
-                    .hash = rawstor_hash_scalar(buf, size),
-                    .sync = 0,
-                },
+    ++_cid_counter;
+    *op = {
+        .s = this,
+        .cid = _cid_counter,
+        .in_flight = false,
+        .next = nullptr,
+        .request = {
+            .io = {
+                .magic = RAWSTOR_MAGIC,
+                .cmd = RAWSTOR_CMD_WRITE,
+                .cid = _cid_counter,
+                .offset = (uint64_t)offset,
+                .len = (uint32_t)size,
+                .hash = rawstor_hash_scalar(buf, size),
+                .sync = 0,
             },
-            .payload = {
-                .linear = {
-                    .data = buf,
-                },
+        },
+        .payload = {
+            .linear = {
+                .data = buf,
             },
-            .iov = {},
-            .niov = 0,
-            .size = 0,
-            .callback = cb,
-            .data = data,
-        };
+        },
+        .iov = {},
+        .niov = 0,
+        .size = 0,
+        .callback = cb,
+        .data = data,
+    };
 
-        op->iov[0] = {
-            .iov_base = &op->request.io,
-            .iov_len = sizeof(op->request.io),
-        };
-        op->iov[1] = {
-            .iov_base = buf,
-            .iov_len = size,
-        };
-        op->niov = 2;
-        op->size = sizeof(op->request.io) + size;
+    op->iov[0] = {
+        .iov_base = &op->request.io,
+        .iov_len = sizeof(op->request.io),
+    };
+    op->iov[1] = {
+        .iov_base = buf,
+        .iov_len = size,
+    };
+    op->niov = 2;
+    op->size = sizeof(op->request.io) + size;
 
-        _writev_request(*io_queue, op);
-    } catch (...) {
-        _release_op(op);
-        throw;
-    }
+    _writev_request(*io_queue, op.get());
+
+    _ops[op->cid] = op.get();
+    op.release();
 }
 
 
@@ -853,53 +813,52 @@ void Driver::pwritev(
         throw std::runtime_error("Large iovecs not supported");
     }
 
-    DriverOp *op = _acquire_op();
+    std::unique_ptr<DriverOp> op = std::make_unique<DriverOp>();
 
-    try {
-        *op = {
-            .s = this,
-            .cid = op->cid,  // preserve cid
-            .in_flight = false,
-            .next = nullptr,
-            .request = {
-                .io = {
-                    .magic = RAWSTOR_MAGIC,
-                    .cmd = RAWSTOR_CMD_WRITE,
-                    .cid = op->cid,
-                    .offset = (uint64_t)offset,
-                    .len = (uint32_t)size,
-                    .hash = hash,
-                    .sync = 0,
-                },
+    ++_cid_counter;
+    *op = {
+        .s = this,
+        .cid = _cid_counter,
+        .in_flight = false,
+        .next = nullptr,
+        .request = {
+            .io = {
+                .magic = RAWSTOR_MAGIC,
+                .cmd = RAWSTOR_CMD_WRITE,
+                .cid = _cid_counter,
+                .offset = (uint64_t)offset,
+                .len = (uint32_t)size,
+                .hash = hash,
+                .sync = 0,
             },
-            .payload = {
-                .vector = {
-                    .iov = iov,
-                    .niov = niov,
-                },
+        },
+        .payload = {
+            .vector = {
+                .iov = iov,
+                .niov = niov,
             },
-            .iov = {},
-            .niov = 0,
-            .size = 0,
-            .callback = cb,
-            .data = data,
-        };
+        },
+        .iov = {},
+        .niov = 0,
+        .size = 0,
+        .callback = cb,
+        .data = data,
+    };
 
-        op->iov[0] = {
-            .iov_base = &op->request.io,
-            .iov_len = sizeof(op->request.io),
-        };
-        for (unsigned int i = 0; i < niov; ++i) {
-            op->iov[i + 1] = iov[i];
-        }
-        op->niov = niov + 1;
-        op->size = sizeof(op->request.io) + size;
-
-        _writev_request(*io_queue, op);
-    } catch (...) {
-        _release_op(op);
-        throw;
+    op->iov[0] = {
+        .iov_base = &op->request.io,
+        .iov_len = sizeof(op->request.io),
+    };
+    for (unsigned int i = 0; i < niov; ++i) {
+        op->iov[i + 1] = iov[i];
     }
+    op->niov = niov + 1;
+    op->size = sizeof(op->request.io) + size;
+
+    _writev_request(*io_queue, op.get());
+
+    _ops[op->cid] = op.get();
+    op.release();
 }
 
 

@@ -14,7 +14,7 @@
 #include <rawstor/rawstor.h>
 
 #include <string>
-#include <vector>
+#include <unordered_map>
 
 #include <cstddef>
 
@@ -29,8 +29,8 @@ class Driver final: public rawstor::Driver {
     private:
         RawstorObject *_object;
 
-        std::vector<DriverOp*> _ops_array;
-        RingBuf<DriverOp*> _ops;
+        uint16_t _cid_counter;
+        std::unordered_map<uint16_t, DriverOp*> _ops;
         RawstorOSTFrameResponse _response;
 
         void _validate_event(RawstorIOEvent *event);
@@ -40,9 +40,8 @@ class Driver final: public rawstor::Driver {
             enum RawstorOSTCommandType expected);
         void _validate_hash(uint64_t hash, uint64_t expected);
 
-        DriverOp* _acquire_op();
-        void _release_op(DriverOp *op) noexcept;
-        DriverOp* _find_op(unsigned int cid);
+        void _release_op(DriverOp *op);
+        DriverOp* _find_op(uint16_t cid);
 
         int _connect();
 
@@ -71,7 +70,6 @@ class Driver final: public rawstor::Driver {
 
     public:
         Driver(const URI &uri, unsigned int depth);
-        ~Driver();
 
         void create(
             rawstor::io::Queue &queue,
