@@ -1,0 +1,72 @@
+#include "rawstorstd/uri.hpp"
+
+#include "unittest.h"
+
+
+namespace {
+
+
+int test_uri_empty() {
+    rawstor::URI uri("");
+
+    assertTrue(uri.str() == "");
+    assertTrue(uri.scheme() == "");
+    assertTrue(uri.userinfo() == "");
+    assertTrue(uri.username() == "");
+    assertTrue(uri.password() == "");
+    assertTrue(uri.authority() == "");
+    assertTrue(uri.host() == "");
+    assertTrue(uri.hostname() == "");
+    assertTrue(uri.port() == 0);
+    assertTrue(uri.path() == "");
+
+    return 0;
+}
+
+
+int test_uri_http() {
+    rawstor::URI uri("http://user:password@example.com:80/foo");
+
+    assertTrue(uri.str() == "http://user:password@example.com:80/foo");
+    assertTrue(uri.scheme() == "http");
+    assertTrue(uri.userinfo() == "user:password");
+    assertTrue(uri.username() == "user");
+    assertTrue(uri.password() == "password");
+    assertTrue(uri.authority() == "user:password@example.com:80");
+    assertTrue(uri.host() == "example.com:80");
+    assertTrue(uri.hostname() == "example.com");
+    assertTrue(uri.port() == 80);
+    assertTrue(uri.path() == "/foo");
+
+    return 0;
+}
+
+
+int test_uri_file() {
+    rawstor::URI uri("file:///tmp/foo");
+
+    assertTrue(uri.str() == "file:///tmp/foo");
+    assertTrue(uri.scheme() == "file");
+    assertTrue(uri.userinfo() == "");
+    assertTrue(uri.username() == "");
+    assertTrue(uri.password() == "");
+    assertTrue(uri.authority() == "");
+    assertTrue(uri.host() == "");
+    assertTrue(uri.hostname() == "");
+    assertTrue(uri.port() == 0);
+    assertTrue(uri.path() == "/tmp/foo");
+
+    return 0;
+}
+
+
+} // unnamed
+
+
+int main() {
+    int rval = 0;
+    rval += test_uri_empty();
+    rval += test_uri_http();
+    rval += test_uri_file();
+    return rval ? EXIT_FAILURE : EXIT_SUCCESS;
+}

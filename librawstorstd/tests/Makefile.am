@@ -4,6 +4,7 @@ noinst_PROGRAMS = test_hash \
                   test_mempool \
                   test_ringbuf \
                   test_threading \
+                  test_uri \
                   test_uuid
 
 
@@ -13,6 +14,13 @@ AM_CFLAGS = $(GENERIC_CFLAGS) \
             -I$(top_srcdir)/librawstorstd/include \
             -I$(top_srcdir)/tests \
             -I$(top_srcdir)/include
+
+AM_CXXFLAGS = $(GENERIC_CXXFLAGS) \
+              $(ASAN_CFLAGS) \
+              -I$(top_srcdir)/librawstorstd/src \
+              -I$(top_srcdir)/librawstorstd/include \
+              -I$(top_srcdir)/tests \
+              -I$(top_srcdir)/include
 
 AM_LDFLAGS = $(ASAN_LDFLAGS)
 
@@ -39,6 +47,10 @@ test_ringbuf_LDADD = $(top_srcdir)/librawstorstd/src/librawstorstd.la
 
 test_threading_SOURCES = test_threading.c
 test_threading_LDADD = $(top_srcdir)/librawstorstd/src/librawstorstd.la
+
+
+test_uri_SOURCES = test_uri.cpp
+test_uri_LDADD = $(top_srcdir)/librawstorstd/src/librawstorstd.la
 
 
 test_uuid_SOURCES = test_uuid.c

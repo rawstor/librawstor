@@ -1,0 +1,74 @@
+#ifndef RAWSTORSTD_URI_HPP
+#define RAWSTORSTD_URI_HPP
+
+#include <string>
+
+
+namespace rawstor {
+
+
+class URI {
+    private:
+        std::string _uri;
+        std::string _scheme;
+        std::string _userinfo;
+        std::string _username;
+        std::string _password;
+        std::string _authority;
+        std::string _host;
+        std::string _hostname;
+        unsigned int _port;
+        std::string _path;
+
+    public:
+        explicit URI(const std::string &uri);
+        URI(const URI &other);
+        URI(URI &&other) noexcept;
+        URI& operator=(const URI &other);
+        URI& operator=(URI &&other) noexcept;
+
+        inline const std::string& str() const noexcept {
+            return _uri;
+        }
+
+        inline const std::string& scheme() const noexcept {
+            return _scheme;
+        }
+
+        inline const std::string& userinfo() const noexcept {
+            return _userinfo;
+        }
+
+        inline const std::string& username() const noexcept {
+            return _username;
+        }
+
+        inline const std::string& password() const noexcept {
+            return _password;
+        }
+
+        inline const std::string& authority() const noexcept {
+            return _authority;
+        }
+
+        inline const std::string& host() const noexcept {
+            return _host;
+        }
+
+        inline const std::string& hostname() const noexcept {
+            return _hostname;
+        }
+
+        inline unsigned int port() const noexcept {
+            return _port;
+        }
+
+        inline const std::string& path() const noexcept {
+            return _path;
+        }
+};
+
+
+} // rawstor
+
+#endif // RAWSTORSTD_URI_HPP
