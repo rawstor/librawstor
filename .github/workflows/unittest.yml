@@ -41,15 +41,19 @@ jobs:
         without-liburing:
         - 
         - --without-liburing
-        uri:
-        - ost://127.0.0.1:8080
-        - file:///tmp/objects
+        scheme:
+        - file
+        - ost
         include:
         - packages: liburing-dev
           without-liburing:
         - packages: liburing-dev
-          uri: ost://127.0.0.1:8080
+          scheme: ost
           without-liburing: --without-liburing
+        - uri: file:///tmp/objects
+          scheme: file
+        - uri: ost://127.0.0.1:8080
+          scheme: ost
 
     steps:
     - name: install dependencies
@@ -69,14 +73,14 @@ jobs:
         sudo make install
         popd
     - uses: actions/checkout@v4
-      if: "${{ matrix.uri == 'ost://127.0.0.1:8080' }}"
+      if: "${{ matrix.scheme == 'ost' }}"
       with:
         repository: rawstor/rawstor_ost
         path: rawstor_ost
         ref: refs/heads/main
         ssh-key: ${{ secrets.RAWSTOR_OST_TOKEN }}
     - name: (ost) install rawstor_ost
-      if: "${{ matrix.uri == 'ost://127.0.0.1:8080' }}"
+      if: "${{ matrix.scheme == 'ost' }}"
       run: |
         pushd .
         cd ./rawstor_ost
@@ -86,19 +90,19 @@ jobs:
         sudo make install
         popd
     - name: (ost) start rawstor_ost
-      if: "${{ matrix.uri == 'ost://127.0.0.1:8080' }}"
+      if: "${{ matrix.scheme == 'ost' }}"
       run: |
         mkdir /tmp/objects
         truncate -s 2G /tmp/objects/01988675-e1e5-7788-9ed4-2f2d30910d23
         ost 8080 /tmp/objects/ &
         sleep 1
     - name: (file) create object
-      if: "${{ matrix.uri == 'file:///tmp/objects' }}"
+      if: "${{ matrix.scheme == 'file' }}"
       run: |
         object_id=$(rawstor-cli --uri ${{ matrix.uri }} create --size=1)
         echo "OBJECT_ID=${object_id}" >> $GITHUB_ENV
     - name: (ost) create object
-      if: "${{ matrix.uri == 'ost://127.0.0.1:8080' }}"
+      if: "${{ matrix.scheme == 'ost' }}"
       run: |
         object_id=01988675-e1e5-7788-9ed4-2f2d30910d23
         echo "OBJECT_ID=${object_id}" >> $GITHUB_ENV
@@ -107,5 +111,5 @@ jobs:
         rawstor-cli --uri ${{ matrix.uri }} testio --object-id=${OBJECT_ID} --block-size=4096 --io-depth=1 --count=10
         rawstor-cli --uri ${{ matrix.uri }} testio --object-id=${OBJECT_ID} --block-size=4096 --io-depth=1 --count=10 --vector-mode=1
     - name: (ost) stop rawstor_ost
-      if: "${{ matrix.uri == 'ost://127.0.0.1:8080' }}"
+      if: "${{ matrix.scheme == 'ost' }}"
       run: killall ost

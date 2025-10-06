@@ -13,9 +13,9 @@ jobs:
         without-liburing:
         - 
         - --without-liburing
-        disable-ost:
-        -
-        - --disable-ost
+        scheme:
+        - file
+        - ost
         bs:
         - 4k
         iodepth:
@@ -27,8 +27,13 @@ jobs:
         - packages: liburing-dev
           without-liburing:
         - packages: liburing-dev
-          disable-ost:
+          scheme: ost
           without-liburing: --without-liburing
+        - uri: file:///tmp/objects
+          scheme: file
+        - uri: ost://127.0.0.1:8080
+          scheme: ost
+
 
     steps:
     - name: install dependencies
@@ -43,19 +48,19 @@ jobs:
         pushd .
         cd ./librawstor
         ./autogen.sh
-        ./configure --disable-shared ${{ matrix.without-liburing }} ${{ matrix.disable-ost }}
+        ./configure --disable-shared ${{ matrix.without-liburing }}
         make
         sudo make install
         popd
     - uses: actions/checkout@v4
-      if: "${{ matrix.disable-ost == '' }}"
+      if: "${{ matrix.scheme == 'ost' }}"
       with:
         repository: rawstor/rawstor_ost
         path: rawstor_ost
         ref: refs/heads/main
         ssh-key: ${{ secrets.RAWSTOR_OST_TOKEN }}
-    - name: (rawstor_ost) install rawstor_ost
-      if: "${{ matrix.disable-ost == '' }}"
+    - name: (ost) install rawstor_ost
+      if: "${{ matrix.scheme == 'ost' }}"
       run: |
         pushd .
         cd ./rawstor_ost
@@ -77,29 +82,30 @@ jobs:
         make -j$(nproc)
         sudo make install
         popd
-    - name: (rawstor_ost) start rawstor_ost
-      if: "${{ matrix.disable-ost == '' }}"
+    - name: (ost) start rawstor_ost
+      if: "${{ matrix.scheme == 'ost' }}"
       run: |
         mkdir ${GITHUB_WORKSPACE}/objects
         truncate -s 2G ${GITHUB_WORKSPACE}/objects/01988675-e1e5-7788-9ed4-2f2d30910d23
         ost 8080 ${GITHUB_WORKSPACE}/objects/ &
         sleep 10
-    - name: create object
-      if: "${{ matrix.disable-ost != '' }}"
+    - name: (file) create object
+      if: "${{ matrix.scheme == 'file' }}"
       run: |
-        object_id=$(rawstor-cli create --size=1)
+        object_id=$(rawstor-cli --uri=${{ matrix.uri }} create --size=1)
         echo "OBJECT_ID=${object_id}" >> $GITHUB_ENV
-    - name: (rawstor_ost) create object
-      if: "${{ matrix.disable-ost == '' }}"
+    - name: (ost) create object
+      if: "${{ matrix.scheme == 'ost' }}"
       run: |
         object_id=01988675-e1e5-7788-9ed4-2f2d30910d23
         echo "OBJECT_ID=${object_id}" >> $GITHUB_ENV
     - name: fio
       run: |
         echo "# perftest" >> $GITHUB_STEP_SUMMARY
-        echo "## fio ${{ matrix.without-liburing }} ${{ matrix.disable-ost }}" >> $GITHUB_STEP_SUMMARY
+        echo "## fio ${{ matrix.without-liburing }} ${{ matrix.scheme }}" >> $GITHUB_STEP_SUMMARY
         echo "### bs=${{ matrix.bs }}, iodepth=${{ matrix.iodepth }}, numjobs=${{ matrix.numjobs }}" >> $GITHUB_STEP_SUMMARY
         ./librawstor/.github/tools/fio.sh \
+          ${{ matrix.uri }} \
           ${OBJECT_ID} \
           ${{ matrix.bs }} \
           ${{ matrix.iodepth }} \
@@ -109,11 +115,11 @@ jobs:
         echo \`\`\` >> $GITHUB_STEP_SUMMARY
         cat fio.txt >> $GITHUB_STEP_SUMMARY
         echo \`\`\` >> $GITHUB_STEP_SUMMARY
-    - name: remove object
-      if: "${{ matrix.disable-ost != '' }}"
-      run: rawstor-cli remove --object-id=${OBJECT_ID}
-    - name: (rawstor_ost) stop rawstor_ost
-      if: "${{ matrix.disable-ost == '' }}"
+    - name: (file) remove object
+      if: "${{ matrix.scheme == 'file' }}"
+      run: rawstor-cli --uri=${{ matrix.uri }} remove --object-id=${OBJECT_ID}
+    - name: (ost) stop rawstor_ost
+      if: "${{ matrix.scheme == 'ost' }}"
       run: killall ost
     - uses: actions/checkout@v4
       with:
@@ -128,7 +134,7 @@ jobs:
         ./rawstor_bench/tools/rawstor-bench-import \
           --prefix=./rawstor_bench \
           --repo=librawstor \
-          --name=perftest${{ matrix.without-liburing }}${{ matrix.disable-ost }}-${{ matrix.bs }}-${{ matrix.iodepth }}-${{ matrix.numjobs }} \
+          --name=perftest${{ matrix.without-liburing }}-${{ matrix.scheme }}-${{ matrix.bs }}-${{ matrix.iodepth }}-${{ matrix.numjobs }} \
           --branch="$GITHUB_REF" \
           --commit=$GITHUB_SHA \
           --date="$(date +'%Y-%m-%dT%H:%M:%S%z')" \
@@ -141,4 +147,4 @@ jobs:
 
         ./librawstor/.github/tools/git-commit-and-push.sh \
           ./rawstor_bench \
-          "add: perftest ${{ matrix.without-liburing }} ${{ matrix.disable-ost }} benchmarks"
+          "add: perftest ${{ matrix.without-liburing }} ${{ matrix.scheme }} benchmarks"
