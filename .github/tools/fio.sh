@@ -2,20 +2,18 @@
 
 set -e
 
-URI=$1
-FILENAME=$2
-BS=$3
-IODEPTH=$4
-NUMJOBS=$5
-FIO_TXT=$6
-FIO_JSON=$7
+OBJECT_URI=$1
+BS=$2
+IODEPTH=$3
+NUMJOBS=$4
+FIO_TXT=$5
+FIO_JSON=$6
 
 _FIO_OUTPUT=fio.output
 
 fio \
   --ioengine=librawstor \
-  --uri=${URI} \
-  --filename=${FILENAME} \
+  --filename=${OBJECT_URI} \
   --name=rawstor \
   --iodepth=${IODEPTH} \
   --rw=randrw \

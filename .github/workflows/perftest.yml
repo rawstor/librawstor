@@ -92,21 +92,20 @@ jobs:
     - name: (file) create object
       if: "${{ matrix.scheme == 'file' }}"
       run: |
-        object_id=$(rawstor-cli --uri=${{ matrix.uri }} create --size=1)
-        echo "OBJECT_ID=${object_id}" >> $GITHUB_ENV
+        object_uri=$(rawstor-cli create --uri=${{ matrix.uri }} --size=1)
+        echo "OBJECT_URI=${object_uri}" >> $GITHUB_ENV
     - name: (ost) create object
       if: "${{ matrix.scheme == 'ost' }}"
       run: |
-        object_id=01988675-e1e5-7788-9ed4-2f2d30910d23
-        echo "OBJECT_ID=${object_id}" >> $GITHUB_ENV
+        object_uri=${{ matrix.uri }}/01988675-e1e5-7788-9ed4-2f2d30910d23
+        echo "OBJECT_URI=${object_uri}" >> $GITHUB_ENV
     - name: fio
       run: |
         echo "# perftest" >> $GITHUB_STEP_SUMMARY
         echo "## fio ${{ matrix.without-liburing }} ${{ matrix.scheme }}" >> $GITHUB_STEP_SUMMARY
         echo "### bs=${{ matrix.bs }}, iodepth=${{ matrix.iodepth }}, numjobs=${{ matrix.numjobs }}" >> $GITHUB_STEP_SUMMARY
         ./librawstor/.github/tools/fio.sh \
-          ${{ matrix.uri }} \
-          ${OBJECT_ID} \
+          ${OBJECT_URI} \
           ${{ matrix.bs }} \
           ${{ matrix.iodepth }} \
           ${{ matrix.numjobs }} \
@@ -117,7 +116,7 @@ jobs:
         echo \`\`\` >> $GITHUB_STEP_SUMMARY
     - name: (file) remove object
       if: "${{ matrix.scheme == 'file' }}"
-      run: rawstor-cli --uri=${{ matrix.uri }} remove --object-id=${OBJECT_ID}
+      run: rawstor-cli remove --object-uri=${OBJECT_URI}
     - name: (ost) stop rawstor_ost
       if: "${{ matrix.scheme == 'ost' }}"
       run: killall ost
