@@ -5,7 +5,7 @@
 #include "ost_protocol.h"
 
 #include <rawstorstd/ringbuf.hpp>
-#include <rawstorstd/socket_address.hpp>
+#include <rawstorstd/uri.hpp>
 
 #include <rawstorio/queue.hpp>
 
@@ -27,7 +27,7 @@ struct DriverOp;
 
 class Driver: public rawstor::Driver {
     private:
-        Object *_object;
+        RawstorObject *_object;
 
         std::vector<DriverOp*> _ops_array;
         RingBuf<DriverOp*> _ops;
@@ -70,8 +70,7 @@ class Driver: public rawstor::Driver {
             RawstorIOEvent *event, void *data) noexcept;
 
     public:
-        Driver(const SocketAddress &ost, unsigned int depth);
-        Driver(Driver &&other) noexcept;
+        Driver(const URI &uri, unsigned int depth);
         ~Driver();
 
         void create(
@@ -91,7 +90,7 @@ class Driver: public rawstor::Driver {
 
         void set_object(
             rawstor::io::Queue &queue,
-            rawstor::Object *object,
+            RawstorObject *object,
             RawstorCallback *cb, void *data);
 
         void pread(

@@ -1,7 +1,7 @@
 #ifndef RAWSTOR_CONNECTION_HPP
 #define RAWSTOR_CONNECTION_HPP
 
-#include <rawstorstd/socket_address.hpp>
+#include <rawstorstd/uri.hpp>
 
 #include <rawstor/object.h>
 #include <rawstor/rawstor.h>
@@ -19,20 +19,18 @@ class ConnectionOp;
 
 class Driver;
 
-class Object;
-
 
 class Connection {
     private:
-        Object *_object;
+        RawstorObject *_object;
         unsigned int _depth;
 
         std::vector<std::shared_ptr<Driver>> _sessions;
         size_t _session_index;
 
         std::vector<std::shared_ptr<Driver>> _open(
-            const SocketAddress &ost,
-            rawstor::Object *object,
+            const URI &uri,
+            RawstorObject *object,
             size_t nsessions);
 
         std::shared_ptr<Driver> _get_next_session();
@@ -47,21 +45,14 @@ class Connection {
         void invalidate_session(const std::shared_ptr<Driver> &s);
 
         void create(
-            const SocketAddress &ost,
+            const URI &uri,
             const RawstorObjectSpec &sp, RawstorUUID *id);
 
-        void remove(
-            const SocketAddress &ost,
-            const RawstorUUID &id);
+        void remove(const URI &uri);
 
-        void spec(
-            const SocketAddress &ost,
-            const RawstorUUID &id, RawstorObjectSpec *sp);
+        void spec(const URI &uri, RawstorObjectSpec *sp);
 
-        void open(
-            const SocketAddress &ost,
-            rawstor::Object *object,
-            size_t nsessions);
+        void open(const URI &uri, RawstorObject *object, size_t nsessions);
 
         void close();
 

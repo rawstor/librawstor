@@ -2,7 +2,7 @@
 
 set -e
 
-FILENAME=$1
+OBJECT_URI=$1
 BS=$2
 IODEPTH=$3
 NUMJOBS=$4
@@ -13,7 +13,7 @@ _FIO_OUTPUT=fio.output
 
 fio \
   --ioengine=librawstor \
-  --filename=${FILENAME} \
+  --filename="${OBJECT_URI//:/\\:}" \
   --name=rawstor \
   --iodepth=${IODEPTH} \
   --rw=randrw \
@@ -44,6 +44,6 @@ while IFS='' read line; do
 done < ${_FIO_OUTPUT}
 
 cp ${_FIO_TXT} ${FIO_TXT}
-cp ${_FIO_JSON} ${FIO_JSON}
+cat ${_FIO_JSON} | sed s/\\\\:/:/g > ${FIO_JSON}
 
 rm ${_FIO_OUTPUT} ${_FIO_TXT} ${_FIO_JSON}

@@ -87,8 +87,8 @@ struct DriverOp {
 };
 
 
-Driver::Driver(const SocketAddress &ost, unsigned int depth):
-    rawstor::Driver(ost, depth),
+Driver::Driver(const URI &uri, unsigned int depth):
+    rawstor::Driver(uri, depth),
     _object(nullptr),
     _ops_array(),
     _ops(depth)
@@ -121,19 +121,6 @@ Driver::Driver(const SocketAddress &ost, unsigned int depth):
     }
 
     set_fd(fd);
-}
-
-
-Driver::Driver(Driver &&other) noexcept:
-    rawstor::Driver(std::move(other)),
-    _object(std::exchange(other._object, nullptr)),
-    _ops_array(std::move(other._ops_array)),
-    _ops(std::move(other._ops)),
-    _response(std::move(other._response))
-{
-    for (DriverOp *op: _ops_array) {
-        op->s = this;
-    }
 }
 
 
@@ -225,6 +212,12 @@ DriverOp* Driver::_find_op(unsigned int cid) {
 
 
 int Driver::_connect() {
+    if (!uri().path().str().empty() && uri().path().str() != "/") {
+        std::ostringstream oss;
+        oss << "Empty path expected: " << uri().str();
+        throw std::runtime_error(oss.str());
+    }
+
     int res;
 
     int fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -259,18 +252,16 @@ int Driver::_connect() {
 
         sockaddr_in servaddr = {};
         servaddr.sin_family = AF_INET;
-        servaddr.sin_port = htons(ost().port());
+        servaddr.sin_port = htons(uri().port());
 
-        res = inet_pton(AF_INET, ost().host().c_str(), &servaddr.sin_addr);
+        res = inet_pton(AF_INET, uri().hostname().c_str(), &servaddr.sin_addr);
         if (res == 0) {
             RAWSTOR_THROW_SYSTEM_ERROR(EINVAL);
         } else if (res == -1) {
             RAWSTOR_THROW_ERRNO();
         }
 
-        rawstor_info(
-            "fd %d: Connecting to %s using OST driver...\n",
-            fd, ost().str().c_str());
+        rawstor_info("fd %d: Connecting to %s...\n", fd, uri().str().c_str());
         if (connect(fd, (sockaddr*)&servaddr, sizeof(servaddr)) == -1) {
             RAWSTOR_THROW_ERRNO();
         }
@@ -367,7 +358,7 @@ int Driver::_writev_request_cb(
         DriverOp op_copy = *op;
         s->_release_op(op);
         res = op_copy.callback(
-            s->_object->c_ptr(),
+            s->_object,
             op_copy.request.io.len, 0, error,
             op_copy.data);
     }
@@ -401,7 +392,7 @@ int Driver::_read_response_set_object_id_cb(
     DriverOp op_copy = *op;
     s->_release_op(op);
     int res = op_copy.callback(
-        s->_object->c_ptr(),
+        s->_object,
         0, 0, error,
         op_copy.data);
 
@@ -452,7 +443,7 @@ int Driver::_read_response_head_cb(
             DriverOp op_copy = *op;
             s->_release_op(op);
             res = op_copy.callback(
-                s->_object->c_ptr(),
+                s->_object,
                 op_copy.request.io.len, s->_response.res, error,
                 op_copy.data);
             if (res == 0) {
@@ -478,7 +469,7 @@ int Driver::_read_response_head_cb(
             DriverOp op_copy = *op;
             s->_release_op(op);
             res = op_copy.callback(
-                s->_object->c_ptr(),
+                s->_object,
                 op_copy.request.io.len, 0, error,
                 op_copy.data);
             if (res) {
@@ -514,7 +505,7 @@ int Driver::_read_response_body_cb(
     DriverOp op_copy = *op;
     s->_release_op(op);
     int res = op_copy.callback(
-        s->_object->c_ptr(),
+        s->_object,
         op_copy.request.io.len, s->_response.res, error,
         op_copy.data);
 
@@ -558,7 +549,7 @@ int Driver::_readv_response_body_cb(
     DriverOp op_copy = *op;
     s->_release_op(op);
     int res = op_copy.callback(
-        s->_object->c_ptr(),
+        s->_object,
         op_copy.request.io.len, s->_response.res, error,
         op_copy.data);
 
@@ -624,7 +615,7 @@ void Driver::spec(
 
 void Driver::set_object(
     rawstor::io::Queue &queue,
-    rawstor::Object *object,
+    RawstorObject *object,
     RawstorCallback *cb, void *data)
 {
     rawstor_info("%s: Setting object id\n", str().c_str());

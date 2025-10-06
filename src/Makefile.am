@@ -2,12 +2,14 @@ lib_LTLIBRARIES = librawstor.la
 
 
 AM_CFLAGS = $(GENERIC_CFLAGS) \
+            $(LIBXXHASH_CFLAGS) \
             $(ASAN_CFLAGS) \
             -I$(top_srcdir)/librawstorstd/include \
             -I$(top_srcdir)/librawstorio/include \
             -I$(top_srcdir)/include
 
 AM_CXXFLAGS = $(GENERIC_CXXFLAGS) \
+              $(LIBXXHASH_CFLAGS) \
               $(ASAN_CFLAGS) \
               -I$(top_srcdir)/librawstorstd/include \
               -I$(top_srcdir)/librawstorio/include \
@@ -38,14 +40,8 @@ librawstor_la_SOURCES = connection.cpp \
 
 librawstor_la_LIBADD = $(top_srcdir)/librawstorstd/src/librawstorstd.la \
                        $(top_srcdir)/librawstorio/src/librawstorio.la \
+                       $(LIBXXHASH_LIBS) \
                        -lstdc++
-
-
-if ENABLE_OST
-    AM_CFLAGS += $(LIBXXHASH_CFLAGS)
-    AM_CXXFLAGS += $(LIBXXHASH_CFLAGS)
-    librawstor_la_LIBADD += $(LIBXXHASH_LIBS)
-endif
 
 
 pkgconfigdir = $(libdir)/pkgconfig

@@ -11,18 +11,15 @@
 #include <string.h>
 
 
-int rawstor_cli_show(const struct RawstorUUID *object_id) {
-    RawstorUUIDString uuid_string;
-    rawstor_uuid_to_string(object_id, &uuid_string);
-
+int rawstor_cli_show(const char *uri) {
     struct RawstorObjectSpec spec;
-    int res = rawstor_object_spec(object_id, &spec);
+    int res = rawstor_object_spec(uri, &spec);
     if (res) {
         fprintf(stderr, "rawstor_object_spec() failed: %s\n", strerror(-res));
         return EXIT_FAILURE;
     }
 
-    printf("id: %s\n", uuid_string);
+    printf("uri: %s\n", uri);
     printf("size: %zu Gb\n", spec.size >> 30);
 
     return EXIT_SUCCESS;

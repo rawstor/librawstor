@@ -20,7 +20,6 @@ static void usage() {
         "\n"
         "options:\n"
         "  -h, --help            Show this help message and exit\n"
-        "  --ost                 OST host:port\n"
         "  --sessions            Number of opened sessions per object\n"
         "  --wait-timeout        IO wait timeout\n"
         "\n"
@@ -45,19 +44,22 @@ static void command_create_usage() {
         "command options:\n"
         "  -h, --help            Show this help message and exit\n"
         "  -s, --size SIZE       Object size in Gb\n"
+        "  -u, --uri RAWSTOR_URI Rawstor URI\n"
     );
 };
 
 
 static int command_create(int argc, char **argv) {
-    const char *optstring = "hs:";
+    const char *optstring = "hs:u:";
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
         {"size", required_argument, NULL, 's'},
+        {"uri", required_argument, NULL, 'u'},
         {},
     };
 
     char *size_arg = NULL;
+    char *uri_arg = NULL;
     optind = 1;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
@@ -75,6 +77,10 @@ static int command_create(int argc, char **argv) {
                 size_arg = optarg;
                 break;
 
+            case 'u':
+                uri_arg = optarg;
+                break;
+
             default:
                 return EXIT_FAILURE;
         }
@@ -90,13 +96,18 @@ static int command_create(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
+    if (uri_arg == NULL) {
+        fprintf(stderr, "uri required\n");
+        return EXIT_FAILURE;
+    }
+
     size_t size = 0;
     if (sscanf(size_arg, "%zu", &size) != 1) {
         fprintf(stderr, "size argument must be unsigned integer\n");
         return EXIT_FAILURE;
     }
 
-    return rawstor_cli_create(size);
+    return rawstor_cli_create(uri_arg, size);
 }
 
 
@@ -108,8 +119,8 @@ static void command_remove_usage() {
         "usage: rawstor-cli [options] remove [command_options]\n"
         "\n"
         "command options:\n"
-        "  -o, --object-id OBJECT_ID\n"
-        "                        Rawstor object id\n"
+        "  -o, --object-uri OBJECT_URI\n"
+        "                        Rawstor object URI\n"
     );
 };
 
@@ -118,11 +129,11 @@ static int command_remove(int argc, char **argv) {
     const char *optstring = "ho:";
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
-        {"object-id", required_argument, NULL, 'o'},
+        {"object-uri", required_argument, NULL, 'o'},
         {},
     };
 
-    char *object_id_arg = NULL;
+    char *object_uri_arg = NULL;
     optind = 1;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
@@ -137,7 +148,7 @@ static int command_remove(int argc, char **argv) {
                 break;
 
             case 'o':
-                object_id_arg = optarg;
+                object_uri_arg = optarg;
                 break;
 
             default:
@@ -150,18 +161,12 @@ static int command_remove(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
-    if (object_id_arg == NULL) {
-        fprintf(stderr, "object-id required\n");
+    if (object_uri_arg == NULL) {
+        fprintf(stderr, "object-uri required\n");
         return EXIT_FAILURE;
     }
 
-    struct RawstorUUID object_id;
-    if (rawstor_uuid_from_string(&object_id, object_id_arg)) {
-        fprintf(stderr, "object-id argument must be valid UUID\n");
-        return EXIT_FAILURE;
-    }
-
-    return rawstor_cli_remove(&object_id);
+    return rawstor_cli_remove(object_uri_arg);
 }
 
 
@@ -173,8 +178,8 @@ static void command_show_usage() {
         "usage: rawstor-cli [options] show [command_options]\n"
         "\n"
         "command options:\n"
-        "  -o, --object-id OBJECT_ID\n"
-        "                        Rawstor object id\n"
+        "  -o, --object-uri OBJECT_URI\n"
+        "                        Rawstor object URI\n"
     );
 };
 
@@ -183,11 +188,11 @@ static int command_show(int argc, char **argv) {
     const char *optstring = "ho:";
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
-        {"object-id", required_argument, NULL, 'o'},
+        {"object-uri", required_argument, NULL, 'o'},
         {},
     };
 
-    char *object_id_arg = NULL;
+    char *object_uri_arg = NULL;
     optind = 1;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
@@ -202,7 +207,7 @@ static int command_show(int argc, char **argv) {
                 break;
 
             case 'o':
-                object_id_arg = optarg;
+                object_uri_arg = optarg;
                 break;
 
             default:
@@ -215,18 +220,12 @@ static int command_show(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
-    if (object_id_arg == NULL) {
-        fprintf(stderr, "object-id required\n");
+    if (object_uri_arg == NULL) {
+        fprintf(stderr, "object-uri required\n");
         return EXIT_FAILURE;
     }
 
-    struct RawstorUUID object_id;
-    if (rawstor_uuid_from_string(&object_id, object_id_arg)) {
-        fprintf(stderr, "object-id argument must be valid UUID\n");
-        return EXIT_FAILURE;
-    }
-
-    return rawstor_cli_show(&object_id);
+    return rawstor_cli_show(object_uri_arg);
 }
 
 
@@ -245,8 +244,8 @@ static void command_testio_usage() {
         "  -d, --io-depth IO_DEPTH\n"
         "                        IO depth\n"
         "  -h, --help            Show this help message and exit\n"
-        "  -o, --object-id OBJECT_ID\n"
-        "                        Rawstor object id\n"
+        "  -o, --object-uri OBJECT_URI\n"
+        "                        Rawstor object URI\n"
         "  --vector-mode         Use readv/writev\n"
     );
 };
@@ -259,7 +258,7 @@ static int command_testio(int argc, char **argv) {
         {"count", required_argument, NULL, 'c'},
         {"help", no_argument, NULL, 'h'},
         {"io-depth", required_argument, NULL, 'd'},
-        {"object-id", required_argument, NULL, 'o'},
+        {"object-uri", required_argument, NULL, 'o'},
         {"vector-mode", required_argument, NULL, 'v'},
         {},
     };
@@ -267,7 +266,7 @@ static int command_testio(int argc, char **argv) {
     char *block_size_arg = NULL;
     char *count_arg = NULL;
     char *io_depth_arg = NULL;
-    char *object_id_arg = NULL;
+    char *object_uri_arg = NULL;
     int vector_mode = 0;
     optind = 1;
     while (1) {
@@ -295,7 +294,7 @@ static int command_testio(int argc, char **argv) {
                 break;
 
             case 'o':
-                object_id_arg = optarg;
+                object_uri_arg = optarg;
                 break;
 
             case 'v':
@@ -345,19 +344,13 @@ static int command_testio(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
-    if (object_id_arg == NULL) {
-        fprintf(stderr, "object-id required\n");
-        return EXIT_FAILURE;
-    }
-
-    struct RawstorUUID object_id;
-    if (rawstor_uuid_from_string(&object_id, object_id_arg)) {
-        fprintf(stderr, "object-id argument must be valid UUID\n");
+    if (object_uri_arg == NULL) {
+        fprintf(stderr, "object-uri required\n");
         return EXIT_FAILURE;
     }
 
     return rawstor_cli_testio(
-        &object_id,
+        object_uri_arg,
         block_size, count, io_depth,
         vector_mode);
 }
@@ -366,10 +359,9 @@ static int command_testio(int argc, char **argv) {
 static int run_command(
     const char *command,
     const struct RawstorOpts *opts,
-    const struct RawstorSocketAddress *default_ost,
     int argc, char **argv)
 {
-    int res = rawstor_initialize(opts, default_ost);
+    int res = rawstor_initialize(opts);
     if (res) {
         fprintf(stderr, "rawstor_initialize() failed: %s\n", strerror(-res));
         return EXIT_FAILURE;
@@ -399,13 +391,11 @@ int main(int argc, char **argv) {
     const char *optstring = "+h";
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
-        {"ost", required_argument, NULL, 'o'},
         {"sessions", required_argument, NULL, 's'},
         {"wait-timeout", required_argument, NULL, 't'},
         {},
     };
 
-    char *ost_arg = NULL;
     char *sessions_arg = NULL;
     char *wait_timeout_arg = NULL;
     while (1) {
@@ -417,10 +407,6 @@ int main(int argc, char **argv) {
             case 'h':
                 usage();
                 return EXIT_SUCCESS;
-                break;
-
-            case 'o':
-                ost_arg = optarg;
                 break;
 
             case 's':
@@ -442,29 +428,6 @@ int main(int argc, char **argv) {
     }
 
     struct RawstorOpts opts = {};
-    struct RawstorSocketAddress ost = {};
-    struct RawstorSocketAddress *ost_ptr = NULL;
-
-    if (ost_arg != NULL) {
-        const char *comma = strchr(ost_arg, ':');
-        if (comma == NULL) {
-            fprintf(stderr, "host:port format expected for ost argument\n");
-            return EXIT_FAILURE;
-        }
-
-        if (sscanf(comma + 1, "%u", &ost.port) != 1) {
-            fprintf(stderr, "ost port argument must be unsigned integer\n");
-            return EXIT_FAILURE;
-        }
-
-        ost.host = strndup(ost_arg, comma - ost_arg);
-        if (ost.host == NULL) {
-            perror("strdup() failed");
-            return EXIT_FAILURE;
-        }
-
-        ost_ptr = &ost;
-    }
 
     if (sessions_arg != NULL) {
         if (sscanf(sessions_arg, "%u", &opts.sessions) != 1) {
@@ -481,11 +444,7 @@ int main(int argc, char **argv) {
     }
 
     int ret = run_command(
-        argv[optind], &opts, ost_ptr, argc - optind, &argv[optind]);
-
-    if (ost_ptr != NULL) {
-        free(ost_ptr->host);
-    }
+        argv[optind], &opts, argc - optind, &argv[optind]);
 
     return ret;
 }

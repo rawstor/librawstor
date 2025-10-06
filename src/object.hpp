@@ -1,68 +1,53 @@
 #ifndef RAWSTOR_OBJECT_HPP
 #define RAWSTOR_OBJECT_HPP
 
-#include "config.h"
 #include "connection.hpp"
 
 #include <rawstorstd/mempool.hpp>
-#include <rawstorstd/socket_address.hpp>
+#include <rawstorstd/uri.hpp>
 
 #include <rawstor.h>
 
+#include <memory>
+
+
 namespace rawstor {
-
-
-class DriverOST;
-class DriverFile;
 
 
 struct ObjectOp;
 
 
-class Object {
+} // rawstor
+
+
+struct RawstorObject final {
     private:
-#ifdef RAWSTOR_ENABLE_OST
-        using DriverImpl = DriverOST;
-#else
-        using DriverImpl = DriverFile;
-#endif
-        RawstorObject *_c_ptr;
         RawstorUUID _id;
-        MemPool<ObjectOp> _ops;
-        Connection _cn;
+        rawstor::MemPool<rawstor::ObjectOp> _ops;
+        rawstor::Connection _cn;
 
         static int _process(
             RawstorObject *object,
             size_t size, size_t res, int error, void *data) noexcept;
 
     public:
-        static void create(const RawstorObjectSpec &sp, RawstorUUID *id);
         static void create(
-            const SocketAddress &ost,
+            const rawstor::URI &uri,
             const RawstorObjectSpec &sp,
             RawstorUUID *id);
+        static void remove(const rawstor::URI &uri);
+        static void spec(const rawstor::URI &uri, RawstorObjectSpec *sp);
 
-        Object(const RawstorUUID &id);
-        Object(const Object &) = delete;
+        explicit RawstorObject(const rawstor::URI &uri);
+        RawstorObject(const RawstorObject &) = delete;
+        RawstorObject(RawstorObject &&) = delete;
+        ~RawstorObject() {}
+        RawstorObject& operator=(const RawstorObject &) = delete;
+        RawstorObject& operator=(RawstorObject &&) = delete;
 
-        ~Object();
-
-        Object& operator=(const Object&) = delete;
-
-        RawstorObject* c_ptr() noexcept;
-
-        const RawstorUUID& id() const noexcept;
-
-        void remove();
-        void remove(const SocketAddress &ost);
-
-        void spec(RawstorObjectSpec *sp);
-        void spec(const SocketAddress &ost, RawstorObjectSpec *sp);
-
-        void open();
-        void open(const SocketAddress &ost);
-
-        void close();
+        inline const RawstorUUID& id() const noexcept {
+            return _id;
+        }
 
         void pread(
             void *buf, size_t size, off_t offset,
@@ -79,11 +64,7 @@ class Object {
         void pwritev(
             iovec *iov, unsigned int niov, size_t size, off_t offset,
             RawstorCallback *cb, void *data);
-
 };
-
-
-} // rawstor
 
 
 #endif // RAWSTOR_OBJECT_HPP

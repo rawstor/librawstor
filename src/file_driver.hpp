@@ -6,7 +6,7 @@
 #include <rawstorio/queue.hpp>
 
 #include <rawstorstd/mempool.hpp>
-#include <rawstorstd/socket_address.hpp>
+#include <rawstorstd/uri.hpp>
 
 #include <rawstor/io_event.h>
 #include <rawstor/object.h>
@@ -23,7 +23,7 @@ struct DriverOp;
 
 class Driver: public rawstor::Driver {
     private:
-        Object *_object;
+        RawstorObject *_object;
         MemPool<DriverOp> _ops_pool;
 
         DriverOp* _acquire_op();
@@ -34,8 +34,7 @@ class Driver: public rawstor::Driver {
         static int _io_cb(RawstorIOEvent *event, void *data) noexcept;
 
     public:
-        Driver(const SocketAddress &ost, unsigned int depth);
-        Driver(Driver &&other) noexcept;
+        Driver(const URI &uri, unsigned int depth);
 
         void create(
             rawstor::io::Queue &queue,
@@ -54,7 +53,7 @@ class Driver: public rawstor::Driver {
 
         void set_object(
             rawstor::io::Queue &queue,
-            rawstor::Object *object,
+            RawstorObject *object,
             RawstorCallback *cb, void *data);
 
         void pread(

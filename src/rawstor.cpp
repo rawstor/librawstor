@@ -4,7 +4,7 @@
 #include "rawstor_internals.hpp"
 
 #include <rawstorstd/logging.h>
-#include <rawstorstd/socket_address.hpp>
+#include <rawstorstd/uri.hpp>
 
 #include <rawstorio/queue.hpp>
 #include <rawstorio/event.hpp>
@@ -25,38 +25,6 @@
 
 
 #define QUEUE_DEPTH 256
-#define DEFAULT_OST_HOST "127.0.0.1"
-#define DEFAULT_OST_PORT 8080
-
-
-namespace {
-
-
-rawstor::SocketAddress* _default_ost = nullptr;
-
-
-void default_ost_initialize(
-    const struct RawstorSocketAddress *default_ost)
-{
-    _default_ost = new rawstor::SocketAddress(
-        (default_ost != nullptr && default_ost->host != nullptr) ?
-            default_ost->host :
-            DEFAULT_OST_HOST,
-        (default_ost != nullptr && default_ost->port != 0) ?
-            default_ost->port :
-            DEFAULT_OST_PORT);
-}
-
-
-void default_ost_terminate() {
-    if (_default_ost != nullptr) {
-        delete _default_ost;
-        _default_ost = nullptr;
-    }
-}
-
-
-} // unnamed
 
 
 namespace rawstor {
@@ -65,18 +33,10 @@ namespace rawstor {
 rawstor::io::Queue *io_queue;
 
 
-const SocketAddress& default_ost() {
-    return *_default_ost;
-}
-
-
 } // rawstor
 
 
-int rawstor_initialize(
-    const struct RawstorOpts *opts,
-    const struct RawstorSocketAddress *default_ost)
-{
+int rawstor_initialize(const struct RawstorOpts *opts) {
     int res = 0;
 
     assert(rawstor::io_queue == nullptr);
@@ -96,13 +56,6 @@ int rawstor_initialize(
     }
 
     try {
-        default_ost_initialize(default_ost);
-    } catch (std::bad_alloc &) {
-        res = -ENOMEM;
-        goto err_default_ost_initialize;
-    }
-
-    try {
         std::unique_ptr<rawstor::io::Queue> q = rawstor::io::Queue::create(
             QUEUE_DEPTH);
         rawstor::io_queue = q.get();
@@ -115,8 +68,6 @@ int rawstor_initialize(
     return 0;
 
 err_io_queue:
-    default_ost_terminate();
-err_default_ost_initialize:
     rawstor_opts_terminate();
 err_opts_initialize:
     rawstor_logging_terminate();
@@ -127,7 +78,6 @@ err_logging_initialize:
 
 void rawstor_terminate() {
     delete rawstor::io_queue;
-    default_ost_terminate();
     rawstor_opts_terminate();
     rawstor_logging_terminate();
 }

@@ -5,9 +5,11 @@
 #include "ost_driver.hpp"
 
 #include <rawstorstd/logging.h>
-#include <rawstorstd/socket_address.hpp>
+#include <rawstorstd/uri.hpp>
 
 #include <string>
+#include <stdexcept>
+#include <sstream>
 #include <utility>
 
 #include <unistd.h>
@@ -18,16 +20,10 @@
 namespace rawstor {
 
 
-Driver::Driver(const SocketAddress &ost, unsigned int depth):
+Driver::Driver(const URI &uri, unsigned int depth):
     _depth(depth),
-    _ost(ost),
+    _uri(uri),
     _fd(-1)
-{}
-
-
-Driver::Driver(Driver &&other) noexcept:
-    _ost(std::move(other._ost)),
-    _fd(std::exchange(other._fd, -1))
 {}
 
 
@@ -44,14 +40,16 @@ Driver::~Driver() {
 }
 
 
-std::unique_ptr<Driver> Driver::create(
-    const SocketAddress &ost, unsigned int depth)
-{
-#ifdef RAWSTOR_ENABLE_OST
-    return std::make_unique<rawstor::ost::Driver>(ost, depth);
-#else
-    return std::make_unique<rawstor::file::Driver>(ost, depth);
-#endif
+std::unique_ptr<Driver> Driver::create(const URI &uri, unsigned int depth) {
+    if (uri.scheme() == "ost") {
+        return std::make_unique<rawstor::ost::Driver>(uri, depth);
+    }
+    if (uri.scheme() == "file") {
+        return std::make_unique<rawstor::file::Driver>(uri, depth);
+    }
+    std::ostringstream oss;
+    oss << "Unexpected URI: " << uri.str();
+    throw std::runtime_error(oss.str());
 }
 
 

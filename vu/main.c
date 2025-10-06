@@ -18,6 +18,8 @@ void usage() {
         "\n"
         "options:\n"
         "  -h, --help            Show this help message and exit\n"
+        "  -u, --uri URI\n"
+        "                        Rawstor URI.\n"
         "  -o, --object-id OBJECT_ID\n"
         "                        Rawstor object id.\n"
         "  -s, --socket-path SOCKET_PATH\n"
@@ -43,11 +45,13 @@ int main(int argc, char **argv) {
         {"help", no_argument, NULL, 'h'},
         {"object-id", required_argument, NULL, 'o'},
         {"socket-path", required_argument, NULL, 's'},
+        {"uri", required_argument, NULL, 'u'},
         {},
     };
 
     const char *object_id_arg = NULL;
     const char *socket_path_arg = NULL;
+    const char *uri_arg = NULL;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
         if (c == -1) {
@@ -66,6 +70,10 @@ int main(int argc, char **argv) {
 
             case 's':
                 socket_path_arg = optarg;
+                break;
+
+            case 'u':
+                uri_arg = optarg;
                 break;
 
             default:
@@ -94,10 +102,15 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
+    if (uri_arg == NULL) {
+        fprintf(stderr, "uri argument required\n");
+        return EXIT_FAILURE;
+    }
+
     sigemptyset(&sact.sa_mask);
     sigaction(SIGINT, &sact, NULL);
 
-    rawstor_vu_server(object_id, socket_path_arg);
+    rawstor_vu_server(uri_arg, object_id, socket_path_arg);
 
     return EXIT_SUCCESS;
 }

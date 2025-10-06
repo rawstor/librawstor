@@ -34,10 +34,18 @@
 namespace {
 
 
-std::string get_ost_path(const rawstor::SocketAddress &ost) {
-    std::ostringstream oss;
-    oss << "./ost-" << ost.host() << ":" << ost.port();
-    return oss.str();
+std::string get_ost_path(const rawstor::URI &uri) {
+    if (uri.scheme() != "file") {
+        std::ostringstream oss;
+        oss << "Unexpected URI scheme: " << uri.str();
+        throw std::runtime_error(oss.str());
+    }
+    if (!uri.host().empty()) {
+        std::ostringstream oss;
+        oss << "Empty host expected: " << uri.str();
+        throw std::runtime_error(oss.str());
+    }
+    return uri.path().str();
 }
 
 
@@ -46,7 +54,7 @@ std::string get_object_spec_path(
 {
     std::ostringstream oss;
 
-    oss << ost_path << "/rawstor-" << uuid << ".spec";
+    oss << ost_path << "/" << uuid << ".spec";
 
     return oss.str();
 }
@@ -57,7 +65,7 @@ std::string get_object_dat_path(
 {
     std::ostringstream oss;
 
-    oss << ost_path << "/rawstor-" << uuid << ".dat";
+    oss << ost_path << "/" << uuid << ".dat";
 
     return oss.str();
 }
@@ -109,17 +117,10 @@ struct DriverOp {
 };
 
 
-Driver::Driver(const SocketAddress &ost, unsigned int depth):
-    rawstor::Driver(ost, depth),
+Driver::Driver(const URI &uri, unsigned int depth):
+    rawstor::Driver(uri, depth),
     _object(nullptr),
     _ops_pool(depth)
-{}
-
-
-Driver::Driver(Driver &&other) noexcept:
-    rawstor::Driver(std::move(other)),
-    _object(std::exchange(other._object, nullptr)),
-    _ops_pool(std::move(other._ops_pool))
 {}
 
 
@@ -134,15 +135,13 @@ void Driver::_release_op(DriverOp *op) noexcept {
 
 
 int Driver::_connect(const RawstorUUID &id) {
-    std::string ost_path = get_ost_path(ost());
+    std::string ost_path = get_ost_path(uri());
 
     RawstorUUIDString uuid_string;
     rawstor_uuid_to_string(&id, &uuid_string);
     std::string dat_path = get_object_dat_path(ost_path, uuid_string);
 
-    rawstor_info(
-        "Connecting to %s using File driver...\n",
-        ost().str().c_str());
+    rawstor_info("Connecting to %s...\n", uri().str().c_str());
     int fd = open(dat_path.c_str(), O_RDWR | O_NONBLOCK);
     if (fd == -1) {
         RAWSTOR_THROW_ERRNO();
@@ -156,7 +155,7 @@ int Driver::_io_cb(RawstorIOEvent *event, void *data) noexcept {
     DriverOp *op = static_cast<DriverOp*>(data);
 
     int ret = op->callback(
-        op->s->_object->c_ptr(),
+        op->s->_object,
         rawstor_io_event_size(event),
         rawstor_io_event_result(event),
         rawstor_io_event_error(event),
@@ -173,7 +172,7 @@ void Driver::create(
     const RawstorObjectSpec &sp, RawstorUUID *id,
     RawstorCallback *cb, void *data)
 {
-    std::string ost_path = get_ost_path(ost());
+    std::string ost_path = get_ost_path(uri());
     if (mkdir(ost_path.c_str(), 0755) == -1) {
         if (errno == EEXIST) {
             errno = 0;
@@ -235,7 +234,7 @@ void Driver::remove(
     const RawstorUUID &id,
     RawstorCallback *cb, void *data)
 {
-    std::string ost_path = get_ost_path(ost());
+    std::string ost_path = get_ost_path(uri());
 
     RawstorUUIDString uuid_string;
     rawstor_uuid_to_string(&id, &uuid_string);
@@ -267,7 +266,7 @@ void Driver::spec(
     const RawstorUUID &id, RawstorObjectSpec *sp,
     RawstorCallback *cb, void *data)
 {
-    std::string ost_path = get_ost_path(ost());
+    std::string ost_path = get_ost_path(uri());
 
     RawstorUUIDString uuid_string;
     rawstor_uuid_to_string(&id, &uuid_string);
@@ -299,7 +298,7 @@ void Driver::spec(
 
 void Driver::set_object(
     rawstor::io::Queue &,
-    rawstor::Object *object,
+    RawstorObject *object,
     RawstorCallback *cb, void *data)
 {
     if (fd() != -1) {
@@ -315,7 +314,7 @@ void Driver::set_object(
 
     _object = object;
 
-    cb(object->c_ptr(), 0, 0, 0, data);
+    cb(object, 0, 0, 0, data);
 }
 
 
