@@ -19,6 +19,7 @@ int rawstor_cli_show(const char *uri) {
         return EXIT_FAILURE;
     }
 
+    printf("uri: %s\n", uri);
     printf("size: %zu Gb\n", spec.size >> 30);
 
     return EXIT_SUCCESS;
