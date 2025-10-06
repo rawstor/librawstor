@@ -27,7 +27,7 @@ int rawstor_cli_create(const char *uri, size_t size){
     RawstorUUIDString uuid_string;
     rawstor_uuid_to_string(&object_id, &uuid_string);
     fprintf(stderr, "Object created\n");
-    fprintf(stdout, "%s\n", uuid_string);
+    fprintf(stdout, "%s/%s\n", uri, uuid_string);
 
     return EXIT_SUCCESS;
 }
