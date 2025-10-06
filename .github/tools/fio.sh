@@ -13,7 +13,7 @@ _FIO_OUTPUT=fio.output
 
 fio \
   --ioengine=librawstor \
-  --filename=${OBJECT_URI} \
+  --filename="${OBJECT_URI//:/\\:}" \
   --name=rawstor \
   --iodepth=${IODEPTH} \
   --rw=randrw \
