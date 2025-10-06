@@ -20,7 +20,7 @@ struct ObjectOp;
 } // rawstor
 
 
-struct RawstorObject {
+struct RawstorObject final {
     private:
         RawstorUUID _id;
         rawstor::MemPool<rawstor::ObjectOp> _ops;
