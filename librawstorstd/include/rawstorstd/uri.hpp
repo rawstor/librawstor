@@ -32,7 +32,6 @@ class URIPath {
         inline const std::string& filename() const noexcept {
             return _filename;
         }
-
 };
 
 
@@ -55,6 +54,8 @@ class URI {
         URI(URI &&other) noexcept;
         URI& operator=(const URI &other);
         URI& operator=(URI &&other) noexcept;
+
+        URI up() const;
 
         inline const std::string& str() const noexcept {
             return _uri;

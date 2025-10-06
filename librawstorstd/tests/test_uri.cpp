@@ -79,6 +79,97 @@ int test_uri_empty_path() {
     assertTrue(uri.hostname() == "127.0.0.1");
     assertTrue(uri.port() == 8080);
     assertTrue(uri.path().str() == "");
+    assertTrue(uri.path().dirname() == "");
+    assertTrue(uri.path().filename() == "");
+
+    return 0;
+}
+
+
+int test_uri_with_uuid() {
+    rawstor::URI uri("file:///tmp/objects/uuid");
+
+    assertTrue(uri.str() == "file:///tmp/objects/uuid");
+    assertTrue(uri.scheme() == "file");
+    assertTrue(uri.userinfo() == "");
+    assertTrue(uri.username() == "");
+    assertTrue(uri.password() == "");
+    assertTrue(uri.authority() == "");
+    assertTrue(uri.host() == "");
+    assertTrue(uri.hostname() == "");
+    assertTrue(uri.port() == 0);
+    assertTrue(uri.path().str() == "/tmp/objects/uuid");
+    assertTrue(uri.path().dirname() == "/tmp/objects");
+    assertTrue(uri.path().filename() == "uuid");
+
+    return 0;
+}
+
+
+int test_uri_without_uuid_with_slash() {
+    rawstor::URI uri("file:///tmp/objects/");
+
+    assertTrue(uri.str() == "file:///tmp/objects/");
+    assertTrue(uri.scheme() == "file");
+    assertTrue(uri.userinfo() == "");
+    assertTrue(uri.username() == "");
+    assertTrue(uri.password() == "");
+    assertTrue(uri.authority() == "");
+    assertTrue(uri.host() == "");
+    assertTrue(uri.hostname() == "");
+    assertTrue(uri.port() == 0);
+    assertTrue(uri.path().str() == "/tmp/objects/");
+    assertTrue(uri.path().dirname() == "/tmp/objects");
+    assertTrue(uri.path().filename() == "");
+
+    return 0;
+}
+
+
+int test_uri_without_uuid_without_slash() {
+    rawstor::URI uri("file:///tmp/objects");
+
+    assertTrue(uri.str() == "file:///tmp/objects");
+    assertTrue(uri.scheme() == "file");
+    assertTrue(uri.userinfo() == "");
+    assertTrue(uri.username() == "");
+    assertTrue(uri.password() == "");
+    assertTrue(uri.authority() == "");
+    assertTrue(uri.host() == "");
+    assertTrue(uri.hostname() == "");
+    assertTrue(uri.port() == 0);
+    assertTrue(uri.path().str() == "/tmp/objects");
+    assertTrue(uri.path().dirname() == "/tmp");
+    assertTrue(uri.path().filename() == "objects");
+
+    return 0;
+}
+
+
+int test_uri_up() {
+    rawstor::URI uri("http://user:password@example.com:80/foo/bar/span/");
+    assertTrue(
+        uri.str() == "http://user:password@example.com:80/foo/bar/span/");
+
+    uri = uri.up();
+    assertTrue(
+        uri.str() == "http://user:password@example.com:80/foo/bar/span");
+
+    uri = uri.up();
+    assertTrue(
+        uri.str() == "http://user:password@example.com:80/foo/bar");
+
+    uri = uri.up();
+    assertTrue(
+        uri.str() == "http://user:password@example.com:80/foo");
+
+    uri = uri.up();
+    assertTrue(
+        uri.str() == "http://user:password@example.com:80");
+
+    uri = uri.up();
+    assertTrue(
+        uri.str() == "http://user:password@example.com:80");
 
     return 0;
 }
@@ -93,5 +184,9 @@ int main() {
     rval += test_uri_http();
     rval += test_uri_file();
     rval += test_uri_empty_path();
+    rval += test_uri_with_uuid();
+    rval += test_uri_without_uuid_with_slash();
+    rval += test_uri_without_uuid_without_slash();
+    rval += test_uri_up();
     return rval ? EXIT_FAILURE : EXIT_SUCCESS;
 }
