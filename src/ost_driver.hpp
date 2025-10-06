@@ -25,7 +25,7 @@ namespace ost {
 struct DriverOp;
 
 
-class Driver: public rawstor::Driver {
+class Driver final: public rawstor::Driver {
     private:
         RawstorObject *_object;
 
