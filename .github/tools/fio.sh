@@ -44,6 +44,6 @@ while IFS='' read line; do
 done < ${_FIO_OUTPUT}
 
 cp ${_FIO_TXT} ${FIO_TXT}
-cp ${_FIO_JSON} ${FIO_JSON}
+cat ${_FIO_JSON} | sed s/\\\\:/:/g > ${FIO_JSON}
 
 rm ${_FIO_OUTPUT} ${_FIO_TXT} ${_FIO_JSON}
