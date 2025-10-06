@@ -50,9 +50,7 @@ std::string get_ost_path(const rawstor::URI &uri) {
         oss << "Empty path unexpected: " << uri.str();
         throw std::runtime_error(oss.str());
     }
-    std::ostringstream oss;
-    oss << "./ost-" << uri.path();
-    return oss.str();
+    return uri.path();
 }
 
 
@@ -61,7 +59,7 @@ std::string get_object_spec_path(
 {
     std::ostringstream oss;
 
-    oss << ost_path << "/rawstor-" << uuid << ".spec";
+    oss << ost_path << "/" << uuid << ".spec";
 
     return oss.str();
 }
@@ -72,7 +70,7 @@ std::string get_object_dat_path(
 {
     std::ostringstream oss;
 
-    oss << ost_path << "/rawstor-" << uuid << ".dat";
+    oss << ost_path << "/" << uuid << ".dat";
 
     return oss.str();
 }
