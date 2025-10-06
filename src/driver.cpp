@@ -25,12 +25,6 @@ Driver::Driver(const SocketAddress &ost, unsigned int depth):
 {}
 
 
-Driver::Driver(Driver &&other) noexcept:
-    _ost(std::move(other._ost)),
-    _fd(std::exchange(other._fd, -1))
-{}
-
-
 Driver::~Driver() {
     if (_fd != -1) {
         rawstor_info("fd %d: Close\n", _fd);

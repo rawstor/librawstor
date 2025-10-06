@@ -124,19 +124,6 @@ Driver::Driver(const SocketAddress &ost, unsigned int depth):
 }
 
 
-Driver::Driver(Driver &&other) noexcept:
-    rawstor::Driver(std::move(other)),
-    _object(std::exchange(other._object, nullptr)),
-    _ops_array(std::move(other._ops_array)),
-    _ops(std::move(other._ops)),
-    _response(std::move(other._response))
-{
-    for (DriverOp *op: _ops_array) {
-        op->s = this;
-    }
-}
-
-
 Driver::~Driver() {
     for (DriverOp *op: _ops_array) {
         delete op;

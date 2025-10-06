@@ -31,10 +31,10 @@ class Driver {
 
         Driver(const SocketAddress &ost, unsigned int depth);
         Driver(const Driver &) = delete;
-        Driver(Driver &&other) noexcept;
+        Driver(Driver &&) noexcept = delete;
         virtual ~Driver();
-
-        Driver& operator=(const Driver&) = delete;
+        Driver& operator=(const Driver &) = delete;
+        Driver& operator=(Driver &&) = delete;
 
         std::string str() const;
 

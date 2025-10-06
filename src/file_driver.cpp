@@ -116,13 +116,6 @@ Driver::Driver(const SocketAddress &ost, unsigned int depth):
 {}
 
 
-Driver::Driver(Driver &&other) noexcept:
-    rawstor::Driver(std::move(other)),
-    _object(std::exchange(other._object, nullptr)),
-    _ops_pool(std::move(other._ops_pool))
-{}
-
-
 DriverOp* Driver::_acquire_op() {
     return _ops_pool.alloc();
 }

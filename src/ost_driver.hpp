@@ -71,7 +71,6 @@ class Driver: public rawstor::Driver {
 
     public:
         Driver(const SocketAddress &ost, unsigned int depth);
-        Driver(Driver &&other) noexcept;
         ~Driver();
 
         void create(
