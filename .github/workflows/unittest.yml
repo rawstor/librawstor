@@ -47,6 +47,9 @@ jobs:
         include:
         - packages: liburing-dev
           without-liburing:
+        - packages: liburing-dev
+          uri: ost://127.0.0.1:8080
+          without-liburing: --without-liburing
 
     steps:
     - name: install dependencies
