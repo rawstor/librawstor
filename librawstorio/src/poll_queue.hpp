@@ -30,7 +30,7 @@ class Queue: public rawstor::io::Queue {
         std::shared_ptr<Session> _get_session(int fd);
 
     public:
-        static std::string engine_name();
+        static const std::string& engine_name();
         static void setup_fd(int fd);
 
         Queue(unsigned int depth):

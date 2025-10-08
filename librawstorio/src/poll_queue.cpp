@@ -15,6 +15,15 @@
 #include <cassert>
 
 
+namespace {
+
+
+std::string engine_name = "poll";
+
+
+} // unnamed
+
+
 namespace rawstor {
 namespace io {
 namespace poll {
@@ -37,8 +46,8 @@ std::shared_ptr<Session> Queue::_get_session(int fd) {
 }
 
 
-std::string Queue::engine_name() {
-    return "poll";
+const std::string& Queue::engine_name() {
+    return ::engine_name;
 }
 
 

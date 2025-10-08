@@ -7,6 +7,16 @@
 
 #include <time.h>
 
+
+namespace {
+
+
+std::string engine_name = "poll";
+
+
+} // unnamed
+
+
 namespace rawstor {
 namespace io {
 namespace uring {
@@ -27,8 +37,8 @@ Queue::~Queue() {
 }
 
 
-std::string Queue::engine_name() {
-    return "uring";
+const std::string& Queue::engine_name() {
+    return ::engine_name;
 }
 
 
