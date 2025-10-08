@@ -20,7 +20,7 @@ class Queue {
         unsigned int _depth;
 
     public:
-        static std::string engine_name();
+        static const std::string& engine_name();
         static void setup_fd(int fd);
         static std::unique_ptr<Queue> create(unsigned int depth);
 

@@ -41,7 +41,6 @@ struct RawstorObject final {
         explicit RawstorObject(const rawstor::URI &uri);
         RawstorObject(const RawstorObject &) = delete;
         RawstorObject(RawstorObject &&) = delete;
-        ~RawstorObject() {}
         RawstorObject& operator=(const RawstorObject &) = delete;
         RawstorObject& operator=(RawstorObject &&) = delete;
 

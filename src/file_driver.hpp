@@ -5,12 +5,10 @@
 
 #include <rawstorio/queue.hpp>
 
-#include <rawstorstd/mempool.hpp>
 #include <rawstorstd/uri.hpp>
 
-#include <rawstor/io_event.h>
 #include <rawstor/object.h>
-#include <rawstor/rawstor.h>
+#include <rawstor/uuid.h>
 
 #include <string>
 
@@ -18,23 +16,20 @@ namespace rawstor {
 namespace file {
 
 
-struct DriverOp;
+class DriverOp;
 
 
-class Driver: public rawstor::Driver {
+class Driver final: public rawstor::Driver {
     private:
         RawstorObject *_object;
-        MemPool<DriverOp> _ops_pool;
-
-        DriverOp* _acquire_op();
-        void _release_op(DriverOp *op) noexcept;
 
         int _connect(const RawstorUUID &id);
-
-        static int _io_cb(RawstorIOEvent *event, void *data) noexcept;
-
     public:
         Driver(const URI &uri, unsigned int depth);
+
+        inline RawstorObject* object() const noexcept {
+            return _object;
+        }
 
         void create(
             rawstor::io::Queue &queue,

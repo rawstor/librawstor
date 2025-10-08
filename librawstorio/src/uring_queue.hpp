@@ -16,7 +16,7 @@ class Queue: public rawstor::io::Queue {
         io_uring _ring;
 
     public:
-        static std::string engine_name();
+        static const std::string& engine_name();
         static void setup_fd(int fd);
 
         Queue(unsigned int depth);

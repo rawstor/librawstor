@@ -318,12 +318,18 @@ void SeekableSession::_process(
     ssize_t res;
     if (write) {
         if (!pollhup) {
+#ifdef RAWSTOR_TRACE_EVENTS
+            event->trace("pwritev()");
+#endif
             res = ::pwritev(_fd, event->iov(), event->niov(), event->offset());
         } else {
             res = -1;
             errno = ECONNRESET;
         }
     } else {
+#ifdef RAWSTOR_TRACE_EVENTS
+        event->trace("preadv()");
+#endif
         res = ::preadv(_fd, event->iov(), event->niov(), event->offset());
     }
 
@@ -371,23 +377,32 @@ void UnseekableSession::_process(
         std::vector<iovec> iov;
         iov.reserve(niov);
         for (rawstor::io::poll::Event *event: events) {
+#ifdef RAWSTOR_TRACE_EVENTS
+            event->trace("add to bulk");
+#endif
             event->add_iov(iov);
         }
 
         ssize_t res;
         if (write) {
             if (!pollhup) {
+#ifdef RAWSTOR_TRACE_EVENTS
+                rawstor_trace("bulk writev()\n");
+#endif
                 res = ::writev(_fd, iov.data(), iov.size());
             } else {
                 res = -1;
                 errno = ECONNRESET;
             }
         } else {
+#ifdef RAWSTOR_TRACE_EVENTS
+            rawstor_trace("bulk readv()\n");
+#endif
             res = ::readv(_fd, iov.data(), iov.size());
         }
 
 #ifdef RAWSTOR_TRACE_EVENTS
-        rawstor_trace("bulk process(): res = %zd\n", res);
+        rawstor_trace("bulk res = %zd\n", res);
 #endif
         if (res > 0) {
             for (rawstor::io::poll::Event *event: events) {

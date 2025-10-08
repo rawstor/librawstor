@@ -6,7 +6,6 @@
 
 #include <rawstorstd/gpp.hpp>
 #include <rawstorstd/logging.h>
-#include <rawstorstd/mempool.h>
 #include <rawstorstd/uuid.h>
 
 #include <rawstorio/event.hpp>
@@ -19,9 +18,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 
-#include <cassert>
 #include <cerrno>
-#include <climits>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -109,29 +106,44 @@ namespace rawstor {
 namespace file {
 
 
-struct DriverOp {
-    Driver *s;
+class DriverOp final {
+    private:
+        Driver &_s;
 
-    RawstorCallback *callback;
-    void *data;
+        RawstorCallback *_cb;
+        void *_data;
+    public:
+        static int process(RawstorIOEvent *event, void *data) noexcept {
+            DriverOp *op = static_cast<DriverOp*>(data);
+
+            int ret = op->_cb(
+                op->_s.object(),
+                rawstor_io_event_size(event),
+                rawstor_io_event_result(event),
+                rawstor_io_event_error(event),
+                op->_data);
+
+            delete op;
+
+            return ret;
+        }
+
+        DriverOp(Driver &s, RawstorCallback *cb, void *data):
+            _s(s),
+            _cb(cb),
+            _data(data)
+        {}
+        DriverOp(const DriverOp &) = delete;
+        DriverOp(DriverOp &&) = delete;
+        DriverOp& operator=(const DriverOp &) = delete;
+        DriverOp& operator=(DriverOp &&) = delete;
 };
 
 
 Driver::Driver(const URI &uri, unsigned int depth):
     rawstor::Driver(uri, depth),
-    _object(nullptr),
-    _ops_pool(depth)
+    _object(nullptr)
 {}
-
-
-DriverOp* Driver::_acquire_op() {
-    return _ops_pool.alloc();
-}
-
-
-void Driver::_release_op(DriverOp *op) noexcept {
-    return _ops_pool.free(op);
-}
 
 
 int Driver::_connect(const RawstorUUID &id) {
@@ -148,22 +160,6 @@ int Driver::_connect(const RawstorUUID &id) {
     }
     rawstor_info("fd %d: Connected\n", fd);
     return fd;
-}
-
-
-int Driver::_io_cb(RawstorIOEvent *event, void *data) noexcept {
-    DriverOp *op = static_cast<DriverOp*>(data);
-
-    int ret = op->callback(
-        op->s->_object,
-        rawstor_io_event_size(event),
-        rawstor_io_event_result(event),
-        rawstor_io_event_error(event),
-        op->data);
-
-    op->s->_release_op(op);
-
-    return ret;
 }
 
 
@@ -322,19 +318,10 @@ void Driver::pread(
     void *buf, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
-    DriverOp *op = _acquire_op();
-    try {
-        *op = {
-            .s = this,
-            .callback = cb,
-            .data = data,
-        };
-
-        io_queue->pread(fd(), buf, size, offset, _io_cb, op);
-    } catch (...) {
-        _release_op(op);
-        throw;
-    }
+    std::unique_ptr<DriverOp> op = std::make_unique<DriverOp>(*this, cb, data);
+    io_queue->pread(
+        fd(), buf, size, offset, DriverOp::process, op.get());
+    op.release();
 }
 
 
@@ -342,19 +329,10 @@ void Driver::preadv(
     iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
-    DriverOp *op = _acquire_op();
-    try {
-        *op = {
-            .s = this,
-            .callback = cb,
-            .data = data,
-        };
-
-        io_queue->preadv(fd(), iov, niov, size, offset, _io_cb, op);
-    } catch (...) {
-        _release_op(op);
-        throw;
-    }
+    std::unique_ptr<DriverOp> op = std::make_unique<DriverOp>(*this, cb, data);
+    io_queue->preadv(
+        fd(), iov, niov, size, offset, DriverOp::process, op.get());
+    op.release();
 }
 
 
@@ -362,19 +340,10 @@ void Driver::pwrite(
     void *buf, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
-    DriverOp *op = _acquire_op();
-    try {
-        *op = {
-            .s = this,
-            .callback = cb,
-            .data = data,
-        };
-
-        io_queue->pwrite(fd(), buf, size, offset, _io_cb, op);
-    } catch (...) {
-        _release_op(op);
-        throw;
-    }
+    std::unique_ptr<DriverOp> op = std::make_unique<DriverOp>(*this, cb, data);
+    io_queue->pwrite(
+        fd(), buf, size, offset, DriverOp::process, op.get());
+    op.release();
 }
 
 
@@ -382,19 +351,10 @@ void Driver::pwritev(
     iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
-    DriverOp *op = _acquire_op();
-    try {
-        *op = {
-            .s = this,
-            .callback = cb,
-            .data = data,
-        };
-
-        io_queue->pwritev(fd(), iov, niov, size, offset, _io_cb, op);
-    } catch (...) {
-        _release_op(op);
-        throw;
-    }
+    std::unique_ptr<DriverOp> op = std::make_unique<DriverOp>(*this, cb, data);
+    io_queue->pwritev(
+        fd(), iov, niov, size, offset, DriverOp::process, op.get());
+    op.release();
 }
 
 
