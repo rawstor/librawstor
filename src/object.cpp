@@ -105,10 +105,7 @@ void RawstorObject::pread(
             .data = data,
         };
 
-        std::unique_ptr<rawstor::ConnectionOp> e = _cn.pread(
-            buf, size, offset, _process, op);
-        _cn.submit(e.get());
-        e.release();
+        _cn.pread(buf, size, offset, _process, op);
     } catch (...) {
         _ops.free(op);
         throw;
@@ -131,10 +128,7 @@ void RawstorObject::preadv(
             .data = data,
         };
 
-        std::unique_ptr<rawstor::ConnectionOp> e = _cn.preadv(
-            iov, niov, size, offset, _process, op);
-        _cn.submit(e.get());
-        e.release();
+        _cn.preadv(iov, niov, size, offset, _process, op);
     } catch (...) {
         _ops.free(op);
         throw;
@@ -157,10 +151,7 @@ void RawstorObject::pwrite(
             .data = data,
         };
 
-        std::unique_ptr<rawstor::ConnectionOp> e = _cn.pwrite(
-            buf, size, offset, _process, op);
-        _cn.submit(e.get());
-        e.release();
+        _cn.pwrite(buf, size, offset, _process, op);
     } catch (...) {
         _ops.free(op);
         throw;
@@ -183,10 +174,7 @@ void RawstorObject::pwritev(
             .data = data,
         };
 
-        std::unique_ptr<rawstor::ConnectionOp> e = _cn.pwritev(
-            iov, niov, size, offset, _process, op);
-        _cn.submit(e.get());
-        e.release();
+        _cn.pwritev(iov, niov, size, offset, _process, op);
     } catch (...) {
         _ops.free(op);
         throw;
