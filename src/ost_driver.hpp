@@ -22,54 +22,33 @@ namespace rawstor {
 namespace ost {
 
 
-struct DriverOp;
+class DriverOp;
+class DriverOpResponse;
 
 
 class Driver final: public rawstor::Driver {
     private:
         RawstorObject *_object;
-
-        uint16_t _cid_counter;
         std::unordered_map<uint16_t, DriverOp*> _ops;
-        RawstorOSTFrameResponse _response;
+        DriverOpResponse *_op_response;
 
-        void _validate_event(RawstorIOEvent *event);
-        void _validate_response(const RawstorOSTFrameResponse &response);
-        void _validate_cmd(
-            enum RawstorOSTCommandType cmd,
-            enum RawstorOSTCommandType expected);
-        void _validate_hash(uint64_t hash, uint64_t expected);
-
-        void _release_op(DriverOp *op);
         DriverOp* _find_op(uint16_t cid);
 
         int _connect();
-
-        void _writev_request(rawstor::io::Queue &queue, DriverOp *op);
-        void _read_response_set_object_id(
-            rawstor::io::Queue &queue, DriverOp *op);
         void _read_response_head(rawstor::io::Queue &queue);
-        void _read_response_body(rawstor::io::Queue &queue, DriverOp *op);
-        void _readv_response_body(rawstor::io::Queue &queue, DriverOp *op);
-
-        static void _next_read_response_body(
-            rawstor::io::Queue &queue, DriverOp *op);
-        static void _next_readv_response_body(
-            rawstor::io::Queue &queue, DriverOp *op);
-
-        static int _writev_request_cb(
-            RawstorIOEvent *event, void *data) noexcept;
-        static int _read_response_set_object_id_cb(
-            RawstorIOEvent *event, void *data) noexcept;
         static int _read_response_head_cb(
-            RawstorIOEvent *event, void *data) noexcept;
-        static int _read_response_body_cb(
-            RawstorIOEvent *event, void *data) noexcept;
-        static int _readv_response_body_cb(
             RawstorIOEvent *event, void *data) noexcept;
 
     public:
         Driver(const URI &uri, unsigned int depth);
+        ~Driver();
+
+        void register_request(DriverOp &op);
+        void unregister_request(DriverOp &op);
+
+        inline RawstorObject* object() noexcept {
+            return _object;
+        }
 
         void create(
             rawstor::io::Queue &queue,
