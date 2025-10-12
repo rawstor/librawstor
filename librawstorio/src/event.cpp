@@ -1,18 +1,21 @@
 #include <rawstorio/event.hpp>
 
+#include <rawstorio/callback.hpp>
+
 #include <rawstorstd/gpp.hpp>
 #include <rawstorstd/logging.h>
+
+#include <memory>
 
 
 RawstorIOEvent::RawstorIOEvent(
     rawstor::io::Queue &q,
     int fd, size_t size,
-    RawstorIOCallback *cb, void *data):
+    std::unique_ptr<rawstor::io::Callback> cb):
     _q(q),
     _fd(fd),
     _size(size),
-    _cb(cb),
-    _data(data)
+    _cb(std::move(cb))
 #ifdef RAWSTOR_TRACE_EVENTS
     , _trace_id(rawstor_trace_event_begin(
         "RawstorIOEvent(%d, %zu)\n", fd, size))
@@ -33,10 +36,7 @@ void RawstorIOEvent::dispatch() {
     rawstor_trace_event_message(_trace_id, "dispatch()\n");
     try {
 #endif
-        int res = _cb(this, _data);
-        if (res) {
-            RAWSTOR_THROW_SYSTEM_ERROR(-res);
-        }
+        (*_cb)(this);
 #ifdef RAWSTOR_TRACE_EVENTS
     } catch (std::exception &e) {
         rawstor_trace_event_message(

@@ -1,7 +1,7 @@
 #ifndef RAWSTORIO_QUEUE_HPP
 #define RAWSTORIO_QUEUE_HPP
 
-#include <rawstor/io_queue.h>
+#include <rawstorio/callback.hpp>
 
 #include <memory>
 #include <string>
@@ -38,42 +38,42 @@ class Queue {
         virtual void read(
             int fd,
             void *buf, size_t size,
-            RawstorIOCallback *cb, void *data) = 0;
+            std::unique_ptr<Callback> cb) = 0;
 
         virtual void readv(
             int fd,
             iovec *iov, unsigned int niov, size_t size,
-            RawstorIOCallback *cb, void *data) = 0;
+            std::unique_ptr<Callback> cb) = 0;
 
         virtual void pread(
             int fd,
             void *buf, size_t size, off_t offset,
-            RawstorIOCallback *cb, void *data) = 0;
+            std::unique_ptr<Callback> cb) = 0;
 
         virtual void preadv(
             int fd,
             iovec *iov, unsigned int niov, size_t size, off_t offset,
-            RawstorIOCallback *cb, void *data) = 0;
+            std::unique_ptr<Callback> cb) = 0;
 
         virtual void write(
             int fd,
             void *buf, size_t size,
-            RawstorIOCallback *cb, void *data) = 0;
+            std::unique_ptr<Callback> cb) = 0;
 
         virtual void writev(
             int fd,
             iovec *iov, unsigned int niov, size_t size,
-            RawstorIOCallback *cb, void *data) = 0;
+            std::unique_ptr<Callback> cb) = 0;
 
         virtual void pwrite(
             int fd,
             void *buf, size_t size, off_t offset,
-            RawstorIOCallback *cb, void *data) = 0;
+            std::unique_ptr<Callback> cb) = 0;
 
         virtual void pwritev(
             int fd,
             iovec *iov, unsigned int niov, size_t size, off_t offset,
-            RawstorIOCallback *cb, void *data) = 0;
+            std::unique_ptr<Callback> cb) = 0;
 
         virtual RawstorIOEvent* wait_event(unsigned int timeout) = 0;
 

@@ -106,28 +106,13 @@ namespace rawstor {
 namespace file {
 
 
-class DriverOp final {
+class DriverOp final: public rawstor::io::Callback {
     private:
         Driver &_s;
 
         RawstorCallback *_cb;
         void *_data;
     public:
-        static int process(RawstorIOEvent *event, void *data) noexcept {
-            DriverOp *op = static_cast<DriverOp*>(data);
-
-            int ret = op->_cb(
-                op->_s.object(),
-                rawstor_io_event_size(event),
-                rawstor_io_event_result(event),
-                rawstor_io_event_error(event),
-                op->_data);
-
-            delete op;
-
-            return ret;
-        }
-
         DriverOp(Driver &s, RawstorCallback *cb, void *data):
             _s(s),
             _cb(cb),
@@ -137,6 +122,18 @@ class DriverOp final {
         DriverOp(DriverOp &&) = delete;
         DriverOp& operator=(const DriverOp &) = delete;
         DriverOp& operator=(DriverOp &&) = delete;
+
+        void operator()(RawstorIOEvent *event) {
+            int res = _cb(
+                _s.object(),
+                rawstor_io_event_size(event),
+                rawstor_io_event_result(event),
+                rawstor_io_event_error(event),
+                _data);
+            if (res) {
+                RAWSTOR_THROW_SYSTEM_ERROR(-res);
+            }
+        }
 };
 
 
@@ -320,8 +317,7 @@ void Driver::pread(
 {
     std::unique_ptr<DriverOp> op = std::make_unique<DriverOp>(*this, cb, data);
     io_queue->pread(
-        fd(), buf, size, offset, DriverOp::process, op.get());
-    op.release();
+        fd(), buf, size, offset, std::move(op));
 }
 
 
@@ -331,8 +327,7 @@ void Driver::preadv(
 {
     std::unique_ptr<DriverOp> op = std::make_unique<DriverOp>(*this, cb, data);
     io_queue->preadv(
-        fd(), iov, niov, size, offset, DriverOp::process, op.get());
-    op.release();
+        fd(), iov, niov, size, offset, std::move(op));
 }
 
 
@@ -342,8 +337,7 @@ void Driver::pwrite(
 {
     std::unique_ptr<DriverOp> op = std::make_unique<DriverOp>(*this, cb, data);
     io_queue->pwrite(
-        fd(), buf, size, offset, DriverOp::process, op.get());
-    op.release();
+        fd(), buf, size, offset, std::move(op));
 }
 
 
@@ -353,8 +347,7 @@ void Driver::pwritev(
 {
     std::unique_ptr<DriverOp> op = std::make_unique<DriverOp>(*this, cb, data);
     io_queue->pwritev(
-        fd(), iov, niov, size, offset, DriverOp::process, op.get());
-    op.release();
+        fd(), iov, niov, size, offset, std::move(op));
 }
 
 

@@ -8,7 +8,6 @@
 #include <unordered_map>
 #include <memory>
 #include <string>
-#include <vector>
 
 
 namespace rawstor {
@@ -17,7 +16,6 @@ namespace poll {
 
 
 class Event;
-
 
 class Session;
 
@@ -41,42 +39,42 @@ class Queue: public rawstor::io::Queue {
         void read(
             int fd,
             void *buf, size_t size,
-            RawstorIOCallback *cb, void *data);
+            std::unique_ptr<rawstor::io::Callback> cb);
 
         void readv(
             int fd,
             struct iovec *iov, unsigned int niov, size_t size,
-            RawstorIOCallback *cb, void *data);
+            std::unique_ptr<rawstor::io::Callback> cb);
 
         void pread(
             int fd,
             void *buf, size_t size, off_t offset,
-            RawstorIOCallback *cb, void *data);
+            std::unique_ptr<rawstor::io::Callback> cb);
 
         void preadv(
             int fd,
             struct iovec *iov, unsigned int niov, size_t size, off_t offset,
-            RawstorIOCallback *cb, void *data);
+            std::unique_ptr<rawstor::io::Callback> cb);
 
         void write(
             int fd,
             void *buf, size_t size,
-            RawstorIOCallback *cb, void *data);
+            std::unique_ptr<rawstor::io::Callback> cb);
 
         void writev(
             int fd,
             struct iovec *iov, unsigned int niov, size_t size,
-            RawstorIOCallback *cb, void *data);
+            std::unique_ptr<rawstor::io::Callback> cb);
 
         void pwrite(
             int fd,
             void *buf, size_t size, off_t offset,
-            RawstorIOCallback *cb, void *data);
+            std::unique_ptr<rawstor::io::Callback> cb);
 
         void pwritev(
             int fd,
             struct iovec *iov, unsigned int niov, size_t size, off_t offset,
-            RawstorIOCallback *cb, void *data);
+            std::unique_ptr<rawstor::io::Callback> cb);
 
         RawstorIOEvent* wait_event(unsigned int timeout);
 

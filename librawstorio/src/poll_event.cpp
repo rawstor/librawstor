@@ -35,7 +35,6 @@ size_t Event::shift(size_t shift) {
 }
 
 
-
 size_t EventP::shift(size_t shift) {
     size_t ret = Event::shift(shift);
     _offset += shift - ret;

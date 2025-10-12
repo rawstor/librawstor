@@ -1,5 +1,5 @@
-#ifndef RAWSTOR_IO_QUEUE_H
-#define RAWSTOR_IO_QUEUE_H
+#ifndef RAWSTOR_IO_CALLBACK_H
+#define RAWSTOR_IO_CALLBACK_H
 
 #include <rawstor/io_event.h>
 
@@ -19,4 +19,4 @@ typedef int(RawstorIOCallback)(RawstorIOEvent *event, void *data);
 #endif
 
 
-#endif // RAWSTOR_IO_QUEUE_H
+#endif // RAWSTOR_IO_CALLBACK_H

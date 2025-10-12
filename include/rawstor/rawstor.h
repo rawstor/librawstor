@@ -1,7 +1,7 @@
 #ifndef RAWSTOR_RAWSTOR_H
 #define RAWSTOR_RAWSTOR_H
 
-#include <rawstor/io_queue.h>
+#include <rawstor/io_callback.h>
 #include <rawstor/uuid.h>
 
 #include <sys/types.h>

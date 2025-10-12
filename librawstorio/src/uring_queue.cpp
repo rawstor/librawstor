@@ -66,73 +66,73 @@ void Queue::setup_fd(int fd) {
 void Queue::read(
     int fd,
     void *buf, size_t size,
-    RawstorIOCallback *cb, void *data)
+    std::unique_ptr<rawstor::io::Callback> cb)
 {
     new rawstor::io::uring::EventRead(
-        *this, fd, buf, size, cb, data);
+        *this, fd, buf, size, std::move(cb));
 }
 
 
 void Queue::readv(
     int fd, struct iovec *iov, unsigned int niov, size_t size,
-    RawstorIOCallback *cb, void *data)
+    std::unique_ptr<rawstor::io::Callback> cb)
 {
     new rawstor::io::uring::EventReadV(
-        *this, fd, iov, niov, size, cb, data);
+        *this, fd, iov, niov, size, std::move(cb));
 }
 
 
 void Queue::pread(
     int fd, void *buf, size_t size, off_t offset,
-    RawstorIOCallback *cb, void *data)
+    std::unique_ptr<rawstor::io::Callback> cb)
 {
     new rawstor::io::uring::EventPRead(
-        *this, fd, buf, size, offset, cb, data);
+        *this, fd, buf, size, offset, std::move(cb));
 }
 
 
 void Queue::preadv(
     int fd, struct iovec *iov, unsigned int niov, size_t size, off_t offset,
-    RawstorIOCallback *cb, void *data)
+    std::unique_ptr<rawstor::io::Callback> cb)
 {
     new rawstor::io::uring::EventPReadV(
-        *this, fd, iov, niov, size, offset, cb, data);
+        *this, fd, iov, niov, size, offset, std::move(cb));
 }
 
 
 void Queue::write(
     int fd, void *buf, size_t size,
-    RawstorIOCallback *cb, void *data)
+    std::unique_ptr<rawstor::io::Callback> cb)
 {
     new rawstor::io::uring::EventWrite(
-        *this, fd, buf, size, cb, data);
+        *this, fd, buf, size, std::move(cb));
 }
 
 
 void Queue::writev(
     int fd, struct iovec *iov, unsigned int niov, size_t size,
-    RawstorIOCallback *cb, void *data)
+    std::unique_ptr<rawstor::io::Callback> cb)
 {
     new rawstor::io::uring::EventWriteV(
-        *this, fd, iov, niov, size, cb, data);
+        *this, fd, iov, niov, size, std::move(cb));
 }
 
 
 void Queue::pwrite(
     int fd, void *buf, size_t size, off_t offset,
-    RawstorIOCallback *cb, void *data)
+    std::unique_ptr<rawstor::io::Callback> cb)
 {
     new rawstor::io::uring::EventPWrite(
-        *this, fd, buf, size, offset, cb, data);
+        *this, fd, buf, size, offset, std::move(cb));
 }
 
 
 void Queue::pwritev(
     int fd, struct iovec *iov, unsigned int niov, size_t size, off_t offset,
-    RawstorIOCallback *cb, void *data)
+    std::unique_ptr<rawstor::io::Callback> cb)
 {
     new rawstor::io::uring::EventPWriteV(
-        *this, fd, iov, niov, size, offset, cb, data);
+        *this, fd, iov, niov, size, offset, std::move(cb));
 }
 
 

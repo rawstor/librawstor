@@ -41,9 +41,11 @@ Driver::~Driver() {
 
 
 std::unique_ptr<Driver> Driver::create(const URI &uri, unsigned int depth) {
+    /*
     if (uri.scheme() == "ost") {
         return std::make_unique<rawstor::ost::Driver>(uri, depth);
     }
+    */
     if (uri.scheme() == "file") {
         return std::make_unique<rawstor::file::Driver>(uri, depth);
     }

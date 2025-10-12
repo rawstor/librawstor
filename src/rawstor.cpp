@@ -3,11 +3,13 @@
 #include "opts.h"
 #include "rawstor_internals.hpp"
 
+#include <rawstorstd/gpp.hpp>
 #include <rawstorstd/logging.h>
 #include <rawstorstd/uri.hpp>
 
-#include <rawstorio/queue.hpp>
+#include <rawstorio/callback.hpp>
 #include <rawstorio/event.hpp>
+#include <rawstorio/queue.hpp>
 
 #include <sys/types.h>
 #include <sys/uio.h>
@@ -25,6 +27,32 @@
 
 
 #define QUEUE_DEPTH 256
+
+
+namespace {
+
+
+class Callback: public rawstor::io::Callback {
+    private:
+        RawstorIOCallback *_cb;
+        void *_data;
+
+    public:
+        Callback(RawstorIOCallback *cb, void *data):
+            _cb(cb),
+            _data(data)
+        {}
+
+        void operator()(RawstorIOEvent *event) {
+            int res = _cb(event, _data);
+            if (res) {
+                RAWSTOR_THROW_SYSTEM_ERROR(-res);
+            }
+        }
+};
+
+
+} // unnamed
 
 
 namespace rawstor {
@@ -113,9 +141,10 @@ int rawstor_fd_read(
     RawstorIOCallback *cb, void *data)
 {
     try {
+        std::unique_ptr<Callback> c = std::make_unique<Callback>(cb, data);
         rawstor::io_queue->read(
             fd, buf, size,
-            cb, data);
+            std::move(c));
         return 0;
     } catch (std::system_error &e) {
         return -e.code().value();
@@ -128,9 +157,10 @@ int rawstor_fd_pread(
     RawstorIOCallback *cb, void *data)
 {
     try {
+        std::unique_ptr<Callback> c = std::make_unique<Callback>(cb, data);
         rawstor::io_queue->pread(
             fd, buf, size, offset,
-            cb, data);
+            std::move(c));
         return 0;
     } catch (std::system_error &e) {
         return -e.code().value();
@@ -143,9 +173,10 @@ int rawstor_fd_readv(
     RawstorIOCallback *cb, void *data)
 {
     try {
+        std::unique_ptr<Callback> c = std::make_unique<Callback>(cb, data);
         rawstor::io_queue->readv(
             fd, iov, niov, size,
-            cb, data);
+            std::move(c));
         return 0;
     } catch (std::system_error &e) {
         return -e.code().value();
@@ -158,9 +189,10 @@ int rawstor_fd_preadv(
     RawstorIOCallback *cb, void *data)
 {
     try {
+        std::unique_ptr<Callback> c = std::make_unique<Callback>(cb, data);
         rawstor::io_queue->preadv(
             fd, iov, niov, size, offset,
-            cb, data);
+            std::move(c));
         return 0;
     } catch (std::system_error &e) {
         return -e.code().value();
@@ -173,9 +205,10 @@ int rawstor_fd_write(
     RawstorIOCallback *cb, void *data)
 {
     try {
+        std::unique_ptr<Callback> c = std::make_unique<Callback>(cb, data);
         rawstor::io_queue->write(
             fd, buf, size,
-            cb, data);
+            std::move(c));
         return 0;
     } catch (std::system_error &e) {
         return -e.code().value();
@@ -188,9 +221,10 @@ int rawstor_fd_pwrite(
     RawstorIOCallback *cb, void *data)
 {
     try {
+        std::unique_ptr<Callback> c = std::make_unique<Callback>(cb, data);
         rawstor::io_queue->pwrite(
             fd, buf, size, offset,
-            cb, data);
+            std::move(c));
         return 0;
     } catch (std::system_error &e) {
         return -e.code().value();
@@ -203,9 +237,10 @@ int rawstor_fd_writev(
     RawstorIOCallback *cb, void *data)
 {
     try {
+        std::unique_ptr<Callback> c = std::make_unique<Callback>(cb, data);
         rawstor::io_queue->writev(
             fd, iov, niov, size,
-            cb, data);
+            std::move(c));
         return 0;
     } catch (std::system_error &e) {
         return -e.code().value();
@@ -218,9 +253,10 @@ int rawstor_fd_pwritev(
     RawstorIOCallback *cb, void *data)
 {
     try {
+        std::unique_ptr<Callback> c = std::make_unique<Callback>(cb, data);
         rawstor::io_queue->pwritev(
             fd, iov, niov, size, offset,
-            cb, data);
+            std::move(c));
         return 0;
     } catch (std::system_error &e) {
         return -e.code().value();
