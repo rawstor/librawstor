@@ -23,7 +23,8 @@ namespace uring {
 
 
 Queue::Queue(unsigned int depth):
-    rawstor::io::Queue(depth)
+    rawstor::io::Queue(depth),
+    _events(0)
 {
     int res = io_uring_queue_init(depth, &_ring, 0);
     if (res < 0) {
