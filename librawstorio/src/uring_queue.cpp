@@ -7,13 +7,24 @@
 
 #include <time.h>
 
+
+namespace {
+
+
+std::string engine_name = "uring";
+
+
+} // unnamed
+
+
 namespace rawstor {
 namespace io {
 namespace uring {
 
 
 Queue::Queue(unsigned int depth):
-    rawstor::io::Queue(depth)
+    rawstor::io::Queue(depth),
+    _events(0)
 {
     int res = io_uring_queue_init(depth, &_ring, 0);
     if (res < 0) {
@@ -27,8 +38,8 @@ Queue::~Queue() {
 }
 
 
-std::string Queue::engine_name() {
-    return "uring";
+const std::string& Queue::engine_name() {
+    return ::engine_name;
 }
 
 
@@ -56,77 +67,90 @@ void Queue::setup_fd(int fd) {
 void Queue::read(
     int fd,
     void *buf, size_t size,
-    RawstorIOCallback *cb, void *data)
+    std::unique_ptr<rawstor::io::Task> t)
 {
     new rawstor::io::uring::EventRead(
-        *this, fd, buf, size, cb, data);
+        *this, fd, buf, size, std::move(t));
+    ++_events;
 }
 
 
 void Queue::readv(
     int fd, struct iovec *iov, unsigned int niov, size_t size,
-    RawstorIOCallback *cb, void *data)
+    std::unique_ptr<rawstor::io::Task> t)
 {
     new rawstor::io::uring::EventReadV(
-        *this, fd, iov, niov, size, cb, data);
+        *this, fd, iov, niov, size, std::move(t));
+    ++_events;
 }
 
 
 void Queue::pread(
     int fd, void *buf, size_t size, off_t offset,
-    RawstorIOCallback *cb, void *data)
+    std::unique_ptr<rawstor::io::Task> t)
 {
     new rawstor::io::uring::EventPRead(
-        *this, fd, buf, size, offset, cb, data);
+        *this, fd, buf, size, offset, std::move(t));
+    ++_events;
 }
 
 
 void Queue::preadv(
     int fd, struct iovec *iov, unsigned int niov, size_t size, off_t offset,
-    RawstorIOCallback *cb, void *data)
+    std::unique_ptr<rawstor::io::Task> t)
 {
     new rawstor::io::uring::EventPReadV(
-        *this, fd, iov, niov, size, offset, cb, data);
+        *this, fd, iov, niov, size, offset, std::move(t));
+    ++_events;
 }
 
 
 void Queue::write(
     int fd, void *buf, size_t size,
-    RawstorIOCallback *cb, void *data)
+    std::unique_ptr<rawstor::io::Task> t)
 {
     new rawstor::io::uring::EventWrite(
-        *this, fd, buf, size, cb, data);
+        *this, fd, buf, size, std::move(t));
+    ++_events;
 }
 
 
 void Queue::writev(
     int fd, struct iovec *iov, unsigned int niov, size_t size,
-    RawstorIOCallback *cb, void *data)
+    std::unique_ptr<rawstor::io::Task> t)
 {
     new rawstor::io::uring::EventWriteV(
-        *this, fd, iov, niov, size, cb, data);
+        *this, fd, iov, niov, size, std::move(t));
+    ++_events;
 }
 
 
 void Queue::pwrite(
     int fd, void *buf, size_t size, off_t offset,
-    RawstorIOCallback *cb, void *data)
+    std::unique_ptr<rawstor::io::Task> t)
 {
     new rawstor::io::uring::EventPWrite(
-        *this, fd, buf, size, offset, cb, data);
+        *this, fd, buf, size, offset, std::move(t));
+    ++_events;
 }
 
 
 void Queue::pwritev(
     int fd, struct iovec *iov, unsigned int niov, size_t size, off_t offset,
-    RawstorIOCallback *cb, void *data)
+    std::unique_ptr<rawstor::io::Task> t)
 {
     new rawstor::io::uring::EventPWriteV(
-        *this, fd, iov, niov, size, offset, cb, data);
+        *this, fd, iov, niov, size, offset, std::move(t));
+    ++_events;
 }
 
 
-RawstorIOEvent* Queue::wait_event(unsigned int timeout) {
+bool Queue::empty() const noexcept {
+    return _events == 0;
+}
+
+
+void Queue::wait(unsigned int timeout) {
     int res;
     io_uring_cqe *cqe;
     __kernel_timespec ts = {
@@ -154,17 +178,14 @@ RawstorIOEvent* Queue::wait_event(unsigned int timeout) {
         }
     }
 
-    rawstor::io::uring::Event *event = static_cast<rawstor::io::uring::Event*>(
-        io_uring_cqe_get_data(cqe));
+    std::unique_ptr<Event> event(
+        static_cast<Event*>(io_uring_cqe_get_data(cqe)));
 
     event->set_cqe(cqe);
 
-    return event;
-}
+    --_events;
 
-
-void Queue::release_event(RawstorIOEvent *event) noexcept {
-    delete event;
+    event->dispatch();
 }
 
 

@@ -18,8 +18,8 @@ namespace uring {
 Event::Event(
     Queue &q,
     int fd, size_t size,
-    RawstorIOCallback *cb, void *data):
-    RawstorIOEvent(q, fd, size, cb, data),
+    std::unique_ptr<rawstor::io::Task> t):
+    RawstorIOEvent(q, fd, size, std::move(t)),
     _sqe(io_uring_get_sqe(q.ring())),
     _cqe(nullptr)
 {
@@ -50,8 +50,8 @@ int Event::error() const noexcept {
 EventRead::EventRead(
     Queue &q,
     int fd, void *buf, size_t size,
-    RawstorIOCallback *cb, void *data):
-    Event(q, fd, size, cb, data)
+    std::unique_ptr<rawstor::io::Task> t):
+    Event(q, fd, size, std::move(t))
 {
     io_uring_prep_read(_sqe, fd, buf, size, 0);
 }
@@ -60,8 +60,8 @@ EventRead::EventRead(
 EventReadV::EventReadV(
     Queue &q,
     int fd, iovec *iov, unsigned int niov, size_t size,
-    RawstorIOCallback *cb, void *data):
-    Event(q, fd, size, cb, data)
+    std::unique_ptr<rawstor::io::Task> t):
+    Event(q, fd, size, std::move(t))
 {
     io_uring_prep_readv(_sqe, fd, iov, niov, 0);
 }
@@ -70,8 +70,8 @@ EventReadV::EventReadV(
 EventPRead::EventPRead(
     Queue &q,
     int fd, void *buf, size_t size, off_t offset,
-    RawstorIOCallback *cb, void *data):
-    Event(q, fd, size, cb, data)
+    std::unique_ptr<rawstor::io::Task> t):
+    Event(q, fd, size, std::move(t))
 {
     io_uring_prep_read(_sqe, fd, buf, size, offset);
 }
@@ -80,8 +80,8 @@ EventPRead::EventPRead(
 EventPReadV::EventPReadV(
     Queue &q,
     int fd, iovec *iov, unsigned int niov, size_t size, off_t offset,
-    RawstorIOCallback *cb, void *data):
-    Event(q, fd, size, cb, data)
+    std::unique_ptr<rawstor::io::Task> t):
+    Event(q, fd, size, std::move(t))
 {
     io_uring_prep_readv(_sqe, fd, iov, niov, offset);
 }
@@ -90,8 +90,8 @@ EventPReadV::EventPReadV(
 EventWrite::EventWrite(
     Queue &q,
     int fd, void *buf, size_t size,
-    RawstorIOCallback *cb, void *data):
-    Event(q, fd, size, cb, data)
+    std::unique_ptr<rawstor::io::Task> t):
+    Event(q, fd, size, std::move(t))
 {
     io_uring_prep_write(_sqe, fd, buf, size, 0);
 }
@@ -100,8 +100,8 @@ EventWrite::EventWrite(
 EventWriteV::EventWriteV(
     Queue &q,
     int fd, iovec *iov, unsigned int niov, size_t size,
-    RawstorIOCallback *cb, void *data):
-    Event(q, fd, size, cb, data)
+    std::unique_ptr<rawstor::io::Task> t):
+    Event(q, fd, size, std::move(t))
 {
     io_uring_prep_writev(_sqe, fd, iov, niov, 0);
 }
@@ -110,8 +110,8 @@ EventWriteV::EventWriteV(
 EventPWrite::EventPWrite(
     Queue &q,
     int fd, void *buf, size_t size, off_t offset,
-    RawstorIOCallback *cb, void *data):
-    Event(q, fd, size, cb, data)
+    std::unique_ptr<rawstor::io::Task> t):
+    Event(q, fd, size, std::move(t))
 {
     io_uring_prep_write(_sqe, fd, buf, size, offset);
 }
@@ -120,8 +120,8 @@ EventPWrite::EventPWrite(
 EventPWriteV::EventPWriteV(
     Queue &q,
     int fd, iovec *iov, unsigned int niov, size_t size, off_t offset,
-    RawstorIOCallback *cb, void *data):
-    Event(q, fd, size, cb, data)
+    std::unique_ptr<rawstor::io::Task> t):
+    Event(q, fd, size, std::move(t))
 {
     io_uring_prep_writev(_sqe, fd, iov, niov, offset);
 }

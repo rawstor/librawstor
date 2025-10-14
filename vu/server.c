@@ -201,29 +201,16 @@ static int server_loop(int client_socket) {
         return res;
     }
 
-    int rval = 0;
-    while (!rval) {
-        printf("Waiting for event...\n");
-        RawstorIOEvent *event = rawstor_wait_event();
-        if (event == NULL) {
-            if (errno) {
-                perror("rawstor_wait_event() failed");
-                errno = 0;
-            } else {
-                printf("EOF\n");
-            }
+    while (!rawstor_empty()) {
+        res = rawstor_wait();
+        if (res) {
             break;
         }
-
-        printf("Dispatching event...\n");
-        rval = rawstor_dispatch_event(event);
-
-        rawstor_release_event(event);
     }
 
     rawstor_terminate();
 
-    return 0;
+    return res;
 }
 
 

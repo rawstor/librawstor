@@ -20,7 +20,7 @@ class ConnectionOp;
 class Driver;
 
 
-class Connection {
+class Connection final {
     private:
         RawstorObject *_object;
         unsigned int _depth;
@@ -56,57 +56,23 @@ class Connection {
 
         void close();
 
-        std::unique_ptr<ConnectionOp> pread(
+        void pread(
             void *buf, size_t size, off_t offset,
             RawstorCallback *cb, void *data);
 
-        std::unique_ptr<ConnectionOp> preadv(
+        void preadv(
             iovec *iov, unsigned int niov, size_t size, off_t offset,
             RawstorCallback *cb, void *data);
 
-        std::unique_ptr<ConnectionOp> pwrite(
+        void pwrite(
             void *buf, size_t size, off_t offset,
             RawstorCallback *cb, void *data);
 
-        std::unique_ptr<ConnectionOp> pwritev(
+        void pwritev(
             iovec *iov, unsigned int niov, size_t size, off_t offset,
             RawstorCallback *cb, void *data);
 
-        void submit(ConnectionOp *op);
-};
-
-
-class ConnectionOp {
-    private:
-        rawstor::Connection &_cn;
-        RawstorCallback *_cb;
-        void *_data;
-
-    protected:
-        std::shared_ptr<rawstor::Driver> _s;
-        unsigned int _attempts;
-
-        static int _process(
-            RawstorObject *object,
-            size_t size, size_t res, int error, void *data) noexcept;
-
-    public:
-        ConnectionOp(rawstor::Connection &cn, RawstorCallback *cb, void *data);
-        ConnectionOp(const ConnectionOp &) = delete;
-        ConnectionOp(ConnectionOp &&) = delete;
-        ConnectionOp& operator=(const ConnectionOp &) = delete;
-        ConnectionOp& operator=(ConnectionOp &&) = delete;
-        virtual ~ConnectionOp() {}
-
-        virtual void operator()(const std::shared_ptr<rawstor::Driver> &s) = 0;
-
-        virtual std::string str() const = 0;
-
-        inline int callback(
-            RawstorObject *object, size_t size, size_t res, int error)
-        {
-            return _cb(object, size, res, error, _data);
-        }
+        void retry(ConnectionOp *op);
 };
 
 

@@ -8,7 +8,6 @@
 #include <unordered_map>
 #include <memory>
 #include <string>
-#include <vector>
 
 
 namespace rawstor {
@@ -17,7 +16,6 @@ namespace poll {
 
 
 class Event;
-
 
 class Session;
 
@@ -30,7 +28,7 @@ class Queue: public rawstor::io::Queue {
         std::shared_ptr<Session> _get_session(int fd);
 
     public:
-        static std::string engine_name();
+        static const std::string& engine_name();
         static void setup_fd(int fd);
 
         Queue(unsigned int depth):
@@ -41,46 +39,46 @@ class Queue: public rawstor::io::Queue {
         void read(
             int fd,
             void *buf, size_t size,
-            RawstorIOCallback *cb, void *data);
+            std::unique_ptr<rawstor::io::Task> t);
 
         void readv(
             int fd,
             struct iovec *iov, unsigned int niov, size_t size,
-            RawstorIOCallback *cb, void *data);
+            std::unique_ptr<rawstor::io::Task> t);
 
         void pread(
             int fd,
             void *buf, size_t size, off_t offset,
-            RawstorIOCallback *cb, void *data);
+            std::unique_ptr<rawstor::io::Task> t);
 
         void preadv(
             int fd,
             struct iovec *iov, unsigned int niov, size_t size, off_t offset,
-            RawstorIOCallback *cb, void *data);
+            std::unique_ptr<rawstor::io::Task> t);
 
         void write(
             int fd,
             void *buf, size_t size,
-            RawstorIOCallback *cb, void *data);
+            std::unique_ptr<rawstor::io::Task> t);
 
         void writev(
             int fd,
             struct iovec *iov, unsigned int niov, size_t size,
-            RawstorIOCallback *cb, void *data);
+            std::unique_ptr<rawstor::io::Task> t);
 
         void pwrite(
             int fd,
             void *buf, size_t size, off_t offset,
-            RawstorIOCallback *cb, void *data);
+            std::unique_ptr<rawstor::io::Task> t);
 
         void pwritev(
             int fd,
             struct iovec *iov, unsigned int niov, size_t size, off_t offset,
-            RawstorIOCallback *cb, void *data);
+            std::unique_ptr<rawstor::io::Task> t);
 
-        RawstorIOEvent* wait_event(unsigned int timeout);
+        bool empty() const noexcept;
 
-        void release_event(RawstorIOEvent *event) noexcept;
+        void wait(unsigned int timeout);
 };
 
 

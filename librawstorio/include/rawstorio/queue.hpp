@@ -1,7 +1,7 @@
 #ifndef RAWSTORIO_QUEUE_HPP
 #define RAWSTORIO_QUEUE_HPP
 
-#include <rawstor/io_queue.h>
+#include <rawstorio/task.hpp>
 
 #include <memory>
 #include <string>
@@ -20,7 +20,7 @@ class Queue {
         unsigned int _depth;
 
     public:
-        static std::string engine_name();
+        static const std::string& engine_name();
         static void setup_fd(int fd);
         static std::unique_ptr<Queue> create(unsigned int depth);
 
@@ -38,46 +38,46 @@ class Queue {
         virtual void read(
             int fd,
             void *buf, size_t size,
-            RawstorIOCallback *cb, void *data) = 0;
+            std::unique_ptr<Task> t) = 0;
 
         virtual void readv(
             int fd,
             iovec *iov, unsigned int niov, size_t size,
-            RawstorIOCallback *cb, void *data) = 0;
+            std::unique_ptr<Task> t) = 0;
 
         virtual void pread(
             int fd,
             void *buf, size_t size, off_t offset,
-            RawstorIOCallback *cb, void *data) = 0;
+            std::unique_ptr<Task> t) = 0;
 
         virtual void preadv(
             int fd,
             iovec *iov, unsigned int niov, size_t size, off_t offset,
-            RawstorIOCallback *cb, void *data) = 0;
+            std::unique_ptr<Task> t) = 0;
 
         virtual void write(
             int fd,
             void *buf, size_t size,
-            RawstorIOCallback *cb, void *data) = 0;
+            std::unique_ptr<Task> t) = 0;
 
         virtual void writev(
             int fd,
             iovec *iov, unsigned int niov, size_t size,
-            RawstorIOCallback *cb, void *data) = 0;
+            std::unique_ptr<Task> t) = 0;
 
         virtual void pwrite(
             int fd,
             void *buf, size_t size, off_t offset,
-            RawstorIOCallback *cb, void *data) = 0;
+            std::unique_ptr<Task> t) = 0;
 
         virtual void pwritev(
             int fd,
             iovec *iov, unsigned int niov, size_t size, off_t offset,
-            RawstorIOCallback *cb, void *data) = 0;
+            std::unique_ptr<Task> t) = 0;
 
-        virtual RawstorIOEvent* wait_event(unsigned int timeout) = 0;
+        virtual bool empty() const noexcept = 0;
 
-        virtual void release_event(RawstorIOEvent *event) noexcept = 0;
+        virtual void wait(unsigned int timeout) = 0;
 };
 
 

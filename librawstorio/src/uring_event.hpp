@@ -7,6 +7,8 @@
 
 #include <liburing.h>
 
+#include <memory>
+
 #include <cstddef>
 
 
@@ -27,7 +29,7 @@ class Event: public RawstorIOEvent {
         Event(
             Queue &q,
             int fd, size_t size,
-            RawstorIOCallback *cb, void *data);
+            std::unique_ptr<rawstor::io::Task> t);
         ~Event();
 
         inline void set_cqe(io_uring_cqe *cqe) noexcept {
@@ -44,7 +46,7 @@ class EventRead: public Event {
         EventRead(
             Queue &q,
             int fd, void *buf, size_t size,
-            RawstorIOCallback *cb, void *data);
+            std::unique_ptr<rawstor::io::Task> t);
 };
 
 
@@ -53,7 +55,7 @@ class EventReadV: public Event {
         EventReadV(
             Queue &q,
             int fd, iovec *iov, unsigned int niov, size_t size,
-            RawstorIOCallback *cb, void *data);
+            std::unique_ptr<rawstor::io::Task> t);
 };
 
 
@@ -62,7 +64,7 @@ class EventPRead: public Event {
         EventPRead(
             Queue &q,
             int fd, void *buf, size_t size, off_t offset,
-            RawstorIOCallback *cb, void *data);
+            std::unique_ptr<rawstor::io::Task> t);
 };
 
 
@@ -71,7 +73,7 @@ class EventPReadV: public Event {
         EventPReadV(
             Queue &q,
             int fd, iovec *iov, unsigned int niov, size_t size, off_t offset,
-            RawstorIOCallback *cb, void *data);
+            std::unique_ptr<rawstor::io::Task> t);
 };
 
 
@@ -80,7 +82,7 @@ class EventWrite: public Event {
         EventWrite(
             Queue &q,
             int fd, void *buf, size_t size,
-            RawstorIOCallback *cb, void *data);
+            std::unique_ptr<rawstor::io::Task> t);
 };
 
 
@@ -89,7 +91,7 @@ class EventWriteV: public Event {
         EventWriteV(
             Queue &q,
             int fd, iovec *iov, unsigned int niov, size_t size,
-            RawstorIOCallback *cb, void *data);
+            std::unique_ptr<rawstor::io::Task> t);
 };
 
 
@@ -98,7 +100,7 @@ class EventPWrite: public Event {
         EventPWrite(
             Queue &q,
             int fd, void *buf, size_t size, off_t offset,
-            RawstorIOCallback *cb, void *data);
+            std::unique_ptr<rawstor::io::Task> t);
 };
 
 
@@ -107,7 +109,7 @@ class EventPWriteV: public Event {
         EventPWriteV(
             Queue &q,
             int fd, iovec *iov, unsigned int niov, size_t size, off_t offset,
-            RawstorIOCallback *cb, void *data);
+            std::unique_ptr<rawstor::io::Task> t);
 };
 
 

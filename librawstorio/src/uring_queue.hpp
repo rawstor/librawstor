@@ -5,6 +5,8 @@
 
 #include <liburing.h>
 
+#include <memory>
+
 
 namespace rawstor {
 namespace io {
@@ -14,9 +16,10 @@ namespace uring {
 class Queue: public rawstor::io::Queue {
     private:
         io_uring _ring;
+        unsigned int _events;
 
     public:
-        static std::string engine_name();
+        static const std::string& engine_name();
         static void setup_fd(int fd);
 
         Queue(unsigned int depth);
@@ -29,46 +32,46 @@ class Queue: public rawstor::io::Queue {
         void read(
             int fd,
             void *buf, size_t size,
-            RawstorIOCallback *cb, void *data);
+            std::unique_ptr<rawstor::io::Task> t);
 
         void readv(
             int fd,
             iovec *iov, unsigned int niov, size_t size,
-            RawstorIOCallback *cb, void *data);
+            std::unique_ptr<rawstor::io::Task> t);
 
         void pread(
             int fd,
             void *buf, size_t size, off_t offset,
-            RawstorIOCallback *cb, void *data);
+            std::unique_ptr<rawstor::io::Task> t);
 
         void preadv(
             int fd,
             iovec *iov, unsigned int niov, size_t size, off_t offset,
-            RawstorIOCallback *cb, void *data);
+            std::unique_ptr<rawstor::io::Task> t);
 
         void write(
             int fd,
             void *buf, size_t size,
-            RawstorIOCallback *cb, void *data);
+            std::unique_ptr<rawstor::io::Task> t);
 
         void writev(
             int fd,
             iovec *iov, unsigned int niov, size_t size,
-            RawstorIOCallback *cb, void *data);
+            std::unique_ptr<rawstor::io::Task> t);
 
         void pwrite(
             int fd,
             void *buf, size_t size, off_t offset,
-            RawstorIOCallback *cb, void *data);
+            std::unique_ptr<rawstor::io::Task> t);
 
         void pwritev(
             int fd,
             iovec *iov, unsigned int niov, size_t size, off_t offset,
-            RawstorIOCallback *cb, void *data);
+            std::unique_ptr<rawstor::io::Task> t);
 
-        RawstorIOEvent* wait_event(unsigned int timeout);
+        bool empty() const noexcept;
 
-        void release_event(RawstorIOEvent *event) noexcept;
+        void wait(unsigned int timeout);
 };
 
 

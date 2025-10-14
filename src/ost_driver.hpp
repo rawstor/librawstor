@@ -13,8 +13,9 @@
 #include <rawstor/object.h>
 #include <rawstor/rawstor.h>
 
+#include <memory>
 #include <string>
-#include <vector>
+#include <unordered_map>
 
 #include <cstddef>
 
@@ -22,56 +23,34 @@ namespace rawstor {
 namespace ost {
 
 
-struct DriverOp;
+class Context;
 
 
-class Driver: public rawstor::Driver {
+class Driver final: public rawstor::Driver {
     private:
+        uint16_t _cid_counter;
+
         RawstorObject *_object;
 
-        std::vector<DriverOp*> _ops_array;
-        RingBuf<DriverOp*> _ops;
-        RawstorOSTFrameResponse _response;
-
-        void _validate_event(RawstorIOEvent *event);
-        void _validate_response(const RawstorOSTFrameResponse &response);
-        void _validate_cmd(
-            enum RawstorOSTCommandType cmd,
-            enum RawstorOSTCommandType expected);
-        void _validate_hash(uint64_t hash, uint64_t expected);
-
-        DriverOp* _acquire_op();
-        void _release_op(DriverOp *op) noexcept;
-        DriverOp* _find_op(unsigned int cid);
+        std::shared_ptr<Context> _context;
 
         int _connect();
-
-        void _writev_request(rawstor::io::Queue &queue, DriverOp *op);
-        void _read_response_set_object_id(
-            rawstor::io::Queue &queue, DriverOp *op);
-        void _read_response_head(rawstor::io::Queue &queue);
-        void _read_response_body(rawstor::io::Queue &queue, DriverOp *op);
-        void _readv_response_body(rawstor::io::Queue &queue, DriverOp *op);
-
-        static void _next_read_response_body(
-            rawstor::io::Queue &queue, DriverOp *op);
-        static void _next_readv_response_body(
-            rawstor::io::Queue &queue, DriverOp *op);
-
-        static int _writev_request_cb(
-            RawstorIOEvent *event, void *data) noexcept;
-        static int _read_response_set_object_id_cb(
-            RawstorIOEvent *event, void *data) noexcept;
-        static int _read_response_head_cb(
-            RawstorIOEvent *event, void *data) noexcept;
-        static int _read_response_body_cb(
-            RawstorIOEvent *event, void *data) noexcept;
-        static int _readv_response_body_cb(
-            RawstorIOEvent *event, void *data) noexcept;
 
     public:
         Driver(const URI &uri, unsigned int depth);
         ~Driver();
+
+        inline RawstorObject* object() noexcept {
+            return _object;
+        }
+
+        void read_response_head(rawstor::io::Queue &queue);
+        void read_response_body(
+            rawstor::io::Queue &queue, uint16_t cid,
+            void *buf, size_t size);
+        void read_response_body(
+            rawstor::io::Queue &queue, uint16_t cid,
+            iovec *iov, unsigned int niov, size_t size);
 
         void create(
             rawstor::io::Queue &queue,

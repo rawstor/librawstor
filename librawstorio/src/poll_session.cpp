@@ -58,7 +58,7 @@ class SeekableSession: public rawstor::io::poll::Session {
 
         void read(
             void *, size_t,
-            RawstorIOCallback *, void *)
+            std::unique_ptr<rawstor::io::Task>)
         {
             throw std::runtime_error(
                 "method not allowed for seekable session");
@@ -66,7 +66,7 @@ class SeekableSession: public rawstor::io::poll::Session {
 
         void readv(
             struct iovec *, unsigned int, size_t,
-            RawstorIOCallback *, void *)
+            std::unique_ptr<rawstor::io::Task>)
         {
             throw std::runtime_error(
                 "method not allowed for seekable session");
@@ -74,11 +74,11 @@ class SeekableSession: public rawstor::io::poll::Session {
 
         void pread(
             void *buf, size_t size, off_t offset,
-            RawstorIOCallback *cb, void *data)
+            std::unique_ptr<rawstor::io::Task> t)
         {
             std::unique_ptr<rawstor::io::poll::EventP> event =
                 std::make_unique<rawstor::io::poll::EventP>(
-                    _q, _fd, buf, size, offset, cb, data);
+                    _q, _fd, buf, size, offset, std::move(t));
 
             _read_sqes.push(event.get());
 
@@ -87,11 +87,11 @@ class SeekableSession: public rawstor::io::poll::Session {
 
         void preadv(
             struct iovec *iov, unsigned int niov, size_t size, off_t offset,
-            RawstorIOCallback *cb, void *data)
+            std::unique_ptr<rawstor::io::Task> t)
         {
             std::unique_ptr<rawstor::io::poll::EventP> event =
                 std::make_unique<rawstor::io::poll::EventP>(
-                    _q, _fd, iov, niov, size, offset, cb, data);
+                    _q, _fd, iov, niov, size, offset, std::move(t));
 
             _read_sqes.push(event.get());
 
@@ -100,7 +100,7 @@ class SeekableSession: public rawstor::io::poll::Session {
 
         void write(
             void *, size_t,
-            RawstorIOCallback *, void *)
+            std::unique_ptr<rawstor::io::Task>)
         {
             throw std::runtime_error(
                 "method not allowed for seekable session");
@@ -108,7 +108,7 @@ class SeekableSession: public rawstor::io::poll::Session {
 
         void writev(
             struct iovec *, unsigned int, size_t,
-            RawstorIOCallback *, void *)
+            std::unique_ptr<rawstor::io::Task>)
         {
             throw std::runtime_error(
                 "method not allowed for seekable session");
@@ -116,11 +116,11 @@ class SeekableSession: public rawstor::io::poll::Session {
 
         void pwrite(
             void *buf, size_t size, off_t offset,
-            RawstorIOCallback *cb, void *data)
+            std::unique_ptr<rawstor::io::Task> t)
         {
             std::unique_ptr<rawstor::io::poll::EventP> event =
                 std::make_unique<rawstor::io::poll::EventP>(
-                    _q, _fd, buf, size, offset, cb, data);
+                    _q, _fd, buf, size, offset, std::move(t));
 
             _write_sqes.push(event.get());
 
@@ -129,11 +129,11 @@ class SeekableSession: public rawstor::io::poll::Session {
 
         void pwritev(
             struct iovec *iov, unsigned int niov, size_t size, off_t offset,
-            RawstorIOCallback *cb, void *data)
+            std::unique_ptr<rawstor::io::Task> t)
         {
             std::unique_ptr<rawstor::io::poll::EventP> event =
                 std::make_unique<rawstor::io::poll::EventP>(
-                    _q, _fd, iov, niov, size, offset, cb, data);
+                    _q, _fd, iov, niov, size, offset, std::move(t));
 
             _write_sqes.push(event.get());
 
@@ -194,11 +194,11 @@ class UnseekableSession: public rawstor::io::poll::Session {
 
         void read(
             void *buf, size_t size,
-            RawstorIOCallback *cb, void *data)
+            std::unique_ptr<rawstor::io::Task> t)
         {
             std::unique_ptr<rawstor::io::poll::Event> event =
                 std::make_unique<rawstor::io::poll::Event>(
-                    _q, _fd, buf, size, cb, data);
+                    _q, _fd, buf, size, std::move(t));
 
             _read_sqes.push(event.get());
 
@@ -207,11 +207,11 @@ class UnseekableSession: public rawstor::io::poll::Session {
 
         void readv(
             struct iovec *iov, unsigned int niov, size_t size,
-            RawstorIOCallback *cb, void *data)
+            std::unique_ptr<rawstor::io::Task> t)
         {
             std::unique_ptr<rawstor::io::poll::Event> event =
                 std::make_unique<rawstor::io::poll::Event>(
-                    _q, _fd, iov, niov, size, cb, data);
+                    _q, _fd, iov, niov, size, std::move(t));
 
             _read_sqes.push(event.get());
 
@@ -220,7 +220,7 @@ class UnseekableSession: public rawstor::io::poll::Session {
 
         void pread(
             void *, size_t, off_t,
-            RawstorIOCallback *, void *)
+            std::unique_ptr<rawstor::io::Task>)
         {
             throw std::runtime_error(
                 "method not allowed for unseekable session");
@@ -228,7 +228,7 @@ class UnseekableSession: public rawstor::io::poll::Session {
 
         void preadv(
             struct iovec *, unsigned int, size_t, off_t,
-            RawstorIOCallback *, void *)
+            std::unique_ptr<rawstor::io::Task>)
         {
             throw std::runtime_error(
                 "method not allowed for unseekable session");
@@ -236,11 +236,11 @@ class UnseekableSession: public rawstor::io::poll::Session {
 
         void write(
             void *buf, size_t size,
-            RawstorIOCallback *cb, void *data)
+            std::unique_ptr<rawstor::io::Task> t)
         {
             std::unique_ptr<rawstor::io::poll::Event> event =
                 std::make_unique<rawstor::io::poll::Event>(
-                    _q, _fd, buf, size, cb, data);
+                    _q, _fd, buf, size, std::move(t));
 
             _write_sqes.push(event.get());
 
@@ -249,11 +249,11 @@ class UnseekableSession: public rawstor::io::poll::Session {
 
         void writev(
             struct iovec *iov, unsigned int niov, size_t size,
-            RawstorIOCallback *cb, void *data)
+            std::unique_ptr<rawstor::io::Task> t)
         {
             std::unique_ptr<rawstor::io::poll::Event> event =
                 std::make_unique<rawstor::io::poll::Event>(
-                    _q, _fd, iov, niov, size, cb, data);
+                    _q, _fd, iov, niov, size, std::move(t));
 
             _write_sqes.push(event.get());
 
@@ -262,7 +262,7 @@ class UnseekableSession: public rawstor::io::poll::Session {
 
         void pwrite(
             void *, size_t, off_t,
-            RawstorIOCallback *, void *)
+            std::unique_ptr<rawstor::io::Task>)
         {
             throw std::runtime_error(
                 "method not allowed for unseekable session");
@@ -270,7 +270,7 @@ class UnseekableSession: public rawstor::io::poll::Session {
 
         void pwritev(
             struct iovec *, unsigned int, size_t, off_t,
-            RawstorIOCallback *, void *)
+            std::unique_ptr<rawstor::io::Task>)
         {
             throw std::runtime_error(
                 "method not allowed for unseekable session");
@@ -318,12 +318,18 @@ void SeekableSession::_process(
     ssize_t res;
     if (write) {
         if (!pollhup) {
+#ifdef RAWSTOR_TRACE_EVENTS
+            event->trace("pwritev()");
+#endif
             res = ::pwritev(_fd, event->iov(), event->niov(), event->offset());
         } else {
             res = -1;
             errno = ECONNRESET;
         }
     } else {
+#ifdef RAWSTOR_TRACE_EVENTS
+        event->trace("preadv()");
+#endif
         res = ::preadv(_fd, event->iov(), event->niov(), event->offset());
     }
 
@@ -371,23 +377,32 @@ void UnseekableSession::_process(
         std::vector<iovec> iov;
         iov.reserve(niov);
         for (rawstor::io::poll::Event *event: events) {
+#ifdef RAWSTOR_TRACE_EVENTS
+            event->trace("add to bulk");
+#endif
             event->add_iov(iov);
         }
 
         ssize_t res;
         if (write) {
             if (!pollhup) {
+#ifdef RAWSTOR_TRACE_EVENTS
+                rawstor_trace("bulk writev()\n");
+#endif
                 res = ::writev(_fd, iov.data(), iov.size());
             } else {
                 res = -1;
                 errno = ECONNRESET;
             }
         } else {
+#ifdef RAWSTOR_TRACE_EVENTS
+            rawstor_trace("bulk readv()\n");
+#endif
             res = ::readv(_fd, iov.data(), iov.size());
         }
 
 #ifdef RAWSTOR_TRACE_EVENTS
-        rawstor_trace("bulk process(): res = %zd\n", res);
+        rawstor_trace("bulk res = %zd\n", res);
 #endif
         if (res > 0) {
             for (rawstor::io::poll::Event *event: events) {

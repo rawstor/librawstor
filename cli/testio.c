@@ -325,24 +325,13 @@ int rawstor_cli_testio(
         }
     }
 
-    while (counter > 0) {
-        RawstorIOEvent *event = rawstor_wait_event();
-        if (event == NULL) {
-            assert(errno != 0);
-            fprintf(
-                stderr, "rawstor_wait_event() failed: %s\n", strerror(errno));
-            goto err_wait;
-        }
-
-        int res = rawstor_dispatch_event(event);
-
-        rawstor_release_event(event);
-
+    while (counter > 0 && !rawstor_empty()) {
+        int res = rawstor_wait();
         if (res < 0) {
             fprintf(
                 stderr,
-                "rawstor_dispatch_event() failed: %s\n", strerror(-res));
-            goto err_dispatch;
+                "rawstor_wait() failed: %s\n", strerror(-res));
+            goto err_wait;
         }
     }
 
@@ -360,7 +349,6 @@ int rawstor_cli_testio(
 
     return EXIT_SUCCESS;
 
-err_dispatch:
 err_wait:
 err_pwrite:
 err_worker_create:

@@ -15,6 +15,15 @@
 #include <cassert>
 
 
+namespace {
+
+
+std::string engine_name = "poll";
+
+
+} // unnamed
+
+
 namespace rawstor {
 namespace io {
 namespace poll {
@@ -37,8 +46,8 @@ std::shared_ptr<Session> Queue::_get_session(int fd) {
 }
 
 
-std::string Queue::engine_name() {
-    return "poll";
+const std::string& Queue::engine_name() {
+    return ::engine_name;
 }
 
 
@@ -71,75 +80,88 @@ void Queue::setup_fd(int fd) {
 void Queue::read(
     int fd,
     void *buf, size_t size,
-    RawstorIOCallback *cb, void *data)
+    std::unique_ptr<rawstor::io::Task> t)
 {
-    _get_session(fd)->read(buf, size, cb, data);
+    _get_session(fd)->read(buf, size, std::move(t));
 }
 
 
 void Queue::readv(
     int fd, struct iovec *iov, unsigned int niov, size_t size,
-    RawstorIOCallback *cb, void *data)
+    std::unique_ptr<rawstor::io::Task> t)
 {
-    _get_session(fd)->readv(iov, niov, size, cb, data);
+    _get_session(fd)->readv(iov, niov, size, std::move(t));
 }
 
 
 void Queue::pread(
     int fd, void *buf, size_t size, off_t offset,
-    RawstorIOCallback *cb, void *data)
+    std::unique_ptr<rawstor::io::Task> t)
 {
-    _get_session(fd)->pread(buf, size, offset, cb, data);
+    _get_session(fd)->pread(buf, size, offset, std::move(t));
 }
 
 
 void Queue::preadv(
     int fd, struct iovec *iov, unsigned int niov, size_t size, off_t offset,
-    RawstorIOCallback *cb, void *data)
+    std::unique_ptr<rawstor::io::Task> t)
 {
-    _get_session(fd)->preadv(iov, niov, size, offset, cb, data);
+    _get_session(fd)->preadv(iov, niov, size, offset, std::move(t));
 }
 
 
 void Queue::write(
     int fd, void *buf, size_t size,
-    RawstorIOCallback *cb, void *data)
+    std::unique_ptr<rawstor::io::Task> t)
 {
-    _get_session(fd)->write(buf, size, cb, data);
+    _get_session(fd)->write(buf, size, std::move(t));
 }
 
 
 void Queue::writev(
     int fd, struct iovec *iov, unsigned int niov, size_t size,
-    RawstorIOCallback *cb, void *data)
+    std::unique_ptr<rawstor::io::Task> t)
 {
-    _get_session(fd)->writev(iov, niov, size, cb, data);
+    _get_session(fd)->writev(iov, niov, size, std::move(t));
 }
 
 
 void Queue::pwrite(
     int fd, void *buf, size_t size, off_t offset,
-    RawstorIOCallback *cb, void *data)
+    std::unique_ptr<rawstor::io::Task> t)
 {
-    _get_session(fd)->pwrite(buf, size, offset, cb, data);
+    _get_session(fd)->pwrite(buf, size, offset, std::move(t));
 }
 
 
 void Queue::pwritev(
     int fd, struct iovec *iov, unsigned int niov, size_t size, off_t offset,
-    RawstorIOCallback *cb, void *data)
+    std::unique_ptr<rawstor::io::Task> t)
 {
-    _get_session(fd)->pwritev(iov, niov, size, offset, cb, data);
+    _get_session(fd)->pwritev(iov, niov, size, offset, std::move(t));
 }
 
 
-RawstorIOEvent* Queue::wait_event(unsigned int timeout) {
-    std::vector<pollfd> fds;
+bool Queue::empty() const noexcept {
+    if (!_cqes.empty()) {
+        return false;
+    }
+    for (const auto &it: _sessions) {
+        if (!it.second->empty()) {
+            return false;
+        }
+    }
+    return true;
+}
+
+
+void Queue::wait(unsigned int timeout) {
     while (_cqes.empty()) {
         if (_sessions.empty()) {
-            return nullptr;
+            return;
         }
 
+        std::vector<pollfd> fds;
         fds.reserve(_sessions.size());
 
         std::unordered_map<int, std::shared_ptr<Session>>::iterator it =
@@ -162,7 +184,7 @@ RawstorIOEvent* Queue::wait_event(unsigned int timeout) {
         }
 
         if (i == 0) {
-            return nullptr;
+            return;
         }
 
         rawstor_trace("poll()\n");
@@ -190,12 +212,8 @@ RawstorIOEvent* Queue::wait_event(unsigned int timeout) {
         }
     }
 
-    return _cqes.pop();
-}
-
-
-void Queue::release_event(RawstorIOEvent *event) noexcept {
-    delete event;
+    std::unique_ptr<Event> event(_cqes.pop());
+    event->dispatch();
 }
 
 

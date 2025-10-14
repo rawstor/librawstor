@@ -2,6 +2,7 @@
 #define RAWSTORIO_POLL_EVENT_HPP
 
 #include <rawstorio/event.hpp>
+#include <rawstorio/task.hpp>
 
 #include <sys/types.h>
 #include <sys/uio.h>
@@ -30,8 +31,8 @@ class Event: public RawstorIOEvent {
         Event(
             Queue &q, int fd,
             void *buf, size_t size,
-            RawstorIOCallback *cb, void *data):
-            RawstorIOEvent(q, fd, size, cb, data),
+            std::unique_ptr<rawstor::io::Task> t):
+            RawstorIOEvent(q, fd, size, std::move(t)),
             _iov(1, (iovec){.iov_base = buf, .iov_len = size}),
             _iov_at(_iov.data()),
             _niov_at(1),
@@ -42,8 +43,8 @@ class Event: public RawstorIOEvent {
         Event(
             Queue &q, int fd,
             iovec *iov, unsigned int niov, size_t size,
-            RawstorIOCallback *cb, void *data):
-            RawstorIOEvent(q, fd, size, cb, data),
+            std::unique_ptr<rawstor::io::Task> t):
+            RawstorIOEvent(q, fd, size, std::move(t)),
             _niov_at(niov),
             _result(0),
             _error(0)
@@ -57,11 +58,11 @@ class Event: public RawstorIOEvent {
 
         virtual ~Event() {}
 
-        inline size_t result() const noexcept {
+        size_t result() const noexcept {
             return _result;
         }
 
-        inline int error() const noexcept {
+        int error() const noexcept {
             return _error;
         }
 
@@ -95,16 +96,16 @@ class EventP: public Event {
         EventP(
             Queue &q, int fd,
             void *buf, size_t size, off_t offset,
-            RawstorIOCallback *cb, void *data):
-            Event(q, fd, buf, size, cb, data),
+            std::unique_ptr<rawstor::io::Task> t):
+            Event(q, fd, buf, size, std::move(t)),
             _offset(offset)
         {}
 
         EventP(
             Queue &q, int fd,
             iovec *iov, unsigned int niov, size_t size, off_t offset,
-            RawstorIOCallback *cb, void *data):
-            Event(q, fd, iov, niov, size, cb, data),
+            std::unique_ptr<rawstor::io::Task> t):
+            Event(q, fd, iov, niov, size, std::move(t)),
             _offset(offset)
         {}
 
