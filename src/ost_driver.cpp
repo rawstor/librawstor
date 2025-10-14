@@ -42,7 +42,7 @@
 #define op_trace(cid, event) \
     rawstor_debug( \
         "[%u] %s(): %zi of %zu\n", \
-        cid, __FUNCTION__, \
+        (cid), __FUNCTION__, \
         event->result(), \
         event->size())
 
@@ -50,7 +50,10 @@
 namespace {
 
 
-void validate_event(rawstor::ost::Driver &s, RawstorIOEvent *event) {
+class DriverOp;
+
+
+void validate_event(RawstorIOEvent *event) {
     int error = event->error();
     if (error != 0) {
         RAWSTOR_THROW_SYSTEM_ERROR(error);
@@ -58,8 +61,8 @@ void validate_event(rawstor::ost::Driver &s, RawstorIOEvent *event) {
 
     if (event->result() != event->size()) {
         rawstor_error(
-            "%s: Unexpected event size: %zu != %zu\n",
-            s.str().c_str(),
+            "fd %d: Unexpected event size: %zu != %zu\n",
+            event->fd(),
             event->result(),
             event->size());
         RAWSTOR_THROW_SYSTEM_ERROR(EAGAIN);
@@ -67,10 +70,7 @@ void validate_event(rawstor::ost::Driver &s, RawstorIOEvent *event) {
 }
 
 
-/*
-void validate_response(
-    rawstor::ost::Driver &s, const RawstorOSTFrameResponse &response)
-{
+void validate_response(rawstor::ost::Driver &s, const RawstorOSTFrameResponse &response) {
     if (response.magic != RAWSTOR_MAGIC) {
         rawstor_error(
             "%s: Unexpected magic number: %x != %x\n",
@@ -87,7 +87,6 @@ void validate_response(
         RAWSTOR_THROW_SYSTEM_ERROR(EPROTO);
     }
 }
-*/
 
 
 void validate_cmd(
@@ -101,6 +100,7 @@ void validate_cmd(
 }
 
 
+/*
 void validate_hash(rawstor::ost::Driver &s, uint64_t hash, uint64_t expected) {
     if (hash != expected) {
         rawstor_error(
@@ -111,6 +111,7 @@ void validate_hash(rawstor::ost::Driver &s, uint64_t hash, uint64_t expected) {
         RAWSTOR_THROW_SYSTEM_ERROR(EPROTO);
     }
 }
+*/
 
 
 }
@@ -120,140 +121,58 @@ namespace rawstor {
 namespace ost {
 
 
-class DriverOp {
+class Context final {
     private:
-        static uint16_t _cid_counter;
-
-        Driver *_s;
-        uint16_t _cid;
-
-    protected:
-        bool _in_flight;
-        rawstor::io::Queue *_q;
-        RawstorCallback *_cb;
-        void *_data;
-
-        static int _request_cb(
-            RawstorIOEvent *event, void *data) noexcept
-        {
-            DriverOp *op = static_cast<DriverOp*>(data);
-            Driver &s = op->session();
-            int error = 0;
-
-            try {
-                op_trace(op->_cid, event);
-
-                validate_event(s, event);
-
-                op->_in_flight = true;
-            } catch (const std::system_error &e) {
-                error = e.code().value();
-            }
-
-            int res = 0;
-            if (error) {
-                res = op->_cb(
-                    s.object(),
-                    event->size(), 0, error,
-                    op->_data);
-                delete op;
-            }
-
-            return res;
-        }
+        rawstor::ost::Driver *_s;
+        std::unordered_map<uint16_t, std::shared_ptr<DriverOp>> _ops;
+        unsigned int _reads;
 
     public:
-        DriverOp(
-            Driver &s, RawstorCallback *cb, void *data):
+        Context(rawstor::ost::Driver &s):
             _s(&s),
-            _cid(++_cid_counter),
-            _in_flight(false),
-            _q(nullptr),
-            _cb(cb),
-            _data(data)
-        {
-            _s->register_request(*this);
-        }
+            _reads(0)
+        {}
 
-        DriverOp(const DriverOp &) = delete;
-        DriverOp(DriverOp &&) = delete;
-        virtual ~DriverOp() {
-            if (_s != nullptr) {
-                _s->unregister_request(*this);
-            }
-        }
-
-        DriverOp& operator=(const DriverOp &) = delete;
-        DriverOp& operator=(DriverOp &&) = delete;
-
-        inline Driver& session() {
-            if (_s == nullptr) {
-                throw std::runtime_error("Driver operation detached");
-            }
-            return *_s;
-        }
-
-        inline rawstor::io::Queue& queue() {
-            if (_q == nullptr) {
-                throw std::runtime_error("Driver operation not submitted");
-            }
-            return *_q;
-        }
-
-        inline void detach() noexcept {
+        void detach() noexcept {
             _s = nullptr;
         }
 
-        inline uint16_t cid() const noexcept {
-            return _cid;
-        }
-
-        inline bool in_flight() const noexcept {
-            return _in_flight;
-        }
-
-        virtual int dispatch(int res, int error) noexcept = 0;
-
-        virtual void submit(rawstor::io::Queue &queue) = 0;
-        virtual bool response_head_cb(
-            RawstorIOEvent *event,
-            RawstorOSTFrameResponse &response) = 0;
-};
-
-
-uint16_t DriverOp::_cid_counter = 0;
-
-
-class DriverOpResponse {
-    private:
-        rawstor::ost::Driver *_s;
-        RawstorOSTFrameResponse _response;
-
-        rawstor::ost::Driver& session() {
+        inline rawstor::ost::Driver& session() {
             if (_s == nullptr) {
-                throw std::runtime_error("Driver operation detached");
+                throw std::runtime_error("Context detached");
             }
             return *_s;
         }
 
-        static int _submit_cb(RawstorIOEvent *, void *) noexcept {
-            return 0;
+        inline bool has_reads() const noexcept {
+            return _reads > 0;
         }
 
-    public:
-        DriverOpResponse(rawstor::ost::Driver &s): _s(&s) {}
-        DriverOpResponse(const DriverOpResponse &) = delete;
-        DriverOpResponse(DriverOpResponse &&) = delete;
-        ~DriverOpResponse() {}
-        DriverOpResponse& operator=(const DriverOpResponse &) = delete;
-        DriverOpResponse& operator=(DriverOpResponse &&) = delete;
-
-        void submit(rawstor::io::Queue &queue) {
-            queue.read(
-                session().fd(),
-                &_response, sizeof(_response),
-                _submit_cb, this);
+        inline void add_read() noexcept {
+            ++_reads;
         }
+
+        inline void sub_read() noexcept {
+            --_reads;
+        }
+
+        void register_op(const std::shared_ptr<DriverOp> &op);
+
+        void unregister_op(uint16_t cid) {
+            _ops.erase(cid);
+        }
+
+        DriverOp& find_op(uint16_t cid) {
+            auto it = _ops.find(cid);
+            if (it == _ops.end()) {
+                rawstor_error("Unexpected cid: %u\n", cid);
+                RAWSTOR_THROW_SYSTEM_ERROR(EPROTO);
+            }
+
+            return *it->second.get();
+        }
+
+        void fail_all(int error);
 };
 
 
@@ -278,17 +197,269 @@ uint64_t hash(iovec *iov, unsigned int niov) {
 }
 
 
-class DriverOpFrameBasic: public rawstor::ost::DriverOp {
+class DriverOp {
+    private:
+        uint16_t _cid;
+
+    protected:
+        std::shared_ptr<rawstor::ost::Context> _context;
+        bool _in_flight;
+
+        size_t _size;
+        RawstorCallback *_cb;
+        void *_data;
+
+    public:
+        DriverOp(
+            const std::shared_ptr<rawstor::ost::Context> &context, uint16_t cid,
+            size_t size,
+            RawstorCallback *cb, void *data):
+            _cid(cid),
+            _context(context),
+            _in_flight(false),
+            _size(size),
+            _cb(cb),
+            _data(data)
+        {}
+
+        DriverOp(const DriverOp &) = delete;
+        DriverOp(DriverOp &&) = delete;
+        virtual ~DriverOp() {}
+
+        DriverOp& operator=(const DriverOp &) = delete;
+        DriverOp& operator=(DriverOp &&) = delete;
+
+        inline uint16_t cid() const noexcept {
+            return _cid;
+        }
+
+        inline bool in_flight() const noexcept {
+            return _in_flight;
+        }
+
+        inline void dispatch(size_t res, int error) {
+            RawstorObject *o = _context->session().object();
+
+            _in_flight = false;
+
+            int ret = _cb(o, _size, res, error, _data);
+
+            _context->unregister_op(_cid);
+
+            if (ret) {
+                RAWSTOR_THROW_SYSTEM_ERROR(-ret);
+            }
+        }
+
+        void request_cb(RawstorIOEvent *event) {
+            RawstorObject *o = _context->session().object();
+            int error = 0;
+
+            try {
+                op_trace(_cid, event);
+
+                validate_event(event);
+
+                _in_flight = true;
+            } catch (const std::system_error &e) {
+                error = e.code().value();
+            }
+
+            int res = 0;
+            if (error) {
+                res = _cb(
+                    o,
+                    event->size(), 0, error,  // TODO: event size?
+                    _data);
+            }
+
+            if (res) {
+                RAWSTOR_THROW_SYSTEM_ERROR(-res);
+            }
+        }
+
+        virtual void response_head_cb(RawstorOSTFrameResponse &) = 0;
+
+        virtual void response_body_cb(RawstorIOEvent *) {
+        }
+};
+
+
+class DriverOpSetObjectId final: public DriverOp {
+    public:
+        DriverOpSetObjectId(
+            const std::shared_ptr<rawstor::ost::Context> &context,
+            uint16_t cid,
+            RawstorCallback *cb, void *data):
+            DriverOp(context, cid, 0, cb, data)
+        {}
+
+        void response_head_cb(RawstorOSTFrameResponse &response) {
+            rawstor::ost::Driver &s = _context->session();
+            int error = 0;
+
+            try {
+                validate_cmd(s, response.cmd, RAWSTOR_CMD_SET_OBJECT);
+                validate_response(s, response);
+            } catch (std::system_error &e) {
+                error = e.code().value();
+            }
+
+            rawstor_info("%s: Object id successfully set\n", s.str().c_str());
+
+            dispatch(0, error);
+        }
+};
+
+
+class DriverOpRead final: public DriverOp {
+    private:
+        void *_buf;
+
+    public:
+        DriverOpRead(
+            const std::shared_ptr<rawstor::ost::Context> &context,
+            uint16_t cid, void *buf, size_t size,
+            RawstorCallback *cb, void *data):
+            DriverOp(context, cid, size, cb, data),
+            _buf(buf)
+        {}
+
+        void response_head_cb(RawstorOSTFrameResponse &response) {
+            rawstor::ost::Driver &s = _context->session();
+            int error = 0;
+
+            try {
+                validate_cmd(s, response.cmd, RAWSTOR_CMD_READ);
+                validate_response(s, response);
+            } catch (std::system_error &e) {
+                error = e.code().value();
+            }
+
+            if (error) {
+                dispatch(response.res, error);
+            } else {
+                s.read_response_body(
+                    *rawstor::io_queue, cid(), _buf, _size);
+            }
+        }
+
+        void response_body_cb(RawstorIOEvent *event) {
+            op_trace(cid(), event);
+
+            int error = 0;
+
+            try {
+                validate_event(event);
+            } catch (std::system_error &e) {
+                error = e.code().value();
+            }
+
+            dispatch(_size, error);
+        }
+};
+
+
+class DriverOpReadV final: public DriverOp {
+    private:
+        iovec *_iov;
+        unsigned int _niov;
+
+    public:
+        DriverOpReadV(
+            const std::shared_ptr<rawstor::ost::Context> &context,
+            uint16_t cid, iovec *iov, unsigned int niov, size_t size,
+            RawstorCallback *cb, void *data):
+            DriverOp(context, cid, size, cb, data),
+            _iov(iov),
+            _niov(niov)
+        {}
+
+        void response_head_cb(RawstorOSTFrameResponse &response) {
+            rawstor::ost::Driver &s = _context->session();
+            int error = 0;
+
+            try {
+                validate_cmd(s, response.cmd, RAWSTOR_CMD_READ);
+                validate_response(s, response);
+            } catch (std::system_error &e) {
+                error = e.code().value();
+            }
+
+            if (error) {
+                dispatch(response.res, error);
+            } else {
+                s.read_response_body(
+                    *rawstor::io_queue, cid(), _iov, _niov, _size);
+            }
+        }
+
+        void response_body_cb(RawstorIOEvent *event) {
+            op_trace(cid(), event);
+
+            int error = 0;
+
+            try {
+                validate_event(event);
+            } catch (std::system_error &e) {
+                error = e.code().value();
+            }
+
+            dispatch(_size, error);
+        }
+};
+
+
+class DriverOpWrite final: public DriverOp {
+    public:
+        DriverOpWrite(
+            const std::shared_ptr<rawstor::ost::Context> &context,
+            uint16_t cid, size_t size,
+            RawstorCallback *cb, void *data):
+            DriverOp(context, cid, size, cb, data)
+        {}
+
+        void response_head_cb(RawstorOSTFrameResponse &response) {
+            rawstor::ost::Driver &s = _context->session();
+            int error = 0;
+
+            try {
+                validate_cmd(s, response.cmd, RAWSTOR_CMD_WRITE);
+                validate_response(s, response);
+            } catch (std::system_error &e) {
+                error = e.code().value();
+            }
+
+            dispatch(response.res, error);
+        }
+};
+
+
+class Request: public rawstor::io::Callback {
+    protected:
+        std::shared_ptr<DriverOp> _op;
+
+    public:
+        Request(const std::shared_ptr<DriverOp> &op):
+            _op(op)
+        {}
+
+        void operator()(RawstorIOEvent *event) {
+            _op->request_cb(event);
+        }
+};
+
+
+class RequestBasic: public Request {
     protected:
         RawstorOSTFrameBasic _request;
 
     public:
-        DriverOpFrameBasic(
-            rawstor::ost::Driver &s,
+        RequestBasic(
+            const std::shared_ptr<DriverOp> &op,
             const RawstorUUID &id,
-            const RawstorOSTCommandType &cmd,
-            RawstorCallback *cb, void *data):
-            rawstor::ost::DriverOp(s, cb, data),
+            const RawstorOSTCommandType &cmd):
+            Request(op),
             _request({
                 .magic = RAWSTOR_MAGIC,
                 .cmd = cmd,
@@ -300,237 +471,80 @@ class DriverOpFrameBasic: public rawstor::ost::DriverOp {
             memcpy(_request.obj_id, id.bytes, sizeof(_request.obj_id));
         }
 
-        void submit(rawstor::io::Queue &queue) {
-            _q = &queue;
-            queue.write(
-                session().fd(),
-                &_request, sizeof(_request),
-                DriverOp::_request_cb, this);
+        void* data() noexcept {
+            return &_request;
+        }
+
+        size_t size() const noexcept {
+            return sizeof(_request);
         }
 };
 
 
-class DriverOpCmdSetObjectId final: public DriverOpFrameBasic {
+class RequestSetObjectId final: public RequestBasic {
     public:
-        DriverOpCmdSetObjectId(
-            rawstor::ost::Driver &s,
-            const RawstorUUID &id,
-            RawstorCallback *cb, void *data):
-            DriverOpFrameBasic(
-                s,
-                id, RAWSTOR_CMD_SET_OBJECT,
-                cb, data)
+        RequestSetObjectId(
+            const std::shared_ptr<DriverOp> &op,
+            const RawstorUUID &id):
+            RequestBasic(op, id, RAWSTOR_CMD_SET_OBJECT)
         {}
-
-        int dispatch(int res, int error) noexcept {
-            return _cb(
-                session().object(),
-                0, res, error,
-                _data);
-        }
-
-        bool response_head_cb(
-            RawstorIOEvent *event, RawstorOSTFrameResponse &response)
-        {
-            op_trace(cid(), event);
-            _in_flight = false;
-            validate_cmd(session(), response.cmd, _request.cmd);
-
-            return false;
-        }
 };
 
 
-class DriverOpFrameIO: public rawstor::ost::DriverOp {
+class RequestIO: public Request {
     protected:
         RawstorOSTFrameIO _request;
 
     public:
-        DriverOpFrameIO(
-            rawstor::ost::Driver &s,
+        RequestIO(
+            const std::shared_ptr<DriverOp> &op,
             const RawstorOSTCommandType &cmd,
-            size_t size, off_t offset, uint64_t hash,
-            RawstorCallback *cb, void *data):
-            rawstor::ost::DriverOp(s, cb, data),
+            size_t size, off_t offset, uint64_t hash):
+            Request(op),
             _request({
                 .magic = RAWSTOR_MAGIC,
                 .cmd = cmd,
-                .cid = cid(),
+                .cid = op->cid(),
                 .offset = (uint64_t)offset,
                 .len = (uint32_t)size,
                 .hash = hash,
                 .sync = 0,
             })
         {}
-
-        int dispatch(int res, int error) noexcept {
-            return _cb(
-                session().object(),
-                _request.len, res, error,
-                _data);
-        }
 };
 
 
-class DriverOpCmdRead final: public DriverOpFrameIO {
-    private:
-        void *_buf;
-        uint64_t _hash;
-        int32_t _res;
-
-        static int _response_body_cb(
-            RawstorIOEvent *event, void *data) noexcept
-        {
-            DriverOpCmdRead *op = static_cast<DriverOpCmdRead*>(data);
-            rawstor::ost::Driver &s = op->session();
-            int error = 0;
-
-            try {
-                op_trace(op->cid(), event);
-                validate_event(s, event);
-
-                uint64_t hash = rawstor_hash_scalar(
-                    op->_buf, op->_request.len);
-                validate_hash(s, op->_hash, hash);
-            } catch (const std::system_error &e) {
-                error = e.code().value();
-            }
-
-            int res = op->dispatch(op->_res, error);
-            delete op;
-
-            return res;
-        }
-
+class RequestCmdRead final: public RequestIO {
     public:
-        DriverOpCmdRead(
-            rawstor::ost::Driver &s,
-            void *buf, size_t size, off_t offset,
-            RawstorCallback *cb, void *data):
-            DriverOpFrameIO(
-                s,
-                RAWSTOR_CMD_READ,
-                size, offset, 0,
-                cb, data),
-            _buf(buf),
-            _hash(0)
+        RequestCmdRead(
+            const std::shared_ptr<DriverOp> &op,
+            size_t size, off_t offset):
+            RequestIO(
+                op, RAWSTOR_CMD_READ,
+                size, offset, 0)
         {}
 
-        void submit(rawstor::io::Queue &queue) {
-            _q = &queue;
-            queue.write(
-                session().fd(),
-                &_request, sizeof(_request),
-                DriverOp::_request_cb, this);
+        void* data() noexcept {
+            return &_request;
         }
 
-        bool response_head_cb(
-            RawstorIOEvent *event, RawstorOSTFrameResponse &response)
-        {
-            op_trace(cid(), event);
-            _in_flight = false;
-            validate_cmd(session(), response.cmd, _request.cmd);
-
-            _hash = response.hash;
-            _res = response.res;
-
-            event->queue().read(
-                session().fd(),
-                _buf, _request.len,
-                _response_body_cb, this);
-
-            return true;
+        size_t size() const noexcept {
+            return sizeof(_request);
         }
 };
 
 
-class DriverOpCmdReadV final: public DriverOpFrameIO {
-    private:
-        iovec *_iov;
-        unsigned int _niov;
-        uint64_t _hash;
-        int32_t _res;
-
-        static int _response_body_cb(
-            RawstorIOEvent *event, void *data) noexcept
-        {
-            DriverOpCmdReadV *op = static_cast<DriverOpCmdReadV*>(data);
-            rawstor::ost::Driver &s = op->session();
-            int error = 0;
-
-            try {
-                op_trace(op->cid(), event);
-                validate_event(s, event);
-
-                uint64_t hash;
-                int res = rawstor_hash_vector(op->_iov, op->_niov, &hash);
-                if (res < 0) {
-                    RAWSTOR_THROW_SYSTEM_ERROR(-res);
-                }
-                validate_hash(s, op->_hash, hash);
-            } catch (const std::system_error &e) {
-                error = e.code().value();
-            }
-
-            int res = op->dispatch(op->_res, error);
-            delete op;
-
-            return res;
-        }
-
-    public:
-        DriverOpCmdReadV(
-            rawstor::ost::Driver &s,
-            iovec *iov, unsigned int niov, size_t size, off_t offset,
-            RawstorCallback *cb, void *data):
-            DriverOpFrameIO(
-                s,
-                RAWSTOR_CMD_READ,
-                size, offset, 0,
-                cb, data),
-            _iov(iov),
-            _niov(niov)
-        {}
-
-        void submit(rawstor::io::Queue &queue) {
-            _q = &queue;
-            queue.write(
-                session().fd(),
-                &_request, sizeof(_request),
-                DriverOp::_request_cb, this);
-        }
-
-        bool response_head_cb(
-            RawstorIOEvent *event, RawstorOSTFrameResponse &response)
-        {
-            op_trace(cid(), event);
-            _in_flight = false;
-            validate_cmd(session(), response.cmd, _request.cmd);
-
-            event->queue().readv(
-                session().fd(),
-                _iov, _niov, _request.len,
-                _response_body_cb, this);
-
-            return true;
-        }
-};
-
-
-class DriverOpCmdWrite final: public DriverOpFrameIO {
+class RequestCmdWrite final: public RequestIO {
     private:
         std::vector<iovec> _iov;
 
     public:
-        DriverOpCmdWrite(
-            rawstor::ost::Driver &s,
-            void *buf, size_t size, off_t offset,
-            RawstorCallback *cb, void *data):
-            DriverOpFrameIO(
-                s,
-                RAWSTOR_CMD_WRITE,
-                size, offset, hash(buf, size),
-                cb, data)
+        RequestCmdWrite(
+            const std::shared_ptr<DriverOp> &op,
+            void *buf, size_t size, off_t offset):
+            RequestIO(
+                op, RAWSTOR_CMD_WRITE,
+                size, offset, hash(buf, size))
         {
             _iov.reserve(2);
             _iov.push_back({
@@ -543,40 +557,12 @@ class DriverOpCmdWrite final: public DriverOpFrameIO {
             });
         }
 
-        void submit(rawstor::io::Queue &queue) {
-            _q = &queue;
-            queue.writev(
-                session().fd(),
-                _iov.data(), _iov.size(), sizeof(_request) + _request.len,
-                DriverOp::_request_cb, this);
-        }
-
-        bool response_head_cb(
-            RawstorIOEvent *event, RawstorOSTFrameResponse &response)
-        {
-            op_trace(cid(), event);
-            _in_flight = false;
-            validate_cmd(session(), response.cmd, _request.cmd);
-
-            return false;
-        }
-};
-
-
-class DriverOpCmdWriteV final: public DriverOpFrameIO {
-    private:
-        std::vector<iovec> _iov;
-
-    public:
-        DriverOpCmdWriteV(
-            rawstor::ost::Driver &s,
-            iovec *iov, unsigned int niov, size_t size, off_t offset,
-            RawstorCallback *cb, void *data):
-            DriverOpFrameIO(
-                s,
-                RAWSTOR_CMD_WRITE,
-                size, offset, hash(iov, niov),
-                cb, data)
+        RequestCmdWrite(
+            const std::shared_ptr<DriverOp> &op,
+            iovec *iov, unsigned int niov, size_t size, off_t offset):
+            RequestIO(
+                op, RAWSTOR_CMD_WRITE,
+                size, offset, hash(iov, niov))
         {
             _iov.reserve(niov + 1);
             _iov.push_back({
@@ -588,22 +574,85 @@ class DriverOpCmdWriteV final: public DriverOpFrameIO {
             }
         }
 
-        void submit(rawstor::io::Queue &queue) {
-            _q = &queue;
-            queue.writev(
-                session().fd(),
-                _iov.data(), _iov.size(), sizeof(_request) + _request.len,
-                DriverOp::_request_cb, this);
+        iovec* iov() noexcept {
+            return _iov.data();
         }
 
-        bool response_head_cb(
-            RawstorIOEvent *event, RawstorOSTFrameResponse &response)
-        {
-            op_trace(cid(), event);
-            _in_flight = false;
-            validate_cmd(session(), response.cmd, _request.cmd);
+        unsigned int niov() const noexcept {
+            return _iov.size();
+        }
 
-            return false;
+        size_t size() const noexcept {
+            return sizeof(_request) + _request.len;
+        }
+};
+
+
+class ResponseHead final: public rawstor::io::Callback {
+    private:
+        std::shared_ptr<rawstor::ost::Context> _context;
+        RawstorOSTFrameResponse _response;
+
+    public:
+        ResponseHead(
+            const std::shared_ptr<rawstor::ost::Context> &context):
+            _context(context)
+        {
+            _context->add_read();
+        }
+
+        void operator()(RawstorIOEvent *event) {
+            _context->sub_read();
+
+            try {
+                validate_event(event);
+                op_trace(_response.cid, event);
+
+                DriverOp &op = _context->find_op(_response.cid);
+                op.response_head_cb(_response);
+
+                if (!_context->has_reads()) {
+                    _context->session().read_response_head(*rawstor::io_queue);
+                }
+            } catch (std::system_error &e) {
+                _context->fail_all(e.code().value());
+            }
+        }
+
+        inline void* data() noexcept {
+            return &_response;
+        }
+
+        inline size_t size() const noexcept {
+            return sizeof(_response);
+        }
+};
+
+
+class ResponseBody final: public rawstor::io::Callback {
+    private:
+        std::shared_ptr<rawstor::ost::Context> _context;
+        uint16_t _cid;
+
+    public:
+        ResponseBody(
+            const std::shared_ptr<rawstor::ost::Context> &context,
+            uint16_t cid):
+            _context(context),
+            _cid(cid)
+        {
+            _context->add_read();
+        }
+
+        void operator()(RawstorIOEvent *event) {
+            _context->sub_read();
+
+            DriverOp &op = _context->find_op(_cid);
+            op.response_body_cb(event);
+
+            if (!_context->has_reads()) {
+                _context->session().read_response_head(*rawstor::io_queue);
+            }
         }
 };
 
@@ -615,10 +664,30 @@ namespace rawstor {
 namespace ost {
 
 
+void Context::register_op(const std::shared_ptr<DriverOp> &op) {
+    _ops[op->cid()] = op;
+}
+
+
+void Context::fail_all(int error) {
+    std::vector<std::shared_ptr<DriverOp>> inflight_ops;
+    inflight_ops.reserve(_ops.size());
+    for (const auto &i: _ops) {
+        if (i.second->in_flight()) {
+            inflight_ops.push_back(i.second);
+        }
+    }
+    for (auto i: inflight_ops) {
+        i->dispatch(0, error);
+    }
+}
+
+
 Driver::Driver(const URI &uri, unsigned int depth):
     rawstor::Driver(uri, depth),
+    _cid_counter(0),
     _object(nullptr),
-    _op_response(nullptr)
+    _context(std::make_shared<Context>(*this))
 {
     int fd = _connect();
     set_fd(fd);
@@ -626,40 +695,7 @@ Driver::Driver(const URI &uri, unsigned int depth):
 
 
 Driver::~Driver() {
-    /**
-     * TODO: Probably should be rewritten
-     * with detach() call to inflight requests.
-     */
-    while (!_ops.empty()) {
-        delete _ops.begin()->second;
-    }
-}
-
-
-void Driver::register_request(DriverOp &op) {
-    if (_ops.empty()) {
-        _read_response_head(op.queue());
-    }
-    _ops[op.cid()] = &op;
-}
-
-
-void Driver::unregister_request(DriverOp &op) {
-    _ops.erase(op.cid());
-    if (!_ops.empty()) {
-        _read_response_head(op.queue());
-    }
-}
-
-
-DriverOp* Driver::_find_op(uint16_t cid) {
-    std::unordered_map<uint16_t, DriverOp*>::iterator it = _ops.find(cid);
-    if (it == _ops.end()) {
-        rawstor_error("Unexpected cid: %u\n", cid);
-        RAWSTOR_THROW_SYSTEM_ERROR(EPROTO);
-    }
-
-    return it->second;
+    _context->detach();
 }
 
 
@@ -730,11 +766,35 @@ int Driver::_connect() {
 }
 
 
-void Driver::_read_response_head(rawstor::io::Queue &queue) {
-    std::unique_ptr<DriverOpResponse> response =
-        std::make_unique<DriverOpResponse>(*this);
-    response->submit(queue);
-    response.release();
+void Driver::read_response_head(rawstor::io::Queue &queue) {
+    std::unique_ptr<ResponseHead> res =
+        std::make_unique<ResponseHead>(_context);
+    void *res_data = res->data();
+    size_t res_size = res->size();
+    queue.read(
+        fd(), res_data, res_size, std::move(res));
+}
+
+
+void Driver::read_response_body(
+    rawstor::io::Queue &queue, uint16_t cid,
+    void *buf, size_t size)
+{
+    std::unique_ptr<ResponseBody> res =
+        std::make_unique<ResponseBody>(_context, cid);
+    queue.read(
+        fd(), buf, size, std::move(res));
+}
+
+
+void Driver::read_response_body(
+    rawstor::io::Queue &queue, uint16_t cid,
+    iovec *iov, unsigned int niov, size_t size)
+{
+    std::unique_ptr<ResponseBody> res =
+        std::make_unique<ResponseBody>(_context, cid);
+    queue.readv(
+        fd(), iov, niov, size, std::move(res));
 }
 
 
@@ -793,12 +853,22 @@ void Driver::set_object(
 {
     rawstor_info("%s: Setting object id\n", str().c_str());
 
-    std::unique_ptr<DriverOpCmdSetObjectId> op =
-        std::make_unique<DriverOpCmdSetObjectId>(*this, object->id(), cb, data);
+    assert(_cid_counter == 0); // OST returns always 0.
 
-    op->submit(queue);
+    std::shared_ptr<DriverOpSetObjectId> op =
+        std::make_shared<DriverOpSetObjectId>(
+            _context, _cid_counter++, cb, data);
+    _context->register_op(op);
 
-    op.release();
+    std::unique_ptr<RequestSetObjectId> req =
+        std::make_unique<RequestSetObjectId>(op, object->id());
+    void *req_data = req->data();
+    size_t req_size = req->size();
+    queue.write(fd(), req_data, req_size, std::move(req));
+
+    if (!_context->has_reads()) {
+        read_response_head(queue);
+    }
 
     _object = object;
 }
@@ -812,12 +882,20 @@ void Driver::pread(
         "%s(): offset = %jd, size = %zu\n",
         __FUNCTION__, (intmax_t)offset, size);
 
-    std::unique_ptr<DriverOpCmdRead> op = std::make_unique<DriverOpCmdRead>(
-        *this, buf, size, offset, cb, data);
+    std::shared_ptr<DriverOpRead> op =
+        std::make_shared<DriverOpRead>(
+            _context, _cid_counter++, buf, size, cb, data);
+    _context->register_op(op);
 
-    op->submit(*io_queue);
+    std::unique_ptr<RequestCmdRead> req =
+        std::make_unique<RequestCmdRead>(op, size, offset);
+    void *req_data = req->data();
+    size_t req_size = req->size();
+    io_queue->write(fd(), req_data, req_size, std::move(req));
 
-    op.release();
+    if (!_context->has_reads()) {
+        read_response_head(*io_queue);
+    }
 }
 
 
@@ -829,12 +907,20 @@ void Driver::preadv(
         "%s(): offset = %jd, niov = %u, size = %zu\n",
         __FUNCTION__, (intmax_t)offset, niov, size);
 
-    std::unique_ptr<DriverOpCmdReadV> op = std::make_unique<DriverOpCmdReadV>(
-        *this, iov, niov, size, offset, cb, data);
+    std::shared_ptr<DriverOpReadV> op =
+        std::make_shared<DriverOpReadV>(
+            _context, _cid_counter++, iov, niov, size, cb, data);
+    _context->register_op(op);
 
-    op->submit(*io_queue);
+    std::unique_ptr<RequestCmdRead> req =
+        std::make_unique<RequestCmdRead>(op, size, offset);
+    void *req_data = req->data();
+    size_t req_size = req->size();
+    io_queue->write(fd(), req_data, req_size, std::move(req));
 
-    op.release();
+    if (!_context->has_reads()) {
+        read_response_head(*io_queue);
+    }
 }
 
 
@@ -846,12 +932,21 @@ void Driver::pwrite(
         "%s(): offset = %jd, size = %zu\n",
         __FUNCTION__, (intmax_t)offset, size);
 
-    std::unique_ptr<DriverOpCmdWrite> op = std::make_unique<DriverOpCmdWrite>(
-        *this, buf, size, offset, cb, data);
+    std::shared_ptr<DriverOpWrite> op =
+        std::make_shared<DriverOpWrite>(
+            _context, _cid_counter++, size, cb, data);
+    _context->register_op(op);
 
-    op->submit(*io_queue);
+    std::unique_ptr<RequestCmdWrite> req =
+        std::make_unique<RequestCmdWrite>(op, buf, size, offset);
+    iovec *req_iov = req->iov();
+    unsigned int req_niov = req->niov();
+    size_t req_size = req->size();
+    io_queue->writev(fd(), req_iov, req_niov, req_size, std::move(req));
 
-    op.release();
+    if (!_context->has_reads()) {
+        read_response_head(*io_queue);
+    }
 }
 
 
@@ -863,12 +958,21 @@ void Driver::pwritev(
         "%s(): offset = %jd, niov = %u, size = %zu\n",
         __FUNCTION__, (intmax_t)offset, niov, size);
 
-    std::unique_ptr<DriverOpCmdWriteV> op = std::make_unique<DriverOpCmdWriteV>(
-        *this, iov, niov, size, offset, cb, data);
+    std::shared_ptr<DriverOpWrite> op =
+        std::make_shared<DriverOpWrite>(
+            _context, _cid_counter++, size, cb, data);
+    _context->register_op(op);
 
-    op->submit(*io_queue);
+    std::unique_ptr<RequestCmdWrite> req =
+        std::make_unique<RequestCmdWrite>(op, iov, niov, size, offset);
+    iovec *req_iov = req->iov();
+    unsigned int req_niov = req->niov();
+    size_t req_size = req->size();
+    io_queue->writev(fd(), req_iov, req_niov, req_size, std::move(req));
 
-    op.release();
+    if (!_context->has_reads()) {
+        read_response_head(*io_queue);
+    }
 }
 
 

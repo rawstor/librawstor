@@ -34,6 +34,7 @@ librawstor_la_SOURCES = connection.cpp \
                         driver.cpp \
                         file_driver.cpp \
                         object.cpp \
+                        ost_driver.cpp \
                         opts.c \
                         rawstor.cpp
 

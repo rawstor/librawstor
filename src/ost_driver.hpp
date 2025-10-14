@@ -13,6 +13,7 @@
 #include <rawstor/object.h>
 #include <rawstor/rawstor.h>
 
+#include <memory>
 #include <string>
 #include <unordered_map>
 
@@ -22,33 +23,34 @@ namespace rawstor {
 namespace ost {
 
 
-class DriverOp;
-class DriverOpResponse;
+class Context;
 
 
 class Driver final: public rawstor::Driver {
     private:
-        RawstorObject *_object;
-        std::unordered_map<uint16_t, DriverOp*> _ops;
-        DriverOpResponse *_op_response;
+        uint16_t _cid_counter;
 
-        DriverOp* _find_op(uint16_t cid);
+        RawstorObject *_object;
+
+        std::shared_ptr<Context> _context;
 
         int _connect();
-        void _read_response_head(rawstor::io::Queue &queue);
-        static int _read_response_head_cb(
-            RawstorIOEvent *event, void *data) noexcept;
 
     public:
         Driver(const URI &uri, unsigned int depth);
         ~Driver();
 
-        void register_request(DriverOp &op);
-        void unregister_request(DriverOp &op);
-
         inline RawstorObject* object() noexcept {
             return _object;
         }
+
+        void read_response_head(rawstor::io::Queue &queue);
+        void read_response_body(
+            rawstor::io::Queue &queue, uint16_t cid,
+            void *buf, size_t size);
+        void read_response_body(
+            rawstor::io::Queue &queue, uint16_t cid,
+            iovec *iov, unsigned int niov, size_t size);
 
         void create(
             rawstor::io::Queue &queue,
