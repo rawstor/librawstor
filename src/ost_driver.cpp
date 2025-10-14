@@ -100,7 +100,6 @@ void validate_cmd(
 }
 
 
-/*
 void validate_hash(rawstor::ost::Driver &s, uint64_t hash, uint64_t expected) {
     if (hash != expected) {
         rawstor_error(
@@ -111,7 +110,6 @@ void validate_hash(rawstor::ost::Driver &s, uint64_t hash, uint64_t expected) {
         RAWSTOR_THROW_SYSTEM_ERROR(EPROTO);
     }
 }
-*/
 
 
 }
@@ -267,10 +265,7 @@ class DriverOp {
 
             int res = 0;
             if (error) {
-                res = _cb(
-                    o,
-                    event->size(), 0, error,  // TODO: event size?
-                    _data);
+                res = _cb(o, _size, 0, error, _data);
             }
 
             if (res) {
@@ -315,6 +310,7 @@ class DriverOpSetObjectId final: public DriverOp {
 class DriverOpRead final: public DriverOp {
     private:
         void *_buf;
+        uint64_t _hash;
 
     public:
         DriverOpRead(
@@ -322,7 +318,8 @@ class DriverOpRead final: public DriverOp {
             uint16_t cid, void *buf, size_t size,
             RawstorCallback *cb, void *data):
             DriverOp(context, cid, size, cb, data),
-            _buf(buf)
+            _buf(buf),
+            _hash(0)
         {}
 
         void response_head_cb(RawstorOSTFrameResponse &response) {
@@ -332,6 +329,9 @@ class DriverOpRead final: public DriverOp {
             try {
                 validate_cmd(s, response.cmd, RAWSTOR_CMD_READ);
                 validate_response(s, response);
+
+                _hash = response.hash;
+
             } catch (std::system_error &e) {
                 error = e.code().value();
             }
@@ -345,12 +345,14 @@ class DriverOpRead final: public DriverOp {
         }
 
         void response_body_cb(RawstorIOEvent *event) {
+            rawstor::ost::Driver &s = _context->session();
             op_trace(cid(), event);
 
             int error = 0;
 
             try {
                 validate_event(event);
+                validate_hash(s, hash(_buf, _size), _hash);
             } catch (std::system_error &e) {
                 error = e.code().value();
             }
@@ -364,6 +366,7 @@ class DriverOpReadV final: public DriverOp {
     private:
         iovec *_iov;
         unsigned int _niov;
+        uint64_t _hash;
 
     public:
         DriverOpReadV(
@@ -372,7 +375,8 @@ class DriverOpReadV final: public DriverOp {
             RawstorCallback *cb, void *data):
             DriverOp(context, cid, size, cb, data),
             _iov(iov),
-            _niov(niov)
+            _niov(niov),
+            _hash(0)
         {}
 
         void response_head_cb(RawstorOSTFrameResponse &response) {
@@ -382,6 +386,7 @@ class DriverOpReadV final: public DriverOp {
             try {
                 validate_cmd(s, response.cmd, RAWSTOR_CMD_READ);
                 validate_response(s, response);
+                _hash = response.hash;
             } catch (std::system_error &e) {
                 error = e.code().value();
             }
@@ -395,12 +400,14 @@ class DriverOpReadV final: public DriverOp {
         }
 
         void response_body_cb(RawstorIOEvent *event) {
+            rawstor::ost::Driver &s = _context->session();
             op_trace(cid(), event);
 
             int error = 0;
 
             try {
                 validate_event(event);
+                validate_hash(s, hash(_iov, _niov), _hash);
             } catch (std::system_error &e) {
                 error = e.code().value();
             }
