@@ -111,13 +111,18 @@ void rawstor_terminate() {
 }
 
 
-RawstorIOEvent* rawstor_wait_event() {
+int rawstor_empty() {
+    return rawstor::io_queue->empty();
+}
+
+
+int rawstor_wait() {
     try {
-        return rawstor::io_queue->wait_event(rawstor_opts_wait_timeout());
+        rawstor::io_queue->wait(rawstor_opts_wait_timeout());
     } catch (std::system_error &e) {
-        errno = e.code().value();
-        return nullptr;
+        return -e.code().value();
     }
+    return 0;
 }
 
 
@@ -128,11 +133,6 @@ int rawstor_dispatch_event(RawstorIOEvent *event) {
     } catch (std::system_error &e) {
         return -e.code().value();
     }
-}
-
-
-void rawstor_release_event(RawstorIOEvent *event) {
-    rawstor::io_queue->release_event(event);
 }
 
 

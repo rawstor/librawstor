@@ -77,9 +77,7 @@ class Queue {
 
         virtual bool empty() const noexcept = 0;
 
-        virtual RawstorIOEvent* wait_event(unsigned int timeout) = 0;
-
-        virtual void release_event(RawstorIOEvent *event) noexcept = 0;
+        virtual void wait(unsigned int timeout) = 0;
 };
 
 

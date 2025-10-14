@@ -73,11 +73,9 @@ int rawstor_initialize(const struct RawstorOpts *opts);
 
 void rawstor_terminate(void);
 
-RawstorIOEvent* rawstor_wait_event(void);
+int rawstor_empty(void);
 
-int rawstor_dispatch_event(RawstorIOEvent *event);
-
-void rawstor_release_event(RawstorIOEvent *event);
+int rawstor_wait(void);
 
 
 #ifdef __cplusplus

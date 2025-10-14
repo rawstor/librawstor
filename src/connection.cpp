@@ -114,20 +114,8 @@ int Queue::callback(
 
 
 void Queue::wait() {
-    while (_operations > 0) {
-        RawstorIOEvent *event = _q->wait_event(rawstor_opts_wait_timeout());
-        if (event == NULL) {
-            break;
-        }
-
-        try {
-            event->dispatch();
-        } catch (...) {
-            _q->release_event(event);
-            throw;
-        }
-
-        _q->release_event(event);
+    while (!_q->empty()) {
+        _q->wait(rawstor_opts_wait_timeout());
     }
 
     if (_operations > 0) {

@@ -155,11 +155,11 @@ bool Queue::empty() const noexcept {
 }
 
 
-RawstorIOEvent* Queue::wait_event(unsigned int timeout) {
+void Queue::wait(unsigned int timeout) {
     std::vector<pollfd> fds;
     while (_cqes.empty()) {
         if (_sessions.empty()) {
-            return nullptr;
+            return;
         }
 
         fds.reserve(_sessions.size());
@@ -184,7 +184,7 @@ RawstorIOEvent* Queue::wait_event(unsigned int timeout) {
         }
 
         if (i == 0) {
-            return nullptr;
+            return;
         }
 
         rawstor_trace("poll()\n");
@@ -212,11 +212,15 @@ RawstorIOEvent* Queue::wait_event(unsigned int timeout) {
         }
     }
 
-    return _cqes.pop();
-}
+    Event *event = _cqes.pop();
 
+    try {
+        event->dispatch();
+    } catch (...) {
+        delete event;
+        throw;
+    }
 
-void Queue::release_event(RawstorIOEvent *event) noexcept {
     delete event;
 }
 

@@ -149,7 +149,7 @@ bool Queue::empty() const noexcept {
 }
 
 
-RawstorIOEvent* Queue::wait_event(unsigned int timeout) {
+void Queue::wait(unsigned int timeout) {
     int res;
     io_uring_cqe *cqe;
     __kernel_timespec ts = {
@@ -184,11 +184,13 @@ RawstorIOEvent* Queue::wait_event(unsigned int timeout) {
 
     --_events;
 
-    return event;
-}
+    try {
+        event->dispatch();
+    } catch (...) {
+        delete event;
+        throw;
+    }
 
-
-void Queue::release_event(RawstorIOEvent *event) noexcept {
     delete event;
 }
 

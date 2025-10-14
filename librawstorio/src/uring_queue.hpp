@@ -71,9 +71,7 @@ class Queue: public rawstor::io::Queue {
 
         bool empty() const noexcept;
 
-        RawstorIOEvent* wait_event(unsigned int timeout);
-
-        void release_event(RawstorIOEvent *event) noexcept;
+        void wait(unsigned int timeout);
 };
 
 
