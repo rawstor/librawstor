@@ -120,7 +120,12 @@ void Queue::wait() {
             break;
         }
 
-        event->dispatch();
+        try {
+            event->dispatch();
+        } catch (...) {
+            _q->release_event(event);
+            throw;
+        }
 
         _q->release_event(event);
     }

@@ -28,7 +28,7 @@ jobs:
     - name: configure
       run: ./configure --enable-trace ${{ matrix.without-liburing }}
     - name: make
-      run: make
+      run: make -j$(nproc)
     - name: make test
       run: make test
 
@@ -69,7 +69,7 @@ jobs:
         cd ./librawstor
         ./autogen.sh
         ./configure --disable-shared ${{ matrix.without-liburing }}
-        make
+        make -j$(nproc)
         sudo make install
         popd
     - uses: actions/checkout@v4
@@ -86,7 +86,7 @@ jobs:
         cd ./rawstor_ost
         ./autogen.sh
         ./configure --disable-shared
-        make
+        make -j$(nproc)
         sudo make install
         popd
     - name: (ost) start rawstor_ost

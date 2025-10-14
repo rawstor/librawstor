@@ -301,11 +301,11 @@ class DriverOpSetObjectId final: public DriverOp {
             try {
                 validate_cmd(s, response.cmd, RAWSTOR_CMD_SET_OBJECT);
                 validate_response(s, response);
+                rawstor_info(
+                    "%s: Object id successfully set\n", s.str().c_str());
             } catch (std::system_error &e) {
                 error = e.code().value();
             }
-
-            rawstor_info("%s: Object id successfully set\n", s.str().c_str());
 
             dispatch(0, error);
         }
