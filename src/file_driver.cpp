@@ -106,7 +106,7 @@ namespace rawstor {
 namespace file {
 
 
-class DriverOp final: public rawstor::io::Callback {
+class DriverOp final: public rawstor::io::Task {
     private:
         Driver &_s;
 

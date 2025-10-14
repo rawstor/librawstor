@@ -80,65 +80,65 @@ void Queue::setup_fd(int fd) {
 void Queue::read(
     int fd,
     void *buf, size_t size,
-    std::unique_ptr<rawstor::io::Callback> cb)
+    std::unique_ptr<rawstor::io::Task> t)
 {
-    _get_session(fd)->read(buf, size, std::move(cb));
+    _get_session(fd)->read(buf, size, std::move(t));
 }
 
 
 void Queue::readv(
     int fd, struct iovec *iov, unsigned int niov, size_t size,
-    std::unique_ptr<rawstor::io::Callback> cb)
+    std::unique_ptr<rawstor::io::Task> t)
 {
-    _get_session(fd)->readv(iov, niov, size, std::move(cb));
+    _get_session(fd)->readv(iov, niov, size, std::move(t));
 }
 
 
 void Queue::pread(
     int fd, void *buf, size_t size, off_t offset,
-    std::unique_ptr<rawstor::io::Callback> cb)
+    std::unique_ptr<rawstor::io::Task> t)
 {
-    _get_session(fd)->pread(buf, size, offset, std::move(cb));
+    _get_session(fd)->pread(buf, size, offset, std::move(t));
 }
 
 
 void Queue::preadv(
     int fd, struct iovec *iov, unsigned int niov, size_t size, off_t offset,
-    std::unique_ptr<rawstor::io::Callback> cb)
+    std::unique_ptr<rawstor::io::Task> t)
 {
-    _get_session(fd)->preadv(iov, niov, size, offset, std::move(cb));
+    _get_session(fd)->preadv(iov, niov, size, offset, std::move(t));
 }
 
 
 void Queue::write(
     int fd, void *buf, size_t size,
-    std::unique_ptr<rawstor::io::Callback> cb)
+    std::unique_ptr<rawstor::io::Task> t)
 {
-    _get_session(fd)->write(buf, size, std::move(cb));
+    _get_session(fd)->write(buf, size, std::move(t));
 }
 
 
 void Queue::writev(
     int fd, struct iovec *iov, unsigned int niov, size_t size,
-    std::unique_ptr<rawstor::io::Callback> cb)
+    std::unique_ptr<rawstor::io::Task> t)
 {
-    _get_session(fd)->writev(iov, niov, size, std::move(cb));
+    _get_session(fd)->writev(iov, niov, size, std::move(t));
 }
 
 
 void Queue::pwrite(
     int fd, void *buf, size_t size, off_t offset,
-    std::unique_ptr<rawstor::io::Callback> cb)
+    std::unique_ptr<rawstor::io::Task> t)
 {
-    _get_session(fd)->pwrite(buf, size, offset, std::move(cb));
+    _get_session(fd)->pwrite(buf, size, offset, std::move(t));
 }
 
 
 void Queue::pwritev(
     int fd, struct iovec *iov, unsigned int niov, size_t size, off_t offset,
-    std::unique_ptr<rawstor::io::Callback> cb)
+    std::unique_ptr<rawstor::io::Task> t)
 {
-    _get_session(fd)->pwritev(iov, niov, size, offset, std::move(cb));
+    _get_session(fd)->pwritev(iov, niov, size, offset, std::move(t));
 }
 
 

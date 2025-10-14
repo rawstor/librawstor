@@ -1,7 +1,7 @@
 #ifndef RAWSTORIO_EVENT_HPP
 #define RAWSTORIO_EVENT_HPP
 
-#include <rawstorio/callback.hpp>
+#include <rawstorio/task.hpp>
 
 #include <rawstorstd/logging.h>
 
@@ -30,7 +30,7 @@ struct RawstorIOEvent {
         int _fd;
         size_t _size;
 
-        std::unique_ptr<rawstor::io::Callback> _cb;
+        std::unique_ptr<rawstor::io::Task> _t;
 
 #ifdef RAWSTOR_TRACE_EVENTS
         void *_trace_id;
@@ -40,7 +40,7 @@ struct RawstorIOEvent {
         RawstorIOEvent(
             rawstor::io::Queue &q,
             int fd, size_t size,
-            std::unique_ptr<rawstor::io::Callback> cb);
+            std::unique_ptr<rawstor::io::Task> t);
         RawstorIOEvent(const RawstorIOEvent &) = delete;
         RawstorIOEvent(RawstorIOEvent &&) = delete;
         RawstorIOEvent& operator=(const RawstorIOEvent &) = delete;

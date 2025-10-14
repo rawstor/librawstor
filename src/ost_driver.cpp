@@ -435,7 +435,7 @@ class DriverOpWrite final: public DriverOp {
 };
 
 
-class Request: public rawstor::io::Callback {
+class Request: public rawstor::io::Task {
     protected:
         std::shared_ptr<DriverOp> _op;
 
@@ -588,7 +588,7 @@ class RequestCmdWrite final: public RequestIO {
 };
 
 
-class ResponseHead final: public rawstor::io::Callback {
+class ResponseHead final: public rawstor::io::Task {
     private:
         std::shared_ptr<rawstor::ost::Context> _context;
         RawstorOSTFrameResponse _response;
@@ -629,7 +629,7 @@ class ResponseHead final: public rawstor::io::Callback {
 };
 
 
-class ResponseBody final: public rawstor::io::Callback {
+class ResponseBody final: public rawstor::io::Task {
     private:
         std::shared_ptr<rawstor::ost::Context> _context;
         uint16_t _cid;

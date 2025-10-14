@@ -32,42 +32,42 @@ class Queue: public rawstor::io::Queue {
         void read(
             int fd,
             void *buf, size_t size,
-            std::unique_ptr<rawstor::io::Callback> cb);
+            std::unique_ptr<rawstor::io::Task> t);
 
         void readv(
             int fd,
             iovec *iov, unsigned int niov, size_t size,
-            std::unique_ptr<rawstor::io::Callback> cb);
+            std::unique_ptr<rawstor::io::Task> t);
 
         void pread(
             int fd,
             void *buf, size_t size, off_t offset,
-            std::unique_ptr<rawstor::io::Callback> cb);
+            std::unique_ptr<rawstor::io::Task> t);
 
         void preadv(
             int fd,
             iovec *iov, unsigned int niov, size_t size, off_t offset,
-            std::unique_ptr<rawstor::io::Callback> cb);
+            std::unique_ptr<rawstor::io::Task> t);
 
         void write(
             int fd,
             void *buf, size_t size,
-            std::unique_ptr<rawstor::io::Callback> cb);
+            std::unique_ptr<rawstor::io::Task> t);
 
         void writev(
             int fd,
             iovec *iov, unsigned int niov, size_t size,
-            std::unique_ptr<rawstor::io::Callback> cb);
+            std::unique_ptr<rawstor::io::Task> t);
 
         void pwrite(
             int fd,
             void *buf, size_t size, off_t offset,
-            std::unique_ptr<rawstor::io::Callback> cb);
+            std::unique_ptr<rawstor::io::Task> t);
 
         void pwritev(
             int fd,
             iovec *iov, unsigned int niov, size_t size, off_t offset,
-            std::unique_ptr<rawstor::io::Callback> cb);
+            std::unique_ptr<rawstor::io::Task> t);
 
         bool empty() const noexcept;
 
