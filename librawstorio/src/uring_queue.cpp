@@ -178,21 +178,14 @@ void Queue::wait(unsigned int timeout) {
         }
     }
 
-    rawstor::io::uring::Event *event = static_cast<rawstor::io::uring::Event*>(
-        io_uring_cqe_get_data(cqe));
+    std::unique_ptr<Event> event(
+        static_cast<Event*>(io_uring_cqe_get_data(cqe)));
 
     event->set_cqe(cqe);
 
     --_events;
 
-    try {
-        event->dispatch();
-    } catch (...) {
-        delete event;
-        throw;
-    }
-
-    delete event;
+    event->dispatch();
 }
 
 

@@ -212,16 +212,8 @@ void Queue::wait(unsigned int timeout) {
         }
     }
 
-    Event *event = _cqes.pop();
-
-    try {
-        event->dispatch();
-    } catch (...) {
-        delete event;
-        throw;
-    }
-
-    delete event;
+    std::unique_ptr<Event> event(_cqes.pop());
+    event->dispatch();
 }
 
 
