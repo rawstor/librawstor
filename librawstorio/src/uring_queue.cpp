@@ -70,6 +70,7 @@ void Queue::read(
 {
     new rawstor::io::uring::EventRead(
         *this, fd, buf, size, std::move(cb));
+    ++_events;
 }
 
 
@@ -79,6 +80,7 @@ void Queue::readv(
 {
     new rawstor::io::uring::EventReadV(
         *this, fd, iov, niov, size, std::move(cb));
+    ++_events;
 }
 
 
@@ -88,6 +90,7 @@ void Queue::pread(
 {
     new rawstor::io::uring::EventPRead(
         *this, fd, buf, size, offset, std::move(cb));
+    ++_events;
 }
 
 
@@ -97,6 +100,7 @@ void Queue::preadv(
 {
     new rawstor::io::uring::EventPReadV(
         *this, fd, iov, niov, size, offset, std::move(cb));
+    ++_events;
 }
 
 
@@ -106,6 +110,7 @@ void Queue::write(
 {
     new rawstor::io::uring::EventWrite(
         *this, fd, buf, size, std::move(cb));
+    ++_events;
 }
 
 
@@ -115,6 +120,7 @@ void Queue::writev(
 {
     new rawstor::io::uring::EventWriteV(
         *this, fd, iov, niov, size, std::move(cb));
+    ++_events;
 }
 
 
@@ -124,6 +130,7 @@ void Queue::pwrite(
 {
     new rawstor::io::uring::EventPWrite(
         *this, fd, buf, size, offset, std::move(cb));
+    ++_events;
 }
 
 
@@ -133,6 +140,12 @@ void Queue::pwritev(
 {
     new rawstor::io::uring::EventPWriteV(
         *this, fd, iov, niov, size, offset, std::move(cb));
+    ++_events;
+}
+
+
+bool Queue::empty() const noexcept {
+    return _events == 0;
 }
 
 
@@ -168,6 +181,8 @@ RawstorIOEvent* Queue::wait_event(unsigned int timeout) {
         io_uring_cqe_get_data(cqe));
 
     event->set_cqe(cqe);
+
+    --_events;
 
     return event;
 }

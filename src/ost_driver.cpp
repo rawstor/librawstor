@@ -771,8 +771,7 @@ void Driver::read_response_head(rawstor::io::Queue &queue) {
         std::make_unique<ResponseHead>(_context);
     void *res_data = res->data();
     size_t res_size = res->size();
-    queue.read(
-        fd(), res_data, res_size, std::move(res));
+    queue.read(fd(), res_data, res_size, std::move(res));
 }
 
 
@@ -782,8 +781,7 @@ void Driver::read_response_body(
 {
     std::unique_ptr<ResponseBody> res =
         std::make_unique<ResponseBody>(_context, cid);
-    queue.read(
-        fd(), buf, size, std::move(res));
+    queue.read(fd(), buf, size, std::move(res));
 }
 
 
@@ -793,8 +791,7 @@ void Driver::read_response_body(
 {
     std::unique_ptr<ResponseBody> res =
         std::make_unique<ResponseBody>(_context, cid);
-    queue.readv(
-        fd(), iov, niov, size, std::move(res));
+    queue.readv(fd(), iov, niov, size, std::move(res));
 }
 
 

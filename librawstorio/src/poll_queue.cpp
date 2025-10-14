@@ -142,6 +142,19 @@ void Queue::pwritev(
 }
 
 
+bool Queue::empty() const noexcept {
+    if (!_cqes.empty()) {
+        return false;
+    }
+    for (const auto &it: _sessions) {
+        if (!it.second->empty()) {
+            return false;
+        }
+    }
+    return true;
+}
+
+
 RawstorIOEvent* Queue::wait_event(unsigned int timeout) {
     std::vector<pollfd> fds;
     while (_cqes.empty()) {

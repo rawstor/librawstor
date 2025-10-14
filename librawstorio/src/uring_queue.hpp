@@ -16,6 +16,7 @@ namespace uring {
 class Queue: public rawstor::io::Queue {
     private:
         io_uring _ring;
+        unsigned int _events;
 
     public:
         static const std::string& engine_name();
@@ -67,6 +68,8 @@ class Queue: public rawstor::io::Queue {
             int fd,
             iovec *iov, unsigned int niov, size_t size, off_t offset,
             std::unique_ptr<rawstor::io::Callback> cb);
+
+        bool empty() const noexcept;
 
         RawstorIOEvent* wait_event(unsigned int timeout);
 
