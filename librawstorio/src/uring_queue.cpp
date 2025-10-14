@@ -11,7 +11,7 @@
 namespace {
 
 
-std::string engine_name = "poll";
+std::string engine_name = "uring";
 
 
 } // unnamed
