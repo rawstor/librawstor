@@ -41,7 +41,7 @@
 
 #define op_trace(cid, event) \
     rawstor_debug( \
-        "[%u] %s(): %zi of %zu\n", \
+        "[%u] %s(): %zu of %zu\n", \
         (cid), __FUNCTION__, \
         event->result(), \
         event->size())

@@ -156,12 +156,12 @@ bool Queue::empty() const noexcept {
 
 
 void Queue::wait(unsigned int timeout) {
-    std::vector<pollfd> fds;
     while (_cqes.empty()) {
         if (_sessions.empty()) {
             return;
         }
 
+        std::vector<pollfd> fds;
         fds.reserve(_sessions.size());
 
         std::unordered_map<int, std::shared_ptr<Session>>::iterator it =

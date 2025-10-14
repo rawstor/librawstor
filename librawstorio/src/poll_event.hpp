@@ -1,8 +1,8 @@
 #ifndef RAWSTORIO_POLL_EVENT_HPP
 #define RAWSTORIO_POLL_EVENT_HPP
 
-#include <rawstorio/task.hpp>
 #include <rawstorio/event.hpp>
+#include <rawstorio/task.hpp>
 
 #include <sys/types.h>
 #include <sys/uio.h>
@@ -58,11 +58,11 @@ class Event: public RawstorIOEvent {
 
         virtual ~Event() {}
 
-        inline size_t result() const noexcept {
+        size_t result() const noexcept {
             return _result;
         }
 
-        inline int error() const noexcept {
+        int error() const noexcept {
             return _error;
         }
 
