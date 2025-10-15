@@ -106,22 +106,29 @@ namespace rawstor {
 namespace file {
 
 
-class DriverOp final: public rawstor::io::Task {
+class DriverOpScalarPositional final: public rawstor::io::TaskScalarPositional {
     private:
         Driver &_s;
 
+        void *_buf;
+        size_t _size;
+        off_t _offset;
+
         RawstorCallback *_cb;
         void *_data;
+
     public:
-        DriverOp(Driver &s, RawstorCallback *cb, void *data):
+        DriverOpScalarPositional(
+            Driver &s,
+            void *buf, size_t size, off_t offset,
+            RawstorCallback *cb, void *data):
             _s(s),
+            _buf(buf),
+            _size(size),
+            _offset(offset),
             _cb(cb),
             _data(data)
         {}
-        DriverOp(const DriverOp &) = delete;
-        DriverOp(DriverOp &&) = delete;
-        DriverOp& operator=(const DriverOp &) = delete;
-        DriverOp& operator=(DriverOp &&) = delete;
 
         void operator()(RawstorIOEvent *event) {
             int res = _cb(
@@ -133,6 +140,76 @@ class DriverOp final: public rawstor::io::Task {
             if (res) {
                 RAWSTOR_THROW_SYSTEM_ERROR(-res);
             }
+        }
+
+        void* buf() noexcept {
+            return _buf;
+        }
+
+        size_t size() const noexcept {
+            return _size;
+        }
+
+        off_t offset() const noexcept {
+            return _offset;
+        }
+};
+
+
+class DriverOpVectorPositional final:
+    public rawstor::io::TaskVectorPositional
+{
+    private:
+        Driver &_s;
+
+        iovec *_iov;
+        unsigned int _niov;
+        size_t _size;
+        off_t _offset;
+
+        RawstorCallback *_cb;
+        void *_data;
+
+    public:
+        DriverOpVectorPositional(
+            Driver &s,
+            iovec *iov, unsigned int niov, size_t size, off_t offset,
+            RawstorCallback *cb, void *data):
+            _s(s),
+            _iov(iov),
+            _niov(niov),
+            _size(size),
+            _offset(offset),
+            _cb(cb),
+            _data(data)
+        {}
+
+        void operator()(RawstorIOEvent *event) {
+            int res = _cb(
+                _s.object(),
+                rawstor_io_event_size(event),
+                rawstor_io_event_result(event),
+                rawstor_io_event_error(event),
+                _data);
+            if (res) {
+                RAWSTOR_THROW_SYSTEM_ERROR(-res);
+            }
+        }
+
+        iovec* iov() noexcept {
+            return _iov;
+        }
+
+        unsigned int niov() const noexcept {
+            return _niov;
+        }
+
+        size_t size() const noexcept {
+            return _size;
+        }
+
+        off_t offset() const noexcept {
+            return _offset;
         }
 };
 
@@ -315,9 +392,10 @@ void Driver::pread(
     void *buf, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
-    std::unique_ptr<DriverOp> op = std::make_unique<DriverOp>(*this, cb, data);
-    io_queue->pread(
-        fd(), buf, size, offset, std::move(op));
+    std::unique_ptr<rawstor::io::TaskScalarPositional> op =
+        std::make_unique<DriverOpScalarPositional>(
+            *this, buf, size, offset, cb, data);
+    io_queue->read(fd(), std::move(op));
 }
 
 
@@ -325,9 +403,10 @@ void Driver::preadv(
     iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
-    std::unique_ptr<DriverOp> op = std::make_unique<DriverOp>(*this, cb, data);
-    io_queue->preadv(
-        fd(), iov, niov, size, offset, std::move(op));
+    std::unique_ptr<rawstor::io::TaskVectorPositional> op =
+        std::make_unique<DriverOpVectorPositional>(
+            *this, iov, niov, size, offset, cb, data);
+    io_queue->read(fd(), std::move(op));
 }
 
 
@@ -335,9 +414,10 @@ void Driver::pwrite(
     void *buf, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
-    std::unique_ptr<DriverOp> op = std::make_unique<DriverOp>(*this, cb, data);
-    io_queue->pwrite(
-        fd(), buf, size, offset, std::move(op));
+    std::unique_ptr<rawstor::io::TaskScalarPositional> op =
+        std::make_unique<DriverOpScalarPositional>(
+            *this, buf, size, offset, cb, data);
+    io_queue->write(fd(), std::move(op));
 }
 
 
@@ -345,9 +425,10 @@ void Driver::pwritev(
     iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
-    std::unique_ptr<DriverOp> op = std::make_unique<DriverOp>(*this, cb, data);
-    io_queue->pwritev(
-        fd(), iov, niov, size, offset, std::move(op));
+    std::unique_ptr<rawstor::io::TaskVectorPositional> op =
+        std::make_unique<DriverOpVectorPositional>(
+            *this, iov, niov, size, offset, cb, data);
+    io_queue->write(fd(), std::move(op));
 }
 
 

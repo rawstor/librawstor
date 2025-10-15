@@ -1,4 +1,4 @@
-#include <rawstor.h>
+#include <rawstor/rawstor.h>
 
 #include "opts.h"
 #include "rawstor_internals.hpp"
@@ -32,13 +32,20 @@
 namespace {
 
 
-class Task: public rawstor::io::Task {
+class TaskScalar final: public rawstor::io::TaskScalar {
     private:
+        void *_buf;
+        size_t _size;
+
         RawstorIOCallback *_cb;
         void *_data;
 
     public:
-        Task(RawstorIOCallback *cb, void *data):
+        TaskScalar(
+            void *buf, size_t size,
+            RawstorIOCallback *cb, void *data):
+            _buf(buf),
+            _size(size),
             _cb(cb),
             _data(data)
         {}
@@ -48,6 +55,143 @@ class Task: public rawstor::io::Task {
             if (res) {
                 RAWSTOR_THROW_SYSTEM_ERROR(-res);
             }
+        }
+
+        void* buf() noexcept {
+            return _buf;
+        }
+
+        size_t size() const noexcept {
+            return _size;
+        }
+};
+
+
+class TaskVector final: public rawstor::io::TaskVector {
+    private:
+        iovec *_iov;
+        unsigned int _niov;
+        size_t _size;
+
+        RawstorIOCallback *_cb;
+        void *_data;
+
+    public:
+        TaskVector(
+            iovec *iov, unsigned int niov, size_t size,
+            RawstorIOCallback *cb, void *data):
+            _iov(iov),
+            _niov(niov),
+            _size(size),
+            _cb(cb),
+            _data(data)
+        {}
+
+        void operator()(RawstorIOEvent *event) {
+            int res = _cb(event, _data);
+            if (res) {
+                RAWSTOR_THROW_SYSTEM_ERROR(-res);
+            }
+        }
+
+        iovec* iov() noexcept {
+            return _iov;
+        }
+
+        unsigned int niov() const noexcept {
+            return _niov;
+        }
+
+        size_t size() const noexcept {
+            return _size;
+        }
+};
+
+
+class TaskScalarPositional final: public rawstor::io::TaskScalarPositional {
+    private:
+        void *_buf;
+        size_t _size;
+        off_t _offset;
+
+        RawstorIOCallback *_cb;
+        void *_data;
+
+    public:
+        TaskScalarPositional(
+            void *buf, size_t size, off_t offset,
+            RawstorIOCallback *cb, void *data):
+            _buf(buf),
+            _size(size),
+            _offset(offset),
+            _cb(cb),
+            _data(data)
+        {}
+
+        void operator()(RawstorIOEvent *event) {
+            int res = _cb(event, _data);
+            if (res) {
+                RAWSTOR_THROW_SYSTEM_ERROR(-res);
+            }
+        }
+
+        void* buf() noexcept {
+            return _buf;
+        }
+
+        size_t size() const noexcept {
+            return _size;
+        }
+
+        off_t offset() const noexcept {
+            return _offset;
+        }
+};
+
+
+class TaskVectorPositional final: public rawstor::io::TaskVectorPositional {
+    private:
+        iovec *_iov;
+        unsigned int _niov;
+        size_t _size;
+        off_t _offset;
+
+        RawstorIOCallback *_cb;
+        void *_data;
+
+    public:
+        TaskVectorPositional(
+            iovec *iov, unsigned int niov, size_t size, off_t offset,
+            RawstorIOCallback *cb, void *data):
+            _iov(iov),
+            _niov(niov),
+            _size(size),
+            _offset(offset),
+            _cb(cb),
+            _data(data)
+        {}
+
+        void operator()(RawstorIOEvent *event) {
+            int res = _cb(event, _data);
+            if (res) {
+                RAWSTOR_THROW_SYSTEM_ERROR(-res);
+            }
+        }
+
+        iovec* iov() noexcept {
+            return _iov;
+        }
+
+        unsigned int niov() const noexcept {
+            return _niov;
+        }
+
+        size_t size() const noexcept {
+            return _size;
+        }
+
+        off_t offset() const noexcept {
+            return _offset;
         }
 };
 
@@ -64,7 +208,7 @@ rawstor::io::Queue *io_queue;
 } // rawstor
 
 
-int rawstor_initialize(const struct RawstorOpts *opts) {
+int rawstor_initialize(const RawstorOpts *opts) {
     int res = 0;
 
     assert(rawstor::io_queue == nullptr);
@@ -141,10 +285,26 @@ int rawstor_fd_read(
     RawstorIOCallback *cb, void *data)
 {
     try {
-        std::unique_ptr<Task> t = std::make_unique<Task>(cb, data);
-        rawstor::io_queue->read(
-            fd, buf, size,
-            std::move(t));
+        std::unique_ptr<rawstor::io::TaskScalar> t =
+            std::make_unique<TaskScalar>(
+                buf, size, cb, data);
+        rawstor::io_queue->read(fd, std::move(t));
+        return 0;
+    } catch (std::system_error &e) {
+        return -e.code().value();
+    }
+}
+
+
+int rawstor_fd_readv(
+    int fd, iovec *iov, unsigned int niov, size_t size,
+    RawstorIOCallback *cb, void *data)
+{
+    try {
+        std::unique_ptr<rawstor::io::TaskVector> t =
+            std::make_unique<TaskVector>(
+                iov, niov, size, cb, data);
+        rawstor::io_queue->read(fd, std::move(t));
         return 0;
     } catch (std::system_error &e) {
         return -e.code().value();
@@ -157,26 +317,10 @@ int rawstor_fd_pread(
     RawstorIOCallback *cb, void *data)
 {
     try {
-        std::unique_ptr<Task> t = std::make_unique<Task>(cb, data);
-        rawstor::io_queue->pread(
-            fd, buf, size, offset,
-            std::move(t));
-        return 0;
-    } catch (std::system_error &e) {
-        return -e.code().value();
-    }
-}
-
-
-int rawstor_fd_readv(
-    int fd, struct iovec *iov, unsigned int niov, size_t size,
-    RawstorIOCallback *cb, void *data)
-{
-    try {
-        std::unique_ptr<Task> t = std::make_unique<Task>(cb, data);
-        rawstor::io_queue->readv(
-            fd, iov, niov, size,
-            std::move(t));
+        std::unique_ptr<rawstor::io::TaskScalarPositional> t =
+            std::make_unique<TaskScalarPositional>(
+                buf, size, offset, cb, data);
+        rawstor::io_queue->read(fd, std::move(t));
         return 0;
     } catch (std::system_error &e) {
         return -e.code().value();
@@ -185,14 +329,14 @@ int rawstor_fd_readv(
 
 
 int rawstor_fd_preadv(
-    int fd, struct iovec *iov, unsigned int niov, size_t size, off_t offset,
+    int fd, iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data)
 {
     try {
-        std::unique_ptr<Task> t = std::make_unique<Task>(cb, data);
-        rawstor::io_queue->preadv(
-            fd, iov, niov, size, offset,
-            std::move(t));
+        std::unique_ptr<rawstor::io::TaskVectorPositional> t =
+            std::make_unique<TaskVectorPositional>(
+                iov, niov, size, offset, cb, data);
+        rawstor::io_queue->read(fd, std::move(t));
         return 0;
     } catch (std::system_error &e) {
         return -e.code().value();
@@ -205,10 +349,25 @@ int rawstor_fd_write(
     RawstorIOCallback *cb, void *data)
 {
     try {
-        std::unique_ptr<Task> t = std::make_unique<Task>(cb, data);
-        rawstor::io_queue->write(
-            fd, buf, size,
-            std::move(t));
+        std::unique_ptr<rawstor::io::TaskScalar> t =
+            std::make_unique<TaskScalar>(
+                buf, size, cb, data);
+        rawstor::io_queue->write(fd, std::move(t));
+        return 0;
+    } catch (std::system_error &e) {
+        return -e.code().value();
+    }
+}
+
+
+int rawstor_fd_writev(
+    int fd, iovec *iov, unsigned int niov, size_t size,
+    RawstorIOCallback *cb, void *data)
+{
+    try {
+        std::unique_ptr<rawstor::io::TaskVector> t =
+            std::make_unique<TaskVector>(iov, niov, size, cb, data);
+        rawstor::io_queue->write(fd, std::move(t));
         return 0;
     } catch (std::system_error &e) {
         return -e.code().value();
@@ -221,26 +380,10 @@ int rawstor_fd_pwrite(
     RawstorIOCallback *cb, void *data)
 {
     try {
-        std::unique_ptr<Task> t = std::make_unique<Task>(cb, data);
-        rawstor::io_queue->pwrite(
-            fd, buf, size, offset,
-            std::move(t));
-        return 0;
-    } catch (std::system_error &e) {
-        return -e.code().value();
-    }
-}
-
-
-int rawstor_fd_writev(
-    int fd, struct iovec *iov, unsigned int niov, size_t size,
-    RawstorIOCallback *cb, void *data)
-{
-    try {
-        std::unique_ptr<Task> t = std::make_unique<Task>(cb, data);
-        rawstor::io_queue->writev(
-            fd, iov, niov, size,
-            std::move(t));
+        std::unique_ptr<rawstor::io::TaskScalarPositional> t =
+            std::make_unique<TaskScalarPositional>(
+                buf, size, offset, cb, data);
+        rawstor::io_queue->write(fd, std::move(t));
         return 0;
     } catch (std::system_error &e) {
         return -e.code().value();
@@ -249,14 +392,14 @@ int rawstor_fd_writev(
 
 
 int rawstor_fd_pwritev(
-    int fd, struct iovec *iov, unsigned int niov, size_t size, off_t offset,
+    int fd, iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data)
 {
     try {
-        std::unique_ptr<Task> t = std::make_unique<Task>(cb, data);
-        rawstor::io_queue->pwritev(
-            fd, iov, niov, size, offset,
-            std::move(t));
+        std::unique_ptr<rawstor::io::TaskVectorPositional> t =
+            std::make_unique<TaskVectorPositional>(
+                iov, niov, size, offset, cb, data);
+        rawstor::io_queue->write(fd, std::move(t));
         return 0;
     } catch (std::system_error &e) {
         return -e.code().value();

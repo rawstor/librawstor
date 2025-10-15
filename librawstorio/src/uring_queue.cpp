@@ -65,83 +65,74 @@ void Queue::setup_fd(int fd) {
 
 
 void Queue::read(
-    int fd,
-    void *buf, size_t size,
-    std::unique_ptr<rawstor::io::Task> t)
+    int fd, std::unique_ptr<rawstor::io::TaskScalar> t)
 {
-    new rawstor::io::uring::EventRead(
-        *this, fd, buf, size, std::move(t));
+    std::unique_ptr<Event> e = Event::read(*this, fd, std::move(t));
     ++_events;
+    e.release();
 }
 
 
-void Queue::readv(
-    int fd, struct iovec *iov, unsigned int niov, size_t size,
-    std::unique_ptr<rawstor::io::Task> t)
+void Queue::read(
+    int fd, std::unique_ptr<rawstor::io::TaskVector> t)
 {
-    new rawstor::io::uring::EventReadV(
-        *this, fd, iov, niov, size, std::move(t));
+    std::unique_ptr<Event> e = Event::read(*this, fd, std::move(t));
     ++_events;
+    e.release();
 }
 
 
-void Queue::pread(
-    int fd, void *buf, size_t size, off_t offset,
-    std::unique_ptr<rawstor::io::Task> t)
+void Queue::read(
+    int fd, std::unique_ptr<rawstor::io::TaskScalarPositional> t)
 {
-    new rawstor::io::uring::EventPRead(
-        *this, fd, buf, size, offset, std::move(t));
+    std::unique_ptr<Event> e = Event::read(*this, fd, std::move(t));
     ++_events;
+    e.release();
 }
 
 
-void Queue::preadv(
-    int fd, struct iovec *iov, unsigned int niov, size_t size, off_t offset,
-    std::unique_ptr<rawstor::io::Task> t)
+void Queue::read(
+    int fd, std::unique_ptr<rawstor::io::TaskVectorPositional> t)
 {
-    new rawstor::io::uring::EventPReadV(
-        *this, fd, iov, niov, size, offset, std::move(t));
+    std::unique_ptr<Event> e = Event::read(*this, fd, std::move(t));
     ++_events;
+    e.release();
 }
 
 
 void Queue::write(
-    int fd, void *buf, size_t size,
-    std::unique_ptr<rawstor::io::Task> t)
+    int fd, std::unique_ptr<rawstor::io::TaskScalar> t)
 {
-    new rawstor::io::uring::EventWrite(
-        *this, fd, buf, size, std::move(t));
+    std::unique_ptr<Event> e = Event::write(*this, fd, std::move(t));
     ++_events;
+    e.release();
 }
 
 
-void Queue::writev(
-    int fd, struct iovec *iov, unsigned int niov, size_t size,
-    std::unique_ptr<rawstor::io::Task> t)
+void Queue::write(
+    int fd, std::unique_ptr<rawstor::io::TaskVector> t)
 {
-    new rawstor::io::uring::EventWriteV(
-        *this, fd, iov, niov, size, std::move(t));
+    std::unique_ptr<Event> e = Event::write(*this, fd, std::move(t));
     ++_events;
+    e.release();
 }
 
 
-void Queue::pwrite(
-    int fd, void *buf, size_t size, off_t offset,
-    std::unique_ptr<rawstor::io::Task> t)
+void Queue::write(
+    int fd, std::unique_ptr<rawstor::io::TaskScalarPositional> t)
 {
-    new rawstor::io::uring::EventPWrite(
-        *this, fd, buf, size, offset, std::move(t));
+    std::unique_ptr<Event> e = Event::write(*this, fd, std::move(t));
     ++_events;
+    e.release();
 }
 
 
-void Queue::pwritev(
-    int fd, struct iovec *iov, unsigned int niov, size_t size, off_t offset,
-    std::unique_ptr<rawstor::io::Task> t)
+void Queue::write(
+    int fd, std::unique_ptr<rawstor::io::TaskVectorPositional> t)
 {
-    new rawstor::io::uring::EventPWriteV(
-        *this, fd, iov, niov, size, offset, std::move(t));
+    std::unique_ptr<Event> e = Event::write(*this, fd, std::move(t));
     ++_events;
+    e.release();
 }
 
 

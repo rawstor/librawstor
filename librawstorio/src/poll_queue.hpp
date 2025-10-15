@@ -37,44 +37,28 @@ class Queue: public rawstor::io::Queue {
         {}
 
         void read(
-            int fd,
-            void *buf, size_t size,
-            std::unique_ptr<rawstor::io::Task> t);
+            int fd, std::unique_ptr<rawstor::io::TaskScalar> t);
 
-        void readv(
-            int fd,
-            struct iovec *iov, unsigned int niov, size_t size,
-            std::unique_ptr<rawstor::io::Task> t);
+        void read(
+            int fd, std::unique_ptr<rawstor::io::TaskVector> t);
 
-        void pread(
-            int fd,
-            void *buf, size_t size, off_t offset,
-            std::unique_ptr<rawstor::io::Task> t);
+        void read(
+            int fd, std::unique_ptr<rawstor::io::TaskScalarPositional> t);
 
-        void preadv(
-            int fd,
-            struct iovec *iov, unsigned int niov, size_t size, off_t offset,
-            std::unique_ptr<rawstor::io::Task> t);
+        void read(
+            int fd, std::unique_ptr<rawstor::io::TaskVectorPositional> t);
 
         void write(
-            int fd,
-            void *buf, size_t size,
-            std::unique_ptr<rawstor::io::Task> t);
+            int fd, std::unique_ptr<rawstor::io::TaskScalar> t);
 
-        void writev(
-            int fd,
-            struct iovec *iov, unsigned int niov, size_t size,
-            std::unique_ptr<rawstor::io::Task> t);
+        void write(
+            int fd, std::unique_ptr<rawstor::io::TaskVector> t);
 
-        void pwrite(
-            int fd,
-            void *buf, size_t size, off_t offset,
-            std::unique_ptr<rawstor::io::Task> t);
+        void write(
+            int fd, std::unique_ptr<rawstor::io::TaskScalarPositional> t);
 
-        void pwritev(
-            int fd,
-            struct iovec *iov, unsigned int niov, size_t size, off_t offset,
-            std::unique_ptr<rawstor::io::Task> t);
+        void write(
+            int fd, std::unique_ptr<rawstor::io::TaskVectorPositional> t);
 
         bool empty() const noexcept;
 

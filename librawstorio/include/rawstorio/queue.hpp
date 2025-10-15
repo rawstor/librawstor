@@ -36,44 +36,28 @@ class Queue {
         }
 
         virtual void read(
-            int fd,
-            void *buf, size_t size,
-            std::unique_ptr<Task> t) = 0;
+            int fd, std::unique_ptr<TaskScalar> t) = 0;
 
-        virtual void readv(
-            int fd,
-            iovec *iov, unsigned int niov, size_t size,
-            std::unique_ptr<Task> t) = 0;
+        virtual void read(
+            int fd, std::unique_ptr<TaskVector> t) = 0;
 
-        virtual void pread(
-            int fd,
-            void *buf, size_t size, off_t offset,
-            std::unique_ptr<Task> t) = 0;
+        virtual void read(
+            int fd, std::unique_ptr<TaskScalarPositional> t) = 0;
 
-        virtual void preadv(
-            int fd,
-            iovec *iov, unsigned int niov, size_t size, off_t offset,
-            std::unique_ptr<Task> t) = 0;
+        virtual void read(
+            int fd, std::unique_ptr<TaskVectorPositional> t) = 0;
 
         virtual void write(
-            int fd,
-            void *buf, size_t size,
-            std::unique_ptr<Task> t) = 0;
+            int fd, std::unique_ptr<TaskScalar> t) = 0;
 
-        virtual void writev(
-            int fd,
-            iovec *iov, unsigned int niov, size_t size,
-            std::unique_ptr<Task> t) = 0;
+        virtual void write(
+            int fd, std::unique_ptr<TaskVector> t) = 0;
 
-        virtual void pwrite(
-            int fd,
-            void *buf, size_t size, off_t offset,
-            std::unique_ptr<Task> t) = 0;
+        virtual void write(
+            int fd, std::unique_ptr<TaskScalarPositional> t) = 0;
 
-        virtual void pwritev(
-            int fd,
-            iovec *iov, unsigned int niov, size_t size, off_t offset,
-            std::unique_ptr<Task> t) = 0;
+        virtual void write(
+            int fd, std::unique_ptr<TaskVectorPositional> t) = 0;
 
         virtual bool empty() const noexcept = 0;
 

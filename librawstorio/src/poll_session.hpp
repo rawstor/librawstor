@@ -38,36 +38,28 @@ class Session {
         virtual bool empty() const noexcept = 0;
 
         virtual void read(
-            void *buf, size_t size,
-            std::unique_ptr<rawstor::io::Task> t) = 0;
+            std::unique_ptr<rawstor::io::TaskScalar> t) = 0;
 
-        virtual void readv(
-            struct iovec *iov, unsigned int niov, size_t size,
-            std::unique_ptr<rawstor::io::Task> t) = 0;
+        virtual void read(
+            std::unique_ptr<rawstor::io::TaskVector> t) = 0;
 
-        virtual void pread(
-            void *buf, size_t size, off_t offset,
-            std::unique_ptr<rawstor::io::Task> t) = 0;
+        virtual void read(
+            std::unique_ptr<rawstor::io::TaskScalarPositional> t) = 0;
 
-        virtual void preadv(
-            struct iovec *iov, unsigned int niov, size_t size, off_t offset,
-            std::unique_ptr<rawstor::io::Task> t) = 0;
+        virtual void read(
+            std::unique_ptr<rawstor::io::TaskVectorPositional> t) = 0;
 
         virtual void write(
-            void *buf, size_t size,
-            std::unique_ptr<rawstor::io::Task> t) = 0;
+            std::unique_ptr<rawstor::io::TaskScalar> t) = 0;
 
-        virtual void writev(
-            struct iovec *iov, unsigned int niov, size_t size,
-            std::unique_ptr<rawstor::io::Task> t) = 0;
+        virtual void write(
+            std::unique_ptr<rawstor::io::TaskVector> t) = 0;
 
-        virtual void pwrite(
-            void *buf, size_t size, off_t offset,
-            std::unique_ptr<rawstor::io::Task> t) = 0;
+        virtual void write(
+            std::unique_ptr<rawstor::io::TaskScalarPositional> t) = 0;
 
-        virtual void pwritev(
-            struct iovec *iov, unsigned int niov, size_t size, off_t offset,
-            std::unique_ptr<rawstor::io::Task> t) = 0;
+        virtual void write(
+            std::unique_ptr<rawstor::io::TaskVectorPositional> t) = 0;
 
         virtual void process_read(RingBuf<Event*> &cqes, bool pollhup) = 0;
         virtual void process_write(RingBuf<Event*> &cqes, bool pollhup) = 0;
