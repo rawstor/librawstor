@@ -122,6 +122,7 @@ class DriverOpScalarPositional final: public rawstor::io::TaskScalarPositional {
             Driver &s,
             void *buf, size_t size, off_t offset,
             RawstorCallback *cb, void *data):
+            rawstor::io::TaskScalarPositional(s.fd()),
             _s(s),
             _buf(buf),
             _size(size),
@@ -175,6 +176,7 @@ class DriverOpVectorPositional final:
             Driver &s,
             iovec *iov, unsigned int niov, size_t size, off_t offset,
             RawstorCallback *cb, void *data):
+            rawstor::io::TaskVectorPositional(s.fd()),
             _s(s),
             _iov(iov),
             _niov(niov),
@@ -395,7 +397,7 @@ void Driver::pread(
     std::unique_ptr<rawstor::io::TaskScalarPositional> op =
         std::make_unique<DriverOpScalarPositional>(
             *this, buf, size, offset, cb, data);
-    io_queue->read(fd(), std::move(op));
+    io_queue->read(std::move(op));
 }
 
 
@@ -406,7 +408,7 @@ void Driver::preadv(
     std::unique_ptr<rawstor::io::TaskVectorPositional> op =
         std::make_unique<DriverOpVectorPositional>(
             *this, iov, niov, size, offset, cb, data);
-    io_queue->read(fd(), std::move(op));
+    io_queue->read(std::move(op));
 }
 
 
@@ -417,7 +419,7 @@ void Driver::pwrite(
     std::unique_ptr<rawstor::io::TaskScalarPositional> op =
         std::make_unique<DriverOpScalarPositional>(
             *this, buf, size, offset, cb, data);
-    io_queue->write(fd(), std::move(op));
+    io_queue->write(std::move(op));
 }
 
 
@@ -428,7 +430,7 @@ void Driver::pwritev(
     std::unique_ptr<rawstor::io::TaskVectorPositional> op =
         std::make_unique<DriverOpVectorPositional>(
             *this, iov, niov, size, offset, cb, data);
-    io_queue->write(fd(), std::move(op));
+    io_queue->write(std::move(op));
 }
 
 

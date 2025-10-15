@@ -69,7 +69,7 @@ class SeekableSession: public rawstor::io::poll::Session {
         void read(std::unique_ptr<rawstor::io::TaskScalarPositional> t) {
             std::unique_ptr<rawstor::io::poll::EventP> event =
                 std::make_unique<rawstor::io::poll::EventP>(
-                    _q, _fd, std::move(t));
+                    _q, std::move(t));
 
             _read_sqes.push(event.get());
 
@@ -79,7 +79,7 @@ class SeekableSession: public rawstor::io::poll::Session {
         void read(std::unique_ptr<rawstor::io::TaskVectorPositional> t) {
             std::unique_ptr<rawstor::io::poll::EventP> event =
                 std::make_unique<rawstor::io::poll::EventP>(
-                    _q, _fd, std::move(t));
+                    _q, std::move(t));
 
             _read_sqes.push(event.get());
 
@@ -99,7 +99,7 @@ class SeekableSession: public rawstor::io::poll::Session {
         void write(std::unique_ptr<rawstor::io::TaskScalarPositional> t) {
             std::unique_ptr<rawstor::io::poll::EventP> event =
                 std::make_unique<rawstor::io::poll::EventP>(
-                    _q, _fd, std::move(t));
+                    _q, std::move(t));
 
             _write_sqes.push(event.get());
 
@@ -109,7 +109,7 @@ class SeekableSession: public rawstor::io::poll::Session {
         void write(std::unique_ptr<rawstor::io::TaskVectorPositional> t) {
             std::unique_ptr<rawstor::io::poll::EventP> event =
                 std::make_unique<rawstor::io::poll::EventP>(
-                    _q, _fd, std::move(t));
+                    _q, std::move(t));
 
             _write_sqes.push(event.get());
 
@@ -171,7 +171,7 @@ class UnseekableSession: public rawstor::io::poll::Session {
         void read(std::unique_ptr<rawstor::io::TaskScalar> t) {
             std::unique_ptr<rawstor::io::poll::Event> event =
                 std::make_unique<rawstor::io::poll::Event>(
-                    _q, _fd, std::move(t));
+                    _q, std::move(t));
 
             _read_sqes.push(event.get());
 
@@ -181,7 +181,7 @@ class UnseekableSession: public rawstor::io::poll::Session {
         void read(std::unique_ptr<rawstor::io::TaskVector> t) {
             std::unique_ptr<rawstor::io::poll::Event> event =
                 std::make_unique<rawstor::io::poll::Event>(
-                    _q, _fd, std::move(t));
+                    _q, std::move(t));
 
             _read_sqes.push(event.get());
 
@@ -201,7 +201,7 @@ class UnseekableSession: public rawstor::io::poll::Session {
         void write(std::unique_ptr<rawstor::io::TaskScalar> t) {
             std::unique_ptr<rawstor::io::poll::Event> event =
                 std::make_unique<rawstor::io::poll::Event>(
-                    _q, _fd, std::move(t));
+                    _q, std::move(t));
 
             _write_sqes.push(event.get());
 
@@ -211,7 +211,7 @@ class UnseekableSession: public rawstor::io::poll::Session {
         void write(std::unique_ptr<rawstor::io::TaskVector> t) {
             std::unique_ptr<rawstor::io::poll::Event> event =
                 std::make_unique<rawstor::io::poll::Event>(
-                    _q, _fd, std::move(t));
+                    _q, std::move(t));
 
             _write_sqes.push(event.get());
 

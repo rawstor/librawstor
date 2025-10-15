@@ -35,29 +35,21 @@ class Queue {
             return _depth;
         }
 
-        virtual void read(
-            int fd, std::unique_ptr<TaskScalar> t) = 0;
+        virtual void read(std::unique_ptr<TaskScalar> t) = 0;
 
-        virtual void read(
-            int fd, std::unique_ptr<TaskVector> t) = 0;
+        virtual void read(std::unique_ptr<TaskVector> t) = 0;
 
-        virtual void read(
-            int fd, std::unique_ptr<TaskScalarPositional> t) = 0;
+        virtual void read(std::unique_ptr<TaskScalarPositional> t) = 0;
 
-        virtual void read(
-            int fd, std::unique_ptr<TaskVectorPositional> t) = 0;
+        virtual void read(std::unique_ptr<TaskVectorPositional> t) = 0;
 
-        virtual void write(
-            int fd, std::unique_ptr<TaskScalar> t) = 0;
+        virtual void write(std::unique_ptr<TaskScalar> t) = 0;
 
-        virtual void write(
-            int fd, std::unique_ptr<TaskVector> t) = 0;
+        virtual void write(std::unique_ptr<TaskVector> t) = 0;
 
-        virtual void write(
-            int fd, std::unique_ptr<TaskScalarPositional> t) = 0;
+        virtual void write(std::unique_ptr<TaskScalarPositional> t) = 0;
 
-        virtual void write(
-            int fd, std::unique_ptr<TaskVectorPositional> t) = 0;
+        virtual void write(std::unique_ptr<TaskVectorPositional> t) = 0;
 
         virtual bool empty() const noexcept = 0;
 

@@ -29,29 +29,21 @@ class Queue: public rawstor::io::Queue {
             return &_ring;
         }
 
-        void read(
-            int fd, std::unique_ptr<rawstor::io::TaskScalar> t);
+        void read(std::unique_ptr<rawstor::io::TaskScalar> t);
 
-        void read(
-            int fd, std::unique_ptr<rawstor::io::TaskVector> t);
+        void read(std::unique_ptr<rawstor::io::TaskVector> t);
 
-        void read(
-            int fd, std::unique_ptr<rawstor::io::TaskScalarPositional> t);
+        void read(std::unique_ptr<rawstor::io::TaskScalarPositional> t);
 
-        void read(
-            int fd, std::unique_ptr<rawstor::io::TaskVectorPositional> t);
+        void read(std::unique_ptr<rawstor::io::TaskVectorPositional> t);
 
-        void write(
-            int fd, std::unique_ptr<rawstor::io::TaskScalar> t);
+        void write(std::unique_ptr<rawstor::io::TaskScalar> t);
 
-        void write(
-            int fd, std::unique_ptr<rawstor::io::TaskVector> t);
+        void write(std::unique_ptr<rawstor::io::TaskVector> t);
 
-        void write(
-            int fd, std::unique_ptr<rawstor::io::TaskScalarPositional> t);
+        void write(std::unique_ptr<rawstor::io::TaskScalarPositional> t);
 
-        void write(
-            int fd, std::unique_ptr<rawstor::io::TaskVectorPositional> t);
+        void write(std::unique_ptr<rawstor::io::TaskVectorPositional> t);
 
         bool empty() const noexcept;
 

@@ -27,7 +27,6 @@ class Queue;
 struct RawstorIOEvent {
     private:
         rawstor::io::Queue &_q;
-        int _fd;
 
     protected:
         std::unique_ptr<rawstor::io::Task> _t;
@@ -40,7 +39,6 @@ struct RawstorIOEvent {
     public:
         RawstorIOEvent(
             rawstor::io::Queue &q,
-            int fd,
             std::unique_ptr<rawstor::io::Task> t);
         RawstorIOEvent(const RawstorIOEvent &) = delete;
         RawstorIOEvent(RawstorIOEvent &&) = delete;
@@ -59,7 +57,7 @@ struct RawstorIOEvent {
         }
 
         inline int fd() const noexcept {
-            return _fd;
+            return _t->fd();
         }
 
         inline size_t size() const noexcept {

@@ -9,13 +9,12 @@
 
 
 RawstorIOEvent::RawstorIOEvent(
-    rawstor::io::Queue &q, int fd, std::unique_ptr<rawstor::io::Task> t):
+    rawstor::io::Queue &q, std::unique_ptr<rawstor::io::Task> t):
     _q(q),
-    _fd(fd),
     _t(std::move(t))
 #ifdef RAWSTOR_TRACE_EVENTS
     , _trace_id(rawstor_trace_event_begin(
-        "RawstorIOEvent(%d, %zu)\n", fd, size()))
+        "RawstorIOEvent(%d, %zu)\n", fd(), size()))
 #endif
 {}
 

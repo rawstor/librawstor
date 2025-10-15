@@ -29,9 +29,9 @@ class Event: public RawstorIOEvent {
 
     public:
         Event(
-            Queue &q, int fd,
+            Queue &q,
             std::unique_ptr<rawstor::io::TaskScalar> t):
-            RawstorIOEvent(q, fd, std::move(t)),
+            RawstorIOEvent(q, std::move(t)),
             _iov(
                 1,
                 (iovec){
@@ -47,9 +47,9 @@ class Event: public RawstorIOEvent {
         {}
 
         Event(
-            Queue &q, int fd,
+            Queue &q,
             std::unique_ptr<rawstor::io::TaskVector> t):
-            RawstorIOEvent(q, fd, std::move(t)),
+            RawstorIOEvent(q, std::move(t)),
             _niov_at(static_cast<rawstor::io::TaskVector*>(_t.get())->niov()),
             _result(0),
             _error(0)
@@ -100,17 +100,17 @@ class EventP: public Event {
 
     public:
         EventP(
-            Queue &q, int fd,
+            Queue &q,
             std::unique_ptr<rawstor::io::TaskScalarPositional> t):
-            Event(q, fd, std::move(t)),
+            Event(q, std::move(t)),
             _offset(static_cast<rawstor::io::TaskScalarPositional*>(
                 _t.get())->offset())
         {}
 
         EventP(
-            Queue &q, int fd,
+            Queue &q,
             std::unique_ptr<rawstor::io::TaskVectorPositional> t):
-            Event(q, fd, std::move(t)),
+            Event(q, std::move(t)),
             _offset(static_cast<rawstor::io::TaskVectorPositional*>(
                 _t.get())->offset())
         {}

@@ -28,33 +28,24 @@ class Event: public RawstorIOEvent {
 
     public:
         static std::unique_ptr<Event> read(
-            Queue &q,
-            int fd, std::unique_ptr<rawstor::io::TaskScalar> t);
+            Queue &q, std::unique_ptr<rawstor::io::TaskScalar> t);
         static std::unique_ptr<Event> read(
-            Queue &q,
-            int fd, std::unique_ptr<rawstor::io::TaskVector> t);
+            Queue &q, std::unique_ptr<rawstor::io::TaskVector> t);
         static std::unique_ptr<Event> read(
-            Queue &q,
-            int fd, std::unique_ptr<rawstor::io::TaskScalarPositional> t);
+            Queue &q, std::unique_ptr<rawstor::io::TaskScalarPositional> t);
         static std::unique_ptr<Event> read(
-            Queue &q,
-            int fd, std::unique_ptr<rawstor::io::TaskVectorPositional> t);
+            Queue &q, std::unique_ptr<rawstor::io::TaskVectorPositional> t);
         static std::unique_ptr<Event> write(
-            Queue &q,
-            int fd, std::unique_ptr<rawstor::io::TaskScalar> t);
+            Queue &q, std::unique_ptr<rawstor::io::TaskScalar> t);
         static std::unique_ptr<Event> write(
-            Queue &q,
-            int fd, std::unique_ptr<rawstor::io::TaskVector> t);
+            Queue &q, std::unique_ptr<rawstor::io::TaskVector> t);
         static std::unique_ptr<Event> write(
-            Queue &q,
-            int fd, std::unique_ptr<rawstor::io::TaskScalarPositional> t);
+            Queue &q, std::unique_ptr<rawstor::io::TaskScalarPositional> t);
         static std::unique_ptr<Event> write(
-            Queue &q,
-            int fd, std::unique_ptr<rawstor::io::TaskVectorPositional> t);
+            Queue &q, std::unique_ptr<rawstor::io::TaskVectorPositional> t);
 
         Event(
             Queue &q,
-            int fd,
             std::unique_ptr<rawstor::io::Task> t);
         ~Event();
 

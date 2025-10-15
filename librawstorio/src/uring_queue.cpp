@@ -64,73 +64,57 @@ void Queue::setup_fd(int fd) {
 }
 
 
-void Queue::read(
-    int fd, std::unique_ptr<rawstor::io::TaskScalar> t)
-{
-    std::unique_ptr<Event> e = Event::read(*this, fd, std::move(t));
+void Queue::read(std::unique_ptr<rawstor::io::TaskScalar> t) {
+    std::unique_ptr<Event> e = Event::read(*this, std::move(t));
     ++_events;
     e.release();
 }
 
 
-void Queue::read(
-    int fd, std::unique_ptr<rawstor::io::TaskVector> t)
-{
-    std::unique_ptr<Event> e = Event::read(*this, fd, std::move(t));
+void Queue::read(std::unique_ptr<rawstor::io::TaskVector> t) {
+    std::unique_ptr<Event> e = Event::read(*this, std::move(t));
     ++_events;
     e.release();
 }
 
 
-void Queue::read(
-    int fd, std::unique_ptr<rawstor::io::TaskScalarPositional> t)
-{
-    std::unique_ptr<Event> e = Event::read(*this, fd, std::move(t));
+void Queue::read(std::unique_ptr<rawstor::io::TaskScalarPositional> t) {
+    std::unique_ptr<Event> e = Event::read(*this, std::move(t));
     ++_events;
     e.release();
 }
 
 
-void Queue::read(
-    int fd, std::unique_ptr<rawstor::io::TaskVectorPositional> t)
-{
-    std::unique_ptr<Event> e = Event::read(*this, fd, std::move(t));
+void Queue::read(std::unique_ptr<rawstor::io::TaskVectorPositional> t) {
+    std::unique_ptr<Event> e = Event::read(*this, std::move(t));
     ++_events;
     e.release();
 }
 
 
-void Queue::write(
-    int fd, std::unique_ptr<rawstor::io::TaskScalar> t)
-{
-    std::unique_ptr<Event> e = Event::write(*this, fd, std::move(t));
+void Queue::write(std::unique_ptr<rawstor::io::TaskScalar> t) {
+    std::unique_ptr<Event> e = Event::write(*this, std::move(t));
     ++_events;
     e.release();
 }
 
 
-void Queue::write(
-    int fd, std::unique_ptr<rawstor::io::TaskVector> t)
-{
-    std::unique_ptr<Event> e = Event::write(*this, fd, std::move(t));
+void Queue::write(std::unique_ptr<rawstor::io::TaskVector> t) {
+    std::unique_ptr<Event> e = Event::write(*this, std::move(t));
     ++_events;
     e.release();
 }
 
 
-void Queue::write(
-    int fd, std::unique_ptr<rawstor::io::TaskScalarPositional> t)
-{
-    std::unique_ptr<Event> e = Event::write(*this, fd, std::move(t));
+void Queue::write(std::unique_ptr<rawstor::io::TaskScalarPositional> t) {
+    std::unique_ptr<Event> e = Event::write(*this, std::move(t));
     ++_events;
     e.release();
 }
 
 
-void Queue::write(
-    int fd, std::unique_ptr<rawstor::io::TaskVectorPositional> t)
-{
-    std::unique_ptr<Event> e = Event::write(*this, fd, std::move(t));
+void Queue::write(std::unique_ptr<rawstor::io::TaskVectorPositional> t) {
+    std::unique_ptr<Event> e = Event::write(*this, std::move(t));
     ++_events;
     e.release();
 }

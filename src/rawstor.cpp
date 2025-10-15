@@ -42,8 +42,9 @@ class TaskScalar final: public rawstor::io::TaskScalar {
 
     public:
         TaskScalar(
-            void *buf, size_t size,
+            int fd, void *buf, size_t size,
             RawstorIOCallback *cb, void *data):
+            rawstor::io::TaskScalar(fd),
             _buf(buf),
             _size(size),
             _cb(cb),
@@ -78,8 +79,9 @@ class TaskVector final: public rawstor::io::TaskVector {
 
     public:
         TaskVector(
-            iovec *iov, unsigned int niov, size_t size,
+            int fd, iovec *iov, unsigned int niov, size_t size,
             RawstorIOCallback *cb, void *data):
+            rawstor::io::TaskVector(fd),
             _iov(iov),
             _niov(niov),
             _size(size),
@@ -119,8 +121,9 @@ class TaskScalarPositional final: public rawstor::io::TaskScalarPositional {
 
     public:
         TaskScalarPositional(
-            void *buf, size_t size, off_t offset,
+            int fd, void *buf, size_t size, off_t offset,
             RawstorIOCallback *cb, void *data):
+            rawstor::io::TaskScalarPositional(fd),
             _buf(buf),
             _size(size),
             _offset(offset),
@@ -161,8 +164,9 @@ class TaskVectorPositional final: public rawstor::io::TaskVectorPositional {
 
     public:
         TaskVectorPositional(
-            iovec *iov, unsigned int niov, size_t size, off_t offset,
+            int fd, iovec *iov, unsigned int niov, size_t size, off_t offset,
             RawstorIOCallback *cb, void *data):
+            rawstor::io::TaskVectorPositional(fd),
             _iov(iov),
             _niov(niov),
             _size(size),
@@ -287,8 +291,8 @@ int rawstor_fd_read(
     try {
         std::unique_ptr<rawstor::io::TaskScalar> t =
             std::make_unique<TaskScalar>(
-                buf, size, cb, data);
-        rawstor::io_queue->read(fd, std::move(t));
+                fd, buf, size, cb, data);
+        rawstor::io_queue->read(std::move(t));
         return 0;
     } catch (std::system_error &e) {
         return -e.code().value();
@@ -303,8 +307,8 @@ int rawstor_fd_readv(
     try {
         std::unique_ptr<rawstor::io::TaskVector> t =
             std::make_unique<TaskVector>(
-                iov, niov, size, cb, data);
-        rawstor::io_queue->read(fd, std::move(t));
+                fd, iov, niov, size, cb, data);
+        rawstor::io_queue->read(std::move(t));
         return 0;
     } catch (std::system_error &e) {
         return -e.code().value();
@@ -319,8 +323,8 @@ int rawstor_fd_pread(
     try {
         std::unique_ptr<rawstor::io::TaskScalarPositional> t =
             std::make_unique<TaskScalarPositional>(
-                buf, size, offset, cb, data);
-        rawstor::io_queue->read(fd, std::move(t));
+                fd, buf, size, offset, cb, data);
+        rawstor::io_queue->read(std::move(t));
         return 0;
     } catch (std::system_error &e) {
         return -e.code().value();
@@ -335,8 +339,8 @@ int rawstor_fd_preadv(
     try {
         std::unique_ptr<rawstor::io::TaskVectorPositional> t =
             std::make_unique<TaskVectorPositional>(
-                iov, niov, size, offset, cb, data);
-        rawstor::io_queue->read(fd, std::move(t));
+                fd, iov, niov, size, offset, cb, data);
+        rawstor::io_queue->read(std::move(t));
         return 0;
     } catch (std::system_error &e) {
         return -e.code().value();
@@ -351,8 +355,8 @@ int rawstor_fd_write(
     try {
         std::unique_ptr<rawstor::io::TaskScalar> t =
             std::make_unique<TaskScalar>(
-                buf, size, cb, data);
-        rawstor::io_queue->write(fd, std::move(t));
+                fd, buf, size, cb, data);
+        rawstor::io_queue->write(std::move(t));
         return 0;
     } catch (std::system_error &e) {
         return -e.code().value();
@@ -366,8 +370,9 @@ int rawstor_fd_writev(
 {
     try {
         std::unique_ptr<rawstor::io::TaskVector> t =
-            std::make_unique<TaskVector>(iov, niov, size, cb, data);
-        rawstor::io_queue->write(fd, std::move(t));
+            std::make_unique<TaskVector>(
+                fd, iov, niov, size, cb, data);
+        rawstor::io_queue->write(std::move(t));
         return 0;
     } catch (std::system_error &e) {
         return -e.code().value();
@@ -382,8 +387,8 @@ int rawstor_fd_pwrite(
     try {
         std::unique_ptr<rawstor::io::TaskScalarPositional> t =
             std::make_unique<TaskScalarPositional>(
-                buf, size, offset, cb, data);
-        rawstor::io_queue->write(fd, std::move(t));
+                fd, buf, size, offset, cb, data);
+        rawstor::io_queue->write(std::move(t));
         return 0;
     } catch (std::system_error &e) {
         return -e.code().value();
@@ -398,8 +403,8 @@ int rawstor_fd_pwritev(
     try {
         std::unique_ptr<rawstor::io::TaskVectorPositional> t =
             std::make_unique<TaskVectorPositional>(
-                iov, niov, size, offset, cb, data);
-        rawstor::io_queue->write(fd, std::move(t));
+                fd, iov, niov, size, offset, cb, data);
+        rawstor::io_queue->write(std::move(t));
         return 0;
     } catch (std::system_error &e) {
         return -e.code().value();

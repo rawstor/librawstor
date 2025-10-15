@@ -29,20 +29,20 @@ namespace io {
 namespace poll {
 
 
-std::shared_ptr<Session> Queue::_get_session(int fd) {
+Session& Queue::_get_session(int fd) {
     /**
      * TODO: replace list with map or hash.
      */
     std::unordered_map<int, std::shared_ptr<Session>>::iterator it =
         _sessions.find(fd);
     if (it != _sessions.end()) {
-        return it->second;
+        return *it->second;
     }
 
     std::shared_ptr<Session> session = Session::create(*this, fd);
     _sessions[fd] = session;
 
-    return session;
+    return *session;
 }
 
 
@@ -77,59 +77,51 @@ void Queue::setup_fd(int fd) {
 }
 
 
-void Queue::read(
-    int fd, std::unique_ptr<rawstor::io::TaskScalar> t)
-{
-    _get_session(fd)->read(std::move(t));
+void Queue::read(std::unique_ptr<rawstor::io::TaskScalar> t) {
+    Session &s = _get_session(t->fd());
+    s.read(std::move(t));
 }
 
 
-void Queue::read(
-    int fd, std::unique_ptr<rawstor::io::TaskVector> t)
-{
-    _get_session(fd)->read(std::move(t));
+void Queue::read(std::unique_ptr<rawstor::io::TaskVector> t) {
+    Session &s = _get_session(t->fd());
+    s.read(std::move(t));
 }
 
 
-void Queue::read(
-    int fd, std::unique_ptr<rawstor::io::TaskScalarPositional> t)
-{
-    _get_session(fd)->read(std::move(t));
+void Queue::read(std::unique_ptr<rawstor::io::TaskScalarPositional> t) {
+    Session &s = _get_session(t->fd());
+    s.read(std::move(t));
 }
 
 
-void Queue::read(
-    int fd, std::unique_ptr<rawstor::io::TaskVectorPositional> t)
-{
-    _get_session(fd)->read(std::move(t));
+void Queue::read(std::unique_ptr<rawstor::io::TaskVectorPositional> t) {
+    Session &s = _get_session(t->fd());
+    s.read(std::move(t));
 }
 
 
-void Queue::write(
-    int fd, std::unique_ptr<rawstor::io::TaskScalar> t)
-{
-    _get_session(fd)->write(std::move(t));
+void Queue::write(std::unique_ptr<rawstor::io::TaskScalar> t) {
+    Session &s = _get_session(t->fd());
+    s.write(std::move(t));
 }
 
 
-void Queue::write(
-    int fd, std::unique_ptr<rawstor::io::TaskVector> t)
-{
-    _get_session(fd)->write(std::move(t));
+void Queue::write(std::unique_ptr<rawstor::io::TaskVector> t) {
+    Session &s = _get_session(t->fd());
+    s.write(std::move(t));
 }
 
 
-void Queue::write(
-    int fd, std::unique_ptr<rawstor::io::TaskScalarPositional> t)
-{
-    _get_session(fd)->write(std::move(t));
+void Queue::write(std::unique_ptr<rawstor::io::TaskScalarPositional> t) {
+    Session &s = _get_session(t->fd());
+    s.write(std::move(t));
 }
 
 
-void Queue::write(
-    int fd, std::unique_ptr<rawstor::io::TaskVectorPositional> t)
-{
-    _get_session(fd)->write(std::move(t));
+void Queue::write(std::unique_ptr<rawstor::io::TaskVectorPositional> t) {
+    Session &s = _get_session(t->fd());
+    s.write(std::move(t));
 }
 
 

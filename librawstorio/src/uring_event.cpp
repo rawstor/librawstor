@@ -17,9 +17,8 @@ namespace io {
 namespace uring {
 
 
-Event::Event(
-    Queue &q, int fd, std::unique_ptr<rawstor::io::Task> t):
-    RawstorIOEvent(q, fd, std::move(t)),
+Event::Event(Queue &q, std::unique_ptr<rawstor::io::Task> t):
+    RawstorIOEvent(q, std::move(t)),
     _sqe(io_uring_get_sqe(q.ring())),
     _cqe(nullptr)
 {
@@ -38,13 +37,13 @@ Event::~Event() {
 
 
 std::unique_ptr<Event> Event::read(
-    Queue &q,
-    int fd, std::unique_ptr<rawstor::io::TaskScalar> t)
+    Queue &q, std::unique_ptr<rawstor::io::TaskScalar> t)
 {
-    std::unique_ptr<Event> event = std::make_unique<Event>(q, fd, std::move(t));
+    std::unique_ptr<Event> event = std::make_unique<Event>(q, std::move(t));
     io_uring_prep_read(
         event->_sqe,
-        fd,
+        static_cast<rawstor::io::TaskScalar*>(
+            event->_t.get())->fd(),
         static_cast<rawstor::io::TaskScalar*>(
             event->_t.get())->buf(),
         static_cast<rawstor::io::TaskScalar*>(
@@ -55,13 +54,13 @@ std::unique_ptr<Event> Event::read(
 
 
 std::unique_ptr<Event> Event::read(
-    Queue &q,
-    int fd, std::unique_ptr<rawstor::io::TaskVector> t)
+    Queue &q, std::unique_ptr<rawstor::io::TaskVector> t)
 {
-    std::unique_ptr<Event> event = std::make_unique<Event>(q, fd, std::move(t));
+    std::unique_ptr<Event> event = std::make_unique<Event>(q, std::move(t));
     io_uring_prep_readv(
         event->_sqe,
-        fd,
+        static_cast<rawstor::io::TaskVector*>(
+            event->_t.get())->fd(),
         static_cast<rawstor::io::TaskVector*>(
             event->_t.get())->iov(),
         static_cast<rawstor::io::TaskVector*>(
@@ -72,13 +71,13 @@ std::unique_ptr<Event> Event::read(
 
 
 std::unique_ptr<Event> Event::read(
-    Queue &q,
-    int fd, std::unique_ptr<rawstor::io::TaskScalarPositional> t)
+    Queue &q, std::unique_ptr<rawstor::io::TaskScalarPositional> t)
 {
-    std::unique_ptr<Event> event = std::make_unique<Event>(q, fd, std::move(t));
+    std::unique_ptr<Event> event = std::make_unique<Event>(q, std::move(t));
     io_uring_prep_read(
         event->_sqe,
-        fd,
+        static_cast<rawstor::io::TaskScalarPositional*>(
+            event->_t.get())->fd(),
         static_cast<rawstor::io::TaskScalarPositional*>(
             event->_t.get())->buf(),
         static_cast<rawstor::io::TaskScalarPositional*>(
@@ -90,13 +89,13 @@ std::unique_ptr<Event> Event::read(
 
 
 std::unique_ptr<Event> Event::read(
-    Queue &q,
-    int fd, std::unique_ptr<rawstor::io::TaskVectorPositional> t)
+    Queue &q, std::unique_ptr<rawstor::io::TaskVectorPositional> t)
 {
-    std::unique_ptr<Event> event = std::make_unique<Event>(q, fd, std::move(t));
+    std::unique_ptr<Event> event = std::make_unique<Event>(q, std::move(t));
     io_uring_prep_readv(
         event->_sqe,
-        fd,
+        static_cast<rawstor::io::TaskVectorPositional*>(
+            event->_t.get())->fd(),
         static_cast<rawstor::io::TaskVectorPositional*>(
             event->_t.get())->iov(),
         static_cast<rawstor::io::TaskVectorPositional*>(
@@ -108,13 +107,13 @@ std::unique_ptr<Event> Event::read(
 
 
 std::unique_ptr<Event> Event::write(
-    Queue &q,
-    int fd, std::unique_ptr<rawstor::io::TaskScalar> t)
+    Queue &q, std::unique_ptr<rawstor::io::TaskScalar> t)
 {
-    std::unique_ptr<Event> event = std::make_unique<Event>(q, fd, std::move(t));
+    std::unique_ptr<Event> event = std::make_unique<Event>(q, std::move(t));
     io_uring_prep_write(
         event->_sqe,
-        fd,
+        static_cast<rawstor::io::TaskScalar*>(
+            event->_t.get())->fd(),
         static_cast<rawstor::io::TaskScalar*>(
             event->_t.get())->buf(),
         static_cast<rawstor::io::TaskScalar*>(
@@ -125,13 +124,13 @@ std::unique_ptr<Event> Event::write(
 
 
 std::unique_ptr<Event> Event::write(
-    Queue &q,
-    int fd, std::unique_ptr<rawstor::io::TaskVector> t)
+    Queue &q, std::unique_ptr<rawstor::io::TaskVector> t)
 {
-    std::unique_ptr<Event> event = std::make_unique<Event>(q, fd, std::move(t));
+    std::unique_ptr<Event> event = std::make_unique<Event>(q, std::move(t));
     io_uring_prep_writev(
         event->_sqe,
-        fd,
+        static_cast<rawstor::io::TaskVector*>(
+            event->_t.get())->fd(),
         static_cast<rawstor::io::TaskVector*>(
             event->_t.get())->iov(),
         static_cast<rawstor::io::TaskVector*>(
@@ -142,13 +141,13 @@ std::unique_ptr<Event> Event::write(
 
 
 std::unique_ptr<Event> Event::write(
-    Queue &q,
-    int fd, std::unique_ptr<rawstor::io::TaskScalarPositional> t)
+    Queue &q, std::unique_ptr<rawstor::io::TaskScalarPositional> t)
 {
-    std::unique_ptr<Event> event = std::make_unique<Event>(q, fd, std::move(t));
+    std::unique_ptr<Event> event = std::make_unique<Event>(q, std::move(t));
     io_uring_prep_write(
         event->_sqe,
-        fd,
+        static_cast<rawstor::io::TaskScalarPositional*>(
+            event->_t.get())->fd(),
         static_cast<rawstor::io::TaskScalarPositional*>(
             event->_t.get())->buf(),
         static_cast<rawstor::io::TaskScalarPositional*>(
@@ -160,13 +159,13 @@ std::unique_ptr<Event> Event::write(
 
 
 std::unique_ptr<Event> Event::write(
-    Queue &q,
-    int fd, std::unique_ptr<rawstor::io::TaskVectorPositional> t)
+    Queue &q, std::unique_ptr<rawstor::io::TaskVectorPositional> t)
 {
-    std::unique_ptr<Event> event = std::make_unique<Event>(q, fd, std::move(t));
+    std::unique_ptr<Event> event = std::make_unique<Event>(q, std::move(t));
     io_uring_prep_writev(
         event->_sqe,
-        fd,
+        static_cast<rawstor::io::TaskVectorPositional*>(
+            event->_t.get())->fd(),
         static_cast<rawstor::io::TaskVectorPositional*>(
             event->_t.get())->iov(),
         static_cast<rawstor::io::TaskVectorPositional*>(
