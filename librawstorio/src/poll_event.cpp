@@ -14,6 +14,11 @@ namespace io {
 namespace poll {
 
 
+void Event::dispatch() {
+    (*_t)(_result, _error);
+}
+
+
 void Event::add_iov(std::vector<iovec> &iov) {
     for (unsigned int i = 0; i < _niov_at; ++i) {
         iov.push_back(_iov_at[i]);
@@ -23,9 +28,9 @@ void Event::add_iov(std::vector<iovec> &iov) {
 
 size_t Event::shift(size_t shift) {
     size_t ret;
-    if (shift >= size()) {
-        ret = shift - size();
-        _result += size();
+    if (shift >= _t->size()) {
+        ret = shift - _t->size();
+        _result += _t->size();
         _niov_at = 0;
     } else {
         ret = rawstor_iovec_shift(&_iov_at, &_niov_at, shift);
@@ -37,7 +42,7 @@ size_t Event::shift(size_t shift) {
 
 size_t EventP::shift(size_t shift) {
     size_t ret = Event::shift(shift);
-    _offset += shift - ret;
+    _offset_at += shift - ret;
     return ret;
 }
 

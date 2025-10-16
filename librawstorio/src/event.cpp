@@ -8,31 +8,35 @@
 #include <memory>
 
 
-RawstorIOEvent::RawstorIOEvent(
+namespace rawstor {
+namespace io {
+
+
+Event::Event(
     rawstor::io::Queue &q, std::unique_ptr<rawstor::io::Task> t):
     _q(q),
     _t(std::move(t))
 #ifdef RAWSTOR_TRACE_EVENTS
     , _trace_id(rawstor_trace_event_begin(
-        "RawstorIOEvent(%d, %zu)\n", fd(), size()))
+        "Event(%d, %zu)\n", fd(), size()))
 #endif
 {}
 
 
-RawstorIOEvent::~RawstorIOEvent() {
+Event::~Event() {
 #ifdef RAWSTOR_TRACE_EVENTS
     rawstor_trace_event_end(
-        _trace_id, "RawstorIOEvent::~RawstorIOEvent()\n");
+        _trace_id, "Event::~Event()\n");
 #endif
 }
 
 
-void RawstorIOEvent::dispatch() {
+void Event::dispatch() {
 #ifdef RAWSTOR_TRACE_EVENTS
     rawstor_trace_event_message(_trace_id, "dispatch()\n");
     try {
 #endif
-        (*_t)(this);
+        (*_t)(result(), error());
 #ifdef RAWSTOR_TRACE_EVENTS
     } catch (std::exception &e) {
         rawstor_trace_event_message(
@@ -45,18 +49,4 @@ void RawstorIOEvent::dispatch() {
 }
 
 
-int rawstor_io_event_fd(RawstorIOEvent *event) {
-    return event->fd();
-}
-
-size_t rawstor_io_event_size(RawstorIOEvent *event) {
-    return event->size();
-}
-
-size_t rawstor_io_event_result(RawstorIOEvent *event) {
-    return event->result();
-}
-
-int rawstor_io_event_error(RawstorIOEvent *event) {
-    return event->error();
-}
+}} // rawstor::io

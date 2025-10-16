@@ -1,14 +1,16 @@
 #ifndef RAWSTORIO_POLL_EVENT_HPP
 #define RAWSTORIO_POLL_EVENT_HPP
 
-#include <rawstorio/event.hpp>
 #include <rawstorio/task.hpp>
+
+#include <rawstorstd/logging.h>
 
 #include <sys/types.h>
 #include <sys/uio.h>
 
 #include <unistd.h>
 
+#include <string>
 #include <vector>
 
 #include <cstddef>
@@ -19,8 +21,13 @@ namespace io {
 namespace poll {
 
 
-class Event: public RawstorIOEvent {
-    private:
+class Queue;
+
+
+class Event {
+    protected:
+        Queue &_q;
+        std::unique_ptr<rawstor::io::Task> _t;
         std::vector<iovec> _iov;
         iovec *_iov_at;
         unsigned int _niov_at;
@@ -31,7 +38,8 @@ class Event: public RawstorIOEvent {
         Event(
             Queue &q,
             std::unique_ptr<rawstor::io::TaskScalar> t):
-            RawstorIOEvent(q, std::move(t)),
+            _q(q),
+            _t(std::move(t)),
             _iov(
                 1,
                 (iovec){
@@ -49,7 +57,8 @@ class Event: public RawstorIOEvent {
         Event(
             Queue &q,
             std::unique_ptr<rawstor::io::TaskVector> t):
-            RawstorIOEvent(q, std::move(t)),
+            _q(q),
+            _t(std::move(t)),
             _niov_at(static_cast<rawstor::io::TaskVector*>(_t.get())->niov()),
             _result(0),
             _error(0)
@@ -64,15 +73,7 @@ class Event: public RawstorIOEvent {
 
         virtual ~Event() {}
 
-        size_t result() const noexcept {
-            return _result;
-        }
-
-        int error() const noexcept {
-            return _error;
-        }
-
-        inline virtual void set_error(int error) noexcept {
+        inline void set_error(int error) noexcept {
             _error = error;
         }
 
@@ -88,22 +89,30 @@ class Event: public RawstorIOEvent {
             return _niov_at == 0;
         }
 
+        void dispatch();
+
         void add_iov(std::vector<iovec> &iov);
 
         virtual size_t shift(size_t shift);
+
+#ifdef RAWSTOR_TRACE_EVENTS
+        void trace(const std::string &message) {
+            _t->trace(message);
+        }
+#endif
 };
 
 
 class EventP: public Event {
     private:
-        off_t _offset;
+        off_t _offset_at;
 
     public:
         EventP(
             Queue &q,
             std::unique_ptr<rawstor::io::TaskScalarPositional> t):
             Event(q, std::move(t)),
-            _offset(static_cast<rawstor::io::TaskScalarPositional*>(
+            _offset_at(static_cast<rawstor::io::TaskScalarPositional*>(
                 _t.get())->offset())
         {}
 
@@ -111,12 +120,12 @@ class EventP: public Event {
             Queue &q,
             std::unique_ptr<rawstor::io::TaskVectorPositional> t):
             Event(q, std::move(t)),
-            _offset(static_cast<rawstor::io::TaskVectorPositional*>(
+            _offset_at(static_cast<rawstor::io::TaskVectorPositional*>(
                 _t.get())->offset())
         {}
 
         inline off_t offset() const noexcept {
-            return _offset;
+            return _offset_at;
         }
 
         size_t shift(size_t shift);

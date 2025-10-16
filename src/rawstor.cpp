@@ -7,7 +7,6 @@
 #include <rawstorstd/logging.h>
 #include <rawstorstd/uri.hpp>
 
-#include <rawstorio/event.hpp>
 #include <rawstorio/task.hpp>
 #include <rawstorio/queue.hpp>
 
@@ -51,8 +50,8 @@ class TaskScalar final: public rawstor::io::TaskScalar {
             _data(data)
         {}
 
-        void operator()(RawstorIOEvent *event) {
-            int res = _cb(event, _data);
+        void operator()(size_t result, int error) {
+            int res = _cb(result, error, _data);
             if (res) {
                 RAWSTOR_THROW_SYSTEM_ERROR(-res);
             }
@@ -89,8 +88,8 @@ class TaskVector final: public rawstor::io::TaskVector {
             _data(data)
         {}
 
-        void operator()(RawstorIOEvent *event) {
-            int res = _cb(event, _data);
+        void operator()(size_t result, int error) {
+            int res = _cb(result, error, _data);
             if (res) {
                 RAWSTOR_THROW_SYSTEM_ERROR(-res);
             }
@@ -131,8 +130,8 @@ class TaskScalarPositional final: public rawstor::io::TaskScalarPositional {
             _data(data)
         {}
 
-        void operator()(RawstorIOEvent *event) {
-            int res = _cb(event, _data);
+        void operator()(size_t result, int error) {
+            int res = _cb(result, error, _data);
             if (res) {
                 RAWSTOR_THROW_SYSTEM_ERROR(-res);
             }
@@ -175,8 +174,8 @@ class TaskVectorPositional final: public rawstor::io::TaskVectorPositional {
             _data(data)
         {}
 
-        void operator()(RawstorIOEvent *event) {
-            int res = _cb(event, _data);
+        void operator()(size_t result, int error) {
+            int res = _cb(result, error, _data);
             if (res) {
                 RAWSTOR_THROW_SYSTEM_ERROR(-res);
             }
@@ -271,16 +270,6 @@ int rawstor_wait() {
         return -e.code().value();
     }
     return 0;
-}
-
-
-int rawstor_dispatch_event(RawstorIOEvent *event) {
-    try {
-        event->dispatch();
-        return 0;
-    } catch (std::system_error &e) {
-        return -e.code().value();
-    }
 }
 
 

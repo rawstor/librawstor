@@ -93,23 +93,22 @@ static int dispatch_vu_request(VhostUserMsg *msg) {
 }
 
 
-static int server_read(RawstorIOEvent *event, void *data);
+static int server_read(size_t result, int error, void *data);
 
 
-static int server_write(RawstorIOEvent *event, void *data);
+static int server_write(size_t result, int error, void *data);
 
 
-static int server_read(RawstorIOEvent *event, void *data) {
-    int client_socket = rawstor_io_event_fd(event);
+static int server_read(size_t result, int error, void *data) {
+    // TODO: implement server in CPP.
+    int client_socket = 0; // rawstor_io_event_fd(event);
     VhostUserMsg *msg = (VhostUserMsg*)data;
 
-    int error = rawstor_io_event_error(event);
     if (error != 0) {
         fprintf(stderr, "read() failed: %s\n", strerror(error));
         return -error;
     }
 
-    size_t result = rawstor_io_event_result(event);
     if (result == 0) {
         fprintf(
             stderr,
@@ -160,20 +159,20 @@ static int server_read(RawstorIOEvent *event, void *data) {
 }
 
 
-static int server_write(RawstorIOEvent *event, void *data) {
-    int client_socket = rawstor_io_event_fd(event);
+static int server_write(size_t result, int error, void *data) {
+    // TODO: implement server in CPP.
+    int client_socket = 0; // rawstor_io_event_fd(event);
     VhostUserMsg *msg = (VhostUserMsg*)data;
 
-    int error = rawstor_io_event_error(event);
     if (error != 0) {
         fprintf(stderr, "write() failed: %s\n", strerror(error));
         return -error;
     }
 
-    printf("Message sent: %ld bytes\n", rawstor_io_event_result(event));
+    printf("Message sent: %ld bytes\n", result);
 
     int res = rawstor_fd_read(
-        client_socket, msg, rawstor_io_event_size(event),
+        client_socket, msg, sizeof(*msg),
         server_read, msg);
     if (res) {
         fprintf(stderr, "rawstor_fd_read() failed: %s\n", strerror(-res));

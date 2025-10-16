@@ -1,7 +1,5 @@
 #include "uring_queue.hpp"
 
-#include "uring_event.hpp"
-
 #include <rawstorstd/gpp.hpp>
 #include <rawstorstd/socket.h>
 
@@ -65,58 +63,98 @@ void Queue::setup_fd(int fd) {
 
 
 void Queue::read(std::unique_ptr<rawstor::io::TaskScalar> t) {
-    std::unique_ptr<Event> e = Event::read(*this, std::move(t));
+    io_uring_sqe *sqe = io_uring_get_sqe(&_ring);
+    if (sqe == nullptr) {
+        RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
+    }
+    io_uring_prep_read(sqe, t->fd(), t->buf(), t->size(), 0);
+    io_uring_sqe_set_data(sqe, t.get());
     ++_events;
-    e.release();
+    t.release();
 }
 
 
 void Queue::read(std::unique_ptr<rawstor::io::TaskVector> t) {
-    std::unique_ptr<Event> e = Event::read(*this, std::move(t));
+    io_uring_sqe *sqe = io_uring_get_sqe(&_ring);
+    if (sqe == nullptr) {
+        RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
+    }
+    io_uring_prep_readv(sqe, t->fd(), t->iov(), t->niov(), 0);
+    io_uring_sqe_set_data(sqe, t.get());
     ++_events;
-    e.release();
+    t.release();
 }
 
 
 void Queue::read(std::unique_ptr<rawstor::io::TaskScalarPositional> t) {
-    std::unique_ptr<Event> e = Event::read(*this, std::move(t));
+    io_uring_sqe *sqe = io_uring_get_sqe(&_ring);
+    if (sqe == nullptr) {
+        RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
+    }
+    io_uring_prep_read(sqe, t->fd(), t->buf(), t->size(), t->offset());
+    io_uring_sqe_set_data(sqe, t.get());
     ++_events;
-    e.release();
+    t.release();
 }
 
 
 void Queue::read(std::unique_ptr<rawstor::io::TaskVectorPositional> t) {
-    std::unique_ptr<Event> e = Event::read(*this, std::move(t));
+    io_uring_sqe *sqe = io_uring_get_sqe(&_ring);
+    if (sqe == nullptr) {
+        RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
+    }
+    io_uring_prep_readv(sqe, t->fd(), t->iov(), t->niov(), t->offset());
+    io_uring_sqe_set_data(sqe, t.get());
     ++_events;
-    e.release();
+    t.release();
 }
 
 
 void Queue::write(std::unique_ptr<rawstor::io::TaskScalar> t) {
-    std::unique_ptr<Event> e = Event::write(*this, std::move(t));
+    io_uring_sqe *sqe = io_uring_get_sqe(&_ring);
+    if (sqe == nullptr) {
+        RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
+    }
+    io_uring_prep_write(sqe, t->fd(), t->buf(), t->size(), 0);
+    io_uring_sqe_set_data(sqe, t.get());
     ++_events;
-    e.release();
+    t.release();
 }
 
 
 void Queue::write(std::unique_ptr<rawstor::io::TaskVector> t) {
-    std::unique_ptr<Event> e = Event::write(*this, std::move(t));
+    io_uring_sqe *sqe = io_uring_get_sqe(&_ring);
+    if (sqe == nullptr) {
+        RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
+    }
+    io_uring_prep_writev(sqe, t->fd(), t->iov(), t->niov(), 0);
+    io_uring_sqe_set_data(sqe, t.get());
     ++_events;
-    e.release();
+    t.release();
 }
 
 
 void Queue::write(std::unique_ptr<rawstor::io::TaskScalarPositional> t) {
-    std::unique_ptr<Event> e = Event::write(*this, std::move(t));
+    io_uring_sqe *sqe = io_uring_get_sqe(&_ring);
+    if (sqe == nullptr) {
+        RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
+    }
+    io_uring_prep_write(sqe, t->fd(), t->buf(), t->size(), t->offset());
+    io_uring_sqe_set_data(sqe, t.get());
     ++_events;
-    e.release();
+    t.release();
 }
 
 
 void Queue::write(std::unique_ptr<rawstor::io::TaskVectorPositional> t) {
-    std::unique_ptr<Event> e = Event::write(*this, std::move(t));
+    io_uring_sqe *sqe = io_uring_get_sqe(&_ring);
+    if (sqe == nullptr) {
+        RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
+    }
+    io_uring_prep_writev(sqe, t->fd(), t->iov(), t->niov(), t->offset());
+    io_uring_sqe_set_data(sqe, t.get());
     ++_events;
-    e.release();
+    t.release();
 }
 
 
@@ -153,14 +191,17 @@ void Queue::wait(unsigned int timeout) {
         }
     }
 
-    std::unique_ptr<Event> event(
-        static_cast<Event*>(io_uring_cqe_get_data(cqe)));
+    std::unique_ptr<rawstor::io::Task> t(
+        static_cast<rawstor::io::Task*>(io_uring_cqe_get_data(cqe)));
 
-    event->set_cqe(cqe);
+    size_t result = cqe->res >= 0 ? cqe->res : 0;
+    int error = cqe->res < 0 ? -cqe->res : 0;
+
+    io_uring_cqe_seen(&_ring, cqe);
 
     --_events;
 
-    event->dispatch();
+    (*t)(result, error);
 }
 
 

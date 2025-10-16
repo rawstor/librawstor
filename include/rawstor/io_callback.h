@@ -1,8 +1,6 @@
 #ifndef RAWSTOR_IO_CALLBACK_H
 #define RAWSTOR_IO_CALLBACK_H
 
-#include <rawstor/io_event.h>
-
 #include <stddef.h>
 
 
@@ -11,7 +9,7 @@ extern "C" {
 #endif
 
 
-typedef int(RawstorIOCallback)(RawstorIOEvent *event, void *data);
+typedef int(RawstorIOCallback)(size_t result, int error, void *data);
 
 
 #ifdef __cplusplus
