@@ -10,6 +10,7 @@
 
 #include <unistd.h>
 
+#include <memory>
 #include <string>
 #include <vector>
 
