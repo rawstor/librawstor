@@ -30,9 +30,6 @@ namespace poll {
 
 
 Session& Queue::_get_session(int fd) {
-    /**
-     * TODO: replace list with map or hash.
-     */
     std::unordered_map<int, std::shared_ptr<Session>>::iterator it =
         _sessions.find(fd);
     if (it != _sessions.end()) {
