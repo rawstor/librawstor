@@ -2,6 +2,7 @@
 
 #include <rawstorstd/iovec.h>
 
+#include <sstream>
 #include <vector>
 
 #include <sys/types.h>
@@ -15,7 +16,20 @@ namespace poll {
 
 
 void Event::dispatch() {
-    (*_t)(_result, _error);
+#ifdef RAWSTOR_TRACE_EVENTS
+    trace("callback");
+    try {
+#endif
+        (*_t)(_result, _error);
+#ifdef RAWSTOR_TRACE_EVENTS
+    } catch (std::exception &e) {
+        std::ostringstream oss;
+        oss << "callback error: " << e.what();
+        trace(oss.str());
+        throw;
+    }
+    trace("callback success");
+#endif
 }
 
 

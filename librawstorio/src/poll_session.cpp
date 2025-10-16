@@ -288,6 +288,9 @@ void SeekableSession::_process(
     if (res > 0) {
         res = event->shift(res);
         if (event->completed()) {
+#ifdef RAWSTOR_TRACE_EVENTS
+            event->trace("completed");
+#endif
             cqes.push(event);
         } else {
 #ifdef RAWSTOR_TRACE_EVENTS
@@ -360,6 +363,9 @@ void UnseekableSession::_process(
             for (rawstor::io::poll::Event *event: events) {
                 res = event->shift(res);
                 if (event->completed()) {
+#ifdef RAWSTOR_TRACE_EVENTS
+                    event->trace("completed");
+#endif
                     cqes.push(event);
                 } else {
 #ifdef RAWSTOR_TRACE_EVENTS
