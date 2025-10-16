@@ -1,6 +1,6 @@
 #include "connection.hpp"
 
-#include "driver.hpp"
+#include "session.hpp"
 #include "opts.h"
 
 #include <rawstorio/queue.hpp>
@@ -27,7 +27,7 @@ class ConnectionOp {
         void *_data;
 
     protected:
-        std::shared_ptr<Driver> _s;
+        std::shared_ptr<Session> _s;
         unsigned int _attempts;
 
         static int _submit_cb(
@@ -42,7 +42,7 @@ class ConnectionOp {
         ConnectionOp& operator=(const ConnectionOp &) = delete;
         ConnectionOp& operator=(ConnectionOp &&) = delete;
 
-        virtual void submit(const std::shared_ptr<Driver> &s) = 0;
+        virtual void submit(const std::shared_ptr<Session> &s) = 0;
 
         virtual std::string str() const = 0;
 
@@ -140,7 +140,7 @@ class ConnectionOpPRead: public rawstor::ConnectionOp {
             _offset(offset)
         {}
 
-        void submit(const std::shared_ptr<rawstor::Driver> &s) {
+        void submit(const std::shared_ptr<rawstor::Session> &s) {
             _s = s;
             ++_attempts;
             _s->pread(_buf, _size, _offset, _submit_cb, this);
@@ -173,7 +173,7 @@ class ConnectionOpPReadV: public rawstor::ConnectionOp {
             _offset(offset)
         {}
 
-        void submit(const std::shared_ptr<rawstor::Driver> &s) {
+        void submit(const std::shared_ptr<rawstor::Session> &s) {
             _s = s;
             ++_attempts;
             _s->preadv(_iov, _niov, _size, _offset, _submit_cb, this);
@@ -204,7 +204,7 @@ class ConnectionOpPWrite: public rawstor::ConnectionOp {
             _offset(offset)
         {}
 
-        void submit(const std::shared_ptr<rawstor::Driver> &s) {
+        void submit(const std::shared_ptr<rawstor::Session> &s) {
             _s = s;
             ++_attempts;
             _s->pwrite(_buf, _size, _offset, _submit_cb, this);
@@ -237,7 +237,7 @@ class ConnectionOpPWriteV: public rawstor::ConnectionOp {
             _offset(offset)
         {}
 
-        void submit(const std::shared_ptr<rawstor::Driver> &s) {
+        void submit(const std::shared_ptr<rawstor::Session> &s) {
             _s = s;
             ++_attempts;
             _s->pwritev(_iov, _niov, _size, _offset, _submit_cb, this);
@@ -335,12 +335,12 @@ Connection::~Connection() {
 }
 
 
-std::vector<std::shared_ptr<Driver>> Connection::_open(
+std::vector<std::shared_ptr<Session>> Connection::_open(
     const URI &uri,
     RawstorObject *object,
     size_t nsessions)
 {
-    std::vector<std::shared_ptr<Driver>> sessions;
+    std::vector<std::shared_ptr<Session>> sessions;
 
     for (
         unsigned int attempt = 1;
@@ -353,10 +353,10 @@ std::vector<std::shared_ptr<Driver>> Connection::_open(
             sessions.clear();
             sessions.reserve(nsessions);
             for (size_t i = 0; i < nsessions; ++i) {
-                sessions.push_back(Driver::create(uri, _depth));
+                sessions.push_back(Session::create(uri, _depth));
             }
 
-            for (std::shared_ptr<Driver> s: sessions) {
+            for (std::shared_ptr<Session> s: sessions) {
                 s->set_object(q.queue(), object, q.callback, &q);
             }
 
@@ -385,12 +385,12 @@ std::vector<std::shared_ptr<Driver>> Connection::_open(
 }
 
 
-std::shared_ptr<Driver> Connection::_get_next_session() {
+std::shared_ptr<Session> Connection::_get_next_session() {
     if (_sessions.empty()) {
         throw std::runtime_error("Empty sessions list");
     }
 
-    std::shared_ptr<Driver> s = _sessions[_session_index++];
+    std::shared_ptr<Session> s = _sessions[_session_index++];
     if (_session_index >= _sessions.size()) {
         _session_index = 0;
     }
@@ -399,14 +399,14 @@ std::shared_ptr<Driver> Connection::_get_next_session() {
 }
 
 
-void Connection::invalidate_session(const std::shared_ptr<Driver> &s) {
-    typename std::vector<std::shared_ptr<Driver>>::iterator it = std::find(
+void Connection::invalidate_session(const std::shared_ptr<Session> &s) {
+    typename std::vector<std::shared_ptr<Session>>::iterator it = std::find(
         _sessions.begin(), _sessions.end(), s);
 
     if (it != _sessions.end()) {
         _sessions.erase(it);
 
-        std::vector<std::shared_ptr<Driver>> new_sessions = _open(
+        std::vector<std::shared_ptr<Session>> new_sessions = _open(
             s->uri(), _object, 1);
 
         _sessions.push_back(new_sessions.front());
@@ -420,7 +420,7 @@ void Connection::create(
 {
     Queue q(1, _depth);
 
-    std::unique_ptr<Driver> s = Driver::create(uri, _depth);
+    std::unique_ptr<Session> s = Session::create(uri, _depth);
     s->create(q.queue(), sp, id, q.callback, &q);
 
     q.wait();
@@ -436,7 +436,7 @@ void Connection::remove(const URI &uri) {
 
     Queue q(1, _depth);
 
-    std::unique_ptr<Driver> s = Driver::create(uri.up(), _depth);
+    std::unique_ptr<Session> s = Session::create(uri.up(), _depth);
     s->remove(q.queue(), id, q.callback, &q);
 
     q.wait();
@@ -452,7 +452,7 @@ void Connection::spec(const URI &uri, RawstorObjectSpec *sp) {
 
     Queue q(1, _depth);
 
-    std::unique_ptr<Driver> s = Driver::create(uri.up(), _depth);
+    std::unique_ptr<Session> s = Session::create(uri.up(), _depth);
     s->spec(q.queue(), id, sp, q.callback, &q);
 
     q.wait();

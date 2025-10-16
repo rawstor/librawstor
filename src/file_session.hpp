@@ -1,7 +1,7 @@
-#ifndef RAWSTOR_FILE_DRIVER_HPP
-#define RAWSTOR_FILE_DRIVER_HPP
+#ifndef RAWSTOR_FILE_SESSION_HPP
+#define RAWSTOR_FILE_SESSION_HPP
 
-#include "driver.hpp"
+#include "session.hpp"
 
 #include <rawstorio/queue.hpp>
 
@@ -16,16 +16,16 @@ namespace rawstor {
 namespace file {
 
 
-class DriverOp;
+class SessionOp;
 
 
-class Driver final: public rawstor::Driver {
+class Session final: public rawstor::Session {
     private:
         RawstorObject *_object;
 
         int _connect(const RawstorUUID &id);
     public:
-        Driver(const URI &uri, unsigned int depth);
+        Session(const URI &uri, unsigned int depth);
 
         inline RawstorObject* object() const noexcept {
             return _object;
@@ -72,4 +72,4 @@ class Driver final: public rawstor::Driver {
 }} // rawstor::file
 
 
-#endif // RAWSTOR_FILE_DRIVER_HPP
+#endif // RAWSTOR_FILE_SESSION_HPP

@@ -17,7 +17,7 @@ namespace rawstor {
 
 class ConnectionOp;
 
-class Driver;
+class Session;
 
 
 class Connection final {
@@ -25,15 +25,15 @@ class Connection final {
         RawstorObject *_object;
         unsigned int _depth;
 
-        std::vector<std::shared_ptr<Driver>> _sessions;
+        std::vector<std::shared_ptr<Session>> _sessions;
         size_t _session_index;
 
-        std::vector<std::shared_ptr<Driver>> _open(
+        std::vector<std::shared_ptr<Session>> _open(
             const URI &uri,
             RawstorObject *object,
             size_t nsessions);
 
-        std::shared_ptr<Driver> _get_next_session();
+        std::shared_ptr<Session> _get_next_session();
 
     public:
         Connection(unsigned int depth);
@@ -42,7 +42,7 @@ class Connection final {
 
         Connection& operator=(const Connection&) = delete;
 
-        void invalidate_session(const std::shared_ptr<Driver> &s);
+        void invalidate_session(const std::shared_ptr<Session> &s);
 
         void create(
             const URI &uri,

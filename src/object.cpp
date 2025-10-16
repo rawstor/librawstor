@@ -3,9 +3,9 @@
 
 #include "config.h"
 #include "connection.hpp"
-#include "file_driver.hpp"
+#include "file_session.hpp"
 #include "opts.h"
-#include "ost_driver.hpp"
+#include "ost_session.hpp"
 #include "rawstor_internals.hpp"
 
 #include <rawstorstd/gpp.hpp>

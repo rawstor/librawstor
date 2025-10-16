@@ -1,7 +1,7 @@
-#ifndef RAWSTOR_OST_DRIVER_HPP
-#define RAWSTOR_OST_DRIVER_HPP
+#ifndef RAWSTOR_OST_SESSION_HPP
+#define RAWSTOR_OST_SESSION_HPP
 
-#include "driver.hpp"
+#include "session.hpp"
 #include "ost_protocol.h"
 
 #include <rawstorstd/ringbuf.hpp>
@@ -25,7 +25,7 @@ namespace ost {
 class Context;
 
 
-class Driver final: public rawstor::Driver {
+class Session final: public rawstor::Session {
     private:
         uint16_t _cid_counter;
 
@@ -36,8 +36,8 @@ class Driver final: public rawstor::Driver {
         int _connect();
 
     public:
-        Driver(const URI &uri, unsigned int depth);
-        ~Driver();
+        Session(const URI &uri, unsigned int depth);
+        ~Session();
 
         inline RawstorObject* object() noexcept {
             return _object;
@@ -91,4 +91,4 @@ class Driver final: public rawstor::Driver {
 
 }} // rawstor::ost
 
-#endif // RAWSTOR_OST_DRIVER_HPP
+#endif // RAWSTOR_OST_SESSION_HPP

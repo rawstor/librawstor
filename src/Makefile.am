@@ -30,11 +30,11 @@ librawstor_la_HEADERS = $(top_srcdir)/include/rawstor/io_callback.h \
                         $(top_srcdir)/include/rawstor/uuid.h
 
 librawstor_la_SOURCES = connection.cpp \
-                        driver.cpp \
-                        file_driver.cpp \
+                        file_session.cpp \
                         object.cpp \
-                        ost_driver.cpp \
+                        ost_session.cpp \
                         opts.c \
+                        session.cpp \
                         rawstor.cpp
 
 librawstor_la_LIBADD = $(top_srcdir)/librawstorstd/src/librawstorstd.la \

@@ -1,5 +1,5 @@
-#ifndef RAWSTOR_DRIVER_HPP
-#define RAWSTOR_DRIVER_HPP
+#ifndef RAWSTOR_SESSION_HPP
+#define RAWSTOR_SESSION_HPP
 
 #include "object.hpp"
 
@@ -16,7 +16,7 @@
 namespace rawstor {
 
 
-class Driver {
+class Session {
     private:
         unsigned int _depth;
         URI _uri;
@@ -28,15 +28,15 @@ class Driver {
         }
 
     public:
-        static std::unique_ptr<Driver> create(
+        static std::unique_ptr<Session> create(
             const URI &uri, unsigned int depth);
 
-        Driver(const URI &uri, unsigned int depth);
-        Driver(const Driver &) = delete;
-        Driver(Driver &&) noexcept = delete;
-        virtual ~Driver();
-        Driver& operator=(const Driver &) = delete;
-        Driver& operator=(Driver &&) = delete;
+        Session(const URI &uri, unsigned int depth);
+        Session(const Session &) = delete;
+        Session(Session &&) noexcept = delete;
+        virtual ~Session();
+        Session& operator=(const Session &) = delete;
+        Session& operator=(Session &&) = delete;
 
         std::string str() const;
 
@@ -92,4 +92,4 @@ class Driver {
 
 } //rawstor
 
-#endif // RAWSTOR_DRIVER_HPP
+#endif // RAWSTOR_SESSION_HPP
