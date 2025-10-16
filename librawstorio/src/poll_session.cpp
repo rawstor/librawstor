@@ -56,84 +56,60 @@ class SeekableSession: public rawstor::io::poll::Session {
             return _read_sqes.empty() && _write_sqes.empty();
         }
 
-        void read(
-            void *, size_t,
-            std::unique_ptr<rawstor::io::Task>)
-        {
+        void read(std::unique_ptr<rawstor::io::TaskScalar>) {
             throw std::runtime_error(
                 "method not allowed for seekable session");
         }
 
-        void readv(
-            struct iovec *, unsigned int, size_t,
-            std::unique_ptr<rawstor::io::Task>)
-        {
+        void read(std::unique_ptr<rawstor::io::TaskVector>) {
             throw std::runtime_error(
                 "method not allowed for seekable session");
         }
 
-        void pread(
-            void *buf, size_t size, off_t offset,
-            std::unique_ptr<rawstor::io::Task> t)
-        {
+        void read(std::unique_ptr<rawstor::io::TaskScalarPositional> t) {
             std::unique_ptr<rawstor::io::poll::EventP> event =
                 std::make_unique<rawstor::io::poll::EventP>(
-                    _q, _fd, buf, size, offset, std::move(t));
+                    _q, std::move(t));
 
             _read_sqes.push(event.get());
 
             event.release();
         }
 
-        void preadv(
-            struct iovec *iov, unsigned int niov, size_t size, off_t offset,
-            std::unique_ptr<rawstor::io::Task> t)
-        {
+        void read(std::unique_ptr<rawstor::io::TaskVectorPositional> t) {
             std::unique_ptr<rawstor::io::poll::EventP> event =
                 std::make_unique<rawstor::io::poll::EventP>(
-                    _q, _fd, iov, niov, size, offset, std::move(t));
+                    _q, std::move(t));
 
             _read_sqes.push(event.get());
 
             event.release();
         }
 
-        void write(
-            void *, size_t,
-            std::unique_ptr<rawstor::io::Task>)
-        {
+        void write(std::unique_ptr<rawstor::io::TaskScalar>) {
             throw std::runtime_error(
                 "method not allowed for seekable session");
         }
 
-        void writev(
-            struct iovec *, unsigned int, size_t,
-            std::unique_ptr<rawstor::io::Task>)
-        {
+        void write(std::unique_ptr<rawstor::io::TaskVector>) {
             throw std::runtime_error(
                 "method not allowed for seekable session");
         }
 
-        void pwrite(
-            void *buf, size_t size, off_t offset,
-            std::unique_ptr<rawstor::io::Task> t)
-        {
+        void write(std::unique_ptr<rawstor::io::TaskScalarPositional> t) {
             std::unique_ptr<rawstor::io::poll::EventP> event =
                 std::make_unique<rawstor::io::poll::EventP>(
-                    _q, _fd, buf, size, offset, std::move(t));
+                    _q, std::move(t));
 
             _write_sqes.push(event.get());
 
             event.release();
         }
 
-        void pwritev(
-            struct iovec *iov, unsigned int niov, size_t size, off_t offset,
-            std::unique_ptr<rawstor::io::Task> t)
-        {
+        void write(std::unique_ptr<rawstor::io::TaskVectorPositional> t) {
             std::unique_ptr<rawstor::io::poll::EventP> event =
                 std::make_unique<rawstor::io::poll::EventP>(
-                    _q, _fd, iov, niov, size, offset, std::move(t));
+                    _q, std::move(t));
 
             _write_sqes.push(event.get());
 
@@ -192,86 +168,62 @@ class UnseekableSession: public rawstor::io::poll::Session {
             return _read_sqes.empty() && _write_sqes.empty();
         }
 
-        void read(
-            void *buf, size_t size,
-            std::unique_ptr<rawstor::io::Task> t)
-        {
+        void read(std::unique_ptr<rawstor::io::TaskScalar> t) {
             std::unique_ptr<rawstor::io::poll::Event> event =
                 std::make_unique<rawstor::io::poll::Event>(
-                    _q, _fd, buf, size, std::move(t));
+                    _q, std::move(t));
 
             _read_sqes.push(event.get());
 
             event.release();
         }
 
-        void readv(
-            struct iovec *iov, unsigned int niov, size_t size,
-            std::unique_ptr<rawstor::io::Task> t)
-        {
+        void read(std::unique_ptr<rawstor::io::TaskVector> t) {
             std::unique_ptr<rawstor::io::poll::Event> event =
                 std::make_unique<rawstor::io::poll::Event>(
-                    _q, _fd, iov, niov, size, std::move(t));
+                    _q, std::move(t));
 
             _read_sqes.push(event.get());
 
             event.release();
         }
 
-        void pread(
-            void *, size_t, off_t,
-            std::unique_ptr<rawstor::io::Task>)
-        {
+        void read(std::unique_ptr<rawstor::io::TaskScalarPositional>) {
             throw std::runtime_error(
                 "method not allowed for unseekable session");
         }
 
-        void preadv(
-            struct iovec *, unsigned int, size_t, off_t,
-            std::unique_ptr<rawstor::io::Task>)
-        {
+        void read(std::unique_ptr<rawstor::io::TaskVectorPositional>) {
             throw std::runtime_error(
                 "method not allowed for unseekable session");
         }
 
-        void write(
-            void *buf, size_t size,
-            std::unique_ptr<rawstor::io::Task> t)
-        {
+        void write(std::unique_ptr<rawstor::io::TaskScalar> t) {
             std::unique_ptr<rawstor::io::poll::Event> event =
                 std::make_unique<rawstor::io::poll::Event>(
-                    _q, _fd, buf, size, std::move(t));
+                    _q, std::move(t));
 
             _write_sqes.push(event.get());
 
             event.release();
         }
 
-        void writev(
-            struct iovec *iov, unsigned int niov, size_t size,
-            std::unique_ptr<rawstor::io::Task> t)
-        {
+        void write(std::unique_ptr<rawstor::io::TaskVector> t) {
             std::unique_ptr<rawstor::io::poll::Event> event =
                 std::make_unique<rawstor::io::poll::Event>(
-                    _q, _fd, iov, niov, size, std::move(t));
+                    _q, std::move(t));
 
             _write_sqes.push(event.get());
 
             event.release();
         }
 
-        void pwrite(
-            void *, size_t, off_t,
-            std::unique_ptr<rawstor::io::Task>)
-        {
+        void write(std::unique_ptr<rawstor::io::TaskScalarPositional>) {
             throw std::runtime_error(
                 "method not allowed for unseekable session");
         }
 
-        void pwritev(
-            struct iovec *, unsigned int, size_t, off_t,
-            std::unique_ptr<rawstor::io::Task>)
-        {
+        void write(std::unique_ptr<rawstor::io::TaskVectorPositional>) {
             throw std::runtime_error(
                 "method not allowed for unseekable session");
         }

@@ -29,20 +29,17 @@ namespace io {
 namespace poll {
 
 
-std::shared_ptr<Session> Queue::_get_session(int fd) {
-    /**
-     * TODO: replace list with map or hash.
-     */
+Session& Queue::_get_session(int fd) {
     std::unordered_map<int, std::shared_ptr<Session>>::iterator it =
         _sessions.find(fd);
     if (it != _sessions.end()) {
-        return it->second;
+        return *it->second;
     }
 
     std::shared_ptr<Session> session = Session::create(*this, fd);
     _sessions[fd] = session;
 
-    return session;
+    return *session;
 }
 
 
@@ -77,68 +74,51 @@ void Queue::setup_fd(int fd) {
 }
 
 
-void Queue::read(
-    int fd,
-    void *buf, size_t size,
-    std::unique_ptr<rawstor::io::Task> t)
-{
-    _get_session(fd)->read(buf, size, std::move(t));
+void Queue::read(std::unique_ptr<rawstor::io::TaskScalar> t) {
+    Session &s = _get_session(t->fd());
+    s.read(std::move(t));
 }
 
 
-void Queue::readv(
-    int fd, struct iovec *iov, unsigned int niov, size_t size,
-    std::unique_ptr<rawstor::io::Task> t)
-{
-    _get_session(fd)->readv(iov, niov, size, std::move(t));
+void Queue::read(std::unique_ptr<rawstor::io::TaskVector> t) {
+    Session &s = _get_session(t->fd());
+    s.read(std::move(t));
 }
 
 
-void Queue::pread(
-    int fd, void *buf, size_t size, off_t offset,
-    std::unique_ptr<rawstor::io::Task> t)
-{
-    _get_session(fd)->pread(buf, size, offset, std::move(t));
+void Queue::read(std::unique_ptr<rawstor::io::TaskScalarPositional> t) {
+    Session &s = _get_session(t->fd());
+    s.read(std::move(t));
 }
 
 
-void Queue::preadv(
-    int fd, struct iovec *iov, unsigned int niov, size_t size, off_t offset,
-    std::unique_ptr<rawstor::io::Task> t)
-{
-    _get_session(fd)->preadv(iov, niov, size, offset, std::move(t));
+void Queue::read(std::unique_ptr<rawstor::io::TaskVectorPositional> t) {
+    Session &s = _get_session(t->fd());
+    s.read(std::move(t));
 }
 
 
-void Queue::write(
-    int fd, void *buf, size_t size,
-    std::unique_ptr<rawstor::io::Task> t)
-{
-    _get_session(fd)->write(buf, size, std::move(t));
+void Queue::write(std::unique_ptr<rawstor::io::TaskScalar> t) {
+    Session &s = _get_session(t->fd());
+    s.write(std::move(t));
 }
 
 
-void Queue::writev(
-    int fd, struct iovec *iov, unsigned int niov, size_t size,
-    std::unique_ptr<rawstor::io::Task> t)
-{
-    _get_session(fd)->writev(iov, niov, size, std::move(t));
+void Queue::write(std::unique_ptr<rawstor::io::TaskVector> t) {
+    Session &s = _get_session(t->fd());
+    s.write(std::move(t));
 }
 
 
-void Queue::pwrite(
-    int fd, void *buf, size_t size, off_t offset,
-    std::unique_ptr<rawstor::io::Task> t)
-{
-    _get_session(fd)->pwrite(buf, size, offset, std::move(t));
+void Queue::write(std::unique_ptr<rawstor::io::TaskScalarPositional> t) {
+    Session &s = _get_session(t->fd());
+    s.write(std::move(t));
 }
 
 
-void Queue::pwritev(
-    int fd, struct iovec *iov, unsigned int niov, size_t size, off_t offset,
-    std::unique_ptr<rawstor::io::Task> t)
-{
-    _get_session(fd)->pwritev(iov, niov, size, offset, std::move(t));
+void Queue::write(std::unique_ptr<rawstor::io::TaskVectorPositional> t) {
+    Session &s = _get_session(t->fd());
+    s.write(std::move(t));
 }
 
 

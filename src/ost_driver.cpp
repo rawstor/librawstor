@@ -442,12 +442,13 @@ class DriverOpWrite final: public DriverOp {
 };
 
 
-class Request: public rawstor::io::Task {
+class RequestScalar: public rawstor::io::TaskScalar {
     protected:
         std::shared_ptr<DriverOp> _op;
 
     public:
-        Request(const std::shared_ptr<DriverOp> &op):
+        RequestScalar(int fd, const std::shared_ptr<DriverOp> &op):
+            rawstor::io::TaskScalar(fd),
             _op(op)
         {}
 
@@ -457,16 +458,33 @@ class Request: public rawstor::io::Task {
 };
 
 
-class RequestBasic: public Request {
+class RequestVector: public rawstor::io::TaskVector {
+    protected:
+        std::shared_ptr<DriverOp> _op;
+
+    public:
+        RequestVector(int fd, const std::shared_ptr<DriverOp> &op):
+            rawstor::io::TaskVector(fd),
+            _op(op)
+        {}
+
+        void operator()(RawstorIOEvent *event) {
+            _op->request_cb(event);
+        }
+};
+
+
+class RequestBasic: public RequestScalar {
     protected:
         RawstorOSTFrameBasic _request;
 
     public:
         RequestBasic(
+            int fd,
             const std::shared_ptr<DriverOp> &op,
             const RawstorUUID &id,
             const RawstorOSTCommandType &cmd):
-            Request(op),
+            RequestScalar(fd, op),
             _request({
                 .magic = RAWSTOR_MAGIC,
                 .cmd = cmd,
@@ -478,7 +496,7 @@ class RequestBasic: public Request {
             memcpy(_request.obj_id, id.bytes, sizeof(_request.obj_id));
         }
 
-        void* data() noexcept {
+        void* buf() noexcept {
             return &_request;
         }
 
@@ -491,23 +509,25 @@ class RequestBasic: public Request {
 class RequestSetObjectId final: public RequestBasic {
     public:
         RequestSetObjectId(
+            int fd,
             const std::shared_ptr<DriverOp> &op,
             const RawstorUUID &id):
-            RequestBasic(op, id, RAWSTOR_CMD_SET_OBJECT)
+            RequestBasic(fd, op, id, RAWSTOR_CMD_SET_OBJECT)
         {}
 };
 
 
-class RequestIO: public Request {
+class RequestIOScalar: public RequestScalar {
     protected:
         RawstorOSTFrameIO _request;
 
     public:
-        RequestIO(
+        RequestIOScalar(
+            int fd,
             const std::shared_ptr<DriverOp> &op,
             const RawstorOSTCommandType &cmd,
             size_t size, off_t offset, uint64_t hash):
-            Request(op),
+            RequestScalar(fd, op),
             _request({
                 .magic = RAWSTOR_MAGIC,
                 .cmd = cmd,
@@ -521,17 +541,42 @@ class RequestIO: public Request {
 };
 
 
-class RequestCmdRead final: public RequestIO {
+class RequestIOVector: public RequestVector {
+    protected:
+        RawstorOSTFrameIO _request;
+
+    public:
+        RequestIOVector(
+            int fd,
+            const std::shared_ptr<DriverOp> &op,
+            const RawstorOSTCommandType &cmd,
+            size_t size, off_t offset, uint64_t hash):
+            RequestVector(fd, op),
+            _request({
+                .magic = RAWSTOR_MAGIC,
+                .cmd = cmd,
+                .cid = op->cid(),
+                .offset = (uint64_t)offset,
+                .len = (uint32_t)size,
+                .hash = hash,
+                .sync = 0,
+            })
+        {}
+};
+
+
+class RequestCmdRead final: public RequestIOScalar {
     public:
         RequestCmdRead(
+            int fd,
             const std::shared_ptr<DriverOp> &op,
             size_t size, off_t offset):
-            RequestIO(
-                op, RAWSTOR_CMD_READ,
+            RequestIOScalar(
+                fd, op, RAWSTOR_CMD_READ,
                 size, offset, 0)
         {}
 
-        void* data() noexcept {
+        void* buf() noexcept {
             return &_request;
         }
 
@@ -541,16 +586,17 @@ class RequestCmdRead final: public RequestIO {
 };
 
 
-class RequestCmdWrite final: public RequestIO {
+class RequestCmdWrite final: public RequestIOVector {
     private:
         std::vector<iovec> _iov;
 
     public:
         RequestCmdWrite(
+            int fd,
             const std::shared_ptr<DriverOp> &op,
             void *buf, size_t size, off_t offset):
-            RequestIO(
-                op, RAWSTOR_CMD_WRITE,
+            RequestIOVector(
+                fd, op, RAWSTOR_CMD_WRITE,
                 size, offset, hash(buf, size))
         {
             _iov.reserve(2);
@@ -565,10 +611,11 @@ class RequestCmdWrite final: public RequestIO {
         }
 
         RequestCmdWrite(
+            int fd,
             const std::shared_ptr<DriverOp> &op,
             iovec *iov, unsigned int niov, size_t size, off_t offset):
-            RequestIO(
-                op, RAWSTOR_CMD_WRITE,
+            RequestIOVector(
+                fd, op, RAWSTOR_CMD_WRITE,
                 size, offset, hash(iov, niov))
         {
             _iov.reserve(niov + 1);
@@ -595,14 +642,16 @@ class RequestCmdWrite final: public RequestIO {
 };
 
 
-class ResponseHead final: public rawstor::io::Task {
+class ResponseHead final: public rawstor::io::TaskScalar {
     private:
         std::shared_ptr<rawstor::ost::Context> _context;
         RawstorOSTFrameResponse _response;
 
     public:
         ResponseHead(
+            int fd,
             const std::shared_ptr<rawstor::ost::Context> &context):
+            rawstor::io::TaskScalar(fd),
             _context(context)
         {
             _context->add_read();
@@ -626,7 +675,7 @@ class ResponseHead final: public rawstor::io::Task {
             }
         }
 
-        inline void* data() noexcept {
+        inline void* buf() noexcept {
             return &_response;
         }
 
@@ -636,17 +685,24 @@ class ResponseHead final: public rawstor::io::Task {
 };
 
 
-class ResponseBody final: public rawstor::io::Task {
+class ResponseBodyScalar final: public rawstor::io::TaskScalar {
     private:
         std::shared_ptr<rawstor::ost::Context> _context;
         uint16_t _cid;
+        void *_buf;
+        size_t _size;
 
     public:
-        ResponseBody(
+        ResponseBodyScalar(
+            int fd,
             const std::shared_ptr<rawstor::ost::Context> &context,
-            uint16_t cid):
+            uint16_t cid,
+            void *buf, size_t size):
+            rawstor::io::TaskScalar(fd),
             _context(context),
-            _cid(cid)
+            _cid(cid),
+            _buf(buf),
+            _size(size)
         {
             _context->add_read();
         }
@@ -660,6 +716,62 @@ class ResponseBody final: public rawstor::io::Task {
             if (!_context->has_reads()) {
                 _context->session().read_response_head(*rawstor::io_queue);
             }
+        }
+
+        void* buf() noexcept {
+            return _buf;
+        }
+        size_t size() const noexcept {
+            return _size;
+        }
+};
+
+
+class ResponseBodyVector final: public rawstor::io::TaskVector {
+    private:
+        std::shared_ptr<rawstor::ost::Context> _context;
+        uint16_t _cid;
+        iovec *_iov;
+        unsigned int _niov;
+        size_t _size;
+
+    public:
+        ResponseBodyVector(
+            int fd,
+            const std::shared_ptr<rawstor::ost::Context> &context,
+            uint16_t cid,
+            iovec *iov, unsigned int niov, size_t size):
+            rawstor::io::TaskVector(fd),
+            _context(context),
+            _cid(cid),
+            _iov(iov),
+            _niov(niov),
+            _size(size)
+        {
+            _context->add_read();
+        }
+
+        void operator()(RawstorIOEvent *event) {
+            _context->sub_read();
+
+            DriverOp &op = _context->find_op(_cid);
+            op.response_body_cb(event);
+
+            if (!_context->has_reads()) {
+                _context->session().read_response_head(*rawstor::io_queue);
+            }
+        }
+
+        iovec* iov() noexcept {
+            return _iov;
+        }
+
+        unsigned int niov() const noexcept {
+            return _niov;
+        }
+
+        size_t size() const noexcept {
+            return _size;
         }
 };
 
@@ -775,10 +887,9 @@ int Driver::_connect() {
 
 void Driver::read_response_head(rawstor::io::Queue &queue) {
     std::unique_ptr<ResponseHead> res =
-        std::make_unique<ResponseHead>(_context);
-    void *res_data = res->data();
-    size_t res_size = res->size();
-    queue.read(fd(), res_data, res_size, std::move(res));
+        std::make_unique<ResponseHead>(
+            fd(), _context);
+    queue.read(std::move(res));
 }
 
 
@@ -786,9 +897,10 @@ void Driver::read_response_body(
     rawstor::io::Queue &queue, uint16_t cid,
     void *buf, size_t size)
 {
-    std::unique_ptr<ResponseBody> res =
-        std::make_unique<ResponseBody>(_context, cid);
-    queue.read(fd(), buf, size, std::move(res));
+    std::unique_ptr<ResponseBodyScalar> res =
+        std::make_unique<ResponseBodyScalar>(
+            fd(), _context, cid, buf, size);
+    queue.read(std::move(res));
 }
 
 
@@ -796,9 +908,10 @@ void Driver::read_response_body(
     rawstor::io::Queue &queue, uint16_t cid,
     iovec *iov, unsigned int niov, size_t size)
 {
-    std::unique_ptr<ResponseBody> res =
-        std::make_unique<ResponseBody>(_context, cid);
-    queue.readv(fd(), iov, niov, size, std::move(res));
+    std::unique_ptr<ResponseBodyVector> res =
+        std::make_unique<ResponseBodyVector>(
+            fd(), _context, cid, iov, niov, size);
+    queue.read(std::move(res));
 }
 
 
@@ -865,10 +978,9 @@ void Driver::set_object(
     _context->register_op(op);
 
     std::unique_ptr<RequestSetObjectId> req =
-        std::make_unique<RequestSetObjectId>(op, object->id());
-    void *req_data = req->data();
-    size_t req_size = req->size();
-    queue.write(fd(), req_data, req_size, std::move(req));
+        std::make_unique<RequestSetObjectId>(
+            fd(), op, object->id());
+    queue.write(std::move(req));
 
     if (!_context->has_reads()) {
         read_response_head(queue);
@@ -892,10 +1004,9 @@ void Driver::pread(
     _context->register_op(op);
 
     std::unique_ptr<RequestCmdRead> req =
-        std::make_unique<RequestCmdRead>(op, size, offset);
-    void *req_data = req->data();
-    size_t req_size = req->size();
-    io_queue->write(fd(), req_data, req_size, std::move(req));
+        std::make_unique<RequestCmdRead>(
+            fd(), op, size, offset);
+    io_queue->write(std::move(req));
 
     if (!_context->has_reads()) {
         read_response_head(*io_queue);
@@ -917,10 +1028,9 @@ void Driver::preadv(
     _context->register_op(op);
 
     std::unique_ptr<RequestCmdRead> req =
-        std::make_unique<RequestCmdRead>(op, size, offset);
-    void *req_data = req->data();
-    size_t req_size = req->size();
-    io_queue->write(fd(), req_data, req_size, std::move(req));
+        std::make_unique<RequestCmdRead>(
+            fd(), op, size, offset);
+    io_queue->write(std::move(req));
 
     if (!_context->has_reads()) {
         read_response_head(*io_queue);
@@ -942,11 +1052,9 @@ void Driver::pwrite(
     _context->register_op(op);
 
     std::unique_ptr<RequestCmdWrite> req =
-        std::make_unique<RequestCmdWrite>(op, buf, size, offset);
-    iovec *req_iov = req->iov();
-    unsigned int req_niov = req->niov();
-    size_t req_size = req->size();
-    io_queue->writev(fd(), req_iov, req_niov, req_size, std::move(req));
+        std::make_unique<RequestCmdWrite>(
+            fd(), op, buf, size, offset);
+    io_queue->write(std::move(req));
 
     if (!_context->has_reads()) {
         read_response_head(*io_queue);
@@ -968,11 +1076,9 @@ void Driver::pwritev(
     _context->register_op(op);
 
     std::unique_ptr<RequestCmdWrite> req =
-        std::make_unique<RequestCmdWrite>(op, iov, niov, size, offset);
-    iovec *req_iov = req->iov();
-    unsigned int req_niov = req->niov();
-    size_t req_size = req->size();
-    io_queue->writev(fd(), req_iov, req_niov, req_size, std::move(req));
+        std::make_unique<RequestCmdWrite>(
+            fd(), op, iov, niov, size, offset);
+    io_queue->write(std::move(req));
 
     if (!_context->has_reads()) {
         read_response_head(*io_queue);

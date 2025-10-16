@@ -6,6 +6,8 @@
 
 #include <rawstor/io_event.h>
 
+#include <memory>
+
 #include <cerrno>
 #include <cstddef>
 
@@ -15,11 +17,8 @@ namespace io {
 namespace uring {
 
 
-Event::Event(
-    Queue &q,
-    int fd, size_t size,
-    std::unique_ptr<rawstor::io::Task> t):
-    RawstorIOEvent(q, fd, size, std::move(t)),
+Event::Event(Queue &q, std::unique_ptr<rawstor::io::Task> t):
+    RawstorIOEvent(q, std::move(t)),
     _sqe(io_uring_get_sqe(q.ring())),
     _cqe(nullptr)
 {
@@ -37,6 +36,94 @@ Event::~Event() {
 }
 
 
+std::unique_ptr<Event> Event::read(
+    Queue &q, std::unique_ptr<rawstor::io::TaskScalar> t)
+{
+    rawstor::io::TaskScalar *p = t.get();
+    std::unique_ptr<Event> event = std::make_unique<Event>(q, std::move(t));
+    io_uring_prep_read(
+        event->_sqe, p->fd(), p->buf(), p->size(), 0);
+    return event;
+}
+
+
+std::unique_ptr<Event> Event::read(
+    Queue &q, std::unique_ptr<rawstor::io::TaskVector> t)
+{
+    rawstor::io::TaskVector *p = t.get();
+    std::unique_ptr<Event> event = std::make_unique<Event>(q, std::move(t));
+    io_uring_prep_readv(
+        event->_sqe, p->fd(), p->iov(), p->niov(), 0);
+    return event;
+}
+
+
+std::unique_ptr<Event> Event::read(
+    Queue &q, std::unique_ptr<rawstor::io::TaskScalarPositional> t)
+{
+    rawstor::io::TaskScalarPositional *p = t.get();
+    std::unique_ptr<Event> event = std::make_unique<Event>(q, std::move(t));
+    io_uring_prep_read(
+        event->_sqe, p->fd(), p->buf(), p->size(), p->offset());
+    return event;
+}
+
+
+std::unique_ptr<Event> Event::read(
+    Queue &q, std::unique_ptr<rawstor::io::TaskVectorPositional> t)
+{
+    rawstor::io::TaskVectorPositional *p = t.get();
+    std::unique_ptr<Event> event = std::make_unique<Event>(q, std::move(t));
+    io_uring_prep_readv(
+        event->_sqe, p->fd(), p->iov(), p->niov(), p->offset());
+    return event;
+}
+
+
+std::unique_ptr<Event> Event::write(
+    Queue &q, std::unique_ptr<rawstor::io::TaskScalar> t)
+{
+    rawstor::io::TaskScalar *p = t.get();
+    std::unique_ptr<Event> event = std::make_unique<Event>(q, std::move(t));
+    io_uring_prep_write(
+        event->_sqe, p->fd(), p->buf(), p->size(), 0);
+    return event;
+}
+
+
+std::unique_ptr<Event> Event::write(
+    Queue &q, std::unique_ptr<rawstor::io::TaskVector> t)
+{
+    rawstor::io::TaskVector *p = t.get();
+    std::unique_ptr<Event> event = std::make_unique<Event>(q, std::move(t));
+    io_uring_prep_writev(
+        event->_sqe, p->fd(), p->iov(), p->niov(), 0);
+    return event;
+}
+
+
+std::unique_ptr<Event> Event::write(
+    Queue &q, std::unique_ptr<rawstor::io::TaskScalarPositional> t)
+{
+    rawstor::io::TaskScalarPositional *p = t.get();
+    std::unique_ptr<Event> event = std::make_unique<Event>(q, std::move(t));
+    io_uring_prep_write(
+        event->_sqe, p->fd(), p->buf(), p->size(), p->offset());
+    return event;
+}
+
+
+std::unique_ptr<Event> Event::write(
+    Queue &q, std::unique_ptr<rawstor::io::TaskVectorPositional> t)
+{
+    rawstor::io::TaskVectorPositional *p = t.get();
+    std::unique_ptr<Event> event = std::make_unique<Event>(q, std::move(t));
+    io_uring_prep_writev(
+        event->_sqe, p->fd(), p->iov(), p->niov(), p->offset());
+    return event;
+}
+
+
 size_t Event::result() const noexcept {
     return (_cqe != nullptr && _cqe->res >= 0) ? _cqe->res : 0;
 }
@@ -44,86 +131,6 @@ size_t Event::result() const noexcept {
 
 int Event::error() const noexcept {
     return (_cqe != nullptr && _cqe->res < 0) ? -_cqe->res : 0;
-}
-
-
-EventRead::EventRead(
-    Queue &q,
-    int fd, void *buf, size_t size,
-    std::unique_ptr<rawstor::io::Task> t):
-    Event(q, fd, size, std::move(t))
-{
-    io_uring_prep_read(_sqe, fd, buf, size, 0);
-}
-
-
-EventReadV::EventReadV(
-    Queue &q,
-    int fd, iovec *iov, unsigned int niov, size_t size,
-    std::unique_ptr<rawstor::io::Task> t):
-    Event(q, fd, size, std::move(t))
-{
-    io_uring_prep_readv(_sqe, fd, iov, niov, 0);
-}
-
-
-EventPRead::EventPRead(
-    Queue &q,
-    int fd, void *buf, size_t size, off_t offset,
-    std::unique_ptr<rawstor::io::Task> t):
-    Event(q, fd, size, std::move(t))
-{
-    io_uring_prep_read(_sqe, fd, buf, size, offset);
-}
-
-
-EventPReadV::EventPReadV(
-    Queue &q,
-    int fd, iovec *iov, unsigned int niov, size_t size, off_t offset,
-    std::unique_ptr<rawstor::io::Task> t):
-    Event(q, fd, size, std::move(t))
-{
-    io_uring_prep_readv(_sqe, fd, iov, niov, offset);
-}
-
-
-EventWrite::EventWrite(
-    Queue &q,
-    int fd, void *buf, size_t size,
-    std::unique_ptr<rawstor::io::Task> t):
-    Event(q, fd, size, std::move(t))
-{
-    io_uring_prep_write(_sqe, fd, buf, size, 0);
-}
-
-
-EventWriteV::EventWriteV(
-    Queue &q,
-    int fd, iovec *iov, unsigned int niov, size_t size,
-    std::unique_ptr<rawstor::io::Task> t):
-    Event(q, fd, size, std::move(t))
-{
-    io_uring_prep_writev(_sqe, fd, iov, niov, 0);
-}
-
-
-EventPWrite::EventPWrite(
-    Queue &q,
-    int fd, void *buf, size_t size, off_t offset,
-    std::unique_ptr<rawstor::io::Task> t):
-    Event(q, fd, size, std::move(t))
-{
-    io_uring_prep_write(_sqe, fd, buf, size, offset);
-}
-
-
-EventPWriteV::EventPWriteV(
-    Queue &q,
-    int fd, iovec *iov, unsigned int niov, size_t size, off_t offset,
-    std::unique_ptr<rawstor::io::Task> t):
-    Event(q, fd, size, std::move(t))
-{
-    io_uring_prep_writev(_sqe, fd, iov, niov, offset);
 }
 
 

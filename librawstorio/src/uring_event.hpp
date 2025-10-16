@@ -21,14 +21,31 @@ class Queue;
 
 
 class Event: public RawstorIOEvent {
+    private:
     protected:
         io_uring_sqe *_sqe;
         io_uring_cqe *_cqe;
 
     public:
+        static std::unique_ptr<Event> read(
+            Queue &q, std::unique_ptr<rawstor::io::TaskScalar> t);
+        static std::unique_ptr<Event> read(
+            Queue &q, std::unique_ptr<rawstor::io::TaskVector> t);
+        static std::unique_ptr<Event> read(
+            Queue &q, std::unique_ptr<rawstor::io::TaskScalarPositional> t);
+        static std::unique_ptr<Event> read(
+            Queue &q, std::unique_ptr<rawstor::io::TaskVectorPositional> t);
+        static std::unique_ptr<Event> write(
+            Queue &q, std::unique_ptr<rawstor::io::TaskScalar> t);
+        static std::unique_ptr<Event> write(
+            Queue &q, std::unique_ptr<rawstor::io::TaskVector> t);
+        static std::unique_ptr<Event> write(
+            Queue &q, std::unique_ptr<rawstor::io::TaskScalarPositional> t);
+        static std::unique_ptr<Event> write(
+            Queue &q, std::unique_ptr<rawstor::io::TaskVectorPositional> t);
+
         Event(
             Queue &q,
-            int fd, size_t size,
             std::unique_ptr<rawstor::io::Task> t);
         ~Event();
 
@@ -38,78 +55,6 @@ class Event: public RawstorIOEvent {
 
         size_t result() const noexcept;
         int error() const noexcept;
-};
-
-
-class EventRead: public Event {
-    public:
-        EventRead(
-            Queue &q,
-            int fd, void *buf, size_t size,
-            std::unique_ptr<rawstor::io::Task> t);
-};
-
-
-class EventReadV: public Event {
-    public:
-        EventReadV(
-            Queue &q,
-            int fd, iovec *iov, unsigned int niov, size_t size,
-            std::unique_ptr<rawstor::io::Task> t);
-};
-
-
-class EventPRead: public Event {
-    public:
-        EventPRead(
-            Queue &q,
-            int fd, void *buf, size_t size, off_t offset,
-            std::unique_ptr<rawstor::io::Task> t);
-};
-
-
-class EventPReadV: public Event {
-    public:
-        EventPReadV(
-            Queue &q,
-            int fd, iovec *iov, unsigned int niov, size_t size, off_t offset,
-            std::unique_ptr<rawstor::io::Task> t);
-};
-
-
-class EventWrite: public Event {
-    public:
-        EventWrite(
-            Queue &q,
-            int fd, void *buf, size_t size,
-            std::unique_ptr<rawstor::io::Task> t);
-};
-
-
-class EventWriteV: public Event {
-    public:
-        EventWriteV(
-            Queue &q,
-            int fd, iovec *iov, unsigned int niov, size_t size,
-            std::unique_ptr<rawstor::io::Task> t);
-};
-
-
-class EventPWrite: public Event {
-    public:
-        EventPWrite(
-            Queue &q,
-            int fd, void *buf, size_t size, off_t offset,
-            std::unique_ptr<rawstor::io::Task> t);
-};
-
-
-class EventPWriteV: public Event {
-    public:
-        EventPWriteV(
-            Queue &q,
-            int fd, iovec *iov, unsigned int niov, size_t size, off_t offset,
-            std::unique_ptr<rawstor::io::Task> t);
 };
 
 

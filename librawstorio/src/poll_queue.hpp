@@ -25,7 +25,7 @@ class Queue: public rawstor::io::Queue {
         std::unordered_map<int, std::shared_ptr<Session>> _sessions;
         rawstor::RingBuf<Event*> _cqes;
 
-        std::shared_ptr<Session> _get_session(int fd);
+        Session& _get_session(int fd);
 
     public:
         static const std::string& engine_name();
@@ -36,45 +36,21 @@ class Queue: public rawstor::io::Queue {
             _cqes(depth)
         {}
 
-        void read(
-            int fd,
-            void *buf, size_t size,
-            std::unique_ptr<rawstor::io::Task> t);
+        void read(std::unique_ptr<rawstor::io::TaskScalar> t);
 
-        void readv(
-            int fd,
-            struct iovec *iov, unsigned int niov, size_t size,
-            std::unique_ptr<rawstor::io::Task> t);
+        void read(std::unique_ptr<rawstor::io::TaskVector> t);
 
-        void pread(
-            int fd,
-            void *buf, size_t size, off_t offset,
-            std::unique_ptr<rawstor::io::Task> t);
+        void read(std::unique_ptr<rawstor::io::TaskScalarPositional> t);
 
-        void preadv(
-            int fd,
-            struct iovec *iov, unsigned int niov, size_t size, off_t offset,
-            std::unique_ptr<rawstor::io::Task> t);
+        void read(std::unique_ptr<rawstor::io::TaskVectorPositional> t);
 
-        void write(
-            int fd,
-            void *buf, size_t size,
-            std::unique_ptr<rawstor::io::Task> t);
+        void write(std::unique_ptr<rawstor::io::TaskScalar> t);
 
-        void writev(
-            int fd,
-            struct iovec *iov, unsigned int niov, size_t size,
-            std::unique_ptr<rawstor::io::Task> t);
+        void write(std::unique_ptr<rawstor::io::TaskVector> t);
 
-        void pwrite(
-            int fd,
-            void *buf, size_t size, off_t offset,
-            std::unique_ptr<rawstor::io::Task> t);
+        void write(std::unique_ptr<rawstor::io::TaskScalarPositional> t);
 
-        void pwritev(
-            int fd,
-            struct iovec *iov, unsigned int niov, size_t size, off_t offset,
-            std::unique_ptr<rawstor::io::Task> t);
+        void write(std::unique_ptr<rawstor::io::TaskVectorPositional> t);
 
         bool empty() const noexcept;
 
