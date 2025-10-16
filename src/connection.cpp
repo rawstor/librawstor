@@ -3,7 +3,6 @@
 #include "driver.hpp"
 #include "opts.h"
 
-#include <rawstorio/event.hpp>
 #include <rawstorio/queue.hpp>
 
 #include <rawstorstd/gpp.hpp>
@@ -257,7 +256,8 @@ class ConnectionOpPWriteV: public rawstor::ConnectionOp {
 namespace rawstor {
 
 
-ConnectionOp::ConnectionOp(rawstor::Connection &cn, RawstorCallback *cb, void *data):
+ConnectionOp::ConnectionOp(
+    rawstor::Connection &cn, RawstorCallback *cb, void *data):
     _cn(cn),
     _cb(cb),
     _data(data),

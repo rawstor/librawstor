@@ -5,7 +5,6 @@
 #include "ost_protocol.h"
 #include "rawstor_internals.hpp"
 
-#include <rawstorio/event.hpp>
 #include <rawstorio/queue.hpp>
 
 #include <rawstorstd/gpp.hpp>
@@ -39,12 +38,12 @@
 #define IOVEC_SIZE 256
 
 
-#define op_trace(cid, event) \
+#define t_trace(t, result) \
     rawstor_debug( \
-        "[%u] %s(): %zu of %zu\n", \
-        (cid), __FUNCTION__, \
-        event->result(), \
-        event->size())
+        "%s(): %zu of %zu\n", \
+        __FUNCTION__, \
+        (result), \
+        (t).size())
 
 
 namespace {
@@ -53,20 +52,16 @@ namespace {
 class DriverOp;
 
 
-void validate_event(RawstorIOEvent *event) {
-    int error = event->error();
-    if (error != 0) {
-        RAWSTOR_THROW_SYSTEM_ERROR(error);
+int validate_result(size_t result, rawstor::io::Task &t) {
+    if (result == t.size()) {
+        return 0;
     }
 
-    if (event->result() != event->size()) {
-        rawstor_error(
-            "fd %d: Unexpected event size: %zu != %zu\n",
-            event->fd(),
-            event->result(),
-            event->size());
-        RAWSTOR_THROW_SYSTEM_ERROR(EAGAIN);
-    }
+    rawstor_error(
+        "fd %d: Unexpected event size: %zu != %zu\n",
+        t.fd(), result, t.size());
+
+    return EAGAIN;
 }
 
 
@@ -235,47 +230,27 @@ class DriverOp {
             return _in_flight;
         }
 
-        inline void dispatch(size_t res, int error) {
+        inline void dispatch(size_t result, int error) {
             RawstorObject *o = _context->session().object();
 
             _in_flight = false;
 
-            int ret = _cb(o, _size, res, error, _data);
+            int res = _cb(o, _size, result, error, _data);
 
             _context->unregister_op(_cid);
-
-            if (ret) {
-                RAWSTOR_THROW_SYSTEM_ERROR(-ret);
-            }
-        }
-
-        void request_cb(RawstorIOEvent *event) {
-            RawstorObject *o = _context->session().object();
-            int error = 0;
-
-            try {
-                op_trace(_cid, event);
-
-                validate_event(event);
-
-                _in_flight = true;
-            } catch (const std::system_error &e) {
-                error = e.code().value();
-            }
-
-            int res = 0;
-            if (error) {
-                res = _cb(o, _size, 0, error, _data);
-            }
 
             if (res) {
                 RAWSTOR_THROW_SYSTEM_ERROR(-res);
             }
         }
 
+        void request_cb() {
+            _in_flight = true;
+        }
+
         virtual void response_head_cb(RawstorOSTFrameResponse &) = 0;
 
-        virtual void response_body_cb(RawstorIOEvent *) {
+        virtual void response_body_cb() {
         }
 };
 
@@ -337,21 +312,18 @@ class DriverOpRead final: public DriverOp {
             }
 
             if (error) {
-                dispatch(response.res, error);
+                dispatch(0, error);
             } else {
                 s.read_response_body(
                     *rawstor::io_queue, cid(), _buf, _size);
             }
         }
 
-        void response_body_cb(RawstorIOEvent *event) {
+        void response_body_cb() {
             rawstor::ost::Driver &s = _context->session();
-            op_trace(cid(), event);
 
             int error = 0;
-
             try {
-                validate_event(event);
                 validate_hash(s, hash(_buf, _size), _hash);
             } catch (std::system_error &e) {
                 error = e.code().value();
@@ -399,14 +371,11 @@ class DriverOpReadV final: public DriverOp {
             }
         }
 
-        void response_body_cb(RawstorIOEvent *event) {
+        void response_body_cb() {
             rawstor::ost::Driver &s = _context->session();
-            op_trace(cid(), event);
 
             int error = 0;
-
             try {
-                validate_event(event);
                 validate_hash(s, hash(_iov, _niov), _hash);
             } catch (std::system_error &e) {
                 error = e.code().value();
@@ -452,8 +421,18 @@ class RequestScalar: public rawstor::io::TaskScalar {
             _op(op)
         {}
 
-        void operator()(RawstorIOEvent *event) {
-            _op->request_cb(event);
+        void operator()(size_t result, int error) {
+            t_trace(*this, result);
+
+            if (!error) {
+                error = validate_result(result, *this);
+            }
+
+            if (error) {
+                _op->dispatch(0, error);
+            } else {
+                _op->request_cb();
+            }
         }
 };
 
@@ -468,8 +447,18 @@ class RequestVector: public rawstor::io::TaskVector {
             _op(op)
         {}
 
-        void operator()(RawstorIOEvent *event) {
-            _op->request_cb(event);
+        void operator()(size_t result, int error) {
+            t_trace(*this, result);
+
+            if (!error) {
+                error = validate_result(result, *this);
+            }
+
+            if (error) {
+                _op->dispatch(0, error);
+            } else {
+                _op->request_cb();
+            }
         }
 };
 
@@ -657,21 +646,27 @@ class ResponseHead final: public rawstor::io::TaskScalar {
             _context->add_read();
         }
 
-        void operator()(RawstorIOEvent *event) {
+        void operator()(size_t result, int error) {
+            t_trace(*this, result);
+
             _context->sub_read();
+            if (!error) {
+                error = validate_result(result, *this);
+            }
 
-            try {
-                validate_event(event);
-                op_trace(_response.cid, event);
-
-                DriverOp &op = _context->find_op(_response.cid);
-                op.response_head_cb(_response);
-
-                if (!_context->has_reads()) {
-                    _context->session().read_response_head(*rawstor::io_queue);
+            if (error) {
+                _context->fail_all(error);
+            } else {
+                try {
+                    DriverOp &op = _context->find_op(_response.cid);
+                    op.response_head_cb(_response);
+                    if (!_context->has_reads()) {
+                        _context->session().read_response_head(
+                            *rawstor::io_queue);
+                    }
+                } catch (std::system_error &e) {
+                    _context->fail_all(e.code().value());
                 }
-            } catch (std::system_error &e) {
-                _context->fail_all(e.code().value());
             }
         }
 
@@ -707,11 +702,21 @@ class ResponseBodyScalar final: public rawstor::io::TaskScalar {
             _context->add_read();
         }
 
-        void operator()(RawstorIOEvent *event) {
-            _context->sub_read();
+        void operator()(size_t result, int error) {
+            t_trace(*this, result);
 
+            _context->sub_read();
             DriverOp &op = _context->find_op(_cid);
-            op.response_body_cb(event);
+
+            if (!error) {
+                error = validate_result(result, *this);
+            }
+
+            if (error) {
+                op.dispatch(result, error);
+            } else {
+                op.response_body_cb();
+            }
 
             if (!_context->has_reads()) {
                 _context->session().read_response_head(*rawstor::io_queue);
@@ -751,11 +756,21 @@ class ResponseBodyVector final: public rawstor::io::TaskVector {
             _context->add_read();
         }
 
-        void operator()(RawstorIOEvent *event) {
-            _context->sub_read();
+        void operator()(size_t result, int error) {
+            t_trace(*this, result);
 
+            _context->sub_read();
             DriverOp &op = _context->find_op(_cid);
-            op.response_body_cb(event);
+
+            if (!error) {
+                error = validate_result(result, *this);
+            }
+
+            if (error) {
+                op.dispatch(result, error);
+            } else {
+                op.response_body_cb();
+            }
 
             if (!_context->has_reads()) {
                 _context->session().read_response_head(*rawstor::io_queue);

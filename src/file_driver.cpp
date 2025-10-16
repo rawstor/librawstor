@@ -8,7 +8,6 @@
 #include <rawstorstd/logging.h>
 #include <rawstorstd/uuid.h>
 
-#include <rawstorio/event.hpp>
 #include <rawstorio/queue.hpp>
 
 #include <sys/stat.h>
@@ -131,13 +130,8 @@ class DriverOpScalarPositional final: public rawstor::io::TaskScalarPositional {
             _data(data)
         {}
 
-        void operator()(RawstorIOEvent *event) {
-            int res = _cb(
-                _s.object(),
-                rawstor_io_event_size(event),
-                rawstor_io_event_result(event),
-                rawstor_io_event_error(event),
-                _data);
+        void operator()(size_t result, int error) {
+            int res = _cb(_s.object(), _size, result, error, _data);
             if (res) {
                 RAWSTOR_THROW_SYSTEM_ERROR(-res);
             }
@@ -186,13 +180,8 @@ class DriverOpVectorPositional final:
             _data(data)
         {}
 
-        void operator()(RawstorIOEvent *event) {
-            int res = _cb(
-                _s.object(),
-                rawstor_io_event_size(event),
-                rawstor_io_event_result(event),
-                rawstor_io_event_error(event),
-                _data);
+        void operator()(size_t result, int error) {
+            int res = _cb(_s.object(), _size, result, error, _data);
             if (res) {
                 RAWSTOR_THROW_SYSTEM_ERROR(-res);
             }

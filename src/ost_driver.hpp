@@ -9,7 +9,6 @@
 
 #include <rawstorio/queue.hpp>
 
-#include <rawstor/io_event.h>
 #include <rawstor/object.h>
 #include <rawstor/rawstor.h>
 

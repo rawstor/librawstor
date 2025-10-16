@@ -23,7 +23,7 @@ struct RawstorObjectSpec {
 };
 
 typedef int(RawstorCallback)(
-    RawstorObject *object, size_t size, size_t res, int error, void *data);
+    RawstorObject *object, size_t size, size_t result, int error, void *data);
 
 
 int rawstor_object_spec(const char *uri, struct RawstorObjectSpec *spec);
