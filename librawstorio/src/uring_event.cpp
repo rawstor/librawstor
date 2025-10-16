@@ -39,16 +39,10 @@ Event::~Event() {
 std::unique_ptr<Event> Event::read(
     Queue &q, std::unique_ptr<rawstor::io::TaskScalar> t)
 {
+    rawstor::io::TaskScalar *p = t.get();
     std::unique_ptr<Event> event = std::make_unique<Event>(q, std::move(t));
     io_uring_prep_read(
-        event->_sqe,
-        static_cast<rawstor::io::TaskScalar*>(
-            event->_t.get())->fd(),
-        static_cast<rawstor::io::TaskScalar*>(
-            event->_t.get())->buf(),
-        static_cast<rawstor::io::TaskScalar*>(
-            event->_t.get())->size(),
-        0);
+        event->_sqe, p->fd(), p->buf(), p->size(), 0);
     return event;
 }
 
@@ -56,16 +50,10 @@ std::unique_ptr<Event> Event::read(
 std::unique_ptr<Event> Event::read(
     Queue &q, std::unique_ptr<rawstor::io::TaskVector> t)
 {
+    rawstor::io::TaskVector *p = t.get();
     std::unique_ptr<Event> event = std::make_unique<Event>(q, std::move(t));
     io_uring_prep_readv(
-        event->_sqe,
-        static_cast<rawstor::io::TaskVector*>(
-            event->_t.get())->fd(),
-        static_cast<rawstor::io::TaskVector*>(
-            event->_t.get())->iov(),
-        static_cast<rawstor::io::TaskVector*>(
-            event->_t.get())->niov(),
-        0);
+        event->_sqe, p->fd(), p->iov(), p->niov(), 0);
     return event;
 }
 
@@ -73,17 +61,10 @@ std::unique_ptr<Event> Event::read(
 std::unique_ptr<Event> Event::read(
     Queue &q, std::unique_ptr<rawstor::io::TaskScalarPositional> t)
 {
+    rawstor::io::TaskScalarPositional *p = t.get();
     std::unique_ptr<Event> event = std::make_unique<Event>(q, std::move(t));
     io_uring_prep_read(
-        event->_sqe,
-        static_cast<rawstor::io::TaskScalarPositional*>(
-            event->_t.get())->fd(),
-        static_cast<rawstor::io::TaskScalarPositional*>(
-            event->_t.get())->buf(),
-        static_cast<rawstor::io::TaskScalarPositional*>(
-            event->_t.get())->size(),
-        static_cast<rawstor::io::TaskScalarPositional*>(
-            event->_t.get())->offset());
+        event->_sqe, p->fd(), p->buf(), p->size(), p->offset());
     return event;
 }
 
@@ -91,17 +72,10 @@ std::unique_ptr<Event> Event::read(
 std::unique_ptr<Event> Event::read(
     Queue &q, std::unique_ptr<rawstor::io::TaskVectorPositional> t)
 {
+    rawstor::io::TaskVectorPositional *p = t.get();
     std::unique_ptr<Event> event = std::make_unique<Event>(q, std::move(t));
     io_uring_prep_readv(
-        event->_sqe,
-        static_cast<rawstor::io::TaskVectorPositional*>(
-            event->_t.get())->fd(),
-        static_cast<rawstor::io::TaskVectorPositional*>(
-            event->_t.get())->iov(),
-        static_cast<rawstor::io::TaskVectorPositional*>(
-            event->_t.get())->niov(),
-        static_cast<rawstor::io::TaskVectorPositional*>(
-            event->_t.get())->offset());
+        event->_sqe, p->fd(), p->iov(), p->niov(), p->offset());
     return event;
 }
 
@@ -109,16 +83,10 @@ std::unique_ptr<Event> Event::read(
 std::unique_ptr<Event> Event::write(
     Queue &q, std::unique_ptr<rawstor::io::TaskScalar> t)
 {
+    rawstor::io::TaskScalar *p = t.get();
     std::unique_ptr<Event> event = std::make_unique<Event>(q, std::move(t));
     io_uring_prep_write(
-        event->_sqe,
-        static_cast<rawstor::io::TaskScalar*>(
-            event->_t.get())->fd(),
-        static_cast<rawstor::io::TaskScalar*>(
-            event->_t.get())->buf(),
-        static_cast<rawstor::io::TaskScalar*>(
-            event->_t.get())->size(),
-        0);
+        event->_sqe, p->fd(), p->buf(), p->size(), 0);
     return event;
 }
 
@@ -126,16 +94,10 @@ std::unique_ptr<Event> Event::write(
 std::unique_ptr<Event> Event::write(
     Queue &q, std::unique_ptr<rawstor::io::TaskVector> t)
 {
+    rawstor::io::TaskVector *p = t.get();
     std::unique_ptr<Event> event = std::make_unique<Event>(q, std::move(t));
     io_uring_prep_writev(
-        event->_sqe,
-        static_cast<rawstor::io::TaskVector*>(
-            event->_t.get())->fd(),
-        static_cast<rawstor::io::TaskVector*>(
-            event->_t.get())->iov(),
-        static_cast<rawstor::io::TaskVector*>(
-            event->_t.get())->niov(),
-        0);
+        event->_sqe, p->fd(), p->iov(), p->niov(), 0);
     return event;
 }
 
@@ -143,17 +105,10 @@ std::unique_ptr<Event> Event::write(
 std::unique_ptr<Event> Event::write(
     Queue &q, std::unique_ptr<rawstor::io::TaskScalarPositional> t)
 {
+    rawstor::io::TaskScalarPositional *p = t.get();
     std::unique_ptr<Event> event = std::make_unique<Event>(q, std::move(t));
     io_uring_prep_write(
-        event->_sqe,
-        static_cast<rawstor::io::TaskScalarPositional*>(
-            event->_t.get())->fd(),
-        static_cast<rawstor::io::TaskScalarPositional*>(
-            event->_t.get())->buf(),
-        static_cast<rawstor::io::TaskScalarPositional*>(
-            event->_t.get())->size(),
-        static_cast<rawstor::io::TaskScalarPositional*>(
-            event->_t.get())->offset());
+        event->_sqe, p->fd(), p->buf(), p->size(), p->offset());
     return event;
 }
 
@@ -161,17 +116,10 @@ std::unique_ptr<Event> Event::write(
 std::unique_ptr<Event> Event::write(
     Queue &q, std::unique_ptr<rawstor::io::TaskVectorPositional> t)
 {
+    rawstor::io::TaskVectorPositional *p = t.get();
     std::unique_ptr<Event> event = std::make_unique<Event>(q, std::move(t));
     io_uring_prep_writev(
-        event->_sqe,
-        static_cast<rawstor::io::TaskVectorPositional*>(
-            event->_t.get())->fd(),
-        static_cast<rawstor::io::TaskVectorPositional*>(
-            event->_t.get())->iov(),
-        static_cast<rawstor::io::TaskVectorPositional*>(
-            event->_t.get())->niov(),
-        static_cast<rawstor::io::TaskVectorPositional*>(
-            event->_t.get())->offset());
+        event->_sqe, p->fd(), p->iov(), p->niov(), p->offset());
     return event;
 }
 
