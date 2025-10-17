@@ -18,6 +18,10 @@ namespace rawstor {
 
 class Task;
 
+class TaskScalar;
+
+class TaskVector;
+
 
 class Session {
     private:
@@ -72,24 +76,15 @@ class Session {
 
         virtual void set_object(
             rawstor::io::Queue &queue,
-            RawstorObject *object,
             std::unique_ptr<Task> t) = 0;
 
-        virtual void pread(
-            void *buf, off_t offset,
-            std::unique_ptr<Task> t) = 0;
+        virtual void read(std::unique_ptr<TaskScalar> t) = 0;
 
-        virtual void preadv(
-            iovec *iov, unsigned int niov, off_t offset,
-            std::unique_ptr<Task> t) = 0;
+        virtual void read(std::unique_ptr<TaskVector> t) = 0;
 
-        virtual void pwrite(
-            void *buf, off_t offset,
-            std::unique_ptr<Task> t) = 0;
+        virtual void write(std::unique_ptr<TaskScalar> t) = 0;
 
-        virtual void pwritev(
-            iovec *iov, unsigned int niov, off_t offset,
-            std::unique_ptr<Task> t) = 0;
+        virtual void write(std::unique_ptr<TaskVector> t) = 0;
 };
 
 

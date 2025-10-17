@@ -226,6 +226,10 @@ class SessionOp {
             return _in_flight;
         }
 
+        inline RawstorObject* object() noexcept {
+            return _t->object();
+        }
+
         inline size_t size() const noexcept {
             return _t->size();
         }
@@ -283,18 +287,20 @@ class SessionOpSetObjectId final: public SessionOp {
 
 class SessionOpRead final: public SessionOp {
     private:
-        void *_buf;
         uint64_t _hash;
 
     public:
         SessionOpRead(
             const std::shared_ptr<rawstor::ost::Context> &context,
-            uint16_t cid, void *buf,
-            std::unique_ptr<rawstor::Task> t):
+            uint16_t cid,
+            std::unique_ptr<rawstor::TaskScalar> t):
             SessionOp(context, cid, std::move(t)),
-            _buf(buf),
             _hash(0)
         {}
+
+        off_t offset() const noexcept {
+            return static_cast<rawstor::TaskScalar*>(_t.get())->offset();
+        }
 
         void response_head_cb(RawstorOSTFrameResponse &response) {
             rawstor::ost::Session &s = _context->session();
@@ -314,7 +320,10 @@ class SessionOpRead final: public SessionOp {
                 dispatch(0, error);
             } else {
                 s.read_response_body(
-                    *rawstor::io_queue, cid(), _buf, _t->size());
+                    *rawstor::io_queue,
+                    cid(),
+                    static_cast<rawstor::TaskScalar*>(_t.get())->buf(),
+                    _t->size());
             }
         }
 
@@ -323,7 +332,12 @@ class SessionOpRead final: public SessionOp {
 
             int error = 0;
             try {
-                validate_hash(s, hash(_buf, _t->size()), _hash);
+                validate_hash(
+                    s,
+                    hash(
+                        static_cast<rawstor::TaskScalar*>(_t.get())->buf(),
+                        _t->size()),
+                    _hash);
             } catch (std::system_error &e) {
                 error = e.code().value();
             }
@@ -335,20 +349,20 @@ class SessionOpRead final: public SessionOp {
 
 class SessionOpReadV final: public SessionOp {
     private:
-        iovec *_iov;
-        unsigned int _niov;
         uint64_t _hash;
 
     public:
         SessionOpReadV(
             const std::shared_ptr<rawstor::ost::Context> &context,
-            uint16_t cid, iovec *iov, unsigned int niov,
-            std::unique_ptr<rawstor::Task> t):
+            uint16_t cid,
+            std::unique_ptr<rawstor::TaskVector> t):
             SessionOp(context, cid, std::move(t)),
-            _iov(iov),
-            _niov(niov),
             _hash(0)
         {}
+
+        off_t offset() const noexcept {
+            return static_cast<rawstor::TaskVector*>(_t.get())->offset();
+        }
 
         void response_head_cb(RawstorOSTFrameResponse &response) {
             rawstor::ost::Session &s = _context->session();
@@ -366,7 +380,11 @@ class SessionOpReadV final: public SessionOp {
                 dispatch(response.res, error);
             } else {
                 s.read_response_body(
-                    *rawstor::io_queue, cid(), _iov, _niov, _t->size());
+                    *rawstor::io_queue,
+                    cid(),
+                    static_cast<rawstor::TaskVector*>(_t.get())->iov(),
+                    static_cast<rawstor::TaskVector*>(_t.get())->niov(),
+                    _t->size());
             }
         }
 
@@ -375,7 +393,12 @@ class SessionOpReadV final: public SessionOp {
 
             int error = 0;
             try {
-                validate_hash(s, hash(_iov, _niov), _hash);
+                validate_hash(
+                    s,
+                    hash(
+                        static_cast<rawstor::TaskVector*>(_t.get())->iov(),
+                        static_cast<rawstor::TaskVector*>(_t.get())->niov()),
+                    _hash);
             } catch (std::system_error &e) {
                 error = e.code().value();
             }
@@ -390,9 +413,54 @@ class SessionOpWrite final: public SessionOp {
         SessionOpWrite(
             const std::shared_ptr<rawstor::ost::Context> &context,
             uint16_t cid,
-            std::unique_ptr<rawstor::Task> t):
+            std::unique_ptr<rawstor::TaskScalar> t):
             SessionOp(context, cid, std::move(t))
         {}
+
+        void* buf() noexcept {
+            return static_cast<rawstor::TaskScalar*>(_t.get())->buf();
+        }
+
+        off_t offset() const noexcept {
+            return static_cast<rawstor::TaskScalar*>(_t.get())->offset();
+        }
+
+        void response_head_cb(RawstorOSTFrameResponse &response) {
+            rawstor::ost::Session &s = _context->session();
+            int error = 0;
+
+            try {
+                validate_cmd(s, response.cmd, RAWSTOR_CMD_WRITE);
+                validate_response(s, response);
+            } catch (std::system_error &e) {
+                error = e.code().value();
+            }
+
+            dispatch(response.res, error);
+        }
+};
+
+
+class SessionOpWriteV final: public SessionOp {
+    public:
+        SessionOpWriteV(
+            const std::shared_ptr<rawstor::ost::Context> &context,
+            uint16_t cid,
+            std::unique_ptr<rawstor::TaskVector> t):
+            SessionOp(context, cid, std::move(t))
+        {}
+
+        iovec* iov() noexcept {
+            return static_cast<rawstor::TaskVector*>(_t.get())->iov();
+        }
+
+        unsigned int niov() noexcept {
+            return static_cast<rawstor::TaskVector*>(_t.get())->niov();
+        }
+
+        off_t offset() const noexcept {
+            return static_cast<rawstor::TaskVector*>(_t.get())->offset();
+        }
 
         void response_head_cb(RawstorOSTFrameResponse &response) {
             rawstor::ost::Session &s = _context->session();
@@ -470,7 +538,6 @@ class RequestBasic: public RequestScalar {
         RequestBasic(
             int fd,
             const std::shared_ptr<SessionOp> &op,
-            const RawstorUUID &id,
             const RawstorOSTCommandType &cmd):
             RequestScalar(fd, op),
             _request({
@@ -481,7 +548,10 @@ class RequestBasic: public RequestScalar {
                 .val = 0,
             })
         {
-            memcpy(_request.obj_id, id.bytes, sizeof(_request.obj_id));
+            memcpy(
+                _request.obj_id,
+                op->object()->id().bytes,
+                sizeof(_request.obj_id));
         }
 
         void* buf() noexcept {
@@ -498,9 +568,8 @@ class RequestSetObjectId final: public RequestBasic {
     public:
         RequestSetObjectId(
             int fd,
-            const std::shared_ptr<SessionOp> &op,
-            const RawstorUUID &id):
-            RequestBasic(fd, op, id, RAWSTOR_CMD_SET_OBJECT)
+            const std::shared_ptr<SessionOp> &op):
+            RequestBasic(fd, op, RAWSTOR_CMD_SET_OBJECT)
         {}
 };
 
@@ -512,15 +581,32 @@ class RequestIOScalar: public RequestScalar {
     public:
         RequestIOScalar(
             int fd,
-            const std::shared_ptr<SessionOp> &op,
+            const std::shared_ptr<SessionOpRead> &op,
             const RawstorOSTCommandType &cmd,
-            off_t offset, uint64_t hash):
+            uint64_t hash):
             RequestScalar(fd, op),
             _request({
                 .magic = RAWSTOR_MAGIC,
                 .cmd = cmd,
                 .cid = op->cid(),
-                .offset = (uint64_t)offset,
+                .offset = (uint64_t)op->offset(),
+                .len = (uint32_t)op->size(),
+                .hash = hash,
+                .sync = 0,
+            })
+        {}
+
+        RequestIOScalar(
+            int fd,
+            const std::shared_ptr<SessionOpReadV> &op,
+            const RawstorOSTCommandType &cmd,
+            uint64_t hash):
+            RequestScalar(fd, op),
+            _request({
+                .magic = RAWSTOR_MAGIC,
+                .cmd = cmd,
+                .cid = op->cid(),
+                .offset = (uint64_t)op->offset(),
                 .len = (uint32_t)op->size(),
                 .hash = hash,
                 .sync = 0,
@@ -536,15 +622,32 @@ class RequestIOVector: public RequestVector {
     public:
         RequestIOVector(
             int fd,
-            const std::shared_ptr<SessionOp> &op,
+            const std::shared_ptr<SessionOpWrite> &op,
             const RawstorOSTCommandType &cmd,
-            off_t offset, uint64_t hash):
+            uint64_t hash):
             RequestVector(fd, op),
             _request({
                 .magic = RAWSTOR_MAGIC,
                 .cmd = cmd,
                 .cid = op->cid(),
-                .offset = (uint64_t)offset, // TODO: store in op
+                .offset = (uint64_t)op->offset(),
+                .len = (uint32_t)op->size(),
+                .hash = hash,
+                .sync = 0,
+            })
+        {}
+
+        RequestIOVector(
+            int fd,
+            const std::shared_ptr<SessionOpWriteV> &op,
+            const RawstorOSTCommandType &cmd,
+            uint64_t hash):
+            RequestVector(fd, op),
+            _request({
+                .magic = RAWSTOR_MAGIC,
+                .cmd = cmd,
+                .cid = op->cid(),
+                .offset = (uint64_t)op->offset(),
                 .len = (uint32_t)op->size(),
                 .hash = hash,
                 .sync = 0,
@@ -557,11 +660,14 @@ class RequestCmdRead final: public RequestIOScalar {
     public:
         RequestCmdRead(
             int fd,
-            const std::shared_ptr<SessionOp> &op,
-            off_t offset):
-            RequestIOScalar(
-                fd, op, RAWSTOR_CMD_READ,
-                offset, 0)
+            const std::shared_ptr<SessionOpRead> &op):
+            RequestIOScalar(fd, op, RAWSTOR_CMD_READ, 0)
+        {}
+
+        RequestCmdRead(
+            int fd,
+            const std::shared_ptr<SessionOpReadV> &op):
+            RequestIOScalar(fd, op, RAWSTOR_CMD_READ, 0)
         {}
 
         void* buf() noexcept {
@@ -581,11 +687,10 @@ class RequestCmdWrite final: public RequestIOVector {
     public:
         RequestCmdWrite(
             int fd,
-            const std::shared_ptr<SessionOp> &op,
-            void *buf, off_t offset):
+            const std::shared_ptr<SessionOpWrite> &op):
             RequestIOVector(
                 fd, op, RAWSTOR_CMD_WRITE,
-                offset, hash(buf, op->size()))
+                hash(op->buf(), op->size()))
         {
             _iov.reserve(2);
             _iov.push_back({
@@ -593,26 +698,25 @@ class RequestCmdWrite final: public RequestIOVector {
                 .iov_len = sizeof(_request),
             });
             _iov.push_back({
-                .iov_base = buf,
+                .iov_base = op->buf(),
                 .iov_len = op->size(),
             });
         }
 
         RequestCmdWrite(
             int fd,
-            const std::shared_ptr<SessionOp> &op,
-            iovec *iov, unsigned int niov, off_t offset):
+            const std::shared_ptr<SessionOpWriteV> &op):
             RequestIOVector(
                 fd, op, RAWSTOR_CMD_WRITE,
-                offset, hash(iov, niov))
+                hash(op->iov(), op->niov()))
         {
-            _iov.reserve(niov + 1);
+            _iov.reserve(op->niov() + 1);
             _iov.push_back({
                 .iov_base = &_request,
                 .iov_len = sizeof(_request),
             });
-            for (unsigned int i = 0; i < niov; ++i) {
-                _iov.push_back(iov[i]);
+            for (unsigned int i = 0; i < op->niov(); ++i) {
+                _iov.push_back(op->iov()[i]);
             }
         }
 
@@ -978,7 +1082,6 @@ void Session::spec(
 
 void Session::set_object(
     rawstor::io::Queue &queue,
-    RawstorObject *object,
     std::unique_ptr<rawstor::Task> t)
 {
     rawstor_info("%s: Setting object id\n", str().c_str());
@@ -991,8 +1094,7 @@ void Session::set_object(
     _context->register_op(op);
 
     std::unique_ptr<RequestSetObjectId> req =
-        std::make_unique<RequestSetObjectId>(
-            fd(), op, object->id());
+        std::make_unique<RequestSetObjectId>(fd(), op);
     queue.write(std::move(req));
 
     if (!_context->has_reads()) {
@@ -1001,22 +1103,18 @@ void Session::set_object(
 }
 
 
-void Session::pread(
-    void *buf, off_t offset,
-    std::unique_ptr<rawstor::Task> t)
-{
+void Session::read(std::unique_ptr<rawstor::TaskScalar> t) {
     rawstor_debug(
         "%s(): offset = %jd, size = %zu\n",
-        __FUNCTION__, (intmax_t)offset, t->size());
+        __FUNCTION__, (intmax_t)t->offset(), t->size());
 
     std::shared_ptr<SessionOpRead> op =
         std::make_shared<SessionOpRead>(
-            _context, _cid_counter++, buf, std::move(t));
+            _context, _cid_counter++, std::move(t));
     _context->register_op(op);
 
     std::unique_ptr<RequestCmdRead> req =
-        std::make_unique<RequestCmdRead>(
-            fd(), op, offset);
+        std::make_unique<RequestCmdRead>(fd(), op);
     io_queue->write(std::move(req));
 
     if (!_context->has_reads()) {
@@ -1025,22 +1123,18 @@ void Session::pread(
 }
 
 
-void Session::preadv(
-    iovec *iov, unsigned int niov, off_t offset,
-    std::unique_ptr<rawstor::Task> t)
-{
+void Session::read(std::unique_ptr<rawstor::TaskVector> t) {
     rawstor_debug(
         "%s(): offset = %jd, niov = %u, size = %zu\n",
-        __FUNCTION__, (intmax_t)offset, niov, t->size());
+        __FUNCTION__, (intmax_t)t->offset(), t->niov(), t->size());
 
     std::shared_ptr<SessionOpReadV> op =
         std::make_shared<SessionOpReadV>(
-            _context, _cid_counter++, iov, niov, std::move(t));
+            _context, _cid_counter++, std::move(t));
     _context->register_op(op);
 
     std::unique_ptr<RequestCmdRead> req =
-        std::make_unique<RequestCmdRead>(
-            fd(), op, offset);
+        std::make_unique<RequestCmdRead>(fd(), op);
     io_queue->write(std::move(req));
 
     if (!_context->has_reads()) {
@@ -1049,13 +1143,10 @@ void Session::preadv(
 }
 
 
-void Session::pwrite(
-    void *buf, off_t offset,
-    std::unique_ptr<rawstor::Task> t)
-{
+void Session::write(std::unique_ptr<rawstor::TaskScalar> t) {
     rawstor_debug(
         "%s(): offset = %jd, size = %zu\n",
-        __FUNCTION__, (intmax_t)offset, t->size());
+        __FUNCTION__, (intmax_t)t->offset(), t->size());
 
     std::shared_ptr<SessionOpWrite> op =
         std::make_shared<SessionOpWrite>(
@@ -1063,8 +1154,7 @@ void Session::pwrite(
     _context->register_op(op);
 
     std::unique_ptr<RequestCmdWrite> req =
-        std::make_unique<RequestCmdWrite>(
-            fd(), op, buf, offset);
+        std::make_unique<RequestCmdWrite>(fd(), op);
     io_queue->write(std::move(req));
 
     if (!_context->has_reads()) {
@@ -1073,22 +1163,18 @@ void Session::pwrite(
 }
 
 
-void Session::pwritev(
-    iovec *iov, unsigned int niov, off_t offset,
-    std::unique_ptr<rawstor::Task> t)
-{
+void Session::write(std::unique_ptr<rawstor::TaskVector> t) {
     rawstor_debug(
         "%s(): offset = %jd, niov = %u, size = %zu\n",
-        __FUNCTION__, (intmax_t)offset, niov, t->size());
+        __FUNCTION__, (intmax_t)t->offset(), t->niov(), t->size());
 
-    std::shared_ptr<SessionOpWrite> op =
-        std::make_shared<SessionOpWrite>(
+    std::shared_ptr<SessionOpWriteV> op =
+        std::make_shared<SessionOpWriteV>(
             _context, _cid_counter++, std::move(t));
     _context->register_op(op);
 
     std::unique_ptr<RequestCmdWrite> req =
-        std::make_unique<RequestCmdWrite>(
-            fd(), op, iov, niov, offset);
+        std::make_unique<RequestCmdWrite>(fd(), op);
     io_queue->write(std::move(req));
 
     if (!_context->has_reads()) {

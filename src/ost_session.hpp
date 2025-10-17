@@ -62,24 +62,15 @@ class Session final: public rawstor::Session {
 
         void set_object(
             rawstor::io::Queue &queue,
-            RawstorObject *object,
             std::unique_ptr<rawstor::Task> t);
 
-        void pread(
-            void *buf, off_t offset,
-            std::unique_ptr<rawstor::Task> t);
+        void read(std::unique_ptr<rawstor::TaskScalar> t);
 
-        void preadv(
-            iovec *iov, unsigned int niov, off_t offset,
-            std::unique_ptr<rawstor::Task> t);
+        void read(std::unique_ptr<rawstor::TaskVector> t);
 
-        void pwrite(
-            void *buf, off_t offset,
-            std::unique_ptr<rawstor::Task> t);
+        void write(std::unique_ptr<rawstor::TaskScalar> t);
 
-        void pwritev(
-            iovec *iov, unsigned int niov, off_t offset,
-            std::unique_ptr<rawstor::Task> t);
+        void write(std::unique_ptr<rawstor::TaskVector> t);
 };
 
 

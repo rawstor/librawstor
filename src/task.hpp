@@ -12,14 +12,14 @@ namespace rawstor {
 
 
 class Task {
-    protected:
+    private:
         RawstorObject *_o;
         size_t _size;
         RawstorCallback *_cb;
         void *_data;
 
     public:
-        explicit Task(
+        Task(
             RawstorObject *o,
             size_t size,
             RawstorCallback *cb,
@@ -36,15 +36,90 @@ class Task {
         Task& operator=(const Task &) = delete;
         Task& operator=(Task &&) = delete;
 
-        inline size_t size() const noexcept {
-            return _size;
-        }
-
         virtual void operator()(size_t result, int error) {
             int res = _cb(_o, _size, result, error, _data);
             if (res) {
                 RAWSTOR_THROW_SYSTEM_ERROR(-res);
             }
+        }
+
+        inline RawstorObject* object() noexcept {
+            return _o;
+        }
+
+        inline size_t size() const noexcept {
+            return _size;
+        }
+
+        inline RawstorCallback* callback() noexcept {
+            return _cb;
+        }
+
+        void* data() noexcept {
+            return _data;
+        }
+};
+
+
+class TaskScalar: public Task {
+    private:
+        void *_buf;
+        off_t _offset;
+
+    public:
+        TaskScalar(
+            RawstorObject *o,
+            void *buf,
+            size_t size,
+            off_t offset,
+            RawstorCallback *cb,
+            void *data):
+            Task(o, size, cb, data),
+            _buf(buf),
+            _offset(offset)
+        {}
+
+        inline void* buf() noexcept {
+            return _buf;
+        }
+
+        inline off_t offset() const noexcept {
+            return _offset;
+        }
+};
+
+
+class TaskVector: public Task {
+    private:
+        iovec *_iov;
+        unsigned int _niov;
+        off_t _offset;
+
+    public:
+        TaskVector(
+            RawstorObject *o,
+            iovec *iov,
+            unsigned int niov,
+            size_t size,
+            off_t offset,
+            RawstorCallback *cb,
+            void *data):
+            Task(o, size, cb, data),
+            _iov(iov),
+            _niov(niov),
+            _offset(offset)
+        {}
+
+        inline iovec* iov() noexcept {
+            return _iov;
+        }
+
+        inline unsigned int niov() const noexcept {
+            return _niov;
+        }
+
+        inline off_t offset() const noexcept {
+            return _offset;
         }
 };
 
