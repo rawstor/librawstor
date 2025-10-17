@@ -21,15 +21,12 @@ class SessionOp;
 
 class Session final: public rawstor::Session {
     private:
-        RawstorObject *_object;
+        RawstorObject *_o;
 
         int _connect(const RawstorUUID &id);
+
     public:
         Session(const URI &uri, unsigned int depth);
-
-        inline RawstorObject* object() const noexcept {
-            return _object;
-        }
 
         void create(
             rawstor::io::Queue &queue,
@@ -48,6 +45,7 @@ class Session final: public rawstor::Session {
 
         void set_object(
             rawstor::io::Queue &queue,
+            RawstorObject *object,
             std::unique_ptr<rawstor::Task> t);
 
         void read(std::unique_ptr<rawstor::TaskScalar> t);

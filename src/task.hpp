@@ -13,18 +13,12 @@ namespace rawstor {
 
 class Task {
     private:
-        RawstorObject *_o;
         size_t _size;
         RawstorCallback *_cb;
         void *_data;
 
     public:
-        Task(
-            RawstorObject *o,
-            size_t size,
-            RawstorCallback *cb,
-            void *data):
-            _o(o),
+        Task(size_t size, RawstorCallback *cb, void *data):
             _size(size),
             _cb(cb),
             _data(data)
@@ -36,15 +30,11 @@ class Task {
         Task& operator=(const Task &) = delete;
         Task& operator=(Task &&) = delete;
 
-        virtual void operator()(size_t result, int error) {
-            int res = _cb(_o, _size, result, error, _data);
+        virtual void operator()(RawstorObject *o, size_t result, int error) {
+            int res = _cb(o, _size, result, error, _data);
             if (res) {
                 RAWSTOR_THROW_SYSTEM_ERROR(-res);
             }
-        }
-
-        inline RawstorObject* object() noexcept {
-            return _o;
         }
 
         inline size_t size() const noexcept {
@@ -68,13 +58,12 @@ class TaskScalar: public Task {
 
     public:
         TaskScalar(
-            RawstorObject *o,
             void *buf,
             size_t size,
             off_t offset,
             RawstorCallback *cb,
             void *data):
-            Task(o, size, cb, data),
+            Task(size, cb, data),
             _buf(buf),
             _offset(offset)
         {}
@@ -97,14 +86,13 @@ class TaskVector: public Task {
 
     public:
         TaskVector(
-            RawstorObject *o,
             iovec *iov,
             unsigned int niov,
             size_t size,
             off_t offset,
             RawstorCallback *cb,
             void *data):
-            Task(o, size, cb, data),
+            Task(size, cb, data),
             _iov(iov),
             _niov(niov),
             _offset(offset)

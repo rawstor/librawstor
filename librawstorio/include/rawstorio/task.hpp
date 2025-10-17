@@ -25,7 +25,8 @@ class Task {
             _fd(fd)
 #ifdef RAWSTOR_TRACE_EVENTS
             , _trace_id(rawstor_trace_event_begin(
-                "Task(%d)\n", _fd))
+                __FILE__, __LINE__, __FUNCTION__,
+                "fd %d\n", _fd))
 #endif
         {}
         Task(const Task &) = delete;
@@ -33,7 +34,8 @@ class Task {
         virtual ~Task() {
 #ifdef RAWSTOR_TRACE_EVENTS
             rawstor_trace_event_end(
-                _trace_id, "Task::~Task()\n");
+                _trace_id, __FILE__, __LINE__, __FUNCTION__,
+                "fd %d\n", _fd);
 #endif
         }
 
@@ -48,8 +50,13 @@ class Task {
         virtual size_t size() const noexcept = 0;
 
 #ifdef RAWSTOR_TRACE_EVENTS
-        void trace(const std::string &message) {
-            rawstor_trace_event_message(_trace_id, "%s\n", message.c_str());
+        void trace(
+            const char *file, int line, const char *function,
+            const std::string &message)
+        {
+            rawstor_trace_event_message(
+                _trace_id, file, line, function,
+                "%s\n", message.c_str());
         }
 #endif
 };

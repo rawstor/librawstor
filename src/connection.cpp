@@ -99,14 +99,13 @@ class ConnectionOpScalar: public rawstor::TaskScalar {
             unsigned int attempt,
             void *buf, size_t size, size_t offset,
             RawstorCallback *cb, void *data):
-            rawstor::TaskScalar(
-                cn.object(), buf, size, offset, cb, data),
+            rawstor::TaskScalar(buf, size, offset, cb, data),
             _cn(cn),
             _s(s),
             _attempt(attempt)
         {}
 
-        void operator()(size_t result, int error) noexcept {
+        void operator()(RawstorObject *o, size_t result, int error) noexcept {
             if (!error) {
                 if (_attempt > 0) {
                     rawstor_warning(
@@ -114,7 +113,7 @@ class ConnectionOpScalar: public rawstor::TaskScalar {
                         str().c_str(), _s->str().c_str(),
                         _attempt + 1, rawstor_opts_io_attempts());
                 }
-                rawstor::Task::operator()(result, error);
+                rawstor::Task::operator()(o, result, error);
                 return;
             }
 
@@ -125,7 +124,7 @@ class ConnectionOpScalar: public rawstor::TaskScalar {
                     str().c_str(), _s->str().c_str(),
                     std::strerror(error),
                     _attempt + 1, rawstor_opts_io_attempts());
-                rawstor::Task::operator()(result, error);
+                rawstor::Task::operator()(o, result, error);
                 return;
             }
 
@@ -140,7 +139,7 @@ class ConnectionOpScalar: public rawstor::TaskScalar {
                 _cn.invalidate_session(_s);
                 _retry(_cn.get_next_session());
             } catch (const std::system_error &e) {
-                rawstor::Task::operator()(result, e.code().value());
+                rawstor::Task::operator()(o, result, e.code().value());
             } catch (const std::exception &e) {
                 rawstor_error(
                     "%s; exception on %s: %s; attempt %d of %d; "
@@ -148,7 +147,7 @@ class ConnectionOpScalar: public rawstor::TaskScalar {
                     str().c_str(), _s->str().c_str(),
                     e.what(),
                     _attempt + 1, rawstor_opts_io_attempts());
-                rawstor::Task::operator()(result, EIO);
+                rawstor::Task::operator()(o, result, EIO);
             }
         }
 
@@ -171,14 +170,13 @@ class ConnectionOpVector: public rawstor::TaskVector {
             unsigned int attempt,
             iovec *iov, unsigned int niov, size_t size, size_t offset,
             RawstorCallback *cb, void *data):
-            rawstor::TaskVector(
-                cn.object(), iov, niov, size, offset, cb, data),
+            rawstor::TaskVector(iov, niov, size, offset, cb, data),
             _cn(cn),
             _s(s),
             _attempt(attempt)
         {}
 
-        void operator()(size_t result, int error) noexcept {
+        void operator()(RawstorObject *o, size_t result, int error) noexcept {
             if (!error) {
                 if (_attempt > 0) {
                     rawstor_warning(
@@ -186,7 +184,7 @@ class ConnectionOpVector: public rawstor::TaskVector {
                         str().c_str(), _s->str().c_str(),
                         _attempt + 1, rawstor_opts_io_attempts());
                 }
-                rawstor::Task::operator()(result, error);
+                rawstor::Task::operator()(o, result, error);
                 return;
             }
 
@@ -197,7 +195,7 @@ class ConnectionOpVector: public rawstor::TaskVector {
                     str().c_str(), _s->str().c_str(),
                     std::strerror(error),
                     _attempt + 1, rawstor_opts_io_attempts());
-                rawstor::Task::operator()(result, error);
+                rawstor::Task::operator()(o, result, error);
                 return;
             }
 
@@ -212,7 +210,7 @@ class ConnectionOpVector: public rawstor::TaskVector {
                 _cn.invalidate_session(_s);
                 _retry(_cn.get_next_session());
             } catch (const std::system_error &e) {
-                rawstor::Task::operator()(result, e.code().value());
+                rawstor::Task::operator()(o, result, e.code().value());
             } catch (const std::exception &e) {
                 rawstor_error(
                     "%s; exception on %s: %s; attempt %d of %d; "
@@ -220,7 +218,7 @@ class ConnectionOpVector: public rawstor::TaskVector {
                     str().c_str(), _s->str().c_str(),
                     e.what(),
                     _attempt + 1, rawstor_opts_io_attempts());
-                rawstor::Task::operator()(result, EIO);
+                rawstor::Task::operator()(o, result, EIO);
             }
         }
 
@@ -289,7 +287,7 @@ class ConnectionOpPReadV final: public ConnectionOpVector {
 class ConnectionOpPWrite final: public ConnectionOpScalar {
     protected:
         void _retry(const std::shared_ptr<rawstor::Session> &s) {
-            std::unique_ptr<ConnectionOpPWrite> op =
+            std::unique_ptr<rawstor::TaskScalar> op =
                 std::make_unique<ConnectionOpPWrite>(
                     _cn, s, _attempt + 1,
                     buf(), size(), offset(), callback(), data());
@@ -387,8 +385,8 @@ std::vector<std::shared_ptr<Session>> Connection::_open(
 
             for (std::shared_ptr<Session> s: sessions) {
                 std::unique_ptr<Task> t =
-                    std::make_unique<Task>(object, 0, q.callback, &q);
-                s->set_object(q.queue(), std::move(t));
+                    std::make_unique<Task>(0, q.callback, &q);
+                s->set_object(q.queue(), object, std::move(t));
             }
 
             q.wait();
@@ -453,7 +451,7 @@ void Connection::create(
 
     std::unique_ptr<Session> s = Session::create(uri, _depth);
     std::unique_ptr<Task> t =
-        std::make_unique<Task>(nullptr, 0, q.callback, &q);
+        std::make_unique<Task>(0, q.callback, &q);
     s->create(q.queue(), sp, id, std::move(t));
 
     q.wait();
@@ -471,7 +469,7 @@ void Connection::remove(const URI &uri) {
 
     std::unique_ptr<Session> s = Session::create(uri.up(), _depth);
     std::unique_ptr<Task> t =
-        std::make_unique<Task>(nullptr, 0, q.callback, &q);
+        std::make_unique<Task>(0, q.callback, &q);
     s->remove(q.queue(), id, std::move(t));
 
     q.wait();
@@ -489,7 +487,7 @@ void Connection::spec(const URI &uri, RawstorObjectSpec *sp) {
 
     std::unique_ptr<Session> s = Session::create(uri.up(), _depth);
     std::unique_ptr<Task> t =
-        std::make_unique<Task>(nullptr, 0, q.callback, &q);
+        std::make_unique<Task>(0, q.callback, &q);
     s->spec(q.queue(), id, sp, std::move(t));
 
     q.wait();

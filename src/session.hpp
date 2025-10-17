@@ -76,6 +76,7 @@ class Session {
 
         virtual void set_object(
             rawstor::io::Queue &queue,
+            RawstorObject *object,
             std::unique_ptr<Task> t) = 0;
 
         virtual void read(std::unique_ptr<TaskScalar> t) = 0;

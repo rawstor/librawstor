@@ -71,11 +71,17 @@ void rawstor_logging_terminate(void);
 
 
 #ifdef RAWSTOR_TRACE_EVENTS
-void* rawstor_trace_event_begin(const char *format, ...);
+void* rawstor_trace_event_begin(
+    const char *file, int line, const char *function,
+    const char *format, ...);
 
-void rawstor_trace_event_end(void *event, const char *format, ...);
+void rawstor_trace_event_end(
+    void *event, const char *file, int line, const char *function,
+    const char *format, ...);
 
-void rawstor_trace_event_message(void *event, const char *format, ...);
+void rawstor_trace_event_message(
+    void *event, const char *file, int line, const char *function,
+    const char *format, ...);
 
 void rawstor_trace_event_dump(void);
 #else

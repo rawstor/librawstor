@@ -27,6 +27,7 @@ class Context;
 
 class Session final: public rawstor::Session {
     private:
+        RawstorObject *_o;
         uint16_t _cid_counter;
 
         std::shared_ptr<Context> _context;
@@ -62,6 +63,7 @@ class Session final: public rawstor::Session {
 
         void set_object(
             rawstor::io::Queue &queue,
+            RawstorObject *object,
             std::unique_ptr<rawstor::Task> t);
 
         void read(std::unique_ptr<rawstor::TaskScalar> t);
