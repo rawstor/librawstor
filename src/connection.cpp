@@ -123,47 +123,49 @@ class ConnectionOp: public rawstor::Task {
 
 
 void ConnectionOp::operator()(size_t result, int error) noexcept {
-    if (error) {
-        if (_attempt < rawstor_opts_io_attempts()) {
-            rawstor_warning(
-                "%s; error on %s: %s; attempt: %d of %d; "
-                "retrying...\n",
-                str().c_str(), _s->str().c_str(),
-                std::strerror(error),
-                _attempt + 1, rawstor_opts_io_attempts());
-            try {
-                _cn.invalidate_session(_s);
-                _retry(_cn.get_next_session());
-                return;
-            } catch (const std::system_error &e) {
-                error = e.code().value();
-            } catch (const std::exception &e) {
-                rawstor_error(
-                    "%s; exception on %s: %s; attempt %d of %d; "
-                    "failing...\n",
-                    str().c_str(), _s->str().c_str(),
-                    e.what(),
-                    _attempt + 1, rawstor_opts_io_attempts());
-                error = EIO;
-            }
-        } else {
-            rawstor_error(
-                "%s; error on %s: %s; attempt %d of %d; "
-                "failing...\n",
-                str().c_str(), _s->str().c_str(),
-                std::strerror(error),
-                _attempt + 1, rawstor_opts_io_attempts());
-        }
-    } else {
+    if (!error) {
         if (_attempt > 0) {
             rawstor_warning(
                 "%s; success on %s; attempt: %d of %d\n",
                 str().c_str(), _s->str().c_str(),
                 _attempt + 1, rawstor_opts_io_attempts());
         }
+        rawstor::Task::operator()(result, error);
+        return;
     }
 
-    rawstor::Task::operator()(result, error);
+    if (_attempt >= rawstor_opts_io_attempts()) {
+        rawstor_error(
+            "%s; error on %s: %s; attempt %d of %d; "
+            "failing...\n",
+            str().c_str(), _s->str().c_str(),
+            std::strerror(error),
+            _attempt + 1, rawstor_opts_io_attempts());
+        rawstor::Task::operator()(result, error);
+        return;
+    }
+
+    rawstor_warning(
+        "%s; error on %s: %s; attempt: %d of %d; "
+        "retrying...\n",
+        str().c_str(), _s->str().c_str(),
+        std::strerror(error),
+        _attempt + 1, rawstor_opts_io_attempts());
+
+    try {
+        _cn.invalidate_session(_s);
+        _retry(_cn.get_next_session());
+    } catch (const std::system_error &e) {
+        rawstor::Task::operator()(result, e.code().value());
+    } catch (const std::exception &e) {
+        rawstor_error(
+            "%s; exception on %s: %s; attempt %d of %d; "
+            "failing...\n",
+            str().c_str(), _s->str().c_str(),
+            e.what(),
+            _attempt + 1, rawstor_opts_io_attempts());
+        rawstor::Task::operator()(result, EIO);
+    }
 }
 
 
