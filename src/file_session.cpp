@@ -3,6 +3,7 @@
 #include "object.hpp"
 #include "opts.h"
 #include "rawstor_internals.hpp"
+#include "task.hpp"
 
 #include <rawstorstd/gpp.hpp>
 #include <rawstorstd/logging.h>
@@ -105,36 +106,28 @@ namespace rawstor {
 namespace file {
 
 
-class SessionOpScalarPositional final: public rawstor::io::TaskScalarPositional {
+class SessionOpScalarPositional final:
+    public rawstor::io::TaskScalarPositional
+{
     private:
-        Session &_s;
-
         void *_buf;
-        size_t _size;
         off_t _offset;
 
-        RawstorCallback *_cb;
-        void *_data;
+        std::unique_ptr<rawstor::Task> _t;
 
     public:
         SessionOpScalarPositional(
-            Session &s,
-            void *buf, size_t size, off_t offset,
-            RawstorCallback *cb, void *data):
-            rawstor::io::TaskScalarPositional(s.fd()),
-            _s(s),
+            int fd,
+            void *buf, off_t offset,
+            std::unique_ptr<rawstor::Task> t):
+            rawstor::io::TaskScalarPositional(fd),
             _buf(buf),
-            _size(size),
             _offset(offset),
-            _cb(cb),
-            _data(data)
+            _t(std::move(t))
         {}
 
         void operator()(size_t result, int error) {
-            int res = _cb(_s.object(), _size, result, error, _data);
-            if (res) {
-                RAWSTOR_THROW_SYSTEM_ERROR(-res);
-            }
+            (*_t)(result, error);
         }
 
         void* buf() noexcept {
@@ -142,7 +135,7 @@ class SessionOpScalarPositional final: public rawstor::io::TaskScalarPositional 
         }
 
         size_t size() const noexcept {
-            return _size;
+            return _t->size();
         }
 
         off_t offset() const noexcept {
@@ -155,36 +148,26 @@ class SessionOpVectorPositional final:
     public rawstor::io::TaskVectorPositional
 {
     private:
-        Session &_s;
-
         iovec *_iov;
         unsigned int _niov;
-        size_t _size;
         off_t _offset;
 
-        RawstorCallback *_cb;
-        void *_data;
+        std::unique_ptr<rawstor::Task> _t;
 
     public:
         SessionOpVectorPositional(
-            Session &s,
-            iovec *iov, unsigned int niov, size_t size, off_t offset,
-            RawstorCallback *cb, void *data):
-            rawstor::io::TaskVectorPositional(s.fd()),
-            _s(s),
+            int fd,
+            iovec *iov, unsigned int niov, off_t offset,
+            std::unique_ptr<rawstor::Task> t):
+            rawstor::io::TaskVectorPositional(fd),
             _iov(iov),
             _niov(niov),
-            _size(size),
             _offset(offset),
-            _cb(cb),
-            _data(data)
+            _t(std::move(t))
         {}
 
         void operator()(size_t result, int error) {
-            int res = _cb(_s.object(), _size, result, error, _data);
-            if (res) {
-                RAWSTOR_THROW_SYSTEM_ERROR(-res);
-            }
+            (*_t)(result, error);
         }
 
         iovec* iov() noexcept {
@@ -196,7 +179,7 @@ class SessionOpVectorPositional final:
         }
 
         size_t size() const noexcept {
-            return _size;
+            return _t->size();
         }
 
         off_t offset() const noexcept {
@@ -231,7 +214,7 @@ int Session::_connect(const RawstorUUID &id) {
 void Session::create(
     rawstor::io::Queue &,
     const RawstorObjectSpec &sp, RawstorUUID *id,
-    RawstorCallback *cb, void *data)
+    std::unique_ptr<rawstor::Task> t)
 {
     std::string ost_path = get_ost_path(uri());
     if (mkdir(ost_path.c_str(), 0755) == -1) {
@@ -286,14 +269,14 @@ void Session::create(
 
     *id = uuid;
 
-    cb(nullptr, 0, 0, 0, data);
+    (*t)(0, 0);
 }
 
 
 void Session::remove(
     rawstor::io::Queue &,
     const RawstorUUID &id,
-    RawstorCallback *cb, void *data)
+    std::unique_ptr<rawstor::Task> t)
 {
     std::string ost_path = get_ost_path(uri());
 
@@ -318,14 +301,14 @@ void Session::remove(
         }
     }
 
-    cb(nullptr, 0, 0, 0, data);
+    (*t)(0, 0);
 }
 
 
 void Session::spec(
     rawstor::io::Queue &,
     const RawstorUUID &id, RawstorObjectSpec *sp,
-    RawstorCallback *cb, void *data)
+    std::unique_ptr<rawstor::Task> t)
 {
     std::string ost_path = get_ost_path(uri());
 
@@ -353,14 +336,14 @@ void Session::spec(
         throw;
     }
 
-    cb(nullptr, 0, 0, 0, data);
+    (*t)(0, 0);
 }
 
 
 void Session::set_object(
     rawstor::io::Queue &,
     RawstorObject *object,
-    RawstorCallback *cb, void *data)
+    std::unique_ptr<rawstor::Task> t)
 {
     if (fd() != -1) {
         throw std::runtime_error("Object already set");
@@ -375,50 +358,50 @@ void Session::set_object(
 
     _object = object;
 
-    cb(object, 0, 0, 0, data);
+    (*t)(0, 0);
 }
 
 
 void Session::pread(
-    void *buf, size_t size, off_t offset,
-    RawstorCallback *cb, void *data)
+    void *buf, off_t offset,
+    std::unique_ptr<rawstor::Task> t)
 {
     std::unique_ptr<rawstor::io::TaskScalarPositional> op =
         std::make_unique<SessionOpScalarPositional>(
-            *this, buf, size, offset, cb, data);
+            fd(), buf, offset, std::move(t));
     io_queue->read(std::move(op));
 }
 
 
 void Session::preadv(
-    iovec *iov, unsigned int niov, size_t size, off_t offset,
-    RawstorCallback *cb, void *data)
+    iovec *iov, unsigned int niov, off_t offset,
+    std::unique_ptr<rawstor::Task> t)
 {
     std::unique_ptr<rawstor::io::TaskVectorPositional> op =
         std::make_unique<SessionOpVectorPositional>(
-            *this, iov, niov, size, offset, cb, data);
+            fd(), iov, niov, offset, std::move(t));
     io_queue->read(std::move(op));
 }
 
 
 void Session::pwrite(
-    void *buf, size_t size, off_t offset,
-    RawstorCallback *cb, void *data)
+    void *buf, off_t offset,
+    std::unique_ptr<rawstor::Task> t)
 {
     std::unique_ptr<rawstor::io::TaskScalarPositional> op =
         std::make_unique<SessionOpScalarPositional>(
-            *this, buf, size, offset, cb, data);
+            fd(), buf, offset, std::move(t));
     io_queue->write(std::move(op));
 }
 
 
 void Session::pwritev(
-    iovec *iov, unsigned int niov, size_t size, off_t offset,
-    RawstorCallback *cb, void *data)
+    iovec *iov, unsigned int niov, off_t offset,
+    std::unique_ptr<rawstor::Task> t)
 {
     std::unique_ptr<rawstor::io::TaskVectorPositional> op =
         std::make_unique<SessionOpVectorPositional>(
-            *this, iov, niov, size, offset, cb, data);
+            fd(), iov, niov, offset, std::move(t));
     io_queue->write(std::move(op));
 }
 

@@ -1,7 +1,8 @@
 #include "connection.hpp"
 
-#include "session.hpp"
 #include "opts.h"
+#include "session.hpp"
+#include "task.hpp"
 
 #include <rawstorio/queue.hpp>
 
@@ -15,46 +16,6 @@
 #include <string>
 
 #include <cstring>
-
-
-namespace rawstor {
-
-
-class ConnectionOp {
-    private:
-        Connection &_cn;
-        RawstorCallback *_cb;
-        void *_data;
-
-    protected:
-        std::shared_ptr<Session> _s;
-        unsigned int _attempts;
-
-        static int _submit_cb(
-            RawstorObject *object,
-            size_t size, size_t res, int error, void *data) noexcept;
-
-    public:
-        ConnectionOp(Connection &cn, RawstorCallback *cb, void *data);
-        ConnectionOp(const ConnectionOp &) = delete;
-        ConnectionOp(ConnectionOp &&) = delete;
-        virtual ~ConnectionOp() {}
-        ConnectionOp& operator=(const ConnectionOp &) = delete;
-        ConnectionOp& operator=(ConnectionOp &&) = delete;
-
-        virtual void submit(const std::shared_ptr<Session> &s) = 0;
-
-        virtual std::string str() const = 0;
-
-        inline int dispatch(
-            RawstorObject *object, size_t size, size_t res, int error)
-        {
-            return _cb(object, size, res, error, _data);
-        }
-};
-
-
-} // rawstor
 
 
 namespace {
@@ -123,28 +84,113 @@ void Queue::wait() {
 }
 
 
-class ConnectionOpPRead: public rawstor::ConnectionOp {
+class ConnectionOp: public rawstor::Task {
+    protected:
+        rawstor::Connection &_cn;
+        std::shared_ptr<rawstor::Session> _s;
+        unsigned int _attempt;
+
+        RawstorCallback *_cb;
+        void *_data;
+
+        virtual void _retry(const std::shared_ptr<rawstor::Session> &s) = 0;
+
+    public:
+        ConnectionOp(
+            rawstor::Connection &cn,
+            const std::shared_ptr<rawstor::Session> &s,
+            unsigned int attempt,
+            size_t size,
+            RawstorCallback *cb, void *data):
+            rawstor::Task(cn.object(), size, cb, data),
+            _cn(cn),
+            _s(s),
+            _attempt(attempt),
+            _cb(cb),
+            _data(data)
+        {}
+
+        ConnectionOp(const ConnectionOp &) = delete;
+        ConnectionOp(ConnectionOp &&) = delete;
+        virtual ~ConnectionOp() {}
+        ConnectionOp& operator=(const ConnectionOp &) = delete;
+        ConnectionOp& operator=(ConnectionOp &&) = delete;
+
+        void operator()(size_t result, int error) noexcept;
+
+        virtual std::string str() const = 0;
+};
+
+
+void ConnectionOp::operator()(size_t result, int error) noexcept {
+    if (error) {
+        if (_attempt < rawstor_opts_io_attempts()) {
+            rawstor_warning(
+                "%s; error on %s: %s; attempt: %d of %d; "
+                "retrying...\n",
+                str().c_str(), _s->str().c_str(),
+                std::strerror(error),
+                _attempt + 1, rawstor_opts_io_attempts());
+            try {
+                _cn.invalidate_session(_s);
+                _retry(_cn.get_next_session());
+                return;
+            } catch (const std::system_error &e) {
+                error = e.code().value();
+            } catch (const std::exception &e) {
+                rawstor_error(
+                    "%s; exception on %s: %s; attempt %d of %d; "
+                    "failing...\n",
+                    str().c_str(), _s->str().c_str(),
+                    e.what(),
+                    _attempt + 1, rawstor_opts_io_attempts());
+                error = EIO;
+            }
+        } else {
+            rawstor_error(
+                "%s; error on %s: %s; attempt %d of %d; "
+                "failing...\n",
+                str().c_str(), _s->str().c_str(),
+                std::strerror(error),
+                _attempt + 1, rawstor_opts_io_attempts());
+        }
+    } else {
+        if (_attempt > 0) {
+            rawstor_warning(
+                "%s; success on %s; attempt: %d of %d\n",
+                str().c_str(), _s->str().c_str(),
+                _attempt + 1, rawstor_opts_io_attempts());
+        }
+    }
+
+    rawstor::Task::operator()(result, error);
+}
+
+
+class ConnectionOpPRead: public ConnectionOp {
     private:
         void *_buf;
-        size_t _size;
         size_t _offset;
+
+        void _retry(const std::shared_ptr<rawstor::Session> &s) {
+            std::unique_ptr<ConnectionOpPRead> op =
+                std::make_unique<ConnectionOpPRead>(
+                    _cn, s, _attempt + 1,
+                    _buf, _size, _offset, _cb, _data);
+            s->pread(_buf, _offset, std::move(op));
+        }
 
     public:
         ConnectionOpPRead(
             rawstor::Connection &cn,
+            const std::shared_ptr<rawstor::Session> &s,
+            unsigned int attempt,
             void *buf, size_t size, size_t offset,
             RawstorCallback *cb, void *data):
-            ConnectionOp(cn, cb, data),
+            ConnectionOp(cn, s, attempt, size, cb, data),
             _buf(buf),
-            _size(size),
             _offset(offset)
         {}
-
-        void submit(const std::shared_ptr<rawstor::Session> &s) {
-            _s = s;
-            ++_attempts;
-            _s->pread(_buf, _size, _offset, _submit_cb, this);
-        }
 
         std::string str() const {
             std::ostringstream oss;
@@ -154,30 +200,32 @@ class ConnectionOpPRead: public rawstor::ConnectionOp {
 };
 
 
-class ConnectionOpPReadV: public rawstor::ConnectionOp {
+class ConnectionOpPReadV: public ConnectionOp {
     private:
         iovec *_iov;
         unsigned int _niov;
-        size_t _size;
         off_t _offset;
+
+        void _retry(const std::shared_ptr<rawstor::Session> &s) {
+            std::unique_ptr<ConnectionOpPReadV> op =
+                std::make_unique<ConnectionOpPReadV>(
+                    _cn, s, _attempt + 1,
+                    _iov, _niov, _size, _offset, _cb, _data);
+            s->preadv(_iov, _niov, _offset, std::move(op));
+        }
 
     public:
         ConnectionOpPReadV(
             rawstor::Connection &cn,
+            const std::shared_ptr<rawstor::Session> &s,
+            unsigned int attempt,
             iovec *iov, unsigned int niov, size_t size, off_t offset,
             RawstorCallback *cb, void *data):
-            ConnectionOp(cn, cb, data),
+            ConnectionOp(cn, s, attempt, size, cb, data),
             _iov(iov),
             _niov(niov),
-            _size(size),
             _offset(offset)
         {}
-
-        void submit(const std::shared_ptr<rawstor::Session> &s) {
-            _s = s;
-            ++_attempts;
-            _s->preadv(_iov, _niov, _size, _offset, _submit_cb, this);
-        }
 
         std::string str() const {
             std::ostringstream oss;
@@ -187,28 +235,30 @@ class ConnectionOpPReadV: public rawstor::ConnectionOp {
 };
 
 
-class ConnectionOpPWrite: public rawstor::ConnectionOp {
+class ConnectionOpPWrite: public ConnectionOp {
     private:
         void *_buf;
-        size_t _size;
         size_t _offset;
+
+        void _retry(const std::shared_ptr<rawstor::Session> &s) {
+            std::unique_ptr<ConnectionOpPWrite> op =
+                std::make_unique<ConnectionOpPWrite>(
+                    _cn, s, _attempt + 1,
+                    _buf, _size, _offset, _cb, _data);
+            s->pwrite(_buf, _offset, std::move(op));
+        }
 
     public:
         ConnectionOpPWrite(
             rawstor::Connection &cn,
+            const std::shared_ptr<rawstor::Session> &s,
+            unsigned int attempt,
             void *buf, size_t size, size_t offset,
             RawstorCallback *cb, void *data):
-            ConnectionOp(cn, cb, data),
+            ConnectionOp(cn, s, attempt, size, cb, data),
             _buf(buf),
-            _size(size),
             _offset(offset)
         {}
-
-        void submit(const std::shared_ptr<rawstor::Session> &s) {
-            _s = s;
-            ++_attempts;
-            _s->pwrite(_buf, _size, _offset, _submit_cb, this);
-        }
 
         std::string str() const {
             std::ostringstream oss;
@@ -218,30 +268,32 @@ class ConnectionOpPWrite: public rawstor::ConnectionOp {
 };
 
 
-class ConnectionOpPWriteV: public rawstor::ConnectionOp {
+class ConnectionOpPWriteV: public ConnectionOp {
     private:
         iovec *_iov;
         unsigned int _niov;
-        size_t _size;
         off_t _offset;
+
+        void _retry(const std::shared_ptr<rawstor::Session> &s) {
+            std::unique_ptr<ConnectionOpPWriteV> op =
+                std::make_unique<ConnectionOpPWriteV>(
+                    _cn, s, _attempt + 1,
+                    _iov, _niov, _size, _offset, _cb, _data);
+            s->pwritev(_iov, _niov, _offset, std::move(op));
+        }
 
     public:
         ConnectionOpPWriteV(
             rawstor::Connection &cn,
+            const std::shared_ptr<rawstor::Session> &s,
+            unsigned int attempt,
             iovec *iov, unsigned int niov, size_t size, off_t offset,
             RawstorCallback *cb, void *data):
-            ConnectionOp(cn, cb, data),
+            ConnectionOp(cn, s, attempt, size, cb, data),
             _iov(iov),
             _niov(niov),
-            _size(size),
             _offset(offset)
         {}
-
-        void submit(const std::shared_ptr<rawstor::Session> &s) {
-            _s = s;
-            ++_attempts;
-            _s->pwritev(_iov, _niov, _size, _offset, _submit_cb, this);
-        }
 
         std::string str() const {
             std::ostringstream oss;
@@ -254,69 +306,6 @@ class ConnectionOpPWriteV: public rawstor::ConnectionOp {
 } // unnamed
 
 namespace rawstor {
-
-
-ConnectionOp::ConnectionOp(
-    rawstor::Connection &cn, RawstorCallback *cb, void *data):
-    _cn(cn),
-    _cb(cb),
-    _data(data),
-    _attempts(0)
-{}
-
-
-int ConnectionOp::_submit_cb(
-    RawstorObject *object,
-    size_t size, size_t res, int error, void *data) noexcept
-{
-    ConnectionOp *op = static_cast<ConnectionOp*>(data);
-
-    if (error) {
-        if (op->_attempts < rawstor_opts_io_attempts()) {
-            rawstor_warning(
-                "%s; error on %s: %s; attempt: %d of %d; "
-                "retrying...\n",
-                op->str().c_str(), op->_s->str().c_str(),
-                std::strerror(error),
-                op->_attempts, rawstor_opts_io_attempts());
-            try {
-                op->_cn.invalidate_session(op->_s);
-                op->_cn.retry(op);
-                return 0;
-            } catch (const std::system_error &e) {
-                error = e.code().value();
-            } catch (const std::exception &e) {
-                rawstor_error(
-                    "%s; exception on %s: %s; attempt %d of %d; "
-                    "failing...\n",
-                    op->str().c_str(), op->_s->str().c_str(),
-                    e.what(),
-                    op->_attempts, rawstor_opts_io_attempts());
-                error = EIO;
-            }
-        } else {
-            rawstor_error(
-                "%s; error on %s: %s; attempt %d of %d; "
-                "failing...\n",
-                op->str().c_str(), op->_s->str().c_str(),
-                std::strerror(error),
-                op->_attempts, rawstor_opts_io_attempts());
-        }
-    } else {
-        if (op->_attempts > 1) {
-            rawstor_warning(
-                "%s; success on %s; attempt: %d of %d\n",
-                op->str().c_str(), op->_s->str().c_str(),
-                op->_attempts, rawstor_opts_io_attempts());
-        }
-    }
-
-    int ret = op->dispatch(object, size, res, error);
-
-    delete op;
-
-    return ret;
-}
 
 
 Connection::Connection(unsigned int depth):
@@ -357,7 +346,9 @@ std::vector<std::shared_ptr<Session>> Connection::_open(
             }
 
             for (std::shared_ptr<Session> s: sessions) {
-                s->set_object(q.queue(), object, q.callback, &q);
+                std::unique_ptr<Task> t =
+                    std::make_unique<Task>(object, 0, q.callback, &q);
+                s->set_object(q.queue(), object, std::move(t));
             }
 
             q.wait();
@@ -385,7 +376,7 @@ std::vector<std::shared_ptr<Session>> Connection::_open(
 }
 
 
-std::shared_ptr<Session> Connection::_get_next_session() {
+std::shared_ptr<Session> Connection::get_next_session() {
     if (_sessions.empty()) {
         throw std::runtime_error("Empty sessions list");
     }
@@ -421,7 +412,9 @@ void Connection::create(
     Queue q(1, _depth);
 
     std::unique_ptr<Session> s = Session::create(uri, _depth);
-    s->create(q.queue(), sp, id, q.callback, &q);
+    std::unique_ptr<Task> t =
+        std::make_unique<Task>(nullptr, 0, q.callback, &q);
+    s->create(q.queue(), sp, id, std::move(t));
 
     q.wait();
 }
@@ -437,7 +430,9 @@ void Connection::remove(const URI &uri) {
     Queue q(1, _depth);
 
     std::unique_ptr<Session> s = Session::create(uri.up(), _depth);
-    s->remove(q.queue(), id, q.callback, &q);
+    std::unique_ptr<Task> t =
+        std::make_unique<Task>(nullptr, 0, q.callback, &q);
+    s->remove(q.queue(), id, std::move(t));
 
     q.wait();
 }
@@ -453,7 +448,9 @@ void Connection::spec(const URI &uri, RawstorObjectSpec *sp) {
     Queue q(1, _depth);
 
     std::unique_ptr<Session> s = Session::create(uri.up(), _depth);
-    s->spec(q.queue(), id, sp, q.callback, &q);
+    std::unique_ptr<Task> t =
+        std::make_unique<Task>(nullptr, 0, q.callback, &q);
+    s->spec(q.queue(), id, sp, std::move(t));
 
     q.wait();
 }
@@ -479,11 +476,11 @@ void Connection::pread(
     void *buf, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
+    std::shared_ptr<rawstor::Session> s = get_next_session();
     std::unique_ptr<ConnectionOpPRead> op =
         std::make_unique<ConnectionOpPRead>(
-            *this, buf, size, offset, cb, data);
-    op->submit(_get_next_session());
-    op.release();
+            *this, s, 0, buf, size, offset, cb, data);
+    s->pread(buf, offset, std::move(op));
 }
 
 
@@ -491,11 +488,11 @@ void Connection::preadv(
     iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
+    std::shared_ptr<rawstor::Session> s = get_next_session();
     std::unique_ptr<ConnectionOpPReadV> op =
         std::make_unique<ConnectionOpPReadV>(
-            *this, iov, niov, size, offset, cb, data);
-    op->submit(_get_next_session());
-    op.release();
+            *this, s, 0, iov, niov, size, offset, cb, data);
+    s->preadv(iov, niov, offset, std::move(op));
 }
 
 
@@ -503,11 +500,11 @@ void Connection::pwrite(
     void *buf, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
+    std::shared_ptr<rawstor::Session> s = get_next_session();
     std::unique_ptr<ConnectionOpPWrite> op =
         std::make_unique<ConnectionOpPWrite>(
-            *this, buf, size, offset, cb, data);
-    op->submit(_get_next_session());
-    op.release();
+            *this, s, 0, buf, size, offset, cb, data);
+    s->pwrite(buf, offset, std::move(op));
 }
 
 
@@ -515,16 +512,11 @@ void Connection::pwritev(
     iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorCallback *cb, void *data)
 {
+    std::shared_ptr<rawstor::Session> s = get_next_session();
     std::unique_ptr<ConnectionOpPWriteV> op =
         std::make_unique<ConnectionOpPWriteV>(
-            *this, iov, niov, size, offset, cb, data);
-    op->submit(_get_next_session());
-    op.release();
-}
-
-
-void Connection::retry(ConnectionOp *op) {
-    op->submit(_get_next_session());
+            *this, s, 0, iov, niov, size, offset, cb, data);
+    s->pwritev(iov, niov, offset, std::move(op));
 }
 
 

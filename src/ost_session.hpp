@@ -29,8 +29,6 @@ class Session final: public rawstor::Session {
     private:
         uint16_t _cid_counter;
 
-        RawstorObject *_object;
-
         std::shared_ptr<Context> _context;
 
         int _connect();
@@ -38,10 +36,6 @@ class Session final: public rawstor::Session {
     public:
         Session(const URI &uri, unsigned int depth);
         ~Session();
-
-        inline RawstorObject* object() noexcept {
-            return _object;
-        }
 
         void read_response_head(rawstor::io::Queue &queue);
         void read_response_body(
@@ -54,38 +48,38 @@ class Session final: public rawstor::Session {
         void create(
             rawstor::io::Queue &queue,
             const RawstorObjectSpec &sp, RawstorUUID *id,
-            RawstorCallback *cb, void *data);
+            std::unique_ptr<rawstor::Task> t);
 
         void remove(
             rawstor::io::Queue &queue,
             const RawstorUUID &id,
-            RawstorCallback *cb, void *data);
+            std::unique_ptr<rawstor::Task> t);
 
         void spec(
             rawstor::io::Queue &queue,
             const RawstorUUID &id, RawstorObjectSpec *sp,
-            RawstorCallback *cb, void *data);
+            std::unique_ptr<rawstor::Task> t);
 
         void set_object(
             rawstor::io::Queue &queue,
             RawstorObject *object,
-            RawstorCallback *cb, void *data);
+            std::unique_ptr<rawstor::Task> t);
 
         void pread(
-            void *buf, size_t size, off_t offset,
-            RawstorCallback *cb, void *data);
+            void *buf, off_t offset,
+            std::unique_ptr<rawstor::Task> t);
 
         void preadv(
-            iovec *iov, unsigned int niov, size_t size, off_t offset,
-            RawstorCallback *cb, void *data);
+            iovec *iov, unsigned int niov, off_t offset,
+            std::unique_ptr<rawstor::Task> t);
 
         void pwrite(
-            void *buf, size_t size, off_t offset,
-            RawstorCallback *cb, void *data);
+            void *buf, off_t offset,
+            std::unique_ptr<rawstor::Task> t);
 
         void pwritev(
-            iovec *iov, unsigned int niov, size_t size, off_t offset,
-            RawstorCallback *cb, void *data);
+            iovec *iov, unsigned int niov, off_t offset,
+            std::unique_ptr<rawstor::Task> t);
 };
 
 

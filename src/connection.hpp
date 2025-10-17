@@ -15,8 +15,6 @@
 namespace rawstor {
 
 
-class ConnectionOp;
-
 class Session;
 
 
@@ -33,8 +31,6 @@ class Connection final {
             RawstorObject *object,
             size_t nsessions);
 
-        std::shared_ptr<Session> _get_next_session();
-
     public:
         Connection(unsigned int depth);
         Connection(const Connection &) = delete;
@@ -42,7 +38,12 @@ class Connection final {
 
         Connection& operator=(const Connection&) = delete;
 
+        std::shared_ptr<Session> get_next_session();
         void invalidate_session(const std::shared_ptr<Session> &s);
+
+        inline RawstorObject* object() noexcept {
+            return _object;
+        }
 
         void create(
             const URI &uri,
@@ -71,8 +72,6 @@ class Connection final {
         void pwritev(
             iovec *iov, unsigned int niov, size_t size, off_t offset,
             RawstorCallback *cb, void *data);
-
-        void retry(ConnectionOp *op);
 };
 
 
