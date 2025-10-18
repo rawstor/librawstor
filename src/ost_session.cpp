@@ -179,7 +179,7 @@ class Context final {
             return *it->second.get();
         }
 
-        void fail_all(int error);
+        void fail_in_flight(int error);
 };
 
 
@@ -783,13 +783,13 @@ class ResponseHead final: public rawstor::io::TaskScalar {
             }
 
             if (error) {
-                _context->fail_all(error);
+                _context->fail_in_flight(error);
             } else {
                 try {
                     SessionOp &op = _context->find_op(_response.cid);
                     op.response_head_cb(&_response, 0);
                 } catch (std::system_error &e) {
-                    _context->fail_all(e.code().value());
+                    _context->fail_in_flight(e.code().value());
                 }
             }
             if (_context->has_ops() && !_context->has_reads()) {
@@ -923,15 +923,15 @@ void Context::register_op(const std::shared_ptr<SessionOp> &op) {
 }
 
 
-void Context::fail_all(int error) {
-    std::vector<std::shared_ptr<SessionOp>> inflight_ops;
-    inflight_ops.reserve(_ops.size());
+void Context::fail_in_flight(int error) {
+    std::vector<std::shared_ptr<SessionOp>> in_flight_ops;
+    in_flight_ops.reserve(_ops.size());
     for (const auto &i: _ops) {
         if (i.second->in_flight()) {
-            inflight_ops.push_back(i.second);
+            in_flight_ops.push_back(i.second);
         }
     }
-    for (auto i: inflight_ops) {
+    for (auto i: in_flight_ops) {
         i->response_head_cb(nullptr, error);
     }
 }
