@@ -136,20 +136,24 @@ void rawstor_trace_event_end(
     const char *format, ...)
 {
     rawstor_mutex_lock(rawstor_logging_mutex);
+    try {
+        assert(events[event].state() == EVENT_AVAILABLE);
+        events[event].deleting();
 
-    assert(events[event].state() == EVENT_AVAILABLE);
-    events[event].deleting();
+        rawstor_trace_event_dump();
 
-    rawstor_trace_event_dump();
+        dprintf(STDERR_FILENO, "TRACE %s:%d %s(): ", file, line, function);
 
-    dprintf(STDERR_FILENO, "TRACE %s:%d %s(): ", file, line, function);
+        va_list args;
+        va_start(args, format);
+        vdprintf(STDERR_FILENO, format, args);
+        va_end(args);
 
-    va_list args;
-    va_start(args, format);
-    vdprintf(STDERR_FILENO, format, args);
-    va_end(args);
-
-    rawstor_mutex_unlock(rawstor_logging_mutex);
+        rawstor_mutex_unlock(rawstor_logging_mutex);
+    } catch (...) {
+        rawstor_mutex_unlock(rawstor_logging_mutex);
+        throw;
+    }
 }
 
 
@@ -158,20 +162,24 @@ void rawstor_trace_event_message(
     const char *format, ...)
 {
     rawstor_mutex_lock(rawstor_logging_mutex);
+    try {
+        assert(events[event].state() == EVENT_AVAILABLE);
+        events[event].message();
 
-    assert(events[event].state() == EVENT_AVAILABLE);
-    events[event].message();
+        rawstor_trace_event_dump();
 
-    rawstor_trace_event_dump();
+        dprintf(STDERR_FILENO, "TRACE %s:%d %s(): ", file, line, function);
 
-    dprintf(STDERR_FILENO, "TRACE %s:%d %s(): ", file, line, function);
+        va_list args;
+        va_start(args, format);
+        vdprintf(STDERR_FILENO, format, args);
+        va_end(args);
 
-    va_list args;
-    va_start(args, format);
-    vdprintf(STDERR_FILENO, format, args);
-    va_end(args);
-
-    rawstor_mutex_unlock(rawstor_logging_mutex);
+        rawstor_mutex_unlock(rawstor_logging_mutex);
+    } catch (...) {
+        rawstor_mutex_unlock(rawstor_logging_mutex);
+        throw;
+    }
 }
 
 
