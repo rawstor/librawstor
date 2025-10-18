@@ -19,9 +19,9 @@ class Task {
 #endif
 
     public:
-        Task():
+        Task()
 #ifdef RAWSTOR_TRACE_EVENTS
-            _trace_id(rawstor_trace_event_begin(
+            : _trace_id(rawstor_trace_event_begin(
                 'I', __FILE__, __LINE__, __FUNCTION__,
                 "\n"))
 #endif
