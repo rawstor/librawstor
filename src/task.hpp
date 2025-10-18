@@ -2,6 +2,7 @@
 #define RAWSTOR_TASK_HPP
 
 #include <rawstorstd/gpp.hpp>
+#include <rawstorstd/logging.h>
 
 #include <rawstor/object.h>
 
@@ -17,15 +18,30 @@ class Task {
         RawstorCallback *_cb;
         void *_data;
 
+#ifdef RAWSTOR_TRACE_EVENTS
+        size_t _trace_id;
+#endif
+
     public:
         Task(size_t size, RawstorCallback *cb, void *data):
             _size(size),
             _cb(cb),
             _data(data)
+#ifdef RAWSTOR_TRACE_EVENTS
+            , _trace_id(rawstor_trace_event_begin(
+                'I', __FILE__, __LINE__, __FUNCTION__,
+                "size %d\n", _size))
+#endif
         {}
         Task(const Task &) = delete;
         Task(Task &&) = delete;
-        virtual ~Task() {}
+        virtual ~Task() {
+#ifdef RAWSTOR_TRACE_EVENTS
+            rawstor_trace_event_end(
+                _trace_id, __FILE__, __LINE__, __FUNCTION__,
+                "size %d\n", _size);
+#endif
+        }
 
         Task& operator=(const Task &) = delete;
         Task& operator=(Task &&) = delete;
@@ -48,6 +64,17 @@ class Task {
         void* data() noexcept {
             return _data;
         }
+
+#ifdef RAWSTOR_TRACE_EVENTS
+        void trace(
+            const char *file, int line, const char *function,
+            const std::string &message)
+        {
+            rawstor_trace_event_message(
+                _trace_id, file, line, function,
+                "%s\n", message.c_str());
+        }
+#endif
 };
 
 

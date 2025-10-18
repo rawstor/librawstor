@@ -17,7 +17,7 @@ class Task {
         int _fd;
 
 #ifdef RAWSTOR_TRACE_EVENTS
-        void *_trace_id;
+        size_t _trace_id;
 #endif
 
     public:
@@ -25,7 +25,7 @@ class Task {
             _fd(fd)
 #ifdef RAWSTOR_TRACE_EVENTS
             , _trace_id(rawstor_trace_event_begin(
-                __FILE__, __LINE__, __FUNCTION__,
+                '|', __FILE__, __LINE__, __FUNCTION__,
                 "fd %d\n", _fd))
 #endif
         {}

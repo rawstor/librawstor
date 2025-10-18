@@ -217,7 +217,11 @@ class SessionOp {
 
         inline void _dispatch(size_t result, int error) {
             _in_flight = false;
-            rawstor_trace("[%d] in-flight >>>\n", _cid);
+#ifdef RAWSTOR_TRACE_EVENTS
+            _t->trace(
+                __FILE__, __LINE__, __FUNCTION__,
+                "in-flight end");
+#endif
 
             try {
                 (*_t)(_o, result, error);
@@ -241,13 +245,12 @@ class SessionOp {
             _o(o),
             _context(context),
             _t(std::move(t))
-        {
-            rawstor_trace("[%d] created\n", _cid);
-        }
+        {}
 
         SessionOp(const SessionOp &) = delete;
         SessionOp(SessionOp &&) = delete;
-        virtual ~SessionOp() {}
+        virtual ~SessionOp() {
+        }
 
         SessionOp& operator=(const SessionOp &) = delete;
         SessionOp& operator=(SessionOp &&) = delete;
@@ -270,7 +273,11 @@ class SessionOp {
 
         void request_cb(int error) {
             _in_flight = true;
-            rawstor_trace("[%d] in-flight <<<\n", _cid);
+#ifdef RAWSTOR_TRACE_EVENTS
+            _t->trace(
+                __FILE__, __LINE__, __FUNCTION__,
+                "in-flight begin");
+#endif
 
             if (error) {
                 _dispatch(0, error);
