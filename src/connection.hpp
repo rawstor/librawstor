@@ -15,6 +15,11 @@
 namespace rawstor {
 
 
+class TaskScalar;
+
+class TaskVector;
+
+
 class Session;
 
 
@@ -53,21 +58,13 @@ class Connection final {
 
         void close();
 
-        void pread(
-            void *buf, size_t size, off_t offset,
-            RawstorCallback *cb, void *data);
+        void read(std::unique_ptr<TaskScalar> t);
 
-        void preadv(
-            iovec *iov, unsigned int niov, size_t size, off_t offset,
-            RawstorCallback *cb, void *data);
+        void read(std::unique_ptr<TaskVector> t);
 
-        void pwrite(
-            void *buf, size_t size, off_t offset,
-            RawstorCallback *cb, void *data);
+        void write(std::unique_ptr<TaskScalar> t);
 
-        void pwritev(
-            iovec *iov, unsigned int niov, size_t size, off_t offset,
-            RawstorCallback *cb, void *data);
+        void write(std::unique_ptr<TaskVector> t);
 };
 
 

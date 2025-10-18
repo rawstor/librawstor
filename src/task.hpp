@@ -14,23 +14,16 @@ namespace rawstor {
 
 class Task {
     private:
-        size_t _size;
-        RawstorCallback *_cb;
-        void *_data;
-
 #ifdef RAWSTOR_TRACE_EVENTS
         size_t _trace_id;
 #endif
 
     public:
-        Task(size_t size, RawstorCallback *cb, void *data):
-            _size(size),
-            _cb(cb),
-            _data(data)
+        Task():
 #ifdef RAWSTOR_TRACE_EVENTS
-            , _trace_id(rawstor_trace_event_begin(
+            _trace_id(rawstor_trace_event_begin(
                 'I', __FILE__, __LINE__, __FUNCTION__,
-                "size %d\n", _size))
+                "\n"))
 #endif
         {}
         Task(const Task &) = delete;
@@ -39,31 +32,17 @@ class Task {
 #ifdef RAWSTOR_TRACE_EVENTS
             rawstor_trace_event_end(
                 _trace_id, __FILE__, __LINE__, __FUNCTION__,
-                "size %d\n", _size);
+                "\n");
 #endif
         }
 
         Task& operator=(const Task &) = delete;
         Task& operator=(Task &&) = delete;
 
-        virtual void operator()(RawstorObject *o, size_t result, int error) {
-            int res = _cb(o, _size, result, error, _data);
-            if (res) {
-                RAWSTOR_THROW_SYSTEM_ERROR(-res);
-            }
-        }
+        virtual void operator()(
+            RawstorObject *o, size_t result, int error) = 0;
 
-        inline size_t size() const noexcept {
-            return _size;
-        }
-
-        inline RawstorCallback* callback() noexcept {
-            return _cb;
-        }
-
-        void* data() noexcept {
-            return _data;
-        }
+        virtual size_t size() const noexcept = 0;
 
 #ifdef RAWSTOR_TRACE_EVENTS
         void trace(
@@ -79,63 +58,24 @@ class Task {
 
 
 class TaskScalar: public Task {
-    private:
-        void *_buf;
-        off_t _offset;
-
     public:
-        TaskScalar(
-            void *buf,
-            size_t size,
-            off_t offset,
-            RawstorCallback *cb,
-            void *data):
-            Task(size, cb, data),
-            _buf(buf),
-            _offset(offset)
-        {}
+        TaskScalar(): Task() {}
 
-        inline void* buf() noexcept {
-            return _buf;
-        }
+        virtual void* buf() noexcept = 0;
 
-        inline off_t offset() const noexcept {
-            return _offset;
-        }
+        virtual off_t offset() const noexcept = 0;
 };
 
 
 class TaskVector: public Task {
-    private:
-        iovec *_iov;
-        unsigned int _niov;
-        off_t _offset;
-
     public:
-        TaskVector(
-            iovec *iov,
-            unsigned int niov,
-            size_t size,
-            off_t offset,
-            RawstorCallback *cb,
-            void *data):
-            Task(size, cb, data),
-            _iov(iov),
-            _niov(niov),
-            _offset(offset)
-        {}
+        TaskVector(): Task() {}
 
-        inline iovec* iov() noexcept {
-            return _iov;
-        }
+        virtual iovec* iov() noexcept = 0;
 
-        inline unsigned int niov() const noexcept {
-            return _niov;
-        }
+        virtual unsigned int niov() const noexcept = 0;
 
-        inline off_t offset() const noexcept {
-            return _offset;
-        }
+        virtual off_t offset() const noexcept = 0;
 };
 
 
