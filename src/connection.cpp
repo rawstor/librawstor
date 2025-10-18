@@ -205,7 +205,7 @@ class ConnectionOpVector: public rawstor::TaskVector {
                 return;
             }
 
-            if (_attempt >= rawstor_opts_io_attempts()) {
+            if (_attempt + 1 >= rawstor_opts_io_attempts()) {
                 rawstor_error(
                     "%s; error on %s: %s; attempt %d of %d; "
                     "failing...\n",
