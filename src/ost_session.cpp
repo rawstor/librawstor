@@ -225,9 +225,8 @@ class SessionOp {
 
             try {
                 (*_t)(_o, result, error);
-                // TODO: Does 'this' still exists?
             } catch(...) {
-                _context->unregister_op(_cid); // TODO: verify this
+                _context->unregister_op(_cid);
                 throw;
             }
 
