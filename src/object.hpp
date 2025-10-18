@@ -3,7 +3,6 @@
 
 #include "connection.hpp"
 
-#include <rawstorstd/mempool.hpp>
 #include <rawstorstd/uri.hpp>
 
 #include <rawstor.h>
@@ -11,24 +10,10 @@
 #include <memory>
 
 
-namespace rawstor {
-
-
-struct ObjectOp;
-
-
-} // rawstor
-
-
 struct RawstorObject final {
     private:
         RawstorUUID _id;
-        rawstor::MemPool<rawstor::ObjectOp> _ops;
         rawstor::Connection _cn;
-
-        static int _process(
-            RawstorObject *object,
-            size_t size, size_t res, int error, void *data) noexcept;
 
     public:
         static void create(

@@ -271,7 +271,7 @@ void SeekableSession::_process(
     if (write) {
         if (!pollhup) {
 #ifdef RAWSTOR_TRACE_EVENTS
-            event->trace("pwritev()");
+            event->trace(__FILE__, __LINE__, __FUNCTION__, "pwritev()");
 #endif
             res = ::pwritev(_fd, event->iov(), event->niov(), event->offset());
         } else {
@@ -280,7 +280,7 @@ void SeekableSession::_process(
         }
     } else {
 #ifdef RAWSTOR_TRACE_EVENTS
-        event->trace("preadv()");
+        event->trace(__FILE__, __LINE__, __FUNCTION__, "preadv()");
 #endif
         res = ::preadv(_fd, event->iov(), event->niov(), event->offset());
     }
@@ -289,12 +289,12 @@ void SeekableSession::_process(
         res = event->shift(res);
         if (event->completed()) {
 #ifdef RAWSTOR_TRACE_EVENTS
-            event->trace("completed");
+            event->trace(__FILE__, __LINE__, __FUNCTION__, "completed");
 #endif
             cqes.push(event);
         } else {
 #ifdef RAWSTOR_TRACE_EVENTS
-            event->trace("partial");
+            event->trace(__FILE__, __LINE__, __FUNCTION__, "partial");
 #endif
             sqes.push(event);
         }
@@ -333,7 +333,7 @@ void UnseekableSession::_process(
         iov.reserve(niov);
         for (rawstor::io::poll::Event *event: events) {
 #ifdef RAWSTOR_TRACE_EVENTS
-            event->trace("add to bulk");
+            event->trace(__FILE__, __LINE__, __FUNCTION__, "add to bulk");
 #endif
             event->add_iov(iov);
         }
@@ -364,12 +364,14 @@ void UnseekableSession::_process(
                 res = event->shift(res);
                 if (event->completed()) {
 #ifdef RAWSTOR_TRACE_EVENTS
-                    event->trace("completed");
+                    event->trace(
+                        __FILE__, __LINE__, __FUNCTION__, "completed");
 #endif
                     cqes.push(event);
                 } else {
 #ifdef RAWSTOR_TRACE_EVENTS
-                    event->trace("partial");
+                    event->trace(
+                        __FILE__, __LINE__, __FUNCTION__, "partial");
 #endif
                     sqes.push(event);
                 }

@@ -3,14 +3,14 @@
 
 #include "config.h"
 #include "connection.hpp"
-#include "file_driver.hpp"
+#include "file_session.hpp"
 #include "opts.h"
-#include "ost_driver.hpp"
+#include "ost_session.hpp"
 #include "rawstor_internals.hpp"
+#include "task.hpp"
 
 #include <rawstorstd/gpp.hpp>
 #include <rawstorstd/logging.h>
-#include <rawstorstd/mempool.h>
 #include <rawstorstd/uuid.h>
 
 #include <rawstorstd/uri.hpp>
@@ -32,21 +32,102 @@
 #define QUEUE_DEPTH 256
 
 
-namespace rawstor {
+namespace {
 
 
-struct ObjectOp {
-    RawstorCallback *callback;
-    void *data;
+class ObjectOpScalar final: public rawstor::TaskScalar {
+    private:
+        void *_buf;
+        size_t _size;
+        off_t _offset;
+
+        RawstorCallback *_cb;
+        void *_data;
+
+    public:
+        ObjectOpScalar(
+            void *buf, size_t size, off_t offset,
+            RawstorCallback *cb, void *data):
+            _buf(buf),
+            _size(size),
+            _offset(offset),
+            _cb(cb),
+            _data(data)
+        {}
+
+        void operator()(RawstorObject *o, size_t result, int error) {
+            int res = _cb(o, _size, result, error, _data);
+            if (res) {
+                RAWSTOR_THROW_SYSTEM_ERROR(-res);
+            }
+        }
+
+        void* buf() noexcept {
+            return _buf;
+        }
+
+        size_t size() const noexcept {
+            return _size;
+        }
+
+        off_t offset() const noexcept {
+            return _offset;
+        }
 };
 
 
-}
+class ObjectOpVector final: public rawstor::TaskVector {
+    private:
+        iovec *_iov;
+        unsigned int _niov;
+        size_t _size;
+        off_t _offset;
+
+        RawstorCallback *_cb;
+        void *_data;
+
+    public:
+        ObjectOpVector(
+            iovec *iov, unsigned int niov, size_t size, off_t offset,
+            RawstorCallback *cb, void *data):
+            _iov(iov),
+            _niov(niov),
+            _size(size),
+            _offset(offset),
+            _cb(cb),
+            _data(data)
+        {}
+
+        void operator()(RawstorObject *o, size_t result, int error) {
+            int res = _cb(o, _size, result, error, _data);
+            if (res) {
+                RAWSTOR_THROW_SYSTEM_ERROR(-res);
+            }
+        }
+
+        iovec* iov() noexcept {
+            return _iov;
+        }
+
+        unsigned int niov() const noexcept {
+            return _niov;
+        }
+
+        size_t size() const noexcept {
+            return _size;
+        }
+
+        off_t offset() const noexcept {
+            return _offset;
+        }
+};
+
+
+} // unnamed
 
 
 RawstorObject::RawstorObject(const rawstor::URI &uri) :
     _id(),
-    _ops(QUEUE_DEPTH),
     _cn(QUEUE_DEPTH)
 {
     int res = rawstor_uuid_from_string(&_id, uri.path().filename().c_str());
@@ -54,20 +135,6 @@ RawstorObject::RawstorObject(const rawstor::URI &uri) :
         RAWSTOR_THROW_SYSTEM_ERROR(-res);
     }
     _cn.open(uri.up(), this, rawstor_opts_sessions());
-}
-
-
-int RawstorObject::_process(
-    RawstorObject *object,
-    size_t size, size_t res, int error, void *data) noexcept
-{
-    rawstor::ObjectOp *op = static_cast<rawstor::ObjectOp*>(data);
-
-    int ret = op->callback(object, size, res, error, op->data);
-
-    object->_ops.free(op);
-
-    return ret;
 }
 
 
@@ -98,18 +165,10 @@ void RawstorObject::pread(
         "%s(): offset = %jd, size = %zu\n",
         __FUNCTION__, (intmax_t)offset, size);
 
-    rawstor::ObjectOp *op = _ops.alloc();
-    try {
-        *op = {
-            .callback = cb,
-            .data = data,
-        };
-
-        _cn.pread(buf, size, offset, _process, op);
-    } catch (...) {
-        _ops.free(op);
-        throw;
-    }
+    std::unique_ptr<rawstor::TaskScalar> op =
+        std::make_unique<ObjectOpScalar>(
+            buf, size, offset, cb, data);
+    _cn.read(std::move(op));
 }
 
 
@@ -121,18 +180,10 @@ void RawstorObject::preadv(
         "%s(): offset = %jd, niov = %u, size = %zu\n",
         __FUNCTION__, (intmax_t)offset, niov, size);
 
-    rawstor::ObjectOp *op = _ops.alloc();
-    try {
-        *op = {
-            .callback = cb,
-            .data = data,
-        };
-
-        _cn.preadv(iov, niov, size, offset, _process, op);
-    } catch (...) {
-        _ops.free(op);
-        throw;
-    }
+    std::unique_ptr<rawstor::TaskVector> op =
+        std::make_unique<ObjectOpVector>(
+            iov, niov, size, offset, cb, data);
+    _cn.read(std::move(op));
 }
 
 
@@ -144,18 +195,10 @@ void RawstorObject::pwrite(
         "%s(): offset = %jd, size = %zu\n",
         __FUNCTION__, (intmax_t)offset, size);
 
-    rawstor::ObjectOp *op = _ops.alloc();
-    try {
-        *op = {
-            .callback = cb,
-            .data = data,
-        };
-
-        _cn.pwrite(buf, size, offset, _process, op);
-    } catch (...) {
-        _ops.free(op);
-        throw;
-    }
+    std::unique_ptr<rawstor::TaskScalar> op =
+        std::make_unique<ObjectOpScalar>(
+            buf, size, offset, cb, data);
+    _cn.write(std::move(op));
 }
 
 
@@ -167,18 +210,10 @@ void RawstorObject::pwritev(
         "%s(): offset = %jd, niov = %u, size = %zu\n",
         __FUNCTION__, (intmax_t)offset, niov, size);
 
-    rawstor::ObjectOp *op = _ops.alloc();
-    try {
-        *op = {
-            .callback = cb,
-            .data = data,
-        };
-
-        _cn.pwritev(iov, niov, size, offset, _process, op);
-    } catch (...) {
-        _ops.free(op);
-        throw;
-    }
+    std::unique_ptr<rawstor::TaskVector> op =
+        std::make_unique<ObjectOpVector>(
+            iov, niov, size, offset, cb, data);
+    _cn.write(std::move(op));
 }
 
 

@@ -15,9 +15,12 @@
 namespace rawstor {
 
 
-class ConnectionOp;
+class TaskScalar;
 
-class Driver;
+class TaskVector;
+
+
+class Session;
 
 
 class Connection final {
@@ -25,15 +28,13 @@ class Connection final {
         RawstorObject *_object;
         unsigned int _depth;
 
-        std::vector<std::shared_ptr<Driver>> _sessions;
+        std::vector<std::shared_ptr<Session>> _sessions;
         size_t _session_index;
 
-        std::vector<std::shared_ptr<Driver>> _open(
+        std::vector<std::shared_ptr<Session>> _open(
             const URI &uri,
             RawstorObject *object,
             size_t nsessions);
-
-        std::shared_ptr<Driver> _get_next_session();
 
     public:
         Connection(unsigned int depth);
@@ -42,7 +43,8 @@ class Connection final {
 
         Connection& operator=(const Connection&) = delete;
 
-        void invalidate_session(const std::shared_ptr<Driver> &s);
+        std::shared_ptr<Session> get_next_session();
+        void invalidate_session(const std::shared_ptr<Session> &s);
 
         void create(
             const URI &uri,
@@ -56,23 +58,13 @@ class Connection final {
 
         void close();
 
-        void pread(
-            void *buf, size_t size, off_t offset,
-            RawstorCallback *cb, void *data);
+        void read(std::unique_ptr<TaskScalar> t);
 
-        void preadv(
-            iovec *iov, unsigned int niov, size_t size, off_t offset,
-            RawstorCallback *cb, void *data);
+        void read(std::unique_ptr<TaskVector> t);
 
-        void pwrite(
-            void *buf, size_t size, off_t offset,
-            RawstorCallback *cb, void *data);
+        void write(std::unique_ptr<TaskScalar> t);
 
-        void pwritev(
-            iovec *iov, unsigned int niov, size_t size, off_t offset,
-            RawstorCallback *cb, void *data);
-
-        void retry(ConnectionOp *op);
+        void write(std::unique_ptr<TaskVector> t);
 };
 
 

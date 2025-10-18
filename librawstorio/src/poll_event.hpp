@@ -97,8 +97,11 @@ class Event {
         virtual size_t shift(size_t shift);
 
 #ifdef RAWSTOR_TRACE_EVENTS
-        void trace(const std::string &message) {
-            _t->trace(message);
+        void trace(
+            const char *file, int line, const char *function,
+            const std::string &message)
+        {
+            _t->trace(file, line, function, message);
         }
 #endif
 };

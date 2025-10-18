@@ -17,7 +17,7 @@ namespace poll {
 
 void Event::dispatch() {
 #ifdef RAWSTOR_TRACE_EVENTS
-    trace("callback");
+    trace(__FILE__, __LINE__, __FUNCTION__, "callback");
     try {
 #endif
         (*_t)(_result, _error);
@@ -25,10 +25,10 @@ void Event::dispatch() {
     } catch (std::exception &e) {
         std::ostringstream oss;
         oss << "callback error: " << e.what();
-        trace(oss.str());
+        trace(__FILE__, __LINE__, __FUNCTION__, oss.str());
         throw;
     }
-    trace("callback success");
+    trace(__FILE__, __LINE__, __FUNCTION__, "callback success");
 #endif
 }
 

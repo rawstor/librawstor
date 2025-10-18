@@ -1,32 +1,29 @@
-#ifndef RAWSTORIO_TASK_HPP
-#define RAWSTORIO_TASK_HPP
+#ifndef RAWSTOR_TASK_HPP
+#define RAWSTOR_TASK_HPP
 
+#include <rawstorstd/gpp.hpp>
 #include <rawstorstd/logging.h>
+
+#include <rawstor/object.h>
 
 #include <sys/uio.h>
 
-#include <string>
-
 
 namespace rawstor {
-namespace io {
 
 
 class Task {
     private:
-        int _fd;
-
 #ifdef RAWSTOR_TRACE_EVENTS
         size_t _trace_id;
 #endif
 
     public:
-        Task(int fd):
-            _fd(fd)
+        Task()
 #ifdef RAWSTOR_TRACE_EVENTS
-            , _trace_id(rawstor_trace_event_begin(
-                '|', __FILE__, __LINE__, __FUNCTION__,
-                "fd %d\n", _fd))
+            : _trace_id(rawstor_trace_event_begin(
+                'I', __FILE__, __LINE__, __FUNCTION__,
+                "\n"))
 #endif
         {}
         Task(const Task &) = delete;
@@ -35,18 +32,16 @@ class Task {
 #ifdef RAWSTOR_TRACE_EVENTS
             rawstor_trace_event_end(
                 _trace_id, __FILE__, __LINE__, __FUNCTION__,
-                "fd %d\n", _fd);
+                "\n");
 #endif
         }
 
         Task& operator=(const Task &) = delete;
         Task& operator=(Task &&) = delete;
 
-        inline int fd() const noexcept {
-            return _fd;
-        }
+        virtual void operator()(
+            RawstorObject *o, size_t result, int error) = 0;
 
-        virtual void operator()(size_t result, int error) = 0;
         virtual size_t size() const noexcept = 0;
 
 #ifdef RAWSTOR_TRACE_EVENTS
@@ -64,41 +59,26 @@ class Task {
 
 class TaskScalar: public Task {
     public:
-        TaskScalar(int fd): Task(fd) {}
-        virtual ~TaskScalar() {}
+        TaskScalar(): Task() {}
 
         virtual void* buf() noexcept = 0;
+
+        virtual off_t offset() const noexcept = 0;
 };
 
 
 class TaskVector: public Task {
     public:
-        TaskVector(int fd): Task(fd) {}
-        virtual ~TaskVector() {}
+        TaskVector(): Task() {}
 
         virtual iovec* iov() noexcept = 0;
+
         virtual unsigned int niov() const noexcept = 0;
-};
-
-
-class TaskScalarPositional: public TaskScalar {
-    public:
-        TaskScalarPositional(int fd): TaskScalar(fd) {}
-        virtual ~TaskScalarPositional() {}
 
         virtual off_t offset() const noexcept = 0;
 };
 
 
-class TaskVectorPositional: public TaskVector {
-    public:
-        TaskVectorPositional(int fd): TaskVector(fd) {}
-        virtual ~TaskVectorPositional() {}
+} // rawstor
 
-        virtual off_t offset() const noexcept = 0;
-};
-
-
-}} // rawstor::io
-
-#endif // RAWSTORIO_TASK_HPP
+#endif // RAWSTOR_TASK_HPP

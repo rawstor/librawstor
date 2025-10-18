@@ -1,8 +1,9 @@
-#include "file_driver.hpp"
+#include "file_session.hpp"
 
 #include "object.hpp"
 #include "opts.h"
 #include "rawstor_internals.hpp"
+#include "task.hpp"
 
 #include <rawstorstd/gpp.hpp>
 #include <rawstorstd/logging.h>
@@ -105,113 +106,86 @@ namespace rawstor {
 namespace file {
 
 
-class DriverOpScalarPositional final: public rawstor::io::TaskScalarPositional {
+class SessionOpScalarPositional final:
+    public rawstor::io::TaskScalarPositional
+{
     private:
-        Driver &_s;
-
-        void *_buf;
-        size_t _size;
-        off_t _offset;
-
-        RawstorCallback *_cb;
-        void *_data;
+        RawstorObject *_o;
+        std::unique_ptr<rawstor::TaskScalar> _t;
 
     public:
-        DriverOpScalarPositional(
-            Driver &s,
-            void *buf, size_t size, off_t offset,
-            RawstorCallback *cb, void *data):
-            rawstor::io::TaskScalarPositional(s.fd()),
-            _s(s),
-            _buf(buf),
-            _size(size),
-            _offset(offset),
-            _cb(cb),
-            _data(data)
+        SessionOpScalarPositional(
+            RawstorObject *o,
+            int fd,
+            std::unique_ptr<rawstor::TaskScalar> t):
+            rawstor::io::TaskScalarPositional(fd),
+            _o(o),
+            _t(std::move(t))
         {}
 
         void operator()(size_t result, int error) {
-            int res = _cb(_s.object(), _size, result, error, _data);
-            if (res) {
-                RAWSTOR_THROW_SYSTEM_ERROR(-res);
-            }
+            (*_t)(_o, result, error);
         }
 
         void* buf() noexcept {
-            return _buf;
+            return _t->buf();
         }
 
         size_t size() const noexcept {
-            return _size;
+            return _t->size();
         }
 
         off_t offset() const noexcept {
-            return _offset;
+            return _t->offset();
         }
 };
 
 
-class DriverOpVectorPositional final:
+class SessionOpVectorPositional final:
     public rawstor::io::TaskVectorPositional
 {
     private:
-        Driver &_s;
-
-        iovec *_iov;
-        unsigned int _niov;
-        size_t _size;
-        off_t _offset;
-
-        RawstorCallback *_cb;
-        void *_data;
+        RawstorObject *_o;
+        std::unique_ptr<rawstor::TaskVector> _t;
 
     public:
-        DriverOpVectorPositional(
-            Driver &s,
-            iovec *iov, unsigned int niov, size_t size, off_t offset,
-            RawstorCallback *cb, void *data):
-            rawstor::io::TaskVectorPositional(s.fd()),
-            _s(s),
-            _iov(iov),
-            _niov(niov),
-            _size(size),
-            _offset(offset),
-            _cb(cb),
-            _data(data)
+        SessionOpVectorPositional(
+            RawstorObject *o,
+            int fd,
+            std::unique_ptr<rawstor::TaskVector> t):
+            rawstor::io::TaskVectorPositional(fd),
+            _o(o),
+            _t(std::move(t))
         {}
 
         void operator()(size_t result, int error) {
-            int res = _cb(_s.object(), _size, result, error, _data);
-            if (res) {
-                RAWSTOR_THROW_SYSTEM_ERROR(-res);
-            }
+            (*_t)(_o, result, error);
         }
 
         iovec* iov() noexcept {
-            return _iov;
+            return _t->iov();
         }
 
         unsigned int niov() const noexcept {
-            return _niov;
+            return _t->niov();
         }
 
         size_t size() const noexcept {
-            return _size;
+            return _t->size();
         }
 
         off_t offset() const noexcept {
-            return _offset;
+            return _t->offset();
         }
 };
 
 
-Driver::Driver(const URI &uri, unsigned int depth):
-    rawstor::Driver(uri, depth),
-    _object(nullptr)
+Session::Session(const URI &uri, unsigned int depth):
+    rawstor::Session(uri, depth)
 {}
 
 
-int Driver::_connect(const RawstorUUID &id) {
+int Session::_connect(const RawstorUUID &id) {
     std::string ost_path = get_ost_path(uri());
 
     RawstorUUIDString uuid_string;
@@ -228,10 +202,10 @@ int Driver::_connect(const RawstorUUID &id) {
 }
 
 
-void Driver::create(
+void Session::create(
     rawstor::io::Queue &,
     const RawstorObjectSpec &sp, RawstorUUID *id,
-    RawstorCallback *cb, void *data)
+    std::unique_ptr<rawstor::Task> t)
 {
     std::string ost_path = get_ost_path(uri());
     if (mkdir(ost_path.c_str(), 0755) == -1) {
@@ -268,7 +242,7 @@ void Driver::create(
         }
     }
     try {
-        ssize_t res = write(fd, &sp, sizeof(sp));
+        ssize_t res = ::write(fd, &sp, sizeof(sp));
         if (res == -1) {
             RAWSTOR_THROW_ERRNO();
         }
@@ -286,14 +260,14 @@ void Driver::create(
 
     *id = uuid;
 
-    cb(nullptr, 0, 0, 0, data);
+    (*t)(nullptr, 0, 0);
 }
 
 
-void Driver::remove(
+void Session::remove(
     rawstor::io::Queue &,
     const RawstorUUID &id,
-    RawstorCallback *cb, void *data)
+    std::unique_ptr<rawstor::Task> t)
 {
     std::string ost_path = get_ost_path(uri());
 
@@ -318,14 +292,14 @@ void Driver::remove(
         }
     }
 
-    cb(nullptr, 0, 0, 0, data);
+    (*t)(nullptr, 0, 0);
 }
 
 
-void Driver::spec(
+void Session::spec(
     rawstor::io::Queue &,
     const RawstorUUID &id, RawstorObjectSpec *sp,
-    RawstorCallback *cb, void *data)
+    std::unique_ptr<rawstor::Task> t)
 {
     std::string ost_path = get_ost_path(uri());
 
@@ -340,7 +314,7 @@ void Driver::spec(
     }
 
     try {
-        ssize_t rval = read(fd, sp, sizeof(*sp));
+        ssize_t rval = ::read(fd, sp, sizeof(*sp));
         if (rval == -1) {
             RAWSTOR_THROW_ERRNO();
         }
@@ -353,14 +327,14 @@ void Driver::spec(
         throw;
     }
 
-    cb(nullptr, 0, 0, 0, data);
+    (*t)(nullptr, 0, 0);
 }
 
 
-void Driver::set_object(
+void Session::set_object(
     rawstor::io::Queue &,
     RawstorObject *object,
-    RawstorCallback *cb, void *data)
+    std::unique_ptr<rawstor::Task> t)
 {
     if (fd() != -1) {
         throw std::runtime_error("Object already set");
@@ -373,52 +347,36 @@ void Driver::set_object(
 
     set_fd(fd);
 
-    _object = object;
+    (*t)(object, 0, 0);
 
-    cb(object, 0, 0, 0, data);
+    _o = object;
 }
 
 
-void Driver::pread(
-    void *buf, size_t size, off_t offset,
-    RawstorCallback *cb, void *data)
-{
+void Session::read(std::unique_ptr<rawstor::TaskScalar> t) {
     std::unique_ptr<rawstor::io::TaskScalarPositional> op =
-        std::make_unique<DriverOpScalarPositional>(
-            *this, buf, size, offset, cb, data);
+        std::make_unique<SessionOpScalarPositional>(_o, fd(), std::move(t));
     io_queue->read(std::move(op));
 }
 
 
-void Driver::preadv(
-    iovec *iov, unsigned int niov, size_t size, off_t offset,
-    RawstorCallback *cb, void *data)
-{
+void Session::read(std::unique_ptr<rawstor::TaskVector> t) {
     std::unique_ptr<rawstor::io::TaskVectorPositional> op =
-        std::make_unique<DriverOpVectorPositional>(
-            *this, iov, niov, size, offset, cb, data);
+        std::make_unique<SessionOpVectorPositional>(_o, fd(), std::move(t));
     io_queue->read(std::move(op));
 }
 
 
-void Driver::pwrite(
-    void *buf, size_t size, off_t offset,
-    RawstorCallback *cb, void *data)
-{
+void Session::write(std::unique_ptr<rawstor::TaskScalar> t) {
     std::unique_ptr<rawstor::io::TaskScalarPositional> op =
-        std::make_unique<DriverOpScalarPositional>(
-            *this, buf, size, offset, cb, data);
+        std::make_unique<SessionOpScalarPositional>(_o, fd(), std::move(t));
     io_queue->write(std::move(op));
 }
 
 
-void Driver::pwritev(
-    iovec *iov, unsigned int niov, size_t size, off_t offset,
-    RawstorCallback *cb, void *data)
-{
+void Session::write(std::unique_ptr<rawstor::TaskVector> t) {
     std::unique_ptr<rawstor::io::TaskVectorPositional> op =
-        std::make_unique<DriverOpVectorPositional>(
-            *this, iov, niov, size, offset, cb, data);
+        std::make_unique<SessionOpVectorPositional>(_o, fd(), std::move(t));
     io_queue->write(std::move(op));
 }
 

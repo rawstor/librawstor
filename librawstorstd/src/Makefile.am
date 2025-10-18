@@ -17,7 +17,7 @@ AM_LDFLAGS = $(ASAN_LDFLAGS)
 librawstorstd_la_SOURCES = hash.c \
                            iovec.c \
                            list.c \
-                           logging.c \
+                           logging.cpp \
                            mempool.c \
                            ringbuf.c \
                            socket.c \

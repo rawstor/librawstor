@@ -1,5 +1,5 @@
-#ifndef RAWSTOR_DRIVER_HPP
-#define RAWSTOR_DRIVER_HPP
+#ifndef RAWSTOR_SESSION_HPP
+#define RAWSTOR_SESSION_HPP
 
 #include "object.hpp"
 
@@ -16,7 +16,14 @@
 namespace rawstor {
 
 
-class Driver {
+class Task;
+
+class TaskScalar;
+
+class TaskVector;
+
+
+class Session {
     private:
         unsigned int _depth;
         URI _uri;
@@ -28,15 +35,15 @@ class Driver {
         }
 
     public:
-        static std::unique_ptr<Driver> create(
+        static std::unique_ptr<Session> create(
             const URI &uri, unsigned int depth);
 
-        Driver(const URI &uri, unsigned int depth);
-        Driver(const Driver &) = delete;
-        Driver(Driver &&) noexcept = delete;
-        virtual ~Driver();
-        Driver& operator=(const Driver &) = delete;
-        Driver& operator=(Driver &&) = delete;
+        Session(const URI &uri, unsigned int depth);
+        Session(const Session &) = delete;
+        Session(Session &&) noexcept = delete;
+        virtual ~Session();
+        Session& operator=(const Session &) = delete;
+        Session& operator=(Session &&) = delete;
 
         std::string str() const;
 
@@ -55,41 +62,33 @@ class Driver {
         virtual void create(
             rawstor::io::Queue &queue,
             const RawstorObjectSpec &sp, RawstorUUID *id,
-            RawstorCallback *cb, void *data) = 0;
+            std::unique_ptr<Task> t) = 0;
 
         virtual void remove(
             rawstor::io::Queue &queue,
             const RawstorUUID &id,
-            RawstorCallback *cb, void *data) = 0;
+            std::unique_ptr<Task> t) = 0;
 
         virtual void spec(
             rawstor::io::Queue &queue,
             const RawstorUUID &id, RawstorObjectSpec *sp,
-            RawstorCallback *cb, void *data) = 0;
+            std::unique_ptr<Task> t) = 0;
 
         virtual void set_object(
             rawstor::io::Queue &queue,
             RawstorObject *object,
-            RawstorCallback *cb, void *data) = 0;
+            std::unique_ptr<Task> t) = 0;
 
-        virtual void pread(
-            void *buf, size_t size, off_t offset,
-            RawstorCallback *cb, void *data) = 0;
+        virtual void read(std::unique_ptr<TaskScalar> t) = 0;
 
-        virtual void preadv(
-            iovec *iov, unsigned int niov, size_t size, off_t offset,
-            RawstorCallback *cb, void *data) = 0;
+        virtual void read(std::unique_ptr<TaskVector> t) = 0;
 
-        virtual void pwrite(
-            void *buf, size_t size, off_t offset,
-            RawstorCallback *cb, void *data) = 0;
+        virtual void write(std::unique_ptr<TaskScalar> t) = 0;
 
-        virtual void pwritev(
-            iovec *iov, unsigned int niov, size_t size, off_t offset,
-            RawstorCallback *cb, void *data) = 0;
+        virtual void write(std::unique_ptr<TaskVector> t) = 0;
 };
 
 
 } //rawstor
 
-#endif // RAWSTOR_DRIVER_HPP
+#endif // RAWSTOR_SESSION_HPP

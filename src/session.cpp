@@ -1,8 +1,8 @@
-#include "driver.hpp"
+#include "session.hpp"
 
 #include "config.h"
-#include "file_driver.hpp"
-#include "ost_driver.hpp"
+#include "file_session.hpp"
+#include "ost_session.hpp"
 
 #include <rawstorstd/logging.h>
 #include <rawstorstd/uri.hpp>
@@ -20,32 +20,32 @@
 namespace rawstor {
 
 
-Driver::Driver(const URI &uri, unsigned int depth):
+Session::Session(const URI &uri, unsigned int depth):
     _depth(depth),
     _uri(uri),
     _fd(-1)
 {}
 
 
-Driver::~Driver() {
+Session::~Session() {
     if (_fd != -1) {
         rawstor_info("fd %d: Close\n", _fd);
         if (::close(_fd) == -1) {
             int error = errno;
             errno = 0;
             rawstor_error(
-                "Driver::~Driver(): Close failed: %s\n", strerror(error));
+                "Session::~Session(): Close failed: %s\n", strerror(error));
         }
     }
 }
 
 
-std::unique_ptr<Driver> Driver::create(const URI &uri, unsigned int depth) {
+std::unique_ptr<Session> Session::create(const URI &uri, unsigned int depth) {
     if (uri.scheme() == "ost") {
-        return std::make_unique<rawstor::ost::Driver>(uri, depth);
+        return std::make_unique<rawstor::ost::Session>(uri, depth);
     }
     if (uri.scheme() == "file") {
-        return std::make_unique<rawstor::file::Driver>(uri, depth);
+        return std::make_unique<rawstor::file::Session>(uri, depth);
     }
     std::ostringstream oss;
     oss << "Unexpected URI: " << uri.str();
@@ -53,7 +53,7 @@ std::unique_ptr<Driver> Driver::create(const URI &uri, unsigned int depth) {
 }
 
 
-std::string Driver::str() const {
+std::string Session::str() const {
     std::ostringstream oss;
     oss << "fd " << _fd;
     return oss.str();
