@@ -59,7 +59,8 @@ static int command_create(int argc, char **argv) {
     };
 
     char *size_arg = NULL;
-    char *uri_arg = NULL;
+    const char *uris[256];
+    size_t nuris = 0;
     optind = 1;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
@@ -78,7 +79,11 @@ static int command_create(int argc, char **argv) {
                 break;
 
             case 'u':
-                uri_arg = optarg;
+                if (nuris >= sizeof(uris) / sizeof(*uris)) {
+                    fprintf(stderr, "Too many uris: %zu\n", nuris);
+                    return EXIT_FAILURE;
+                }
+                uris[nuris++] = optarg;
                 break;
 
             default:
@@ -96,7 +101,7 @@ static int command_create(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
-    if (uri_arg == NULL) {
+    if (nuris == 0) {
         fprintf(stderr, "uri required\n");
         return EXIT_FAILURE;
     }
@@ -107,7 +112,7 @@ static int command_create(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
-    return rawstor_cli_create(uri_arg, size);
+    return rawstor_cli_create(uris, nuris, size);
 }
 
 
@@ -133,7 +138,8 @@ static int command_remove(int argc, char **argv) {
         {},
     };
 
-    char *object_uri_arg = NULL;
+    const char *uris[256];
+    size_t nuris = 0;
     optind = 1;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
@@ -148,7 +154,11 @@ static int command_remove(int argc, char **argv) {
                 break;
 
             case 'o':
-                object_uri_arg = optarg;
+                if (nuris >= sizeof(uris) / sizeof(*uris)) {
+                    fprintf(stderr, "Too many uris: %zu\n", nuris);
+                    return EXIT_FAILURE;
+                }
+                uris[nuris++] = optarg;
                 break;
 
             default:
@@ -161,12 +171,12 @@ static int command_remove(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
-    if (object_uri_arg == NULL) {
+    if (nuris == 0) {
         fprintf(stderr, "object-uri required\n");
         return EXIT_FAILURE;
     }
 
-    return rawstor_cli_remove(object_uri_arg);
+    return rawstor_cli_remove(uris, nuris);
 }
 
 
@@ -192,7 +202,8 @@ static int command_show(int argc, char **argv) {
         {},
     };
 
-    char *object_uri_arg = NULL;
+    const char *uris[256];
+    size_t nuris = 0;
     optind = 1;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
@@ -207,7 +218,11 @@ static int command_show(int argc, char **argv) {
                 break;
 
             case 'o':
-                object_uri_arg = optarg;
+                if (nuris >= sizeof(uris) / sizeof(*uris)) {
+                    fprintf(stderr, "Too many uris: %zu\n", nuris);
+                    return EXIT_FAILURE;
+                }
+                uris[nuris++] = optarg;
                 break;
 
             default:
@@ -220,12 +235,12 @@ static int command_show(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
-    if (object_uri_arg == NULL) {
+    if (nuris == 0) {
         fprintf(stderr, "object-uri required\n");
         return EXIT_FAILURE;
     }
 
-    return rawstor_cli_show(object_uri_arg);
+    return rawstor_cli_show(uris, nuris);
 }
 
 
@@ -263,10 +278,11 @@ static int command_testio(int argc, char **argv) {
         {},
     };
 
-    char *block_size_arg = NULL;
-    char *count_arg = NULL;
-    char *io_depth_arg = NULL;
-    char *object_uri_arg = NULL;
+    const char *block_size_arg = NULL;
+    const char *count_arg = NULL;
+    const char *io_depth_arg = NULL;
+    const char *uris[256];
+    size_t nuris = 0;
     int vector_mode = 0;
     optind = 1;
     while (1) {
@@ -294,7 +310,11 @@ static int command_testio(int argc, char **argv) {
                 break;
 
             case 'o':
-                object_uri_arg = optarg;
+                if (nuris >= sizeof(uris) / sizeof(*uris)) {
+                    fprintf(stderr, "Too many uris: %zu\n", nuris);
+                    return EXIT_FAILURE;
+                }
+                uris[nuris++] = optarg;
                 break;
 
             case 'v':
@@ -344,13 +364,13 @@ static int command_testio(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
-    if (object_uri_arg == NULL) {
+    if (nuris == 0) {
         fprintf(stderr, "object-uri required\n");
         return EXIT_FAILURE;
     }
 
     return rawstor_cli_testio(
-        object_uri_arg,
+        uris, nuris,
         block_size, count, io_depth,
         vector_mode);
 }
@@ -396,8 +416,8 @@ int main(int argc, char **argv) {
         {},
     };
 
-    char *sessions_arg = NULL;
-    char *wait_timeout_arg = NULL;
+    const char *sessions_arg = NULL;
+    const char *wait_timeout_arg = NULL;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
         if (c == -1)

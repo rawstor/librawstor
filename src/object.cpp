@@ -17,10 +17,12 @@
 
 #include <unistd.h>
 
+#include <cassert>
 #include <cstddef>
 #include <cstdlib>
 #include <new>
 #include <memory>
+#include <set>
 #include <stdexcept>
 #include <system_error>
 #include <utility>
@@ -35,31 +37,107 @@
 namespace {
 
 
-class ObjectOpScalar final: public rawstor::TaskScalar {
+std::vector<rawstor::URI> uriv(const char * const *uris, size_t nuris) {
+    std::vector<rawstor::URI> ret;
+    ret.reserve(nuris);
+    for (size_t i = 0; i < nuris; ++i) {
+        ret.emplace_back(uris[i]);
+    }
+    return ret;
+}
+
+
+void validate_not_empty(const std::vector<rawstor::URI> &uris) {
+    if (!uris.empty()) {
+        return;
+    }
+
+    throw std::runtime_error("Empty uri list");
+}
+
+
+void validate_same_uuid(const std::vector<rawstor::URI> &uris) {
+    if (uris.empty()) {
+        return;
+    }
+
+    std::string uuid = uris.front().path().filename();
+    for (const auto &uri: uris) {
+        if (uri.path().filename() != uuid) {
+            throw std::runtime_error("Equal UUID expected");
+        }
+    }
+}
+
+
+void validate_different_targets(const std::vector<rawstor::URI> &uris) {
+    if (uris.empty()) {
+        return;
+    }
+
+    std::set<rawstor::URI> targets;
+    for (const auto &uri: uris) {
+        rawstor::URI target = uri.parent();
+        if (targets.find(target) != targets.end()) {
+            throw std::runtime_error("Different targets expected");
+        }
+        targets.insert(target);
+    }
+}
+
+
+class ObjectOp {
     private:
-        void *_buf;
+        size_t _mirrors;
         size_t _size;
-        off_t _offset;
 
         RawstorCallback *_cb;
         void *_data;
 
     public:
-        ObjectOpScalar(
-            void *buf, size_t size, off_t offset,
-            RawstorCallback *cb, void *data):
-            _buf(buf),
+        ObjectOp(size_t mirrors, size_t size, RawstorCallback *cb, void *data):
+            _mirrors(mirrors),
             _size(size),
-            _offset(offset),
             _cb(cb),
             _data(data)
         {}
 
-        void operator()(RawstorObject *o, size_t result, int error) override {
-            int res = _cb(o, _size, result, error, _data);
-            if (res) {
-                RAWSTOR_THROW_SYSTEM_ERROR(-res);
+        void task_cb(RawstorObject *o, size_t result, int error) {
+            --_mirrors;
+
+            if (_mirrors == 0) {
+                /**
+                 * TODO: Handle partial tasks.
+                 */
+                int res = _cb(o, _size, result, error, _data);
+                if (res) {
+                    RAWSTOR_THROW_SYSTEM_ERROR(-res);
+                }
             }
+        }
+};
+
+
+class TaskScalar final: public rawstor::TaskScalar {
+    private:
+        std::shared_ptr<ObjectOp> _op;
+
+        void *_buf;
+        size_t _size;
+        off_t _offset;
+
+    public:
+        TaskScalar(
+            const std::shared_ptr<ObjectOp> &op,
+            void *buf, size_t size, off_t offset):
+            _op(op),
+            _buf(buf),
+            _size(size),
+            _offset(offset)
+        {}
+
+        void operator()(RawstorObject *o, size_t result, int error) override {
+            _op->task_cb(o, result, error);
         }
 
         void* buf() noexcept override {
@@ -76,33 +154,28 @@ class ObjectOpScalar final: public rawstor::TaskScalar {
 };
 
 
-class ObjectOpVector final: public rawstor::TaskVector {
+class TaskVector final: public rawstor::TaskVector {
     private:
+        std::shared_ptr<ObjectOp> _op;
+
         iovec *_iov;
         unsigned int _niov;
         size_t _size;
         off_t _offset;
 
-        RawstorCallback *_cb;
-        void *_data;
-
     public:
-        ObjectOpVector(
-            iovec *iov, unsigned int niov, size_t size, off_t offset,
-            RawstorCallback *cb, void *data):
+        TaskVector(
+            const std::shared_ptr<ObjectOp> &op,
+            iovec *iov, unsigned int niov, size_t size, off_t offset):
+            _op(op),
             _iov(iov),
             _niov(niov),
             _size(size),
-            _offset(offset),
-            _cb(cb),
-            _data(data)
+            _offset(offset)
         {}
 
         void operator()(RawstorObject *o, size_t result, int error) override {
-            int res = _cb(o, _size, result, error, _data);
-            if (res) {
-                RAWSTOR_THROW_SYSTEM_ERROR(-res);
-            }
+            _op->task_cb(o, result, error);
         }
 
         iovec* iov() noexcept override {
@@ -126,34 +199,66 @@ class ObjectOpVector final: public rawstor::TaskVector {
 } // unnamed
 
 
-RawstorObject::RawstorObject(const rawstor::URI &uri) :
-    _id(),
-    _cn(QUEUE_DEPTH)
+RawstorObject::RawstorObject(const std::vector<rawstor::URI> &uris) :
+    _id()
 {
-    int res = rawstor_uuid_from_string(&_id, uri.path().filename().c_str());
+    validate_not_empty(uris);
+    validate_different_targets(uris);
+    validate_same_uuid(uris);
+
+    std::string uuid = uris.front().path().filename();
+    int res = rawstor_uuid_from_string(&_id, uuid.c_str());
     if (res) {
         RAWSTOR_THROW_SYSTEM_ERROR(-res);
     }
-    _cn.open(uri.up(), this, rawstor_opts_sessions());
+
+    _cns.reserve(uris.size());
+    for (const auto &uri: uris) {
+        std::unique_ptr<rawstor::Connection> cn =
+            std::make_unique<rawstor::Connection>(QUEUE_DEPTH);
+        cn->open(uri.parent(), this, rawstor_opts_sessions());
+        _cns.push_back(std::move(cn));
+    }
 }
 
 
 void RawstorObject::create(
-    const rawstor::URI &uri,
+    const std::vector<rawstor::URI> &uris,
     const RawstorObjectSpec &sp,
     RawstorUUID *id)
 {
-    rawstor::Connection(QUEUE_DEPTH).create(uri, sp, id);
+    /**
+     * TODO: Handle exceptions inside loop.
+     */
+    validate_not_empty(uris);
+    validate_different_targets(uris);
+    for (const auto &uri: uris) {
+        rawstor::Connection(QUEUE_DEPTH).create(uri, sp, id);
+    }
 }
 
 
-void RawstorObject::remove(const rawstor::URI &uri) {
-    rawstor::Connection(QUEUE_DEPTH).remove(uri);
+void RawstorObject::remove(const std::vector<rawstor::URI> &uris) {
+    /**
+     * TODO: Handle exceptions inside loop.
+     */
+    validate_not_empty(uris);
+    validate_different_targets(uris);
+    validate_same_uuid(uris);
+    for (const auto &uri: uris) {
+        rawstor::Connection(QUEUE_DEPTH).remove(uri);
+    }
 }
 
 
-void RawstorObject::spec(const rawstor::URI &uri, RawstorObjectSpec *sp) {
-    rawstor::Connection(QUEUE_DEPTH).spec(uri, sp);
+void RawstorObject::spec(const std::vector<rawstor::URI> &uris, RawstorObjectSpec *sp) {
+    /**
+     * TODO: Should we read all specs and compare them here?
+     */
+    validate_not_empty(uris);
+    validate_different_targets(uris);
+    validate_same_uuid(uris);
+    rawstor::Connection(QUEUE_DEPTH).spec(uris.front(), sp);
 }
 
 
@@ -165,10 +270,15 @@ void RawstorObject::pread(
         "%s(): offset = %jd, size = %zu\n",
         __FUNCTION__, (intmax_t)offset, size);
 
-    std::unique_ptr<rawstor::TaskScalar> op =
-        std::make_unique<ObjectOpScalar>(
-            buf, size, offset, cb, data);
-    _cn.read(std::move(op));
+    std::shared_ptr<ObjectOp> op =
+        std::make_shared<ObjectOp>(_cns.size(), size, cb, data);
+
+    for (auto &cn: _cns) {
+        std::unique_ptr<rawstor::TaskScalar> t =
+            std::make_unique<TaskScalar>(
+                op, buf, size, offset);
+        cn->read(std::move(t));
+    }
 }
 
 
@@ -180,10 +290,15 @@ void RawstorObject::preadv(
         "%s(): offset = %jd, niov = %u, size = %zu\n",
         __FUNCTION__, (intmax_t)offset, niov, size);
 
-    std::unique_ptr<rawstor::TaskVector> op =
-        std::make_unique<ObjectOpVector>(
-            iov, niov, size, offset, cb, data);
-    _cn.read(std::move(op));
+    std::shared_ptr<ObjectOp> op =
+        std::make_shared<ObjectOp>(_cns.size(), size, cb, data);
+
+    for (auto &cn: _cns) {
+        std::unique_ptr<rawstor::TaskVector> t =
+            std::make_unique<TaskVector>(
+                op, iov, niov, size, offset);
+        cn->read(std::move(t));
+    }
 }
 
 
@@ -195,10 +310,15 @@ void RawstorObject::pwrite(
         "%s(): offset = %jd, size = %zu\n",
         __FUNCTION__, (intmax_t)offset, size);
 
-    std::unique_ptr<rawstor::TaskScalar> op =
-        std::make_unique<ObjectOpScalar>(
-            buf, size, offset, cb, data);
-    _cn.write(std::move(op));
+    std::shared_ptr<ObjectOp> op =
+        std::make_shared<ObjectOp>(_cns.size(), size, cb, data);
+
+    for (auto &cn: _cns) {
+        std::unique_ptr<rawstor::TaskScalar> t =
+            std::make_unique<TaskScalar>(
+                op, buf, size, offset);
+        cn->write(std::move(t));
+    }
 }
 
 
@@ -210,20 +330,25 @@ void RawstorObject::pwritev(
         "%s(): offset = %jd, niov = %u, size = %zu\n",
         __FUNCTION__, (intmax_t)offset, niov, size);
 
-    std::unique_ptr<rawstor::TaskVector> op =
-        std::make_unique<ObjectOpVector>(
-            iov, niov, size, offset, cb, data);
-    _cn.write(std::move(op));
+    std::shared_ptr<ObjectOp> op =
+        std::make_shared<ObjectOp>(_cns.size(), size, cb, data);
+
+    for (auto &cn: _cns) {
+        std::unique_ptr<rawstor::TaskVector> t =
+            std::make_unique<TaskVector>(
+                op, iov, niov, size, offset);
+        cn->write(std::move(t));
+    }
 }
 
 
 int rawstor_object_create(
-    const char *uri,
+    const char * const *uris, size_t nuris,
     const RawstorObjectSpec *sp,
     RawstorUUID *id)
 {
     try {
-        RawstorObject::create(rawstor::URI(uri), *sp, id);
+        RawstorObject::create(uriv(uris, nuris), *sp, id);
         return 0;
     } catch (const std::system_error &e) {
         return -e.code().value();
@@ -231,9 +356,9 @@ int rawstor_object_create(
 }
 
 
-int rawstor_object_remove(const char *uri) {
+int rawstor_object_remove(const char * const *uris, size_t nuris) {
     try {
-        RawstorObject::remove(rawstor::URI(uri));
+        RawstorObject::remove(uriv(uris, nuris));
         return 0;
     } catch (const std::system_error &e) {
         return -e.code().value();
@@ -241,9 +366,11 @@ int rawstor_object_remove(const char *uri) {
 }
 
 
-int rawstor_object_spec(const char *uri, RawstorObjectSpec *sp) {
+int rawstor_object_spec(
+    const char * const *uris, size_t nuris, RawstorObjectSpec *sp)
+{
     try {
-        RawstorObject::spec(rawstor::URI(uri), sp);
+        RawstorObject::spec(uriv(uris, nuris), sp);
         return 0;
     } catch (const std::system_error &e) {
         return -e.code().value();
@@ -251,10 +378,12 @@ int rawstor_object_spec(const char *uri, RawstorObjectSpec *sp) {
 }
 
 
-int rawstor_object_open(const char *uri, RawstorObject **object) {
+int rawstor_object_open(
+    const char * const *uris, size_t nuris, RawstorObject **object)
+{
     try {
         std::unique_ptr<RawstorObject> ret =
-            std::make_unique<RawstorObject>(rawstor::URI(uri));
+            std::make_unique<RawstorObject>(uriv(uris, nuris));
 
         *object = ret.get();
 

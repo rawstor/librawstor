@@ -7,7 +7,7 @@
 #include <string.h>
 
 
-int rawstor_cli_create(const char *uri, size_t size){
+int rawstor_cli_create(const char * const*uris, size_t nuris, size_t size){
     struct RawstorObjectSpec spec = {
         .size = size << 30,
     };
@@ -16,7 +16,7 @@ int rawstor_cli_create(const char *uri, size_t size){
     fprintf(stderr, "  size: %zu Gb\n", size);
     struct RawstorUUID object_id;
 
-    int res = rawstor_object_create(uri, &spec, &object_id);
+    int res = rawstor_object_create(uris, nuris, &spec, &object_id);
     if (res) {
         fprintf(
             stderr,
@@ -27,7 +27,9 @@ int rawstor_cli_create(const char *uri, size_t size){
     RawstorUUIDString uuid_string;
     rawstor_uuid_to_string(&object_id, &uuid_string);
     fprintf(stderr, "Object created\n");
-    fprintf(stdout, "%s/%s\n", uri, uuid_string);
+    for (size_t i = 0; i < nuris; ++i) {
+        fprintf(stdout, "%s/%s\n", uris[i], uuid_string);
+    }
 
     return EXIT_SUCCESS;
 }

@@ -11,7 +11,7 @@ extern "C" {
 #endif
 
 
-int rawstor_cli_create(const char *uri, size_t size);
+int rawstor_cli_create(const char * const *uris, size_t nuris, size_t size);
 
 
 #ifdef __cplusplus

@@ -55,7 +55,11 @@ class URI {
         URI& operator=(const URI &other);
         URI& operator=(URI &&other) noexcept;
 
-        URI up() const;
+        URI parent() const;
+
+        bool operator<(const URI &other) const noexcept {
+            return _uri < other._uri;
+        }
 
         inline const std::string& str() const noexcept {
             return _uri;

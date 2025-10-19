@@ -249,7 +249,7 @@ URI& URI::operator=(URI &&other) noexcept {
 }
 
 
-URI URI::up() const {
+URI URI::parent() const {
     std::ostringstream oss;
     oss << _scheme << "://" << _authority << _path.dirname();
     return URI(oss.str());

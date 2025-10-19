@@ -483,7 +483,7 @@ void Connection::remove(const URI &uri) {
 
     Queue q(1, _depth);
 
-    std::unique_ptr<Session> s = Session::create(uri.up(), _depth);
+    std::unique_ptr<Session> s = Session::create(uri.parent(), _depth);
     std::unique_ptr<QueueTask> t = std::make_unique<QueueTask>(q);
     s->remove(q.queue(), id, std::move(t));
 
@@ -500,7 +500,7 @@ void Connection::spec(const URI &uri, RawstorObjectSpec *sp) {
 
     Queue q(1, _depth);
 
-    std::unique_ptr<Session> s = Session::create(uri.up(), _depth);
+    std::unique_ptr<Session> s = Session::create(uri.parent(), _depth);
     std::unique_ptr<QueueTask> t = std::make_unique<QueueTask>(q);
     s->spec(q.queue(), id, sp, std::move(t));
 

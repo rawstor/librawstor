@@ -146,28 +146,28 @@ int test_uri_without_uuid_without_slash() {
 }
 
 
-int test_uri_up() {
+int test_uri_parent() {
     rawstor::URI uri("http://user:password@example.com:80/foo/bar/span/");
     assertTrue(
         uri.str() == "http://user:password@example.com:80/foo/bar/span/");
 
-    uri = uri.up();
+    uri = uri.parent();
     assertTrue(
         uri.str() == "http://user:password@example.com:80/foo/bar/span");
 
-    uri = uri.up();
+    uri = uri.parent();
     assertTrue(
         uri.str() == "http://user:password@example.com:80/foo/bar");
 
-    uri = uri.up();
+    uri = uri.parent();
     assertTrue(
         uri.str() == "http://user:password@example.com:80/foo");
 
-    uri = uri.up();
+    uri = uri.parent();
     assertTrue(
         uri.str() == "http://user:password@example.com:80/");
 
-    uri = uri.up();
+    uri = uri.parent();
     assertTrue(
         uri.str() == "http://user:password@example.com:80/");
 
@@ -187,6 +187,6 @@ int main() {
     rval += test_uri_with_uuid();
     rval += test_uri_without_uuid_with_slash();
     rval += test_uri_without_uuid_without_slash();
-    rval += test_uri_up();
+    rval += test_uri_parent();
     return rval ? EXIT_FAILURE : EXIT_SUCCESS;
 }
