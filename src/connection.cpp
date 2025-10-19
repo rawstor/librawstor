@@ -81,7 +81,7 @@ class QueueTask final: public rawstor::Task {
             }
         }
 
-        virtual size_t size() const noexcept override {
+        size_t size() const noexcept override {
             return 0;
         }
 };
@@ -247,7 +247,7 @@ class ConnectionOpVector: public rawstor::TaskVector {
             return _t->iov();
         }
 
-        virtual unsigned int niov() const noexcept override {
+        unsigned int niov() const noexcept override {
             return _t->niov();
         }
 
