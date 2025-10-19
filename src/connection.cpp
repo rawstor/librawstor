@@ -110,7 +110,7 @@ class ConnectionOpScalar: public rawstor::TaskScalar {
         {}
 
         void operator()(
-            RawstorObject *o, size_t result, int error) noexcept override
+            RawstorObject *o, size_t result, int error) override
         {
             if (!error) {
                 if (_attempt > 0) {
@@ -196,7 +196,7 @@ class ConnectionOpVector: public rawstor::TaskVector {
         {}
 
         void operator()(
-            RawstorObject *o, size_t result, int error) noexcept override
+            RawstorObject *o, size_t result, int error) override
         {
             if (!error) {
                 if (_attempt > 0) {
