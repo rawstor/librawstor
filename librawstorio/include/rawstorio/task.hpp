@@ -87,7 +87,6 @@ class TaskScalarPositional: public TaskScalar {
         TaskScalarPositional(int fd): TaskScalar(fd) {}
         virtual ~TaskScalarPositional() {}
 
-        virtual size_t size() const noexcept = 0;
         virtual off_t offset() const noexcept = 0;
 };
 
@@ -97,7 +96,6 @@ class TaskVectorPositional: public TaskVector {
         TaskVectorPositional(int fd): TaskVector(fd) {}
         virtual ~TaskVectorPositional() {}
 
-        virtual size_t size() const noexcept = 0;
         virtual off_t offset() const noexcept = 0;
 };
 

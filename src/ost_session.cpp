@@ -302,7 +302,9 @@ class SessionOpSetObjectId final: public SessionOp {
             rawstor_info("%s: Setting object id\n", s.str().c_str());
         }
 
-        void response_head_cb(RawstorOSTFrameResponse *response, int error) {
+        void response_head_cb(
+            RawstorOSTFrameResponse *response, int error) override
+        {
             rawstor::ost::Session &s = _context->session();
 
             if (!error) {
@@ -341,7 +343,9 @@ class SessionOpRead final: public SessionOp {
             return static_cast<rawstor::TaskScalar*>(_t.get())->offset();
         }
 
-        void response_head_cb(RawstorOSTFrameResponse *response, int error) {
+        void response_head_cb(
+            RawstorOSTFrameResponse *response, int error) override
+        {
             rawstor::ost::Session &s = _context->session();
 
             if (!error) {
@@ -398,7 +402,9 @@ class SessionOpReadV final: public SessionOp {
             return static_cast<rawstor::TaskVector*>(_t.get())->offset();
         }
 
-        void response_head_cb(RawstorOSTFrameResponse *response, int error) {
+        void response_head_cb(
+            RawstorOSTFrameResponse *response, int error) override
+        {
             rawstor::ost::Session &s = _context->session();
 
             if (!error) {
@@ -456,7 +462,9 @@ class SessionOpWrite final: public SessionOp {
             return static_cast<rawstor::TaskScalar*>(_t.get())->offset();
         }
 
-        void response_head_cb(RawstorOSTFrameResponse *response, int error) {
+        void response_head_cb(
+            RawstorOSTFrameResponse *response, int error) override
+        {
             rawstor::ost::Session &s = _context->session();
 
             if (!error) {
@@ -494,7 +502,9 @@ class SessionOpWriteV final: public SessionOp {
             return static_cast<rawstor::TaskVector*>(_t.get())->offset();
         }
 
-        void response_head_cb(RawstorOSTFrameResponse *response, int error) {
+        void response_head_cb(
+            RawstorOSTFrameResponse *response, int error) override
+        {
             rawstor::ost::Session &s = _context->session();
 
             if (!error) {
@@ -520,7 +530,7 @@ class RequestScalar: public rawstor::io::TaskScalar {
             _op(op)
         {}
 
-        void operator()(size_t result, int error) {
+        void operator()(size_t result, int error) override {
             t_trace(*this, result, error);
 
             if (!error) {
@@ -542,7 +552,7 @@ class RequestVector: public rawstor::io::TaskVector {
             _op(op)
         {}
 
-        void operator()(size_t result, int error) {
+        void operator()(size_t result, int error) override {
             t_trace(*this, result, error);
 
             if (!error) {
@@ -579,11 +589,11 @@ class RequestBasic: public RequestScalar {
                 sizeof(_request.obj_id));
         }
 
-        void* buf() noexcept {
+        void* buf() noexcept override {
             return &_request;
         }
 
-        size_t size() const noexcept {
+        size_t size() const noexcept override {
             return sizeof(_request);
         }
 };
@@ -696,11 +706,11 @@ class RequestCmdRead final: public RequestIOScalar {
             RequestIOScalar(fd, op, RAWSTOR_CMD_READ, 0)
         {}
 
-        void* buf() noexcept {
+        void* buf() noexcept override {
             return &_request;
         }
 
-        size_t size() const noexcept {
+        size_t size() const noexcept override {
             return sizeof(_request);
         }
 };
@@ -746,15 +756,15 @@ class RequestCmdWrite final: public RequestIOVector {
             }
         }
 
-        iovec* iov() noexcept {
+        iovec* iov() noexcept override {
             return _iov.data();
         }
 
-        unsigned int niov() const noexcept {
+        unsigned int niov() const noexcept override {
             return _iov.size();
         }
 
-        size_t size() const noexcept {
+        size_t size() const noexcept override {
             return sizeof(_request) + _request.len;
         }
 };
@@ -775,7 +785,7 @@ class ResponseHead final: public rawstor::io::TaskScalar {
             _context->add_read();
         }
 
-        void operator()(size_t result, int error) {
+        void operator()(size_t result, int error) override {
             t_trace(*this, result, error);
 
             _context->sub_read();
@@ -799,11 +809,11 @@ class ResponseHead final: public rawstor::io::TaskScalar {
             }
         }
 
-        inline void* buf() noexcept {
+        inline void* buf() noexcept override {
             return &_response;
         }
 
-        inline size_t size() const noexcept {
+        inline size_t size() const noexcept override {
             return sizeof(_response);
         }
 };
@@ -831,7 +841,7 @@ class ResponseBodyScalar final: public rawstor::io::TaskScalar {
             _context->add_read();
         }
 
-        void operator()(size_t result, int error) {
+        void operator()(size_t result, int error) override {
             t_trace(*this, result, error);
 
             _context->sub_read();
@@ -848,10 +858,10 @@ class ResponseBodyScalar final: public rawstor::io::TaskScalar {
             }
         }
 
-        void* buf() noexcept {
+        void* buf() noexcept override {
             return _buf;
         }
-        size_t size() const noexcept {
+        size_t size() const noexcept override {
             return _size;
         }
 };
@@ -881,7 +891,7 @@ class ResponseBodyVector final: public rawstor::io::TaskVector {
             _context->add_read();
         }
 
-        void operator()(size_t result, int error) {
+        void operator()(size_t result, int error) override {
             t_trace(*this, result, error);
 
             _context->sub_read();
@@ -898,15 +908,15 @@ class ResponseBodyVector final: public rawstor::io::TaskVector {
             }
         }
 
-        iovec* iov() noexcept {
+        iovec* iov() noexcept override {
             return _iov;
         }
 
-        unsigned int niov() const noexcept {
+        unsigned int niov() const noexcept override {
             return _niov;
         }
 
-        size_t size() const noexcept {
+        size_t size() const noexcept override {
             return _size;
         }
 };

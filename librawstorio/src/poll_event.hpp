@@ -136,7 +136,7 @@ class EventP: public Event {
             return _offset_at;
         }
 
-        size_t shift(size_t shift);
+        size_t shift(size_t shift) override;
 };
 
 

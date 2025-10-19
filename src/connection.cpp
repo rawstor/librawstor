@@ -69,7 +69,7 @@ class QueueTask final: public rawstor::Task {
     public:
         QueueTask(Queue &q): _q(q) {}
 
-        void operator()(RawstorObject *, size_t result, int error) {
+        void operator()(RawstorObject *, size_t result, int error) override {
             _q.sub_operation();
 
             if (error) {
@@ -81,7 +81,7 @@ class QueueTask final: public rawstor::Task {
             }
         }
 
-        virtual size_t size() const noexcept {
+        virtual size_t size() const noexcept override {
             return 0;
         }
 };
@@ -109,7 +109,9 @@ class ConnectionOpScalar: public rawstor::TaskScalar {
             _t(std::move(t))
         {}
 
-        void operator()(RawstorObject *o, size_t result, int error) noexcept {
+        void operator()(
+            RawstorObject *o, size_t result, int error) noexcept override
+        {
             if (!error) {
                 if (_attempt > 0) {
                     rawstor_warning(
@@ -155,15 +157,15 @@ class ConnectionOpScalar: public rawstor::TaskScalar {
             }
         }
 
-        void* buf() noexcept {
+        void* buf() noexcept override {
             return _t->buf();
         }
 
-        size_t size() const noexcept {
+        size_t size() const noexcept override {
             return _t->size();
         }
 
-        off_t offset() const noexcept {
+        off_t offset() const noexcept override {
             return _t->offset();
         }
 
@@ -193,7 +195,9 @@ class ConnectionOpVector: public rawstor::TaskVector {
             _t(std::move(t))
         {}
 
-        void operator()(RawstorObject *o, size_t result, int error) noexcept {
+        void operator()(
+            RawstorObject *o, size_t result, int error) noexcept override
+        {
             if (!error) {
                 if (_attempt > 0) {
                     rawstor_warning(
@@ -239,19 +243,19 @@ class ConnectionOpVector: public rawstor::TaskVector {
             }
         }
 
-        iovec* iov() noexcept {
+        iovec* iov() noexcept override {
             return _t->iov();
         }
 
-        virtual unsigned int niov() const noexcept {
+        virtual unsigned int niov() const noexcept override {
             return _t->niov();
         }
 
-        size_t size() const noexcept {
+        size_t size() const noexcept override {
             return _t->size();
         }
 
-        off_t offset() const noexcept {
+        off_t offset() const noexcept override {
             return _t->offset();
         }
 
@@ -261,7 +265,7 @@ class ConnectionOpVector: public rawstor::TaskVector {
 
 class ConnectionOpPRead final: public ConnectionOpScalar {
     protected:
-        void _retry(const std::shared_ptr<rawstor::Session> &s) {
+        void _retry(const std::shared_ptr<rawstor::Session> &s) override {
             std::unique_ptr<rawstor::TaskScalar> op =
                 std::make_unique<ConnectionOpPRead>(
                     _cn, s, _attempt + 1, std::move(_t));
@@ -277,7 +281,7 @@ class ConnectionOpPRead final: public ConnectionOpScalar {
             ConnectionOpScalar(cn, s, attempt, std::move(t))
         {}
 
-        std::string str() const {
+        std::string str() const override {
             std::ostringstream oss;
             oss << "IO pread: size = " << size() << ", offset = " << offset();
             return oss.str();
@@ -287,7 +291,7 @@ class ConnectionOpPRead final: public ConnectionOpScalar {
 
 class ConnectionOpPReadV final: public ConnectionOpVector {
     protected:
-        void _retry(const std::shared_ptr<rawstor::Session> &s) {
+        void _retry(const std::shared_ptr<rawstor::Session> &s) override {
             std::unique_ptr<rawstor::TaskVector> op =
                 std::make_unique<ConnectionOpPReadV>(
                     _cn, s, _attempt + 1, std::move(_t));
@@ -303,7 +307,7 @@ class ConnectionOpPReadV final: public ConnectionOpVector {
             ConnectionOpVector(cn, s, attempt, std::move(t))
         {}
 
-        std::string str() const {
+        std::string str() const override {
             std::ostringstream oss;
             oss << "IO preadv: size = " << size() << ", offset = " << offset();
             return oss.str();
@@ -313,7 +317,7 @@ class ConnectionOpPReadV final: public ConnectionOpVector {
 
 class ConnectionOpPWrite final: public ConnectionOpScalar {
     protected:
-        void _retry(const std::shared_ptr<rawstor::Session> &s) {
+        void _retry(const std::shared_ptr<rawstor::Session> &s) override {
             std::unique_ptr<rawstor::TaskScalar> op =
                 std::make_unique<ConnectionOpPWrite>(
                     _cn, s, _attempt + 1, std::move(_t));
@@ -329,7 +333,7 @@ class ConnectionOpPWrite final: public ConnectionOpScalar {
             ConnectionOpScalar(cn, s, attempt, std::move(t))
         {}
 
-        std::string str() const {
+        std::string str() const override {
             std::ostringstream oss;
             oss << "IO pwrite: size = " << size() << ", offset = " << offset();
             return oss.str();
@@ -339,7 +343,7 @@ class ConnectionOpPWrite final: public ConnectionOpScalar {
 
 class ConnectionOpPWriteV final: public ConnectionOpVector {
     private:
-        void _retry(const std::shared_ptr<rawstor::Session> &s) {
+        void _retry(const std::shared_ptr<rawstor::Session> &s) override {
             std::unique_ptr<rawstor::TaskVector> op =
                 std::make_unique<ConnectionOpPWriteV>(
                     _cn, s, _attempt + 1, std::move(_t));
@@ -355,7 +359,7 @@ class ConnectionOpPWriteV final: public ConnectionOpVector {
             ConnectionOpVector(cn, s, attempt, std::move(t))
         {}
 
-        std::string str() const {
+        std::string str() const override {
             std::ostringstream oss;
             oss << "IO pwritev: size = " << size() << ", offset = " << offset();
             return oss.str();

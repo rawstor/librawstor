@@ -46,27 +46,33 @@ class SeekableSession: public rawstor::io::poll::Session {
             }
         }
 
-        short events() const noexcept {
+        short events() const noexcept override {
             return
                 (_read_sqes.empty() ? 0 : POLLIN) |
                 (_write_sqes.empty() ? 0 : POLLOUT);
         }
 
-        bool empty() const noexcept {
+        bool empty() const noexcept override {
             return _read_sqes.empty() && _write_sqes.empty();
         }
 
-        void read(std::unique_ptr<rawstor::io::TaskScalar>) {
+        void read(
+            std::unique_ptr<rawstor::io::TaskScalar>) override
+        {
             throw std::runtime_error(
                 "method not allowed for seekable session");
         }
 
-        void read(std::unique_ptr<rawstor::io::TaskVector>) {
+        void read(
+            std::unique_ptr<rawstor::io::TaskVector>) override
+        {
             throw std::runtime_error(
                 "method not allowed for seekable session");
         }
 
-        void read(std::unique_ptr<rawstor::io::TaskScalarPositional> t) {
+        void read(
+            std::unique_ptr<rawstor::io::TaskScalarPositional> t) override
+        {
             std::unique_ptr<rawstor::io::poll::EventP> event =
                 std::make_unique<rawstor::io::poll::EventP>(
                     _q, std::move(t));
@@ -76,7 +82,9 @@ class SeekableSession: public rawstor::io::poll::Session {
             event.release();
         }
 
-        void read(std::unique_ptr<rawstor::io::TaskVectorPositional> t) {
+        void read(
+            std::unique_ptr<rawstor::io::TaskVectorPositional> t) override
+        {
             std::unique_ptr<rawstor::io::poll::EventP> event =
                 std::make_unique<rawstor::io::poll::EventP>(
                     _q, std::move(t));
@@ -86,17 +94,23 @@ class SeekableSession: public rawstor::io::poll::Session {
             event.release();
         }
 
-        void write(std::unique_ptr<rawstor::io::TaskScalar>) {
+        void write(
+            std::unique_ptr<rawstor::io::TaskScalar>) override
+        {
             throw std::runtime_error(
                 "method not allowed for seekable session");
         }
 
-        void write(std::unique_ptr<rawstor::io::TaskVector>) {
+        void write(
+            std::unique_ptr<rawstor::io::TaskVector>) override
+        {
             throw std::runtime_error(
                 "method not allowed for seekable session");
         }
 
-        void write(std::unique_ptr<rawstor::io::TaskScalarPositional> t) {
+        void write(
+            std::unique_ptr<rawstor::io::TaskScalarPositional> t) override
+        {
             std::unique_ptr<rawstor::io::poll::EventP> event =
                 std::make_unique<rawstor::io::poll::EventP>(
                     _q, std::move(t));
@@ -106,7 +120,9 @@ class SeekableSession: public rawstor::io::poll::Session {
             event.release();
         }
 
-        void write(std::unique_ptr<rawstor::io::TaskVectorPositional> t) {
+        void write(
+            std::unique_ptr<rawstor::io::TaskVectorPositional> t) override
+        {
             std::unique_ptr<rawstor::io::poll::EventP> event =
                 std::make_unique<rawstor::io::poll::EventP>(
                     _q, std::move(t));
@@ -117,13 +133,15 @@ class SeekableSession: public rawstor::io::poll::Session {
         }
 
         void process_read(
-            rawstor::RingBuf<rawstor::io::poll::Event*> &cqes, bool pollhup)
+            rawstor::RingBuf<rawstor::io::poll::Event*> &cqes,
+            bool pollhup) override
         {
             _process(_read_sqes, cqes, false, pollhup);
         }
 
         void process_write(
-            rawstor::RingBuf<rawstor::io::poll::Event*> &cqes, bool pollhup)
+            rawstor::RingBuf<rawstor::io::poll::Event*> &cqes,
+            bool pollhup) override
         {
             _process(_write_sqes, cqes, true, pollhup);
         }
@@ -158,17 +176,19 @@ class UnseekableSession: public rawstor::io::poll::Session {
             }
         }
 
-        short events() const noexcept {
+        short events() const noexcept override {
             return
                 (_read_sqes.empty() ? 0 : POLLIN) |
                 (_write_sqes.empty() ? 0 : POLLOUT);
         }
 
-        bool empty() const noexcept {
+        bool empty() const noexcept override {
             return _read_sqes.empty() && _write_sqes.empty();
         }
 
-        void read(std::unique_ptr<rawstor::io::TaskScalar> t) {
+        void read(
+            std::unique_ptr<rawstor::io::TaskScalar> t) override
+        {
             std::unique_ptr<rawstor::io::poll::Event> event =
                 std::make_unique<rawstor::io::poll::Event>(
                     _q, std::move(t));
@@ -178,7 +198,9 @@ class UnseekableSession: public rawstor::io::poll::Session {
             event.release();
         }
 
-        void read(std::unique_ptr<rawstor::io::TaskVector> t) {
+        void read(
+            std::unique_ptr<rawstor::io::TaskVector> t) override
+        {
             std::unique_ptr<rawstor::io::poll::Event> event =
                 std::make_unique<rawstor::io::poll::Event>(
                     _q, std::move(t));
@@ -188,17 +210,23 @@ class UnseekableSession: public rawstor::io::poll::Session {
             event.release();
         }
 
-        void read(std::unique_ptr<rawstor::io::TaskScalarPositional>) {
+        void read(
+            std::unique_ptr<rawstor::io::TaskScalarPositional>) override
+        {
             throw std::runtime_error(
                 "method not allowed for unseekable session");
         }
 
-        void read(std::unique_ptr<rawstor::io::TaskVectorPositional>) {
+        void read(
+            std::unique_ptr<rawstor::io::TaskVectorPositional>) override
+        {
             throw std::runtime_error(
                 "method not allowed for unseekable session");
         }
 
-        void write(std::unique_ptr<rawstor::io::TaskScalar> t) {
+        void write(
+            std::unique_ptr<rawstor::io::TaskScalar> t) override
+        {
             std::unique_ptr<rawstor::io::poll::Event> event =
                 std::make_unique<rawstor::io::poll::Event>(
                     _q, std::move(t));
@@ -208,7 +236,9 @@ class UnseekableSession: public rawstor::io::poll::Session {
             event.release();
         }
 
-        void write(std::unique_ptr<rawstor::io::TaskVector> t) {
+        void write(
+            std::unique_ptr<rawstor::io::TaskVector> t) override
+        {
             std::unique_ptr<rawstor::io::poll::Event> event =
                 std::make_unique<rawstor::io::poll::Event>(
                     _q, std::move(t));
@@ -218,24 +248,30 @@ class UnseekableSession: public rawstor::io::poll::Session {
             event.release();
         }
 
-        void write(std::unique_ptr<rawstor::io::TaskScalarPositional>) {
+        void write(
+            std::unique_ptr<rawstor::io::TaskScalarPositional>) override
+        {
             throw std::runtime_error(
                 "method not allowed for unseekable session");
         }
 
-        void write(std::unique_ptr<rawstor::io::TaskVectorPositional>) {
+        void write(
+            std::unique_ptr<rawstor::io::TaskVectorPositional>) override
+        {
             throw std::runtime_error(
                 "method not allowed for unseekable session");
         }
 
         void process_read(
-            rawstor::RingBuf<rawstor::io::poll::Event*> &cqes, bool pollhup)
+            rawstor::RingBuf<rawstor::io::poll::Event*> &cqes,
+            bool pollhup) override
         {
             _process(_read_sqes, cqes, false, pollhup);
         }
 
         void process_write(
-            rawstor::RingBuf<rawstor::io::poll::Event*> &cqes, bool pollhup)
+            rawstor::RingBuf<rawstor::io::poll::Event*> &cqes,
+            bool pollhup) override
         {
             _process(_write_sqes, cqes, true, pollhup);
         }
