@@ -69,20 +69,12 @@ class QueueTask final: public rawstor::Task {
     public:
         QueueTask(Queue &q): _q(q) {}
 
-        void operator()(RawstorObject *, size_t result, int error) override {
+        void operator()(RawstorObject *, size_t, int error) override {
             _q.sub_operation();
 
             if (error) {
                 RAWSTOR_THROW_SYSTEM_ERROR(error);
             }
-
-            if (size() != result) {
-                RAWSTOR_THROW_SYSTEM_ERROR(EIO);
-            }
-        }
-
-        size_t size() const noexcept override {
-            return 0;
         }
 };
 

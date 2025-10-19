@@ -267,10 +267,6 @@ class SessionOp {
             return _in_flight;
         }
 
-        inline size_t size() const noexcept {
-            return _t->size();
-        }
-
         void request_cb(int error) {
             _in_flight = true;
 #ifdef RAWSTOR_TRACE_EVENTS
@@ -339,6 +335,10 @@ class SessionOpRead final: public SessionOp {
             _hash(0)
         {}
 
+        size_t size() const noexcept {
+            return static_cast<rawstor::TaskScalar*>(_t.get())->size();
+        }
+
         off_t offset() const noexcept {
             return static_cast<rawstor::TaskScalar*>(_t.get())->offset();
         }
@@ -362,7 +362,7 @@ class SessionOpRead final: public SessionOp {
                     *rawstor::io_queue,
                     cid(),
                     static_cast<rawstor::TaskScalar*>(_t.get())->buf(),
-                    _t->size());
+                    static_cast<rawstor::TaskScalar*>(_t.get())->size());
             } else {
                 _dispatch(0, error);
             }
@@ -375,7 +375,7 @@ class SessionOpRead final: public SessionOp {
                     s,
                     hash(
                         static_cast<rawstor::TaskScalar*>(_t.get())->buf(),
-                        _t->size()),
+                        static_cast<rawstor::TaskScalar*>(_t.get())->size()),
                     _hash);
             }
 
@@ -397,6 +397,10 @@ class SessionOpReadV final: public SessionOp {
             SessionOp(o, context, cid, std::move(t)),
             _hash(0)
         {}
+
+        size_t size() const noexcept {
+            return static_cast<rawstor::TaskVector*>(_t.get())->size();
+        }
 
         off_t offset() const noexcept {
             return static_cast<rawstor::TaskVector*>(_t.get())->offset();
@@ -422,7 +426,7 @@ class SessionOpReadV final: public SessionOp {
                     cid(),
                     static_cast<rawstor::TaskVector*>(_t.get())->iov(),
                     static_cast<rawstor::TaskVector*>(_t.get())->niov(),
-                    _t->size());
+                    static_cast<rawstor::TaskVector*>(_t.get())->size());
             } else {
                 _dispatch(0, error);
             }
@@ -456,6 +460,10 @@ class SessionOpWrite final: public SessionOp {
 
         void* buf() noexcept {
             return static_cast<rawstor::TaskScalar*>(_t.get())->buf();
+        }
+
+        size_t size() const noexcept {
+            return static_cast<rawstor::TaskScalar*>(_t.get())->size();
         }
 
         off_t offset() const noexcept {
@@ -496,6 +504,10 @@ class SessionOpWriteV final: public SessionOp {
 
         unsigned int niov() noexcept {
             return static_cast<rawstor::TaskVector*>(_t.get())->niov();
+        }
+
+        size_t size() const noexcept {
+            return static_cast<rawstor::TaskVector*>(_t.get())->size();
         }
 
         off_t offset() const noexcept {
