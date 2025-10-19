@@ -11,17 +11,15 @@
 #include <string.h>
 
 
-int rawstor_cli_show(const char **uris, size_t nuris) {
+int rawstor_cli_show(const char *uris) {
     struct RawstorObjectSpec spec;
-    int res = rawstor_object_spec(uris, nuris, &spec);
+    int res = rawstor_object_spec(uris, &spec);
     if (res) {
         fprintf(stderr, "rawstor_object_spec() failed: %s\n", strerror(-res));
         return EXIT_FAILURE;
     }
 
-    for (size_t i = 0; i < nuris; ++i) {
-        printf("uri: %s\n", uris[i]);
-    }
+    printf("uri: %s\n", uris);
     printf("size: %zu Gb\n", spec.size >> 30);
 
     return EXIT_SUCCESS;

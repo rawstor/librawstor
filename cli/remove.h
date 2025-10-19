@@ -9,7 +9,7 @@ extern "C" {
 #endif
 
 
-int rawstor_cli_remove(const char **uris, size_t nuris);
+int rawstor_cli_remove(const char *uris);
 
 
 #ifdef __cplusplus

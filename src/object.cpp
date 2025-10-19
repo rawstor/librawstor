@@ -17,9 +17,9 @@
 
 #include <unistd.h>
 
-#include <cassert>
 #include <cstddef>
 #include <cstdlib>
+#include <cstring>
 #include <new>
 #include <memory>
 #include <set>
@@ -37,11 +37,20 @@
 namespace {
 
 
-std::vector<rawstor::URI> uriv(const char * const *uris, size_t nuris) {
+std::vector<rawstor::URI> uriv(const char *uris) {
     std::vector<rawstor::URI> ret;
-    ret.reserve(nuris);
-    for (size_t i = 0; i < nuris; ++i) {
-        ret.emplace_back(uris[i]);
+    const char *at = uris;
+    while (true) {
+        const char *next = strchr(at, ',');
+        if (next == nullptr) {
+            ret.emplace_back(at);
+            break;
+        }
+        ret.emplace_back(std::string(at, next));
+        at = next + 1;
+        if (*at == '\0') {
+            break;
+        }
     }
     return ret;
 }
@@ -343,12 +352,10 @@ void RawstorObject::pwritev(
 
 
 int rawstor_object_create(
-    const char * const *uris, size_t nuris,
-    const RawstorObjectSpec *sp,
-    RawstorUUID *id)
+    const char *uris, const RawstorObjectSpec *sp, RawstorUUID *id)
 {
     try {
-        RawstorObject::create(uriv(uris, nuris), *sp, id);
+        RawstorObject::create(uriv(uris), *sp, id);
         return 0;
     } catch (const std::system_error &e) {
         return -e.code().value();
@@ -356,9 +363,9 @@ int rawstor_object_create(
 }
 
 
-int rawstor_object_remove(const char * const *uris, size_t nuris) {
+int rawstor_object_remove(const char *uris) {
     try {
-        RawstorObject::remove(uriv(uris, nuris));
+        RawstorObject::remove(uriv(uris));
         return 0;
     } catch (const std::system_error &e) {
         return -e.code().value();
@@ -366,11 +373,9 @@ int rawstor_object_remove(const char * const *uris, size_t nuris) {
 }
 
 
-int rawstor_object_spec(
-    const char * const *uris, size_t nuris, RawstorObjectSpec *sp)
-{
+int rawstor_object_spec(const char *uris, RawstorObjectSpec *sp) {
     try {
-        RawstorObject::spec(uriv(uris, nuris), sp);
+        RawstorObject::spec(uriv(uris), sp);
         return 0;
     } catch (const std::system_error &e) {
         return -e.code().value();
@@ -378,12 +383,10 @@ int rawstor_object_spec(
 }
 
 
-int rawstor_object_open(
-    const char * const *uris, size_t nuris, RawstorObject **object)
-{
+int rawstor_object_open(const char *uris, RawstorObject **object) {
     try {
         std::unique_ptr<RawstorObject> ret =
-            std::make_unique<RawstorObject>(uriv(uris, nuris));
+            std::make_unique<RawstorObject>(uriv(uris));
 
         *object = ret.get();
 

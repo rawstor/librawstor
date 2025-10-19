@@ -9,13 +9,10 @@
 #include <string.h>
 
 
-int rawstor_cli_remove(const char **uris, size_t nuris) {
-    fprintf(stderr, "Removing object:\n");
-    for (size_t i = 0; i < nuris; ++i) {
-        fprintf(stderr, "  %s\n", uris[i]);
-    }
+int rawstor_cli_remove(const char *uris) {
+    fprintf(stderr, "Removing object: %s\n", uris);
 
-    int res = rawstor_object_remove(uris, nuris);
+    int res = rawstor_object_remove(uris);
     if (res) {
         fprintf(
             stderr,
