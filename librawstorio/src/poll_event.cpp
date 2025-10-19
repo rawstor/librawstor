@@ -42,9 +42,9 @@ void Event::add_iov(std::vector<iovec> &iov) {
 
 size_t Event::shift(size_t shift) {
     size_t ret;
-    if (shift >= _t->size()) {
-        ret = shift - _t->size();
-        _result += _t->size();
+    if (shift >= _size) {
+        ret = shift - _size;
+        _result += _size;
         _niov_at = 0;
     } else {
         ret = rawstor_iovec_shift(&_iov_at, &_niov_at, shift);

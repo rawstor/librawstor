@@ -52,7 +52,8 @@ namespace {
 class SessionOp;
 
 
-int validate_result(size_t result, rawstor::io::Task &t) {
+template <class Task>
+int validate_result(size_t result, Task &t) {
     if (result == t.size()) {
         return 0;
     }

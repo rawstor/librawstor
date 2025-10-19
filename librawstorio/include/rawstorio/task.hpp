@@ -47,7 +47,6 @@ class Task {
         }
 
         virtual void operator()(size_t result, int error) = 0;
-        virtual size_t size() const noexcept = 0;
 
 #ifdef RAWSTOR_TRACE_EVENTS
         void trace(
@@ -68,6 +67,7 @@ class TaskScalar: public Task {
         virtual ~TaskScalar() {}
 
         virtual void* buf() noexcept = 0;
+        virtual size_t size() const noexcept = 0;
 };
 
 
@@ -78,6 +78,7 @@ class TaskVector: public Task {
 
         virtual iovec* iov() noexcept = 0;
         virtual unsigned int niov() const noexcept = 0;
+        virtual size_t size() const noexcept = 0;
 };
 
 
@@ -86,6 +87,7 @@ class TaskScalarPositional: public TaskScalar {
         TaskScalarPositional(int fd): TaskScalar(fd) {}
         virtual ~TaskScalarPositional() {}
 
+        virtual size_t size() const noexcept = 0;
         virtual off_t offset() const noexcept = 0;
 };
 
@@ -95,6 +97,7 @@ class TaskVectorPositional: public TaskVector {
         TaskVectorPositional(int fd): TaskVector(fd) {}
         virtual ~TaskVectorPositional() {}
 
+        virtual size_t size() const noexcept = 0;
         virtual off_t offset() const noexcept = 0;
 };
 
