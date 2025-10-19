@@ -280,14 +280,12 @@ void RawstorObject::pread(
         __FUNCTION__, (intmax_t)offset, size);
 
     std::shared_ptr<ObjectOp> op =
-        std::make_shared<ObjectOp>(_cns.size(), size, cb, data);
+        std::make_shared<ObjectOp>(1, size, cb, data);
 
-    for (auto &cn: _cns) {
-        std::unique_ptr<rawstor::TaskScalar> t =
-            std::make_unique<TaskScalar>(
-                op, buf, size, offset);
-        cn->read(std::move(t));
-    }
+    std::unique_ptr<rawstor::TaskScalar> t =
+        std::make_unique<TaskScalar>(
+            op, buf, size, offset);
+    _cns.front()->read(std::move(t));
 }
 
 
@@ -300,14 +298,12 @@ void RawstorObject::preadv(
         __FUNCTION__, (intmax_t)offset, niov, size);
 
     std::shared_ptr<ObjectOp> op =
-        std::make_shared<ObjectOp>(_cns.size(), size, cb, data);
+        std::make_shared<ObjectOp>(1, size, cb, data);
 
-    for (auto &cn: _cns) {
-        std::unique_ptr<rawstor::TaskVector> t =
-            std::make_unique<TaskVector>(
-                op, iov, niov, size, offset);
-        cn->read(std::move(t));
-    }
+    std::unique_ptr<rawstor::TaskVector> t =
+        std::make_unique<TaskVector>(
+            op, iov, niov, size, offset);
+    _cns.front()->read(std::move(t));
 }
 
 
