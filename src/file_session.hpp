@@ -31,30 +31,30 @@ class Session final: public rawstor::Session {
         void create(
             rawstor::io::Queue &queue,
             const RawstorObjectSpec &sp, RawstorUUID *id,
-            std::unique_ptr<rawstor::Task> t);
+            std::unique_ptr<rawstor::Task> t) override;
 
         void remove(
             rawstor::io::Queue &queue,
             const RawstorUUID &id,
-            std::unique_ptr<rawstor::Task> t);
+            std::unique_ptr<rawstor::Task> t) override;
 
         void spec(
             rawstor::io::Queue &queue,
             const RawstorUUID &id, RawstorObjectSpec *sp,
-            std::unique_ptr<rawstor::Task> t);
+            std::unique_ptr<rawstor::Task> t) override;
 
         void set_object(
             rawstor::io::Queue &queue,
             RawstorObject *object,
-            std::unique_ptr<rawstor::Task> t);
+            std::unique_ptr<rawstor::Task> t) override;
 
-        void read(std::unique_ptr<rawstor::TaskScalar> t);
+        void read(std::unique_ptr<rawstor::TaskScalar> t) override;
 
-        void read(std::unique_ptr<rawstor::TaskVector> t);
+        void read(std::unique_ptr<rawstor::TaskVector> t) override;
 
-        void write(std::unique_ptr<rawstor::TaskScalar> t);
+        void write(std::unique_ptr<rawstor::TaskScalar> t) override;
 
-        void write(std::unique_ptr<rawstor::TaskVector> t);
+        void write(std::unique_ptr<rawstor::TaskVector> t) override;
 };
 
 

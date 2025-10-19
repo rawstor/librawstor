@@ -50,18 +50,18 @@ class TaskScalar final: public rawstor::io::TaskScalar {
             _data(data)
         {}
 
-        void operator()(size_t result, int error) {
+        void operator()(size_t result, int error) override {
             int res = _cb(result, error, _data);
             if (res) {
                 RAWSTOR_THROW_SYSTEM_ERROR(-res);
             }
         }
 
-        void* buf() noexcept {
+        void* buf() noexcept override {
             return _buf;
         }
 
-        size_t size() const noexcept {
+        size_t size() const noexcept override {
             return _size;
         }
 };
@@ -88,22 +88,22 @@ class TaskVector final: public rawstor::io::TaskVector {
             _data(data)
         {}
 
-        void operator()(size_t result, int error) {
+        void operator()(size_t result, int error) override {
             int res = _cb(result, error, _data);
             if (res) {
                 RAWSTOR_THROW_SYSTEM_ERROR(-res);
             }
         }
 
-        iovec* iov() noexcept {
+        iovec* iov() noexcept override {
             return _iov;
         }
 
-        unsigned int niov() const noexcept {
+        unsigned int niov() const noexcept override {
             return _niov;
         }
 
-        size_t size() const noexcept {
+        size_t size() const noexcept override {
             return _size;
         }
 };
@@ -130,22 +130,22 @@ class TaskScalarPositional final: public rawstor::io::TaskScalarPositional {
             _data(data)
         {}
 
-        void operator()(size_t result, int error) {
+        void operator()(size_t result, int error) override {
             int res = _cb(result, error, _data);
             if (res) {
                 RAWSTOR_THROW_SYSTEM_ERROR(-res);
             }
         }
 
-        void* buf() noexcept {
+        void* buf() noexcept override {
             return _buf;
         }
 
-        size_t size() const noexcept {
+        size_t size() const noexcept override {
             return _size;
         }
 
-        off_t offset() const noexcept {
+        off_t offset() const noexcept override {
             return _offset;
         }
 };
@@ -174,26 +174,26 @@ class TaskVectorPositional final: public rawstor::io::TaskVectorPositional {
             _data(data)
         {}
 
-        void operator()(size_t result, int error) {
+        void operator()(size_t result, int error) override {
             int res = _cb(result, error, _data);
             if (res) {
                 RAWSTOR_THROW_SYSTEM_ERROR(-res);
             }
         }
 
-        iovec* iov() noexcept {
+        iovec* iov() noexcept override {
             return _iov;
         }
 
-        unsigned int niov() const noexcept {
+        unsigned int niov() const noexcept override {
             return _niov;
         }
 
-        size_t size() const noexcept {
+        size_t size() const noexcept override {
             return _size;
         }
 
-        off_t offset() const noexcept {
+        off_t offset() const noexcept override {
             return _offset;
         }
 };

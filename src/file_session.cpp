@@ -123,19 +123,19 @@ class SessionOpScalarPositional final:
             _t(std::move(t))
         {}
 
-        void operator()(size_t result, int error) {
+        void operator()(size_t result, int error) override {
             (*_t)(_o, result, error);
         }
 
-        void* buf() noexcept {
+        void* buf() noexcept override {
             return _t->buf();
         }
 
-        size_t size() const noexcept {
+        size_t size() const noexcept override {
             return _t->size();
         }
 
-        off_t offset() const noexcept {
+        off_t offset() const noexcept override {
             return _t->offset();
         }
 };
@@ -158,23 +158,23 @@ class SessionOpVectorPositional final:
             _t(std::move(t))
         {}
 
-        void operator()(size_t result, int error) {
+        void operator()(size_t result, int error) override {
             (*_t)(_o, result, error);
         }
 
-        iovec* iov() noexcept {
+        iovec* iov() noexcept override {
             return _t->iov();
         }
 
-        unsigned int niov() const noexcept {
+        unsigned int niov() const noexcept override {
             return _t->niov();
         }
 
-        size_t size() const noexcept {
+        size_t size() const noexcept override {
             return _t->size();
         }
 
-        off_t offset() const noexcept {
+        off_t offset() const noexcept override {
             return _t->offset();
         }
 };

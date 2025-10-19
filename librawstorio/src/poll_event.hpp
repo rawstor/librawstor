@@ -32,6 +32,7 @@ class Event {
         std::vector<iovec> _iov;
         iovec *_iov_at;
         unsigned int _niov_at;
+        size_t _size;
         ssize_t _result;
         int _error;
 
@@ -46,11 +47,13 @@ class Event {
                 (iovec){
                     .iov_base =
                         static_cast<rawstor::io::TaskScalar*>(_t.get())->buf(),
-                    .iov_len =_t->size(),
+                    .iov_len =
+                        static_cast<rawstor::io::TaskScalar*>(_t.get())->size(),
                 }
             ),
             _iov_at(_iov.data()),
             _niov_at(1),
+            _size(static_cast<rawstor::io::TaskScalar*>(_t.get())->size()),
             _result(0),
             _error(0)
         {}
@@ -61,6 +64,7 @@ class Event {
             _q(q),
             _t(std::move(t)),
             _niov_at(static_cast<rawstor::io::TaskVector*>(_t.get())->niov()),
+            _size(static_cast<rawstor::io::TaskVector*>(_t.get())->size()),
             _result(0),
             _error(0)
         {
@@ -132,7 +136,7 @@ class EventP: public Event {
             return _offset_at;
         }
 
-        size_t shift(size_t shift);
+        size_t shift(size_t shift) override;
 };
 
 

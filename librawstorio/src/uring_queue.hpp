@@ -29,25 +29,33 @@ class Queue: public rawstor::io::Queue {
             return &_ring;
         }
 
-        void read(std::unique_ptr<rawstor::io::TaskScalar> t);
+        void read(
+            std::unique_ptr<rawstor::io::TaskScalar> t) override;
 
-        void read(std::unique_ptr<rawstor::io::TaskVector> t);
+        void read(
+            std::unique_ptr<rawstor::io::TaskVector> t) override;
 
-        void read(std::unique_ptr<rawstor::io::TaskScalarPositional> t);
+        void read(
+            std::unique_ptr<rawstor::io::TaskScalarPositional> t) override;
 
-        void read(std::unique_ptr<rawstor::io::TaskVectorPositional> t);
+        void read(
+            std::unique_ptr<rawstor::io::TaskVectorPositional> t) override;
 
-        void write(std::unique_ptr<rawstor::io::TaskScalar> t);
+        void write(
+            std::unique_ptr<rawstor::io::TaskScalar> t) override;
 
-        void write(std::unique_ptr<rawstor::io::TaskVector> t);
+        void write(
+            std::unique_ptr<rawstor::io::TaskVector> t) override;
 
-        void write(std::unique_ptr<rawstor::io::TaskScalarPositional> t);
+        void write(
+            std::unique_ptr<rawstor::io::TaskScalarPositional> t) override;
 
-        void write(std::unique_ptr<rawstor::io::TaskVectorPositional> t);
+        void write(
+            std::unique_ptr<rawstor::io::TaskVectorPositional> t) override;
 
-        bool empty() const noexcept;
+        bool empty() const noexcept override;
 
-        void wait(unsigned int timeout);
+        void wait(unsigned int timeout) override;
 };
 
 
