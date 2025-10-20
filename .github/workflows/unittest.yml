@@ -41,25 +41,12 @@ jobs:
         without-liburing:
         - 
         - --without-liburing
-        scheme:
-        - file
-        - ost
-        include:
-        - packages: liburing-dev
-          without-liburing:
-        - packages: liburing-dev
-          scheme: ost
-          without-liburing: --without-liburing
-        - uri: file:///tmp/objects
-          scheme: file
-        - uri: ost://127.0.0.1:8080
-          scheme: ost
 
     steps:
     - name: install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libxxhash-dev ${{ matrix.packages }}
+        sudo apt-get install -y libxxhash-dev liburing-dev
     - uses: actions/checkout@v4
       with:
         path: librawstor
@@ -73,14 +60,12 @@ jobs:
         sudo make install
         popd
     - uses: actions/checkout@v4
-      if: "${{ matrix.scheme == 'ost' }}"
       with:
         repository: rawstor/rawstor_ost
         path: rawstor_ost
         ref: refs/heads/main
         ssh-key: ${{ secrets.RAWSTOR_OST_TOKEN }}
     - name: (ost) install rawstor_ost
-      if: "${{ matrix.scheme == 'ost' }}"
       run: |
         pushd .
         cd ./rawstor_ost
@@ -90,26 +75,25 @@ jobs:
         sudo make install
         popd
     - name: (ost) start rawstor_ost
-      if: "${{ matrix.scheme == 'ost' }}"
       run: |
         mkdir /tmp/objects
-        truncate -s 2G /tmp/objects/01988675-e1e5-7788-9ed4-2f2d30910d23
         ost 8080 /tmp/objects/ &
         sleep 1
-    - name: (file) create object
-      if: "${{ matrix.scheme == 'file' }}"
+    - name: create object file,ost
       run: |
-        object_uri=$(rawstor-cli create --uri ${{ matrix.uri }} --size=1)
+        object_uri=$(rawstor-cli create --uri file:///tmp/objects,ost://127.0.0.1:8080 --size=1)
         echo "OBJECT_URI=${object_uri}" >> $GITHUB_ENV
-    - name: (ost) create object
-      if: "${{ matrix.scheme == 'ost' }}"
+    - name: testio file,ost
       run: |
-        object_uri=${{ matrix.uri }}/01988675-e1e5-7788-9ed4-2f2d30910d23
+        rawstor-cli testio --object-uri=${OBJECT_URI} --block-size=4096 --io-depth=1 --count=10
+        rawstor-cli testio --object-uri=${OBJECT_URI} --block-size=4096 --io-depth=1 --count=10 --vector-mode=1
+    - name: create object ost,file
+      run: |
+        object_uri=$(rawstor-cli create --uri ost://127.0.0.1:8080,file:///tmp/objects --size=1)
         echo "OBJECT_URI=${object_uri}" >> $GITHUB_ENV
-    - name: testio
+    - name: testio ost,file
       run: |
         rawstor-cli testio --object-uri=${OBJECT_URI} --block-size=4096 --io-depth=1 --count=10
         rawstor-cli testio --object-uri=${OBJECT_URI} --block-size=4096 --io-depth=1 --count=10 --vector-mode=1
     - name: (ost) stop rawstor_ost
-      if: "${{ matrix.scheme == 'ost' }}"
       run: killall ost
