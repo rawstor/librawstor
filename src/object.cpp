@@ -273,9 +273,6 @@ void RawstorObject::create(
     const RawstorObjectSpec &sp,
     std::vector<rawstor::URI> *object_uris)
 {
-    /**
-     * TODO: Handle exceptions inside loop.
-     */
     validate_not_empty(uris);
     validate_different_uris(uris);
 
@@ -288,10 +285,22 @@ void RawstorObject::create(
     rawstor_uuid_to_string(&uuid, &uuid_string);
 
     std::vector<rawstor::URI> ret;
-    for (const auto &uri: uris) {
-        rawstor::URI object_uri = rawstor::URI(uri, uuid_string);
-        rawstor::Connection(QUEUE_DEPTH).create(object_uri, sp);
-        ret.push_back(object_uri);
+    try {
+        for (const auto &uri: uris) {
+            rawstor::URI object_uri = rawstor::URI(uri, uuid_string);
+            rawstor::Connection(QUEUE_DEPTH).create(object_uri, sp);
+            ret.push_back(object_uri);
+        }
+    } catch (...) {
+        if (!ret.empty()) {
+            try {
+                remove(ret);
+            } catch (std::exception &e) {
+                rawstor_error(
+                    "Failed to rollback create operation: %s\n", e.what());
+            }
+        }
+        throw;
     }
     *object_uris = ret;
 }
@@ -327,6 +336,7 @@ void RawstorObject::spec(const std::vector<rawstor::URI> &uris, RawstorObjectSpe
     validate_not_empty(uris);
     validate_different_uris(uris);
     validate_same_uuid(uris);
+
     rawstor::Connection(QUEUE_DEPTH).spec(uris.front(), sp);
 }
 
