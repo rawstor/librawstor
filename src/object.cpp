@@ -17,15 +17,17 @@
 
 #include <unistd.h>
 
-#include <cstddef>
-#include <cstdlib>
-#include <cstring>
 #include <new>
+#include <exception>
 #include <memory>
 #include <set>
 #include <stdexcept>
 #include <system_error>
 #include <utility>
+
+#include <cstddef>
+#include <cstdlib>
+#include <cstring>
 
 
 /**
@@ -296,14 +298,24 @@ void RawstorObject::create(
 
 
 void RawstorObject::remove(const std::vector<rawstor::URI> &uris) {
-    /**
-     * TODO: Handle exceptions inside loop.
-     */
     validate_not_empty(uris);
     validate_different_uris(uris);
     validate_same_uuid(uris);
+
+    std::exception_ptr eptr;
     for (const auto &uri: uris) {
-        rawstor::Connection(QUEUE_DEPTH).remove(uri);
+        try {
+            rawstor::Connection(QUEUE_DEPTH).remove(uri);
+        } catch (std::exception &e) {
+            rawstor_error("%s\n", e.what());
+
+            if (!eptr) {
+                eptr = std::current_exception();
+            }
+        }
+    }
+    if (eptr) {
+        std::rethrow_exception(eptr);
     }
 }
 
