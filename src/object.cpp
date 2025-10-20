@@ -99,26 +99,51 @@ class ObjectOp {
     private:
         size_t _mirrors;
         size_t _size;
+        off_t _offset;
+
+        size_t _result;
+        int _error;
 
         RawstorCallback *_cb;
         void *_data;
 
     public:
-        ObjectOp(size_t mirrors, size_t size, RawstorCallback *cb, void *data):
+        ObjectOp(
+            size_t mirrors,
+            size_t size, off_t offset,
+            RawstorCallback *cb, void *data):
             _mirrors(mirrors),
             _size(size),
+            _offset(offset),
+            _result(-1),
+            _error(0),
             _cb(cb),
             _data(data)
         {}
 
+        inline size_t size() const noexcept {
+            return _size;
+        }
+
+        inline off_t offset() const noexcept {
+            return _offset;
+        }
+
         void task_cb(RawstorObject *o, size_t result, int error) {
             --_mirrors;
+
+            _result = std::min(_result, result);
+
+            if (error) {
+                rawstor_error("%s\n", strerror(error));
+                _error = EIO;
+            }
 
             if (_mirrors == 0) {
                 /**
                  * TODO: Handle partial tasks.
                  */
-                int res = _cb(o, _size, result, error, _data);
+                int res = _cb(o, _size, _result, _error, _data);
                 if (res) {
                     RAWSTOR_THROW_SYSTEM_ERROR(-res);
                 }
@@ -132,17 +157,11 @@ class TaskScalar final: public rawstor::TaskScalar {
         std::shared_ptr<ObjectOp> _op;
 
         void *_buf;
-        size_t _size;
-        off_t _offset;
 
     public:
-        TaskScalar(
-            const std::shared_ptr<ObjectOp> &op,
-            void *buf, size_t size, off_t offset):
+        TaskScalar(const std::shared_ptr<ObjectOp> &op, void *buf):
             _op(op),
-            _buf(buf),
-            _size(size),
-            _offset(offset)
+            _buf(buf)
         {}
 
         void operator()(RawstorObject *o, size_t result, int error) override {
@@ -154,11 +173,11 @@ class TaskScalar final: public rawstor::TaskScalar {
         }
 
         size_t size() const noexcept override {
-            return _size;
+            return _op->size();
         }
 
         off_t offset() const noexcept override {
-            return _offset;
+            return _op->offset();
         }
 };
 
@@ -169,18 +188,14 @@ class TaskVector final: public rawstor::TaskVector {
 
         iovec *_iov;
         unsigned int _niov;
-        size_t _size;
-        off_t _offset;
 
     public:
         TaskVector(
             const std::shared_ptr<ObjectOp> &op,
-            iovec *iov, unsigned int niov, size_t size, off_t offset):
+            iovec *iov, unsigned int niov):
             _op(op),
             _iov(iov),
-            _niov(niov),
-            _size(size),
-            _offset(offset)
+            _niov(niov)
         {}
 
         void operator()(RawstorObject *o, size_t result, int error) override {
@@ -196,11 +211,11 @@ class TaskVector final: public rawstor::TaskVector {
         }
 
         size_t size() const noexcept override {
-            return _size;
+            return _op->size();
         }
 
         off_t offset() const noexcept override {
-            return _offset;
+            return _op->offset();
         }
 };
 
@@ -280,11 +295,13 @@ void RawstorObject::pread(
         __FUNCTION__, (intmax_t)offset, size);
 
     std::shared_ptr<ObjectOp> op =
-        std::make_shared<ObjectOp>(1, size, cb, data);
+        std::make_shared<ObjectOp>(1, size, offset, cb, data);
 
+    /**
+     * TODO: Can we select fastest connection here?
+     */
     std::unique_ptr<rawstor::TaskScalar> t =
-        std::make_unique<TaskScalar>(
-            op, buf, size, offset);
+        std::make_unique<TaskScalar>(op, buf);
     _cns.front()->read(std::move(t));
 }
 
@@ -298,11 +315,13 @@ void RawstorObject::preadv(
         __FUNCTION__, (intmax_t)offset, niov, size);
 
     std::shared_ptr<ObjectOp> op =
-        std::make_shared<ObjectOp>(1, size, cb, data);
+        std::make_shared<ObjectOp>(1, size, offset, cb, data);
 
+    /**
+     * TODO: Can we select fastest connection here?
+     */
     std::unique_ptr<rawstor::TaskVector> t =
-        std::make_unique<TaskVector>(
-            op, iov, niov, size, offset);
+        std::make_unique<TaskVector>(op, iov, niov);
     _cns.front()->read(std::move(t));
 }
 
@@ -316,12 +335,11 @@ void RawstorObject::pwrite(
         __FUNCTION__, (intmax_t)offset, size);
 
     std::shared_ptr<ObjectOp> op =
-        std::make_shared<ObjectOp>(_cns.size(), size, cb, data);
+        std::make_shared<ObjectOp>(_cns.size(), size, offset, cb, data);
 
     for (auto &cn: _cns) {
         std::unique_ptr<rawstor::TaskScalar> t =
-            std::make_unique<TaskScalar>(
-                op, buf, size, offset);
+            std::make_unique<TaskScalar>(op, buf);
         cn->write(std::move(t));
     }
 }
@@ -336,12 +354,11 @@ void RawstorObject::pwritev(
         __FUNCTION__, (intmax_t)offset, niov, size);
 
     std::shared_ptr<ObjectOp> op =
-        std::make_shared<ObjectOp>(_cns.size(), size, cb, data);
+        std::make_shared<ObjectOp>(_cns.size(), size, offset, cb, data);
 
     for (auto &cn: _cns) {
         std::unique_ptr<rawstor::TaskVector> t =
-            std::make_unique<TaskVector>(
-                op, iov, niov, size, offset);
+            std::make_unique<TaskVector>(op, iov, niov);
         cn->write(std::move(t));
     }
 }
