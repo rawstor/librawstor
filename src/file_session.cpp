@@ -71,7 +71,7 @@ std::string get_object_dat_path(
 void write_dat(
     const std:: string &ost_path,
     const RawstorObjectSpec &spec,
-    RawstorUUID &id)
+    const RawstorUUID &id)
 {
     RawstorUUIDString uuid_string;
     rawstor_uuid_to_string(&id, &uuid_string);
@@ -204,7 +204,7 @@ int Session::_connect(const RawstorUUID &id) {
 
 void Session::create(
     rawstor::io::Queue &,
-    const RawstorObjectSpec &sp, RawstorUUID *id,
+    const RawstorUUID &id, const RawstorObjectSpec &sp,
     std::unique_ptr<rawstor::Task> t)
 {
     std::string ost_path = get_ost_path(uri());
@@ -216,38 +216,26 @@ void Session::create(
         }
     }
 
-    RawstorUUID uuid;
     RawstorUUIDString uuid_string;
-    std::string spec_path;
-    int fd;
-    while (1) {
-        int res;
+    rawstor_uuid_to_string(&id, &uuid_string);
 
-        res = rawstor_uuid7_init(&uuid);
-        if (res) {
-            RAWSTOR_THROW_SYSTEM_ERROR(-res);
-        }
-        rawstor_uuid_to_string(&uuid, &uuid_string);
-        spec_path = get_object_spec_path(ost_path, uuid_string);
-        fd = ::open(
-            spec_path.c_str(),
-            O_EXCL | O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR);
-        if (fd != -1) {
-            break;
-        }
-        if (errno == EEXIST) {
-            errno = 0;
-        } else {
-            RAWSTOR_THROW_ERRNO();
-        }
+    std::string spec_path;
+    spec_path = get_object_spec_path(ost_path, uuid_string);
+
+    int fd = ::open(
+        spec_path.c_str(),
+        O_EXCL | O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR);
+    if (fd == -1) {
+        RAWSTOR_THROW_ERRNO();
     }
+
     try {
         ssize_t res = ::write(fd, &sp, sizeof(sp));
         if (res == -1) {
             RAWSTOR_THROW_ERRNO();
         }
 
-        write_dat(ost_path, sp, uuid);
+        write_dat(ost_path, sp, id);
 
         if (::close(fd) == -1) {
             RAWSTOR_THROW_ERRNO();
@@ -257,8 +245,6 @@ void Session::create(
         ::close(fd);
         throw;
     }
-
-    *id = uuid;
 
     (*t)(nullptr, 0, 0);
 }

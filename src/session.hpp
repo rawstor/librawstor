@@ -61,7 +61,7 @@ class Session {
 
         virtual void create(
             rawstor::io::Queue &queue,
-            const RawstorObjectSpec &sp, RawstorUUID *id,
+            const RawstorUUID &id, const RawstorObjectSpec &sp,
             std::unique_ptr<Task> t) = 0;
 
         virtual void remove(

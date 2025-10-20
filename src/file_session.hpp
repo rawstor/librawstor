@@ -30,7 +30,7 @@ class Session final: public rawstor::Session {
 
         void create(
             rawstor::io::Queue &queue,
-            const RawstorObjectSpec &sp, RawstorUUID *id,
+            const RawstorUUID &id, const RawstorObjectSpec &sp,
             std::unique_ptr<rawstor::Task> t) override;
 
         void remove(

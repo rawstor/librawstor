@@ -44,7 +44,7 @@ static void command_create_usage() {
         "command options:\n"
         "  -h, --help            Show this help message and exit\n"
         "  -s, --size SIZE       Object size in Gb\n"
-        "  -u, --uri RAWSTOR_URI Rawstor URI\n"
+        "  -u, --uri RAWSTOR_URI Comma separated list of Rawstor URI targets\n"
     );
 };
 
@@ -120,7 +120,7 @@ static void command_remove_usage() {
         "\n"
         "command options:\n"
         "  -o, --object-uri OBJECT_URI\n"
-        "                        Rawstor object URI\n"
+        "                        Comma separated list of Rawstor URI targets\n"
     );
 };
 
@@ -179,7 +179,7 @@ static void command_show_usage() {
         "\n"
         "command options:\n"
         "  -o, --object-uri OBJECT_URI\n"
-        "                        Rawstor object URI\n"
+        "                        Comma separated list of Rawstor URI targets\n"
     );
 };
 
@@ -245,7 +245,7 @@ static void command_testio_usage() {
         "                        IO depth\n"
         "  -h, --help            Show this help message and exit\n"
         "  -o, --object-uri OBJECT_URI\n"
-        "                        Rawstor object URI\n"
+        "                        Comma separated list of Rawstor URI targets\n"
         "  --vector-mode         Use readv/writev\n"
     );
 };

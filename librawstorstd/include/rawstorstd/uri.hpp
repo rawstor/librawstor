@@ -50,12 +50,17 @@ class URI {
 
     public:
         explicit URI(const std::string &uri);
+        URI(const URI &parent, const std::string &child);
         URI(const URI &other);
         URI(URI &&other) noexcept;
         URI& operator=(const URI &other);
         URI& operator=(URI &&other) noexcept;
 
-        URI up() const;
+        URI parent() const;
+
+        bool operator<(const URI &other) const noexcept {
+            return _uri < other._uri;
+        }
 
         inline const std::string& str() const noexcept {
             return _uri;

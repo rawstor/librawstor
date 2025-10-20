@@ -7,6 +7,15 @@
 namespace {
 
 
+std::string join(const rawstor::URI &parent, const std::string &child) {
+    std::string path = parent.str();
+    if (path.empty() || path[path.length() - 1] == '/') {
+        return path + child;
+    }
+    return path + '/' + child;
+}
+
+
 void parse_uri(
     const std::string &uri,
     std::string *scheme,
@@ -185,6 +194,19 @@ URI::URI(const std::string &uri):
 }
 
 
+URI::URI(const URI &parent, const std::string &child):
+    _uri(::join(parent, child))
+{
+    std::string path;
+    parse_uri(_uri, &_scheme, &_username, &_password, &_hostname, &_port, &path);
+
+    _userinfo = get_userinfo(_username, _password);
+    _host = get_host(_hostname, _port);
+    _authority = get_authority(_userinfo, _host);
+    _path = URIPath(path);
+}
+
+
 URI::URI(const URI &other):
     _uri(other._uri),
     _scheme(other._scheme),
@@ -249,7 +271,7 @@ URI& URI::operator=(URI &&other) noexcept {
 }
 
 
-URI URI::up() const {
+URI URI::parent() const {
     std::ostringstream oss;
     oss << _scheme << "://" << _authority << _path.dirname();
     return URI(oss.str());

@@ -1074,17 +1074,12 @@ void Session::read_response_body(
 
 void Session::create(
     rawstor::io::Queue &,
-    const RawstorObjectSpec &, RawstorUUID *id,
+    const RawstorUUID &, const RawstorObjectSpec &,
     std::unique_ptr<rawstor::Task> t)
 {
     /**
      * TODO: Implement me.
      */
-    int res = rawstor_uuid7_init(id);
-    if (res < 0) {
-        RAWSTOR_THROW_SYSTEM_ERROR(-res);
-    }
-
     (*t)(nullptr, 0, 0);
 }
 

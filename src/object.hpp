@@ -1,33 +1,44 @@
 #ifndef RAWSTOR_OBJECT_HPP
 #define RAWSTOR_OBJECT_HPP
 
-#include "connection.hpp"
-
 #include <rawstorstd/uri.hpp>
 
 #include <rawstor.h>
 
 #include <memory>
+#include <vector>
+
+
+namespace rawstor {
+
+
+class Connection;
+
+
+} // rawstor
 
 
 struct RawstorObject final {
     private:
         RawstorUUID _id;
-        rawstor::Connection _cn;
+        std::vector<std::unique_ptr<rawstor::Connection>> _cns;
 
     public:
         static void create(
-            const rawstor::URI &uri,
+            const std::vector<rawstor::URI> &uris,
             const RawstorObjectSpec &sp,
-            RawstorUUID *id);
-        static void remove(const rawstor::URI &uri);
-        static void spec(const rawstor::URI &uri, RawstorObjectSpec *sp);
+            std::vector<rawstor::URI> *object_uris);
+        static void remove(const std::vector<rawstor::URI> &uris);
+        static void spec(
+            const std::vector<rawstor::URI> &uris, RawstorObjectSpec *sp);
 
-        explicit RawstorObject(const rawstor::URI &uri);
+        explicit RawstorObject(const std::vector<rawstor::URI> &uris);
         RawstorObject(const RawstorObject &) = delete;
         RawstorObject(RawstorObject &&) = delete;
         RawstorObject& operator=(const RawstorObject &) = delete;
         RawstorObject& operator=(RawstorObject &&) = delete;
+
+        std::vector<rawstor::URI> uris() const;
 
         inline const RawstorUUID& id() const noexcept {
             return _id;
