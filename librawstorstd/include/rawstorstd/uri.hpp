@@ -50,6 +50,7 @@ class URI {
 
     public:
         explicit URI(const std::string &uri);
+        URI(const URI &parent, const std::string &child);
         URI(const URI &other);
         URI(URI &&other) noexcept;
         URI& operator=(const URI &other);

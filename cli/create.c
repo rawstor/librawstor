@@ -14,20 +14,19 @@ int rawstor_cli_create(const char *uris, size_t size){
 
     fprintf(stderr, "Creating object with specification:\n");
     fprintf(stderr, "  size: %zu Gb\n", size);
-    struct RawstorUUID object_id;
 
-    int res = rawstor_object_create(uris, &spec, &object_id);
-    if (res) {
+    char object_uris[65536];
+    int res = rawstor_object_create(
+        uris, &spec, object_uris, sizeof(object_uris));
+    if (res < 0) {
         fprintf(
             stderr,
             "rawstor_object_create() failed: %s\n", strerror(-res));
         return EXIT_FAILURE;
     }
 
-    RawstorUUIDString uuid_string;
-    rawstor_uuid_to_string(&object_id, &uuid_string);
     fprintf(stderr, "Object created\n");
-    fprintf(stdout, "%s/%s\n", uris, uuid_string);
+    fprintf(stdout, "%s\n", object_uris);
 
     return EXIT_SUCCESS;
 }

@@ -1,14 +1,21 @@
 #ifndef RAWSTOR_OBJECT_HPP
 #define RAWSTOR_OBJECT_HPP
 
-#include "connection.hpp"
-
 #include <rawstorstd/uri.hpp>
 
 #include <rawstor.h>
 
 #include <memory>
 #include <vector>
+
+
+namespace rawstor {
+
+
+class Connection;
+
+
+} // rawstor
 
 
 struct RawstorObject final {
@@ -20,7 +27,7 @@ struct RawstorObject final {
         static void create(
             const std::vector<rawstor::URI> &uris,
             const RawstorObjectSpec &sp,
-            RawstorUUID *id);
+            std::vector<rawstor::URI> *object_uris);
         static void remove(const std::vector<rawstor::URI> &uris);
         static void spec(
             const std::vector<rawstor::URI> &uris, RawstorObjectSpec *sp);
@@ -30,6 +37,8 @@ struct RawstorObject final {
         RawstorObject(RawstorObject &&) = delete;
         RawstorObject& operator=(const RawstorObject &) = delete;
         RawstorObject& operator=(RawstorObject &&) = delete;
+
+        std::vector<rawstor::URI> uris() const;
 
         inline const RawstorUUID& id() const noexcept {
             return _id;

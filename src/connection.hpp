@@ -46,9 +46,9 @@ class Connection final {
         std::shared_ptr<Session> get_next_session();
         void invalidate_session(const std::shared_ptr<Session> &s);
 
-        void create(
-            const URI &uri,
-            const RawstorObjectSpec &sp, RawstorUUID *id);
+        const URI* uri() const noexcept;
+
+        void create(const URI &uri, const RawstorObjectSpec &sp);
 
         void remove(const URI &uri);
 

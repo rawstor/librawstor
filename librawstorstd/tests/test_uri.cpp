@@ -175,6 +175,23 @@ int test_uri_parent() {
 }
 
 
+int test_uri_child() {
+    rawstor::URI parent_with_slash("http://user:password@example.com:80/");
+    rawstor::URI child_with_slash(parent_with_slash, "foo");
+
+    assertTrue(
+        child_with_slash.str() == "http://user:password@example.com:80/foo");
+
+    rawstor::URI parent_without_slash("http://user:password@example.com:80");
+    rawstor::URI child_without_slash(parent_without_slash, "foo");
+
+    assertTrue(
+        child_without_slash.str() == "http://user:password@example.com:80/foo");
+
+    return 0;
+}
+
+
 } // unnamed
 
 
@@ -188,5 +205,6 @@ int main() {
     rval += test_uri_without_uuid_with_slash();
     rval += test_uri_without_uuid_without_slash();
     rval += test_uri_parent();
+    rval += test_uri_child();
     return rval ? EXIT_FAILURE : EXIT_SUCCESS;
 }

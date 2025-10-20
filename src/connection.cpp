@@ -460,15 +460,27 @@ void Connection::invalidate_session(const std::shared_ptr<Session> &s) {
 }
 
 
-void Connection::create(
-    const URI &uri,
-    const RawstorObjectSpec &sp, RawstorUUID *id)
-{
+const URI* Connection::uri() const noexcept {
+    if (_sessions.empty()) {
+        return nullptr;
+    }
+
+    return &_sessions.front()->uri();
+}
+
+
+void Connection::create(const URI &uri, const RawstorObjectSpec &sp) {
+    RawstorUUID id;
+    int res = rawstor_uuid_from_string(&id, uri.path().filename().c_str());
+    if (res) {
+        RAWSTOR_THROW_SYSTEM_ERROR(-res);
+    }
+
     Queue q(1, _depth);
 
-    std::unique_ptr<Session> s = Session::create(uri, _depth);
+    std::unique_ptr<Session> s = Session::create(uri.parent(), _depth);
     std::unique_ptr<QueueTask> t = std::make_unique<QueueTask>(q);
-    s->create(q.queue(), sp, id, std::move(t));
+    s->create(q.queue(), id, sp, std::move(t));
 
     q.wait();
 }
