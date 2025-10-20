@@ -48,10 +48,9 @@ std::vector<rawstor::URI> uriv(const char *uris) {
             ret.emplace_back(at);
             break;
         }
-        if (next != uris && *(next - 1) == '\\') {
-            continue;
+        if (next == uris || *(next - 1) != '\\') {
+            ret.emplace_back(std::string(at, next));
         }
-        ret.emplace_back(std::string(at, next));
         at = next + 1;
         if (*at == '\0') {
             break;
