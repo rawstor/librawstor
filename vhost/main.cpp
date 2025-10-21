@@ -17,9 +17,9 @@ namespace {
 
 void usage() {
     std::cerr <<
-        "Rawstor vhost-user server" << std::endl
+        "Rawstor vhost server" << std::endl
         << std::endl
-        << "usage: rawstor-vu [-h] -o OBJECT_ID -s SOCKET_PATH" << std::endl
+        << "usage: rawstor-vhost [-h] -o OBJECT_ID -s SOCKET_PATH" << std::endl
         << std::endl
         << "options:" << std::endl
         << "  -h, --help            "
@@ -104,7 +104,7 @@ int main(int argc, char **argv) {
     sigaction(SIGINT, &sact, NULL);
 
     try {
-        rawstor_vu_server(object_uri_arg, socket_path_arg);
+        rawstor_vhost_server(object_uri_arg, socket_path_arg);
     } catch (std::exception &e) {
         std::cerr << e.what() << std::endl;
         return EXIT_FAILURE;
