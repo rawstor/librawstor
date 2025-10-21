@@ -76,7 +76,7 @@ static int get_protocol_features(VhostUserMsg *msg) {
 }
 
 
-static int dispatch_vu_request(VhostUserMsg *msg) {
+static int dispatch_vhost_request(VhostUserMsg *msg) {
     printf("Request: %d\n", msg->request);
     printf("Flags:   0x%x\n", msg->flags);
     printf("Size:    %u\n", msg->size);
@@ -127,7 +127,7 @@ static int server_read(size_t result, int error, void *data) {
     int response = 0;
 
     printf("============= Vhost user message =============\n");
-    response = dispatch_vu_request(msg);
+    response = dispatch_vhost_request(msg);
     printf("==============================================\n");
 
     if (!response &&
@@ -213,7 +213,7 @@ static int server_loop(int client_socket) {
 }
 
 
-int rawstor_vu_server(
+int rawstor_vhost_server(
     const char RAWSTOR_UNUSED *object_uri,
     const char *socket_path)
 {
