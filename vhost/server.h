@@ -1,5 +1,5 @@
-#ifndef RAWSTOR_VU_SERVER_H
-#define RAWSTOR_VU_SERVER_H
+#ifndef RAWSTOR_VHOST_SERVER_H
+#define RAWSTOR_VHOST_SERVER_H
 
 
 #include <rawstorstd/gcc.h>
@@ -10,7 +10,7 @@ extern "C" {
 #endif
 
 
-int rawstor_vu_server(
+int rawstor_vhost_server(
     const char RAWSTOR_UNUSED *object_uri,
     const char *socket_path);
 
@@ -20,4 +20,4 @@ int rawstor_vu_server(
 #endif
 
 
-#endif // RAWSTOR_VU_SERVER_H
+#endif // RAWSTOR_VHOST_SERVER_H
