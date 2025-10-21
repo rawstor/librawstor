@@ -214,8 +214,7 @@ static int server_loop(int client_socket) {
 
 
 int rawstor_vu_server(
-    const char RAWSTOR_UNUSED *uri,
-    int RAWSTOR_UNUSED object_id,
+    const char RAWSTOR_UNUSED *object_uri,
     const char *socket_path)
 {
     int server_socket = socket(AF_UNIX, SOCK_STREAM, 0);

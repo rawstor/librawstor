@@ -11,8 +11,7 @@ extern "C" {
 
 
 int rawstor_vu_server(
-    const char RAWSTOR_UNUSED *uri,
-    int RAWSTOR_UNUSED object_id,
+    const char RAWSTOR_UNUSED *object_uri,
     const char *socket_path);
 
 
