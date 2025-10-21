@@ -1,4 +1,4 @@
-noinst_PROGRAMS = rawstor-vu
+bin_PROGRAMS = rawstor-vhost
 
 AM_CFLAGS = $(GENERIC_CFLAGS) \
             $(ASAN_CFLAGS) \
@@ -13,9 +13,9 @@ AM_CXXFLAGS = $(GENERIC_CXXFLAGS) \
 AM_LDFLAGS = $(ASAN_LDFLAGS)
 
 
-rawstor_vu_SOURCES = main.cpp \
-                     protocol.h \
-                     server.c \
-                     server.h
+rawstor_vhost_SOURCES = main.cpp \
+                        protocol.h \
+                        server.c \
+                        server.h
 
-rawstor_vu_LDADD = $(top_builddir)/src/librawstor.la
+rawstor_vhost_LDADD = $(top_builddir)/src/librawstor.la
