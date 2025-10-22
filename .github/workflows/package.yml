@@ -33,8 +33,8 @@ jobs:
     - name: dpkg-deb
       run: dpkg-deb --build ${GITHUB_WORKSPACE}/build/librawstor
     - name: ls
-      run: ls -lhR
+      run: ls -lh ${GITHUB_WORKSPACE}/build
     - uses: actions/upload-artifact@v4
       with:
         name: librawstor.deb
-        path: ${GITHUB_WORKSPACE}/librawstor/build/librawstor.deb
+        path: ${GITHUB_WORKSPACE}/build/librawstor.deb
