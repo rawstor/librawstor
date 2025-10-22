@@ -1,5 +1,5 @@
 Package: librawstor
 Version: @PACKAGE_VERSION@
 Maintainer: Vasily Stepanov <vasily.stepanov@gmail.com>
-Architecture: all
+Architecture: amd64
 Description: Rawstor client library

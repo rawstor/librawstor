@@ -1,4 +1,4 @@
-bin_PROGRAMS = rawstor-vu
+noinst_PROGRAMS = rawstor-vu
 
 AM_CFLAGS = $(GENERIC_CFLAGS) \
             $(ASAN_CFLAGS) \
