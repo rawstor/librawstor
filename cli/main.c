@@ -3,6 +3,8 @@
 #include "show.h"
 #include "testio.h"
 
+#include "config.h"
+
 #include <rawstor.h>
 
 #include <getopt.h>
@@ -11,16 +13,17 @@
 #include <string.h>
 
 
-static void usage() {
+static void usage(void) {
     fprintf(
-        stderr,
-        "Rawstor CLI\n"
+        stdout,
+        "Rawstor CLI " PACKAGE_VERSION "\n"
         "\n"
         "usage: rawstor-cli [options] <command> [command_options]\n"
         "\n"
         "options:\n"
         "  -h, --help            Show this help message and exit\n"
         "  --sessions            Number of opened sessions per object\n"
+        "  -v, --version         Rawstor client version\n"
         "  --wait-timeout        IO wait timeout\n"
         "\n"
         "command:\n"
@@ -34,10 +37,18 @@ static void usage() {
 };
 
 
-static void command_create_usage() {
+static void version(void) {
     fprintf(
-        stderr,
-        "Rawstor CLI\n"
+        stdout,
+        "Rawstor CLI " PACKAGE_VERSION "\n"
+    );
+}
+
+
+static void command_create_usage(void) {
+    fprintf(
+        stdout,
+        "Rawstor CLI " PACKAGE_VERSION "\n"
         "\n"
         "usage: rawstor-cli [options] create [command_options]\n"
         "\n"
@@ -111,10 +122,10 @@ static int command_create(int argc, char **argv) {
 }
 
 
-static void command_remove_usage() {
+static void command_remove_usage(void) {
     fprintf(
-        stderr,
-        "Rawstor CLI\n"
+        stdout,
+        "Rawstor CLI " PACKAGE_VERSION "\n"
         "\n"
         "usage: rawstor-cli [options] remove [command_options]\n"
         "\n"
@@ -170,10 +181,10 @@ static int command_remove(int argc, char **argv) {
 }
 
 
-static void command_show_usage() {
+static void command_show_usage(void) {
     fprintf(
-        stderr,
-        "Rawstor CLI\n"
+        stdout,
+        "Rawstor CLI " PACKAGE_VERSION "\n"
         "\n"
         "usage: rawstor-cli [options] show [command_options]\n"
         "\n"
@@ -229,10 +240,10 @@ static int command_show(int argc, char **argv) {
 }
 
 
-static void command_testio_usage() {
+static void command_testio_usage(void) {
     fprintf(
-        stderr,
-        "Rawstor CLI\n"
+        stdout,
+        "Rawstor CLI " PACKAGE_VERSION "\n"
         "\n"
         "usage: rawstor-cli [options] testio [command_options]\n"
         "\n"
@@ -388,10 +399,11 @@ static int run_command(
 
 
 int main(int argc, char **argv) {
-    const char *optstring = "+h";
+    const char *optstring = "+hv";
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
         {"sessions", required_argument, NULL, 's'},
+        {"version", required_argument, NULL, 'v'},
         {"wait-timeout", required_argument, NULL, 't'},
         {},
     };
@@ -415,6 +427,11 @@ int main(int argc, char **argv) {
 
             case 't':
                 wait_timeout_arg = optarg;
+                break;
+
+            case 'v':
+                version();
+                return EXIT_SUCCESS;
                 break;
 
             default:

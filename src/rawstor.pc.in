@@ -6,6 +6,6 @@ includedir=@includedir@
 Name: rawstor
 Description: Rawstor client library
 Requires: @maybe_liburing@ @maybe_libxxhash@
-Version: 0.0.0
+Version: @PACKAGE_VERSION@
 Libs: -L${libdir} -lrawstor -lstdc++ @maybe_asan@
 Cflags: -I${includedir}
