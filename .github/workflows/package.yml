@@ -1,0 +1,42 @@
+name: package
+
+on:
+  push:
+
+#     branches:
+#       - 'releases/**'
+
+jobs:
+  deb:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libxxhash-dev liburing-dev
+    - uses: actions/checkout@v4
+    - name: autogen
+      run: ./autogen.sh
+    - name: configure
+      run: ./configure --prefix=./build/librawstor
+    - name: make
+      run: make -j$(nproc)
+    - name: make test
+      run: make test
+    - name: make install
+      run: |
+        make install
+        mkdir ./build/librawstor/DEBIAN
+        cp ./deb/control ./build/librawstor/DEBIAN
+    - name: test
+      run: dpkg-architecture -L
+    - name: dpkg-deb
+      run: dpkg-deb --build ./build/librawstor
+    - name: test2
+      run: ls -lh
+    - uses: actions/upload-artifact@v4
+      with:
+        name: librawstor.deb
+        path: librawstor.deb

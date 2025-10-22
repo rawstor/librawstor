@@ -99,6 +99,7 @@ AC_CONFIG_FILES(
     [cli/Makefile]
     [vu/Makefile]
     [tests/Makefile]
+    [deb/control]
 )
 
 AC_OUTPUT

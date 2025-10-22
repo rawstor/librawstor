@@ -1,0 +1,5 @@
+Package: librawstor
+Version: @PACKAGE_VERSION@
+Maintainer: Vasily Stepanov <vasily.stepanov@gmail.com>
+Architecture: all
+Description: Rawstor client library
