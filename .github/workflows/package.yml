@@ -33,8 +33,9 @@ jobs:
     - name: dpkg-deb
       run: dpkg-deb --build ${GITHUB_WORKSPACE}/build/librawstor
     - name: ls
-      run: ls -lh ${GITHUB_WORKSPACE}/build
+      run: ls -lh build/librawstor.deb
     - uses: actions/upload-artifact@v4
       with:
         name: librawstor.deb
-        path: ${GITHUB_WORKSPACE}/build/librawstor.deb
+        path: build/librawstor.deb
+        if-no-files-found: error
