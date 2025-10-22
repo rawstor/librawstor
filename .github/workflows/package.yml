@@ -20,7 +20,7 @@ jobs:
     - name: autogen
       run: ./autogen.sh
     - name: configure
-      run: ./configure --prefix=./build/librawstor
+      run: ./configure --prefix=${GITHUB_WORKSPACE}/build/librawstor
     - name: make
       run: make -j$(nproc)
     - name: make test
@@ -28,12 +28,12 @@ jobs:
     - name: make install
       run: |
         make install
-        mkdir ./build/librawstor/DEBIAN
-        cp ./deb/control ./build/librawstor/DEBIAN
+        mkdir ${GITHUB_WORKSPACE}/build/librawstor/DEBIAN
+        cp ./deb/control ${GITHUB_WORKSPACE}/build/librawstor/DEBIAN
     - name: test
       run: dpkg-architecture -L
     - name: dpkg-deb
-      run: dpkg-deb --build ./build/librawstor
+      run: dpkg-deb --build ${GITHUB_WORKSPACE}/build/librawstor
     - name: test2
       run: ls -lh
     - uses: actions/upload-artifact@v4
