@@ -9,6 +9,8 @@ AM_LDFLAGS = $(ASAN_LDFLAGS)
 
 
 rawstor_vu_SOURCES = main.c \
-                     server.c
+                     protocol.h \
+                     server.c \
+                     server.h
 
-rawstor_vu_LDADD = $(top_srcdir)/src/librawstor.la -lstdc++
+rawstor_vu_LDADD = $(top_builddir)/src/librawstor.la -lstdc++

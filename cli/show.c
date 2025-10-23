@@ -1,7 +1,5 @@
 #include "show.h"
 
-#include "gcc.h"
-
 #include <rawstor.h>
 
 #include <assert.h>

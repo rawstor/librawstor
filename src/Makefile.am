@@ -30,15 +30,24 @@ librawstor_la_HEADERS = $(top_srcdir)/include/rawstor/io_callback.h \
                         $(top_srcdir)/include/rawstor/uuid.h
 
 librawstor_la_SOURCES = connection.cpp \
+                        connection.hpp \
                         file_session.cpp \
+                        file_session.hpp \
                         object.cpp \
+                        object.hpp \
                         ost_session.cpp \
+                        ost_session.hpp \
                         opts.c \
+                        opts.h \
+                        ost_protocol.h \
                         session.cpp \
-                        rawstor.cpp
+                        session.hpp \
+                        rawstor.cpp \
+                        rawstor_internals.hpp \
+                        task.hpp
 
-librawstor_la_LIBADD = $(top_srcdir)/librawstorstd/src/librawstorstd.la \
-                       $(top_srcdir)/librawstorio/src/librawstorio.la \
+librawstor_la_LIBADD = $(top_builddir)/librawstorstd/src/librawstorstd.la \
+                       $(top_builddir)/librawstorio/src/librawstorio.la \
                        $(LIBXXHASH_LIBS) \
                        -lstdc++
 
