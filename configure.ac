@@ -1,4 +1,4 @@
-AC_INIT([librawstor], [0.0.0])
+AC_INIT([librawstor], [m4_esyscmd_s(.github/tools/git-version.sh)])
 AM_INIT_AUTOMAKE
 
 # AM_SILENT_RULES([yes])
