@@ -32,8 +32,6 @@ jobs:
         cp ./deb/control ${GITHUB_WORKSPACE}/build/librawstor/DEBIAN
     - name: dpkg-deb
       run: dpkg-deb --build ${GITHUB_WORKSPACE}/build/librawstor
-    - name: ls
-      run: ls -lh build/librawstor.deb
     - uses: actions/upload-artifact@v4
       with:
         name: librawstor.deb

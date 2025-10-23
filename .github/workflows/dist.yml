@@ -1,0 +1,27 @@
+name: dist
+
+on:
+  push:
+
+jobs:
+  dist:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libxxhash-dev liburing-dev
+    - uses: actions/checkout@v4
+    - name: autogen
+      run: ./autogen.sh
+    - name: configure
+      run: ./configure
+    - name: make distcheck
+      run: make distcheck
+    - uses: actions/upload-artifact@v4
+      with:
+        name: dist
+        path: librawstor-*.tar.gz
+        if-no-files-found: error
