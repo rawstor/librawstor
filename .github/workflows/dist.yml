@@ -4,7 +4,7 @@ on:
   push:
 
 jobs:
-  dist:
+  sources:
 
     runs-on: ubuntu-latest
 
@@ -22,6 +22,59 @@ jobs:
       run: make distcheck
     - uses: actions/upload-artifact@v4
       with:
-        name: dist
+        name: sources
         path: librawstor-*.tar.gz
         if-no-files-found: error
+
+  deb:
+    needs: sources
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libxxhash-dev liburing-dev
+    - uses: actions/download-artifact@v5
+      with:
+        name: sources
+    - name: env
+      run: |
+        export LIBRAWSTOR_TAR_GZ=$(ls librawstor-*.tar.gz)
+        export LIBRAWSTOR_TAR=${LIBRAWSTOR_TAR_GZ%.*}
+        export LIBRAWSTOR=${LIBRAWSTOR_TAR%.*}
+        echo "LIBRAWSTOR_TAR_GZ=${LIBRAWSTOR_TAR_GZ}" >> $GITHUB_ENV
+        echo "LIBRAWSTOR=${LIBRAWSTOR}" >> $GITHUB_ENV
+    - name: make
+      run: |
+        tar -xzf ${LIBRAWSTOR_TAR_GZ}
+        cd ${LIBRAWSTOR}
+        ./configure --prefix=${GITHUB_WORKSPACE}/build/librawstor
+        make -j$(nproc)
+        make test
+        make install
+    - name: dpkg-deb
+      run: |
+        mkdir ${GITHUB_WORKSPACE}/build/librawstor/DEBIAN
+        cp ${LIBRAWSTOR}/deb/control ${GITHUB_WORKSPACE}/build/librawstor/DEBIAN
+        dpkg-deb --build ${GITHUB_WORKSPACE}/build/librawstor build/${LIBRAWSTOR}.deb
+    - uses: actions/upload-artifact@v4
+      with:
+        name: deb
+        path: build/librawstor-*.deb
+        if-no-files-found: error
+
+  deb-test:
+    needs: deb
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/download-artifact@v5
+      with:
+        name: deb
+    - name: install
+      run: sudo apt install ./librawstor-*.deb
+    - name: test
+      run: rawstor-cli --version
