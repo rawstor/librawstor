@@ -46,6 +46,8 @@ librawstor_la_SOURCES = connection.cpp \
                         rawstor_internals.hpp \
                         task.hpp
 
+librawstor_la_LDFLAGS = -version-info $(LIBRARY_VERSION)
+
 librawstor_la_LIBADD = $(top_builddir)/librawstorstd/src/librawstorstd.la \
                        $(top_builddir)/librawstorio/src/librawstorio.la \
                        $(LIBXXHASH_LIBS) \
