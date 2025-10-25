@@ -270,7 +270,7 @@ static int command_testio(int argc, char **argv) {
         {"help", no_argument, NULL, 'h'},
         {"io-depth", required_argument, NULL, 'd'},
         {"object-uri", required_argument, NULL, 'o'},
-        {"vector-mode", required_argument, NULL, 'v'},
+        {"vector-mode", no_argument, NULL, 'v'},
         {},
     };
 
@@ -403,7 +403,7 @@ int main(int argc, char **argv) {
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
         {"sessions", required_argument, NULL, 's'},
-        {"version", required_argument, NULL, 'v'},
+        {"version", no_argument, NULL, 'v'},
         {"wait-timeout", required_argument, NULL, 't'},
         {},
     };
