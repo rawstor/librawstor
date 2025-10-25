@@ -65,7 +65,7 @@ jobs:
         path: build/librawstor-*.deb
         if-no-files-found: error
 
-  deb-test:
+  deb-install:
     needs: deb
 
     runs-on: ubuntu-latest
@@ -75,6 +75,47 @@ jobs:
       with:
         name: deb
     - name: install
-      run: sudo apt install ./librawstor-*.deb
+      run: sudo apt install -y ./librawstor-*.deb
     - name: test
       run: rawstor-cli --version
+
+  rpm:
+    needs: sources
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libxxhash-dev liburing-dev rpm rpmlint
+    - name: setuptree
+      run: |
+        mkdir -p ~/rpmbuild/SOURCES
+        mkdir -p ~/rpmbuild/SPECS
+    - uses: actions/download-artifact@v5
+      with:
+        name: sources
+    - name: env
+      run: |
+        export LIBRAWSTOR_TAR_GZ=$(ls librawstor-*.tar.gz)
+        export LIBRAWSTOR_TAR=${LIBRAWSTOR_TAR_GZ%.*}
+        export LIBRAWSTOR=${LIBRAWSTOR_TAR%.*}
+        echo "LIBRAWSTOR_TAR_GZ=${LIBRAWSTOR_TAR_GZ}" >> $GITHUB_ENV
+        echo "LIBRAWSTOR=${LIBRAWSTOR}" >> $GITHUB_ENV
+    - name: configure
+      run: |
+        tar -xzf ${LIBRAWSTOR_TAR_GZ}
+        cd ${LIBRAWSTOR}
+        ./configure --prefix=${HOME}/rpmbuild/BUILD
+    - name: rpmbuild
+      run: |
+        cp ${LIBRAWSTOR}/rpm/librawstor.spec ~/rpmbuild/SPECS
+        cp ${LIBRAWSTOR_TAR_GZ} ~/rpmbuild/SOURCES
+        rpmlint ~/rpmbuild/SPECS/librawstor.spec
+        rpmbuild -bb ~/rpmbuild/SPECS/librawstor.spec
+    - uses: actions/upload-artifact@v4
+      with:
+        name: rpm
+        path: ~/rpmbuild/RPMS/x86_64/librawstor-*.rpm
+        if-no-files-found: error

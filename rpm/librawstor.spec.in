@@ -1,0 +1,28 @@
+Name: librawstor
+Version: @PACKAGE_VERSION_SHORT@
+Release: @PACKAGE_RELEASE@
+Summary: Rawstor client library
+
+License: LGPL
+URL: https://github.com/rawstor/librawstor
+Source0: %{name}-@PACKAGE_VERSION@.tar.gz
+
+%description
+Rawstor client library
+
+%prep
+%autosetup -n %{name}-@PACKAGE_VERSION@
+
+%build
+./configure --prefix=%{_prefix}
+make %{?_smp_mflags}
+
+%install
+rm -rf %{buildroot}
+make install DESTDIR=%{buildroot}
+
+%files
+%{_bindir}/*
+%{_includedir}/*
+%{_exec_prefix}/lib*/*
+%doc README.md COPYING

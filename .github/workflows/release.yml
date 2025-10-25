@@ -1,0 +1,17 @@
+name: release
+
+on:
+  push:
+    tags:
+    - "v*"
+
+
+jobs:
+  verify-tag:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: verify
+      run: git verify-tag ${{ github.ref_name }}

@@ -14,7 +14,7 @@ AC_CONFIG_MACRO_DIRS([m4])
 
 
 AC_SUBST([PACKAGE_VERSION_SHORT], [`echo ${PACKAGE_VERSION%%-*}`])
-AC_SUBST([PACKAGE_RELEASE], [`echo ${PACKAGE_VERSION#*-}`])
+AC_SUBST([PACKAGE_RELEASE], [`RELEASE=${PACKAGE_VERSION#*-} && echo ${RELEASE//-/^}`])
 AC_SUBST([LIBRARY_VERSION], [`echo ${PACKAGE_VERSION_SHORT//./:}`])
 
 AC_SUBST([GENERIC_CFLAGS], ["-std=gnu99 -Wall -Wextra -Werror"])
@@ -104,6 +104,7 @@ AC_CONFIG_FILES(
     [vu/Makefile]
     [tests/Makefile]
     [deb/control]
+    [rpm/librawstor.spec]
 )
 
 AC_OUTPUT
