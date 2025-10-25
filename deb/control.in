@@ -4,3 +4,4 @@ Maintainer: Vasily Stepanov <vasily.stepanov@gmail.com>
 Architecture: amd64
 Depends: liburing2, libxxhash0
 Description: Rawstor client library
+Homepage: https://github.com/rawstor/librawstor
