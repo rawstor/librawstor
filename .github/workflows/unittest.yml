@@ -86,7 +86,7 @@ jobs:
     - name: testio file,ost
       run: |
         rawstor-cli testio --object-uri=${OBJECT_URI} --block-size=4096 --io-depth=1 --count=10
-        rawstor-cli testio --object-uri=${OBJECT_URI} --block-size=4096 --io-depth=1 --count=10 --vector-mode=1
+        rawstor-cli testio --object-uri=${OBJECT_URI} --block-size=4096 --io-depth=1 --count=10 --vector-mode
     - name: create object ost,file
       run: |
         object_uri=$(rawstor-cli create --uri ost://127.0.0.1:8080,file:///tmp/objects --size=1)
@@ -94,6 +94,6 @@ jobs:
     - name: testio ost,file
       run: |
         rawstor-cli testio --object-uri=${OBJECT_URI} --block-size=4096 --io-depth=1 --count=10
-        rawstor-cli testio --object-uri=${OBJECT_URI} --block-size=4096 --io-depth=1 --count=10 --vector-mode=1
+        rawstor-cli testio --object-uri=${OBJECT_URI} --block-size=4096 --io-depth=1 --count=10 --vector-mode
     - name: (ost) stop rawstor_ost
       run: killall ost

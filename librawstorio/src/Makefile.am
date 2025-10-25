@@ -16,7 +16,9 @@ AM_CXXFLAGS = $(GENERIC_CXXFLAGS) \
 AM_LDFLAGS = $(ASAN_LDFLAGS)
 
 
-librawstorio_la_SOURCES = queue.cpp
+librawstorio_la_SOURCES = $(top_srcdir)/librawstorio/include/rawstorio/queue.hpp \
+                          $(top_srcdir)/librawstorio/include/rawstorio/task.hpp \
+                          queue.cpp
 
 librawstorio_la_LIBADD =
 
@@ -24,10 +26,14 @@ librawstorio_la_LIBADD =
 if WITH_LIBURING
     AM_CFLAGS += $(LIBURING_CFLAGS)
     AM_CXXFLAGS += $(LIBURING_CFLAGS)
-    librawstorio_la_SOURCES += uring_queue.cpp
+    librawstorio_la_SOURCES += uring_queue.cpp \
+                               uring_queue.hpp
     librawstorio_la_LIBADD += $(LIBURING_LIBS)
 else
     librawstorio_la_SOURCES += poll_event.cpp \
+                               poll_event.hpp \
                                poll_queue.cpp \
-                               poll_session.cpp
+                               poll_queue.hpp \
+                               poll_session.cpp \
+                               poll_session.hpp
 endif

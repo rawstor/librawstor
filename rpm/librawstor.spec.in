@@ -1,0 +1,19 @@
+Name: librawstor
+Version: @PACKAGE_VERSION_SHORT@
+Release: @PACKAGE_RELEASE@
+Summary: Rawstor client library
+
+License: LGPL
+URL: https://github.com/rawstor/librawstor
+
+%description
+Rawstor client library
+
+%install
+mkdir -p %{buildroot}/usr/bin/
+install bin/rawstor-cli %{buildroot}/usr/bin/rawstor-cli
+install include/* %{buildroot}/usr/include/
+install lib/* %{buildroot}/usr/lib/
+
+%files
+/usr/bin/*
