@@ -1,0 +1,141 @@
+name: dist
+
+on:
+  push:
+
+jobs:
+  verify-tag:
+
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+    - name: install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gnupg
+    - uses: actions/checkout@v4
+    - name: import GPG public keys
+      run: gpg --import .github/gpg-keys/*.asc
+    - name: fetch all tags
+      run: git fetch --tags --force origin
+    - name: verify
+      run: git verify-tag ${{ github.ref_name }}
+
+  sources:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libxxhash-dev liburing-dev
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    - name: autogen
+      run: ./autogen.sh
+    - name: configure
+      run: ./configure
+    - name: make distcheck
+      run: make distcheck
+    - uses: actions/upload-artifact@v4
+      with:
+        name: sources
+        path: librawstor-*.tar.gz
+        if-no-files-found: error
+
+  deb:
+    needs: sources
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libxxhash-dev liburing-dev
+    - uses: actions/download-artifact@v5
+      with:
+        name: sources
+    - name: env
+      run: |
+        export LIBRAWSTOR_TAR_GZ=$(ls librawstor-*.tar.gz)
+        export LIBRAWSTOR_TAR=${LIBRAWSTOR_TAR_GZ%.*}
+        export LIBRAWSTOR=${LIBRAWSTOR_TAR%.*}
+        echo "LIBRAWSTOR_TAR_GZ=${LIBRAWSTOR_TAR_GZ}" >> $GITHUB_ENV
+        echo "LIBRAWSTOR=${LIBRAWSTOR}" >> $GITHUB_ENV
+    - name: make
+      run: |
+        tar -xzf ${LIBRAWSTOR_TAR_GZ}
+        cd ${LIBRAWSTOR}
+        ./configure --prefix=${GITHUB_WORKSPACE}/build/librawstor
+        make -j$(nproc)
+        make test
+        make install
+    - name: dpkg-deb
+      run: |
+        mkdir ${GITHUB_WORKSPACE}/build/librawstor/DEBIAN
+        cp ${LIBRAWSTOR}/deb/control ${GITHUB_WORKSPACE}/build/librawstor/DEBIAN
+        dpkg-deb --build ${GITHUB_WORKSPACE}/build/librawstor build/${LIBRAWSTOR}.deb
+    - uses: actions/upload-artifact@v4
+      with:
+        name: deb
+        path: build/librawstor-*.deb
+        if-no-files-found: error
+
+  deb-install:
+    needs: deb
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/download-artifact@v5
+      with:
+        name: deb
+    - name: install
+      run: sudo apt install -y ./librawstor-*.deb
+    - name: test
+      run: rawstor-cli --version
+
+  rpm:
+    needs: sources
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libxxhash-dev liburing-dev rpm rpmlint
+    - name: setuptree
+      run: |
+        mkdir -p ~/rpmbuild/SOURCES
+        mkdir -p ~/rpmbuild/SPECS
+    - uses: actions/download-artifact@v5
+      with:
+        name: sources
+    - name: env
+      run: |
+        export LIBRAWSTOR_TAR_GZ=$(ls librawstor-*.tar.gz)
+        export LIBRAWSTOR_TAR=${LIBRAWSTOR_TAR_GZ%.*}
+        export LIBRAWSTOR=${LIBRAWSTOR_TAR%.*}
+        echo "LIBRAWSTOR_TAR_GZ=${LIBRAWSTOR_TAR_GZ}" >> $GITHUB_ENV
+        echo "LIBRAWSTOR=${LIBRAWSTOR}" >> $GITHUB_ENV
+    - name: configure
+      run: |
+        tar -xzf ${LIBRAWSTOR_TAR_GZ}
+        cd ${LIBRAWSTOR}
+        ./configure --prefix=${HOME}/rpmbuild/BUILD
+    - name: rpmbuild
+      run: |
+        cp ${LIBRAWSTOR}/rpm/librawstor.spec ~/rpmbuild/SPECS
+        cp ${LIBRAWSTOR_TAR_GZ} ~/rpmbuild/SOURCES
+        rpmlint ~/rpmbuild/SPECS/librawstor.spec
+        rpmbuild -bb ~/rpmbuild/SPECS/librawstor.spec
+    - uses: actions/upload-artifact@v4
+      with:
+        name: rpm
+        path: ~/rpmbuild/RPMS/x86_64/librawstor-*.rpm
+        if-no-files-found: error

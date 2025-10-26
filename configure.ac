@@ -1,4 +1,4 @@
-AC_INIT([librawstor], [0.0.0])
+AC_INIT([librawstor], [m4_esyscmd_s(.github/tools/git-version.sh)])
 AM_INIT_AUTOMAKE
 
 # AM_SILENT_RULES([yes])
@@ -12,6 +12,10 @@ LT_INIT
 
 AC_CONFIG_MACRO_DIRS([m4])
 
+
+AC_SUBST([PACKAGE_VERSION_SHORT], [`echo ${PACKAGE_VERSION%%-*}`])
+AC_SUBST([RPM_RELEASE], [`RELEASE=${PACKAGE_VERSION#*-} && echo ${RELEASE//-/^}`])
+AC_SUBST([LIBRARY_VERSION], [`VERSION=${PACKAGE_VERSION_SHORT%.*} && echo ${VERSION//./:}:0`])
 
 AC_SUBST([GENERIC_CFLAGS], ["-std=gnu99 -Wall -Wextra -Werror"])
 AC_SUBST([GENERIC_CXXFLAGS], ["-std=c++20 -Wall -Wextra -Werror"])
@@ -99,6 +103,8 @@ AC_CONFIG_FILES(
     [cli/Makefile]
     [vu/Makefile]
     [tests/Makefile]
+    [deb/control]
+    [rpm/librawstor.spec]
 )
 
 AC_OUTPUT
