@@ -14,6 +14,6 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: fetch all tags
-      run: git fetch --tags origin
+      run: git fetch --tags --force origin
     - name: verify
       run: git verify-tag ${{ github.ref_name }}
