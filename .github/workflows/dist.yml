@@ -4,6 +4,24 @@ on:
   push:
 
 jobs:
+  verify-tag:
+
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+    - name: install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gnupg
+    - uses: actions/checkout@v4
+    - name: import GPG public keys
+      run: gpg --import .github/gpg-keys/*.asc
+    - name: fetch all tags
+      run: git fetch --tags --force origin
+    - name: verify
+      run: git verify-tag ${{ github.ref_name }}
+
   sources:
 
     runs-on: ubuntu-latest
