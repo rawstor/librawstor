@@ -16,8 +16,8 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y gnupg
-    - name: import GPG public key
-      run: echo "${{ secrets.GPG_PUBLIC_KEY }}" | gpg --import
+    - name: import GPG public keys
+      run: gpg --import .github/gpg-keys/*.asc
     - uses: actions/checkout@v4
     - name: fetch all tags
       run: git fetch --tags --force origin
