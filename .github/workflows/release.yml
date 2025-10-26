@@ -16,5 +16,7 @@ jobs:
       with:
         fetch-depth: 0
         fetch-tags: true
+    - name: fetch all tags
+      run: git fetch --tags origin
     - name: verify
       run: git verify-tag ${{ github.ref_name }}
