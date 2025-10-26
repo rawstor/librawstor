@@ -1,6 +1,6 @@
 Name: librawstor
 Version: @PACKAGE_VERSION_SHORT@
-Release: @PACKAGE_RELEASE@
+Release: @RPM_RELEASE@
 Summary: Rawstor client library
 
 License: LGPL
