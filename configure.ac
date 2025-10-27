@@ -14,7 +14,7 @@ AC_CONFIG_MACRO_DIRS([m4])
 
 
 AC_SUBST([PACKAGE_VERSION_SHORT], [`echo ${PACKAGE_VERSION%%-*}`])
-AC_SUBST([RPM_RELEASE], [`RELEASE=${PACKAGE_VERSION#*-} && echo ${RELEASE//-/^}`])
+AC_SUBST([RPM_RELEASE], [`[[[ ${PACKAGE_VERSION} == *-* ]]] && RELEASE=${PACKAGE_VERSION#*-} && echo ${RELEASE//-/^} || echo "0"`])
 AC_SUBST([LIBRARY_VERSION], [`VERSION=${PACKAGE_VERSION_SHORT%.*} && echo ${VERSION//./:}:0`])
 
 AC_SUBST([GENERIC_CFLAGS], ["-std=gnu99 -Wall -Wextra -Werror"])
