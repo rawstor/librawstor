@@ -2,7 +2,7 @@ SUBDIRS = librawstorstd \
           librawstorio \
           src \
           cli \
-          vu
+          vhost
 
 if ENABLE_TESTS
     SUBDIRS += tests

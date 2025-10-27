@@ -1,16 +1,15 @@
 #ifndef RAWSTOR_VHOST_USER_PROTOCOL_H
 #define RAWSTOR_VHOST_USER_PROTOCOL_H
 
-#if defined(__linux__)
-#include <linux/vhost.h>
-#else
 #include <stdint.h>
-
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+/**
+ * This code below was duplicated from linux/vhost.h header
+ */
 
 /* Do we get callbacks when the ring is completely used, even if we've
  * suppressed them? */
@@ -55,12 +54,14 @@ struct vhost_vring_addr {
      * address. Address must be 32 bit aligned. */
     uint64_t log_guest_addr;
 };
-#endif
 
-#include <stdint.h>
+/**
+ * End of duplicated code from linux/vhost.h header
+ */
 
 
-#define RAWSTOR_VU_PACKED __attribute__((packed))
+
+#define RAWSTOR_VHOST_PACKED __attribute__((packed))
 
 /* Based on qemu/hw/virtio/vhost-user.c */
 #define VHOST_USER_F_PROTOCOL_FEATURES 30
@@ -230,7 +231,7 @@ typedef struct VhostUserMsg {
     int fds[VHOST_MEMORY_BASELINE_NREGIONS];
     int fd_num;
     uint8_t *data;
-} RAWSTOR_VU_PACKED VhostUserMsg;
+} RAWSTOR_VHOST_PACKED VhostUserMsg;
 
 
 #ifdef __cplusplus
