@@ -43,6 +43,12 @@ void sact_handler(int s) {
 }
 
 
+void server(const std::string &object_uri, const std::string &socket_path) {
+    rawstor::vhost::Server s(object_uri, socket_path);
+    s.loop();
+}
+
+
 } // namespace
 
 
@@ -102,7 +108,7 @@ int main(int argc, char **argv) {
     sigaction(SIGINT, &sact, NULL);
 
     try {
-        rawstor::vhost::server(object_uri_arg, socket_path_arg);
+        server(object_uri_arg, socket_path_arg);
     } catch (std::exception &e) {
         std::cerr << e.what() << std::endl;
         return EXIT_FAILURE;
