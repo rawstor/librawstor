@@ -205,7 +205,7 @@ typedef enum VhostUserRequest {
 } VhostUserRequest;
 
 
-typedef struct VhostUserMsg {
+typedef struct {
     VhostUserRequest request;
 
 #define VHOST_USER_VERSION_MASK     (0x3)
@@ -213,25 +213,30 @@ typedef struct VhostUserMsg {
 #define VHOST_USER_NEED_REPLY_MASK  (0x1 << 3)
     uint32_t flags;
     uint32_t size; /* the following payload size */
-    union {
+} RAWSTOR_VHOST_PACKED VhostUserHeader;
+
+
+typedef union {
 #define VHOST_USER_VRING_IDX_MASK   (0xff)
 #define VHOST_USER_VRING_NOFD_MASK  (0x1 << 8)
-        uint64_t u64;
-        struct vhost_vring_state state;
-        struct vhost_vring_addr addr;
-        VhostUserMemory memory;
-        VhostUserMemRegMsg memreg;
-        VhostUserLog log;
-        VhostUserConfig config;
-        VhostUserVringArea area;
-        VhostUserInflight inflight;
-        VhostUserShared object;
-    } payload;
+    uint64_t u64;
+    struct vhost_vring_state state;
+    struct vhost_vring_addr addr;
+    VhostUserMemory memory;
+    VhostUserMemRegMsg memreg;
+    VhostUserLog log;
+    VhostUserConfig config;
+    VhostUserVringArea area;
+    VhostUserInflight inflight;
+    VhostUserShared object;
+} RAWSTOR_VHOST_PACKED VhostUserPayload;
 
-    int fds[VHOST_MEMORY_BASELINE_NREGIONS];
+
+typedef struct {
+    int fds[1];
     int fd_num;
     uint8_t *data;
-} RAWSTOR_VHOST_PACKED VhostUserMsg;
+} RAWSTOR_VHOST_PACKED VhostUserFds;
 
 
 #ifdef __cplusplus
