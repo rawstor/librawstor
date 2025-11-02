@@ -2,181 +2,78 @@
 #define RAWSTORSTD_RINGBUF_HPP
 
 #include <rawstorstd/gpp.hpp>
-#include <rawstorstd/ringbuf.h>
 
-#include <iterator>
-#include <type_traits>
+#include <memory>
+#include <stdexcept>
 #include <utility>
-
-#include <cstddef>
+#include <vector>
 
 
 namespace rawstor {
 
 
 template <typename T>
-class RingBufIter {
-    private:
-        RawstorRingBuf *_buf;
-        void *_iter;
-
-    public:
-        using iterator_category = std::forward_iterator_tag;
-        using value_type = T;
-        using difference_type = std::ptrdiff_t;
-        using pointer = T*;
-        using reference = T&;
-
-        RingBufIter(RawstorRingBuf *buf, void *iter) noexcept:
-            _buf(buf),
-            _iter(iter)
-        {}
-
-        RingBufIter(const RingBufIter &other) noexcept:
-            _buf(other._buf),
-            _iter(other._iter)
-        {}
-
-        RingBufIter(RingBufIter &&other) noexcept:
-            _buf(other._buf),
-            _iter(std::exchange(other._iter, nullptr))
-        {}
-
-        inline RingBufIter<T>& operator=(const RingBufIter<T> &other) noexcept {
-            if (&other != this) {
-                _buf = other._buf;
-                _iter = other._iter;
-            }
-            return *this;
-        }
-
-        inline RingBufIter<T>& operator=(RingBufIter<T> &&other) noexcept {
-            if (&other != this) {
-                _buf = other._buf;
-                _iter = std::exchange(other._iter, nullptr);
-            }
-            return *this;
-        }
-
-        inline bool operator==(const RingBufIter<T> &other) const noexcept {
-            return _iter == other._iter;
-        }
-
-        inline bool operator!=(const RingBufIter<T> &other) const noexcept {
-            return _iter != other._iter;
-        }
-
-        inline RingBufIter<T>& operator++() noexcept {
-            _iter = rawstor_ringbuf_next(_buf, _iter);
-            return *this;
-        }
-
-        inline RingBufIter<T> operator++(int) noexcept {
-            RingBufIter<T> old = *this;
-            _iter = rawstor_ringbuf_next(_buf, _iter);
-            return old;
-        }
-
-        inline T& operator*() noexcept {
-            return *static_cast<T*>(_iter);
-        }
-
-        inline T* operator->() noexcept {
-            return static_cast<T*>(_iter);
-        }
-};
-
-
-template <typename T>
 class RingBuf {
-    static_assert(
-        std::is_trivially_destructible<T>::value,
-        "RingBuf only supports trivially destructible types");
-
     private:
-        RawstorRingBuf *_impl;
+        std::vector<std::unique_ptr<T>> _data;
+        size_t _head;
+        size_t _tail;
+        size_t _count;
 
     public:
-        using iterator = RingBufIter<T>;
-
         RingBuf(size_t capacity):
-            _impl(rawstor_ringbuf_create(capacity, sizeof(T)))
-        {
-            if (_impl == nullptr) {
-                RAWSTOR_THROW_ERRNO();
-            }
-        }
+            _data(capacity),
+            _head(0),
+            _tail(0),
+            _count(0)
+        {}
 
         RingBuf(const RingBuf<T> &) = delete;
-
-        RingBuf(RingBuf<T> &&other) noexcept:
-            _impl(std::exchange(other._impl, nullptr))
-        {}
+        RingBuf(RingBuf<T> &&other) = delete;
 
         RingBuf<T>& operator=(const RingBuf<T> &) = delete;
-
-        RingBuf<T>& operator=(RingBuf<T> &&other) noexcept {
-            if (&other != this) {
-                if (_impl != nullptr) {
-                    rawstor_ringbuf_delete(_impl);
-                }
-
-                _impl = std::exchange(other._impl, nullptr);
-            }
-            return *this;
-        }
-
-        ~RingBuf() {
-            if (_impl != nullptr) {
-                rawstor_ringbuf_delete(_impl);
-            }
-        }
+        RingBuf<T>& operator=(RingBuf<T> &&other) = delete;
 
         inline bool empty() const noexcept {
-            return rawstor_ringbuf_empty(_impl);
+            return _count == 0;
+        }
+
+        inline bool full() const noexcept {
+            return _count == _data.size();
         }
 
         inline size_t capacity() const noexcept {
-            return rawstor_ringbuf_capacity(_impl);
+            return _data.size();
         }
 
         inline size_t size() const noexcept {
-            return rawstor_ringbuf_size(_impl);
+            return _count;
         }
 
-        inline void push(const T &item) {
-            T *head = static_cast<T*>(rawstor_ringbuf_head(_impl));
-            int res = rawstor_ringbuf_push(_impl);
-            if (res) {
-                RAWSTOR_THROW_SYSTEM_ERROR(-res);
+        inline void push(std::unique_ptr<T> item) {
+            if (full()) {
+                RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
             }
-            *head = item;
+            _data[_head] = std::move(item);
+            _head = (_head + 1) % _data.size();
+            ++_count;
         }
 
-        inline void push(T &&item) {
-            T *head = static_cast<T*>(rawstor_ringbuf_head(_impl));
-            int res = rawstor_ringbuf_push(_impl);
-            if (res) {
-                RAWSTOR_THROW_SYSTEM_ERROR(-res);
+        inline const T& tail() const {
+            if (empty()) {
+                throw std::out_of_range("RingBuf is empty");
             }
-            *head = std::move(item);
+            return *_data[_tail].get();
         }
 
-        inline T pop() {
-            T *tail = static_cast<T*>(rawstor_ringbuf_tail(_impl));
-            int res = rawstor_ringbuf_pop(_impl);
-            if (res) {
-                RAWSTOR_THROW_SYSTEM_ERROR(-res);
+        inline std::unique_ptr<T> pop() {
+            if (empty()) {
+                throw std::out_of_range("RingBuf is empty");
             }
-            return std::move(*tail);
-        }
-
-        inline RingBuf<T>::iterator begin() {
-            return RingBuf<T>::iterator(_impl, rawstor_ringbuf_iter(_impl));
-        }
-
-        inline RingBuf<T>::iterator end() {
-            return RingBuf<T>::iterator(_impl, nullptr);
+            std::unique_ptr<T> item = std::exchange(_data[_tail], nullptr);
+            _tail = (_tail + 1) % _data.size();
+            --_count;
+            return item;
         }
 };
 
