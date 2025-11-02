@@ -11,7 +11,6 @@
 #include <rawstorstd/gpp.hpp>
 #include <rawstorstd/hash.h>
 #include <rawstorstd/logging.h>
-#include <rawstorstd/ringbuf.h>
 #include <rawstorstd/socket.h>
 #include <rawstorstd/uuid.h>
 
