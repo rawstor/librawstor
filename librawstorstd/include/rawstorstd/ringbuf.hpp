@@ -73,7 +73,7 @@ class RingBuf {
             std::unique_ptr<T> item = std::exchange(_data[_tail], nullptr);
             _tail = (_tail + 1) % _data.size();
             --_count;
-            return std::move(item);
+            return item;
         }
 };
 
