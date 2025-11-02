@@ -1,6 +1,8 @@
 #ifndef RAWSTORIO_POLL_QUEUE_HPP
 #define RAWSTORIO_POLL_QUEUE_HPP
 
+#include "poll_event.hpp"
+
 #include <rawstorio/queue.hpp>
 
 #include <rawstorstd/ringbuf.hpp>
@@ -23,7 +25,7 @@ class Session;
 class Queue: public rawstor::io::Queue {
     private:
         std::unordered_map<int, std::shared_ptr<Session>> _sessions;
-        rawstor::RingBuf<Event*> _cqes;
+        rawstor::RingBuf<Event> _cqes;
 
         Session& _get_session(int fd);
 

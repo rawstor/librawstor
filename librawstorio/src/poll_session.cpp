@@ -20,12 +20,12 @@ namespace {
 
 class SeekableSession: public rawstor::io::poll::Session {
     private:
-        rawstor::RingBuf<rawstor::io::poll::EventP*> _read_sqes;
-        rawstor::RingBuf<rawstor::io::poll::EventP*> _write_sqes;
+        rawstor::RingBuf<rawstor::io::poll::EventP> _read_sqes;
+        rawstor::RingBuf<rawstor::io::poll::EventP> _write_sqes;
 
         void _process(
-            rawstor::RingBuf<rawstor::io::poll::EventP*> &sqes,
-            rawstor::RingBuf<rawstor::io::poll::Event*> &cqes,
+            rawstor::RingBuf<rawstor::io::poll::EventP> &sqes,
+            rawstor::RingBuf<rawstor::io::poll::Event> &cqes,
             bool write, bool pollhup);
 
     public:
@@ -35,17 +35,6 @@ class SeekableSession: public rawstor::io::poll::Session {
             _write_sqes(q.depth())
         {}
 
-        ~SeekableSession() {
-            while (!_read_sqes.empty()) {
-                rawstor::io::poll::EventP *event = _read_sqes.pop();
-                delete event;
-            }
-            while (!_write_sqes.empty()) {
-                rawstor::io::poll::EventP *event = _write_sqes.pop();
-                delete event;
-            }
-        }
-
         short events() const noexcept override {
             return
                 (_read_sqes.empty() ? 0 : POLLIN) |
@@ -77,9 +66,7 @@ class SeekableSession: public rawstor::io::poll::Session {
                 std::make_unique<rawstor::io::poll::EventP>(
                     _q, std::move(t));
 
-            _read_sqes.push(event.get());
-
-            event.release();
+            _read_sqes.push(std::move(event));
         }
 
         void read(
@@ -89,9 +76,7 @@ class SeekableSession: public rawstor::io::poll::Session {
                 std::make_unique<rawstor::io::poll::EventP>(
                     _q, std::move(t));
 
-            _read_sqes.push(event.get());
-
-            event.release();
+            _read_sqes.push(std::move(event));
         }
 
         void write(
@@ -115,9 +100,7 @@ class SeekableSession: public rawstor::io::poll::Session {
                 std::make_unique<rawstor::io::poll::EventP>(
                     _q, std::move(t));
 
-            _write_sqes.push(event.get());
-
-            event.release();
+            _write_sqes.push(std::move(event));
         }
 
         void write(
@@ -127,20 +110,18 @@ class SeekableSession: public rawstor::io::poll::Session {
                 std::make_unique<rawstor::io::poll::EventP>(
                     _q, std::move(t));
 
-            _write_sqes.push(event.get());
-
-            event.release();
+            _write_sqes.push(std::move(event));
         }
 
         void process_read(
-            rawstor::RingBuf<rawstor::io::poll::Event*> &cqes,
+            rawstor::RingBuf<rawstor::io::poll::Event> &cqes,
             bool pollhup) override
         {
             _process(_read_sqes, cqes, false, pollhup);
         }
 
         void process_write(
-            rawstor::RingBuf<rawstor::io::poll::Event*> &cqes,
+            rawstor::RingBuf<rawstor::io::poll::Event> &cqes,
             bool pollhup) override
         {
             _process(_write_sqes, cqes, true, pollhup);
@@ -150,12 +131,12 @@ class SeekableSession: public rawstor::io::poll::Session {
 
 class UnseekableSession: public rawstor::io::poll::Session {
     private:
-        rawstor::RingBuf<rawstor::io::poll::Event*> _read_sqes;
-        rawstor::RingBuf<rawstor::io::poll::Event*> _write_sqes;
+        rawstor::RingBuf<rawstor::io::poll::Event> _read_sqes;
+        rawstor::RingBuf<rawstor::io::poll::Event> _write_sqes;
 
         void _process(
-            rawstor::RingBuf<rawstor::io::poll::Event*> &sqes,
-            rawstor::RingBuf<rawstor::io::poll::Event*> &cqes,
+            rawstor::RingBuf<rawstor::io::poll::Event> &sqes,
+            rawstor::RingBuf<rawstor::io::poll::Event> &cqes,
             bool write, bool pollhup);
 
     public:
@@ -164,17 +145,6 @@ class UnseekableSession: public rawstor::io::poll::Session {
             _read_sqes(q.depth()),
             _write_sqes(q.depth())
         {}
-
-        ~UnseekableSession() {
-            while (!_read_sqes.empty()) {
-                rawstor::io::poll::Event *event = _read_sqes.pop();
-                delete event;
-            }
-            while (!_write_sqes.empty()) {
-                rawstor::io::poll::Event *event = _write_sqes.pop();
-                delete event;
-            }
-        }
 
         short events() const noexcept override {
             return
@@ -193,9 +163,7 @@ class UnseekableSession: public rawstor::io::poll::Session {
                 std::make_unique<rawstor::io::poll::Event>(
                     _q, std::move(t));
 
-            _read_sqes.push(event.get());
-
-            event.release();
+            _read_sqes.push(std::move(event));
         }
 
         void read(
@@ -205,9 +173,7 @@ class UnseekableSession: public rawstor::io::poll::Session {
                 std::make_unique<rawstor::io::poll::Event>(
                     _q, std::move(t));
 
-            _read_sqes.push(event.get());
-
-            event.release();
+            _read_sqes.push(std::move(event));
         }
 
         void read(
@@ -231,9 +197,7 @@ class UnseekableSession: public rawstor::io::poll::Session {
                 std::make_unique<rawstor::io::poll::Event>(
                     _q, std::move(t));
 
-            _write_sqes.push(event.get());
-
-            event.release();
+            _write_sqes.push(std::move(event));
         }
 
         void write(
@@ -243,9 +207,7 @@ class UnseekableSession: public rawstor::io::poll::Session {
                 std::make_unique<rawstor::io::poll::Event>(
                     _q, std::move(t));
 
-            _write_sqes.push(event.get());
-
-            event.release();
+            _write_sqes.push(std::move(event));
         }
 
         void write(
@@ -263,14 +225,14 @@ class UnseekableSession: public rawstor::io::poll::Session {
         }
 
         void process_read(
-            rawstor::RingBuf<rawstor::io::poll::Event*> &cqes,
+            rawstor::RingBuf<rawstor::io::poll::Event> &cqes,
             bool pollhup) override
         {
             _process(_read_sqes, cqes, false, pollhup);
         }
 
         void process_write(
-            rawstor::RingBuf<rawstor::io::poll::Event*> &cqes,
+            rawstor::RingBuf<rawstor::io::poll::Event> &cqes,
             bool pollhup) override
         {
             _process(_write_sqes, cqes, true, pollhup);
@@ -293,15 +255,15 @@ bool is_seekable(int fd) {
 
 
 void SeekableSession::_process(
-    rawstor::RingBuf<rawstor::io::poll::EventP*> &sqes,
-    rawstor::RingBuf<rawstor::io::poll::Event*> &cqes,
+    rawstor::RingBuf<rawstor::io::poll::EventP> &sqes,
+    rawstor::RingBuf<rawstor::io::poll::Event> &cqes,
     bool write, bool pollhup)
 {
     if (sqes.empty()) {
         return;
     }
 
-    rawstor::io::poll::EventP *event = sqes.pop();
+    std::unique_ptr<rawstor::io::poll::EventP> event = sqes.pop();
 
     ssize_t res;
     if (write) {
@@ -327,47 +289,47 @@ void SeekableSession::_process(
 #ifdef RAWSTOR_TRACE_EVENTS
             event->trace(__FILE__, __LINE__, __FUNCTION__, "completed");
 #endif
-            cqes.push(event);
+            cqes.push(std::move(event));
         } else {
 #ifdef RAWSTOR_TRACE_EVENTS
             event->trace(__FILE__, __LINE__, __FUNCTION__, "partial");
 #endif
-            sqes.push(event);
+            sqes.push(std::move(event));
         }
     } else if (res == 0) {
-        cqes.push(event);
+        cqes.push(std::move(event));
     } else {
         int error = errno;
         errno = 0;
         event->set_error(error);
-        cqes.push(event);
+        cqes.push(std::move(event));
     }
 }
 
 
 void UnseekableSession::_process(
-    rawstor::RingBuf<rawstor::io::poll::Event*> &sqes,
-    rawstor::RingBuf<rawstor::io::poll::Event*> &cqes,
+    rawstor::RingBuf<rawstor::io::poll::Event> &sqes,
+    rawstor::RingBuf<rawstor::io::poll::Event> &cqes,
     bool write, bool pollhup)
 {
     if (sqes.empty()) {
         return;
     }
 
-    std::vector<rawstor::io::poll::Event*> events;
+    std::vector<std::unique_ptr<rawstor::io::poll::Event>> events;
     events.reserve(sqes.size());
 
     unsigned int niov = 0;
     try {
         while (!sqes.empty()) {
-            rawstor::io::poll::Event *event = sqes.pop();
-            events.push_back(event);
+            std::unique_ptr<rawstor::io::poll::Event> event = sqes.pop();
             niov += event->niov();
+            events.push_back(std::move(event));
         }
 
         std::vector<iovec> iov;
         iov.reserve(niov);
-        for (rawstor::io::poll::Event *event: events) {
+        for (std::unique_ptr<rawstor::io::poll::Event> &event: events) {
 #ifdef RAWSTOR_TRACE_EVENTS
             event->trace(__FILE__, __LINE__, __FUNCTION__, "add to bulk");
 #endif
@@ -396,37 +358,37 @@ void UnseekableSession::_process(
         rawstor_trace("bulk res = %zd\n", res);
 #endif
         if (res > 0) {
-            for (rawstor::io::poll::Event *event: events) {
+            for (std::unique_ptr<rawstor::io::poll::Event> &event: events) {
                 res = event->shift(res);
                 if (event->completed()) {
 #ifdef RAWSTOR_TRACE_EVENTS
                     event->trace(
                         __FILE__, __LINE__, __FUNCTION__, "completed");
 #endif
-                    cqes.push(event);
+                    cqes.push(std::move(event));
                 } else {
 #ifdef RAWSTOR_TRACE_EVENTS
                     event->trace(
                         __FILE__, __LINE__, __FUNCTION__, "partial");
 #endif
-                    sqes.push(event);
+                    sqes.push(std::move(event));
                 }
             }
         } else if (res == 0) {
-            for (rawstor::io::poll::Event *event: events) {
-                cqes.push(event);
+            for (std::unique_ptr<rawstor::io::poll::Event> &event: events) {
+                cqes.push(std::move(event));
             }
         } else {
             int error = errno;
             errno = 0;
-            for (rawstor::io::poll::Event *event: events) {
+            for (std::unique_ptr<rawstor::io::poll::Event> &event: events) {
                 event->set_error(error);
-                cqes.push(event);
+                cqes.push(std::move(event));
             }
         }
     } catch (...) {
-        for (rawstor::io::poll::Event *event: events) {
-            sqes.push(event);
+        for (std::unique_ptr<rawstor::io::poll::Event> &event: events) {
+            sqes.push(std::move(event));
         }
         throw;
     }

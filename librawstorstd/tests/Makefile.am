@@ -41,7 +41,7 @@ test_mempool_SOURCES = test_mempool.c
 test_mempool_LDADD = $(top_builddir)/librawstorstd/src/librawstorstd.la
 
 
-test_ringbuf_SOURCES = test_ringbuf.c
+test_ringbuf_SOURCES = test_ringbuf.cpp
 test_ringbuf_LDADD = $(top_builddir)/librawstorstd/src/librawstorstd.la
 
 
