@@ -23,7 +23,6 @@ librawstorstd_la_SOURCES = $(top_srcdir)/librawstorstd/include/rawstorstd/gcc.h 
                            $(top_srcdir)/librawstorstd/include/rawstorstd/logging_config.h \
                            $(top_srcdir)/librawstorstd/include/rawstorstd/mempool.h \
                            $(top_srcdir)/librawstorstd/include/rawstorstd/mempool.hpp \
-                           $(top_srcdir)/librawstorstd/include/rawstorstd/ringbuf.h \
                            $(top_srcdir)/librawstorstd/include/rawstorstd/ringbuf.hpp \
                            $(top_srcdir)/librawstorstd/include/rawstorstd/socket.h \
                            $(top_srcdir)/librawstorstd/include/rawstorstd/threading.h \
@@ -34,7 +33,6 @@ librawstorstd_la_SOURCES = $(top_srcdir)/librawstorstd/include/rawstorstd/gcc.h 
                            list.c \
                            logging.cpp \
                            mempool.c \
-                           ringbuf.c \
                            socket.c \
                            threading.c \
                            uri.cpp \

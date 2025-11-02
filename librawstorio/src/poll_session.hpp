@@ -61,8 +61,8 @@ class Session {
         virtual void write(
             std::unique_ptr<rawstor::io::TaskVectorPositional> t) = 0;
 
-        virtual void process_read(RingBuf<Event*> &cqes, bool pollhup) = 0;
-        virtual void process_write(RingBuf<Event*> &cqes, bool pollhup) = 0;
+        virtual void process_read(RingBuf<Event> &cqes, bool pollhup) = 0;
+        virtual void process_write(RingBuf<Event> &cqes, bool pollhup) = 0;
 };
 
 
