@@ -9,6 +9,7 @@ AM_LDFLAGS = $(ASAN_LDFLAGS)
 
 
 test_dummy_SOURCES = $(top_srcdir)/tests/unittest.h \
+                     $(top_srcdir)/tests/unittest.hpp \
                      test_dummy.c
 test_dummy_LDADD = $(top_builddir)/src/librawstor.la
 
