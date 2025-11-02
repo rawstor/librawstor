@@ -9,7 +9,7 @@
     int caught = 0; \
     try { \
         expr; \
-    } catch (exc &e) { \
+    } catch (const exc &) { \
         caught = 1; \
     } \
     assertTrue(caught == 1); \
