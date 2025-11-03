@@ -231,7 +231,7 @@ void Session::write(std::unique_ptr<rawstor::io::TaskVector> t) {
 
 void Session::write(std::unique_ptr<rawstor::io::TaskScalarPositional> t) {
     std::unique_ptr<Event> event =
-        std::make_unique<EventSimplexScalarPositionalRead>(
+        std::make_unique<EventSimplexScalarPositionalWrite>(
             _q, std::move(t));
 
     _write_sqes.push(std::move(event));
