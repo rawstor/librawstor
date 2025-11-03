@@ -36,7 +36,7 @@ Session& Queue::_get_session(int fd) {
         return *it->second;
     }
 
-    std::shared_ptr<Session> session = Session::create(*this, fd);
+    std::shared_ptr<Session> session = std::make_shared<Session>(*this, fd);
     _sessions[fd] = session;
 
     return *session;
@@ -98,6 +98,12 @@ void Queue::read(std::unique_ptr<rawstor::io::TaskVectorPositional> t) {
 }
 
 
+void Queue::read(std::unique_ptr<rawstor::io::TaskMessage> t) {
+    Session &s = _get_session(t->fd());
+    s.read(std::move(t));
+}
+
+
 void Queue::write(std::unique_ptr<rawstor::io::TaskScalar> t) {
     Session &s = _get_session(t->fd());
     s.write(std::move(t));
@@ -117,6 +123,12 @@ void Queue::write(std::unique_ptr<rawstor::io::TaskScalarPositional> t) {
 
 
 void Queue::write(std::unique_ptr<rawstor::io::TaskVectorPositional> t) {
+    Session &s = _get_session(t->fd());
+    s.write(std::move(t));
+}
+
+
+void Queue::write(std::unique_ptr<rawstor::io::TaskMessage> t) {
     Session &s = _get_session(t->fd());
     s.write(std::move(t));
 }

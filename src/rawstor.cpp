@@ -199,6 +199,48 @@ class TaskVectorPositional final: public rawstor::io::TaskVectorPositional {
 };
 
 
+class TaskMessage final: public rawstor::io::TaskMessage {
+    private:
+        msghdr *_msg;
+        size_t _size;
+        int _flags;
+
+        RawstorIOCallback *_cb;
+        void *_data;
+
+    public:
+        TaskMessage(
+            int fd, msghdr *msg, size_t size, int flags,
+            RawstorIOCallback *cb, void *data):
+            rawstor::io::TaskMessage(fd),
+            _msg(msg),
+            _size(size),
+            _flags(flags),
+            _cb(cb),
+            _data(data)
+        {}
+
+        void operator()(size_t result, int error) override {
+            int res = _cb(result, error, _data);
+            if (res) {
+                RAWSTOR_THROW_SYSTEM_ERROR(-res);
+            }
+        }
+
+        msghdr* msg() noexcept override {
+            return _msg;
+        }
+
+        size_t size() const noexcept override {
+            return _size;
+        }
+
+        int flags() const noexcept override {
+            return _flags;
+        }
+};
+
+
 } // unnamed
 
 
@@ -337,6 +379,22 @@ int rawstor_fd_preadv(
 }
 
 
+int rawstor_fd_recvmsg(
+    int fd, msghdr *msg, size_t size, int flags,
+    RawstorIOCallback *cb, void *data)
+{
+    try {
+        std::unique_ptr<rawstor::io::TaskMessage> t =
+            std::make_unique<TaskMessage>(
+                fd, msg, size, flags, cb, data);
+        rawstor::io_queue->read(std::move(t));
+        return 0;
+    } catch (std::system_error &e) {
+        return -e.code().value();
+    }
+}
+
+
 int rawstor_fd_write(
     int fd, void *buf, size_t size,
     RawstorIOCallback *cb, void *data)
@@ -393,6 +451,22 @@ int rawstor_fd_pwritev(
         std::unique_ptr<rawstor::io::TaskVectorPositional> t =
             std::make_unique<TaskVectorPositional>(
                 fd, iov, niov, size, offset, cb, data);
+        rawstor::io_queue->write(std::move(t));
+        return 0;
+    } catch (std::system_error &e) {
+        return -e.code().value();
+    }
+}
+
+
+int rawstor_fd_sendmsg(
+    int fd, msghdr *msg, size_t size, int flags,
+    RawstorIOCallback *cb, void *data)
+{
+    try {
+        std::unique_ptr<rawstor::io::TaskMessage> t =
+            std::make_unique<TaskMessage>(
+                fd, msg, size, flags, cb, data);
         rawstor::io_queue->write(std::move(t));
         return 0;
     } catch (std::system_error &e) {
