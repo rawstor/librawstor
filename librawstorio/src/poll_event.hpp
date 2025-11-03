@@ -3,8 +3,6 @@
 
 #include <rawstorio/task.hpp>
 
-#include <rawstorstd/gpp.hpp>
-#include <rawstorstd/iovec.h>
 #include <rawstorstd/logging.h>
 
 #include <sys/types.h>
@@ -13,7 +11,6 @@
 #include <unistd.h>
 
 #include <memory>
-#include <sstream>
 #include <string>
 #include <vector>
 
@@ -54,22 +51,7 @@ class Event {
             _error = error;
         }
 
-        void dispatch() {
-#ifdef RAWSTOR_TRACE_EVENTS
-            trace(__FILE__, __LINE__, __FUNCTION__, "callback");
-            try {
-#endif
-                (*_t)(_result, _error);
-#ifdef RAWSTOR_TRACE_EVENTS
-            } catch (std::exception &e) {
-                std::ostringstream oss;
-                oss << "callback error: " << e.what();
-                trace(__FILE__, __LINE__, __FUNCTION__, oss.str());
-                throw;
-            }
-            trace(__FILE__, __LINE__, __FUNCTION__, "callback success");
-#endif
-        }
+        void dispatch();
 
 #ifdef RAWSTOR_TRACE_EVENTS
         void trace(
@@ -149,37 +131,9 @@ class EventMultiplexScalar: public EventMultiplex {
             return _size_at == 0;
         }
 
-        size_t shift(size_t shift) noexcept override final {
-            if (shift >= _size_at) {
-                size_t ret = shift - _size_at;
-                _result += _size_at;
-                _size_at = 0;
-#ifdef RAWSTOR_TRACE_EVENTS
-                trace(
-                    __FILE__, __LINE__, __FUNCTION__, "completed");
-#endif
-                return ret;
-            }
+        size_t shift(size_t shift) noexcept override final;
 
-            _buf_at = static_cast<char*>(_buf_at) + shift;
-            _result += shift;
-            _size_at -= shift;
-#ifdef RAWSTOR_TRACE_EVENTS
-            trace(
-                __FILE__, __LINE__, __FUNCTION__, "partial");
-#endif
-            return 0;
-        }
-
-        void add_to_batch(std::vector<iovec> &iov) override final {
-#ifdef RAWSTOR_TRACE_EVENTS
-            trace(__FILE__, __LINE__, __FUNCTION__, "add to batch");
-#endif
-            iov.push_back((iovec){
-                .iov_base = _buf_at,
-                .iov_len = _size_at,
-            });
-        }
+        void add_to_batch(std::vector<iovec> &iov) override final;
 };
 
 
@@ -216,35 +170,9 @@ class EventMultiplexVector: public EventMultiplex {
             return _niov_at == 0;
         }
 
-        size_t shift(size_t shift) noexcept override final {
-            if (shift >= _size_at) {
-                _result += _size_at;
-                _niov_at = 0;
-#ifdef RAWSTOR_TRACE_EVENTS
-                trace(
-                    __FILE__, __LINE__, __FUNCTION__, "completed");
-#endif
-                return shift - _size_at;
-            };
+        size_t shift(size_t shift) noexcept override final;
 
-            rawstor_iovec_shift(&_iov_at, &_niov_at, shift);
-            _result += shift;
-            _size_at -= shift;
-#ifdef RAWSTOR_TRACE_EVENTS
-            trace(
-                __FILE__, __LINE__, __FUNCTION__, "partial");
-#endif
-            return 0;
-        }
-
-        void add_to_batch(std::vector<iovec> &iov) override final {
-#ifdef RAWSTOR_TRACE_EVENTS
-            trace(__FILE__, __LINE__, __FUNCTION__, "add to batch");
-#endif
-            for (unsigned int i = 0; i < _niov_at; ++i) {
-                iov.push_back(_iov_at[i]);
-            }
-        }
+        void add_to_batch(std::vector<iovec> &iov) override final;
 };
 
 
@@ -256,18 +184,7 @@ class EventMultiplexScalarRead final: public EventMultiplexScalar {
             EventMultiplexScalar(q, std::move(t))
         {}
 
-        void process() noexcept override final {
-#ifdef RAWSTOR_TRACE_EVENTS
-            trace(__FILE__, __LINE__, __FUNCTION__, "read()");
-#endif
-            ssize_t res = ::read(_t->fd(), _buf_at, _size_at);
-            if (res == -1) {
-                int error = errno;
-                errno = 0;
-                set_error(error);
-            }
-            shift(res);
-        }
+        void process() noexcept override final;
 };
 
 
@@ -279,18 +196,7 @@ class EventMultiplexVectorRead final: public EventMultiplexVector {
             EventMultiplexVector(q, std::move(t))
         {}
 
-        void process() noexcept override final {
-#ifdef RAWSTOR_TRACE_EVENTS
-            trace(__FILE__, __LINE__, __FUNCTION__, "readv()");
-#endif
-            ssize_t res = ::readv(_t->fd(), _iov_at, _niov_at);
-            if (res == -1) {
-                int error = errno;
-                errno = 0;
-                set_error(error);
-            }
-            shift(res);
-        }
+        void process() noexcept override final;
 };
 
 
@@ -302,36 +208,7 @@ class EventSimplexScalarPositionalRead final: public EventSimplex {
             EventSimplex(q, std::move(t))
         {}
 
-        void process() noexcept override final {
-#ifdef RAWSTOR_TRACE_EVENTS
-            trace(__FILE__, __LINE__, __FUNCTION__, "pread()");
-#endif
-            ssize_t res = ::pread(
-                _t->fd(),
-                static_cast<rawstor::io::TaskScalarPositional*>(
-                    _t.get())->buf(),
-                static_cast<rawstor::io::TaskScalarPositional*>(
-                    _t.get())->size(),
-                static_cast<rawstor::io::TaskScalarPositional*>(
-                    _t.get())->offset());
-            if (res == -1) {
-                int error = errno;
-                errno = 0;
-                set_error(error);
-            }
-            _result = res;
-#ifdef RAWSTOR_TRACE_EVENTS
-            if (
-                (size_t)_result ==
-                static_cast<rawstor::io::TaskScalarPositional*>(
-                    _t.get())->size())
-            {
-                trace(__FILE__, __LINE__, __FUNCTION__, "completed");
-            } else {
-                trace(__FILE__, __LINE__, __FUNCTION__, "partial");
-            }
-#endif
-        }
+        void process() noexcept override final;
 };
 
 
@@ -343,37 +220,7 @@ class EventSimplexVectorPositionalRead final: public EventSimplex {
             EventSimplex(q, std::move(t))
         {}
 
-        void process() noexcept override final {
-#ifdef RAWSTOR_TRACE_EVENTS
-            trace(__FILE__, __LINE__, __FUNCTION__, "preadv()");
-#endif
-            ssize_t res = ::preadv(
-                _t->fd(),
-                static_cast<rawstor::io::TaskVectorPositional*>(
-                    _t.get())->iov(),
-                static_cast<rawstor::io::TaskVectorPositional*>(
-                    _t.get())->niov(),
-                static_cast<rawstor::io::TaskVectorPositional*>(
-                    _t.get())->offset()
-            );
-            if (res == -1) {
-                int error = errno;
-                errno = 0;
-                set_error(error);
-            }
-            _result = res;
-#ifdef RAWSTOR_TRACE_EVENTS
-            if (
-                (size_t)_result ==
-                static_cast<rawstor::io::TaskVectorPositional*>(
-                    _t.get())->size())
-            {
-                trace(__FILE__, __LINE__, __FUNCTION__, "completed");
-            } else {
-                trace(__FILE__, __LINE__, __FUNCTION__, "partial");
-            }
-#endif
-        }
+        void process() noexcept override final;
 };
 
 
@@ -385,35 +232,7 @@ class EventSimplexMessageRead final: public EventSimplex {
             EventSimplex(q, std::move(t))
         {}
 
-        void process() noexcept override final {
-#ifdef RAWSTOR_TRACE_EVENTS
-            trace(__FILE__, __LINE__, __FUNCTION__, "recvmsg()");
-#endif
-            ssize_t res = ::recvmsg(
-                _t->fd(),
-                static_cast<rawstor::io::TaskMessage*>(
-                    _t.get())->msg(),
-                static_cast<rawstor::io::TaskMessage*>(
-                    _t.get())->flags()
-            );
-            if (res == -1) {
-                int error = errno;
-                errno = 0;
-                set_error(error);
-            }
-            _result = res;
-#ifdef RAWSTOR_TRACE_EVENTS
-            if (
-                (size_t)_result ==
-                static_cast<rawstor::io::TaskMessage*>(
-                    _t.get())->size())
-            {
-                trace(__FILE__, __LINE__, __FUNCTION__, "completed");
-            } else {
-                trace(__FILE__, __LINE__, __FUNCTION__, "partial");
-            }
-#endif
-        }
+        void process() noexcept override final;
 };
 
 
@@ -425,18 +244,7 @@ class EventMultiplexScalarWrite final: public EventMultiplexScalar {
             EventMultiplexScalar(q, std::move(t))
         {}
 
-        void process() noexcept override final {
-#ifdef RAWSTOR_TRACE_EVENTS
-            trace(__FILE__, __LINE__, __FUNCTION__, "write()");
-#endif
-            ssize_t res = ::write(_t->fd(), _buf_at, _size_at);
-            if (res == -1) {
-                int error = errno;
-                errno = 0;
-                set_error(error);
-            }
-            shift(res);
-        }
+        void process() noexcept override final;
 };
 
 
@@ -448,18 +256,7 @@ class EventMultiplexVectorWrite final: public EventMultiplexVector {
             EventMultiplexVector(q, std::move(t))
         {}
 
-        void process() noexcept override final {
-#ifdef RAWSTOR_TRACE_EVENTS
-            trace(__FILE__, __LINE__, __FUNCTION__, "writev()");
-#endif
-            ssize_t res = ::writev(_t->fd(), _iov_at, _niov_at);
-            if (res == -1) {
-                int error = errno;
-                errno = 0;
-                set_error(error);
-            }
-            shift(res);
-        }
+        void process() noexcept override final;
 };
 
 
@@ -471,36 +268,7 @@ class EventSimplexScalarPositionalWrite final: public EventSimplex {
             EventSimplex(q, std::move(t))
         {}
 
-        void process() noexcept override final {
-#ifdef RAWSTOR_TRACE_EVENTS
-            trace(__FILE__, __LINE__, __FUNCTION__, "pwrite()");
-#endif
-            ssize_t res = ::pwrite(
-                _t->fd(),
-                static_cast<rawstor::io::TaskScalarPositional*>(
-                    _t.get())->buf(),
-                static_cast<rawstor::io::TaskScalarPositional*>(
-                    _t.get())->size(),
-                static_cast<rawstor::io::TaskScalarPositional*>(
-                    _t.get())->offset());
-            if (res == -1) {
-                int error = errno;
-                errno = 0;
-                set_error(error);
-            }
-            _result = res;
-#ifdef RAWSTOR_TRACE_EVENTS
-            if (
-                (size_t)_result ==
-                static_cast<rawstor::io::TaskScalarPositional*>(
-                    _t.get())->size())
-            {
-                trace(__FILE__, __LINE__, __FUNCTION__, "completed");
-            } else {
-                trace(__FILE__, __LINE__, __FUNCTION__, "partial");
-            }
-#endif
-        }
+        void process() noexcept override final;
 };
 
 
@@ -512,37 +280,7 @@ class EventSimplexVectorPositionalWrite final: public EventSimplex {
             EventSimplex(q, std::move(t))
         {}
 
-        void process() noexcept override final {
-#ifdef RAWSTOR_TRACE_EVENTS
-            trace(__FILE__, __LINE__, __FUNCTION__, "pwritev()");
-#endif
-            ssize_t res = ::pwritev(
-                _t->fd(),
-                static_cast<rawstor::io::TaskVectorPositional*>(
-                    _t.get())->iov(),
-                static_cast<rawstor::io::TaskVectorPositional*>(
-                    _t.get())->niov(),
-                static_cast<rawstor::io::TaskVectorPositional*>(
-                    _t.get())->offset()
-            );
-            if (res == -1) {
-                int error = errno;
-                errno = 0;
-                set_error(error);
-            }
-            _result = res;
-#ifdef RAWSTOR_TRACE_EVENTS
-            if (
-                (size_t)_result ==
-                static_cast<rawstor::io::TaskVectorPositional*>(
-                    _t.get())->size())
-            {
-                trace(__FILE__, __LINE__, __FUNCTION__, "completed");
-            } else {
-                trace(__FILE__, __LINE__, __FUNCTION__, "partial");
-            }
-#endif
-        }
+        void process() noexcept override final;
 };
 
 
@@ -554,35 +292,7 @@ class EventSimplexMessageWrite final: public EventSimplex {
             EventSimplex(q, std::move(t))
         {}
 
-        void process() noexcept override final {
-#ifdef RAWSTOR_TRACE_EVENTS
-            trace(__FILE__, __LINE__, __FUNCTION__, "sendmsg()");
-#endif
-            ssize_t res = ::sendmsg(
-                _t->fd(),
-                static_cast<rawstor::io::TaskMessage*>(
-                    _t.get())->msg(),
-                static_cast<rawstor::io::TaskMessage*>(
-                    _t.get())->flags()
-            );
-            if (res == -1) {
-                int error = errno;
-                errno = 0;
-                set_error(error);
-            }
-            _result = res;
-#ifdef RAWSTOR_TRACE_EVENTS
-            if (
-                (size_t)_result ==
-                static_cast<rawstor::io::TaskMessage*>(
-                    _t.get())->size())
-            {
-                trace(__FILE__, __LINE__, __FUNCTION__, "completed");
-            } else {
-                trace(__FILE__, __LINE__, __FUNCTION__, "partial");
-            }
-#endif
-        }
+        void process() noexcept override final;
 };
 
 
