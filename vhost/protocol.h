@@ -233,8 +233,8 @@ typedef union {
 
 
 typedef struct {
-    int fds[1];
-    int fd_num;
+    int fds[VHOST_MEMORY_BASELINE_NREGIONS];
+    int nfds;
     uint8_t *data;
 } RAWSTOR_VHOST_PACKED VhostUserFds;
 

@@ -20,6 +20,7 @@
 #include <stdexcept>
 #include <string>
 
+#include <cassert>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -118,9 +119,32 @@ class TaskVector: public Task {
 };
 
 
+class TaskMessage: public Task {
+    public:
+        TaskMessage(const std::shared_ptr<ClientOp> &op):
+            Task(op)
+        {}
+
+        virtual msghdr* msg() noexcept = 0;
+        virtual size_t size() const noexcept = 0;
+        virtual int flags() const noexcept = 0;
+};
+
+
 void read(int fd, std::unique_ptr<TaskScalar> t) {
     int res = rawstor_fd_read(
         fd, t->buf(), t->size(),
+        t->callback, t.get());
+    if (res) {
+        RAWSTOR_THROW_SYSTEM_ERROR(-res);
+    }
+    t.release();
+}
+
+
+void read(int fd, std::unique_ptr<TaskMessage> t) {
+    int res = rawstor_fd_recvmsg(
+        fd, t->msg(), t->size(), t->flags(),
         t->callback, t.get());
     if (res) {
         RAWSTOR_THROW_SYSTEM_ERROR(-res);
@@ -267,29 +291,29 @@ std::unique_ptr<TaskWriteMsg> response(const std::shared_ptr<ClientOp> &op) {
         case VHOST_USER_GET_PROTOCOL_FEATURES:
             return std::make_unique<TaskWriteGetProtocolFeatures>(op);
         case VHOST_USER_SET_PROTOCOL_FEATURES:
-            {
-                rawstor_debug(
-                    "Setting features u64: 0x%llx\n", op->payload().u64);
-                op->client().set_features(op->payload().u64);
-                return nullptr;
-            }
+            rawstor_debug(
+                "Setting features u64: 0x%llx\n", op->payload().u64);
+            op->client().set_features(op->payload().u64);
+            return nullptr;
         case VHOST_USER_GET_QUEUE_NUM:
             return std::make_unique<TaskWriteU64>(op, 1);
-        // case VHOST_USER_SET_BACKEND_REQ_FD:
+        case VHOST_USER_SET_BACKEND_REQ_FD:
+            if (op->fds().nfds != 1) {
+                rawstor_error(
+                    "Invalid backend_req_fd message (%d fd's)", op->fds().nfds);
+                return nullptr;
+            }
+            op->client().set_backend_fd(op->fds().fds[0]);
+            rawstor_debug("Got backend_fd: %d\n", op->fds().fds[0]);
+            return nullptr;
         case VHOST_USER_GET_MAX_MEM_SLOTS:
             return std::make_unique<TaskWriteU64>(
                 op, op->client().get_max_mem_slots());
         default:
             rawstor_error("Unexpected request: %d\n", op->header().request);
+            throw std::runtime_error("Unexpected request");
             return nullptr;
     };
-
-    // if (op->header().flags & VHOST_USER_NEED_REPLY_MASK) {
-    //     msg->payload.u64 = 0;
-    //     msg->size = sizeof(msg->payload.u64);
-    //     msg->fd_num = 0;
-    //     response = 1;
-    // }
 }
 
 
@@ -299,7 +323,12 @@ void dispatch(const std::shared_ptr<ClientOp> &op) {
     rawstor_debug("Flags:   0x%x\n", op->header().flags);
     rawstor_debug("Size:    %u\n", op->header().size);
 
+    bool need_reply = op->header().flags & VHOST_USER_NEED_REPLY_MASK;
+
     std::unique_ptr<TaskWriteMsg> t = response(op);
+    if (t.get() == nullptr && need_reply) {
+        t = std::make_unique<TaskWriteU64>(op, 0);
+    }
     if (t.get() != nullptr) {
         rawstor_debug(
             "Sending back to guest %s\n", t->str().c_str());
@@ -310,18 +339,37 @@ void dispatch(const std::shared_ptr<ClientOp> &op) {
 }
 
 
-class TaskReadUserHeader final: public TaskScalar {
+class TaskReadUserHeader final: public TaskMessage {
+    private:
+        iovec _iov;
+        char _control[CMSG_SPACE(VHOST_MEMORY_BASELINE_NREGIONS * sizeof(int))];
+        msghdr _msg;
+
     public:
         TaskReadUserHeader(const std::shared_ptr<ClientOp> &op):
-            TaskScalar(op)
+            TaskMessage(op),
+            _iov((iovec){
+                .iov_base = &_op->header(),
+                .iov_len = sizeof(_op->header())
+            }),
+            _msg((msghdr){
+                .msg_iov = &_iov,
+                .msg_iovlen = 1,
+                .msg_control = &_control,
+                .msg_controllen = sizeof(_control),
+            })
         {}
 
-        inline void* buf() noexcept override {
-            return &_op->header();
+        inline msghdr* msg() noexcept override {
+            return &_msg;
         }
 
         size_t size() const noexcept override {
             return sizeof(_op->header());
+        }
+
+        inline int flags() const noexcept override {
+            return MSG_WAITALL;
         }
 
         void operator()(size_t result, int error) override;
@@ -360,6 +408,20 @@ void TaskReadUserHeader::operator()(size_t result, int error) {
     if (result != size()) {
         rawstor_error("Unexpected request header size: %zu\n", result);
         RAWSTOR_THROW_SYSTEM_ERROR(EPROTO);
+    }
+
+    cmsghdr *cmsg;
+    for (cmsg = CMSG_FIRSTHDR(&_msg);
+         cmsg != NULL;
+         cmsg = CMSG_NXTHDR(&_msg, cmsg))
+    {
+        if (cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SCM_RIGHTS) {
+            size_t fd_size = cmsg->cmsg_len - CMSG_LEN(0);
+            _op->fds().nfds = fd_size / sizeof(int);
+            assert(_op->fds().nfds <= VHOST_MEMORY_BASELINE_NREGIONS);
+            memcpy(_op->fds().fds, CMSG_DATA(cmsg), fd_size);
+            break;
+        }
     }
 
     if (_op->header().size != 0) {
@@ -413,6 +475,17 @@ namespace vhost {
 
 
 Client::~Client() {
+    if (_backend_fd != -1) {
+        try {
+            if (close(_backend_fd)) {
+                RAWSTOR_THROW_ERRNO();
+            }
+        } catch (std::exception &e) {
+            std::ostringstream oss;
+            oss << "Failed to close backend fd: " << e.what();
+            rawstor_error("%s\n", oss.str().c_str());
+        }
+    }
     try {
         if (close(_fd)) {
             RAWSTOR_THROW_ERRNO();

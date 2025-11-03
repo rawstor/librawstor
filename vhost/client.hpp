@@ -1,7 +1,12 @@
 #ifndef RAWSTOR_VHOST_CLIENT_HPP
 #define RAWSTOR_VHOST_CLIENT_HPP
 
+#include <rawstorstd/gpp.hpp>
+
 #include <cstdint>
+
+#include <unistd.h>
+
 
 namespace rawstor {
 namespace vhost {
@@ -48,22 +53,14 @@ class Client final {
             return 509;
         }
 
-        /*
-        void set_backend_req_fd(int fd) noexcept {
-            if (vmsg->fd_num != 1) {
-                vu_panic(dev, "Invalid backend_req_fd message (%d fd's)", vmsg->fd_num);
-                return false;
+        void set_backend_fd(int fd) {
+            if (_backend_fd != -1) {
+                if (close(_backend_fd)) {
+                    RAWSTOR_THROW_ERRNO();
+                }
             }
-
-            if (dev->backend_fd != -1) {
-                close(dev->backend_fd);
-            }
-            dev->backend_fd = vmsg->fds[0];
-            DPRINT("Got backend_fd: %d\n", vmsg->fds[0]);
-
-            return false;
+            _backend_fd = fd;
         }
-        */
 
         void loop();
 };
