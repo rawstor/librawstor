@@ -1,9 +1,7 @@
 #ifndef RAWSTOR_RAWSTOR_H
 #define RAWSTOR_RAWSTOR_H
 
-#include <rawstor/io_callback.h>
-#include <rawstor/uuid.h>
-
+#include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/uio.h>
 
@@ -14,6 +12,9 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+
+typedef int(RawstorIOCallback)(size_t result, int error, void *data);
 
 
 /**
@@ -38,6 +39,10 @@ int rawstor_fd_preadv(
     struct iovec *iov, unsigned int niov, size_t size, off_t offset,
     RawstorIOCallback *cb, void *data);
 
+int rawstor_fd_recvmsg(
+    int fd, struct msghdr *message, size_t size, int flags,
+    RawstorIOCallback *cb, void *data);
+
 int rawstor_fd_write(
     int fd, void *buf, size_t size,
     RawstorIOCallback *cb, void *data);
@@ -52,6 +57,10 @@ int rawstor_fd_pwrite(
 
 int rawstor_fd_pwritev(
     int fd, struct iovec *iov, unsigned int niov, size_t size, off_t offset,
+    RawstorIOCallback *cb, void *data);
+
+int rawstor_fd_sendmsg(
+    int fd, struct msghdr *message, size_t size, int flags,
     RawstorIOCallback *cb, void *data);
 
 

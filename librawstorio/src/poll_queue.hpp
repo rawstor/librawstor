@@ -22,7 +22,7 @@ class Event;
 class Session;
 
 
-class Queue: public rawstor::io::Queue {
+class Queue final: public rawstor::io::Queue {
     private:
         std::unordered_map<int, std::shared_ptr<Session>> _sessions;
         rawstor::RingBuf<Event> _cqes;
@@ -50,6 +50,9 @@ class Queue: public rawstor::io::Queue {
         void read(
             std::unique_ptr<rawstor::io::TaskVectorPositional> t) override;
 
+        void read(
+            std::unique_ptr<rawstor::io::TaskMessage> t) override;
+
         void write(
             std::unique_ptr<rawstor::io::TaskScalar> t) override;
 
@@ -61,6 +64,9 @@ class Queue: public rawstor::io::Queue {
 
         void write(
             std::unique_ptr<rawstor::io::TaskVectorPositional> t) override;
+
+        void write(
+            std::unique_ptr<rawstor::io::TaskMessage> t) override;
 
         bool empty() const noexcept override;
 

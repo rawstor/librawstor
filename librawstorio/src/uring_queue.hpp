@@ -13,7 +13,7 @@ namespace io {
 namespace uring {
 
 
-class Queue: public rawstor::io::Queue {
+class Queue final: public rawstor::io::Queue {
     private:
         io_uring _ring;
         unsigned int _events;
@@ -41,6 +41,9 @@ class Queue: public rawstor::io::Queue {
         void read(
             std::unique_ptr<rawstor::io::TaskVectorPositional> t) override;
 
+        void read(
+            std::unique_ptr<rawstor::io::TaskMessage> t) override;
+
         void write(
             std::unique_ptr<rawstor::io::TaskScalar> t) override;
 
@@ -52,6 +55,9 @@ class Queue: public rawstor::io::Queue {
 
         void write(
             std::unique_ptr<rawstor::io::TaskVectorPositional> t) override;
+
+        void write(
+            std::unique_ptr<rawstor::io::TaskMessage> t) override;
 
         bool empty() const noexcept override;
 

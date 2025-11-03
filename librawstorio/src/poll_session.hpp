@@ -1,32 +1,47 @@
 #ifndef RAWSTORIO_POLL_SESSION_HPP
 #define RAWSTORIO_POLL_SESSION_HPP
 
+#include "poll_event.hpp"
 #include "poll_queue.hpp"
 
 #include <rawstorstd/ringbuf.hpp>
 
 #include <memory>
+#include <poll.h>
 
 namespace rawstor {
 namespace io {
 namespace poll {
 
 
-class Event;
-
-
-class Session {
-    protected:
+class Session final {
+    private:
         Queue &_q;
         int _fd;
+        rawstor::RingBuf<Event> _read_sqes;
+        rawstor::RingBuf<Event> _write_sqes;
+
+        void _process_simplex(
+            std::unique_ptr<EventSimplex> event,
+            rawstor::RingBuf<Event> &cqes,
+            bool write, bool pollhup);
+
+        void _process_multiplex(
+            std::vector<std::unique_ptr<EventMultiplex>> &events,
+            unsigned int niov,
+            rawstor::RingBuf<Event> &sqes,
+            rawstor::RingBuf<Event> &cqes,
+            bool write, bool pollhup);
+
+        void _process(
+            rawstor::RingBuf<Event> &sqes,
+            rawstor::RingBuf<Event> &cqes,
+            bool write, bool pollhup);
 
     public:
-        static std::shared_ptr<Session> create(Queue &q, int fd);
-
         Session(Queue &q, int fd);
         Session(const Session &) = delete;
         Session(Session &&) = delete;
-        virtual ~Session() {}
         Session& operator=(const Session &) = delete;
         Session& operator=(Session &&) = delete;
 
@@ -34,35 +49,39 @@ class Session {
             return _fd;
         }
 
-        virtual short events() const noexcept = 0;
-        virtual bool empty() const noexcept = 0;
+        inline short events() const noexcept {
+            return
+                (_read_sqes.empty() ? 0 : POLLIN) |
+                (_write_sqes.empty() ? 0 : POLLOUT);
+        }
 
-        virtual void read(
-            std::unique_ptr<rawstor::io::TaskScalar> t) = 0;
+        inline bool empty() const noexcept {
+            return _read_sqes.empty() && _write_sqes.empty();
+        }
 
-        virtual void read(
-            std::unique_ptr<rawstor::io::TaskVector> t) = 0;
+        void read(std::unique_ptr<rawstor::io::TaskScalar> t);
 
-        virtual void read(
-            std::unique_ptr<rawstor::io::TaskScalarPositional> t) = 0;
+        void read(std::unique_ptr<rawstor::io::TaskVector> t);
 
-        virtual void read(
-            std::unique_ptr<rawstor::io::TaskVectorPositional> t) = 0;
+        void read(std::unique_ptr<rawstor::io::TaskScalarPositional> t);
 
-        virtual void write(
-            std::unique_ptr<rawstor::io::TaskScalar> t) = 0;
+        void read(std::unique_ptr<rawstor::io::TaskVectorPositional> t);
 
-        virtual void write(
-            std::unique_ptr<rawstor::io::TaskVector> t) = 0;
+        void read(std::unique_ptr<rawstor::io::TaskMessage> t);
 
-        virtual void write(
-            std::unique_ptr<rawstor::io::TaskScalarPositional> t) = 0;
+        void write(std::unique_ptr<rawstor::io::TaskScalar> t);
 
-        virtual void write(
-            std::unique_ptr<rawstor::io::TaskVectorPositional> t) = 0;
+        void write(std::unique_ptr<rawstor::io::TaskVector> t);
 
-        virtual void process_read(RingBuf<Event> &cqes, bool pollhup) = 0;
-        virtual void process_write(RingBuf<Event> &cqes, bool pollhup) = 0;
+        void write(std::unique_ptr<rawstor::io::TaskScalarPositional> t);
+
+        void write(std::unique_ptr<rawstor::io::TaskVectorPositional> t);
+
+        void write(std::unique_ptr<rawstor::io::TaskMessage> t);
+
+        void process_read(RingBuf<Event> &cqes, bool pollhup);
+
+        void process_write(RingBuf<Event> &cqes, bool pollhup);
 };
 
 

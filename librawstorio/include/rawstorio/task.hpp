@@ -3,6 +3,7 @@
 
 #include <rawstorstd/logging.h>
 
+#include <sys/socket.h>
 #include <sys/uio.h>
 
 #include <string>
@@ -97,6 +98,17 @@ class TaskVectorPositional: public TaskVector {
         virtual ~TaskVectorPositional() {}
 
         virtual off_t offset() const noexcept = 0;
+};
+
+
+class TaskMessage: public Task {
+    public:
+        TaskMessage(int fd): Task(fd) {}
+        virtual ~TaskMessage() {}
+
+        virtual msghdr* msg() noexcept = 0;
+        virtual size_t size() const noexcept = 0;
+        virtual int flags() const noexcept = 0;
 };
 
 

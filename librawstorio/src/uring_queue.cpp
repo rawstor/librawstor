@@ -110,6 +110,18 @@ void Queue::read(std::unique_ptr<rawstor::io::TaskVectorPositional> t) {
 }
 
 
+void Queue::read(std::unique_ptr<rawstor::io::TaskMessage> t) {
+    io_uring_sqe *sqe = io_uring_get_sqe(&_ring);
+    if (sqe == nullptr) {
+        RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
+    }
+    io_uring_prep_recvmsg(sqe, t->fd(), t->msg(), t->flags());
+    io_uring_sqe_set_data(sqe, t.get());
+    ++_events;
+    t.release();
+}
+
+
 void Queue::write(std::unique_ptr<rawstor::io::TaskScalar> t) {
     io_uring_sqe *sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
@@ -152,6 +164,18 @@ void Queue::write(std::unique_ptr<rawstor::io::TaskVectorPositional> t) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
     io_uring_prep_writev(sqe, t->fd(), t->iov(), t->niov(), t->offset());
+    io_uring_sqe_set_data(sqe, t.get());
+    ++_events;
+    t.release();
+}
+
+
+void Queue::write(std::unique_ptr<rawstor::io::TaskMessage> t) {
+    io_uring_sqe *sqe = io_uring_get_sqe(&_ring);
+    if (sqe == nullptr) {
+        RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
+    }
+    io_uring_prep_sendmsg(sqe, t->fd(), t->msg(), t->flags());
     io_uring_sqe_set_data(sqe, t.get());
     ++_events;
     t.release();
