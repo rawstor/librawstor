@@ -347,6 +347,14 @@ void Session::read(std::unique_ptr<rawstor::TaskScalar> t) {
 
 
 void Session::read(std::unique_ptr<rawstor::TaskVector> t) {
+    rawstor_debug(
+        "%s(): fd = %d, offset = %jd, size = %zu\n",
+        __FUNCTION__, fd(), (intmax_t)t->offset(), t->size());
+
+    rawstor_debug(
+        "%s(): fd = %d, offset = %jd, niov = %u, size = %zu\n",
+        __FUNCTION__, fd(), (intmax_t)t->offset(), t->niov(), t->size());
+
     std::unique_ptr<rawstor::io::TaskVectorPositional> op =
         std::make_unique<SessionOpVectorPositional>(_o, fd(), std::move(t));
     io_queue->read(std::move(op));
@@ -354,6 +362,10 @@ void Session::read(std::unique_ptr<rawstor::TaskVector> t) {
 
 
 void Session::write(std::unique_ptr<rawstor::TaskScalar> t) {
+    rawstor_debug(
+        "%s(): fd = %d, offset = %jd, size = %zu\n",
+        __FUNCTION__, fd(), (intmax_t)t->offset(), t->size());
+
     std::unique_ptr<rawstor::io::TaskScalarPositional> op =
         std::make_unique<SessionOpScalarPositional>(_o, fd(), std::move(t));
     io_queue->write(std::move(op));
@@ -361,6 +373,10 @@ void Session::write(std::unique_ptr<rawstor::TaskScalar> t) {
 
 
 void Session::write(std::unique_ptr<rawstor::TaskVector> t) {
+    rawstor_debug(
+        "%s(): fd = %d, offset = %jd, niov = %u, size = %zu\n",
+        __FUNCTION__, fd(), (intmax_t)t->offset(), t->niov(), t->size());
+
     std::unique_ptr<rawstor::io::TaskVectorPositional> op =
         std::make_unique<SessionOpVectorPositional>(_o, fd(), std::move(t));
     io_queue->write(std::move(op));
