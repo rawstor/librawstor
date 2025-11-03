@@ -141,7 +141,7 @@ void Session::_process(
                 if (events.empty()) {
                     std::unique_ptr<Event> event = sqes.pop();
                     std::unique_ptr<EventSimplex> sevent(
-                        dynamic_cast<EventSimplex*>(event.release()));
+                        static_cast<EventSimplex*>(event.release()));
                     _process_simplex(std::move(sevent), cqes, write, pollhup);
                     return;
                 } else {
@@ -151,7 +151,7 @@ void Session::_process(
             } else {
                 std::unique_ptr<Event> event = sqes.pop();
                 std::unique_ptr<EventMultiplex> mevent(
-                    dynamic_cast<EventMultiplex*>(event.release()));
+                    static_cast<EventMultiplex*>(event.release()));
                 niov += mevent->niov();
                 events.push_back(std::move(mevent));
             }
