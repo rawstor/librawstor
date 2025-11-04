@@ -13,6 +13,8 @@ rawstor_vhost_SOURCES = client.cpp \
                         main.cpp \
                         protocol.h \
                         server.cpp \
-                        server.hpp
+                        server.hpp \
+                        virtq.cpp \
+                        virtq.hpp
 
 rawstor_vhost_LDADD = $(top_builddir)/src/librawstor.la

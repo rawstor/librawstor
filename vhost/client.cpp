@@ -284,10 +284,77 @@ class TaskWriteGetProtocolFeatures final: public TaskWriteU64 {
 };
 
 
+void close_fds(VhostUserFds &fds) {
+    for (int i = 0; i < fds.nfds; ++i) {
+        close(fds.fds[i]);
+    }
+}
+
+
+int eventfd_cb(size_t result, int error, void *data) noexcept {
+    std::unique_ptr<uint64_t> value(static_cast<uint64_t*>(data));
+
+    if (error) {
+        return -error;
+    }
+
+    if (result != sizeof(uint64_t)) {
+        rawstor_error("Unexpected eventfd size: %zu\n", result);
+        return -EPROTO;
+    }
+
+    return 0;
+}
+
+
 std::unique_ptr<TaskWriteMsg> response(const std::shared_ptr<ClientOp> &op) {
     switch (op->header().request) {
         case VHOST_USER_GET_FEATURES:
             return std::make_unique<TaskWriteGetFeatures>(op);
+        case VHOST_USER_SET_OWNER:
+            return nullptr;
+        case VHOST_USER_SET_VRING_CALL:
+            {
+                int index = op->payload().u64 & VHOST_USER_VRING_IDX_MASK;
+                bool nofd = op->payload().u64 & VHOST_USER_VRING_NOFD_MASK;
+                int fd = nofd ? -1 : op->fds().fds[0];
+                rawstor_debug("Got call_fd: %d for vq: %d\n", fd, index);
+
+                if (nofd) {
+                    close_fds(op->fds());
+                }
+
+                if (op->fds().nfds != 1) {
+                    rawstor_error(
+                        "Invalid fds in request: %d", op->header().request);
+                    close_fds(op->fds());
+                    return nullptr;
+                }
+
+                try {
+                    op->client().set_vring_call(index, fd);
+                } catch (...) {
+                    if (fd != -1) {
+                        close(fd);
+                    }
+                    throw;
+                }
+
+                /* in case of I/O hang after reconnecting */
+                if (fd != -1) {
+                    std::unique_ptr<uint64_t> value =
+                        std::make_unique<uint64_t>(1);
+                    if (rawstor_fd_write(
+                        fd,
+                        value.get(), sizeof(*value.get()),
+                        eventfd_cb, value.get()))
+                    {
+                        RAWSTOR_THROW_ERRNO();
+                    }
+                    value.release();
+                }
+            }
+            return nullptr;
         case VHOST_USER_GET_PROTOCOL_FEATURES:
             return std::make_unique<TaskWriteGetProtocolFeatures>(op);
         case VHOST_USER_SET_PROTOCOL_FEATURES:
@@ -301,10 +368,11 @@ std::unique_ptr<TaskWriteMsg> response(const std::shared_ptr<ClientOp> &op) {
             if (op->fds().nfds != 1) {
                 rawstor_error(
                     "Invalid backend_req_fd message (%d fd's)", op->fds().nfds);
+                close_fds(op->fds());
                 return nullptr;
             }
-            op->client().set_backend_fd(op->fds().fds[0]);
             rawstor_debug("Got backend_fd: %d\n", op->fds().fds[0]);
+            op->client().set_backend_fd(op->fds().fds[0]);
             return nullptr;
         case VHOST_USER_GET_MAX_MEM_SLOTS:
             return std::make_unique<TaskWriteU64>(
@@ -495,6 +563,17 @@ Client::~Client() {
         oss << "Failed to close socket: " << e.what();
         rawstor_error("%s\n", oss.str().c_str());
     }
+}
+
+
+void Client::set_vring_call(size_t index, int fd) {
+    if (index >= _vq.size()) {
+        std::ostringstream oss;
+        oss << "Invalid queue index: " << index;
+        throw std::out_of_range(oss.str());
+    }
+
+    _vq[index].set_call_fd(fd);
 }
 
 
