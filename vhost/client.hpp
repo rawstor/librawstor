@@ -1,11 +1,15 @@
 #ifndef RAWSTOR_VHOST_CLIENT_HPP
 #define RAWSTOR_VHOST_CLIENT_HPP
 
+#include "virtq.hpp"
+
 #include <rawstorstd/gpp.hpp>
 
-#include <cstdint>
-
 #include <unistd.h>
+
+#include <vector>
+
+#include <cstdint>
 
 
 namespace rawstor {
@@ -17,12 +21,14 @@ class Client final {
         int _fd;
         int _backend_fd;
         uint64_t _features;
+        std::vector<Virtq> _vq;
 
     public:
         explicit Client(int fd):
             _fd(fd),
             _backend_fd(-1),
-            _features(0)
+            _features(0),
+            _vq(1)
         {}
         Client(const Client &) = delete;
         Client(Client &&) = delete;
@@ -61,6 +67,8 @@ class Client final {
             }
             _backend_fd = fd;
         }
+
+        void set_vring_call(size_t index, int fd);
 
         void loop();
 };
