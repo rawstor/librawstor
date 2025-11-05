@@ -153,6 +153,17 @@ void read(int fd, std::unique_ptr<TaskMessage> t) {
 }
 
 
+void write(int fd, std::unique_ptr<TaskScalar> t) {
+    int res = rawstor_fd_write(
+        fd, t->buf(), t->size(),
+        t->callback, t.get());
+    if (res) {
+        RAWSTOR_THROW_SYSTEM_ERROR(-res);
+    }
+    t.release();
+}
+
+
 void write(int fd, std::unique_ptr<TaskVector> t) {
     int res = rawstor_fd_writev(
         fd, t->iov(), t->niov(), t->size(),
@@ -162,6 +173,37 @@ void write(int fd, std::unique_ptr<TaskVector> t) {
     }
     t.release();
 }
+
+
+class TaskEventFd final: public TaskScalar {
+    private:
+        uint64_t _value;
+
+    public:
+        TaskEventFd(const std::shared_ptr<ClientOp> &op, uint64_t value):
+            TaskScalar(op),
+            _value(value)
+        {}
+
+        void* buf() noexcept {
+            return &_value;
+        }
+
+        size_t size() const noexcept {
+            return sizeof(_value);
+        }
+
+        void operator()(size_t result, int error) {
+            if (error) {
+                RAWSTOR_THROW_SYSTEM_ERROR(error);
+            }
+
+            if (result != sizeof(uint64_t)) {
+                rawstor_error("Unexpected eventfd size: %zu\n", result);
+                RAWSTOR_THROW_SYSTEM_ERROR(EPROTO);
+            }
+        }
+};
 
 
 class TaskWriteMsg: public TaskVector {
@@ -222,6 +264,7 @@ class TaskWriteU64: public TaskWriteMsg {
         TaskWriteU64(const std::shared_ptr<ClientOp> &op, uint64_t u64):
             TaskWriteMsg(op, sizeof(op->payload().u64))
         {
+            _op->header().flags = 0;
             _op->payload().u64 = u64;
         }
 
@@ -291,92 +334,127 @@ void close_fds(VhostUserFds &fds) {
 }
 
 
-int eventfd_cb(size_t result, int error, void *data) noexcept {
-    std::unique_ptr<uint64_t> value(static_cast<uint64_t*>(data));
+std::unique_ptr<TaskWriteMsg> get_features(
+    const std::shared_ptr<ClientOp> &op)
+{
+    return std::make_unique<TaskWriteGetFeatures>(op);
+}
 
-    if (error) {
-        return -error;
+
+std::unique_ptr<TaskWriteMsg> set_owner(
+    const std::shared_ptr<ClientOp> &)
+{
+    return nullptr;
+}
+
+
+std::unique_ptr<TaskWriteMsg> set_vring_call(
+    const std::shared_ptr<ClientOp> &op)
+{
+    int index = op->payload().u64 & VHOST_USER_VRING_IDX_MASK;
+    bool nofd = op->payload().u64 & VHOST_USER_VRING_NOFD_MASK;
+    int fd = nofd ? -1 : op->fds().fds[0];
+    rawstor_debug("Got call_fd: %d for vq: %d\n", fd, index);
+
+    if (nofd) {
+        close_fds(op->fds());
     }
 
-    if (result != sizeof(uint64_t)) {
-        rawstor_error("Unexpected eventfd size: %zu\n", result);
-        return -EPROTO;
+    if (op->fds().nfds != 1) {
+        rawstor_error(
+            "Invalid fds in request: %d", op->header().request);
+        close_fds(op->fds());
+        return nullptr;
     }
 
-    return 0;
+    try {
+        op->device().set_vring_call(index, fd);
+    } catch (...) {
+        if (fd != -1) {
+            close(fd);
+        }
+        throw;
+    }
+
+    /* in case of I/O hang after reconnecting */
+    if (fd != -1) {
+        std::unique_ptr<TaskEventFd> t =
+            std::make_unique<TaskEventFd>(op, 1);
+        write(fd, std::move(t));
+    }
+
+    return nullptr;
+}
+
+
+std::unique_ptr<TaskWriteMsg> get_protocol_features(
+    const std::shared_ptr<ClientOp> &op)
+{
+    return std::make_unique<TaskWriteGetProtocolFeatures>(op);
+}
+
+
+std::unique_ptr<TaskWriteMsg> set_protocol_features(
+    const std::shared_ptr<ClientOp> &op)
+{
+    rawstor_debug(
+        "Setting features u64: 0x%llx\n", op->payload().u64);
+    op->device().set_features(op->payload().u64);
+    return nullptr;
+}
+
+
+std::unique_ptr<TaskWriteMsg> get_queue_num(
+    const std::shared_ptr<ClientOp> &op)
+{
+    return std::make_unique<TaskWriteU64>(op, op->device().nqueues());
+}
+
+
+std::unique_ptr<TaskWriteMsg> set_backend_req_fd(
+    const std::shared_ptr<ClientOp> &op)
+{
+    const VhostUserFds &fds = op->fds();
+
+    if (fds.nfds != 1) {
+        rawstor_error(
+            "Invalid backend_req_fd message (%d fd's)", op->fds().nfds);
+        close_fds(op->fds());
+        return nullptr;
+    }
+
+    rawstor_debug("Got backend_fd: %d\n", fds.fds[0]);
+    op->device().set_backend_fd(fds.fds[0]);
+
+    return nullptr;
+}
+
+
+std::unique_ptr<TaskWriteMsg> get_max_mem_slots(
+    const std::shared_ptr<ClientOp> &op)
+{
+    return std::make_unique<TaskWriteU64>(op, op->device().get_max_mem_slots());
 }
 
 
 std::unique_ptr<TaskWriteMsg> response(const std::shared_ptr<ClientOp> &op) {
     switch (op->header().request) {
         case VHOST_USER_GET_FEATURES:
-            return std::make_unique<TaskWriteGetFeatures>(op);
+            return get_features(op);
         case VHOST_USER_SET_OWNER:
-            return nullptr;
+            return set_owner(op);
         case VHOST_USER_SET_VRING_CALL:
-            {
-                int index = op->payload().u64 & VHOST_USER_VRING_IDX_MASK;
-                bool nofd = op->payload().u64 & VHOST_USER_VRING_NOFD_MASK;
-                int fd = nofd ? -1 : op->fds().fds[0];
-                rawstor_debug("Got call_fd: %d for vq: %d\n", fd, index);
-
-                if (nofd) {
-                    close_fds(op->fds());
-                }
-
-                if (op->fds().nfds != 1) {
-                    rawstor_error(
-                        "Invalid fds in request: %d", op->header().request);
-                    close_fds(op->fds());
-                    return nullptr;
-                }
-
-                try {
-                    op->device().set_vring_call(index, fd);
-                } catch (...) {
-                    if (fd != -1) {
-                        close(fd);
-                    }
-                    throw;
-                }
-
-                /* in case of I/O hang after reconnecting */
-                if (fd != -1) {
-                    std::unique_ptr<uint64_t> value =
-                        std::make_unique<uint64_t>(1);
-                    if (rawstor_fd_write(
-                        fd,
-                        value.get(), sizeof(*value.get()),
-                        eventfd_cb, value.get()))
-                    {
-                        RAWSTOR_THROW_ERRNO();
-                    }
-                    value.release();
-                }
-            }
-            return nullptr;
+            return set_vring_call(op);
         case VHOST_USER_GET_PROTOCOL_FEATURES:
-            return std::make_unique<TaskWriteGetProtocolFeatures>(op);
+            return get_protocol_features(op);
         case VHOST_USER_SET_PROTOCOL_FEATURES:
-            rawstor_debug(
-                "Setting features u64: 0x%llx\n", op->payload().u64);
-            op->device().set_features(op->payload().u64);
-            return nullptr;
+            return set_protocol_features(op);
         case VHOST_USER_GET_QUEUE_NUM:
-            return std::make_unique<TaskWriteU64>(op, 1);
+            return get_queue_num(op);
         case VHOST_USER_SET_BACKEND_REQ_FD:
-            if (op->fds().nfds != 1) {
-                rawstor_error(
-                    "Invalid backend_req_fd message (%d fd's)", op->fds().nfds);
-                close_fds(op->fds());
-                return nullptr;
-            }
-            rawstor_debug("Got backend_fd: %d\n", op->fds().fds[0]);
-            op->device().set_backend_fd(op->fds().fds[0]);
-            return nullptr;
+            return set_backend_req_fd(op);
         case VHOST_USER_GET_MAX_MEM_SLOTS:
-            return std::make_unique<TaskWriteU64>(
-                op, op->device().get_max_mem_slots());
+            return get_max_mem_slots(op);
         default:
             rawstor_error("Unexpected request: %d\n", op->header().request);
             throw std::runtime_error("Unexpected request");
@@ -386,18 +464,23 @@ std::unique_ptr<TaskWriteMsg> response(const std::shared_ptr<ClientOp> &op) {
 
 
 void dispatch(const std::shared_ptr<ClientOp> &op) {
-    rawstor_debug("============= Vhost user message =============\n");
-    rawstor_debug("Request: %d\n", op->header().request);
-    rawstor_debug("Flags:   0x%x\n", op->header().flags);
-    rawstor_debug("Size:    %u\n", op->header().size);
+    VhostUserHeader &header = op->header();
 
-    bool need_reply = op->header().flags & VHOST_USER_NEED_REPLY_MASK;
+    rawstor_debug("============= Vhost user message =============\n");
+    rawstor_debug("Request: %d\n", header.request);
+    rawstor_debug("Flags:   0x%x\n", header.flags);
+    rawstor_debug("Size:    %u\n", header.size);
+
+    bool need_reply = header.flags & VHOST_USER_NEED_REPLY_MASK;
 
     std::unique_ptr<TaskWriteMsg> t = response(op);
     if (t.get() == nullptr && need_reply) {
         t = std::make_unique<TaskWriteU64>(op, 0);
     }
     if (t.get() != nullptr) {
+        header.flags &= ~VHOST_USER_VERSION_MASK;
+        header.flags |= VHOST_USER_VERSION;
+        header.flags |= VHOST_USER_REPLY_MASK;
         rawstor_debug(
             "Sending back to guest %s\n", t->str().c_str());
         write(op->device().fd(), std::move(t));
