@@ -8,8 +8,8 @@ AM_CXXFLAGS = $(GENERIC_CXXFLAGS) \
 AM_LDFLAGS = $(ASAN_LDFLAGS)
 
 
-rawstor_vhost_SOURCES = client.cpp \
-                        client.hpp \
+rawstor_vhost_SOURCES = device.cpp \
+                        device.hpp \
                         main.cpp \
                         protocol.h \
                         server.cpp \
