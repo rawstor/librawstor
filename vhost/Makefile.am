@@ -14,7 +14,7 @@ rawstor_vhost_SOURCES = device.cpp \
                         protocol.h \
                         server.cpp \
                         server.hpp \
-                        virtq.cpp \
-                        virtq.hpp
+                        virtqueue.cpp \
+                        virtqueue.hpp
 
 rawstor_vhost_LDADD = $(top_builddir)/src/librawstor.la

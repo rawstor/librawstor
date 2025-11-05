@@ -1,4 +1,4 @@
-#include "virtq.hpp"
+#include "virtqueue.hpp"
 
 #include <rawstorstd/gpp.hpp>
 #include <rawstorstd/logging.h>
@@ -13,7 +13,7 @@ namespace rawstor {
 namespace vhost {
 
 
-Virtq::~Virtq() {
+VirtQueue::~VirtQueue() {
     if (_call_fd != -1) {
         rawstor_info("fd %d: Close\n", _call_fd);
         if (close(_call_fd) == -1) {
@@ -23,16 +23,35 @@ Virtq::~Virtq() {
                 "Virtq::~Virtq(): Close failed: %s\n", strerror(error));
         }
     }
+    if (_err_fd != -1) {
+        rawstor_info("fd %d: Close\n", _err_fd);
+        if (close(_err_fd) == -1) {
+            int error = errno;
+            errno = 0;
+            rawstor_error(
+                "Virtq::~Virtq(): Close failed: %s\n", strerror(error));
+        }
+    }
 }
 
 
-void Virtq::set_call_fd(int fd) {
+void VirtQueue::set_call_fd(int fd) {
     if (_call_fd != -1) {
         if (close(_call_fd) == -1) {
             RAWSTOR_THROW_ERRNO();
         }
     }
     _call_fd = fd;
+}
+
+
+void VirtQueue::set_err_fd(int fd) {
+    if (_err_fd != -1) {
+        if (close(_err_fd) == -1) {
+            RAWSTOR_THROW_ERRNO();
+        }
+    }
+    _err_fd = fd;
 }
 
 
