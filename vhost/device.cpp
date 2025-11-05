@@ -351,19 +351,23 @@ std::unique_ptr<TaskWriteMsg> set_owner(
 std::unique_ptr<TaskWriteMsg> set_vring_call(
     const std::shared_ptr<ClientOp> &op)
 {
-    int index = op->payload().u64 & VHOST_USER_VRING_IDX_MASK;
-    bool nofd = op->payload().u64 & VHOST_USER_VRING_NOFD_MASK;
-    int fd = nofd ? -1 : op->fds().fds[0];
+    const VhostUserHeader &header = op->header();
+    const VhostUserPayload &payload = op->payload();
+    VhostUserFds &fds = op->fds();
+
+    int index = payload.u64 & VHOST_USER_VRING_IDX_MASK;
+    bool nofd = payload.u64 & VHOST_USER_VRING_NOFD_MASK;
+    int fd = nofd ? -1 : fds.fds[0];
+
     rawstor_debug("Got call_fd: %d for vq: %d\n", fd, index);
 
     if (nofd) {
-        close_fds(op->fds());
+        close_fds(fds);
     }
 
-    if (op->fds().nfds != 1) {
-        rawstor_error(
-            "Invalid fds in request: %d", op->header().request);
-        close_fds(op->fds());
+    if (fds.nfds != 1) {
+        rawstor_error("Invalid fds in request: %d", header.request);
+        close_fds(fds);
         return nullptr;
     }
 
@@ -381,6 +385,42 @@ std::unique_ptr<TaskWriteMsg> set_vring_call(
         std::unique_ptr<TaskEventFd> t =
             std::make_unique<TaskEventFd>(op, 1);
         write(fd, std::move(t));
+    }
+
+    return nullptr;
+}
+
+
+std::unique_ptr<TaskWriteMsg> set_vring_err(
+    const std::shared_ptr<ClientOp> &op)
+{
+    const VhostUserHeader &header = op->header();
+    const VhostUserPayload &payload = op->payload();
+    VhostUserFds &fds = op->fds();
+
+    int index = payload.u64 & VHOST_USER_VRING_IDX_MASK;
+    bool nofd = payload.u64 & VHOST_USER_VRING_NOFD_MASK;
+    int fd = nofd ? -1 : fds.fds[0];
+
+    rawstor_debug("Got err_fd: %d for vq: %d\n", fd, index);
+
+    if (nofd) {
+        close_fds(fds);
+    }
+
+    if (fds.nfds != 1) {
+        rawstor_error("Invalid fds in request: %d", header.request);
+        close_fds(fds);
+        return nullptr;
+    }
+
+    try {
+        op->device().set_vring_err(index, fd);
+    } catch (...) {
+        if (fd != -1) {
+            close(fd);
+        }
+        throw;
     }
 
     return nullptr;
@@ -445,6 +485,8 @@ std::unique_ptr<TaskWriteMsg> response(const std::shared_ptr<ClientOp> &op) {
             return set_owner(op);
         case VHOST_USER_SET_VRING_CALL:
             return set_vring_call(op);
+        case VHOST_USER_SET_VRING_ERR:
+            return set_vring_err(op);
         case VHOST_USER_GET_PROTOCOL_FEATURES:
             return get_protocol_features(op);
         case VHOST_USER_SET_PROTOCOL_FEATURES:
@@ -657,6 +699,17 @@ void Device::set_vring_call(size_t index, int fd) {
     }
 
     _vq[index].set_call_fd(fd);
+}
+
+
+void Device::set_vring_err(size_t index, int fd) {
+    if (index >= _vq.size()) {
+        std::ostringstream oss;
+        oss << "Invalid queue index: " << index;
+        throw std::out_of_range(oss.str());
+    }
+
+    _vq[index].set_err_fd(fd);
 }
 
 
