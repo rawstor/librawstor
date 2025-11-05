@@ -68,6 +68,10 @@ class Device final {
             _backend_fd = fd;
         }
 
+        inline size_t nqueues() const noexcept {
+            return _vq.size();
+        }
+
         void set_vring_call(size_t index, int fd);
 
         void loop();
