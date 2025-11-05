@@ -1,7 +1,7 @@
 #ifndef RAWSTOR_VHOST_DEVICE_HPP
 #define RAWSTOR_VHOST_DEVICE_HPP
 
-#include "virtq.hpp"
+#include "virtqueue.hpp"
 
 #include <rawstorstd/gpp.hpp>
 
@@ -21,7 +21,7 @@ class Device final {
         int _fd;
         int _backend_fd;
         uint64_t _features;
-        std::vector<Virtq> _vq;
+        std::vector<VirtQueue> _vq;
 
     public:
         explicit Device(int fd):
@@ -73,6 +73,8 @@ class Device final {
         }
 
         void set_vring_call(size_t index, int fd);
+
+        void set_vring_err(size_t index, int fd);
 
         void loop();
 };
