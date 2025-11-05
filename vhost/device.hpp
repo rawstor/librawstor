@@ -1,5 +1,5 @@
-#ifndef RAWSTOR_VHOST_CLIENT_HPP
-#define RAWSTOR_VHOST_CLIENT_HPP
+#ifndef RAWSTOR_VHOST_DEVICE_HPP
+#define RAWSTOR_VHOST_DEVICE_HPP
 
 #include "virtq.hpp"
 
@@ -16,7 +16,7 @@ namespace rawstor {
 namespace vhost {
 
 
-class Client final {
+class Device final {
     private:
         int _fd;
         int _backend_fd;
@@ -24,18 +24,18 @@ class Client final {
         std::vector<Virtq> _vq;
 
     public:
-        explicit Client(int fd):
+        explicit Device(int fd):
             _fd(fd),
             _backend_fd(-1),
             _features(0),
             _vq(1)
         {}
-        Client(const Client &) = delete;
-        Client(Client &&) = delete;
-        ~Client();
+        Device(const Device &) = delete;
+        Device(Device &&) = delete;
+        ~Device();
 
-        Client& operator=(const Client &) = delete;
-        Client& operator=(Client &&) = delete;
+        Device& operator=(const Device &) = delete;
+        Device& operator=(Device &&) = delete;
 
         inline int fd() const noexcept {
             return _fd;
@@ -76,4 +76,4 @@ class Client final {
 
 }} // rawstor::vhost
 
-#endif // RAWSTOR_VHOST_CLIENT_HPP
+#endif // RAWSTOR_VHOST_DEVICE_HPP

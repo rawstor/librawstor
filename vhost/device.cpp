@@ -1,4 +1,4 @@
-#include "client.hpp"
+#include "device.hpp"
 
 #include "protocol.h"
 
@@ -35,13 +35,13 @@ namespace {
 
 class ClientOp {
     private:
-        rawstor::vhost::Client &_client;
+        rawstor::vhost::Device &_client;
         VhostUserHeader _header;
         VhostUserPayload _payload;
         VhostUserFds _fds;
 
     public:
-        ClientOp(rawstor::vhost::Client &client):
+        ClientOp(rawstor::vhost::Device &client):
             _client(client)
         {}
         ClientOp(const ClientOp &) = delete;
@@ -49,7 +49,7 @@ class ClientOp {
         ClientOp& operator=(const ClientOp &) = delete;
         ClientOp& operator=(ClientOp &&) = delete;
 
-        inline rawstor::vhost::Client& client() noexcept {
+        inline rawstor::vhost::Device& device() noexcept {
             return _client;
         }
 
@@ -278,7 +278,7 @@ class TaskWriteGetProtocolFeatures final: public TaskWriteU64 {
                     1ull << VHOST_USER_PROTOCOL_F_CONFIGURE_MEM_SLOTS |
                     1ull << VHOST_USER_PROTOCOL_F_CONFIG
                 ) |
-                op->client().get_features()
+                op->device().get_features()
             )
         {}
 };
@@ -332,7 +332,7 @@ std::unique_ptr<TaskWriteMsg> response(const std::shared_ptr<ClientOp> &op) {
                 }
 
                 try {
-                    op->client().set_vring_call(index, fd);
+                    op->device().set_vring_call(index, fd);
                 } catch (...) {
                     if (fd != -1) {
                         close(fd);
@@ -360,7 +360,7 @@ std::unique_ptr<TaskWriteMsg> response(const std::shared_ptr<ClientOp> &op) {
         case VHOST_USER_SET_PROTOCOL_FEATURES:
             rawstor_debug(
                 "Setting features u64: 0x%llx\n", op->payload().u64);
-            op->client().set_features(op->payload().u64);
+            op->device().set_features(op->payload().u64);
             return nullptr;
         case VHOST_USER_GET_QUEUE_NUM:
             return std::make_unique<TaskWriteU64>(op, 1);
@@ -372,11 +372,11 @@ std::unique_ptr<TaskWriteMsg> response(const std::shared_ptr<ClientOp> &op) {
                 return nullptr;
             }
             rawstor_debug("Got backend_fd: %d\n", op->fds().fds[0]);
-            op->client().set_backend_fd(op->fds().fds[0]);
+            op->device().set_backend_fd(op->fds().fds[0]);
             return nullptr;
         case VHOST_USER_GET_MAX_MEM_SLOTS:
             return std::make_unique<TaskWriteU64>(
-                op, op->client().get_max_mem_slots());
+                op, op->device().get_max_mem_slots());
         default:
             rawstor_error("Unexpected request: %d\n", op->header().request);
             throw std::runtime_error("Unexpected request");
@@ -400,7 +400,7 @@ void dispatch(const std::shared_ptr<ClientOp> &op) {
     if (t.get() != nullptr) {
         rawstor_debug(
             "Sending back to guest %s\n", t->str().c_str());
-        write(op->client().fd(), std::move(t));
+        write(op->device().fd(), std::move(t));
     }
 
     rawstor_debug("==============================================\n");
@@ -502,17 +502,17 @@ void TaskReadUserHeader::operator()(size_t result, int error) {
         std::unique_ptr<TaskReadUserPayload> t =
             std::make_unique<TaskReadUserPayload>(
                 _op, _op->header().size);
-        read(_op->client().fd(), std::move(t));
+        read(_op->device().fd(), std::move(t));
         return;
     }
 
     dispatch(_op);
 
     std::shared_ptr<ClientOp> op =
-        std::make_shared<ClientOp>(_op->client());
+        std::make_shared<ClientOp>(_op->device());
     std::unique_ptr<TaskReadUserHeader> t =
         std::make_unique<TaskReadUserHeader>(op);
-    read(op->client().fd(), std::move(t));
+    read(op->device().fd(), std::move(t));
 }
 
 
@@ -529,10 +529,10 @@ void TaskReadUserPayload::operator()(size_t result, int error) {
     dispatch(_op);
 
     std::shared_ptr<ClientOp> op =
-        std::make_shared<ClientOp>(_op->client());
+        std::make_shared<ClientOp>(_op->device());
     std::unique_ptr<TaskReadUserHeader> t =
         std::make_unique<TaskReadUserHeader>(op);
-    read(op->client().fd(), std::move(t));
+    read(op->device().fd(), std::move(t));
 }
 
 
@@ -542,7 +542,7 @@ namespace rawstor {
 namespace vhost {
 
 
-Client::~Client() {
+Device::~Device() {
     if (_backend_fd != -1) {
         try {
             if (close(_backend_fd)) {
@@ -566,7 +566,7 @@ Client::~Client() {
 }
 
 
-void Client::set_vring_call(size_t index, int fd) {
+void Device::set_vring_call(size_t index, int fd) {
     if (index >= _vq.size()) {
         std::ostringstream oss;
         oss << "Invalid queue index: " << index;
@@ -577,7 +577,7 @@ void Client::set_vring_call(size_t index, int fd) {
 }
 
 
-void Client::loop() {
+void Device::loop() {
     std::shared_ptr<ClientOp> op = std::make_shared<ClientOp>(*this);
     std::unique_ptr<TaskReadUserHeader> t =
         std::make_unique<TaskReadUserHeader>(op);
