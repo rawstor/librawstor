@@ -7,11 +7,13 @@ namespace vhost {
 
 class VirtQueue final {
     private:
+        bool _enabled;
         int _call_fd;
         int _err_fd;
 
     public:
         VirtQueue():
+            _enabled(false),
             _call_fd(-1),
             _err_fd(-1)
         {}
@@ -21,6 +23,14 @@ class VirtQueue final {
 
         VirtQueue& operator=(const VirtQueue &) = delete;
         VirtQueue& operator=(VirtQueue &&) = delete;
+
+        inline void enable() noexcept {
+            _enabled = true;
+        }
+
+        inline void disable() noexcept {
+            _enabled = false;
+        }
 
         void set_call_fd(int fd);
 

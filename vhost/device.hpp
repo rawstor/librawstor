@@ -21,16 +21,18 @@ class Device final {
     private:
         int _fd;
         int _backend_fd;
+        uint64_t _features;
         uint64_t _protocol_features;
-        std::vector<VirtQueue> _vq;
+        std::vector<VirtQueue> _vqs;
         VirtioBlkConfig _config;
 
     public:
         explicit Device(int fd):
             _fd(fd),
             _backend_fd(-1),
+            _features(0),
             _protocol_features(0),
-            _vq(1),
+            _vqs(1),
             _config{}
         {}
         Device(const Device &) = delete;
@@ -45,6 +47,8 @@ class Device final {
         }
 
         uint64_t get_features() const noexcept;
+
+        void set_features(uint64_t features);
 
         uint64_t get_protocol_features() const noexcept;
 
@@ -62,7 +66,7 @@ class Device final {
         }
 
         inline size_t nqueues() const noexcept {
-            return _vq.size();
+            return _vqs.size();
         }
 
         void set_vring_call(size_t index, int fd);
