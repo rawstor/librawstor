@@ -371,6 +371,22 @@ std::unique_ptr<TaskWriteMsg> get_features(
 
 
 /**
+ * Enable features in the underlying vhost implementation using a bitmask.
+ * Feature bit VHOST_USER_F_PROTOCOL_FEATURES signals back-end support for
+ * VHOST_USER_GET_PROTOCOL_FEATURES and VHOST_USER_SET_PROTOCOL_FEATURES.
+ */
+std::unique_ptr<TaskWriteMsg> set_features(
+    const std::shared_ptr<DeviceOp> &op)
+{
+    const VhostUserPayload &payload = op->payload();
+
+    op->device().set_features(payload.u64);
+
+    return nullptr;
+}
+
+
+/**
  * Issued when a new connection is established. It marks the sender as the
  * front-end that owns of the session. This can be used on the back-end as a
  * "session start" flag.
@@ -603,6 +619,8 @@ std::unique_ptr<TaskWriteMsg> response(const std::shared_ptr<DeviceOp> &op) {
     switch (op->header().request) {
         case VHOST_USER_GET_FEATURES:
             return get_features(op);
+        case VHOST_USER_SET_FEATURES:
+            return set_features(op);
         case VHOST_USER_SET_OWNER:
             return set_owner(op);
         case VHOST_USER_SET_VRING_CALL:
@@ -654,6 +672,9 @@ void dispatch(const std::shared_ptr<DeviceOp> &op) {
 
 class TaskReadUserHeader final: public TaskMessage {
     private:
+        /**
+         * TODO: Move these variables to DriverOp.
+         */
         iovec _iov;
         char _control[CMSG_SPACE(VHOST_MEMORY_BASELINE_NREGIONS * sizeof(int))];
         msghdr _msg;
@@ -826,7 +847,7 @@ uint64_t Device::get_features() const noexcept {
          * vhost-user feature bits
          */
         1ull << VHOST_F_LOG_ALL |
-        1ull << VHOST_USER_F_PROTOCOL_FEATURES;
+        1ull << VHOST_USER_F_PROTOCOL_FEATURES |
 
         /**
         1ull << VIRTIO_BLK_F_SIZE_MAX |
@@ -843,7 +864,27 @@ uint64_t Device::get_features() const noexcept {
         1ull << VIRTIO_BLK_F_SECURE_ERASE |
         1ull << VIRTIO_BLK_F_ZONED;
         */
+
+        _features;
     }
+
+
+void Device::set_features(uint64_t features) {
+    if (!(features & (1ull << VIRTIO_F_VERSION_1))) {
+        throw std::runtime_error(
+            "virtio legacy devices aren't supported by libvhost-user");
+    }
+
+    _features = features;
+
+    if (!(_features & (1ull << VHOST_USER_F_PROTOCOL_FEATURES))) {
+        printf("VHOST_USER_F_PROTOCOL_FEATURES\n");
+        for (auto &vq: _vqs) {
+            vq.enable();
+        }
+    }
+
+}
 
 
 uint64_t Device::get_protocol_features() const noexcept {
@@ -871,24 +912,24 @@ uint64_t Device::get_protocol_features() const noexcept {
 
 
 void Device::set_vring_call(size_t index, int fd) {
-    if (index >= _vq.size()) {
+    if (index >= _vqs.size()) {
         std::ostringstream oss;
         oss << "Invalid queue index: " << index;
         throw std::out_of_range(oss.str());
     }
 
-    _vq[index].set_call_fd(fd);
+    _vqs[index].set_call_fd(fd);
 }
 
 
 void Device::set_vring_err(size_t index, int fd) {
-    if (index >= _vq.size()) {
+    if (index >= _vqs.size()) {
         std::ostringstream oss;
         oss << "Invalid queue index: " << index;
         throw std::out_of_range(oss.str());
     }
 
-    _vq[index].set_err_fd(fd);
+    _vqs[index].set_err_fd(fd);
 }
 
 
