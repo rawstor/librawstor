@@ -10,6 +10,8 @@ AM_LDFLAGS = $(ASAN_LDFLAGS)
 
 rawstor_vhost_SOURCES = device.cpp \
                         device.hpp \
+                        devregion.cpp \
+                        devregion.hpp \
                         main.cpp \
                         protocol.h \
                         server.cpp \

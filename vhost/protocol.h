@@ -88,6 +88,14 @@ struct vhost_vring_addr {
 #define VHOST_MEMORY_BASELINE_NREGIONS 8
 
 /*
+ * vhost in the kernel usually supports 509 mem slots. 509 used to be the
+ * KVM limit, it supported 512, but 3 were used for internal purposes. This
+ * limit is sufficient to support many DIMMs and virtio-mem in
+ * "dynamic-memslots" mode.
+ */
+#define VHOST_USER_MAX_RAM_SLOTS 509
+
+/*
  * Maximum size of virtio device config space
  */
 #define VHOST_USER_MAX_CONFIG_SIZE 256
@@ -100,7 +108,7 @@ typedef struct VhostUserMemoryRegion {
     uint64_t memory_size;
     uint64_t userspace_addr;
     uint64_t mmap_offset;
-} VhostUserMemoryRegion;
+} RAWSTOR_PACKED VhostUserMemoryRegion;
 
 
 typedef struct VhostUserMemory {
@@ -113,7 +121,7 @@ typedef struct VhostUserMemory {
 typedef struct VhostUserMemRegMsg {
     uint64_t padding;
     VhostUserMemoryRegion region;
-} VhostUserMemRegMsg;
+} RAWSTOR_PACKED VhostUserMemRegMsg;
 
 
 typedef struct VhostUserLog {
@@ -251,8 +259,8 @@ typedef union {
 
 typedef struct {
     int fds[VHOST_MEMORY_BASELINE_NREGIONS];
-    int nfds;
-} RAWSTOR_PACKED VhostUserFds;
+    unsigned int fd_num;
+} VhostUserFds;
 
 
 typedef struct {
