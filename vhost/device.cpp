@@ -1,6 +1,8 @@
 #include "device.hpp"
 
 #include "protocol.h"
+#include "stdheaders/linux/virtio_config.h"
+#include "stdheaders/linux/virtio_ring.h"
 
 #include <rawstorstd/gcc.h>
 #include <rawstorstd/gpp.hpp>
