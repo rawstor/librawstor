@@ -8,7 +8,12 @@ AM_CXXFLAGS = $(GENERIC_CXXFLAGS) \
 AM_LDFLAGS = $(ASAN_LDFLAGS)
 
 
-rawstor_vhost_SOURCES = device.cpp \
+rawstor_vhost_SOURCES = stdheaders/linux/vhost.h \
+                        stdheaders/linux/vhost_types.h \
+                        stdheaders/linux/virtio_blk.h \
+                        stdheaders/linux/virtio_config.h \
+                        stdheaders/linux/virtio_ring.h \
+                        device.cpp \
                         device.hpp \
                         devregion.cpp \
                         devregion.hpp \

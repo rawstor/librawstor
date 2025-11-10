@@ -1,6 +1,8 @@
 #ifndef RAWSTOR_VHOST_USER_PROTOCOL_H
 #define RAWSTOR_VHOST_USER_PROTOCOL_H
 
+#include "stdheaders/linux/vhost_types.h"
+
 #include <rawstorstd/gcc.h>
 
 #include <stdint.h>
@@ -9,85 +11,10 @@
 extern "C" {
 #endif
 
-/**
- * This code below was duplicated from linux/vhost.h header
- */
 
-/* Do we get callbacks when the ring is completely used, even if we've
- * suppressed them? */
-#define VIRTIO_F_NOTIFY_ON_EMPTY    24
-
-/* We support indirect buffer descriptors */
-#define VIRTIO_RING_F_INDIRECT_DESC 28
-
-/* The Guest publishes the used index for which it expects an interrupt
- * at the end of the avail ring. Host should ignore the avail->flags field. */
-/* The Host publishes the avail index for which it expects a kick
- * at the end of the used ring. Guest should ignore the used->flags field. */
-#define VIRTIO_RING_F_EVENT_IDX     29
-
-/* v1.0 compliant. */
-#define VIRTIO_F_VERSION_1      32
-
-/* Log all write descriptors. Can be changed while device is active. */
-#define VHOST_F_LOG_ALL 26
-
-struct vhost_vring_state {
-    unsigned int index;
-    unsigned int num;
-};
-
-struct vhost_vring_addr {
-    unsigned int index;
-    /* Option flags. */
-    unsigned int flags;
-    /* Flag values: */
-    /* Whether log address is valid. If set enables logging. */
-#define VHOST_VRING_F_LOG 0
-
-    /* Start of array of descriptors (virtually contiguous) */
-    uint64_t desc_user_addr;
-    /* Used structure address. Must be 32 bit aligned */
-    uint64_t used_user_addr;
-    /* Available structure address. Must be 16 bit aligned */
-    uint64_t avail_user_addr;
-    /* Logging support. */
-    /* Log writes to used structure, at offset calculated from specified
-     * address. Address must be 32 bit aligned. */
-    uint64_t log_guest_addr;
-};
+#define UUID_LEN 16
 
 /**
- * End of duplicated code from linux/vhost.h header
- */
-
-/* Feature bits */
-#define VIRTIO_BLK_F_SIZE_MAX     1   /* Indicates maximum segment size */
-#define VIRTIO_BLK_F_SEG_MAX      2   /* Indicates maximum # of segments */
-#define VIRTIO_BLK_F_GEOMETRY     4   /* Legacy geometry available  */
-#define VIRTIO_BLK_F_RO           5   /* Disk is read-only */
-#define VIRTIO_BLK_F_BLK_SIZE     6   /* Block size of disk is available*/
-#define VIRTIO_BLK_F_TOPOLOGY     10  /* Topology information is available */
-#define VIRTIO_BLK_F_MQ           12  /* support more than one vq */
-#define VIRTIO_BLK_F_DISCARD      13  /* DISCARD is supported */
-#define VIRTIO_BLK_F_WRITE_ZEROES 14  /* WRITE ZEROES is supported */
-#define VIRTIO_BLK_F_SECURE_ERASE 16 /* Secure Erase is supported */
-#define VIRTIO_BLK_F_ZONED        17  /* Zoned block device */
-
-/* Legacy feature bits */
-#define VIRTIO_BLK_F_BARRIER      0   /* Does host support barriers? */
-#define VIRTIO_BLK_F_SCSI         7   /* Supports scsi command passthru */
-#define VIRTIO_BLK_F_FLUSH        9   /* Flush command supported */
-#define VIRTIO_BLK_F_CONFIG_WCE   11  /* Writeback mode available in config */
-/* Old (deprecated) name for VIRTIO_BLK_F_FLUSH. */
-#define VIRTIO_BLK_F_WCE VIRTIO_BLK_F_FLUSH
-
-/* Based on qemu/hw/virtio/vhost-user.c */
-#define VHOST_USER_F_PROTOCOL_FEATURES 30
-
-#define VHOST_MEMORY_BASELINE_NREGIONS 8
-
-/*
  * vhost in the kernel usually supports 509 mem slots. 509 used to be the
  * KVM limit, it supported 512, but 3 were used for internal purposes. This
  * limit is sufficient to support many DIMMs and virtio-mem in
@@ -95,12 +22,15 @@ struct vhost_vring_addr {
  */
 #define VHOST_USER_MAX_RAM_SLOTS 509
 
-/*
+/* Based on qemu/hw/virtio/vhost-user.c */
+#define VHOST_USER_F_PROTOCOL_FEATURES 30
+
+#define VHOST_MEMORY_BASELINE_NREGIONS 8
+
+/**
  * Maximum size of virtio device config space
  */
 #define VHOST_USER_MAX_CONFIG_SIZE 256
-
-#define UUID_LEN 16
 
 
 typedef struct VhostUserMemoryRegion {
