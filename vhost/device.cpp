@@ -2,16 +2,19 @@
 
 #include "protocol.h"
 
+#include <rawstorstd/gcc.h>
 #include <rawstorstd/gpp.hpp>
 #include <rawstorstd/logging.h>
 
 #include <rawstor.h>
 
+#include <sys/mman.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+
 #include <err.h>
 #include <errno.h>
 #include <inttypes.h>
-#include <sys/socket.h>
-#include <sys/un.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -29,7 +32,6 @@
 
 /* The version of the protocol we support */
 #define VHOST_USER_VERSION 1
-
 
 namespace {
 
@@ -245,12 +247,19 @@ class TaskWriteMsg: public TaskMessage {
             },
             _control {},
             _msg {
+                .msg_name = nullptr,
+                .msg_namelen = 0,
                 .msg_iov = _iov,
-                .msg_iovlen = _iov[1].iov_len > 0 ? 2 : 1,
+                .msg_iovlen = 2,
                 .msg_control = nullptr,
                 .msg_controllen = 0,
+                .msg_flags = 0,
             }
         {
+            if (_iov[1].iov_len == 0) {
+                _msg.msg_iovlen = 1;
+            }
+
             VhostUserHeader &header = _op->header();
 
             header.flags = flags;
@@ -340,20 +349,42 @@ class TaskWriteConfig: public TaskWriteMsg {
             const VirtioBlkConfig &config):
             TaskWriteMsg(op, op->header().size, 0, 0)
         {
-            VhostUserPayload &payload = op->payload();
+            VhostUserPayload &payload = _op->payload();
             assert(payload.config.size <= sizeof(VirtioBlkConfig));
 
             memcpy(payload.config.region, &config, payload.config.size);
         }
 
         std::string str() const override {
-            return "config";
+            std::ostringstream oss;
+            VhostUserPayload &payload = _op->payload();
+
+            oss << "config(" << payload.config.size << ")";
+            return oss.str();
+        }
+};
+
+
+class TaskWriteMemRegMsg: public TaskWriteMsg {
+    public:
+        TaskWriteMemRegMsg(
+            const std::shared_ptr<DeviceOp> &op,
+            const VhostUserMemRegMsg &msg):
+            TaskWriteMsg(op, sizeof(TaskWriteMemRegMsg), 0, 0)
+        {
+            VhostUserPayload &payload = _op->payload();
+
+            payload.memreg = msg;
+        }
+
+        std::string str() const override {
+            return "memreg";
         }
 };
 
 
 void close_fds(VhostUserFds &fds) {
-    for (int i = 0; i < fds.nfds; ++i) {
+    for (unsigned int i = 0; i < fds.fd_num; ++i) {
         close(fds.fds[i]);
     }
 }
@@ -428,7 +459,7 @@ std::unique_ptr<TaskWriteMsg> set_vring_call(
         close_fds(fds);
     }
 
-    if (fds.nfds != 1) {
+    if (fds.fd_num != 1) {
         rawstor_error("Invalid fds in request: %d", header.request);
         close_fds(fds);
         return nullptr;
@@ -484,7 +515,7 @@ std::unique_ptr<TaskWriteMsg> set_vring_err(
         close_fds(fds);
     }
 
-    if (fds.nfds != 1) {
+    if (fds.fd_num != 1) {
         rawstor_error("Invalid fds in request: %d", header.request);
         close_fds(fds);
         return nullptr;
@@ -527,7 +558,9 @@ std::unique_ptr<TaskWriteMsg> set_protocol_features(
 {
     const VhostUserPayload &payload = op->payload();
 
-    rawstor_debug("Setting features u64: 0x%llx\n", payload.u64);
+    rawstor_debug(
+        "Setting features u64: 0x%llx\n",
+        (unsigned long long)payload.u64);
 
     op->device().set_protocol_features(payload.u64);
 
@@ -561,12 +594,12 @@ std::unique_ptr<TaskWriteMsg> get_queue_num(
 std::unique_ptr<TaskWriteMsg> set_backend_req_fd(
     const std::shared_ptr<DeviceOp> &op)
 {
-    const VhostUserFds &fds = op->fds();
+    VhostUserFds &fds = op->fds();
 
-    if (fds.nfds != 1) {
+    if (fds.fd_num != 1) {
         rawstor_error(
-            "Invalid backend_req_fd message (%d fd's)", op->fds().nfds);
-        close_fds(op->fds());
+            "Invalid backend_req_fd message (%d fd's)", fds.fd_num);
+        close_fds(fds);
         return nullptr;
     }
 
@@ -615,6 +648,90 @@ std::unique_ptr<TaskWriteMsg> get_max_mem_slots(
 }
 
 
+/**
+ * When the VHOST_USER_PROTOCOL_F_CONFIGURE_MEM_SLOTS protocol feature has been
+ * successfully negotiated, this message is submitted by the front-end to the
+ * back-end. The message payload contains a memory region descriptor struct,
+ * describing a region of guest memory which the back-end device must map in.
+ * When the VHOST_USER_PROTOCOL_F_CONFIGURE_MEM_SLOTS protocol feature has been
+ * successfully negotiated, along with the VHOST_USER_REM_MEM_REG message, this
+ * message is used to set and update the memory tables of the back-end device.
+ *
+ * Exactly one file descriptor from which the memory is mapped is passed in the
+ * ancillary data.
+ *
+ * In postcopy mode (see VHOST_USER_POSTCOPY_LISTEN), the back-end replies with
+ * the bases of the memory mapped region to the front-end. For further details
+ * on postcopy, see VHOST_USER_SET_MEM_TABLE. They apply to
+ * VHOST_USER_ADD_MEM_REG accordingly.
+ */
+std::unique_ptr<TaskWriteMsg> add_mem_reg(
+    const std::shared_ptr<DeviceOp> &op)
+{
+    const VhostUserHeader &header = op->header();
+    VhostUserPayload &payload = op->payload();
+    VhostUserFds &fds = op->fds();
+
+    VhostUserMemRegMsg &m = payload.memreg;
+
+    if (fds.fd_num != 1) {
+        rawstor_error(
+            "VHOST_USER_ADD_MEM_REG received %d fds - only 1 fd "
+            "should be sent for this message type", fds.fd_num);
+        close_fds(fds);
+        return nullptr;
+    }
+
+    /*
+     * If we are in postcopy mode and we receive a u64 payload with a 0 value
+     * we know all the postcopy client bases have been received, and we
+     * should start generating faults.
+     */
+    if (op->device().postcopy_listening() &&
+        header.size == sizeof(payload.u64) &&
+        payload.u64 == 0)
+    {
+        /**
+         * TODO: Implement generate_faults.
+         */
+        // (void)generate_faults(dev);
+        return nullptr;
+    }
+
+    if (header.size < sizeof(VhostUserMemoryRegion)) {
+        rawstor_error(
+            "VHOST_USER_ADD_MEM_REG requires a message size of at "
+            "least %zu bytes and only %d bytes were received",
+            sizeof(VhostUserMemoryRegion), header.size);
+        close_fds(fds);
+        return nullptr;
+    }
+
+    if (op->device().nregions() == VHOST_USER_MAX_RAM_SLOTS) {
+        rawstor_error(
+            "failing attempt to hot add memory via "
+            "VHOST_USER_ADD_MEM_REG message because the backend has "
+            "no free ram slots available");
+        close_fds(fds);
+        return nullptr;
+    }
+
+    m.region.userspace_addr = op->device().add_mem_reg(m.region, fds.fds[0]);
+
+    close(fds.fds[0]);
+
+    if (op->device().postcopy_listening()) {
+        /* Send the message back to qemu with the addresses filled in. */
+        rawstor_debug("Successfully added new region in postcopy\n");
+        return std::make_unique<TaskWriteMemRegMsg>(op, m);
+    }
+
+    rawstor_debug("Successfully added new region\n");
+
+    return nullptr;
+}
+
+
 std::unique_ptr<TaskWriteMsg> response(const std::shared_ptr<DeviceOp> &op) {
     switch (op->header().request) {
         case VHOST_USER_GET_FEATURES:
@@ -639,6 +756,8 @@ std::unique_ptr<TaskWriteMsg> response(const std::shared_ptr<DeviceOp> &op) {
             return get_config(op);
         case VHOST_USER_GET_MAX_MEM_SLOTS:
             return get_max_mem_slots(op);
+        case VHOST_USER_ADD_MEM_REG:
+            return add_mem_reg(op);
         default:
             rawstor_error("Unexpected request: %d\n", op->header().request);
             throw std::runtime_error("Unexpected request");
@@ -655,6 +774,19 @@ void dispatch(const std::shared_ptr<DeviceOp> &op) {
     rawstor_debug("Flags:   0x%x\n", header.flags);
     rawstor_debug("Size:    %u\n", header.size);
 
+#if RAWSTOR_LOGLEVEL >= RAWSTOR_LOGLEVEL_DEBUG
+    VhostUserFds &fds = op->fds();
+    if (fds.fd_num) {
+        std::ostringstream oss;
+        for (unsigned int i = 0; i < fds.fd_num; i++) {
+            oss << " " << fds.fds[i];
+        }
+        rawstor_debug("Fds:    %s\n", oss.str().c_str());
+    }
+#endif
+
+    rawstor_debug("==============================================\n");
+
     bool need_reply = header.flags & VHOST_USER_NEED_REPLY_MASK;
 
     std::unique_ptr<TaskWriteMsg> t = response(op);
@@ -665,8 +797,6 @@ void dispatch(const std::shared_ptr<DeviceOp> &op) {
         rawstor_debug("Sending back to guest: %s\n", t->str().c_str());
         write(op->device().fd(), std::move(t));
     }
-
-    rawstor_debug("==============================================\n");
 }
 
 
@@ -687,10 +817,13 @@ class TaskReadUserHeader final: public TaskMessage {
                 .iov_len = sizeof(_op->header())
             },
             _msg {
+                .msg_name = nullptr,
+                .msg_namelen = 0,
                 .msg_iov = &_iov,
                 .msg_iovlen = 1,
                 .msg_control = &_control,
                 .msg_controllen = sizeof(_control),
+                .msg_flags = 0,
             }
         {}
 
@@ -744,6 +877,8 @@ void TaskReadUserHeader::operator()(size_t result, int error) {
         RAWSTOR_THROW_SYSTEM_ERROR(EPROTO);
     }
 
+    VhostUserFds &fds = _op->fds();
+    fds.fd_num = 0;
     cmsghdr *cmsg;
     for (cmsg = CMSG_FIRSTHDR(&_msg);
          cmsg != NULL;
@@ -751,23 +886,24 @@ void TaskReadUserHeader::operator()(size_t result, int error) {
     {
         if (cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SCM_RIGHTS) {
             size_t fd_size = cmsg->cmsg_len - CMSG_LEN(0);
-            _op->fds().nfds = fd_size / sizeof(int);
-            assert(_op->fds().nfds <= VHOST_MEMORY_BASELINE_NREGIONS);
-            memcpy(_op->fds().fds, CMSG_DATA(cmsg), fd_size);
+            fds.fd_num = fd_size / sizeof(int);
+            assert(fds.fd_num <= VHOST_MEMORY_BASELINE_NREGIONS);
+            memcpy(fds.fds, CMSG_DATA(cmsg), fd_size);
             break;
         }
     }
 
-    if (_op->header().size != 0) {
-        if (_op->header().size > sizeof(VhostUserPayload)) {
+    const VhostUserHeader &header = _op->header();
+    if (header.size != 0) {
+        if (header.size > sizeof(VhostUserPayload)) {
             rawstor_error(
                 "Unexpected request payload size: %u\n",
-                (unsigned int)_op->header().size);
+                (unsigned int)header.size);
             RAWSTOR_THROW_SYSTEM_ERROR(EPROTO);
         }
         std::unique_ptr<TaskReadUserPayload> t =
             std::make_unique<TaskReadUserPayload>(
-                _op, _op->header().size);
+                _op, header.size);
         read(_op->device().fd(), std::move(t));
         return;
     }
@@ -799,6 +935,51 @@ void TaskReadUserPayload::operator()(size_t result, int error) {
     std::unique_ptr<TaskReadUserHeader> t =
         std::make_unique<TaskReadUserHeader>(op);
     read(op->device().fd(), std::move(t));
+}
+
+
+size_t find_mem_region_pos(
+    const std::vector<std::unique_ptr<rawstor::vhost::DevRegion>> &regions,
+    const VhostUserMemoryRegion &m)
+{
+    if (regions.empty()) {
+        return 0;
+    }
+
+    const uint64_t start_gpa = m.guest_phys_addr;
+    const uint64_t end_gpa = start_gpa + m.memory_size;
+
+    size_t low = 0;
+    size_t high = regions.size() - 1;
+
+    /**
+     * We will add memory regions into the array sorted by GPA. Perform a
+     * binary search to locate the insertion point: it will be at the low
+     * index.
+     */
+    while (low <= high) {
+        size_t mid = low + (high - low)  / 2;
+        const rawstor::vhost::DevRegion &cur = *regions[mid];
+
+        /* Overlap of GPA addresses. */
+        if (
+            start_gpa < cur.guest_phys_addr() + cur.memory_size() &&
+            cur.guest_phys_addr() < end_gpa)
+        {
+            throw std::runtime_error(
+                "regions with overlapping guest physical addresses");
+        }
+
+        if (start_gpa >= cur.guest_phys_addr() + cur.memory_size()) {
+            low = mid + 1;
+        }
+
+        if (start_gpa < cur.guest_phys_addr()) {
+            high = mid - 1;
+        }
+    }
+
+    return low;
 }
 
 
@@ -849,7 +1030,7 @@ uint64_t Device::get_features() const noexcept {
         1ull << VHOST_F_LOG_ALL |
         1ull << VHOST_USER_F_PROTOCOL_FEATURES |
 
-        /**
+        /*
         1ull << VIRTIO_BLK_F_SIZE_MAX |
         1ull << VIRTIO_BLK_F_SEG_MAX |
         1ull << VIRTIO_BLK_F_TOPOLOGY |
@@ -878,7 +1059,6 @@ void Device::set_features(uint64_t features) {
     _features = features;
 
     if (!(_features & (1ull << VHOST_USER_F_PROTOCOL_FEATURES))) {
-        printf("VHOST_USER_F_PROTOCOL_FEATURES\n");
         for (auto &vq: _vqs) {
             vq.enable();
         }
@@ -930,6 +1110,52 @@ void Device::set_vring_err(size_t index, int fd) {
     }
 
     _vqs[index].set_err_fd(fd);
+}
+
+
+uint64_t Device::add_mem_reg(const VhostUserMemoryRegion &m, int fd) {
+    if (_regions.size() >= VHOST_USER_MAX_RAM_SLOTS) {
+        throw std::runtime_error(
+            "failing attempt to hot add memory region because the backend has "
+            "no free ram slots available");
+    }
+
+    size_t idx = find_mem_region_pos(_regions, m);
+
+    std::unique_ptr<DevRegion> region =
+        std::make_unique<DevRegion>(m, fd, _postcopy_listening);
+
+    rawstor_debug("Adding region %zu\n", _regions.size());
+    rawstor_debug(
+        "    guest_phys_addr: 0x%llx\n",
+        (unsigned long long)m.guest_phys_addr);
+    rawstor_debug(
+        "    memory_size:     0x%llx\n",
+        (unsigned long long)m.memory_size);
+    rawstor_debug(
+        "    userspace_addr:  0x%llx\n",
+        (unsigned long long)m.userspace_addr);
+    rawstor_debug(
+        "    old mmap_offset: 0x%llx\n",
+        (unsigned long long)m.mmap_offset);
+    rawstor_debug(
+        "    new mmap_offset: 0x%llx\n",
+        (unsigned long long)region->mmap_offset());
+    rawstor_debug(
+        "    mmap_addr:       0x%llx\n",
+        (unsigned long long)(uintptr_t)region->mmap_addr());
+
+    /**
+     * Return the address to QEMU so that it can translate the ufd fault
+     * addresses back.
+     */
+    uint64_t ret = _postcopy_listening ?
+        (uint64_t)(uintptr_t)region->mmap_addr() + region->mmap_offset() :
+        m.userspace_addr;
+
+    _regions.insert(_regions.begin() + idx, std::move(region));
+
+    return ret;
 }
 
 

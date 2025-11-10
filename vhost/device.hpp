@@ -1,6 +1,7 @@
 #ifndef RAWSTOR_VHOST_DEVICE_HPP
 #define RAWSTOR_VHOST_DEVICE_HPP
 
+#include "devregion.hpp"
 #include "protocol.h"
 #include "virtqueue.hpp"
 
@@ -8,6 +9,7 @@
 
 #include <unistd.h>
 
+#include <memory>
 #include <vector>
 
 #include <cstdint>
@@ -20,21 +22,27 @@ namespace vhost {
 class Device final {
     private:
         int _fd;
+        std::vector<std::unique_ptr<DevRegion>> _regions;
+        std::vector<VirtQueue> _vqs;
         int _backend_fd;
         uint64_t _features;
         uint64_t _protocol_features;
-        std::vector<VirtQueue> _vqs;
         VirtioBlkConfig _config;
+        bool _postcopy_listening;
 
     public:
         explicit Device(int fd):
             _fd(fd),
+            _vqs(1),
             _backend_fd(-1),
             _features(0),
             _protocol_features(0),
-            _vqs(1),
-            _config{}
-        {}
+            _config {},
+            _postcopy_listening(false)
+        {
+            _regions.reserve(VHOST_USER_MAX_RAM_SLOTS);
+        }
+
         Device(const Device &) = delete;
         Device(Device &&) = delete;
         ~Device();
@@ -65,8 +73,16 @@ class Device final {
             _backend_fd = fd;
         }
 
+        inline size_t nregions() const noexcept {
+            return _regions.size();
+        }
+
         inline size_t nqueues() const noexcept {
             return _vqs.size();
+        }
+
+        inline bool postcopy_listening() const noexcept {
+            return _postcopy_listening;
         }
 
         void set_vring_call(size_t index, int fd);
@@ -84,8 +100,10 @@ class Device final {
              * purposes. This limit is sufficient to support many DIMMs and
              * virtio-mem in "dynamic-memslots" mode.
              */
-            return 509;
+            return VHOST_USER_MAX_RAM_SLOTS;
         }
+
+        uint64_t add_mem_reg(const VhostUserMemoryRegion &m, int fd);
 
         void loop();
 };
