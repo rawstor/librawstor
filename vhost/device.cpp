@@ -450,6 +450,37 @@ std::unique_ptr<TaskWriteMsg> set_vring_num(
 
 
 /**
+ * Sets the next index to use for descriptors in this vring:
+ *
+ * * For a split virtqueue, sets only the next descriptor index to process in
+ *   the Available Ring. The device is supposed to read the next index in the
+ *   Used Ring from the respective vring structure in guest memory.
+ *
+ * * For a packed virtqueue, both indices are supplied, as they are not
+ *   explicitly available in memory.
+ *
+ * Consequently, the payload type is specific to the type of virt queue (a
+ * vring descriptor index for split virtqueues vs. vring descriptor indices for
+ * packed virtqueues).
+ */
+std::unique_ptr<TaskWriteMsg> set_vring_base(
+    const std::shared_ptr<DeviceOp> &op)
+{
+    const VhostUserPayload &payload = op->payload();
+
+    unsigned int index = payload.state.index;
+    unsigned int num = payload.state.num;
+
+    rawstor_debug("State.index: %u\n", index);
+    rawstor_debug("State.num:   %u\n", num);
+
+    op->device().set_vring_base(index, num);
+
+    return nullptr;
+}
+
+
+/**
  * Set the event file descriptor to signal when buffers are used. It is passed
  * in the ancillary data.
  *
@@ -762,6 +793,8 @@ std::unique_ptr<TaskWriteMsg> response(const std::shared_ptr<DeviceOp> &op) {
             return set_owner(op);
         case VHOST_USER_SET_VRING_NUM:
             return set_vring_num(op);
+        case VHOST_USER_SET_VRING_BASE:
+            return set_vring_base(op);
         case VHOST_USER_SET_VRING_CALL:
             return set_vring_call(op);
         case VHOST_USER_SET_VRING_ERR:
@@ -1121,6 +1154,17 @@ void Device::set_vring_size(size_t index, unsigned int size) {
     }
 
     _vqs[index].set_vring_size(size);
+}
+
+
+void Device::set_vring_base(size_t index, unsigned int idx) {
+    if (index >= _vqs.size()) {
+        std::ostringstream oss;
+        oss << "Invalid queue index: " << index;
+        throw std::out_of_range(oss.str());
+    }
+
+    _vqs[index].set_vring_base(idx);
 }
 
 
