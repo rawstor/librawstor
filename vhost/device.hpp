@@ -87,6 +87,8 @@ class Device final {
 
         void set_vring_size(size_t index, unsigned int size);
 
+        void set_vring_base(size_t index, unsigned int idx);
+
         void set_vring_call(size_t index, int fd);
 
         void set_vring_err(size_t index, int fd);
