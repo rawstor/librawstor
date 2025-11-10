@@ -430,6 +430,26 @@ std::unique_ptr<TaskWriteMsg> set_owner(
 
 
 /**
+ * Set the size of the queue.
+ */
+std::unique_ptr<TaskWriteMsg> set_vring_num(
+    const std::shared_ptr<DeviceOp> &op)
+{
+    const VhostUserPayload &payload = op->payload();
+
+    unsigned int index = payload.state.index;
+    unsigned int num = payload.state.num;
+
+    rawstor_debug("State.index: %u\n", index);
+    rawstor_debug("State.num:   %u\n", num);
+
+    op->device().set_vring_size(index, num);
+
+    return nullptr;
+}
+
+
+/**
  * Set the event file descriptor to signal when buffers are used. It is passed
  * in the ancillary data.
  *
@@ -740,6 +760,8 @@ std::unique_ptr<TaskWriteMsg> response(const std::shared_ptr<DeviceOp> &op) {
             return set_features(op);
         case VHOST_USER_SET_OWNER:
             return set_owner(op);
+        case VHOST_USER_SET_VRING_NUM:
+            return set_vring_num(op);
         case VHOST_USER_SET_VRING_CALL:
             return set_vring_call(op);
         case VHOST_USER_SET_VRING_ERR:
@@ -1088,6 +1110,17 @@ uint64_t Device::get_protocol_features() const noexcept {
             1ull << VHOST_USER_PROTOCOL_F_CONFIG
         ) |
         _protocol_features;
+}
+
+
+void Device::set_vring_size(size_t index, unsigned int size) {
+    if (index >= _vqs.size()) {
+        std::ostringstream oss;
+        oss << "Invalid queue index: " << index;
+        throw std::out_of_range(oss.str());
+    }
+
+    _vqs[index].set_vring_size(size);
 }
 
 

@@ -85,6 +85,8 @@ class Device final {
             return _postcopy_listening;
         }
 
+        void set_vring_size(size_t index, unsigned int size);
+
         void set_vring_call(size_t index, int fd);
 
         void set_vring_err(size_t index, int fd);

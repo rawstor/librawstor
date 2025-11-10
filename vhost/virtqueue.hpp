@@ -10,6 +10,7 @@ class VirtQueue final {
         bool _enabled;
         int _call_fd;
         int _err_fd;
+        int _vring_size;
 
     public:
         VirtQueue():
@@ -30,6 +31,10 @@ class VirtQueue final {
 
         inline void disable() noexcept {
             _enabled = false;
+        }
+
+        void set_vring_size(unsigned int size) {
+            _vring_size = size;
         }
 
         void set_call_fd(int fd);
