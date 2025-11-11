@@ -1,6 +1,8 @@
 #ifndef RAWSTOR_STDHEADERS_LINUX_VHOST_TYPES_H
 #define RAWSTOR_STDHEADERS_LINUX_VHOST_TYPES_H
 
+#include "stdheaders/linux/types.h"
+
 #include <stdint.h>
 
 
@@ -28,15 +30,15 @@ struct vhost_vring_addr {
 #define VHOST_VRING_F_LOG 0
 
     /* Start of array of descriptors (virtually contiguous) */
-    uint64_t desc_user_addr;
+    __u64 desc_user_addr;
     /* Used structure address. Must be 32 bit aligned */
-    uint64_t used_user_addr;
+    __u64 used_user_addr;
     /* Available structure address. Must be 16 bit aligned */
-    uint64_t avail_user_addr;
+    __u64 avail_user_addr;
     /* Logging support. */
     /* Log writes to used structure, at offset calculated from specified
      * address. Address must be 32 bit aligned. */
-    uint64_t log_guest_addr;
+    __u64 log_guest_addr;
 };
 
 

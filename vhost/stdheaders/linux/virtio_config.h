@@ -1,6 +1,8 @@
 #ifndef RAWSTOR_STDHEADERS_LINUX_VIRTIO_CONFIG_H
 #define RAWSTOR_STDHEADERS_LINUX_VIRTIO_CONFIG_H
 
+#include "stdheaders/linux/virtio_types.h"
+
 
 #ifdef __cplusplus
 extern "C" {
