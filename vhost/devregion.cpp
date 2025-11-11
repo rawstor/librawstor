@@ -98,7 +98,7 @@ DevRegion::DevRegion(
 
     _guest_phys_addr = m.guest_phys_addr;
     _memory_size = m.memory_size;
-    _virtual_address = m.userspace_addr;
+    _userspace_address = m.userspace_addr;
     _mmap_addr = mmap_addr;
     _mmap_offset = mmap_offset;
 }
