@@ -20,7 +20,7 @@ class DevRegion final {
         uint64_t _memory_size;
 
         /* QEMU virtual address (userspace). */
-        uint64_t _virtual_address;
+        uint64_t _userspace_address;
 
         /* Starting offset in our mmaped space. */
         uint64_t _mmap_offset;
@@ -45,8 +45,8 @@ class DevRegion final {
             return _memory_size;
         }
 
-        inline uint64_t virtual_address() const noexcept {
-            return _virtual_address;
+        inline uint64_t userspace_address() const noexcept {
+            return _userspace_address;
         }
 
         inline uint64_t mmap_offset() const noexcept {

@@ -1,5 +1,7 @@
 #include "virtqueue.hpp"
 
+#include "device.hpp"
+
 #include <rawstorstd/gpp.hpp>
 #include <rawstorstd/logging.h>
 
@@ -52,6 +54,28 @@ void VirtQueue::set_err_fd(int fd) {
         }
     }
     _err_fd = fd;
+}
+
+
+void VirtQueue::set_vring_addr(
+    const Device& device, const vhost_vring_addr &vra)
+{
+    _vra = vra;
+    _ring.set_addr(device, vra);
+
+    if (_last_avail_idx != _used_idx) {
+        bool resume = true; // TODO: What is queue_is_processed_in_order?
+
+        rawstor_debug(
+            "Last avail index != used index: %u != %u%s\n",
+            _last_avail_idx, _used_idx,
+            resume ? ", resuming" : "");
+
+        if (resume) {
+            _shadow_avail_idx = _used_idx;
+            _last_avail_idx = _used_idx;
+        }
+    }
 }
 
 

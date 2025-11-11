@@ -4,6 +4,7 @@
 #include "devregion.hpp"
 #include "protocol.h"
 #include "virtqueue.hpp"
+#include "stdheaders/linux/virtio_blk.h"
 
 #include <rawstorstd/gpp.hpp>
 
@@ -27,7 +28,7 @@ class Device final {
         int _backend_fd;
         uint64_t _features;
         uint64_t _protocol_features;
-        VirtioBlkConfig _config;
+        virtio_blk_config _config;
         bool _postcopy_listening;
 
     public:
@@ -93,7 +94,14 @@ class Device final {
 
         void set_vring_err(size_t index, int fd);
 
-        const VirtioBlkConfig& get_config() const noexcept {
+        void set_vring_addr(const vhost_vring_addr &vra);
+
+        /**
+         * Translate qemu virtual address to our virtual address.
+         * */
+        void* userspace_va_to_va(uint64_t userspace_addr) const noexcept;
+
+        const virtio_blk_config& get_config() const noexcept {
             return _config;
         }
 

@@ -32,7 +32,7 @@
 #include <cstring>
 
 
-/* The version of the protocol we support */
+// The version of the protocol we support
 #define VHOST_USER_VERSION 1
 
 namespace {
@@ -348,11 +348,11 @@ class TaskWriteConfig: public TaskWriteMsg {
     public:
         TaskWriteConfig(
             const std::shared_ptr<DeviceOp> &op,
-            const VirtioBlkConfig &config):
+            const virtio_blk_config &config):
             TaskWriteMsg(op, op->header().size, 0, 0)
         {
             VhostUserPayload &payload = _op->payload();
-            assert(payload.config.size <= sizeof(VirtioBlkConfig));
+            assert(payload.config.size <= sizeof(virtio_blk_config));
 
             memcpy(payload.config.region, &config, payload.config.size);
         }
@@ -452,6 +452,50 @@ std::unique_ptr<TaskWriteMsg> set_vring_num(
 
 
 /**
+ * Sets the addresses of the different aspects of the vring.
+ */
+std::unique_ptr<TaskWriteMsg> set_vring_addr(
+    const std::shared_ptr<DeviceOp> &op)
+{
+    const VhostUserPayload &payload = op->payload();
+    const vhost_vring_addr &vra = payload.addr;
+
+    rawstor_debug("vhost_vring_addr:\n");
+    rawstor_debug("    index:  %d\n", vra.index);
+    rawstor_debug("    flags:  %d\n", vra.flags);
+    rawstor_debug(
+        "    desc_user_addr:   0x%llx\n",
+        (unsigned long long)vra.desc_user_addr);
+    rawstor_debug(
+        "    used_user_addr:   0x%llx\n",
+        (unsigned long long)vra.used_user_addr);
+    rawstor_debug(
+        "    avail_user_addr:  0x%llx\n",
+        (unsigned long long)vra.avail_user_addr);
+    rawstor_debug(
+        "    log_guest_addr:   0x%llx\n",
+        (unsigned long long)vra.log_guest_addr);
+
+    op->device().set_vring_addr(vra);
+
+    /*
+    vq->vra = *vra;
+    vq->vring.flags = vra->flags;
+    vq->vring.log_guest_addr = vra->log_guest_addr;
+
+    if (map_ring(dev, vq)) {
+        vu_panic(dev, "Invalid vring_addr message");
+        return false;
+    }
+
+    vq->used_idx = le16toh(vq->vring.used->idx);
+    */
+
+    return nullptr;
+}
+
+
+/**
  * Sets the next index to use for descriptors in this vring:
  *
  * * For a split virtqueue, sets only the next descriptor index to process in
@@ -527,7 +571,7 @@ std::unique_ptr<TaskWriteMsg> set_vring_call(
         throw;
     }
 
-    /* in case of I/O hang after reconnecting */
+    // in case of I/O hang after reconnecting
     if (fd != -1) {
         std::unique_ptr<TaskEventFd> t =
             std::make_unique<TaskEventFd>(op, 1);
@@ -675,7 +719,7 @@ std::unique_ptr<TaskWriteMsg> get_config(
     const std::shared_ptr<DeviceOp> &op)
 {
     const VhostUserPayload &payload = op->payload();
-    if (payload.config.size > sizeof(VirtioBlkConfig)) {
+    if (payload.config.size > sizeof(virtio_blk_config)) {
         /**
          * Return zero to indicate an error to frontend
          */
@@ -774,7 +818,7 @@ std::unique_ptr<TaskWriteMsg> add_mem_reg(
     close(fds.fds[0]);
 
     if (op->device().postcopy_listening()) {
-        /* Send the message back to qemu with the addresses filled in. */
+        // Send the message back to qemu with the addresses filled in.
         rawstor_debug("Successfully added new region in postcopy\n");
         return std::make_unique<TaskWriteMemRegMsg>(op, m);
     }
@@ -795,6 +839,8 @@ std::unique_ptr<TaskWriteMsg> response(const std::shared_ptr<DeviceOp> &op) {
             return set_owner(op);
         case VHOST_USER_SET_VRING_NUM:
             return set_vring_num(op);
+        case VHOST_USER_SET_VRING_ADDR:
+            return set_vring_addr(op);
         case VHOST_USER_SET_VRING_BASE:
             return set_vring_base(op);
         case VHOST_USER_SET_VRING_CALL:
@@ -1018,7 +1064,7 @@ size_t find_mem_region_pos(
         size_t mid = low + (high - low)  / 2;
         const rawstor::vhost::DevRegion &cur = *regions[mid];
 
-        /* Overlap of GPA addresses. */
+        // Overlap of GPA addresses.
         if (
             start_gpa < cur.guest_phys_addr() + cur.memory_size() &&
             cur.guest_phys_addr() < end_gpa)
@@ -1149,46 +1195,47 @@ uint64_t Device::get_protocol_features() const noexcept {
 
 
 void Device::set_vring_size(size_t index, unsigned int size) {
-    if (index >= _vqs.size()) {
-        std::ostringstream oss;
-        oss << "Invalid queue index: " << index;
-        throw std::out_of_range(oss.str());
-    }
-
-    _vqs[index].set_vring_size(size);
+    _vqs.at(index).set_vring_size(size);
 }
 
 
 void Device::set_vring_base(size_t index, unsigned int idx) {
-    if (index >= _vqs.size()) {
-        std::ostringstream oss;
-        oss << "Invalid queue index: " << index;
-        throw std::out_of_range(oss.str());
-    }
-
-    _vqs[index].set_vring_base(idx);
+    _vqs.at(index).set_vring_base(idx);
 }
 
 
 void Device::set_vring_call(size_t index, int fd) {
-    if (index >= _vqs.size()) {
-        std::ostringstream oss;
-        oss << "Invalid queue index: " << index;
-        throw std::out_of_range(oss.str());
-    }
-
-    _vqs[index].set_call_fd(fd);
+    _vqs.at(index).set_call_fd(fd);
 }
 
 
 void Device::set_vring_err(size_t index, int fd) {
-    if (index >= _vqs.size()) {
-        std::ostringstream oss;
-        oss << "Invalid queue index: " << index;
-        throw std::out_of_range(oss.str());
+    _vqs.at(index).set_err_fd(fd);
+}
+
+
+void Device::set_vring_addr(const vhost_vring_addr &vra) {
+    _vqs.at(vra.index).set_vring_addr(*this, vra);
+}
+
+
+void* Device::userspace_va_to_va(uint64_t userspace_addr) const noexcept {
+    /**
+     * TODO: implement in logn.
+     */
+
+    // Find matching memory region.
+    for (auto &r: _regions) {
+        if (
+            (userspace_addr >= r->userspace_address()) &&
+            (userspace_addr < (r->userspace_address() + r->memory_size())))
+        {
+            uint64_t offset = userspace_addr - r->userspace_address();
+            return (char*)r->mmap_addr() + r->mmap_offset() + offset;
+        }
     }
 
-    _vqs[index].set_err_fd(fd);
+    return nullptr;
 }
 
 
