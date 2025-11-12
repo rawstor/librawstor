@@ -102,6 +102,18 @@ void EventMultiplexVector::add_to_batch(std::vector<iovec> &iov) {
 }
 
 
+void EventSimplexPoll::process() noexcept {
+#ifdef RAWSTOR_TRACE_EVENTS
+    trace(__FILE__, __LINE__, __FUNCTION__, "process()");
+#endif
+}
+
+
+void EventSimplexPoll::set_result(short revents) noexcept {
+    _result = revents;
+}
+
+
 void EventMultiplexScalarRead::process() noexcept {
 #ifdef RAWSTOR_TRACE_EVENTS
     trace(__FILE__, __LINE__, __FUNCTION__, "read()");

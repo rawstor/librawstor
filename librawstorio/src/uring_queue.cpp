@@ -62,6 +62,18 @@ void Queue::setup_fd(int fd) {
 }
 
 
+void Queue::poll(std::unique_ptr<rawstor::io::TaskPoll> t) {
+    io_uring_sqe *sqe = io_uring_get_sqe(&_ring);
+    if (sqe == nullptr) {
+        RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
+    }
+    io_uring_prep_poll_add(sqe, t->fd(), t->mask());
+    io_uring_sqe_set_data(sqe, t.get());
+    ++_events;
+    t.release();
+}
+
+
 void Queue::read(std::unique_ptr<rawstor::io::TaskScalar> t) {
     io_uring_sqe *sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {

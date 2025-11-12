@@ -62,6 +62,15 @@ class Task {
 };
 
 
+class TaskPoll: public Task {
+    public:
+        TaskPoll(int fd): Task(fd) {}
+        virtual ~TaskPoll() override = default;
+
+        virtual unsigned int mask() const noexcept = 0;
+};
+
+
 class TaskScalar: public Task {
     public:
         TaskScalar(int fd): Task(fd) {}

@@ -180,6 +180,24 @@ class EventMultiplexVector: public EventMultiplex {
 };
 
 
+class EventSimplexPoll final: public EventSimplex {
+    public:
+        EventSimplexPoll(
+            Queue &q,
+            std::unique_ptr<rawstor::io::TaskPoll> t):
+            EventSimplex(q, std::move(t))
+        {}
+
+        inline unsigned int mask() const noexcept {
+            return static_cast<rawstor::io::TaskPoll*>(_t.get())->mask();
+        }
+
+        void process() noexcept override final;
+
+        void set_result(short revents) noexcept;
+};
+
+
 class EventMultiplexScalarRead final: public EventMultiplexScalar {
     public:
         EventMultiplexScalarRead(

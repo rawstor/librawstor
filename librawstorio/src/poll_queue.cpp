@@ -74,6 +74,12 @@ void Queue::setup_fd(int fd) {
 }
 
 
+void Queue::poll(std::unique_ptr<rawstor::io::TaskPoll> t) {
+    Session &s = _get_session(t->fd());
+    s.poll(std::move(t));
+}
+
+
 void Queue::read(std::unique_ptr<rawstor::io::TaskScalar> t) {
     Session &s = _get_session(t->fd());
     s.read(std::move(t));
@@ -191,16 +197,7 @@ void Queue::wait(unsigned int timeout) {
 
         for (const pollfd &fd: fds) {
             std::shared_ptr<Session> &s = _sessions.at(fd.fd);
-            if (fd.revents & POLLHUP) {
-                s->process_read(_cqes, true);
-                s->process_write(_cqes, true);
-            } else if (fd.revents & POLLIN) {
-                s->process_read(_cqes, false);
-            } else if (fd.revents & POLLOUT) {
-                s->process_write(_cqes, false);
-            } else {
-                continue;
-            }
+            s->process(_cqes, fd.revents);
         }
     }
 

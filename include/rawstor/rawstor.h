@@ -27,6 +27,10 @@ typedef int(RawstorIOCallback)(size_t result, int error, void *data);
  * fd
  */
 
+int rawstor_fd_poll(
+    int fd, unsigned int mask,
+    RawstorIOCallback *cb, void *data);
+
 int rawstor_fd_read(
     int fd, void *buf, size_t size,
     RawstorIOCallback *cb, void *data);
