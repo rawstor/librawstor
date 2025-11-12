@@ -28,13 +28,32 @@ Session::Session(Queue &q, int fd):
 {}
 
 
+void Session::_process_poll(
+    rawstor::RingBuf<Event> &cqes,
+    short revents)
+{
+    for (auto it = _poll_sqes.begin(); it != _poll_sqes.end();) {
+        if ((*it)->mask() & revents) {
+            std::unique_ptr<EventSimplexPoll> event = std::move(*it);
+            it = _poll_sqes.erase(it);
+
+            event->set_result(revents);
+            event->process();
+            cqes.push(std::move(event));
+        } else {
+            ++it;
+        }
+    }
+}
+
+
 void Session::_process_simplex(
     std::unique_ptr<EventSimplex> event,
     rawstor::RingBuf<Event> &cqes,
-    bool write, bool pollhup)
+    bool write, short revents)
 {
     if (write) {
-        if (!pollhup) {
+        if (!(revents & POLLHUP)) {
             event->process();
         } else {
             event->set_error(ECONNRESET);
@@ -52,7 +71,7 @@ void Session::_process_multiplex(
     unsigned int niov,
     rawstor::RingBuf<Event> &sqes,
     rawstor::RingBuf<Event> &cqes,
-    bool write, bool pollhup)
+    bool write, short revents)
 {
     if (events.size() == 1) {
 #ifdef RAWSTOR_TRACE_EVENTS
@@ -77,7 +96,7 @@ void Session::_process_multiplex(
 
     ssize_t res;
     if (write) {
-        if (!pollhup) {
+        if (!(revents & POLLHUP)) {
 #ifdef RAWSTOR_TRACE_EVENTS
             rawstor_trace("batch writev()\n");
 #endif
@@ -124,7 +143,7 @@ void Session::_process_multiplex(
 void Session::_process(
     rawstor::RingBuf<Event> &sqes,
     rawstor::RingBuf<Event> &cqes,
-    bool write, bool pollhup)
+    bool write, short revents)
 {
     if (sqes.empty()) {
         return;
@@ -142,10 +161,11 @@ void Session::_process(
                     std::unique_ptr<Event> event = sqes.pop();
                     std::unique_ptr<EventSimplex> sevent(
                         static_cast<EventSimplex*>(event.release()));
-                    _process_simplex(std::move(sevent), cqes, write, pollhup);
+                    _process_simplex(std::move(sevent), cqes, write, revents);
                     return;
                 } else {
-                    _process_multiplex(events, niov, sqes, cqes, write, pollhup);
+                    _process_multiplex(
+                        events, niov, sqes, cqes, write, revents);
                     return;
                 }
             } else {
@@ -156,13 +176,37 @@ void Session::_process(
                 events.push_back(std::move(mevent));
             }
         }
-        _process_multiplex(events, niov, sqes, cqes, write, pollhup);
+        _process_multiplex(events, niov, sqes, cqes, write, revents);
     } catch (...) {
         for (std::unique_ptr<EventMultiplex> &event: events) {
             sqes.push(std::move(event));
         }
         throw;
     }
+}
+
+
+short Session::events() const noexcept {
+    short ret = 0;
+    for (const auto &it: _poll_sqes) {
+        ret |= it->mask();
+    }
+    if (!_read_sqes.empty()) {
+        ret |= POLLIN;
+    }
+    if (!_write_sqes.empty()) {
+        ret |= POLLOUT;
+    }
+    return ret;
+}
+
+
+void Session::poll(std::unique_ptr<rawstor::io::TaskPoll> t) {
+    std::unique_ptr<EventSimplexPoll> event =
+        std::make_unique<EventSimplexPoll>(
+            _q, std::move(t));
+
+    _poll_sqes.push_back(std::move(event));
 }
 
 
@@ -256,19 +300,17 @@ void Session::write(std::unique_ptr<rawstor::io::TaskMessage> t) {
 }
 
 
-void Session::process_read(
+void Session::process(
     rawstor::RingBuf<rawstor::io::poll::Event> &cqes,
-    bool pollhup)
+    short revents)
 {
-    _process(_read_sqes, cqes, false, pollhup);
-}
-
-
-void Session::process_write(
-    rawstor::RingBuf<rawstor::io::poll::Event> &cqes,
-    bool pollhup)
-{
-    _process(_write_sqes, cqes, true, pollhup);
+    _process_poll(cqes, revents);
+    if (revents & (POLLIN | POLLHUP)) {
+        _process(_read_sqes, cqes, false, revents);
+    }
+    if (revents & (POLLOUT | POLLHUP)) {
+        _process(_write_sqes, cqes, true, revents);
+    }
 }
 
 

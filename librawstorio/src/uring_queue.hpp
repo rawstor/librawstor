@@ -29,6 +29,9 @@ class Queue final: public rawstor::io::Queue {
             return &_ring;
         }
 
+        void poll(
+            std::unique_ptr<rawstor::io::TaskPoll> t) override;
+
         void read(
             std::unique_ptr<rawstor::io::TaskScalar> t) override;
 

@@ -35,6 +35,8 @@ class Queue {
             return _depth;
         }
 
+        virtual void poll(std::unique_ptr<TaskPoll> t) = 0;
+
         virtual void read(std::unique_ptr<TaskScalar> t) = 0;
 
         virtual void read(std::unique_ptr<TaskVector> t) = 0;
