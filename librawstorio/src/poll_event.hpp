@@ -41,8 +41,12 @@ class Event {
             _result(0),
             _error(0)
         {}
-
+        Event(const Event &) = delete;
+        Event(Event &&) = delete;
         virtual ~Event() = default;
+
+        Event& operator=(const Event &) = delete;
+        Event& operator=(Event &&) = delete;
 
         inline void set_error(int error) noexcept {
 #ifdef RAWSTOR_TRACE_EVENTS
