@@ -64,7 +64,7 @@ class Task {
 class TaskScalar: public Task {
     public:
         TaskScalar(int fd): Task(fd) {}
-        virtual ~TaskScalar() {}
+        virtual ~TaskScalar() override = default;
 
         virtual void* buf() noexcept = 0;
         virtual size_t size() const noexcept = 0;
@@ -74,7 +74,7 @@ class TaskScalar: public Task {
 class TaskVector: public Task {
     public:
         TaskVector(int fd): Task(fd) {}
-        virtual ~TaskVector() {}
+        virtual ~TaskVector() override = default;
 
         virtual iovec* iov() noexcept = 0;
         virtual unsigned int niov() const noexcept = 0;
@@ -85,7 +85,7 @@ class TaskVector: public Task {
 class TaskScalarPositional: public TaskScalar {
     public:
         TaskScalarPositional(int fd): TaskScalar(fd) {}
-        virtual ~TaskScalarPositional() {}
+        virtual ~TaskScalarPositional() override = default;
 
         virtual off_t offset() const noexcept = 0;
 };
@@ -94,7 +94,7 @@ class TaskScalarPositional: public TaskScalar {
 class TaskVectorPositional: public TaskVector {
     public:
         TaskVectorPositional(int fd): TaskVector(fd) {}
-        virtual ~TaskVectorPositional() {}
+        virtual ~TaskVectorPositional() override = default;
 
         virtual off_t offset() const noexcept = 0;
 };
