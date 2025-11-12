@@ -25,9 +25,11 @@ class VirtQueue final {
 
         uint16_t _used_idx;
 
+        int _kick_fd;
         int _call_fd;
         int _err_fd;
         bool _enabled;
+        bool _started;
 
         int _vring_size;
 
@@ -39,9 +41,11 @@ class VirtQueue final {
             _last_avail_idx(0),
             _shadow_avail_idx(0),
             _used_idx(0),
+            _kick_fd(-1),
             _call_fd(-1),
             _err_fd(-1),
             _enabled(false),
+            _started(false),
             _vring_size(0)
         {}
         VirtQueue(const VirtQueue &) = delete;
@@ -67,6 +71,8 @@ class VirtQueue final {
             _shadow_avail_idx = idx;
             _last_avail_idx = idx;
         }
+
+        void set_kick_fd(int fd);
 
         void set_call_fd(int fd);
 

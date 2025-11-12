@@ -16,6 +16,15 @@ namespace vhost {
 
 
 VirtQueue::~VirtQueue() {
+    if (_kick_fd != -1) {
+        rawstor_info("fd %d: Close\n", _call_fd);
+        if (close(_kick_fd) == -1) {
+            int error = errno;
+            errno = 0;
+            rawstor_error(
+                "Virtq::~Virtq(): Close failed: %s\n", strerror(error));
+        }
+    }
     if (_call_fd != -1) {
         rawstor_info("fd %d: Close\n", _call_fd);
         if (close(_call_fd) == -1) {
@@ -34,6 +43,31 @@ VirtQueue::~VirtQueue() {
                 "Virtq::~Virtq(): Close failed: %s\n", strerror(error));
         }
     }
+}
+
+
+void VirtQueue::set_kick_fd(int fd) {
+    if (_kick_fd != -1) {
+        // dev->remove_watch(dev, dev->vq[index].kick_fd);
+        if (close(_call_fd) == -1) {
+            RAWSTOR_THROW_ERRNO();
+        }
+    }
+    _kick_fd = fd;
+
+    _started = true;
+
+    // if (_kick_fd != -1 && dev->vq[index].handler) {
+    //     // dev->set_watch(dev, dev->vq[index].kick_fd, VU_WATCH_IN,
+    //     //                vu_kick_cb, (void *)(long)index);
+
+    //     DPRINT("Waiting for kicks on fd: %d for vq: %d\n",
+    //            dev->vq[index].kick_fd, index);
+    // }
+
+    // if (vu_check_queue_inflights(dev, &dev->vq[index])) {
+    //     vu_panic(dev, "Failed to check inflights for vq: %d\n", index);
+    // }
 }
 
 
