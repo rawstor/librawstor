@@ -248,8 +248,7 @@ class SessionOp {
 
         SessionOp(const SessionOp &) = delete;
         SessionOp(SessionOp &&) = delete;
-        virtual ~SessionOp() {
-        }
+        virtual ~SessionOp() = default;
 
         SessionOp& operator=(const SessionOp &) = delete;
         SessionOp& operator=(SessionOp &&) = delete;

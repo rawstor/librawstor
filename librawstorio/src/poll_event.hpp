@@ -76,7 +76,13 @@ class Event {
             _iov_at = _iov.data();
         }
 
-        virtual ~Event() {}
+        Event(const Event &) = delete;
+        Event(Event &&) = delete;
+
+        virtual ~Event() = default;
+
+        Event& operator=(const Event &) = delete;
+        Event& operator=(Event &&) = delete;
 
         inline void set_error(int error) noexcept {
             _error = error;
