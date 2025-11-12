@@ -41,8 +41,12 @@ class Event {
             _result(0),
             _error(0)
         {}
+        Event(const Event &) = delete;
+        Event(Event &&) = delete;
+        virtual ~Event() = default;
 
-        virtual ~Event() {}
+        Event& operator=(const Event &) = delete;
+        Event& operator=(Event &&) = delete;
 
         inline void set_error(int error) noexcept {
 #ifdef RAWSTOR_TRACE_EVENTS
@@ -75,7 +79,7 @@ class EventSimplex: public Event {
             Event(q, std::move(t))
         {}
 
-        virtual ~EventSimplex() {}
+        virtual ~EventSimplex() override = default;
 
         bool multiplex() const noexcept override final {
             return false;
@@ -91,7 +95,7 @@ class EventMultiplex: public Event {
             Event(q, std::move(t))
         {}
 
-        virtual ~EventMultiplex() {}
+        virtual ~EventMultiplex() override = default;
 
         bool multiplex() const noexcept override final {
             return true;
@@ -121,7 +125,7 @@ class EventMultiplexScalar: public EventMultiplex {
             _size_at(static_cast<rawstor::io::TaskScalar*>(_t.get())->size())
         {}
 
-        virtual ~EventMultiplexScalar() {}
+        virtual ~EventMultiplexScalar() override = default;
 
         unsigned int niov() const noexcept override final {
             return 1;
@@ -160,7 +164,7 @@ class EventMultiplexVector: public EventMultiplex {
             _iov_at = _iov.data();
         }
 
-        virtual ~EventMultiplexVector() {}
+        virtual ~EventMultiplexVector() override = default;
 
         unsigned int niov() const noexcept override final {
             return _niov_at;
