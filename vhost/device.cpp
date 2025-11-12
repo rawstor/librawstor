@@ -527,6 +527,55 @@ std::unique_ptr<TaskWriteMsg> set_vring_base(
 
 
 /**
+ * Set the event file descriptor for adding buffers to the vring. It is passed
+ * in the ancillary data.
+ *
+ * Bits (0-7) of the payload contain the vring index. Bit 8 is the invalid FD
+ * flag. This flag is set when there is no file descriptor in the ancillary
+ * data. This signals that polling should be used instead of waiting for the
+ * kick. Note that if the protocol feature
+ * VHOST_USER_PROTOCOL_F_INBAND_NOTIFICATIONS has been negotiated this message
+ * isn't necessary as the ring is also started on the VHOST_USER_VRING_KICK
+ * message, it may however still be used to set an event file descriptor (which
+ * will be preferred over the message) or to enable polling.
+ */
+std::unique_ptr<TaskWriteMsg> set_vring_kick(
+    const std::shared_ptr<DeviceOp> &op)
+{
+    const VhostUserHeader &header = op->header();
+    const VhostUserPayload &payload = op->payload();
+    VhostUserFds &fds = op->fds();
+
+    int index = payload.u64 & VHOST_USER_VRING_IDX_MASK;
+    bool nofd = payload.u64 & VHOST_USER_VRING_NOFD_MASK;
+    int fd = nofd ? -1 : fds.fds[0];
+
+    rawstor_debug("Got kick_fd: %d for vq: %d\n", fd, index);
+
+    if (nofd) {
+        close_fds(fds);
+    }
+
+    if (fds.fd_num != 1) {
+        rawstor_error("Invalid fds in request: %d", header.request);
+        close_fds(fds);
+        return nullptr;
+    }
+
+    try {
+        op->device().set_vring_kick(index, fd);
+    } catch (...) {
+        if (fd != -1) {
+            close(fd);
+        }
+        throw;
+    }
+
+    return nullptr;
+}
+
+
+/**
  * Set the event file descriptor to signal when buffers are used. It is passed
  * in the ancillary data.
  *
@@ -843,6 +892,8 @@ std::unique_ptr<TaskWriteMsg> response(const std::shared_ptr<DeviceOp> &op) {
             return set_vring_addr(op);
         case VHOST_USER_SET_VRING_BASE:
             return set_vring_base(op);
+        case VHOST_USER_SET_VRING_KICK:
+            return set_vring_kick(op);
         case VHOST_USER_SET_VRING_CALL:
             return set_vring_call(op);
         case VHOST_USER_SET_VRING_ERR:
@@ -1201,6 +1252,11 @@ void Device::set_vring_size(size_t index, unsigned int size) {
 
 void Device::set_vring_base(size_t index, unsigned int idx) {
     _vqs.at(index).set_vring_base(idx);
+}
+
+
+void Device::set_vring_kick(size_t index, int fd) {
+    _vqs.at(index).set_kick_fd(fd);
 }
 
 
