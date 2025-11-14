@@ -1,5 +1,5 @@
 AC_INIT([librawstor], [m4_esyscmd_s(.github/tools/git-version.sh)])
-AM_INIT_AUTOMAKE
+AM_INIT_AUTOMAKE([1.9 tar-pax])
 
 # AM_SILENT_RULES([yes])
 
@@ -64,7 +64,7 @@ AS_IF([test "x$enable_asan" == "xyes"], [
 AC_ARG_WITH([liburing], [AS_HELP_STRING([--without-liburing],
     [disable support for liburing])],
     [with_liburing=$withval],
-    [with_liburing="yes"])
+    [with_liburing="no"])
 AM_CONDITIONAL([WITH_LIBURING], [test "x$with_liburing" == "xyes"])
 AS_IF([test "x$with_liburing" == "xyes"], [
     PKG_CHECK_MODULES([LIBURING], [liburing])
@@ -101,7 +101,10 @@ AC_CONFIG_FILES(
     [src/Makefile]
     [src/rawstor.pc]
     [cli/Makefile]
-    [vu/Makefile]
+    [vhost/Makefile]
+    [vhost/3rdparty/Makefile]
+    [vhost/3rdparty/qemu/Makefile]
+    [vhost/3rdparty/qemu/libvhost-user/Makefile]
     [tests/Makefile]
     [deb/control]
     [rpm/librawstor.spec]
