@@ -1,3 +1,5 @@
+SUBDIRS = 3rdparty
+
 bin_PROGRAMS = rawstor-vhost
 
 AM_CXXFLAGS = $(GENERIC_CXXFLAGS) \
@@ -13,4 +15,5 @@ rawstor_vhost_SOURCES = main.cpp \
                         server.cpp \
                         server.hpp
 
-rawstor_vhost_LDADD = $(top_builddir)/src/librawstor.la
+rawstor_vhost_LDADD = $(top_builddir)/src/librawstor.la \
+                      $(top_builddir)/vhost/3rdparty/qemu/libvhost-user/libvhost-user.la
