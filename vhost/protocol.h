@@ -1,80 +1,38 @@
 #ifndef RAWSTOR_VHOST_USER_PROTOCOL_H
 #define RAWSTOR_VHOST_USER_PROTOCOL_H
 
-#if defined(__linux__)
-#include <linux/vhost.h>
-#else
-#include <stdint.h>
+#include "stdheaders/linux/vhost_types.h"
 
+#include <rawstorstd/gcc.h>
+
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 
-/* Do we get callbacks when the ring is completely used, even if we've
- * suppressed them? */
-#define VIRTIO_F_NOTIFY_ON_EMPTY    24
-
-/* We support indirect buffer descriptors */
-#define VIRTIO_RING_F_INDIRECT_DESC 28
-
-/* The Guest publishes the used index for which it expects an interrupt
- * at the end of the avail ring. Host should ignore the avail->flags field. */
-/* The Host publishes the avail index for which it expects a kick
- * at the end of the used ring. Guest should ignore the used->flags field. */
-#define VIRTIO_RING_F_EVENT_IDX     29
-
-/* v1.0 compliant. */
-#define VIRTIO_F_VERSION_1      32
-
-/* Log all write descriptors. Can be changed while device is active. */
-#define VHOST_F_LOG_ALL 26
-
-struct vhost_vring_state {
-    unsigned int index;
-    unsigned int num;
-};
-
-struct vhost_vring_addr {
-    unsigned int index;
-    /* Option flags. */
-    unsigned int flags;
-    /* Flag values: */
-    /* Whether log address is valid. If set enables logging. */
-#define VHOST_VRING_F_LOG 0
-
-    /* Start of array of descriptors (virtually contiguous) */
-    uint64_t desc_user_addr;
-    /* Used structure address. Must be 32 bit aligned */
-    uint64_t used_user_addr;
-    /* Available structure address. Must be 16 bit aligned */
-    uint64_t avail_user_addr;
-    /* Logging support. */
-    /* Log writes to used structure, at offset calculated from specified
-     * address. Address must be 32 bit aligned. */
-    uint64_t log_guest_addr;
-};
-#endif
-
-#include <stdint.h>
+#define UUID_LEN 16
 
 
-#define RAWSTOR_VU_PACKED __attribute__((packed))
+
+/**
+ * vhost in the kernel usually supports 509 mem slots. 509 used to be the
+ * KVM limit, it supported 512, but 3 were used for internal purposes. This
+ * limit is sufficient to support many DIMMs and virtio-mem in
+ * "dynamic-memslots" mode.
+ */
+#define VHOST_USER_MAX_RAM_SLOTS 509
 
 /* Based on qemu/hw/virtio/vhost-user.c */
 #define VHOST_USER_F_PROTOCOL_FEATURES 30
 
 #define VHOST_MEMORY_BASELINE_NREGIONS 8
 
-/*
+/**
  * Maximum size of virtio device config space
  */
 #define VHOST_USER_MAX_CONFIG_SIZE 256
-
-#define UUID_LEN 16
-
-#define VHOST_USER_HDR_SIZE offsetof(VhostUserMsg, payload)
 
 
 typedef struct VhostUserMemoryRegion {
@@ -82,7 +40,7 @@ typedef struct VhostUserMemoryRegion {
     uint64_t memory_size;
     uint64_t userspace_addr;
     uint64_t mmap_offset;
-} VhostUserMemoryRegion;
+} RAWSTOR_PACKED VhostUserMemoryRegion;
 
 
 typedef struct VhostUserMemory {
@@ -95,7 +53,7 @@ typedef struct VhostUserMemory {
 typedef struct VhostUserMemRegMsg {
     uint64_t padding;
     VhostUserMemoryRegion region;
-} VhostUserMemRegMsg;
+} RAWSTOR_PACKED VhostUserMemRegMsg;
 
 
 typedef struct VhostUserLog {
@@ -204,7 +162,7 @@ typedef enum VhostUserRequest {
 } VhostUserRequest;
 
 
-typedef struct VhostUserMsg {
+typedef struct {
     VhostUserRequest request;
 
 #define VHOST_USER_VERSION_MASK     (0x3)
@@ -212,25 +170,29 @@ typedef struct VhostUserMsg {
 #define VHOST_USER_NEED_REPLY_MASK  (0x1 << 3)
     uint32_t flags;
     uint32_t size; /* the following payload size */
-    union {
+} RAWSTOR_PACKED VhostUserHeader;
+
+
+typedef union {
 #define VHOST_USER_VRING_IDX_MASK   (0xff)
 #define VHOST_USER_VRING_NOFD_MASK  (0x1 << 8)
-        uint64_t u64;
-        struct vhost_vring_state state;
-        struct vhost_vring_addr addr;
-        VhostUserMemory memory;
-        VhostUserMemRegMsg memreg;
-        VhostUserLog log;
-        VhostUserConfig config;
-        VhostUserVringArea area;
-        VhostUserInflight inflight;
-        VhostUserShared object;
-    } payload;
+    uint64_t u64;
+    struct vhost_vring_state state;
+    struct vhost_vring_addr addr;
+    VhostUserMemory memory;
+    VhostUserMemRegMsg memreg;
+    VhostUserLog log;
+    VhostUserConfig config;
+    VhostUserVringArea area;
+    VhostUserInflight inflight;
+    VhostUserShared object;
+} RAWSTOR_PACKED VhostUserPayload;
 
+
+typedef struct {
     int fds[VHOST_MEMORY_BASELINE_NREGIONS];
-    int fd_num;
-    uint8_t *data;
-} RAWSTOR_VU_PACKED VhostUserMsg;
+    unsigned int fd_num;
+} VhostUserFds;
 
 
 #ifdef __cplusplus
