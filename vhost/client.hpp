@@ -14,11 +14,7 @@ class Client final {
         uint64_t _features;
 
     public:
-        explicit Client(int fd):
-            _fd(fd),
-            _backend_fd(-1),
-            _features(0)
-        {}
+        explicit Client(int fd);
         Client(const Client &) = delete;
         Client(Client &&) = delete;
         ~Client();
