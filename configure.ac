@@ -1,5 +1,5 @@
 AC_INIT([librawstor], [m4_esyscmd_s(.github/tools/git-version.sh)])
-AM_INIT_AUTOMAKE
+AM_INIT_AUTOMAKE([1.9 tar-pax])
 
 # AM_SILENT_RULES([yes])
 
@@ -102,6 +102,9 @@ AC_CONFIG_FILES(
     [src/rawstor.pc]
     [cli/Makefile]
     [vhost/Makefile]
+    [vhost/3rdparty/Makefile]
+    [vhost/3rdparty/qemu/Makefile]
+    [vhost/3rdparty/qemu/libvhost-user/Makefile]
     [tests/Makefile]
     [deb/control]
     [rpm/librawstor.spec]
