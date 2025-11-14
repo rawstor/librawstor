@@ -31,6 +31,36 @@
 namespace {
 
 
+class TaskPoll final: public rawstor::io::TaskPoll {
+    private:
+        unsigned int _mask;
+
+        RawstorIOCallback *_cb;
+        void *_data;
+
+    public:
+        TaskPoll(
+            int fd, unsigned int mask,
+            RawstorIOCallback *cb, void *data):
+            rawstor::io::TaskPoll(fd),
+            _mask(mask),
+            _cb(cb),
+            _data(data)
+        {}
+
+        void operator()(size_t result, int error) override {
+            int res = _cb(result, error, _data);
+            if (res) {
+                RAWSTOR_THROW_SYSTEM_ERROR(-res);
+            }
+        }
+
+        unsigned int mask() const noexcept override {
+            return _mask;
+        }
+};
+
+
 class TaskScalar final: public rawstor::io::TaskScalar {
     private:
         void *_buf;
@@ -312,6 +342,22 @@ int rawstor_wait() {
         return -e.code().value();
     }
     return 0;
+}
+
+
+int rawstor_fd_poll(
+    int fd, unsigned int mask,
+    RawstorIOCallback *cb, void *data)
+{
+    try {
+        std::unique_ptr<rawstor::io::TaskPoll> t =
+            std::make_unique<TaskPoll>(
+                fd, mask, cb, data);
+        rawstor::io_queue->poll(std::move(t));
+        return 0;
+    } catch (std::system_error &e) {
+        return -e.code().value();
+    }
 }
 
 
