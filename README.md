@@ -67,7 +67,7 @@ git checkout -b ref/component-name
 git push origin <your-branch-name>
 ```
 
-6. Submit a Pull Request from your branch to the main repository's main branch
+6. Submit a Pull Request from your branch to the `main` branch of the `rawstor/librawstor` repository
 
 ### Code Style & Standards
 
