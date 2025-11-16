@@ -42,7 +42,7 @@ For small fixes (typos, minor bugs), feel free to open a pull request directly.
 2. Clone your fork locally:
 
 ```bash
-git clone git@github.com:<your-username>/librawstor.git
+git clone https://github.com/<your-username>/librawstor.git
 cd librawstor
 ```
 
@@ -81,7 +81,7 @@ git push origin your-branch-name
 
 * Provide a clear description of what the PR accomplishes
 * Reference any related issues (e.g., "Fixes #123")
-* Ensure all tests pass and code meets quality standards
+* Ensure all tests pass (by running `make test`) and code meets quality standards
 * Keep PRs focused on a single purpose - avoid mixing multiple features
 
 ### Need Help?
