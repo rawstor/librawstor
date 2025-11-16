@@ -64,7 +64,7 @@ git checkout -b ref/component-name
 5. Push your branch to your fork:
 
 ```bash
-git push origin your-branch-name
+git push origin <your-branch-name>
 ```
 
 6. Submit a Pull Request from your branch to the main repository's main branch
