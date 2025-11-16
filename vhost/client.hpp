@@ -1,6 +1,12 @@
 #ifndef RAWSTOR_VHOST_CLIENT_HPP
 #define RAWSTOR_VHOST_CLIENT_HPP
 
+extern "C" {
+#include "libvhost-user.h"
+}
+
+#include <unordered_map>
+
 #include <cstdint>
 
 namespace rawstor {
@@ -9,11 +15,16 @@ namespace vhost {
 
 class Client final {
     private:
+        static std::unordered_map<int, Client*> _clients;
+
         int _fd;
-        int _backend_fd;
+        VuDev _dev;
+        VuDevIface _iface;
         uint64_t _features;
 
     public:
+        static Client* get(int fd);
+
         explicit Client(int fd);
         Client(const Client &) = delete;
         Client(Client &&) = delete;
@@ -25,6 +36,8 @@ class Client final {
         inline int fd() const noexcept {
             return _fd;
         }
+
+        void dispatch();
 
         uint64_t get_features() const noexcept {
             return _features;
