@@ -42,7 +42,7 @@ For small fixes (typos, minor bugs), feel free to open a pull request directly.
 2. Clone your fork locally:
 
 ```bash
-git clone git@github.com:rawstor/librawstor.git
+git clone git@github.com:<your-username>/librawstor.git
 cd librawstor
 ```
 
@@ -67,7 +67,7 @@ git checkout -b ref/component-name
 git push origin your-branch-name
 ```
 
-6. Submit a Pull Request from your branch to the main repository's main (or master) branch
+6. Submit a Pull Request from your branch to the main repository's main branch
 
 ### Code Style & Standards
 
