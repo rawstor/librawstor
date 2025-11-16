@@ -6,7 +6,9 @@
 
 #include <rawstorstd/ringbuf.hpp>
 
+#include <list>
 #include <memory>
+
 #include <poll.h>
 
 namespace rawstor {
@@ -18,25 +20,30 @@ class Session final {
     private:
         Queue &_q;
         int _fd;
+        std::list<std::unique_ptr<EventSimplexPoll>> _poll_sqes;
         rawstor::RingBuf<Event> _read_sqes;
         rawstor::RingBuf<Event> _write_sqes;
+
+        void _process_poll(
+            rawstor::RingBuf<Event> &cqes,
+            short revents);
 
         void _process_simplex(
             std::unique_ptr<EventSimplex> event,
             rawstor::RingBuf<Event> &cqes,
-            bool write, bool pollhup);
+            bool write, short revents);
 
         void _process_multiplex(
             std::vector<std::unique_ptr<EventMultiplex>> &events,
             unsigned int niov,
             rawstor::RingBuf<Event> &sqes,
             rawstor::RingBuf<Event> &cqes,
-            bool write, bool pollhup);
+            bool write, short revents);
 
         void _process(
             rawstor::RingBuf<Event> &sqes,
             rawstor::RingBuf<Event> &cqes,
-            bool write, bool pollhup);
+            bool write, short revents);
 
     public:
         Session(Queue &q, int fd);
@@ -49,15 +56,16 @@ class Session final {
             return _fd;
         }
 
-        inline short events() const noexcept {
-            return
-                (_read_sqes.empty() ? 0 : POLLIN) |
-                (_write_sqes.empty() ? 0 : POLLOUT);
-        }
+        short events() const noexcept;
 
         inline bool empty() const noexcept {
-            return _read_sqes.empty() && _write_sqes.empty();
+            return
+                _poll_sqes.empty() &&
+                _read_sqes.empty() &&
+                _write_sqes.empty();
         }
+
+        void poll(std::unique_ptr<rawstor::io::TaskPoll> t);
 
         void read(std::unique_ptr<rawstor::io::TaskScalar> t);
 
@@ -79,9 +87,7 @@ class Session final {
 
         void write(std::unique_ptr<rawstor::io::TaskMessage> t);
 
-        void process_read(RingBuf<Event> &cqes, bool pollhup);
-
-        void process_write(RingBuf<Event> &cqes, bool pollhup);
+        void process(RingBuf<Event> &cqes, short revents);
 };
 
 
