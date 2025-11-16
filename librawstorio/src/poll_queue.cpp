@@ -178,7 +178,7 @@ void Queue::wait(unsigned int timeout) {
         }
 
         for (const pollfd &fd: fds) {
-            std::shared_ptr<Session> &s = _sessions[fd.fd];
+            std::shared_ptr<Session> &s = _sessions.at(fd.fd);
             if (fd.revents & POLLHUP) {
                 s->process_read(_cqes, true);
                 s->process_write(_cqes, true);
