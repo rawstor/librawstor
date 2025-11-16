@@ -26,6 +26,72 @@ This will replace liburing with poll.
 make test
 ```
 
+## Contributing
+
+We love your contributions and want to make it as easy as possible to work together. Please follow these guidelines when contributing to this project.
+
+### Before You Start
+
+For major features or significant changes, please open an issue first to discuss your proposed changes with the maintainers. This helps ensure your work aligns with the project direction and prevents duplicate effort.
+For small fixes (typos, minor bugs), feel free to open a pull request directly.
+
+### Development Workflow
+
+1. Fork the repository on GitHub
+
+2. Clone your fork locally:
+
+```bash
+git clone git@github.com:rawstor/librawstor.git
+cd librawstor
+```
+
+3. Create a feature branch with a descriptive name:
+
+```bash
+# For new features:
+git checkout -b add/feature-name
+
+# For bug fixes:
+git checkout -b fix/bug-description
+
+# For refactoring:
+git checkout -b ref/component-name
+```
+
+4. Make your changes and commit them with clear, descriptive commit messages
+
+5. Push your branch to your fork:
+
+```bash
+git push origin your-branch-name
+```
+
+6. Submit a Pull Request from your branch to the main repository's main (or master) branch
+
+### Code Style & Standards
+
+* Follow the existing code style and patterns in the project
+* Write clear, descriptive commit messages
+* Include comments for complex logic
+* Update documentation when necessary
+* Add tests for new functionality
+
+### Pull Request Guidelines
+
+* Provide a clear description of what the PR accomplishes
+* Reference any related issues (e.g., "Fixes #123")
+* Ensure all tests pass and code meets quality standards
+* Keep PRs focused on a single purpose - avoid mixing multiple features
+
+### Need Help?
+
+* Check existing issues and discussions
+* Ask questions in the project's GitHub Discussions
+* Reach out to maintainers by mentioning them in issues
+
+Thank you for contributing!
+
 ## Troubleshooting
 
 ### Operation not permitted
