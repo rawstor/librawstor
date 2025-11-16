@@ -9,11 +9,13 @@ extern "C" {
 
 #include <rawstor.h>
 
+#include <sys/socket.h>
+#include <sys/un.h>
+
 #include <err.h>
 #include <errno.h>
 #include <inttypes.h>
-#include <sys/socket.h>
-#include <sys/un.h>
+#include <poll.h>
 #include <unistd.h>
 
 #include <iostream>
@@ -28,10 +30,6 @@ extern "C" {
 #include <cstring>
 
 
-/* The version of the protocol we support */
-#define VHOST_USER_VERSION 1
-
-
 namespace {
 
 
@@ -41,7 +39,7 @@ namespace {
 //         VhostUserHeader _header;
 //         VhostUserPayload _payload;
 //         VhostUserFds _fds;
-// 
+//
 //     public:
 //         ClientOp(rawstor::vhost::Client &client):
 //             _client(client)
@@ -50,77 +48,113 @@ namespace {
 //         ClientOp(ClientOp &&) = delete;
 //         ClientOp& operator=(const ClientOp &) = delete;
 //         ClientOp& operator=(ClientOp &&) = delete;
-// 
+//
 //         inline rawstor::vhost::Client& client() noexcept {
 //             return _client;
 //         }
-// 
+//
 //         inline VhostUserHeader& header() noexcept {
 //             return _header;
 //         }
-// 
+//
 //         inline VhostUserPayload& payload() noexcept {
 //             return _payload;
 //         }
-// 
+//
 //         inline VhostUserFds& fds() noexcept {
 //             return _fds;
 //         }
 // };
-// 
-// 
-// class Task {
-//     protected:
-//         std::shared_ptr<ClientOp> _op;
-// 
-//     public:
-//         static int callback(size_t result, int error, void *data) {
-//             std::unique_ptr<Task> t(static_cast<Task*>(data));
-//             try {
-//                 (*t)(result, error);
-//                 return 0;
-//             } catch (std::system_error &e) {
-//                 return -e.code().value();
-//             }
-//         }
-// 
-//         Task(const std::shared_ptr<ClientOp> &op):
-//             _op(op)
-//         {}
-//         Task(const Task &) = delete;
-//         Task(Task &&) = delete;
-//         virtual ~Task() {}
-// 
-//         Task& operator=(const Task &) = delete;
-//         Task& operator=(Task &&) = delete;
-// 
-//         virtual void operator()(size_t result, int error) = 0;
-// };
-// 
-// 
+
+
+class Task {
+    public:
+        static int callback(size_t result, int error, void *data) {
+            std::unique_ptr<Task> t(static_cast<Task*>(data));
+            try {
+                (*t)(result, error);
+                return 0;
+            } catch (std::system_error &e) {
+                return -e.code().value();
+            }
+        }
+
+        Task() {}
+        Task(const Task &) = delete;
+        Task(Task &&) = delete;
+        virtual ~Task() = default;
+
+        Task& operator=(const Task &) = delete;
+        Task& operator=(Task &&) = delete;
+
+        virtual void operator()(size_t result, int error) = 0;
+};
+
+
+class TaskPoll final: public Task {
+    protected:
+        rawstor::vhost::Client &_client;
+
+    public:
+        TaskPoll(rawstor::vhost::Client &client):
+            _client(client)
+        {}
+
+        unsigned int mask() {
+            return POLLIN;
+        }
+
+        void operator()(size_t, int error);
+};
+
+
 // class TaskScalar: public Task {
 //     public:
 //         TaskScalar(const std::shared_ptr<ClientOp> &op):
 //             Task(op)
 //         {}
-// 
+//
 //         virtual void* buf() noexcept = 0;
 //         virtual size_t size() const noexcept = 0;
 // };
-// 
-// 
+//
+//
 // class TaskVector: public Task {
 //     public:
 //         TaskVector(const std::shared_ptr<ClientOp> &op):
 //             Task(op)
 //         {}
-// 
+//
 //         virtual iovec* iov() noexcept = 0;
 //         virtual unsigned int niov() const noexcept = 0;
 //         virtual size_t size() const noexcept = 0;
 // };
-// 
-// 
+
+
+void poll(int fd, std::unique_ptr<TaskPoll> t) {
+    int res = rawstor_fd_poll(
+        fd, t->mask(),
+        t->callback, t.get());
+    if (res) {
+        RAWSTOR_THROW_SYSTEM_ERROR(-res);
+    }
+    t.release();
+}
+
+
+void TaskPoll::operator()(size_t, int error) {
+    if (error != 0) {
+        RAWSTOR_THROW_SYSTEM_ERROR(error);
+    }
+
+    _client.dispatch();
+
+    std::unique_ptr<TaskPoll> t =
+        std::make_unique<TaskPoll>(_client);
+    poll(_client.fd(), std::move(t));
+}
+
+
 // void read(int fd, std::unique_ptr<TaskScalar> t) {
 //     int res = rawstor_fd_read(
 //         fd, t->buf(), t->size(),
@@ -130,8 +164,8 @@ namespace {
 //     }
 //     t.release();
 // }
-// 
-// 
+//
+//
 // void write(int fd, std::unique_ptr<TaskVector> t) {
 //     int res = rawstor_fd_writev(
 //         fd, t->iov(), t->niov(), t->size(),
@@ -141,12 +175,12 @@ namespace {
 //     }
 //     t.release();
 // }
-// 
-// 
+//
+//
 // class TaskWriteMsg: public TaskVector {
 //     private:
 //         iovec _iov[2];
-// 
+//
 //     public:
 //         TaskWriteMsg(
 //             const std::shared_ptr<ClientOp> &op,
@@ -166,36 +200,36 @@ namespace {
 //             op->header().size = payload_size;
 //             op->header().flags = VHOST_USER_VERSION | VHOST_USER_REPLY_MASK;
 //         }
-// 
+//
 //         void operator()(size_t result, int error) override {
 //             if (error != 0) {
 //                 RAWSTOR_THROW_SYSTEM_ERROR(error);
 //             }
-// 
+//
 //             if (result != size()) {
 //                 rawstor_error("Unexpected response size: %zu\n", result);
 //                 RAWSTOR_THROW_SYSTEM_ERROR(EPROTO);
 //             }
-// 
+//
 //             rawstor_debug("Message sent: %zu bytes\n", result);
 //         }
-// 
+//
 //         iovec* iov() noexcept override {
 //             return _iov;
 //         }
-// 
+//
 //         unsigned int niov() const noexcept override {
 //             return 2;
 //         }
-// 
+//
 //         size_t size() const noexcept override {
 //             return _iov[0].iov_len + _iov[1].iov_len;
 //         }
-// 
+//
 //         virtual std::string str() const = 0;
 // };
-// 
-// 
+//
+//
 // class TaskWriteU64: public TaskWriteMsg {
 //     public:
 //         TaskWriteU64(const std::shared_ptr<ClientOp> &op, uint64_t u64):
@@ -203,15 +237,15 @@ namespace {
 //         {
 //             _op->payload().u64 = u64;
 //         }
-// 
+//
 //         std::string str() const override {
 //             std::ostringstream oss;
 //             oss << "u64: 0x" << std::hex << _op->payload().u64;
 //             return oss.str();
 //         }
 // };
-// 
-// 
+//
+//
 // class TaskWriteGetFeatures final: public TaskWriteU64 {
 //     public:
 //         TaskWriteGetFeatures(const std::shared_ptr<ClientOp> &op):
@@ -225,15 +259,15 @@ namespace {
 //                 1ull << VIRTIO_RING_F_INDIRECT_DESC |
 //                 1ull << VIRTIO_RING_F_EVENT_IDX |
 //                 1ull << VIRTIO_F_VERSION_1 |
-// 
+//
 //                 /* vhost-user feature bits */
 //                 1ull << VHOST_F_LOG_ALL |
 //                 1ull << VHOST_USER_F_PROTOCOL_FEATURES
 //             )
 //         {}
 // };
-// 
-// 
+//
+//
 // class TaskWriteGetProtocolFeatures final: public TaskWriteU64 {
 //     public:
 //         TaskWriteGetProtocolFeatures(const std::shared_ptr<ClientOp> &op):
@@ -261,8 +295,8 @@ namespace {
 //             )
 //         {}
 // };
-// 
-// 
+//
+//
 // std::unique_ptr<TaskWriteMsg> response(const std::shared_ptr<ClientOp> &op) {
 //     switch (op->header().request) {
 //         case VHOST_USER_GET_FEATURES:
@@ -286,7 +320,7 @@ namespace {
 //             rawstor_error("Unexpected request: %d\n", op->header().request);
 //             return nullptr;
 //     };
-// 
+//
 //     // if (op->header().flags & VHOST_USER_NEED_REPLY_MASK) {
 //     //     msg->payload.u64 = 0;
 //     //     msg->size = sizeof(msg->payload.u64);
@@ -294,47 +328,47 @@ namespace {
 //     //     response = 1;
 //     // }
 // }
-// 
-// 
+//
+//
 // void dispatch(const std::shared_ptr<ClientOp> &op) {
 //     rawstor_debug("============= Vhost user message =============\n");
 //     rawstor_debug("Request: %d\n", op->header().request);
 //     rawstor_debug("Flags:   0x%x\n", op->header().flags);
 //     rawstor_debug("Size:    %u\n", op->header().size);
-// 
+//
 //     std::unique_ptr<TaskWriteMsg> t = response(op);
 //     if (t.get() != nullptr) {
 //         rawstor_debug(
 //             "Sending back to guest %s\n", t->str().c_str());
 //         write(op->client().fd(), std::move(t));
 //     }
-// 
+//
 //     rawstor_debug("==============================================\n");
 // }
-// 
-// 
+//
+//
 // class TaskReadUserHeader final: public TaskScalar {
 //     public:
 //         TaskReadUserHeader(const std::shared_ptr<ClientOp> &op):
 //             TaskScalar(op)
 //         {}
-// 
+//
 //         inline void* buf() noexcept override {
 //             return &_op->header();
 //         }
-// 
+//
 //         size_t size() const noexcept override {
 //             return sizeof(_op->header());
 //         }
-// 
+//
 //         void operator()(size_t result, int error) override;
 // };
-// 
-// 
+//
+//
 // class TaskReadUserPayload final: public TaskScalar {
 //     private:
 //         size_t _payload_size;
-// 
+//
 //     public:
 //         TaskReadUserPayload(
 //             const std::shared_ptr<ClientOp> &op,
@@ -342,29 +376,29 @@ namespace {
 //             TaskScalar(op),
 //             _payload_size(payload_size)
 //         {}
-// 
+//
 //         inline void* buf() noexcept override {
 //             return &_op->payload();
 //         }
-// 
+//
 //         size_t size() const noexcept override {
 //             return _payload_size;
 //         }
-// 
+//
 //         void operator()(size_t result, int error) override;
 // };
-// 
-// 
+//
+//
 // void TaskReadUserHeader::operator()(size_t result, int error) {
 //     if (error != 0) {
 //         RAWSTOR_THROW_SYSTEM_ERROR(error);
 //     }
-// 
+//
 //     if (result != size()) {
 //         rawstor_error("Unexpected request header size: %zu\n", result);
 //         RAWSTOR_THROW_SYSTEM_ERROR(EPROTO);
 //     }
-// 
+//
 //     if (_op->header().size != 0) {
 //         if (_op->header().size > sizeof(VhostUserPayload)) {
 //             rawstor_error(
@@ -378,29 +412,29 @@ namespace {
 //         read(_op->client().fd(), std::move(t));
 //         return;
 //     }
-// 
+//
 //     dispatch(_op);
-// 
+//
 //     std::shared_ptr<ClientOp> op =
 //         std::make_shared<ClientOp>(_op->client());
 //     std::unique_ptr<TaskReadUserHeader> t =
 //         std::make_unique<TaskReadUserHeader>(op);
 //     read(op->client().fd(), std::move(t));
 // }
-// 
-// 
+//
+//
 // void TaskReadUserPayload::operator()(size_t result, int error) {
 //     if (error != 0) {
 //         RAWSTOR_THROW_SYSTEM_ERROR(error);
 //     }
-// 
+//
 //     if (result != size()) {
 //         rawstor_error("Unexpected request payload size: %zu\n", result);
 //         RAWSTOR_THROW_SYSTEM_ERROR(EPROTO);
 //     }
-// 
+//
 //     dispatch(_op);
-// 
+//
 //     std::shared_ptr<ClientOp> op =
 //         std::make_shared<ClientOp>(_op->client());
 //     std::unique_ptr<TaskReadUserHeader> t =
@@ -409,8 +443,8 @@ namespace {
 // }
 
 
-void panic(VuDev *, const char *) {
-    abort();
+void panic(VuDev *, const char *err) {
+    rawstor_error("libvhost-user: %s\n", err);
 }
 
 void set_watch(VuDev *, int, int, vu_watch_cb, void *) {
@@ -422,44 +456,84 @@ void remove_watch(VuDev *, int) {
 }
 
 
+uint64_t get_features(VuDev *dev) {
+    rawstor::vhost::Client *c = rawstor::vhost::Client::get(dev->sock);
+    return c->get_features();
+}
+
+
+void set_features(VuDev *dev, uint64_t features) {
+    rawstor::vhost::Client *c = rawstor::vhost::Client::get(dev->sock);
+    c->set_features(features);
+}
+
+
+uint64_t get_protocol_features(VuDev *dev) {
+    rawstor::vhost::Client *c = rawstor::vhost::Client::get(dev->sock);
+    return c->get_protocol_features();
+}
+
+
+void set_protocol_features(VuDev *dev, uint64_t features) {
+    rawstor::vhost::Client *c = rawstor::vhost::Client::get(dev->sock);
+    c->set_protocol_features(features);
+}
+
 
 } // unnamed
 
 namespace rawstor {
 namespace vhost {
 
+
+std::unordered_map<int, Client*> Client::_clients;
+
+
 Client::Client(int fd):
     _fd(fd),
-    _backend_fd(-1),
+    _iface {
+        .get_features = ::get_features,
+        .set_features = ::set_features,
+        .get_protocol_features = nullptr,
+        .set_protocol_features = nullptr,
+        .process_msg = nullptr,
+        .queue_set_started = nullptr,
+        .queue_is_processed_in_order = nullptr,
+        .get_config = nullptr,
+        .set_config = nullptr,
+        .get_shared_object = nullptr,
+    },
     _features(0)
 {
-    VuDev dev;
+    _clients.insert(std::pair<int, Client*>(_fd, this));
+
     bool res = vu_init(
-        &dev, 2, _fd, panic, nullptr, set_watch, remove_watch, nullptr);
+        &_dev, 1, _fd, panic, nullptr, set_watch, remove_watch, &_iface);
     assert(res == true);
-    vu_deinit(&dev);
 }
 
 
 Client::~Client() {
-    try {
-        if (close(_fd)) {
-            RAWSTOR_THROW_ERRNO();
-        }
-    } catch (std::exception &e) {
-        std::ostringstream oss;
-        oss << "Failed to close socket: " << e.what();
-        rawstor_error("%s\n", oss.str().c_str());
-    }
+    vu_deinit(&_dev);
+    _clients.erase(_fd);
+}
+
+
+Client* Client::get(int fd) {
+    return _clients.at(fd);
+}
+
+
+void Client::dispatch() {
+    bool res = vu_dispatch(&_dev);
+    assert(res == true);
 }
 
 
 void Client::loop() {
-    /*
-    std::shared_ptr<ClientOp> op = std::make_shared<ClientOp>(*this);
-    std::unique_ptr<TaskReadUserHeader> t =
-        std::make_unique<TaskReadUserHeader>(op);
-    read(_fd, std::move(t));
+    std::unique_ptr<TaskPoll> t =
+        std::make_unique<TaskPoll>(*this);
+    poll(_fd, std::move(t));
 
     while (!rawstor_empty()) {
         int res = rawstor_wait();
@@ -472,7 +546,6 @@ void Client::loop() {
             RAWSTOR_THROW_SYSTEM_ERROR(-res);
         }
     }
-    */
 }
 
 
