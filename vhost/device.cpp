@@ -1,7 +1,8 @@
-#include "client.hpp"
+#include "device.hpp"
 
 extern "C" {
 #include "libvhost-user.h"
+#include "standard-headers/linux/virtio_blk.h"
 }
 
 #include <rawstorstd/gpp.hpp>
@@ -68,6 +69,9 @@ namespace {
 
 
 class Task {
+    protected:
+        rawstor::vhost::Device &_device;
+
     public:
         static int callback(size_t result, int error, void *data) {
             std::unique_ptr<Task> t(static_cast<Task*>(data));
@@ -79,7 +83,7 @@ class Task {
             }
         }
 
-        Task() {}
+        Task(rawstor::vhost::Device &device): _device(device) {}
         Task(const Task &) = delete;
         Task(Task &&) = delete;
         virtual ~Task() = default;
@@ -91,20 +95,75 @@ class Task {
 };
 
 
-class TaskPoll final: public Task {
-    protected:
-        rawstor::vhost::Client &_client;
-
+class TaskPoll: public Task {
     public:
-        TaskPoll(rawstor::vhost::Client &client):
-            _client(client)
+        TaskPoll(rawstor::vhost::Device &device):
+            Task(device)
+        {}
+        virtual ~TaskPoll() override = default;
+
+        virtual unsigned int mask() = 0;
+};
+
+
+void poll(int fd, std::unique_ptr<TaskPoll> t) {
+    int res = rawstor_fd_poll(
+        fd, t->mask(),
+        t->callback, t.get());
+    if (res) {
+        RAWSTOR_THROW_SYSTEM_ERROR(-res);
+    }
+    t.release();
+}
+
+
+class TaskDispatch final: public TaskPoll {
+    public:
+        TaskDispatch(rawstor::vhost::Device &device):
+            TaskPoll(device)
         {}
 
-        unsigned int mask() {
+        unsigned int mask() override {
             return POLLIN;
         }
 
-        void operator()(size_t, int error);
+        void operator()(size_t, int error) override;
+};
+
+
+class TaskWatch final: public TaskPoll {
+    private:
+        int _fd;
+        int _condition;
+        int _mask;
+        vu_watch_cb _cb;
+        void *_data;
+
+    public:
+        TaskWatch(
+            rawstor::vhost::Device &device,
+            int fd, int condition, vu_watch_cb cb, void *data):
+            TaskPoll(device),
+            _fd(fd),
+            _condition(condition),
+            _mask(0),
+            _cb(cb),
+            _data(data)
+        {
+            printf("condition = %d\n", _condition);
+            if (_condition & VU_WATCH_IN) {
+                _mask |= POLLIN;
+            }
+            if (_condition & VU_WATCH_OUT) {
+                _mask |= POLLOUT;
+            }
+        }
+
+        unsigned int mask() override {
+            return _mask;
+        }
+
+        void operator()(size_t, int error) override;
 };
 
 
@@ -131,27 +190,39 @@ class TaskPoll final: public Task {
 // };
 
 
-void poll(int fd, std::unique_ptr<TaskPoll> t) {
-    int res = rawstor_fd_poll(
-        fd, t->mask(),
-        t->callback, t.get());
-    if (res) {
-        RAWSTOR_THROW_SYSTEM_ERROR(-res);
-    }
-    t.release();
-}
-
-
-void TaskPoll::operator()(size_t, int error) {
+void TaskDispatch::operator()(size_t result, int error) {
     if (error != 0) {
         RAWSTOR_THROW_SYSTEM_ERROR(error);
     }
 
-    _client.dispatch();
+    if (!(result & POLLIN)) {
+        // TODO: Throw error here
+    }
 
-    std::unique_ptr<TaskPoll> t =
-        std::make_unique<TaskPoll>(_client);
-    poll(_client.fd(), std::move(t));
+    _device.dispatch();
+
+    std::unique_ptr<TaskDispatch> t =
+        std::make_unique<TaskDispatch>(_device);
+    poll(_device.dev()->sock, std::move(t));
+}
+
+
+void TaskWatch::operator()(size_t result, int error) {
+    if (error != 0) {
+        RAWSTOR_THROW_SYSTEM_ERROR(error);
+    }
+
+    if (!(result & _mask)) {
+        // TODO: Throw error here
+    }
+
+    if (_device.get_watch(_fd)) {
+        _cb(_device.dev(), _condition, _data);
+
+        std::unique_ptr<TaskWatch> t =
+            std::make_unique<TaskWatch>(_device, _fd, _condition, _cb, _data);
+        poll(_fd, std::move(t));
+    }
 }
 
 
@@ -447,36 +518,65 @@ void panic(VuDev *, const char *err) {
     rawstor_error("libvhost-user: %s\n", err);
 }
 
-void set_watch(VuDev *, int, int, vu_watch_cb, void *) {
-    abort();
+void set_watch(VuDev *dev, int fd, int condition, vu_watch_cb cb, void *data) {
+    rawstor::vhost::Device *d = rawstor::vhost::Device::get(dev->sock);
+    d->set_watch(fd, condition, cb, data);
 }
 
-void remove_watch(VuDev *, int) {
-    abort();
+void remove_watch(VuDev *dev, int fd) {
+    rawstor::vhost::Device *d = rawstor::vhost::Device::get(dev->sock);
+    d->remove_watch(fd);
 }
 
 
 uint64_t get_features(VuDev *dev) {
-    rawstor::vhost::Client *c = rawstor::vhost::Client::get(dev->sock);
-    return c->get_features();
+    rawstor::vhost::Device *d = rawstor::vhost::Device::get(dev->sock);
+    return d->get_features();
 }
 
 
 void set_features(VuDev *dev, uint64_t features) {
-    rawstor::vhost::Client *c = rawstor::vhost::Client::get(dev->sock);
-    c->set_features(features);
+    rawstor::vhost::Device *d = rawstor::vhost::Device::get(dev->sock);
+    d->set_features(features);
 }
 
 
 uint64_t get_protocol_features(VuDev *dev) {
-    rawstor::vhost::Client *c = rawstor::vhost::Client::get(dev->sock);
-    return c->get_protocol_features();
+    rawstor::vhost::Device *d = rawstor::vhost::Device::get(dev->sock);
+    return d->get_protocol_features();
 }
 
 
 void set_protocol_features(VuDev *dev, uint64_t features) {
-    rawstor::vhost::Client *c = rawstor::vhost::Client::get(dev->sock);
-    c->set_protocol_features(features);
+    rawstor::vhost::Device *d = rawstor::vhost::Device::get(dev->sock);
+    d->set_protocol_features(features);
+}
+
+
+int get_config(VuDev *dev, uint8_t *config, uint32_t len) {
+    rawstor::vhost::Device *d = rawstor::vhost::Device::get(dev->sock);
+    try {
+        d->get_config(config, len);
+        return 0;
+    } catch (const std::exception &e) {
+        rawstor_error("%s\n", e.what());
+        return -1;
+    }
+}
+
+
+int set_config(
+    VuDev *dev, const uint8_t *data,
+    uint32_t offset, uint32_t size, uint32_t flags)
+{
+    rawstor::vhost::Device *d = rawstor::vhost::Device::get(dev->sock);
+    try {
+        d->set_config(data, offset, size, flags);
+        return 0;
+    } catch (const std::exception &e) {
+        rawstor_error("%s\n", e.what());
+        return -1;
+    }
 }
 
 
@@ -486,54 +586,108 @@ namespace rawstor {
 namespace vhost {
 
 
-std::unordered_map<int, Client*> Client::_clients;
+std::unordered_map<int, Device*> Device::_devices;
 
 
-Client::Client(int fd):
-    _fd(fd),
+Device::Device(int fd):
     _iface {
         .get_features = ::get_features,
         .set_features = ::set_features,
-        .get_protocol_features = nullptr,
-        .set_protocol_features = nullptr,
+        .get_protocol_features = ::get_protocol_features,
+        .set_protocol_features = ::set_protocol_features,
         .process_msg = nullptr,
         .queue_set_started = nullptr,
         .queue_is_processed_in_order = nullptr,
-        .get_config = nullptr,
-        .set_config = nullptr,
+        .get_config = ::get_config,
+        .set_config = ::set_config,
         .get_shared_object = nullptr,
     },
-    _features(0)
+    _features(0),
+    _blk_config(std::make_unique<virtio_blk_config>())
 {
-    _clients.insert(std::pair<int, Client*>(_fd, this));
-
     bool res = vu_init(
-        &_dev, 1, _fd, panic, nullptr, set_watch, remove_watch, &_iface);
+        &_dev, 1, fd, panic, nullptr, ::set_watch, ::remove_watch, &_iface);
     assert(res == true);
+
+    _devices.insert(std::pair<int, Device*>(fd, this));
 }
 
 
-Client::~Client() {
+Device::~Device() {
+    _devices.erase(_dev.sock);
     vu_deinit(&_dev);
-    _clients.erase(_fd);
 }
 
 
-Client* Client::get(int fd) {
-    return _clients.at(fd);
+Device* Device::get(int fd) {
+    return _devices.at(fd);
 }
 
 
-void Client::dispatch() {
+void Device::dispatch() {
     bool res = vu_dispatch(&_dev);
     assert(res == true);
 }
 
 
-void Client::loop() {
-    std::unique_ptr<TaskPoll> t =
-        std::make_unique<TaskPoll>(*this);
-    poll(_fd, std::move(t));
+void Device::get_config(uint8_t *config, uint32_t len) const {
+    if (len > sizeof(virtio_blk_config)) {
+        std::ostringstream oss;
+        oss << "virtio_blk_config struct is smaller than expected: "
+            << sizeof(virtio_blk_config) << " < " << len;
+        throw std::runtime_error(oss.str());
+    }
+
+    memcpy(config, _blk_config.get(), len);
+}
+
+
+void Device::set_config(
+    const uint8_t *data,
+    uint32_t offset, uint32_t size, uint32_t flags)
+{
+    /* don't support live migration */
+    if (flags != VHOST_SET_CONFIG_TYPE_FRONTEND) {
+        RAWSTOR_THROW_SYSTEM_ERROR(EINVAL);
+    }
+
+    if (offset != offsetof(virtio_blk_config, wce)) {
+        RAWSTOR_THROW_SYSTEM_ERROR(EINVAL);
+    }
+
+    if (size != 1) {
+        RAWSTOR_THROW_SYSTEM_ERROR(EINVAL);
+    }
+
+    _blk_config->wce = *data;
+}
+
+
+void Device::set_watch(int fd, int condition, vu_watch_cb cb, void *data) {
+    _watches.insert(std::pair<int, int>(fd, condition));
+    std::unique_ptr<TaskWatch> t =
+        std::make_unique<TaskWatch>(*this, fd, condition, cb, data);
+    poll(fd, std::move(t));
+}
+
+void Device::remove_watch(int fd) {
+    _watches.erase(fd);
+}
+
+
+int Device::get_watch(int fd) const noexcept {
+    const auto &it = _watches.find(fd);
+    if (it == _watches.end()) {
+        return 0;
+    }
+    return it->second;
+}
+
+
+void Device::loop() {
+    std::unique_ptr<TaskDispatch> t =
+        std::make_unique<TaskDispatch>(*this);
+    poll(_dev.sock, std::move(t));
 
     while (!rawstor_empty()) {
         int res = rawstor_wait();
