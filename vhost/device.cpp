@@ -34,40 +34,6 @@ extern "C" {
 namespace {
 
 
-// class ClientOp {
-//     private:
-//         rawstor::vhost::Client &_client;
-//         VhostUserHeader _header;
-//         VhostUserPayload _payload;
-//         VhostUserFds _fds;
-//
-//     public:
-//         ClientOp(rawstor::vhost::Client &client):
-//             _client(client)
-//         {}
-//         ClientOp(const ClientOp &) = delete;
-//         ClientOp(ClientOp &&) = delete;
-//         ClientOp& operator=(const ClientOp &) = delete;
-//         ClientOp& operator=(ClientOp &&) = delete;
-//
-//         inline rawstor::vhost::Client& client() noexcept {
-//             return _client;
-//         }
-//
-//         inline VhostUserHeader& header() noexcept {
-//             return _header;
-//         }
-//
-//         inline VhostUserPayload& payload() noexcept {
-//             return _payload;
-//         }
-//
-//         inline VhostUserFds& fds() noexcept {
-//             return _fds;
-//         }
-// };
-
-
 class Task {
     protected:
         rawstor::vhost::Device &_device;
@@ -150,7 +116,6 @@ class TaskWatch final: public TaskPoll {
             _cb(cb),
             _data(data)
         {
-            printf("condition = %d\n", _condition);
             if (_condition & VU_WATCH_IN) {
                 _mask |= POLLIN;
             }
@@ -165,29 +130,6 @@ class TaskWatch final: public TaskPoll {
 
         void operator()(size_t, int error) override;
 };
-
-
-// class TaskScalar: public Task {
-//     public:
-//         TaskScalar(const std::shared_ptr<ClientOp> &op):
-//             Task(op)
-//         {}
-//
-//         virtual void* buf() noexcept = 0;
-//         virtual size_t size() const noexcept = 0;
-// };
-//
-//
-// class TaskVector: public Task {
-//     public:
-//         TaskVector(const std::shared_ptr<ClientOp> &op):
-//             Task(op)
-//         {}
-//
-//         virtual iovec* iov() noexcept = 0;
-//         virtual unsigned int niov() const noexcept = 0;
-//         virtual size_t size() const noexcept = 0;
-// };
 
 
 void TaskDispatch::operator()(size_t result, int error) {
@@ -224,294 +166,6 @@ void TaskWatch::operator()(size_t result, int error) {
         poll(_fd, std::move(t));
     }
 }
-
-
-// void read(int fd, std::unique_ptr<TaskScalar> t) {
-//     int res = rawstor_fd_read(
-//         fd, t->buf(), t->size(),
-//         t->callback, t.get());
-//     if (res) {
-//         RAWSTOR_THROW_SYSTEM_ERROR(-res);
-//     }
-//     t.release();
-// }
-//
-//
-// void write(int fd, std::unique_ptr<TaskVector> t) {
-//     int res = rawstor_fd_writev(
-//         fd, t->iov(), t->niov(), t->size(),
-//         t->callback, t.get());
-//     if (res) {
-//         RAWSTOR_THROW_SYSTEM_ERROR(-res);
-//     }
-//     t.release();
-// }
-//
-//
-// class TaskWriteMsg: public TaskVector {
-//     private:
-//         iovec _iov[2];
-//
-//     public:
-//         TaskWriteMsg(
-//             const std::shared_ptr<ClientOp> &op,
-//             size_t payload_size):
-//             TaskVector(op),
-//             _iov {
-//                 {
-//                     .iov_base = &op->header(),
-//                     .iov_len = sizeof(op->header()),
-//                 },
-//                 {
-//                     .iov_base = &op->payload(),
-//                     .iov_len = payload_size,
-//                 }
-//             }
-//         {
-//             op->header().size = payload_size;
-//             op->header().flags = VHOST_USER_VERSION | VHOST_USER_REPLY_MASK;
-//         }
-//
-//         void operator()(size_t result, int error) override {
-//             if (error != 0) {
-//                 RAWSTOR_THROW_SYSTEM_ERROR(error);
-//             }
-//
-//             if (result != size()) {
-//                 rawstor_error("Unexpected response size: %zu\n", result);
-//                 RAWSTOR_THROW_SYSTEM_ERROR(EPROTO);
-//             }
-//
-//             rawstor_debug("Message sent: %zu bytes\n", result);
-//         }
-//
-//         iovec* iov() noexcept override {
-//             return _iov;
-//         }
-//
-//         unsigned int niov() const noexcept override {
-//             return 2;
-//         }
-//
-//         size_t size() const noexcept override {
-//             return _iov[0].iov_len + _iov[1].iov_len;
-//         }
-//
-//         virtual std::string str() const = 0;
-// };
-//
-//
-// class TaskWriteU64: public TaskWriteMsg {
-//     public:
-//         TaskWriteU64(const std::shared_ptr<ClientOp> &op, uint64_t u64):
-//             TaskWriteMsg(op, sizeof(op->payload().u64))
-//         {
-//             _op->payload().u64 = u64;
-//         }
-//
-//         std::string str() const override {
-//             std::ostringstream oss;
-//             oss << "u64: 0x" << std::hex << _op->payload().u64;
-//             return oss.str();
-//         }
-// };
-//
-//
-// class TaskWriteGetFeatures final: public TaskWriteU64 {
-//     public:
-//         TaskWriteGetFeatures(const std::shared_ptr<ClientOp> &op):
-//             TaskWriteU64(
-//                 op,
-//                 /*
-//                  * The following VIRTIO feature bits are supported by our
-//                  * virtqueue implementation:
-//                  */
-//                 1ull << VIRTIO_F_NOTIFY_ON_EMPTY |
-//                 1ull << VIRTIO_RING_F_INDIRECT_DESC |
-//                 1ull << VIRTIO_RING_F_EVENT_IDX |
-//                 1ull << VIRTIO_F_VERSION_1 |
-//
-//                 /* vhost-user feature bits */
-//                 1ull << VHOST_F_LOG_ALL |
-//                 1ull << VHOST_USER_F_PROTOCOL_FEATURES
-//             )
-//         {}
-// };
-//
-//
-// class TaskWriteGetProtocolFeatures final: public TaskWriteU64 {
-//     public:
-//         TaskWriteGetProtocolFeatures(const std::shared_ptr<ClientOp> &op):
-//             TaskWriteU64(
-//                 op,
-//                 /*
-//                 * Note that we support, but intentionally do not set,
-//                 * VHOST_USER_PROTOCOL_F_INBAND_NOTIFICATIONS. This means that
-//                 * a device implementation can return it in its callback
-//                 * (get_protocol_features) if it wants to use this for
-//                 * simulation, but it is otherwise not desirable (if even
-//                 * implemented by the frontend.)
-//                 */
-//                 (
-//                     1ull << VHOST_USER_PROTOCOL_F_MQ |
-//                     1ull << VHOST_USER_PROTOCOL_F_LOG_SHMFD |
-//                     1ull << VHOST_USER_PROTOCOL_F_BACKEND_REQ |
-//                     1ull << VHOST_USER_PROTOCOL_F_HOST_NOTIFIER |
-//                     1ull << VHOST_USER_PROTOCOL_F_BACKEND_SEND_FD |
-//                     1ull << VHOST_USER_PROTOCOL_F_REPLY_ACK |
-//                     1ull << VHOST_USER_PROTOCOL_F_CONFIGURE_MEM_SLOTS |
-//                     1ull << VHOST_USER_PROTOCOL_F_CONFIG
-//                 ) |
-//                 op->client().get_features()
-//             )
-//         {}
-// };
-//
-//
-// std::unique_ptr<TaskWriteMsg> response(const std::shared_ptr<ClientOp> &op) {
-//     switch (op->header().request) {
-//         case VHOST_USER_GET_FEATURES:
-//             return std::make_unique<TaskWriteGetFeatures>(op);
-//         case VHOST_USER_GET_PROTOCOL_FEATURES:
-//             return std::make_unique<TaskWriteGetProtocolFeatures>(op);
-//         case VHOST_USER_SET_PROTOCOL_FEATURES:
-//             {
-//                 rawstor_debug(
-//                     "Setting features u64: 0x%llx\n", op->payload().u64);
-//                 op->client().set_features(op->payload().u64);
-//                 return nullptr;
-//             }
-//         case VHOST_USER_GET_QUEUE_NUM:
-//             return std::make_unique<TaskWriteU64>(op, 1);
-//         // case VHOST_USER_SET_BACKEND_REQ_FD:
-//         case VHOST_USER_GET_MAX_MEM_SLOTS:
-//             return std::make_unique<TaskWriteU64>(
-//                 op, op->client().get_max_mem_slots());
-//         default:
-//             rawstor_error("Unexpected request: %d\n", op->header().request);
-//             return nullptr;
-//     };
-//
-//     // if (op->header().flags & VHOST_USER_NEED_REPLY_MASK) {
-//     //     msg->payload.u64 = 0;
-//     //     msg->size = sizeof(msg->payload.u64);
-//     //     msg->fd_num = 0;
-//     //     response = 1;
-//     // }
-// }
-//
-//
-// void dispatch(const std::shared_ptr<ClientOp> &op) {
-//     rawstor_debug("============= Vhost user message =============\n");
-//     rawstor_debug("Request: %d\n", op->header().request);
-//     rawstor_debug("Flags:   0x%x\n", op->header().flags);
-//     rawstor_debug("Size:    %u\n", op->header().size);
-//
-//     std::unique_ptr<TaskWriteMsg> t = response(op);
-//     if (t.get() != nullptr) {
-//         rawstor_debug(
-//             "Sending back to guest %s\n", t->str().c_str());
-//         write(op->client().fd(), std::move(t));
-//     }
-//
-//     rawstor_debug("==============================================\n");
-// }
-//
-//
-// class TaskReadUserHeader final: public TaskScalar {
-//     public:
-//         TaskReadUserHeader(const std::shared_ptr<ClientOp> &op):
-//             TaskScalar(op)
-//         {}
-//
-//         inline void* buf() noexcept override {
-//             return &_op->header();
-//         }
-//
-//         size_t size() const noexcept override {
-//             return sizeof(_op->header());
-//         }
-//
-//         void operator()(size_t result, int error) override;
-// };
-//
-//
-// class TaskReadUserPayload final: public TaskScalar {
-//     private:
-//         size_t _payload_size;
-//
-//     public:
-//         TaskReadUserPayload(
-//             const std::shared_ptr<ClientOp> &op,
-//             size_t payload_size):
-//             TaskScalar(op),
-//             _payload_size(payload_size)
-//         {}
-//
-//         inline void* buf() noexcept override {
-//             return &_op->payload();
-//         }
-//
-//         size_t size() const noexcept override {
-//             return _payload_size;
-//         }
-//
-//         void operator()(size_t result, int error) override;
-// };
-//
-//
-// void TaskReadUserHeader::operator()(size_t result, int error) {
-//     if (error != 0) {
-//         RAWSTOR_THROW_SYSTEM_ERROR(error);
-//     }
-//
-//     if (result != size()) {
-//         rawstor_error("Unexpected request header size: %zu\n", result);
-//         RAWSTOR_THROW_SYSTEM_ERROR(EPROTO);
-//     }
-//
-//     if (_op->header().size != 0) {
-//         if (_op->header().size > sizeof(VhostUserPayload)) {
-//             rawstor_error(
-//                 "Unexpected request payload size: %u\n",
-//                 (unsigned int)_op->header().size);
-//             RAWSTOR_THROW_SYSTEM_ERROR(EPROTO);
-//         }
-//         std::unique_ptr<TaskReadUserPayload> t =
-//             std::make_unique<TaskReadUserPayload>(
-//                 _op, _op->header().size);
-//         read(_op->client().fd(), std::move(t));
-//         return;
-//     }
-//
-//     dispatch(_op);
-//
-//     std::shared_ptr<ClientOp> op =
-//         std::make_shared<ClientOp>(_op->client());
-//     std::unique_ptr<TaskReadUserHeader> t =
-//         std::make_unique<TaskReadUserHeader>(op);
-//     read(op->client().fd(), std::move(t));
-// }
-//
-//
-// void TaskReadUserPayload::operator()(size_t result, int error) {
-//     if (error != 0) {
-//         RAWSTOR_THROW_SYSTEM_ERROR(error);
-//     }
-//
-//     if (result != size()) {
-//         rawstor_error("Unexpected request payload size: %zu\n", result);
-//         RAWSTOR_THROW_SYSTEM_ERROR(EPROTO);
-//     }
-//
-//     dispatch(_op);
-//
-//     std::shared_ptr<ClientOp> op =
-//         std::make_shared<ClientOp>(_op->client());
-//     std::unique_ptr<TaskReadUserHeader> t =
-//         std::make_unique<TaskReadUserHeader>(op);
-//     read(op->client().fd(), std::move(t));
-// }
 
 
 void panic(VuDev *, const char *err) {
@@ -589,25 +243,86 @@ namespace vhost {
 std::unordered_map<int, Device*> Device::_devices;
 
 
-Device::Device(int fd):
+Device::Device(const std::string &object_uris, int fd):
     _iface {
         .get_features = ::get_features,
-        .set_features = ::set_features,
+        .set_features = ::set_features, // not required
         .get_protocol_features = ::get_protocol_features,
         .set_protocol_features = ::set_protocol_features,
         .process_msg = nullptr,
-        .queue_set_started = nullptr,
+        .queue_set_started = nullptr, // implement
         .queue_is_processed_in_order = nullptr,
         .get_config = ::get_config,
         .set_config = ::set_config,
         .get_shared_object = nullptr,
     },
-    _features(0),
+    _features(
+        VIRTIO_BLK_F_SIZE_MAX |
+        VIRTIO_BLK_F_SEG_MAX |
+        VIRTIO_BLK_F_BLK_SIZE |
+        VIRTIO_BLK_F_TOPOLOGY |
+        VIRTIO_BLK_F_MQ |
+        // VIRTIO_BLK_F_FLUSH |
+        // VIRTIO_BLK_F_DISCARD |
+        // VIRTIO_BLK_F_WRITE_ZEROES |
+        VIRTIO_BLK_F_CONFIG_WCE
+    ),
     _blk_config(std::make_unique<virtio_blk_config>())
 {
-    bool res = vu_init(
+    memset(_blk_config.get(), 0, sizeof(*_blk_config.get()));
+
+    int ires = rawstor_object_spec(object_uris.c_str(), &_spec);
+    if (ires) {
+        RAWSTOR_THROW_SYSTEM_ERROR(-ires);
+    }
+
+    _blk_config->capacity = _spec.size >> 9;
+
+    _blk_config->size_max = 1 << 16; // VIRTIO_BLK_F_SIZE_MAX
+
+    _blk_config->seg_max = 1 << 7 - 2; // VIRTIO_BLK_F_SEG_MAX
+
+    _blk_config->geometry = { // VIRTIO_BLK_F_GEOMETRY
+        .cylinders = 0,
+        .heads = 0,
+        .sectors = 0,
+    };
+
+    _blk_config->blk_size = 1 << 9; // VIRTIO_BLK_F_BLK_SIZE
+
+	_blk_config->physical_block_exp = 0; // VIRTIO_BLK_F_TOPOLOGY
+	_blk_config->alignment_offset = 0; // VIRTIO_BLK_F_TOPOLOGY
+	_blk_config->min_io_size = 1; // VIRTIO_BLK_F_TOPOLOGY
+	_blk_config->opt_io_size = 1; // VIRTIO_BLK_F_TOPOLOGY
+
+	_blk_config->wce = 0; // VIRTIO_BLK_F_CONFIG_WCE
+
+	_blk_config->num_queues = 1; // VIRTIO_BLK_F_MQ
+
+	_blk_config->max_discard_sectors = 0; // VIRTIO_BLK_F_DISCARD
+	_blk_config->max_discard_seg = 0; // VIRTIO_BLK_F_DISCARD
+	_blk_config->discard_sector_alignment = 0; // VIRTIO_BLK_F_DISCARD
+
+	_blk_config->max_write_zeroes_sectors = 0; // VIRTIO_BLK_F_WRITE_ZEROES
+	_blk_config->max_write_zeroes_seg = 0; // VIRTIO_BLK_F_WRITE_ZEROES
+	_blk_config->write_zeroes_may_unmap = 0; // VIRTIO_BLK_F_WRITE_ZEROES
+
+	_blk_config->max_secure_erase_sectors = 0; // VIRTIO_BLK_F_SECURE_ERASE
+	_blk_config->max_secure_erase_seg = 0; // VIRTIO_BLK_F_SECURE_ERASE
+	_blk_config->secure_erase_sector_alignment = 0; // VIRTIO_BLK_F_SECURE_ERASE
+
+    _blk_config->zoned = { // VIRTIO_BLK_F_ZONED
+        .zone_sectors = 0,
+        .max_open_zones = 0,
+        .max_active_zones = 0,
+        .max_append_sectors = 0,
+        .write_granularity = 0,
+        .model = 0,
+    };
+
+    bool bres = vu_init(
         &_dev, 1, fd, panic, nullptr, ::set_watch, ::remove_watch, &_iface);
-    assert(res == true);
+    assert(bres == true);
 
     _devices.insert(std::pair<int, Device*>(fd, this));
 }
@@ -669,6 +384,7 @@ void Device::set_watch(int fd, int condition, vu_watch_cb cb, void *data) {
         std::make_unique<TaskWatch>(*this, fd, condition, cb, data);
     poll(fd, std::move(t));
 }
+
 
 void Device::remove_watch(int fd) {
     _watches.erase(fd);

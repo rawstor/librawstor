@@ -72,7 +72,8 @@ namespace rawstor {
 namespace vhost {
 
 
-Server::Server(const std::string &, const std::string &socket_path):
+Server::Server(const std::string &object_uris, const std::string &socket_path):
+    _object_uris(object_uris),
     _socket_path(socket_path),
     _fd(open_unix_socket(_socket_path))
 {
@@ -106,7 +107,7 @@ void Server::loop() {
             RAWSTOR_THROW_ERRNO();
         }
 
-        Device d(fd);
+        Device d(_object_uris, fd);
         d.loop();
     }
 }
