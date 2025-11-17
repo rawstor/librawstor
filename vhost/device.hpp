@@ -1,5 +1,5 @@
-#ifndef RAWSTOR_VHOST_CLIENT_HPP
-#define RAWSTOR_VHOST_CLIENT_HPP
+#ifndef RAWSTOR_VHOST_DEVICE_HPP
+#define RAWSTOR_VHOST_DEVICE_HPP
 
 extern "C" {
 #include "libvhost-user.h"
@@ -9,32 +9,38 @@ extern "C" {
 
 #include <cstdint>
 
+
+struct virtio_blk_config;
+
+
 namespace rawstor {
 namespace vhost {
 
 
-class Client final {
+class Device final {
     private:
-        static std::unordered_map<int, Client*> _clients;
+        static std::unordered_map<int, Device*> _devices;
 
-        int _fd;
         VuDev _dev;
         VuDevIface _iface;
         uint64_t _features;
+        uint64_t _protocol_features;
+        std::unique_ptr<virtio_blk_config> _blk_config;
+        std::unordered_map<int, int> _watches;
 
     public:
-        static Client* get(int fd);
+        static Device* get(int fd);
 
-        explicit Client(int fd);
-        Client(const Client &) = delete;
-        Client(Client &&) = delete;
-        ~Client();
+        explicit Device(int fd);
+        Device(const Device &) = delete;
+        Device(Device &&) = delete;
+        ~Device();
 
-        Client& operator=(const Client &) = delete;
-        Client& operator=(Client &&) = delete;
+        Device& operator=(const Device &) = delete;
+        Device& operator=(Device &&) = delete;
 
-        inline int fd() const noexcept {
-            return _fd;
+        inline VuDev* dev() noexcept {
+            return &_dev;
         }
 
         void dispatch();
@@ -46,6 +52,26 @@ class Client final {
         void set_features(uint64_t features) noexcept {
             _features = features;
         }
+
+        uint64_t get_protocol_features() const noexcept {
+            return _protocol_features;
+        }
+
+        void set_protocol_features(uint64_t features) noexcept {
+            _protocol_features = features;
+        }
+
+        void get_config(uint8_t *config, uint32_t len) const;
+
+        void set_config(
+             const uint8_t *data,
+             uint32_t offset, uint32_t size, uint32_t flags);
+
+        void set_watch(int fd, int condition, vu_watch_cb cb, void *data);
+
+        void remove_watch(int fd);
+
+        int get_watch(int fd) const noexcept;
 
         uint64_t get_max_mem_slots() const noexcept {
             /**
@@ -80,4 +106,4 @@ class Client final {
 
 }} // rawstor::vhost
 
-#endif // RAWSTOR_VHOST_CLIENT_HPP
+#endif // RAWSTOR_VHOST_DEVICE_HPP

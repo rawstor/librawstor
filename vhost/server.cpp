@@ -1,6 +1,6 @@
 #include "server.hpp"
 
-#include "client.hpp"
+#include "device.hpp"
 
 #include <rawstorstd/gpp.hpp>
 #include <rawstorstd/logging.h>
@@ -106,9 +106,8 @@ void Server::loop() {
             RAWSTOR_THROW_ERRNO();
         }
 
-        Client c(fd);
-
-        c.loop();
+        Device d(fd);
+        d.loop();
     }
 }
 
