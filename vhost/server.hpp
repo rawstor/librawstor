@@ -10,11 +10,12 @@ namespace vhost {
 
 class Server final {
     private:
+        std::string _object_uris;
         std::string _socket_path;
         int _fd;
 
     public:
-        Server(const std::string &object_uri, const std::string &socket_path);
+        Server(const std::string &object_uris, const std::string &socket_path);
         Server(const Server &) = delete;
         Server(Server &&) = delete;
         ~Server();
