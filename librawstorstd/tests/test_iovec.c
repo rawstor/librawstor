@@ -27,12 +27,12 @@ static int test_discard_front_unalligned() {
     struct iovec *iov_at = v;
     unsigned int niov_at = 3;
 
-    size_t left = rawstor_iovec_discard_front(&iov_at, &niov_at, 12);
+    size_t size = rawstor_iovec_discard_front(&iov_at, &niov_at, 12);
 
     assertTrue(niov_at == 2);
     assertTrue(strncmp(iov_at[0].iov_base, "34567890", 8) == 0);
     assertTrue(iov_at[0].iov_len == 8);
-    assertTrue(left == 0);
+    assertTrue(size == 12);
     return 0;
 }
 
@@ -56,12 +56,12 @@ static int test_discard_front_alligned() {
     struct iovec *iov_at = v;
     unsigned int niov_at = 3;
 
-    size_t left = rawstor_iovec_discard_front(&iov_at, &niov_at, 10);
+    size_t size = rawstor_iovec_discard_front(&iov_at, &niov_at, 10);
 
     assertTrue(niov_at == 2);
     assertTrue(strncmp(iov_at[0].iov_base, "1234567890", 8) == 0);
     assertTrue(iov_at[0].iov_len == 10);
-    assertTrue(left == 0);
+    assertTrue(size == 10);
     return 0;
 }
 
@@ -85,10 +85,10 @@ static int test_discard_front_all() {
     struct iovec *iov_at = v;
     unsigned int niov_at = 3;
 
-    size_t left = rawstor_iovec_discard_front(&iov_at, &niov_at, 30);
+    size_t size = rawstor_iovec_discard_front(&iov_at, &niov_at, 30);
 
     assertTrue(niov_at == 0);
-    assertTrue(left == 0);
+    assertTrue(size == 30);
     return 0;
 }
 
@@ -112,10 +112,10 @@ static int test_discard_front_overflow() {
     struct iovec *iov_at = v;
     unsigned int niov_at = 3;
 
-    size_t left = rawstor_iovec_discard_front(&iov_at, &niov_at, 35);
+    size_t size = rawstor_iovec_discard_front(&iov_at, &niov_at, 35);
 
     assertTrue(niov_at == 0);
-    assertTrue(left == 5);
+    assertTrue(size == 30);
     return 0;
 }
 
@@ -139,12 +139,12 @@ static int test_discard_back_unalligned() {
     struct iovec *iov_at = v;
     unsigned int niov_at = 3;
 
-    size_t left = rawstor_iovec_discard_back(&iov_at, &niov_at, 12);
+    size_t size = rawstor_iovec_discard_back(&iov_at, &niov_at, 12);
 
     assertTrue(niov_at == 2);
     assertTrue(strncmp(iov_at[1].iov_base, "12345678", 8) == 0);
     assertTrue(iov_at[1].iov_len == 8);
-    assertTrue(left == 0);
+    assertTrue(size == 12);
     return 0;
 }
 
@@ -168,12 +168,12 @@ static int test_discard_back_alligned() {
     struct iovec *iov_at = v;
     unsigned int niov_at = 3;
 
-    size_t left = rawstor_iovec_discard_back(&iov_at, &niov_at, 10);
+    size_t size = rawstor_iovec_discard_back(&iov_at, &niov_at, 10);
 
     assertTrue(niov_at == 2);
     assertTrue(strncmp(iov_at[1].iov_base, "1234567890", 10) == 0);
     assertTrue(iov_at[1].iov_len == 10);
-    assertTrue(left == 0);
+    assertTrue(size == 10);
     return 0;
 }
 
@@ -197,10 +197,10 @@ static int test_discard_back_all() {
     struct iovec *iov_at = v;
     unsigned int niov_at = 3;
 
-    size_t left = rawstor_iovec_discard_back(&iov_at, &niov_at, 30);
+    size_t size = rawstor_iovec_discard_back(&iov_at, &niov_at, 30);
 
     assertTrue(niov_at == 0);
-    assertTrue(left == 0);
+    assertTrue(size == 30);
     return 0;
 }
 
@@ -224,10 +224,10 @@ static int test_discard_back_overflow() {
     struct iovec *iov_at = v;
     unsigned int niov_at = 3;
 
-    size_t left = rawstor_iovec_discard_back(&iov_at, &niov_at, 35);
+    size_t size = rawstor_iovec_discard_back(&iov_at, &niov_at, 35);
 
     assertTrue(niov_at == 0);
-    assertTrue(left == 5);
+    assertTrue(size == 30);
     return 0;
 }
 
