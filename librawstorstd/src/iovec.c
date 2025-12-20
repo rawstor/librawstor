@@ -69,3 +69,14 @@ size_t rawstor_iovec_to_buf(
 
     return total;
 }
+
+
+size_t rawstor_iovec_size(struct iovec *iov, unsigned int niov) {
+    size_t ret = 0;
+
+    for (unsigned int i = 0; i < niov; i++) {
+        ret += iov[i].iov_len;
+    }
+
+    return ret;
+}

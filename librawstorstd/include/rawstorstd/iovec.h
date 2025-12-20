@@ -21,6 +21,8 @@ size_t rawstor_iovec_to_buf(
     struct iovec *iov, unsigned int niov, size_t offset,
     void *buf, size_t size);
 
+size_t rawstor_iovec_size(struct iovec *iov, unsigned int niov);
+
 
 #ifdef __cplusplus
 }

@@ -355,6 +355,28 @@ static int test_to_buf_overflow() {
 }
 
 
+static int test_size() {
+    char data[] = "1234567890";
+    struct iovec v[3];
+    v[0] = (struct iovec) {
+        .iov_base = data,
+        .iov_len = sizeof(data) - 1,
+    };
+    v[1] = (struct iovec) {
+        .iov_base = data,
+        .iov_len = sizeof(data) - 1,
+    };
+    v[2] = (struct iovec) {
+        .iov_base = data,
+        .iov_len = sizeof(data) - 1,
+    };
+
+    assertTrue(rawstor_iovec_size(v, 3) == 30);
+
+    return 0;
+}
+
+
 int main() {
     int rval = 0;
     rval += test_discard_front_unalligned();
@@ -369,5 +391,6 @@ int main() {
     rval += test_to_buf_alligned();
     rval += test_to_buf_all();
     rval += test_to_buf_overflow();
+    rval += test_size();
     return rval ? EXIT_FAILURE : EXIT_SUCCESS;
 }
