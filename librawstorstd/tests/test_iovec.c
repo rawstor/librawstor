@@ -232,6 +232,129 @@ static int test_discard_back_overflow() {
 }
 
 
+static int test_to_buf_unalligned() {
+    char data[] = "1234567890";
+    struct iovec v[3];
+    v[0] = (struct iovec) {
+        .iov_base = data,
+        .iov_len = sizeof(data) - 1,
+    };
+    v[1] = (struct iovec) {
+        .iov_base = data,
+        .iov_len = sizeof(data) - 1,
+    };
+    v[2] = (struct iovec) {
+        .iov_base = data,
+        .iov_len = sizeof(data) - 1,
+    };
+
+    char buf[12];
+    size_t size = rawstor_iovec_to_buf(v, 3, 0, buf, sizeof(buf));
+
+    assertTrue(size == 12);
+    assertTrue(strncmp(buf, "123456789012", size) == 0);
+
+    size = rawstor_iovec_to_buf(v, 3, 3, buf, sizeof(buf));
+
+    assertTrue(size == 12);
+    assertTrue(strncmp(buf, "456789012345", size) == 0);
+    return 0;
+}
+
+
+static int test_to_buf_alligned() {
+    char data[] = "1234567890";
+    struct iovec v[3];
+    v[0] = (struct iovec) {
+        .iov_base = data,
+        .iov_len = sizeof(data) - 1,
+    };
+    v[1] = (struct iovec) {
+        .iov_base = data,
+        .iov_len = sizeof(data) - 1,
+    };
+    v[2] = (struct iovec) {
+        .iov_base = data,
+        .iov_len = sizeof(data) - 1,
+    };
+
+    char buf[10];
+    size_t size = rawstor_iovec_to_buf(v, 3, 0, buf, sizeof(buf));
+
+    assertTrue(size == 10);
+    assertTrue(strncmp(buf, "1234567890", size) == 0);
+
+    size = rawstor_iovec_to_buf(v, 3, 10, buf, sizeof(buf));
+
+    assertTrue(size == 10);
+    assertTrue(strncmp(buf, "1234567890", size) == 0);
+
+    return 0;
+}
+
+
+static int test_to_buf_all() {
+    char data[] = "1234567890";
+    struct iovec v[3];
+    v[0] = (struct iovec) {
+        .iov_base = data,
+        .iov_len = sizeof(data) - 1,
+    };
+    v[1] = (struct iovec) {
+        .iov_base = data,
+        .iov_len = sizeof(data) - 1,
+    };
+    v[2] = (struct iovec) {
+        .iov_base = data,
+        .iov_len = sizeof(data) - 1,
+    };
+
+    char buf[30];
+    size_t size = rawstor_iovec_to_buf(v, 3, 0, buf, sizeof(buf));
+
+    assertTrue(size == 30);
+    assertTrue(strncmp(buf, "123456789012345678901234567890", size) == 0);
+
+    size = rawstor_iovec_to_buf(v, 3, 3, buf, sizeof(buf) - 3);
+
+    assertTrue(size == 27);
+    assertTrue(strncmp(buf, "456789012345678901234567890", size) == 0);
+
+    return 0;
+}
+
+
+static int test_to_buf_overflow() {
+    char data[] = "1234567890";
+    struct iovec v[3];
+    v[0] = (struct iovec) {
+        .iov_base = data,
+        .iov_len = sizeof(data) - 1,
+    };
+    v[1] = (struct iovec) {
+        .iov_base = data,
+        .iov_len = sizeof(data) - 1,
+    };
+    v[2] = (struct iovec) {
+        .iov_base = data,
+        .iov_len = sizeof(data) - 1,
+    };
+
+    char buf[35];
+    size_t size = rawstor_iovec_to_buf(v, 3, 0, buf, sizeof(buf));
+
+    assertTrue(size == 30);
+    assertTrue(strncmp(buf, "123456789012345678901234567890", size) == 0);
+
+    size = rawstor_iovec_to_buf(v, 3, 3, buf, sizeof(buf));
+
+    assertTrue(size == 27);
+    assertTrue(strncmp(buf, "456789012345678901234567890", size) == 0);
+
+    return 0;
+}
+
+
 int main() {
     int rval = 0;
     rval += test_discard_front_unalligned();
@@ -242,5 +365,9 @@ int main() {
     rval += test_discard_back_alligned();
     rval += test_discard_back_all();
     rval += test_discard_back_overflow();
+    rval += test_to_buf_unalligned();
+    rval += test_to_buf_alligned();
+    rval += test_to_buf_all();
+    rval += test_to_buf_overflow();
     return rval ? EXIT_FAILURE : EXIT_SUCCESS;
 }
