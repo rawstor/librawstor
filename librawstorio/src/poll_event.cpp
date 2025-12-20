@@ -47,7 +47,7 @@ size_t Event::shift(size_t shift) {
         _result += _size;
         _niov_at = 0;
     } else {
-        ret = rawstor_iovec_shift(&_iov_at, &_niov_at, shift);
+        ret = shift - rawstor_iovec_discard_front(&_iov_at, &_niov_at, shift);
         _result += shift;
     }
     return ret;
