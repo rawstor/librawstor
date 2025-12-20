@@ -81,7 +81,7 @@ size_t EventMultiplexVector::shift(size_t shift) noexcept {
         return shift - _size_at;
     };
 
-    rawstor_iovec_shift(&_iov_at, &_niov_at, shift);
+    rawstor_iovec_discard_front(&_iov_at, &_niov_at, shift);
     _result += shift;
     _size_at -= shift;
 #ifdef RAWSTOR_TRACE_EVENTS
