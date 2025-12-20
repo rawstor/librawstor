@@ -59,7 +59,7 @@ static int test_discard_front_alligned() {
     size_t size = rawstor_iovec_discard_front(&iov_at, &niov_at, 10);
 
     assertTrue(niov_at == 2);
-    assertTrue(strncmp(iov_at[0].iov_base, "1234567890", 8) == 0);
+    assertTrue(strncmp(iov_at[0].iov_base, "1234567890", 10) == 0);
     assertTrue(iov_at[0].iov_len == 10);
     assertTrue(size == 10);
     return 0;
