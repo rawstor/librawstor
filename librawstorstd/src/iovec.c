@@ -48,6 +48,29 @@ size_t rawstor_iovec_discard_back(
 }
 
 
+size_t rawstor_iovec_from_buf(
+    struct iovec *iov, unsigned int niov, size_t offset,
+    const void *buf, size_t size)
+{
+    size_t total = 0;
+
+    for (unsigned int i = 0; (offset || size) && i < niov; i++) {
+        if (offset < iov[i].iov_len) {
+            size_t len = iov[i].iov_len - offset < size ?
+                iov[i].iov_len - offset : size;
+            memcpy(iov[i].iov_base + offset, buf + total, len);
+            size -= len;
+            total += len;
+            offset = 0;
+        } else {
+            offset -= iov[i].iov_len;
+        }
+    }
+
+    return total;
+}
+
+
 size_t rawstor_iovec_to_buf(
     struct iovec *iov, unsigned int niov, size_t offset,
     void *buf, size_t size)
@@ -68,4 +91,15 @@ size_t rawstor_iovec_to_buf(
     }
 
     return total;
+}
+
+
+size_t rawstor_iovec_size(struct iovec *iov, unsigned int niov) {
+    size_t ret = 0;
+
+    for (unsigned int i = 0; i < niov; i++) {
+        ret += iov[i].iov_len;
+    }
+
+    return ret;
 }
