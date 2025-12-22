@@ -25,6 +25,7 @@ class Device final {
         static std::unordered_map<int, Device*> _devices;
 
         RawstorObjectSpec _spec;
+        RawstorObject *_object;
 
         VuDev _dev;
         VuDevIface _iface;
@@ -34,7 +35,7 @@ class Device final {
         std::unordered_map<int, int> _watches;
 
     public:
-        static Device* get(int fd);
+        static Device& get(int fd);
 
         Device(const std::string &object_uris, int fd);
         Device(const Device &) = delete;
@@ -43,6 +44,10 @@ class Device final {
 
         Device& operator=(const Device &) = delete;
         Device& operator=(Device &&) = delete;
+
+        inline RawstorObject* object() noexcept {
+            return _object;
+        }
 
         inline VuDev* dev() noexcept {
             return &_dev;
