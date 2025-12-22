@@ -8,7 +8,7 @@
 #include <string.h>
 
 
-static int test_discard_front_unalligned() {
+static int test_discard_front_unaligned() {
     char data[] = "1234567890";
     struct iovec v[3];
     v[0] = (struct iovec) {
@@ -37,7 +37,7 @@ static int test_discard_front_unalligned() {
 }
 
 
-static int test_discard_front_alligned() {
+static int test_discard_front_aligned() {
     char data[] = "1234567890";
     struct iovec v[3];
     v[0] = (struct iovec) {
@@ -120,7 +120,7 @@ static int test_discard_front_overflow() {
 }
 
 
-static int test_discard_back_unalligned() {
+static int test_discard_back_unaligned() {
     char data[] = "1234567890";
     struct iovec v[3];
     v[0] = (struct iovec) {
@@ -149,7 +149,7 @@ static int test_discard_back_unalligned() {
 }
 
 
-static int test_discard_back_alligned() {
+static int test_discard_back_aligned() {
     char data[] = "1234567890";
     struct iovec v[3];
     v[0] = (struct iovec) {
@@ -232,7 +232,7 @@ static int test_discard_back_overflow() {
 }
 
 
-static int test_from_buf_unalligned() {
+static int test_from_buf_unaligned() {
     struct iovec v[3];
     char data0[] = "          ";
     v[0] = (struct iovec) {
@@ -262,7 +262,7 @@ static int test_from_buf_unalligned() {
 }
 
 
-static int test_from_buf_alligned() {
+static int test_from_buf_aligned() {
     struct iovec v[3];
     char data0[] = "          ";
     v[0] = (struct iovec) {
@@ -352,7 +352,7 @@ static int test_from_buf_overflow() {
 }
 
 
-static int test_to_buf_unalligned() {
+static int test_to_buf_unaligned() {
     char data[] = "1234567890";
     struct iovec v[3];
     v[0] = (struct iovec) {
@@ -382,7 +382,7 @@ static int test_to_buf_unalligned() {
 }
 
 
-static int test_to_buf_alligned() {
+static int test_to_buf_aligned() {
     char data[] = "1234567890";
     struct iovec v[3];
     v[0] = (struct iovec) {
@@ -499,20 +499,20 @@ static int test_size() {
 
 int main() {
     int rval = 0;
-    rval += test_discard_front_unalligned();
-    rval += test_discard_front_alligned();
+    rval += test_discard_front_unaligned();
+    rval += test_discard_front_aligned();
     rval += test_discard_front_all();
     rval += test_discard_front_overflow();
-    rval += test_discard_back_unalligned();
-    rval += test_discard_back_alligned();
+    rval += test_discard_back_unaligned();
+    rval += test_discard_back_aligned();
     rval += test_discard_back_all();
     rval += test_discard_back_overflow();
-    rval += test_from_buf_unalligned();
-    rval += test_from_buf_alligned();
+    rval += test_from_buf_unaligned();
+    rval += test_from_buf_aligned();
     rval += test_from_buf_all();
     rval += test_from_buf_overflow();
-    rval += test_to_buf_unalligned();
-    rval += test_to_buf_alligned();
+    rval += test_to_buf_unaligned();
+    rval += test_to_buf_aligned();
     rval += test_to_buf_all();
     rval += test_to_buf_overflow();
     rval += test_size();
