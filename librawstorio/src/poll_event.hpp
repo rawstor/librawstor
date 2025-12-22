@@ -12,6 +12,7 @@
 
 #include <memory>
 #include <string>
+#include <sstream>
 #include <vector>
 
 #include <cstddef>
@@ -50,7 +51,9 @@ class Event {
 
         inline void set_error(int error) noexcept {
 #ifdef RAWSTOR_TRACE_EVENTS
-            trace(__FILE__, __LINE__, __FUNCTION__, "error");
+            std::ostringstream oss;
+            oss << "error " << error;
+            trace(__FILE__, __LINE__, __FUNCTION__, oss.str());
 #endif
             _error = error;
         }
