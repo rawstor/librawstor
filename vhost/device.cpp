@@ -20,6 +20,7 @@ extern "C" {
 #include <poll.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <iostream>
 #include <memory>
 #include <sstream>
@@ -77,20 +78,7 @@ class ObjectTask {
         ObjectTask& operator=(const ObjectTask &) = delete;
         ObjectTask& operator=(ObjectTask &&) = delete;
 
-        virtual void operator()(size_t size, size_t result, int error) {
-            if (error != 0) {
-                RAWSTOR_THROW_SYSTEM_ERROR(error);
-            }
-
-            if (result != size) {
-                RAWSTOR_THROW_SYSTEM_ERROR(EIO);
-            }
-
-            vu_queue_push(
-                _req->device->dev(), _req->vq,
-                &_req->elem, result + sizeof(virtio_blk_inhdr));
-            vu_queue_notify(_req->device->dev(), _req->vq);
-        }
+        virtual void operator()(size_t size, size_t result, int error);
 };
 
 
@@ -232,6 +220,27 @@ void TaskWatch::operator()(size_t result, int error) {
 }
 
 
+void req_push(VuBlkReq *req, size_t size) {
+    vu_queue_push(
+        req->device->dev(), req->vq,
+        &req->elem, size + sizeof(virtio_blk_inhdr));
+    vu_queue_notify(req->device->dev(), req->vq);
+}
+
+
+void ObjectTask::operator()(size_t size, size_t result, int error) {
+    if (error != 0) {
+        RAWSTOR_THROW_SYSTEM_ERROR(error);
+    }
+
+    if (result != size) {
+        RAWSTOR_THROW_SYSTEM_ERROR(EIO);
+    }
+
+    req_push(_req.get(), result);
+}
+
+
 void panic(VuDev *, const char *err) {
     rawstor_error("libvhost-user: %s\n", err);
 }
@@ -305,6 +314,8 @@ void process_req(std::unique_ptr<VuBlkReq> req) {
     rawstor_iovec_discard_back(
         &in_iov, &in_niov, sizeof(virtio_blk_inhdr));
 
+    size_t in_size = rawstor_iovec_size(in_iov, in_niov);
+
     // TODO: handle ble
     // int64_t sector_num = le64_to_cpu(out.sector);
     int64_t offset = out.sector << VIRTIO_BLK_SECTOR_BITS;
@@ -318,7 +329,7 @@ void process_req(std::unique_ptr<VuBlkReq> req) {
                 int res = rawstor_object_preadv(
                     o,
                     in_iov, in_niov,
-                    rawstor_iovec_size(in_iov, in_niov), offset,
+                    in_size, offset,
                     t->callback, t.get());
                 if (res) {
                     // TODO: Handle exception and set in->status
@@ -346,12 +357,30 @@ void process_req(std::unique_ptr<VuBlkReq> req) {
                 in->status = VIRTIO_BLK_S_OK;
                 break;
             }
-        case VIRTIO_BLK_T_FLUSH:
         case VIRTIO_BLK_T_GET_ID:
+            {
+                const char serial[] = "rawstor";
+
+                size_t size =
+                    std::min(
+                        sizeof(serial),
+                        std::min(
+                            in_size,
+                            (size_t)VIRTIO_BLK_ID_BYTES));
+
+                rawstor_iovec_from_buf(in_iov, in_niov, 0, serial, size);
+                in->status = VIRTIO_BLK_S_OK;
+
+                req_push(req.get(), in_size);
+
+                break;
+            }
+        case VIRTIO_BLK_T_FLUSH:
         case VIRTIO_BLK_T_DISCARD:
         case VIRTIO_BLK_T_WRITE_ZEROES:
         default:
             in->status = VIRTIO_BLK_S_UNSUPP;
+            req_push(req.get(), in_size);
             break;
     }
 }
