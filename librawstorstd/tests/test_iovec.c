@@ -232,6 +232,126 @@ static int test_discard_back_overflow() {
 }
 
 
+static int test_from_buf_unalligned() {
+    struct iovec v[3];
+    char data0[] = "          ";
+    v[0] = (struct iovec) {
+        .iov_base = data0,
+        .iov_len = sizeof(data0) - 1,
+    };
+    char data1[] = "          ";
+    v[1] = (struct iovec) {
+        .iov_base = data1,
+        .iov_len = sizeof(data1) - 1,
+    };
+    char data2[] = "          ";
+    v[2] = (struct iovec) {
+        .iov_base = data2,
+        .iov_len = sizeof(data2) - 1,
+    };
+
+    char buf[] = "123456789012";
+    size_t size = rawstor_iovec_from_buf(v, 3, 0, buf, sizeof(buf) - 1);
+
+    assertTrue(size == 12);
+    assertTrue(strncmp(v[0].iov_base, "1234567890", v[0].iov_len) == 0);
+    assertTrue(strncmp(v[1].iov_base, "12        ", v[1].iov_len) == 0);
+    assertTrue(strncmp(v[2].iov_base, "          ", v[2].iov_len) == 0);
+
+    return 0;
+}
+
+
+static int test_from_buf_alligned() {
+    struct iovec v[3];
+    char data0[] = "          ";
+    v[0] = (struct iovec) {
+        .iov_base = data0,
+        .iov_len = sizeof(data0) - 1,
+    };
+    char data1[] = "          ";
+    v[1] = (struct iovec) {
+        .iov_base = data1,
+        .iov_len = sizeof(data1) - 1,
+    };
+    char data2[] = "          ";
+    v[2] = (struct iovec) {
+        .iov_base = data2,
+        .iov_len = sizeof(data2) - 1,
+    };
+
+    char buf[] = "1234567890";
+    size_t size = rawstor_iovec_from_buf(v, 3, 0, buf, sizeof(buf) - 1);
+
+    assertTrue(size == 10);
+    assertTrue(strncmp(v[0].iov_base, "1234567890", v[0].iov_len) == 0);
+    assertTrue(strncmp(v[1].iov_base, "          ", v[1].iov_len) == 0);
+    assertTrue(strncmp(v[2].iov_base, "          ", v[2].iov_len) == 0);
+
+    return 0;
+}
+
+
+static int test_from_buf_all() {
+    struct iovec v[3];
+    char data0[] = "          ";
+    v[0] = (struct iovec) {
+        .iov_base = data0,
+        .iov_len = sizeof(data0) - 1,
+    };
+    char data1[] = "          ";
+    v[1] = (struct iovec) {
+        .iov_base = data1,
+        .iov_len = sizeof(data1) - 1,
+    };
+    char data2[] = "          ";
+    v[2] = (struct iovec) {
+        .iov_base = data2,
+        .iov_len = sizeof(data2) - 1,
+    };
+
+    char buf[] = "123456789012345678901234567890";
+    size_t size = rawstor_iovec_from_buf(v, 3, 0, buf, sizeof(buf) - 1);
+
+    assertTrue(size == 30);
+    assertTrue(strncmp(v[0].iov_base, "1234567890", v[0].iov_len) == 0);
+    assertTrue(strncmp(v[1].iov_base, "1234567890", v[1].iov_len) == 0);
+    assertTrue(strncmp(v[2].iov_base, "1234567890", v[2].iov_len) == 0);
+
+    return 0;
+}
+
+
+static int test_from_buf_overflow() {
+    struct iovec v[3];
+    char data0[] = "          ";
+    v[0] = (struct iovec) {
+        .iov_base = data0,
+        .iov_len = sizeof(data0) - 1,
+    };
+    char data1[] = "          ";
+    v[1] = (struct iovec) {
+        .iov_base = data1,
+        .iov_len = sizeof(data1) - 1,
+    };
+    char data2[] = "          ";
+    v[2] = (struct iovec) {
+        .iov_base = data2,
+        .iov_len = sizeof(data2) - 1,
+    };
+
+    char buf[] = "12345678901234567890123456789012345";
+    size_t size = rawstor_iovec_from_buf(v, 3, 0, buf, sizeof(buf) - 1);
+
+    assertTrue(size == 30);
+    assertTrue(strncmp(v[0].iov_base, "1234567890", v[0].iov_len) == 0);
+    assertTrue(strncmp(v[1].iov_base, "1234567890", v[1].iov_len) == 0);
+    assertTrue(strncmp(v[2].iov_base, "1234567890", v[2].iov_len) == 0);
+
+    return 0;
+}
+
+
 static int test_to_buf_unalligned() {
     char data[] = "1234567890";
     struct iovec v[3];
@@ -387,6 +507,10 @@ int main() {
     rval += test_discard_back_alligned();
     rval += test_discard_back_all();
     rval += test_discard_back_overflow();
+    rval += test_from_buf_unalligned();
+    rval += test_from_buf_alligned();
+    rval += test_from_buf_all();
+    rval += test_from_buf_overflow();
     rval += test_to_buf_unalligned();
     rval += test_to_buf_alligned();
     rval += test_to_buf_all();

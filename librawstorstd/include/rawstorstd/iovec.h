@@ -17,6 +17,10 @@ size_t rawstor_iovec_discard_front(
 size_t rawstor_iovec_discard_back(
     struct iovec **iov, unsigned int *niov, size_t size);
 
+size_t rawstor_iovec_from_buf(
+    struct iovec *iov, unsigned int niov, size_t offset,
+    const void *buf, size_t size);
+
 size_t rawstor_iovec_to_buf(
     struct iovec *iov, unsigned int niov, size_t offset,
     void *buf, size_t size);
