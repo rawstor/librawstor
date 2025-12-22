@@ -64,7 +64,16 @@ class Device final {
         }
 
         inline uint64_t get_protocol_features() const noexcept {
-            return _protocol_features;
+            return
+                1ULL << VHOST_USER_PROTOCOL_F_MQ |
+                1ULL << VHOST_USER_PROTOCOL_F_LOG_SHMFD |
+                1ULL << VHOST_USER_PROTOCOL_F_BACKEND_REQ |
+                1ULL << VHOST_USER_PROTOCOL_F_HOST_NOTIFIER |
+                1ULL << VHOST_USER_PROTOCOL_F_BACKEND_SEND_FD |
+                1ULL << VHOST_USER_PROTOCOL_F_REPLY_ACK |
+                1ULL << VHOST_USER_PROTOCOL_F_CONFIGURE_MEM_SLOTS |
+                1ULL << VHOST_USER_PROTOCOL_F_CONFIG |
+                _protocol_features;
         }
 
         inline void set_protocol_features(uint64_t features) noexcept {

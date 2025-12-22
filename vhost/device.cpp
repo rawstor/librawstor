@@ -448,6 +448,7 @@ Device::Device(const std::string &object_uris, int fd):
         // VIRTIO_BLK_F_WRITE_ZEROES |
         VIRTIO_BLK_F_CONFIG_WCE
     ),
+    _protocol_features(0),
     _blk_config(std::make_unique<virtio_blk_config>())
 {
     memset(_blk_config.get(), 0, sizeof(*_blk_config.get()));
@@ -567,10 +568,12 @@ void Device::set_config(
 
 
 void Device::set_watch(int fd, int condition, vu_watch_cb cb, void *data) {
-    _watches.insert(std::pair<int, int>(fd, condition));
-    std::unique_ptr<TaskWatch> t =
-        std::make_unique<TaskWatch>(*this, fd, condition, cb, data);
-    poll(fd, std::move(t));
+    if (!get_watch(fd)) {
+        _watches.insert(std::pair<int, int>(fd, condition));
+        std::unique_ptr<TaskWatch> t =
+            std::make_unique<TaskWatch>(*this, fd, condition, cb, data);
+        poll(fd, std::move(t));
+    }
 }
 
 
