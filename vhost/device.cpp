@@ -498,44 +498,42 @@ Device::Device(const std::string &object_uris, int fd):
 
     _blk_config->seg_max = (1 << 7) - 2; // VIRTIO_BLK_F_SEG_MAX
 
-    _blk_config->geometry = { // VIRTIO_BLK_F_GEOMETRY
-        .cylinders = 0,
-        .heads = 0,
-        .sectors = 0,
-    };
+    _blk_config->geometry = {}; // VIRTIO_BLK_F_GEOMETRY
+    // _blk_config->geometry.cylinders = 0,
+    // _blk_config->geometry.heads = 0,
+    // _blk_config->geometry.sectors = 0,
 
     _blk_config->blk_size = 1 << VIRTIO_BLK_SECTOR_BITS; // VIRTIO_BLK_F_BLK_SIZE
 
-	_blk_config->physical_block_exp = 0; // VIRTIO_BLK_F_TOPOLOGY
-	_blk_config->alignment_offset = 0; // VIRTIO_BLK_F_TOPOLOGY
-	_blk_config->min_io_size = 1; // VIRTIO_BLK_F_TOPOLOGY
-	_blk_config->opt_io_size = 1; // VIRTIO_BLK_F_TOPOLOGY
+    _blk_config->physical_block_exp = 0; // VIRTIO_BLK_F_TOPOLOGY
+    _blk_config->alignment_offset = 0; // VIRTIO_BLK_F_TOPOLOGY
+    _blk_config->min_io_size = 1; // VIRTIO_BLK_F_TOPOLOGY
+    _blk_config->opt_io_size = 1; // VIRTIO_BLK_F_TOPOLOGY
 
-	_blk_config->wce = 0; // VIRTIO_BLK_F_CONFIG_WCE
+    _blk_config->wce = 0; // VIRTIO_BLK_F_CONFIG_WCE
 
-	_blk_config->num_queues = 1; // VIRTIO_BLK_F_MQ
+    _blk_config->num_queues = 1; // VIRTIO_BLK_F_MQ
 
-	_blk_config->max_discard_sectors = 0; // VIRTIO_BLK_F_DISCARD
-	_blk_config->max_discard_seg = 0; // VIRTIO_BLK_F_DISCARD
+    _blk_config->max_discard_sectors = 0; // VIRTIO_BLK_F_DISCARD
+    _blk_config->max_discard_seg = 0; // VIRTIO_BLK_F_DISCARD
      // VIRTIO_BLK_F_DISCARD
-	_blk_config->discard_sector_alignment = 1 >> VIRTIO_BLK_SECTOR_BITS;
+    _blk_config->discard_sector_alignment = 1 >> VIRTIO_BLK_SECTOR_BITS;
 
-	_blk_config->max_write_zeroes_sectors = 0; // VIRTIO_BLK_F_WRITE_ZEROES
-	_blk_config->max_write_zeroes_seg = 0; // VIRTIO_BLK_F_WRITE_ZEROES
-	_blk_config->write_zeroes_may_unmap = 0; // VIRTIO_BLK_F_WRITE_ZEROES
+    _blk_config->max_write_zeroes_sectors = 0; // VIRTIO_BLK_F_WRITE_ZEROES
+    _blk_config->max_write_zeroes_seg = 0; // VIRTIO_BLK_F_WRITE_ZEROES
+    _blk_config->write_zeroes_may_unmap = 0; // VIRTIO_BLK_F_WRITE_ZEROES
 
-	_blk_config->max_secure_erase_sectors = 0; // VIRTIO_BLK_F_SECURE_ERASE
-	_blk_config->max_secure_erase_seg = 0; // VIRTIO_BLK_F_SECURE_ERASE
-	_blk_config->secure_erase_sector_alignment = 0; // VIRTIO_BLK_F_SECURE_ERASE
+    _blk_config->max_secure_erase_sectors = 0; // VIRTIO_BLK_F_SECURE_ERASE
+    _blk_config->max_secure_erase_seg = 0; // VIRTIO_BLK_F_SECURE_ERASE
+    _blk_config->secure_erase_sector_alignment = 0; // VIRTIO_BLK_F_SECURE_ERASE
 
-    _blk_config->zoned = { // VIRTIO_BLK_F_ZONED
-        .zone_sectors = 0,
-        .max_open_zones = 0,
-        .max_active_zones = 0,
-        .max_append_sectors = 0,
-        .write_granularity = 0,
-        .model = 0,
-    };
+    _blk_config->zoned = {}; // VIRTIO_BLK_F_ZONED
+    // _blk_config->zoned.zone_sectors = 0;
+    // _blk_config->zoned.max_open_zones = 0;
+    // _blk_config->zoned.max_active_zones = 0;
+    // _blk_config->zoned.max_append_sectors = 0;
+    // _blk_config->zoned.write_granularity = 0;
+    // _blk_config->zoned.model = 0;
 
     bool bres = vu_init(
         &_dev, 1, fd, panic, nullptr, ::set_watch, ::remove_watch, &_iface);

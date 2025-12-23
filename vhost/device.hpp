@@ -7,6 +7,7 @@ extern "C" {
 #include "libvhost-user.h"
 }
 
+#include <memory>
 #include <string>
 #include <unordered_map>
 
