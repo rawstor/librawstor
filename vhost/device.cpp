@@ -253,8 +253,10 @@ void set_watch(VuDev *dev, int fd, int condition, vu_watch_cb cb, void *data) {
 
 
 void remove_watch(VuDev *dev, int fd) {
-    rawstor::vhost::Device &d = rawstor::vhost::Device::get(dev->sock);
-    d.remove_watch(fd);
+    rawstor::vhost::Device *d = rawstor::vhost::Device::find(dev->sock);
+    if (d != nullptr) {
+        d->remove_watch(fd);
+    }
 }
 
 
@@ -555,6 +557,15 @@ Device& Device::get(int fd) {
 }
 
 
+Device* Device::find(int fd) {
+    auto ret = _devices.find(fd);
+    if (ret == _devices.end()) {
+        return nullptr;
+    }
+    return ret->second;
+}
+
+
 void Device::dispatch() {
     bool res = vu_dispatch(&_dev);
     assert(res == true);
@@ -626,6 +637,10 @@ void Device::loop() {
     while (!rawstor_empty()) {
         int res = rawstor_wait();
         if (res) {
+            if (res == -EINTR) {
+                break;
+            }
+
             if (res == -ETIME) {
                 rawstor_warning("rawstor_wait() failed: timeout\n");
                 continue;

@@ -99,17 +99,15 @@ Server::~Server() {
 
 
 void Server::loop() {
-    while (true) {
-        rawstor_info("Listening %s\n", _socket_path.c_str());
+    rawstor_info("Listening %s\n", _socket_path.c_str());
 
-        int fd = ::accept(_fd, NULL, NULL);
-        if (fd < 0) {
-            RAWSTOR_THROW_ERRNO();
-        }
-
-        Device d(_object_uris, fd);
-        d.loop();
+    int fd = ::accept(_fd, NULL, NULL);
+    if (fd < 0) {
+        RAWSTOR_THROW_ERRNO();
     }
+
+    Device d(_object_uris, fd);
+    d.loop();
 }
 
 
