@@ -4,6 +4,8 @@
 #include <sstream>
 #include <utility>
 
+#include <cstring>
+
 namespace {
 
 
