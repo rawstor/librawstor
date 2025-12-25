@@ -185,20 +185,18 @@ URIPath& URIPath::operator=(URIPath &&other) noexcept {
 
 std::vector<rawstor::URI> URI::uriv(const char *uris) {
     std::vector<rawstor::URI> ret;
-    const char *at = uris;
+    const char *start = uris;
+    const char *p = uris;
     while (true) {
-        const char *next = strchr(at, ',');
-        if (next == nullptr) {
-            ret.emplace_back(at);
+        if (*p == '\0') {
+            ret.emplace_back(std::string(start));
             break;
         }
-        if (next == uris || *(next - 1) != '\\') {
-            ret.emplace_back(std::string(at, next));
+        if (*p == ',' && (p == uris || *(p - 1) != '\\')) {
+            ret.emplace_back(std::string(start, p - start));
+            start = p + 1;
         }
-        at = next + 1;
-        if (*at == '\0') {
-            break;
-        }
+        ++p;
     }
     return ret;
 }
