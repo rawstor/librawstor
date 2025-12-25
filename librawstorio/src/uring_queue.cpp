@@ -167,8 +167,8 @@ void Queue::wait(unsigned int timeout) {
     int res;
     io_uring_cqe *cqe;
     __kernel_timespec ts = {
-        .tv_sec = 0,
-        .tv_nsec = 1000000u * timeout
+        .tv_sec = timeout / 1000,
+        .tv_nsec = 1000000u * (timeout % 1000)
     };
 
     if (io_uring_sq_ready(&_ring) > 0) {
