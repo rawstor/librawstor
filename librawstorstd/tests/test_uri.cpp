@@ -193,22 +193,61 @@ int test_uri_child() {
 
 
 int test_uris() {
-    std::vector<rawstor::URI> uris1 = rawstor::URI::uriv("a,b,c");
-    assertTrue(uris1.size() == 3);
-    assertTrue(uris1[0].str() == "a");
-    assertTrue(uris1[1].str() == "b");
-    assertTrue(uris1[2].str() == "c");
+    {
+        std::vector<rawstor::URI> uris = rawstor::URI::uriv("a,b,c");
+        assertTrue(uris.size() == 3);
+        assertTrue(uris[0].str() == "a");
+        assertTrue(uris[1].str() == "b");
+        assertTrue(uris[2].str() == "c");
+    }
 
-    std::vector<rawstor::URI> uris2 = rawstor::URI::uriv("a\\,b,c");
-    assertTrue(uris2.size() == 2);
-    assertTrue(uris2[0].str() == "a\\,b");
-    assertTrue(uris2[1].str() == "c");
+    {
+        std::vector<rawstor::URI> uris = rawstor::URI::uriv("a\\,b,c");
+        assertTrue(uris.size() == 2);
+        assertTrue(uris[0].str() == "a\\,b");
+        assertTrue(uris[1].str() == "c");
+    }
 
-    std::vector<rawstor::URI> uris3 = rawstor::URI::uriv("a,b,");
-    assertTrue(uris3.size() == 3);
-    assertTrue(uris3[0].str() == "a");
-    assertTrue(uris3[1].str() == "b");
-    assertTrue(uris3[2].str() == "");
+    {
+        std::vector<rawstor::URI> uris = rawstor::URI::uriv("a,b,");
+        assertTrue(uris.size() == 3);
+        assertTrue(uris[0].str() == "a");
+        assertTrue(uris[1].str() == "b");
+        assertTrue(uris[2].str() == "");
+    }
+
+    {
+        std::vector<rawstor::URI> uris = rawstor::URI::uriv("");
+        assertTrue(uris.size() == 1);
+        assertTrue(uris[0].str() == "");
+    }
+
+    {
+        std::vector<rawstor::URI> uris = rawstor::URI::uriv(",");
+        assertTrue(uris.size() == 2);
+        assertTrue(uris[0].str() == "");
+        assertTrue(uris[1].str() == "");
+    }
+
+    {
+        std::vector<rawstor::URI> uris = rawstor::URI::uriv(",a");
+        assertTrue(uris.size() == 2);
+        assertTrue(uris[0].str() == "");
+        assertTrue(uris[1].str() == "a");
+    }
+
+    {
+        std::vector<rawstor::URI> uris = rawstor::URI::uriv("a,");
+        assertTrue(uris.size() == 2);
+        assertTrue(uris[0].str() == "a");
+        assertTrue(uris[1].str() == "");
+    }
+
+    {
+        std::vector<rawstor::URI> uris = rawstor::URI::uriv("\\,a");
+        assertTrue(uris.size() == 1);
+        assertTrue(uris[0].str() == "\\,a");
+    }
 
     return 0;
 }
