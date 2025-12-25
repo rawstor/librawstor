@@ -12,6 +12,7 @@
 
 #include <memory>
 #include <string>
+#include <sstream>
 #include <vector>
 
 #include <cstddef>
@@ -50,7 +51,9 @@ class Event {
 
         inline void set_error(int error) noexcept {
 #ifdef RAWSTOR_TRACE_EVENTS
-            trace(__FILE__, __LINE__, __FUNCTION__, "error");
+            std::ostringstream oss;
+            oss << "error " << error;
+            trace(__FILE__, __LINE__, __FUNCTION__, oss.str());
 #endif
             _error = error;
         }
@@ -177,6 +180,24 @@ class EventMultiplexVector: public EventMultiplex {
         size_t shift(size_t shift) noexcept override final;
 
         void add_to_batch(std::vector<iovec> &iov) override final;
+};
+
+
+class EventSimplexPoll final: public EventSimplex {
+    public:
+        EventSimplexPoll(
+            Queue &q,
+            std::unique_ptr<rawstor::io::TaskPoll> t):
+            EventSimplex(q, std::move(t))
+        {}
+
+        inline unsigned int mask() const noexcept {
+            return static_cast<rawstor::io::TaskPoll*>(_t.get())->mask();
+        }
+
+        void process() noexcept override final;
+
+        void set_result(short revents) noexcept;
 };
 
 

@@ -38,6 +38,9 @@ class Queue final: public rawstor::io::Queue {
             _cqes(depth)
         {}
 
+        void poll(
+            std::unique_ptr<rawstor::io::TaskPoll> t) override;
+
         void read(
             std::unique_ptr<rawstor::io::TaskScalar> t) override;
 
