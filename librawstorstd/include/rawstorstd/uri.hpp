@@ -2,6 +2,7 @@
 #define RAWSTORSTD_URI_HPP
 
 #include <string>
+#include <vector>
 
 
 namespace rawstor {
@@ -49,6 +50,8 @@ class URI {
         URIPath _path;
 
     public:
+        static std::vector<rawstor::URI> uriv(const char *uris);
+
         explicit URI(const std::string &uri);
         URI(const URI &parent, const std::string &child);
         URI(const URI &other);

@@ -39,27 +39,6 @@
 namespace {
 
 
-std::vector<rawstor::URI> uriv(const char *uris) {
-    std::vector<rawstor::URI> ret;
-    const char *at = uris;
-    while (true) {
-        const char *next = strchr(at, ',');
-        if (next == nullptr) {
-            ret.emplace_back(at);
-            break;
-        }
-        if (next == uris || *(next - 1) != '\\') {
-            ret.emplace_back(std::string(at, next));
-        }
-        at = next + 1;
-        if (*at == '\0') {
-            break;
-        }
-    }
-    return ret;
-}
-
-
 int uris(const std::vector<rawstor::URI> &uriv, char *buf, size_t size) {
     std::ostringstream oss;
     bool comma = false;
@@ -438,7 +417,7 @@ int rawstor_object_create(
 {
     try {
         std::vector<rawstor::URI> object_uriv;
-        RawstorObject::create(uriv(uris), *sp, &object_uriv);
+        RawstorObject::create(rawstor::URI::uriv(uris), *sp, &object_uriv);
         return ::uris(object_uriv, object_uris, size);
     } catch (const std::system_error &e) {
         return -e.code().value();
@@ -448,7 +427,7 @@ int rawstor_object_create(
 
 int rawstor_object_remove(const char *object_uris) {
     try {
-        RawstorObject::remove(uriv(object_uris));
+        RawstorObject::remove(rawstor::URI::uriv(object_uris));
         return 0;
     } catch (const std::system_error &e) {
         return -e.code().value();
@@ -458,7 +437,7 @@ int rawstor_object_remove(const char *object_uris) {
 
 int rawstor_object_spec(const char *object_uris, RawstorObjectSpec *sp) {
     try {
-        RawstorObject::spec(uriv(object_uris), sp);
+        RawstorObject::spec(rawstor::URI::uriv(object_uris), sp);
         return 0;
     } catch (const std::system_error &e) {
         return -e.code().value();
@@ -469,7 +448,7 @@ int rawstor_object_spec(const char *object_uris, RawstorObjectSpec *sp) {
 int rawstor_object_open(const char *object_uris, RawstorObject **object) {
     try {
         std::unique_ptr<RawstorObject> ret =
-            std::make_unique<RawstorObject>(uriv(object_uris));
+            std::make_unique<RawstorObject>(rawstor::URI::uriv(object_uris));
 
         *object = ret.get();
 
