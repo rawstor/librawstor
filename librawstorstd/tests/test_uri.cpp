@@ -192,6 +192,67 @@ int test_uri_child() {
 }
 
 
+int test_uris() {
+    {
+        std::vector<rawstor::URI> uris = rawstor::URI::uriv("a,b,c");
+        assertTrue(uris.size() == 3);
+        assertTrue(uris[0].str() == "a");
+        assertTrue(uris[1].str() == "b");
+        assertTrue(uris[2].str() == "c");
+    }
+
+    {
+        std::vector<rawstor::URI> uris = rawstor::URI::uriv("a\\,b,c");
+        assertTrue(uris.size() == 2);
+        assertTrue(uris[0].str() == "a\\,b");
+        assertTrue(uris[1].str() == "c");
+    }
+
+    {
+        std::vector<rawstor::URI> uris = rawstor::URI::uriv("a,b,");
+        assertTrue(uris.size() == 3);
+        assertTrue(uris[0].str() == "a");
+        assertTrue(uris[1].str() == "b");
+        assertTrue(uris[2].str() == "");
+    }
+
+    {
+        std::vector<rawstor::URI> uris = rawstor::URI::uriv("");
+        assertTrue(uris.size() == 1);
+        assertTrue(uris[0].str() == "");
+    }
+
+    {
+        std::vector<rawstor::URI> uris = rawstor::URI::uriv(",");
+        assertTrue(uris.size() == 2);
+        assertTrue(uris[0].str() == "");
+        assertTrue(uris[1].str() == "");
+    }
+
+    {
+        std::vector<rawstor::URI> uris = rawstor::URI::uriv(",a");
+        assertTrue(uris.size() == 2);
+        assertTrue(uris[0].str() == "");
+        assertTrue(uris[1].str() == "a");
+    }
+
+    {
+        std::vector<rawstor::URI> uris = rawstor::URI::uriv("a,");
+        assertTrue(uris.size() == 2);
+        assertTrue(uris[0].str() == "a");
+        assertTrue(uris[1].str() == "");
+    }
+
+    {
+        std::vector<rawstor::URI> uris = rawstor::URI::uriv("\\,a");
+        assertTrue(uris.size() == 1);
+        assertTrue(uris[0].str() == "\\,a");
+    }
+
+    return 0;
+}
+
+
 } // unnamed
 
 
@@ -206,5 +267,6 @@ int main() {
     rval += test_uri_without_uuid_without_slash();
     rval += test_uri_parent();
     rval += test_uri_child();
+    rval += test_uris();
     return rval ? EXIT_FAILURE : EXIT_SUCCESS;
 }

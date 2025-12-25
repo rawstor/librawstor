@@ -4,6 +4,8 @@
 #include <sstream>
 #include <utility>
 
+#include <cstring>
+
 namespace {
 
 
@@ -179,6 +181,26 @@ URIPath& URIPath::operator=(URIPath &&other) noexcept {
     }
     return *this;
 }
+
+
+std::vector<rawstor::URI> URI::uriv(const char *uris) {
+    std::vector<rawstor::URI> ret;
+    const char *start = uris;
+    const char *p = uris;
+    while (true) {
+        if (*p == '\0') {
+            ret.emplace_back(std::string(start));
+            break;
+        }
+        if (*p == ',' && (p == uris || *(p - 1) != '\\')) {
+            ret.emplace_back(std::string(start, p - start));
+            start = p + 1;
+        }
+        ++p;
+    }
+    return ret;
+}
+
 
 
 URI::URI(const std::string &uri):
