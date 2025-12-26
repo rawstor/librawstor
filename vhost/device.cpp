@@ -8,6 +8,7 @@ extern "C" {
 #include <rawstorstd/gpp.hpp>
 #include <rawstorstd/iovec.h>
 #include <rawstorstd/logging.h>
+#include <rawstorstd/uri.hpp>
 
 #include <rawstor.h>
 
@@ -361,16 +362,20 @@ void process_req(std::unique_ptr<VuBlkReq> req) {
             }
         case VIRTIO_BLK_T_GET_ID:
             {
-                const char serial[] = "rawstor";
+                char uuid[37];
+                rawstor_object_id(req->device->object(), uuid);
 
-                size_t size =
-                    std::min(
-                        sizeof(serial),
-                        std::min(
-                            in_size,
-                            (size_t)VIRTIO_BLK_ID_BYTES));
+                size_t size = std::min(in_size, (size_t)VIRTIO_BLK_ID_BYTES);
 
-                rawstor_iovec_from_buf(in_iov, in_niov, 0, serial, size);
+                char *at = uuid;
+                if (size < sizeof(uuid)) {
+                    at += sizeof(uuid) - size;
+                } else {
+                    size = sizeof(uuid);
+                }
+
+                rawstor_iovec_from_buf(in_iov, in_niov, 0, at, size);
+
                 in->status = VIRTIO_BLK_S_OK;
 
                 req_push(req.get(), in_size);
