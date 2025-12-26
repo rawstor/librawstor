@@ -363,7 +363,11 @@ void process_req(std::unique_ptr<VuBlkReq> req) {
         case VIRTIO_BLK_T_GET_ID:
             {
                 char uuid[37];
-                rawstor_object_id(req->device->object(), uuid);
+                int res = rawstor_object_id(
+                    req->device->object(), uuid, sizeof(uuid));
+                if (res < 0) {
+                    RAWSTOR_THROW_SYSTEM_ERROR(-res);
+                }
 
                 size_t size = std::min(in_size, (size_t)VIRTIO_BLK_ID_BYTES);
 
