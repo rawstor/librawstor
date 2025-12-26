@@ -48,6 +48,8 @@ int rawstor_object_open(
 
 int rawstor_object_close(RawstorObject *object);
 
+int rawstor_object_id(const RawstorObject *object, char *buf, size_t size);
+
 int rawstor_object_uris(const RawstorObject *object, char *buf, size_t size);
 
 int rawstor_object_pread(
