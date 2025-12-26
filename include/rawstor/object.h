@@ -8,7 +8,6 @@
 #define RAWSTOR_OBJECT_H
 
 #include <rawstor/rawstor.h>
-#include <rawstor/uuid.h>
 
 #include <sys/types.h>
 #include <sys/uio.h>
