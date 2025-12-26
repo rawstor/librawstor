@@ -8,7 +8,6 @@
 #define RAWSTOR_RAWSTOR_H
 
 #include <rawstor/io_callback.h>
-#include <rawstor/uuid.h>
 
 #include <sys/types.h>
 #include <sys/uio.h>

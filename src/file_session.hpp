@@ -6,9 +6,9 @@
 #include <rawstorio/queue.hpp>
 
 #include <rawstorstd/uri.hpp>
+#include <rawstorstd/uuid.h>
 
 #include <rawstor/object.h>
-#include <rawstor/uuid.h>
 
 #include <string>
 
