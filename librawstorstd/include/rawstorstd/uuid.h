@@ -11,13 +11,11 @@ extern "C" {
 #endif
 
 
-// defined in rawstor.h
-// struct RawstorUUID {
-//     uint8_t bytes[16];
-// };
+struct RawstorUUID {
+    uint8_t bytes[16];
+};
 
-// defined in rawstor.h
-// typedef char RawstorUUIDString[37];
+typedef char RawstorUUIDString[37];
 
 
 int rawstor_uuid7_init(struct RawstorUUID *uuid);

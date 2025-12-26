@@ -2,8 +2,9 @@
 #define RAWSTOR_OBJECT_HPP
 
 #include <rawstorstd/uri.hpp>
+#include <rawstorstd/uuid.h>
 
-#include <rawstor.h>
+#include <rawstor/object.h>
 
 #include <memory>
 #include <vector>
