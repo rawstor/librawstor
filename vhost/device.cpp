@@ -40,12 +40,17 @@ extern "C" {
 namespace {
 
 
+struct virtio_blk_inhdr {
+    unsigned char status;
+};
+
+
 class Request final {
     private:
         rawstor::vhost::Device &_device;
         VuVirtq *_vq;
         std::unique_ptr<VuVirtqElement> _elem;
-        unsigned char *_status;
+        virtio_blk_inhdr *_in;
         iovec *_in_iov;
         unsigned int _in_niov;
         virtio_blk_outhdr _out;
@@ -70,16 +75,12 @@ class Request final {
             return _in_niov;
         }
 
-        inline virtio_blk_outhdr* out() noexcept {
-            return &_out;
-        }
-
         inline iovec* out_iov() noexcept {
             return _out_iov;
         }
 
         inline unsigned int out_niov() noexcept {
-            return _in_niov;
+            return _out_niov;
         }
 
         inline uint32_t type() noexcept {
@@ -120,24 +121,24 @@ Request::Request(
 
     rawstor_iovec_discard_front(&_out_iov, &_out_niov, sizeof(_out));
 
-    if (_in_iov[_in_niov - 1].iov_len < sizeof(unsigned char)) {
+    if (_in_iov[_in_niov - 1].iov_len < sizeof(virtio_blk_inhdr)) {
         rawstor_error("virtio-blk request inhdr too short");
         return;
     }
 
-    _status = static_cast<unsigned char*>(_in_iov[_in_niov - 1].iov_base)
+    _in = static_cast<virtio_blk_inhdr*>(_in_iov[_in_niov - 1].iov_base)
         + _in_iov[_in_niov - 1].iov_len
-        - sizeof(unsigned char);
+        - sizeof(virtio_blk_inhdr);
 
-    rawstor_iovec_discard_back(&_in_iov, &_in_niov, sizeof(unsigned char));
+    rawstor_iovec_discard_back(&_in_iov, &_in_niov, sizeof(virtio_blk_inhdr));
 }
 
 
 void Request::push(unsigned char status, size_t size) {
-    *_status = status;
+    _in->status = status;
     vu_queue_push(
         _device.dev(), _vq,
-        _elem.get(), size + sizeof(unsigned char));
+        _elem.get(), size + sizeof(virtio_blk_inhdr));
     vu_queue_notify(_device.dev(), _vq);
 }
 
@@ -410,6 +411,9 @@ void process_request(std::unique_ptr<Request> req) {
 
             case VIRTIO_BLK_T_OUT:
                 {
+                    printf("VIRTIO_BLK_T_OUT\n");
+                    printf("in_size = %zu\n", rawstor_iovec_size(req->in_iov(), req->in_niov()));
+                    printf("out_size = %zu\n", rawstor_iovec_size(req->out_iov(), req->out_niov()));
                     std::unique_ptr<ObjectTask> t =
                         std::make_unique<ObjectTask>(std::move(req));
                     t->pwritev();
@@ -539,19 +543,19 @@ Device::Device(const std::string &object_uris, int fd):
         .get_shared_object = nullptr,
     },
     _features(
-        VIRTIO_BLK_F_SIZE_MAX |
-        VIRTIO_BLK_F_SEG_MAX |
-        VIRTIO_BLK_F_BLK_SIZE |
-        VIRTIO_BLK_F_TOPOLOGY |
-        VIRTIO_BLK_F_MQ |
-        VIRTIO_F_VERSION_1 |
-        VIRTIO_RING_F_INDIRECT_DESC |
-        VIRTIO_RING_F_EVENT_IDX |
-        VHOST_USER_F_PROTOCOL_FEATURES |
-        // VIRTIO_BLK_F_FLUSH |
-        // VIRTIO_BLK_F_DISCARD |
-        // VIRTIO_BLK_F_WRITE_ZEROES |
-        VIRTIO_BLK_F_CONFIG_WCE
+        1ull << VIRTIO_BLK_F_SIZE_MAX |
+        1ull << VIRTIO_BLK_F_SEG_MAX |
+        1ull << VIRTIO_BLK_F_BLK_SIZE |
+        1ull << VIRTIO_BLK_F_TOPOLOGY |
+        1ull << VIRTIO_BLK_F_MQ |
+        1ull << VIRTIO_F_VERSION_1 |
+        1ull << VIRTIO_RING_F_INDIRECT_DESC |
+        1ull << VIRTIO_RING_F_EVENT_IDX |
+        1ull << VHOST_USER_F_PROTOCOL_FEATURES |
+        // 1ull << VIRTIO_BLK_F_FLUSH |
+        // 1ull << VIRTIO_BLK_F_DISCARD |
+        // 1ull << VIRTIO_BLK_F_WRITE_ZEROES |
+        1ull << VIRTIO_BLK_F_CONFIG_WCE
     ),
     _protocol_features(0),
     _blk_config(std::make_unique<virtio_blk_config>())
