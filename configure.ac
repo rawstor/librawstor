@@ -101,7 +101,7 @@ AC_CONFIG_FILES(
     [src/Makefile]
     [src/rawstor.pc]
     [cli/Makefile]
-    [vu/Makefile]
+    [vhost/Makefile]
     [tests/Makefile]
     [deb/control]
     [rpm/librawstor.spec]
