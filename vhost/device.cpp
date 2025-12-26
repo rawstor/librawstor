@@ -411,9 +411,6 @@ void process_request(std::unique_ptr<Request> req) {
 
             case VIRTIO_BLK_T_OUT:
                 {
-                    printf("VIRTIO_BLK_T_OUT\n");
-                    printf("in_size = %zu\n", rawstor_iovec_size(req->in_iov(), req->in_niov()));
-                    printf("out_size = %zu\n", rawstor_iovec_size(req->out_iov(), req->out_niov()));
                     std::unique_ptr<ObjectTask> t =
                         std::make_unique<ObjectTask>(std::move(req));
                     t->pwritev();
