@@ -473,8 +473,8 @@ int rawstor_object_close(RawstorObject *object) {
 }
 
 
-void rawstor_object_id(const RawstorObject *object, char buf[37]) {
-    rawstor_uuid_to_string(&object->id(), (RawstorUUIDString*)&buf);
+void rawstor_object_id(const RawstorObject *object, char *buf[37]) {
+    rawstor_uuid_to_string(&object->id(), (RawstorUUIDString*)buf);
 }
 
 
