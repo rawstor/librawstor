@@ -494,6 +494,21 @@ int rawstor_object_close(RawstorObject *object) {
 }
 
 
+int rawstor_object_id(const RawstorObject *object, char *buf, size_t size) {
+    try {
+        RawstorUUIDString uuid;
+        rawstor_uuid_to_string(&object->id(), &uuid);
+        int res = snprintf(buf, size, "%s", uuid);
+        if (res < 0) {
+            RAWSTOR_THROW_ERRNO();
+        }
+        return res;
+    } catch (const std::system_error &e) {
+        return -e.code().value();
+    }
+}
+
+
 int rawstor_object_uris(const RawstorObject *object, char *buf, size_t size) {
     try {
         return uris(object->uris(), buf, size);
