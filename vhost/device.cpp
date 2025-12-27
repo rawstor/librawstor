@@ -283,7 +283,8 @@ void TaskDispatch::operator()(size_t result, int error) {
     }
 
     if (!(result & POLLIN)) {
-        // TODO: Throw error here
+        rawstor_error("Unexpected poll result: %zu\n", result);
+        RAWSTOR_THROW_SYSTEM_ERROR(EBADF);
     }
 
     _device.dispatch();
@@ -304,7 +305,8 @@ void TaskWatch::operator()(size_t result, int error) {
     }
 
     if (!(result & _mask)) {
-        // TODO: Throw error here
+        rawstor_error("Unexpected poll result: %zu\n", result);
+        RAWSTOR_THROW_SYSTEM_ERROR(EBADF);
     }
 
     if (_device.get_watch(_fd)) {
@@ -324,7 +326,7 @@ void ObjectTask::operator()(size_t size, size_t result, int error) {
     }
 
     if (result != size) {
-        rawstor_error("partial\n");
+        rawstor_error("Partial object operation: %zu != %zu\n", result, size);
         _req->push(VIRTIO_BLK_S_IOERR, result);
     }
 
