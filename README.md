@@ -40,7 +40,7 @@ qemu-system-x86_64 \
     -device virtio-blk-pci,drive=drive1 \
     -object memory-backend-memfd,id=mem,size=4G,share=on \
     -chardev socket,id=rawstor1,reconnect=1,path=/run/rawstor1.sock \
-    -device vhost-user-blk-pci,chardev=rawstor1
+    -device vhost-user-blk-pci,chardev=rawstor1,num-queues=1,disable-legacy=on
 ```
 
 ## Testing
