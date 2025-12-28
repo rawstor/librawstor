@@ -32,7 +32,19 @@ int open_unix_socket(const std::string &socket_path) {
     try {
         struct sockaddr_un addr;
         addr.sun_family = AF_UNIX;
-        strncpy(addr.sun_path, socket_path.c_str(), sizeof(addr.sun_path) - 1);
+
+        int res = snprintf(
+            addr.sun_path, sizeof(addr.sun_path),
+            "%s", socket_path.c_str());
+        if (res < 0) {
+            RAWSTOR_THROW_ERRNO();
+        }
+        if ((size_t)res >= sizeof(addr.sun_path)) {
+            std::ostringstream oss;
+            oss << "Socket path is greater than "
+                << sizeof(addr.sun_path) - 1 << "characters";
+            throw std::runtime_error(oss.str());
+        }
 
         if (bind(server_socket, (struct sockaddr *)&addr, sizeof(addr))) {
             RAWSTOR_THROW_ERRNO();
