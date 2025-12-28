@@ -1,6 +1,6 @@
 SUBDIRS = 3rdparty
 
-bin_PROGRAMS = rawstor-vhost
+noinst_PROGRAMS = rawstor-vhost
 
 AM_CXXFLAGS = $(GENERIC_CXXFLAGS) \
               $(ASAN_CFLAGS) \
