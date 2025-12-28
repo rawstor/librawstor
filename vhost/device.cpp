@@ -323,11 +323,13 @@ void ObjectTask::operator()(size_t size, size_t result, int error) {
     if (error != 0) {
         rawstor_error("%s\n", strerror(error));
         _req->push(VIRTIO_BLK_S_IOERR, result);
+        return;
     }
 
     if (result != size) {
         rawstor_error("Partial object operation: %zu != %zu\n", result, size);
         _req->push(VIRTIO_BLK_S_IOERR, result);
+        return;
     }
 
     _req->push(VIRTIO_BLK_S_OK, result);
