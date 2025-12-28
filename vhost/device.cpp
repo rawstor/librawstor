@@ -5,6 +5,7 @@ extern "C" {
 #include "standard-headers/linux/virtio_blk.h"
 }
 
+#include <rawstorstd/endian.h>
 #include <rawstorstd/gpp.hpp>
 #include <rawstorstd/iovec.h>
 #include <rawstorstd/logging.h>
@@ -84,14 +85,11 @@ class Request final {
         }
 
         inline uint32_t type() noexcept {
-            // uint32_t le32_to_cpu(out.type);
-            return _out.type & ~VIRTIO_BLK_T_BARRIER;
+            return RAWSTOR_LE32TOH(_out.type) & ~VIRTIO_BLK_T_BARRIER;
         }
 
         inline uint64_t offset() noexcept {
-            // TODO: handle ble
-            // int64_t sector_num = le64_to_cpu(out.sector);
-            return _out.sector << VIRTIO_BLK_SECTOR_BITS;
+            return RAWSTOR_LE64TOH(_out.sector) << VIRTIO_BLK_SECTOR_BITS;
         }
 
         void push(unsigned char status, size_t size);
