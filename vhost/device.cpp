@@ -550,11 +550,10 @@ Device::Device(const std::string &object_uris, int fd):
         1ull << VIRTIO_F_VERSION_1 |
         1ull << VIRTIO_RING_F_INDIRECT_DESC |
         1ull << VIRTIO_RING_F_EVENT_IDX |
-        1ull << VHOST_USER_F_PROTOCOL_FEATURES |
+        1ull << VHOST_USER_F_PROTOCOL_FEATURES
         // 1ull << VIRTIO_BLK_F_FLUSH |
         // 1ull << VIRTIO_BLK_F_DISCARD |
         // 1ull << VIRTIO_BLK_F_WRITE_ZEROES |
-        1ull << VIRTIO_BLK_F_CONFIG_WCE
     ),
     _protocol_features(0),
     _blk_config(std::make_unique<virtio_blk_config>())
