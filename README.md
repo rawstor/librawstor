@@ -9,7 +9,7 @@
 make
 make install
 rawstor-vhost \
-    --socket-path=rawstor.sock \
+    --socket-path=/run/rawstor1.sock \
     --object-uri=ost://${OST_HOST}:${OST_PORT}/${OBJECT_UUID}
 ```
 
