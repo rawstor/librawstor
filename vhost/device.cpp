@@ -116,14 +116,14 @@ Request::Request(
             _out_iov, _out_niov, 0, &_out, sizeof(_out)) != sizeof(_out))
     {
         rawstor_error("virtio-blk request outhdr too short");
-        return;
+        RAWSTOR_THROW_SYSTEM_ERROR(EINVAL);
     }
 
     rawstor_iovec_discard_front(&_out_iov, &_out_niov, sizeof(_out));
 
     if (_in_iov[_in_niov - 1].iov_len < sizeof(virtio_blk_inhdr)) {
         rawstor_error("virtio-blk request inhdr too short");
-        return;
+        RAWSTOR_THROW_SYSTEM_ERROR(EINVAL);
     }
 
     _in = static_cast<virtio_blk_inhdr*>(_in_iov[_in_niov - 1].iov_base)
@@ -157,7 +157,7 @@ class ObjectTask final {
             try {
                 (*t)(size, result, error);
                 return 0;
-            } catch (std::system_error &e) {
+            } catch (const std::system_error &e) {
                 return -e.code().value();
             }
         }
@@ -189,7 +189,7 @@ class Task {
             try {
                 (*t)(result, error);
                 return 0;
-            } catch (std::system_error &e) {
+            } catch (const std::system_error &e) {
                 return -e.code().value();
             }
         }
@@ -459,7 +459,7 @@ void process_request(std::unique_ptr<Request> req) {
                 req->push(VIRTIO_BLK_S_UNSUPP, in_size);
                 break;
         }
-    } catch (std::exception &e) {
+    } catch (const std::exception &e) {
         rawstor_error("%s\n", e.what());
         size_t in_size = rawstor_iovec_size(
             req->in_iov(), req->in_niov());
@@ -480,9 +480,13 @@ void process_vq(VuDev *dev, int qidx) {
             break;
         }
 
-        std::unique_ptr<Request> req =
-            std::make_unique<Request>(d, vq, std::move(elem));
-        process_request(std::move(req));
+        try {
+            std::unique_ptr<Request> req =
+                std::make_unique<Request>(d, vq, std::move(elem));
+            process_request(std::move(req));
+        } catch (const std::exception &e) {
+            rawstor_error("%s\n", e.what());
+        }
     }
 }
 
