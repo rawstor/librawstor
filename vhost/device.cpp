@@ -600,7 +600,8 @@ Device::Device(const std::string &object_uris, int fd):
     _blk_config->max_discard_sectors = 0; // VIRTIO_BLK_F_DISCARD
     _blk_config->max_discard_seg = 0; // VIRTIO_BLK_F_DISCARD
      // VIRTIO_BLK_F_DISCARD
-    _blk_config->discard_sector_alignment = 1 >> VIRTIO_BLK_SECTOR_BITS;
+    _blk_config->discard_sector_alignment =
+        _blk_config->blk_size >> VIRTIO_BLK_SECTOR_BITS;
 
     _blk_config->max_write_zeroes_sectors = 0; // VIRTIO_BLK_F_WRITE_ZEROES
     _blk_config->max_write_zeroes_seg = 0; // VIRTIO_BLK_F_WRITE_ZEROES
