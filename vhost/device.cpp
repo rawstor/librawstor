@@ -124,9 +124,10 @@ Request::Request(
         RAWSTOR_THROW_SYSTEM_ERROR(EINVAL);
     }
 
-    _in = static_cast<virtio_blk_inhdr*>(_in_iov[_in_niov - 1].iov_base)
+    _in = reinterpret_cast<virtio_blk_inhdr*>(
+        static_cast<char*>(_in_iov[_in_niov - 1].iov_base)
         + _in_iov[_in_niov - 1].iov_len
-        - sizeof(virtio_blk_inhdr);
+        - sizeof(virtio_blk_inhdr));
 
     rawstor_iovec_discard_back(&_in_iov, &_in_niov, sizeof(virtio_blk_inhdr));
 }
