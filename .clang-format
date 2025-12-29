@@ -1,4 +1,6 @@
 ---
 BasedOnStyle: LLVM
 IndentWidth: 4
+IndentAccessModifiers: true
 AlignAfterOpenBracket: BlockIndent
+BreakConstructorInitializers: AfterColon
