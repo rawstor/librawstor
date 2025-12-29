@@ -27,7 +27,7 @@ function find_cmd() {
 
 function check_file() {
     local file="$1"
-    message="$(clang-format -n -Werror --style=file --fallback-style=LLVM "${file}")"
+    message="$(clang-format -n -Werror --ferror-limit=3 --style=file --fallback-style=LLVM "${file}")"
     local status="$?"
     if [ $status -ne 0 ]; then
         echo "$message" >&2
