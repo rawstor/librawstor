@@ -13,7 +13,6 @@
 namespace rawstor {
 namespace io {
 
-
 std::unique_ptr<Queue> Queue::create(unsigned int depth) {
 #ifdef RAWSTOR_WITH_LIBURING
     return std::make_unique<rawstor::io::uring::Queue>(depth);
@@ -22,15 +21,13 @@ std::unique_ptr<Queue> Queue::create(unsigned int depth) {
 #endif
 }
 
-
-const std::string& Queue::engine_name() {
+const std::string &Queue::engine_name() {
 #ifdef RAWSTOR_WITH_LIBURING
     return rawstor::io::uring::Queue::engine_name();
 #else
     return rawstor::io::poll::Queue::engine_name();
 #endif
 }
-
 
 void Queue::setup_fd(int fd) {
 #ifdef RAWSTOR_WITH_LIBURING
@@ -40,5 +37,5 @@ void Queue::setup_fd(int fd) {
 #endif
 }
 
-
-}} // rawstor::io
+} // namespace io
+} // namespace rawstor
