@@ -4,5 +4,5 @@ AlignAfterOpenBracket: BlockIndent
 BreakConstructorInitializers: AfterColon
 IndentAccessModifiers: true
 IndentWidth: 4
-PackConstructorInitializers: Never
+PackConstructorInitializers: CurrentLine
 PointerAlignment: Left
