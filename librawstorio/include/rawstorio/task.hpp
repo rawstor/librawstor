@@ -28,8 +28,7 @@ class Task {
               '|', __FILE__, __LINE__, __FUNCTION__, "fd %d\n", _fd
           ))
 #endif
-    {
-    }
+    {}
     Task(const Task &) = delete;
     Task(Task &&) = delete;
     virtual ~Task() {
