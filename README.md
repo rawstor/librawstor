@@ -5,9 +5,12 @@
 ## TL;DR
 ```
 ./autogen.sh
-./configure --prefix=${HOME}/local
+./configure
 make
 make install
+rawstor-vhost \
+    --socket-path=/run/rawstor1.sock \
+    --object-uri=ost://${OST_HOST}:${OST_PORT}/${OBJECT_UUID}
 ```
 
 ## Configure
@@ -19,6 +22,26 @@ make install
 ```
 
 This will replace liburing with poll.
+
+## rawstor-vhost
+
+rawstor-vhost is a userspace VirtIO block device backend that implements the vhost-user protocol. It allows virtual machines to access block storage via shared memory, bypassing the host kernel for improved performance.
+
+```
+rawstor-vhost \
+    --socket-path=/run/rawstor1.sock \
+    --object-uri=ost://${OST_HOST}:${OST_PORT}/${OBJECT_UUID}
+
+qemu-system-x86_64 \
+    -enable-kvm \
+    -m 4G \
+    -machine accel=kvm,memory-backend=mem \
+    -drive file=image.qcow2,if=none,id=drive1 \
+    -device virtio-blk-pci,drive=drive1 \
+    -object memory-backend-memfd,id=mem,size=4G,share=on \
+    -chardev socket,id=rawstor1,reconnect=1,path=/run/rawstor1.sock \
+    -device vhost-user-blk-pci,chardev=rawstor1,num-queues=1,disable-legacy=on
+```
 
 ## Testing
 

@@ -14,7 +14,8 @@ AM_CXXFLAGS = $(GENERIC_CXXFLAGS) \
 AM_LDFLAGS = $(ASAN_LDFLAGS)
 
 
-librawstorstd_la_SOURCES = $(top_srcdir)/librawstorstd/include/rawstorstd/gcc.h \
+librawstorstd_la_SOURCES = $(top_srcdir)/librawstorstd/include/rawstorstd/endian.h \
+                           $(top_srcdir)/librawstorstd/include/rawstorstd/gcc.h \
                            $(top_srcdir)/librawstorstd/include/rawstorstd/gpp.hpp \
                            $(top_srcdir)/librawstorstd/include/rawstorstd/hash.h \
                            $(top_srcdir)/librawstorstd/include/rawstorstd/iovec.h \
