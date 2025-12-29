@@ -14,7 +14,7 @@ function find_cmd() {
         if [ $is_first -ne 1 ]; then
             cmd+="-o "
         fi
-        cmd+="-wholename \"./$path\" "
+        cmd+="-wholename \"$path\" "
         is_first=0
     done
     cmd+=" \)"
