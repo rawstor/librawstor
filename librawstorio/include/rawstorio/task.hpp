@@ -30,8 +30,8 @@ class Task {
 #endif
         {
         }
-        Task(const Task &) = delete;
-        Task(Task &&) = delete;
+        Task(const Task&) = delete;
+        Task(Task&&) = delete;
         virtual ~Task() {
 #ifdef RAWSTOR_TRACE_EVENTS
             rawstor_trace_event_end(
@@ -40,8 +40,8 @@ class Task {
 #endif
         }
 
-        Task &operator=(const Task &) = delete;
-        Task &operator=(Task &&) = delete;
+        Task& operator=(const Task&) = delete;
+        Task& operator=(Task&&) = delete;
 
         inline int fd() const noexcept { return _fd; }
 
@@ -49,8 +49,8 @@ class Task {
 
 #ifdef RAWSTOR_TRACE_EVENTS
         void trace(
-            const char *file, int line, const char *function,
-            const std::string &message
+            const char* file, int line, const char* function,
+            const std::string& message
         ) {
             rawstor_trace_event_message(
                 _trace_id, file, line, function, "%s\n", message.c_str()
@@ -72,7 +72,7 @@ class TaskScalar : public Task {
         TaskScalar(int fd) : Task(fd) {}
         virtual ~TaskScalar() override = default;
 
-        virtual void *buf() noexcept = 0;
+        virtual void* buf() noexcept = 0;
         virtual size_t size() const noexcept = 0;
 };
 
@@ -81,7 +81,7 @@ class TaskVector : public Task {
         TaskVector(int fd) : Task(fd) {}
         virtual ~TaskVector() override = default;
 
-        virtual iovec *iov() noexcept = 0;
+        virtual iovec* iov() noexcept = 0;
         virtual unsigned int niov() const noexcept = 0;
         virtual size_t size() const noexcept = 0;
 };
@@ -107,7 +107,7 @@ class TaskMessage : public Task {
         TaskMessage(int fd) : Task(fd) {}
         virtual ~TaskMessage() override = default;
 
-        virtual msghdr *msg() noexcept = 0;
+        virtual msghdr* msg() noexcept = 0;
         virtual size_t size() const noexcept = 0;
         virtual int flags() const noexcept = 0;
 };
