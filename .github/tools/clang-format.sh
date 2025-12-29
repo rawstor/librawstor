@@ -4,9 +4,16 @@
 function find_cmd() {
     IFS=','
     local paths="$1"
-    local cmd="$3"
+    local excludes="$2"
+    local cmd=""
 
     cmd+="find . -type f "
+
+    if [ -n "$excludes" ]; then
+        for exclude in $excludes; do
+            cmd+="! -path \"$exclude\" "
+        done
+    fi
 
     cmd+="\( "
     local is_first=1
@@ -14,7 +21,7 @@ function find_cmd() {
         if [ $is_first -ne 1 ]; then
             cmd+="-o "
         fi
-        cmd+="-wholename \"$path\" "
+        cmd+="-path \"$path\" "
         is_first=0
     done
     cmd+=" \)"
@@ -31,7 +38,6 @@ function check_file() {
     local status="$?"
     if [ $status -ne 0 ]; then
         echo "$message" >&2
-        EXIT_STATUS=1
         return 1
     fi
     return 0
@@ -39,9 +45,11 @@ function check_file() {
 
 
 function main() {
-    local input_pattern=${1:-"*.c,*.h,*.cpp,*.hpp"}
+    local input_pattern=$1
+    local input_excludes=$2
     echo -e "Sources: $input_pattern"
-    local cmd=$(find_cmd "$input_pattern")
+    local cmd=$(find_cmd "$input_pattern" "$input_excludes")
+    echo $cmd
 
     for file in $(eval $cmd); do
         echo -e "Checking file: $file"
@@ -70,4 +78,4 @@ function main() {
 }
 
 
-main $1
+main ${1:-"*.c,*.h,*.cpp,*.hpp"} ${2:-"**/**/3rdparty/*"}
