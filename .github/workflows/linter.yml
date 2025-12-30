@@ -10,5 +10,23 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+    - name: versions
+      run: |
+        sudo cat /etc/*release*
+        sudo apt update
+        sudo apt search clang-format
+    - name: add LLVM nightly packages
+      run: |
+        wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
+        deb http://apt.llvm.org/noble/ llvm-toolchain-noble main
+        deb-src http://apt.llvm.org/noble/ llvm-toolchain-noble main
+        deb http://apt.llvm.org/noble/ llvm-toolchain-noble-20 main
+        deb-src http://apt.llvm.org/noble/ llvm-toolchain-noble-20 main
+        deb http://apt.llvm.org/noble/ llvm-toolchain-noble-21 main
+        deb-src http://apt.llvm.org/noble/ llvm-toolchain-noble-21 main
+    - name: versions
+      run: |
+        sudo apt update
+        sudo apt search clang-format
     - name: clang-format
       run: ./.github/tools/clang-format.sh
