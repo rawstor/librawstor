@@ -16,38 +16,32 @@
 #include <sys/un.h>
 #include <unistd.h>
 
-
 #define QUEUE_DEPTH 256
 
 /* The version of the protocol we support */
 #define VHOST_USER_VERSION 1
 
-
-static int get_features(VhostUserMsg *msg) {
+static int get_features(VhostUserMsg* msg) {
     msg->payload.u64 =
         /*
          * The following VIRTIO feature bits are supported by our virtqueue
          * implementation:
          */
-        1ULL << VIRTIO_F_NOTIFY_ON_EMPTY |
-        1ULL << VIRTIO_RING_F_INDIRECT_DESC |
-        1ULL << VIRTIO_RING_F_EVENT_IDX |
-        1ULL << VIRTIO_F_VERSION_1 |
+        1ULL << VIRTIO_F_NOTIFY_ON_EMPTY | 1ULL << VIRTIO_RING_F_INDIRECT_DESC |
+        1ULL << VIRTIO_RING_F_EVENT_IDX | 1ULL << VIRTIO_F_VERSION_1 |
 
         /* vhost-user feature bits */
-        1ULL << VHOST_F_LOG_ALL |
-        1ULL << VHOST_USER_F_PROTOCOL_FEATURES;
+        1ULL << VHOST_F_LOG_ALL | 1ULL << VHOST_USER_F_PROTOCOL_FEATURES;
 
     msg->size = sizeof(msg->payload.u64);
     msg->fd_num = 0;
 
-    printf("Sending back to guest u64: 0x%016"PRIx64"\n", msg->payload.u64);
+    printf("Sending back to guest u64: 0x%016" PRIx64 "\n", msg->payload.u64);
 
     return 1;
 }
 
-
-static int get_protocol_features(VhostUserMsg *msg) {
+static int get_protocol_features(VhostUserMsg* msg) {
     /*
      * Note that we support, but intentionally do not set,
      * VHOST_USER_PROTOCOL_F_INBAND_NOTIFICATIONS. This means that
@@ -70,39 +64,35 @@ static int get_protocol_features(VhostUserMsg *msg) {
     msg->size = sizeof(msg->payload.u64);
     msg->fd_num = 0;
 
-    printf("Sending back to guest u64: 0x%016"PRIx64"\n", msg->payload.u64);
+    printf("Sending back to guest u64: 0x%016" PRIx64 "\n", msg->payload.u64);
 
     return 1;
 }
 
-
-static int dispatch_vu_request(VhostUserMsg *msg) {
+static int dispatch_vu_request(VhostUserMsg* msg) {
     printf("Request: %d\n", msg->request);
     printf("Flags:   0x%x\n", msg->flags);
     printf("Size:    %u\n", msg->size);
 
     switch (msg->request) {
-        case VHOST_USER_GET_FEATURES:
-            return get_features(msg);
-        case VHOST_USER_GET_PROTOCOL_FEATURES:
-            return get_protocol_features(msg);
-        default:
-            printf("Unexpected request: %d\n", msg->request);
+    case VHOST_USER_GET_FEATURES:
+        return get_features(msg);
+    case VHOST_USER_GET_PROTOCOL_FEATURES:
+        return get_protocol_features(msg);
+    default:
+        printf("Unexpected request: %d\n", msg->request);
     };
     return 0;
 }
 
+static int server_read(size_t result, int error, void* data);
 
-static int server_read(size_t result, int error, void *data);
+static int server_write(size_t result, int error, void* data);
 
-
-static int server_write(size_t result, int error, void *data);
-
-
-static int server_read(size_t result, int error, void *data) {
+static int server_read(size_t result, int error, void* data) {
     // TODO: implement server in CPP.
     int client_socket = 0; // rawstor_io_event_fd(event);
-    VhostUserMsg *msg = (VhostUserMsg*)data;
+    VhostUserMsg* msg = (VhostUserMsg*)data;
 
     if (error != 0) {
         fprintf(stderr, "read() failed: %s\n", strerror(error));
@@ -110,17 +100,11 @@ static int server_read(size_t result, int error, void *data) {
     }
 
     if (result == 0) {
-        fprintf(
-            stderr,
-            "Connection lost: %d\n", client_socket);
+        fprintf(stderr, "Connection lost: %d\n", client_socket);
         return 0;
-    } else if (
-        result < (int)VHOST_USER_HDR_SIZE ||
-        result > (int)sizeof(VhostUserMsg)
-    ) {
-        fprintf(
-            stderr,
-            "Unexpected request size: %zu\n", result);
+    } else if (result < (int)VHOST_USER_HDR_SIZE ||
+               result > (int)sizeof(VhostUserMsg)) {
+        fprintf(stderr, "Unexpected request size: %zu\n", result);
         return -EPROTO;
     }
 
@@ -130,9 +114,7 @@ static int server_read(size_t result, int error, void *data) {
     response = dispatch_vu_request(msg);
     printf("==============================================\n");
 
-    if (!response &&
-        msg->flags & VHOST_USER_NEED_REPLY_MASK)
-    {
+    if (!response && msg->flags & VHOST_USER_NEED_REPLY_MASK) {
         msg->payload.u64 = 0;
         msg->size = sizeof(msg->payload.u64);
         msg->fd_num = 0;
@@ -143,14 +125,12 @@ static int server_read(size_t result, int error, void *data) {
         return 0;
     }
 
-    msg->flags = VHOST_USER_VERSION |
-                 VHOST_USER_REPLY_MASK;
+    msg->flags = VHOST_USER_VERSION | VHOST_USER_REPLY_MASK;
 
     int res = rawstor_fd_write(
-        client_socket, msg, VHOST_USER_HDR_SIZE + msg->size,
-        server_write, msg);
-    if (res)
-    {
+        client_socket, msg, VHOST_USER_HDR_SIZE + msg->size, server_write, msg
+    );
+    if (res) {
         fprintf(stderr, "rawstor_fd_write() failed: %s\n", strerror(-res));
         return res;
     }
@@ -158,11 +138,10 @@ static int server_read(size_t result, int error, void *data) {
     return 0;
 }
 
-
-static int server_write(size_t result, int error, void *data) {
+static int server_write(size_t result, int error, void* data) {
     // TODO: implement server in CPP.
     int client_socket = 0; // rawstor_io_event_fd(event);
-    VhostUserMsg *msg = (VhostUserMsg*)data;
+    VhostUserMsg* msg = (VhostUserMsg*)data;
 
     if (error != 0) {
         fprintf(stderr, "write() failed: %s\n", strerror(error));
@@ -171,9 +150,8 @@ static int server_write(size_t result, int error, void *data) {
 
     printf("Message sent: %ld bytes\n", result);
 
-    int res = rawstor_fd_read(
-        client_socket, msg, sizeof(*msg),
-        server_read, msg);
+    int res =
+        rawstor_fd_read(client_socket, msg, sizeof(*msg), server_read, msg);
     if (res) {
         fprintf(stderr, "rawstor_fd_read() failed: %s\n", strerror(-res));
         return res;
@@ -181,7 +159,6 @@ static int server_write(size_t result, int error, void *data) {
 
     return 0;
 }
-
 
 static int server_loop(int client_socket) {
     int res = rawstor_initialize(NULL);
@@ -193,8 +170,8 @@ static int server_loop(int client_socket) {
     VhostUserMsg msg;
 
     res = rawstor_fd_read(
-        client_socket, &msg, sizeof(VhostUserMsg),
-        server_read, &msg);
+        client_socket, &msg, sizeof(VhostUserMsg), server_read, &msg
+    );
     if (res) {
         fprintf(stderr, "rawstor_fd_read() failed: %s\n", strerror(-res));
         return res;
@@ -212,24 +189,20 @@ static int server_loop(int client_socket) {
     return res;
 }
 
-
 int rawstor_vu_server(
-    const char RAWSTOR_UNUSED *uri,
-    int RAWSTOR_UNUSED object_id,
-    const char *socket_path)
-{
+    const char RAWSTOR_UNUSED* uri, int RAWSTOR_UNUSED object_id,
+    const char* socket_path
+) {
     int server_socket = socket(AF_UNIX, SOCK_STREAM, 0);
     if (server_socket < 0) {
         perror("socket() failed");
         return -1;
     }
 
-    struct sockaddr_un addr = {
-        .sun_family = AF_UNIX
-    };
+    struct sockaddr_un addr = {.sun_family = AF_UNIX};
     strncpy(addr.sun_path, socket_path, sizeof(addr.sun_path) - 1);
 
-    if (bind(server_socket, (struct sockaddr *)&addr, sizeof(addr))) {
+    if (bind(server_socket, (struct sockaddr*)&addr, sizeof(addr))) {
         perror("bind() failed");
         if (close(server_socket)) {
             err(EXIT_FAILURE, NULL);
@@ -263,7 +236,7 @@ int rawstor_vu_server(
 
     int rval = server_loop(client_socket);
 
-    if(close(client_socket)) {
+    if (close(client_socket)) {
         perror("close() failed");
     } else {
         printf("Connection closed: %d\n", client_socket);

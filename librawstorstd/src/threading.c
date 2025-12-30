@@ -7,26 +7,21 @@
 #include <string.h>
 #include <time.h>
 
-
 struct RawstorThread {
     pthread_t pthread;
 };
-
 
 struct RawstorMutex {
     pthread_mutex_t pmutex;
 };
 
-
 struct RawstorCond {
     pthread_cond_t pcond;
 };
 
-
-RawstorThread* rawstor_thread_create(
-    RawstorThreadRoutine *routine, void *data)
-{
-    RawstorThread *ret = malloc(sizeof(RawstorThread));
+RawstorThread*
+rawstor_thread_create(RawstorThreadRoutine* routine, void* data) {
+    RawstorThread* ret = malloc(sizeof(RawstorThread));
     if (ret == NULL) {
         return NULL;
     }
@@ -41,9 +36,8 @@ RawstorThread* rawstor_thread_create(
     return ret;
 }
 
-
-void* rawstor_thread_join(RawstorThread *thread) {
-    void *data;
+void* rawstor_thread_join(RawstorThread* thread) {
+    void* data;
 
     int res = pthread_join(thread->pthread, &data);
     if (res != 0) {
@@ -57,8 +51,7 @@ void* rawstor_thread_join(RawstorThread *thread) {
     return data;
 }
 
-
-void rawstor_thread_detach(RawstorThread *thread) {
+void rawstor_thread_detach(RawstorThread* thread) {
     int res = pthread_detach(thread->pthread);
     if (res != 0) {
         errno = res;
@@ -69,9 +62,8 @@ void rawstor_thread_detach(RawstorThread *thread) {
     free(thread);
 }
 
-
 RawstorMutex* rawstor_mutex_create(void) {
-    RawstorMutex *ret = malloc(sizeof(RawstorMutex));
+    RawstorMutex* ret = malloc(sizeof(RawstorMutex));
     if (ret == NULL) {
         return NULL;
     }
@@ -86,8 +78,7 @@ RawstorMutex* rawstor_mutex_create(void) {
     return ret;
 }
 
-
-void rawstor_mutex_delete(RawstorMutex *mutex) {
+void rawstor_mutex_delete(RawstorMutex* mutex) {
     int res = pthread_mutex_destroy(&mutex->pmutex);
     if (res != 0) {
         errno = res;
@@ -97,7 +88,7 @@ void rawstor_mutex_delete(RawstorMutex *mutex) {
     free(mutex);
 }
 
-void rawstor_mutex_lock(RawstorMutex *mutex) {
+void rawstor_mutex_lock(RawstorMutex* mutex) {
     int res = pthread_mutex_lock(&mutex->pmutex);
     if (res != 0) {
         errno = res;
@@ -106,7 +97,7 @@ void rawstor_mutex_lock(RawstorMutex *mutex) {
     }
 }
 
-void rawstor_mutex_unlock(RawstorMutex *mutex) {
+void rawstor_mutex_unlock(RawstorMutex* mutex) {
     int res = pthread_mutex_unlock(&mutex->pmutex);
     if (res != 0) {
         errno = res;
@@ -115,9 +106,8 @@ void rawstor_mutex_unlock(RawstorMutex *mutex) {
     }
 }
 
-
 RawstorCond* rawstor_cond_create(void) {
-    RawstorCond *ret = malloc(sizeof(RawstorCond));
+    RawstorCond* ret = malloc(sizeof(RawstorCond));
     if (ret == NULL) {
         return NULL;
     }
@@ -132,7 +122,6 @@ RawstorCond* rawstor_cond_create(void) {
     return ret;
 }
 
-
 void rawstor_cond_delete(RawstorCond* cond) {
     int res = pthread_cond_destroy(&cond->pcond);
     if (res != 0) {
@@ -143,8 +132,7 @@ void rawstor_cond_delete(RawstorCond* cond) {
     free(cond);
 }
 
-
-void rawstor_cond_wait(RawstorCond *cond, RawstorMutex *mutex) {
+void rawstor_cond_wait(RawstorCond* cond, RawstorMutex* mutex) {
     int res = pthread_cond_wait(&cond->pcond, &mutex->pmutex);
     if (res != 0) {
         errno = res;
@@ -153,10 +141,9 @@ void rawstor_cond_wait(RawstorCond *cond, RawstorMutex *mutex) {
     }
 }
 
-
 int rawstor_cond_wait_timeout(
-    RawstorCond *cond, RawstorMutex *mutex, int timeout)
-{
+    RawstorCond* cond, RawstorMutex* mutex, int timeout
+) {
     struct timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);
     ts.tv_sec += timeout / 1000;
@@ -177,8 +164,7 @@ int rawstor_cond_wait_timeout(
     return 1;
 }
 
-
-void rawstor_cond_signal(RawstorCond *cond) {
+void rawstor_cond_signal(RawstorCond* cond) {
     int res = pthread_cond_signal(&cond->pcond);
     if (res != 0) {
         errno = res;
@@ -187,8 +173,7 @@ void rawstor_cond_signal(RawstorCond *cond) {
     }
 }
 
-
-void rawstor_cond_broadcast(RawstorCond *cond) {
+void rawstor_cond_broadcast(RawstorCond* cond) {
     int res = pthread_cond_broadcast(&cond->pcond);
     if (res != 0) {
         errno = res;

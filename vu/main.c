@@ -8,7 +8,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-
 void usage() {
     fprintf(
         stderr,
@@ -28,19 +27,14 @@ void usage() {
     );
 }
 
-
 void sact_handler(int s) {
     printf("Caught signal: %d\n", s);
 }
 
+static struct sigaction sact = {.sa_handler = sact_handler};
 
-static struct sigaction sact = {
-    .sa_handler = sact_handler
-};
-
-
-int main(int argc, char **argv) {
-    const char *optstring = "ho:s:";
+int main(int argc, char** argv) {
+    const char* optstring = "ho:s:";
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
         {"object-id", required_argument, NULL, 'o'},
@@ -49,9 +43,9 @@ int main(int argc, char **argv) {
         {},
     };
 
-    const char *object_id_arg = NULL;
-    const char *socket_path_arg = NULL;
-    const char *uri_arg = NULL;
+    const char* object_id_arg = NULL;
+    const char* socket_path_arg = NULL;
+    const char* uri_arg = NULL;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
         if (c == -1) {
@@ -59,25 +53,25 @@ int main(int argc, char **argv) {
         }
 
         switch (c) {
-            case 'h':
-                usage();
-                return EXIT_SUCCESS;
-                break;
+        case 'h':
+            usage();
+            return EXIT_SUCCESS;
+            break;
 
-            case 'o':
-                object_id_arg = optarg;
-                break;
+        case 'o':
+            object_id_arg = optarg;
+            break;
 
-            case 's':
-                socket_path_arg = optarg;
-                break;
+        case 's':
+            socket_path_arg = optarg;
+            break;
 
-            case 'u':
-                uri_arg = optarg;
-                break;
+        case 'u':
+            uri_arg = optarg;
+            break;
 
-            default:
-                return EXIT_FAILURE;
+        default:
+            return EXIT_FAILURE;
         }
     }
 

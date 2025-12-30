@@ -14,20 +14,15 @@
 
 #include <cassert>
 
-
 namespace {
-
 
 std::string engine_name = "poll";
 
-
-} // unnamed
-
+} // namespace
 
 namespace rawstor {
 namespace io {
 namespace poll {
-
 
 Session& Queue::_get_session(int fd) {
     std::unordered_map<int, std::shared_ptr<Session>>::iterator it =
@@ -42,11 +37,9 @@ Session& Queue::_get_session(int fd) {
     return *session;
 }
 
-
 const std::string& Queue::engine_name() {
     return ::engine_name;
 }
-
 
 void Queue::setup_fd(int fd) {
     int res;
@@ -73,67 +66,57 @@ void Queue::setup_fd(int fd) {
     }
 }
 
-
 void Queue::read(std::unique_ptr<rawstor::io::TaskScalar> t) {
-    Session &s = _get_session(t->fd());
+    Session& s = _get_session(t->fd());
     s.read(std::move(t));
 }
-
 
 void Queue::read(std::unique_ptr<rawstor::io::TaskVector> t) {
-    Session &s = _get_session(t->fd());
+    Session& s = _get_session(t->fd());
     s.read(std::move(t));
 }
-
 
 void Queue::read(std::unique_ptr<rawstor::io::TaskScalarPositional> t) {
-    Session &s = _get_session(t->fd());
+    Session& s = _get_session(t->fd());
     s.read(std::move(t));
 }
-
 
 void Queue::read(std::unique_ptr<rawstor::io::TaskVectorPositional> t) {
-    Session &s = _get_session(t->fd());
+    Session& s = _get_session(t->fd());
     s.read(std::move(t));
 }
 
-
 void Queue::write(std::unique_ptr<rawstor::io::TaskScalar> t) {
-    Session &s = _get_session(t->fd());
+    Session& s = _get_session(t->fd());
     s.write(std::move(t));
 }
-
 
 void Queue::write(std::unique_ptr<rawstor::io::TaskVector> t) {
-    Session &s = _get_session(t->fd());
+    Session& s = _get_session(t->fd());
     s.write(std::move(t));
 }
-
 
 void Queue::write(std::unique_ptr<rawstor::io::TaskScalarPositional> t) {
-    Session &s = _get_session(t->fd());
+    Session& s = _get_session(t->fd());
     s.write(std::move(t));
 }
-
 
 void Queue::write(std::unique_ptr<rawstor::io::TaskVectorPositional> t) {
-    Session &s = _get_session(t->fd());
+    Session& s = _get_session(t->fd());
     s.write(std::move(t));
 }
-
 
 bool Queue::empty() const noexcept {
     if (!_cqes.empty()) {
         return false;
     }
-    for (const auto &it: _sessions) {
+    for (const auto& it : _sessions) {
         if (!it.second->empty()) {
             return false;
         }
     }
     return true;
 }
-
 
 void Queue::wait(unsigned int timeout) {
     while (_cqes.empty()) {
@@ -177,8 +160,8 @@ void Queue::wait(unsigned int timeout) {
             RAWSTOR_THROW_SYSTEM_ERROR(ETIME);
         }
 
-        for (const pollfd &fd: fds) {
-            std::shared_ptr<Session> &s = _sessions.at(fd.fd);
+        for (const pollfd& fd : fds) {
+            std::shared_ptr<Session>& s = _sessions.at(fd.fd);
             if (fd.revents & POLLHUP) {
                 s->process_read(_cqes, true);
                 s->process_write(_cqes, true);
@@ -196,5 +179,6 @@ void Queue::wait(unsigned int timeout) {
     event->dispatch();
 }
 
-
-}}} // rawstor::io
+} // namespace poll
+} // namespace io
+} // namespace rawstor
