@@ -809,7 +809,7 @@ class ResponseHead final: public rawstor::io::TaskScalar {
                 try {
                     SessionOp &op = _context->find_op(_response.cid);
                     op.response_head_cb(&_response, 0);
-                } catch (std::system_error &e) {
+                } catch (const std::system_error &e) {
                     _context->fail_in_flight(e.code().value());
                 }
             }

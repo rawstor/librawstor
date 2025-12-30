@@ -273,7 +273,7 @@ void RawstorObject::create(
         if (!ret.empty()) {
             try {
                 remove(ret);
-            } catch (std::exception &e) {
+            } catch (const std::exception &e) {
                 rawstor_error(
                     "Failed to rollback create operation: %s\n", e.what());
             }
@@ -293,7 +293,7 @@ void RawstorObject::remove(const std::vector<rawstor::URI> &uris) {
     for (const auto &uri: uris) {
         try {
             rawstor::Connection(QUEUE_DEPTH).remove(uri);
-        } catch (std::exception &e) {
+        } catch (const std::exception &e) {
             rawstor_error("%s\n", e.what());
 
             if (!eptr) {

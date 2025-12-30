@@ -307,7 +307,7 @@ int rawstor_initialize(const RawstorOpts *opts) {
             QUEUE_DEPTH);
         rawstor::io_queue = q.get();
         q.release();
-    } catch (std::bad_alloc &) {
+    } catch (const std::bad_alloc &) {
         res = -ENOMEM;
         goto err_io_queue;
     }
@@ -338,7 +338,7 @@ int rawstor_empty() {
 int rawstor_wait() {
     try {
         rawstor::io_queue->wait(rawstor_opts_wait_timeout());
-    } catch (std::system_error &e) {
+    } catch (const std::system_error &e) {
         return -e.code().value();
     }
     return 0;
@@ -355,7 +355,7 @@ int rawstor_fd_poll(
                 fd, mask, cb, data);
         rawstor::io_queue->poll(std::move(t));
         return 0;
-    } catch (std::system_error &e) {
+    } catch (const std::system_error &e) {
         return -e.code().value();
     }
 }
@@ -371,7 +371,7 @@ int rawstor_fd_read(
                 fd, buf, size, cb, data);
         rawstor::io_queue->read(std::move(t));
         return 0;
-    } catch (std::system_error &e) {
+    } catch (const std::system_error &e) {
         return -e.code().value();
     }
 }
@@ -387,7 +387,7 @@ int rawstor_fd_readv(
                 fd, iov, niov, size, cb, data);
         rawstor::io_queue->read(std::move(t));
         return 0;
-    } catch (std::system_error &e) {
+    } catch (const std::system_error &e) {
         return -e.code().value();
     }
 }
@@ -403,7 +403,7 @@ int rawstor_fd_pread(
                 fd, buf, size, offset, cb, data);
         rawstor::io_queue->read(std::move(t));
         return 0;
-    } catch (std::system_error &e) {
+    } catch (const std::system_error &e) {
         return -e.code().value();
     }
 }
@@ -419,7 +419,7 @@ int rawstor_fd_preadv(
                 fd, iov, niov, size, offset, cb, data);
         rawstor::io_queue->read(std::move(t));
         return 0;
-    } catch (std::system_error &e) {
+    } catch (const std::system_error &e) {
         return -e.code().value();
     }
 }
@@ -435,7 +435,7 @@ int rawstor_fd_recvmsg(
                 fd, msg, size, flags, cb, data);
         rawstor::io_queue->read(std::move(t));
         return 0;
-    } catch (std::system_error &e) {
+    } catch (const std::system_error &e) {
         return -e.code().value();
     }
 }
@@ -451,7 +451,7 @@ int rawstor_fd_write(
                 fd, buf, size, cb, data);
         rawstor::io_queue->write(std::move(t));
         return 0;
-    } catch (std::system_error &e) {
+    } catch (const std::system_error &e) {
         return -e.code().value();
     }
 }
@@ -467,7 +467,7 @@ int rawstor_fd_writev(
                 fd, iov, niov, size, cb, data);
         rawstor::io_queue->write(std::move(t));
         return 0;
-    } catch (std::system_error &e) {
+    } catch (const std::system_error &e) {
         return -e.code().value();
     }
 }
@@ -483,7 +483,7 @@ int rawstor_fd_pwrite(
                 fd, buf, size, offset, cb, data);
         rawstor::io_queue->write(std::move(t));
         return 0;
-    } catch (std::system_error &e) {
+    } catch (const std::system_error &e) {
         return -e.code().value();
     }
 }
@@ -499,7 +499,7 @@ int rawstor_fd_pwritev(
                 fd, iov, niov, size, offset, cb, data);
         rawstor::io_queue->write(std::move(t));
         return 0;
-    } catch (std::system_error &e) {
+    } catch (const std::system_error &e) {
         return -e.code().value();
     }
 }
@@ -515,7 +515,7 @@ int rawstor_fd_sendmsg(
                 fd, msg, size, flags, cb, data);
         rawstor::io_queue->write(std::move(t));
         return 0;
-    } catch (std::system_error &e) {
+    } catch (const std::system_error &e) {
         return -e.code().value();
     }
 }
