@@ -8,9 +8,7 @@
 
 #include <sys/uio.h>
 
-
 namespace rawstor {
-
 
 class Task {
     private:
@@ -21,43 +19,43 @@ class Task {
     public:
         Task()
 #ifdef RAWSTOR_TRACE_EVENTS
-            : _trace_id(rawstor_trace_event_begin(
-                'I', __FILE__, __LINE__, __FUNCTION__,
-                "\n"))
+            :
+            _trace_id(rawstor_trace_event_begin(
+                'I', __FILE__, __LINE__, __FUNCTION__, "\n"
+            ))
 #endif
-        {}
-        Task(const Task &) = delete;
-        Task(Task &&) = delete;
+        {
+        }
+        Task(const Task&) = delete;
+        Task(Task&&) = delete;
         virtual ~Task() {
 #ifdef RAWSTOR_TRACE_EVENTS
             rawstor_trace_event_end(
-                _trace_id, __FILE__, __LINE__, __FUNCTION__,
-                "\n");
+                _trace_id, __FILE__, __LINE__, __FUNCTION__, "\n"
+            );
 #endif
         }
 
-        Task& operator=(const Task &) = delete;
-        Task& operator=(Task &&) = delete;
+        Task& operator=(const Task&) = delete;
+        Task& operator=(Task&&) = delete;
 
-        virtual void operator()(
-            RawstorObject *o, size_t result, int error) = 0;
+        virtual void operator()(RawstorObject* o, size_t result, int error) = 0;
 
 #ifdef RAWSTOR_TRACE_EVENTS
         void trace(
-            const char *file, int line, const char *function,
-            const std::string &message)
-        {
+            const char* file, int line, const char* function,
+            const std::string& message
+        ) {
             rawstor_trace_event_message(
-                _trace_id, file, line, function,
-                "%s\n", message.c_str());
+                _trace_id, file, line, function, "%s\n", message.c_str()
+            );
         }
 #endif
 };
 
-
-class TaskScalar: public Task {
+class TaskScalar : public Task {
     public:
-        TaskScalar(): Task() {}
+        TaskScalar() : Task() {}
 
         virtual void* buf() noexcept = 0;
 
@@ -66,10 +64,9 @@ class TaskScalar: public Task {
         virtual off_t offset() const noexcept = 0;
 };
 
-
-class TaskVector: public Task {
+class TaskVector : public Task {
     public:
-        TaskVector(): Task() {}
+        TaskVector() : Task() {}
 
         virtual iovec* iov() noexcept = 0;
 
@@ -80,7 +77,6 @@ class TaskVector: public Task {
         virtual off_t offset() const noexcept = 0;
 };
 
-
-} // rawstor
+} // namespace rawstor
 
 #endif // RAWSTOR_TASK_HPP

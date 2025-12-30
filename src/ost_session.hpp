@@ -1,8 +1,8 @@
 #ifndef RAWSTOR_OST_SESSION_HPP
 #define RAWSTOR_OST_SESSION_HPP
 
-#include "session.hpp"
 #include "ost_protocol.h"
+#include "session.hpp"
 
 #include <rawstorstd/ringbuf.hpp>
 #include <rawstorstd/uri.hpp>
@@ -21,13 +21,11 @@
 namespace rawstor {
 namespace ost {
 
-
 class Context;
 
-
-class Session final: public rawstor::Session {
+class Session final : public rawstor::Session {
     private:
-        RawstorObject *_o;
+        RawstorObject* _o;
         uint16_t _cid_counter;
 
         std::shared_ptr<Context> _context;
@@ -35,36 +33,37 @@ class Session final: public rawstor::Session {
         int _connect();
 
     public:
-        Session(const URI &uri, unsigned int depth);
+        Session(const URI& uri, unsigned int depth);
         ~Session();
 
-        void read_response_head(rawstor::io::Queue &queue);
+        void read_response_head(rawstor::io::Queue& queue);
         void read_response_body(
-            rawstor::io::Queue &queue, uint16_t cid,
-            void *buf, size_t size);
+            rawstor::io::Queue& queue, uint16_t cid, void* buf, size_t size
+        );
         void read_response_body(
-            rawstor::io::Queue &queue, uint16_t cid,
-            iovec *iov, unsigned int niov, size_t size);
+            rawstor::io::Queue& queue, uint16_t cid, iovec* iov,
+            unsigned int niov, size_t size
+        );
 
         void create(
-            rawstor::io::Queue &queue,
-            const RawstorUUID &id, const RawstorObjectSpec &sp,
-            std::unique_ptr<rawstor::Task> t) override;
+            rawstor::io::Queue& queue, const RawstorUUID& id,
+            const RawstorObjectSpec& sp, std::unique_ptr<rawstor::Task> t
+        ) override;
 
         void remove(
-            rawstor::io::Queue &queue,
-            const RawstorUUID &id,
-            std::unique_ptr<rawstor::Task> t) override;
+            rawstor::io::Queue& queue, const RawstorUUID& id,
+            std::unique_ptr<rawstor::Task> t
+        ) override;
 
         void spec(
-            rawstor::io::Queue &queue,
-            const RawstorUUID &id, RawstorObjectSpec *sp,
-            std::unique_ptr<rawstor::Task> t) override;
+            rawstor::io::Queue& queue, const RawstorUUID& id,
+            RawstorObjectSpec* sp, std::unique_ptr<rawstor::Task> t
+        ) override;
 
         void set_object(
-            rawstor::io::Queue &queue,
-            RawstorObject *object,
-            std::unique_ptr<rawstor::Task> t) override;
+            rawstor::io::Queue& queue, RawstorObject* object,
+            std::unique_ptr<rawstor::Task> t
+        ) override;
 
         void read(std::unique_ptr<rawstor::TaskScalar> t) override;
 
@@ -75,7 +74,7 @@ class Session final: public rawstor::Session {
         void write(std::unique_ptr<rawstor::TaskVector> t) override;
 };
 
-
-}} // rawstor::ost
+} // namespace ost
+} // namespace rawstor
 
 #endif // RAWSTOR_OST_SESSION_HPP

@@ -7,14 +7,10 @@
 
 #include <memory>
 
-
 namespace rawstor {
 
+extern rawstor::io::Queue* io_queue;
 
-extern rawstor::io::Queue *io_queue;
-
-
-} // rawstor
-
+} // namespace rawstor
 
 #endif // RAWSTOR_INTERNALS_HPP
