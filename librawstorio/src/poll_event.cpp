@@ -14,7 +14,6 @@ namespace rawstor {
 namespace io {
 namespace poll {
 
-
 void Event::dispatch() {
 #ifdef RAWSTOR_TRACE_EVENTS
     trace(__FILE__, __LINE__, __FUNCTION__, "callback");
@@ -22,7 +21,7 @@ void Event::dispatch() {
 #endif
         (*_t)(_result, _error);
 #ifdef RAWSTOR_TRACE_EVENTS
-    } catch (std::exception &e) {
+    } catch (const std::exception& e) {
         std::ostringstream oss;
         oss << "callback error: " << e.what();
         trace(__FILE__, __LINE__, __FUNCTION__, oss.str());
@@ -32,13 +31,11 @@ void Event::dispatch() {
 #endif
 }
 
-
-void Event::add_iov(std::vector<iovec> &iov) {
+void Event::add_iov(std::vector<iovec>& iov) {
     for (unsigned int i = 0; i < _niov_at; ++i) {
         iov.push_back(_iov_at[i]);
     }
 }
-
 
 size_t Event::shift(size_t shift) {
     size_t ret;
@@ -53,12 +50,12 @@ size_t Event::shift(size_t shift) {
     return ret;
 }
 
-
 size_t EventP::shift(size_t shift) {
     size_t ret = Event::shift(shift);
     _offset_at += shift - ret;
     return ret;
 }
 
-
-}}} // rawstor::io::poll
+} // namespace poll
+} // namespace io
+} // namespace rawstor

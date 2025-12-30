@@ -2,9 +2,7 @@
 
 #include "unittest.h"
 
-
 namespace {
-
 
 int test_uri_empty() {
     rawstor::URI uri("");
@@ -25,7 +23,6 @@ int test_uri_empty() {
     return 0;
 }
 
-
 int test_uri_http() {
     rawstor::URI uri("http://user:password@example.com:80/foo");
 
@@ -44,7 +41,6 @@ int test_uri_http() {
 
     return 0;
 }
-
 
 int test_uri_file() {
     rawstor::URI uri("file:///tmp/foo");
@@ -65,7 +61,6 @@ int test_uri_file() {
     return 0;
 }
 
-
 int test_uri_empty_path() {
     rawstor::URI uri("ost://127.0.0.1:8080");
 
@@ -84,7 +79,6 @@ int test_uri_empty_path() {
 
     return 0;
 }
-
 
 int test_uri_with_uuid() {
     rawstor::URI uri("file:///tmp/objects/uuid");
@@ -105,7 +99,6 @@ int test_uri_with_uuid() {
     return 0;
 }
 
-
 int test_uri_without_uuid_with_slash() {
     rawstor::URI uri("file:///tmp/objects/");
 
@@ -124,7 +117,6 @@ int test_uri_without_uuid_with_slash() {
 
     return 0;
 }
-
 
 int test_uri_without_uuid_without_slash() {
     rawstor::URI uri("file:///tmp/objects");
@@ -145,55 +137,49 @@ int test_uri_without_uuid_without_slash() {
     return 0;
 }
 
-
 int test_uri_parent() {
     rawstor::URI uri("http://user:password@example.com:80/foo/bar/span/");
     assertTrue(
-        uri.str() == "http://user:password@example.com:80/foo/bar/span/");
+        uri.str() == "http://user:password@example.com:80/foo/bar/span/"
+    );
 
     uri = uri.parent();
-    assertTrue(
-        uri.str() == "http://user:password@example.com:80/foo/bar/span");
+    assertTrue(uri.str() == "http://user:password@example.com:80/foo/bar/span");
 
     uri = uri.parent();
-    assertTrue(
-        uri.str() == "http://user:password@example.com:80/foo/bar");
+    assertTrue(uri.str() == "http://user:password@example.com:80/foo/bar");
 
     uri = uri.parent();
-    assertTrue(
-        uri.str() == "http://user:password@example.com:80/foo");
+    assertTrue(uri.str() == "http://user:password@example.com:80/foo");
 
     uri = uri.parent();
-    assertTrue(
-        uri.str() == "http://user:password@example.com:80/");
+    assertTrue(uri.str() == "http://user:password@example.com:80/");
 
     uri = uri.parent();
-    assertTrue(
-        uri.str() == "http://user:password@example.com:80/");
+    assertTrue(uri.str() == "http://user:password@example.com:80/");
 
     return 0;
 }
-
 
 int test_uri_child() {
     rawstor::URI parent_with_slash("http://user:password@example.com:80/");
     rawstor::URI child_with_slash(parent_with_slash, "foo");
 
     assertTrue(
-        child_with_slash.str() == "http://user:password@example.com:80/foo");
+        child_with_slash.str() == "http://user:password@example.com:80/foo"
+    );
 
     rawstor::URI parent_without_slash("http://user:password@example.com:80");
     rawstor::URI child_without_slash(parent_without_slash, "foo");
 
     assertTrue(
-        child_without_slash.str() == "http://user:password@example.com:80/foo");
+        child_without_slash.str() == "http://user:password@example.com:80/foo"
+    );
 
     return 0;
 }
 
-
-} // unnamed
-
+} // namespace
 
 int main() {
     int rval = 0;

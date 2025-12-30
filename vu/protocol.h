@@ -6,15 +6,13 @@
 #else
 #include <stdint.h>
 
-
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-
 /* Do we get callbacks when the ring is completely used, even if we've
  * suppressed them? */
-#define VIRTIO_F_NOTIFY_ON_EMPTY    24
+#define VIRTIO_F_NOTIFY_ON_EMPTY 24
 
 /* We support indirect buffer descriptors */
 #define VIRTIO_RING_F_INDIRECT_DESC 28
@@ -23,10 +21,10 @@ extern "C" {
  * at the end of the avail ring. Host should ignore the avail->flags field. */
 /* The Host publishes the avail index for which it expects a kick
  * at the end of the used ring. Guest should ignore the used->flags field. */
-#define VIRTIO_RING_F_EVENT_IDX     29
+#define VIRTIO_RING_F_EVENT_IDX 29
 
 /* v1.0 compliant. */
-#define VIRTIO_F_VERSION_1      32
+#define VIRTIO_F_VERSION_1 32
 
 /* Log all write descriptors. Can be changed while device is active. */
 #define VHOST_F_LOG_ALL 26
@@ -59,7 +57,6 @@ struct vhost_vring_addr {
 
 #include <stdint.h>
 
-
 #define RAWSTOR_VU_PACKED __attribute__((packed))
 
 /* Based on qemu/hw/virtio/vhost-user.c */
@@ -76,7 +73,6 @@ struct vhost_vring_addr {
 
 #define VHOST_USER_HDR_SIZE offsetof(VhostUserMsg, payload)
 
-
 typedef struct VhostUserMemoryRegion {
     uint64_t guest_phys_addr;
     uint64_t memory_size;
@@ -84,25 +80,21 @@ typedef struct VhostUserMemoryRegion {
     uint64_t mmap_offset;
 } VhostUserMemoryRegion;
 
-
 typedef struct VhostUserMemory {
     uint32_t nregions;
     uint32_t padding;
     VhostUserMemoryRegion regions[VHOST_MEMORY_BASELINE_NREGIONS];
 } VhostUserMemory;
 
-
 typedef struct VhostUserMemRegMsg {
     uint64_t padding;
     VhostUserMemoryRegion region;
 } VhostUserMemRegMsg;
 
-
 typedef struct VhostUserLog {
     uint64_t mmap_size;
     uint64_t mmap_offset;
 } VhostUserLog;
-
 
 typedef struct VhostUserConfig {
     uint32_t offset;
@@ -111,13 +103,11 @@ typedef struct VhostUserConfig {
     uint8_t region[VHOST_USER_MAX_CONFIG_SIZE];
 } VhostUserConfig;
 
-
 typedef struct VhostUserVringArea {
     uint64_t u64;
     uint64_t size;
     uint64_t offset;
 } VhostUserVringArea;
-
 
 typedef struct VhostUserInflight {
     uint64_t mmap_size;
@@ -126,11 +116,9 @@ typedef struct VhostUserInflight {
     uint16_t queue_size;
 } VhostUserInflight;
 
-
 typedef struct VhostUserShared {
     unsigned char uuid[UUID_LEN];
 } VhostUserShared;
-
 
 enum VhostUserProtocolFeature {
     VHOST_USER_PROTOCOL_F_MQ = 0,
@@ -153,7 +141,6 @@ enum VhostUserProtocolFeature {
     VHOST_USER_PROTOCOL_F_SHARED_OBJECT = 18,
     VHOST_USER_PROTOCOL_F_MAX
 };
-
 
 typedef enum VhostUserRequest {
     VHOST_USER_NONE = 0,
@@ -184,9 +171,9 @@ typedef enum VhostUserRequest {
     VHOST_USER_SET_CONFIG = 25,
     VHOST_USER_CREATE_CRYPTO_SESSION = 26,
     VHOST_USER_CLOSE_CRYPTO_SESSION = 27,
-    VHOST_USER_POSTCOPY_ADVISE  = 28,
-    VHOST_USER_POSTCOPY_LISTEN  = 29,
-    VHOST_USER_POSTCOPY_END     = 30,
+    VHOST_USER_POSTCOPY_ADVISE = 28,
+    VHOST_USER_POSTCOPY_LISTEN = 29,
+    VHOST_USER_POSTCOPY_END = 30,
     VHOST_USER_GET_INFLIGHT_FD = 31,
     VHOST_USER_SET_INFLIGHT_FD = 32,
     VHOST_USER_GPU_SET_SOCKET = 33,
@@ -203,18 +190,17 @@ typedef enum VhostUserRequest {
     VHOST_USER_MAX
 } VhostUserRequest;
 
-
 typedef struct VhostUserMsg {
     VhostUserRequest request;
 
-#define VHOST_USER_VERSION_MASK     (0x3)
-#define VHOST_USER_REPLY_MASK       (0x1 << 2)
-#define VHOST_USER_NEED_REPLY_MASK  (0x1 << 3)
+#define VHOST_USER_VERSION_MASK (0x3)
+#define VHOST_USER_REPLY_MASK (0x1 << 2)
+#define VHOST_USER_NEED_REPLY_MASK (0x1 << 3)
     uint32_t flags;
     uint32_t size; /* the following payload size */
     union {
-#define VHOST_USER_VRING_IDX_MASK   (0xff)
-#define VHOST_USER_VRING_NOFD_MASK  (0x1 << 8)
+#define VHOST_USER_VRING_IDX_MASK (0xff)
+#define VHOST_USER_VRING_NOFD_MASK (0x1 << 8)
         uint64_t u64;
         struct vhost_vring_state state;
         struct vhost_vring_addr addr;
@@ -229,13 +215,11 @@ typedef struct VhostUserMsg {
 
     int fds[VHOST_MEMORY_BASELINE_NREGIONS];
     int fd_num;
-    uint8_t *data;
+    uint8_t* data;
 } RAWSTOR_VU_PACKED VhostUserMsg;
-
 
 #ifdef __cplusplus
 }
 #endif
-
 
 #endif // RAWSTOR_VHOST_SERVER_H
