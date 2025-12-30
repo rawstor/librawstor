@@ -8,9 +8,7 @@
 #include <utility>
 #include <vector>
 
-
 namespace rawstor {
-
 
 template <typename T>
 class RingBuf {
@@ -21,34 +19,25 @@ class RingBuf {
         size_t _count;
 
     public:
-        RingBuf(size_t capacity):
+        RingBuf(size_t capacity) :
             _data(capacity),
             _head(0),
             _tail(0),
-            _count(0)
-        {}
+            _count(0) {}
 
-        RingBuf(const RingBuf<T> &) = delete;
-        RingBuf(RingBuf<T> &&other) = delete;
+        RingBuf(const RingBuf<T>&) = delete;
+        RingBuf(RingBuf<T>&& other) = delete;
 
-        RingBuf<T>& operator=(const RingBuf<T> &) = delete;
-        RingBuf<T>& operator=(RingBuf<T> &&other) = delete;
+        RingBuf<T>& operator=(const RingBuf<T>&) = delete;
+        RingBuf<T>& operator=(RingBuf<T>&& other) = delete;
 
-        inline bool empty() const noexcept {
-            return _count == 0;
-        }
+        inline bool empty() const noexcept { return _count == 0; }
 
-        inline bool full() const noexcept {
-            return _count == _data.size();
-        }
+        inline bool full() const noexcept { return _count == _data.size(); }
 
-        inline size_t capacity() const noexcept {
-            return _data.size();
-        }
+        inline size_t capacity() const noexcept { return _data.size(); }
 
-        inline size_t size() const noexcept {
-            return _count;
-        }
+        inline size_t size() const noexcept { return _count; }
 
         inline void push(std::unique_ptr<T> item) {
             if (full()) {
@@ -77,8 +66,6 @@ class RingBuf {
         }
 };
 
-
-} // rawstor
-
+} // namespace rawstor
 
 #endif // RAWSTORSTD_RINGBUF_HPP

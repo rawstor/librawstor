@@ -5,11 +5,10 @@
 #include <stddef.h>
 #include <stdlib.h>
 
-
 static int test_list_empty() {
-    RawstorList *l = rawstor_list_create(sizeof(int));
+    RawstorList* l = rawstor_list_create(sizeof(int));
 
-    void *it = rawstor_list_iter(l);
+    void* it = rawstor_list_iter(l);
     assertTrue(it == NULL);
 
     assertTrue(rawstor_list_empty(l) != 0);
@@ -20,10 +19,9 @@ static int test_list_empty() {
     return 0;
 }
 
-
 static int test_list_append() {
-    int *it;
-    RawstorList *l = rawstor_list_create(sizeof(int));
+    int* it;
+    RawstorList* l = rawstor_list_create(sizeof(int));
 
     it = rawstor_list_append(l);
     assertTrue(it != NULL);
@@ -41,10 +39,9 @@ static int test_list_append() {
     return 0;
 }
 
-
 static int test_list_iter() {
-    int *it;
-    RawstorList *l = rawstor_list_create(sizeof(int));
+    int* it;
+    RawstorList* l = rawstor_list_create(sizeof(int));
 
     it = rawstor_list_append(l);
     assertTrue(it != NULL);
@@ -77,11 +74,10 @@ static int test_list_iter() {
 
     return 0;
 }
-
 
 static int test_list_remove() {
-    int *it;
-    RawstorList *l = rawstor_list_create(sizeof(int));
+    int* it;
+    RawstorList* l = rawstor_list_create(sizeof(int));
 
     it = rawstor_list_append(l);
     assertTrue(it != NULL);
@@ -115,10 +111,9 @@ static int test_list_remove() {
     return 0;
 }
 
-
 static int test_list_remove_first() {
-    int *it;
-    RawstorList *l = rawstor_list_create(sizeof(int));
+    int* it;
+    RawstorList* l = rawstor_list_create(sizeof(int));
 
     it = rawstor_list_append(l);
     assertTrue(it != NULL);
@@ -146,11 +141,10 @@ static int test_list_remove_first() {
 
     return 0;
 }
-
 
 static int test_list_remove_last() {
-    int *it;
-    RawstorList *l = rawstor_list_create(sizeof(int));
+    int* it;
+    RawstorList* l = rawstor_list_create(sizeof(int));
 
     it = rawstor_list_append(l);
     assertTrue(it != NULL);
@@ -183,10 +177,9 @@ static int test_list_remove_last() {
     return 0;
 }
 
-
 static int test_list_size() {
-    int *it;
-    RawstorList *l = rawstor_list_create(sizeof(int));
+    int* it;
+    RawstorList* l = rawstor_list_create(sizeof(int));
 
     assertTrue(rawstor_list_size(l) == 0);
 
@@ -226,7 +219,6 @@ static int test_list_size() {
 
     return 0;
 }
-
 
 int main() {
     int rval = 0;

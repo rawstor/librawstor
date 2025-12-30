@@ -4,9 +4,7 @@
 #include <string>
 #include <vector>
 
-
 namespace rawstor {
-
 
 class URIPath {
     private:
@@ -16,25 +14,20 @@ class URIPath {
 
     public:
         URIPath() {}
-        explicit URIPath(const std::string &path);
-        URIPath(const URIPath &other);
-        URIPath(URIPath &&other) noexcept;
-        URIPath& operator=(const URIPath &other);
-        URIPath& operator=(URIPath &&other) noexcept;
+        explicit URIPath(const std::string& path);
+        URIPath(const URIPath& other);
+        URIPath(URIPath&& other) noexcept;
+        URIPath& operator=(const URIPath& other);
+        URIPath& operator=(URIPath&& other) noexcept;
 
-        inline const std::string& str() const noexcept {
-            return _path;
-        }
+        inline const std::string& str() const noexcept { return _path; }
 
-        inline const std::string& dirname() const noexcept {
-            return _dirname;
-        }
+        inline const std::string& dirname() const noexcept { return _dirname; }
 
         inline const std::string& filename() const noexcept {
             return _filename;
         }
 };
-
 
 class URI {
     private:
@@ -50,28 +43,24 @@ class URI {
         URIPath _path;
 
     public:
-        static std::vector<rawstor::URI> uriv(const char *uris);
+        static std::vector<rawstor::URI> uriv(const char* uris);
 
-        explicit URI(const std::string &uri);
-        URI(const URI &parent, const std::string &child);
-        URI(const URI &other);
-        URI(URI &&other) noexcept;
-        URI& operator=(const URI &other);
-        URI& operator=(URI &&other) noexcept;
+        explicit URI(const std::string& uri);
+        URI(const URI& parent, const std::string& child);
+        URI(const URI& other);
+        URI(URI&& other) noexcept;
+        URI& operator=(const URI& other);
+        URI& operator=(URI&& other) noexcept;
 
         URI parent() const;
 
-        bool operator<(const URI &other) const noexcept {
+        bool operator<(const URI& other) const noexcept {
             return _uri < other._uri;
         }
 
-        inline const std::string& str() const noexcept {
-            return _uri;
-        }
+        inline const std::string& str() const noexcept { return _uri; }
 
-        inline const std::string& scheme() const noexcept {
-            return _scheme;
-        }
+        inline const std::string& scheme() const noexcept { return _scheme; }
 
         inline const std::string& userinfo() const noexcept {
             return _userinfo;
@@ -89,24 +78,17 @@ class URI {
             return _authority;
         }
 
-        inline const std::string& host() const noexcept {
-            return _host;
-        }
+        inline const std::string& host() const noexcept { return _host; }
 
         inline const std::string& hostname() const noexcept {
             return _hostname;
         }
 
-        inline unsigned int port() const noexcept {
-            return _port;
-        }
+        inline unsigned int port() const noexcept { return _port; }
 
-        inline const URIPath& path() const noexcept {
-            return _path;
-        }
+        inline const URIPath& path() const noexcept { return _path; }
 };
 
-
-} // rawstor
+} // namespace rawstor
 
 #endif // RAWSTORSTD_URI_HPP

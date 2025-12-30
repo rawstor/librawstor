@@ -9,33 +9,29 @@
 
 #include <cstddef>
 
-
 namespace rawstor {
-
 
 template <typename T>
 class MemPool {
     private:
-        RawstorMemPool *_impl;
+        RawstorMemPool* _impl;
 
     public:
-        MemPool(size_t capacity):
-            _impl(rawstor_mempool_create(capacity, sizeof(T)))
-        {
+        MemPool(size_t capacity) :
+            _impl(rawstor_mempool_create(capacity, sizeof(T))) {
             if (_impl == nullptr) {
                 RAWSTOR_THROW_ERRNO();
             }
         }
 
-        MemPool(const MemPool<T> &) = delete;
+        MemPool(const MemPool<T>&) = delete;
 
-        MemPool(MemPool<T> &&other) noexcept:
-            _impl(std::exchange(other._impl, nullptr))
-        {}
+        MemPool(MemPool<T>&& other) noexcept :
+            _impl(std::exchange(other._impl, nullptr)) {}
 
-        MemPool<T>& operator=(const MemPool<T> &) = delete;
+        MemPool<T>& operator=(const MemPool<T>&) = delete;
 
-        MemPool<T>& operator=(MemPool<T> &&other) noexcept {
+        MemPool<T>& operator=(MemPool<T>&& other) noexcept {
             if (&other != this) {
                 if (_impl != nullptr) {
                     rawstor_mempool_delete(_impl);
@@ -76,13 +72,9 @@ class MemPool {
             return ret;
         }
 
-        inline void free(T *ptr) noexcept {
-            rawstor_mempool_free(_impl, ptr);
-        };
+        inline void free(T* ptr) noexcept { rawstor_mempool_free(_impl, ptr); };
 };
 
-
-} // rawstor
-
+} // namespace rawstor
 
 #endif // RAWSTORSTD_MEMPOOL_HPP

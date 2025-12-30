@@ -3,6 +3,7 @@ BasedOnStyle: LLVM
 AlignAfterOpenBracket: BlockIndent
 AllowShortFunctionsOnASingleLine: InlineOnly
 BreakConstructorInitializers: AfterColon
+BreakTemplateDeclarations: Yes
 IndentAccessModifiers: true
 IndentWidth: 4
 PackConstructorInitializers: CurrentLine
