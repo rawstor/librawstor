@@ -22,7 +22,6 @@ extern "C" {
 typedef struct RawstorObject RawstorObject;
 
 struct RawstorObjectSpec {
-    public:
         size_t size;
 };
 
