@@ -13,14 +13,11 @@
 #include <stdlib.h>
 #include <unistd.h>
 
-
-RawstorMutex *rawstor_logging_mutex = NULL;
-
+RawstorMutex* rawstor_logging_mutex = NULL;
 
 #ifdef RAWSTOR_TRACE_EVENTS
 
 namespace {
-
 
 typedef enum {
     EVENT_CREATING,
@@ -30,51 +27,34 @@ typedef enum {
     EVENT_DELETED,
 } EventState;
 
-
 class Event {
     private:
         char _appearance;
         EventState _state;
 
     public:
-        explicit Event(char appearance):
+        explicit Event(char appearance) :
             _appearance(appearance),
-            _state(EVENT_CREATING)
-        {}
+            _state(EVENT_CREATING) {}
 
-        char appearance() const noexcept {
-            return _appearance;
-        }
+        char appearance() const noexcept { return _appearance; }
 
-        EventState state() const noexcept {
-            return _state;
-        }
+        EventState state() const noexcept { return _state; }
 
-        void deleting() noexcept {
-            _state = EVENT_DELETING;
-        }
+        void deleting() noexcept { _state = EVENT_DELETING; }
 
-        void message() noexcept {
-            _state = EVENT_MESSAGE;
-        }
+        void message() noexcept { _state = EVENT_MESSAGE; }
 
-        void available() noexcept {
-            _state = EVENT_AVAILABLE;
-        }
+        void available() noexcept { _state = EVENT_AVAILABLE; }
 
-        void deleted() noexcept {
-            _state = EVENT_DELETED;
-        }
+        void deleted() noexcept { _state = EVENT_DELETED; }
 };
-
 
 std::vector<Event> events;
 
-
-} // unnamed
+} // namespace
 
 #endif // RAWSTOR_TRACE_EVENTS
-
 
 int rawstor_logging_initialize() {
     rawstor_logging_mutex = rawstor_mutex_create();
@@ -87,24 +67,22 @@ int rawstor_logging_initialize() {
     return 0;
 }
 
-
 void rawstor_logging_terminate(void) {
     rawstor_mutex_delete(rawstor_logging_mutex);
 }
 
-
 #ifdef RAWSTOR_TRACE_EVENTS
 
-
 size_t rawstor_trace_event_begin(
-    char appearance, const char *file, int line, const char *function,
-    const char *format, ...)
-{
+    char appearance, const char* file, int line, const char* function,
+    const char* format, ...
+) {
     rawstor_mutex_lock(rawstor_logging_mutex);
     try {
-        std::vector<Event>::iterator it = std::find_if(
-            events.begin(), events.end(),
-            [](const auto &event){ return event.state() == EVENT_DELETED; });
+        std::vector<Event>::iterator it =
+            std::find_if(events.begin(), events.end(), [](const auto& event) {
+                return event.state() == EVENT_DELETED;
+            });
 
         if (it == events.end()) {
             events.push_back(Event(appearance));
@@ -130,11 +108,10 @@ size_t rawstor_trace_event_begin(
     }
 }
 
-
 void rawstor_trace_event_end(
-    size_t event, const char *file, int line, const char *function,
-    const char *format, ...)
-{
+    size_t event, const char* file, int line, const char* function,
+    const char* format, ...
+) {
     rawstor_mutex_lock(rawstor_logging_mutex);
     try {
         assert(events[event].state() == EVENT_AVAILABLE);
@@ -156,11 +133,10 @@ void rawstor_trace_event_end(
     }
 }
 
-
 void rawstor_trace_event_message(
-    size_t event, const char *file, int line, const char *function,
-    const char *format, ...)
-{
+    size_t event, const char* file, int line, const char* function,
+    const char* format, ...
+) {
     rawstor_mutex_lock(rawstor_logging_mutex);
     try {
         assert(events[event].state() == EVENT_AVAILABLE);
@@ -182,33 +158,31 @@ void rawstor_trace_event_message(
     }
 }
 
-
 void rawstor_trace_event_dump(void) {
-    for (Event &event: events) {
+    for (Event& event : events) {
         char ch = '?';
         switch (event.state()) {
-            case EVENT_CREATING:
-                ch = '+';
-                event.available();
-                break;
-            case EVENT_AVAILABLE:
-                ch = event.appearance();
-                break;
-            case EVENT_MESSAGE:
-                ch = '*';
-                event.available();
-                break;
-            case EVENT_DELETING:
-                ch = '-';
-                event.deleted();
-                break;
-            case EVENT_DELETED:
-                ch = ' ';
-                break;
+        case EVENT_CREATING:
+            ch = '+';
+            event.available();
+            break;
+        case EVENT_AVAILABLE:
+            ch = event.appearance();
+            break;
+        case EVENT_MESSAGE:
+            ch = '*';
+            event.available();
+            break;
+        case EVENT_DELETING:
+            ch = '-';
+            event.deleted();
+            break;
+        case EVENT_DELETED:
+            ch = ' ';
+            break;
         }
         dprintf(STDERR_FILENO, "%c ", ch);
     }
 }
-
 
 #endif // RAWSTOR_TRACE_EVENTS
