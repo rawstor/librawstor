@@ -1,19 +1,22 @@
 #!/bin/bash
 
+set -f
+
+
+CLANG_FORMAT="clang-format-21"
+if ! command -v ${CLANG_FORMAT} >/dev/null 2>&1
+then
+    echo "${CLANG_FORMAT} could not be found, falling back to clang-format"
+    CLANG_FORMAT="clang-format"
+fi
+
 
 function find_cmd() {
     IFS=','
     local paths="$1"
-    local excludes="$2"
     local cmd=""
 
     cmd+="find . -type f "
-
-    if [ -n "$excludes" ]; then
-        for exclude in $excludes; do
-            cmd+="! -path \"$exclude\" "
-        done
-    fi
 
     cmd+="\( "
     local is_first=1
@@ -21,12 +24,13 @@ function find_cmd() {
         if [ $is_first -ne 1 ]; then
             cmd+="-o "
         fi
-        cmd+="-path \"$path\" "
+        echo path="${path}"
+        cmd+="-path \"${path}\" "
         is_first=0
     done
     cmd+=" \)"
 
-    echo $cmd
+    echo "${cmd}"
 
     unset IFS
 }
@@ -34,7 +38,7 @@ function find_cmd() {
 
 function check_file() {
     local file="$1"
-    message="$(clang-format -n -Werror --ferror-limit=3 --style=file --fallback-style=LLVM "${file}")"
+    message="$(${CLANG_FORMAT} -n -Werror --ferror-limit=3 --style=file --fallback-style=LLVM "${file}")"
     local status="$?"
     if [ $status -ne 0 ]; then
         echo "$message" >&2
@@ -46,9 +50,8 @@ function check_file() {
 
 function main() {
     local input_pattern=$1
-    local input_excludes=$2
     echo -e "Sources: $input_pattern"
-    local cmd=$(find_cmd "$input_pattern" "$input_excludes")
+    local cmd="$(find_cmd "${input_pattern}")"
 
     for file in $(eval $cmd); do
         echo -e "Checking file: $file"
@@ -69,7 +72,7 @@ function main() {
                 echo " \\"
                 echo -n " && "
             fi
-            echo -n "clang-format --style=file -i "${issues[$i]}""
+            echo -n "${CLANG_FORMAT} --style=file -i "${issues[$i]}""
         done
         echo
         exit 1
@@ -77,4 +80,4 @@ function main() {
 }
 
 
-main ${1:-"*.c,*.h,*.cpp,*.hpp"} ${2:-"**/**/3rdparty/*"}
+main "${1:-*.c,*.h,*.cpp,*.hpp}"
