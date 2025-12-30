@@ -24,7 +24,6 @@ function find_cmd() {
         if [ $is_first -ne 1 ]; then
             cmd+="-o "
         fi
-        echo path="${path}"
         cmd+="-path \"${path}\" "
         is_first=0
     done
@@ -52,6 +51,7 @@ function main() {
     local input_pattern=$1
     echo -e "Sources: $input_pattern"
     local cmd="$(find_cmd "${input_pattern}")"
+    local -a issues=()
 
     for file in $(eval $cmd); do
         echo -e "Checking file: $file"
