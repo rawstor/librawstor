@@ -21,7 +21,7 @@ std::unique_ptr<Queue> Queue::create(unsigned int depth) {
 #endif
 }
 
-const std::string &Queue::engine_name() {
+const std::string& Queue::engine_name() {
 #ifdef RAWSTOR_WITH_LIBURING
     return rawstor::io::uring::Queue::engine_name();
 #else

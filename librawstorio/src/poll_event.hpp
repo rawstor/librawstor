@@ -11,8 +11,8 @@
 #include <unistd.h>
 
 #include <memory>
-#include <string>
 #include <sstream>
+#include <string>
 #include <vector>
 
 #include <cstddef>
@@ -22,32 +22,27 @@ namespace rawstor {
 namespace io {
 namespace poll {
 
-
 class Queue;
-
 
 class Event {
     protected:
-        Queue &_q;
+        Queue& _q;
         std::unique_ptr<rawstor::io::Task> _t;
         ssize_t _result;
         int _error;
 
     public:
-        Event(
-            Queue &q,
-            std::unique_ptr<rawstor::io::Task> t):
+        Event(Queue& q, std::unique_ptr<rawstor::io::Task> t) :
             _q(q),
             _t(std::move(t)),
             _result(0),
-            _error(0)
-        {}
-        Event(const Event &) = delete;
-        Event(Event &&) = delete;
+            _error(0) {}
+        Event(const Event&) = delete;
+        Event(Event&&) = delete;
         virtual ~Event() = default;
 
-        Event& operator=(const Event &) = delete;
-        Event& operator=(Event &&) = delete;
+        Event& operator=(const Event&) = delete;
+        Event& operator=(Event&&) = delete;
 
         inline void set_error(int error) noexcept {
 #ifdef RAWSTOR_TRACE_EVENTS
@@ -62,9 +57,9 @@ class Event {
 
 #ifdef RAWSTOR_TRACE_EVENTS
         void trace(
-            const char *file, int line, const char *function,
-            const std::string &message)
-        {
+            const char* file, int line, const char* function,
+            const std::string& message
+        ) {
             _t->trace(file, line, function, message);
         }
 #endif
@@ -73,36 +68,24 @@ class Event {
         virtual void process() noexcept = 0;
 };
 
-
-class EventSimplex: public Event {
+class EventSimplex : public Event {
     public:
-        EventSimplex(
-            Queue &q,
-            std::unique_ptr<rawstor::io::Task> t):
-            Event(q, std::move(t))
-        {}
+        EventSimplex(Queue& q, std::unique_ptr<rawstor::io::Task> t) :
+            Event(q, std::move(t)) {}
 
         virtual ~EventSimplex() override = default;
 
-        bool multiplex() const noexcept override final {
-            return false;
-        };
+        bool multiplex() const noexcept override final { return false; };
 };
 
-
-class EventMultiplex: public Event {
+class EventMultiplex : public Event {
     public:
-        EventMultiplex(
-            Queue &q,
-            std::unique_ptr<rawstor::io::Task> t):
-            Event(q, std::move(t))
-        {}
+        EventMultiplex(Queue& q, std::unique_ptr<rawstor::io::Task> t) :
+            Event(q, std::move(t)) {}
 
         virtual ~EventMultiplex() override = default;
 
-        bool multiplex() const noexcept override final {
-            return true;
-        };
+        bool multiplex() const noexcept override final { return true; };
 
         virtual unsigned int niov() const noexcept = 0;
 
@@ -110,56 +93,48 @@ class EventMultiplex: public Event {
 
         virtual size_t shift(size_t shift) noexcept = 0;
 
-        virtual void add_to_batch(std::vector<iovec> &iov) = 0;
+        virtual void add_to_batch(std::vector<iovec>& iov) = 0;
 };
 
-
-class EventMultiplexScalar: public EventMultiplex {
+class EventMultiplexScalar : public EventMultiplex {
     protected:
-        void *_buf_at;
+        void* _buf_at;
         size_t _size_at;
 
     public:
         EventMultiplexScalar(
-            Queue &q,
-            std::unique_ptr<rawstor::io::TaskScalar> t):
+            Queue& q, std::unique_ptr<rawstor::io::TaskScalar> t
+        ) :
             EventMultiplex(q, std::move(t)),
             _buf_at(static_cast<rawstor::io::TaskScalar*>(_t.get())->buf()),
-            _size_at(static_cast<rawstor::io::TaskScalar*>(_t.get())->size())
-        {}
+            _size_at(static_cast<rawstor::io::TaskScalar*>(_t.get())->size()) {}
 
         virtual ~EventMultiplexScalar() override = default;
 
-        unsigned int niov() const noexcept override final {
-            return 1;
-        }
+        unsigned int niov() const noexcept override final { return 1; }
 
-        bool completed() const noexcept override final {
-            return _size_at == 0;
-        }
+        bool completed() const noexcept override final { return _size_at == 0; }
 
         size_t shift(size_t shift) noexcept override final;
 
-        void add_to_batch(std::vector<iovec> &iov) override final;
+        void add_to_batch(std::vector<iovec>& iov) override final;
 };
 
-
-class EventMultiplexVector: public EventMultiplex {
+class EventMultiplexVector : public EventMultiplex {
     protected:
         std::vector<iovec> _iov;
-        iovec *_iov_at;
+        iovec* _iov_at;
         unsigned int _niov_at;
         size_t _size_at;
 
     public:
         EventMultiplexVector(
-            Queue &q,
-            std::unique_ptr<rawstor::io::TaskVector> t):
+            Queue& q, std::unique_ptr<rawstor::io::TaskVector> t
+        ) :
             EventMultiplex(q, std::move(t)),
             _niov_at(static_cast<rawstor::io::TaskVector*>(_t.get())->niov()),
-            _size_at(static_cast<rawstor::io::TaskVector*>(_t.get())->size())
-        {
-            iovec *iov = static_cast<rawstor::io::TaskVector*>(_t.get())->iov();
+            _size_at(static_cast<rawstor::io::TaskVector*>(_t.get())->size()) {
+            iovec* iov = static_cast<rawstor::io::TaskVector*>(_t.get())->iov();
             _iov.reserve(_niov_at);
             for (unsigned int i = 0; i < _niov_at; ++i) {
                 _iov.push_back(iov[i]);
@@ -169,27 +144,19 @@ class EventMultiplexVector: public EventMultiplex {
 
         virtual ~EventMultiplexVector() override = default;
 
-        unsigned int niov() const noexcept override final {
-            return _niov_at;
-        }
+        unsigned int niov() const noexcept override final { return _niov_at; }
 
-        bool completed() const noexcept override final {
-            return _niov_at == 0;
-        }
+        bool completed() const noexcept override final { return _niov_at == 0; }
 
         size_t shift(size_t shift) noexcept override final;
 
-        void add_to_batch(std::vector<iovec> &iov) override final;
+        void add_to_batch(std::vector<iovec>& iov) override final;
 };
 
-
-class EventSimplexPoll final: public EventSimplex {
+class EventSimplexPoll final : public EventSimplex {
     public:
-        EventSimplexPoll(
-            Queue &q,
-            std::unique_ptr<rawstor::io::TaskPoll> t):
-            EventSimplex(q, std::move(t))
-        {}
+        EventSimplexPoll(Queue& q, std::unique_ptr<rawstor::io::TaskPoll> t) :
+            EventSimplex(q, std::move(t)) {}
 
         inline unsigned int mask() const noexcept {
             return static_cast<rawstor::io::TaskPoll*>(_t.get())->mask();
@@ -200,128 +167,108 @@ class EventSimplexPoll final: public EventSimplex {
         void set_result(short revents) noexcept;
 };
 
-
-class EventMultiplexScalarRead final: public EventMultiplexScalar {
+class EventMultiplexScalarRead final : public EventMultiplexScalar {
     public:
         EventMultiplexScalarRead(
-            Queue &q,
-            std::unique_ptr<rawstor::io::TaskScalar> t):
-            EventMultiplexScalar(q, std::move(t))
-        {}
+            Queue& q, std::unique_ptr<rawstor::io::TaskScalar> t
+        ) :
+            EventMultiplexScalar(q, std::move(t)) {}
 
         void process() noexcept override final;
 };
 
-
-class EventMultiplexVectorRead final: public EventMultiplexVector {
+class EventMultiplexVectorRead final : public EventMultiplexVector {
     public:
         EventMultiplexVectorRead(
-            Queue &q,
-            std::unique_ptr<rawstor::io::TaskVector> t):
-            EventMultiplexVector(q, std::move(t))
-        {}
+            Queue& q, std::unique_ptr<rawstor::io::TaskVector> t
+        ) :
+            EventMultiplexVector(q, std::move(t)) {}
 
         void process() noexcept override final;
 };
 
-
-class EventSimplexScalarPositionalRead final: public EventSimplex {
+class EventSimplexScalarPositionalRead final : public EventSimplex {
     public:
         EventSimplexScalarPositionalRead(
-            Queue &q,
-            std::unique_ptr<rawstor::io::TaskScalarPositional> t):
-            EventSimplex(q, std::move(t))
-        {}
+            Queue& q, std::unique_ptr<rawstor::io::TaskScalarPositional> t
+        ) :
+            EventSimplex(q, std::move(t)) {}
 
         void process() noexcept override final;
 };
 
-
-class EventSimplexVectorPositionalRead final: public EventSimplex {
+class EventSimplexVectorPositionalRead final : public EventSimplex {
     public:
         EventSimplexVectorPositionalRead(
-            Queue &q,
-            std::unique_ptr<rawstor::io::TaskVectorPositional> t):
-            EventSimplex(q, std::move(t))
-        {}
+            Queue& q, std::unique_ptr<rawstor::io::TaskVectorPositional> t
+        ) :
+            EventSimplex(q, std::move(t)) {}
 
         void process() noexcept override final;
 };
 
-
-class EventSimplexMessageRead final: public EventSimplex {
+class EventSimplexMessageRead final : public EventSimplex {
     public:
         EventSimplexMessageRead(
-            Queue &q,
-            std::unique_ptr<rawstor::io::TaskMessage> t):
-            EventSimplex(q, std::move(t))
-        {}
+            Queue& q, std::unique_ptr<rawstor::io::TaskMessage> t
+        ) :
+            EventSimplex(q, std::move(t)) {}
 
         void process() noexcept override final;
 };
 
-
-class EventMultiplexScalarWrite final: public EventMultiplexScalar {
+class EventMultiplexScalarWrite final : public EventMultiplexScalar {
     public:
         EventMultiplexScalarWrite(
-            Queue &q,
-            std::unique_ptr<rawstor::io::TaskScalar> t):
-            EventMultiplexScalar(q, std::move(t))
-        {}
+            Queue& q, std::unique_ptr<rawstor::io::TaskScalar> t
+        ) :
+            EventMultiplexScalar(q, std::move(t)) {}
 
         void process() noexcept override final;
 };
 
-
-class EventMultiplexVectorWrite final: public EventMultiplexVector {
+class EventMultiplexVectorWrite final : public EventMultiplexVector {
     public:
         EventMultiplexVectorWrite(
-            Queue &q,
-            std::unique_ptr<rawstor::io::TaskVector> t):
-            EventMultiplexVector(q, std::move(t))
-        {}
+            Queue& q, std::unique_ptr<rawstor::io::TaskVector> t
+        ) :
+            EventMultiplexVector(q, std::move(t)) {}
 
         void process() noexcept override final;
 };
 
-
-class EventSimplexScalarPositionalWrite final: public EventSimplex {
+class EventSimplexScalarPositionalWrite final : public EventSimplex {
     public:
         EventSimplexScalarPositionalWrite(
-            Queue &q,
-            std::unique_ptr<rawstor::io::TaskScalarPositional> t):
-            EventSimplex(q, std::move(t))
-        {}
+            Queue& q, std::unique_ptr<rawstor::io::TaskScalarPositional> t
+        ) :
+            EventSimplex(q, std::move(t)) {}
 
         void process() noexcept override final;
 };
 
-
-class EventSimplexVectorPositionalWrite final: public EventSimplex {
+class EventSimplexVectorPositionalWrite final : public EventSimplex {
     public:
         EventSimplexVectorPositionalWrite(
-            Queue &q,
-            std::unique_ptr<rawstor::io::TaskVectorPositional> t):
-            EventSimplex(q, std::move(t))
-        {}
+            Queue& q, std::unique_ptr<rawstor::io::TaskVectorPositional> t
+        ) :
+            EventSimplex(q, std::move(t)) {}
 
         void process() noexcept override final;
 };
 
-
-class EventSimplexMessageWrite final: public EventSimplex {
+class EventSimplexMessageWrite final : public EventSimplex {
     public:
         EventSimplexMessageWrite(
-            Queue &q,
-            std::unique_ptr<rawstor::io::TaskMessage> t):
-            EventSimplex(q, std::move(t))
-        {}
+            Queue& q, std::unique_ptr<rawstor::io::TaskMessage> t
+        ) :
+            EventSimplex(q, std::move(t)) {}
 
         void process() noexcept override final;
 };
 
-
-}}} // rawstor::io
-
+} // namespace poll
+} // namespace io
+} // namespace rawstor
 
 #endif // RAWSTORIO_POLL_EVENT_HPP
