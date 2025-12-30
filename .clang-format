@@ -1,0 +1,11 @@
+---
+BasedOnStyle: LLVM
+AccessModifierOffset: -4
+AlignAfterOpenBracket: BlockIndent
+AllowShortFunctionsOnASingleLine: InlineOnly
+BreakConstructorInitializers: AfterColon
+BreakTemplateDeclarations: Yes
+IndentWidth: 4
+PackConstructorInitializers: CurrentLine
+PointerAlignment: Left
+...

@@ -15,23 +15,21 @@
 #include <sys/types.h>
 #include <sys/uio.h>
 
-#include <unistd.h>
 #include <fcntl.h>
+#include <unistd.h>
 
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
-#include <string>
 #include <sstream>
+#include <string>
 #include <utility>
-
 
 namespace {
 
-
-std::string get_ost_path(const rawstor::URI &uri) {
+std::string get_ost_path(const rawstor::URI& uri) {
     if (uri.scheme() != "file") {
         std::ostringstream oss;
         oss << "Unexpected URI scheme: " << uri.str();
@@ -45,10 +43,9 @@ std::string get_ost_path(const rawstor::URI &uri) {
     return uri.path().str();
 }
 
-
 std::string get_object_spec_path(
-    const std::string &ost_path, const RawstorUUIDString &uuid)
-{
+    const std::string& ost_path, const RawstorUUIDString& uuid
+) {
     std::ostringstream oss;
 
     oss << ost_path << "/" << uuid << ".spec";
@@ -56,10 +53,9 @@ std::string get_object_spec_path(
     return oss.str();
 }
 
-
 std::string get_object_dat_path(
-    const std::string &ost_path, const RawstorUUIDString &uuid)
-{
+    const std::string& ost_path, const RawstorUUIDString& uuid
+) {
     std::ostringstream oss;
 
     oss << ost_path << "/" << uuid << ".dat";
@@ -67,12 +63,10 @@ std::string get_object_dat_path(
     return oss.str();
 }
 
-
 void write_dat(
-    const std:: string &ost_path,
-    const RawstorObjectSpec &spec,
-    const RawstorUUID &id)
-{
+    const std::string& ost_path, const RawstorObjectSpec& spec,
+    const RawstorUUID& id
+) {
     RawstorUUIDString uuid_string;
     rawstor_uuid_to_string(&id, &uuid_string);
 
@@ -91,101 +85,75 @@ void write_dat(
         if (close(fd) == -1) {
             RAWSTOR_THROW_ERRNO();
         }
-    } catch (const std::system_error &e) {
+    } catch (const std::system_error& e) {
         close(fd);
         unlink(dat_path.c_str());
         throw;
     }
 }
 
-
 } // unnamed namespace
-
 
 namespace rawstor {
 namespace file {
 
+class SessionOpScalarPositional final
+    : public rawstor::io::TaskScalarPositional {
+private:
+    RawstorObject* _o;
+    std::unique_ptr<rawstor::TaskScalar> _t;
 
-class SessionOpScalarPositional final:
-    public rawstor::io::TaskScalarPositional
-{
-    private:
-        RawstorObject *_o;
-        std::unique_ptr<rawstor::TaskScalar> _t;
+public:
+    SessionOpScalarPositional(
+        RawstorObject* o, int fd, std::unique_ptr<rawstor::TaskScalar> t
+    ) :
+        rawstor::io::TaskScalarPositional(fd),
+        _o(o),
+        _t(std::move(t)) {}
 
-    public:
-        SessionOpScalarPositional(
-            RawstorObject *o,
-            int fd,
-            std::unique_ptr<rawstor::TaskScalar> t):
-            rawstor::io::TaskScalarPositional(fd),
-            _o(o),
-            _t(std::move(t))
-        {}
+    void operator()(size_t result, int error) override {
+        (*_t)(_o, result, error);
+    }
 
-        void operator()(size_t result, int error) override {
-            (*_t)(_o, result, error);
-        }
+    void* buf() noexcept override { return _t->buf(); }
 
-        void* buf() noexcept override {
-            return _t->buf();
-        }
+    size_t size() const noexcept override { return _t->size(); }
 
-        size_t size() const noexcept override {
-            return _t->size();
-        }
-
-        off_t offset() const noexcept override {
-            return _t->offset();
-        }
+    off_t offset() const noexcept override { return _t->offset(); }
 };
 
+class SessionOpVectorPositional final
+    : public rawstor::io::TaskVectorPositional {
+private:
+    RawstorObject* _o;
+    std::unique_ptr<rawstor::TaskVector> _t;
 
-class SessionOpVectorPositional final:
-    public rawstor::io::TaskVectorPositional
-{
-    private:
-        RawstorObject *_o;
-        std::unique_ptr<rawstor::TaskVector> _t;
+public:
+    SessionOpVectorPositional(
+        RawstorObject* o, int fd, std::unique_ptr<rawstor::TaskVector> t
+    ) :
+        rawstor::io::TaskVectorPositional(fd),
+        _o(o),
+        _t(std::move(t)) {}
 
-    public:
-        SessionOpVectorPositional(
-            RawstorObject *o,
-            int fd,
-            std::unique_ptr<rawstor::TaskVector> t):
-            rawstor::io::TaskVectorPositional(fd),
-            _o(o),
-            _t(std::move(t))
-        {}
+    void operator()(size_t result, int error) override {
+        (*_t)(_o, result, error);
+    }
 
-        void operator()(size_t result, int error) override {
-            (*_t)(_o, result, error);
-        }
+    iovec* iov() noexcept override { return _t->iov(); }
 
-        iovec* iov() noexcept override {
-            return _t->iov();
-        }
+    unsigned int niov() const noexcept override { return _t->niov(); }
 
-        unsigned int niov() const noexcept override {
-            return _t->niov();
-        }
+    size_t size() const noexcept override { return _t->size(); }
 
-        size_t size() const noexcept override {
-            return _t->size();
-        }
-
-        off_t offset() const noexcept override {
-            return _t->offset();
-        }
+    off_t offset() const noexcept override { return _t->offset(); }
 };
 
+Session::Session(const URI& uri, unsigned int depth) :
+    rawstor::Session(uri, depth) {
+}
 
-Session::Session(const URI &uri, unsigned int depth):
-    rawstor::Session(uri, depth)
-{}
-
-
-int Session::_connect(const RawstorUUID &id) {
+int Session::_connect(const RawstorUUID& id) {
     std::string ost_path = get_ost_path(uri());
 
     RawstorUUIDString uuid_string;
@@ -201,12 +169,10 @@ int Session::_connect(const RawstorUUID &id) {
     return fd;
 }
 
-
 void Session::create(
-    rawstor::io::Queue &,
-    const RawstorUUID &id, const RawstorObjectSpec &sp,
-    std::unique_ptr<rawstor::Task> t)
-{
+    rawstor::io::Queue&, const RawstorUUID& id, const RawstorObjectSpec& sp,
+    std::unique_ptr<rawstor::Task> t
+) {
     std::string ost_path = get_ost_path(uri());
     if (mkdir(ost_path.c_str(), 0755) == -1) {
         if (errno == EEXIST) {
@@ -223,8 +189,8 @@ void Session::create(
     spec_path = get_object_spec_path(ost_path, uuid_string);
 
     int fd = ::open(
-        spec_path.c_str(),
-        O_EXCL | O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR);
+        spec_path.c_str(), O_EXCL | O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR
+    );
     if (fd == -1) {
         RAWSTOR_THROW_ERRNO();
     }
@@ -249,12 +215,9 @@ void Session::create(
     (*t)(nullptr, 0, 0);
 }
 
-
 void Session::remove(
-    rawstor::io::Queue &,
-    const RawstorUUID &id,
-    std::unique_ptr<rawstor::Task> t)
-{
+    rawstor::io::Queue&, const RawstorUUID& id, std::unique_ptr<rawstor::Task> t
+) {
     std::string ost_path = get_ost_path(uri());
 
     RawstorUUIDString uuid_string;
@@ -281,12 +244,10 @@ void Session::remove(
     (*t)(nullptr, 0, 0);
 }
 
-
 void Session::spec(
-    rawstor::io::Queue &,
-    const RawstorUUID &id, RawstorObjectSpec *sp,
-    std::unique_ptr<rawstor::Task> t)
-{
+    rawstor::io::Queue&, const RawstorUUID& id, RawstorObjectSpec* sp,
+    std::unique_ptr<rawstor::Task> t
+) {
     std::string ost_path = get_ost_path(uri());
 
     RawstorUUIDString uuid_string;
@@ -316,12 +277,9 @@ void Session::spec(
     (*t)(nullptr, 0, 0);
 }
 
-
 void Session::set_object(
-    rawstor::io::Queue &,
-    RawstorObject *object,
-    std::unique_ptr<rawstor::Task> t)
-{
+    rawstor::io::Queue&, RawstorObject* object, std::unique_ptr<rawstor::Task> t
+) {
     if (fd() != -1) {
         throw std::runtime_error("Object already set");
     }
@@ -338,49 +296,49 @@ void Session::set_object(
     _o = object;
 }
 
-
 void Session::read(std::unique_ptr<rawstor::TaskScalar> t) {
     rawstor_debug(
-        "%s(): fd = %d, offset = %jd, size = %zu\n",
-        __FUNCTION__, fd(), (intmax_t)t->offset(), t->size());
+        "%s(): fd = %d, offset = %jd, size = %zu\n", __FUNCTION__, fd(),
+        (intmax_t)t->offset(), t->size()
+    );
 
     std::unique_ptr<rawstor::io::TaskScalarPositional> op =
         std::make_unique<SessionOpScalarPositional>(_o, fd(), std::move(t));
     io_queue->read(std::move(op));
 }
-
 
 void Session::read(std::unique_ptr<rawstor::TaskVector> t) {
     rawstor_debug(
-        "%s(): fd = %d, offset = %jd, niov = %u, size = %zu\n",
-        __FUNCTION__, fd(), (intmax_t)t->offset(), t->niov(), t->size());
+        "%s(): fd = %d, offset = %jd, niov = %u, size = %zu\n", __FUNCTION__,
+        fd(), (intmax_t)t->offset(), t->niov(), t->size()
+    );
 
     std::unique_ptr<rawstor::io::TaskVectorPositional> op =
         std::make_unique<SessionOpVectorPositional>(_o, fd(), std::move(t));
     io_queue->read(std::move(op));
 }
 
-
 void Session::write(std::unique_ptr<rawstor::TaskScalar> t) {
     rawstor_debug(
-        "%s(): fd = %d, offset = %jd, size = %zu\n",
-        __FUNCTION__, fd(), (intmax_t)t->offset(), t->size());
+        "%s(): fd = %d, offset = %jd, size = %zu\n", __FUNCTION__, fd(),
+        (intmax_t)t->offset(), t->size()
+    );
 
     std::unique_ptr<rawstor::io::TaskScalarPositional> op =
         std::make_unique<SessionOpScalarPositional>(_o, fd(), std::move(t));
     io_queue->write(std::move(op));
 }
 
-
 void Session::write(std::unique_ptr<rawstor::TaskVector> t) {
     rawstor_debug(
-        "%s(): fd = %d, offset = %jd, niov = %u, size = %zu\n",
-        __FUNCTION__, fd(), (intmax_t)t->offset(), t->niov(), t->size());
+        "%s(): fd = %d, offset = %jd, niov = %u, size = %zu\n", __FUNCTION__,
+        fd(), (intmax_t)t->offset(), t->niov(), t->size()
+    );
 
     std::unique_ptr<rawstor::io::TaskVectorPositional> op =
         std::make_unique<SessionOpVectorPositional>(_o, fd(), std::move(t));
     io_queue->write(std::move(op));
 }
 
-
-}} // rawstor::file
+} // namespace file
+} // namespace rawstor

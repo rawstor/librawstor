@@ -7,12 +7,10 @@
 #include <stdexcept>
 
 #include <cerrno>
-#include <cstdlib>
 #include <cstdio>
-
+#include <cstdlib>
 
 namespace {
-
 
 int test_ringbuf_empty() {
     rawstor::RingBuf<int> buf(3);
@@ -27,7 +25,6 @@ int test_ringbuf_empty() {
     return 0;
 }
 
-
 int test_ringbuf_invalid() {
     rawstor::RingBuf<int> buf(0);
 
@@ -41,7 +38,6 @@ int test_ringbuf_invalid() {
 
     return 0;
 }
-
 
 int test_ringbuf_basics() {
     rawstor::RingBuf<int> buf(3);
@@ -114,7 +110,6 @@ int test_ringbuf_basics() {
     return 0;
 }
 
-
 int test_ringbuf_overlap() {
     rawstor::RingBuf<int> buf(4);
 
@@ -153,9 +148,7 @@ int test_ringbuf_overlap() {
     return 0;
 }
 
-
 } // unnamed namespace
-
 
 int main() {
     int rval = 0;

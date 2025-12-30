@@ -6,12 +6,11 @@
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 
-#include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/types.h>
 
 #include <errno.h>
 #include <fcntl.h>
-
 
 static int socket_add_flag(int fd, int flag) {
     int error;
@@ -36,7 +35,6 @@ static int socket_add_flag(int fd, int flag) {
 
     return 0;
 }
-
 
 int rawstor_socket_set_nonblock(int fd) {
     int res = socket_add_flag(fd, O_NONBLOCK);
@@ -64,7 +62,6 @@ int rawstor_socket_set_nodelay(int fd) {
     return 0;
 }
 
-
 int rawstor_socket_set_snd_timeout(int fd, unsigned int timeout) {
     int error;
 
@@ -82,7 +79,6 @@ int rawstor_socket_set_snd_timeout(int fd, unsigned int timeout) {
 
     return 0;
 }
-
 
 int rawstor_socket_set_rcv_timeout(int fd, unsigned int timeout) {
     int error;
@@ -102,39 +98,36 @@ int rawstor_socket_set_rcv_timeout(int fd, unsigned int timeout) {
     return 0;
 }
 
-
 int rawstor_socket_set_user_timeout(int fd, unsigned int timeout) {
     int error;
 
-    #if defined(RAWSTOR_ON_LINUX)
-        if (setsockopt(
-            fd, IPPROTO_TCP, TCP_USER_TIMEOUT,
-            &timeout, sizeof(timeout)))
-        {
-            error = errno;
-            errno = 0;
-            return -error;
-        }
-        rawstor_debug("fd %d: IPPROTO_TCP/TCP_USER_TIMEOUT = %ums\n", fd, timeout);
-    #elif defined(RAWSTOR_ON_MACOS)
-        timeout = (timeout + 999) / 1000;
-        if (setsockopt(
-            fd, IPPROTO_TCP, TCP_CONNECTIONTIMEOUT,
-            &timeout, sizeof(timeout)))
-        {
-            error = errno;
-            errno = 0;
-            return -error;
-        }
-        rawstor_debug(
-            "fd %d: IPPROTO_TCP/TCP_CONNECTIONTIMEOUT = %us\n", fd, timeout);
-    #else
-        #error "Unexpected platform"
-    #endif
+#if defined(RAWSTOR_ON_LINUX)
+    if (setsockopt(
+            fd, IPPROTO_TCP, TCP_USER_TIMEOUT, &timeout, sizeof(timeout)
+        )) {
+        error = errno;
+        errno = 0;
+        return -error;
+    }
+    rawstor_debug("fd %d: IPPROTO_TCP/TCP_USER_TIMEOUT = %ums\n", fd, timeout);
+#elif defined(RAWSTOR_ON_MACOS)
+    timeout = (timeout + 999) / 1000;
+    if (setsockopt(
+            fd, IPPROTO_TCP, TCP_CONNECTIONTIMEOUT, &timeout, sizeof(timeout)
+        )) {
+        error = errno;
+        errno = 0;
+        return -error;
+    }
+    rawstor_debug(
+        "fd %d: IPPROTO_TCP/TCP_CONNECTIONTIMEOUT = %us\n", fd, timeout
+    );
+#else
+#error "Unexpected platform"
+#endif
 
     return 0;
 }
-
 
 int rawstor_socket_set_snd_bufsize(int fd, unsigned int size) {
     int error;
@@ -149,7 +142,6 @@ int rawstor_socket_set_snd_bufsize(int fd, unsigned int size) {
 
     return 0;
 }
-
 
 int rawstor_socket_set_rcv_bufsize(int fd, unsigned int size) {
     int error;
