@@ -5,41 +5,30 @@
 
 #include <time.h>
 
-
 namespace {
-
 
 std::string engine_name = "uring";
 
-
-} // unnamed
-
+} // namespace
 
 namespace rawstor {
 namespace io {
 namespace uring {
 
-
-Queue::Queue(unsigned int depth):
-    rawstor::io::Queue(depth),
-    _events(0)
-{
+Queue::Queue(unsigned int depth) : rawstor::io::Queue(depth), _events(0) {
     int res = io_uring_queue_init(depth, &_ring, 0);
     if (res < 0) {
         RAWSTOR_THROW_SYSTEM_ERROR(-res);
     };
 }
 
-
 Queue::~Queue() {
     io_uring_queue_exit(&_ring);
 }
 
-
 const std::string& Queue::engine_name() {
     return ::engine_name;
 }
-
 
 void Queue::setup_fd(int fd) {
     int res;
@@ -61,9 +50,8 @@ void Queue::setup_fd(int fd) {
     }
 }
 
-
 void Queue::poll(std::unique_ptr<rawstor::io::TaskPoll> t) {
-    io_uring_sqe *sqe = io_uring_get_sqe(&_ring);
+    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
@@ -73,9 +61,8 @@ void Queue::poll(std::unique_ptr<rawstor::io::TaskPoll> t) {
     t.release();
 }
 
-
 void Queue::read(std::unique_ptr<rawstor::io::TaskScalar> t) {
-    io_uring_sqe *sqe = io_uring_get_sqe(&_ring);
+    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
@@ -85,9 +72,8 @@ void Queue::read(std::unique_ptr<rawstor::io::TaskScalar> t) {
     t.release();
 }
 
-
 void Queue::read(std::unique_ptr<rawstor::io::TaskVector> t) {
-    io_uring_sqe *sqe = io_uring_get_sqe(&_ring);
+    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
@@ -97,9 +83,8 @@ void Queue::read(std::unique_ptr<rawstor::io::TaskVector> t) {
     t.release();
 }
 
-
 void Queue::read(std::unique_ptr<rawstor::io::TaskScalarPositional> t) {
-    io_uring_sqe *sqe = io_uring_get_sqe(&_ring);
+    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
@@ -109,9 +94,8 @@ void Queue::read(std::unique_ptr<rawstor::io::TaskScalarPositional> t) {
     t.release();
 }
 
-
 void Queue::read(std::unique_ptr<rawstor::io::TaskVectorPositional> t) {
-    io_uring_sqe *sqe = io_uring_get_sqe(&_ring);
+    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
@@ -121,9 +105,8 @@ void Queue::read(std::unique_ptr<rawstor::io::TaskVectorPositional> t) {
     t.release();
 }
 
-
 void Queue::read(std::unique_ptr<rawstor::io::TaskMessage> t) {
-    io_uring_sqe *sqe = io_uring_get_sqe(&_ring);
+    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
@@ -133,9 +116,8 @@ void Queue::read(std::unique_ptr<rawstor::io::TaskMessage> t) {
     t.release();
 }
 
-
 void Queue::write(std::unique_ptr<rawstor::io::TaskScalar> t) {
-    io_uring_sqe *sqe = io_uring_get_sqe(&_ring);
+    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
@@ -145,9 +127,8 @@ void Queue::write(std::unique_ptr<rawstor::io::TaskScalar> t) {
     t.release();
 }
 
-
 void Queue::write(std::unique_ptr<rawstor::io::TaskVector> t) {
-    io_uring_sqe *sqe = io_uring_get_sqe(&_ring);
+    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
@@ -157,9 +138,8 @@ void Queue::write(std::unique_ptr<rawstor::io::TaskVector> t) {
     t.release();
 }
 
-
 void Queue::write(std::unique_ptr<rawstor::io::TaskScalarPositional> t) {
-    io_uring_sqe *sqe = io_uring_get_sqe(&_ring);
+    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
@@ -169,9 +149,8 @@ void Queue::write(std::unique_ptr<rawstor::io::TaskScalarPositional> t) {
     t.release();
 }
 
-
 void Queue::write(std::unique_ptr<rawstor::io::TaskVectorPositional> t) {
-    io_uring_sqe *sqe = io_uring_get_sqe(&_ring);
+    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
@@ -181,9 +160,8 @@ void Queue::write(std::unique_ptr<rawstor::io::TaskVectorPositional> t) {
     t.release();
 }
 
-
 void Queue::write(std::unique_ptr<rawstor::io::TaskMessage> t) {
-    io_uring_sqe *sqe = io_uring_get_sqe(&_ring);
+    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
@@ -193,18 +171,15 @@ void Queue::write(std::unique_ptr<rawstor::io::TaskMessage> t) {
     t.release();
 }
 
-
 bool Queue::empty() const noexcept {
     return _events == 0;
 }
 
-
 void Queue::wait(unsigned int timeout) {
     int res;
-    io_uring_cqe *cqe;
+    io_uring_cqe* cqe;
     __kernel_timespec ts = {
-        .tv_sec = timeout / 1000,
-        .tv_nsec = 1000000u * (timeout % 1000)
+        .tv_sec = timeout / 1000, .tv_nsec = 1000000u * (timeout % 1000)
     };
 
     if (io_uring_sq_ready(&_ring) > 0) {
@@ -228,7 +203,8 @@ void Queue::wait(unsigned int timeout) {
     }
 
     std::unique_ptr<rawstor::io::Task> t(
-        static_cast<rawstor::io::Task*>(io_uring_cqe_get_data(cqe)));
+        static_cast<rawstor::io::Task*>(io_uring_cqe_get_data(cqe))
+    );
 
     size_t result = cqe->res >= 0 ? cqe->res : 0;
     int error = cqe->res < 0 ? -cqe->res : 0;
@@ -240,5 +216,6 @@ void Queue::wait(unsigned int timeout) {
     (*t)(result, error);
 }
 
-
-}}} // rawstor::io::uring
+} // namespace uring
+} // namespace io
+} // namespace rawstor

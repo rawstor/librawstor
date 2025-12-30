@@ -1,15 +1,14 @@
 #include "rawstorstd/uri.hpp"
 
-#include <string>
 #include <sstream>
+#include <string>
 #include <utility>
 
 #include <cstring>
 
 namespace {
 
-
-std::string join(const rawstor::URI &parent, const std::string &child) {
+std::string join(const rawstor::URI& parent, const std::string& child) {
     std::string path = parent.str();
     if (path.empty() || path[path.length() - 1] == '/') {
         return path + child;
@@ -17,14 +16,11 @@ std::string join(const rawstor::URI &parent, const std::string &child) {
     return path + '/' + child;
 }
 
-
 void parse_uri(
-    const std::string &uri,
-    std::string *scheme,
-    std::string *username, std::string *password,
-    std::string *hostname, unsigned int *port,
-    std::string *path)
-{
+    const std::string& uri, std::string* scheme, std::string* username,
+    std::string* password, std::string* hostname, unsigned int* port,
+    std::string* path
+) {
     size_t scheme_delim = uri.find("://");
     if (scheme_delim != uri.npos) {
         *scheme = uri.substr(0, scheme_delim);
@@ -40,8 +36,8 @@ void parse_uri(
         size_t colon_delim = uri.find(":", scheme_delim);
         if (colon_delim != uri.npos && colon_delim < at_delim) {
             colon_delim += 1;
-            *username = uri.substr(
-                scheme_delim, colon_delim - scheme_delim - 1);
+            *username =
+                uri.substr(scheme_delim, colon_delim - scheme_delim - 1);
             *password = uri.substr(colon_delim, at_delim - colon_delim - 1);
         } else {
             *username = uri.substr(scheme_delim, at_delim - scheme_delim);
@@ -63,7 +59,8 @@ void parse_uri(
         *hostname = uri.substr(at_delim, colon_delim - at_delim);
         colon_delim += 1;
         std::istringstream iss(
-            uri.substr(colon_delim, path_delim - colon_delim));
+            uri.substr(colon_delim, path_delim - colon_delim)
+        );
         iss >> *port;
     } else {
         *hostname = uri.substr(at_delim, path_delim - at_delim);
@@ -73,10 +70,8 @@ void parse_uri(
     *path = uri.substr(path_delim);
 }
 
-
-std::string get_userinfo(
-    const std::string &username, const std::string &password)
-{
+std::string
+get_userinfo(const std::string& username, const std::string& password) {
     std::ostringstream oss;
 
     oss << username;
@@ -87,10 +82,7 @@ std::string get_userinfo(
     return oss.str();
 }
 
-
-std::string get_host(
-    const std::string &hostname, unsigned int port)
-{
+std::string get_host(const std::string& hostname, unsigned int port) {
     std::ostringstream oss;
 
     oss << hostname;
@@ -101,10 +93,8 @@ std::string get_host(
     return oss.str();
 }
 
-
-std::string get_authority(
-    const std::string &userinfo, const std::string &host)
-{
+std::string
+get_authority(const std::string& userinfo, const std::string& host) {
     std::ostringstream oss;
 
     if (!userinfo.empty()) {
@@ -115,10 +105,9 @@ std::string get_authority(
     return oss.str();
 }
 
-
 void parse_path(
-    const std::string &path, std::string *dirname, std::string *filename)
-{
+    const std::string& path, std::string* dirname, std::string* filename
+) {
     size_t path_delim = path.rfind('/');
     if (path_delim != path.npos) {
         if (path_delim != 0) {
@@ -134,34 +123,27 @@ void parse_path(
     }
 }
 
-
-} // unnamed
+} // namespace
 
 namespace rawstor {
 
-
-URIPath::URIPath(const std::string &path):
-    _path(path)
-{
+URIPath::URIPath(const std::string& path) : _path(path) {
     parse_path(path, &_dirname, &_filename);
 }
 
-
-URIPath::URIPath(const URIPath &other):
+URIPath::URIPath(const URIPath& other) :
     _path(other._path),
     _dirname(other._dirname),
-    _filename(other._filename)
-{}
+    _filename(other._filename) {
+}
 
-
-URIPath::URIPath(URIPath &&other) noexcept:
+URIPath::URIPath(URIPath&& other) noexcept :
     _path(std::move(other._path)),
     _dirname(std::move(other._dirname)),
-    _filename(std::move(other._filename))
-{}
+    _filename(std::move(other._filename)) {
+}
 
-
-URIPath& URIPath::operator=(const URIPath &other) {
+URIPath& URIPath::operator=(const URIPath& other) {
     if (this != &other) {
         URIPath copy(other);
 
@@ -172,8 +154,7 @@ URIPath& URIPath::operator=(const URIPath &other) {
     return *this;
 }
 
-
-URIPath& URIPath::operator=(URIPath &&other) noexcept {
+URIPath& URIPath::operator=(URIPath&& other) noexcept {
     if (this != &other) {
         _path = std::move(other._path);
         _dirname = std::move(other._dirname);
@@ -182,11 +163,10 @@ URIPath& URIPath::operator=(URIPath &&other) noexcept {
     return *this;
 }
 
-
-std::vector<rawstor::URI> URI::uriv(const char *uris) {
+std::vector<rawstor::URI> URI::uriv(const char* uris) {
     std::vector<rawstor::URI> ret;
-    const char *start = uris;
-    const char *p = uris;
+    const char* start = uris;
+    const char* p = uris;
     while (true) {
         if (*p == '\0') {
             ret.emplace_back(std::string(start));
@@ -201,13 +181,11 @@ std::vector<rawstor::URI> URI::uriv(const char *uris) {
     return ret;
 }
 
-
-
-URI::URI(const std::string &uri):
-    _uri(uri)
-{
+URI::URI(const std::string& uri) : _uri(uri) {
     std::string path;
-    parse_uri(_uri, &_scheme, &_username, &_password, &_hostname, &_port, &path);
+    parse_uri(
+        _uri, &_scheme, &_username, &_password, &_hostname, &_port, &path
+    );
 
     _userinfo = get_userinfo(_username, _password);
     _host = get_host(_hostname, _port);
@@ -215,12 +193,12 @@ URI::URI(const std::string &uri):
     _path = URIPath(path);
 }
 
-
-URI::URI(const URI &parent, const std::string &child):
-    _uri(::join(parent, child))
-{
+URI::URI(const URI& parent, const std::string& child) :
+    _uri(::join(parent, child)) {
     std::string path;
-    parse_uri(_uri, &_scheme, &_username, &_password, &_hostname, &_port, &path);
+    parse_uri(
+        _uri, &_scheme, &_username, &_password, &_hostname, &_port, &path
+    );
 
     _userinfo = get_userinfo(_username, _password);
     _host = get_host(_hostname, _port);
@@ -228,8 +206,7 @@ URI::URI(const URI &parent, const std::string &child):
     _path = URIPath(path);
 }
 
-
-URI::URI(const URI &other):
+URI::URI(const URI& other) :
     _uri(other._uri),
     _scheme(other._scheme),
     _userinfo(other._userinfo),
@@ -239,11 +216,10 @@ URI::URI(const URI &other):
     _host(other._host),
     _hostname(other._hostname),
     _port(other._port),
-    _path(other._path)
-{}
+    _path(other._path) {
+}
 
-
-URI::URI(URI &&other) noexcept:
+URI::URI(URI&& other) noexcept :
     _uri(std::move(other._uri)),
     _scheme(std::move(other._scheme)),
     _userinfo(std::move(other._userinfo)),
@@ -253,11 +229,10 @@ URI::URI(URI &&other) noexcept:
     _host(std::move(other._host)),
     _hostname(std::move(other._hostname)),
     _port(std::exchange(other._port, 0)),
-    _path(std::move(other._path))
-{}
+    _path(std::move(other._path)) {
+}
 
-
-URI& URI::operator=(const URI &other) {
+URI& URI::operator=(const URI& other) {
     if (this != &other) {
         URI copy(other);
 
@@ -275,8 +250,7 @@ URI& URI::operator=(const URI &other) {
     return *this;
 }
 
-
-URI& URI::operator=(URI &&other) noexcept {
+URI& URI::operator=(URI&& other) noexcept {
     if (this != &other) {
         _uri = std::move(other._uri);
         _scheme = std::move(other._scheme);
@@ -292,12 +266,10 @@ URI& URI::operator=(URI &&other) noexcept {
     return *this;
 }
 
-
 URI URI::parent() const {
     std::ostringstream oss;
     oss << _scheme << "://" << _authority << _path.dirname();
     return URI(oss.str());
 }
 
-
-} // rawstor
+} // namespace rawstor

@@ -4,13 +4,12 @@
 
 #include "unittest.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdio.h>
-
 
 static int test_hash_scalar() {
-    const char *buf = "hello world";
+    const char* buf = "hello world";
     uint64_t hash = rawstor_hash_scalar((void*)buf, strlen(buf));
 #ifdef RAWSTOR_WITH_LIBXXHASH
     assertTrue(hash == 0xd447b1ea40e6988b);
@@ -20,18 +19,17 @@ static int test_hash_scalar() {
     return 0;
 }
 
-
 static int test_hash_vector() {
     struct iovec iov[] = {
-        (struct iovec) {
+        (struct iovec){
             .iov_base = "hello",
             .iov_len = strlen("hello"),
         },
-        (struct iovec) {
+        (struct iovec){
             .iov_base = " ",
             .iov_len = strlen(" "),
         },
-        (struct iovec) {
+        (struct iovec){
             .iov_base = "world",
             .iov_len = strlen("world"),
         }
@@ -46,7 +44,6 @@ static int test_hash_vector() {
 #endif
     return 0;
 }
-
 
 int main() {
     int rval = 0;

@@ -12,7 +12,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-
 static void usage(void) {
     fprintf(
         stdout,
@@ -36,14 +35,9 @@ static void usage(void) {
     );
 };
 
-
 static void version(void) {
-    fprintf(
-        stdout,
-        "Rawstor CLI " PACKAGE_VERSION "\n"
-    );
+    fprintf(stdout, "Rawstor CLI " PACKAGE_VERSION "\n");
 }
-
 
 static void command_create_usage(void) {
     fprintf(
@@ -59,9 +53,8 @@ static void command_create_usage(void) {
     );
 };
 
-
-static int command_create(int argc, char **argv) {
-    const char *optstring = "hs:u:";
+static int command_create(int argc, char** argv) {
+    const char* optstring = "hs:u:";
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
         {"size", required_argument, NULL, 's'},
@@ -69,8 +62,8 @@ static int command_create(int argc, char **argv) {
         {},
     };
 
-    char *size_arg = NULL;
-    char *uri_arg = NULL;
+    char* size_arg = NULL;
+    char* uri_arg = NULL;
     optind = 1;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
@@ -79,21 +72,21 @@ static int command_create(int argc, char **argv) {
         }
 
         switch (c) {
-            case 'h':
-                command_create_usage();
-                return EXIT_SUCCESS;
-                break;
+        case 'h':
+            command_create_usage();
+            return EXIT_SUCCESS;
+            break;
 
-            case 's':
-                size_arg = optarg;
-                break;
+        case 's':
+            size_arg = optarg;
+            break;
 
-            case 'u':
-                uri_arg = optarg;
-                break;
+        case 'u':
+            uri_arg = optarg;
+            break;
 
-            default:
-                return EXIT_FAILURE;
+        default:
+            return EXIT_FAILURE;
         }
     }
 
@@ -121,7 +114,6 @@ static int command_create(int argc, char **argv) {
     return rawstor_cli_create(uri_arg, size);
 }
 
-
 static void command_remove_usage(void) {
     fprintf(
         stdout,
@@ -135,16 +127,15 @@ static void command_remove_usage(void) {
     );
 };
 
-
-static int command_remove(int argc, char **argv) {
-    const char *optstring = "ho:";
+static int command_remove(int argc, char** argv) {
+    const char* optstring = "ho:";
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
         {"object-uri", required_argument, NULL, 'o'},
         {},
     };
 
-    char *object_uri_arg = NULL;
+    char* object_uri_arg = NULL;
     optind = 1;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
@@ -153,17 +144,17 @@ static int command_remove(int argc, char **argv) {
         }
 
         switch (c) {
-            case 'h':
-                command_remove_usage();
-                return EXIT_SUCCESS;
-                break;
+        case 'h':
+            command_remove_usage();
+            return EXIT_SUCCESS;
+            break;
 
-            case 'o':
-                object_uri_arg = optarg;
-                break;
+        case 'o':
+            object_uri_arg = optarg;
+            break;
 
-            default:
-                return EXIT_FAILURE;
+        default:
+            return EXIT_FAILURE;
         }
     }
 
@@ -180,7 +171,6 @@ static int command_remove(int argc, char **argv) {
     return rawstor_cli_remove(object_uri_arg);
 }
 
-
 static void command_show_usage(void) {
     fprintf(
         stdout,
@@ -194,16 +184,15 @@ static void command_show_usage(void) {
     );
 };
 
-
-static int command_show(int argc, char **argv) {
-    const char *optstring = "ho:";
+static int command_show(int argc, char** argv) {
+    const char* optstring = "ho:";
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
         {"object-uri", required_argument, NULL, 'o'},
         {},
     };
 
-    char *object_uri_arg = NULL;
+    char* object_uri_arg = NULL;
     optind = 1;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
@@ -212,17 +201,17 @@ static int command_show(int argc, char **argv) {
         }
 
         switch (c) {
-            case 'h':
-                command_show_usage();
-                return EXIT_SUCCESS;
-                break;
+        case 'h':
+            command_show_usage();
+            return EXIT_SUCCESS;
+            break;
 
-            case 'o':
-                object_uri_arg = optarg;
-                break;
+        case 'o':
+            object_uri_arg = optarg;
+            break;
 
-            default:
-                return EXIT_FAILURE;
+        default:
+            return EXIT_FAILURE;
         }
     }
 
@@ -238,7 +227,6 @@ static int command_show(int argc, char **argv) {
 
     return rawstor_cli_show(object_uri_arg);
 }
-
 
 static void command_testio_usage(void) {
     fprintf(
@@ -261,9 +249,8 @@ static void command_testio_usage(void) {
     );
 };
 
-
-static int command_testio(int argc, char **argv) {
-    const char *optstring = "b:c:d:ho:s:";
+static int command_testio(int argc, char** argv) {
+    const char* optstring = "b:c:d:ho:s:";
     struct option longopts[] = {
         {"block-size", required_argument, NULL, 'b'},
         {"count", required_argument, NULL, 'c'},
@@ -274,10 +261,10 @@ static int command_testio(int argc, char **argv) {
         {},
     };
 
-    char *block_size_arg = NULL;
-    char *count_arg = NULL;
-    char *io_depth_arg = NULL;
-    char *object_uri_arg = NULL;
+    char* block_size_arg = NULL;
+    char* count_arg = NULL;
+    char* io_depth_arg = NULL;
+    char* object_uri_arg = NULL;
     int vector_mode = 0;
     optind = 1;
     while (1) {
@@ -287,33 +274,33 @@ static int command_testio(int argc, char **argv) {
         }
 
         switch (c) {
-            case 'b':
-                block_size_arg = optarg;
-                break;
+        case 'b':
+            block_size_arg = optarg;
+            break;
 
-            case 'c':
-                count_arg = optarg;
-                break;
+        case 'c':
+            count_arg = optarg;
+            break;
 
-            case 'd':
-                io_depth_arg = optarg;
-                break;
+        case 'd':
+            io_depth_arg = optarg;
+            break;
 
-            case 'h':
-                command_testio_usage();
-                return EXIT_SUCCESS;
-                break;
+        case 'h':
+            command_testio_usage();
+            return EXIT_SUCCESS;
+            break;
 
-            case 'o':
-                object_uri_arg = optarg;
-                break;
+        case 'o':
+            object_uri_arg = optarg;
+            break;
 
-            case 'v':
-                vector_mode = 1;
-                break;
+        case 'v':
+            vector_mode = 1;
+            break;
 
-            default:
-                return EXIT_FAILURE;
+        default:
+            return EXIT_FAILURE;
         }
     }
 
@@ -361,17 +348,13 @@ static int command_testio(int argc, char **argv) {
     }
 
     return rawstor_cli_testio(
-        object_uri_arg,
-        block_size, count, io_depth,
-        vector_mode);
+        object_uri_arg, block_size, count, io_depth, vector_mode
+    );
 }
 
-
 static int run_command(
-    const char *command,
-    const struct RawstorOpts *opts,
-    int argc, char **argv)
-{
+    const char* command, const struct RawstorOpts* opts, int argc, char** argv
+) {
     int res = rawstor_initialize(opts);
     if (res) {
         fprintf(stderr, "rawstor_initialize() failed: %s\n", strerror(-res));
@@ -397,9 +380,8 @@ static int run_command(
     return ret;
 }
 
-
-int main(int argc, char **argv) {
-    const char *optstring = "+hv";
+int main(int argc, char** argv) {
+    const char* optstring = "+hv";
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
         {"sessions", required_argument, NULL, 's'},
@@ -408,34 +390,34 @@ int main(int argc, char **argv) {
         {},
     };
 
-    char *sessions_arg = NULL;
-    char *wait_timeout_arg = NULL;
+    char* sessions_arg = NULL;
+    char* wait_timeout_arg = NULL;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
         if (c == -1)
             break;
 
         switch (c) {
-            case 'h':
-                usage();
-                return EXIT_SUCCESS;
-                break;
+        case 'h':
+            usage();
+            return EXIT_SUCCESS;
+            break;
 
-            case 's':
-                sessions_arg = optarg;
-                break;
+        case 's':
+            sessions_arg = optarg;
+            break;
 
-            case 't':
-                wait_timeout_arg = optarg;
-                break;
+        case 't':
+            wait_timeout_arg = optarg;
+            break;
 
-            case 'v':
-                version();
-                return EXIT_SUCCESS;
-                break;
+        case 'v':
+            version();
+            return EXIT_SUCCESS;
+            break;
 
-            default:
-                return EXIT_FAILURE;
+        default:
+            return EXIT_FAILURE;
         }
     }
 
@@ -460,8 +442,7 @@ int main(int argc, char **argv) {
         }
     }
 
-    int ret = run_command(
-        argv[optind], &opts, argc - optind, &argv[optind]);
+    int ret = run_command(argv[optind], &opts, argc - optind, &argv[optind]);
 
     return ret;
 }

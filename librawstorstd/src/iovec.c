@@ -5,10 +5,9 @@
 #include <stddef.h>
 #include <string.h>
 
-
 size_t rawstor_iovec_discard_front(
-    struct iovec **iov, unsigned int *niov, size_t size)
-{
+    struct iovec** iov, unsigned int* niov, size_t size
+) {
     size_t total = 0;
 
     while (*niov > 0 && size >= (*iov)[0].iov_len) {
@@ -27,10 +26,9 @@ size_t rawstor_iovec_discard_front(
     return total;
 }
 
-
 size_t rawstor_iovec_discard_back(
-    struct iovec **iov, unsigned int *niov, size_t size)
-{
+    struct iovec** iov, unsigned int* niov, size_t size
+) {
     size_t total = 0;
 
     while (*niov > 0 && size >= (*iov)[*niov - 1].iov_len) {
@@ -47,17 +45,16 @@ size_t rawstor_iovec_discard_back(
     return total;
 }
 
-
 size_t rawstor_iovec_from_buf(
-    struct iovec *iov, unsigned int niov, size_t offset,
-    const void *buf, size_t size)
-{
+    struct iovec* iov, unsigned int niov, size_t offset, const void* buf,
+    size_t size
+) {
     size_t total = 0;
 
     for (unsigned int i = 0; (offset || size) && i < niov; i++) {
         if (offset < iov[i].iov_len) {
-            size_t len = iov[i].iov_len - offset < size ?
-                iov[i].iov_len - offset : size;
+            size_t len =
+                iov[i].iov_len - offset < size ? iov[i].iov_len - offset : size;
             memcpy(iov[i].iov_base + offset, buf + total, len);
             size -= len;
             total += len;
@@ -70,17 +67,15 @@ size_t rawstor_iovec_from_buf(
     return total;
 }
 
-
 size_t rawstor_iovec_to_buf(
-    struct iovec *iov, unsigned int niov, size_t offset,
-    void *buf, size_t size)
-{
+    struct iovec* iov, unsigned int niov, size_t offset, void* buf, size_t size
+) {
     size_t total = 0;
 
     for (unsigned int i = 0; (offset || size) && i < niov; i++) {
         if (offset < iov[i].iov_len) {
-            size_t len = iov[i].iov_len - offset < size ?
-                iov[i].iov_len - offset : size;
+            size_t len =
+                iov[i].iov_len - offset < size ? iov[i].iov_len - offset : size;
             memcpy(buf + total, iov[i].iov_base + offset, len);
             size -= len;
             total += len;
@@ -93,8 +88,7 @@ size_t rawstor_iovec_to_buf(
     return total;
 }
 
-
-size_t rawstor_iovec_size(struct iovec *iov, unsigned int niov) {
+size_t rawstor_iovec_size(struct iovec* iov, unsigned int niov) {
     size_t ret = 0;
 
     for (unsigned int i = 0; i < niov; i++) {
