@@ -7,3 +7,6 @@ IndentAccessModifiers: true
 IndentWidth: 4
 PackConstructorInitializers: CurrentLine
 PointerAlignment: Left
+---
+Language: C
+IndentAccessModifiers: false
