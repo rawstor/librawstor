@@ -23,7 +23,8 @@ Session::Session(Queue& q, int fd) :
     _q(q),
     _fd(fd),
     _read_sqes(q.depth()),
-    _write_sqes(q.depth()) {}
+    _write_sqes(q.depth()) {
+}
 
 void Session::_process_poll(rawstor::RingBuf<Event>& cqes, short revents) {
     for (auto it = _poll_sqes.begin(); it != _poll_sqes.end();) {

@@ -37,7 +37,9 @@ Session& Queue::_get_session(int fd) {
     return *session;
 }
 
-const std::string& Queue::engine_name() { return ::engine_name; }
+const std::string& Queue::engine_name() {
+    return ::engine_name;
+}
 
 void Queue::setup_fd(int fd) {
     int res;

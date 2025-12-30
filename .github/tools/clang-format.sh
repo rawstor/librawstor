@@ -49,7 +49,6 @@ function main() {
     local input_excludes=$2
     echo -e "Sources: $input_pattern"
     local cmd=$(find_cmd "$input_pattern" "$input_excludes")
-    echo $cmd
 
     for file in $(eval $cmd); do
         echo -e "Checking file: $file"
