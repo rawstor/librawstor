@@ -8,18 +8,16 @@
 #include <time.h>
 #include <unistd.h>
 
-
 struct TestThreadingContext {
-    RawstorMutex *mutex;
-    RawstorCond *cond;
+    RawstorMutex* mutex;
+    RawstorCond* cond;
 
     int wait;
     int value;
 };
 
-
-static void* test_thread(void *data) {
-    struct TestThreadingContext *context = data;
+static void* test_thread(void* data) {
+    struct TestThreadingContext* context = data;
 
     rawstor_mutex_lock(context->mutex);
     ++context->wait;
@@ -31,9 +29,8 @@ static void* test_thread(void *data) {
     return context;
 }
 
-
 static int test_cond_signal() {
-    struct TestThreadingContext context = (struct TestThreadingContext) {
+    struct TestThreadingContext context = (struct TestThreadingContext){
         .mutex = rawstor_mutex_create(),
         .cond = rawstor_cond_create(),
         .wait = 0,
@@ -43,7 +40,7 @@ static int test_cond_signal() {
     assertTrue(context.mutex != NULL);
     assertTrue(context.cond != NULL);
 
-    RawstorThread *thread = rawstor_thread_create(test_thread, &context);
+    RawstorThread* thread = rawstor_thread_create(test_thread, &context);
 
     while (1) {
         rawstor_mutex_lock(context.mutex);
@@ -59,7 +56,7 @@ static int test_cond_signal() {
     rawstor_cond_signal(context.cond);
     rawstor_mutex_unlock(context.mutex);
 
-    void *data = rawstor_thread_join(thread);
+    void* data = rawstor_thread_join(thread);
     assertTrue(data == &context);
 
     assertTrue(context.value == 1);
@@ -70,11 +67,10 @@ static int test_cond_signal() {
     return 0;
 }
 
-
 static int test_cond_broadcast() {
     int count = 10;
 
-    struct TestThreadingContext context = (struct TestThreadingContext) {
+    struct TestThreadingContext context = (struct TestThreadingContext){
         .mutex = rawstor_mutex_create(),
         .cond = rawstor_cond_create(),
         .wait = 0,
@@ -84,7 +80,7 @@ static int test_cond_broadcast() {
     assertTrue(context.mutex != NULL);
     assertTrue(context.cond != NULL);
 
-    RawstorThread **threads = calloc(count, sizeof(RawstorThread*));
+    RawstorThread** threads = calloc(count, sizeof(RawstorThread*));
     assertTrue(threads != NULL);
 
     for (int i = 0; i < count; ++i) {
@@ -117,12 +113,11 @@ static int test_cond_broadcast() {
     return 0;
 }
 
+static void* test_wait_thread(void* data) {
+    int* timeout = data;
 
-static void* test_wait_thread(void *data) {
-    int *timeout = data;
-
-    RawstorMutex *mutex = rawstor_mutex_create();
-    RawstorCond *cond = rawstor_cond_create();
+    RawstorMutex* mutex = rawstor_mutex_create();
+    RawstorCond* cond = rawstor_cond_create();
 
     assert(mutex != NULL);
     assert(cond != NULL);
@@ -137,14 +132,13 @@ static void* test_wait_thread(void *data) {
     return NULL;
 }
 
-
 static int test_cond_wait_timeout() {
     static int timeout = 100;
 
     struct timespec ts_start;
     clock_gettime(CLOCK_MONOTONIC, &ts_start);
 
-    RawstorThread *thread = rawstor_thread_create(test_wait_thread, &timeout);
+    RawstorThread* thread = rawstor_thread_create(test_wait_thread, &timeout);
     assertTrue(thread != NULL);
     rawstor_thread_join(thread);
 
@@ -163,7 +157,6 @@ static int test_cond_wait_timeout() {
 
     return 0;
 }
-
 
 int main() {
     int rval = 0;

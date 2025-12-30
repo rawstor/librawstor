@@ -10,7 +10,6 @@
 
 #include <unistd.h>
 
-
 static int test_timestamp() {
     struct RawstorUUID uuid;
     assertTrue(rawstor_uuid7_set_timestamp(&uuid, 100) == 0);
@@ -21,7 +20,6 @@ static int test_timestamp() {
     assertTrue(rawstor_uuid7_get_timestamp(&uuid) == (1ull << 48) - 1);
     return 0;
 }
-
 
 static int test_counter() {
     struct RawstorUUID uuid;
@@ -34,7 +32,6 @@ static int test_counter() {
     return 0;
 }
 
-
 static int test_version() {
     for (int version = 0; version < 16; ++version) {
         struct RawstorUUID uuid;
@@ -44,7 +41,6 @@ static int test_version() {
     return 0;
 }
 
-
 static int test_variant() {
     for (int variant = 0; variant < 4; ++variant) {
         struct RawstorUUID uuid;
@@ -53,7 +49,6 @@ static int test_variant() {
     }
     return 0;
 }
-
 
 static int test_all_at_once() {
     RawstorUUIDString s;
@@ -73,7 +68,6 @@ static int test_all_at_once() {
     return 0;
 }
 
-
 static int test_init() {
     struct RawstorUUID uuid;
     assertTrue(rawstor_uuid7_init(&uuid) == 0);
@@ -84,11 +78,13 @@ static int test_init() {
     return 0;
 }
 
-
 static int test_from_string() {
     struct RawstorUUID uuid;
-    assertTrue(rawstor_uuid_from_string(
-        &uuid, "0195e6ef-3ba8-741d-af22-e02bf9c800ec") == 0);
+    assertTrue(
+        rawstor_uuid_from_string(
+            &uuid, "0195e6ef-3ba8-741d-af22-e02bf9c800ec"
+        ) == 0
+    );
 
     assertTrue(rawstor_uuid_get_version(&uuid) == 7);
     assertTrue(rawstor_uuid_get_variant(&uuid) == 2);
@@ -98,30 +94,46 @@ static int test_from_string() {
     return 0;
 }
 
-
 static int test_from_string_errors() {
     struct RawstorUUID uuid;
-    assertTrue(rawstor_uuid_from_string(
-        &uuid, "0195e6ef-3ba8-741d-af22-e02bf9c800ec") == 0);
+    assertTrue(
+        rawstor_uuid_from_string(
+            &uuid, "0195e6ef-3ba8-741d-af22-e02bf9c800ec"
+        ) == 0
+    );
 
-    assertTrue(rawstor_uuid_from_string(
-        &uuid, "0195E6EF-3BA8-741D-AF22-E02BF9C800EC") == 0);
+    assertTrue(
+        rawstor_uuid_from_string(
+            &uuid, "0195E6EF-3BA8-741D-AF22-E02BF9C800EC"
+        ) == 0
+    );
 
-    assertTrue(rawstor_uuid_from_string(
-        &uuid, "0195e6ef-3ba8-741d-af22-e02bf9c800ecX") == 0);
+    assertTrue(
+        rawstor_uuid_from_string(
+            &uuid, "0195e6ef-3ba8-741d-af22-e02bf9c800ecX"
+        ) == 0
+    );
 
-    assertTrue(rawstor_uuid_from_string(
-        &uuid, "0195e6efX3ba8-741d-af22-e02bf9c800ec") == -EINVAL);
+    assertTrue(
+        rawstor_uuid_from_string(
+            &uuid, "0195e6efX3ba8-741d-af22-e02bf9c800ec"
+        ) == -EINVAL
+    );
 
-    assertTrue(rawstor_uuid_from_string(
-        &uuid, "0195e6ef-3ba8-741d-af22-e02bf9c800e") == -EINVAL);
+    assertTrue(
+        rawstor_uuid_from_string(
+            &uuid, "0195e6ef-3ba8-741d-af22-e02bf9c800e"
+        ) == -EINVAL
+    );
 
-    assertTrue(rawstor_uuid_from_string(
-        &uuid, "X195e6ef-3ba8-741d-af22-e02bf9c800ec") == -EINVAL);
+    assertTrue(
+        rawstor_uuid_from_string(
+            &uuid, "X195e6ef-3ba8-741d-af22-e02bf9c800ec"
+        ) == -EINVAL
+    );
 
     return 0;
 }
-
 
 int main() {
     int rval = 0;

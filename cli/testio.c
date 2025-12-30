@@ -8,7 +8,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-
 typedef struct {
     unsigned int index;
     off_t offset;
@@ -16,22 +15,21 @@ typedef struct {
     struct iovec src_iov;
     struct iovec dst_iov;
 
-    unsigned int *counter;
+    unsigned int* counter;
     unsigned int iteration;
     unsigned int niterations;
 } Worker;
 
-
 static Worker* worker_create(
-    unsigned int index, size_t block_size,
-    unsigned int *counter, unsigned int niterations)
-{
-    Worker *worker = malloc(sizeof(Worker));
+    unsigned int index, size_t block_size, unsigned int* counter,
+    unsigned int niterations
+) {
+    Worker* worker = malloc(sizeof(Worker));
     if (worker == NULL) {
         goto err_worker;
     }
 
-    *worker = (Worker) {
+    *worker = (Worker){
         .index = index,
         .offset = block_size * index,
         .src_iov.iov_len = block_size,
@@ -61,15 +59,13 @@ err_worker:
     return NULL;
 }
 
-
-static void worker_delete(Worker *worker) {
+static void worker_delete(Worker* worker) {
     free(worker->dst_iov.iov_base);
     free(worker->src_iov.iov_base);
     free(worker);
 }
 
-
-static void print_buf(const char *buf, size_t size) {
+static void print_buf(const char* buf, size_t size) {
     printf("'");
     for (size_t i = 0; i < size; ++i) {
         putc(buf[i], stdout);
@@ -77,14 +73,12 @@ static void print_buf(const char *buf, size_t size) {
     printf("'\n");
 }
 
-
-static void fill(
-    char *buffer, size_t size, unsigned int index, unsigned int iteration)
-{
+static void
+fill(char* buffer, size_t size, unsigned int index, unsigned int iteration) {
     while (1) {
         int res = snprintf(
-            buffer, size, "<worker %u iteration %u> ",
-            index, iteration + 1);
+            buffer, size, "<worker %u iteration %u> ", index, iteration + 1
+        );
         if (res < 0) {
             break;
         }
@@ -99,19 +93,18 @@ static void fill(
     }
 }
 
-
 static int src_data_sent(
-    RawstorObject *object, size_t size, size_t result, int error, void *data);
-
+    RawstorObject* object, size_t size, size_t result, int error, void* data
+);
 
 static int srcv_data_sent(
-    RawstorObject *object, size_t size, size_t res, int error, void *data);
-
+    RawstorObject* object, size_t size, size_t res, int error, void* data
+);
 
 static int dst_data_received(
-    RawstorObject *object, size_t size, size_t result, int error, void *data)
-{
-    Worker *worker = (Worker*)data;
+    RawstorObject* object, size_t size, size_t result, int error, void* data
+) {
+    Worker* worker = (Worker*)data;
 
     printf("(%u) %s(): result = %zd\n", worker->index, __FUNCTION__, result);
 
@@ -121,8 +114,9 @@ static int dst_data_received(
 
     if (result != size) {
         printf(
-            "(%u) %s(): Partial read: %zu != %zu\n",
-            worker->index, __FUNCTION__, result, size);
+            "(%u) %s(): Partial read: %zu != %zu\n", worker->index,
+            __FUNCTION__, result, size
+        );
         return -EIO;
     }
 
@@ -135,9 +129,9 @@ static int dst_data_received(
         return -EIO;
     } else {
         printf(
-            "(%u) %s(): src == dst on %u of %u\n",
-            worker->index, __FUNCTION__,
-            worker->iteration + 1, worker->niterations);
+            "(%u) %s(): src == dst on %u of %u\n", worker->index, __FUNCTION__,
+            worker->iteration + 1, worker->niterations
+        );
     }
 
     --(*worker->counter);
@@ -149,20 +143,20 @@ static int dst_data_received(
     }
 
     fill(
-        worker->src_iov.iov_base, worker->src_iov.iov_len,
-        worker->index, worker->iteration);
+        worker->src_iov.iov_base, worker->src_iov.iov_len, worker->index,
+        worker->iteration
+    );
 
     return rawstor_object_pwrite(
-        object,
-        worker->src_iov.iov_base, worker->src_iov.iov_len, worker->offset,
-        src_data_sent, worker);
+        object, worker->src_iov.iov_base, worker->src_iov.iov_len,
+        worker->offset, src_data_sent, worker
+    );
 }
 
-
 static int dstv_data_received(
-    RawstorObject *object, size_t size, size_t result, int error, void *data)
-{
-    Worker *worker = (Worker*)data;
+    RawstorObject* object, size_t size, size_t result, int error, void* data
+) {
+    Worker* worker = (Worker*)data;
 
     printf("(%u) %s(): result = %zd\n", worker->index, __FUNCTION__, result);
 
@@ -172,8 +166,9 @@ static int dstv_data_received(
 
     if (result != size) {
         printf(
-            "(%u) %s(): Partial read: %zu != %zu\n",
-            worker->index, __FUNCTION__, result, size);
+            "(%u) %s(): Partial read: %zu != %zu\n", worker->index,
+            __FUNCTION__, result, size
+        );
         return -EIO;
     }
 
@@ -186,9 +181,9 @@ static int dstv_data_received(
         return -EIO;
     } else {
         printf(
-            "(%u) %s(): src == dst on %u of %u\n",
-            worker->index, __FUNCTION__,
-            worker->iteration + 1, worker->niterations);
+            "(%u) %s(): src == dst on %u of %u\n", worker->index, __FUNCTION__,
+            worker->iteration + 1, worker->niterations
+        );
     }
 
     --(*worker->counter);
@@ -200,20 +195,20 @@ static int dstv_data_received(
     }
 
     fill(
-        worker->src_iov.iov_base, worker->src_iov.iov_len,
-        worker->index, worker->iteration);
+        worker->src_iov.iov_base, worker->src_iov.iov_len, worker->index,
+        worker->iteration
+    );
 
     return rawstor_object_pwritev(
-        object,
-        &worker->src_iov, 1, worker->src_iov.iov_len, worker->offset,
-        srcv_data_sent, worker);
+        object, &worker->src_iov, 1, worker->src_iov.iov_len, worker->offset,
+        srcv_data_sent, worker
+    );
 }
 
-
 static int src_data_sent(
-    RawstorObject *object, size_t size, size_t result, int error, void *data)
-{
-    Worker *worker = (Worker*)data;
+    RawstorObject* object, size_t size, size_t result, int error, void* data
+) {
+    Worker* worker = (Worker*)data;
 
     printf("(%u) %s(): result = %zd\n", worker->index, __FUNCTION__, result);
 
@@ -223,22 +218,22 @@ static int src_data_sent(
 
     if (result != size) {
         printf(
-            "(%u) %s(): Partial write: %zu != %zu\n",
-            worker->index, __FUNCTION__, result, size);
+            "(%u) %s(): Partial write: %zu != %zu\n", worker->index,
+            __FUNCTION__, result, size
+        );
         return -EIO;
     }
 
     return rawstor_object_pread(
-        object,
-        worker->dst_iov.iov_base, worker->dst_iov.iov_len, worker->offset,
-        dst_data_received, worker);
+        object, worker->dst_iov.iov_base, worker->dst_iov.iov_len,
+        worker->offset, dst_data_received, worker
+    );
 }
 
-
 static int srcv_data_sent(
-    RawstorObject *object, size_t size, size_t result, int error, void *data)
-{
-    Worker *worker = (Worker*)data;
+    RawstorObject* object, size_t size, size_t result, int error, void* data
+) {
+    Worker* worker = (Worker*)data;
 
     printf("(%u) %s(): result = %zd\n", worker->index, __FUNCTION__, result);
 
@@ -248,25 +243,24 @@ static int srcv_data_sent(
 
     if (result != size) {
         printf(
-            "(%u) %s(): Partial write: %zu != %zu\n",
-            worker->index, __FUNCTION__, result, size);
+            "(%u) %s(): Partial write: %zu != %zu\n", worker->index,
+            __FUNCTION__, result, size
+        );
         return -EIO;
     }
 
     return rawstor_object_preadv(
-        object,
-        &worker->dst_iov, 1, worker->dst_iov.iov_len, worker->offset,
-        dstv_data_received, worker);
+        object, &worker->dst_iov, 1, worker->dst_iov.iov_len, worker->offset,
+        dstv_data_received, worker
+    );
 }
 
-
 int rawstor_cli_testio(
-    const char *uris,
-    size_t block_size, unsigned int count, unsigned int io_depth,
-    int vector_mode)
-{
+    const char* uris, size_t block_size, unsigned int count,
+    unsigned int io_depth, int vector_mode
+) {
     int res;
-    RawstorObject *object;
+    RawstorObject* object;
     res = rawstor_object_open(uris, &object);
     if (res < 0) {
         fprintf(stderr, "rawstor_object_open() failed: %s\n", strerror(-res));
@@ -274,7 +268,7 @@ int rawstor_cli_testio(
     }
 
     unsigned int counter = count * io_depth;
-    Worker **workers = calloc(io_depth, sizeof(Worker*));
+    Worker** workers = calloc(io_depth, sizeof(Worker*));
     if (workers == NULL) {
         fprintf(stderr, "calloc() failed: %s\n", strerror(errno));
         goto err_workers;
@@ -290,34 +284,35 @@ int rawstor_cli_testio(
     if (!vector_mode) {
         for (unsigned int i = 0; i < io_depth; ++i) {
             fill(
-                workers[i]->src_iov.iov_base, workers[i]->src_iov.iov_len,
-                i, 0);
+                workers[i]->src_iov.iov_base, workers[i]->src_iov.iov_len, i, 0
+            );
             res = rawstor_object_pwrite(
-                object,
-                workers[i]->src_iov.iov_base, workers[i]->src_iov.iov_len,
-                workers[i]->offset,
-                src_data_sent, workers[i]);
+                object, workers[i]->src_iov.iov_base,
+                workers[i]->src_iov.iov_len, workers[i]->offset, src_data_sent,
+                workers[i]
+            );
             if (res < 0) {
                 fprintf(
-                    stderr,
-                    "rawstor_object_pwrite() failed: %s\n", strerror(-res));
+                    stderr, "rawstor_object_pwrite() failed: %s\n",
+                    strerror(-res)
+                );
                 goto err_pwrite;
             }
         }
     } else {
         for (unsigned int i = 0; i < io_depth; ++i) {
             fill(
-                workers[i]->src_iov.iov_base, workers[i]->src_iov.iov_len,
-                i, 0);
+                workers[i]->src_iov.iov_base, workers[i]->src_iov.iov_len, i, 0
+            );
             res = rawstor_object_pwritev(
-                object,
-                &workers[i]->src_iov, 1, workers[i]->src_iov.iov_len,
-                workers[i]->offset,
-                srcv_data_sent, workers[i]);
+                object, &workers[i]->src_iov, 1, workers[i]->src_iov.iov_len,
+                workers[i]->offset, srcv_data_sent, workers[i]
+            );
             if (res < 0) {
                 fprintf(
-                    stderr,
-                    "rawstor_object_pwritev() failed: %s\n", strerror(-res));
+                    stderr, "rawstor_object_pwritev() failed: %s\n",
+                    strerror(-res)
+                );
                 goto err_pwrite;
             }
         }
@@ -326,9 +321,7 @@ int rawstor_cli_testio(
     while (counter > 0 && !rawstor_empty()) {
         int res = rawstor_wait();
         if (res < 0) {
-            fprintf(
-                stderr,
-                "rawstor_wait() failed: %s\n", strerror(-res));
+            fprintf(stderr, "rawstor_wait() failed: %s\n", strerror(-res));
             goto err_wait;
         }
     }
@@ -359,9 +352,7 @@ err_worker_create:
 err_workers:
     res = rawstor_object_close(object);
     if (res < 0) {
-        fprintf(
-            stderr,
-            "rawstor_object_close() failed: %s\n", strerror(res));
+        fprintf(stderr, "rawstor_object_close() failed: %s\n", strerror(res));
     }
 err_open:
     return EXIT_FAILURE;

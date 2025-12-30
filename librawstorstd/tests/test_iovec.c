@@ -7,24 +7,23 @@
 #include <stdlib.h>
 #include <string.h>
 
-
 static int test_discard_front_unaligned() {
     char data[] = "1234567890";
     struct iovec v[3];
-    v[0] = (struct iovec) {
+    v[0] = (struct iovec){
         .iov_base = data,
         .iov_len = sizeof(data) - 1,
     };
-    v[1] = (struct iovec) {
+    v[1] = (struct iovec){
         .iov_base = data,
         .iov_len = sizeof(data) - 1,
     };
-    v[2] = (struct iovec) {
+    v[2] = (struct iovec){
         .iov_base = data,
         .iov_len = sizeof(data) - 1,
     };
 
-    struct iovec *iov_at = v;
+    struct iovec* iov_at = v;
     unsigned int niov_at = 3;
 
     size_t size = rawstor_iovec_discard_front(&iov_at, &niov_at, 12);
@@ -36,24 +35,23 @@ static int test_discard_front_unaligned() {
     return 0;
 }
 
-
 static int test_discard_front_aligned() {
     char data[] = "1234567890";
     struct iovec v[3];
-    v[0] = (struct iovec) {
+    v[0] = (struct iovec){
         .iov_base = data,
         .iov_len = sizeof(data) - 1,
     };
-    v[1] = (struct iovec) {
+    v[1] = (struct iovec){
         .iov_base = data,
         .iov_len = sizeof(data) - 1,
     };
-    v[2] = (struct iovec) {
+    v[2] = (struct iovec){
         .iov_base = data,
         .iov_len = sizeof(data) - 1,
     };
 
-    struct iovec *iov_at = v;
+    struct iovec* iov_at = v;
     unsigned int niov_at = 3;
 
     size_t size = rawstor_iovec_discard_front(&iov_at, &niov_at, 10);
@@ -65,24 +63,23 @@ static int test_discard_front_aligned() {
     return 0;
 }
 
-
 static int test_discard_front_all() {
     char data[] = "1234567890";
     struct iovec v[3];
-    v[0] = (struct iovec) {
+    v[0] = (struct iovec){
         .iov_base = data,
         .iov_len = sizeof(data) - 1,
     };
-    v[1] = (struct iovec) {
+    v[1] = (struct iovec){
         .iov_base = data,
         .iov_len = sizeof(data) - 1,
     };
-    v[2] = (struct iovec) {
+    v[2] = (struct iovec){
         .iov_base = data,
         .iov_len = sizeof(data) - 1,
     };
 
-    struct iovec *iov_at = v;
+    struct iovec* iov_at = v;
     unsigned int niov_at = 3;
 
     size_t size = rawstor_iovec_discard_front(&iov_at, &niov_at, 30);
@@ -92,24 +89,23 @@ static int test_discard_front_all() {
     return 0;
 }
 
-
 static int test_discard_front_overflow() {
     char data[] = "1234567890";
     struct iovec v[3];
-    v[0] = (struct iovec) {
+    v[0] = (struct iovec){
         .iov_base = data,
         .iov_len = sizeof(data) - 1,
     };
-    v[1] = (struct iovec) {
+    v[1] = (struct iovec){
         .iov_base = data,
         .iov_len = sizeof(data) - 1,
     };
-    v[2] = (struct iovec) {
+    v[2] = (struct iovec){
         .iov_base = data,
         .iov_len = sizeof(data) - 1,
     };
 
-    struct iovec *iov_at = v;
+    struct iovec* iov_at = v;
     unsigned int niov_at = 3;
 
     size_t size = rawstor_iovec_discard_front(&iov_at, &niov_at, 35);
@@ -119,24 +115,23 @@ static int test_discard_front_overflow() {
     return 0;
 }
 
-
 static int test_discard_back_unaligned() {
     char data[] = "1234567890";
     struct iovec v[3];
-    v[0] = (struct iovec) {
+    v[0] = (struct iovec){
         .iov_base = data,
         .iov_len = sizeof(data) - 1,
     };
-    v[1] = (struct iovec) {
+    v[1] = (struct iovec){
         .iov_base = data,
         .iov_len = sizeof(data) - 1,
     };
-    v[2] = (struct iovec) {
+    v[2] = (struct iovec){
         .iov_base = data,
         .iov_len = sizeof(data) - 1,
     };
 
-    struct iovec *iov_at = v;
+    struct iovec* iov_at = v;
     unsigned int niov_at = 3;
 
     size_t size = rawstor_iovec_discard_back(&iov_at, &niov_at, 12);
@@ -148,24 +143,23 @@ static int test_discard_back_unaligned() {
     return 0;
 }
 
-
 static int test_discard_back_aligned() {
     char data[] = "1234567890";
     struct iovec v[3];
-    v[0] = (struct iovec) {
+    v[0] = (struct iovec){
         .iov_base = data,
         .iov_len = sizeof(data) - 1,
     };
-    v[1] = (struct iovec) {
+    v[1] = (struct iovec){
         .iov_base = data,
         .iov_len = sizeof(data) - 1,
     };
-    v[2] = (struct iovec) {
+    v[2] = (struct iovec){
         .iov_base = data,
         .iov_len = sizeof(data) - 1,
     };
 
-    struct iovec *iov_at = v;
+    struct iovec* iov_at = v;
     unsigned int niov_at = 3;
 
     size_t size = rawstor_iovec_discard_back(&iov_at, &niov_at, 10);
@@ -177,24 +171,23 @@ static int test_discard_back_aligned() {
     return 0;
 }
 
-
 static int test_discard_back_all() {
     char data[] = "1234567890";
     struct iovec v[3];
-    v[0] = (struct iovec) {
+    v[0] = (struct iovec){
         .iov_base = data,
         .iov_len = sizeof(data) - 1,
     };
-    v[1] = (struct iovec) {
+    v[1] = (struct iovec){
         .iov_base = data,
         .iov_len = sizeof(data) - 1,
     };
-    v[2] = (struct iovec) {
+    v[2] = (struct iovec){
         .iov_base = data,
         .iov_len = sizeof(data) - 1,
     };
 
-    struct iovec *iov_at = v;
+    struct iovec* iov_at = v;
     unsigned int niov_at = 3;
 
     size_t size = rawstor_iovec_discard_back(&iov_at, &niov_at, 30);
@@ -204,24 +197,23 @@ static int test_discard_back_all() {
     return 0;
 }
 
-
 static int test_discard_back_overflow() {
     char data[] = "1234567890";
     struct iovec v[3];
-    v[0] = (struct iovec) {
+    v[0] = (struct iovec){
         .iov_base = data,
         .iov_len = sizeof(data) - 1,
     };
-    v[1] = (struct iovec) {
+    v[1] = (struct iovec){
         .iov_base = data,
         .iov_len = sizeof(data) - 1,
     };
-    v[2] = (struct iovec) {
+    v[2] = (struct iovec){
         .iov_base = data,
         .iov_len = sizeof(data) - 1,
     };
 
-    struct iovec *iov_at = v;
+    struct iovec* iov_at = v;
     unsigned int niov_at = 3;
 
     size_t size = rawstor_iovec_discard_back(&iov_at, &niov_at, 35);
@@ -231,21 +223,20 @@ static int test_discard_back_overflow() {
     return 0;
 }
 
-
 static int test_from_buf_unaligned() {
     struct iovec v[3];
     char data0[] = "          ";
-    v[0] = (struct iovec) {
+    v[0] = (struct iovec){
         .iov_base = data0,
         .iov_len = sizeof(data0) - 1,
     };
     char data1[] = "          ";
-    v[1] = (struct iovec) {
+    v[1] = (struct iovec){
         .iov_base = data1,
         .iov_len = sizeof(data1) - 1,
     };
     char data2[] = "          ";
-    v[2] = (struct iovec) {
+    v[2] = (struct iovec){
         .iov_base = data2,
         .iov_len = sizeof(data2) - 1,
     };
@@ -261,21 +252,20 @@ static int test_from_buf_unaligned() {
     return 0;
 }
 
-
 static int test_from_buf_aligned() {
     struct iovec v[3];
     char data0[] = "          ";
-    v[0] = (struct iovec) {
+    v[0] = (struct iovec){
         .iov_base = data0,
         .iov_len = sizeof(data0) - 1,
     };
     char data1[] = "          ";
-    v[1] = (struct iovec) {
+    v[1] = (struct iovec){
         .iov_base = data1,
         .iov_len = sizeof(data1) - 1,
     };
     char data2[] = "          ";
-    v[2] = (struct iovec) {
+    v[2] = (struct iovec){
         .iov_base = data2,
         .iov_len = sizeof(data2) - 1,
     };
@@ -291,21 +281,20 @@ static int test_from_buf_aligned() {
     return 0;
 }
 
-
 static int test_from_buf_all() {
     struct iovec v[3];
     char data0[] = "          ";
-    v[0] = (struct iovec) {
+    v[0] = (struct iovec){
         .iov_base = data0,
         .iov_len = sizeof(data0) - 1,
     };
     char data1[] = "          ";
-    v[1] = (struct iovec) {
+    v[1] = (struct iovec){
         .iov_base = data1,
         .iov_len = sizeof(data1) - 1,
     };
     char data2[] = "          ";
-    v[2] = (struct iovec) {
+    v[2] = (struct iovec){
         .iov_base = data2,
         .iov_len = sizeof(data2) - 1,
     };
@@ -321,21 +310,20 @@ static int test_from_buf_all() {
     return 0;
 }
 
-
 static int test_from_buf_overflow() {
     struct iovec v[3];
     char data0[] = "          ";
-    v[0] = (struct iovec) {
+    v[0] = (struct iovec){
         .iov_base = data0,
         .iov_len = sizeof(data0) - 1,
     };
     char data1[] = "          ";
-    v[1] = (struct iovec) {
+    v[1] = (struct iovec){
         .iov_base = data1,
         .iov_len = sizeof(data1) - 1,
     };
     char data2[] = "          ";
-    v[2] = (struct iovec) {
+    v[2] = (struct iovec){
         .iov_base = data2,
         .iov_len = sizeof(data2) - 1,
     };
@@ -351,19 +339,18 @@ static int test_from_buf_overflow() {
     return 0;
 }
 
-
 static int test_to_buf_unaligned() {
     char data[] = "1234567890";
     struct iovec v[3];
-    v[0] = (struct iovec) {
+    v[0] = (struct iovec){
         .iov_base = data,
         .iov_len = sizeof(data) - 1,
     };
-    v[1] = (struct iovec) {
+    v[1] = (struct iovec){
         .iov_base = data,
         .iov_len = sizeof(data) - 1,
     };
-    v[2] = (struct iovec) {
+    v[2] = (struct iovec){
         .iov_base = data,
         .iov_len = sizeof(data) - 1,
     };
@@ -381,19 +368,18 @@ static int test_to_buf_unaligned() {
     return 0;
 }
 
-
 static int test_to_buf_aligned() {
     char data[] = "1234567890";
     struct iovec v[3];
-    v[0] = (struct iovec) {
+    v[0] = (struct iovec){
         .iov_base = data,
         .iov_len = sizeof(data) - 1,
     };
-    v[1] = (struct iovec) {
+    v[1] = (struct iovec){
         .iov_base = data,
         .iov_len = sizeof(data) - 1,
     };
-    v[2] = (struct iovec) {
+    v[2] = (struct iovec){
         .iov_base = data,
         .iov_len = sizeof(data) - 1,
     };
@@ -412,19 +398,18 @@ static int test_to_buf_aligned() {
     return 0;
 }
 
-
 static int test_to_buf_all() {
     char data[] = "1234567890";
     struct iovec v[3];
-    v[0] = (struct iovec) {
+    v[0] = (struct iovec){
         .iov_base = data,
         .iov_len = sizeof(data) - 1,
     };
-    v[1] = (struct iovec) {
+    v[1] = (struct iovec){
         .iov_base = data,
         .iov_len = sizeof(data) - 1,
     };
-    v[2] = (struct iovec) {
+    v[2] = (struct iovec){
         .iov_base = data,
         .iov_len = sizeof(data) - 1,
     };
@@ -443,19 +428,18 @@ static int test_to_buf_all() {
     return 0;
 }
 
-
 static int test_to_buf_overflow() {
     char data[] = "1234567890";
     struct iovec v[3];
-    v[0] = (struct iovec) {
+    v[0] = (struct iovec){
         .iov_base = data,
         .iov_len = sizeof(data) - 1,
     };
-    v[1] = (struct iovec) {
+    v[1] = (struct iovec){
         .iov_base = data,
         .iov_len = sizeof(data) - 1,
     };
-    v[2] = (struct iovec) {
+    v[2] = (struct iovec){
         .iov_base = data,
         .iov_len = sizeof(data) - 1,
     };
@@ -474,19 +458,18 @@ static int test_to_buf_overflow() {
     return 0;
 }
 
-
 static int test_size() {
     char data[] = "1234567890";
     struct iovec v[3];
-    v[0] = (struct iovec) {
+    v[0] = (struct iovec){
         .iov_base = data,
         .iov_len = sizeof(data) - 1,
     };
-    v[1] = (struct iovec) {
+    v[1] = (struct iovec){
         .iov_base = data,
         .iov_len = sizeof(data) - 1,
     };
-    v[2] = (struct iovec) {
+    v[2] = (struct iovec){
         .iov_base = data,
         .iov_len = sizeof(data) - 1,
     };
@@ -495,7 +478,6 @@ static int test_size() {
 
     return 0;
 }
-
 
 int main() {
     int rval = 0;

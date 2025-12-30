@@ -7,7 +7,6 @@
 extern "C" {
 #endif
 
-
 #if defined(RAWSTOR_ON_MACOS)
 
 #include <libkern/OSByteOrder.h>
@@ -26,10 +25,8 @@ extern "C" {
 
 #endif
 
-
 #ifdef __cplusplus
 }
 #endif
-
 
 #endif // RAWSTORSTD_ENDIAN_H

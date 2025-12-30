@@ -34,85 +34,67 @@ extern "C" {
 #include <cstdlib>
 #include <cstring>
 
-
 #define VIRTIO_BLK_SECTOR_BITS 9
-
 
 namespace {
 
-
 struct virtio_blk_inhdr {
+public:
     unsigned char status;
 };
 
-
 class Request final {
-    private:
-        rawstor::vhost::Device &_device;
-        VuVirtq *_vq;
-        std::unique_ptr<VuVirtqElement> _elem;
-        virtio_blk_inhdr *_in;
-        iovec *_in_iov;
-        unsigned int _in_niov;
-        virtio_blk_outhdr _out;
-        iovec *_out_iov;
-        unsigned int _out_niov;
+private:
+    rawstor::vhost::Device& _device;
+    VuVirtq* _vq;
+    std::unique_ptr<VuVirtqElement> _elem;
+    virtio_blk_inhdr* _in;
+    iovec* _in_iov;
+    unsigned int _in_niov;
+    virtio_blk_outhdr _out;
+    iovec* _out_iov;
+    unsigned int _out_niov;
 
-    public:
-        Request(
-            rawstor::vhost::Device &device,
-            VuVirtq *vq,
-            std::unique_ptr<VuVirtqElement> elem);
+public:
+    Request(
+        rawstor::vhost::Device& device, VuVirtq* vq,
+        std::unique_ptr<VuVirtqElement> elem
+    );
 
-        inline rawstor::vhost::Device& device() noexcept {
-            return _device;
-        }
+    inline rawstor::vhost::Device& device() noexcept { return _device; }
 
-        inline iovec* in_iov() noexcept {
-            return _in_iov;
-        }
+    inline iovec* in_iov() noexcept { return _in_iov; }
 
-        inline unsigned int in_niov() noexcept {
-            return _in_niov;
-        }
+    inline unsigned int in_niov() noexcept { return _in_niov; }
 
-        inline iovec* out_iov() noexcept {
-            return _out_iov;
-        }
+    inline iovec* out_iov() noexcept { return _out_iov; }
 
-        inline unsigned int out_niov() noexcept {
-            return _out_niov;
-        }
+    inline unsigned int out_niov() noexcept { return _out_niov; }
 
-        inline uint32_t type() noexcept {
-            return RAWSTOR_LE32TOH(_out.type) & ~VIRTIO_BLK_T_BARRIER;
-        }
+    inline uint32_t type() noexcept {
+        return RAWSTOR_LE32TOH(_out.type) & ~VIRTIO_BLK_T_BARRIER;
+    }
 
-        inline uint64_t offset() noexcept {
-            return RAWSTOR_LE64TOH(_out.sector) << VIRTIO_BLK_SECTOR_BITS;
-        }
+    inline uint64_t offset() noexcept {
+        return RAWSTOR_LE64TOH(_out.sector) << VIRTIO_BLK_SECTOR_BITS;
+    }
 
-        void push(unsigned char status, size_t size);
+    void push(unsigned char status, size_t size);
 };
 
-
-
 Request::Request(
-    rawstor::vhost::Device &device,
-    VuVirtq *vq,
-    std::unique_ptr<VuVirtqElement> elem):
+    rawstor::vhost::Device& device, VuVirtq* vq,
+    std::unique_ptr<VuVirtqElement> elem
+) :
     _device(device),
     _vq(vq),
     _elem(std::move(elem)),
     _in_iov(_elem->in_sg),
     _in_niov(_elem->in_num),
     _out_iov(_elem->out_sg),
-    _out_niov(_elem->out_num)
-{
-    if (
-        rawstor_iovec_to_buf(
-            _out_iov, _out_niov, 0, &_out, sizeof(_out)) != sizeof(_out))
-    {
+    _out_niov(_elem->out_num) {
+    if (rawstor_iovec_to_buf(_out_iov, _out_niov, 0, &_out, sizeof(_out)) !=
+        sizeof(_out)) {
         rawstor_error("virtio-blk request outhdr too short");
         RAWSTOR_THROW_SYSTEM_ERROR(EINVAL);
     }
@@ -125,156 +107,134 @@ Request::Request(
     }
 
     _in = reinterpret_cast<virtio_blk_inhdr*>(
-        static_cast<char*>(_in_iov[_in_niov - 1].iov_base)
-        + _in_iov[_in_niov - 1].iov_len
-        - sizeof(virtio_blk_inhdr));
+        static_cast<char*>(_in_iov[_in_niov - 1].iov_base) +
+        _in_iov[_in_niov - 1].iov_len - sizeof(virtio_blk_inhdr)
+    );
 
     rawstor_iovec_discard_back(&_in_iov, &_in_niov, sizeof(virtio_blk_inhdr));
 }
 
-
 void Request::push(unsigned char status, size_t size) {
     _in->status = status;
     vu_queue_push(
-        _device.dev(), _vq,
-        _elem.get(), size + sizeof(virtio_blk_inhdr));
+        _device.dev(), _vq, _elem.get(), size + sizeof(virtio_blk_inhdr)
+    );
     vu_queue_notify(_device.dev(), _vq);
 }
 
-
 class ObjectTask final {
-    protected:
-        std::unique_ptr<Request> _req;
+protected:
+    std::unique_ptr<Request> _req;
 
-    public:
-        static int callback(
-            RawstorObject *,
-            size_t size, size_t result, int error,
-            void *data)
-        {
-            std::unique_ptr<ObjectTask> t(static_cast<ObjectTask*>(data));
-            try {
-                (*t)(size, result, error);
-                return 0;
-            } catch (const std::system_error &e) {
-                return -e.code().value();
-            }
+public:
+    static int callback(
+        RawstorObject*, size_t size, size_t result, int error, void* data
+    ) {
+        std::unique_ptr<ObjectTask> t(static_cast<ObjectTask*>(data));
+        try {
+            (*t)(size, result, error);
+            return 0;
+        } catch (const std::system_error& e) {
+            return -e.code().value();
         }
+    }
 
-        ObjectTask(std::unique_ptr<Request> req):
-            _req(std::move(req))
-        {}
-        ObjectTask(const ObjectTask &) = delete;
-        ObjectTask(ObjectTask &&) = delete;
-        ~ObjectTask() = default;
+    ObjectTask(std::unique_ptr<Request> req) : _req(std::move(req)) {}
+    ObjectTask(const ObjectTask&) = delete;
+    ObjectTask(ObjectTask&&) = delete;
+    ~ObjectTask() = default;
 
-        ObjectTask& operator=(const ObjectTask &) = delete;
-        ObjectTask& operator=(ObjectTask &&) = delete;
+    ObjectTask& operator=(const ObjectTask&) = delete;
+    ObjectTask& operator=(ObjectTask&&) = delete;
 
-        void preadv();
-        void pwritev();
+    void preadv();
+    void pwritev();
 
-        void operator()(size_t size, size_t result, int error);
+    void operator()(size_t size, size_t result, int error);
 };
-
 
 class Task {
-    protected:
-        rawstor::vhost::Device &_device;
+protected:
+    rawstor::vhost::Device& _device;
 
-    public:
-        static int callback(size_t result, int error, void *data) {
-            std::unique_ptr<Task> t(static_cast<Task*>(data));
-            try {
-                (*t)(result, error);
-                return 0;
-            } catch (const std::system_error &e) {
-                return -e.code().value();
-            }
+public:
+    static int callback(size_t result, int error, void* data) {
+        std::unique_ptr<Task> t(static_cast<Task*>(data));
+        try {
+            (*t)(result, error);
+            return 0;
+        } catch (const std::system_error& e) {
+            return -e.code().value();
         }
+    }
 
-        Task(rawstor::vhost::Device &device): _device(device) {}
-        Task(const Task &) = delete;
-        Task(Task &&) = delete;
-        virtual ~Task() = default;
+    Task(rawstor::vhost::Device& device) : _device(device) {}
+    Task(const Task&) = delete;
+    Task(Task&&) = delete;
+    virtual ~Task() = default;
 
-        Task& operator=(const Task &) = delete;
-        Task& operator=(Task &&) = delete;
+    Task& operator=(const Task&) = delete;
+    Task& operator=(Task&&) = delete;
 
-        virtual void operator()(size_t result, int error) = 0;
+    virtual void operator()(size_t result, int error) = 0;
 };
 
+class TaskPoll : public Task {
+public:
+    TaskPoll(rawstor::vhost::Device& device) : Task(device) {}
+    virtual ~TaskPoll() override = default;
 
-class TaskPoll: public Task {
-    public:
-        TaskPoll(rawstor::vhost::Device &device):
-            Task(device)
-        {}
-        virtual ~TaskPoll() override = default;
-
-        virtual unsigned int mask() = 0;
+    virtual unsigned int mask() = 0;
 };
-
 
 void poll(int fd, std::unique_ptr<TaskPoll> t) {
-    int res = rawstor_fd_poll(
-        fd, t->mask(),
-        t->callback, t.get());
+    int res = rawstor_fd_poll(fd, t->mask(), t->callback, t.get());
     if (res) {
         RAWSTOR_THROW_SYSTEM_ERROR(-res);
     }
     t.release();
 }
 
+class TaskDispatch final : public TaskPoll {
+public:
+    TaskDispatch(rawstor::vhost::Device& device) : TaskPoll(device) {}
 
-class TaskDispatch final: public TaskPoll {
-    public:
-        TaskDispatch(rawstor::vhost::Device &device):
-            TaskPoll(device)
-        {}
+    unsigned int mask() override { return POLLIN; }
 
-        unsigned int mask() override {
-            return POLLIN;
-        }
-
-        void operator()(size_t, int error) override;
+    void operator()(size_t, int error) override;
 };
 
+class TaskWatch final : public TaskPoll {
+private:
+    int _fd;
+    int _condition;
+    int _mask;
+    vu_watch_cb _cb;
+    void* _data;
 
-class TaskWatch final: public TaskPoll {
-    private:
-        int _fd;
-        int _condition;
-        int _mask;
-        vu_watch_cb _cb;
-        void *_data;
-
-    public:
-        TaskWatch(
-            rawstor::vhost::Device &device,
-            int fd, int condition, vu_watch_cb cb, void *data):
-            TaskPoll(device),
-            _fd(fd),
-            _condition(condition),
-            _mask(0),
-            _cb(cb),
-            _data(data)
-        {
-            if (_condition & VU_WATCH_IN) {
-                _mask |= POLLIN;
-            }
-            if (_condition & VU_WATCH_OUT) {
-                _mask |= POLLOUT;
-            }
+public:
+    TaskWatch(
+        rawstor::vhost::Device& device, int fd, int condition, vu_watch_cb cb,
+        void* data
+    ) :
+        TaskPoll(device),
+        _fd(fd),
+        _condition(condition),
+        _mask(0),
+        _cb(cb),
+        _data(data) {
+        if (_condition & VU_WATCH_IN) {
+            _mask |= POLLIN;
         }
-
-        unsigned int mask() override {
-            return _mask;
+        if (_condition & VU_WATCH_OUT) {
+            _mask |= POLLOUT;
         }
+    }
 
-        void operator()(size_t, int error) override;
+    unsigned int mask() override { return _mask; }
+
+    void operator()(size_t, int error) override;
 };
-
 
 void TaskDispatch::operator()(size_t result, int error) {
     if (error != 0) {
@@ -288,11 +248,9 @@ void TaskDispatch::operator()(size_t result, int error) {
 
     _device.dispatch();
 
-    std::unique_ptr<TaskDispatch> t =
-        std::make_unique<TaskDispatch>(_device);
+    std::unique_ptr<TaskDispatch> t = std::make_unique<TaskDispatch>(_device);
     poll(_device.dev()->sock, std::move(t));
 }
-
 
 void TaskWatch::operator()(size_t result, int error) {
     if (error == EBADF) {
@@ -317,7 +275,6 @@ void TaskWatch::operator()(size_t result, int error) {
     }
 }
 
-
 void ObjectTask::operator()(size_t size, size_t result, int error) {
     if (error != 0) {
         rawstor_error("%s\n", strerror(error));
@@ -334,147 +291,132 @@ void ObjectTask::operator()(size_t size, size_t result, int error) {
     _req->push(VIRTIO_BLK_S_OK, result);
 }
 
-
 void ObjectTask::preadv() {
     int res = rawstor_object_preadv(
         _req->device().object(), _req->in_iov(), _req->in_niov(),
         rawstor_iovec_size(_req->in_iov(), _req->in_niov()), _req->offset(),
-        callback, this);
+        callback, this
+    );
     if (res) {
         RAWSTOR_THROW_SYSTEM_ERROR(-res);
     }
 }
-
 
 void ObjectTask::pwritev() {
     int res = rawstor_object_pwritev(
         _req->device().object(), _req->out_iov(), _req->out_niov(),
         rawstor_iovec_size(_req->out_iov(), _req->out_niov()), _req->offset(),
-        callback, this);
+        callback, this
+    );
     if (res) {
         RAWSTOR_THROW_SYSTEM_ERROR(-res);
     }
 }
 
-
-void panic(VuDev *, const char *err) {
+void panic(VuDev*, const char* err) {
     rawstor_error("libvhost-user: %s\n", err);
 }
 
-
-void set_watch(VuDev *dev, int fd, int condition, vu_watch_cb cb, void *data) {
-    rawstor::vhost::Device &d = rawstor::vhost::Device::get(dev->sock);
+void set_watch(VuDev* dev, int fd, int condition, vu_watch_cb cb, void* data) {
+    rawstor::vhost::Device& d = rawstor::vhost::Device::get(dev->sock);
     d.set_watch(fd, condition, cb, data);
 }
 
-
-void remove_watch(VuDev *dev, int fd) {
-    rawstor::vhost::Device *d = rawstor::vhost::Device::find(dev->sock);
+void remove_watch(VuDev* dev, int fd) {
+    rawstor::vhost::Device* d = rawstor::vhost::Device::find(dev->sock);
     if (d != nullptr) {
         d->remove_watch(fd);
     }
 }
 
-
-uint64_t get_features(VuDev *dev) {
-    rawstor::vhost::Device &d = rawstor::vhost::Device::get(dev->sock);
+uint64_t get_features(VuDev* dev) {
+    rawstor::vhost::Device& d = rawstor::vhost::Device::get(dev->sock);
     return d.get_features();
 }
 
-
-void set_features(VuDev *dev, uint64_t features) {
-    rawstor::vhost::Device &d = rawstor::vhost::Device::get(dev->sock);
+void set_features(VuDev* dev, uint64_t features) {
+    rawstor::vhost::Device& d = rawstor::vhost::Device::get(dev->sock);
     d.set_features(features);
 }
 
-
-uint64_t get_protocol_features(VuDev *dev) {
-    rawstor::vhost::Device &d = rawstor::vhost::Device::get(dev->sock);
+uint64_t get_protocol_features(VuDev* dev) {
+    rawstor::vhost::Device& d = rawstor::vhost::Device::get(dev->sock);
     return d.get_protocol_features();
 }
 
-
-void set_protocol_features(VuDev *dev, uint64_t features) {
-    rawstor::vhost::Device &d = rawstor::vhost::Device::get(dev->sock);
+void set_protocol_features(VuDev* dev, uint64_t features) {
+    rawstor::vhost::Device& d = rawstor::vhost::Device::get(dev->sock);
     d.set_protocol_features(features);
 }
-
 
 void process_request(std::unique_ptr<Request> req) {
     try {
         switch (req->type()) {
-            case VIRTIO_BLK_T_IN:
-                {
-                    std::unique_ptr<ObjectTask> t =
-                        std::make_unique<ObjectTask>(std::move(req));
-                    t->preadv();
-                    t.release();
-                    break;
-                }
-
-            case VIRTIO_BLK_T_OUT:
-                {
-                    std::unique_ptr<ObjectTask> t =
-                        std::make_unique<ObjectTask>(std::move(req));
-                    t->pwritev();
-                    t.release();
-                    break;
-                }
-
-            case VIRTIO_BLK_T_GET_ID:
-                {
-                    char uuid[37];
-                    int res = rawstor_object_id(
-                        req->device().object(), uuid, sizeof(uuid));
-                    if (res < 0) {
-                        RAWSTOR_THROW_SYSTEM_ERROR(-res);
-                    }
-
-                    size_t in_size = rawstor_iovec_size(
-                        req->in_iov(), req->in_niov());
-                    size_t size = std::min(
-                        in_size, (size_t)VIRTIO_BLK_ID_BYTES);
-
-                    char *at = uuid;
-                    if (size < sizeof(uuid)) {
-                        at += sizeof(uuid) - size;
-                    } else {
-                        size = sizeof(uuid);
-                    }
-
-                    rawstor_iovec_from_buf(
-                        req->in_iov(), req->in_niov(), 0, at, size);
-
-                    req->push(VIRTIO_BLK_S_OK, in_size);
-                    break;
-                }
-
-            case VIRTIO_BLK_T_FLUSH:
-            case VIRTIO_BLK_T_DISCARD:
-            case VIRTIO_BLK_T_WRITE_ZEROES:
-            default:
-                size_t in_size = rawstor_iovec_size(
-                    req->in_iov(), req->in_niov());
-                req->push(VIRTIO_BLK_S_UNSUPP, in_size);
-                break;
+        case VIRTIO_BLK_T_IN: {
+            std::unique_ptr<ObjectTask> t =
+                std::make_unique<ObjectTask>(std::move(req));
+            t->preadv();
+            t.release();
+            break;
         }
-    } catch (const std::exception &e) {
+
+        case VIRTIO_BLK_T_OUT: {
+            std::unique_ptr<ObjectTask> t =
+                std::make_unique<ObjectTask>(std::move(req));
+            t->pwritev();
+            t.release();
+            break;
+        }
+
+        case VIRTIO_BLK_T_GET_ID: {
+            char uuid[37];
+            int res =
+                rawstor_object_id(req->device().object(), uuid, sizeof(uuid));
+            if (res < 0) {
+                RAWSTOR_THROW_SYSTEM_ERROR(-res);
+            }
+
+            size_t in_size = rawstor_iovec_size(req->in_iov(), req->in_niov());
+            size_t size = std::min(in_size, (size_t)VIRTIO_BLK_ID_BYTES);
+
+            char* at = uuid;
+            if (size < sizeof(uuid)) {
+                at += sizeof(uuid) - size;
+            } else {
+                size = sizeof(uuid);
+            }
+
+            rawstor_iovec_from_buf(req->in_iov(), req->in_niov(), 0, at, size);
+
+            req->push(VIRTIO_BLK_S_OK, in_size);
+            break;
+        }
+
+        case VIRTIO_BLK_T_FLUSH:
+        case VIRTIO_BLK_T_DISCARD:
+        case VIRTIO_BLK_T_WRITE_ZEROES:
+        default:
+            size_t in_size = rawstor_iovec_size(req->in_iov(), req->in_niov());
+            req->push(VIRTIO_BLK_S_UNSUPP, in_size);
+            break;
+        }
+    } catch (const std::exception& e) {
         rawstor_error("%s\n", e.what());
-        size_t in_size = rawstor_iovec_size(
-            req->in_iov(), req->in_niov());
+        size_t in_size = rawstor_iovec_size(req->in_iov(), req->in_niov());
         req->push(VIRTIO_BLK_S_IOERR, in_size);
     }
 }
 
-
-void process_vq(VuDev *dev, int qidx) {
-    VuVirtq *vq = vu_get_queue(dev, qidx);
-    rawstor::vhost::Device &d = rawstor::vhost::Device::get(dev->sock);
+void process_vq(VuDev* dev, int qidx) {
+    VuVirtq* vq = vu_get_queue(dev, qidx);
+    rawstor::vhost::Device& d = rawstor::vhost::Device::get(dev->sock);
 
     while (1) {
         std::unique_ptr<VuVirtqElement> elem(
             static_cast<VuVirtqElement*>(
-                vu_queue_pop(d.dev(), vq, sizeof(VuVirtqElement))));
+                vu_queue_pop(d.dev(), vq, sizeof(VuVirtqElement))
+            )
+        );
         if (elem.get() == nullptr) {
             break;
         }
@@ -483,58 +425,52 @@ void process_vq(VuDev *dev, int qidx) {
             std::unique_ptr<Request> req =
                 std::make_unique<Request>(d, vq, std::move(elem));
             process_request(std::move(req));
-        } catch (const std::exception &e) {
+        } catch (const std::exception& e) {
             rawstor_error("%s\n", e.what());
         }
     }
 }
 
-
-void queue_set_started(VuDev *dev, int qidx, bool started) {
-    VuVirtq *vq = vu_get_queue(dev, qidx);
+void queue_set_started(VuDev* dev, int qidx, bool started) {
+    VuVirtq* vq = vu_get_queue(dev, qidx);
     vu_set_queue_handler(dev, vq, started ? process_vq : NULL);
 }
 
-
-int get_config(VuDev *dev, uint8_t *config, uint32_t len) {
-    rawstor::vhost::Device &d = rawstor::vhost::Device::get(dev->sock);
+int get_config(VuDev* dev, uint8_t* config, uint32_t len) {
+    rawstor::vhost::Device& d = rawstor::vhost::Device::get(dev->sock);
     try {
         d.get_config(config, len);
         return 0;
-    } catch (const std::exception &e) {
+    } catch (const std::exception& e) {
         rawstor_error("%s\n", e.what());
         return -1;
     }
 }
 
-
 int set_config(
-    VuDev *dev, const uint8_t *data,
-    uint32_t offset, uint32_t size, uint32_t flags)
-{
-    rawstor::vhost::Device &d = rawstor::vhost::Device::get(dev->sock);
+    VuDev* dev, const uint8_t* data, uint32_t offset, uint32_t size,
+    uint32_t flags
+) {
+    rawstor::vhost::Device& d = rawstor::vhost::Device::get(dev->sock);
     try {
         d.set_config(data, offset, size, flags);
         return 0;
-    } catch (const std::exception &e) {
+    } catch (const std::exception& e) {
         rawstor_error("%s\n", e.what());
         return -1;
     }
 }
 
-
-} // unnamed
+} // namespace
 
 namespace rawstor {
 namespace vhost {
 
-
 std::unordered_map<int, Device*> Device::_devices;
 
-
-Device::Device(const std::string &object_uris, int fd):
+Device::Device(const std::string& object_uris, int fd) :
     _object(nullptr),
-    _iface {
+    _iface{
         .get_features = ::get_features,
         .set_features = ::set_features,
         .get_protocol_features = ::get_protocol_features,
@@ -547,22 +483,17 @@ Device::Device(const std::string &object_uris, int fd):
         .get_shared_object = nullptr,
     },
     _features(
-        1ull << VIRTIO_BLK_F_SIZE_MAX |
-        1ull << VIRTIO_BLK_F_SEG_MAX |
-        1ull << VIRTIO_BLK_F_BLK_SIZE |
-        1ull << VIRTIO_BLK_F_TOPOLOGY |
-        1ull << VIRTIO_BLK_F_MQ |
-        1ull << VIRTIO_F_VERSION_1 |
-        1ull << VIRTIO_RING_F_INDIRECT_DESC |
-        1ull << VIRTIO_RING_F_EVENT_IDX |
+        1ull << VIRTIO_BLK_F_SIZE_MAX | 1ull << VIRTIO_BLK_F_SEG_MAX |
+        1ull << VIRTIO_BLK_F_BLK_SIZE | 1ull << VIRTIO_BLK_F_TOPOLOGY |
+        1ull << VIRTIO_BLK_F_MQ | 1ull << VIRTIO_F_VERSION_1 |
+        1ull << VIRTIO_RING_F_INDIRECT_DESC | 1ull << VIRTIO_RING_F_EVENT_IDX |
         1ull << VHOST_USER_F_PROTOCOL_FEATURES
         // 1ull << VIRTIO_BLK_F_FLUSH |
         // 1ull << VIRTIO_BLK_F_DISCARD |
         // 1ull << VIRTIO_BLK_F_WRITE_ZEROES |
     ),
     _protocol_features(0),
-    _blk_config(std::make_unique<virtio_blk_config>())
-{
+    _blk_config(std::make_unique<virtio_blk_config>()) {
     memset(_blk_config.get(), 0, sizeof(*_blk_config.get()));
 
     int ires = rawstor_object_spec(object_uris.c_str(), &_spec);
@@ -586,30 +517,30 @@ Device::Device(const std::string &object_uris, int fd):
     // _blk_config->geometry.heads = 0,
     // _blk_config->geometry.sectors = 0,
 
-     // VIRTIO_BLK_F_BLK_SIZE
+    // VIRTIO_BLK_F_BLK_SIZE
     _blk_config->blk_size = 1 << VIRTIO_BLK_SECTOR_BITS;
 
     _blk_config->physical_block_exp = 0; // VIRTIO_BLK_F_TOPOLOGY
-    _blk_config->alignment_offset = 0; // VIRTIO_BLK_F_TOPOLOGY
-    _blk_config->min_io_size = 1; // VIRTIO_BLK_F_TOPOLOGY
-    _blk_config->opt_io_size = 1; // VIRTIO_BLK_F_TOPOLOGY
+    _blk_config->alignment_offset = 0;   // VIRTIO_BLK_F_TOPOLOGY
+    _blk_config->min_io_size = 1;        // VIRTIO_BLK_F_TOPOLOGY
+    _blk_config->opt_io_size = 1;        // VIRTIO_BLK_F_TOPOLOGY
 
     _blk_config->wce = 0; // VIRTIO_BLK_F_CONFIG_WCE
 
     _blk_config->num_queues = 1; // VIRTIO_BLK_F_MQ
 
     _blk_config->max_discard_sectors = 0; // VIRTIO_BLK_F_DISCARD
-    _blk_config->max_discard_seg = 0; // VIRTIO_BLK_F_DISCARD
-     // VIRTIO_BLK_F_DISCARD
+    _blk_config->max_discard_seg = 0;     // VIRTIO_BLK_F_DISCARD
+                                          // VIRTIO_BLK_F_DISCARD
     _blk_config->discard_sector_alignment =
         _blk_config->blk_size >> VIRTIO_BLK_SECTOR_BITS;
 
     _blk_config->max_write_zeroes_sectors = 0; // VIRTIO_BLK_F_WRITE_ZEROES
-    _blk_config->max_write_zeroes_seg = 0; // VIRTIO_BLK_F_WRITE_ZEROES
-    _blk_config->write_zeroes_may_unmap = 0; // VIRTIO_BLK_F_WRITE_ZEROES
+    _blk_config->max_write_zeroes_seg = 0;     // VIRTIO_BLK_F_WRITE_ZEROES
+    _blk_config->write_zeroes_may_unmap = 0;   // VIRTIO_BLK_F_WRITE_ZEROES
 
-    _blk_config->max_secure_erase_sectors = 0; // VIRTIO_BLK_F_SECURE_ERASE
-    _blk_config->max_secure_erase_seg = 0; // VIRTIO_BLK_F_SECURE_ERASE
+    _blk_config->max_secure_erase_sectors = 0;      // VIRTIO_BLK_F_SECURE_ERASE
+    _blk_config->max_secure_erase_seg = 0;          // VIRTIO_BLK_F_SECURE_ERASE
     _blk_config->secure_erase_sector_alignment = 0; // VIRTIO_BLK_F_SECURE_ERASE
 
     _blk_config->zoned = {}; // VIRTIO_BLK_F_ZONED
@@ -621,12 +552,12 @@ Device::Device(const std::string &object_uris, int fd):
     // _blk_config->zoned.model = 0;
 
     bool bres = vu_init(
-        &_dev, 1, fd, panic, nullptr, ::set_watch, ::remove_watch, &_iface);
+        &_dev, 1, fd, panic, nullptr, ::set_watch, ::remove_watch, &_iface
+    );
     assert(bres == true);
 
     _devices.insert(std::pair<int, Device*>(fd, this));
 }
-
 
 Device::~Device() {
     _devices.erase(_dev.sock);
@@ -634,11 +565,9 @@ Device::~Device() {
     rawstor_object_close(_object);
 }
 
-
 Device& Device::get(int fd) {
     return *_devices.at(fd);
 }
-
 
 Device* Device::find(int fd) {
     auto ret = _devices.find(fd);
@@ -648,14 +577,12 @@ Device* Device::find(int fd) {
     return ret->second;
 }
 
-
 void Device::dispatch() {
     bool res = vu_dispatch(&_dev);
     assert(res == true);
 }
 
-
-void Device::get_config(uint8_t *config, uint32_t len) const {
+void Device::get_config(uint8_t* config, uint32_t len) const {
     if (len > sizeof(virtio_blk_config)) {
         std::ostringstream oss;
         oss << "virtio_blk_config struct is smaller than expected: "
@@ -666,11 +593,9 @@ void Device::get_config(uint8_t *config, uint32_t len) const {
     memcpy(config, _blk_config.get(), len);
 }
 
-
 void Device::set_config(
-    const uint8_t *data,
-    uint32_t offset, uint32_t size, uint32_t flags)
-{
+    const uint8_t* data, uint32_t offset, uint32_t size, uint32_t flags
+) {
     /* don't support live migration */
     if (flags != VHOST_SET_CONFIG_TYPE_FRONTEND) {
         RAWSTOR_THROW_SYSTEM_ERROR(EINVAL);
@@ -687,8 +612,7 @@ void Device::set_config(
     _blk_config->wce = *data;
 }
 
-
-void Device::set_watch(int fd, int condition, vu_watch_cb cb, void *data) {
+void Device::set_watch(int fd, int condition, vu_watch_cb cb, void* data) {
     if (!get_watch(fd)) {
         _watches.insert(std::pair<int, int>(fd, condition));
         std::unique_ptr<TaskWatch> t =
@@ -697,24 +621,20 @@ void Device::set_watch(int fd, int condition, vu_watch_cb cb, void *data) {
     }
 }
 
-
 void Device::remove_watch(int fd) {
     _watches.erase(fd);
 }
 
-
 int Device::get_watch(int fd) const noexcept {
-    const auto &it = _watches.find(fd);
+    const auto& it = _watches.find(fd);
     if (it == _watches.end()) {
         return 0;
     }
     return it->second;
 }
 
-
 void Device::loop() {
-    std::unique_ptr<TaskDispatch> t =
-        std::make_unique<TaskDispatch>(*this);
+    std::unique_ptr<TaskDispatch> t = std::make_unique<TaskDispatch>(*this);
     poll(_dev.sock, std::move(t));
 
     while (!rawstor_empty()) {
@@ -734,5 +654,5 @@ void Device::loop() {
     }
 }
 
-
-}} // rawstor::vhost
+} // namespace vhost
+} // namespace rawstor

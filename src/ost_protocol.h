@@ -7,14 +7,11 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-
 #define RAWSTOR_MAGIC 0x72737472 // "rstr" as ascii
-
 
 enum RawstorOSTCommandType {
     RAWSTOR_CMD_SET_OBJECT,
@@ -23,13 +20,11 @@ enum RawstorOSTCommandType {
     RAWSTOR_CMD_DISCARD,
 };
 
-
 /* Just for basic validation only */
 struct RawstorOSTFrameCmdOnly {
     uint32_t magic;
     enum RawstorOSTCommandType cmd;
 } RAWSTOR_PACKED;
-
 
 /* Minimalistic protocol frame */
 struct RawstorOSTFrameBasic {
@@ -42,7 +37,6 @@ struct RawstorOSTFrameBasic {
     uint64_t val;
 } RAWSTOR_PACKED;
 
-
 struct RawstorOSTFrameIO {
     uint32_t magic;
     enum RawstorOSTCommandType cmd;
@@ -52,7 +46,6 @@ struct RawstorOSTFrameIO {
     uint64_t hash;
     bool sync;
 } RAWSTOR_PACKED;
-
 
 /* response frames */
 struct RawstorOSTFrameResponse {
@@ -65,10 +58,8 @@ struct RawstorOSTFrameResponse {
     uint64_t hash;
 } RAWSTOR_PACKED;
 
-
 #ifdef __cplusplus
 }
 #endif
-
 
 #endif // RAWSTOR_OST_PROTOCOL_H
