@@ -22,40 +22,40 @@ enum RawstorOSTCommandType {
 
 /* Just for basic validation only */
 struct RawstorOSTFrameCmdOnly {
-        uint32_t magic;
-        enum RawstorOSTCommandType cmd;
+    uint32_t magic;
+    enum RawstorOSTCommandType cmd;
 } RAWSTOR_PACKED;
 
 /* Minimalistic protocol frame */
 struct RawstorOSTFrameBasic {
-        uint32_t magic;
-        enum RawstorOSTCommandType cmd;
-        // var is for minimal commands only,
-        // will be overridden in other command structs
-        uint8_t obj_id[16];
-        uint64_t offset;
-        uint64_t val;
+    uint32_t magic;
+    enum RawstorOSTCommandType cmd;
+    // var is for minimal commands only,
+    // will be overridden in other command structs
+    uint8_t obj_id[16];
+    uint64_t offset;
+    uint64_t val;
 } RAWSTOR_PACKED;
 
 struct RawstorOSTFrameIO {
-        uint32_t magic;
-        enum RawstorOSTCommandType cmd;
-        uint16_t cid;
-        uint64_t offset;
-        uint32_t len;
-        uint64_t hash;
-        bool sync;
+    uint32_t magic;
+    enum RawstorOSTCommandType cmd;
+    uint16_t cid;
+    uint64_t offset;
+    uint32_t len;
+    uint64_t hash;
+    bool sync;
 } RAWSTOR_PACKED;
 
 /* response frames */
 struct RawstorOSTFrameResponse {
-        uint32_t magic;
-        enum RawstorOSTCommandType cmd;
-        uint16_t cid;
-        // TODO: if we send length in res - it should be the same type
-        // (signed-unsigned too)
-        int32_t res;
-        uint64_t hash;
+    uint32_t magic;
+    enum RawstorOSTCommandType cmd;
+    uint16_t cid;
+    // TODO: if we send length in res - it should be the same type
+    // (signed-unsigned too)
+    int32_t res;
+    uint64_t hash;
 } RAWSTOR_PACKED;
 
 #ifdef __cplusplus

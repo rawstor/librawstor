@@ -81,12 +81,12 @@ int rawstor_fd_sendmsg(
  */
 
 struct RawstorOpts {
-        unsigned int wait_timeout;
-        unsigned int io_attempts;
-        unsigned int sessions;
-        unsigned int so_sndtimeo;
-        unsigned int so_rcvtimeo;
-        unsigned int tcp_user_timeout;
+    unsigned int wait_timeout;
+    unsigned int io_attempts;
+    unsigned int sessions;
+    unsigned int so_sndtimeo;
+    unsigned int so_rcvtimeo;
+    unsigned int tcp_user_timeout;
 };
 
 int rawstor_initialize(const struct RawstorOpts* opts);

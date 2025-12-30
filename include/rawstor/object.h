@@ -22,7 +22,7 @@ extern "C" {
 typedef struct RawstorObject RawstorObject;
 
 struct RawstorObjectSpec {
-        size_t size;
+    size_t size;
 };
 
 typedef int(RawstorCallback)(

@@ -10,7 +10,7 @@ extern "C" {
 #endif
 
 struct RawstorUUID {
-        uint8_t bytes[16];
+    uint8_t bytes[16];
 };
 
 typedef char RawstorUUIDString[37];

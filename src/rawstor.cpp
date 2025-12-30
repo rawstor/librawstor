@@ -29,201 +29,201 @@
 namespace {
 
 class TaskPoll final : public rawstor::io::TaskPoll {
-    private:
-        unsigned int _mask;
+private:
+    unsigned int _mask;
 
-        RawstorIOCallback* _cb;
-        void* _data;
+    RawstorIOCallback* _cb;
+    void* _data;
 
-    public:
-        TaskPoll(int fd, unsigned int mask, RawstorIOCallback* cb, void* data) :
-            rawstor::io::TaskPoll(fd),
-            _mask(mask),
-            _cb(cb),
-            _data(data) {}
+public:
+    TaskPoll(int fd, unsigned int mask, RawstorIOCallback* cb, void* data) :
+        rawstor::io::TaskPoll(fd),
+        _mask(mask),
+        _cb(cb),
+        _data(data) {}
 
-        void operator()(size_t result, int error) override {
-            int res = _cb(result, error, _data);
-            if (res) {
-                RAWSTOR_THROW_SYSTEM_ERROR(-res);
-            }
+    void operator()(size_t result, int error) override {
+        int res = _cb(result, error, _data);
+        if (res) {
+            RAWSTOR_THROW_SYSTEM_ERROR(-res);
         }
+    }
 
-        unsigned int mask() const noexcept override { return _mask; }
+    unsigned int mask() const noexcept override { return _mask; }
 };
 
 class TaskScalar final : public rawstor::io::TaskScalar {
-    private:
-        void* _buf;
-        size_t _size;
+private:
+    void* _buf;
+    size_t _size;
 
-        RawstorIOCallback* _cb;
-        void* _data;
+    RawstorIOCallback* _cb;
+    void* _data;
 
-    public:
-        TaskScalar(
-            int fd, void* buf, size_t size, RawstorIOCallback* cb, void* data
-        ) :
-            rawstor::io::TaskScalar(fd),
-            _buf(buf),
-            _size(size),
-            _cb(cb),
-            _data(data) {}
+public:
+    TaskScalar(
+        int fd, void* buf, size_t size, RawstorIOCallback* cb, void* data
+    ) :
+        rawstor::io::TaskScalar(fd),
+        _buf(buf),
+        _size(size),
+        _cb(cb),
+        _data(data) {}
 
-        void operator()(size_t result, int error) override {
-            int res = _cb(result, error, _data);
-            if (res) {
-                RAWSTOR_THROW_SYSTEM_ERROR(-res);
-            }
+    void operator()(size_t result, int error) override {
+        int res = _cb(result, error, _data);
+        if (res) {
+            RAWSTOR_THROW_SYSTEM_ERROR(-res);
         }
+    }
 
-        void* buf() noexcept override { return _buf; }
+    void* buf() noexcept override { return _buf; }
 
-        size_t size() const noexcept override { return _size; }
+    size_t size() const noexcept override { return _size; }
 };
 
 class TaskVector final : public rawstor::io::TaskVector {
-    private:
-        iovec* _iov;
-        unsigned int _niov;
-        size_t _size;
+private:
+    iovec* _iov;
+    unsigned int _niov;
+    size_t _size;
 
-        RawstorIOCallback* _cb;
-        void* _data;
+    RawstorIOCallback* _cb;
+    void* _data;
 
-    public:
-        TaskVector(
-            int fd, iovec* iov, unsigned int niov, size_t size,
-            RawstorIOCallback* cb, void* data
-        ) :
-            rawstor::io::TaskVector(fd),
-            _iov(iov),
-            _niov(niov),
-            _size(size),
-            _cb(cb),
-            _data(data) {}
+public:
+    TaskVector(
+        int fd, iovec* iov, unsigned int niov, size_t size,
+        RawstorIOCallback* cb, void* data
+    ) :
+        rawstor::io::TaskVector(fd),
+        _iov(iov),
+        _niov(niov),
+        _size(size),
+        _cb(cb),
+        _data(data) {}
 
-        void operator()(size_t result, int error) override {
-            int res = _cb(result, error, _data);
-            if (res) {
-                RAWSTOR_THROW_SYSTEM_ERROR(-res);
-            }
+    void operator()(size_t result, int error) override {
+        int res = _cb(result, error, _data);
+        if (res) {
+            RAWSTOR_THROW_SYSTEM_ERROR(-res);
         }
+    }
 
-        iovec* iov() noexcept override { return _iov; }
+    iovec* iov() noexcept override { return _iov; }
 
-        unsigned int niov() const noexcept override { return _niov; }
+    unsigned int niov() const noexcept override { return _niov; }
 
-        size_t size() const noexcept override { return _size; }
+    size_t size() const noexcept override { return _size; }
 };
 
 class TaskScalarPositional final : public rawstor::io::TaskScalarPositional {
-    private:
-        void* _buf;
-        size_t _size;
-        off_t _offset;
+private:
+    void* _buf;
+    size_t _size;
+    off_t _offset;
 
-        RawstorIOCallback* _cb;
-        void* _data;
+    RawstorIOCallback* _cb;
+    void* _data;
 
-    public:
-        TaskScalarPositional(
-            int fd, void* buf, size_t size, off_t offset, RawstorIOCallback* cb,
-            void* data
-        ) :
-            rawstor::io::TaskScalarPositional(fd),
-            _buf(buf),
-            _size(size),
-            _offset(offset),
-            _cb(cb),
-            _data(data) {}
+public:
+    TaskScalarPositional(
+        int fd, void* buf, size_t size, off_t offset, RawstorIOCallback* cb,
+        void* data
+    ) :
+        rawstor::io::TaskScalarPositional(fd),
+        _buf(buf),
+        _size(size),
+        _offset(offset),
+        _cb(cb),
+        _data(data) {}
 
-        void operator()(size_t result, int error) override {
-            int res = _cb(result, error, _data);
-            if (res) {
-                RAWSTOR_THROW_SYSTEM_ERROR(-res);
-            }
+    void operator()(size_t result, int error) override {
+        int res = _cb(result, error, _data);
+        if (res) {
+            RAWSTOR_THROW_SYSTEM_ERROR(-res);
         }
+    }
 
-        void* buf() noexcept override { return _buf; }
+    void* buf() noexcept override { return _buf; }
 
-        size_t size() const noexcept override { return _size; }
+    size_t size() const noexcept override { return _size; }
 
-        off_t offset() const noexcept override { return _offset; }
+    off_t offset() const noexcept override { return _offset; }
 };
 
 class TaskVectorPositional final : public rawstor::io::TaskVectorPositional {
-    private:
-        iovec* _iov;
-        unsigned int _niov;
-        size_t _size;
-        off_t _offset;
+private:
+    iovec* _iov;
+    unsigned int _niov;
+    size_t _size;
+    off_t _offset;
 
-        RawstorIOCallback* _cb;
-        void* _data;
+    RawstorIOCallback* _cb;
+    void* _data;
 
-    public:
-        TaskVectorPositional(
-            int fd, iovec* iov, unsigned int niov, size_t size, off_t offset,
-            RawstorIOCallback* cb, void* data
-        ) :
-            rawstor::io::TaskVectorPositional(fd),
-            _iov(iov),
-            _niov(niov),
-            _size(size),
-            _offset(offset),
-            _cb(cb),
-            _data(data) {}
+public:
+    TaskVectorPositional(
+        int fd, iovec* iov, unsigned int niov, size_t size, off_t offset,
+        RawstorIOCallback* cb, void* data
+    ) :
+        rawstor::io::TaskVectorPositional(fd),
+        _iov(iov),
+        _niov(niov),
+        _size(size),
+        _offset(offset),
+        _cb(cb),
+        _data(data) {}
 
-        void operator()(size_t result, int error) override {
-            int res = _cb(result, error, _data);
-            if (res) {
-                RAWSTOR_THROW_SYSTEM_ERROR(-res);
-            }
+    void operator()(size_t result, int error) override {
+        int res = _cb(result, error, _data);
+        if (res) {
+            RAWSTOR_THROW_SYSTEM_ERROR(-res);
         }
+    }
 
-        iovec* iov() noexcept override { return _iov; }
+    iovec* iov() noexcept override { return _iov; }
 
-        unsigned int niov() const noexcept override { return _niov; }
+    unsigned int niov() const noexcept override { return _niov; }
 
-        size_t size() const noexcept override { return _size; }
+    size_t size() const noexcept override { return _size; }
 
-        off_t offset() const noexcept override { return _offset; }
+    off_t offset() const noexcept override { return _offset; }
 };
 
 class TaskMessage final : public rawstor::io::TaskMessage {
-    private:
-        msghdr* _msg;
-        size_t _size;
-        int _flags;
+private:
+    msghdr* _msg;
+    size_t _size;
+    int _flags;
 
-        RawstorIOCallback* _cb;
-        void* _data;
+    RawstorIOCallback* _cb;
+    void* _data;
 
-    public:
-        TaskMessage(
-            int fd, msghdr* msg, size_t size, int flags, RawstorIOCallback* cb,
-            void* data
-        ) :
-            rawstor::io::TaskMessage(fd),
-            _msg(msg),
-            _size(size),
-            _flags(flags),
-            _cb(cb),
-            _data(data) {}
+public:
+    TaskMessage(
+        int fd, msghdr* msg, size_t size, int flags, RawstorIOCallback* cb,
+        void* data
+    ) :
+        rawstor::io::TaskMessage(fd),
+        _msg(msg),
+        _size(size),
+        _flags(flags),
+        _cb(cb),
+        _data(data) {}
 
-        void operator()(size_t result, int error) override {
-            int res = _cb(result, error, _data);
-            if (res) {
-                RAWSTOR_THROW_SYSTEM_ERROR(-res);
-            }
+    void operator()(size_t result, int error) override {
+        int res = _cb(result, error, _data);
+        if (res) {
+            RAWSTOR_THROW_SYSTEM_ERROR(-res);
         }
+    }
 
-        msghdr* msg() noexcept override { return _msg; }
+    msghdr* msg() noexcept override { return _msg; }
 
-        size_t size() const noexcept override { return _size; }
+    size_t size() const noexcept override { return _size; }
 
-        int flags() const noexcept override { return _flags; }
+    int flags() const noexcept override { return _flags; }
 };
 
 } // namespace

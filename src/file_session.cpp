@@ -99,54 +99,54 @@ namespace file {
 
 class SessionOpScalarPositional final
     : public rawstor::io::TaskScalarPositional {
-    private:
-        RawstorObject* _o;
-        std::unique_ptr<rawstor::TaskScalar> _t;
+private:
+    RawstorObject* _o;
+    std::unique_ptr<rawstor::TaskScalar> _t;
 
-    public:
-        SessionOpScalarPositional(
-            RawstorObject* o, int fd, std::unique_ptr<rawstor::TaskScalar> t
-        ) :
-            rawstor::io::TaskScalarPositional(fd),
-            _o(o),
-            _t(std::move(t)) {}
+public:
+    SessionOpScalarPositional(
+        RawstorObject* o, int fd, std::unique_ptr<rawstor::TaskScalar> t
+    ) :
+        rawstor::io::TaskScalarPositional(fd),
+        _o(o),
+        _t(std::move(t)) {}
 
-        void operator()(size_t result, int error) override {
-            (*_t)(_o, result, error);
-        }
+    void operator()(size_t result, int error) override {
+        (*_t)(_o, result, error);
+    }
 
-        void* buf() noexcept override { return _t->buf(); }
+    void* buf() noexcept override { return _t->buf(); }
 
-        size_t size() const noexcept override { return _t->size(); }
+    size_t size() const noexcept override { return _t->size(); }
 
-        off_t offset() const noexcept override { return _t->offset(); }
+    off_t offset() const noexcept override { return _t->offset(); }
 };
 
 class SessionOpVectorPositional final
     : public rawstor::io::TaskVectorPositional {
-    private:
-        RawstorObject* _o;
-        std::unique_ptr<rawstor::TaskVector> _t;
+private:
+    RawstorObject* _o;
+    std::unique_ptr<rawstor::TaskVector> _t;
 
-    public:
-        SessionOpVectorPositional(
-            RawstorObject* o, int fd, std::unique_ptr<rawstor::TaskVector> t
-        ) :
-            rawstor::io::TaskVectorPositional(fd),
-            _o(o),
-            _t(std::move(t)) {}
+public:
+    SessionOpVectorPositional(
+        RawstorObject* o, int fd, std::unique_ptr<rawstor::TaskVector> t
+    ) :
+        rawstor::io::TaskVectorPositional(fd),
+        _o(o),
+        _t(std::move(t)) {}
 
-        void operator()(size_t result, int error) override {
-            (*_t)(_o, result, error);
-        }
+    void operator()(size_t result, int error) override {
+        (*_t)(_o, result, error);
+    }
 
-        iovec* iov() noexcept override { return _t->iov(); }
+    iovec* iov() noexcept override { return _t->iov(); }
 
-        unsigned int niov() const noexcept override { return _t->niov(); }
+    unsigned int niov() const noexcept override { return _t->niov(); }
 
-        size_t size() const noexcept override { return _t->size(); }
+    size_t size() const noexcept override { return _t->size(); }
 
-        off_t offset() const noexcept override { return _t->offset(); }
+    off_t offset() const noexcept override { return _t->offset(); }
 };
 
 Session::Session(const URI& uri, unsigned int depth) :

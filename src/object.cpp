@@ -89,104 +89,104 @@ void validate_different_uris(const std::vector<rawstor::URI>& uris) {
 }
 
 class ObjectOp {
-    private:
-        size_t _mirrors;
-        size_t _size;
-        off_t _offset;
+private:
+    size_t _mirrors;
+    size_t _size;
+    off_t _offset;
 
-        size_t _result;
-        int _error;
+    size_t _result;
+    int _error;
 
-        RawstorCallback* _cb;
-        void* _data;
+    RawstorCallback* _cb;
+    void* _data;
 
-    public:
-        ObjectOp(
-            size_t mirrors, size_t size, off_t offset, RawstorCallback* cb,
-            void* data
-        ) :
-            _mirrors(mirrors),
-            _size(size),
-            _offset(offset),
-            _result(-1),
-            _error(0),
-            _cb(cb),
-            _data(data) {}
+public:
+    ObjectOp(
+        size_t mirrors, size_t size, off_t offset, RawstorCallback* cb,
+        void* data
+    ) :
+        _mirrors(mirrors),
+        _size(size),
+        _offset(offset),
+        _result(-1),
+        _error(0),
+        _cb(cb),
+        _data(data) {}
 
-        inline size_t size() const noexcept { return _size; }
+    inline size_t size() const noexcept { return _size; }
 
-        inline off_t offset() const noexcept { return _offset; }
+    inline off_t offset() const noexcept { return _offset; }
 
-        void task_cb(RawstorObject* o, size_t result, int error) {
-            --_mirrors;
+    void task_cb(RawstorObject* o, size_t result, int error) {
+        --_mirrors;
 
-            _result = std::min(_result, result);
+        _result = std::min(_result, result);
 
-            if (error) {
-                rawstor_error("%s\n", strerror(error));
-                _error = EIO;
-            }
+        if (error) {
+            rawstor_error("%s\n", strerror(error));
+            _error = EIO;
+        }
 
-            if (_mirrors == 0) {
-                /**
-                 * TODO: Handle partial tasks.
-                 */
-                int res = _cb(o, _size, _result, _error, _data);
-                if (res) {
-                    RAWSTOR_THROW_SYSTEM_ERROR(-res);
-                }
+        if (_mirrors == 0) {
+            /**
+             * TODO: Handle partial tasks.
+             */
+            int res = _cb(o, _size, _result, _error, _data);
+            if (res) {
+                RAWSTOR_THROW_SYSTEM_ERROR(-res);
             }
         }
+    }
 };
 
 class TaskScalar final : public rawstor::TaskScalar {
-    private:
-        std::shared_ptr<ObjectOp> _op;
+private:
+    std::shared_ptr<ObjectOp> _op;
 
-        void* _buf;
+    void* _buf;
 
-    public:
-        TaskScalar(const std::shared_ptr<ObjectOp>& op, void* buf) :
-            _op(op),
-            _buf(buf) {}
+public:
+    TaskScalar(const std::shared_ptr<ObjectOp>& op, void* buf) :
+        _op(op),
+        _buf(buf) {}
 
-        void operator()(RawstorObject* o, size_t result, int error) override {
-            _op->task_cb(o, result, error);
-        }
+    void operator()(RawstorObject* o, size_t result, int error) override {
+        _op->task_cb(o, result, error);
+    }
 
-        void* buf() noexcept override { return _buf; }
+    void* buf() noexcept override { return _buf; }
 
-        size_t size() const noexcept override { return _op->size(); }
+    size_t size() const noexcept override { return _op->size(); }
 
-        off_t offset() const noexcept override { return _op->offset(); }
+    off_t offset() const noexcept override { return _op->offset(); }
 };
 
 class TaskVector final : public rawstor::TaskVector {
-    private:
-        std::shared_ptr<ObjectOp> _op;
+private:
+    std::shared_ptr<ObjectOp> _op;
 
-        iovec* _iov;
-        unsigned int _niov;
+    iovec* _iov;
+    unsigned int _niov;
 
-    public:
-        TaskVector(
-            const std::shared_ptr<ObjectOp>& op, iovec* iov, unsigned int niov
-        ) :
-            _op(op),
-            _iov(iov),
-            _niov(niov) {}
+public:
+    TaskVector(
+        const std::shared_ptr<ObjectOp>& op, iovec* iov, unsigned int niov
+    ) :
+        _op(op),
+        _iov(iov),
+        _niov(niov) {}
 
-        void operator()(RawstorObject* o, size_t result, int error) override {
-            _op->task_cb(o, result, error);
-        }
+    void operator()(RawstorObject* o, size_t result, int error) override {
+        _op->task_cb(o, result, error);
+    }
 
-        iovec* iov() noexcept override { return _iov; }
+    iovec* iov() noexcept override { return _iov; }
 
-        unsigned int niov() const noexcept override { return _niov; }
+    unsigned int niov() const noexcept override { return _niov; }
 
-        size_t size() const noexcept override { return _op->size(); }
+    size_t size() const noexcept override { return _op->size(); }
 
-        off_t offset() const noexcept override { return _op->offset(); }
+    off_t offset() const noexcept override { return _op->offset(); }
 };
 
 } // namespace

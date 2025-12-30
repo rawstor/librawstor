@@ -28,26 +28,26 @@ typedef enum {
 } EventState;
 
 class Event {
-    private:
-        char _appearance;
-        EventState _state;
+private:
+    char _appearance;
+    EventState _state;
 
-    public:
-        explicit Event(char appearance) :
-            _appearance(appearance),
-            _state(EVENT_CREATING) {}
+public:
+    explicit Event(char appearance) :
+        _appearance(appearance),
+        _state(EVENT_CREATING) {}
 
-        char appearance() const noexcept { return _appearance; }
+    char appearance() const noexcept { return _appearance; }
 
-        EventState state() const noexcept { return _state; }
+    EventState state() const noexcept { return _state; }
 
-        void deleting() noexcept { _state = EVENT_DELETING; }
+    void deleting() noexcept { _state = EVENT_DELETING; }
 
-        void message() noexcept { _state = EVENT_MESSAGE; }
+    void message() noexcept { _state = EVENT_MESSAGE; }
 
-        void available() noexcept { _state = EVENT_AVAILABLE; }
+    void available() noexcept { _state = EVENT_AVAILABLE; }
 
-        void deleted() noexcept { _state = EVENT_DELETED; }
+    void deleted() noexcept { _state = EVENT_DELETED; }
 };
 
 std::vector<Event> events;

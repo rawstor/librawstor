@@ -39,47 +39,47 @@ extern "C" {
 namespace {
 
 struct virtio_blk_inhdr {
-    public:
-        unsigned char status;
+public:
+    unsigned char status;
 };
 
 class Request final {
-    private:
-        rawstor::vhost::Device& _device;
-        VuVirtq* _vq;
-        std::unique_ptr<VuVirtqElement> _elem;
-        virtio_blk_inhdr* _in;
-        iovec* _in_iov;
-        unsigned int _in_niov;
-        virtio_blk_outhdr _out;
-        iovec* _out_iov;
-        unsigned int _out_niov;
+private:
+    rawstor::vhost::Device& _device;
+    VuVirtq* _vq;
+    std::unique_ptr<VuVirtqElement> _elem;
+    virtio_blk_inhdr* _in;
+    iovec* _in_iov;
+    unsigned int _in_niov;
+    virtio_blk_outhdr _out;
+    iovec* _out_iov;
+    unsigned int _out_niov;
 
-    public:
-        Request(
-            rawstor::vhost::Device& device, VuVirtq* vq,
-            std::unique_ptr<VuVirtqElement> elem
-        );
+public:
+    Request(
+        rawstor::vhost::Device& device, VuVirtq* vq,
+        std::unique_ptr<VuVirtqElement> elem
+    );
 
-        inline rawstor::vhost::Device& device() noexcept { return _device; }
+    inline rawstor::vhost::Device& device() noexcept { return _device; }
 
-        inline iovec* in_iov() noexcept { return _in_iov; }
+    inline iovec* in_iov() noexcept { return _in_iov; }
 
-        inline unsigned int in_niov() noexcept { return _in_niov; }
+    inline unsigned int in_niov() noexcept { return _in_niov; }
 
-        inline iovec* out_iov() noexcept { return _out_iov; }
+    inline iovec* out_iov() noexcept { return _out_iov; }
 
-        inline unsigned int out_niov() noexcept { return _out_niov; }
+    inline unsigned int out_niov() noexcept { return _out_niov; }
 
-        inline uint32_t type() noexcept {
-            return RAWSTOR_LE32TOH(_out.type) & ~VIRTIO_BLK_T_BARRIER;
-        }
+    inline uint32_t type() noexcept {
+        return RAWSTOR_LE32TOH(_out.type) & ~VIRTIO_BLK_T_BARRIER;
+    }
 
-        inline uint64_t offset() noexcept {
-            return RAWSTOR_LE64TOH(_out.sector) << VIRTIO_BLK_SECTOR_BITS;
-        }
+    inline uint64_t offset() noexcept {
+        return RAWSTOR_LE64TOH(_out.sector) << VIRTIO_BLK_SECTOR_BITS;
+    }
 
-        void push(unsigned char status, size_t size);
+    void push(unsigned char status, size_t size);
 };
 
 Request::Request(
@@ -123,68 +123,68 @@ void Request::push(unsigned char status, size_t size) {
 }
 
 class ObjectTask final {
-    protected:
-        std::unique_ptr<Request> _req;
+protected:
+    std::unique_ptr<Request> _req;
 
-    public:
-        static int callback(
-            RawstorObject*, size_t size, size_t result, int error, void* data
-        ) {
-            std::unique_ptr<ObjectTask> t(static_cast<ObjectTask*>(data));
-            try {
-                (*t)(size, result, error);
-                return 0;
-            } catch (const std::system_error& e) {
-                return -e.code().value();
-            }
+public:
+    static int callback(
+        RawstorObject*, size_t size, size_t result, int error, void* data
+    ) {
+        std::unique_ptr<ObjectTask> t(static_cast<ObjectTask*>(data));
+        try {
+            (*t)(size, result, error);
+            return 0;
+        } catch (const std::system_error& e) {
+            return -e.code().value();
         }
+    }
 
-        ObjectTask(std::unique_ptr<Request> req) : _req(std::move(req)) {}
-        ObjectTask(const ObjectTask&) = delete;
-        ObjectTask(ObjectTask&&) = delete;
-        ~ObjectTask() = default;
+    ObjectTask(std::unique_ptr<Request> req) : _req(std::move(req)) {}
+    ObjectTask(const ObjectTask&) = delete;
+    ObjectTask(ObjectTask&&) = delete;
+    ~ObjectTask() = default;
 
-        ObjectTask& operator=(const ObjectTask&) = delete;
-        ObjectTask& operator=(ObjectTask&&) = delete;
+    ObjectTask& operator=(const ObjectTask&) = delete;
+    ObjectTask& operator=(ObjectTask&&) = delete;
 
-        void preadv();
-        void pwritev();
+    void preadv();
+    void pwritev();
 
-        void operator()(size_t size, size_t result, int error);
+    void operator()(size_t size, size_t result, int error);
 };
 
 class Task {
-    protected:
-        rawstor::vhost::Device& _device;
+protected:
+    rawstor::vhost::Device& _device;
 
-    public:
-        static int callback(size_t result, int error, void* data) {
-            std::unique_ptr<Task> t(static_cast<Task*>(data));
-            try {
-                (*t)(result, error);
-                return 0;
-            } catch (const std::system_error& e) {
-                return -e.code().value();
-            }
+public:
+    static int callback(size_t result, int error, void* data) {
+        std::unique_ptr<Task> t(static_cast<Task*>(data));
+        try {
+            (*t)(result, error);
+            return 0;
+        } catch (const std::system_error& e) {
+            return -e.code().value();
         }
+    }
 
-        Task(rawstor::vhost::Device& device) : _device(device) {}
-        Task(const Task&) = delete;
-        Task(Task&&) = delete;
-        virtual ~Task() = default;
+    Task(rawstor::vhost::Device& device) : _device(device) {}
+    Task(const Task&) = delete;
+    Task(Task&&) = delete;
+    virtual ~Task() = default;
 
-        Task& operator=(const Task&) = delete;
-        Task& operator=(Task&&) = delete;
+    Task& operator=(const Task&) = delete;
+    Task& operator=(Task&&) = delete;
 
-        virtual void operator()(size_t result, int error) = 0;
+    virtual void operator()(size_t result, int error) = 0;
 };
 
 class TaskPoll : public Task {
-    public:
-        TaskPoll(rawstor::vhost::Device& device) : Task(device) {}
-        virtual ~TaskPoll() override = default;
+public:
+    TaskPoll(rawstor::vhost::Device& device) : Task(device) {}
+    virtual ~TaskPoll() override = default;
 
-        virtual unsigned int mask() = 0;
+    virtual unsigned int mask() = 0;
 };
 
 void poll(int fd, std::unique_ptr<TaskPoll> t) {
@@ -196,44 +196,44 @@ void poll(int fd, std::unique_ptr<TaskPoll> t) {
 }
 
 class TaskDispatch final : public TaskPoll {
-    public:
-        TaskDispatch(rawstor::vhost::Device& device) : TaskPoll(device) {}
+public:
+    TaskDispatch(rawstor::vhost::Device& device) : TaskPoll(device) {}
 
-        unsigned int mask() override { return POLLIN; }
+    unsigned int mask() override { return POLLIN; }
 
-        void operator()(size_t, int error) override;
+    void operator()(size_t, int error) override;
 };
 
 class TaskWatch final : public TaskPoll {
-    private:
-        int _fd;
-        int _condition;
-        int _mask;
-        vu_watch_cb _cb;
-        void* _data;
+private:
+    int _fd;
+    int _condition;
+    int _mask;
+    vu_watch_cb _cb;
+    void* _data;
 
-    public:
-        TaskWatch(
-            rawstor::vhost::Device& device, int fd, int condition,
-            vu_watch_cb cb, void* data
-        ) :
-            TaskPoll(device),
-            _fd(fd),
-            _condition(condition),
-            _mask(0),
-            _cb(cb),
-            _data(data) {
-            if (_condition & VU_WATCH_IN) {
-                _mask |= POLLIN;
-            }
-            if (_condition & VU_WATCH_OUT) {
-                _mask |= POLLOUT;
-            }
+public:
+    TaskWatch(
+        rawstor::vhost::Device& device, int fd, int condition, vu_watch_cb cb,
+        void* data
+    ) :
+        TaskPoll(device),
+        _fd(fd),
+        _condition(condition),
+        _mask(0),
+        _cb(cb),
+        _data(data) {
+        if (_condition & VU_WATCH_IN) {
+            _mask |= POLLIN;
         }
+        if (_condition & VU_WATCH_OUT) {
+            _mask |= POLLOUT;
+        }
+    }
 
-        unsigned int mask() override { return _mask; }
+    unsigned int mask() override { return _mask; }
 
-        void operator()(size_t, int error) override;
+    void operator()(size_t, int error) override;
 };
 
 void TaskDispatch::operator()(size_t result, int error) {

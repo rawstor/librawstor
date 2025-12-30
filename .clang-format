@@ -1,14 +1,11 @@
 ---
 BasedOnStyle: LLVM
+AccessModifierOffset: -4
 AlignAfterOpenBracket: BlockIndent
 AllowShortFunctionsOnASingleLine: InlineOnly
 BreakConstructorInitializers: AfterColon
 BreakTemplateDeclarations: Yes
-IndentAccessModifiers: true
 IndentWidth: 4
 PackConstructorInitializers: CurrentLine
 PointerAlignment: Left
----
-Language: C
-IndentAccessModifiers: false
 ...
