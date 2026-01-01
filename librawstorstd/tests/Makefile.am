@@ -1,8 +1,7 @@
-noinst_PROGRAMS = test_hash \
+noinst_PROGRAMS = test_all \
                   test_iovec \
                   test_list \
                   test_mempool \
-                  test_ringbuf \
                   test_threading \
                   test_uri \
                   test_uuid
@@ -28,8 +27,9 @@ AM_LDFLAGS = $(ASAN_LDFLAGS) \
              $(GTEST_LIBS) -lgtest_main
 
 
-test_hash_SOURCES = test_hash.cpp
-test_hash_LDADD = $(top_builddir)/librawstorstd/src/librawstorstd.la
+test_all_SOURCES = test_hash.cpp \
+                   test_ringbuf.cpp
+test_all_LDADD = $(top_builddir)/librawstorstd/src/librawstorstd.la
 
 
 test_iovec_SOURCES = test_iovec.c
@@ -42,10 +42,6 @@ test_list_LDADD = $(top_builddir)/librawstorstd/src/librawstorstd.la
 
 test_mempool_SOURCES = test_mempool.c
 test_mempool_LDADD = $(top_builddir)/librawstorstd/src/librawstorstd.la
-
-
-test_ringbuf_SOURCES = test_ringbuf.cpp
-test_ringbuf_LDADD = $(top_builddir)/librawstorstd/src/librawstorstd.la
 
 
 test_threading_SOURCES = test_threading.c
