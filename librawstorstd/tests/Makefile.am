@@ -28,7 +28,7 @@ AM_LDFLAGS = $(ASAN_LDFLAGS) \
              $(GTEST_LIBS) -lgtest_main
 
 
-test_hash_SOURCES = test_hash.c
+test_hash_SOURCES = test_hash.cpp
 test_hash_LDADD = $(top_builddir)/librawstorstd/src/librawstorstd.la
 
 
