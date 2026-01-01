@@ -30,7 +30,7 @@ jobs:
     - name: install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libxxhash-dev liburing-dev
+        sudo apt-get install -y libxxhash-dev liburing-dev libgtest-dev
     - uses: actions/checkout@v4
       with:
         fetch-depth: 0
@@ -55,7 +55,7 @@ jobs:
     - name: install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libxxhash-dev liburing-dev
+        sudo apt-get install -y libxxhash-dev liburing-dev libgtest-dev
     - uses: actions/download-artifact@v5
       with:
         name: sources
@@ -108,7 +108,7 @@ jobs:
     - name: install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libxxhash-dev liburing-dev rpm rpmlint
+        sudo apt-get install -y libxxhash-dev liburing-dev libgtest-dev rpm rpmlint
     - name: setuptree
       run: |
         mkdir -p ~/rpmbuild/SOURCES

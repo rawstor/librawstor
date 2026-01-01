@@ -10,6 +10,7 @@ noinst_PROGRAMS = test_hash \
 
 AM_CFLAGS = $(GENERIC_CFLAGS) \
             $(ASAN_CFLAGS) \
+            $(GTEST_CFLAGS) \
             -I$(top_srcdir)/librawstorstd/src \
             -I$(top_srcdir)/librawstorstd/include \
             -I$(top_srcdir)/tests \
@@ -17,12 +18,14 @@ AM_CFLAGS = $(GENERIC_CFLAGS) \
 
 AM_CXXFLAGS = $(GENERIC_CXXFLAGS) \
               $(ASAN_CFLAGS) \
+              $(GTEST_CFLAGS) \
               -I$(top_srcdir)/librawstorstd/src \
               -I$(top_srcdir)/librawstorstd/include \
               -I$(top_srcdir)/tests \
               -I$(top_srcdir)/include
 
-AM_LDFLAGS = $(ASAN_LDFLAGS)
+AM_LDFLAGS = $(ASAN_LDFLAGS) \
+             $(GTEST_LIBS) -lgtest_main
 
 
 test_hash_SOURCES = test_hash.c
