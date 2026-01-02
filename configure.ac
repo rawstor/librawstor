@@ -26,6 +26,9 @@ AC_ARG_ENABLE([tests], [AS_HELP_STRING([--disable-tests],
     [enable_tests=$enableval],
     [enable_tests="yes"])
 AM_CONDITIONAL([ENABLE_TESTS], [test "x$enable_tests" == "xyes"])
+AS_IF([test "x$enable_tests" == "xyes"], [
+    PKG_CHECK_MODULES([GTEST], [gtest])
+])
 
 
 AC_ARG_ENABLE([debug], [AS_HELP_STRING([--enable-debug],
