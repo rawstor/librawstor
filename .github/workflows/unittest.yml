@@ -21,7 +21,7 @@ jobs:
     - name: install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libxxhash-dev ${{ matrix.packages }}
+        sudo apt-get install -y libxxhash-dev libgtest-dev ${{ matrix.packages }}
     - uses: actions/checkout@v4
     - name: autogen
       run: ./autogen.sh
@@ -55,7 +55,7 @@ jobs:
         pushd .
         cd ./librawstor
         ./autogen.sh
-        ./configure --enable-trace --disable-shared --enable-asan ${{ matrix.without-liburing }}
+        ./configure --enable-trace --disable-shared --enable-asan --disable-tests ${{ matrix.without-liburing }}
         make -j$(nproc)
         sudo make install
         popd

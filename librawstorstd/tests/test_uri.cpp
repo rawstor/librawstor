@@ -1,196 +1,162 @@
 #include "rawstorstd/uri.hpp"
 
-#include "unittest.h"
+#include <gtest/gtest.h>
 
 namespace {
 
-int test_uri_empty() {
+TEST(URITest, empty) {
     rawstor::URI uri("");
 
-    assertTrue(uri.str() == "");
-    assertTrue(uri.scheme() == "");
-    assertTrue(uri.userinfo() == "");
-    assertTrue(uri.username() == "");
-    assertTrue(uri.password() == "");
-    assertTrue(uri.authority() == "");
-    assertTrue(uri.host() == "");
-    assertTrue(uri.hostname() == "");
-    assertTrue(uri.port() == 0);
-    assertTrue(uri.path().str() == "");
-    assertTrue(uri.path().dirname() == "/");
-    assertTrue(uri.path().filename() == "");
-
-    return 0;
+    EXPECT_EQ(uri.str(), "");
+    EXPECT_EQ(uri.scheme(), "");
+    EXPECT_EQ(uri.userinfo(), "");
+    EXPECT_EQ(uri.username(), "");
+    EXPECT_EQ(uri.password(), "");
+    EXPECT_EQ(uri.authority(), "");
+    EXPECT_EQ(uri.host(), "");
+    EXPECT_EQ(uri.hostname(), "");
+    EXPECT_EQ(uri.port(), 0u);
+    EXPECT_EQ(uri.path().str(), "");
+    EXPECT_EQ(uri.path().dirname(), "/");
+    EXPECT_EQ(uri.path().filename(), "");
 }
 
-int test_uri_http() {
+TEST(URITest, http) {
     rawstor::URI uri("http://user:password@example.com:80/foo");
 
-    assertTrue(uri.str() == "http://user:password@example.com:80/foo");
-    assertTrue(uri.scheme() == "http");
-    assertTrue(uri.userinfo() == "user:password");
-    assertTrue(uri.username() == "user");
-    assertTrue(uri.password() == "password");
-    assertTrue(uri.authority() == "user:password@example.com:80");
-    assertTrue(uri.host() == "example.com:80");
-    assertTrue(uri.hostname() == "example.com");
-    assertTrue(uri.port() == 80);
-    assertTrue(uri.path().str() == "/foo");
-    assertTrue(uri.path().dirname() == "/");
-    assertTrue(uri.path().filename() == "foo");
-
-    return 0;
+    EXPECT_EQ(uri.str(), "http://user:password@example.com:80/foo");
+    EXPECT_EQ(uri.scheme(), "http");
+    EXPECT_EQ(uri.userinfo(), "user:password");
+    EXPECT_EQ(uri.username(), "user");
+    EXPECT_EQ(uri.password(), "password");
+    EXPECT_EQ(uri.authority(), "user:password@example.com:80");
+    EXPECT_EQ(uri.host(), "example.com:80");
+    EXPECT_EQ(uri.hostname(), "example.com");
+    EXPECT_EQ(uri.port(), 80u);
+    EXPECT_EQ(uri.path().str(), "/foo");
+    EXPECT_EQ(uri.path().dirname(), "/");
+    EXPECT_EQ(uri.path().filename(), "foo");
 }
 
-int test_uri_file() {
+TEST(URITest, file) {
     rawstor::URI uri("file:///tmp/foo");
 
-    assertTrue(uri.str() == "file:///tmp/foo");
-    assertTrue(uri.scheme() == "file");
-    assertTrue(uri.userinfo() == "");
-    assertTrue(uri.username() == "");
-    assertTrue(uri.password() == "");
-    assertTrue(uri.authority() == "");
-    assertTrue(uri.host() == "");
-    assertTrue(uri.hostname() == "");
-    assertTrue(uri.port() == 0);
-    assertTrue(uri.path().str() == "/tmp/foo");
-    assertTrue(uri.path().dirname() == "/tmp");
-    assertTrue(uri.path().filename() == "foo");
-
-    return 0;
+    EXPECT_EQ(uri.str(), "file:///tmp/foo");
+    EXPECT_EQ(uri.scheme(), "file");
+    EXPECT_EQ(uri.userinfo(), "");
+    EXPECT_EQ(uri.username(), "");
+    EXPECT_EQ(uri.password(), "");
+    EXPECT_EQ(uri.authority(), "");
+    EXPECT_EQ(uri.host(), "");
+    EXPECT_EQ(uri.hostname(), "");
+    EXPECT_EQ(uri.port(), 0u);
+    EXPECT_EQ(uri.path().str(), "/tmp/foo");
+    EXPECT_EQ(uri.path().dirname(), "/tmp");
+    EXPECT_EQ(uri.path().filename(), "foo");
 }
 
-int test_uri_empty_path() {
+TEST(URITest, empty_path) {
     rawstor::URI uri("ost://127.0.0.1:8080");
 
-    assertTrue(uri.str() == "ost://127.0.0.1:8080");
-    assertTrue(uri.scheme() == "ost");
-    assertTrue(uri.userinfo() == "");
-    assertTrue(uri.username() == "");
-    assertTrue(uri.password() == "");
-    assertTrue(uri.authority() == "127.0.0.1:8080");
-    assertTrue(uri.host() == "127.0.0.1:8080");
-    assertTrue(uri.hostname() == "127.0.0.1");
-    assertTrue(uri.port() == 8080);
-    assertTrue(uri.path().str() == "");
-    assertTrue(uri.path().dirname() == "/");
-    assertTrue(uri.path().filename() == "");
-
-    return 0;
+    EXPECT_EQ(uri.str(), "ost://127.0.0.1:8080");
+    EXPECT_EQ(uri.scheme(), "ost");
+    EXPECT_EQ(uri.userinfo(), "");
+    EXPECT_EQ(uri.username(), "");
+    EXPECT_EQ(uri.password(), "");
+    EXPECT_EQ(uri.authority(), "127.0.0.1:8080");
+    EXPECT_EQ(uri.host(), "127.0.0.1:8080");
+    EXPECT_EQ(uri.hostname(), "127.0.0.1");
+    EXPECT_EQ(uri.port(), 8080u);
+    EXPECT_EQ(uri.path().str(), "");
+    EXPECT_EQ(uri.path().dirname(), "/");
+    EXPECT_EQ(uri.path().filename(), "");
 }
 
-int test_uri_with_uuid() {
+TEST(URITest, with_uuid) {
     rawstor::URI uri("file:///tmp/objects/uuid");
 
-    assertTrue(uri.str() == "file:///tmp/objects/uuid");
-    assertTrue(uri.scheme() == "file");
-    assertTrue(uri.userinfo() == "");
-    assertTrue(uri.username() == "");
-    assertTrue(uri.password() == "");
-    assertTrue(uri.authority() == "");
-    assertTrue(uri.host() == "");
-    assertTrue(uri.hostname() == "");
-    assertTrue(uri.port() == 0);
-    assertTrue(uri.path().str() == "/tmp/objects/uuid");
-    assertTrue(uri.path().dirname() == "/tmp/objects");
-    assertTrue(uri.path().filename() == "uuid");
-
-    return 0;
+    EXPECT_EQ(uri.str(), "file:///tmp/objects/uuid");
+    EXPECT_EQ(uri.scheme(), "file");
+    EXPECT_EQ(uri.userinfo(), "");
+    EXPECT_EQ(uri.username(), "");
+    EXPECT_EQ(uri.password(), "");
+    EXPECT_EQ(uri.authority(), "");
+    EXPECT_EQ(uri.host(), "");
+    EXPECT_EQ(uri.hostname(), "");
+    EXPECT_EQ(uri.port(), 0u);
+    EXPECT_EQ(uri.path().str(), "/tmp/objects/uuid");
+    EXPECT_EQ(uri.path().dirname(), "/tmp/objects");
+    EXPECT_EQ(uri.path().filename(), "uuid");
 }
 
-int test_uri_without_uuid_with_slash() {
+TEST(URITest, without_uuid_with_slash) {
     rawstor::URI uri("file:///tmp/objects/");
 
-    assertTrue(uri.str() == "file:///tmp/objects/");
-    assertTrue(uri.scheme() == "file");
-    assertTrue(uri.userinfo() == "");
-    assertTrue(uri.username() == "");
-    assertTrue(uri.password() == "");
-    assertTrue(uri.authority() == "");
-    assertTrue(uri.host() == "");
-    assertTrue(uri.hostname() == "");
-    assertTrue(uri.port() == 0);
-    assertTrue(uri.path().str() == "/tmp/objects/");
-    assertTrue(uri.path().dirname() == "/tmp/objects");
-    assertTrue(uri.path().filename() == "");
-
-    return 0;
+    EXPECT_EQ(uri.str(), "file:///tmp/objects/");
+    EXPECT_EQ(uri.scheme(), "file");
+    EXPECT_EQ(uri.userinfo(), "");
+    EXPECT_EQ(uri.username(), "");
+    EXPECT_EQ(uri.password(), "");
+    EXPECT_EQ(uri.authority(), "");
+    EXPECT_EQ(uri.host(), "");
+    EXPECT_EQ(uri.hostname(), "");
+    EXPECT_EQ(uri.port(), 0u);
+    EXPECT_EQ(uri.path().str(), "/tmp/objects/");
+    EXPECT_EQ(uri.path().dirname(), "/tmp/objects");
+    EXPECT_EQ(uri.path().filename(), "");
 }
 
-int test_uri_without_uuid_without_slash() {
+TEST(URITest, without_uuid_without_slash) {
     rawstor::URI uri("file:///tmp/objects");
 
-    assertTrue(uri.str() == "file:///tmp/objects");
-    assertTrue(uri.scheme() == "file");
-    assertTrue(uri.userinfo() == "");
-    assertTrue(uri.username() == "");
-    assertTrue(uri.password() == "");
-    assertTrue(uri.authority() == "");
-    assertTrue(uri.host() == "");
-    assertTrue(uri.hostname() == "");
-    assertTrue(uri.port() == 0);
-    assertTrue(uri.path().str() == "/tmp/objects");
-    assertTrue(uri.path().dirname() == "/tmp");
-    assertTrue(uri.path().filename() == "objects");
-
-    return 0;
+    EXPECT_EQ(uri.str(), "file:///tmp/objects");
+    EXPECT_EQ(uri.scheme(), "file");
+    EXPECT_EQ(uri.userinfo(), "");
+    EXPECT_EQ(uri.username(), "");
+    EXPECT_EQ(uri.password(), "");
+    EXPECT_EQ(uri.authority(), "");
+    EXPECT_EQ(uri.host(), "");
+    EXPECT_EQ(uri.hostname(), "");
+    EXPECT_EQ(uri.port(), 0u);
+    EXPECT_EQ(uri.path().str(), "/tmp/objects");
+    EXPECT_EQ(uri.path().dirname(), "/tmp");
+    EXPECT_EQ(uri.path().filename(), "objects");
 }
 
-int test_uri_parent() {
+TEST(URITest, parent) {
     rawstor::URI uri("http://user:password@example.com:80/foo/bar/span/");
-    assertTrue(
-        uri.str() == "http://user:password@example.com:80/foo/bar/span/"
-    );
+    EXPECT_EQ(uri.str(), "http://user:password@example.com:80/foo/bar/span/");
 
     uri = uri.parent();
-    assertTrue(uri.str() == "http://user:password@example.com:80/foo/bar/span");
+    EXPECT_EQ(uri.str(), "http://user:password@example.com:80/foo/bar/span");
 
     uri = uri.parent();
-    assertTrue(uri.str() == "http://user:password@example.com:80/foo/bar");
+    EXPECT_EQ(uri.str(), "http://user:password@example.com:80/foo/bar");
 
     uri = uri.parent();
-    assertTrue(uri.str() == "http://user:password@example.com:80/foo");
+    EXPECT_EQ(uri.str(), "http://user:password@example.com:80/foo");
 
     uri = uri.parent();
-    assertTrue(uri.str() == "http://user:password@example.com:80/");
+    EXPECT_EQ(uri.str(), "http://user:password@example.com:80/");
 
     uri = uri.parent();
-    assertTrue(uri.str() == "http://user:password@example.com:80/");
-
-    return 0;
+    EXPECT_EQ(uri.str(), "http://user:password@example.com:80/");
 }
 
-int test_uri_child() {
+TEST(URITest, child) {
     rawstor::URI parent_with_slash("http://user:password@example.com:80/");
     rawstor::URI child_with_slash(parent_with_slash, "foo");
 
-    assertTrue(
-        child_with_slash.str() == "http://user:password@example.com:80/foo"
+    EXPECT_EQ(
+        child_with_slash.str(), "http://user:password@example.com:80/foo"
     );
 
     rawstor::URI parent_without_slash("http://user:password@example.com:80");
     rawstor::URI child_without_slash(parent_without_slash, "foo");
 
-    assertTrue(
-        child_without_slash.str() == "http://user:password@example.com:80/foo"
+    EXPECT_EQ(
+        child_without_slash.str(), "http://user:password@example.com:80/foo"
     );
-
-    return 0;
 }
 
 } // namespace
-
-int main() {
-    int rval = 0;
-    rval += test_uri_empty();
-    rval += test_uri_http();
-    rval += test_uri_file();
-    rval += test_uri_empty_path();
-    rval += test_uri_with_uuid();
-    rval += test_uri_without_uuid_with_slash();
-    rval += test_uri_without_uuid_without_slash();
-    rval += test_uri_parent();
-    rval += test_uri_child();
-    return rval ? EXIT_FAILURE : EXIT_SUCCESS;
-}

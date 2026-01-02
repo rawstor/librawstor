@@ -1,4 +1,3 @@
 /Makefile
 /Makefile.in
-/test_*
-!/test_*.c
+/test_all
