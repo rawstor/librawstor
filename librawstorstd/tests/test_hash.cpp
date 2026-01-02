@@ -21,18 +21,21 @@ TEST(HashTest, scalar) {
 }
 
 TEST(HashTest, vector) {
+    const char* s1 = "hello";
+    const char* s2 = " ";
+    const char* s3 = "world";
     iovec iov[] = {
-        (iovec){
-            .iov_base = (void*)"hello",
-            .iov_len = strlen("hello"),
+        {
+            .iov_base = (void*)s1,
+            .iov_len = strlen(s1),
         },
-        (iovec){
-            .iov_base = (void*)" ",
-            .iov_len = strlen(" "),
+        {
+            .iov_base = (void*)s2,
+            .iov_len = strlen(s2),
         },
-        (iovec){
-            .iov_base = (void*)"world",
-            .iov_len = strlen("world"),
+        {
+            .iov_base = (void*)s3,
+            .iov_len = strlen(s3),
         }
     };
     uint64_t hash;

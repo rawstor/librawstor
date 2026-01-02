@@ -4,26 +4,41 @@
 
 #include <sys/uio.h>
 
+#include <vector>
+
 #include <cstdlib>
 #include <cstring>
 
 namespace {
 
 class IOVecTest : public testing::Test {
+private:
+    std::vector<iovec> _iov_src;
+
 protected:
     iovec* _iov;
     unsigned int _niov;
 
-    IOVecTest() : _iov(nullptr), _niov(3) {
+    IOVecTest() : _niov(3) {
+        for (unsigned int i = 0; i < _niov; ++i) {
+            const char s[] = "1234567890";
+            _iov_src.push_back(
+                {.iov_base = malloc(sizeof(s) - 1), .iov_len = sizeof(s) - 1}
+            );
+            memcpy(_iov_src[i].iov_base, s, sizeof(s) - 1);
+        }
         _iov = new iovec[_niov]();
-        for (unsigned int i = 0; i < 3; ++i) {
-            const size_t len = 10;
-            _iov[i] = {.iov_base = new char[len], .iov_len = len};
-            memcpy(_iov[i].iov_base, "1234567890", len);
+        for (unsigned int i = 0; i < _niov; ++i) {
+            _iov[i] = _iov_src[i];
         }
     }
 
-    ~IOVecTest() override { delete[] _iov; }
+    ~IOVecTest() override {
+        for (auto iov : _iov_src) {
+            free(iov.iov_base);
+        }
+        delete[] _iov;
+    }
 };
 
 TEST_F(IOVecTest, discard_front_unaligned) {
