@@ -1,5 +1,4 @@
 noinst_PROGRAMS = test_all \
-                  test_uri \
                   test_uuid
 
 
@@ -28,12 +27,9 @@ test_all_SOURCES = test_hash.cpp \
                    test_list.cpp \
                    test_mempool.cpp \
                    test_ringbuf.cpp \
-                   test_threading.cpp
+                   test_threading.cpp \
+                   test_uri.cpp
 test_all_LDADD = $(top_builddir)/librawstorstd/src/librawstorstd.la
-
-
-test_uri_SOURCES = test_uri.cpp
-test_uri_LDADD = $(top_builddir)/librawstorstd/src/librawstorstd.la
 
 
 test_uuid_SOURCES = test_uuid.c
