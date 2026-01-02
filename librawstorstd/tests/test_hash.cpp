@@ -26,15 +26,15 @@ TEST(HashTest, vector) {
     const char* s3 = "world";
     iovec iov[] = {
         {
-            .iov_base = (void*)s1,
+            .iov_base = const_cast<char*>(s1),
             .iov_len = strlen(s1),
         },
         {
-            .iov_base = (void*)s2,
+            .iov_base = const_cast<char*>(s2),
             .iov_len = strlen(s2),
         },
         {
-            .iov_base = (void*)s3,
+            .iov_base = const_cast<char*>(s3),
             .iov_len = strlen(s3),
         }
     };
