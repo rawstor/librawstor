@@ -48,7 +48,7 @@ jobs:
         pushd .
         cd ./librawstor
         ./autogen.sh
-        ./configure --disable-shared ${{ matrix.without-liburing }}
+        ./configure --disable-shared --disable-tests ${{ matrix.without-liburing }}
         make -j$(nproc)
         sudo make install
         popd
