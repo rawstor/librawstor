@@ -1,5 +1,4 @@
 noinst_PROGRAMS = test_all \
-                  test_mempool \
                   test_threading \
                   test_uri \
                   test_uuid
@@ -28,12 +27,9 @@ AM_LDFLAGS = $(ASAN_LDFLAGS) \
 test_all_SOURCES = test_hash.cpp \
                    test_iovec.cpp \
                    test_list.cpp \
+                   test_mempool.cpp \
                    test_ringbuf.cpp
 test_all_LDADD = $(top_builddir)/librawstorstd/src/librawstorstd.la
-
-
-test_mempool_SOURCES = test_mempool.c
-test_mempool_LDADD = $(top_builddir)/librawstorstd/src/librawstorstd.la
 
 
 test_threading_SOURCES = test_threading.c
