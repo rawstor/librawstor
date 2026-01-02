@@ -1,25 +1,22 @@
-noinst_PROGRAMS = test_dummy
-
-AM_CFLAGS = $(GENERIC_CFLAGS) \
-            $(ASAN_CFLAGS) \
-            -I$(top_srcdir)/include \
-            -I$(top_srcdir)/src
-
-AM_LDFLAGS = $(ASAN_LDFLAGS)
+noinst_PROGRAMS = test_all
 
 
-test_dummy_SOURCES = $(top_srcdir)/tests/unittest.h \
-                     $(top_srcdir)/tests/unittest.hpp \
-                     test_dummy.c
-test_dummy_LDADD = $(top_builddir)/src/librawstor.la
+AM_CXXFLAGS = $(GENERIC_CXXFLAGS) \
+              $(ASAN_CFLAGS) \
+              $(GTEST_CFLAGS) \
+              -I$(top_srcdir)/include \
+              -I$(top_srcdir)/src
+
+AM_LDFLAGS = $(ASAN_LDFLAGS) \
+             $(GTEST_LIBS)
+
+
+test_all_SOURCES = test_dummy.cpp
+test_all_LDADD = $(top_builddir)/src/librawstor.la -lgtest_main
 
 
 test: all
-	@for test in $(noinst_PROGRAMS); do \
-	    echo $${test}; \
-	    ./$${test} || exit 1; \
-	done
-	@echo Success!!!
+	./test_all
 
 
 .PHONY: test
