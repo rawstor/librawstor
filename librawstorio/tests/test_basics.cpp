@@ -52,7 +52,7 @@ protected:
         _queue(rawstor::io::Queue::create(1)) {}
 };
 
-class TaskScalar final : public rawstor::io::TaskScalar {
+class SimpleTask final : public rawstor::io::TaskScalar {
 private:
     void* _buf;
     size_t _size;
@@ -61,7 +61,7 @@ private:
     int& _error;
 
 public:
-    TaskScalar(int fd, void* buf, size_t size, size_t& result, int& error) :
+    SimpleTask(int fd, void* buf, size_t size, size_t& result, int& error) :
         rawstor::io::TaskScalar(fd),
         _buf(buf),
         _size(size),
@@ -77,13 +77,31 @@ public:
     size_t size() const noexcept override { return _size; }
 };
 
-TEST_F(BasicsTest, hello_world) {
-    char buf[] = "hello world";
+TEST_F(BasicsTest, read) {
+    char buf[] = "data";
     size_t result = 0;
     int error = 0;
 
-    std::unique_ptr<TaskScalar> t =
-        std::make_unique<TaskScalar>(_fd, buf, sizeof(buf) - 1, result, error);
+    _server.write(buf, sizeof(buf) - 1);
+    _server.wait();
+
+    std::unique_ptr<SimpleTask> t =
+        std::make_unique<SimpleTask>(_fd, buf, sizeof(buf) - 1, result, error);
+    _queue->read(std::move(t));
+    _queue->wait(0);
+
+    EXPECT_EQ(result, sizeof(buf) - 1);
+    EXPECT_EQ(error, 0);
+    EXPECT_EQ(strncmp(static_cast<char*>(t->buf()), buf, sizeof(buf) - 1), 0);
+}
+
+TEST_F(BasicsTest, write) {
+    char buf[] = "data";
+    size_t result = 0;
+    int error = 0;
+
+    std::unique_ptr<SimpleTask> t =
+        std::make_unique<SimpleTask>(_fd, buf, sizeof(buf) - 1, result, error);
     _queue->write(std::move(t));
     _queue->wait(0);
 
