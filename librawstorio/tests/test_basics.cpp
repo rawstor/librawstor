@@ -1,5 +1,7 @@
 #include "server.hpp"
 
+#include "task.hpp"
+
 #include <rawstorstd/gpp.hpp>
 
 #include <rawstorio/queue.hpp>
@@ -52,31 +54,6 @@ protected:
         _queue(rawstor::io::Queue::create(1)) {}
 };
 
-class SimpleTask final : public rawstor::io::TaskScalar {
-private:
-    void* _buf;
-    size_t _size;
-
-    size_t& _result;
-    int& _error;
-
-public:
-    SimpleTask(int fd, void* buf, size_t size, size_t& result, int& error) :
-        rawstor::io::TaskScalar(fd),
-        _buf(buf),
-        _size(size),
-        _result(result),
-        _error(error) {}
-
-    void operator()(size_t result, int error) override {
-        _result = result;
-        _error = error;
-    }
-
-    void* buf() noexcept override { return _buf; }
-    size_t size() const noexcept override { return _size; }
-};
-
 TEST_F(BasicsTest, read) {
     char buf[] = "data";
     size_t result = 0;
@@ -85,8 +62,10 @@ TEST_F(BasicsTest, read) {
     _server.write(buf, sizeof(buf) - 1);
     _server.wait();
 
-    std::unique_ptr<SimpleTask> t =
-        std::make_unique<SimpleTask>(_fd, buf, sizeof(buf) - 1, result, error);
+    std::unique_ptr<rawstor::io::TaskScalar> t =
+        std::make_unique<rawstor::io::tests::SimpleTask>(
+            _fd, buf, sizeof(buf) - 1, result, error
+        );
     _queue->read(std::move(t));
     _queue->wait(0);
 
@@ -100,8 +79,10 @@ TEST_F(BasicsTest, write) {
     size_t result = 0;
     int error = 0;
 
-    std::unique_ptr<SimpleTask> t =
-        std::make_unique<SimpleTask>(_fd, buf, sizeof(buf) - 1, result, error);
+    std::unique_ptr<rawstor::io::TaskScalar> t =
+        std::make_unique<rawstor::io::tests::SimpleTask>(
+            _fd, buf, sizeof(buf) - 1, result, error
+        );
     _queue->write(std::move(t));
     _queue->wait(0);
 

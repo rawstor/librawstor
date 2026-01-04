@@ -15,6 +15,7 @@ AM_LDFLAGS = $(ASAN_LDFLAGS) \
 
 test_all_SOURCES = server.hpp \
                    server.cpp \
+                   task.hpp \
                    test_basics.cpp
 test_all_LDADD = $(top_builddir)/librawstorstd/src/librawstorstd.la \
                  $(top_builddir)/librawstorio/src/librawstorio.la \
