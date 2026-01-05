@@ -7,6 +7,8 @@
 
 #include <unistd.h>
 
+#include <algorithm>
+#include <iterator>
 #include <memory>
 #include <mutex>
 #include <new>
@@ -86,18 +88,18 @@ public:
     size_t size() const noexcept { return _size; }
 };
 
-Server::Server() : _name(nullptr), _fd(-1), _client_fd(-1), _thread(nullptr) {
+Server::Server() : _fd(-1), _client_fd(-1), _thread(nullptr) {
     {
-        std::string tpl = "/tmp/rawstor_io_tests_server.sock.XXXXXX";
-        _name = new char[tpl.length() + 1];
-        strncpy(_name, tpl.c_str(), tpl.length() + 1);
+        const char tpl[] = "/tmp/rawstor_io_tests_server.sock.XXXXXX";
+        _name.reserve(sizeof(tpl));
+        std::copy(tpl, tpl + sizeof(tpl), std::back_inserter(_name));
     }
 
-    if (mkstemp(_name) == -1) {
+    if (mkstemp(_name.data()) == -1) {
         RAWSTOR_THROW_ERRNO();
     }
 
-    unlink(_name);
+    unlink(_name.data());
 
     _fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (_fd == -1) {
@@ -106,7 +108,10 @@ Server::Server() : _name(nullptr), _fd(-1), _client_fd(-1), _thread(nullptr) {
 
     sockaddr_un addr = {};
     addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, _name, sizeof(addr.sun_path) - 1);
+    if (snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", _name.data()) <
+        0) {
+        RAWSTOR_THROW_ERRNO();
+    }
 
     try {
         if (bind(_fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == -1) {
@@ -118,7 +123,7 @@ Server::Server() : _name(nullptr), _fd(-1), _client_fd(-1), _thread(nullptr) {
         }
     } catch (...) {
         ::close(_fd);
-        unlink(_name);
+        unlink(_name.data());
         throw;
     }
 
@@ -141,10 +146,7 @@ Server::~Server() {
         ::close(_fd);
     }
 
-    if (_name != nullptr) {
-        unlink(_name);
-        delete[] _name;
-    }
+    unlink(_name.data());
 }
 
 void Server::_main(Server* server) {

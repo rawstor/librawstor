@@ -6,6 +6,7 @@
 #include <memory>
 #include <mutex>
 #include <thread>
+#include <vector>
 
 #include <cstddef>
 
@@ -17,7 +18,7 @@ class Command;
 
 class Server {
 private:
-    char* _name;
+    std::vector<char> _name;
     int _fd;
     int _client_fd;
 
@@ -44,7 +45,7 @@ public:
     Server();
     ~Server();
 
-    inline const char* name() const noexcept { return _name; }
+    inline const char* name() const noexcept { return _name.data(); }
 
     void close();
     void read(void* buf, size_t size);
