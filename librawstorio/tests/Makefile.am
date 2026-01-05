@@ -19,8 +19,8 @@ test_all_SOURCES = fixture.hpp \
                    task.hpp \
                    test_basics.cpp \
                    test_multiplex.cpp
-test_all_LDADD = $(top_builddir)/librawstorstd/src/librawstorstd.la \
-                 $(top_builddir)/librawstorio/src/librawstorio.la \
+test_all_LDADD = $(top_builddir)/librawstorio/src/librawstorio.la \
+                 $(top_builddir)/librawstorstd/src/librawstorstd.la \
                  -lgtest_main
 
 
