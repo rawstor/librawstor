@@ -1,0 +1,63 @@
+#ifndef RAWSTORIO_TESTS_TASK_HPP
+#define RAWSTORIO_TESTS_TASK_HPP
+
+#include <rawstorio/task.hpp>
+
+namespace rawstor {
+namespace io {
+namespace tests {
+
+class SimpleScalarTask final : public rawstor::io::TaskScalar {
+private:
+    void* _buf;
+    size_t _size;
+
+    size_t& _result;
+    int& _error;
+
+public:
+    SimpleScalarTask(
+        int fd, void* buf, size_t size, size_t& result, int& error
+    ) :
+        rawstor::io::TaskScalar(fd),
+        _buf(buf),
+        _size(size),
+        _result(result),
+        _error(error) {}
+
+    void operator()(size_t result, int error) override {
+        _result = result;
+        _error = error;
+    }
+
+    void* buf() noexcept override { return _buf; }
+    size_t size() const noexcept override { return _size; }
+};
+
+class SimplePollTask final : public rawstor::io::TaskPoll {
+private:
+    unsigned int _mask;
+
+    size_t& _result;
+    int& _error;
+
+public:
+    SimplePollTask(int fd, unsigned int mask, size_t& result, int& error) :
+        rawstor::io::TaskPoll(fd),
+        _mask(mask),
+        _result(result),
+        _error(error) {}
+
+    void operator()(size_t result, int error) override {
+        _result = result;
+        _error = error;
+    }
+
+    unsigned int mask() const noexcept override { return _mask; }
+};
+
+} // namespace tests
+} // namespace io
+} // namespace rawstor
+
+#endif // RAWSTORIO_TESTS_TASK_HPP

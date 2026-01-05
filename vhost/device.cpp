@@ -149,6 +149,7 @@ public:
 
     void preadv();
     void pwritev();
+    inline Request* req() noexcept { return _req.get(); }
 
     void operator()(size_t size, size_t result, int error);
 };
@@ -241,34 +242,50 @@ void TaskDispatch::operator()(size_t result, int error) {
         RAWSTOR_THROW_SYSTEM_ERROR(error);
     }
 
-    if (!(result & POLLIN)) {
-        rawstor_error("Unexpected poll result: %zu\n", result);
+    if (result & POLLNVAL) {
+        return;
+    }
+
+    if (result & POLLERR) {
         RAWSTOR_THROW_SYSTEM_ERROR(EBADF);
     }
 
-    _device.dispatch();
+    if (result & POLLIN) {
+        _device.dispatch();
+    }
+
+    if (result & POLLHUP) {
+        RAWSTOR_THROW_SYSTEM_ERROR(EPIPE);
+    }
 
     std::unique_ptr<TaskDispatch> t = std::make_unique<TaskDispatch>(_device);
     poll(_device.dev()->sock, std::move(t));
 }
 
 void TaskWatch::operator()(size_t result, int error) {
-    if (error == EBADF) {
-        return;
-    }
-
     if (error != 0) {
         RAWSTOR_THROW_SYSTEM_ERROR(error);
     }
 
-    if (!(result & _mask)) {
-        rawstor_error("Unexpected poll result: %zu\n", result);
+    if (result & POLLNVAL) {
+        return;
+    }
+
+    if (result & POLLERR) {
         RAWSTOR_THROW_SYSTEM_ERROR(EBADF);
     }
 
-    if (_device.get_watch(_fd)) {
-        _cb(_device.dev(), _condition, _data);
+    int watch = _device.find_watch(_fd);
 
+    if (result & _mask && watch) {
+        _cb(_device.dev(), _condition, _data);
+    }
+
+    if (result & POLLHUP) {
+        RAWSTOR_THROW_SYSTEM_ERROR(EPIPE);
+    }
+
+    if (watch) {
         std::unique_ptr<TaskWatch> t =
             std::make_unique<TaskWatch>(_device, _fd, _condition, _cb, _data);
         poll(_fd, std::move(t));
@@ -350,25 +367,37 @@ void set_protocol_features(VuDev* dev, uint64_t features) {
 }
 
 void process_request(std::unique_ptr<Request> req) {
-    try {
-        switch (req->type()) {
-        case VIRTIO_BLK_T_IN: {
-            std::unique_ptr<ObjectTask> t =
-                std::make_unique<ObjectTask>(std::move(req));
+    size_t in_size = rawstor_iovec_size(req->in_iov(), req->in_niov());
+
+    switch (req->type()) {
+    case VIRTIO_BLK_T_IN: {
+        std::unique_ptr<ObjectTask> t =
+            std::make_unique<ObjectTask>(std::move(req));
+        try {
             t->preadv();
             t.release();
-            break;
+        } catch (const std::exception& e) {
+            rawstor_error("%s\n", e.what());
+            t->req()->push(VIRTIO_BLK_S_IOERR, in_size);
         }
+        break;
+    }
 
-        case VIRTIO_BLK_T_OUT: {
-            std::unique_ptr<ObjectTask> t =
-                std::make_unique<ObjectTask>(std::move(req));
+    case VIRTIO_BLK_T_OUT: {
+        std::unique_ptr<ObjectTask> t =
+            std::make_unique<ObjectTask>(std::move(req));
+        try {
             t->pwritev();
             t.release();
-            break;
+        } catch (const std::exception& e) {
+            rawstor_error("%s\n", e.what());
+            t->req()->push(VIRTIO_BLK_S_IOERR, in_size);
         }
+        break;
+    }
 
-        case VIRTIO_BLK_T_GET_ID: {
+    case VIRTIO_BLK_T_GET_ID: {
+        try {
             char uuid[37];
             int res =
                 rawstor_object_id(req->device().object(), uuid, sizeof(uuid));
@@ -376,7 +405,6 @@ void process_request(std::unique_ptr<Request> req) {
                 RAWSTOR_THROW_SYSTEM_ERROR(-res);
             }
 
-            size_t in_size = rawstor_iovec_size(req->in_iov(), req->in_niov());
             size_t size = std::min(in_size, (size_t)VIRTIO_BLK_ID_BYTES);
 
             char* at = uuid;
@@ -389,21 +417,19 @@ void process_request(std::unique_ptr<Request> req) {
             rawstor_iovec_from_buf(req->in_iov(), req->in_niov(), 0, at, size);
 
             req->push(VIRTIO_BLK_S_OK, in_size);
-            break;
+        } catch (const std::exception& e) {
+            rawstor_error("%s\n", e.what());
+            req->push(VIRTIO_BLK_S_IOERR, in_size);
         }
+        break;
+    }
 
-        case VIRTIO_BLK_T_FLUSH:
-        case VIRTIO_BLK_T_DISCARD:
-        case VIRTIO_BLK_T_WRITE_ZEROES:
-        default:
-            size_t in_size = rawstor_iovec_size(req->in_iov(), req->in_niov());
-            req->push(VIRTIO_BLK_S_UNSUPP, in_size);
-            break;
-        }
-    } catch (const std::exception& e) {
-        rawstor_error("%s\n", e.what());
-        size_t in_size = rawstor_iovec_size(req->in_iov(), req->in_niov());
-        req->push(VIRTIO_BLK_S_IOERR, in_size);
+    case VIRTIO_BLK_T_FLUSH:
+    case VIRTIO_BLK_T_DISCARD:
+    case VIRTIO_BLK_T_WRITE_ZEROES:
+    default:
+        req->push(VIRTIO_BLK_S_UNSUPP, in_size);
+        break;
     }
 }
 
@@ -613,7 +639,7 @@ void Device::set_config(
 }
 
 void Device::set_watch(int fd, int condition, vu_watch_cb cb, void* data) {
-    if (!get_watch(fd)) {
+    if (!find_watch(fd)) {
         _watches.insert(std::pair<int, int>(fd, condition));
         std::unique_ptr<TaskWatch> t =
             std::make_unique<TaskWatch>(*this, fd, condition, cb, data);
@@ -625,7 +651,7 @@ void Device::remove_watch(int fd) {
     _watches.erase(fd);
 }
 
-int Device::get_watch(int fd) const noexcept {
+int Device::find_watch(int fd) const noexcept {
     const auto& it = _watches.find(fd);
     if (it == _watches.end()) {
         return 0;
