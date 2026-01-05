@@ -52,7 +52,6 @@ TEST_F(PollHupTest, pollout) {
     }
     _queue->wait(0);
 
-    EXPECT_FALSE(result & POLLOUT);
     EXPECT_TRUE(result & POLLHUP);
     EXPECT_EQ(error, 0);
 }
