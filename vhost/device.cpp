@@ -246,12 +246,12 @@ void TaskDispatch::operator()(size_t result, int error) {
         return;
     }
 
-    if (result & POLLIN) {
-        _device.dispatch();
-    }
-
     if (result & POLLERR) {
         RAWSTOR_THROW_SYSTEM_ERROR(EBADF);
+    }
+
+    if (result & POLLIN) {
+        _device.dispatch();
     }
 
     if (result & POLLHUP) {
@@ -271,14 +271,14 @@ void TaskWatch::operator()(size_t result, int error) {
         return;
     }
 
+    if (result & POLLERR) {
+        RAWSTOR_THROW_SYSTEM_ERROR(EBADF);
+    }
+
     int watch = _device.find_watch(_fd);
 
     if (result & _mask && watch) {
         _cb(_device.dev(), _condition, _data);
-    }
-
-    if (result & POLLERR) {
-        RAWSTOR_THROW_SYSTEM_ERROR(EBADF);
     }
 
     if (result & POLLHUP) {
