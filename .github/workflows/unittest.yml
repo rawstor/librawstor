@@ -26,7 +26,7 @@ jobs:
     - name: autogen
       run: ./autogen.sh
     - name: configure
-      run: ./configure --enable-trace --enable-asan ${{ matrix.without-liburing }}
+      run: ./configure --enable-asan ${{ matrix.without-liburing }}
     - name: make
       run: make -j$(nproc)
     - name: make test
