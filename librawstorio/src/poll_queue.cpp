@@ -176,6 +176,7 @@ void Queue::wait(unsigned int timeout) {
         }
 
         for (const pollfd& fd : fds) {
+            rawstor_trace("poll(): revents = %d\n", fd.revents);
             std::shared_ptr<Session>& s = _sessions.at(fd.fd);
             s->process(_cqes, fd.revents);
         }

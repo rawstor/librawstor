@@ -92,17 +92,18 @@ void EventMultiplexVector::add_to_batch(std::vector<iovec>& iov) {
     }
 }
 
-void EventSimplexPoll::process() noexcept {
+ssize_t EventSimplexPoll::process() noexcept {
 #ifdef RAWSTOR_TRACE_EVENTS
     trace(__FILE__, __LINE__, __FUNCTION__, "process()");
 #endif
+    return 0;
 }
 
 void EventSimplexPoll::set_result(short revents) noexcept {
     _result = revents;
 }
 
-void EventMultiplexScalarRead::process() noexcept {
+ssize_t EventMultiplexScalarRead::process() noexcept {
 #ifdef RAWSTOR_TRACE_EVENTS
     trace(__FILE__, __LINE__, __FUNCTION__, "read()");
 #endif
@@ -113,9 +114,10 @@ void EventMultiplexScalarRead::process() noexcept {
         set_error(error);
     }
     shift(res);
+    return res;
 }
 
-void EventMultiplexVectorRead::process() noexcept {
+ssize_t EventMultiplexVectorRead::process() noexcept {
 #ifdef RAWSTOR_TRACE_EVENTS
     trace(__FILE__, __LINE__, __FUNCTION__, "readv()");
 #endif
@@ -126,9 +128,10 @@ void EventMultiplexVectorRead::process() noexcept {
         set_error(error);
     }
     shift(res);
+    return res;
 }
 
-void EventSimplexScalarPositionalRead::process() noexcept {
+ssize_t EventSimplexScalarPositionalRead::process() noexcept {
 #ifdef RAWSTOR_TRACE_EVENTS
     trace(__FILE__, __LINE__, __FUNCTION__, "pread()");
 #endif
@@ -152,9 +155,10 @@ void EventSimplexScalarPositionalRead::process() noexcept {
         trace(__FILE__, __LINE__, __FUNCTION__, "partial");
     }
 #endif
+    return res;
 }
 
-void EventSimplexVectorPositionalRead::process() noexcept {
+ssize_t EventSimplexVectorPositionalRead::process() noexcept {
 #ifdef RAWSTOR_TRACE_EVENTS
     trace(__FILE__, __LINE__, __FUNCTION__, "preadv()");
 #endif
@@ -178,9 +182,10 @@ void EventSimplexVectorPositionalRead::process() noexcept {
         trace(__FILE__, __LINE__, __FUNCTION__, "partial");
     }
 #endif
+    return res;
 }
 
-void EventSimplexMessageRead::process() noexcept {
+ssize_t EventSimplexMessageRead::process() noexcept {
 #ifdef RAWSTOR_TRACE_EVENTS
     trace(__FILE__, __LINE__, __FUNCTION__, "recvmsg()");
 #endif
@@ -202,9 +207,10 @@ void EventSimplexMessageRead::process() noexcept {
         trace(__FILE__, __LINE__, __FUNCTION__, "partial");
     }
 #endif
+    return res;
 }
 
-void EventMultiplexScalarWrite::process() noexcept {
+ssize_t EventMultiplexScalarWrite::process() noexcept {
 #ifdef RAWSTOR_TRACE_EVENTS
     trace(__FILE__, __LINE__, __FUNCTION__, "write()");
 #endif
@@ -215,9 +221,10 @@ void EventMultiplexScalarWrite::process() noexcept {
         set_error(error);
     }
     shift(res);
+    return res;
 }
 
-void EventMultiplexVectorWrite::process() noexcept {
+ssize_t EventMultiplexVectorWrite::process() noexcept {
 #ifdef RAWSTOR_TRACE_EVENTS
     trace(__FILE__, __LINE__, __FUNCTION__, "writev()");
 #endif
@@ -228,9 +235,10 @@ void EventMultiplexVectorWrite::process() noexcept {
         set_error(error);
     }
     shift(res);
+    return res;
 }
 
-void EventSimplexScalarPositionalWrite::process() noexcept {
+ssize_t EventSimplexScalarPositionalWrite::process() noexcept {
 #ifdef RAWSTOR_TRACE_EVENTS
     trace(__FILE__, __LINE__, __FUNCTION__, "pwrite()");
 #endif
@@ -254,9 +262,10 @@ void EventSimplexScalarPositionalWrite::process() noexcept {
         trace(__FILE__, __LINE__, __FUNCTION__, "partial");
     }
 #endif
+    return res;
 }
 
-void EventSimplexVectorPositionalWrite::process() noexcept {
+ssize_t EventSimplexVectorPositionalWrite::process() noexcept {
 #ifdef RAWSTOR_TRACE_EVENTS
     trace(__FILE__, __LINE__, __FUNCTION__, "pwritev()");
 #endif
@@ -280,9 +289,10 @@ void EventSimplexVectorPositionalWrite::process() noexcept {
         trace(__FILE__, __LINE__, __FUNCTION__, "partial");
     }
 #endif
+    return res;
 }
 
-void EventSimplexMessageWrite::process() noexcept {
+ssize_t EventSimplexMessageWrite::process() noexcept {
 #ifdef RAWSTOR_TRACE_EVENTS
     trace(__FILE__, __LINE__, __FUNCTION__, "sendmsg()");
 #endif
@@ -304,6 +314,7 @@ void EventSimplexMessageWrite::process() noexcept {
         trace(__FILE__, __LINE__, __FUNCTION__, "partial");
     }
 #endif
+    return res;
 }
 
 } // namespace poll

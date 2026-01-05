@@ -28,14 +28,7 @@ Session::Session(Queue& q, int fd) :
 
 void Session::_process_poll(rawstor::RingBuf<Event>& cqes, short revents) {
     for (auto it = _poll_sqes.begin(); it != _poll_sqes.end();) {
-        if (revents & POLLNVAL) {
-            std::unique_ptr<EventSimplexPoll> event = std::move(*it);
-            it = _poll_sqes.erase(it);
-
-            event->set_error(EBADF);
-            event->process();
-            cqes.push(std::move(event));
-        } else if ((*it)->mask() & revents) {
+        if (((*it)->mask() | POLLERR | POLLHUP | POLLNVAL) & revents) {
             std::unique_ptr<EventSimplexPoll> event = std::move(*it);
             it = _poll_sqes.erase(it);
 
@@ -53,10 +46,10 @@ void Session::_process_simplex(
     bool write, short revents
 ) {
     if (write) {
-        if (!(revents & POLLHUP)) {
+        if (!(revents & (POLLERR | POLLHUP | POLLNVAL))) {
             event->process();
         } else {
-            event->set_error(ECONNRESET);
+            event->set_error(EPIPE);
         }
     } else {
         event->process();
@@ -75,11 +68,27 @@ void Session::_process_multiplex(
         rawstor_trace("single event in batch\n");
 #endif
         std::unique_ptr<EventMultiplex> event(events.front().release());
-        event->process();
-        if (event->completed()) {
+        ssize_t res;
+        if (write) {
+            if (!(revents & (POLLERR | POLLHUP | POLLNVAL))) {
+                res = event->process();
+            } else {
+                res = -1;
+                event->set_error(EPIPE);
+            }
+        } else {
+            res = event->process();
+        }
+        if (res > 0) {
+            if (event->completed()) {
+                cqes.push(std::move(event));
+            } else {
+                sqes.push(std::move(event));
+            }
+        } else if (res == 0) {
             cqes.push(std::move(event));
         } else {
-            sqes.push(std::move(event));
+            cqes.push(std::move(event));
         }
         events.clear();
         return;
@@ -93,14 +102,14 @@ void Session::_process_multiplex(
 
     ssize_t res;
     if (write) {
-        if (!(revents & POLLHUP)) {
+        if (!(revents & (POLLERR | POLLHUP | POLLNVAL))) {
 #ifdef RAWSTOR_TRACE_EVENTS
             rawstor_trace("batch writev()\n");
 #endif
             res = ::writev(_fd, iov.data(), iov.size());
         } else {
             res = -1;
-            errno = ECONNRESET;
+            errno = EPIPE;
         }
     } else {
 #ifdef RAWSTOR_TRACE_EVENTS
@@ -280,10 +289,10 @@ void Session::process(
     rawstor::RingBuf<rawstor::io::poll::Event>& cqes, short revents
 ) {
     _process_poll(cqes, revents);
-    if (revents & (POLLIN | POLLHUP)) {
+    if (revents & (POLLIN | POLLERR | POLLHUP | POLLNVAL)) {
         _process(_read_sqes, cqes, false, revents);
     }
-    if (revents & (POLLOUT | POLLHUP)) {
+    if (revents & (POLLOUT | POLLERR | POLLHUP | POLLNVAL)) {
         _process(_write_sqes, cqes, true, revents);
     }
 }
