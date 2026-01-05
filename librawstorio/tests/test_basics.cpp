@@ -4,12 +4,52 @@
 
 #include <gtest/gtest.h>
 
+#include <poll.h>
+
 namespace {
 
 class BasicsTest : public rawstor::io::tests::QueueTest {
 protected:
     BasicsTest() : rawstor::io::tests::QueueTest(1) {}
 };
+
+TEST_F(BasicsTest, pollin) {
+    const char server_buf[] = "data";
+    size_t result = 0;
+    int error = 0;
+
+    _server.write(server_buf, sizeof(server_buf));
+    _server.wait();
+
+    {
+        std::unique_ptr<rawstor::io::TaskPoll> t =
+            std::make_unique<rawstor::io::tests::SimplePollTask>(
+                _fd, POLLIN, result, error
+            );
+        _queue->poll(std::move(t));
+    }
+    _queue->wait(0);
+
+    EXPECT_EQ(result, (size_t)POLLIN);
+    EXPECT_EQ(error, 0);
+}
+
+TEST_F(BasicsTest, pollout) {
+    size_t result = 0;
+    int error = 0;
+
+    {
+        std::unique_ptr<rawstor::io::TaskPoll> t =
+            std::make_unique<rawstor::io::tests::SimplePollTask>(
+                _fd, POLLOUT, result, error
+            );
+        _queue->poll(std::move(t));
+    }
+    _queue->wait(0);
+
+    EXPECT_EQ(result, (size_t)POLLOUT);
+    EXPECT_EQ(error, 0);
+}
 
 TEST_F(BasicsTest, read) {
     const char server_buf[] = "data";
@@ -20,11 +60,13 @@ TEST_F(BasicsTest, read) {
     _server.write(server_buf, sizeof(server_buf));
     _server.wait();
 
-    std::unique_ptr<rawstor::io::TaskScalar> t =
-        std::make_unique<rawstor::io::tests::SimpleTask>(
-            _fd, client_buf, sizeof(client_buf), result, error
-        );
-    _queue->read(std::move(t));
+    {
+        std::unique_ptr<rawstor::io::TaskScalar> t =
+            std::make_unique<rawstor::io::tests::SimpleScalarTask>(
+                _fd, client_buf, sizeof(client_buf), result, error
+            );
+        _queue->read(std::move(t));
+    }
     _queue->wait(0);
 
     EXPECT_EQ(result, sizeof(client_buf));
@@ -38,11 +80,13 @@ TEST_F(BasicsTest, write) {
     size_t result = 0;
     int error = 0;
 
-    std::unique_ptr<rawstor::io::TaskScalar> t =
-        std::make_unique<rawstor::io::tests::SimpleTask>(
-            _fd, client_buf, sizeof(client_buf), result, error
-        );
-    _queue->write(std::move(t));
+    {
+        std::unique_ptr<rawstor::io::TaskScalar> t =
+            std::make_unique<rawstor::io::tests::SimpleScalarTask>(
+                _fd, client_buf, sizeof(client_buf), result, error
+            );
+        _queue->write(std::move(t));
+    }
     _queue->wait(0);
 
     _server.read(server_buf, sizeof(server_buf));
