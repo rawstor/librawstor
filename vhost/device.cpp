@@ -375,11 +375,11 @@ void process_request(std::unique_ptr<Request> req) {
             std::make_unique<ObjectTask>(std::move(req));
         try {
             t->preadv();
+            t.release();
         } catch (const std::exception& e) {
             rawstor_error("%s\n", e.what());
             t->req()->push(VIRTIO_BLK_S_IOERR, in_size);
         }
-        t.release();
         break;
     }
 
@@ -388,11 +388,11 @@ void process_request(std::unique_ptr<Request> req) {
             std::make_unique<ObjectTask>(std::move(req));
         try {
             t->pwritev();
+            t.release();
         } catch (const std::exception& e) {
             rawstor_error("%s\n", e.what());
             t->req()->push(VIRTIO_BLK_S_IOERR, in_size);
         }
-        t.release();
         break;
     }
 
