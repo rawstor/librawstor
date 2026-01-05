@@ -250,6 +250,10 @@ void TaskDispatch::operator()(size_t result, int error) {
         _device.dispatch();
     }
 
+    if (result & POLLERR) {
+        RAWSTOR_THROW_SYSTEM_ERROR(EBADF);
+    }
+
     if (result & POLLHUP) {
         RAWSTOR_THROW_SYSTEM_ERROR(EPIPE);
     }
@@ -271,6 +275,10 @@ void TaskWatch::operator()(size_t result, int error) {
 
     if (result & _mask && watch) {
         _cb(_device.dev(), _condition, _data);
+    }
+
+    if (result & POLLERR) {
+        RAWSTOR_THROW_SYSTEM_ERROR(EBADF);
     }
 
     if (result & POLLHUP) {

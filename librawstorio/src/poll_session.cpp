@@ -28,21 +28,7 @@ Session::Session(Queue& q, int fd) :
 
 void Session::_process_poll(rawstor::RingBuf<Event>& cqes, short revents) {
     for (auto it = _poll_sqes.begin(); it != _poll_sqes.end();) {
-        if (revents & POLLNVAL) {
-            std::unique_ptr<EventSimplexPoll> event = std::move(*it);
-            it = _poll_sqes.erase(it);
-
-            event->set_result(revents);
-            event->process();
-            cqes.push(std::move(event));
-        } else if (revents & POLLHUP) {
-            std::unique_ptr<EventSimplexPoll> event = std::move(*it);
-            it = _poll_sqes.erase(it);
-
-            event->set_result(revents);
-            event->process();
-            cqes.push(std::move(event));
-        } else if ((*it)->mask() & revents) {
+        if (((*it)->mask() | POLLERR | POLLHUP | POLLNVAL) & revents) {
             std::unique_ptr<EventSimplexPoll> event = std::move(*it);
             it = _poll_sqes.erase(it);
 
@@ -60,7 +46,7 @@ void Session::_process_simplex(
     bool write, short revents
 ) {
     if (write) {
-        if (!(revents & POLLHUP)) {
+        if (!(revents & (POLLERR | POLLHUP | POLLNVAL))) {
             event->process();
         } else {
             event->set_error(EPIPE);
@@ -84,7 +70,7 @@ void Session::_process_multiplex(
         std::unique_ptr<EventMultiplex> event(events.front().release());
         ssize_t res;
         if (write) {
-            if (!(revents & POLLHUP)) {
+            if (!(revents & (POLLERR | POLLHUP | POLLNVAL))) {
                 res = event->process();
             } else {
                 res = -1;
@@ -116,7 +102,7 @@ void Session::_process_multiplex(
 
     ssize_t res;
     if (write) {
-        if (!(revents & POLLHUP)) {
+        if (!(revents & (POLLERR | POLLHUP | POLLNVAL))) {
 #ifdef RAWSTOR_TRACE_EVENTS
             rawstor_trace("batch writev()\n");
 #endif
@@ -303,10 +289,10 @@ void Session::process(
     rawstor::RingBuf<rawstor::io::poll::Event>& cqes, short revents
 ) {
     _process_poll(cqes, revents);
-    if (revents & (POLLIN | POLLHUP)) {
+    if (revents & (POLLIN | POLLERR | POLLHUP | POLLNVAL)) {
         _process(_read_sqes, cqes, false, revents);
     }
-    if (revents & (POLLOUT | POLLHUP)) {
+    if (revents & (POLLOUT | POLLERR | POLLHUP | POLLNVAL)) {
         _process(_write_sqes, cqes, true, revents);
     }
 }
