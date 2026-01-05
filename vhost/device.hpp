@@ -81,7 +81,7 @@ public:
 
     void remove_watch(int fd);
 
-    int get_watch(int fd) const noexcept;
+    int find_watch(int fd) const noexcept;
 
     void loop();
 };

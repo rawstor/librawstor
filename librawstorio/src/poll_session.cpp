@@ -33,7 +33,6 @@ void Session::_process_poll(rawstor::RingBuf<Event>& cqes, short revents) {
             it = _poll_sqes.erase(it);
 
             event->set_result(revents);
-            event->set_error(EBADF);
             event->process();
             cqes.push(std::move(event));
         } else if (revents & POLLHUP) {
@@ -41,7 +40,6 @@ void Session::_process_poll(rawstor::RingBuf<Event>& cqes, short revents) {
             it = _poll_sqes.erase(it);
 
             event->set_result(revents);
-            event->set_error(EPIPE);
             event->process();
             cqes.push(std::move(event));
         } else if ((*it)->mask() & revents) {

@@ -31,8 +31,9 @@ TEST_F(PollHupTest, pollin) {
     }
     _queue->wait(0);
 
-    EXPECT_EQ(result, (size_t)(POLLIN | POLLHUP));
-    EXPECT_EQ(error, EPIPE);
+    EXPECT_TRUE(result & POLLIN);
+    EXPECT_TRUE(result & POLLHUP);
+    EXPECT_EQ(error, 0);
 }
 
 TEST_F(PollHupTest, pollout) {
@@ -51,8 +52,9 @@ TEST_F(PollHupTest, pollout) {
     }
     _queue->wait(0);
 
-    EXPECT_EQ(result, (size_t)POLLHUP);
-    EXPECT_EQ(error, EPIPE);
+    EXPECT_FALSE(result & POLLOUT);
+    EXPECT_TRUE(result & POLLHUP);
+    EXPECT_EQ(error, 0);
 }
 
 TEST_F(PollHupTest, read) {
