@@ -28,7 +28,7 @@ int open_unix_socket(const std::string& socket_path) {
     }
 
     try {
-        struct sockaddr_un addr;
+        sockaddr_un addr = {};
         addr.sun_family = AF_UNIX;
 
         int res = snprintf(
@@ -44,7 +44,9 @@ int open_unix_socket(const std::string& socket_path) {
             throw std::runtime_error(oss.str());
         }
 
-        if (bind(server_socket, (struct sockaddr*)&addr, sizeof(addr))) {
+        if (bind(
+                server_socket, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)
+            )) {
             RAWSTOR_THROW_ERRNO();
         }
 
