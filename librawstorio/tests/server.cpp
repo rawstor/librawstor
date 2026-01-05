@@ -251,15 +251,8 @@ void Server::write(const void* buf, size_t size) {
 }
 
 void Server::wait() {
-    while (true) {
-        std::unique_lock lock(_mutex);
-        if (!_commands.empty()) {
-            _pop_condition.wait(lock);
-        }
-        if (_commands.empty()) {
-            break;
-        }
-    }
+    std::unique_lock lock(_mutex);
+    _pop_condition.wait(lock, [this] { return _commands.empty(); });
 }
 
 } // namespace tests
