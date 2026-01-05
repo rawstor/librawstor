@@ -52,13 +52,12 @@ TEST_F(BasicsTest, write) {
     _queue->write(std::move(t));
     _queue->wait(0);
 
-    _server.read(sizeof(server_buf));
+    _server.read(server_buf, sizeof(server_buf));
     _server.wait();
 
     EXPECT_EQ(result, sizeof(client_buf));
     EXPECT_EQ(error, 0);
-    EXPECT_EQ(_server.buf_size(), sizeof(server_buf));
-    EXPECT_EQ(strcmp(_server.buf(), client_buf), 0);
+    EXPECT_EQ(strcmp(server_buf, client_buf), 0);
 }
 
 } // unnamed namespace

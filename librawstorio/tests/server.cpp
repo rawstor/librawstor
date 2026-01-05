@@ -7,8 +7,6 @@
 
 #include <unistd.h>
 
-#include <algorithm>
-#include <iterator>
 #include <memory>
 #include <mutex>
 #include <new>
@@ -55,20 +53,15 @@ public:
 
 class CommandRead final : public Command {
 private:
-    char* _data;
+    void* _buf;
     size_t _size;
 
 public:
-    CommandRead(size_t size) : _data(nullptr), _size(size) {
-        _data = static_cast<char*>(malloc(_size));
-        if (_data == nullptr) {
-            throw std::bad_alloc();
-        }
-    }
-    ~CommandRead() override { free(_data); }
+    CommandRead(void* buf, size_t size) : _buf(buf), _size(size) {}
+    ~CommandRead() override {}
 
     CommandType type() const noexcept override { return CT_READ; }
-    char* data() noexcept { return _data; }
+    void* buf() noexcept { return _buf; }
     size_t size() const noexcept { return _size; }
 };
 
@@ -81,21 +74,15 @@ public:
 
 class CommandWrite final : public Command {
 private:
-    void* _data;
+    const void* _buf;
     size_t _size;
 
 public:
-    CommandWrite(const void* data, size_t size) : _data(nullptr), _size(size) {
-        _data = malloc(_size);
-        if (_data == nullptr) {
-            throw std::bad_alloc();
-        }
-        memcpy(_data, data, _size);
-    }
-    ~CommandWrite() override { free(_data); }
+    CommandWrite(const void* buf, size_t size) : _buf(buf), _size(size) {}
+    ~CommandWrite() override {}
 
     CommandType type() const noexcept override { return CT_WRITE; }
-    void* data() noexcept { return _data; }
+    const void* buf() noexcept { return _buf; }
     size_t size() const noexcept { return _size; }
 };
 
@@ -216,24 +203,16 @@ void Server::_do_close(Command&) {
 
 void Server::_do_read(Command& command) {
     CommandRead& command_read = dynamic_cast<CommandRead&>(command);
-    ssize_t res = ::read(_client_fd, command_read.data(), command_read.size());
+    ssize_t res = ::read(_client_fd, command_read.buf(), command_read.size());
     if (res == -1) {
         RAWSTOR_THROW_ERRNO();
-    }
-    _buf.clear();
-    if (res > 0) {
-        _buf.reserve(res);
-        std::copy(
-            command_read.data(), command_read.data() + res,
-            std::back_inserter(_buf)
-        );
     }
 }
 
 void Server::_do_write(Command& command) {
     CommandWrite& command_write = dynamic_cast<CommandWrite&>(command);
     ssize_t res =
-        ::write(_client_fd, command_write.data(), command_write.size());
+        ::write(_client_fd, command_write.buf(), command_write.size());
     if (res == -1) {
         RAWSTOR_THROW_ERRNO();
     }
@@ -257,15 +236,15 @@ void Server::close() {
     _push_condition.notify_one();
 }
 
-void Server::read(size_t size) {
+void Server::read(void* buf, size_t size) {
     std::unique_lock lock(_mutex);
-    _commands.push_back(std::make_shared<CommandRead>(size));
+    _commands.push_back(std::make_shared<CommandRead>(buf, size));
     _push_condition.notify_one();
 }
 
-void Server::write(const void* data, size_t size) {
+void Server::write(const void* buf, size_t size) {
     std::unique_lock lock(_mutex);
-    _commands.push_back(std::make_shared<CommandWrite>(data, size));
+    _commands.push_back(std::make_shared<CommandWrite>(buf, size));
     _push_condition.notify_one();
 }
 
@@ -279,14 +258,6 @@ void Server::wait() {
             break;
         }
     }
-}
-
-const char* Server::buf() const noexcept {
-    return _buf.data();
-}
-
-size_t Server::buf_size() const noexcept {
-    return _buf.size();
 }
 
 } // namespace tests

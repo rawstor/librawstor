@@ -20,7 +20,6 @@ private:
     char* _name;
     int _fd;
     int _client_fd;
-    std::vector<char> _buf;
 
     std::unique_ptr<std::thread> _thread;
 
@@ -48,13 +47,10 @@ public:
     inline const char* name() const noexcept { return _name; }
 
     void close();
-    void read(size_t size);
-    void write(const void* data, size_t size);
+    void read(void* buf, size_t size);
+    void write(const void* buf, size_t size);
 
     void wait();
-
-    const char* buf() const noexcept;
-    size_t buf_size() const noexcept;
 };
 
 } // namespace tests
