@@ -56,7 +56,7 @@ void Session::_process_simplex(
         if (!(revents & POLLHUP)) {
             event->process();
         } else {
-            event->set_error(ECONNRESET);
+            event->set_error(EPIPE);
         }
     } else {
         event->process();
@@ -81,7 +81,7 @@ void Session::_process_multiplex(
                 res = event->process();
             } else {
                 res = -1;
-                event->set_error(ECONNRESET);
+                event->set_error(EPIPE);
             }
         } else {
             res = event->process();
@@ -116,7 +116,7 @@ void Session::_process_multiplex(
             res = ::writev(_fd, iov.data(), iov.size());
         } else {
             res = -1;
-            errno = ECONNRESET;
+            errno = EPIPE;
         }
     } else {
 #ifdef RAWSTOR_TRACE_EVENTS

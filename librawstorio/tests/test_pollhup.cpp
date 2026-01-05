@@ -49,7 +49,7 @@ TEST_F(PollHupTest, write) {
     _queue->wait(0);
 
     EXPECT_EQ(result, (size_t)0);
-    EXPECT_EQ(error, ECONNRESET);
+    EXPECT_EQ(error, EPIPE);
 }
 
 } // unnamed namespace
