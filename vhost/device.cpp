@@ -149,6 +149,7 @@ public:
 
     void preadv();
     void pwritev();
+    inline Request* req() noexcept { return _req.get(); }
 
     void operator()(size_t size, size_t result, int error);
 };
@@ -358,25 +359,37 @@ void set_protocol_features(VuDev* dev, uint64_t features) {
 }
 
 void process_request(std::unique_ptr<Request> req) {
-    try {
-        switch (req->type()) {
-        case VIRTIO_BLK_T_IN: {
-            std::unique_ptr<ObjectTask> t =
-                std::make_unique<ObjectTask>(std::move(req));
+    size_t in_size = rawstor_iovec_size(req->in_iov(), req->in_niov());
+
+    switch (req->type()) {
+    case VIRTIO_BLK_T_IN: {
+        std::unique_ptr<ObjectTask> t =
+            std::make_unique<ObjectTask>(std::move(req));
+        try {
             t->preadv();
-            t.release();
-            break;
+        } catch (const std::exception& e) {
+            rawstor_error("%s\n", e.what());
+            t->req()->push(VIRTIO_BLK_S_IOERR, in_size);
         }
+        t.release();
+        break;
+    }
 
-        case VIRTIO_BLK_T_OUT: {
-            std::unique_ptr<ObjectTask> t =
-                std::make_unique<ObjectTask>(std::move(req));
+    case VIRTIO_BLK_T_OUT: {
+        std::unique_ptr<ObjectTask> t =
+            std::make_unique<ObjectTask>(std::move(req));
+        try {
             t->pwritev();
-            t.release();
-            break;
+        } catch (const std::exception& e) {
+            rawstor_error("%s\n", e.what());
+            t->req()->push(VIRTIO_BLK_S_IOERR, in_size);
         }
+        t.release();
+        break;
+    }
 
-        case VIRTIO_BLK_T_GET_ID: {
+    case VIRTIO_BLK_T_GET_ID: {
+        try {
             char uuid[37];
             int res =
                 rawstor_object_id(req->device().object(), uuid, sizeof(uuid));
@@ -384,7 +397,6 @@ void process_request(std::unique_ptr<Request> req) {
                 RAWSTOR_THROW_SYSTEM_ERROR(-res);
             }
 
-            size_t in_size = rawstor_iovec_size(req->in_iov(), req->in_niov());
             size_t size = std::min(in_size, (size_t)VIRTIO_BLK_ID_BYTES);
 
             char* at = uuid;
@@ -397,21 +409,19 @@ void process_request(std::unique_ptr<Request> req) {
             rawstor_iovec_from_buf(req->in_iov(), req->in_niov(), 0, at, size);
 
             req->push(VIRTIO_BLK_S_OK, in_size);
-            break;
+        } catch (const std::exception& e) {
+            rawstor_error("%s\n", e.what());
+            req->push(VIRTIO_BLK_S_IOERR, in_size);
         }
+        break;
+    }
 
-        case VIRTIO_BLK_T_FLUSH:
-        case VIRTIO_BLK_T_DISCARD:
-        case VIRTIO_BLK_T_WRITE_ZEROES:
-        default:
-            size_t in_size = rawstor_iovec_size(req->in_iov(), req->in_niov());
-            req->push(VIRTIO_BLK_S_UNSUPP, in_size);
-            break;
-        }
-    } catch (const std::exception& e) {
-        rawstor_error("%s\n", e.what());
-        size_t in_size = rawstor_iovec_size(req->in_iov(), req->in_niov());
-        req->push(VIRTIO_BLK_S_IOERR, in_size);
+    case VIRTIO_BLK_T_FLUSH:
+    case VIRTIO_BLK_T_DISCARD:
+    case VIRTIO_BLK_T_WRITE_ZEROES:
+    default:
+        req->push(VIRTIO_BLK_S_UNSUPP, in_size);
+        break;
     }
 }
 
