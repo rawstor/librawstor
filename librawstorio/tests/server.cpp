@@ -85,7 +85,7 @@ private:
     size_t _size;
 
 public:
-    CommandWrite(void* data, size_t size) : _data(nullptr), _size(size) {
+    CommandWrite(const void* data, size_t size) : _data(nullptr), _size(size) {
         _data = malloc(_size);
         if (_data == nullptr) {
             throw std::bad_alloc();
@@ -285,7 +285,7 @@ void Server::read(size_t size) {
     }
 }
 
-void Server::write(void* data, size_t size) {
+void Server::write(const void* data, size_t size) {
     while (true) {
         std::unique_lock lock(_mutex);
         if (_command.get() != nullptr) {

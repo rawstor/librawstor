@@ -47,7 +47,7 @@ public:
 
     void close();
     void read(size_t size);
-    void write(void* data, size_t size);
+    void write(const void* data, size_t size);
 
     void wait();
 

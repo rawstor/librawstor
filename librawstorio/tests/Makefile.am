@@ -13,7 +13,8 @@ AM_LDFLAGS = $(ASAN_LDFLAGS) \
              $(GTEST_LIBS)
 
 
-test_all_SOURCES = server.hpp \
+test_all_SOURCES = fixture.hpp \
+                   server.hpp \
                    server.cpp \
                    task.hpp \
                    test_basics.cpp
