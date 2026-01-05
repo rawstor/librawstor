@@ -106,7 +106,7 @@ Server::Server() : _name(nullptr), _fd(-1), _client_fd(-1), _thread(nullptr) {
 
     sockaddr_un addr = {};
     addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, _name, strlen(_name) + 1);
+    strncpy(addr.sun_path, _name, sizeof(addr.sun_path) - 1);
 
     try {
         if (bind(_fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == -1) {
