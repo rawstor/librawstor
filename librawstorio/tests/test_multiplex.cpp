@@ -1,15 +1,8 @@
-#include "server.hpp"
-
 #include "fixture.hpp"
+#include "server.hpp"
 #include "task.hpp"
 
-#include <rawstorstd/gpp.hpp>
-
-#include <rawstorio/queue.hpp>
-
 #include <gtest/gtest.h>
-
-#include <unistd.h>
 
 namespace {
 

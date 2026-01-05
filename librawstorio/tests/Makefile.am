@@ -19,7 +19,8 @@ test_all_SOURCES = main.cpp \
                    server.cpp \
                    task.hpp \
                    test_basics.cpp \
-                   test_multiplex.cpp
+                   test_multiplex.cpp \
+                   test_pollhup.cpp
 test_all_LDADD = $(top_builddir)/librawstorio/src/librawstorio.la \
                  $(top_builddir)/librawstorstd/src/librawstorstd.la
 

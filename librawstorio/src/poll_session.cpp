@@ -75,11 +75,27 @@ void Session::_process_multiplex(
         rawstor_trace("single event in batch\n");
 #endif
         std::unique_ptr<EventMultiplex> event(events.front().release());
-        event->process();
-        if (event->completed()) {
+        ssize_t res;
+        if (write) {
+            if (!(revents & POLLHUP)) {
+                res = event->process();
+            } else {
+                res = -1;
+                event->set_error(ECONNRESET);
+            }
+        } else {
+            res = event->process();
+        }
+        if (res > 0) {
+            if (event->completed()) {
+                cqes.push(std::move(event));
+            } else {
+                sqes.push(std::move(event));
+            }
+        } else if (res == 0) {
             cqes.push(std::move(event));
         } else {
-            sqes.push(std::move(event));
+            cqes.push(std::move(event));
         }
         events.clear();
         return;

@@ -1,6 +1,8 @@
 #ifndef RAWSTORIO_TESTS_FIXTURE_HPP
 #define RAWSTORIO_TESTS_FIXTURE_HPP
 
+#include "server.hpp"
+
 #include <rawstorstd/gpp.hpp>
 
 #include <rawstorio/queue.hpp>
