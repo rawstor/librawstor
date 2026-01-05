@@ -168,28 +168,30 @@ void Server::_loop() {
     bool exit = false;
     while (!exit) {
         std::unique_lock lock(_mutex);
-        if (_command.get() == nullptr) {
-            _condition.wait(lock);
+        if (_commands.empty()) {
+            _push_condition.wait(lock);
         }
-        assert(_command.get() != nullptr);
-        switch (_command->type()) {
+        assert(!_commands.empty());
+        std::shared_ptr<Command> command = _commands.front();
+        _commands.pop_front();
+        switch (command->type()) {
         case CT_ACCEPT:
-            _do_accept(*_command.get());
+            _do_accept(*command.get());
             break;
         case CT_CLOSE:
-            _do_close(*_command.get());
+            _do_close(*command.get());
             break;
         case CT_READ:
-            _do_read(*_command.get());
+            _do_read(*command.get());
             break;
         case CT_STOP:
             exit = true;
             break;
         case CT_WRITE:
-            _do_write(*_command.get());
+            _do_write(*command.get());
             break;
         }
-        _command.reset();
+        _pop_condition.notify_one();
     }
 }
 
@@ -238,72 +240,44 @@ void Server::_do_write(Command& command) {
 }
 
 void Server::_accept() {
-    while (true) {
-        std::unique_lock lock(_mutex);
-        if (_command.get() != nullptr) {
-            continue;
-        }
-        _command = std::make_unique<CommandAccept>();
-        _condition.notify_one();
-        break;
-    }
+    std::unique_lock lock(_mutex);
+    _commands.push_back(std::make_shared<CommandAccept>());
+    _push_condition.notify_one();
 }
 
 void Server::_stop() {
-    while (true) {
-        std::unique_lock lock(_mutex);
-        if (_command.get() != nullptr) {
-            continue;
-        }
-        _command = std::make_unique<CommandStop>();
-        _condition.notify_one();
-        break;
-    }
+    std::unique_lock lock(_mutex);
+    _commands.push_back(std::make_shared<CommandStop>());
+    _push_condition.notify_one();
 }
 
 void Server::close() {
-    while (true) {
-        std::unique_lock lock(_mutex);
-        if (_command.get() != nullptr) {
-            continue;
-        }
-        _command = std::make_unique<CommandClose>();
-        _condition.notify_one();
-        break;
-    }
+    std::unique_lock lock(_mutex);
+    _commands.push_back(std::make_shared<CommandClose>());
+    _push_condition.notify_one();
 }
 
 void Server::read(size_t size) {
-    while (true) {
-        std::unique_lock lock(_mutex);
-        if (_command.get() != nullptr) {
-            continue;
-        }
-        _command = std::make_unique<CommandRead>(size);
-        _condition.notify_one();
-        break;
-    }
+    std::unique_lock lock(_mutex);
+    _commands.push_back(std::make_shared<CommandRead>(size));
+    _push_condition.notify_one();
 }
 
 void Server::write(const void* data, size_t size) {
-    while (true) {
-        std::unique_lock lock(_mutex);
-        if (_command.get() != nullptr) {
-            continue;
-        }
-        _command = std::make_unique<CommandWrite>(data, size);
-        _condition.notify_one();
-        break;
-    }
+    std::unique_lock lock(_mutex);
+    _commands.push_back(std::make_shared<CommandWrite>(data, size));
+    _push_condition.notify_one();
 }
 
 void Server::wait() {
     while (true) {
         std::unique_lock lock(_mutex);
-        if (_command.get() != nullptr) {
-            continue;
+        if (!_commands.empty()) {
+            _pop_condition.wait(lock);
         }
-        break;
+        if (_commands.empty()) {
+            break;
+        }
     }
 }
 

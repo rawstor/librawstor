@@ -2,6 +2,7 @@
 #define RAWSTORIO_TESTS_SERVER_HPP
 
 #include <condition_variable>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -23,9 +24,10 @@ private:
 
     std::unique_ptr<std::thread> _thread;
 
-    std::unique_ptr<Command> _command;
+    std::deque<std::shared_ptr<Command>> _commands;
 
-    std::condition_variable _condition;
+    std::condition_variable _push_condition;
+    std::condition_variable _pop_condition;
     std::mutex _mutex;
 
     static void _main(Server* server);
