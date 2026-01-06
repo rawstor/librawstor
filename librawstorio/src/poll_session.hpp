@@ -26,19 +26,16 @@ private:
     void _process_poll(rawstor::RingBuf<Event>& cqes, short revents);
 
     void _process_simplex(
-        std::unique_ptr<EventSimplex> event, rawstor::RingBuf<Event>& cqes,
-        bool write, short revents
+        std::unique_ptr<EventSimplex> event, rawstor::RingBuf<Event>& cqes
     );
 
     void _process_multiplex(
         std::vector<std::unique_ptr<EventMultiplex>>& events, unsigned int niov,
-        rawstor::RingBuf<Event>& sqes, rawstor::RingBuf<Event>& cqes,
-        bool write, short revents
+        rawstor::RingBuf<Event>& sqes, rawstor::RingBuf<Event>& cqes, bool write
     );
 
     void _process(
-        rawstor::RingBuf<Event>& sqes, rawstor::RingBuf<Event>& cqes,
-        bool write, short revents
+        rawstor::RingBuf<Event>& sqes, rawstor::RingBuf<Event>& cqes, bool write
     );
 
 public:
