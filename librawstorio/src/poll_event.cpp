@@ -112,8 +112,9 @@ ssize_t EventMultiplexScalarRead::process() noexcept {
         int error = errno;
         errno = 0;
         set_error(error);
+    } else {
+        shift(res);
     }
-    shift(res);
     return res;
 }
 
@@ -126,8 +127,9 @@ ssize_t EventMultiplexVectorRead::process() noexcept {
         int error = errno;
         errno = 0;
         set_error(error);
+    } else {
+        shift(res);
     }
-    shift(res);
     return res;
 }
 
@@ -219,8 +221,9 @@ ssize_t EventMultiplexScalarWrite::process() noexcept {
         int error = errno;
         errno = 0;
         set_error(error);
+    } else {
+        shift(res);
     }
-    shift(res);
     return res;
 }
 
@@ -233,8 +236,9 @@ ssize_t EventMultiplexVectorWrite::process() noexcept {
         int error = errno;
         errno = 0;
         set_error(error);
+    } else {
+        shift(res);
     }
-    shift(res);
     return res;
 }
 
