@@ -177,39 +177,46 @@ void Queue::wait(unsigned int timeout) {
         .tv_sec = timeout / 1000, .tv_nsec = 1000000u * (timeout % 1000)
     };
 
-    if (io_uring_sq_ready(&_ring) > 0) {
-        /**
-         * TODO: Replace with io_uring_submit_wait_cqe_timeout and do something
-         * with sigmask.
-         */
-        res = io_uring_submit(&_ring);
-        if (res < 0) {
-            RAWSTOR_THROW_SYSTEM_ERROR(-res);
+    while (true) {
+        if (io_uring_sq_ready(&_ring) > 0) {
+            /**
+             * TODO: Replace with io_uring_submit_wait_cqe_timeout and do
+             * something with sigmask.
+             */
+            res = io_uring_submit(&_ring);
+            if (res < 0) {
+                RAWSTOR_THROW_SYSTEM_ERROR(-res);
+            }
+            rawstor_trace("io_uring_wait_cqe_timeout()\n");
+            res = io_uring_wait_cqe_timeout(&_ring, &cqe, &ts);
+            rawstor_trace("io_uring_wait_cqe_timeout(): res = %d\n", res);
+            if (res < 0) {
+                RAWSTOR_THROW_SYSTEM_ERROR(-res);
+            }
+        } else {
+            rawstor_trace("io_uring_wait_cqe_timeout()\n");
+            res = io_uring_wait_cqe_timeout(&_ring, &cqe, &ts);
+            rawstor_trace("io_uring_wait_cqe_timeout(): res = %d\n", res);
+            if (res < 0) {
+                RAWSTOR_THROW_SYSTEM_ERROR(-res);
+            }
         }
-        rawstor_trace("io_uring_wait_cqe_timeout()\n");
-        res = io_uring_wait_cqe_timeout(&_ring, &cqe, &ts);
-        rawstor_trace("io_uring_wait_cqe_timeout(): res = %d\n", res);
-        if (res < 0) {
-            RAWSTOR_THROW_SYSTEM_ERROR(-res);
+        std::unique_ptr<Event> event(
+            static_cast<Event*>(io_uring_cqe_get_data(cqe))
+        );
+
+        event->set_result(cqe->res);
+
+        io_uring_cqe_seen(&_ring, cqe);
+
+        if (event->completed() || event->error() || cqe->res == 0) {
+            event->dispatch();
+            break;
         }
-    } else {
-        rawstor_trace("io_uring_wait_cqe_timeout()\n");
-        res = io_uring_wait_cqe_timeout(&_ring, &cqe, &ts);
-        rawstor_trace("io_uring_wait_cqe_timeout(): res = %d\n", res);
-        if (res < 0) {
-            RAWSTOR_THROW_SYSTEM_ERROR(-res);
-        }
+
+        event->prep();
+        event.release();
     }
-
-    std::unique_ptr<Event> event(
-        static_cast<Event*>(io_uring_cqe_get_data(cqe))
-    );
-
-    event->set_result(cqe->res);
-
-    io_uring_cqe_seen(&_ring, cqe);
-
-    event->dispatch();
 }
 
 } // namespace uring

@@ -6,7 +6,7 @@
 #include <rawstorio/task.hpp>
 
 #include <memory>
-#include <sstream>
+#include <vector>
 
 namespace rawstor {
 namespace io {
@@ -38,18 +38,11 @@ public:
 
     void dispatch();
 
-    inline void set_result(ssize_t res) noexcept {
-        if (res >= 0) {
-            _result += res;
-        } else {
-            _error = -res;
-#ifdef RAWSTOR_TRACE_EVENTS
-            std::ostringstream oss;
-            oss << "error " << _error;
-            trace(__FILE__, __LINE__, __FUNCTION__, oss.str());
-#endif
-        }
-    }
+    virtual void set_result(ssize_t res) noexcept = 0;
+
+    inline int error() const noexcept { return _error; }
+
+    virtual bool completed() const noexcept = 0;
 
 #ifdef RAWSTOR_TRACE_EVENTS
     void trace(
@@ -67,20 +60,65 @@ public:
         Event(q, std::move(t)) {}
 
     void prep() override;
+
+    void set_result(ssize_t res) noexcept override;
+
+    bool completed() const noexcept override { return true; }
 };
 
-class EventScalarRead final : public Event {
+class EventScalar : public Event {
+protected:
+    void* _buf_at;
+    size_t _size_at;
+
+public:
+    EventScalar(Queue& q, std::unique_ptr<rawstor::io::TaskScalar> t) :
+        Event(q, std::move(t)),
+        _buf_at(static_cast<rawstor::io::TaskScalar*>(_t.get())->buf()),
+        _size_at(static_cast<rawstor::io::TaskScalar*>(_t.get())->size()) {}
+
+    void set_result(ssize_t res) noexcept override;
+
+    bool completed() const noexcept override { return _size_at == 0; }
+};
+
+class EventVector : public Event {
+protected:
+    std::vector<iovec> _iov;
+    iovec* _iov_at;
+    unsigned int _niov_at;
+    size_t _size_at;
+
+public:
+    EventVector(Queue& q, std::unique_ptr<rawstor::io::TaskVector> t) :
+        Event(q, std::move(t)),
+        _niov_at(static_cast<rawstor::io::TaskVector*>(_t.get())->niov()),
+        _size_at(static_cast<rawstor::io::TaskVector*>(_t.get())->size()) {
+        iovec* iov = static_cast<rawstor::io::TaskVector*>(_t.get())->iov();
+        _iov.reserve(_niov_at);
+        for (unsigned int i = 0; i < _niov_at; ++i) {
+            _iov.push_back(iov[i]);
+        }
+        _iov_at = _iov.data();
+    }
+
+    void set_result(ssize_t res) noexcept override;
+
+    bool completed() const noexcept override { return _size_at == 0; }
+};
+
+class EventScalarRead final : public EventScalar {
 public:
     EventScalarRead(Queue& q, std::unique_ptr<rawstor::io::TaskScalar> t) :
-        Event(q, std::move(t)) {}
+        EventScalar(q, std::move(t)) {}
 
     void prep() override;
 };
 
-class EventVectorRead final : public Event {
+class EventVectorRead final : public EventVector {
 public:
     EventVectorRead(Queue& q, std::unique_ptr<rawstor::io::TaskVector> t) :
-        Event(q, std::move(t)) {}
+        EventVector(q, std::move(t)) {}
 
     void prep() override;
 };
@@ -93,6 +131,10 @@ public:
         Event(q, std::move(t)) {}
 
     void prep() override;
+
+    void set_result(ssize_t res) noexcept { _result = res; }
+
+    bool completed() const noexcept override { return true; }
 };
 
 class EventVectorPositionalRead final : public Event {
@@ -103,6 +145,10 @@ public:
         Event(q, std::move(t)) {}
 
     void prep() override;
+
+    void set_result(ssize_t res) noexcept { _result = res; }
+
+    bool completed() const noexcept override { return true; }
 };
 
 class EventMessageRead final : public Event {
@@ -111,20 +157,24 @@ public:
         Event(q, std::move(t)) {}
 
     void prep() override;
+
+    void set_result(ssize_t res) noexcept { _result = res; }
+
+    bool completed() const noexcept override { return true; }
 };
 
-class EventScalarWrite final : public Event {
+class EventScalarWrite final : public EventScalar {
 public:
     EventScalarWrite(Queue& q, std::unique_ptr<rawstor::io::TaskScalar> t) :
-        Event(q, std::move(t)) {}
+        EventScalar(q, std::move(t)) {}
 
     void prep() override;
 };
 
-class EventVectorWrite final : public Event {
+class EventVectorWrite final : public EventVector {
 public:
     EventVectorWrite(Queue& q, std::unique_ptr<rawstor::io::TaskVector> t) :
-        Event(q, std::move(t)) {}
+        EventVector(q, std::move(t)) {}
 
     void prep() override;
 };
@@ -137,6 +187,10 @@ public:
         Event(q, std::move(t)) {}
 
     void prep() override;
+
+    void set_result(ssize_t res) noexcept { _result = res; }
+
+    bool completed() const noexcept override { return true; }
 };
 
 class EventVectorPositionalWrite final : public Event {
@@ -147,6 +201,10 @@ public:
         Event(q, std::move(t)) {}
 
     void prep() override;
+
+    void set_result(ssize_t res) noexcept { _result = res; }
+
+    bool completed() const noexcept override { return true; }
 };
 
 class EventMessageWrite final : public Event {
@@ -155,6 +213,10 @@ public:
         Event(q, std::move(t)) {}
 
     void prep() override;
+
+    void set_result(ssize_t res) noexcept { _result = res; }
+
+    bool completed() const noexcept override { return true; }
 };
 
 } // namespace uring

@@ -150,8 +150,7 @@ ssize_t EventSimplexScalarPositionalRead::process() noexcept {
     }
     _result = res;
 #ifdef RAWSTOR_TRACE_EVENTS
-    if ((size_t)_result ==
-        static_cast<rawstor::io::TaskScalarPositional*>(_t.get())->size()) {
+    if (_size_at == 0) {
         trace(__FILE__, __LINE__, __FUNCTION__, "completed");
     } else {
         trace(__FILE__, __LINE__, __FUNCTION__, "partial");
@@ -177,8 +176,7 @@ ssize_t EventSimplexVectorPositionalRead::process() noexcept {
     }
     _result = res;
 #ifdef RAWSTOR_TRACE_EVENTS
-    if ((size_t)_result ==
-        static_cast<rawstor::io::TaskVectorPositional*>(_t.get())->size()) {
+    if (_size_at == 0) {
         trace(__FILE__, __LINE__, __FUNCTION__, "completed");
     } else {
         trace(__FILE__, __LINE__, __FUNCTION__, "partial");

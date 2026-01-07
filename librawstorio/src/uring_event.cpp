@@ -2,9 +2,12 @@
 
 #include "uring_queue.hpp"
 
+#include <rawstorstd/iovec.h>
 #include <rawstorstd/logging.h>
 
 #include <liburing.h>
+
+#include <sstream>
 
 namespace rawstor {
 namespace io {
@@ -27,17 +30,72 @@ void Event::dispatch() {
 #endif
 }
 
+void EventPoll::set_result(ssize_t res) noexcept {
+    if (res >= 0) {
+        _result = res;
+    } else {
+        _error = -res;
+#ifdef RAWSTOR_TRACE_EVENTS
+        std::ostringstream oss;
+        oss << "error " << _error;
+        trace(__FILE__, __LINE__, __FUNCTION__, oss.str());
+#endif
+    }
+}
+
 void EventPoll::prep() {
 #ifdef RAWSTOR_TRACE_EVENTS
     trace(__FILE__, __LINE__, __FUNCTION__, "io_uring_prep_poll_add()");
 #endif
     io_uring_sqe* sqe = _q.get_sqe();
-
     io_uring_prep_poll_add(
         sqe, _t->fd(), static_cast<rawstor::io::TaskPoll*>(_t.get())->mask()
     );
-
     io_uring_sqe_set_data(sqe, this);
+}
+
+void EventScalar::set_result(ssize_t res) noexcept {
+    if (res >= 0) {
+        _buf_at = static_cast<char*>(_buf_at) + res;
+        _size_at -= res;
+        _result += res;
+#ifdef RAWSTOR_TRACE_EVENTS
+        if (_size_at == 0) {
+            trace(__FILE__, __LINE__, __FUNCTION__, "completed");
+        } else {
+            trace(__FILE__, __LINE__, __FUNCTION__, "partial");
+        }
+#endif
+    } else {
+        _error = -res;
+#ifdef RAWSTOR_TRACE_EVENTS
+        std::ostringstream oss;
+        oss << "error " << _error;
+        trace(__FILE__, __LINE__, __FUNCTION__, oss.str());
+#endif
+    }
+}
+
+void EventVector::set_result(ssize_t res) noexcept {
+    if (res >= 0) {
+        rawstor_iovec_discard_front(&_iov_at, &_niov_at, res);
+        _size_at -= res;
+        _result += res;
+#ifdef RAWSTOR_TRACE_EVENTS
+        if (_size_at == 0) {
+            trace(__FILE__, __LINE__, __FUNCTION__, "completed");
+        } else {
+            trace(__FILE__, __LINE__, __FUNCTION__, "partial");
+        }
+#endif
+    } else {
+        _error = -res;
+#ifdef RAWSTOR_TRACE_EVENTS
+        std::ostringstream oss;
+        oss << "error " << _error;
+        trace(__FILE__, __LINE__, __FUNCTION__, oss.str());
+#endif
+    }
 }
 
 void EventScalarRead::prep() {
@@ -45,12 +103,7 @@ void EventScalarRead::prep() {
     trace(__FILE__, __LINE__, __FUNCTION__, "io_uring_prep_read()");
 #endif
     io_uring_sqe* sqe = _q.get_sqe();
-
-    io_uring_prep_read(
-        sqe, _t->fd(), static_cast<rawstor::io::TaskScalar*>(_t.get())->buf(),
-        static_cast<rawstor::io::TaskScalar*>(_t.get())->size(), 0
-    );
-
+    io_uring_prep_read(sqe, _t->fd(), _buf_at, _size_at, 0);
     io_uring_sqe_set_data(sqe, this);
 }
 
@@ -111,10 +164,7 @@ void EventScalarWrite::prep() {
     trace(__FILE__, __LINE__, __FUNCTION__, "io_uring_prep_write()");
 #endif
     io_uring_sqe* sqe = _q.get_sqe();
-    io_uring_prep_write(
-        sqe, _t->fd(), static_cast<rawstor::io::TaskScalar*>(_t.get())->buf(),
-        static_cast<rawstor::io::TaskScalar*>(_t.get())->size(), 0
-    );
+    io_uring_prep_write(sqe, _t->fd(), _buf_at, _size_at, 0);
     io_uring_sqe_set_data(sqe, this);
 }
 
