@@ -13,6 +13,9 @@
 namespace rawstor {
 namespace io {
 
+Queue::Queue(unsigned int depth) : _depth(depth) {
+}
+
 std::unique_ptr<Queue> Queue::create(unsigned int depth) {
 #ifdef RAWSTOR_WITH_LIBURING
     return std::make_unique<rawstor::io::uring::Queue>(depth);

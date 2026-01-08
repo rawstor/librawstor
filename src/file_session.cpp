@@ -10,6 +10,7 @@
 #include <rawstorstd/uuid.h>
 
 #include <rawstorio/queue.hpp>
+#include <rawstorio/task.hpp>
 
 #include <sys/stat.h>
 #include <sys/types.h>
