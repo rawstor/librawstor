@@ -19,26 +19,10 @@ private:
 #endif
 
 public:
-    Task(int fd) :
-        _fd(fd)
-#ifdef RAWSTOR_TRACE_EVENTS
-        ,
-        _trace_id(rawstor_trace_event_begin(
-            '|', __FILE__, __LINE__, __FUNCTION__, "fd %d\n", _fd
-        ))
-#endif
-    {
-    }
+    Task(int fd);
     Task(const Task&) = delete;
     Task(Task&&) = delete;
-    virtual ~Task() {
-#ifdef RAWSTOR_TRACE_EVENTS
-        rawstor_trace_event_end(
-            _trace_id, __FILE__, __LINE__, __FUNCTION__, "fd %d\n", _fd
-        );
-#endif
-    }
-
+    virtual ~Task();
     Task& operator=(const Task&) = delete;
     Task& operator=(Task&&) = delete;
 
@@ -50,17 +34,13 @@ public:
     void trace(
         const char* file, int line, const char* function,
         const std::string& message
-    ) {
-        rawstor_trace_event_message(
-            _trace_id, file, line, function, "%s\n", message.c_str()
-        );
-    }
+    );
 #endif
 };
 
 class TaskScalar : public Task {
 public:
-    TaskScalar(int fd) : Task(fd) {}
+    TaskScalar(int fd);
     virtual ~TaskScalar() override = default;
 
     virtual void* buf() noexcept = 0;
@@ -69,7 +49,7 @@ public:
 
 class TaskVector : public Task {
 public:
-    TaskVector(int fd) : Task(fd) {}
+    TaskVector(int fd);
     virtual ~TaskVector() override = default;
 
     virtual iovec* iov() noexcept = 0;
@@ -79,7 +59,7 @@ public:
 
 class TaskScalarPositional : public TaskScalar {
 public:
-    TaskScalarPositional(int fd) : TaskScalar(fd) {}
+    TaskScalarPositional(int fd);
     virtual ~TaskScalarPositional() override = default;
 
     virtual off_t offset() const noexcept = 0;
@@ -87,7 +67,7 @@ public:
 
 class TaskVectorPositional : public TaskVector {
 public:
-    TaskVectorPositional(int fd) : TaskVector(fd) {}
+    TaskVectorPositional(int fd);
     virtual ~TaskVectorPositional() override = default;
 
     virtual off_t offset() const noexcept = 0;
