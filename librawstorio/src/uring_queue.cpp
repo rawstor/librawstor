@@ -1,5 +1,7 @@
 #include "uring_queue.hpp"
 
+#include <rawstorio/task.hpp>
+
 #include <rawstorstd/gpp.hpp>
 #include <rawstorstd/socket.h>
 
