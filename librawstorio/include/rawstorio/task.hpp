@@ -19,7 +19,7 @@ private:
 #endif
 
 public:
-    Task(int fd);
+    explicit Task(int fd);
     Task(const Task&) = delete;
     Task(Task&&) = delete;
     virtual ~Task();
@@ -40,7 +40,7 @@ public:
 
 class TaskScalar : public Task {
 public:
-    TaskScalar(int fd);
+    explicit TaskScalar(int fd);
     virtual ~TaskScalar() override = default;
 
     virtual void* buf() noexcept = 0;
@@ -49,7 +49,7 @@ public:
 
 class TaskVector : public Task {
 public:
-    TaskVector(int fd);
+    explicit TaskVector(int fd);
     virtual ~TaskVector() override = default;
 
     virtual iovec* iov() noexcept = 0;
@@ -59,7 +59,7 @@ public:
 
 class TaskScalarPositional : public TaskScalar {
 public:
-    TaskScalarPositional(int fd);
+    explicit TaskScalarPositional(int fd);
     virtual ~TaskScalarPositional() override = default;
 
     virtual off_t offset() const noexcept = 0;
@@ -67,7 +67,7 @@ public:
 
 class TaskVectorPositional : public TaskVector {
 public:
-    TaskVectorPositional(int fd);
+    explicit TaskVectorPositional(int fd);
     virtual ~TaskVectorPositional() override = default;
 
     virtual off_t offset() const noexcept = 0;

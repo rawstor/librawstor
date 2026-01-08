@@ -33,7 +33,7 @@ public:
     static void setup_fd(int fd);
     static std::unique_ptr<Queue> create(unsigned int depth);
 
-    Queue(unsigned int depth);
+    explicit Queue(unsigned int depth);
     Queue(const Queue&) = delete;
     Queue(Queue&&) = delete;
     virtual ~Queue() = default;
