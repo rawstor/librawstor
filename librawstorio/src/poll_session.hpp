@@ -53,27 +53,31 @@ public:
         return _poll_sqes.empty() && _read_sqes.empty() && _write_sqes.empty();
     }
 
-    void poll(std::unique_ptr<rawstor::io::TaskPoll> t);
+    rawstor::io::Event* poll(std::unique_ptr<rawstor::io::TaskPoll> t);
 
-    void read(std::unique_ptr<rawstor::io::TaskScalar> t);
+    rawstor::io::Event* read(std::unique_ptr<rawstor::io::TaskScalar> t);
 
-    void read(std::unique_ptr<rawstor::io::TaskVector> t);
+    rawstor::io::Event* read(std::unique_ptr<rawstor::io::TaskVector> t);
 
-    void read(std::unique_ptr<rawstor::io::TaskScalarPositional> t);
+    rawstor::io::Event*
+    read(std::unique_ptr<rawstor::io::TaskScalarPositional> t);
 
-    void read(std::unique_ptr<rawstor::io::TaskVectorPositional> t);
+    rawstor::io::Event*
+    read(std::unique_ptr<rawstor::io::TaskVectorPositional> t);
 
-    void read(std::unique_ptr<rawstor::io::TaskMessage> t);
+    rawstor::io::Event* read(std::unique_ptr<rawstor::io::TaskMessage> t);
 
-    void write(std::unique_ptr<rawstor::io::TaskScalar> t);
+    rawstor::io::Event* write(std::unique_ptr<rawstor::io::TaskScalar> t);
 
-    void write(std::unique_ptr<rawstor::io::TaskVector> t);
+    rawstor::io::Event* write(std::unique_ptr<rawstor::io::TaskVector> t);
 
-    void write(std::unique_ptr<rawstor::io::TaskScalarPositional> t);
+    rawstor::io::Event*
+    write(std::unique_ptr<rawstor::io::TaskScalarPositional> t);
 
-    void write(std::unique_ptr<rawstor::io::TaskVectorPositional> t);
+    rawstor::io::Event*
+    write(std::unique_ptr<rawstor::io::TaskVectorPositional> t);
 
-    void write(std::unique_ptr<rawstor::io::TaskMessage> t);
+    rawstor::io::Event* write(std::unique_ptr<rawstor::io::TaskMessage> t);
 
     void process(RingBuf<Event>& cqes, short revents);
 };

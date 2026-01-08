@@ -178,83 +178,132 @@ short Session::events() const noexcept {
     return ret;
 }
 
-void Session::poll(std::unique_ptr<rawstor::io::TaskPoll> t) {
+rawstor::io::Event* Session::poll(std::unique_ptr<rawstor::io::TaskPoll> t) {
     std::unique_ptr<EventSimplexPoll> event =
         std::make_unique<EventSimplexPoll>(_q, std::move(t));
 
+    rawstor::io::Event* ret = event.get();
+
     _poll_sqes.push_back(std::move(event));
+
+    return ret;
 }
 
-void Session::read(std::unique_ptr<rawstor::io::TaskScalar> t) {
+rawstor::io::Event* Session::read(std::unique_ptr<rawstor::io::TaskScalar> t) {
     std::unique_ptr<Event> event =
         std::make_unique<EventMultiplexScalarRead>(_q, std::move(t));
 
+    rawstor::io::Event* ret = event.get();
+
     _read_sqes.push(std::move(event));
+
+    return ret;
 }
 
-void Session::read(std::unique_ptr<rawstor::io::TaskVector> t) {
+rawstor::io::Event* Session::read(std::unique_ptr<rawstor::io::TaskVector> t) {
     std::unique_ptr<Event> event =
         std::make_unique<EventMultiplexVectorRead>(_q, std::move(t));
 
+    rawstor::io::Event* ret = event.get();
+
     _read_sqes.push(std::move(event));
+
+    return ret;
 }
 
-void Session::read(std::unique_ptr<rawstor::io::TaskScalarPositional> t) {
+rawstor::io::Event*
+Session::read(std::unique_ptr<rawstor::io::TaskScalarPositional> t) {
     std::unique_ptr<rawstor::io::poll::Event> event =
         std::make_unique<rawstor::io::poll::EventSimplexScalarPositionalRead>(
             _q, std::move(t)
         );
 
+    rawstor::io::Event* ret = event.get();
+
     _read_sqes.push(std::move(event));
+
+    return ret;
 }
 
-void Session::read(std::unique_ptr<rawstor::io::TaskVectorPositional> t) {
+rawstor::io::Event*
+Session::read(std::unique_ptr<rawstor::io::TaskVectorPositional> t) {
     std::unique_ptr<Event> event =
         std::make_unique<EventSimplexVectorPositionalRead>(_q, std::move(t));
 
+    rawstor::io::Event* ret = event.get();
+
     _read_sqes.push(std::move(event));
+
+    return ret;
 }
 
-void Session::read(std::unique_ptr<rawstor::io::TaskMessage> t) {
+rawstor::io::Event* Session::read(std::unique_ptr<rawstor::io::TaskMessage> t) {
     std::unique_ptr<Event> event =
         std::make_unique<EventSimplexMessageRead>(_q, std::move(t));
 
+    rawstor::io::Event* ret = event.get();
+
     _read_sqes.push(std::move(event));
+
+    return ret;
 }
 
-void Session::write(std::unique_ptr<rawstor::io::TaskScalar> t) {
+rawstor::io::Event* Session::write(std::unique_ptr<rawstor::io::TaskScalar> t) {
     std::unique_ptr<Event> event =
         std::make_unique<EventMultiplexScalarWrite>(_q, std::move(t));
 
+    rawstor::io::Event* ret = event.get();
+
     _write_sqes.push(std::move(event));
+
+    return ret;
 }
 
-void Session::write(std::unique_ptr<rawstor::io::TaskVector> t) {
+rawstor::io::Event* Session::write(std::unique_ptr<rawstor::io::TaskVector> t) {
     std::unique_ptr<Event> event =
         std::make_unique<EventMultiplexVectorWrite>(_q, std::move(t));
 
+    rawstor::io::Event* ret = event.get();
+
     _write_sqes.push(std::move(event));
+
+    return ret;
 }
 
-void Session::write(std::unique_ptr<rawstor::io::TaskScalarPositional> t) {
+rawstor::io::Event*
+Session::write(std::unique_ptr<rawstor::io::TaskScalarPositional> t) {
     std::unique_ptr<Event> event =
         std::make_unique<EventSimplexScalarPositionalWrite>(_q, std::move(t));
 
+    rawstor::io::Event* ret = event.get();
+
     _write_sqes.push(std::move(event));
+
+    return ret;
 }
 
-void Session::write(std::unique_ptr<rawstor::io::TaskVectorPositional> t) {
+rawstor::io::Event*
+Session::write(std::unique_ptr<rawstor::io::TaskVectorPositional> t) {
     std::unique_ptr<Event> event =
         std::make_unique<EventSimplexVectorPositionalWrite>(_q, std::move(t));
 
+    rawstor::io::Event* ret = event.get();
+
     _write_sqes.push(std::move(event));
+
+    return ret;
 }
 
-void Session::write(std::unique_ptr<rawstor::io::TaskMessage> t) {
+rawstor::io::Event*
+Session::write(std::unique_ptr<rawstor::io::TaskMessage> t) {
     std::unique_ptr<Event> event =
         std::make_unique<EventSimplexMessageWrite>(_q, std::move(t));
 
+    rawstor::io::Event* ret = event.get();
+
     _write_sqes.push(std::move(event));
+
+    return ret;
 }
 
 void Session::process(

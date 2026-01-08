@@ -24,6 +24,8 @@ class TaskVectorPositional;
 
 class TaskMessage;
 
+class Event;
+
 class Queue {
 private:
     unsigned int _depth;
@@ -42,27 +44,27 @@ public:
 
     inline unsigned int depth() const noexcept { return _depth; }
 
-    virtual void poll(std::unique_ptr<TaskPoll> t) = 0;
+    virtual Event* poll(std::unique_ptr<TaskPoll> t) = 0;
 
-    virtual void read(std::unique_ptr<TaskScalar> t) = 0;
+    virtual Event* read(std::unique_ptr<TaskScalar> t) = 0;
 
-    virtual void read(std::unique_ptr<TaskVector> t) = 0;
+    virtual Event* read(std::unique_ptr<TaskVector> t) = 0;
 
-    virtual void read(std::unique_ptr<TaskScalarPositional> t) = 0;
+    virtual Event* read(std::unique_ptr<TaskScalarPositional> t) = 0;
 
-    virtual void read(std::unique_ptr<TaskVectorPositional> t) = 0;
+    virtual Event* read(std::unique_ptr<TaskVectorPositional> t) = 0;
 
-    virtual void read(std::unique_ptr<TaskMessage> t) = 0;
+    virtual Event* read(std::unique_ptr<TaskMessage> t) = 0;
 
-    virtual void write(std::unique_ptr<TaskScalar> t) = 0;
+    virtual Event* write(std::unique_ptr<TaskScalar> t) = 0;
 
-    virtual void write(std::unique_ptr<TaskVector> t) = 0;
+    virtual Event* write(std::unique_ptr<TaskVector> t) = 0;
 
-    virtual void write(std::unique_ptr<TaskScalarPositional> t) = 0;
+    virtual Event* write(std::unique_ptr<TaskScalarPositional> t) = 0;
 
-    virtual void write(std::unique_ptr<TaskVectorPositional> t) = 0;
+    virtual Event* write(std::unique_ptr<TaskVectorPositional> t) = 0;
 
-    virtual void write(std::unique_ptr<TaskMessage> t) = 0;
+    virtual Event* write(std::unique_ptr<TaskMessage> t) = 0;
 
     virtual bool empty() const noexcept = 0;
 
