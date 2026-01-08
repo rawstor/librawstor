@@ -30,7 +30,9 @@ public:
     static const std::string& engine_name();
     static void setup_fd(int fd);
 
-    Queue(unsigned int depth) : rawstor::io::Queue(depth), _cqes(depth) {}
+    explicit Queue(unsigned int depth) :
+        rawstor::io::Queue(depth),
+        _cqes(depth) {}
 
     void read(std::unique_ptr<rawstor::io::TaskScalar> t) override;
 
