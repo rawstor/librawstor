@@ -24,7 +24,7 @@ class TaskVectorPositional;
 
 class TaskMessage;
 
-class Event;
+typedef void Event;
 
 class Queue {
 private:

@@ -61,7 +61,7 @@ rawstor::io::Event* Queue::poll(std::unique_ptr<rawstor::io::TaskPoll> t) {
     io_uring_sqe_set_data(sqe, t.get());
     ++_events;
 
-    rawstor::io::Event* ret = reinterpret_cast<rawstor::io::Event*>(t.get());
+    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(t.get());
     t.release();
     return ret;
 }
@@ -75,7 +75,7 @@ rawstor::io::Event* Queue::read(std::unique_ptr<rawstor::io::TaskScalar> t) {
     io_uring_sqe_set_data(sqe, t.get());
     ++_events;
 
-    rawstor::io::Event* ret = reinterpret_cast<rawstor::io::Event*>(t.get());
+    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(t.get());
     t.release();
     return ret;
 }
@@ -89,7 +89,7 @@ rawstor::io::Event* Queue::read(std::unique_ptr<rawstor::io::TaskVector> t) {
     io_uring_sqe_set_data(sqe, t.get());
     ++_events;
 
-    rawstor::io::Event* ret = reinterpret_cast<rawstor::io::Event*>(t.get());
+    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(t.get());
     t.release();
     return ret;
 }
@@ -104,7 +104,7 @@ Queue::read(std::unique_ptr<rawstor::io::TaskScalarPositional> t) {
     io_uring_sqe_set_data(sqe, t.get());
     ++_events;
 
-    rawstor::io::Event* ret = reinterpret_cast<rawstor::io::Event*>(t.get());
+    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(t.get());
     t.release();
     return ret;
 }
@@ -119,7 +119,7 @@ Queue::read(std::unique_ptr<rawstor::io::TaskVectorPositional> t) {
     io_uring_sqe_set_data(sqe, t.get());
     ++_events;
 
-    rawstor::io::Event* ret = reinterpret_cast<rawstor::io::Event*>(t.get());
+    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(t.get());
     t.release();
     return ret;
 }
@@ -133,7 +133,7 @@ rawstor::io::Event* Queue::read(std::unique_ptr<rawstor::io::TaskMessage> t) {
     io_uring_sqe_set_data(sqe, t.get());
     ++_events;
 
-    rawstor::io::Event* ret = reinterpret_cast<rawstor::io::Event*>(t.get());
+    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(t.get());
     t.release();
     return ret;
 }
@@ -147,7 +147,7 @@ rawstor::io::Event* Queue::write(std::unique_ptr<rawstor::io::TaskScalar> t) {
     io_uring_sqe_set_data(sqe, t.get());
     ++_events;
 
-    rawstor::io::Event* ret = reinterpret_cast<rawstor::io::Event*>(t.get());
+    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(t.get());
     t.release();
     return ret;
 }
@@ -161,7 +161,7 @@ rawstor::io::Event* Queue::write(std::unique_ptr<rawstor::io::TaskVector> t) {
     io_uring_sqe_set_data(sqe, t.get());
     ++_events;
 
-    rawstor::io::Event* ret = reinterpret_cast<rawstor::io::Event*>(t.get());
+    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(t.get());
     t.release();
     return ret;
 }
@@ -176,7 +176,7 @@ Queue::write(std::unique_ptr<rawstor::io::TaskScalarPositional> t) {
     io_uring_sqe_set_data(sqe, t.get());
     ++_events;
 
-    rawstor::io::Event* ret = reinterpret_cast<rawstor::io::Event*>(t.get());
+    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(t.get());
     t.release();
     return ret;
 }
@@ -191,7 +191,7 @@ Queue::write(std::unique_ptr<rawstor::io::TaskVectorPositional> t) {
     io_uring_sqe_set_data(sqe, t.get());
     ++_events;
 
-    rawstor::io::Event* ret = reinterpret_cast<rawstor::io::Event*>(t.get());
+    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(t.get());
     t.release();
     return ret;
 }
@@ -205,7 +205,7 @@ rawstor::io::Event* Queue::write(std::unique_ptr<rawstor::io::TaskMessage> t) {
     io_uring_sqe_set_data(sqe, t.get());
     ++_events;
 
-    rawstor::io::Event* ret = reinterpret_cast<rawstor::io::Event*>(t.get());
+    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(t.get());
     t.release();
     return ret;
 }

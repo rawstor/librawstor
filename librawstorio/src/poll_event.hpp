@@ -1,8 +1,6 @@
 #ifndef RAWSTORIO_POLL_EVENT_HPP
 #define RAWSTORIO_POLL_EVENT_HPP
 
-#include "event.hpp"
-
 #include <rawstorio/task.hpp>
 
 #include <rawstorstd/logging.h>
@@ -26,7 +24,7 @@ namespace poll {
 
 class Queue;
 
-class Event : public rawstor::io::Event {
+class Event {
 protected:
     Queue& _q;
     std::unique_ptr<rawstor::io::Task> _t;
@@ -39,6 +37,12 @@ public:
         _t(std::move(t)),
         _result(0),
         _error(0) {}
+    Event(const Event&) = delete;
+    Event(Event&&) = delete;
+    virtual ~Event() = default;
+
+    Event& operator=(const Event&) = delete;
+    Event& operator=(Event&&) = delete;
 
     inline void set_error(int error) noexcept {
 #ifdef RAWSTOR_TRACE_EVENTS
