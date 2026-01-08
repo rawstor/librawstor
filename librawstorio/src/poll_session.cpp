@@ -189,6 +189,24 @@ rawstor::io::Event* Session::poll(std::unique_ptr<rawstor::io::TaskPoll> t) {
     return ret;
 }
 
+bool Session::cancel_poll(
+    rawstor::io::Event* event, rawstor::RingBuf<Event>& cqes
+) {
+    for (std::list<std::unique_ptr<EventSimplexPoll>>::iterator it =
+             _poll_sqes.begin();
+         it != _poll_sqes.end(); ++it) {
+        if (event == static_cast<rawstor::io::Event*>(it->get())) {
+            std::unique_ptr<EventSimplexPoll> e = std::move(*it);
+            _poll_sqes.erase(it);
+
+            e->set_error(ECANCELED);
+            cqes.push(std::move(e));
+            return true;
+        }
+    }
+    return false;
+}
+
 rawstor::io::Event* Session::read(std::unique_ptr<rawstor::io::TaskScalar> t) {
     std::unique_ptr<Event> event =
         std::make_unique<EventMultiplexScalarRead>(_q, std::move(t));

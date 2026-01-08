@@ -54,6 +54,7 @@ public:
     }
 
     rawstor::io::Event* poll(std::unique_ptr<rawstor::io::TaskPoll> t);
+    bool cancel_poll(rawstor::io::Event* event, rawstor::RingBuf<Event>& cqes);
 
     rawstor::io::Event* read(std::unique_ptr<rawstor::io::TaskScalar> t);
 

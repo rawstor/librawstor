@@ -24,6 +24,7 @@ public:
     ~Queue();
 
     rawstor::io::Event* poll(std::unique_ptr<rawstor::io::TaskPoll> t) override;
+    void cancel_poll(rawstor::io::Event* event);
 
     rawstor::io::Event*
     read(std::unique_ptr<rawstor::io::TaskScalar> t) override;

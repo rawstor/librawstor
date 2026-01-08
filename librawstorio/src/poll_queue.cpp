@@ -71,6 +71,15 @@ rawstor::io::Event* Queue::poll(std::unique_ptr<rawstor::io::TaskPoll> t) {
     return s.poll(std::move(t));
 }
 
+void Queue::cancel_poll(rawstor::io::Event* e) {
+    for (auto& it : _sessions) {
+        if (it.second->cancel_poll(e, _cqes)) {
+            return;
+        }
+    }
+    RAWSTOR_THROW_SYSTEM_ERROR(ENOENT);
+}
+
 rawstor::io::Event* Queue::read(std::unique_ptr<rawstor::io::TaskScalar> t) {
     Session& s = _get_session(t->fd());
     return s.read(std::move(t));
@@ -139,10 +148,6 @@ bool Queue::empty() const noexcept {
 
 void Queue::wait(unsigned int timeout) {
     while (_cqes.empty()) {
-        if (_sessions.empty()) {
-            return;
-        }
-
         std::vector<pollfd> fds;
         fds.reserve(_sessions.size());
 
@@ -163,10 +168,6 @@ void Queue::wait(unsigned int timeout) {
             } else {
                 it = _sessions.erase(it);
             }
-        }
-
-        if (i == 0) {
-            return;
         }
 
         rawstor_trace("poll()\n");
