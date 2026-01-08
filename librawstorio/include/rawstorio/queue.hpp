@@ -1,8 +1,6 @@
 #ifndef RAWSTORIO_QUEUE_HPP
 #define RAWSTORIO_QUEUE_HPP
 
-#include <rawstorio/task.hpp>
-
 #include <memory>
 #include <string>
 
@@ -14,6 +12,18 @@
 namespace rawstor {
 namespace io {
 
+class TaskPoll;
+
+class TaskScalar;
+
+class TaskVector;
+
+class TaskScalarPositional;
+
+class TaskVectorPositional;
+
+class TaskMessage;
+
 class Queue {
 private:
     unsigned int _depth;
@@ -23,10 +33,10 @@ public:
     static void setup_fd(int fd);
     static std::unique_ptr<Queue> create(unsigned int depth);
 
-    Queue(unsigned int depth) : _depth(depth) {}
+    Queue(unsigned int depth);
     Queue(const Queue&) = delete;
     Queue(Queue&&) = delete;
-    virtual ~Queue() {}
+    virtual ~Queue() = default;
     Queue& operator=(const Queue&) = delete;
     Queue& operator=(Queue&&) = delete;
 
