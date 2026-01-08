@@ -20,10 +20,8 @@ public:
     static const std::string& engine_name();
     static void setup_fd(int fd);
 
-    Queue(unsigned int depth);
+    explicit Queue(unsigned int depth);
     ~Queue();
-
-    inline io_uring* ring() noexcept { return &_ring; }
 
     void poll(std::unique_ptr<rawstor::io::TaskPoll> t) override;
 
