@@ -30,6 +30,9 @@ void initialize() {
 namespace rawstor {
 namespace io {
 
+Queue::Queue(unsigned int depth) : _depth(depth) {
+}
+
 std::unique_ptr<Queue> Queue::create(unsigned int depth) {
     std::call_once(initialize_once_flag, initialize);
 #ifdef RAWSTOR_WITH_LIBURING

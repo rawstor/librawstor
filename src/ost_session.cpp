@@ -7,6 +7,7 @@
 #include "task.hpp"
 
 #include <rawstorio/queue.hpp>
+#include <rawstorio/task.hpp>
 
 #include <rawstorstd/gpp.hpp>
 #include <rawstorstd/hash.h>
