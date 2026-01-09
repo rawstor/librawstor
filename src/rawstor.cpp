@@ -280,10 +280,6 @@ void rawstor_terminate() {
     rawstor_logging_terminate();
 }
 
-int rawstor_empty() {
-    return rawstor::io_queue->empty();
-}
-
 int rawstor_wait() {
     try {
         rawstor::io_queue->wait(rawstor_opts_wait_timeout());

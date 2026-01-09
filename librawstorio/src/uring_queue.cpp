@@ -17,7 +17,7 @@ namespace rawstor {
 namespace io {
 namespace uring {
 
-Queue::Queue(unsigned int depth) : rawstor::io::Queue(depth), _events(0) {
+Queue::Queue(unsigned int depth) : rawstor::io::Queue(depth) {
     int res = io_uring_queue_init(depth, &_ring, 0);
     if (res < 0) {
         RAWSTOR_THROW_SYSTEM_ERROR(-res);
@@ -59,7 +59,6 @@ rawstor::io::Event* Queue::poll(std::unique_ptr<rawstor::io::TaskPoll> t) {
     }
     io_uring_prep_poll_add(sqe, t->fd(), t->mask());
     io_uring_sqe_set_data(sqe, t.get());
-    ++_events;
 
     rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(t.get());
     t.release();
@@ -73,7 +72,6 @@ rawstor::io::Event* Queue::read(std::unique_ptr<rawstor::io::TaskScalar> t) {
     }
     io_uring_prep_read(sqe, t->fd(), t->buf(), t->size(), 0);
     io_uring_sqe_set_data(sqe, t.get());
-    ++_events;
 
     rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(t.get());
     t.release();
@@ -87,7 +85,6 @@ rawstor::io::Event* Queue::read(std::unique_ptr<rawstor::io::TaskVector> t) {
     }
     io_uring_prep_readv(sqe, t->fd(), t->iov(), t->niov(), 0);
     io_uring_sqe_set_data(sqe, t.get());
-    ++_events;
 
     rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(t.get());
     t.release();
@@ -102,7 +99,6 @@ Queue::read(std::unique_ptr<rawstor::io::TaskScalarPositional> t) {
     }
     io_uring_prep_read(sqe, t->fd(), t->buf(), t->size(), t->offset());
     io_uring_sqe_set_data(sqe, t.get());
-    ++_events;
 
     rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(t.get());
     t.release();
@@ -117,7 +113,6 @@ Queue::read(std::unique_ptr<rawstor::io::TaskVectorPositional> t) {
     }
     io_uring_prep_readv(sqe, t->fd(), t->iov(), t->niov(), t->offset());
     io_uring_sqe_set_data(sqe, t.get());
-    ++_events;
 
     rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(t.get());
     t.release();
@@ -131,7 +126,6 @@ rawstor::io::Event* Queue::read(std::unique_ptr<rawstor::io::TaskMessage> t) {
     }
     io_uring_prep_recvmsg(sqe, t->fd(), t->msg(), t->flags());
     io_uring_sqe_set_data(sqe, t.get());
-    ++_events;
 
     rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(t.get());
     t.release();
@@ -145,7 +139,6 @@ rawstor::io::Event* Queue::write(std::unique_ptr<rawstor::io::TaskScalar> t) {
     }
     io_uring_prep_write(sqe, t->fd(), t->buf(), t->size(), 0);
     io_uring_sqe_set_data(sqe, t.get());
-    ++_events;
 
     rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(t.get());
     t.release();
@@ -159,7 +152,6 @@ rawstor::io::Event* Queue::write(std::unique_ptr<rawstor::io::TaskVector> t) {
     }
     io_uring_prep_writev(sqe, t->fd(), t->iov(), t->niov(), 0);
     io_uring_sqe_set_data(sqe, t.get());
-    ++_events;
 
     rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(t.get());
     t.release();
@@ -174,7 +166,6 @@ Queue::write(std::unique_ptr<rawstor::io::TaskScalarPositional> t) {
     }
     io_uring_prep_write(sqe, t->fd(), t->buf(), t->size(), t->offset());
     io_uring_sqe_set_data(sqe, t.get());
-    ++_events;
 
     rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(t.get());
     t.release();
@@ -189,7 +180,6 @@ Queue::write(std::unique_ptr<rawstor::io::TaskVectorPositional> t) {
     }
     io_uring_prep_writev(sqe, t->fd(), t->iov(), t->niov(), t->offset());
     io_uring_sqe_set_data(sqe, t.get());
-    ++_events;
 
     rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(t.get());
     t.release();
@@ -203,7 +193,6 @@ rawstor::io::Event* Queue::write(std::unique_ptr<rawstor::io::TaskMessage> t) {
     }
     io_uring_prep_sendmsg(sqe, t->fd(), t->msg(), t->flags());
     io_uring_sqe_set_data(sqe, t.get());
-    ++_events;
 
     rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(t.get());
     t.release();
@@ -219,10 +208,6 @@ void Queue::cancel(rawstor::io::Event* event) {
     if (res < 0) {
         RAWSTOR_THROW_SYSTEM_ERROR(-res);
     }
-}
-
-bool Queue::empty() const noexcept {
-    return _events == 0;
 }
 
 void Queue::wait(unsigned int timeout) {
@@ -260,8 +245,6 @@ void Queue::wait(unsigned int timeout) {
     int error = cqe->res < 0 ? -cqe->res : 0;
 
     io_uring_cqe_seen(&_ring, cqe);
-
-    --_events;
 
     (*t)(result, error);
 }

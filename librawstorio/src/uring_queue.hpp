@@ -14,7 +14,6 @@ namespace uring {
 class Queue final : public rawstor::io::Queue {
 private:
     io_uring _ring;
-    unsigned int _events;
 
 public:
     static const std::string& engine_name();
@@ -54,8 +53,6 @@ public:
 
     rawstor::io::Event*
     write(std::unique_ptr<rawstor::io::TaskMessage> t) override;
-
-    void cancel(rawstor::io::Event* event);
 
     bool empty() const noexcept override;
 
