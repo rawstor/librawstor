@@ -322,7 +322,7 @@ bool Session::cancel(rawstor::io::Event* event, rawstor::RingBuf<Event>& cqes) {
 
     bool found = false;
     rawstor::RingBuf<Event> read_sqes(_read_sqes.capacity());
-    while(!_read_sqes.empty()) {
+    while (!_read_sqes.empty()) {
         std::unique_ptr<Event> e = _read_sqes.pop();
         if (event == static_cast<rawstor::io::Event*>(e.get())) {
             found = true;
@@ -339,7 +339,7 @@ bool Session::cancel(rawstor::io::Event* event, rawstor::RingBuf<Event>& cqes) {
     }
 
     rawstor::RingBuf<Event> write_sqes(_write_sqes.capacity());
-    while(!_write_sqes.empty()) {
+    while (!_write_sqes.empty()) {
         std::unique_ptr<Event> e = _write_sqes.pop();
         if (event == static_cast<rawstor::io::Event*>(e.get())) {
             found = true;
