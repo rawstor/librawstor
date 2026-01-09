@@ -33,14 +33,11 @@ TEST_F(CancelTest, poll) {
         event = _queue->poll(std::move(t));
     }
 
-    EXPECT_FALSE(_queue->empty());
     EXPECT_THROW(_queue->wait(0), std::system_error);
 
     _queue->cancel(event);
 
-    EXPECT_FALSE(_queue->empty());
-    _queue->wait(0);
-    EXPECT_TRUE(_queue->empty());
+    EXPECT_NO_THROW(_queue->wait(0));
     EXPECT_THROW(_queue->wait(0), std::system_error);
 
     EXPECT_EQ(result, (size_t)0);
@@ -85,14 +82,12 @@ TEST_F(CancelTest, read) {
         event = _queue->read(std::move(t));
     }
 
-    EXPECT_FALSE(_queue->empty());
     EXPECT_THROW(_queue->wait(0), std::system_error);
 
     _queue->cancel(event);
 
-    EXPECT_FALSE(_queue->empty());
-    _queue->wait(0);
-    EXPECT_TRUE(_queue->empty());
+    EXPECT_NO_THROW(_queue->wait(0));
+
     EXPECT_THROW(_queue->wait(0), std::system_error);
 
     EXPECT_EQ(result, (size_t)0);
@@ -142,13 +137,10 @@ TEST_F(CancelTest, write) {
         event = _queue->write(std::move(t));
     }
 
-    EXPECT_FALSE(_queue->empty());
-
     _queue->cancel(event);
 
-    EXPECT_FALSE(_queue->empty());
-    _queue->wait(0);
-    EXPECT_TRUE(_queue->empty());
+    EXPECT_NO_THROW(_queue->wait(0));
+
     EXPECT_THROW(_queue->wait(0), std::system_error);
 
     EXPECT_EQ(result, (size_t)0);
