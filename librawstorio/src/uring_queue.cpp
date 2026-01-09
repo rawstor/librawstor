@@ -75,6 +75,19 @@ Queue::poll(int fd, std::unique_ptr<rawstor::io::Task> t, unsigned int mask) {
     return static_cast<rawstor::io::Event*>(t.release());
 }
 
+rawstor::io::Event* Queue::poll_multishot(
+    int fd, std::unique_ptr<rawstor::io::Task> t, unsigned int mask
+) {
+    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
+    if (sqe == nullptr) {
+        RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
+    }
+    io_uring_prep_poll_multishot(sqe, fd, mask);
+    io_uring_sqe_set_data(sqe, t.get());
+
+    return static_cast<rawstor::io::Event*>(t.release());
+}
+
 rawstor::io::Event*
 Queue::read(int fd, std::unique_ptr<rawstor::io::TaskScalar> t) {
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
@@ -266,6 +279,10 @@ void Queue::wait(unsigned int timeout) {
             int error = cqe->res < 0 ? -cqe->res : 0;
 
             (*t)(result, error);
+
+            if (cqe->flags & IORING_CQE_F_MORE) {
+                t.release();
+            }
         }
     } catch (...) {
         if (nr) {

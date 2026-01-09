@@ -38,6 +38,10 @@ public:
         int fd, std::unique_ptr<rawstor::io::Task> t, unsigned int mask
     ) override;
 
+    rawstor::io::Event* poll_multishot(
+        int fd, std::unique_ptr<rawstor::io::Task> t, unsigned int mask
+    ) override;
+
     rawstor::io::Event*
     read(int fd, std::unique_ptr<rawstor::io::TaskScalar> t) override;
 

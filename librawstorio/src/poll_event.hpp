@@ -46,6 +46,8 @@ public:
     Event& operator=(const Event&) = delete;
     Event& operator=(Event&&) = delete;
 
+    void set_result(ssize_t result) noexcept { _result = result; }
+
     inline void set_error(int error) noexcept {
 #ifdef RAWSTOR_TRACE_EVENTS
         if (error != 0) {
@@ -71,7 +73,14 @@ public:
 #endif
     virtual bool is_multiplex() const noexcept = 0;
 
+    // TODO: make this abstract
+    virtual bool is_multishot() const noexcept { return false; }
+
+    virtual bool is_poll() const noexcept = 0;
+
     virtual ssize_t process() noexcept = 0;
+
+    int fd() const noexcept { return _fd; }
 };
 
 class EventSimplex : public Event {
@@ -124,6 +133,8 @@ public:
     size_t shift(size_t shift) noexcept override final;
 
     void add_to_batch(std::vector<iovec>& iov) override final;
+
+    bool multishot() const noexcept { return false; }
 };
 
 class EventMultiplexVector : public EventMultiplex {
@@ -159,7 +170,7 @@ public:
     void add_to_batch(std::vector<iovec>& iov) override final;
 };
 
-class EventSimplexPoll final : public EventSimplex {
+class EventSimplexPoll : public EventSimplex {
 private:
     unsigned int _mask;
 
@@ -176,6 +187,28 @@ public:
     inline void set_result(ssize_t result) noexcept { _result = result; }
 
     ssize_t process() noexcept override final;
+
+    bool is_poll() const noexcept override final { return true; }
+};
+
+class EventSimplexPollOneshot final : public EventSimplexPoll {
+public:
+    EventSimplexPollOneshot(
+        Queue& q, int fd, std::unique_ptr<rawstor::io::Task> t,
+        unsigned int mask
+    ) :
+        EventSimplexPoll(q, fd, std::move(t), mask) {}
+};
+
+class EventSimplexPollMultishot final : public EventSimplexPoll {
+public:
+    EventSimplexPollMultishot(
+        Queue& q, int fd, std::unique_ptr<rawstor::io::Task> t,
+        unsigned int mask
+    ) :
+        EventSimplexPoll(q, fd, std::move(t), mask) {}
+
+    bool is_multishot() const noexcept override final { return true; }
 };
 
 class EventSimplexScalarRead final : public EventSimplex {
@@ -186,6 +219,8 @@ public:
         EventSimplex(q, fd, std::move(t)) {}
 
     ssize_t process() noexcept override final;
+
+    bool is_poll() const noexcept override final { return false; }
 };
 
 class EventSimplexVectorRead final : public EventSimplex {
@@ -196,6 +231,8 @@ public:
         EventSimplex(q, fd, std::move(t)) {}
 
     ssize_t process() noexcept override final;
+
+    bool is_poll() const noexcept override final { return false; }
 };
 
 class EventSimplexScalarPositionalRead final : public EventSimplex {
@@ -211,6 +248,8 @@ public:
         _offset(offset) {}
 
     ssize_t process() noexcept override final;
+
+    bool is_poll() const noexcept override final { return false; }
 };
 
 class EventSimplexVectorPositionalRead final : public EventSimplex {
@@ -226,6 +265,8 @@ public:
         _offset(offset) {}
 
     ssize_t process() noexcept override final;
+
+    bool is_poll() const noexcept override final { return false; }
 };
 
 class EventSimplexScalarRecv final : public EventSimplex {
@@ -241,6 +282,8 @@ public:
         _flags(flags) {}
 
     ssize_t process() noexcept override final;
+
+    bool is_poll() const noexcept override final { return false; }
 };
 
 class EventSimplexMessageRead final : public EventSimplex {
@@ -256,6 +299,8 @@ public:
         _flags(flags) {}
 
     ssize_t process() noexcept override final;
+
+    bool is_poll() const noexcept override final { return false; }
 };
 
 class EventMultiplexScalarWrite final : public EventMultiplexScalar {
@@ -266,6 +311,8 @@ public:
         EventMultiplexScalar(q, fd, std::move(t)) {}
 
     ssize_t process() noexcept override final;
+
+    bool is_poll() const noexcept override final { return false; }
 };
 
 class EventMultiplexVectorWrite final : public EventMultiplexVector {
@@ -276,6 +323,8 @@ public:
         EventMultiplexVector(q, fd, std::move(t)) {}
 
     ssize_t process() noexcept override final;
+
+    bool is_poll() const noexcept override final { return false; }
 };
 
 class EventSimplexScalarPositionalWrite final : public EventSimplex {
@@ -291,6 +340,8 @@ public:
         _offset(offset) {}
 
     ssize_t process() noexcept override final;
+
+    bool is_poll() const noexcept override final { return false; }
 };
 
 class EventSimplexVectorPositionalWrite final : public EventSimplex {
@@ -306,6 +357,8 @@ public:
         _offset(offset) {}
 
     ssize_t process() noexcept override final;
+
+    bool is_poll() const noexcept override final { return false; }
 };
 
 class EventSimplexScalarSend final : public EventSimplex {
@@ -321,6 +374,8 @@ public:
         _flags(flags) {}
 
     ssize_t process() noexcept override final;
+
+    bool is_poll() const noexcept override final { return false; }
 };
 
 class EventSimplexMessageWrite final : public EventSimplex {
@@ -336,6 +391,8 @@ public:
         _flags(flags) {}
 
     ssize_t process() noexcept override final;
+
+    bool is_poll() const noexcept override final { return false; }
 };
 
 } // namespace poll

@@ -46,6 +46,25 @@ public:
     size_t size() const noexcept override { return _size; }
 };
 
+class SimplePollMultishotTask final : public rawstor::io::Task {
+private:
+    size_t& _result;
+    int& _error;
+    unsigned int& _count;
+
+public:
+    SimplePollMultishotTask(size_t& result, int& error, unsigned int& count) :
+        _result(result),
+        _error(error),
+        _count(count) {}
+
+    void operator()(size_t result, int error) override {
+        _result = result;
+        _error = error;
+        ++_count;
+    }
+};
+
 } // namespace tests
 } // namespace io
 } // namespace rawstor
