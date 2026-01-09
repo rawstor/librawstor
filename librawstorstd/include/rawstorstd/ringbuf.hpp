@@ -35,11 +35,11 @@ public:
     RingBuf<T>& operator=(const RingBuf<T>&) = delete;
     RingBuf<T>& operator=(RingBuf<T>&& other) noexcept {
         RingBuf<T> temp(std::move(other));
-        swap(std::move(temp));
+        swap(temp);
         return *this;
     }
 
-    void swap(RingBuf<T>&& other) noexcept {
+    void swap(RingBuf<T>& other) noexcept {
         if (this != &other) {
             std::swap(_data, other._data);
             std::swap(_head, other._head);
