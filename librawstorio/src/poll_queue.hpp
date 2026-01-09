@@ -34,27 +34,39 @@ public:
         rawstor::io::Queue(depth),
         _cqes(depth) {}
 
-    void poll(std::unique_ptr<rawstor::io::TaskPoll> t) override;
+    rawstor::io::Event* poll(std::unique_ptr<rawstor::io::TaskPoll> t) override;
 
-    void read(std::unique_ptr<rawstor::io::TaskScalar> t) override;
+    rawstor::io::Event*
+    read(std::unique_ptr<rawstor::io::TaskScalar> t) override;
 
-    void read(std::unique_ptr<rawstor::io::TaskVector> t) override;
+    rawstor::io::Event*
+    read(std::unique_ptr<rawstor::io::TaskVector> t) override;
 
-    void read(std::unique_ptr<rawstor::io::TaskScalarPositional> t) override;
+    rawstor::io::Event*
+    read(std::unique_ptr<rawstor::io::TaskScalarPositional> t) override;
 
-    void read(std::unique_ptr<rawstor::io::TaskVectorPositional> t) override;
+    rawstor::io::Event*
+    read(std::unique_ptr<rawstor::io::TaskVectorPositional> t) override;
 
-    void read(std::unique_ptr<rawstor::io::TaskMessage> t) override;
+    rawstor::io::Event*
+    read(std::unique_ptr<rawstor::io::TaskMessage> t) override;
 
-    void write(std::unique_ptr<rawstor::io::TaskScalar> t) override;
+    rawstor::io::Event*
+    write(std::unique_ptr<rawstor::io::TaskScalar> t) override;
 
-    void write(std::unique_ptr<rawstor::io::TaskVector> t) override;
+    rawstor::io::Event*
+    write(std::unique_ptr<rawstor::io::TaskVector> t) override;
 
-    void write(std::unique_ptr<rawstor::io::TaskScalarPositional> t) override;
+    rawstor::io::Event*
+    write(std::unique_ptr<rawstor::io::TaskScalarPositional> t) override;
 
-    void write(std::unique_ptr<rawstor::io::TaskVectorPositional> t) override;
+    rawstor::io::Event*
+    write(std::unique_ptr<rawstor::io::TaskVectorPositional> t) override;
 
-    void write(std::unique_ptr<rawstor::io::TaskMessage> t) override;
+    rawstor::io::Event*
+    write(std::unique_ptr<rawstor::io::TaskMessage> t) override;
+
+    void cancel(rawstor::io::Event* e) override;
 
     bool empty() const noexcept override;
 
