@@ -26,14 +26,14 @@ public:
         _count(0) {}
 
     RingBuf(const RingBuf<T>&) = delete;
-    RingBuf(RingBuf<T>&& other) :
+    RingBuf(RingBuf<T>&& other) noexcept :
         _data(std::move(other._data)),
         _head(std::exchange(other._head, 0)),
         _tail(std::exchange(other._tail, 0)),
         _count(std::exchange(other._count, 0)) {}
 
     RingBuf<T>& operator=(const RingBuf<T>&) = delete;
-    RingBuf<T>& operator=(RingBuf<T>&& other) {
+    RingBuf<T>& operator=(RingBuf<T>&& other) noexcept {
         if (this != &other) {
             _data = std::move(other._data);
             _head = std::exchange(other._head, 0);
