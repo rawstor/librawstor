@@ -41,12 +41,8 @@ public:
     inline rawstor::io::Queue& queue() noexcept { return *_q; }
 
     void wait() {
-        while (!_q->empty()) {
+        while (_operations > 0) {
             _q->wait(rawstor_opts_wait_timeout());
-        }
-
-        if (_operations > 0) {
-            throw std::runtime_error("Queue not completed");
         }
     }
 };
