@@ -19,10 +19,14 @@ private:
     size_t _count;
 
 public:
-    explicit RingBuf(size_t capacity) : _data(capacity), _head(0), _tail(0), _count(0) {}
+    explicit RingBuf(size_t capacity) :
+        _data(capacity),
+        _head(0),
+        _tail(0),
+        _count(0) {}
 
     RingBuf(const RingBuf<T>&) = delete;
-    RingBuf(RingBuf<T>&& other):
+    RingBuf(RingBuf<T>&& other) :
         _data(std::move(other._data)),
         _head(std::exchange(other._head, 0)),
         _tail(std::exchange(other._tail, 0)),
