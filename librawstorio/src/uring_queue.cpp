@@ -63,9 +63,20 @@ Queue::poll(int fd, std::unique_ptr<rawstor::io::Task> t, unsigned int mask) {
     io_uring_prep_poll_add(sqe, fd, mask);
     io_uring_sqe_set_data(sqe, t.get());
 
-    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(t.get());
-    t.release();
-    return ret;
+    return static_cast<rawstor::io::Event*>(t.release());
+}
+
+rawstor::io::Event* Queue::poll_multishot(
+    int fd, std::unique_ptr<rawstor::io::Task> t, unsigned int mask
+) {
+    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
+    if (sqe == nullptr) {
+        RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
+    }
+    io_uring_prep_poll_multishot(sqe, fd, mask);
+    io_uring_sqe_set_data(sqe, t.get());
+
+    return static_cast<rawstor::io::Event*>(t.release());
 }
 
 rawstor::io::Event*
@@ -77,9 +88,7 @@ Queue::read(int fd, std::unique_ptr<rawstor::io::TaskScalar> t) {
     io_uring_prep_read(sqe, fd, t->buf(), t->size(), 0);
     io_uring_sqe_set_data(sqe, t.get());
 
-    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(t.get());
-    t.release();
-    return ret;
+    return static_cast<rawstor::io::Event*>(t.release());
 }
 
 rawstor::io::Event*
@@ -91,9 +100,7 @@ Queue::readv(int fd, std::unique_ptr<rawstor::io::TaskVector> t) {
     io_uring_prep_readv(sqe, fd, t->iov(), t->niov(), 0);
     io_uring_sqe_set_data(sqe, t.get());
 
-    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(t.get());
-    t.release();
-    return ret;
+    return static_cast<rawstor::io::Event*>(t.release());
 }
 
 rawstor::io::Event*
@@ -105,9 +112,7 @@ Queue::pread(int fd, std::unique_ptr<rawstor::io::TaskScalar> t, off_t offset) {
     io_uring_prep_read(sqe, fd, t->buf(), t->size(), offset);
     io_uring_sqe_set_data(sqe, t.get());
 
-    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(t.get());
-    t.release();
-    return ret;
+    return static_cast<rawstor::io::Event*>(t.release());
 }
 
 rawstor::io::Event* Queue::preadv(
@@ -120,9 +125,7 @@ rawstor::io::Event* Queue::preadv(
     io_uring_prep_readv(sqe, fd, t->iov(), t->niov(), offset);
     io_uring_sqe_set_data(sqe, t.get());
 
-    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(t.get());
-    t.release();
-    return ret;
+    return static_cast<rawstor::io::Event*>(t.release());
 }
 
 rawstor::io::Event* Queue::recv(
@@ -135,9 +138,7 @@ rawstor::io::Event* Queue::recv(
     io_uring_prep_recv(sqe, fd, t->buf(), t->size(), flags);
     io_uring_sqe_set_data(sqe, t.get());
 
-    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(t.get());
-    t.release();
-    return ret;
+    return static_cast<rawstor::io::Event*>(t.release());
 }
 
 rawstor::io::Event* Queue::recvmsg(
@@ -150,9 +151,7 @@ rawstor::io::Event* Queue::recvmsg(
     io_uring_prep_recvmsg(sqe, fd, t->msg(), flags);
     io_uring_sqe_set_data(sqe, t.get());
 
-    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(t.get());
-    t.release();
-    return ret;
+    return static_cast<rawstor::io::Event*>(t.release());
 }
 
 rawstor::io::Event*
@@ -164,9 +163,7 @@ Queue::write(int fd, std::unique_ptr<rawstor::io::TaskScalar> t) {
     io_uring_prep_write(sqe, fd, t->buf(), t->size(), 0);
     io_uring_sqe_set_data(sqe, t.get());
 
-    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(t.get());
-    t.release();
-    return ret;
+    return static_cast<rawstor::io::Event*>(t.release());
 }
 
 rawstor::io::Event*
@@ -178,9 +175,7 @@ Queue::writev(int fd, std::unique_ptr<rawstor::io::TaskVector> t) {
     io_uring_prep_writev(sqe, fd, t->iov(), t->niov(), 0);
     io_uring_sqe_set_data(sqe, t.get());
 
-    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(t.get());
-    t.release();
-    return ret;
+    return static_cast<rawstor::io::Event*>(t.release());
 }
 
 rawstor::io::Event* Queue::pwrite(
@@ -193,9 +188,7 @@ rawstor::io::Event* Queue::pwrite(
     io_uring_prep_write(sqe, fd, t->buf(), t->size(), offset);
     io_uring_sqe_set_data(sqe, t.get());
 
-    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(t.get());
-    t.release();
-    return ret;
+    return static_cast<rawstor::io::Event*>(t.release());
 }
 
 rawstor::io::Event* Queue::pwritev(
@@ -208,9 +201,7 @@ rawstor::io::Event* Queue::pwritev(
     io_uring_prep_writev(sqe, fd, t->iov(), t->niov(), offset);
     io_uring_sqe_set_data(sqe, t.get());
 
-    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(t.get());
-    t.release();
-    return ret;
+    return static_cast<rawstor::io::Event*>(t.release());
 }
 
 rawstor::io::Event* Queue::send(
@@ -223,9 +214,7 @@ rawstor::io::Event* Queue::send(
     io_uring_prep_send(sqe, fd, t->buf(), t->size(), flags);
     io_uring_sqe_set_data(sqe, t.get());
 
-    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(t.get());
-    t.release();
-    return ret;
+    return static_cast<rawstor::io::Event*>(t.release());
 }
 
 rawstor::io::Event* Queue::sendmsg(
@@ -238,9 +227,7 @@ rawstor::io::Event* Queue::sendmsg(
     io_uring_prep_sendmsg(sqe, fd, t->msg(), flags);
     io_uring_sqe_set_data(sqe, t.get());
 
-    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(t.get());
-    t.release();
-    return ret;
+    return static_cast<rawstor::io::Event*>(t.release());
 }
 
 void Queue::cancel(rawstor::io::Event* event) {
@@ -288,9 +275,13 @@ void Queue::wait(unsigned int timeout) {
     size_t result = cqe->res >= 0 ? cqe->res : 0;
     int error = cqe->res < 0 ? -cqe->res : 0;
 
-    io_uring_cqe_seen(&_ring, cqe);
-
     (*t)(result, error);
+
+    if (cqe->flags & IORING_CQE_F_MORE) {
+        t.release();
+    }
+
+    io_uring_cqe_seen(&_ring, cqe);
 }
 
 } // namespace uring

@@ -67,9 +67,28 @@ void Queue::setup_fd(int fd) {
 }
 
 rawstor::io::Event*
-Queue::poll(int fd, std::unique_ptr<rawstor::io::Task> t, unsigned int flags) {
+Queue::poll(int fd, std::unique_ptr<rawstor::io::Task> t, unsigned int mask) {
     Session& s = _get_session(fd);
-    return s.poll(std::move(t), flags);
+
+    std::unique_ptr<EventSimplexPollOneshot> event =
+        std::make_unique<EventSimplexPollOneshot>(
+            *this, fd, std::move(t), mask
+        );
+
+    return s.poll(std::move(event));
+}
+
+rawstor::io::Event* Queue::poll_multishot(
+    int fd, std::unique_ptr<rawstor::io::Task> t, unsigned int mask
+) {
+    Session& s = _get_session(fd);
+
+    std::unique_ptr<EventSimplexPollMultishot> event =
+        std::make_unique<EventSimplexPollMultishot>(
+            *this, fd, std::move(t), mask
+        );
+
+    return s.poll(std::move(event));
 }
 
 rawstor::io::Event*
@@ -203,6 +222,21 @@ void Queue::wait(unsigned int timeout) {
 
     std::unique_ptr<Event> event(_cqes.pop());
     event->dispatch();
+
+    if (event->is_multishot() && event->error() != ECANCELED) {
+        // TODO: here should be just s.push()
+        if (event->is_poll()) {
+            std::unique_ptr<EventSimplexPoll> poll_event(
+                static_cast<EventSimplexPoll*>(event.release())
+            );
+
+            poll_event->set_result(0);
+            poll_event->set_error(0);
+
+            Session& s = _get_session(poll_event->fd());
+            s.poll(std::move(poll_event));
+        }
+    }
 }
 
 } // namespace poll

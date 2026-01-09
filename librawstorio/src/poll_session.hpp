@@ -53,8 +53,7 @@ public:
         return _poll_sqes.empty() && _read_sqes.empty() && _write_sqes.empty();
     }
 
-    rawstor::io::Event*
-    poll(std::unique_ptr<rawstor::io::Task> t, unsigned int flags);
+    rawstor::io::Event* poll(std::unique_ptr<EventSimplexPoll> event);
 
     rawstor::io::Event* read(std::unique_ptr<rawstor::io::TaskScalar> t);
 

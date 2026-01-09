@@ -129,7 +129,7 @@ void Session::_process_write(rawstor::RingBuf<Event>& cqes) {
     try {
         while (!_write_sqes.empty()) {
             const Event& tail = _write_sqes.tail();
-            if (!tail.multiplex()) {
+            if (!tail.is_multiplex()) {
                 if (events.empty()) {
                     std::unique_ptr<Event> event = _write_sqes.pop();
                     std::unique_ptr<EventSimplex> sevent(
@@ -173,11 +173,7 @@ short Session::events() const noexcept {
     return ret;
 }
 
-rawstor::io::Event*
-Session::poll(std::unique_ptr<rawstor::io::Task> t, unsigned int mask) {
-    std::unique_ptr<EventSimplexPoll> event =
-        std::make_unique<EventSimplexPoll>(_q, _fd, std::move(t), mask);
-
+rawstor::io::Event* Session::poll(std::unique_ptr<EventSimplexPoll> event) {
     rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
 
     _poll_sqes.push_back(std::move(event));

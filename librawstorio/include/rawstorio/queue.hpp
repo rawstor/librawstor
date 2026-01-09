@@ -14,6 +14,8 @@ namespace io {
 
 class Task;
 
+class TaskPollMultishot;
+
 class TaskScalar;
 
 class TaskVector;
@@ -41,6 +43,8 @@ public:
     inline unsigned int depth() const noexcept { return _depth; }
 
     virtual Event* poll(int fd, std::unique_ptr<Task> t, unsigned int mask) = 0;
+    virtual Event*
+    poll_multishot(int fd, std::unique_ptr<Task> t, unsigned int mask) = 0;
 
     virtual Event* read(int fd, std::unique_ptr<TaskScalar> t) = 0;
     virtual Event* readv(int fd, std::unique_ptr<TaskVector> t) = 0;
