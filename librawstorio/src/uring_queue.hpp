@@ -54,7 +54,7 @@ public:
     rawstor::io::Event*
     write(std::unique_ptr<rawstor::io::TaskMessage> t) override;
 
-    bool empty() const noexcept override;
+    void cancel(rawstor::io::Event* event);
 
     void wait(unsigned int timeout) override;
 };
