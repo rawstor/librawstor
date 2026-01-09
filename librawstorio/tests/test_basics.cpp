@@ -13,6 +13,32 @@ protected:
     BasicsTest() : rawstor::io::tests::QueueTest(1) {}
 };
 
+TEST_F(BasicsTest, empty) {
+    const char server_buf[] = "data";
+    size_t result = 0;
+    int error = 0;
+
+    _server.write(server_buf, sizeof(server_buf));
+    _server.wait();
+
+    EXPECT_TRUE(_queue->empty());
+    EXPECT_THROW(_queue->wait(0), std::system_error);
+
+    {
+        std::unique_ptr<rawstor::io::TaskPoll> t =
+            std::make_unique<rawstor::io::tests::SimplePollTask>(
+                _fd, POLLIN, result, error
+            );
+        _queue->poll(std::move(t));
+    }
+    EXPECT_FALSE(_queue->empty());
+
+    _queue->wait(0);
+
+    EXPECT_TRUE(_queue->empty());
+    EXPECT_THROW(_queue->wait(0), std::system_error);
+}
+
 TEST_F(BasicsTest, pollin) {
     const char server_buf[] = "data";
     size_t result = 0;
