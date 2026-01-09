@@ -60,7 +60,7 @@ public:
 
     virtual void cancel(Event* event) = 0;
 
-    virtual bool empty() const noexcept = 0;
+    virtual bool empty1() const noexcept = 0;
 
     virtual void wait(unsigned int timeout) = 0;
 };

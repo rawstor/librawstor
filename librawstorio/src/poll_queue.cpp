@@ -134,7 +134,7 @@ void Queue::cancel(rawstor::io::Event* e) {
     RAWSTOR_THROW_SYSTEM_ERROR(ENOENT);
 }
 
-bool Queue::empty() const noexcept {
+bool Queue::empty1() const noexcept {
     if (!_cqes.empty()) {
         return false;
     }

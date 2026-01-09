@@ -68,7 +68,7 @@ public:
 
     void cancel(rawstor::io::Event* e) override;
 
-    bool empty() const noexcept override;
+    bool empty1() const noexcept override;
 
     void wait(unsigned int timeout) override;
 };

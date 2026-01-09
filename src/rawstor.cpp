@@ -280,8 +280,8 @@ void rawstor_terminate() {
     rawstor_logging_terminate();
 }
 
-int rawstor_empty() {
-    return rawstor::io_queue->empty();
+int rawstor_empty1() {
+    return rawstor::io_queue->empty1();
 }
 
 int rawstor_wait() {
