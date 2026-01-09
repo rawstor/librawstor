@@ -54,7 +54,6 @@ public:
     }
 
     rawstor::io::Event* poll(std::unique_ptr<rawstor::io::TaskPoll> t);
-    bool cancel_poll(rawstor::io::Event* event, rawstor::RingBuf<Event>& cqes);
 
     rawstor::io::Event* read(std::unique_ptr<rawstor::io::TaskScalar> t);
 
@@ -79,6 +78,8 @@ public:
     write(std::unique_ptr<rawstor::io::TaskVectorPositional> t);
 
     rawstor::io::Event* write(std::unique_ptr<rawstor::io::TaskMessage> t);
+
+    bool cancel(rawstor::io::Event* event, rawstor::RingBuf<Event>& cqes);
 
     void process(RingBuf<Event>& cqes, short revents);
 };

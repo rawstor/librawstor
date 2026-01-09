@@ -66,17 +66,6 @@ rawstor::io::Event* Queue::poll(std::unique_ptr<rawstor::io::TaskPoll> t) {
     return ret;
 }
 
-void Queue::cancel_poll(rawstor::io::Event* event) {
-    io_uring_sync_cancel_reg req = {};
-    req.addr = (__u64)event;
-    req.fd = 0;
-    req.flags = 0;
-    int res = io_uring_register_sync_cancel(&_ring, &req);
-    if (res < 0) {
-        RAWSTOR_THROW_SYSTEM_ERROR(-res);
-    }
-}
-
 rawstor::io::Event* Queue::read(std::unique_ptr<rawstor::io::TaskScalar> t) {
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
@@ -219,6 +208,17 @@ rawstor::io::Event* Queue::write(std::unique_ptr<rawstor::io::TaskMessage> t) {
     rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(t.get());
     t.release();
     return ret;
+}
+
+void Queue::cancel(rawstor::io::Event* event) {
+    io_uring_sync_cancel_reg req = {};
+    req.addr = (__u64)event;
+    req.fd = 0;
+    req.flags = 0;
+    int res = io_uring_register_sync_cancel(&_ring, &req);
+    if (res < 0) {
+        RAWSTOR_THROW_SYSTEM_ERROR(-res);
+    }
 }
 
 bool Queue::empty() const noexcept {

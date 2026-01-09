@@ -35,7 +35,6 @@ public:
         _cqes(depth) {}
 
     rawstor::io::Event* poll(std::unique_ptr<rawstor::io::TaskPoll> t) override;
-    void cancel_poll(rawstor::io::Event* e) override;
 
     rawstor::io::Event*
     read(std::unique_ptr<rawstor::io::TaskScalar> t) override;
@@ -66,6 +65,8 @@ public:
 
     rawstor::io::Event*
     write(std::unique_ptr<rawstor::io::TaskMessage> t) override;
+
+    void cancel(rawstor::io::Event* e) override;
 
     bool empty() const noexcept override;
 

@@ -189,24 +189,6 @@ rawstor::io::Event* Session::poll(std::unique_ptr<rawstor::io::TaskPoll> t) {
     return ret;
 }
 
-bool Session::cancel_poll(
-    rawstor::io::Event* event, rawstor::RingBuf<Event>& cqes
-) {
-    for (std::list<std::unique_ptr<EventSimplexPoll>>::iterator it =
-             _poll_sqes.begin();
-         it != _poll_sqes.end(); ++it) {
-        if (event == static_cast<rawstor::io::Event*>(it->get())) {
-            std::unique_ptr<EventSimplexPoll> e = std::move(*it);
-            _poll_sqes.erase(it);
-
-            e->set_error(ECANCELED);
-            cqes.push(std::move(e));
-            return true;
-        }
-    }
-    return false;
-}
-
 rawstor::io::Event* Session::read(std::unique_ptr<rawstor::io::TaskScalar> t) {
     std::unique_ptr<Event> event =
         std::make_unique<EventMultiplexScalarRead>(_q, std::move(t));
@@ -322,6 +304,37 @@ Session::write(std::unique_ptr<rawstor::io::TaskMessage> t) {
     _write_sqes.push(std::move(event));
 
     return ret;
+}
+
+bool Session::cancel(rawstor::io::Event* event, rawstor::RingBuf<Event>& cqes) {
+    for (std::list<std::unique_ptr<EventSimplexPoll>>::iterator it =
+             _poll_sqes.begin();
+         it != _poll_sqes.end(); ++it) {
+        if (event == static_cast<rawstor::io::Event*>(it->get())) {
+            std::unique_ptr<EventSimplexPoll> e = std::move(*it);
+            _poll_sqes.erase(it);
+
+            e->set_error(ECANCELED);
+            cqes.push(std::move(e));
+            return true;
+        }
+    }
+
+    bool found = false;
+    rawstor::RingBuf<Event> read_sqes(_read_sqes.capacity());
+    while(!_read_sqes.empty()) {
+        std::unique_ptr<Event> e = _read_sqes.pop();
+        if (event == static_cast<rawstor::io::Event*>(e.get())) {
+            found = true;
+
+            e->set_error(ECANCELED);
+            cqes.push(std::move(e));
+        } else {
+            read_sqes.push(std::move(e));
+        }
+    }
+    _read_sqes = std::move(read_sqes);
+    return found;
 }
 
 void Session::process(
