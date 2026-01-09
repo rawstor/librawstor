@@ -34,13 +34,18 @@ public:
 
     RingBuf<T>& operator=(const RingBuf<T>&) = delete;
     RingBuf<T>& operator=(RingBuf<T>&& other) noexcept {
-        if (this != &other) {
-            _data = std::move(other._data);
-            _head = std::exchange(other._head, 0);
-            _tail = std::exchange(other._tail, 0);
-            _count = std::exchange(other._count, 0);
-        }
+        RingBuf<T> temp(std::move(other));
+        swap(std::move(temp));
         return *this;
+    }
+
+    void swap(RingBuf<T>&& other) noexcept {
+        if (this != &other) {
+            std::swap(_data, other._data);
+            std::swap(_head, other._head);
+            std::swap(_tail, other._tail);
+            std::swap(_count, other._count);
+        }
     }
 
     inline bool empty() const noexcept { return _count == 0; }
