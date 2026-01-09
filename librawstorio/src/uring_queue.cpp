@@ -221,7 +221,7 @@ void Queue::cancel(rawstor::io::Event* event) {
     }
 }
 
-bool Queue::empty1() const noexcept {
+bool Queue::empty() const noexcept {
     return _events == 0;
 }
 
