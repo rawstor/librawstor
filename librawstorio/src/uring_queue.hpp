@@ -25,6 +25,9 @@ public:
     rawstor::io::Event* poll(std::unique_ptr<rawstor::io::TaskPoll> t) override;
 
     rawstor::io::Event*
+    poll(std::unique_ptr<rawstor::io::TaskPollMultishot> t) override;
+
+    rawstor::io::Event*
     read(std::unique_ptr<rawstor::io::TaskScalar> t) override;
 
     rawstor::io::Event*

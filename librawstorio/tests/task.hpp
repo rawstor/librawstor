@@ -56,6 +56,34 @@ public:
     unsigned int mask() const noexcept override { return _mask; }
 };
 
+class SimplePollMultishotTask final : public rawstor::io::TaskPollMultishot {
+private:
+    unsigned int _mask;
+
+    size_t& _result;
+    int& _error;
+    unsigned int& _count;
+
+public:
+    SimplePollMultishotTask(
+        int fd, unsigned int mask, size_t& result, int& error,
+        unsigned int& count
+    ) :
+        rawstor::io::TaskPollMultishot(fd),
+        _mask(mask),
+        _result(result),
+        _error(error),
+        _count(count) {}
+
+    void operator()(size_t result, int error) override {
+        _result = result;
+        _error = error;
+        ++_count;
+    }
+
+    unsigned int mask() const noexcept override { return _mask; }
+};
+
 } // namespace tests
 } // namespace io
 } // namespace rawstor

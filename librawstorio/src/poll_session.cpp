@@ -134,7 +134,7 @@ void Session::_process(
     try {
         while (!sqes.empty()) {
             const Event& tail = sqes.tail();
-            if (!tail.multiplex()) {
+            if (!tail.is_multiplex()) {
                 if (events.empty()) {
                     std::unique_ptr<Event> event = sqes.pop();
                     std::unique_ptr<EventSimplex> sevent(
@@ -178,10 +178,7 @@ short Session::events() const noexcept {
     return ret;
 }
 
-rawstor::io::Event* Session::poll(std::unique_ptr<rawstor::io::TaskPoll> t) {
-    std::unique_ptr<EventSimplexPoll> event =
-        std::make_unique<EventSimplexPoll>(_q, std::move(t));
-
+rawstor::io::Event* Session::poll(std::unique_ptr<EventSimplexPoll> event) {
     rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
 
     _poll_sqes.push_back(std::move(event));

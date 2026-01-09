@@ -40,6 +40,12 @@ TaskPoll::TaskPoll(int fd) : Task(fd) {
 #endif
 }
 
+TaskPollMultishot::TaskPollMultishot(int fd) : Task(fd) {
+#ifdef RAWSTOR_TRACE_EVENTS
+    trace(__FILE__, __LINE__, __FUNCTION__, "");
+#endif
+}
+
 TaskScalar::TaskScalar(int fd) : Task(fd) {
 #ifdef RAWSTOR_TRACE_EVENTS
     trace(__FILE__, __LINE__, __FUNCTION__, "");

@@ -47,6 +47,14 @@ public:
     virtual unsigned int mask() const noexcept = 0;
 };
 
+class TaskPollMultishot : public Task {
+public:
+    explicit TaskPollMultishot(int fd);
+    virtual ~TaskPollMultishot() override = default;
+
+    virtual unsigned int mask() const noexcept = 0;
+};
+
 class TaskScalar : public Task {
 public:
     explicit TaskScalar(int fd);

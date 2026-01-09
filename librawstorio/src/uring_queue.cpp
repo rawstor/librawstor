@@ -65,6 +65,20 @@ rawstor::io::Event* Queue::poll(std::unique_ptr<rawstor::io::TaskPoll> t) {
     return ret;
 }
 
+rawstor::io::Event*
+Queue::poll(std::unique_ptr<rawstor::io::TaskPollMultishot> t) {
+    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
+    if (sqe == nullptr) {
+        RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
+    }
+    io_uring_prep_poll_multishot(sqe, t->fd(), t->mask());
+    io_uring_sqe_set_data(sqe, t.get());
+
+    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(t.get());
+    t.release();
+    return ret;
+}
+
 rawstor::io::Event* Queue::read(std::unique_ptr<rawstor::io::TaskScalar> t) {
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
