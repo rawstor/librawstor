@@ -123,4 +123,57 @@ TEST_F(CancelTest, read_completed) {
     EXPECT_EQ(error, 0);
 }
 
+TEST_F(CancelTest, write) {
+    char client_buf[] = "data";
+    size_t result = 0;
+    int error = 0;
+    rawstor::io::Event* event = nullptr;
+
+    {
+        std::unique_ptr<rawstor::io::TaskScalar> t =
+            std::make_unique<rawstor::io::tests::SimpleScalarTask>(
+                _fd, client_buf, sizeof(client_buf), result, error
+            );
+        event = _queue->write(std::move(t));
+    }
+
+    EXPECT_FALSE(_queue->empty());
+
+    _queue->cancel(event);
+
+    EXPECT_FALSE(_queue->empty());
+    _queue->wait(0);
+    EXPECT_TRUE(_queue->empty());
+    EXPECT_THROW(_queue->wait(0), std::system_error);
+
+    EXPECT_EQ(result, (size_t)0);
+    EXPECT_EQ(error, ECANCELED);
+}
+
+TEST_F(CancelTest, write_completed) {
+    char client_buf[] = "data";
+    char server_buf[sizeof(client_buf)];
+    size_t result = 0;
+    int error = 0;
+    rawstor::io::Event* event = nullptr;
+
+    {
+        std::unique_ptr<rawstor::io::TaskScalar> t =
+            std::make_unique<rawstor::io::tests::SimpleScalarTask>(
+                _fd, client_buf, sizeof(client_buf), result, error
+            );
+        event = _queue->write(std::move(t));
+    }
+
+    _queue->wait(0);
+
+    _server.read(server_buf, sizeof(server_buf));
+    _server.wait();
+
+    EXPECT_THROW(_queue->cancel(event), std::system_error);
+    EXPECT_EQ(result, sizeof(client_buf));
+    EXPECT_EQ(error, 0);
+    EXPECT_EQ(strcmp(server_buf, client_buf), 0);
+}
+
 } // unnamed namespace

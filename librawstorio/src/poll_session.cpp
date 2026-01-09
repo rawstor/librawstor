@@ -334,6 +334,24 @@ bool Session::cancel(rawstor::io::Event* event, rawstor::RingBuf<Event>& cqes) {
         }
     }
     _read_sqes = std::move(read_sqes);
+    if (found) {
+        return found;
+    }
+
+    rawstor::RingBuf<Event> write_sqes(_write_sqes.capacity());
+    while(!_write_sqes.empty()) {
+        std::unique_ptr<Event> e = _write_sqes.pop();
+        if (event == static_cast<rawstor::io::Event*>(e.get())) {
+            found = true;
+
+            e->set_error(ECANCELED);
+            cqes.push(std::move(e));
+        } else {
+            write_sqes.push(std::move(e));
+        }
+    }
+    _write_sqes = std::move(write_sqes);
+
     return found;
 }
 
