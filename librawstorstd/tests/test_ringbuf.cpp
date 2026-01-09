@@ -139,4 +139,43 @@ TEST(RingBufTest, overlap) {
     EXPECT_EQ(buf.size(), (size_t)4);
 }
 
+TEST(RingBufTest, move_constructor) {
+    rawstor::RingBuf<int> buf1(3);
+
+    std::unique_ptr<int> i1 = std::make_unique<int>(1);
+    buf1.push(std::move(i1));
+    EXPECT_EQ(buf1.size(), (size_t)1);
+
+    rawstor::RingBuf<int> buf2(std::move(buf1));
+    EXPECT_EQ(buf1.size(), (size_t)0);
+    EXPECT_EQ(buf1.capacity(), (size_t)0);
+    EXPECT_EQ(buf2.size(), (size_t)1);
+    EXPECT_EQ(buf2.capacity(), (size_t)3);
+
+    std::unique_ptr<int> i2 = buf2.pop();
+    EXPECT_EQ(*i2, 1);
+}
+
+TEST(RingBufTest, move_operator) {
+    rawstor::RingBuf<int> buf1(3);
+
+    std::unique_ptr<int> i1 = std::make_unique<int>(1);
+    buf1.push(std::move(i1));
+    EXPECT_EQ(buf1.size(), (size_t)1);
+
+    rawstor::RingBuf<int> buf2(10);
+    EXPECT_EQ(buf2.size(), (size_t)0);
+    EXPECT_EQ(buf2.capacity(), (size_t)10);
+
+    buf2 = std::move(buf1);
+
+    EXPECT_EQ(buf1.size(), (size_t)0);
+    EXPECT_EQ(buf1.capacity(), (size_t)0);
+    EXPECT_EQ(buf2.size(), (size_t)1);
+    EXPECT_EQ(buf2.capacity(), (size_t)3);
+
+    std::unique_ptr<int> i2 = buf2.pop();
+    EXPECT_EQ(*i2, 1);
+}
+
 } // unnamed namespace
