@@ -40,12 +40,10 @@ public:
     }
 
     void swap(RingBuf<T>& other) noexcept {
-        if (this != &other) {
-            std::swap(_data, other._data);
-            std::swap(_head, other._head);
-            std::swap(_tail, other._tail);
-            std::swap(_count, other._count);
-        }
+        std::swap(_data, other._data);
+        std::swap(_head, other._head);
+        std::swap(_tail, other._tail);
+        std::swap(_count, other._count);
     }
 
     inline bool empty() const noexcept { return _count == 0; }
