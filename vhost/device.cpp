@@ -663,18 +663,17 @@ void Device::loop() {
     std::unique_ptr<TaskDispatch> t = std::make_unique<TaskDispatch>(*this);
     poll(_dev.sock, std::move(t));
 
-    while (!rawstor_empty()) {
+    while (true) {
         int res = rawstor_wait();
-        if (res) {
-            if (res == -EINTR) {
-                break;
-            }
+        if (res == -ETIME) {
+            continue;
+        }
 
-            if (res == -ETIME) {
-                rawstor_warning("rawstor_wait() failed: timeout\n");
-                continue;
-            }
+        if (res == -EINTR) {
+            break;
+        }
 
+        if (res < 0) {
             RAWSTOR_THROW_SYSTEM_ERROR(-res);
         }
     }

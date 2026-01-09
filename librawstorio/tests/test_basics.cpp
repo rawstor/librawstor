@@ -21,7 +21,6 @@ TEST_F(BasicsTest, empty) {
     _server.write(server_buf, sizeof(server_buf));
     _server.wait();
 
-    EXPECT_TRUE(_queue->empty());
     EXPECT_THROW(_queue->wait(0), std::system_error);
 
     {
@@ -31,11 +30,9 @@ TEST_F(BasicsTest, empty) {
             );
         _queue->poll(std::move(t));
     }
-    EXPECT_FALSE(_queue->empty());
 
-    _queue->wait(0);
+    EXPECT_NO_THROW(_queue->wait(0));
 
-    EXPECT_TRUE(_queue->empty());
     EXPECT_THROW(_queue->wait(0), std::system_error);
 }
 
