@@ -4,8 +4,6 @@
 
 #include <gtest/gtest.h>
 
-#include <poll.h>
-
 namespace {
 
 class OverflowTest : public rawstor::io::tests::QueueTest {
