@@ -165,22 +165,22 @@ public:
     void set_result(short revents) noexcept;
 };
 
-class EventMultiplexScalarRead final : public EventMultiplexScalar {
+class EventSimplexScalarRead final : public EventSimplex {
 public:
-    EventMultiplexScalarRead(
+    EventSimplexScalarRead(
         Queue& q, std::unique_ptr<rawstor::io::TaskScalar> t
     ) :
-        EventMultiplexScalar(q, std::move(t)) {}
+        EventSimplex(q, std::move(t)) {}
 
     ssize_t process() noexcept override final;
 };
 
-class EventMultiplexVectorRead final : public EventMultiplexVector {
+class EventSimplexVectorRead final : public EventSimplex {
 public:
-    EventMultiplexVectorRead(
+    EventSimplexVectorRead(
         Queue& q, std::unique_ptr<rawstor::io::TaskVector> t
     ) :
-        EventMultiplexVector(q, std::move(t)) {}
+        EventSimplex(q, std::move(t)) {}
 
     ssize_t process() noexcept override final;
 };
