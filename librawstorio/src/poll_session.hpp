@@ -20,7 +20,7 @@ private:
     Queue& _q;
     int _fd;
     std::list<std::unique_ptr<EventSimplexPoll>> _poll_sqes;
-    rawstor::RingBuf<Event> _read_sqes;
+    rawstor::RingBuf<EventSimplex> _read_sqes;
     rawstor::RingBuf<Event> _write_sqes;
 
     void _process_poll(rawstor::RingBuf<Event>& cqes, short revents);
@@ -29,14 +29,14 @@ private:
         std::unique_ptr<EventSimplex> event, rawstor::RingBuf<Event>& cqes
     );
 
-    void _process_multiplex(
+    void _process_multiplex_write(
         std::vector<std::unique_ptr<EventMultiplex>>& events, unsigned int niov,
-        rawstor::RingBuf<Event>& sqes, rawstor::RingBuf<Event>& cqes, bool write
+        rawstor::RingBuf<Event>& cqes
     );
 
-    void _process(
-        rawstor::RingBuf<Event>& sqes, rawstor::RingBuf<Event>& cqes, bool write
-    );
+    void _process_read(rawstor::RingBuf<Event>& cqes);
+
+    void _process_write(rawstor::RingBuf<Event>& cqes);
 
 public:
     Session(Queue& q, int fd);
