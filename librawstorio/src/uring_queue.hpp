@@ -1,6 +1,8 @@
 #ifndef RAWSTORIO_URING_QUEUE_HPP
 #define RAWSTORIO_URING_QUEUE_HPP
 
+#include <rawstorstd/gpp.hpp>
+
 #include <rawstorio/queue.hpp>
 
 #include <liburing.h>
@@ -21,6 +23,14 @@ public:
 
     explicit Queue(unsigned int depth);
     ~Queue();
+
+    inline io_uring_sqe* get_sqe() {
+        io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
+        if (sqe == nullptr) {
+            RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
+        }
+        return sqe;
+    }
 
     rawstor::io::Event* poll(std::unique_ptr<rawstor::io::TaskPoll> t) override;
 
