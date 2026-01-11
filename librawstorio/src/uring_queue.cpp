@@ -53,7 +53,7 @@ void Queue::setup_fd(int fd) {
 }
 
 rawstor::io::Event*
-Queue::poll(int fd, std::unique_ptr<rawstor::io::Task> t, int mask) {
+Queue::poll(int fd, std::unique_ptr<rawstor::io::Task> t, unsigned int mask) {
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
@@ -128,8 +128,9 @@ rawstor::io::Event* Queue::preadv(
     return ret;
 }
 
-rawstor::io::Event*
-Queue::recvmsg(int fd, std::unique_ptr<rawstor::io::TaskMessage> t, int flags) {
+rawstor::io::Event* Queue::recvmsg(
+    int fd, std::unique_ptr<rawstor::io::TaskMessage> t, unsigned int flags
+) {
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
@@ -205,8 +206,9 @@ rawstor::io::Event* Queue::pwritev(
     return ret;
 }
 
-rawstor::io::Event*
-Queue::sendmsg(int fd, std::unique_ptr<rawstor::io::TaskMessage> t, int flags) {
+rawstor::io::Event* Queue::sendmsg(
+    int fd, std::unique_ptr<rawstor::io::TaskMessage> t, unsigned int flags
+) {
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
