@@ -23,8 +23,9 @@ public:
     explicit Queue(unsigned int depth);
     ~Queue();
 
-    rawstor::io::Event*
-    poll(int fd, std::unique_ptr<rawstor::io::Task> t, int mask) override;
+    rawstor::io::Event* poll(
+        int fd, std::unique_ptr<rawstor::io::Task> t, unsigned int mask
+    ) override;
 
     rawstor::io::Event*
     read(int fd, std::unique_ptr<rawstor::io::TaskScalar> t) override;
@@ -41,7 +42,7 @@ public:
     ) override;
 
     rawstor::io::Event* recvmsg(
-        int fd, std::unique_ptr<rawstor::io::TaskMessage> t, int flags
+        int fd, std::unique_ptr<rawstor::io::TaskMessage> t, unsigned int flags
     ) override;
 
     rawstor::io::Event*
@@ -59,7 +60,7 @@ public:
     ) override;
 
     rawstor::io::Event* sendmsg(
-        int fd, std::unique_ptr<rawstor::io::TaskMessage> t, int flags
+        int fd, std::unique_ptr<rawstor::io::TaskMessage> t, unsigned int flags
     ) override;
 
     void cancel(rawstor::io::Event* event);
