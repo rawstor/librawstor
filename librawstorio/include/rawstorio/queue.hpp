@@ -12,15 +12,11 @@
 namespace rawstor {
 namespace io {
 
-class TaskPoll;
+class Task;
 
 class TaskScalar;
 
 class TaskVector;
-
-class TaskScalarPositional;
-
-class TaskVectorPositional;
 
 class TaskMessage;
 
@@ -44,19 +40,25 @@ public:
 
     inline unsigned int depth() const noexcept { return _depth; }
 
-    virtual Event* poll(std::unique_ptr<TaskPoll> t) = 0;
+    virtual Event* poll(int fd, std::unique_ptr<Task> t, int mask) = 0;
 
-    virtual Event* read(std::unique_ptr<TaskScalar> t) = 0;
-    virtual Event* read(std::unique_ptr<TaskVector> t) = 0;
-    virtual Event* read(std::unique_ptr<TaskScalarPositional> t) = 0;
-    virtual Event* read(std::unique_ptr<TaskVectorPositional> t) = 0;
-    virtual Event* read(std::unique_ptr<TaskMessage> t) = 0;
+    virtual Event* read(int fd, std::unique_ptr<TaskScalar> t) = 0;
+    virtual Event* readv(int fd, std::unique_ptr<TaskVector> t) = 0;
+    virtual Event*
+    pread(int fd, std::unique_ptr<TaskScalar> t, off_t offset) = 0;
+    virtual Event*
+    preadv(int fd, std::unique_ptr<TaskVector> t, off_t offset) = 0;
+    virtual Event*
+    recvmsg(int fd, std::unique_ptr<TaskMessage> t, int flags) = 0;
 
-    virtual Event* write(std::unique_ptr<TaskScalar> t) = 0;
-    virtual Event* write(std::unique_ptr<TaskVector> t) = 0;
-    virtual Event* write(std::unique_ptr<TaskScalarPositional> t) = 0;
-    virtual Event* write(std::unique_ptr<TaskVectorPositional> t) = 0;
-    virtual Event* write(std::unique_ptr<TaskMessage> t) = 0;
+    virtual Event* write(int fd, std::unique_ptr<TaskScalar> t) = 0;
+    virtual Event* writev(int fd, std::unique_ptr<TaskVector> t) = 0;
+    virtual Event*
+    pwrite(int fd, std::unique_ptr<TaskScalar> t, off_t offset) = 0;
+    virtual Event*
+    pwritev(int fd, std::unique_ptr<TaskVector> t, off_t offset) = 0;
+    virtual Event*
+    sendmsg(int fd, std::unique_ptr<TaskMessage> t, int flags) = 0;
 
     virtual void cancel(Event* event) = 0;
 
