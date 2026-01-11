@@ -159,11 +159,12 @@ public:
 
 class EventSimplexPoll final : public EventSimplex {
 private:
-    int _mask;
+    unsigned int _mask;
 
 public:
     EventSimplexPoll(
-        Queue& q, int fd, std::unique_ptr<rawstor::io::Task> t, int mask
+        Queue& q, int fd, std::unique_ptr<rawstor::io::Task> t,
+        unsigned int mask
     ) :
         EventSimplex(q, fd, std::move(t)),
         _mask(mask) {}
@@ -227,11 +228,12 @@ public:
 
 class EventSimplexMessageRead final : public EventSimplex {
 private:
-    int _flags;
+    unsigned int _flags;
 
 public:
     EventSimplexMessageRead(
-        Queue& q, int fd, std::unique_ptr<rawstor::io::TaskMessage> t, int flags
+        Queue& q, int fd, std::unique_ptr<rawstor::io::TaskMessage> t,
+        unsigned int flags
     ) :
         EventSimplex(q, fd, std::move(t)),
         _flags(flags) {}
@@ -291,11 +293,12 @@ public:
 
 class EventSimplexMessageWrite final : public EventSimplex {
 private:
-    int _flags;
+    unsigned int _flags;
 
 public:
     EventSimplexMessageWrite(
-        Queue& q, int fd, std::unique_ptr<rawstor::io::TaskMessage> t, int flags
+        Queue& q, int fd, std::unique_ptr<rawstor::io::TaskMessage> t,
+        unsigned int flags
     ) :
         EventSimplex(q, fd, std::move(t)),
         _flags(flags) {}

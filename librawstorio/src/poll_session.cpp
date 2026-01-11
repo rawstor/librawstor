@@ -174,7 +174,7 @@ short Session::events() const noexcept {
 }
 
 rawstor::io::Event*
-Session::poll(std::unique_ptr<rawstor::io::Task> t, int mask) {
+Session::poll(std::unique_ptr<rawstor::io::Task> t, unsigned int mask) {
     std::unique_ptr<EventSimplexPoll> event =
         std::make_unique<EventSimplexPoll>(_q, _fd, std::move(t), mask);
 
@@ -235,8 +235,9 @@ Session::preadv(std::unique_ptr<rawstor::io::TaskVector> t, off_t offset) {
     return ret;
 }
 
-rawstor::io::Event*
-Session::recvmsg(std::unique_ptr<rawstor::io::TaskMessage> t, int flags) {
+rawstor::io::Event* Session::recvmsg(
+    std::unique_ptr<rawstor::io::TaskMessage> t, unsigned int flags
+) {
     std::unique_ptr<EventSimplex> event =
         std::make_unique<EventSimplexMessageRead>(_q, _fd, std::move(t), flags);
 
@@ -298,8 +299,9 @@ Session::pwritev(std::unique_ptr<rawstor::io::TaskVector> t, off_t offset) {
     return ret;
 }
 
-rawstor::io::Event*
-Session::sendmsg(std::unique_ptr<rawstor::io::TaskMessage> t, int flags) {
+rawstor::io::Event* Session::sendmsg(
+    std::unique_ptr<rawstor::io::TaskMessage> t, unsigned int flags
+) {
     std::unique_ptr<Event> event = std::make_unique<EventSimplexMessageWrite>(
         _q, _fd, std::move(t), flags
     );
