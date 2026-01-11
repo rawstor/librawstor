@@ -34,9 +34,7 @@ private:
     void* _data;
 
 public:
-    Task(RawstorIOCallback* cb, void* data) :
-        _cb(cb),
-        _data(data) {}
+    Task(RawstorIOCallback* cb, void* data) : _cb(cb), _data(data) {}
 
     void operator()(size_t result, int error) override {
         int res = _cb(result, error, _data);
@@ -55,9 +53,7 @@ private:
     void* _data;
 
 public:
-    TaskScalar(
-        void* buf, size_t size, RawstorIOCallback* cb, void* data
-    ) :
+    TaskScalar(void* buf, size_t size, RawstorIOCallback* cb, void* data) :
         _buf(buf),
         _size(size),
         _cb(cb),
@@ -86,8 +82,8 @@ private:
 
 public:
     TaskVector(
-        iovec* iov, unsigned int niov, size_t size,
-        RawstorIOCallback* cb, void* data
+        iovec* iov, unsigned int niov, size_t size, RawstorIOCallback* cb,
+        void* data
     ) :
         _iov(iov),
         _niov(niov),
@@ -118,9 +114,7 @@ private:
     void* _data;
 
 public:
-    TaskMessage(
-        msghdr* msg, size_t size, RawstorIOCallback* cb, void* data
-    ) :
+    TaskMessage(msghdr* msg, size_t size, RawstorIOCallback* cb, void* data) :
         _msg(msg),
         _size(size),
         _cb(cb),
@@ -205,8 +199,7 @@ int rawstor_fd_poll(
     int fd, unsigned int mask, RawstorIOCallback* cb, void* data
 ) {
     try {
-        std::unique_ptr<rawstor::io::Task> t =
-            std::make_unique<Task>(cb, data);
+        std::unique_ptr<rawstor::io::Task> t = std::make_unique<Task>(cb, data);
         rawstor::io_queue->poll(fd, std::move(t), mask);
         return 0;
     } catch (const std::system_error& e) {

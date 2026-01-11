@@ -681,8 +681,7 @@ public:
 
         _context->sub_read();
         if (!error) {
-            error =
-                validate_result(_context->session().fd(), size(), result);
+            error = validate_result(_context->session().fd(), size(), result);
         }
 
         if (error) {
@@ -731,8 +730,7 @@ public:
         SessionOp& op = _context->find_op(_cid);
 
         if (!error) {
-            error =
-                validate_result(_context->session().fd(), _size, result);
+            error = validate_result(_context->session().fd(), _size, result);
         }
 
         static_cast<SessionOpRead&>(op).response_body_cb(result, error);
@@ -774,8 +772,7 @@ public:
         SessionOp& op = _context->find_op(_cid);
 
         if (!error) {
-            error =
-                validate_result(_context->session().fd(), size(), result);
+            error = validate_result(_context->session().fd(), size(), result);
         }
 
         static_cast<SessionOpReadV&>(op).response_body_cb(result, error);

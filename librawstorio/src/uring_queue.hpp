@@ -31,14 +31,17 @@ public:
     rawstor::io::Event*
     readv(int fd, std::unique_ptr<rawstor::io::TaskVector> t) override;
 
-    rawstor::io::Event*
-    pread(int fd, std::unique_ptr<rawstor::io::TaskScalar> t, off_t offset) override;
+    rawstor::io::Event* pread(
+        int fd, std::unique_ptr<rawstor::io::TaskScalar> t, off_t offset
+    ) override;
 
-    rawstor::io::Event*
-    preadv(int fd, std::unique_ptr<rawstor::io::TaskVector> t, off_t offset) override;
+    rawstor::io::Event* preadv(
+        int fd, std::unique_ptr<rawstor::io::TaskVector> t, off_t offset
+    ) override;
 
-    rawstor::io::Event*
-    recvmsg(int fd, std::unique_ptr<rawstor::io::TaskMessage> t, int flags) override;
+    rawstor::io::Event* recvmsg(
+        int fd, std::unique_ptr<rawstor::io::TaskMessage> t, int flags
+    ) override;
 
     rawstor::io::Event*
     write(int fd, std::unique_ptr<rawstor::io::TaskScalar> t) override;
@@ -46,14 +49,17 @@ public:
     rawstor::io::Event*
     writev(int fd, std::unique_ptr<rawstor::io::TaskVector> t) override;
 
-    rawstor::io::Event*
-    pwrite(int fd, std::unique_ptr<rawstor::io::TaskScalar> t, off_t offset) override;
+    rawstor::io::Event* pwrite(
+        int fd, std::unique_ptr<rawstor::io::TaskScalar> t, off_t offset
+    ) override;
 
-    rawstor::io::Event*
-    pwritev(int fd, std::unique_ptr<rawstor::io::TaskVector> t, off_t offset) override;
+    rawstor::io::Event* pwritev(
+        int fd, std::unique_ptr<rawstor::io::TaskVector> t, off_t offset
+    ) override;
 
-    rawstor::io::Event*
-    sendmsg(int fd, std::unique_ptr<rawstor::io::TaskMessage> t, int flags) override;
+    rawstor::io::Event* sendmsg(
+        int fd, std::unique_ptr<rawstor::io::TaskMessage> t, int flags
+    ) override;
 
     void cancel(rawstor::io::Event* event);
 
