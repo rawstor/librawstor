@@ -48,7 +48,7 @@ int rawstor_fd_preadv(
 );
 
 int rawstor_fd_recvmsg(
-    int fd, struct msghdr* message, size_t size, int flags,
+    int fd, struct msghdr* message, size_t size, unsigned int flags,
     RawstorIOCallback* cb, void* data
 );
 
@@ -72,7 +72,7 @@ int rawstor_fd_pwritev(
 );
 
 int rawstor_fd_sendmsg(
-    int fd, struct msghdr* message, size_t size, int flags,
+    int fd, struct msghdr* message, size_t size, unsigned int flags,
     RawstorIOCallback* cb, void* data
 );
 

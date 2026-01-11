@@ -263,7 +263,7 @@ int rawstor_fd_preadv(
 }
 
 int rawstor_fd_recvmsg(
-    int fd, msghdr* msg, size_t size, int flags, RawstorIOCallback* cb,
+    int fd, msghdr* msg, size_t size, unsigned int flags, RawstorIOCallback* cb,
     void* data
 ) {
     try {
@@ -332,7 +332,7 @@ int rawstor_fd_pwritev(
 }
 
 int rawstor_fd_sendmsg(
-    int fd, msghdr* msg, size_t size, int flags, RawstorIOCallback* cb,
+    int fd, msghdr* msg, size_t size, unsigned int flags, RawstorIOCallback* cb,
     void* data
 ) {
     try {
