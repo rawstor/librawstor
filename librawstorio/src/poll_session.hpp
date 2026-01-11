@@ -53,7 +53,8 @@ public:
         return _poll_sqes.empty() && _read_sqes.empty() && _write_sqes.empty();
     }
 
-    rawstor::io::Event* poll(std::unique_ptr<rawstor::io::Task> t, int flags);
+    rawstor::io::Event*
+    poll(std::unique_ptr<rawstor::io::Task> t, unsigned int flags);
 
     rawstor::io::Event* read(std::unique_ptr<rawstor::io::TaskScalar> t);
 
@@ -66,7 +67,7 @@ public:
     preadv(std::unique_ptr<rawstor::io::TaskVector> t, off_t offset);
 
     rawstor::io::Event*
-    recvmsg(std::unique_ptr<rawstor::io::TaskMessage> t, int flags);
+    recvmsg(std::unique_ptr<rawstor::io::TaskMessage> t, unsigned int flags);
 
     rawstor::io::Event* write(std::unique_ptr<rawstor::io::TaskScalar> t);
 
@@ -79,7 +80,7 @@ public:
     pwritev(std::unique_ptr<rawstor::io::TaskVector> t, off_t offset);
 
     rawstor::io::Event*
-    sendmsg(std::unique_ptr<rawstor::io::TaskMessage> t, int flags);
+    sendmsg(std::unique_ptr<rawstor::io::TaskMessage> t, unsigned int flags);
 
     bool cancel(rawstor::io::Event* event, rawstor::RingBuf<Event>& cqes);
 
