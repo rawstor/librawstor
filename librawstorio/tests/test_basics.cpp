@@ -25,10 +25,8 @@ TEST_F(BasicsTest, empty) {
 
     {
         std::unique_ptr<rawstor::io::Task> t =
-            std::make_unique<rawstor::io::tests::SimplePollTask>(
-                _fd, result, error
-            );
-        _queue->poll(std::move(t), POLLIN);
+            std::make_unique<rawstor::io::tests::SimplePollTask>(result, error);
+        _queue->poll(_fd, std::move(t), POLLIN);
     }
 
     EXPECT_NO_THROW(_queue->wait(0));
@@ -46,10 +44,8 @@ TEST_F(BasicsTest, pollin) {
 
     {
         std::unique_ptr<rawstor::io::Task> t =
-            std::make_unique<rawstor::io::tests::SimplePollTask>(
-                _fd, result, error
-            );
-        _queue->poll(std::move(t), POLLIN);
+            std::make_unique<rawstor::io::tests::SimplePollTask>(result, error);
+        _queue->poll(_fd, std::move(t), POLLIN);
     }
     _queue->wait(0);
 
@@ -63,10 +59,8 @@ TEST_F(BasicsTest, pollout) {
 
     {
         std::unique_ptr<rawstor::io::Task> t =
-            std::make_unique<rawstor::io::tests::SimplePollTask>(
-                _fd, result, error
-            );
-        _queue->poll(std::move(t), POLLOUT);
+            std::make_unique<rawstor::io::tests::SimplePollTask>(result, error);
+        _queue->poll(_fd, std::move(t), POLLOUT);
     }
     _queue->wait(0);
 
@@ -86,9 +80,9 @@ TEST_F(BasicsTest, read) {
     {
         std::unique_ptr<rawstor::io::TaskScalar> t =
             std::make_unique<rawstor::io::tests::SimpleScalarTask>(
-                _fd, client_buf, sizeof(client_buf), result, error
+                client_buf, sizeof(client_buf), result, error
             );
-        _queue->read(std::move(t));
+        _queue->read(_fd, std::move(t));
     }
     _queue->wait(0);
 
@@ -106,9 +100,9 @@ TEST_F(BasicsTest, write) {
     {
         std::unique_ptr<rawstor::io::TaskScalar> t =
             std::make_unique<rawstor::io::tests::SimpleScalarTask>(
-                _fd, client_buf, sizeof(client_buf), result, error
+                client_buf, sizeof(client_buf), result, error
             );
-        _queue->write(std::move(t));
+        _queue->write(_fd, std::move(t));
     }
     _queue->wait(0);
 

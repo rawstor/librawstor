@@ -13,21 +13,17 @@ namespace io {
 
 class Task {
 private:
-    int _fd;
-
 #ifdef RAWSTOR_TRACE_EVENTS
     size_t _trace_id;
 #endif
 
 public:
-    explicit Task(int fd);
+    Task();
     Task(const Task&) = delete;
     Task(Task&&) = delete;
     virtual ~Task();
     Task& operator=(const Task&) = delete;
     Task& operator=(Task&&) = delete;
-
-    inline int fd() const noexcept { return _fd; }
 
     virtual void operator()(size_t result, int error) = 0;
 
@@ -41,7 +37,7 @@ public:
 
 class TaskScalar : public Task {
 public:
-    explicit TaskScalar(int fd);
+    TaskScalar();
     virtual ~TaskScalar() override = default;
 
     virtual void* buf() noexcept = 0;
@@ -50,7 +46,7 @@ public:
 
 class TaskVector : public Task {
 public:
-    explicit TaskVector(int fd);
+    TaskVector();
     virtual ~TaskVector() override = default;
 
     virtual iovec* iov() noexcept = 0;
@@ -60,7 +56,7 @@ public:
 
 class TaskMessage : public Task {
 public:
-    explicit TaskMessage(int fd);
+    TaskMessage();
     virtual ~TaskMessage() override = default;
 
     virtual msghdr* msg() noexcept = 0;

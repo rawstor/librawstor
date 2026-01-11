@@ -16,10 +16,8 @@ private:
     int& _error;
 
 public:
-    SimpleScalarTask(
-        int fd, void* buf, size_t size, size_t& result, int& error
-    ) :
-        rawstor::io::TaskScalar(fd),
+    SimpleScalarTask(void* buf, size_t size, size_t& result, int& error) :
+        rawstor::io::TaskScalar(),
         _buf(buf),
         _size(size),
         _result(result),
@@ -40,8 +38,8 @@ private:
     int& _error;
 
 public:
-    SimplePollTask(int fd, size_t& result, int& error) :
-        rawstor::io::Task(fd),
+    SimplePollTask(size_t& result, int& error) :
+        rawstor::io::Task(),
         _result(result),
         _error(error) {}
 

@@ -5,22 +5,18 @@
 namespace rawstor {
 namespace io {
 
-Task::Task(int fd) :
-    _fd(fd)
+Task::Task() :
 #ifdef RAWSTOR_TRACE_EVENTS
-    ,
-    _trace_id(rawstor_trace_event_begin(
-        '|', __FILE__, __LINE__, __FUNCTION__, "fd %d\n", _fd
-    ))
+    _trace_id(
+        rawstor_trace_event_begin('|', __FILE__, __LINE__, __FUNCTION__, "\n")
+    )
 #endif
 {
 }
 
 Task::~Task() {
 #ifdef RAWSTOR_TRACE_EVENTS
-    rawstor_trace_event_end(
-        _trace_id, __FILE__, __LINE__, __FUNCTION__, "fd %d\n", _fd
-    );
+    rawstor_trace_event_end(_trace_id, __FILE__, __LINE__, __FUNCTION__, "\n");
 #endif
 }
 
@@ -34,19 +30,19 @@ void Task::trace(
 }
 #endif
 
-TaskScalar::TaskScalar(int fd) : Task(fd) {
+TaskScalar::TaskScalar() {
 #ifdef RAWSTOR_TRACE_EVENTS
     trace(__FILE__, __LINE__, __FUNCTION__, "");
 #endif
 }
 
-TaskVector::TaskVector(int fd) : Task(fd) {
+TaskVector::TaskVector() {
 #ifdef RAWSTOR_TRACE_EVENTS
     trace(__FILE__, __LINE__, __FUNCTION__, "");
 #endif
 }
 
-TaskMessage::TaskMessage(int fd) : Task(fd) {
+TaskMessage::TaskMessage() {
 #ifdef RAWSTOR_TRACE_EVENTS
     trace(__FILE__, __LINE__, __FUNCTION__, "");
 #endif

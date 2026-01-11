@@ -34,8 +34,7 @@ private:
     void* _data;
 
 public:
-    Task(int fd, RawstorIOCallback* cb, void* data) :
-        rawstor::io::Task(fd),
+    Task(RawstorIOCallback* cb, void* data) :
         _cb(cb),
         _data(data) {}
 
@@ -57,9 +56,8 @@ private:
 
 public:
     TaskScalar(
-        int fd, void* buf, size_t size, RawstorIOCallback* cb, void* data
+        void* buf, size_t size, RawstorIOCallback* cb, void* data
     ) :
-        rawstor::io::TaskScalar(fd),
         _buf(buf),
         _size(size),
         _cb(cb),
@@ -88,10 +86,9 @@ private:
 
 public:
     TaskVector(
-        int fd, iovec* iov, unsigned int niov, size_t size,
+        iovec* iov, unsigned int niov, size_t size,
         RawstorIOCallback* cb, void* data
     ) :
-        rawstor::io::TaskVector(fd),
         _iov(iov),
         _niov(niov),
         _size(size),
@@ -122,9 +119,8 @@ private:
 
 public:
     TaskMessage(
-        int fd, msghdr* msg, size_t size, RawstorIOCallback* cb, void* data
+        msghdr* msg, size_t size, RawstorIOCallback* cb, void* data
     ) :
-        rawstor::io::TaskMessage(fd),
         _msg(msg),
         _size(size),
         _cb(cb),
@@ -210,8 +206,8 @@ int rawstor_fd_poll(
 ) {
     try {
         std::unique_ptr<rawstor::io::Task> t =
-            std::make_unique<Task>(fd, cb, data);
-        rawstor::io_queue->poll(std::move(t), mask);
+            std::make_unique<Task>(cb, data);
+        rawstor::io_queue->poll(fd, std::move(t), mask);
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -223,8 +219,8 @@ int rawstor_fd_read(
 ) {
     try {
         std::unique_ptr<rawstor::io::TaskScalar> t =
-            std::make_unique<TaskScalar>(fd, buf, size, cb, data);
-        rawstor::io_queue->read(std::move(t));
+            std::make_unique<TaskScalar>(buf, size, cb, data);
+        rawstor::io_queue->read(fd, std::move(t));
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -237,8 +233,8 @@ int rawstor_fd_readv(
 ) {
     try {
         std::unique_ptr<rawstor::io::TaskVector> t =
-            std::make_unique<TaskVector>(fd, iov, niov, size, cb, data);
-        rawstor::io_queue->readv(std::move(t));
+            std::make_unique<TaskVector>(iov, niov, size, cb, data);
+        rawstor::io_queue->readv(fd, std::move(t));
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -251,8 +247,8 @@ int rawstor_fd_pread(
 ) {
     try {
         std::unique_ptr<rawstor::io::TaskScalar> t =
-            std::make_unique<TaskScalar>(fd, buf, size, cb, data);
-        rawstor::io_queue->pread(std::move(t), offset);
+            std::make_unique<TaskScalar>(buf, size, cb, data);
+        rawstor::io_queue->pread(fd, std::move(t), offset);
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -265,8 +261,8 @@ int rawstor_fd_preadv(
 ) {
     try {
         std::unique_ptr<rawstor::io::TaskVector> t =
-            std::make_unique<TaskVector>(fd, iov, niov, size, cb, data);
-        rawstor::io_queue->preadv(std::move(t), offset);
+            std::make_unique<TaskVector>(iov, niov, size, cb, data);
+        rawstor::io_queue->preadv(fd, std::move(t), offset);
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -279,8 +275,8 @@ int rawstor_fd_recvmsg(
 ) {
     try {
         std::unique_ptr<rawstor::io::TaskMessage> t =
-            std::make_unique<TaskMessage>(fd, msg, size, cb, data);
-        rawstor::io_queue->recvmsg(std::move(t), flags);
+            std::make_unique<TaskMessage>(msg, size, cb, data);
+        rawstor::io_queue->recvmsg(fd, std::move(t), flags);
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -292,8 +288,8 @@ int rawstor_fd_write(
 ) {
     try {
         std::unique_ptr<rawstor::io::TaskScalar> t =
-            std::make_unique<TaskScalar>(fd, buf, size, cb, data);
-        rawstor::io_queue->write(std::move(t));
+            std::make_unique<TaskScalar>(buf, size, cb, data);
+        rawstor::io_queue->write(fd, std::move(t));
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -306,8 +302,8 @@ int rawstor_fd_writev(
 ) {
     try {
         std::unique_ptr<rawstor::io::TaskVector> t =
-            std::make_unique<TaskVector>(fd, iov, niov, size, cb, data);
-        rawstor::io_queue->writev(std::move(t));
+            std::make_unique<TaskVector>(iov, niov, size, cb, data);
+        rawstor::io_queue->writev(fd, std::move(t));
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -320,8 +316,8 @@ int rawstor_fd_pwrite(
 ) {
     try {
         std::unique_ptr<rawstor::io::TaskScalar> t =
-            std::make_unique<TaskScalar>(fd, buf, size, cb, data);
-        rawstor::io_queue->pwrite(std::move(t), offset);
+            std::make_unique<TaskScalar>(buf, size, cb, data);
+        rawstor::io_queue->pwrite(fd, std::move(t), offset);
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -334,8 +330,8 @@ int rawstor_fd_pwritev(
 ) {
     try {
         std::unique_ptr<rawstor::io::TaskVector> t =
-            std::make_unique<TaskVector>(fd, iov, niov, size, cb, data);
-        rawstor::io_queue->pwritev(std::move(t), offset);
+            std::make_unique<TaskVector>(iov, niov, size, cb, data);
+        rawstor::io_queue->pwritev(fd, std::move(t), offset);
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -348,8 +344,8 @@ int rawstor_fd_sendmsg(
 ) {
     try {
         std::unique_ptr<rawstor::io::TaskMessage> t =
-            std::make_unique<TaskMessage>(fd, msg, size, cb, data);
-        rawstor::io_queue->sendmsg(std::move(t), flags);
+            std::make_unique<TaskMessage>(msg, size, cb, data);
+        rawstor::io_queue->sendmsg(fd, std::move(t), flags);
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();

@@ -105,9 +105,8 @@ private:
 
 public:
     SessionOpScalarPositional(
-        RawstorObject* o, int fd, std::unique_ptr<rawstor::TaskScalar> t
+        RawstorObject* o, std::unique_ptr<rawstor::TaskScalar> t
     ) :
-        rawstor::io::TaskScalar(fd),
         _o(o),
         _t(std::move(t)) {}
 
@@ -127,9 +126,8 @@ private:
 
 public:
     SessionOpVectorPositional(
-        RawstorObject* o, int fd, std::unique_ptr<rawstor::TaskVector> t
+        RawstorObject* o, std::unique_ptr<rawstor::TaskVector> t
     ) :
-        rawstor::io::TaskVector(fd),
         _o(o),
         _t(std::move(t)) {}
 
@@ -300,8 +298,8 @@ void Session::pread(std::unique_ptr<rawstor::TaskScalar> t) {
     );
 
     std::unique_ptr<rawstor::io::TaskScalar> op =
-        std::make_unique<SessionOpScalarPositional>(_o, fd(), std::move(t));
-    io_queue->pread(std::move(op), offset);
+        std::make_unique<SessionOpScalarPositional>(_o, std::move(t));
+    io_queue->pread(fd(), std::move(op), offset);
 }
 
 void Session::preadv(std::unique_ptr<rawstor::TaskVector> t) {
@@ -313,8 +311,8 @@ void Session::preadv(std::unique_ptr<rawstor::TaskVector> t) {
     );
 
     std::unique_ptr<rawstor::io::TaskVector> op =
-        std::make_unique<SessionOpVectorPositional>(_o, fd(), std::move(t));
-    io_queue->preadv(std::move(op), offset);
+        std::make_unique<SessionOpVectorPositional>(_o, std::move(t));
+    io_queue->preadv(fd(), std::move(op), offset);
 }
 
 void Session::pwrite(std::unique_ptr<rawstor::TaskScalar> t) {
@@ -326,8 +324,8 @@ void Session::pwrite(std::unique_ptr<rawstor::TaskScalar> t) {
     );
 
     std::unique_ptr<rawstor::io::TaskScalar> op =
-        std::make_unique<SessionOpScalarPositional>(_o, fd(), std::move(t));
-    io_queue->pwrite(std::move(op), offset);
+        std::make_unique<SessionOpScalarPositional>(_o, std::move(t));
+    io_queue->pwrite(fd(), std::move(op), offset);
 }
 
 void Session::pwritev(std::unique_ptr<rawstor::TaskVector> t) {
@@ -339,8 +337,8 @@ void Session::pwritev(std::unique_ptr<rawstor::TaskVector> t) {
     );
 
     std::unique_ptr<rawstor::io::TaskVector> op =
-        std::make_unique<SessionOpVectorPositional>(_o, fd(), std::move(t));
-    io_queue->pwritev(std::move(op), offset);
+        std::make_unique<SessionOpVectorPositional>(_o, std::move(t));
+    io_queue->pwritev(fd(), std::move(op), offset);
 }
 
 } // namespace file
