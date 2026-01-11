@@ -5,8 +5,9 @@
 namespace rawstor {
 namespace io {
 
-Task::Task() :
+Task::Task()
 #ifdef RAWSTOR_TRACE_EVENTS
+    :
     _trace_id(
         rawstor_trace_event_begin('|', __FILE__, __LINE__, __FUNCTION__, "\n")
     )
