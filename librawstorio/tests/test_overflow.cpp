@@ -22,9 +22,9 @@ TEST_F(OverflowTest, push_three) {
     {
         std::unique_ptr<rawstor::io::TaskScalar> t =
             std::make_unique<rawstor::io::tests::SimpleScalarTask>(
-                _fd, client_buf1, sizeof(client_buf1), result1, error1
+                client_buf1, sizeof(client_buf1), result1, error1
             );
-        EXPECT_NO_THROW(_queue->read(std::move(t)));
+        EXPECT_NO_THROW(_queue->read(_fd, std::move(t)));
     }
 
     char client_buf2[5];
@@ -33,9 +33,9 @@ TEST_F(OverflowTest, push_three) {
     {
         std::unique_ptr<rawstor::io::TaskScalar> t =
             std::make_unique<rawstor::io::tests::SimpleScalarTask>(
-                _fd, client_buf2, sizeof(client_buf2), result2, error2
+                client_buf2, sizeof(client_buf2), result2, error2
             );
-        EXPECT_NO_THROW(_queue->read(std::move(t)));
+        EXPECT_NO_THROW(_queue->read(_fd, std::move(t)));
     }
 
     char client_buf3[5];
@@ -44,9 +44,9 @@ TEST_F(OverflowTest, push_three) {
     {
         std::unique_ptr<rawstor::io::TaskScalar> t =
             std::make_unique<rawstor::io::tests::SimpleScalarTask>(
-                _fd, client_buf3, sizeof(client_buf3), result3, error3
+                client_buf3, sizeof(client_buf3), result3, error3
             );
-        EXPECT_THROW(_queue->read(std::move(t)), std::system_error);
+        EXPECT_THROW(_queue->read(_fd, std::move(t)), std::system_error);
     }
 
     EXPECT_NO_THROW(_queue->wait(0));
@@ -75,9 +75,9 @@ TEST_F(OverflowTest, push_two_pop_one) {
     {
         std::unique_ptr<rawstor::io::TaskScalar> t =
             std::make_unique<rawstor::io::tests::SimpleScalarTask>(
-                _fd, client_buf1, sizeof(client_buf1), result1, error1
+                client_buf1, sizeof(client_buf1), result1, error1
             );
-        EXPECT_NO_THROW(_queue->read(std::move(t)));
+        EXPECT_NO_THROW(_queue->read(_fd, std::move(t)));
     }
 
     char client_buf2[5];
@@ -86,9 +86,9 @@ TEST_F(OverflowTest, push_two_pop_one) {
     {
         std::unique_ptr<rawstor::io::TaskScalar> t =
             std::make_unique<rawstor::io::tests::SimpleScalarTask>(
-                _fd, client_buf2, sizeof(client_buf2), result2, error2
+                client_buf2, sizeof(client_buf2), result2, error2
             );
-        EXPECT_NO_THROW(_queue->read(std::move(t)));
+        EXPECT_NO_THROW(_queue->read(_fd, std::move(t)));
     }
 
     EXPECT_NO_THROW(_queue->wait(0));
@@ -102,9 +102,9 @@ TEST_F(OverflowTest, push_two_pop_one) {
     {
         std::unique_ptr<rawstor::io::TaskScalar> t =
             std::make_unique<rawstor::io::tests::SimpleScalarTask>(
-                _fd, client_buf3, sizeof(client_buf3), result3, error3
+                client_buf3, sizeof(client_buf3), result3, error3
             );
-        EXPECT_NO_THROW(_queue->read(std::move(t)));
+        EXPECT_NO_THROW(_queue->read(_fd, std::move(t)));
     }
 
     EXPECT_NO_THROW(_queue->wait(0));

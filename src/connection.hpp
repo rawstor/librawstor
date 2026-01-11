@@ -52,13 +52,13 @@ public:
 
     void close();
 
-    void read(std::unique_ptr<TaskScalar> t);
+    void pread(std::unique_ptr<TaskScalar> t);
 
-    void read(std::unique_ptr<TaskVector> t);
+    void preadv(std::unique_ptr<TaskVector> t);
 
-    void write(std::unique_ptr<TaskScalar> t);
+    void pwrite(std::unique_ptr<TaskScalar> t);
 
-    void write(std::unique_ptr<TaskVector> t);
+    void pwritev(std::unique_ptr<TaskVector> t);
 };
 
 } // namespace rawstor

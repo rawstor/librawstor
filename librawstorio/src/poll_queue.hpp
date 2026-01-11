@@ -34,37 +34,44 @@ public:
         rawstor::io::Queue(depth),
         _cqes(depth) {}
 
-    rawstor::io::Event* poll(std::unique_ptr<rawstor::io::TaskPoll> t) override;
+    rawstor::io::Event*
+    poll(int fd, std::unique_ptr<rawstor::io::Task> t, int mask) override;
 
     rawstor::io::Event*
-    read(std::unique_ptr<rawstor::io::TaskScalar> t) override;
+    read(int fd, std::unique_ptr<rawstor::io::TaskScalar> t) override;
 
     rawstor::io::Event*
-    read(std::unique_ptr<rawstor::io::TaskVector> t) override;
+    readv(int fd, std::unique_ptr<rawstor::io::TaskVector> t) override;
+
+    rawstor::io::Event* pread(
+        int fd, std::unique_ptr<rawstor::io::TaskScalar> t, off_t offset
+    ) override;
+
+    rawstor::io::Event* preadv(
+        int fd, std::unique_ptr<rawstor::io::TaskVector> t, off_t offset
+    ) override;
+
+    rawstor::io::Event* recvmsg(
+        int fd, std::unique_ptr<rawstor::io::TaskMessage> t, int flags
+    ) override;
 
     rawstor::io::Event*
-    read(std::unique_ptr<rawstor::io::TaskScalarPositional> t) override;
+    write(int fd, std::unique_ptr<rawstor::io::TaskScalar> t) override;
 
     rawstor::io::Event*
-    read(std::unique_ptr<rawstor::io::TaskVectorPositional> t) override;
+    writev(int fd, std::unique_ptr<rawstor::io::TaskVector> t) override;
 
-    rawstor::io::Event*
-    read(std::unique_ptr<rawstor::io::TaskMessage> t) override;
+    rawstor::io::Event* pwrite(
+        int fd, std::unique_ptr<rawstor::io::TaskScalar> t, off_t offset
+    ) override;
 
-    rawstor::io::Event*
-    write(std::unique_ptr<rawstor::io::TaskScalar> t) override;
+    rawstor::io::Event* pwritev(
+        int fd, std::unique_ptr<rawstor::io::TaskVector> t, off_t offset
+    ) override;
 
-    rawstor::io::Event*
-    write(std::unique_ptr<rawstor::io::TaskVector> t) override;
-
-    rawstor::io::Event*
-    write(std::unique_ptr<rawstor::io::TaskScalarPositional> t) override;
-
-    rawstor::io::Event*
-    write(std::unique_ptr<rawstor::io::TaskVectorPositional> t) override;
-
-    rawstor::io::Event*
-    write(std::unique_ptr<rawstor::io::TaskMessage> t) override;
+    rawstor::io::Event* sendmsg(
+        int fd, std::unique_ptr<rawstor::io::TaskMessage> t, int flags
+    ) override;
 
     void cancel(rawstor::io::Event* e) override;
 
