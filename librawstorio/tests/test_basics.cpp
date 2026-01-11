@@ -24,11 +24,11 @@ TEST_F(BasicsTest, empty) {
     EXPECT_THROW(_queue->wait(0), std::system_error);
 
     {
-        std::unique_ptr<rawstor::io::TaskPoll> t =
+        std::unique_ptr<rawstor::io::Task> t =
             std::make_unique<rawstor::io::tests::SimplePollTask>(
-                _fd, POLLIN, result, error
+                _fd, result, error
             );
-        _queue->poll(std::move(t));
+        _queue->poll(std::move(t), POLLIN);
     }
 
     EXPECT_NO_THROW(_queue->wait(0));
@@ -45,11 +45,11 @@ TEST_F(BasicsTest, pollin) {
     _server.wait();
 
     {
-        std::unique_ptr<rawstor::io::TaskPoll> t =
+        std::unique_ptr<rawstor::io::Task> t =
             std::make_unique<rawstor::io::tests::SimplePollTask>(
-                _fd, POLLIN, result, error
+                _fd, result, error
             );
-        _queue->poll(std::move(t));
+        _queue->poll(std::move(t), POLLIN);
     }
     _queue->wait(0);
 
@@ -62,11 +62,11 @@ TEST_F(BasicsTest, pollout) {
     int error = 0;
 
     {
-        std::unique_ptr<rawstor::io::TaskPoll> t =
+        std::unique_ptr<rawstor::io::Task> t =
             std::make_unique<rawstor::io::tests::SimplePollTask>(
-                _fd, POLLOUT, result, error
+                _fd, result, error
             );
-        _queue->poll(std::move(t));
+        _queue->poll(std::move(t), POLLOUT);
     }
     _queue->wait(0);
 

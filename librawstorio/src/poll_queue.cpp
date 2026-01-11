@@ -66,9 +66,10 @@ void Queue::setup_fd(int fd) {
     }
 }
 
-rawstor::io::Event* Queue::poll(std::unique_ptr<rawstor::io::TaskPoll> t) {
+rawstor::io::Event*
+Queue::poll(std::unique_ptr<rawstor::io::Task> t, int flags) {
     Session& s = _get_session(t->fd());
-    return s.poll(std::move(t));
+    return s.poll(std::move(t), flags);
 }
 
 rawstor::io::Event* Queue::read(std::unique_ptr<rawstor::io::TaskScalar> t) {
@@ -76,26 +77,27 @@ rawstor::io::Event* Queue::read(std::unique_ptr<rawstor::io::TaskScalar> t) {
     return s.read(std::move(t));
 }
 
-rawstor::io::Event* Queue::read(std::unique_ptr<rawstor::io::TaskVector> t) {
+rawstor::io::Event* Queue::readv(std::unique_ptr<rawstor::io::TaskVector> t) {
     Session& s = _get_session(t->fd());
-    return s.read(std::move(t));
+    return s.readv(std::move(t));
 }
 
 rawstor::io::Event*
-Queue::read(std::unique_ptr<rawstor::io::TaskScalarPositional> t) {
+Queue::pread(std::unique_ptr<rawstor::io::TaskScalar> t, off_t offset) {
     Session& s = _get_session(t->fd());
-    return s.read(std::move(t));
+    return s.pread(std::move(t), offset);
 }
 
 rawstor::io::Event*
-Queue::read(std::unique_ptr<rawstor::io::TaskVectorPositional> t) {
+Queue::preadv(std::unique_ptr<rawstor::io::TaskVector> t, off_t offset) {
     Session& s = _get_session(t->fd());
-    return s.read(std::move(t));
+    return s.preadv(std::move(t), offset);
 }
 
-rawstor::io::Event* Queue::read(std::unique_ptr<rawstor::io::TaskMessage> t) {
+rawstor::io::Event*
+Queue::recvmsg(std::unique_ptr<rawstor::io::TaskMessage> t, int flags) {
     Session& s = _get_session(t->fd());
-    return s.read(std::move(t));
+    return s.recvmsg(std::move(t), flags);
 }
 
 rawstor::io::Event* Queue::write(std::unique_ptr<rawstor::io::TaskScalar> t) {
@@ -103,26 +105,27 @@ rawstor::io::Event* Queue::write(std::unique_ptr<rawstor::io::TaskScalar> t) {
     return s.write(std::move(t));
 }
 
-rawstor::io::Event* Queue::write(std::unique_ptr<rawstor::io::TaskVector> t) {
+rawstor::io::Event* Queue::writev(std::unique_ptr<rawstor::io::TaskVector> t) {
     Session& s = _get_session(t->fd());
-    return s.write(std::move(t));
+    return s.writev(std::move(t));
 }
 
 rawstor::io::Event*
-Queue::write(std::unique_ptr<rawstor::io::TaskScalarPositional> t) {
+Queue::pwrite(std::unique_ptr<rawstor::io::TaskScalar> t, off_t offset) {
     Session& s = _get_session(t->fd());
-    return s.write(std::move(t));
+    return s.pwrite(std::move(t), offset);
 }
 
 rawstor::io::Event*
-Queue::write(std::unique_ptr<rawstor::io::TaskVectorPositional> t) {
+Queue::pwritev(std::unique_ptr<rawstor::io::TaskVector> t, off_t offset) {
     Session& s = _get_session(t->fd());
-    return s.write(std::move(t));
+    return s.pwritev(std::move(t), offset);
 }
 
-rawstor::io::Event* Queue::write(std::unique_ptr<rawstor::io::TaskMessage> t) {
+rawstor::io::Event*
+Queue::sendmsg(std::unique_ptr<rawstor::io::TaskMessage> t, int flags) {
     Session& s = _get_session(t->fd());
-    return s.write(std::move(t));
+    return s.sendmsg(std::move(t), flags);
 }
 
 void Queue::cancel(rawstor::io::Event* e) {

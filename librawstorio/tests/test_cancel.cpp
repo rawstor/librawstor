@@ -26,11 +26,11 @@ TEST_F(CancelTest, poll) {
     rawstor::io::Event* event = nullptr;
 
     {
-        std::unique_ptr<rawstor::io::TaskPoll> t =
+        std::unique_ptr<rawstor::io::Task> t =
             std::make_unique<rawstor::io::tests::SimplePollTask>(
-                _fd, POLLIN, result, error
+                _fd, result, error
             );
-        event = _queue->poll(std::move(t));
+        event = _queue->poll(std::move(t), POLLIN);
     }
 
     EXPECT_THROW(_queue->wait(0), std::system_error);
@@ -54,11 +54,11 @@ TEST_F(CancelTest, poll_completed) {
     _server.wait();
 
     {
-        std::unique_ptr<rawstor::io::TaskPoll> t =
+        std::unique_ptr<rawstor::io::Task> t =
             std::make_unique<rawstor::io::tests::SimplePollTask>(
-                _fd, POLLIN, result, error
+                _fd, result, error
             );
-        event = _queue->poll(std::move(t));
+        event = _queue->poll(std::move(t), POLLIN);
     }
 
     _queue->wait(0);

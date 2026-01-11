@@ -921,7 +921,7 @@ void Session::read_response_body(
         std::make_unique<ResponseBodyVector>(
             fd(), _context, cid, iov, niov, size
         );
-    queue.read(std::move(res));
+    queue.readv(std::move(res));
 }
 
 void Session::create(
@@ -984,7 +984,7 @@ void Session::set_object(
     _o = object;
 }
 
-void Session::read(std::unique_ptr<rawstor::TaskScalar> t) {
+void Session::pread(std::unique_ptr<rawstor::TaskScalar> t) {
     rawstor_debug(
         "%s(): fd = %d, offset = %jd, size = %zu\n", __FUNCTION__, fd(),
         (intmax_t)t->offset(), t->size()
@@ -1004,7 +1004,7 @@ void Session::read(std::unique_ptr<rawstor::TaskScalar> t) {
     }
 }
 
-void Session::read(std::unique_ptr<rawstor::TaskVector> t) {
+void Session::preadv(std::unique_ptr<rawstor::TaskVector> t) {
     rawstor_debug(
         "%s(): fd = %d, offset = %jd, niov = %u, size = %zu\n", __FUNCTION__,
         fd(), (intmax_t)t->offset(), t->niov(), t->size()
@@ -1024,7 +1024,7 @@ void Session::read(std::unique_ptr<rawstor::TaskVector> t) {
     }
 }
 
-void Session::write(std::unique_ptr<rawstor::TaskScalar> t) {
+void Session::pwrite(std::unique_ptr<rawstor::TaskScalar> t) {
     rawstor_debug(
         "%s(): fd = %d, offset = %jd, size = %zu\n", __FUNCTION__, fd(),
         (intmax_t)t->offset(), t->size()
@@ -1037,14 +1037,14 @@ void Session::write(std::unique_ptr<rawstor::TaskScalar> t) {
 
     std::unique_ptr<RequestCmdWrite> req =
         std::make_unique<RequestCmdWrite>(fd(), op);
-    io_queue->write(std::move(req));
+    io_queue->writev(std::move(req));
 
     if (!_context->has_reads()) {
         read_response_head(*io_queue);
     }
 }
 
-void Session::write(std::unique_ptr<rawstor::TaskVector> t) {
+void Session::pwritev(std::unique_ptr<rawstor::TaskVector> t) {
     rawstor_debug(
         "%s(): fd = %d, offset = %jd, niov = %u, size = %zu\n", __FUNCTION__,
         fd(), (intmax_t)t->offset(), t->niov(), t->size()
@@ -1057,7 +1057,7 @@ void Session::write(std::unique_ptr<rawstor::TaskVector> t) {
 
     std::unique_ptr<RequestCmdWrite> req =
         std::make_unique<RequestCmdWrite>(fd(), op);
-    io_queue->write(std::move(req));
+    io_queue->writev(std::move(req));
 
     if (!_context->has_reads()) {
         read_response_head(*io_queue);

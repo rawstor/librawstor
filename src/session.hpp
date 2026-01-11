@@ -67,13 +67,13 @@ public:
         std::unique_ptr<Task> t
     ) = 0;
 
-    virtual void read(std::unique_ptr<TaskScalar> t) = 0;
+    virtual void pread(std::unique_ptr<TaskScalar> t) = 0;
 
-    virtual void read(std::unique_ptr<TaskVector> t) = 0;
+    virtual void preadv(std::unique_ptr<TaskVector> t) = 0;
 
-    virtual void write(std::unique_ptr<TaskScalar> t) = 0;
+    virtual void pwrite(std::unique_ptr<TaskScalar> t) = 0;
 
-    virtual void write(std::unique_ptr<TaskVector> t) = 0;
+    virtual void pwritev(std::unique_ptr<TaskVector> t) = 0;
 };
 
 } // namespace rawstor

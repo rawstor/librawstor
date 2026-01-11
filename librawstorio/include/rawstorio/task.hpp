@@ -39,14 +39,6 @@ public:
 #endif
 };
 
-class TaskPoll : public Task {
-public:
-    explicit TaskPoll(int fd);
-    virtual ~TaskPoll() override = default;
-
-    virtual unsigned int mask() const noexcept = 0;
-};
-
 class TaskScalar : public Task {
 public:
     explicit TaskScalar(int fd);
@@ -66,22 +58,6 @@ public:
     virtual size_t size() const noexcept = 0;
 };
 
-class TaskScalarPositional : public TaskScalar {
-public:
-    explicit TaskScalarPositional(int fd);
-    virtual ~TaskScalarPositional() override = default;
-
-    virtual off_t offset() const noexcept = 0;
-};
-
-class TaskVectorPositional : public TaskVector {
-public:
-    explicit TaskVectorPositional(int fd);
-    virtual ~TaskVectorPositional() override = default;
-
-    virtual off_t offset() const noexcept = 0;
-};
-
 class TaskMessage : public Task {
 public:
     explicit TaskMessage(int fd);
@@ -89,7 +65,6 @@ public:
 
     virtual msghdr* msg() noexcept = 0;
     virtual size_t size() const noexcept = 0;
-    virtual int flags() const noexcept = 0;
 };
 
 } // namespace io

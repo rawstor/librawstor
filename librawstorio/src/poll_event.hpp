@@ -152,13 +152,15 @@ public:
 };
 
 class EventSimplexPoll final : public EventSimplex {
-public:
-    EventSimplexPoll(Queue& q, std::unique_ptr<rawstor::io::TaskPoll> t) :
-        EventSimplex(q, std::move(t)) {}
+private:
+    int _mask;
 
-    inline unsigned int mask() const noexcept {
-        return static_cast<rawstor::io::TaskPoll*>(_t.get())->mask();
-    }
+public:
+    EventSimplexPoll(Queue& q, std::unique_ptr<rawstor::io::Task> t, int mask) :
+        EventSimplex(q, std::move(t)),
+        _mask(mask) {}
+
+    inline unsigned int mask() const noexcept { return _mask; }
 
     ssize_t process() noexcept override final;
 
@@ -186,31 +188,43 @@ public:
 };
 
 class EventSimplexScalarPositionalRead final : public EventSimplex {
+private:
+    off_t _offset;
+
 public:
     EventSimplexScalarPositionalRead(
-        Queue& q, std::unique_ptr<rawstor::io::TaskScalarPositional> t
+        Queue& q, std::unique_ptr<rawstor::io::TaskScalar> t, off_t offset
     ) :
-        EventSimplex(q, std::move(t)) {}
+        EventSimplex(q, std::move(t)),
+        _offset(offset) {}
 
     ssize_t process() noexcept override final;
 };
 
 class EventSimplexVectorPositionalRead final : public EventSimplex {
+private:
+    off_t _offset;
+
 public:
     EventSimplexVectorPositionalRead(
-        Queue& q, std::unique_ptr<rawstor::io::TaskVectorPositional> t
+        Queue& q, std::unique_ptr<rawstor::io::TaskVector> t, off_t offset
     ) :
-        EventSimplex(q, std::move(t)) {}
+        EventSimplex(q, std::move(t)),
+        _offset(offset) {}
 
     ssize_t process() noexcept override final;
 };
 
 class EventSimplexMessageRead final : public EventSimplex {
+private:
+    int _flags;
+
 public:
     EventSimplexMessageRead(
-        Queue& q, std::unique_ptr<rawstor::io::TaskMessage> t
+        Queue& q, std::unique_ptr<rawstor::io::TaskMessage> t, int flags
     ) :
-        EventSimplex(q, std::move(t)) {}
+        EventSimplex(q, std::move(t)),
+        _flags(flags) {}
 
     ssize_t process() noexcept override final;
 };
@@ -236,31 +250,43 @@ public:
 };
 
 class EventSimplexScalarPositionalWrite final : public EventSimplex {
+private:
+    off_t _offset;
+
 public:
     EventSimplexScalarPositionalWrite(
-        Queue& q, std::unique_ptr<rawstor::io::TaskScalarPositional> t
+        Queue& q, std::unique_ptr<rawstor::io::TaskScalar> t, off_t offset
     ) :
-        EventSimplex(q, std::move(t)) {}
+        EventSimplex(q, std::move(t)),
+        _offset(offset) {}
 
     ssize_t process() noexcept override final;
 };
 
 class EventSimplexVectorPositionalWrite final : public EventSimplex {
+private:
+    off_t _offset;
+
 public:
     EventSimplexVectorPositionalWrite(
-        Queue& q, std::unique_ptr<rawstor::io::TaskVectorPositional> t
+        Queue& q, std::unique_ptr<rawstor::io::TaskVector> t, off_t offset
     ) :
-        EventSimplex(q, std::move(t)) {}
+        EventSimplex(q, std::move(t)),
+        _offset(offset) {}
 
     ssize_t process() noexcept override final;
 };
 
 class EventSimplexMessageWrite final : public EventSimplex {
+private:
+    int _flags;
+
 public:
     EventSimplexMessageWrite(
-        Queue& q, std::unique_ptr<rawstor::io::TaskMessage> t
+        Queue& q, std::unique_ptr<rawstor::io::TaskMessage> t, int flags
     ) :
-        EventSimplex(q, std::move(t)) {}
+        EventSimplex(q, std::move(t)),
+        _flags(flags) {}
 
     ssize_t process() noexcept override final;
 };

@@ -225,7 +225,7 @@ protected:
             std::make_unique<ConnectionOpPRead>(
                 _cn, s, _attempt + 1, std::move(_t)
             );
-        s->read(std::move(op));
+        s->pread(std::move(op));
     }
 
 public:
@@ -249,7 +249,7 @@ protected:
             std::make_unique<ConnectionOpPReadV>(
                 _cn, s, _attempt + 1, std::move(_t)
             );
-        s->read(std::move(op));
+        s->preadv(std::move(op));
     }
 
 public:
@@ -273,7 +273,7 @@ protected:
             std::make_unique<ConnectionOpPWrite>(
                 _cn, s, _attempt + 1, std::move(_t)
             );
-        s->write(std::move(op));
+        s->pwrite(std::move(op));
     }
 
 public:
@@ -297,7 +297,7 @@ private:
             std::make_unique<ConnectionOpPWriteV>(
                 _cn, s, _attempt + 1, std::move(_t)
             );
-        s->write(std::move(op));
+        s->pwritev(std::move(op));
     }
 
 public:
@@ -469,32 +469,32 @@ void Connection::close() {
     _object = nullptr;
 }
 
-void Connection::read(std::unique_ptr<TaskScalar> t) {
+void Connection::pread(std::unique_ptr<TaskScalar> t) {
     std::shared_ptr<Session> s = get_next_session();
     std::unique_ptr<TaskScalar> op =
         std::make_unique<ConnectionOpPRead>(*this, s, 0, std::move(t));
-    s->read(std::move(op));
+    s->pread(std::move(op));
 }
 
-void Connection::read(std::unique_ptr<TaskVector> t) {
+void Connection::preadv(std::unique_ptr<TaskVector> t) {
     std::shared_ptr<Session> s = get_next_session();
     std::unique_ptr<TaskVector> op =
         std::make_unique<ConnectionOpPReadV>(*this, s, 0, std::move(t));
-    s->read(std::move(op));
+    s->preadv(std::move(op));
 }
 
-void Connection::write(std::unique_ptr<TaskScalar> t) {
+void Connection::pwrite(std::unique_ptr<TaskScalar> t) {
     std::shared_ptr<Session> s = get_next_session();
     std::unique_ptr<TaskScalar> op =
         std::make_unique<ConnectionOpPWrite>(*this, s, 0, std::move(t));
-    s->write(std::move(op));
+    s->pwrite(std::move(op));
 }
 
-void Connection::write(std::unique_ptr<TaskVector> t) {
+void Connection::pwritev(std::unique_ptr<TaskVector> t) {
     std::shared_ptr<Session> s = get_next_session();
     std::unique_ptr<TaskVector> op =
         std::make_unique<ConnectionOpPWriteV>(*this, s, 0, std::move(t));
-    s->write(std::move(op));
+    s->pwritev(std::move(op));
 }
 
 } // namespace rawstor

@@ -34,17 +34,14 @@ public:
     size_t size() const noexcept override { return _size; }
 };
 
-class SimplePollTask final : public rawstor::io::TaskPoll {
+class SimplePollTask final : public rawstor::io::Task {
 private:
-    unsigned int _mask;
-
     size_t& _result;
     int& _error;
 
 public:
-    SimplePollTask(int fd, unsigned int mask, size_t& result, int& error) :
-        rawstor::io::TaskPoll(fd),
-        _mask(mask),
+    SimplePollTask(int fd, size_t& result, int& error) :
+        rawstor::io::Task(fd),
         _result(result),
         _error(error) {}
 
@@ -52,8 +49,6 @@ public:
         _result = result;
         _error = error;
     }
-
-    unsigned int mask() const noexcept override { return _mask; }
 };
 
 } // namespace tests

@@ -34,12 +34,6 @@ void Task::trace(
 }
 #endif
 
-TaskPoll::TaskPoll(int fd) : Task(fd) {
-#ifdef RAWSTOR_TRACE_EVENTS
-    trace(__FILE__, __LINE__, __FUNCTION__, "");
-#endif
-}
-
 TaskScalar::TaskScalar(int fd) : Task(fd) {
 #ifdef RAWSTOR_TRACE_EVENTS
     trace(__FILE__, __LINE__, __FUNCTION__, "");
@@ -47,18 +41,6 @@ TaskScalar::TaskScalar(int fd) : Task(fd) {
 }
 
 TaskVector::TaskVector(int fd) : Task(fd) {
-#ifdef RAWSTOR_TRACE_EVENTS
-    trace(__FILE__, __LINE__, __FUNCTION__, "");
-#endif
-}
-
-TaskScalarPositional::TaskScalarPositional(int fd) : TaskScalar(fd) {
-#ifdef RAWSTOR_TRACE_EVENTS
-    trace(__FILE__, __LINE__, __FUNCTION__, "");
-#endif
-}
-
-TaskVectorPositional::TaskVectorPositional(int fd) : TaskVector(fd) {
 #ifdef RAWSTOR_TRACE_EVENTS
     trace(__FILE__, __LINE__, __FUNCTION__, "");
 #endif

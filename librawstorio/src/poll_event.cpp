@@ -160,16 +160,14 @@ ssize_t EventSimplexScalarPositionalRead::process() noexcept {
     trace(__FILE__, __LINE__, __FUNCTION__, "pread()");
 #endif
     ssize_t res = ::pread(
-        _t->fd(),
-        static_cast<rawstor::io::TaskScalarPositional*>(_t.get())->buf(),
-        static_cast<rawstor::io::TaskScalarPositional*>(_t.get())->size(),
-        static_cast<rawstor::io::TaskScalarPositional*>(_t.get())->offset()
+        _t->fd(), static_cast<rawstor::io::TaskScalar*>(_t.get())->buf(),
+        static_cast<rawstor::io::TaskScalar*>(_t.get())->size(), _offset
     );
     if (res >= 0) {
         _result = res;
 #ifdef RAWSTOR_TRACE_EVENTS
         if ((size_t)_result ==
-            static_cast<rawstor::io::TaskScalarPositional*>(_t.get())->size()) {
+            static_cast<rawstor::io::TaskScalar*>(_t.get())->size()) {
             trace(__FILE__, __LINE__, __FUNCTION__, "completed");
         } else {
             trace(__FILE__, __LINE__, __FUNCTION__, "partial");
@@ -188,16 +186,14 @@ ssize_t EventSimplexVectorPositionalRead::process() noexcept {
     trace(__FILE__, __LINE__, __FUNCTION__, "preadv()");
 #endif
     ssize_t res = ::preadv(
-        _t->fd(),
-        static_cast<rawstor::io::TaskVectorPositional*>(_t.get())->iov(),
-        static_cast<rawstor::io::TaskVectorPositional*>(_t.get())->niov(),
-        static_cast<rawstor::io::TaskVectorPositional*>(_t.get())->offset()
+        _t->fd(), static_cast<rawstor::io::TaskVector*>(_t.get())->iov(),
+        static_cast<rawstor::io::TaskVector*>(_t.get())->niov(), _offset
     );
     if (res >= 0) {
         _result = res;
 #ifdef RAWSTOR_TRACE_EVENTS
         if ((size_t)_result ==
-            static_cast<rawstor::io::TaskVectorPositional*>(_t.get())->size()) {
+            static_cast<rawstor::io::TaskVector*>(_t.get())->size()) {
             trace(__FILE__, __LINE__, __FUNCTION__, "completed");
         } else {
             trace(__FILE__, __LINE__, __FUNCTION__, "partial");
@@ -217,7 +213,7 @@ ssize_t EventSimplexMessageRead::process() noexcept {
 #endif
     ssize_t res = ::recvmsg(
         _t->fd(), static_cast<rawstor::io::TaskMessage*>(_t.get())->msg(),
-        static_cast<rawstor::io::TaskMessage*>(_t.get())->flags()
+        _flags
     );
     if (res >= 0) {
         _result = res;
@@ -272,16 +268,14 @@ ssize_t EventSimplexScalarPositionalWrite::process() noexcept {
     trace(__FILE__, __LINE__, __FUNCTION__, "pwrite()");
 #endif
     ssize_t res = ::pwrite(
-        _t->fd(),
-        static_cast<rawstor::io::TaskScalarPositional*>(_t.get())->buf(),
-        static_cast<rawstor::io::TaskScalarPositional*>(_t.get())->size(),
-        static_cast<rawstor::io::TaskScalarPositional*>(_t.get())->offset()
+        _t->fd(), static_cast<rawstor::io::TaskScalar*>(_t.get())->buf(),
+        static_cast<rawstor::io::TaskScalar*>(_t.get())->size(), _offset
     );
     if (res >= 0) {
         _result = res;
 #ifdef RAWSTOR_TRACE_EVENTS
         if ((size_t)_result ==
-            static_cast<rawstor::io::TaskScalarPositional*>(_t.get())->size()) {
+            static_cast<rawstor::io::TaskScalar*>(_t.get())->size()) {
             trace(__FILE__, __LINE__, __FUNCTION__, "completed");
         } else {
             trace(__FILE__, __LINE__, __FUNCTION__, "partial");
@@ -300,16 +294,14 @@ ssize_t EventSimplexVectorPositionalWrite::process() noexcept {
     trace(__FILE__, __LINE__, __FUNCTION__, "pwritev()");
 #endif
     ssize_t res = ::pwritev(
-        _t->fd(),
-        static_cast<rawstor::io::TaskVectorPositional*>(_t.get())->iov(),
-        static_cast<rawstor::io::TaskVectorPositional*>(_t.get())->niov(),
-        static_cast<rawstor::io::TaskVectorPositional*>(_t.get())->offset()
+        _t->fd(), static_cast<rawstor::io::TaskVector*>(_t.get())->iov(),
+        static_cast<rawstor::io::TaskVector*>(_t.get())->niov(), _offset
     );
     if (res >= 0) {
         _result = res;
 #ifdef RAWSTOR_TRACE_EVENTS
         if ((size_t)_result ==
-            static_cast<rawstor::io::TaskVectorPositional*>(_t.get())->size()) {
+            static_cast<rawstor::io::TaskVector*>(_t.get())->size()) {
             trace(__FILE__, __LINE__, __FUNCTION__, "completed");
         } else {
             trace(__FILE__, __LINE__, __FUNCTION__, "partial");
@@ -329,7 +321,7 @@ ssize_t EventSimplexMessageWrite::process() noexcept {
 #endif
     ssize_t res = ::sendmsg(
         _t->fd(), static_cast<rawstor::io::TaskMessage*>(_t.get())->msg(),
-        static_cast<rawstor::io::TaskMessage*>(_t.get())->flags()
+        _flags
     );
     if (res >= 0) {
         _result = res;

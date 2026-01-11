@@ -23,11 +23,11 @@ TEST_F(PollHupTest, pollin) {
     _server.wait();
 
     {
-        std::unique_ptr<rawstor::io::TaskPoll> t =
+        std::unique_ptr<rawstor::io::Task> t =
             std::make_unique<rawstor::io::tests::SimplePollTask>(
-                _fd, POLLIN, result, error
+                _fd, result, error
             );
-        _queue->poll(std::move(t));
+        _queue->poll(std::move(t), POLLIN);
     }
     _queue->wait(0);
 
@@ -44,11 +44,11 @@ TEST_F(PollHupTest, pollout) {
     _server.wait();
 
     {
-        std::unique_ptr<rawstor::io::TaskPoll> t =
+        std::unique_ptr<rawstor::io::Task> t =
             std::make_unique<rawstor::io::tests::SimplePollTask>(
-                _fd, POLLOUT, result, error
+                _fd, result, error
             );
-        _queue->poll(std::move(t));
+        _queue->poll(std::move(t), POLLOUT);
     }
     _queue->wait(0);
 
