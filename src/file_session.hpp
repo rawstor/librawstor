@@ -46,13 +46,13 @@ public:
         std::unique_ptr<rawstor::Task> t
     ) override;
 
-    void read(std::unique_ptr<rawstor::TaskScalar> t) override;
+    void pread(std::unique_ptr<rawstor::TaskScalar> t) override;
 
-    void read(std::unique_ptr<rawstor::TaskVector> t) override;
+    void preadv(std::unique_ptr<rawstor::TaskVector> t) override;
 
-    void write(std::unique_ptr<rawstor::TaskScalar> t) override;
+    void pwrite(std::unique_ptr<rawstor::TaskScalar> t) override;
 
-    void write(std::unique_ptr<rawstor::TaskVector> t) override;
+    void pwritev(std::unique_ptr<rawstor::TaskVector> t) override;
 };
 
 } // namespace file

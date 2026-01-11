@@ -16,10 +16,8 @@ private:
     int& _error;
 
 public:
-    SimpleScalarTask(
-        int fd, void* buf, size_t size, size_t& result, int& error
-    ) :
-        rawstor::io::TaskScalar(fd),
+    SimpleScalarTask(void* buf, size_t size, size_t& result, int& error) :
+        rawstor::io::TaskScalar(),
         _buf(buf),
         _size(size),
         _result(result),
@@ -34,17 +32,14 @@ public:
     size_t size() const noexcept override { return _size; }
 };
 
-class SimplePollTask final : public rawstor::io::TaskPoll {
+class SimplePollTask final : public rawstor::io::Task {
 private:
-    unsigned int _mask;
-
     size_t& _result;
     int& _error;
 
 public:
-    SimplePollTask(int fd, unsigned int mask, size_t& result, int& error) :
-        rawstor::io::TaskPoll(fd),
-        _mask(mask),
+    SimplePollTask(size_t& result, int& error) :
+        rawstor::io::Task(),
         _result(result),
         _error(error) {}
 
@@ -52,8 +47,6 @@ public:
         _result = result;
         _error = error;
     }
-
-    unsigned int mask() const noexcept override { return _mask; }
 };
 
 } // namespace tests

@@ -311,7 +311,7 @@ void RawstorObject::pread(
      */
     std::unique_ptr<rawstor::TaskScalar> t =
         std::make_unique<TaskScalar>(op, buf);
-    _cns.front()->read(std::move(t));
+    _cns.front()->pread(std::move(t));
 }
 
 void RawstorObject::preadv(
@@ -331,7 +331,7 @@ void RawstorObject::preadv(
      */
     std::unique_ptr<rawstor::TaskVector> t =
         std::make_unique<TaskVector>(op, iov, niov);
-    _cns.front()->read(std::move(t));
+    _cns.front()->preadv(std::move(t));
 }
 
 void RawstorObject::pwrite(
@@ -347,7 +347,7 @@ void RawstorObject::pwrite(
     for (auto& cn : _cns) {
         std::unique_ptr<rawstor::TaskScalar> t =
             std::make_unique<TaskScalar>(op, buf);
-        cn->write(std::move(t));
+        cn->pwrite(std::move(t));
     }
 }
 
@@ -366,7 +366,7 @@ void RawstorObject::pwritev(
     for (auto& cn : _cns) {
         std::unique_ptr<rawstor::TaskVector> t =
             std::make_unique<TaskVector>(op, iov, niov);
-        cn->write(std::move(t));
+        cn->pwritev(std::move(t));
     }
 }
 
