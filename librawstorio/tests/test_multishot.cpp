@@ -25,8 +25,8 @@ TEST_F(MultishotTest, poll) {
 
     {
         std::unique_ptr<rawstor::io::Task> t =
-            std::make_unique<rawstor::io::tests::SimplePollMultishotTask>(
-                result, error, count
+            std::make_unique<rawstor::io::tests::SimpleTaskMultishot>(
+                &result, &error, &count
             );
         event = _queue->poll_multishot(_fd, std::move(t), POLLIN);
     }
