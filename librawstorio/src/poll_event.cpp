@@ -213,8 +213,7 @@ ssize_t EventSimplexScalarRecv::process() noexcept {
 #endif
     ssize_t res = ::recv(
         _fd, static_cast<rawstor::io::TaskScalar*>(_t.get())->buf(),
-        static_cast<rawstor::io::TaskScalar*>(_t.get())->size(),
-        _flags
+        static_cast<rawstor::io::TaskScalar*>(_t.get())->size(), _flags
     );
     if (res >= 0) {
         _result = res;
