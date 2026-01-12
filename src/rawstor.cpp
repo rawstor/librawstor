@@ -262,6 +262,20 @@ int rawstor_fd_preadv(
     }
 }
 
+int rawstor_fd_recv(
+    int fd, void* buf, size_t size, unsigned int flags, RawstorIOCallback* cb,
+    void* data
+) {
+    try {
+        std::unique_ptr<rawstor::io::TaskScalar> t =
+            std::make_unique<TaskScalar>(buf, size, cb, data);
+        rawstor::io_queue->recv(fd, std::move(t), flags);
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    }
+}
+
 int rawstor_fd_recvmsg(
     int fd, msghdr* msg, size_t size, unsigned int flags, RawstorIOCallback* cb,
     void* data
@@ -325,6 +339,20 @@ int rawstor_fd_pwritev(
         std::unique_ptr<rawstor::io::TaskVector> t =
             std::make_unique<TaskVector>(iov, niov, size, cb, data);
         rawstor::io_queue->pwritev(fd, std::move(t), offset);
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    }
+}
+
+int rawstor_fd_send(
+    int fd, void* buf, size_t size, unsigned int flags, RawstorIOCallback* cb,
+    void* data
+) {
+    try {
+        std::unique_ptr<rawstor::io::TaskScalar> t =
+            std::make_unique<TaskScalar>(buf, size, cb, data);
+        rawstor::io_queue->send(fd, std::move(t), flags);
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
