@@ -7,7 +7,7 @@ namespace rawstor {
 namespace io {
 namespace tests {
 
-class SimpleScalarTask final : public rawstor::io::TaskScalar {
+class SimpleTaskScalar final : public rawstor::io::TaskScalar {
 private:
     void* _buf;
     size_t _size;
@@ -16,7 +16,7 @@ private:
     int& _error;
 
 public:
-    SimpleScalarTask(void* buf, size_t size, size_t& result, int& error) :
+    SimpleTaskScalar(void* buf, size_t size, size_t& result, int& error) :
         rawstor::io::TaskScalar(),
         _buf(buf),
         _size(size),
@@ -32,13 +32,13 @@ public:
     size_t size() const noexcept override { return _size; }
 };
 
-class SimplePollTask final : public rawstor::io::Task {
+class SimpleTaskPoll final : public rawstor::io::Task {
 private:
     size_t& _result;
     int& _error;
 
 public:
-    SimplePollTask(size_t& result, int& error) :
+    SimpleTaskPoll(size_t& result, int& error) :
         _result(result),
         _error(error) {}
 
@@ -48,14 +48,14 @@ public:
     }
 };
 
-class SimplePollMultishotTask final : public rawstor::io::Task {
+class SimpleTaskPollMultishot final : public rawstor::io::Task {
 private:
     size_t& _result;
     int& _error;
     unsigned int& _count;
 
 public:
-    SimplePollMultishotTask(size_t& result, int& error, unsigned int& count) :
+    SimpleTaskPollMultishot(size_t& result, int& error, unsigned int& count) :
         _result(result),
         _error(error),
         _count(count) {}

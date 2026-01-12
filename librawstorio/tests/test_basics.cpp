@@ -25,7 +25,7 @@ TEST_F(BasicsTest, empty) {
 
     {
         std::unique_ptr<rawstor::io::Task> t =
-            std::make_unique<rawstor::io::tests::SimplePollTask>(result, error);
+            std::make_unique<rawstor::io::tests::SimpleTaskPoll>(result, error);
         _queue->poll(_fd, std::move(t), POLLIN);
     }
 
@@ -44,7 +44,7 @@ TEST_F(BasicsTest, pollin) {
 
     {
         std::unique_ptr<rawstor::io::Task> t =
-            std::make_unique<rawstor::io::tests::SimplePollTask>(result, error);
+            std::make_unique<rawstor::io::tests::SimpleTaskPoll>(result, error);
         _queue->poll(_fd, std::move(t), POLLIN);
     }
     _queue->wait(0);
@@ -59,7 +59,7 @@ TEST_F(BasicsTest, pollout) {
 
     {
         std::unique_ptr<rawstor::io::Task> t =
-            std::make_unique<rawstor::io::tests::SimplePollTask>(result, error);
+            std::make_unique<rawstor::io::tests::SimpleTaskPoll>(result, error);
         _queue->poll(_fd, std::move(t), POLLOUT);
     }
     _queue->wait(0);
@@ -79,7 +79,7 @@ TEST_F(BasicsTest, read) {
 
     {
         std::unique_ptr<rawstor::io::TaskScalar> t =
-            std::make_unique<rawstor::io::tests::SimpleScalarTask>(
+            std::make_unique<rawstor::io::tests::SimpleTaskScalar>(
                 client_buf, sizeof(client_buf), result, error
             );
         _queue->read(_fd, std::move(t));
@@ -102,7 +102,7 @@ TEST_F(BasicsTest, recv) {
 
     {
         std::unique_ptr<rawstor::io::TaskScalar> t =
-            std::make_unique<rawstor::io::tests::SimpleScalarTask>(
+            std::make_unique<rawstor::io::tests::SimpleTaskScalar>(
                 client_buf, sizeof(client_buf), result, error
             );
         _queue->recv(_fd, std::move(t), 0);
@@ -122,7 +122,7 @@ TEST_F(BasicsTest, write) {
 
     {
         std::unique_ptr<rawstor::io::TaskScalar> t =
-            std::make_unique<rawstor::io::tests::SimpleScalarTask>(
+            std::make_unique<rawstor::io::tests::SimpleTaskScalar>(
                 client_buf, sizeof(client_buf), result, error
             );
         _queue->write(_fd, std::move(t));
@@ -145,7 +145,7 @@ TEST_F(BasicsTest, send) {
 
     {
         std::unique_ptr<rawstor::io::TaskScalar> t =
-            std::make_unique<rawstor::io::tests::SimpleScalarTask>(
+            std::make_unique<rawstor::io::tests::SimpleTaskScalar>(
                 client_buf, sizeof(client_buf), result, error
             );
         _queue->send(_fd, std::move(t), 0);
