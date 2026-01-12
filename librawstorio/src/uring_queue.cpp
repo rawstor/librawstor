@@ -1,5 +1,7 @@
 #include "uring_queue.hpp"
 
+#include "uring_task.hpp"
+
 #include <rawstorio/task.hpp>
 
 #include <rawstorstd/gpp.hpp>
@@ -150,6 +152,24 @@ rawstor::io::Event* Queue::recv(
     return static_cast<rawstor::io::Event*>(t.release());
 }
 
+rawstor::io::Event* Queue::recv_multishot(
+    int fd, std::unique_ptr<rawstor::io::TaskBuffered> t, unsigned int flags
+) {
+    std::unique_ptr<TaskBufferRing> buffer =
+        std::make_unique<TaskBufferRing>(_ring, std::move(t));
+
+    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
+    if (sqe == nullptr) {
+        RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
+    }
+    io_uring_prep_recv_multishot(sqe, fd, nullptr, 0, flags);
+    sqe->flags |= IOSQE_BUFFER_SELECT;
+    sqe->buf_group = buffer->group_id();
+    io_uring_sqe_set_data(sqe, buffer.get());
+
+    return static_cast<rawstor::io::Event*>(buffer.release());
+}
+
 rawstor::io::Event* Queue::recvmsg(
     int fd, std::unique_ptr<rawstor::io::TaskMessage> t, unsigned int flags
 ) {
@@ -277,6 +297,12 @@ void Queue::wait(unsigned int timeout) {
 
             size_t result = cqe->res >= 0 ? cqe->res : 0;
             int error = cqe->res < 0 ? -cqe->res : 0;
+
+            if (cqe->flags & IORING_CQE_F_BUFFER) {
+                static_cast<TaskBufferRing*>(t.get())->select_buffer(
+                    cqe->flags >> IORING_CQE_BUFFER_SHIFT
+                );
+            }
 
             (*t)(result, error);
 

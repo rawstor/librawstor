@@ -65,6 +65,41 @@ public:
     size_t size() const noexcept override { return _size; }
 };
 
+class SimpleTaskBufferedMultishot final : public rawstor::io::TaskBuffered {
+private:
+    unsigned int _buffer_size;
+    unsigned int _buffer_count;
+
+    void* _buffer;
+    size_t* _result;
+    int* _error;
+    unsigned int* _count;
+
+public:
+    SimpleTaskBufferedMultishot(
+        unsigned int buffer_size, unsigned int buffer_count, void* buffer,
+        size_t* result, int* error, unsigned int* count
+    ) :
+        _buffer_size(buffer_size),
+        _buffer_count(buffer_count),
+        _buffer(buffer),
+        _result(result),
+        _error(error),
+        _count(count) {}
+
+    void operator()(size_t result, int error) override {
+        if (result > 0) {
+            memcpy(_buffer, rawstor::io::TaskBuffered::_buffer, result);
+        }
+        *_result = result;
+        *_error = error;
+        ++(*_count);
+    }
+
+    unsigned int size() const noexcept override { return _buffer_size; }
+    unsigned int count() const noexcept override { return _buffer_count; }
+};
+
 } // namespace tests
 } // namespace io
 } // namespace rawstor

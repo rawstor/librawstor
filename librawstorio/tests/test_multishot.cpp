@@ -56,4 +56,183 @@ TEST_F(MultishotTest, poll) {
     EXPECT_EQ(count, 3u);
 }
 
+TEST_F(MultishotTest, recv) {
+    {
+        const char server_buf[] = "dat1dat2";
+        _server.write(server_buf, sizeof(server_buf) - 1);
+        _server.wait();
+    }
+
+    char client_buf[5];
+    size_t result;
+    int error;
+    unsigned int count;
+    rawstor::io::Event* event = nullptr;
+
+    {
+        std::unique_ptr<rawstor::io::TaskBuffered> t =
+            std::make_unique<rawstor::io::tests::SimpleTaskBufferedMultishot>(
+                4, 4, client_buf, &result, &error, &count
+            );
+        event = _queue->recv_multishot(_fd, std::move(t), 0);
+    }
+
+    memset(client_buf, '\0', 5);
+    result = 0;
+    error = 0;
+    EXPECT_NO_THROW(_queue->wait(0));
+    EXPECT_EQ(result, (size_t)4);
+    EXPECT_EQ(error, 0);
+    EXPECT_EQ(strncmp((char*)client_buf, "dat1", 4), 0);
+    EXPECT_EQ(count, 1u);
+
+    memset(client_buf, '\0', 5);
+    result = 0;
+    error = 0;
+    EXPECT_NO_THROW(_queue->wait(0));
+    EXPECT_EQ(result, (size_t)4);
+    EXPECT_EQ(error, 0);
+    EXPECT_EQ(strncmp((char*)client_buf, "dat2", 4), 0);
+    EXPECT_EQ(count, 2u);
+
+    memset(client_buf, '\0', 5);
+    result = 0;
+    error = 0;
+    EXPECT_THROW(_queue->wait(0), std::system_error);
+    EXPECT_EQ(result, (size_t)0);
+    EXPECT_EQ(error, 0);
+    EXPECT_EQ(strncmp((char*)client_buf, "", 4), 0);
+    EXPECT_EQ(count, 2u);
+
+    {
+        const char server_buf[] = "dat3dat4";
+        _server.write(server_buf, sizeof(server_buf) - 1);
+        _server.wait();
+    }
+
+    memset(client_buf, '\0', 5);
+    result = 0;
+    error = 0;
+    EXPECT_NO_THROW(_queue->wait(0));
+    EXPECT_EQ(result, (size_t)4);
+    EXPECT_EQ(error, 0);
+    EXPECT_EQ(strncmp((char*)client_buf, "dat3", 4), 0);
+    EXPECT_EQ(count, 3u);
+
+    memset(client_buf, '\0', 5);
+    result = 0;
+    error = 0;
+    EXPECT_NO_THROW(_queue->wait(0));
+    EXPECT_EQ(result, (size_t)4);
+    EXPECT_EQ(error, 0);
+    EXPECT_EQ(strncmp((char*)client_buf, "dat4", 4), 0);
+    EXPECT_EQ(count, 4u);
+
+    memset(client_buf, '\0', 5);
+    result = 0;
+    error = 0;
+    EXPECT_THROW(_queue->wait(0), std::system_error);
+    EXPECT_EQ(result, (size_t)0);
+    EXPECT_EQ(error, 0);
+    EXPECT_EQ(strncmp((char*)client_buf, "", 4), 0);
+    EXPECT_EQ(count, 4u);
+
+    EXPECT_NO_THROW(_queue->cancel(event));
+
+    memset(client_buf, '\0', 5);
+    result = 0;
+    error = 0;
+    EXPECT_NO_THROW(_queue->wait(0));
+    EXPECT_EQ(result, (size_t)0);
+    EXPECT_EQ(error, ECANCELED);
+    EXPECT_EQ(count, 5u);
+
+    memset(client_buf, '\0', 5);
+    result = 0;
+    error = 0;
+    EXPECT_THROW(_queue->wait(0), std::system_error);
+    EXPECT_EQ(result, (size_t)0);
+    EXPECT_EQ(error, 0);
+    EXPECT_EQ(strncmp((char*)client_buf, "", 4), 0);
+    EXPECT_EQ(count, 5u);
+}
+
+TEST_F(MultishotTest, recv_overflow) {
+    {
+        const char server_buf[] = "dat1dat2dat3dat4";
+        _server.write(server_buf, sizeof(server_buf) - 1);
+        _server.wait();
+    }
+
+    char client_buf[5];
+    size_t result;
+    int error;
+    unsigned int count;
+    rawstor::io::Event* event = nullptr;
+
+    {
+        std::unique_ptr<rawstor::io::TaskBuffered> t =
+            std::make_unique<rawstor::io::tests::SimpleTaskBufferedMultishot>(
+                4, 4, client_buf, &result, &error, &count
+            );
+        event = _queue->recv_multishot(_fd, std::move(t), 0);
+    }
+
+    memset(client_buf, '\0', 5);
+    result = 0;
+    error = 0;
+    EXPECT_NO_THROW(_queue->wait(0));
+    EXPECT_EQ(result, (size_t)4);
+    EXPECT_EQ(error, 0);
+    EXPECT_EQ(strncmp((char*)client_buf, "dat1", 4), 0);
+    EXPECT_EQ(count, 1u);
+
+    memset(client_buf, '\0', 5);
+    result = 0;
+    error = 0;
+    EXPECT_NO_THROW(_queue->wait(0));
+    EXPECT_EQ(result, (size_t)4);
+    EXPECT_EQ(error, 0);
+    EXPECT_EQ(strncmp((char*)client_buf, "dat2", 4), 0);
+    EXPECT_EQ(count, 2u);
+
+    memset(client_buf, '\0', 5);
+    result = 0;
+    error = 0;
+    EXPECT_NO_THROW(_queue->wait(0));
+    EXPECT_EQ(result, (size_t)4);
+    EXPECT_EQ(error, 0);
+    EXPECT_EQ(strncmp((char*)client_buf, "dat3", 4), 0);
+    EXPECT_EQ(count, 3u);
+
+    memset(client_buf, '\0', 5);
+    result = 0;
+    error = 0;
+    EXPECT_NO_THROW(_queue->wait(0));
+    EXPECT_EQ(result, (size_t)4);
+    EXPECT_EQ(error, 0);
+    EXPECT_EQ(strncmp((char*)client_buf, "dat4", 4), 0);
+    EXPECT_EQ(count, 4u);
+
+    memset(client_buf, '\0', 5);
+    result = 0;
+    error = 0;
+    EXPECT_NO_THROW(_queue->wait(0));
+    EXPECT_EQ(result, (size_t)0);
+    EXPECT_EQ(error, ENOBUFS);
+    EXPECT_EQ(strncmp((char*)client_buf, "", 4), 0);
+    EXPECT_EQ(count, 5u);
+
+    EXPECT_THROW(_queue->cancel(event), std::system_error);
+
+    memset(client_buf, '\0', 5);
+    result = 0;
+    error = 0;
+    EXPECT_THROW(_queue->wait(0), std::system_error);
+    EXPECT_EQ(result, (size_t)0);
+    EXPECT_EQ(error, 0);
+    EXPECT_EQ(strncmp((char*)client_buf, "", 4), 0);
+    EXPECT_EQ(count, 5u);
+}
+
 } // unnamed namespace

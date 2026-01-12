@@ -35,6 +35,26 @@ public:
 #endif
 };
 
+class TaskBuffered : public Task {
+protected:
+    void* _buffer;
+
+public:
+    TaskBuffered() : _buffer(nullptr) {}
+    virtual ~TaskBuffered() override = default;
+
+    inline void set(void* buffer) noexcept { _buffer = buffer; }
+
+    /**
+     * size: must be a power of two.
+     */
+    virtual unsigned int size() const noexcept = 0;
+    /**
+     * count: must be a power of two.
+     */
+    virtual unsigned int count() const noexcept = 0;
+};
+
 class TaskScalar : public Task {
 public:
     TaskScalar();

@@ -28,7 +28,9 @@ if WITH_LIBURING
     AM_CFLAGS += $(LIBURING_CFLAGS)
     AM_CXXFLAGS += $(LIBURING_CFLAGS)
     librawstorio_la_SOURCES += uring_queue.cpp \
-                               uring_queue.hpp
+                               uring_queue.hpp \
+                               uring_task.cpp \
+                               uring_task.hpp
     librawstorio_la_LIBADD += $(LIBURING_LIBS)
 else
     librawstorio_la_SOURCES += poll_event.cpp \
