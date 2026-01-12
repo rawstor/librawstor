@@ -49,6 +49,8 @@ public:
     virtual Event*
     preadv(int fd, std::unique_ptr<TaskVector> t, off_t offset) = 0;
     virtual Event*
+    recv(int fd, std::unique_ptr<TaskScalar> t, unsigned int flags) = 0;
+    virtual Event*
     recvmsg(int fd, std::unique_ptr<TaskMessage> t, unsigned int flags) = 0;
 
     virtual Event* write(int fd, std::unique_ptr<TaskScalar> t) = 0;
@@ -57,6 +59,8 @@ public:
     pwrite(int fd, std::unique_ptr<TaskScalar> t, off_t offset) = 0;
     virtual Event*
     pwritev(int fd, std::unique_ptr<TaskVector> t, off_t offset) = 0;
+    virtual Event*
+    send(int fd, std::unique_ptr<TaskScalar> t, unsigned int flags) = 0;
     virtual Event*
     sendmsg(int fd, std::unique_ptr<TaskMessage> t, unsigned int flags) = 0;
 

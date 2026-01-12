@@ -97,6 +97,13 @@ rawstor::io::Event* Queue::preadv(
     return s.preadv(std::move(t), offset);
 }
 
+rawstor::io::Event* Queue::recv(
+    int fd, std::unique_ptr<rawstor::io::TaskScalar> t, unsigned int flags
+) {
+    Session& s = _get_session(fd);
+    return s.recv(std::move(t), flags);
+}
+
 rawstor::io::Event* Queue::recvmsg(
     int fd, std::unique_ptr<rawstor::io::TaskMessage> t, unsigned int flags
 ) {
@@ -128,6 +135,13 @@ rawstor::io::Event* Queue::pwritev(
 ) {
     Session& s = _get_session(fd);
     return s.pwritev(std::move(t), offset);
+}
+
+rawstor::io::Event* Queue::send(
+    int fd, std::unique_ptr<rawstor::io::TaskScalar> t, unsigned int flags
+) {
+    Session& s = _get_session(fd);
+    return s.send(std::move(t), flags);
 }
 
 rawstor::io::Event* Queue::sendmsg(

@@ -41,6 +41,10 @@ public:
         int fd, std::unique_ptr<rawstor::io::TaskVector> t, off_t offset
     ) override;
 
+    rawstor::io::Event* recv(
+        int fd, std::unique_ptr<rawstor::io::TaskScalar> t, unsigned int flags
+    ) override;
+
     rawstor::io::Event* recvmsg(
         int fd, std::unique_ptr<rawstor::io::TaskMessage> t, unsigned int flags
     ) override;
@@ -57,6 +61,10 @@ public:
 
     rawstor::io::Event* pwritev(
         int fd, std::unique_ptr<rawstor::io::TaskVector> t, off_t offset
+    ) override;
+
+    rawstor::io::Event* send(
+        int fd, std::unique_ptr<rawstor::io::TaskScalar> t, unsigned int flags
     ) override;
 
     rawstor::io::Event* sendmsg(
