@@ -73,14 +73,15 @@ public:
 #endif
     virtual bool is_multiplex() const noexcept = 0;
 
-    // TODO: make this abstract
-    virtual bool is_multishot() const noexcept { return false; }
-
     virtual bool is_poll() const noexcept = 0;
+    virtual bool is_read() const noexcept = 0;
+    virtual bool is_write() const noexcept = 0;
 
     virtual ssize_t process() noexcept = 0;
 
     int fd() const noexcept { return _fd; }
+
+    virtual bool has_more() const noexcept { return false; }
 };
 
 class EventSimplex : public Event {
@@ -133,8 +134,6 @@ public:
     size_t shift(size_t shift) noexcept override final;
 
     void add_to_batch(std::vector<iovec>& iov) override final;
-
-    bool multishot() const noexcept { return false; }
 };
 
 class EventMultiplexVector : public EventMultiplex {
@@ -187,6 +186,8 @@ public:
     ssize_t process() noexcept override final;
 
     bool is_poll() const noexcept override final { return true; }
+    bool is_read() const noexcept override final { return false; }
+    bool is_write() const noexcept override final { return false; }
 };
 
 class EventSimplexPollOneshot final : public EventSimplexPoll {
@@ -206,7 +207,9 @@ public:
     ) :
         EventSimplexPoll(q, fd, std::move(t), mask) {}
 
-    bool is_multishot() const noexcept override final { return true; }
+    bool has_more() const noexcept override final {
+        return _error != ECANCELED;
+    }
 };
 
 class EventSimplexScalarRead final : public EventSimplex {
@@ -219,6 +222,8 @@ public:
     ssize_t process() noexcept override final;
 
     bool is_poll() const noexcept override final { return false; }
+    bool is_read() const noexcept override final { return true; }
+    bool is_write() const noexcept override final { return false; }
 };
 
 class EventSimplexVectorRead final : public EventSimplex {
@@ -231,6 +236,8 @@ public:
     ssize_t process() noexcept override final;
 
     bool is_poll() const noexcept override final { return false; }
+    bool is_read() const noexcept override final { return true; }
+    bool is_write() const noexcept override final { return false; }
 };
 
 class EventSimplexScalarPositionalRead final : public EventSimplex {
@@ -248,6 +255,8 @@ public:
     ssize_t process() noexcept override final;
 
     bool is_poll() const noexcept override final { return false; }
+    bool is_read() const noexcept override final { return true; }
+    bool is_write() const noexcept override final { return false; }
 };
 
 class EventSimplexVectorPositionalRead final : public EventSimplex {
@@ -265,6 +274,8 @@ public:
     ssize_t process() noexcept override final;
 
     bool is_poll() const noexcept override final { return false; }
+    bool is_read() const noexcept override final { return true; }
+    bool is_write() const noexcept override final { return false; }
 };
 
 class EventSimplexScalarRecv final : public EventSimplex {
@@ -282,6 +293,8 @@ public:
     ssize_t process() noexcept override final;
 
     bool is_poll() const noexcept override final { return false; }
+    bool is_read() const noexcept override final { return true; }
+    bool is_write() const noexcept override final { return false; }
 };
 
 class EventSimplexMessageRead final : public EventSimplex {
@@ -299,6 +312,8 @@ public:
     ssize_t process() noexcept override final;
 
     bool is_poll() const noexcept override final { return false; }
+    bool is_read() const noexcept override final { return true; }
+    bool is_write() const noexcept override final { return false; }
 };
 
 class EventMultiplexScalarWrite final : public EventMultiplexScalar {
@@ -311,6 +326,8 @@ public:
     ssize_t process() noexcept override final;
 
     bool is_poll() const noexcept override final { return false; }
+    bool is_read() const noexcept override final { return false; }
+    bool is_write() const noexcept override final { return true; }
 };
 
 class EventMultiplexVectorWrite final : public EventMultiplexVector {
@@ -323,6 +340,8 @@ public:
     ssize_t process() noexcept override final;
 
     bool is_poll() const noexcept override final { return false; }
+    bool is_read() const noexcept override final { return false; }
+    bool is_write() const noexcept override final { return true; }
 };
 
 class EventSimplexScalarPositionalWrite final : public EventSimplex {
@@ -340,6 +359,8 @@ public:
     ssize_t process() noexcept override final;
 
     bool is_poll() const noexcept override final { return false; }
+    bool is_read() const noexcept override final { return false; }
+    bool is_write() const noexcept override final { return true; }
 };
 
 class EventSimplexVectorPositionalWrite final : public EventSimplex {
@@ -357,6 +378,8 @@ public:
     ssize_t process() noexcept override final;
 
     bool is_poll() const noexcept override final { return false; }
+    bool is_read() const noexcept override final { return false; }
+    bool is_write() const noexcept override final { return true; }
 };
 
 class EventSimplexScalarSend final : public EventSimplex {
@@ -374,6 +397,8 @@ public:
     ssize_t process() noexcept override final;
 
     bool is_poll() const noexcept override final { return false; }
+    bool is_read() const noexcept override final { return false; }
+    bool is_write() const noexcept override final { return true; }
 };
 
 class EventSimplexMessageWrite final : public EventSimplex {
@@ -391,6 +416,8 @@ public:
     ssize_t process() noexcept override final;
 
     bool is_poll() const noexcept override final { return false; }
+    bool is_read() const noexcept override final { return false; }
+    bool is_write() const noexcept override final { return true; }
 };
 
 } // namespace poll
