@@ -226,6 +226,21 @@ public:
     ssize_t process() noexcept override final;
 };
 
+class EventSimplexScalarRecv final : public EventSimplex {
+private:
+    unsigned int _flags;
+
+public:
+    EventSimplexScalarRecv(
+        Queue& q, int fd, std::unique_ptr<rawstor::io::TaskScalar> t,
+        unsigned int flags
+    ) :
+        EventSimplex(q, fd, std::move(t)),
+        _flags(flags) {}
+
+    ssize_t process() noexcept override final;
+};
+
 class EventSimplexMessageRead final : public EventSimplex {
 private:
     unsigned int _flags;
@@ -287,6 +302,21 @@ public:
     ) :
         EventSimplex(q, fd, std::move(t)),
         _offset(offset) {}
+
+    ssize_t process() noexcept override final;
+};
+
+class EventSimplexScalarSend final : public EventSimplex {
+private:
+    unsigned int _flags;
+
+public:
+    EventSimplexScalarSend(
+        Queue& q, int fd, std::unique_ptr<rawstor::io::TaskScalar> t,
+        unsigned int flags
+    ) :
+        EventSimplex(q, fd, std::move(t)),
+        _flags(flags) {}
 
     ssize_t process() noexcept override final;
 };

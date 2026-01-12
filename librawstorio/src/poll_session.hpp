@@ -67,6 +67,9 @@ public:
     preadv(std::unique_ptr<rawstor::io::TaskVector> t, off_t offset);
 
     rawstor::io::Event*
+    recv(std::unique_ptr<rawstor::io::TaskScalar> t, unsigned int flags);
+
+    rawstor::io::Event*
     recvmsg(std::unique_ptr<rawstor::io::TaskMessage> t, unsigned int flags);
 
     rawstor::io::Event* write(std::unique_ptr<rawstor::io::TaskScalar> t);
@@ -78,6 +81,9 @@ public:
 
     rawstor::io::Event*
     pwritev(std::unique_ptr<rawstor::io::TaskVector> t, off_t offset);
+
+    rawstor::io::Event*
+    send(std::unique_ptr<rawstor::io::TaskScalar> t, unsigned int flags);
 
     rawstor::io::Event*
     sendmsg(std::unique_ptr<rawstor::io::TaskMessage> t, unsigned int flags);

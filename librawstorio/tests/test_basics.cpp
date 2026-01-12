@@ -91,6 +91,29 @@ TEST_F(BasicsTest, read) {
     EXPECT_EQ(strcmp(client_buf, server_buf), 0);
 }
 
+TEST_F(BasicsTest, recv) {
+    const char server_buf[] = "data";
+    char client_buf[sizeof(server_buf)];
+    size_t result = 0;
+    int error = 0;
+
+    _server.write(server_buf, sizeof(server_buf));
+    _server.wait();
+
+    {
+        std::unique_ptr<rawstor::io::TaskScalar> t =
+            std::make_unique<rawstor::io::tests::SimpleScalarTask>(
+                client_buf, sizeof(client_buf), result, error
+            );
+        _queue->recv(_fd, std::move(t), 0);
+    }
+    _queue->wait(0);
+
+    EXPECT_EQ(result, sizeof(client_buf));
+    EXPECT_EQ(error, 0);
+    EXPECT_EQ(strcmp(client_buf, server_buf), 0);
+}
+
 TEST_F(BasicsTest, write) {
     char client_buf[] = "data";
     char server_buf[sizeof(client_buf)];
@@ -103,6 +126,29 @@ TEST_F(BasicsTest, write) {
                 client_buf, sizeof(client_buf), result, error
             );
         _queue->write(_fd, std::move(t));
+    }
+    _queue->wait(0);
+
+    _server.read(server_buf, sizeof(server_buf));
+    _server.wait();
+
+    EXPECT_EQ(result, sizeof(client_buf));
+    EXPECT_EQ(error, 0);
+    EXPECT_EQ(strcmp(server_buf, client_buf), 0);
+}
+
+TEST_F(BasicsTest, send) {
+    char client_buf[] = "data";
+    char server_buf[sizeof(client_buf)];
+    size_t result = 0;
+    int error = 0;
+
+    {
+        std::unique_ptr<rawstor::io::TaskScalar> t =
+            std::make_unique<rawstor::io::tests::SimpleScalarTask>(
+                client_buf, sizeof(client_buf), result, error
+            );
+        _queue->send(_fd, std::move(t), 0);
     }
     _queue->wait(0);
 
