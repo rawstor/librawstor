@@ -25,7 +25,7 @@ TEST_F(MultishotTest, poll) {
 
     {
         std::unique_ptr<rawstor::io::Task> t =
-            std::make_unique<rawstor::io::tests::SimpleTaskPollMultishot>(
+            std::make_unique<rawstor::io::tests::SimpleTaskMultishot>(
                 result, error, count
             );
         event = _queue->poll_multishot(_fd, std::move(t), POLLIN);
@@ -51,6 +51,63 @@ TEST_F(MultishotTest, poll) {
     result = 0;
     error = 0;
     EXPECT_NO_THROW(_queue->wait(0));
+    EXPECT_EQ(result, (size_t)0);
+    EXPECT_EQ(error, ECANCELED);
+    EXPECT_EQ(count, 3u);
+}
+
+TEST_F(MultishotTest, recv) {
+    char server_buf[] = "dataX";
+
+    char *client_buf;
+    size_t result;
+    int error = 0;
+    unsigned int count = 0;
+    rawstor::io::Event* event = nullptr;
+
+    {
+        std::unique_ptr<rawstor::io::TaskBuffered> t =
+            std::make_unique<rawstor::io::tests::SimpleTaskBufferedMultishot>(
+                (void*&)client_buf, result, error, count
+            );
+        event = _queue->recv_multishot(_fd, std::move(t), 0);
+    }
+
+    server_buf[4] = '1';
+    _server.write(server_buf, sizeof(server_buf));
+    _server.wait();
+
+    client_buf = nullptr;
+    result = 0;
+    error = 0;
+    EXPECT_NO_THROW(_queue->wait(0));
+    EXPECT_NE(client_buf, nullptr);
+    EXPECT_EQ(result, sizeof(server_buf));
+    EXPECT_EQ(error, 0);
+    EXPECT_EQ(strcmp((char*)client_buf, "data1"), 0);
+    EXPECT_EQ(count, 1u);
+
+    server_buf[4] = '2';
+    _server.write(server_buf, sizeof(server_buf));
+    _server.wait();
+
+    client_buf = nullptr;
+    result = 0;
+    error = 0;
+    EXPECT_NO_THROW(_queue->wait(0));
+    EXPECT_NE(client_buf, nullptr);
+    EXPECT_EQ(result, sizeof(server_buf));
+    EXPECT_EQ(error, 0);
+    EXPECT_EQ(strcmp((char*)client_buf, "data2"), 0);
+    EXPECT_EQ(count, 2u);
+
+    EXPECT_NO_THROW(_queue->cancel(event));
+
+    client_buf = nullptr;
+    result = 0;
+    error = 0;
+    EXPECT_NO_THROW(_queue->wait(0));
+    EXPECT_NE(client_buf, nullptr);
     EXPECT_EQ(result, (size_t)0);
     EXPECT_EQ(error, ECANCELED);
     EXPECT_EQ(count, 3u);

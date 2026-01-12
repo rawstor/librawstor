@@ -14,6 +14,8 @@ namespace io {
 
 class Task;
 
+class TaskBuffered;
+
 class TaskPollMultishot;
 
 class TaskScalar;
@@ -54,6 +56,9 @@ public:
     preadv(int fd, std::unique_ptr<TaskVector> t, off_t offset) = 0;
     virtual Event*
     recv(int fd, std::unique_ptr<TaskScalar> t, unsigned int flags) = 0;
+    virtual Event* recv_multishot(
+        int fd, std::unique_ptr<TaskBuffered> t, unsigned int flags
+    ) = 0;
     virtual Event*
     recvmsg(int fd, std::unique_ptr<TaskMessage> t, unsigned int flags) = 0;
 

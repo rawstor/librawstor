@@ -6,6 +6,7 @@
 #include <liburing.h>
 
 #include <memory>
+#include <string>
 
 namespace rawstor {
 namespace io {
@@ -46,6 +47,10 @@ public:
 
     rawstor::io::Event* recv(
         int fd, std::unique_ptr<rawstor::io::TaskScalar> t, unsigned int flags
+    ) override;
+
+    rawstor::io::Event* recv_multishot(
+        int fd, std::unique_ptr<rawstor::io::TaskBuffered> t, unsigned int flags
     ) override;
 
     rawstor::io::Event* recvmsg(

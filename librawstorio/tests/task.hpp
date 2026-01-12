@@ -7,6 +7,39 @@ namespace rawstor {
 namespace io {
 namespace tests {
 
+class SimpleTask final : public rawstor::io::Task {
+private:
+    size_t& _result;
+    int& _error;
+
+public:
+    SimpleTask(size_t& result, int& error) : _result(result), _error(error) {}
+
+    void operator()(size_t result, int error) override {
+        _result = result;
+        _error = error;
+    }
+};
+
+class SimpleTaskMultishot final : public rawstor::io::Task {
+private:
+    size_t& _result;
+    int& _error;
+    unsigned int& _count;
+
+public:
+    SimpleTaskMultishot(size_t& result, int& error, unsigned int& count) :
+        _result(result),
+        _error(error),
+        _count(count) {}
+
+    void operator()(size_t result, int error) override {
+        _result = result;
+        _error = error;
+        ++_count;
+    }
+};
+
 class SimpleTaskScalar final : public rawstor::io::TaskScalar {
 private:
     void* _buf;
@@ -32,35 +65,24 @@ public:
     size_t size() const noexcept override { return _size; }
 };
 
-class SimpleTaskPoll final : public rawstor::io::Task {
+class SimpleTaskBufferedMultishot final : public rawstor::io::TaskBuffered {
 private:
-    size_t& _result;
-    int& _error;
-
-public:
-    SimpleTaskPoll(size_t& result, int& error) :
-        _result(result),
-        _error(error) {}
-
-    void operator()(size_t result, int error) override {
-        _result = result;
-        _error = error;
-    }
-};
-
-class SimpleTaskPollMultishot final : public rawstor::io::Task {
-private:
+    void*& _buffer;
     size_t& _result;
     int& _error;
     unsigned int& _count;
 
 public:
-    SimpleTaskPollMultishot(size_t& result, int& error, unsigned int& count) :
+    SimpleTaskBufferedMultishot(
+        void*& buffer, size_t& result, int& error, unsigned int& count
+    ) :
+        _buffer(buffer),
         _result(result),
         _error(error),
         _count(count) {}
 
     void operator()(size_t result, int error) override {
+        _buffer = rawstor::io::TaskBuffered::_buffer;
         _result = result;
         _error = error;
         ++_count;

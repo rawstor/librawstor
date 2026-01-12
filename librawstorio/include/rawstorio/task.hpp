@@ -35,6 +35,17 @@ public:
 #endif
 };
 
+class TaskBuffered : public Task {
+protected:
+    void* _buffer;
+
+public:
+    TaskBuffered() : _buffer(nullptr) {}
+    virtual ~TaskBuffered() override = default;
+
+    inline void set_buffer(void* buffer) noexcept { _buffer = buffer; }
+};
+
 class TaskScalar : public Task {
 public:
     TaskScalar();
