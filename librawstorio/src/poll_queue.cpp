@@ -323,7 +323,7 @@ void Queue::wait(unsigned int timeout) {
         std::unique_ptr<Event> event(_cqes.pop());
         event->dispatch();
 
-        if (event->is_multishot() && event->error() != ECANCELED) {
+        if (event->has_more()) {
             // TODO: here should be just s.push()
             if (event->is_poll()) {
                 std::unique_ptr<EventSimplexPoll> poll_event(
