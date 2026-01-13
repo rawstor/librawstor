@@ -22,7 +22,6 @@
 #include <algorithm>
 #include <iterator>
 #include <memory>
-#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -825,9 +824,7 @@ Session::~Session() {
 
 int Session::_connect() {
     if (!uri().path().str().empty() && uri().path().str() != "/") {
-        std::ostringstream oss;
-        oss << "Empty path expected: " << uri().str();
-        rawstor_error("%s\n", oss.str().c_str());
+        rawstor_error("Empty path expected: %s\n", uri().str().c_str());
         RAWSTOR_THROW_SYSTEM_ERROR(EINVAL);
     }
 
