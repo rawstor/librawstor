@@ -32,15 +32,11 @@ namespace {
 
 std::string get_ost_path(const rawstor::URI& uri) {
     if (uri.scheme() != "file") {
-        std::ostringstream oss;
-        oss << "Unexpected URI scheme: " << uri.str();
-        rawstor_error("%s\n", oss.str().c_str());
+        rawstor_error("Unexpected URI scheme: %s\n", uri.str().c_str());
         RAWSTOR_THROW_SYSTEM_ERROR(EINVAL);
     }
     if (!uri.host().empty()) {
-        std::ostringstream oss;
-        oss << "Empty host expected: " << uri.str();
-        rawstor_error("%s\n", oss.str().c_str());
+        rawstor_error("Empty host expected: %s\n", uri.str().c_str());
         RAWSTOR_THROW_SYSTEM_ERROR(EINVAL);
     }
     return uri.path().str();

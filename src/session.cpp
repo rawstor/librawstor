@@ -44,9 +44,7 @@ std::unique_ptr<Session> Session::create(const URI& uri, unsigned int depth) {
     if (uri.scheme() == "file") {
         return std::make_unique<rawstor::file::Session>(uri, depth);
     }
-    std::ostringstream oss;
-    oss << "Unexpected URI: " << uri.str();
-    rawstor_error("%s\n", oss.str().c_str());
+    rawstor_error("Unexpected URI: %s\n", uri.str().c_str());
     RAWSTOR_THROW_SYSTEM_ERROR(EINVAL);
 }
 
