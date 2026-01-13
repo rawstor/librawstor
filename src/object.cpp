@@ -58,7 +58,8 @@ void validate_not_empty(const std::vector<rawstor::URI>& uris) {
         return;
     }
 
-    throw std::runtime_error("Empty uri list");
+    rawstor_error("Empty uri list\n");
+    RAWSTOR_THROW_SYSTEM_ERROR(EINVAL);
 }
 
 void validate_same_uuid(const std::vector<rawstor::URI>& uris) {
@@ -69,7 +70,8 @@ void validate_same_uuid(const std::vector<rawstor::URI>& uris) {
     std::string uuid = uris.front().path().filename();
     for (const auto& uri : uris) {
         if (uri.path().filename() != uuid) {
-            throw std::runtime_error("Equal UUID expected");
+            rawstor_error("Equal UUID expected\n");
+            RAWSTOR_THROW_SYSTEM_ERROR(EINVAL);
         }
     }
 }
@@ -82,7 +84,8 @@ void validate_different_uris(const std::vector<rawstor::URI>& uris) {
     std::set<rawstor::URI> targets;
     for (const auto& uri : uris) {
         if (targets.find(uri) != targets.end()) {
-            throw std::runtime_error("Different uris expected");
+            rawstor_error("Different uris expected\n");
+            RAWSTOR_THROW_SYSTEM_ERROR(EINVAL);
         }
         targets.insert(uri);
     }

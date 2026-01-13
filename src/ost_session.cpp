@@ -827,7 +827,8 @@ int Session::_connect() {
     if (!uri().path().str().empty() && uri().path().str() != "/") {
         std::ostringstream oss;
         oss << "Empty path expected: " << uri().str();
-        throw std::runtime_error(oss.str());
+        rawstor_error("%s\n", oss.str().c_str());
+        RAWSTOR_THROW_SYSTEM_ERROR(EINVAL);
     }
 
     int res;
