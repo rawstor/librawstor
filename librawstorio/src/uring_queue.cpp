@@ -18,7 +18,11 @@ namespace io {
 namespace uring {
 
 Queue::Queue(unsigned int depth) : rawstor::io::Queue(depth) {
-    int res = io_uring_queue_init(depth, &_ring, 0);
+    int res = io_uring_queue_init(
+        depth, &_ring,
+        IORING_SETUP_SUBMIT_ALL | IORING_SETUP_COOP_TASKRUN |
+            IORING_SETUP_SINGLE_ISSUER
+    );
     if (res < 0) {
         RAWSTOR_THROW_SYSTEM_ERROR(-res);
     };
