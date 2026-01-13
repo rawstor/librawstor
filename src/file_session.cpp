@@ -34,12 +34,14 @@ std::string get_ost_path(const rawstor::URI& uri) {
     if (uri.scheme() != "file") {
         std::ostringstream oss;
         oss << "Unexpected URI scheme: " << uri.str();
-        throw std::runtime_error(oss.str());
+        rawstor_error("%s\n", oss.str().c_str());
+        RAWSTOR_THROW_SYSTEM_ERROR(EINVAL);
     }
     if (!uri.host().empty()) {
         std::ostringstream oss;
         oss << "Empty host expected: " << uri.str();
-        throw std::runtime_error(oss.str());
+        rawstor_error("%s\n", oss.str().c_str());
+        RAWSTOR_THROW_SYSTEM_ERROR(EINVAL);
     }
     return uri.path().str();
 }
