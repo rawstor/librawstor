@@ -25,9 +25,9 @@ uint64_t rawstor_hash_scalar(void* buf, size_t length) {
 int rawstor_hash_vector(
     const struct iovec* iov, unsigned int niov, uint64_t* hash
 ) {
+#ifdef RAWSTOR_WITH_LIBXXHASH
     int ret;
 
-#ifdef RAWSTOR_WITH_LIBXXHASH
     // Allocate a state struct. Do not just use malloc() or new.
     XXH3_state_t* state = XXH3_createState();
     if (state == NULL) {
