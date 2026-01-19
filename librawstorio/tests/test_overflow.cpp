@@ -49,17 +49,16 @@ TEST_F(OverflowTest, push_three) {
         EXPECT_THROW(_queue->read(_fd, std::move(t)), std::system_error);
     }
 
-    EXPECT_NO_THROW(_queue->wait(0));
+    EXPECT_NO_THROW(_wait_all());
+
     EXPECT_EQ(result1, sizeof(client_buf1));
     EXPECT_EQ(error1, 0);
     EXPECT_EQ(strncmp(client_buf1, "data1", 5), 0);
 
-    EXPECT_NO_THROW(_queue->wait(0));
     EXPECT_EQ(result2, sizeof(client_buf2));
     EXPECT_EQ(error2, 0);
     EXPECT_EQ(strncmp(client_buf2, "data2", 5), 0);
 
-    EXPECT_THROW(_queue->wait(0), std::system_error);
     EXPECT_EQ(result3, (size_t)0);
     EXPECT_EQ(error3, 0);
 }
@@ -91,7 +90,8 @@ TEST_F(OverflowTest, push_two_pop_one) {
         EXPECT_NO_THROW(_queue->read(_fd, std::move(t)));
     }
 
-    EXPECT_NO_THROW(_queue->wait(0));
+    EXPECT_NO_THROW(_wait_all());
+
     EXPECT_EQ(result1, sizeof(client_buf1));
     EXPECT_EQ(error1, 0);
     EXPECT_EQ(strncmp(client_buf1, "data1", 5), 0);
@@ -107,12 +107,12 @@ TEST_F(OverflowTest, push_two_pop_one) {
         EXPECT_NO_THROW(_queue->read(_fd, std::move(t)));
     }
 
-    EXPECT_NO_THROW(_queue->wait(0));
+    EXPECT_NO_THROW(_wait_all());
+
     EXPECT_EQ(result2, sizeof(client_buf2));
     EXPECT_EQ(error2, 0);
     EXPECT_EQ(strncmp(client_buf2, "data2", 5), 0);
 
-    EXPECT_NO_THROW(_queue->wait(0));
     EXPECT_EQ(result3, sizeof(client_buf3));
     EXPECT_EQ(error3, 0);
     EXPECT_EQ(strncmp(client_buf3, "data3", 5), 0);
