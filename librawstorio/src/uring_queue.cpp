@@ -272,44 +272,46 @@ bool Queue::empty() const noexcept {
 }
 
 void Queue::wait(unsigned int timeout) {
-    int res;
-    io_uring_cqe* cqe;
     __kernel_timespec ts = {
         .tv_sec = timeout / 1000, .tv_nsec = 1000000u * (timeout % 1000)
     };
 
-    if (io_uring_sq_ready(&_ring) > 0) {
-        /**
-         * TODO: Replace with io_uring_submit_wait_cqe_timeout and do something
-         * with sigmask.
-         */
-        res = io_uring_submit(&_ring);
-        if (res < 0) {
-            RAWSTOR_THROW_SYSTEM_ERROR(-res);
-        }
-        res = io_uring_wait_cqe_timeout(&_ring, &cqe, &ts);
-        if (res < 0) {
-            RAWSTOR_THROW_SYSTEM_ERROR(-res);
-        }
-    } else {
-        res = io_uring_wait_cqe_timeout(&_ring, &cqe, &ts);
-        if (res < 0) {
-            RAWSTOR_THROW_SYSTEM_ERROR(-res);
-        }
+    io_uring_cqe* cqe;
+    int res = io_uring_submit_and_wait_timeout(&_ring, &cqe, 1, &ts, nullptr);
+    if (res < 0) {
+        RAWSTOR_THROW_SYSTEM_ERROR(-res);
+    }
+    if (cqe == nullptr) {
+        RAWSTOR_THROW_SYSTEM_ERROR(ETIME);
     }
 
-    std::unique_ptr<rawstor::io::Task> t(
-        static_cast<rawstor::io::Task*>(io_uring_cqe_get_data(cqe))
-    );
+    unsigned int nr = 0;
 
-    size_t result = cqe->res >= 0 ? cqe->res : 0;
-    int error = cqe->res < 0 ? -cqe->res : 0;
+    try {
+        unsigned int head;
+        io_uring_for_each_cqe(&_ring, head, cqe) {
+            std::unique_ptr<rawstor::io::Task> t(
+                static_cast<rawstor::io::Task*>(io_uring_cqe_get_data(cqe))
+            );
 
-    io_uring_cqe_seen(&_ring, cqe);
+            size_t result = cqe->res >= 0 ? cqe->res : 0;
+            int error = cqe->res < 0 ? -cqe->res : 0;
 
-    --_events;
+            (*t)(result, error);
 
-    (*t)(result, error);
+            --_events;
+            ++nr;
+        }
+    } catch (...) {
+        if (nr) {
+            io_uring_cq_advance(&_ring, nr);
+        }
+        throw;
+    }
+
+    if (nr) {
+        io_uring_cq_advance(&_ring, nr);
+    }
 }
 
 } // namespace uring

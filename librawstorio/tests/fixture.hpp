@@ -13,6 +13,7 @@
 #include <sys/un.h>
 
 #include <memory>
+#include <system_error>
 
 namespace rawstor {
 namespace io {
@@ -56,6 +57,18 @@ protected:
         _server(),
         _fd(_connect(_server.name())),
         _queue(rawstor::io::Queue::create(depth)) {}
+
+    void _wait_all() {
+        try {
+            while (true) {
+                _queue->wait(0);
+            }
+        } catch (const std::system_error& e) {
+            if (e.code().value() != ETIME) {
+                throw;
+            }
+        }
+    }
 };
 
 } // namespace tests
