@@ -12,12 +12,12 @@ FIO_JSON=$6
 _FIO_OUTPUT=fio.output
 
 fio \
-  --ioengine=librawstor \
-  --filename="${OBJECT_URI//:/\\:}" \
   --output-format=normal,json \
   --output=${_FIO_OUTPUT} \
   \
+  --ioengine=librawstor \
   --name=randread \
+  --filename="${OBJECT_URI//:/\\:}" \
   --iodepth=${IODEPTH} \
   --rw=randread \
   --bs=${BS} \
@@ -29,7 +29,9 @@ fio \
   \
   --stonewall \
   \
+  --ioengine=librawstor \
   --name=randwrite \
+  --filename="${OBJECT_URI//:/\\:}" \
   --iodepth=${IODEPTH} \
   --rw=randwrite \
   --bs=${BS} \
