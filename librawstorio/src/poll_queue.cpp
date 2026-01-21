@@ -213,8 +213,10 @@ void Queue::wait(unsigned int timeout) {
         }
     }
 
-    std::unique_ptr<Event> event(_cqes.pop());
-    event->dispatch();
+    while (!_cqes.empty()) {
+        std::unique_ptr<Event> event(_cqes.pop());
+        event->dispatch();
+    }
 }
 
 } // namespace poll
