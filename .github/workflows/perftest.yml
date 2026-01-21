@@ -94,6 +94,7 @@ jobs:
       run: |
         object_uri=$(rawstor-cli create --uri=${{ matrix.uri }} --size=1)
         echo "OBJECT_URI=${object_uri}" >> $GITHUB_ENV
+        rawstor-cli testio --object-uri=${object_uri} --block-size=4096 --io-depth=1 --count=1
     - name: (ost) create object
       if: "${{ matrix.scheme == 'ost' }}"
       run: |
