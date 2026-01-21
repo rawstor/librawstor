@@ -19,7 +19,6 @@ fio \
   --thread \
   \
   --name=randwrite \
-  --stonewall \
   --iodepth=${IODEPTH} \
   --rw=randwrite \
   --bs=${BS} \
@@ -30,6 +29,7 @@ fio \
   --group_reporting \
   \
   --name=randread \
+  --stonewall \
   --iodepth=${IODEPTH} \
   --rw=randread \
   --bs=${BS} \
