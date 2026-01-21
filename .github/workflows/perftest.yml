@@ -104,9 +104,9 @@ jobs:
         fio \
           --ioengine=librawstor \
           --filename="${OBJECT_URI//:/\\:}" \
-          --name=randread \
+          --name=randwrite \
           --iodepth=1 \
-          --rw=randread \
+          --rw=randwrite \
           --bs=4k \
           --size=1G \
           --numjobs=1 \
