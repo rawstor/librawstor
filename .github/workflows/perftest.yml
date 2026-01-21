@@ -108,7 +108,7 @@ jobs:
           --iodepth=1 \
           --rw=randwrite \
           --bs=4k \
-          --size=1G \
+          --size=512M \
           --numjobs=1 \
           --runtime=10 \
           --time_based

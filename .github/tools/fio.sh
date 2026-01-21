@@ -22,7 +22,7 @@ fio \
   --iodepth=${IODEPTH} \
   --rw=randread \
   --bs=${BS} \
-  --size=1G \
+  --size=512M \
   --numjobs=${NUMJOBS} \
   --runtime=10 \
   --time_based \
@@ -33,7 +33,7 @@ fio \
   --iodepth=${IODEPTH} \
   --rw=randwrite \
   --bs=${BS} \
-  --size=1G \
+  --size=512M \
   --numjobs=${NUMJOBS} \
   --runtime=10 \
   --time_based \
