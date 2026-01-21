@@ -148,8 +148,6 @@ jobs:
         ssh-key: ${{ secrets.RAWSTOR_BENCH_TOKEN }}
     - name: publish
       run: |
-        exit 1
-
         ./librawstor/.github/tools/git-config.sh ./librawstor
 
         cd ./perftest
