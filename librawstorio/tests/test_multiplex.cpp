@@ -38,8 +38,7 @@ TEST_F(MultiplexTest, read) {
         _queue->read(_fd, std::move(t));
     }
 
-    _queue->wait(0);
-    _queue->wait(0);
+    EXPECT_NO_THROW(_wait_all());
 
     EXPECT_EQ(result1, (size_t)5);
     EXPECT_EQ(error1, 0);
@@ -73,8 +72,7 @@ TEST_F(MultiplexTest, write) {
         _queue->write(_fd, std::move(t));
     }
 
-    _queue->wait(0);
-    _queue->wait(0);
+    EXPECT_NO_THROW(_wait_all());
 
     char server_buf[10];
     _server.read(server_buf, sizeof(server_buf));
