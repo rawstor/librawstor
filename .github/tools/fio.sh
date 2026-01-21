@@ -16,6 +16,7 @@ fio \
   --output=${_FIO_OUTPUT} \
   --ioengine=librawstor \
   --filename="${OBJECT_URI//:/\\:}" \
+  --thread \
   \
   --name=randread \
   --iodepth=${IODEPTH} \
