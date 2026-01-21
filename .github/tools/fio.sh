@@ -28,7 +28,6 @@ fio \
   --time_based \
   --group_reporting \
   \
-  \
   --name=randwrite \
   --stonewall \
   --iodepth=${IODEPTH} \
