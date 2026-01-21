@@ -18,9 +18,10 @@ fio \
   --filename="${OBJECT_URI//:/\\:}" \
   --thread \
   \
-  --name=randread \
+  --name=randwrite \
+  --stonewall \
   --iodepth=${IODEPTH} \
-  --rw=randread \
+  --rw=randwrite \
   --bs=${BS} \
   --size=1G \
   --numjobs=${NUMJOBS} \
@@ -28,11 +29,9 @@ fio \
   --time_based \
   --group_reporting \
   \
-  \
-  --name=randwrite \
-  --stonewall \
+  --name=randread \
   --iodepth=${IODEPTH} \
-  --rw=randwrite \
+  --rw=randread \
   --bs=${BS} \
   --size=1G \
   --numjobs=${NUMJOBS} \
