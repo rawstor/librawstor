@@ -14,10 +14,10 @@ _FIO_OUTPUT=fio.output
 fio \
   --output-format=normal,json \
   --output=${_FIO_OUTPUT} \
-  \
   --ioengine=librawstor \
-  --name=randread \
   --filename="${OBJECT_URI//:/\\:}" \
+  \
+  --name=randread \
   --iodepth=${IODEPTH} \
   --rw=randread \
   --bs=${BS} \
@@ -27,11 +27,9 @@ fio \
   --time_based \
   --group_reporting \
   \
-  --stonewall \
   \
-  --ioengine=librawstor \
   --name=randwrite \
-  --filename="${OBJECT_URI//:/\\:}" \
+  --stonewall \
   --iodepth=${IODEPTH} \
   --rw=randwrite \
   --bs=${BS} \
