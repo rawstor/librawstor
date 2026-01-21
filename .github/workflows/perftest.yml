@@ -87,7 +87,7 @@ jobs:
       run: |
         mkdir ${GITHUB_WORKSPACE}/objects
         truncate -s 2G ${GITHUB_WORKSPACE}/objects/01988675-e1e5-7788-9ed4-2f2d30910d23
-        ost 8080 ${GITHUB_WORKSPACE}/objects/ &
+        ost 8080 ${GITHUB_WORKSPACE}/objects/ &> ost.log &
         sleep 10
     - name: (file) create object
       if: "${{ matrix.scheme == 'file' }}"
@@ -140,6 +140,11 @@ jobs:
     - name: (ost) stop rawstor_ost
       if: "${{ matrix.scheme == 'ost' }}"
       run: killall ost
+    - name: ost.log
+      if: always()
+      run: |
+        touch ost.log
+        cat ost.log
 
   export:
     needs: perftest
