@@ -114,12 +114,32 @@ jobs:
         echo \`\`\` >> $GITHUB_STEP_SUMMARY
         cat fio.txt >> $GITHUB_STEP_SUMMARY
         echo \`\`\` >> $GITHUB_STEP_SUMMARY
+    - uses: actions/upload-artifact@v4
+      with:
+        name: perftest${{ matrix.without-liburing }}-${{ matrix.scheme }}-${{ matrix.bs }}-${{ matrix.iodepth }}-${{ matrix.numjobs }}
+        path: |
+          ./fio.txt
+          ./fio.json
+        if-no-files-found: error
     - name: (file) remove object
       if: "${{ matrix.scheme == 'file' }}"
       run: rawstor-cli remove --object-uri=${OBJECT_URI}
     - name: (ost) stop rawstor_ost
       if: "${{ matrix.scheme == 'ost' }}"
       run: killall ost
+
+  export:
+    needs: perftest
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/download-artifact@v5
+      with:
+        path: ./perftest
+    - uses: actions/checkout@v4
+      with:
+        path: librawstor
     - uses: actions/checkout@v4
       with:
         repository: rawstor/rawstor_bench
@@ -130,20 +150,24 @@ jobs:
       run: |
         ./librawstor/.github/tools/git-config.sh ./librawstor
 
-        ./rawstor_bench/tools/rawstor-bench-import \
-          --prefix=./rawstor_bench \
-          --repo=librawstor \
-          --name=perftest${{ matrix.without-liburing }}-${{ matrix.scheme }}-${{ matrix.bs }}-${{ matrix.iodepth }}-${{ matrix.numjobs }} \
-          --branch="$GITHUB_REF" \
-          --commit=$GITHUB_SHA \
-          --date="$(date +'%Y-%m-%dT%H:%M:%S%z')" \
-          fio \
-          fio.txt \
-          fio.json
+        cd ./perftest
+        for perftest_name in *; do
+          ${GITHUB_WORKSPACE}/rawstor_bench/tools/rawstor-bench-import \
+            --prefix=${GITHUB_WORKSPACE}/rawstor_bench \
+            --repo=librawstor \
+            --name=${perftest_name} \
+            --branch="$GITHUB_REF" \
+            --commit=$GITHUB_SHA \
+            --date="$(date +'%Y-%m-%dT%H:%M:%S%z')" \
+            fio \
+            ./${perftest_name}/fio.txt \
+            ./${perftest_name}/fio.json
+          done
+        cd ${GITHUB_WORKSPACE}
 
         ./rawstor_bench/tools/rawstor-bench-compile \
           --prefix=./rawstor_bench fio
 
         ./librawstor/.github/tools/git-commit-and-push.sh \
           ./rawstor_bench \
-          "add: perftest ${{ matrix.without-liburing }} ${{ matrix.scheme }} benchmarks"
+          "add: perftest $GITHUB_SHA benchmarks"

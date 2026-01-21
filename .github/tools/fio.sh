@@ -12,19 +12,33 @@ FIO_JSON=$6
 _FIO_OUTPUT=fio.output
 
 fio \
+  --output-format=normal,json \
+  --output=${_FIO_OUTPUT} \
   --ioengine=librawstor \
   --filename="${OBJECT_URI//:/\\:}" \
-  --name=rawstor \
+  --thread \
+  \
+  --name=randread \
   --iodepth=${IODEPTH} \
-  --rw=randrw \
+  --rw=randread \
   --bs=${BS} \
   --size=1G \
   --numjobs=${NUMJOBS} \
   --runtime=10 \
   --time_based \
   --group_reporting \
-  --output-format=normal,json \
-  --output=${_FIO_OUTPUT}
+  \
+  \
+  --name=randwrite \
+  --stonewall \
+  --iodepth=${IODEPTH} \
+  --rw=randwrite \
+  --bs=${BS} \
+  --size=1G \
+  --numjobs=${NUMJOBS} \
+  --runtime=10 \
+  --time_based \
+  --group_reporting
 
 _FIO_TXT=_fio.txt
 _FIO_JSON=_fio.json
