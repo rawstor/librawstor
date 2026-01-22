@@ -164,7 +164,7 @@ rawstor::io::Event* Queue::recv_multishot(
     }
     io_uring_prep_recv_multishot(sqe, fd, nullptr, 0, flags);
     sqe->flags |= IOSQE_BUFFER_SELECT;
-    sqe->buf_group = buffer->group_id();
+    sqe->buf_group = buffer->id();
     io_uring_sqe_set_data(sqe, buffer.get());
 
     return static_cast<rawstor::io::Event*>(buffer.release());
@@ -299,7 +299,7 @@ void Queue::wait(unsigned int timeout) {
             int error = cqe->res < 0 ? -cqe->res : 0;
 
             if (cqe->flags & IORING_CQE_F_BUFFER) {
-                static_cast<TaskBufferRing*>(t.get())->select_buffer(
+                static_cast<TaskBufferRing*>(t.get())->select_entry(
                     cqe->flags >> IORING_CQE_BUFFER_SHIFT
                 );
             }

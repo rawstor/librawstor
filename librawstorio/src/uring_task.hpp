@@ -11,22 +11,42 @@ namespace rawstor {
 namespace io {
 namespace uring {
 
+class BufferRingEntry {
+private:
+    io_uring_buf_ring* _buf_ring;
+
+    void* _data;
+    size_t _size;
+    unsigned int _index;
+    int _mask;
+
+public:
+    BufferRingEntry(
+        io_uring_buf_ring* buf_ring, void* data, size_t size,
+        unsigned int index, int mask
+    );
+    ~BufferRingEntry();
+
+    inline void* data() noexcept { return _data; }
+};
+
 class TaskBufferRing final : public rawstor::io::Task {
 private:
-    static __u16 _group_id_counter;
+    static __u16 _id_counter;
 
-    const unsigned int _buffer_shift;
+    const unsigned int _entry_size;
+    const unsigned int _entry_shift;
 
-    const __u16 _group_id;
+    const __u16 _id;
     io_uring_buf_ring* _buf_ring;
     size_t _buf_ring_size;
-    int _buf_mask;
-    char* _buf_base;
-    unsigned int _buf_current_index;
+    int _mask;
+    char* _entries_base;
+    std::unique_ptr<BufferRingEntry> _current_entry;
 
     std::unique_ptr<rawstor::io::TaskBuffered> _t;
 
-    char* _get_buffer(unsigned int index);
+    void* _get_entry(unsigned int index);
 
 public:
     TaskBufferRing(
@@ -36,9 +56,9 @@ public:
 
     void operator()(size_t result, int error) override;
 
-    void select_buffer(unsigned int index) noexcept;
+    void select_entry(unsigned int index) noexcept;
 
-    unsigned int group_id() const noexcept;
+    unsigned int id() const noexcept;
 };
 
 } // namespace uring
