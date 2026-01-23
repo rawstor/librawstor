@@ -72,9 +72,9 @@ TEST_F(MultishotTest, recv) {
     {
         std::unique_ptr<rawstor::io::TaskBuffered> t =
             std::make_unique<rawstor::io::tests::SimpleTaskBufferedMultishot>(
-                4, 4, client_buf, &result, &error, &count
+                client_buf, &result, &error, &count
             );
-        event = _queue->recv_multishot(_fd, std::move(t), 0);
+        event = _queue->recv_multishot(_fd, std::move(t), 4, 4, 0);
     }
 
     memset(client_buf, '\0', 5);
@@ -173,9 +173,9 @@ TEST_F(MultishotTest, recv_overflow) {
     {
         std::unique_ptr<rawstor::io::TaskBuffered> t =
             std::make_unique<rawstor::io::tests::SimpleTaskBufferedMultishot>(
-                4, 4, client_buf, &result, &error, &count
+                client_buf, &result, &error, &count
             );
-        event = _queue->recv_multishot(_fd, std::move(t), 0);
+        event = _queue->recv_multishot(_fd, std::move(t), 4, 4, 0);
     }
 
     memset(client_buf, '\0', 5);

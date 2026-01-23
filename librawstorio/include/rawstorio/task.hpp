@@ -37,22 +37,17 @@ public:
 
 class TaskBuffered : public Task {
 protected:
-    void* _buffer;
+    iovec* _iov;
+    unsigned int _niov;
 
 public:
-    TaskBuffered() : _buffer(nullptr) {}
+    TaskBuffered() : _iov(nullptr), _niov(0) {}
     virtual ~TaskBuffered() override = default;
 
-    inline void set(void* buffer) noexcept { _buffer = buffer; }
-
-    /**
-     * size: must be a power of two.
-     */
-    virtual unsigned int size() const noexcept = 0;
-    /**
-     * count: must be a power of two.
-     */
-    virtual unsigned int count() const noexcept = 0;
+    inline void set(iovec* iov, unsigned int niov) noexcept {
+        _iov = iov;
+        _niov = niov;
+    }
 };
 
 class TaskScalar : public Task {

@@ -56,8 +56,13 @@ public:
     preadv(int fd, std::unique_ptr<TaskVector> t, off_t offset) = 0;
     virtual Event*
     recv(int fd, std::unique_ptr<TaskScalar> t, unsigned int flags) = 0;
+    /**
+     * entry_size: must be a power of two.
+     * entries: must be a power of two.
+     */
     virtual Event* recv_multishot(
-        int fd, std::unique_ptr<TaskBuffered> t, unsigned int flags
+        int fd, std::unique_ptr<TaskBuffered> t, size_t entry_size,
+        unsigned int entries, unsigned int flags
     ) = 0;
     virtual Event*
     recvmsg(int fd, std::unique_ptr<TaskMessage> t, unsigned int flags) = 0;

@@ -1,6 +1,6 @@
 #include "uring_queue.hpp"
 
-#include "uring_task.hpp"
+#include "uring_buffer.hpp"
 
 #include <rawstorio/task.hpp>
 
@@ -153,10 +153,11 @@ rawstor::io::Event* Queue::recv(
 }
 
 rawstor::io::Event* Queue::recv_multishot(
-    int fd, std::unique_ptr<rawstor::io::TaskBuffered> t, unsigned int flags
+    int fd, std::unique_ptr<rawstor::io::TaskBuffered> t, size_t entry_size,
+    unsigned int entries, unsigned int flags
 ) {
-    std::unique_ptr<TaskBufferRing> buffer =
-        std::make_unique<TaskBufferRing>(_ring, std::move(t));
+    std::unique_ptr<BufferRing> buffer =
+        std::make_unique<BufferRing>(_ring, entry_size, entries, std::move(t));
 
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
@@ -299,7 +300,7 @@ void Queue::wait(unsigned int timeout) {
             int error = cqe->res < 0 ? -cqe->res : 0;
 
             if (cqe->flags & IORING_CQE_F_BUFFER) {
-                static_cast<TaskBufferRing*>(t.get())->select_entry(
+                static_cast<BufferRing*>(t.get())->select_entry(
                     cqe->flags >> IORING_CQE_BUFFER_SHIFT
                 );
             }

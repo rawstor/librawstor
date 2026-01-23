@@ -1,5 +1,5 @@
-#ifndef RAWSTORIO_URING_TASK_HPP
-#define RAWSTORIO_URING_TASK_HPP
+#ifndef RAWSTORIO_URING_BUFFER_HPP
+#define RAWSTORIO_URING_BUFFER_HPP
 
 #include <rawstorio/task.hpp>
 
@@ -11,7 +11,7 @@ namespace rawstor {
 namespace io {
 namespace uring {
 
-class BufferRingEntry {
+class BufferRingEntry final {
 private:
     io_uring_buf_ring* _buf_ring;
 
@@ -30,11 +30,11 @@ public:
     inline void* data() noexcept { return _data; }
 };
 
-class TaskBufferRing final : public rawstor::io::Task {
+class BufferRing final : public rawstor::io::Task {
 private:
     static __u16 _id_counter;
 
-    const unsigned int _entry_size;
+    const size_t _entry_size;
     const unsigned int _entry_shift;
 
     const __u16 _id;
@@ -49,14 +49,15 @@ private:
     void* _get_entry(unsigned int index);
 
 public:
-    TaskBufferRing(
-        io_uring& ring, std::unique_ptr<rawstor::io::TaskBuffered> t
+    BufferRing(
+        io_uring& ring, size_t entry_size, unsigned int entries,
+        std::unique_ptr<rawstor::io::TaskBuffered> t
     );
-    ~TaskBufferRing();
+    ~BufferRing();
 
     void operator()(size_t result, int error) override;
 
-    void select_entry(unsigned int index) noexcept;
+    void select_entry(unsigned int index);
 
     unsigned int id() const noexcept;
 };
@@ -65,4 +66,4 @@ public:
 } // namespace io
 } // namespace rawstor
 
-#endif // RAWSTORIO_URING_TASK_HPP
+#endif // RAWSTORIO_URING_BUFFER_HPP

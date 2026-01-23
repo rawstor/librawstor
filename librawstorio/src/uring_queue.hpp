@@ -50,7 +50,8 @@ public:
     ) override;
 
     rawstor::io::Event* recv_multishot(
-        int fd, std::unique_ptr<rawstor::io::TaskBuffered> t, unsigned int flags
+        int fd, std::unique_ptr<rawstor::io::TaskBuffered> t, size_t entry_size,
+        unsigned int entries, unsigned int flags
     ) override;
 
     rawstor::io::Event* recvmsg(

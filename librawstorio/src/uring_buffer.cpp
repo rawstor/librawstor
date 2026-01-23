@@ -1,4 +1,4 @@
-#include "uring_task.hpp"
+#include "uring_buffer.hpp"
 
 #include <rawstorstd/gpp.hpp>
 
@@ -46,26 +46,25 @@ BufferRingEntry::~BufferRingEntry() {
     io_uring_buf_ring_advance(_buf_ring, 1);
 }
 
-__u16 TaskBufferRing::_id_counter = 0;
+__u16 BufferRing::_id_counter = 0;
 
-TaskBufferRing::TaskBufferRing(
-    io_uring& ring, std::unique_ptr<rawstor::io::TaskBuffered> t
+BufferRing::BufferRing(
+    io_uring& ring, size_t entry_size, unsigned int entries,
+    std::unique_ptr<rawstor::io::TaskBuffered> t
 ) :
-    _entry_size(t->size()),
-    _entry_shift(shift(t->size())),
+    _entry_size(entry_size),
+    _entry_shift(shift(entry_size)),
     _id(++_id_counter),
     _buf_ring(nullptr),
     _buf_ring_size(
-        sizeof(struct io_uring_buf) * t->count() + _entry_size * t->count()
+        sizeof(struct io_uring_buf) * entries + entry_size * entries
     ),
-    _mask(io_uring_buf_ring_mask(t->count())),
+    _mask(io_uring_buf_ring_mask(entries)),
     _entries_base(nullptr),
     _t(std::move(t)) {
 
-    unsigned int buffers = _t->count();
-
     assert((_entry_size & (_entry_size - 1)) == 0);
-    assert((buffers & (buffers - 1)) == 0);
+    assert((entries & (entries - 1)) == 0);
 
     _buf_ring = static_cast<io_uring_buf_ring*>(mmap(
         nullptr, _buf_ring_size, PROT_READ | PROT_WRITE,
@@ -75,14 +74,14 @@ TaskBufferRing::TaskBufferRing(
         throw std::bad_alloc();
     }
     _entries_base =
-        reinterpret_cast<char*>(_buf_ring) + sizeof(io_uring_buf) * buffers;
+        reinterpret_cast<char*>(_buf_ring) + sizeof(io_uring_buf) * entries;
 
     try {
         io_uring_buf_ring_init(_buf_ring);
 
         io_uring_buf_reg reg{};
         reg.ring_addr = reinterpret_cast<__u64>(_buf_ring);
-        reg.ring_entries = buffers;
+        reg.ring_entries = entries;
         reg.bgid = _id;
 
         // TODO: Replace with io_uring_setup_buf_ring()?
@@ -91,52 +90,55 @@ TaskBufferRing::TaskBufferRing(
             RAWSTOR_THROW_SYSTEM_ERROR(-res);
         }
 
-        for (unsigned int i = 0; i < buffers; ++i) {
+        for (unsigned int i = 0; i < entries; ++i) {
             io_uring_buf_ring_add(
                 _buf_ring, _get_entry(i), _entry_size, i, _mask, i
             );
         }
 
         // TODO: use io_uring_buf_ring_cq_advance() here?
-        io_uring_buf_ring_advance(_buf_ring, buffers);
+        io_uring_buf_ring_advance(_buf_ring, entries);
     } catch (...) {
         munmap(_buf_ring, _buf_ring_size);
         throw;
     }
 }
 
-TaskBufferRing::~TaskBufferRing() {
+BufferRing::~BufferRing() {
     munmap(_buf_ring, _buf_ring_size);
     // TODO: Add io_uring_free_buf_ring() if we are going to use
     // io_uring_setup_buf_ring()
 }
 
-void TaskBufferRing::operator()(size_t result, int error) {
-    void* buffer =
-        _current_entry.get() != nullptr ? _current_entry->data() : nullptr;
-    _t->set(buffer);
+void BufferRing::operator()(size_t result, int error) {
+    iovec iov;
+    if (_current_entry.get() != nullptr) {
+        iov.iov_base = _current_entry.get();
+        iov.iov_len = result;
+    }
+    _t->set(&iov, 1);
     try {
         (*_t)(result, error);
     } catch (...) {
-        _t->set(nullptr);
+        _t->set(nullptr, 0);
         _current_entry.reset();
         throw;
     }
-    _t->set(nullptr);
+    _t->set(nullptr, 0);
     _current_entry.reset();
 }
 
-void* TaskBufferRing::_get_entry(unsigned int index) {
+void* BufferRing::_get_entry(unsigned int index) {
     return _entries_base + (index << _entry_shift);
 }
 
-void TaskBufferRing::select_entry(unsigned int index) noexcept {
+void BufferRing::select_entry(unsigned int index) {
     _current_entry = std::make_unique<BufferRingEntry>(
         _buf_ring, _get_entry(index), _entry_size, index, _mask
     );
 }
 
-unsigned int TaskBufferRing::id() const noexcept {
+unsigned int BufferRing::id() const noexcept {
     return _id;
 }
 
