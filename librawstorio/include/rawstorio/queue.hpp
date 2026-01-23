@@ -14,8 +14,6 @@ namespace io {
 
 class Task;
 
-class TaskBuffered;
-
 class TaskPollMultishot;
 
 class TaskScalar;
@@ -23,6 +21,8 @@ class TaskScalar;
 class TaskVector;
 
 class TaskMessage;
+
+class TaskVectorExternal;
 
 typedef void Event;
 
@@ -61,7 +61,7 @@ public:
      * entries: must be a power of two.
      */
     virtual Event* recv_multishot(
-        int fd, std::unique_ptr<TaskBuffered> t, size_t entry_size,
+        int fd, std::unique_ptr<TaskVectorExternal> t, size_t entry_size,
         unsigned int entries, unsigned int flags
     ) = 0;
     virtual Event*

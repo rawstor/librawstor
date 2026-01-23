@@ -50,7 +50,7 @@ __u16 BufferRing::_id_counter = 0;
 
 BufferRing::BufferRing(
     io_uring& ring, size_t entry_size, unsigned int entries,
-    std::unique_ptr<rawstor::io::TaskBuffered> t
+    std::unique_ptr<rawstor::io::TaskVectorExternal> t
 ) :
     _entry_size(entry_size),
     _entry_shift(shift(entry_size)),

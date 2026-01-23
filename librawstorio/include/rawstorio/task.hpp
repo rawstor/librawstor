@@ -35,21 +35,6 @@ public:
 #endif
 };
 
-class TaskBuffered : public Task {
-protected:
-    iovec* _iov;
-    unsigned int _niov;
-
-public:
-    TaskBuffered() : _iov(nullptr), _niov(0) {}
-    virtual ~TaskBuffered() override = default;
-
-    inline void set(iovec* iov, unsigned int niov) noexcept {
-        _iov = iov;
-        _niov = niov;
-    }
-};
-
 class TaskScalar : public Task {
 public:
     TaskScalar();
@@ -76,6 +61,24 @@ public:
 
     virtual msghdr* msg() noexcept = 0;
     virtual size_t size() const noexcept = 0;
+};
+
+class TaskVectorExternal : public TaskVector {
+private:
+    iovec* _iov;
+    unsigned int _niov;
+
+public:
+    TaskVectorExternal() : _iov(nullptr), _niov(0) {}
+    virtual ~TaskVectorExternal() override = default;
+
+    inline void set(iovec* iov, unsigned int niov) noexcept {
+        _iov = iov;
+        _niov = niov;
+    }
+
+    iovec* iov() noexcept { return _iov; }
+    virtual unsigned int niov() const noexcept { return _niov; }
 };
 
 } // namespace io

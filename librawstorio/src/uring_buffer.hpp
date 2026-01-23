@@ -44,14 +44,14 @@ private:
     char* _entries_base;
     std::unique_ptr<BufferRingEntry> _current_entry;
 
-    std::unique_ptr<rawstor::io::TaskBuffered> _t;
+    std::unique_ptr<rawstor::io::TaskVectorExternal> _t;
 
     void* _get_entry(unsigned int index);
 
 public:
     BufferRing(
         io_uring& ring, size_t entry_size, unsigned int entries,
-        std::unique_ptr<rawstor::io::TaskBuffered> t
+        std::unique_ptr<rawstor::io::TaskVectorExternal> t
     );
     ~BufferRing();
 

@@ -67,17 +67,20 @@ public:
     size_t size() const noexcept override { return _size; }
 };
 
-class SimpleTaskBufferedMultishot final : public rawstor::io::TaskBuffered {
+class SimpleTaskVectorExternal final : public rawstor::io::TaskVectorExternal {
 private:
+    size_t _size;
     void* _buffer;
     size_t* _result;
     int* _error;
     unsigned int* _count;
 
 public:
-    SimpleTaskBufferedMultishot(
-        void* buffer, size_t* result, int* error, unsigned int* count
+    SimpleTaskVectorExternal(
+        size_t size, void* buffer, size_t* result, int* error,
+        unsigned int* count
     ) :
+        _size(size),
         _buffer(buffer),
         _result(result),
         _error(error),
@@ -86,13 +89,15 @@ public:
     void operator()(size_t result, int error) override {
         if (result > 0) {
             rawstor_iovec_to_buf(
-                _iov, _niov, 0, _buffer, rawstor_iovec_size(_iov, _niov)
+                iov(), niov(), 0, _buffer, rawstor_iovec_size(iov(), niov())
             );
         }
         *_result = result;
         *_error = error;
         ++(*_count);
     }
+
+    size_t size() const noexcept override { return _size; }
 };
 
 } // namespace tests

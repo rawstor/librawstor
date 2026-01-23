@@ -153,8 +153,8 @@ rawstor::io::Event* Queue::recv(
 }
 
 rawstor::io::Event* Queue::recv_multishot(
-    int fd, std::unique_ptr<rawstor::io::TaskBuffered> t, size_t entry_size,
-    unsigned int entries, unsigned int flags
+    int fd, std::unique_ptr<rawstor::io::TaskVectorExternal> t,
+    size_t entry_size, unsigned int entries, unsigned int flags
 ) {
     std::unique_ptr<BufferRing> buffer =
         std::make_unique<BufferRing>(_ring, entry_size, entries, std::move(t));
