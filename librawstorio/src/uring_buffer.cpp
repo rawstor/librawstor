@@ -1,6 +1,7 @@
 #include "uring_buffer.hpp"
 
 #include <rawstorstd/gpp.hpp>
+#include <rawstorstd/logging.h>
 
 #include <sys/mman.h>
 
@@ -8,6 +9,8 @@
 
 #include <memory>
 #include <new>
+#include <sstream>
+#include <vector>
 
 namespace {
 
@@ -37,6 +40,7 @@ BufferRingEntry::BufferRingEntry(
     _buf_ring(buf_ring),
     _data(data),
     _size(size),
+    _result(0),
     _index(index),
     _mask(mask) {
 }
@@ -61,6 +65,8 @@ BufferRing::BufferRing(
     ),
     _mask(io_uring_buf_ring_mask(entries)),
     _entries_base(nullptr),
+    _pending_offset(0),
+    _pending_size(0),
     _t(std::move(t)) {
 
     assert((_entry_size & (_entry_size - 1)) == 0);
@@ -111,21 +117,63 @@ BufferRing::~BufferRing() {
 }
 
 void BufferRing::operator()(size_t result, int error) {
-    iovec iov;
-    if (_current_entry.get() != nullptr) {
-        iov.iov_base = _current_entry.get();
-        iov.iov_len = result;
+#ifdef RAWSTOR_TRACE_EVENTS
+    std::ostringstream oss;
+    oss << "multishot received: result = " << result << ", error = " << error;
+    trace(__FILE__, __LINE__, __FUNCTION__, oss.str());
+#endif
+    if (result > 0) {
+        _pending_entry->set_result(result);
+        _pending_size += result;
+        _pending_entries.push_back(std::move(_pending_entry));
     }
-    _t->set(&iov, 1);
-    try {
-        (*_t)(result, error);
-    } catch (...) {
+
+    while (_pending_size >= _t->size() || error) {
+        std::vector<iovec> iov;
+        size_t iov_size = 0;
+        iov.reserve(_pending_entries.size());
+
+        while (!_pending_entries.empty()) {
+            BufferRingEntry* e = _pending_entries.front().get();
+            void* e_data = static_cast<char*>(e->data()) + _pending_offset;
+            size_t e_size = e->result() - _pending_offset;
+            if (e_size <= _t->size() - iov_size) [[likely]] {
+                iov.push_back({.iov_base = e_data, .iov_len = e_size});
+                _pending_offset = 0;
+                _pending_size -= e_size;
+                _pending_entries.pop_front();
+                iov_size += e_size;
+                if (iov_size == _t->size()) {
+                    break;
+                }
+            } else {
+                iov.push_back(
+                    {.iov_base = e_data, .iov_len = _t->size() - iov_size}
+                );
+                _pending_offset += iov.back().iov_len;
+                _pending_size -= iov.back().iov_len;
+                iov_size += iov.back().iov_len;
+                break;
+            }
+        }
+
+        _t->set(iov.data(), iov.size());
+        try {
+#ifdef RAWSTOR_TRACE_EVENTS
+            std::ostringstream oss;
+            oss << "sending iov: niov = " << iov.size()
+                << ", size = " << iov_size;
+            _t->trace(__FILE__, __LINE__, __FUNCTION__, oss.str());
+#endif
+            (*_t)(iov_size, error);
+        } catch (...) {
+            _t->set(nullptr, 0);
+            throw;
+        }
         _t->set(nullptr, 0);
-        _current_entry.reset();
-        throw;
+
+        error = 0;
     }
-    _t->set(nullptr, 0);
-    _current_entry.reset();
 }
 
 void* BufferRing::_get_entry(unsigned int index) {
@@ -133,7 +181,7 @@ void* BufferRing::_get_entry(unsigned int index) {
 }
 
 void BufferRing::select_entry(unsigned int index) {
-    _current_entry = std::make_unique<BufferRingEntry>(
+    _pending_entry = std::make_unique<BufferRingEntry>(
         _buf_ring, _get_entry(index), _entry_size, index, _mask
     );
 }

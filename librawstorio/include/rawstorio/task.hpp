@@ -69,7 +69,7 @@ private:
     unsigned int _niov;
 
 public:
-    TaskVectorExternal() : _iov(nullptr), _niov(0) {}
+    TaskVectorExternal();
     virtual ~TaskVectorExternal() override = default;
 
     inline void set(iovec* iov, unsigned int niov) noexcept {

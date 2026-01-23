@@ -49,5 +49,11 @@ TaskMessage::TaskMessage() {
 #endif
 }
 
+TaskVectorExternal::TaskVectorExternal() : _iov(nullptr), _niov(0) {
+#ifdef RAWSTOR_TRACE_EVENTS
+    trace(__FILE__, __LINE__, __FUNCTION__, "");
+#endif
+}
+
 } // namespace io
 } // namespace rawstor

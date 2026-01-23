@@ -5,6 +5,7 @@
 
 #include <liburing.h>
 
+#include <list>
 #include <memory>
 
 namespace rawstor {
@@ -17,6 +18,7 @@ private:
 
     void* _data;
     size_t _size;
+    size_t _result;
     unsigned int _index;
     int _mask;
 
@@ -28,6 +30,8 @@ public:
     ~BufferRingEntry();
 
     inline void* data() noexcept { return _data; }
+    inline void set_result(size_t result) noexcept { _result = result; };
+    inline size_t result() noexcept { return _result; }
 };
 
 class BufferRing final : public rawstor::io::Task {
@@ -42,7 +46,11 @@ private:
     size_t _buf_ring_size;
     int _mask;
     char* _entries_base;
-    std::unique_ptr<BufferRingEntry> _current_entry;
+
+    size_t _pending_offset;
+    size_t _pending_size;
+    std::unique_ptr<BufferRingEntry> _pending_entry;
+    std::list<std::unique_ptr<BufferRingEntry>> _pending_entries;
 
     std::unique_ptr<rawstor::io::TaskVectorExternal> _t;
 
