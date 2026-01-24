@@ -77,8 +77,8 @@ public:
         _niov = niov;
     }
 
-    iovec* iov() noexcept { return _iov; }
-    virtual unsigned int niov() const noexcept { return _niov; }
+    iovec* iov() noexcept final { return _iov; }
+    virtual unsigned int niov() const noexcept final { return _niov; }
 };
 
 } // namespace io
