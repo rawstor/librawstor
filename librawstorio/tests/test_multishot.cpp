@@ -239,4 +239,77 @@ TEST_F(MultishotTest, recv_partial) {
     }
 }
 
+TEST_F(MultishotTest, recv_fill_buf) {
+    std::vector<rawstor::io::tests::SimpleTaskVectorExternalItem> items;
+    rawstor::io::Event* event = nullptr;
+
+    {
+        std::unique_ptr<rawstor::io::TaskVectorExternal> t =
+            std::make_unique<rawstor::io::tests::SimpleTaskVectorExternal>(
+                4, &items
+            );
+        event = _queue->recv_multishot(_fd, std::move(t), 4, 4, 0);
+    }
+
+    {
+        const char server_buf[] = "123";
+        _server.write(server_buf, sizeof(server_buf) - 1);
+        _server.wait();
+    }
+
+    EXPECT_NO_THROW(_wait_all());
+    EXPECT_EQ(items.size(), (size_t)0);
+
+    {
+        const char server_buf[] = "456";
+        _server.write(server_buf, sizeof(server_buf) - 1);
+        _server.wait();
+    }
+
+    EXPECT_NO_THROW(_wait_all());
+    EXPECT_EQ(items.size(), (size_t)1);
+    if (items.size() >= 1) {
+        EXPECT_EQ(items[0].result(), (size_t)4);
+        EXPECT_EQ(items[0].error(), 0);
+        EXPECT_EQ(strncmp(items[0].data(), "1234", 3), 0);
+    }
+
+    {
+        const char server_buf[] = "789";
+        _server.write(server_buf, sizeof(server_buf) - 1);
+        _server.wait();
+    }
+
+    EXPECT_NO_THROW(_wait_all());
+    EXPECT_EQ(items.size(), (size_t)2);
+    if (items.size() >= 2) {
+        EXPECT_EQ(items[1].result(), (size_t)4);
+        EXPECT_EQ(items[1].error(), 0);
+        EXPECT_EQ(strncmp(items[1].data(), "5678", 3), 0);
+    }
+
+    {
+        const char server_buf[] = "012";
+        _server.write(server_buf, sizeof(server_buf) - 1);
+        _server.wait();
+    }
+
+    EXPECT_NO_THROW(_wait_all());
+    EXPECT_EQ(items.size(), (size_t)3);
+    if (items.size() >= 3) {
+        EXPECT_EQ(items[2].result(), (size_t)4);
+        EXPECT_EQ(items[2].error(), 0);
+        EXPECT_EQ(strncmp(items[2].data(), "9012", 3), 0);
+    }
+
+    EXPECT_NO_THROW(_queue->cancel(event));
+
+    EXPECT_NO_THROW(_queue->wait(0));
+    if (items.size() >= 5) {
+        EXPECT_EQ(items[4].result(), (size_t)1);
+        EXPECT_EQ(items[4].error(), ECANCELED);
+        EXPECT_EQ(strncmp(items[4].data(), "3", 1), 0);
+    }
+}
+
 } // unnamed namespace
