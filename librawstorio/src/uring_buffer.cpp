@@ -129,6 +129,7 @@ void BufferRing::operator()(size_t result, int error) {
     }
 
     while (_pending_size >= _t->size() || error) {
+        std::list<std::unique_ptr<BufferRingEntry>> entries;
         std::vector<iovec> iov;
         size_t iov_size = 0;
         iov.reserve(_pending_entries.size());
@@ -141,6 +142,7 @@ void BufferRing::operator()(size_t result, int error) {
                 iov.push_back({.iov_base = e_data, .iov_len = e_size});
                 _pending_offset = 0;
                 _pending_size -= e_size;
+                entries.push_back(std::move(_pending_entries.front()));
                 _pending_entries.pop_front();
                 iov_size += e_size;
                 if (iov_size == _t->size()) {
