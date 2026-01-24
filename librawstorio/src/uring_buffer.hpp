@@ -27,7 +27,12 @@ public:
         io_uring_buf_ring* buf_ring, void* data, size_t size,
         unsigned int index, int mask
     );
+    BufferRingEntry(const BufferRingEntry&) = delete;
+    BufferRingEntry(BufferRingEntry&&) = delete;
     ~BufferRingEntry();
+
+    BufferRingEntry& operator=(const BufferRingEntry&) = delete;
+    BufferRingEntry& operator=(BufferRingEntry&&) = delete;
 
     inline void* data() noexcept { return _data; }
     inline void set_result(size_t result) noexcept { _result = result; };
@@ -61,8 +66,13 @@ public:
         io_uring& ring, size_t entry_size, unsigned int entries,
         std::unique_ptr<rawstor::io::TaskVectorExternal> t
     );
+    BufferRing(const BufferRing&) = delete;
+    BufferRing(BufferRing&&) = delete;
+
     ~BufferRing();
 
+    BufferRing& operator=(const BufferRing&) = delete;
+    BufferRing& operator=(BufferRing&&) = delete;
     void operator()(size_t result, int error) override;
 
     void select_entry(unsigned int index);
