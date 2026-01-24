@@ -54,15 +54,6 @@ public:
     virtual size_t size() const noexcept = 0;
 };
 
-class TaskMessage : public Task {
-public:
-    TaskMessage();
-    virtual ~TaskMessage() override = default;
-
-    virtual msghdr* msg() noexcept = 0;
-    virtual size_t size() const noexcept = 0;
-};
-
 class TaskVectorExternal : public TaskVector {
 private:
     iovec* _iov;
@@ -77,8 +68,17 @@ public:
         _niov = niov;
     }
 
-    iovec* iov() noexcept final { return _iov; }
-    virtual unsigned int niov() const noexcept final { return _niov; }
+    iovec* iov() noexcept override final { return _iov; }
+    virtual unsigned int niov() const noexcept override final { return _niov; }
+};
+
+class TaskMessage : public Task {
+public:
+    TaskMessage();
+    virtual ~TaskMessage() override = default;
+
+    virtual msghdr* msg() noexcept = 0;
+    virtual size_t size() const noexcept = 0;
 };
 
 } // namespace io

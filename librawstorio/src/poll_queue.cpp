@@ -172,6 +172,22 @@ rawstor::io::Event* Queue::recv(
     return ret;
 }
 
+rawstor::io::Event* Queue::recv_multishot(
+    int fd, std::unique_ptr<rawstor::io::TaskVectorExternal> t,
+    size_t entry_size, unsigned int entries, unsigned int flags
+) {
+    Session& s = _get_session(fd);
+
+    std::unique_ptr<EventSimplexVectorRecvMultishot> event =
+        std::make_unique<EventSimplexVectorRecvMultishot>(
+            *this, fd, std::move(t), entry_size, entries, flags
+        );
+
+    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
+    s.read(std::move(event));
+    return ret;
+}
+
 rawstor::io::Event* Queue::recvmsg(
     int fd, std::unique_ptr<rawstor::io::TaskMessage> t, unsigned int flags
 ) {
@@ -335,6 +351,18 @@ void Queue::wait(unsigned int timeout) {
 
                 Session& s = _get_session(poll_event->fd());
                 s.poll(std::move(poll_event));
+            } else if (event->is_read()) {
+                std::unique_ptr<EventSimplex> simplex_event(
+                    static_cast<EventSimplex*>(event.release())
+                );
+
+                simplex_event->set_result(0);
+                simplex_event->set_error(0);
+
+                Session& s = _get_session(simplex_event->fd());
+                s.read(std::move(simplex_event));
+            } else {
+                throw std::runtime_error("Unexpected multishot event");
             }
         }
     }

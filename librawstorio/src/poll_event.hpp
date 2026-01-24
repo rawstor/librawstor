@@ -10,6 +10,7 @@
 
 #include <unistd.h>
 
+#include <list>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -297,6 +298,35 @@ public:
     bool is_poll() const noexcept override final { return false; }
     bool is_read() const noexcept override final { return true; }
     bool is_write() const noexcept override final { return false; }
+};
+
+class EventSimplexVectorRecvMultishot final : public EventSimplex {
+private:
+    size_t _entry_size;
+    size_t _pending_offset;
+    size_t _pending_size;
+    std::list<std::vector<char>> _pending_entries;
+    unsigned int _flags;
+
+public:
+    EventSimplexVectorRecvMultishot(
+        Queue& q, int fd, std::unique_ptr<rawstor::io::TaskVectorExternal> t,
+        size_t entry_size, unsigned int, unsigned int flags
+    ) :
+        EventSimplex(q, fd, std::move(t)),
+        _entry_size(entry_size),
+        _pending_offset(0),
+        _pending_size(0),
+        _flags(flags) {}
+
+    ssize_t process() noexcept override final;
+
+    bool is_poll() const noexcept override final { return false; }
+    bool is_read() const noexcept override final { return true; }
+    bool is_write() const noexcept override final { return false; }
+    bool has_more() const noexcept override final {
+        return _error != ECANCELED;
+    }
 };
 
 class EventSimplexMessageRead final : public EventSimplex {

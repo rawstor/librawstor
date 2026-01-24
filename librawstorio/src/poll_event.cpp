@@ -229,6 +229,35 @@ ssize_t EventSimplexScalarRecv::process() noexcept {
     return res;
 }
 
+ssize_t EventSimplexVectorRecvMultishot::process() noexcept {
+#ifdef RAWSTOR_TRACE_EVENTS
+    trace(__FILE__, __LINE__, __FUNCTION__, "recv()");
+#endif
+    (void)(_flags);
+    ssize_t res = -1;
+    errno = ECANCELED;
+    // ssize_t res = ::recv(
+    //     _fd, static_cast<rawstor::io::TaskSc,
+    //     static_cast<rawstor::io::TaskScalar*>(_t.get())->size(), _flags
+    // );
+    if (res >= 0) {
+        _result = res;
+#ifdef RAWSTOR_TRACE_EVENTS
+        if ((size_t)_result ==
+            static_cast<rawstor::io::TaskScalar*>(_t.get())->size()) {
+            trace(__FILE__, __LINE__, __FUNCTION__, "completed");
+        } else {
+            trace(__FILE__, __LINE__, __FUNCTION__, "partial");
+        }
+#endif
+    } else {
+        int error = errno;
+        errno = 0;
+        set_error(error);
+    }
+    return res;
+}
+
 ssize_t EventSimplexMessageRead::process() noexcept {
 #ifdef RAWSTOR_TRACE_EVENTS
     trace(__FILE__, __LINE__, __FUNCTION__, "recvmsg()");

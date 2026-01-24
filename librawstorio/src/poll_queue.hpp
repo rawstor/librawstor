@@ -60,6 +60,11 @@ public:
         int fd, std::unique_ptr<rawstor::io::TaskScalar> t, unsigned int flags
     ) override;
 
+    rawstor::io::Event* recv_multishot(
+        int fd, std::unique_ptr<rawstor::io::TaskVectorExternal> t,
+        size_t entry_size, unsigned int entries, unsigned int flags
+    ) override;
+
     rawstor::io::Event* recvmsg(
         int fd, std::unique_ptr<rawstor::io::TaskMessage> t, unsigned int flags
     ) override;

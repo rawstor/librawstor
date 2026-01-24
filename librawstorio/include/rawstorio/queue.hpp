@@ -20,9 +20,9 @@ class TaskScalar;
 
 class TaskVector;
 
-class TaskMessage;
-
 class TaskVectorExternal;
+
+class TaskMessage;
 
 typedef void Event;
 
