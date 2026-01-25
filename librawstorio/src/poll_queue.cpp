@@ -339,15 +339,12 @@ void Queue::wait(unsigned int timeout) {
         std::unique_ptr<Event> event(_cqes.pop());
         event->dispatch();
 
-        if (event->has_more()) {
+        if (event->is_multishot() && !event->error()) {
             // TODO: here should be just s.push()
             if (event->is_poll()) {
                 std::unique_ptr<EventSimplexPoll> poll_event(
                     static_cast<EventSimplexPoll*>(event.release())
                 );
-
-                poll_event->set_result(0);
-                poll_event->set_error(0);
 
                 Session& s = _get_session(poll_event->fd());
                 s.poll(std::move(poll_event));
@@ -355,9 +352,6 @@ void Queue::wait(unsigned int timeout) {
                 std::unique_ptr<EventSimplex> simplex_event(
                     static_cast<EventSimplex*>(event.release())
                 );
-
-                simplex_event->set_result(0);
-                simplex_event->set_error(0);
 
                 Session& s = _get_session(simplex_event->fd());
                 s.read(std::move(simplex_event));

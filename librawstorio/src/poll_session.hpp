@@ -24,7 +24,11 @@ private:
 
     void _process_poll(rawstor::RingBuf<Event>& cqes, short revents);
 
-    void _process_simplex(
+    void _process_simplex_read(
+        std::unique_ptr<EventSimplex> event, rawstor::RingBuf<Event>& cqes
+    );
+
+    void _process_simplex_write(
         std::unique_ptr<EventSimplex> event, rawstor::RingBuf<Event>& cqes
     );
 

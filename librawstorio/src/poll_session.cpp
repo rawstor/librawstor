@@ -40,11 +40,26 @@ void Session::_process_poll(rawstor::RingBuf<Event>& cqes, short revents) {
     }
 }
 
-void Session::_process_simplex(
+void Session::_process_simplex_read(
     std::unique_ptr<EventSimplex> event, rawstor::RingBuf<Event>& cqes
 ) {
     event->process();
-    cqes.push(std::move(event));
+    if (event->is_completed() || event->error()) {
+        cqes.push(std::move(event));
+    } else {
+        _read_sqes.push(std::move(event));
+    }
+}
+
+void Session::_process_simplex_write(
+    std::unique_ptr<EventSimplex> event, rawstor::RingBuf<Event>& cqes
+) {
+    event->process();
+    if (event->is_completed() || event->error()) {
+        cqes.push(std::move(event));
+    } else {
+        _write_sqes.push(std::move(event));
+    }
 }
 
 void Session::_process_multiplex_write(
@@ -113,7 +128,7 @@ void Session::_process_read(rawstor::RingBuf<Event>& cqes) {
     }
 
     std::unique_ptr<EventSimplex> event = _read_sqes.pop();
-    _process_simplex(std::move(event), cqes);
+    _process_simplex_read(std::move(event), cqes);
 }
 
 void Session::_process_write(rawstor::RingBuf<Event>& cqes) {
@@ -134,7 +149,7 @@ void Session::_process_write(rawstor::RingBuf<Event>& cqes) {
                     std::unique_ptr<EventSimplex> sevent(
                         static_cast<EventSimplex*>(event.release())
                     );
-                    _process_simplex(std::move(sevent), cqes);
+                    _process_simplex_write(std::move(sevent), cqes);
                     return;
                 } else {
                     _process_multiplex_write(events, niov, cqes);

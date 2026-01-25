@@ -99,6 +99,12 @@ ssize_t EventSimplexPoll::process() noexcept {
     return 0;
 }
 
+void EventSimplexPollMultishot::dispatch() {
+    Event::dispatch();
+    _result = 0;
+    _error = 0;
+}
+
 ssize_t EventSimplexScalarRead::process() noexcept {
 #ifdef RAWSTOR_TRACE_EVENTS
     trace(__FILE__, __LINE__, __FUNCTION__, "read()");
@@ -229,33 +235,114 @@ ssize_t EventSimplexScalarRecv::process() noexcept {
     return res;
 }
 
+bool EventSimplexVectorRecvMultishot::is_completed() const noexcept {
+    return _pending_size >=
+           static_cast<rawstor::io::TaskVectorExternal*>(_t.get())->size();
+}
+
 ssize_t EventSimplexVectorRecvMultishot::process() noexcept {
+    ssize_t res;
+
+    while (!_pending_entries.full()) {
 #ifdef RAWSTOR_TRACE_EVENTS
-    trace(__FILE__, __LINE__, __FUNCTION__, "recv()");
+        trace(__FILE__, __LINE__, __FUNCTION__, "recv()");
 #endif
-    (void)(_flags);
-    ssize_t res = -1;
-    errno = ECANCELED;
-    // ssize_t res = ::recv(
-    //     _fd, static_cast<rawstor::io::TaskSc,
-    //     static_cast<rawstor::io::TaskScalar*>(_t.get())->size(), _flags
-    // );
-    if (res >= 0) {
-        _result = res;
+        std::unique_ptr<EventSimplexVectorRecvMultishotEntry> entry =
+            std::make_unique<EventSimplexVectorRecvMultishotEntry>(_entry_size);
+        res = ::recv(_fd, entry->data(), entry->size(), _flags);
+
+        if (res >= 0) {
+            entry->set_result(res);
+            _pending_size += res;
+            _pending_entries.push(std::move(entry));
+
 #ifdef RAWSTOR_TRACE_EVENTS
-        if ((size_t)_result ==
-            static_cast<rawstor::io::TaskScalar*>(_t.get())->size()) {
-            trace(__FILE__, __LINE__, __FUNCTION__, "completed");
+            if (_pending_size >=
+                static_cast<rawstor::io::TaskVectorExternal*>(_t.get())
+                    ->size()) {
+                trace(__FILE__, __LINE__, __FUNCTION__, "completed");
+            } else {
+                trace(__FILE__, __LINE__, __FUNCTION__, "partial");
+            }
+#endif
         } else {
-            trace(__FILE__, __LINE__, __FUNCTION__, "partial");
-        }
+            int error = errno;
+            errno = 0;
+            if (error != EAGAIN) {
+                set_error(error);
+            }
+#ifdef RAWSTOR_TRACE_EVENTS
+            if (error == EAGAIN) {
+                trace(__FILE__, __LINE__, __FUNCTION__, "received all");
+            }
 #endif
-    } else {
-        int error = errno;
-        errno = 0;
-        set_error(error);
+            break;
+        }
     }
+
     return res;
+}
+
+void EventSimplexVectorRecvMultishot::dispatch() {
+    bool full = _pending_entries.full();
+
+    TaskVectorExternal* t = static_cast<TaskVectorExternal*>(_t.get());
+    while (_pending_size >= t->size() || _error) {
+        std::list<std::unique_ptr<EventSimplexVectorRecvMultishotEntry>>
+            entries;
+        std::vector<iovec> iov;
+        size_t iov_size = 0;
+        iov.reserve(_pending_entries.size());
+
+        while (!_pending_entries.empty()) {
+            EventSimplexVectorRecvMultishotEntry& e = _pending_entries.tail();
+            void* e_data = static_cast<char*>(e.data()) + _pending_offset;
+            size_t e_size = e.result() - _pending_offset;
+            if (e_size <= t->size() - iov_size) [[likely]] {
+                iov.push_back({.iov_base = e_data, .iov_len = e_size});
+                _pending_offset = 0;
+                _pending_size -= e_size;
+                entries.push_back(_pending_entries.pop());
+                iov_size += e_size;
+                if (iov_size == t->size()) {
+                    break;
+                }
+            } else {
+                iov.push_back(
+                    {.iov_base = e_data, .iov_len = t->size() - iov_size}
+                );
+                _pending_offset += iov.back().iov_len;
+                _pending_size -= iov.back().iov_len;
+                iov_size += iov.back().iov_len;
+                break;
+            }
+        }
+
+        _result = iov_size;
+        t->set(iov.data(), iov.size());
+        try {
+#ifdef RAWSTOR_TRACE_EVENTS
+            std::ostringstream oss;
+            oss << "sending iov: niov = " << iov.size()
+                << ", size = " << iov_size;
+            t->trace(__FILE__, __LINE__, __FUNCTION__, oss.str());
+#endif
+            Event::dispatch();
+        } catch (...) {
+            t->set(nullptr, 0);
+            throw;
+        }
+        t->set(nullptr, 0);
+
+        _error = 0;
+    }
+
+    if (full) {
+        t->set(nullptr, 0);
+        _result = 0;
+        set_error(ENOBUFS);
+        Event::dispatch();
+    }
 }
 
 ssize_t EventSimplexMessageRead::process() noexcept {

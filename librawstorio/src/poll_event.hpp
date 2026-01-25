@@ -4,6 +4,7 @@
 #include <rawstorio/task.hpp>
 
 #include <rawstorstd/logging.h>
+#include <rawstorstd/ringbuf.hpp>
 
 #include <sys/types.h>
 #include <sys/uio.h>
@@ -47,8 +48,6 @@ public:
     Event& operator=(const Event&) = delete;
     Event& operator=(Event&&) = delete;
 
-    void set_result(ssize_t result) noexcept { _result = result; }
-
     inline void set_error(int error) noexcept {
 #ifdef RAWSTOR_TRACE_EVENTS
         if (error != 0) {
@@ -62,7 +61,7 @@ public:
 
     inline int error() const noexcept { return _error; }
 
-    void dispatch();
+    virtual void dispatch();
 
 #ifdef RAWSTOR_TRACE_EVENTS
     void trace(
@@ -72,8 +71,9 @@ public:
         _t->trace(file, line, function, message);
     }
 #endif
+    virtual bool is_completed() const noexcept = 0;
     virtual bool is_multiplex() const noexcept = 0;
-
+    virtual bool is_multishot() const noexcept { return false; }
     virtual bool is_poll() const noexcept = 0;
     virtual bool is_read() const noexcept = 0;
     virtual bool is_write() const noexcept = 0;
@@ -81,8 +81,6 @@ public:
     virtual ssize_t process() noexcept = 0;
 
     int fd() const noexcept { return _fd; }
-
-    virtual bool has_more() const noexcept { return false; }
 };
 
 class EventSimplex : public Event {
@@ -105,8 +103,6 @@ public:
     bool is_multiplex() const noexcept override final { return true; }
 
     virtual unsigned int niov() const noexcept = 0;
-
-    virtual bool is_completed() const noexcept = 0;
 
     virtual size_t shift(size_t shift) noexcept = 0;
 
@@ -188,6 +184,7 @@ public:
 
     ssize_t process() noexcept override final;
 
+    bool is_completed() const noexcept override final { return true; }
     bool is_poll() const noexcept override final { return true; }
     bool is_read() const noexcept override final { return false; }
     bool is_write() const noexcept override final { return false; }
@@ -210,9 +207,9 @@ public:
     ) :
         EventSimplexPoll(q, fd, std::move(t), mask) {}
 
-    bool has_more() const noexcept override final {
-        return _error != ECANCELED;
-    }
+    bool is_multishot() const noexcept override final { return true; }
+
+    void dispatch() override;
 };
 
 class EventSimplexScalarRead final : public EventSimplex {
@@ -224,6 +221,7 @@ public:
 
     ssize_t process() noexcept override final;
 
+    bool is_completed() const noexcept override final { return true; }
     bool is_poll() const noexcept override final { return false; }
     bool is_read() const noexcept override final { return true; }
     bool is_write() const noexcept override final { return false; }
@@ -238,6 +236,7 @@ public:
 
     ssize_t process() noexcept override final;
 
+    bool is_completed() const noexcept override final { return true; }
     bool is_poll() const noexcept override final { return false; }
     bool is_read() const noexcept override final { return true; }
     bool is_write() const noexcept override final { return false; }
@@ -257,6 +256,7 @@ public:
 
     ssize_t process() noexcept override final;
 
+    bool is_completed() const noexcept override final { return true; }
     bool is_poll() const noexcept override final { return false; }
     bool is_read() const noexcept override final { return true; }
     bool is_write() const noexcept override final { return false; }
@@ -276,6 +276,7 @@ public:
 
     ssize_t process() noexcept override final;
 
+    bool is_completed() const noexcept override final { return true; }
     bool is_poll() const noexcept override final { return false; }
     bool is_read() const noexcept override final { return true; }
     bool is_write() const noexcept override final { return false; }
@@ -295,9 +296,51 @@ public:
 
     ssize_t process() noexcept override final;
 
+    bool is_completed() const noexcept override final { return true; }
     bool is_poll() const noexcept override final { return false; }
     bool is_read() const noexcept override final { return true; }
     bool is_write() const noexcept override final { return false; }
+};
+
+class EventSimplexVectorRecvMultishotEntry final {
+private:
+    std::vector<char> _data;
+    size_t _result;
+
+public:
+    EventSimplexVectorRecvMultishotEntry(size_t size) :
+        _data(size),
+        _result(0) {}
+
+    EventSimplexVectorRecvMultishotEntry(
+        const EventSimplexVectorRecvMultishotEntry&
+    ) = delete;
+
+    EventSimplexVectorRecvMultishotEntry(
+        EventSimplexVectorRecvMultishotEntry&& other
+    ) noexcept :
+        _data(std::move(other._data)),
+        _result(std::exchange(other._result, 0)) {}
+
+    EventSimplexVectorRecvMultishotEntry&
+    operator=(const EventSimplexVectorRecvMultishotEntry&) = delete;
+
+    EventSimplexVectorRecvMultishotEntry&
+    operator=(EventSimplexVectorRecvMultishotEntry&& other) noexcept {
+        EventSimplexVectorRecvMultishotEntry temp(std::move(other));
+        swap(temp);
+        return *this;
+    }
+
+    inline void* data() noexcept { return _data.data(); }
+    inline size_t size() const noexcept { return _data.size(); }
+    inline size_t result() const noexcept { return _result; }
+    inline void set_result(size_t result) noexcept { _result = result; };
+
+    void swap(EventSimplexVectorRecvMultishotEntry& other) noexcept {
+        std::swap(_data, other._data);
+        std::swap(_result, other._result);
+    }
 };
 
 class EventSimplexVectorRecvMultishot final : public EventSimplex {
@@ -305,28 +348,29 @@ private:
     size_t _entry_size;
     size_t _pending_offset;
     size_t _pending_size;
-    std::list<std::vector<char>> _pending_entries;
+    rawstor::RingBuf<EventSimplexVectorRecvMultishotEntry> _pending_entries;
     unsigned int _flags;
 
 public:
     EventSimplexVectorRecvMultishot(
         Queue& q, int fd, std::unique_ptr<rawstor::io::TaskVectorExternal> t,
-        size_t entry_size, unsigned int, unsigned int flags
+        size_t entry_size, unsigned int entries, unsigned int flags
     ) :
         EventSimplex(q, fd, std::move(t)),
         _entry_size(entry_size),
         _pending_offset(0),
         _pending_size(0),
+        _pending_entries(entries),
         _flags(flags) {}
 
     ssize_t process() noexcept override final;
+    void dispatch() override;
 
+    bool is_completed() const noexcept override final;
+    bool is_multishot() const noexcept override final { return true; }
     bool is_poll() const noexcept override final { return false; }
     bool is_read() const noexcept override final { return true; }
     bool is_write() const noexcept override final { return false; }
-    bool has_more() const noexcept override final {
-        return _error != ECANCELED;
-    }
 };
 
 class EventSimplexMessageRead final : public EventSimplex {
@@ -343,6 +387,7 @@ public:
 
     ssize_t process() noexcept override final;
 
+    bool is_completed() const noexcept override final { return true; }
     bool is_poll() const noexcept override final { return false; }
     bool is_read() const noexcept override final { return true; }
     bool is_write() const noexcept override final { return false; }
@@ -390,6 +435,7 @@ public:
 
     ssize_t process() noexcept override final;
 
+    bool is_completed() const noexcept override final { return true; }
     bool is_poll() const noexcept override final { return false; }
     bool is_read() const noexcept override final { return false; }
     bool is_write() const noexcept override final { return true; }
@@ -409,6 +455,7 @@ public:
 
     ssize_t process() noexcept override final;
 
+    bool is_completed() const noexcept override final { return true; }
     bool is_poll() const noexcept override final { return false; }
     bool is_read() const noexcept override final { return false; }
     bool is_write() const noexcept override final { return true; }
@@ -428,6 +475,7 @@ public:
 
     ssize_t process() noexcept override final;
 
+    bool is_completed() const noexcept override final { return true; }
     bool is_poll() const noexcept override final { return false; }
     bool is_read() const noexcept override final { return false; }
     bool is_write() const noexcept override final { return true; }
@@ -447,6 +495,7 @@ public:
 
     ssize_t process() noexcept override final;
 
+    bool is_completed() const noexcept override final { return true; }
     bool is_poll() const noexcept override final { return false; }
     bool is_read() const noexcept override final { return false; }
     bool is_write() const noexcept override final { return true; }

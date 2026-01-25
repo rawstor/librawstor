@@ -35,8 +35,8 @@ public:
     BufferRingEntry& operator=(BufferRingEntry&&) = delete;
 
     inline void* data() noexcept { return _data; }
-    inline void set_result(size_t result) noexcept { _result = result; };
     inline size_t result() noexcept { return _result; }
+    inline void set_result(size_t result) noexcept { _result = result; };
 };
 
 class BufferRing final : public rawstor::io::Task {
