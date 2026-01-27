@@ -13,6 +13,7 @@
 #include <vector>
 
 #include <cassert>
+#include <cstring>
 
 namespace {
 

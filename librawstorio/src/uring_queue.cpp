@@ -5,7 +5,8 @@
 #include <rawstorstd/gpp.hpp>
 #include <rawstorstd/socket.h>
 
-#include <time.h>
+#include <ctime>
+#include <cstring>
 
 namespace {
 
