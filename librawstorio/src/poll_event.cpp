@@ -241,7 +241,7 @@ bool EventSimplexVectorRecvMultishot::is_completed() const noexcept {
 }
 
 ssize_t EventSimplexVectorRecvMultishot::process() noexcept {
-    ssize_t res;
+    ssize_t res = -ENOBUFS;
 
     while (!_pending_entries.full()) {
 #ifdef RAWSTOR_TRACE_EVENTS
