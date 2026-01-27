@@ -63,6 +63,13 @@ public:
         ++_count;
     }
 
+    inline T& tail() {
+        if (empty()) {
+            throw std::out_of_range("RingBuf is empty");
+        }
+        return *_data[_tail].get();
+    }
+
     inline const T& tail() const {
         if (empty()) {
             throw std::out_of_range("RingBuf is empty");
