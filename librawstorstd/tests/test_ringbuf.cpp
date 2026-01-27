@@ -178,4 +178,14 @@ TEST(RingBufTest, move_operator) {
     EXPECT_EQ(*i2, 1);
 }
 
+TEST(RingBufTest, tail) {
+    rawstor::RingBuf<int> buf(3);
+
+    buf.push(std::make_unique<int>(10));
+    EXPECT_EQ(buf.tail(), 10);
+
+    buf.tail() = 20;
+    EXPECT_EQ(buf.tail(), 20);
+}
+
 } // unnamed namespace
