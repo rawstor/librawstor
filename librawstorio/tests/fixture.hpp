@@ -40,7 +40,7 @@ private:
                 RAWSTOR_THROW_ERRNO();
             }
 
-            // rawstor::io::Queue::setup_fd(fd);
+            rawstor::io::Queue::setup_fd(fd);
         } catch (...) {
             close(fd);
             throw;
