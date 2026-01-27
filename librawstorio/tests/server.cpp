@@ -215,6 +215,7 @@ void Server::_do_write(Command& command) {
     CommandWrite& command_write = dynamic_cast<CommandWrite&>(command);
     ssize_t res =
         ::write(_client_fd, command_write.buf(), command_write.size());
+    printf("write(%zu), res = %zd\n", command_write.size(), res);
     if (res == -1) {
         RAWSTOR_THROW_ERRNO();
     }

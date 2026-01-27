@@ -64,7 +64,7 @@ protected:
     void _wait_all() {
         try {
             while (true) {
-                _queue->wait(100);
+                _queue->wait(0);
             }
         } catch (const std::system_error& e) {
             if (e.code().value() != ETIME) {
