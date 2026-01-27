@@ -13,6 +13,7 @@
 #include <vector>
 
 #include <cassert>
+#include <cstring>
 
 namespace {
 
@@ -62,7 +63,10 @@ void Queue::setup_fd(int fd) {
 
     res = rawstor_socket_set_nodelay(fd);
     if (res) {
-        RAWSTOR_THROW_SYSTEM_ERROR(-res);
+        rawstor_warning(
+            "Failed to set IPPROTO_TCP/TCP_NODELAY for socket %d: %s\n", fd,
+            strerror(-res)
+        );
     }
 }
 
