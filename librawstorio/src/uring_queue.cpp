@@ -5,7 +5,8 @@
 #include <rawstorstd/gpp.hpp>
 #include <rawstorstd/socket.h>
 
-#include <time.h>
+#include <cstring>
+#include <ctime>
 
 namespace {
 
@@ -50,7 +51,10 @@ void Queue::setup_fd(int fd) {
 
     res = rawstor_socket_set_nodelay(fd);
     if (res) {
-        RAWSTOR_THROW_SYSTEM_ERROR(-res);
+        rawstor_warning(
+            "Failed to set IPPROTO_TCP/TCP_NODELAY for socket %d: %s\n", fd,
+            strerror(-res)
+        );
     }
 }
 
