@@ -67,6 +67,7 @@ protected:
                 _queue->wait(0);
             }
         } catch (const std::system_error& e) {
+            printf("_wait_all.error(): %s\n", e.what());
             if (e.code().value() != ETIME) {
                 throw;
             }
