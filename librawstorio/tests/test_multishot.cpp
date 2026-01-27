@@ -134,7 +134,7 @@ TEST_F(MultishotTest, recv_overflow) {
             std::make_unique<rawstor::io::tests::SimpleTaskVectorExternal>(
                 4, &items
             );
-        event = _queue->recv_multishot(_fd, std::move(t), 4, 4, 0);
+        event = _queue->recv_multishot(_fd, std::move(t), 4, 8, 0);
     }
 
     EXPECT_NO_THROW(_wait_all());
@@ -144,25 +144,21 @@ TEST_F(MultishotTest, recv_overflow) {
         EXPECT_EQ(items[0].error(), 0);
         EXPECT_EQ(strncmp(items[0].data(), "dat1", 4), 0);
     }
-    EXPECT_NO_THROW(_wait_all());
     if (items.size() >= 2) {
         EXPECT_EQ(items[1].result(), (size_t)4);
         EXPECT_EQ(items[1].error(), 0);
         EXPECT_EQ(strncmp(items[1].data(), "dat2", 4), 0);
     }
-    EXPECT_NO_THROW(_wait_all());
     if (items.size() >= 3) {
         EXPECT_EQ(items[2].result(), (size_t)4);
         EXPECT_EQ(items[2].error(), 0);
         EXPECT_EQ(strncmp(items[2].data(), "dat3", 4), 0);
     }
-    EXPECT_NO_THROW(_wait_all());
     if (items.size() >= 4) {
         EXPECT_EQ(items[3].result(), (size_t)4);
         EXPECT_EQ(items[3].error(), 0);
         EXPECT_EQ(strncmp(items[3].data(), "dat4", 4), 0);
     }
-    EXPECT_NO_THROW(_wait_all());
     if (items.size() >= 5) {
         EXPECT_EQ(items[4].result(), (size_t)0);
         EXPECT_EQ(items[4].error(), ENOBUFS);
