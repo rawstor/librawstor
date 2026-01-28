@@ -2,7 +2,6 @@
 #define RAWSTORIO_TESTS_TASK_HPP
 
 #include <rawstorstd/iovec.h>
-#include <rawstorstd/logging.h>
 
 #include <rawstorio/task.hpp>
 
@@ -106,14 +105,9 @@ public:
         _items(items) {}
 
     void operator()(size_t result, int error) override {
-        rawstor_debug(
-            "SimpleTaskVectorExternal(%zu): result = %zu, error = %d, \n",
-            _size, result, error
-        );
         if (result > 0) {
             std::vector<char> s(result + 1);
             rawstor_iovec_to_buf(iov(), niov(), 0, s.data(), s.size());
-            rawstor_debug("data = '%s'\n", s.data());
         }
         _items->emplace_back(iov(), niov(), result, error);
     }
