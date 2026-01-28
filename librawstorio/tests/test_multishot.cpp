@@ -134,7 +134,7 @@ TEST_F(MultishotTest, recv_overflow) {
             std::make_unique<rawstor::io::tests::SimpleTaskVectorExternal>(
                 4, &items
             );
-        event = _queue->recv_multishot(_fd, std::move(t), 8, 4, 0);
+        event = _queue->recv_multishot(_fd, std::move(t), 8, 2, 0);
     }
 
     EXPECT_NO_THROW(_wait_all());
