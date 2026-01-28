@@ -51,10 +51,15 @@ void Queue::setup_fd(int fd) {
 
     res = rawstor_socket_set_nodelay(fd);
     if (res) {
-        rawstor_warning(
-            "Failed to set IPPROTO_TCP/TCP_NODELAY for socket %d: %s\n", fd,
-            strerror(-res)
-        );
+        if (res == -EOPNOTSUPP) {
+            rawstor_warning(
+                "Failed to set IPPROTO_TCP/TCP_NODELAY for descriptor %d: "
+                "%s\n",
+                fd, strerror(-res)
+            );
+        } else {
+            RAWSTOR_THROW_SYSTEM_ERROR(-res);
+        }
     }
 }
 
