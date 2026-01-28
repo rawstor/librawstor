@@ -121,7 +121,7 @@ TEST_F(MultishotTest, recv) {
 
 TEST_F(MultishotTest, recv_overflow) {
     {
-        const char server_buf[] = "dat1dat2dat3dat4";
+        const char server_buf[] = "dat1dat2dat3dat4x";
         _server.write(server_buf, sizeof(server_buf) - 1);
         _server.wait();
     }
@@ -134,7 +134,7 @@ TEST_F(MultishotTest, recv_overflow) {
             std::make_unique<rawstor::io::tests::SimpleTaskVectorExternal>(
                 4, &items
             );
-        event = _queue->recv_multishot(_fd, std::move(t), 8, 2, 0);
+        event = _queue->recv_multishot(_fd, std::move(t), 4, 4, 0);
     }
 
     EXPECT_NO_THROW(_wait_all());
