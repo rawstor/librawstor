@@ -53,7 +53,7 @@ void Queue::setup_fd(int fd) {
     if (res) {
         if (res == -EOPNOTSUPP) {
             rawstor_warning(
-                "Failed to set IPPROTO_TCP/TCP_NODELAY for descriptior %d: "
+                "Failed to set IPPROTO_TCP/TCP_NODELAY for descriptor %d: "
                 "%s\n",
                 fd, strerror(-res)
             );
