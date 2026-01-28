@@ -4,7 +4,6 @@
 #include "server.hpp"
 
 #include <rawstorstd/gpp.hpp>
-#include <rawstorstd/logging.h>
 
 #include <rawstorio/queue.hpp>
 
@@ -68,7 +67,6 @@ protected:
                 _queue->wait(0);
             }
         } catch (const std::system_error& e) {
-            rawstor_debug("_wait_all.error(): %s\n", e.what());
             if (e.code().value() != ETIME) {
                 throw;
             }
