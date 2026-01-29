@@ -19,11 +19,10 @@ namespace rawstor {
 namespace io {
 namespace poll {
 
-Session::Session(Queue& q, int fd) :
-    _q(q),
+Session::Session(int fd, unsigned int depth) :
     _fd(fd),
-    _read_sqes(q.depth()),
-    _write_sqes(q.depth()) {
+    _read_sqes(depth),
+    _write_sqes(depth) {
 }
 
 void Session::_process_poll(rawstor::RingBuf<Event>& cqes, short revents) {
@@ -173,168 +172,16 @@ short Session::events() const noexcept {
     return ret;
 }
 
-rawstor::io::Event*
-Session::poll(std::unique_ptr<rawstor::io::Task> t, unsigned int mask) {
-    std::unique_ptr<EventSimplexPoll> event =
-        std::make_unique<EventSimplexPoll>(_q, _fd, std::move(t), mask);
-
-    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
-
+void Session::poll(std::unique_ptr<EventSimplexPoll> event) {
     _poll_sqes.push_back(std::move(event));
-
-    return ret;
 }
 
-rawstor::io::Event* Session::read(std::unique_ptr<rawstor::io::TaskScalar> t) {
-    std::unique_ptr<EventSimplex> event =
-        std::make_unique<EventSimplexScalarRead>(_q, _fd, std::move(t));
-
-    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
-
+void Session::read(std::unique_ptr<EventSimplex> event) {
     _read_sqes.push(std::move(event));
-
-    return ret;
 }
 
-rawstor::io::Event* Session::readv(std::unique_ptr<rawstor::io::TaskVector> t) {
-    std::unique_ptr<EventSimplex> event =
-        std::make_unique<EventSimplexVectorRead>(_q, _fd, std::move(t));
-
-    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
-
-    _read_sqes.push(std::move(event));
-
-    return ret;
-}
-
-rawstor::io::Event*
-Session::pread(std::unique_ptr<rawstor::io::TaskScalar> t, off_t offset) {
-    std::unique_ptr<EventSimplex> event =
-        std::make_unique<rawstor::io::poll::EventSimplexScalarPositionalRead>(
-            _q, _fd, std::move(t), offset
-        );
-
-    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
-
-    _read_sqes.push(std::move(event));
-
-    return ret;
-}
-
-rawstor::io::Event*
-Session::preadv(std::unique_ptr<rawstor::io::TaskVector> t, off_t offset) {
-    std::unique_ptr<EventSimplex> event =
-        std::make_unique<EventSimplexVectorPositionalRead>(
-            _q, _fd, std::move(t), offset
-        );
-
-    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
-
-    _read_sqes.push(std::move(event));
-
-    return ret;
-}
-
-rawstor::io::Event*
-Session::recv(std::unique_ptr<rawstor::io::TaskScalar> t, unsigned int flags) {
-    std::unique_ptr<EventSimplex> event =
-        std::make_unique<EventSimplexScalarRecv>(_q, _fd, std::move(t), flags);
-
-    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
-
-    _read_sqes.push(std::move(event));
-
-    return ret;
-}
-
-rawstor::io::Event* Session::recvmsg(
-    std::unique_ptr<rawstor::io::TaskMessage> t, unsigned int flags
-) {
-    std::unique_ptr<EventSimplex> event =
-        std::make_unique<EventSimplexMessageRead>(_q, _fd, std::move(t), flags);
-
-    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
-
-    _read_sqes.push(std::move(event));
-
-    return ret;
-}
-
-rawstor::io::Event* Session::write(std::unique_ptr<rawstor::io::TaskScalar> t) {
-    std::unique_ptr<Event> event =
-        std::make_unique<EventMultiplexScalarWrite>(_q, _fd, std::move(t));
-
-    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
-
+void Session::write(std::unique_ptr<Event> event) {
     _write_sqes.push(std::move(event));
-
-    return ret;
-}
-
-rawstor::io::Event*
-Session::writev(std::unique_ptr<rawstor::io::TaskVector> t) {
-    std::unique_ptr<Event> event =
-        std::make_unique<EventMultiplexVectorWrite>(_q, _fd, std::move(t));
-
-    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
-
-    _write_sqes.push(std::move(event));
-
-    return ret;
-}
-
-rawstor::io::Event*
-Session::pwrite(std::unique_ptr<rawstor::io::TaskScalar> t, off_t offset) {
-    std::unique_ptr<Event> event =
-        std::make_unique<EventSimplexScalarPositionalWrite>(
-            _q, _fd, std::move(t), offset
-        );
-
-    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
-
-    _write_sqes.push(std::move(event));
-
-    return ret;
-}
-
-rawstor::io::Event*
-Session::pwritev(std::unique_ptr<rawstor::io::TaskVector> t, off_t offset) {
-    std::unique_ptr<Event> event =
-        std::make_unique<EventSimplexVectorPositionalWrite>(
-            _q, _fd, std::move(t), offset
-        );
-
-    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
-
-    _write_sqes.push(std::move(event));
-
-    return ret;
-}
-
-rawstor::io::Event*
-Session::send(std::unique_ptr<rawstor::io::TaskScalar> t, unsigned int flags) {
-    std::unique_ptr<Event> event =
-        std::make_unique<EventSimplexScalarSend>(_q, _fd, std::move(t), flags);
-
-    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
-
-    _write_sqes.push(std::move(event));
-
-    return ret;
-}
-
-rawstor::io::Event* Session::sendmsg(
-    std::unique_ptr<rawstor::io::TaskMessage> t, unsigned int flags
-) {
-    std::unique_ptr<Event> event = std::make_unique<EventSimplexMessageWrite>(
-        _q, _fd, std::move(t), flags
-    );
-
-    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
-
-    _write_sqes.push(std::move(event));
-
-    return ret;
 }
 
 bool Session::cancel(rawstor::io::Event* event, rawstor::RingBuf<Event>& cqes) {
