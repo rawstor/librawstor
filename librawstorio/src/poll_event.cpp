@@ -99,10 +99,6 @@ ssize_t EventSimplexPoll::process() noexcept {
     return 0;
 }
 
-void EventSimplexPoll::set_result(short revents) noexcept {
-    _result = revents;
-}
-
 ssize_t EventSimplexScalarRead::process() noexcept {
 #ifdef RAWSTOR_TRACE_EVENTS
     trace(__FILE__, __LINE__, __FUNCTION__, "read()");
