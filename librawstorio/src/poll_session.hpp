@@ -17,7 +17,6 @@ namespace poll {
 
 class Session final {
 private:
-    Queue& _q;
     int _fd;
     std::list<std::unique_ptr<EventSimplexPoll>> _poll_sqes;
     rawstor::RingBuf<EventSimplex> _read_sqes;
@@ -39,7 +38,7 @@ private:
     void _process_write(rawstor::RingBuf<Event>& cqes);
 
 public:
-    Session(Queue& q, int fd);
+    Session(int fd, unsigned int depth);
     Session(const Session&) = delete;
     Session(Session&&) = delete;
     Session& operator=(const Session&) = delete;
@@ -53,40 +52,11 @@ public:
         return _poll_sqes.empty() && _read_sqes.empty() && _write_sqes.empty();
     }
 
-    rawstor::io::Event*
-    poll(std::unique_ptr<rawstor::io::Task> t, unsigned int flags);
+    void poll(std::unique_ptr<EventSimplexPoll> event);
 
-    rawstor::io::Event* read(std::unique_ptr<rawstor::io::TaskScalar> t);
+    void read(std::unique_ptr<EventSimplex> event);
 
-    rawstor::io::Event* readv(std::unique_ptr<rawstor::io::TaskVector> t);
-
-    rawstor::io::Event*
-    pread(std::unique_ptr<rawstor::io::TaskScalar> t, off_t offset);
-
-    rawstor::io::Event*
-    preadv(std::unique_ptr<rawstor::io::TaskVector> t, off_t offset);
-
-    rawstor::io::Event*
-    recv(std::unique_ptr<rawstor::io::TaskScalar> t, unsigned int flags);
-
-    rawstor::io::Event*
-    recvmsg(std::unique_ptr<rawstor::io::TaskMessage> t, unsigned int flags);
-
-    rawstor::io::Event* write(std::unique_ptr<rawstor::io::TaskScalar> t);
-
-    rawstor::io::Event* writev(std::unique_ptr<rawstor::io::TaskVector> t);
-
-    rawstor::io::Event*
-    pwrite(std::unique_ptr<rawstor::io::TaskScalar> t, off_t offset);
-
-    rawstor::io::Event*
-    pwritev(std::unique_ptr<rawstor::io::TaskVector> t, off_t offset);
-
-    rawstor::io::Event*
-    send(std::unique_ptr<rawstor::io::TaskScalar> t, unsigned int flags);
-
-    rawstor::io::Event*
-    sendmsg(std::unique_ptr<rawstor::io::TaskMessage> t, unsigned int flags);
+    void write(std::unique_ptr<Event> event);
 
     bool cancel(rawstor::io::Event* event, rawstor::RingBuf<Event>& cqes);
 
