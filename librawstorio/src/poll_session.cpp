@@ -60,7 +60,7 @@ void Session::_process_multiplex_write(
         ssize_t res;
         res = event->process();
         if (res > 0) {
-            if (event->completed()) {
+            if (event->is_completed()) {
                 cqes.push(std::move(event));
             } else {
                 _write_sqes.push(std::move(event));
@@ -87,7 +87,7 @@ void Session::_process_multiplex_write(
     if (res > 0) {
         for (std::unique_ptr<EventMultiplex>& event : events) {
             res = event->shift(res);
-            if (event->completed()) {
+            if (event->is_completed()) {
                 cqes.push(std::move(event));
             } else {
                 _write_sqes.push(std::move(event));
@@ -129,7 +129,7 @@ void Session::_process_write(rawstor::RingBuf<Event>& cqes) {
     try {
         while (!_write_sqes.empty()) {
             const Event& tail = _write_sqes.tail();
-            if (!tail.multiplex()) {
+            if (!tail.is_multiplex()) {
                 if (events.empty()) {
                     std::unique_ptr<Event> event = _write_sqes.pop();
                     std::unique_ptr<EventSimplex> sevent(
