@@ -102,7 +102,6 @@ BufferRing::BufferRing(
             );
         }
 
-        // TODO: use io_uring_buf_ring_cq_advance() here?
         io_uring_buf_ring_advance(_buf_ring, entries);
     } catch (...) {
         munmap(_buf_ring, _buf_ring_size);

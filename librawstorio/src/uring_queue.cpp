@@ -319,6 +319,7 @@ void Queue::wait(unsigned int timeout) {
     }
 
     if (nr) {
+        // TODO: use __io_uring_buf_ring_cq_advance here
         io_uring_cq_advance(&_ring, nr);
     }
 }
