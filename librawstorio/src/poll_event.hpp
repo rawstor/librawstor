@@ -81,7 +81,7 @@ public:
 
     virtual ~EventSimplex() override = default;
 
-    bool is_multiplex() const noexcept override final { return false; };
+    bool is_multiplex() const noexcept override final { return false; }
 };
 
 class EventMultiplex : public Event {
@@ -91,7 +91,7 @@ public:
 
     virtual ~EventMultiplex() override = default;
 
-    bool is_multiplex() const noexcept override final { return true; };
+    bool is_multiplex() const noexcept override final { return true; }
 
     virtual unsigned int niov() const noexcept = 0;
 
