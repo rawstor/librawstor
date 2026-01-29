@@ -340,7 +340,6 @@ void Queue::wait(unsigned int timeout) {
         event->dispatch();
 
         if (event->is_multishot() && !event->error()) {
-            // TODO: here should be just s.push()
             if (event->is_poll()) {
                 std::unique_ptr<EventSimplexPoll> poll_event(
                     static_cast<EventSimplexPoll*>(event.release())
