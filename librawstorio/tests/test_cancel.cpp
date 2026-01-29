@@ -27,7 +27,7 @@ TEST_F(CancelTest, poll) {
 
     {
         std::unique_ptr<rawstor::io::Task> t =
-            std::make_unique<rawstor::io::tests::SimplePollTask>(result, error);
+            std::make_unique<rawstor::io::tests::SimpleTask>(&result, &error);
         event = _queue->poll(_fd, std::move(t), POLLIN);
     }
 
@@ -53,7 +53,7 @@ TEST_F(CancelTest, poll_completed) {
 
     {
         std::unique_ptr<rawstor::io::Task> t =
-            std::make_unique<rawstor::io::tests::SimplePollTask>(result, error);
+            std::make_unique<rawstor::io::tests::SimpleTask>(&result, &error);
         event = _queue->poll(_fd, std::move(t), POLLIN);
     }
 
@@ -72,8 +72,8 @@ TEST_F(CancelTest, read) {
 
     {
         std::unique_ptr<rawstor::io::TaskScalar> t =
-            std::make_unique<rawstor::io::tests::SimpleScalarTask>(
-                client_buf, sizeof(client_buf), result, error
+            std::make_unique<rawstor::io::tests::SimpleTaskScalar>(
+                client_buf, sizeof(client_buf), &result, &error
             );
         event = _queue->read(_fd, std::move(t));
     }
@@ -102,8 +102,8 @@ TEST_F(CancelTest, read_completed) {
 
     {
         std::unique_ptr<rawstor::io::TaskScalar> t =
-            std::make_unique<rawstor::io::tests::SimpleScalarTask>(
-                client_buf, sizeof(client_buf), result, error
+            std::make_unique<rawstor::io::tests::SimpleTaskScalar>(
+                client_buf, sizeof(client_buf), &result, &error
             );
         event = _queue->read(_fd, std::move(t));
     }
@@ -127,8 +127,8 @@ TEST_F(CancelTest, write) {
 
     {
         std::unique_ptr<rawstor::io::TaskScalar> t =
-            std::make_unique<rawstor::io::tests::SimpleScalarTask>(
-                client_buf, sizeof(client_buf), result, error
+            std::make_unique<rawstor::io::tests::SimpleTaskScalar>(
+                client_buf, sizeof(client_buf), &result, &error
             );
         event = _queue->write(_fd, std::move(t));
     }
@@ -152,8 +152,8 @@ TEST_F(CancelTest, write_completed) {
 
     {
         std::unique_ptr<rawstor::io::TaskScalar> t =
-            std::make_unique<rawstor::io::tests::SimpleScalarTask>(
-                client_buf, sizeof(client_buf), result, error
+            std::make_unique<rawstor::io::tests::SimpleTaskScalar>(
+                client_buf, sizeof(client_buf), &result, &error
             );
         event = _queue->write(_fd, std::move(t));
     }

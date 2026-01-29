@@ -7,16 +7,30 @@ namespace rawstor {
 namespace io {
 namespace tests {
 
-class SimpleScalarTask final : public rawstor::io::TaskScalar {
+class SimpleTask final : public rawstor::io::Task {
+private:
+    size_t* _result;
+    int* _error;
+
+public:
+    SimpleTask(size_t* result, int* error) : _result(result), _error(error) {}
+
+    void operator()(size_t result, int error) override {
+        *_result = result;
+        *_error = error;
+    }
+};
+
+class SimpleTaskScalar final : public rawstor::io::TaskScalar {
 private:
     void* _buf;
     size_t _size;
 
-    size_t& _result;
-    int& _error;
+    size_t* _result;
+    int* _error;
 
 public:
-    SimpleScalarTask(void* buf, size_t size, size_t& result, int& error) :
+    SimpleTaskScalar(void* buf, size_t size, size_t* result, int* error) :
         rawstor::io::TaskScalar(),
         _buf(buf),
         _size(size),
@@ -24,8 +38,8 @@ public:
         _error(error) {}
 
     void operator()(size_t result, int error) override {
-        _result = result;
-        _error = error;
+        *_result = result;
+        *_error = error;
     }
 
     void* buf() noexcept override { return _buf; }
