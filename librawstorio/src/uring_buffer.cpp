@@ -19,12 +19,16 @@ unsigned int shift(unsigned int value) {
         return 0;
     }
 
+#if defined(__GNUC__) || defined(__clang__)
+    return __builtin_ctz(value);
+#else
     unsigned int ret = 0;
     while (value >> ret != 1) {
         ++ret;
     }
 
     return ret;
+#endif
 }
 
 } // unnamed namespace
