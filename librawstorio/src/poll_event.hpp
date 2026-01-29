@@ -173,9 +173,9 @@ public:
 
     inline unsigned int mask() const noexcept { return _mask; }
 
-    ssize_t process() noexcept override final;
+    inline void set_result(ssize_t result) noexcept { _result = result; }
 
-    void set_result(short revents) noexcept;
+    ssize_t process() noexcept override final;
 };
 
 class EventSimplexScalarRead final : public EventSimplex {
