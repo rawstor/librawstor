@@ -76,9 +76,9 @@ void Queue::setup_fd(int fd) {
 }
 
 rawstor::io::Event*
-Queue::poll(int fd, std::unique_ptr<rawstor::io::Task> t, unsigned int flags) {
+Queue::poll(int fd, std::unique_ptr<rawstor::io::Task> t, unsigned int mask) {
     Session& s = _get_session(fd);
-    return s.poll(std::move(t), flags);
+    return s.poll(std::move(t), mask);
 }
 
 rawstor::io::Event*

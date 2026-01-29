@@ -16,7 +16,7 @@
 #include <vector>
 
 #include <cstddef>
-#include <cstdio>
+#include <cstring>
 
 namespace rawstor {
 namespace io {
@@ -48,9 +48,11 @@ public:
 
     inline void set_error(int error) noexcept {
 #ifdef RAWSTOR_TRACE_EVENTS
-        std::ostringstream oss;
-        oss << "error " << error;
-        trace(__FILE__, __LINE__, __FUNCTION__, oss.str());
+        if (error != 0) {
+            std::ostringstream oss;
+            oss << "error " << strerror(error);
+            trace(__FILE__, __LINE__, __FUNCTION__, oss.str());
+        }
 #endif
         _error = error;
     }
@@ -67,7 +69,7 @@ public:
         _t->trace(file, line, function, message);
     }
 #endif
-    virtual bool multiplex() const noexcept = 0;
+    virtual bool is_multiplex() const noexcept = 0;
 
     virtual ssize_t process() noexcept = 0;
 };
@@ -79,7 +81,7 @@ public:
 
     virtual ~EventSimplex() override = default;
 
-    bool multiplex() const noexcept override final { return false; };
+    bool is_multiplex() const noexcept override final { return false; };
 };
 
 class EventMultiplex : public Event {
@@ -89,11 +91,11 @@ public:
 
     virtual ~EventMultiplex() override = default;
 
-    bool multiplex() const noexcept override final { return true; };
+    bool is_multiplex() const noexcept override final { return true; };
 
     virtual unsigned int niov() const noexcept = 0;
 
-    virtual bool completed() const noexcept = 0;
+    virtual bool is_completed() const noexcept = 0;
 
     virtual size_t shift(size_t shift) noexcept = 0;
 
@@ -117,7 +119,7 @@ public:
 
     unsigned int niov() const noexcept override final { return 1; }
 
-    bool completed() const noexcept override final { return _size_at == 0; }
+    bool is_completed() const noexcept override final { return _size_at == 0; }
 
     size_t shift(size_t shift) noexcept override final;
 
@@ -150,7 +152,7 @@ public:
 
     unsigned int niov() const noexcept override final { return _niov_at; }
 
-    bool completed() const noexcept override final { return _niov_at == 0; }
+    bool is_completed() const noexcept override final { return _niov_at == 0; }
 
     size_t shift(size_t shift) noexcept override final;
 
