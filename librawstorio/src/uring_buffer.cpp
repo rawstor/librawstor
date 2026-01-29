@@ -7,31 +7,11 @@
 
 #include <cassert>
 
+#include <bit>
 #include <memory>
 #include <new>
 #include <sstream>
 #include <vector>
-
-namespace {
-
-unsigned int shift(unsigned int value) {
-    if (value == 0) {
-        return 0;
-    }
-
-#if defined(__GNUC__) || defined(__clang__)
-    return __builtin_ctz(value);
-#else
-    unsigned int ret = 0;
-    while (value >> ret != 1) {
-        ++ret;
-    }
-
-    return ret;
-#endif
-}
-
-} // unnamed namespace
 
 namespace rawstor {
 namespace io {
@@ -61,7 +41,7 @@ BufferRing::BufferRing(
     std::unique_ptr<rawstor::io::TaskVectorExternal> t
 ) :
     _entry_size(entry_size),
-    _entry_shift(shift(entry_size)),
+    _entry_shift(std::countr_zero(entry_size)),
     _id(++_id_counter),
     _buf_ring(nullptr),
     _buf_ring_size(
