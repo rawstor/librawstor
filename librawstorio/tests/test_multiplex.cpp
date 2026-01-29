@@ -21,8 +21,8 @@ TEST_F(MultiplexTest, read) {
     int error1 = 0;
     {
         std::unique_ptr<rawstor::io::TaskScalar> t =
-            std::make_unique<rawstor::io::tests::SimpleScalarTask>(
-                client_buf1, sizeof(client_buf1), result1, error1
+            std::make_unique<rawstor::io::tests::SimpleTaskScalar>(
+                client_buf1, sizeof(client_buf1), &result1, &error1
             );
         _queue->read(_fd, std::move(t));
     }
@@ -32,8 +32,8 @@ TEST_F(MultiplexTest, read) {
     int error2 = 0;
     {
         std::unique_ptr<rawstor::io::TaskScalar> t =
-            std::make_unique<rawstor::io::tests::SimpleScalarTask>(
-                client_buf2, sizeof(client_buf2), result2, error2
+            std::make_unique<rawstor::io::tests::SimpleTaskScalar>(
+                client_buf2, sizeof(client_buf2), &result2, &error2
             );
         _queue->read(_fd, std::move(t));
     }
@@ -55,8 +55,8 @@ TEST_F(MultiplexTest, write) {
     int error1 = 0;
     {
         std::unique_ptr<rawstor::io::TaskScalar> t =
-            std::make_unique<rawstor::io::tests::SimpleScalarTask>(
-                client_buf1, 5, result1, error1
+            std::make_unique<rawstor::io::tests::SimpleTaskScalar>(
+                client_buf1, 5, &result1, &error1
             );
         _queue->write(_fd, std::move(t));
     }
@@ -66,8 +66,8 @@ TEST_F(MultiplexTest, write) {
     int error2 = 0;
     {
         std::unique_ptr<rawstor::io::TaskScalar> t =
-            std::make_unique<rawstor::io::tests::SimpleScalarTask>(
-                client_buf2, 5, result2, error2
+            std::make_unique<rawstor::io::tests::SimpleTaskScalar>(
+                client_buf2, 5, &result2, &error2
             );
         _queue->write(_fd, std::move(t));
     }
