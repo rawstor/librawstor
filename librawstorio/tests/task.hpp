@@ -46,23 +46,6 @@ public:
     size_t size() const noexcept override { return _size; }
 };
 
-class SimplePollTask final : public rawstor::io::Task {
-private:
-    size_t& _result;
-    int& _error;
-
-public:
-    SimplePollTask(size_t& result, int& error) :
-        rawstor::io::Task(),
-        _result(result),
-        _error(error) {}
-
-    void operator()(size_t result, int error) override {
-        _result = result;
-        _error = error;
-    }
-};
-
 } // namespace tests
 } // namespace io
 } // namespace rawstor
