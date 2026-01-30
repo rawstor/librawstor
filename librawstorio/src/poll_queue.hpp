@@ -38,6 +38,10 @@ public:
         int fd, std::unique_ptr<rawstor::io::Task> t, unsigned int mask
     ) override;
 
+    rawstor::io::Event* poll_multishot(
+        int fd, std::unique_ptr<rawstor::io::Task> t, unsigned int mask
+    ) override;
+
     rawstor::io::Event*
     read(int fd, std::unique_ptr<rawstor::io::TaskScalar> t) override;
 
@@ -54,6 +58,11 @@ public:
 
     rawstor::io::Event* recv(
         int fd, std::unique_ptr<rawstor::io::TaskScalar> t, unsigned int flags
+    ) override;
+
+    rawstor::io::Event* recv_multishot(
+        int fd, std::unique_ptr<rawstor::io::TaskVectorExternal> t,
+        size_t entry_size, unsigned int entries, unsigned int flags
     ) override;
 
     rawstor::io::Event* recvmsg(

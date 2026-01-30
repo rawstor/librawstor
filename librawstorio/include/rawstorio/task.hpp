@@ -54,6 +54,24 @@ public:
     virtual size_t size() const noexcept = 0;
 };
 
+class TaskVectorExternal : public TaskVector {
+private:
+    iovec* _iov;
+    unsigned int _niov;
+
+public:
+    TaskVectorExternal();
+    virtual ~TaskVectorExternal() override = default;
+
+    inline void set(iovec* iov, unsigned int niov) noexcept {
+        _iov = iov;
+        _niov = niov;
+    }
+
+    iovec* iov() noexcept override final { return _iov; }
+    virtual unsigned int niov() const noexcept override final { return _niov; }
+};
+
 class TaskMessage : public Task {
 public:
     TaskMessage();

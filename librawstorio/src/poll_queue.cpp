@@ -79,8 +79,25 @@ rawstor::io::Event*
 Queue::poll(int fd, std::unique_ptr<rawstor::io::Task> t, unsigned int mask) {
     Session& s = _get_session(fd);
 
-    std::unique_ptr<EventSimplexPoll> event =
-        std::make_unique<EventSimplexPoll>(*this, fd, std::move(t), mask);
+    std::unique_ptr<EventSimplexPollOneshot> event =
+        std::make_unique<EventSimplexPollOneshot>(
+            *this, fd, std::move(t), mask
+        );
+
+    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
+    s.poll(std::move(event));
+    return ret;
+}
+
+rawstor::io::Event* Queue::poll_multishot(
+    int fd, std::unique_ptr<rawstor::io::Task> t, unsigned int mask
+) {
+    Session& s = _get_session(fd);
+
+    std::unique_ptr<EventSimplexPollMultishot> event =
+        std::make_unique<EventSimplexPollMultishot>(
+            *this, fd, std::move(t), mask
+        );
 
     rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
     s.poll(std::move(event));
@@ -148,6 +165,22 @@ rawstor::io::Event* Queue::recv(
     std::unique_ptr<EventSimplex> event =
         std::make_unique<EventSimplexScalarRecv>(
             *this, fd, std::move(t), flags
+        );
+
+    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
+    s.read(std::move(event));
+    return ret;
+}
+
+rawstor::io::Event* Queue::recv_multishot(
+    int fd, std::unique_ptr<rawstor::io::TaskVectorExternal> t,
+    size_t entry_size, unsigned int entries, unsigned int flags
+) {
+    Session& s = _get_session(fd);
+
+    std::unique_ptr<EventSimplexVectorRecvMultishot> event =
+        std::make_unique<EventSimplexVectorRecvMultishot>(
+            *this, fd, std::move(t), entry_size, entries, flags
         );
 
     rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
@@ -305,6 +338,26 @@ void Queue::wait(unsigned int timeout) {
     while (!_cqes.empty()) {
         std::unique_ptr<Event> event(_cqes.pop());
         event->dispatch();
+
+        if (event->is_multishot() && !event->error()) {
+            if (event->is_poll()) {
+                std::unique_ptr<EventSimplexPoll> poll_event(
+                    static_cast<EventSimplexPoll*>(event.release())
+                );
+
+                Session& s = _get_session(poll_event->fd());
+                s.poll(std::move(poll_event));
+            } else if (event->is_read()) {
+                std::unique_ptr<EventSimplex> simplex_event(
+                    static_cast<EventSimplex*>(event.release())
+                );
+
+                Session& s = _get_session(simplex_event->fd());
+                s.read(std::move(simplex_event));
+            } else {
+                throw std::runtime_error("Unexpected multishot event");
+            }
+        }
     }
 }
 

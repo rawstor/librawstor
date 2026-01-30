@@ -1,5 +1,7 @@
 #include "uring_queue.hpp"
 
+#include "uring_buffer.hpp"
+
 #include <rawstorio/task.hpp>
 
 #include <rawstorstd/gpp.hpp>
@@ -75,6 +77,19 @@ Queue::poll(int fd, std::unique_ptr<rawstor::io::Task> t, unsigned int mask) {
     return static_cast<rawstor::io::Event*>(t.release());
 }
 
+rawstor::io::Event* Queue::poll_multishot(
+    int fd, std::unique_ptr<rawstor::io::Task> t, unsigned int mask
+) {
+    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
+    if (sqe == nullptr) {
+        RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
+    }
+    io_uring_prep_poll_multishot(sqe, fd, mask);
+    io_uring_sqe_set_data(sqe, t.get());
+
+    return static_cast<rawstor::io::Event*>(t.release());
+}
+
 rawstor::io::Event*
 Queue::read(int fd, std::unique_ptr<rawstor::io::TaskScalar> t) {
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
@@ -135,6 +150,25 @@ rawstor::io::Event* Queue::recv(
     io_uring_sqe_set_data(sqe, t.get());
 
     return static_cast<rawstor::io::Event*>(t.release());
+}
+
+rawstor::io::Event* Queue::recv_multishot(
+    int fd, std::unique_ptr<rawstor::io::TaskVectorExternal> t,
+    size_t entry_size, unsigned int entries, unsigned int flags
+) {
+    std::unique_ptr<BufferRing> buffer =
+        std::make_unique<BufferRing>(_ring, entry_size, entries, std::move(t));
+
+    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
+    if (sqe == nullptr) {
+        RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
+    }
+    io_uring_prep_recv_multishot(sqe, fd, nullptr, 0, flags);
+    sqe->flags |= IOSQE_BUFFER_SELECT;
+    sqe->buf_group = buffer->id();
+    io_uring_sqe_set_data(sqe, buffer.get());
+
+    return static_cast<rawstor::io::Event*>(buffer.release());
 }
 
 rawstor::io::Event* Queue::recvmsg(
@@ -265,7 +299,17 @@ void Queue::wait(unsigned int timeout) {
             size_t result = cqe->res >= 0 ? cqe->res : 0;
             int error = cqe->res < 0 ? -cqe->res : 0;
 
+            if (cqe->flags & IORING_CQE_F_BUFFER) {
+                static_cast<BufferRing*>(t.get())->select_entry(
+                    cqe->flags >> IORING_CQE_BUFFER_SHIFT
+                );
+            }
+
             (*t)(result, error);
+
+            if (cqe->flags & IORING_CQE_F_MORE) {
+                t.release();
+            }
         }
     } catch (...) {
         if (nr) {
@@ -275,6 +319,7 @@ void Queue::wait(unsigned int timeout) {
     }
 
     if (nr) {
+        // TODO: use __io_uring_buf_ring_cq_advance here
         io_uring_cq_advance(&_ring, nr);
     }
 }
