@@ -6,6 +6,7 @@
 #include <sys/mman.h>
 
 #include <cassert>
+#include <cstring>
 
 #include <bit>
 #include <memory>
@@ -40,6 +41,7 @@ BufferRing::BufferRing(
     io_uring& ring, size_t entry_size, unsigned int entries,
     std::unique_ptr<rawstor::io::TaskVectorExternal> t
 ) :
+    _ring(ring),
     _entry_size(entry_size),
     _entry_shift(std::countr_zero(entry_size)),
     _id(++_id_counter),
@@ -76,7 +78,7 @@ BufferRing::BufferRing(
         reg.bgid = _id;
 
         // TODO: Replace with io_uring_setup_buf_ring()?
-        int res = io_uring_register_buf_ring(&ring, &reg, 0);
+        int res = io_uring_register_buf_ring(&_ring, &reg, 0);
         if (res < 0) {
             RAWSTOR_THROW_SYSTEM_ERROR(-res);
         }
@@ -96,7 +98,13 @@ BufferRing::BufferRing(
 
 BufferRing::~BufferRing() {
     munmap(_buf_ring, _buf_ring_size);
-    // TODO: Add io_uring_free_buf_ring() if we are going to use
+    int res = io_uring_unregister_buf_ring(&_ring, _id);
+    if (res < 0) {
+        rawstor_error(
+            "io_uring_unregister_buf_ring() failed: %s\n", strerror(-res)
+        );
+    }
+    // TODO: Call io_uring_free_buf_ring() if we are going to use
     // io_uring_setup_buf_ring()
 }
 

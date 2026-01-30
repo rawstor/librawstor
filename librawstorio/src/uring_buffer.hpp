@@ -45,6 +45,8 @@ class BufferRing final : public rawstor::io::Task {
 private:
     static __u16 _id_counter;
 
+    io_uring& _ring;
+
     const size_t _entry_size;
     const unsigned int _entry_shift;
 
