@@ -105,10 +105,6 @@ public:
         _items(items) {}
 
     void operator()(size_t result, int error) override {
-        if (result > 0) {
-            std::vector<char> s(result + 1);
-            rawstor_iovec_to_buf(iov(), niov(), 0, s.data(), s.size());
-        }
         _items->emplace_back(iov(), niov(), result, error);
     }
 
