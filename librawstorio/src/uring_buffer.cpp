@@ -51,6 +51,7 @@ BufferRing::BufferRing(
     _entries_base(nullptr),
     _pending_offset(0),
     _pending_size(0),
+    _pending_entries(entries),
     _t(std::move(t)) {
 
     assert((_entry_size & (_entry_size - 1)) == 0);
@@ -108,7 +109,7 @@ void BufferRing::operator()(size_t result, int error) {
     if (result > 0) {
         _pending_entry->set_result(result);
         _pending_size += result;
-        _pending_entries.push_back(std::move(_pending_entry));
+        _pending_entries.push(std::move(_pending_entry));
     }
 
     while (_pending_size >= _t->size() || error) {
@@ -118,15 +119,14 @@ void BufferRing::operator()(size_t result, int error) {
         iov.reserve(_pending_entries.size());
 
         while (!_pending_entries.empty()) {
-            BufferRingEntry* e = _pending_entries.front().get();
-            void* e_data = static_cast<char*>(e->data()) + _pending_offset;
-            size_t e_size = e->result() - _pending_offset;
+            BufferRingEntry& e = _pending_entries.tail();
+            void* e_data = static_cast<char*>(e.data()) + _pending_offset;
+            size_t e_size = e.result() - _pending_offset;
             if (e_size <= _t->size() - iov_size) [[likely]] {
                 iov.push_back({.iov_base = e_data, .iov_len = e_size});
                 _pending_offset = 0;
                 _pending_size -= e_size;
-                entries.push_back(std::move(_pending_entries.front()));
-                _pending_entries.pop_front();
+                entries.push_back(_pending_entries.pop());
                 iov_size += e_size;
                 if (iov_size == _t->size()) {
                     break;

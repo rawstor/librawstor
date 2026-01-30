@@ -1,6 +1,8 @@
 #ifndef RAWSTORIO_URING_BUFFER_HPP
 #define RAWSTORIO_URING_BUFFER_HPP
 
+#include <rawstorstd/ringbuf.hpp>
+
 #include <rawstorio/task.hpp>
 
 #include <liburing.h>
@@ -55,7 +57,7 @@ private:
     size_t _pending_offset;
     size_t _pending_size;
     std::unique_ptr<BufferRingEntry> _pending_entry;
-    std::list<std::unique_ptr<BufferRingEntry>> _pending_entries;
+    rawstor::RingBuf<BufferRingEntry> _pending_entries;
 
     std::unique_ptr<rawstor::io::TaskVectorExternal> _t;
 
