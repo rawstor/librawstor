@@ -43,6 +43,12 @@ TaskVector::TaskVector() {
 #endif
 }
 
+TaskVectorExternal::TaskVectorExternal() : _iov(nullptr), _niov(0) {
+#ifdef RAWSTOR_TRACE_EVENTS
+    trace(__FILE__, __LINE__, __FUNCTION__, "");
+#endif
+}
+
 TaskMessage::TaskMessage() {
 #ifdef RAWSTOR_TRACE_EVENTS
     trace(__FILE__, __LINE__, __FUNCTION__, "");
