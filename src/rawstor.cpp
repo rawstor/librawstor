@@ -105,6 +105,32 @@ public:
     size_t size() const noexcept override { return _size; }
 };
 
+class TaskVectorExternal final : public rawstor::io::TaskVectorExternal {
+private:
+    size_t _size;
+    RawstorIOMultishotVectorCallback* _cb;
+    void* _data;
+
+public:
+    TaskVectorExternal(
+        size_t size, RawstorIOMultishotVectorCallback* cb, void* data
+    ) :
+        _size(size),
+        _cb(cb),
+        _data(data) {}
+
+    void operator()(size_t result, int error) override {
+        ssize_t res = _cb(iov(), niov(), result, error, _data);
+        if (res >= 0) [[likely]] {
+            _size = res;
+        } else {
+            RAWSTOR_THROW_SYSTEM_ERROR(-res);
+        }
+    }
+
+    size_t size() const noexcept override { return _size; }
+};
+
 class TaskMessage final : public rawstor::io::TaskMessage {
 private:
     msghdr* _msg;
@@ -207,6 +233,23 @@ int rawstor_fd_poll(
     }
 }
 
+int rawstor_fd_poll_multishot(
+    int fd, unsigned int mask, RawstorIOCallback* cb, void* data,
+    RawstorIOEvent** event
+) {
+    try {
+        std::unique_ptr<rawstor::io::Task> t = std::make_unique<Task>(cb, data);
+        RawstorIOEvent* e =
+            rawstor::io_queue->poll_multishot(fd, std::move(t), mask);
+        if (event != nullptr) {
+            *event = e;
+        }
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    }
+}
+
 int rawstor_fd_read(
     int fd, void* buf, size_t size, RawstorIOCallback* cb, void* data
 ) {
@@ -270,6 +313,26 @@ int rawstor_fd_recv(
         std::unique_ptr<rawstor::io::TaskScalar> t =
             std::make_unique<TaskScalar>(buf, size, cb, data);
         rawstor::io_queue->recv(fd, std::move(t), flags);
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    }
+}
+
+int rawstor_fd_recv_multishot(
+    int fd, size_t size, size_t entry_size, unsigned int entries,
+    unsigned int flags, RawstorIOMultishotVectorCallback* cb, void* data,
+    RawstorIOEvent** event
+) {
+    try {
+        std::unique_ptr<rawstor::io::TaskVectorExternal> t =
+            std::make_unique<TaskVectorExternal>(size, cb, data);
+        RawstorIOEvent* e = rawstor::io_queue->recv_multishot(
+            fd, std::move(t), entry_size, entries, flags
+        );
+        if (event != nullptr) {
+            *event = e;
+        }
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -367,6 +430,15 @@ int rawstor_fd_sendmsg(
         std::unique_ptr<rawstor::io::TaskMessage> t =
             std::make_unique<TaskMessage>(msg, size, cb, data);
         rawstor::io_queue->sendmsg(fd, std::move(t), flags);
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    }
+}
+
+int rawstor_fd_cancel(RawstorIOEvent* event) {
+    try {
+        rawstor::io_queue->cancel(event);
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
