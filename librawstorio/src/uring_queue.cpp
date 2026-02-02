@@ -277,7 +277,9 @@ void Queue::wait(unsigned int timeout) {
     };
 
     io_uring_cqe* cqe;
+    rawstor_trace("io_uring_submit_and_wait_timeout()\n");
     int res = io_uring_submit_and_wait_timeout(&_ring, &cqe, 1, &ts, nullptr);
+    rawstor_trace("io_uring_submit_and_wait_timeout(): res = %d\n", res);
     if (res < 0) {
         RAWSTOR_THROW_SYSTEM_ERROR(-res);
     }
@@ -290,6 +292,8 @@ void Queue::wait(unsigned int timeout) {
     try {
         unsigned int head;
         io_uring_for_each_cqe(&_ring, head, cqe) {
+            rawstor_trace("cqe->res = %d\n", cqe->res);
+
             ++nr;
 
             std::unique_ptr<rawstor::io::Task> t(
@@ -305,7 +309,9 @@ void Queue::wait(unsigned int timeout) {
                 );
             }
 
+            rawstor_trace("callback: result=%zu, error=%d\n", result, error);
             (*t)(result, error);
+            rawstor_trace("callback success\n");
 
             if (cqe->flags & IORING_CQE_F_MORE) {
                 t.release();

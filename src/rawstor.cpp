@@ -14,6 +14,7 @@
 #include <sys/uio.h>
 
 #include <memory>
+#include <sstream>
 #include <stdexcept>
 #include <system_error>
 
@@ -37,6 +38,11 @@ public:
     Task(RawstorIOCallback* cb, void* data) : _cb(cb), _data(data) {}
 
     void operator()(size_t result, int error) override {
+#ifdef RAWSTOR_TRACE_EVENTS
+        std::ostringstream oss;
+        oss << "result = " << result << ", error = " << error;
+        trace(__FILE__, __LINE__, __FUNCTION__, oss.str());
+#endif
         int res = _cb(result, error, _data);
         if (res) {
             RAWSTOR_THROW_SYSTEM_ERROR(-res);
@@ -60,6 +66,11 @@ public:
         _data(data) {}
 
     void operator()(size_t result, int error) override {
+#ifdef RAWSTOR_TRACE_EVENTS
+        std::ostringstream oss;
+        oss << "result = " << result << ", error = " << error;
+        trace(__FILE__, __LINE__, __FUNCTION__, oss.str());
+#endif
         int res = _cb(result, error, _data);
         if (res) {
             RAWSTOR_THROW_SYSTEM_ERROR(-res);
@@ -92,6 +103,11 @@ public:
         _data(data) {}
 
     void operator()(size_t result, int error) override {
+#ifdef RAWSTOR_TRACE_EVENTS
+        std::ostringstream oss;
+        oss << "result = " << result << ", error = " << error;
+        trace(__FILE__, __LINE__, __FUNCTION__, oss.str());
+#endif
         int res = _cb(result, error, _data);
         if (res) {
             RAWSTOR_THROW_SYSTEM_ERROR(-res);
@@ -120,6 +136,11 @@ public:
         _data(data) {}
 
     void operator()(size_t result, int error) override {
+#ifdef RAWSTOR_TRACE_EVENTS
+        std::ostringstream oss;
+        oss << "result = " << result << ", error = " << error;
+        trace(__FILE__, __LINE__, __FUNCTION__, oss.str());
+#endif
         ssize_t res = _cb(iov(), niov(), result, error, _data);
         if (res >= 0) [[likely]] {
             _size = res;
@@ -147,6 +168,11 @@ public:
         _data(data) {}
 
     void operator()(size_t result, int error) override {
+#ifdef RAWSTOR_TRACE_EVENTS
+        std::ostringstream oss;
+        oss << "result = " << result << ", error = " << error;
+        trace(__FILE__, __LINE__, __FUNCTION__, oss.str());
+#endif
         int res = _cb(result, error, _data);
         if (res) {
             RAWSTOR_THROW_SYSTEM_ERROR(-res);
