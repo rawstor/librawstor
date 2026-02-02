@@ -338,7 +338,7 @@ void EventSimplexVectorRecvMultishot::dispatch() {
         }
     }
 
-    if (full) {
+    if (full && !_error) {
         t->set(nullptr, 0);
         _result = 0;
         set_error(ENOBUFS);
