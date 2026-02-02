@@ -154,47 +154,43 @@ public:
     void operator()(size_t size, size_t result, int error);
 };
 
-class Task {
+class TaskMultishot {
 protected:
     rawstor::vhost::Device& _device;
 
 public:
     static int callback(size_t result, int error, void* data) {
-        std::unique_ptr<Task> t(static_cast<Task*>(data));
+        std::unique_ptr<TaskMultishot> t(static_cast<TaskMultishot*>(data));
+
         try {
             (*t)(result, error);
+            if (error == 0) {
+                t.release();
+            }
             return 0;
         } catch (const std::system_error& e) {
             return -e.code().value();
         }
     }
 
-    Task(rawstor::vhost::Device& device) : _device(device) {}
-    Task(const Task&) = delete;
-    Task(Task&&) = delete;
-    virtual ~Task() = default;
+    TaskMultishot(rawstor::vhost::Device& device) : _device(device) {}
+    TaskMultishot(const TaskMultishot&) = delete;
+    TaskMultishot(TaskMultishot&&) = delete;
+    virtual ~TaskMultishot() = default;
 
-    Task& operator=(const Task&) = delete;
-    Task& operator=(Task&&) = delete;
+    TaskMultishot& operator=(const TaskMultishot&) = delete;
+    TaskMultishot& operator=(TaskMultishot&&) = delete;
 
     virtual void operator()(size_t result, int error) = 0;
 };
 
-class TaskPoll : public Task {
+class TaskPoll : public TaskMultishot {
 public:
-    TaskPoll(rawstor::vhost::Device& device) : Task(device) {}
+    TaskPoll(rawstor::vhost::Device& device) : TaskMultishot(device) {}
     virtual ~TaskPoll() override = default;
 
     virtual unsigned int mask() = 0;
 };
-
-void poll(int fd, std::unique_ptr<TaskPoll> t) {
-    int res = rawstor_fd_poll(fd, t->mask(), t->callback, t.get());
-    if (res) {
-        RAWSTOR_THROW_SYSTEM_ERROR(-res);
-    }
-    t.release();
-}
 
 class TaskDispatch final : public TaskPoll {
 public:
@@ -238,7 +234,7 @@ public:
 };
 
 void TaskDispatch::operator()(size_t result, int error) {
-    if (error != 0) {
+    if (error != 0 && error != ECANCELED) {
         RAWSTOR_THROW_SYSTEM_ERROR(error);
     }
 
@@ -257,13 +253,10 @@ void TaskDispatch::operator()(size_t result, int error) {
     if (result & POLLHUP) {
         RAWSTOR_THROW_SYSTEM_ERROR(EPIPE);
     }
-
-    std::unique_ptr<TaskDispatch> t = std::make_unique<TaskDispatch>(_device);
-    poll(_device.dev()->sock, std::move(t));
 }
 
 void TaskWatch::operator()(size_t result, int error) {
-    if (error != 0) {
+    if (error != 0 && error != ECANCELED) {
         RAWSTOR_THROW_SYSTEM_ERROR(error);
     }
 
@@ -275,20 +268,14 @@ void TaskWatch::operator()(size_t result, int error) {
         RAWSTOR_THROW_SYSTEM_ERROR(EBADF);
     }
 
-    int watch = _device.find_watch(_fd);
+    bool has_watch = _device.has_watch(_fd);
 
-    if (result & _mask && watch) {
+    if ((result & _mask) && has_watch) {
         _cb(_device.dev(), _condition, _data);
     }
 
     if (result & POLLHUP) {
         RAWSTOR_THROW_SYSTEM_ERROR(EPIPE);
-    }
-
-    if (watch) {
-        std::unique_ptr<TaskWatch> t =
-            std::make_unique<TaskWatch>(_device, _fd, _condition, _cb, _data);
-        poll(_fd, std::move(t));
     }
 }
 
@@ -492,6 +479,29 @@ int set_config(
 namespace rawstor {
 namespace vhost {
 
+Watcher::Watcher(
+    rawstor::vhost::Device& device, int fd, int condition, vu_watch_cb cb,
+    void* data
+) :
+    _event(nullptr),
+    _counter(1) {
+    std::unique_ptr<TaskWatch> t =
+        std::make_unique<TaskWatch>(device, fd, condition, cb, data);
+    int res =
+        rawstor_fd_poll_multishot(fd, t->mask(), t->callback, t.get(), &_event);
+    if (res) {
+        RAWSTOR_THROW_SYSTEM_ERROR(-res);
+    }
+    t.release();
+}
+
+Watcher::~Watcher() {
+    int res = rawstor_fd_cancel(_event);
+    if (res < 0) {
+        rawstor_error("Failed to cancel event: %s\n", strerror(-res));
+    }
+}
+
 std::unordered_map<int, Device*> Device::_devices;
 
 Device::Device(const std::string& object_uris, int fd) :
@@ -639,29 +649,45 @@ void Device::set_config(
 }
 
 void Device::set_watch(int fd, int condition, vu_watch_cb cb, void* data) {
-    if (!find_watch(fd)) {
-        _watches.insert(std::pair<int, int>(fd, condition));
-        std::unique_ptr<TaskWatch> t =
-            std::make_unique<TaskWatch>(*this, fd, condition, cb, data);
-        poll(fd, std::move(t));
+    auto it = _watches.find(fd);
+    if (it != _watches.end()) {
+        it->second->inc_counter();
+        return;
     }
+
+    _watches.insert(
+        std::pair<int, std::unique_ptr<Watcher>>(
+            fd, std::make_unique<Watcher>(*this, fd, condition, cb, data)
+        )
+    );
 }
 
 void Device::remove_watch(int fd) {
-    _watches.erase(fd);
+    auto it = _watches.find(fd);
+    if (it == _watches.end()) {
+        return;
+    }
+
+    if (it->second->dec_counter() <= 0) {
+        _watches.erase(it);
+    }
 }
 
-int Device::find_watch(int fd) const noexcept {
+bool Device::has_watch(int fd) const noexcept {
     const auto& it = _watches.find(fd);
-    if (it == _watches.end()) {
-        return 0;
-    }
-    return it->second;
+    return it != _watches.end();
 }
 
 void Device::loop() {
+    RawstorIOEvent* event;
     std::unique_ptr<TaskDispatch> t = std::make_unique<TaskDispatch>(*this);
-    poll(_dev.sock, std::move(t));
+    int res = rawstor_fd_poll_multishot(
+        _dev.sock, t->mask(), t->callback, t.get(), &event
+    );
+    if (res < 0) {
+        RAWSTOR_THROW_SYSTEM_ERROR(-res);
+    }
+    t.release();
 
     while (true) {
         int res = rawstor_wait();
@@ -676,6 +702,11 @@ void Device::loop() {
         if (res < 0) {
             RAWSTOR_THROW_SYSTEM_ERROR(-res);
         }
+    }
+
+    res = rawstor_fd_cancel(event);
+    if (res < 0) {
+        RAWSTOR_THROW_SYSTEM_ERROR(-res);
     }
 }
 

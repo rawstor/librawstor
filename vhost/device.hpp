@@ -18,6 +18,24 @@ struct virtio_blk_config;
 namespace rawstor {
 namespace vhost {
 
+class Device;
+
+class Watcher {
+private:
+    RawstorIOEvent* _event;
+    int _counter;
+
+public:
+    Watcher(
+        rawstor::vhost::Device& device, int fd, int condition, vu_watch_cb cb,
+        void* data
+    );
+    ~Watcher();
+
+    int inc_counter() noexcept { return ++_counter; }
+    int dec_counter() noexcept { return --_counter; }
+};
+
 class Device final {
 private:
     static std::unordered_map<int, Device*> _devices;
@@ -30,7 +48,7 @@ private:
     uint64_t _features;
     uint64_t _protocol_features;
     std::unique_ptr<virtio_blk_config> _blk_config;
-    std::unordered_map<int, int> _watches;
+    std::unordered_map<int, std::unique_ptr<Watcher>> _watches;
 
 public:
     static Device& get(int fd);
@@ -81,7 +99,7 @@ public:
 
     void remove_watch(int fd);
 
-    int find_watch(int fd) const noexcept;
+    bool has_watch(int fd) const noexcept;
 
     void loop();
 };
