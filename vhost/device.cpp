@@ -154,10 +154,34 @@ public:
     void operator()(size_t size, size_t result, int error);
 };
 
-class TaskMultishot {
+class Task {
 protected:
     rawstor::vhost::Device& _device;
 
+public:
+    static int callback(size_t result, int error, void* data) {
+        std::unique_ptr<Task> t(static_cast<Task*>(data));
+
+        try {
+            (*t)(result, error);
+            return 0;
+        } catch (const std::system_error& e) {
+            return -e.code().value();
+        }
+    }
+
+    explicit Task(rawstor::vhost::Device& device) : _device(device) {}
+    Task(const Task&) = delete;
+    Task(Task&&) = delete;
+    virtual ~Task() = default;
+
+    Task& operator=(const Task&) = delete;
+    Task& operator=(Task&&) = delete;
+
+    virtual void operator()(size_t result, int error) = 0;
+};
+
+class TaskMultishot : public Task {
 public:
     static int callback(size_t result, int error, void* data) {
         std::unique_ptr<TaskMultishot> t(static_cast<TaskMultishot*>(data));
@@ -173,7 +197,7 @@ public:
         }
     }
 
-    TaskMultishot(rawstor::vhost::Device& device) : _device(device) {}
+    explicit TaskMultishot(rawstor::vhost::Device& device) : Task(device) {}
     TaskMultishot(const TaskMultishot&) = delete;
     TaskMultishot(TaskMultishot&&) = delete;
     virtual ~TaskMultishot() = default;
@@ -184,24 +208,32 @@ public:
     virtual void operator()(size_t result, int error) = 0;
 };
 
-class TaskPoll : public TaskMultishot {
+class TaskPoll : public Task {
 public:
-    TaskPoll(rawstor::vhost::Device& device) : TaskMultishot(device) {}
+    explicit TaskPoll(rawstor::vhost::Device& device) : Task(device) {}
     virtual ~TaskPoll() override = default;
 
     virtual unsigned int mask() = 0;
 };
 
+void poll(int fd, std::unique_ptr<TaskPoll> t) {
+    int res = rawstor_fd_poll(fd, t->mask(), t->callback, t.get());
+    if (res) {
+        RAWSTOR_THROW_SYSTEM_ERROR(-res);
+    }
+    t.release();
+}
+
 class TaskDispatch final : public TaskPoll {
 public:
-    TaskDispatch(rawstor::vhost::Device& device) : TaskPoll(device) {}
+    explicit TaskDispatch(rawstor::vhost::Device& device) : TaskPoll(device) {}
 
     unsigned int mask() override { return POLLIN; }
 
     void operator()(size_t, int error) override;
 };
 
-class TaskWatch final : public TaskPoll {
+class TaskWatch final : public TaskMultishot {
 private:
     int _fd;
     int _condition;
@@ -214,7 +246,7 @@ public:
         rawstor::vhost::Device& device, int fd, int condition, vu_watch_cb cb,
         void* data
     ) :
-        TaskPoll(device),
+        TaskMultishot(device),
         _fd(fd),
         _condition(condition),
         _mask(0),
@@ -228,13 +260,13 @@ public:
         }
     }
 
-    unsigned int mask() override { return _mask; }
+    unsigned int mask() { return _mask; }
 
     void operator()(size_t, int error) override;
 };
 
 void TaskDispatch::operator()(size_t result, int error) {
-    if (error != 0 && error != ECANCELED) {
+    if (error != 0) {
         RAWSTOR_THROW_SYSTEM_ERROR(error);
     }
 
@@ -253,6 +285,9 @@ void TaskDispatch::operator()(size_t result, int error) {
     if (result & POLLHUP) {
         RAWSTOR_THROW_SYSTEM_ERROR(EPIPE);
     }
+
+    std::unique_ptr<TaskDispatch> t = std::make_unique<TaskDispatch>(_device);
+    poll(_device.dev()->sock, std::move(t));
 }
 
 void TaskWatch::operator()(size_t result, int error) {
@@ -679,15 +714,8 @@ bool Device::has_watch(int fd) const noexcept {
 }
 
 void Device::loop() {
-    RawstorIOEvent* event;
     std::unique_ptr<TaskDispatch> t = std::make_unique<TaskDispatch>(*this);
-    int res = rawstor_fd_poll_multishot(
-        _dev.sock, t->mask(), t->callback, t.get(), &event
-    );
-    if (res < 0) {
-        RAWSTOR_THROW_SYSTEM_ERROR(-res);
-    }
-    t.release();
+    poll(_dev.sock, std::move(t));
 
     while (true) {
         int res = rawstor_wait();
@@ -702,11 +730,6 @@ void Device::loop() {
         if (res < 0) {
             RAWSTOR_THROW_SYSTEM_ERROR(-res);
         }
-    }
-
-    res = rawstor_fd_cancel(event);
-    if (res < 0) {
-        RAWSTOR_THROW_SYSTEM_ERROR(-res);
     }
 }
 

@@ -4,6 +4,7 @@
 
 #include <rawstorstd/gpp.hpp>
 #include <rawstorstd/logging.h>
+#include <rawstorstd/socket.h>
 
 #include <rawstor.h>
 
@@ -110,6 +111,11 @@ void Server::loop() {
     if (fd < 0) {
         RAWSTOR_THROW_ERRNO();
     }
+
+    // int res = rawstor_socket_set_nonblock(fd);
+    // if (res) {
+    //     RAWSTOR_THROW_SYSTEM_ERROR(-res);
+    // }
 
     Device d(_object_uris, fd);
     d.loop();
