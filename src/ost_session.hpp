@@ -26,6 +26,7 @@ class Context;
 class Session final : public rawstor::Session {
 private:
     RawstorObject* _o;
+    RawstorIOEvent* _read_event;
     uint16_t _cid_counter;
 
     std::shared_ptr<Context> _context;
@@ -33,36 +34,24 @@ private:
     int _connect();
 
 public:
-    Session(const URI& uri, unsigned int depth);
+    Session(rawstor::io::Queue& queue, const URI& uri, unsigned int depth);
     ~Session();
 
-    void read_response_head(rawstor::io::Queue& queue);
-    void read_response_body(
-        rawstor::io::Queue& queue, uint16_t cid, void* buf, size_t size
-    );
-    void read_response_body(
-        rawstor::io::Queue& queue, uint16_t cid, iovec* iov, unsigned int niov,
-        size_t size
-    );
-
     void create(
-        rawstor::io::Queue& queue, const RawstorUUID& id,
-        const RawstorObjectSpec& sp, std::unique_ptr<rawstor::Task> t
-    ) override;
-
-    void remove(
-        rawstor::io::Queue& queue, const RawstorUUID& id,
+        const RawstorUUID& id, const RawstorObjectSpec& sp,
         std::unique_ptr<rawstor::Task> t
     ) override;
 
+    void
+    remove(const RawstorUUID& id, std::unique_ptr<rawstor::Task> t) override;
+
     void spec(
-        rawstor::io::Queue& queue, const RawstorUUID& id, RawstorObjectSpec* sp,
+        const RawstorUUID& id, RawstorObjectSpec* sp,
         std::unique_ptr<rawstor::Task> t
     ) override;
 
     void set_object(
-        rawstor::io::Queue& queue, RawstorObject* object,
-        std::unique_ptr<rawstor::Task> t
+        RawstorObject* object, std::unique_ptr<rawstor::Task> t
     ) override;
 
     void pread(std::unique_ptr<rawstor::TaskScalar> t) override;
