@@ -177,6 +177,7 @@ private:
 protected:
     rawstor::TraceEvent _trace_event;
     std::shared_ptr<rawstor::ost::Context> _context;
+    RawstorOSTFrameResponse _response;
 
     std::function<void(size_t, int)> _cb;
 
@@ -230,7 +231,7 @@ public:
         }
     }
 
-    virtual void response_head_cb(RawstorOSTFrameResponse*, int error) = 0;
+    virtual void response_head_cb(iovec* iov, unsigned int niov, size_t result, int error) = 0;
 };
 
 class SessionOpSetObjectId final : public SessionOp {
@@ -261,14 +262,19 @@ public:
     size_t request_size() const noexcept override { return sizeof(_request); }
 
     void
-    response_head_cb(RawstorOSTFrameResponse* response, int error) override {
-        RAWSTOR_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
+    response_head_cb(iovec* iov, unsigned int niov, size_t result, int error) {
+        RAWSTOR_TRACE_EVENT_MESSAGE(
+            _trace_event, "niov = %d, result = %zu, error = %d\n", niov, result,
+            error
+        );
 
         rawstor::ost::Session& s = _context->session();
 
         if (!error) {
             error = validate_response(s, response);
         }
+
+        if (result)
 
         if (!error) {
             error = validate_cmd(s, response->cmd, RAWSTOR_CMD_SET_OBJECT);
