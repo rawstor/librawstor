@@ -97,7 +97,7 @@ size_t rawstor_iovec_to_iovec(
     }
 
     size_t total = 0;
-    size_t i = 0;
+    unsigned int i = 0;
     size_t src_pos = 0;
 
     while (i < src_niov && offset > 0) {
