@@ -102,7 +102,6 @@ ssize_t EventSimplexPoll::process() noexcept {
 void EventSimplexPollMultishot::dispatch() {
     Event::dispatch();
     _result = 0;
-    _error = 0;
 }
 
 ssize_t EventSimplexScalarRead::process() noexcept {
@@ -334,10 +333,12 @@ void EventSimplexVectorRecvMultishot::dispatch() {
         }
         t->set(nullptr, 0);
 
-        _error = 0;
+        if (_error) {
+            break;
+        }
     }
 
-    if (full) {
+    if (full && !_error) {
         t->set(nullptr, 0);
         _result = 0;
         set_error(ENOBUFS);
