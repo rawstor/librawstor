@@ -180,6 +180,7 @@ private:
 protected:
     RawstorObject* _o;
     std::shared_ptr<rawstor::ost::Context> _context;
+    RawstorOSTFrameResponse _response;
 
     std::unique_ptr<rawstor::Task> _t;
 
@@ -234,7 +235,7 @@ public:
         }
     }
 
-    virtual void response_head_cb(RawstorOSTFrameResponse*, int error) = 0;
+    virtual void response_head_cb(iovec* iov, unsigned int niov, size_t result, int error) = 0;
 };
 
 class SessionOpSetObjectId final : public SessionOp {
@@ -249,12 +250,14 @@ public:
     }
 
     void
-    response_head_cb(RawstorOSTFrameResponse* response, int error) override {
+    response_head_cb(iovec* iov, unsigned int niov, size_t result, int error) {
         rawstor::ost::Session& s = _context->session();
 
         if (!error) {
             error = validate_response(s, response);
         }
+
+        if (result)
 
         if (!error) {
             error = validate_cmd(s, response->cmd, RAWSTOR_CMD_SET_OBJECT);
