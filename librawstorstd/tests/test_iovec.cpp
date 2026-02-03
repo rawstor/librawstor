@@ -4,6 +4,8 @@
 
 #include <sys/uio.h>
 
+#include <list>
+#include <string>
 #include <vector>
 
 #include <cstdlib>
@@ -13,6 +15,7 @@ namespace {
 
 class IOVecTest : public testing::Test {
 private:
+    std::list<std::string> _iov_src_data;
     std::vector<iovec> _iov_src;
 
 protected:
@@ -21,23 +24,13 @@ protected:
 
     IOVecTest() : _niov(3) {
         for (unsigned int i = 0; i < _niov; ++i) {
-            const char s[] = "1234567890";
+            _iov_src_data.push_back("1234567890");
             _iov_src.push_back(
-                {.iov_base = malloc(sizeof(s) - 1), .iov_len = sizeof(s) - 1}
+                {.iov_base = _iov_src_data.back().data(),
+                 .iov_len = _iov_src_data.back().size()}
             );
-            memcpy(_iov_src[i].iov_base, s, sizeof(s) - 1);
         }
-        _iov = new iovec[_niov]();
-        for (unsigned int i = 0; i < _niov; ++i) {
-            _iov[i] = _iov_src[i];
-        }
-    }
-
-    ~IOVecTest() override {
-        for (auto iov : _iov_src) {
-            free(iov.iov_base);
-        }
-        delete[] _iov;
+        _iov = _iov_src.data();
     }
 };
 
@@ -301,6 +294,38 @@ TEST_F(IOVecTest, to_buf_overflow) {
 
     EXPECT_EQ(size, (size_t)27);
     EXPECT_EQ(strncmp(buf, "456789012345678901234567890", size), 0);
+}
+
+TEST_F(IOVecTest, to_iovec) {
+    std::vector<std::string> iov_dst_data;
+    std::vector<iovec> iov_dst;
+
+    for (unsigned int i = 0; i < 3; ++i) {
+        iov_dst_data.push_back(std::string(4, ' '));
+    }
+
+    for (unsigned int i = 0; i < 3; ++i) {
+        iov_dst.push_back(
+            {.iov_base = iov_dst_data[i].data(),
+             .iov_len = iov_dst_data[i].size()}
+        );
+    }
+
+    size_t size =
+        rawstor_iovec_to_iovec(_iov, _niov, 3, iov_dst.data(), iov_dst.size());
+
+    EXPECT_EQ(size, (size_t)12);
+    EXPECT_EQ(strncmp(iov_dst_data[0].data(), "4567", 4), 0);
+    EXPECT_EQ(strncmp(iov_dst_data[1].data(), "8901", 4), 0);
+    EXPECT_EQ(strncmp(iov_dst_data[2].data(), "2345", 4), 0);
+
+    size =
+        rawstor_iovec_to_iovec(_iov, _niov, 20, iov_dst.data(), iov_dst.size());
+
+    EXPECT_EQ(size, (size_t)10);
+    EXPECT_EQ(strncmp(iov_dst_data[0].data(), "1234", 4), 0);
+    EXPECT_EQ(strncmp(iov_dst_data[1].data(), "5678", 4), 0);
+    EXPECT_EQ(strncmp(iov_dst_data[2].data(), "90", 2), 0);
 }
 
 TEST_F(IOVecTest, size) {
