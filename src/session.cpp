@@ -37,7 +37,7 @@ Session::~Session() {
     }
 }
 
-std::unique_ptr<Session> Session::create(const URI& uri, unsigned int depth) {
+std::shared_ptr<Session> Session::create(const URI& uri, unsigned int depth) {
     if (uri.scheme() == "ost") {
         return std::make_unique<rawstor::ost::Session>(uri, depth);
     }
