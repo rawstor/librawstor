@@ -26,7 +26,7 @@ protected:
     inline void set_fd(int fd) noexcept { _fd = fd; }
 
 public:
-    static std::unique_ptr<Session> create(const URI& uri, unsigned int depth);
+    static std::shared_ptr<Session> create(const URI& uri, unsigned int depth);
 
     Session(const URI& uri, unsigned int depth);
     Session(const Session&) = delete;
