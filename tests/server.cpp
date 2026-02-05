@@ -2,8 +2,9 @@
 
 #include <rawstorstd/gpp.hpp>
 
+#include <arpa/inet.h>
+
 #include <sys/socket.h>
-#include <sys/un.h>
 
 #include <unistd.h>
 
@@ -21,7 +22,6 @@
 #include <ctime>
 
 namespace rawstor {
-namespace io {
 namespace tests {
 
 enum CommandType {
@@ -88,30 +88,17 @@ public:
     size_t size() const noexcept { return _size; }
 };
 
-Server::Server() : _fd(-1), _client_fd(-1), _thread(nullptr) {
-    {
-        const char tpl[] = "/tmp/rawstor_io_tests_server.sock.XXXXXX";
-        _name.reserve(sizeof(tpl));
-        std::copy(tpl, tpl + sizeof(tpl), std::back_inserter(_name));
-    }
-
-    if (mkstemp(_name.data()) == -1) {
-        RAWSTOR_THROW_ERRNO();
-    }
-
-    unlink(_name.data());
-
-    _fd = socket(AF_UNIX, SOCK_STREAM, 0);
+Server::Server(int port) : _fd(-1), _client_fd(-1), _thread(nullptr) {
+    _fd = socket(AF_INET, SOCK_STREAM, 0);
     if (_fd == -1) {
         RAWSTOR_THROW_ERRNO();
     }
 
-    sockaddr_un addr = {};
-    addr.sun_family = AF_UNIX;
-    if (snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", _name.data()) <
-        0) {
-        RAWSTOR_THROW_ERRNO();
-    }
+    struct sockaddr_in addr = {
+        .sin_family = AF_INET,
+        .sin_port = htons(port),
+        .sin_addr = {.s_addr = htonl(INADDR_ANY)}
+    };
 
     try {
         if (bind(_fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == -1) {
@@ -121,13 +108,9 @@ Server::Server() : _fd(-1), _client_fd(-1), _thread(nullptr) {
         if (listen(_fd, 1)) {
             RAWSTOR_THROW_ERRNO();
         }
-
         _thread = std::make_unique<std::thread>(Server::_main, this);
-
-        _accept();
     } catch (...) {
         ::close(_fd);
-        unlink(_name.data());
         throw;
     }
 }
@@ -145,8 +128,6 @@ Server::~Server() {
     if (_fd != -1) {
         ::close(_fd);
     }
-
-    unlink(_name.data());
 }
 
 void Server::_main(Server* server) {
@@ -220,15 +201,15 @@ void Server::_do_write(Command& command) {
     }
 }
 
-void Server::_accept() {
-    std::unique_lock lock(_mutex);
-    _commands.push_back(std::make_shared<CommandAccept>());
-    _push_condition.notify_one();
-}
-
 void Server::_stop() {
     std::unique_lock lock(_mutex);
     _commands.push_back(std::make_shared<CommandStop>());
+    _push_condition.notify_one();
+}
+
+void Server::accept() {
+    std::unique_lock lock(_mutex);
+    _commands.push_back(std::make_shared<CommandAccept>());
     _push_condition.notify_one();
 }
 
@@ -256,5 +237,4 @@ void Server::wait() {
 }
 
 } // namespace tests
-} // namespace io
 } // namespace rawstor

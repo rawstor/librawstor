@@ -15,6 +15,7 @@ AM_LDFLAGS = $(ASAN_LDFLAGS) \
 
 test_all_SOURCES = main.cpp \
                    fixture.hpp \
+                   server.cpp \
                    test_lifecycle.cpp
 test_all_LDADD = $(top_builddir)/librawstorio/src/librawstorio.la \
                  $(top_builddir)/librawstorstd/src/librawstorstd.la \
