@@ -21,10 +21,8 @@ private:
     std::vector<std::unique_ptr<rawstor::Connection>> _cns;
 
 public:
-    static void create(
-        const std::vector<rawstor::URI>& uris, const RawstorObjectSpec& sp,
-        std::vector<rawstor::URI>* object_uris
-    );
+    static std::vector<rawstor::URI>
+    create(const std::vector<rawstor::URI>& uris, const RawstorObjectSpec& sp);
     static void remove(const std::vector<rawstor::URI>& uris);
     static void
     spec(const std::vector<rawstor::URI>& uris, RawstorObjectSpec* sp);

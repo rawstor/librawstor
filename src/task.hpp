@@ -56,6 +56,7 @@ public:
 class TaskScalar : public Task {
 public:
     TaskScalar() : Task() {}
+    virtual ~TaskScalar() = default;
 
     virtual void* buf() noexcept = 0;
 
@@ -67,6 +68,7 @@ public:
 class TaskVector : public Task {
 public:
     TaskVector() : Task() {}
+    virtual ~TaskVector() = default;
 
     virtual iovec* iov() noexcept = 0;
 
