@@ -36,6 +36,84 @@
 
 namespace {
 
+class Queue final {
+private:
+    unsigned int _operations;
+    std::unique_ptr<rawstor::io::Queue> _q;
+
+public:
+    Queue(unsigned int operations, unsigned int depth) :
+        _operations(operations),
+        _q(rawstor::io::Queue::create(depth)) {}
+    Queue(const Queue&) = delete;
+
+    Queue& operator=(const Queue&) = delete;
+    Queue& operator=(Queue&&) = delete;
+
+    inline void sub_operation() noexcept { --_operations; }
+
+    inline rawstor::io::Queue& queue() noexcept { return *_q; }
+
+    void wait() {
+        std::exception_ptr eptr;
+        while (_operations > 0) {
+            try {
+                _q->wait(rawstor_opts_wait_timeout());
+            } catch (const std::exception& e) {
+                rawstor_error("%s\n", e.what());
+                if (!eptr) {
+                    eptr = std::current_exception();
+                }
+                --_operations;
+            }
+        }
+        if (eptr) {
+            std::rethrow_exception(eptr);
+        }
+    }
+};
+
+class QueueTask : public rawstor::Task {
+private:
+    Queue& _q;
+    std::shared_ptr<rawstor::Connection> _cn;
+
+public:
+    QueueTask(Queue& q, std::shared_ptr<rawstor::Connection> cn) :
+        _q(q),
+        _cn(cn) {}
+    virtual ~QueueTask() = default;
+
+    void operator()(RawstorObject*, size_t, int error) override {
+        if (error) {
+            RAWSTOR_THROW_SYSTEM_ERROR(error);
+        }
+
+        _q.sub_operation();
+    }
+};
+
+class QueueTaskCreate final : public QueueTask {
+private:
+    rawstor::URI _uri;
+    std::vector<rawstor::URI>& _uris;
+
+public:
+    QueueTaskCreate(
+        Queue& q, std::shared_ptr<rawstor::Connection> cn, rawstor::URI uri,
+        std::vector<rawstor::URI>& uris
+    ) :
+        QueueTask(q, cn),
+        _uri(uri),
+        _uris(uris) {}
+
+    void operator()(RawstorObject* o, size_t size, int error) override {
+        QueueTask::operator()(o, size, error);
+
+        _uris.push_back(_uri);
+    }
+};
+
 int uris(const std::vector<rawstor::URI>& uriv, char* buf, size_t size) {
     std::ostringstream oss;
     bool comma = false;
@@ -167,9 +245,8 @@ RawstorObject::RawstorObject(const std::vector<rawstor::URI>& uris) : _id() {
     }
 }
 
-void RawstorObject::create(
-    const std::vector<rawstor::URI>& uris, const RawstorObjectSpec& sp,
-    std::vector<rawstor::URI>* object_uris
+std::vector<rawstor::URI> RawstorObject::create(
+    const std::vector<rawstor::URI>& uris, const RawstorObjectSpec& sp
 ) {
     validate_not_empty(uris);
     validate_different_uris(uris);
@@ -182,13 +259,22 @@ void RawstorObject::create(
     }
     rawstor_uuid_to_string(&uuid, &uuid_string);
 
+    Queue q(uris.size(), QUEUE_DEPTH);
+
     std::vector<rawstor::URI> ret;
+    ret.reserve(uris.size());
+
+    for (const auto& uri : uris) {
+        rawstor::URI object_uri = rawstor::URI(uri, uuid_string);
+        std::shared_ptr<rawstor::Connection> cn =
+            std::make_shared<rawstor::Connection>(QUEUE_DEPTH);
+        std::unique_ptr<QueueTask> t =
+            std::make_unique<QueueTaskCreate>(q, cn, object_uri, ret);
+        cn->create(q.queue(), object_uri, sp, std::move(t));
+    }
+
     try {
-        for (const auto& uri : uris) {
-            rawstor::URI object_uri = rawstor::URI(uri, uuid_string);
-            rawstor::Connection(QUEUE_DEPTH).create(object_uri, sp);
-            ret.push_back(object_uri);
-        }
+        q.wait();
     } catch (...) {
         if (!ret.empty()) {
             try {
@@ -201,7 +287,8 @@ void RawstorObject::create(
         }
         throw;
     }
-    *object_uris = ret;
+
+    return ret;
 }
 
 void RawstorObject::remove(const std::vector<rawstor::URI>& uris) {
@@ -209,21 +296,16 @@ void RawstorObject::remove(const std::vector<rawstor::URI>& uris) {
     validate_different_uris(uris);
     validate_same_uuid(uris);
 
-    std::exception_ptr eptr;
-    for (const auto& uri : uris) {
-        try {
-            rawstor::Connection(QUEUE_DEPTH).remove(uri);
-        } catch (const std::exception& e) {
-            rawstor_error("%s\n", e.what());
+    Queue q(uris.size(), QUEUE_DEPTH);
 
-            if (!eptr) {
-                eptr = std::current_exception();
-            }
-        }
+    for (const auto& object_uri : uris) {
+        std::shared_ptr<rawstor::Connection> cn =
+            std::make_shared<rawstor::Connection>(QUEUE_DEPTH);
+        std::unique_ptr<QueueTask> t = std::make_unique<QueueTask>(q, cn);
+        cn->remove(q.queue(), object_uri, std::move(t));
     }
-    if (eptr) {
-        std::rethrow_exception(eptr);
-    }
+
+    q.wait();
 }
 
 void RawstorObject::spec(
@@ -236,7 +318,14 @@ void RawstorObject::spec(
     validate_different_uris(uris);
     validate_same_uuid(uris);
 
-    rawstor::Connection(QUEUE_DEPTH).spec(uris.front(), sp);
+    Queue q(1, QUEUE_DEPTH);
+
+    std::shared_ptr<rawstor::Connection> cn =
+        std::make_shared<rawstor::Connection>(QUEUE_DEPTH);
+    std::unique_ptr<QueueTask> t = std::make_unique<QueueTask>(q, cn);
+    cn->spec(q.queue(), uris.front(), sp, std::move(t));
+
+    q.wait();
 }
 
 std::vector<rawstor::URI> RawstorObject::uris() const {
@@ -325,8 +414,8 @@ int rawstor_object_create(
     size_t size
 ) {
     try {
-        std::vector<rawstor::URI> object_uriv;
-        RawstorObject::create(rawstor::URI::uriv(uris), *sp, &object_uriv);
+        std::vector<rawstor::URI> object_uriv =
+            RawstorObject::create(rawstor::URI::uriv(uris), *sp);
         return ::uris(object_uriv, object_uris, size);
     } catch (const std::system_error& e) {
         return -e.code().value();

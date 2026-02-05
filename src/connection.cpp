@@ -67,6 +67,25 @@ public:
     }
 };
 
+class ConnectionOp : public rawstor::Task {
+protected:
+    std::shared_ptr<rawstor::Session> _s;
+
+    std::unique_ptr<rawstor::Task> _t;
+
+public:
+    ConnectionOp(
+        const std::shared_ptr<rawstor::Session>& s,
+        std::unique_ptr<rawstor::Task> t
+    ) :
+        _s(s),
+        _t(std::move(t)) {}
+
+    void operator()(RawstorObject* o, size_t result, int error) override {
+        (*_t)(o, result, error);
+    }
+};
+
 class ConnectionOpScalar : public rawstor::Task {
 protected:
     rawstor::Connection& _cn;
@@ -433,52 +452,51 @@ const URI* Connection::uri() const noexcept {
     return &_sessions.front()->uri();
 }
 
-void Connection::create(const URI& uri, const RawstorObjectSpec& sp) {
+void Connection::create(
+    rawstor::io::Queue& queue, const URI& uri, const RawstorObjectSpec& sp,
+    std::unique_ptr<Task> t
+) {
     RawstorUUID id;
     int res = rawstor_uuid_from_string(&id, uri.path().filename().c_str());
     if (res) {
         RAWSTOR_THROW_SYSTEM_ERROR(-res);
     }
 
-    Queue q(1, _depth);
-
     std::shared_ptr<Session> s = Session::create(uri.parent(), _depth);
-    std::unique_ptr<QueueTask> t = std::make_unique<QueueTask>(q);
-    s->create(q.queue(), id, sp, std::move(t));
-
-    q.wait();
+    std::unique_ptr<ConnectionOp> op =
+        std::make_unique<ConnectionOp>(s, std::move(t));
+    s->create(queue, id, sp, std::move(op));
 }
 
-void Connection::remove(const URI& uri) {
+void Connection::remove(
+    rawstor::io::Queue& queue, const URI& uri, std::unique_ptr<Task> t
+) {
     RawstorUUID id;
     int res = rawstor_uuid_from_string(&id, uri.path().filename().c_str());
     if (res) {
         RAWSTOR_THROW_SYSTEM_ERROR(-res);
     }
 
-    Queue q(1, _depth);
-
     std::shared_ptr<Session> s = Session::create(uri.parent(), _depth);
-    std::unique_ptr<QueueTask> t = std::make_unique<QueueTask>(q);
-    s->remove(q.queue(), id, std::move(t));
-
-    q.wait();
+    std::unique_ptr<ConnectionOp> op =
+        std::make_unique<ConnectionOp>(s, std::move(t));
+    s->remove(queue, id, std::move(op));
 }
 
-void Connection::spec(const URI& uri, RawstorObjectSpec* sp) {
+void Connection::spec(
+    rawstor::io::Queue& queue, const URI& uri, RawstorObjectSpec* sp,
+    std::unique_ptr<Task> t
+) {
     RawstorUUID id;
     int res = rawstor_uuid_from_string(&id, uri.path().filename().c_str());
     if (res) {
         RAWSTOR_THROW_SYSTEM_ERROR(-res);
     }
 
-    Queue q(1, _depth);
-
     std::shared_ptr<Session> s = Session::create(uri.parent(), _depth);
-    std::unique_ptr<QueueTask> t = std::make_unique<QueueTask>(q);
-    s->spec(q.queue(), id, sp, std::move(t));
-
-    q.wait();
+    std::unique_ptr<ConnectionOp> op =
+        std::make_unique<ConnectionOp>(s, std::move(t));
+    s->spec(queue, id, sp, std::move(op));
 }
 
 void Connection::open(const URI& uri, RawstorObject* object, size_t nsessions) {

@@ -3,6 +3,8 @@
 
 #include <rawstorstd/uri.hpp>
 
+#include <rawstorio/queue.hpp>
+
 #include <rawstor/object.h>
 #include <rawstor/rawstor.h>
 
@@ -40,11 +42,18 @@ public:
 
     const URI* uri() const noexcept;
 
-    void create(const URI& uri, const RawstorObjectSpec& sp);
+    void create(
+        rawstor::io::Queue& queue, const URI& uri, const RawstorObjectSpec& sp,
+        std::unique_ptr<Task> t
+    );
 
-    void remove(const URI& uri);
+    void
+    remove(rawstor::io::Queue& queue, const URI& uri, std::unique_ptr<Task> t);
 
-    void spec(const URI& uri, RawstorObjectSpec* sp);
+    void spec(
+        rawstor::io::Queue& queue, const URI& uri, RawstorObjectSpec* sp,
+        std::unique_ptr<Task> t
+    );
 
     void open(const URI& uri, RawstorObject* object, size_t nsessions);
 
