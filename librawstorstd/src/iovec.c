@@ -154,7 +154,7 @@ size_t rawstor_iovec_to_iovec(
     return total;
 }
 
-size_t rawstor_iovec_size(struct iovec* iov, unsigned int niov) {
+size_t rawstor_iovec_size(const struct iovec* iov, unsigned int niov) {
     size_t ret = 0;
 
     for (unsigned int i = 0; i < niov; i++) {

@@ -31,7 +31,7 @@ size_t rawstor_iovec_to_iovec(
     struct iovec* dst_iov, unsigned int dst_niov
 );
 
-size_t rawstor_iovec_size(struct iovec* iov, unsigned int niov);
+size_t rawstor_iovec_size(const struct iovec* iov, unsigned int niov);
 
 #ifdef __cplusplus
 }
