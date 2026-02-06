@@ -68,7 +68,8 @@ size_t rawstor_iovec_from_buf(
 }
 
 size_t rawstor_iovec_to_buf(
-    struct iovec* iov, unsigned int niov, size_t offset, void* buf, size_t size
+    const struct iovec* iov, unsigned int niov, size_t offset, void* buf,
+    size_t size
 ) {
     size_t total = 0;
 
@@ -89,7 +90,7 @@ size_t rawstor_iovec_to_buf(
 }
 
 size_t rawstor_iovec_to_iovec(
-    struct iovec* src_iov, unsigned int src_niov, size_t offset,
+    const struct iovec* src_iov, unsigned int src_niov, size_t offset,
     struct iovec* dst_iov, unsigned int dst_niov
 ) {
     if (!src_niov || !dst_niov) {

@@ -12,7 +12,7 @@
 #include <errno.h>
 #include <stdint.h>
 
-uint64_t rawstor_hash_scalar(void* buf, size_t length) {
+uint64_t rawstor_hash_scalar(const void* buf, size_t length) {
 #ifdef RAWSTOR_WITH_LIBXXHASH
     return XXH3_64bits(buf, length);
 #else
