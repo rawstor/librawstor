@@ -37,12 +37,6 @@
  */
 #define IOVEC_SIZE 256
 
-#define t_trace(size, result, error)                                           \
-    rawstor_debug(                                                             \
-        "%s(): %zu of %zu, error = %d\n", __FUNCTION__, (result), (size),      \
-        error                                                                  \
-    )
-
 namespace {
 
 class SessionOp;
@@ -532,7 +526,14 @@ public:
     virtual ~Request() = default;
 
     void operator()(size_t result, int error) override {
-        t_trace(_op->request_size(), result, error);
+#ifdef RAWSTOR_TRACE_EVENTS
+        {
+            std::ostringstream oss;
+            oss << result << " of " << _op->request_size()
+                << ", error = " << error;
+            trace(__FILE__, __LINE__, __FUNCTION__, oss.str());
+        }
+#endif
 
         if (!error) {
             error = validate_result(
@@ -557,7 +558,14 @@ public:
     }
 
     void operator()(size_t result, int error) override {
-        t_trace(sizeof(*_context->response()), result, error);
+#ifdef RAWSTOR_TRACE_EVENTS
+        {
+            std::ostringstream oss;
+            oss << result << " of " << sizeof(*_context->response())
+                << ", error = " << error;
+            trace(__FILE__, __LINE__, __FUNCTION__, oss.str());
+        }
+#endif
 
         _context->sub_read();
         if (!error) {
@@ -597,7 +605,13 @@ public:
     }
 
     void operator()(size_t result, int error) override {
-        t_trace(_size, result, error);
+#ifdef RAWSTOR_TRACE_EVENTS
+        {
+            std::ostringstream oss;
+            oss << result << " of " << _size << ", error = " << error;
+            trace(__FILE__, __LINE__, __FUNCTION__, oss.str());
+        }
+#endif
 
         _context->sub_read();
         SessionOp& op = _context->find_op();
@@ -629,7 +643,13 @@ public:
     }
 
     void operator()(size_t result, int error) override {
-        t_trace(_size, result, error);
+#ifdef RAWSTOR_TRACE_EVENTS
+        {
+            std::ostringstream oss;
+            oss << result << " of " << _size << ", error = " << error;
+            trace(__FILE__, __LINE__, __FUNCTION__, oss.str());
+        }
+#endif
 
         _context->sub_read();
         SessionOp& op = _context->find_op();
