@@ -53,30 +53,6 @@ public:
 #endif
 };
 
-class TaskScalar : public Task {
-public:
-    TaskScalar() : Task() {}
-
-    virtual void* buf() noexcept = 0;
-
-    virtual size_t size() const noexcept = 0;
-
-    virtual off_t offset() const noexcept = 0;
-};
-
-class TaskVector : public Task {
-public:
-    TaskVector() : Task() {}
-
-    virtual iovec* iov() noexcept = 0;
-
-    virtual unsigned int niov() const noexcept = 0;
-
-    virtual size_t size() const noexcept = 0;
-
-    virtual off_t offset() const noexcept = 0;
-};
-
 } // namespace rawstor
 
 #endif // RAWSTOR_TASK_HPP

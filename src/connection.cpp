@@ -7,6 +7,7 @@
 #include <rawstorio/queue.hpp>
 
 #include <rawstorstd/gpp.hpp>
+#include <rawstorstd/iovec.h>
 
 #include <rawstor/object.h>
 
@@ -66,20 +67,20 @@ public:
     }
 };
 
-class ConnectionOpScalar : public rawstor::TaskScalar {
+class ConnectionOpScalar : public rawstor::Task {
 protected:
     rawstor::Connection& _cn;
     std::shared_ptr<rawstor::Session> _s;
     unsigned int _attempt;
 
-    std::unique_ptr<rawstor::TaskScalar> _t;
+    std::unique_ptr<rawstor::Task> _t;
 
     virtual void _retry(const std::shared_ptr<rawstor::Session>& s) = 0;
 
 public:
     ConnectionOpScalar(
         rawstor::Connection& cn, const std::shared_ptr<rawstor::Session>& s,
-        unsigned int attempt, std::unique_ptr<rawstor::TaskScalar> t
+        unsigned int attempt, std::unique_ptr<rawstor::Task> t
     ) :
         _cn(cn),
         _s(s),
@@ -132,29 +133,23 @@ public:
         }
     }
 
-    void* buf() noexcept override { return _t->buf(); }
-
-    size_t size() const noexcept override { return _t->size(); }
-
-    off_t offset() const noexcept override { return _t->offset(); }
-
     virtual std::string str() const = 0;
 };
 
-class ConnectionOpVector : public rawstor::TaskVector {
+class ConnectionOpVector : public rawstor::Task {
 protected:
     rawstor::Connection& _cn;
     std::shared_ptr<rawstor::Session> _s;
     unsigned int _attempt;
 
-    std::unique_ptr<rawstor::TaskVector> _t;
+    std::unique_ptr<rawstor::Task> _t;
 
     virtual void _retry(const std::shared_ptr<rawstor::Session>& s) = 0;
 
 public:
     ConnectionOpVector(
         rawstor::Connection& cn, const std::shared_ptr<rawstor::Session>& s,
-        unsigned int attempt, std::unique_ptr<rawstor::TaskVector> t
+        unsigned int attempt, std::unique_ptr<rawstor::Task> t
     ) :
         _cn(cn),
         _s(s),
@@ -207,109 +202,136 @@ public:
         }
     }
 
-    iovec* iov() noexcept override { return _t->iov(); }
-
-    unsigned int niov() const noexcept override { return _t->niov(); }
-
-    size_t size() const noexcept override { return _t->size(); }
-
-    off_t offset() const noexcept override { return _t->offset(); }
-
     virtual std::string str() const = 0;
 };
 
 class ConnectionOpPRead final : public ConnectionOpScalar {
 protected:
+    void* _buf;
+    size_t _size;
+    off_t _offset;
+
     void _retry(const std::shared_ptr<rawstor::Session>& s) override {
-        std::unique_ptr<rawstor::TaskScalar> op =
-            std::make_unique<ConnectionOpPRead>(
-                _cn, s, _attempt + 1, std::move(_t)
-            );
-        s->pread(std::move(op));
+        std::unique_ptr<rawstor::Task> op = std::make_unique<ConnectionOpPRead>(
+            _cn, s, _attempt + 1, _buf, _size, _offset, std::move(_t)
+        );
+        s->pread(_buf, _size, _offset, std::move(op));
     }
 
 public:
     ConnectionOpPRead(
         rawstor::Connection& cn, const std::shared_ptr<rawstor::Session>& s,
-        unsigned int attempt, std::unique_ptr<rawstor::TaskScalar> t
+        unsigned int attempt, void* buf, size_t size, off_t offset,
+        std::unique_ptr<rawstor::Task> t
     ) :
-        ConnectionOpScalar(cn, s, attempt, std::move(t)) {}
+        ConnectionOpScalar(cn, s, attempt, std::move(t)),
+        _buf(buf),
+        _size(size),
+        _offset(offset) {}
 
     std::string str() const override {
         std::ostringstream oss;
-        oss << "IO pread: size = " << size() << ", offset = " << offset();
+        oss << "IO pread: size = " << _size << ", offset = " << _offset;
         return oss.str();
     }
 };
 
 class ConnectionOpPReadV final : public ConnectionOpVector {
 protected:
+    iovec* _iov;
+    unsigned int _niov;
+    size_t _size;
+    off_t _offset;
+
     void _retry(const std::shared_ptr<rawstor::Session>& s) override {
-        std::unique_ptr<rawstor::TaskVector> op =
+        std::unique_ptr<rawstor::Task> op =
             std::make_unique<ConnectionOpPReadV>(
-                _cn, s, _attempt + 1, std::move(_t)
+                _cn, s, _attempt + 1, _iov, _niov, _size, _offset, std::move(_t)
             );
-        s->preadv(std::move(op));
+        s->preadv(_iov, _niov, _size, _offset, std::move(op));
     }
 
 public:
     ConnectionOpPReadV(
         rawstor::Connection& cn, const std::shared_ptr<rawstor::Session>& s,
-        unsigned int attempt, std::unique_ptr<rawstor::TaskVector> t
+        unsigned int attempt, iovec* iov, unsigned int niov, size_t size,
+        off_t offset, std::unique_ptr<rawstor::Task> t
     ) :
-        ConnectionOpVector(cn, s, attempt, std::move(t)) {}
+        ConnectionOpVector(cn, s, attempt, std::move(t)),
+        _iov(iov),
+        _niov(niov),
+        _size(size),
+        _offset(offset) {}
 
     std::string str() const override {
         std::ostringstream oss;
-        oss << "IO preadv: size = " << size() << ", offset = " << offset();
+        oss << "IO preadv: size = " << _size << ", offset = " << _offset;
         return oss.str();
     }
 };
 
 class ConnectionOpPWrite final : public ConnectionOpScalar {
 protected:
+    const void* _buf;
+    size_t _size;
+    off_t _offset;
+
     void _retry(const std::shared_ptr<rawstor::Session>& s) override {
-        std::unique_ptr<rawstor::TaskScalar> op =
+        std::unique_ptr<rawstor::Task> op =
             std::make_unique<ConnectionOpPWrite>(
-                _cn, s, _attempt + 1, std::move(_t)
+                _cn, s, _attempt + 1, _buf, _size, _offset, std::move(_t)
             );
-        s->pwrite(std::move(op));
+        s->pwrite(_buf, _size, _offset, std::move(op));
     }
 
 public:
     ConnectionOpPWrite(
         rawstor::Connection& cn, const std::shared_ptr<rawstor::Session>& s,
-        unsigned int attempt, std::unique_ptr<rawstor::TaskScalar> t
+        unsigned int attempt, const void* buf, size_t size, off_t offset,
+        std::unique_ptr<rawstor::Task> t
     ) :
-        ConnectionOpScalar(cn, s, attempt, std::move(t)) {}
+        ConnectionOpScalar(cn, s, attempt, std::move(t)),
+        _buf(buf),
+        _size(size),
+        _offset(offset) {}
 
     std::string str() const override {
         std::ostringstream oss;
-        oss << "IO pwrite: size = " << size() << ", offset = " << offset();
+        oss << "IO pwrite: size = " << _size << ", offset = " << _offset;
         return oss.str();
     }
 };
 
 class ConnectionOpPWriteV final : public ConnectionOpVector {
 private:
+    const iovec* _iov;
+    unsigned int _niov;
+    size_t _size;
+    off_t _offset;
+
     void _retry(const std::shared_ptr<rawstor::Session>& s) override {
-        std::unique_ptr<rawstor::TaskVector> op =
+        std::unique_ptr<rawstor::Task> op =
             std::make_unique<ConnectionOpPWriteV>(
-                _cn, s, _attempt + 1, std::move(_t)
+                _cn, s, _attempt + 1, _iov, _niov, _size, _offset, std::move(_t)
             );
-        s->pwritev(std::move(op));
+        s->pwritev(_iov, _niov, _size, _offset, std::move(op));
     }
 
 public:
     ConnectionOpPWriteV(
         rawstor::Connection& cn, const std::shared_ptr<rawstor::Session>& s,
-        unsigned int attempt, std::unique_ptr<rawstor::TaskVector> t
+        unsigned int attempt, const iovec* iov, unsigned int niov, size_t size,
+        off_t offset, std::unique_ptr<rawstor::Task> t
     ) :
-        ConnectionOpVector(cn, s, attempt, std::move(t)) {}
+        ConnectionOpVector(cn, s, attempt, std::move(t)),
+        _iov(iov),
+        _niov(niov),
+        _size(size),
+        _offset(offset) {}
 
     std::string str() const override {
         std::ostringstream oss;
-        oss << "IO pwritev: size = " << size() << ", offset = " << offset();
+        oss << "IO pwritev: size = " << _size << ", offset = " << _offset;
         return oss.str();
     }
 };
@@ -469,32 +491,46 @@ void Connection::close() {
     _object = nullptr;
 }
 
-void Connection::pread(std::unique_ptr<TaskScalar> t) {
+void Connection::pread(
+    void* buf, size_t size, off_t offset, std::unique_ptr<Task> t
+) {
     std::shared_ptr<Session> s = get_next_session();
-    std::unique_ptr<TaskScalar> op =
-        std::make_unique<ConnectionOpPRead>(*this, s, 0, std::move(t));
-    s->pread(std::move(op));
+    std::unique_ptr<Task> op = std::make_unique<ConnectionOpPRead>(
+        *this, s, 0, buf, size, offset, std::move(t)
+    );
+    s->pread(buf, size, offset, std::move(op));
 }
 
-void Connection::preadv(std::unique_ptr<TaskVector> t) {
+void Connection::preadv(
+    iovec* iov, unsigned int niov, size_t size, off_t offset,
+    std::unique_ptr<Task> t
+) {
     std::shared_ptr<Session> s = get_next_session();
-    std::unique_ptr<TaskVector> op =
-        std::make_unique<ConnectionOpPReadV>(*this, s, 0, std::move(t));
-    s->preadv(std::move(op));
+    std::unique_ptr<Task> op = std::make_unique<ConnectionOpPReadV>(
+        *this, s, 0, iov, niov, size, offset, std::move(t)
+    );
+    s->preadv(iov, niov, size, offset, std::move(op));
 }
 
-void Connection::pwrite(std::unique_ptr<TaskScalar> t) {
+void Connection::pwrite(
+    const void* buf, size_t size, off_t offset, std::unique_ptr<Task> t
+) {
     std::shared_ptr<Session> s = get_next_session();
-    std::unique_ptr<TaskScalar> op =
-        std::make_unique<ConnectionOpPWrite>(*this, s, 0, std::move(t));
-    s->pwrite(std::move(op));
+    std::unique_ptr<Task> op = std::make_unique<ConnectionOpPWrite>(
+        *this, s, 0, buf, size, offset, std::move(t)
+    );
+    s->pwrite(buf, size, offset, std::move(op));
 }
 
-void Connection::pwritev(std::unique_ptr<TaskVector> t) {
+void Connection::pwritev(
+    const iovec* iov, unsigned int niov, size_t size, off_t offset,
+    std::unique_ptr<Task> t
+) {
     std::shared_ptr<Session> s = get_next_session();
-    std::unique_ptr<TaskVector> op =
-        std::make_unique<ConnectionOpPWriteV>(*this, s, 0, std::move(t));
-    s->pwritev(std::move(op));
+    std::unique_ptr<Task> op = std::make_unique<ConnectionOpPWriteV>(
+        *this, s, 0, iov, niov, size, offset, std::move(t)
+    );
+    s->pwritev(iov, niov, size, offset, std::move(op));
 }
 
 } // namespace rawstor

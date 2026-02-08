@@ -95,7 +95,6 @@ class ObjectOp {
 private:
     size_t _mirrors;
     size_t _size;
-    off_t _offset;
 
     size_t _result;
     int _error;
@@ -104,21 +103,13 @@ private:
     void* _data;
 
 public:
-    ObjectOp(
-        size_t mirrors, size_t size, off_t offset, RawstorCallback* cb,
-        void* data
-    ) :
+    ObjectOp(size_t mirrors, size_t size, RawstorCallback* cb, void* data) :
         _mirrors(mirrors),
         _size(size),
-        _offset(offset),
         _result(-1),
         _error(0),
         _cb(cb),
         _data(data) {}
-
-    inline size_t size() const noexcept { return _size; }
-
-    inline off_t offset() const noexcept { return _offset; }
 
     void task_cb(RawstorObject* o, size_t result, int error) {
         --_mirrors;
@@ -142,54 +133,16 @@ public:
     }
 };
 
-class TaskScalar final : public rawstor::TaskScalar {
+class Task final : public rawstor::Task {
 private:
     std::shared_ptr<ObjectOp> _op;
 
-    void* _buf;
-
 public:
-    TaskScalar(const std::shared_ptr<ObjectOp>& op, void* buf) :
-        _op(op),
-        _buf(buf) {}
+    Task(const std::shared_ptr<ObjectOp>& op) : _op(op) {}
 
     void operator()(RawstorObject* o, size_t result, int error) override {
         _op->task_cb(o, result, error);
     }
-
-    void* buf() noexcept override { return _buf; }
-
-    size_t size() const noexcept override { return _op->size(); }
-
-    off_t offset() const noexcept override { return _op->offset(); }
-};
-
-class TaskVector final : public rawstor::TaskVector {
-private:
-    std::shared_ptr<ObjectOp> _op;
-
-    iovec* _iov;
-    unsigned int _niov;
-
-public:
-    TaskVector(
-        const std::shared_ptr<ObjectOp>& op, iovec* iov, unsigned int niov
-    ) :
-        _op(op),
-        _iov(iov),
-        _niov(niov) {}
-
-    void operator()(RawstorObject* o, size_t result, int error) override {
-        _op->task_cb(o, result, error);
-    }
-
-    iovec* iov() noexcept override { return _iov; }
-
-    unsigned int niov() const noexcept override { return _niov; }
-
-    size_t size() const noexcept override { return _op->size(); }
-
-    off_t offset() const noexcept override { return _op->offset(); }
 };
 
 } // namespace
@@ -303,18 +256,17 @@ void RawstorObject::pread(
     void* buf, size_t size, off_t offset, RawstorCallback* cb, void* data
 ) {
     rawstor_debug(
-        "%s(): offset = %jd, size = %zu\n", __FUNCTION__, (intmax_t)offset, size
+        "%s(): size = %zu, offset = %jd\n", __FUNCTION__, size, (intmax_t)offset
     );
 
     std::shared_ptr<ObjectOp> op =
-        std::make_shared<ObjectOp>(1, size, offset, cb, data);
+        std::make_shared<ObjectOp>(1, size, cb, data);
 
     /**
      * TODO: Can we select fastest connection here?
      */
-    std::unique_ptr<rawstor::TaskScalar> t =
-        std::make_unique<TaskScalar>(op, buf);
-    _cns.front()->pread(std::move(t));
+    std::unique_ptr<rawstor::Task> t = std::make_unique<Task>(op);
+    _cns.front()->pread(buf, size, offset, std::move(t));
 }
 
 void RawstorObject::preadv(
@@ -322,35 +274,32 @@ void RawstorObject::preadv(
     RawstorCallback* cb, void* data
 ) {
     rawstor_debug(
-        "%s(): offset = %jd, niov = %u, size = %zu\n", __FUNCTION__,
-        (intmax_t)offset, niov, size
+        "%s(): size = %zu, offset = %jd\n", __FUNCTION__, size, (intmax_t)offset
     );
 
     std::shared_ptr<ObjectOp> op =
-        std::make_shared<ObjectOp>(1, size, offset, cb, data);
+        std::make_shared<ObjectOp>(1, size, cb, data);
 
     /**
      * TODO: Can we select fastest connection here?
      */
-    std::unique_ptr<rawstor::TaskVector> t =
-        std::make_unique<TaskVector>(op, iov, niov);
-    _cns.front()->preadv(std::move(t));
+    std::unique_ptr<rawstor::Task> t = std::make_unique<Task>(op);
+    _cns.front()->preadv(iov, niov, size, offset, std::move(t));
 }
 
 void RawstorObject::pwrite(
     void* buf, size_t size, off_t offset, RawstorCallback* cb, void* data
 ) {
     rawstor_debug(
-        "%s(): offset = %jd, size = %zu\n", __FUNCTION__, (intmax_t)offset, size
+        "%s(): size = %zu, offset = %jd\n", __FUNCTION__, size, (intmax_t)offset
     );
 
     std::shared_ptr<ObjectOp> op =
-        std::make_shared<ObjectOp>(_cns.size(), size, offset, cb, data);
+        std::make_shared<ObjectOp>(_cns.size(), size, cb, data);
 
     for (auto& cn : _cns) {
-        std::unique_ptr<rawstor::TaskScalar> t =
-            std::make_unique<TaskScalar>(op, buf);
-        cn->pwrite(std::move(t));
+        std::unique_ptr<rawstor::Task> t = std::make_unique<Task>(op);
+        cn->pwrite(buf, size, offset, std::move(t));
     }
 }
 
@@ -359,17 +308,15 @@ void RawstorObject::pwritev(
     RawstorCallback* cb, void* data
 ) {
     rawstor_debug(
-        "%s(): offset = %jd, niov = %u, size = %zu\n", __FUNCTION__,
-        (intmax_t)offset, niov, size
+        "%s(): size = %zu, offset = %jd\n", __FUNCTION__, size, (intmax_t)offset
     );
 
     std::shared_ptr<ObjectOp> op =
-        std::make_shared<ObjectOp>(_cns.size(), size, offset, cb, data);
+        std::make_shared<ObjectOp>(_cns.size(), size, cb, data);
 
     for (auto& cn : _cns) {
-        std::unique_ptr<rawstor::TaskVector> t =
-            std::make_unique<TaskVector>(op, iov, niov);
-        cn->pwritev(std::move(t));
+        std::unique_ptr<rawstor::Task> t = std::make_unique<Task>(op);
+        cn->pwritev(iov, niov, size, offset, std::move(t));
     }
 }
 
