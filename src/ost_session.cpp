@@ -726,8 +726,8 @@ private:
 
 public:
     ResponseBodyScalar(
-        const std::shared_ptr<rawstor::ost::Context>& context,
-        void* buf, size_t size
+        const std::shared_ptr<rawstor::ost::Context>& context, void* buf,
+        size_t size
     ) :
         _context(context),
         _buf(buf),
@@ -765,8 +765,8 @@ private:
 
 public:
     ResponseBodyVector(
-        const std::shared_ptr<rawstor::ost::Context>& context,
-        iovec* iov, unsigned int niov, size_t size
+        const std::shared_ptr<rawstor::ost::Context>& context, iovec* iov,
+        unsigned int niov, size_t size
     ) :
         _context(context),
         _iov(iov),
@@ -913,8 +913,7 @@ void Session::read_response_body(
 }
 
 void Session::read_response_body(
-    rawstor::io::Queue& queue, iovec* iov, unsigned int niov,
-    size_t size
+    rawstor::io::Queue& queue, iovec* iov, unsigned int niov, size_t size
 ) {
     std::unique_ptr<ResponseBodyVector> res =
         std::make_unique<ResponseBodyVector>(_context, iov, niov, size);

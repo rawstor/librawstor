@@ -37,12 +37,9 @@ public:
     ~Session();
 
     void read_response_head(rawstor::io::Queue& queue);
+    void read_response_body(rawstor::io::Queue& queue, void* buf, size_t size);
     void read_response_body(
-        rawstor::io::Queue& queue, void* buf, size_t size
-    );
-    void read_response_body(
-        rawstor::io::Queue& queue, iovec* iov, unsigned int niov,
-        size_t size
+        rawstor::io::Queue& queue, iovec* iov, unsigned int niov, size_t size
     );
 
     void create(
