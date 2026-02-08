@@ -116,6 +116,7 @@ private:
     rawstor::ost::Session* _s;
     std::unordered_map<uint16_t, std::shared_ptr<SessionOp>> _ops;
     unsigned int _reads;
+    RawstorOSTFrameResponse _response;
 
 public:
     Context(rawstor::ost::Session& s) : _s(&s), _reads(0) {}
@@ -141,10 +142,12 @@ public:
 
     void unregister_op(uint16_t cid) { _ops.erase(cid); }
 
-    SessionOp& find_op(uint16_t cid) {
-        auto it = _ops.find(cid);
+    inline RawstorOSTFrameResponse* response() noexcept { return &_response; }
+
+    SessionOp& find_op() {
+        auto it = _ops.find(_response.cid);
         if (it == _ops.end()) {
-            rawstor_error("Unexpected cid: %u\n", cid);
+            rawstor_error("Unexpected cid: %u\n", _response.cid);
             RAWSTOR_THROW_SYSTEM_ERROR(EPROTO);
         }
 
@@ -327,7 +330,7 @@ public:
         if (!error) {
             _hash = response->hash;
             s.read_response_body(
-                *rawstor::io_queue, cid(),
+                *rawstor::io_queue,
                 static_cast<rawstor::TaskScalar*>(_t.get())->buf(),
                 static_cast<rawstor::TaskScalar*>(_t.get())->size()
             );
@@ -397,7 +400,7 @@ public:
         if (!error) {
             _hash = response->hash;
             s.read_response_body(
-                *rawstor::io_queue, cid(),
+                *rawstor::io_queue,
                 static_cast<rawstor::TaskVector*>(_t.get())->iov(),
                 static_cast<rawstor::TaskVector*>(_t.get())->niov(),
                 static_cast<rawstor::TaskVector*>(_t.get())->size()
@@ -676,7 +679,6 @@ public:
 class ResponseHead final : public rawstor::io::TaskScalar {
 private:
     std::shared_ptr<rawstor::ost::Context> _context;
-    RawstorOSTFrameResponse _response;
 
 public:
     explicit ResponseHead(
@@ -698,8 +700,8 @@ public:
             _context->fail_in_flight(error);
         } else {
             try {
-                SessionOp& op = _context->find_op(_response.cid);
-                op.response_head_cb(&_response, 0);
+                SessionOp& op = _context->find_op();
+                op.response_head_cb(_context->response(), 0);
             } catch (const std::system_error& e) {
                 _context->fail_in_flight(e.code().value());
             }
@@ -709,25 +711,25 @@ public:
         }
     }
 
-    inline void* buf() noexcept override { return &_response; }
+    inline void* buf() noexcept override { return _context->response(); }
 
-    inline size_t size() const noexcept override { return sizeof(_response); }
+    inline size_t size() const noexcept override {
+        return sizeof(*_context->response());
+    }
 };
 
 class ResponseBodyScalar final : public rawstor::io::TaskScalar {
 private:
     std::shared_ptr<rawstor::ost::Context> _context;
-    uint16_t _cid;
     void* _buf;
     size_t _size;
 
 public:
     ResponseBodyScalar(
-        const std::shared_ptr<rawstor::ost::Context>& context, uint16_t cid,
-        void* buf, size_t size
+        const std::shared_ptr<rawstor::ost::Context>& context, void* buf,
+        size_t size
     ) :
         _context(context),
-        _cid(cid),
         _buf(buf),
         _size(size) {
         _context->add_read();
@@ -737,7 +739,7 @@ public:
         t_trace(*this, result, error);
 
         _context->sub_read();
-        SessionOp& op = _context->find_op(_cid);
+        SessionOp& op = _context->find_op();
 
         if (!error) {
             error = validate_result(_context->session().fd(), _size, result);
@@ -757,18 +759,16 @@ public:
 class ResponseBodyVector final : public rawstor::io::TaskVector {
 private:
     std::shared_ptr<rawstor::ost::Context> _context;
-    uint16_t _cid;
     iovec* _iov;
     unsigned int _niov;
     size_t _size;
 
 public:
     ResponseBodyVector(
-        const std::shared_ptr<rawstor::ost::Context>& context, uint16_t cid,
-        iovec* iov, unsigned int niov, size_t size
+        const std::shared_ptr<rawstor::ost::Context>& context, iovec* iov,
+        unsigned int niov, size_t size
     ) :
         _context(context),
-        _cid(cid),
         _iov(iov),
         _niov(niov),
         _size(size) {
@@ -779,7 +779,7 @@ public:
         t_trace(*this, result, error);
 
         _context->sub_read();
-        SessionOp& op = _context->find_op(_cid);
+        SessionOp& op = _context->find_op();
 
         if (!error) {
             error = validate_result(_context->session().fd(), size(), result);
@@ -905,19 +905,18 @@ void Session::read_response_head(rawstor::io::Queue& queue) {
 }
 
 void Session::read_response_body(
-    rawstor::io::Queue& queue, uint16_t cid, void* buf, size_t size
+    rawstor::io::Queue& queue, void* buf, size_t size
 ) {
     std::unique_ptr<ResponseBodyScalar> res =
-        std::make_unique<ResponseBodyScalar>(_context, cid, buf, size);
+        std::make_unique<ResponseBodyScalar>(_context, buf, size);
     queue.read(fd(), std::move(res));
 }
 
 void Session::read_response_body(
-    rawstor::io::Queue& queue, uint16_t cid, iovec* iov, unsigned int niov,
-    size_t size
+    rawstor::io::Queue& queue, iovec* iov, unsigned int niov, size_t size
 ) {
     std::unique_ptr<ResponseBodyVector> res =
-        std::make_unique<ResponseBodyVector>(_context, cid, iov, niov, size);
+        std::make_unique<ResponseBodyVector>(_context, iov, niov, size);
     queue.readv(fd(), std::move(res));
 }
 
