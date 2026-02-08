@@ -460,7 +460,7 @@ public:
         });
     }
 
-    const iovec* request_iov() noexcept { return _iov.data(); }
+    const iovec* request_iov() const noexcept { return _iov.data(); }
 
     unsigned int request_niov() const noexcept { return _iov.size(); }
 
