@@ -62,13 +62,24 @@ public:
         std::unique_ptr<rawstor::Task> t
     ) override;
 
-    void pread(std::unique_ptr<rawstor::TaskScalar> t) override;
+    void pread(
+        void* buf, size_t size, off_t offset, std::unique_ptr<rawstor::Task> t
+    ) override;
 
-    void preadv(std::unique_ptr<rawstor::TaskVector> t) override;
+    void preadv(
+        iovec* iov, unsigned int niov, size_t size, off_t offset,
+        std::unique_ptr<rawstor::Task> t
+    ) override;
 
-    void pwrite(std::unique_ptr<rawstor::TaskScalar> t) override;
+    void pwrite(
+        const void* buf, size_t size, off_t offset,
+        std::unique_ptr<rawstor::Task> t
+    ) override;
 
-    void pwritev(std::unique_ptr<rawstor::TaskVector> t) override;
+    void pwritev(
+        const iovec* iov, unsigned int niov, size_t size, off_t offset,
+        std::unique_ptr<rawstor::Task> t
+    ) override;
 };
 
 } // namespace ost

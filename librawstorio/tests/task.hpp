@@ -44,31 +44,6 @@ public:
     }
 };
 
-class SimpleTaskScalar final : public rawstor::io::TaskScalar {
-private:
-    void* _buf;
-    size_t _size;
-
-    size_t* _result;
-    int* _error;
-
-public:
-    SimpleTaskScalar(void* buf, size_t size, size_t* result, int* error) :
-        rawstor::io::TaskScalar(),
-        _buf(buf),
-        _size(size),
-        _result(result),
-        _error(error) {}
-
-    void operator()(size_t result, int error) override {
-        *_result = result;
-        *_error = error;
-    }
-
-    void* buf() noexcept override { return _buf; }
-    size_t size() const noexcept override { return _size; }
-};
-
 class SimpleTaskVectorExternalItem {
 private:
     std::vector<char> _data;
@@ -105,7 +80,7 @@ public:
         _items(items) {}
 
     void operator()(size_t result, int error) override {
-        _items->emplace_back(iov(), niov(), result, error);
+        _items->emplace_back(_iov, _niov, result, error);
     }
 
     size_t size() const noexcept override { return _size; }
