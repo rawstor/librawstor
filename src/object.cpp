@@ -288,7 +288,7 @@ void RawstorObject::preadv(
 }
 
 void RawstorObject::pwrite(
-    void* buf, size_t size, off_t offset, RawstorCallback* cb, void* data
+    const void* buf, size_t size, off_t offset, RawstorCallback* cb, void* data
 ) {
     rawstor_debug(
         "%s(): size = %zu, offset = %jd\n", __FUNCTION__, size, (intmax_t)offset
@@ -304,7 +304,7 @@ void RawstorObject::pwrite(
 }
 
 void RawstorObject::pwritev(
-    iovec* iov, unsigned int niov, size_t size, off_t offset,
+    const iovec* iov, unsigned int niov, size_t size, off_t offset,
     RawstorCallback* cb, void* data
 ) {
     rawstor_debug(
