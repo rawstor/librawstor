@@ -7,12 +7,12 @@
 int main(int argc, char** argv) {
     int res = rawstor_initialize(nullptr);
     if (res < 0) {
-        RAWSTOR_THROW_ERRNO(-res);
+        RAWSTOR_THROW_SYSTEM_ERROR(-res);
     }
 
     testing::InitGoogleTest(&argc, argv);
 
-    int res = RUN_ALL_TESTS();
+    res = RUN_ALL_TESTS();
 
     rawstor_terminate();
 
