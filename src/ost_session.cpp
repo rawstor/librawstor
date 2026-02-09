@@ -348,6 +348,7 @@ class SessionOpReadV final : public SessionOp {
 private:
     iovec* _iov;
     unsigned int _niov;
+    size_t _size;
     RawstorOSTFrameIO _request;
 
     uint64_t _hash;
@@ -361,12 +362,13 @@ public:
         SessionOp(o, context, cid, std::move(t)),
         _iov(iov),
         _niov(niov),
+        _size(size),
         _request({
             .magic = RAWSTOR_MAGIC,
             .cmd = RAWSTOR_CMD_READ,
             .cid = cid,
             .offset = (uint64_t)offset,
-            .len = (uint32_t)size,
+            .len = (uint32_t)_size,
             .hash = 0,
             .sync = 0,
         }),
@@ -390,7 +392,7 @@ public:
 
         if (!error) {
             _hash = response->hash;
-            s.read_response_body(*rawstor::io_queue, _iov, _niov);
+            s.read_response_body(*rawstor::io_queue, _iov, _niov, _size);
         } else {
             _dispatch(0, error);
         }
