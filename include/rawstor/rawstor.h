@@ -33,8 +33,8 @@ int rawstor_fd_read(
 );
 
 int rawstor_fd_readv(
-    int fd, struct iovec* iov, unsigned int niov, size_t size,
-    RawstorIOCallback* cb, void* data
+    int fd, struct iovec* iov, unsigned int niov, RawstorIOCallback* cb,
+    void* data
 );
 
 int rawstor_fd_pread(
@@ -43,7 +43,7 @@ int rawstor_fd_pread(
 );
 
 int rawstor_fd_preadv(
-    int fd, struct iovec* iov, unsigned int niov, size_t size, off_t offset,
+    int fd, struct iovec* iov, unsigned int niov, off_t offset,
     RawstorIOCallback* cb, void* data
 );
 
@@ -53,37 +53,37 @@ int rawstor_fd_recv(
 );
 
 int rawstor_fd_recvmsg(
-    int fd, struct msghdr* message, size_t size, unsigned int flags,
-    RawstorIOCallback* cb, void* data
+    int fd, struct msghdr* msg, unsigned int flags, RawstorIOCallback* cb,
+    void* data
 );
 
 int rawstor_fd_write(
-    int fd, void* buf, size_t size, RawstorIOCallback* cb, void* data
+    int fd, const void* buf, size_t size, RawstorIOCallback* cb, void* data
 );
 
 int rawstor_fd_writev(
-    int fd, struct iovec* iov, unsigned int niov, size_t size,
-    RawstorIOCallback* cb, void* data
+    int fd, const struct iovec* iov, unsigned int niov, RawstorIOCallback* cb,
+    void* data
 );
 
 int rawstor_fd_pwrite(
-    int fd, void* buf, size_t size, off_t offset, RawstorIOCallback* cb,
+    int fd, const void* buf, size_t size, off_t offset, RawstorIOCallback* cb,
     void* data
 );
 
 int rawstor_fd_pwritev(
-    int fd, struct iovec* iov, unsigned int niov, size_t size, off_t offset,
+    int fd, const struct iovec* iov, unsigned int niov, off_t offset,
     RawstorIOCallback* cb, void* data
 );
 
 int rawstor_fd_send(
-    int fd, void* buf, size_t size, unsigned int flags, RawstorIOCallback* cb,
-    void* data
+    int fd, const void* buf, size_t size, unsigned int flags,
+    RawstorIOCallback* cb, void* data
 );
 
 int rawstor_fd_sendmsg(
-    int fd, struct msghdr* message, size_t size, unsigned int flags,
-    RawstorIOCallback* cb, void* data
+    int fd, const struct msghdr* msg, unsigned int flags, RawstorIOCallback* cb,
+    void* data
 );
 
 /**
