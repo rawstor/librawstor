@@ -94,11 +94,10 @@ Server::Server(int port) : _fd(-1), _client_fd(-1), _thread(nullptr) {
         RAWSTOR_THROW_ERRNO();
     }
 
-    struct sockaddr_in addr = {
-        .sin_family = AF_INET,
-        .sin_port = htons(port),
-        .sin_addr = {.s_addr = htonl(INADDR_ANY)}
-    };
+    sockaddr_in addr = {};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
     try {
         if (bind(_fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == -1) {
