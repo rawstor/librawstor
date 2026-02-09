@@ -35,27 +35,8 @@ public:
 #endif
 };
 
-class TaskScalar : public Task {
-public:
-    TaskScalar();
-    virtual ~TaskScalar() override = default;
-
-    virtual void* buf() noexcept = 0;
-    virtual size_t size() const noexcept = 0;
-};
-
-class TaskVector : public Task {
-public:
-    TaskVector();
-    virtual ~TaskVector() override = default;
-
-    virtual iovec* iov() noexcept = 0;
-    virtual unsigned int niov() const noexcept = 0;
-    virtual size_t size() const noexcept = 0;
-};
-
-class TaskVectorExternal : public TaskVector {
-private:
+class TaskVectorExternal : public Task {
+protected:
     iovec* _iov;
     unsigned int _niov;
 
@@ -68,16 +49,6 @@ public:
         _niov = niov;
     }
 
-    iovec* iov() noexcept override final { return _iov; }
-    virtual unsigned int niov() const noexcept override final { return _niov; }
-};
-
-class TaskMessage : public Task {
-public:
-    TaskMessage();
-    virtual ~TaskMessage() override = default;
-
-    virtual msghdr* msg() noexcept = 0;
     virtual size_t size() const noexcept = 0;
 };
 

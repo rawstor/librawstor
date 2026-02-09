@@ -66,7 +66,7 @@ void Queue::setup_fd(int fd) {
 }
 
 rawstor::io::Event*
-Queue::poll(int fd, std::unique_ptr<rawstor::io::Task> t, unsigned int mask) {
+Queue::poll(int fd, unsigned int mask, std::unique_ptr<rawstor::io::Task> t) {
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
@@ -79,7 +79,7 @@ Queue::poll(int fd, std::unique_ptr<rawstor::io::Task> t, unsigned int mask) {
 }
 
 rawstor::io::Event* Queue::poll_multishot(
-    int fd, std::unique_ptr<rawstor::io::Task> t, unsigned int mask
+    int fd, unsigned int mask, std::unique_ptr<rawstor::io::Task> t
 ) {
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
@@ -91,39 +91,43 @@ rawstor::io::Event* Queue::poll_multishot(
     return static_cast<rawstor::io::Event*>(t.release());
 }
 
-rawstor::io::Event*
-Queue::read(int fd, std::unique_ptr<rawstor::io::TaskScalar> t) {
+rawstor::io::Event* Queue::read(
+    int fd, void* buf, size_t size, std::unique_ptr<rawstor::io::Task> t
+) {
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
-    io_uring_prep_read(sqe, fd, t->buf(), t->size(), 0);
+    io_uring_prep_read(sqe, fd, buf, size, 0);
     io_uring_sqe_set_data(sqe, t.get());
     ++_events;
 
     return static_cast<rawstor::io::Event*>(t.release());
 }
 
-rawstor::io::Event*
-Queue::readv(int fd, std::unique_ptr<rawstor::io::TaskVector> t) {
+rawstor::io::Event* Queue::readv(
+    int fd, iovec* iov, unsigned int niov, std::unique_ptr<rawstor::io::Task> t
+) {
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
-    io_uring_prep_readv(sqe, fd, t->iov(), t->niov(), 0);
+    io_uring_prep_readv(sqe, fd, iov, niov, 0);
     io_uring_sqe_set_data(sqe, t.get());
     ++_events;
 
     return static_cast<rawstor::io::Event*>(t.release());
 }
 
-rawstor::io::Event*
-Queue::pread(int fd, std::unique_ptr<rawstor::io::TaskScalar> t, off_t offset) {
+rawstor::io::Event* Queue::pread(
+    int fd, void* buf, size_t size, off_t offset,
+    std::unique_ptr<rawstor::io::Task> t
+) {
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
-    io_uring_prep_read(sqe, fd, t->buf(), t->size(), offset);
+    io_uring_prep_read(sqe, fd, buf, size, offset);
     io_uring_sqe_set_data(sqe, t.get());
     ++_events;
 
@@ -131,13 +135,14 @@ Queue::pread(int fd, std::unique_ptr<rawstor::io::TaskScalar> t, off_t offset) {
 }
 
 rawstor::io::Event* Queue::preadv(
-    int fd, std::unique_ptr<rawstor::io::TaskVector> t, off_t offset
+    int fd, iovec* iov, unsigned int niov, off_t offset,
+    std::unique_ptr<rawstor::io::Task> t
 ) {
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
-    io_uring_prep_readv(sqe, fd, t->iov(), t->niov(), offset);
+    io_uring_prep_readv(sqe, fd, iov, niov, offset);
     io_uring_sqe_set_data(sqe, t.get());
     ++_events;
 
@@ -145,13 +150,14 @@ rawstor::io::Event* Queue::preadv(
 }
 
 rawstor::io::Event* Queue::recv(
-    int fd, std::unique_ptr<rawstor::io::TaskScalar> t, unsigned int flags
+    int fd, void* buf, size_t size, unsigned int flags,
+    std::unique_ptr<rawstor::io::Task> t
 ) {
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
-    io_uring_prep_recv(sqe, fd, t->buf(), t->size(), flags);
+    io_uring_prep_recv(sqe, fd, buf, size, flags);
     io_uring_sqe_set_data(sqe, t.get());
     ++_events;
 
@@ -159,8 +165,8 @@ rawstor::io::Event* Queue::recv(
 }
 
 rawstor::io::Event* Queue::recv_multishot(
-    int fd, std::unique_ptr<rawstor::io::TaskVectorExternal> t,
-    size_t entry_size, unsigned int entries, unsigned int flags
+    int fd, size_t entry_size, unsigned int entries, unsigned int flags,
+    std::unique_ptr<rawstor::io::TaskVectorExternal> t
 ) {
     std::unique_ptr<BufferRing> buffer =
         std::make_unique<BufferRing>(_ring, entry_size, entries, std::move(t));
@@ -178,39 +184,43 @@ rawstor::io::Event* Queue::recv_multishot(
 }
 
 rawstor::io::Event* Queue::recvmsg(
-    int fd, std::unique_ptr<rawstor::io::TaskMessage> t, unsigned int flags
+    int fd, msghdr* msg, unsigned int flags,
+    std::unique_ptr<rawstor::io::Task> t
 ) {
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
-    io_uring_prep_recvmsg(sqe, fd, t->msg(), flags);
+    io_uring_prep_recvmsg(sqe, fd, msg, flags);
     io_uring_sqe_set_data(sqe, t.get());
     ++_events;
 
     return static_cast<rawstor::io::Event*>(t.release());
 }
 
-rawstor::io::Event*
-Queue::write(int fd, std::unique_ptr<rawstor::io::TaskScalar> t) {
+rawstor::io::Event* Queue::write(
+    int fd, const void* buf, size_t size, std::unique_ptr<rawstor::io::Task> t
+) {
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
-    io_uring_prep_write(sqe, fd, t->buf(), t->size(), 0);
+    io_uring_prep_write(sqe, fd, buf, size, 0);
     io_uring_sqe_set_data(sqe, t.get());
     ++_events;
 
     return static_cast<rawstor::io::Event*>(t.release());
 }
 
-rawstor::io::Event*
-Queue::writev(int fd, std::unique_ptr<rawstor::io::TaskVector> t) {
+rawstor::io::Event* Queue::writev(
+    int fd, const iovec* iov, unsigned int niov,
+    std::unique_ptr<rawstor::io::Task> t
+) {
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
-    io_uring_prep_writev(sqe, fd, t->iov(), t->niov(), 0);
+    io_uring_prep_writev(sqe, fd, iov, niov, 0);
     io_uring_sqe_set_data(sqe, t.get());
     ++_events;
 
@@ -218,13 +228,14 @@ Queue::writev(int fd, std::unique_ptr<rawstor::io::TaskVector> t) {
 }
 
 rawstor::io::Event* Queue::pwrite(
-    int fd, std::unique_ptr<rawstor::io::TaskScalar> t, off_t offset
+    int fd, const void* buf, size_t size, off_t offset,
+    std::unique_ptr<rawstor::io::Task> t
 ) {
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
-    io_uring_prep_write(sqe, fd, t->buf(), t->size(), offset);
+    io_uring_prep_write(sqe, fd, buf, size, offset);
     io_uring_sqe_set_data(sqe, t.get());
     ++_events;
 
@@ -232,13 +243,14 @@ rawstor::io::Event* Queue::pwrite(
 }
 
 rawstor::io::Event* Queue::pwritev(
-    int fd, std::unique_ptr<rawstor::io::TaskVector> t, off_t offset
+    int fd, const iovec* iov, unsigned int niov, off_t offset,
+    std::unique_ptr<rawstor::io::Task> t
 ) {
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
-    io_uring_prep_writev(sqe, fd, t->iov(), t->niov(), offset);
+    io_uring_prep_writev(sqe, fd, iov, niov, offset);
     io_uring_sqe_set_data(sqe, t.get());
     ++_events;
 
@@ -246,13 +258,14 @@ rawstor::io::Event* Queue::pwritev(
 }
 
 rawstor::io::Event* Queue::send(
-    int fd, std::unique_ptr<rawstor::io::TaskScalar> t, unsigned int flags
+    int fd, const void* buf, size_t size, unsigned int flags,
+    std::unique_ptr<rawstor::io::Task> t
 ) {
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
-    io_uring_prep_send(sqe, fd, t->buf(), t->size(), flags);
+    io_uring_prep_send(sqe, fd, buf, size, flags);
     io_uring_sqe_set_data(sqe, t.get());
     ++_events;
 
@@ -260,13 +273,14 @@ rawstor::io::Event* Queue::send(
 }
 
 rawstor::io::Event* Queue::sendmsg(
-    int fd, std::unique_ptr<rawstor::io::TaskMessage> t, unsigned int flags
+    int fd, const msghdr* msg, unsigned int flags,
+    std::unique_ptr<rawstor::io::Task> t
 ) {
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
-    io_uring_prep_sendmsg(sqe, fd, t->msg(), flags);
+    io_uring_prep_sendmsg(sqe, fd, msg, flags);
     io_uring_sqe_set_data(sqe, t.get());
     ++_events;
 

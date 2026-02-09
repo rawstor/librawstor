@@ -28,7 +28,7 @@ TEST_F(CancelTest, poll) {
     {
         std::unique_ptr<rawstor::io::Task> t =
             std::make_unique<rawstor::io::tests::SimpleTask>(&result, &error);
-        event = _queue->poll(_fd, std::move(t), POLLIN);
+        event = _queue->poll(_fd, POLLIN, std::move(t));
     }
 
     EXPECT_THROW(_queue->wait(0), std::system_error);
@@ -54,7 +54,7 @@ TEST_F(CancelTest, poll_completed) {
     {
         std::unique_ptr<rawstor::io::Task> t =
             std::make_unique<rawstor::io::tests::SimpleTask>(&result, &error);
-        event = _queue->poll(_fd, std::move(t), POLLIN);
+        event = _queue->poll(_fd, POLLIN, std::move(t));
     }
 
     _queue->wait(0);
@@ -71,11 +71,9 @@ TEST_F(CancelTest, read) {
     rawstor::io::Event* event = nullptr;
 
     {
-        std::unique_ptr<rawstor::io::TaskScalar> t =
-            std::make_unique<rawstor::io::tests::SimpleTaskScalar>(
-                client_buf, sizeof(client_buf), &result, &error
-            );
-        event = _queue->read(_fd, std::move(t));
+        std::unique_ptr<rawstor::io::Task> t =
+            std::make_unique<rawstor::io::tests::SimpleTask>(&result, &error);
+        event = _queue->read(_fd, client_buf, sizeof(client_buf), std::move(t));
     }
 
     EXPECT_THROW(_queue->wait(0), std::system_error);
@@ -101,11 +99,9 @@ TEST_F(CancelTest, read_completed) {
     _server.wait();
 
     {
-        std::unique_ptr<rawstor::io::TaskScalar> t =
-            std::make_unique<rawstor::io::tests::SimpleTaskScalar>(
-                client_buf, sizeof(client_buf), &result, &error
-            );
-        event = _queue->read(_fd, std::move(t));
+        std::unique_ptr<rawstor::io::Task> t =
+            std::make_unique<rawstor::io::tests::SimpleTask>(&result, &error);
+        event = _queue->read(_fd, client_buf, sizeof(client_buf), std::move(t));
     }
 
     _queue->wait(0);
@@ -126,11 +122,10 @@ TEST_F(CancelTest, write) {
     rawstor::io::Event* event = nullptr;
 
     {
-        std::unique_ptr<rawstor::io::TaskScalar> t =
-            std::make_unique<rawstor::io::tests::SimpleTaskScalar>(
-                client_buf, sizeof(client_buf), &result, &error
-            );
-        event = _queue->write(_fd, std::move(t));
+        std::unique_ptr<rawstor::io::Task> t =
+            std::make_unique<rawstor::io::tests::SimpleTask>(&result, &error);
+        event =
+            _queue->write(_fd, client_buf, sizeof(client_buf), std::move(t));
     }
 
     _queue->cancel(event);
@@ -151,11 +146,10 @@ TEST_F(CancelTest, write_completed) {
     rawstor::io::Event* event = nullptr;
 
     {
-        std::unique_ptr<rawstor::io::TaskScalar> t =
-            std::make_unique<rawstor::io::tests::SimpleTaskScalar>(
-                client_buf, sizeof(client_buf), &result, &error
-            );
-        event = _queue->write(_fd, std::move(t));
+        std::unique_ptr<rawstor::io::Task> t =
+            std::make_unique<rawstor::io::tests::SimpleTask>(&result, &error);
+        event =
+            _queue->write(_fd, client_buf, sizeof(client_buf), std::move(t));
     }
 
     _queue->wait(0);

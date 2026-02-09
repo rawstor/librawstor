@@ -49,11 +49,12 @@ public:
     );
 
     void pwrite(
-        void* buf, size_t size, off_t offset, RawstorCallback* cb, void* data
+        const void* buf, size_t size, off_t offset, RawstorCallback* cb,
+        void* data
     );
 
     void pwritev(
-        iovec* iov, unsigned int niov, size_t size, off_t offset,
+        const iovec* iov, unsigned int niov, size_t size, off_t offset,
         RawstorCallback* cb, void* data
     );
 };

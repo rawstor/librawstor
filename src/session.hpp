@@ -16,10 +16,6 @@ namespace rawstor {
 
 class Task;
 
-class TaskScalar;
-
-class TaskVector;
-
 class Session {
 private:
     unsigned int _depth;
@@ -67,13 +63,22 @@ public:
         std::unique_ptr<Task> t
     ) = 0;
 
-    virtual void pread(std::unique_ptr<TaskScalar> t) = 0;
+    virtual void
+    pread(void* buf, size_t size, off_t offset, std::unique_ptr<Task> t) = 0;
 
-    virtual void preadv(std::unique_ptr<TaskVector> t) = 0;
+    virtual void preadv(
+        iovec* iov, unsigned int niov, size_t size, off_t offset,
+        std::unique_ptr<Task> t
+    ) = 0;
 
-    virtual void pwrite(std::unique_ptr<TaskScalar> t) = 0;
+    virtual void pwrite(
+        const void* buf, size_t size, off_t offset, std::unique_ptr<Task> t
+    ) = 0;
 
-    virtual void pwritev(std::unique_ptr<TaskVector> t) = 0;
+    virtual void pwritev(
+        const iovec* iov, unsigned int niov, size_t size, off_t offset,
+        std::unique_ptr<Task> t
+    ) = 0;
 };
 
 } // namespace rawstor
