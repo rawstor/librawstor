@@ -5,8 +5,9 @@
 #include <rawstor/rawstor.h>
 
 int main(int argc, char** argv) {
-    if (rawstor_initialize(nullptr)) {
-        RAWSTOR_THROW_ERRNO();
+    int res = rawstor_initialize(nullptr);
+    if (res < 0) {
+        RAWSTOR_THROW_ERRNO(-res);
     }
 
     testing::InitGoogleTest(&argc, argv);
