@@ -132,7 +132,7 @@ int rawstor_fd_read(
 }
 
 int rawstor_fd_readv(
-    int fd, iovec* iov, unsigned int niov, size_t, RawstorIOCallback* cb,
+    int fd, iovec* iov, unsigned int niov, RawstorIOCallback* cb,
     void* data
 ) {
     try {
@@ -158,7 +158,7 @@ int rawstor_fd_pread(
 }
 
 int rawstor_fd_preadv(
-    int fd, iovec* iov, unsigned int niov, size_t, off_t offset,
+    int fd, iovec* iov, unsigned int niov, off_t offset,
     RawstorIOCallback* cb, void* data
 ) {
     try {
@@ -184,7 +184,7 @@ int rawstor_fd_recv(
 }
 
 int rawstor_fd_recvmsg(
-    int fd, msghdr* msg, size_t, unsigned int flags, RawstorIOCallback* cb,
+    int fd, msghdr* msg, unsigned int flags, RawstorIOCallback* cb,
     void* data
 ) {
     try {
@@ -197,7 +197,7 @@ int rawstor_fd_recvmsg(
 }
 
 int rawstor_fd_write(
-    int fd, void* buf, size_t size, RawstorIOCallback* cb, void* data
+    int fd, const void* buf, size_t size, RawstorIOCallback* cb, void* data
 ) {
     try {
         std::unique_ptr<rawstor::io::Task> t = std::make_unique<Task>(cb, data);
@@ -209,7 +209,7 @@ int rawstor_fd_write(
 }
 
 int rawstor_fd_writev(
-    int fd, iovec* iov, unsigned int niov, size_t, RawstorIOCallback* cb,
+    int fd, const iovec* iov, unsigned int niov, RawstorIOCallback* cb,
     void* data
 ) {
     try {
@@ -222,7 +222,7 @@ int rawstor_fd_writev(
 }
 
 int rawstor_fd_pwrite(
-    int fd, void* buf, size_t size, off_t offset, RawstorIOCallback* cb,
+    int fd, const void* buf, size_t size, off_t offset, RawstorIOCallback* cb,
     void* data
 ) {
     try {
@@ -235,7 +235,7 @@ int rawstor_fd_pwrite(
 }
 
 int rawstor_fd_pwritev(
-    int fd, iovec* iov, unsigned int niov, size_t, off_t offset,
+    int fd, const iovec* iov, unsigned int niov, off_t offset,
     RawstorIOCallback* cb, void* data
 ) {
     try {
@@ -248,7 +248,7 @@ int rawstor_fd_pwritev(
 }
 
 int rawstor_fd_send(
-    int fd, void* buf, size_t size, unsigned int flags, RawstorIOCallback* cb,
+    int fd, const void* buf, size_t size, unsigned int flags, RawstorIOCallback* cb,
     void* data
 ) {
     try {
@@ -261,7 +261,7 @@ int rawstor_fd_send(
 }
 
 int rawstor_fd_sendmsg(
-    int fd, msghdr* msg, size_t, unsigned int flags, RawstorIOCallback* cb,
+    int fd, const msghdr* msg, unsigned int flags, RawstorIOCallback* cb,
     void* data
 ) {
     try {
