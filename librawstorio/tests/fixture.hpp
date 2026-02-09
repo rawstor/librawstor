@@ -59,7 +59,7 @@ protected:
         _server(),
         _fd(_connect(_server.name())),
         _queue(rawstor::io::Queue::create(depth)) {}
-    virtual ~QueueTest() { close(_fd); }
+    ~QueueTest() { close(_fd); }
 
     void _wait_all() {
         try {
