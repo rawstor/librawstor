@@ -180,6 +180,8 @@ public:
         EventSimplex(q, fd, std::move(t)),
         _mask(mask) {}
 
+    virtual ~EventSimplexPoll() override = default;
+
     inline unsigned int mask() const noexcept { return _mask; }
 
     inline void set_result(ssize_t result) noexcept { _result = result; }
