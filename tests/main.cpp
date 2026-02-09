@@ -1,10 +1,11 @@
 #include <gtest/gtest.h>
 
 #include <rawstorstd/gpp.hpp>
-#include <rawstorstd/logging.h>
+
+#include <rawstor/rawstor.h>
 
 int main(int argc, char** argv) {
-    int res = rawstor_logging_initialize();
+    int res = rawstor_initialize(nullptr);
     if (res < 0) {
         RAWSTOR_THROW_SYSTEM_ERROR(-res);
     }
@@ -13,7 +14,7 @@ int main(int argc, char** argv) {
 
     res = RUN_ALL_TESTS();
 
-    rawstor_logging_terminate();
+    rawstor_terminate();
 
     return res;
 }
