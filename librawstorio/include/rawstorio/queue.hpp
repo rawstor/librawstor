@@ -4,6 +4,7 @@
 #include <memory>
 #include <string>
 
+#include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/uio.h>
 
@@ -14,15 +15,7 @@ namespace io {
 
 class Task;
 
-class TaskPollMultishot;
-
-class TaskScalar;
-
-class TaskVector;
-
 class TaskVectorExternal;
-
-class TaskMessage;
 
 typedef void Event;
 
@@ -44,39 +37,57 @@ public:
 
     inline unsigned int depth() const noexcept { return _depth; }
 
-    virtual Event* poll(int fd, std::unique_ptr<Task> t, unsigned int mask) = 0;
+    virtual Event* poll(int fd, unsigned int mask, std::unique_ptr<Task> t) = 0;
     virtual Event*
-    poll_multishot(int fd, std::unique_ptr<Task> t, unsigned int mask) = 0;
+    poll_multishot(int fd, unsigned int mask, std::unique_ptr<Task> t) = 0;
 
-    virtual Event* read(int fd, std::unique_ptr<TaskScalar> t) = 0;
-    virtual Event* readv(int fd, std::unique_ptr<TaskVector> t) = 0;
     virtual Event*
-    pread(int fd, std::unique_ptr<TaskScalar> t, off_t offset) = 0;
+    read(int fd, void* buf, size_t size, std::unique_ptr<Task> t) = 0;
     virtual Event*
-    preadv(int fd, std::unique_ptr<TaskVector> t, off_t offset) = 0;
-    virtual Event*
-    recv(int fd, std::unique_ptr<TaskScalar> t, unsigned int flags) = 0;
+    readv(int fd, iovec* iov, unsigned int niov, std::unique_ptr<Task> t) = 0;
+    virtual Event* pread(
+        int fd, void* buf, size_t size, off_t offset, std::unique_ptr<Task> t
+    ) = 0;
+    virtual Event* preadv(
+        int fd, iovec* iov, unsigned int niov, off_t offset,
+        std::unique_ptr<Task> t
+    ) = 0;
+    virtual Event* recv(
+        int fd, void* buf, size_t size, unsigned int flags,
+        std::unique_ptr<Task> t
+    ) = 0;
     /**
      * entry_size: must be a power of two.
      * entries: must be a power of two.
      */
     virtual Event* recv_multishot(
-        int fd, std::unique_ptr<TaskVectorExternal> t, size_t entry_size,
-        unsigned int entries, unsigned int flags
+        int fd, size_t entry_size, unsigned int entries, unsigned int flags,
+        std::unique_ptr<TaskVectorExternal> t
     ) = 0;
-    virtual Event*
-    recvmsg(int fd, std::unique_ptr<TaskMessage> t, unsigned int flags) = 0;
+    virtual Event* recvmsg(
+        int fd, msghdr* msg, unsigned int flags, std::unique_ptr<Task> t
+    ) = 0;
 
-    virtual Event* write(int fd, std::unique_ptr<TaskScalar> t) = 0;
-    virtual Event* writev(int fd, std::unique_ptr<TaskVector> t) = 0;
     virtual Event*
-    pwrite(int fd, std::unique_ptr<TaskScalar> t, off_t offset) = 0;
-    virtual Event*
-    pwritev(int fd, std::unique_ptr<TaskVector> t, off_t offset) = 0;
-    virtual Event*
-    send(int fd, std::unique_ptr<TaskScalar> t, unsigned int flags) = 0;
-    virtual Event*
-    sendmsg(int fd, std::unique_ptr<TaskMessage> t, unsigned int flags) = 0;
+    write(int fd, const void* buf, size_t size, std::unique_ptr<Task> t) = 0;
+    virtual Event* writev(
+        int fd, const iovec* iov, unsigned int niov, std::unique_ptr<Task> t
+    ) = 0;
+    virtual Event* pwrite(
+        int fd, const void* buf, size_t size, off_t offset,
+        std::unique_ptr<Task> t
+    ) = 0;
+    virtual Event* pwritev(
+        int fd, const iovec* iov, unsigned int niov, off_t offset,
+        std::unique_ptr<Task> t
+    ) = 0;
+    virtual Event* send(
+        int fd, const void* buf, size_t size, unsigned int flags,
+        std::unique_ptr<Task> t
+    ) = 0;
+    virtual Event* sendmsg(
+        int fd, const msghdr* msg, unsigned int flags, std::unique_ptr<Task> t
+    ) = 0;
 
     virtual void cancel(Event* event) = 0;
 

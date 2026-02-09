@@ -45,7 +45,7 @@ size_t EventMultiplexScalar::shift(size_t shift) noexcept {
         return ret;
     }
 
-    _buf_at = static_cast<char*>(_buf_at) + shift;
+    _buf_at = static_cast<const char*>(_buf_at) + shift;
     _result += shift;
     _size_at -= shift;
 #ifdef RAWSTOR_TRACE_EVENTS
@@ -59,7 +59,7 @@ void EventMultiplexScalar::add_to_batch(std::vector<iovec>& iov) {
     trace(__FILE__, __LINE__, __FUNCTION__, "add to batch");
 #endif
     iov.push_back((iovec){
-        .iov_base = _buf_at,
+        .iov_base = const_cast<void*>(_buf_at),
         .iov_len = _size_at,
     });
 }
@@ -108,15 +108,11 @@ ssize_t EventSimplexScalarRead::process() noexcept {
 #ifdef RAWSTOR_TRACE_EVENTS
     trace(__FILE__, __LINE__, __FUNCTION__, "read()");
 #endif
-    ssize_t res = ::read(
-        _fd, static_cast<rawstor::io::TaskScalar*>(_t.get())->buf(),
-        static_cast<rawstor::io::TaskScalar*>(_t.get())->size()
-    );
+    ssize_t res = ::read(_fd, _buf, _size);
     if (res >= 0) {
         _result = res;
 #ifdef RAWSTOR_TRACE_EVENTS
-        if ((size_t)_result ==
-            static_cast<rawstor::io::TaskScalar*>(_t.get())->size()) {
+        if ((size_t)_result == _size) {
             trace(__FILE__, __LINE__, __FUNCTION__, "completed");
         } else {
             trace(__FILE__, __LINE__, __FUNCTION__, "partial");
@@ -134,15 +130,11 @@ ssize_t EventSimplexVectorRead::process() noexcept {
 #ifdef RAWSTOR_TRACE_EVENTS
     trace(__FILE__, __LINE__, __FUNCTION__, "readv()");
 #endif
-    ssize_t res = ::readv(
-        _fd, static_cast<rawstor::io::TaskVector*>(_t.get())->iov(),
-        static_cast<rawstor::io::TaskVector*>(_t.get())->niov()
-    );
+    ssize_t res = ::readv(_fd, _iov, _niov);
     if (res >= 0) {
         _result = res;
 #ifdef RAWSTOR_TRACE_EVENTS
-        if ((size_t)_result ==
-            static_cast<rawstor::io::TaskVector*>(_t.get())->size()) {
+        if ((size_t)_result == rawstor_iovec_size(_iov, _niov)) {
             trace(__FILE__, __LINE__, __FUNCTION__, "completed");
         } else {
             trace(__FILE__, __LINE__, __FUNCTION__, "partial");
@@ -160,15 +152,11 @@ ssize_t EventSimplexScalarPositionalRead::process() noexcept {
 #ifdef RAWSTOR_TRACE_EVENTS
     trace(__FILE__, __LINE__, __FUNCTION__, "pread()");
 #endif
-    ssize_t res = ::pread(
-        _fd, static_cast<rawstor::io::TaskScalar*>(_t.get())->buf(),
-        static_cast<rawstor::io::TaskScalar*>(_t.get())->size(), _offset
-    );
+    ssize_t res = ::pread(_fd, _buf, _size, _offset);
     if (res >= 0) {
         _result = res;
 #ifdef RAWSTOR_TRACE_EVENTS
-        if ((size_t)_result ==
-            static_cast<rawstor::io::TaskScalar*>(_t.get())->size()) {
+        if ((size_t)_result == _size) {
             trace(__FILE__, __LINE__, __FUNCTION__, "completed");
         } else {
             trace(__FILE__, __LINE__, __FUNCTION__, "partial");
@@ -186,15 +174,11 @@ ssize_t EventSimplexVectorPositionalRead::process() noexcept {
 #ifdef RAWSTOR_TRACE_EVENTS
     trace(__FILE__, __LINE__, __FUNCTION__, "preadv()");
 #endif
-    ssize_t res = ::preadv(
-        _fd, static_cast<rawstor::io::TaskVector*>(_t.get())->iov(),
-        static_cast<rawstor::io::TaskVector*>(_t.get())->niov(), _offset
-    );
+    ssize_t res = ::preadv(_fd, _iov, _niov, _offset);
     if (res >= 0) {
         _result = res;
 #ifdef RAWSTOR_TRACE_EVENTS
-        if ((size_t)_result ==
-            static_cast<rawstor::io::TaskVector*>(_t.get())->size()) {
+        if ((size_t)_result == rawstor_iovec_size(_iov, _niov)) {
             trace(__FILE__, __LINE__, __FUNCTION__, "completed");
         } else {
             trace(__FILE__, __LINE__, __FUNCTION__, "partial");
@@ -212,15 +196,11 @@ ssize_t EventSimplexScalarRecv::process() noexcept {
 #ifdef RAWSTOR_TRACE_EVENTS
     trace(__FILE__, __LINE__, __FUNCTION__, "recv()");
 #endif
-    ssize_t res = ::recv(
-        _fd, static_cast<rawstor::io::TaskScalar*>(_t.get())->buf(),
-        static_cast<rawstor::io::TaskScalar*>(_t.get())->size(), _flags
-    );
+    ssize_t res = ::recv(_fd, _buf, _size, _flags);
     if (res >= 0) {
         _result = res;
 #ifdef RAWSTOR_TRACE_EVENTS
-        if ((size_t)_result ==
-            static_cast<rawstor::io::TaskScalar*>(_t.get())->size()) {
+        if ((size_t)_result == _size) {
             trace(__FILE__, __LINE__, __FUNCTION__, "completed");
         } else {
             trace(__FILE__, __LINE__, __FUNCTION__, "partial");
@@ -350,14 +330,12 @@ ssize_t EventSimplexMessageRead::process() noexcept {
 #ifdef RAWSTOR_TRACE_EVENTS
     trace(__FILE__, __LINE__, __FUNCTION__, "recvmsg()");
 #endif
-    ssize_t res = ::recvmsg(
-        _fd, static_cast<rawstor::io::TaskMessage*>(_t.get())->msg(), _flags
-    );
+    ssize_t res = ::recvmsg(_fd, _msg, _flags);
     if (res >= 0) {
         _result = res;
 #ifdef RAWSTOR_TRACE_EVENTS
         if ((size_t)_result ==
-            static_cast<rawstor::io::TaskMessage*>(_t.get())->size()) {
+            rawstor_iovec_size(_msg->msg_iov, _msg->msg_iovlen)) {
             trace(__FILE__, __LINE__, __FUNCTION__, "completed");
         } else {
             trace(__FILE__, __LINE__, __FUNCTION__, "partial");
@@ -405,15 +383,11 @@ ssize_t EventSimplexScalarPositionalWrite::process() noexcept {
 #ifdef RAWSTOR_TRACE_EVENTS
     trace(__FILE__, __LINE__, __FUNCTION__, "pwrite()");
 #endif
-    ssize_t res = ::pwrite(
-        _fd, static_cast<rawstor::io::TaskScalar*>(_t.get())->buf(),
-        static_cast<rawstor::io::TaskScalar*>(_t.get())->size(), _offset
-    );
+    ssize_t res = ::pwrite(_fd, _buf, _size, _offset);
     if (res >= 0) {
         _result = res;
 #ifdef RAWSTOR_TRACE_EVENTS
-        if ((size_t)_result ==
-            static_cast<rawstor::io::TaskScalar*>(_t.get())->size()) {
+        if ((size_t)_result == _size) {
             trace(__FILE__, __LINE__, __FUNCTION__, "completed");
         } else {
             trace(__FILE__, __LINE__, __FUNCTION__, "partial");
@@ -431,15 +405,11 @@ ssize_t EventSimplexVectorPositionalWrite::process() noexcept {
 #ifdef RAWSTOR_TRACE_EVENTS
     trace(__FILE__, __LINE__, __FUNCTION__, "pwritev()");
 #endif
-    ssize_t res = ::pwritev(
-        _fd, static_cast<rawstor::io::TaskVector*>(_t.get())->iov(),
-        static_cast<rawstor::io::TaskVector*>(_t.get())->niov(), _offset
-    );
+    ssize_t res = ::pwritev(_fd, _iov, _niov, _offset);
     if (res >= 0) {
         _result = res;
 #ifdef RAWSTOR_TRACE_EVENTS
-        if ((size_t)_result ==
-            static_cast<rawstor::io::TaskVector*>(_t.get())->size()) {
+        if ((size_t)_result == rawstor_iovec_size(_iov, _niov)) {
             trace(__FILE__, __LINE__, __FUNCTION__, "completed");
         } else {
             trace(__FILE__, __LINE__, __FUNCTION__, "partial");
@@ -457,15 +427,11 @@ ssize_t EventSimplexScalarSend::process() noexcept {
 #ifdef RAWSTOR_TRACE_EVENTS
     trace(__FILE__, __LINE__, __FUNCTION__, "send()");
 #endif
-    ssize_t res = ::send(
-        _fd, static_cast<rawstor::io::TaskScalar*>(_t.get())->buf(),
-        static_cast<rawstor::io::TaskScalar*>(_t.get())->size(), _flags
-    );
+    ssize_t res = ::send(_fd, _buf, _size, _flags);
     if (res >= 0) {
         _result = res;
 #ifdef RAWSTOR_TRACE_EVENTS
-        if ((size_t)_result ==
-            static_cast<rawstor::io::TaskScalar*>(_t.get())->size()) {
+        if ((size_t)_result == _size) {
             trace(__FILE__, __LINE__, __FUNCTION__, "completed");
         } else {
             trace(__FILE__, __LINE__, __FUNCTION__, "partial");
@@ -483,14 +449,12 @@ ssize_t EventSimplexMessageWrite::process() noexcept {
 #ifdef RAWSTOR_TRACE_EVENTS
     trace(__FILE__, __LINE__, __FUNCTION__, "sendmsg()");
 #endif
-    ssize_t res = ::sendmsg(
-        _fd, static_cast<rawstor::io::TaskMessage*>(_t.get())->msg(), _flags
-    );
+    ssize_t res = ::sendmsg(_fd, _msg, _flags);
     if (res >= 0) {
         _result = res;
 #ifdef RAWSTOR_TRACE_EVENTS
         if ((size_t)_result ==
-            static_cast<rawstor::io::TaskMessage*>(_t.get())->size()) {
+            rawstor_iovec_size(_msg->msg_iov, _msg->msg_iovlen)) {
             trace(__FILE__, __LINE__, __FUNCTION__, "completed");
         } else {
             trace(__FILE__, __LINE__, __FUNCTION__, "partial");

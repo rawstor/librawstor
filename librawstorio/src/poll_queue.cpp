@@ -76,12 +76,12 @@ void Queue::setup_fd(int fd) {
 }
 
 rawstor::io::Event*
-Queue::poll(int fd, std::unique_ptr<rawstor::io::Task> t, unsigned int mask) {
+Queue::poll(int fd, unsigned int mask, std::unique_ptr<rawstor::io::Task> t) {
     Session& s = _get_session(fd);
 
     std::unique_ptr<EventSimplexPollOneshot> event =
         std::make_unique<EventSimplexPollOneshot>(
-            *this, fd, std::move(t), mask
+            *this, fd, mask, std::move(t)
         );
 
     rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
@@ -90,13 +90,13 @@ Queue::poll(int fd, std::unique_ptr<rawstor::io::Task> t, unsigned int mask) {
 }
 
 rawstor::io::Event* Queue::poll_multishot(
-    int fd, std::unique_ptr<rawstor::io::Task> t, unsigned int mask
+    int fd, unsigned int mask, std::unique_ptr<rawstor::io::Task> t
 ) {
     Session& s = _get_session(fd);
 
     std::unique_ptr<EventSimplexPollMultishot> event =
         std::make_unique<EventSimplexPollMultishot>(
-            *this, fd, std::move(t), mask
+            *this, fd, mask, std::move(t)
         );
 
     rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
@@ -104,37 +104,45 @@ rawstor::io::Event* Queue::poll_multishot(
     return ret;
 }
 
-rawstor::io::Event*
-Queue::read(int fd, std::unique_ptr<rawstor::io::TaskScalar> t) {
+rawstor::io::Event* Queue::read(
+    int fd, void* buf, size_t size, std::unique_ptr<rawstor::io::Task> t
+) {
     Session& s = _get_session(fd);
 
     std::unique_ptr<EventSimplex> event =
-        std::make_unique<EventSimplexScalarRead>(*this, fd, std::move(t));
+        std::make_unique<EventSimplexScalarRead>(
+            *this, fd, buf, size, std::move(t)
+        );
 
     rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
     s.read(std::move(event));
     return ret;
 }
 
-rawstor::io::Event*
-Queue::readv(int fd, std::unique_ptr<rawstor::io::TaskVector> t) {
+rawstor::io::Event* Queue::readv(
+    int fd, iovec* iov, unsigned int niov, std::unique_ptr<rawstor::io::Task> t
+) {
     Session& s = _get_session(fd);
 
     std::unique_ptr<EventSimplex> event =
-        std::make_unique<EventSimplexVectorRead>(*this, fd, std::move(t));
+        std::make_unique<EventSimplexVectorRead>(
+            *this, fd, iov, niov, std::move(t)
+        );
 
     rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
     s.read(std::move(event));
     return ret;
 }
 
-rawstor::io::Event*
-Queue::pread(int fd, std::unique_ptr<rawstor::io::TaskScalar> t, off_t offset) {
+rawstor::io::Event* Queue::pread(
+    int fd, void* buf, size_t size, off_t offset,
+    std::unique_ptr<rawstor::io::Task> t
+) {
     Session& s = _get_session(fd);
 
     std::unique_ptr<EventSimplex> event =
         std::make_unique<rawstor::io::poll::EventSimplexScalarPositionalRead>(
-            *this, fd, std::move(t), offset
+            *this, fd, buf, size, offset, std::move(t)
         );
 
     rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
@@ -143,13 +151,14 @@ Queue::pread(int fd, std::unique_ptr<rawstor::io::TaskScalar> t, off_t offset) {
 }
 
 rawstor::io::Event* Queue::preadv(
-    int fd, std::unique_ptr<rawstor::io::TaskVector> t, off_t offset
+    int fd, iovec* iov, unsigned int niov, off_t offset,
+    std::unique_ptr<rawstor::io::Task> t
 ) {
     Session& s = _get_session(fd);
 
     std::unique_ptr<EventSimplex> event =
         std::make_unique<EventSimplexVectorPositionalRead>(
-            *this, fd, std::move(t), offset
+            *this, fd, iov, niov, offset, std::move(t)
         );
 
     rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
@@ -158,13 +167,14 @@ rawstor::io::Event* Queue::preadv(
 }
 
 rawstor::io::Event* Queue::recv(
-    int fd, std::unique_ptr<rawstor::io::TaskScalar> t, unsigned int flags
+    int fd, void* buf, size_t size, unsigned int flags,
+    std::unique_ptr<rawstor::io::Task> t
 ) {
     Session& s = _get_session(fd);
 
     std::unique_ptr<EventSimplex> event =
         std::make_unique<EventSimplexScalarRecv>(
-            *this, fd, std::move(t), flags
+            *this, fd, buf, size, flags, std::move(t)
         );
 
     rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
@@ -173,14 +183,14 @@ rawstor::io::Event* Queue::recv(
 }
 
 rawstor::io::Event* Queue::recv_multishot(
-    int fd, std::unique_ptr<rawstor::io::TaskVectorExternal> t,
-    size_t entry_size, unsigned int entries, unsigned int flags
+    int fd, size_t entry_size, unsigned int entries, unsigned int flags,
+    std::unique_ptr<rawstor::io::TaskVectorExternal> t
 ) {
     Session& s = _get_session(fd);
 
     std::unique_ptr<EventSimplexVectorRecvMultishot> event =
         std::make_unique<EventSimplexVectorRecvMultishot>(
-            *this, fd, std::move(t), entry_size, entries, flags
+            *this, fd, entry_size, entries, flags, std::move(t)
         );
 
     rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
@@ -189,13 +199,14 @@ rawstor::io::Event* Queue::recv_multishot(
 }
 
 rawstor::io::Event* Queue::recvmsg(
-    int fd, std::unique_ptr<rawstor::io::TaskMessage> t, unsigned int flags
+    int fd, msghdr* msg, unsigned int flags,
+    std::unique_ptr<rawstor::io::Task> t
 ) {
     Session& s = _get_session(fd);
 
     std::unique_ptr<EventSimplex> event =
         std::make_unique<EventSimplexMessageRead>(
-            *this, fd, std::move(t), flags
+            *this, fd, msg, flags, std::move(t)
         );
 
     rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
@@ -203,24 +214,29 @@ rawstor::io::Event* Queue::recvmsg(
     return ret;
 }
 
-rawstor::io::Event*
-Queue::write(int fd, std::unique_ptr<rawstor::io::TaskScalar> t) {
+rawstor::io::Event* Queue::write(
+    int fd, const void* buf, size_t size, std::unique_ptr<rawstor::io::Task> t
+) {
     Session& s = _get_session(fd);
 
-    std::unique_ptr<Event> event =
-        std::make_unique<EventMultiplexScalarWrite>(*this, fd, std::move(t));
+    std::unique_ptr<Event> event = std::make_unique<EventMultiplexScalarWrite>(
+        *this, fd, buf, size, std::move(t)
+    );
 
     rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
     s.write(std::move(event));
     return ret;
 }
 
-rawstor::io::Event*
-Queue::writev(int fd, std::unique_ptr<rawstor::io::TaskVector> t) {
+rawstor::io::Event* Queue::writev(
+    int fd, const iovec* iov, unsigned int niov,
+    std::unique_ptr<rawstor::io::Task> t
+) {
     Session& s = _get_session(fd);
 
-    std::unique_ptr<Event> event =
-        std::make_unique<EventMultiplexVectorWrite>(*this, fd, std::move(t));
+    std::unique_ptr<Event> event = std::make_unique<EventMultiplexVectorWrite>(
+        *this, fd, iov, niov, std::move(t)
+    );
 
     rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
     s.write(std::move(event));
@@ -228,13 +244,14 @@ Queue::writev(int fd, std::unique_ptr<rawstor::io::TaskVector> t) {
 }
 
 rawstor::io::Event* Queue::pwrite(
-    int fd, std::unique_ptr<rawstor::io::TaskScalar> t, off_t offset
+    int fd, const void* buf, size_t size, off_t offset,
+    std::unique_ptr<rawstor::io::Task> t
 ) {
     Session& s = _get_session(fd);
 
     std::unique_ptr<Event> event =
         std::make_unique<EventSimplexScalarPositionalWrite>(
-            *this, fd, std::move(t), offset
+            *this, fd, buf, size, offset, std::move(t)
         );
 
     rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
@@ -243,13 +260,14 @@ rawstor::io::Event* Queue::pwrite(
 }
 
 rawstor::io::Event* Queue::pwritev(
-    int fd, std::unique_ptr<rawstor::io::TaskVector> t, off_t offset
+    int fd, const iovec* iov, unsigned int niov, off_t offset,
+    std::unique_ptr<rawstor::io::Task> t
 ) {
     Session& s = _get_session(fd);
 
     std::unique_ptr<Event> event =
         std::make_unique<EventSimplexVectorPositionalWrite>(
-            *this, fd, std::move(t), offset
+            *this, fd, iov, niov, offset, std::move(t)
         );
 
     rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
@@ -258,12 +276,13 @@ rawstor::io::Event* Queue::pwritev(
 }
 
 rawstor::io::Event* Queue::send(
-    int fd, std::unique_ptr<rawstor::io::TaskScalar> t, unsigned int flags
+    int fd, const void* buf, size_t size, unsigned int flags,
+    std::unique_ptr<rawstor::io::Task> t
 ) {
     Session& s = _get_session(fd);
 
     std::unique_ptr<Event> event = std::make_unique<EventSimplexScalarSend>(
-        *this, fd, std::move(t), flags
+        *this, fd, buf, size, flags, std::move(t)
     );
 
     rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
@@ -272,12 +291,13 @@ rawstor::io::Event* Queue::send(
 }
 
 rawstor::io::Event* Queue::sendmsg(
-    int fd, std::unique_ptr<rawstor::io::TaskMessage> t, unsigned int flags
+    int fd, const msghdr* msg, unsigned int flags,
+    std::unique_ptr<rawstor::io::Task> t
 ) {
     Session& s = _get_session(fd);
 
     std::unique_ptr<Event> event = std::make_unique<EventSimplexMessageWrite>(
-        *this, fd, std::move(t), flags
+        *this, fd, msg, flags, std::move(t)
     );
 
     rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());

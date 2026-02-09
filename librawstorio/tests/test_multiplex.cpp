@@ -20,22 +20,18 @@ TEST_F(MultiplexTest, read) {
     size_t result1 = 0;
     int error1 = 0;
     {
-        std::unique_ptr<rawstor::io::TaskScalar> t =
-            std::make_unique<rawstor::io::tests::SimpleTaskScalar>(
-                client_buf1, sizeof(client_buf1), &result1, &error1
-            );
-        _queue->read(_fd, std::move(t));
+        std::unique_ptr<rawstor::io::Task> t =
+            std::make_unique<rawstor::io::tests::SimpleTask>(&result1, &error1);
+        _queue->read(_fd, client_buf1, sizeof(client_buf1), std::move(t));
     }
 
     char client_buf2[5];
     size_t result2 = 0;
     int error2 = 0;
     {
-        std::unique_ptr<rawstor::io::TaskScalar> t =
-            std::make_unique<rawstor::io::tests::SimpleTaskScalar>(
-                client_buf2, sizeof(client_buf2), &result2, &error2
-            );
-        _queue->read(_fd, std::move(t));
+        std::unique_ptr<rawstor::io::Task> t =
+            std::make_unique<rawstor::io::tests::SimpleTask>(&result2, &error2);
+        _queue->read(_fd, client_buf2, sizeof(client_buf2), std::move(t));
     }
 
     EXPECT_NO_THROW(_wait_all());
@@ -54,22 +50,18 @@ TEST_F(MultiplexTest, write) {
     size_t result1 = 0;
     int error1 = 0;
     {
-        std::unique_ptr<rawstor::io::TaskScalar> t =
-            std::make_unique<rawstor::io::tests::SimpleTaskScalar>(
-                client_buf1, 5, &result1, &error1
-            );
-        _queue->write(_fd, std::move(t));
+        std::unique_ptr<rawstor::io::Task> t =
+            std::make_unique<rawstor::io::tests::SimpleTask>(&result1, &error1);
+        _queue->write(_fd, client_buf1, 5, std::move(t));
     }
 
     char client_buf2[] = "data2";
     size_t result2 = 0;
     int error2 = 0;
     {
-        std::unique_ptr<rawstor::io::TaskScalar> t =
-            std::make_unique<rawstor::io::tests::SimpleTaskScalar>(
-                client_buf2, 5, &result2, &error2
-            );
-        _queue->write(_fd, std::move(t));
+        std::unique_ptr<rawstor::io::Task> t =
+            std::make_unique<rawstor::io::tests::SimpleTask>(&result2, &error2);
+        _queue->write(_fd, client_buf2, 5, std::move(t));
     }
 
     EXPECT_NO_THROW(_wait_all());

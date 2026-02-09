@@ -28,7 +28,7 @@ TEST_F(MultishotTest, poll) {
             std::make_unique<rawstor::io::tests::SimpleTaskMultishot>(
                 &result, &error, &count
             );
-        event = _queue->poll_multishot(_fd, std::move(t), POLLIN);
+        event = _queue->poll_multishot(_fd, POLLIN, std::move(t));
     }
 
     EXPECT_NO_THROW(_queue->wait(0));
@@ -71,7 +71,7 @@ TEST_F(MultishotTest, recv) {
             std::make_unique<rawstor::io::tests::SimpleTaskVectorExternal>(
                 4, &items
             );
-        event = _queue->recv_multishot(_fd, std::move(t), 4, 4, 0);
+        event = _queue->recv_multishot(_fd, 4, 4, 0, std::move(t));
     }
 
     EXPECT_NO_THROW(_wait_all());
@@ -137,7 +137,7 @@ TEST_F(MultishotTest, recv_overflow) {
         /**
          * NOTE: entry_size=4, entries=4 not working for uring in linux-6.11.0
          */
-        event = _queue->recv_multishot(_fd, std::move(t), 8, 2, 0);
+        event = _queue->recv_multishot(_fd, 8, 2, 0, std::move(t));
     }
 
     EXPECT_NO_THROW(_wait_all());
@@ -182,7 +182,7 @@ TEST_F(MultishotTest, recv_partial) {
             std::make_unique<rawstor::io::tests::SimpleTaskVectorExternal>(
                 3, &items
             );
-        event = _queue->recv_multishot(_fd, std::move(t), 4, 4, 0);
+        event = _queue->recv_multishot(_fd, 4, 4, 0, std::move(t));
     }
 
     {
@@ -251,7 +251,7 @@ TEST_F(MultishotTest, recv_fill_buf) {
             std::make_unique<rawstor::io::tests::SimpleTaskVectorExternal>(
                 4, &items
             );
-        event = _queue->recv_multishot(_fd, std::move(t), 4, 4, 0);
+        event = _queue->recv_multishot(_fd, 4, 4, 0, std::move(t));
     }
 
     {
