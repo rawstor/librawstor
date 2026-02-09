@@ -132,8 +132,7 @@ int rawstor_fd_read(
 }
 
 int rawstor_fd_readv(
-    int fd, iovec* iov, unsigned int niov, RawstorIOCallback* cb,
-    void* data
+    int fd, iovec* iov, unsigned int niov, RawstorIOCallback* cb, void* data
 ) {
     try {
         std::unique_ptr<rawstor::io::Task> t = std::make_unique<Task>(cb, data);
@@ -158,8 +157,8 @@ int rawstor_fd_pread(
 }
 
 int rawstor_fd_preadv(
-    int fd, iovec* iov, unsigned int niov, off_t offset,
-    RawstorIOCallback* cb, void* data
+    int fd, iovec* iov, unsigned int niov, off_t offset, RawstorIOCallback* cb,
+    void* data
 ) {
     try {
         std::unique_ptr<rawstor::io::Task> t = std::make_unique<Task>(cb, data);
@@ -184,8 +183,7 @@ int rawstor_fd_recv(
 }
 
 int rawstor_fd_recvmsg(
-    int fd, msghdr* msg, unsigned int flags, RawstorIOCallback* cb,
-    void* data
+    int fd, msghdr* msg, unsigned int flags, RawstorIOCallback* cb, void* data
 ) {
     try {
         std::unique_ptr<rawstor::io::Task> t = std::make_unique<Task>(cb, data);
@@ -248,8 +246,8 @@ int rawstor_fd_pwritev(
 }
 
 int rawstor_fd_send(
-    int fd, const void* buf, size_t size, unsigned int flags, RawstorIOCallback* cb,
-    void* data
+    int fd, const void* buf, size_t size, unsigned int flags,
+    RawstorIOCallback* cb, void* data
 ) {
     try {
         std::unique_ptr<rawstor::io::Task> t = std::make_unique<Task>(cb, data);
