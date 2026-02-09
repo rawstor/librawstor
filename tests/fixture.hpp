@@ -25,7 +25,7 @@ protected:
         oss << "file://" << _path.string();
         _uris = oss.str();
     }
-    ~ObjectTest() { std::filesystem::remove_all(_path); }
+    virtual ~ObjectTest() { std::filesystem::remove_all(_path); }
     const char* uris() const noexcept { return _uris.c_str(); }
 };
 
