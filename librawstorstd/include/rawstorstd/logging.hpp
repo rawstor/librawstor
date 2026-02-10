@@ -82,7 +82,7 @@ public:
     }
 
     TraceEvent& operator=(const TraceEvent&) = delete;
-    TraceEvent& operator=(TraceEvent&& other) {
+    TraceEvent& operator=(TraceEvent&& other) noexcept {
 #ifdef RAWSTOR_TRACE_EVENTS
         std::swap(_id, other._id);
         std::swap(_file, other._file);
