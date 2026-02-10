@@ -73,9 +73,9 @@ void rawstor_logging_terminate(void) {
 
 #ifdef RAWSTOR_TRACE_EVENTS
 
-size_t rawstor_trace_event_begin(
+size_t rawstor_trace_event_va_begin(
     char appearance, const char* file, int line, const char* function,
-    const char* format, ...
+    const char* format, va_list args
 ) {
     rawstor_mutex_lock(rawstor_logging_mutex);
     try {
@@ -95,10 +95,7 @@ size_t rawstor_trace_event_begin(
 
         dprintf(STDERR_FILENO, "TRACE %s:%d %s(): ", file, line, function);
 
-        va_list args;
-        va_start(args, format);
         vdprintf(STDERR_FILENO, format, args);
-        va_end(args);
 
         rawstor_mutex_unlock(rawstor_logging_mutex);
         return it - events.begin();
@@ -106,6 +103,19 @@ size_t rawstor_trace_event_begin(
         rawstor_mutex_unlock(rawstor_logging_mutex);
         throw;
     }
+}
+
+size_t rawstor_trace_event_begin(
+    char appearance, const char* file, int line, const char* function,
+    const char* format, ...
+) {
+    va_list args;
+    va_start(args, format);
+    size_t ret = rawstor_trace_event_va_begin(
+        appearance, file, line, function, format, args
+    );
+    va_end(args);
+    return ret;
 }
 
 void rawstor_trace_event_end(
@@ -133,9 +143,9 @@ void rawstor_trace_event_end(
     }
 }
 
-void rawstor_trace_event_message(
+void rawstor_trace_event_va_message(
     size_t event, const char* file, int line, const char* function,
-    const char* format, ...
+    const char* format, va_list args
 ) {
     rawstor_mutex_lock(rawstor_logging_mutex);
     try {
@@ -146,16 +156,23 @@ void rawstor_trace_event_message(
 
         dprintf(STDERR_FILENO, "TRACE %s:%d %s(): ", file, line, function);
 
-        va_list args;
-        va_start(args, format);
         vdprintf(STDERR_FILENO, format, args);
-        va_end(args);
 
         rawstor_mutex_unlock(rawstor_logging_mutex);
     } catch (...) {
         rawstor_mutex_unlock(rawstor_logging_mutex);
         throw;
     }
+}
+
+void rawstor_trace_event_message(
+    size_t event, const char* file, int line, const char* function,
+    const char* format, ...
+) {
+    va_list args;
+    va_start(args, format);
+    rawstor_trace_event_va_message(event, file, line, function, format, args);
+    va_end(args);
 }
 
 void rawstor_trace_event_dump(void) {

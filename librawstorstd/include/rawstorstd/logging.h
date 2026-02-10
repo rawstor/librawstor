@@ -78,6 +78,11 @@ void rawstor_logging_terminate(void);
 #endif
 
 #ifdef RAWSTOR_TRACE_EVENTS
+size_t rawstor_trace_event_va_begin(
+    char appearance, const char* file, int line, const char* function,
+    const char* format, va_list ap
+);
+
 size_t rawstor_trace_event_begin(
     char appearance, const char* file, int line, const char* function,
     const char* format, ...
@@ -86,6 +91,11 @@ size_t rawstor_trace_event_begin(
 void rawstor_trace_event_end(
     size_t event, const char* file, int line, const char* function,
     const char* format, ...
+);
+
+void rawstor_trace_event_va_message(
+    size_t event, const char* file, int line, const char* function,
+    const char* format, va_list ap
 );
 
 void rawstor_trace_event_message(
