@@ -20,6 +20,7 @@ librawstorstd_la_SOURCES = $(top_srcdir)/librawstorstd/include/rawstorstd/gcc.h 
                            $(top_srcdir)/librawstorstd/include/rawstorstd/iovec.h \
                            $(top_srcdir)/librawstorstd/include/rawstorstd/list.h \
                            $(top_srcdir)/librawstorstd/include/rawstorstd/logging.h \
+                           $(top_srcdir)/librawstorstd/include/rawstorstd/logging.hpp \
                            $(top_srcdir)/librawstorstd/include/rawstorstd/logging_config.h \
                            $(top_srcdir)/librawstorstd/include/rawstorstd/mempool.h \
                            $(top_srcdir)/librawstorstd/include/rawstorstd/mempool.hpp \
