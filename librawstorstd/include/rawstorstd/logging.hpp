@@ -110,7 +110,7 @@ public:
         (void)(file);
         (void)(line);
         (void)(function);
-        (void)(message);
+        (void)(format);
 #endif
     }
 };
