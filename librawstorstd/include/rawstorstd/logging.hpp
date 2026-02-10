@@ -32,7 +32,7 @@ public:
     TraceEvent(
         char appearance, const char* file, int line, const char* function,
         const char* format, ...
-    ) noexcept
+    )
 #ifdef RAWSTOR_TRACE_EVENTS
         :
         _id(static_cast<size_t>(-1))

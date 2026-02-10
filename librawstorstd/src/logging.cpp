@@ -126,31 +126,21 @@ size_t rawstor_trace_event_begin(
 
 void rawstor_trace_event_inc(size_t event) {
     rawstor_mutex_lock(rawstor_logging_mutex);
-    try {
-        assert(events[event].state() == EVENT_AVAILABLE);
-        events[event].inc();
-        rawstor_mutex_unlock(rawstor_logging_mutex);
-    } catch (...) {
-        rawstor_mutex_unlock(rawstor_logging_mutex);
-        throw;
-    }
+    assert(events[event].state() == EVENT_AVAILABLE);
+    events[event].inc();
+    rawstor_mutex_unlock(rawstor_logging_mutex);
 }
 
 void rawstor_trace_event_dec(size_t event) {
     rawstor_mutex_lock(rawstor_logging_mutex);
-    try {
-        assert(events[event].state() == EVENT_AVAILABLE);
-        size_t refs = events[event].dec();
-        if (refs == 0) {
-            events[event].deleting();
-            rawstor_trace_event_dump();
-            dprintf(STDERR_FILENO, "TRACE\n");
-        }
-        rawstor_mutex_unlock(rawstor_logging_mutex);
-    } catch (...) {
-        rawstor_mutex_unlock(rawstor_logging_mutex);
-        throw;
+    assert(events[event].state() == EVENT_AVAILABLE);
+    size_t refs = events[event].dec();
+    if (refs == 0) {
+        events[event].deleting();
+        rawstor_trace_event_dump();
+        dprintf(STDERR_FILENO, "TRACE\n");
     }
+    rawstor_mutex_unlock(rawstor_logging_mutex);
 }
 
 void rawstor_trace_event_va_message(
@@ -158,21 +148,16 @@ void rawstor_trace_event_va_message(
     const char* format, va_list args
 ) {
     rawstor_mutex_lock(rawstor_logging_mutex);
-    try {
-        assert(events[event].state() == EVENT_AVAILABLE);
-        events[event].message();
+    assert(events[event].state() == EVENT_AVAILABLE);
+    events[event].message();
 
-        rawstor_trace_event_dump();
+    rawstor_trace_event_dump();
 
-        dprintf(STDERR_FILENO, "TRACE %s:%d %s(): ", file, line, function);
+    dprintf(STDERR_FILENO, "TRACE %s:%d %s(): ", file, line, function);
 
-        vdprintf(STDERR_FILENO, format, args);
+    vdprintf(STDERR_FILENO, format, args);
 
-        rawstor_mutex_unlock(rawstor_logging_mutex);
-    } catch (...) {
-        rawstor_mutex_unlock(rawstor_logging_mutex);
-        throw;
-    }
+    rawstor_mutex_unlock(rawstor_logging_mutex);
 }
 
 void rawstor_trace_event_message(
