@@ -26,9 +26,6 @@ class TraceEvent final {
 private:
 #ifdef RAWSTOR_TRACE_EVENTS
     size_t _id;
-    const char* _file;
-    int _line;
-    const char* _function;
 #endif
 
 public:
@@ -38,10 +35,7 @@ public:
     ) noexcept
 #ifdef RAWSTOR_TRACE_EVENTS
         :
-        _id(static_cast<size_t>(-1)),
-        _file(file),
-        _line(line),
-        _function(function)
+        _id(static_cast<size_t>(-1))
 #endif
     {
 #ifdef RAWSTOR_TRACE_EVENTS
@@ -60,15 +54,23 @@ public:
 #endif
     }
 
-    TraceEvent(const TraceEvent&) = delete;
+    TraceEvent(const TraceEvent& other) noexcept
+#ifdef RAWSTOR_TRACE_EVENTS
+        :
+        _id(other._id)
+#endif
+    {
+#ifdef RAWSTOR_TRACE_EVENTS
+        rawstor_trace_event_inc(_id);
+#else
+        (void)(other);
+#endif
+    }
 
     TraceEvent(TraceEvent&& other) noexcept
 #ifdef RAWSTOR_TRACE_EVENTS
         :
-        _id(std::exchange(other._id, static_cast<size_t>(-1))),
-        _file(other._file),
-        _line(other._line),
-        _function(other._function)
+        _id(std::exchange(other._id, static_cast<size_t>(-1)))
 #endif
     {
 #ifndef RAWSTOR_TRACE_EVENTS
@@ -79,7 +81,7 @@ public:
     ~TraceEvent() {
 #ifdef RAWSTOR_TRACE_EVENTS
         if (_id != static_cast<size_t>(-1)) {
-            rawstor_trace_event_end(_id, _file, _line, _function, "end\n");
+            rawstor_trace_event_dec(_id);
         }
 #endif
     }
@@ -88,9 +90,6 @@ public:
     TraceEvent& operator=(TraceEvent&& other) noexcept {
 #ifdef RAWSTOR_TRACE_EVENTS
         std::swap(_id, other._id);
-        std::swap(_file, other._file);
-        std::swap(_line, other._line);
-        std::swap(_function, other._function);
 #else
         (void)(other);
 #endif

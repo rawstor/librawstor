@@ -88,10 +88,9 @@ size_t rawstor_trace_event_begin(
     const char* format, ...
 );
 
-void rawstor_trace_event_end(
-    size_t event, const char* file, int line, const char* function,
-    const char* format, ...
-);
+void rawstor_trace_event_inc(size_t event);
+
+void rawstor_trace_event_dec(size_t event);
 
 void rawstor_trace_event_va_message(
     size_t event, const char* file, int line, const char* function,
