@@ -31,11 +31,13 @@ class Event {
 private:
     char _appearance;
     EventState _state;
+    size_t _refs;
 
 public:
     explicit Event(char appearance) :
         _appearance(appearance),
-        _state(EVENT_CREATING) {}
+        _state(EVENT_CREATING),
+        _refs(1) {}
 
     char appearance() const noexcept { return _appearance; }
 
@@ -48,6 +50,10 @@ public:
     void available() noexcept { _state = EVENT_AVAILABLE; }
 
     void deleted() noexcept { _state = EVENT_DELETED; }
+
+    size_t inc() noexcept { return ++_refs; }
+
+    size_t dec() noexcept { return --_refs; }
 };
 
 std::vector<Event> events;
@@ -73,9 +79,9 @@ void rawstor_logging_terminate(void) {
 
 #ifdef RAWSTOR_TRACE_EVENTS
 
-size_t rawstor_trace_event_begin(
+size_t rawstor_trace_event_va_begin(
     char appearance, const char* file, int line, const char* function,
-    const char* format, ...
+    const char* format, va_list args
 ) {
     rawstor_mutex_lock(rawstor_logging_mutex);
     try {
@@ -95,10 +101,7 @@ size_t rawstor_trace_event_begin(
 
         dprintf(STDERR_FILENO, "TRACE %s:%d %s(): ", file, line, function);
 
-        va_list args;
-        va_start(args, format);
         vdprintf(STDERR_FILENO, format, args);
-        va_end(args);
 
         rawstor_mutex_unlock(rawstor_logging_mutex);
         return it - events.begin();
@@ -108,34 +111,51 @@ size_t rawstor_trace_event_begin(
     }
 }
 
-void rawstor_trace_event_end(
-    size_t event, const char* file, int line, const char* function,
+size_t rawstor_trace_event_begin(
+    char appearance, const char* file, int line, const char* function,
     const char* format, ...
 ) {
+    va_list args;
+    va_start(args, format);
+    size_t ret = rawstor_trace_event_va_begin(
+        appearance, file, line, function, format, args
+    );
+    va_end(args);
+    return ret;
+}
+
+void rawstor_trace_event_inc(size_t event) {
     rawstor_mutex_lock(rawstor_logging_mutex);
     try {
         assert(events[event].state() == EVENT_AVAILABLE);
-        events[event].deleting();
-
-        rawstor_trace_event_dump();
-
-        dprintf(STDERR_FILENO, "TRACE %s:%d %s(): ", file, line, function);
-
-        va_list args;
-        va_start(args, format);
-        vdprintf(STDERR_FILENO, format, args);
-        va_end(args);
-
-        rawstor_mutex_unlock(rawstor_logging_mutex);
+        events[event].inc();
     } catch (...) {
         rawstor_mutex_unlock(rawstor_logging_mutex);
         throw;
     }
+    rawstor_mutex_unlock(rawstor_logging_mutex);
 }
 
-void rawstor_trace_event_message(
+void rawstor_trace_event_dec(size_t event) {
+    rawstor_mutex_lock(rawstor_logging_mutex);
+    try {
+        assert(events[event].state() == EVENT_AVAILABLE);
+        size_t refs = events[event].dec();
+        if (refs == 0) {
+            events[event].deleting();
+            rawstor_trace_event_dump();
+            dprintf(STDERR_FILENO, "TRACE\n");
+        }
+    } catch (...) {
+        rawstor_mutex_unlock(rawstor_logging_mutex);
+        throw;
+    }
+    rawstor_mutex_unlock(rawstor_logging_mutex);
+}
+
+void rawstor_trace_event_va_message(
     size_t event, const char* file, int line, const char* function,
-    const char* format, ...
+    const char* format, va_list args
 ) {
     rawstor_mutex_lock(rawstor_logging_mutex);
     try {
@@ -146,16 +166,22 @@ void rawstor_trace_event_message(
 
         dprintf(STDERR_FILENO, "TRACE %s:%d %s(): ", file, line, function);
 
-        va_list args;
-        va_start(args, format);
         vdprintf(STDERR_FILENO, format, args);
-        va_end(args);
-
-        rawstor_mutex_unlock(rawstor_logging_mutex);
     } catch (...) {
         rawstor_mutex_unlock(rawstor_logging_mutex);
         throw;
     }
+    rawstor_mutex_unlock(rawstor_logging_mutex);
+}
+
+void rawstor_trace_event_message(
+    size_t event, const char* file, int line, const char* function,
+    const char* format, ...
+) {
+    va_list args;
+    va_start(args, format);
+    rawstor_trace_event_va_message(event, file, line, function, format, args);
+    va_end(args);
 }
 
 void rawstor_trace_event_dump(void) {
