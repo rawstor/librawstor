@@ -182,7 +182,7 @@ protected:
 
     inline void _dispatch(size_t result, int error) {
         _in_flight = false;
-        RAWSTOR_TRACE_EVENT_MESSAGE(_t->trace_event, "in-flight end");
+        RAWSTOR_TRACE_EVENT_MESSAGE(_t->trace_event, "%s\n", "in-flight end");
 
         try {
             (*_t)(_o, result, error);
@@ -222,7 +222,7 @@ public:
 
     void request_cb(int error) {
         _in_flight = true;
-        RAWSTOR_TRACE_EVENT_MESSAGE(_t->trace_event, "in-flight begin");
+        RAWSTOR_TRACE_EVENT_MESSAGE(_t->trace_event, "%s\n", "in-flight begin");
 
         if (error) {
             _dispatch(0, error);
@@ -525,8 +525,8 @@ public:
 
     void operator()(size_t result, int error) override {
         RAWSTOR_TRACE_EVENT_MESSAGE(
-            trace_event,
-            result << " of " << _op->request_size() << ", error = " << error
+            trace_event, "%zu of %zu, error = %d\n", result,
+            _op->request_size(), error
         );
 
         if (!error) {
@@ -553,8 +553,8 @@ public:
 
     void operator()(size_t result, int error) override {
         RAWSTOR_TRACE_EVENT_MESSAGE(
-            trace_event, result << " of " << sizeof(*_context->response())
-                                << ", error = " << error
+            trace_event, "%zu of %zu, error = %d\n", result,
+            sizeof(*_context->response()), error
         );
 
         _context->sub_read();
@@ -596,7 +596,7 @@ public:
 
     void operator()(size_t result, int error) override {
         RAWSTOR_TRACE_EVENT_MESSAGE(
-            trace_event, result << " of " << _size << ", error = " << error
+            trace_event, "%zu of %zu, error = %d\n", result, _size, error
         );
 
         _context->sub_read();
@@ -630,7 +630,7 @@ public:
 
     void operator()(size_t result, int error) override {
         RAWSTOR_TRACE_EVENT_MESSAGE(
-            trace_event, result << " of " << _size << ", error = " << error
+            trace_event, "%zu of %zu, error = %d\n", result, _size, error
         );
 
         _context->sub_read();
