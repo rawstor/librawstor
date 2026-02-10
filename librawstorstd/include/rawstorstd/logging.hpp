@@ -4,6 +4,7 @@
 #include <rawstorstd/logging.h>
 
 #include <cassert>
+#include <cstdarg>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -96,7 +97,7 @@ public:
         return *this;
     }
 
-    void message(
+    inline void message(
         const char* file, int line, const char* function, const char* format,
         ...
     ) const noexcept {
