@@ -186,7 +186,7 @@ protected:
 
     inline void _dispatch(size_t result, int error) {
         _in_flight = false;
-        RAWSTOR_TRACE_EVENT_MESSAGE(_t->trace_event, "in-flight end");
+        RAWSTOR_TRACE_EVENT_MESSAGE(_t->trace_event, "%s\n", "in-flight end");
 
         try {
             (*_t)(_o, result, error);
@@ -224,7 +224,7 @@ public:
 
     void request_cb(int error) {
         _in_flight = true;
-        RAWSTOR_TRACE_EVENT_MESSAGE(_t->trace_event, "in-flight begin");
+        RAWSTOR_TRACE_EVENT_MESSAGE(_t->trace_event, "%s\n", "in-flight begin");
 
         if (error) {
             _dispatch(0, error);

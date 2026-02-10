@@ -15,16 +15,16 @@ namespace io {
 namespace poll {
 
 void Event::dispatch() {
-    RAWSTOR_TRACE_EVENT_MESSAGE(_t->trace_event, "callback");
+    RAWSTOR_TRACE_EVENT_MESSAGE(_t->trace_event, "%s\n", "callback");
     try {
         (*_t)(_result, _error);
     } catch (const std::exception& e) {
         RAWSTOR_TRACE_EVENT_MESSAGE(
-            _t->trace_event, "callback error: " << e.what()
+            _t->trace_event, "callback error: %s\n", e.what()
         );
         throw;
     }
-    RAWSTOR_TRACE_EVENT_MESSAGE(_t->trace_event, "callback success");
+    RAWSTOR_TRACE_EVENT_MESSAGE(_t->trace_event, "%s\n", "callback success");
 }
 
 void Event::add_iov(std::vector<iovec>& iov) {

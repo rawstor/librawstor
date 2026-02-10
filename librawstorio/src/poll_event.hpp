@@ -95,7 +95,7 @@ public:
         const char* file, int line, const char* function,
         const std::string& message
     ) {
-        _t->trace_event.message(file, line, function, message);
+        _t->trace_event.message(file, line, function, "%s\n", message.c_str());
     }
 #endif
 };
