@@ -186,9 +186,7 @@ protected:
 
     inline void _dispatch(size_t result, int error) {
         _in_flight = false;
-#ifdef RAWSTOR_TRACE_EVENTS
-        _t->trace(__FILE__, __LINE__, __FUNCTION__, "in-flight end");
-#endif
+        RAWSTOR_TRACE_EVENT_MESSAGE(_t->trace_event, "in-flight end");
 
         try {
             (*_t)(_o, result, error);
@@ -226,9 +224,7 @@ public:
 
     void request_cb(int error) {
         _in_flight = true;
-#ifdef RAWSTOR_TRACE_EVENTS
-        _t->trace(__FILE__, __LINE__, __FUNCTION__, "in-flight begin");
-#endif
+        RAWSTOR_TRACE_EVENT_MESSAGE(_t->trace_event, "in-flight begin");
 
         if (error) {
             _dispatch(0, error);
