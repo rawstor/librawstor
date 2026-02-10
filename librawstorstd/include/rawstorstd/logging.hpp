@@ -15,12 +15,11 @@ namespace rawstor {
 
 #ifdef RAWSTOR_TRACE_EVENTS
 #define RAWSTOR_TRACE_EVENT_MESSAGE(trace, stream)                             \
-    do {                                                                          \
+    do {                                                                       \
         std::ostringstream oss;                                                \
         oss << stream;                                                         \
         trace.message(__FILE__, __LINE__, __FUNCTION__, oss.str());            \
-    }                                                                          \
-    while (0)
+    } while (0)
 #else
 #define RAWSTOR_TRACE_EVENT_MESSAGE(trace, stream)
 #endif
@@ -74,9 +73,7 @@ public:
     ~TraceEvent() {
 #ifdef RAWSTOR_TRACE_EVENTS
         if (_id != (size_t)-1) {
-            rawstor_trace_event_end(
-                _id, _file, _line, _function, "end\n"
-            );
+            rawstor_trace_event_end(_id, _file, _line, _function, "end\n");
         }
 #endif
     }
