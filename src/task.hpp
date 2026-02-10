@@ -15,7 +15,7 @@ private:
 public:
     TraceEvent trace_event;
 
-    Task() : trace_event(RAWSTOR_TRACE_EVENT('I', "")) {}
+    Task() : trace_event(RAWSTOR_TRACE_EVENT('I', "%s\n", "")) {}
 
     Task(const Task&) = delete;
     Task(Task&&) = delete;

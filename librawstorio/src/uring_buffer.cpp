@@ -110,8 +110,8 @@ BufferRing::~BufferRing() {
 
 void BufferRing::operator()(size_t result, int error) {
     RAWSTOR_TRACE_EVENT_MESSAGE(
-        trace_event,
-        "multishot received: result = " << result << ", error = " << error
+        trace_event, "multishot received: result = %zu, error = %d\n", result,
+        error
     );
     if (result > 0) {
         _pending_entry->set_result(result);
@@ -152,8 +152,8 @@ void BufferRing::operator()(size_t result, int error) {
         _t->set(iov.data(), iov.size());
         try {
             RAWSTOR_TRACE_EVENT_MESSAGE(
-                trace_event,
-                "sending iov: niov = " << iov.size() << ", size = " << iov_size
+                trace_event, "sending iov: niov = %zu, size = %zu\n",
+                iov.size(), iov_size
             );
             (*_t)(iov_size, error);
         } catch (...) {

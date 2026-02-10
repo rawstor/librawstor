@@ -301,8 +301,8 @@ void EventSimplexVectorRecvMultishot::dispatch() {
         t->set(iov.data(), iov.size());
         try {
             RAWSTOR_TRACE_EVENT_MESSAGE(
-                t->trace_event,
-                "sending iov: niov = " << iov.size() << ", size = " << iov_size
+                t->trace_event, "sending iov: niov = %zu, size = %zu\n",
+                iov.size(), iov_size
             );
             Event::dispatch();
         } catch (...) {
