@@ -62,7 +62,10 @@ public:
     TraceEvent(TraceEvent&& other) noexcept
 #ifdef RAWSTOR_TRACE_EVENTS
         :
-        _id(std::exchange(other._id, (size_t)-1))
+        _id(std::exchange(other._id, (size_t)-1)),
+        _file(other._file),
+        _line(other._line),
+        _function(other._function)
 #endif
     {
 #ifndef RAWSTOR_TRACE_EVENTS
