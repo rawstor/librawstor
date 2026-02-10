@@ -55,7 +55,7 @@ public:
 #endif
     }
 
-    TraceEvent(const TraceEvent& other) noexcept
+    TraceEvent(const TraceEvent& other)
 #ifdef RAWSTOR_TRACE_EVENTS
         :
         _id(other._id)
