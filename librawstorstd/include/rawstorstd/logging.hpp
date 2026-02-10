@@ -15,7 +15,7 @@ namespace rawstor {
 
 #ifdef RAWSTOR_TRACE_EVENTS
 #define RAWSTOR_TRACE_EVENT_MESSAGE(trace, stream)                             \
-    {                                                                          \
+    do {                                                                          \
         std::ostringstream oss;                                                \
         oss << stream;                                                         \
         trace.message(__FILE__, __LINE__, __FUNCTION__, oss.str());            \
