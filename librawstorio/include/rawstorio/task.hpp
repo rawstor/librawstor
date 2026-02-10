@@ -1,7 +1,7 @@
 #ifndef RAWSTORIO_TASK_HPP
 #define RAWSTORIO_TASK_HPP
 
-#include <rawstorstd/logging.h>
+#include <rawstorstd/logging.hpp>
 
 #include <sys/socket.h>
 #include <sys/uio.h>
@@ -12,27 +12,17 @@ namespace rawstor {
 namespace io {
 
 class Task {
-private:
-#ifdef RAWSTOR_TRACE_EVENTS
-    size_t _trace_id;
-#endif
-
 public:
+    rawstor::TraceEvent trace_event;
+
     Task();
     Task(const Task&) = delete;
     Task(Task&&) = delete;
-    virtual ~Task();
+    virtual ~Task() = default;
     Task& operator=(const Task&) = delete;
     Task& operator=(Task&&) = delete;
 
     virtual void operator()(size_t result, int error) = 0;
-
-#ifdef RAWSTOR_TRACE_EVENTS
-    void trace(
-        const char* file, int line, const char* function,
-        const std::string& message
-    );
-#endif
 };
 
 class TaskVectorExternal : public Task {
