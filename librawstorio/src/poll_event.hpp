@@ -4,7 +4,7 @@
 #include <rawstorio/task.hpp>
 
 #include <rawstorstd/iovec.h>
-#include <rawstorstd/logging.h>
+#include <rawstorstd/logging.hpp>
 #include <rawstorstd/ringbuf.hpp>
 
 #include <sys/types.h>
@@ -69,7 +69,7 @@ public:
         const char* file, int line, const char* function,
         const std::string& message
     ) {
-        _t->trace(file, line, function, message);
+        _t->trace_event.message(file, line, function, message);
     }
 #endif
     virtual bool is_completed() const noexcept = 0;
