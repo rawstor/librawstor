@@ -109,11 +109,10 @@ BufferRing::~BufferRing() {
 }
 
 void BufferRing::operator()(size_t result, int error) {
-#ifdef RAWSTOR_TRACE_EVENTS
-    std::ostringstream oss;
-    oss << "multishot received: result = " << result << ", error = " << error;
-    trace(__FILE__, __LINE__, __FUNCTION__, oss.str());
-#endif
+    RAWSTOR_TRACE_EVENT_MESSAGE(
+        trace_event,
+        "multishot received: result = " << result << ", error = " << error
+    );
     if (result > 0) {
         _pending_entry->set_result(result);
         _pending_size += result;
@@ -152,12 +151,10 @@ void BufferRing::operator()(size_t result, int error) {
 
         _t->set(iov.data(), iov.size());
         try {
-#ifdef RAWSTOR_TRACE_EVENTS
-            std::ostringstream oss;
-            oss << "sending iov: niov = " << iov.size()
-                << ", size = " << iov_size;
-            _t->trace(__FILE__, __LINE__, __FUNCTION__, oss.str());
-#endif
+            RAWSTOR_TRACE_EVENT_MESSAGE(
+                trace_event,
+                "sending iov: niov = " << iov.size() << ", size = " << iov_size
+            );
             (*_t)(iov_size, error);
         } catch (...) {
             _t->set(nullptr, 0);
