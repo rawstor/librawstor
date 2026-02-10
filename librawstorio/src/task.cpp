@@ -3,7 +3,7 @@
 namespace rawstor {
 namespace io {
 
-Task::Task() : trace_event(RAWSTOR_TRACE_EVENT('|',  "")) {
+Task::Task() : trace_event(RAWSTOR_TRACE_EVENT('|', "")) {
 }
 
 TaskVectorExternal::TaskVectorExternal() : _iov(nullptr), _niov(0) {
