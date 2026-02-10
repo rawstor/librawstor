@@ -29,6 +29,9 @@ class TraceEvent final {
 private:
 #ifdef RAWSTOR_TRACE_EVENTS
     size_t _id;
+    const char* _file;
+    int _line;
+    const char* _function;
 #endif
 
 public:
@@ -40,7 +43,10 @@ public:
         :
         _id(rawstor_trace_event_begin(
             appearance, file, line, function, "%s\n", message.c_str()
-        ))
+        )),
+        _file(file),
+        _line(line),
+        _function(function)
 #endif
     {
 #ifndef RAWSTOR_TRACE_EVENTS
@@ -69,7 +75,7 @@ public:
 #ifdef RAWSTOR_TRACE_EVENTS
         if (_id != (size_t)-1) {
             rawstor_trace_event_end(
-                _id, __FILE__, __LINE__, __FUNCTION__, "\n"
+                _id, _file, _line, _function, "end\n"
             );
         }
 #endif
@@ -78,7 +84,10 @@ public:
     TraceEvent& operator=(const TraceEvent&) = delete;
     TraceEvent& operator=(TraceEvent&& other) {
 #ifdef RAWSTOR_TRACE_EVENTS
-        _id = std::exchange(other._id, (size_t)-1);
+        std::swap(_id, other._id);
+        std::swap(_file, other._file);
+        std::swap(_line, other._line);
+        std::swap(_function, other._function);
 #else
         (void)(other);
 #endif
