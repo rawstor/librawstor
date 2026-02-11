@@ -10,17 +10,11 @@
 
 #include <rawstor/object.h>
 
-#include <string>
-
 namespace rawstor {
 namespace file {
 
-class SessionOp;
-
 class Session final : public rawstor::Session {
 private:
-    RawstorObject* _o;
-
     int _connect(const RawstorUUID& id);
 
 public:
@@ -28,41 +22,42 @@ public:
 
     void create(
         rawstor::io::Queue& queue, const RawstorUUID& id,
-        const RawstorObjectSpec& sp, std::unique_ptr<rawstor::Task> t
+        const RawstorObjectSpec& sp, std::function<void(int)>&& cb
     ) override;
 
     void remove(
         rawstor::io::Queue& queue, const RawstorUUID& id,
-        std::unique_ptr<rawstor::Task> t
+        std::function<void(int)>&& cb
     ) override;
 
     void spec(
-        rawstor::io::Queue& queue, const RawstorUUID& id, RawstorObjectSpec* sp,
-        std::unique_ptr<rawstor::Task> t
+        rawstor::io::Queue& queue, const RawstorUUID& id,
+        std::function<void(const RawstorObjectSpec&, int)>&& cb
     ) override;
 
     void set_object(
         rawstor::io::Queue& queue, RawstorObject* object,
-        std::unique_ptr<rawstor::Task> t
+        std::function<void(int)>&& cb
     ) override;
 
     void pread(
-        void* buf, size_t size, off_t offset, std::unique_ptr<rawstor::Task> t
+        void* buf, size_t size, off_t offset,
+        std::function<void(size_t, int)>&& cb
     ) override;
 
     void preadv(
         iovec* iov, unsigned int niov, size_t size, off_t offset,
-        std::unique_ptr<rawstor::Task> t
+        std::function<void(size_t, int)>&& cb
     ) override;
 
     void pwrite(
         const void* buf, size_t size, off_t offset,
-        std::unique_ptr<rawstor::Task> t
+        std::function<void(size_t, int)>&& cb
     ) override;
 
     void pwritev(
         const iovec* iov, unsigned int niov, size_t size, off_t offset,
-        std::unique_ptr<rawstor::Task> t
+        std::function<void(size_t, int)>&& cb
     ) override;
 };
 

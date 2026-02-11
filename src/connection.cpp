@@ -492,18 +492,59 @@ void Connection::close() {
 }
 
 void Connection::pread(
-    void* buf, size_t size, off_t offset, std::unique_ptr<Task> t
+    void* buf, size_t size, off_t offset, std::function<void(size_t, int)>&& cb
 ) {
     std::shared_ptr<Session> s = get_next_session();
-    std::unique_ptr<Task> op = std::make_unique<ConnectionOpPRead>(
-        *this, s, 0, buf, size, offset, std::move(t)
-    );
-    s->pread(buf, size, offset, std::move(op));
+    s->pread(buf, size, offset, [this, s, attempt = 0u, cb](size_t result, int error) {
+        if (!error) {
+            if (attempt > 0) {
+                rawstor_warning(
+                    "%s; success on %s; attempt: %d of %d\n", str().c_str(),
+                    s->str().c_str(), attempt + 1, rawstor_opts_io_attempts()
+                );
+            }
+            cb(result, error);
+            return;
+        }
+
+        if (attempt + 1 >= rawstor_opts_io_attempts()) {
+            rawstor_error(
+                "%s; error on %s: %s; attempt %d of %d; "
+                "failing...\n",
+                str().c_str(), s->str().c_str(), std::strerror(error),
+                attempt + 1, rawstor_opts_io_attempts()
+            );
+            cb(result, error);
+            return;
+        }
+
+        rawstor_warning(
+            "%s; error on %s: %s; attempt: %d of %d; "
+            "retrying...\n",
+            str().c_str(), s->str().c_str(), std::strerror(error), attempt + 1,
+            rawstor_opts_io_attempts()
+        );
+
+        try {
+            invalidate_session(s);
+            _retry(get_next_session());
+        } catch (const std::system_error& e) {
+            cb(result, e.code().value());
+        } catch (const std::exception& e) {
+            rawstor_error(
+                "%s; exception on %s: %s; attempt %d of %d; "
+                "failing...\n",
+                str().c_str(), s->str().c_str(), e.what(), attempt + 1,
+                rawstor_opts_io_attempts()
+            );
+            cb(result, EIO);
+        }
+    });
 }
 
 void Connection::preadv(
     iovec* iov, unsigned int niov, size_t size, off_t offset,
-    std::unique_ptr<Task> t
+    std::function<void(size_t, int)>&& cb
 ) {
     std::shared_ptr<Session> s = get_next_session();
     std::unique_ptr<Task> op = std::make_unique<ConnectionOpPReadV>(
@@ -513,7 +554,8 @@ void Connection::preadv(
 }
 
 void Connection::pwrite(
-    const void* buf, size_t size, off_t offset, std::unique_ptr<Task> t
+    const void* buf, size_t size, off_t offset,
+    std::function<void(size_t, int)>&& cb
 ) {
     std::shared_ptr<Session> s = get_next_session();
     std::unique_ptr<Task> op = std::make_unique<ConnectionOpPWrite>(
@@ -524,7 +566,7 @@ void Connection::pwrite(
 
 void Connection::pwritev(
     const iovec* iov, unsigned int niov, size_t size, off_t offset,
-    std::unique_ptr<Task> t
+    std::function<void(size_t, int)>&& cb
 ) {
     std::shared_ptr<Session> s = get_next_session();
     std::unique_ptr<Task> op = std::make_unique<ConnectionOpPWriteV>(

@@ -6,14 +6,13 @@
 #include <rawstor/object.h>
 #include <rawstor/rawstor.h>
 
+#include <functional>
 #include <memory>
 #include <vector>
 
 #include <cstddef>
 
 namespace rawstor {
-
-class Task;
 
 class Session;
 
@@ -50,19 +49,24 @@ public:
 
     void close();
 
-    void pread(void* buf, size_t size, off_t offset, std::unique_ptr<Task> t);
+    void pread(
+        void* buf, size_t size, off_t offset,
+        std::function<void(size_t, int)>&& cb
+    );
 
     void preadv(
         iovec* iov, unsigned int niov, size_t size, off_t offset,
-        std::unique_ptr<Task> t
+        std::function<void(size_t, int)>&& cb
     );
 
-    void
-    pwrite(const void* buf, size_t size, off_t offset, std::unique_ptr<Task> t);
+    void pwrite(
+        const void* buf, size_t size, off_t offset,
+        std::function<void(size_t, int)>&& cb
+    );
 
     void pwritev(
         const iovec* iov, unsigned int niov, size_t size, off_t offset,
-        std::unique_ptr<Task> t
+        std::function<void(size_t, int)>&& cb
     );
 };
 
