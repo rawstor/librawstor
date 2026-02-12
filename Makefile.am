@@ -1,4 +1,5 @@
 SUBDIRS = librawstorstd \
+          librawrx \
           librawstorio \
           src \
           cli \
@@ -25,6 +26,7 @@ CLEANFILES = README
 if ENABLE_TESTS
 test: all
 	make -C librawstorstd test
+	make -C librawrx test
 	make -C librawstorio test
 	make -C tests test
 
