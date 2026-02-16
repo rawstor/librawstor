@@ -27,6 +27,14 @@ private:
     std::vector<std::shared_ptr<Session>>
     _open(const URI& uri, RawstorObject* object, size_t nsessions);
 
+    void
+    _op(const char* func_name, size_t size, off_t offset,
+        std::function<void(size_t, int)>&& cb,
+        const std::shared_ptr<std::function<void(
+            std::shared_ptr<Session>, std::function<void(size_t, int)>&&
+        )>>& op,
+        unsigned int attempt);
+
 public:
     Connection(unsigned int depth);
     Connection(const Connection&) = delete;

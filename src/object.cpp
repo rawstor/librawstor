@@ -10,7 +10,7 @@
 #include "task.hpp"
 
 #include <rawstorstd/gpp.hpp>
-#include <rawstorstd/logging.h>
+#include <rawstorstd/logging.hpp>
 #include <rawstorstd/uuid.h>
 
 #include <rawstorstd/uri.hpp>
@@ -253,70 +253,151 @@ std::vector<rawstor::URI> RawstorObject::uris() const {
 }
 
 void RawstorObject::pread(
-    void* buf, size_t size, off_t offset, RawstorCallback* cb, void* data
+    void* buf, size_t size, off_t offset, std::function<void(size_t, int)>&& cb
 ) {
-    rawstor_debug(
-        "%s(): size = %zu, offset = %jd\n", __FUNCTION__, size, (intmax_t)offset
+    rawstor::TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
+        'I', "pread(): size = %zu, offset = %jd\n", size, (intmax_t)offset
     );
-
-    std::shared_ptr<ObjectOp> op =
-        std::make_shared<ObjectOp>(1, size, cb, data);
+    rawstor_debug(
+        "pread(): size = %zu, offset = %jd\n", size, (intmax_t)offset
+    );
 
     /**
      * TODO: Can we select fastest connection here?
      */
-    std::unique_ptr<rawstor::Task> t = std::make_unique<Task>(op);
-    _cns.front()->pread(buf, size, offset, std::move(t));
+    _cns.front()->pread(
+        buf, size, offset,
+        [size, trace_event, cb = std::move(cb)](size_t result, int error) {
+            RAWSTOR_TRACE_EVENT_MESSAGE(
+                trace_event, "%zu of %zu, error = %d\n", result, size, error
+            );
+            cb(result, error);
+        }
+    );
 }
 
 void RawstorObject::preadv(
     iovec* iov, unsigned int niov, size_t size, off_t offset,
-    RawstorCallback* cb, void* data
+    std::function<void(size_t, int)>&& cb
 ) {
-    rawstor_debug(
-        "%s(): size = %zu, offset = %jd\n", __FUNCTION__, size, (intmax_t)offset
+    rawstor::TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
+        'I', "preadv(): size = %zu, offset = %jd\n", size, (intmax_t)offset
     );
-
-    std::shared_ptr<ObjectOp> op =
-        std::make_shared<ObjectOp>(1, size, cb, data);
+    rawstor_debug(
+        "preadv(): size = %zu, offset = %jd\n", size, (intmax_t)offset
+    );
 
     /**
      * TODO: Can we select fastest connection here?
      */
-    std::unique_ptr<rawstor::Task> t = std::make_unique<Task>(op);
-    _cns.front()->preadv(iov, niov, size, offset, std::move(t));
+    _cns.front()->preadv(
+        iov, niov, size, offset,
+        [size, trace_event, cb = std::move(cb)](size_t result, int error) {
+            RAWSTOR_TRACE_EVENT_MESSAGE(
+                trace_event, "%zu of %zu, error = %d\n", result, size, error
+            );
+            cb(result, error);
+        }
+    );
 }
 
 void RawstorObject::pwrite(
-    const void* buf, size_t size, off_t offset, RawstorCallback* cb, void* data
+    const void* buf, size_t size, off_t offset,
+    std::function<void(size_t, int)>&& cb
 ) {
+    rawstor::TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
+        'I', "pwrite(): size = %zu, offset = %jd\n", size, (intmax_t)offset
+    );
     rawstor_debug(
-        "%s(): size = %zu, offset = %jd\n", __FUNCTION__, size, (intmax_t)offset
+        "pwrite(): size = %zu, offset = %jd\n", size, (intmax_t)offset
     );
 
-    std::shared_ptr<ObjectOp> op =
-        std::make_shared<ObjectOp>(_cns.size(), size, cb, data);
+    struct Operation {
+        size_t mirrors;
+        size_t result;
+        int error;
+    };
+
+    std::shared_ptr<Operation> op = std::make_shared<Operation>(
+        (Operation){.mirrors = _cns.size(), .result = (size_t)-1, .error = 0}
+    );
 
     for (auto& cn : _cns) {
-        std::unique_ptr<rawstor::Task> t = std::make_unique<Task>(op);
-        cn->pwrite(buf, size, offset, std::move(t));
+        cn->pwrite(
+            buf, size, offset,
+            [op, size, cb = std::move(cb),
+             trace_event](size_t result, int error) {
+                RAWSTOR_TRACE_EVENT_MESSAGE(
+                    trace_event, "%zu of %zu, error = %d\n", result, size, error
+                );
+
+                --op->mirrors;
+
+                op->result = std::min(op->result, result);
+
+                if (error) {
+                    rawstor_error("%s\n", strerror(error));
+                    op->error = EIO;
+                }
+
+                if (op->mirrors == 0) {
+                    /**
+                     * TODO: Handle partial tasks.
+                     */
+                    cb(op->result, op->error);
+                }
+            }
+        );
     }
 }
 
 void RawstorObject::pwritev(
     const iovec* iov, unsigned int niov, size_t size, off_t offset,
-    RawstorCallback* cb, void* data
+    std::function<void(size_t, int)>&& cb
 ) {
+    rawstor::TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
+        'I', "pwritev(): size = %zu, offset = %jd\n", size, (intmax_t)offset
+    );
     rawstor_debug(
-        "%s(): size = %zu, offset = %jd\n", __FUNCTION__, size, (intmax_t)offset
+        "pwritev(): size = %zu, offset = %jd\n", size, (intmax_t)offset
     );
 
-    std::shared_ptr<ObjectOp> op =
-        std::make_shared<ObjectOp>(_cns.size(), size, cb, data);
+    struct Operation {
+        size_t mirrors;
+        size_t result;
+        int error;
+    };
+
+    std::shared_ptr<Operation> op = std::make_shared<Operation>(
+        (Operation){.mirrors = _cns.size(), .result = (size_t)-1, .error = 0}
+    );
 
     for (auto& cn : _cns) {
-        std::unique_ptr<rawstor::Task> t = std::make_unique<Task>(op);
-        cn->pwritev(iov, niov, size, offset, std::move(t));
+        cn->pwritev(
+            iov, niov, size, offset,
+            [op, size, cb = std::move(cb),
+             trace_event](size_t result, int error) {
+                RAWSTOR_TRACE_EVENT_MESSAGE(
+                    trace_event, "%zu of %zu, error = %d\n", result, size, error
+                );
+
+                --op->mirrors;
+
+                op->result = std::min(op->result, result);
+
+                if (error) {
+                    rawstor_error("%s\n", strerror(error));
+                    op->error = EIO;
+                }
+
+                if (op->mirrors == 0) {
+                    /**
+                     * TODO: Handle partial tasks.
+                     */
+                    cb(op->result, op->error);
+                }
+            }
+        );
     }
 }
 
@@ -404,7 +485,12 @@ int rawstor_object_pread(
     RawstorCallback* cb, void* data
 ) {
     try {
-        object->pread(buf, size, offset, cb, data);
+        object->pread(
+            buf, size, offset,
+            [object, size, cb, data](size_t result, int error) {
+                cb(object, size, result, error, data);
+            }
+        );
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -416,7 +502,12 @@ int rawstor_object_preadv(
     off_t offset, RawstorCallback* cb, void* data
 ) {
     try {
-        object->preadv(iov, niov, size, offset, cb, data);
+        object->preadv(
+            iov, niov, size, offset,
+            [object, size, cb, data](size_t result, int error) {
+                cb(object, size, result, error, data);
+            }
+        );
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -428,7 +519,12 @@ int rawstor_object_pwrite(
     RawstorCallback* cb, void* data
 ) {
     try {
-        object->pwrite(buf, size, offset, cb, data);
+        object->pwrite(
+            buf, size, offset,
+            [object, size, cb, data](size_t result, int error) {
+                cb(object, size, result, error, data);
+            }
+        );
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -440,7 +536,12 @@ int rawstor_object_pwritev(
     off_t offset, RawstorCallback* cb, void* data
 ) {
     try {
-        object->pwritev(iov, niov, size, offset, cb, data);
+        object->pwritev(
+            iov, niov, size, offset,
+            [object, size, cb, data](size_t result, int error) {
+                cb(object, size, result, error, data);
+            }
+        );
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();

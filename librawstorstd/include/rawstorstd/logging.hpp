@@ -12,7 +12,7 @@
 namespace rawstor {
 
 #define RAWSTOR_TRACE_EVENT(appearance, format, ...)                           \
-    TraceEvent(                                                                \
+    rawstor::TraceEvent(                                                       \
         (appearance), __FILE__, __LINE__, __FUNCTION__, format, __VA_ARGS__    \
     )
 
