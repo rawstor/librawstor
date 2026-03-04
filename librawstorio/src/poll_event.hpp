@@ -1,12 +1,11 @@
 #ifndef RAWSTORIO_POLL_EVENT_HPP
 #define RAWSTORIO_POLL_EVENT_HPP
 
-#include <rawstorio/task.hpp>
-
 #include <rawstorstd/iovec.h>
 #include <rawstorstd/logging.hpp>
 #include <rawstorstd/ringbuf.hpp>
 
+#include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/uio.h>
 
@@ -14,7 +13,6 @@
 
 #include <list>
 #include <memory>
-#include <sstream>
 #include <string>
 #include <vector>
 
@@ -31,17 +29,18 @@ class Event {
 protected:
     Queue& _q;
     int _fd;
-    std::unique_ptr<rawstor::io::Task> _t;
     ssize_t _result;
     int _error;
 
 public:
-    Event(Queue& q, int fd, std::unique_ptr<rawstor::io::Task> t) :
+    rawstor::TraceEvent trace_event;
+
+    Event(Queue& q, int fd, const rawstor::TraceEvent& trace_event) :
         _q(q),
         _fd(fd),
-        _t(std::move(t)),
         _result(0),
-        _error(0) {}
+        _error(0),
+        trace_event(trace_event) {}
     Event(const Event&) = delete;
     Event(Event&&) = delete;
     virtual ~Event() = default;
@@ -52,9 +51,9 @@ public:
     inline void set_error(int error) noexcept {
 #ifdef RAWSTOR_TRACE_EVENTS
         if (error != 0) {
-            std::ostringstream oss;
-            oss << "error " << strerror(error);
-            trace(__FILE__, __LINE__, __FUNCTION__, oss.str());
+            RAWSTOR_TRACE_EVENT_MESSAGE(
+                trace_event, "error %s\n", strerror(error)
+            );
         }
 #endif
         _error = error;
@@ -62,16 +61,8 @@ public:
 
     inline int error() const noexcept { return _error; }
 
-    virtual void dispatch();
+    virtual void dispatch() = 0;
 
-#ifdef RAWSTOR_TRACE_EVENTS
-    void trace(
-        const char* file, int line, const char* function,
-        const std::string& message
-    ) {
-        _t->trace_event.message(file, line, function, "%s\n", message.c_str());
-    }
-#endif
     virtual bool is_completed() const noexcept = 0;
     virtual bool is_multiplex() const noexcept = 0;
     virtual bool is_multishot() const noexcept { return false; }
@@ -86,8 +77,8 @@ public:
 
 class EventSimplex : public Event {
 public:
-    EventSimplex(Queue& q, int fd, std::unique_ptr<rawstor::io::Task> t) :
-        Event(q, fd, std::move(t)) {}
+    EventSimplex(Queue& q, int fd, const rawstor::TraceEvent& trace_event) :
+        Event(q, fd, trace_event) {}
 
     virtual ~EventSimplex() override = default;
 
@@ -95,11 +86,20 @@ public:
 };
 
 class EventMultiplex : public Event {
+private:
+    std::function<void(size_t, int)> _cb;
+
 public:
-    EventMultiplex(Queue& q, int fd, std::unique_ptr<rawstor::io::Task> t) :
-        Event(q, fd, std::move(t)) {}
+    EventMultiplex(
+        Queue& q, int fd, const rawstor::TraceEvent& trace_event,
+        std::function<void(size_t, int)>&& cb
+    ) :
+        Event(q, fd, trace_event),
+        _cb(std::move(cb)) {}
 
     virtual ~EventMultiplex() override = default;
+
+    void dispatch() override final;
 
     bool is_multiplex() const noexcept override final { return true; }
 
@@ -118,9 +118,10 @@ protected:
 public:
     EventMultiplexScalar(
         Queue& q, int fd, const void* buf, size_t size,
-        std::unique_ptr<rawstor::io::Task> t
+        const rawstor::TraceEvent& trace_event,
+        std::function<void(size_t, int)>&& cb
     ) :
-        EventMultiplex(q, fd, std::move(t)),
+        EventMultiplex(q, fd, trace_event, std::move(cb)),
         _buf_at(buf),
         _size_at(size) {}
 
@@ -145,9 +146,10 @@ protected:
 public:
     EventMultiplexVector(
         Queue& q, int fd, const iovec* iov, unsigned int niov,
-        std::unique_ptr<rawstor::io::Task> t
+        const rawstor::TraceEvent& trace_event,
+        std::function<void(size_t, int)>&& cb
     ) :
-        EventMultiplex(q, fd, std::move(t)),
+        EventMultiplex(q, fd, trace_event, std::move(cb)),
         _niov_at(niov),
         _size_at(rawstor_iovec_size(iov, niov)) {
         _iov.reserve(_niov_at);
@@ -175,9 +177,9 @@ private:
 public:
     EventSimplexPoll(
         Queue& q, int fd, unsigned int mask,
-        std::unique_ptr<rawstor::io::Task> t
+        const rawstor::TraceEvent& trace_event
     ) :
-        EventSimplex(q, fd, std::move(t)),
+        EventSimplex(q, fd, trace_event),
         _mask(mask) {}
 
     virtual ~EventSimplexPoll() override = default;
@@ -186,78 +188,100 @@ public:
 
     inline void set_result(ssize_t result) noexcept { _result = result; }
 
-    ssize_t process() noexcept override final;
-
     bool is_completed() const noexcept override final { return true; }
     bool is_poll() const noexcept override final { return true; }
     bool is_read() const noexcept override final { return false; }
     bool is_write() const noexcept override final { return false; }
+
+    ssize_t process() noexcept override final;
 };
 
 class EventSimplexPollOneshot final : public EventSimplexPoll {
+private:
+    std::function<void(size_t, int)> _cb;
+
 public:
     EventSimplexPollOneshot(
         Queue& q, int fd, unsigned int mask,
-        std::unique_ptr<rawstor::io::Task> t
+        const rawstor::TraceEvent& trace_event,
+        std::function<void(size_t, int)>&& cb
     ) :
-        EventSimplexPoll(q, fd, mask, std::move(t)) {}
+        EventSimplexPoll(q, fd, mask, trace_event),
+        _cb(std::move(cb)) {}
+
+    void dispatch() override final;
 };
 
 class EventSimplexPollMultishot final : public EventSimplexPoll {
+private:
+    std::function<void(size_t, int)> _cb;
+
 public:
     EventSimplexPollMultishot(
         Queue& q, int fd, unsigned int mask,
-        std::unique_ptr<rawstor::io::Task> t
+        const rawstor::TraceEvent& trace_event,
+        std::function<void(size_t, int)>&& cb
     ) :
-        EventSimplexPoll(q, fd, mask, std::move(t)) {}
+        EventSimplexPoll(q, fd, mask, trace_event),
+        _cb(std::move(cb)) {}
+
+    void dispatch() override final;
 
     bool is_multishot() const noexcept override final { return true; }
-
-    void dispatch() override;
 };
 
 class EventSimplexScalarRead final : public EventSimplex {
 private:
     void* _buf;
     size_t _size;
+    std::function<void(size_t, int)> _cb;
 
 public:
     EventSimplexScalarRead(
         Queue& q, int fd, void* buf, size_t size,
-        std::unique_ptr<rawstor::io::Task> t
+        const rawstor::TraceEvent& trace_event,
+        std::function<void(size_t, int)>&& cb
     ) :
-        EventSimplex(q, fd, std::move(t)),
+        EventSimplex(q, fd, trace_event),
         _buf(buf),
-        _size(size) {}
+        _size(size),
+        _cb(std::move(cb)) {}
 
-    ssize_t process() noexcept override final;
+    void dispatch() override final;
 
     bool is_completed() const noexcept override final { return true; }
     bool is_poll() const noexcept override final { return false; }
     bool is_read() const noexcept override final { return true; }
     bool is_write() const noexcept override final { return false; }
+
+    ssize_t process() noexcept override final;
 };
 
 class EventSimplexVectorRead final : public EventSimplex {
 private:
     iovec* _iov;
     unsigned int _niov;
+    std::function<void(size_t, int)> _cb;
 
 public:
     EventSimplexVectorRead(
         Queue& q, int fd, iovec* iov, unsigned int niov,
-        std::unique_ptr<rawstor::io::Task> t
+        const rawstor::TraceEvent& trace_event,
+        std::function<void(size_t, int)>&& cb
     ) :
-        EventSimplex(q, fd, std::move(t)),
+        EventSimplex(q, fd, trace_event),
         _iov(iov),
-        _niov(niov) {}
+        _niov(niov),
+        _cb(std::move(cb)) {}
 
-    ssize_t process() noexcept override final;
+    void dispatch() override final;
 
     bool is_completed() const noexcept override final { return true; }
     bool is_poll() const noexcept override final { return false; }
     bool is_read() const noexcept override final { return true; }
     bool is_write() const noexcept override final { return false; }
+
+    ssize_t process() noexcept override final;
 };
 
 class EventSimplexScalarPositionalRead final : public EventSimplex {
@@ -265,23 +289,28 @@ private:
     void* _buf;
     size_t _size;
     off_t _offset;
+    std::function<void(size_t, int)> _cb;
 
 public:
     EventSimplexScalarPositionalRead(
         Queue& q, int fd, void* buf, size_t size, off_t offset,
-        std::unique_ptr<rawstor::io::Task> t
+        const rawstor::TraceEvent& trace_event,
+        std::function<void(size_t, int)>&& cb
     ) :
-        EventSimplex(q, fd, std::move(t)),
+        EventSimplex(q, fd, trace_event),
         _buf(buf),
         _size(size),
-        _offset(offset) {}
+        _offset(offset),
+        _cb(std::move(cb)) {}
 
-    ssize_t process() noexcept override final;
+    void dispatch() override final;
 
     bool is_completed() const noexcept override final { return true; }
     bool is_poll() const noexcept override final { return false; }
     bool is_read() const noexcept override final { return true; }
     bool is_write() const noexcept override final { return false; }
+
+    ssize_t process() noexcept override final;
 };
 
 class EventSimplexVectorPositionalRead final : public EventSimplex {
@@ -289,23 +318,28 @@ private:
     iovec* _iov;
     unsigned int _niov;
     off_t _offset;
+    std::function<void(size_t, int)> _cb;
 
 public:
     EventSimplexVectorPositionalRead(
         Queue& q, int fd, iovec* iov, unsigned int niov, off_t offset,
-        std::unique_ptr<rawstor::io::Task> t
+        const rawstor::TraceEvent& trace_event,
+        std::function<void(size_t, int)>&& cb
     ) :
-        EventSimplex(q, fd, std::move(t)),
+        EventSimplex(q, fd, trace_event),
         _iov(iov),
         _niov(niov),
-        _offset(offset) {}
+        _offset(offset),
+        _cb(std::move(cb)) {}
 
-    ssize_t process() noexcept override final;
+    void dispatch() override final;
 
     bool is_completed() const noexcept override final { return true; }
     bool is_poll() const noexcept override final { return false; }
     bool is_read() const noexcept override final { return true; }
     bool is_write() const noexcept override final { return false; }
+
+    ssize_t process() noexcept override final;
 };
 
 class EventSimplexScalarRecv final : public EventSimplex {
@@ -313,23 +347,28 @@ private:
     void* _buf;
     size_t _size;
     unsigned int _flags;
+    std::function<void(size_t, int)> _cb;
 
 public:
     EventSimplexScalarRecv(
         Queue& q, int fd, void* buf, size_t size, unsigned int flags,
-        std::unique_ptr<rawstor::io::Task> t
+        const rawstor::TraceEvent& trace_event,
+        std::function<void(size_t, int)>&& cb
     ) :
-        EventSimplex(q, fd, std::move(t)),
+        EventSimplex(q, fd, trace_event),
         _buf(buf),
         _size(size),
-        _flags(flags) {}
+        _flags(flags),
+        _cb(std::move(cb)) {}
 
-    ssize_t process() noexcept override final;
+    void dispatch() override final;
 
     bool is_completed() const noexcept override final { return true; }
     bool is_poll() const noexcept override final { return false; }
     bool is_read() const noexcept override final { return true; }
     bool is_write() const noexcept override final { return false; }
+
+    ssize_t process() noexcept override final;
 };
 
 class EventSimplexVectorRecvMultishotEntry final {
@@ -376,83 +415,97 @@ public:
 class EventSimplexVectorRecvMultishot final : public EventSimplex {
 private:
     size_t _entry_size;
+    size_t _size;
     size_t _pending_offset;
     size_t _pending_size;
     rawstor::RingBuf<EventSimplexVectorRecvMultishotEntry> _pending_entries;
     unsigned int _flags;
+    std::function<size_t(const iovec* iov, unsigned int niov, size_t, int)> _cb;
 
 public:
     EventSimplexVectorRecvMultishot(
-        Queue& q, int fd, size_t entry_size, unsigned int entries,
-        unsigned int flags, std::unique_ptr<rawstor::io::TaskVectorExternal> t
+        Queue& q, int fd, size_t entry_size, unsigned int entries, size_t size,
+        unsigned int flags, const rawstor::TraceEvent& trace_event,
+        std::function<
+            size_t(const iovec* iov, unsigned int niov, size_t, int)>&& cb
     ) :
-        EventSimplex(q, fd, std::move(t)),
+        EventSimplex(q, fd, trace_event),
         _entry_size(entry_size),
+        _size(size),
         _pending_offset(0),
         _pending_size(0),
         _pending_entries(entries),
-        _flags(flags) {}
+        _flags(flags),
+        _cb(std::move(cb)) {}
 
-    ssize_t process() noexcept override final;
-    void dispatch() override;
+    void dispatch() override final;
 
     bool is_completed() const noexcept override final;
     bool is_multishot() const noexcept override final { return true; }
     bool is_poll() const noexcept override final { return false; }
     bool is_read() const noexcept override final { return true; }
     bool is_write() const noexcept override final { return false; }
+
+    ssize_t process() noexcept override final;
 };
 
 class EventSimplexMessageRead final : public EventSimplex {
 private:
     msghdr* _msg;
     unsigned int _flags;
+    std::function<void(size_t, int)> _cb;
 
 public:
     EventSimplexMessageRead(
         Queue& q, int fd, msghdr* msg, unsigned int flags,
-        std::unique_ptr<rawstor::io::Task> t
+        const rawstor::TraceEvent& trace_event,
+        std::function<void(size_t, int)>&& cb
     ) :
-        EventSimplex(q, fd, std::move(t)),
+        EventSimplex(q, fd, trace_event),
         _msg(msg),
-        _flags(flags) {}
+        _flags(flags),
+        _cb(std::move(cb)) {}
 
-    ssize_t process() noexcept override final;
+    void dispatch() override final;
 
     bool is_completed() const noexcept override final { return true; }
     bool is_poll() const noexcept override final { return false; }
     bool is_read() const noexcept override final { return true; }
     bool is_write() const noexcept override final { return false; }
+
+    ssize_t process() noexcept override final;
 };
 
 class EventMultiplexScalarWrite final : public EventMultiplexScalar {
 public:
     EventMultiplexScalarWrite(
         Queue& q, int fd, const void* buf, size_t size,
-        std::unique_ptr<rawstor::io::Task> t
+        const rawstor::TraceEvent& trace_event,
+        std::function<void(size_t, int)>&& cb
     ) :
-        EventMultiplexScalar(q, fd, buf, size, std::move(t)) {}
-
-    ssize_t process() noexcept override final;
+        EventMultiplexScalar(q, fd, buf, size, trace_event, std::move(cb)) {}
 
     bool is_poll() const noexcept override final { return false; }
     bool is_read() const noexcept override final { return false; }
     bool is_write() const noexcept override final { return true; }
+
+    ssize_t process() noexcept override final;
 };
 
 class EventMultiplexVectorWrite final : public EventMultiplexVector {
 public:
     EventMultiplexVectorWrite(
         Queue& q, int fd, const iovec* iov, unsigned int niov,
-        std::unique_ptr<rawstor::io::Task> t
+        const rawstor::TraceEvent& trace_event,
+        std::function<void(size_t, int)>&& cb
     ) :
-        EventMultiplexVector(q, fd, iov, niov, std::move(t)) {}
-
-    ssize_t process() noexcept override final;
+        EventMultiplexVector(q, fd, iov, niov, trace_event, std::move(cb)) {}
 
     bool is_poll() const noexcept override final { return false; }
     bool is_read() const noexcept override final { return false; }
     bool is_write() const noexcept override final { return true; }
+
+    ssize_t process() noexcept override final;
 };
 
 class EventSimplexScalarPositionalWrite final : public EventSimplex {
@@ -460,23 +513,28 @@ private:
     const void* _buf;
     size_t _size;
     off_t _offset;
+    std::function<void(size_t, int)> _cb;
 
 public:
     EventSimplexScalarPositionalWrite(
         Queue& q, int fd, const void* buf, size_t size, off_t offset,
-        std::unique_ptr<rawstor::io::Task> t
+        const rawstor::TraceEvent& trace_event,
+        std::function<void(size_t, int)>&& cb
     ) :
-        EventSimplex(q, fd, std::move(t)),
+        EventSimplex(q, fd, trace_event),
         _buf(buf),
         _size(size),
-        _offset(offset) {}
+        _offset(offset),
+        _cb(std::move(cb)) {}
 
-    ssize_t process() noexcept override final;
+    void dispatch() override final;
 
     bool is_completed() const noexcept override final { return true; }
     bool is_poll() const noexcept override final { return false; }
     bool is_read() const noexcept override final { return false; }
     bool is_write() const noexcept override final { return true; }
+
+    ssize_t process() noexcept override final;
 };
 
 class EventSimplexVectorPositionalWrite final : public EventSimplex {
@@ -484,23 +542,28 @@ private:
     const iovec* _iov;
     unsigned int _niov;
     off_t _offset;
+    std::function<void(size_t, int)> _cb;
 
 public:
     EventSimplexVectorPositionalWrite(
         Queue& q, int fd, const iovec* iov, unsigned int niov, off_t offset,
-        std::unique_ptr<rawstor::io::Task> t
+        const rawstor::TraceEvent& trace_event,
+        std::function<void(size_t, int)>&& cb
     ) :
-        EventSimplex(q, fd, std::move(t)),
+        EventSimplex(q, fd, trace_event),
         _iov(iov),
         _niov(niov),
-        _offset(offset) {}
+        _offset(offset),
+        _cb(std::move(cb)) {}
 
-    ssize_t process() noexcept override final;
+    void dispatch() override final;
 
     bool is_completed() const noexcept override final { return true; }
     bool is_poll() const noexcept override final { return false; }
     bool is_read() const noexcept override final { return false; }
     bool is_write() const noexcept override final { return true; }
+
+    ssize_t process() noexcept override final;
 };
 
 class EventSimplexScalarSend final : public EventSimplex {
@@ -508,45 +571,55 @@ private:
     const void* _buf;
     size_t _size;
     unsigned int _flags;
+    std::function<void(size_t, int)> _cb;
 
 public:
     EventSimplexScalarSend(
         Queue& q, int fd, const void* buf, size_t size, unsigned int flags,
-        std::unique_ptr<rawstor::io::Task> t
+        const rawstor::TraceEvent& trace_event,
+        std::function<void(size_t, int)>&& cb
     ) :
-        EventSimplex(q, fd, std::move(t)),
+        EventSimplex(q, fd, trace_event),
         _buf(buf),
         _size(size),
-        _flags(flags) {}
+        _flags(flags),
+        _cb(std::move(cb)) {}
 
-    ssize_t process() noexcept override final;
+    void dispatch() override final;
 
     bool is_completed() const noexcept override final { return true; }
     bool is_poll() const noexcept override final { return false; }
     bool is_read() const noexcept override final { return false; }
     bool is_write() const noexcept override final { return true; }
+
+    ssize_t process() noexcept override final;
 };
 
 class EventSimplexMessageWrite final : public EventSimplex {
 private:
     const msghdr* _msg;
     unsigned int _flags;
+    std::function<void(size_t, int)> _cb;
 
 public:
     EventSimplexMessageWrite(
         Queue& q, int fd, const msghdr* msg, unsigned int flags,
-        std::unique_ptr<rawstor::io::Task> t
+        const rawstor::TraceEvent& trace_event,
+        std::function<void(size_t, int)>&& cb
     ) :
-        EventSimplex(q, fd, std::move(t)),
+        EventSimplex(q, fd, trace_event),
         _msg(msg),
-        _flags(flags) {}
+        _flags(flags),
+        _cb(std::move(cb)) {}
 
-    ssize_t process() noexcept override final;
+    void dispatch() override final;
 
     bool is_completed() const noexcept override final { return true; }
     bool is_poll() const noexcept override final { return false; }
     bool is_read() const noexcept override final { return false; }
     bool is_write() const noexcept override final { return true; }
+
+    ssize_t process() noexcept override final;
 };
 
 } // namespace poll

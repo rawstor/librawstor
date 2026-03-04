@@ -35,75 +35,77 @@ public:
         _cqes(depth) {}
 
     rawstor::io::Event* poll(
-        int fd, unsigned int mask, std::unique_ptr<rawstor::io::Task> t
+        int fd, unsigned int mask, std::function<void(size_t, int)>&& cb
     ) override;
 
     rawstor::io::Event* poll_multishot(
-        int fd, unsigned int mask, std::unique_ptr<rawstor::io::Task> t
+        int fd, unsigned int mask, std::function<void(size_t, int)>&& cb
     ) override;
 
     rawstor::io::Event* read(
-        int fd, void* buf, size_t size, std::unique_ptr<rawstor::io::Task> t
+        int fd, void* buf, size_t size, std::function<void(size_t, int)>&& cb
     ) override;
 
     rawstor::io::Event* readv(
         int fd, iovec* iov, unsigned int niov,
-        std::unique_ptr<rawstor::io::Task> t
+        std::function<void(size_t, int)>&& cb
     ) override;
 
     rawstor::io::Event* pread(
         int fd, void* buf, size_t size, off_t offset,
-        std::unique_ptr<rawstor::io::Task> t
+        std::function<void(size_t, int)>&& cb
     ) override;
 
     rawstor::io::Event* preadv(
         int fd, iovec* iov, unsigned int niov, off_t offset,
-        std::unique_ptr<rawstor::io::Task> t
+        std::function<void(size_t, int)>&& cb
     ) override;
 
     rawstor::io::Event* recv(
         int fd, void* buf, size_t size, unsigned int flags,
-        std::unique_ptr<rawstor::io::Task> t
+        std::function<void(size_t, int)>&& cb
     ) override;
 
     rawstor::io::Event* recv_multishot(
-        int fd, size_t entry_size, unsigned int entries, unsigned int flags,
-        std::unique_ptr<rawstor::io::TaskVectorExternal> t
+        int fd, size_t entry_size, unsigned int entries, size_t size,
+        unsigned int flags,
+        std::function<
+            size_t(const iovec* iov, unsigned int niov, size_t, int)>&& cb
     ) override;
 
     rawstor::io::Event* recvmsg(
         int fd, msghdr* msg, unsigned int flags,
-        std::unique_ptr<rawstor::io::Task> t
+        std::function<void(size_t, int)>&& cb
     ) override;
 
     rawstor::io::Event* write(
         int fd, const void* buf, size_t size,
-        std::unique_ptr<rawstor::io::Task> t
+        std::function<void(size_t, int)>&& cb
     ) override;
 
     rawstor::io::Event* writev(
         int fd, const iovec* iov, unsigned int niov,
-        std::unique_ptr<rawstor::io::Task> t
+        std::function<void(size_t, int)>&& cb
     ) override;
 
     rawstor::io::Event* pwrite(
         int fd, const void* buf, size_t size, off_t offset,
-        std::unique_ptr<rawstor::io::Task> t
+        std::function<void(size_t, int)>&& cb
     ) override;
 
     rawstor::io::Event* pwritev(
         int fd, const iovec* iov, unsigned int niov, off_t offset,
-        std::unique_ptr<rawstor::io::Task> t
+        std::function<void(size_t, int)>&& cb
     ) override;
 
     rawstor::io::Event* send(
         int fd, const void* buf, size_t size, unsigned int flags,
-        std::unique_ptr<rawstor::io::Task> t
+        std::function<void(size_t, int)>&& cb
     ) override;
 
     rawstor::io::Event* sendmsg(
         int fd, const msghdr* msg, unsigned int flags,
-        std::unique_ptr<rawstor::io::Task> t
+        std::function<void(size_t, int)>&& cb
     ) override;
 
     void cancel(rawstor::io::Event* e) override;
