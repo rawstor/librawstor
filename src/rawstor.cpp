@@ -8,7 +8,6 @@
 #include <rawstorstd/uri.hpp>
 
 #include <rawstorio/queue.hpp>
-#include <rawstorio/task.hpp>
 
 #include <sys/types.h>
 #include <sys/uio.h>
@@ -25,26 +24,6 @@
 #include <cstring>
 
 #define QUEUE_DEPTH 256
-
-namespace {
-
-class Task final : public rawstor::io::Task {
-private:
-    RawstorIOCallback* _cb;
-    void* _data;
-
-public:
-    Task(RawstorIOCallback* cb, void* data) : _cb(cb), _data(data) {}
-
-    void operator()(size_t result, int error) override {
-        int res = _cb(result, error, _data);
-        if (res) {
-            RAWSTOR_THROW_SYSTEM_ERROR(-res);
-        }
-    }
-};
-
-} // namespace
 
 namespace rawstor {
 

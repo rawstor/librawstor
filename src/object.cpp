@@ -7,13 +7,11 @@
 #include "opts.h"
 #include "ost_session.hpp"
 #include "rawstor_internals.hpp"
-#include "task.hpp"
 
 #include <rawstorstd/gpp.hpp>
 #include <rawstorstd/logging.hpp>
-#include <rawstorstd/uuid.h>
-
 #include <rawstorstd/uri.hpp>
+#include <rawstorstd/uuid.h>
 
 #include <unistd.h>
 
@@ -90,60 +88,6 @@ void validate_different_uris(const std::vector<rawstor::URI>& uris) {
         targets.insert(uri);
     }
 }
-
-class ObjectOp {
-private:
-    size_t _mirrors;
-    size_t _size;
-
-    size_t _result;
-    int _error;
-
-    RawstorCallback* _cb;
-    void* _data;
-
-public:
-    ObjectOp(size_t mirrors, size_t size, RawstorCallback* cb, void* data) :
-        _mirrors(mirrors),
-        _size(size),
-        _result(-1),
-        _error(0),
-        _cb(cb),
-        _data(data) {}
-
-    void task_cb(RawstorObject* o, size_t result, int error) {
-        --_mirrors;
-
-        _result = std::min(_result, result);
-
-        if (error) {
-            rawstor_error("%s\n", strerror(error));
-            _error = EIO;
-        }
-
-        if (_mirrors == 0) {
-            /**
-             * TODO: Handle partial tasks.
-             */
-            int res = _cb(o, _size, _result, _error, _data);
-            if (res) {
-                RAWSTOR_THROW_SYSTEM_ERROR(-res);
-            }
-        }
-    }
-};
-
-class Task final : public rawstor::Task {
-private:
-    std::shared_ptr<ObjectOp> _op;
-
-public:
-    Task(const std::shared_ptr<ObjectOp>& op) : _op(op) {}
-
-    void operator()(RawstorObject* o, size_t result, int error) override {
-        _op->task_cb(o, result, error);
-    }
-};
 
 } // namespace
 

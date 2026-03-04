@@ -2,12 +2,12 @@
 
 #include "opts.h"
 #include "session.hpp"
-#include "task.hpp"
 
 #include <rawstorio/queue.hpp>
 
 #include <rawstorstd/gpp.hpp>
 #include <rawstorstd/iovec.h>
+#include <rawstorstd/logging.hpp>
 
 #include <rawstor/object.h>
 

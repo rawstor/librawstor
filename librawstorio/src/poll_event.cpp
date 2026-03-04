@@ -1,7 +1,5 @@
 #include "poll_event.hpp"
 
-#include <rawstorio/task.hpp>
-
 #include <rawstorstd/iovec.h>
 #include <rawstorstd/logging.h>
 

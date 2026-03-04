@@ -4,10 +4,8 @@
 #include "opts.h"
 #include "ost_protocol.h"
 #include "rawstor_internals.hpp"
-#include "task.hpp"
 
 #include <rawstorio/queue.hpp>
-#include <rawstorio/task.hpp>
 
 #include <rawstorstd/gpp.hpp>
 #include <rawstorstd/hash.h>
@@ -173,6 +171,7 @@ class SessionOp {
 private:
     uint16_t _cid;
     bool _in_flight;
+    rawstor::TraceEvent _trace_event;
 
 protected:
     std::shared_ptr<rawstor::ost::Context> _context;
@@ -181,8 +180,7 @@ protected:
 
     inline void _dispatch(size_t result, int error) {
         _in_flight = false;
-        // RAWSTOR_TRACE_EVENT_MESSAGE(_t->trace_event, "%s\n", "in-flight
-        // end");
+        RAWSTOR_TRACE_EVENT_MESSAGE(_trace_event, "%s\n", "in-flight end");
 
         try {
             _cb(result, error);
@@ -197,10 +195,12 @@ protected:
 public:
     SessionOp(
         const std::shared_ptr<rawstor::ost::Context>& context, uint16_t cid,
+        const rawstor::TraceEvent& trace_event,
         std::function<void(size_t, int)>&& cb
     ) :
         _cid(cid),
         _in_flight(false),
+        _trace_event(trace_event),
         _context(context),
         _cb(std::move(cb)) {}
 
@@ -221,8 +221,7 @@ public:
 
     void request_cb(int error) {
         _in_flight = true;
-        // RAWSTOR_TRACE_EVENT_MESSAGE(_t->trace_event, "%s\n", "in-flight
-        // begin");
+        RAWSTOR_TRACE_EVENT_MESSAGE(_trace_event, "%s\n", "in-flight begin");
 
         if (error) {
             _dispatch(0, error);
@@ -239,9 +238,10 @@ private:
 public:
     SessionOpSetObjectId(
         const std::shared_ptr<rawstor::ost::Context>& context, uint16_t cid,
-        const RawstorUUID& id, std::function<void(size_t, int)>&& cb
+        const RawstorUUID& id, const rawstor::TraceEvent& trace_event,
+        std::function<void(size_t, int)>&& cb
     ) :
-        SessionOp(context, cid, std::move(cb)),
+        SessionOp(context, cid, trace_event, std::move(cb)),
         _request({
             .magic = RAWSTOR_MAGIC,
             .cmd = RAWSTOR_CMD_SET_OBJECT,
@@ -290,9 +290,10 @@ public:
     SessionOpRead(
         const std::shared_ptr<rawstor::ost::Context>& context, uint16_t cid,
         void* buf, size_t size, off_t offset,
+        const rawstor::TraceEvent& trace_event,
         std::function<void(size_t, int)>&& cb
     ) :
-        SessionOp(context, cid, std::move(cb)),
+        SessionOp(context, cid, trace_event, std::move(cb)),
         _buf(buf),
         _size(size),
         _request({
@@ -353,9 +354,10 @@ public:
     SessionOpReadV(
         const std::shared_ptr<rawstor::ost::Context>& context, uint16_t cid,
         iovec* iov, unsigned int niov, size_t size, off_t offset,
+        const rawstor::TraceEvent& trace_event,
         std::function<void(size_t, int)>&& cb
     ) :
-        SessionOp(context, cid, std::move(cb)),
+        SessionOp(context, cid, trace_event, std::move(cb)),
         _iov(iov),
         _niov(niov),
         _size(size),
@@ -413,9 +415,10 @@ public:
     SessionOpWrite(
         const std::shared_ptr<rawstor::ost::Context>& context, uint16_t cid,
         const void* buf, size_t size, off_t offset,
+        const rawstor::TraceEvent& trace_event,
         std::function<void(size_t, int)>&& cb
     ) :
-        SessionOp(context, cid, std::move(cb)),
+        SessionOp(context, cid, trace_event, std::move(cb)),
         _request({
             .magic = RAWSTOR_MAGIC,
             .cmd = RAWSTOR_CMD_WRITE,
@@ -469,9 +472,10 @@ public:
     SessionOpWriteV(
         const std::shared_ptr<rawstor::ost::Context>& context, uint16_t cid,
         const iovec* iov, unsigned int niov, size_t size, off_t offset,
+        const rawstor::TraceEvent& trace_event,
         std::function<void(size_t, int)>&& cb
     ) :
-        SessionOp(context, cid, std::move(cb)),
+        SessionOp(context, cid, trace_event, std::move(cb)),
         _request({
             .magic = RAWSTOR_MAGIC,
             .cmd = RAWSTOR_CMD_WRITE,
@@ -512,30 +516,6 @@ public:
         }
 
         _dispatch(response != nullptr ? response->res : 0, error);
-    }
-};
-
-class Request : public rawstor::io::Task {
-protected:
-    std::shared_ptr<SessionOp> _op;
-
-public:
-    explicit Request(const std::shared_ptr<SessionOp>& op) : _op(op) {}
-    virtual ~Request() = default;
-
-    void operator()(size_t result, int error) override {
-        RAWSTOR_TRACE_EVENT_MESSAGE(
-            trace_event, "%zu of %zu, error = %d\n", result,
-            _op->request_size(), error
-        );
-
-        if (!error) {
-            error = validate_result(
-                _op->context().session().fd(), _op->request_size(), result
-            );
-        }
-
-        _op->request_cb(error);
     }
 };
 
@@ -778,7 +758,7 @@ void Session::set_object(
 
     std::shared_ptr<SessionOpSetObjectId> op =
         std::make_shared<SessionOpSetObjectId>(
-            _context, _cid_counter++, object->id(),
+            _context, _cid_counter++, object->id(), trace_event,
             [cb](size_t, int error) { cb(error); }
         );
     _context->register_op(op);
@@ -818,11 +798,10 @@ void Session::pread(
     );
 
     std::shared_ptr<SessionOpRead> op = std::make_shared<SessionOpRead>(
-        _context, _cid_counter++, buf, size, offset, std::move(cb)
+        _context, _cid_counter++, buf, size, offset, trace_event, std::move(cb)
     );
     _context->register_op(op);
 
-    std::unique_ptr<Request> req = std::make_unique<Request>(op);
     io_queue->write(
         fd(), op->request_data(), op->request_size(),
         [op, trace_event](size_t result, int error) {
@@ -857,11 +836,11 @@ void Session::preadv(
     );
 
     std::shared_ptr<SessionOpReadV> op = std::make_shared<SessionOpReadV>(
-        _context, _cid_counter++, iov, niov, size, offset, std::move(cb)
+        _context, _cid_counter++, iov, niov, size, offset, trace_event,
+        std::move(cb)
     );
     _context->register_op(op);
 
-    std::unique_ptr<Request> req = std::make_unique<Request>(op);
     io_queue->write(
         fd(), op->request_data(), op->request_size(),
         [op, trace_event](size_t result, int error) {
@@ -896,7 +875,7 @@ void Session::pwrite(
     );
 
     std::shared_ptr<SessionOpWrite> op = std::make_shared<SessionOpWrite>(
-        _context, _cid_counter++, buf, size, offset, std::move(cb)
+        _context, _cid_counter++, buf, size, offset, trace_event, std::move(cb)
     );
     _context->register_op(op);
 
@@ -934,7 +913,8 @@ void Session::pwritev(
     );
 
     std::shared_ptr<SessionOpWriteV> op = std::make_shared<SessionOpWriteV>(
-        _context, _cid_counter++, iov, niov, size, offset, std::move(cb)
+        _context, _cid_counter++, iov, niov, size, offset, trace_event,
+        std::move(cb)
     );
     _context->register_op(op);
 

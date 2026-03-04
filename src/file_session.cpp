@@ -3,7 +3,6 @@
 #include "object.hpp"
 #include "opts.h"
 #include "rawstor_internals.hpp"
-#include "task.hpp"
 
 #include <rawstorstd/gpp.hpp>
 #include <rawstorstd/iovec.h>
@@ -11,7 +10,6 @@
 #include <rawstorstd/uuid.h>
 
 #include <rawstorio/queue.hpp>
-#include <rawstorio/task.hpp>
 
 #include <sys/stat.h>
 #include <sys/types.h>

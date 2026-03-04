@@ -17,9 +17,7 @@ AM_LDFLAGS = $(ASAN_LDFLAGS)
 
 
 librawstorio_la_SOURCES = $(top_srcdir)/librawstorio/include/rawstorio/queue.hpp \
-                          $(top_srcdir)/librawstorio/include/rawstorio/task.hpp \
-                          queue.cpp \
-                          task.cpp
+                          queue.cpp
 
 librawstorio_la_LIBADD =
 
