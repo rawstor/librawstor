@@ -20,7 +20,7 @@ namespace rawstor {
 #define RAWSTOR_TRACE_EVENT_MESSAGE(trace_event, format, ...)                  \
     trace_event.message(__FILE__, __LINE__, __FUNCTION__, format, __VA_ARGS__)
 #else
-#define RAWSTOR_TRACE_EVENT_MESSAGE(trace_event, format, ...)
+#define RAWSTOR_TRACE_EVENT_MESSAGE(trace_event, format, ...) (void)(trace_event)
 #endif
 
 class TraceEvent final {
