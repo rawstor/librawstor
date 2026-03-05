@@ -192,7 +192,7 @@ rawstor::io::Event* Queue::recv(
 rawstor::io::Event* Queue::recv_multishot(
     int fd, size_t entry_size, unsigned int entries, size_t size,
     unsigned int flags,
-    std::function<size_t(const iovec* iov, unsigned int niov, size_t, int)>&& cb
+    std::function<size_t(const iovec*, unsigned int, size_t, int)>&& cb
 ) {
     TraceEvent trace_event = RAWSTOR_TRACE_EVENT('|', "%s\n", "");
     Session& s = _get_session(fd);

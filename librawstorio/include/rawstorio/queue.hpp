@@ -74,8 +74,7 @@ public:
     virtual Event* recv_multishot(
         int fd, size_t entry_size, unsigned int entries, size_t size,
         unsigned int flags,
-        std::function<
-            size_t(const iovec* iov, unsigned int niov, size_t, int)>&& cb
+        std::function<size_t(const iovec*, unsigned int, size_t, int)>&& cb
     ) = 0;
 
     virtual Event* recvmsg(

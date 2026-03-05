@@ -27,6 +27,7 @@ if WITH_LIBURING
     AM_CXXFLAGS += $(LIBURING_CFLAGS)
     librawstorio_la_SOURCES += uring_buffer.cpp \
                                uring_buffer.hpp \
+                               uring_event.hpp \
                                uring_queue.cpp \
                                uring_queue.hpp
     librawstorio_la_LIBADD += $(LIBURING_LIBS)
