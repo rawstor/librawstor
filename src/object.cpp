@@ -202,9 +202,6 @@ void RawstorObject::pread(
     rawstor::TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
         'I', "pread(): size = %zu, offset = %jd\n", size, (intmax_t)offset
     );
-    rawstor_debug(
-        "pread(): size = %zu, offset = %jd\n", size, (intmax_t)offset
-    );
 
     /**
      * TODO: Can we select fastest connection here?
@@ -227,9 +224,6 @@ void RawstorObject::preadv(
     rawstor::TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
         'I', "preadv(): size = %zu, offset = %jd\n", size, (intmax_t)offset
     );
-    rawstor_debug(
-        "preadv(): size = %zu, offset = %jd\n", size, (intmax_t)offset
-    );
 
     /**
      * TODO: Can we select fastest connection here?
@@ -251,9 +245,6 @@ void RawstorObject::pwrite(
 ) {
     rawstor::TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
         'I', "pwrite(): size = %zu, offset = %jd\n", size, (intmax_t)offset
-    );
-    rawstor_debug(
-        "pwrite(): size = %zu, offset = %jd\n", size, (intmax_t)offset
     );
 
     struct Operation {
@@ -301,9 +292,6 @@ void RawstorObject::pwritev(
 ) {
     rawstor::TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
         'I', "pwritev(): size = %zu, offset = %jd\n", size, (intmax_t)offset
-    );
-    rawstor_debug(
-        "pwritev(): size = %zu, offset = %jd\n", size, (intmax_t)offset
     );
 
     struct Operation {

@@ -124,7 +124,8 @@ void Connection::_op(
     unsigned int attempt
 ) {
     rawstor::TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
-        'I', "%s(): size = %zu, offset %jd\n", func_name, size, (intmax_t)offset
+        'I', "%s(): size = %zu, offset = %jd\n", func_name, size,
+        (intmax_t)offset
     );
 
     std::shared_ptr<Session> s = get_next_session();

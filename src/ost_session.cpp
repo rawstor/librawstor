@@ -791,10 +791,8 @@ void Session::set_object(
 void Session::pread(
     void* buf, size_t size, off_t offset, std::function<void(size_t, int)>&& cb
 ) {
-    TraceEvent trace_event = RAWSTOR_TRACE_EVENT('I', "%s\n", "pread");
-    rawstor_debug(
-        "%s(): fd = %d, size = %zu, offset = %jd\n", __FUNCTION__, fd(), size,
-        (intmax_t)offset
+    TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
+        'I', "fd = %d, size = %zu, offset = %jd\n", fd(), size, (intmax_t)offset
     );
 
     std::shared_ptr<SessionOpRead> op = std::make_shared<SessionOpRead>(
@@ -829,10 +827,8 @@ void Session::preadv(
     iovec* iov, unsigned int niov, size_t size, off_t offset,
     std::function<void(size_t, int)>&& cb
 ) {
-    TraceEvent trace_event = RAWSTOR_TRACE_EVENT('I', "%s\n", "preadv");
-    rawstor_debug(
-        "%s(): fd = %d, size = %zu, offset = %jd\n", __FUNCTION__, fd(), size,
-        (intmax_t)offset
+    TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
+        'I', "fd = %d, size = %zu, offset = %jd\n", fd(), size, (intmax_t)offset
     );
 
     std::shared_ptr<SessionOpReadV> op = std::make_shared<SessionOpReadV>(
@@ -868,10 +864,8 @@ void Session::pwrite(
     const void* buf, size_t size, off_t offset,
     std::function<void(size_t, int)>&& cb
 ) {
-    TraceEvent trace_event = RAWSTOR_TRACE_EVENT('I', "%s\n", "pwritev");
-    rawstor_debug(
-        "%s(): fd = %d, size = %zu, offset = %jd\n", __FUNCTION__, fd(), size,
-        (intmax_t)offset
+    TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
+        'I', "fd = %d, size = %zu, offset = %jd\n", fd(), size, (intmax_t)offset
     );
 
     std::shared_ptr<SessionOpWrite> op = std::make_shared<SessionOpWrite>(
@@ -906,10 +900,8 @@ void Session::pwritev(
     const iovec* iov, unsigned int niov, size_t size, off_t offset,
     std::function<void(size_t, int)>&& cb
 ) {
-    TraceEvent trace_event = RAWSTOR_TRACE_EVENT('I', "%s\n", "pwritev");
-    rawstor_debug(
-        "%s(): fd = %d, size = %zu, offset = %jd\n", __FUNCTION__, fd(), size,
-        (intmax_t)offset
+    TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
+        'I', "fd = %d, size = %zu, offset = %jd\n", fd(), size, (intmax_t)offset
     );
 
     std::shared_ptr<SessionOpWriteV> op = std::make_shared<SessionOpWriteV>(
