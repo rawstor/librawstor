@@ -300,9 +300,11 @@ void RawstorObject::pwritev(
         std::function<void(size_t, int)> cb;
     };
 
-    std::shared_ptr<Operation> op = std::make_shared<Operation>(
-        (Operation){.mirrors = _cns.size(), .result = (size_t)-1, .error = 0, .cb = std::move(cb)}
-    );
+    std::shared_ptr<Operation> op =
+        std::make_shared<Operation>((Operation){.mirrors = _cns.size(),
+                                                .result = (size_t)-1,
+                                                .error = 0,
+                                                .cb = std::move(cb)});
 
     for (auto& cn : _cns) {
         cn->pwritev(
