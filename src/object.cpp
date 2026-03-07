@@ -260,8 +260,7 @@ void RawstorObject::pwrite(
     for (auto& cn : _cns) {
         cn->pwrite(
             buf, size, offset,
-            [op, size, cb = std::move(cb),
-             trace_event](size_t result, int error) {
+            [op, size, cb, trace_event](size_t result, int error) {
                 RAWSTOR_TRACE_EVENT_MESSAGE(
                     trace_event, "%zu of %zu, error = %d\n", result, size, error
                 );
@@ -307,8 +306,7 @@ void RawstorObject::pwritev(
     for (auto& cn : _cns) {
         cn->pwritev(
             iov, niov, size, offset,
-            [op, size, cb = std::move(cb),
-             trace_event](size_t result, int error) {
+            [op, size, cb, trace_event](size_t result, int error) {
                 RAWSTOR_TRACE_EVENT_MESSAGE(
                     trace_event, "%zu of %zu, error = %d\n", result, size, error
                 );
