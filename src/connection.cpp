@@ -142,7 +142,7 @@ void Connection::_op(
                         "IO %s: size = %zu, offset = %jd; "
                         "success on %s; "
                         "attempt: %d of %d\n",
-                        "pread", size, (intmax_t)offset, s->str().c_str(),
+                        func_name, size, (intmax_t)offset, s->str().c_str(),
                         attempt + 1, rawstor_opts_io_attempts()
                     );
                 }
@@ -155,7 +155,7 @@ void Connection::_op(
                     "IO %s: size = %zu, offset = %jd; "
                     "error on %s: %s; "
                     "attempt %d of %d; failing...\n",
-                    "pread", size, (intmax_t)offset, s->str().c_str(),
+                    func_name, size, (intmax_t)offset, s->str().c_str(),
                     std::strerror(error), attempt + 1,
                     rawstor_opts_io_attempts()
                 );
@@ -167,7 +167,7 @@ void Connection::_op(
                 "IO %s: size = %zu, offset = %jd; "
                 "error on %s: %s; "
                 "attempt: %d of %d; retrying...\n",
-                "pread", size, (intmax_t)offset, s->str().c_str(),
+                func_name, size, (intmax_t)offset, s->str().c_str(),
                 std::strerror(error), attempt + 1, rawstor_opts_io_attempts()
             );
 
@@ -181,8 +181,8 @@ void Connection::_op(
                     "IO %s: size = %zu, offset = %jd; "
                     "exception on %s: %s; "
                     "attempt %d of %d; failing...\n",
-                    "pread", size, (intmax_t)offset, s->str().c_str(), e.what(),
-                    attempt + 1, rawstor_opts_io_attempts()
+                    func_name, size, (intmax_t)offset, s->str().c_str(),
+                    e.what(), attempt + 1, rawstor_opts_io_attempts()
                 );
                 cb(result, EIO);
                 return;
