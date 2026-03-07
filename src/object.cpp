@@ -200,7 +200,7 @@ void RawstorObject::pread(
     void* buf, size_t size, off_t offset, std::function<void(size_t, int)>&& cb
 ) {
     rawstor::TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
-        'I', "pread(): size = %zu, offset = %jd\n", size, (intmax_t)offset
+        'o', "pread(): size = %zu, offset = %jd\n", size, (intmax_t)offset
     );
 
     /**
@@ -222,7 +222,7 @@ void RawstorObject::preadv(
     std::function<void(size_t, int)>&& cb
 ) {
     rawstor::TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
-        'I', "preadv(): size = %zu, offset = %jd\n", size, (intmax_t)offset
+        'o', "preadv(): size = %zu, offset = %jd\n", size, (intmax_t)offset
     );
 
     /**
@@ -244,7 +244,7 @@ void RawstorObject::pwrite(
     std::function<void(size_t, int)>&& cb
 ) {
     rawstor::TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
-        'I', "pwrite(): size = %zu, offset = %jd\n", size, (intmax_t)offset
+        'o', "pwrite(): size = %zu, offset = %jd\n", size, (intmax_t)offset
     );
 
     struct Operation {
@@ -291,7 +291,7 @@ void RawstorObject::pwritev(
     std::function<void(size_t, int)>&& cb
 ) {
     rawstor::TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
-        'I', "pwritev(): size = %zu, offset = %jd\n", size, (intmax_t)offset
+        'o', "pwritev(): size = %zu, offset = %jd\n", size, (intmax_t)offset
     );
 
     struct Operation {

@@ -124,7 +124,7 @@ void Connection::_op(
     unsigned int attempt
 ) {
     rawstor::TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
-        'I', "%s(): size = %zu, offset = %jd\n", func_name, size,
+        'c', "%s(): size = %zu, offset = %jd\n", func_name, size,
         (intmax_t)offset
     );
 
@@ -133,8 +133,7 @@ void Connection::_op(
         s, [this, s, func_name, size, offset, cb = std::move(cb), op, attempt,
             trace_event](size_t result, int error) mutable {
             RAWSTOR_TRACE_EVENT_MESSAGE(
-                trace_event, "%zu of %zu, error = %d, attempt\n", result, size,
-                error, attempt
+                trace_event, "result = %zu, error = %d\n", result, error
             );
 
             if (!error) {

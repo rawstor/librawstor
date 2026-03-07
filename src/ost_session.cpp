@@ -620,7 +620,7 @@ int Session::_connect() {
 
 void Session::read_response_head(rawstor::io::Queue& queue) {
     TraceEvent trace_event =
-        RAWSTOR_TRACE_EVENT('I', "%s\n", "read response head");
+        RAWSTOR_TRACE_EVENT('s', "%s\n", "read response head");
     _context->add_read();
     queue.read(
         fd(), _context->response(), sizeof(*_context->response()),
@@ -659,7 +659,8 @@ void Session::read_response_body(
     rawstor::io::Queue& queue, void* buf, size_t size
 ) {
     TraceEvent trace_event =
-        RAWSTOR_TRACE_EVENT('I', "%s\n", "read response body scalar");
+        RAWSTOR_TRACE_EVENT('s', "%s\n", "read response body scalar");
+    _context->add_read();
     queue.read(
         fd(), buf, size,
         [context = _context, size, trace_event](size_t result, int error) {
@@ -687,7 +688,7 @@ void Session::read_response_body(
     rawstor::io::Queue& queue, iovec* iov, unsigned int niov, size_t size
 ) {
     TraceEvent trace_event =
-        RAWSTOR_TRACE_EVENT('I', "%s\n", "read response body vector");
+        RAWSTOR_TRACE_EVENT('s', "%s\n", "read response body vector");
     queue.readv(
         fd(), iov, niov,
         [context = _context, size, trace_event](size_t result, int error) {
@@ -752,7 +753,7 @@ void Session::set_object(
     rawstor::io::Queue& queue, RawstorObject* object,
     std::function<void(int)>&& cb
 ) {
-    TraceEvent trace_event = RAWSTOR_TRACE_EVENT('I', "%s\n", "set object");
+    TraceEvent trace_event = RAWSTOR_TRACE_EVENT('s', "%s\n", "set object");
 
     assert(_cid_counter == 0); // OST returns always 0.
 
@@ -792,7 +793,7 @@ void Session::pread(
     void* buf, size_t size, off_t offset, std::function<void(size_t, int)>&& cb
 ) {
     TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
-        'I', "fd = %d, size = %zu, offset = %jd\n", fd(), size, (intmax_t)offset
+        's', "fd = %d, size = %zu, offset = %jd\n", fd(), size, (intmax_t)offset
     );
 
     std::shared_ptr<SessionOpRead> op = std::make_shared<SessionOpRead>(
@@ -828,7 +829,7 @@ void Session::preadv(
     std::function<void(size_t, int)>&& cb
 ) {
     TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
-        'I', "fd = %d, size = %zu, offset = %jd\n", fd(), size, (intmax_t)offset
+        's', "fd = %d, size = %zu, offset = %jd\n", fd(), size, (intmax_t)offset
     );
 
     std::shared_ptr<SessionOpReadV> op = std::make_shared<SessionOpReadV>(
@@ -865,7 +866,7 @@ void Session::pwrite(
     std::function<void(size_t, int)>&& cb
 ) {
     TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
-        'I', "fd = %d, size = %zu, offset = %jd\n", fd(), size, (intmax_t)offset
+        's', "fd = %d, size = %zu, offset = %jd\n", fd(), size, (intmax_t)offset
     );
 
     std::shared_ptr<SessionOpWrite> op = std::make_shared<SessionOpWrite>(
@@ -901,7 +902,7 @@ void Session::pwritev(
     std::function<void(size_t, int)>&& cb
 ) {
     TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
-        'I', "fd = %d, size = %zu, offset = %jd\n", fd(), size, (intmax_t)offset
+        's', "fd = %d, size = %zu, offset = %jd\n", fd(), size, (intmax_t)offset
     );
 
     std::shared_ptr<SessionOpWriteV> op = std::make_shared<SessionOpWriteV>(
