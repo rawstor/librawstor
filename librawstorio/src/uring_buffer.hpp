@@ -3,10 +3,9 @@
 
 #include <rawstorstd/ringbuf.hpp>
 
-#include <rawstorio/task.hpp>
-
 #include <liburing.h>
 
+#include <functional>
 #include <list>
 #include <memory>
 
@@ -26,7 +25,7 @@ private:
 
 public:
     BufferRingEntry(
-        io_uring_buf_ring* buf_ring, void* data, size_t size,
+        io_uring_buf_ring* buf_ring, void* data, size_t size, size_t result,
         unsigned int index, int mask
     );
     BufferRingEntry(const BufferRingEntry&) = delete;
@@ -38,10 +37,9 @@ public:
 
     inline void* data() noexcept { return _data; }
     inline size_t result() noexcept { return _result; }
-    inline void set_result(size_t result) noexcept { _result = result; };
 };
 
-class BufferRing final : public rawstor::io::Task {
+class BufferRing final {
 private:
     static __u16 _id_counter;
 
@@ -56,19 +54,19 @@ private:
     int _mask;
     char* _entries_base;
 
+    size_t _size;
     size_t _pending_offset;
     size_t _pending_size;
-    std::unique_ptr<BufferRingEntry> _pending_entry;
     rawstor::RingBuf<BufferRingEntry> _pending_entries;
 
-    std::unique_ptr<rawstor::io::TaskVectorExternal> _t;
+    std::function<size_t(const iovec* iov, unsigned int niov, size_t, int)> _cb;
 
     void* _get_entry(unsigned int index);
 
 public:
     BufferRing(
-        io_uring& ring, size_t entry_size, unsigned int entries,
-        std::unique_ptr<rawstor::io::TaskVectorExternal> t
+        io_uring& ring, size_t entry_size, unsigned int entries, size_t size,
+        std::function<size_t(const iovec*, unsigned int, size_t, int)>&& cb
     );
     BufferRing(const BufferRing&) = delete;
     BufferRing(BufferRing&&) = delete;
@@ -77,9 +75,7 @@ public:
 
     BufferRing& operator=(const BufferRing&) = delete;
     BufferRing& operator=(BufferRing&&) = delete;
-    void operator()(size_t result, int error) override;
-
-    void select_entry(unsigned int index);
+    void operator()(size_t result, int error, unsigned int flags);
 
     unsigned int id() const noexcept;
 };
