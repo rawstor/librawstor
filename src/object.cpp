@@ -297,16 +297,17 @@ void RawstorObject::pwritev(
         size_t mirrors;
         size_t result;
         int error;
+        std::function<void(size_t, int)> cb;
     };
 
     std::shared_ptr<Operation> op = std::make_shared<Operation>(
-        (Operation){.mirrors = _cns.size(), .result = (size_t)-1, .error = 0}
+        (Operation){.mirrors = _cns.size(), .result = (size_t)-1, .error = 0, .cb = std::move(cb)}
     );
 
     for (auto& cn : _cns) {
         cn->pwritev(
             iov, niov, size, offset,
-            [op, size, cb, trace_event](size_t result, int error) {
+            [op, size, trace_event](size_t result, int error) {
                 RAWSTOR_TRACE_EVENT_MESSAGE(
                     trace_event, "%zu of %zu, error = %d\n", result, size, error
                 );
@@ -324,7 +325,7 @@ void RawstorObject::pwritev(
                     /**
                      * TODO: Handle partial tasks.
                      */
-                    cb(op->result, op->error);
+                    op->cb(op->result, op->error);
                 }
             }
         );
