@@ -689,6 +689,7 @@ void Session::read_response_body(
 ) {
     TraceEvent trace_event =
         RAWSTOR_TRACE_EVENT('s', "%s\n", "read response body vector");
+    _context->add_read();
     queue.readv(
         fd(), iov, niov,
         [context = _context, size, trace_event](size_t result, int error) {
