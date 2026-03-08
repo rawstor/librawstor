@@ -9,6 +9,7 @@
 
 #include <rawstor/object.h>
 
+#include <functional>
 #include <memory>
 #include <sstream>
 
@@ -45,39 +46,42 @@ public:
 
     virtual void create(
         rawstor::io::Queue& queue, const RawstorUUID& id,
-        const RawstorObjectSpec& sp, std::unique_ptr<Task> t
+        const RawstorObjectSpec& sp, std::function<void(int)>&& cb
     ) = 0;
 
     virtual void remove(
         rawstor::io::Queue& queue, const RawstorUUID& id,
-        std::unique_ptr<Task> t
+        std::function<void(int)>&& cb
     ) = 0;
 
     virtual void spec(
-        rawstor::io::Queue& queue, const RawstorUUID& id, RawstorObjectSpec* sp,
-        std::unique_ptr<Task> t
+        rawstor::io::Queue& queue, const RawstorUUID& id,
+        std::function<void(const RawstorObjectSpec&, int)>&& cb
     ) = 0;
 
     virtual void set_object(
         rawstor::io::Queue& queue, RawstorObject* object,
-        std::unique_ptr<Task> t
+        std::function<void(int)>&& cb
     ) = 0;
 
-    virtual void
-    pread(void* buf, size_t size, off_t offset, std::unique_ptr<Task> t) = 0;
+    virtual void pread(
+        void* buf, size_t size, off_t offset,
+        std::function<void(size_t, int)>&& cb
+    ) = 0;
 
     virtual void preadv(
         iovec* iov, unsigned int niov, size_t size, off_t offset,
-        std::unique_ptr<Task> t
+        std::function<void(size_t, int)>&& cb
     ) = 0;
 
     virtual void pwrite(
-        const void* buf, size_t size, off_t offset, std::unique_ptr<Task> t
+        const void* buf, size_t size, off_t offset,
+        std::function<void(size_t, int)>&& cb
     ) = 0;
 
     virtual void pwritev(
         const iovec* iov, unsigned int niov, size_t size, off_t offset,
-        std::unique_ptr<Task> t
+        std::function<void(size_t, int)>&& cb
     ) = 0;
 };
 

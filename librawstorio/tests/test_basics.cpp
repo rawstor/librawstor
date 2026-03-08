@@ -1,6 +1,5 @@
 #include "fixture.hpp"
 #include "server.hpp"
-#include "task.hpp"
 
 #include <gtest/gtest.h>
 
@@ -15,19 +14,16 @@ protected:
 
 TEST_F(BasicsTest, empty) {
     const char server_buf[] = "data";
-    size_t result = 0;
-    int error = 0;
-
     _server.write(server_buf, sizeof(server_buf));
     _server.wait();
-
     EXPECT_THROW(_queue->wait(0), std::system_error);
 
-    {
-        std::unique_ptr<rawstor::io::Task> t =
-            std::make_unique<rawstor::io::tests::SimpleTask>(&result, &error);
-        _queue->poll(_fd, POLLIN, std::move(t));
-    }
+    size_t result = 0;
+    int error = 0;
+    _queue->poll(_fd, POLLIN, [&result, &error](size_t r, int e) {
+        result = r;
+        error = e;
+    });
 
     EXPECT_NO_THROW(_queue->wait(0));
 
@@ -36,17 +32,15 @@ TEST_F(BasicsTest, empty) {
 
 TEST_F(BasicsTest, pollin) {
     const char server_buf[] = "data";
-    size_t result = 0;
-    int error = 0;
-
     _server.write(server_buf, sizeof(server_buf));
     _server.wait();
 
-    {
-        std::unique_ptr<rawstor::io::Task> t =
-            std::make_unique<rawstor::io::tests::SimpleTask>(&result, &error);
-        _queue->poll(_fd, POLLIN, std::move(t));
-    }
+    size_t result = 0;
+    int error = 0;
+    _queue->poll(_fd, POLLIN, [&result, &error](size_t r, int e) {
+        result = r;
+        error = e;
+    });
     _queue->wait(0);
 
     EXPECT_EQ(result, (size_t)POLLIN);
@@ -56,12 +50,10 @@ TEST_F(BasicsTest, pollin) {
 TEST_F(BasicsTest, pollout) {
     size_t result = 0;
     int error = 0;
-
-    {
-        std::unique_ptr<rawstor::io::Task> t =
-            std::make_unique<rawstor::io::tests::SimpleTask>(&result, &error);
-        _queue->poll(_fd, POLLOUT, std::move(t));
-    }
+    _queue->poll(_fd, POLLOUT, [&result, &error](size_t r, int e) {
+        result = r;
+        error = e;
+    });
     _queue->wait(0);
 
     EXPECT_EQ(result, (size_t)POLLOUT);
@@ -71,17 +63,19 @@ TEST_F(BasicsTest, pollout) {
 TEST_F(BasicsTest, read) {
     const char server_buf[] = "data";
     char client_buf[sizeof(server_buf)];
-    size_t result = 0;
-    int error = 0;
 
     _server.write(server_buf, sizeof(server_buf));
     _server.wait();
 
-    {
-        std::unique_ptr<rawstor::io::Task> t =
-            std::make_unique<rawstor::io::tests::SimpleTask>(&result, &error);
-        _queue->read(_fd, client_buf, sizeof(client_buf), std::move(t));
-    }
+    size_t result = 0;
+    int error = 0;
+    _queue->read(
+        _fd, client_buf, sizeof(client_buf),
+        [&result, &error](size_t r, int e) {
+            result = r;
+            error = e;
+        }
+    );
     _queue->wait(0);
 
     EXPECT_EQ(result, sizeof(client_buf));
@@ -91,18 +85,19 @@ TEST_F(BasicsTest, read) {
 
 TEST_F(BasicsTest, recv) {
     const char server_buf[] = "data";
-    char client_buf[sizeof(server_buf)];
-    size_t result = 0;
-    int error = 0;
-
     _server.write(server_buf, sizeof(server_buf));
     _server.wait();
 
-    {
-        std::unique_ptr<rawstor::io::Task> t =
-            std::make_unique<rawstor::io::tests::SimpleTask>(&result, &error);
-        _queue->recv(_fd, client_buf, sizeof(client_buf), 0, std::move(t));
-    }
+    char client_buf[sizeof(server_buf)];
+    size_t result = 0;
+    int error = 0;
+    _queue->recv(
+        _fd, client_buf, sizeof(client_buf), 0,
+        [&result, &error](size_t r, int e) {
+            result = r;
+            error = e;
+        }
+    );
     _queue->wait(0);
 
     EXPECT_EQ(result, sizeof(client_buf));
@@ -112,17 +107,18 @@ TEST_F(BasicsTest, recv) {
 
 TEST_F(BasicsTest, write) {
     char client_buf[] = "data";
-    char server_buf[sizeof(client_buf)];
     size_t result = 0;
     int error = 0;
-
-    {
-        std::unique_ptr<rawstor::io::Task> t =
-            std::make_unique<rawstor::io::tests::SimpleTask>(&result, &error);
-        _queue->write(_fd, client_buf, sizeof(client_buf), std::move(t));
-    }
+    _queue->write(
+        _fd, client_buf, sizeof(client_buf),
+        [&result, &error](size_t r, int e) {
+            result = r;
+            error = e;
+        }
+    );
     _queue->wait(0);
 
+    char server_buf[sizeof(client_buf)];
     _server.read(server_buf, sizeof(server_buf));
     _server.wait();
 
@@ -133,17 +129,18 @@ TEST_F(BasicsTest, write) {
 
 TEST_F(BasicsTest, send) {
     char client_buf[] = "data";
-    char server_buf[sizeof(client_buf)];
     size_t result = 0;
     int error = 0;
-
-    {
-        std::unique_ptr<rawstor::io::Task> t =
-            std::make_unique<rawstor::io::tests::SimpleTask>(&result, &error);
-        _queue->send(_fd, client_buf, sizeof(client_buf), 0, std::move(t));
-    }
+    _queue->send(
+        _fd, client_buf, sizeof(client_buf), 0,
+        [&result, &error](size_t r, int e) {
+            result = r;
+            error = e;
+        }
+    );
     _queue->wait(0);
 
+    char server_buf[sizeof(client_buf)];
     _server.read(server_buf, sizeof(server_buf));
     _server.wait();
 
