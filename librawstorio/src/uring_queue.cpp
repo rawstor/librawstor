@@ -541,7 +541,14 @@ void Queue::wait(unsigned int timeout) {
                 error = -cqe->res;
             }
 
-            (*p)(result, error, cqe->flags);
+            try {
+                (*p)(result, error, cqe->flags);
+            } catch (...) {
+                if (cqe->flags & IORING_CQE_F_MORE) {
+                    p.release();
+                }
+                throw;
+            }
 
             if (cqe->flags & IORING_CQE_F_MORE) {
                 p.release();
