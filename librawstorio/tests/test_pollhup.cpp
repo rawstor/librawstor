@@ -1,6 +1,5 @@
 #include "fixture.hpp"
 #include "server.hpp"
-#include "task.hpp"
 
 #include <gtest/gtest.h>
 
@@ -15,18 +14,16 @@ protected:
 
 TEST_F(PollHupTest, pollin) {
     const char server_buf[] = "data";
-    size_t result = 0;
-    int error = 0;
-
     _server.write(server_buf, sizeof(server_buf));
     _server.close();
     _server.wait();
 
-    {
-        std::unique_ptr<rawstor::io::Task> t =
-            std::make_unique<rawstor::io::tests::SimpleTask>(&result, &error);
-        _queue->poll(_fd, POLLIN, std::move(t));
-    }
+    size_t result = 0;
+    int error = 0;
+    _queue->poll(_fd, POLLIN, [&result, &error](size_t r, int e) {
+        result = r;
+        error = e;
+    });
     _queue->wait(0);
 
     EXPECT_TRUE(result & POLLIN);
@@ -35,17 +32,15 @@ TEST_F(PollHupTest, pollin) {
 }
 
 TEST_F(PollHupTest, pollout) {
-    size_t result = 0;
-    int error = 0;
-
     _server.close();
     _server.wait();
 
-    {
-        std::unique_ptr<rawstor::io::Task> t =
-            std::make_unique<rawstor::io::tests::SimpleTask>(&result, &error);
-        _queue->poll(_fd, POLLOUT, std::move(t));
-    }
+    size_t result = 0;
+    int error = 0;
+    _queue->poll(_fd, POLLOUT, [&result, &error](size_t r, int e) {
+        result = r;
+        error = e;
+    });
     _queue->wait(0);
 
     EXPECT_TRUE(result & POLLHUP);
@@ -54,19 +49,17 @@ TEST_F(PollHupTest, pollout) {
 
 TEST_F(PollHupTest, read) {
     const char server_buf[] = "data1data2";
-    char client_buf[sizeof(server_buf)];
-    size_t result = 0;
-    int error = 0;
-
     _server.write(server_buf, 5);
     _server.close();
     _server.wait();
 
-    {
-        std::unique_ptr<rawstor::io::Task> t =
-            std::make_unique<rawstor::io::tests::SimpleTask>(&result, &error);
-        _queue->read(_fd, client_buf, 10, std::move(t));
-    }
+    char client_buf[sizeof(server_buf)];
+    size_t result = 0;
+    int error = 0;
+    _queue->read(_fd, client_buf, 10, [&result, &error](size_t r, int e) {
+        result = r;
+        error = e;
+    });
     _queue->wait(0);
 
     EXPECT_EQ(result, (size_t)5);
@@ -75,18 +68,19 @@ TEST_F(PollHupTest, read) {
 }
 
 TEST_F(PollHupTest, write) {
-    char client_buf[] = "data";
-    size_t result = 0;
-    int error = 0;
-
     _server.close();
     _server.wait();
 
-    {
-        std::unique_ptr<rawstor::io::Task> t =
-            std::make_unique<rawstor::io::tests::SimpleTask>(&result, &error);
-        _queue->write(_fd, client_buf, sizeof(client_buf), std::move(t));
-    }
+    char client_buf[] = "data";
+    size_t result = 0;
+    int error = 0;
+    _queue->write(
+        _fd, client_buf, sizeof(client_buf),
+        [&result, &error](size_t r, int e) {
+            result = r;
+            error = e;
+        }
+    );
     _queue->wait(0);
 
     EXPECT_EQ(result, (size_t)0);

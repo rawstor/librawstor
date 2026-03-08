@@ -19,13 +19,13 @@ namespace io {
 namespace uring {
 
 BufferRingEntry::BufferRingEntry(
-    io_uring_buf_ring* buf_ring, void* data, size_t size, unsigned int index,
-    int mask
+    io_uring_buf_ring* buf_ring, void* data, size_t size, size_t result,
+    unsigned int index, int mask
 ) :
     _buf_ring(buf_ring),
     _data(data),
     _size(size),
-    _result(0),
+    _result(result),
     _index(index),
     _mask(mask) {
 }
@@ -38,8 +38,8 @@ BufferRingEntry::~BufferRingEntry() {
 __u16 BufferRing::_id_counter = 0;
 
 BufferRing::BufferRing(
-    io_uring& ring, size_t entry_size, unsigned int entries,
-    std::unique_ptr<rawstor::io::TaskVectorExternal> t
+    io_uring& ring, size_t entry_size, unsigned int entries, size_t size,
+    std::function<size_t(const iovec* iov, unsigned int niov, size_t, int)>&& cb
 ) :
     _ring(ring),
     _entry_size(entry_size),
@@ -51,10 +51,11 @@ BufferRing::BufferRing(
     ),
     _mask(io_uring_buf_ring_mask(entries)),
     _entries_base(nullptr),
+    _size(size),
     _pending_offset(0),
     _pending_size(0),
     _pending_entries(entries),
-    _t(std::move(t)) {
+    _cb(std::move(cb)) {
 
     assert((_entry_size & (_entry_size - 1)) == 0);
     assert((entries & (entries - 1)) == 0);
@@ -108,18 +109,18 @@ BufferRing::~BufferRing() {
     // io_uring_setup_buf_ring()
 }
 
-void BufferRing::operator()(size_t result, int error) {
-    RAWSTOR_TRACE_EVENT_MESSAGE(
-        trace_event, "multishot received: result = %zu, error = %d\n", result,
-        error
-    );
-    if (result > 0) {
-        _pending_entry->set_result(result);
+void BufferRing::operator()(size_t result, int error, unsigned int flags) {
+    if (result > 0 && (flags & IORING_CQE_F_BUFFER)) {
+        unsigned int index = flags >> IORING_CQE_BUFFER_SHIFT;
+        std::unique_ptr<BufferRingEntry> pending_entry =
+            std::make_unique<BufferRingEntry>(
+                _buf_ring, _get_entry(index), _entry_size, result, index, _mask
+            );
         _pending_size += result;
-        _pending_entries.push(std::move(_pending_entry));
+        _pending_entries.push(std::move(pending_entry));
     }
 
-    while (_pending_size >= _t->size() || error) {
+    while (_pending_size >= _size || error) {
         std::list<std::unique_ptr<BufferRingEntry>> entries;
         std::vector<iovec> iov;
         size_t iov_size = 0;
@@ -129,18 +130,18 @@ void BufferRing::operator()(size_t result, int error) {
             BufferRingEntry& e = _pending_entries.tail();
             void* e_data = static_cast<char*>(e.data()) + _pending_offset;
             size_t e_size = e.result() - _pending_offset;
-            if (e_size <= _t->size() - iov_size) [[likely]] {
+            if (e_size <= _size - iov_size) [[likely]] {
                 iov.push_back({.iov_base = e_data, .iov_len = e_size});
                 _pending_offset = 0;
                 _pending_size -= e_size;
                 entries.push_back(_pending_entries.pop());
                 iov_size += e_size;
-                if (iov_size == _t->size()) {
+                if (iov_size == _size) {
                     break;
                 }
             } else {
                 iov.push_back(
-                    {.iov_base = e_data, .iov_len = _t->size() - iov_size}
+                    {.iov_base = e_data, .iov_len = _size - iov_size}
                 );
                 _pending_offset += iov.back().iov_len;
                 _pending_size -= iov.back().iov_len;
@@ -149,18 +150,7 @@ void BufferRing::operator()(size_t result, int error) {
             }
         }
 
-        _t->set(iov.data(), iov.size());
-        try {
-            RAWSTOR_TRACE_EVENT_MESSAGE(
-                trace_event, "sending iov: niov = %zu, size = %zu\n",
-                iov.size(), iov_size
-            );
-            (*_t)(iov_size, error);
-        } catch (...) {
-            _t->set(nullptr, 0);
-            throw;
-        }
-        _t->set(nullptr, 0);
+        _size = _cb(iov.data(), iov.size(), iov_size, error);
 
         error = 0;
     }
@@ -168,12 +158,6 @@ void BufferRing::operator()(size_t result, int error) {
 
 void* BufferRing::_get_entry(unsigned int index) {
     return _entries_base + (index << _entry_shift);
-}
-
-void BufferRing::select_entry(unsigned int index) {
-    _pending_entry = std::make_unique<BufferRingEntry>(
-        _buf_ring, _get_entry(index), _entry_size, index, _mask
-    );
 }
 
 unsigned int BufferRing::id() const noexcept {

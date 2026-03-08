@@ -1,12 +1,36 @@
 #include "fixture.hpp"
 #include "server.hpp"
-#include "task.hpp"
+
+#include <rawstorstd/iovec.h>
 
 #include <gtest/gtest.h>
 
 #include <poll.h>
 
 namespace {
+
+class MultishotVectorItem {
+private:
+    std::vector<char> _data;
+    const size_t _result;
+    const int _error;
+
+public:
+    MultishotVectorItem(
+        const iovec* iov, unsigned int niov, size_t result, int error
+    ) :
+        _data(result),
+        _result(result),
+        _error(error) {
+        if (result > 0) {
+            rawstor_iovec_to_buf(iov, niov, 0, _data.data(), result);
+        }
+    }
+
+    const char* data() const noexcept { return _data.data(); }
+    size_t result() const noexcept { return _result; }
+    int error() const noexcept { return _error; }
+};
 
 class MultishotTest : public rawstor::io::tests::QueueTest {
 protected:
@@ -15,21 +39,19 @@ protected:
 
 TEST_F(MultishotTest, poll) {
     const char server_buf[] = "data";
-    size_t result = 0;
-    int error = 0;
-    unsigned int count = 0;
-    rawstor::io::Event* event = nullptr;
-
     _server.write(server_buf, sizeof(server_buf));
     _server.wait();
 
-    {
-        std::unique_ptr<rawstor::io::Task> t =
-            std::make_unique<rawstor::io::tests::SimpleTaskMultishot>(
-                &result, &error, &count
-            );
-        event = _queue->poll_multishot(_fd, POLLIN, std::move(t));
-    }
+    size_t result = 0;
+    int error = 0;
+    unsigned int count = 0;
+    rawstor::io::Event* event = _queue->poll_multishot(
+        _fd, POLLIN, [&result, &error, &count](size_t r, int e) {
+            result = r;
+            error = e;
+            ++count;
+        }
+    );
 
     EXPECT_NO_THROW(_queue->wait(0));
     EXPECT_EQ(result, (size_t)POLLIN);
@@ -57,22 +79,19 @@ TEST_F(MultishotTest, poll) {
 }
 
 TEST_F(MultishotTest, recv) {
-    {
-        const char server_buf[] = "dat1dat2";
-        _server.write(server_buf, sizeof(server_buf) - 1);
-        _server.wait();
-    }
+    const char server_buf[] = "dat1dat2";
+    _server.write(server_buf, sizeof(server_buf) - 1);
+    _server.wait();
 
-    std::vector<rawstor::io::tests::SimpleTaskVectorExternalItem> items;
-    rawstor::io::Event* event = nullptr;
-
-    {
-        std::unique_ptr<rawstor::io::TaskVectorExternal> t =
-            std::make_unique<rawstor::io::tests::SimpleTaskVectorExternal>(
-                4, &items
-            );
-        event = _queue->recv_multishot(_fd, 4, 4, 0, std::move(t));
-    }
+    std::vector<MultishotVectorItem> items;
+    rawstor::io::Event* event = _queue->recv_multishot(
+        _fd, 4, 4, 4, 0,
+        [&items](const iovec* iov, unsigned int niov, size_t result, int error)
+            -> size_t {
+            items.emplace_back(iov, niov, result, error);
+            return 4;
+        }
+    );
 
     EXPECT_NO_THROW(_wait_all());
     EXPECT_EQ(items.size(), (size_t)2);
@@ -126,19 +145,18 @@ TEST_F(MultishotTest, recv_overflow) {
         _server.wait();
     }
 
-    std::vector<rawstor::io::tests::SimpleTaskVectorExternalItem> items;
-    rawstor::io::Event* event = nullptr;
-
-    {
-        std::unique_ptr<rawstor::io::TaskVectorExternal> t =
-            std::make_unique<rawstor::io::tests::SimpleTaskVectorExternal>(
-                4, &items
-            );
-        /**
-         * NOTE: entry_size=4, entries=4 not working for uring in linux-6.11.0
-         */
-        event = _queue->recv_multishot(_fd, 8, 2, 0, std::move(t));
-    }
+    /**
+     * NOTE: entry_size=4, entries=4 not working for uring in linux-6.11.0
+     */
+    std::vector<MultishotVectorItem> items;
+    rawstor::io::Event* event = _queue->recv_multishot(
+        _fd, 8, 2, 4, 0,
+        [&items](const iovec* iov, unsigned int niov, size_t result, int error)
+            -> size_t {
+            items.emplace_back(iov, niov, result, error);
+            return 4;
+        }
+    );
 
     EXPECT_NO_THROW(_wait_all());
     EXPECT_EQ(items.size(), (size_t)5);
@@ -174,16 +192,15 @@ TEST_F(MultishotTest, recv_overflow) {
 }
 
 TEST_F(MultishotTest, recv_partial) {
-    std::vector<rawstor::io::tests::SimpleTaskVectorExternalItem> items;
-    rawstor::io::Event* event = nullptr;
-
-    {
-        std::unique_ptr<rawstor::io::TaskVectorExternal> t =
-            std::make_unique<rawstor::io::tests::SimpleTaskVectorExternal>(
-                3, &items
-            );
-        event = _queue->recv_multishot(_fd, 4, 4, 0, std::move(t));
-    }
+    std::vector<MultishotVectorItem> items;
+    rawstor::io::Event* event = _queue->recv_multishot(
+        _fd, 4, 4, 3, 0,
+        [&items](const iovec* iov, unsigned int niov, size_t result, int error)
+            -> size_t {
+            items.emplace_back(iov, niov, result, error);
+            return 3;
+        }
+    );
 
     {
         const char server_buf[] = "1234";
@@ -243,16 +260,15 @@ TEST_F(MultishotTest, recv_partial) {
 }
 
 TEST_F(MultishotTest, recv_fill_buf) {
-    std::vector<rawstor::io::tests::SimpleTaskVectorExternalItem> items;
-    rawstor::io::Event* event = nullptr;
-
-    {
-        std::unique_ptr<rawstor::io::TaskVectorExternal> t =
-            std::make_unique<rawstor::io::tests::SimpleTaskVectorExternal>(
-                4, &items
-            );
-        event = _queue->recv_multishot(_fd, 4, 4, 0, std::move(t));
-    }
+    std::vector<MultishotVectorItem> items;
+    rawstor::io::Event* event = _queue->recv_multishot(
+        _fd, 4, 4, 4, 0,
+        [&items](const iovec* iov, unsigned int niov, size_t result, int error)
+            -> size_t {
+            items.emplace_back(iov, niov, result, error);
+            return 4;
+        }
+    );
 
     {
         const char server_buf[] = "123";

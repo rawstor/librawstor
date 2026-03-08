@@ -6,6 +6,7 @@
 
 #include <rawstor/object.h>
 
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -40,22 +41,23 @@ public:
     inline const RawstorUUID& id() const noexcept { return _id; }
 
     void pread(
-        void* buf, size_t size, off_t offset, RawstorCallback* cb, void* data
+        void* buf, size_t size, off_t offset,
+        std::function<void(size_t, int)>&& cb
     );
 
     void preadv(
         iovec* iov, unsigned int niov, size_t size, off_t offset,
-        RawstorCallback* cb, void* data
+        std::function<void(size_t, int)>&& cb
     );
 
     void pwrite(
-        const void* buf, size_t size, off_t offset, RawstorCallback* cb,
-        void* data
+        const void* buf, size_t size, off_t offset,
+        std::function<void(size_t, int)>&& cb
     );
 
     void pwritev(
         const iovec* iov, unsigned int niov, size_t size, off_t offset,
-        RawstorCallback* cb, void* data
+        std::function<void(size_t, int)>&& cb
     );
 };
 
