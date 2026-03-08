@@ -63,7 +63,9 @@ public:
 #endif
     {
 #ifdef RAWSTOR_TRACE_EVENTS
-        rawstor_trace_event_inc(_id);
+        if (_id != static_casrt<size_t>(-1)) {
+            rawstor_trace_event_inc(_id);
+        }
 #else
         (void)(other);
 #endif
