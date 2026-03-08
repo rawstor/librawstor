@@ -1,7 +1,6 @@
 #include "config.h"
 #include "fixture.hpp"
 #include "server.hpp"
-#include "task.hpp"
 
 #include <gtest/gtest.h>
 
@@ -23,13 +22,11 @@ TEST_F(CancelTest, cancel_nullptr) {
 TEST_F(CancelTest, poll) {
     size_t result = 0;
     int error = 0;
-    rawstor::io::Event* event = nullptr;
-
-    {
-        std::unique_ptr<rawstor::io::Task> t =
-            std::make_unique<rawstor::io::tests::SimpleTask>(&result, &error);
-        event = _queue->poll(_fd, POLLIN, std::move(t));
-    }
+    rawstor::io::Event* event =
+        _queue->poll(_fd, POLLIN, [&result, &error](size_t r, int e) {
+            result = r;
+            error = e;
+        });
 
     EXPECT_THROW(_queue->wait(0), std::system_error);
 
@@ -44,18 +41,16 @@ TEST_F(CancelTest, poll) {
 
 TEST_F(CancelTest, poll_completed) {
     const char server_buf[] = "data";
-    size_t result = 0;
-    int error = 0;
-    rawstor::io::Event* event = nullptr;
-
     _server.write(server_buf, sizeof(server_buf));
     _server.wait();
 
-    {
-        std::unique_ptr<rawstor::io::Task> t =
-            std::make_unique<rawstor::io::tests::SimpleTask>(&result, &error);
-        event = _queue->poll(_fd, POLLIN, std::move(t));
-    }
+    size_t result = 0;
+    int error = 0;
+    rawstor::io::Event* event =
+        _queue->poll(_fd, POLLIN, [&result, &error](size_t r, int e) {
+            result = r;
+            error = e;
+        });
 
     _queue->wait(0);
 
@@ -68,13 +63,13 @@ TEST_F(CancelTest, read) {
     char client_buf[10];
     size_t result = 0;
     int error = 0;
-    rawstor::io::Event* event = nullptr;
-
-    {
-        std::unique_ptr<rawstor::io::Task> t =
-            std::make_unique<rawstor::io::tests::SimpleTask>(&result, &error);
-        event = _queue->read(_fd, client_buf, sizeof(client_buf), std::move(t));
-    }
+    rawstor::io::Event* event = _queue->read(
+        _fd, client_buf, sizeof(client_buf),
+        [&result, &error](size_t r, int e) {
+            result = r;
+            error = e;
+        }
+    );
 
     EXPECT_THROW(_queue->wait(0), std::system_error);
 
@@ -90,19 +85,19 @@ TEST_F(CancelTest, read) {
 
 TEST_F(CancelTest, read_completed) {
     const char server_buf[] = "data";
-    char client_buf[sizeof(server_buf)];
-    size_t result = 0;
-    int error = 0;
-    rawstor::io::Event* event = nullptr;
-
     _server.write(server_buf, sizeof(server_buf));
     _server.wait();
 
-    {
-        std::unique_ptr<rawstor::io::Task> t =
-            std::make_unique<rawstor::io::tests::SimpleTask>(&result, &error);
-        event = _queue->read(_fd, client_buf, sizeof(client_buf), std::move(t));
-    }
+    char client_buf[sizeof(server_buf)];
+    size_t result = 0;
+    int error = 0;
+    rawstor::io::Event* event = _queue->read(
+        _fd, client_buf, sizeof(client_buf),
+        [&result, &error](size_t r, int e) {
+            result = r;
+            error = e;
+        }
+    );
 
     _queue->wait(0);
 
@@ -120,13 +115,13 @@ TEST_F(CancelTest, write) {
     size_t result = 0;
     int error = 0;
     rawstor::io::Event* event = nullptr;
-
-    {
-        std::unique_ptr<rawstor::io::Task> t =
-            std::make_unique<rawstor::io::tests::SimpleTask>(&result, &error);
-        event =
-            _queue->write(_fd, client_buf, sizeof(client_buf), std::move(t));
-    }
+    event = _queue->write(
+        _fd, client_buf, sizeof(client_buf),
+        [&result, &error](size_t r, int e) {
+            result = r;
+            error = e;
+        }
+    );
 
     _queue->cancel(event);
 
@@ -140,20 +135,18 @@ TEST_F(CancelTest, write) {
 
 TEST_F(CancelTest, write_completed) {
     char client_buf[] = "data";
-    char server_buf[sizeof(client_buf)];
     size_t result = 0;
     int error = 0;
-    rawstor::io::Event* event = nullptr;
-
-    {
-        std::unique_ptr<rawstor::io::Task> t =
-            std::make_unique<rawstor::io::tests::SimpleTask>(&result, &error);
-        event =
-            _queue->write(_fd, client_buf, sizeof(client_buf), std::move(t));
-    }
-
+    rawstor::io::Event* event = _queue->write(
+        _fd, client_buf, sizeof(client_buf),
+        [&result, &error](size_t r, int e) {
+            result = r;
+            error = e;
+        }
+    );
     _queue->wait(0);
 
+    char server_buf[sizeof(client_buf)];
     _server.read(server_buf, sizeof(server_buf));
     _server.wait();
 

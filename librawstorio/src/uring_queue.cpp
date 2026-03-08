@@ -2,9 +2,8 @@
 
 #include "uring_buffer.hpp"
 
-#include <rawstorio/task.hpp>
-
 #include <rawstorstd/gpp.hpp>
+#include <rawstorstd/logging.hpp>
 #include <rawstorstd/socket.h>
 
 #include <cstring>
@@ -66,104 +65,206 @@ void Queue::setup_fd(int fd) {
 }
 
 rawstor::io::Event*
-Queue::poll(int fd, unsigned int mask, std::unique_ptr<rawstor::io::Task> t) {
+Queue::poll(int fd, unsigned int mask, std::function<void(size_t, int)>&& cb) {
+    TraceEvent trace_event =
+        RAWSTOR_TRACE_EVENT('|', "fd = %d, mask = %u\n", fd, mask);
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
+    std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
+        std::make_unique<std::function<void(size_t, int, unsigned int)>>(
+            [cb = std::move(cb),
+             trace_event](size_t result, int error, unsigned int) {
+                RAWSTOR_TRACE_EVENT_MESSAGE(
+                    trace_event, "result = %zu, error = %d\n", result, error
+                );
+                cb(result, error);
+            }
+        );
     io_uring_prep_poll_add(sqe, fd, mask);
-    io_uring_sqe_set_data(sqe, t.get());
+    io_uring_sqe_set_data(sqe, p.get());
 
-    return static_cast<rawstor::io::Event*>(t.release());
+    return static_cast<rawstor::io::Event*>(p.release());
 }
 
 rawstor::io::Event* Queue::poll_multishot(
-    int fd, unsigned int mask, std::unique_ptr<rawstor::io::Task> t
+    int fd, unsigned int mask, std::function<void(size_t, int)>&& cb
 ) {
+    TraceEvent trace_event =
+        RAWSTOR_TRACE_EVENT('|', "fd = %d, mask = %u\n", fd, mask);
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
     io_uring_prep_poll_multishot(sqe, fd, mask);
-    io_uring_sqe_set_data(sqe, t.get());
+    std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
+        std::make_unique<std::function<void(size_t, int, unsigned int)>>(
+            [cb = std::move(cb),
+             trace_event](size_t result, int error, unsigned int) {
+                RAWSTOR_TRACE_EVENT_MESSAGE(
+                    trace_event, "result = %zu, error = %d\n", result, error
+                );
+                cb(result, error);
+            }
+        );
+    io_uring_sqe_set_data(sqe, p.get());
 
-    return static_cast<rawstor::io::Event*>(t.release());
+    return static_cast<rawstor::io::Event*>(p.release());
 }
 
 rawstor::io::Event* Queue::read(
-    int fd, void* buf, size_t size, std::unique_ptr<rawstor::io::Task> t
+    int fd, void* buf, size_t size, std::function<void(size_t, int)>&& cb
 ) {
+    TraceEvent trace_event =
+        RAWSTOR_TRACE_EVENT('|', "fd = %d, size = %zu\n", fd, size);
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
     io_uring_prep_read(sqe, fd, buf, size, 0);
-    io_uring_sqe_set_data(sqe, t.get());
+    std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
+        std::make_unique<std::function<void(size_t, int, unsigned int)>>(
+            [cb = std::move(cb),
+             trace_event](size_t result, int error, unsigned int) {
+                RAWSTOR_TRACE_EVENT_MESSAGE(
+                    trace_event, "result = %zu, error = %d\n", result, error
+                );
+                cb(result, error);
+            }
+        );
+    io_uring_sqe_set_data(sqe, p.get());
 
-    return static_cast<rawstor::io::Event*>(t.release());
+    return static_cast<rawstor::io::Event*>(p.release());
 }
 
 rawstor::io::Event* Queue::readv(
-    int fd, iovec* iov, unsigned int niov, std::unique_ptr<rawstor::io::Task> t
+    int fd, iovec* iov, unsigned int niov, std::function<void(size_t, int)>&& cb
 ) {
+    TraceEvent trace_event =
+        RAWSTOR_TRACE_EVENT('|', "fd = %d, niov = %zu\n", fd, niov);
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
     io_uring_prep_readv(sqe, fd, iov, niov, 0);
-    io_uring_sqe_set_data(sqe, t.get());
+    std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
+        std::make_unique<std::function<void(size_t, int, unsigned int)>>(
+            [cb = std::move(cb),
+             trace_event](size_t result, int error, unsigned int) {
+                RAWSTOR_TRACE_EVENT_MESSAGE(
+                    trace_event, "result = %zu, error = %d\n", result, error
+                );
+                cb(result, error);
+            }
+        );
+    io_uring_sqe_set_data(sqe, p.get());
 
-    return static_cast<rawstor::io::Event*>(t.release());
+    return static_cast<rawstor::io::Event*>(p.release());
 }
 
 rawstor::io::Event* Queue::pread(
     int fd, void* buf, size_t size, off_t offset,
-    std::unique_ptr<rawstor::io::Task> t
+    std::function<void(size_t, int)>&& cb
 ) {
+    TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
+        '|', "fd = %d, size = %zu, offset = %jd\n", fd, size, (intmax_t)offset
+    );
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
     io_uring_prep_read(sqe, fd, buf, size, offset);
-    io_uring_sqe_set_data(sqe, t.get());
+    std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
+        std::make_unique<std::function<void(size_t, int, unsigned int)>>(
+            [cb = std::move(cb),
+             trace_event](size_t result, int error, unsigned int) {
+                RAWSTOR_TRACE_EVENT_MESSAGE(
+                    trace_event, "result = %zu, error = %d\n", result, error
+                );
+                cb(result, error);
+            }
+        );
+    io_uring_sqe_set_data(sqe, p.get());
 
-    return static_cast<rawstor::io::Event*>(t.release());
+    return static_cast<rawstor::io::Event*>(p.release());
 }
 
 rawstor::io::Event* Queue::preadv(
     int fd, iovec* iov, unsigned int niov, off_t offset,
-    std::unique_ptr<rawstor::io::Task> t
+    std::function<void(size_t, int)>&& cb
 ) {
+    TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
+        '|', "fd = %d, niov = %u, offset = %jd\n", fd, niov, (intmax_t)offset
+    );
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
     io_uring_prep_readv(sqe, fd, iov, niov, offset);
-    io_uring_sqe_set_data(sqe, t.get());
+    std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
+        std::make_unique<std::function<void(size_t, int, unsigned int)>>(
+            [cb = std::move(cb),
+             trace_event](size_t result, int error, unsigned int) {
+                RAWSTOR_TRACE_EVENT_MESSAGE(
+                    trace_event, "result = %zu, error = %d\n", result, error
+                );
+                cb(result, error);
+            }
+        );
+    io_uring_sqe_set_data(sqe, p.get());
 
-    return static_cast<rawstor::io::Event*>(t.release());
+    return static_cast<rawstor::io::Event*>(p.release());
 }
 
 rawstor::io::Event* Queue::recv(
     int fd, void* buf, size_t size, unsigned int flags,
-    std::unique_ptr<rawstor::io::Task> t
+    std::function<void(size_t, int)>&& cb
 ) {
+    TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
+        '|', "fd = %d, size = %zu, flags = %u\n", fd, size, flags
+    );
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
     io_uring_prep_recv(sqe, fd, buf, size, flags);
-    io_uring_sqe_set_data(sqe, t.get());
+    std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
+        std::make_unique<std::function<void(size_t, int, unsigned int)>>(
+            [cb = std::move(cb),
+             trace_event](size_t result, int error, unsigned int) {
+                RAWSTOR_TRACE_EVENT_MESSAGE(
+                    trace_event, "result = %zu, error = %d\n", result, error
+                );
+                cb(result, error);
+            }
+        );
+    io_uring_sqe_set_data(sqe, p.get());
 
-    return static_cast<rawstor::io::Event*>(t.release());
+    return static_cast<rawstor::io::Event*>(p.release());
 }
 
 rawstor::io::Event* Queue::recv_multishot(
-    int fd, size_t entry_size, unsigned int entries, unsigned int flags,
-    std::unique_ptr<rawstor::io::TaskVectorExternal> t
+    int fd, size_t entry_size, unsigned int entries, size_t size,
+    unsigned int flags,
+    std::function<size_t(const iovec*, unsigned int, size_t, int)>&& cb
 ) {
-    std::unique_ptr<BufferRing> buffer =
-        std::make_unique<BufferRing>(_ring, entry_size, entries, std::move(t));
+    TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
+        '|',
+        "fd = %d, entry_size = %zu, entries = %u, size = %zu, flags = %u\n", fd,
+        entry_size, entries, size, flags
+    );
+    std::shared_ptr<BufferRing> buffer = std::make_shared<BufferRing>(
+        _ring, entry_size, entries, size,
+        [cb = std::move(cb), trace_event](
+            const iovec* iov, unsigned int niov, size_t result, int error
+        ) -> size_t {
+            RAWSTOR_TRACE_EVENT_MESSAGE(
+                trace_event, "result = %zu, error = %d\n", result, error
+            );
+            return cb(iov, niov, result, error);
+        }
+    );
 
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
@@ -172,106 +273,206 @@ rawstor::io::Event* Queue::recv_multishot(
     io_uring_prep_recv_multishot(sqe, fd, nullptr, 0, flags);
     sqe->flags |= IOSQE_BUFFER_SELECT;
     sqe->buf_group = buffer->id();
-    io_uring_sqe_set_data(sqe, buffer.get());
+    std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
+        std::make_unique<std::function<void(size_t, int, unsigned int)>>(
+            [buffer,
+             trace_event](size_t result, int error, unsigned int flags) {
+                RAWSTOR_TRACE_EVENT_MESSAGE(
+                    trace_event, "result = %zu, error = %d, flags = %u\n",
+                    result, error, flags
+                );
+                (*buffer)(result, error, flags);
+            }
+        );
+    io_uring_sqe_set_data(sqe, p.get());
 
-    return static_cast<rawstor::io::Event*>(buffer.release());
+    return static_cast<rawstor::io::Event*>(p.release());
 }
 
 rawstor::io::Event* Queue::recvmsg(
     int fd, msghdr* msg, unsigned int flags,
-    std::unique_ptr<rawstor::io::Task> t
+    std::function<void(size_t, int)>&& cb
 ) {
+    TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
+        '|', "fd = %d, niov = %zu, flags = %u\n", fd, msg->msg_iovlen, flags
+    );
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
+    std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
+        std::make_unique<std::function<void(size_t, int, unsigned int)>>(
+            [cb = std::move(cb),
+             trace_event](size_t result, int error, unsigned int) {
+                RAWSTOR_TRACE_EVENT_MESSAGE(
+                    trace_event, "result = %zu, error = %d\n", result, error
+                );
+                cb(result, error);
+            }
+        );
     io_uring_prep_recvmsg(sqe, fd, msg, flags);
-    io_uring_sqe_set_data(sqe, t.get());
+    io_uring_sqe_set_data(sqe, p.get());
 
-    return static_cast<rawstor::io::Event*>(t.release());
+    return static_cast<rawstor::io::Event*>(p.release());
 }
 
 rawstor::io::Event* Queue::write(
-    int fd, const void* buf, size_t size, std::unique_ptr<rawstor::io::Task> t
+    int fd, const void* buf, size_t size, std::function<void(size_t, int)>&& cb
 ) {
+    TraceEvent trace_event =
+        RAWSTOR_TRACE_EVENT('|', "fd = %d, size = %zu\n", fd, size);
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
+    std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
+        std::make_unique<std::function<void(size_t, int, unsigned int)>>(
+            [cb = std::move(cb),
+             trace_event](size_t result, int error, unsigned int) {
+                RAWSTOR_TRACE_EVENT_MESSAGE(
+                    trace_event, "result = %zu, error = %d\n", result, error
+                );
+                cb(result, error);
+            }
+        );
     io_uring_prep_write(sqe, fd, buf, size, 0);
-    io_uring_sqe_set_data(sqe, t.get());
+    io_uring_sqe_set_data(sqe, p.get());
 
-    return static_cast<rawstor::io::Event*>(t.release());
+    return static_cast<rawstor::io::Event*>(p.release());
 }
 
 rawstor::io::Event* Queue::writev(
     int fd, const iovec* iov, unsigned int niov,
-    std::unique_ptr<rawstor::io::Task> t
+    std::function<void(size_t, int)>&& cb
 ) {
+    TraceEvent trace_event =
+        RAWSTOR_TRACE_EVENT('|', "fd = %d, niov = %u\n", fd, niov);
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
+    std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
+        std::make_unique<std::function<void(size_t, int, unsigned int)>>(
+            [cb = std::move(cb),
+             trace_event](size_t result, int error, unsigned int) {
+                RAWSTOR_TRACE_EVENT_MESSAGE(
+                    trace_event, "result = %zu, error = %d\n", result, error
+                );
+                cb(result, error);
+            }
+        );
     io_uring_prep_writev(sqe, fd, iov, niov, 0);
-    io_uring_sqe_set_data(sqe, t.get());
+    io_uring_sqe_set_data(sqe, p.get());
 
-    return static_cast<rawstor::io::Event*>(t.release());
+    return static_cast<rawstor::io::Event*>(p.release());
 }
 
 rawstor::io::Event* Queue::pwrite(
     int fd, const void* buf, size_t size, off_t offset,
-    std::unique_ptr<rawstor::io::Task> t
+    std::function<void(size_t, int)>&& cb
 ) {
+    TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
+        '|', "fd = %d, size = %zu, offset = %jd\n", fd, size, (intmax_t)offset
+    );
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
+    std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
+        std::make_unique<std::function<void(size_t, int, unsigned int)>>(
+            [cb = std::move(cb),
+             trace_event](size_t result, int error, unsigned int) {
+                RAWSTOR_TRACE_EVENT_MESSAGE(
+                    trace_event, "result = %zu, error = %d\n", result, error
+                );
+                cb(result, error);
+            }
+        );
     io_uring_prep_write(sqe, fd, buf, size, offset);
-    io_uring_sqe_set_data(sqe, t.get());
+    io_uring_sqe_set_data(sqe, p.get());
 
-    return static_cast<rawstor::io::Event*>(t.release());
+    return static_cast<rawstor::io::Event*>(p.release());
 }
 
 rawstor::io::Event* Queue::pwritev(
     int fd, const iovec* iov, unsigned int niov, off_t offset,
-    std::unique_ptr<rawstor::io::Task> t
+    std::function<void(size_t, int)>&& cb
 ) {
+    TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
+        '|', "fd = %d, niov = %u, offset = %jd\n", fd, niov, (intmax_t)offset
+    );
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
+    std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
+        std::make_unique<std::function<void(size_t, int, unsigned int)>>(
+            [cb = std::move(cb),
+             trace_event](size_t result, int error, unsigned int) {
+                RAWSTOR_TRACE_EVENT_MESSAGE(
+                    trace_event, "result = %zu, error = %d\n", result, error
+                );
+                cb(result, error);
+            }
+        );
     io_uring_prep_writev(sqe, fd, iov, niov, offset);
-    io_uring_sqe_set_data(sqe, t.get());
+    io_uring_sqe_set_data(sqe, p.get());
 
-    return static_cast<rawstor::io::Event*>(t.release());
+    return static_cast<rawstor::io::Event*>(p.release());
 }
 
 rawstor::io::Event* Queue::send(
     int fd, const void* buf, size_t size, unsigned int flags,
-    std::unique_ptr<rawstor::io::Task> t
+    std::function<void(size_t, int)>&& cb
 ) {
+    TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
+        '|', "fd = %d, size = %zu, flags = %u\n", fd, size, flags
+    );
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
+    std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
+        std::make_unique<std::function<void(size_t, int, unsigned int)>>(
+            [cb = std::move(cb),
+             trace_event](size_t result, int error, unsigned int) {
+                RAWSTOR_TRACE_EVENT_MESSAGE(
+                    trace_event, "result = %zu, error = %d\n", result, error
+                );
+                cb(result, error);
+            }
+        );
     io_uring_prep_send(sqe, fd, buf, size, flags);
-    io_uring_sqe_set_data(sqe, t.get());
+    io_uring_sqe_set_data(sqe, p.get());
 
-    return static_cast<rawstor::io::Event*>(t.release());
+    return static_cast<rawstor::io::Event*>(p.release());
 }
 
 rawstor::io::Event* Queue::sendmsg(
     int fd, const msghdr* msg, unsigned int flags,
-    std::unique_ptr<rawstor::io::Task> t
+    std::function<void(size_t, int)>&& cb
 ) {
+    TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
+        '|', "fd = %d, niov = %zu, flags = %u\n", fd, msg->msg_iovlen, flags
+    );
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
+    std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
+        std::make_unique<std::function<void(size_t, int, unsigned int)>>(
+            [cb = std::move(cb),
+             trace_event](size_t result, int error, unsigned int) {
+                RAWSTOR_TRACE_EVENT_MESSAGE(
+                    trace_event, "result = %zu, error = %d\n", result, error
+                );
+                cb(result, error);
+            }
+        );
     io_uring_prep_sendmsg(sqe, fd, msg, flags);
-    io_uring_sqe_set_data(sqe, t.get());
+    io_uring_sqe_set_data(sqe, p.get());
 
-    return static_cast<rawstor::io::Event*>(t.release());
+    return static_cast<rawstor::io::Event*>(p.release());
 }
 
 void Queue::cancel(rawstor::io::Event* event) {
@@ -306,23 +507,26 @@ void Queue::wait(unsigned int timeout) {
         io_uring_for_each_cqe(&_ring, head, cqe) {
             ++nr;
 
-            std::unique_ptr<rawstor::io::Task> t(
-                static_cast<rawstor::io::Task*>(io_uring_cqe_get_data(cqe))
+            std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p(
+                static_cast<std::function<void(size_t, int, unsigned int)>*>(
+                    io_uring_cqe_get_data(cqe)
+                )
             );
 
-            size_t result = cqe->res >= 0 ? cqe->res : 0;
-            int error = cqe->res < 0 ? -cqe->res : 0;
-
-            if (cqe->flags & IORING_CQE_F_BUFFER) {
-                static_cast<BufferRing*>(t.get())->select_entry(
-                    cqe->flags >> IORING_CQE_BUFFER_SHIFT
-                );
+            size_t result;
+            int error;
+            if (cqe->res >= 0) [[likely]] {
+                result = cqe->res;
+                error = 0;
+            } else {
+                result = 0;
+                error = -cqe->res;
             }
 
-            (*t)(result, error);
+            (*p)(result, error, cqe->flags);
 
             if (cqe->flags & IORING_CQE_F_MORE) {
-                t.release();
+                p.release();
             }
         }
     } catch (...) {
