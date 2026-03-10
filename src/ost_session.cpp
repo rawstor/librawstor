@@ -605,11 +605,10 @@ Session::Session(
     _context(std::make_shared<Context>(*this)) {
     int fd = _connect();
     set_fd(fd);
-    RawstorOSTFrameResponse response;
     TraceEvent trace_event = RAWSTOR_TRACE_EVENT('s', "%s\n", "multishot recv");
     _read_event = io_queue->recv_multishot(
-        fd, 1u << 17, 64 * 4, sizeof(response), 0,
-        [fd, response, is_head = true, size = sizeof(response),
+        fd, 1u << 17, 64 * 4, sizeof(RawstorOSTFrameResponse), 0,
+        [fd, cid = 0, is_head = true, size = sizeof(RawstorOSTFrameResponse),
          context = _context, trace_event](
             const iovec* iov, unsigned int niov, size_t result, int error
         ) mutable {
@@ -627,13 +626,15 @@ Session::Session(
                 size = sizeof(RawstorOSTFrameResponse);
             } else {
                 if (is_head) {
+                    RawstorOSTFrameResponse response;
                     rawstor_iovec_to_buf(
                         iov, niov, 0, &response, sizeof(response)
                     );
-                    SessionOp& op = context->find_op(response.cid);
+                    cid = response.cid;
+                    SessionOp& op = context->find_op(cid);
                     op.response_head_cb(&response, 0, &is_head, &size);
                 } else {
-                    SessionOp& op = context->find_op(response.cid);
+                    SessionOp& op = context->find_op(cid);
                     op.response_body_cb(iov, niov, result, error);
                     is_head = true;
                     size = sizeof(RawstorOSTFrameResponse);
