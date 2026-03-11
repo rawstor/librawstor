@@ -769,7 +769,6 @@ void Session::set_object(RawstorObject* object) {
                 }
 
                 context->set_ready();
-                printf("now context is ready\n");
             }
         );
     _context->register_op(op);
@@ -837,7 +836,6 @@ void Session::pread(
     TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
         's', "fd = %d, size = %zu, offset = %jd\n", fd(), size, (intmax_t)offset
     );
-    printf("context ready = %d\n", _context->is_ready());
 
     std::shared_ptr<SessionOpRead> op = std::make_shared<SessionOpRead>(
         _context, _cid_counter++, buf, size, offset, trace_event, std::move(cb)
@@ -870,7 +868,6 @@ void Session::preadv(
     TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
         's', "fd = %d, size = %zu, offset = %jd\n", fd(), size, (intmax_t)offset
     );
-    printf("context ready = %d\n", _context->is_ready());
 
     std::shared_ptr<SessionOpReadV> op = std::make_shared<SessionOpReadV>(
         _context, _cid_counter++, iov, niov, size, offset, trace_event,
@@ -904,7 +901,6 @@ void Session::pwrite(
     TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
         's', "fd = %d, size = %zu, offset = %jd\n", fd(), size, (intmax_t)offset
     );
-    printf("context ready = %d\n", _context->is_ready());
 
     std::shared_ptr<SessionOpWrite> op = std::make_shared<SessionOpWrite>(
         _context, _cid_counter++, buf, size, offset, trace_event, std::move(cb)
@@ -937,7 +933,6 @@ void Session::pwritev(
     TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
         's', "fd = %d, size = %zu, offset = %jd\n", fd(), size, (intmax_t)offset
     );
-    printf("context ready = %d\n", _context->is_ready());
 
     std::shared_ptr<SessionOpWriteV> op = std::make_shared<SessionOpWriteV>(
         _context, _cid_counter++, iov, niov, size, offset, trace_event,
