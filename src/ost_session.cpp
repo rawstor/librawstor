@@ -349,13 +349,13 @@ public:
         const iovec* iov, unsigned int niov, size_t result, int error
     ) override {
         RAWSTOR_TRACE_EVENT_MESSAGE(
-            _trace_event, "niov = %d, result = %zu, error = %d\n", niov, result,
+            _trace_event, "niov = %u, result = %zu, error = %d\n", niov, result,
             error
         );
 
         if (!error) {
             rawstor::ost::Session& s = _context->session();
-            error = validate_hash(s, hash(_buf, _size), _hash);
+            error = validate_hash(s, hash(iov, niov), _hash);
         }
 
         if (result) {
@@ -406,7 +406,7 @@ public:
         size_t* next_size
     ) override {
         RAWSTOR_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
-        
+
         rawstor::ost::Session& s = _context->session();
 
         if (!error) {
@@ -432,13 +432,13 @@ public:
         const iovec* iov, unsigned int niov, size_t result, int error
     ) override {
         RAWSTOR_TRACE_EVENT_MESSAGE(
-            _trace_event, "niov = %d, result = %zu, error = %d\n", niov, result,\
+            _trace_event, "niov = %u, result = %zu, error = %d\n", niov, result,
             error
         );
 
         if (!error) {
             rawstor::ost::Session& s = _context->session();
-            error = validate_hash(s, hash(_iov, _niov), _hash);
+            error = validate_hash(s, hash(iov, niov), _hash);
         }
 
         if (result) {
