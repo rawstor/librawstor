@@ -650,8 +650,8 @@ Session::~Session() {
     if (_read_event != nullptr) {
         try {
             io_queue->cancel(_read_event);
-        } catch (const std::system_error& e) {
-            rawstor_error("Failed to cancel event: %s\n", e.what());
+        } catch (const std::exception& e) {
+            rawstor_warning("Failed to cancel event: %s\n", e.what());
         }
     }
     _context->detach();
