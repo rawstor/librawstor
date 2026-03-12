@@ -228,59 +228,6 @@ public:
     virtual void response_body_cb(const iovec*, unsigned int, size_t, int) {}
 };
 
-class SessionOpSetObjectId final : public SessionOp {
-private:
-    RawstorOSTFrameBasic _request;
-
-public:
-    SessionOpSetObjectId(
-        const std::shared_ptr<rawstor::ost::Context>& context, uint16_t cid,
-        const RawstorUUID& id, const rawstor::TraceEvent& trace_event,
-        std::function<void(size_t, int)>&& cb
-    ) :
-        SessionOp(context, cid, trace_event, std::move(cb)),
-        _request({
-            .magic = RAWSTOR_MAGIC,
-            .cmd = RAWSTOR_CMD_SET_OBJECT,
-            .obj_id = {},
-            .offset = 0,
-            .val = 0,
-        }) {
-        memcpy(_request.obj_id, id.bytes, sizeof(_request.obj_id));
-        rawstor::ost::Session& s = _context->session();
-        rawstor_info("%s: Setting object id\n", s.str().c_str());
-    }
-
-    const void* request_data() const noexcept { return &_request; }
-
-    size_t request_size() const noexcept override { return sizeof(_request); }
-
-    void response_head_cb(
-        const RawstorOSTFrameResponse* response, int error, bool* next_head,
-        size_t* next_size
-    ) override {
-        RAWSTOR_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
-
-        rawstor::ost::Session& s = _context->session();
-
-        if (!error) {
-            error = validate_response(s, response);
-        }
-
-        if (!error) {
-            error = validate_cmd(s, response->cmd, RAWSTOR_CMD_SET_OBJECT);
-        }
-
-        if (!error) {
-            rawstor_info("%s: Object id successfully set\n", s.str().c_str());
-        }
-
-        _dispatch(0, error);
-        *next_head = true;
-        *next_size = sizeof(RawstorOSTFrameResponse);
-    }
-};
-
 class SessionOpRead final : public SessionOp {
 private:
     void* _buf;
