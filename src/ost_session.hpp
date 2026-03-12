@@ -32,6 +32,8 @@ private:
     std::shared_ptr<Context> _context;
 
     int _connect();
+    void _set_object(RawstorObject* object);
+    void _setup_recv();
 
 public:
     Session(rawstor::io::Queue& queue, const URI& uri, unsigned int depth);

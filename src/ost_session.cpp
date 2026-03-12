@@ -109,11 +109,10 @@ namespace ost {
 class Context final {
 private:
     rawstor::ost::Session* _s;
-    bool _ready;
     std::unordered_map<uint16_t, std::shared_ptr<SessionOp>> _ops;
 
 public:
-    Context(rawstor::ost::Session& s) : _s(&s), _ready(false) {}
+    Context(rawstor::ost::Session& s) : _s(&s) {}
 
     void detach() noexcept { _s = nullptr; }
 
@@ -127,9 +126,6 @@ public:
     void register_op(const std::shared_ptr<SessionOp>& op);
 
     void unregister_op(uint16_t cid) { _ops.erase(cid); }
-
-    bool is_ready() const noexcept { return _ready; }
-    void set_ready() noexcept { _ready = true; }
 
     SessionOp& find_op(uint16_t cid) {
         auto it = _ops.find(cid);
@@ -605,45 +601,6 @@ Session::Session(
     _context(std::make_shared<Context>(*this)) {
     int fd = _connect();
     set_fd(fd);
-    TraceEvent trace_event = RAWSTOR_TRACE_EVENT('s', "%s\n", "multishot recv");
-    _read_event = io_queue->recv_multishot(
-        fd, 1u << 17, 64 * 4, sizeof(RawstorOSTFrameResponse), 0,
-        [fd, cid = 0, is_head = true, size = sizeof(RawstorOSTFrameResponse),
-         context = _context, trace_event](
-            const iovec* iov, unsigned int niov, size_t result, int error
-        ) mutable {
-            RAWSTOR_TRACE_EVENT_MESSAGE(
-                trace_event, "%zu of %zu, error = %d\n", result, size, error
-            );
-
-            if (!error) {
-                error = validate_result(fd, size, result);
-            }
-
-            if (error) {
-                context->fail_in_flight(error, &is_head, &size);
-                is_head = true;
-                size = sizeof(RawstorOSTFrameResponse);
-            } else {
-                if (is_head) {
-                    RawstorOSTFrameResponse response;
-                    rawstor_iovec_to_buf(
-                        iov, niov, 0, &response, sizeof(response)
-                    );
-                    cid = response.cid;
-                    SessionOp& op = context->find_op(cid);
-                    op.response_head_cb(&response, 0, &is_head, &size);
-                } else {
-                    SessionOp& op = context->find_op(cid);
-                    op.response_body_cb(iov, niov, result, error);
-                    is_head = true;
-                    size = sizeof(RawstorOSTFrameResponse);
-                }
-            }
-
-            return size;
-        }
-    );
 }
 
 Session::~Session() {
@@ -722,60 +679,23 @@ int Session::_connect() {
     return fd;
 }
 
-void Session::create(
-    const RawstorUUID&, const RawstorObjectSpec&, std::function<void(int)>&& cb
-) {
-    /**
-     * TODO: Implement me.
-     */
-    cb(0);
-}
-
-void Session::remove(const RawstorUUID&, std::function<void(int)>&&) {
-    throw std::runtime_error("Session::remove() not implemented");
-}
-
-void Session::spec(
-    const RawstorUUID&, std::function<void(const RawstorObjectSpec&, int)>&& cb
-) {
-    rawstor_info("%s: Reading object specification...\n", str().c_str());
-
-    /**
-     * TODO: Implement me.
-     */
-    RawstorObjectSpec ret = {
-        .size = 1 << 30,
-    };
-
-    rawstor_info(
-        "%s: Object specification successfully received (emulated)\n",
-        str().c_str()
-    );
-
-    cb(ret, 0);
-}
-
-void Session::set_object(RawstorObject* object) {
+void Session::_set_object(RawstorObject* object) {
     TraceEvent trace_event = RAWSTOR_TRACE_EVENT('s', "%s\n", "set object");
 
     std::unique_ptr<rawstor::io::Queue> queue = rawstor::io::Queue::create(2);
 
-    std::shared_ptr<SessionOpSetObjectId> op =
-        std::make_shared<SessionOpSetObjectId>(
-            _context, _cid_counter++, object->id(), trace_event,
-            [context = _context](size_t, int error) {
-                if (error) {
-                    RAWSTOR_THROW_SYSTEM_ERROR(error);
-                }
-
-                context->set_ready();
-            }
-        );
-    _context->register_op(op);
-
-    _queue.write(
-        fd(), op->request_data(), op->request_size(),
-        [op, trace_event](size_t result, int error) {
+    RawstorOSTFrameBasic request = {
+        .magic = RAWSTOR_MAGIC,
+        .cmd = RAWSTOR_CMD_SET_OBJECT,
+        .obj_id = {},
+        .offset = 0,
+        .val = 0,
+    };
+    memcpy(request.obj_id, object->id().bytes, sizeof(request.obj_id));
+    rawstor_info("%s: Setting object id\n", str().c_str());
+    queue->write(
+        fd(), &request, sizeof(request),
+        [fd = fd(), trace_event](size_t result, int error) {
             RAWSTOR_TRACE_EVENT_MESSAGE(
                 trace_event, "%zu of %zu, error = %d\n", result,
                 sizeof(RawstorOSTFrameBasic), error
@@ -828,6 +748,93 @@ void Session::set_object(RawstorObject* object) {
             rawstor_info("%s: Object id successfully set\n", str().c_str());
         }
     );
+
+    while (!completed) {
+        queue->wait(rawstor_opts_wait_timeout());
+    }
+}
+
+void Session::_setup_recv() {
+    assert(_read_event == nullptr);
+
+    TraceEvent trace_event = RAWSTOR_TRACE_EVENT('s', "%s\n", "multishot recv");
+    _read_event = io_queue->recv_multishot(
+        fd(), 1u << 17, 64 * 4, sizeof(RawstorOSTFrameResponse), 0,
+        [fd = fd(), cid = 0, is_head = true,
+         size = sizeof(RawstorOSTFrameResponse), context = _context,
+         trace_event](
+            const iovec* iov, unsigned int niov, size_t result, int error
+        ) mutable {
+            RAWSTOR_TRACE_EVENT_MESSAGE(
+                trace_event, "%zu of %zu, error = %d\n", result, size, error
+            );
+
+            if (!error) {
+                error = validate_result(fd, size, result);
+            }
+
+            if (error) {
+                context->fail_in_flight(error, &is_head, &size);
+                is_head = true;
+                size = sizeof(RawstorOSTFrameResponse);
+            } else {
+                if (is_head) {
+                    RawstorOSTFrameResponse response;
+                    rawstor_iovec_to_buf(
+                        iov, niov, 0, &response, sizeof(response)
+                    );
+                    cid = response.cid;
+                    SessionOp& op = context->find_op(cid);
+                    op.response_head_cb(&response, 0, &is_head, &size);
+                } else {
+                    SessionOp& op = context->find_op(cid);
+                    op.response_body_cb(iov, niov, result, error);
+                    is_head = true;
+                    size = sizeof(RawstorOSTFrameResponse);
+                }
+            }
+
+            return size;
+        }
+    );
+}
+
+void Session::create(
+    const RawstorUUID&, const RawstorObjectSpec&, std::function<void(int)>&& cb
+) {
+    /**
+     * TODO: Implement me.
+     */
+    cb(0);
+}
+
+void Session::remove(const RawstorUUID&, std::function<void(int)>&&) {
+    throw std::runtime_error("Session::remove() not implemented");
+}
+
+void Session::spec(
+    const RawstorUUID&, std::function<void(const RawstorObjectSpec&, int)>&& cb
+) {
+    rawstor_info("%s: Reading object specification...\n", str().c_str());
+
+    /**
+     * TODO: Implement me.
+     */
+    RawstorObjectSpec ret = {
+        .size = 1 << 30,
+    };
+
+    rawstor_info(
+        "%s: Object specification successfully received (emulated)\n",
+        str().c_str()
+    );
+
+    cb(ret, 0);
+}
+
+void Session::set_object(RawstorObject* object) {
+    _set_object(object);
+    _setup_recv();
 }
 
 void Session::pread(
