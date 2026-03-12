@@ -264,6 +264,7 @@ void Connection::remove(const URI& uri) {
 }
 
 void Connection::spec(const URI& uri, RawstorObjectSpec* sp) {
+    rawstor_info("Connection::spec()\n");
     RawstorUUID id;
     int res = rawstor_uuid_from_string(&id, uri.path().filename().c_str());
     if (res) {
