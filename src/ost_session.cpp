@@ -537,6 +537,8 @@ void Context::fail_in_flight(int error, bool* next_head, size_t* next_size) {
     for (auto i : in_flight_ops) {
         i->response_head_cb(nullptr, error, next_head, next_size);
     }
+    *next_head = true;
+    *next_size = sizeof(RawstorOSTFrameResponse);
 }
 
 Session::Session(
@@ -704,7 +706,7 @@ void Session::_set_object(RawstorObject* object) {
 void Session::_setup_recv() {
     assert(_read_event == nullptr);
 
-    TraceEvent trace_event = RAWSTOR_TRACE_EVENT('s', "%s\n", "multishot recv");
+    TraceEvent trace_event = RAWSTOR_TRACE_EVENT('m', "%s\n", "multishot recv");
     _read_event = io_queue->recv_multishot(
         fd(), 1u << 17, 64 * 4, sizeof(RawstorOSTFrameResponse), 0,
         [fd = fd(), cid = 0, is_head = true,
@@ -722,22 +724,25 @@ void Session::_setup_recv() {
 
             if (error) {
                 context->fail_in_flight(error, &is_head, &size);
-                is_head = true;
-                size = sizeof(RawstorOSTFrameResponse);
             } else {
-                if (is_head) {
-                    RawstorOSTFrameResponse response;
-                    rawstor_iovec_to_buf(
-                        iov, niov, 0, &response, sizeof(response)
-                    );
-                    cid = response.cid;
-                    SessionOp& op = context->find_op(cid);
-                    op.response_head_cb(&response, 0, &is_head, &size);
-                } else {
-                    SessionOp& op = context->find_op(cid);
-                    op.response_body_cb(iov, niov, result, error);
-                    is_head = true;
-                    size = sizeof(RawstorOSTFrameResponse);
+                try {
+                    if (is_head) {
+                        RawstorOSTFrameResponse response;
+                        rawstor_iovec_to_buf(
+                            iov, niov, 0, &response, sizeof(response)
+                        );
+                        cid = response.cid;
+                        SessionOp& op = context->find_op(cid);
+                        op.response_head_cb(&response, 0, &is_head, &size);
+                    } else {
+                        SessionOp& op = context->find_op(cid);
+                        op.response_body_cb(iov, niov, result, error);
+                        is_head = true;
+                        size = sizeof(RawstorOSTFrameResponse);
+                    }
+                } catch (const std::system_error& e) {
+                    error = e.code().value();
+                    context->fail_in_flight(error, &is_head, &size);
                 }
             }
 
