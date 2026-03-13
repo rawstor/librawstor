@@ -41,14 +41,18 @@ Queue::~Queue() {
         if (res < 0) {
             rawstor_error("Failed to cancel sqes: %s\n", strerror(-res));
         } else {
-            try {
-                wait(0);
-            } catch (const std::system_error& e) {
-                if (e.code().value() != ETIME) {
+            while (true) {
+                try {
+                    wait(0);
+                } catch (const std::system_error& e) {
+                    if (e.code().value() != ETIME) {
+                        rawstor_error("Failed to wait: %s\n", e.what());
+                    }
+                    break;
+                } catch (const std::exception& e) {
                     rawstor_error("Failed to wait: %s\n", e.what());
+                    break;
                 }
-            } catch (const std::exception& e) {
-                rawstor_error("Failed to wait: %s\n", e.what());
             }
         }
     }
