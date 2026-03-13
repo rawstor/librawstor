@@ -251,7 +251,7 @@ int rawstor_fd_recv(
  *
  * @warning After an error occurs, the operation automatically cancels itself.
  *          Calling rawstor_fd_cancel() on an already-terminated event is
- *          unnecessary and may return an error.
+ *          unnecessary and will return -ENOENT.
  *
  * @see rawstor_fd_cancel() for operation termination.
  */
