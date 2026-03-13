@@ -20,7 +20,7 @@ namespace vhost {
 
 class Device;
 
-class Watcher {
+class Watcher final {
 private:
     RawstorIOEvent* _event;
     int _counter;
@@ -30,7 +30,12 @@ public:
         rawstor::vhost::Device& device, int fd, int condition, vu_watch_cb cb,
         void* data
     );
+    Watcher(const Watcher&) = delete;
+    Watcher(Watcher&&) = delete;
     ~Watcher();
+
+    Watcher& operator=(const Watcher&) = delete;
+    Watcher& operator=(Watcher&&) = delete;
 
     int inc_counter() noexcept { return ++_counter; }
     int dec_counter() noexcept { return --_counter; }
