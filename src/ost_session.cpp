@@ -555,7 +555,7 @@ Session::Session(
 Session::~Session() {
     if (_read_event != nullptr) {
         try {
-            io_queue->cancel(_read_event);
+            _queue.cancel(_read_event);
         } catch (const std::exception& e) {
             rawstor_warning("Failed to cancel event: %s\n", e.what());
         }
@@ -707,7 +707,7 @@ void Session::_setup_recv() {
     assert(_read_event == nullptr);
 
     TraceEvent trace_event = RAWSTOR_TRACE_EVENT('m', "%s\n", "multishot recv");
-    _read_event = io_queue->recv_multishot(
+    _read_event = _queue.recv_multishot(
         fd(), 1u << 17, 64 * 4, sizeof(RawstorOSTFrameResponse), 0,
         [fd = fd(), cid = 0, is_head = true,
          size = sizeof(RawstorOSTFrameResponse), context = _context,
