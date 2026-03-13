@@ -31,7 +31,7 @@ rawstor::io::Queue* io_queue;
 
 } // namespace rawstor
 
-int rawstor_initialize(const RawstorOpts* opts) {
+int rawstor_initialize(const RawstorOpts* opts) noexcept {
     int res = 0;
 
     assert(rawstor::io_queue == nullptr);
@@ -71,13 +71,13 @@ err_logging_initialize:
     return res;
 }
 
-void rawstor_terminate() {
+void rawstor_terminate() noexcept {
     delete rawstor::io_queue;
     rawstor_opts_terminate();
     rawstor_logging_terminate();
 }
 
-int rawstor_wait() {
+int rawstor_wait() noexcept {
     try {
         rawstor::io_queue->wait(rawstor_opts_wait_timeout());
     } catch (const std::system_error& e) {
@@ -88,7 +88,7 @@ int rawstor_wait() {
 
 int rawstor_fd_poll(
     int fd, unsigned int mask, RawstorIOCallback* cb, void* data
-) {
+) noexcept {
     try {
         rawstor::io_queue->poll(fd, mask, [cb, data](size_t result, int error) {
             int res = cb(result, error, data);
@@ -104,7 +104,7 @@ int rawstor_fd_poll(
 
 int rawstor_fd_read(
     int fd, void* buf, size_t size, RawstorIOCallback* cb, void* data
-) {
+) noexcept {
     try {
         rawstor::io_queue->read(
             fd, buf, size, [cb, data](size_t result, int error) {
@@ -122,7 +122,7 @@ int rawstor_fd_read(
 
 int rawstor_fd_readv(
     int fd, iovec* iov, unsigned int niov, RawstorIOCallback* cb, void* data
-) {
+) noexcept {
     try {
         rawstor::io_queue->readv(
             fd, iov, niov, [cb, data](size_t result, int error) {
@@ -141,7 +141,7 @@ int rawstor_fd_readv(
 int rawstor_fd_pread(
     int fd, void* buf, size_t size, off_t offset, RawstorIOCallback* cb,
     void* data
-) {
+) noexcept {
     try {
         rawstor::io_queue->pread(
             fd, buf, size, offset, [cb, data](size_t result, int error) {
@@ -160,7 +160,7 @@ int rawstor_fd_pread(
 int rawstor_fd_preadv(
     int fd, iovec* iov, unsigned int niov, off_t offset, RawstorIOCallback* cb,
     void* data
-) {
+) noexcept {
     try {
         rawstor::io_queue->preadv(
             fd, iov, niov, offset, [cb, data](size_t result, int error) {
@@ -179,7 +179,7 @@ int rawstor_fd_preadv(
 int rawstor_fd_recv(
     int fd, void* buf, size_t size, unsigned int flags, RawstorIOCallback* cb,
     void* data
-) {
+) noexcept {
     try {
         rawstor::io_queue->recv(
             fd, buf, size, flags, [cb, data](size_t result, int error) {
@@ -197,7 +197,7 @@ int rawstor_fd_recv(
 
 int rawstor_fd_recvmsg(
     int fd, msghdr* msg, unsigned int flags, RawstorIOCallback* cb, void* data
-) {
+) noexcept {
     try {
         rawstor::io_queue->recvmsg(
             fd, msg, flags, [cb, data](size_t result, int error) {
@@ -215,7 +215,7 @@ int rawstor_fd_recvmsg(
 
 int rawstor_fd_write(
     int fd, const void* buf, size_t size, RawstorIOCallback* cb, void* data
-) {
+) noexcept {
     try {
         rawstor::io_queue->write(
             fd, buf, size, [cb, data](size_t result, int error) {
@@ -234,7 +234,7 @@ int rawstor_fd_write(
 int rawstor_fd_writev(
     int fd, const iovec* iov, unsigned int niov, RawstorIOCallback* cb,
     void* data
-) {
+) noexcept {
     try {
         rawstor::io_queue->writev(
             fd, iov, niov, [cb, data](size_t result, int error) {
@@ -253,7 +253,7 @@ int rawstor_fd_writev(
 int rawstor_fd_pwrite(
     int fd, const void* buf, size_t size, off_t offset, RawstorIOCallback* cb,
     void* data
-) {
+) noexcept {
     try {
         rawstor::io_queue->pwrite(
             fd, buf, size, offset, [cb, data](size_t result, int error) {
@@ -272,7 +272,7 @@ int rawstor_fd_pwrite(
 int rawstor_fd_pwritev(
     int fd, const iovec* iov, unsigned int niov, off_t offset,
     RawstorIOCallback* cb, void* data
-) {
+) noexcept {
     try {
         rawstor::io_queue->pwritev(
             fd, iov, niov, offset, [cb, data](size_t result, int error) {
@@ -291,7 +291,7 @@ int rawstor_fd_pwritev(
 int rawstor_fd_send(
     int fd, const void* buf, size_t size, unsigned int flags,
     RawstorIOCallback* cb, void* data
-) {
+) noexcept {
     try {
         rawstor::io_queue->send(
             fd, buf, size, flags, [cb, data](size_t result, int error) {
@@ -310,7 +310,7 @@ int rawstor_fd_send(
 int rawstor_fd_sendmsg(
     int fd, const msghdr* msg, unsigned int flags, RawstorIOCallback* cb,
     void* data
-) {
+) noexcept {
     try {
         rawstor::io_queue->sendmsg(
             fd, msg, flags, [cb, data](size_t result, int error) {

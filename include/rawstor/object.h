@@ -31,42 +31,48 @@ typedef int(RawstorCallback)(
 
 int rawstor_object_spec(
     const char* object_uris, struct RawstorObjectSpec* spec
-);
+) RAWSTOR_NOEXCEPT;
 
 int rawstor_object_create(
     const char* uris, const struct RawstorObjectSpec* spec, char* object_uris,
     size_t size
-);
+) RAWSTOR_NOEXCEPT;
 
-int rawstor_object_remove(const char* object_uris);
+int rawstor_object_remove(const char* object_uris) RAWSTOR_NOEXCEPT;
 
-int rawstor_object_open(const char* object_uris, RawstorObject** object);
+int rawstor_object_open(
+    const char* object_uris, RawstorObject** object
+) RAWSTOR_NOEXCEPT;
 
-int rawstor_object_close(RawstorObject* object);
+int rawstor_object_close(RawstorObject* object) RAWSTOR_NOEXCEPT;
 
-int rawstor_object_id(const RawstorObject* object, char* buf, size_t size);
+int rawstor_object_id(
+    const RawstorObject* object, char* buf, size_t size
+) RAWSTOR_NOEXCEPT;
 
-int rawstor_object_uris(const RawstorObject* object, char* buf, size_t size);
+int rawstor_object_uris(
+    const RawstorObject* object, char* buf, size_t size
+) RAWSTOR_NOEXCEPT;
 
 int rawstor_object_pread(
     RawstorObject* object, void* buf, size_t size, off_t offset,
     RawstorCallback* cb, void* data
-);
+) RAWSTOR_NOEXCEPT;
 
 int rawstor_object_preadv(
     RawstorObject* object, struct iovec* iov, unsigned int niov, size_t size,
     off_t offset, RawstorCallback* cb, void* data
-);
+) RAWSTOR_NOEXCEPT;
 
 int rawstor_object_pwrite(
     RawstorObject* object, void* buf, size_t size, off_t offset,
     RawstorCallback* cb, void* data
-);
+) RAWSTOR_NOEXCEPT;
 
 int rawstor_object_pwritev(
     RawstorObject* object, struct iovec* iov, unsigned int niov, size_t size,
     off_t offset, RawstorCallback* cb, void* data
-);
+) RAWSTOR_NOEXCEPT;
 
 #ifdef __cplusplus
 }

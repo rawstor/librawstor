@@ -18,6 +18,12 @@
 extern "C" {
 #endif
 
+#ifdef __cplusplus
+#define RAWSTOR_NOEXCEPT noexcept
+#else
+#define RAWSTOR_NOEXCEPT
+#endif
+
 typedef int(RawstorIOCallback)(size_t result, int error, void* data);
 
 /**
@@ -26,65 +32,65 @@ typedef int(RawstorIOCallback)(size_t result, int error, void* data);
 
 int rawstor_fd_poll(
     int fd, unsigned int mask, RawstorIOCallback* cb, void* data
-);
+) RAWSTOR_NOEXCEPT;
 
 int rawstor_fd_read(
     int fd, void* buf, size_t size, RawstorIOCallback* cb, void* data
-);
+) RAWSTOR_NOEXCEPT;
 
 int rawstor_fd_readv(
     int fd, struct iovec* iov, unsigned int niov, RawstorIOCallback* cb,
     void* data
-);
+) RAWSTOR_NOEXCEPT;
 
 int rawstor_fd_pread(
     int fd, void* buf, size_t size, off_t offset, RawstorIOCallback* cb,
     void* data
-);
+) RAWSTOR_NOEXCEPT;
 
 int rawstor_fd_preadv(
     int fd, struct iovec* iov, unsigned int niov, off_t offset,
     RawstorIOCallback* cb, void* data
-);
+) RAWSTOR_NOEXCEPT;
 
 int rawstor_fd_recv(
     int fd, void* buf, size_t size, unsigned int flags, RawstorIOCallback* cb,
     void* data
-);
+) RAWSTOR_NOEXCEPT;
 
 int rawstor_fd_recvmsg(
     int fd, struct msghdr* msg, unsigned int flags, RawstorIOCallback* cb,
     void* data
-);
+) RAWSTOR_NOEXCEPT;
 
 int rawstor_fd_write(
     int fd, const void* buf, size_t size, RawstorIOCallback* cb, void* data
-);
+) RAWSTOR_NOEXCEPT;
 
 int rawstor_fd_writev(
     int fd, const struct iovec* iov, unsigned int niov, RawstorIOCallback* cb,
     void* data
-);
+) RAWSTOR_NOEXCEPT;
 
 int rawstor_fd_pwrite(
     int fd, const void* buf, size_t size, off_t offset, RawstorIOCallback* cb,
     void* data
-);
+) RAWSTOR_NOEXCEPT;
 
 int rawstor_fd_pwritev(
     int fd, const struct iovec* iov, unsigned int niov, off_t offset,
     RawstorIOCallback* cb, void* data
-);
+) RAWSTOR_NOEXCEPT;
 
 int rawstor_fd_send(
     int fd, const void* buf, size_t size, unsigned int flags,
     RawstorIOCallback* cb, void* data
-);
+) RAWSTOR_NOEXCEPT;
 
 int rawstor_fd_sendmsg(
     int fd, const struct msghdr* msg, unsigned int flags, RawstorIOCallback* cb,
     void* data
-);
+) RAWSTOR_NOEXCEPT;
 
 /**
  * Lib
@@ -99,11 +105,11 @@ struct RawstorOpts {
     unsigned int tcp_user_timeout;
 };
 
-int rawstor_initialize(const struct RawstorOpts* opts);
+int rawstor_initialize(const struct RawstorOpts* opts) RAWSTOR_NOEXCEPT;
 
-void rawstor_terminate(void);
+void rawstor_terminate(void) RAWSTOR_NOEXCEPT;
 
-int rawstor_wait(void);
+int rawstor_wait(void) RAWSTOR_NOEXCEPT;
 
 #ifdef __cplusplus
 }

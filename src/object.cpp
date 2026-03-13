@@ -339,7 +339,7 @@ void RawstorObject::pwritev(
 int rawstor_object_create(
     const char* uris, const RawstorObjectSpec* sp, char* object_uris,
     size_t size
-) {
+) noexcept {
     try {
         std::vector<rawstor::URI> object_uriv;
         RawstorObject::create(rawstor::URI::uriv(uris), *sp, &object_uriv);
@@ -349,7 +349,7 @@ int rawstor_object_create(
     }
 }
 
-int rawstor_object_remove(const char* object_uris) {
+int rawstor_object_remove(const char* object_uris) noexcept {
     try {
         RawstorObject::remove(rawstor::URI::uriv(object_uris));
         return 0;
@@ -358,7 +358,9 @@ int rawstor_object_remove(const char* object_uris) {
     }
 }
 
-int rawstor_object_spec(const char* object_uris, RawstorObjectSpec* sp) {
+int rawstor_object_spec(
+    const char* object_uris, RawstorObjectSpec* sp
+) noexcept {
     try {
         RawstorObject::spec(rawstor::URI::uriv(object_uris), sp);
         return 0;
@@ -367,7 +369,9 @@ int rawstor_object_spec(const char* object_uris, RawstorObjectSpec* sp) {
     }
 }
 
-int rawstor_object_open(const char* object_uris, RawstorObject** object) {
+int rawstor_object_open(
+    const char* object_uris, RawstorObject** object
+) noexcept {
     try {
         std::unique_ptr<RawstorObject> ret =
             std::make_unique<RawstorObject>(rawstor::URI::uriv(object_uris));
@@ -384,7 +388,7 @@ int rawstor_object_open(const char* object_uris, RawstorObject** object) {
     }
 }
 
-int rawstor_object_close(RawstorObject* object) {
+int rawstor_object_close(RawstorObject* object) noexcept {
     try {
         delete object;
         return 0;
@@ -393,7 +397,9 @@ int rawstor_object_close(RawstorObject* object) {
     }
 }
 
-int rawstor_object_id(const RawstorObject* object, char* buf, size_t size) {
+int rawstor_object_id(
+    const RawstorObject* object, char* buf, size_t size
+) noexcept {
     try {
         RawstorUUIDString uuid;
         rawstor_uuid_to_string(&object->id(), &uuid);
@@ -407,7 +413,9 @@ int rawstor_object_id(const RawstorObject* object, char* buf, size_t size) {
     }
 }
 
-int rawstor_object_uris(const RawstorObject* object, char* buf, size_t size) {
+int rawstor_object_uris(
+    const RawstorObject* object, char* buf, size_t size
+) noexcept {
     try {
         return uris(object->uris(), buf, size);
     } catch (const std::system_error& e) {
@@ -418,7 +426,7 @@ int rawstor_object_uris(const RawstorObject* object, char* buf, size_t size) {
 int rawstor_object_pread(
     RawstorObject* object, void* buf, size_t size, off_t offset,
     RawstorCallback* cb, void* data
-) {
+) noexcept {
     try {
         object->pread(
             buf, size, offset,
@@ -435,7 +443,7 @@ int rawstor_object_pread(
 int rawstor_object_preadv(
     RawstorObject* object, iovec* iov, unsigned int niov, size_t size,
     off_t offset, RawstorCallback* cb, void* data
-) {
+) noexcept {
     try {
         object->preadv(
             iov, niov, size, offset,
@@ -452,7 +460,7 @@ int rawstor_object_preadv(
 int rawstor_object_pwrite(
     RawstorObject* object, void* buf, size_t size, off_t offset,
     RawstorCallback* cb, void* data
-) {
+) noexcept {
     try {
         object->pwrite(
             buf, size, offset,
@@ -469,7 +477,7 @@ int rawstor_object_pwrite(
 int rawstor_object_pwritev(
     RawstorObject* object, iovec* iov, unsigned int niov, size_t size,
     off_t offset, RawstorCallback* cb, void* data
-) {
+) noexcept {
     try {
         object->pwritev(
             iov, niov, size, offset,
