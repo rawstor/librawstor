@@ -50,10 +50,10 @@ extern "C" {
  *
  * @return       Operation control flag. Zero on success, negative on error.
  *
- * @note The callback may be invoked from an I/O completion context (e.g.,
- *       completion handler). Avoid blocking operations in the callback;
- *       instead, queue data or events for processing in a separate thread or
- *       context.
+ * @note         The callback may be invoked from an I/O completion context
+ *               (e.g., completion handler). Avoid blocking operations in the
+ *               callback; instead, queue data or events for processing in a
+ *               separate thread or context.
  */
 typedef int(RawstorIOCallback)(size_t result, int error, void* data);
 
@@ -88,15 +88,16 @@ typedef int(RawstorIOCallback)(size_t result, int error, void* data);
  *               Negative value: Terminate the multishot operation immediately.
  *               The exact negative value may be propagated as an error code.
  *
- * @note This callback is invoked from an completion context.
- *       For optimal performance:
- *       1. Process data quickly or copy to a separate buffer
- *       2. Avoid system calls or blocking operations
- *       3. Keep the ring buffer moving by returning promptly
+ * @note         This callback is invoked from an completion context.
+ *               For optimal performance:
+ *               1. Process data quickly or copy to a separate buffer
+ *               2. Avoid system calls or blocking operations
+ *               3. Keep the ring buffer moving by returning promptly
  *
- * @warning After returning a negative value or when error != 0, no further
- *          callbacks will be invoked, and the multishot operation terminates.
- *          The event handle becomes invalid and should not be canceled.
+ * @warning      After returning a negative value or when error != 0, no further
+ *               callbacks will be invoked, and the multishot operation
+ *               terminates. The event handle becomes invalid and should not be
+ *               canceled.
  */
 typedef ssize_t(RawstorIOMultishotVectorCallback)(
     const struct iovec* iov, unsigned int niov, size_t result, int error,
@@ -148,24 +149,24 @@ int rawstor_fd_poll(
  * @return      0 on successful registration of the multishot poll operation.
  *              Negative error code on failure.
  *
- * @note The poll operation remains active indefinitely until:
- *       - Explicitly canceled via rawstor_fd_cancel()
- *       - An error occurs (e.g., descriptor closure, unsupported event)
+ * @note        The poll operation remains active indefinitely until:
+ *              - Explicitly canceled via rawstor_fd_cancel()
+ *              - An error occurs (e.g., descriptor closure, unsupported event)
  *
- * @warning After an error occurs, the operation automatically terminates.
- *          Calling rawstor_fd_cancel() on an already-terminated event is
- *          unnecessary and will return -ENOENT.
+ * @warning     After an error occurs, the operation automatically terminates.
+ *              Calling rawstor_fd_cancel() on an already-terminated event is
+ *              unnecessary and will return -ENOENT.
  *
- * @warning The callback may be invoked from an completion context. Avoid
- *          blocking operations in the callback; instead, queue events for
- *          processing in a separate context.
+ * @warning     The callback may be invoked from an completion context. Avoid
+ *              blocking operations in the callback; instead, queue events for
+ *              processing in a separate context.
  *
- * @warning Polling a descriptor that doesn't support the requested events may
- *          result in immediate callback invocation with appropriate error
- *          codes or undefined behavior.
+ * @warning     Polling a descriptor that doesn't support the requested events
+ *              may result in immediate callback invocation with appropriate
+ *              error codes or undefined behavior.
  *
- * @see rawstor_fd_cancel() for operation termination.
- * @see poll(2) for standard poll semantics and event definitions.
+ * @see         rawstor_fd_cancel() for operation termination.
+ * @see         poll(2) for standard poll semantics and event definitions.
  */
 int rawstor_fd_poll_multishot(
     int fd, unsigned int mask, RawstorIOCallback* cb, void* data,
@@ -240,20 +241,21 @@ int rawstor_fd_recv(
  * @return           0 on successful registration of the multishot operation.
  *                   Negative error code on failure.
  *
- * @note The ring buffer operates in a circular principle. When the producer
- * (network receive) overtakes the consumer (callback processing), an overflow
- * occurs, triggering an ENOBUFS error in the callback and automatic
- * termination.
+ * @note             The ring buffer operates in a circular principle. When the
+ *                   producer (network receive) overtakes the consumer (callback
+ *                   processing), an overflow occurs, triggering an ENOBUFS
+ *                   error in the callback and automatic termination.
  *
- * @warning Once initiated, the operation continues indefinitely until:
- *          - Explicitly canceled via rawstor_fd_cancel()
- *          - An error occurs (e.g., socket closure, buffer overflow)
+ * @warning          Once initiated, the operation continues indefinitely until:
+ *                   - Explicitly canceled via rawstor_fd_cancel()
+ *                   - An error occurs (e.g., socket closure, buffer overflow)
  *
- * @warning After an error occurs, the operation automatically cancels itself.
- *          Calling rawstor_fd_cancel() on an already-terminated event is
- *          unnecessary and will return -ENOENT.
+ * @warning          After an error occurs, the operation automatically cancels
+ *                   itself. Calling rawstor_fd_cancel() on an
+ *                   already-terminated event is unnecessary and will return
+ * -ENOENT.
  *
- * @see rawstor_fd_cancel() for operation termination.
+ * @see              rawstor_fd_cancel() for operation termination.
  */
 int rawstor_fd_recv_multishot(
     int fd, size_t entry_size, unsigned int entries, size_t size,
@@ -303,7 +305,7 @@ int rawstor_fd_sendmsg(
  * 2. All ring buffer entries are safely released if any
  * 3. Any pending I/O operations are properly cleaned up
  *
- * @param event Event handle obtained from `rawstor_fd_recv_multishot()`.
+ * @param event Event handle obtained from cancelable rawstor IO function.
  *              After successful cancellation, the handle becomes invalid and
  *              should not be used further. The caller does not need to free
  *              the handle - all associated resources are managed internally.
@@ -311,19 +313,27 @@ int rawstor_fd_sendmsg(
  * @return      0 on successful cancellation.
  *              Negative error code on failure:
  *              -ENOENT Event handle does not correspond to an active operation
- *                      (possibly already cleaned up)
+ *              (possibly already cleaned up)
  *
- * @note Cancellation is synchronous. When this function returns, the multishot
- *       operation is guaranteed to be completely terminated and all resources
- *       released. No further callbacks will occur, even if they were queued
- *       prior to cancellation.
+ * @note        Cancellation is synchronous from the caller's perspective: the
+ *              function returns immediately after initiating the cancellation.
+ * However, the completion callback will still be invoked once with the
+ *              ECANCELED error code to indicate that the operation has been
+ * canceled. After that callback returns, the operation is fully terminated, all
+ * resources are released, and no further callbacks will occur. If the operation
+ *              was already completed or terminated due to an error, calling
+ * this function will return -ENOENT and no additional callback will be invoked.
+ *              The event handle becomes invalid immediately upon successful
+ * return from rawstor_fd_cancel() and must not be used afterwards, even though
+ *              the cancellation callback may still be pending.
  *
- * @warning After an error occurs in the multishot operation (e.g., socket
- *          error, ring buffer overflow with ENOBUFS), the operation
- *          automatically terminates. Calling `rawstor_fd_cancel()` in such
- *          cases is unnecessary and will return -ENOENT.
+ * @warning     After an error occurs in the multishot operation (e.g., socket
+ *              error, ring buffer overflow with ENOBUFS), the operation
+ *              automatically terminates. Calling `rawstor_fd_cancel()` in such
+ *              cases is unnecessary and will return -ENOENT.
  *
- * @see rawstor_fd_recv_multishot() for establishing multishot operations.
+ * @see         rawstor_fd_poll_multishot(), rawstor_fd_recv_multishot() for
+ *              establishing multishot operations.
  *
  */
 int rawstor_fd_cancel(RawstorIOEvent* event) RAWSTOR_NOEXCEPT;
