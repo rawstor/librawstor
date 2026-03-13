@@ -682,31 +682,31 @@ void Device::set_config(
 }
 
 void Device::set_watch(int fd, int condition, vu_watch_cb cb, void* data) {
-    auto it = _watches.find(fd);
-    if (it != _watches.end()) {
+    auto it = _watchers.find(fd);
+    if (it != _watchers.end()) {
         it->second->inc_counter();
         return;
     }
 
-    _watches.emplace(
+    _watchers.emplace(
         fd, std::make_unique<Watcher>(*this, fd, condition, cb, data)
     );
 }
 
 void Device::remove_watch(int fd) {
-    auto it = _watches.find(fd);
-    if (it == _watches.end()) {
+    auto it = _watchers.find(fd);
+    if (it == _watchers.end()) {
         return;
     }
 
     if (it->second->dec_counter() <= 0) {
-        _watches.erase(it);
+        _watchers.erase(it);
     }
 }
 
 bool Device::has_watch(int fd) const noexcept {
-    const auto& it = _watches.find(fd);
-    return it != _watches.end();
+    const auto& it = _watchers.find(fd);
+    return it != _watchers.end();
 }
 
 void Device::loop() {
