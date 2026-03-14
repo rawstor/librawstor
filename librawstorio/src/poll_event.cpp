@@ -263,8 +263,9 @@ void EventSimplexVectorRecvMultishot::dispatch() {
         _result = iov_size;
         try {
             RAWSTOR_TRACE_EVENT_MESSAGE(
-                trace_event, "sending iov: niov = %zu, size = %zu\n",
-                iov.size(), iov_size
+                trace_event,
+                "sending iov: niov = %zu, size = %zu, error = %d\n", iov.size(),
+                iov_size, _error
             );
             RAWSTOR_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "callback");
             _size = _cb(iov.data(), iov.size(), _result, _error);
@@ -313,7 +314,7 @@ ssize_t EventSimplexVectorRecvMultishot::process() noexcept {
             std::make_unique<EventSimplexVectorRecvMultishotEntry>(_entry_size);
         res = ::recv(_fd, entry->data(), entry->size(), _flags);
 
-        if (res >= 0) {
+        if (res > 0) {
             entry->set_result(res);
             _pending_size += res;
             _pending_entries.push(std::move(entry));
@@ -325,6 +326,9 @@ ssize_t EventSimplexVectorRecvMultishot::process() noexcept {
                 RAWSTOR_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "partial");
             }
 #endif
+        } else if (res == 0) {
+            set_error(EPIPE);
+            break;
         } else {
             int error = errno;
             errno = 0;
