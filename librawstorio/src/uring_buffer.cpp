@@ -98,6 +98,10 @@ BufferRing::BufferRing(
 }
 
 BufferRing::~BufferRing() {
+    while (!_pending_entries.empty()) {
+        _pending_entries.pop();
+    }
+
     munmap(_buf_ring, _buf_ring_size);
     int res = io_uring_unregister_buf_ring(&_ring, _id);
     if (res < 0) {
@@ -118,6 +122,10 @@ void BufferRing::operator()(size_t result, int error, unsigned int flags) {
             );
         _pending_size += result;
         _pending_entries.push(std::move(pending_entry));
+    }
+
+    if (result == 0 && error == 0) {
+        error = EPIPE;
     }
 
     while (_pending_size >= _size || error) {
