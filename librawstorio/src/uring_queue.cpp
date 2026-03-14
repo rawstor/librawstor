@@ -9,6 +9,8 @@
 #include <cstring>
 #include <ctime>
 
+#include <system_error>
+
 namespace {
 
 std::string engine_name = "uring";
@@ -29,6 +31,32 @@ Queue::Queue(unsigned int depth) : rawstor::io::Queue(depth) {
 }
 
 Queue::~Queue() {
+    int res = io_uring_submit(&_ring);
+    if (res < 0) {
+        rawstor_error("Failed to submit sqes: %s\n", strerror(-res));
+    } else {
+        io_uring_sync_cancel_reg req = {};
+        req.flags = IORING_ASYNC_CANCEL_ANY;
+        res = io_uring_register_sync_cancel(&_ring, &req);
+        if (res < 0) {
+            rawstor_error("Failed to cancel sqes: %s\n", strerror(-res));
+        } else {
+            while (true) {
+                try {
+                    wait(0);
+                } catch (const std::system_error& e) {
+                    if (e.code().value() != ETIME) {
+                        rawstor_error("Failed to wait: %s\n", e.what());
+                    }
+                    break;
+                } catch (const std::exception& e) {
+                    rawstor_error("Failed to wait: %s\n", e.what());
+                    break;
+                }
+            }
+        }Expand commentComment on lines R47 to R57Resolved
+    }
+
     io_uring_queue_exit(&_ring);
 }
 
@@ -476,11 +504,16 @@ rawstor::io::Event* Queue::sendmsg(
 }
 
 void Queue::cancel(rawstor::io::Event* event) {
+    int res = io_uring_submit(&_ring);
+    if (res < 0) {
+        RAWSTOR_THROW_SYSTEM_ERROR(-res);
+    }
+
     io_uring_sync_cancel_reg req = {};
     req.addr = (__u64)event;
     req.fd = 0;
     req.flags = 0;
-    int res = io_uring_register_sync_cancel(&_ring, &req);
+    res = io_uring_register_sync_cancel(&_ring, &req);
     if (res < 0) {
         RAWSTOR_THROW_SYSTEM_ERROR(-res);
     }
@@ -492,7 +525,9 @@ void Queue::wait(unsigned int timeout) {
     };
 
     io_uring_cqe* cqe;
+    rawstor_trace("io_uring_submit_and_wait_timeout()\n");
     int res = io_uring_submit_and_wait_timeout(&_ring, &cqe, 1, &ts, nullptr);
+    rawstor_trace("io_uring_submit_and_wait_timeout(): res = %d\n", res);
     if (res < 0) {
         RAWSTOR_THROW_SYSTEM_ERROR(-res);
     }
@@ -505,6 +540,8 @@ void Queue::wait(unsigned int timeout) {
     try {
         unsigned int head;
         io_uring_for_each_cqe(&_ring, head, cqe) {
+            rawstor_trace("cqe->res = %d\n", cqe->res);
+
             ++nr;
 
             std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p(
@@ -524,8 +561,13 @@ void Queue::wait(unsigned int timeout) {
             }
 
             try {
+                rawstor_trace(
+                    "callback: result = %zu, error = %d\n", result, error
+                );
                 (*p)(result, error, cqe->flags);
+                rawstor_trace("callback success\n");
             } catch (...) {
+                rawstor_trace("callback error\n");
                 if (cqe->flags & IORING_CQE_F_MORE) {
                     p.release();
                 }
