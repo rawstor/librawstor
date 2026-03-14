@@ -54,7 +54,7 @@ Queue::~Queue() {
                     break;
                 }
             }
-        }Expand commentComment on lines R47 to R57Resolved
+        }
     }
 
     io_uring_queue_exit(&_ring);
