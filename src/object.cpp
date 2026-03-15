@@ -208,9 +208,9 @@ void RawstorObject::pread(
      */
     _cns.front()->pread(
         buf, size, offset,
-        [size, trace_event, cb = std::move(cb)](size_t result, int error) {
+        [trace_event, cb = std::move(cb)](size_t result, int error) {
             RAWSTOR_TRACE_EVENT_MESSAGE(
-                trace_event, "%zu of %zu, error = %d\n", result, size, error
+                trace_event, "result = %zu, error = %d\n", result, error
             );
             cb(result, error);
         }
@@ -230,9 +230,9 @@ void RawstorObject::preadv(
      */
     _cns.front()->preadv(
         iov, niov, size, offset,
-        [size, trace_event, cb = std::move(cb)](size_t result, int error) {
+        [trace_event, cb = std::move(cb)](size_t result, int error) {
             RAWSTOR_TRACE_EVENT_MESSAGE(
-                trace_event, "%zu of %zu, error = %d\n", result, size, error
+                trace_event, "result = %zu, error = %d\n", result, error
             );
             cb(result, error);
         }
@@ -262,10 +262,9 @@ void RawstorObject::pwrite(
 
     for (auto& cn : _cns) {
         cn->pwrite(
-            buf, size, offset,
-            [op, size, trace_event](size_t result, int error) {
+            buf, size, offset, [op, trace_event](size_t result, int error) {
                 RAWSTOR_TRACE_EVENT_MESSAGE(
-                    trace_event, "%zu of %zu, error = %d\n", result, size, error
+                    trace_event, "result = %zu, error = %d\n", result, error
                 );
 
                 --op->mirrors;
@@ -312,9 +311,9 @@ void RawstorObject::pwritev(
     for (auto& cn : _cns) {
         cn->pwritev(
             iov, niov, size, offset,
-            [op, size, trace_event](size_t result, int error) {
+            [op, trace_event](size_t result, int error) {
                 RAWSTOR_TRACE_EVENT_MESSAGE(
-                    trace_event, "%zu of %zu, error = %d\n", result, size, error
+                    trace_event, "result = %zu, error = %d\n", result, error
                 );
 
                 --op->mirrors;
