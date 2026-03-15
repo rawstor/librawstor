@@ -79,9 +79,15 @@ int rawstor_initialize(const RawstorOpts* opts) noexcept {
 }
 
 void rawstor_terminate() noexcept {
-    delete rawstor::io_queue;
-    rawstor_opts_terminate();
-    rawstor_logging_terminate();
+    try {
+        delete rawstor::io_queue;
+        rawstor_opts_terminate();
+        rawstor_logging_terminate();
+    } catch (const std::exception& e) {
+        rawstor_error("%s\n", e.what());
+    } catch (...) {
+        rawstor_error("Unexpected error\n");
+    }
 }
 
 int rawstor_wait() noexcept {
