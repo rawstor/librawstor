@@ -18,7 +18,7 @@ struct sigaction sact;
 void usage() {
     std::cerr << "Rawstor vhost server" << std::endl
               << std::endl
-              << "usage: rawstor-vhost [-h] -o OBJECT_ID -s SOCKET_PATH"
+              << "usage: rawstor-vhost [-h] -o OBJECT_URI -s SOCKET_PATH"
               << std::endl
               << std::endl
               << "options:" << std::endl
