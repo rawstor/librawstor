@@ -346,6 +346,14 @@ int rawstor_object_create(
         return ::uris(object_uriv, object_uris, size);
     } catch (const std::system_error& e) {
         return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstor_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstor_error("Unexpected error\n");
+        return -EINVAL;
     }
 }
 
@@ -355,6 +363,14 @@ int rawstor_object_remove(const char* object_uris) noexcept {
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstor_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstor_error("Unexpected error\n");
+        return -EINVAL;
     }
 }
 
@@ -366,6 +382,14 @@ int rawstor_object_spec(
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstor_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstor_error("Unexpected error\n");
+        return -EINVAL;
     }
 }
 
@@ -385,6 +409,12 @@ int rawstor_object_open(
         return -e.code().value();
     } catch (const std::bad_alloc& e) {
         return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstor_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstor_error("Unexpected error\n");
+        return -EINVAL;
     }
 }
 
@@ -394,6 +424,14 @@ int rawstor_object_close(RawstorObject* object) noexcept {
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstor_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstor_error("Unexpected error\n");
+        return -EINVAL;
     }
 }
 
@@ -410,6 +448,14 @@ int rawstor_object_id(
         return res;
     } catch (const std::system_error& e) {
         return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstor_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstor_error("Unexpected error\n");
+        return -EINVAL;
     }
 }
 
@@ -420,6 +466,14 @@ int rawstor_object_uris(
         return uris(object->uris(), buf, size);
     } catch (const std::system_error& e) {
         return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstor_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstor_error("Unexpected error\n");
+        return -EINVAL;
     }
 }
 
@@ -437,6 +491,14 @@ int rawstor_object_pread(
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstor_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstor_error("Unexpected error\n");
+        return -EINVAL;
     }
 }
 
@@ -454,6 +516,14 @@ int rawstor_object_preadv(
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstor_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstor_error("Unexpected error\n");
+        return -EINVAL;
     }
 }
 
@@ -471,6 +541,14 @@ int rawstor_object_pwrite(
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstor_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstor_error("Unexpected error\n");
+        return -EINVAL;
     }
 }
 
@@ -488,5 +566,13 @@ int rawstor_object_pwritev(
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstor_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstor_error("Unexpected error\n");
+        return -EINVAL;
     }
 }
