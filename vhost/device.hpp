@@ -30,7 +30,7 @@ private:
     uint64_t _features;
     uint64_t _protocol_features;
     std::unique_ptr<virtio_blk_config> _blk_config;
-    std::unordered_map<int, int> _watches;
+    std::unordered_map<int, int> _watchers;
 
 public:
     static Device& get(int fd);
