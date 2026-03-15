@@ -641,7 +641,7 @@ void Device::set_config(
 
 void Device::set_watch(int fd, int condition, vu_watch_cb cb, void* data) {
     if (!find_watch(fd)) {
-        _watchers.insert(std::pair<int, int>(fd, condition));
+        _watchers.emplace(fd, condition);
         std::unique_ptr<TaskWatch> t =
             std::make_unique<TaskWatch>(*this, fd, condition, cb, data);
         poll(fd, std::move(t));
