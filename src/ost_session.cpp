@@ -541,8 +541,10 @@ void Context::fail_in_flight(int error) {
     }
 }
 
-Session::Session(const URI& uri, unsigned int depth) :
-    rawstor::Session(uri, depth),
+Session::Session(
+    rawstor::io::Queue& queue, const URI& uri, unsigned int depth
+) :
+    rawstor::Session(queue, uri, depth),
     _cid_counter(0),
     _context(std::make_shared<Context>(*this)) {
     int fd = _connect();
@@ -714,8 +716,7 @@ void Session::read_response_body(
 }
 
 void Session::create(
-    rawstor::io::Queue&, const RawstorUUID&, const RawstorObjectSpec&,
-    std::function<void(int)>&& cb
+    const RawstorUUID&, const RawstorObjectSpec&, std::function<void(int)>&& cb
 ) {
     /**
      * TODO: Implement me.
@@ -723,15 +724,12 @@ void Session::create(
     cb(0);
 }
 
-void Session::remove(
-    rawstor::io::Queue&, const RawstorUUID&, std::function<void(int)>&&
-) {
+void Session::remove(const RawstorUUID&, std::function<void(int)>&&) {
     throw std::runtime_error("Session::remove() not implemented");
 }
 
 void Session::spec(
-    rawstor::io::Queue&, const RawstorUUID&,
-    std::function<void(const RawstorObjectSpec&, int)>&& cb
+    const RawstorUUID&, std::function<void(const RawstorObjectSpec&, int)>&& cb
 ) {
     rawstor_info("%s: Reading object specification...\n", str().c_str());
 
@@ -750,44 +748,79 @@ void Session::spec(
     cb(ret, 0);
 }
 
-void Session::set_object(
-    rawstor::io::Queue& queue, RawstorObject* object,
-    std::function<void(int)>&& cb
-) {
+void Session::set_object(RawstorObject* object) {
     TraceEvent trace_event = RAWSTOR_TRACE_EVENT('s', "%s\n", "set object");
 
-    assert(_cid_counter == 0); // OST returns always 0.
+    std::unique_ptr<rawstor::io::Queue> queue = rawstor::io::Queue::create(2);
 
-    std::shared_ptr<SessionOpSetObjectId> op =
-        std::make_shared<SessionOpSetObjectId>(
-            _context, _cid_counter++, object->id(), trace_event,
-            [cb](size_t, int error) { cb(error); }
-        );
-    _context->register_op(op);
-
-    queue.write(
-        fd(), op->request_data(), op->request_size(),
-        [op, trace_event](size_t result, int error) {
+    RawstorOSTFrameBasic request = {
+        .magic = RAWSTOR_MAGIC,
+        .cmd = RAWSTOR_CMD_SET_OBJECT,
+        .obj_id = {},
+        .offset = 0,
+        .val = 0,
+    };
+    memcpy(request.obj_id, object->id().bytes, sizeof(request.obj_id));
+    rawstor_info("%s: Setting object id\n", str().c_str());
+    queue->write(
+        fd(), &request, sizeof(request),
+        [fd = fd(), trace_event](size_t result, int error) {
             RAWSTOR_TRACE_EVENT_MESSAGE(
                 trace_event, "%zu of %zu, error = %d\n", result,
-                op->request_size(), error
+                sizeof(RawstorOSTFrameBasic), error
+            );
+
+            if (!error) {
+                error =
+                    validate_result(fd, sizeof(RawstorOSTFrameBasic), result);
+            }
+
+            if (error) {
+                RAWSTOR_THROW_SYSTEM_ERROR(error);
+            }
+        }
+    );
+
+    bool completed = false;
+    RawstorOSTFrameResponse response;
+    queue->read(
+        fd(), &response, sizeof(response),
+        [this, &response, &completed, trace_event](size_t result, int error) {
+            RAWSTOR_TRACE_EVENT_MESSAGE(trace_event, "error = %d\n", error);
+
+            completed = true;
+
+            RAWSTOR_TRACE_EVENT_MESSAGE(
+                trace_event, "%zu of %zu, error = %d\n", result,
+                sizeof(RawstorOSTFrameResponse), error
             );
 
             if (!error) {
                 error = validate_result(
-                    op->context().session().fd(), op->request_size(), result
+                    fd(), sizeof(RawstorOSTFrameResponse), result
                 );
             }
 
-            op->request_cb(error);
+            if (!error) {
+                error = validate_response(*this, &response);
+            }
+
+            if (!error) {
+                error =
+                    validate_cmd(*this, response.cmd, RAWSTOR_CMD_SET_OBJECT);
+            }
+
+            if (error) {
+                RAWSTOR_THROW_SYSTEM_ERROR(error);
+            }
+
+            rawstor_info("%s: Object id successfully set\n", str().c_str());
         }
     );
 
-    if (!_context->has_reads()) {
-        read_response_head(queue);
+    while (!completed) {
+        queue->wait(rawstor_opts_wait_timeout());
     }
-
-    _o = object;
 }
 
 void Session::pread(

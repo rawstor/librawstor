@@ -2,9 +2,11 @@
 
 #include "server.hpp"
 
-#include <rawstor/object.h>
+#include <rawstor_internals.hpp>
 
 #include <rawstorstd/gpp.hpp>
+
+#include <rawstor/object.h>
 
 #include <gtest/gtest.h>
 
@@ -100,6 +102,10 @@ TEST_P(LifecycleTest, create_spec_remove) {
     }
     EXPECT_EQ(res, (int)strlen(object_uris));
     _backend->close();
+    try {
+        rawstor::io_queue->wait(0);
+    } catch (...) {
+    }
 
     _backend->accept();
     RawstorObjectSpec read_spec;
@@ -115,6 +121,10 @@ TEST_P(LifecycleTest, create_spec_remove) {
         EXPECT_EQ(read_spec.size, (size_t)(1ull << 20));
     }
     _backend->close();
+    try {
+        rawstor::io_queue->wait(0);
+    } catch (...) {
+    }
 
     // rawstor_object_remove not implemented for OST
     if (_backend->protocol() != "ost") {
@@ -125,6 +135,10 @@ TEST_P(LifecycleTest, create_spec_remove) {
         }
         EXPECT_EQ(res, 0);
         _backend->close();
+    }
+    try {
+        rawstor::io_queue->wait(0);
+    } catch (...) {
     }
 }
 

@@ -1,6 +1,7 @@
 #include "connection.hpp"
 
 #include "opts.h"
+#include "rawstor_internals.hpp"
 #include "session.hpp"
 
 #include <rawstorio/queue.hpp>
@@ -73,25 +74,15 @@ Connection::_open(const URI& uri, RawstorObject* object, size_t nsessions) {
     for (unsigned int attempt = 1; attempt <= rawstor_opts_io_attempts();
          ++attempt) {
         try {
-            Queue q(nsessions, _depth);
-
             sessions.clear();
             sessions.reserve(nsessions);
             for (size_t i = 0; i < nsessions; ++i) {
-                sessions.push_back(Session::create(uri, _depth));
+                sessions.push_back(Session::create(*io_queue, uri, _depth));
             }
 
             for (std::shared_ptr<Session> s : sessions) {
-                s->set_object(q.queue(), object, [&q](int error) {
-                    q.sub_operation();
-
-                    if (error) {
-                        RAWSTOR_THROW_SYSTEM_ERROR(error);
-                    }
-                });
+                s->set_object(object);
             }
-
-            q.wait();
 
             break;
         } catch (const std::system_error& e) {
@@ -237,8 +228,9 @@ void Connection::create(const URI& uri, const RawstorObjectSpec& sp) {
 
     Queue q(1, _depth);
 
-    std::unique_ptr<Session> s = Session::create(uri.parent(), _depth);
-    s->create(q.queue(), id, sp, [&q](int error) {
+    std::unique_ptr<Session> s =
+        Session::create(q.queue(), uri.parent(), _depth);
+    s->create(id, sp, [&q](int error) {
         q.sub_operation();
 
         if (error) {
@@ -258,8 +250,9 @@ void Connection::remove(const URI& uri) {
 
     Queue q(1, _depth);
 
-    std::unique_ptr<Session> s = Session::create(uri.parent(), _depth);
-    s->remove(q.queue(), id, [&q](int error) {
+    std::unique_ptr<Session> s =
+        Session::create(q.queue(), uri.parent(), _depth);
+    s->remove(id, [&q](int error) {
         q.sub_operation();
 
         if (error) {
@@ -279,8 +272,9 @@ void Connection::spec(const URI& uri, RawstorObjectSpec* sp) {
 
     Queue q(1, _depth);
 
-    std::unique_ptr<Session> s = Session::create(uri.parent(), _depth);
-    s->spec(q.queue(), id, [&q, sp](const RawstorObjectSpec& spec, int error) {
+    std::unique_ptr<Session> s =
+        Session::create(q.queue(), uri.parent(), _depth);
+    s->spec(id, [&q, sp](const RawstorObjectSpec& spec, int error) {
         q.sub_operation();
 
         if (error) {

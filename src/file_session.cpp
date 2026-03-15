@@ -95,8 +95,10 @@ void write_dat(
 namespace rawstor {
 namespace file {
 
-Session::Session(const URI& uri, unsigned int depth) :
-    rawstor::Session(uri, depth) {
+Session::Session(
+    rawstor::io::Queue& queue, const URI& uri, unsigned int depth
+) :
+    rawstor::Session(queue, uri, depth) {
 }
 
 int Session::_connect(const RawstorUUID& id) {
@@ -116,7 +118,7 @@ int Session::_connect(const RawstorUUID& id) {
 }
 
 void Session::create(
-    rawstor::io::Queue&, const RawstorUUID& id, const RawstorObjectSpec& sp,
+    const RawstorUUID& id, const RawstorObjectSpec& sp,
     std::function<void(int)>&& cb
 ) {
     std::string ost_path = get_ost_path(uri());
@@ -161,9 +163,7 @@ void Session::create(
     cb(0);
 }
 
-void Session::remove(
-    rawstor::io::Queue&, const RawstorUUID& id, std::function<void(int)>&& cb
-) {
+void Session::remove(const RawstorUUID& id, std::function<void(int)>&& cb) {
     std::string ost_path = get_ost_path(uri());
 
     RawstorUUIDString uuid_string;
@@ -191,7 +191,7 @@ void Session::remove(
 }
 
 void Session::spec(
-    rawstor::io::Queue&, const RawstorUUID& id,
+    const RawstorUUID& id,
     std::function<void(const RawstorObjectSpec&, int)>&& cb
 ) {
     std::string ost_path = get_ost_path(uri());
@@ -224,9 +224,7 @@ void Session::spec(
     cb(ret, 0);
 }
 
-void Session::set_object(
-    rawstor::io::Queue&, RawstorObject* object, std::function<void(int)>&& cb
-) {
+void Session::set_object(RawstorObject* object) {
     if (fd() != -1) {
         throw std::runtime_error("Object already set");
     }
@@ -237,8 +235,6 @@ void Session::set_object(
     }
 
     set_fd(fd);
-
-    cb(0);
 }
 
 void Session::pread(
@@ -249,7 +245,7 @@ void Session::pread(
         (intmax_t)offset
     );
 
-    io_queue->pread(fd(), buf, size, offset, std::move(cb));
+    _queue.pread(fd(), buf, size, offset, std::move(cb));
 }
 
 void Session::preadv(
@@ -261,7 +257,7 @@ void Session::preadv(
         (intmax_t)offset
     );
 
-    io_queue->preadv(fd(), iov, niov, offset, std::move(cb));
+    _queue.preadv(fd(), iov, niov, offset, std::move(cb));
 }
 
 void Session::pwrite(
@@ -273,7 +269,7 @@ void Session::pwrite(
         (intmax_t)offset
     );
 
-    io_queue->pwrite(fd(), buf, size, offset, std::move(cb));
+    _queue.pwrite(fd(), buf, size, offset, std::move(cb));
 }
 
 void Session::pwritev(
@@ -285,7 +281,7 @@ void Session::pwritev(
         (intmax_t)offset
     );
 
-    io_queue->pwritev(fd(), iov, niov, offset, std::move(cb));
+    _queue.pwritev(fd(), iov, niov, offset, std::move(cb));
 }
 
 } // namespace file
