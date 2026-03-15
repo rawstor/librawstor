@@ -38,9 +38,7 @@ public:
 
     void read_response_head();
     void read_response_body(void* buf, size_t size);
-    void read_response_body(
-        iovec* iov, unsigned int niov, size_t size
-    );
+    void read_response_body(iovec* iov, unsigned int niov, size_t size);
 
     void create(
         const RawstorUUID& id, const RawstorObjectSpec& sp,

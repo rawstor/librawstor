@@ -657,9 +657,7 @@ void Session::read_response_head() {
     );
 }
 
-void Session::read_response_body(
-    void* buf, size_t size
-) {
+void Session::read_response_body(void* buf, size_t size) {
     TraceEvent trace_event =
         RAWSTOR_TRACE_EVENT('s', "%s\n", "read response body scalar");
     _context->add_read();
@@ -686,9 +684,7 @@ void Session::read_response_body(
     );
 }
 
-void Session::read_response_body(
-    iovec* iov, unsigned int niov, size_t size
-) {
+void Session::read_response_body(iovec* iov, unsigned int niov, size_t size) {
     TraceEvent trace_event =
         RAWSTOR_TRACE_EVENT('s', "%s\n", "read response body vector");
     _context->add_read();

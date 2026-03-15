@@ -262,8 +262,7 @@ void RawstorObject::pwrite(
 
     for (auto& cn : _cns) {
         cn->pwrite(
-            buf, size, offset,
-            [op, trace_event](size_t result, int error) {
+            buf, size, offset, [op, trace_event](size_t result, int error) {
                 RAWSTOR_TRACE_EVENT_MESSAGE(
                     trace_event, "result = %zu, error = %d\n", result, error
                 );
