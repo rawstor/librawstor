@@ -18,27 +18,21 @@ private:
     int _connect(const RawstorUUID& id);
 
 public:
-    Session(const URI& uri, unsigned int depth);
+    Session(rawstor::io::Queue& queue, const URI& uri, unsigned int depth);
 
     void create(
-        rawstor::io::Queue& queue, const RawstorUUID& id,
-        const RawstorObjectSpec& sp, std::function<void(int)>&& cb
-    ) override;
-
-    void remove(
-        rawstor::io::Queue& queue, const RawstorUUID& id,
+        const RawstorUUID& id, const RawstorObjectSpec& sp,
         std::function<void(int)>&& cb
     ) override;
 
+    void remove(const RawstorUUID& id, std::function<void(int)>&& cb) override;
+
     void spec(
-        rawstor::io::Queue& queue, const RawstorUUID& id,
+        const RawstorUUID& id,
         std::function<void(const RawstorObjectSpec&, int)>&& cb
     ) override;
 
-    void set_object(
-        rawstor::io::Queue& queue, RawstorObject* object,
-        std::function<void(int)>&& cb
-    ) override;
+    void set_object(RawstorObject* object) override;
 
     void pread(
         void* buf, size_t size, off_t offset,
