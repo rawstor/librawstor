@@ -24,12 +24,14 @@ private:
     int _fd;
 
 protected:
+    rawstor::io::Queue& _queue;
     inline void set_fd(int fd) noexcept { _fd = fd; }
 
 public:
-    static std::unique_ptr<Session> create(const URI& uri, unsigned int depth);
+    static std::unique_ptr<Session>
+    create(rawstor::io::Queue& queue, const URI& uri, unsigned int depth);
 
-    Session(const URI& uri, unsigned int depth);
+    Session(rawstor::io::Queue& queue, const URI& uri, unsigned int depth);
     Session(const Session&) = delete;
     Session(Session&&) noexcept = delete;
     virtual ~Session();
@@ -45,24 +47,19 @@ public:
     inline int fd() const noexcept { return _fd; }
 
     virtual void create(
-        rawstor::io::Queue& queue, const RawstorUUID& id,
-        const RawstorObjectSpec& sp, std::function<void(int)>&& cb
-    ) = 0;
-
-    virtual void remove(
-        rawstor::io::Queue& queue, const RawstorUUID& id,
+        const RawstorUUID& id, const RawstorObjectSpec& sp,
         std::function<void(int)>&& cb
     ) = 0;
 
+    virtual void
+    remove(const RawstorUUID& id, std::function<void(int)>&& cb) = 0;
+
     virtual void spec(
-        rawstor::io::Queue& queue, const RawstorUUID& id,
+        const RawstorUUID& id,
         std::function<void(const RawstorObjectSpec&, int)>&& cb
     ) = 0;
 
-    virtual void set_object(
-        rawstor::io::Queue& queue, RawstorObject* object,
-        std::function<void(int)>&& cb
-    ) = 0;
+    virtual void set_object(RawstorObject* object) = 0;
 
     virtual void pread(
         void* buf, size_t size, off_t offset,
