@@ -25,6 +25,7 @@ private:
 
 protected:
     rawstor::io::Queue& _queue;
+
     inline void set_fd(int fd) noexcept { _fd = fd; }
 
 public:

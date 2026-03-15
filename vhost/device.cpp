@@ -161,6 +161,7 @@ protected:
 public:
     static int callback(size_t result, int error, void* data) {
         std::unique_ptr<Task> t(static_cast<Task*>(data));
+
         try {
             (*t)(result, error);
             return 0;
@@ -169,7 +170,7 @@ public:
         }
     }
 
-    Task(rawstor::vhost::Device& device) : _device(device) {}
+    explicit Task(rawstor::vhost::Device& device) : _device(device) {}
     Task(const Task&) = delete;
     Task(Task&&) = delete;
     virtual ~Task() = default;
@@ -182,7 +183,7 @@ public:
 
 class TaskPoll : public Task {
 public:
-    TaskPoll(rawstor::vhost::Device& device) : Task(device) {}
+    explicit TaskPoll(rawstor::vhost::Device& device) : Task(device) {}
     virtual ~TaskPoll() override = default;
 
     virtual unsigned int mask() = 0;
@@ -198,7 +199,7 @@ void poll(int fd, std::unique_ptr<TaskPoll> t) {
 
 class TaskDispatch final : public TaskPoll {
 public:
-    TaskDispatch(rawstor::vhost::Device& device) : TaskPoll(device) {}
+    explicit TaskDispatch(rawstor::vhost::Device& device) : TaskPoll(device) {}
 
     unsigned int mask() override { return POLLIN; }
 
@@ -640,7 +641,7 @@ void Device::set_config(
 
 void Device::set_watch(int fd, int condition, vu_watch_cb cb, void* data) {
     if (!find_watch(fd)) {
-        _watches.insert(std::pair<int, int>(fd, condition));
+        _watchers.insert(std::pair<int, int>(fd, condition));
         std::unique_ptr<TaskWatch> t =
             std::make_unique<TaskWatch>(*this, fd, condition, cb, data);
         poll(fd, std::move(t));
@@ -648,12 +649,12 @@ void Device::set_watch(int fd, int condition, vu_watch_cb cb, void* data) {
 }
 
 void Device::remove_watch(int fd) {
-    _watches.erase(fd);
+    _watchers.erase(fd);
 }
 
 int Device::find_watch(int fd) const noexcept {
-    const auto& it = _watches.find(fd);
-    if (it == _watches.end()) {
+    const auto& it = _watchers.find(fd);
+    if (it == _watchers.end()) {
         return 0;
     }
     return it->second;
