@@ -325,7 +325,7 @@ public:
 
         if (!error) {
             _hash = response->hash;
-            s.read_response_body(*rawstor::io_queue, _buf, _size);
+            s.read_response_body(_buf, _size);
         } else {
             _dispatch(0, error);
         }
@@ -390,7 +390,7 @@ public:
 
         if (!error) {
             _hash = response->hash;
-            s.read_response_body(*rawstor::io_queue, _iov, _niov, _size);
+            s.read_response_body(_iov, _niov, _size);
         } else {
             _dispatch(0, error);
         }
@@ -620,11 +620,11 @@ int Session::_connect() {
     return fd;
 }
 
-void Session::read_response_head(rawstor::io::Queue& queue) {
+void Session::read_response_head() {
     TraceEvent trace_event =
         RAWSTOR_TRACE_EVENT('s', "%s\n", "read response head");
     _context->add_read();
-    queue.read(
+    _queue.read(
         fd(), _context->response(), sizeof(*_context->response()),
         [context = _context, trace_event](size_t result, int error) mutable {
             RAWSTOR_TRACE_EVENT_MESSAGE(
@@ -651,19 +651,17 @@ void Session::read_response_head(rawstor::io::Queue& queue) {
                 }
             }
             if (context->has_ops() && !context->has_reads()) {
-                context->session().read_response_head(*rawstor::io_queue);
+                context->session().read_response_head();
             }
         }
     );
 }
 
-void Session::read_response_body(
-    rawstor::io::Queue& queue, void* buf, size_t size
-) {
+void Session::read_response_body(void* buf, size_t size) {
     TraceEvent trace_event =
         RAWSTOR_TRACE_EVENT('s', "%s\n", "read response body scalar");
     _context->add_read();
-    queue.read(
+    _queue.read(
         fd(), buf, size,
         [context = _context, size, trace_event](size_t result, int error) {
             RAWSTOR_TRACE_EVENT_MESSAGE(
@@ -680,19 +678,17 @@ void Session::read_response_body(
             static_cast<SessionOpRead&>(op).response_body_cb(result, error);
 
             if (context->has_ops() && !context->has_reads()) {
-                context->session().read_response_head(*rawstor::io_queue);
+                context->session().read_response_head();
             }
         }
     );
 }
 
-void Session::read_response_body(
-    rawstor::io::Queue& queue, iovec* iov, unsigned int niov, size_t size
-) {
+void Session::read_response_body(iovec* iov, unsigned int niov, size_t size) {
     TraceEvent trace_event =
         RAWSTOR_TRACE_EVENT('s', "%s\n", "read response body vector");
     _context->add_read();
-    queue.readv(
+    _queue.readv(
         fd(), iov, niov,
         [context = _context, size, trace_event](size_t result, int error) {
             RAWSTOR_TRACE_EVENT_MESSAGE(
@@ -709,7 +705,7 @@ void Session::read_response_body(
             static_cast<SessionOpReadV&>(op).response_body_cb(result, error);
 
             if (context->has_ops() && !context->has_reads()) {
-                context->session().read_response_head(*rawstor::io_queue);
+                context->session().read_response_head();
             }
         }
     );
@@ -835,7 +831,7 @@ void Session::pread(
     );
     _context->register_op(op);
 
-    io_queue->write(
+    _queue.write(
         fd(), op->request_data(), op->request_size(),
         [op, trace_event](size_t result, int error) {
             RAWSTOR_TRACE_EVENT_MESSAGE(
@@ -854,7 +850,7 @@ void Session::pread(
     );
 
     if (!_context->has_reads()) {
-        read_response_head(*io_queue);
+        read_response_head();
     }
 }
 
@@ -872,7 +868,7 @@ void Session::preadv(
     );
     _context->register_op(op);
 
-    io_queue->write(
+    _queue.write(
         fd(), op->request_data(), op->request_size(),
         [op, trace_event](size_t result, int error) {
             RAWSTOR_TRACE_EVENT_MESSAGE(
@@ -891,7 +887,7 @@ void Session::preadv(
     );
 
     if (!_context->has_reads()) {
-        read_response_head(*io_queue);
+        read_response_head();
     }
 }
 
@@ -908,7 +904,7 @@ void Session::pwrite(
     );
     _context->register_op(op);
 
-    io_queue->writev(
+    _queue.writev(
         fd(), op->request_iov(), op->request_niov(),
         [op, trace_event](size_t result, int error) {
             RAWSTOR_TRACE_EVENT_MESSAGE(
@@ -927,7 +923,7 @@ void Session::pwrite(
     );
 
     if (!_context->has_reads()) {
-        read_response_head(*io_queue);
+        read_response_head();
     }
 }
 
@@ -945,7 +941,7 @@ void Session::pwritev(
     );
     _context->register_op(op);
 
-    io_queue->writev(
+    _queue.writev(
         fd(), op->request_iov(), op->request_niov(),
         [op, trace_event](size_t result, int error) {
             RAWSTOR_TRACE_EVENT_MESSAGE(
@@ -964,7 +960,7 @@ void Session::pwritev(
     );
 
     if (!_context->has_reads()) {
-        read_response_head(*io_queue);
+        read_response_head();
     }
 }
 
