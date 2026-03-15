@@ -39,7 +39,7 @@ namespace {
 
 class SessionOp;
 
-int validate_result(int fd, size_t size, size_t result) {
+int validate_result(int fd, size_t size, size_t result) noexcept {
     if (result == size) {
         return 0;
     }
@@ -52,8 +52,8 @@ int validate_result(int fd, size_t size, size_t result) {
 }
 
 int validate_response(
-    rawstor::ost::Session& s, const RawstorOSTFrameResponse* response
-) {
+    const rawstor::ost::Session& s, const RawstorOSTFrameResponse* response
+) noexcept {
     assert(response != nullptr);
 
     if (response->magic != RAWSTOR_MAGIC) {
@@ -75,9 +75,9 @@ int validate_response(
 }
 
 int validate_cmd(
-    rawstor::ost::Session& s, enum RawstorOSTCommandType cmd,
+    const rawstor::ost::Session& s, enum RawstorOSTCommandType cmd,
     enum RawstorOSTCommandType expected
-) {
+) noexcept {
     if (cmd == expected) {
         return 0;
     }
@@ -86,7 +86,9 @@ int validate_cmd(
     return EPROTO;
 }
 
-int validate_hash(rawstor::ost::Session& s, uint64_t hash, uint64_t expected) {
+int validate_hash(
+    const rawstor::ost::Session& s, uint64_t hash, uint64_t expected
+) noexcept {
     if (hash == expected) {
         return 0;
     }
@@ -171,9 +173,9 @@ class SessionOp {
 private:
     uint16_t _cid;
     bool _in_flight;
-    rawstor::TraceEvent _trace_event;
 
 protected:
+    rawstor::TraceEvent _trace_event;
     std::shared_ptr<rawstor::ost::Context> _context;
 
     std::function<void(size_t, int)> _cb;
@@ -260,6 +262,8 @@ public:
 
     void
     response_head_cb(RawstorOSTFrameResponse* response, int error) override {
+        RAWSTOR_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
+
         rawstor::ost::Session& s = _context->session();
 
         if (!error) {
@@ -313,6 +317,8 @@ public:
 
     void
     response_head_cb(RawstorOSTFrameResponse* response, int error) override {
+        RAWSTOR_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
+
         rawstor::ost::Session& s = _context->session();
 
         if (!error) {
@@ -332,6 +338,10 @@ public:
     }
 
     void response_body_cb(size_t result, int error) {
+        RAWSTOR_TRACE_EVENT_MESSAGE(
+            _trace_event, "result = %zu, error = %d\n", result, error
+        );
+
         if (!error) {
             rawstor::ost::Session& s = _context->session();
             error = validate_hash(s, hash(_buf, _size), _hash);
@@ -378,6 +388,8 @@ public:
 
     void
     response_head_cb(RawstorOSTFrameResponse* response, int error) override {
+        RAWSTOR_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
+
         rawstor::ost::Session& s = _context->session();
 
         if (!error) {
@@ -397,6 +409,10 @@ public:
     }
 
     void response_body_cb(size_t result, int error) {
+        RAWSTOR_TRACE_EVENT_MESSAGE(
+            _trace_event, "result = %zu, error = %d\n", result, error
+        );
+
         if (!error) {
             rawstor::ost::Session& s = _context->session();
             error = validate_hash(s, hash(_iov, _niov), _hash);
@@ -449,6 +465,8 @@ public:
 
     void
     response_head_cb(RawstorOSTFrameResponse* response, int error) override {
+        RAWSTOR_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
+
         rawstor::ost::Session& s = _context->session();
 
         if (!error) {
@@ -505,6 +523,8 @@ public:
 
     void
     response_head_cb(RawstorOSTFrameResponse* response, int error) override {
+        RAWSTOR_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
+
         rawstor::ost::Session& s = _context->session();
 
         if (!error) {
