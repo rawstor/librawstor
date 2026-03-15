@@ -32,54 +32,39 @@ rawstor::io::Queue* io_queue;
 } // namespace rawstor
 
 int rawstor_initialize(const RawstorOpts* opts) noexcept {
-    int res = 0;
-
-    assert(rawstor::io_queue == nullptr);
-
-    res = rawstor_logging_initialize();
-    if (res) {
-        goto err_logging_initialize;
-    }
-
-    rawstor_info(
-        "Rawstor compiled with IO queue engine: %s\n",
-        rawstor::io::Queue::engine_name().c_str()
-    );
-
-    res = rawstor_opts_initialize(opts);
-    if (res) {
-        goto err_opts_initialize;
-    }
-
     try {
-        std::unique_ptr<rawstor::io::Queue> q =
-            rawstor::io::Queue::create(QUEUE_DEPTH);
-        rawstor::io_queue = q.get();
-        q.release();
-    } catch (const std::bad_alloc&) {
-        res = -ENOMEM;
-        goto err_io_queue;
-    }
+        int res = 0;
 
-    return 0;
+        assert(rawstor::io_queue == nullptr);
 
-err_io_queue:
-    rawstor_opts_terminate();
-err_opts_initialize:
-    rawstor_logging_terminate();
-err_logging_initialize:
-    return res;
-}
+        res = rawstor_logging_initialize();
+        if (res) {
+            RAWSTOR_THROW_SYSTEM_ERROR(-res);
+        }
 
-void rawstor_terminate() noexcept {
-    delete rawstor::io_queue;
-    rawstor_opts_terminate();
-    rawstor_logging_terminate();
-}
+        rawstor_info(
+            "Rawstor compiled with IO queue engine: %s\n",
+            rawstor::io::Queue::engine_name().c_str()
+        );
 
-int rawstor_wait() noexcept {
-    try {
-        rawstor::io_queue->wait(rawstor_opts_wait_timeout());
+        res = rawstor_opts_initialize(opts);
+        if (res) {
+            rawstor_logging_terminate();
+            RAWSTOR_THROW_SYSTEM_ERROR(-res);
+        }
+
+        try {
+            std::unique_ptr<rawstor::io::Queue> q =
+                rawstor::io::Queue::create(QUEUE_DEPTH);
+            rawstor::io_queue = q.get();
+            q.release();
+        } catch (...) {
+            rawstor_logging_terminate();
+            rawstor_opts_terminate();
+            throw;
+        }
+
+        return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
     } catch (const std::bad_alloc& e) {
@@ -91,7 +76,29 @@ int rawstor_wait() noexcept {
         rawstor_error("Unexpected error\n");
         return -EINVAL;
     }
-    return 0;
+}
+
+void rawstor_terminate() noexcept {
+    delete rawstor::io_queue;
+    rawstor_opts_terminate();
+    rawstor_logging_terminate();
+}
+
+int rawstor_wait() noexcept {
+    try {
+        rawstor::io_queue->wait(rawstor_opts_wait_timeout());
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstor_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstor_error("Unexpected error\n");
+        return -EINVAL;
+    }
 }
 
 int rawstor_fd_poll(
