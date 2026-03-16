@@ -181,6 +181,33 @@ public:
     virtual void operator()(size_t result, int error) = 0;
 };
 
+class TaskMultishot : public Task {
+public:
+    static int callback(size_t result, int error, void* data) {
+        std::unique_ptr<TaskMultishot> t(static_cast<TaskMultishot*>(data));
+
+        try {
+            (*t)(result, error);
+            if (error == 0) {
+                t.release();
+            }
+            return 0;
+        } catch (const std::system_error& e) {
+            return -e.code().value();
+        }
+    }
+
+    explicit TaskMultishot(rawstor::vhost::Device& device) : Task(device) {}
+    TaskMultishot(const TaskMultishot&) = delete;
+    TaskMultishot(TaskMultishot&&) = delete;
+    virtual ~TaskMultishot() = default;
+
+    TaskMultishot& operator=(const TaskMultishot&) = delete;
+    TaskMultishot& operator=(TaskMultishot&&) = delete;
+
+    virtual void operator()(size_t result, int error) = 0;
+};
+
 class TaskPoll : public Task {
 public:
     explicit TaskPoll(rawstor::vhost::Device& device) : Task(device) {}
@@ -206,7 +233,7 @@ public:
     void operator()(size_t, int error) override;
 };
 
-class TaskWatch final : public TaskPoll {
+class TaskWatch final : public TaskMultishot {
 private:
     int _fd;
     int _condition;
@@ -219,7 +246,7 @@ public:
         rawstor::vhost::Device& device, int fd, int condition, vu_watch_cb cb,
         void* data
     ) :
-        TaskPoll(device),
+        TaskMultishot(device),
         _fd(fd),
         _condition(condition),
         _mask(0),
@@ -233,7 +260,7 @@ public:
         }
     }
 
-    unsigned int mask() override { return _mask; }
+    unsigned int mask() { return _mask; }
 
     void operator()(size_t, int error) override;
 };
@@ -264,7 +291,7 @@ void TaskDispatch::operator()(size_t result, int error) {
 }
 
 void TaskWatch::operator()(size_t result, int error) {
-    if (error != 0) {
+    if (error != 0 && error != ECANCELED) {
         RAWSTOR_THROW_SYSTEM_ERROR(error);
     }
 
@@ -276,20 +303,12 @@ void TaskWatch::operator()(size_t result, int error) {
         RAWSTOR_THROW_SYSTEM_ERROR(EBADF);
     }
 
-    int watch = _device.find_watch(_fd);
-
-    if (result & _mask && watch) {
+    if ((result & _mask) && _device.has_watch(_fd)) {
         _cb(_device.dev(), _condition, _data);
     }
 
     if (result & POLLHUP) {
         RAWSTOR_THROW_SYSTEM_ERROR(EPIPE);
-    }
-
-    if (watch) {
-        std::unique_ptr<TaskWatch> t =
-            std::make_unique<TaskWatch>(_device, _fd, _condition, _cb, _data);
-        poll(_fd, std::move(t));
     }
 }
 
@@ -493,6 +512,29 @@ int set_config(
 namespace rawstor {
 namespace vhost {
 
+Watcher::Watcher(
+    rawstor::vhost::Device& device, int fd, int condition, vu_watch_cb cb,
+    void* data
+) :
+    _event(nullptr),
+    _counter(1) {
+    std::unique_ptr<TaskWatch> t =
+        std::make_unique<TaskWatch>(device, fd, condition, cb, data);
+    int res =
+        rawstor_fd_poll_multishot(fd, t->mask(), t->callback, t.get(), &_event);
+    if (res) {
+        RAWSTOR_THROW_SYSTEM_ERROR(-res);
+    }
+    t.release();
+}
+
+Watcher::~Watcher() {
+    int res = rawstor_fd_cancel(_event);
+    if (res < 0) {
+        rawstor_error("Failed to cancel event: %s\n", strerror(-res));
+    }
+}
+
 std::unordered_map<int, Device*> Device::_devices;
 
 Device::Device(const std::string& object_uris, int fd) :
@@ -640,24 +682,31 @@ void Device::set_config(
 }
 
 void Device::set_watch(int fd, int condition, vu_watch_cb cb, void* data) {
-    if (!find_watch(fd)) {
-        _watchers.emplace(fd, condition);
-        std::unique_ptr<TaskWatch> t =
-            std::make_unique<TaskWatch>(*this, fd, condition, cb, data);
-        poll(fd, std::move(t));
+    auto it = _watchers.find(fd);
+    if (it != _watchers.end()) {
+        it->second->inc_counter();
+        return;
     }
+
+    _watchers.emplace(
+        fd, std::make_unique<Watcher>(*this, fd, condition, cb, data)
+    );
 }
 
 void Device::remove_watch(int fd) {
-    _watchers.erase(fd);
+    auto it = _watchers.find(fd);
+    if (it == _watchers.end()) {
+        return;
+    }
+
+    if (it->second->dec_counter() <= 0) {
+        _watchers.erase(it);
+    }
 }
 
-int Device::find_watch(int fd) const noexcept {
+bool Device::has_watch(int fd) const noexcept {
     const auto& it = _watchers.find(fd);
-    if (it == _watchers.end()) {
-        return 0;
-    }
-    return it->second;
+    return it != _watchers.end();
 }
 
 void Device::loop() {
