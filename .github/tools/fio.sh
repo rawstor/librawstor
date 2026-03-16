@@ -26,6 +26,17 @@ fio \
   --numjobs=${NUMJOBS} \
   --runtime=10 \
   --time_based \
+  --group_reporting \
+  \
+  --name=randwrite \
+  --stonewall \
+  --iodepth=${IODEPTH} \
+  --rw=randwrite \
+  --bs=${BS} \
+  --size=1G \
+  --numjobs=${NUMJOBS} \
+  --runtime=10 \
+  --time_based \
   --group_reporting
 
 _FIO_TXT=_fio.txt
