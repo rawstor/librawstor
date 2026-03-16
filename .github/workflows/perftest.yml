@@ -73,7 +73,7 @@ jobs:
       with:
         repository: rawstor/fio
         path: fio
-        ref: refs/heads/rawstor
+        ref: refs/heads/dnm/debug
     - name: install fio
       run: |
         pushd .
