@@ -1,6 +1,7 @@
 #include "units.h"
 
 #include <errno.h>
+#include <stdint.h>
 #include <stdio.h>
 
 static int unit_to_shift(const char unit) {
@@ -35,6 +36,10 @@ int rawstor_cli_size_to_bytes(const char* s, size_t* out) {
     int shift = unit_to_shift(unit);
     if (shift < 0) {
         return shift;
+    }
+
+    if (value > (SIZE_MAX >> shift)) {
+        return -EOVERFLOW;
     }
 
     *out = value << shift;
