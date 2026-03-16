@@ -10,13 +10,15 @@ AM_LDFLAGS = $(ASAN_LDFLAGS)
 
 
 rawstor_cli_SOURCES = create.c \
-					  create.h \
+                      create.h \
                       main.c \
                       remove.c \
                       remove.h \
                       show.c \
                       show.h \
                       testio.c \
-                      testio.h
+                      testio.h \
+                      units.c \
+                      units.h
 
 rawstor_cli_LDADD = $(top_builddir)/src/librawstor.la -lstdc++

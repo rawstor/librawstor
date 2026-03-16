@@ -2,6 +2,7 @@
 #include "remove.h"
 #include "show.h"
 #include "testio.h"
+#include "units.h"
 
 #include "config.h"
 
@@ -48,7 +49,9 @@ static void command_create_usage(void) {
         "\n"
         "command options:\n"
         "  -h, --help            Show this help message and exit\n"
-        "  -s, --size SIZE       Object size in Gb\n"
+        "  -s, --size SIZE       Object size with unit suffix (B, K, M, G, "
+        "T).\n"
+        "                        Examples: 10G, 5M, 2T.\n"
         "  -u, --uri RAWSTOR_URI Comma separated list of Rawstor URI targets\n"
     );
 };
@@ -106,8 +109,12 @@ static int command_create(int argc, char** argv) {
     }
 
     size_t size = 0;
-    if (sscanf(size_arg, "%zu", &size) != 1) {
-        fprintf(stderr, "size argument must be unsigned integer\n");
+    int res = rawstor_cli_size_to_bytes(size_arg, &size);
+    if (res < 0) {
+        fprintf(
+            stderr, "Failed to parse units: %s\nError: %s\n", size_arg,
+            strerror(-res)
+        );
         return EXIT_FAILURE;
     }
 

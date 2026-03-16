@@ -1,5 +1,7 @@
 #include "create.h"
 
+#include "units.h"
+
 #include <rawstor.h>
 
 #include <stdio.h>
@@ -8,11 +10,13 @@
 
 int rawstor_cli_create(const char* uris, size_t size) {
     struct RawstorObjectSpec spec = {
-        .size = size << 30,
+        .size = size,
     };
+    char buf[256];
+    rawstor_cli_bytes_to_size(size, buf, sizeof(buf));
 
     fprintf(stderr, "Creating object with specification:\n");
-    fprintf(stderr, "  size: %zu Gb\n", size);
+    fprintf(stderr, "  size: %s\n", buf);
 
     char object_uris[65536];
     int res =
