@@ -95,14 +95,18 @@ int rawstor_wait() noexcept {
         rawstor::io_queue->wait(rawstor_opts_wait_timeout());
         return 0;
     } catch (const std::system_error& e) {
+        rawstor_info("1\n");
         rawstor::io_queue->debug();
         return -e.code().value();
     } catch (const std::bad_alloc& e) {
+        rawstor_info("2\n");
         return -ENOMEM;
     } catch (const std::exception& e) {
+        rawstor_info("3\n");
         rawstor_error("%s\n", e.what());
         return -EINVAL;
     } catch (...) {
+        rawstor_info("4\n");
         rawstor_error("Unexpected error\n");
         return -EINVAL;
     }
