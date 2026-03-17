@@ -115,6 +115,8 @@ public:
     virtual void cancel(Event* event) = 0;
 
     virtual void wait(unsigned int timeout) = 0;
+
+    virtual void debug() {};
 };
 
 } // namespace io

@@ -95,6 +95,7 @@ int rawstor_wait() noexcept {
         rawstor::io_queue->wait(rawstor_opts_wait_timeout());
         return 0;
     } catch (const std::system_error& e) {
+        rawstor::io_queue->debug();
         return -e.code().value();
     } catch (const std::bad_alloc& e) {
         return -ENOMEM;

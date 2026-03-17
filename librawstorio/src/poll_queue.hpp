@@ -110,6 +110,8 @@ public:
     void cancel(rawstor::io::Event* e) override;
 
     void wait(unsigned int timeout) override;
+
+    void debug() override;
 };
 
 } // namespace poll

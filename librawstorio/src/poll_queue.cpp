@@ -424,6 +424,13 @@ void Queue::wait(unsigned int timeout) {
     }
 }
 
+void Queue::debug() {
+    rawstor_info("cqes: %zu\n", _cqes.size());
+    for(auto it : _sessions) {
+        it.second->debug();
+    }
+}
+
 } // namespace poll
 } // namespace io
 } // namespace rawstor
