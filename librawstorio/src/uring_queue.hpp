@@ -15,6 +15,7 @@ namespace uring {
 class Queue final : public rawstor::io::Queue {
 private:
     io_uring _ring;
+    unsigned int _counter;
 
 public:
     static const std::string& engine_name();
@@ -99,6 +100,8 @@ public:
     void cancel(rawstor::io::Event* event);
 
     void wait(unsigned int timeout) override;
+
+    void debug() override;
 };
 
 } // namespace uring

@@ -21,7 +21,7 @@ namespace rawstor {
 namespace io {
 namespace uring {
 
-Queue::Queue(unsigned int depth) : rawstor::io::Queue(depth) {
+Queue::Queue(unsigned int depth) : rawstor::io::Queue(depth), _counter(0) {
     int res = io_uring_queue_init(
         depth, &_ring, IORING_SETUP_SUBMIT_ALL | IORING_SETUP_COOP_TASKRUN
     );
@@ -100,6 +100,7 @@ Queue::poll(int fd, unsigned int mask, std::function<void(size_t, int)>&& cb) {
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
+    ++_counter;
     std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
         std::make_unique<std::function<void(size_t, int, unsigned int)>>(
             [cb = std::move(cb),
@@ -126,6 +127,7 @@ rawstor::io::Event* Queue::poll_multishot(
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
     io_uring_prep_poll_multishot(sqe, fd, mask);
+    ++_counter;
     std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
         std::make_unique<std::function<void(size_t, int, unsigned int)>>(
             [cb = std::move(cb),
@@ -151,6 +153,7 @@ rawstor::io::Event* Queue::read(
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
     io_uring_prep_read(sqe, fd, buf, size, 0);
+    ++_counter;
     std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
         std::make_unique<std::function<void(size_t, int, unsigned int)>>(
             [cb = std::move(cb),
@@ -176,6 +179,7 @@ rawstor::io::Event* Queue::readv(
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
     io_uring_prep_readv(sqe, fd, iov, niov, 0);
+    ++_counter;
     std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
         std::make_unique<std::function<void(size_t, int, unsigned int)>>(
             [cb = std::move(cb),
@@ -203,6 +207,7 @@ rawstor::io::Event* Queue::pread(
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
     io_uring_prep_read(sqe, fd, buf, size, offset);
+    ++_counter;
     std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
         std::make_unique<std::function<void(size_t, int, unsigned int)>>(
             [cb = std::move(cb),
@@ -230,6 +235,7 @@ rawstor::io::Event* Queue::preadv(
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
     io_uring_prep_readv(sqe, fd, iov, niov, offset);
+    ++_counter;
     std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
         std::make_unique<std::function<void(size_t, int, unsigned int)>>(
             [cb = std::move(cb),
@@ -257,6 +263,7 @@ rawstor::io::Event* Queue::recv(
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
     io_uring_prep_recv(sqe, fd, buf, size, flags);
+    ++_counter;
     std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
         std::make_unique<std::function<void(size_t, int, unsigned int)>>(
             [cb = std::move(cb),
@@ -301,6 +308,7 @@ rawstor::io::Event* Queue::recv_multishot(
     io_uring_prep_recv_multishot(sqe, fd, nullptr, 0, flags);
     sqe->flags |= IOSQE_BUFFER_SELECT;
     sqe->buf_group = buffer->id();
+    ++_counter;
     std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
         std::make_unique<std::function<void(size_t, int, unsigned int)>>(
             [buffer,
@@ -328,6 +336,7 @@ rawstor::io::Event* Queue::recvmsg(
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
+    ++_counter;
     std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
         std::make_unique<std::function<void(size_t, int, unsigned int)>>(
             [cb = std::move(cb),
@@ -353,6 +362,7 @@ rawstor::io::Event* Queue::write(
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
+    ++_counter;
     std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
         std::make_unique<std::function<void(size_t, int, unsigned int)>>(
             [cb = std::move(cb),
@@ -379,6 +389,7 @@ rawstor::io::Event* Queue::writev(
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
+    ++_counter;
     std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
         std::make_unique<std::function<void(size_t, int, unsigned int)>>(
             [cb = std::move(cb),
@@ -406,6 +417,7 @@ rawstor::io::Event* Queue::pwrite(
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
+    ++_counter;
     std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
         std::make_unique<std::function<void(size_t, int, unsigned int)>>(
             [cb = std::move(cb),
@@ -433,6 +445,7 @@ rawstor::io::Event* Queue::pwritev(
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
+    ++_counter;
     std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
         std::make_unique<std::function<void(size_t, int, unsigned int)>>(
             [cb = std::move(cb),
@@ -460,6 +473,7 @@ rawstor::io::Event* Queue::send(
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
+    ++_counter;
     std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
         std::make_unique<std::function<void(size_t, int, unsigned int)>>(
             [cb = std::move(cb),
@@ -487,6 +501,7 @@ rawstor::io::Event* Queue::sendmsg(
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
     }
+    ++_counter;
     std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
         std::make_unique<std::function<void(size_t, int, unsigned int)>>(
             [cb = std::move(cb),
@@ -570,12 +585,16 @@ void Queue::wait(unsigned int timeout) {
                 rawstor_trace("callback error\n");
                 if (cqe->flags & IORING_CQE_F_MORE) {
                     p.release();
+                } else {
+                    --_counter;
                 }
                 throw;
             }
 
             if (cqe->flags & IORING_CQE_F_MORE) {
                 p.release();
+            } else {
+                --_counter;
             }
         }
     } catch (...) {
@@ -589,6 +608,10 @@ void Queue::wait(unsigned int timeout) {
         // TODO: use __io_uring_buf_ring_cq_advance here
         io_uring_cq_advance(&_ring, nr);
     }
+}
+
+void Queue::debug() {
+    rawstor_info("counter: %u\n", _counter);
 }
 
 } // namespace uring
