@@ -231,6 +231,11 @@ void EventSimplexVectorRecvMultishot::dispatch() {
     bool full = _pending_entries.full();
 
     while (_pending_size >= _size || _error) {
+        if (_size == 0) {
+            set_error(ELOOP);
+            break;
+        }
+
         std::list<std::unique_ptr<EventSimplexVectorRecvMultishotEntry>>
             entries;
         std::vector<iovec> iov;

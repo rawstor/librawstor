@@ -284,7 +284,7 @@ public:
         } else {
             _dispatch(0, error);
             *next_head = true;
-            *next_size = sizeof(RawstorOSTFrameResponse);
+            *next_size = 0;
         }
     }
 
@@ -367,7 +367,7 @@ public:
         } else {
             _dispatch(0, error);
             *next_head = true;
-            *next_size = sizeof(RawstorOSTFrameResponse);
+            *next_size = 0;
         }
     }
 
@@ -450,8 +450,13 @@ public:
         }
 
         _dispatch(response != nullptr ? response->res : 0, error);
-        *next_head = true;
-        *next_size = sizeof(RawstorOSTFrameResponse);
+        if (!error) {
+            *next_head = true;
+            *next_size = sizeof(RawstorOSTFrameResponse);
+        } else {
+            *next_head = true;
+            *next_size = 0;
+        }
     }
 };
 
@@ -512,8 +517,13 @@ public:
         }
 
         _dispatch(response != nullptr ? response->res : 0, error);
-        *next_head = true;
-        *next_size = sizeof(RawstorOSTFrameResponse);
+        if (!error) {
+            *next_head = true;
+            *next_size = sizeof(RawstorOSTFrameResponse);
+        } else {
+            *next_head = true;
+            *next_size = 0;
+        }
     }
 };
 
@@ -540,7 +550,7 @@ void Context::fail_in_flight(int error, bool* next_head, size_t* next_size) {
         }
     }
     *next_head = true;
-    *next_size = sizeof(RawstorOSTFrameResponse);
+    *next_size = 0;
 }
 
 Session::Session(

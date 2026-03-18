@@ -129,6 +129,11 @@ void BufferRing::operator()(size_t result, int error, unsigned int flags) {
     }
 
     while (_pending_size >= _size || error) {
+        if (_size == 0) {
+            error = ELOOP;
+            break;
+        }
+
         std::list<std::unique_ptr<BufferRingEntry>> entries;
         std::vector<iovec> iov;
         size_t iov_size = 0;
