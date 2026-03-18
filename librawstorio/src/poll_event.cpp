@@ -20,6 +20,7 @@ inline void dispatch(
 #ifdef RAWSTOR_TRACE_EVENTS
     try {
 #endif
+        rawstor_debug("result = %zu, error = %d\n", result, error);
         cb(result, error);
 #ifdef RAWSTOR_TRACE_EVENTS
     } catch (const std::exception& e) {
@@ -268,6 +269,10 @@ void EventSimplexVectorRecvMultishot::dispatch() {
                 iov_size, _error
             );
             RAWSTOR_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "callback");
+            rawstor_debug(
+                "niov = %zu, result = %zu, error = %d\n", iov.size(), _result,
+                _error
+            );
             _size = _cb(iov.data(), iov.size(), _result, _error);
             RAWSTOR_TRACE_EVENT_MESSAGE(
                 trace_event, "%s\n", "callback success"

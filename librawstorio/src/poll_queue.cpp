@@ -79,6 +79,7 @@ rawstor::io::Event*
 Queue::poll(int fd, unsigned int mask, std::function<void(size_t, int)>&& cb) {
     TraceEvent trace_event =
         RAWSTOR_TRACE_EVENT('|', "fd = %d, mask = %u\n", fd, mask);
+    rawstor_debug("fd = %d, mask = %u\n", fd, mask);
     Session& s = _get_session(fd);
 
     std::unique_ptr<EventSimplexPollOneshot> event =
@@ -96,6 +97,7 @@ rawstor::io::Event* Queue::poll_multishot(
 ) {
     TraceEvent trace_event =
         RAWSTOR_TRACE_EVENT('|', "fd = %d, mask = %u\n", fd, mask);
+    rawstor_debug("fd = %d, mask = %u\n", fd, mask);
     Session& s = _get_session(fd);
 
     std::unique_ptr<EventSimplexPollMultishot> event =
@@ -113,6 +115,7 @@ rawstor::io::Event* Queue::read(
 ) {
     TraceEvent trace_event =
         RAWSTOR_TRACE_EVENT('|', "fd = %d, size = %zu\n", fd, size);
+    rawstor_debug("fd = %d, size = %zu\n", fd, size);
     Session& s = _get_session(fd);
 
     std::unique_ptr<EventSimplex> event =
@@ -130,6 +133,7 @@ rawstor::io::Event* Queue::readv(
 ) {
     TraceEvent trace_event =
         RAWSTOR_TRACE_EVENT('|', "fd = %d, niov = %u\n", fd, niov);
+    rawstor_debug("fd = %d, niov = %u\n", fd, niov);
     Session& s = _get_session(fd);
 
     std::unique_ptr<EventSimplex> event =
@@ -148,6 +152,9 @@ rawstor::io::Event* Queue::pread(
 ) {
     TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
         '|', "fd = %d, size = %zu, offset = %jd\n", fd, size, (intmax_t)offset
+    );
+    rawstor_debug(
+        "fd = %d, size = %zu, offset = %jd\n", fd, size, (intmax_t)offset
     );
     Session& s = _get_session(fd);
 
@@ -168,6 +175,9 @@ rawstor::io::Event* Queue::preadv(
     TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
         '|', "fd = %d, niov = %u, offset = %jd\n", fd, niov, (intmax_t)offset
     );
+    rawstor_debug(
+        "fd = %d, niov = %u, offset = %jd\n", fd, niov, (intmax_t)offset
+    );
     Session& s = _get_session(fd);
 
     std::unique_ptr<EventSimplex> event =
@@ -187,6 +197,7 @@ rawstor::io::Event* Queue::recv(
     TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
         '|', "fd = %d, size = %zu, flags = %u\n", fd, size, flags
     );
+    rawstor_debug("fd = %d, size = %zu, flags = %u\n", fd, size, flags);
     Session& s = _get_session(fd);
 
     std::unique_ptr<EventSimplex> event =
@@ -209,6 +220,10 @@ rawstor::io::Event* Queue::recv_multishot(
         "fd = %d, entry_size = %zu, entries = %u, size = %zu, flags = %u\n", fd,
         entry_size, entries, size, flags
     );
+    rawstor_debug(
+        "fd = %d, entry_size = %zu, entries = %u, size = %zu, flags = %u\n", fd,
+        entry_size, entries, size, flags
+    );
     Session& s = _get_session(fd);
 
     std::unique_ptr<EventSimplexVectorRecvMultishot> event =
@@ -227,7 +242,12 @@ rawstor::io::Event* Queue::recvmsg(
     std::function<void(size_t, int)>&& cb
 ) {
     TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
-        '|', "fd = %d, niov = %u, flags = %u\n", fd, msg->msg_iovlen, flags
+        '|', "fd = %d, niov = %u, flags = %u\n", fd,
+        (unsigned int)msg->msg_iovlen, flags
+    );
+    rawstor_debug(
+        "fd = %d, niov = %u, flags = %u\n", fd, (unsigned int)msg->msg_iovlen,
+        flags
     );
     Session& s = _get_session(fd);
 
@@ -246,6 +266,7 @@ rawstor::io::Event* Queue::write(
 ) {
     TraceEvent trace_event =
         RAWSTOR_TRACE_EVENT('|', "fd = %d, size = %zu\n", fd, size);
+    rawstor_debug("fd = %d, size = %zu\n", fd, size);
     Session& s = _get_session(fd);
 
     std::unique_ptr<Event> event = std::make_unique<EventMultiplexScalarWrite>(
@@ -263,6 +284,7 @@ rawstor::io::Event* Queue::writev(
 ) {
     TraceEvent trace_event =
         RAWSTOR_TRACE_EVENT('|', "fd = %d, niov = %u\n", fd, niov);
+    rawstor_debug("fd = %d, niov = %u\n", fd, niov);
     Session& s = _get_session(fd);
 
     std::unique_ptr<Event> event = std::make_unique<EventMultiplexVectorWrite>(
@@ -281,6 +303,9 @@ rawstor::io::Event* Queue::pwrite(
     TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
         '|', "fd = %d, size = %zu, offset = %jd\n", fd, size, (intmax_t)offset
     );
+    rawstor_debug(
+        "fd = %d, size = %zu, offset = %jd\n", fd, size, (intmax_t)offset
+    );
     Session& s = _get_session(fd);
 
     std::unique_ptr<Event> event =
@@ -298,7 +323,10 @@ rawstor::io::Event* Queue::pwritev(
     std::function<void(size_t, int)>&& cb
 ) {
     TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
-        '|', "fd = %d, niov = %u, offset = %jd\n", fd, niov, offset
+        '|', "fd = %d, niov = %u, offset = %jd\n", fd, niov, (intmax_t)offset
+    );
+    rawstor_debug(
+        "fd = %d, niov = %u, offset = %jd\n", fd, niov, (intmax_t)offset
     );
     Session& s = _get_session(fd);
 
@@ -319,6 +347,7 @@ rawstor::io::Event* Queue::send(
     TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
         '|', "fd = %d, size = %zu, flags = %u\n", fd, size, flags
     );
+    rawstor_debug("fd = %d, size = %zu, flags = %u\n", fd, size, flags);
     Session& s = _get_session(fd);
 
     std::unique_ptr<Event> event = std::make_unique<EventSimplexScalarSend>(
@@ -335,7 +364,12 @@ rawstor::io::Event* Queue::sendmsg(
     std::function<void(size_t, int)>&& cb
 ) {
     TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
-        '|', "fd = %d, niov = %u, flags = %u\n", fd, msg->msg_iovlen, flags
+        '|', "fd = %d, niov = %u, flags = %u\n", fd,
+        (unsigned int)msg->msg_iovlen, flags
+    );
+    rawstor_debug(
+        "fd = %d, niov = %u, flags = %u\n", fd, (unsigned int)msg->msg_iovlen,
+        flags
     );
     Session& s = _get_session(fd);
 
