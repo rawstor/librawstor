@@ -51,7 +51,7 @@ jobs:
         pushd .
         cd ./librawstor
         ./autogen.sh
-        ./configure --disable-shared --disable-tests --enable-debug ${{ matrix.without-liburing }}
+        ./configure --disable-shared --disable-tests --enable-debug --enable-asan ${{ matrix.without-liburing }}
         make -j$(nproc)
         sudo make install
         popd
@@ -81,7 +81,7 @@ jobs:
       run: |
         pushd .
         cd ./fio
-        ./configure
+        ./configure --enable-asan
         make -j$(nproc)
         sudo make install
         popd
