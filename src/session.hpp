@@ -81,6 +81,8 @@ public:
         const iovec* iov, unsigned int niov, size_t size, off_t offset,
         std::function<void(size_t, int)>&& cb
     ) = 0;
+
+    virtual void invalidate(int error) = 0;
 };
 
 } // namespace rawstor

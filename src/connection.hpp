@@ -43,7 +43,7 @@ public:
     Connection& operator=(const Connection&) = delete;
 
     std::shared_ptr<Session> get_next_session();
-    void invalidate_session(const std::shared_ptr<Session>& s);
+    void invalidate_session(const std::shared_ptr<Session>& s, int error);
 
     const URI* uri() const noexcept;
 

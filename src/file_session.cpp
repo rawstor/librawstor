@@ -284,5 +284,8 @@ void Session::pwritev(
     _queue.pwritev(fd(), iov, niov, offset, std::move(cb));
 }
 
+void Session::invalidate(int) {
+}
+
 } // namespace file
 } // namespace rawstor

@@ -163,7 +163,7 @@ void Connection::_op(
             );
 
             try {
-                invalidate_session(s);
+                invalidate_session(s, error);
             } catch (const std::system_error& e) {
                 cb(result, e.code().value());
                 return;
@@ -197,7 +197,10 @@ std::shared_ptr<Session> Connection::get_next_session() {
     return s;
 }
 
-void Connection::invalidate_session(const std::shared_ptr<Session>& s) {
+void Connection::invalidate_session(
+    const std::shared_ptr<Session>& s, int error
+) {
+    s->invalidate(error);
     typename std::vector<std::shared_ptr<Session>>::iterator it =
         std::find(_sessions.begin(), _sessions.end(), s);
 

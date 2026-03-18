@@ -918,5 +918,11 @@ void Session::pwritev(
     );
 }
 
+void Session::invalidate(int error) {
+    bool next_head;
+    size_t next_size;
+    _context->fail_in_flight(error, &next_head, &next_size);
+}
+
 } // namespace ost
 } // namespace rawstor

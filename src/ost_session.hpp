@@ -72,6 +72,8 @@ public:
         const iovec* iov, unsigned int niov, size_t size, off_t offset,
         std::function<void(size_t, int)>&& cb
     ) override;
+
+    void invalidate(int error) override;
 };
 
 } // namespace ost
