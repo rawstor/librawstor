@@ -101,14 +101,6 @@ int rawstor_wait() noexcept {
     } catch (const std::bad_alloc& e) {
         rawstor_info("2\n");
         return -ENOMEM;
-    } catch (const std::exception& e) {
-        rawstor_info("3\n");
-        rawstor_error("%s\n", e.what());
-        return -EINVAL;
-    } catch (...) {
-        rawstor_info("4\n");
-        rawstor_error("Unexpected error\n");
-        return -EINVAL;
     }
 }
 
