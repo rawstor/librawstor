@@ -298,7 +298,7 @@ rawstor::io::Event* Queue::pwritev(
     std::function<void(size_t, int)>&& cb
 ) {
     TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
-        '|', "fd = %d, niov = %u, offset = %jd\n", fd, niov, offset
+        '|', "fd = %d, niov = %u, offset = %jd\n", fd, niov, (intmax_t)offset
     );
     Session& s = _get_session(fd);
 
