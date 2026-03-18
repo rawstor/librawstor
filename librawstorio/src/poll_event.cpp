@@ -354,6 +354,15 @@ ssize_t EventSimplexVectorRecvMultishot::process() noexcept {
     return res;
 }
 
+void EventSimplexVectorRecvMultishot::debug() {
+    rawstor_debug("_entry_size = %zu\n", _entry_size);
+    rawstor_debug("_size = %zu\n", _size);
+    rawstor_debug("_pending_offset = %zu\n", _pending_offset);
+    rawstor_debug("_pending_size = %zu\n", _pending_size);
+    rawstor_debug("_pending_entries.size() = %zu\n", _pending_entries.size());
+    rawstor_debug("_flags = %u\n", _flags);
+}
+
 void EventSimplexMessageRead::dispatch() {
     ::dispatch(trace_event, _result, _error, _cb);
 }

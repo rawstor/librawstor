@@ -84,6 +84,8 @@ public:
     virtual ~EventSimplex() override = default;
 
     bool is_multiplex() const noexcept override final { return false; }
+
+    virtual void debug() {}
 };
 
 class EventMultiplex : public Event {
@@ -448,6 +450,8 @@ public:
     bool is_write() const noexcept override final { return false; }
 
     ssize_t process() noexcept override final;
+
+    void debug() override;
 };
 
 class EventSimplexMessageRead final : public EventSimplex {

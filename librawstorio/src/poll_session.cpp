@@ -264,6 +264,9 @@ void Session::debug() {
     rawstor_info("%d: poll_sqes: %zu\n", _fd, _poll_sqes.size());
     rawstor_info("%d: read_sqes: %zu\n", _fd, _read_sqes.size());
     rawstor_info("%d: write_sqes: %zu\n", _fd, _write_sqes.size());
+    if (!_read_sqes.empty()) {
+        _read_sqes.tail().debug();
+    }
 }
 
 } // namespace poll

@@ -422,6 +422,7 @@ void Queue::wait(unsigned int timeout) {
             RAWSTOR_THROW_ERRNO();
         }
         if (res == 0) {
+            rawstor_debug("fds.size() = %zu\n", fds.size());
             RAWSTOR_THROW_SYSTEM_ERROR(ETIME);
         }
 
