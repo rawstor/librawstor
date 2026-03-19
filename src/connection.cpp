@@ -300,9 +300,8 @@ void Connection::close() {
 void Connection::pread(
     void* buf, size_t size, off_t offset, std::function<void(size_t, int)>&& cb
 ) {
-    auto cbptr = std::make_shared<std::function<void(size_t, int)>>(
-        std::move(cb)
-    );
+    auto cbptr =
+        std::make_shared<std::function<void(size_t, int)>>(std::move(cb));
     auto opptr = std::make_shared<std::function<
         void(std::shared_ptr<Session>, std::function<void(size_t, int)>&&)>>(
         [buf, size, offset](
@@ -316,9 +315,8 @@ void Connection::preadv(
     iovec* iov, unsigned int niov, size_t size, off_t offset,
     std::function<void(size_t, int)>&& cb
 ) {
-    auto cbptr = std::make_shared<std::function<void(size_t, int)>>(
-        std::move(cb)
-    );
+    auto cbptr =
+        std::make_shared<std::function<void(size_t, int)>>(std::move(cb));
     auto opptr = std::make_shared<std::function<
         void(std::shared_ptr<Session>, std::function<void(size_t, int)>&&)>>(
         [iov, niov, size, offset](
@@ -332,9 +330,8 @@ void Connection::pwrite(
     const void* buf, size_t size, off_t offset,
     std::function<void(size_t, int)>&& cb
 ) {
-    auto cbptr = std::make_shared<std::function<void(size_t, int)>>(
-        std::move(cb)
-    );
+    auto cbptr =
+        std::make_shared<std::function<void(size_t, int)>>(std::move(cb));
     auto opptr = std::make_shared<std::function<
         void(std::shared_ptr<Session>, std::function<void(size_t, int)>&&)>>(
         [buf, size, offset](
@@ -348,9 +345,8 @@ void Connection::pwritev(
     const iovec* iov, unsigned int niov, size_t size, off_t offset,
     std::function<void(size_t, int)>&& cb
 ) {
-    auto cbptr = std::make_shared<std::function<void(size_t, int)>>(
-        std::move(cb)
-    );
+    auto cbptr =
+        std::make_shared<std::function<void(size_t, int)>>(std::move(cb));
     auto opptr = std::make_shared<std::function<
         void(std::shared_ptr<Session>, std::function<void(size_t, int)>&&)>>(
         [iov, niov, size, offset](
