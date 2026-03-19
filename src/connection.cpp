@@ -108,7 +108,7 @@ Connection::_open(const URI& uri, RawstorObject* object, size_t nsessions) {
 
 void Connection::_op(
     const char* func_name, size_t size, off_t offset,
-    std::function<void(size_t, int)>&& cb,
+    const std::shared_ptr<std::function<void(size_t, int)>>& cb,
     const std::shared_ptr<std::function<
         void(std::shared_ptr<Session>, std::function<void(size_t, int)>&&)>>&
         op,
@@ -121,7 +121,7 @@ void Connection::_op(
 
     std::shared_ptr<Session> s = get_next_session();
     (*op)(
-        s, [this, s, func_name, size, offset, cb = std::move(cb), op, attempt,
+        s, [this, s, func_name, size, offset, cb, op, attempt,
             trace_event](size_t result, int error) mutable {
             RAWSTOR_TRACE_EVENT_MESSAGE(
                 trace_event, "result = %zu, error = %d\n", result, error
@@ -137,7 +137,7 @@ void Connection::_op(
                         attempt + 1, rawstor_opts_io_attempts()
                     );
                 }
-                cb(result, error);
+                (*cb)(result, error);
                 return;
             }
 
@@ -150,7 +150,7 @@ void Connection::_op(
                     std::strerror(error), attempt + 1,
                     rawstor_opts_io_attempts()
                 );
-                cb(result, error);
+                (*cb)(result, error);
                 return;
             }
 
@@ -165,7 +165,7 @@ void Connection::_op(
             try {
                 invalidate_session(s);
             } catch (const std::system_error& e) {
-                cb(result, e.code().value());
+                (*cb)(result, e.code().value());
                 return;
             } catch (const std::exception& e) {
                 rawstor_error(
@@ -175,7 +175,7 @@ void Connection::_op(
                     func_name, size, (intmax_t)offset, s->str().c_str(),
                     e.what(), attempt + 1, rawstor_opts_io_attempts()
                 );
-                cb(result, EIO);
+                (*cb)(result, EIO);
                 return;
             }
 
@@ -300,52 +300,56 @@ void Connection::close() {
 void Connection::pread(
     void* buf, size_t size, off_t offset, std::function<void(size_t, int)>&& cb
 ) {
-    auto op = std::make_shared<std::function<
+    auto cbptr = std::make_shared<std::function<void(size_t, int)>>(std::move(cb));
+    auto opptr = std::make_shared<std::function<
         void(std::shared_ptr<Session>, std::function<void(size_t, int)>&&)>>(
         [buf, size, offset](
             std::shared_ptr<Session> s, std::function<void(size_t, int)>&& cb
         ) { s->pread(buf, size, offset, std::move(cb)); }
     );
-    _op(__FUNCTION__, size, offset, std::move(cb), op, 0);
+    _op(__FUNCTION__, size, offset, cbptr, opptr, 0);
 }
 
 void Connection::preadv(
     iovec* iov, unsigned int niov, size_t size, off_t offset,
     std::function<void(size_t, int)>&& cb
 ) {
-    auto op = std::make_shared<std::function<
+    auto cbptr = std::make_shared<std::function<void(size_t, int)>>(std::move(cb));
+    auto opptr = std::make_shared<std::function<
         void(std::shared_ptr<Session>, std::function<void(size_t, int)>&&)>>(
         [iov, niov, size, offset](
             std::shared_ptr<Session> s, std::function<void(size_t, int)>&& cb
         ) { s->preadv(iov, niov, size, offset, std::move(cb)); }
     );
-    _op(__FUNCTION__, size, offset, std::move(cb), op, 0);
+    _op(__FUNCTION__, size, offset, cbptr, opptr, 0);
 }
 
 void Connection::pwrite(
     const void* buf, size_t size, off_t offset,
     std::function<void(size_t, int)>&& cb
 ) {
+    auto cbptr = std::make_shared<std::function<void(size_t, int)>>(std::move(cb));
     auto op = std::make_shared<std::function<
         void(std::shared_ptr<Session>, std::function<void(size_t, int)>&&)>>(
         [buf, size, offset](
             std::shared_ptr<Session> s, std::function<void(size_t, int)>&& cb
         ) { s->pwrite(buf, size, offset, std::move(cb)); }
     );
-    _op(__FUNCTION__, size, offset, std::move(cb), op, 0);
+    _op(__FUNCTION__, size, offset, cbptr, op, 0);
 }
 
 void Connection::pwritev(
     const iovec* iov, unsigned int niov, size_t size, off_t offset,
     std::function<void(size_t, int)>&& cb
 ) {
-    auto op = std::make_shared<std::function<
+    auto cbptr = std::make_shared<std::function<void(size_t, int)>>(std::move(cb));
+    auto opptr = std::make_shared<std::function<
         void(std::shared_ptr<Session>, std::function<void(size_t, int)>&&)>>(
         [iov, niov, size, offset](
             std::shared_ptr<Session> s, std::function<void(size_t, int)>&& cb
         ) { s->pwritev(iov, niov, size, offset, std::move(cb)); }
     );
-    _op(__FUNCTION__, size, offset, std::move(cb), op, 0);
+    _op(__FUNCTION__, size, offset, cbptr, opptr, 0);
 }
 
 } // namespace rawstor
