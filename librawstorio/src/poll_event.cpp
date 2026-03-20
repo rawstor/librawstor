@@ -260,29 +260,28 @@ void EventSimplexVectorRecvMultishot::dispatch() {
             }
         }
 
-        _result = iov_size;
-        if (_result || _error) {
-            try {
-                RAWSTOR_TRACE_EVENT_MESSAGE(
-                    trace_event,
-                    "sending iov: niov = %zu, size = %zu, error = %d\n", iov.size(),
-                    iov_size, _error
-                );
-                RAWSTOR_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "callback");
-                _size = _cb(iov.data(), iov.size(), _result, _error);
-                RAWSTOR_TRACE_EVENT_MESSAGE(
-                    trace_event, "%s\n", "callback success"
-                );
-            } catch (const std::exception& e) {
-                RAWSTOR_TRACE_EVENT_MESSAGE(
-                    trace_event, "callback error: %s\n", e.what()
-                );
-                throw;
-            }
+        if (!_size && !_error) {
+            break;
         }
 
-        if (!_size || _error) {
-            break;
+        _result = iov_size;
+        try {
+            RAWSTOR_TRACE_EVENT_MESSAGE(
+                trace_event,
+                "sending iov: niov = %zu, size = %zu, error = %d\n", iov.size(),
+                iov_size, _error
+            );
+            RAWSTOR_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "callback");
+            _size = _cb(iov.data(), iov.size(), _result, _error);
+            _error = 0;
+            RAWSTOR_TRACE_EVENT_MESSAGE(
+                trace_event, "%s\n", "callback success"
+            );
+        } catch (const std::exception& e) {
+            RAWSTOR_TRACE_EVENT_MESSAGE(
+                trace_event, "callback error: %s\n", e.what()
+            );
+            throw;
         }
     }
 
