@@ -323,11 +323,90 @@ TEST_F(MultishotTest, recv_fill_buf) {
 
     EXPECT_NO_THROW(_queue->cancel(event));
 
-    EXPECT_NO_THROW(_queue->wait(0));
+    EXPECT_NO_THROW(_wait_all());
     if (items.size() >= 5) {
         EXPECT_EQ(items[4].result(), (size_t)1);
         EXPECT_EQ(items[4].error(), ECANCELED);
         EXPECT_EQ(strncmp(items[4].data(), "3", 1), 0);
+    }
+}
+
+TEST_F(MultishotTest, stop_iteration) {
+    std::vector<MultishotVectorItem> items;
+    rawstor::io::Event* event = _queue->recv_multishot(
+        _fd, 4, 4, 4, 0,
+        [&items](const iovec* iov, unsigned int niov, size_t result, int error)
+            -> size_t {
+            items.emplace_back(iov, niov, result, error);
+            return 0;
+        }
+    );
+
+    {
+        const char server_buf[] = "123456789012";
+        _server.write(server_buf, sizeof(server_buf) - 1);
+        _server.wait();
+    }
+
+    EXPECT_NO_THROW(_wait_all());
+    EXPECT_EQ(items.size(), (size_t)1);
+    if (items.size() >= 1) {
+        EXPECT_EQ(items[0].result(), (size_t)4);
+        EXPECT_EQ(items[0].error(), 0);
+        EXPECT_EQ(strncmp(items[0].data(), "1234", 4), 0);
+    }
+
+    EXPECT_NO_THROW(_queue->cancel(event));
+
+    EXPECT_NO_THROW(_wait_all());
+    EXPECT_EQ(items.size(), (size_t)2);
+    if (items.size() >= 2) {
+        EXPECT_EQ(items[1].result(), (size_t)0);
+        EXPECT_EQ(items[1].error(), ECANCELED);
+    }
+}
+
+TEST_F(MultishotTest, stop_iteration_overflow) {
+    std::vector<MultishotVectorItem> items;
+    rawstor::io::Event* event = _queue->recv_multishot(
+        _fd, 4, 4, 4, 0,
+        [&items](const iovec* iov, unsigned int niov, size_t result, int error)
+            -> size_t {
+            items.emplace_back(iov, niov, result, error);
+            return 0;
+        }
+    );
+
+    {
+        const char server_buf[] = "123456789012";
+        _server.write(server_buf, sizeof(server_buf) - 1);
+        _server.wait();
+    }
+
+    EXPECT_NO_THROW(_wait_all());
+    EXPECT_EQ(items.size(), (size_t)1);
+    if (items.size() >= 1) {
+        EXPECT_EQ(items[0].result(), (size_t)4);
+        EXPECT_EQ(items[0].error(), 0);
+        EXPECT_EQ(strncmp(items[0].data(), "1234", 4), 0);
+    }
+
+    {
+        const char server_buf[] = "345678901234";
+        _server.write(server_buf, sizeof(server_buf) - 1);
+        _server.wait();
+    }
+
+    EXPECT_NO_THROW(_wait_all());
+    EXPECT_EQ(items.size(), (size_t)1);
+
+    EXPECT_NO_THROW(_queue->cancel(event));
+
+    EXPECT_NO_THROW(_wait_all());
+    EXPECT_EQ(items.size(), (size_t)2);
+    if (items.size() >= 2) {
+        EXPECT_EQ(items[1].result(), (size_t)0);
+        EXPECT_EQ(items[1].error(), ECANCELED);
     }
 }
 
