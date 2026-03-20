@@ -398,16 +398,14 @@ TEST_F(MultishotTest, stop_iteration_overflow) {
     }
 
     EXPECT_NO_THROW(_wait_all());
-    EXPECT_EQ(items.size(), (size_t)1);
-
-    EXPECT_NO_THROW(_queue->cancel(event));
-
-    EXPECT_NO_THROW(_wait_all());
     EXPECT_EQ(items.size(), (size_t)2);
     if (items.size() >= 2) {
         EXPECT_EQ(items[1].result(), (size_t)0);
-        EXPECT_EQ(items[1].error(), ECANCELED);
+        EXPECT_EQ(items[1].error(), ENOBUFS);
     }
+
+    EXPECT_THROW(_queue->cancel(event), std::system_error);
+    EXPECT_EQ(items.size(), (size_t)2);
 }
 
 } // unnamed namespace

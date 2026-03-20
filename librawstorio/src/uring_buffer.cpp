@@ -134,7 +134,7 @@ void BufferRing::operator()(size_t result, int error, unsigned int flags) {
         size_t iov_size = 0;
         iov.reserve(_pending_entries.size());
 
-        while (!_pending_entries.empty()) {
+        while (!_pending_entries.empty() && _size) {
             BufferRingEntry& e = _pending_entries.tail();
             void* e_data = static_cast<char*>(e.data()) + _pending_offset;
             size_t e_size = e.result() - _pending_offset;
@@ -158,8 +158,11 @@ void BufferRing::operator()(size_t result, int error, unsigned int flags) {
             }
         }
 
-        _size = _cb(iov.data(), iov.size(), iov_size, error);
+        if (!_size && !error) {
+            break;
+        }
 
+        _size = _cb(iov.data(), iov.size(), iov_size, error);
         error = 0;
     }
 }
