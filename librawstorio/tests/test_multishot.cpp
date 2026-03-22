@@ -332,9 +332,15 @@ TEST_F(MultishotTest, recv_fill_buf) {
 }
 
 TEST_F(MultishotTest, stop_iteration) {
+    {
+        const char server_buf[] = "dat1dat2dat3";
+        _server.write(server_buf, sizeof(server_buf) - 1);
+        _server.wait();
+    }
+
     std::vector<MultishotVectorItem> items;
     rawstor::io::Event* event = _queue->recv_multishot(
-        _fd, 4, 4, 4, 0,
+        _fd, 8, 4, 4, 0,
         [&items](const iovec* iov, unsigned int niov, size_t result, int error)
             -> size_t {
             items.emplace_back(iov, niov, result, error);
@@ -342,18 +348,12 @@ TEST_F(MultishotTest, stop_iteration) {
         }
     );
 
-    {
-        const char server_buf[] = "123456789012";
-        _server.write(server_buf, sizeof(server_buf) - 1);
-        _server.wait();
-    }
-
     EXPECT_NO_THROW(_wait_all());
     EXPECT_EQ(items.size(), (size_t)1);
     if (items.size() >= 1) {
         EXPECT_EQ(items[0].result(), (size_t)4);
         EXPECT_EQ(items[0].error(), 0);
-        EXPECT_EQ(strncmp(items[0].data(), "1234", 4), 0);
+        EXPECT_EQ(strncmp(items[0].data(), "dat1", 4), 0);
     }
 
     EXPECT_NO_THROW(_queue->cancel(event));
@@ -367,9 +367,15 @@ TEST_F(MultishotTest, stop_iteration) {
 }
 
 TEST_F(MultishotTest, stop_iteration_overflow) {
+    {
+        const char server_buf[] = "dat1dat2dat3";
+        _server.write(server_buf, sizeof(server_buf) - 1);
+        _server.wait();
+    }
+
     std::vector<MultishotVectorItem> items;
     rawstor::io::Event* event = _queue->recv_multishot(
-        _fd, 4, 4, 4, 0,
+        _fd, 8, 4, 4, 0,
         [&items](const iovec* iov, unsigned int niov, size_t result, int error)
             -> size_t {
             items.emplace_back(iov, niov, result, error);
@@ -377,22 +383,16 @@ TEST_F(MultishotTest, stop_iteration_overflow) {
         }
     );
 
-    {
-        const char server_buf[] = "123456789012";
-        _server.write(server_buf, sizeof(server_buf) - 1);
-        _server.wait();
-    }
-
     EXPECT_NO_THROW(_wait_all());
     EXPECT_EQ(items.size(), (size_t)1);
     if (items.size() >= 1) {
         EXPECT_EQ(items[0].result(), (size_t)4);
         EXPECT_EQ(items[0].error(), 0);
-        EXPECT_EQ(strncmp(items[0].data(), "1234", 4), 0);
+        EXPECT_EQ(strncmp(items[0].data(), "dat1", 4), 0);
     }
 
     {
-        const char server_buf[] = "345678901234";
+        const char server_buf[] = "dat4dat5dat6";
         _server.write(server_buf, sizeof(server_buf) - 1);
         _server.wait();
     }
