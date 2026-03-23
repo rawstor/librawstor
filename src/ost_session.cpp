@@ -732,13 +732,9 @@ void Session::_setup_recv() {
 
             if (!error) {
                 error = validate_result(fd, size, result);
-                is_head = true;
-                size = 0;
             }
 
-            if (error) {
-                context->fail_in_flight(error, &is_head, &size);
-            } else {
+            if (!error) {
                 try {
                     if (is_head) {
                         RawstorOSTFrameResponse response;
@@ -756,8 +752,14 @@ void Session::_setup_recv() {
                     }
                 } catch (const std::system_error& e) {
                     error = e.code().value();
-                    context->fail_in_flight(error, &is_head, &size);
+                } catch (const std::exception& e) {
+                    rawstor_error("%s\n", e.what());
+                    error = EPROTO;
                 }
+            }
+
+            if (error) {
+                context->fail_in_flight(error, &is_head, &size);
             }
 
             return size;
