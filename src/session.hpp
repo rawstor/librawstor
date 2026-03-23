@@ -11,7 +11,7 @@
 
 #include <functional>
 #include <memory>
-#include <sstream>
+#include <string>
 
 namespace rawstor {
 
