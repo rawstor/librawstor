@@ -131,9 +131,7 @@ public:
         _read_event(nullptr) {
         _setup_recv();
     }
-    ~Context() {
-        _teardown_recv();
-    }
+    ~Context() { _teardown_recv(); }
 
     int fd() const noexcept { return _fd; }
 
@@ -539,7 +537,11 @@ void Context::_setup_recv() {
         [this, fd = _fd, cid = 0, is_head = true,
          size = sizeof(RawstorOSTFrameResponse), trace_event](
             const iovec* iov, unsigned int niov, size_t result, int error
-        ) mutable {
+        ) mutable -> size_t {
+            if (error == ECANCELED) {
+                return 0;
+            }
+
             RAWSTOR_TRACE_EVENT_MESSAGE(
                 trace_event, "%zu of %zu, error = %d\n", result, size, error
             );
