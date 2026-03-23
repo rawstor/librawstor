@@ -34,6 +34,7 @@ private:
     int _connect();
     void _set_object(RawstorObject* object);
     void _setup_recv();
+    void _teardown_recv();
 
 public:
     Session(rawstor::io::Queue& queue, const URI& uri, unsigned int depth);

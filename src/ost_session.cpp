@@ -565,13 +565,7 @@ Session::Session(
 }
 
 Session::~Session() {
-    if (_read_event != nullptr) {
-        try {
-            _queue.cancel(_read_event);
-        } catch (const std::exception& e) {
-            rawstor_warning("Failed to cancel event: %s\n", e.what());
-        }
-    }
+    _teardown_recv();
     _context->detach();
 }
 
@@ -721,7 +715,7 @@ void Session::_setup_recv() {
     TraceEvent trace_event = RAWSTOR_TRACE_EVENT('m', "%s\n", "multishot recv");
     _read_event = _queue.recv_multishot(
         fd(), 1u << 17, 64 * 4, sizeof(RawstorOSTFrameResponse), 0,
-        [fd = fd(), cid = 0, is_head = true,
+        [this, fd = fd(), cid = 0, is_head = true,
          size = sizeof(RawstorOSTFrameResponse), context = _context,
          trace_event](
             const iovec* iov, unsigned int niov, size_t result, int error
@@ -760,11 +754,23 @@ void Session::_setup_recv() {
 
             if (error) {
                 context->fail_in_flight(error, &is_head, &size);
+                _teardown_recv();
             }
 
             return size;
         }
     );
+}
+
+void Session::_teardown_recv() {
+    if (_read_event != nullptr) {
+        try {
+            _queue.cancel(_read_event);
+        } catch (const std::exception& e) {
+            rawstor_warning("Failed to cancel event: %s\n", e.what());
+        }
+        _read_event = nullptr;
+    }
 }
 
 void Session::create(
