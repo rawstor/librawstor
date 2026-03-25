@@ -103,14 +103,13 @@ int validate_hash(int fd, uint64_t hash, uint64_t expected) noexcept {
 namespace rawstor {
 namespace ost {
 
-class Context final {
+class Context final : public std::enable_shared_from_this<Context> {
 private:
     rawstor::io::Queue& _queue;
     int _fd;
     std::unordered_map<uint16_t, std::shared_ptr<SessionOp>> _ops;
     RawstorIOEvent* _read_event;
 
-    void _setup_recv();
     void _teardown_recv() noexcept;
     void _fail_in_flight(int error, bool* next_head, size_t* next_size);
 
@@ -128,10 +127,10 @@ public:
     Context(rawstor::io::Queue& queue, int fd) :
         _queue(queue),
         _fd(fd),
-        _read_event(nullptr) {
-        _setup_recv();
-    }
+        _read_event(nullptr) {}
     ~Context() { _teardown_recv(); }
+
+    void setup_recv();
 
     int fd() const noexcept { return _fd; }
 
@@ -528,62 +527,6 @@ public:
 namespace rawstor {
 namespace ost {
 
-void Context::_setup_recv() {
-    assert(_read_event == nullptr);
-
-    TraceEvent trace_event = RAWSTOR_TRACE_EVENT('m', "%s\n", "multishot recv");
-    _read_event = _queue.recv_multishot(
-        _fd, 1u << 17, 64 * 4, sizeof(RawstorOSTFrameResponse), 0,
-        [this, fd = _fd, cid = 0, is_head = true,
-         size = sizeof(RawstorOSTFrameResponse), trace_event](
-            const iovec* iov, unsigned int niov, size_t result, int error
-        ) mutable -> size_t {
-            if (error == ECANCELED) {
-                return 0;
-            }
-
-            RAWSTOR_TRACE_EVENT_MESSAGE(
-                trace_event, "%zu of %zu, error = %d\n", result, size, error
-            );
-
-            if (!error) {
-                error = validate_result(fd, size, result);
-            }
-
-            if (!error) {
-                try {
-                    if (is_head) {
-                        RawstorOSTFrameResponse response;
-                        rawstor_iovec_to_buf(
-                            iov, niov, 0, &response, sizeof(response)
-                        );
-                        cid = response.cid;
-                        SessionOp& op = _find_op(cid);
-                        op.response_head_cb(&response, 0, &is_head, &size);
-                    } else {
-                        SessionOp& op = _find_op(cid);
-                        op.response_body_cb(iov, niov, result, error);
-                        is_head = true;
-                        size = sizeof(RawstorOSTFrameResponse);
-                    }
-                } catch (const std::system_error& e) {
-                    error = e.code().value();
-                } catch (const std::exception& e) {
-                    rawstor_error("%s\n", e.what());
-                    error = EPROTO;
-                }
-            }
-
-            if (error) {
-                _fail_in_flight(error, &is_head, &size);
-                _teardown_recv();
-            }
-
-            return size;
-        }
-    );
-}
-
 void Context::_teardown_recv() noexcept {
     if (_read_event != nullptr) {
         try {
@@ -608,6 +551,62 @@ void Context::_fail_in_flight(int error, bool* next_head, size_t* next_size) {
     }
     *next_head = true;
     *next_size = 0;
+}
+
+void Context::setup_recv() {
+    assert(_read_event == nullptr);
+
+    TraceEvent trace_event = RAWSTOR_TRACE_EVENT('m', "%s\n", "multishot recv");
+    _read_event = _queue.recv_multishot(
+        _fd, 1u << 17, 64 * 4, sizeof(RawstorOSTFrameResponse), 0,
+        [context = shared_from_this(), fd = _fd, cid = 0, is_head = true,
+         size = sizeof(RawstorOSTFrameResponse), trace_event](
+            const iovec* iov, unsigned int niov, size_t result, int error
+        ) mutable -> size_t {
+            if (error == ECANCELED) {
+                return 0;
+            }
+
+            RAWSTOR_TRACE_EVENT_MESSAGE(
+                trace_event, "%zu of %zu, error = %d\n", result, size, error
+            );
+
+            if (!error) {
+                error = validate_result(fd, size, result);
+            }
+
+            if (!error) {
+                try {
+                    if (is_head) {
+                        RawstorOSTFrameResponse response;
+                        rawstor_iovec_to_buf(
+                            iov, niov, 0, &response, sizeof(response)
+                        );
+                        cid = response.cid;
+                        SessionOp& op = context->_find_op(cid);
+                        op.response_head_cb(&response, 0, &is_head, &size);
+                    } else {
+                        SessionOp& op = context->_find_op(cid);
+                        op.response_body_cb(iov, niov, result, error);
+                        is_head = true;
+                        size = sizeof(RawstorOSTFrameResponse);
+                    }
+                } catch (const std::system_error& e) {
+                    error = e.code().value();
+                } catch (const std::exception& e) {
+                    rawstor_error("%s\n", e.what());
+                    error = EPROTO;
+                }
+            }
+
+            if (error) {
+                context->_fail_in_flight(error, &is_head, &size);
+                context->_teardown_recv();
+            }
+
+            return size;
+        }
+    );
 }
 
 void Context::register_op(const std::shared_ptr<SessionOp>& op) {
@@ -799,6 +798,7 @@ void Session::spec(
 void Session::set_object(RawstorObject* object) {
     _set_object(object);
     _context = std::make_shared<Context>(_queue, fd());
+    _context->setup_recv();
 }
 
 void Session::pread(
