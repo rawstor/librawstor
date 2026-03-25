@@ -81,6 +81,7 @@ int rawstor_initialize(const RawstorOpts* opts) noexcept {
 void rawstor_terminate() noexcept {
     try {
         delete rawstor::io_queue;
+        rawstor::io_queue = nullptr;
         rawstor_opts_terminate();
         rawstor_logging_terminate();
     } catch (const std::exception& e) {
