@@ -444,13 +444,8 @@ public:
 
         _dispatch(response != nullptr ? response->res : 0, error);
 
-        if (!error) {
-            *next_head = true;
-            *next_size = sizeof(RawstorOSTFrameResponse);
-        } else {
-            *next_head = true;
-            *next_size = 0;
-        }
+        *next_head = true;
+        *next_size = error ? 0 : sizeof(RawstorOSTFrameResponse);
     }
 };
 
@@ -511,13 +506,8 @@ public:
 
         _dispatch(response != nullptr ? response->res : 0, error);
 
-        if (!error) {
-            *next_head = true;
-            *next_size = sizeof(RawstorOSTFrameResponse);
-        } else {
-            *next_head = true;
-            *next_size = 0;
-        }
+        *next_head = true;
+        *next_size = error ? 0 : sizeof(RawstorOSTFrameResponse);
     }
 };
 
