@@ -244,7 +244,8 @@ static void command_testio_usage(void) {
         "\n"
         "command options:\n"
         "  -b, --block-size BLOCK_SIZE\n"
-        "                        Block size in bytes\n"
+        "                        Block size with unit suffix (B, K, M, G, T"
+        ").\n"
         "  -c, --count COUNT\n   How many blocks are we going to be\n"
         "                        reading/writing in bytes\n"
         "  -d, --io-depth IO_DEPTH\n"
@@ -322,8 +323,12 @@ static int command_testio(int argc, char** argv) {
     }
 
     size_t block_size = 0;
-    if (sscanf(block_size_arg, "%zu", &block_size) != 1) {
-        fprintf(stderr, "block-size argument must be unsigned integer\n");
+    int res = rawstor_cli_size_to_bytes(block_size_arg, &block_size);
+    if (res < 0) {
+        fprintf(
+            stderr, "Failed to parse units: %s\nError: %s\n", block_size_arg,
+            strerror(-res)
+        );
         return EXIT_FAILURE;
     }
 
