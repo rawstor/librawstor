@@ -236,7 +236,7 @@ void EventSimplexVectorRecvMultishot::dispatch() {
         size_t iov_size = 0;
         iov.reserve(_pending_entries.size());
 
-        while (!_pending_entries.empty()) {
+        while (!_pending_entries.empty() && _size) {
             EventSimplexVectorRecvMultishotEntry& e = _pending_entries.tail();
             void* e_data = static_cast<char*>(e.data()) + _pending_offset;
             size_t e_size = e.result() - _pending_offset;
@@ -260,6 +260,10 @@ void EventSimplexVectorRecvMultishot::dispatch() {
             }
         }
 
+        if (!_size && !_error) {
+            break;
+        }
+
         _result = iov_size;
         try {
             RAWSTOR_TRACE_EVENT_MESSAGE(
@@ -269,6 +273,7 @@ void EventSimplexVectorRecvMultishot::dispatch() {
             );
             RAWSTOR_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "callback");
             _size = _cb(iov.data(), iov.size(), _result, _error);
+            _error = 0;
             RAWSTOR_TRACE_EVENT_MESSAGE(
                 trace_event, "%s\n", "callback success"
             );
@@ -277,10 +282,6 @@ void EventSimplexVectorRecvMultishot::dispatch() {
                 trace_event, "callback error: %s\n", e.what()
             );
             throw;
-        }
-
-        if (_error) {
-            break;
         }
     }
 

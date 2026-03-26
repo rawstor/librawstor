@@ -26,14 +26,12 @@ class Context;
 
 class Session final : public rawstor::Session {
 private:
-    RawstorIOEvent* _read_event;
     uint16_t _cid_counter;
 
     std::shared_ptr<Context> _context;
 
     int _connect();
     void _set_object(RawstorObject* object);
-    void _setup_recv();
 
 public:
     Session(rawstor::io::Queue& queue, const URI& uri, unsigned int depth);
