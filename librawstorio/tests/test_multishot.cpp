@@ -392,7 +392,7 @@ TEST_F(MultishotTest, stop_iteration_overflow) {
     }
 
     {
-        const char server_buf[] = "dat4dat5dat6";
+        const char server_buf[] = "dat4dat5dat6dat7dat8dat9";
         _server.write(server_buf, sizeof(server_buf) - 1);
         _server.wait();
     }
