@@ -405,6 +405,7 @@ TEST_F(MultishotTest, stop_iteration_overflow) {
     }
 
     EXPECT_THROW(_queue->cancel(event), std::system_error);
+    EXPECT_NO_THROW(_wait_all());
     EXPECT_EQ(items.size(), (size_t)2);
 }
 
