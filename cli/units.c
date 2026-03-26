@@ -50,7 +50,7 @@ int rawstor_cli_size_to_bytes(const char* s, size_t* out) {
 int rawstor_cli_bytes_to_size(size_t value, char* buf, size_t size) {
     const char units[] = "BKMGT";
     size_t i;
-    for (i = 0; i < sizeof(units) - 1; ++i) {
+    for (i = 0; i < sizeof(units) - 2; ++i) {
         if (value < 1024 || (value & 1023) != 0) {
             break;
         }
