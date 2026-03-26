@@ -1,5 +1,7 @@
 #include "show.h"
 
+#include "units.h"
+
 #include <rawstor.h>
 
 #include <assert.h>
@@ -16,8 +18,11 @@ int rawstor_cli_show(const char* uris) {
         return EXIT_FAILURE;
     }
 
+    char buf[256];
+    rawstor_cli_bytes_to_size(spec.size, buf, sizeof(buf));
+
     printf("uri: %s\n", uris);
-    printf("size: %zu Gb\n", spec.size >> 30);
+    printf("size: %s\n", buf);
 
     return EXIT_SUCCESS;
 }
