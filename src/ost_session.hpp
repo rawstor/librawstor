@@ -35,6 +35,7 @@ private:
 
 public:
     Session(rawstor::io::Queue& queue, const URI& uri, unsigned int depth);
+    ~Session();
 
     void create(
         const RawstorUUID& id, const RawstorObjectSpec& sp,

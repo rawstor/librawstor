@@ -110,7 +110,6 @@ private:
     std::unordered_map<uint16_t, std::shared_ptr<SessionOp>> _ops;
     RawstorIOEvent* _read_event;
 
-    void _teardown_recv() noexcept;
     void _fail_in_flight(int error, bool* next_head, size_t* next_size);
 
     SessionOp& _find_op(uint16_t cid) {
@@ -128,9 +127,9 @@ public:
         _queue(queue),
         _fd(fd),
         _read_event(nullptr) {}
-    ~Context() { _teardown_recv(); }
 
     void setup_recv();
+    void teardown_recv() noexcept;
 
     int fd() const noexcept { return _fd; }
 
@@ -527,17 +526,6 @@ public:
 namespace rawstor {
 namespace ost {
 
-void Context::_teardown_recv() noexcept {
-    if (_read_event != nullptr) {
-        try {
-            _queue.cancel(_read_event);
-        } catch (const std::exception& e) {
-            rawstor_warning("Failed to cancel event: %s\n", e.what());
-        }
-        _read_event = nullptr;
-    }
-}
-
 void Context::_fail_in_flight(int error, bool* next_head, size_t* next_size) {
     std::vector<std::shared_ptr<SessionOp>> in_flight_ops;
     in_flight_ops.reserve(_ops.size());
@@ -601,12 +589,22 @@ void Context::setup_recv() {
 
             if (error) {
                 context->_fail_in_flight(error, &is_head, &size);
-                context->_teardown_recv();
             }
 
             return size;
         }
     );
+}
+
+void Context::teardown_recv() noexcept {
+    if (_read_event != nullptr) {
+        try {
+            _queue.cancel(_read_event);
+        } catch (const std::exception& e) {
+            rawstor_warning("Failed to cancel event: %s\n", e.what());
+        }
+        _read_event = nullptr;
+    }
 }
 
 void Context::register_op(const std::shared_ptr<SessionOp>& op) {
@@ -620,6 +618,12 @@ Session::Session(
     _cid_counter(0) {
     int fd = _connect();
     set_fd(fd);
+}
+
+Session::~Session() {
+    if (_context.get() != nullptr) {
+        _context->teardown_recv();
+    }
 }
 
 int Session::_connect() {
