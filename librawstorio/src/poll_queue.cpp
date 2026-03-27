@@ -227,7 +227,8 @@ rawstor::io::Event* Queue::recvmsg(
     std::function<void(size_t, int)>&& cb
 ) {
     TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
-        '|', "fd = %d, niov = %u, flags = %u\n", fd, msg->msg_iovlen, flags
+        '|', "fd = %d, niov = %u, flags = %u\n", fd,
+        (unsigned int)msg->msg_iovlen, flags
     );
     Session& s = _get_session(fd);
 
@@ -298,7 +299,7 @@ rawstor::io::Event* Queue::pwritev(
     std::function<void(size_t, int)>&& cb
 ) {
     TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
-        '|', "fd = %d, niov = %u, offset = %jd\n", fd, niov, offset
+        '|', "fd = %d, niov = %u, offset = %jd\n", fd, niov, (intmax_t)offset
     );
     Session& s = _get_session(fd);
 
@@ -335,7 +336,8 @@ rawstor::io::Event* Queue::sendmsg(
     std::function<void(size_t, int)>&& cb
 ) {
     TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
-        '|', "fd = %d, niov = %u, flags = %u\n", fd, msg->msg_iovlen, flags
+        '|', "fd = %d, niov = %u, flags = %u\n", fd,
+        (unsigned int)msg->msg_iovlen, flags
     );
     Session& s = _get_session(fd);
 
