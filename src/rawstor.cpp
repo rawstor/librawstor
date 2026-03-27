@@ -217,6 +217,7 @@ err_logging_initialize:
 
 void rawstor_terminate() {
     delete rawstor::io_queue;
+    rawstor::io_queue = nullptr;
     rawstor_opts_terminate();
     rawstor_logging_terminate();
 }
