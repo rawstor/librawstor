@@ -29,7 +29,7 @@ private:
 
     void
     _op(const char* func_name, size_t size, off_t offset,
-        std::function<void(size_t, int)>&& cb,
+        const std::shared_ptr<std::function<void(size_t, int)>>& cb,
         const std::shared_ptr<std::function<void(
             std::shared_ptr<Session>, std::function<void(size_t, int)>&&
         )>>& op,
