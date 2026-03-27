@@ -549,15 +549,17 @@ void Context::register_op(const std::shared_ptr<SessionOp>& op) {
 }
 
 void Context::fail_in_flight(int error) {
-    std::vector<std::shared_ptr<SessionOp>> in_flight_ops;
-    in_flight_ops.reserve(_ops.size());
-    for (const auto& i : _ops) {
-        if (i.second->in_flight()) {
-            in_flight_ops.push_back(i.second);
+    if (!_ops.empty()) {
+        std::vector<std::shared_ptr<SessionOp>> in_flight_ops;
+        in_flight_ops.reserve(_ops.size());
+        for (const auto& i : _ops) {
+            if (i.second->in_flight()) {
+                in_flight_ops.push_back(i.second);
+            }
         }
-    }
-    for (auto i : in_flight_ops) {
-        i->response_head_cb(nullptr, error);
+        for (const auto& i : in_flight_ops) {
+            i->response_head_cb(nullptr, error);
+        }
     }
 }
 
