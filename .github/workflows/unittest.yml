@@ -24,7 +24,7 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y libxxhash-dev libgtest-dev ${{ matrix.packages }}
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
     - name: autogen
       run: ./autogen.sh
     - name: configure
@@ -49,7 +49,7 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y libxxhash-dev liburing-dev
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
       with:
         path: librawstor
     - name: install librawstor
@@ -61,7 +61,7 @@ jobs:
         make -j$(nproc)
         sudo make install
         popd
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
       with:
         repository: rawstor/rawstor_ost
         path: rawstor_ost
