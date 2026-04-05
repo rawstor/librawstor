@@ -1,12 +1,16 @@
 #ifndef RAWSTORIO_TESTS_SERVER_HPP
 #define RAWSTORIO_TESTS_SERVER_HPP
 
+#include "socket.hpp"
+
+#include <sys/socket.h>
+
 #include <condition_variable>
 #include <deque>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <thread>
-#include <vector>
 
 #include <cstddef>
 
@@ -18,8 +22,7 @@ class Command;
 
 class Server {
 private:
-    std::vector<char> _name;
-    int _fd;
+    Socket _socket;
     int _client_fd;
 
     std::unique_ptr<std::thread> _thread;
@@ -37,6 +40,7 @@ private:
     void _do_close(Command& command);
     void _do_read(Command& command);
     void _do_write(Command& command);
+    void _do_connect(Command& command);
 
     void _accept();
     void _stop();
@@ -45,11 +49,12 @@ public:
     Server();
     ~Server();
 
-    inline const char* name() const noexcept { return _name.data(); }
-
     void close();
     void read(void* buf, size_t size);
     void write(const void* buf, size_t size);
+    void connect(int fd, const sockaddr* addr, socklen_t size);
+
+    inline const Socket& socket() const noexcept { return _socket; }
 
     void wait();
 };
