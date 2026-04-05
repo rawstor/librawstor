@@ -68,6 +68,7 @@ public:
     virtual bool is_multiplex() const noexcept = 0;
     virtual bool is_multishot() const noexcept { return false; }
     virtual bool is_poll() const noexcept = 0;
+    virtual bool is_accept() const noexcept = 0;
     virtual bool is_read() const noexcept = 0;
     virtual bool is_write() const noexcept = 0;
 
@@ -191,6 +192,7 @@ public:
 
     bool is_completed() const noexcept override final { return true; }
     bool is_poll() const noexcept override final { return true; }
+    bool is_accept() const noexcept override final { return false; }
     bool is_read() const noexcept override final { return false; }
     bool is_write() const noexcept override final { return false; }
 
@@ -231,6 +233,52 @@ public:
     bool is_multishot() const noexcept override final { return true; }
 };
 
+class EventSimplexAccept : public EventSimplex {
+private:
+    sockaddr* _addr;
+    socklen_t* _addrlen;
+
+public:
+    EventSimplexAccept(
+        Queue& q, int fd, sockaddr* addr, socklen_t* addrlen,
+        const rawstor::TraceEvent& trace_event
+    ) :
+        EventSimplex(q, fd, trace_event),
+        _addr(addr),
+        _addrlen(addrlen) {}
+
+    virtual ~EventSimplexAccept() override = default;
+
+    inline sockaddr* addr() const noexcept { return _addr; }
+    inline socklen_t* addrlen() const noexcept { return _addrlen; }
+
+    inline void set_result(ssize_t result) noexcept { _result = result; }
+
+    bool is_completed() const noexcept override final { return true; }
+    bool is_poll() const noexcept override final { return false; }
+    bool is_accept() const noexcept override final { return true; }
+    bool is_read() const noexcept override final { return false; }
+    bool is_write() const noexcept override final { return false; }
+
+    ssize_t process() noexcept override final;
+};
+
+class EventSimplexAcceptOneshot final : public EventSimplexAccept {
+private:
+    std::function<void(size_t, int)> _cb;
+
+public:
+    EventSimplexAcceptOneshot(
+        Queue& q, int fd, sockaddr* addr, socklen_t* addrlen,
+        const rawstor::TraceEvent& trace_event,
+        std::function<void(size_t, int)>&& cb
+    ) :
+        EventSimplexAccept(q, fd, addr, addrlen, trace_event),
+        _cb(std::move(cb)) {}
+
+    void dispatch() override final;
+};
+
 class EventSimplexScalarRead final : public EventSimplex {
 private:
     void* _buf;
@@ -252,6 +300,7 @@ public:
 
     bool is_completed() const noexcept override final { return true; }
     bool is_poll() const noexcept override final { return false; }
+    bool is_accept() const noexcept override final { return false; }
     bool is_read() const noexcept override final { return true; }
     bool is_write() const noexcept override final { return false; }
 
@@ -279,6 +328,7 @@ public:
 
     bool is_completed() const noexcept override final { return true; }
     bool is_poll() const noexcept override final { return false; }
+    bool is_accept() const noexcept override final { return false; }
     bool is_read() const noexcept override final { return true; }
     bool is_write() const noexcept override final { return false; }
 
@@ -308,6 +358,7 @@ public:
 
     bool is_completed() const noexcept override final { return true; }
     bool is_poll() const noexcept override final { return false; }
+    bool is_accept() const noexcept override final { return false; }
     bool is_read() const noexcept override final { return true; }
     bool is_write() const noexcept override final { return false; }
 
@@ -337,6 +388,7 @@ public:
 
     bool is_completed() const noexcept override final { return true; }
     bool is_poll() const noexcept override final { return false; }
+    bool is_accept() const noexcept override final { return false; }
     bool is_read() const noexcept override final { return true; }
     bool is_write() const noexcept override final { return false; }
 
@@ -366,6 +418,7 @@ public:
 
     bool is_completed() const noexcept override final { return true; }
     bool is_poll() const noexcept override final { return false; }
+    bool is_accept() const noexcept override final { return false; }
     bool is_read() const noexcept override final { return true; }
     bool is_write() const noexcept override final { return false; }
 
@@ -444,6 +497,7 @@ public:
     bool is_completed() const noexcept override final;
     bool is_multishot() const noexcept override final { return true; }
     bool is_poll() const noexcept override final { return false; }
+    bool is_accept() const noexcept override final { return false; }
     bool is_read() const noexcept override final { return true; }
     bool is_write() const noexcept override final { return false; }
 
@@ -471,6 +525,7 @@ public:
 
     bool is_completed() const noexcept override final { return true; }
     bool is_poll() const noexcept override final { return false; }
+    bool is_accept() const noexcept override final { return false; }
     bool is_read() const noexcept override final { return true; }
     bool is_write() const noexcept override final { return false; }
 
@@ -487,6 +542,7 @@ public:
         EventMultiplexScalar(q, fd, buf, size, trace_event, std::move(cb)) {}
 
     bool is_poll() const noexcept override final { return false; }
+    bool is_accept() const noexcept override final { return false; }
     bool is_read() const noexcept override final { return false; }
     bool is_write() const noexcept override final { return true; }
 
@@ -503,6 +559,7 @@ public:
         EventMultiplexVector(q, fd, iov, niov, trace_event, std::move(cb)) {}
 
     bool is_poll() const noexcept override final { return false; }
+    bool is_accept() const noexcept override final { return false; }
     bool is_read() const noexcept override final { return false; }
     bool is_write() const noexcept override final { return true; }
 
@@ -532,6 +589,7 @@ public:
 
     bool is_completed() const noexcept override final { return true; }
     bool is_poll() const noexcept override final { return false; }
+    bool is_accept() const noexcept override final { return false; }
     bool is_read() const noexcept override final { return false; }
     bool is_write() const noexcept override final { return true; }
 
@@ -561,6 +619,7 @@ public:
 
     bool is_completed() const noexcept override final { return true; }
     bool is_poll() const noexcept override final { return false; }
+    bool is_accept() const noexcept override final { return false; }
     bool is_read() const noexcept override final { return false; }
     bool is_write() const noexcept override final { return true; }
 
@@ -590,6 +649,7 @@ public:
 
     bool is_completed() const noexcept override final { return true; }
     bool is_poll() const noexcept override final { return false; }
+    bool is_accept() const noexcept override final { return false; }
     bool is_read() const noexcept override final { return false; }
     bool is_write() const noexcept override final { return true; }
 
@@ -617,6 +677,7 @@ public:
 
     bool is_completed() const noexcept override final { return true; }
     bool is_poll() const noexcept override final { return false; }
+    bool is_accept() const noexcept override final { return false; }
     bool is_read() const noexcept override final { return false; }
     bool is_write() const noexcept override final { return true; }
 

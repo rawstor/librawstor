@@ -19,10 +19,15 @@ class Session final {
 private:
     int _fd;
     std::list<std::unique_ptr<EventSimplexPoll>> _poll_sqes;
+    rawstor::RingBuf<EventSimplexAccept> _accept_sqes;
     rawstor::RingBuf<EventSimplex> _read_sqes;
     rawstor::RingBuf<Event> _write_sqes;
 
     void _process_poll(rawstor::RingBuf<Event>& cqes, short revents);
+
+    void _process_simplex_accept(
+        std::unique_ptr<EventSimplexAccept> event, rawstor::RingBuf<Event>& cqes
+    );
 
     void _process_simplex_read(
         std::unique_ptr<EventSimplex> event, rawstor::RingBuf<Event>& cqes
@@ -36,6 +41,8 @@ private:
         std::vector<std::unique_ptr<EventMultiplex>>& events, unsigned int niov,
         rawstor::RingBuf<Event>& cqes
     );
+
+    void _process_accept(rawstor::RingBuf<Event>& cqes);
 
     void _process_read(rawstor::RingBuf<Event>& cqes);
 
@@ -53,10 +60,13 @@ public:
     short events() const noexcept;
 
     inline bool empty() const noexcept {
-        return _poll_sqes.empty() && _read_sqes.empty() && _write_sqes.empty();
+        return _poll_sqes.empty() && _accept_sqes.empty() &&
+               _read_sqes.empty() && _write_sqes.empty();
     }
 
     void poll(std::unique_ptr<EventSimplexPoll> event);
+
+    void accept(std::unique_ptr<EventSimplexAccept> event);
 
     void read(std::unique_ptr<EventSimplex> event);
 

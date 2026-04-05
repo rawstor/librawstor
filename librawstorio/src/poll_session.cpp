@@ -21,6 +21,7 @@ namespace poll {
 
 Session::Session(int fd, unsigned int depth) :
     _fd(fd),
+    _accept_sqes(depth),
     _read_sqes(depth),
     _write_sqes(depth) {
 }
@@ -37,6 +38,17 @@ void Session::_process_poll(rawstor::RingBuf<Event>& cqes, short revents) {
         } else {
             ++it;
         }
+    }
+}
+
+void Session::_process_simplex_accept(
+    std::unique_ptr<EventSimplexAccept> event, rawstor::RingBuf<Event>& cqes
+) {
+    event->process();
+    if (event->is_completed() || event->error()) {
+        cqes.push(std::move(event));
+    } else {
+        _accept_sqes.push(std::move(event));
     }
 }
 
@@ -122,6 +134,15 @@ void Session::_process_multiplex_write(
     events.clear();
 }
 
+void Session::_process_accept(rawstor::RingBuf<Event>& cqes) {
+    if (_accept_sqes.empty()) {
+        return;
+    }
+
+    std::unique_ptr<EventSimplexAccept> event = _accept_sqes.pop();
+    _process_simplex_accept(std::move(event), cqes);
+}
+
 void Session::_process_read(rawstor::RingBuf<Event>& cqes) {
     if (_read_sqes.empty()) {
         return;
@@ -178,6 +199,9 @@ short Session::events() const noexcept {
     for (const auto& it : _poll_sqes) {
         ret |= it->mask();
     }
+    if (!_accept_sqes.empty()) {
+        ret |= POLLIN;
+    }
     if (!_read_sqes.empty()) {
         ret |= POLLIN;
     }
@@ -189,6 +213,10 @@ short Session::events() const noexcept {
 
 void Session::poll(std::unique_ptr<EventSimplexPoll> event) {
     _poll_sqes.push_back(std::move(event));
+}
+
+void Session::accept(std::unique_ptr<EventSimplexAccept> event) {
+    _accept_sqes.push(std::move(event));
 }
 
 void Session::read(std::unique_ptr<EventSimplex> event) {
@@ -253,6 +281,7 @@ void Session::process(
 ) {
     _process_poll(cqes, revents);
     if (revents & (POLLIN | POLLERR | POLLHUP | POLLNVAL)) {
+        _process_accept(cqes);
         _process_read(cqes);
     }
     if (revents & (POLLOUT | POLLERR | POLLHUP | POLLNVAL)) {
