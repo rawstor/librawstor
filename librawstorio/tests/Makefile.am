@@ -15,8 +15,11 @@ AM_LDFLAGS = $(ASAN_LDFLAGS) \
 
 test_all_SOURCES = main.cpp \
                    fixture.hpp \
+                   fixture.cpp \
                    server.hpp \
                    server.cpp \
+                   socket.hpp \
+                   socket.cpp \
                    test_basics.cpp \
                    test_cancel.cpp \
                    test_multiplex.cpp \

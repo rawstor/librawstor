@@ -30,26 +30,24 @@ enum CommandType {
     CT_READ,
     CT_STOP,
     CT_WRITE,
+    CT_CONNECT,
 };
 
 class Command {
 public:
-    virtual ~Command() {}
+    virtual ~Command() = default;
     virtual CommandType type() const noexcept = 0;
 };
 
 class CommandAccept final : public Command {
 public:
     CommandAccept() {}
-    ~CommandAccept() override {}
 
     CommandType type() const noexcept override { return CT_ACCEPT; }
 };
 
 class CommandClose final : public Command {
 public:
-    ~CommandClose() override {}
-
     CommandType type() const noexcept override { return CT_CLOSE; }
 };
 
@@ -60,7 +58,6 @@ private:
 
 public:
     CommandRead(void* buf, size_t size) : _buf(buf), _size(size) {}
-    ~CommandRead() override {}
 
     CommandType type() const noexcept override { return CT_READ; }
     void* buf() noexcept { return _buf; }
@@ -69,8 +66,6 @@ public:
 
 class CommandStop final : public Command {
 public:
-    ~CommandStop() override {}
-
     CommandType type() const noexcept override { return CT_STOP; }
 };
 
@@ -81,55 +76,36 @@ private:
 
 public:
     CommandWrite(const void* buf, size_t size) : _buf(buf), _size(size) {}
-    ~CommandWrite() override {}
 
     CommandType type() const noexcept override { return CT_WRITE; }
     const void* buf() noexcept { return _buf; }
     size_t size() const noexcept { return _size; }
 };
 
-Server::Server() : _fd(-1), _client_fd(-1), _thread(nullptr) {
-    {
-        const char tpl[] = "/tmp/rawstor_io_tests_server.sock.XXXXXX";
-        _name.reserve(sizeof(tpl));
-        std::copy(tpl, tpl + sizeof(tpl), std::back_inserter(_name));
-    }
+class CommandConnect final : public Command {
+private:
+    int _fd;
+    const sockaddr* _addr;
+    socklen_t _size;
 
-    if (mkstemp(_name.data()) == -1) {
-        RAWSTOR_THROW_ERRNO();
-    }
+public:
+    CommandConnect(int fd, const sockaddr* addr, socklen_t size) :
+        _fd(fd),
+        _addr(addr),
+        _size(size) {}
 
-    unlink(_name.data());
+    CommandType type() const noexcept override { return CT_CONNECT; }
+    int fd() const noexcept { return _fd; }
+    const sockaddr* addr() noexcept { return _addr; }
+    socklen_t size() const noexcept { return _size; }
+};
 
-    _fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (_fd == -1) {
-        RAWSTOR_THROW_ERRNO();
-    }
+Server::Server() : _client_fd(-1), _thread(nullptr) {
+    _socket.listen();
 
-    sockaddr_un addr = {};
-    addr.sun_family = AF_UNIX;
-    if (snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", _name.data()) <
-        0) {
-        RAWSTOR_THROW_ERRNO();
-    }
+    _thread = std::make_unique<std::thread>(Server::_main, this);
 
-    try {
-        if (bind(_fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == -1) {
-            RAWSTOR_THROW_ERRNO();
-        }
-
-        if (listen(_fd, 1)) {
-            RAWSTOR_THROW_ERRNO();
-        }
-
-        _thread = std::make_unique<std::thread>(Server::_main, this);
-
-        _accept();
-    } catch (...) {
-        ::close(_fd);
-        unlink(_name.data());
-        throw;
-    }
+    _accept();
 }
 
 Server::~Server() {
@@ -141,12 +117,6 @@ Server::~Server() {
     if (_client_fd != -1) {
         ::close(_client_fd);
     }
-
-    if (_fd != -1) {
-        ::close(_fd);
-    }
-
-    unlink(_name.data());
 }
 
 void Server::_main(Server* server) {
@@ -179,6 +149,9 @@ void Server::_loop() {
         case CT_WRITE:
             _do_write(*command.get());
             break;
+        case CT_CONNECT:
+            _do_connect(*command.get());
+            break;
         }
         _pop_condition.notify_one();
     }
@@ -187,7 +160,7 @@ void Server::_loop() {
 void Server::_do_accept(Command&) {
     assert(_client_fd == -1);
 
-    int fd = ::accept(_fd, NULL, NULL);
+    int fd = ::accept(_socket.fd(), nullptr, nullptr);
     if (fd == -1) {
         RAWSTOR_THROW_ERRNO();
     }
@@ -220,6 +193,16 @@ void Server::_do_write(Command& command) {
     }
 }
 
+void Server::_do_connect(Command& command) {
+    CommandConnect& command_connect = dynamic_cast<CommandConnect&>(command);
+    int res = ::connect(
+        command_connect.fd(), command_connect.addr(), command_connect.size()
+    );
+    if (res == -1) {
+        RAWSTOR_THROW_ERRNO();
+    }
+}
+
 void Server::_accept() {
     std::unique_lock lock(_mutex);
     _commands.push_back(std::make_shared<CommandAccept>());
@@ -247,6 +230,12 @@ void Server::read(void* buf, size_t size) {
 void Server::write(const void* buf, size_t size) {
     std::unique_lock lock(_mutex);
     _commands.push_back(std::make_shared<CommandWrite>(buf, size));
+    _push_condition.notify_one();
+}
+
+void Server::connect(int fd, const sockaddr* addr, socklen_t size) {
+    std::unique_lock lock(_mutex);
+    _commands.push_back(std::make_shared<CommandConnect>(fd, addr, size));
     _push_condition.notify_one();
 }
 
