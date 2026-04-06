@@ -125,9 +125,8 @@ rawstor::io::Event* Queue::accept(
     return ret;
 }
 
-rawstor::io::Event* Queue::accept_multishot(
-    int, sockaddr*, socklen_t*, std::function<void(size_t, int)>&&
-) {
+rawstor::io::Event*
+Queue::accept_multishot(int, std::function<void(size_t, int)>&&) {
     throw std::runtime_error("not implemented");
 }
 

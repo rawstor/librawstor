@@ -53,8 +53,7 @@ public:
     short events() const noexcept;
 
     inline bool empty() const noexcept {
-        return _poll_sqes.empty() &&
-               _read_sqes.empty() && _write_sqes.empty();
+        return _poll_sqes.empty() && _read_sqes.empty() && _write_sqes.empty();
     }
 
     void poll(std::unique_ptr<EventSimplexPoll> event);

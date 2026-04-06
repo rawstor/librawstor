@@ -48,10 +48,8 @@ public:
         std::function<void(size_t, int)>&& cb
     ) = 0;
 
-    virtual Event* accept_multishot(
-        int fd, sockaddr* addr, socklen_t* addrlen,
-        std::function<void(size_t, int)>&& cb
-    ) = 0;
+    virtual Event*
+    accept_multishot(int fd, std::function<void(size_t, int)>&& cb) = 0;
 
     virtual Event* read(
         int fd, void* buf, size_t size, std::function<void(size_t, int)>&& cb

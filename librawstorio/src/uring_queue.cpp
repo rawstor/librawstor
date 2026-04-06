@@ -145,8 +145,7 @@ rawstor::io::Event* Queue::accept(
     int fd, sockaddr* addr, socklen_t* addrlen,
     std::function<void(size_t, int)>&& cb
 ) {
-    TraceEvent trace_event =
-        RAWSTOR_TRACE_EVENT('|', "fd = %d\n", fd);
+    TraceEvent trace_event = RAWSTOR_TRACE_EVENT('|', "fd = %d\n", fd);
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
@@ -167,10 +166,28 @@ rawstor::io::Event* Queue::accept(
     return static_cast<rawstor::io::Event*>(p.release());
 }
 
-rawstor::io::Event* Queue::accept_multishot(
-    int, sockaddr*, socklen_t*, std::function<void(size_t, int)>&&
-) {
-    throw std::runtime_error("not implemented");
+rawstor::io::Event*
+Queue::accept_multishot(int fd, std::function<void(size_t, int)>&& cb) {
+    TraceEvent trace_event =
+        RAWSTOR_TRACE_EVENT('|', "fd = %d\n", fd);
+    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
+    if (sqe == nullptr) {
+        RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);
+    }
+    io_uring_prep_multishot_accept(sqe, fd, nullptr, nullptr, 0);
+    std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
+        std::make_unique<std::function<void(size_t, int, unsigned int)>>(
+            [cb = std::move(cb),
+             trace_event](size_t result, int error, unsigned int) {
+                RAWSTOR_TRACE_EVENT_MESSAGE(
+                    trace_event, "result = %zu, error = %d\n", result, error
+                );
+                cb(result, error);
+            }
+        );
+    io_uring_sqe_set_data(sqe, p.get());
+
+    return static_cast<rawstor::io::Event*>(p.release());
 }
 
 rawstor::io::Event* Queue::read(

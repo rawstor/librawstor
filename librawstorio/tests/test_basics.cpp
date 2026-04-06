@@ -94,8 +94,8 @@ TEST_F(BasicsTest, accept) {
             error = e;
         }
     );
-    _queue->wait(1000);
 
+    EXPECT_NO_THROW(_queue->wait(0));
     EXPECT_GT(result, (size_t)0);
     EXPECT_EQ(error, 0);
 }
