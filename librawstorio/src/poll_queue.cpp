@@ -108,6 +108,38 @@ rawstor::io::Event* Queue::poll_multishot(
     return ret;
 }
 
+rawstor::io::Event* Queue::accept(
+    int fd, sockaddr* addr, socklen_t* addrlen,
+    std::function<void(size_t, int)>&& cb
+) {
+    TraceEvent trace_event = RAWSTOR_TRACE_EVENT('|', "fd = %d\n", fd);
+    Session& s = _get_session(fd);
+
+    std::unique_ptr<EventSimplexAcceptOneshot> event =
+        std::make_unique<EventSimplexAcceptOneshot>(
+            *this, fd, addr, addrlen, trace_event, std::move(cb)
+        );
+
+    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
+    s.accept(std::move(event));
+    return ret;
+}
+
+rawstor::io::Event*
+Queue::accept_multishot(int fd, std::function<void(size_t, int)>&& cb) {
+    TraceEvent trace_event = RAWSTOR_TRACE_EVENT('|', "fd = %d\n", fd);
+    Session& s = _get_session(fd);
+
+    std::unique_ptr<EventSimplexAcceptMultishot> event =
+        std::make_unique<EventSimplexAcceptMultishot>(
+            *this, fd, trace_event, std::move(cb)
+        );
+
+    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
+    s.accept(std::move(event));
+    return ret;
+}
+
 rawstor::io::Event* Queue::read(
     int fd, void* buf, size_t size, std::function<void(size_t, int)>&& cb
 ) {
@@ -412,6 +444,13 @@ void Queue::wait(unsigned int timeout) {
 
                 Session& s = _get_session(poll_event->fd());
                 s.poll(std::move(poll_event));
+            } else if (event->is_accept()) {
+                std::unique_ptr<EventSimplexAccept> accept_event(
+                    static_cast<EventSimplexAccept*>(event.release())
+                );
+
+                Session& s = _get_session(accept_event->fd());
+                s.accept(std::move(accept_event));
             } else if (event->is_read()) {
                 std::unique_ptr<EventSimplex> simplex_event(
                     static_cast<EventSimplex*>(event.release())

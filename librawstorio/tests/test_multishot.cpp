@@ -1,9 +1,13 @@
 #include "fixture.hpp"
 #include "server.hpp"
 
+#include <rawstorstd/gpp.hpp>
 #include <rawstorstd/iovec.h>
 
 #include <gtest/gtest.h>
+
+#include <sys/socket.h>
+#include <sys/un.h>
 
 #include <poll.h>
 
@@ -65,6 +69,65 @@ TEST_F(MultishotTest, poll) {
     error = 0;
     EXPECT_NO_THROW(_queue->wait(0));
     EXPECT_EQ(result, (size_t)POLLIN);
+    EXPECT_EQ(error, 0);
+    EXPECT_EQ(count, 2u);
+
+    EXPECT_NO_THROW(_queue->cancel(event));
+
+    result = 0;
+    error = 0;
+    EXPECT_NO_THROW(_queue->wait(0));
+    EXPECT_EQ(result, (size_t)0);
+    EXPECT_EQ(error, ECANCELED);
+    EXPECT_EQ(count, 3u);
+}
+
+TEST_F(MultishotTest, accept) {
+    rawstor::io::tests::Socket client_socket;
+    rawstor::io::tests::Socket server_socket1;
+    rawstor::io::tests::Socket server_socket2;
+
+    client_socket.listen();
+
+    sockaddr_un addr = {};
+    addr.sun_family = AF_UNIX;
+    if (snprintf(
+            addr.sun_path, sizeof(addr.sun_path), "%s",
+            client_socket.name().data()
+        ) < 0) {
+        RAWSTOR_THROW_ERRNO();
+    }
+
+    _server.connect(
+        server_socket1.fd(), reinterpret_cast<sockaddr*>(&addr), sizeof(addr)
+    );
+    _server.wait();
+
+    size_t result = 0;
+    int error = 0;
+    unsigned int count = 0;
+    rawstor::io::Event* event = _queue->accept_multishot(
+        client_socket.fd(), [&result, &error, &count](size_t r, int e) {
+            result = r;
+            error = e;
+            ++count;
+        }
+    );
+
+    EXPECT_NO_THROW(_queue->wait(0));
+    EXPECT_GT(result, (size_t)0);
+    EXPECT_EQ(error, 0);
+    EXPECT_EQ(count, 1u);
+
+    _server.connect(
+        server_socket2.fd(), reinterpret_cast<sockaddr*>(&addr), sizeof(addr)
+    );
+    _server.wait();
+
+    result = 0;
+    error = 0;
+    EXPECT_NO_THROW(_queue->wait(0));
+    EXPECT_GT(result, (size_t)0);
     EXPECT_EQ(error, 0);
     EXPECT_EQ(count, 2u);
 
