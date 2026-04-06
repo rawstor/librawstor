@@ -107,8 +107,7 @@ TEST_F(MultishotTest, accept) {
     int error = 0;
     unsigned int count = 0;
     rawstor::io::Event* event = _queue->accept_multishot(
-        client_socket.fd(),
-        [&result, &error, &count](size_t r, int e) {
+        client_socket.fd(), [&result, &error, &count](size_t r, int e) {
             result = r;
             error = e;
             ++count;

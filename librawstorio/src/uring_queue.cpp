@@ -168,8 +168,7 @@ rawstor::io::Event* Queue::accept(
 
 rawstor::io::Event*
 Queue::accept_multishot(int fd, std::function<void(size_t, int)>&& cb) {
-    TraceEvent trace_event =
-        RAWSTOR_TRACE_EVENT('|', "fd = %d\n", fd);
+    TraceEvent trace_event = RAWSTOR_TRACE_EVENT('|', "fd = %d\n", fd);
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
         RAWSTOR_THROW_SYSTEM_ERROR(ENOBUFS);

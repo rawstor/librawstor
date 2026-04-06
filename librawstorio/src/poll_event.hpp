@@ -234,23 +234,13 @@ public:
 };
 
 class EventSimplexAccept : public EventSimplex {
-private:
-    sockaddr* _addr;
-    socklen_t* _addrlen;
-
 public:
     EventSimplexAccept(
-        Queue& q, int fd, sockaddr* addr, socklen_t* addrlen,
-        const rawstor::TraceEvent& trace_event
+        Queue& q, int fd, const rawstor::TraceEvent& trace_event
     ) :
-        EventSimplex(q, fd, trace_event),
-        _addr(addr),
-        _addrlen(addrlen) {}
+        EventSimplex(q, fd, trace_event) {}
 
     virtual ~EventSimplexAccept() override = default;
-
-    inline sockaddr* addr() const noexcept { return _addr; }
-    inline socklen_t* addrlen() const noexcept { return _addrlen; }
 
     inline void set_result(ssize_t result) noexcept { _result = result; }
 
@@ -259,12 +249,12 @@ public:
     bool is_accept() const noexcept override final { return true; }
     bool is_read() const noexcept override final { return false; }
     bool is_write() const noexcept override final { return false; }
-
-    ssize_t process() noexcept override final;
 };
 
 class EventSimplexAcceptOneshot final : public EventSimplexAccept {
 private:
+    sockaddr* _addr;
+    socklen_t* _addrlen;
     std::function<void(size_t, int)> _cb;
 
 public:
@@ -273,10 +263,35 @@ public:
         const rawstor::TraceEvent& trace_event,
         std::function<void(size_t, int)>&& cb
     ) :
-        EventSimplexAccept(q, fd, addr, addrlen, trace_event),
+        EventSimplexAccept(q, fd, trace_event),
+        _addr(addr),
+        _addrlen(addrlen),
+        _cb(std::move(cb)) {}
+
+    inline sockaddr* addr() const noexcept { return _addr; }
+    inline socklen_t* addrlen() const noexcept { return _addrlen; }
+
+    void dispatch() override final;
+    ssize_t process() noexcept override final;
+};
+
+class EventSimplexAcceptMultishot final : public EventSimplexAccept {
+private:
+    std::function<void(size_t, int)> _cb;
+
+public:
+    EventSimplexAcceptMultishot(
+        Queue& q, int fd, const rawstor::TraceEvent& trace_event,
+        std::function<void(size_t, int)>&& cb
+    ) :
+        EventSimplexAccept(q, fd, trace_event),
         _cb(std::move(cb)) {}
 
     void dispatch() override final;
+
+    bool is_multishot() const noexcept override final { return true; }
+
+    ssize_t process() noexcept override final;
 };
 
 class EventSimplexScalarRead final : public EventSimplex {

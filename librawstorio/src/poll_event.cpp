@@ -102,7 +102,7 @@ void EventSimplexPollMultishot::dispatch() {
     _result = 0;
 }
 
-ssize_t EventSimplexAccept::process() noexcept {
+ssize_t EventSimplexAcceptOneshot::process() noexcept {
     RAWSTOR_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "accept()");
     ssize_t res = ::accept(_fd, _addr, _addrlen);
     if (res >= 0) {
@@ -120,6 +120,27 @@ ssize_t EventSimplexAccept::process() noexcept {
 
 void EventSimplexAcceptOneshot::dispatch() {
     ::dispatch(trace_event, _result, _error, _cb);
+}
+
+ssize_t EventSimplexAcceptMultishot::process() noexcept {
+    RAWSTOR_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "accept()");
+    ssize_t res = ::accept(_fd, nullptr, nullptr);
+    if (res >= 0) {
+        _result = res;
+#ifdef RAWSTOR_TRACE_EVENTS
+        RAWSTOR_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "completed");
+#endif
+    } else {
+        int error = errno;
+        errno = 0;
+        set_error(error);
+    }
+    return res;
+}
+
+void EventSimplexAcceptMultishot::dispatch() {
+    ::dispatch(trace_event, _result, _error, _cb);
+    _result = 0;
 }
 
 void EventSimplexScalarRead::dispatch() {
