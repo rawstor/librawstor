@@ -58,6 +58,8 @@ public:
 
     void poll(std::unique_ptr<EventSimplexPoll> event);
 
+    void accept(std::unique_ptr<EventSimplexAccept> event);
+
     void read(std::unique_ptr<EventSimplex> event);
 
     void write(std::unique_ptr<Event> event);

@@ -191,6 +191,10 @@ void Session::poll(std::unique_ptr<EventSimplexPoll> event) {
     _poll_sqes.push_back(std::move(event));
 }
 
+void Session::accept(std::unique_ptr<EventSimplexAccept> event) {
+    _read_sqes.push(std::move(event));
+}
+
 void Session::read(std::unique_ptr<EventSimplex> event) {
     _read_sqes.push(std::move(event));
 }
