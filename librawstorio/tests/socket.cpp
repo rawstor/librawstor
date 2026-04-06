@@ -35,9 +35,12 @@ void Socket::listen() {
 
     char tpl[] = "/tmp/rawstor_io_tests_server.sock.XXXXXX";
 
-    if (mkstemp(tpl) == -1) {
+    int fd = mkstemp(tpl);
+    if (fd == -1) {
         RAWSTOR_THROW_ERRNO();
     }
+
+    close(fd);
 
     if (unlink(tpl) == -1) {
         RAWSTOR_THROW_ERRNO();
