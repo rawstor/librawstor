@@ -42,6 +42,14 @@ public:
         int fd, unsigned int mask, std::function<void(size_t, int)>&& cb
     ) override;
 
+    rawstor::io::Event* accept(
+        int fd, sockaddr* addr, socklen_t* addrlen,
+        std::function<void(size_t, int)>&& cb
+    ) override;
+
+    rawstor::io::Event*
+    accept_multishot(int fd, std::function<void(size_t, int)>&& cb) override;
+
     rawstor::io::Event* read(
         int fd, void* buf, size_t size, std::function<void(size_t, int)>&& cb
     ) override;
