@@ -162,6 +162,62 @@ int rawstor_fd_poll_multishot(
     }
 }
 
+int rawstor_fd_accept(
+    int fd, sockaddr* addr, socklen_t* addrlen, RawstorIOCallback* cb,
+    void* data
+) noexcept {
+    try {
+        rawstor::io_queue->accept(
+            fd, addr, addrlen, [cb, data](size_t result, int error) {
+                int res = cb(result, error, data);
+                if (res) {
+                    RAWSTOR_THROW_SYSTEM_ERROR(-res);
+                }
+            }
+        );
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstor_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstor_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+int rawstor_fd_accept_multishot(
+    int fd, RawstorIOCallback* cb, void* data, RawstorIOEvent** event
+) noexcept {
+    try {
+        RawstorIOEvent* e = rawstor::io_queue->accept_multishot(
+            fd, [cb, data](size_t result, int error) {
+                int res = cb(result, error, data);
+                if (res) {
+                    RAWSTOR_THROW_SYSTEM_ERROR(-res);
+                }
+            }
+        );
+        if (event != nullptr) {
+            *event = e;
+        }
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstor_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstor_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
 int rawstor_fd_read(
     int fd, void* buf, size_t size, RawstorIOCallback* cb, void* data
 ) noexcept {
