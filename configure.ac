@@ -108,6 +108,7 @@ AC_CONFIG_FILES(
     [vhost/3rdparty/Makefile]
     [vhost/3rdparty/qemu/Makefile]
     [vhost/3rdparty/qemu/libvhost-user/Makefile]
+    [ost/Makefile]
     [tests/Makefile]
     [deb/control]
     [rpm/librawstor.spec]
