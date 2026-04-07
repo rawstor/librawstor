@@ -1,7 +1,6 @@
 #ifndef RAWSTOR_OST_SESSION_HPP
 #define RAWSTOR_OST_SESSION_HPP
 
-#include "ost_protocol.h"
 #include "session.hpp"
 
 #include <rawstorstd/ringbuf.hpp>
@@ -10,6 +9,7 @@
 #include <rawstorio/queue.hpp>
 
 #include <rawstor/object.h>
+#include <rawstor/ost_protocol.h>
 #include <rawstor/rawstor.h>
 
 #include <functional>

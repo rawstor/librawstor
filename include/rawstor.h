@@ -8,6 +8,7 @@
 #define RAWSTOR_H
 
 #include <rawstor/object.h>
+#include <rawstor/ost_protocol.h>
 #include <rawstor/rawstor.h>
 
 #endif // RAWSTOR_H
