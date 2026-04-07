@@ -2,7 +2,8 @@ SUBDIRS = librawstorstd \
           librawstorio \
           src \
           cli \
-          vhost
+          vhost \
+          ost
 
 if ENABLE_TESTS
     SUBDIRS += tests
