@@ -185,11 +185,13 @@ int rawstor_fd_poll_multishot(
  *                address and listening for connections (via listen()).
  *
  * @param addr    Pointer to a sockaddr structure that will receive the address
- *                of the connecting client. May be NULL if the client address
+ *                of the connecting client. This memory must remain valid until
+ *                the callback is invoked. May be NULL if the client address
  *                is not required.
  *
  * @param addrlen Pointer to a socklen_t that on input specifies the size of
- *                the buffer pointed to by addr. On output, it contains the
+ *                the buffer pointed to by addr. This memory must remain valid
+ *                until the callback is invoked. On output, it contains the
  *                actual size of the client address (may be less than or equal
  *                to the input value). Cannot be NULL if addr is non-NULL.
  *
