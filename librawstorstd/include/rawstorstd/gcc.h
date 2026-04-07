@@ -11,8 +11,6 @@ extern "C" {
 #define RAWSTOR_UNUSED
 #endif
 
-#define RAWSTOR_PACKED __attribute__((packed))
-
 #ifdef __APPLE__
 #define RAWSTOR_ON_MACOS
 #endif
