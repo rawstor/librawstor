@@ -252,9 +252,7 @@ int rawstor_fd_accept(
  * @return        0 on successful registration of the multishot accept
  *                operation. Negative error code on failure.
  *
- * @note          The client socket descriptor passed to the callback is already
- *                in non‑blocking mode (if supported by the implementation).
- *                The caller must close the client socket when finished.
+ * @note          The caller must close the client socket when finished.
  *
  * @note          The operation continues indefinitely until:
  *                - Explicitly canceled with `rawstor_fd_cancel()`
