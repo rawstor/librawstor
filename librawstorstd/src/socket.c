@@ -62,6 +62,21 @@ int rawstor_socket_set_nodelay(int fd) {
     return 0;
 }
 
+int rawstor_socket_set_reuse(int fd) {
+    int error;
+
+    int onoff = 1;
+    if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &onoff, sizeof(onoff))) {
+        error = errno;
+        errno = 0;
+        return -error;
+    }
+
+    rawstor_debug("fd %d: SOL_SOCKET/SO_REUSEADDR\n", fd);
+
+    return 0;
+}
+
 int rawstor_socket_set_snd_timeout(int fd, unsigned int timeout) {
     int error;
 
