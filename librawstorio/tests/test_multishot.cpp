@@ -474,8 +474,12 @@ TEST_F(MultishotTest, stop_iteration_overflow) {
 }
 
 TEST_F(MultishotTest, recv_close) {
-    _server.close();
-    _server.wait();
+    {
+        const char server_buf[] = "dat1dat2dat3";
+        _server.write(server_buf, sizeof(server_buf) - 1);
+        _server.close();
+        _server.wait();
+    }
 
     std::vector<MultishotVectorItem> items;
     rawstor::io::Event* event = _queue->recv_multishot(
@@ -488,16 +492,31 @@ TEST_F(MultishotTest, recv_close) {
     );
 
     EXPECT_NO_THROW(_wait_all());
-    EXPECT_EQ(items.size(), (size_t)1);
+    EXPECT_EQ(items.size(), (size_t)4);
     if (items.size() >= 1) {
-        EXPECT_EQ(items[0].result(), (size_t)0);
-        EXPECT_EQ(items[0].error(), EPIPE);
+        EXPECT_EQ(items[0].result(), (size_t)4);
+        EXPECT_EQ(items[0].error(), 0);
+        EXPECT_EQ(strncmp(items[0].data(), "dat1", 4), 0);
+    }
+    if (items.size() >= 2) {
+        EXPECT_EQ(items[1].result(), (size_t)4);
+        EXPECT_EQ(items[1].error(), 0);
+        EXPECT_EQ(strncmp(items[1].data(), "dat2", 4), 0);
+    }
+    if (items.size() >= 3) {
+        EXPECT_EQ(items[2].result(), (size_t)4);
+        EXPECT_EQ(items[2].error(), 0);
+        EXPECT_EQ(strncmp(items[2].data(), "dat3", 4), 0);
+    }
+    if (items.size() >= 4) {
+        EXPECT_EQ(items[3].result(), (size_t)0);
+        EXPECT_EQ(items[3].error(), EPIPE);
     }
 
     EXPECT_THROW(_queue->cancel(event), std::system_error);
 
     EXPECT_NO_THROW(_wait_all());
-    EXPECT_EQ(items.size(), (size_t)1);
+    EXPECT_EQ(items.size(), (size_t)4);
 }
 
 } // unnamed namespace
