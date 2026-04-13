@@ -315,6 +315,7 @@ TEST_F(MultishotTest, recv_partial) {
     EXPECT_NO_THROW(_queue->cancel(event));
 
     EXPECT_NO_THROW(_queue->wait(0));
+    EXPECT_EQ(items.size(), (size_t)5);
     if (items.size() >= 5) {
         EXPECT_EQ(items[4].result(), (size_t)1);
         EXPECT_EQ(items[4].error(), ECANCELED);
@@ -387,10 +388,10 @@ TEST_F(MultishotTest, recv_fill_buf) {
     EXPECT_NO_THROW(_queue->cancel(event));
 
     EXPECT_NO_THROW(_wait_all());
-    if (items.size() >= 5) {
-        EXPECT_EQ(items[4].result(), (size_t)1);
-        EXPECT_EQ(items[4].error(), ECANCELED);
-        EXPECT_EQ(strncmp(items[4].data(), "3", 1), 0);
+    EXPECT_EQ(items.size(), (size_t)4);
+    if (items.size() >= 4) {
+        EXPECT_EQ(items[3].result(), (size_t)0);
+        EXPECT_EQ(items[3].error(), ECANCELED);
     }
 }
 
@@ -470,6 +471,33 @@ TEST_F(MultishotTest, stop_iteration_overflow) {
     EXPECT_THROW(_queue->cancel(event), std::system_error);
     EXPECT_NO_THROW(_wait_all());
     EXPECT_EQ(items.size(), (size_t)2);
+}
+
+TEST_F(MultishotTest, recv_close) {
+    _server.close();
+    _server.wait();
+
+    std::vector<MultishotVectorItem> items;
+    rawstor::io::Event* event = _queue->recv_multishot(
+        _fd, 4, 4, 4, 0,
+        [&items](const iovec* iov, unsigned int niov, size_t result, int error)
+            -> size_t {
+            items.emplace_back(iov, niov, result, error);
+            return 4;
+        }
+    );
+
+    EXPECT_NO_THROW(_wait_all());
+    EXPECT_EQ(items.size(), (size_t)1);
+    if (items.size() >= 1) {
+        EXPECT_EQ(items[0].result(), (size_t)0);
+        EXPECT_EQ(items[0].error(), EPIPE);
+    }
+
+    EXPECT_THROW(_queue->cancel(event), std::system_error);
+
+    EXPECT_NO_THROW(_wait_all());
+    EXPECT_EQ(items.size(), (size_t)1);
 }
 
 } // unnamed namespace
