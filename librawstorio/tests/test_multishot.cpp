@@ -483,7 +483,7 @@ TEST_F(MultishotTest, recv_close) {
 
     std::vector<MultishotVectorItem> items;
     rawstor::io::Event* event = _queue->recv_multishot(
-        _fd, 4, 4, 4, 0,
+        _fd, 8, 4, 4, 0,
         [&items](const iovec* iov, unsigned int niov, size_t result, int error)
             -> size_t {
             items.emplace_back(iov, niov, result, error);
