@@ -313,13 +313,15 @@ void EventSimplexVectorRecvMultishot::dispatch() {
                 iov_size, _error
             );
             RAWSTOR_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "callback");
-            _size = _cb(iov.data(), iov.size(), _result, _error);
+            int report_error = (_pending_size < _size || !_size) ? _error : 0;
+            _size = _cb(iov.data(), iov.size(), _result, report_error);
             RAWSTOR_TRACE_EVENT_MESSAGE(
                 trace_event, "%s\n", "callback success"
             );
-            if (_error) {
+            if (report_error) {
                 break;
             }
+            _error = 0;
         } catch (const std::exception& e) {
             RAWSTOR_TRACE_EVENT_MESSAGE(
                 trace_event, "callback error: %s\n", e.what()
