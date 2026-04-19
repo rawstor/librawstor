@@ -1,8 +1,6 @@
 #ifndef RAWSTOR_OST_PROTOCOL_H
 #define RAWSTOR_OST_PROTOCOL_H
 
-#include <rawstorstd/gcc.h>
-
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -10,6 +8,8 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+#define RAWSTOR_PACKED __attribute__((packed))
 
 #define RAWSTOR_MAGIC 0x72737472 // "rstr" as ascii
 
