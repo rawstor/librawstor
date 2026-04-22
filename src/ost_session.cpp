@@ -2,6 +2,7 @@
 
 #include "object.hpp"
 #include "opts.h"
+#include "ost_protocol.h"
 #include "rawstor_internals.hpp"
 
 #include <rawstorio/queue.hpp>
@@ -14,7 +15,6 @@
 #include <rawstorstd/uuid.h>
 
 #include <rawstor/object.h>
-#include <rawstor/ost_protocol.h>
 
 #include <arpa/inet.h>
 
