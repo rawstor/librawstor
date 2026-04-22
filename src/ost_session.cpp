@@ -76,7 +76,7 @@ int validate_response(
 }
 
 int validate_cmd(
-    int fd, enum RawstorOSTCommandType cmd, enum RawstorOSTCommandType expected
+    int fd, RawstorOSTCommandType cmd, RawstorOSTCommandType expected
 ) noexcept {
     if (cmd == expected) {
         return 0;

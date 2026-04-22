@@ -13,16 +13,15 @@ extern "C" {
 
 #define RAWSTOR_MAGIC 0x72737472 // "rstr" as ascii
 
-enum RawstorOSTCommandType {
-    RAWSTOR_CMD_SET_OBJECT,
-    RAWSTOR_CMD_READ,
-    RAWSTOR_CMD_WRITE,
-    RAWSTOR_CMD_DISCARD,
-};
+#define RAWSTOR_CMD_SET_OBJECT 0
+#define RAWSTOR_CMD_READ 1
+#define RAWSTOR_CMD_WRITE 2
+#define RAWSTOR_CMD_DISCARD 3
+typedef uint32_t RawstorOSTCommandType;
 
 struct RawstorOSTFrameHead {
     uint32_t magic;
-    enum RawstorOSTCommandType cmd;
+    RawstorOSTCommandType cmd; // RawstorOSTCommandType
 } RAWSTOR_PACKED;
 
 /* Minimalistic protocol frame */
@@ -44,7 +43,7 @@ struct RawstorOSTFrameIOBody {
     uint64_t offset;
     uint32_t len;
     uint64_t hash;
-    bool sync;
+    uint8_t sync;
 } RAWSTOR_PACKED;
 
 struct RawstorOSTFrameIO {
