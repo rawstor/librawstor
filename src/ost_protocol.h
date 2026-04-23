@@ -1,8 +1,6 @@
 #ifndef RAWSTOR_OST_PROTOCOL_H
 #define RAWSTOR_OST_PROTOCOL_H
 
-#include <rawstorstd/gcc.h>
-
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -11,25 +9,23 @@
 extern "C" {
 #endif
 
+#define RAWSTOR_PACKED __attribute__((packed))
+
 #define RAWSTOR_MAGIC 0x72737472 // "rstr" as ascii
 
-enum RawstorOSTCommandType {
-    RAWSTOR_CMD_SET_OBJECT,
-    RAWSTOR_CMD_READ,
-    RAWSTOR_CMD_WRITE,
-    RAWSTOR_CMD_DISCARD,
-};
+#define RAWSTOR_CMD_SET_OBJECT 0
+#define RAWSTOR_CMD_READ 1
+#define RAWSTOR_CMD_WRITE 2
+#define RAWSTOR_CMD_DISCARD 3
+typedef uint32_t RawstorOSTCommandType;
 
-/* Just for basic validation only */
-struct RawstorOSTFrameCmdOnly {
+struct RawstorOSTFrameHead {
     uint32_t magic;
-    enum RawstorOSTCommandType cmd;
+    RawstorOSTCommandType cmd; // RawstorOSTCommandType
 } RAWSTOR_PACKED;
 
 /* Minimalistic protocol frame */
-struct RawstorOSTFrameBasic {
-    uint32_t magic;
-    enum RawstorOSTCommandType cmd;
+struct RawstorOSTFrameBasicBody {
     // var is for minimal commands only,
     // will be overridden in other command structs
     uint8_t obj_id[16];
@@ -37,20 +33,27 @@ struct RawstorOSTFrameBasic {
     uint64_t val;
 } RAWSTOR_PACKED;
 
-struct RawstorOSTFrameIO {
-    uint32_t magic;
-    enum RawstorOSTCommandType cmd;
+struct RawstorOSTFrameBasic {
+    struct RawstorOSTFrameHead head;
+    struct RawstorOSTFrameBasicBody body;
+} RAWSTOR_PACKED;
+
+struct RawstorOSTFrameIOBody {
     uint16_t cid;
     uint64_t offset;
     uint32_t len;
     uint64_t hash;
-    bool sync;
+    uint8_t sync;
+} RAWSTOR_PACKED;
+
+struct RawstorOSTFrameIO {
+    struct RawstorOSTFrameHead head;
+    struct RawstorOSTFrameIOBody body;
 } RAWSTOR_PACKED;
 
 /* response frames */
 struct RawstorOSTFrameResponse {
-    uint32_t magic;
-    enum RawstorOSTCommandType cmd;
+    struct RawstorOSTFrameHead head;
     uint16_t cid;
     // TODO: if we send length in res - it should be the same type
     // (signed-unsigned too)
