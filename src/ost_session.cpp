@@ -56,10 +56,10 @@ int validate_response(
 ) noexcept {
     assert(response != nullptr);
 
-    if (response->magic != RAWSTOR_MAGIC) {
+    if (response->head.magic != RAWSTOR_MAGIC) {
         rawstor_error(
             "%s: Unexpected magic number: %x != %x\n", s.str().c_str(),
-            response->magic, RAWSTOR_MAGIC
+            response->head.magic, RAWSTOR_MAGIC
         );
         return EPROTO;
     }
@@ -75,8 +75,8 @@ int validate_response(
 }
 
 int validate_cmd(
-    const rawstor::ost::Session& s, enum RawstorOSTCommandType cmd,
-    enum RawstorOSTCommandType expected
+    const rawstor::ost::Session& s, RawstorOSTCommandType cmd,
+    RawstorOSTCommandType expected
 ) noexcept {
     if (cmd == expected) {
         return 0;
@@ -245,13 +245,18 @@ public:
     ) :
         SessionOp(context, cid, trace_event, std::move(cb)),
         _request({
-            .magic = RAWSTOR_MAGIC,
-            .cmd = RAWSTOR_CMD_SET_OBJECT,
-            .obj_id = {},
-            .offset = 0,
-            .val = 0,
+            .head =
+                {
+                    .magic = RAWSTOR_MAGIC,
+                    .cmd = RAWSTOR_CMD_SET_OBJECT,
+                },
+            .body = {
+                .obj_id = {},
+                .offset = 0,
+                .val = 0,
+            },
         }) {
-        memcpy(_request.obj_id, id.bytes, sizeof(_request.obj_id));
+        memcpy(_request.body.obj_id, id.bytes, sizeof(_request.body.obj_id));
         rawstor::ost::Session& s = _context->session();
         rawstor_info("%s: Setting object id\n", s.str().c_str());
     }
@@ -271,7 +276,7 @@ public:
         }
 
         if (!error) {
-            error = validate_cmd(s, response->cmd, RAWSTOR_CMD_SET_OBJECT);
+            error = validate_cmd(s, response->head.cmd, RAWSTOR_CMD_SET_OBJECT);
         }
 
         if (!error) {
@@ -301,13 +306,19 @@ public:
         _buf(buf),
         _size(size),
         _request({
-            .magic = RAWSTOR_MAGIC,
-            .cmd = RAWSTOR_CMD_READ,
-            .cid = cid,
-            .offset = (uint64_t)offset,
-            .len = (uint32_t)_size,
-            .hash = 0,
-            .sync = 0,
+            .head =
+                {
+                    .magic = RAWSTOR_MAGIC,
+                    .cmd = RAWSTOR_CMD_READ,
+                },
+            .body =
+                {
+                    .cid = cid,
+                    .offset = (uint64_t)offset,
+                    .len = (uint32_t)_size,
+                    .hash = 0,
+                    .sync = 0,
+                },
         }),
         _hash(0) {}
 
@@ -326,7 +337,7 @@ public:
         }
 
         if (!error) {
-            error = validate_cmd(s, response->cmd, RAWSTOR_CMD_READ);
+            error = validate_cmd(s, response->head.cmd, RAWSTOR_CMD_READ);
         }
 
         if (!error) {
@@ -372,13 +383,19 @@ public:
         _niov(niov),
         _size(size),
         _request({
-            .magic = RAWSTOR_MAGIC,
-            .cmd = RAWSTOR_CMD_READ,
-            .cid = cid,
-            .offset = (uint64_t)offset,
-            .len = (uint32_t)_size,
-            .hash = 0,
-            .sync = 0,
+            .head =
+                {
+                    .magic = RAWSTOR_MAGIC,
+                    .cmd = RAWSTOR_CMD_READ,
+                },
+            .body =
+                {
+                    .cid = cid,
+                    .offset = (uint64_t)offset,
+                    .len = (uint32_t)_size,
+                    .hash = 0,
+                    .sync = 0,
+                },
         }),
         _hash(0) {}
 
@@ -397,7 +414,7 @@ public:
         }
 
         if (!error) {
-            error = validate_cmd(s, response->cmd, RAWSTOR_CMD_READ);
+            error = validate_cmd(s, response->head.cmd, RAWSTOR_CMD_READ);
         }
 
         if (!error) {
@@ -436,13 +453,18 @@ public:
     ) :
         SessionOp(context, cid, trace_event, std::move(cb)),
         _request({
-            .magic = RAWSTOR_MAGIC,
-            .cmd = RAWSTOR_CMD_WRITE,
-            .cid = cid,
-            .offset = (uint64_t)offset,
-            .len = (uint32_t)size,
-            .hash = hash(buf, size),
-            .sync = 0,
+            .head =
+                {
+                    .magic = RAWSTOR_MAGIC,
+                    .cmd = RAWSTOR_CMD_WRITE,
+                },
+            .body = {
+                .cid = cid,
+                .offset = (uint64_t)offset,
+                .len = (uint32_t)size,
+                .hash = hash(buf, size),
+                .sync = 0,
+            },
         }) {
         _iov.reserve(2);
         _iov.push_back({
@@ -460,7 +482,7 @@ public:
     unsigned int request_niov() const noexcept { return _iov.size(); }
 
     size_t request_size() const noexcept override {
-        return sizeof(_request) + _request.len;
+        return sizeof(_request) + _request.body.len;
     }
 
     void
@@ -474,7 +496,7 @@ public:
         }
 
         if (!error) {
-            error = validate_cmd(s, response->cmd, RAWSTOR_CMD_WRITE);
+            error = validate_cmd(s, response->head.cmd, RAWSTOR_CMD_WRITE);
         }
 
         _dispatch(response != nullptr ? response->res : 0, error);
@@ -495,13 +517,18 @@ public:
     ) :
         SessionOp(context, cid, trace_event, std::move(cb)),
         _request({
-            .magic = RAWSTOR_MAGIC,
-            .cmd = RAWSTOR_CMD_WRITE,
-            .cid = cid,
-            .offset = (uint64_t)offset,
-            .len = (uint32_t)size,
-            .hash = hash(iov, niov),
-            .sync = 0,
+            .head =
+                {
+                    .magic = RAWSTOR_MAGIC,
+                    .cmd = RAWSTOR_CMD_WRITE,
+                },
+            .body = {
+                .cid = cid,
+                .offset = (uint64_t)offset,
+                .len = (uint32_t)size,
+                .hash = hash(iov, niov),
+                .sync = 0,
+            },
         }) {
         _iov.reserve(1 + niov);
         _iov.push_back({
@@ -518,7 +545,7 @@ public:
     unsigned int request_niov() const noexcept { return _iov.size(); }
 
     size_t request_size() const noexcept override {
-        return sizeof(_request) + _request.len;
+        return sizeof(_request) + _request.body.len;
     }
 
     void
@@ -532,7 +559,7 @@ public:
         }
 
         if (!error) {
-            error = validate_cmd(s, response->cmd, RAWSTOR_CMD_WRITE);
+            error = validate_cmd(s, response->head.cmd, RAWSTOR_CMD_WRITE);
         }
 
         _dispatch(response != nullptr ? response->res : 0, error);
@@ -772,13 +799,20 @@ void Session::set_object(RawstorObject* object) {
     std::unique_ptr<rawstor::io::Queue> queue = rawstor::io::Queue::create(2);
 
     RawstorOSTFrameBasic request = {
-        .magic = RAWSTOR_MAGIC,
-        .cmd = RAWSTOR_CMD_SET_OBJECT,
-        .obj_id = {},
-        .offset = 0,
-        .val = 0,
+        .head =
+            {
+                .magic = RAWSTOR_MAGIC,
+                .cmd = RAWSTOR_CMD_SET_OBJECT,
+            },
+        .body = {
+            .obj_id = {},
+            .offset = 0,
+            .val = 0,
+        },
     };
-    memcpy(request.obj_id, object->id().bytes, sizeof(request.obj_id));
+    memcpy(
+        request.body.obj_id, object->id().bytes, sizeof(request.body.obj_id)
+    );
     rawstor_info("%s: Setting object id\n", str().c_str());
     queue->write(
         fd(), &request, sizeof(request),
@@ -824,8 +858,9 @@ void Session::set_object(RawstorObject* object) {
             }
 
             if (!error) {
-                error =
-                    validate_cmd(*this, response.cmd, RAWSTOR_CMD_SET_OBJECT);
+                error = validate_cmd(
+                    *this, response.head.cmd, RAWSTOR_CMD_SET_OBJECT
+                );
             }
 
             if (error) {
