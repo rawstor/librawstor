@@ -21,7 +21,7 @@ typedef uint32_t RawstorOSTCommandType;
 
 struct RawstorOSTFrameHead {
     uint32_t magic;
-    RawstorOSTCommandType cmd; // RawstorOSTCommandType
+    RawstorOSTCommandType cmd;
 } RAWSTOR_PACKED;
 
 /* Minimalistic protocol frame */
