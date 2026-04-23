@@ -65,10 +65,10 @@ int validate_response(
 ) {
     assert(response != nullptr);
 
-    if (response->magic != RAWSTOR_MAGIC) {
+    if (response->head.magic != RAWSTOR_MAGIC) {
         rawstor_error(
             "%s: Unexpected magic number: %x != %x\n", s.str().c_str(),
-            response->magic, RAWSTOR_MAGIC
+            response->head.magic, RAWSTOR_MAGIC
         );
         return EPROTO;
     }
@@ -84,8 +84,8 @@ int validate_response(
 }
 
 int validate_cmd(
-    rawstor::ost::Session& s, enum RawstorOSTCommandType cmd,
-    enum RawstorOSTCommandType expected
+    rawstor::ost::Session& s, RawstorOSTCommandType cmd,
+    RawstorOSTCommandType expected
 ) {
     if (cmd == expected) {
         return 0;
@@ -254,7 +254,7 @@ public:
         }
 
         if (!error) {
-            error = validate_cmd(s, response->cmd, RAWSTOR_CMD_SET_OBJECT);
+            error = validate_cmd(s, response->head.cmd, RAWSTOR_CMD_SET_OBJECT);
         }
 
         if (!error) {
@@ -294,7 +294,7 @@ public:
         }
 
         if (!error) {
-            error = validate_cmd(s, response->cmd, RAWSTOR_CMD_READ);
+            error = validate_cmd(s, response->head.cmd, RAWSTOR_CMD_READ);
         }
 
         if (!error) {
@@ -355,7 +355,7 @@ public:
         }
 
         if (!error) {
-            error = validate_cmd(s, response->cmd, RAWSTOR_CMD_READ);
+            error = validate_cmd(s, response->head.cmd, RAWSTOR_CMD_READ);
         }
 
         if (!error) {
@@ -417,7 +417,7 @@ public:
         }
 
         if (!error) {
-            error = validate_cmd(s, response->cmd, RAWSTOR_CMD_WRITE);
+            error = validate_cmd(s, response->head.cmd, RAWSTOR_CMD_WRITE);
         }
 
         _dispatch(response != nullptr ? response->res : 0, error);
@@ -457,7 +457,7 @@ public:
         }
 
         if (!error) {
-            error = validate_cmd(s, response->cmd, RAWSTOR_CMD_WRITE);
+            error = validate_cmd(s, response->head.cmd, RAWSTOR_CMD_WRITE);
         }
 
         _dispatch(response != nullptr ? response->res : 0, error);
@@ -515,13 +515,18 @@ public:
     ) :
         RequestScalar(fd, op),
         _request({
-            .magic = RAWSTOR_MAGIC,
-            .cmd = cmd,
-            .obj_id = {},
-            .offset = 0,
-            .val = 0,
+            .head =
+                {
+                    .magic = RAWSTOR_MAGIC,
+                    .cmd = cmd,
+                },
+            .body = {
+                .obj_id = {},
+                .offset = 0,
+                .val = 0,
+            },
         }) {
-        memcpy(_request.obj_id, id.bytes, sizeof(_request.obj_id));
+        memcpy(_request.body.obj_id, id.bytes, sizeof(_request.body.obj_id));
     }
 
     void* buf() noexcept override { return &_request; }
@@ -548,13 +553,18 @@ public:
     ) :
         RequestScalar(fd, op),
         _request({
-            .magic = RAWSTOR_MAGIC,
-            .cmd = cmd,
-            .cid = op->cid(),
-            .offset = (uint64_t)op->offset(),
-            .len = (uint32_t)op->size(),
-            .hash = hash,
-            .sync = 0,
+            .head =
+                {
+                    .magic = RAWSTOR_MAGIC,
+                    .cmd = cmd,
+                },
+            .body = {
+                .cid = op->cid(),
+                .offset = (uint64_t)op->offset(),
+                .len = (uint32_t)op->size(),
+                .hash = hash,
+                .sync = 0,
+            },
         }) {}
 
     RequestIOScalar(
@@ -563,13 +573,18 @@ public:
     ) :
         RequestScalar(fd, op),
         _request({
-            .magic = RAWSTOR_MAGIC,
-            .cmd = cmd,
-            .cid = op->cid(),
-            .offset = (uint64_t)op->offset(),
-            .len = (uint32_t)op->size(),
-            .hash = hash,
-            .sync = 0,
+            .head =
+                {
+                    .magic = RAWSTOR_MAGIC,
+                    .cmd = cmd,
+                },
+            .body = {
+                .cid = op->cid(),
+                .offset = (uint64_t)op->offset(),
+                .len = (uint32_t)op->size(),
+                .hash = hash,
+                .sync = 0,
+            },
         }) {}
 };
 
@@ -584,13 +599,18 @@ public:
     ) :
         RequestVector(fd, op),
         _request({
-            .magic = RAWSTOR_MAGIC,
-            .cmd = cmd,
-            .cid = op->cid(),
-            .offset = (uint64_t)op->offset(),
-            .len = (uint32_t)op->size(),
-            .hash = hash,
-            .sync = 0,
+            .head =
+                {
+                    .magic = RAWSTOR_MAGIC,
+                    .cmd = cmd,
+                },
+            .body = {
+                .cid = op->cid(),
+                .offset = (uint64_t)op->offset(),
+                .len = (uint32_t)op->size(),
+                .hash = hash,
+                .sync = 0,
+            },
         }) {}
 
     RequestIOVector(
@@ -599,13 +619,18 @@ public:
     ) :
         RequestVector(fd, op),
         _request({
-            .magic = RAWSTOR_MAGIC,
-            .cmd = cmd,
-            .cid = op->cid(),
-            .offset = (uint64_t)op->offset(),
-            .len = (uint32_t)op->size(),
-            .hash = hash,
-            .sync = 0,
+            .head =
+                {
+                    .magic = RAWSTOR_MAGIC,
+                    .cmd = cmd,
+                },
+            .body = {
+                .cid = op->cid(),
+                .offset = (uint64_t)op->offset(),
+                .len = (uint32_t)op->size(),
+                .hash = hash,
+                .sync = 0,
+            },
         }) {}
 };
 
@@ -661,7 +686,7 @@ public:
     unsigned int niov() const noexcept override { return _iov.size(); }
 
     size_t size() const noexcept override {
-        return sizeof(_request) + _request.len;
+        return sizeof(_request) + _request.body.len;
     }
 };
 
