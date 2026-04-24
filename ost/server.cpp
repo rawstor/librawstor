@@ -63,7 +63,7 @@ Server::Server(const std::string& addr, unsigned int port, const char* uris) :
         RAWSTOR_THROW_ERRNO();
     }
 
-    if (listen(_fd, 1) == -1) {
+    if (listen(_fd, SOMAXCONN) == -1) {
         close(_fd);
         RAWSTOR_THROW_ERRNO();
     }
