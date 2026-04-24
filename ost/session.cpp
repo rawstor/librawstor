@@ -262,6 +262,7 @@ Session::~Session() {
             rawstor_error("Failed to cancel event: %s\n", strerror(-res));
         }
     }
+    close(_fd);
     _server.del_session(_fd);
 }
 
@@ -275,6 +276,10 @@ ssize_t Session::_recv(
 ssize_t
 Session::_recv(const iovec* iov, unsigned int niov, size_t result, int error) {
     if (error) {
+        if (error == EPIPE) {
+            _server.del_session(_fd);
+            return 0;
+        }
         RAWSTOR_THROW_SYSTEM_ERROR(error);
     }
 
