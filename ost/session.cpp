@@ -57,7 +57,7 @@ Session::Session(Server& server, int fd) :
     _server(server),
     _fd(fd),
     _recv_event(nullptr),
-    _next(SON_HEAD),
+    _next(&Session::_recv_head),
     _object(nullptr) {
     int res = rawstor_fd_recv_multishot(
         _fd, 1u << 17, 64 * 4, sizeof(_request_head), 0, _recv, this,
@@ -101,16 +101,7 @@ Session::_recv(const iovec* iov, unsigned int niov, size_t result, int error) {
         RAWSTOR_THROW_SYSTEM_ERROR(error);
     }
 
-    switch (_next) {
-    case SON_HEAD:
-        return _recv_head(iov, niov, result);
-    case SON_BODY:
-        return _recv_body(iov, niov, result);
-    case SON_DATA:
-        return _recv_data(iov, niov, result);
-    }
-
-    return 0;
+    return (this->*_next)(iov, niov, result);
 }
 
 ssize_t
@@ -134,7 +125,7 @@ Session::_recv_head(const iovec* iov, unsigned int niov, size_t result) {
         return -EPROTO;
     }
 
-    _next = SON_BODY;
+    _next = &Session::_recv_body;
 
     rawstor_trace("head received: %d\n", _request_head.cmd);
     switch (_request_head.cmd) {
@@ -151,7 +142,7 @@ Session::_recv_head(const iovec* iov, unsigned int niov, size_t result) {
 
 ssize_t
 Session::_recv_body(const iovec* iov, unsigned int niov, size_t result) {
-    _next = SON_HEAD;
+    _next = &Session::_recv_head;
 
     switch (_request_head.cmd) {
     case RAWSTOR_CMD_SET_OBJECT:
@@ -204,7 +195,7 @@ Session::_recv_body(const iovec* iov, unsigned int niov, size_t result) {
             iov, niov, 0, &_request_body.io, sizeof(_request_body.io)
         );
 
-        _next = SON_DATA;
+        _next = &Session::_recv_data;
 
         return _request_body.io.len;
 
@@ -232,7 +223,7 @@ Session::_recv_body(const iovec* iov, unsigned int niov, size_t result) {
 
 ssize_t
 Session::_recv_data(const iovec* iov, unsigned int niov, size_t result) {
-    _next = SON_HEAD;
+    _next = &Session::_recv_head;
 
     if (result != _request_body.io.len) {
         rawstor_error(
