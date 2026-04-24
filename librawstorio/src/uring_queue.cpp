@@ -160,9 +160,22 @@ rawstor::io::Event* Queue::accept(
                 if (!error) {
                     try {
                         rawstor::io::uring::Queue::setup_fd(result);
-                    } catch (...) {
+                    } catch (const std::system_error& e) {
                         ::close(result);
-                        throw;
+                        result = 0;
+                        error = e.code().value();
+                    } catch (const std::exception& e) {
+                        rawstor_error(
+                            "Failed to setup fd %zu: \n", result, e.what()
+                        );
+                        ::close(result);
+                        result = 0;
+                        error = e.code().value();
+                    } catch (...) {
+                        rawstor_error("Failed to setup fd %zu\n", result);
+                        ::close(result);
+                        result = 0;
+                        error = EIO;
                     }
                 }
                 cb(result, error);
@@ -192,9 +205,22 @@ Queue::accept_multishot(int fd, std::function<void(size_t, int)>&& cb) {
                 if (!error) {
                     try {
                         rawstor::io::uring::Queue::setup_fd(result);
-                    } catch (...) {
+                    } catch (const std::system_error& e) {
                         ::close(result);
-                        throw;
+                        result = 0;
+                        error = e.code().value();
+                    } catch (const std::exception& e) {
+                        rawstor_error(
+                            "Failed to setup fd %zu: \n", result, e.what()
+                        );
+                        ::close(result);
+                        result = 0;
+                        error = e.code().value();
+                    } catch (...) {
+                        rawstor_error("Failed to setup fd %zu\n", result);
+                        ::close(result);
+                        result = 0;
+                        error = EIO;
                     }
                 }
                 cb(result, error);
