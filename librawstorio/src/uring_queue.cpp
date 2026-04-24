@@ -157,6 +157,9 @@ rawstor::io::Event* Queue::accept(
                 RAWSTOR_TRACE_EVENT_MESSAGE(
                     trace_event, "result = %zu, error = %d\n", result, error
                 );
+                if (result >= 0) {
+                    rawstor::io::uring::Queue::setup_fd(result);
+                }
                 cb(result, error);
             }
         );
@@ -181,6 +184,9 @@ Queue::accept_multishot(int fd, std::function<void(size_t, int)>&& cb) {
                 RAWSTOR_TRACE_EVENT_MESSAGE(
                     trace_event, "result = %zu, error = %d\n", result, error
                 );
+                if (result >= 0) {
+                    rawstor::io::uring::Queue::setup_fd(result);
+                }
                 cb(result, error);
             }
         );

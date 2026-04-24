@@ -1,5 +1,7 @@
 #include "poll_event.hpp"
 
+#include "poll_queue.hpp"
+
 #include <rawstorstd/iovec.h>
 #include <rawstorstd/logging.h>
 
@@ -106,6 +108,7 @@ ssize_t EventSimplexAcceptOneshot::process() noexcept {
     RAWSTOR_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "accept()");
     ssize_t res = ::accept(_fd, _addr, _addrlen);
     if (res >= 0) {
+        rawstor::io::poll::Queue::setup_fd(res);
         _result = res;
 #ifdef RAWSTOR_TRACE_EVENTS
         RAWSTOR_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "completed");
@@ -126,6 +129,7 @@ ssize_t EventSimplexAcceptMultishot::process() noexcept {
     RAWSTOR_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "accept()");
     ssize_t res = ::accept(_fd, nullptr, nullptr);
     if (res >= 0) {
+        rawstor::io::poll::Queue::setup_fd(res);
         _result = res;
 #ifdef RAWSTOR_TRACE_EVENTS
         RAWSTOR_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "completed");
