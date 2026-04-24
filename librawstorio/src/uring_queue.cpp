@@ -206,6 +206,9 @@ Queue::accept_multishot(int fd, std::function<void(size_t, int)>&& cb) {
                     try {
                         rawstor::io::uring::Queue::setup_fd(result);
                     } catch (const std::system_error& e) {
+                        rawstor_error(
+                            "Failed to setup fd %zu: %s\n", result, e.what()
+                        );
                         ::close(result);
                         result = 0;
                         error = e.code().value();

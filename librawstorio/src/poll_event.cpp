@@ -116,6 +116,7 @@ ssize_t EventSimplexAcceptOneshot::process() noexcept {
             RAWSTOR_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "completed");
 #endif
         } catch (const std::system_error& e) {
+            rawstor_error("Failed to setup fd %zd: %s\n", res, e.what());
             ::close(res);
             res = -e.code().value();
             set_error(e.code().value());
@@ -153,6 +154,7 @@ ssize_t EventSimplexAcceptMultishot::process() noexcept {
             RAWSTOR_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "completed");
 #endif
         } catch (const std::system_error& e) {
+            rawstor_error("Failed to setup fd %zd: %s\n", res, e.what());
             ::close(res);
             res = -e.code().value();
             set_error(e.code().value());
