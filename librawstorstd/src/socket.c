@@ -119,7 +119,7 @@ int rawstor_socket_set_user_timeout(int fd, unsigned int timeout) {
 #if defined(RAWSTOR_ON_LINUX)
     if (setsockopt(
             fd, IPPROTO_TCP, TCP_USER_TIMEOUT, &timeout, sizeof(timeout)
-        )) {
+        ) == -1) {
         error = errno;
         errno = 0;
         return -error;
