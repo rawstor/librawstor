@@ -166,6 +166,9 @@ TEST(URIsTest, basics) {
         EXPECT_EQ(uris[0].str(), "a");
         EXPECT_EQ(uris[1].str(), "b");
         EXPECT_EQ(uris[2].str(), "c");
+
+        std::string s = rawstor::URI::uris(uris);
+        EXPECT_EQ(s, "a,b,c");
     }
 
     {
@@ -173,6 +176,9 @@ TEST(URIsTest, basics) {
         EXPECT_EQ(uris.size(), (size_t)2);
         EXPECT_EQ(uris[0].str(), "a\\,b");
         EXPECT_EQ(uris[1].str(), "c");
+
+        std::string s = rawstor::URI::uris(uris);
+        EXPECT_EQ(s, "a\\,b,c");
     }
 
     {
@@ -181,12 +187,18 @@ TEST(URIsTest, basics) {
         EXPECT_EQ(uris[0].str(), "a");
         EXPECT_EQ(uris[1].str(), "b");
         EXPECT_EQ(uris[2].str(), "");
+
+        std::string s = rawstor::URI::uris(uris);
+        EXPECT_EQ(s, "a,b,");
     }
 
     {
         std::vector<rawstor::URI> uris = rawstor::URI::uriv("");
         EXPECT_EQ(uris.size(), (size_t)1);
         EXPECT_EQ(uris[0].str(), "");
+
+        std::string s = rawstor::URI::uris(uris);
+        EXPECT_EQ(s, "");
     }
 
     {
@@ -194,6 +206,9 @@ TEST(URIsTest, basics) {
         EXPECT_EQ(uris.size(), (size_t)2);
         EXPECT_EQ(uris[0].str(), "");
         EXPECT_EQ(uris[1].str(), "");
+
+        std::string s = rawstor::URI::uris(uris);
+        EXPECT_EQ(s, ",");
     }
 
     {
@@ -201,6 +216,9 @@ TEST(URIsTest, basics) {
         EXPECT_EQ(uris.size(), (size_t)2);
         EXPECT_EQ(uris[0].str(), "");
         EXPECT_EQ(uris[1].str(), "a");
+
+        std::string s = rawstor::URI::uris(uris);
+        EXPECT_EQ(s, ",a");
     }
 
     {
@@ -208,12 +226,18 @@ TEST(URIsTest, basics) {
         EXPECT_EQ(uris.size(), (size_t)2);
         EXPECT_EQ(uris[0].str(), "a");
         EXPECT_EQ(uris[1].str(), "");
+
+        std::string s = rawstor::URI::uris(uris);
+        EXPECT_EQ(s, "a,");
     }
 
     {
         std::vector<rawstor::URI> uris = rawstor::URI::uriv("\\,a");
         EXPECT_EQ(uris.size(), (size_t)1);
         EXPECT_EQ(uris[0].str(), "\\,a");
+
+        std::string s = rawstor::URI::uris(uris);
+        EXPECT_EQ(s, "\\,a");
     }
 }
 
