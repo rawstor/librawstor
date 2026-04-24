@@ -112,6 +112,9 @@ ssize_t EventSimplexAcceptOneshot::process() noexcept {
         try {
             rawstor::io::poll::Queue::setup_fd(res);
             _result = res;
+#ifdef RAWSTOR_TRACE_EVENTS
+            RAWSTOR_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "completed");
+#endif
         } catch (const std::system_error& e) {
             ::close(res);
             res = -e.code().value();
@@ -127,9 +130,6 @@ ssize_t EventSimplexAcceptOneshot::process() noexcept {
             res = -EIO;
             set_error(EIO);
         }
-#ifdef RAWSTOR_TRACE_EVENTS
-        RAWSTOR_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "completed");
-#endif
     } else {
         int error = errno;
         errno = 0;
@@ -149,6 +149,9 @@ ssize_t EventSimplexAcceptMultishot::process() noexcept {
         try {
             rawstor::io::poll::Queue::setup_fd(res);
             _result = res;
+#ifdef RAWSTOR_TRACE_EVENTS
+            RAWSTOR_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "completed");
+#endif
         } catch (const std::system_error& e) {
             ::close(res);
             res = -e.code().value();
@@ -164,9 +167,6 @@ ssize_t EventSimplexAcceptMultishot::process() noexcept {
             res = -EIO;
             set_error(EIO);
         }
-#ifdef RAWSTOR_TRACE_EVENTS
-        RAWSTOR_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "completed");
-#endif
     } else {
         int error = errno;
         errno = 0;
