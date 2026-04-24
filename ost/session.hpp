@@ -10,18 +10,12 @@ namespace ostbackend {
 
 class Server;
 
-enum SessionOpNext {
-    SON_HEAD,
-    SON_BODY,
-    SON_DATA,
-};
-
 class Session final {
 private:
     Server& _server;
     int _fd;
     RawstorIOEvent* _recv_event;
-    SessionOpNext _next;
+    ssize_t (Session::*_next)(const iovec*, unsigned int, size_t);
     RawstorOSTFrameHead _request_head;
     union {
         RawstorOSTFrameBasicBody basic;
