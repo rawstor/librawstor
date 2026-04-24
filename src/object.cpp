@@ -35,16 +35,8 @@
 namespace {
 
 int uris(const std::vector<rawstor::URI>& uriv, char* buf, size_t size) {
-    std::ostringstream oss;
-    bool comma = false;
-    for (const auto& uri : uriv) {
-        if (comma) {
-            oss << ',';
-        }
-        oss << uri.str();
-        comma = true;
-    }
-    int res = snprintf(buf, size, "%s", oss.str().c_str());
+    std::string s = rawstor::URI::uris(uriv);
+    int res = snprintf(buf, size, "%s", s.c_str());
     if (res < 0) {
         RAWSTOR_THROW_ERRNO();
     }
