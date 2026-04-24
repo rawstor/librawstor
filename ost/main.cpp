@@ -17,7 +17,7 @@ void usage() {
     std::cerr << "Rawstor OST server with a file-based backend." << std::endl
               << std::endl
               << "usage: rawstor-file-ost "
-                 "[-h] -u RAWSTOR_URI -a ADDR"
+                 "[-h] -u RAWSTOR_URI -b ADDR"
               << std::endl
               << std::endl
               << "options:" << std::endl
