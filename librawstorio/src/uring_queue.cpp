@@ -166,7 +166,7 @@ rawstor::io::Event* Queue::accept(
                         error = e.code().value();
                     } catch (const std::exception& e) {
                         rawstor_error(
-                            "Failed to setup fd %zu: \n", result, e.what()
+                            "Failed to setup fd %zu: %s\n", result, e.what()
                         );
                         ::close(result);
                         result = 0;
@@ -211,7 +211,7 @@ Queue::accept_multishot(int fd, std::function<void(size_t, int)>&& cb) {
                         error = e.code().value();
                     } catch (const std::exception& e) {
                         rawstor_error(
-                            "Failed to setup fd %zu: \n", result, e.what()
+                            "Failed to setup fd %zu: %s\n", result, e.what()
                         );
                         ::close(result);
                         result = 0;
