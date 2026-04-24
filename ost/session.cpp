@@ -76,11 +76,12 @@ Session::~Session() {
     if (_recv_event != nullptr) {
         int res = rawstor_fd_cancel(_recv_event);
         if (res < 0) {
-            rawstor_error("Failed to cancel event: %s\n", strerror(-res));
+            if (res != -ENOENT) {
+                rawstor_error("Failed to cancel event: %s\n", strerror(-res));
+            }
         }
     }
     close(_fd);
-    _server.del_session(_fd);
 }
 
 ssize_t Session::_recv(
