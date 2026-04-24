@@ -1,8 +1,11 @@
 #include "poll_event.hpp"
 
+#include "poll_queue.hpp"
+
 #include <rawstorstd/iovec.h>
 #include <rawstorstd/logging.h>
 
+#include <system_error>
 #include <vector>
 
 #include <sys/types.h>
@@ -106,10 +109,28 @@ ssize_t EventSimplexAcceptOneshot::process() noexcept {
     RAWSTOR_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "accept()");
     ssize_t res = ::accept(_fd, _addr, _addrlen);
     if (res >= 0) {
-        _result = res;
+        try {
+            rawstor::io::poll::Queue::setup_fd(res);
+            _result = res;
 #ifdef RAWSTOR_TRACE_EVENTS
-        RAWSTOR_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "completed");
+            RAWSTOR_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "completed");
 #endif
+        } catch (const std::system_error& e) {
+            rawstor_error("Failed to setup fd %zd: %s\n", res, e.what());
+            ::close(res);
+            res = -e.code().value();
+            set_error(e.code().value());
+        } catch (const std::exception& e) {
+            rawstor_error("Failed to setup fd %zd: %s\n", res, e.what());
+            ::close(res);
+            res = -EIO;
+            set_error(EIO);
+        } catch (...) {
+            rawstor_error("Failed to setup fd %zd\n", res);
+            ::close(res);
+            res = -EIO;
+            set_error(EIO);
+        }
     } else {
         int error = errno;
         errno = 0;
@@ -126,10 +147,28 @@ ssize_t EventSimplexAcceptMultishot::process() noexcept {
     RAWSTOR_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "accept()");
     ssize_t res = ::accept(_fd, nullptr, nullptr);
     if (res >= 0) {
-        _result = res;
+        try {
+            rawstor::io::poll::Queue::setup_fd(res);
+            _result = res;
 #ifdef RAWSTOR_TRACE_EVENTS
-        RAWSTOR_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "completed");
+            RAWSTOR_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "completed");
 #endif
+        } catch (const std::system_error& e) {
+            rawstor_error("Failed to setup fd %zd: %s\n", res, e.what());
+            ::close(res);
+            res = -e.code().value();
+            set_error(e.code().value());
+        } catch (const std::exception& e) {
+            rawstor_error("Failed to setup fd %zd: %s\n", res, e.what());
+            ::close(res);
+            res = -EIO;
+            set_error(EIO);
+        } catch (...) {
+            rawstor_error("Failed to setup fd %zd\n", res);
+            ::close(res);
+            res = -EIO;
+            set_error(EIO);
+        }
     } else {
         int error = errno;
         errno = 0;

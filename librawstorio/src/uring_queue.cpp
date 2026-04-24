@@ -158,6 +158,30 @@ rawstor::io::Event* Queue::accept(
                 RAWSTOR_TRACE_EVENT_MESSAGE(
                     trace_event, "result = %zu, error = %d\n", result, error
                 );
+                if (!error) {
+                    try {
+                        rawstor::io::uring::Queue::setup_fd(result);
+                    } catch (const std::system_error& e) {
+                        rawstor_error(
+                            "Failed to setup fd %zu: %s\n", result, e.what()
+                        );
+                        ::close(result);
+                        result = 0;
+                        error = e.code().value();
+                    } catch (const std::exception& e) {
+                        rawstor_error(
+                            "Failed to setup fd %zu: %s\n", result, e.what()
+                        );
+                        ::close(result);
+                        result = 0;
+                        error = EIO;
+                    } catch (...) {
+                        rawstor_error("Failed to setup fd %zu\n", result);
+                        ::close(result);
+                        result = 0;
+                        error = EIO;
+                    }
+                }
                 cb(result, error);
             }
         );
@@ -183,6 +207,30 @@ Queue::accept_multishot(int fd, std::function<void(size_t, int)>&& cb) {
                 RAWSTOR_TRACE_EVENT_MESSAGE(
                     trace_event, "result = %zu, error = %d\n", result, error
                 );
+                if (!error) {
+                    try {
+                        rawstor::io::uring::Queue::setup_fd(result);
+                    } catch (const std::system_error& e) {
+                        rawstor_error(
+                            "Failed to setup fd %zu: %s\n", result, e.what()
+                        );
+                        ::close(result);
+                        result = 0;
+                        error = e.code().value();
+                    } catch (const std::exception& e) {
+                        rawstor_error(
+                            "Failed to setup fd %zu: %s\n", result, e.what()
+                        );
+                        ::close(result);
+                        result = 0;
+                        error = EIO;
+                    } catch (...) {
+                        rawstor_error("Failed to setup fd %zu\n", result);
+                        ::close(result);
+                        result = 0;
+                        error = EIO;
+                    }
+                }
                 cb(result, error);
             }
         );
