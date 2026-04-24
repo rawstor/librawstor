@@ -158,7 +158,12 @@ rawstor::io::Event* Queue::accept(
                     trace_event, "result = %zu, error = %d\n", result, error
                 );
                 if (!error) {
-                    rawstor::io::uring::Queue::setup_fd(result);
+                    try {
+                        rawstor::io::uring::Queue::setup_fd(result);
+                    } catch (...) {
+                        ::close(result);
+                        throw;
+                    }
                 }
                 cb(result, error);
             }
@@ -185,7 +190,12 @@ Queue::accept_multishot(int fd, std::function<void(size_t, int)>&& cb) {
                     trace_event, "result = %zu, error = %d\n", result, error
                 );
                 if (!error) {
-                    rawstor::io::uring::Queue::setup_fd(result);
+                    try {
+                        rawstor::io::uring::Queue::setup_fd(result);
+                    } catch (...) {
+                        ::close(result);
+                        throw;
+                    }
                 }
                 cb(result, error);
             }
