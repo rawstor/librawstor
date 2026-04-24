@@ -108,8 +108,19 @@ ssize_t EventSimplexAcceptOneshot::process() noexcept {
     RAWSTOR_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "accept()");
     ssize_t res = ::accept(_fd, _addr, _addrlen);
     if (res >= 0) {
-        rawstor::io::poll::Queue::setup_fd(res);
-        _result = res;
+        try {
+            rawstor::io::poll::Queue::setup_fd(res);
+            _result = res;
+        } catch (const std::system_error& e) {
+            ::close(res);
+            res = -e.code().value();
+            set_error(e.code().value());
+        } catch (...) {
+            rawstor_error("Failed to setup fd: %zd\n", res);
+            ::close(res);
+            res = -EFAULT;
+            set_error(EFAULT);
+        }
 #ifdef RAWSTOR_TRACE_EVENTS
         RAWSTOR_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "completed");
 #endif
@@ -129,8 +140,19 @@ ssize_t EventSimplexAcceptMultishot::process() noexcept {
     RAWSTOR_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "accept()");
     ssize_t res = ::accept(_fd, nullptr, nullptr);
     if (res >= 0) {
-        rawstor::io::poll::Queue::setup_fd(res);
-        _result = res;
+        try {
+            rawstor::io::poll::Queue::setup_fd(res);
+            _result = res;
+        } catch (const std::system_error& e) {
+            ::close(res);
+            res = -e.code().value();
+            set_error(e.code().value());
+        } catch (...) {
+            rawstor_error("Failed to setup fd: %zd\n", res);
+            ::close(res);
+            res = -EFAULT;
+            set_error(EFAULT);
+        }
 #ifdef RAWSTOR_TRACE_EVENTS
         RAWSTOR_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "completed");
 #endif
