@@ -170,7 +170,7 @@ rawstor::io::Event* Queue::accept(
                         );
                         ::close(result);
                         result = 0;
-                        error = e.code().value();
+                        error = EIO;
                     } catch (...) {
                         rawstor_error("Failed to setup fd %zu\n", result);
                         ::close(result);
@@ -215,7 +215,7 @@ Queue::accept_multishot(int fd, std::function<void(size_t, int)>&& cb) {
                         );
                         ::close(result);
                         result = 0;
-                        error = e.code().value();
+                        error = EIO;
                     } catch (...) {
                         rawstor_error("Failed to setup fd %zu\n", result);
                         ::close(result);

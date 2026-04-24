@@ -5,13 +5,13 @@
 #include <rawstorstd/iovec.h>
 #include <rawstorstd/logging.h>
 
+#include <vector>
+#include <system_error>
+
 #include <sys/types.h>
 #include <sys/uio.h>
 
 #include <unistd.h>
-
-#include <vector>
-#include <system_error>
 
 namespace {
 
@@ -153,8 +153,13 @@ ssize_t EventSimplexAcceptMultishot::process() noexcept {
             ::close(res);
             res = -e.code().value();
             set_error(e.code().value());
+        } catch (const std::exception& e) {
+            rawstor_error("Failed to setup fd %zd: %s\n", res, e.what());
+            ::close(res);
+            res = -EIO;
+            set_error(EIO);
         } catch (...) {
-            rawstor_error("Failed to setup fd: %zd\n", res);
+            rawstor_error("Failed to setup fd %zd\n", res);
             ::close(res);
             res = -EIO;
             set_error(EIO);
