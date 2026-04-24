@@ -42,6 +42,7 @@ private:
 
 public:
     static std::vector<rawstor::URI> uriv(const char* uris);
+    static std::string uris(const std::vector<rawstor::URI>& uriv);
 
     explicit URI(const std::string& uri);
     URI(const URI& parent, const std::string& child);

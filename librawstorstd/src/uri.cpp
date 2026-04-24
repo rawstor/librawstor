@@ -181,6 +181,19 @@ std::vector<rawstor::URI> URI::uriv(const char* uris) {
     return ret;
 }
 
+std::string URI::uris(const std::vector<rawstor::URI>& uriv) {
+    std::ostringstream oss;
+    bool comma = false;
+    for (const auto& uri : uriv) {
+        if (comma) {
+            oss << ',';
+        }
+        oss << uri.str();
+        comma = true;
+    }
+    return oss.str();
+}
+
 URI::URI(const std::string& uri) : _uri(uri) {
     std::string path;
     parse_uri(
