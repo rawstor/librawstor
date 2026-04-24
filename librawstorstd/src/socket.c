@@ -51,13 +51,28 @@ int rawstor_socket_set_nodelay(int fd) {
     int error;
 
     int onoff = 1;
-    if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &onoff, sizeof(onoff))) {
+    if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &onoff, sizeof(onoff)) == -1) {
         error = errno;
         errno = 0;
         return -error;
     }
 
     rawstor_debug("fd %d: IPPROTO_TCP/TCP_NODELAY\n", fd);
+
+    return 0;
+}
+
+int rawstor_socket_set_reuse(int fd) {
+    int error;
+
+    int onoff = 1;
+    if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &onoff, sizeof(onoff)) == -1) {
+        error = errno;
+        errno = 0;
+        return -error;
+    }
+
+    rawstor_debug("fd %d: SOL_SOCKET/SO_REUSEADDR\n", fd);
 
     return 0;
 }
@@ -69,7 +84,7 @@ int rawstor_socket_set_snd_timeout(int fd, unsigned int timeout) {
         .tv_sec = timeout / 1000,
         .tv_usec = (timeout % 1000) * 1000,
     };
-    if (setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeo, sizeof(timeo))) {
+    if (setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeo, sizeof(timeo)) == -1) {
         error = errno;
         errno = 0;
         return -error;
@@ -87,7 +102,7 @@ int rawstor_socket_set_rcv_timeout(int fd, unsigned int timeout) {
         .tv_sec = timeout / 1000,
         .tv_usec = (timeout % 1000) * 1000,
     };
-    if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeo, sizeof(timeo))) {
+    if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeo, sizeof(timeo)) == -1) {
         error = errno;
         errno = 0;
         return -error;
@@ -114,7 +129,7 @@ int rawstor_socket_set_user_timeout(int fd, unsigned int timeout) {
     timeout = (timeout + 999) / 1000;
     if (setsockopt(
             fd, IPPROTO_TCP, TCP_CONNECTIONTIMEOUT, &timeout, sizeof(timeout)
-        )) {
+        ) == -1) {
         error = errno;
         errno = 0;
         return -error;
@@ -132,7 +147,7 @@ int rawstor_socket_set_user_timeout(int fd, unsigned int timeout) {
 int rawstor_socket_set_snd_bufsize(int fd, unsigned int size) {
     int error;
 
-    if (setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &size, sizeof(size))) {
+    if (setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &size, sizeof(size)) == -1) {
         error = errno;
         errno = 0;
         return -error;
@@ -146,7 +161,7 @@ int rawstor_socket_set_snd_bufsize(int fd, unsigned int size) {
 int rawstor_socket_set_rcv_bufsize(int fd, unsigned int size) {
     int error;
 
-    if (setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &size, sizeof(size))) {
+    if (setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &size, sizeof(size)) == -1) {
         error = errno;
         errno = 0;
         return -error;
