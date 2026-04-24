@@ -28,7 +28,8 @@ void usage() {
                  "Comma separated list of Rawstor URI targets."
               << std::endl
               << "  -b, --bind ADDR       Bind address in the format "
-              << "<ip>:<port> (e.g., 127.0.0.1:8080)." << std::endl;
+              << "<ip>:<port> " << std::endl
+              << "                        (e.g., 127.0.0.1:8080)." << std::endl;
 }
 
 void sact_handler(int s) {
