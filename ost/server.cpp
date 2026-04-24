@@ -67,6 +67,8 @@ Server::Server(const std::string& addr, unsigned int port, const char* uris) :
         close(_fd);
         RAWSTOR_THROW_ERRNO();
     }
+
+    rawstor_info("Waiting for connections on %s:%u\n", addr.c_str(), port);
 }
 
 Server::~Server() {
