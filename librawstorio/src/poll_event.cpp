@@ -5,12 +5,13 @@
 #include <rawstorstd/iovec.h>
 #include <rawstorstd/logging.h>
 
-#include <vector>
-
 #include <sys/types.h>
 #include <sys/uio.h>
 
 #include <unistd.h>
+
+#include <vector>
+#include <system_error>
 
 namespace {
 
