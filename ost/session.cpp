@@ -13,6 +13,7 @@
 #include <rawstor/ost_protocol.h>
 #include <rawstor/rawstor.h>
 
+#include <functional>
 #include <memory>
 
 #include <cstring>
