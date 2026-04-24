@@ -19,215 +19,33 @@
 
 namespace {
 
-class SessionOp {
-protected:
-    int _fd;
-    RawstorOSTFrameResponse _response;
+typedef std::function<void(size_t, int)> IOCallback;
 
-public:
-    static int callback(size_t result, int error, void* data) {
-        std::unique_ptr<SessionOp> op(static_cast<SessionOp*>(data));
+typedef std::function<void(RawstorObject*, size_t, size_t, int)> Callback;
 
-        try {
-            (*op)(result, error);
-            return 0;
-        } catch (const std::system_error& e) {
-            return -e.code().value();
-        }
-    }
+int io_callback(size_t result, int error, void* data) {
+    std::unique_ptr<IOCallback> cb(static_cast<IOCallback*>(data));
 
-    SessionOp(int fd, RawstorOSTCommandType cmd, uint16_t cid, int32_t res) :
-        _fd(fd),
-        _response{
-            .head =
-                {
-                    .magic = RAWSTOR_MAGIC,
-                    .cmd = cmd,
-                },
-            .cid = cid,
-            .res = res,
-            .hash = 0,
-        } {}
-
-    SessionOp(const SessionOp&) = delete;
-    SessionOp(SessionOp&&) = delete;
-    virtual ~SessionOp() = default;
-
-    SessionOp& operator=(const SessionOp&) = delete;
-    SessionOp& operator=(SessionOp&&) = delete;
-
-    virtual void operator()(size_t, int error) = 0;
-};
-
-class SessionOpSetObject final : SessionOp {
-public:
-    SessionOpSetObject(int fd, int32_t res) :
-        SessionOp(fd, RAWSTOR_CMD_SET_OBJECT, 0, res) {}
-
-    void process() {
-        int res = rawstor_fd_write(
-            _fd, &_response, sizeof(_response), callback, this
-        );
-        if (res < 0) {
-            RAWSTOR_THROW_SYSTEM_ERROR(-res);
-        }
-    }
-
-    void operator()(size_t, int error) override {
-        if (error) {
-            RAWSTOR_THROW_SYSTEM_ERROR(error);
-        }
-    }
-};
-
-class SessionOpRead final : SessionOp {
-private:
-    RawstorObject* _object;
-    std::vector<char> _buf;
-    iovec _iov[2];
-    off_t _offset;
-
-    int _io_cb(RawstorObject*, size_t, size_t result, int error) {
-        if (error) {
-            _response.hash = 0;
-            _response.res = -error;
-            _iov[1].iov_len = 0;
-        } else {
-            _response.hash = rawstor_hash_scalar(_buf.data(), result);
-            _response.res = result;
-            _iov[1].iov_len = result;
-        }
-
-        int res = rawstor_fd_writev(_fd, _iov, 2, callback, this);
-        if (res < 0) {
-            RAWSTOR_THROW_SYSTEM_ERROR(-res);
-        }
-
+    try {
+        (*cb)(result, error);
         return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
     }
+}
 
-public:
-    static int io_cb(
-        RawstorObject* object, size_t size, size_t result, int error, void* data
-    ) {
-        try {
-            std::unique_ptr<SessionOpRead> op(
-                static_cast<SessionOpRead*>(data)
-            );
-            int ret = op->_io_cb(object, size, result, error);
-            if (ret >= 0) {
-                op.release();
-            }
-            return ret;
-        } catch (const std::system_error& e) {
-            return -e.code().value();
-        }
-    }
+int callback(
+    RawstorObject* object, size_t size, size_t result, int error, void* data
+) {
+    std::unique_ptr<Callback> cb(static_cast<Callback*>(data));
 
-    SessionOpRead(
-        RawstorObject* object, int fd, uint16_t cid, size_t size, off_t offset
-    ) :
-        SessionOp(fd, RAWSTOR_CMD_READ, cid, 0),
-        _object(object),
-        _buf(size),
-        _iov{
-            {
-                .iov_base = &_response,
-                .iov_len = sizeof(_response),
-            },
-            {
-                .iov_base = _buf.data(),
-                .iov_len = 0,
-            }
-        },
-        _offset(offset) {}
-
-    void process() {
-        int res = rawstor_object_pread(
-            _object, _buf.data(), _buf.size(), _offset, io_cb, this
-        );
-        if (res < 0) {
-            RAWSTOR_THROW_SYSTEM_ERROR(-res);
-        }
-    }
-
-    void operator()(size_t, int error) override {
-        if (error) {
-            RAWSTOR_THROW_SYSTEM_ERROR(error);
-        }
-    }
-};
-
-class SessionOpWrite final : SessionOp {
-private:
-    RawstorObject* _object;
-    std::vector<char> _buf;
-    off_t _offset;
-
-    int _io_cb(RawstorObject*, size_t, size_t result, int error) {
-        if (error) {
-            _response.hash = 0;
-            _response.res = -error;
-        } else {
-            _response.hash = rawstor_hash_scalar(_buf.data(), _buf.size());
-            _response.res = result;
-        }
-
-        int res = rawstor_fd_write(
-            _fd, &_response, sizeof(_response), callback, this
-        );
-        if (res < 0) {
-            RAWSTOR_THROW_SYSTEM_ERROR(-res);
-        }
-
+    try {
+        (*cb)(object, size, result, error);
         return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
     }
-
-public:
-    static int io_cb(
-        RawstorObject* object, size_t size, size_t result, int error, void* data
-    ) {
-        try {
-            std::unique_ptr<SessionOpWrite> op(
-                static_cast<SessionOpWrite*>(data)
-            );
-            int ret = op->_io_cb(object, size, result, error);
-            if (ret >= 0) {
-                op.release();
-            }
-            return ret;
-        } catch (const std::system_error& e) {
-            return -e.code().value();
-        }
-    }
-
-    SessionOpWrite(
-        RawstorObject* object, int fd, uint16_t cid, off_t offset,
-        const iovec* iov, unsigned int niov, size_t size
-    ) :
-        SessionOp(fd, RAWSTOR_CMD_WRITE, cid, 0),
-        _object(object),
-        _buf(size),
-        _offset(offset) {
-        rawstor_iovec_to_buf(iov, niov, 0, _buf.data(), size);
-        _response.hash = rawstor_hash_scalar(_buf.data(), _buf.size());
-    }
-
-    void process() {
-        int res = rawstor_object_pwrite(
-            _object, _buf.data(), _buf.size(), _offset, io_cb, this
-        );
-        if (res < 0) {
-            RAWSTOR_THROW_SYSTEM_ERROR(-res);
-        }
-    }
-
-    void operator()(size_t, int error) override {
-        if (error) {
-            RAWSTOR_THROW_SYSTEM_ERROR(error);
-        }
-    }
-};
+}
 
 } // namespace
 
@@ -453,31 +271,140 @@ void Session::_set_object(const RawstorOSTFrameBasicBody& request) {
     int res =
         rawstor_object_open(rawstor::URI::uris(object_uris).c_str(), &_object);
 
-    std::unique_ptr<SessionOpSetObject> op =
-        std::make_unique<SessionOpSetObject>(_fd, res);
-    op->process();
-    op.release();
+    auto response =
+        std::make_shared<RawstorOSTFrameResponse>((RawstorOSTFrameResponse){
+            .head =
+                {
+                    .magic = RAWSTOR_MAGIC,
+                    .cmd = RAWSTOR_CMD_SET_OBJECT,
+                },
+            .cid = 0,
+            .res = res,
+            .hash = 0,
+        });
+
+    auto cb = std::make_unique<IOCallback>([response](size_t, int error) {
+        if (error) {
+            RAWSTOR_THROW_SYSTEM_ERROR(error);
+        }
+    });
+
+    res = rawstor_fd_write(
+        _fd, response.get(), sizeof(*response), io_callback, cb.get()
+    );
+    if (res < 0) {
+        RAWSTOR_THROW_SYSTEM_ERROR(-res);
+    }
+
+    cb.release();
 }
 
 void Session::_read(const RawstorOSTFrameIOBody& request) {
-    std::unique_ptr<SessionOpRead> op = std::make_unique<SessionOpRead>(
-        _object, _fd, request.cid, request.len, request.offset
-    );
+    auto data = std::make_shared<std::vector<char>>(request.len);
 
-    op->process();
-    op.release();
+    auto cb = std::make_unique<Callback>([data, cid = request.cid, fd = _fd](
+                                             RawstorObject*, size_t,
+                                             size_t result, int error
+                                         ) {
+        auto response =
+            std::make_shared<RawstorOSTFrameResponse>((RawstorOSTFrameResponse){
+                .head =
+                    {
+                        .magic = RAWSTOR_MAGIC,
+                        .cmd = RAWSTOR_CMD_READ,
+                    },
+                .cid = cid,
+                .res = error ? -error : static_cast<int32_t>(result),
+                .hash =
+                    error ? 0 : rawstor_hash_scalar(data->data(), data->size()),
+            });
+
+        auto iov = std::make_shared<std::vector<iovec>>(std::vector<iovec>{
+            {
+                .iov_base = response.get(),
+                .iov_len = sizeof(*response),
+            },
+            {
+                .iov_base = data->data(),
+                .iov_len = data->size(),
+            },
+        });
+
+        auto cb = std::make_unique<IOCallback>([data, response,
+                                                iov](size_t, int error) {
+            if (error) {
+                RAWSTOR_THROW_SYSTEM_ERROR(error);
+            }
+        });
+
+        int res = rawstor_fd_writev(
+            fd, iov->data(), error ? 1 : 2, io_callback, cb.get()
+        );
+        if (res < 0) {
+            RAWSTOR_THROW_SYSTEM_ERROR(-res);
+        }
+
+        cb.release();
+    });
+
+    int res = rawstor_object_pread(
+        _object, data->data(), data->size(), request.offset, callback, cb.get()
+    );
+    if (res < 0) {
+        RAWSTOR_THROW_SYSTEM_ERROR(-res);
+    }
+
+    cb.release();
 }
 
 void Session::_write(
     const RawstorOSTFrameIOBody& request, const iovec* iov, unsigned int niov,
     size_t size
 ) {
-    std::unique_ptr<SessionOpWrite> op = std::make_unique<SessionOpWrite>(
-        _object, _fd, request.cid, request.offset, iov, niov, size
-    );
+    auto data = std::make_shared<std::vector<char>>(size);
+    rawstor_iovec_to_buf(iov, niov, 0, data->data(), size);
 
-    op->process();
-    op.release();
+    auto cb = std::make_unique<Callback>([data, cid = request.cid, fd = _fd](
+                                             RawstorObject*, size_t,
+                                             size_t result, int error
+                                         ) {
+        auto response =
+            std::make_shared<RawstorOSTFrameResponse>((RawstorOSTFrameResponse){
+                .head =
+                    {
+                        .magic = RAWSTOR_MAGIC,
+                        .cmd = RAWSTOR_CMD_WRITE,
+                    },
+                .cid = cid,
+                .res = error ? -error : static_cast<int32_t>(result),
+                .hash =
+                    error ? 0 : rawstor_hash_scalar(data->data(), data->size()),
+            });
+
+        auto cb = std::make_unique<IOCallback>([response](size_t, int error) {
+            if (error) {
+                RAWSTOR_THROW_SYSTEM_ERROR(error);
+            }
+        });
+
+        int res = rawstor_fd_write(
+            fd, response.get(), sizeof(*response), io_callback, cb.get()
+        );
+        if (res < 0) {
+            RAWSTOR_THROW_SYSTEM_ERROR(-res);
+        }
+
+        cb.release();
+    });
+
+    int res = rawstor_object_pwrite(
+        _object, data->data(), data->size(), request.offset, callback, cb.get()
+    );
+    if (res < 0) {
+        RAWSTOR_THROW_SYSTEM_ERROR(-res);
+    }
+
+    cb.release();
 }
 
 void Session::_discard(const RawstorOSTFrameIOBody&) {
