@@ -73,9 +73,10 @@ int validate_response(
         return EPROTO;
     }
 
-    if (response->res < 0) {
+    if (response->body.res < 0) {
         rawstor_error(
-            "%s: Server error: %s\n", s.str().c_str(), strerror(-response->res)
+            "%s: Server error: %s\n", s.str().c_str(),
+            strerror(-response->body.res)
         );
         return EPROTO;
     }
@@ -298,7 +299,7 @@ public:
         }
 
         if (!error) {
-            _hash = response->hash;
+            _hash = response->body.hash;
             s.read_response_body(
                 *rawstor::io_queue, cid(),
                 static_cast<rawstor::TaskScalar*>(_t.get())->buf(),
@@ -359,7 +360,7 @@ public:
         }
 
         if (!error) {
-            _hash = response->hash;
+            _hash = response->body.hash;
             s.read_response_body(
                 *rawstor::io_queue, cid(),
                 static_cast<rawstor::TaskVector*>(_t.get())->iov(),
@@ -420,7 +421,9 @@ public:
             error = validate_cmd(s, response->head.cmd, RAWSTOR_CMD_WRITE);
         }
 
-        _dispatch(response != nullptr ? response->res : 0, error);
+        _dispatch(
+            !error && response != nullptr ? response->body.res : 0, error
+        );
     }
 };
 
@@ -460,7 +463,9 @@ public:
             error = validate_cmd(s, response->head.cmd, RAWSTOR_CMD_WRITE);
         }
 
-        _dispatch(response != nullptr ? response->res : 0, error);
+        _dispatch(
+            !error && response != nullptr ? response->body.res : 0, error
+        );
     }
 };
 
@@ -716,7 +721,7 @@ public:
             _context->fail_in_flight(error);
         } else {
             try {
-                SessionOp& op = _context->find_op(_response.cid);
+                SessionOp& op = _context->find_op(_response.body.cid);
                 op.response_head_cb(&_response, 0);
             } catch (const std::system_error& e) {
                 _context->fail_in_flight(e.code().value());
