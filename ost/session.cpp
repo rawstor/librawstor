@@ -271,9 +271,11 @@ void Session::_set_object(const RawstorOSTFrameBasicBody& request) {
                     .magic = RAWSTOR_MAGIC,
                     .cmd = RAWSTOR_CMD_SET_OBJECT,
                 },
-            .cid = 0,
-            .res = res,
-            .hash = 0,
+            .body = {
+                .cid = 0,
+                .res = res,
+                .hash = 0,
+            },
         });
 
     auto cb = std::make_unique<IOCallback>([response](size_t, int error) {
@@ -306,10 +308,12 @@ void Session::_read(const RawstorOSTFrameIOBody& request) {
                         .magic = RAWSTOR_MAGIC,
                         .cmd = RAWSTOR_CMD_READ,
                     },
+                .body = {
                 .cid = cid,
                 .res = error ? -error : static_cast<int32_t>(result),
                 .hash =
                     error ? 0 : rawstor_hash_scalar(data->data(), data->size()),
+                },
             });
 
         auto iov = std::make_shared<std::vector<iovec>>(std::vector<iovec>{
@@ -368,10 +372,12 @@ void Session::_write(
                         .magic = RAWSTOR_MAGIC,
                         .cmd = RAWSTOR_CMD_WRITE,
                     },
+                .body = {
                 .cid = cid,
                 .res = error ? -error : static_cast<int32_t>(result),
                 .hash =
                     error ? 0 : rawstor_hash_scalar(data->data(), data->size()),
+                },
             });
 
         auto cb = std::make_unique<IOCallback>([response](size_t, int error) {
