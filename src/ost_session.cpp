@@ -462,7 +462,9 @@ public:
             );
         }
 
-        _dispatch(response != nullptr ? response->body.res : 0, error);
+        _dispatch(
+            !error && response != nullptr ? response->body.res : 0, error
+        );
 
         *next_head = true;
         *next_size = error ? 0 : sizeof(RawstorOSTFrameResponse);
@@ -530,7 +532,9 @@ public:
             );
         }
 
-        _dispatch(response != nullptr ? response->body.res : 0, error);
+        _dispatch(
+            !error && response != nullptr ? response->body.res : 0, error
+        );
 
         *next_head = true;
         *next_size = error ? 0 : sizeof(RawstorOSTFrameResponse);
