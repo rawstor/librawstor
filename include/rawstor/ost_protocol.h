@@ -52,13 +52,17 @@ struct RawstorOSTFrameIO {
 } RAWSTOR_PACKED;
 
 /* response frames */
-struct RawstorOSTFrameResponse {
-    struct RawstorOSTFrameHead head;
+struct RawstorOSTFrameResponseBody {
     uint16_t cid;
     // TODO: if we send length in res - it should be the same type
     // (signed-unsigned too)
     int32_t res;
     uint64_t hash;
+} RAWSTOR_PACKED;
+
+struct RawstorOSTFrameResponse {
+    struct RawstorOSTFrameHead head;
+    struct RawstorOSTFrameResponseBody body;
 } RAWSTOR_PACKED;
 
 #ifdef __cplusplus

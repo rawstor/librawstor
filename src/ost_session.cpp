@@ -65,9 +65,9 @@ int validate_response(
         return EPROTO;
     }
 
-    if (response->res < 0) {
+    if (response->body.res < 0) {
         rawstor_error(
-            "fd %d: Server error: %s\n", fd, strerror(-response->res)
+            "fd %d: Server error: %s\n", fd, strerror(-response->body.res)
         );
         return EPROTO;
     }
@@ -282,7 +282,7 @@ public:
         }
 
         if (!error) {
-            _hash = response->hash;
+            _hash = response->body.hash;
             *next_head = false;
             *next_size = _size;
         } else {
@@ -370,7 +370,7 @@ public:
         }
 
         if (!error) {
-            _hash = response->hash;
+            _hash = response->body.hash;
             *next_head = false;
             *next_size = _size;
         } else {
@@ -462,7 +462,7 @@ public:
             );
         }
 
-        _dispatch(response != nullptr ? response->res : 0, error);
+        _dispatch(response != nullptr ? response->body.res : 0, error);
 
         *next_head = true;
         *next_size = error ? 0 : sizeof(RawstorOSTFrameResponse);
@@ -530,7 +530,7 @@ public:
             );
         }
 
-        _dispatch(response != nullptr ? response->res : 0, error);
+        _dispatch(response != nullptr ? response->body.res : 0, error);
 
         *next_head = true;
         *next_size = error ? 0 : sizeof(RawstorOSTFrameResponse);
@@ -588,7 +588,7 @@ void Context::setup_recv() {
                         rawstor_iovec_to_buf(
                             iov, niov, 0, &response, sizeof(response)
                         );
-                        cid = response.cid;
+                        cid = response.body.cid;
                         SessionOp& op = context->_find_op(cid);
                         op.response_head_cb(&response, 0, &is_head, &size);
                     } else {
