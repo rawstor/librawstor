@@ -64,9 +64,10 @@ int validate_response(
         return EPROTO;
     }
 
-    if (response->res < 0) {
+    if (response->body.res < 0) {
         rawstor_error(
-            "%s: Server error: %s\n", s.str().c_str(), strerror(-response->res)
+            "%s: Server error: %s\n", s.str().c_str(),
+            strerror(-response->body.res)
         );
         return EPROTO;
     }
@@ -139,9 +140,9 @@ public:
     inline RawstorOSTFrameResponse* response() noexcept { return &_response; }
 
     SessionOp& find_op() {
-        auto it = _ops.find(_response.cid);
+        auto it = _ops.find(_response.body.cid);
         if (it == _ops.end()) {
-            rawstor_error("Unexpected cid: %u\n", _response.cid);
+            rawstor_error("Unexpected cid: %u\n", _response.body.cid);
             RAWSTOR_THROW_SYSTEM_ERROR(EPROTO);
         }
 
@@ -341,7 +342,7 @@ public:
         }
 
         if (!error) {
-            _hash = response->hash;
+            _hash = response->body.hash;
             s.read_response_body(_buf, _size);
         } else {
             _dispatch(0, error);
@@ -418,7 +419,7 @@ public:
         }
 
         if (!error) {
-            _hash = response->hash;
+            _hash = response->body.hash;
             s.read_response_body(_iov, _niov, _size);
         } else {
             _dispatch(0, error);
@@ -499,7 +500,9 @@ public:
             error = validate_cmd(s, response->head.cmd, RAWSTOR_CMD_WRITE);
         }
 
-        _dispatch(response != nullptr ? response->res : 0, error);
+        _dispatch(
+            !error && response != nullptr ? response->body.res : 0, error
+        );
     }
 };
 
@@ -562,7 +565,9 @@ public:
             error = validate_cmd(s, response->head.cmd, RAWSTOR_CMD_WRITE);
         }
 
-        _dispatch(response != nullptr ? response->res : 0, error);
+        _dispatch(
+            !error && response != nullptr ? response->body.res : 0, error
+        );
     }
 };
 
