@@ -42,10 +42,40 @@ int callback(
 
     try {
         (*cb)(object, size, result, error);
-        return 0;
-    } catch (const std::system_error& e) {
-        return -e.code().value();
+    } catch (const std::exception& e) {
+        rawstor_error("%s\n", e.what());
     }
+
+    return 0;
+}
+
+inline std::shared_ptr<RawstorOSTFrameResponse> make_response(
+    const RawstorOSTCommandType& type, uint16_t cid, int32_t res, uint64_t hash
+) {
+    return std::make_shared<RawstorOSTFrameResponse>((RawstorOSTFrameResponse){
+        .head =
+            {
+                .magic = RAWSTOR_MAGIC,
+                .cmd = type,
+            },
+        .body = {
+            .cid = cid,
+            .res = res,
+            .hash = hash,
+        },
+    });
+}
+
+int validate_result(int fd, size_t size, size_t result) noexcept {
+    if (result == size) {
+        return 0;
+    }
+
+    rawstor_error(
+        "fd %d: Unexpected event size: %zu != %zu\n", fd, result, size
+    );
+
+    return EIO;
 }
 
 } // namespace
@@ -264,25 +294,19 @@ void Session::_set_object(const RawstorOSTFrameBasicBody& request) {
     int res =
         rawstor_object_open(rawstor::URI::uris(object_uris).c_str(), &_object);
 
-    auto response =
-        std::make_shared<RawstorOSTFrameResponse>((RawstorOSTFrameResponse){
-            .head =
-                {
-                    .magic = RAWSTOR_MAGIC,
-                    .cmd = RAWSTOR_CMD_SET_OBJECT,
-                },
-            .body = {
-                .cid = 0,
-                .res = res,
-                .hash = 0,
-            },
-        });
+    auto response = make_response(RAWSTOR_CMD_SET_OBJECT, 0, res, 0);
 
-    auto cb = std::make_unique<IOCallback>([response](size_t, int error) {
-        if (error) {
-            RAWSTOR_THROW_SYSTEM_ERROR(error);
-        }
-    });
+    auto cb =
+        std::make_unique<IOCallback>([fd = _fd,
+                                      response](size_t result, int error) {
+            if (!error) {
+                error = validate_result(fd, sizeof(*response), result);
+            }
+
+            if (error) {
+                RAWSTOR_THROW_SYSTEM_ERROR(error);
+            }
+        });
 
     res = rawstor_fd_write(
         _fd, response.get(), sizeof(*response), io_callback, cb.get()
@@ -297,25 +321,14 @@ void Session::_set_object(const RawstorOSTFrameBasicBody& request) {
 void Session::_read(const RawstorOSTFrameIOBody& request) {
     auto data = std::make_shared<std::vector<char>>(request.len);
 
-    auto cb = std::make_unique<Callback>([data, cid = request.cid, fd = _fd](
+    auto cb = std::make_unique<Callback>([fd = _fd, cid = request.cid, data](
                                              RawstorObject*, size_t,
                                              size_t result, int error
                                          ) {
-        auto response =
-            std::make_shared<RawstorOSTFrameResponse>((RawstorOSTFrameResponse){
-                .head =
-                    {
-                        .magic = RAWSTOR_MAGIC,
-                        .cmd = RAWSTOR_CMD_READ,
-                    },
-                .body = {
-                    .cid = cid,
-                    .res = error ? -error : static_cast<int32_t>(result),
-                    .hash =
-                        error ? 0
-                              : rawstor_hash_scalar(data->data(), data->size()),
-                },
-            });
+        auto response = make_response(
+            RAWSTOR_CMD_READ, cid, error ? -error : static_cast<int>(result),
+            error ? 0 : rawstor_hash_scalar(data->data(), data->size())
+        );
 
         auto iov = std::make_shared<std::vector<iovec>>(std::vector<iovec>{
             {
@@ -328,8 +341,12 @@ void Session::_read(const RawstorOSTFrameIOBody& request) {
             },
         });
 
-        auto cb = std::make_unique<IOCallback>([data, response,
-                                                iov](size_t, int error) {
+        auto cb = std::make_unique<IOCallback>([fd, data, response,
+                                                iov](size_t result, int error) {
+            if (!error) {
+                error = validate_result(fd, sizeof(*response), result);
+            }
+
             if (error) {
                 RAWSTOR_THROW_SYSTEM_ERROR(error);
             }
@@ -362,31 +379,26 @@ void Session::_write(
     auto data = std::make_shared<std::vector<char>>(size);
     rawstor_iovec_to_buf(iov, niov, 0, data->data(), size);
 
-    auto cb = std::make_unique<Callback>([data, cid = request.cid, fd = _fd](
+    auto cb = std::make_unique<Callback>([fd = _fd, cid = request.cid, data](
                                              RawstorObject*, size_t,
                                              size_t result, int error
                                          ) {
-        auto response =
-            std::make_shared<RawstorOSTFrameResponse>((RawstorOSTFrameResponse){
-                .head =
-                    {
-                        .magic = RAWSTOR_MAGIC,
-                        .cmd = RAWSTOR_CMD_WRITE,
-                    },
-                .body = {
-                    .cid = cid,
-                    .res = error ? -error : static_cast<int32_t>(result),
-                    .hash =
-                        error ? 0
-                              : rawstor_hash_scalar(data->data(), data->size()),
-                },
-            });
+        auto response = make_response(
+            RAWSTOR_CMD_WRITE, cid, error ? -error : static_cast<int>(result),
+            error ? 0 : rawstor_hash_scalar(data->data(), data->size())
+        );
 
-        auto cb = std::make_unique<IOCallback>([response](size_t, int error) {
-            if (error) {
-                RAWSTOR_THROW_SYSTEM_ERROR(error);
-            }
-        });
+        auto cb =
+            std::make_unique<IOCallback>([fd,
+                                          response](size_t result, int error) {
+                if (!error) {
+                    error = validate_result(fd, sizeof(*response), result);
+                }
+
+                if (error) {
+                    RAWSTOR_THROW_SYSTEM_ERROR(error);
+                }
+            });
 
         int res = rawstor_fd_write(
             fd, response.get(), sizeof(*response), io_callback, cb.get()
