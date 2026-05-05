@@ -39,7 +39,7 @@ public:
         return _uris;
     }
 
-    void del_session(int fd);
+    void del_session(int fd) noexcept;
     void loop();
 };
 

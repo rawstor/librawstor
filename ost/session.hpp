@@ -26,7 +26,7 @@ private:
     static ssize_t _recv(
         const iovec* iov, unsigned int niov, size_t result, int error,
         void* data
-    );
+    ) noexcept;
     ssize_t
     _recv(const iovec* iov, unsigned int niov, size_t result, int error);
     ssize_t _recv_head(const iovec* iov, unsigned int niov, size_t result);
@@ -44,7 +44,7 @@ public:
     Session(Server& server, int fd);
     Session(const Session&) = delete;
     Session(Session&&) = delete;
-    ~Session();
+    ~Session() noexcept;
 
     Session& operator=(const Session&) = delete;
     Session& operator=(Session&&) = delete;

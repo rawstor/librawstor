@@ -109,7 +109,7 @@ void Server::_add_session(int fd) {
     _sessions.emplace(fd, std::make_unique<Session>(*this, fd));
 }
 
-void Server::del_session(int fd) {
+void Server::del_session(int fd) noexcept {
     auto it = _sessions.find(fd);
     if (it != _sessions.end()) {
         _sessions.erase(it);
