@@ -390,26 +390,27 @@ void Session::_set_object(const RawstorOSTFrameBasicBody& request) {
 void Session::_read(const RawstorOSTFrameIOBody& request) {
     auto data = std::make_shared<std::vector<unsigned char>>(request.len);
 
-    auto cb = std::make_unique<Callback>([fd = _fd, cid = request.cid, data](
-                                             RawstorObject*, size_t,
-                                             size_t result, int error
-                                         ) {
-        try {
-            send_response(
-                fd, RAWSTOR_CMD_READ, cid,
-                error ? -error : static_cast<int>(result),
-                error ? 0 : rawstor_hash_scalar(data->data(), data->size()), data
-            );
-        } catch (...) {
-            int res = close(fd);
-            if (res == -1) {
-                int errsv = errno;
-                errno = 0;
-                rawstor_error("%s\n", strerror(errsv));
+    auto cb = std::make_unique<Callback>(
+        [fd = _fd, cid = request.cid,
+         data](RawstorObject*, size_t, size_t result, int error) {
+            try {
+                send_response(
+                    fd, RAWSTOR_CMD_READ, cid,
+                    error ? -error : static_cast<int>(result),
+                    error ? 0 : rawstor_hash_scalar(data->data(), data->size()),
+                    data
+                );
+            } catch (...) {
+                int res = close(fd);
+                if (res == -1) {
+                    int errsv = errno;
+                    errno = 0;
+                    rawstor_error("%s\n", strerror(errsv));
+                }
+                throw;
             }
-            throw;
         }
-    });
+    );
 
     int res = rawstor_object_pread(
         _object, data->data(), data->size(), request.offset, callback, cb.get()
