@@ -63,115 +63,102 @@ int validate_result(int fd, size_t size, size_t result) noexcept {
 }
 
 void send_response(
-    rawstor::ostbackend::Server& server, int fd,
-    const RawstorOSTCommandType& type, uint16_t cid, int32_t result,
+    int fd, const RawstorOSTCommandType& type, uint16_t cid, int32_t result,
     uint64_t hash
 ) {
-    try {
-        auto response =
-            std::make_shared<RawstorOSTFrameResponse>((RawstorOSTFrameResponse){
-                .head =
-                    {
-                        .magic = RAWSTOR_MAGIC,
-                        .cmd = type,
-                    },
-                .body = {
-                    .cid = cid,
-                    .res = result,
-                    .hash = hash,
+    auto response =
+        std::make_shared<RawstorOSTFrameResponse>((RawstorOSTFrameResponse){
+            .head =
+                {
+                    .magic = RAWSTOR_MAGIC,
+                    .cmd = type,
                 },
-            });
-
-        auto cb =
-            std::make_unique<IOCallback>([&server, fd,
-                                          response](size_t result, int error) {
-                if (!error) {
-                    error = validate_result(fd, sizeof(*response), result);
-                }
-
-                if (error) {
-                    rawstor_error("%s\n", strerror(error));
-                    server.del_session(fd);
-                }
-            });
-
-        int res = rawstor_fd_write(
-            fd, response.get(), sizeof(*response), io_callback, cb.get()
-        );
-        if (res < 0) {
-            RAWSTOR_THROW_SYSTEM_ERROR(-res);
-        }
-
-        cb.release();
-    } catch (const std::exception& e) {
-        rawstor_error("%s\n", e.what());
-        server.del_session(fd);
-    } catch (...) {
-        rawstor_error("Unexpected error\n");
-        server.del_session(fd);
-    }
-}
-
-void send_response(
-    rawstor::ostbackend::Server& server, int fd,
-    const RawstorOSTCommandType& type, uint16_t cid, int32_t result,
-    uint64_t hash, const std::shared_ptr<std::vector<unsigned char>>& data
-) noexcept {
-    try {
-        auto response =
-            std::make_shared<RawstorOSTFrameResponse>((RawstorOSTFrameResponse){
-                .head =
-                    {
-                        .magic = RAWSTOR_MAGIC,
-                        .cmd = type,
-                    },
-                .body = {
-                    .cid = cid,
-                    .res = result,
-                    .hash = hash,
-                },
-            });
-
-        auto iov = std::make_shared<std::vector<iovec>>(std::vector<iovec>{
-            {
-                .iov_base = response.get(),
-                .iov_len = sizeof(*response),
-            },
-            {
-                .iov_base = data->data(),
-                .iov_len = data->size(),
+            .body = {
+                .cid = cid,
+                .res = result,
+                .hash = hash,
             },
         });
 
-        auto cb = std::make_unique<IOCallback>([&server, fd, data, response,
-                                                iov](size_t result, int error) {
+    auto cb =
+        std::make_unique<IOCallback>([fd, response](size_t result, int error) {
             if (!error) {
-                error = validate_result(
-                    fd, sizeof(*response) + data->size(), result
-                );
+                error = validate_result(fd, sizeof(*response), result);
             }
 
             if (error) {
                 rawstor_error("%s\n", strerror(error));
-                server.del_session(fd);
+                int res = ::close(fd);
+                if (res == -1) {
+                    RAWSTOR_THROW_ERRNO();
+                }
             }
         });
 
-        int res = rawstor_fd_writev(
-            fd, iov->data(), iov->size(), io_callback, cb.get()
-        );
-        if (res < 0) {
-            RAWSTOR_THROW_SYSTEM_ERROR(-res);
+    int res = rawstor_fd_write(
+        fd, response.get(), sizeof(*response), io_callback, cb.get()
+    );
+    if (res < 0) {
+        RAWSTOR_THROW_SYSTEM_ERROR(-res);
+    }
+
+    cb.release();
+}
+
+void send_response(
+    int fd, const RawstorOSTCommandType& type, uint16_t cid, int32_t result,
+    uint64_t hash, const std::shared_ptr<std::vector<unsigned char>>& data
+) {
+    auto response =
+        std::make_shared<RawstorOSTFrameResponse>((RawstorOSTFrameResponse){
+            .head =
+                {
+                    .magic = RAWSTOR_MAGIC,
+                    .cmd = type,
+                },
+            .body = {
+                .cid = cid,
+                .res = result,
+                .hash = hash,
+            },
+        });
+
+    auto iov = std::make_shared<std::vector<iovec>>(std::vector<iovec>{
+        {
+            .iov_base = response.get(),
+            .iov_len = sizeof(*response),
+        },
+        {
+            .iov_base = data->data(),
+            .iov_len = data->size(),
+        },
+    });
+
+    auto cb = std::make_unique<IOCallback>([fd, data, response,
+                                            iov](size_t result, int error) {
+        if (!error) {
+            error =
+                validate_result(fd, sizeof(*response) + data->size(), result);
         }
 
-        cb.release();
-    } catch (const std::exception& e) {
-        rawstor_error("%s\n", e.what());
-        server.del_session(fd);
-    } catch (...) {
-        rawstor_error("Unexpected error\n");
-        server.del_session(fd);
+        if (error) {
+            rawstor_error("%s\n", strerror(error));
+            int res = close(fd);
+            if (res == -1) {
+                int errsv = errno;
+                errno = 0;
+                rawstor_error("%s\n", strerror(errsv));
+            }
+        }
+    });
+
+    int res =
+        rawstor_fd_writev(fd, iov->data(), iov->size(), io_callback, cb.get());
+    if (res < 0) {
+        RAWSTOR_THROW_SYSTEM_ERROR(-res);
     }
+
+    cb.release();
 }
 
 } // namespace
@@ -213,10 +200,6 @@ Session::~Session() noexcept {
 ssize_t Session::_recv(
     const iovec* iov, unsigned int niov, size_t result, int error, void* data
 ) noexcept {
-    if (error == ECANCELED) {
-        return 0;
-    }
-
     Session* session = static_cast<Session*>(data);
     try {
         return session->_recv(iov, niov, result, error);
@@ -234,10 +217,7 @@ ssize_t Session::_recv(
 ssize_t
 Session::_recv(const iovec* iov, unsigned int niov, size_t result, int error) {
     if (error) {
-        if (error == EPIPE) {
-            _server.del_session(_fd);
-            return 0;
-        }
+        _recv_event = nullptr;
         RAWSTOR_THROW_SYSTEM_ERROR(error);
     }
 
@@ -404,30 +384,39 @@ void Session::_set_object(const RawstorOSTFrameBasicBody& request) {
     int result =
         rawstor_object_open(rawstor::URI::uris(object_uris).c_str(), &_object);
 
-    send_response(_server, _fd, RAWSTOR_CMD_SET_OBJECT, 0, result, 0);
+    send_response(_fd, RAWSTOR_CMD_SET_OBJECT, 0, result, 0);
 }
 
 void Session::_read(const RawstorOSTFrameIOBody& request) {
     auto data = std::make_shared<std::vector<unsigned char>>(request.len);
 
-    auto cb = std::make_unique<Callback>(
-        [&server = _server, fd = _fd, cid = request.cid,
-         data](RawstorObject*, size_t, size_t result, int error) {
+    auto cb = std::make_unique<Callback>([fd = _fd, cid = request.cid, data](
+                                             RawstorObject*, size_t,
+                                             size_t result, int error
+                                         ) {
+        try {
             send_response(
-                server, fd, RAWSTOR_CMD_READ, cid,
+                fd, RAWSTOR_CMD_READ, cid,
                 error ? -error : static_cast<int>(result),
-                error ? 0 : rawstor_hash_scalar(data->data(), data->size()),
-                data
+                error ? 0 : rawstor_hash_scalar(data->data(), data->size()), data
             );
+        } catch (...) {
+            int res = close(fd);
+            if (res == -1) {
+                int errsv = errno;
+                errno = 0;
+                rawstor_error("%s\n", strerror(errsv));
+            }
+            throw;
         }
-    );
+    });
 
     int res = rawstor_object_pread(
         _object, data->data(), data->size(), request.offset, callback, cb.get()
     );
     if (res < 0) {
         rawstor_warning("%s\n", strerror(-res));
-        send_response(_server, _fd, RAWSTOR_CMD_READ, request.cid, res, 0);
+        send_response(_fd, RAWSTOR_CMD_READ, request.cid, res, 0);
     } else {
         cb.release();
     }
@@ -441,13 +430,23 @@ void Session::_write(
     rawstor_iovec_to_buf(iov, niov, 0, data->data(), size);
 
     auto cb = std::make_unique<Callback>(
-        [&server = _server, fd = _fd, cid = request.cid,
+        [fd = _fd, cid = request.cid,
          data](RawstorObject*, size_t, size_t result, int error) {
-            send_response(
-                server, fd, RAWSTOR_CMD_WRITE, cid,
-                error ? -error : static_cast<int>(result),
-                error ? 0 : rawstor_hash_scalar(data->data(), data->size())
-            );
+            try {
+                send_response(
+                    fd, RAWSTOR_CMD_WRITE, cid,
+                    error ? -error : static_cast<int>(result),
+                    error ? 0 : rawstor_hash_scalar(data->data(), data->size())
+                );
+            } catch (...) {
+                int res = close(fd);
+                if (res == -1) {
+                    int errsv = errno;
+                    errno = 0;
+                    rawstor_error("%s\n", strerror(errsv));
+                }
+                throw;
+            }
         }
     );
 
@@ -456,7 +455,7 @@ void Session::_write(
     );
     if (res < 0) {
         rawstor_warning("%s\n", strerror(-res));
-        send_response(_server, _fd, RAWSTOR_CMD_WRITE, request.cid, res, 0);
+        send_response(_fd, RAWSTOR_CMD_WRITE, request.cid, res, 0);
     } else {
         cb.release();
     }
