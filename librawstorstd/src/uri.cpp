@@ -64,8 +64,7 @@ void parse_uri(
         if (iss.peek() < '0' || iss.peek() > '9') {
             *port = 0;
         } else {
-            iss >> *port;
-            if (!iss.eof() || *port > 65535) {
+            if (!(iss >> *port) || !iss.eof() || *port > 65535) {
                 *port = 0;
             }
         }
