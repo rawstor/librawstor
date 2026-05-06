@@ -61,7 +61,13 @@ void parse_uri(
         std::istringstream iss(
             uri.substr(colon_delim, path_delim - colon_delim)
         );
-        iss >> *port;
+        if (iss.peek() < '0' || iss.peek() > '9') {
+            *port = 0;
+        } else {
+            if (!(iss >> *port) || !iss.eof() || *port > 65535) {
+                *port = 0;
+            }
+        }
     } else {
         *hostname = uri.substr(at_delim, path_delim - at_delim);
         *port = 0;
