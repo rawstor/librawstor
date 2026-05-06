@@ -49,8 +49,12 @@ void parse_addr(
         *name = addr.substr(0, colon_delim);
         colon_delim += 1;
         std::istringstream iss(addr.substr(colon_delim));
-        if (!(iss >> *port)) {
+        if (iss.peek() < '0' || iss.peek() > '9') {
             *port = 0;
+        } else {
+            if (!(iss >> *port) || !iss.eof() || *port > 65535) {
+                *port = 0;
+            }
         }
     } else {
         *name = addr;
