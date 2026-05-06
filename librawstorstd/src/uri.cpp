@@ -61,7 +61,8 @@ void parse_uri(
         std::istringstream iss(
             uri.substr(colon_delim, path_delim - colon_delim)
         );
-        if (!(iss >> *port) || !iss.eof() || *port > 65535) {
+        if (iss.peek() == '+' || !(iss >> *port) || !iss.eof() ||
+            *port > 65535) {
             *port = 0;
         }
     } else {
