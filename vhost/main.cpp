@@ -5,6 +5,7 @@
 #include <getopt.h>
 #include <signal.h>
 
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
