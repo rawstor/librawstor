@@ -103,6 +103,7 @@ int main(int argc, char** argv) {
     sact.sa_handler = sact_handler;
     sigemptyset(&sact.sa_mask);
     sigaction(SIGINT, &sact, NULL);
+    sigaction(SIGTERM, &sact, NULL);
 
     try {
         server(object_uri_arg, socket_path_arg);
