@@ -5,6 +5,7 @@
 #include <getopt.h>
 #include <signal.h>
 
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -13,7 +14,7 @@
 
 namespace {
 
-struct sigaction sact;
+struct sigaction sact = {};
 
 void usage() {
     std::cerr << "Rawstor vhost server" << std::endl
@@ -52,16 +53,16 @@ void server(const std::string& object_uri, const std::string& socket_path) {
 int main(int argc, char** argv) {
     const char* optstring = "ho:s:";
     struct option longopts[] = {
-        {"help", no_argument, NULL, 'h'},
-        {"object-uri", required_argument, NULL, 'o'},
-        {"socket-path", required_argument, NULL, 's'},
+        {"help", no_argument, nullptr, 'h'},
+        {"object-uri", required_argument, nullptr, 'o'},
+        {"socket-path", required_argument, nullptr, 's'},
         {},
     };
 
-    const char* object_uri_arg = NULL;
-    const char* socket_path_arg = NULL;
+    const char* object_uri_arg = nullptr;
+    const char* socket_path_arg = nullptr;
     while (1) {
-        int c = getopt_long(argc, argv, optstring, longopts, NULL);
+        int c = getopt_long(argc, argv, optstring, longopts, nullptr);
         if (c == -1) {
             break;
         }
@@ -90,19 +91,32 @@ int main(int argc, char** argv) {
         return EXIT_FAILURE;
     }
 
-    if (object_uri_arg == NULL) {
+    if (object_uri_arg == nullptr) {
         std::cerr << "object-uri argument required" << std::endl;
         return EXIT_FAILURE;
     }
 
-    if (socket_path_arg == NULL) {
+    if (socket_path_arg == nullptr) {
         std::cerr << "socket-path argument required" << std::endl;
         return EXIT_FAILURE;
     }
 
     sact.sa_handler = sact_handler;
     sigemptyset(&sact.sa_mask);
-    sigaction(SIGINT, &sact, NULL);
+    if (sigaction(SIGINT, &sact, nullptr) == -1) {
+        int errsv = errno;
+        errno = 0;
+        std::cerr << "Failed to register SIGINT handler: " << strerror(errsv)
+                  << std::endl;
+        return EXIT_FAILURE;
+    }
+    if (sigaction(SIGTERM, &sact, nullptr) == -1) {
+        int errsv = errno;
+        errno = 0;
+        std::cerr << "Failed to register SIGTERM handler: " << strerror(errsv)
+                  << std::endl;
+        return EXIT_FAILURE;
+    }
 
     try {
         server(object_uri_arg, socket_path_arg);
