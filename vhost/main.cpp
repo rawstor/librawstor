@@ -102,8 +102,16 @@ int main(int argc, char** argv) {
 
     sact.sa_handler = sact_handler;
     sigemptyset(&sact.sa_mask);
-    sigaction(SIGINT, &sact, NULL);
-    sigaction(SIGTERM, &sact, NULL);
+    if (sigaction(SIGINT, &sact, NULL) == -1) {
+        std::cerr << "Failed to register SIGINT handler: " << strerror(errno)
+                  << std::endl;
+        return EXIT_FAILURE;
+    }
+    if (sigaction(SIGTERM, &sact, NULL) == -1) {
+        std::cerr << "Failed to register SIGTERM handler: " << strerror(errno)
+                  << std::endl;
+        return EXIT_FAILURE;
+    }
 
     try {
         server(object_uri_arg, socket_path_arg);
