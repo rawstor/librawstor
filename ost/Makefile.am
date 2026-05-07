@@ -1,4 +1,4 @@
-bin_PROGRAMS = rawstor-file-ost
+bin_PROGRAMS = rawstor-ost
 
 AM_CXXFLAGS = $(GENERIC_CXXFLAGS) \
               $(ASAN_CFLAGS) \
@@ -8,10 +8,10 @@ AM_CXXFLAGS = $(GENERIC_CXXFLAGS) \
 AM_LDFLAGS = $(ASAN_LDFLAGS)
 
 
-rawstor_file_ost_SOURCES = main.cpp \
-                           server.cpp \
-                           server.hpp \
-                           session.cpp \
-                           session.hpp
+rawstor_ost_SOURCES = main.cpp \
+                      server.cpp \
+                      server.hpp \
+                      session.cpp \
+                      session.hpp
 
-rawstor_file_ost_LDADD = $(top_builddir)/src/librawstor.la -lstdc++
+rawstor_ost_LDADD = $(top_builddir)/src/librawstor.la -lstdc++
