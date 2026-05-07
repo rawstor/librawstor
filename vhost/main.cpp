@@ -104,12 +104,16 @@ int main(int argc, char** argv) {
     sact.sa_handler = sact_handler;
     sigemptyset(&sact.sa_mask);
     if (sigaction(SIGINT, &sact, nullptr) == -1) {
-        std::cerr << "Failed to register SIGINT handler: " << strerror(errno)
+        int errsv = errno;
+        errno = 0;
+        std::cerr << "Failed to register SIGINT handler: " << strerror(errsv)
                   << std::endl;
         return EXIT_FAILURE;
     }
     if (sigaction(SIGTERM, &sact, nullptr) == -1) {
-        std::cerr << "Failed to register SIGTERM handler: " << strerror(errno)
+        int errsv = errno;
+        errno = 0;
+        std::cerr << "Failed to register SIGTERM handler: " << strerror(errsv)
                   << std::endl;
         return EXIT_FAILURE;
     }
