@@ -72,9 +72,7 @@ Server::Server(const std::string& addr, unsigned int port, const char* uris) :
 }
 
 Server::~Server() {
-    while (!_sessions.empty()) {
-        _sessions.erase(_sessions.begin());
-    }
+    _sessions.clear();
 
     if (_fd != -1) {
         close(_fd);
