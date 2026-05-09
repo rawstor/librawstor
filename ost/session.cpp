@@ -15,6 +15,7 @@
 
 #include <functional>
 #include <memory>
+#include <sstream>
 #include <vector>
 
 #include <cstring>
@@ -257,7 +258,11 @@ Session::_recv_head(const iovec* iov, unsigned int niov, size_t result) {
         return sizeof(RawstorOSTFrameIOBody);
     }
 
-    return 0;
+    {
+        std::ostringstream oss;
+        oss << "Unexpected command: " << _request_head.cmd;
+        throw std::runtime_error(oss.str());
+    }
 }
 
 ssize_t
@@ -338,7 +343,11 @@ Session::_recv_body(const iovec* iov, unsigned int niov, size_t result) {
         return sizeof(RawstorOSTFrameHead);
     }
 
-    return 0;
+    {
+        std::ostringstream oss;
+        oss << "Unexpected command: " << _request_head.cmd;
+        throw std::runtime_error(oss.str());
+    }
 }
 
 ssize_t
