@@ -72,7 +72,7 @@ int main(int argc, char** argv) {
             return EXIT_SUCCESS;
             break;
 
-        case 'o':
+        case 't':
             target_arg = optarg;
             break;
 
