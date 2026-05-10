@@ -83,7 +83,7 @@ jobs:
         sleep 1
     - name: create object file,ost
       run: |
-        target=$(rawstor-cli create --uri file:///tmp/objects,ost://127.0.0.1:8080 --size=1G)
+        target=$(rawstor-cli create --location file:///tmp/objects,ost://127.0.0.1:8080 --size=1G)
         echo "TARGET=${target}" >> $GITHUB_ENV
     - name: testio file,ost
       run: |
@@ -91,7 +91,7 @@ jobs:
         rawstor-cli testio --target=${TARGET} --block-size=4K --io-depth=1 --count=10 --vector-mode
     - name: create object ost,file
       run: |
-        target=$(rawstor-cli create --uri ost://127.0.0.1:8080,file:///tmp/objects --size=1G)
+        target=$(rawstor-cli create --location ost://127.0.0.1:8080,file:///tmp/objects --size=1G)
         echo "TARGET=${target}" >> $GITHUB_ENV
     - name: testio ost,file
       run: |

@@ -29,9 +29,9 @@ jobs:
         - packages: liburing-dev
           scheme: ost
           without-liburing: --without-liburing
-        - uri: file:///tmp/objects
+        - location: file:///tmp/objects
           scheme: file
-        - uri: ost://127.0.0.1:8080
+        - location: ost://127.0.0.1:8080
           scheme: ost
 
 
@@ -92,13 +92,13 @@ jobs:
     - name: (file) create object
       if: "${{ matrix.scheme == 'file' }}"
       run: |
-        target=$(rawstor-cli create --uri=${{ matrix.uri }} --size=1G)
+        target=$(rawstor-cli create --location=${{ matrix.location }} --size=1G)
         echo "TARGET=${target}" >> $GITHUB_ENV
         rawstor-cli testio --target=${target} --block-size=4K --io-depth=1 --count=1
     - name: (ost) create object
       if: "${{ matrix.scheme == 'ost' }}"
       run: |
-        target=${{ matrix.uri }}/01988675-e1e5-7788-9ed4-2f2d30910d23
+        target=${{ matrix.location }}/01988675-e1e5-7788-9ed4-2f2d30910d23
         echo "TARGET=${target}" >> $GITHUB_ENV
     - name: fio
       run: |
