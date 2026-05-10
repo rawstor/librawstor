@@ -41,11 +41,10 @@ When multiple URIs are listed, the client interprets the list according to speci
 
 ## Target
 
-A **target** identifies a specific data object. For a single location, the format is `<location>/<uuid>`. For multiple locations, the UUID must be appended to each URI: `<loc1>/<uuid>,<loc2>/<uuid>,...`
-
+A **target** identifies a specific data object. For a single location, the format is `<scheme>://<endpoint>/<uuid>`. For multiple targets, the UUID must be appended to each URI: `<scheme1>://<endpoint1>/<uuid>,<scheme2>://<endpoint2>/<uuid>,...`
 
 Where:
-- `<location>` is a location URI as defined above.
+- `<scheme>` and `<endpoint>` are the same as for location.
 - `<uuid>` is the unique identifier of the object (rawstor uses UUID v7).
 
 ### Single backend target examples
@@ -55,9 +54,9 @@ Where:
 
 ### Multiple backend target (mirroring / locality)
 
-A target may also contain a comma‑separated list of location‑UUID pairs. **When multiple locations are given, the UUID must be identical across all entries.** The client uses the same policies as for locations (mirroring, locality, etc.).
+The client uses the same policies as for locations (mirroring, locality, etc.).
 
-Example: `ost://host1:port1/019cbfad-a389-7d42-a0f6-c29993ac8c00,file:///var/rawstor/019cbfad-a389-7d42-a0f6-c29993ac8c00`
+Example: `ost://127.0.0.1:9090/019cbfad-a389-7d42-a0f6-c29993ac8c00,file:///var/rawstor/019cbfad-a389-7d42-a0f6-c29993ac8c00`
 
 This target references the same object (UUID `019cbfad-a389-7d42-a0f6-c29993ac8c00`) on two different backends.
 
@@ -69,8 +68,8 @@ This target references the same object (UUID `019cbfad-a389-7d42-a0f6-c29993ac8c
 
 | Concept | Format | Purpose | Example |
 |---------|--------|---------|---------|
-| **Location** | `scheme://endpoint` or `uri1,uri2,…` | Address of a backend data store (or a set of stores) | `ost://127.0.0.1:9090`<br>`file:///var/rawstor` |
-| **Target** | `<location>/<uuid>` or `<loc1>/<uuid>,<loc2>/<uuid>,…` | Address of a specific data object | `ost://127.0.0.1:9090/019cbfad-a389-7d42-a0f6-c29993ac8c00`<br>`ost://127.0.0.1:9090/019cbfad-a389-7d42-a0f6-c29993ac8c00,file:///var/rawstor/019cbfad-a389-7d42-a0f6-c29993ac8c00` |
+| **Location** | `<scheme>://<endpoint>` or `uri1,uri2,...` | Address of a backend data store (or a set of stores) | `ost://127.0.0.1:9090`<br>`file:///var/rawstor` |
+| **Target** | `<scheme>://<endpoint>/<uuid>` or `uri1,uri2,...` | Address of a specific data object | `ost://127.0.0.1:9090/019cbfad-a389-7d42-a0f6-c29993ac8c00`<br>`ost://127.0.0.1:9090/019cbfad-a389-7d42-a0f6-c29993ac8c00,file:///var/rawstor/019cbfad-a389-7d42-a0f6-c29993ac8c00` |
 
 ---
 
