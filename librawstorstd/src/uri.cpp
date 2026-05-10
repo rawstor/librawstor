@@ -131,6 +131,7 @@ void parse_path(
 
 std::string escape(const std::string& s, const char ch) {
     std::string ret;
+    ret.reserve(s.size());
 
     for (const char i : s) {
         if (i == ch || i == '\\') {
@@ -144,6 +145,7 @@ std::string escape(const std::string& s, const char ch) {
 
 std::string unescape(const std::string& s) {
     std::string ret;
+    ret.reserve(s.size());
     bool escaped = false;
 
     for (const char ch : s) {
