@@ -59,7 +59,7 @@ public:
     static Device& get(int fd);
     static Device* find(int fd);
 
-    Device(const std::string& object_uris, int fd);
+    Device(const std::string& target, int fd);
     Device(const Device&) = delete;
     Device(Device&&) = delete;
     ~Device();

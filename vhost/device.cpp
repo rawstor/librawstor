@@ -537,7 +537,7 @@ Watcher::~Watcher() {
 
 std::unordered_map<int, Device*> Device::_devices;
 
-Device::Device(const std::string& object_uris, int fd) :
+Device::Device(const std::string& target, int fd) :
     _object(nullptr),
     _iface{
         .get_features = ::get_features,
@@ -565,12 +565,12 @@ Device::Device(const std::string& object_uris, int fd) :
     _blk_config(std::make_unique<virtio_blk_config>()) {
     memset(_blk_config.get(), 0, sizeof(*_blk_config.get()));
 
-    int ires = rawstor_object_spec(object_uris.c_str(), &_spec);
+    int ires = rawstor_object_spec(target.c_str(), &_spec);
     if (ires) {
         RAWSTOR_THROW_SYSTEM_ERROR(-ires);
     }
 
-    ires = rawstor_object_open(object_uris.c_str(), &_object);
+    ires = rawstor_object_open(target.c_str(), &_object);
     if (ires) {
         RAWSTOR_THROW_SYSTEM_ERROR(-ires);
     }

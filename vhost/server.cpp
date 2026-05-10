@@ -81,8 +81,8 @@ void close_unix_socket(const std::string& socket_path, int fd) {
 namespace rawstor {
 namespace vhost {
 
-Server::Server(const std::string& object_uris, const std::string& socket_path) :
-    _object_uris(object_uris),
+Server::Server(const std::string& target, const std::string& socket_path) :
+    _target(target),
     _socket_path(socket_path),
     _fd(open_unix_socket(_socket_path)) {
     int res = rawstor_initialize(NULL);
@@ -111,7 +111,7 @@ void Server::loop() {
         RAWSTOR_THROW_ERRNO();
     }
 
-    Device d(_object_uris, fd);
+    Device d(_target, fd);
     d.loop();
 }
 
