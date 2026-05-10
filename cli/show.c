@@ -21,7 +21,7 @@ int rawstor_cli_show(const char* target) {
     char buf[256];
     rawstor_cli_bytes_to_size(spec.size, buf, sizeof(buf));
 
-    printf("uri: %s\n", target);
+    printf("target: %s\n", target);
     printf("size: %s\n", buf);
 
     return EXIT_SUCCESS;

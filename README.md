@@ -10,7 +10,7 @@ make
 make install
 rawstor-vhost \
     --socket-path=/run/rawstor1.sock \
-    --object-uri=ost://${OST_HOST}:${OST_PORT}/${OBJECT_UUID}
+    --target=ost://${OST_HOST}:${OST_PORT}/${OBJECT_UUID}
 ```
 
 ## Configure
@@ -30,7 +30,7 @@ rawstor-vhost is a userspace VirtIO block device backend that implements the vho
 ```
 rawstor-vhost \
     --socket-path=/run/rawstor1.sock \
-    --object-uri=ost://${OST_HOST}:${OST_PORT}/${OBJECT_UUID}
+    --target=ost://${OST_HOST}:${OST_PORT}/${OBJECT_UUID}
 
 qemu-system-x86_64 \
     -enable-kvm \

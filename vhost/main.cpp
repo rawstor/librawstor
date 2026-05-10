@@ -19,16 +19,15 @@ struct sigaction sact = {};
 void usage() {
     std::cerr << "Rawstor vhost server" << std::endl
               << std::endl
-              << "usage: rawstor-vhost [-h] -o OBJECT_URI -s SOCKET_PATH"
+              << "usage: rawstor-vhost [-h] -t TARGET -s SOCKET_PATH"
               << std::endl
               << std::endl
               << "options:" << std::endl
               << "  -h, --help            "
                  "Show this help message and exit"
               << std::endl
-              << "  -o, --object-uri OBJECT_URI" << std::endl
-              << "                        Comma separated list "
-                 "of Rawstor URI targets."
+              << "  -t, --target TARGET   Comma separated list of rawstor "
+                 "backend targets"
               << std::endl
               << "  -s, --socket-path SOCKET_PATH" << std::endl
               << "                        "
@@ -51,10 +50,10 @@ void server(const std::string& target, const std::string& socket_path) {
 } // namespace
 
 int main(int argc, char** argv) {
-    const char* optstring = "ho:s:";
+    const char* optstring = "ht:s:";
     struct option longopts[] = {
         {"help", no_argument, nullptr, 'h'},
-        {"object-uri", required_argument, nullptr, 'o'},
+        {"target", required_argument, nullptr, 't'},
         {"socket-path", required_argument, nullptr, 's'},
         {},
     };
@@ -73,7 +72,7 @@ int main(int argc, char** argv) {
             return EXIT_SUCCESS;
             break;
 
-        case 'o':
+        case 't':
             target_arg = optarg;
             break;
 
@@ -92,7 +91,7 @@ int main(int argc, char** argv) {
     }
 
     if (target_arg == nullptr) {
-        std::cerr << "object-uri argument required" << std::endl;
+        std::cerr << "target argument required" << std::endl;
         return EXIT_FAILURE;
     }
 

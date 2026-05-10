@@ -446,7 +446,7 @@ int rawstor_object_id(
     }
 }
 
-int rawstor_object_uris(
+int rawstor_object_location(
     const RawstorObject* object, char* buf, size_t size
 ) noexcept {
     try {
