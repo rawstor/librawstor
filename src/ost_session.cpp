@@ -634,9 +634,9 @@ void Context::register_op(const std::shared_ptr<SessionOp>& op) {
 }
 
 Session::Session(
-    rawstor::io::Queue& queue, const URI& uri, unsigned int depth
+    rawstor::io::Queue& queue, const URI& location, unsigned int depth
 ) :
-    rawstor::Session(queue, uri, depth),
+    rawstor::Session(queue, location, depth),
     _cid_counter(0) {
     int fd = _connect();
     set_fd(fd);
@@ -649,8 +649,8 @@ Session::~Session() {
 }
 
 int Session::_connect() {
-    if (!uri().path().str().empty() && uri().path().str() != "/") {
-        rawstor_error("Empty path expected: %s\n", uri().str().c_str());
+    if (!location().path().str().empty() && location().path().str() != "/") {
+        rawstor_error("Empty path expected: %s\n", location().str().c_str());
         RAWSTOR_THROW_SYSTEM_ERROR(EINVAL);
     }
 
@@ -688,16 +688,20 @@ int Session::_connect() {
 
         sockaddr_in servaddr = {};
         servaddr.sin_family = AF_INET;
-        servaddr.sin_port = htons(uri().port());
+        servaddr.sin_port = htons(location().port());
 
-        res = inet_pton(AF_INET, uri().hostname().c_str(), &servaddr.sin_addr);
+        res = inet_pton(
+            AF_INET, location().hostname().c_str(), &servaddr.sin_addr
+        );
         if (res == 0) {
             RAWSTOR_THROW_SYSTEM_ERROR(EINVAL);
         } else if (res == -1) {
             RAWSTOR_THROW_ERRNO();
         }
 
-        rawstor_info("fd %d: Connecting to %s...\n", fd, uri().str().c_str());
+        rawstor_info(
+            "fd %d: Connecting to %s...\n", fd, location().str().c_str()
+        );
         if (connect(fd, (sockaddr*)&servaddr, sizeof(servaddr)) == -1) {
             RAWSTOR_THROW_ERRNO();
         }

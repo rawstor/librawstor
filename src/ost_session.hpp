@@ -34,7 +34,7 @@ private:
     void _set_object(RawstorObject* object);
 
 public:
-    Session(rawstor::io::Queue& queue, const URI& uri, unsigned int depth);
+    Session(rawstor::io::Queue& queue, const URI& location, unsigned int depth);
     ~Session();
 
     void create(

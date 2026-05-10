@@ -34,7 +34,7 @@ int rawstor_object_spec(
 ) RAWSTOR_NOEXCEPT;
 
 int rawstor_object_create(
-    const char* uris, const struct RawstorObjectSpec* spec, char* target,
+    const char* location, const struct RawstorObjectSpec* spec, char* target,
     size_t size
 ) RAWSTOR_NOEXCEPT;
 
