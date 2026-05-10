@@ -133,7 +133,7 @@ std::string escape(const std::string& s, const char ch) {
     std::string ret;
 
     for (const char i : s) {
-        if (i == ch) {
+        if (i == ch || i == '\\') {
             ret.push_back('\\');
         }
         ret.push_back(i);
@@ -144,12 +144,15 @@ std::string escape(const std::string& s, const char ch) {
 
 std::string unescape(const std::string& s) {
     std::string ret;
+    bool escaped = false;
 
-    for (auto i = s.begin(); i != s.end(); ++i) {
-        if (*i == '\\' && (i == s.begin() || *(i - 1) != '\\')) {
+    for (const char ch : s) {
+        if (!escaped && ch == '\\') {
+            escaped = true;
             continue;
         }
-        ret.push_back(*i);
+        ret.push_back(ch);
+        escaped = false;
     }
 
     return ret;
@@ -199,15 +202,17 @@ std::vector<rawstor::URI> URI::uriv(const char* uris) {
     std::vector<rawstor::URI> ret;
     const char* start = uris;
     const char* p = uris;
+    bool escaped = false;
     while (true) {
         if (*p == '\0') {
             ret.emplace_back(unescape(std::string(start)));
             break;
         }
-        if (*p == ',' && (p == uris || *(p - 1) != '\\')) {
+        if (*p == ',' && !escaped) {
             ret.emplace_back(unescape(std::string(start, p - start)));
             start = p + 1;
         }
+        escaped = *p == '\\' && !escaped;
         ++p;
     }
     return ret;
