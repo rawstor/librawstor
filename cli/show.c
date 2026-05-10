@@ -10,9 +10,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-int rawstor_cli_show(const char* uris) {
+int rawstor_cli_show(const char* target) {
     struct RawstorObjectSpec spec;
-    int res = rawstor_object_spec(uris, &spec);
+    int res = rawstor_object_spec(target, &spec);
     if (res) {
         fprintf(stderr, "rawstor_object_spec() failed: %s\n", strerror(-res));
         return EXIT_FAILURE;
@@ -21,7 +21,7 @@ int rawstor_cli_show(const char* uris) {
     char buf[256];
     rawstor_cli_bytes_to_size(spec.size, buf, sizeof(buf));
 
-    printf("uri: %s\n", uris);
+    printf("uri: %s\n", target);
     printf("size: %s\n", buf);
 
     return EXIT_SUCCESS;

@@ -66,7 +66,7 @@ static int command_create(int argc, char** argv) {
     };
 
     char* size_arg = NULL;
-    char* uri_arg = NULL;
+    char* location_arg = NULL;
     optind = 1;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
@@ -85,7 +85,7 @@ static int command_create(int argc, char** argv) {
             break;
 
         case 'u':
-            uri_arg = optarg;
+            location_arg = optarg;
             break;
 
         default:
@@ -103,7 +103,7 @@ static int command_create(int argc, char** argv) {
         return EXIT_FAILURE;
     }
 
-    if (uri_arg == NULL) {
+    if (location_arg == NULL) {
         fprintf(stderr, "uri required\n");
         return EXIT_FAILURE;
     }
@@ -118,7 +118,7 @@ static int command_create(int argc, char** argv) {
         return EXIT_FAILURE;
     }
 
-    return rawstor_cli_create(uri_arg, size);
+    return rawstor_cli_create(location_arg, size);
 }
 
 static void command_remove_usage(void) {
@@ -142,7 +142,7 @@ static int command_remove(int argc, char** argv) {
         {},
     };
 
-    char* object_uri_arg = NULL;
+    char* target_arg = NULL;
     optind = 1;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
@@ -157,7 +157,7 @@ static int command_remove(int argc, char** argv) {
             break;
 
         case 'o':
-            object_uri_arg = optarg;
+            target_arg = optarg;
             break;
 
         default:
@@ -170,12 +170,12 @@ static int command_remove(int argc, char** argv) {
         return EXIT_FAILURE;
     }
 
-    if (object_uri_arg == NULL) {
+    if (target_arg == NULL) {
         fprintf(stderr, "object-uri required\n");
         return EXIT_FAILURE;
     }
 
-    return rawstor_cli_remove(object_uri_arg);
+    return rawstor_cli_remove(target_arg);
 }
 
 static void command_show_usage(void) {
@@ -199,7 +199,7 @@ static int command_show(int argc, char** argv) {
         {},
     };
 
-    char* object_uri_arg = NULL;
+    char* target_arg = NULL;
     optind = 1;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
@@ -214,7 +214,7 @@ static int command_show(int argc, char** argv) {
             break;
 
         case 'o':
-            object_uri_arg = optarg;
+            target_arg = optarg;
             break;
 
         default:
@@ -227,12 +227,12 @@ static int command_show(int argc, char** argv) {
         return EXIT_FAILURE;
     }
 
-    if (object_uri_arg == NULL) {
+    if (target_arg == NULL) {
         fprintf(stderr, "object-uri required\n");
         return EXIT_FAILURE;
     }
 
-    return rawstor_cli_show(object_uri_arg);
+    return rawstor_cli_show(target_arg);
 }
 
 static void command_testio_usage(void) {
@@ -272,7 +272,7 @@ static int command_testio(int argc, char** argv) {
     char* block_size_arg = NULL;
     char* count_arg = NULL;
     char* io_depth_arg = NULL;
-    char* object_uri_arg = NULL;
+    char* target_arg = NULL;
     int vector_mode = 0;
     optind = 1;
     while (1) {
@@ -300,7 +300,7 @@ static int command_testio(int argc, char** argv) {
             break;
 
         case 'o':
-            object_uri_arg = optarg;
+            target_arg = optarg;
             break;
 
         case 'v':
@@ -354,13 +354,13 @@ static int command_testio(int argc, char** argv) {
         return EXIT_FAILURE;
     }
 
-    if (object_uri_arg == NULL) {
+    if (target_arg == NULL) {
         fprintf(stderr, "object-uri required\n");
         return EXIT_FAILURE;
     }
 
     return rawstor_cli_testio(
-        object_uri_arg, block_size, count, io_depth, vector_mode
+        target_arg, block_size, count, io_depth, vector_mode
     );
 }
 
