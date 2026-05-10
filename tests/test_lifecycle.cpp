@@ -93,14 +93,14 @@ protected:
 TEST_P(LifecycleTest, create_spec_remove) {
     _backend->accept();
     RawstorObjectSpec spec{.size = 1ull << 20};
-    char object_uris[1024] = {};
+    char target[1024] = {};
     int res = rawstor_object_create(
-        _backend->uris().c_str(), &spec, object_uris, sizeof(object_uris)
+        _backend->uris().c_str(), &spec, target, sizeof(target)
     );
     if (res < 0) {
         RAWSTOR_THROW_SYSTEM_ERROR(-res);
     }
-    EXPECT_EQ(res, (int)strlen(object_uris));
+    EXPECT_EQ(res, (int)strlen(target));
     _backend->close();
     try {
         rawstor::io_queue->wait(0);
@@ -109,7 +109,7 @@ TEST_P(LifecycleTest, create_spec_remove) {
 
     _backend->accept();
     RawstorObjectSpec read_spec;
-    res = rawstor_object_spec(object_uris, &read_spec);
+    res = rawstor_object_spec(target, &read_spec);
     if (res < 0) {
         RAWSTOR_THROW_SYSTEM_ERROR(-res);
     }
@@ -129,7 +129,7 @@ TEST_P(LifecycleTest, create_spec_remove) {
     // rawstor_object_remove not implemented for OST
     if (_backend->protocol() != "ost") {
         _backend->accept();
-        res = rawstor_object_remove(object_uris);
+        res = rawstor_object_remove(target);
         if (res < 0) {
             RAWSTOR_THROW_SYSTEM_ERROR(-res);
         }

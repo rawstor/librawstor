@@ -2,7 +2,7 @@
 
 set -e
 
-OBJECT_URI=$1
+TARGET=$1
 BS=$2
 IODEPTH=$3
 NUMJOBS=$4
@@ -15,7 +15,7 @@ fio \
   --output-format=normal,json \
   --output=${_FIO_OUTPUT} \
   --ioengine=librawstor \
-  --filename="${OBJECT_URI//:/\\:}" \
+  --filename="${TARGET//:/\\:}" \
   \
   --name=randread \
   --iodepth=${IODEPTH} \

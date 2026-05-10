@@ -92,21 +92,21 @@ jobs:
     - name: (file) create object
       if: "${{ matrix.scheme == 'file' }}"
       run: |
-        object_uri=$(rawstor-cli create --uri=${{ matrix.uri }} --size=1G)
-        echo "OBJECT_URI=${object_uri}" >> $GITHUB_ENV
-        rawstor-cli testio --object-uri=${object_uri} --block-size=4K --io-depth=1 --count=1
+        target=$(rawstor-cli create --uri=${{ matrix.uri }} --size=1G)
+        echo "TARGET=${target}" >> $GITHUB_ENV
+        rawstor-cli testio --target=${target} --block-size=4K --io-depth=1 --count=1
     - name: (ost) create object
       if: "${{ matrix.scheme == 'ost' }}"
       run: |
-        object_uri=${{ matrix.uri }}/01988675-e1e5-7788-9ed4-2f2d30910d23
-        echo "OBJECT_URI=${object_uri}" >> $GITHUB_ENV
+        target=${{ matrix.uri }}/01988675-e1e5-7788-9ed4-2f2d30910d23
+        echo "TARGET=${target}" >> $GITHUB_ENV
     - name: fio
       run: |
         echo "# perftest" >> $GITHUB_STEP_SUMMARY
         echo "## fio ${{ matrix.without-liburing }} ${{ matrix.scheme }}" >> $GITHUB_STEP_SUMMARY
         echo "### bs=${{ matrix.bs }}, iodepth=${{ matrix.iodepth }}, numjobs=${{ matrix.numjobs }}" >> $GITHUB_STEP_SUMMARY
         ./librawstor/.github/tools/fio.sh \
-          ${OBJECT_URI} \
+          ${TARGET} \
           ${{ matrix.bs }} \
           ${{ matrix.iodepth }} \
           ${{ matrix.numjobs }} \
@@ -124,7 +124,7 @@ jobs:
         if-no-files-found: error
     - name: (file) remove object
       if: "${{ matrix.scheme == 'file' }}"
-      run: rawstor-cli remove --object-uri=${OBJECT_URI}
+      run: rawstor-cli remove --target=${TARGET}
     - name: (ost) stop rawstor_ost
       if: "${{ matrix.scheme == 'ost' }}"
       run: killall ost
