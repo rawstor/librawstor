@@ -137,9 +137,7 @@ int rawstor_object_create(
  * @retval 0        Object successfully removed from all backends.
  * @retval -EINVAL  Invalid target syntax (malformed URI, empty list, duplicate
  *                  URIs, mismatched UUIDs).
- * @retval -ENOENT  Object not found on one or more backends (behavior
- *                  depends on policy; may return success if deletion
- *                  from at least one backend succeeds).
+ * @retval -ENOENT  Object not found on one or more backends.
  * @retval -EIO     I/O error (network or filesystem).
  * @retval -EACCES  Permission denied.
  *
