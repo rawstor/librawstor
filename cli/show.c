@@ -8,15 +8,15 @@
 #include <stdlib.h>
 #include <string.h>
 
-int rawstor_cli_show(const char* uris) {
+int rawstor_cli_show(const char* target) {
     struct RawstorObjectSpec spec;
-    int res = rawstor_object_spec(uris, &spec);
+    int res = rawstor_object_spec(target, &spec);
     if (res) {
         fprintf(stderr, "rawstor_object_spec() failed: %s\n", strerror(-res));
         return EXIT_FAILURE;
     }
 
-    printf("uri: %s\n", uris);
+    printf("uri: %s\n", target);
     printf("size: %zu Gb\n", spec.size >> 30);
 
     return EXIT_SUCCESS;

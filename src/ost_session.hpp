@@ -33,7 +33,7 @@ private:
     int _connect();
 
 public:
-    Session(rawstor::io::Queue& queue, const URI& uri, unsigned int depth);
+    Session(rawstor::io::Queue& queue, const URI& location, unsigned int depth);
     ~Session();
 
     void read_response_head();
