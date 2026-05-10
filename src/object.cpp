@@ -83,22 +83,22 @@ void validate_different_uris(const std::vector<rawstor::URI>& uris) {
 
 } // namespace
 
-RawstorObject::RawstorObject(const std::vector<rawstor::URI>& uris) : _id() {
-    validate_not_empty(uris);
-    validate_different_uris(uris);
-    validate_same_uuid(uris);
+RawstorObject::RawstorObject(const std::vector<rawstor::URI>& targets) : _id() {
+    validate_not_empty(targets);
+    validate_different_uris(targets);
+    validate_same_uuid(targets);
 
-    std::string uuid = uris.front().path().filename();
-    int res = rawstor_uuid_from_string(&_id, uuid.c_str());
+    std::string id = targets.front().path().filename();
+    int res = rawstor_uuid_from_string(&_id, id.c_str());
     if (res) {
         RAWSTOR_THROW_SYSTEM_ERROR(-res);
     }
 
-    _cns.reserve(uris.size());
-    for (const auto& uri : uris) {
+    _cns.reserve(targets.size());
+    for (const auto& target : targets) {
         std::unique_ptr<rawstor::Connection> cn =
             std::make_unique<rawstor::Connection>(QUEUE_DEPTH);
-        cn->open(uri.parent(), this, rawstor_opts_sessions());
+        cn->open(target.parent(), this, rawstor_opts_sessions());
         _cns.push_back(std::move(cn));
     }
 }
@@ -140,15 +140,15 @@ void RawstorObject::create(
     *object_uris = ret;
 }
 
-void RawstorObject::remove(const std::vector<rawstor::URI>& uris) {
-    validate_not_empty(uris);
-    validate_different_uris(uris);
-    validate_same_uuid(uris);
+void RawstorObject::remove(const std::vector<rawstor::URI>& targets) {
+    validate_not_empty(targets);
+    validate_different_uris(targets);
+    validate_same_uuid(targets);
 
     std::exception_ptr eptr;
-    for (const auto& uri : uris) {
+    for (const auto& target : targets) {
         try {
-            rawstor::Connection(QUEUE_DEPTH).remove(uri);
+            rawstor::Connection(QUEUE_DEPTH).remove(target);
         } catch (const std::exception& e) {
             rawstor_error("%s\n", e.what());
 
@@ -163,16 +163,16 @@ void RawstorObject::remove(const std::vector<rawstor::URI>& uris) {
 }
 
 void RawstorObject::spec(
-    const std::vector<rawstor::URI>& uris, RawstorObjectSpec* sp
+    const std::vector<rawstor::URI>& targets, RawstorObjectSpec* sp
 ) {
     /**
      * TODO: Should we read all specs and compare them here?
      */
-    validate_not_empty(uris);
-    validate_different_uris(uris);
-    validate_same_uuid(uris);
+    validate_not_empty(targets);
+    validate_different_uris(targets);
+    validate_same_uuid(targets);
 
-    rawstor::Connection(QUEUE_DEPTH).spec(uris.front(), sp);
+    rawstor::Connection(QUEUE_DEPTH).spec(targets.front(), sp);
 }
 
 std::vector<rawstor::URI> RawstorObject::uris() const {
@@ -349,9 +349,9 @@ int rawstor_object_create(
     }
 }
 
-int rawstor_object_remove(const char* object_uris) noexcept {
+int rawstor_object_remove(const char* target) noexcept {
     try {
-        RawstorObject::remove(rawstor::URI::uriv(object_uris));
+        RawstorObject::remove(rawstor::URI::uriv(target));
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -367,10 +367,10 @@ int rawstor_object_remove(const char* object_uris) noexcept {
 }
 
 int rawstor_object_spec(
-    const char* object_uris, RawstorObjectSpec* sp
+    const char* target, RawstorObjectSpec* sp
 ) noexcept {
     try {
-        RawstorObject::spec(rawstor::URI::uriv(object_uris), sp);
+        RawstorObject::spec(rawstor::URI::uriv(target), sp);
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -386,11 +386,11 @@ int rawstor_object_spec(
 }
 
 int rawstor_object_open(
-    const char* object_uris, RawstorObject** object
+    const char* target, RawstorObject** object
 ) noexcept {
     try {
         std::unique_ptr<RawstorObject> ret =
-            std::make_unique<RawstorObject>(rawstor::URI::uriv(object_uris));
+            std::make_unique<RawstorObject>(rawstor::URI::uriv(target));
 
         *object = ret.get();
 

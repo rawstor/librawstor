@@ -49,9 +49,9 @@ public:
 
     void create(const URI& uri, const RawstorObjectSpec& sp);
 
-    void remove(const URI& uri);
+    void remove(const URI& target);
 
-    void spec(const URI& uri, RawstorObjectSpec* sp);
+    void spec(const URI& target, RawstorObjectSpec* sp);
 
     void open(const URI& uri, RawstorObject* object, size_t nsessions);
 

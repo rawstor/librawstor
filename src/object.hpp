@@ -26,11 +26,11 @@ public:
         const std::vector<rawstor::URI>& uris, const RawstorObjectSpec& sp,
         std::vector<rawstor::URI>* object_uris
     );
-    static void remove(const std::vector<rawstor::URI>& uris);
+    static void remove(const std::vector<rawstor::URI>& target);
     static void
-    spec(const std::vector<rawstor::URI>& uris, RawstorObjectSpec* sp);
+    spec(const std::vector<rawstor::URI>& targets, RawstorObjectSpec* sp);
 
-    explicit RawstorObject(const std::vector<rawstor::URI>& uris);
+    explicit RawstorObject(const std::vector<rawstor::URI>& targets);
     RawstorObject(const RawstorObject&) = delete;
     RawstorObject(RawstorObject&&) = delete;
     RawstorObject& operator=(const RawstorObject&) = delete;

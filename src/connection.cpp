@@ -241,9 +241,9 @@ void Connection::create(const URI& uri, const RawstorObjectSpec& sp) {
     q.wait();
 }
 
-void Connection::remove(const URI& uri) {
+void Connection::remove(const URI& target) {
     RawstorUUID id;
-    int res = rawstor_uuid_from_string(&id, uri.path().filename().c_str());
+    int res = rawstor_uuid_from_string(&id, target.path().filename().c_str());
     if (res) {
         RAWSTOR_THROW_SYSTEM_ERROR(-res);
     }
@@ -251,7 +251,7 @@ void Connection::remove(const URI& uri) {
     Queue q(1, _depth);
 
     std::unique_ptr<Session> s =
-        Session::create(q.queue(), uri.parent(), _depth);
+        Session::create(q.queue(), target.parent(), _depth);
     s->remove(id, [&q](int error) {
         q.sub_operation();
 
@@ -263,9 +263,9 @@ void Connection::remove(const URI& uri) {
     q.wait();
 }
 
-void Connection::spec(const URI& uri, RawstorObjectSpec* sp) {
+void Connection::spec(const URI& target, RawstorObjectSpec* sp) {
     RawstorUUID id;
-    int res = rawstor_uuid_from_string(&id, uri.path().filename().c_str());
+    int res = rawstor_uuid_from_string(&id, target.path().filename().c_str());
     if (res) {
         RAWSTOR_THROW_SYSTEM_ERROR(-res);
     }
@@ -273,7 +273,7 @@ void Connection::spec(const URI& uri, RawstorObjectSpec* sp) {
     Queue q(1, _depth);
 
     std::unique_ptr<Session> s =
-        Session::create(q.queue(), uri.parent(), _depth);
+        Session::create(q.queue(), target.parent(), _depth);
     s->spec(id, [&q, sp](const RawstorObjectSpec& spec, int error) {
         q.sub_operation();
 

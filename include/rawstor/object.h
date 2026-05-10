@@ -30,18 +30,18 @@ typedef int(RawstorCallback)(
 );
 
 int rawstor_object_spec(
-    const char* object_uris, struct RawstorObjectSpec* spec
+    const char* target, struct RawstorObjectSpec* spec
 ) RAWSTOR_NOEXCEPT;
 
 int rawstor_object_create(
-    const char* uris, const struct RawstorObjectSpec* spec, char* object_uris,
+    const char* uris, const struct RawstorObjectSpec* spec, char* target,
     size_t size
 ) RAWSTOR_NOEXCEPT;
 
-int rawstor_object_remove(const char* object_uris) RAWSTOR_NOEXCEPT;
+int rawstor_object_remove(const char* target) RAWSTOR_NOEXCEPT;
 
 int rawstor_object_open(
-    const char* object_uris, RawstorObject** object
+    const char* target, RawstorObject** object
 ) RAWSTOR_NOEXCEPT;
 
 int rawstor_object_close(RawstorObject* object) RAWSTOR_NOEXCEPT;
