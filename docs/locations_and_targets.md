@@ -33,6 +33,7 @@ When multiple URIs are listed, the client interprets the list according to speci
 
 **Syntax rules:**
 - Do not add spaces between URIs – use a single comma: `uri1,uri2`
+- To include a literal comma within a URI, escape it with a backslash: `\,`
 - Each URI must be a valid location (scheme + endpoint).
 - All URIs in the list must be unique – duplicates are not allowed.
 
@@ -40,7 +41,7 @@ When multiple URIs are listed, the client interprets the list according to speci
 
 ## Target
 
-A **target** identifies a specific data object within a location (or a set of locations). Its format is: <location>/<uuid>
+A **target** identifies a specific data object. For a single location, the format is `<location>/<uuid>`. For multiple locations, the UUID must be appended to each URI: `<loc1>/<uuid>,<loc2>/<uuid>,...`
 
 
 Where:
