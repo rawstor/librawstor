@@ -29,7 +29,7 @@ When multiple URIs are listed, the client interprets the list according to speci
 | Example | Behavior |
 |---------|----------|
 | `ost://host1:port1,ost://host2:port2` | **Mirroring** – both backends contain identical data. |
-| `ost://host1:port1,file:///data/folder` | **Data locality** – the OST backend is the primary remote store, and the file backend serves as a local cache or fast access path. |
+| `file:///data/folder,ost://host:port` | **Data locality** – the file backend serves as a local cache or fast access path, while the OST backend is the primary remote store. |
 
 **Syntax rules:**
 - Do not add spaces between URIs – use a single comma: `uri1,uri2`
