@@ -237,6 +237,38 @@ int rawstor_object_id(
     const RawstorObject* object, char* buf, size_t size
 ) RAWSTOR_NOEXCEPT;
 
+/**
+ * @brief Retrieve the list of location URIs for an open object.
+ *
+ * Given an open RawstorObject handle, this function writes a comma‑separated
+ * list of location URIs (as defined in the Locations and Targets documentation)
+ * into the provided buffer. These URIs represent the backend(s) where the
+ * object is physically stored (e.g., OST servers, file system paths).
+ *
+ * The format is the same as the location part of a target string, for example:
+ * - "ost://host1:9090/abc,ost://host2:9090/abc"  (mirroring)
+ * - "file:///data/abc,ost://host1:9090/abc"      (locality)
+ *
+ * If the buffer size is insufficient, the output is truncated but the return
+ * value indicates the required buffer length (excluding the null terminator),
+ * similar to snprintf().
+ *
+ * @param object  Open object handle obtained from rawstor_object_open().
+ * @param buf     Output buffer that will receive the comma‑separated list of
+ *                location URIs. Can not be NULL.
+ * @param size    Size of the output buffer in bytes (including space for the
+ *                terminating null byte). If size is 0, no data is written,
+ *                but the required length is still returned.
+ *
+ * @return On success, returns the number of characters that would have been
+ *         written to buf (excluding the terminating null byte). If this value
+ *         is non‑negative but greater than or equal to size, the output was
+ *         truncated.
+ *
+ * @see rawstor_object_id
+ * @see Locations and Targets:
+ * https://github.com/rawstor/librawstor/blob/main/docs/locations_and_targets.md
+ */
 int rawstor_object_uris(
     const RawstorObject* object, char* buf, size_t size
 ) RAWSTOR_NOEXCEPT;
