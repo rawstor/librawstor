@@ -43,8 +43,8 @@ void sact_handler(int s) {
     std::cout << "Caught signal:" << s << std::endl;
 }
 
-void server(const std::string& target_arg, const std::string& socket_path) {
-    rawstor::vhost::Server s(target_arg, socket_path);
+void server(const std::string& target, const std::string& socket_path) {
+    rawstor::vhost::Server s(target, socket_path);
     s.loop();
 }
 
