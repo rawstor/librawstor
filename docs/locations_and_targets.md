@@ -1,4 +1,4 @@
-# Rawstor Documentation: Locations and Targets
+# Locations and Targets
 
 ## Overview
 
