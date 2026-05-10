@@ -174,7 +174,7 @@ TEST(URIsTest, basics) {
     {
         std::vector<rawstor::URI> uris = rawstor::URI::uriv("a\\,b,c");
         EXPECT_EQ(uris.size(), (size_t)2);
-        EXPECT_EQ(uris[0].str(), "a\\,b");
+        EXPECT_EQ(uris[0].str(), "a,b");
         EXPECT_EQ(uris[1].str(), "c");
 
         std::string s = rawstor::URI::uris(uris);
@@ -234,7 +234,7 @@ TEST(URIsTest, basics) {
     {
         std::vector<rawstor::URI> uris = rawstor::URI::uriv("\\,a");
         EXPECT_EQ(uris.size(), (size_t)1);
-        EXPECT_EQ(uris[0].str(), "\\,a");
+        EXPECT_EQ(uris[0].str(), ",a");
 
         std::string s = rawstor::URI::uris(uris);
         EXPECT_EQ(s, "\\,a");

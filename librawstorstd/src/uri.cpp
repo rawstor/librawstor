@@ -129,6 +129,32 @@ void parse_path(
     }
 }
 
+std::string escape(const std::string& s, const char ch) {
+    std::string ret;
+
+    for (const char i : s) {
+        if (i == ch) {
+            ret.push_back('\\');
+        }
+        ret.push_back(i);
+    }
+
+    return ret;
+}
+
+std::string unescape(const std::string& s) {
+    std::string ret;
+
+    for (auto i = s.begin(); i != s.end(); ++i) {
+        if (*i == '\\' && (i == s.begin() || *(i - 1) != '\\')) {
+            continue;
+        }
+        ret.push_back(*i);
+    }
+
+    return ret;
+}
+
 } // namespace
 
 namespace rawstor {
@@ -175,11 +201,11 @@ std::vector<rawstor::URI> URI::uriv(const char* uris) {
     const char* p = uris;
     while (true) {
         if (*p == '\0') {
-            ret.emplace_back(std::string(start));
+            ret.emplace_back(unescape(std::string(start)));
             break;
         }
         if (*p == ',' && (p == uris || *(p - 1) != '\\')) {
-            ret.emplace_back(std::string(start, p - start));
+            ret.emplace_back(unescape(std::string(start, p - start)));
             start = p + 1;
         }
         ++p;
@@ -194,7 +220,7 @@ std::string URI::uris(const std::vector<rawstor::URI>& uriv) {
         if (comma) {
             oss << ',';
         }
-        oss << uri.str();
+        oss << escape(uri.str(), ',');
         comma = true;
     }
     return oss.str();
