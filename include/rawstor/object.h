@@ -270,7 +270,7 @@ int rawstor_object_id(
  * @see Locations and Targets:
  * https://github.com/rawstor/librawstor/blob/main/docs/locations_and_targets.md
  */
-int rawstor_object_uris(
+int rawstor_object_location(
     const RawstorObject* object, char* buf, size_t size
 ) RAWSTOR_NOEXCEPT;
 

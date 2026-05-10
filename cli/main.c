@@ -52,16 +52,18 @@ static void command_create_usage(void) {
         "  -s, --size SIZE       Object size with unit suffix (B, K, M, G, "
         "T).\n"
         "                        Examples: 10G, 5M, 2T.\n"
-        "  -u, --uri RAWSTOR_URI Comma separated list of Rawstor URI targets\n"
+        "  -l, --location LOCATION\n"
+        "                        Comma separated list of rawstor backend "
+        "locations\n"
     );
 };
 
 static int command_create(int argc, char** argv) {
-    const char* optstring = "hs:u:";
+    const char* optstring = "hs:l:";
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
+        {"location", required_argument, NULL, 'l'},
         {"size", required_argument, NULL, 's'},
-        {"uri", required_argument, NULL, 'u'},
         {},
     };
 
@@ -80,12 +82,12 @@ static int command_create(int argc, char** argv) {
             return EXIT_SUCCESS;
             break;
 
-        case 's':
-            size_arg = optarg;
+        case 'l':
+            location_arg = optarg;
             break;
 
-        case 'u':
-            location_arg = optarg;
+        case 's':
+            size_arg = optarg;
             break;
 
         default:
@@ -104,7 +106,7 @@ static int command_create(int argc, char** argv) {
     }
 
     if (location_arg == NULL) {
-        fprintf(stderr, "uri required\n");
+        fprintf(stderr, "location required\n");
         return EXIT_FAILURE;
     }
 
@@ -129,16 +131,16 @@ static void command_remove_usage(void) {
         "usage: rawstor-cli [options] remove [command_options]\n"
         "\n"
         "command options:\n"
-        "  -o, --object-uri OBJECT_URI\n"
-        "                        Comma separated list of Rawstor URI targets\n"
+        "  -t, --target TARGET   Comma separated list of rawstor backend "
+        "targets\n"
     );
 };
 
 static int command_remove(int argc, char** argv) {
-    const char* optstring = "ho:";
+    const char* optstring = "ht:";
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
-        {"object-uri", required_argument, NULL, 'o'},
+        {"target", required_argument, NULL, 't'},
         {},
     };
 
@@ -156,7 +158,7 @@ static int command_remove(int argc, char** argv) {
             return EXIT_SUCCESS;
             break;
 
-        case 'o':
+        case 't':
             target_arg = optarg;
             break;
 
@@ -171,7 +173,7 @@ static int command_remove(int argc, char** argv) {
     }
 
     if (target_arg == NULL) {
-        fprintf(stderr, "object-uri required\n");
+        fprintf(stderr, "target required\n");
         return EXIT_FAILURE;
     }
 
@@ -186,16 +188,16 @@ static void command_show_usage(void) {
         "usage: rawstor-cli [options] show [command_options]\n"
         "\n"
         "command options:\n"
-        "  -o, --object-uri OBJECT_URI\n"
-        "                        Comma separated list of Rawstor URI targets\n"
+        "  -t, --target TARGET   Comma separated list of rawstor backend "
+        "targets\n"
     );
 };
 
 static int command_show(int argc, char** argv) {
-    const char* optstring = "ho:";
+    const char* optstring = "ht:";
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
-        {"object-uri", required_argument, NULL, 'o'},
+        {"target", required_argument, NULL, 't'},
         {},
     };
 
@@ -213,7 +215,7 @@ static int command_show(int argc, char** argv) {
             return EXIT_SUCCESS;
             break;
 
-        case 'o':
+        case 't':
             target_arg = optarg;
             break;
 
@@ -228,7 +230,7 @@ static int command_show(int argc, char** argv) {
     }
 
     if (target_arg == NULL) {
-        fprintf(stderr, "object-uri required\n");
+        fprintf(stderr, "target required\n");
         return EXIT_FAILURE;
     }
 
@@ -251,20 +253,20 @@ static void command_testio_usage(void) {
         "  -d, --io-depth IO_DEPTH\n"
         "                        IO depth\n"
         "  -h, --help            Show this help message and exit\n"
-        "  -o, --object-uri OBJECT_URI\n"
-        "                        Comma separated list of Rawstor URI targets\n"
+        "  -t, --target TARGET   Comma separated list of rawstor backend "
+        "targets\n"
         "  --vector-mode         Use readv/writev\n"
     );
 };
 
 static int command_testio(int argc, char** argv) {
-    const char* optstring = "b:c:d:ho:s:";
+    const char* optstring = "b:c:d:ht:";
     struct option longopts[] = {
         {"block-size", required_argument, NULL, 'b'},
         {"count", required_argument, NULL, 'c'},
         {"help", no_argument, NULL, 'h'},
         {"io-depth", required_argument, NULL, 'd'},
-        {"object-uri", required_argument, NULL, 'o'},
+        {"target", required_argument, NULL, 't'},
         {"vector-mode", no_argument, NULL, 'v'},
         {},
     };
@@ -299,7 +301,7 @@ static int command_testio(int argc, char** argv) {
             return EXIT_SUCCESS;
             break;
 
-        case 'o':
+        case 't':
             target_arg = optarg;
             break;
 
@@ -355,7 +357,7 @@ static int command_testio(int argc, char** argv) {
     }
 
     if (target_arg == NULL) {
-        fprintf(stderr, "object-uri required\n");
+        fprintf(stderr, "target required\n");
         return EXIT_FAILURE;
     }
 
