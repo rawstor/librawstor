@@ -8,10 +8,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-int rawstor_cli_remove(const char* uris) {
-    fprintf(stderr, "Removing object: %s\n", uris);
+int rawstor_cli_remove(const char* target) {
+    fprintf(stderr, "Removing object: %s\n", target);
 
-    int res = rawstor_object_remove(uris);
+    int res = rawstor_object_remove(target);
     if (res) {
         fprintf(stderr, "rawstor_object_remove() failed: %s\n", strerror(-res));
         return EXIT_FAILURE;

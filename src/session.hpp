@@ -20,7 +20,7 @@ class Task;
 class Session {
 private:
     unsigned int _depth;
-    URI _uri;
+    URI _location;
     int _fd;
 
 protected:
@@ -30,9 +30,9 @@ protected:
 
 public:
     static std::unique_ptr<Session>
-    create(rawstor::io::Queue& queue, const URI& uri, unsigned int depth);
+    create(rawstor::io::Queue& queue, const URI& location, unsigned int depth);
 
-    Session(rawstor::io::Queue& queue, const URI& uri, unsigned int depth);
+    Session(rawstor::io::Queue& queue, const URI& location, unsigned int depth);
     Session(const Session&) = delete;
     Session(Session&&) noexcept = delete;
     virtual ~Session();
@@ -41,7 +41,7 @@ public:
 
     std::string str() const;
 
-    inline const URI& uri() const noexcept { return _uri; }
+    inline const URI& location() const noexcept { return _location; }
 
     inline unsigned int depth() const noexcept { return _depth; }
 

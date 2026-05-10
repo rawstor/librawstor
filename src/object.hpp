@@ -23,20 +23,20 @@ private:
 
 public:
     static void create(
-        const std::vector<rawstor::URI>& uris, const RawstorObjectSpec& sp,
-        std::vector<rawstor::URI>* object_uris
+        const std::vector<rawstor::URI>& locations, const RawstorObjectSpec& sp,
+        std::vector<rawstor::URI>* targets
     );
-    static void remove(const std::vector<rawstor::URI>& uris);
+    static void remove(const std::vector<rawstor::URI>& targets);
     static void
-    spec(const std::vector<rawstor::URI>& uris, RawstorObjectSpec* sp);
+    spec(const std::vector<rawstor::URI>& targets, RawstorObjectSpec* sp);
 
-    explicit RawstorObject(const std::vector<rawstor::URI>& uris);
+    explicit RawstorObject(const std::vector<rawstor::URI>& targets);
     RawstorObject(const RawstorObject&) = delete;
     RawstorObject(RawstorObject&&) = delete;
     RawstorObject& operator=(const RawstorObject&) = delete;
     RawstorObject& operator=(RawstorObject&&) = delete;
 
-    std::vector<rawstor::URI> uris() const;
+    std::vector<rawstor::URI> locations() const;
 
     inline const RawstorUUID& id() const noexcept { return _id; }
 

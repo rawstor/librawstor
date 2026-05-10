@@ -7,7 +7,7 @@
 extern "C" {
 #endif
 
-int rawstor_cli_show(const char* uris);
+int rawstor_cli_show(const char* target);
 
 #ifdef __cplusplus
 }

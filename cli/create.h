@@ -9,7 +9,7 @@
 extern "C" {
 #endif
 
-int rawstor_cli_create(const char* uris, size_t size);
+int rawstor_cli_create(const char* location, size_t size);
 
 #ifdef __cplusplus
 }

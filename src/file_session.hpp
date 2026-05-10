@@ -18,7 +18,7 @@ private:
     int _connect(const RawstorUUID& id);
 
 public:
-    Session(rawstor::io::Queue& queue, const URI& uri, unsigned int depth);
+    Session(rawstor::io::Queue& queue, const URI& location, unsigned int depth);
 
     void create(
         const RawstorUUID& id, const RawstorObjectSpec& sp,

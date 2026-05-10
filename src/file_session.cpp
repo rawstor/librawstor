@@ -29,16 +29,16 @@
 
 namespace {
 
-std::string get_ost_path(const rawstor::URI& uri) {
-    if (uri.scheme() != "file") {
-        rawstor_error("Unexpected URI scheme: %s\n", uri.str().c_str());
+std::string get_ost_path(const rawstor::URI& location) {
+    if (location.scheme() != "file") {
+        rawstor_error("Unexpected URI scheme: %s\n", location.str().c_str());
         RAWSTOR_THROW_SYSTEM_ERROR(EINVAL);
     }
-    if (!uri.host().empty()) {
-        rawstor_error("Empty host expected: %s\n", uri.str().c_str());
+    if (!location.host().empty()) {
+        rawstor_error("Empty host expected: %s\n", location.str().c_str());
         RAWSTOR_THROW_SYSTEM_ERROR(EINVAL);
     }
-    return uri.path().str();
+    return location.path().str();
 }
 
 std::string get_object_spec_path(
@@ -96,19 +96,19 @@ namespace rawstor {
 namespace file {
 
 Session::Session(
-    rawstor::io::Queue& queue, const URI& uri, unsigned int depth
+    rawstor::io::Queue& queue, const URI& location, unsigned int depth
 ) :
-    rawstor::Session(queue, uri, depth) {
+    rawstor::Session(queue, location, depth) {
 }
 
 int Session::_connect(const RawstorUUID& id) {
-    std::string ost_path = get_ost_path(uri());
+    std::string ost_path = get_ost_path(location());
 
-    RawstorUUIDString uuid_string;
-    rawstor_uuid_to_string(&id, &uuid_string);
-    std::string dat_path = get_object_dat_path(ost_path, uuid_string);
+    RawstorUUIDString id_string;
+    rawstor_uuid_to_string(&id, &id_string);
+    std::string dat_path = get_object_dat_path(ost_path, id_string);
 
-    rawstor_info("Connecting to %s...\n", uri().str().c_str());
+    rawstor_info("Connecting to %s...\n", location().str().c_str());
     int fd = open(dat_path.c_str(), O_RDWR | O_NONBLOCK);
     if (fd == -1) {
         RAWSTOR_THROW_ERRNO();
@@ -121,7 +121,7 @@ void Session::create(
     const RawstorUUID& id, const RawstorObjectSpec& sp,
     std::function<void(int)>&& cb
 ) {
-    std::string ost_path = get_ost_path(uri());
+    std::string ost_path = get_ost_path(location());
     if (mkdir(ost_path.c_str(), 0755) == -1) {
         if (errno == EEXIST) {
             errno = 0;
@@ -164,7 +164,7 @@ void Session::create(
 }
 
 void Session::remove(const RawstorUUID& id, std::function<void(int)>&& cb) {
-    std::string ost_path = get_ost_path(uri());
+    std::string ost_path = get_ost_path(location());
 
     RawstorUUIDString uuid_string;
     rawstor_uuid_to_string(&id, &uuid_string);
@@ -194,7 +194,7 @@ void Session::spec(
     const RawstorUUID& id,
     std::function<void(const RawstorObjectSpec&, int)>&& cb
 ) {
-    std::string ost_path = get_ost_path(uri());
+    std::string ost_path = get_ost_path(location());
 
     RawstorUUIDString uuid_string;
     rawstor_uuid_to_string(&id, &uuid_string);

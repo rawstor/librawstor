@@ -67,8 +67,9 @@ Connection::~Connection() {
     }
 }
 
-std::vector<std::shared_ptr<Session>>
-Connection::_open(const URI& uri, RawstorObject* object, size_t nsessions) {
+std::vector<std::shared_ptr<Session>> Connection::_open(
+    const URI& location, RawstorObject* object, size_t nsessions
+) {
     std::vector<std::shared_ptr<Session>> sessions;
 
     for (unsigned int attempt = 1; attempt <= rawstor_opts_io_attempts();
@@ -77,7 +78,9 @@ Connection::_open(const URI& uri, RawstorObject* object, size_t nsessions) {
             sessions.clear();
             sessions.reserve(nsessions);
             for (size_t i = 0; i < nsessions; ++i) {
-                sessions.push_back(Session::create(*io_queue, uri, _depth));
+                sessions.push_back(
+                    Session::create(*io_queue, location, _depth)
+                );
             }
 
             for (std::shared_ptr<Session> s : sessions) {
@@ -205,23 +208,23 @@ void Connection::invalidate_session(const std::shared_ptr<Session>& s) {
         _sessions.erase(it);
 
         std::vector<std::shared_ptr<Session>> new_sessions =
-            _open(s->uri(), _object, 1);
+            _open(s->location(), _object, 1);
 
         _sessions.push_back(new_sessions.front());
     }
 }
 
-const URI* Connection::uri() const noexcept {
+const URI* Connection::location() const noexcept {
     if (_sessions.empty()) {
         return nullptr;
     }
 
-    return &_sessions.front()->uri();
+    return &_sessions.front()->location();
 }
 
-void Connection::create(const URI& uri, const RawstorObjectSpec& sp) {
+void Connection::create(const URI& target, const RawstorObjectSpec& sp) {
     RawstorUUID id;
-    int res = rawstor_uuid_from_string(&id, uri.path().filename().c_str());
+    int res = rawstor_uuid_from_string(&id, target.path().filename().c_str());
     if (res) {
         RAWSTOR_THROW_SYSTEM_ERROR(-res);
     }
@@ -229,7 +232,7 @@ void Connection::create(const URI& uri, const RawstorObjectSpec& sp) {
     Queue q(1, _depth);
 
     std::unique_ptr<Session> s =
-        Session::create(q.queue(), uri.parent(), _depth);
+        Session::create(q.queue(), target.parent(), _depth);
     s->create(id, sp, [&q](int error) {
         q.sub_operation();
 
@@ -241,9 +244,9 @@ void Connection::create(const URI& uri, const RawstorObjectSpec& sp) {
     q.wait();
 }
 
-void Connection::remove(const URI& uri) {
+void Connection::remove(const URI& target) {
     RawstorUUID id;
-    int res = rawstor_uuid_from_string(&id, uri.path().filename().c_str());
+    int res = rawstor_uuid_from_string(&id, target.path().filename().c_str());
     if (res) {
         RAWSTOR_THROW_SYSTEM_ERROR(-res);
     }
@@ -251,7 +254,7 @@ void Connection::remove(const URI& uri) {
     Queue q(1, _depth);
 
     std::unique_ptr<Session> s =
-        Session::create(q.queue(), uri.parent(), _depth);
+        Session::create(q.queue(), target.parent(), _depth);
     s->remove(id, [&q](int error) {
         q.sub_operation();
 
@@ -263,9 +266,9 @@ void Connection::remove(const URI& uri) {
     q.wait();
 }
 
-void Connection::spec(const URI& uri, RawstorObjectSpec* sp) {
+void Connection::spec(const URI& target, RawstorObjectSpec* sp) {
     RawstorUUID id;
-    int res = rawstor_uuid_from_string(&id, uri.path().filename().c_str());
+    int res = rawstor_uuid_from_string(&id, target.path().filename().c_str());
     if (res) {
         RAWSTOR_THROW_SYSTEM_ERROR(-res);
     }
@@ -273,7 +276,7 @@ void Connection::spec(const URI& uri, RawstorObjectSpec* sp) {
     Queue q(1, _depth);
 
     std::unique_ptr<Session> s =
-        Session::create(q.queue(), uri.parent(), _depth);
+        Session::create(q.queue(), target.parent(), _depth);
     s->spec(id, [&q, sp](const RawstorObjectSpec& spec, int error) {
         q.sub_operation();
 
@@ -287,8 +290,10 @@ void Connection::spec(const URI& uri, RawstorObjectSpec* sp) {
     q.wait();
 }
 
-void Connection::open(const URI& uri, RawstorObject* object, size_t nsessions) {
-    _sessions = _open(uri, object, nsessions);
+void Connection::open(
+    const URI& location, RawstorObject* object, size_t nsessions
+) {
+    _sessions = _open(location, object, nsessions);
     _object = object;
 }
 

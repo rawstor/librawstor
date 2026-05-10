@@ -25,7 +25,7 @@ private:
     size_t _session_index;
 
     std::vector<std::shared_ptr<Session>>
-    _open(const URI& uri, RawstorObject* object, size_t nsessions);
+    _open(const URI& location, RawstorObject* object, size_t nsessions);
 
     void
     _op(const char* func_name, size_t size, off_t offset,
@@ -45,15 +45,15 @@ public:
     std::shared_ptr<Session> get_next_session();
     void invalidate_session(const std::shared_ptr<Session>& s);
 
-    const URI* uri() const noexcept;
+    const URI* location() const noexcept;
 
-    void create(const URI& uri, const RawstorObjectSpec& sp);
+    void create(const URI& target, const RawstorObjectSpec& sp);
 
-    void remove(const URI& uri);
+    void remove(const URI& target);
 
-    void spec(const URI& uri, RawstorObjectSpec* sp);
+    void spec(const URI& target, RawstorObjectSpec* sp);
 
-    void open(const URI& uri, RawstorObject* object, size_t nsessions);
+    void open(const URI& location, RawstorObject* object, size_t nsessions);
 
     void close();
 
