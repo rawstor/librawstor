@@ -26,7 +26,7 @@ public:
         const std::vector<rawstor::URI>& locations, const RawstorObjectSpec& sp,
         std::vector<rawstor::URI>* targets
     );
-    static void remove(const std::vector<rawstor::URI>& target);
+    static void remove(const std::vector<rawstor::URI>& targets);
     static void
     spec(const std::vector<rawstor::URI>& targets, RawstorObjectSpec* sp);
 
