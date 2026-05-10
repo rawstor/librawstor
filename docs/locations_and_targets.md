@@ -41,7 +41,7 @@ When multiple URIs are listed, the client interprets the list according to speci
 
 ## Target
 
-A **target** identifies a specific data object. For a single location, the format is `<scheme>://<endpoint>/<uuid>`. For multiple targets, the UUID must be appended to each URI: `<scheme1>://<endpoint1>/<uuid>,<scheme2>://<endpoint2>/<uuid>,...`
+A **target** identifies a specific data object. For a single target, the format is `<scheme>://<endpoint>/<uuid>`. For multiple targets, the UUID must be appended to each URI: `<scheme1>://<endpoint1>/<uuid>,<scheme2>://<endpoint2>/<uuid>,...`
 
 Where:
 - `<scheme>` and `<endpoint>` are the same as for location.
