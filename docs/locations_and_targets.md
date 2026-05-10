@@ -2,13 +2,13 @@
 
 ## Overview
 
-Rawstor client library and OST backend uses two core concepts to address and access data: **Location** and **Target**.
+Rawstor client library and OST backend use two core concepts to address and access data: **Location** and **Target**.
 
 ---
 
 ## Location
 
-A **location** specifies the address of a backend data store (or a list of backends). It is expressed as a comma-separated list of URIs. The URI format follows the standard scheme `[scheme]://<endpoint>`.
+A **location** specifies the address of a backend data store (or a list of backends). It is expressed as a comma-separated list of URIs. The URI format follows the standard scheme `<scheme>://<endpoint>`.
 
 Currently, two URI schemes are supported:
 
@@ -44,7 +44,7 @@ A **target** identifies a specific data object within a location (or a set of lo
 
 
 Where:
-- `<location>` is a location URI (or comma‑separated list of URIs) as defined above.
+- `<location>` is a location URI as defined above.
 - `<uuid>` is the unique identifier of the object (rawstor uses UUID v7).
 
 ### Single backend target examples
