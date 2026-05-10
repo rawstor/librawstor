@@ -98,7 +98,7 @@ int rawstor_object_spec(
  *                  field must be set to the expected size of the object.
  * @param target    Output buffer that will receive the target string of the
  *                  created object (e.g., "ost://host:port/<uuid>").
- *                  Can not be NULL.
+ *                  Cannot be NULL.
  * @param size      Size of the target buffer in bytes (including space for
  *                  the null terminator).
  *
@@ -196,7 +196,7 @@ int rawstor_object_open(
  * not be used further. Any pending write buffers are flushed to the backend(s)
  * before the handle is closed.
  *
- * @param object  Pointer to the RawstorObject handle to close. Can not be NULL.
+ * @param object  Pointer to the RawstorObject handle to close. Cannot be NULL.
  *
  * @return 0 on success, negative errno on error.
  * @retval 0        Object successfully closed.
@@ -220,8 +220,8 @@ int rawstor_object_close(RawstorObject* object) RAWSTOR_NOEXCEPT;
  * terminator), similar to snprintf().
  *
  * @param object  Open object handle obtained from rawstor_object_open().
- * @param buf     Output buffer that will receive the UUID string. Can not be
- *                NULL.
+ * @param buf     Output buffer that will receive the UUID string. Can be NULL
+ *                if only the required buffer length is needed.
  * @param size    Size of the output buffer in bytes (including space for the
  *                terminating null byte). If size is 0, no data is written, but
  *                the required length is still returned.
@@ -255,7 +255,8 @@ int rawstor_object_id(
  *
  * @param object  Open object handle obtained from rawstor_object_open().
  * @param buf     Output buffer that will receive the comma‑separated list of
- *                location URIs. Can not be NULL.
+ *                location URIs. Can be NULL if only the required buffer length
+ *                is needed.
  * @param size    Size of the output buffer in bytes (including space for the
  *                terminating null byte). If size is 0, no data is written,
  *                but the required length is still returned.
