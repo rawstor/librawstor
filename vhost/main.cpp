@@ -43,8 +43,8 @@ void sact_handler(int s) {
     std::cout << "Caught signal:" << s << std::endl;
 }
 
-void server(const std::string& object_uri, const std::string& socket_path) {
-    rawstor::vhost::Server s(object_uri, socket_path);
+void server(const std::string& target, const std::string& socket_path) {
+    rawstor::vhost::Server s(target, socket_path);
     s.loop();
 }
 
@@ -59,7 +59,7 @@ int main(int argc, char** argv) {
         {},
     };
 
-    const char* object_uri_arg = nullptr;
+    const char* target_arg = nullptr;
     const char* socket_path_arg = nullptr;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, nullptr);
@@ -74,7 +74,7 @@ int main(int argc, char** argv) {
             break;
 
         case 'o':
-            object_uri_arg = optarg;
+            target_arg = optarg;
             break;
 
         case 's':
@@ -91,7 +91,7 @@ int main(int argc, char** argv) {
         return EXIT_FAILURE;
     }
 
-    if (object_uri_arg == nullptr) {
+    if (target_arg == nullptr) {
         std::cerr << "object-uri argument required" << std::endl;
         return EXIT_FAILURE;
     }
@@ -119,7 +119,7 @@ int main(int argc, char** argv) {
     }
 
     try {
-        server(object_uri_arg, socket_path_arg);
+        server(target_arg, socket_path_arg);
     } catch (const std::exception& e) {
         std::cerr << e.what() << std::endl;
         return EXIT_FAILURE;
