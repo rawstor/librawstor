@@ -14,18 +14,19 @@ namespace {
 struct sigaction sact = {};
 
 void usage() {
-    std::cerr << "Rawstor OST server with a file-based backend." << std::endl
+    std::cerr << "Rawstor OST backend." << std::endl
               << std::endl
-              << "usage: rawstor-file-ost "
-                 "[-h] -u RAWSTOR_URI -b ADDR"
+              << "usage: rawstor-ost "
+                 "[-h] -l LOCATION -b ADDR"
               << std::endl
               << std::endl
               << "options:" << std::endl
               << "  -h, --help            "
                  "Show this help message and exit."
               << std::endl
-              << "  -u, --uri RAWSTOR_URI "
-                 "Comma separated list of Rawstor URI targets."
+              << "  -l, --location LOCATION" << std::endl
+              << "                        Comma separated list of rawstor "
+                 "backend locations"
               << std::endl
               << "  -b, --bind ADDR       Bind address in the format "
               << "<ip>:<port> " << std::endl
@@ -36,8 +37,8 @@ void sact_handler(int s) {
     std::cout << "Caught signal:" << s << std::endl;
 }
 
-void ost(const std::string& addr, unsigned int port, const char* uris) {
-    rawstor::ostbackend::Server s(addr, port, uris);
+void ost(const std::string& addr, unsigned int port, const char* location) {
+    rawstor::ostbackend::Server s(addr, port, location);
     s.loop();
 }
 
@@ -65,15 +66,15 @@ void parse_addr(
 } // namespace
 
 int main(int argc, char** argv) {
-    const char* optstring = "hu:b:";
+    const char* optstring = "hl:b:";
     struct option longopts[] = {
         {"help", no_argument, nullptr, 'h'},
-        {"uri", required_argument, nullptr, 'u'},
+        {"location", required_argument, nullptr, 'l'},
         {"bind", required_argument, nullptr, 'b'},
         {},
     };
 
-    const char* uri_arg = nullptr;
+    const char* location_arg = nullptr;
     const char* bind_arg = nullptr;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, nullptr);
@@ -87,8 +88,8 @@ int main(int argc, char** argv) {
             return EXIT_SUCCESS;
             break;
 
-        case 'u':
-            uri_arg = optarg;
+        case 'l':
+            location_arg = optarg;
             break;
 
         case 'b':
@@ -105,8 +106,8 @@ int main(int argc, char** argv) {
         return EXIT_FAILURE;
     }
 
-    if (uri_arg == nullptr) {
-        std::cerr << "uri argument required" << std::endl;
+    if (location_arg == nullptr) {
+        std::cerr << "location argument required" << std::endl;
         return EXIT_FAILURE;
     }
 
@@ -136,7 +137,7 @@ int main(int argc, char** argv) {
         std::string name;
         unsigned int port;
         parse_addr(bind_arg, &name, &port);
-        ost(name, port, uri_arg);
+        ost(name, port, location_arg);
     } catch (const std::exception& e) {
         std::cerr << e.what() << std::endl;
         return EXIT_FAILURE;

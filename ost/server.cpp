@@ -25,9 +25,9 @@
 namespace rawstor {
 namespace ostbackend {
 
-Server::Server(const std::string& addr, unsigned int port, const char* uris) :
+Server::Server(const std::string& addr, unsigned int port, const char* location) :
     _fd(-1),
-    _uris(rawstor::URI::uriv(uris)),
+    _locations(rawstor::URI::uriv(location)),
     _accept_event(nullptr) {
 
     int res = rawstor_initialize(nullptr);

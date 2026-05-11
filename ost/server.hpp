@@ -18,7 +18,7 @@ class Session;
 class Server final {
 private:
     int _fd;
-    std::vector<rawstor::URI> _uris;
+    std::vector<rawstor::URI> _locations;
     RawstorIOEvent* _accept_event;
     std::unordered_map<int, std::unique_ptr<Session>> _sessions;
 
@@ -27,7 +27,7 @@ private:
     void _add_session(int fd);
 
 public:
-    Server(const std::string& addr, unsigned int port, const char* uris);
+    Server(const std::string& addr, unsigned int port, const char* location);
     Server(const Server&) = delete;
     Server(Server&&) = delete;
     ~Server();
@@ -35,8 +35,8 @@ public:
     Server& operator=(const Server&) = delete;
     Server& operator=(Server&&) = delete;
 
-    inline const std::vector<rawstor::URI>& uris() const noexcept {
-        return _uris;
+    inline const std::vector<rawstor::URI>& locations() const noexcept {
+        return _locations;
     }
 
     void del_session(int fd) noexcept;

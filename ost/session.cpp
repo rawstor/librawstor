@@ -383,15 +383,15 @@ void Session::_set_object(const RawstorOSTFrameBasicBody& request) {
     RawstorUUIDString uuid_string;
     rawstor_uuid_to_string(&uuid, &uuid_string);
 
-    std::vector<rawstor::URI> object_uris;
-    object_uris.reserve(_server.uris().size());
-    for (const auto& uri : _server.uris()) {
-        rawstor::URI object_uri = rawstor::URI(uri, uuid_string);
-        object_uris.push_back(object_uri);
+    std::vector<rawstor::URI> targets;
+    targets.reserve(_server.locations().size());
+    for (const auto& location : _server.locations()) {
+        rawstor::URI target = rawstor::URI(location, uuid_string);
+        targets.push_back(target);
     }
 
     int result =
-        rawstor_object_open(rawstor::URI::uris(object_uris).c_str(), &_object);
+        rawstor_object_open(rawstor::URI::uris(targets).c_str(), &_object);
 
     send_response(_fd, RAWSTOR_CMD_SET_OBJECT, 0, result, 0);
 }
