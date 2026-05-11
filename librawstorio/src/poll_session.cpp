@@ -252,6 +252,28 @@ bool Session::cancel(rawstor::io::Event* event, rawstor::RingBuf<Event>& cqes) {
     return found;
 }
 
+void Session::cancel(rawstor::RingBuf<Event>& cqes) {
+    while (!_poll_sqes.empty()) {
+        std::unique_ptr<EventSimplexPoll> e = std::move(_poll_sqes.back());
+        _poll_sqes.pop_back();
+
+        e->set_error(ECANCELED);
+        cqes.push(std::move(e));
+    }
+
+    while (!_read_sqes.empty()) {
+        std::unique_ptr<EventSimplex> e = _read_sqes.pop();
+        e->set_error(ECANCELED);
+        cqes.push(std::move(e));
+    }
+
+    while (!_write_sqes.empty()) {
+        std::unique_ptr<Event> e = _write_sqes.pop();
+        e->set_error(ECANCELED);
+        cqes.push(std::move(e));
+    }
+}
+
 void Session::process(
     rawstor::RingBuf<rawstor::io::poll::Event>& cqes, short revents
 ) {

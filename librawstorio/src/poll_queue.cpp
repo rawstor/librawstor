@@ -391,6 +391,17 @@ void Queue::cancel(rawstor::io::Event* e) {
     RAWSTOR_THROW_SYSTEM_ERROR(ENOENT);
 }
 
+void Queue::cancel(int fd) {
+    for (auto it = _sessions.begin(); it != _sessions.end(); ++it) {
+        if (it->second->fd() == fd) {
+            it->second->cancel(_cqes);
+            _sessions.erase(it);
+            return;
+        }
+    }
+    RAWSTOR_THROW_SYSTEM_ERROR(ENOENT);
+}
+
 void Queue::wait(unsigned int timeout) {
     while (_cqes.empty()) {
         std::vector<pollfd> fds;
