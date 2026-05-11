@@ -25,7 +25,9 @@
 namespace rawstor {
 namespace ostbackend {
 
-Server::Server(const std::string& addr, unsigned int port, const char* location) :
+Server::Server(
+    const std::string& addr, unsigned int port, const char* location
+) :
     _fd(-1),
     _locations(rawstor::URI::uriv(location)),
     _accept_event(nullptr) {
@@ -115,7 +117,11 @@ void Server::del_session(int fd) noexcept {
 }
 
 void Server::loop() {
-    rawstor_fd_accept_multishot(_fd, _accept, this, &_accept_event);
+    int res = rawstor_fd_accept_multishot(_fd, _accept, this, &_accept_event);
+    if (res < 0) {
+        RAWSTOR_THROW_SYSTEM_ERROR(-res);
+    }
+
     while (true) {
         int res = rawstor_wait();
         if (res == -ETIME) {

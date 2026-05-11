@@ -178,6 +178,7 @@ Session::Session(Server& server, int fd) :
         &_recv_event
     );
     if (res < 0) {
+        close(_fd);
         RAWSTOR_THROW_SYSTEM_ERROR(-res);
     }
 }
@@ -397,6 +398,17 @@ void Session::_set_object(const RawstorOSTFrameBasicBody& request) {
 }
 
 void Session::_read(const RawstorOSTFrameIOBody& request) {
+    if (_object == nullptr) {
+        send_response(_fd, RAWSTOR_CMD_READ, request.cid, -EBADF, 0);
+        return;
+    }
+
+    // 64MB limit
+    if (request.len > (1ULL << 26)) {
+        send_response(_fd, RAWSTOR_CMD_READ, request.cid, -EINVAL, 0);
+        return;
+    }
+
     auto data = std::make_shared<std::vector<unsigned char>>(request.len);
 
     auto cb = std::make_unique<Callback>(
@@ -436,6 +448,17 @@ void Session::_write(
     const RawstorOSTFrameIOBody& request, const iovec* iov, unsigned int niov,
     size_t size
 ) {
+    if (_object == nullptr) {
+        send_response(_fd, RAWSTOR_CMD_WRITE, request.cid, -EBADF, 0);
+        return;
+    }
+
+    // 64MB limit
+    if (request.len > (1ULL << 26)) {
+        send_response(_fd, RAWSTOR_CMD_WRITE, request.cid, -EINVAL, 0);
+        return;
+    }
+
     auto data = std::make_shared<std::vector<unsigned char>>(size);
     rawstor_iovec_to_buf(iov, niov, 0, data->data(), size);
 
