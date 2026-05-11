@@ -396,10 +396,9 @@ void Queue::cancel(int fd) {
         if (it->second->fd() == fd) {
             it->second->cancel(_cqes);
             _sessions.erase(it);
-            return;
+            break;
         }
     }
-    RAWSTOR_THROW_SYSTEM_ERROR(ENOENT);
 }
 
 void Queue::wait(unsigned int timeout) {
