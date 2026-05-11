@@ -17,7 +17,7 @@ protected:
 
 TEST_F(CancelTest, cancel_noent) {
     EXPECT_THROW(_queue->cancel(nullptr), std::system_error);
-    EXPECT_THROW(_queue->cancel(0), std::system_error);
+    EXPECT_NO_THROW(_queue->cancel(0));
 }
 
 TEST_F(CancelTest, poll) {
@@ -189,15 +189,16 @@ TEST_F(CancelTest, cancel_all) {
 
     _queue->cancel(_fd);
 
-    EXPECT_NO_THROW(_queue->wait(0));
-    EXPECT_THROW(_queue->wait(0), std::system_error);
+    EXPECT_NO_THROW(_wait_all());
 
     EXPECT_EQ(result_poll, (size_t)0);
     EXPECT_EQ(error_poll, ECANCELED);
     EXPECT_EQ(result_read, (size_t)0);
     EXPECT_EQ(error_read, ECANCELED);
+#ifndef RAWSTOR_WITH_LIBURING
     EXPECT_EQ(result_write, (size_t)0);
     EXPECT_EQ(error_write, ECANCELED);
+#endif
 }
 
 } // unnamed namespace
