@@ -12,24 +12,9 @@ sudo make install
 OST_ADDR=192.168.0.1:8080
 
 ##
-# OST Server
-#
-OST_DATADIR=/var/rawstor
-OBJECT_SIZE=1g
-
-mkdir -p ${OST_DATADIR}
-
-OBJECT_ID=$(rawstor-cli create --size=${OBJECT_SIZE} --location=file://${OST_DATADIR})
-echo OBJECT_ID=${OBJECT_ID}
-
-rawstor-ost \
-    --bind ${OST_ADDR} \
-    --location file://${OST_DATADIR}
-
-##
 # Client
 #
-OBJECT_ID=...  # See above in OST Server section
+OBJECT_ID=...
 VHOST_RUNDIR=/var/run/rawstor
 
 mkdir -p ${VHOST_RUNDIR}
