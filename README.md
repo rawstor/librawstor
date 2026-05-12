@@ -7,10 +7,46 @@
 ./autogen.sh
 ./configure
 make
-make install
-rawstor-vhost \
-    --socket-path=/run/rawstor1.sock \
-    --target=ost://${OST_HOST}:${OST_PORT}/${OBJECT_UUID}
+sudo make install
+
+OST_ADDR=192.168.0.1:8080
+
+##
+# OST Server
+#
+OST_DATADIR=/var/rawstor
+OBJECT_SIZE=1g
+
+mkdir -p ${OST_DATADIR}
+
+OBJECT_ID=$(rawstor-cli create --size=${OBJECT_SIZE} --location=file://${OST_DATADIR})
+echo OBJECT_ID=${OBJECT_ID}
+
+rawstor-ost \
+    --bind ${OST_ADDR} \
+    --location file://${OST_DATADIR}
+
+##
+# Client
+#
+OBJECT_ID=...  # See above in OST Server section
+VHOST_RUNDIR=/var/run/rawstor
+
+mkdir -p ${VHOST_RUNDIR}
+
+./vhost/rawstor-vhost \
+    --socket-path=${VHOST_RUNDIR}/rawstor1.sock \
+    --target=ost://${OST_ADDR}/${OBJECT_ID}
+
+qemu-system-x86_64 \
+    -enable-kvm \
+    -m 4G \
+    -machine accel=kvm,memory-backend=mem \
+    -drive file=image.qcow2,if=none,id=drive1 \
+    -device virtio-blk-pci,drive=drive1 \
+    -object memory-backend-memfd,id=mem,size=4G,share=on \
+    -chardev socket,id=rawstor1,reconnect=1,path=${VHOST_RUNDIR}/rawstor1.sock \
+    -device vhost-user-blk-pci,chardev=rawstor1,num-queues=1,disable-legacy=on
 ```
 
 ## Configure
@@ -29,8 +65,8 @@ rawstor-vhost is a userspace VirtIO block device backend that implements the vho
 
 ```
 rawstor-vhost \
-    --socket-path=/run/rawstor1.sock \
-    --target=ost://${OST_HOST}:${OST_PORT}/${OBJECT_UUID}
+    --socket-path=/var/run/rawstor/rawstor1.sock \
+    --target=ost://${OST_ADDR}/${OBJECT_ID}
 
 qemu-system-x86_64 \
     -enable-kvm \
@@ -39,7 +75,7 @@ qemu-system-x86_64 \
     -drive file=image.qcow2,if=none,id=drive1 \
     -device virtio-blk-pci,drive=drive1 \
     -object memory-backend-memfd,id=mem,size=4G,share=on \
-    -chardev socket,id=rawstor1,reconnect=1,path=/run/rawstor1.sock \
+    -chardev socket,id=rawstor1,reconnect=1,path=/var/run/rawstor/rawstor1.sock \
     -device vhost-user-blk-pci,chardev=rawstor1,num-queues=1,disable-legacy=on
 ```
 
