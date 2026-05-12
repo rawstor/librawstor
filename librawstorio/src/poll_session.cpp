@@ -254,8 +254,8 @@ bool Session::cancel(rawstor::io::Event* event, rawstor::RingBuf<Event>& cqes) {
 
 void Session::cancel(rawstor::RingBuf<Event>& cqes) {
     while (!_poll_sqes.empty()) {
-        std::unique_ptr<EventSimplexPoll> e = std::move(_poll_sqes.back());
-        _poll_sqes.pop_back();
+        std::unique_ptr<EventSimplexPoll> e = std::move(_poll_sqes.front());
+        _poll_sqes.pop_front();
 
         e->set_error(ECANCELED);
         cqes.push(std::move(e));
