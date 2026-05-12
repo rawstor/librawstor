@@ -246,7 +246,9 @@ int rawstor_object_id(
  * object is physically stored (e.g., OST servers, file system paths).
  *
  * The format is the same as the location part of a target string, for example:
+ *
  * - "ost://host1:9090/abc,ost://host2:9090/abc"  (mirroring)
+ *
  * - "file:///data/abc,ost://host1:9090/abc"      (locality)
  *
  * If the buffer size is insufficient, the output is truncated but the return
