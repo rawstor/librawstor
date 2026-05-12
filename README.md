@@ -52,6 +52,8 @@ rawstor-vhost is a userspace VirtIO block device backend that implements the vho
 
 ```
 PREFIX=${HOME}/local
+OST_ADDR=192.168.0.1:8080
+OBJECT_ID=...
 VHOST_RUNDIR=${PREFIX}/var/run/rawstor
 
 rawstor-vhost \
@@ -65,7 +67,7 @@ qemu-system-x86_64 \
     -drive file=image.qcow2,if=none,id=drive1 \
     -device virtio-blk-pci,drive=drive1 \
     -object memory-backend-memfd,id=mem,size=4G,share=on \
-    -chardev socket,id=rawstor1,reconnect=1,path=${VHOST_RUNDIR}//rawstor1.sock \
+    -chardev socket,id=rawstor1,reconnect=1,path=${VHOST_RUNDIR}/rawstor1.sock \
     -device vhost-user-blk-pci,chardev=rawstor1,num-queues=1,disable-legacy=on
 ```
 
