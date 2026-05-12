@@ -589,3 +589,20 @@ int rawstor_fd_cancel(RawstorIOEvent* event) noexcept {
         return -EINVAL;
     }
 }
+
+int rawstor_fd_cancel_all(int fd) noexcept {
+    try {
+        rawstor::io_queue->cancel(fd);
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstor_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstor_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
