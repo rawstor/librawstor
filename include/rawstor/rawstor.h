@@ -448,6 +448,39 @@ int rawstor_fd_sendmsg(
 int rawstor_fd_cancel(RawstorIOEvent* event) RAWSTOR_NOEXCEPT;
 
 /**
+ * @brief Cancel all ongoing I/O operations associated with a file descriptor.
+ *
+ * This function terminates all active I/O operations that were started on the
+ * given file descriptor. After cancellation:
+ *
+ * - Each cancelled operation will invoke its completion callback once with the
+ *   ECANCELED error code.
+ *
+ * - After those callbacks return, no further callbacks will occur for those
+ *   operations.
+ *
+ * - All ring buffer entries and associated resources are safely released.
+ *
+ * - The file descriptor itself is not closed; only the operations are
+ *   cancelled.
+ *
+ * @param fd    File descriptor whose pending I/O operations should be
+ *              cancelled.
+ *
+ * @return      0 on success (all operations cancelled). Negative error code on
+ *              failure.
+ *
+ * @note        The cancellation is synchronous from the caller's perspective.
+ *              However, any completion callbacks that were already queued may
+ *              still be invoked with the ECANCELED error code before they are
+ *              suppressed. After this function returns, no further callbacks
+ *              will occur.
+ *
+ * @see rawstor_fd_cancel(RawstorIOEvent*)
+ */
+int rawstor_fd_cancel_all(int fd) RAWSTOR_NOEXCEPT;
+
+/**
  * Lib
  */
 
