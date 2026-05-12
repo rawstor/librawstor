@@ -4,10 +4,12 @@
 
 ## TL;DR
 ```
+PREFIX=${HOME}/local
+
 ./autogen.sh
-./configure
-make
-sudo make install
+./configure --prefix=${PREFIX}
+make -j${nproc}
+make install
 
 OST_ADDR=192.168.0.1:8080
 
@@ -15,7 +17,7 @@ OST_ADDR=192.168.0.1:8080
 # Client
 #
 OBJECT_ID=...
-VHOST_RUNDIR=/var/run/rawstor
+VHOST_RUNDIR=${PREFIX}/var/run/rawstor
 
 mkdir -p ${VHOST_RUNDIR}
 
@@ -49,8 +51,11 @@ This will replace liburing with poll.
 rawstor-vhost is a userspace VirtIO block device backend that implements the vhost-user protocol. It allows virtual machines to access block storage via shared memory, bypassing the host kernel for improved performance.
 
 ```
+PREFIX=${HOME}/local
+VHOST_RUNDIR=${PREFIX}/var/run/rawstor
+
 rawstor-vhost \
-    --socket-path=/var/run/rawstor/rawstor1.sock \
+    --socket-path=${VHOST_RUNDIR}/rawstor1.sock \
     --target=ost://${OST_ADDR}/${OBJECT_ID}
 
 qemu-system-x86_64 \
@@ -60,7 +65,7 @@ qemu-system-x86_64 \
     -drive file=image.qcow2,if=none,id=drive1 \
     -device virtio-blk-pci,drive=drive1 \
     -object memory-backend-memfd,id=mem,size=4G,share=on \
-    -chardev socket,id=rawstor1,reconnect=1,path=/var/run/rawstor/rawstor1.sock \
+    -chardev socket,id=rawstor1,reconnect=1,path=${VHOST_RUNDIR}//rawstor1.sock \
     -device vhost-user-blk-pci,chardev=rawstor1,num-queues=1,disable-legacy=on
 ```
 
