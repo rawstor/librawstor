@@ -122,6 +122,8 @@ public:
 
     virtual void cancel(Event* event) = 0;
 
+    virtual void cancel(int fd) = 0;
+
     virtual void wait(unsigned int timeout) = 0;
 };
 

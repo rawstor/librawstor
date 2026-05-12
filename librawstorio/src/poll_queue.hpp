@@ -117,6 +117,8 @@ public:
 
     void cancel(rawstor::io::Event* e) override;
 
+    void cancel(int fd) override;
+
     void wait(unsigned int timeout) override;
 };
 

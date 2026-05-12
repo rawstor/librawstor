@@ -607,8 +607,21 @@ void Queue::cancel(rawstor::io::Event* event) {
 
     io_uring_sync_cancel_reg req = {};
     req.addr = (__u64)event;
-    req.fd = 0;
-    req.flags = 0;
+    res = io_uring_register_sync_cancel(&_ring, &req);
+    if (res < 0) {
+        RAWSTOR_THROW_SYSTEM_ERROR(-res);
+    }
+}
+
+void Queue::cancel(int fd) {
+    int res = io_uring_submit(&_ring);
+    if (res < 0) {
+        RAWSTOR_THROW_SYSTEM_ERROR(-res);
+    }
+
+    io_uring_sync_cancel_reg req = {};
+    req.fd = fd;
+    req.flags = IORING_ASYNC_CANCEL_ALL | IORING_ASYNC_CANCEL_FD;
     res = io_uring_register_sync_cancel(&_ring, &req);
     if (res < 0) {
         RAWSTOR_THROW_SYSTEM_ERROR(-res);
