@@ -25,7 +25,7 @@ extern "C" {
 #endif
 
 /**
- * Generic callback for asynchronous I/O operations.
+ * @brief Generic callback for asynchronous I/O operations.
  *
  * This callback is used for various asynchronous operations including read,
  * write, and poll. The meaning of the `result` parameter varies depending on
@@ -58,7 +58,8 @@ extern "C" {
 typedef int(RawstorIOCallback)(size_t result, int error, void* data);
 
 /**
- * Callback for multishot receive operations with scatter-gather semantics.
+ * @brief Callback for multishot receive operations with scatter-gather
+ *        semantics.
  *
  * @param iov    Array of I/O vectors pointing to received data in the ring
  *               buffer. Each iovec represents a contiguous chunk of received
@@ -115,8 +116,8 @@ int rawstor_fd_poll(
 ) RAWSTOR_NOEXCEPT;
 
 /**
- * Establishes a persistent multishot poll operation for monitoring file
- * descriptor events.
+ * @brief Establishes a persistent multishot poll operation for monitoring file
+ *        descriptor events.
  *
  * This function sets up a continuous poll operation that monitors the
  * specified file descriptor for events defined in the mask. When any of the
@@ -174,7 +175,7 @@ int rawstor_fd_poll_multishot(
 ) RAWSTOR_NOEXCEPT;
 
 /**
- * Asynchronously accepts an incoming connection on a listening socket.
+ * @brief Asynchronously accepts an incoming connection on a listening socket.
  *
  * This function initiates an asynchronous accept operation on the specified
  * listening socket. When a new connection arrives, the provided callback is
@@ -224,7 +225,8 @@ int rawstor_fd_accept(
 ) RAWSTOR_NOEXCEPT;
 
 /**
- * Establishes a persistent multishot accept operation on a listening socket.
+ * @brief Establishes a persistent multishot accept operation on a listening
+ *        socket.
  *
  * This function sets up a continuous asynchronous accept operation that
  * invokes the provided callback for each incoming connection. The operation
@@ -300,7 +302,7 @@ int rawstor_fd_recv(
 ) RAWSTOR_NOEXCEPT;
 
 /**
- * Establishes a persistent multishot recv operation.
+ * @brief Establishes a persistent multishot recv operation.
  *
  * Continuously receives data into a circular buffer, invoking the callback for
  * each completed I/O operation. The operation persists until canceled or until
@@ -400,11 +402,15 @@ int rawstor_fd_sendmsg(
 ) RAWSTOR_NOEXCEPT;
 
 /**
- * Cancels an ongoing IO operation and releases associated resources if any.
+ * @brief Cancels an ongoing IO operation and releases associated resources if
+ *        any.
  *
  * This function gracefully terminates an IO operation. It ensures that:
+ *
  * 1. No further callbacks will be invoked after cancellation completes
+ *
  * 2. All ring buffer entries are safely released if any
+ *
  * 3. Any pending I/O operations are properly cleaned up
  *
  * @param event Event handle obtained from cancelable rawstor IO function.
@@ -419,14 +425,15 @@ int rawstor_fd_sendmsg(
  *
  * @note        Cancellation is synchronous from the caller's perspective: the
  *              function returns immediately after initiating the cancellation.
- * However, the completion callback will still be invoked once with the
- *              ECANCELED error code to indicate that the operation has been
- * canceled. After that callback returns, the operation is fully terminated, all
- * resources are released, and no further callbacks will occur. If the operation
- *              was already completed or terminated due to an error, calling
- * this function will return -ENOENT and no additional callback will be invoked.
- *              The event handle becomes invalid immediately upon successful
- * return from rawstor_fd_cancel() and must not be used afterwards, even though
+ *              However, the completion callback will still be invoked once
+ *              with the ECANCELED error code to indicate that the operation
+ *              has been canceled. After that callback returns, the operation is
+ *              fully terminated, all resources are released, and no further
+ *              callbacks will occur. If the operation was already completed or
+ *              terminated due to an error, calling this function will return
+ *              -ENOENT and no additional callback will be invoked. The event
+ *              handle becomes invalid immediately upon successful return from
+ *              rawstor_fd_cancel() and must not be used afterwards, even though
  *              the cancellation callback may still be pending.
  *
  * @warning     After an error occurs in the multishot operation (e.g., socket
