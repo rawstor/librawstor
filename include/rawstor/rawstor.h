@@ -471,10 +471,10 @@ int rawstor_fd_cancel(RawstorIOEvent* event) RAWSTOR_NOEXCEPT;
  *              failure.
  *
  * @note        The cancellation is synchronous from the caller's perspective.
- *              However, any completion callbacks that were already queued may
- *              still be invoked with the ECANCELED error code before they are
- *              suppressed. After this function returns, no further callbacks
- *              will occur.
+ *              However, completion callbacks for the cancelled operations will
+ *              still be invoked once with the ECANCELED error code (e.g., via
+ *              rawstor_wait()) before the operations are fully terminated.
+ *              After those callbacks return, no further callbacks will occur.
  *
  * @see rawstor_fd_cancel(RawstorIOEvent*)
  */
