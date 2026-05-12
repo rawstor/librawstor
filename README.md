@@ -8,7 +8,7 @@ PREFIX=${HOME}/local
 
 ./autogen.sh
 ./configure --prefix=${PREFIX}
-make -j${nproc}
+make -j$(nproc)
 make install
 
 OST_ADDR=192.168.0.1:8080
