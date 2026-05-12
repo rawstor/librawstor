@@ -66,6 +66,8 @@ public:
 
     bool cancel(rawstor::io::Event* event, rawstor::RingBuf<Event>& cqes);
 
+    void cancel(rawstor::RingBuf<Event>& cqes);
+
     void process(RingBuf<Event>& cqes, short revents);
 };
 

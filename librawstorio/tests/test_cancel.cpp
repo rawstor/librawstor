@@ -12,11 +12,12 @@ namespace {
 
 class CancelTest : public rawstor::io::tests::QueueTest {
 protected:
-    CancelTest() : rawstor::io::tests::QueueTest(1) {}
+    CancelTest() : rawstor::io::tests::QueueTest(4) {}
 };
 
-TEST_F(CancelTest, cancel_nullptr) {
+TEST_F(CancelTest, cancel_noent) {
     EXPECT_THROW(_queue->cancel(nullptr), std::system_error);
+    EXPECT_NO_THROW(_queue->cancel(0));
 }
 
 TEST_F(CancelTest, poll) {
@@ -154,6 +155,50 @@ TEST_F(CancelTest, write_completed) {
     EXPECT_EQ(result, sizeof(client_buf));
     EXPECT_EQ(error, 0);
     EXPECT_EQ(strcmp(server_buf, client_buf), 0);
+}
+
+TEST_F(CancelTest, cancel_all) {
+    size_t result_poll = 0;
+    int error_poll = 0;
+    _queue->poll(_fd, POLLIN, [&result_poll, &error_poll](size_t r, int e) {
+        result_poll = r;
+        error_poll = e;
+    });
+
+    char client_buf_read[10];
+    size_t result_read = 0;
+    int error_read = 0;
+    _queue->read(
+        _fd, client_buf_read, sizeof(client_buf_read),
+        [&result_read, &error_read](size_t r, int e) {
+            result_read = r;
+            error_read = e;
+        }
+    );
+
+    char client_buf_write[] = "data";
+    size_t result_write = 0;
+    int error_write = 0;
+    _queue->write(
+        _fd, client_buf_write, sizeof(client_buf_write),
+        [&result_write, &error_write](size_t r, int e) {
+            result_write = r;
+            error_write = e;
+        }
+    );
+
+    _queue->cancel(_fd);
+
+    EXPECT_NO_THROW(_wait_all());
+
+    EXPECT_EQ(result_poll, (size_t)0);
+    EXPECT_EQ(error_poll, ECANCELED);
+    EXPECT_EQ(result_read, (size_t)0);
+    EXPECT_EQ(error_read, ECANCELED);
+#ifndef RAWSTOR_WITH_LIBURING
+    EXPECT_EQ(result_write, (size_t)0);
+    EXPECT_EQ(error_write, ECANCELED);
+#endif
 }
 
 } // unnamed namespace

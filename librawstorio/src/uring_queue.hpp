@@ -107,6 +107,8 @@ public:
 
     void cancel(rawstor::io::Event* event);
 
+    void cancel(int fd);
+
     bool empty() const noexcept override;
 
     void wait(unsigned int timeout) override;
