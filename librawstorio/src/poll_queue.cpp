@@ -392,12 +392,10 @@ void Queue::cancel(rawstor::io::Event* e) {
 }
 
 void Queue::cancel(int fd) {
-    for (auto it = _sessions.begin(); it != _sessions.end(); ++it) {
-        if (it->second->fd() == fd) {
-            it->second->cancel(_cqes);
-            _sessions.erase(it);
-            break;
-        }
+    auto it = _sessions.find(fd);
+    if (it != _sessions.end()) {
+        it->second->cancel(_cqes);
+        _sessions.erase(it);
     }
 }
 
