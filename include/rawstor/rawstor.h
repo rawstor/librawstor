@@ -402,10 +402,10 @@ int rawstor_fd_sendmsg(
 ) RAWSTOR_NOEXCEPT;
 
 /**
- * @brief Cancels an ongoing IO operation and releases associated resources if
+ * @brief Cancels an ongoing I/O operation and releases associated resources if
  *        any.
  *
- * This function gracefully terminates an IO operation. It ensures that:
+ * This function gracefully terminates an I/O operation. It ensures that:
  *
  * 1. No further callbacks will be invoked after cancellation completes
  *
@@ -413,7 +413,7 @@ int rawstor_fd_sendmsg(
  *
  * 3. Any pending I/O operations are properly cleaned up
  *
- * @param event Event handle obtained from cancelable rawstor IO function.
+ * @param event Event handle obtained from cancelable rawstor I/O function.
  *              After successful cancellation, the handle becomes invalid and
  *              should not be used further. The caller does not need to free
  *              the handle - all associated resources are managed internally.
