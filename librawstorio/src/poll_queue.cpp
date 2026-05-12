@@ -391,6 +391,14 @@ void Queue::cancel(rawstor::io::Event* e) {
     RAWSTOR_THROW_SYSTEM_ERROR(ENOENT);
 }
 
+void Queue::cancel(int fd) {
+    auto it = _sessions.find(fd);
+    if (it != _sessions.end()) {
+        it->second->cancel(_cqes);
+        _sessions.erase(it);
+    }
+}
+
 bool Queue::empty() const noexcept {
     if (!_cqes.empty()) {
         return false;
