@@ -89,10 +89,6 @@ void send_response(
 
             if (error) {
                 rawstor_error("%s\n", strerror(error));
-                int res = ::close(fd);
-                if (res == -1) {
-                    RAWSTOR_THROW_ERRNO();
-                }
             }
         });
 
@@ -144,12 +140,6 @@ void send_response(
 
         if (error) {
             rawstor_error("%s\n", strerror(error));
-            int res = close(fd);
-            if (res == -1) {
-                int errsv = errno;
-                errno = 0;
-                rawstor_error("%s\n", strerror(errsv));
-            }
         }
     });
 
@@ -191,9 +181,7 @@ Session::~Session() noexcept {
     if (_recv_event != nullptr) {
         int res = rawstor_fd_cancel(_recv_event);
         if (res < 0) {
-            if (res != -ENOENT) {
-                rawstor_error("Failed to cancel event: %s\n", strerror(-res));
-            }
+            rawstor_error("Failed to cancel event: %s\n", strerror(-res));
         }
     }
     close(_fd);
@@ -202,9 +190,18 @@ Session::~Session() noexcept {
 ssize_t Session::_recv(
     const iovec* iov, unsigned int niov, size_t result, int error, void* data
 ) noexcept {
+    if (error == ECANCELED) {
+        return 0;
+    }
     Session* session = static_cast<Session*>(data);
     try {
         return session->_recv(iov, niov, result, error);
+    } catch (const std::system_error& e) {
+        if (e.code().value() != EPIPE) {
+            rawstor_error("%s\n", e.what());
+        }
+        session->_server.del_session(session->_fd);
+        return 0;
     } catch (const std::exception& e) {
         rawstor_error("%s\n", e.what());
         session->_server.del_session(session->_fd);
@@ -421,14 +418,8 @@ void Session::_read(const RawstorOSTFrameIOBody& request) {
                     error ? 0 : rawstor_hash_scalar(data->data(), data->size()),
                     data
                 );
-            } catch (...) {
-                int res = close(fd);
-                if (res == -1) {
-                    int errsv = errno;
-                    errno = 0;
-                    rawstor_error("%s\n", strerror(errsv));
-                }
-                throw;
+            } catch (const std::exception& e) {
+                rawstor_error("%s\n", e.what());
             }
         }
     );
@@ -471,14 +462,8 @@ void Session::_write(
                     error ? -error : static_cast<int>(result),
                     error ? 0 : rawstor_hash_scalar(data->data(), data->size())
                 );
-            } catch (...) {
-                int res = close(fd);
-                if (res == -1) {
-                    int errsv = errno;
-                    errno = 0;
-                    rawstor_error("%s\n", strerror(errsv));
-                }
-                throw;
+            } catch (const std::exception& e) {
+                rawstor_error("%s\n", e.what());
             }
         }
     );
