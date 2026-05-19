@@ -37,40 +37,45 @@ Server::Server(
         RAWSTOR_THROW_SYSTEM_ERROR(-res);
     }
 
-    _fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (_fd == -1) {
-        RAWSTOR_THROW_ERRNO();
-    }
+    try {
+        _fd = socket(AF_INET, SOCK_STREAM, 0);
+        if (_fd == -1) {
+            RAWSTOR_THROW_ERRNO();
+        }
 
-    res = rawstor_socket_set_reuse(_fd);
-    if (res < 0) {
-        close(_fd);
-        RAWSTOR_THROW_SYSTEM_ERROR(-res);
-    }
+        res = rawstor_socket_set_reuse(_fd);
+        if (res < 0) {
+            RAWSTOR_THROW_SYSTEM_ERROR(-res);
+        }
 
-    sockaddr_in sin = {};
-    sin.sin_family = AF_INET,
-    res = inet_pton(AF_INET, addr.c_str(), &sin.sin_addr);
-    if (res == 0) {
-        std::ostringstream oss;
-        oss << "the address was not parseable: " << addr;
-        throw std::runtime_error(oss.str());
-    } else if (res == -1) {
-        RAWSTOR_THROW_ERRNO();
-    }
-    sin.sin_port = htons(port);
+        sockaddr_in sin = {};
+        sin.sin_family = AF_INET;
+        res = inet_pton(AF_INET, addr.c_str(), &sin.sin_addr);
+        if (res == 0) {
+            std::ostringstream oss;
+            oss << "the address was not parseable: " << addr;
+            throw std::runtime_error(oss.str());
+        } else if (res == -1) {
+            RAWSTOR_THROW_ERRNO();
+        }
+        sin.sin_port = htons(port);
 
-    if (bind(_fd, reinterpret_cast<sockaddr*>(&sin), sizeof(sin)) == -1) {
-        close(_fd);
-        RAWSTOR_THROW_ERRNO();
-    }
+        if (bind(_fd, reinterpret_cast<sockaddr*>(&sin), sizeof(sin)) == -1) {
+            RAWSTOR_THROW_ERRNO();
+        }
 
-    if (listen(_fd, SOMAXCONN) == -1) {
-        close(_fd);
-        RAWSTOR_THROW_ERRNO();
-    }
+        if (listen(_fd, SOMAXCONN) == -1) {
+            RAWSTOR_THROW_ERRNO();
+        }
 
-    rawstor_info("Waiting for connections on %s:%u\n", addr.c_str(), port);
+        rawstor_info("Waiting for connections on %s:%u\n", addr.c_str(), port);
+    } catch (...) {
+        if (_fd != -1) {
+            close(_fd);
+        }
+        rawstor_terminate();
+        throw;
+    }
 }
 
 Server::~Server() {
