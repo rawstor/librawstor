@@ -138,9 +138,6 @@ void Server::loop() {
         }
 
         if (res < 0) {
-            if (res == -EPIPE) {
-                continue;
-            }
             RAWSTOR_THROW_SYSTEM_ERROR(-res);
         }
     }
