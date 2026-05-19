@@ -473,7 +473,49 @@ TEST_F(MultishotTest, stop_iteration_overflow) {
     EXPECT_EQ(items.size(), (size_t)2);
 }
 
-TEST_F(MultishotTest, recv_close) {
+TEST_F(MultishotTest, recv_close_partial) {
+    {
+        const char server_buf[] = "dat1dat2dat";
+        _server.write(server_buf, sizeof(server_buf) - 1);
+        _server.close();
+        _server.wait();
+    }
+
+    std::vector<MultishotVectorItem> items;
+    rawstor::io::Event* event = _queue->recv_multishot(
+        _fd, 8, 4, 4, 0,
+        [&items](const iovec* iov, unsigned int niov, size_t result, int error)
+            -> size_t {
+            items.emplace_back(iov, niov, result, error);
+            return 4;
+        }
+    );
+
+    EXPECT_NO_THROW(_wait_all());
+    EXPECT_EQ(items.size(), (size_t)3);
+    if (items.size() >= 1) {
+        EXPECT_EQ(items[0].result(), (size_t)4);
+        EXPECT_EQ(items[0].error(), 0);
+        EXPECT_EQ(strncmp(items[0].data(), "dat1", 4), 0);
+    }
+    if (items.size() >= 2) {
+        EXPECT_EQ(items[1].result(), (size_t)4);
+        EXPECT_EQ(items[1].error(), 0);
+        EXPECT_EQ(strncmp(items[1].data(), "dat2", 4), 0);
+    }
+    if (items.size() >= 3) {
+        EXPECT_EQ(items[2].result(), (size_t)3);
+        EXPECT_EQ(items[2].error(), EPIPE);
+        EXPECT_EQ(strncmp(items[2].data(), "dat", 3), 0);
+    }
+
+    EXPECT_THROW(_queue->cancel(event), std::system_error);
+
+    EXPECT_NO_THROW(_wait_all());
+    EXPECT_EQ(items.size(), (size_t)3);
+}
+
+TEST_F(MultishotTest, recv_close_full) {
     {
         const char server_buf[] = "dat1dat2dat3";
         _server.write(server_buf, sizeof(server_buf) - 1);
@@ -517,6 +559,45 @@ TEST_F(MultishotTest, recv_close) {
 
     EXPECT_NO_THROW(_wait_all());
     EXPECT_EQ(items.size(), (size_t)4);
+}
+
+TEST_F(MultishotTest, recv_cancel_in_cb) {
+    {
+        const char server_buf[] = "dat1";
+        _server.write(server_buf, sizeof(server_buf) - 1);
+        _server.wait();
+    }
+
+    std::vector<MultishotVectorItem> items;
+    rawstor::io::Event* event = _queue->recv_multishot(
+        _fd, 8, 4, 4, 0,
+        [&items, &queue = _queue, &event](
+            const iovec* iov, unsigned int niov, size_t result, int error
+        ) -> size_t {
+            if (!error) {
+                EXPECT_NO_THROW(queue->cancel(event));
+            }
+            items.emplace_back(iov, niov, result, error);
+            return 4;
+        }
+    );
+
+    EXPECT_NO_THROW(_wait_all());
+    EXPECT_EQ(items.size(), (size_t)2);
+    if (items.size() >= 1) {
+        EXPECT_EQ(items[0].result(), (size_t)4);
+        EXPECT_EQ(items[0].error(), 0);
+        EXPECT_EQ(strncmp(items[0].data(), "dat1", 4), 0);
+    }
+    if (items.size() >= 2) {
+        EXPECT_EQ(items[1].result(), (size_t)0);
+        EXPECT_EQ(items[1].error(), ECANCELED);
+    }
+
+    EXPECT_THROW(_queue->cancel(event), std::system_error);
+
+    EXPECT_NO_THROW(_wait_all());
+    EXPECT_EQ(items.size(), (size_t)2);
 }
 
 } // unnamed namespace

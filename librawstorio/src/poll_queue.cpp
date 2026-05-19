@@ -388,6 +388,10 @@ void Queue::cancel(rawstor::io::Event* e) {
             return;
         }
     }
+    if (_current_event != nullptr && e == _current_event) {
+        _current_event->set_error(ECANCELED);
+        return;
+    }
     RAWSTOR_THROW_SYSTEM_ERROR(ENOENT);
 }
 
@@ -442,8 +446,14 @@ void Queue::wait(unsigned int timeout) {
 
     while (!_cqes.empty()) {
         std::unique_ptr<Event> event(_cqes.pop());
-        event->dispatch();
-
+        _current_event = event.get();
+        try {
+            event->dispatch();
+        } catch (...) {
+            _current_event = nullptr;
+            throw;
+        }
+        _current_event = nullptr;
         if (event->is_multishot() && !event->error()) {
             if (event->is_poll()) {
                 std::unique_ptr<EventSimplexPoll> poll_event(
