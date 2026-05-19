@@ -23,6 +23,7 @@ class Queue final : public rawstor::io::Queue {
 private:
     std::unordered_map<int, std::shared_ptr<Session>> _sessions;
     rawstor::RingBuf<Event> _cqes;
+    Event* _current_event;
 
     Session& _get_session(int fd);
 
@@ -32,7 +33,8 @@ public:
 
     explicit Queue(unsigned int depth) :
         rawstor::io::Queue(depth),
-        _cqes(depth) {}
+        _cqes(depth),
+        _current_event(nullptr) {}
 
     rawstor::io::Event* poll(
         int fd, unsigned int mask, std::function<void(size_t, int)>&& cb
