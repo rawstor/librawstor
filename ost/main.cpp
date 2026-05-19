@@ -134,10 +134,16 @@ int main(int argc, char** argv) {
         return EXIT_FAILURE;
     }
 
+    std::string name;
+    unsigned int port;
+    parse_addr(bind_arg, &name, &port);
+    if (port == 0) {
+        std::cerr << "Invalid bind address: port is missing or invalid in \""
+                  << bind_arg << "\"" << std::endl;
+        return EXIT_FAILURE;
+    }
+
     try {
-        std::string name;
-        unsigned int port;
-        parse_addr(bind_arg, &name, &port);
         ost(name, port, location_arg);
     } catch (const std::exception& e) {
         std::cerr << e.what() << std::endl;
