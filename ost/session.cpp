@@ -479,8 +479,8 @@ void Session::_write(
     }
 }
 
-void Session::_discard(const RawstorOSTFrameIOBody&) {
-    throw std::runtime_error("Not implemented");
+void Session::_discard(const RawstorOSTFrameIOBody& request) {
+    send_response(_fd, RAWSTOR_CMD_DISCARD, request.cid, -ENOSYS, 0);
 }
 
 } // namespace ostbackend
