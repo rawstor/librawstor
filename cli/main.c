@@ -6,12 +6,18 @@
 
 #include "config.h"
 
+#include <rawstorstd/gcc.h>
+
 #include <rawstor.h>
 
+#include <errno.h>
 #include <getopt.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+static struct sigaction sact = {};
 
 static void usage(void) {
     fprintf(
@@ -38,6 +44,9 @@ static void usage(void) {
 
 static void version(void) {
     fprintf(stdout, "Rawstor CLI " PACKAGE_VERSION "\n");
+}
+
+static void sact_handler(int RAWSTOR_UNUSED s) {
 }
 
 static void command_create_usage(void) {
@@ -454,6 +463,25 @@ int main(int argc, char** argv) {
             fprintf(stderr, "wait-timeout argument must be unsigned integer\n");
             return EXIT_FAILURE;
         }
+    }
+
+    sact.sa_handler = sact_handler;
+    sigemptyset(&sact.sa_mask);
+    if (sigaction(SIGINT, &sact, NULL) == -1) {
+        int errsv = errno;
+        errno = 0;
+        fprintf(
+            stderr, "Failed to register SIGINT handler: %s\n", strerror(errsv)
+        );
+        return EXIT_FAILURE;
+    }
+    if (sigaction(SIGTERM, &sact, NULL) == -1) {
+        int errsv = errno;
+        errno = 0;
+        fprintf(
+            stderr, "Failed to register SIGTERM handler: %s\n", strerror(errsv)
+        );
+        return EXIT_FAILURE;
     }
 
     int ret = run_command(argv[optind], &opts, argc - optind, &argv[optind]);
