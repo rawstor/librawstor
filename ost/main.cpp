@@ -34,8 +34,7 @@ void usage() {
               << "                        (e.g., 127.0.0.1:8080)." << std::endl;
 }
 
-void sact_handler(int s) {
-    std::cout << "Caught signal:" << s << std::endl;
+void sact_handler(int) {
 }
 
 void ost(const std::string& addr, unsigned int port, const char* location) {
