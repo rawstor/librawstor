@@ -95,9 +95,16 @@ Server::~Server() {
     rawstor_terminate();
 }
 
-int Server::_accept(size_t result, int error, void* data) {
+int Server::_accept(size_t result, int error, void* data) noexcept {
     Server* server = static_cast<Server*>(data);
-    return server->_accept(result, error);
+
+    try {
+        return server->_accept(result, error);
+    } catch (const std::exception& e) {
+        rawstor_error("%s\n", e.what());
+    }
+
+    return 0;
 }
 
 int Server::_accept(size_t result, int error) {
