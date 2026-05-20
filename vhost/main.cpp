@@ -39,8 +39,7 @@ void usage() {
               << std::endl;
 }
 
-void sact_handler(int s) {
-    std::cout << "Caught signal:" << s << std::endl;
+void sact_handler(int) {
 }
 
 void server(const std::string& target, const std::string& socket_path) {
