@@ -111,7 +111,12 @@ int Server::_accept(size_t result, int error) {
 }
 
 void Server::_add_session(int fd) {
-    _sessions.emplace(fd, std::make_unique<Session>(*this, fd));
+    try {
+        _sessions.emplace(fd, std::make_unique<Session>(*this, fd));
+    } catch (...) {
+        close(fd);
+        throw;
+    }
 }
 
 void Server::del_session(int fd) noexcept {
