@@ -453,6 +453,18 @@ void Session::_write(
     auto data = std::make_shared<std::vector<unsigned char>>(size);
     rawstor_iovec_to_buf(iov, niov, 0, data->data(), size);
 
+    uint64_t hash = rawstor_hash_scalar(data->data(), data->size());
+
+    if (hash != request.hash) {
+        rawstor_error(
+            "Hash mismatch: %llx != %llx\n\n",
+            static_cast<unsigned long long>(hash),
+            static_cast<unsigned long long>(request.hash)
+        );
+        send_response(_fd, RAWSTOR_CMD_WRITE, request.cid, -EIO, 0);
+        return;
+    }
+
     auto cb = std::make_unique<Callback>(
         [fd = _fd, cid = request.cid,
          data](RawstorObject*, size_t, size_t result, int error) {
