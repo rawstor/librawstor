@@ -28,7 +28,7 @@ static void usage(void) {
         "options:\n"
         "  -h, --help            Show this help message and exit\n"
         "  --sessions            Number of opened sessions per object\n"
-        "  -v, --version         Rawstor client version\n"
+        "  -v, --version         Rawstor version\n"
         "  --wait-timeout        IO wait timeout\n"
         "\n"
         "command:\n"
@@ -84,7 +84,6 @@ static int command_create(int argc, char** argv) {
         case 'h':
             command_create_usage();
             return EXIT_SUCCESS;
-            break;
 
         case 's':
             size_arg = optarg;
@@ -156,7 +155,6 @@ static int command_remove(int argc, char** argv) {
         case 'h':
             command_remove_usage();
             return EXIT_SUCCESS;
-            break;
 
         case 'o':
             target_arg = optarg;
@@ -213,7 +211,6 @@ static int command_show(int argc, char** argv) {
         case 'h':
             command_show_usage();
             return EXIT_SUCCESS;
-            break;
 
         case 'o':
             target_arg = optarg;
@@ -298,7 +295,6 @@ static int command_testio(int argc, char** argv) {
         case 'h':
             command_testio_usage();
             return EXIT_SUCCESS;
-            break;
 
         case 'o':
             target_arg = optarg;
@@ -410,7 +406,6 @@ int main(int argc, char** argv) {
         case 'h':
             usage();
             return EXIT_SUCCESS;
-            break;
 
         case 's':
             sessions_arg = optarg;
@@ -423,7 +418,6 @@ int main(int argc, char** argv) {
         case 'v':
             version();
             return EXIT_SUCCESS;
-            break;
 
         default:
             return EXIT_FAILURE;
