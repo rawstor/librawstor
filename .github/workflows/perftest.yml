@@ -13,9 +13,9 @@ jobs:
         without-liburing:
         - 
         - --without-liburing
-        scheme:
+        backend:
         - file
-        - ost
+        - ost-legacy
         bs:
         - 4k
         iodepth:
@@ -27,13 +27,12 @@ jobs:
         - packages: liburing-dev
           without-liburing:
         - packages: liburing-dev
-          scheme: ost
+          backend: ost-legacy
           without-liburing: --without-liburing
         - uri: file:///tmp/objects
-          scheme: file
+          backend: file
         - uri: ost://127.0.0.1:8080
-          scheme: ost
-
+          backend: ost-legacy
 
     steps:
     - name: install dependencies
@@ -53,14 +52,14 @@ jobs:
         sudo make install
         popd
     - uses: actions/checkout@v6
-      if: "${{ matrix.scheme == 'ost' }}"
+      if: "${{ matrix.backend == 'ost-legacy' }}"
       with:
         repository: rawstor/rawstor_ost
         path: rawstor_ost
         ref: refs/heads/main
         ssh-key: ${{ secrets.RAWSTOR_OST_TOKEN }}
-    - name: (ost) install rawstor_ost
-      if: "${{ matrix.scheme == 'ost' }}"
+    - name: (ost-legacy) install rawstor_ost
+      if: "${{ matrix.backend == 'ost-legacy' }}"
       run: |
         pushd .
         cd ./rawstor_ost
@@ -82,28 +81,28 @@ jobs:
         make -j$(nproc)
         sudo make install
         popd
-    - name: (ost) start rawstor_ost
-      if: "${{ matrix.scheme == 'ost' }}"
+    - name: (ost-legacy) start rawstor_ost
+      if: "${{ matrix.backend == 'ost-legacy' }}"
       run: |
         mkdir ${GITHUB_WORKSPACE}/objects
         truncate -s 2G ${GITHUB_WORKSPACE}/objects/01988675-e1e5-7788-9ed4-2f2d30910d23
         ost 8080 ${GITHUB_WORKSPACE}/objects/ &
         sleep 10
     - name: (file) create object
-      if: "${{ matrix.scheme == 'file' }}"
+      if: "${{ matrix.backend == 'file' }}"
       run: |
         object_uri=$(rawstor-cli create --uri=${{ matrix.uri }} --size=1)
         echo "OBJECT_URI=${object_uri}" >> $GITHUB_ENV
         rawstor-cli testio --object-uri=${object_uri} --block-size=4096 --io-depth=1 --count=1
-    - name: (ost) create object
-      if: "${{ matrix.scheme == 'ost' }}"
+    - name: (ost-legacy) create object
+      if: "${{ matrix.backend == 'ost-legacy' }}"
       run: |
         object_uri=${{ matrix.uri }}/01988675-e1e5-7788-9ed4-2f2d30910d23
         echo "OBJECT_URI=${object_uri}" >> $GITHUB_ENV
     - name: fio
       run: |
         echo "# perftest" >> $GITHUB_STEP_SUMMARY
-        echo "## fio ${{ matrix.without-liburing }} ${{ matrix.scheme }}" >> $GITHUB_STEP_SUMMARY
+        echo "## fio ${{ matrix.without-liburing }} ${{ matrix.backend }}" >> $GITHUB_STEP_SUMMARY
         echo "### bs=${{ matrix.bs }}, iodepth=${{ matrix.iodepth }}, numjobs=${{ matrix.numjobs }}" >> $GITHUB_STEP_SUMMARY
         ./librawstor/.github/tools/fio.sh \
           ${OBJECT_URI} \
@@ -117,16 +116,16 @@ jobs:
         echo \`\`\` >> $GITHUB_STEP_SUMMARY
     - uses: actions/upload-artifact@v4
       with:
-        name: perftest${{ matrix.without-liburing }}-${{ matrix.scheme }}-${{ matrix.bs }}-${{ matrix.iodepth }}-${{ matrix.numjobs }}
+        name: perftest${{ matrix.without-liburing }}-${{ matrix.backend }}-${{ matrix.bs }}-${{ matrix.iodepth }}-${{ matrix.numjobs }}
         path: |
           ./fio.txt
           ./fio.json
         if-no-files-found: error
     - name: (file) remove object
-      if: "${{ matrix.scheme == 'file' }}"
+      if: "${{ matrix.backend == 'file' }}"
       run: rawstor-cli remove --object-uri=${OBJECT_URI}
-    - name: (ost) stop rawstor_ost
-      if: "${{ matrix.scheme == 'ost' }}"
+    - name: (ost-legacy) stop rawstor_ost
+      if: "${{ matrix.backend == 'ost-legacy' }}"
       run: killall ost
 
   export:
