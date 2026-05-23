@@ -27,12 +27,12 @@ jobs:
         - packages: liburing-dev
           without-liburing:
         - packages: liburing-dev
-          backend: ost
+          backend: ost-legacy
           without-liburing: --without-liburing
         - location: file:///tmp/objects
           backend: file
         - location: ost://127.0.0.1:8080
-          backend: ost
+          backend: ost-legacy
 
     steps:
     - name: install dependencies
@@ -52,14 +52,14 @@ jobs:
         sudo make install
         popd
     - uses: actions/checkout@v6
-      if: "${{ matrix.backend == 'ost' }}"
+      if: "${{ matrix.backend == 'ost-legacy' }}"
       with:
         repository: rawstor/rawstor_ost
         path: rawstor_ost
         ref: refs/heads/main
         ssh-key: ${{ secrets.RAWSTOR_OST_TOKEN }}
-    - name: (ost) install rawstor_ost
-      if: "${{ matrix.backend == 'ost' }}"
+    - name: (ost-legacy) install rawstor_ost
+      if: "${{ matrix.backend == 'ost-legacy' }}"
       run: |
         pushd .
         cd ./rawstor_ost
@@ -81,8 +81,8 @@ jobs:
         make -j$(nproc)
         sudo make install
         popd
-    - name: (ost) start rawstor_ost
-      if: "${{ matrix.backend == 'ost' }}"
+    - name: (ost-legacy) start rawstor_ost
+      if: "${{ matrix.backend == 'ost-legacy' }}"
       run: |
         mkdir ${GITHUB_WORKSPACE}/objects
         truncate -s 2G ${GITHUB_WORKSPACE}/objects/01988675-e1e5-7788-9ed4-2f2d30910d23
@@ -94,8 +94,8 @@ jobs:
         target=$(rawstor-cli create --location=${{ matrix.location }} --size=1G)
         echo "TARGET=${target}" >> $GITHUB_ENV
         rawstor-cli testio --target=${target} --block-size=4K --io-depth=1 --count=1
-    - name: (ost) create object
-      if: "${{ matrix.backend == 'ost' }}"
+    - name: (ost-legacy) create object
+      if: "${{ matrix.backend == 'ost-legacy' }}"
       run: |
         target=${{ matrix.location }}/01988675-e1e5-7788-9ed4-2f2d30910d23
         echo "TARGET=${target}" >> $GITHUB_ENV
@@ -124,8 +124,8 @@ jobs:
     - name: (file) remove object
       if: "${{ matrix.backend == 'file' }}"
       run: rawstor-cli remove --target=${TARGET}
-    - name: (ost) stop rawstor_ost
-      if: "${{ matrix.backend == 'ost' }}"
+    - name: (ost-legacy) stop rawstor_ost
+      if: "${{ matrix.backend == 'ost-legacy' }}"
       run: killall ost
 
   export:
