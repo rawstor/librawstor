@@ -19,7 +19,7 @@ namespace {
 struct sigaction sact = {};
 
 void usage() {
-    std::cout << "Rawstor vhost server" << std::endl
+    std::cout << "Rawstor vhost server " << PACKAGE_VERSION << std::endl
               << std::endl
               << "usage: rawstor-vhost [options] -t TARGET -s SOCKET_PATH"
               << std::endl
