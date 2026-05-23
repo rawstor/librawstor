@@ -246,7 +246,8 @@ Session::_recv_head(const iovec* iov, unsigned int niov, size_t result) {
             "fd %d: Unexpected magic number: %x != %x\n", _fd,
             _request_head.magic, RAWSTOR_MAGIC
         );
-        return -EPROTO;
+
+        RAWSTOR_THROW_SYSTEM_ERROR(EPROTO);
     }
 
     _next = &Session::_recv_body;
@@ -419,7 +420,7 @@ void Session::_read(const RawstorOSTFrameIOBody& request) {
             try {
                 send_response(
                     fd, RAWSTOR_CMD_READ, cid,
-                    error ? -error : static_cast<int>(result),
+                    error ? -error : static_cast<int32_t>(result),
                     error ? 0 : rawstor_hash_scalar(data->data(), data->size()),
                     data
                 );
@@ -462,7 +463,7 @@ void Session::_write(
 
     if (hash != request.hash) {
         rawstor_error(
-            "Hash mismatch: %llx != %llx\n\n",
+            "Hash mismatch: %llx != %llx\n",
             static_cast<unsigned long long>(hash),
             static_cast<unsigned long long>(request.hash)
         );
@@ -476,7 +477,7 @@ void Session::_write(
             try {
                 send_response(
                     fd, RAWSTOR_CMD_WRITE, cid,
-                    error ? -error : static_cast<int>(result),
+                    error ? -error : static_cast<int32_t>(result),
                     error ? 0 : rawstor_hash_scalar(data->data(), data->size())
                 );
             } catch (const std::exception& e) {
