@@ -1,5 +1,7 @@
 #include "server.hpp"
 
+#include "config.h"
+
 #include <getopt.h>
 #include <signal.h>
 
@@ -15,10 +17,10 @@ namespace {
 struct sigaction sact = {};
 
 void usage() {
-    std::cerr << "Rawstor OST backend." << std::endl
+    std::cout << "Rawstor OST backend " << PACKAGE_VERSION << std::endl
               << std::endl
               << "usage: rawstor-ost "
-                 "[-h] -l LOCATION -b ADDR"
+                 "[options] -l LOCATION -b ADDR"
               << std::endl
               << std::endl
               << "options:" << std::endl
@@ -31,7 +33,8 @@ void usage() {
               << std::endl
               << "  -b, --bind ADDR       Bind address in the format "
               << "<ip>:<port> " << std::endl
-              << "                        (e.g., 127.0.0.1:8080)." << std::endl;
+              << "                        (e.g., 127.0.0.1:8080)." << std::endl
+              << "  -v, --version         Rawstor version" << std::endl;
 }
 
 void sact_handler(int) {
@@ -63,14 +66,19 @@ void parse_addr(
     }
 }
 
+void version() {
+    std::cout << "Rawstor OST backend " << PACKAGE_VERSION << std::endl;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
-    const char* optstring = "hl:b:";
+    const char* optstring = "b:hl:v";
     struct option longopts[] = {
+        {"bind", required_argument, nullptr, 'b'},
         {"help", no_argument, nullptr, 'h'},
         {"location", required_argument, nullptr, 'l'},
-        {"bind", required_argument, nullptr, 'b'},
+        {"version", no_argument, nullptr, 'v'},
         {},
     };
 
@@ -83,6 +91,10 @@ int main(int argc, char** argv) {
         }
 
         switch (c) {
+        case 'b':
+            bind_arg = optarg;
+            break;
+
         case 'h':
             usage();
             return EXIT_SUCCESS;
@@ -91,9 +103,9 @@ int main(int argc, char** argv) {
             location_arg = optarg;
             break;
 
-        case 'b':
-            bind_arg = optarg;
-            break;
+        case 'v':
+            version();
+            return EXIT_SUCCESS;
 
         default:
             return EXIT_FAILURE;
