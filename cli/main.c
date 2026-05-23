@@ -29,7 +29,7 @@ static void usage(void) {
         "options:\n"
         "  -h, --help            Show this help message and exit\n"
         "  --sessions            Number of opened sessions per object\n"
-        "  -v, --version         Rawstor client version\n"
+        "  -v, --version         Rawstor version\n"
         "  --wait-timeout        IO wait timeout\n"
         "\n"
         "command:\n"

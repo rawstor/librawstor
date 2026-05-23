@@ -1,5 +1,7 @@
 #include "server.hpp"
 
+#include "config.h"
+
 #include <rawstor.h>
 
 #include <getopt.h>
@@ -35,7 +37,12 @@ void usage() {
               << std::endl
               << "                        "
                  "vhost-user Unix domain socket."
-              << std::endl;
+              << std::endl
+              << "  -v, --version         Rawstor version" << std::endl;
+}
+
+static void version(void) {
+    std::cout << "Rawstor VHOST " << PACKAGE_VERSION << std::endl;
 }
 
 void sact_handler(int) {
@@ -49,10 +56,11 @@ void server(const std::string& target, const std::string& socket_path) {
 } // namespace
 
 int main(int argc, char** argv) {
-    const char* optstring = "ht:s:";
+    const char* optstring = "ht:s:v";
     struct option longopts[] = {
         {"help", no_argument, nullptr, 'h'},
         {"target", required_argument, nullptr, 't'},
+        {"version", no_argument, NULL, 'v'},
         {"socket-path", required_argument, nullptr, 's'},
         {},
     };
@@ -77,6 +85,11 @@ int main(int argc, char** argv) {
 
         case 's':
             socket_path_arg = optarg;
+            break;
+
+        case 'v':
+            version();
+            return EXIT_SUCCESS;
             break;
 
         default:
