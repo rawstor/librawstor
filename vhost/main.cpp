@@ -77,7 +77,6 @@ int main(int argc, char** argv) {
         case 'h':
             usage();
             return EXIT_SUCCESS;
-            break;
 
         case 't':
             target_arg = optarg;
@@ -90,7 +89,6 @@ int main(int argc, char** argv) {
         case 'v':
             version();
             return EXIT_SUCCESS;
-            break;
 
         default:
             return EXIT_FAILURE;
