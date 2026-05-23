@@ -97,10 +97,18 @@ jobs:
         truncate -s 2G ${GITHUB_WORKSPACE}/objects/01988675-e1e5-7788-9ed4-2f2d30910d23
         ost 8080 ${GITHUB_WORKSPACE}/objects/ &
         sleep 10
-    - name: create object
-      if: "${{ matrix.backend == 'file' || matrix.backend == 'ost' }}"
+    - name: (file) create object
+      if: "${{ matrix.backend == 'file' }}"
       run: |
         target=$(rawstor-cli create --location=${{ matrix.location }} --size=1G)
+        echo "TARGET=${target}" >> $GITHUB_ENV
+        rawstor-cli testio --target=${target} --block-size=4K --io-depth=1 --count=1
+    - name: (ost) create object
+      if: "${{ matrix.backend == 'ost' }}"
+      run: |
+        file_target=$(rawstor-cli create --location=file://${GITHUB_WORKSPACE}/objects --size=1G)
+        object_id=${file_target##*/}
+        target=${{ matrix.location }}/${object_id}
         echo "TARGET=${target}" >> $GITHUB_ENV
         rawstor-cli testio --target=${target} --block-size=4K --io-depth=1 --count=1
     - name: (ost-legacy) create object
@@ -130,8 +138,8 @@ jobs:
           ./fio.txt
           ./fio.json
         if-no-files-found: error
-    - name: remove object
-      if: "${{ matrix.backend == 'file' || matrix.backend == 'ost' }}"
+    - name: (file) remove object
+      if: "${{ matrix.backend == 'file' }}"
       run: rawstor-cli remove --target=${TARGET}
     - name: (ost) stop rawstor-ost
       if: "${{ matrix.backend == 'ost' }}"
