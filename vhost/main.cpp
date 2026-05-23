@@ -1,5 +1,7 @@
 #include "server.hpp"
 
+#include "config.h"
+
 #include <rawstor.h>
 
 #include <getopt.h>
@@ -17,9 +19,9 @@ namespace {
 struct sigaction sact = {};
 
 void usage() {
-    std::cerr << "Rawstor vhost server" << std::endl
+    std::cout << "Rawstor VHOST " << PACKAGE_VERSION << std::endl
               << std::endl
-              << "usage: rawstor-vhost [-h] -t TARGET -s SOCKET_PATH"
+              << "usage: rawstor-vhost [options] -t TARGET -s SOCKET_PATH"
               << std::endl
               << std::endl
               << "options:" << std::endl
@@ -35,7 +37,12 @@ void usage() {
               << std::endl
               << "                        "
                  "vhost-user Unix domain socket."
-              << std::endl;
+              << std::endl
+              << "  -v, --version         Rawstor version" << std::endl;
+}
+
+void version() {
+    std::cout << "Rawstor VHOST " << PACKAGE_VERSION << std::endl;
 }
 
 void sact_handler(int) {
@@ -49,11 +56,12 @@ void server(const std::string& target, const std::string& socket_path) {
 } // namespace
 
 int main(int argc, char** argv) {
-    const char* optstring = "ht:s:";
+    const char* optstring = "ht:s:v";
     struct option longopts[] = {
         {"help", no_argument, nullptr, 'h'},
         {"target", required_argument, nullptr, 't'},
         {"socket-path", required_argument, nullptr, 's'},
+        {"version", no_argument, nullptr, 'v'},
         {},
     };
 
@@ -69,7 +77,6 @@ int main(int argc, char** argv) {
         case 'h':
             usage();
             return EXIT_SUCCESS;
-            break;
 
         case 't':
             target_arg = optarg;
@@ -78,6 +85,10 @@ int main(int argc, char** argv) {
         case 's':
             socket_path_arg = optarg;
             break;
+
+        case 'v':
+            version();
+            return EXIT_SUCCESS;
 
         default:
             return EXIT_FAILURE;
