@@ -86,7 +86,6 @@ int main(int argc, char** argv) {
         case 'h':
             usage();
             return EXIT_SUCCESS;
-            break;
 
         case 'l':
             location_arg = optarg;

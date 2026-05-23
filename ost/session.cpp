@@ -175,7 +175,12 @@ Session::Session(Server& server, int fd) :
 
 Session::~Session() noexcept {
     if (_object != nullptr) {
-        rawstor_object_close(_object);
+        int res = rawstor_object_close(_object);
+        if (res < 0) {
+            rawstor_error(
+                "Failed to close object in session: %s\n", strerror(-res)
+            );
+        }
         _object = nullptr;
     }
     if (_recv_event != nullptr) {
