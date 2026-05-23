@@ -41,7 +41,7 @@ void usage() {
               << "  -v, --version         Rawstor version" << std::endl;
 }
 
-static void version(void) {
+void version() {
     std::cout << "Rawstor VHOST " << PACKAGE_VERSION << std::endl;
 }
 
@@ -60,7 +60,7 @@ int main(int argc, char** argv) {
     struct option longopts[] = {
         {"help", no_argument, nullptr, 'h'},
         {"target", required_argument, nullptr, 't'},
-        {"version", no_argument, NULL, 'v'},
+        {"version", no_argument, nullptr, 'v'},
         {"socket-path", required_argument, nullptr, 's'},
         {},
     };
