@@ -19,9 +19,9 @@ namespace {
 struct sigaction sact = {};
 
 void usage() {
-    std::cerr << "Rawstor vhost server" << std::endl
+    std::cout << "Rawstor vhost server" << std::endl
               << std::endl
-              << "usage: rawstor-vhost [-h] -t TARGET -s SOCKET_PATH"
+              << "usage: rawstor-vhost [options] -t TARGET -s SOCKET_PATH"
               << std::endl
               << std::endl
               << "options:" << std::endl
@@ -60,8 +60,8 @@ int main(int argc, char** argv) {
     struct option longopts[] = {
         {"help", no_argument, nullptr, 'h'},
         {"target", required_argument, nullptr, 't'},
-        {"version", no_argument, nullptr, 'v'},
         {"socket-path", required_argument, nullptr, 's'},
+        {"version", no_argument, nullptr, 'v'},
         {},
     };
 
