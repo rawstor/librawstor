@@ -97,7 +97,9 @@ jobs:
     - name: install
       run: sudo apt install -y ./librawstor-*.deb
     - name: test
-      run: rawstor-cli --version
+      run: |
+        rawstor-cli --version
+        rawstor-ost --version
 
   rpm:
     needs: sources
