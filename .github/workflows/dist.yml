@@ -158,4 +158,5 @@ jobs:
     - uses: softprops/action-gh-release@v3
       with:
         working_directory: ./artifacts
-        files: *
+        files: |
+          *
