@@ -14,9 +14,24 @@ make install
 OST_ADDR=192.168.0.1:8080
 
 ##
+# OST Server
+#
+OST_DATADIR=/var/rawstor
+OBJECT_SIZE=1g
+
+mkdir -p ${OST_DATADIR}
+
+OBJECT_ID=$(rawstor-cli create --size=${OBJECT_SIZE} --location=file://${OST_DATADIR})
+echo OBJECT_ID=${OBJECT_ID}
+
+rawstor-ost \
+    --bind ${OST_ADDR} \
+    --location file://${OST_DATADIR}
+
+##
 # Client
 #
-OBJECT_ID=...
+OBJECT_ID=...  # See above in OST Server section
 VHOST_RUNDIR=${PREFIX}/var/run/rawstor
 
 mkdir -p ${VHOST_RUNDIR}
@@ -45,6 +60,48 @@ qemu-system-x86_64 \
 ```
 
 This will replace liburing with poll.
+
+## rawstor-ost – OST Protocol Server
+
+`rawstor-ost` implements the **OST protocol** (see [Protocol.md](https://github.com/rawstor/rawstor_docs/blob/main/Protocol.md)), handling network connections and providing access to data stored in **locations** (as defined in the [Locations and Targets](https://github.com/rawstor/librawstor/blob/main/docs/locations_and_targets.md) documentation).
+
+- `file://` scheme → serves data directly from the local filesystem.
+- `ost://` scheme → acts as a proxy to an underlying OST backend.
+- Comma‑separated list → supports mirroring or data locality.
+
+### Usage
+
+`rawstor-ost [-h] -l LOCATION -b ADDR`
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `-h, --help` | Show help message and exit. |
+| `-l, --location LOCATION` | Comma‑separated list of backend locations (e.g., `file:///path`, `ost://host:port`). |
+| `-b, --bind ADDR` | Bind address in `<ip>:<port>` format (e.g., `127.0.0.1:8080`). |
+
+### Examples
+
+Serve local directory:
+```bash
+rawstor-ost -l file:///var/rawstor/data -b 0.0.0.0:8080
+```
+
+Proxy to remote OST:
+```bash
+rawstor-ost -l ost://192.168.1.100:8080 -b 0.0.0.0:8080
+```
+
+Data locality (local cache + proxy):
+```bash
+rawstor-ost -l file:///var/rawstor/data,ost://remote:8080 -b 0.0.0.0:8080
+```
+
+Mirroring between two OST backends:
+```bash
+rawstor-ost -l ost://left:8080,ost://right:8080 -b 0.0.0.0:8080
+```
 
 ## rawstor-vhost
 

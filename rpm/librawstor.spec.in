@@ -1,14 +1,14 @@
 Name: librawstor
 Version: @PACKAGE_VERSION_SHORT@
 Release: @RPM_RELEASE@
-Summary: Rawstor client library
+Summary: Rawstor client library and OST backend
 
 License: LGPL
 URL: https://github.com/rawstor/librawstor
 Source0: %{name}-@PACKAGE_VERSION@.tar.gz
 
 %description
-Rawstor client library
+Rawstor client library and OST backend
 
 %prep
 %autosetup -n %{name}-@PACKAGE_VERSION@

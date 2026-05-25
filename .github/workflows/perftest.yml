@@ -15,6 +15,7 @@ jobs:
         - --without-liburing
         backend:
         - file
+        - ost
         - ost-legacy
         bs:
         - 4k
@@ -31,6 +32,8 @@ jobs:
           without-liburing: --without-liburing
         - location: file:///tmp/objects
           backend: file
+        - location: ost://127.0.0.1:8080
+          backend: ost
         - location: ost://127.0.0.1:8080
           backend: ost-legacy
 
@@ -81,6 +84,12 @@ jobs:
         make -j$(nproc)
         sudo make install
         popd
+    - name: (ost) start rawstor-ost
+      if: "${{ matrix.backend == 'ost' }}"
+      run: |
+        mkdir ${GITHUB_WORKSPACE}/objects
+        rawstor-ost --bind 127.0.0.1:8080 --location file://${GITHUB_WORKSPACE}/objects &
+        sleep 10
     - name: (ost-legacy) start rawstor_ost
       if: "${{ matrix.backend == 'ost-legacy' }}"
       run: |
@@ -92,6 +101,14 @@ jobs:
       if: "${{ matrix.backend == 'file' }}"
       run: |
         target=$(rawstor-cli create --location=${{ matrix.location }} --size=1G)
+        echo "TARGET=${target}" >> $GITHUB_ENV
+        rawstor-cli testio --target=${target} --block-size=4K --io-depth=1 --count=1
+    - name: (ost) create object
+      if: "${{ matrix.backend == 'ost' }}"
+      run: |
+        file_target=$(rawstor-cli create --location=file://${GITHUB_WORKSPACE}/objects --size=1G)
+        object_id=${file_target##*/}
+        target=${{ matrix.location }}/${object_id}
         echo "TARGET=${target}" >> $GITHUB_ENV
         rawstor-cli testio --target=${target} --block-size=4K --io-depth=1 --count=1
     - name: (ost-legacy) create object
@@ -124,6 +141,9 @@ jobs:
     - name: (file) remove object
       if: "${{ matrix.backend == 'file' }}"
       run: rawstor-cli remove --target=${TARGET}
+    - name: (ost) stop rawstor-ost
+      if: "${{ matrix.backend == 'ost' }}"
+      run: killall rawstor-ost
     - name: (ost-legacy) stop rawstor_ost
       if: "${{ matrix.backend == 'ost-legacy' }}"
       run: killall ost
