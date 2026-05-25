@@ -7,7 +7,7 @@ jobs:
   verify-tag:
 
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/vt')
+    if: startsWith(github.ref, 'refs/tags/v')
 
     steps:
     - name: install dependencies
@@ -149,7 +149,7 @@ jobs:
     - verify-tag
 
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/vt')
+    if: startsWith(github.ref, 'refs/tags/v')
 
     steps:
     - uses: actions/download-artifact@v5
