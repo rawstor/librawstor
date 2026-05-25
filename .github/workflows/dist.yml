@@ -162,6 +162,6 @@ jobs:
       with:
         working_directory: ./artifacts
         files: |
-          librawstor-*.deb
-          librawstor-*.rpm
-          librawstor-*.tar.gz
+          deb/*
+          rpm/*
+          sources/*
