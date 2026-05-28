@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2025, Vasily Stepanov (vasily.stepanov@gmail.com)
+ * Copyright (C) 2025-2026, Vasily Stepanov (vasily.stepanov@gmail.com)
  *
  * SPDX-License-Identifier: LGPL-3.0
  */
