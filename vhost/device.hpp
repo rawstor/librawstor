@@ -2,6 +2,7 @@
 #define RAWSTOR_VHOST_DEVICE_HPP
 
 #include <rawstor/object.h>
+#include <rawstor/rawio.h>
 
 extern "C" {
 #include "libvhost-user.h"

@@ -26,6 +26,7 @@ librawstor_ladir = $(includedir)/rawstor
 
 librawstor_la_HEADERS = $(top_srcdir)/include/rawstor/object.h \
                         $(top_srcdir)/include/rawstor/ost_protocol.h \
+                        $(top_srcdir)/include/rawstor/rawio.h \
                         $(top_srcdir)/include/rawstor/rawstor.h \
                         $(top_builddir)/include/rawstor/version.h
 

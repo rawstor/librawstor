@@ -3,7 +3,7 @@
 
 #include <rawstd/uri.hpp>
 
-#include <rawstor/rawstor.h>
+#include <rawstor/rawio.h>
 
 #include <memory>
 #include <string>
