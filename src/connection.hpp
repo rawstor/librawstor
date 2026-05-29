@@ -1,7 +1,7 @@
 #ifndef RAWSTOR_CONNECTION_HPP
 #define RAWSTOR_CONNECTION_HPP
 
-#include <rawstorstd/uri.hpp>
+#include <rawstd/uri.hpp>
 
 #include <rawstor/object.h>
 #include <rawstor/rawstor.h>
@@ -25,7 +25,7 @@ private:
     size_t _session_index;
 
     std::vector<std::shared_ptr<Session>>
-    _open(const URI& location, RawstorObject* object, size_t nsessions);
+    _open(const rawstd::URI& location, RawstorObject* object, size_t nsessions);
 
     void
     _op(const char* func_name, size_t size, off_t offset,
@@ -45,15 +45,16 @@ public:
     std::shared_ptr<Session> get_next_session();
     void invalidate_session(const std::shared_ptr<Session>& s);
 
-    const URI* location() const noexcept;
+    const rawstd::URI* location() const noexcept;
 
-    void create(const URI& target, const RawstorObjectSpec& sp);
+    void create(const rawstd::URI& target, const RawstorObjectSpec& sp);
 
-    void remove(const URI& target);
+    void remove(const rawstd::URI& target);
 
-    void spec(const URI& target, RawstorObjectSpec* sp);
+    void spec(const rawstd::URI& target, RawstorObjectSpec* sp);
 
-    void open(const URI& location, RawstorObject* object, size_t nsessions);
+    void
+    open(const rawstd::URI& location, RawstorObject* object, size_t nsessions);
 
     void close();
 

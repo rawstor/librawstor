@@ -5,7 +5,7 @@
 #include <sstream>
 #include <string>
 
-#include <rawstorstd/uri.hpp>
+#include <rawstd/uri.hpp>
 
 #include <gtest/gtest.h>
 

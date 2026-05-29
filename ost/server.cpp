@@ -2,10 +2,10 @@
 
 #include "session.hpp"
 
-#include <rawstorstd/gpp.hpp>
-#include <rawstorstd/logging.hpp>
-#include <rawstorstd/socket.h>
-#include <rawstorstd/uri.hpp>
+#include <rawstd/gpp.hpp>
+#include <rawstd/logging.hpp>
+#include <rawstd/socket.h>
+#include <rawstd/uri.hpp>
 
 #include <rawstor/rawstor.h>
 
@@ -29,23 +29,23 @@ Server::Server(
     const std::string& addr, unsigned int port, const char* location
 ) :
     _fd(-1),
-    _locations(rawstor::URI::uriv(location)),
+    _locations(rawstd::URI::uriv(location)),
     _accept_event(nullptr) {
 
     int res = rawstor_initialize(nullptr);
     if (res < 0) {
-        RAWSTOR_THROW_SYSTEM_ERROR(-res);
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 
     try {
         _fd = socket(AF_INET, SOCK_STREAM, 0);
         if (_fd == -1) {
-            RAWSTOR_THROW_ERRNO();
+            RAWSTD_THROW_ERRNO();
         }
 
-        res = rawstor_socket_set_reuse(_fd);
+        res = rawstd_socket_set_reuse(_fd);
         if (res < 0) {
-            RAWSTOR_THROW_SYSTEM_ERROR(-res);
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
         }
 
         sockaddr_in sin = {};
@@ -56,19 +56,19 @@ Server::Server(
             oss << "the address was not parseable: " << addr;
             throw std::runtime_error(oss.str());
         } else if (res == -1) {
-            RAWSTOR_THROW_ERRNO();
+            RAWSTD_THROW_ERRNO();
         }
         sin.sin_port = htons(port);
 
         if (bind(_fd, reinterpret_cast<sockaddr*>(&sin), sizeof(sin)) == -1) {
-            RAWSTOR_THROW_ERRNO();
+            RAWSTD_THROW_ERRNO();
         }
 
         if (listen(_fd, SOMAXCONN) == -1) {
-            RAWSTOR_THROW_ERRNO();
+            RAWSTD_THROW_ERRNO();
         }
 
-        rawstor_info("Waiting for connections on %s:%u\n", addr.c_str(), port);
+        rawstd_info("Waiting for connections on %s:%u\n", addr.c_str(), port);
     } catch (...) {
         if (_fd != -1) {
             close(_fd);
@@ -88,7 +88,7 @@ Server::~Server() {
     if (_accept_event != nullptr) {
         int res = rawstor_fd_cancel(_accept_event);
         if (res < 0) {
-            rawstor_error("Failed to cancel event: %s\n", strerror(-res));
+            rawstd_error("Failed to cancel event: %s\n", strerror(-res));
         }
     }
 
@@ -101,7 +101,7 @@ int Server::_accept(size_t result, int error, void* data) noexcept {
     try {
         return server->_accept(result, error);
     } catch (const std::exception& e) {
-        rawstor_error("%s\n", e.what());
+        rawstd_error("%s\n", e.what());
     }
 
     return 0;
@@ -109,7 +109,7 @@ int Server::_accept(size_t result, int error, void* data) noexcept {
 
 int Server::_accept(size_t result, int error) {
     if (error) {
-        RAWSTOR_THROW_SYSTEM_ERROR(error);
+        RAWSTD_THROW_SYSTEM_ERROR(error);
     }
 
     _add_session(result);
@@ -136,7 +136,7 @@ void Server::del_session(int fd) noexcept {
 void Server::loop() {
     int res = rawstor_fd_accept_multishot(_fd, _accept, this, &_accept_event);
     if (res < 0) {
-        RAWSTOR_THROW_SYSTEM_ERROR(-res);
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 
     while (true) {
@@ -150,7 +150,7 @@ void Server::loop() {
         }
 
         if (res < 0) {
-            RAWSTOR_THROW_SYSTEM_ERROR(-res);
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
         }
     }
 }

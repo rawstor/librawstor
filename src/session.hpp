@@ -5,7 +5,7 @@
 
 #include <rawstorio/queue.hpp>
 
-#include <rawstorstd/uri.hpp>
+#include <rawstd/uri.hpp>
 
 #include <rawstor/object.h>
 
@@ -20,7 +20,7 @@ class Task;
 class Session {
 private:
     unsigned int _depth;
-    URI _location;
+    rawstd::URI _location;
     int _fd;
 
 protected:
@@ -29,10 +29,15 @@ protected:
     inline void set_fd(int fd) noexcept { _fd = fd; }
 
 public:
-    static std::unique_ptr<Session>
-    create(rawstor::io::Queue& queue, const URI& location, unsigned int depth);
+    static std::unique_ptr<Session> create(
+        rawstor::io::Queue& queue, const rawstd::URI& location,
+        unsigned int depth
+    );
 
-    Session(rawstor::io::Queue& queue, const URI& location, unsigned int depth);
+    Session(
+        rawstor::io::Queue& queue, const rawstd::URI& location,
+        unsigned int depth
+    );
     Session(const Session&) = delete;
     Session(Session&&) noexcept = delete;
     virtual ~Session();
@@ -41,22 +46,22 @@ public:
 
     std::string str() const;
 
-    inline const URI& location() const noexcept { return _location; }
+    inline const rawstd::URI& location() const noexcept { return _location; }
 
     inline unsigned int depth() const noexcept { return _depth; }
 
     inline int fd() const noexcept { return _fd; }
 
     virtual void create(
-        const RawstorUUID& id, const RawstorObjectSpec& sp,
+        const RawstdUUID& id, const RawstorObjectSpec& sp,
         std::function<void(int)>&& cb
     ) = 0;
 
     virtual void
-    remove(const RawstorUUID& id, std::function<void(int)>&& cb) = 0;
+    remove(const RawstdUUID& id, std::function<void(int)>&& cb) = 0;
 
     virtual void spec(
-        const RawstorUUID& id,
+        const RawstdUUID& id,
         std::function<void(const RawstorObjectSpec&, int)>&& cb
     ) = 0;
 

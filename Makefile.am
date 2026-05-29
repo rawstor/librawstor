@@ -1,4 +1,4 @@
-SUBDIRS = librawstorstd \
+SUBDIRS = librawstd \
           librawstorio \
           src \
           cli \
@@ -25,7 +25,7 @@ CLEANFILES = README
 
 if ENABLE_TESTS
 test: all
-	make -C librawstorstd test
+	make -C librawstd test
 	make -C librawstorio test
 	make -C tests test
 
