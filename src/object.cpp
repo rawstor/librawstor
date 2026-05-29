@@ -83,7 +83,9 @@ void validate_different_uris(const std::vector<rawstd::URI>& uris) {
 
 } // namespace
 
-RawstorObject::RawstorObject(const std::vector<rawstd::URI>& targets) : _id() {
+namespace rawstor {
+
+Object::Object(const std::vector<rawstd::URI>& targets) : _id() {
     validate_not_empty(targets);
     validate_different_uris(targets);
     validate_same_uuid(targets);
@@ -103,7 +105,7 @@ RawstorObject::RawstorObject(const std::vector<rawstd::URI>& targets) : _id() {
     }
 }
 
-void RawstorObject::create(
+void Object::create(
     const std::vector<rawstd::URI>& locations, const RawstorObjectSpec& sp,
     std::vector<rawstd::URI>* targets
 ) {
@@ -140,7 +142,7 @@ void RawstorObject::create(
     *targets = ret;
 }
 
-void RawstorObject::remove(const std::vector<rawstd::URI>& targets) {
+void Object::remove(const std::vector<rawstd::URI>& targets) {
     validate_not_empty(targets);
     validate_different_uris(targets);
     validate_same_uuid(targets);
@@ -162,7 +164,7 @@ void RawstorObject::remove(const std::vector<rawstd::URI>& targets) {
     }
 }
 
-void RawstorObject::spec(
+void Object::spec(
     const std::vector<rawstd::URI>& targets, RawstorObjectSpec* sp
 ) {
     /**
@@ -175,7 +177,7 @@ void RawstorObject::spec(
     rawstor::Connection(QUEUE_DEPTH).spec(targets.front(), sp);
 }
 
-std::vector<rawstd::URI> RawstorObject::locations() const {
+std::vector<rawstd::URI> Object::locations() const {
     std::vector<rawstd::URI> ret;
     ret.reserve(_cns.size());
     for (const auto& cn : _cns) {
@@ -188,7 +190,7 @@ std::vector<rawstd::URI> RawstorObject::locations() const {
     return ret;
 }
 
-void RawstorObject::pread(
+void Object::pread(
     void* buf, size_t size, off_t offset, std::function<void(size_t, int)>&& cb
 ) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
@@ -209,7 +211,7 @@ void RawstorObject::pread(
     );
 }
 
-void RawstorObject::preadv(
+void Object::preadv(
     iovec* iov, unsigned int niov, size_t size, off_t offset,
     std::function<void(size_t, int)>&& cb
 ) {
@@ -231,7 +233,7 @@ void RawstorObject::preadv(
     );
 }
 
-void RawstorObject::pwrite(
+void Object::pwrite(
     const void* buf, size_t size, off_t offset,
     std::function<void(size_t, int)>&& cb
 ) {
@@ -279,7 +281,7 @@ void RawstorObject::pwrite(
     }
 }
 
-void RawstorObject::pwritev(
+void Object::pwritev(
     const iovec* iov, unsigned int niov, size_t size, off_t offset,
     std::function<void(size_t, int)>&& cb
 ) {
@@ -328,12 +330,14 @@ void RawstorObject::pwritev(
     }
 }
 
+} // namespace rawstor
+
 int rawstor_object_create(
     const char* location, const RawstorObjectSpec* sp, char* target, size_t size
 ) noexcept {
     try {
         std::vector<rawstd::URI> targets;
-        RawstorObject::create(rawstd::URI::uriv(location), *sp, &targets);
+        rawstor::Object::create(rawstd::URI::uriv(location), *sp, &targets);
         return ::uris(targets, target, size);
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -350,7 +354,7 @@ int rawstor_object_create(
 
 int rawstor_object_remove(const char* target) noexcept {
     try {
-        RawstorObject::remove(rawstd::URI::uriv(target));
+        rawstor::Object::remove(rawstd::URI::uriv(target));
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -367,7 +371,7 @@ int rawstor_object_remove(const char* target) noexcept {
 
 int rawstor_object_spec(const char* target, RawstorObjectSpec* sp) noexcept {
     try {
-        RawstorObject::spec(rawstd::URI::uriv(target), sp);
+        rawstor::Object::spec(rawstd::URI::uriv(target), sp);
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -384,8 +388,8 @@ int rawstor_object_spec(const char* target, RawstorObjectSpec* sp) noexcept {
 
 int rawstor_object_open(const char* target, RawstorObject** object) noexcept {
     try {
-        std::unique_ptr<RawstorObject> ret =
-            std::make_unique<RawstorObject>(rawstd::URI::uriv(target));
+        std::unique_ptr<rawstor::Object> ret =
+            std::make_unique<rawstor::Object>(rawstd::URI::uriv(target));
 
         *object = ret.get();
 
@@ -407,7 +411,7 @@ int rawstor_object_open(const char* target, RawstorObject** object) noexcept {
 
 int rawstor_object_close(RawstorObject* object) noexcept {
     try {
-        delete object;
+        delete static_cast<rawstor::Object*>(object);
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -427,7 +431,9 @@ int rawstor_object_id(
 ) noexcept {
     try {
         RawstdUUIDString uuid;
-        rawstd_uuid_to_string(&object->id(), &uuid);
+        rawstd_uuid_to_string(
+            &static_cast<const rawstor::Object*>(object)->id(), &uuid
+        );
         int res = snprintf(buf, size, "%s", uuid);
         if (res < 0) {
             RAWSTD_THROW_ERRNO();
@@ -450,7 +456,9 @@ int rawstor_object_location(
     const RawstorObject* object, char* buf, size_t size
 ) noexcept {
     try {
-        return uris(object->locations(), buf, size);
+        return uris(
+            static_cast<const rawstor::Object*>(object)->locations(), buf, size
+        );
     } catch (const std::system_error& e) {
         return -e.code().value();
     } catch (const std::bad_alloc& e) {
@@ -469,7 +477,7 @@ int rawstor_object_pread(
     RawstorCallback* cb, void* data
 ) noexcept {
     try {
-        object->pread(
+        static_cast<rawstor::Object*>(object)->pread(
             buf, size, offset,
             [object, size, cb, data](size_t result, int error) {
                 cb(object, size, result, error, data);
@@ -494,7 +502,7 @@ int rawstor_object_preadv(
     off_t offset, RawstorCallback* cb, void* data
 ) noexcept {
     try {
-        object->preadv(
+        static_cast<rawstor::Object*>(object)->preadv(
             iov, niov, size, offset,
             [object, size, cb, data](size_t result, int error) {
                 cb(object, size, result, error, data);
@@ -519,7 +527,7 @@ int rawstor_object_pwrite(
     RawstorCallback* cb, void* data
 ) noexcept {
     try {
-        object->pwrite(
+        static_cast<rawstor::Object*>(object)->pwrite(
             buf, size, offset,
             [object, size, cb, data](size_t result, int error) {
                 cb(object, size, result, error, data);
@@ -544,7 +552,7 @@ int rawstor_object_pwritev(
     off_t offset, RawstorCallback* cb, void* data
 ) noexcept {
     try {
-        object->pwritev(
+        static_cast<rawstor::Object*>(object)->pwritev(
             iov, niov, size, offset,
             [object, size, cb, data](size_t result, int error) {
                 cb(object, size, result, error, data);

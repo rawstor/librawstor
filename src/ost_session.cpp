@@ -718,7 +718,7 @@ int Session::_connect() {
     return fd;
 }
 
-void Session::_set_object(RawstorObject* object) {
+void Session::_set_object(Object* object) {
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('s', "%s\n", "set object");
 
@@ -835,7 +835,7 @@ void Session::spec(
     cb(ret, 0);
 }
 
-void Session::set_object(RawstorObject* object) {
+void Session::set_object(Object* object) {
     _set_object(object);
     _context = std::make_shared<Context>(_queue, fd());
     _context->setup_recv();
