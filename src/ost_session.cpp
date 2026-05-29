@@ -634,10 +634,8 @@ void Context::register_op(const std::shared_ptr<SessionOp>& op) {
     _ops[op->cid()] = op;
 }
 
-Session::Session(
-    rawio::Queue& queue, const rawstd::URI& location, unsigned int depth
-) :
-    rawstor::Session(queue, location, depth),
+Session::Session(rawio::Queue& queue, const rawstd::URI& location) :
+    rawstor::Session(queue, location),
     _cid_counter(0) {
     int fd = _connect();
     set_fd(fd);
