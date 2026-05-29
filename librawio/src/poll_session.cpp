@@ -15,8 +15,7 @@
 #include <poll.h>
 #include <unistd.h>
 
-namespace rawstor {
-namespace io {
+namespace rawio {
 namespace poll {
 
 Session::Session(int fd, unsigned int depth) :
@@ -203,11 +202,11 @@ void Session::write(std::unique_ptr<Event> event) {
     _write_sqes.push(std::move(event));
 }
 
-bool Session::cancel(rawstor::io::Event* event, rawstd::RingBuf<Event>& cqes) {
+bool Session::cancel(rawio::Event* event, rawstd::RingBuf<Event>& cqes) {
     for (std::list<std::unique_ptr<EventSimplexPoll>>::iterator it =
              _poll_sqes.begin();
          it != _poll_sqes.end(); ++it) {
-        if (event == static_cast<rawstor::io::Event*>(it->get())) {
+        if (event == static_cast<rawio::Event*>(it->get())) {
             std::unique_ptr<EventSimplexPoll> e = std::move(*it);
             _poll_sqes.erase(it);
 
@@ -221,7 +220,7 @@ bool Session::cancel(rawstor::io::Event* event, rawstd::RingBuf<Event>& cqes) {
     rawstd::RingBuf<EventSimplex> read_sqes(_read_sqes.capacity());
     while (!_read_sqes.empty()) {
         std::unique_ptr<EventSimplex> e = _read_sqes.pop();
-        if (event == static_cast<rawstor::io::Event*>(e.get())) {
+        if (event == static_cast<rawio::Event*>(e.get())) {
             found = true;
 
             e->set_error(ECANCELED);
@@ -238,7 +237,7 @@ bool Session::cancel(rawstor::io::Event* event, rawstd::RingBuf<Event>& cqes) {
     rawstd::RingBuf<Event> write_sqes(_write_sqes.capacity());
     while (!_write_sqes.empty()) {
         std::unique_ptr<Event> e = _write_sqes.pop();
-        if (event == static_cast<rawstor::io::Event*>(e.get())) {
+        if (event == static_cast<rawio::Event*>(e.get())) {
             found = true;
 
             e->set_error(ECANCELED);
@@ -275,7 +274,7 @@ void Session::cancel(rawstd::RingBuf<Event>& cqes) {
 }
 
 void Session::process(
-    rawstd::RingBuf<rawstor::io::poll::Event>& cqes, short revents
+    rawstd::RingBuf<rawio::poll::Event>& cqes, short revents
 ) {
     _process_poll(cqes, revents);
     if (revents & (POLLIN | POLLERR | POLLHUP | POLLNVAL)) {
@@ -287,5 +286,4 @@ void Session::process(
 }
 
 } // namespace poll
-} // namespace io
-} // namespace rawstor
+} // namespace rawio

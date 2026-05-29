@@ -1,5 +1,5 @@
-#ifndef RAWSTORIO_POLL_SESSION_HPP
-#define RAWSTORIO_POLL_SESSION_HPP
+#ifndef RAWIO_POLL_SESSION_HPP
+#define RAWIO_POLL_SESSION_HPP
 
 #include "poll_event.hpp"
 #include "poll_queue.hpp"
@@ -11,8 +11,7 @@
 
 #include <poll.h>
 
-namespace rawstor {
-namespace io {
+namespace rawio {
 namespace poll {
 
 class Session final {
@@ -64,7 +63,7 @@ public:
 
     void write(std::unique_ptr<Event> event);
 
-    bool cancel(rawstor::io::Event* event, rawstd::RingBuf<Event>& cqes);
+    bool cancel(rawio::Event* event, rawstd::RingBuf<Event>& cqes);
 
     void cancel(rawstd::RingBuf<Event>& cqes);
 
@@ -72,7 +71,6 @@ public:
 };
 
 } // namespace poll
-} // namespace io
-} // namespace rawstor
+} // namespace rawio
 
-#endif // RAWSTORIO_SESSION_POLL_HPP
+#endif // RAWIO_SESSION_POLL_HPP

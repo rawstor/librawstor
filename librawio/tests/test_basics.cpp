@@ -12,9 +12,9 @@
 
 namespace {
 
-class BasicsTest : public rawstor::io::tests::QueueTest {
+class BasicsTest : public rawio::tests::QueueTest {
 protected:
-    BasicsTest() : rawstor::io::tests::QueueTest(1) {}
+    BasicsTest() : rawio::tests::QueueTest(1) {}
 };
 
 TEST_F(BasicsTest, empty) {
@@ -66,8 +66,8 @@ TEST_F(BasicsTest, pollout) {
 }
 
 TEST_F(BasicsTest, accept) {
-    rawstor::io::tests::Socket client_socket;
-    rawstor::io::tests::Socket server_socket;
+    rawio::tests::Socket client_socket;
+    rawio::tests::Socket server_socket;
 
     client_socket.listen();
 

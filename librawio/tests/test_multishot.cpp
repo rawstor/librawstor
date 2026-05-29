@@ -36,9 +36,9 @@ public:
     int error() const noexcept { return _error; }
 };
 
-class MultishotTest : public rawstor::io::tests::QueueTest {
+class MultishotTest : public rawio::tests::QueueTest {
 protected:
-    MultishotTest() : rawstor::io::tests::QueueTest(1) {}
+    MultishotTest() : rawio::tests::QueueTest(1) {}
 };
 
 TEST_F(MultishotTest, poll) {
@@ -49,7 +49,7 @@ TEST_F(MultishotTest, poll) {
     size_t result = 0;
     int error = 0;
     unsigned int count = 0;
-    rawstor::io::Event* event = _queue->poll_multishot(
+    rawio::Event* event = _queue->poll_multishot(
         _fd, POLLIN, [&result, &error, &count](size_t r, int e) {
             result = r;
             error = e;
@@ -83,9 +83,9 @@ TEST_F(MultishotTest, poll) {
 }
 
 TEST_F(MultishotTest, accept) {
-    rawstor::io::tests::Socket client_socket;
-    rawstor::io::tests::Socket server_socket1;
-    rawstor::io::tests::Socket server_socket2;
+    rawio::tests::Socket client_socket;
+    rawio::tests::Socket server_socket1;
+    rawio::tests::Socket server_socket2;
 
     client_socket.listen();
 
@@ -106,7 +106,7 @@ TEST_F(MultishotTest, accept) {
     size_t result = 0;
     int error = 0;
     unsigned int count = 0;
-    rawstor::io::Event* event = _queue->accept_multishot(
+    rawio::Event* event = _queue->accept_multishot(
         client_socket.fd(), [&result, &error, &count](size_t r, int e) {
             result = r;
             error = e;
@@ -147,7 +147,7 @@ TEST_F(MultishotTest, recv) {
     _server.wait();
 
     std::vector<MultishotVectorItem> items;
-    rawstor::io::Event* event = _queue->recv_multishot(
+    rawio::Event* event = _queue->recv_multishot(
         _fd, 4, 4, 4, 0,
         [&items](const iovec* iov, unsigned int niov, size_t result, int error)
             -> size_t {
@@ -212,7 +212,7 @@ TEST_F(MultishotTest, recv_overflow) {
      * NOTE: entry_size=4, entries=4 not working for uring in linux-6.11.0
      */
     std::vector<MultishotVectorItem> items;
-    rawstor::io::Event* event = _queue->recv_multishot(
+    rawio::Event* event = _queue->recv_multishot(
         _fd, 8, 2, 4, 0,
         [&items](const iovec* iov, unsigned int niov, size_t result, int error)
             -> size_t {
@@ -256,7 +256,7 @@ TEST_F(MultishotTest, recv_overflow) {
 
 TEST_F(MultishotTest, recv_partial) {
     std::vector<MultishotVectorItem> items;
-    rawstor::io::Event* event = _queue->recv_multishot(
+    rawio::Event* event = _queue->recv_multishot(
         _fd, 4, 4, 3, 0,
         [&items](const iovec* iov, unsigned int niov, size_t result, int error)
             -> size_t {
@@ -324,7 +324,7 @@ TEST_F(MultishotTest, recv_partial) {
 
 TEST_F(MultishotTest, recv_fill_buf) {
     std::vector<MultishotVectorItem> items;
-    rawstor::io::Event* event = _queue->recv_multishot(
+    rawio::Event* event = _queue->recv_multishot(
         _fd, 4, 4, 4, 0,
         [&items](const iovec* iov, unsigned int niov, size_t result, int error)
             -> size_t {

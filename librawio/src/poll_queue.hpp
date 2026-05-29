@@ -1,121 +1,127 @@
-#ifndef RAWSTORIO_URING_QUEUE_HPP
-#define RAWSTORIO_URING_QUEUE_HPP
+#ifndef RAWIO_POLL_QUEUE_HPP
+#define RAWIO_POLL_QUEUE_HPP
 
-#include <rawstorio/queue.hpp>
+#include "poll_event.hpp"
 
-#include <liburing.h>
+#include <rawio/queue.hpp>
+
+#include <rawstd/ringbuf.hpp>
 
 #include <memory>
 #include <string>
+#include <unordered_map>
 
-namespace rawstor {
-namespace io {
-namespace uring {
+namespace rawio {
+namespace poll {
 
-class Queue final : public rawstor::io::Queue {
+class Event;
+
+class Session;
+
+class Queue final : public rawio::Queue {
 private:
-    io_uring _ring;
-    unsigned int _events;
+    std::unordered_map<int, std::shared_ptr<Session>> _sessions;
+    rawstd::RingBuf<Event> _cqes;
+
+    Session& _get_session(int fd);
 
 public:
     static const std::string& engine_name();
     static void setup_fd(int fd);
 
-    explicit Queue(unsigned int depth);
-    ~Queue();
+    explicit Queue(unsigned int depth) : rawio::Queue(depth), _cqes(depth) {}
 
-    rawstor::io::Event* poll(
+    rawio::Event* poll(
         int fd, unsigned int mask, std::function<void(size_t, int)>&& cb
     ) override;
 
-    rawstor::io::Event* poll_multishot(
+    rawio::Event* poll_multishot(
         int fd, unsigned int mask, std::function<void(size_t, int)>&& cb
     ) override;
 
-    rawstor::io::Event* accept(
+    rawio::Event* accept(
         int fd, sockaddr* addr, socklen_t* addrlen,
         std::function<void(size_t, int)>&& cb
     ) override;
 
-    rawstor::io::Event*
+    rawio::Event*
     accept_multishot(int fd, std::function<void(size_t, int)>&& cb) override;
 
-    rawstor::io::Event* read(
+    rawio::Event* read(
         int fd, void* buf, size_t size, std::function<void(size_t, int)>&& cb
     ) override;
 
-    rawstor::io::Event* readv(
+    rawio::Event* readv(
         int fd, iovec* iov, unsigned int niov,
         std::function<void(size_t, int)>&& cb
     ) override;
 
-    rawstor::io::Event* pread(
+    rawio::Event* pread(
         int fd, void* buf, size_t size, off_t offset,
         std::function<void(size_t, int)>&& cb
     ) override;
 
-    rawstor::io::Event* preadv(
+    rawio::Event* preadv(
         int fd, iovec* iov, unsigned int niov, off_t offset,
         std::function<void(size_t, int)>&& cb
     ) override;
 
-    rawstor::io::Event* recv(
+    rawio::Event* recv(
         int fd, void* buf, size_t size, unsigned int flags,
         std::function<void(size_t, int)>&& cb
     ) override;
 
-    rawstor::io::Event* recv_multishot(
+    rawio::Event* recv_multishot(
         int fd, size_t entry_size, unsigned int entries, size_t size,
         unsigned int flags,
         std::function<size_t(const iovec*, unsigned int, size_t, int)>&& cb
     ) override;
 
-    rawstor::io::Event* recvmsg(
+    rawio::Event* recvmsg(
         int fd, msghdr* msg, unsigned int flags,
         std::function<void(size_t, int)>&& cb
     ) override;
 
-    rawstor::io::Event* write(
+    rawio::Event* write(
         int fd, const void* buf, size_t size,
         std::function<void(size_t, int)>&& cb
     ) override;
 
-    rawstor::io::Event* writev(
+    rawio::Event* writev(
         int fd, const iovec* iov, unsigned int niov,
         std::function<void(size_t, int)>&& cb
     ) override;
 
-    rawstor::io::Event* pwrite(
+    rawio::Event* pwrite(
         int fd, const void* buf, size_t size, off_t offset,
         std::function<void(size_t, int)>&& cb
     ) override;
 
-    rawstor::io::Event* pwritev(
+    rawio::Event* pwritev(
         int fd, const iovec* iov, unsigned int niov, off_t offset,
         std::function<void(size_t, int)>&& cb
     ) override;
 
-    rawstor::io::Event* send(
+    rawio::Event* send(
         int fd, const void* buf, size_t size, unsigned int flags,
         std::function<void(size_t, int)>&& cb
     ) override;
 
-    rawstor::io::Event* sendmsg(
+    rawio::Event* sendmsg(
         int fd, const msghdr* msg, unsigned int flags,
         std::function<void(size_t, int)>&& cb
     ) override;
 
-    void cancel(rawstor::io::Event* event);
+    void cancel(rawio::Event* e) override;
 
-    void cancel(int fd);
+    void cancel(int fd) override;
 
     bool empty() const noexcept override;
 
     void wait(unsigned int timeout) override;
 };
 
-} // namespace uring
-} // namespace io
-} // namespace rawstor
+} // namespace poll
+} // namespace rawio
 
-#endif // RAWSTORIO_URING_QUEUE_HPP
+#endif // RAWIO_POLL_QUEUE_HPP

@@ -5,7 +5,7 @@
 #include "ost_protocol.h"
 #include "rawstor_internals.hpp"
 
-#include <rawstorio/queue.hpp>
+#include <rawio/queue.hpp>
 
 #include <rawstd/gpp.hpp>
 #include <rawstd/hash.h>
@@ -596,7 +596,7 @@ void Context::fail_in_flight(int error) {
 }
 
 Session::Session(
-    rawstor::io::Queue& queue, const rawstd::URI& location, unsigned int depth
+    rawio::Queue& queue, const rawstd::URI& location, unsigned int depth
 ) :
     rawstor::Session(queue, location, depth),
     _cid_counter(0),
@@ -668,7 +668,7 @@ int Session::_connect() {
         }
         rawstd_info("fd %d: Connected\n", fd);
 
-        rawstor::io::Queue::setup_fd(fd);
+        rawio::Queue::setup_fd(fd);
     } catch (...) {
         ::close(fd);
         rawstd_info("fd %d: Closed\n", fd);
@@ -806,7 +806,7 @@ void Session::set_object(RawstorObject* object) {
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('s', "%s\n", "set object");
 
-    std::unique_ptr<rawstor::io::Queue> queue = rawstor::io::Queue::create(2);
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
 
     RawstorOSTFrameBasic request = {
         .head =

@@ -1,8 +1,8 @@
-#include <rawstorio/queue.hpp>
+#include <rawio/queue.hpp>
 
 #include "config.h"
 
-#ifdef RAWSTOR_WITH_LIBURING
+#ifdef RAWIO_WITH_LIBURING
 #include "uring_queue.hpp"
 #else
 #include "poll_queue.hpp"
@@ -27,36 +27,34 @@ void initialize() {
 
 } // unnamed namespace
 
-namespace rawstor {
-namespace io {
+namespace rawio {
 
 Queue::Queue(unsigned int depth) : _depth(depth) {
 }
 
 std::unique_ptr<Queue> Queue::create(unsigned int depth) {
     std::call_once(initialize_once_flag, initialize);
-#ifdef RAWSTOR_WITH_LIBURING
-    return std::make_unique<rawstor::io::uring::Queue>(depth);
+#ifdef RAWIO_WITH_LIBURING
+    return std::make_unique<rawio::uring::Queue>(depth);
 #else
-    return std::make_unique<rawstor::io::poll::Queue>(depth);
+    return std::make_unique<rawio::poll::Queue>(depth);
 #endif
 }
 
 const std::string& Queue::engine_name() {
-#ifdef RAWSTOR_WITH_LIBURING
-    return rawstor::io::uring::Queue::engine_name();
+#ifdef RAWIO_WITH_LIBURING
+    return rawio::uring::Queue::engine_name();
 #else
-    return rawstor::io::poll::Queue::engine_name();
+    return rawio::poll::Queue::engine_name();
 #endif
 }
 
 void Queue::setup_fd(int fd) {
-#ifdef RAWSTOR_WITH_LIBURING
-    rawstor::io::uring::Queue::setup_fd(fd);
+#ifdef RAWIO_WITH_LIBURING
+    rawio::uring::Queue::setup_fd(fd);
 #else
-    rawstor::io::poll::Queue::setup_fd(fd);
+    rawio::poll::Queue::setup_fd(fd);
 #endif
 }
 
-} // namespace io
-} // namespace rawstor
+} // namespace rawio

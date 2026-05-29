@@ -7,7 +7,7 @@
 #include <rawstd/logging.h>
 #include <rawstd/uri.hpp>
 
-#include <rawstorio/queue.hpp>
+#include <rawio/queue.hpp>
 
 #include <sys/types.h>
 #include <sys/uio.h>
@@ -27,7 +27,7 @@
 
 namespace rawstor {
 
-rawstor::io::Queue* io_queue;
+rawio::Queue* io_queue;
 
 } // namespace rawstor
 
@@ -44,7 +44,7 @@ int rawstor_initialize(const RawstorOpts* opts) noexcept {
 
         rawstd_info(
             "Rawstor compiled with IO queue engine: %s\n",
-            rawstor::io::Queue::engine_name().c_str()
+            rawio::Queue::engine_name().c_str()
         );
 
         res = rawstor_opts_initialize(opts);
@@ -54,8 +54,7 @@ int rawstor_initialize(const RawstorOpts* opts) noexcept {
         }
 
         try {
-            std::unique_ptr<rawstor::io::Queue> q =
-                rawstor::io::Queue::create(QUEUE_DEPTH);
+            std::unique_ptr<rawio::Queue> q = rawio::Queue::create(QUEUE_DEPTH);
             rawstor::io_queue = q.get();
             q.release();
         } catch (...) {

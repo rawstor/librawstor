@@ -5,9 +5,9 @@
 
 namespace {
 
-class OverflowTest : public rawstor::io::tests::QueueTest {
+class OverflowTest : public rawio::tests::QueueTest {
 protected:
-    OverflowTest() : rawstor::io::tests::QueueTest(2) {}
+    OverflowTest() : rawio::tests::QueueTest(2) {}
 };
 
 TEST_F(OverflowTest, push_three) {

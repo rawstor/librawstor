@@ -21,8 +21,7 @@ std::string engine_name = "poll";
 
 } // namespace
 
-namespace rawstor {
-namespace io {
+namespace rawio {
 namespace poll {
 
 Session& Queue::_get_session(int fd) {
@@ -75,7 +74,7 @@ void Queue::setup_fd(int fd) {
     }
 }
 
-rawstor::io::Event*
+rawio::Event*
 Queue::poll(int fd, unsigned int mask, std::function<void(size_t, int)>&& cb) {
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('|', "fd = %d, mask = %u\n", fd, mask);
@@ -86,12 +85,12 @@ Queue::poll(int fd, unsigned int mask, std::function<void(size_t, int)>&& cb) {
             *this, fd, mask, trace_event, std::move(cb)
         );
 
-    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
+    rawio::Event* ret = static_cast<rawio::Event*>(event.get());
     s.poll(std::move(event));
     return ret;
 }
 
-rawstor::io::Event* Queue::poll_multishot(
+rawio::Event* Queue::poll_multishot(
     int fd, unsigned int mask, std::function<void(size_t, int)>&& cb
 ) {
     rawstd::TraceEvent trace_event =
@@ -103,12 +102,12 @@ rawstor::io::Event* Queue::poll_multishot(
             *this, fd, mask, trace_event, std::move(cb)
         );
 
-    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
+    rawio::Event* ret = static_cast<rawio::Event*>(event.get());
     s.poll(std::move(event));
     return ret;
 }
 
-rawstor::io::Event* Queue::accept(
+rawio::Event* Queue::accept(
     int fd, sockaddr* addr, socklen_t* addrlen,
     std::function<void(size_t, int)>&& cb
 ) {
@@ -120,12 +119,12 @@ rawstor::io::Event* Queue::accept(
             *this, fd, addr, addrlen, trace_event, std::move(cb)
         );
 
-    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
+    rawio::Event* ret = static_cast<rawio::Event*>(event.get());
     s.accept(std::move(event));
     return ret;
 }
 
-rawstor::io::Event*
+rawio::Event*
 Queue::accept_multishot(int fd, std::function<void(size_t, int)>&& cb) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('|', "fd = %d\n", fd);
     Session& s = _get_session(fd);
@@ -135,12 +134,12 @@ Queue::accept_multishot(int fd, std::function<void(size_t, int)>&& cb) {
             *this, fd, trace_event, std::move(cb)
         );
 
-    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
+    rawio::Event* ret = static_cast<rawio::Event*>(event.get());
     s.accept(std::move(event));
     return ret;
 }
 
-rawstor::io::Event* Queue::read(
+rawio::Event* Queue::read(
     int fd, void* buf, size_t size, std::function<void(size_t, int)>&& cb
 ) {
     rawstd::TraceEvent trace_event =
@@ -152,12 +151,12 @@ rawstor::io::Event* Queue::read(
             *this, fd, buf, size, trace_event, std::move(cb)
         );
 
-    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
+    rawio::Event* ret = static_cast<rawio::Event*>(event.get());
     s.read(std::move(event));
     return ret;
 }
 
-rawstor::io::Event* Queue::readv(
+rawio::Event* Queue::readv(
     int fd, iovec* iov, unsigned int niov, std::function<void(size_t, int)>&& cb
 ) {
     rawstd::TraceEvent trace_event =
@@ -169,12 +168,12 @@ rawstor::io::Event* Queue::readv(
             *this, fd, iov, niov, trace_event, std::move(cb)
         );
 
-    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
+    rawio::Event* ret = static_cast<rawio::Event*>(event.get());
     s.read(std::move(event));
     return ret;
 }
 
-rawstor::io::Event* Queue::pread(
+rawio::Event* Queue::pread(
     int fd, void* buf, size_t size, off_t offset,
     std::function<void(size_t, int)>&& cb
 ) {
@@ -184,16 +183,16 @@ rawstor::io::Event* Queue::pread(
     Session& s = _get_session(fd);
 
     std::unique_ptr<EventSimplex> event =
-        std::make_unique<rawstor::io::poll::EventSimplexScalarPositionalRead>(
+        std::make_unique<rawio::poll::EventSimplexScalarPositionalRead>(
             *this, fd, buf, size, offset, trace_event, std::move(cb)
         );
 
-    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
+    rawio::Event* ret = static_cast<rawio::Event*>(event.get());
     s.read(std::move(event));
     return ret;
 }
 
-rawstor::io::Event* Queue::preadv(
+rawio::Event* Queue::preadv(
     int fd, iovec* iov, unsigned int niov, off_t offset,
     std::function<void(size_t, int)>&& cb
 ) {
@@ -207,12 +206,12 @@ rawstor::io::Event* Queue::preadv(
             *this, fd, iov, niov, offset, trace_event, std::move(cb)
         );
 
-    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
+    rawio::Event* ret = static_cast<rawio::Event*>(event.get());
     s.read(std::move(event));
     return ret;
 }
 
-rawstor::io::Event* Queue::recv(
+rawio::Event* Queue::recv(
     int fd, void* buf, size_t size, unsigned int flags,
     std::function<void(size_t, int)>&& cb
 ) {
@@ -226,12 +225,12 @@ rawstor::io::Event* Queue::recv(
             *this, fd, buf, size, flags, trace_event, std::move(cb)
         );
 
-    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
+    rawio::Event* ret = static_cast<rawio::Event*>(event.get());
     s.read(std::move(event));
     return ret;
 }
 
-rawstor::io::Event* Queue::recv_multishot(
+rawio::Event* Queue::recv_multishot(
     int fd, size_t entry_size, unsigned int entries, size_t size,
     unsigned int flags,
     std::function<size_t(const iovec*, unsigned int, size_t, int)>&& cb
@@ -249,12 +248,12 @@ rawstor::io::Event* Queue::recv_multishot(
             std::move(cb)
         );
 
-    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
+    rawio::Event* ret = static_cast<rawio::Event*>(event.get());
     s.read(std::move(event));
     return ret;
 }
 
-rawstor::io::Event* Queue::recvmsg(
+rawio::Event* Queue::recvmsg(
     int fd, msghdr* msg, unsigned int flags,
     std::function<void(size_t, int)>&& cb
 ) {
@@ -269,12 +268,12 @@ rawstor::io::Event* Queue::recvmsg(
             *this, fd, msg, flags, trace_event, std::move(cb)
         );
 
-    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
+    rawio::Event* ret = static_cast<rawio::Event*>(event.get());
     s.read(std::move(event));
     return ret;
 }
 
-rawstor::io::Event* Queue::write(
+rawio::Event* Queue::write(
     int fd, const void* buf, size_t size, std::function<void(size_t, int)>&& cb
 ) {
     rawstd::TraceEvent trace_event =
@@ -285,12 +284,12 @@ rawstor::io::Event* Queue::write(
         *this, fd, buf, size, trace_event, std::move(cb)
     );
 
-    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
+    rawio::Event* ret = static_cast<rawio::Event*>(event.get());
     s.write(std::move(event));
     return ret;
 }
 
-rawstor::io::Event* Queue::writev(
+rawio::Event* Queue::writev(
     int fd, const iovec* iov, unsigned int niov,
     std::function<void(size_t, int)>&& cb
 ) {
@@ -302,12 +301,12 @@ rawstor::io::Event* Queue::writev(
         *this, fd, iov, niov, trace_event, std::move(cb)
     );
 
-    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
+    rawio::Event* ret = static_cast<rawio::Event*>(event.get());
     s.write(std::move(event));
     return ret;
 }
 
-rawstor::io::Event* Queue::pwrite(
+rawio::Event* Queue::pwrite(
     int fd, const void* buf, size_t size, off_t offset,
     std::function<void(size_t, int)>&& cb
 ) {
@@ -321,12 +320,12 @@ rawstor::io::Event* Queue::pwrite(
             *this, fd, buf, size, offset, trace_event, std::move(cb)
         );
 
-    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
+    rawio::Event* ret = static_cast<rawio::Event*>(event.get());
     s.write(std::move(event));
     return ret;
 }
 
-rawstor::io::Event* Queue::pwritev(
+rawio::Event* Queue::pwritev(
     int fd, const iovec* iov, unsigned int niov, off_t offset,
     std::function<void(size_t, int)>&& cb
 ) {
@@ -340,12 +339,12 @@ rawstor::io::Event* Queue::pwritev(
             *this, fd, iov, niov, offset, trace_event, std::move(cb)
         );
 
-    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
+    rawio::Event* ret = static_cast<rawio::Event*>(event.get());
     s.write(std::move(event));
     return ret;
 }
 
-rawstor::io::Event* Queue::send(
+rawio::Event* Queue::send(
     int fd, const void* buf, size_t size, unsigned int flags,
     std::function<void(size_t, int)>&& cb
 ) {
@@ -358,12 +357,12 @@ rawstor::io::Event* Queue::send(
         *this, fd, buf, size, flags, trace_event, std::move(cb)
     );
 
-    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
+    rawio::Event* ret = static_cast<rawio::Event*>(event.get());
     s.write(std::move(event));
     return ret;
 }
 
-rawstor::io::Event* Queue::sendmsg(
+rawio::Event* Queue::sendmsg(
     int fd, const msghdr* msg, unsigned int flags,
     std::function<void(size_t, int)>&& cb
 ) {
@@ -377,12 +376,12 @@ rawstor::io::Event* Queue::sendmsg(
         *this, fd, msg, flags, trace_event, std::move(cb)
     );
 
-    rawstor::io::Event* ret = static_cast<rawstor::io::Event*>(event.get());
+    rawio::Event* ret = static_cast<rawio::Event*>(event.get());
     s.write(std::move(event));
     return ret;
 }
 
-void Queue::cancel(rawstor::io::Event* e) {
+void Queue::cancel(rawio::Event* e) {
     for (auto& it : _sessions) {
         if (it.second->cancel(e, _cqes)) {
             return;
@@ -486,5 +485,4 @@ void Queue::wait(unsigned int timeout) {
 }
 
 } // namespace poll
-} // namespace io
-} // namespace rawstor
+} // namespace rawio
