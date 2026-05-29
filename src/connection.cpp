@@ -20,6 +20,11 @@
 
 #include <cstring>
 
+/**
+ * TODO: Make it global
+ */
+#define QUEUE_DEPTH 256
+
 namespace {
 
 /**
@@ -54,10 +59,7 @@ public:
 
 namespace rawstor {
 
-Connection::Connection(unsigned int depth) :
-    _object(nullptr),
-    _depth(depth),
-    _session_index(0) {
+Connection::Connection() : _object(nullptr), _session_index(0) {
 }
 
 Connection::~Connection() {
@@ -79,9 +81,7 @@ std::vector<std::shared_ptr<Session>> Connection::_open(
             sessions.clear();
             sessions.reserve(nsessions);
             for (size_t i = 0; i < nsessions; ++i) {
-                sessions.push_back(
-                    Session::create(*io_queue, location, _depth)
-                );
+                sessions.push_back(Session::create(*io_queue, location));
             }
 
             for (std::shared_ptr<Session> s : sessions) {
@@ -232,10 +232,9 @@ void Connection::create(
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 
-    Queue q(1, _depth);
+    Queue q(1, QUEUE_DEPTH);
 
-    std::unique_ptr<Session> s =
-        Session::create(q.queue(), target.parent(), _depth);
+    std::unique_ptr<Session> s = Session::create(q.queue(), target.parent());
     s->create(id, sp, [&q](int error) {
         q.sub_operation();
 
@@ -254,10 +253,9 @@ void Connection::remove(const rawstd::URI& target) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 
-    Queue q(1, _depth);
+    Queue q(1, QUEUE_DEPTH);
 
-    std::unique_ptr<Session> s =
-        Session::create(q.queue(), target.parent(), _depth);
+    std::unique_ptr<Session> s = Session::create(q.queue(), target.parent());
     s->remove(id, [&q](int error) {
         q.sub_operation();
 
@@ -276,10 +274,9 @@ void Connection::spec(const rawstd::URI& target, RawstorObjectSpec* sp) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 
-    Queue q(1, _depth);
+    Queue q(1, QUEUE_DEPTH);
 
-    std::unique_ptr<Session> s =
-        Session::create(q.queue(), target.parent(), _depth);
+    std::unique_ptr<Session> s = Session::create(q.queue(), target.parent());
     s->spec(id, [&q, sp](const RawstorObjectSpec& spec, int error) {
         q.sub_operation();
 

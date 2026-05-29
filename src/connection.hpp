@@ -20,7 +20,6 @@ class Session;
 class Connection final {
 private:
     Object* _object;
-    unsigned int _depth;
 
     std::vector<std::shared_ptr<Session>> _sessions;
     size_t _session_index;
@@ -37,7 +36,7 @@ private:
         unsigned int attempt);
 
 public:
-    Connection(unsigned int depth);
+    Connection();
     Connection(const Connection&) = delete;
     ~Connection();
 
