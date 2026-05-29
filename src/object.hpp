@@ -10,11 +10,13 @@
 #include <memory>
 #include <vector>
 
+struct RawstorObject {};
+
 namespace rawstor {
 
 class Connection;
 
-class Object final {
+class Object final : public RawstorObject {
 private:
     RawstdUUID _id;
     std::vector<std::unique_ptr<rawstor::Connection>> _cns;

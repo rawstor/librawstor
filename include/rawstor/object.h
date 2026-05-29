@@ -19,7 +19,7 @@
 extern "C" {
 #endif
 
-typedef void RawstorObject;
+typedef struct RawstorObject RawstorObject;
 
 /**
  * @brief Object metadata structure.
