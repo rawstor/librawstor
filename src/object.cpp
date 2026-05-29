@@ -410,8 +410,20 @@ int rawstor_object_open(const char* target, RawstorObject** object) noexcept {
 }
 
 int rawstor_object_close(RawstorObject* object) noexcept {
-    delete static_cast<rawstor::Object*>(object);
-    return 0;
+    try {
+        delete static_cast<rawstor::Object*>(object);
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
 }
 
 int rawstor_object_id(
