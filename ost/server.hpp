@@ -1,7 +1,7 @@
 #ifndef RAWSTOR_OSTBACKEND_SERVER_HPP
 #define RAWSTOR_OSTBACKEND_SERVER_HPP
 
-#include <rawstorstd/uri.hpp>
+#include <rawstd/uri.hpp>
 
 #include <rawstor/rawstor.h>
 
@@ -18,7 +18,7 @@ class Session;
 class Server final {
 private:
     int _fd;
-    std::vector<rawstor::URI> _locations;
+    std::vector<rawstd::URI> _locations;
     RawstorIOEvent* _accept_event;
     std::unordered_map<int, std::unique_ptr<Session>> _sessions;
 
@@ -35,7 +35,7 @@ public:
     Server& operator=(const Server&) = delete;
     Server& operator=(Server&&) = delete;
 
-    inline const std::vector<rawstor::URI>& locations() const noexcept {
+    inline const std::vector<rawstd::URI>& locations() const noexcept {
         return _locations;
     }
 

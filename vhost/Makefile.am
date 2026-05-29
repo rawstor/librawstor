@@ -4,7 +4,7 @@ noinst_PROGRAMS = rawstor-vhost
 
 AM_CXXFLAGS = $(GENERIC_CXXFLAGS) \
               $(ASAN_CFLAGS) \
-              -I$(top_srcdir)/librawstorstd/include \
+              -I$(top_srcdir)/librawstd/include \
               -I$(top_srcdir)/include \
               -I$(srcdir)/3rdparty/qemu/libvhost-user
 

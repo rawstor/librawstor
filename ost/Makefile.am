@@ -2,7 +2,7 @@ bin_PROGRAMS = rawstor-ost
 
 AM_CXXFLAGS = $(GENERIC_CXXFLAGS) \
               $(ASAN_CFLAGS) \
-              -I$(top_srcdir)/librawstorstd/include \
+              -I$(top_srcdir)/librawstd/include \
               -I$(top_srcdir)/include
 
 AM_LDFLAGS = $(ASAN_LDFLAGS)

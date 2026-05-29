@@ -3,8 +3,8 @@
 
 #include "session.hpp"
 
-#include <rawstorstd/ringbuf.hpp>
-#include <rawstorstd/uri.hpp>
+#include <rawstd/ringbuf.hpp>
+#include <rawstd/uri.hpp>
 
 #include <rawstorio/queue.hpp>
 
@@ -34,18 +34,21 @@ private:
     void _set_object(RawstorObject* object);
 
 public:
-    Session(rawstor::io::Queue& queue, const URI& location, unsigned int depth);
+    Session(
+        rawstor::io::Queue& queue, const rawstd::URI& location,
+        unsigned int depth
+    );
     ~Session();
 
     void create(
-        const RawstorUUID& id, const RawstorObjectSpec& sp,
+        const RawstdUUID& id, const RawstorObjectSpec& sp,
         std::function<void(int)>&& cb
     ) override;
 
-    void remove(const RawstorUUID& id, std::function<void(int)>&& cb) override;
+    void remove(const RawstdUUID& id, std::function<void(int)>&& cb) override;
 
     void spec(
-        const RawstorUUID& id,
+        const RawstdUUID& id,
         std::function<void(const RawstorObjectSpec&, int)>&& cb
     ) override;
 

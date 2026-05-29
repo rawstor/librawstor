@@ -5,7 +5,7 @@
 
 #include <rawstorio/queue.hpp>
 
-#include <rawstorstd/ringbuf.hpp>
+#include <rawstd/ringbuf.hpp>
 
 #include <memory>
 #include <string>
@@ -22,7 +22,7 @@ class Session;
 class Queue final : public rawstor::io::Queue {
 private:
     std::unordered_map<int, std::shared_ptr<Session>> _sessions;
-    rawstor::RingBuf<Event> _cqes;
+    rawstd::RingBuf<Event> _cqes;
     Event* _current_event;
 
     Session& _get_session(int fd);

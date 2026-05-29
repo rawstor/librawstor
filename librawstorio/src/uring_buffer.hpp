@@ -1,7 +1,7 @@
 #ifndef RAWSTORIO_URING_BUFFER_HPP
 #define RAWSTORIO_URING_BUFFER_HPP
 
-#include <rawstorstd/ringbuf.hpp>
+#include <rawstd/ringbuf.hpp>
 
 #include <liburing.h>
 
@@ -57,7 +57,7 @@ private:
     size_t _size;
     size_t _pending_offset;
     size_t _pending_size;
-    rawstor::RingBuf<BufferRingEntry> _pending_entries;
+    rawstd::RingBuf<BufferRingEntry> _pending_entries;
 
     std::function<size_t(const iovec* iov, unsigned int niov, size_t, int)> _cb;
 

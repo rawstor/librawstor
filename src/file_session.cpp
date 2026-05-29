@@ -4,10 +4,10 @@
 #include "opts.h"
 #include "rawstor_internals.hpp"
 
-#include <rawstorstd/gpp.hpp>
-#include <rawstorstd/iovec.h>
-#include <rawstorstd/logging.h>
-#include <rawstorstd/uuid.h>
+#include <rawstd/gpp.hpp>
+#include <rawstd/iovec.h>
+#include <rawstd/logging.h>
+#include <rawstd/uuid.h>
 
 #include <rawstorio/queue.hpp>
 
@@ -29,20 +29,20 @@
 
 namespace {
 
-std::string get_ost_path(const rawstor::URI& location) {
+std::string get_ost_path(const rawstd::URI& location) {
     if (location.scheme() != "file") {
-        rawstor_error("Unexpected URI scheme: %s\n", location.str().c_str());
-        RAWSTOR_THROW_SYSTEM_ERROR(EINVAL);
+        rawstd_error("Unexpected URI scheme: %s\n", location.str().c_str());
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
     if (!location.host().empty()) {
-        rawstor_error("Empty host expected: %s\n", location.str().c_str());
-        RAWSTOR_THROW_SYSTEM_ERROR(EINVAL);
+        rawstd_error("Empty host expected: %s\n", location.str().c_str());
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
     return location.path().str();
 }
 
 std::string get_object_spec_path(
-    const std::string& ost_path, const RawstorUUIDString& uuid
+    const std::string& ost_path, const RawstdUUIDString& uuid
 ) {
     std::ostringstream oss;
 
@@ -51,9 +51,8 @@ std::string get_object_spec_path(
     return oss.str();
 }
 
-std::string get_object_dat_path(
-    const std::string& ost_path, const RawstorUUIDString& uuid
-) {
+std::string
+get_object_dat_path(const std::string& ost_path, const RawstdUUIDString& uuid) {
     std::ostringstream oss;
 
     oss << ost_path << "/" << uuid << ".dat";
@@ -63,25 +62,25 @@ std::string get_object_dat_path(
 
 void write_dat(
     const std::string& ost_path, const RawstorObjectSpec& spec,
-    const RawstorUUID& id
+    const RawstdUUID& id
 ) {
-    RawstorUUIDString uuid_string;
-    rawstor_uuid_to_string(&id, &uuid_string);
+    RawstdUUIDString uuid_string;
+    rawstd_uuid_to_string(&id, &uuid_string);
 
     std::string dat_path = get_object_dat_path(ost_path, uuid_string);
 
     int fd = open(dat_path.c_str(), O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR);
     if (fd == -1) {
-        RAWSTOR_THROW_ERRNO();
+        RAWSTD_THROW_ERRNO();
     }
 
     try {
         if (ftruncate(fd, spec.size) == -1) {
-            RAWSTOR_THROW_ERRNO();
+            RAWSTD_THROW_ERRNO();
         }
 
         if (close(fd) == -1) {
-            RAWSTOR_THROW_ERRNO();
+            RAWSTD_THROW_ERRNO();
         }
     } catch (const std::system_error& e) {
         close(fd);
@@ -96,29 +95,29 @@ namespace rawstor {
 namespace file {
 
 Session::Session(
-    rawstor::io::Queue& queue, const URI& location, unsigned int depth
+    rawstor::io::Queue& queue, const rawstd::URI& location, unsigned int depth
 ) :
     rawstor::Session(queue, location, depth) {
 }
 
-int Session::_connect(const RawstorUUID& id) {
+int Session::_connect(const RawstdUUID& id) {
     std::string ost_path = get_ost_path(location());
 
-    RawstorUUIDString id_string;
-    rawstor_uuid_to_string(&id, &id_string);
+    RawstdUUIDString id_string;
+    rawstd_uuid_to_string(&id, &id_string);
     std::string dat_path = get_object_dat_path(ost_path, id_string);
 
-    rawstor_info("Connecting to %s...\n", location().str().c_str());
+    rawstd_info("Connecting to %s...\n", location().str().c_str());
     int fd = open(dat_path.c_str(), O_RDWR | O_NONBLOCK);
     if (fd == -1) {
-        RAWSTOR_THROW_ERRNO();
+        RAWSTD_THROW_ERRNO();
     }
-    rawstor_info("fd %d: Connected\n", fd);
+    rawstd_info("fd %d: Connected\n", fd);
     return fd;
 }
 
 void Session::create(
-    const RawstorUUID& id, const RawstorObjectSpec& sp,
+    const RawstdUUID& id, const RawstorObjectSpec& sp,
     std::function<void(int)>&& cb
 ) {
     std::string ost_path = get_ost_path(location());
@@ -126,12 +125,12 @@ void Session::create(
         if (errno == EEXIST) {
             errno = 0;
         } else {
-            RAWSTOR_THROW_ERRNO();
+            RAWSTD_THROW_ERRNO();
         }
     }
 
-    RawstorUUIDString uuid_string;
-    rawstor_uuid_to_string(&id, &uuid_string);
+    RawstdUUIDString uuid_string;
+    rawstd_uuid_to_string(&id, &uuid_string);
 
     std::string spec_path;
     spec_path = get_object_spec_path(ost_path, uuid_string);
@@ -140,19 +139,19 @@ void Session::create(
         spec_path.c_str(), O_EXCL | O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR
     );
     if (fd == -1) {
-        RAWSTOR_THROW_ERRNO();
+        RAWSTD_THROW_ERRNO();
     }
 
     try {
         ssize_t res = ::write(fd, &sp, sizeof(sp));
         if (res == -1) {
-            RAWSTOR_THROW_ERRNO();
+            RAWSTD_THROW_ERRNO();
         }
 
         write_dat(ost_path, sp, id);
 
         if (::close(fd) == -1) {
-            RAWSTOR_THROW_ERRNO();
+            RAWSTD_THROW_ERRNO();
         }
     } catch (...) {
         unlink(spec_path.c_str());
@@ -163,18 +162,18 @@ void Session::create(
     cb(0);
 }
 
-void Session::remove(const RawstorUUID& id, std::function<void(int)>&& cb) {
+void Session::remove(const RawstdUUID& id, std::function<void(int)>&& cb) {
     std::string ost_path = get_ost_path(location());
 
-    RawstorUUIDString uuid_string;
-    rawstor_uuid_to_string(&id, &uuid_string);
+    RawstdUUIDString uuid_string;
+    rawstd_uuid_to_string(&id, &uuid_string);
 
     std::string dat_path = get_object_dat_path(ost_path, uuid_string);
     if (unlink(dat_path.c_str()) == -1) {
         if (errno == ENOENT) {
             errno = 0;
         } else {
-            RAWSTOR_THROW_ERRNO();
+            RAWSTD_THROW_ERRNO();
         }
     }
 
@@ -183,7 +182,7 @@ void Session::remove(const RawstorUUID& id, std::function<void(int)>&& cb) {
         if (errno == ENOENT) {
             errno = 0;
         } else {
-            RAWSTOR_THROW_ERRNO();
+            RAWSTD_THROW_ERRNO();
         }
     }
 
@@ -191,30 +190,30 @@ void Session::remove(const RawstorUUID& id, std::function<void(int)>&& cb) {
 }
 
 void Session::spec(
-    const RawstorUUID& id,
+    const RawstdUUID& id,
     std::function<void(const RawstorObjectSpec&, int)>&& cb
 ) {
     std::string ost_path = get_ost_path(location());
 
-    RawstorUUIDString uuid_string;
-    rawstor_uuid_to_string(&id, &uuid_string);
+    RawstdUUIDString uuid_string;
+    rawstd_uuid_to_string(&id, &uuid_string);
 
     std::string spec_path = get_object_spec_path(ost_path, uuid_string);
 
     int fd = ::open(spec_path.c_str(), O_RDONLY);
     if (fd == -1) {
-        RAWSTOR_THROW_ERRNO();
+        RAWSTD_THROW_ERRNO();
     }
 
     RawstorObjectSpec ret;
     try {
         ssize_t rval = ::read(fd, &ret, sizeof(ret));
         if (rval == -1) {
-            RAWSTOR_THROW_ERRNO();
+            RAWSTD_THROW_ERRNO();
         }
 
         if (::close(fd) == -1) {
-            RAWSTOR_THROW_ERRNO();
+            RAWSTD_THROW_ERRNO();
         }
     } catch (...) {
         ::close(fd);
@@ -231,7 +230,7 @@ void Session::set_object(RawstorObject* object) {
 
     int fd = _connect(object->id());
     if (fd == -1) {
-        RAWSTOR_THROW_ERRNO();
+        RAWSTD_THROW_ERRNO();
     }
 
     set_fd(fd);
@@ -240,7 +239,7 @@ void Session::set_object(RawstorObject* object) {
 void Session::pread(
     void* buf, size_t size, off_t offset, std::function<void(size_t, int)>&& cb
 ) {
-    rawstor_debug(
+    rawstd_debug(
         "%s(): fd = %d, size = %zu, offset = %jd\n", __FUNCTION__, fd(), size,
         (intmax_t)offset
     );
@@ -252,7 +251,7 @@ void Session::preadv(
     iovec* iov, unsigned int niov, size_t size, off_t offset,
     std::function<void(size_t, int)>&& cb
 ) {
-    rawstor_debug(
+    rawstd_debug(
         "%s(): fd = %d, size = %zu, offset = %jd\n", __FUNCTION__, fd(), size,
         (intmax_t)offset
     );
@@ -264,7 +263,7 @@ void Session::pwrite(
     const void* buf, size_t size, off_t offset,
     std::function<void(size_t, int)>&& cb
 ) {
-    rawstor_debug(
+    rawstd_debug(
         "%s(): fd = %d, size = %zu, offset = %jd\n", __FUNCTION__, fd(), size,
         (intmax_t)offset
     );
@@ -276,7 +275,7 @@ void Session::pwritev(
     const iovec* iov, unsigned int niov, size_t size, off_t offset,
     std::function<void(size_t, int)>&& cb
 ) {
-    rawstor_debug(
+    rawstd_debug(
         "%s(): fd = %d, size = %zu, offset = %jd\n", __FUNCTION__, fd(), size,
         (intmax_t)offset
     );

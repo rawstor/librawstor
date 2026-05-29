@@ -1,6 +1,6 @@
 #include "server.hpp"
 
-#include <rawstorstd/gpp.hpp>
+#include <rawstd/gpp.hpp>
 
 #include <arpa/inet.h>
 
@@ -91,7 +91,7 @@ public:
 Server::Server(int port) : _fd(-1), _client_fd(-1), _thread(nullptr) {
     _fd = socket(AF_INET, SOCK_STREAM, 0);
     if (_fd == -1) {
-        RAWSTOR_THROW_ERRNO();
+        RAWSTD_THROW_ERRNO();
     }
 
     sockaddr_in addr = {};
@@ -101,11 +101,11 @@ Server::Server(int port) : _fd(-1), _client_fd(-1), _thread(nullptr) {
 
     try {
         if (bind(_fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == -1) {
-            RAWSTOR_THROW_ERRNO();
+            RAWSTD_THROW_ERRNO();
         }
 
         if (listen(_fd, 1)) {
-            RAWSTOR_THROW_ERRNO();
+            RAWSTD_THROW_ERRNO();
         }
         _thread = std::make_unique<std::thread>(Server::_main, this);
     } catch (...) {
@@ -169,7 +169,7 @@ void Server::_do_accept(Command&) {
 
     int fd = ::accept(_fd, NULL, NULL);
     if (fd == -1) {
-        RAWSTOR_THROW_ERRNO();
+        RAWSTD_THROW_ERRNO();
     }
 
     _client_fd = fd;
@@ -178,7 +178,7 @@ void Server::_do_accept(Command&) {
 void Server::_do_close(Command&) {
     int res = ::close(_client_fd);
     if (res == -1) {
-        RAWSTOR_THROW_ERRNO();
+        RAWSTD_THROW_ERRNO();
     }
     _client_fd = -1;
 }
@@ -187,7 +187,7 @@ void Server::_do_read(Command& command) {
     CommandRead& command_read = dynamic_cast<CommandRead&>(command);
     ssize_t res = ::read(_client_fd, command_read.buf(), command_read.size());
     if (res == -1) {
-        RAWSTOR_THROW_ERRNO();
+        RAWSTD_THROW_ERRNO();
     }
 }
 
@@ -196,7 +196,7 @@ void Server::_do_write(Command& command) {
     ssize_t res =
         ::write(_client_fd, command_write.buf(), command_write.size());
     if (res == -1) {
-        RAWSTOR_THROW_ERRNO();
+        RAWSTD_THROW_ERRNO();
     }
 }
 

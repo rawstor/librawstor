@@ -36,7 +36,7 @@ AC_ARG_ENABLE([debug], [AS_HELP_STRING([--enable-debug],
     [enable_debug=$enableval],
     [enable_debug="no"])
 AS_IF([test "x$enable_debug" == "xyes"], [
-    AC_SUBST([maybe_loglevel_define], ["#define RAWSTOR_LOGLEVEL RAWSTOR_LOGLEVEL_DEBUG"])
+    AC_SUBST([maybe_loglevel_define], ["#define RAWSTD_LOGLEVEL RAWSTD_LOGLEVEL_DEBUG"])
 ])
 
 
@@ -45,7 +45,7 @@ AC_ARG_ENABLE([trace], [AS_HELP_STRING([--enable-trace],
     [enable_trace=$enableval],
     [enable_trace="no"])
 AS_IF([test "x$enable_trace" == "xyes"], [
-    AC_SUBST([maybe_loglevel_define], ["#define RAWSTOR_LOGLEVEL RAWSTOR_LOGLEVEL_TRACE"])
+    AC_SUBST([maybe_loglevel_define], ["#define RAWSTD_LOGLEVEL RAWSTD_LOGLEVEL_TRACE"])
 ])
 
 
@@ -94,10 +94,10 @@ AS_IF([test "x$with_libxxhash" == "xyes"], [
 
 AC_CONFIG_FILES(
     [Makefile]
-    [librawstorstd/include/rawstorstd/logging_config.h]
-    [librawstorstd/Makefile]
-    [librawstorstd/src/Makefile]
-    [librawstorstd/tests/Makefile]
+    [librawstd/include/rawstd/logging_config.h]
+    [librawstd/Makefile]
+    [librawstd/src/Makefile]
+    [librawstd/tests/Makefile]
     [librawstorio/Makefile]
     [librawstorio/src/Makefile]
     [librawstorio/tests/Makefile]

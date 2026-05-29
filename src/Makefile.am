@@ -4,14 +4,14 @@ lib_LTLIBRARIES = librawstor.la
 AM_CFLAGS = $(GENERIC_CFLAGS) \
             $(LIBXXHASH_CFLAGS) \
             $(ASAN_CFLAGS) \
-            -I$(top_srcdir)/librawstorstd/include \
+            -I$(top_srcdir)/librawstd/include \
             -I$(top_srcdir)/librawstorio/include \
             -I$(top_srcdir)/include
 
 AM_CXXFLAGS = $(GENERIC_CXXFLAGS) \
               $(LIBXXHASH_CFLAGS) \
               $(ASAN_CFLAGS) \
-              -I$(top_srcdir)/librawstorstd/include \
+              -I$(top_srcdir)/librawstd/include \
               -I$(top_srcdir)/librawstorio/include \
               -I$(top_srcdir)/include
 
@@ -45,8 +45,8 @@ librawstor_la_SOURCES = connection.cpp \
 
 librawstor_la_LDFLAGS = -version-info $(LIBRARY_VERSION)
 
-librawstor_la_LIBADD = $(top_builddir)/librawstorstd/src/librawstorstd.la \
-                       $(top_builddir)/librawstorio/src/librawstorio.la \
+librawstor_la_LIBADD = $(top_builddir)/librawstorio/src/librawstorio.la \
+                       $(top_builddir)/librawstd/src/librawstd.la \
                        $(LIBXXHASH_LIBS) \
                        -lstdc++
 
