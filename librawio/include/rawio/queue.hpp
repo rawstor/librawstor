@@ -29,7 +29,7 @@ public:
     explicit Queue(unsigned int depth);
     Queue(const Queue&) = delete;
     Queue(Queue&&) = delete;
-    virtual ~Queue() = default;
+    virtual ~Queue() noexcept = default;
     Queue& operator=(const Queue&) = delete;
     Queue& operator=(Queue&&) = delete;
 
