@@ -23,8 +23,6 @@
 #include <cstdlib>
 #include <cstring>
 
-#define QUEUE_DEPTH 256
-
 namespace rawstor {
 
 rawio::Queue* io_queue;
@@ -54,7 +52,8 @@ int rawstor_initialize(const RawstorOpts* opts) noexcept {
         }
 
         try {
-            std::unique_ptr<rawio::Queue> q = rawio::Queue::create(QUEUE_DEPTH);
+            std::unique_ptr<rawio::Queue> q =
+                rawio::Queue::create(rawstor_opts_queue_depth());
             rawstor::io_queue = q.get();
             q.release();
         } catch (...) {
