@@ -20,7 +20,7 @@ public:
     static void setup_fd(int fd);
 
     explicit Queue(unsigned int depth);
-    ~Queue();
+    ~Queue() noexcept;
 
     rawio::Event* poll(
         int fd, unsigned int mask, std::function<void(size_t, int)>&& cb

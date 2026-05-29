@@ -29,7 +29,7 @@ Queue::Queue(unsigned int depth) : rawio::Queue(depth) {
     };
 }
 
-Queue::~Queue() {
+Queue::~Queue() noexcept {
     int res = io_uring_submit(&_ring);
     if (res < 0) {
         rawstd_error("Failed to submit sqes: %s\n", strerror(-res));
