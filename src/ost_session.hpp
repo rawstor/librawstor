@@ -54,7 +54,7 @@ public:
         std::function<void(const RawstorObjectSpec&, int)>&& cb
     ) override;
 
-    void set_object(RawstorObject* object) override;
+    void set_object(Object* object) override;
 
     void pread(
         void* buf, size_t size, off_t offset,

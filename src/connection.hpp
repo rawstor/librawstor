@@ -1,9 +1,10 @@
 #ifndef RAWSTOR_CONNECTION_HPP
 #define RAWSTOR_CONNECTION_HPP
 
+#include "object.hpp"
+
 #include <rawstd/uri.hpp>
 
-#include <rawstor/object.h>
 #include <rawstor/rawstor.h>
 
 #include <functional>
@@ -18,14 +19,14 @@ class Session;
 
 class Connection final {
 private:
-    RawstorObject* _object;
+    Object* _object;
     unsigned int _depth;
 
     std::vector<std::shared_ptr<Session>> _sessions;
     size_t _session_index;
 
     std::vector<std::shared_ptr<Session>>
-    _open(const rawstd::URI& location, RawstorObject* object, size_t nsessions);
+    _open(const rawstd::URI& location, Object* object, size_t nsessions);
 
     void
     _op(const char* func_name, size_t size, off_t offset,
@@ -53,8 +54,7 @@ public:
 
     void spec(const rawstd::URI& target, RawstorObjectSpec* sp);
 
-    void
-    open(const rawstd::URI& location, RawstorObject* object, size_t nsessions);
+    void open(const rawstd::URI& location, Object* object, size_t nsessions);
 
     void close();
 
