@@ -94,7 +94,7 @@ void Queue::setup_fd(int fd) {
 
 rawstor::io::Event*
 Queue::poll(int fd, unsigned int mask, std::function<void(size_t, int)>&& cb) {
-    TraceEvent trace_event =
+    rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('|', "fd = %d, mask = %u\n", fd, mask);
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
@@ -119,7 +119,7 @@ Queue::poll(int fd, unsigned int mask, std::function<void(size_t, int)>&& cb) {
 rawstor::io::Event* Queue::poll_multishot(
     int fd, unsigned int mask, std::function<void(size_t, int)>&& cb
 ) {
-    TraceEvent trace_event =
+    rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('|', "fd = %d, mask = %u\n", fd, mask);
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
@@ -145,7 +145,7 @@ rawstor::io::Event* Queue::accept(
     int fd, sockaddr* addr, socklen_t* addrlen,
     std::function<void(size_t, int)>&& cb
 ) {
-    TraceEvent trace_event = RAWSTD_TRACE_EVENT('|', "fd = %d\n", fd);
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('|', "fd = %d\n", fd);
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
@@ -192,7 +192,7 @@ rawstor::io::Event* Queue::accept(
 
 rawstor::io::Event*
 Queue::accept_multishot(int fd, std::function<void(size_t, int)>&& cb) {
-    TraceEvent trace_event = RAWSTD_TRACE_EVENT('|', "fd = %d\n", fd);
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('|', "fd = %d\n", fd);
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
@@ -240,7 +240,7 @@ Queue::accept_multishot(int fd, std::function<void(size_t, int)>&& cb) {
 rawstor::io::Event* Queue::read(
     int fd, void* buf, size_t size, std::function<void(size_t, int)>&& cb
 ) {
-    TraceEvent trace_event =
+    rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('|', "fd = %d, size = %zu\n", fd, size);
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
@@ -265,7 +265,7 @@ rawstor::io::Event* Queue::read(
 rawstor::io::Event* Queue::readv(
     int fd, iovec* iov, unsigned int niov, std::function<void(size_t, int)>&& cb
 ) {
-    TraceEvent trace_event =
+    rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('|', "fd = %d, niov = %zu\n", fd, niov);
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
@@ -291,7 +291,7 @@ rawstor::io::Event* Queue::pread(
     int fd, void* buf, size_t size, off_t offset,
     std::function<void(size_t, int)>&& cb
 ) {
-    TraceEvent trace_event = RAWSTD_TRACE_EVENT(
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         '|', "fd = %d, size = %zu, offset = %jd\n", fd, size, (intmax_t)offset
     );
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
@@ -318,7 +318,7 @@ rawstor::io::Event* Queue::preadv(
     int fd, iovec* iov, unsigned int niov, off_t offset,
     std::function<void(size_t, int)>&& cb
 ) {
-    TraceEvent trace_event = RAWSTD_TRACE_EVENT(
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         '|', "fd = %d, niov = %u, offset = %jd\n", fd, niov, (intmax_t)offset
     );
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
@@ -345,7 +345,7 @@ rawstor::io::Event* Queue::recv(
     int fd, void* buf, size_t size, unsigned int flags,
     std::function<void(size_t, int)>&& cb
 ) {
-    TraceEvent trace_event = RAWSTD_TRACE_EVENT(
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         '|', "fd = %d, size = %zu, flags = %u\n", fd, size, flags
     );
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
@@ -373,7 +373,7 @@ rawstor::io::Event* Queue::recv_multishot(
     unsigned int flags,
     std::function<size_t(const iovec*, unsigned int, size_t, int)>&& cb
 ) {
-    TraceEvent trace_event = RAWSTD_TRACE_EVENT(
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         '|',
         "fd = %d, entry_size = %zu, entries = %u, size = %zu, flags = %u\n", fd,
         entry_size, entries, size, flags
@@ -417,7 +417,7 @@ rawstor::io::Event* Queue::recvmsg(
     int fd, msghdr* msg, unsigned int flags,
     std::function<void(size_t, int)>&& cb
 ) {
-    TraceEvent trace_event = RAWSTD_TRACE_EVENT(
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         '|', "fd = %d, niov = %zu, flags = %u\n", fd, msg->msg_iovlen, flags
     );
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
@@ -443,7 +443,7 @@ rawstor::io::Event* Queue::recvmsg(
 rawstor::io::Event* Queue::write(
     int fd, const void* buf, size_t size, std::function<void(size_t, int)>&& cb
 ) {
-    TraceEvent trace_event =
+    rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('|', "fd = %d, size = %zu\n", fd, size);
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
@@ -469,7 +469,7 @@ rawstor::io::Event* Queue::writev(
     int fd, const iovec* iov, unsigned int niov,
     std::function<void(size_t, int)>&& cb
 ) {
-    TraceEvent trace_event =
+    rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('|', "fd = %d, niov = %u\n", fd, niov);
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
@@ -495,7 +495,7 @@ rawstor::io::Event* Queue::pwrite(
     int fd, const void* buf, size_t size, off_t offset,
     std::function<void(size_t, int)>&& cb
 ) {
-    TraceEvent trace_event = RAWSTD_TRACE_EVENT(
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         '|', "fd = %d, size = %zu, offset = %jd\n", fd, size, (intmax_t)offset
     );
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
@@ -522,7 +522,7 @@ rawstor::io::Event* Queue::pwritev(
     int fd, const iovec* iov, unsigned int niov, off_t offset,
     std::function<void(size_t, int)>&& cb
 ) {
-    TraceEvent trace_event = RAWSTD_TRACE_EVENT(
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         '|', "fd = %d, niov = %u, offset = %jd\n", fd, niov, (intmax_t)offset
     );
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
@@ -549,7 +549,7 @@ rawstor::io::Event* Queue::send(
     int fd, const void* buf, size_t size, unsigned int flags,
     std::function<void(size_t, int)>&& cb
 ) {
-    TraceEvent trace_event = RAWSTD_TRACE_EVENT(
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         '|', "fd = %d, size = %zu, flags = %u\n", fd, size, flags
     );
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
@@ -576,7 +576,7 @@ rawstor::io::Event* Queue::sendmsg(
     int fd, const msghdr* msg, unsigned int flags,
     std::function<void(size_t, int)>&& cb
 ) {
-    TraceEvent trace_event = RAWSTD_TRACE_EVENT(
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         '|', "fd = %d, niov = %zu, flags = %u\n", fd, msg->msg_iovlen, flags
     );
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
