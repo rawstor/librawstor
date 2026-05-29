@@ -27,11 +27,6 @@
 #include <cstdlib>
 #include <cstring>
 
-/**
- * TODO: Make it global
- */
-#define QUEUE_DEPTH 256
-
 namespace {
 
 int uris(const std::vector<rawstd::URI>& uriv, char* buf, size_t size) {
@@ -99,7 +94,7 @@ Object::Object(const std::vector<rawstd::URI>& targets) : _id() {
     _cns.reserve(targets.size());
     for (const auto& target : targets) {
         std::unique_ptr<rawstor::Connection> cn =
-            std::make_unique<rawstor::Connection>(QUEUE_DEPTH);
+            std::make_unique<rawstor::Connection>();
         cn->open(target.parent(), this, rawstor_opts_sessions());
         _cns.push_back(std::move(cn));
     }
@@ -124,7 +119,7 @@ void Object::create(
     try {
         for (const auto& location : locations) {
             rawstd::URI target = rawstd::URI(location, id_string);
-            rawstor::Connection(QUEUE_DEPTH).create(target, sp);
+            rawstor::Connection().create(target, sp);
             ret.push_back(target);
         }
     } catch (...) {
@@ -150,7 +145,7 @@ void Object::remove(const std::vector<rawstd::URI>& targets) {
     std::exception_ptr eptr;
     for (const auto& target : targets) {
         try {
-            rawstor::Connection(QUEUE_DEPTH).remove(target);
+            rawstor::Connection().remove(target);
         } catch (const std::exception& e) {
             rawstd_error("%s\n", e.what());
 
@@ -174,7 +169,7 @@ void Object::spec(
     validate_different_uris(targets);
     validate_same_uuid(targets);
 
-    rawstor::Connection(QUEUE_DEPTH).spec(targets.front(), sp);
+    rawstor::Connection().spec(targets.front(), sp);
 }
 
 std::vector<rawstd::URI> Object::locations() const {

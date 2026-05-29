@@ -34,9 +34,7 @@ private:
     void _set_object(Object* object);
 
 public:
-    Session(
-        rawio::Queue& queue, const rawstd::URI& location, unsigned int depth
-    );
+    Session(rawio::Queue& queue, const rawstd::URI& location);
     ~Session();
 
     void create(

@@ -19,7 +19,6 @@ class Task;
 
 class Session {
 private:
-    unsigned int _depth;
     rawstd::URI _location;
     int _fd;
 
@@ -29,13 +28,10 @@ protected:
     inline void set_fd(int fd) noexcept { _fd = fd; }
 
 public:
-    static std::unique_ptr<Session> create(
-        rawio::Queue& queue, const rawstd::URI& location, unsigned int depth
-    );
+    static std::unique_ptr<Session>
+    create(rawio::Queue& queue, const rawstd::URI& location);
 
-    Session(
-        rawio::Queue& queue, const rawstd::URI& location, unsigned int depth
-    );
+    Session(rawio::Queue& queue, const rawstd::URI& location);
     Session(const Session&) = delete;
     Session(Session&&) noexcept = delete;
     virtual ~Session();
@@ -45,8 +41,6 @@ public:
     std::string str() const;
 
     inline const rawstd::URI& location() const noexcept { return _location; }
-
-    inline unsigned int depth() const noexcept { return _depth; }
 
     inline int fd() const noexcept { return _fd; }
 
