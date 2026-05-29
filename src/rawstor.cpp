@@ -106,7 +106,7 @@ int rawstor_wait() noexcept {
     }
 }
 
-int rawstor_fd_poll(
+int rawio_poll(
     int fd, unsigned int mask, RawstorIOCallback* cb, void* data
 ) noexcept {
     try {
@@ -130,7 +130,7 @@ int rawstor_fd_poll(
     }
 }
 
-int rawstor_fd_poll_multishot(
+int rawio_poll_multishot(
     int fd, unsigned int mask, RawstorIOCallback* cb, void* data,
     RawstorIOEvent** event
 ) noexcept {
@@ -160,7 +160,7 @@ int rawstor_fd_poll_multishot(
     }
 }
 
-int rawstor_fd_accept(
+int rawio_accept(
     int fd, sockaddr* addr, socklen_t* addrlen, RawstorIOCallback* cb,
     void* data
 ) noexcept {
@@ -187,7 +187,7 @@ int rawstor_fd_accept(
     }
 }
 
-int rawstor_fd_accept_multishot(
+int rawio_accept_multishot(
     int fd, RawstorIOCallback* cb, void* data, RawstorIOEvent** event
 ) noexcept {
     try {
@@ -216,7 +216,7 @@ int rawstor_fd_accept_multishot(
     }
 }
 
-int rawstor_fd_read(
+int rawio_read(
     int fd, void* buf, size_t size, RawstorIOCallback* cb, void* data
 ) noexcept {
     try {
@@ -242,7 +242,7 @@ int rawstor_fd_read(
     }
 }
 
-int rawstor_fd_readv(
+int rawio_readv(
     int fd, iovec* iov, unsigned int niov, RawstorIOCallback* cb, void* data
 ) noexcept {
     try {
@@ -268,7 +268,7 @@ int rawstor_fd_readv(
     }
 }
 
-int rawstor_fd_pread(
+int rawio_pread(
     int fd, void* buf, size_t size, off_t offset, RawstorIOCallback* cb,
     void* data
 ) noexcept {
@@ -295,7 +295,7 @@ int rawstor_fd_pread(
     }
 }
 
-int rawstor_fd_preadv(
+int rawio_preadv(
     int fd, iovec* iov, unsigned int niov, off_t offset, RawstorIOCallback* cb,
     void* data
 ) noexcept {
@@ -322,7 +322,7 @@ int rawstor_fd_preadv(
     }
 }
 
-int rawstor_fd_recv(
+int rawio_recv(
     int fd, void* buf, size_t size, unsigned int flags, RawstorIOCallback* cb,
     void* data
 ) noexcept {
@@ -349,7 +349,7 @@ int rawstor_fd_recv(
     }
 }
 
-int rawstor_fd_recv_multishot(
+int rawio_recv_multishot(
     int fd, size_t entry_size, unsigned int entries, size_t size,
     unsigned int flags, RawstorIOMultishotVectorCallback* cb, void* data,
     RawstorIOEvent** event
@@ -384,7 +384,7 @@ int rawstor_fd_recv_multishot(
     }
 }
 
-int rawstor_fd_recvmsg(
+int rawio_recvmsg(
     int fd, msghdr* msg, unsigned int flags, RawstorIOCallback* cb, void* data
 ) noexcept {
     try {
@@ -410,7 +410,7 @@ int rawstor_fd_recvmsg(
     }
 }
 
-int rawstor_fd_write(
+int rawio_write(
     int fd, const void* buf, size_t size, RawstorIOCallback* cb, void* data
 ) noexcept {
     try {
@@ -436,7 +436,7 @@ int rawstor_fd_write(
     }
 }
 
-int rawstor_fd_writev(
+int rawio_writev(
     int fd, const iovec* iov, unsigned int niov, RawstorIOCallback* cb,
     void* data
 ) noexcept {
@@ -463,7 +463,7 @@ int rawstor_fd_writev(
     }
 }
 
-int rawstor_fd_pwrite(
+int rawio_pwrite(
     int fd, const void* buf, size_t size, off_t offset, RawstorIOCallback* cb,
     void* data
 ) noexcept {
@@ -490,7 +490,7 @@ int rawstor_fd_pwrite(
     }
 }
 
-int rawstor_fd_pwritev(
+int rawio_pwritev(
     int fd, const iovec* iov, unsigned int niov, off_t offset,
     RawstorIOCallback* cb, void* data
 ) noexcept {
@@ -517,7 +517,7 @@ int rawstor_fd_pwritev(
     }
 }
 
-int rawstor_fd_send(
+int rawio_send(
     int fd, const void* buf, size_t size, unsigned int flags,
     RawstorIOCallback* cb, void* data
 ) noexcept {
@@ -544,7 +544,7 @@ int rawstor_fd_send(
     }
 }
 
-int rawstor_fd_sendmsg(
+int rawio_sendmsg(
     int fd, const msghdr* msg, unsigned int flags, RawstorIOCallback* cb,
     void* data
 ) noexcept {
@@ -571,7 +571,7 @@ int rawstor_fd_sendmsg(
     }
 }
 
-int rawstor_fd_cancel(RawstorIOEvent* event) noexcept {
+int rawio_cancel(RawstorIOEvent* event) noexcept {
     try {
         rawstor::io_queue->cancel(event);
         return 0;
@@ -588,7 +588,7 @@ int rawstor_fd_cancel(RawstorIOEvent* event) noexcept {
     }
 }
 
-int rawstor_fd_cancel_all(int fd) noexcept {
+int rawio_cancel_all(int fd) noexcept {
     try {
         rawstor::io_queue->cancel(fd);
         return 0;

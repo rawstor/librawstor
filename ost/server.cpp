@@ -86,7 +86,7 @@ Server::~Server() {
     }
 
     if (_accept_event != nullptr) {
-        int res = rawstor_fd_cancel(_accept_event);
+        int res = rawio_cancel(_accept_event);
         if (res < 0) {
             rawstd_error("Failed to cancel event: %s\n", strerror(-res));
         }
@@ -134,7 +134,7 @@ void Server::del_session(int fd) noexcept {
 }
 
 void Server::loop() {
-    int res = rawstor_fd_accept_multishot(_fd, _accept, this, &_accept_event);
+    int res = rawio_accept_multishot(_fd, _accept, this, &_accept_event);
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }

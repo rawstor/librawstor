@@ -92,7 +92,7 @@ void send_response(
             }
         });
 
-    int res = rawstor_fd_write(
+    int res = rawio_write(
         fd, response.get(), sizeof(*response), io_callback, cb.get()
     );
     if (res < 0) {
@@ -144,7 +144,7 @@ void send_response(
     });
 
     int res =
-        rawstor_fd_writev(fd, iov->data(), iov->size(), io_callback, cb.get());
+        rawio_writev(fd, iov->data(), iov->size(), io_callback, cb.get());
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
@@ -163,7 +163,7 @@ Session::Session(Server& server, int fd) :
     _recv_event(nullptr),
     _next(&Session::_recv_head),
     _object(nullptr) {
-    int res = rawstor_fd_recv_multishot(
+    int res = rawio_recv_multishot(
         _fd, 1u << 17, 64 * 4, sizeof(_request_head), 0, _recv, this,
         &_recv_event
     );
@@ -184,7 +184,7 @@ Session::~Session() noexcept {
         _object = nullptr;
     }
     if (_recv_event != nullptr) {
-        int res = rawstor_fd_cancel(_recv_event);
+        int res = rawio_cancel(_recv_event);
         if (res < 0) {
             rawstd_error("Failed to cancel event: %s\n", strerror(-res));
         }

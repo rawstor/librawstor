@@ -217,7 +217,7 @@ public:
 };
 
 void poll(int fd, std::unique_ptr<TaskPoll> t) {
-    int res = rawstor_fd_poll(fd, t->mask(), t->callback, t.get());
+    int res = rawio_poll(fd, t->mask(), t->callback, t.get());
     if (res) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
@@ -521,7 +521,7 @@ Watcher::Watcher(
     std::unique_ptr<TaskWatch> t =
         std::make_unique<TaskWatch>(device, fd, condition, cb, data);
     int res =
-        rawstor_fd_poll_multishot(fd, t->mask(), t->callback, t.get(), &_event);
+        rawio_poll_multishot(fd, t->mask(), t->callback, t.get(), &_event);
     if (res) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
@@ -529,7 +529,7 @@ Watcher::Watcher(
 }
 
 Watcher::~Watcher() {
-    int res = rawstor_fd_cancel(_event);
+    int res = rawio_cancel(_event);
     if (res < 0) {
         rawstd_error("Failed to cancel event: %s\n", strerror(-res));
     }

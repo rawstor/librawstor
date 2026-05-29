@@ -77,7 +77,7 @@ typedef int(RawstorIOCallback)(size_t result, int error, void* data);
  *               No further callbacks will be invoked. Other errors indicate
  *               socket or I/O errors.
  *
- * @param data   User context pointer from rawstor_fd_recv_multishot().
+ * @param data   User context pointer from rawio_recv_multishot().
  *
  * @return       Specifies the size for the next buffer allocation in bytes.
  *               Positive value: Requested size for next receive operation.
@@ -106,7 +106,7 @@ typedef void RawstorIOEvent;
  * fd
  */
 
-int rawstor_fd_poll(
+int rawio_poll(
     int fd, unsigned int mask, RawstorIOCallback* cb, void* data
 ) RAWSTOR_NOEXCEPT;
 
@@ -138,7 +138,7 @@ int rawstor_fd_poll(
  *
  * @param event Output parameter that receives an opaque event handle for
  *              controlling the multishot poll operation. This handle must be
- *              used to cancel the operation via rawstor_fd_cancel(). The
+ *              used to cancel the operation via rawio_cancel(). The
  *              handle tracks the operation's lifecycle and must be preserved
  *              until the operation terminates.
  *
@@ -146,11 +146,11 @@ int rawstor_fd_poll(
  *              Negative error code on failure.
  *
  * @note        The poll operation remains active indefinitely until:
- *              - Explicitly canceled via rawstor_fd_cancel()
+ *              - Explicitly canceled via rawio_cancel()
  *              - An error occurs (e.g., descriptor closure, unsupported event)
  *
  * @warning     After an error occurs, the operation automatically terminates.
- *              Calling rawstor_fd_cancel() on an already-terminated event is
+ *              Calling rawio_cancel() on an already-terminated event is
  *              unnecessary and will return -ENOENT.
  *
  * @warning     The callback may be invoked from an completion context. Avoid
@@ -161,10 +161,10 @@ int rawstor_fd_poll(
  *              may result in immediate callback invocation with appropriate
  *              error codes or undefined behavior.
  *
- * @see         rawstor_fd_cancel() for operation termination.
+ * @see         rawio_cancel() for operation termination.
  * @see         poll(2) for standard poll semantics and event definitions.
  */
-int rawstor_fd_poll_multishot(
+int rawio_poll_multishot(
     int fd, unsigned int mask, RawstorIOCallback* cb, void* data,
     RawstorIOEvent** event
 ) RAWSTOR_NOEXCEPT;
@@ -211,10 +211,10 @@ int rawstor_fd_poll_multishot(
  *                Avoid blocking operations inside the callback; instead, queue
  *                the new socket for processing in a separate thread or context.
  *
- * @see           rawstor_fd_accept_multishot() for a persistent version.
+ * @see           rawio_accept_multishot() for a persistent version.
  * @see           accept(2) for standard synchronous accept semantics.
  */
-int rawstor_fd_accept(
+int rawio_accept(
     int fd, struct sockaddr* addr, socklen_t* addrlen, RawstorIOCallback* cb,
     void* data
 ) RAWSTOR_NOEXCEPT;
@@ -243,7 +243,7 @@ int rawstor_fd_accept(
  *
  * @param event   Output parameter that receives an opaque event handle for
  *                controlling the multishot accept operation. This handle must
- *                be used to cancel the operation via `rawstor_fd_cancel()`.
+ *                be used to cancel the operation via `rawio_cancel()`.
  *                The handle remains valid until the operation terminates.
  *
  * @return        0 on successful registration of the multishot accept
@@ -252,11 +252,11 @@ int rawstor_fd_accept(
  * @note          The caller must close the client socket when finished.
  *
  * @note          The operation continues indefinitely until:
- *                - Explicitly canceled with `rawstor_fd_cancel()`
+ *                - Explicitly canceled with `rawio_cancel()`
  *                - An error occurs (e.g., the listening socket is closed)
  *
  * @warning       After an error occurs, the operation automatically terminates.
- *                Calling `rawstor_fd_cancel()` on an already‑terminated event
+ *                Calling `rawio_cancel()` on an already‑terminated event
  *                returns `-ENOENT` and no further callbacks are invoked.
  *
  * @warning       The callback is invoked from an I/O completion context.
@@ -264,34 +264,34 @@ int rawstor_fd_accept(
  *                the callback. Instead, queue the accepted socket for later
  *                processing.
  *
- * @see           rawstor_fd_accept() for a single‑shot version.
- * @see           rawstor_fd_cancel() for terminating the operation.
+ * @see           rawio_accept() for a single‑shot version.
+ * @see           rawio_cancel() for terminating the operation.
  * @see           accept(2), getpeername(2).
  */
-int rawstor_fd_accept_multishot(
+int rawio_accept_multishot(
     int fd, RawstorIOCallback* cb, void* data, RawstorIOEvent** event
 ) RAWSTOR_NOEXCEPT;
 
-int rawstor_fd_read(
+int rawio_read(
     int fd, void* buf, size_t size, RawstorIOCallback* cb, void* data
 ) RAWSTOR_NOEXCEPT;
 
-int rawstor_fd_readv(
+int rawio_readv(
     int fd, struct iovec* iov, unsigned int niov, RawstorIOCallback* cb,
     void* data
 ) RAWSTOR_NOEXCEPT;
 
-int rawstor_fd_pread(
+int rawio_pread(
     int fd, void* buf, size_t size, off_t offset, RawstorIOCallback* cb,
     void* data
 ) RAWSTOR_NOEXCEPT;
 
-int rawstor_fd_preadv(
+int rawio_preadv(
     int fd, struct iovec* iov, unsigned int niov, off_t offset,
     RawstorIOCallback* cb, void* data
 ) RAWSTOR_NOEXCEPT;
 
-int rawstor_fd_recv(
+int rawio_recv(
     int fd, void* buf, size_t size, unsigned int flags, RawstorIOCallback* cb,
     void* data
 ) RAWSTOR_NOEXCEPT;
@@ -333,9 +333,9 @@ int rawstor_fd_recv(
  *
  * @param event      Output parameter that receives an opaque event handle.
  *                   This handle must be used to cancel the operation via
- *                   rawstor_fd_cancel(). The handle must be preserved until
- *                   the operation terminates (either via explicit
- *                   cancellation or error).
+ *                   rawio_cancel(). The handle must be preserved until the
+ *                   operation terminates (either via explicit cancellation or
+ *                   error).
  *
  * @return           0 on successful registration of the multishot operation.
  *                   Negative error code on failure.
@@ -346,52 +346,52 @@ int rawstor_fd_recv(
  *                   error in the callback and automatic termination.
  *
  * @warning          Once initiated, the operation continues indefinitely until:
- *                   - Explicitly canceled via rawstor_fd_cancel()
+ *                   - Explicitly canceled via rawio_cancel()
  *                   - An error occurs (e.g., socket closure, buffer overflow)
  *
  * @warning          After an error occurs, the operation automatically cancels
- *                   itself. Calling rawstor_fd_cancel() on an
- *                   already-terminated event is unnecessary and will return
+ *                   itself. Calling rawio_cancel() on an already-terminated
+ *                   event is unnecessary and will return
  *                   -ENOENT.
  *
- * @see              rawstor_fd_cancel() for operation termination.
+ * @see              rawio_cancel() for operation termination.
  */
-int rawstor_fd_recv_multishot(
+int rawio_recv_multishot(
     int fd, size_t entry_size, unsigned int entries, size_t size,
     unsigned int flags, RawstorIOMultishotVectorCallback* cb, void* data,
     RawstorIOEvent** event
 ) RAWSTOR_NOEXCEPT;
 
-int rawstor_fd_recvmsg(
+int rawio_recvmsg(
     int fd, struct msghdr* msg, unsigned int flags, RawstorIOCallback* cb,
     void* data
 ) RAWSTOR_NOEXCEPT;
 
-int rawstor_fd_write(
+int rawio_write(
     int fd, const void* buf, size_t size, RawstorIOCallback* cb, void* data
 ) RAWSTOR_NOEXCEPT;
 
-int rawstor_fd_writev(
+int rawio_writev(
     int fd, const struct iovec* iov, unsigned int niov, RawstorIOCallback* cb,
     void* data
 ) RAWSTOR_NOEXCEPT;
 
-int rawstor_fd_pwrite(
+int rawio_pwrite(
     int fd, const void* buf, size_t size, off_t offset, RawstorIOCallback* cb,
     void* data
 ) RAWSTOR_NOEXCEPT;
 
-int rawstor_fd_pwritev(
+int rawio_pwritev(
     int fd, const struct iovec* iov, unsigned int niov, off_t offset,
     RawstorIOCallback* cb, void* data
 ) RAWSTOR_NOEXCEPT;
 
-int rawstor_fd_send(
+int rawio_send(
     int fd, const void* buf, size_t size, unsigned int flags,
     RawstorIOCallback* cb, void* data
 ) RAWSTOR_NOEXCEPT;
 
-int rawstor_fd_sendmsg(
+int rawio_sendmsg(
     int fd, const struct msghdr* msg, unsigned int flags, RawstorIOCallback* cb,
     void* data
 ) RAWSTOR_NOEXCEPT;
@@ -428,19 +428,19 @@ int rawstor_fd_sendmsg(
  *              terminated due to an error, calling this function will return
  *              -ENOENT and no additional callback will be invoked. The event
  *              handle becomes invalid immediately upon successful return from
- *              rawstor_fd_cancel() and must not be used afterwards, even though
- *              the cancellation callback may still be pending.
+ *              rawio_cancel() and must not be used afterwards, even though the
+ *              cancellation callback may still be pending.
  *
  * @warning     After an error occurs in the multishot operation (e.g., socket
  *              error, ring buffer overflow with ENOBUFS), the operation
- *              automatically terminates. Calling `rawstor_fd_cancel()` in such
+ *              automatically terminates. Calling `rawio_cancel()` in such
  *              cases is unnecessary and will return -ENOENT.
  *
- * @see         rawstor_fd_poll_multishot(), rawstor_fd_recv_multishot() for
+ * @see         rawio_poll_multishot(), rawio_recv_multishot() for
  *              establishing multishot operations.
  *
  */
-int rawstor_fd_cancel(RawstorIOEvent* event) RAWSTOR_NOEXCEPT;
+int rawio_cancel(RawstorIOEvent* event) RAWSTOR_NOEXCEPT;
 
 /**
  * @brief Cancel all ongoing I/O operations associated with a file descriptor.
@@ -471,9 +471,9 @@ int rawstor_fd_cancel(RawstorIOEvent* event) RAWSTOR_NOEXCEPT;
  *              rawstor_wait()) before the operations are fully terminated.
  *              After those callbacks return, no further callbacks will occur.
  *
- * @see rawstor_fd_cancel(RawstorIOEvent*)
+ * @see         rawio_cancel(RawstorIOEvent*)
  */
-int rawstor_fd_cancel_all(int fd) RAWSTOR_NOEXCEPT;
+int rawio_cancel_all(int fd) RAWSTOR_NOEXCEPT;
 
 #ifdef __cplusplus
 }
