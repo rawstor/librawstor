@@ -5,11 +5,11 @@ extern "C" {
 #include "standard-headers/linux/virtio_blk.h"
 }
 
-#include <rawstorstd/endian.h>
-#include <rawstorstd/gpp.hpp>
-#include <rawstorstd/iovec.h>
-#include <rawstorstd/logging.h>
-#include <rawstorstd/uri.hpp>
+#include <rawstd/endian.h>
+#include <rawstd/gpp.hpp>
+#include <rawstd/iovec.h>
+#include <rawstd/logging.h>
+#include <rawstd/uri.hpp>
 
 #include <rawstor.h>
 
@@ -72,11 +72,11 @@ public:
     inline unsigned int out_niov() noexcept { return _out_niov; }
 
     inline uint32_t type() noexcept {
-        return RAWSTOR_LE32TOH(_out.type) & ~VIRTIO_BLK_T_BARRIER;
+        return RAWSTD_LE32TOH(_out.type) & ~VIRTIO_BLK_T_BARRIER;
     }
 
     inline uint64_t offset() noexcept {
-        return RAWSTOR_LE64TOH(_out.sector) << VIRTIO_BLK_SECTOR_BITS;
+        return RAWSTD_LE64TOH(_out.sector) << VIRTIO_BLK_SECTOR_BITS;
     }
 
     void push(unsigned char status, size_t size);
@@ -93,17 +93,17 @@ Request::Request(
     _in_niov(_elem->in_num),
     _out_iov(_elem->out_sg),
     _out_niov(_elem->out_num) {
-    if (rawstor_iovec_to_buf(_out_iov, _out_niov, 0, &_out, sizeof(_out)) !=
+    if (rawstd_iovec_to_buf(_out_iov, _out_niov, 0, &_out, sizeof(_out)) !=
         sizeof(_out)) {
-        rawstor_error("virtio-blk request outhdr too short");
-        RAWSTOR_THROW_SYSTEM_ERROR(EINVAL);
+        rawstd_error("virtio-blk request outhdr too short");
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
 
-    rawstor_iovec_discard_front(&_out_iov, &_out_niov, sizeof(_out));
+    rawstd_iovec_discard_front(&_out_iov, &_out_niov, sizeof(_out));
 
     if (_in_iov[_in_niov - 1].iov_len < sizeof(virtio_blk_inhdr)) {
-        rawstor_error("virtio-blk request inhdr too short");
-        RAWSTOR_THROW_SYSTEM_ERROR(EINVAL);
+        rawstd_error("virtio-blk request inhdr too short");
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
 
     _in = reinterpret_cast<virtio_blk_inhdr*>(
@@ -111,7 +111,7 @@ Request::Request(
         _in_iov[_in_niov - 1].iov_len - sizeof(virtio_blk_inhdr)
     );
 
-    rawstor_iovec_discard_back(&_in_iov, &_in_niov, sizeof(virtio_blk_inhdr));
+    rawstd_iovec_discard_back(&_in_iov, &_in_niov, sizeof(virtio_blk_inhdr));
 }
 
 void Request::push(unsigned char status, size_t size) {
@@ -192,7 +192,7 @@ public:
 void poll(int fd, std::unique_ptr<TaskPoll> t) {
     int res = rawstor_fd_poll(fd, t->mask(), t->callback, t.get());
     if (res) {
-        RAWSTOR_THROW_SYSTEM_ERROR(-res);
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
     t.release();
 }
@@ -240,7 +240,7 @@ public:
 
 void TaskDispatch::operator()(size_t result, int error) {
     if (error != 0) {
-        RAWSTOR_THROW_SYSTEM_ERROR(error);
+        RAWSTD_THROW_SYSTEM_ERROR(error);
     }
 
     if (result & POLLNVAL) {
@@ -248,7 +248,7 @@ void TaskDispatch::operator()(size_t result, int error) {
     }
 
     if (result & POLLERR) {
-        RAWSTOR_THROW_SYSTEM_ERROR(EBADF);
+        RAWSTD_THROW_SYSTEM_ERROR(EBADF);
     }
 
     if (result & POLLIN) {
@@ -256,7 +256,7 @@ void TaskDispatch::operator()(size_t result, int error) {
     }
 
     if (result & POLLHUP) {
-        RAWSTOR_THROW_SYSTEM_ERROR(EPIPE);
+        RAWSTD_THROW_SYSTEM_ERROR(EPIPE);
     }
 
     std::unique_ptr<TaskDispatch> t = std::make_unique<TaskDispatch>(_device);
@@ -265,7 +265,7 @@ void TaskDispatch::operator()(size_t result, int error) {
 
 void TaskWatch::operator()(size_t result, int error) {
     if (error != 0) {
-        RAWSTOR_THROW_SYSTEM_ERROR(error);
+        RAWSTD_THROW_SYSTEM_ERROR(error);
     }
 
     if (result & POLLNVAL) {
@@ -273,7 +273,7 @@ void TaskWatch::operator()(size_t result, int error) {
     }
 
     if (result & POLLERR) {
-        RAWSTOR_THROW_SYSTEM_ERROR(EBADF);
+        RAWSTD_THROW_SYSTEM_ERROR(EBADF);
     }
 
     int watch = _device.find_watch(_fd);
@@ -283,7 +283,7 @@ void TaskWatch::operator()(size_t result, int error) {
     }
 
     if (result & POLLHUP) {
-        RAWSTOR_THROW_SYSTEM_ERROR(EPIPE);
+        RAWSTD_THROW_SYSTEM_ERROR(EPIPE);
     }
 
     if (watch) {
@@ -295,13 +295,13 @@ void TaskWatch::operator()(size_t result, int error) {
 
 void ObjectTask::operator()(size_t size, size_t result, int error) {
     if (error != 0) {
-        rawstor_error("%s\n", strerror(error));
+        rawstd_error("%s\n", strerror(error));
         _req->push(VIRTIO_BLK_S_IOERR, result);
         return;
     }
 
     if (result != size) {
-        rawstor_error("Partial object operation: %zu != %zu\n", result, size);
+        rawstd_error("Partial object operation: %zu != %zu\n", result, size);
         _req->push(VIRTIO_BLK_S_IOERR, result);
         return;
     }
@@ -312,27 +312,27 @@ void ObjectTask::operator()(size_t size, size_t result, int error) {
 void ObjectTask::preadv() {
     int res = rawstor_object_preadv(
         _req->device().object(), _req->in_iov(), _req->in_niov(),
-        rawstor_iovec_size(_req->in_iov(), _req->in_niov()), _req->offset(),
+        rawstd_iovec_size(_req->in_iov(), _req->in_niov()), _req->offset(),
         callback, this
     );
     if (res) {
-        RAWSTOR_THROW_SYSTEM_ERROR(-res);
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 }
 
 void ObjectTask::pwritev() {
     int res = rawstor_object_pwritev(
         _req->device().object(), _req->out_iov(), _req->out_niov(),
-        rawstor_iovec_size(_req->out_iov(), _req->out_niov()), _req->offset(),
+        rawstd_iovec_size(_req->out_iov(), _req->out_niov()), _req->offset(),
         callback, this
     );
     if (res) {
-        RAWSTOR_THROW_SYSTEM_ERROR(-res);
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 }
 
 void panic(VuDev*, const char* err) {
-    rawstor_error("libvhost-user: %s\n", err);
+    rawstd_error("libvhost-user: %s\n", err);
 }
 
 void set_watch(VuDev* dev, int fd, int condition, vu_watch_cb cb, void* data) {
@@ -368,7 +368,7 @@ void set_protocol_features(VuDev* dev, uint64_t features) {
 }
 
 void process_request(std::unique_ptr<Request> req) {
-    size_t in_size = rawstor_iovec_size(req->in_iov(), req->in_niov());
+    size_t in_size = rawstd_iovec_size(req->in_iov(), req->in_niov());
 
     switch (req->type()) {
     case VIRTIO_BLK_T_IN: {
@@ -378,7 +378,7 @@ void process_request(std::unique_ptr<Request> req) {
             t->preadv();
             t.release();
         } catch (const std::exception& e) {
-            rawstor_error("%s\n", e.what());
+            rawstd_error("%s\n", e.what());
             t->req()->push(VIRTIO_BLK_S_IOERR, in_size);
         }
         break;
@@ -391,7 +391,7 @@ void process_request(std::unique_ptr<Request> req) {
             t->pwritev();
             t.release();
         } catch (const std::exception& e) {
-            rawstor_error("%s\n", e.what());
+            rawstd_error("%s\n", e.what());
             t->req()->push(VIRTIO_BLK_S_IOERR, in_size);
         }
         break;
@@ -403,7 +403,7 @@ void process_request(std::unique_ptr<Request> req) {
             int res =
                 rawstor_object_id(req->device().object(), uuid, sizeof(uuid));
             if (res < 0) {
-                RAWSTOR_THROW_SYSTEM_ERROR(-res);
+                RAWSTD_THROW_SYSTEM_ERROR(-res);
             }
 
             size_t size = std::min(in_size, (size_t)VIRTIO_BLK_ID_BYTES);
@@ -415,11 +415,11 @@ void process_request(std::unique_ptr<Request> req) {
                 size = sizeof(uuid);
             }
 
-            rawstor_iovec_from_buf(req->in_iov(), req->in_niov(), 0, at, size);
+            rawstd_iovec_from_buf(req->in_iov(), req->in_niov(), 0, at, size);
 
             req->push(VIRTIO_BLK_S_OK, in_size);
         } catch (const std::exception& e) {
-            rawstor_error("%s\n", e.what());
+            rawstd_error("%s\n", e.what());
             req->push(VIRTIO_BLK_S_IOERR, in_size);
         }
         break;
@@ -453,7 +453,7 @@ void process_vq(VuDev* dev, int qidx) {
                 std::make_unique<Request>(d, vq, std::move(elem));
             process_request(std::move(req));
         } catch (const std::exception& e) {
-            rawstor_error("%s\n", e.what());
+            rawstd_error("%s\n", e.what());
         }
     }
 }
@@ -469,7 +469,7 @@ int get_config(VuDev* dev, uint8_t* config, uint32_t len) {
         d.get_config(config, len);
         return 0;
     } catch (const std::exception& e) {
-        rawstor_error("%s\n", e.what());
+        rawstd_error("%s\n", e.what());
         return -1;
     }
 }
@@ -483,7 +483,7 @@ int set_config(
         d.set_config(data, offset, size, flags);
         return 0;
     } catch (const std::exception& e) {
-        rawstor_error("%s\n", e.what());
+        rawstd_error("%s\n", e.what());
         return -1;
     }
 }
@@ -525,12 +525,12 @@ Device::Device(const std::string& target, int fd) :
 
     int ires = rawstor_object_spec(target.c_str(), &_spec);
     if (ires) {
-        RAWSTOR_THROW_SYSTEM_ERROR(-ires);
+        RAWSTD_THROW_SYSTEM_ERROR(-ires);
     }
 
     ires = rawstor_object_open(target.c_str(), &_object);
     if (ires) {
-        RAWSTOR_THROW_SYSTEM_ERROR(-ires);
+        RAWSTD_THROW_SYSTEM_ERROR(-ires);
     }
 
     _blk_config->capacity = _spec.size >> VIRTIO_BLK_SECTOR_BITS;
@@ -625,15 +625,15 @@ void Device::set_config(
 ) {
     /* don't support live migration */
     if (flags != VHOST_SET_CONFIG_TYPE_FRONTEND) {
-        RAWSTOR_THROW_SYSTEM_ERROR(EINVAL);
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
 
     if (offset != offsetof(virtio_blk_config, wce)) {
-        RAWSTOR_THROW_SYSTEM_ERROR(EINVAL);
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
 
     if (size != 1) {
-        RAWSTOR_THROW_SYSTEM_ERROR(EINVAL);
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
 
     _blk_config->wce = *data;
@@ -675,7 +675,7 @@ void Device::loop() {
         }
 
         if (res < 0) {
-            RAWSTOR_THROW_SYSTEM_ERROR(-res);
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
         }
     }
 }

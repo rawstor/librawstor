@@ -4,7 +4,7 @@
 #include "poll_event.hpp"
 #include "poll_queue.hpp"
 
-#include <rawstorstd/ringbuf.hpp>
+#include <rawstd/ringbuf.hpp>
 
 #include <list>
 #include <memory>
@@ -19,27 +19,27 @@ class Session final {
 private:
     int _fd;
     std::list<std::unique_ptr<EventSimplexPoll>> _poll_sqes;
-    rawstor::RingBuf<EventSimplex> _read_sqes;
-    rawstor::RingBuf<Event> _write_sqes;
+    rawstd::RingBuf<EventSimplex> _read_sqes;
+    rawstd::RingBuf<Event> _write_sqes;
 
-    void _process_poll(rawstor::RingBuf<Event>& cqes, short revents);
+    void _process_poll(rawstd::RingBuf<Event>& cqes, short revents);
 
     void _process_simplex_read(
-        std::unique_ptr<EventSimplex> event, rawstor::RingBuf<Event>& cqes
+        std::unique_ptr<EventSimplex> event, rawstd::RingBuf<Event>& cqes
     );
 
     void _process_simplex_write(
-        std::unique_ptr<EventSimplex> event, rawstor::RingBuf<Event>& cqes
+        std::unique_ptr<EventSimplex> event, rawstd::RingBuf<Event>& cqes
     );
 
     void _process_multiplex_write(
         std::vector<std::unique_ptr<EventMultiplex>>& events, unsigned int niov,
-        rawstor::RingBuf<Event>& cqes
+        rawstd::RingBuf<Event>& cqes
     );
 
-    void _process_read(rawstor::RingBuf<Event>& cqes);
+    void _process_read(rawstd::RingBuf<Event>& cqes);
 
-    void _process_write(rawstor::RingBuf<Event>& cqes);
+    void _process_write(rawstd::RingBuf<Event>& cqes);
 
 public:
     Session(int fd, unsigned int depth);
@@ -64,11 +64,11 @@ public:
 
     void write(std::unique_ptr<Event> event);
 
-    bool cancel(rawstor::io::Event* event, rawstor::RingBuf<Event>& cqes);
+    bool cancel(rawstor::io::Event* event, rawstd::RingBuf<Event>& cqes);
 
-    void cancel(rawstor::RingBuf<Event>& cqes);
+    void cancel(rawstd::RingBuf<Event>& cqes);
 
-    void process(RingBuf<Event>& cqes, short revents);
+    void process(rawstd::RingBuf<Event>& cqes, short revents);
 };
 
 } // namespace poll

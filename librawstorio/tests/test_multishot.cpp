@@ -1,8 +1,8 @@
 #include "fixture.hpp"
 #include "server.hpp"
 
-#include <rawstorstd/gpp.hpp>
-#include <rawstorstd/iovec.h>
+#include <rawstd/gpp.hpp>
+#include <rawstd/iovec.h>
 
 #include <gtest/gtest.h>
 
@@ -27,7 +27,7 @@ public:
         _result(result),
         _error(error) {
         if (result > 0) {
-            rawstor_iovec_to_buf(iov, niov, 0, _data.data(), result);
+            rawstd_iovec_to_buf(iov, niov, 0, _data.data(), result);
         }
     }
 
@@ -95,7 +95,7 @@ TEST_F(MultishotTest, accept) {
             addr.sun_path, sizeof(addr.sun_path), "%s",
             client_socket.name().data()
         ) < 0) {
-        RAWSTOR_THROW_ERRNO();
+        RAWSTD_THROW_ERRNO();
     }
 
     _server.connect(

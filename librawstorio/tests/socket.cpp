@@ -1,6 +1,6 @@
 #include "socket.hpp"
 
-#include <rawstorstd/gpp.hpp>
+#include <rawstd/gpp.hpp>
 
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -17,7 +17,7 @@ namespace tests {
 Socket::Socket() : _fd(-1) {
     _fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (_fd == -1) {
-        RAWSTOR_THROW_ERRNO();
+        RAWSTD_THROW_ERRNO();
     }
 }
 
@@ -37,13 +37,13 @@ void Socket::listen() {
 
     int fd = mkstemp(tpl);
     if (fd == -1) {
-        RAWSTOR_THROW_ERRNO();
+        RAWSTD_THROW_ERRNO();
     }
 
     close(fd);
 
     if (unlink(tpl) == -1) {
-        RAWSTOR_THROW_ERRNO();
+        RAWSTD_THROW_ERRNO();
     }
 
     _name = tpl;
@@ -52,15 +52,15 @@ void Socket::listen() {
     addr.sun_family = AF_UNIX;
     if (snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", _name.data()) <
         0) {
-        RAWSTOR_THROW_ERRNO();
+        RAWSTD_THROW_ERRNO();
     }
 
     if (::bind(_fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == -1) {
-        RAWSTOR_THROW_ERRNO();
+        RAWSTD_THROW_ERRNO();
     }
 
     if (::listen(_fd, 1)) {
-        RAWSTOR_THROW_ERRNO();
+        RAWSTD_THROW_ERRNO();
     }
 }
 
@@ -72,12 +72,12 @@ void Socket::connect(const Socket& other) {
     if (snprintf(
             addr.sun_path, sizeof(addr.sun_path), "%s", other._name.data()
         ) < 0) {
-        RAWSTOR_THROW_ERRNO();
+        RAWSTD_THROW_ERRNO();
     }
 
     if (::connect(_fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) ==
         -1) {
-        RAWSTOR_THROW_ERRNO();
+        RAWSTD_THROW_ERRNO();
     }
 }
 

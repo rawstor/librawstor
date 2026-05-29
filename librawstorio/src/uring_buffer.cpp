@@ -1,7 +1,7 @@
 #include "uring_buffer.hpp"
 
-#include <rawstorstd/gpp.hpp>
-#include <rawstorstd/logging.h>
+#include <rawstd/gpp.hpp>
+#include <rawstd/logging.h>
 
 #include <sys/mman.h>
 
@@ -81,7 +81,7 @@ BufferRing::BufferRing(
         // TODO: Replace with io_uring_setup_buf_ring()?
         int res = io_uring_register_buf_ring(&_ring, &reg, 0);
         if (res < 0) {
-            RAWSTOR_THROW_SYSTEM_ERROR(-res);
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
         }
 
         for (unsigned int i = 0; i < entries; ++i) {
@@ -105,7 +105,7 @@ BufferRing::~BufferRing() {
     munmap(_buf_ring, _buf_ring_size);
     int res = io_uring_unregister_buf_ring(&_ring, _id);
     if (res < 0) {
-        rawstor_error(
+        rawstd_error(
             "io_uring_unregister_buf_ring() failed: %s\n", strerror(-res)
         );
     }

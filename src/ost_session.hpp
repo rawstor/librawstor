@@ -4,8 +4,8 @@
 #include "ost_protocol.h"
 #include "session.hpp"
 
-#include <rawstorstd/ringbuf.hpp>
-#include <rawstorstd/uri.hpp>
+#include <rawstd/ringbuf.hpp>
+#include <rawstd/uri.hpp>
 
 #include <rawstorio/queue.hpp>
 
@@ -33,7 +33,10 @@ private:
     int _connect();
 
 public:
-    Session(rawstor::io::Queue& queue, const URI& location, unsigned int depth);
+    Session(
+        rawstor::io::Queue& queue, const rawstd::URI& location,
+        unsigned int depth
+    );
     ~Session();
 
     void read_response_head();
@@ -41,14 +44,14 @@ public:
     void read_response_body(iovec* iov, unsigned int niov, size_t size);
 
     void create(
-        const RawstorUUID& id, const RawstorObjectSpec& sp,
+        const RawstdUUID& id, const RawstorObjectSpec& sp,
         std::function<void(int)>&& cb
     ) override;
 
-    void remove(const RawstorUUID& id, std::function<void(int)>&& cb) override;
+    void remove(const RawstdUUID& id, std::function<void(int)>&& cb) override;
 
     void spec(
-        const RawstorUUID& id,
+        const RawstdUUID& id,
         std::function<void(const RawstorObjectSpec&, int)>&& cb
     ) override;
 

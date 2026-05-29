@@ -1,9 +1,9 @@
 #ifndef RAWSTORIO_POLL_EVENT_HPP
 #define RAWSTORIO_POLL_EVENT_HPP
 
-#include <rawstorstd/iovec.h>
-#include <rawstorstd/logging.hpp>
-#include <rawstorstd/ringbuf.hpp>
+#include <rawstd/iovec.h>
+#include <rawstd/logging.hpp>
+#include <rawstd/ringbuf.hpp>
 
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -34,9 +34,9 @@ protected:
     int _error;
 
 public:
-    rawstor::TraceEvent trace_event;
+    rawstd::TraceEvent trace_event;
 
-    Event(Queue& q, int fd, const rawstor::TraceEvent& trace_event) :
+    Event(Queue& q, int fd, const rawstd::TraceEvent& trace_event) :
         _q(q),
         _fd(fd),
         _result(0),
@@ -50,9 +50,9 @@ public:
     Event& operator=(Event&&) = delete;
 
     inline void set_error(int error) noexcept {
-#ifdef RAWSTOR_TRACE_EVENTS
+#ifdef RAWSTD_TRACE_EVENTS
         if (error != 0) {
-            RAWSTOR_TRACE_EVENT_MESSAGE(
+            RAWSTD_TRACE_EVENT_MESSAGE(
                 trace_event, "error %s\n", strerror(error)
             );
         }
@@ -79,7 +79,7 @@ public:
 
 class EventSimplex : public Event {
 public:
-    EventSimplex(Queue& q, int fd, const rawstor::TraceEvent& trace_event) :
+    EventSimplex(Queue& q, int fd, const rawstd::TraceEvent& trace_event) :
         Event(q, fd, trace_event) {}
 
     virtual ~EventSimplex() override = default;
@@ -93,7 +93,7 @@ private:
 
 public:
     EventMultiplex(
-        Queue& q, int fd, const rawstor::TraceEvent& trace_event,
+        Queue& q, int fd, const rawstd::TraceEvent& trace_event,
         std::function<void(size_t, int)>&& cb
     ) :
         Event(q, fd, trace_event),
@@ -120,7 +120,7 @@ protected:
 public:
     EventMultiplexScalar(
         Queue& q, int fd, const void* buf, size_t size,
-        const rawstor::TraceEvent& trace_event,
+        const rawstd::TraceEvent& trace_event,
         std::function<void(size_t, int)>&& cb
     ) :
         EventMultiplex(q, fd, trace_event, std::move(cb)),
@@ -148,12 +148,12 @@ protected:
 public:
     EventMultiplexVector(
         Queue& q, int fd, const iovec* iov, unsigned int niov,
-        const rawstor::TraceEvent& trace_event,
+        const rawstd::TraceEvent& trace_event,
         std::function<void(size_t, int)>&& cb
     ) :
         EventMultiplex(q, fd, trace_event, std::move(cb)),
         _niov_at(niov),
-        _size_at(rawstor_iovec_size(iov, niov)) {
+        _size_at(rawstd_iovec_size(iov, niov)) {
         _iov.reserve(_niov_at);
         for (unsigned int i = 0; i < _niov_at; ++i) {
             _iov.push_back(iov[i]);
@@ -179,7 +179,7 @@ private:
 public:
     EventSimplexPoll(
         Queue& q, int fd, unsigned int mask,
-        const rawstor::TraceEvent& trace_event
+        const rawstd::TraceEvent& trace_event
     ) :
         EventSimplex(q, fd, trace_event),
         _mask(mask) {}
@@ -206,7 +206,7 @@ private:
 public:
     EventSimplexPollOneshot(
         Queue& q, int fd, unsigned int mask,
-        const rawstor::TraceEvent& trace_event,
+        const rawstd::TraceEvent& trace_event,
         std::function<void(size_t, int)>&& cb
     ) :
         EventSimplexPoll(q, fd, mask, trace_event),
@@ -222,7 +222,7 @@ private:
 public:
     EventSimplexPollMultishot(
         Queue& q, int fd, unsigned int mask,
-        const rawstor::TraceEvent& trace_event,
+        const rawstd::TraceEvent& trace_event,
         std::function<void(size_t, int)>&& cb
     ) :
         EventSimplexPoll(q, fd, mask, trace_event),
@@ -236,7 +236,7 @@ public:
 class EventSimplexAccept : public EventSimplex {
 public:
     EventSimplexAccept(
-        Queue& q, int fd, const rawstor::TraceEvent& trace_event
+        Queue& q, int fd, const rawstd::TraceEvent& trace_event
     ) :
         EventSimplex(q, fd, trace_event) {}
 
@@ -260,7 +260,7 @@ private:
 public:
     EventSimplexAcceptOneshot(
         Queue& q, int fd, sockaddr* addr, socklen_t* addrlen,
-        const rawstor::TraceEvent& trace_event,
+        const rawstd::TraceEvent& trace_event,
         std::function<void(size_t, int)>&& cb
     ) :
         EventSimplexAccept(q, fd, trace_event),
@@ -281,7 +281,7 @@ private:
 
 public:
     EventSimplexAcceptMultishot(
-        Queue& q, int fd, const rawstor::TraceEvent& trace_event,
+        Queue& q, int fd, const rawstd::TraceEvent& trace_event,
         std::function<void(size_t, int)>&& cb
     ) :
         EventSimplexAccept(q, fd, trace_event),
@@ -303,7 +303,7 @@ private:
 public:
     EventSimplexScalarRead(
         Queue& q, int fd, void* buf, size_t size,
-        const rawstor::TraceEvent& trace_event,
+        const rawstd::TraceEvent& trace_event,
         std::function<void(size_t, int)>&& cb
     ) :
         EventSimplex(q, fd, trace_event),
@@ -331,7 +331,7 @@ private:
 public:
     EventSimplexVectorRead(
         Queue& q, int fd, iovec* iov, unsigned int niov,
-        const rawstor::TraceEvent& trace_event,
+        const rawstd::TraceEvent& trace_event,
         std::function<void(size_t, int)>&& cb
     ) :
         EventSimplex(q, fd, trace_event),
@@ -360,7 +360,7 @@ private:
 public:
     EventSimplexScalarPositionalRead(
         Queue& q, int fd, void* buf, size_t size, off_t offset,
-        const rawstor::TraceEvent& trace_event,
+        const rawstd::TraceEvent& trace_event,
         std::function<void(size_t, int)>&& cb
     ) :
         EventSimplex(q, fd, trace_event),
@@ -390,7 +390,7 @@ private:
 public:
     EventSimplexVectorPositionalRead(
         Queue& q, int fd, iovec* iov, unsigned int niov, off_t offset,
-        const rawstor::TraceEvent& trace_event,
+        const rawstd::TraceEvent& trace_event,
         std::function<void(size_t, int)>&& cb
     ) :
         EventSimplex(q, fd, trace_event),
@@ -420,7 +420,7 @@ private:
 public:
     EventSimplexScalarRecv(
         Queue& q, int fd, void* buf, size_t size, unsigned int flags,
-        const rawstor::TraceEvent& trace_event,
+        const rawstd::TraceEvent& trace_event,
         std::function<void(size_t, int)>&& cb
     ) :
         EventSimplex(q, fd, trace_event),
@@ -487,14 +487,14 @@ private:
     size_t _size;
     size_t _pending_offset;
     size_t _pending_size;
-    rawstor::RingBuf<EventSimplexVectorRecvMultishotEntry> _pending_entries;
+    rawstd::RingBuf<EventSimplexVectorRecvMultishotEntry> _pending_entries;
     unsigned int _flags;
     std::function<size_t(const iovec* iov, unsigned int niov, size_t, int)> _cb;
 
 public:
     EventSimplexVectorRecvMultishot(
         Queue& q, int fd, size_t entry_size, unsigned int entries, size_t size,
-        unsigned int flags, const rawstor::TraceEvent& trace_event,
+        unsigned int flags, const rawstd::TraceEvent& trace_event,
         std::function<
             size_t(const iovec* iov, unsigned int niov, size_t, int)>&& cb
     ) :
@@ -528,7 +528,7 @@ private:
 public:
     EventSimplexMessageRead(
         Queue& q, int fd, msghdr* msg, unsigned int flags,
-        const rawstor::TraceEvent& trace_event,
+        const rawstd::TraceEvent& trace_event,
         std::function<void(size_t, int)>&& cb
     ) :
         EventSimplex(q, fd, trace_event),
@@ -551,7 +551,7 @@ class EventMultiplexScalarWrite final : public EventMultiplexScalar {
 public:
     EventMultiplexScalarWrite(
         Queue& q, int fd, const void* buf, size_t size,
-        const rawstor::TraceEvent& trace_event,
+        const rawstd::TraceEvent& trace_event,
         std::function<void(size_t, int)>&& cb
     ) :
         EventMultiplexScalar(q, fd, buf, size, trace_event, std::move(cb)) {}
@@ -568,7 +568,7 @@ class EventMultiplexVectorWrite final : public EventMultiplexVector {
 public:
     EventMultiplexVectorWrite(
         Queue& q, int fd, const iovec* iov, unsigned int niov,
-        const rawstor::TraceEvent& trace_event,
+        const rawstd::TraceEvent& trace_event,
         std::function<void(size_t, int)>&& cb
     ) :
         EventMultiplexVector(q, fd, iov, niov, trace_event, std::move(cb)) {}
@@ -591,7 +591,7 @@ private:
 public:
     EventSimplexScalarPositionalWrite(
         Queue& q, int fd, const void* buf, size_t size, off_t offset,
-        const rawstor::TraceEvent& trace_event,
+        const rawstd::TraceEvent& trace_event,
         std::function<void(size_t, int)>&& cb
     ) :
         EventSimplex(q, fd, trace_event),
@@ -621,7 +621,7 @@ private:
 public:
     EventSimplexVectorPositionalWrite(
         Queue& q, int fd, const iovec* iov, unsigned int niov, off_t offset,
-        const rawstor::TraceEvent& trace_event,
+        const rawstd::TraceEvent& trace_event,
         std::function<void(size_t, int)>&& cb
     ) :
         EventSimplex(q, fd, trace_event),
@@ -651,7 +651,7 @@ private:
 public:
     EventSimplexScalarSend(
         Queue& q, int fd, const void* buf, size_t size, unsigned int flags,
-        const rawstor::TraceEvent& trace_event,
+        const rawstd::TraceEvent& trace_event,
         std::function<void(size_t, int)>&& cb
     ) :
         EventSimplex(q, fd, trace_event),
@@ -680,7 +680,7 @@ private:
 public:
     EventSimplexMessageWrite(
         Queue& q, int fd, const msghdr* msg, unsigned int flags,
-        const rawstor::TraceEvent& trace_event,
+        const rawstd::TraceEvent& trace_event,
         std::function<void(size_t, int)>&& cb
     ) :
         EventSimplex(q, fd, trace_event),

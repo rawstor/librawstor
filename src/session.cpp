@@ -4,8 +4,8 @@
 #include "file_session.hpp"
 #include "ost_session.hpp"
 
-#include <rawstorstd/logging.h>
-#include <rawstorstd/uri.hpp>
+#include <rawstd/logging.h>
+#include <rawstd/uri.hpp>
 
 #include <sstream>
 #include <stdexcept>
@@ -19,7 +19,7 @@
 namespace rawstor {
 
 Session::Session(
-    rawstor::io::Queue& queue, const URI& location, unsigned int depth
+    rawstor::io::Queue& queue, const rawstd::URI& location, unsigned int depth
 ) :
     _depth(depth),
     _location(location),
@@ -29,11 +29,11 @@ Session::Session(
 
 Session::~Session() {
     if (_fd != -1) {
-        rawstor_info("fd %d: Close\n", _fd);
+        rawstd_info("fd %d: Close\n", _fd);
         if (::close(_fd) == -1) {
             int error = errno;
             errno = 0;
-            rawstor_error(
+            rawstd_error(
                 "Session::~Session(): Close failed: %s\n", strerror(error)
             );
         }
@@ -41,7 +41,7 @@ Session::~Session() {
 }
 
 std::unique_ptr<Session> Session::create(
-    rawstor::io::Queue& queue, const URI& location, unsigned int depth
+    rawstor::io::Queue& queue, const rawstd::URI& location, unsigned int depth
 ) {
     if (location.scheme() == "ost") {
         return std::make_unique<rawstor::ost::Session>(queue, location, depth);
@@ -49,8 +49,8 @@ std::unique_ptr<Session> Session::create(
     if (location.scheme() == "file") {
         return std::make_unique<rawstor::file::Session>(queue, location, depth);
     }
-    rawstor_error("Unexpected URI scheme: %s\n", location.str().c_str());
-    RAWSTOR_THROW_SYSTEM_ERROR(EINVAL);
+    rawstd_error("Unexpected URI scheme: %s\n", location.str().c_str());
+    RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
 }
 
 std::string Session::str() const {

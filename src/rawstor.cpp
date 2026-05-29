@@ -3,9 +3,9 @@
 #include "opts.h"
 #include "rawstor_internals.hpp"
 
-#include <rawstorstd/gpp.hpp>
-#include <rawstorstd/logging.h>
-#include <rawstorstd/uri.hpp>
+#include <rawstd/gpp.hpp>
+#include <rawstd/logging.h>
+#include <rawstd/uri.hpp>
 
 #include <rawstorio/queue.hpp>
 
@@ -37,20 +37,20 @@ int rawstor_initialize(const RawstorOpts* opts) noexcept {
 
         assert(rawstor::io_queue == nullptr);
 
-        res = rawstor_logging_initialize();
+        res = rawstd_logging_initialize();
         if (res) {
-            RAWSTOR_THROW_SYSTEM_ERROR(-res);
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
         }
 
-        rawstor_info(
+        rawstd_info(
             "Rawstor compiled with IO queue engine: %s\n",
             rawstor::io::Queue::engine_name().c_str()
         );
 
         res = rawstor_opts_initialize(opts);
         if (res) {
-            rawstor_logging_terminate();
-            RAWSTOR_THROW_SYSTEM_ERROR(-res);
+            rawstd_logging_terminate();
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
         }
 
         try {
@@ -59,7 +59,7 @@ int rawstor_initialize(const RawstorOpts* opts) noexcept {
             rawstor::io_queue = q.get();
             q.release();
         } catch (...) {
-            rawstor_logging_terminate();
+            rawstd_logging_terminate();
             rawstor_opts_terminate();
             throw;
         }
@@ -70,10 +70,10 @@ int rawstor_initialize(const RawstorOpts* opts) noexcept {
     } catch (const std::bad_alloc& e) {
         return -ENOMEM;
     } catch (const std::exception& e) {
-        rawstor_error("%s\n", e.what());
+        rawstd_error("%s\n", e.what());
         return -EINVAL;
     } catch (...) {
-        rawstor_error("Unexpected error\n");
+        rawstd_error("Unexpected error\n");
         return -EINVAL;
     }
 }
@@ -86,10 +86,10 @@ int rawstor_empty() noexcept {
     } catch (const std::bad_alloc& e) {
         return -ENOMEM;
     } catch (const std::exception& e) {
-        rawstor_error("%s\n", e.what());
+        rawstd_error("%s\n", e.what());
         return -EINVAL;
     } catch (...) {
-        rawstor_error("Unexpected error\n");
+        rawstd_error("Unexpected error\n");
         return -EINVAL;
     }
 }
@@ -99,11 +99,11 @@ void rawstor_terminate() noexcept {
         delete rawstor::io_queue;
         rawstor::io_queue = nullptr;
         rawstor_opts_terminate();
-        rawstor_logging_terminate();
+        rawstd_logging_terminate();
     } catch (const std::exception& e) {
-        rawstor_error("%s\n", e.what());
+        rawstd_error("%s\n", e.what());
     } catch (...) {
-        rawstor_error("Unexpected error\n");
+        rawstd_error("Unexpected error\n");
     }
 }
 
@@ -116,10 +116,10 @@ int rawstor_wait() noexcept {
     } catch (const std::bad_alloc& e) {
         return -ENOMEM;
     } catch (const std::exception& e) {
-        rawstor_error("%s\n", e.what());
+        rawstd_error("%s\n", e.what());
         return -EINVAL;
     } catch (...) {
-        rawstor_error("Unexpected error\n");
+        rawstd_error("Unexpected error\n");
         return -EINVAL;
     }
 }
@@ -131,7 +131,7 @@ int rawstor_fd_poll(
         rawstor::io_queue->poll(fd, mask, [cb, data](size_t result, int error) {
             int res = cb(result, error, data);
             if (res) {
-                RAWSTOR_THROW_SYSTEM_ERROR(-res);
+                RAWSTD_THROW_SYSTEM_ERROR(-res);
             }
         });
         return 0;
@@ -140,10 +140,10 @@ int rawstor_fd_poll(
     } catch (const std::bad_alloc& e) {
         return -ENOMEM;
     } catch (const std::exception& e) {
-        rawstor_error("%s\n", e.what());
+        rawstd_error("%s\n", e.what());
         return -EINVAL;
     } catch (...) {
-        rawstor_error("Unexpected error\n");
+        rawstd_error("Unexpected error\n");
         return -EINVAL;
     }
 }
@@ -156,7 +156,7 @@ int rawstor_fd_read(
             fd, buf, size, [cb, data](size_t result, int error) {
                 int res = cb(result, error, data);
                 if (res) {
-                    RAWSTOR_THROW_SYSTEM_ERROR(-res);
+                    RAWSTD_THROW_SYSTEM_ERROR(-res);
                 }
             }
         );
@@ -166,10 +166,10 @@ int rawstor_fd_read(
     } catch (const std::bad_alloc& e) {
         return -ENOMEM;
     } catch (const std::exception& e) {
-        rawstor_error("%s\n", e.what());
+        rawstd_error("%s\n", e.what());
         return -EINVAL;
     } catch (...) {
-        rawstor_error("Unexpected error\n");
+        rawstd_error("Unexpected error\n");
         return -EINVAL;
     }
 }
@@ -183,7 +183,7 @@ int rawstor_fd_readv(
             fd, iov, niov, [cb, data](size_t result, int error) {
                 int res = cb(result, error, data);
                 if (res) {
-                    RAWSTOR_THROW_SYSTEM_ERROR(-res);
+                    RAWSTD_THROW_SYSTEM_ERROR(-res);
                 }
             }
         );
@@ -193,10 +193,10 @@ int rawstor_fd_readv(
     } catch (const std::bad_alloc& e) {
         return -ENOMEM;
     } catch (const std::exception& e) {
-        rawstor_error("%s\n", e.what());
+        rawstd_error("%s\n", e.what());
         return -EINVAL;
     } catch (...) {
-        rawstor_error("Unexpected error\n");
+        rawstd_error("Unexpected error\n");
         return -EINVAL;
     }
 }
@@ -210,7 +210,7 @@ int rawstor_fd_pread(
             fd, buf, size, offset, [cb, data](size_t result, int error) {
                 int res = cb(result, error, data);
                 if (res) {
-                    RAWSTOR_THROW_SYSTEM_ERROR(-res);
+                    RAWSTD_THROW_SYSTEM_ERROR(-res);
                 }
             }
         );
@@ -220,10 +220,10 @@ int rawstor_fd_pread(
     } catch (const std::bad_alloc& e) {
         return -ENOMEM;
     } catch (const std::exception& e) {
-        rawstor_error("%s\n", e.what());
+        rawstd_error("%s\n", e.what());
         return -EINVAL;
     } catch (...) {
-        rawstor_error("Unexpected error\n");
+        rawstd_error("Unexpected error\n");
         return -EINVAL;
     }
 }
@@ -237,7 +237,7 @@ int rawstor_fd_preadv(
             fd, iov, niov, offset, [cb, data](size_t result, int error) {
                 int res = cb(result, error, data);
                 if (res) {
-                    RAWSTOR_THROW_SYSTEM_ERROR(-res);
+                    RAWSTD_THROW_SYSTEM_ERROR(-res);
                 }
             }
         );
@@ -247,10 +247,10 @@ int rawstor_fd_preadv(
     } catch (const std::bad_alloc& e) {
         return -ENOMEM;
     } catch (const std::exception& e) {
-        rawstor_error("%s\n", e.what());
+        rawstd_error("%s\n", e.what());
         return -EINVAL;
     } catch (...) {
-        rawstor_error("Unexpected error\n");
+        rawstd_error("Unexpected error\n");
         return -EINVAL;
     }
 }
@@ -263,7 +263,7 @@ int rawstor_fd_recvmsg(
             fd, msg, flags, [cb, data](size_t result, int error) {
                 int res = cb(result, error, data);
                 if (res) {
-                    RAWSTOR_THROW_SYSTEM_ERROR(-res);
+                    RAWSTD_THROW_SYSTEM_ERROR(-res);
                 }
             }
         );
@@ -273,10 +273,10 @@ int rawstor_fd_recvmsg(
     } catch (const std::bad_alloc& e) {
         return -ENOMEM;
     } catch (const std::exception& e) {
-        rawstor_error("%s\n", e.what());
+        rawstd_error("%s\n", e.what());
         return -EINVAL;
     } catch (...) {
-        rawstor_error("Unexpected error\n");
+        rawstd_error("Unexpected error\n");
         return -EINVAL;
     }
 }
@@ -289,7 +289,7 @@ int rawstor_fd_write(
             fd, buf, size, [cb, data](size_t result, int error) {
                 int res = cb(result, error, data);
                 if (res) {
-                    RAWSTOR_THROW_SYSTEM_ERROR(-res);
+                    RAWSTD_THROW_SYSTEM_ERROR(-res);
                 }
             }
         );
@@ -299,10 +299,10 @@ int rawstor_fd_write(
     } catch (const std::bad_alloc& e) {
         return -ENOMEM;
     } catch (const std::exception& e) {
-        rawstor_error("%s\n", e.what());
+        rawstd_error("%s\n", e.what());
         return -EINVAL;
     } catch (...) {
-        rawstor_error("Unexpected error\n");
+        rawstd_error("Unexpected error\n");
         return -EINVAL;
     }
 }
@@ -316,7 +316,7 @@ int rawstor_fd_writev(
             fd, iov, niov, [cb, data](size_t result, int error) {
                 int res = cb(result, error, data);
                 if (res) {
-                    RAWSTOR_THROW_SYSTEM_ERROR(-res);
+                    RAWSTD_THROW_SYSTEM_ERROR(-res);
                 }
             }
         );
@@ -326,10 +326,10 @@ int rawstor_fd_writev(
     } catch (const std::bad_alloc& e) {
         return -ENOMEM;
     } catch (const std::exception& e) {
-        rawstor_error("%s\n", e.what());
+        rawstd_error("%s\n", e.what());
         return -EINVAL;
     } catch (...) {
-        rawstor_error("Unexpected error\n");
+        rawstd_error("Unexpected error\n");
         return -EINVAL;
     }
 }
@@ -343,7 +343,7 @@ int rawstor_fd_pwrite(
             fd, buf, size, offset, [cb, data](size_t result, int error) {
                 int res = cb(result, error, data);
                 if (res) {
-                    RAWSTOR_THROW_SYSTEM_ERROR(-res);
+                    RAWSTD_THROW_SYSTEM_ERROR(-res);
                 }
             }
         );
@@ -353,10 +353,10 @@ int rawstor_fd_pwrite(
     } catch (const std::bad_alloc& e) {
         return -ENOMEM;
     } catch (const std::exception& e) {
-        rawstor_error("%s\n", e.what());
+        rawstd_error("%s\n", e.what());
         return -EINVAL;
     } catch (...) {
-        rawstor_error("Unexpected error\n");
+        rawstd_error("Unexpected error\n");
         return -EINVAL;
     }
 }
@@ -370,7 +370,7 @@ int rawstor_fd_pwritev(
             fd, iov, niov, offset, [cb, data](size_t result, int error) {
                 int res = cb(result, error, data);
                 if (res) {
-                    RAWSTOR_THROW_SYSTEM_ERROR(-res);
+                    RAWSTD_THROW_SYSTEM_ERROR(-res);
                 }
             }
         );
@@ -380,10 +380,10 @@ int rawstor_fd_pwritev(
     } catch (const std::bad_alloc& e) {
         return -ENOMEM;
     } catch (const std::exception& e) {
-        rawstor_error("%s\n", e.what());
+        rawstd_error("%s\n", e.what());
         return -EINVAL;
     } catch (...) {
-        rawstor_error("Unexpected error\n");
+        rawstd_error("Unexpected error\n");
         return -EINVAL;
     }
 }
@@ -396,7 +396,7 @@ int rawstor_fd_sendmsg(
             fd, msg, flags, [cb, data](size_t result, int error) {
                 int res = cb(result, error, data);
                 if (res) {
-                    RAWSTOR_THROW_SYSTEM_ERROR(-res);
+                    RAWSTD_THROW_SYSTEM_ERROR(-res);
                 }
             }
         );
@@ -406,10 +406,10 @@ int rawstor_fd_sendmsg(
     } catch (const std::bad_alloc& e) {
         return -ENOMEM;
     } catch (const std::exception& e) {
-        rawstor_error("%s\n", e.what());
+        rawstd_error("%s\n", e.what());
         return -EINVAL;
     } catch (...) {
-        rawstor_error("Unexpected error\n");
+        rawstd_error("Unexpected error\n");
         return -EINVAL;
     }
 }

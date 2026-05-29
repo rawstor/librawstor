@@ -1,8 +1,8 @@
 #ifndef RAWSTOR_OBJECT_HPP
 #define RAWSTOR_OBJECT_HPP
 
-#include <rawstorstd/uri.hpp>
-#include <rawstorstd/uuid.h>
+#include <rawstd/uri.hpp>
+#include <rawstd/uuid.h>
 
 #include <rawstor/object.h>
 
@@ -18,27 +18,27 @@ class Connection;
 
 struct RawstorObject final {
 private:
-    RawstorUUID _id;
+    RawstdUUID _id;
     std::vector<std::unique_ptr<rawstor::Connection>> _cns;
 
 public:
     static void create(
-        const std::vector<rawstor::URI>& locations, const RawstorObjectSpec& sp,
-        std::vector<rawstor::URI>* targets
+        const std::vector<rawstd::URI>& locations, const RawstorObjectSpec& sp,
+        std::vector<rawstd::URI>* targets
     );
-    static void remove(const std::vector<rawstor::URI>& targets);
+    static void remove(const std::vector<rawstd::URI>& targets);
     static void
-    spec(const std::vector<rawstor::URI>& targets, RawstorObjectSpec* sp);
+    spec(const std::vector<rawstd::URI>& targets, RawstorObjectSpec* sp);
 
-    explicit RawstorObject(const std::vector<rawstor::URI>& targets);
+    explicit RawstorObject(const std::vector<rawstd::URI>& targets);
     RawstorObject(const RawstorObject&) = delete;
     RawstorObject(RawstorObject&&) = delete;
     RawstorObject& operator=(const RawstorObject&) = delete;
     RawstorObject& operator=(RawstorObject&&) = delete;
 
-    std::vector<rawstor::URI> locations() const;
+    std::vector<rawstd::URI> locations() const;
 
-    inline const RawstorUUID& id() const noexcept { return _id; }
+    inline const RawstdUUID& id() const noexcept { return _id; }
 
     void pread(
         void* buf, size_t size, off_t offset,

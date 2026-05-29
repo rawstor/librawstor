@@ -1,0 +1,39 @@
+#ifndef RAWSTD_IOVEC_ROUTINES_H
+#define RAWSTD_IOVEC_ROUTINES_H
+
+#include <sys/uio.h>
+
+#include <stddef.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+size_t
+rawstd_iovec_discard_front(struct iovec** iov, unsigned int* niov, size_t size);
+
+size_t
+rawstd_iovec_discard_back(struct iovec** iov, unsigned int* niov, size_t size);
+
+size_t rawstd_iovec_from_buf(
+    struct iovec* iov, unsigned int niov, size_t offset, const void* buf,
+    size_t size
+);
+
+size_t rawstd_iovec_to_buf(
+    const struct iovec* iov, unsigned int niov, size_t offset, void* buf,
+    size_t size
+);
+
+size_t rawstd_iovec_to_iovec(
+    const struct iovec* src_iov, unsigned int src_niov, size_t offset,
+    struct iovec* dst_iov, unsigned int dst_niov
+);
+
+size_t rawstd_iovec_size(const struct iovec* iov, unsigned int niov);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif // RAWSTD_IOVEC_ROUTINES_H
