@@ -10,13 +10,13 @@
 #include <memory>
 #include <vector>
 
+struct RawstorObject {};
+
 namespace rawstor {
 
 class Connection;
 
-} // namespace rawstor
-
-struct RawstorObject final {
+class Object final : public RawstorObject {
 private:
     RawstdUUID _id;
     std::vector<std::unique_ptr<rawstor::Connection>> _cns;
@@ -30,11 +30,11 @@ public:
     static void
     spec(const std::vector<rawstd::URI>& targets, RawstorObjectSpec* sp);
 
-    explicit RawstorObject(const std::vector<rawstd::URI>& targets);
-    RawstorObject(const RawstorObject&) = delete;
-    RawstorObject(RawstorObject&&) = delete;
-    RawstorObject& operator=(const RawstorObject&) = delete;
-    RawstorObject& operator=(RawstorObject&&) = delete;
+    explicit Object(const std::vector<rawstd::URI>& targets);
+    Object(const Object&) = delete;
+    Object(Object&&) = delete;
+    Object& operator=(const Object&) = delete;
+    Object& operator=(Object&&) = delete;
 
     std::vector<rawstd::URI> locations() const;
 
@@ -60,5 +60,7 @@ public:
         std::function<void(size_t, int)>&& cb
     );
 };
+
+} // namespace rawstor
 
 #endif // RAWSTOR_OBJECT_HPP

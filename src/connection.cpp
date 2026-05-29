@@ -1,5 +1,6 @@
 #include "connection.hpp"
 
+#include "object.hpp"
 #include "opts.h"
 #include "rawstor_internals.hpp"
 #include "session.hpp"
@@ -68,7 +69,7 @@ Connection::~Connection() {
 }
 
 std::vector<std::shared_ptr<Session>> Connection::_open(
-    const rawstd::URI& location, RawstorObject* object, size_t nsessions
+    const rawstd::URI& location, Object* object, size_t nsessions
 ) {
     std::vector<std::shared_ptr<Session>> sessions;
 
@@ -293,7 +294,7 @@ void Connection::spec(const rawstd::URI& target, RawstorObjectSpec* sp) {
 }
 
 void Connection::open(
-    const rawstd::URI& location, RawstorObject* object, size_t nsessions
+    const rawstd::URI& location, Object* object, size_t nsessions
 ) {
     _sessions = _open(location, object, nsessions);
     _object = object;

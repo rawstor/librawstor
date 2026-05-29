@@ -223,7 +223,7 @@ void Session::spec(
     cb(ret, 0);
 }
 
-void Session::set_object(RawstorObject* object) {
+void Session::set_object(Object* object) {
     if (fd() != -1) {
         throw std::runtime_error("Object already set");
     }

@@ -802,7 +802,7 @@ void Session::spec(
     cb(ret, 0);
 }
 
-void Session::set_object(RawstorObject* object) {
+void Session::set_object(rawstor::Object* object) {
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('s', "%s\n", "set object");
 

@@ -63,7 +63,7 @@ public:
         std::function<void(const RawstorObjectSpec&, int)>&& cb
     ) = 0;
 
-    virtual void set_object(RawstorObject* object) = 0;
+    virtual void set_object(Object* object) = 0;
 
     virtual void pread(
         void* buf, size_t size, off_t offset,
