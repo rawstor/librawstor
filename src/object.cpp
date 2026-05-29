@@ -119,7 +119,7 @@ void Object::create(
     try {
         for (const auto& location : locations) {
             rawstd::URI target = rawstd::URI(location, id_string);
-            rawstor::Connection().create(target, sp);
+            rawstor::Connection::create(target, sp);
             ret.push_back(target);
         }
     } catch (...) {
@@ -145,7 +145,7 @@ void Object::remove(const std::vector<rawstd::URI>& targets) {
     std::exception_ptr eptr;
     for (const auto& target : targets) {
         try {
-            rawstor::Connection().remove(target);
+            rawstor::Connection::remove(target);
         } catch (const std::exception& e) {
             rawstd_error("%s\n", e.what());
 
@@ -169,7 +169,7 @@ void Object::spec(
     validate_different_uris(targets);
     validate_same_uuid(targets);
 
-    rawstor::Connection().spec(targets.front(), sp);
+    rawstor::Connection::spec(targets.front(), sp);
 }
 
 std::vector<rawstd::URI> Object::locations() const {

@@ -36,6 +36,12 @@ private:
         unsigned int attempt);
 
 public:
+    static void create(const rawstd::URI& target, const RawstorObjectSpec& sp);
+
+    static void remove(const rawstd::URI& target);
+
+    static void spec(const rawstd::URI& target, RawstorObjectSpec* sp);
+
     Connection();
     Connection(const Connection&) = delete;
     ~Connection();
@@ -46,12 +52,6 @@ public:
     void invalidate_session(const std::shared_ptr<Session>& s);
 
     const rawstd::URI* location() const noexcept;
-
-    void create(const rawstd::URI& target, const RawstorObjectSpec& sp);
-
-    void remove(const rawstd::URI& target);
-
-    void spec(const rawstd::URI& target, RawstorObjectSpec* sp);
 
     void open(const rawstd::URI& location, Object* object, size_t nsessions);
 
