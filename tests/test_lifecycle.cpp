@@ -4,7 +4,7 @@
 
 #include <rawstor_internals.hpp>
 
-#include <rawstorstd/gpp.hpp>
+#include <rawstd/gpp.hpp>
 
 #include <rawstor/object.h>
 
@@ -98,7 +98,7 @@ TEST_P(LifecycleTest, create_spec_remove) {
         _backend->uris().c_str(), &spec, object_uris, sizeof(object_uris)
     );
     if (res < 0) {
-        RAWSTOR_THROW_SYSTEM_ERROR(-res);
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
     EXPECT_EQ(res, (int)strlen(object_uris));
     _backend->close();
@@ -111,7 +111,7 @@ TEST_P(LifecycleTest, create_spec_remove) {
     RawstorObjectSpec read_spec;
     res = rawstor_object_spec(object_uris, &read_spec);
     if (res < 0) {
-        RAWSTOR_THROW_SYSTEM_ERROR(-res);
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
     EXPECT_EQ(res, 0);
     if (_backend->protocol() == "ost") {
@@ -131,7 +131,7 @@ TEST_P(LifecycleTest, create_spec_remove) {
         _backend->accept();
         res = rawstor_object_remove(object_uris);
         if (res < 0) {
-            RAWSTOR_THROW_SYSTEM_ERROR(-res);
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
         }
         EXPECT_EQ(res, 0);
         _backend->close();

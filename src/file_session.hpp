@@ -5,8 +5,8 @@
 
 #include <rawstorio/queue.hpp>
 
-#include <rawstorstd/uri.hpp>
-#include <rawstorstd/uuid.h>
+#include <rawstd/uri.hpp>
+#include <rawstd/uuid.h>
 
 #include <rawstor/object.h>
 
@@ -15,20 +15,23 @@ namespace file {
 
 class Session final : public rawstor::Session {
 private:
-    int _connect(const RawstorUUID& id);
+    int _connect(const RawstdUUID& id);
 
 public:
-    Session(rawstor::io::Queue& queue, const URI& location, unsigned int depth);
+    Session(
+        rawstor::io::Queue& queue, const rawstd::URI& location,
+        unsigned int depth
+    );
 
     void create(
-        const RawstorUUID& id, const RawstorObjectSpec& sp,
+        const RawstdUUID& id, const RawstorObjectSpec& sp,
         std::function<void(int)>&& cb
     ) override;
 
-    void remove(const RawstorUUID& id, std::function<void(int)>&& cb) override;
+    void remove(const RawstdUUID& id, std::function<void(int)>&& cb) override;
 
     void spec(
-        const RawstorUUID& id,
+        const RawstdUUID& id,
         std::function<void(const RawstorObjectSpec&, int)>&& cb
     ) override;
 

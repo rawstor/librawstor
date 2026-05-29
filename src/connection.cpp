@@ -6,9 +6,9 @@
 
 #include <rawstorio/queue.hpp>
 
-#include <rawstorstd/gpp.hpp>
-#include <rawstorstd/iovec.h>
-#include <rawstorstd/logging.hpp>
+#include <rawstd/gpp.hpp>
+#include <rawstd/iovec.h>
+#include <rawstd/logging.hpp>
 
 #include <rawstor/object.h>
 
@@ -63,12 +63,12 @@ Connection::~Connection() {
     try {
         close();
     } catch (const std::system_error& e) {
-        rawstor_error("Connection::close(): %s\n", e.what());
+        rawstd_error("Connection::close(): %s\n", e.what());
     }
 }
 
 std::vector<std::shared_ptr<Session>> Connection::_open(
-    const URI& location, RawstorObject* object, size_t nsessions
+    const rawstd::URI& location, RawstorObject* object, size_t nsessions
 ) {
     std::vector<std::shared_ptr<Session>> sessions;
 
@@ -90,13 +90,13 @@ std::vector<std::shared_ptr<Session>> Connection::_open(
             break;
         } catch (const std::system_error& e) {
             if (attempt != rawstor_opts_io_attempts()) {
-                rawstor_warning(
+                rawstd_warning(
                     "Open session failed; error: %s; "
                     "attempt: %d of %d; retrying...\n",
                     e.what(), attempt, rawstor_opts_io_attempts()
                 );
             } else {
-                rawstor_warning(
+                rawstd_warning(
                     "Open session failed; error: %s; "
                     "attempt: %d of %d; failing...\n",
                     e.what(), attempt, rawstor_opts_io_attempts()
@@ -117,7 +117,7 @@ void Connection::_op(
         op,
     unsigned int attempt
 ) {
-    rawstor::TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'c', "%s(): size = %zu, offset = %jd\n", func_name, size,
         (intmax_t)offset
     );
@@ -126,13 +126,13 @@ void Connection::_op(
     (*op)(
         s, [this, s, func_name, size, offset, cb, op, attempt,
             trace_event](size_t result, int error) mutable {
-            RAWSTOR_TRACE_EVENT_MESSAGE(
+            RAWSTD_TRACE_EVENT_MESSAGE(
                 trace_event, "result = %zu, error = %d\n", result, error
             );
 
             if (!error) {
                 if (attempt > 0) {
-                    rawstor_warning(
+                    rawstd_warning(
                         "IO %s: size = %zu, offset = %jd; "
                         "success on %s; "
                         "attempt: %d of %d\n",
@@ -145,7 +145,7 @@ void Connection::_op(
             }
 
             if (attempt + 1 >= rawstor_opts_io_attempts()) {
-                rawstor_error(
+                rawstd_error(
                     "IO %s: size = %zu, offset = %jd; "
                     "error on %s: %s; "
                     "attempt %d of %d; failing...\n",
@@ -157,7 +157,7 @@ void Connection::_op(
                 return;
             }
 
-            rawstor_warning(
+            rawstd_warning(
                 "IO %s: size = %zu, offset = %jd; "
                 "error on %s: %s; "
                 "attempt: %d of %d; retrying...\n",
@@ -171,7 +171,7 @@ void Connection::_op(
                 (*cb)(result, e.code().value());
                 return;
             } catch (const std::exception& e) {
-                rawstor_error(
+                rawstd_error(
                     "IO %s: size = %zu, offset = %jd; "
                     "exception on %s: %s; "
                     "attempt %d of %d; failing...\n",
@@ -214,7 +214,7 @@ void Connection::invalidate_session(const std::shared_ptr<Session>& s) {
     }
 }
 
-const URI* Connection::location() const noexcept {
+const rawstd::URI* Connection::location() const noexcept {
     if (_sessions.empty()) {
         return nullptr;
     }
@@ -222,11 +222,13 @@ const URI* Connection::location() const noexcept {
     return &_sessions.front()->location();
 }
 
-void Connection::create(const URI& target, const RawstorObjectSpec& sp) {
-    RawstorUUID id;
-    int res = rawstor_uuid_from_string(&id, target.path().filename().c_str());
+void Connection::create(
+    const rawstd::URI& target, const RawstorObjectSpec& sp
+) {
+    RawstdUUID id;
+    int res = rawstd_uuid_from_string(&id, target.path().filename().c_str());
     if (res) {
-        RAWSTOR_THROW_SYSTEM_ERROR(-res);
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 
     Queue q(1, _depth);
@@ -237,18 +239,18 @@ void Connection::create(const URI& target, const RawstorObjectSpec& sp) {
         q.sub_operation();
 
         if (error) {
-            RAWSTOR_THROW_SYSTEM_ERROR(error);
+            RAWSTD_THROW_SYSTEM_ERROR(error);
         }
     });
 
     q.wait();
 }
 
-void Connection::remove(const URI& target) {
-    RawstorUUID id;
-    int res = rawstor_uuid_from_string(&id, target.path().filename().c_str());
+void Connection::remove(const rawstd::URI& target) {
+    RawstdUUID id;
+    int res = rawstd_uuid_from_string(&id, target.path().filename().c_str());
     if (res) {
-        RAWSTOR_THROW_SYSTEM_ERROR(-res);
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 
     Queue q(1, _depth);
@@ -259,18 +261,18 @@ void Connection::remove(const URI& target) {
         q.sub_operation();
 
         if (error) {
-            RAWSTOR_THROW_SYSTEM_ERROR(error);
+            RAWSTD_THROW_SYSTEM_ERROR(error);
         }
     });
 
     q.wait();
 }
 
-void Connection::spec(const URI& target, RawstorObjectSpec* sp) {
-    RawstorUUID id;
-    int res = rawstor_uuid_from_string(&id, target.path().filename().c_str());
+void Connection::spec(const rawstd::URI& target, RawstorObjectSpec* sp) {
+    RawstdUUID id;
+    int res = rawstd_uuid_from_string(&id, target.path().filename().c_str());
     if (res) {
-        RAWSTOR_THROW_SYSTEM_ERROR(-res);
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 
     Queue q(1, _depth);
@@ -281,7 +283,7 @@ void Connection::spec(const URI& target, RawstorObjectSpec* sp) {
         q.sub_operation();
 
         if (error) {
-            RAWSTOR_THROW_SYSTEM_ERROR(error);
+            RAWSTD_THROW_SYSTEM_ERROR(error);
         }
 
         *sp = spec;
@@ -291,7 +293,7 @@ void Connection::spec(const URI& target, RawstorObjectSpec* sp) {
 }
 
 void Connection::open(
-    const URI& location, RawstorObject* object, size_t nsessions
+    const rawstd::URI& location, RawstorObject* object, size_t nsessions
 ) {
     _sessions = _open(location, object, nsessions);
     _object = object;

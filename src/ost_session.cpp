@@ -7,11 +7,11 @@
 
 #include <rawstorio/queue.hpp>
 
-#include <rawstorstd/gpp.hpp>
-#include <rawstorstd/hash.h>
-#include <rawstorstd/logging.hpp>
-#include <rawstorstd/socket.h>
-#include <rawstorstd/uuid.h>
+#include <rawstd/gpp.hpp>
+#include <rawstd/hash.h>
+#include <rawstd/logging.hpp>
+#include <rawstd/socket.h>
+#include <rawstd/uuid.h>
 
 #include <rawstor/object.h>
 
@@ -44,7 +44,7 @@ int validate_result(int fd, size_t size, size_t result) noexcept {
         return 0;
     }
 
-    rawstor_error(
+    rawstd_error(
         "fd %d: Unexpected event size: %zu != %zu\n", fd, result, size
     );
 
@@ -57,7 +57,7 @@ int validate_response(
     assert(response != nullptr);
 
     if (response->head.magic != RAWSTOR_MAGIC) {
-        rawstor_error(
+        rawstd_error(
             "%s: Unexpected magic number: %x != %x\n", s.str().c_str(),
             response->head.magic, RAWSTOR_MAGIC
         );
@@ -65,7 +65,7 @@ int validate_response(
     }
 
     if (response->body.res < 0) {
-        rawstor_error(
+        rawstd_error(
             "%s: Server error: %s\n", s.str().c_str(),
             strerror(-response->body.res)
         );
@@ -83,7 +83,7 @@ int validate_cmd(
         return 0;
     }
 
-    rawstor_error("%s: Unexpected command: %d\n", s.str().c_str(), cmd);
+    rawstd_error("%s: Unexpected command: %d\n", s.str().c_str(), cmd);
     return EPROTO;
 }
 
@@ -94,7 +94,7 @@ int validate_hash(
         return 0;
     }
 
-    rawstor_error(
+    rawstd_error(
         "%s: Hash mismatch: %llx != %llx\n", s.str().c_str(),
         (unsigned long long)hash, (unsigned long long)expected
     );
@@ -142,8 +142,8 @@ public:
     SessionOp& find_op() {
         auto it = _ops.find(_response.body.cid);
         if (it == _ops.end()) {
-            rawstor_error("Unexpected cid: %u\n", _response.body.cid);
-            RAWSTOR_THROW_SYSTEM_ERROR(EPROTO);
+            rawstd_error("Unexpected cid: %u\n", _response.body.cid);
+            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
         }
 
         return *it->second.get();
@@ -158,14 +158,14 @@ public:
 namespace {
 
 uint64_t hash(const void* buf, size_t size) {
-    return rawstor_hash_scalar(buf, size);
+    return rawstd_hash_scalar(buf, size);
 }
 
 uint64_t hash(const iovec* iov, unsigned int niov) {
     uint64_t ret;
-    int res = rawstor_hash_vector(iov, niov, &ret);
+    int res = rawstd_hash_vector(iov, niov, &ret);
     if (res) {
-        RAWSTOR_THROW_SYSTEM_ERROR(-res);
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
     return ret;
 }
@@ -176,14 +176,14 @@ private:
     bool _in_flight;
 
 protected:
-    rawstor::TraceEvent _trace_event;
+    rawstd::TraceEvent _trace_event;
     std::shared_ptr<rawstor::ost::Context> _context;
 
     std::function<void(size_t, int)> _cb;
 
     inline void _dispatch(size_t result, int error) {
         _in_flight = false;
-        RAWSTOR_TRACE_EVENT_MESSAGE(_trace_event, "%s\n", "in-flight end");
+        RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "%s\n", "in-flight end");
 
         try {
             _cb(result, error);
@@ -198,7 +198,7 @@ protected:
 public:
     SessionOp(
         const std::shared_ptr<rawstor::ost::Context>& context, uint16_t cid,
-        const rawstor::TraceEvent& trace_event,
+        const rawstd::TraceEvent& trace_event,
         std::function<void(size_t, int)>&& cb
     ) :
         _cid(cid),
@@ -224,7 +224,7 @@ public:
 
     void request_cb(int error) {
         _in_flight = true;
-        RAWSTOR_TRACE_EVENT_MESSAGE(_trace_event, "%s\n", "in-flight begin");
+        RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "%s\n", "in-flight begin");
 
         if (error) {
             _dispatch(0, error);
@@ -241,7 +241,7 @@ private:
 public:
     SessionOpSetObjectId(
         const std::shared_ptr<rawstor::ost::Context>& context, uint16_t cid,
-        const RawstorUUID& id, const rawstor::TraceEvent& trace_event,
+        const RawstdUUID& id, const rawstd::TraceEvent& trace_event,
         std::function<void(size_t, int)>&& cb
     ) :
         SessionOp(context, cid, trace_event, std::move(cb)),
@@ -259,7 +259,7 @@ public:
         }) {
         memcpy(_request.body.obj_id, id.bytes, sizeof(_request.body.obj_id));
         rawstor::ost::Session& s = _context->session();
-        rawstor_info("%s: Setting object id\n", s.str().c_str());
+        rawstd_info("%s: Setting object id\n", s.str().c_str());
     }
 
     const void* request_data() const noexcept { return &_request; }
@@ -268,7 +268,7 @@ public:
 
     void
     response_head_cb(RawstorOSTFrameResponse* response, int error) override {
-        RAWSTOR_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
+        RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
 
         rawstor::ost::Session& s = _context->session();
 
@@ -281,7 +281,7 @@ public:
         }
 
         if (!error) {
-            rawstor_info("%s: Object id successfully set\n", s.str().c_str());
+            rawstd_info("%s: Object id successfully set\n", s.str().c_str());
         }
 
         _dispatch(0, error);
@@ -300,7 +300,7 @@ public:
     SessionOpRead(
         const std::shared_ptr<rawstor::ost::Context>& context, uint16_t cid,
         void* buf, size_t size, off_t offset,
-        const rawstor::TraceEvent& trace_event,
+        const rawstd::TraceEvent& trace_event,
         std::function<void(size_t, int)>&& cb
     ) :
         SessionOp(context, cid, trace_event, std::move(cb)),
@@ -329,7 +329,7 @@ public:
 
     void
     response_head_cb(RawstorOSTFrameResponse* response, int error) override {
-        RAWSTOR_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
+        RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
 
         rawstor::ost::Session& s = _context->session();
 
@@ -350,7 +350,7 @@ public:
     }
 
     void response_body_cb(size_t result, int error) {
-        RAWSTOR_TRACE_EVENT_MESSAGE(
+        RAWSTD_TRACE_EVENT_MESSAGE(
             _trace_event, "result = %zu, error = %d\n", result, error
         );
 
@@ -376,7 +376,7 @@ public:
     SessionOpReadV(
         const std::shared_ptr<rawstor::ost::Context>& context, uint16_t cid,
         iovec* iov, unsigned int niov, size_t size, off_t offset,
-        const rawstor::TraceEvent& trace_event,
+        const rawstd::TraceEvent& trace_event,
         std::function<void(size_t, int)>&& cb
     ) :
         SessionOp(context, cid, trace_event, std::move(cb)),
@@ -406,7 +406,7 @@ public:
 
     void
     response_head_cb(RawstorOSTFrameResponse* response, int error) override {
-        RAWSTOR_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
+        RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
 
         rawstor::ost::Session& s = _context->session();
 
@@ -427,7 +427,7 @@ public:
     }
 
     void response_body_cb(size_t result, int error) {
-        RAWSTOR_TRACE_EVENT_MESSAGE(
+        RAWSTD_TRACE_EVENT_MESSAGE(
             _trace_event, "result = %zu, error = %d\n", result, error
         );
 
@@ -449,7 +449,7 @@ public:
     SessionOpWrite(
         const std::shared_ptr<rawstor::ost::Context>& context, uint16_t cid,
         const void* buf, size_t size, off_t offset,
-        const rawstor::TraceEvent& trace_event,
+        const rawstd::TraceEvent& trace_event,
         std::function<void(size_t, int)>&& cb
     ) :
         SessionOp(context, cid, trace_event, std::move(cb)),
@@ -488,7 +488,7 @@ public:
 
     void
     response_head_cb(RawstorOSTFrameResponse* response, int error) override {
-        RAWSTOR_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
+        RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
 
         rawstor::ost::Session& s = _context->session();
 
@@ -515,7 +515,7 @@ public:
     SessionOpWriteV(
         const std::shared_ptr<rawstor::ost::Context>& context, uint16_t cid,
         const iovec* iov, unsigned int niov, size_t size, off_t offset,
-        const rawstor::TraceEvent& trace_event,
+        const rawstd::TraceEvent& trace_event,
         std::function<void(size_t, int)>&& cb
     ) :
         SessionOp(context, cid, trace_event, std::move(cb)),
@@ -553,7 +553,7 @@ public:
 
     void
     response_head_cb(RawstorOSTFrameResponse* response, int error) override {
-        RAWSTOR_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
+        RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
 
         rawstor::ost::Session& s = _context->session();
 
@@ -596,7 +596,7 @@ void Context::fail_in_flight(int error) {
 }
 
 Session::Session(
-    rawstor::io::Queue& queue, const URI& location, unsigned int depth
+    rawstor::io::Queue& queue, const rawstd::URI& location, unsigned int depth
 ) :
     rawstor::Session(queue, location, depth),
     _cid_counter(0),
@@ -611,39 +611,39 @@ Session::~Session() {
 
 int Session::_connect() {
     if (!location().path().str().empty() && location().path().str() != "/") {
-        rawstor_error("Empty path expected: %s\n", location().str().c_str());
-        RAWSTOR_THROW_SYSTEM_ERROR(EINVAL);
+        rawstd_error("Empty path expected: %s\n", location().str().c_str());
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
 
     int res;
 
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd == -1) {
-        RAWSTOR_THROW_ERRNO();
+        RAWSTD_THROW_ERRNO();
     }
 
     try {
         unsigned int so_sndtimeo = rawstor_opts_so_sndtimeo();
         if (so_sndtimeo != 0) {
-            res = rawstor_socket_set_snd_timeout(fd, so_sndtimeo);
+            res = rawstd_socket_set_snd_timeout(fd, so_sndtimeo);
             if (res < 0) {
-                RAWSTOR_THROW_SYSTEM_ERROR(-res);
+                RAWSTD_THROW_SYSTEM_ERROR(-res);
             }
         }
 
         unsigned int so_rcvtimeo = rawstor_opts_so_rcvtimeo();
         if (so_rcvtimeo != 0) {
-            res = rawstor_socket_set_rcv_timeout(fd, so_rcvtimeo);
+            res = rawstd_socket_set_rcv_timeout(fd, so_rcvtimeo);
             if (res < 0) {
-                RAWSTOR_THROW_SYSTEM_ERROR(-res);
+                RAWSTD_THROW_SYSTEM_ERROR(-res);
             }
         }
 
         unsigned int tcp_user_timeo = rawstor_opts_tcp_user_timeout();
         if (tcp_user_timeo != 0) {
-            res = rawstor_socket_set_user_timeout(fd, tcp_user_timeo);
+            res = rawstd_socket_set_user_timeout(fd, tcp_user_timeo);
             if (res < 0) {
-                RAWSTOR_THROW_SYSTEM_ERROR(-res);
+                RAWSTD_THROW_SYSTEM_ERROR(-res);
             }
         }
 
@@ -655,23 +655,23 @@ int Session::_connect() {
             AF_INET, location().hostname().c_str(), &servaddr.sin_addr
         );
         if (res == 0) {
-            RAWSTOR_THROW_SYSTEM_ERROR(EINVAL);
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
         } else if (res == -1) {
-            RAWSTOR_THROW_ERRNO();
+            RAWSTD_THROW_ERRNO();
         }
 
-        rawstor_info(
+        rawstd_info(
             "fd %d: Connecting to %s...\n", fd, location().str().c_str()
         );
         if (connect(fd, (sockaddr*)&servaddr, sizeof(servaddr)) == -1) {
-            RAWSTOR_THROW_ERRNO();
+            RAWSTD_THROW_ERRNO();
         }
-        rawstor_info("fd %d: Connected\n", fd);
+        rawstd_info("fd %d: Connected\n", fd);
 
         rawstor::io::Queue::setup_fd(fd);
     } catch (...) {
         ::close(fd);
-        rawstor_info("fd %d: Closed\n", fd);
+        rawstd_info("fd %d: Closed\n", fd);
         throw;
     }
 
@@ -679,13 +679,13 @@ int Session::_connect() {
 }
 
 void Session::read_response_head() {
-    TraceEvent trace_event =
-        RAWSTOR_TRACE_EVENT('s', "%s\n", "read response head");
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('s', "%s\n", "read response head");
     _context->add_read();
     _queue.read(
         fd(), _context->response(), sizeof(*_context->response()),
         [context = _context, trace_event](size_t result, int error) mutable {
-            RAWSTOR_TRACE_EVENT_MESSAGE(
+            RAWSTD_TRACE_EVENT_MESSAGE(
                 trace_event, "%zu of %zu, error = %d\n", result,
                 sizeof(*_context->response()), error
             );
@@ -716,13 +716,13 @@ void Session::read_response_head() {
 }
 
 void Session::read_response_body(void* buf, size_t size) {
-    TraceEvent trace_event =
-        RAWSTOR_TRACE_EVENT('s', "%s\n", "read response body scalar");
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('s', "%s\n", "read response body scalar");
     _context->add_read();
     _queue.read(
         fd(), buf, size,
         [context = _context, size, trace_event](size_t result, int error) {
-            RAWSTOR_TRACE_EVENT_MESSAGE(
+            RAWSTD_TRACE_EVENT_MESSAGE(
                 trace_event, "%zu of %zu, error = %d\n", result, size, error
             );
 
@@ -743,13 +743,13 @@ void Session::read_response_body(void* buf, size_t size) {
 }
 
 void Session::read_response_body(iovec* iov, unsigned int niov, size_t size) {
-    TraceEvent trace_event =
-        RAWSTOR_TRACE_EVENT('s', "%s\n", "read response body vector");
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('s', "%s\n", "read response body vector");
     _context->add_read();
     _queue.readv(
         fd(), iov, niov,
         [context = _context, size, trace_event](size_t result, int error) {
-            RAWSTOR_TRACE_EVENT_MESSAGE(
+            RAWSTD_TRACE_EVENT_MESSAGE(
                 trace_event, "%zu of %zu, error = %d\n", result, size, error
             );
 
@@ -770,7 +770,7 @@ void Session::read_response_body(iovec* iov, unsigned int niov, size_t size) {
 }
 
 void Session::create(
-    const RawstorUUID&, const RawstorObjectSpec&, std::function<void(int)>&& cb
+    const RawstdUUID&, const RawstorObjectSpec&, std::function<void(int)>&& cb
 ) {
     /**
      * TODO: Implement me.
@@ -778,14 +778,14 @@ void Session::create(
     cb(0);
 }
 
-void Session::remove(const RawstorUUID&, std::function<void(int)>&&) {
+void Session::remove(const RawstdUUID&, std::function<void(int)>&&) {
     throw std::runtime_error("Session::remove() not implemented");
 }
 
 void Session::spec(
-    const RawstorUUID&, std::function<void(const RawstorObjectSpec&, int)>&& cb
+    const RawstdUUID&, std::function<void(const RawstorObjectSpec&, int)>&& cb
 ) {
-    rawstor_info("%s: Reading object specification...\n", str().c_str());
+    rawstd_info("%s: Reading object specification...\n", str().c_str());
 
     /**
      * TODO: Implement me.
@@ -794,7 +794,7 @@ void Session::spec(
         .size = 1 << 30,
     };
 
-    rawstor_info(
+    rawstd_info(
         "%s: Object specification successfully received (emulated)\n",
         str().c_str()
     );
@@ -803,7 +803,8 @@ void Session::spec(
 }
 
 void Session::set_object(RawstorObject* object) {
-    TraceEvent trace_event = RAWSTOR_TRACE_EVENT('s', "%s\n", "set object");
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('s', "%s\n", "set object");
 
     std::unique_ptr<rawstor::io::Queue> queue = rawstor::io::Queue::create(2);
 
@@ -822,11 +823,11 @@ void Session::set_object(RawstorObject* object) {
     memcpy(
         request.body.obj_id, object->id().bytes, sizeof(request.body.obj_id)
     );
-    rawstor_info("%s: Setting object id\n", str().c_str());
+    rawstd_info("%s: Setting object id\n", str().c_str());
     queue->write(
         fd(), &request, sizeof(request),
         [fd = fd(), trace_event](size_t result, int error) {
-            RAWSTOR_TRACE_EVENT_MESSAGE(
+            RAWSTD_TRACE_EVENT_MESSAGE(
                 trace_event, "%zu of %zu, error = %d\n", result,
                 sizeof(RawstorOSTFrameBasic), error
             );
@@ -837,7 +838,7 @@ void Session::set_object(RawstorObject* object) {
             }
 
             if (error) {
-                RAWSTOR_THROW_SYSTEM_ERROR(error);
+                RAWSTD_THROW_SYSTEM_ERROR(error);
             }
         }
     );
@@ -847,11 +848,11 @@ void Session::set_object(RawstorObject* object) {
     queue->read(
         fd(), &response, sizeof(response),
         [this, &response, &completed, trace_event](size_t result, int error) {
-            RAWSTOR_TRACE_EVENT_MESSAGE(trace_event, "error = %d\n", error);
+            RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "error = %d\n", error);
 
             completed = true;
 
-            RAWSTOR_TRACE_EVENT_MESSAGE(
+            RAWSTD_TRACE_EVENT_MESSAGE(
                 trace_event, "%zu of %zu, error = %d\n", result,
                 sizeof(RawstorOSTFrameResponse), error
             );
@@ -873,10 +874,10 @@ void Session::set_object(RawstorObject* object) {
             }
 
             if (error) {
-                RAWSTOR_THROW_SYSTEM_ERROR(error);
+                RAWSTD_THROW_SYSTEM_ERROR(error);
             }
 
-            rawstor_info("%s: Object id successfully set\n", str().c_str());
+            rawstd_info("%s: Object id successfully set\n", str().c_str());
         }
     );
 
@@ -888,7 +889,7 @@ void Session::set_object(RawstorObject* object) {
 void Session::pread(
     void* buf, size_t size, off_t offset, std::function<void(size_t, int)>&& cb
 ) {
-    TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         's', "fd = %d, size = %zu, offset = %jd\n", fd(), size, (intmax_t)offset
     );
 
@@ -900,7 +901,7 @@ void Session::pread(
     _queue.write(
         fd(), op->request_data(), op->request_size(),
         [op, trace_event](size_t result, int error) {
-            RAWSTOR_TRACE_EVENT_MESSAGE(
+            RAWSTD_TRACE_EVENT_MESSAGE(
                 trace_event, "%zu of %zu, error = %d\n", result,
                 op->request_size(), error
             );
@@ -924,7 +925,7 @@ void Session::preadv(
     iovec* iov, unsigned int niov, size_t size, off_t offset,
     std::function<void(size_t, int)>&& cb
 ) {
-    TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         's', "fd = %d, size = %zu, offset = %jd\n", fd(), size, (intmax_t)offset
     );
 
@@ -937,7 +938,7 @@ void Session::preadv(
     _queue.write(
         fd(), op->request_data(), op->request_size(),
         [op, trace_event](size_t result, int error) {
-            RAWSTOR_TRACE_EVENT_MESSAGE(
+            RAWSTD_TRACE_EVENT_MESSAGE(
                 trace_event, "%zu of %zu, error = %d\n", result,
                 op->request_size(), error
             );
@@ -961,7 +962,7 @@ void Session::pwrite(
     const void* buf, size_t size, off_t offset,
     std::function<void(size_t, int)>&& cb
 ) {
-    TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         's', "fd = %d, size = %zu, offset = %jd\n", fd(), size, (intmax_t)offset
     );
 
@@ -973,7 +974,7 @@ void Session::pwrite(
     _queue.writev(
         fd(), op->request_iov(), op->request_niov(),
         [op, trace_event](size_t result, int error) {
-            RAWSTOR_TRACE_EVENT_MESSAGE(
+            RAWSTD_TRACE_EVENT_MESSAGE(
                 trace_event, "%zu of %zu, error = %d\n", result,
                 op->request_size(), error
             );
@@ -997,7 +998,7 @@ void Session::pwritev(
     const iovec* iov, unsigned int niov, size_t size, off_t offset,
     std::function<void(size_t, int)>&& cb
 ) {
-    TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         's', "fd = %d, size = %zu, offset = %jd\n", fd(), size, (intmax_t)offset
     );
 
@@ -1010,7 +1011,7 @@ void Session::pwritev(
     _queue.writev(
         fd(), op->request_iov(), op->request_niov(),
         [op, trace_event](size_t result, int error) {
-            RAWSTOR_TRACE_EVENT_MESSAGE(
+            RAWSTD_TRACE_EVENT_MESSAGE(
                 trace_event, "%zu of %zu, error = %d\n", result,
                 op->request_size(), error
             );

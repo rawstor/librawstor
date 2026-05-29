@@ -2,8 +2,8 @@
 
 #include "device.hpp"
 
-#include <rawstorstd/gpp.hpp>
-#include <rawstorstd/logging.h>
+#include <rawstd/gpp.hpp>
+#include <rawstd/logging.h>
 
 #include <rawstor.h>
 
@@ -24,7 +24,7 @@ namespace {
 int open_unix_socket(const std::string& socket_path) {
     int server_socket = socket(AF_UNIX, SOCK_STREAM, 0);
     if (server_socket < 0) {
-        RAWSTOR_THROW_ERRNO();
+        RAWSTD_THROW_ERRNO();
     }
 
     try {
@@ -35,7 +35,7 @@ int open_unix_socket(const std::string& socket_path) {
             addr.sun_path, sizeof(addr.sun_path), "%s", socket_path.c_str()
         );
         if (res < 0) {
-            RAWSTOR_THROW_ERRNO();
+            RAWSTD_THROW_ERRNO();
         }
         if ((size_t)res >= sizeof(addr.sun_path)) {
             std::ostringstream oss;
@@ -47,12 +47,12 @@ int open_unix_socket(const std::string& socket_path) {
         if (bind(
                 server_socket, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)
             )) {
-            RAWSTOR_THROW_ERRNO();
+            RAWSTD_THROW_ERRNO();
         }
 
         try {
             if (listen(server_socket, 1)) {
-                RAWSTOR_THROW_ERRNO();
+                RAWSTD_THROW_ERRNO();
             }
         } catch (...) {
             unlink(socket_path.c_str());
@@ -68,11 +68,11 @@ int open_unix_socket(const std::string& socket_path) {
 
 void close_unix_socket(const std::string& socket_path, int fd) {
     if (unlink(socket_path.c_str())) {
-        RAWSTOR_THROW_ERRNO();
+        RAWSTD_THROW_ERRNO();
     }
 
     if (close(fd)) {
-        RAWSTOR_THROW_ERRNO();
+        RAWSTD_THROW_ERRNO();
     }
 }
 
@@ -87,7 +87,7 @@ Server::Server(const std::string& target, const std::string& socket_path) :
     _fd(open_unix_socket(_socket_path)) {
     int res = rawstor_initialize(NULL);
     if (res) {
-        RAWSTOR_THROW_SYSTEM_ERROR(-res);
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
     };
 }
 
@@ -97,18 +97,18 @@ Server::~Server() {
     } catch (const std::exception& e) {
         std::ostringstream oss;
         oss << "Failed to close socket " << _socket_path << ": " << e.what();
-        rawstor_error("%s\n", oss.str().c_str());
+        rawstd_error("%s\n", oss.str().c_str());
     }
 
     rawstor_terminate();
 }
 
 void Server::loop() {
-    rawstor_info("Listening %s\n", _socket_path.c_str());
+    rawstd_info("Listening %s\n", _socket_path.c_str());
 
     int fd = ::accept(_fd, NULL, NULL);
     if (fd < 0) {
-        RAWSTOR_THROW_ERRNO();
+        RAWSTD_THROW_ERRNO();
     }
 
     Device d(_target, fd);

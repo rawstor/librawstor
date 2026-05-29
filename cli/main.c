@@ -5,7 +5,7 @@
 
 #include "config.h"
 
-#include <rawstorstd/gcc.h>
+#include <rawstd/gcc.h>
 
 #include <rawstor.h>
 
@@ -45,7 +45,7 @@ static void version(void) {
     fprintf(stdout, "Rawstor CLI " PACKAGE_VERSION "\n");
 }
 
-static void sact_handler(int RAWSTOR_UNUSED s) {
+static void sact_handler(int RAWSTD_UNUSED s) {
 }
 
 static void command_create_usage(void) {

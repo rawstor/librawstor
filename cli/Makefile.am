@@ -2,7 +2,7 @@ bin_PROGRAMS = rawstor-cli
 
 AM_CFLAGS = $(GENERIC_CFLAGS) \
             $(ASAN_CFLAGS) \
-            -I$(top_srcdir)/librawstorstd/include \
+            -I$(top_srcdir)/librawstd/include \
             -I$(top_srcdir)/librawstorio/include \
             -I$(top_srcdir)/include
 

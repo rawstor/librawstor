@@ -3,7 +3,7 @@
 
 #include <rawstorio/queue.hpp>
 
-#include <rawstorstd/uri.hpp>
+#include <rawstd/uri.hpp>
 
 #include <memory>
 

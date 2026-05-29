@@ -1,6 +1,6 @@
 #include "server.hpp"
 
-#include <rawstorstd/gpp.hpp>
+#include <rawstd/gpp.hpp>
 
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -162,7 +162,7 @@ void Server::_do_accept(Command&) {
 
     int fd = ::accept(_socket.fd(), nullptr, nullptr);
     if (fd == -1) {
-        RAWSTOR_THROW_ERRNO();
+        RAWSTD_THROW_ERRNO();
     }
 
     _client_fd = fd;
@@ -171,7 +171,7 @@ void Server::_do_accept(Command&) {
 void Server::_do_close(Command&) {
     int res = ::close(_client_fd);
     if (res == -1) {
-        RAWSTOR_THROW_ERRNO();
+        RAWSTD_THROW_ERRNO();
     }
     _client_fd = -1;
 }
@@ -180,7 +180,7 @@ void Server::_do_read(Command& command) {
     CommandRead& command_read = dynamic_cast<CommandRead&>(command);
     ssize_t res = ::read(_client_fd, command_read.buf(), command_read.size());
     if (res == -1) {
-        RAWSTOR_THROW_ERRNO();
+        RAWSTD_THROW_ERRNO();
     }
 }
 
@@ -189,7 +189,7 @@ void Server::_do_write(Command& command) {
     ssize_t res =
         ::write(_client_fd, command_write.buf(), command_write.size());
     if (res == -1) {
-        RAWSTOR_THROW_ERRNO();
+        RAWSTD_THROW_ERRNO();
     }
 }
 
@@ -199,7 +199,7 @@ void Server::_do_connect(Command& command) {
         command_connect.fd(), command_connect.addr(), command_connect.size()
     );
     if (res == -1) {
-        RAWSTOR_THROW_ERRNO();
+        RAWSTD_THROW_ERRNO();
     }
 }
 

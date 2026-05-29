@@ -1,7 +1,7 @@
 #include "fixture.hpp"
 #include "server.hpp"
 
-#include <rawstorstd/gpp.hpp>
+#include <rawstd/gpp.hpp>
 
 #include <gtest/gtest.h>
 
@@ -77,7 +77,7 @@ TEST_F(BasicsTest, accept) {
             addr.sun_path, sizeof(addr.sun_path), "%s",
             client_socket.name().data()
         ) < 0) {
-        RAWSTOR_THROW_ERRNO();
+        RAWSTD_THROW_ERRNO();
     }
 
     _server.connect(

@@ -3,9 +3,9 @@
 #include "poll_event.hpp"
 #include "poll_session.hpp"
 
-#include <rawstorstd/gpp.hpp>
-#include <rawstorstd/logging.h>
-#include <rawstorstd/socket.h>
+#include <rawstd/gpp.hpp>
+#include <rawstd/logging.h>
+#include <rawstd/socket.h>
 
 #include <poll.h>
 
@@ -46,39 +46,39 @@ void Queue::setup_fd(int fd) {
     int res;
     static unsigned int bufsize = 4096 * 64 * 4;
 
-    res = rawstor_socket_set_nonblock(fd);
+    res = rawstd_socket_set_nonblock(fd);
     if (res) {
-        RAWSTOR_THROW_SYSTEM_ERROR(-res);
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 
-    res = rawstor_socket_set_snd_bufsize(fd, bufsize);
+    res = rawstd_socket_set_snd_bufsize(fd, bufsize);
     if (res) {
-        RAWSTOR_THROW_SYSTEM_ERROR(-res);
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 
-    res = rawstor_socket_set_rcv_bufsize(fd, bufsize);
+    res = rawstd_socket_set_rcv_bufsize(fd, bufsize);
     if (res) {
-        RAWSTOR_THROW_SYSTEM_ERROR(-res);
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 
-    res = rawstor_socket_set_nodelay(fd);
+    res = rawstd_socket_set_nodelay(fd);
     if (res) {
         if (res == -EOPNOTSUPP) {
-            rawstor_warning(
+            rawstd_warning(
                 "Failed to set IPPROTO_TCP/TCP_NODELAY for descriptor %d: "
                 "%s\n",
                 fd, strerror(-res)
             );
         } else {
-            RAWSTOR_THROW_SYSTEM_ERROR(-res);
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
         }
     }
 }
 
 rawstor::io::Event*
 Queue::poll(int fd, unsigned int mask, std::function<void(size_t, int)>&& cb) {
-    TraceEvent trace_event =
-        RAWSTOR_TRACE_EVENT('|', "fd = %d, mask = %u\n", fd, mask);
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('|', "fd = %d, mask = %u\n", fd, mask);
     Session& s = _get_session(fd);
 
     std::unique_ptr<EventSimplexPollOneshot> event =
@@ -94,8 +94,8 @@ Queue::poll(int fd, unsigned int mask, std::function<void(size_t, int)>&& cb) {
 rawstor::io::Event* Queue::poll_multishot(
     int fd, unsigned int mask, std::function<void(size_t, int)>&& cb
 ) {
-    TraceEvent trace_event =
-        RAWSTOR_TRACE_EVENT('|', "fd = %d, mask = %u\n", fd, mask);
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('|', "fd = %d, mask = %u\n", fd, mask);
     Session& s = _get_session(fd);
 
     std::unique_ptr<EventSimplexPollMultishot> event =
@@ -112,7 +112,7 @@ rawstor::io::Event* Queue::accept(
     int fd, sockaddr* addr, socklen_t* addrlen,
     std::function<void(size_t, int)>&& cb
 ) {
-    TraceEvent trace_event = RAWSTOR_TRACE_EVENT('|', "fd = %d\n", fd);
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('|', "fd = %d\n", fd);
     Session& s = _get_session(fd);
 
     std::unique_ptr<EventSimplexAcceptOneshot> event =
@@ -127,7 +127,7 @@ rawstor::io::Event* Queue::accept(
 
 rawstor::io::Event*
 Queue::accept_multishot(int fd, std::function<void(size_t, int)>&& cb) {
-    TraceEvent trace_event = RAWSTOR_TRACE_EVENT('|', "fd = %d\n", fd);
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('|', "fd = %d\n", fd);
     Session& s = _get_session(fd);
 
     std::unique_ptr<EventSimplexAcceptMultishot> event =
@@ -143,8 +143,8 @@ Queue::accept_multishot(int fd, std::function<void(size_t, int)>&& cb) {
 rawstor::io::Event* Queue::read(
     int fd, void* buf, size_t size, std::function<void(size_t, int)>&& cb
 ) {
-    TraceEvent trace_event =
-        RAWSTOR_TRACE_EVENT('|', "fd = %d, size = %zu\n", fd, size);
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('|', "fd = %d, size = %zu\n", fd, size);
     Session& s = _get_session(fd);
 
     std::unique_ptr<EventSimplex> event =
@@ -160,8 +160,8 @@ rawstor::io::Event* Queue::read(
 rawstor::io::Event* Queue::readv(
     int fd, iovec* iov, unsigned int niov, std::function<void(size_t, int)>&& cb
 ) {
-    TraceEvent trace_event =
-        RAWSTOR_TRACE_EVENT('|', "fd = %d, niov = %u\n", fd, niov);
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('|', "fd = %d, niov = %u\n", fd, niov);
     Session& s = _get_session(fd);
 
     std::unique_ptr<EventSimplex> event =
@@ -178,7 +178,7 @@ rawstor::io::Event* Queue::pread(
     int fd, void* buf, size_t size, off_t offset,
     std::function<void(size_t, int)>&& cb
 ) {
-    TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         '|', "fd = %d, size = %zu, offset = %jd\n", fd, size, (intmax_t)offset
     );
     Session& s = _get_session(fd);
@@ -197,7 +197,7 @@ rawstor::io::Event* Queue::preadv(
     int fd, iovec* iov, unsigned int niov, off_t offset,
     std::function<void(size_t, int)>&& cb
 ) {
-    TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         '|', "fd = %d, niov = %u, offset = %jd\n", fd, niov, (intmax_t)offset
     );
     Session& s = _get_session(fd);
@@ -216,7 +216,7 @@ rawstor::io::Event* Queue::recv(
     int fd, void* buf, size_t size, unsigned int flags,
     std::function<void(size_t, int)>&& cb
 ) {
-    TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         '|', "fd = %d, size = %zu, flags = %u\n", fd, size, flags
     );
     Session& s = _get_session(fd);
@@ -236,7 +236,7 @@ rawstor::io::Event* Queue::recv_multishot(
     unsigned int flags,
     std::function<size_t(const iovec*, unsigned int, size_t, int)>&& cb
 ) {
-    TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         '|',
         "fd = %d, entry_size = %zu, entries = %u, size = %zu, flags = %u\n", fd,
         entry_size, entries, size, flags
@@ -258,7 +258,7 @@ rawstor::io::Event* Queue::recvmsg(
     int fd, msghdr* msg, unsigned int flags,
     std::function<void(size_t, int)>&& cb
 ) {
-    TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         '|', "fd = %d, niov = %u, flags = %u\n", fd,
         (unsigned int)msg->msg_iovlen, flags
     );
@@ -277,8 +277,8 @@ rawstor::io::Event* Queue::recvmsg(
 rawstor::io::Event* Queue::write(
     int fd, const void* buf, size_t size, std::function<void(size_t, int)>&& cb
 ) {
-    TraceEvent trace_event =
-        RAWSTOR_TRACE_EVENT('|', "fd = %d, size = %zu\n", fd, size);
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('|', "fd = %d, size = %zu\n", fd, size);
     Session& s = _get_session(fd);
 
     std::unique_ptr<Event> event = std::make_unique<EventMultiplexScalarWrite>(
@@ -294,8 +294,8 @@ rawstor::io::Event* Queue::writev(
     int fd, const iovec* iov, unsigned int niov,
     std::function<void(size_t, int)>&& cb
 ) {
-    TraceEvent trace_event =
-        RAWSTOR_TRACE_EVENT('|', "fd = %d, niov = %u\n", fd, niov);
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('|', "fd = %d, niov = %u\n", fd, niov);
     Session& s = _get_session(fd);
 
     std::unique_ptr<Event> event = std::make_unique<EventMultiplexVectorWrite>(
@@ -311,7 +311,7 @@ rawstor::io::Event* Queue::pwrite(
     int fd, const void* buf, size_t size, off_t offset,
     std::function<void(size_t, int)>&& cb
 ) {
-    TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         '|', "fd = %d, size = %zu, offset = %jd\n", fd, size, (intmax_t)offset
     );
     Session& s = _get_session(fd);
@@ -330,7 +330,7 @@ rawstor::io::Event* Queue::pwritev(
     int fd, const iovec* iov, unsigned int niov, off_t offset,
     std::function<void(size_t, int)>&& cb
 ) {
-    TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         '|', "fd = %d, niov = %u, offset = %jd\n", fd, niov, (intmax_t)offset
     );
     Session& s = _get_session(fd);
@@ -349,7 +349,7 @@ rawstor::io::Event* Queue::send(
     int fd, const void* buf, size_t size, unsigned int flags,
     std::function<void(size_t, int)>&& cb
 ) {
-    TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         '|', "fd = %d, size = %zu, flags = %u\n", fd, size, flags
     );
     Session& s = _get_session(fd);
@@ -367,7 +367,7 @@ rawstor::io::Event* Queue::sendmsg(
     int fd, const msghdr* msg, unsigned int flags,
     std::function<void(size_t, int)>&& cb
 ) {
-    TraceEvent trace_event = RAWSTOR_TRACE_EVENT(
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         '|', "fd = %d, niov = %u, flags = %u\n", fd,
         (unsigned int)msg->msg_iovlen, flags
     );
@@ -388,7 +388,7 @@ void Queue::cancel(rawstor::io::Event* e) {
             return;
         }
     }
-    RAWSTOR_THROW_SYSTEM_ERROR(ENOENT);
+    RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
 }
 
 void Queue::cancel(int fd) {
@@ -435,18 +435,18 @@ void Queue::wait(unsigned int timeout) {
             }
         }
 
-        rawstor_trace("poll()\n");
+        rawstd_trace("poll()\n");
         int res = ::poll(fds.data(), fds.size(), timeout);
-        rawstor_trace("poll(): res = %d\n", res);
+        rawstd_trace("poll(): res = %d\n", res);
         if (res == -1) {
-            RAWSTOR_THROW_ERRNO();
+            RAWSTD_THROW_ERRNO();
         }
         if (res == 0) {
-            RAWSTOR_THROW_SYSTEM_ERROR(ETIME);
+            RAWSTD_THROW_SYSTEM_ERROR(ETIME);
         }
 
         for (const pollfd& fd : fds) {
-            rawstor_trace("poll(): revents = %d\n", fd.revents);
+            rawstd_trace("poll(): revents = %d\n", fd.revents);
             std::shared_ptr<Session>& s = _sessions.at(fd.fd);
             s->process(_cqes, fd.revents);
         }
