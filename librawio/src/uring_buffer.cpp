@@ -14,8 +14,7 @@
 #include <sstream>
 #include <vector>
 
-namespace rawstor {
-namespace io {
+namespace rawio {
 namespace uring {
 
 BufferRingEntry::BufferRingEntry(
@@ -173,5 +172,4 @@ unsigned int BufferRing::id() const noexcept {
 }
 
 } // namespace uring
-} // namespace io
-} // namespace rawstor
+} // namespace rawio

@@ -3,7 +3,7 @@
 
 #include "session.hpp"
 
-#include <rawstorio/queue.hpp>
+#include <rawio/queue.hpp>
 
 #include <rawstd/uri.hpp>
 #include <rawstd/uuid.h>
@@ -19,8 +19,7 @@ private:
 
 public:
     Session(
-        rawstor::io::Queue& queue, const rawstd::URI& location,
-        unsigned int depth
+        rawio::Queue& queue, const rawstd::URI& location, unsigned int depth
     );
 
     void create(

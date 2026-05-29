@@ -1,5 +1,5 @@
-#ifndef RAWSTORIO_QUEUE_HPP
-#define RAWSTORIO_QUEUE_HPP
+#ifndef RAWIO_QUEUE_HPP
+#define RAWIO_QUEUE_HPP
 
 #include <memory>
 #include <string>
@@ -13,8 +13,7 @@
 #include <functional>
 #include <memory>
 
-namespace rawstor {
-namespace io {
+namespace rawio {
 
 typedef void Event;
 
@@ -129,7 +128,6 @@ public:
     virtual void wait(unsigned int timeout) = 0;
 };
 
-} // namespace io
-} // namespace rawstor
+} // namespace rawio
 
-#endif // RAWSTORIO_QUEUE_HPP
+#endif // RAWIO_QUEUE_HPP

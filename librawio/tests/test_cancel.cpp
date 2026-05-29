@@ -10,9 +10,9 @@
 
 namespace {
 
-class CancelTest : public rawstor::io::tests::QueueTest {
+class CancelTest : public rawio::tests::QueueTest {
 protected:
-    CancelTest() : rawstor::io::tests::QueueTest(4) {}
+    CancelTest() : rawio::tests::QueueTest(4) {}
 };
 
 TEST_F(CancelTest, cancel_noent) {
@@ -23,7 +23,7 @@ TEST_F(CancelTest, cancel_noent) {
 TEST_F(CancelTest, poll) {
     size_t result = 0;
     int error = 0;
-    rawstor::io::Event* event =
+    rawio::Event* event =
         _queue->poll(_fd, POLLIN, [&result, &error](size_t r, int e) {
             result = r;
             error = e;
@@ -47,7 +47,7 @@ TEST_F(CancelTest, poll_completed) {
 
     size_t result = 0;
     int error = 0;
-    rawstor::io::Event* event =
+    rawio::Event* event =
         _queue->poll(_fd, POLLIN, [&result, &error](size_t r, int e) {
             result = r;
             error = e;
@@ -64,7 +64,7 @@ TEST_F(CancelTest, read) {
     char client_buf[10];
     size_t result = 0;
     int error = 0;
-    rawstor::io::Event* event = _queue->read(
+    rawio::Event* event = _queue->read(
         _fd, client_buf, sizeof(client_buf),
         [&result, &error](size_t r, int e) {
             result = r;
@@ -92,7 +92,7 @@ TEST_F(CancelTest, read_completed) {
     char client_buf[sizeof(server_buf)];
     size_t result = 0;
     int error = 0;
-    rawstor::io::Event* event = _queue->read(
+    rawio::Event* event = _queue->read(
         _fd, client_buf, sizeof(client_buf),
         [&result, &error](size_t r, int e) {
             result = r;
@@ -108,14 +108,14 @@ TEST_F(CancelTest, read_completed) {
 }
 
 TEST_F(CancelTest, write) {
-#ifdef RAWSTOR_WITH_LIBURING
+#ifdef RAWIO_WITH_LIBURING
     GTEST_SKIP() << "Async write cancelation is hard to test";
 #endif
 
     char client_buf[] = "data";
     size_t result = 0;
     int error = 0;
-    rawstor::io::Event* event = nullptr;
+    rawio::Event* event = nullptr;
     event = _queue->write(
         _fd, client_buf, sizeof(client_buf),
         [&result, &error](size_t r, int e) {
@@ -138,7 +138,7 @@ TEST_F(CancelTest, write_completed) {
     char client_buf[] = "data";
     size_t result = 0;
     int error = 0;
-    rawstor::io::Event* event = _queue->write(
+    rawio::Event* event = _queue->write(
         _fd, client_buf, sizeof(client_buf),
         [&result, &error](size_t r, int e) {
             result = r;
@@ -195,7 +195,7 @@ TEST_F(CancelTest, cancel_all) {
     EXPECT_EQ(error_poll, ECANCELED);
     EXPECT_EQ(result_read, (size_t)0);
     EXPECT_EQ(error_read, ECANCELED);
-#ifndef RAWSTOR_WITH_LIBURING
+#ifndef RAWIO_WITH_LIBURING
     EXPECT_EQ(result_write, (size_t)0);
     EXPECT_EQ(error_write, ECANCELED);
 #endif
