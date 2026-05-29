@@ -33,9 +33,7 @@ private:
     int _connect();
 
 public:
-    Session(
-        rawio::Queue& queue, const rawstd::URI& location, unsigned int depth
-    );
+    Session(rawio::Queue& queue, const rawstd::URI& location);
     ~Session();
 
     void read_response_head();

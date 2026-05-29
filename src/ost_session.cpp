@@ -595,10 +595,8 @@ void Context::fail_in_flight(int error) {
     }
 }
 
-Session::Session(
-    rawio::Queue& queue, const rawstd::URI& location, unsigned int depth
-) :
-    rawstor::Session(queue, location, depth),
+Session::Session(rawio::Queue& queue, const rawstd::URI& location) :
+    rawstor::Session(queue, location),
     _cid_counter(0),
     _context(std::make_shared<Context>(*this)) {
     int fd = _connect();

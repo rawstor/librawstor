@@ -18,10 +18,7 @@
 
 namespace rawstor {
 
-Session::Session(
-    rawio::Queue& queue, const rawstd::URI& location, unsigned int depth
-) :
-    _depth(depth),
+Session::Session(rawio::Queue& queue, const rawstd::URI& location) :
     _location(location),
     _fd(-1),
     _queue(queue) {
@@ -40,14 +37,13 @@ Session::~Session() {
     }
 }
 
-std::unique_ptr<Session> Session::create(
-    rawio::Queue& queue, const rawstd::URI& location, unsigned int depth
-) {
+std::unique_ptr<Session>
+Session::create(rawio::Queue& queue, const rawstd::URI& location) {
     if (location.scheme() == "ost") {
-        return std::make_unique<rawstor::ost::Session>(queue, location, depth);
+        return std::make_unique<rawstor::ost::Session>(queue, location);
     }
     if (location.scheme() == "file") {
-        return std::make_unique<rawstor::file::Session>(queue, location, depth);
+        return std::make_unique<rawstor::file::Session>(queue, location);
     }
     rawstd_error("Unexpected URI scheme: %s\n", location.str().c_str());
     RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
