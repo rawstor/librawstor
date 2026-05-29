@@ -7,9 +7,9 @@
 
 namespace {
 
-class PollHupTest : public rawstor::io::tests::QueueTest {
+class PollHupTest : public rawio::tests::QueueTest {
 protected:
-    PollHupTest() : rawstor::io::tests::QueueTest(1) {}
+    PollHupTest() : rawio::tests::QueueTest(1) {}
 };
 
 TEST_F(PollHupTest, pollin) {

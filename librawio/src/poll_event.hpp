@@ -1,5 +1,5 @@
-#ifndef RAWSTORIO_POLL_EVENT_HPP
-#define RAWSTORIO_POLL_EVENT_HPP
+#ifndef RAWIO_POLL_EVENT_HPP
+#define RAWIO_POLL_EVENT_HPP
 
 #include <rawstd/iovec.h>
 #include <rawstd/logging.hpp>
@@ -20,8 +20,7 @@
 #include <cstddef>
 #include <cstring>
 
-namespace rawstor {
-namespace io {
+namespace rawio {
 namespace poll {
 
 class Queue;
@@ -700,7 +699,6 @@ public:
 };
 
 } // namespace poll
-} // namespace io
-} // namespace rawstor
+} // namespace rawio
 
-#endif // RAWSTORIO_POLL_EVENT_HPP
+#endif // RAWIO_POLL_EVENT_HPP

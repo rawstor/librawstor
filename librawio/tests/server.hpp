@@ -1,5 +1,5 @@
-#ifndef RAWSTORIO_TESTS_SERVER_HPP
-#define RAWSTORIO_TESTS_SERVER_HPP
+#ifndef RAWIO_TESTS_SERVER_HPP
+#define RAWIO_TESTS_SERVER_HPP
 
 #include "socket.hpp"
 
@@ -14,8 +14,7 @@
 
 #include <cstddef>
 
-namespace rawstor {
-namespace io {
+namespace rawio {
 namespace tests {
 
 class Command;
@@ -60,7 +59,6 @@ public:
 };
 
 } // namespace tests
-} // namespace io
-} // namespace rawstor
+} // namespace rawio
 
-#endif // RAWSTORIO_TESTS_SERVER_HPP
+#endif // RAWIO_TESTS_SERVER_HPP

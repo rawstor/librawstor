@@ -4,7 +4,7 @@
 #include "opts.h"
 #include "rawstor_internals.hpp"
 
-#include <rawstorio/queue.hpp>
+#include <rawio/queue.hpp>
 
 #include <rawstd/gpp.hpp>
 #include <rawstd/hash.h>
@@ -105,7 +105,7 @@ namespace ost {
 
 class Context final : public std::enable_shared_from_this<Context> {
 private:
-    rawstor::io::Queue& _queue;
+    rawio::Queue& _queue;
     int _fd;
     std::unordered_map<uint16_t, std::shared_ptr<SessionOp>> _ops;
     RawstorIOEvent* _read_event;
@@ -123,7 +123,7 @@ private:
     }
 
 public:
-    Context(rawstor::io::Queue& queue, int fd) :
+    Context(rawio::Queue& queue, int fd) :
         _queue(queue),
         _fd(fd),
         _read_event(nullptr) {}
@@ -635,7 +635,7 @@ void Context::register_op(const std::shared_ptr<SessionOp>& op) {
 }
 
 Session::Session(
-    rawstor::io::Queue& queue, const rawstd::URI& location, unsigned int depth
+    rawio::Queue& queue, const rawstd::URI& location, unsigned int depth
 ) :
     rawstor::Session(queue, location, depth),
     _cid_counter(0) {
@@ -708,7 +708,7 @@ int Session::_connect() {
         }
         rawstd_info("fd %d: Connected\n", fd);
 
-        rawstor::io::Queue::setup_fd(fd);
+        rawio::Queue::setup_fd(fd);
     } catch (...) {
         ::close(fd);
         rawstd_info("fd %d: Closed\n", fd);
@@ -722,7 +722,7 @@ void Session::_set_object(RawstorObject* object) {
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('s', "%s\n", "set object");
 
-    std::unique_ptr<rawstor::io::Queue> queue = rawstor::io::Queue::create(2);
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
 
     RawstorOSTFrameBasic request = {
         .head =

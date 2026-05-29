@@ -72,7 +72,7 @@ AM_CONDITIONAL([WITH_LIBURING], [test "x$with_liburing" == "xyes"])
 AS_IF([test "x$with_liburing" == "xyes"], [
     PKG_CHECK_MODULES([LIBURING], [liburing])
     AC_SUBST([maybe_liburing], ["liburing"])
-    AC_DEFINE([RAWSTOR_WITH_LIBURING], 1, [Enable liburing integration])
+    AC_DEFINE([RAWIO_WITH_LIBURING], 1, [Enable liburing integration])
 ], [
     AC_SUBST([maybe_liburing], [""])
 ])
@@ -98,9 +98,9 @@ AC_CONFIG_FILES(
     [librawstd/Makefile]
     [librawstd/src/Makefile]
     [librawstd/tests/Makefile]
-    [librawstorio/Makefile]
-    [librawstorio/src/Makefile]
-    [librawstorio/tests/Makefile]
+    [librawio/Makefile]
+    [librawio/src/Makefile]
+    [librawio/tests/Makefile]
     [src/Makefile]
     [src/rawstor.pc]
     [cli/Makefile]

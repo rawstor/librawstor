@@ -37,8 +37,7 @@ inline void dispatch(
 
 } // unnamed namespace
 
-namespace rawstor {
-namespace io {
+namespace rawio {
 namespace poll {
 
 void EventMultiplex::dispatch() {
@@ -110,7 +109,7 @@ ssize_t EventSimplexAcceptOneshot::process() noexcept {
     ssize_t res = ::accept(_fd, _addr, _addrlen);
     if (res >= 0) {
         try {
-            rawstor::io::poll::Queue::setup_fd(res);
+            rawio::poll::Queue::setup_fd(res);
             _result = res;
 #ifdef RAWSTD_TRACE_EVENTS
             RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "completed");
@@ -148,7 +147,7 @@ ssize_t EventSimplexAcceptMultishot::process() noexcept {
     ssize_t res = ::accept(_fd, nullptr, nullptr);
     if (res >= 0) {
         try {
-            rawstor::io::poll::Queue::setup_fd(res);
+            rawio::poll::Queue::setup_fd(res);
             _result = res;
 #ifdef RAWSTD_TRACE_EVENTS
             RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "completed");
@@ -576,5 +575,4 @@ ssize_t EventSimplexMessageWrite::process() noexcept {
 }
 
 } // namespace poll
-} // namespace io
-} // namespace rawstor
+} // namespace rawio

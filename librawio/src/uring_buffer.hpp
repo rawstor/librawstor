@@ -1,5 +1,5 @@
-#ifndef RAWSTORIO_URING_BUFFER_HPP
-#define RAWSTORIO_URING_BUFFER_HPP
+#ifndef RAWIO_URING_BUFFER_HPP
+#define RAWIO_URING_BUFFER_HPP
 
 #include <rawstd/ringbuf.hpp>
 
@@ -9,8 +9,7 @@
 #include <list>
 #include <memory>
 
-namespace rawstor {
-namespace io {
+namespace rawio {
 namespace uring {
 
 class BufferRingEntry final {
@@ -81,7 +80,6 @@ public:
 };
 
 } // namespace uring
-} // namespace io
-} // namespace rawstor
+} // namespace rawio
 
-#endif // RAWSTORIO_URING_BUFFER_HPP
+#endif // RAWIO_URING_BUFFER_HPP

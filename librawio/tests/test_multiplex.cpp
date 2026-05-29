@@ -5,9 +5,9 @@
 
 namespace {
 
-class MultiplexTest : public rawstor::io::tests::QueueTest {
+class MultiplexTest : public rawio::tests::QueueTest {
 protected:
-    MultiplexTest() : rawstor::io::tests::QueueTest(2) {}
+    MultiplexTest() : rawio::tests::QueueTest(2) {}
 };
 
 TEST_F(MultiplexTest, read) {

@@ -4,7 +4,7 @@
 #include "rawstor_internals.hpp"
 #include "session.hpp"
 
-#include <rawstorio/queue.hpp>
+#include <rawio/queue.hpp>
 
 #include <rawstd/gpp.hpp>
 #include <rawstd/iovec.h>
@@ -27,12 +27,12 @@ namespace {
 class Queue final {
 private:
     unsigned int _operations;
-    std::unique_ptr<rawstor::io::Queue> _q;
+    std::unique_ptr<rawio::Queue> _q;
 
 public:
     Queue(unsigned int operations, unsigned int depth) :
         _operations(operations),
-        _q(rawstor::io::Queue::create(depth)) {}
+        _q(rawio::Queue::create(depth)) {}
 
     Queue(const Queue&) = delete;
 
@@ -40,7 +40,7 @@ public:
 
     inline void sub_operation() noexcept { --_operations; }
 
-    inline rawstor::io::Queue& queue() noexcept { return *_q; }
+    inline rawio::Queue& queue() noexcept { return *_q; }
 
     void wait() {
         while (_operations > 0) {

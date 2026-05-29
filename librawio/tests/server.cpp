@@ -20,8 +20,7 @@
 #include <cstdio>
 #include <ctime>
 
-namespace rawstor {
-namespace io {
+namespace rawio {
 namespace tests {
 
 enum CommandType {
@@ -245,5 +244,4 @@ void Server::wait() {
 }
 
 } // namespace tests
-} // namespace io
-} // namespace rawstor
+} // namespace rawio

@@ -9,7 +9,7 @@
 #include <rawstd/logging.h>
 #include <rawstd/uuid.h>
 
-#include <rawstorio/queue.hpp>
+#include <rawio/queue.hpp>
 
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -95,7 +95,7 @@ namespace rawstor {
 namespace file {
 
 Session::Session(
-    rawstor::io::Queue& queue, const rawstd::URI& location, unsigned int depth
+    rawio::Queue& queue, const rawstd::URI& location, unsigned int depth
 ) :
     rawstor::Session(queue, location, depth) {
 }
