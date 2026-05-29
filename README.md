@@ -1,4 +1,4 @@
-# Rawstor client library
+# Rawstor library and tools
 
 [![Unit Test Status](https://github.com/rawstor/librawstor/actions/workflows/unittest.yml/badge.svg?branch=main)](https://github.com/rawstor/librawstor/actions/workflows/unittest.yml)
 
@@ -51,15 +51,22 @@ qemu-system-x86_64 \
     -device vhost-user-blk-pci,chardev=rawstor1,num-queues=1,disable-legacy=on
 ```
 
-## Configure
+## Environment Variables
 
-### Disable liburing
+The following environment variables can be used to tune the behavior of the Rawstor client and server.
+Default values are shown below.
 
-```
-./configure --without-liburing
-```
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RAWSTOR_OPTS_QUEUE_DEPTH` | `256` | Maximum number of requests that can be queued internally. Higher values allow deeper burst handling but increase memory usage. |
+| `RAWSTOR_OPTS_WAIT_TIMEOUT` | `5000` | Timeout for waiting on internal operations (e.g., queue readiness). |
+| `RAWSTOR_OPTS_IO_ATTEMPTS` | `3` | Number of retry attempts for I/O operations that encounter recoverable errors. |
+| `RAWSTOR_OPTS_SESSIONS` | `1` | Number of concurrent sessions that Rawstor client will open for each object. |
+| `RAWSTOR_OPTS_SO_SNDTIMEO` | `5000` | Socket send timeout. Sets `SO_SNDTIMEO` for network sockets. |
+| `RAWSTOR_OPTS_SO_RCVTIMEO` | `5000` | Socket receive timeout. Sets `SO_RCVTIMEO` for network sockets. |
+| `RAWSTOR_OPTS_TCP_USER_TIMEOUT` | `5000` | TCP user timeout (Linux `TCP_USER_TIMEOUT`). Defines how long transmitted data may remain unacknowledged before the connection is closed. |
 
-This will replace liburing with poll.
+> **Note:** All timeout values are expressed in milliseconds unless stated otherwise.
 
 ## rawstor-ost – OST Protocol Server
 
