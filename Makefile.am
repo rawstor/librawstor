@@ -1,5 +1,5 @@
 SUBDIRS = librawstd \
-          librawstorio \
+          librawio \
           src \
           cli \
           vhost \
@@ -26,7 +26,7 @@ CLEANFILES = README
 if ENABLE_TESTS
 test: all
 	make -C librawstd test
-	make -C librawstorio test
+	make -C librawio test
 	make -C tests test
 
 .PHONY: test

@@ -19,7 +19,7 @@
 namespace rawstor {
 
 Session::Session(
-    rawstor::io::Queue& queue, const rawstd::URI& location, unsigned int depth
+    rawio::Queue& queue, const rawstd::URI& location, unsigned int depth
 ) :
     _depth(depth),
     _location(location),
@@ -41,7 +41,7 @@ Session::~Session() {
 }
 
 std::unique_ptr<Session> Session::create(
-    rawstor::io::Queue& queue, const rawstd::URI& location, unsigned int depth
+    rawio::Queue& queue, const rawstd::URI& location, unsigned int depth
 ) {
     if (location.scheme() == "ost") {
         return std::make_unique<rawstor::ost::Session>(queue, location, depth);

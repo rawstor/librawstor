@@ -6,7 +6,7 @@
 #include <rawstd/ringbuf.hpp>
 #include <rawstd/uri.hpp>
 
-#include <rawstorio/queue.hpp>
+#include <rawio/queue.hpp>
 
 #include <rawstor/object.h>
 #include <rawstor/ost_protocol.h>
@@ -35,8 +35,7 @@ private:
 
 public:
     Session(
-        rawstor::io::Queue& queue, const rawstd::URI& location,
-        unsigned int depth
+        rawio::Queue& queue, const rawstd::URI& location, unsigned int depth
     );
     ~Session();
 

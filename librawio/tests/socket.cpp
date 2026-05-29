@@ -10,8 +10,7 @@
 #include <cassert>
 #include <cstdio>
 
-namespace rawstor {
-namespace io {
+namespace rawio {
 namespace tests {
 
 Socket::Socket() : _fd(-1) {
@@ -33,7 +32,7 @@ Socket::~Socket() {
 void Socket::listen() {
     assert(_name.empty());
 
-    char tpl[] = "/tmp/rawstor_io_tests_server.sock.XXXXXX";
+    char tpl[] = "/tmp/rawio_tests_server.sock.XXXXXX";
 
     int fd = mkstemp(tpl);
     if (fd == -1) {
@@ -82,5 +81,4 @@ void Socket::connect(const Socket& other) {
 }
 
 } // namespace tests
-} // namespace io
-} // namespace rawstor
+} // namespace rawio

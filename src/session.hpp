@@ -3,7 +3,7 @@
 
 #include "object.hpp"
 
-#include <rawstorio/queue.hpp>
+#include <rawio/queue.hpp>
 
 #include <rawstd/uri.hpp>
 
@@ -24,19 +24,17 @@ private:
     int _fd;
 
 protected:
-    rawstor::io::Queue& _queue;
+    rawio::Queue& _queue;
 
     inline void set_fd(int fd) noexcept { _fd = fd; }
 
 public:
     static std::unique_ptr<Session> create(
-        rawstor::io::Queue& queue, const rawstd::URI& location,
-        unsigned int depth
+        rawio::Queue& queue, const rawstd::URI& location, unsigned int depth
     );
 
     Session(
-        rawstor::io::Queue& queue, const rawstd::URI& location,
-        unsigned int depth
+        rawio::Queue& queue, const rawstd::URI& location, unsigned int depth
     );
     Session(const Session&) = delete;
     Session(Session&&) noexcept = delete;

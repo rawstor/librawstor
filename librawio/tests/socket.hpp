@@ -1,11 +1,10 @@
-#ifndef RAWSTORIO_TESTS_SOCKET_HPP
-#define RAWSTORIO_TESTS_SOCKET_HPP
+#ifndef RAWIO_TESTS_SOCKET_HPP
+#define RAWIO_TESTS_SOCKET_HPP
 
 #include <string>
 #include <utility>
 
-namespace rawstor {
-namespace io {
+namespace rawio {
 namespace tests {
 
 class Socket final {
@@ -41,7 +40,6 @@ public:
 };
 
 } // namespace tests
-} // namespace io
-} // namespace rawstor
+} // namespace rawio
 
-#endif // RAWSTORIO_TESTS_SOCKET_HPP
+#endif // RAWIO_TESTS_SOCKET_HPP

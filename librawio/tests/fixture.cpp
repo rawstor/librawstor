@@ -8,16 +8,15 @@
 #include <memory>
 #include <system_error>
 
-namespace rawstor {
-namespace io {
+namespace rawio {
 namespace tests {
 
 QueueTest::QueueTest(unsigned int depth) :
     testing::Test(),
     _server(),
-    _queue(rawstor::io::Queue::create(depth)) {
+    _queue(rawio::Queue::create(depth)) {
     _socket.connect(_server.socket());
-    rawstor::io::Queue::setup_fd(_socket.fd());
+    rawio::Queue::setup_fd(_socket.fd());
     _fd = _socket.fd();
 }
 
@@ -34,5 +33,4 @@ void QueueTest::_wait_all() {
 }
 
 } // namespace tests
-} // namespace io
-} // namespace rawstor
+} // namespace rawio
