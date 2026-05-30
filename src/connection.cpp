@@ -20,11 +20,6 @@
 
 #include <cstring>
 
-/**
- * TODO: Make it global
- */
-#define QUEUE_DEPTH 256
-
 namespace {
 
 /**
@@ -36,9 +31,9 @@ private:
     std::unique_ptr<rawio::Queue> _q;
 
 public:
-    Queue(unsigned int operations, unsigned int depth) :
+    Queue(unsigned int operations) :
         _operations(operations),
-        _q(rawio::Queue::create(depth)) {}
+        _q(rawio::Queue::create(rawstor_opts_queue_depth())) {}
 
     Queue(const Queue&) = delete;
 
@@ -232,7 +227,7 @@ void Connection::create(
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 
-    Queue q(1, QUEUE_DEPTH);
+    Queue q(1);
 
     std::unique_ptr<Session> s = Session::create(q.queue(), target.parent());
     s->create(id, sp, [&q](int error) {
@@ -253,7 +248,7 @@ void Connection::remove(const rawstd::URI& target) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 
-    Queue q(1, QUEUE_DEPTH);
+    Queue q(1);
 
     std::unique_ptr<Session> s = Session::create(q.queue(), target.parent());
     s->remove(id, [&q](int error) {
@@ -274,7 +269,7 @@ void Connection::spec(const rawstd::URI& target, RawstorObjectSpec* sp) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 
-    Queue q(1, QUEUE_DEPTH);
+    Queue q(1);
 
     std::unique_ptr<Session> s = Session::create(q.queue(), target.parent());
     s->spec(id, [&q, sp](const RawstorObjectSpec& spec, int error) {
