@@ -485,6 +485,7 @@ int rawstor_fd_cancel_all(int fd) RAWSTOR_NOEXCEPT;
  */
 
 struct RawstorOpts {
+    unsigned int queue_depth;
     unsigned int wait_timeout;
     unsigned int io_attempts;
     unsigned int sessions;
