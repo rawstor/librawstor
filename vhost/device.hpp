@@ -23,13 +23,14 @@ class Device;
 
 class Watcher final {
 private:
-    RawstorIOEvent* _event;
+    RawIOQueue* _queue;
+    RawIOEvent* _event;
     int _counter;
 
 public:
     Watcher(
-        rawstor::vhost::Device& device, int fd, int condition, vu_watch_cb cb,
-        void* data
+        RawIOQueue* queue, rawstor::vhost::Device& device, int fd,
+        int condition, vu_watch_cb cb, void* data
     );
     Watcher(const Watcher&) = delete;
     Watcher(Watcher&&) = delete;
@@ -46,6 +47,7 @@ class Device final {
 private:
     static std::unordered_map<int, Device*> _devices;
 
+    RawIOQueue* _queue;
     RawstorObjectSpec _spec;
     RawstorObject* _object;
 
@@ -67,6 +69,8 @@ public:
 
     Device& operator=(const Device&) = delete;
     Device& operator=(Device&&) = delete;
+
+    inline RawIOQueue* queue() noexcept { return _queue; }
 
     inline RawstorObject* object() noexcept { return _object; }
 

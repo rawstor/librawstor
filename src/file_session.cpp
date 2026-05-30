@@ -2,14 +2,13 @@
 
 #include "object.hpp"
 #include "opts.h"
-#include "rawstor_internals.hpp"
+
+#include <rawio/queue.hpp>
 
 #include <rawstd/gpp.hpp>
 #include <rawstd/iovec.h>
 #include <rawstd/logging.h>
 #include <rawstd/uuid.h>
-
-#include <rawio/queue.hpp>
 
 #include <sys/stat.h>
 #include <sys/types.h>

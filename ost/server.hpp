@@ -17,9 +17,10 @@ class Session;
 
 class Server final {
 private:
+    RawIOQueue* _queue;
     int _fd;
     std::vector<rawstd::URI> _locations;
-    RawstorIOEvent* _accept_event;
+    RawIOEvent* _accept_event;
     std::unordered_map<int, std::unique_ptr<Session>> _sessions;
 
     static int _accept(size_t result, int error, void* data) noexcept;

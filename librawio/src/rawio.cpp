@@ -1,56 +1,20 @@
-#include <rawstor/rawstor.h>
-
-#include "opts.h"
-
-#include <rawio/queue.hpp>
+#include <rawstor/rawio.h>
 
 #include <rawstd/gpp.hpp>
 #include <rawstd/logging.h>
-#include <rawstd/uri.hpp>
 
-#include <sys/types.h>
-#include <sys/uio.h>
+#include "rawio/queue.hpp"
 
-#include <memory>
+#include <exception>
 #include <stdexcept>
-#include <system_error>
 
-#include <cassert>
 #include <cerrno>
-#include <cstddef>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
 
-<<<<<<< HEAD
-namespace rawstor {
-
-rawio::Queue* io_queue;
-
-} // namespace rawstor
-
-=======
->>>>>>> 118a520 (add: rawio)
-int rawstor_initialize(const RawstorOpts* opts) noexcept {
+int rawio_queue_create(unsigned int depth, RawIOQueue** queue) noexcept {
     try {
-        int res = 0;
-
-        res = rawstd_logging_initialize();
-        if (res) {
-            RAWSTD_THROW_SYSTEM_ERROR(-res);
-        }
-
-        rawstd_info(
-            "Rawstor compiled with IO queue engine: %s\n",
-            rawio::Queue::engine_name().c_str()
-        );
-
-        res = rawstor_opts_initialize(opts);
-        if (res) {
-            rawstd_logging_terminate();
-            RAWSTD_THROW_SYSTEM_ERROR(-res);
-        }
-
+        std::unique_ptr<rawio::Queue> ret = rawio::Queue::create(depth);
+        *queue = ret.get();
+        ret.release();
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -65,47 +29,22 @@ int rawstor_initialize(const RawstorOpts* opts) noexcept {
     }
 }
 
-void rawstor_terminate() noexcept {
-<<<<<<< HEAD
-    try {
-        delete rawstor::io_queue;
-        rawstor::io_queue = nullptr;
-        rawstor_opts_terminate();
-        rawstd_logging_terminate();
-    } catch (const std::exception& e) {
-        rawstd_error("%s\n", e.what());
-    } catch (...) {
-        rawstd_error("Unexpected error\n");
-    }
-}
-
-int rawstor_wait() noexcept {
-    try {
-        rawstor::io_queue->wait_timeout(rawstor_opts_wait_timeout());
-        return 0;
-    } catch (const std::system_error& e) {
-        return -e.code().value();
-    } catch (const std::bad_alloc& e) {
-        return -ENOMEM;
-    } catch (const std::exception& e) {
-        rawstd_error("%s\n", e.what());
-        return -EINVAL;
-    } catch (...) {
-        rawstd_error("Unexpected error\n");
-        return -EINVAL;
-    }
+void rawio_queue_delete(RawIOQueue* queue) noexcept {
+    delete static_cast<rawio::Queue*>(queue);
 }
 
 int rawio_poll(
-    int fd, unsigned int mask, RawstorIOCallback* cb, void* data
+    RawIOQueue* queue, int fd, unsigned int mask, RawIOCallback* cb, void* data
 ) noexcept {
     try {
-        rawstor::io_queue->poll(fd, mask, [cb, data](size_t result, int error) {
-            int res = cb(result, error, data);
-            if (res) {
-                RAWSTD_THROW_SYSTEM_ERROR(-res);
+        static_cast<rawio::Queue*>(queue)->poll(
+            fd, mask, [cb, data](size_t result, int error) {
+                int res = cb(result, error, data);
+                if (res) {
+                    RAWSTD_THROW_SYSTEM_ERROR(-res);
+                }
             }
-        });
+        );
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -121,11 +60,11 @@ int rawio_poll(
 }
 
 int rawio_poll_multishot(
-    int fd, unsigned int mask, RawstorIOCallback* cb, void* data,
-    RawstorIOEvent** event
+    RawIOQueue* queue, int fd, unsigned int mask, RawIOCallback* cb, void* data,
+    RawIOEvent** event
 ) noexcept {
     try {
-        RawstorIOEvent* e = rawstor::io_queue->poll_multishot(
+        RawIOEvent* e = static_cast<rawio::Queue*>(queue)->poll_multishot(
             fd, mask, [cb, data](size_t result, int error) {
                 int res = cb(result, error, data);
                 if (res) {
@@ -151,11 +90,11 @@ int rawio_poll_multishot(
 }
 
 int rawio_accept(
-    int fd, sockaddr* addr, socklen_t* addrlen, RawstorIOCallback* cb,
-    void* data
+    RawIOQueue* queue, int fd, sockaddr* addr, socklen_t* addrlen,
+    RawIOCallback* cb, void* data
 ) noexcept {
     try {
-        rawstor::io_queue->accept(
+        static_cast<rawio::Queue*>(queue)->accept(
             fd, addr, addrlen, [cb, data](size_t result, int error) {
                 int res = cb(result, error, data);
                 if (res) {
@@ -178,10 +117,10 @@ int rawio_accept(
 }
 
 int rawio_accept_multishot(
-    int fd, RawstorIOCallback* cb, void* data, RawstorIOEvent** event
+    RawIOQueue* queue, int fd, RawIOCallback* cb, void* data, RawIOEvent** event
 ) noexcept {
     try {
-        RawstorIOEvent* e = rawstor::io_queue->accept_multishot(
+        RawIOEvent* e = static_cast<rawio::Queue*>(queue)->accept_multishot(
             fd, [cb, data](size_t result, int error) {
                 int res = cb(result, error, data);
                 if (res) {
@@ -207,10 +146,11 @@ int rawio_accept_multishot(
 }
 
 int rawio_read(
-    int fd, void* buf, size_t size, RawstorIOCallback* cb, void* data
+    RawIOQueue* queue, int fd, void* buf, size_t size, RawIOCallback* cb,
+    void* data
 ) noexcept {
     try {
-        rawstor::io_queue->read(
+        static_cast<rawio::Queue*>(queue)->read(
             fd, buf, size, [cb, data](size_t result, int error) {
                 int res = cb(result, error, data);
                 if (res) {
@@ -233,10 +173,11 @@ int rawio_read(
 }
 
 int rawio_readv(
-    int fd, iovec* iov, unsigned int niov, RawstorIOCallback* cb, void* data
+    RawIOQueue* queue, int fd, iovec* iov, unsigned int niov, RawIOCallback* cb,
+    void* data
 ) noexcept {
     try {
-        rawstor::io_queue->readv(
+        static_cast<rawio::Queue*>(queue)->readv(
             fd, iov, niov, [cb, data](size_t result, int error) {
                 int res = cb(result, error, data);
                 if (res) {
@@ -259,11 +200,11 @@ int rawio_readv(
 }
 
 int rawio_pread(
-    int fd, void* buf, size_t size, off_t offset, RawstorIOCallback* cb,
-    void* data
+    RawIOQueue* queue, int fd, void* buf, size_t size, off_t offset,
+    RawIOCallback* cb, void* data
 ) noexcept {
     try {
-        rawstor::io_queue->pread(
+        static_cast<rawio::Queue*>(queue)->pread(
             fd, buf, size, offset, [cb, data](size_t result, int error) {
                 int res = cb(result, error, data);
                 if (res) {
@@ -286,11 +227,11 @@ int rawio_pread(
 }
 
 int rawio_preadv(
-    int fd, iovec* iov, unsigned int niov, off_t offset, RawstorIOCallback* cb,
-    void* data
+    RawIOQueue* queue, int fd, iovec* iov, unsigned int niov, off_t offset,
+    RawIOCallback* cb, void* data
 ) noexcept {
     try {
-        rawstor::io_queue->preadv(
+        static_cast<rawio::Queue*>(queue)->preadv(
             fd, iov, niov, offset, [cb, data](size_t result, int error) {
                 int res = cb(result, error, data);
                 if (res) {
@@ -313,11 +254,11 @@ int rawio_preadv(
 }
 
 int rawio_recv(
-    int fd, void* buf, size_t size, unsigned int flags, RawstorIOCallback* cb,
-    void* data
+    RawIOQueue* queue, int fd, void* buf, size_t size, unsigned int flags,
+    RawIOCallback* cb, void* data
 ) noexcept {
     try {
-        rawstor::io_queue->recv(
+        static_cast<rawio::Queue*>(queue)->recv(
             fd, buf, size, flags, [cb, data](size_t result, int error) {
                 int res = cb(result, error, data);
                 if (res) {
@@ -340,12 +281,12 @@ int rawio_recv(
 }
 
 int rawio_recv_multishot(
-    int fd, size_t entry_size, unsigned int entries, size_t size,
-    unsigned int flags, RawstorIOMultishotVectorCallback* cb, void* data,
-    RawstorIOEvent** event
+    RawIOQueue* queue, int fd, size_t entry_size, unsigned int entries,
+    size_t size, unsigned int flags, RawIOMultishotVectorCallback* cb,
+    void* data, RawIOEvent** event
 ) noexcept {
     try {
-        RawstorIOEvent* e = rawstor::io_queue->recv_multishot(
+        RawIOEvent* e = static_cast<rawio::Queue*>(queue)->recv_multishot(
             fd, entry_size, entries, size, flags,
             [cb, data](
                 const iovec* iov, unsigned int niov, size_t result, int error
@@ -375,10 +316,11 @@ int rawio_recv_multishot(
 }
 
 int rawio_recvmsg(
-    int fd, msghdr* msg, unsigned int flags, RawstorIOCallback* cb, void* data
+    RawIOQueue* queue, int fd, msghdr* msg, unsigned int flags,
+    RawIOCallback* cb, void* data
 ) noexcept {
     try {
-        rawstor::io_queue->recvmsg(
+        static_cast<rawio::Queue*>(queue)->recvmsg(
             fd, msg, flags, [cb, data](size_t result, int error) {
                 int res = cb(result, error, data);
                 if (res) {
@@ -401,10 +343,11 @@ int rawio_recvmsg(
 }
 
 int rawio_write(
-    int fd, const void* buf, size_t size, RawstorIOCallback* cb, void* data
+    RawIOQueue* queue, int fd, const void* buf, size_t size, RawIOCallback* cb,
+    void* data
 ) noexcept {
     try {
-        rawstor::io_queue->write(
+        static_cast<rawio::Queue*>(queue)->write(
             fd, buf, size, [cb, data](size_t result, int error) {
                 int res = cb(result, error, data);
                 if (res) {
@@ -427,11 +370,11 @@ int rawio_write(
 }
 
 int rawio_writev(
-    int fd, const iovec* iov, unsigned int niov, RawstorIOCallback* cb,
-    void* data
+    RawIOQueue* queue, int fd, const iovec* iov, unsigned int niov,
+    RawIOCallback* cb, void* data
 ) noexcept {
     try {
-        rawstor::io_queue->writev(
+        static_cast<rawio::Queue*>(queue)->writev(
             fd, iov, niov, [cb, data](size_t result, int error) {
                 int res = cb(result, error, data);
                 if (res) {
@@ -454,11 +397,11 @@ int rawio_writev(
 }
 
 int rawio_pwrite(
-    int fd, const void* buf, size_t size, off_t offset, RawstorIOCallback* cb,
-    void* data
+    RawIOQueue* queue, int fd, const void* buf, size_t size, off_t offset,
+    RawIOCallback* cb, void* data
 ) noexcept {
     try {
-        rawstor::io_queue->pwrite(
+        static_cast<rawio::Queue*>(queue)->pwrite(
             fd, buf, size, offset, [cb, data](size_t result, int error) {
                 int res = cb(result, error, data);
                 if (res) {
@@ -481,11 +424,11 @@ int rawio_pwrite(
 }
 
 int rawio_pwritev(
-    int fd, const iovec* iov, unsigned int niov, off_t offset,
-    RawstorIOCallback* cb, void* data
+    RawIOQueue* queue, int fd, const iovec* iov, unsigned int niov,
+    off_t offset, RawIOCallback* cb, void* data
 ) noexcept {
     try {
-        rawstor::io_queue->pwritev(
+        static_cast<rawio::Queue*>(queue)->pwritev(
             fd, iov, niov, offset, [cb, data](size_t result, int error) {
                 int res = cb(result, error, data);
                 if (res) {
@@ -508,11 +451,11 @@ int rawio_pwritev(
 }
 
 int rawio_send(
-    int fd, const void* buf, size_t size, unsigned int flags,
-    RawstorIOCallback* cb, void* data
+    RawIOQueue* queue, int fd, const void* buf, size_t size, unsigned int flags,
+    RawIOCallback* cb, void* data
 ) noexcept {
     try {
-        rawstor::io_queue->send(
+        static_cast<rawio::Queue*>(queue)->send(
             fd, buf, size, flags, [cb, data](size_t result, int error) {
                 int res = cb(result, error, data);
                 if (res) {
@@ -535,11 +478,11 @@ int rawio_send(
 }
 
 int rawio_sendmsg(
-    int fd, const msghdr* msg, unsigned int flags, RawstorIOCallback* cb,
-    void* data
+    RawIOQueue* queue, int fd, const msghdr* msg, unsigned int flags,
+    RawIOCallback* cb, void* data
 ) noexcept {
     try {
-        rawstor::io_queue->sendmsg(
+        static_cast<rawio::Queue*>(queue)->sendmsg(
             fd, msg, flags, [cb, data](size_t result, int error) {
                 int res = cb(result, error, data);
                 if (res) {
@@ -561,9 +504,9 @@ int rawio_sendmsg(
     }
 }
 
-int rawio_cancel(RawstorIOEvent* event) noexcept {
+int rawio_wait(RawIOQueue* queue, unsigned int timeout) noexcept {
     try {
-        rawstor::io_queue->cancel(event);
+        static_cast<rawio::Queue*>(queue)->wait(timeout);
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -578,9 +521,9 @@ int rawio_cancel(RawstorIOEvent* event) noexcept {
     }
 }
 
-int rawio_cancel_all(int fd) noexcept {
+int rawio_cancel(RawIOQueue* queue, RawIOEvent* event) noexcept {
     try {
-        rawstor::io_queue->cancel(fd);
+        static_cast<rawio::Queue*>(queue)->cancel(event);
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -593,8 +536,21 @@ int rawio_cancel_all(int fd) noexcept {
         rawstd_error("Unexpected error\n");
         return -EINVAL;
     }
-=======
-    rawstor_opts_terminate();
-    rawstd_logging_terminate();
->>>>>>> 118a520 (add: rawio)
+}
+
+int rawio_cancel_all(RawIOQueue* queue, int fd) noexcept {
+    try {
+        static_cast<rawio::Queue*>(queue)->cancel(fd);
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
 }

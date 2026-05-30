@@ -13,11 +13,13 @@
 #include <functional>
 #include <memory>
 
+struct RawIOQueue {};
+
 namespace rawio {
 
 typedef void Event;
 
-class Queue {
+class Queue : public RawIOQueue {
 private:
     unsigned int _depth;
 

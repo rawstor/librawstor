@@ -31,8 +31,6 @@ int rawstor_initialize(const struct RawstorOpts* opts) RAWSTOR_NOEXCEPT;
 
 void rawstor_terminate(void) RAWSTOR_NOEXCEPT;
 
-int rawstor_wait(void) RAWSTOR_NOEXCEPT;
-
 #ifdef __cplusplus
 }
 #endif

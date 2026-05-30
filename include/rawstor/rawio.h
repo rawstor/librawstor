@@ -50,7 +50,7 @@ extern "C" {
  *               callback; instead, queue data or events for processing in a
  *               separate thread or context.
  */
-typedef int(RawstorIOCallback)(size_t result, int error, void* data);
+typedef int(RawIOCallback)(size_t result, int error, void* data);
 
 /**
  * @brief Callback for multishot receive operations with scatter-gather
@@ -95,19 +95,21 @@ typedef int(RawstorIOCallback)(size_t result, int error, void* data);
  *               terminates. The event handle becomes invalid and should not be
  *               canceled.
  */
-typedef ssize_t(RawstorIOMultishotVectorCallback)(
+typedef ssize_t(RawIOMultishotVectorCallback)(
     const struct iovec* iov, unsigned int niov, size_t result, int error,
     void* data
 );
 
-typedef void RawstorIOEvent;
+typedef struct RawIOQueue RawIOQueue;
 
-/**
- * fd
- */
+typedef void RawIOEvent;
+
+int rawio_queue_create(unsigned int depth, RawIOQueue** queue) RAWSTOR_NOEXCEPT;
+
+void rawio_queue_delete(RawIOQueue* queue) RAWSTOR_NOEXCEPT;
 
 int rawio_poll(
-    int fd, unsigned int mask, RawstorIOCallback* cb, void* data
+    RawIOQueue* queue, int fd, unsigned int mask, RawIOCallback* cb, void* data
 ) RAWSTOR_NOEXCEPT;
 
 /**
@@ -165,8 +167,8 @@ int rawio_poll(
  * @see         poll(2) for standard poll semantics and event definitions.
  */
 int rawio_poll_multishot(
-    int fd, unsigned int mask, RawstorIOCallback* cb, void* data,
-    RawstorIOEvent** event
+    RawIOQueue* queue, int fd, unsigned int mask, RawIOCallback* cb, void* data,
+    RawIOEvent** event
 ) RAWSTOR_NOEXCEPT;
 
 /**
@@ -215,8 +217,8 @@ int rawio_poll_multishot(
  * @see           accept(2) for standard synchronous accept semantics.
  */
 int rawio_accept(
-    int fd, struct sockaddr* addr, socklen_t* addrlen, RawstorIOCallback* cb,
-    void* data
+    RawIOQueue* queue, int fd, struct sockaddr* addr, socklen_t* addrlen,
+    RawIOCallback* cb, void* data
 ) RAWSTOR_NOEXCEPT;
 
 /**
@@ -269,31 +271,32 @@ int rawio_accept(
  * @see           accept(2), getpeername(2).
  */
 int rawio_accept_multishot(
-    int fd, RawstorIOCallback* cb, void* data, RawstorIOEvent** event
+    RawIOQueue* queue, int fd, RawIOCallback* cb, void* data, RawIOEvent** event
 ) RAWSTOR_NOEXCEPT;
 
 int rawio_read(
-    int fd, void* buf, size_t size, RawstorIOCallback* cb, void* data
+    RawIOQueue* queue, int fd, void* buf, size_t size, RawIOCallback* cb,
+    void* data
 ) RAWSTOR_NOEXCEPT;
 
 int rawio_readv(
-    int fd, struct iovec* iov, unsigned int niov, RawstorIOCallback* cb,
-    void* data
+    RawIOQueue* queue, int fd, struct iovec* iov, unsigned int niov,
+    RawIOCallback* cb, void* data
 ) RAWSTOR_NOEXCEPT;
 
 int rawio_pread(
-    int fd, void* buf, size_t size, off_t offset, RawstorIOCallback* cb,
-    void* data
+    RawIOQueue* queue, int fd, void* buf, size_t size, off_t offset,
+    RawIOCallback* cb, void* data
 ) RAWSTOR_NOEXCEPT;
 
 int rawio_preadv(
-    int fd, struct iovec* iov, unsigned int niov, off_t offset,
-    RawstorIOCallback* cb, void* data
+    RawIOQueue* queue, int fd, struct iovec* iov, unsigned int niov,
+    off_t offset, RawIOCallback* cb, void* data
 ) RAWSTOR_NOEXCEPT;
 
 int rawio_recv(
-    int fd, void* buf, size_t size, unsigned int flags, RawstorIOCallback* cb,
-    void* data
+    RawIOQueue* queue, int fd, void* buf, size_t size, unsigned int flags,
+    RawIOCallback* cb, void* data
 ) RAWSTOR_NOEXCEPT;
 
 /**
@@ -357,44 +360,47 @@ int rawio_recv(
  * @see              rawio_cancel() for operation termination.
  */
 int rawio_recv_multishot(
-    int fd, size_t entry_size, unsigned int entries, size_t size,
-    unsigned int flags, RawstorIOMultishotVectorCallback* cb, void* data,
-    RawstorIOEvent** event
+    RawIOQueue* queue, int fd, size_t entry_size, unsigned int entries,
+    size_t size, unsigned int flags, RawIOMultishotVectorCallback* cb,
+    void* data, RawIOEvent** event
 ) RAWSTOR_NOEXCEPT;
 
 int rawio_recvmsg(
-    int fd, struct msghdr* msg, unsigned int flags, RawstorIOCallback* cb,
-    void* data
+    RawIOQueue* queue, int fd, struct msghdr* msg, unsigned int flags,
+    RawIOCallback* cb, void* data
 ) RAWSTOR_NOEXCEPT;
 
 int rawio_write(
-    int fd, const void* buf, size_t size, RawstorIOCallback* cb, void* data
+    RawIOQueue* queue, int fd, const void* buf, size_t size, RawIOCallback* cb,
+    void* data
 ) RAWSTOR_NOEXCEPT;
 
 int rawio_writev(
-    int fd, const struct iovec* iov, unsigned int niov, RawstorIOCallback* cb,
-    void* data
+    RawIOQueue* queue, int fd, const struct iovec* iov, unsigned int niov,
+    RawIOCallback* cb, void* data
 ) RAWSTOR_NOEXCEPT;
 
 int rawio_pwrite(
-    int fd, const void* buf, size_t size, off_t offset, RawstorIOCallback* cb,
-    void* data
+    RawIOQueue* queue, int fd, const void* buf, size_t size, off_t offset,
+    RawIOCallback* cb, void* data
 ) RAWSTOR_NOEXCEPT;
 
 int rawio_pwritev(
-    int fd, const struct iovec* iov, unsigned int niov, off_t offset,
-    RawstorIOCallback* cb, void* data
+    RawIOQueue* queue, int fd, const struct iovec* iov, unsigned int niov,
+    off_t offset, RawIOCallback* cb, void* data
 ) RAWSTOR_NOEXCEPT;
 
 int rawio_send(
-    int fd, const void* buf, size_t size, unsigned int flags,
-    RawstorIOCallback* cb, void* data
+    RawIOQueue* queue, int fd, const void* buf, size_t size, unsigned int flags,
+    RawIOCallback* cb, void* data
 ) RAWSTOR_NOEXCEPT;
 
 int rawio_sendmsg(
-    int fd, const struct msghdr* msg, unsigned int flags, RawstorIOCallback* cb,
-    void* data
+    RawIOQueue* queue, int fd, const struct msghdr* msg, unsigned int flags,
+    RawIOCallback* cb, void* data
 ) RAWSTOR_NOEXCEPT;
+
+int rawio_wait(RawIOQueue* queue, unsigned int timeout) RAWSTOR_NOEXCEPT;
 
 /**
  * @brief Cancels an ongoing I/O operation and releases associated resources if
@@ -408,7 +414,7 @@ int rawio_sendmsg(
  *
  * 3. Any pending I/O operations are properly cleaned up
  *
- * @param event Event handle obtained from cancelable rawstor I/O function.
+ * @param event Event handle obtained from cancelable rawio I/O function.
  *              After successful cancellation, the handle becomes invalid and
  *              should not be used further. The caller does not need to free
  *              the handle - all associated resources are managed internally.
@@ -440,7 +446,7 @@ int rawio_sendmsg(
  *              establishing multishot operations.
  *
  */
-int rawio_cancel(RawstorIOEvent* event) RAWSTOR_NOEXCEPT;
+int rawio_cancel(RawIOQueue* queue, RawIOEvent* event) RAWSTOR_NOEXCEPT;
 
 /**
  * @brief Cancel all ongoing I/O operations associated with a file descriptor.
@@ -471,9 +477,9 @@ int rawio_cancel(RawstorIOEvent* event) RAWSTOR_NOEXCEPT;
  *              rawstor_wait()) before the operations are fully terminated.
  *              After those callbacks return, no further callbacks will occur.
  *
- * @see         rawio_cancel(RawstorIOEvent*)
+ * @see         rawio_cancel(RawIOEvent*)
  */
-int rawio_cancel_all(int fd) RAWSTOR_NOEXCEPT;
+int rawio_cancel_all(RawIOQueue* queue, int fd) RAWSTOR_NOEXCEPT;
 
 #ifdef __cplusplus
 }

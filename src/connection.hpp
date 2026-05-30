@@ -3,9 +3,11 @@
 
 #include "object.hpp"
 
-#include <rawstd/uri.hpp>
-
 #include <rawstor/rawstor.h>
+
+#include <rawio/queue.hpp>
+
+#include <rawstd/uri.hpp>
 
 #include <functional>
 #include <memory>
@@ -19,6 +21,7 @@ class Session;
 
 class Connection final {
 private:
+    rawio::Queue& _queue;
     Object* _object;
 
     std::vector<std::shared_ptr<Session>> _sessions;
@@ -42,7 +45,7 @@ public:
 
     static void spec(const rawstd::URI& target, RawstorObjectSpec* sp);
 
-    Connection();
+    explicit Connection(rawio::Queue& queue);
     Connection(const Connection&) = delete;
     ~Connection();
 

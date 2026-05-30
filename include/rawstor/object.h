@@ -7,6 +7,7 @@
 #ifndef RAWSTOR_OBJECT_H
 #define RAWSTOR_OBJECT_H
 
+#include <rawstor/rawio.h>
 #include <rawstor/rawstor.h>
 
 #include <sys/types.h>
@@ -185,7 +186,7 @@ int rawstor_object_remove(const char* target) RAWSTOR_NOEXCEPT;
  * https://github.com/rawstor/librawstor/blob/main/docs/locations_and_targets.md
  */
 int rawstor_object_open(
-    const char* target, RawstorObject** object
+    RawIOQueue* queue, const char* target, RawstorObject** object
 ) RAWSTOR_NOEXCEPT;
 
 /**

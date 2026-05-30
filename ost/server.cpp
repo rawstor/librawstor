@@ -28,6 +28,7 @@ namespace ostbackend {
 Server::Server(
     const std::string& addr, unsigned int port, const char* location
 ) :
+    _queue(nullptr),
     _fd(-1),
     _locations(rawstd::URI::uriv(location)),
     _accept_event(nullptr) {
@@ -38,6 +39,11 @@ Server::Server(
     }
 
     try {
+        res = rawio_queue_create(256, &_queue);
+        if (res < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
+        }
+
         _fd = socket(AF_INET, SOCK_STREAM, 0);
         if (_fd == -1) {
             RAWSTD_THROW_ERRNO();
@@ -73,6 +79,9 @@ Server::Server(
         if (_fd != -1) {
             close(_fd);
         }
+        if (_queue != nullptr) {
+            rawio_queue_delete(_queue);
+        }
         rawstor_terminate();
         throw;
     }
@@ -86,11 +95,13 @@ Server::~Server() {
     }
 
     if (_accept_event != nullptr) {
-        int res = rawio_cancel(_accept_event);
+        int res = rawio_cancel(_queue, _accept_event);
         if (res < 0) {
             rawstd_error("Failed to cancel event: %s\n", strerror(-res));
         }
     }
+
+    rawio_queue_delete(_queue);
 
     rawstor_terminate();
 }
@@ -119,7 +130,7 @@ int Server::_accept(size_t result, int error) {
 
 void Server::_add_session(int fd) {
     try {
-        _sessions.emplace(fd, std::make_unique<Session>(*this, fd));
+        _sessions.emplace(fd, std::make_unique<Session>(_queue, *this, fd));
     } catch (...) {
         close(fd);
         throw;
@@ -134,17 +145,14 @@ void Server::del_session(int fd) noexcept {
 }
 
 void Server::loop() {
-    int res = rawio_accept_multishot(_fd, _accept, this, &_accept_event);
+    int res =
+        rawio_accept_multishot(_queue, _fd, _accept, this, &_accept_event);
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 
     while (true) {
-        int res = rawstor_wait();
-        if (res == -ETIME) {
-            continue;
-        }
-
+        int res = rawio_wait(_queue, -1);
         if (res == -EINTR) {
             break;
         }

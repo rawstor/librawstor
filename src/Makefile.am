@@ -42,8 +42,7 @@ librawstor_la_SOURCES = connection.cpp \
                         opts.h \
                         session.cpp \
                         session.hpp \
-                        rawstor.cpp \
-                        rawstor_internals.hpp
+                        rawstor.cpp
 
 librawstor_la_LDFLAGS = -version-info $(LIBRARY_VERSION)
 

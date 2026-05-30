@@ -216,8 +216,8 @@ public:
     virtual unsigned int mask() = 0;
 };
 
-void poll(int fd, std::unique_ptr<TaskPoll> t) {
-    int res = rawio_poll(fd, t->mask(), t->callback, t.get());
+void poll(RawIOQueue* queue, int fd, std::unique_ptr<TaskPoll> t) {
+    int res = rawio_poll(queue, fd, t->mask(), t->callback, t.get());
     if (res) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
@@ -287,7 +287,7 @@ void TaskDispatch::operator()(size_t result, int error) {
     }
 
     std::unique_ptr<TaskDispatch> t = std::make_unique<TaskDispatch>(_device);
-    poll(_device.dev()->sock, std::move(t));
+    poll(_device.queue(), _device.dev()->sock, std::move(t));
 }
 
 void TaskWatch::operator()(size_t result, int error) {
@@ -513,15 +513,17 @@ namespace rawstor {
 namespace vhost {
 
 Watcher::Watcher(
-    rawstor::vhost::Device& device, int fd, int condition, vu_watch_cb cb,
-    void* data
+    RawIOQueue* queue, rawstor::vhost::Device& device, int fd, int condition,
+    vu_watch_cb cb, void* data
 ) :
+    _queue(queue),
     _event(nullptr),
     _counter(1) {
     std::unique_ptr<TaskWatch> t =
         std::make_unique<TaskWatch>(device, fd, condition, cb, data);
-    int res =
-        rawio_poll_multishot(fd, t->mask(), t->callback, t.get(), &_event);
+    int res = rawio_poll_multishot(
+        _queue, fd, t->mask(), t->callback, t.get(), &_event
+    );
     if (res) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
@@ -529,7 +531,7 @@ Watcher::Watcher(
 }
 
 Watcher::~Watcher() {
-    int res = rawio_cancel(_event);
+    int res = rawio_cancel(_queue, _event);
     if (res < 0) {
         rawstd_error("Failed to cancel event: %s\n", strerror(-res));
     }
@@ -538,6 +540,7 @@ Watcher::~Watcher() {
 std::unordered_map<int, Device*> Device::_devices;
 
 Device::Device(const std::string& target, int fd) :
+    _queue(nullptr),
     _object(nullptr),
     _iface{
         .get_features = ::get_features,
@@ -565,13 +568,20 @@ Device::Device(const std::string& target, int fd) :
     _blk_config(std::make_unique<virtio_blk_config>()) {
     memset(_blk_config.get(), 0, sizeof(*_blk_config.get()));
 
-    int ires = rawstor_object_spec(target.c_str(), &_spec);
+    int ires = rawio_queue_create(256, &_queue);
     if (ires) {
         RAWSTD_THROW_SYSTEM_ERROR(-ires);
     }
 
-    ires = rawstor_object_open(target.c_str(), &_object);
+    ires = rawstor_object_spec(target.c_str(), &_spec);
     if (ires) {
+        rawio_queue_delete(_queue);
+        RAWSTD_THROW_SYSTEM_ERROR(-ires);
+    }
+
+    ires = rawstor_object_open(_queue, target.c_str(), &_object);
+    if (ires) {
+        rawio_queue_delete(_queue);
         RAWSTD_THROW_SYSTEM_ERROR(-ires);
     }
 
@@ -632,6 +642,7 @@ Device::~Device() {
     _devices.erase(_dev.sock);
     vu_deinit(&_dev);
     rawstor_object_close(_object);
+    rawio_queue_delete(_queue);
 }
 
 Device& Device::get(int fd) {
@@ -689,7 +700,7 @@ void Device::set_watch(int fd, int condition, vu_watch_cb cb, void* data) {
     }
 
     _watchers.emplace(
-        fd, std::make_unique<Watcher>(*this, fd, condition, cb, data)
+        fd, std::make_unique<Watcher>(_queue, *this, fd, condition, cb, data)
     );
 }
 
@@ -711,10 +722,10 @@ bool Device::has_watch(int fd) const noexcept {
 
 void Device::loop() {
     std::unique_ptr<TaskDispatch> t = std::make_unique<TaskDispatch>(*this);
-    poll(_dev.sock, std::move(t));
+    poll(_queue, _dev.sock, std::move(t));
 
     while (true) {
-        int res = rawstor_wait();
+        int res = rawio_wait(_queue, 5000);
         if (res == -ETIME) {
             continue;
         }

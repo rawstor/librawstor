@@ -2,7 +2,6 @@
 
 #include "object.hpp"
 #include "opts.h"
-#include "rawstor_internals.hpp"
 
 #include <rawio/queue.hpp>
 
@@ -108,7 +107,7 @@ private:
     rawio::Queue& _queue;
     int _fd;
     std::unordered_map<uint16_t, std::shared_ptr<SessionOp>> _ops;
-    RawstorIOEvent* _read_event;
+    RawIOEvent* _read_event;
 
     void _fail_in_flight(int error, bool* next_head, size_t* next_size);
 

@@ -6,7 +6,6 @@
 #include "file_session.hpp"
 #include "opts.h"
 #include "ost_session.hpp"
-#include "rawstor_internals.hpp"
 
 #include <rawstd/gpp.hpp>
 #include <rawstd/logging.hpp>
@@ -80,7 +79,9 @@ void validate_different_uris(const std::vector<rawstd::URI>& uris) {
 
 namespace rawstor {
 
-Object::Object(const std::vector<rawstd::URI>& targets) : _id() {
+Object::Object(rawio::Queue& queue, const std::vector<rawstd::URI>& targets) :
+    _queue(queue),
+    _id() {
     validate_not_empty(targets);
     validate_different_uris(targets);
     validate_same_uuid(targets);
@@ -94,7 +95,7 @@ Object::Object(const std::vector<rawstd::URI>& targets) : _id() {
     _cns.reserve(targets.size());
     for (const auto& target : targets) {
         std::unique_ptr<rawstor::Connection> cn =
-            std::make_unique<rawstor::Connection>();
+            std::make_unique<rawstor::Connection>(_queue);
         cn->open(target.parent(), this, rawstor_opts_sessions());
         _cns.push_back(std::move(cn));
     }
@@ -381,10 +382,14 @@ int rawstor_object_spec(const char* target, RawstorObjectSpec* sp) noexcept {
     }
 }
 
-int rawstor_object_open(const char* target, RawstorObject** object) noexcept {
+int rawstor_object_open(
+    RawIOQueue* queue, const char* target, RawstorObject** object
+) noexcept {
     try {
         std::unique_ptr<rawstor::Object> ret =
-            std::make_unique<rawstor::Object>(rawstd::URI::uriv(target));
+            std::make_unique<rawstor::Object>(
+                *static_cast<rawio::Queue*>(queue), rawstd::URI::uriv(target)
+            );
 
         *object = ret.get();
 
