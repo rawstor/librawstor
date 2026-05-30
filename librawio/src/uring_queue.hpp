@@ -107,7 +107,7 @@ public:
 
     void cancel(int fd);
 
-    void wait(unsigned int timeout) override;
+    void wait(int timeout) override;
 };
 
 } // namespace uring

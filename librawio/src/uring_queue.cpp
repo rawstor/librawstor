@@ -627,18 +627,24 @@ void Queue::cancel(int fd) {
     }
 }
 
-void Queue::wait(unsigned int timeout) {
-    __kernel_timespec ts = {
-        .tv_sec = timeout / 1000, .tv_nsec = 1000000u * (timeout % 1000)
-    };
-
+void Queue::wait(int timeout) {
     io_uring_cqe* cqe;
+    __kernel_timespec ts;
+    __kernel_timespec *pts = nullptr;
+    if (timeout >= 0) {
+        ts = {
+            .tv_sec = timeout / 1000, .tv_nsec = 1000000u * (timeout % 1000)
+        };
+        pts = &ts;
+    }
+
     rawstd_trace("io_uring_submit_and_wait_timeout()\n");
-    int res = io_uring_submit_and_wait_timeout(&_ring, &cqe, 1, &ts, nullptr);
+    int res = io_uring_submit_and_wait_timeout(&_ring, &cqe, 1, pts, nullptr);
     rawstd_trace("io_uring_submit_and_wait_timeout(): res = %d\n", res);
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
+
     if (cqe == nullptr) {
         RAWSTD_THROW_SYSTEM_ERROR(ETIME);
     }

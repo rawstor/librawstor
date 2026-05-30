@@ -120,7 +120,7 @@ public:
 
     void cancel(int fd) override;
 
-    void wait(unsigned int timeout) override;
+    void wait(int timeout) override;
 };
 
 } // namespace poll

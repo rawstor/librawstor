@@ -402,7 +402,7 @@ void Queue::cancel(int fd) {
     }
 }
 
-void Queue::wait(unsigned int timeout) {
+void Queue::wait(int timeout) {
     while (_cqes.empty()) {
         std::vector<pollfd> fds;
         fds.reserve(_sessions.size());
