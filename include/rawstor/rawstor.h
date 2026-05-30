@@ -87,6 +87,7 @@ int rawstor_fd_sendmsg(
  */
 
 struct RawstorOpts {
+    unsigned int queue_depth;
     unsigned int wait_timeout;
     unsigned int io_attempts;
     unsigned int sessions;
