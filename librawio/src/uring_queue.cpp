@@ -630,11 +630,9 @@ void Queue::cancel(int fd) {
 void Queue::wait(int timeout) {
     io_uring_cqe* cqe;
     __kernel_timespec ts;
-    __kernel_timespec *pts = nullptr;
+    __kernel_timespec* pts = nullptr;
     if (timeout >= 0) {
-        ts = {
-            .tv_sec = timeout / 1000, .tv_nsec = 1000000u * (timeout % 1000)
-        };
+        ts = {.tv_sec = timeout / 1000, .tv_nsec = 1000000u * (timeout % 1000)};
         pts = &ts;
     }
 
