@@ -3,7 +3,9 @@
 
 #include "session.hpp"
 
+#include <functional>
 #include <string>
+#include <vector>
 
 namespace rawstor {
 
@@ -18,8 +20,17 @@ class BlkdevSession : public Session {
 protected:
     virtual std::string device_path(const RawstdUUID& id) const = 0;
 
-    static int run_command(const char* const* argv);
-    static int wait_for_device(const std::string& path, int timeout_ms = 5000);
+    /*
+     * Runs cmd in a detached thread and optionally waits for wait_path to
+     * appear as a block device.  The result is communicated back to the
+     * caller's io_uring ring via a pipe, so the event loop is not blocked.
+     * cb is invoked from an io_uring completion callback with 0 on success
+     * or a positive errno value on failure.
+     */
+    void run_async(
+        std::vector<std::string> cmd, std::string wait_path,
+        std::function<void(int)>&& cb
+    );
 
 public:
     BlkdevSession(rawio::Queue& queue, const rawstd::URI& location);

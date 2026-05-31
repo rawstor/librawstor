@@ -4,11 +4,9 @@
 #include <rawstd/logging.h>
 #include <rawstd/uuid.h>
 
-#include <cerrno>
 #include <cstdio>
 #include <cstring>
 #include <sstream>
-#include <stdexcept>
 #include <string>
 
 namespace rawstor {
@@ -61,31 +59,28 @@ void Session::create(
     RawstdUUIDString uuid_str;
     rawstd_uuid_to_string(&id, &uuid_str);
 
-    char size_arg[64];
-    snprintf(size_arg, sizeof(size_arg), "%zub", sp.size);
+    char size_buf[64];
+    snprintf(size_buf, sizeof(size_buf), "%zub", sp.size);
 
     rawstd_info(
         "lvm: creating LV %s in VG %s, size %s\n", uuid_str, _vg_name.c_str(),
-        size_arg
+        size_buf
     );
 
-    const char* argv[] = {"lvcreate", "--yes",          "-L",   size_arg, "-n",
-                          uuid_str,   _vg_name.c_str(), nullptr};
-
-    int res = run_command(argv);
-    if (res != 0) {
-        rawstd_error("lvm: lvcreate failed: %s\n", strerror(-res));
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-
-    std::string path = device_path(id);
-    res = wait_for_device(path);
-    if (res != 0) {
-        rawstd_error("lvm: device %s did not appear\n", path.c_str());
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-
-    cb(0);
+    run_async(
+        {"lvcreate", "--yes", "-L", size_buf, "-n", uuid_str, _vg_name},
+        device_path(id),
+        [name = std::string(uuid_str), vg = _vg_name,
+         cb = std::move(cb)](int error) mutable {
+            if (error != 0) {
+                rawstd_error(
+                    "lvm: failed to create LV %s in VG %s: %s\n", name.c_str(),
+                    vg.c_str(), strerror(error)
+                );
+            }
+            cb(error);
+        }
+    );
 }
 
 void Session::remove(const RawstdUUID& id, std::function<void(int)>&& cb) {
@@ -93,15 +88,18 @@ void Session::remove(const RawstdUUID& id, std::function<void(int)>&& cb) {
 
     rawstd_info("lvm: removing LV %s\n", path.c_str());
 
-    const char* argv[] = {"lvremove", "-f", path.c_str(), nullptr};
-
-    int res = run_command(argv);
-    if (res != 0) {
-        rawstd_error("lvm: lvremove failed: %s\n", strerror(-res));
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-
-    cb(0);
+    run_async(
+        {"lvremove", "-f", path}, "",
+        [path, cb = std::move(cb)](int error) mutable {
+            if (error != 0) {
+                rawstd_error(
+                    "lvm: failed to remove LV %s: %s\n", path.c_str(),
+                    strerror(error)
+                );
+            }
+            cb(error);
+        }
+    );
 }
 
 } // namespace lvm
