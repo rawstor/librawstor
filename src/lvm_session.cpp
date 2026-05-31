@@ -65,14 +65,12 @@ void Session::create(
     snprintf(size_arg, sizeof(size_arg), "%zub", sp.size);
 
     rawstd_info(
-        "lvm: creating LV %s in VG %s, size %s\n",
-        uuid_str, _vg_name.c_str(), size_arg
+        "lvm: creating LV %s in VG %s, size %s\n", uuid_str, _vg_name.c_str(),
+        size_arg
     );
 
-    const char* argv[] = {
-        "lvcreate", "--yes", "-L", size_arg, "-n", uuid_str,
-        _vg_name.c_str(), nullptr
-    };
+    const char* argv[] = {"lvcreate", "--yes",          "-L",   size_arg, "-n",
+                          uuid_str,   _vg_name.c_str(), nullptr};
 
     int res = run_command(argv);
     if (res != 0) {

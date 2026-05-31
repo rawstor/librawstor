@@ -9,12 +9,12 @@
 
 #include <rawio/queue.hpp>
 
+#include <linux/fs.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/uio.h>
 #include <sys/wait.h>
-#include <linux/fs.h>
 
 #include <fcntl.h>
 #include <unistd.h>
@@ -72,17 +72,18 @@ void BlkdevSession::spec(
 ) {
     std::string path = device_path(id);
 
-    int fd = open(path.c_str(), O_RDONLY | O_NONBLOCK);
+    int fd = open(path.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
     if (fd == -1) {
-        RAWSTD_THROW_ERRNO();
+        cb({}, errno);
+        return;
     }
 
     uint64_t size = 0;
     if (ioctl(fd, BLKGETSIZE64, &size) == -1) {
         int err = errno;
         close(fd);
-        errno = err;
-        RAWSTD_THROW_ERRNO();
+        cb({}, err);
+        return;
     }
 
     close(fd);
@@ -99,7 +100,7 @@ void BlkdevSession::set_object(Object* object) {
 
     rawstd_info("Connecting to %s...\n", path.c_str());
 
-    int fd = open(path.c_str(), O_RDWR | O_NONBLOCK);
+    int fd = open(path.c_str(), O_RDWR | O_NONBLOCK | O_CLOEXEC);
     if (fd == -1) {
         RAWSTD_THROW_ERRNO();
     }
