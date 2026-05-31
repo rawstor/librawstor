@@ -67,9 +67,8 @@ void Session::create(
         "zfs: creating zvol %s, size %s bytes\n", dataset.c_str(), size_arg
     );
 
-    const char* argv[] = {
-        "zfs", "create", "-V", size_arg, dataset.c_str(), nullptr
-    };
+    const char* argv[] = {"zfs",    "create",        "-V",
+                          size_arg, dataset.c_str(), nullptr};
 
     int res = run_command(argv);
     if (res != 0) {
@@ -99,9 +98,7 @@ void Session::remove(const RawstdUUID& id, std::function<void(int)>&& cb) {
 
     int res = run_command(argv);
     if (res != 0) {
-        rawstd_error(
-            "zfs: destroy failed for dataset %s\n", dataset.c_str()
-        );
+        rawstd_error("zfs: destroy failed for dataset %s\n", dataset.c_str());
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 
