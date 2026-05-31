@@ -4,11 +4,9 @@
 #include <rawstd/logging.h>
 #include <rawstd/uuid.h>
 
-#include <cerrno>
 #include <cstdio>
 #include <cstring>
 #include <sstream>
-#include <stdexcept>
 #include <string>
 
 namespace rawstor {
@@ -60,30 +58,25 @@ void Session::create(
 
     std::string dataset = _parent_dataset + "/" + uuid_str;
 
-    char size_arg[64];
-    snprintf(size_arg, sizeof(size_arg), "%zu", sp.size);
+    char size_buf[64];
+    snprintf(size_buf, sizeof(size_buf), "%zu", sp.size);
 
     rawstd_info(
-        "zfs: creating zvol %s, size %s bytes\n", dataset.c_str(), size_arg
+        "zfs: creating zvol %s, size %s bytes\n", dataset.c_str(), size_buf
     );
 
-    const char* argv[] = {"zfs",    "create",        "-V",
-                          size_arg, dataset.c_str(), nullptr};
-
-    int res = run_command(argv);
-    if (res != 0) {
-        rawstd_error("zfs: create failed for dataset %s\n", dataset.c_str());
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-
-    std::string path = device_path(id);
-    res = wait_for_device(path);
-    if (res != 0) {
-        rawstd_error("zfs: device %s did not appear\n", path.c_str());
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-
-    cb(0);
+    run_async(
+        {"zfs", "create", "-V", size_buf, dataset}, device_path(id),
+        [dataset, cb = std::move(cb)](int error) mutable {
+            if (error != 0) {
+                rawstd_error(
+                    "zfs: failed to create zvol %s: %s\n", dataset.c_str(),
+                    strerror(error)
+                );
+            }
+            cb(error);
+        }
+    );
 }
 
 void Session::remove(const RawstdUUID& id, std::function<void(int)>&& cb) {
@@ -94,15 +87,18 @@ void Session::remove(const RawstdUUID& id, std::function<void(int)>&& cb) {
 
     rawstd_info("zfs: destroying zvol %s\n", dataset.c_str());
 
-    const char* argv[] = {"zfs", "destroy", dataset.c_str(), nullptr};
-
-    int res = run_command(argv);
-    if (res != 0) {
-        rawstd_error("zfs: destroy failed for dataset %s\n", dataset.c_str());
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-
-    cb(0);
+    run_async(
+        {"zfs", "destroy", dataset}, "",
+        [dataset, cb = std::move(cb)](int error) mutable {
+            if (error != 0) {
+                rawstd_error(
+                    "zfs: failed to destroy zvol %s: %s\n", dataset.c_str(),
+                    strerror(error)
+                );
+            }
+            cb(error);
+        }
+    );
 }
 
 } // namespace zfs
