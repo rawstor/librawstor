@@ -418,20 +418,21 @@ void Session::_read(const RawstorOSTFrameIOBody& request) {
 
     auto data = std::make_shared<std::vector<unsigned char>>(request.len);
 
-    auto cb = std::make_unique<Callback>([queue = _queue, fd = _fd, cid = request.cid, data](
-                                             RawstorObject*, size_t,
-                                             size_t result, int error
-                                         ) {
-        try {
-            send_response(
-                queue, fd, RAWSTOR_CMD_READ, cid,
-                error ? -error : static_cast<int32_t>(result),
-                error ? 0 : rawstd_hash_scalar(data->data(), data->size()), data
-            );
-        } catch (const std::exception& e) {
-            rawstd_error("%s\n", e.what());
+    auto cb = std::make_unique<Callback>(
+        [queue = _queue, fd = _fd, cid = request.cid,
+         data](RawstorObject*, size_t, size_t result, int error) {
+            try {
+                send_response(
+                    queue, fd, RAWSTOR_CMD_READ, cid,
+                    error ? -error : static_cast<int32_t>(result),
+                    error ? 0 : rawstd_hash_scalar(data->data(), data->size()),
+                    data
+                );
+            } catch (const std::exception& e) {
+                rawstd_error("%s\n", e.what());
+            }
         }
-    });
+    );
 
     int res = rawstor_object_pread(
         _object, data->data(), data->size(), request.offset, callback, cb.get()
