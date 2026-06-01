@@ -1,0 +1,16 @@
+/**
+ * Copyright (C) 2025-2026, Vasily Stepanov (vasily.stepanov@gmail.com)
+ *
+ * SPDX-License-Identifier: LGPL-3.0
+ */
+
+#ifndef RAWSTOR_VERSION_H
+#define RAWSTOR_VERSION_H
+
+#define RAWSTOR_VERSION_MAJOR @PACKAGE_VERSION_MAJOR@
+
+#define RAWSTOR_VERSION_MINOR @PACKAGE_VERSION_MINOR@
+
+#define RAWSTOR_VERSION_PATCH @PACKAGE_VERSION_PATCH@
+
+#endif // RAWSTOR_VERSION_H
