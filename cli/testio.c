@@ -344,6 +344,8 @@ int rawstor_cli_testio(
     }
     free(workers);
 
+    rawio_queue_delete(queue);
+
     printf("Success!\n");
 
     return EXIT_SUCCESS;
