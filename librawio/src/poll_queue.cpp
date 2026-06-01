@@ -487,7 +487,7 @@ void Queue::wait() {
 }
 
 void Queue::wait_timeout(unsigned int timeout) {
-    _wait_timeout(timeout & 0x7fffffffu);
+    _wait_timeout(timeout);
 }
 
 } // namespace poll
