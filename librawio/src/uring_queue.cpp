@@ -59,11 +59,12 @@ Queue::~Queue() {
     io_uring_queue_exit(&_ring);
 }
 
-void Queue::_dispatch(io_uring_cqe* cqe) {
+void Queue::_dispatch() {
     unsigned int nr = 0;
 
     try {
         unsigned int head;
+        io_uring_cqe* cqe;
         io_uring_for_each_cqe(&_ring, head, cqe) {
             rawstd_trace("cqe->res = %d\n", cqe->res);
 
@@ -697,14 +698,7 @@ void Queue::wait() {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 
-    rawstd_trace("io_uring_wait_cqe()\n");
-    res = io_uring_wait_cqe(&_ring, &cqe);
-    rawstd_trace("io_uring_wait_cqe(): res = %d\n", res);
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-
-    _dispatch(cqe);
+    _dispatch();
 }
 
 void Queue::wait_timeout(unsigned int timeout) {
@@ -723,7 +717,7 @@ void Queue::wait_timeout(unsigned int timeout) {
         RAWSTD_THROW_SYSTEM_ERROR(ETIME);
     }
 
-    _dispatch(cqe);
+    _dispatch();
 }
 
 } // namespace uring

@@ -15,7 +15,7 @@ class Queue final : public rawio::Queue {
 private:
     io_uring _ring;
 
-    void _dispatch(io_uring_cqe* cqe);
+    void _dispatch();
 
 public:
     static const std::string& engine_name();
