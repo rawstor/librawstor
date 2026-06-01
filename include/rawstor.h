@@ -9,5 +9,6 @@
 
 #include <rawstor/object.h>
 #include <rawstor/rawstor.h>
+#include <rawstor/version.h>
 
 #endif // RAWSTOR_H
