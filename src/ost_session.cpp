@@ -796,7 +796,7 @@ void Session::_set_object(Object* object) {
     );
 
     while (!completed) {
-        queue->wait(rawstor_opts_wait_timeout());
+        queue->wait_timeout(rawstor_opts_wait_timeout());
     }
 }
 

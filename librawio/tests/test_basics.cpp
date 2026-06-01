@@ -21,7 +21,7 @@ TEST_F(BasicsTest, empty) {
     const char server_buf[] = "data";
     _server.write(server_buf, sizeof(server_buf));
     _server.wait();
-    EXPECT_THROW(_queue->wait(0), std::system_error);
+    EXPECT_THROW(_queue->wait_timeout(0), std::system_error);
 
     size_t result = 0;
     int error = 0;
@@ -30,9 +30,9 @@ TEST_F(BasicsTest, empty) {
         error = e;
     });
 
-    EXPECT_NO_THROW(_queue->wait(0));
+    EXPECT_NO_THROW(_queue->wait_timeout(0));
 
-    EXPECT_THROW(_queue->wait(0), std::system_error);
+    EXPECT_THROW(_queue->wait_timeout(0), std::system_error);
 }
 
 TEST_F(BasicsTest, pollin) {
@@ -46,7 +46,7 @@ TEST_F(BasicsTest, pollin) {
         result = r;
         error = e;
     });
-    _queue->wait(0);
+    _queue->wait_timeout(0);
 
     EXPECT_EQ(result, (size_t)POLLIN);
     EXPECT_EQ(error, 0);
@@ -59,7 +59,7 @@ TEST_F(BasicsTest, pollout) {
         result = r;
         error = e;
     });
-    _queue->wait(0);
+    _queue->wait_timeout(0);
 
     EXPECT_EQ(result, (size_t)POLLOUT);
     EXPECT_EQ(error, 0);
@@ -95,7 +95,7 @@ TEST_F(BasicsTest, accept) {
         }
     );
 
-    EXPECT_NO_THROW(_queue->wait(0));
+    EXPECT_NO_THROW(_queue->wait_timeout(0));
     EXPECT_GT(result, (size_t)0);
     EXPECT_EQ(error, 0);
 }
@@ -116,7 +116,7 @@ TEST_F(BasicsTest, read) {
             error = e;
         }
     );
-    _queue->wait(0);
+    _queue->wait_timeout(0);
 
     EXPECT_EQ(result, sizeof(client_buf));
     EXPECT_EQ(error, 0);
@@ -138,7 +138,7 @@ TEST_F(BasicsTest, recv) {
             error = e;
         }
     );
-    _queue->wait(0);
+    _queue->wait_timeout(0);
 
     EXPECT_EQ(result, sizeof(client_buf));
     EXPECT_EQ(error, 0);
@@ -156,7 +156,7 @@ TEST_F(BasicsTest, write) {
             error = e;
         }
     );
-    _queue->wait(0);
+    _queue->wait_timeout(0);
 
     char server_buf[sizeof(client_buf)];
     _server.read(server_buf, sizeof(server_buf));
@@ -178,7 +178,7 @@ TEST_F(BasicsTest, send) {
             error = e;
         }
     );
-    _queue->wait(0);
+    _queue->wait_timeout(0);
 
     char server_buf[sizeof(client_buf)];
     _server.read(server_buf, sizeof(server_buf));

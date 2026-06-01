@@ -37,6 +37,86 @@ Session& Queue::_get_session(int fd) {
     return *session;
 }
 
+void Queue::_wait_timeout(int timeout) {
+    while (_cqes.empty()) {
+        std::vector<pollfd> fds;
+        fds.reserve(_sessions.size());
+
+        std::unordered_map<int, std::shared_ptr<Session>>::iterator it =
+            _sessions.begin();
+
+        size_t i = 0;
+        while (it != _sessions.end()) {
+            if (!it->second->empty()) {
+                fds.push_back({
+                    .fd = it->second->fd(),
+                    .events = it->second->events(),
+                    .revents = 0,
+                });
+                assert(fds[i].events != 0);
+                ++it;
+                ++i;
+            } else {
+                it = _sessions.erase(it);
+            }
+        }
+
+        rawstd_trace("poll()\n");
+        int res = ::poll(fds.data(), fds.size(), timeout);
+        rawstd_trace("poll(): res = %d\n", res);
+        if (res == -1) {
+            RAWSTD_THROW_ERRNO();
+        }
+        if (res == 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(ETIME);
+        }
+
+        for (const pollfd& fd : fds) {
+            rawstd_trace("poll(): revents = %d\n", fd.revents);
+            std::shared_ptr<Session>& s = _sessions.at(fd.fd);
+            s->process(_cqes, fd.revents);
+        }
+    }
+
+    while (!_cqes.empty()) {
+        std::unique_ptr<Event> event(_cqes.pop());
+        _current_event = event.get();
+        try {
+            event->dispatch();
+        } catch (...) {
+            _current_event = nullptr;
+            throw;
+        }
+        _current_event = nullptr;
+        if (event->is_multishot() && !event->error()) {
+            if (event->is_poll()) {
+                std::unique_ptr<EventSimplexPoll> poll_event(
+                    static_cast<EventSimplexPoll*>(event.release())
+                );
+
+                Session& s = _get_session(poll_event->fd());
+                s.poll(std::move(poll_event));
+            } else if (event->is_accept()) {
+                std::unique_ptr<EventSimplexAccept> accept_event(
+                    static_cast<EventSimplexAccept*>(event.release())
+                );
+
+                Session& s = _get_session(accept_event->fd());
+                s.accept(std::move(accept_event));
+            } else if (event->is_read()) {
+                std::unique_ptr<EventSimplex> simplex_event(
+                    static_cast<EventSimplex*>(event.release())
+                );
+
+                Session& s = _get_session(simplex_event->fd());
+                s.read(std::move(simplex_event));
+            } else {
+                throw std::runtime_error("Unexpected multishot event");
+            }
+        }
+    }
+}
+
 const std::string& Queue::engine_name() {
     return ::engine_name;
 }
@@ -402,84 +482,12 @@ void Queue::cancel(int fd) {
     }
 }
 
-void Queue::wait(int timeout) {
-    while (_cqes.empty()) {
-        std::vector<pollfd> fds;
-        fds.reserve(_sessions.size());
+void Queue::wait() {
+    _wait_timeout(-1);
+}
 
-        std::unordered_map<int, std::shared_ptr<Session>>::iterator it =
-            _sessions.begin();
-
-        size_t i = 0;
-        while (it != _sessions.end()) {
-            if (!it->second->empty()) {
-                fds.push_back({
-                    .fd = it->second->fd(),
-                    .events = it->second->events(),
-                    .revents = 0,
-                });
-                assert(fds[i].events != 0);
-                ++it;
-                ++i;
-            } else {
-                it = _sessions.erase(it);
-            }
-        }
-
-        rawstd_trace("poll()\n");
-        int res = ::poll(fds.data(), fds.size(), timeout);
-        rawstd_trace("poll(): res = %d\n", res);
-        if (res == -1) {
-            RAWSTD_THROW_ERRNO();
-        }
-        if (res == 0) {
-            RAWSTD_THROW_SYSTEM_ERROR(ETIME);
-        }
-
-        for (const pollfd& fd : fds) {
-            rawstd_trace("poll(): revents = %d\n", fd.revents);
-            std::shared_ptr<Session>& s = _sessions.at(fd.fd);
-            s->process(_cqes, fd.revents);
-        }
-    }
-
-    while (!_cqes.empty()) {
-        std::unique_ptr<Event> event(_cqes.pop());
-        _current_event = event.get();
-        try {
-            event->dispatch();
-        } catch (...) {
-            _current_event = nullptr;
-            throw;
-        }
-        _current_event = nullptr;
-        if (event->is_multishot() && !event->error()) {
-            if (event->is_poll()) {
-                std::unique_ptr<EventSimplexPoll> poll_event(
-                    static_cast<EventSimplexPoll*>(event.release())
-                );
-
-                Session& s = _get_session(poll_event->fd());
-                s.poll(std::move(poll_event));
-            } else if (event->is_accept()) {
-                std::unique_ptr<EventSimplexAccept> accept_event(
-                    static_cast<EventSimplexAccept*>(event.release())
-                );
-
-                Session& s = _get_session(accept_event->fd());
-                s.accept(std::move(accept_event));
-            } else if (event->is_read()) {
-                std::unique_ptr<EventSimplex> simplex_event(
-                    static_cast<EventSimplex*>(event.release())
-                );
-
-                Session& s = _get_session(simplex_event->fd());
-                s.read(std::move(simplex_event));
-            } else {
-                throw std::runtime_error("Unexpected multishot event");
-            }
-        }
-    }
+void Queue::wait_timeout(unsigned int timeout) {
+    _wait_timeout(timeout);
 }
 
 } // namespace poll

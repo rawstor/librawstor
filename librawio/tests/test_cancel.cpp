@@ -29,12 +29,12 @@ TEST_F(CancelTest, poll) {
             error = e;
         });
 
-    EXPECT_THROW(_queue->wait(0), std::system_error);
+    EXPECT_THROW(_queue->wait_timeout(0), std::system_error);
 
     _queue->cancel(event);
 
-    EXPECT_NO_THROW(_queue->wait(0));
-    EXPECT_THROW(_queue->wait(0), std::system_error);
+    EXPECT_NO_THROW(_queue->wait_timeout(0));
+    EXPECT_THROW(_queue->wait_timeout(0), std::system_error);
 
     EXPECT_EQ(result, (size_t)0);
     EXPECT_EQ(error, ECANCELED);
@@ -53,7 +53,7 @@ TEST_F(CancelTest, poll_completed) {
             error = e;
         });
 
-    _queue->wait(0);
+    _queue->wait_timeout(0);
 
     EXPECT_THROW(_queue->cancel(event), std::system_error);
     EXPECT_EQ(result, (size_t)POLLIN);
@@ -72,13 +72,13 @@ TEST_F(CancelTest, read) {
         }
     );
 
-    EXPECT_THROW(_queue->wait(0), std::system_error);
+    EXPECT_THROW(_queue->wait_timeout(0), std::system_error);
 
     _queue->cancel(event);
 
-    EXPECT_NO_THROW(_queue->wait(0));
+    EXPECT_NO_THROW(_queue->wait_timeout(0));
 
-    EXPECT_THROW(_queue->wait(0), std::system_error);
+    EXPECT_THROW(_queue->wait_timeout(0), std::system_error);
 
     EXPECT_EQ(result, (size_t)0);
     EXPECT_EQ(error, ECANCELED);
@@ -100,7 +100,7 @@ TEST_F(CancelTest, read_completed) {
         }
     );
 
-    _queue->wait(0);
+    _queue->wait_timeout(0);
 
     EXPECT_THROW(_queue->cancel(event), std::system_error);
     EXPECT_EQ(result, sizeof(client_buf));
@@ -126,9 +126,9 @@ TEST_F(CancelTest, write) {
 
     _queue->cancel(event);
 
-    EXPECT_NO_THROW(_queue->wait(0));
+    EXPECT_NO_THROW(_queue->wait_timeout(0));
 
-    EXPECT_THROW(_queue->wait(0), std::system_error);
+    EXPECT_THROW(_queue->wait_timeout(0), std::system_error);
 
     EXPECT_EQ(result, (size_t)0);
     EXPECT_EQ(error, ECANCELED);
@@ -145,7 +145,7 @@ TEST_F(CancelTest, write_completed) {
             error = e;
         }
     );
-    _queue->wait(0);
+    _queue->wait_timeout(0);
 
     char server_buf[sizeof(client_buf)];
     _server.read(server_buf, sizeof(server_buf));

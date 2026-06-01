@@ -123,7 +123,9 @@ public:
 
     virtual void cancel(int fd) = 0;
 
-    virtual void wait(int timeout) = 0;
+    virtual void wait() = 0;
+
+    virtual void wait_timeout(unsigned int timeout) = 0;
 };
 
 } // namespace rawio
