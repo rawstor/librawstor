@@ -17,10 +17,16 @@ README: README.md
 	cp README.md README
 
 
-EXTRA_DIST = README.md
+ChangeLog: ChangeLog.md
+	cp ChangeLog.md ChangeLog
 
 
-CLEANFILES = README
+EXTRA_DIST = ChangeLog.md \
+             README.md
+
+
+CLEANFILES = ChangeLog \
+             README
 
 
 if ENABLE_TESTS
