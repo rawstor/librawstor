@@ -42,7 +42,7 @@ Queue::~Queue() {
         } else {
             while (true) {
                 try {
-                    wait(0);
+                    wait_timeout(0);
                 } catch (const std::system_error& e) {
                     if (e.code().value() != ETIME) {
                         rawstd_error("Failed to wait: %s\n", e.what());
@@ -57,6 +57,64 @@ Queue::~Queue() {
     }
 
     io_uring_queue_exit(&_ring);
+}
+
+void Queue::_dispatch() {
+    unsigned int nr = 0;
+
+    try {
+        unsigned int head;
+        io_uring_cqe* cqe;
+        io_uring_for_each_cqe(&_ring, head, cqe) {
+            rawstd_trace("cqe->res = %d\n", cqe->res);
+
+            ++nr;
+
+            std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p(
+                static_cast<std::function<void(size_t, int, unsigned int)>*>(
+                    io_uring_cqe_get_data(cqe)
+                )
+            );
+
+            size_t result;
+            int error;
+            if (cqe->res >= 0) [[likely]] {
+                result = cqe->res;
+                error = 0;
+            } else {
+                result = 0;
+                error = -cqe->res;
+            }
+
+            try {
+                rawstd_trace(
+                    "callback: result = %zu, error = %d\n", result, error
+                );
+                (*p)(result, error, cqe->flags);
+                rawstd_trace("callback success\n");
+            } catch (...) {
+                rawstd_trace("callback error\n");
+                if (cqe->flags & IORING_CQE_F_MORE) {
+                    p.release();
+                }
+                throw;
+            }
+
+            if (cqe->flags & IORING_CQE_F_MORE) {
+                p.release();
+            }
+        }
+    } catch (...) {
+        if (nr) {
+            io_uring_cq_advance(&_ring, nr);
+        }
+        throw;
+    }
+
+    if (nr) {
+        // TODO: use __io_uring_buf_ring_cq_advance here
+        io_uring_cq_advance(&_ring, nr);
+    }
 }
 
 const std::string& Queue::engine_name() {
@@ -627,76 +685,38 @@ void Queue::cancel(int fd) {
     }
 }
 
-void Queue::wait(unsigned int timeout) {
+void Queue::wait() {
+    rawstd_trace("io_uring_submit_and_wait()\n");
+    // Ideally used with a ring setup with
+    // IORING_SETUP_SINGLE_ISSUER|IORING_SETUP_DEFER_TASKRUN as that will
+    // greatly reduce the number of context switches that an application
+    // will see waiting on multiple requests.
+    int res = io_uring_submit_and_wait(&_ring, 1);
+    rawstd_trace("io_uring_submit_and_wait(): res = %d\n", res);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+
+    _dispatch();
+}
+
+void Queue::wait_timeout(unsigned int timeout) {
+    io_uring_cqe* cqe;
     __kernel_timespec ts = {
         .tv_sec = timeout / 1000, .tv_nsec = 1000000u * (timeout % 1000)
     };
-
-    io_uring_cqe* cqe;
     rawstd_trace("io_uring_submit_and_wait_timeout()\n");
     int res = io_uring_submit_and_wait_timeout(&_ring, &cqe, 1, &ts, nullptr);
     rawstd_trace("io_uring_submit_and_wait_timeout(): res = %d\n", res);
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
+
     if (cqe == nullptr) {
         RAWSTD_THROW_SYSTEM_ERROR(ETIME);
     }
 
-    unsigned int nr = 0;
-
-    try {
-        unsigned int head;
-        io_uring_for_each_cqe(&_ring, head, cqe) {
-            rawstd_trace("cqe->res = %d\n", cqe->res);
-
-            ++nr;
-
-            std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p(
-                static_cast<std::function<void(size_t, int, unsigned int)>*>(
-                    io_uring_cqe_get_data(cqe)
-                )
-            );
-
-            size_t result;
-            int error;
-            if (cqe->res >= 0) [[likely]] {
-                result = cqe->res;
-                error = 0;
-            } else {
-                result = 0;
-                error = -cqe->res;
-            }
-
-            try {
-                rawstd_trace(
-                    "callback: result = %zu, error = %d\n", result, error
-                );
-                (*p)(result, error, cqe->flags);
-                rawstd_trace("callback success\n");
-            } catch (...) {
-                rawstd_trace("callback error\n");
-                if (cqe->flags & IORING_CQE_F_MORE) {
-                    p.release();
-                }
-                throw;
-            }
-
-            if (cqe->flags & IORING_CQE_F_MORE) {
-                p.release();
-            }
-        }
-    } catch (...) {
-        if (nr) {
-            io_uring_cq_advance(&_ring, nr);
-        }
-        throw;
-    }
-
-    if (nr) {
-        // TODO: use __io_uring_buf_ring_cq_advance here
-        io_uring_cq_advance(&_ring, nr);
-    }
+    _dispatch();
 }
 
 } // namespace uring

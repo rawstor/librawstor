@@ -15,6 +15,8 @@ class Queue final : public rawio::Queue {
 private:
     io_uring _ring;
 
+    void _dispatch();
+
 public:
     static const std::string& engine_name();
     static void setup_fd(int fd);
@@ -107,7 +109,9 @@ public:
 
     void cancel(int fd);
 
-    void wait(unsigned int timeout) override;
+    void wait() override;
+
+    void wait_timeout(unsigned int timeout) override;
 };
 
 } // namespace uring
