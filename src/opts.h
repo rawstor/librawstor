@@ -10,7 +10,6 @@ extern "C" {
 // defined in rawstor.h
 // struct RawstorOpts {
 //     unsigned int queue_depth;
-//     unsigned int wait_timeout;
 //     unsigned int io_attempts;
 //     unsigned int sessions;
 //     unsigned int so_sndtimeo;
@@ -23,8 +22,6 @@ int rawstor_opts_initialize(const struct RawstorOpts* opts);
 void rawstor_opts_terminate(void);
 
 unsigned int rawstor_opts_queue_depth(void);
-
-unsigned int rawstor_opts_wait_timeout(void);
 
 unsigned int rawstor_opts_io_attempts(void);
 

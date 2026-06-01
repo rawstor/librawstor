@@ -30,7 +30,6 @@ static void usage(void) {
         "  -h, --help            Show this help message and exit\n"
         "  --sessions            Number of opened sessions per object\n"
         "  -v, --version         Rawstor version\n"
-        "  --wait-timeout        IO wait timeout\n"
         "\n"
         "command:\n"
         "  create                Create rawstor object\n"
@@ -405,12 +404,10 @@ int main(int argc, char** argv) {
         {"help", no_argument, NULL, 'h'},
         {"sessions", required_argument, NULL, 's'},
         {"version", no_argument, NULL, 'v'},
-        {"wait-timeout", required_argument, NULL, 't'},
         {},
     };
 
     char* sessions_arg = NULL;
-    char* wait_timeout_arg = NULL;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
         if (c == -1)
@@ -423,10 +420,6 @@ int main(int argc, char** argv) {
 
         case 's':
             sessions_arg = optarg;
-            break;
-
-        case 't':
-            wait_timeout_arg = optarg;
             break;
 
         case 'v':
@@ -448,13 +441,6 @@ int main(int argc, char** argv) {
     if (sessions_arg != NULL) {
         if (sscanf(sessions_arg, "%u", &opts.sessions) != 1) {
             fprintf(stderr, "sessions argument must be unsigned integer\n");
-            return EXIT_FAILURE;
-        }
-    }
-
-    if (wait_timeout_arg != NULL) {
-        if (sscanf(wait_timeout_arg, "%u", &opts.wait_timeout) != 1) {
-            fprintf(stderr, "wait-timeout argument must be unsigned integer\n");
             return EXIT_FAILURE;
         }
     }
