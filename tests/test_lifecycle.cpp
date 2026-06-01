@@ -103,7 +103,7 @@ TEST_P(LifecycleTest, create_spec_remove) {
     EXPECT_EQ(res, (int)strlen(object_uris));
     _backend->close();
     try {
-        rawstor::io_queue->wait(0);
+        rawstor::io_queue->wait_timeout(0);
     } catch (...) {
     }
 
@@ -122,7 +122,7 @@ TEST_P(LifecycleTest, create_spec_remove) {
     }
     _backend->close();
     try {
-        rawstor::io_queue->wait(0);
+        rawstor::io_queue->wait_timeout(0);
     } catch (...) {
     }
 
@@ -137,7 +137,7 @@ TEST_P(LifecycleTest, create_spec_remove) {
         _backend->close();
     }
     try {
-        rawstor::io_queue->wait(0);
+        rawstor::io_queue->wait_timeout(0);
     } catch (...) {
     }
 }

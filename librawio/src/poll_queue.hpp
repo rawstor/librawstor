@@ -25,6 +25,8 @@ private:
 
     Session& _get_session(int fd);
 
+    void _wait_timeout(int timeout);
+
 public:
     static const std::string& engine_name();
     static void setup_fd(int fd);
@@ -118,7 +120,9 @@ public:
 
     bool empty() const noexcept override;
 
-    void wait(unsigned int timeout) override;
+    void wait() override;
+
+    void wait_timeout(unsigned int timeout) override;
 };
 
 } // namespace poll

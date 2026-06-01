@@ -24,7 +24,7 @@ TEST_F(PollHupTest, pollin) {
         result = r;
         error = e;
     });
-    _queue->wait(0);
+    _queue->wait_timeout(0);
 
     EXPECT_TRUE(result & POLLIN);
     EXPECT_TRUE(result & POLLHUP);
@@ -41,7 +41,7 @@ TEST_F(PollHupTest, pollout) {
         result = r;
         error = e;
     });
-    _queue->wait(0);
+    _queue->wait_timeout(0);
 
     EXPECT_TRUE(result & POLLHUP);
     EXPECT_EQ(error, 0);
@@ -60,7 +60,7 @@ TEST_F(PollHupTest, read) {
         result = r;
         error = e;
     });
-    _queue->wait(0);
+    _queue->wait_timeout(0);
 
     EXPECT_EQ(result, (size_t)5);
     EXPECT_EQ(error, 0);
@@ -81,7 +81,7 @@ TEST_F(PollHupTest, write) {
             error = e;
         }
     );
-    _queue->wait(0);
+    _queue->wait_timeout(0);
 
     EXPECT_EQ(result, (size_t)0);
     EXPECT_EQ(error, EPIPE);

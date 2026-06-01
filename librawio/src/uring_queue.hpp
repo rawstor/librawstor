@@ -16,6 +16,8 @@ private:
     io_uring _ring;
     unsigned int _events;
 
+    void _dispatch();
+
 public:
     static const std::string& engine_name();
     static void setup_fd(int fd);
@@ -110,7 +112,9 @@ public:
 
     bool empty() const noexcept override;
 
-    void wait(unsigned int timeout) override;
+    void wait() override;
+
+    void wait_timeout(unsigned int timeout) override;
 };
 
 } // namespace uring

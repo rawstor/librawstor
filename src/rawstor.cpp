@@ -107,7 +107,7 @@ void rawstor_terminate() noexcept {
 
 int rawstor_wait() noexcept {
     try {
-        rawstor::io_queue->wait(rawstor_opts_wait_timeout());
+        rawstor::io_queue->wait_timeout(rawstor_opts_wait_timeout());
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
