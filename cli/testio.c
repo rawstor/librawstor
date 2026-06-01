@@ -327,7 +327,7 @@ int rawstor_cli_testio(
     }
 
     while (counter > 0) {
-        int res = rawio_wait(queue, 5000);
+        int res = rawio_wait(queue);
         if (res < 0) {
             fprintf(stderr, "rawstor_wait() failed: %s\n", strerror(-res));
             goto err_wait;

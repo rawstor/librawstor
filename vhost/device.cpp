@@ -725,10 +725,7 @@ void Device::loop() {
     poll(_queue, _dev.sock, std::move(t));
 
     while (true) {
-        int res = rawio_wait(_queue, 5000);
-        if (res == -ETIME) {
-            continue;
-        }
+        int res = rawio_wait(_queue);
 
         if (res == -EINTR) {
             break;

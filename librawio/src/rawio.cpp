@@ -504,9 +504,26 @@ int rawio_sendmsg(
     }
 }
 
-int rawio_wait(RawIOQueue* queue, unsigned int timeout) noexcept {
+int rawio_wait(RawIOQueue* queue) noexcept {
     try {
-        static_cast<rawio::Queue*>(queue)->wait(timeout);
+        static_cast<rawio::Queue*>(queue)->wait();
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+int rawio_wait_timeout(RawIOQueue* queue, unsigned int timeout) noexcept {
+    try {
+        static_cast<rawio::Queue*>(queue)->wait_timeout(timeout);
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();

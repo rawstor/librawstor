@@ -152,7 +152,7 @@ void Server::loop() {
     }
 
     while (true) {
-        int res = rawio_wait(_queue, -1);
+        int res = rawio_wait(_queue);
         if (res == -EINTR) {
             break;
         }
