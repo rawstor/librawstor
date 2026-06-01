@@ -45,7 +45,7 @@ public:
 
     void wait() {
         while (_operations > 0) {
-            _q->wait(rawstor_opts_wait_timeout());
+            _q->wait_timeout(rawstor_opts_wait_timeout());
         }
     }
 };

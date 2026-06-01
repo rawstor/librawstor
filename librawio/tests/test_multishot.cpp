@@ -57,7 +57,7 @@ TEST_F(MultishotTest, poll) {
         }
     );
 
-    EXPECT_NO_THROW(_queue->wait(0));
+    EXPECT_NO_THROW(_queue->wait_timeout(0));
     EXPECT_EQ(result, (size_t)POLLIN);
     EXPECT_EQ(error, 0);
     EXPECT_EQ(count, 1u);
@@ -67,7 +67,7 @@ TEST_F(MultishotTest, poll) {
 
     result = 0;
     error = 0;
-    EXPECT_NO_THROW(_queue->wait(0));
+    EXPECT_NO_THROW(_queue->wait_timeout(0));
     EXPECT_EQ(result, (size_t)POLLIN);
     EXPECT_EQ(error, 0);
     EXPECT_EQ(count, 2u);
@@ -76,7 +76,7 @@ TEST_F(MultishotTest, poll) {
 
     result = 0;
     error = 0;
-    EXPECT_NO_THROW(_queue->wait(0));
+    EXPECT_NO_THROW(_queue->wait_timeout(0));
     EXPECT_EQ(result, (size_t)0);
     EXPECT_EQ(error, ECANCELED);
     EXPECT_EQ(count, 3u);
@@ -114,7 +114,7 @@ TEST_F(MultishotTest, accept) {
         }
     );
 
-    EXPECT_NO_THROW(_queue->wait(0));
+    EXPECT_NO_THROW(_queue->wait_timeout(0));
     EXPECT_GT(result, (size_t)0);
     EXPECT_EQ(error, 0);
     EXPECT_EQ(count, 1u);
@@ -126,7 +126,7 @@ TEST_F(MultishotTest, accept) {
 
     result = 0;
     error = 0;
-    EXPECT_NO_THROW(_queue->wait(0));
+    EXPECT_NO_THROW(_queue->wait_timeout(0));
     EXPECT_GT(result, (size_t)0);
     EXPECT_EQ(error, 0);
     EXPECT_EQ(count, 2u);
@@ -135,7 +135,7 @@ TEST_F(MultishotTest, accept) {
 
     result = 0;
     error = 0;
-    EXPECT_NO_THROW(_queue->wait(0));
+    EXPECT_NO_THROW(_queue->wait_timeout(0));
     EXPECT_EQ(result, (size_t)0);
     EXPECT_EQ(error, ECANCELED);
     EXPECT_EQ(count, 3u);
@@ -197,7 +197,7 @@ TEST_F(MultishotTest, recv) {
         EXPECT_EQ(items[4].error(), ECANCELED);
     }
 
-    EXPECT_THROW(_queue->wait(0), std::system_error);
+    EXPECT_THROW(_queue->wait_timeout(0), std::system_error);
     EXPECT_EQ(items.size(), (size_t)5);
 }
 
@@ -250,7 +250,7 @@ TEST_F(MultishotTest, recv_overflow) {
 
     EXPECT_THROW(_queue->cancel(event), std::system_error);
 
-    EXPECT_THROW(_queue->wait(0), std::system_error);
+    EXPECT_THROW(_queue->wait_timeout(0), std::system_error);
     EXPECT_EQ(items.size(), (size_t)5);
 }
 
@@ -314,7 +314,7 @@ TEST_F(MultishotTest, recv_partial) {
 
     EXPECT_NO_THROW(_queue->cancel(event));
 
-    EXPECT_NO_THROW(_queue->wait(0));
+    EXPECT_NO_THROW(_queue->wait_timeout(0));
     if (items.size() >= 5) {
         EXPECT_EQ(items[4].result(), (size_t)1);
         EXPECT_EQ(items[4].error(), ECANCELED);
@@ -386,7 +386,7 @@ TEST_F(MultishotTest, recv_fill_buf) {
 
     EXPECT_NO_THROW(_queue->cancel(event));
 
-    EXPECT_NO_THROW(_queue->wait(0));
+    EXPECT_NO_THROW(_queue->wait_timeout(0));
     if (items.size() >= 5) {
         EXPECT_EQ(items[4].result(), (size_t)1);
         EXPECT_EQ(items[4].error(), ECANCELED);
