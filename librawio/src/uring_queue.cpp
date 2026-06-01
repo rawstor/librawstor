@@ -42,7 +42,7 @@ Queue::~Queue() {
         } else {
             while (true) {
                 try {
-                    wait(0);
+                    wait_timeout(0);
                 } catch (const std::system_error& e) {
                     if (e.code().value() != ETIME) {
                         rawstd_error("Failed to wait: %s\n", e.what());
@@ -709,7 +709,7 @@ void Queue::wait() {
 
 void Queue::wait_timeout(unsigned int timeout) {
     io_uring_cqe* cqe;
-    __kernel_timespec = {
+    __kernel_timespec ts = {
         .tv_sec = timeout / 1000, .tv_nsec = 1000000u * (timeout % 1000)
     };
     rawstd_trace("io_uring_submit_and_wait_timeout()\n");
