@@ -1,2 +1,3 @@
 **/3rdparty/**
 ./librawstd/include/rawstd/logging_config.h
+./include/rawstor/version.h

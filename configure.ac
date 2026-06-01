@@ -14,6 +14,10 @@ AC_CONFIG_MACRO_DIRS([m4])
 
 
 AC_SUBST([PACKAGE_VERSION_SHORT], [`echo ${PACKAGE_VERSION%%-*}`])
+AC_SUBST([PACKAGE_VERSION_MAJOR], [`echo ${PACKAGE_VERSION_SHORT%%.*}`])
+AC_SUBST([PACKAGE_VERSION_MINOR_PATCH], [`echo ${PACKAGE_VERSION_SHORT#*.}`])
+AC_SUBST([PACKAGE_VERSION_MINOR], [`echo ${PACKAGE_VERSION_MINOR_PATCH%%.*}`])
+AC_SUBST([PACKAGE_VERSION_PATCH], [`echo ${PACKAGE_VERSION_MINOR_PATCH#*.}`])
 AC_SUBST([RPM_RELEASE], [`[[[ ${PACKAGE_VERSION} == *-* ]]] && RELEASE=${PACKAGE_VERSION#*-} && echo ${RELEASE//-/^} || echo "0"`])
 AC_SUBST([LIBRARY_VERSION], [`VERSION=${PACKAGE_VERSION_SHORT%.*} && echo ${VERSION//./:}:0`])
 
@@ -94,6 +98,7 @@ AS_IF([test "x$with_libxxhash" == "xyes"], [
 
 AC_CONFIG_FILES(
     [Makefile]
+    [include/rawstor/version.h]
     [librawstd/include/rawstd/logging_config.h]
     [librawstd/Makefile]
     [librawstd/src/Makefile]
