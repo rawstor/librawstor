@@ -686,7 +686,6 @@ void Queue::cancel(int fd) {
 }
 
 void Queue::wait() {
-    io_uring_cqe* cqe;
     rawstd_trace("io_uring_submit_and_wait()\n");
     // Ideally used with a ring setup with
     // IORING_SETUP_SINGLE_ISSUER|IORING_SETUP_DEFER_TASKRUN as that will
