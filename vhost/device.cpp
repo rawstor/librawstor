@@ -609,7 +609,7 @@ Device::Device(const std::string& target, int fd) :
 
         _blk_config->max_discard_sectors = 0; // VIRTIO_BLK_F_DISCARD
         _blk_config->max_discard_seg = 0;     // VIRTIO_BLK_F_DISCARD
-                                            // VIRTIO_BLK_F_DISCARD
+                                              // VIRTIO_BLK_F_DISCARD
         _blk_config->discard_sector_alignment =
             _blk_config->blk_size >> VIRTIO_BLK_SECTOR_BITS;
 
@@ -617,9 +617,10 @@ Device::Device(const std::string& target, int fd) :
         _blk_config->max_write_zeroes_seg = 0;     // VIRTIO_BLK_F_WRITE_ZEROES
         _blk_config->write_zeroes_may_unmap = 0;   // VIRTIO_BLK_F_WRITE_ZEROES
 
-        _blk_config->max_secure_erase_sectors = 0;      // VIRTIO_BLK_F_SECURE_ERASE
-        _blk_config->max_secure_erase_seg = 0;          // VIRTIO_BLK_F_SECURE_ERASE
-        _blk_config->secure_erase_sector_alignment = 0; // VIRTIO_BLK_F_SECURE_ERASE
+        _blk_config->max_secure_erase_sectors = 0; // VIRTIO_BLK_F_SECURE_ERASE
+        _blk_config->max_secure_erase_seg = 0;     // VIRTIO_BLK_F_SECURE_ERASE
+                                                   // VIRTIO_BLK_F_SECURE_ERASE
+        _blk_config->secure_erase_sector_alignment = 0;
 
         _blk_config->zoned = {}; // VIRTIO_BLK_F_ZONED
         // _blk_config->zoned.zone_sectors = 0;
