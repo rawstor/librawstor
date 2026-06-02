@@ -5,6 +5,7 @@
 .deps/
 .libs/
 /.vscode/
+/ChangeLog
 /Makefile
 /Makefile.in
 /README
