@@ -13,12 +13,12 @@ endif
 ACLOCAL_AMFLAGS = -I m4
 
 
-README: README.md
-	cp README.md README
+README: $(srcdir)/README.md
+	cp $(srcdir)/README.md README
 
 
-ChangeLog: ChangeLog.md
-	cp ChangeLog.md ChangeLog
+ChangeLog: $(srcdir)/ChangeLog.md
+	cp $(srcdir)/ChangeLog.md ChangeLog
 
 
 EXTRA_DIST = ChangeLog.md \
