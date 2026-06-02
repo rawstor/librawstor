@@ -12,14 +12,20 @@ endif
 ACLOCAL_AMFLAGS = -I m4
 
 
-README: README.md
-	cp README.md README
+README: $(srcdir)/README.md
+	cp $(srcdir)/README.md README
 
 
-EXTRA_DIST = README.md
+ChangeLog: $(srcdir)/ChangeLog.md
+	cp $(srcdir)/ChangeLog.md ChangeLog
 
 
-CLEANFILES = README
+EXTRA_DIST = ChangeLog.md \
+             README.md
+
+
+CLEANFILES = ChangeLog \
+             README
 
 
 if ENABLE_TESTS
