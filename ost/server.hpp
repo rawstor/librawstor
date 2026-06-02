@@ -28,7 +28,10 @@ private:
     void _add_session(int fd);
 
 public:
-    Server(const std::string& addr, unsigned int port, const char* location);
+    Server(
+        unsigned int queue_depth, const std::string& addr, unsigned int port,
+        const char* location
+    );
     Server(const Server&) = delete;
     Server(Server&&) = delete;
     ~Server();

@@ -32,7 +32,7 @@ private:
 public:
     Queue(unsigned int operations) :
         _operations(operations),
-        _q(rawio::Queue::create(rawstor_opts_queue_depth())) {}
+        _q(rawio::Queue::create(256)) {}
 
     Queue(const Queue&) = delete;
 

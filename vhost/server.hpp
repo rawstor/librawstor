@@ -8,12 +8,16 @@ namespace vhost {
 
 class Server final {
 private:
+    unsigned int _queue_depth;
     std::string _target;
     std::string _socket_path;
     int _fd;
 
 public:
-    Server(const std::string& target, const std::string& socket_path);
+    Server(
+        unsigned int queue_depth, const std::string& target,
+        const std::string& socket_path
+    );
     Server(const Server&) = delete;
     Server(Server&&) = delete;
     ~Server();

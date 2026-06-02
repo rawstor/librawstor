@@ -539,7 +539,7 @@ Watcher::~Watcher() {
 
 std::unordered_map<int, Device*> Device::_devices;
 
-Device::Device(const std::string& target, int fd) :
+Device::Device(unsigned int queue_depth, const std::string& target, int fd) :
     _queue(nullptr),
     _object(nullptr),
     _iface{
@@ -568,7 +568,7 @@ Device::Device(const std::string& target, int fd) :
     _blk_config(std::make_unique<virtio_blk_config>()) {
     memset(_blk_config.get(), 0, sizeof(*_blk_config.get()));
 
-    int ires = rawio_queue_create(256, &_queue);
+    int ires = rawio_queue_create(queue_depth, &_queue);
     if (ires) {
         RAWSTD_THROW_SYSTEM_ERROR(-ires);
     }

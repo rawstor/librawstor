@@ -26,7 +26,8 @@ namespace rawstor {
 namespace ostbackend {
 
 Server::Server(
-    const std::string& addr, unsigned int port, const char* location
+    unsigned int queue_depth, const std::string& addr, unsigned int port,
+    const char* location
 ) :
     _queue(nullptr),
     _fd(-1),
@@ -39,7 +40,7 @@ Server::Server(
     }
 
     try {
-        res = rawio_queue_create(256, &_queue);
+        res = rawio_queue_create(queue_depth, &_queue);
         if (res < 0) {
             RAWSTD_THROW_SYSTEM_ERROR(-res);
         }

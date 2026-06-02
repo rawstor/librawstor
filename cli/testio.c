@@ -256,13 +256,13 @@ static int srcv_data_sent(
 }
 
 int rawstor_cli_testio(
-    const char* target, size_t block_size, unsigned int count,
-    unsigned int io_depth, int vector_mode
+    unsigned int queue_depth, const char* target, size_t block_size,
+    unsigned int count, unsigned int io_depth, int vector_mode
 ) {
     int res;
 
     RawIOQueue* queue;
-    res = rawio_queue_create(256, &queue);
+    res = rawio_queue_create(queue_depth, &queue);
     if (res < 0) {
         fprintf(stderr, "rawio_queue_create() failed: %s\n", strerror(-res));
         goto err_queue;

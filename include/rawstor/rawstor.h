@@ -18,7 +18,6 @@ extern "C" {
 #endif
 
 struct RawstorOpts {
-    unsigned int queue_depth;
     unsigned int io_attempts;
     unsigned int sessions;
     unsigned int so_sndtimeo;
