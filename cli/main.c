@@ -334,10 +334,12 @@ static int command_testio(int argc, char** argv) {
         return EXIT_FAILURE;
     }
 
-    unsigned int queue_depth = 0;
-    if (sscanf(queue_depth_arg, "%u", &queue_depth) != 1) {
-        fprintf(stderr, "queue-depth argument must be unsigned integer\n");
-        return EXIT_FAILURE;
+    unsigned int queue_depth = DEFAULT_QUEUE_DEPTH;
+    if (queue_depth_arg != NULL) {
+        if (sscanf(queue_depth_arg, "%u", &queue_depth) != 1) {
+            fprintf(stderr, "queue-depth argument must be unsigned integer\n");
+            return EXIT_FAILURE;
+        }
     }
 
     if (block_size_arg == NULL) {
