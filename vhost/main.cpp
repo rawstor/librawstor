@@ -13,6 +13,9 @@
 #include <cstring>
 
 #include <iostream>
+#include <sstream>
+
+#define DEFAULT_QUEUE_DEPTH 256
 
 namespace {
 
@@ -28,15 +31,19 @@ void usage() {
               << "  -h, --help            "
                  "Show this help message and exit"
               << std::endl
-              << "  -t, --target TARGET   Comma separated list of rawstor "
-                 "backend targets"
-              << std::endl
+              << "  --queue-depth QUEUE_DEPTH" << std::endl
+              << "                        "
+                 "RawIO queue depth (default: "
+              << DEFAULT_QUEUE_DEPTH << ")" << std::endl
               << "  -s, --socket-path SOCKET_PATH" << std::endl
               << "                        "
                  "This option specify the location of the"
               << std::endl
               << "                        "
                  "vhost-user Unix domain socket."
+              << std::endl
+              << "  -t, --target TARGET   Comma separated list of rawstor "
+                 "backend targets"
               << std::endl
               << "  -v, --version         Rawstor version" << std::endl;
 }
@@ -48,25 +55,30 @@ void version() {
 void sact_handler(int) {
 }
 
-void server(const std::string& target, const std::string& socket_path) {
-    rawstor::vhost::Server s(target, socket_path);
+void server(
+    unsigned int queue_depth, const std::string& target,
+    const std::string& socket_path
+) {
+    rawstor::vhost::Server s(queue_depth, target, socket_path);
     s.loop();
 }
 
 } // namespace
 
 int main(int argc, char** argv) {
-    const char* optstring = "ht:s:v";
+    const char* optstring = "hs:t:v";
     struct option longopts[] = {
         {"help", no_argument, nullptr, 'h'},
-        {"target", required_argument, nullptr, 't'},
+        {"queue-depth", required_argument, nullptr, 'q'},
         {"socket-path", required_argument, nullptr, 's'},
+        {"target", required_argument, nullptr, 't'},
         {"version", no_argument, nullptr, 'v'},
         {},
     };
 
-    const char* target_arg = nullptr;
+    const char* queue_depth_arg = nullptr;
     const char* socket_path_arg = nullptr;
+    const char* target_arg = nullptr;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, nullptr);
         if (c == -1) {
@@ -78,12 +90,16 @@ int main(int argc, char** argv) {
             usage();
             return EXIT_SUCCESS;
 
-        case 't':
-            target_arg = optarg;
+        case 'q':
+            queue_depth_arg = optarg;
             break;
 
         case 's':
             socket_path_arg = optarg;
+            break;
+
+        case 't':
+            target_arg = optarg;
             break;
 
         case 'v':
@@ -100,13 +116,23 @@ int main(int argc, char** argv) {
         return EXIT_FAILURE;
     }
 
-    if (target_arg == nullptr) {
-        std::cerr << "target argument required" << std::endl;
-        return EXIT_FAILURE;
+    unsigned int queue_depth = DEFAULT_QUEUE_DEPTH;
+    if (queue_depth_arg != nullptr) {
+        std::istringstream iss(queue_depth_arg);
+        if (iss.peek() < '0' || iss.peek() > '9' || !(iss >> queue_depth) ||
+            !iss.eof()) {
+            std::cerr << "queue-depth must be unsigned integer" << std::endl;
+            return EXIT_FAILURE;
+        }
     }
 
     if (socket_path_arg == nullptr) {
         std::cerr << "socket-path argument required" << std::endl;
+        return EXIT_FAILURE;
+    }
+
+    if (target_arg == nullptr) {
+        std::cerr << "target argument required" << std::endl;
         return EXIT_FAILURE;
     }
 
@@ -128,7 +154,7 @@ int main(int argc, char** argv) {
     }
 
     try {
-        server(target_arg, socket_path_arg);
+        server(queue_depth, target_arg, socket_path_arg);
     } catch (const std::exception& e) {
         std::cerr << e.what() << std::endl;
         return EXIT_FAILURE;

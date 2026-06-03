@@ -256,12 +256,20 @@ static int srcv_data_sent(
 }
 
 int rawstor_cli_testio(
-    const char* target, size_t block_size, unsigned int count,
-    unsigned int io_depth, int vector_mode
+    unsigned int queue_depth, const char* target, size_t block_size,
+    unsigned int count, unsigned int io_depth, int vector_mode
 ) {
     int res;
+
+    RawIOQueue* queue;
+    res = rawio_queue_create(queue_depth, &queue);
+    if (res < 0) {
+        fprintf(stderr, "rawio_queue_create() failed: %s\n", strerror(-res));
+        goto err_queue;
+    }
+
     RawstorObject* object;
-    res = rawstor_object_open(target, &object);
+    res = rawstor_object_open(queue, target, &object);
     if (res < 0) {
         fprintf(stderr, "rawstor_object_open() failed: %s\n", strerror(-res));
         goto err_open;
@@ -319,7 +327,7 @@ int rawstor_cli_testio(
     }
 
     while (counter > 0) {
-        int res = rawstor_wait();
+        int res = rawio_wait(queue);
         if (res < 0) {
             fprintf(stderr, "rawstor_wait() failed: %s\n", strerror(-res));
             goto err_wait;
@@ -335,6 +343,8 @@ int rawstor_cli_testio(
         worker_delete(workers[i]);
     }
     free(workers);
+
+    rawio_queue_delete(queue);
 
     printf("Success!\n");
 
@@ -355,5 +365,7 @@ err_workers:
         fprintf(stderr, "rawstor_object_close() failed: %s\n", strerror(res));
     }
 err_open:
+    rawio_queue_delete(queue);
+err_queue:
     return EXIT_FAILURE;
 }

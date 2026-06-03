@@ -3,10 +3,10 @@
 
 #include "session.hpp"
 
+#include <rawio/queue.hpp>
+
 #include <rawstd/ringbuf.hpp>
 #include <rawstd/uri.hpp>
-
-#include <rawio/queue.hpp>
 
 #include <rawstor/object.h>
 #include <rawstor/ost_protocol.h>

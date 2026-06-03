@@ -17,6 +17,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define DEFAULT_QUEUE_DEPTH 256
+
 static struct sigaction sact = {};
 
 static void usage(void) {
@@ -30,7 +32,6 @@ static void usage(void) {
         "  -h, --help            Show this help message and exit\n"
         "  --sessions            Number of opened sessions per object\n"
         "  -v, --version         Rawstor version\n"
-        "  --wait-timeout        IO wait timeout\n"
         "\n"
         "command:\n"
         "  create                Create rawstor object\n"
@@ -251,23 +252,27 @@ static void command_testio_usage(void) {
         "usage: rawstor-cli [options] testio [command_options]\n"
         "\n"
         "command options:\n"
+        "  --queue-depth QUEUE_DEPTH\n"
+        "                        RawIO queue depth (default: %u)\n"
         "  -b, --block-size BLOCK_SIZE\n"
         "                        Block size with unit suffix (B, K, M, G, T"
         ").\n"
-        "  -c, --count COUNT\n   How many blocks are we going to be\n"
+        "  -c, --count COUNT     How many blocks are we going to be\n"
         "                        reading/writing in bytes\n"
         "  -d, --io-depth IO_DEPTH\n"
         "                        IO depth\n"
         "  -h, --help            Show this help message and exit\n"
         "  -t, --target TARGET   Comma separated list of rawstor backend "
         "targets\n"
-        "  --vector-mode         Use readv/writev\n"
+        "  --vector-mode         Use readv/writev\n",
+        DEFAULT_QUEUE_DEPTH
     );
 };
 
 static int command_testio(int argc, char** argv) {
     const char* optstring = "b:c:d:ht:";
     struct option longopts[] = {
+        {"queue-depth", required_argument, NULL, 'q'},
         {"block-size", required_argument, NULL, 'b'},
         {"count", required_argument, NULL, 'c'},
         {"help", no_argument, NULL, 'h'},
@@ -277,6 +282,7 @@ static int command_testio(int argc, char** argv) {
         {},
     };
 
+    char* queue_depth_arg = NULL;
     char* block_size_arg = NULL;
     char* count_arg = NULL;
     char* io_depth_arg = NULL;
@@ -290,6 +296,10 @@ static int command_testio(int argc, char** argv) {
         }
 
         switch (c) {
+        case 'q':
+            queue_depth_arg = optarg;
+            break;
+
         case 'b':
             block_size_arg = optarg;
             break;
@@ -322,6 +332,14 @@ static int command_testio(int argc, char** argv) {
     if (optind < argc) {
         fprintf(stderr, "Unexpected argument: %s\n", argv[optind]);
         return EXIT_FAILURE;
+    }
+
+    unsigned int queue_depth = DEFAULT_QUEUE_DEPTH;
+    if (queue_depth_arg != NULL) {
+        if (sscanf(queue_depth_arg, "%u", &queue_depth) != 1) {
+            fprintf(stderr, "queue-depth argument must be unsigned integer\n");
+            return EXIT_FAILURE;
+        }
     }
 
     if (block_size_arg == NULL) {
@@ -367,7 +385,7 @@ static int command_testio(int argc, char** argv) {
     }
 
     return rawstor_cli_testio(
-        target_arg, block_size, count, io_depth, vector_mode
+        queue_depth, target_arg, block_size, count, io_depth, vector_mode
     );
 }
 
@@ -405,12 +423,10 @@ int main(int argc, char** argv) {
         {"help", no_argument, NULL, 'h'},
         {"sessions", required_argument, NULL, 's'},
         {"version", no_argument, NULL, 'v'},
-        {"wait-timeout", required_argument, NULL, 't'},
         {},
     };
 
     char* sessions_arg = NULL;
-    char* wait_timeout_arg = NULL;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
         if (c == -1)
@@ -423,10 +439,6 @@ int main(int argc, char** argv) {
 
         case 's':
             sessions_arg = optarg;
-            break;
-
-        case 't':
-            wait_timeout_arg = optarg;
             break;
 
         case 'v':
@@ -448,13 +460,6 @@ int main(int argc, char** argv) {
     if (sessions_arg != NULL) {
         if (sscanf(sessions_arg, "%u", &opts.sessions) != 1) {
             fprintf(stderr, "sessions argument must be unsigned integer\n");
-            return EXIT_FAILURE;
-        }
-    }
-
-    if (wait_timeout_arg != NULL) {
-        if (sscanf(wait_timeout_arg, "%u", &opts.wait_timeout) != 1) {
-            fprintf(stderr, "wait-timeout argument must be unsigned integer\n");
             return EXIT_FAILURE;
         }
     }

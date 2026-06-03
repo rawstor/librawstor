@@ -3,7 +3,7 @@
 
 #include <rawstd/uri.hpp>
 
-#include <rawstor/rawstor.h>
+#include <rawstor/rawio.h>
 
 #include <memory>
 #include <string>
@@ -17,9 +17,10 @@ class Session;
 
 class Server final {
 private:
+    RawIOQueue* _queue;
     int _fd;
     std::vector<rawstd::URI> _locations;
-    RawstorIOEvent* _accept_event;
+    RawIOEvent* _accept_event;
     std::unordered_map<int, std::unique_ptr<Session>> _sessions;
 
     static int _accept(size_t result, int error, void* data) noexcept;
@@ -27,7 +28,10 @@ private:
     void _add_session(int fd);
 
 public:
-    Server(const std::string& addr, unsigned int port, const char* location);
+    Server(
+        unsigned int queue_depth, const std::string& addr, unsigned int port,
+        const char* location
+    );
     Server(const Server&) = delete;
     Server(Server&&) = delete;
     ~Server();

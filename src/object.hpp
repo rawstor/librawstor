@@ -1,10 +1,12 @@
 #ifndef RAWSTOR_OBJECT_HPP
 #define RAWSTOR_OBJECT_HPP
 
+#include <rawstor/object.h>
+
+#include <rawio/queue.hpp>
+
 #include <rawstd/uri.hpp>
 #include <rawstd/uuid.h>
-
-#include <rawstor/object.h>
 
 #include <functional>
 #include <memory>
@@ -18,6 +20,7 @@ class Connection;
 
 class Object final : public RawstorObject {
 private:
+    rawio::Queue& _queue;
     RawstdUUID _id;
     std::vector<std::unique_ptr<rawstor::Connection>> _cns;
 
@@ -30,7 +33,7 @@ public:
     static void
     spec(const std::vector<rawstd::URI>& targets, RawstorObjectSpec* sp);
 
-    explicit Object(const std::vector<rawstd::URI>& targets);
+    Object(rawio::Queue& queue, const std::vector<rawstd::URI>& targets);
     Object(const Object&) = delete;
     Object(Object&&) = delete;
     Object& operator=(const Object&) = delete;

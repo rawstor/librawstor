@@ -2,6 +2,7 @@
 #define RAWSTOR_VHOST_DEVICE_HPP
 
 #include <rawstor/object.h>
+#include <rawstor/rawio.h>
 
 extern "C" {
 #include "libvhost-user.h"
@@ -22,13 +23,14 @@ class Device;
 
 class Watcher final {
 private:
-    RawstorIOEvent* _event;
+    RawIOQueue* _queue;
+    RawIOEvent* _event;
     int _counter;
 
 public:
     Watcher(
-        rawstor::vhost::Device& device, int fd, int condition, vu_watch_cb cb,
-        void* data
+        RawIOQueue* queue, rawstor::vhost::Device& device, int fd,
+        int condition, vu_watch_cb cb, void* data
     );
     Watcher(const Watcher&) = delete;
     Watcher(Watcher&&) = delete;
@@ -45,6 +47,7 @@ class Device final {
 private:
     static std::unordered_map<int, Device*> _devices;
 
+    RawIOQueue* _queue;
     RawstorObjectSpec _spec;
     RawstorObject* _object;
 
@@ -59,13 +62,15 @@ public:
     static Device& get(int fd);
     static Device* find(int fd);
 
-    Device(const std::string& target, int fd);
+    Device(unsigned int queue_depth, const std::string& target, int fd);
     Device(const Device&) = delete;
     Device(Device&&) = delete;
     ~Device();
 
     Device& operator=(const Device&) = delete;
     Device& operator=(Device&&) = delete;
+
+    inline RawIOQueue* queue() noexcept { return _queue; }
 
     inline RawstorObject* object() noexcept { return _object; }
 

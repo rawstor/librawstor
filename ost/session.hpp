@@ -3,7 +3,7 @@
 
 #include <rawstor/object.h>
 #include <rawstor/ost_protocol.h>
-#include <rawstor/rawstor.h>
+#include <rawstor/rawio.h>
 
 namespace rawstor {
 namespace ostbackend {
@@ -12,9 +12,10 @@ class Server;
 
 class Session final {
 private:
+    RawIOQueue* _queue;
     Server& _server;
     int _fd;
-    RawstorIOEvent* _recv_event;
+    RawIOEvent* _recv_event;
     ssize_t (Session::*_next)(const iovec*, unsigned int, size_t);
     RawstorOSTFrameHead _request_head;
     union {
@@ -41,7 +42,7 @@ private:
     void _discard(const RawstorOSTFrameIOBody& request);
 
 public:
-    Session(Server& server, int fd);
+    Session(RawIOQueue* queue, Server& server, int fd);
     Session(const Session&) = delete;
     Session(Session&&) = delete;
     ~Session() noexcept;

@@ -2,16 +2,15 @@
 
 #include "object.hpp"
 #include "opts.h"
-#include "rawstor_internals.hpp"
 #include "session.hpp"
+
+#include <rawstor/object.h>
 
 #include <rawio/queue.hpp>
 
 #include <rawstd/gpp.hpp>
 #include <rawstd/iovec.h>
 #include <rawstd/logging.hpp>
-
-#include <rawstor/object.h>
 
 #include <algorithm>
 #include <sstream>
@@ -33,7 +32,7 @@ private:
 public:
     Queue(unsigned int operations) :
         _operations(operations),
-        _q(rawio::Queue::create(rawstor_opts_queue_depth())) {}
+        _q(rawio::Queue::create(256)) {}
 
     Queue(const Queue&) = delete;
 
@@ -45,7 +44,7 @@ public:
 
     void wait() {
         while (_operations > 0) {
-            _q->wait_timeout(rawstor_opts_wait_timeout());
+            _q->wait();
         }
     }
 };
@@ -54,7 +53,10 @@ public:
 
 namespace rawstor {
 
-Connection::Connection() : _object(nullptr), _session_index(0) {
+Connection::Connection(rawio::Queue& queue) :
+    _queue(queue),
+    _object(nullptr),
+    _session_index(0) {
 }
 
 Connection::~Connection() {
@@ -76,7 +78,7 @@ std::vector<std::shared_ptr<Session>> Connection::_open(
             sessions.clear();
             sessions.reserve(nsessions);
             for (size_t i = 0; i < nsessions; ++i) {
-                sessions.push_back(Session::create(*io_queue, location));
+                sessions.push_back(Session::create(_queue, location));
             }
 
             for (std::shared_ptr<Session> s : sessions) {

@@ -17,7 +17,8 @@ AM_LDFLAGS = $(ASAN_LDFLAGS)
 
 
 librawio_la_SOURCES = $(top_srcdir)/librawio/include/rawio/queue.hpp \
-                      queue.cpp
+                      queue.cpp \
+                      rawio.cpp
 
 librawio_la_LIBADD =
 

@@ -81,7 +81,11 @@ void close_unix_socket(const std::string& socket_path, int fd) {
 namespace rawstor {
 namespace vhost {
 
-Server::Server(const std::string& target, const std::string& socket_path) :
+Server::Server(
+    unsigned int queue_depth, const std::string& target,
+    const std::string& socket_path
+) :
+    _queue_depth(queue_depth),
     _target(target),
     _socket_path(socket_path),
     _fd(open_unix_socket(_socket_path)) {
@@ -111,7 +115,7 @@ void Server::loop() {
         RAWSTD_THROW_ERRNO();
     }
 
-    Device d(_target, fd);
+    Device d(_queue_depth, _target, fd);
     d.loop();
 }
 

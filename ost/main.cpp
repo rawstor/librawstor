@@ -12,6 +12,8 @@
 #include <cstdlib>
 #include <cstring>
 
+#define DEFAULT_QUEUE_DEPTH 256
+
 namespace {
 
 struct sigaction sact = {};
@@ -27,6 +29,10 @@ void usage() {
               << "  -h, --help            "
                  "Show this help message and exit."
               << std::endl
+              << "  --queue-depth QUEUE_DEPTH" << std::endl
+              << "                        "
+                 "RawIO queue depth (default: "
+              << DEFAULT_QUEUE_DEPTH << ")" << std::endl
               << "  -l, --location LOCATION" << std::endl
               << "                        Comma separated list of rawstor "
                  "backend locations"
@@ -40,8 +46,11 @@ void usage() {
 void sact_handler(int) {
 }
 
-void ost(const std::string& addr, unsigned int port, const char* location) {
-    rawstor::ostbackend::Server s(addr, port, location);
+void ost(
+    unsigned int queue_depth, const std::string& addr, unsigned int port,
+    const char* location
+) {
+    rawstor::ostbackend::Server s(queue_depth, addr, port, location);
     s.loop();
 }
 
@@ -78,10 +87,12 @@ int main(int argc, char** argv) {
         {"bind", required_argument, nullptr, 'b'},
         {"help", no_argument, nullptr, 'h'},
         {"location", required_argument, nullptr, 'l'},
+        {"queue-depth", required_argument, nullptr, 'q'},
         {"version", no_argument, nullptr, 'v'},
         {},
     };
 
+    const char* queue_depth_arg = nullptr;
     const char* location_arg = nullptr;
     const char* bind_arg = nullptr;
     while (1) {
@@ -103,6 +114,10 @@ int main(int argc, char** argv) {
             location_arg = optarg;
             break;
 
+        case 'q':
+            queue_depth_arg = optarg;
+            break;
+
         case 'v':
             version();
             return EXIT_SUCCESS;
@@ -115,6 +130,16 @@ int main(int argc, char** argv) {
     if (optind < argc) {
         std::cerr << "Unexpected argument: " << argv[optind] << std::endl;
         return EXIT_FAILURE;
+    }
+
+    unsigned int queue_depth = DEFAULT_QUEUE_DEPTH;
+    if (queue_depth_arg != nullptr) {
+        std::istringstream iss(queue_depth_arg);
+        if (iss.peek() < '0' || iss.peek() > '9' || !(iss >> queue_depth) ||
+            !iss.eof()) {
+            std::cerr << "queue-depth must be unsigned integer" << std::endl;
+            return EXIT_FAILURE;
+        }
     }
 
     if (location_arg == nullptr) {
@@ -154,7 +179,7 @@ int main(int argc, char** argv) {
     }
 
     try {
-        ost(name, port, location_arg);
+        ost(queue_depth, name, port, location_arg);
     } catch (const std::exception& e) {
         std::cerr << e.what() << std::endl;
         return EXIT_FAILURE;
