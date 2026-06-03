@@ -167,6 +167,9 @@ public:
             return 0;
         } catch (const std::system_error& e) {
             return -e.code().value();
+        } catch (const std::exception& e) {
+            rawstd_error("%s\n", e.what());
+            return -EINVAL;
         }
     }
 
@@ -367,6 +370,14 @@ void set_protocol_features(VuDev* dev, uint64_t features) {
     d.set_protocol_features(features);
 }
 
+int process_msg(VuDev*, VhostUserMsg* vmsg, int*) {
+    if (vmsg->request == VHOST_USER_NONE) {
+        rawstd_info("Disconnect\n");
+        return 1;
+    }
+    return 0;
+}
+
 void process_request(std::unique_ptr<Request> req) {
     size_t in_size = rawstd_iovec_size(req->in_iov(), req->in_niov());
 
@@ -502,7 +513,7 @@ Device::Device(const std::string& target, int fd) :
         .set_features = ::set_features,
         .get_protocol_features = ::get_protocol_features,
         .set_protocol_features = ::set_protocol_features,
-        .process_msg = nullptr,
+        .process_msg = ::process_msg,
         .queue_set_started = ::queue_set_started,
         .queue_is_processed_in_order = nullptr,
         .get_config = ::get_config,
@@ -668,6 +679,10 @@ void Device::loop() {
         int res = rawstor_wait();
         if (res == -ETIME) {
             continue;
+        }
+
+        if (res == -EPIPE) {
+            break;
         }
 
         if (res == -EINTR) {
