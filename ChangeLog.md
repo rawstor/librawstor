@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Units for command line arguments.
 - [Location and target](docs/locations_and_targets.md) conception.
 - OST backend implementation.
+- Multiqueue support.
 
 ## [0.1.1] - 2025-05-26
 
