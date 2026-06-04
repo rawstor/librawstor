@@ -24,8 +24,7 @@ struct sigaction sact = {};
 void usage() {
     std::cout << "Rawstor VHOST " << PACKAGE_VERSION << std::endl
               << std::endl
-              << "usage: rawstor-vhost [options] -s PATH -t TARGET"
-              << std::endl
+              << "usage: rawstor-vhost [options] -s PATH -t TARGET" << std::endl
               << std::endl
               << "options:" << std::endl
               << "  -h, --help            "
