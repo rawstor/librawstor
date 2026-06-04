@@ -23,11 +23,12 @@ extern "C" {
 #define RAWSTOR_CMD_READ 1
 #define RAWSTOR_CMD_WRITE 2
 #define RAWSTOR_CMD_DISCARD 3
-typedef uint32_t RawstorOSTCommandType;
+typedef uint16_t RawstorOSTCommandType;
 
 struct RawstorOSTFrameHead {
     uint32_t magic;
     RawstorOSTCommandType cmd;
+    uint16_t cid;
 } RAWSTOR_PACKED;
 
 /* Minimalistic protocol frame */
@@ -45,7 +46,6 @@ struct RawstorOSTFrameBasic {
 } RAWSTOR_PACKED;
 
 struct RawstorOSTFrameIOBody {
-    uint16_t cid;
     uint64_t offset;
     uint32_t len;
     uint64_t hash;

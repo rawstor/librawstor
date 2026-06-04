@@ -34,12 +34,15 @@ private:
     ssize_t _recv_body(const iovec* iov, unsigned int niov, size_t result);
     ssize_t _recv_data(const iovec* iov, unsigned int niov, size_t result);
     void _set_object(const RawstorOSTFrameBasicBody& request);
-    void _read(const RawstorOSTFrameIOBody& request);
+    void
+    _read(const RawstorOSTFrameHead& head, const RawstorOSTFrameIOBody& body);
     void _write(
-        const RawstorOSTFrameIOBody& request, const iovec* iov,
-        unsigned int niov, size_t size
+        const RawstorOSTFrameHead& head, const RawstorOSTFrameIOBody& body,
+        const iovec* iov, unsigned int niov, size_t size
     );
-    void _discard(const RawstorOSTFrameIOBody& request);
+    void _discard(
+        const RawstorOSTFrameHead& head, const RawstorOSTFrameIOBody& body
+    );
 
 public:
     Session(RawIOQueue* queue, Server& server, int fd);

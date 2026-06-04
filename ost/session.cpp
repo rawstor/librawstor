@@ -309,7 +309,7 @@ Session::_recv_body(const iovec* iov, unsigned int niov, size_t result) {
             iov, niov, 0, &_request_body.io, sizeof(_request_body.io)
         );
 
-        _read(_request_body.io);
+        _read(_request_head, _request_body.io);
 
         return sizeof(RawstorOSTFrameHead);
 
@@ -345,7 +345,7 @@ Session::_recv_body(const iovec* iov, unsigned int niov, size_t result) {
             iov, niov, 0, &_request_body.io, sizeof(_request_body.io)
         );
 
-        _discard(_request_body.io);
+        _discard(_request_head, _request_body.io);
 
         return sizeof(RawstorOSTFrameHead);
     }
@@ -370,7 +370,7 @@ Session::_recv_data(const iovec* iov, unsigned int niov, size_t result) {
         RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
     }
 
-    _write(_request_body.io, iov, niov, result);
+    _write(_request_head, _request_body.io, iov, niov, result);
 
     return sizeof(RawstorOSTFrameHead);
 }
@@ -404,22 +404,24 @@ void Session::_set_object(const RawstorOSTFrameBasicBody& request) {
     send_response(_queue, _fd, RAWSTOR_CMD_SET_OBJECT, 0, result, 0);
 }
 
-void Session::_read(const RawstorOSTFrameIOBody& request) {
+void Session::_read(
+    const RawstorOSTFrameHead& head, const RawstorOSTFrameIOBody& body
+) {
     if (_object == nullptr) {
-        send_response(_queue, _fd, RAWSTOR_CMD_READ, request.cid, -EBADF, 0);
+        send_response(_queue, _fd, RAWSTOR_CMD_READ, head.cid, -EBADF, 0);
         return;
     }
 
     // 64MB limit
-    if (request.len > (1ULL << 26)) {
-        send_response(_queue, _fd, RAWSTOR_CMD_READ, request.cid, -EINVAL, 0);
+    if (body.len > (1ULL << 26)) {
+        send_response(_queue, _fd, RAWSTOR_CMD_READ, head.cid, -EINVAL, 0);
         return;
     }
 
-    auto data = std::make_shared<std::vector<unsigned char>>(request.len);
+    auto data = std::make_shared<std::vector<unsigned char>>(body.len);
 
     auto cb = std::make_unique<Callback>(
-        [queue = _queue, fd = _fd, cid = request.cid,
+        [queue = _queue, fd = _fd, cid = head.cid,
          data](RawstorObject*, size_t, size_t result, int error) {
             try {
                 send_response(
@@ -435,28 +437,28 @@ void Session::_read(const RawstorOSTFrameIOBody& request) {
     );
 
     int res = rawstor_object_pread(
-        _object, data->data(), data->size(), request.offset, callback, cb.get()
+        _object, data->data(), data->size(), body.offset, callback, cb.get()
     );
     if (res < 0) {
         rawstd_warning("%s\n", strerror(-res));
-        send_response(_queue, _fd, RAWSTOR_CMD_READ, request.cid, res, 0);
+        send_response(_queue, _fd, RAWSTOR_CMD_READ, head.cid, res, 0);
     } else {
         cb.release();
     }
 }
 
 void Session::_write(
-    const RawstorOSTFrameIOBody& request, const iovec* iov, unsigned int niov,
-    size_t size
+    const RawstorOSTFrameHead& head, const RawstorOSTFrameIOBody& body,
+    const iovec* iov, unsigned int niov, size_t size
 ) {
     if (_object == nullptr) {
-        send_response(_queue, _fd, RAWSTOR_CMD_WRITE, request.cid, -EBADF, 0);
+        send_response(_queue, _fd, RAWSTOR_CMD_WRITE, head.cid, -EBADF, 0);
         return;
     }
 
     // 64MB limit
-    if (request.len > (1ULL << 26)) {
-        send_response(_queue, _fd, RAWSTOR_CMD_WRITE, request.cid, -EINVAL, 0);
+    if (body.len > (1ULL << 26)) {
+        send_response(_queue, _fd, RAWSTOR_CMD_WRITE, head.cid, -EINVAL, 0);
         return;
     }
 
@@ -465,18 +467,18 @@ void Session::_write(
 
     uint64_t hash = rawstd_hash_scalar(data->data(), data->size());
 
-    if (hash != request.hash) {
+    if (hash != body.hash) {
         rawstd_error(
             "Hash mismatch: %llx != %llx\n",
             static_cast<unsigned long long>(hash),
-            static_cast<unsigned long long>(request.hash)
+            static_cast<unsigned long long>(body.hash)
         );
-        send_response(_queue, _fd, RAWSTOR_CMD_WRITE, request.cid, -EIO, 0);
+        send_response(_queue, _fd, RAWSTOR_CMD_WRITE, head.cid, -EIO, 0);
         return;
     }
 
     auto cb = std::make_unique<Callback>(
-        [queue = _queue, fd = _fd, cid = request.cid,
+        [queue = _queue, fd = _fd, cid = head.cid,
          data](RawstorObject*, size_t, size_t result, int error) {
             try {
                 send_response(
@@ -491,18 +493,20 @@ void Session::_write(
     );
 
     int res = rawstor_object_pwrite(
-        _object, data->data(), data->size(), request.offset, callback, cb.get()
+        _object, data->data(), data->size(), body.offset, callback, cb.get()
     );
     if (res < 0) {
         rawstd_warning("%s\n", strerror(-res));
-        send_response(_queue, _fd, RAWSTOR_CMD_WRITE, request.cid, res, 0);
+        send_response(_queue, _fd, RAWSTOR_CMD_WRITE, head.cid, res, 0);
     } else {
         cb.release();
     }
 }
 
-void Session::_discard(const RawstorOSTFrameIOBody& request) {
-    send_response(_queue, _fd, RAWSTOR_CMD_DISCARD, request.cid, -ENOSYS, 0);
+void Session::_discard(
+    const RawstorOSTFrameHead& head, const RawstorOSTFrameIOBody&
+) {
+    send_response(_queue, _fd, RAWSTOR_CMD_DISCARD, head.cid, -ENOSYS, 0);
 }
 
 } // namespace ostbackend
