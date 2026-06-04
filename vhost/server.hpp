@@ -8,6 +8,7 @@ namespace vhost {
 
 class Server final {
 private:
+    unsigned int _num_queues;
     unsigned int _queue_size;
     std::string _target;
     std::string _socket_path;
@@ -15,8 +16,8 @@ private:
 
 public:
     Server(
-        unsigned int queue_size, const std::string& target,
-        const std::string& socket_path
+        unsigned int num_queues, unsigned int queue_size,
+        const std::string& target, const std::string& socket_path
     );
     Server(const Server&) = delete;
     Server(Server&&) = delete;

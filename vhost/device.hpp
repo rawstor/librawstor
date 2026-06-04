@@ -62,7 +62,10 @@ public:
     static Device& get(int fd);
     static Device* find(int fd);
 
-    Device(unsigned int queue_size, const std::string& target, int fd);
+    Device(
+        unsigned int num_queues, unsigned int queue_size,
+        const std::string& target, int fd
+    );
     Device(const Device&) = delete;
     Device(Device&&) = delete;
     ~Device();

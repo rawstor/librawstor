@@ -358,11 +358,13 @@ void panic(VuDev*, const char* err) {
 }
 
 void set_watch(VuDev* dev, int fd, int condition, vu_watch_cb cb, void* data) {
+    printf("set_watch(): fd=%d, condition=%d\n", fd, condition);
     rawstor::vhost::Device& d = rawstor::vhost::Device::get(dev->sock);
     d.set_watch(fd, condition, cb, data);
 }
 
 void remove_watch(VuDev* dev, int fd) {
+    printf("remove_watch(): fd=%d\n", fd);
     rawstor::vhost::Device* d = rawstor::vhost::Device::find(dev->sock);
     if (d != nullptr) {
         d->remove_watch(fd);
@@ -489,6 +491,7 @@ void process_vq(VuDev* dev, int qidx) {
 }
 
 void queue_set_started(VuDev* dev, int qidx, bool started) {
+    printf("queue_set_started %d %d\n", qidx, started);
     VuVirtq* vq = vu_get_queue(dev, qidx);
     vu_set_queue_handler(dev, vq, started ? process_vq : NULL);
 }
@@ -550,7 +553,10 @@ Watcher::~Watcher() {
 
 std::unordered_map<int, Device*> Device::_devices;
 
-Device::Device(unsigned int queue_size, const std::string& target, int fd) :
+Device::Device(
+    unsigned int num_queues, unsigned int queue_size, const std::string& target,
+    int fd
+) :
     _queue(nullptr),
     _object(nullptr),
     _iface{
@@ -616,7 +622,7 @@ Device::Device(unsigned int queue_size, const std::string& target, int fd) :
 
         _blk_config->wce = 0; // VIRTIO_BLK_F_CONFIG_WCE
 
-        _blk_config->num_queues = 1; // VIRTIO_BLK_F_MQ
+        _blk_config->num_queues = num_queues; // VIRTIO_BLK_F_MQ
 
         _blk_config->max_discard_sectors = 0; // VIRTIO_BLK_F_DISCARD
         _blk_config->max_discard_seg = 0;     // VIRTIO_BLK_F_DISCARD
@@ -642,7 +648,8 @@ Device::Device(unsigned int queue_size, const std::string& target, int fd) :
         // _blk_config->zoned.model = 0;
 
         bool bres = vu_init(
-            &_dev, 1, fd, panic, nullptr, ::set_watch, ::remove_watch, &_iface
+            &_dev, num_queues, fd, panic, nullptr, ::set_watch, ::remove_watch,
+            &_iface
         );
         assert(bres == true);
 

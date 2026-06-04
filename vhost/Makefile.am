@@ -14,6 +14,7 @@ AM_LDFLAGS = $(ASAN_LDFLAGS)
 rawstor_vhost_SOURCES = device.cpp \
                         device.hpp \
                         main.cpp \
+                        queue.cpp \
                         server.cpp \
                         server.hpp
 
