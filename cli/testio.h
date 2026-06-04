@@ -8,7 +8,7 @@ extern "C" {
 #endif
 
 int rawstor_cli_testio(
-    unsigned int queue_depth, const char* target, size_t block_size,
+    unsigned int queue_size, const char* target, size_t block_size,
     unsigned int count, unsigned int io_depth, int vector_mode
 );
 

@@ -15,7 +15,7 @@
 #include <iostream>
 #include <sstream>
 
-#define DEFAULT_QUEUE_DEPTH 256
+#define DEFAULT_QUEUE_SIZE 256
 
 namespace {
 
@@ -24,18 +24,19 @@ struct sigaction sact = {};
 void usage() {
     std::cout << "Rawstor VHOST " << PACKAGE_VERSION << std::endl
               << std::endl
-              << "usage: rawstor-vhost [options] -t TARGET -s SOCKET_PATH"
-              << std::endl
+              << "usage: rawstor-vhost [options] -s PATH -t TARGET" << std::endl
               << std::endl
               << "options:" << std::endl
               << "  -h, --help            "
                  "Show this help message and exit"
               << std::endl
-              << "  --queue-depth QUEUE_DEPTH" << std::endl
-              << "                        "
-                 "RawIO queue depth (default: "
-              << DEFAULT_QUEUE_DEPTH << ")" << std::endl
-              << "  -s, --socket-path SOCKET_PATH" << std::endl
+              << "  --queue-size SIZE     "
+                 "RawIO queue size (default: "
+              << DEFAULT_QUEUE_SIZE << ")" << std::endl
+              << "  -v, --version         Rawstor version" << std::endl
+              << std::endl
+              << "required arguments:" << std::endl
+              << "  -s, --socket-path PATH" << std::endl
               << "                        "
                  "This option specify the location of the"
               << std::endl
@@ -44,8 +45,7 @@ void usage() {
               << std::endl
               << "  -t, --target TARGET   Comma separated list of rawstor "
                  "backend targets"
-              << std::endl
-              << "  -v, --version         Rawstor version" << std::endl;
+              << std::endl;
 }
 
 void version() {
@@ -56,10 +56,10 @@ void sact_handler(int) {
 }
 
 void server(
-    unsigned int queue_depth, const std::string& target,
+    unsigned int queue_size, const std::string& target,
     const std::string& socket_path
 ) {
-    rawstor::vhost::Server s(queue_depth, target, socket_path);
+    rawstor::vhost::Server s(queue_size, target, socket_path);
     s.loop();
 }
 
@@ -69,14 +69,14 @@ int main(int argc, char** argv) {
     const char* optstring = "hs:t:v";
     struct option longopts[] = {
         {"help", no_argument, nullptr, 'h'},
-        {"queue-depth", required_argument, nullptr, 'q'},
+        {"queue-size", required_argument, nullptr, 'q'},
         {"socket-path", required_argument, nullptr, 's'},
         {"target", required_argument, nullptr, 't'},
         {"version", no_argument, nullptr, 'v'},
         {},
     };
 
-    const char* queue_depth_arg = nullptr;
+    const char* queue_size_arg = nullptr;
     const char* socket_path_arg = nullptr;
     const char* target_arg = nullptr;
     while (1) {
@@ -91,7 +91,7 @@ int main(int argc, char** argv) {
             return EXIT_SUCCESS;
 
         case 'q':
-            queue_depth_arg = optarg;
+            queue_size_arg = optarg;
             break;
 
         case 's':
@@ -116,12 +116,12 @@ int main(int argc, char** argv) {
         return EXIT_FAILURE;
     }
 
-    unsigned int queue_depth = DEFAULT_QUEUE_DEPTH;
-    if (queue_depth_arg != nullptr) {
-        std::istringstream iss(queue_depth_arg);
-        if (iss.peek() < '0' || iss.peek() > '9' || !(iss >> queue_depth) ||
+    unsigned int queue_size = DEFAULT_QUEUE_SIZE;
+    if (queue_size_arg != nullptr) {
+        std::istringstream iss(queue_size_arg);
+        if (iss.peek() < '0' || iss.peek() > '9' || !(iss >> queue_size) ||
             !iss.eof()) {
-            std::cerr << "queue-depth must be unsigned integer" << std::endl;
+            std::cerr << "queue-size must be unsigned integer" << std::endl;
             return EXIT_FAILURE;
         }
     }
@@ -154,7 +154,7 @@ int main(int argc, char** argv) {
     }
 
     try {
-        server(queue_depth, target_arg, socket_path_arg);
+        server(queue_size, target_arg, socket_path_arg);
     } catch (const std::exception& e) {
         std::cerr << e.what() << std::endl;
         return EXIT_FAILURE;

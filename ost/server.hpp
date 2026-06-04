@@ -29,7 +29,7 @@ private:
 
 public:
     Server(
-        unsigned int queue_depth, const std::string& addr, unsigned int port,
+        unsigned int queue_size, const std::string& addr, unsigned int port,
         const char* location
     );
     Server(const Server&) = delete;
