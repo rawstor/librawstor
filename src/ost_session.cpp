@@ -592,7 +592,7 @@ void Context::setup_recv() {
                         rawstd_iovec_to_buf(
                             iov, niov, 0, &response, sizeof(response)
                         );
-                        cid = response.body.cid;
+                        cid = response.head.cid;
                         SessionOp& op = context->_find_op(cid);
                         op.response_head_cb(&response, 0, &is_head, &size);
                     } else {

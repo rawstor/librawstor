@@ -59,7 +59,6 @@ struct RawstorOSTFrameIO {
 
 /* response frames */
 struct RawstorOSTFrameResponseBody {
-    uint16_t cid;
     // TODO: if we send length in res - it should be the same type
     // (signed-unsigned too)
     int32_t res;

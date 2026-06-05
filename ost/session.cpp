@@ -73,9 +73,9 @@ void send_response(
                 {
                     .magic = RAWSTOR_MAGIC,
                     .cmd = type,
+                    .cid = cid,
                 },
             .body = {
-                .cid = cid,
                 .res = result,
                 .hash = hash,
             },
@@ -113,9 +113,9 @@ void send_response(
                 {
                     .magic = RAWSTOR_MAGIC,
                     .cmd = type,
+                    .cid = cid,
                 },
             .body = {
-                .cid = cid,
                 .res = result,
                 .hash = hash,
             },
