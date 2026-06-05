@@ -44,7 +44,7 @@ public:
     }
 
     void del_session(int fd) noexcept;
-    void loop();
+    void loop(unsigned int wait_timeout);
 };
 
 } // namespace ostbackend

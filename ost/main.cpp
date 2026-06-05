@@ -13,6 +13,7 @@
 #include <cstring>
 
 #define DEFAULT_QUEUE_SIZE 256
+#define DEFAULT_WAIT_TIMEOUT 5000
 
 namespace {
 
@@ -33,6 +34,9 @@ void usage() {
                  "RawIO queue size (default: "
               << DEFAULT_QUEUE_SIZE << ")" << std::endl
               << "  -v, --version         Rawstor version" << std::endl
+              << "  --wait-timeout TIMEOUT_MS" << std::endl
+              << "                        RawIO wait timeout in milliseconds "
+                 "(default: " << DEFAULT_WAIT_TIMEOUT << ")" << std::endl
               << std::endl
               << "required arguments:" << std::endl
               << "  -b, --bind ADDR       Bind address in the format "
@@ -48,11 +52,11 @@ void sact_handler(int) {
 }
 
 void ost(
-    unsigned int queue_size, const std::string& addr, unsigned int port,
+    unsigned int queue_size, unsigned int wait_timeout, const std::string& addr, unsigned int port,
     const char* location
 ) {
     rawstor::ostbackend::Server s(queue_size, addr, port, location);
-    s.loop();
+    s.loop(wait_timeout);
 }
 
 void parse_addr(
@@ -90,10 +94,12 @@ int main(int argc, char** argv) {
         {"location", required_argument, nullptr, 'l'},
         {"queue-size", required_argument, nullptr, 'q'},
         {"version", no_argument, nullptr, 'v'},
+        {"wait-timeout", required_argument, nullptr, 'w'},
         {},
     };
 
     const char* queue_size_arg = nullptr;
+    const char* wait_timeout_arg = nullptr;
     const char* location_arg = nullptr;
     const char* bind_arg = nullptr;
     while (1) {
@@ -123,6 +129,10 @@ int main(int argc, char** argv) {
             version();
             return EXIT_SUCCESS;
 
+        case 'w':
+            wait_timeout_arg = optarg;
+            break;
+
         default:
             return EXIT_FAILURE;
         }
@@ -139,6 +149,16 @@ int main(int argc, char** argv) {
         if (iss.peek() < '0' || iss.peek() > '9' || !(iss >> queue_size) ||
             !iss.eof()) {
             std::cerr << "queue-size must be unsigned integer" << std::endl;
+            return EXIT_FAILURE;
+        }
+    }
+
+    unsigned int wait_timeout = DEFAULT_WAIT_TIMEOUT;
+    if (wait_timeout_arg != nullptr) {
+        std::istringstream iss(wait_timeout_arg);
+        if (iss.peek() < '0' || iss.peek() > '9' || !(iss >> wait_timeout) ||
+            !iss.eof()) {
+            std::cerr << "wait-timeout must be unsigned integer" << std::endl;
             return EXIT_FAILURE;
         }
     }
@@ -180,7 +200,7 @@ int main(int argc, char** argv) {
     }
 
     try {
-        ost(queue_size, name, port, location_arg);
+        ost(queue_size, wait_timeout, name, port, location_arg);
     } catch (const std::exception& e) {
         std::cerr << e.what() << std::endl;
         return EXIT_FAILURE;

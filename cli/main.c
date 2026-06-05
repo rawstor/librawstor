@@ -18,6 +18,7 @@
 #include <string.h>
 
 #define DEFAULT_QUEUE_SIZE 256
+#define DEFAULT_WAIT_TIMEOUT 5000
 
 static struct sigaction sact = {};
 
@@ -77,8 +78,8 @@ static int command_create(int argc, char** argv) {
         {},
     };
 
-    char* size_arg = NULL;
-    char* location_arg = NULL;
+    const char* size_arg = NULL;
+    const char* location_arg = NULL;
     optind = 1;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
@@ -153,7 +154,7 @@ static int command_remove(int argc, char** argv) {
         {},
     };
 
-    char* target_arg = NULL;
+    const char* target_arg = NULL;
     optind = 1;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
@@ -209,7 +210,7 @@ static int command_show(int argc, char** argv) {
         {},
     };
 
-    char* target_arg = NULL;
+    const char* target_arg = NULL;
     optind = 1;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
@@ -253,6 +254,9 @@ static void command_testio_usage(void) {
         "\n"
         "command options:\n"
         "  --queue-size SIZE     RawIO queue size (default: %u)\n"
+        "  --wait-timeout TIMEOUT_MS\n"
+        "                        RawIO wait timeout in milliseconds "
+        "(default: %u)\n"
         "  -b, --block-size SIZE Block size with unit suffix (B, K, M, G, T"
         ").\n"
         "  -c, --count COUNT     How many blocks are we going to be\n"
@@ -262,7 +266,8 @@ static void command_testio_usage(void) {
         "  -t, --target TARGET   Comma separated list of rawstor backend "
         "targets\n"
         "  --vector-mode         Use readv/writev\n",
-        DEFAULT_QUEUE_SIZE
+        DEFAULT_QUEUE_SIZE,
+        DEFAULT_WAIT_TIMEOUT
     );
 };
 
@@ -270,6 +275,7 @@ static int command_testio(int argc, char** argv) {
     const char* optstring = "b:c:d:ht:";
     struct option longopts[] = {
         {"queue-size", required_argument, NULL, 'q'},
+        {"wait-timeout", required_argument, NULL, 'w'},
         {"block-size", required_argument, NULL, 'b'},
         {"count", required_argument, NULL, 'c'},
         {"help", no_argument, NULL, 'h'},
@@ -279,11 +285,12 @@ static int command_testio(int argc, char** argv) {
         {},
     };
 
-    char* queue_size_arg = NULL;
-    char* block_size_arg = NULL;
-    char* count_arg = NULL;
-    char* io_depth_arg = NULL;
-    char* target_arg = NULL;
+    const char* queue_size_arg = NULL;
+    const char* wait_timeout_arg = NULL;
+    const char* block_size_arg = NULL;
+    const char* count_arg = NULL;
+    const char* io_depth_arg = NULL;
+    const char* target_arg = NULL;
     int vector_mode = 0;
     optind = 1;
     while (1) {
@@ -293,10 +300,6 @@ static int command_testio(int argc, char** argv) {
         }
 
         switch (c) {
-        case 'q':
-            queue_size_arg = optarg;
-            break;
-
         case 'b':
             block_size_arg = optarg;
             break;
@@ -313,12 +316,20 @@ static int command_testio(int argc, char** argv) {
             command_testio_usage();
             return EXIT_SUCCESS;
 
+        case 'q':
+            queue_size_arg = optarg;
+            break;
+
         case 't':
             target_arg = optarg;
             break;
 
         case 'v':
             vector_mode = 1;
+            break;
+
+        case 'w':
+            wait_timeout_arg = optarg;
             break;
 
         default:
@@ -335,6 +346,14 @@ static int command_testio(int argc, char** argv) {
     if (queue_size_arg != NULL) {
         if (sscanf(queue_size_arg, "%u", &queue_size) != 1) {
             fprintf(stderr, "queue-size argument must be unsigned integer\n");
+            return EXIT_FAILURE;
+        }
+    }
+
+    unsigned int wait_timeout = DEFAULT_WAIT_TIMEOUT;
+    if (wait_timeout_arg != NULL) {
+        if (sscanf(wait_timeout_arg, "%u", &wait_timeout) != 1) {
+            fprintf(stderr, "wait-timeout argument must be unsigned integer\n");
             return EXIT_FAILURE;
         }
     }
@@ -382,7 +401,7 @@ static int command_testio(int argc, char** argv) {
     }
 
     return rawstor_cli_testio(
-        queue_size, target_arg, block_size, count, io_depth, vector_mode
+        queue_size, wait_timeout, target_arg, block_size, count, io_depth, vector_mode
     );
 }
 

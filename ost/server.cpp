@@ -145,7 +145,7 @@ void Server::del_session(int fd) noexcept {
     }
 }
 
-void Server::loop() {
+void Server::loop(unsigned int wait_timeout) {
     int res =
         rawio_accept_multishot(_queue, _fd, _accept, this, &_accept_event);
     if (res < 0) {
@@ -153,7 +153,7 @@ void Server::loop() {
     }
 
     while (true) {
-        int res = rawio_wait(_queue);
+        int res = rawio_wait_timeout(_queue, wait_timeout);
         if (res == -EINTR) {
             break;
         }

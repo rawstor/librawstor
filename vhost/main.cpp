@@ -16,6 +16,7 @@
 #include <sstream>
 
 #define DEFAULT_QUEUE_SIZE 256
+#define DEFAULT_WAIT_TIMEOUT 5000
 
 namespace {
 
@@ -34,6 +35,9 @@ void usage() {
                  "RawIO queue size (default: "
               << DEFAULT_QUEUE_SIZE << ")" << std::endl
               << "  -v, --version         Rawstor version" << std::endl
+              << "  --wait-timeout TIMEOUT_MS" << std::endl
+              << "                        RawIO wait timeout in milliseconds "
+                 "(default: " << DEFAULT_WAIT_TIMEOUT << ")" << std::endl
               << std::endl
               << "required arguments:" << std::endl
               << "  -s, --socket-path PATH" << std::endl
@@ -56,11 +60,11 @@ void sact_handler(int) {
 }
 
 void server(
-    unsigned int queue_size, const std::string& target,
+    unsigned int queue_size, unsigned int wait_timeout, const std::string& target,
     const std::string& socket_path
 ) {
     rawstor::vhost::Server s(queue_size, target, socket_path);
-    s.loop();
+    s.loop(wait_timeout);
 }
 
 } // namespace
@@ -70,6 +74,7 @@ int main(int argc, char** argv) {
     struct option longopts[] = {
         {"help", no_argument, nullptr, 'h'},
         {"queue-size", required_argument, nullptr, 'q'},
+        {"wait-timeout", required_argument, nullptr, 'w'},
         {"socket-path", required_argument, nullptr, 's'},
         {"target", required_argument, nullptr, 't'},
         {"version", no_argument, nullptr, 'v'},
@@ -77,6 +82,7 @@ int main(int argc, char** argv) {
     };
 
     const char* queue_size_arg = nullptr;
+    const char* wait_timeout_arg = nullptr;
     const char* socket_path_arg = nullptr;
     const char* target_arg = nullptr;
     while (1) {
@@ -106,6 +112,10 @@ int main(int argc, char** argv) {
             version();
             return EXIT_SUCCESS;
 
+        case 'w':
+            wait_timeout_arg = optarg;
+            break;
+
         default:
             return EXIT_FAILURE;
         }
@@ -122,6 +132,16 @@ int main(int argc, char** argv) {
         if (iss.peek() < '0' || iss.peek() > '9' || !(iss >> queue_size) ||
             !iss.eof()) {
             std::cerr << "queue-size must be unsigned integer" << std::endl;
+            return EXIT_FAILURE;
+        }
+    }
+
+    unsigned int wait_timeout = DEFAULT_WAIT_TIMEOUT;
+    if (wait_timeout_arg != nullptr) {
+        std::istringstream iss(wait_timeout_arg);
+        if (iss.peek() < '0' || iss.peek() > '9' || !(iss >> wait_timeout) ||
+            !iss.eof()) {
+            std::cerr << "wait-timeout must be unsigned integer" << std::endl;
             return EXIT_FAILURE;
         }
     }
@@ -154,7 +174,7 @@ int main(int argc, char** argv) {
     }
 
     try {
-        server(queue_size, target_arg, socket_path_arg);
+        server(queue_size, wait_timeout, target_arg, socket_path_arg);
     } catch (const std::exception& e) {
         std::cerr << e.what() << std::endl;
         return EXIT_FAILURE;

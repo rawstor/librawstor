@@ -25,7 +25,7 @@ public:
     Server& operator=(const Server&) = delete;
     Server& operator=(Server&&) = delete;
 
-    void loop();
+    void loop(unsigned int wait_timeout);
 };
 
 } // namespace vhost

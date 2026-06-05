@@ -107,7 +107,7 @@ Server::~Server() {
     rawstor_terminate();
 }
 
-void Server::loop() {
+void Server::loop(unsigned int wait_timeout) {
     rawstd_info("Listening %s\n", _socket_path.c_str());
 
     int fd = ::accept(_fd, NULL, NULL);
@@ -116,7 +116,7 @@ void Server::loop() {
     }
 
     Device d(_queue_size, _target, fd);
-    d.loop();
+    d.loop(wait_timeout);
 }
 
 } // namespace vhost

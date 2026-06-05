@@ -256,7 +256,7 @@ static int srcv_data_sent(
 }
 
 int rawstor_cli_testio(
-    unsigned int queue_size, const char* target, size_t block_size,
+    unsigned int queue_size, unsigned int wait_timeout, const char* target, size_t block_size,
     unsigned int count, unsigned int io_depth, int vector_mode
 ) {
     int res;
@@ -327,7 +327,7 @@ int rawstor_cli_testio(
     }
 
     while (counter > 0) {
-        int res = rawio_wait(queue);
+        int res = rawio_wait_timeout(queue, wait_timeout);
         if (res < 0) {
             fprintf(stderr, "rawstor_wait() failed: %s\n", strerror(-res));
             goto err_wait;

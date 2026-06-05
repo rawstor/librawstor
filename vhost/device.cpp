@@ -735,12 +735,12 @@ bool Device::has_watch(int fd) const noexcept {
     return it != _watchers.end();
 }
 
-void Device::loop() {
+void Device::loop(unsigned int wait_timeout) {
     std::unique_ptr<TaskDispatch> t = std::make_unique<TaskDispatch>(*this);
     poll(_queue, _dev.sock, std::move(t));
 
     while (true) {
-        int res = rawio_wait(_queue);
+        int res = rawio_wait_timeout(_queue, wait_timeout);
         if (res == -EPIPE) {
             break;
         }

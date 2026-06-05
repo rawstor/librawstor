@@ -111,7 +111,7 @@ public:
 
     bool has_watch(int fd) const noexcept;
 
-    void loop();
+    void loop(unsigned int wait_timeout);
 };
 
 } // namespace vhost
