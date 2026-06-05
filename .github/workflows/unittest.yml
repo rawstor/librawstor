@@ -67,7 +67,7 @@ jobs:
       with:
         repository: rawstor/rawstor_ost
         path: rawstor_ost
-        ref: ${GITHUB_REF}
+        ref: ${{ github.ref }}
     - uses: actions/checkout@v6
       if: "${{ steps.rawstor_ost_feature_branch.outcome == 'failure' }}"
       with:
