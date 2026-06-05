@@ -291,7 +291,7 @@ Session::_recv_body(const iovec* iov, unsigned int niov, size_t result) {
             iov, niov, 0, &_request_body.basic, sizeof(_request_body.basic)
         );
 
-        _set_object(_request_body.basic);
+        _set_object(_request_head, _request_body.basic);
 
         return sizeof(RawstorOSTFrameHead);
 
@@ -375,7 +375,9 @@ Session::_recv_data(const iovec* iov, unsigned int niov, size_t result) {
     return sizeof(RawstorOSTFrameHead);
 }
 
-void Session::_set_object(const RawstorOSTFrameBasicBody& request) {
+void Session::_set_object(
+    const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+) {
     if (_object != nullptr) {
         int res = rawstor_object_close(_object);
         if (res < 0) {
@@ -385,7 +387,7 @@ void Session::_set_object(const RawstorOSTFrameBasicBody& request) {
     }
 
     RawstdUUID uuid;
-    memcpy(uuid.bytes, request.obj_id, sizeof(request.obj_id));
+    memcpy(uuid.bytes, body.obj_id, sizeof(body.obj_id));
 
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&uuid, &uuid_string);
@@ -401,7 +403,7 @@ void Session::_set_object(const RawstorOSTFrameBasicBody& request) {
         _queue, rawstd::URI::uris(targets).c_str(), &_object
     );
 
-    send_response(_queue, _fd, RAWSTOR_CMD_SET_OBJECT, 0, result, 0);
+    send_response(_queue, _fd, RAWSTOR_CMD_SET_OBJECT, head.cid, result, 0);
 }
 
 void Session::_read(

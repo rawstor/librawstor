@@ -33,7 +33,9 @@ private:
     ssize_t _recv_head(const iovec* iov, unsigned int niov, size_t result);
     ssize_t _recv_body(const iovec* iov, unsigned int niov, size_t result);
     ssize_t _recv_data(const iovec* iov, unsigned int niov, size_t result);
-    void _set_object(const RawstorOSTFrameBasicBody& request);
+    void _set_object(
+        const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+    );
     void
     _read(const RawstorOSTFrameHead& head, const RawstorOSTFrameIOBody& body);
     void _write(
