@@ -53,12 +53,19 @@ jobs:
         sudo make install
         popd
     - uses: actions/checkout@v6
+      id: rawstor_ost_feature_branch
+      continue-on-error: true
       if: "${{ matrix.backend == 'ost-legacy' }}"
       with:
         repository: rawstor/rawstor_ost
         path: rawstor_ost
+        ref: ${GITHUB_REF}
+    - uses: actions/checkout@v6
+      if: "${{ matrix.backend == 'ost-legacy' && steps.rawstor_ost_feature_branch.outcome == 'failure' }}"
+      with:
+        repository: rawstor/rawstor_ost
+        path: rawstor_ost
         ref: refs/heads/main
-        ssh-key: ${{ secrets.RAWSTOR_OST_TOKEN }}
     - name: (ost-legacy) install rawstor_ost
       if: "${{ matrix.backend == 'ost-legacy' }}"
       run: |
