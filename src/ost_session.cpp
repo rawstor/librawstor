@@ -248,10 +248,10 @@ public:
                 {
                     .magic = RAWSTOR_MAGIC,
                     .cmd = RAWSTOR_CMD_READ,
+                    .cid = cid,
                 },
             .body =
                 {
-                    .cid = cid,
                     .offset = (uint64_t)offset,
                     .len = (uint32_t)_size,
                     .hash = 0,
@@ -336,10 +336,10 @@ public:
                 {
                     .magic = RAWSTOR_MAGIC,
                     .cmd = RAWSTOR_CMD_READ,
+                    .cid = cid,
                 },
             .body =
                 {
-                    .cid = cid,
                     .offset = (uint64_t)offset,
                     .len = (uint32_t)_size,
                     .hash = 0,
@@ -417,9 +417,9 @@ public:
                 {
                     .magic = RAWSTOR_MAGIC,
                     .cmd = RAWSTOR_CMD_WRITE,
+                    .cid = cid,
                 },
             .body = {
-                .cid = cid,
                 .offset = (uint64_t)offset,
                 .len = (uint32_t)size,
                 .hash = hash(buf, size),
@@ -488,9 +488,9 @@ public:
                 {
                     .magic = RAWSTOR_MAGIC,
                     .cmd = RAWSTOR_CMD_WRITE,
+                    .cid = cid,
                 },
             .body = {
-                .cid = cid,
                 .offset = (uint64_t)offset,
                 .len = (uint32_t)size,
                 .hash = hash(iov, niov),
@@ -592,7 +592,7 @@ void Context::setup_recv() {
                         rawstd_iovec_to_buf(
                             iov, niov, 0, &response, sizeof(response)
                         );
-                        cid = response.body.cid;
+                        cid = response.head.cid;
                         SessionOp& op = context->_find_op(cid);
                         op.response_head_cb(&response, 0, &is_head, &size);
                     } else {
@@ -726,6 +726,7 @@ void Session::_set_object(Object* object) {
             {
                 .magic = RAWSTOR_MAGIC,
                 .cmd = RAWSTOR_CMD_SET_OBJECT,
+                .cid = _cid_counter++,
             },
         .body = {
             .obj_id = {},
