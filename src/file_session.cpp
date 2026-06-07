@@ -21,6 +21,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -40,12 +41,11 @@ std::string get_ost_path(const rawstd::URI& location) {
     return location.path().str();
 }
 
-std::string get_object_spec_path(
-    const std::string& ost_path, const RawstdUUIDString& uuid
-) {
+std::string
+get_object_dat_path_legacy(const std::string& ost_path, const RawstdUUIDString& uuid) {
     std::ostringstream oss;
 
-    oss << ost_path << "/" << uuid << ".spec";
+    oss << ost_path << "/" << uuid << ".dat";
 
     return oss.str();
 }
@@ -54,7 +54,7 @@ std::string
 get_object_dat_path(const std::string& ost_path, const RawstdUUIDString& uuid) {
     std::ostringstream oss;
 
-    oss << ost_path << "/" << uuid << ".dat";
+    oss << ost_path << "/" << uuid;
 
     return oss.str();
 }
@@ -105,9 +105,22 @@ int Session::_connect(const RawstdUUID& id) {
     std::string dat_path = get_object_dat_path(ost_path, id_string);
 
     rawstd_info("Connecting to %s...\n", location().str().c_str());
-    int fd = open(dat_path.c_str(), O_RDWR | O_NONBLOCK);
-    if (fd == -1) {
-        RAWSTD_THROW_ERRNO();
+    int fd;
+    try {
+        fd = open(dat_path.c_str(), O_RDWR | O_NONBLOCK);
+        if (fd == -1) {
+            RAWSTD_THROW_ERRNO();
+        }
+    } catch (const std::system_error& e) {
+        if (e.code().value() == ENOENT) {
+            std::string dat_path = get_object_dat_path_legacy(ost_path, id_string);
+            fd = open(dat_path.c_str(), O_RDWR | O_NONBLOCK);
+            if (fd == -1) {
+                RAWSTD_THROW_ERRNO();
+            }
+        } else {
+            throw;
+        }
     }
     rawstd_info("fd %d: Connected\n", fd);
     return fd;
@@ -126,35 +139,7 @@ void Session::create(
         }
     }
 
-    RawstdUUIDString uuid_string;
-    rawstd_uuid_to_string(&id, &uuid_string);
-
-    std::string spec_path;
-    spec_path = get_object_spec_path(ost_path, uuid_string);
-
-    int fd = ::open(
-        spec_path.c_str(), O_EXCL | O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR
-    );
-    if (fd == -1) {
-        RAWSTD_THROW_ERRNO();
-    }
-
-    try {
-        ssize_t res = ::write(fd, &sp, sizeof(sp));
-        if (res == -1) {
-            RAWSTD_THROW_ERRNO();
-        }
-
-        write_dat(ost_path, sp, id);
-
-        if (::close(fd) == -1) {
-            RAWSTD_THROW_ERRNO();
-        }
-    } catch (...) {
-        unlink(spec_path.c_str());
-        ::close(fd);
-        throw;
-    }
+    write_dat(ost_path, sp, id);
 
     cb(0);
 }
@@ -174,15 +159,6 @@ void Session::remove(const RawstdUUID& id, std::function<void(int)>&& cb) {
         }
     }
 
-    std::string spec_path = get_object_spec_path(ost_path, uuid_string);
-    if (unlink(spec_path.c_str()) == -1) {
-        if (errno == ENOENT) {
-            errno = 0;
-        } else {
-            RAWSTD_THROW_ERRNO();
-        }
-    }
-
     cb(0);
 }
 
@@ -195,27 +171,11 @@ void Session::spec(
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&id, &uuid_string);
 
-    std::string spec_path = get_object_spec_path(ost_path, uuid_string);
+    std::string dat_path = get_object_dat_path(ost_path, uuid_string);
 
-    int fd = ::open(spec_path.c_str(), O_RDONLY);
-    if (fd == -1) {
-        RAWSTD_THROW_ERRNO();
-    }
-
-    RawstorObjectSpec ret;
-    try {
-        ssize_t rval = ::read(fd, &ret, sizeof(ret));
-        if (rval == -1) {
-            RAWSTD_THROW_ERRNO();
-        }
-
-        if (::close(fd) == -1) {
-            RAWSTD_THROW_ERRNO();
-        }
-    } catch (...) {
-        ::close(fd);
-        throw;
-    }
+    RawstorObjectSpec ret {
+        .size = std::filesystem::file_size(dat_path),
+    };
 
     cb(ret, 0);
 }
