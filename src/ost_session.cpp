@@ -140,9 +140,9 @@ public:
     inline RawstorOSTFrameResponse* response() noexcept { return &_response; }
 
     SessionOp& find_op() {
-        auto it = _ops.find(_response.body.cid);
+        auto it = _ops.find(_response.head.cid);
         if (it == _ops.end()) {
-            rawstd_error("Unexpected cid: %u\n", _response.body.cid);
+            rawstd_error("Unexpected cid: %u\n", _response.head.cid);
             RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
         }
 
@@ -250,6 +250,7 @@ public:
                 {
                     .magic = RAWSTOR_MAGIC,
                     .cmd = RAWSTOR_CMD_SET_OBJECT,
+                    .cid = cid,
                 },
             .body = {
                 .obj_id = {},
@@ -311,10 +312,10 @@ public:
                 {
                     .magic = RAWSTOR_MAGIC,
                     .cmd = RAWSTOR_CMD_READ,
+                    .cid = cid,
                 },
             .body =
                 {
-                    .cid = cid,
                     .offset = (uint64_t)offset,
                     .len = (uint32_t)_size,
                     .hash = 0,
@@ -388,10 +389,10 @@ public:
                 {
                     .magic = RAWSTOR_MAGIC,
                     .cmd = RAWSTOR_CMD_READ,
+                    .cid = cid,
                 },
             .body =
                 {
-                    .cid = cid,
                     .offset = (uint64_t)offset,
                     .len = (uint32_t)_size,
                     .hash = 0,
@@ -458,9 +459,9 @@ public:
                 {
                     .magic = RAWSTOR_MAGIC,
                     .cmd = RAWSTOR_CMD_WRITE,
+                    .cid = cid,
                 },
             .body = {
-                .cid = cid,
                 .offset = (uint64_t)offset,
                 .len = (uint32_t)size,
                 .hash = hash(buf, size),
@@ -524,9 +525,9 @@ public:
                 {
                     .magic = RAWSTOR_MAGIC,
                     .cmd = RAWSTOR_CMD_WRITE,
+                    .cid = cid,
                 },
             .body = {
-                .cid = cid,
                 .offset = (uint64_t)offset,
                 .len = (uint32_t)size,
                 .hash = hash(iov, niov),
@@ -811,6 +812,7 @@ void Session::set_object(rawstor::Object* object) {
             {
                 .magic = RAWSTOR_MAGIC,
                 .cmd = RAWSTOR_CMD_SET_OBJECT,
+                .cid = _cid_counter++,
             },
         .body = {
             .obj_id = {},
