@@ -21,7 +21,7 @@ public:
     Session(rawio::Queue& queue, const rawstd::URI& location);
 
     void create(
-        const RawstdUUID& id, const RawstorObjectSpec& sp,
+        const RawstdUUID& id, const RawstorObjectSpec& spec,
         std::function<void(int)>&& cb
     ) override;
 

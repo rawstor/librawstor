@@ -3,6 +3,8 @@
 #include "object.hpp"
 #include "opts.h"
 
+#include <rawstor/version.h>
+
 #include <rawio/queue.hpp>
 
 #include <rawstd/gpp.hpp>
@@ -27,9 +29,14 @@
 #include <string>
 #include <utility>
 
+#if RAWSTOR_VERSION_MAJOR == 99 \
+    || (RAWSTOR_VERSION_MAJOR == 0 && RAWSTOR_VERSION_MINOR < 3)
+#define FF_FILE_LEGACY
+#endif
+
 namespace {
 
-std::string get_ost_path(const rawstd::URI& location) {
+std::string get_location_path(const rawstd::URI& location) {
     if (location.scheme() != "file") {
         rawstd_error("Unexpected URI scheme: %s\n", location.str().c_str());
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
@@ -41,34 +48,90 @@ std::string get_ost_path(const rawstd::URI& location) {
     return location.path().str();
 }
 
+#ifdef FF_FILE_LEGACY
 std::string
-get_object_dat_path_legacy(const std::string& ost_path, const RawstdUUIDString& uuid) {
+get_target_path_legacy(const std::string& location_path, const RawstdUUIDString& uuid) {
     std::ostringstream oss;
 
-    oss << ost_path << "/" << uuid << ".dat";
+    oss << location_path << "/" << uuid << ".dat";
+
+    return oss.str();
+}
+#endif
+
+std::string
+get_target_path(const std::string& location_path, const RawstdUUIDString& uuid) {
+    std::ostringstream oss;
+
+    oss << location_path << "/" << uuid;
 
     return oss.str();
 }
 
-std::string
-get_object_dat_path(const std::string& ost_path, const RawstdUUIDString& uuid) {
-    std::ostringstream oss;
+} // unnamed namespace
 
-    oss << ost_path << "/" << uuid;
+namespace rawstor {
+namespace file {
 
-    return oss.str();
+Session::Session(rawio::Queue& queue, const rawstd::URI& location) :
+    rawstor::Session(queue, location) {
 }
 
-void write_dat(
-    const std::string& ost_path, const RawstorObjectSpec& spec,
-    const RawstdUUID& id
+int Session::_connect(const RawstdUUID& id) {
+    std::string location_path = get_location_path(location());
+
+    RawstdUUIDString id_string;
+    rawstd_uuid_to_string(&id, &id_string);
+    std::string target_path = get_target_path(location_path, id_string);
+
+    rawstd_info("Connecting to %s...\n", location().str().c_str());
+    int fd;
+#ifndef FF_FILE_LEGACY
+    fd = open(target_path.c_str(), O_RDWR | O_NONBLOCK);
+    if (fd == -1) {
+        RAWSTD_THROW_ERRNO();
+    }
+#else
+    try {
+        fd = open(target_path.c_str(), O_RDWR | O_NONBLOCK);
+        if (fd == -1) {
+            RAWSTD_THROW_ERRNO();
+        }
+    } catch (const std::system_error& e) {
+        if (e.code().value() == ENOENT) {
+            std::string target_path = get_target_path_legacy(location_path, id_string);
+            fd = open(target_path.c_str(), O_RDWR | O_NONBLOCK);
+            if (fd == -1) {
+                RAWSTD_THROW_ERRNO();
+            }
+        } else {
+            throw;
+        }
+    }
+#endif
+    rawstd_info("fd %d: Connected\n", fd);
+    return fd;
+}
+
+void Session::create(
+    const RawstdUUID& id, const RawstorObjectSpec& spec,
+    std::function<void(int)>&& cb
 ) {
+    std::string location_path = get_location_path(location());
+    if (mkdir(location_path.c_str(), 0755) == -1) {
+        if (errno == EEXIST) {
+            errno = 0;
+        } else {
+            RAWSTD_THROW_ERRNO();
+        }
+    }
+
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&id, &uuid_string);
 
-    std::string dat_path = get_object_dat_path(ost_path, uuid_string);
+    std::string target_path = get_target_path(location_path, uuid_string);
 
-    int fd = open(dat_path.c_str(), O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR);
+    int fd = open(target_path.c_str(), O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR);
     if (fd == -1) {
         RAWSTD_THROW_ERRNO();
     }
@@ -83,75 +146,21 @@ void write_dat(
         }
     } catch (const std::system_error& e) {
         close(fd);
-        unlink(dat_path.c_str());
+        unlink(target_path.c_str());
         throw;
     }
-}
-
-} // unnamed namespace
-
-namespace rawstor {
-namespace file {
-
-Session::Session(rawio::Queue& queue, const rawstd::URI& location) :
-    rawstor::Session(queue, location) {
-}
-
-int Session::_connect(const RawstdUUID& id) {
-    std::string ost_path = get_ost_path(location());
-
-    RawstdUUIDString id_string;
-    rawstd_uuid_to_string(&id, &id_string);
-    std::string dat_path = get_object_dat_path(ost_path, id_string);
-
-    rawstd_info("Connecting to %s...\n", location().str().c_str());
-    int fd;
-    try {
-        fd = open(dat_path.c_str(), O_RDWR | O_NONBLOCK);
-        if (fd == -1) {
-            RAWSTD_THROW_ERRNO();
-        }
-    } catch (const std::system_error& e) {
-        if (e.code().value() == ENOENT) {
-            std::string dat_path = get_object_dat_path_legacy(ost_path, id_string);
-            fd = open(dat_path.c_str(), O_RDWR | O_NONBLOCK);
-            if (fd == -1) {
-                RAWSTD_THROW_ERRNO();
-            }
-        } else {
-            throw;
-        }
-    }
-    rawstd_info("fd %d: Connected\n", fd);
-    return fd;
-}
-
-void Session::create(
-    const RawstdUUID& id, const RawstorObjectSpec& sp,
-    std::function<void(int)>&& cb
-) {
-    std::string ost_path = get_ost_path(location());
-    if (mkdir(ost_path.c_str(), 0755) == -1) {
-        if (errno == EEXIST) {
-            errno = 0;
-        } else {
-            RAWSTD_THROW_ERRNO();
-        }
-    }
-
-    write_dat(ost_path, sp, id);
 
     cb(0);
 }
 
 void Session::remove(const RawstdUUID& id, std::function<void(int)>&& cb) {
-    std::string ost_path = get_ost_path(location());
+    std::string location_path = get_location_path(location());
 
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&id, &uuid_string);
 
-    std::string dat_path = get_object_dat_path(ost_path, uuid_string);
-    if (unlink(dat_path.c_str()) == -1) {
+    std::string target_path = get_target_path(location_path, uuid_string);
+    if (unlink(target_path.c_str()) == -1) {
         if (errno == ENOENT) {
             errno = 0;
         } else {
@@ -166,15 +175,15 @@ void Session::spec(
     const RawstdUUID& id,
     std::function<void(const RawstorObjectSpec&, int)>&& cb
 ) {
-    std::string ost_path = get_ost_path(location());
+    std::string location_path = get_location_path(location());
 
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&id, &uuid_string);
 
-    std::string dat_path = get_object_dat_path(ost_path, uuid_string);
+    std::string target_path = get_target_path(location_path, uuid_string);
 
     RawstorObjectSpec ret {
-        .size = std::filesystem::file_size(dat_path),
+        .size = std::filesystem::file_size(target_path),
     };
 
     cb(ret, 0);
