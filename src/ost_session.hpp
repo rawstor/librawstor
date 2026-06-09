@@ -31,6 +31,7 @@ private:
     std::shared_ptr<Context> _context;
 
     int _connect();
+    void _basic(const RawstdUUID& id);
     void _set_object(Object* object);
 
 public:

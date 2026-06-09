@@ -775,6 +775,88 @@ int Session::_connect() {
     return fd;
 }
 
+void Session::_basic(const RawstdUUID& id, const char* name) {
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('s', "%s\n", "remove");
+
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
+
+    RawstorOSTFrameBasic request = {
+        .head =
+            {
+                .magic = RAWSTOR_MAGIC,
+                .cmd = RAWSTOR_CMD_DISCARD,
+                .cid = _cid_counter++,
+            },
+        .body = {
+            .obj_id = {},
+            .offset = 0,
+            .val = 0,
+        },
+    };
+    memcpy(
+        request.body.obj_id, id.bytes, sizeof(request.body.obj_id)
+    );
+    queue->write(
+        fd(), &request, sizeof(request),
+        [fd = fd(), trace_event](size_t result, int error) {
+            RAWSTD_TRACE_EVENT_MESSAGE(
+                trace_event, "%zu of %zu, error = %d\n", result,
+                sizeof(RawstorOSTFrameBasic), error
+            );
+
+            if (!error) {
+                error =
+                    validate_result(fd, sizeof(RawstorOSTFrameBasic), result);
+            }
+
+            if (error) {
+                RAWSTD_THROW_SYSTEM_ERROR(error);
+            }
+        }
+    );
+
+    bool completed = false;
+    RawstorOSTFrameResponse response;
+    queue->read(
+        fd(), &response, sizeof(response),
+        [fd = fd(), &response, &completed,
+         trace_event](size_t result, int error) {
+            RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "error = %d\n", error);
+
+            completed = true;
+
+            RAWSTD_TRACE_EVENT_MESSAGE(
+                trace_event, "%zu of %zu, error = %d\n", result,
+                sizeof(RawstorOSTFrameResponse), error
+            );
+
+            if (!error) {
+                error = validate_result(
+                    fd, sizeof(RawstorOSTFrameResponse), result
+                );
+            }
+
+            if (!error) {
+                error = validate_response(fd, &response);
+            }
+
+            if (!error) {
+                error =
+                    validate_cmd(fd, response.head.cmd, RAWSTOR_CMD_DISCARD);
+            }
+
+            if (error) {
+                RAWSTD_THROW_SYSTEM_ERROR(error);
+            }
+        }
+    );
+
+    while (!completed) {
+        queue->wait();
+    }
+}
+
 void Session::_set_object(Object* object) {
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('s', "%s\n", "set object");
@@ -869,8 +951,86 @@ void Session::create(
     cb(0);
 }
 
-void Session::remove(const RawstdUUID&, std::function<void(int)>&&) {
-    throw std::runtime_error("Session::remove() not implemented");
+void Session::remove(const RawstdUUID& id, std::function<void(int)>&&) {
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('s', "%s\n", "remove");
+
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
+
+    RawstorOSTFrameBasic request = {
+        .head =
+            {
+                .magic = RAWSTOR_MAGIC,
+                .cmd = RAWSTOR_CMD_DISCARD,
+                .cid = _cid_counter++,
+            },
+        .body = {
+            .obj_id = {},
+            .offset = 0,
+            .val = 0,
+        },
+    };
+    memcpy(
+        request.body.obj_id, id.bytes, sizeof(request.body.obj_id)
+    );
+    queue->write(
+        fd(), &request, sizeof(request),
+        [fd = fd(), trace_event](size_t result, int error) {
+            RAWSTD_TRACE_EVENT_MESSAGE(
+                trace_event, "%zu of %zu, error = %d\n", result,
+                sizeof(RawstorOSTFrameBasic), error
+            );
+
+            if (!error) {
+                error =
+                    validate_result(fd, sizeof(RawstorOSTFrameBasic), result);
+            }
+
+            if (error) {
+                RAWSTD_THROW_SYSTEM_ERROR(error);
+            }
+        }
+    );
+
+    bool completed = false;
+    RawstorOSTFrameResponse response;
+    queue->read(
+        fd(), &response, sizeof(response),
+        [fd = fd(), &response, &completed,
+         trace_event](size_t result, int error) {
+            RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "error = %d\n", error);
+
+            completed = true;
+
+            RAWSTD_TRACE_EVENT_MESSAGE(
+                trace_event, "%zu of %zu, error = %d\n", result,
+                sizeof(RawstorOSTFrameResponse), error
+            );
+
+            if (!error) {
+                error = validate_result(
+                    fd, sizeof(RawstorOSTFrameResponse), result
+                );
+            }
+
+            if (!error) {
+                error = validate_response(fd, &response);
+            }
+
+            if (!error) {
+                error =
+                    validate_cmd(fd, response.head.cmd, RAWSTOR_CMD_DISCARD);
+            }
+
+            if (error) {
+                RAWSTD_THROW_SYSTEM_ERROR(error);
+            }
+        }
+    );
+
+    while (!completed) {
+        queue->wait();
+    }
 }
 
 void Session::spec(
