@@ -99,7 +99,6 @@ namespace ost {
 class Context final : public std::enable_shared_from_this<Context> {
 private:
     rawio::Queue& _queue;
-    int _fd;
     std::unordered_map<uint16_t, std::shared_ptr<SessionOp>> _ops;
     RawIOEvent* _read_event;
 
@@ -116,12 +115,11 @@ private:
     }
 
 public:
-    Context(rawio::Queue& queue, int fd) :
+    Context(rawio::Queue& queue) :
         _queue(queue),
-        _fd(fd),
         _read_event(nullptr) {}
 
-    void setup_recv();
+    void setup_recv(int fd);
     void teardown_recv() noexcept;
 
     void register_op(const std::shared_ptr<SessionOp>& op);
@@ -546,13 +544,13 @@ void Context::_fail_in_flight(int error, bool* next_head, size_t* next_size) {
     *next_size = 0;
 }
 
-void Context::setup_recv() {
+void Context::setup_recv(int fd) {
     assert(_read_event == nullptr);
 
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('m', "%s\n", "multishot recv");
     _read_event = _queue.recv_multishot(
-        _fd, 1u << 17, 64 * 4, sizeof(RawstorOSTFrameResponse), 0,
+        fd, 1u << 17, 64 * 4, sizeof(RawstorOSTFrameResponse), 0,
         [context = shared_from_this(), cid = 0, is_head = true,
          size = sizeof(RawstorOSTFrameResponse), trace_event](
             const iovec* iov, unsigned int niov, size_t result, int error
@@ -815,8 +813,8 @@ void Session::spec(
 
 void Session::set_object(Object* object) {
     _set_object(object);
-    _context = std::make_shared<Context>(_queue, fd());
-    _context->setup_recv();
+    _context = std::make_shared<Context>(_queue);
+    _context->setup_recv(fd());
 }
 
 void Session::pread(
