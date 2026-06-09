@@ -13,8 +13,9 @@ AM_LDFLAGS = $(ASAN_LDFLAGS) \
              $(GTEST_LIBS)
 
 
-test_all_SOURCES = main.cpp \
-                   fixture.hpp \
+test_all_SOURCES = backend.hpp \
+                   backend.cpp \
+                   main.cpp \
                    server.cpp \
                    server.hpp \
                    test_lifecycle.cpp
