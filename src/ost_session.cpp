@@ -39,35 +39,29 @@ namespace {
 
 class SessionOp;
 
-int validate_result(int fd, size_t size, size_t result) noexcept {
+int validate_result(size_t size, size_t result) noexcept {
     if (result == size) {
         return 0;
     }
 
-    rawstd_error(
-        "fd %d: Unexpected event size: %zu != %zu\n", fd, result, size
-    );
+    rawstd_error("Unexpected event size: %zu != %zu\n", result, size);
 
     return EAGAIN;
 }
 
-int validate_response(
-    int fd, const RawstorOSTFrameResponse* response
-) noexcept {
+int validate_response(const RawstorOSTFrameResponse* response) noexcept {
     assert(response != nullptr);
 
     if (response->head.magic != RAWSTOR_MAGIC) {
         rawstd_error(
-            "fd %d: Unexpected magic number: %x != %x\n", fd,
-            response->head.magic, RAWSTOR_MAGIC
+            "Unexpected magic number: %x != %x\n", response->head.magic,
+            RAWSTOR_MAGIC
         );
         return EPROTO;
     }
 
     if (response->body.res < 0) {
-        rawstd_error(
-            "fd %d: Server error: %s\n", fd, strerror(-response->body.res)
-        );
+        rawstd_error("Server error: %s\n", strerror(-response->body.res));
         return EPROTO;
     }
 
@@ -75,23 +69,23 @@ int validate_response(
 }
 
 int validate_cmd(
-    int fd, RawstorOSTCommandType cmd, RawstorOSTCommandType expected
+    RawstorOSTCommandType cmd, RawstorOSTCommandType expected
 ) noexcept {
     if (cmd == expected) {
         return 0;
     }
 
-    rawstd_error("fd %d: Unexpected command: %d\n", fd, cmd);
+    rawstd_error("Unexpected command: %d\n", cmd);
     return EPROTO;
 }
 
-int validate_hash(int fd, uint64_t hash, uint64_t expected) noexcept {
+int validate_hash(uint64_t hash, uint64_t expected) noexcept {
     if (hash == expected) {
         return 0;
     }
 
     rawstd_error(
-        "fd %d: Hash mismatch: %llx != %llx\n", fd, (unsigned long long)hash,
+        "Hash mismatch: %llx != %llx\n", (unsigned long long)hash,
         (unsigned long long)expected
     );
     return EPROTO;
@@ -129,8 +123,6 @@ public:
 
     void setup_recv();
     void teardown_recv() noexcept;
-
-    int fd() const noexcept { return _fd; }
 
     void register_op(const std::shared_ptr<SessionOp>& op);
 
@@ -271,13 +263,11 @@ public:
         RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
 
         if (!error) {
-            error = validate_response(_context->fd(), response);
+            error = validate_response(response);
         }
 
         if (!error) {
-            error = validate_cmd(
-                _context->fd(), response->head.cmd, RAWSTOR_CMD_READ
-            );
+            error = validate_cmd(response->head.cmd, RAWSTOR_CMD_READ);
         }
 
         if (!error) {
@@ -300,7 +290,7 @@ public:
         );
 
         if (!error) {
-            error = validate_hash(_context->fd(), hash(iov, niov), _hash);
+            error = validate_hash(hash(iov, niov), _hash);
         }
 
         if (result) {
@@ -359,13 +349,11 @@ public:
         RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
 
         if (!error) {
-            error = validate_response(_context->fd(), response);
+            error = validate_response(response);
         }
 
         if (!error) {
-            error = validate_cmd(
-                _context->fd(), response->head.cmd, RAWSTOR_CMD_READ
-            );
+            error = validate_cmd(response->head.cmd, RAWSTOR_CMD_READ);
         }
 
         if (!error) {
@@ -388,7 +376,7 @@ public:
         );
 
         if (!error) {
-            error = validate_hash(_context->fd(), hash(iov, niov), _hash);
+            error = validate_hash(hash(iov, niov), _hash);
         }
 
         if (result) {
@@ -452,13 +440,11 @@ public:
         RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
 
         if (!error) {
-            error = validate_response(_context->fd(), response);
+            error = validate_response(response);
         }
 
         if (!error) {
-            error = validate_cmd(
-                _context->fd(), response->head.cmd, RAWSTOR_CMD_WRITE
-            );
+            error = validate_cmd(response->head.cmd, RAWSTOR_CMD_WRITE);
         }
 
         _dispatch(
@@ -522,13 +508,11 @@ public:
         RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
 
         if (!error) {
-            error = validate_response(_context->fd(), response);
+            error = validate_response(response);
         }
 
         if (!error) {
-            error = validate_cmd(
-                _context->fd(), response->head.cmd, RAWSTOR_CMD_WRITE
-            );
+            error = validate_cmd(response->head.cmd, RAWSTOR_CMD_WRITE);
         }
 
         _dispatch(
@@ -569,7 +553,7 @@ void Context::setup_recv() {
         RAWSTD_TRACE_EVENT('m', "%s\n", "multishot recv");
     _read_event = _queue.recv_multishot(
         _fd, 1u << 17, 64 * 4, sizeof(RawstorOSTFrameResponse), 0,
-        [context = shared_from_this(), fd = _fd, cid = 0, is_head = true,
+        [context = shared_from_this(), cid = 0, is_head = true,
          size = sizeof(RawstorOSTFrameResponse), trace_event](
             const iovec* iov, unsigned int niov, size_t result, int error
         ) mutable -> size_t {
@@ -582,7 +566,7 @@ void Context::setup_recv() {
             );
 
             if (!error) {
-                error = validate_result(fd, size, result);
+                error = validate_result(size, result);
             }
 
             if (!error) {
@@ -740,15 +724,14 @@ void Session::_set_object(Object* object) {
     rawstd_info("%s: Setting object id\n", str().c_str());
     queue->write(
         fd(), &request, sizeof(request),
-        [fd = fd(), trace_event](size_t result, int error) {
+        [trace_event](size_t result, int error) {
             RAWSTD_TRACE_EVENT_MESSAGE(
                 trace_event, "%zu of %zu, error = %d\n", result,
                 sizeof(RawstorOSTFrameBasic), error
             );
 
             if (!error) {
-                error =
-                    validate_result(fd, sizeof(RawstorOSTFrameBasic), result);
+                error = validate_result(sizeof(RawstorOSTFrameBasic), result);
             }
 
             if (error) {
@@ -761,8 +744,7 @@ void Session::_set_object(Object* object) {
     RawstorOSTFrameResponse response;
     queue->read(
         fd(), &response, sizeof(response),
-        [fd = fd(), &response, &completed,
-         trace_event](size_t result, int error) {
+        [&response, &completed, trace_event](size_t result, int error) {
             RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "error = %d\n", error);
 
             completed = true;
@@ -773,25 +755,23 @@ void Session::_set_object(Object* object) {
             );
 
             if (!error) {
-                error = validate_result(
-                    fd, sizeof(RawstorOSTFrameResponse), result
-                );
-            }
-
-            if (!error) {
-                error = validate_response(fd, &response);
-            }
-
-            if (!error) {
                 error =
-                    validate_cmd(fd, response.head.cmd, RAWSTOR_CMD_SET_OBJECT);
+                    validate_result(sizeof(RawstorOSTFrameResponse), result);
+            }
+
+            if (!error) {
+                error = validate_response(&response);
+            }
+
+            if (!error) {
+                error = validate_cmd(response.head.cmd, RAWSTOR_CMD_SET_OBJECT);
             }
 
             if (error) {
                 RAWSTD_THROW_SYSTEM_ERROR(error);
             }
 
-            rawstd_info("fd %d: Object id successfully set\n", fd);
+            rawstd_info("Object id successfully set\n");
         }
     );
 
@@ -860,9 +840,7 @@ void Session::pread(
             );
 
             if (!error) {
-                error = validate_result(
-                    op->context().fd(), op->request_size(), result
-                );
+                error = validate_result(op->request_size(), result);
             }
 
             op->request_cb(error);
@@ -893,9 +871,7 @@ void Session::preadv(
             );
 
             if (!error) {
-                error = validate_result(
-                    op->context().fd(), op->request_size(), result
-                );
+                error = validate_result(op->request_size(), result);
             }
 
             op->request_cb(error);
@@ -925,9 +901,7 @@ void Session::pwrite(
             );
 
             if (!error) {
-                error = validate_result(
-                    op->context().fd(), op->request_size(), result
-                );
+                error = validate_result(op->request_size(), result);
             }
 
             op->request_cb(error);
@@ -958,9 +932,7 @@ void Session::pwritev(
             );
 
             if (!error) {
-                error = validate_result(
-                    op->context().fd(), op->request_size(), result
-                );
+                error = validate_result(op->request_size(), result);
             }
 
             op->request_cb(error);
