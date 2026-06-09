@@ -288,13 +288,13 @@ int rawstor_object_preadv(
 ) RAWSTOR_NOEXCEPT;
 
 int rawstor_object_pwrite(
-    RawstorObject* object, void* buf, size_t size, off_t offset,
+    RawstorObject* object, const void* buf, size_t size, off_t offset,
     RawstorCallback* cb, void* data
 ) RAWSTOR_NOEXCEPT;
 
 int rawstor_object_pwritev(
-    RawstorObject* object, struct iovec* iov, unsigned int niov, size_t size,
-    off_t offset, RawstorCallback* cb, void* data
+    RawstorObject* object, const struct iovec* iov, unsigned int niov,
+    size_t size, off_t offset, RawstorCallback* cb, void* data
 ) RAWSTOR_NOEXCEPT;
 
 #ifdef __cplusplus

@@ -523,7 +523,7 @@ int rawstor_object_preadv(
 }
 
 int rawstor_object_pwrite(
-    RawstorObject* object, void* buf, size_t size, off_t offset,
+    RawstorObject* object, const void* buf, size_t size, off_t offset,
     RawstorCallback* cb, void* data
 ) noexcept {
     try {
@@ -548,7 +548,7 @@ int rawstor_object_pwrite(
 }
 
 int rawstor_object_pwritev(
-    RawstorObject* object, iovec* iov, unsigned int niov, size_t size,
+    RawstorObject* object, const iovec* iov, unsigned int niov, size_t size,
     off_t offset, RawstorCallback* cb, void* data
 ) noexcept {
     try {
