@@ -12,7 +12,13 @@ namespace tests {
 
 class Backend {
 public:
+    Backend() = default;
+    Backend(const Backend&) = delete;
+    Backend(Backend&&) = delete;
     virtual ~Backend() = default;
+
+    Backend& operator=(const Backend&) = delete;
+    Backend& operator=(Backend&&) = delete;
 
     virtual void accept() = 0;
 

@@ -18,6 +18,7 @@ test_all_SOURCES = backend.hpp \
                    main.cpp \
                    server.cpp \
                    server.hpp \
+                   test_io.cpp \
                    test_lifecycle.cpp
 test_all_LDADD = $(top_builddir)/librawio/src/librawio.la \
                  $(top_builddir)/librawstd/src/librawstd.la \
