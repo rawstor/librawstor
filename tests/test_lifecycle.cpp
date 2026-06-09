@@ -17,10 +17,6 @@ protected:
     std::shared_ptr<rawstor::tests::Backend> _backend;
 
     void SetUp() override { _backend = GetParam(); }
-
-    LifecycleTest() {}
-
-    ~LifecycleTest() {}
 };
 
 TEST_P(LifecycleTest, create_spec_remove) {
