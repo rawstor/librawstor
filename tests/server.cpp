@@ -1,6 +1,7 @@
 #include "server.hpp"
 
 #include <rawstd/gpp.hpp>
+#include <rawstd/logging.hpp>
 
 #include <arpa/inet.h>
 
@@ -34,21 +35,25 @@ enum CommandType {
 
 class Command {
 public:
-    virtual ~Command() {}
+    rawstd::TraceEvent trace_event;
+
+    explicit Command(const char* name) :
+        trace_event(RAWSTD_TRACE_EVENT('!', "%s\n", name)) {}
+    virtual ~Command() = default;
+
     virtual CommandType type() const noexcept = 0;
 };
 
 class CommandAccept final : public Command {
 public:
-    CommandAccept() {}
-    ~CommandAccept() override {}
+    CommandAccept() : Command("accept") {}
 
     CommandType type() const noexcept override { return CT_ACCEPT; }
 };
 
 class CommandClose final : public Command {
 public:
-    ~CommandClose() override {}
+    CommandClose() : Command("close") {}
 
     CommandType type() const noexcept override { return CT_CLOSE; }
 };
@@ -59,8 +64,10 @@ private:
     size_t _size;
 
 public:
-    CommandRead(void* buf, size_t size) : _buf(buf), _size(size) {}
-    ~CommandRead() override {}
+    CommandRead(void* buf, size_t size) :
+        Command("read"),
+        _buf(buf),
+        _size(size) {}
 
     CommandType type() const noexcept override { return CT_READ; }
     void* buf() noexcept { return _buf; }
@@ -69,8 +76,7 @@ public:
 
 class CommandStop final : public Command {
 public:
-    ~CommandStop() override {}
-
+    CommandStop() : Command("stop") {}
     CommandType type() const noexcept override { return CT_STOP; }
 };
 
@@ -80,8 +86,10 @@ private:
     size_t _size;
 
 public:
-    CommandWrite(const void* buf, size_t size) : _buf(buf), _size(size) {}
-    ~CommandWrite() override {}
+    CommandWrite(const void* buf, size_t size) :
+        Command("write"),
+        _buf(buf),
+        _size(size) {}
 
     CommandType type() const noexcept override { return CT_WRITE; }
     const void* buf() noexcept { return _buf; }
@@ -138,7 +146,9 @@ void Server::_loop() {
     while (!exit) {
         std::unique_lock lock(_mutex);
         if (_commands.empty()) {
+            printf("wait {{{\n");
             _push_condition.wait(lock);
+            printf("wait }}}\n");
         }
         assert(!_commands.empty());
         std::shared_ptr<Command> command = _commands.front();
@@ -164,10 +174,12 @@ void Server::_loop() {
     }
 }
 
-void Server::_do_accept(Command&) {
+void Server::_do_accept(Command& command) {
     assert(_client_fd == -1);
 
+    RAWSTD_TRACE_EVENT_MESSAGE(command.trace_event, "%s()\n", "accept");
     int fd = ::accept(_fd, NULL, NULL);
+    RAWSTD_TRACE_EVENT_MESSAGE(command.trace_event, "accept(): fd = %d\n", fd);
     if (fd == -1) {
         RAWSTD_THROW_ERRNO();
     }
@@ -175,8 +187,10 @@ void Server::_do_accept(Command&) {
     _client_fd = fd;
 }
 
-void Server::_do_close(Command&) {
+void Server::_do_close(Command& command) {
+    RAWSTD_TRACE_EVENT_MESSAGE(command.trace_event, "%s()\n", "close");
     int res = ::close(_client_fd);
+    RAWSTD_TRACE_EVENT_MESSAGE(command.trace_event, "close(): res = %d\n", res);
     if (res == -1) {
         RAWSTD_THROW_ERRNO();
     }
@@ -184,17 +198,29 @@ void Server::_do_close(Command&) {
 }
 
 void Server::_do_read(Command& command) {
+    assert(_client_fd != -1);
+
     CommandRead& command_read = dynamic_cast<CommandRead&>(command);
+    RAWSTD_TRACE_EVENT_MESSAGE(command_read.trace_event, "%s()\n", "read");
     ssize_t res = ::read(_client_fd, command_read.buf(), command_read.size());
+    RAWSTD_TRACE_EVENT_MESSAGE(
+        command_read.trace_event, "read(): res = %zd\n", res
+    );
     if (res == -1) {
         RAWSTD_THROW_ERRNO();
     }
 }
 
 void Server::_do_write(Command& command) {
+    assert(_client_fd != -1);
+
     CommandWrite& command_write = dynamic_cast<CommandWrite&>(command);
+    RAWSTD_TRACE_EVENT_MESSAGE(command_write.trace_event, "%s()\n", "write");
     ssize_t res =
         ::write(_client_fd, command_write.buf(), command_write.size());
+    RAWSTD_TRACE_EVENT_MESSAGE(
+        command_write.trace_event, "read(): res = %zd\n", res
+    );
     if (res == -1) {
         RAWSTD_THROW_ERRNO();
     }
