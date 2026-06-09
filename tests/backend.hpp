@@ -22,6 +22,10 @@ public:
 
     virtual void accept() = 0;
 
+    virtual void read(void* buf, size_t size) = 0;
+
+    virtual void write(const void* buf, size_t size) = 0;
+
     virtual void wait() = 0;
 
     virtual void close() = 0;

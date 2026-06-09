@@ -24,6 +24,10 @@ public:
 
     void accept() override {}
 
+    void read(void*, size_t) override {}
+
+    void write(const void*, size_t) override {}
+
     void wait() override {}
 
     void close() override {}
@@ -41,6 +45,12 @@ public:
     BackendOST() : _server(8753) {}
 
     void accept() override { _server.accept(); }
+
+    void read(void* buf, size_t size) override { _server.read(buf, size); }
+
+    void write(const void* buf, size_t size) override {
+        _server.write(buf, size);
+    }
 
     void wait() override { _server.wait(); }
 

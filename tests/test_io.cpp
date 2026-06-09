@@ -5,6 +5,7 @@
 #include <rawstd/logging.h>
 
 #include <rawstor/object.h>
+#include <rawstor/ost_protocol.h>
 
 #include <gtest/gtest.h>
 
@@ -64,14 +65,17 @@ public:
 class Object {
 private:
     std::shared_ptr<rawstor::tests::Backend> _backend;
+    Queue& _queue;
     std::string _target;
     RawstorObject* _object;
 
 public:
     explicit Object(
-        std::shared_ptr<rawstor::tests::Backend> backend, size_t size
+        std::shared_ptr<rawstor::tests::Backend> backend, Queue& queue,
+        size_t size
     ) :
         _backend(backend),
+        _queue(queue),
         _target(1024, '\0'),
         _object(nullptr) {
         _backend->accept();
@@ -102,8 +106,8 @@ public:
 
     inline const std::string& target() const noexcept { return _target; }
 
-    void open(Queue& q) {
-        int res = rawstor_object_open(q, _target.c_str(), &_object);
+    void open() {
+        int res = rawstor_object_open(_queue, _target.c_str(), &_object);
         if (res < 0) {
             RAWSTD_THROW_SYSTEM_ERROR(-res);
         }
@@ -115,24 +119,41 @@ public:
             if (res < 0) {
                 RAWSTD_THROW_SYSTEM_ERROR(-res);
             }
+            _object = nullptr;
         }
     }
 };
 
-TEST_P(IOTest, basics) {
-    Object o(_backend, 1ull << 20);
-
+TEST_P(IOTest, readwrite) {
     Queue q(16);
 
-    o.open(q);
+    Object o(_backend, q, 1ull << 20);
+
+    RawstorOSTFrameBasic basic;
+    RawstorOSTFrameResponse response = {
+        .head{
+            .magic = 0,
+            .cmd = 0,
+            .cid = 0,
+        },
+        .body = {
+            .res = 0,
+            .hash = 0,
+        },
+    };
+    _backend->accept();
+    _backend->read(&basic, sizeof(basic));
+    _backend->write(&response, sizeof(response));
+    _backend->close();
+
+    o.open();
 
     const char data[] = "hello world";
-
     auto cb =
         std::make_shared<std::function<void(size_t, int)>>([](size_t, int) {
             printf("HERE\n");
         });
-    rawstor_object_pwrite(o, data, sizeof(data), 0, callback, cb.get());
+    rawstor_object_pwrite(o, data, sizeof(data) - 1, 0, callback, cb.get());
 
     o.close();
 }
