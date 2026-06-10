@@ -1,6 +1,8 @@
 #ifndef RAWSTOR_TESTS_SERVER_HPP
 #define RAWSTOR_TESTS_SERVER_HPP
 
+#include <sys/uio.h>
+
 #include <condition_variable>
 #include <deque>
 #include <memory>
@@ -35,6 +37,7 @@ private:
     void _do_close(Command& command);
     void _do_read(Command& command);
     void _do_write(Command& command);
+    void _do_writev(Command& command);
 
     void _stop();
 
@@ -47,6 +50,7 @@ public:
     void close();
     void read(void* buf, size_t size);
     void write(const void* buf, size_t size);
+    void writev(const iovec* iov, unsigned int niov);
 
     void wait();
 };

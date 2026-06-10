@@ -1,4 +1,3 @@
-#include "backend.hpp"
 #include "server.hpp"
 
 #include <rawstd/gpp.hpp>
@@ -8,61 +7,76 @@
 #include <gtest/gtest.h>
 
 #include <cstring>
+#include <filesystem>
 
 namespace {
 
-class LifecycleTest
-    : public testing::TestWithParam<std::shared_ptr<rawstor::tests::Backend>> {
-protected:
-    std::shared_ptr<rawstor::tests::Backend> _backend;
+TEST(FileLifecycleTest, create_spec_remove) {
+    std::filesystem::path path =
+        std::filesystem::temp_directory_path() / "test_objects";
+    std::ostringstream oss;
+    oss << "file://" << path.string();
+    std::string location = oss.str();
 
-    void SetUp() override { _backend = GetParam(); }
-};
-
-TEST_P(LifecycleTest, create_spec_remove) {
-    _backend->accept();
     RawstorObjectSpec spec{.size = 1ull << 20};
-    char target[1024] = {};
+    std::string target(1024, '\0');
     int res = rawstor_object_create(
-        _backend->uris().c_str(), &spec, target, sizeof(target)
+        location.c_str(), &spec, target.data(), target.size()
     );
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
-    EXPECT_EQ(res, (int)strlen(target));
-    _backend->close();
+    EXPECT_GT(res, 0);
+    EXPECT_LE(res, (int)target.size());
+    target.resize(res);
 
-    _backend->accept();
     RawstorObjectSpec read_spec;
-    res = rawstor_object_spec(target, &read_spec);
+    res = rawstor_object_spec(target.c_str(), &read_spec);
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
     EXPECT_EQ(res, 0);
-    if (_backend->protocol() == "ost") {
-        // rawstor_object_spec emulated
-        EXPECT_EQ(read_spec.size, (size_t)(1ull << 30));
-    } else {
-        EXPECT_EQ(read_spec.size, (size_t)(1ull << 20));
-    }
-    _backend->close();
+    EXPECT_EQ(read_spec.size, (size_t)(1ull << 20));
 
-    // rawstor_object_remove not implemented for OST
-    if (_backend->protocol() != "ost") {
-        _backend->accept();
-        res = rawstor_object_remove(target);
-        if (res < 0) {
-            RAWSTD_THROW_SYSTEM_ERROR(-res);
-        }
-        EXPECT_EQ(res, 0);
-        _backend->close();
+    res = rawstor_object_remove(target.c_str());
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
+    EXPECT_EQ(res, 0);
 }
 
-INSTANTIATE_TEST_SUITE_P(
-    AllBackends, LifecycleTest, ::testing::ValuesIn(rawstor::tests::backends),
-    [](const ::testing::TestParamInfo<std::shared_ptr<rawstor::tests::Backend>>&
-           info) { return info.param->protocol(); }
-);
+TEST(OstLifecycleTest, create_spec_remove) {
+    rawstor::tests::Server server(8753);
+    std::string location = "ost://127.0.0.1:8753";
+
+    server.accept();
+    RawstorObjectSpec spec{.size = 1ull << 20};
+    std::string target(1024, '\0');
+    int res = rawstor_object_create(
+        location.c_str(), &spec, target.data(), target.size()
+    );
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+    EXPECT_GT(res, 0);
+    EXPECT_LE(res, (int)target.size());
+    target.resize(res);
+    server.close();
+
+    server.accept();
+    RawstorObjectSpec read_spec;
+    res = rawstor_object_spec(target.c_str(), &read_spec);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+    EXPECT_EQ(res, 0);
+    // rawstor_object_spec emulated
+    EXPECT_EQ(read_spec.size, (size_t)(1ull << 30));
+    server.close();
+
+    // rawstor_object_remove not implemented for OST
+    res = rawstor_object_remove(target.c_str());
+    EXPECT_EQ(res, -EINVAL);
+}
 
 } // unnamed namespace
