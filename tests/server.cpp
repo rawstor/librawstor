@@ -31,6 +31,7 @@ enum CommandType {
     CT_READ,
     CT_STOP,
     CT_WRITE,
+    CT_WRITEV,
 };
 
 class Command {
@@ -96,6 +97,22 @@ public:
     size_t size() const noexcept { return _size; }
 };
 
+class CommandWriteV final : public Command {
+private:
+    const iovec* _iov;
+    unsigned int _niov;
+
+public:
+    CommandWriteV(const iovec* iov, unsigned int niov) :
+        Command("writev"),
+        _iov(iov),
+        _niov(niov) {}
+
+    CommandType type() const noexcept override { return CT_WRITEV; }
+    const iovec* iov() const noexcept { return _iov; }
+    unsigned int niov() const noexcept { return _niov; }
+};
+
 Server::Server(int port) : _fd(-1), _client_fd(-1), _thread(nullptr) {
     _fd = socket(AF_INET, SOCK_STREAM, 0);
     if (_fd == -1) {
@@ -108,6 +125,12 @@ Server::Server(int port) : _fd(-1), _client_fd(-1), _thread(nullptr) {
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
     try {
+        int value = 1;
+        if (setsockopt(_fd, SOL_SOCKET, SO_REUSEADDR, &value, sizeof(value)) ==
+            -1) {
+            RAWSTD_THROW_ERRNO();
+        }
+
         if (bind(_fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == -1) {
             RAWSTD_THROW_ERRNO();
         }
@@ -146,9 +169,7 @@ void Server::_loop() {
     while (!exit) {
         std::unique_lock lock(_mutex);
         if (_commands.empty()) {
-            printf("wait {{{\n");
             _push_condition.wait(lock);
-            printf("wait }}}\n");
         }
         assert(!_commands.empty());
         std::shared_ptr<Command> command = _commands.front();
@@ -169,6 +190,9 @@ void Server::_loop() {
         case CT_WRITE:
             _do_write(*command.get());
             break;
+        case CT_WRITEV:
+            _do_writev(*command.get());
+            break;
         }
         _pop_condition.notify_one();
     }
@@ -179,7 +203,9 @@ void Server::_do_accept(Command& command) {
 
     RAWSTD_TRACE_EVENT_MESSAGE(command.trace_event, "%s()\n", "accept");
     int fd = ::accept(_fd, NULL, NULL);
-    RAWSTD_TRACE_EVENT_MESSAGE(command.trace_event, "accept(): fd = %d\n", fd);
+    RAWSTD_TRACE_EVENT_MESSAGE(
+        command.trace_event, "%s(): fd = %d\n", "accept", fd
+    );
     if (fd == -1) {
         RAWSTD_THROW_ERRNO();
     }
@@ -190,7 +216,9 @@ void Server::_do_accept(Command& command) {
 void Server::_do_close(Command& command) {
     RAWSTD_TRACE_EVENT_MESSAGE(command.trace_event, "%s()\n", "close");
     int res = ::close(_client_fd);
-    RAWSTD_TRACE_EVENT_MESSAGE(command.trace_event, "close(): res = %d\n", res);
+    RAWSTD_TRACE_EVENT_MESSAGE(
+        command.trace_event, "%s(): res = %d\n", "close", res
+    );
     if (res == -1) {
         RAWSTD_THROW_ERRNO();
     }
@@ -204,7 +232,7 @@ void Server::_do_read(Command& command) {
     RAWSTD_TRACE_EVENT_MESSAGE(command_read.trace_event, "%s()\n", "read");
     ssize_t res = ::read(_client_fd, command_read.buf(), command_read.size());
     RAWSTD_TRACE_EVENT_MESSAGE(
-        command_read.trace_event, "read(): res = %zd\n", res
+        command_read.trace_event, "%s(): res = %zd\n", "read", res
     );
     if (res == -1) {
         RAWSTD_THROW_ERRNO();
@@ -219,7 +247,22 @@ void Server::_do_write(Command& command) {
     ssize_t res =
         ::write(_client_fd, command_write.buf(), command_write.size());
     RAWSTD_TRACE_EVENT_MESSAGE(
-        command_write.trace_event, "read(): res = %zd\n", res
+        command_write.trace_event, "%s(): res = %zd\n", "write", res
+    );
+    if (res == -1) {
+        RAWSTD_THROW_ERRNO();
+    }
+}
+
+void Server::_do_writev(Command& command) {
+    assert(_client_fd != -1);
+
+    CommandWriteV& command_writev = dynamic_cast<CommandWriteV&>(command);
+    RAWSTD_TRACE_EVENT_MESSAGE(command_writev.trace_event, "%s()\n", "writev");
+    ssize_t res =
+        ::writev(_client_fd, command_writev.iov(), command_writev.niov());
+    RAWSTD_TRACE_EVENT_MESSAGE(
+        command_writev.trace_event, "%s(): res = %zd\n", "writev", res
     );
     if (res == -1) {
         RAWSTD_THROW_ERRNO();
@@ -253,6 +296,12 @@ void Server::read(void* buf, size_t size) {
 void Server::write(const void* buf, size_t size) {
     std::unique_lock lock(_mutex);
     _commands.push_back(std::make_shared<CommandWrite>(buf, size));
+    _push_condition.notify_one();
+}
+
+void Server::writev(const iovec* iov, unsigned int niov) {
+    std::unique_lock lock(_mutex);
+    _commands.push_back(std::make_shared<CommandWriteV>(iov, niov));
     _push_condition.notify_one();
 }
 

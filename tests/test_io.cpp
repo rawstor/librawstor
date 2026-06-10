@@ -1,7 +1,7 @@
-#include "backend.hpp"
 #include "server.hpp"
 
 #include <rawstd/gpp.hpp>
+#include <rawstd/hash.h>
 #include <rawstd/logging.h>
 
 #include <rawstor/object.h>
@@ -10,13 +10,14 @@
 #include <gtest/gtest.h>
 
 #include <cstring>
+#include <filesystem>
 #include <functional>
 #include <memory>
 
 namespace {
 
 int callback(RawstorObject*, size_t, size_t result, int error, void* data) {
-    std::shared_ptr<std::function<void(size_t, int)>> cb(
+    std::unique_ptr<std::function<void(size_t, int)>> cb(
         static_cast<std::function<void(size_t, int)>*>(data)
     );
     try {
@@ -32,14 +33,6 @@ int callback(RawstorObject*, size_t, size_t result, int error, void* data) {
         return -EINVAL;
     }
 }
-
-class IOTest
-    : public testing::TestWithParam<std::shared_ptr<rawstor::tests::Backend>> {
-protected:
-    std::shared_ptr<rawstor::tests::Backend> _backend;
-
-    void SetUp() override { _backend = GetParam(); }
-};
 
 class Queue {
 private:
@@ -60,80 +53,150 @@ public:
     Queue& operator=(const Queue&) = delete;
     Queue& operator=(Queue&&) = delete;
     operator RawIOQueue*() noexcept { return _queue; }
+
+    void wait() {
+        int res = rawio_wait_timeout(_queue, 0);
+        if (res < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
+        }
+    }
 };
 
 class Object {
 private:
-    std::shared_ptr<rawstor::tests::Backend> _backend;
     Queue& _queue;
     std::string _target;
     RawstorObject* _object;
 
+    void _close() {
+        if (_object != nullptr) {
+            int res = rawstor_object_close(_object);
+            if (res < 0) {
+                rawstd_error("%s\n", strerror(-res));
+            }
+            _object = nullptr;
+        }
+    }
+
 public:
-    explicit Object(
-        std::shared_ptr<rawstor::tests::Backend> backend, Queue& queue,
-        size_t size
-    ) :
-        _backend(backend),
+    Object(Queue& queue, const std::string& location, size_t size) :
         _queue(queue),
         _target(1024, '\0'),
         _object(nullptr) {
-        _backend->accept();
         RawstorObjectSpec spec{.size = size};
         int res = rawstor_object_create(
-            _backend->uris().c_str(), &spec, _target.data(), _target.length()
+            location.c_str(), &spec, _target.data(), _target.size()
         );
         if (res < 0) {
             RAWSTD_THROW_SYSTEM_ERROR(-res);
         }
-        _backend->close();
+
+        try {
+            _target.resize(res);
+            res = rawstor_object_open(_queue, _target.c_str(), &_object);
+            if (res < 0) {
+                RAWSTD_THROW_SYSTEM_ERROR(-res);
+            }
+        } catch (...) {
+            _close();
+            throw;
+        }
     }
 
     Object(const Object&) = delete;
     Object(Object&&) = delete;
     ~Object() {
-        close();
-        if (_backend->protocol() != "ost") {
-            _backend->accept();
-            rawstor_object_remove(_target.c_str());
-            _backend->close();
-        }
+        _close();
+        rawstor_object_remove(_target.c_str());
     }
 
     Object& operator=(const Object&) = delete;
     Object& operator=(Object&&) = delete;
-    operator RawstorObject*() noexcept { return _object; }
 
     inline const std::string& target() const noexcept { return _target; }
 
-    void open() {
-        int res = rawstor_object_open(_queue, _target.c_str(), &_object);
-        if (res < 0) {
-            RAWSTD_THROW_SYSTEM_ERROR(-res);
+    void read(void* buf, size_t size) {
+        bool completed = false;
+        auto cb = std::make_unique<std::function<void(size_t, int)>>(
+            [&completed, &size](size_t result, int error) {
+                if (error) {
+                    RAWSTD_THROW_SYSTEM_ERROR(error);
+                }
+                if (result != size) {
+                    RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+                }
+                completed = true;
+            }
+        );
+        rawstor_object_pread(
+            _object, buf, size, 0, callback, cb.get()
+        );
+        cb.release();
+
+        while (!completed) {
+            _queue.wait();
         }
     }
 
-    void close() {
-        if (_object != nullptr) {
-            int res = rawstor_object_close(_object);
-            if (res < 0) {
-                RAWSTD_THROW_SYSTEM_ERROR(-res);
+    void write(const void* buf, size_t size) {
+        bool completed = false;
+        auto cb = std::make_unique<std::function<void(size_t, int)>>(
+            [&completed, &size](size_t result, int error) {
+                if (error) {
+                    RAWSTD_THROW_SYSTEM_ERROR(error);
+                }
+                if (result != size) {
+                    RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+                }
+                completed = true;
             }
-            _object = nullptr;
+        );
+        rawstor_object_pwrite(
+            _object, buf, size, 0, callback, cb.get()
+        );
+        cb.release();
+
+        while (!completed) {
+            _queue.wait();
         }
     }
 };
 
-TEST_P(IOTest, readwrite) {
-    Queue q(16);
+TEST(FileIOTest, readwrite) {
+    std::filesystem::path path =
+        std::filesystem::temp_directory_path() / "test_objects";
+    std::ostringstream oss;
+    oss << "file://" << path.string();
+    std::string location = oss.str();
 
-    Object o(_backend, q, 1ull << 20);
+    Queue queue(16);
 
-    RawstorOSTFrameBasic basic;
-    RawstorOSTFrameResponse response = {
+    Object object(queue, location, 1ull << 20);
+
+    std::string write_data = "ping";
+    EXPECT_NO_THROW(object.write(write_data.data(), write_data.length()));
+
+    std::string read_data(4, '\0');
+    EXPECT_NO_THROW(object.read(read_data.data(), read_data.length()));
+
+    EXPECT_EQ(read_data, "ping");
+}
+
+TEST(OstIOTest, readwrite) {
+    Queue queue(16);
+    rawstor::tests::Server server(8753);
+    std::string location = "ost://127.0.0.1:8753";
+
+    // create object
+    server.accept();
+    server.close();
+
+    // set object
+    server.accept();
+    RawstorOSTFrameResponse set_object_response = {
         .head{
-            .magic = 0,
-            .cmd = 0,
+            .magic = RAWSTOR_MAGIC,
+            .cmd = RAWSTOR_CMD_SET_OBJECT,
             .cid = 0,
         },
         .body = {
@@ -141,27 +204,65 @@ TEST_P(IOTest, readwrite) {
             .hash = 0,
         },
     };
-    _backend->accept();
-    _backend->read(&basic, sizeof(basic));
-    _backend->write(&response, sizeof(response));
-    _backend->close();
+    server.write(&set_object_response, sizeof(set_object_response));
 
-    o.open();
+    Object object(queue, location, 1ull << 20);
 
-    const char data[] = "hello world";
-    auto cb =
-        std::make_shared<std::function<void(size_t, int)>>([](size_t, int) {
-            printf("HERE\n");
-        });
-    rawstor_object_pwrite(o, data, sizeof(data) - 1, 0, callback, cb.get());
+    // write
+    RawstorOSTFrameResponse write_response = {
+        .head{
+            .magic = RAWSTOR_MAGIC,
+            .cmd = RAWSTOR_CMD_WRITE,
+            .cid = 1,
+        },
+        .body = {
+            .res = 4,
+            .hash = 0,
+        },
+    };
+    server.write(&write_response, sizeof(write_response));
 
-    o.close();
+    std::string ping = "ping";
+    EXPECT_NO_THROW(object.write(ping.data(), ping.length()));
+
+    // read
+    std::string read_response_data = "pong";
+    RawstorOSTFrameResponse read_response = {
+        .head{
+            .magic = RAWSTOR_MAGIC,
+            .cmd = RAWSTOR_CMD_READ,
+            .cid = 2,
+        },
+        .body = {
+            .res = static_cast<int32_t>(read_response_data.length()),
+            .hash = rawstd_hash_scalar(
+                read_response_data.data(), read_response_data.length()
+            ),
+        },
+    };
+    iovec iov[2] = {
+        {
+            .iov_base = &read_response,
+            .iov_len = sizeof(read_response),
+        },
+        {
+            .iov_base = read_response_data.data(),
+            .iov_len = read_response_data.length(),
+        },
+    };
+    server.writev(iov, sizeof(iov) / sizeof(iov[0]));
+
+    std::string pong(4, '\0');
+    EXPECT_NO_THROW(object.read(pong.data(), pong.length()));
+    EXPECT_EQ(pong, "pong");
+
+    server.close();
+
+    // remove object
+    // server.accept();
+    // server.close();
+
+    server.wait();
 }
-
-INSTANTIATE_TEST_SUITE_P(
-    AllBackends, IOTest, ::testing::ValuesIn(rawstor::tests::backends),
-    [](const ::testing::TestParamInfo<std::shared_ptr<rawstor::tests::Backend>>&
-           info) { return info.param->protocol(); }
-);
 
 } // unnamed namespace
