@@ -128,9 +128,7 @@ public:
                 completed = true;
             }
         );
-        rawstor_object_pread(
-            _object, buf, size, 0, callback, cb.get()
-        );
+        rawstor_object_pread(_object, buf, size, 0, callback, cb.get());
         cb.release();
 
         while (!completed) {
@@ -151,9 +149,7 @@ public:
                 completed = true;
             }
         );
-        rawstor_object_pwrite(
-            _object, buf, size, 0, callback, cb.get()
-        );
+        rawstor_object_pwrite(_object, buf, size, 0, callback, cb.get());
         cb.release();
 
         while (!completed) {
@@ -162,7 +158,7 @@ public:
     }
 };
 
-TEST(FileIOTest, readwrite) {
+TEST(FileIOTest, basics) {
     std::filesystem::path path =
         std::filesystem::temp_directory_path() / "test_objects";
     std::ostringstream oss;
@@ -182,7 +178,7 @@ TEST(FileIOTest, readwrite) {
     EXPECT_EQ(read_data, "ping");
 }
 
-TEST(OstIOTest, readwrite) {
+TEST(OstIOTest, basics) {
     Queue queue(16);
     rawstor::tests::Server server(8753);
     std::string location = "ost://127.0.0.1:8753";
@@ -261,6 +257,108 @@ TEST(OstIOTest, readwrite) {
     // remove object
     // server.accept();
     // server.close();
+
+    server.wait();
+}
+
+TEST(OstIOTest, set_object_fail) {
+    Queue queue(16);
+    rawstor::tests::Server server(8753);
+    std::string location = "ost://127.0.0.1:8753";
+
+    // create object
+    server.accept();
+    server.close();
+
+    // set object
+    RawstorOSTFrameResponse set_object_response = {
+        .head{
+            .magic = 0, // wrong magic number
+            .cmd = RAWSTOR_CMD_SET_OBJECT,
+            .cid = 0,
+        },
+        .body = {
+            .res = 0,
+            .hash = 0,
+        },
+    };
+    for (unsigned int i = 0; i < 3; ++i) {
+        server.accept();
+        server.write(&set_object_response, sizeof(set_object_response));
+        server.close();
+    }
+
+    // remove object
+    // server.accept();
+    // server.close();
+
+    EXPECT_THROW(
+        { Object object(queue, location, 1ull << 20); }, std::system_error
+    );
+
+    server.wait();
+}
+
+TEST(OstIOTest, set_object_error) {
+    Queue queue(16);
+    rawstor::tests::Server server(8753);
+    std::string location = "ost://127.0.0.1:8753";
+
+    // create object
+    server.accept();
+    server.close();
+
+    // set object
+    RawstorOSTFrameResponse set_object_response = {
+        .head{
+            .magic = RAWSTOR_MAGIC,
+            .cmd = RAWSTOR_CMD_SET_OBJECT,
+            .cid = 0,
+        },
+        .body = {
+            .res = -ENOENT,
+            .hash = 0,
+        },
+    };
+    for (unsigned int i = 0; i < 3; ++i) {
+        server.accept();
+        server.write(&set_object_response, sizeof(set_object_response));
+        server.close();
+    }
+
+    // remove object
+    // server.accept();
+    // server.close();
+
+    EXPECT_THROW(
+        { Object object(queue, location, 1ull << 20); }, std::system_error
+    );
+
+    server.wait();
+}
+
+TEST(OstIOTest, set_object_disconnect) {
+    Queue queue(16);
+    rawstor::tests::Server server(8753);
+    std::string location = "ost://127.0.0.1:8753";
+
+    // create object
+    server.accept();
+    server.close();
+
+    // set object
+    for (unsigned int i = 0; i < 3; ++i) {
+        server.accept();
+        server.close();
+    }
+
+    // remove object
+    // server.accept();
+    // server.close();
+
+    EXPECT_THROW(
+        { Object object(queue, location, 1ull << 20); }, std::system_error
+    );
 
     server.wait();
 }
