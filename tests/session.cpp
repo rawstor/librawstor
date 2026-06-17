@@ -1,0 +1,103 @@
+#include "session.hpp"
+
+#include "server.hpp"
+
+#include <rawstor/ost_protocol.h>
+
+#include <rawstd/hash.h>
+#include <rawstd/iovec.h>
+
+namespace rawstor {
+namespace tests {
+
+Session::Session(rawstor::tests::Server& server) : _server(server) {
+    _server.accept("SESSION <<<");
+}
+
+Session::~Session() {
+    _server.close("SESSION >>>");
+}
+
+void Session::cmd_allocate() {
+}
+
+void Session::cmd_set_object(uint32_t magic, uint16_t cid, int32_t res) {
+    _server.read(
+        "RAWSTOR_CMD_SET_OBJECT <<<", sizeof(RawstorOSTFrameBasic),
+        [](const void*, size_t) {}
+    );
+
+    RawstorOSTFrameResponse response = {
+        .head{
+            .magic = magic,
+            .cmd = RAWSTOR_CMD_SET_OBJECT,
+            .cid = cid,
+        },
+        .body = {
+            .res = res,
+            .hash = 0,
+        },
+    };
+    _server.write("RAWSTOR_CMD_SET_OBJECT >>>", &response, sizeof(response));
+}
+
+void Session::cmd_read(
+    uint32_t magic, uint16_t cid, const void* buf, size_t size, uint64_t hash
+) {
+    _server.read(
+        "RAWSTOR_CMD_READ <<<", sizeof(RawstorOSTFrameIO),
+        [](const void*, size_t) {}
+    );
+
+    RawstorOSTFrameResponse response = {
+        .head{
+            .magic = magic,
+            .cmd = RAWSTOR_CMD_READ,
+            .cid = cid,
+        },
+        .body = {
+            .res = static_cast<int32_t>(size),
+            .hash = hash,
+        },
+    };
+    iovec iov[2] = {
+        {
+            .iov_base = &response,
+            .iov_len = sizeof(response),
+        },
+        {
+            .iov_base = const_cast<void*>(buf),
+            .iov_len = size,
+        },
+    };
+    _server.writev("RAWSTOR_CMD_READ >>>", iov, sizeof(iov) / sizeof(iov[0]));
+}
+
+void Session::cmd_read(
+    uint32_t magic, uint16_t cid, const void* buf, size_t size
+) {
+    cmd_read(magic, cid, buf, size, rawstd_hash_scalar(buf, size));
+}
+
+void Session::cmd_write(uint32_t magic, uint16_t cid, int32_t res) {
+    _server.read(
+        "RAWSTOR_CMD_WRITE <<<", sizeof(RawstorOSTFrameIO) + res,
+        [](const void*, size_t) {}
+    );
+
+    RawstorOSTFrameResponse response = {
+        .head{
+            .magic = magic,
+            .cmd = RAWSTOR_CMD_WRITE,
+            .cid = cid,
+        },
+        .body = {
+            .res = res,
+            .hash = 0,
+        },
+    };
+    _server.write("RAWSTOR_CMD_WRITE >>>", &response, sizeof(response));
+}
+
+} // namespace tests
+} // namespace rawstor

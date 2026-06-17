@@ -615,6 +615,7 @@ void Context::setup_recv() {
 
             if (error) {
                 context->_fail_in_flight(error, &is_head, &size);
+                RAWSTD_THROW_SYSTEM_ERROR(error);
             }
 
             return size;

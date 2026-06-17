@@ -1,6 +1,7 @@
 #include "server.hpp"
 
 #include <rawstd/gpp.hpp>
+#include <rawstd/iovec.h>
 #include <rawstd/logging.hpp>
 
 #include <arpa/inet.h>
@@ -41,76 +42,95 @@ public:
     explicit Command(const char* name) :
         trace_event(RAWSTD_TRACE_EVENT('!', "%s\n", name)) {}
     virtual ~Command() = default;
+    Command(const Command&) = delete;
+    Command(Command&&) = delete;
+
+    Command& operator=(const Command&) = delete;
+    Command& operator=(Command&&) = delete;
 
     virtual CommandType type() const noexcept = 0;
 };
 
 class CommandAccept final : public Command {
 public:
-    CommandAccept() : Command("accept") {}
+    CommandAccept(const char* name) : Command(name) {}
 
     CommandType type() const noexcept override { return CT_ACCEPT; }
 };
 
 class CommandClose final : public Command {
 public:
-    CommandClose() : Command("close") {}
+    CommandClose(const char* name) : Command(name) {}
 
     CommandType type() const noexcept override { return CT_CLOSE; }
 };
 
 class CommandRead final : public Command {
 private:
-    void* _buf;
     size_t _size;
+    std::function<void(const void*, size_t)> _cb;
 
 public:
-    CommandRead(void* buf, size_t size) :
-        Command("read"),
-        _buf(buf),
-        _size(size) {}
+    CommandRead(
+        const char* name, size_t size,
+        std::function<void(const void*, size_t)>&& cb
+    ) :
+        Command(name),
+        _size(size),
+        _cb(std::move(cb)) {}
 
     CommandType type() const noexcept override { return CT_READ; }
-    void* buf() noexcept { return _buf; }
     size_t size() const noexcept { return _size; }
+    void callback(const void* buf, size_t result) const { _cb(buf, result); }
 };
 
 class CommandStop final : public Command {
 public:
-    CommandStop() : Command("stop") {}
+    CommandStop() : Command("") {}
     CommandType type() const noexcept override { return CT_STOP; }
 };
 
 class CommandWrite final : public Command {
 private:
-    const void* _buf;
-    size_t _size;
+    std::vector<char> _buf;
 
 public:
-    CommandWrite(const void* buf, size_t size) :
-        Command("write"),
-        _buf(buf),
-        _size(size) {}
+    CommandWrite(const char* name, const void* buf, size_t size) :
+        Command(name),
+        _buf(
+            static_cast<const char*>(buf), static_cast<const char*>(buf) + size
+        ) {}
 
     CommandType type() const noexcept override { return CT_WRITE; }
-    const void* buf() noexcept { return _buf; }
-    size_t size() const noexcept { return _size; }
+    const void* buf() noexcept { return _buf.data(); }
+    size_t size() const noexcept { return _buf.size(); }
 };
 
 class CommandWriteV final : public Command {
 private:
-    const iovec* _iov;
-    unsigned int _niov;
+    std::vector<std::vector<char>> _data;
+    std::vector<iovec> _iov;
 
 public:
-    CommandWriteV(const iovec* iov, unsigned int niov) :
-        Command("writev"),
-        _iov(iov),
-        _niov(niov) {}
+    CommandWriteV(const char* name, const iovec* iov, unsigned int niov) :
+        Command(name) {
+        _data.reserve(niov);
+        _iov.reserve(niov);
+        for (unsigned int i = 0; i < niov; ++i) {
+            _data.emplace_back(
+                static_cast<const char*>(iov[i].iov_base),
+                static_cast<const char*>(iov[i].iov_base) + iov[i].iov_len
+            );
+            _iov.push_back({
+                .iov_base = _data[i].data(),
+                .iov_len = _data[i].size(),
+            });
+        }
+    }
 
     CommandType type() const noexcept override { return CT_WRITEV; }
-    const iovec* iov() const noexcept { return _iov; }
-    unsigned int niov() const noexcept { return _niov; }
+    const iovec* iov() const noexcept { return _iov.data(); }
+    unsigned int niov() const noexcept { return _iov.size(); }
 };
 
 Server::Server(int port) : _fd(-1), _client_fd(-1), _thread(nullptr) {
@@ -230,13 +250,15 @@ void Server::_do_read(Command& command) {
 
     CommandRead& command_read = dynamic_cast<CommandRead&>(command);
     RAWSTD_TRACE_EVENT_MESSAGE(command_read.trace_event, "%s()\n", "read");
-    ssize_t res = ::read(_client_fd, command_read.buf(), command_read.size());
+    std::vector<char> buf(command_read.size());
+    ssize_t res = ::read(_client_fd, buf.data(), buf.size());
     RAWSTD_TRACE_EVENT_MESSAGE(
         command_read.trace_event, "%s(): res = %zd\n", "read", res
     );
     if (res == -1) {
         RAWSTD_THROW_ERRNO();
     }
+    command_read.callback(buf.data(), res);
 }
 
 void Server::_do_write(Command& command) {
@@ -251,6 +273,9 @@ void Server::_do_write(Command& command) {
     );
     if (res == -1) {
         RAWSTD_THROW_ERRNO();
+    }
+    if (static_cast<size_t>(res) != command_write.size()) {
+        throw std::runtime_error("Partial write");
     }
 }
 
@@ -267,6 +292,10 @@ void Server::_do_writev(Command& command) {
     if (res == -1) {
         RAWSTD_THROW_ERRNO();
     }
+    if (static_cast<size_t>(res) !=
+        rawstd_iovec_size(command_writev.iov(), command_writev.niov())) {
+        throw std::runtime_error("Partial write");
+    }
 }
 
 void Server::_stop() {
@@ -275,33 +304,38 @@ void Server::_stop() {
     _push_condition.notify_one();
 }
 
-void Server::accept() {
+void Server::accept(const char* name) {
     std::unique_lock lock(_mutex);
-    _commands.push_back(std::make_shared<CommandAccept>());
+    _commands.push_back(std::make_shared<CommandAccept>(name));
     _push_condition.notify_one();
 }
 
-void Server::close() {
+void Server::close(const char* name) {
     std::unique_lock lock(_mutex);
-    _commands.push_back(std::make_shared<CommandClose>());
+    _commands.push_back(std::make_shared<CommandClose>(name));
     _push_condition.notify_one();
 }
 
-void Server::read(void* buf, size_t size) {
+void Server::read(
+    const char* name, size_t size,
+    std::function<void(const void* buf, size_t result)>&& cb
+) {
     std::unique_lock lock(_mutex);
-    _commands.push_back(std::make_shared<CommandRead>(buf, size));
+    _commands.push_back(
+        std::make_shared<CommandRead>(name, size, std::move(cb))
+    );
     _push_condition.notify_one();
 }
 
-void Server::write(const void* buf, size_t size) {
+void Server::write(const char* name, const void* buf, size_t size) {
     std::unique_lock lock(_mutex);
-    _commands.push_back(std::make_shared<CommandWrite>(buf, size));
+    _commands.push_back(std::make_shared<CommandWrite>(name, buf, size));
     _push_condition.notify_one();
 }
 
-void Server::writev(const iovec* iov, unsigned int niov) {
+void Server::writev(const char* name, const iovec* iov, unsigned int niov) {
     std::unique_lock lock(_mutex);
-    _commands.push_back(std::make_shared<CommandWriteV>(iov, niov));
+    _commands.push_back(std::make_shared<CommandWriteV>(name, iov, niov));
     _push_condition.notify_one();
 }
 

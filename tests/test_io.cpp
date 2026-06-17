@@ -1,4 +1,5 @@
 #include "server.hpp"
+#include "session.hpp"
 
 #include <rawstd/gpp.hpp>
 #include <rawstd/hash.h>
@@ -55,7 +56,7 @@ public:
     operator RawIOQueue*() noexcept { return _queue; }
 
     void wait() {
-        int res = rawio_wait_timeout(_queue, 0);
+        int res = rawio_wait(_queue);
         if (res < 0) {
             RAWSTD_THROW_SYSTEM_ERROR(-res);
         }
@@ -132,7 +133,13 @@ public:
         cb.release();
 
         while (!completed) {
-            _queue.wait();
+            try {
+                _queue.wait();
+            } catch (...) {
+                if (!completed) {
+                    throw;
+                }
+            }
         }
     }
 
@@ -153,7 +160,13 @@ public:
         cb.release();
 
         while (!completed) {
-            _queue.wait();
+            try {
+                _queue.wait();
+            } catch (...) {
+                if (!completed) {
+                    throw;
+                }
+            }
         }
     }
 };
@@ -183,80 +196,26 @@ TEST(OstIOTest, basics) {
     rawstor::tests::Server server(8753);
     std::string location = "ost://127.0.0.1:8753";
 
-    // create object
-    server.accept();
-    server.close();
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_allocate();
+    }
 
-    // set object
-    server.accept();
-    RawstorOSTFrameResponse set_object_response = {
-        .head{
-            .magic = RAWSTOR_MAGIC,
-            .cmd = RAWSTOR_CMD_SET_OBJECT,
-            .cid = 0,
-        },
-        .body = {
-            .res = 0,
-            .hash = 0,
-        },
-    };
-    server.write(&set_object_response, sizeof(set_object_response));
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_write(RAWSTOR_MAGIC, 1, 4);
+        s.cmd_read(RAWSTOR_MAGIC, 2, "pong", 4);
+    }
 
     Object object(queue, location, 1ull << 20);
-
-    // write
-    RawstorOSTFrameResponse write_response = {
-        .head{
-            .magic = RAWSTOR_MAGIC,
-            .cmd = RAWSTOR_CMD_WRITE,
-            .cid = 1,
-        },
-        .body = {
-            .res = 4,
-            .hash = 0,
-        },
-    };
-    server.write(&write_response, sizeof(write_response));
 
     std::string ping = "ping";
     EXPECT_NO_THROW(object.write(ping.data(), ping.length()));
 
-    // read
-    std::string read_response_data = "pong";
-    RawstorOSTFrameResponse read_response = {
-        .head{
-            .magic = RAWSTOR_MAGIC,
-            .cmd = RAWSTOR_CMD_READ,
-            .cid = 2,
-        },
-        .body = {
-            .res = static_cast<int32_t>(read_response_data.length()),
-            .hash = rawstd_hash_scalar(
-                read_response_data.data(), read_response_data.length()
-            ),
-        },
-    };
-    iovec iov[2] = {
-        {
-            .iov_base = &read_response,
-            .iov_len = sizeof(read_response),
-        },
-        {
-            .iov_base = read_response_data.data(),
-            .iov_len = read_response_data.length(),
-        },
-    };
-    server.writev(iov, sizeof(iov) / sizeof(iov[0]));
-
     std::string pong(4, '\0');
     EXPECT_NO_THROW(object.read(pong.data(), pong.length()));
     EXPECT_EQ(pong, "pong");
-
-    server.close();
-
-    // remove object
-    // server.accept();
-    // server.close();
 
     server.wait();
 }
@@ -266,31 +225,15 @@ TEST(OstIOTest, set_object_fail) {
     rawstor::tests::Server server(8753);
     std::string location = "ost://127.0.0.1:8753";
 
-    // create object
-    server.accept();
-    server.close();
-
-    // set object
-    RawstorOSTFrameResponse set_object_response = {
-        .head{
-            .magic = 0, // wrong magic number
-            .cmd = RAWSTOR_CMD_SET_OBJECT,
-            .cid = 0,
-        },
-        .body = {
-            .res = 0,
-            .hash = 0,
-        },
-    };
-    for (unsigned int i = 0; i < 3; ++i) {
-        server.accept();
-        server.write(&set_object_response, sizeof(set_object_response));
-        server.close();
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_allocate();
     }
 
-    // remove object
-    // server.accept();
-    // server.close();
+    for (unsigned int i = 0; i < 3; ++i) {
+        rawstor::tests::Session s(server);
+        s.cmd_set_object(0, 0, 0);
+    }
 
     EXPECT_THROW(
         { Object object(queue, location, 1ull << 20); }, std::system_error
@@ -304,31 +247,15 @@ TEST(OstIOTest, set_object_error) {
     rawstor::tests::Server server(8753);
     std::string location = "ost://127.0.0.1:8753";
 
-    // create object
-    server.accept();
-    server.close();
-
-    // set object
-    RawstorOSTFrameResponse set_object_response = {
-        .head{
-            .magic = RAWSTOR_MAGIC,
-            .cmd = RAWSTOR_CMD_SET_OBJECT,
-            .cid = 0,
-        },
-        .body = {
-            .res = -ENOENT,
-            .hash = 0,
-        },
-    };
-    for (unsigned int i = 0; i < 3; ++i) {
-        server.accept();
-        server.write(&set_object_response, sizeof(set_object_response));
-        server.close();
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_allocate();
     }
 
-    // remove object
-    // server.accept();
-    // server.close();
+    for (unsigned int i = 0; i < 3; ++i) {
+        rawstor::tests::Session s(server);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, -ENOENT);
+    }
 
     EXPECT_THROW(
         { Object object(queue, location, 1ull << 20); }, std::system_error
@@ -342,23 +269,42 @@ TEST(OstIOTest, set_object_disconnect) {
     rawstor::tests::Server server(8753);
     std::string location = "ost://127.0.0.1:8753";
 
-    // create object
-    server.accept();
-    server.close();
-
-    // set object
-    for (unsigned int i = 0; i < 3; ++i) {
-        server.accept();
-        server.close();
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_allocate();
     }
 
-    // remove object
-    // server.accept();
-    // server.close();
+    for (unsigned int i = 0; i < 3; ++i) {
+        rawstor::tests::Session s(server);
+    }
 
     EXPECT_THROW(
         { Object object(queue, location, 1ull << 20); }, std::system_error
     );
+
+    server.wait();
+}
+
+TEST(OstIOTest, write_fail) {
+    Queue queue(16);
+    rawstor::tests::Server server(8753);
+    std::string location = "ost://127.0.0.1:8753";
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_allocate();
+    }
+
+    for (unsigned int i = 0; i < 3; ++i) {
+        rawstor::tests::Session s(server);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_write(0, 1, 4);
+    }
+
+    Object object(queue, location, 1ull << 20);
+
+    std::string ping = "ping";
+    EXPECT_THROW(object.write(ping.data(), ping.length()), std::system_error);
 
     server.wait();
 }

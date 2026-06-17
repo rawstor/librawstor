@@ -1,4 +1,5 @@
 #include "server.hpp"
+#include "session.hpp"
 
 #include <rawstd/gpp.hpp>
 
@@ -49,34 +50,41 @@ TEST(OstLifecycleTest, create_spec_remove) {
     rawstor::tests::Server server(8753);
     std::string location = "ost://127.0.0.1:8753";
 
-    server.accept();
-    RawstorObjectSpec spec{.size = 1ull << 20};
     std::string target(1024, '\0');
-    int res = rawstor_object_create(
-        location.c_str(), &spec, target.data(), target.size()
-    );
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-    EXPECT_GT(res, 0);
-    EXPECT_LE(res, (int)target.size());
-    target.resize(res);
-    server.close();
+    {
+        rawstor::tests::Session s(server);
 
-    server.accept();
-    RawstorObjectSpec read_spec;
-    res = rawstor_object_spec(target.c_str(), &read_spec);
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-    EXPECT_EQ(res, 0);
-    // rawstor_object_spec emulated
-    EXPECT_EQ(read_spec.size, (size_t)(1ull << 30));
-    server.close();
+        RawstorObjectSpec spec{.size = 1ull << 20};
 
-    // rawstor_object_remove not implemented for OST
-    res = rawstor_object_remove(target.c_str());
-    EXPECT_EQ(res, -EINVAL);
+        int res = rawstor_object_create(
+            location.c_str(), &spec, target.data(), target.size()
+        );
+        if (res < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
+        }
+        EXPECT_GT(res, 0);
+        EXPECT_LE(res, (int)target.size());
+        target.resize(res);
+    }
+
+    {
+        rawstor::tests::Session s(server);
+
+        RawstorObjectSpec read_spec;
+        int res = rawstor_object_spec(target.c_str(), &read_spec);
+        if (res < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
+        }
+        EXPECT_EQ(res, 0);
+        // rawstor_object_spec emulated
+        EXPECT_EQ(read_spec.size, (size_t)(1ull << 30));
+    }
+
+    {
+        // rawstor_object_remove not implemented for OST
+        int res = rawstor_object_remove(target.c_str());
+        EXPECT_EQ(res, -EINVAL);
+    }
 }
 
 } // unnamed namespace

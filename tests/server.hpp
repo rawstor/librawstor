@@ -5,6 +5,7 @@
 
 #include <condition_variable>
 #include <deque>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -45,12 +46,15 @@ public:
     explicit Server(int port);
     ~Server();
 
-    void accept();
+    void accept(const char* name);
 
-    void close();
-    void read(void* buf, size_t size);
-    void write(const void* buf, size_t size);
-    void writev(const iovec* iov, unsigned int niov);
+    void close(const char* name);
+    void read(
+        const char* name, size_t size,
+        std::function<void(const void* buf, size_t result)>&& cb
+    );
+    void write(const char* name, const void* buf, size_t size);
+    void writev(const char* name, const iovec* iov, unsigned int niov);
 
     void wait();
 };
