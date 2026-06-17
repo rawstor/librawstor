@@ -309,4 +309,53 @@ TEST(OstIOTest, write_fail) {
     server.wait();
 }
 
+TEST(OstIOTest, write_error) {
+    Queue queue(16);
+    rawstor::tests::Server server(8753);
+    std::string location = "ost://127.0.0.1:8753";
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_allocate();
+    }
+
+    for (unsigned int i = 0; i < 3; ++i) {
+        rawstor::tests::Session s(server);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_write_request(4);
+        s.cmd_write_response(RAWSTOR_MAGIC, 1, -ENOENT);
+    }
+
+    Object object(queue, location, 1ull << 20);
+
+    std::string ping = "ping";
+    EXPECT_THROW(object.write(ping.data(), ping.length()), std::system_error);
+
+    server.wait();
+}
+
+TEST(OstIOTest, write_disconnect) {
+    Queue queue(16);
+    rawstor::tests::Server server(8753);
+    std::string location = "ost://127.0.0.1:8753";
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_allocate();
+    }
+
+    for (unsigned int i = 0; i < 3; ++i) {
+        rawstor::tests::Session s(server);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_write_request(4);
+    }
+
+    Object object(queue, location, 1ull << 20);
+
+    std::string ping = "ping";
+    EXPECT_THROW(object.write(ping.data(), ping.length()), std::system_error);
+
+    server.wait();
+}
+
 } // unnamed namespace
