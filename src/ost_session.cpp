@@ -603,9 +603,13 @@ void Context::setup_recv() {
                     }
                 } catch (const std::system_error& e) {
                     error = e.code().value();
+                    context->_fail_in_flight(error, &is_head, &size);
+                    RAWSTD_THROW_SYSTEM_ERROR(error);
                 } catch (const std::exception& e) {
                     rawstd_error("%s\n", e.what());
                     error = EPROTO;
+                    context->_fail_in_flight(error, &is_head, &size);
+                    RAWSTD_THROW_SYSTEM_ERROR(error);
                 }
             }
 
