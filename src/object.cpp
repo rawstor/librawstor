@@ -475,7 +475,10 @@ int rawstor_object_pread(
         static_cast<rawstor::Object*>(object)->pread(
             buf, size, offset,
             [object, size, cb, data](size_t result, int error) {
-                cb(object, size, result, error, data);
+                int res = cb(object, size, result, error, data);
+                if (res < 0) {
+                    RAWSTD_THROW_SYSTEM_ERROR(-res);
+                }
             }
         );
         return 0;
@@ -500,7 +503,10 @@ int rawstor_object_preadv(
         static_cast<rawstor::Object*>(object)->preadv(
             iov, niov, size, offset,
             [object, size, cb, data](size_t result, int error) {
-                cb(object, size, result, error, data);
+                int res = cb(object, size, result, error, data);
+                if (res < 0) {
+                    RAWSTD_THROW_SYSTEM_ERROR(-res);
+                }
             }
         );
         return 0;
@@ -525,7 +531,10 @@ int rawstor_object_pwrite(
         static_cast<rawstor::Object*>(object)->pwrite(
             buf, size, offset,
             [object, size, cb, data](size_t result, int error) {
-                cb(object, size, result, error, data);
+                int res = cb(object, size, result, error, data);
+                if (res < 0) {
+                    RAWSTD_THROW_SYSTEM_ERROR(-res);
+                }
             }
         );
         return 0;
@@ -550,7 +559,10 @@ int rawstor_object_pwritev(
         static_cast<rawstor::Object*>(object)->pwritev(
             iov, niov, size, offset,
             [object, size, cb, data](size_t result, int error) {
-                cb(object, size, result, error, data);
+                int res = cb(object, size, result, error, data);
+                if (res < 0) {
+                    RAWSTD_THROW_SYSTEM_ERROR(-res);
+                }
             }
         );
         return 0;
