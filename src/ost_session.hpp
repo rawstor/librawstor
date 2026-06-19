@@ -41,7 +41,7 @@ private:
     void _remove_op(uint16_t cid);
 
 public:
-    Session(rawio::Queue& queue, const rawstd::URI& location);
+    Session(Private, rawio::Queue& queue, const rawstd::URI& location);
     ~Session();
 
     void create(

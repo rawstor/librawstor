@@ -485,8 +485,8 @@ public:
     }
 };
 
-Session::Session(rawio::Queue& queue, const rawstd::URI& location) :
-    rawstor::Session(queue, location),
+Session::Session(Private p, rawio::Queue& queue, const rawstd::URI& location) :
+    rawstor::Session(p, queue, location),
     _cid_counter(0),
     _read_event(nullptr) {
     int fd = _connect();
@@ -785,7 +785,10 @@ void Session::set_object(Object* object) {
         RAWSTD_TRACE_EVENT('m', "%s\n", "multishot recv");
     _read_event = _queue.recv_multishot(
         fd(), 1u << 17, 64 * 4, sizeof(RawstorOSTFrameResponse), 0,
-        [this, cid = 0, is_head = true, size = sizeof(RawstorOSTFrameResponse),
+        [session = std::static_pointer_cast<rawstor::ost::Session>(
+             shared_from_this()
+         ),
+         cid = 0, is_head = true, size = sizeof(RawstorOSTFrameResponse),
          trace_event](
             const iovec* iov, unsigned int niov, size_t result, int error
         ) mutable -> size_t {
@@ -809,28 +812,28 @@ void Session::set_object(Object* object) {
                             iov, niov, 0, &response, sizeof(response)
                         );
                         cid = response.head.cid;
-                        SessionOp& op = _find_op(cid);
+                        SessionOp& op = session->_find_op(cid);
                         op.response_head_cb(&response, 0, &is_head, &size);
                     } else {
-                        SessionOp& op = _find_op(cid);
+                        SessionOp& op = session->_find_op(cid);
                         op.response_body_cb(iov, niov, result, error);
                         is_head = true;
                         size = sizeof(RawstorOSTFrameResponse);
                     }
                 } catch (const std::system_error& e) {
                     error = e.code().value();
-                    _fail_in_flight(error, &is_head, &size);
+                    session->_fail_in_flight(error, &is_head, &size);
                     RAWSTD_THROW_SYSTEM_ERROR(error);
                 } catch (const std::exception& e) {
                     rawstd_error("%s\n", e.what());
                     error = EPROTO;
-                    _fail_in_flight(error, &is_head, &size);
+                    session->_fail_in_flight(error, &is_head, &size);
                     RAWSTD_THROW_SYSTEM_ERROR(error);
                 }
             }
 
             if (error) {
-                _fail_in_flight(error, &is_head, &size);
+                session->_fail_in_flight(error, &is_head, &size);
             }
 
             return size;

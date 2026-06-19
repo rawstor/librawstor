@@ -93,8 +93,8 @@ void write_dat(
 namespace rawstor {
 namespace file {
 
-Session::Session(rawio::Queue& queue, const rawstd::URI& location) :
-    rawstor::Session(queue, location) {
+Session::Session(Private p, rawio::Queue& queue, const rawstd::URI& location) :
+    rawstor::Session(p, queue, location) {
 }
 
 int Session::_connect(const RawstdUUID& id) {

@@ -17,12 +17,16 @@ namespace rawstor {
 
 class Task;
 
-class Session {
+class Session : public std::enable_shared_from_this<Session> {
 private:
     rawstd::URI _location;
     int _fd;
 
 protected:
+    struct Private {
+        explicit Private() = default;
+    };
+
     rawio::Queue& _queue;
 
     inline void set_fd(int fd) noexcept { _fd = fd; }
@@ -31,7 +35,7 @@ public:
     static std::unique_ptr<Session>
     create(rawio::Queue& queue, const rawstd::URI& location);
 
-    Session(rawio::Queue& queue, const rawstd::URI& location);
+    Session(Private, rawio::Queue& queue, const rawstd::URI& location);
     Session(const Session&) = delete;
     Session(Session&&) noexcept = delete;
     virtual ~Session();
