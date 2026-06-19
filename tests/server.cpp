@@ -332,6 +332,9 @@ void Server::_do_read(rawio::Queue& queue, std::shared_ptr<Command> command) {
                 command_read->trace_event, "read(): result = %zu, error = %d\n",
                 result, error
             );
+            if (error) {
+                RAWSTD_THROW_SYSTEM_ERROR(error);
+            }
             if (result == 0) {
                 RAWSTD_THROW_SYSTEM_ERROR(EPIPE);
             }

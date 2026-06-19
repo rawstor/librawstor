@@ -216,8 +216,6 @@ TEST(OstIOTest, basics) {
     std::string pong(4, '\0');
     EXPECT_NO_THROW(object.read(pong.data(), pong.length()));
     EXPECT_EQ(pong, "pong");
-
-    server.wait();
 }
 
 TEST(OstIOTest, set_object_fail) {
@@ -238,8 +236,6 @@ TEST(OstIOTest, set_object_fail) {
     EXPECT_THROW(
         { Object object(queue, location, 1ull << 20); }, std::system_error
     );
-
-    server.wait();
 }
 
 TEST(OstIOTest, set_object_error) {
@@ -260,8 +256,6 @@ TEST(OstIOTest, set_object_error) {
     EXPECT_THROW(
         { Object object(queue, location, 1ull << 20); }, std::system_error
     );
-
-    server.wait();
 }
 
 TEST(OstIOTest, set_object_disconnect) {
@@ -281,8 +275,6 @@ TEST(OstIOTest, set_object_disconnect) {
     EXPECT_THROW(
         { Object object(queue, location, 1ull << 20); }, std::system_error
     );
-
-    server.wait();
 }
 
 TEST(OstIOTest, write_fail) {
@@ -305,8 +297,6 @@ TEST(OstIOTest, write_fail) {
 
     std::string ping = "ping";
     EXPECT_THROW(object.write(ping.data(), ping.length()), std::system_error);
-
-    server.wait();
 }
 
 TEST(OstIOTest, write_error) {
@@ -330,8 +320,6 @@ TEST(OstIOTest, write_error) {
 
     std::string ping = "ping";
     EXPECT_THROW(object.write(ping.data(), ping.length()), std::system_error);
-
-    server.wait();
 }
 
 TEST(OstIOTest, write_disconnect) {
@@ -354,8 +342,6 @@ TEST(OstIOTest, write_disconnect) {
 
     std::string ping = "ping";
     EXPECT_THROW(object.write(ping.data(), ping.length()), std::system_error);
-
-    server.wait();
 }
 
 } // unnamed namespace
