@@ -199,6 +199,14 @@ Server::~Server() {
         ::close(_client_fd);
     }
 
+    if (_in != -1) {
+        ::close(_in);
+    }
+
+    if (_out != -1) {
+        ::close(_out);
+    }
+
     if (_fd != -1) {
         ::close(_fd);
     }
