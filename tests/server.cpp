@@ -236,14 +236,15 @@ void Server::_notify() {
 void Server::_loop() {
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(_depth);
 
-    std::function<void(size_t, int)> cb;
+    std::shared_ptr<std::function<void(size_t, int)>> cb =
+        std::make_shared<std::function<void(size_t, int)>>();
 
-    auto wrapper = [&cb]() {
-        return [&cb](size_t result, int error) { cb(result, error); };
+    auto wrapper = [cb]() {
+        return [cb](size_t result, int error) { (*cb)(result, error); };
     };
 
     unsigned int value;
-    cb = [this, &queue, &value, &wrapper](size_t result, int error) {
+    *cb = [this, &queue, &value, &wrapper](size_t result, int error) {
         if (error) {
             RAWSTD_THROW_SYSTEM_ERROR(error);
         }
