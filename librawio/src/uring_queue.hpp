@@ -59,6 +59,11 @@ public:
         std::function<void(size_t, int)>&& cb
     ) override;
 
+    rawio::Event* read_multishot(
+        int fd, size_t entry_size, unsigned int entries, size_t size,
+        std::function<size_t(const iovec*, unsigned int, size_t, int)>&& cb
+    ) override;
+
     rawio::Event* recv(
         int fd, void* buf, size_t size, unsigned int flags,
         std::function<void(size_t, int)>&& cb

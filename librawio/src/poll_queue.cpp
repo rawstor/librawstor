@@ -291,6 +291,26 @@ rawio::Event* Queue::preadv(
     return ret;
 }
 
+rawio::Event* Queue::read_multishot(
+    int fd, size_t entry_size, unsigned int entries, size_t size,
+    std::function<size_t(const iovec*, unsigned int, size_t, int)>&& cb
+) {
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
+        '|', "fd = %d, entry_size = %zu, entries = %u, size = %zu\n", fd,
+        entry_size, entries, size
+    );
+    Session& s = _get_session(fd);
+
+    std::unique_ptr<EventSimplexVectorReadMultishot> event =
+        std::make_unique<EventSimplexVectorReadMultishot>(
+            *this, fd, entry_size, entries, size, trace_event, std::move(cb)
+        );
+
+    rawio::Event* ret = static_cast<rawio::Event*>(event.get());
+    s.read(std::move(event));
+    return ret;
+}
+
 rawio::Event* Queue::recv(
     int fd, void* buf, size_t size, unsigned int flags,
     std::function<void(size_t, int)>&& cb
