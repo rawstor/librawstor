@@ -31,7 +31,8 @@ private:
     std::condition_variable _pop_condition;
     std::mutex _mutex;
 
-    static void _main(Server* server);
+    std::shared_ptr<Command> _pop_command();
+    static void _main(Server* server) noexcept;
     void _loop();
 
     void _do_accept(Command& command);

@@ -4,8 +4,11 @@
 
 #include <rawstor/ost_protocol.h>
 
+#include <rawstd/gpp.hpp>
 #include <rawstd/hash.h>
 #include <rawstd/iovec.h>
+
+#include <stdexcept>
 
 #include <cassert>
 
@@ -32,7 +35,14 @@ void Session::cmd_allocate() {
 void Session::cmd_set_object_request() {
     _server.read(
         "RAWSTOR_CMD_SET_OBJECT <<<", sizeof(RawstorOSTFrameBasic),
-        [](const void*, size_t) {}
+        [](const void*, size_t result) {
+            if (result == 0) {
+                RAWSTD_THROW_SYSTEM_ERROR(EPIPE);
+            }
+            if (result != sizeof(RawstorOSTFrameBasic)) {
+                throw std::runtime_error("Partial read");
+            }
+        }
     );
 }
 
@@ -61,7 +71,14 @@ void Session::cmd_set_object(uint32_t magic, uint16_t cid, int32_t res) {
 void Session::cmd_read_request() {
     _server.read(
         "RAWSTOR_CMD_READ <<<", sizeof(RawstorOSTFrameIO),
-        [](const void*, size_t) {}
+        [](const void*, size_t result) {
+            if (result == 0) {
+                RAWSTD_THROW_SYSTEM_ERROR(EPIPE);
+            }
+            if (result != sizeof(RawstorOSTFrameIO)) {
+                throw std::runtime_error("Partial read");
+            }
+        }
     );
 }
 
@@ -115,7 +132,14 @@ void Session::cmd_read(
 void Session::cmd_write_request(size_t size) {
     _server.read(
         "RAWSTOR_CMD_WRITE <<<", sizeof(RawstorOSTFrameIO) + size,
-        [](const void*, size_t) {}
+        [size](const void*, size_t result) {
+            if (result == 0) {
+                RAWSTD_THROW_SYSTEM_ERROR(EPIPE);
+            }
+            if (result != sizeof(RawstorOSTFrameIO) + size) {
+                throw std::runtime_error("Partial read");
+            }
+        }
     );
 }
 

@@ -11,6 +11,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <exception>
 #include <iterator>
 #include <memory>
 #include <mutex>
@@ -166,11 +167,6 @@ Server::Server(int port) : _fd(-1), _client_fd(-1), _thread(nullptr) {
 }
 
 Server::~Server() {
-    if (_thread != nullptr) {
-        _stop();
-        _thread->join();
-    }
-
     if (_client_fd != -1) {
         ::close(_client_fd);
     }
@@ -178,22 +174,39 @@ Server::~Server() {
     if (_fd != -1) {
         ::close(_fd);
     }
+
+    if (_thread != nullptr) {
+        _stop();
+        _thread->join();
+    }
 }
 
-void Server::_main(Server* server) {
-    server->_loop();
+std::shared_ptr<Command> Server::_pop_command() {
+    std::unique_lock lock(_mutex);
+    if (_commands.empty()) {
+        _push_condition.wait(lock);
+    }
+    assert(!_commands.empty());
+    std::shared_ptr<Command> command = _commands.front();
+    _commands.pop_front();
+    return command;
+}
+
+void Server::_main(Server* server) noexcept {
+    try {
+        server->_loop();
+    } catch (const std::exception& e) {
+        rawstd_error("Unexpected error: %s\n", e.what());
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+    }
 }
 
 void Server::_loop() {
     bool exit = false;
     while (!exit) {
-        std::unique_lock lock(_mutex);
-        if (_commands.empty()) {
-            _push_condition.wait(lock);
-        }
-        assert(!_commands.empty());
-        std::shared_ptr<Command> command = _commands.front();
-        _commands.pop_front();
+        std::shared_ptr<Command> command = _pop_command();
+
         switch (command->type()) {
         case CT_ACCEPT:
             _do_accept(*command.get());
@@ -214,7 +227,11 @@ void Server::_loop() {
             _do_writev(*command.get());
             break;
         }
-        _pop_condition.notify_one();
+
+        {
+            std::unique_lock lock(_mutex);
+            _pop_condition.notify_one();
+        }
     }
 }
 

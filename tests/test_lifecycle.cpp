@@ -24,25 +24,16 @@ TEST(FileLifecycleTest, create_spec_remove) {
     int res = rawstor_object_create(
         location.c_str(), &spec, target.data(), target.size()
     );
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
     EXPECT_GT(res, 0);
     EXPECT_LE(res, (int)target.size());
     target.resize(res);
 
     RawstorObjectSpec read_spec;
     res = rawstor_object_spec(target.c_str(), &read_spec);
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
     EXPECT_EQ(res, 0);
     EXPECT_EQ(read_spec.size, (size_t)(1ull << 20));
 
     res = rawstor_object_remove(target.c_str());
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
     EXPECT_EQ(res, 0);
 }
 
@@ -59,9 +50,6 @@ TEST(OstLifecycleTest, create_spec_remove) {
         int res = rawstor_object_create(
             location.c_str(), &spec, target.data(), target.size()
         );
-        if (res < 0) {
-            RAWSTD_THROW_SYSTEM_ERROR(-res);
-        }
         EXPECT_GT(res, 0);
         EXPECT_LE(res, (int)target.size());
         target.resize(res);
@@ -72,9 +60,6 @@ TEST(OstLifecycleTest, create_spec_remove) {
 
         RawstorObjectSpec read_spec;
         int res = rawstor_object_spec(target.c_str(), &read_spec);
-        if (res < 0) {
-            RAWSTD_THROW_SYSTEM_ERROR(-res);
-        }
         EXPECT_EQ(res, 0);
         // rawstor_object_spec emulated
         EXPECT_EQ(read_spec.size, (size_t)(1ull << 30));
