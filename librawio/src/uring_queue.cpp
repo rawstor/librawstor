@@ -398,6 +398,48 @@ rawio::Event* Queue::preadv(
     return static_cast<rawio::Event*>(p.release());
 }
 
+rawio::Event* Queue::read_multishot(
+    int fd, size_t entry_size, unsigned int entries, size_t size,
+    std::function<size_t(const iovec*, unsigned int, size_t, int)>&& cb
+) {
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
+        '|', "fd = %d, entry_size = %zu, entries = %u, size = %zu\n", fd,
+        entry_size, entries, size
+    );
+    std::shared_ptr<BufferRing> buffer = std::make_shared<BufferRing>(
+        _ring, entry_size, entries, size,
+        [cb = std::move(cb), trace_event](
+            const iovec* iov, unsigned int niov, size_t result, int error
+        ) -> size_t {
+            RAWSTD_TRACE_EVENT_MESSAGE(
+                trace_event, "result = %zu, error = %d\n", result, error
+            );
+            return cb(iov, niov, result, error);
+        }
+    );
+
+    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
+    if (sqe == nullptr) {
+        RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
+    }
+    io_uring_prep_read_multishot(sqe, fd, 0, 0, buffer->id());
+    sqe->flags |= IOSQE_BUFFER_SELECT;
+    std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
+        std::make_unique<std::function<void(size_t, int, unsigned int)>>(
+            [buffer,
+             trace_event](size_t result, int error, unsigned int flags) {
+                RAWSTD_TRACE_EVENT_MESSAGE(
+                    trace_event, "result = %zu, error = %d, flags = %u\n",
+                    result, error, flags
+                );
+                (*buffer)(result, error, flags);
+            }
+        );
+    io_uring_sqe_set_data(sqe, p.get());
+
+    return static_cast<rawio::Event*>(p.release());
+}
+
 rawio::Event* Queue::recv(
     int fd, void* buf, size_t size, unsigned int flags,
     std::function<void(size_t, int)>&& cb
