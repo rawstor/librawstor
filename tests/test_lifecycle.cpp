@@ -38,7 +38,7 @@ TEST(FileLifecycleTest, create_spec_remove) {
 }
 
 TEST(OstLifecycleTest, create_spec_remove) {
-    rawstor::tests::Server server(8753);
+    rawstor::tests::Server server(8753, 256);
     std::string location = "ost://127.0.0.1:8753";
 
     std::string target(1024, '\0');

@@ -193,7 +193,7 @@ TEST(FileIOTest, basics) {
 
 TEST(OstIOTest, basics) {
     Queue queue(16);
-    rawstor::tests::Server server(8753);
+    rawstor::tests::Server server(8753, 256);
     std::string location = "ost://127.0.0.1:8753";
 
     {
@@ -222,7 +222,7 @@ TEST(OstIOTest, basics) {
 
 TEST(OstIOTest, set_object_fail) {
     Queue queue(16);
-    rawstor::tests::Server server(8753);
+    rawstor::tests::Server server(8753, 256);
     std::string location = "ost://127.0.0.1:8753";
 
     {
@@ -244,7 +244,7 @@ TEST(OstIOTest, set_object_fail) {
 
 TEST(OstIOTest, set_object_error) {
     Queue queue(16);
-    rawstor::tests::Server server(8753);
+    rawstor::tests::Server server(8753, 256);
     std::string location = "ost://127.0.0.1:8753";
 
     {
@@ -266,7 +266,7 @@ TEST(OstIOTest, set_object_error) {
 
 TEST(OstIOTest, set_object_disconnect) {
     Queue queue(16);
-    rawstor::tests::Server server(8753);
+    rawstor::tests::Server server(8753, 256);
     std::string location = "ost://127.0.0.1:8753";
 
     {
@@ -287,7 +287,7 @@ TEST(OstIOTest, set_object_disconnect) {
 
 TEST(OstIOTest, write_fail) {
     Queue queue(16);
-    rawstor::tests::Server server(8753);
+    rawstor::tests::Server server(8753, 256);
     std::string location = "ost://127.0.0.1:8753";
 
     {
@@ -311,7 +311,7 @@ TEST(OstIOTest, write_fail) {
 
 TEST(OstIOTest, write_error) {
     Queue queue(16);
-    rawstor::tests::Server server(8753);
+    rawstor::tests::Server server(8753, 256);
     std::string location = "ost://127.0.0.1:8753";
 
     {
@@ -336,7 +336,7 @@ TEST(OstIOTest, write_error) {
 
 TEST(OstIOTest, write_disconnect) {
     Queue queue(16);
-    rawstor::tests::Server server(8753);
+    rawstor::tests::Server server(8753, 256);
     std::string location = "ost://127.0.0.1:8753";
 
     {

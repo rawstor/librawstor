@@ -68,21 +68,21 @@ public:
 
 class CommandRead final : public Command {
 private:
-    size_t _size;
-    std::function<void(const void*, size_t)> _cb;
+    std::vector<char> _buf;
+    std::function<void(const void*)> _cb;
 
 public:
     CommandRead(
-        const char* name, size_t size,
-        std::function<void(const void*, size_t)>&& cb
+        const char* name, size_t size, std::function<void(const void*)>&& cb
     ) :
         Command(name),
-        _size(size),
+        _buf(size),
         _cb(std::move(cb)) {}
 
     CommandType type() const noexcept override { return CT_READ; }
-    size_t size() const noexcept { return _size; }
-    void callback(const void* buf, size_t result) const { _cb(buf, result); }
+    void* buf() noexcept { return _buf.data(); }
+    size_t size() const noexcept { return _buf.size(); }
+    void cb() const { _cb(_buf.data()); }
 };
 
 class CommandStop final : public Command {
@@ -134,7 +134,14 @@ public:
     unsigned int niov() const noexcept { return _iov.size(); }
 };
 
-Server::Server(int port) : _fd(-1), _client_fd(-1), _thread(nullptr) {
+Server::Server(int port, unsigned int depth) :
+    _fd(-1),
+    _in(-1),
+    _out(-1),
+    _exit(false),
+    _client_fd(-1),
+    _depth(depth),
+    _thread(nullptr) {
     _fd = socket(AF_INET, SOCK_STREAM, 0);
     if (_fd == -1) {
         RAWSTD_THROW_ERRNO();
@@ -146,6 +153,13 @@ Server::Server(int port) : _fd(-1), _client_fd(-1), _thread(nullptr) {
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
     try {
+        int fds[2];
+        if (pipe(fds) == -1) {
+            RAWSTD_THROW_ERRNO();
+        };
+        _out = fds[0];
+        _in = fds[1];
+
         int value = 1;
         if (setsockopt(_fd, SOL_SOCKET, SO_REUSEADDR, &value, sizeof(value)) ==
             -1) {
@@ -162,11 +176,25 @@ Server::Server(int port) : _fd(-1), _client_fd(-1), _thread(nullptr) {
         _thread = std::make_unique<std::thread>(Server::_main, this);
     } catch (...) {
         ::close(_fd);
+
+        if (_in != -1) {
+            ::close(_in);
+        }
+
+        if (_out != -1) {
+            ::close(_out);
+        }
+
         throw;
     }
 }
 
 Server::~Server() {
+    if (_thread != nullptr) {
+        _stop();
+        _thread->join();
+    }
+
     if (_client_fd != -1) {
         ::close(_client_fd);
     }
@@ -174,22 +202,6 @@ Server::~Server() {
     if (_fd != -1) {
         ::close(_fd);
     }
-
-    if (_thread != nullptr) {
-        _stop();
-        _thread->join();
-    }
-}
-
-std::shared_ptr<Command> Server::_pop_command() {
-    std::unique_lock lock(_mutex);
-    if (_commands.empty()) {
-        _push_condition.wait(lock);
-    }
-    assert(!_commands.empty());
-    std::shared_ptr<Command> command = _commands.front();
-    _commands.pop_front();
-    return command;
 }
 
 void Server::_main(Server* server) noexcept {
@@ -202,163 +214,234 @@ void Server::_main(Server* server) noexcept {
     }
 }
 
-void Server::_loop() {
-    bool exit = false;
-    while (!exit) {
-        std::shared_ptr<Command> command = _pop_command();
-
-        switch (command->type()) {
-        case CT_ACCEPT:
-            _do_accept(*command.get());
-            break;
-        case CT_CLOSE:
-            _do_close(*command.get());
-            break;
-        case CT_READ:
-            _do_read(*command.get());
-            break;
-        case CT_STOP:
-            exit = true;
-            break;
-        case CT_WRITE:
-            _do_write(*command.get());
-            break;
-        case CT_WRITEV:
-            _do_writev(*command.get());
-            break;
-        }
-
-        {
-            std::unique_lock lock(_mutex);
-            _pop_condition.notify_one();
-        }
-    }
-}
-
-void Server::_do_accept(Command& command) {
-    assert(_client_fd == -1);
-
-    RAWSTD_TRACE_EVENT_MESSAGE(command.trace_event, "%s()\n", "accept");
-    int fd = ::accept(_fd, NULL, NULL);
-    RAWSTD_TRACE_EVENT_MESSAGE(
-        command.trace_event, "%s(): fd = %d\n", "accept", fd
-    );
-    if (fd == -1) {
-        RAWSTD_THROW_ERRNO();
-    }
-
-    _client_fd = fd;
-}
-
-void Server::_do_close(Command& command) {
-    RAWSTD_TRACE_EVENT_MESSAGE(command.trace_event, "%s()\n", "close");
-    int res = ::close(_client_fd);
-    RAWSTD_TRACE_EVENT_MESSAGE(
-        command.trace_event, "%s(): res = %d\n", "close", res
-    );
+void Server::_notify() {
+    int value = 1;
+    int res = ::write(_in, &value, sizeof(value));
     if (res == -1) {
         RAWSTD_THROW_ERRNO();
     }
+    if (res != sizeof(value)) {
+        throw std::runtime_error("Partial write");
+    }
+}
+
+void Server::_loop() {
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(_depth);
+
+    std::function<void(size_t, int)> cb;
+
+    auto wrapper = [&cb]() {
+        return [&cb](size_t result, int error) { cb(result, error); };
+    };
+
+    unsigned int value;
+    cb = [this, &queue, &value, &wrapper](size_t result, int error) {
+        if (error) {
+            RAWSTD_THROW_SYSTEM_ERROR(error);
+        }
+        if (result == 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(EPIPE);
+        }
+        if (result != sizeof(value)) {
+            throw std::runtime_error("Partial read");
+        }
+
+        std::shared_ptr<Command> command;
+        {
+            std::unique_lock lock(_mutex);
+            if (!_commands.empty()) {
+                command = _commands.front();
+                _commands.pop_front();
+            }
+        }
+
+        if (command.get() != nullptr) {
+            switch (command->type()) {
+            case CT_ACCEPT:
+                _do_accept(*queue.get(), command);
+                break;
+            case CT_CLOSE:
+                _do_close(*queue.get(), command);
+                break;
+            case CT_READ:
+                _do_read(*queue.get(), command);
+                break;
+            case CT_STOP:
+                _exit = 1;
+                return;
+            case CT_WRITE:
+                _do_write(*queue.get(), command);
+                break;
+            case CT_WRITEV:
+                _do_writev(*queue.get(), command);
+                break;
+            }
+        }
+
+        queue->read(_out, &value, sizeof(value), wrapper());
+    };
+    queue->read(_out, &value, sizeof(value), wrapper());
+
+    while (!_exit) {
+        queue->wait();
+    }
+}
+
+void Server::_do_accept(rawio::Queue& queue, std::shared_ptr<Command> command) {
+    auto command_accept = std::dynamic_pointer_cast<CommandAccept>(command);
+    queue.accept(
+        _fd, nullptr, nullptr,
+        [this, command_accept](size_t result, int error) {
+            _notify();
+
+            if (error) {
+                RAWSTD_THROW_SYSTEM_ERROR(error);
+            }
+            RAWSTD_TRACE_EVENT_MESSAGE(
+                command_accept->trace_event, "accepted on fd: %zu\n", result
+            );
+            assert(_client_fd == -1);
+            _client_fd = result;
+        }
+    );
+}
+
+void Server::_do_close(rawio::Queue&, std::shared_ptr<Command> command) {
+    _notify();
+
+    int res = ::close(_client_fd);
+    if (res == -1) {
+        RAWSTD_THROW_ERRNO();
+    }
+    RAWSTD_TRACE_EVENT_MESSAGE(
+        command->trace_event, "closed: %d\n", _client_fd
+    );
     _client_fd = -1;
 }
 
-void Server::_do_read(Command& command) {
+void Server::_do_read(rawio::Queue& queue, std::shared_ptr<Command> command) {
     assert(_client_fd != -1);
 
-    CommandRead& command_read = dynamic_cast<CommandRead&>(command);
-    RAWSTD_TRACE_EVENT_MESSAGE(command_read.trace_event, "%s()\n", "read");
-    std::vector<char> buf(command_read.size());
-    ssize_t res = ::read(_client_fd, buf.data(), buf.size());
-    RAWSTD_TRACE_EVENT_MESSAGE(
-        command_read.trace_event, "%s(): res = %zd\n", "read", res
+    auto command_read = std::dynamic_pointer_cast<CommandRead>(command);
+    queue.read(
+        _client_fd, command_read->buf(), command_read->size(),
+        [this, command_read](size_t result, int error) {
+            _notify();
+
+            RAWSTD_TRACE_EVENT_MESSAGE(
+                command_read->trace_event, "read(): result = %zu, error = %d\n",
+                result, error
+            );
+            if (result == 0) {
+                RAWSTD_THROW_SYSTEM_ERROR(EPIPE);
+            }
+            if (static_cast<size_t>(result) != command_read->size()) {
+                throw std::runtime_error("Partial read");
+            }
+            command_read->cb();
+        }
     );
-    if (res == -1) {
-        RAWSTD_THROW_ERRNO();
-    }
-    command_read.callback(buf.data(), res);
 }
 
-void Server::_do_write(Command& command) {
+void Server::_do_write(rawio::Queue& queue, std::shared_ptr<Command> command) {
     assert(_client_fd != -1);
 
-    CommandWrite& command_write = dynamic_cast<CommandWrite&>(command);
-    RAWSTD_TRACE_EVENT_MESSAGE(command_write.trace_event, "%s()\n", "write");
-    ssize_t res =
-        ::write(_client_fd, command_write.buf(), command_write.size());
-    RAWSTD_TRACE_EVENT_MESSAGE(
-        command_write.trace_event, "%s(): res = %zd\n", "write", res
+    auto command_write = std::dynamic_pointer_cast<CommandWrite>(command);
+    queue.write(
+        _client_fd, command_write->buf(), command_write->size(),
+        [this, command_write](size_t result, int error) {
+            _notify();
+
+            RAWSTD_TRACE_EVENT_MESSAGE(
+                command_write->trace_event,
+                "write(): result = %zu, error = %d\n", result, error
+            );
+            if (error) {
+                RAWSTD_THROW_SYSTEM_ERROR(error);
+            }
+            if (static_cast<size_t>(result) != command_write->size()) {
+                throw std::runtime_error("Partial write");
+            }
+        }
     );
-    if (res == -1) {
-        RAWSTD_THROW_ERRNO();
-    }
-    if (static_cast<size_t>(res) != command_write.size()) {
-        throw std::runtime_error("Partial write");
-    }
 }
 
-void Server::_do_writev(Command& command) {
+void Server::_do_writev(rawio::Queue& queue, std::shared_ptr<Command> command) {
     assert(_client_fd != -1);
 
-    CommandWriteV& command_writev = dynamic_cast<CommandWriteV&>(command);
-    RAWSTD_TRACE_EVENT_MESSAGE(command_writev.trace_event, "%s()\n", "writev");
-    ssize_t res =
-        ::writev(_client_fd, command_writev.iov(), command_writev.niov());
-    RAWSTD_TRACE_EVENT_MESSAGE(
-        command_writev.trace_event, "%s(): res = %zd\n", "writev", res
+    auto command_writev = std::dynamic_pointer_cast<CommandWriteV>(command);
+    queue.writev(
+        _client_fd, command_writev->iov(), command_writev->niov(),
+        [this, command_writev](size_t result, int error) {
+            _notify();
+
+            RAWSTD_TRACE_EVENT_MESSAGE(
+                command_writev->trace_event, "result = %zu, error = %d\n",
+                result, error
+            );
+            if (error) {
+                RAWSTD_THROW_SYSTEM_ERROR(error);
+            }
+            if (static_cast<size_t>(result) !=
+                rawstd_iovec_size(
+                    command_writev->iov(), command_writev->niov()
+                )) {
+                throw std::runtime_error("Partial write");
+            }
+        }
     );
-    if (res == -1) {
-        RAWSTD_THROW_ERRNO();
-    }
-    if (static_cast<size_t>(res) !=
-        rawstd_iovec_size(command_writev.iov(), command_writev.niov())) {
-        throw std::runtime_error("Partial write");
-    }
 }
 
 void Server::_stop() {
     std::unique_lock lock(_mutex);
     _commands.push_back(std::make_shared<CommandStop>());
-    _push_condition.notify_one();
+    if (_commands.size() == 1) {
+        _notify();
+    }
 }
 
 void Server::accept(const char* name) {
     std::unique_lock lock(_mutex);
     _commands.push_back(std::make_shared<CommandAccept>(name));
-    _push_condition.notify_one();
+    if (_commands.size() == 1) {
+        _notify();
+    }
 }
 
 void Server::close(const char* name) {
     std::unique_lock lock(_mutex);
     _commands.push_back(std::make_shared<CommandClose>(name));
-    _push_condition.notify_one();
+    if (_commands.size() == 1) {
+        _notify();
+    }
 }
 
 void Server::read(
-    const char* name, size_t size,
-    std::function<void(const void* buf, size_t result)>&& cb
+    const char* name, size_t size, std::function<void(const void* buf)>&& cb
 ) {
     std::unique_lock lock(_mutex);
     _commands.push_back(
         std::make_shared<CommandRead>(name, size, std::move(cb))
     );
-    _push_condition.notify_one();
+    if (_commands.size() == 1) {
+        _notify();
+    }
 }
 
 void Server::write(const char* name, const void* buf, size_t size) {
     std::unique_lock lock(_mutex);
     _commands.push_back(std::make_shared<CommandWrite>(name, buf, size));
-    _push_condition.notify_one();
+    if (_commands.size() == 1) {
+        _notify();
+    }
 }
 
 void Server::writev(const char* name, const iovec* iov, unsigned int niov) {
     std::unique_lock lock(_mutex);
     _commands.push_back(std::make_shared<CommandWriteV>(name, iov, niov));
-    _push_condition.notify_one();
-}
-
-void Server::wait() {
-    std::unique_lock lock(_mutex);
-    _pop_condition.wait(lock, [this] { return _commands.empty(); });
+    if (_commands.size() == 1) {
+        _notify();
+    }
 }
 
 } // namespace tests
