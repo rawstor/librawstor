@@ -14,13 +14,13 @@ AM_LDFLAGS = $(ASAN_LDFLAGS) \
 
 
 test_all_SOURCES = main.cpp \
-                   fixture.hpp \
                    server.cpp \
                    server.hpp \
+                   session.cpp \
+                   session.hpp \
+                   test_io.cpp \
                    test_lifecycle.cpp
-test_all_LDADD = $(top_builddir)/librawio/src/librawio.la \
-                 $(top_builddir)/librawstd/src/librawstd.la \
-                 $(top_builddir)/src/librawstor.la
+test_all_LDADD = $(top_builddir)/src/librawstor.la
 
 
 test: all
