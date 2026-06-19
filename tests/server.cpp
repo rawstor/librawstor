@@ -293,6 +293,8 @@ void Server::_loop() {
     while (!_exit) {
         queue->wait();
     }
+
+    queue.reset();
 }
 
 void Server::_do_accept(rawio::Queue& queue, std::shared_ptr<Command> command) {
