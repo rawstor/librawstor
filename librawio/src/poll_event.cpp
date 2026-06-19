@@ -277,46 +277,21 @@ ssize_t EventSimplexVectorPositionalRead::process() noexcept {
     return res;
 }
 
-void EventSimplexScalarRecv::dispatch() {
-    ::dispatch(trace_event, _result, _error, _cb);
-}
-
-ssize_t EventSimplexScalarRecv::process() noexcept {
-    RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "recv()");
-    ssize_t res = ::recv(_fd, _buf, _size, _flags);
-    if (res >= 0) {
-        _result = res;
-#ifdef RAWSTD_TRACE_EVENTS
-        if ((size_t)_result == _size) {
-            RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "completed");
-        } else {
-            RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "partial");
-        }
-#endif
-    } else {
-        int error = errno;
-        errno = 0;
-        set_error(error);
-    }
-    return res;
-}
-
-bool EventSimplexVectorRecvMultishot::is_completed() const noexcept {
+bool EventSimplexVectorMultishot::is_completed() const noexcept {
     return _pending_size >= _size;
 }
 
-void EventSimplexVectorRecvMultishot::dispatch() {
+void EventSimplexVectorMultishot::dispatch() {
     bool full = _pending_entries.full();
 
     while (_pending_size >= _size || _error) {
-        std::list<std::unique_ptr<EventSimplexVectorRecvMultishotEntry>>
-            entries;
+        std::list<std::unique_ptr<MultishotEntry>> entries;
         std::vector<iovec> iov;
         size_t iov_size = 0;
         iov.reserve(_pending_entries.size());
 
         while (!_pending_entries.empty() && _size) {
-            EventSimplexVectorRecvMultishotEntry& e = _pending_entries.tail();
+            MultishotEntry& e = _pending_entries.tail();
             void* e_data = static_cast<char*>(e.data()) + _pending_offset;
             size_t e_size = e.result() - _pending_offset;
             if (e_size <= _size - iov_size) [[likely]] {
@@ -384,14 +359,14 @@ void EventSimplexVectorRecvMultishot::dispatch() {
     }
 }
 
-ssize_t EventSimplexVectorRecvMultishot::process() noexcept {
+ssize_t EventSimplexVectorMultishot::process() noexcept {
     ssize_t res = -ENOBUFS;
 
     while (!_pending_entries.full()) {
-        RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "recv()");
-        std::unique_ptr<EventSimplexVectorRecvMultishotEntry> entry =
-            std::make_unique<EventSimplexVectorRecvMultishotEntry>(_entry_size);
-        res = ::recv(_fd, entry->data(), entry->size(), _flags);
+        RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "_method()");
+        std::unique_ptr<MultishotEntry> entry =
+            std::make_unique<MultishotEntry>(_entry_size);
+        res = _method(entry->data(), entry->size());
 
         if (res > 0) {
             entry->set_result(res);
@@ -424,6 +399,38 @@ ssize_t EventSimplexVectorRecvMultishot::process() noexcept {
     }
 
     return res;
+}
+
+ssize_t EventSimplexVectorReadMultishot::_method(void* data, size_t size) {
+    return ::read(_fd, data, size);
+}
+
+void EventSimplexScalarRecv::dispatch() {
+    ::dispatch(trace_event, _result, _error, _cb);
+}
+
+ssize_t EventSimplexScalarRecv::process() noexcept {
+    RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "recv()");
+    ssize_t res = ::recv(_fd, _buf, _size, _flags);
+    if (res >= 0) {
+        _result = res;
+#ifdef RAWSTD_TRACE_EVENTS
+        if ((size_t)_result == _size) {
+            RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "completed");
+        } else {
+            RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "partial");
+        }
+#endif
+    } else {
+        int error = errno;
+        errno = 0;
+        set_error(error);
+    }
+    return res;
+}
+
+ssize_t EventSimplexVectorRecvMultishot::_method(void* data, size_t size) {
+    return ::recv(_fd, data, size, _flags);
 }
 
 void EventSimplexMessageRead::dispatch() {

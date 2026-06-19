@@ -409,6 +409,97 @@ public:
     ssize_t process() noexcept override final;
 };
 
+class MultishotEntry final {
+private:
+    std::vector<char> _data;
+    size_t _result;
+
+public:
+    MultishotEntry(size_t size) : _data(size), _result(0) {}
+
+    MultishotEntry(const MultishotEntry&) = delete;
+
+    MultishotEntry(MultishotEntry&& other) noexcept :
+        _data(std::move(other._data)),
+        _result(std::exchange(other._result, 0)) {}
+
+    MultishotEntry& operator=(const MultishotEntry&) = delete;
+
+    MultishotEntry& operator=(MultishotEntry&& other) noexcept {
+        MultishotEntry temp(std::move(other));
+        swap(temp);
+        return *this;
+    }
+
+    inline void* data() noexcept { return _data.data(); }
+    inline size_t size() const noexcept { return _data.size(); }
+    inline size_t result() const noexcept { return _result; }
+    inline void set_result(size_t result) noexcept { _result = result; };
+
+    void swap(MultishotEntry& other) noexcept {
+        std::swap(_data, other._data);
+        std::swap(_result, other._result);
+    }
+};
+
+class EventSimplexVectorMultishot : public EventSimplex {
+private:
+    size_t _entry_size;
+    size_t _size;
+    size_t _pending_offset;
+    size_t _pending_size;
+    rawstd::RingBuf<MultishotEntry> _pending_entries;
+    std::function<size_t(const iovec* iov, unsigned int niov, size_t, int)> _cb;
+
+protected:
+    virtual ssize_t _method(void* data, size_t size) = 0;
+
+public:
+    EventSimplexVectorMultishot(
+        Queue& q, int fd, size_t entry_size, unsigned int entries, size_t size,
+        const rawstd::TraceEvent& trace_event,
+        std::function<
+            size_t(const iovec* iov, unsigned int niov, size_t, int)>&& cb
+    ) :
+        EventSimplex(q, fd, trace_event),
+        _entry_size(entry_size),
+        _size(size),
+        _pending_offset(0),
+        _pending_size(0),
+        _pending_entries(entries),
+        _cb(std::move(cb)) {}
+
+    virtual ~EventSimplexVectorMultishot() = default;
+
+    void dispatch() override final;
+
+    bool is_completed() const noexcept override final;
+    bool is_multishot() const noexcept override final { return true; }
+    bool is_poll() const noexcept override final { return false; }
+    bool is_accept() const noexcept override final { return false; }
+    bool is_read() const noexcept override final { return true; }
+    bool is_write() const noexcept override final { return false; }
+
+    ssize_t process() noexcept override final;
+};
+
+class EventSimplexVectorReadMultishot final
+    : public EventSimplexVectorMultishot {
+protected:
+    ssize_t _method(void* data, size_t size);
+
+public:
+    EventSimplexVectorReadMultishot(
+        Queue& q, int fd, size_t entry_size, unsigned int entries, size_t size,
+        const rawstd::TraceEvent& trace_event,
+        std::function<
+            size_t(const iovec* iov, unsigned int niov, size_t, int)>&& cb
+    ) :
+        EventSimplexVectorMultishot(
+            q, fd, entry_size, entries, size, trace_event, std::move(cb)
+        ) {}
+};
+
 class EventSimplexScalarRecv final : public EventSimplex {
 private:
     void* _buf;
@@ -439,56 +530,13 @@ public:
     ssize_t process() noexcept override final;
 };
 
-class EventSimplexVectorRecvMultishotEntry final {
+class EventSimplexVectorRecvMultishot final
+    : public EventSimplexVectorMultishot {
 private:
-    std::vector<char> _data;
-    size_t _result;
-
-public:
-    EventSimplexVectorRecvMultishotEntry(size_t size) :
-        _data(size),
-        _result(0) {}
-
-    EventSimplexVectorRecvMultishotEntry(
-        const EventSimplexVectorRecvMultishotEntry&
-    ) = delete;
-
-    EventSimplexVectorRecvMultishotEntry(
-        EventSimplexVectorRecvMultishotEntry&& other
-    ) noexcept :
-        _data(std::move(other._data)),
-        _result(std::exchange(other._result, 0)) {}
-
-    EventSimplexVectorRecvMultishotEntry&
-    operator=(const EventSimplexVectorRecvMultishotEntry&) = delete;
-
-    EventSimplexVectorRecvMultishotEntry&
-    operator=(EventSimplexVectorRecvMultishotEntry&& other) noexcept {
-        EventSimplexVectorRecvMultishotEntry temp(std::move(other));
-        swap(temp);
-        return *this;
-    }
-
-    inline void* data() noexcept { return _data.data(); }
-    inline size_t size() const noexcept { return _data.size(); }
-    inline size_t result() const noexcept { return _result; }
-    inline void set_result(size_t result) noexcept { _result = result; };
-
-    void swap(EventSimplexVectorRecvMultishotEntry& other) noexcept {
-        std::swap(_data, other._data);
-        std::swap(_result, other._result);
-    }
-};
-
-class EventSimplexVectorRecvMultishot final : public EventSimplex {
-private:
-    size_t _entry_size;
-    size_t _size;
-    size_t _pending_offset;
-    size_t _pending_size;
-    rawstd::RingBuf<EventSimplexVectorRecvMultishotEntry> _pending_entries;
     unsigned int _flags;
-    std::function<size_t(const iovec* iov, unsigned int niov, size_t, int)> _cb;
+
+protected:
+    ssize_t _method(void* data, size_t size);
 
 public:
     EventSimplexVectorRecvMultishot(
@@ -497,25 +545,10 @@ public:
         std::function<
             size_t(const iovec* iov, unsigned int niov, size_t, int)>&& cb
     ) :
-        EventSimplex(q, fd, trace_event),
-        _entry_size(entry_size),
-        _size(size),
-        _pending_offset(0),
-        _pending_size(0),
-        _pending_entries(entries),
-        _flags(flags),
-        _cb(std::move(cb)) {}
-
-    void dispatch() override final;
-
-    bool is_completed() const noexcept override final;
-    bool is_multishot() const noexcept override final { return true; }
-    bool is_poll() const noexcept override final { return false; }
-    bool is_accept() const noexcept override final { return false; }
-    bool is_read() const noexcept override final { return true; }
-    bool is_write() const noexcept override final { return false; }
-
-    ssize_t process() noexcept override final;
+        EventSimplexVectorMultishot(
+            q, fd, entry_size, entries, size, trace_event, std::move(cb)
+        ),
+        _flags(flags) {}
 };
 
 class EventSimplexMessageRead final : public EventSimplex {
