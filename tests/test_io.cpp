@@ -129,7 +129,11 @@ public:
                 completed = true;
             }
         );
-        rawstor_object_pread(_object, buf, size, 0, callback, cb.get());
+        int res =
+            rawstor_object_pread(_object, buf, size, 0, callback, cb.get());
+        if (res < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
+        }
         cb.release();
 
         while (!completed) {
@@ -156,7 +160,11 @@ public:
                 completed = true;
             }
         );
-        rawstor_object_pwrite(_object, buf, size, 0, callback, cb.get());
+        int res =
+            rawstor_object_pwrite(_object, buf, size, 0, callback, cb.get());
+        if (res < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
+        }
         cb.release();
 
         while (!completed) {
