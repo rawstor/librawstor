@@ -25,6 +25,12 @@ public:
     explicit Queue(unsigned int depth);
     ~Queue();
 
+    rawio::Event* open(
+        const char* path, int flags, mode_t mode, std::function<void(int)>&& cb
+    );
+
+    rawio::Event* close(int fd, std::function<void(int)>&& cb);
+
     rawio::Event* poll(
         int fd, unsigned int mask, std::function<void(size_t, int)>&& cb
     ) override;
