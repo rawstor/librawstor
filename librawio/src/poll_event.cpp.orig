@@ -16,8 +16,14 @@
 namespace {
 
 template <typename T, typename... Args>
-inline void
-dispatch(const rawstd::TraceEvent& trace_event, T&& cb, Args... args) {
+inline void dispatch(
+<<<<<<< Updated upstream
+    const rawstd::TraceEvent& trace_event, T&& cb, Args... args
+=======
+    const rawstd::TraceEvent& trace_event,
+    T&& cb, Args... args
+>>>>>>> Stashed changes
+) {
     RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "callback");
 #ifdef RAWSTD_TRACE_EVENTS
     try {
@@ -38,6 +44,13 @@ dispatch(const rawstd::TraceEvent& trace_event, T&& cb, Args... args) {
 
 namespace rawio {
 namespace poll {
+
+void EventEval::dispatch() {
+    ::dispatch(trace_event, _cb);
+}
+
+ssize_t EventEval::process() {
+}
 
 void EventMultiplex::dispatch() {
     ::dispatch(trace_event, _cb, _result, _error);
