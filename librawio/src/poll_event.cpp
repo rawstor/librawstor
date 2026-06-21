@@ -17,7 +17,7 @@ namespace {
 
 template <typename T, typename... Args>
 inline void
-dispatch(const rawstd::TraceEvent& trace_event, T&& cb, Args... args) {
+dispatch(const rawstd::TraceEvent& trace_event, T&& cb, Args&&... args) {
     RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "callback");
 #ifdef RAWSTD_TRACE_EVENTS
     try {
