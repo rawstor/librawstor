@@ -22,7 +22,7 @@ dispatch(const rawstd::TraceEvent& trace_event, T&& cb, Args... args) {
 #ifdef RAWSTD_TRACE_EVENTS
     try {
 #endif
-        cb(args...);
+        std::forward<T>(cb)(std::forward<Args>(args)...);
 #ifdef RAWSTD_TRACE_EVENTS
     } catch (const std::exception& e) {
         RAWSTD_TRACE_EVENT_MESSAGE(
