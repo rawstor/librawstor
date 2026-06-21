@@ -149,6 +149,61 @@ void Queue::setup_fd(int fd) {
     }
 }
 
+rawio::Event* Queue::open(
+    const char* path, int flags, mode_t mode, std::function<void(int)>&& cb
+) {
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('|', "flags = %d, mode = %u\n", flags, mode);
+    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
+    if (sqe == nullptr) {
+        RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
+    }
+    std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
+        std::make_unique<std::function<void(size_t, int, unsigned int)>>(
+            [cb = std::move(cb),
+             trace_event](size_t result, int error, unsigned int) {
+                RAWSTD_TRACE_EVENT_MESSAGE(
+                    trace_event, "result = %zu, error = %d\n", result, error
+                );
+                if (!error) {
+                    cb(result);
+                } else {
+                    cb(-error);
+                }
+            }
+        );
+    io_uring_prep_openat(sqe, AT_FDCWD, path, flags, mode);
+    io_uring_sqe_set_data(sqe, p.get());
+
+    return static_cast<rawio::Event*>(p.release());
+}
+
+rawio::Event* Queue::close(int fd, std::function<void(int)>&& cb) {
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('|', "%s\n", "");
+    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
+    if (sqe == nullptr) {
+        RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
+    }
+    std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
+        std::make_unique<std::function<void(size_t, int, unsigned int)>>(
+            [cb = std::move(cb),
+             trace_event](size_t result, int error, unsigned int) {
+                RAWSTD_TRACE_EVENT_MESSAGE(
+                    trace_event, "result = %zu, error = %d\n", result, error
+                );
+                if (!error) {
+                    cb(result);
+                } else {
+                    cb(-error);
+                }
+            }
+        );
+    io_uring_prep_close(sqe, fd);
+    io_uring_sqe_set_data(sqe, p.get());
+
+    return static_cast<rawio::Event*>(p.release());
+}
+
 rawio::Event*
 Queue::poll(int fd, unsigned int mask, std::function<void(size_t, int)>&& cb) {
     rawstd::TraceEvent trace_event =

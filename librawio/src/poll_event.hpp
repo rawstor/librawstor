@@ -76,6 +76,33 @@ public:
     int fd() const noexcept { return _fd; }
 };
 
+class EventEval final : public Event {
+private:
+    std::function<int()> _eval;
+    std::function<void(int)> _cb;
+
+public:
+    EventEval(
+        Queue& q, const rawstd::TraceEvent& trace_event,
+        std::function<int()>&& eval, std::function<void(int)>&& cb
+    ) :
+        Event(q, -1, trace_event),
+        _eval(std::move(eval)),
+        _cb(std::move(cb)) {}
+
+    void dispatch() override;
+
+    bool is_completed() const noexcept override { return true; }
+    bool is_multiplex() const noexcept override { return false; }
+    bool is_multishot() const noexcept override { return false; }
+    bool is_poll() const noexcept override { return false; }
+    bool is_accept() const noexcept override { return false; }
+    bool is_read() const noexcept override { return false; }
+    bool is_write() const noexcept override { return false; }
+
+    ssize_t process() noexcept override;
+};
+
 class EventSimplex : public Event {
 public:
     EventSimplex(Queue& q, int fd, const rawstd::TraceEvent& trace_event) :

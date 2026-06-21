@@ -38,6 +38,14 @@ Session& Queue::_get_session(int fd) {
 }
 
 void Queue::_wait_timeout(int timeout) {
+    while (!_eval_sqes.empty()) {
+        std::unique_ptr<EventEval> event = std::move(_eval_sqes.front());
+        _eval_sqes.pop_front();
+
+        event->process();
+        _cqes.push(std::move(event));
+    }
+
     while (_cqes.empty()) {
         std::vector<pollfd> fds;
         fds.reserve(_sessions.size());
@@ -117,6 +125,10 @@ void Queue::_wait_timeout(int timeout) {
     }
 }
 
+void Queue::_eval(std::unique_ptr<EventEval>&& event) {
+    _eval_sqes.push_back(std::move(event));
+}
+
 const std::string& Queue::engine_name() {
     return ::engine_name;
 }
@@ -152,6 +164,51 @@ void Queue::setup_fd(int fd) {
             RAWSTD_THROW_SYSTEM_ERROR(-res);
         }
     }
+}
+
+rawio::Event* Queue::open(
+    const char* path, int flags, mode_t mode, std::function<void(int)>&& cb
+) {
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('|', "flags = %d, mode = %d\n", flags, mode);
+
+    std::unique_ptr<EventEval> event = std::make_unique<EventEval>(
+        *this, trace_event,
+        [path, flags, mode]() -> int {
+            int res = ::open(path, flags, mode);
+            if (res == -1) {
+                res = -errno;
+                errno = 0;
+            }
+            return res;
+        },
+        std::move(cb)
+    );
+
+    rawio::Event* ret = static_cast<rawio::Event*>(event.get());
+    _eval(std::move(event));
+    return ret;
+}
+
+rawio::Event* Queue::close(int fd, std::function<void(int)>&& cb) {
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('|', "%s\n", "");
+
+    std::unique_ptr<EventEval> event = std::make_unique<EventEval>(
+        *this, trace_event,
+        [fd]() -> int {
+            int res = ::close(fd);
+            if (res == -1) {
+                res = -errno;
+                errno = 0;
+            }
+            return res;
+        },
+        std::move(cb)
+    );
+
+    rawio::Event* ret = static_cast<rawio::Event*>(event.get());
+    _eval(std::move(event));
+    return ret;
 }
 
 rawio::Event*

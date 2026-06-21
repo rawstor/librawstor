@@ -1,6 +1,7 @@
 #ifndef RAWIO_QUEUE_HPP
 #define RAWIO_QUEUE_HPP
 
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -8,10 +9,8 @@
 #include <sys/types.h>
 #include <sys/uio.h>
 
+#include <fcntl.h>
 #include <unistd.h>
-
-#include <functional>
-#include <memory>
 
 struct RawIOQueue {};
 
@@ -36,6 +35,12 @@ public:
     Queue& operator=(Queue&&) = delete;
 
     inline unsigned int depth() const noexcept { return _depth; }
+
+    virtual Event* open(
+        const char* path, int flags, mode_t mode, std::function<void(int)>&& cb
+    ) = 0;
+
+    virtual Event* close(int fd, std::function<void(int)>&& cb) = 0;
 
     virtual Event*
     poll(int fd, unsigned int mask, std::function<void(size_t, int)>&& cb) = 0;

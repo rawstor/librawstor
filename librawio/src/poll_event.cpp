@@ -40,6 +40,15 @@ dispatch(const rawstd::TraceEvent& trace_event, T&& cb, Args&&... args) {
 namespace rawio {
 namespace poll {
 
+void EventEval::dispatch() {
+    ::dispatch(trace_event, _cb, _result);
+}
+
+ssize_t EventEval::process() noexcept {
+    _result = _eval();
+    return _result;
+}
+
 void EventMultiplex::dispatch() {
     ::dispatch(trace_event, _cb, _result, _error);
 }

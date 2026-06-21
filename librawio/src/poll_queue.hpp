@@ -20,6 +20,7 @@ class Session;
 
 class Queue final : public rawio::Queue {
 private:
+    std::list<std::unique_ptr<EventEval>> _eval_sqes;
     std::unordered_map<int, std::shared_ptr<Session>> _sessions;
     rawstd::RingBuf<Event> _cqes;
     Event* _current_event;
@@ -27,6 +28,8 @@ private:
     Session& _get_session(int fd);
 
     void _wait_timeout(int timeout);
+
+    void _eval(std::unique_ptr<EventEval>&& event);
 
 public:
     static const std::string& engine_name();
@@ -36,6 +39,12 @@ public:
         rawio::Queue(depth),
         _cqes(depth),
         _current_event(nullptr) {}
+
+    rawio::Event* open(
+        const char* path, int flags, mode_t mode, std::function<void(int)>&& cb
+    ) override;
+
+    rawio::Event* close(int fd, std::function<void(int)>&& cb) override;
 
     rawio::Event* poll(
         int fd, unsigned int mask, std::function<void(size_t, int)>&& cb
