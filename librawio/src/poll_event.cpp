@@ -6,6 +6,7 @@
 #include <rawstd/logging.h>
 
 #include <system_error>
+#include <utility>
 #include <vector>
 
 #include <sys/types.h>
@@ -15,15 +16,14 @@
 
 namespace {
 
-inline void dispatch(
-    const rawstd::TraceEvent& trace_event, size_t result, int error,
-    const std::function<void(size_t, int)>& cb
-) {
+template <typename T, typename... Args>
+inline void
+dispatch(const rawstd::TraceEvent& trace_event, T&& cb, Args&&... args) {
     RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "callback");
 #ifdef RAWSTD_TRACE_EVENTS
     try {
 #endif
-        cb(result, error);
+        std::forward<T>(cb)(std::forward<Args>(args)...);
 #ifdef RAWSTD_TRACE_EVENTS
     } catch (const std::exception& e) {
         RAWSTD_TRACE_EVENT_MESSAGE(
@@ -41,7 +41,7 @@ namespace rawio {
 namespace poll {
 
 void EventMultiplex::dispatch() {
-    ::dispatch(trace_event, _result, _error, _cb);
+    ::dispatch(trace_event, _cb, _result, _error);
 }
 
 size_t EventMultiplexScalar::shift(size_t shift) noexcept {
@@ -96,11 +96,11 @@ ssize_t EventSimplexPoll::process() noexcept {
 }
 
 void EventSimplexPollOneshot::dispatch() {
-    ::dispatch(trace_event, _result, _error, _cb);
+    ::dispatch(trace_event, _cb, _result, _error);
 }
 
 void EventSimplexPollMultishot::dispatch() {
-    ::dispatch(trace_event, _result, _error, _cb);
+    ::dispatch(trace_event, _cb, _result, _error);
     _result = 0;
 }
 
@@ -139,7 +139,7 @@ ssize_t EventSimplexAcceptOneshot::process() noexcept {
 }
 
 void EventSimplexAcceptOneshot::dispatch() {
-    ::dispatch(trace_event, _result, _error, _cb);
+    ::dispatch(trace_event, _cb, _result, _error);
 }
 
 ssize_t EventSimplexAcceptMultishot::process() noexcept {
@@ -177,12 +177,12 @@ ssize_t EventSimplexAcceptMultishot::process() noexcept {
 }
 
 void EventSimplexAcceptMultishot::dispatch() {
-    ::dispatch(trace_event, _result, _error, _cb);
+    ::dispatch(trace_event, _cb, _result, _error);
     _result = 0;
 }
 
 void EventSimplexScalarRead::dispatch() {
-    ::dispatch(trace_event, _result, _error, _cb);
+    ::dispatch(trace_event, _cb, _result, _error);
 }
 
 ssize_t EventSimplexScalarRead::process() noexcept {
@@ -206,7 +206,7 @@ ssize_t EventSimplexScalarRead::process() noexcept {
 }
 
 void EventSimplexVectorRead::dispatch() {
-    ::dispatch(trace_event, _result, _error, _cb);
+    ::dispatch(trace_event, _cb, _result, _error);
 }
 
 ssize_t EventSimplexVectorRead::process() noexcept {
@@ -230,7 +230,7 @@ ssize_t EventSimplexVectorRead::process() noexcept {
 }
 
 void EventSimplexScalarPositionalRead::dispatch() {
-    ::dispatch(trace_event, _result, _error, _cb);
+    ::dispatch(trace_event, _cb, _result, _error);
 }
 
 ssize_t EventSimplexScalarPositionalRead::process() noexcept {
@@ -254,7 +254,7 @@ ssize_t EventSimplexScalarPositionalRead::process() noexcept {
 }
 
 void EventSimplexVectorPositionalRead::dispatch() {
-    ::dispatch(trace_event, _result, _error, _cb);
+    ::dispatch(trace_event, _cb, _result, _error);
 }
 
 ssize_t EventSimplexVectorPositionalRead::process() noexcept {
@@ -278,7 +278,7 @@ ssize_t EventSimplexVectorPositionalRead::process() noexcept {
 }
 
 void EventSimplexScalarRecv::dispatch() {
-    ::dispatch(trace_event, _result, _error, _cb);
+    ::dispatch(trace_event, _cb, _result, _error);
 }
 
 ssize_t EventSimplexScalarRecv::process() noexcept {
@@ -427,7 +427,7 @@ ssize_t EventSimplexVectorRecvMultishot::process() noexcept {
 }
 
 void EventSimplexMessageRead::dispatch() {
-    ::dispatch(trace_event, _result, _error, _cb);
+    ::dispatch(trace_event, _cb, _result, _error);
 }
 
 ssize_t EventSimplexMessageRead::process() noexcept {
@@ -478,7 +478,7 @@ ssize_t EventMultiplexVectorWrite::process() noexcept {
 }
 
 void EventSimplexScalarPositionalWrite::dispatch() {
-    ::dispatch(trace_event, _result, _error, _cb);
+    ::dispatch(trace_event, _cb, _result, _error);
 }
 
 ssize_t EventSimplexScalarPositionalWrite::process() noexcept {
@@ -502,7 +502,7 @@ ssize_t EventSimplexScalarPositionalWrite::process() noexcept {
 }
 
 void EventSimplexVectorPositionalWrite::dispatch() {
-    ::dispatch(trace_event, _result, _error, _cb);
+    ::dispatch(trace_event, _cb, _result, _error);
 }
 
 ssize_t EventSimplexVectorPositionalWrite::process() noexcept {
@@ -526,7 +526,7 @@ ssize_t EventSimplexVectorPositionalWrite::process() noexcept {
 }
 
 void EventSimplexScalarSend::dispatch() {
-    ::dispatch(trace_event, _result, _error, _cb);
+    ::dispatch(trace_event, _cb, _result, _error);
 }
 
 ssize_t EventSimplexScalarSend::process() noexcept {
@@ -550,7 +550,7 @@ ssize_t EventSimplexScalarSend::process() noexcept {
 }
 
 void EventSimplexMessageWrite::dispatch() {
-    ::dispatch(trace_event, _result, _error, _cb);
+    ::dispatch(trace_event, _cb, _result, _error);
 }
 
 ssize_t EventSimplexMessageWrite::process() noexcept {
