@@ -206,17 +206,16 @@ TEST(OpenCloseTest, basics) {
     queue->open(
         filename.c_str(), O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR,
         [&fd](int result) {
-            printf("result = %d\n", result);
             fd = result;
         }
     );
     EXPECT_EQ(fd, -1);
-    queue->wait_timeout(0);
+    queue->wait();
     EXPECT_GT(fd, 0);
 
     queue->close(fd, [&fd](int result) { fd = result; });
     EXPECT_GT(fd, 0);
-    queue->wait_timeout(0);
+    queue->wait();
     EXPECT_EQ(fd, 0);
 }
 
