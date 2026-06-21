@@ -205,9 +205,7 @@ TEST(OpenCloseTest, basics) {
     int fd = -1;
     queue->open(
         filename.c_str(), O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR,
-        [&fd](int result) {
-            fd = result;
-        }
+        [&fd](int result) { fd = result; }
     );
     EXPECT_EQ(fd, -1);
     queue->wait();
