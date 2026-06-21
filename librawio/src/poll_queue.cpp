@@ -170,7 +170,7 @@ rawio::Event* Queue::open(
     const char* path, int flags, mode_t mode, std::function<void(int)>&& cb
 ) {
     rawstd::TraceEvent trace_event =
-        RAWSTD_TRACE_EVENT('|', "flags = %d, mask = %d\n", flags, mode);
+        RAWSTD_TRACE_EVENT('|', "flags = %d, mode = %d\n", flags, mode);
 
     std::unique_ptr<EventEval> event = std::make_unique<EventEval>(
         *this, trace_event,

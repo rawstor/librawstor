@@ -10,6 +10,9 @@
 
 #include <poll.h>
 
+#include <filesystem>
+#include <sstream>
+
 namespace {
 
 class BasicsTest : public rawio::tests::QueueTest {
@@ -187,6 +190,34 @@ TEST_F(BasicsTest, send) {
     EXPECT_EQ(result, sizeof(client_buf));
     EXPECT_EQ(error, 0);
     EXPECT_EQ(strcmp(server_buf, client_buf), 0);
+}
+
+TEST(OpenCloseTest, basics) {
+    std::filesystem::path path =
+        std::filesystem::temp_directory_path() / "rawio_tests";
+    std::ostringstream oss;
+    std::filesystem::create_directory(path);
+    oss << path.string() << "/open_close.test";
+    std::string filename = oss.str();
+
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(1);
+
+    int fd = -1;
+    queue->open(
+        filename.c_str(), O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR,
+        [&fd](int result) {
+            printf("result = %d\n", result);
+            fd = result;
+        }
+    );
+    EXPECT_EQ(fd, -1);
+    queue->wait_timeout(0);
+    EXPECT_GT(fd, 0);
+
+    queue->close(fd, [&fd](int result) { fd = result; });
+    EXPECT_GT(fd, 0);
+    queue->wait_timeout(0);
+    EXPECT_EQ(fd, 0);
 }
 
 } // unnamed namespace

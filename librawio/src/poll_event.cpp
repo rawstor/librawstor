@@ -45,7 +45,8 @@ void EventEval::dispatch() {
 }
 
 ssize_t EventEval::process() noexcept {
-    return _eval();
+    _result = _eval();
+    return _result;
 }
 
 void EventMultiplex::dispatch() {
