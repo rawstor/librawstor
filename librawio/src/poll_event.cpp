@@ -105,11 +105,19 @@ ssize_t EventSimplexPoll::process() noexcept {
 }
 
 void EventSimplexPollOneshot::dispatch() {
-    ::dispatch(trace_event, _cb, _result, _error);
+    if (!_error) {
+        ::dispatch(trace_event, _cb, _result);
+    } else {
+        ::dispatch(trace_event, _cb, -_error);
+    }
 }
 
 void EventSimplexPollMultishot::dispatch() {
-    ::dispatch(trace_event, _cb, _result, _error);
+    if (!_error) {
+        ::dispatch(trace_event, _cb, _result);
+    } else {
+        ::dispatch(trace_event, _cb, -_error);
+    }
     _result = 0;
 }
 
@@ -148,7 +156,11 @@ ssize_t EventSimplexAcceptOneshot::process() noexcept {
 }
 
 void EventSimplexAcceptOneshot::dispatch() {
-    ::dispatch(trace_event, _cb, _result, _error);
+    if (!_error) {
+        ::dispatch(trace_event, _cb, _result);
+    } else {
+        ::dispatch(trace_event, _cb, -_error);
+    }
 }
 
 ssize_t EventSimplexAcceptMultishot::process() noexcept {
@@ -186,7 +198,11 @@ ssize_t EventSimplexAcceptMultishot::process() noexcept {
 }
 
 void EventSimplexAcceptMultishot::dispatch() {
-    ::dispatch(trace_event, _cb, _result, _error);
+    if (!_error) {
+        ::dispatch(trace_event, _cb, _result);
+    } else {
+        ::dispatch(trace_event, _cb, -_error);
+    }
     _result = 0;
 }
 

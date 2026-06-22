@@ -46,39 +46,31 @@ TEST_F(MultishotTest, poll) {
     _server.write(server_buf, sizeof(server_buf));
     _server.wait();
 
-    size_t result = 0;
-    int error = 0;
+    int result = 0;
     unsigned int count = 0;
-    rawio::Event* event = _queue->poll_multishot(
-        _fd, POLLIN, [&result, &error, &count](size_t r, int e) {
+    rawio::Event* event =
+        _queue->poll_multishot(_fd, POLLIN, [&result, &count](int r) {
             result = r;
-            error = e;
             ++count;
-        }
-    );
+        });
 
     EXPECT_NO_THROW(_queue->wait_timeout(0));
-    EXPECT_EQ(result, (size_t)POLLIN);
-    EXPECT_EQ(error, 0);
+    EXPECT_EQ(result, POLLIN);
     EXPECT_EQ(count, 1u);
 
     _server.write(server_buf, sizeof(server_buf));
     _server.wait();
 
     result = 0;
-    error = 0;
     EXPECT_NO_THROW(_queue->wait_timeout(0));
-    EXPECT_EQ(result, (size_t)POLLIN);
-    EXPECT_EQ(error, 0);
+    EXPECT_EQ(result, POLLIN);
     EXPECT_EQ(count, 2u);
 
     EXPECT_NO_THROW(_queue->cancel(event));
 
     result = 0;
-    error = 0;
     EXPECT_NO_THROW(_queue->wait_timeout(0));
-    EXPECT_EQ(result, (size_t)0);
-    EXPECT_EQ(error, ECANCELED);
+    EXPECT_EQ(result, -ECANCELED);
     EXPECT_EQ(count, 3u);
 }
 
@@ -103,20 +95,16 @@ TEST_F(MultishotTest, accept) {
     );
     _server.wait();
 
-    size_t result = 0;
-    int error = 0;
+    int result = 0;
     unsigned int count = 0;
-    rawio::Event* event = _queue->accept_multishot(
-        client_socket.fd(), [&result, &error, &count](size_t r, int e) {
+    rawio::Event* event =
+        _queue->accept_multishot(client_socket.fd(), [&result, &count](int r) {
             result = r;
-            error = e;
             ++count;
-        }
-    );
+        });
 
     EXPECT_NO_THROW(_queue->wait_timeout(0));
-    EXPECT_GT(result, (size_t)0);
-    EXPECT_EQ(error, 0);
+    EXPECT_GT(result, 0);
     EXPECT_EQ(count, 1u);
 
     _server.connect(
@@ -125,19 +113,15 @@ TEST_F(MultishotTest, accept) {
     _server.wait();
 
     result = 0;
-    error = 0;
     EXPECT_NO_THROW(_queue->wait_timeout(0));
-    EXPECT_GT(result, (size_t)0);
-    EXPECT_EQ(error, 0);
+    EXPECT_GT(result, 0);
     EXPECT_EQ(count, 2u);
 
     EXPECT_NO_THROW(_queue->cancel(event));
 
     result = 0;
-    error = 0;
     EXPECT_NO_THROW(_queue->wait_timeout(0));
-    EXPECT_EQ(result, (size_t)0);
-    EXPECT_EQ(error, ECANCELED);
+    EXPECT_EQ(result, -ECANCELED);
     EXPECT_EQ(count, 3u);
 }
 

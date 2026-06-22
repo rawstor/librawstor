@@ -21,13 +21,9 @@ TEST_F(CancelTest, cancel_noent) {
 }
 
 TEST_F(CancelTest, poll) {
-    size_t result = 0;
-    int error = 0;
+    int result = 0;
     rawio::Event* event =
-        _queue->poll(_fd, POLLIN, [&result, &error](size_t r, int e) {
-            result = r;
-            error = e;
-        });
+        _queue->poll(_fd, POLLIN, [&result](int r) { result = r; });
 
     EXPECT_THROW(_queue->wait_timeout(0), std::system_error);
 
@@ -36,8 +32,7 @@ TEST_F(CancelTest, poll) {
     EXPECT_NO_THROW(_queue->wait_timeout(0));
     EXPECT_THROW(_queue->wait_timeout(0), std::system_error);
 
-    EXPECT_EQ(result, (size_t)0);
-    EXPECT_EQ(error, ECANCELED);
+    EXPECT_EQ(result, -ECANCELED);
 }
 
 TEST_F(CancelTest, poll_completed) {
@@ -45,19 +40,14 @@ TEST_F(CancelTest, poll_completed) {
     _server.write(server_buf, sizeof(server_buf));
     _server.wait();
 
-    size_t result = 0;
-    int error = 0;
+    int result = 0;
     rawio::Event* event =
-        _queue->poll(_fd, POLLIN, [&result, &error](size_t r, int e) {
-            result = r;
-            error = e;
-        });
+        _queue->poll(_fd, POLLIN, [&result](int r) { result = r; });
 
     _queue->wait_timeout(0);
 
     EXPECT_THROW(_queue->cancel(event), std::system_error);
-    EXPECT_EQ(result, (size_t)POLLIN);
-    EXPECT_EQ(error, 0);
+    EXPECT_EQ(result, POLLIN);
 }
 
 TEST_F(CancelTest, read) {
@@ -158,12 +148,8 @@ TEST_F(CancelTest, write_completed) {
 }
 
 TEST_F(CancelTest, cancel_all) {
-    size_t result_poll = 0;
-    int error_poll = 0;
-    _queue->poll(_fd, POLLIN, [&result_poll, &error_poll](size_t r, int e) {
-        result_poll = r;
-        error_poll = e;
-    });
+    int result_poll = 0;
+    _queue->poll(_fd, POLLIN, [&result_poll](int r) { result_poll = r; });
 
     char client_buf_read[10];
     size_t result_read = 0;
@@ -191,8 +177,7 @@ TEST_F(CancelTest, cancel_all) {
 
     EXPECT_NO_THROW(_wait_all());
 
-    EXPECT_EQ(result_poll, (size_t)0);
-    EXPECT_EQ(error_poll, ECANCELED);
+    EXPECT_EQ(result_poll, -ECANCELED);
     EXPECT_EQ(result_read, (size_t)0);
     EXPECT_EQ(error_read, ECANCELED);
 #ifndef RAWIO_WITH_LIBURING

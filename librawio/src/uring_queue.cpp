@@ -206,7 +206,7 @@ rawio::Event* Queue::close(int fd, std::function<void(int)>&& cb) {
 }
 
 rawio::Event*
-Queue::poll(int fd, unsigned int mask, std::function<void(size_t, int)>&& cb) {
+Queue::poll(int fd, unsigned int mask, std::function<void(int)>&& cb) {
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('|', "fd = %d, mask = %u\n", fd, mask);
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
@@ -220,7 +220,11 @@ Queue::poll(int fd, unsigned int mask, std::function<void(size_t, int)>&& cb) {
                 RAWSTD_TRACE_EVENT_MESSAGE(
                     trace_event, "result = %zu, error = %d\n", result, error
                 );
-                cb(result, error);
+                if (!error) {
+                    cb(result);
+                } else {
+                    cb(-error);
+                }
             }
         );
     io_uring_prep_poll_add(sqe, fd, mask);
@@ -231,7 +235,7 @@ Queue::poll(int fd, unsigned int mask, std::function<void(size_t, int)>&& cb) {
 }
 
 rawio::Event* Queue::poll_multishot(
-    int fd, unsigned int mask, std::function<void(size_t, int)>&& cb
+    int fd, unsigned int mask, std::function<void(int)>&& cb
 ) {
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('|', "fd = %d, mask = %u\n", fd, mask);
@@ -247,7 +251,11 @@ rawio::Event* Queue::poll_multishot(
                 RAWSTD_TRACE_EVENT_MESSAGE(
                     trace_event, "result = %zu, error = %d\n", result, error
                 );
-                cb(result, error);
+                if (!error) {
+                    cb(result);
+                } else {
+                    cb(-error);
+                }
             }
         );
     io_uring_sqe_set_data(sqe, p.get());
@@ -256,8 +264,7 @@ rawio::Event* Queue::poll_multishot(
 }
 
 rawio::Event* Queue::accept(
-    int fd, sockaddr* addr, socklen_t* addrlen,
-    std::function<void(size_t, int)>&& cb
+    int fd, sockaddr* addr, socklen_t* addrlen, std::function<void(int)>&& cb
 ) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('|', "fd = %d\n", fd);
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
@@ -295,7 +302,11 @@ rawio::Event* Queue::accept(
                         error = EIO;
                     }
                 }
-                cb(result, error);
+                if (!error) {
+                    cb(result);
+                } else {
+                    cb(-error);
+                }
             }
         );
     io_uring_prep_accept(sqe, fd, addr, addrlen, 0);
@@ -305,8 +316,7 @@ rawio::Event* Queue::accept(
     return static_cast<rawio::Event*>(p.release());
 }
 
-rawio::Event*
-Queue::accept_multishot(int fd, std::function<void(size_t, int)>&& cb) {
+rawio::Event* Queue::accept_multishot(int fd, std::function<void(int)>&& cb) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('|', "fd = %d\n", fd);
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
@@ -344,7 +354,11 @@ Queue::accept_multishot(int fd, std::function<void(size_t, int)>&& cb) {
                         error = EIO;
                     }
                 }
-                cb(result, error);
+                if (!error) {
+                    cb(result);
+                } else {
+                    cb(-error);
+                }
             }
         );
     io_uring_sqe_set_data(sqe, p.get());

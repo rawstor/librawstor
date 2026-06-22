@@ -126,8 +126,13 @@ int rawstor_fd_poll(
     int fd, unsigned int mask, RawstorIOCallback* cb, void* data
 ) noexcept {
     try {
-        rawstor::io_queue->poll(fd, mask, [cb, data](size_t result, int error) {
-            int res = cb(result, error, data);
+        rawstor::io_queue->poll(fd, mask, [cb, data](int result) {
+            int res;
+            if (result >= 0) {
+                res = cb(result, 0, data);
+            } else {
+                res = cb(0, -result, data);
+            }
             if (res) {
                 RAWSTD_THROW_SYSTEM_ERROR(-res);
             }
