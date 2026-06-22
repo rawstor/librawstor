@@ -717,17 +717,12 @@ int Session::_connect() {
                     .revents = 0,
                 };
                 rawstd_warning("Connect interrupted; polling...\n");
-                res = poll(&fds, 1, 5000);
+                res = poll(&fds, 1, so_sndtimeo);
                 if (res == -1) {
                     RAWSTD_THROW_ERRNO();
                 }
-
                 if (res == 0) {
-                    RAWSTD_THROW_SYSTEM_ERROR(EINTR);
-                }
-
-                if (!(fds.revents & POLLOUT)) {
-                    RAWSTD_THROW_SYSTEM_ERROR(EINTR);
+                    RAWSTD_THROW_SYSTEM_ERROR(ETIMEDOUT);
                 }
 
                 int value = 0;
@@ -738,6 +733,10 @@ int Session::_connect() {
                 }
                 if (value) {
                     RAWSTD_THROW_SYSTEM_ERROR(value);
+                }
+
+                if (!(fds.revents & POLLOUT)) {
+                    RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
                 }
             } else {
                 RAWSTD_THROW_ERRNO();
