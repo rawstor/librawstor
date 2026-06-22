@@ -17,6 +17,8 @@
 
 #include <arpa/inet.h>
 
+#include <poll.h>
+
 #include <algorithm>
 #include <iterator>
 #include <memory>
@@ -662,8 +664,62 @@ int Session::_connect() {
         rawstd_info(
             "fd %d: Connecting to %s...\n", fd, location().str().c_str()
         );
-        if (connect(fd, (sockaddr*)&servaddr, sizeof(servaddr)) == -1) {
-            RAWSTD_THROW_ERRNO();
+        int res = connect(fd, (sockaddr*)&servaddr, sizeof(servaddr));
+        if (res == -1) {
+            if (errno == EINTR) {
+                errno = 0;
+
+                pollfd fds = {
+                    .fd = fd,
+                    .events = POLLOUT,
+                    .revents = 0,
+                };
+                rawstd_warning("Connect interrupted; polling...\n");
+                for (unsigned int attempt = 1;
+                     attempt <= rawstor_opts_io_attempts(); ++attempt) {
+                    try {
+                        res = poll(&fds, 1, so_sndtimeo);
+                        if (res == -1) {
+                            RAWSTD_THROW_ERRNO();
+                        }
+                        if (res == 0) {
+                            RAWSTD_THROW_SYSTEM_ERROR(ETIMEDOUT);
+                        }
+                        break;
+                    } catch (const std::exception& e) {
+                        if (attempt != rawstor_opts_io_attempts()) {
+                            rawstd_warning(
+                                "Poll failed; error: %s; "
+                                "attempt: %d of %d; retrying...\n",
+                                e.what(), attempt, rawstor_opts_io_attempts()
+                            );
+                        } else {
+                            rawstd_warning(
+                                "Poll failed; error: %s; "
+                                "attempt: %d of %d; failing...\n",
+                                e.what(), attempt, rawstor_opts_io_attempts()
+                            );
+                            throw;
+                        }
+                    }
+                }
+
+                int value = 0;
+                socklen_t value_len = sizeof(value);
+                res = getsockopt(fd, SOL_SOCKET, SO_ERROR, &value, &value_len);
+                if (res == -1) {
+                    RAWSTD_THROW_ERRNO();
+                }
+                if (value) {
+                    RAWSTD_THROW_SYSTEM_ERROR(value);
+                }
+
+                if (!(fds.revents & POLLOUT)) {
+                    RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
+                }
+            } else {
+                RAWSTD_THROW_ERRNO();
+            }
         }
         rawstd_info("fd %d: Connected\n", fd);
 
