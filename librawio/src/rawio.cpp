@@ -38,8 +38,13 @@ int rawio_poll(
 ) noexcept {
     try {
         static_cast<rawio::Queue*>(queue)->poll(
-            fd, mask, [cb, data](size_t result, int error) {
-                int res = cb(result, error, data);
+            fd, mask, [cb, data](int result) {
+                int res;
+                if (result >= 0) {
+                    res = cb(result, 0, data);
+                } else {
+                    res = cb(0, -result, data);
+                }
                 if (res) {
                     RAWSTD_THROW_SYSTEM_ERROR(-res);
                 }
@@ -65,8 +70,13 @@ int rawio_poll_multishot(
 ) noexcept {
     try {
         RawIOEvent* e = static_cast<rawio::Queue*>(queue)->poll_multishot(
-            fd, mask, [cb, data](size_t result, int error) {
-                int res = cb(result, error, data);
+            fd, mask, [cb, data](int result) {
+                int res;
+                if (result >= 0) {
+                    res = cb(result, 0, data);
+                } else {
+                    res = cb(0, -result, data);
+                }
                 if (res) {
                     RAWSTD_THROW_SYSTEM_ERROR(-res);
                 }
@@ -95,8 +105,13 @@ int rawio_accept(
 ) noexcept {
     try {
         static_cast<rawio::Queue*>(queue)->accept(
-            fd, addr, addrlen, [cb, data](size_t result, int error) {
-                int res = cb(result, error, data);
+            fd, addr, addrlen, [cb, data](int result) {
+                int res;
+                if (result >= 0) {
+                    res = cb(result, 0, data);
+                } else {
+                    res = cb(0, -result, data);
+                }
                 if (res) {
                     RAWSTD_THROW_SYSTEM_ERROR(-res);
                 }
@@ -121,8 +136,13 @@ int rawio_accept_multishot(
 ) noexcept {
     try {
         RawIOEvent* e = static_cast<rawio::Queue*>(queue)->accept_multishot(
-            fd, [cb, data](size_t result, int error) {
-                int res = cb(result, error, data);
+            fd, [cb, data](int result) {
+                int res;
+                if (result >= 0) {
+                    res = cb(result, 0, data);
+                } else {
+                    res = cb(0, -result, data);
+                }
                 if (res) {
                     RAWSTD_THROW_SYSTEM_ERROR(-res);
                 }

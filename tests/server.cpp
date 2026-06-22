@@ -302,11 +302,11 @@ void Server::_do_accept(rawio::Queue& queue, std::shared_ptr<Command> command) {
     auto command_accept = std::dynamic_pointer_cast<CommandAccept>(command);
     queue.accept(
         _fd, nullptr, nullptr,
-        [this, command_accept](size_t result, int error) {
+        [this, command_accept](int result) {
             _notify();
 
-            if (error) {
-                RAWSTD_THROW_SYSTEM_ERROR(error);
+            if (result < 0) {
+                RAWSTD_THROW_SYSTEM_ERROR(-result);
             }
             RAWSTD_TRACE_EVENT_MESSAGE(
                 command_accept->trace_event, "accepted on fd: %zu\n", result

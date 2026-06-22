@@ -227,13 +227,13 @@ public:
 
 class EventSimplexPollOneshot final : public EventSimplexPoll {
 private:
-    std::function<void(size_t, int)> _cb;
+    std::function<void(int)> _cb;
 
 public:
     EventSimplexPollOneshot(
         Queue& q, int fd, unsigned int mask,
         const rawstd::TraceEvent& trace_event,
-        std::function<void(size_t, int)>&& cb
+        std::function<void(int)>&& cb
     ) :
         EventSimplexPoll(q, fd, mask, trace_event),
         _cb(std::move(cb)) {}
@@ -243,13 +243,13 @@ public:
 
 class EventSimplexPollMultishot final : public EventSimplexPoll {
 private:
-    std::function<void(size_t, int)> _cb;
+    std::function<void(int)> _cb;
 
 public:
     EventSimplexPollMultishot(
         Queue& q, int fd, unsigned int mask,
         const rawstd::TraceEvent& trace_event,
-        std::function<void(size_t, int)>&& cb
+        std::function<void(int)>&& cb
     ) :
         EventSimplexPoll(q, fd, mask, trace_event),
         _cb(std::move(cb)) {}
@@ -281,13 +281,13 @@ class EventSimplexAcceptOneshot final : public EventSimplexAccept {
 private:
     sockaddr* _addr;
     socklen_t* _addrlen;
-    std::function<void(size_t, int)> _cb;
+    std::function<void(int)> _cb;
 
 public:
     EventSimplexAcceptOneshot(
         Queue& q, int fd, sockaddr* addr, socklen_t* addrlen,
         const rawstd::TraceEvent& trace_event,
-        std::function<void(size_t, int)>&& cb
+        std::function<void(int)>&& cb
     ) :
         EventSimplexAccept(q, fd, trace_event),
         _addr(addr),
@@ -303,12 +303,12 @@ public:
 
 class EventSimplexAcceptMultishot final : public EventSimplexAccept {
 private:
-    std::function<void(size_t, int)> _cb;
+    std::function<void(int)> _cb;
 
 public:
     EventSimplexAcceptMultishot(
         Queue& q, int fd, const rawstd::TraceEvent& trace_event,
-        std::function<void(size_t, int)>&& cb
+        std::function<void(int)>&& cb
     ) :
         EventSimplexAccept(q, fd, trace_event),
         _cb(std::move(cb)) {}
