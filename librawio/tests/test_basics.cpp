@@ -26,12 +26,8 @@ TEST_F(BasicsTest, empty) {
     _server.wait();
     EXPECT_THROW(_queue->wait_timeout(0), std::system_error);
 
-    size_t result = 0;
-    int error = 0;
-    _queue->poll(_fd, POLLIN, [&result, &error](size_t r, int e) {
-        result = r;
-        error = e;
-    });
+    int result = 0;
+    _queue->poll(_fd, POLLIN, [&result](int r) { result = r; });
 
     EXPECT_NO_THROW(_queue->wait_timeout(0));
 
@@ -43,29 +39,19 @@ TEST_F(BasicsTest, pollin) {
     _server.write(server_buf, sizeof(server_buf));
     _server.wait();
 
-    size_t result = 0;
-    int error = 0;
-    _queue->poll(_fd, POLLIN, [&result, &error](size_t r, int e) {
-        result = r;
-        error = e;
-    });
+    int result = 0;
+    _queue->poll(_fd, POLLIN, [&result](int r) { result = r; });
     _queue->wait_timeout(0);
 
-    EXPECT_EQ(result, (size_t)POLLIN);
-    EXPECT_EQ(error, 0);
+    EXPECT_EQ(result, POLLIN);
 }
 
 TEST_F(BasicsTest, pollout) {
-    size_t result = 0;
-    int error = 0;
-    _queue->poll(_fd, POLLOUT, [&result, &error](size_t r, int e) {
-        result = r;
-        error = e;
-    });
+    int result = 0;
+    _queue->poll(_fd, POLLOUT, [&result](int r) { result = r; });
     _queue->wait_timeout(0);
 
-    EXPECT_EQ(result, (size_t)POLLOUT);
-    EXPECT_EQ(error, 0);
+    EXPECT_EQ(result, POLLOUT);
 }
 
 TEST_F(BasicsTest, accept) {
@@ -88,19 +74,13 @@ TEST_F(BasicsTest, accept) {
     );
     _server.wait();
 
-    size_t result = 0;
-    int error = 0;
-    _queue->accept(
-        client_socket.fd(), nullptr, nullptr,
-        [&result, &error](size_t r, int e) {
-            result = r;
-            error = e;
-        }
-    );
+    int result = -1;
+    _queue->accept(client_socket.fd(), nullptr, nullptr, [&result](int r) {
+        result = r;
+    });
 
     EXPECT_NO_THROW(_queue->wait_timeout(0));
-    EXPECT_GT(result, (size_t)0);
-    EXPECT_EQ(error, 0);
+    EXPECT_GE(result, 0);
 }
 
 TEST_F(BasicsTest, read) {
