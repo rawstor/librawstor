@@ -704,8 +704,25 @@ int Session::_connect() {
         rawstd_info(
             "fd %d: Connecting to %s...\n", fd, location().str().c_str()
         );
-        if (connect(fd, (sockaddr*)&servaddr, sizeof(servaddr)) == -1) {
-            RAWSTD_THROW_ERRNO();
+        for (unsigned int attempt = 1; attempt <= rawstor_opts_io_attempts();
+             ++attempt) {
+            int res = connect(fd, (sockaddr*)&servaddr, sizeof(servaddr));
+            if (res == 0) {
+                break;
+            }
+            if (res == -1) {
+                if (errno == EINTR && attempt != rawstor_opts_io_attempts()) {
+                    int errsv = errno;
+                    errno = 0;
+                    rawstd_warning(
+                        "Connect failed; error: %s; "
+                        "attempt: %d of %d; retrying...\n",
+                        strerror(errsv), attempt, rawstor_opts_io_attempts()
+                    );
+                } else {
+                    RAWSTD_THROW_ERRNO();
+                }
+            }
         }
         rawstd_info("fd %d: Connected\n", fd);
 
