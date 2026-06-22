@@ -214,7 +214,10 @@ TEST(ConnectTest, basics) {
     }
 
     int result = -1;
-    queue->connect(socket.fd(), reinterpret_cast<sockaddr*>(&addr), sizeof(addr), [&result](int r){ result = r; });
+    queue->connect(
+        socket.fd(), reinterpret_cast<sockaddr*>(&addr), sizeof(addr),
+        [&result](int r) { result = r; }
+    );
 
     EXPECT_NO_THROW(queue->wait_timeout(0));
     EXPECT_GE(result, 0);
