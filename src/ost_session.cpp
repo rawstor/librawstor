@@ -739,11 +739,8 @@ int Session::_connect() {
                 if (value) {
                     RAWSTD_THROW_SYSTEM_ERROR(value);
                 }
-            }
-        }
-        for (unsigned int attempt = 1; attempt <= rawstor_opts_io_attempts();
-             ++attempt) {
-            if (res == -1) {
+            } else {
+                RAWSTD_THROW_ERRNO();
             }
         }
         rawstd_info("fd %d: Connected\n", fd);
