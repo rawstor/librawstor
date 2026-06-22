@@ -717,12 +717,32 @@ int Session::_connect() {
                     .revents = 0,
                 };
                 rawstd_warning("Connect interrupted; polling...\n");
-                res = poll(&fds, 1, so_sndtimeo);
-                if (res == -1) {
-                    RAWSTD_THROW_ERRNO();
-                }
-                if (res == 0) {
-                    RAWSTD_THROW_SYSTEM_ERROR(ETIMEDOUT);
+                for (unsigned int attempt = 1;
+                     attempt <= rawstor_opts_io_attempts(); ++attempt) {
+                    try {
+                        res = poll(&fds, 1, so_sndtimeo);
+                        if (res == -1) {
+                            RAWSTD_THROW_ERRNO();
+                        }
+                        if (res == 0) {
+                            RAWSTD_THROW_SYSTEM_ERROR(ETIMEDOUT);
+                        }
+                    } catch (const std::exception& e) {
+                        if (attempt != rawstor_opts_io_attempts()) {
+                            rawstd_warning(
+                                "Poll failed; error: %s; "
+                                "attempt: %d of %d; retrying...\n",
+                                e.what(), attempt, rawstor_opts_io_attempts()
+                            );
+                        } else {
+                            rawstd_warning(
+                                "Poll failed; error: %s; "
+                                "attempt: %d of %d; failing...\n",
+                                e.what(), attempt, rawstor_opts_io_attempts()
+                            );
+                            throw;
+                        }
+                    }
                 }
 
                 int value = 0;
