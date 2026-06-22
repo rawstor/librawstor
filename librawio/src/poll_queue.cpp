@@ -274,6 +274,46 @@ rawio::Event* Queue::accept_multishot(int fd, std::function<void(int)>&& cb) {
     return ret;
 }
 
+rawio::Event* Queue::connect(
+    int fd, sockaddr* addr, socklen_t addrlen, std::function<void(int)>&& cb
+) {
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('|', "fd = %d\n", fd);
+
+    std::unique_ptr<EventEval> event = std::make_unique<EventEval>(
+        *this, trace_event,
+        [fd, addr, addrlen]() -> int {
+            int res = ::connect(fd, addr, addrlen);
+            if (res == -1) {
+                res = -errno;
+                errno = 0;
+            }
+            return res;
+        },
+        [this, fd, cb = std::move(cb)](int connect_result) {
+            if (connect_result != -EINTR) {
+                cb(connect_result);
+            } else {
+                poll(fd, POLLOUT, [connect_result, cb = std::move(cb)](int poll_result){
+                    if (poll_result == -1) {
+                        RAWSTD_THROW_ERRNO();
+                    }
+                    if (poll_result == 0) {
+                        RAWSTD_THROW_SYSTEM_ERROR(ETIMEDOUT);
+                    }
+                    if (!(poll_result & POLLOUT)) {
+                        RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
+                    }
+                    cb(connect_result);
+                });
+            }
+        }
+    );
+
+    rawio::Event* ret = static_cast<rawio::Event*>(event.get());
+    _eval(std::move(event));
+    return ret;
+}
+
 rawio::Event* Queue::read(
     int fd, void* buf, size_t size, std::function<void(size_t, int)>&& cb
 ) {

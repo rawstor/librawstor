@@ -197,4 +197,27 @@ TEST(OpenCloseTest, basics) {
     EXPECT_EQ(fd, 0);
 }
 
+TEST(ConnectTest, basics) {
+    rawio::tests::Server server;
+
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(1);
+
+    rawio::tests::Socket socket;
+
+    sockaddr_un addr = {};
+    addr.sun_family = AF_UNIX;
+    if (snprintf(
+            addr.sun_path, sizeof(addr.sun_path), "%s",
+            server.socket().name().c_str()
+        ) < 0) {
+        RAWSTD_THROW_ERRNO();
+    }
+
+    int result = -1;
+    queue->connect(socket.fd(), reinterpret_cast<sockaddr*>(&addr), sizeof(addr), [&result](int r){ result = r; });
+
+    EXPECT_NO_THROW(queue->wait_timeout(0));
+    EXPECT_GE(result, 0);
+}
+
 } // unnamed namespace
