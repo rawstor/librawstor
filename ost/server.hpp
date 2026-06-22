@@ -23,8 +23,8 @@ private:
     RawIOEvent* _accept_event;
     std::unordered_map<int, std::unique_ptr<Session>> _sessions;
 
-    static int _accept(size_t result, int error, void* data) noexcept;
-    int _accept(size_t result, int error);
+    static int _accept(int result, void* data) noexcept;
+    int _accept(int result);
     void _add_session(int fd);
 
 public:

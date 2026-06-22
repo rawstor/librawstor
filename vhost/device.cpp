@@ -154,16 +154,17 @@ public:
     void operator()(size_t size, size_t result, int error);
 };
 
+template <typename... Args>
 class Task {
 protected:
     rawstor::vhost::Device& _device;
 
 public:
-    static int callback(size_t result, int error, void* data) {
-        std::unique_ptr<Task> t(static_cast<Task*>(data));
+    static int callback(Args... args, void* data) {
+        std::unique_ptr<Task<Args...>> t(static_cast<Task<Args...>*>(data));
 
         try {
-            (*t)(result, error);
+            (*t)(args...);
             return 0;
         } catch (const std::system_error& e) {
             return -e.code().value();
@@ -181,26 +182,14 @@ public:
     Task& operator=(const Task&) = delete;
     Task& operator=(Task&&) = delete;
 
-    virtual void operator()(size_t result, int error) = 0;
+    virtual void operator()(Args... args) = 0;
 };
 
-class TaskMultishot : public Task {
+template <typename... Args>
+class TaskMultishot : public Task<Args...> {
 public:
-    static int callback(size_t result, int error, void* data) {
-        std::unique_ptr<TaskMultishot> t(static_cast<TaskMultishot*>(data));
-
-        try {
-            (*t)(result, error);
-            if (error == 0) {
-                t.release();
-            }
-            return 0;
-        } catch (const std::system_error& e) {
-            return -e.code().value();
-        }
-    }
-
-    explicit TaskMultishot(rawstor::vhost::Device& device) : Task(device) {}
+    explicit TaskMultishot(rawstor::vhost::Device& device) :
+        Task<Args...>(device) {}
     TaskMultishot(const TaskMultishot&) = delete;
     TaskMultishot(TaskMultishot&&) = delete;
     virtual ~TaskMultishot() = default;
@@ -208,12 +197,12 @@ public:
     TaskMultishot& operator=(const TaskMultishot&) = delete;
     TaskMultishot& operator=(TaskMultishot&&) = delete;
 
-    virtual void operator()(size_t result, int error) = 0;
+    virtual void operator()(Args... args) = 0;
 };
 
-class TaskPoll : public Task {
+class TaskPoll : public Task<int> {
 public:
-    explicit TaskPoll(rawstor::vhost::Device& device) : Task(device) {}
+    explicit TaskPoll(rawstor::vhost::Device& device) : Task<int>(device) {}
     virtual ~TaskPoll() override = default;
 
     virtual unsigned int mask() = 0;
@@ -233,10 +222,10 @@ public:
 
     unsigned int mask() override { return POLLIN; }
 
-    void operator()(size_t, int error) override;
+    void operator()(int result) override;
 };
 
-class TaskWatch final : public TaskMultishot {
+class TaskWatch final : public TaskMultishot<int> {
 private:
     int _fd;
     int _condition;
@@ -245,11 +234,28 @@ private:
     void* _data;
 
 public:
+    static int callback(int result, void* data) {
+        std::unique_ptr<TaskWatch> t(static_cast<TaskWatch*>(data));
+
+        try {
+            (*t)(result);
+            if (result >= 0) {
+                t.release();
+            }
+            return 0;
+        } catch (const std::system_error& e) {
+            return -e.code().value();
+        } catch (const std::exception& e) {
+            rawstd_error("%s\n", e.what());
+            return -EINVAL;
+        }
+    }
+
     TaskWatch(
         rawstor::vhost::Device& device, int fd, int condition, vu_watch_cb cb,
         void* data
     ) :
-        TaskMultishot(device),
+        TaskMultishot<int>(device),
         _fd(fd),
         _condition(condition),
         _mask(0),
@@ -265,12 +271,12 @@ public:
 
     unsigned int mask() { return _mask; }
 
-    void operator()(size_t, int error) override;
+    void operator()(int result) override;
 };
 
-void TaskDispatch::operator()(size_t result, int error) {
-    if (error != 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(error);
+void TaskDispatch::operator()(int result) {
+    if (result < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-result);
     }
 
     if (result & POLLNVAL) {
@@ -293,9 +299,12 @@ void TaskDispatch::operator()(size_t result, int error) {
     poll(_device.queue(), _device.dev()->sock, std::move(t));
 }
 
-void TaskWatch::operator()(size_t result, int error) {
-    if (error != 0 && error != ECANCELED) {
-        RAWSTD_THROW_SYSTEM_ERROR(error);
+void TaskWatch::operator()(int result) {
+    if (result < 0) {
+        if (result == -ECANCELED) {
+            return;
+        }
+        RAWSTD_THROW_SYSTEM_ERROR(-result);
     }
 
     if (result & POLLNVAL) {

@@ -108,8 +108,54 @@ int rawio_queue_create(unsigned int depth, RawIOQueue** queue) RAWSTOR_NOEXCEPT;
 
 void rawio_queue_delete(RawIOQueue* queue) RAWSTOR_NOEXCEPT;
 
+/**
+ * @brief Asynchronously polls a file descriptor for events (single-shot).
+ *
+ * This function initiates a one‑time asynchronous poll operation on the
+ * specified file descriptor. When one or more of the requested events occur,
+ * or an error happens, the provided callback is invoked exactly once. After
+ * the callback returns, the operation is complete and no further callbacks
+ * will be triggered for this request.
+ *
+ * @param fd    File descriptor to monitor. Must be a valid, open file
+ *              descriptor.
+ *
+ * @param mask  Bitmask of events to monitor, composed of poll event flags
+ *              (e.g., POLLIN, POLLOUT). Multiple events can be combined
+ *              using bitwise OR.
+ *
+ * @param cb    Callback function invoked when the poll completes. The
+ *              callback receives an integer result:
+ *              - If positive, it is the bitmask of events that occurred
+ *                (subset of the requested mask).
+ *              - If negative, it is the negative error code (e.g., -EBADF,
+ *                -EINVAL). In case of an error, the operation is considered
+ *                failed and no further action is taken.
+ *
+ * @param data  User-defined context pointer passed unchanged to the callback.
+ *              Can be used to maintain application state.
+ *
+ * @return      0 on successful initiation of the asynchronous poll operation.
+ *              Negative error code on failure (e.g., -EBADF, -EINVAL).
+ *
+ * @note        This is a single‑shot operation: after the callback is invoked,
+ *              the operation terminates automatically. No explicit cancellation
+ *              is required or possible (no event handle is returned).
+ *
+ * @warning     The callback may be invoked from an I/O completion context.
+ *              Avoid blocking operations inside the callback; instead, queue
+ *              the result for processing in a separate thread or context.
+ *
+ * @warning     Polling a descriptor that doesn't support the requested events
+ *              may result in immediate callback invocation with an appropriate
+ *              error code.
+ *
+ * @see         rawio_poll_multishot() for a persistent (multishot) version.
+ * @see         poll(2) for standard poll semantics and event definitions.
+ */
 int rawio_poll(
-    RawIOQueue* queue, int fd, unsigned int mask, RawIOCallback* cb, void* data
+    RawIOQueue* queue, int fd, unsigned int mask,
+    int (*cb)(int result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
 /**
@@ -131,8 +177,12 @@ int rawio_poll(
  *              descriptor types.
  *
  * @param cb    Callback function invoked when monitored events occur or an
- *              error happens. The callback receives the event mask of occurred
- *              events and any error code.
+ *              error happens. The callback receives an integer result:
+ *              - If positive, it is the bitmask of events that occurred
+ *                (subset of the requested mask).
+ *              - If negative, it is the negative error code (e.g., -EBADF,
+ *                -EINVAL). In case of an error, the operation is automatically
+ *                terminated and no further callbacks will be invoked.
  *
  * @param data  User-defined context pointer passed unchanged to each callback
  *              invocation. Can be used to maintain application state across
@@ -155,7 +205,7 @@ int rawio_poll(
  *              Calling rawio_cancel() on an already-terminated event is
  *              unnecessary and will return -ENOENT.
  *
- * @warning     The callback may be invoked from an completion context. Avoid
+ * @warning     The callback may be invoked from a completion context. Avoid
  *              blocking operations in the callback; instead, queue events for
  *              processing in a separate context.
  *
@@ -167,8 +217,8 @@ int rawio_poll(
  * @see         poll(2) for standard poll semantics and event definitions.
  */
 int rawio_poll_multishot(
-    RawIOQueue* queue, int fd, unsigned int mask, RawIOCallback* cb, void* data,
-    RawIOEvent** event
+    RawIOQueue* queue, int fd, unsigned int mask,
+    int (*cb)(int result, void* data), void* data, RawIOEvent** event
 ) RAWSTOR_NOEXCEPT;
 
 /**
@@ -194,10 +244,11 @@ int rawio_poll_multishot(
  *                to the input value). Cannot be NULL if addr is non-NULL.
  *
  * @param cb      Callback function invoked when the accept operation completes.
- *                On success, the `result` parameter contains the new connected
- *                socket descriptor (cast to size_t). On error, `result` is 0
- *                and `error` contains the error code (e.g., EAGAIN,
- *                ECONNABORTED).
+ *                The callback receives an integer result:
+ *                - If positive, it is the new connected socket descriptor.
+ *                - If negative, it is the negative error code (e.g., -EAGAIN,
+ *                  -ECONNABORTED). In case of an error, the operation is
+ *                  considered failed and no further action is taken.
  *
  * @param data    User-defined context pointer passed unchanged to the callback.
  *
@@ -205,9 +256,8 @@ int rawio_poll_multishot(
  *                operation. Negative error code on failure (e.g., -EBADF,
  *                -EINVAL).
  *
- * @note          The caller
- *                is responsible for closing the client socket when no longer
- *                needed.
+ * @note          The caller is responsible for closing the client socket when
+ *                no longer needed.
  *
  * @warning       The callback may be invoked from an I/O completion context.
  *                Avoid blocking operations inside the callback; instead, queue
@@ -218,7 +268,7 @@ int rawio_poll_multishot(
  */
 int rawio_accept(
     RawIOQueue* queue, int fd, struct sockaddr* addr, socklen_t* addrlen,
-    RawIOCallback* cb, void* data
+    int (*cb)(int result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
 /**
@@ -235,10 +285,12 @@ int rawio_accept(
  * @param fd      Listening socket file descriptor. Must be bound and listening.
  *
  * @param cb      Callback function invoked for each incoming connection.
- *                On success, the `result` parameter contains the new connected
- *                socket descriptor (cast to size_t). The `error` parameter is
- *                0. On error (e.g., socket closure, invalid state), `result` is
- *                0 and `error` contains the error code.
+ *                The callback receives an integer result:
+ *                - If positive, it is the new connected socket descriptor.
+ *                - If negative, it is the negative error code (e.g., -EBADF,
+ *                  -EINVAL). In case of an error, the multishot operation is
+ *                  automatically terminated and no further callbacks will be
+ *                  invoked.
  *
  * @param data    User-defined context pointer passed unchanged to each callback
  *                invocation.
@@ -271,7 +323,8 @@ int rawio_accept(
  * @see           accept(2), getpeername(2).
  */
 int rawio_accept_multishot(
-    RawIOQueue* queue, int fd, RawIOCallback* cb, void* data, RawIOEvent** event
+    RawIOQueue* queue, int fd, int (*cb)(int result, void* data), void* data,
+    RawIOEvent** event
 ) RAWSTOR_NOEXCEPT;
 
 int rawio_read(

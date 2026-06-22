@@ -34,17 +34,13 @@ void rawio_queue_delete(RawIOQueue* queue) noexcept {
 }
 
 int rawio_poll(
-    RawIOQueue* queue, int fd, unsigned int mask, RawIOCallback* cb, void* data
+    RawIOQueue* queue, int fd, unsigned int mask,
+    int (*cb)(int result, void* data), void* data
 ) noexcept {
     try {
         static_cast<rawio::Queue*>(queue)->poll(
             fd, mask, [cb, data](int result) {
-                int res;
-                if (result >= 0) {
-                    res = cb(result, 0, data);
-                } else {
-                    res = cb(0, -result, data);
-                }
+                int res = cb(result, data);
                 if (res) {
                     RAWSTD_THROW_SYSTEM_ERROR(-res);
                 }
@@ -65,18 +61,13 @@ int rawio_poll(
 }
 
 int rawio_poll_multishot(
-    RawIOQueue* queue, int fd, unsigned int mask, RawIOCallback* cb, void* data,
-    RawIOEvent** event
+    RawIOQueue* queue, int fd, unsigned int mask,
+    int (*cb)(int result, void* data), void* data, RawIOEvent** event
 ) noexcept {
     try {
         RawIOEvent* e = static_cast<rawio::Queue*>(queue)->poll_multishot(
             fd, mask, [cb, data](int result) {
-                int res;
-                if (result >= 0) {
-                    res = cb(result, 0, data);
-                } else {
-                    res = cb(0, -result, data);
-                }
+                int res = cb(result, data);
                 if (res) {
                     RAWSTD_THROW_SYSTEM_ERROR(-res);
                 }
@@ -101,17 +92,12 @@ int rawio_poll_multishot(
 
 int rawio_accept(
     RawIOQueue* queue, int fd, sockaddr* addr, socklen_t* addrlen,
-    RawIOCallback* cb, void* data
+    int (*cb)(int result, void* data), void* data
 ) noexcept {
     try {
         static_cast<rawio::Queue*>(queue)->accept(
             fd, addr, addrlen, [cb, data](int result) {
-                int res;
-                if (result >= 0) {
-                    res = cb(result, 0, data);
-                } else {
-                    res = cb(0, -result, data);
-                }
+                int res = cb(result, data);
                 if (res) {
                     RAWSTD_THROW_SYSTEM_ERROR(-res);
                 }
@@ -132,17 +118,13 @@ int rawio_accept(
 }
 
 int rawio_accept_multishot(
-    RawIOQueue* queue, int fd, RawIOCallback* cb, void* data, RawIOEvent** event
+    RawIOQueue* queue, int fd, int (*cb)(int result, void* data), void* data,
+    RawIOEvent** event
 ) noexcept {
     try {
         RawIOEvent* e = static_cast<rawio::Queue*>(queue)->accept_multishot(
             fd, [cb, data](int result) {
-                int res;
-                if (result >= 0) {
-                    res = cb(result, 0, data);
-                } else {
-                    res = cb(0, -result, data);
-                }
+                int res = cb(result, data);
                 if (res) {
                     RAWSTD_THROW_SYSTEM_ERROR(-res);
                 }
