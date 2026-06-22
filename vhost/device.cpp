@@ -202,7 +202,7 @@ public:
 
 class TaskPoll : public Task<int> {
 public:
-    explicit TaskPoll(rawstor::vhost::Device& device) : Task(device) {}
+    explicit TaskPoll(rawstor::vhost::Device& device) : Task<int>(device) {}
     virtual ~TaskPoll() override = default;
 
     virtual unsigned int mask() = 0;
@@ -255,7 +255,7 @@ public:
         rawstor::vhost::Device& device, int fd, int condition, vu_watch_cb cb,
         void* data
     ) :
-        TaskMultishot(device),
+        TaskMultishot<int>(device),
         _fd(fd),
         _condition(condition),
         _mask(0),
