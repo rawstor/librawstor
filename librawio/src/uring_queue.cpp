@@ -262,8 +262,7 @@ rawio::Event* Queue::poll_multishot(
 }
 
 rawio::Event* Queue::accept(
-    int fd, sockaddr* addr, socklen_t* addrlen,
-    std::function<void(int)>&& cb
+    int fd, sockaddr* addr, socklen_t* addrlen, std::function<void(int)>&& cb
 ) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('|', "fd = %d\n", fd);
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
@@ -314,8 +313,7 @@ rawio::Event* Queue::accept(
     return static_cast<rawio::Event*>(p.release());
 }
 
-rawio::Event*
-Queue::accept_multishot(int fd, std::function<void(int)>&& cb) {
+rawio::Event* Queue::accept_multishot(int fd, std::function<void(int)>&& cb) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('|', "fd = %d\n", fd);
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {

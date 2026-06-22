@@ -19,9 +19,7 @@ TEST_F(PollHupTest, pollin) {
     _server.wait();
 
     int result = 0;
-    _queue->poll(_fd, POLLIN, [&result](int r) {
-        result = r;
-    });
+    _queue->poll(_fd, POLLIN, [&result](int r) { result = r; });
     _queue->wait_timeout(0);
 
     EXPECT_TRUE(result & POLLIN);
@@ -33,9 +31,7 @@ TEST_F(PollHupTest, pollout) {
     _server.wait();
 
     int result = 0;
-    _queue->poll(_fd, POLLOUT, [&result](int r) {
-        result = r;
-    });
+    _queue->poll(_fd, POLLOUT, [&result](int r) { result = r; });
     _queue->wait_timeout(0);
 
     EXPECT_TRUE(result & POLLHUP);

@@ -23,9 +23,7 @@ TEST_F(CancelTest, cancel_noent) {
 TEST_F(CancelTest, poll) {
     int result = 0;
     rawio::Event* event =
-        _queue->poll(_fd, POLLIN, [&result](int r) {
-            result = r;
-        });
+        _queue->poll(_fd, POLLIN, [&result](int r) { result = r; });
 
     EXPECT_THROW(_queue->wait_timeout(0), std::system_error);
 
@@ -44,9 +42,7 @@ TEST_F(CancelTest, poll_completed) {
 
     int result = 0;
     rawio::Event* event =
-        _queue->poll(_fd, POLLIN, [&result](int r) {
-            result = r;
-        });
+        _queue->poll(_fd, POLLIN, [&result](int r) { result = r; });
 
     _queue->wait_timeout(0);
 
@@ -153,9 +149,7 @@ TEST_F(CancelTest, write_completed) {
 
 TEST_F(CancelTest, cancel_all) {
     int result_poll = 0;
-    _queue->poll(_fd, POLLIN, [&result_poll](int r) {
-        result_poll = r;
-    });
+    _queue->poll(_fd, POLLIN, [&result_poll](int r) { result_poll = r; });
 
     char client_buf_read[10];
     size_t result_read = 0;

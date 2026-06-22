@@ -232,8 +232,7 @@ private:
 public:
     EventSimplexPollOneshot(
         Queue& q, int fd, unsigned int mask,
-        const rawstd::TraceEvent& trace_event,
-        std::function<void(int)>&& cb
+        const rawstd::TraceEvent& trace_event, std::function<void(int)>&& cb
     ) :
         EventSimplexPoll(q, fd, mask, trace_event),
         _cb(std::move(cb)) {}
@@ -248,8 +247,7 @@ private:
 public:
     EventSimplexPollMultishot(
         Queue& q, int fd, unsigned int mask,
-        const rawstd::TraceEvent& trace_event,
-        std::function<void(int)>&& cb
+        const rawstd::TraceEvent& trace_event, std::function<void(int)>&& cb
     ) :
         EventSimplexPoll(q, fd, mask, trace_event),
         _cb(std::move(cb)) {}
@@ -286,8 +284,7 @@ private:
 public:
     EventSimplexAcceptOneshot(
         Queue& q, int fd, sockaddr* addr, socklen_t* addrlen,
-        const rawstd::TraceEvent& trace_event,
-        std::function<void(int)>&& cb
+        const rawstd::TraceEvent& trace_event, std::function<void(int)>&& cb
     ) :
         EventSimplexAccept(q, fd, trace_event),
         _addr(addr),

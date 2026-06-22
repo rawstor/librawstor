@@ -27,9 +27,7 @@ TEST_F(BasicsTest, empty) {
     EXPECT_THROW(_queue->wait_timeout(0), std::system_error);
 
     int result = 0;
-    _queue->poll(_fd, POLLIN, [&result](int r) {
-        result = r;
-    });
+    _queue->poll(_fd, POLLIN, [&result](int r) { result = r; });
 
     EXPECT_NO_THROW(_queue->wait_timeout(0));
 
@@ -42,9 +40,7 @@ TEST_F(BasicsTest, pollin) {
     _server.wait();
 
     int result = 0;
-    _queue->poll(_fd, POLLIN, [&result](int r) {
-        result = r;
-    });
+    _queue->poll(_fd, POLLIN, [&result](int r) { result = r; });
     _queue->wait_timeout(0);
 
     EXPECT_EQ(result, POLLIN);
@@ -52,9 +48,7 @@ TEST_F(BasicsTest, pollin) {
 
 TEST_F(BasicsTest, pollout) {
     int result = 0;
-    _queue->poll(_fd, POLLOUT, [&result](int r) {
-        result = r;
-    });
+    _queue->poll(_fd, POLLOUT, [&result](int r) { result = r; });
     _queue->wait_timeout(0);
 
     EXPECT_EQ(result, POLLOUT);
@@ -81,12 +75,9 @@ TEST_F(BasicsTest, accept) {
     _server.wait();
 
     int result = -1;
-    _queue->accept(
-        client_socket.fd(), nullptr, nullptr,
-        [&result](int r) {
-            result = r;
-        }
-    );
+    _queue->accept(client_socket.fd(), nullptr, nullptr, [&result](int r) {
+        result = r;
+    });
 
     EXPECT_NO_THROW(_queue->wait_timeout(0));
     EXPECT_GE(result, 0);

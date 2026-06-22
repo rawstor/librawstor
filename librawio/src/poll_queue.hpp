@@ -46,9 +46,8 @@ public:
 
     rawio::Event* close(int fd, std::function<void(int)>&& cb) override;
 
-    rawio::Event* poll(
-        int fd, unsigned int mask, std::function<void(int)>&& cb
-    ) override;
+    rawio::Event*
+    poll(int fd, unsigned int mask, std::function<void(int)>&& cb) override;
 
     rawio::Event* poll_multishot(
         int fd, unsigned int mask, std::function<void(int)>&& cb

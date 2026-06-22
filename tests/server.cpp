@@ -300,21 +300,18 @@ void Server::_loop() {
 
 void Server::_do_accept(rawio::Queue& queue, std::shared_ptr<Command> command) {
     auto command_accept = std::dynamic_pointer_cast<CommandAccept>(command);
-    queue.accept(
-        _fd, nullptr, nullptr,
-        [this, command_accept](int result) {
-            _notify();
+    queue.accept(_fd, nullptr, nullptr, [this, command_accept](int result) {
+        _notify();
 
-            if (result < 0) {
-                RAWSTD_THROW_SYSTEM_ERROR(-result);
-            }
-            RAWSTD_TRACE_EVENT_MESSAGE(
-                command_accept->trace_event, "accepted on fd: %zu\n", result
-            );
-            assert(_client_fd == -1);
-            _client_fd = result;
+        if (result < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-result);
         }
-    );
+        RAWSTD_TRACE_EVENT_MESSAGE(
+            command_accept->trace_event, "accepted on fd: %zu\n", result
+        );
+        assert(_client_fd == -1);
+        _client_fd = result;
+    });
 }
 
 void Server::_do_close(rawio::Queue&, std::shared_ptr<Command> command) {

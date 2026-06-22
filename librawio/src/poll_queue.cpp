@@ -245,8 +245,7 @@ rawio::Event* Queue::poll_multishot(
 }
 
 rawio::Event* Queue::accept(
-    int fd, sockaddr* addr, socklen_t* addrlen,
-    std::function<void(int)>&& cb
+    int fd, sockaddr* addr, socklen_t* addrlen, std::function<void(int)>&& cb
 ) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('|', "fd = %d\n", fd);
     Session& s = _get_session(fd);
@@ -261,8 +260,7 @@ rawio::Event* Queue::accept(
     return ret;
 }
 
-rawio::Event*
-Queue::accept_multishot(int fd, std::function<void(int)>&& cb) {
+rawio::Event* Queue::accept_multishot(int fd, std::function<void(int)>&& cb) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('|', "fd = %d\n", fd);
     Session& s = _get_session(fd);
 

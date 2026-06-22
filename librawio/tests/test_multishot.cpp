@@ -48,12 +48,11 @@ TEST_F(MultishotTest, poll) {
 
     int result = 0;
     unsigned int count = 0;
-    rawio::Event* event = _queue->poll_multishot(
-        _fd, POLLIN, [&result, &count](int r) {
+    rawio::Event* event =
+        _queue->poll_multishot(_fd, POLLIN, [&result, &count](int r) {
             result = r;
             ++count;
-        }
-    );
+        });
 
     EXPECT_NO_THROW(_queue->wait_timeout(0));
     EXPECT_EQ(result, POLLIN);
@@ -98,12 +97,11 @@ TEST_F(MultishotTest, accept) {
 
     int result = 0;
     unsigned int count = 0;
-    rawio::Event* event = _queue->accept_multishot(
-        client_socket.fd(), [&result, &count](int r) {
+    rawio::Event* event =
+        _queue->accept_multishot(client_socket.fd(), [&result, &count](int r) {
             result = r;
             ++count;
-        }
-    );
+        });
 
     EXPECT_NO_THROW(_queue->wait_timeout(0));
     EXPECT_GT(result, 0);
