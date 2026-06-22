@@ -307,7 +307,7 @@ void Server::_do_accept(rawio::Queue& queue, std::shared_ptr<Command> command) {
             RAWSTD_THROW_SYSTEM_ERROR(-result);
         }
         RAWSTD_TRACE_EVENT_MESSAGE(
-            command_accept->trace_event, "accepted on fd: %zu\n", result
+            command_accept->trace_event, "accepted on fd: %d\n", result
         );
         assert(_client_fd == -1);
         _client_fd = result;
