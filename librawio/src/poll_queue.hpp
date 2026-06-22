@@ -46,21 +46,20 @@ public:
 
     rawio::Event* close(int fd, std::function<void(int)>&& cb) override;
 
-    rawio::Event* poll(
-        int fd, unsigned int mask, std::function<void(size_t, int)>&& cb
-    ) override;
+    rawio::Event*
+    poll(int fd, unsigned int mask, std::function<void(int)>&& cb) override;
 
     rawio::Event* poll_multishot(
-        int fd, unsigned int mask, std::function<void(size_t, int)>&& cb
+        int fd, unsigned int mask, std::function<void(int)>&& cb
     ) override;
 
     rawio::Event* accept(
         int fd, sockaddr* addr, socklen_t* addrlen,
-        std::function<void(size_t, int)>&& cb
+        std::function<void(int)>&& cb
     ) override;
 
     rawio::Event*
-    accept_multishot(int fd, std::function<void(size_t, int)>&& cb) override;
+    accept_multishot(int fd, std::function<void(int)>&& cb) override;
 
     rawio::Event* read(
         int fd, void* buf, size_t size, std::function<void(size_t, int)>&& cb

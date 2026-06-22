@@ -18,33 +18,23 @@ TEST_F(PollHupTest, pollin) {
     _server.close();
     _server.wait();
 
-    size_t result = 0;
-    int error = 0;
-    _queue->poll(_fd, POLLIN, [&result, &error](size_t r, int e) {
-        result = r;
-        error = e;
-    });
+    int result = 0;
+    _queue->poll(_fd, POLLIN, [&result](int r) { result = r; });
     _queue->wait_timeout(0);
 
     EXPECT_TRUE(result & POLLIN);
     EXPECT_TRUE(result & POLLHUP);
-    EXPECT_EQ(error, 0);
 }
 
 TEST_F(PollHupTest, pollout) {
     _server.close();
     _server.wait();
 
-    size_t result = 0;
-    int error = 0;
-    _queue->poll(_fd, POLLOUT, [&result, &error](size_t r, int e) {
-        result = r;
-        error = e;
-    });
+    int result = 0;
+    _queue->poll(_fd, POLLOUT, [&result](int r) { result = r; });
     _queue->wait_timeout(0);
 
     EXPECT_TRUE(result & POLLHUP);
-    EXPECT_EQ(error, 0);
 }
 
 TEST_F(PollHupTest, read) {
