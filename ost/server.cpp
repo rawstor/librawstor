@@ -107,11 +107,11 @@ Server::~Server() {
     rawstor_terminate();
 }
 
-int Server::_accept(size_t result, int error, void* data) noexcept {
+int Server::_accept(int result, void* data) noexcept {
     Server* server = static_cast<Server*>(data);
 
     try {
-        return server->_accept(result, error);
+        return server->_accept(result);
     } catch (const std::exception& e) {
         rawstd_error("%s\n", e.what());
     }
@@ -119,9 +119,9 @@ int Server::_accept(size_t result, int error, void* data) noexcept {
     return 0;
 }
 
-int Server::_accept(size_t result, int error) {
-    if (error) {
-        RAWSTD_THROW_SYSTEM_ERROR(error);
+int Server::_accept(int result) {
+    if (result < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-result);
     }
 
     _add_session(result);

@@ -109,7 +109,8 @@ int rawio_queue_create(unsigned int depth, RawIOQueue** queue) RAWSTOR_NOEXCEPT;
 void rawio_queue_delete(RawIOQueue* queue) RAWSTOR_NOEXCEPT;
 
 int rawio_poll(
-    RawIOQueue* queue, int fd, unsigned int mask, RawIOCallback* cb, void* data
+    RawIOQueue* queue, int fd, unsigned int mask,
+    int (*cb)(int result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
 /**
@@ -167,8 +168,8 @@ int rawio_poll(
  * @see         poll(2) for standard poll semantics and event definitions.
  */
 int rawio_poll_multishot(
-    RawIOQueue* queue, int fd, unsigned int mask, RawIOCallback* cb, void* data,
-    RawIOEvent** event
+    RawIOQueue* queue, int fd, unsigned int mask,
+    int (*cb)(int result, void* data), void* data, RawIOEvent** event
 ) RAWSTOR_NOEXCEPT;
 
 /**
@@ -218,7 +219,7 @@ int rawio_poll_multishot(
  */
 int rawio_accept(
     RawIOQueue* queue, int fd, struct sockaddr* addr, socklen_t* addrlen,
-    RawIOCallback* cb, void* data
+    int (*cb)(int result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
 /**
@@ -271,7 +272,8 @@ int rawio_accept(
  * @see           accept(2), getpeername(2).
  */
 int rawio_accept_multishot(
-    RawIOQueue* queue, int fd, RawIOCallback* cb, void* data, RawIOEvent** event
+    RawIOQueue* queue, int fd, int (*cb)(int result, void* data), void* data,
+    RawIOEvent** event
 ) RAWSTOR_NOEXCEPT;
 
 int rawio_read(
