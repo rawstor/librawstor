@@ -84,7 +84,7 @@ std::vector<std::shared_ptr<Session>> Connection::_open(
             }
 
             break;
-        } catch (const std::system_error& e) {
+        } catch (const std::exception& e) {
             if (attempt != rawstor_opts_io_attempts()) {
                 rawstd_warning(
                     "Open session failed; error: %s; "
