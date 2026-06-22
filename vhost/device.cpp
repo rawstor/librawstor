@@ -245,6 +245,9 @@ public:
             return 0;
         } catch (const std::system_error& e) {
             return -e.code().value();
+        } catch (const std::exception& e) {
+            rawstd_error("%s\n", e.what());
+            return -EINVAL;
         }
     }
 
