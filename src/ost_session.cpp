@@ -713,7 +713,7 @@ int Session::_connect() {
 
                 pollfd fds = {
                     .fd = fd,
-                    .events = POLL_OUT,
+                    .events = POLLOUT,
                     .revents = 0,
                 };
                 rawstd_warning("Connect interrupted; polling...\n");
@@ -726,7 +726,7 @@ int Session::_connect() {
                     RAWSTD_THROW_SYSTEM_ERROR(EINTR);
                 }
 
-                if (!(fds.revents & POLL_OUT)) {
+                if (!(fds.revents & POLLOUT)) {
                     RAWSTD_THROW_SYSTEM_ERROR(EINTR);
                 }
 
