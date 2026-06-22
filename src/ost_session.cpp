@@ -727,6 +727,7 @@ int Session::_connect() {
                         if (res == 0) {
                             RAWSTD_THROW_SYSTEM_ERROR(ETIMEDOUT);
                         }
+                        break;
                     } catch (const std::exception& e) {
                         if (attempt != rawstor_opts_io_attempts()) {
                             rawstd_warning(
