@@ -275,7 +275,8 @@ rawio::Event* Queue::accept_multishot(int fd, std::function<void(int)>&& cb) {
 }
 
 rawio::Event* Queue::connect(
-    int fd, sockaddr* addr, socklen_t addrlen, std::function<void(int)>&& cb
+    int fd, const sockaddr* addr, socklen_t addrlen,
+    std::function<void(int)>&& cb
 ) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('|', "fd = %d\n", fd);
 
