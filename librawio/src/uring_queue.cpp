@@ -71,27 +71,15 @@ void Queue::_dispatch() {
             ++nr;
             --_events;
 
-            std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p(
-                static_cast<std::function<void(size_t, int, unsigned int)>*>(
+            std::unique_ptr<std::function<void(ssize_t, unsigned int)>> p(
+                static_cast<std::function<void(ssize_t, unsigned int)>*>(
                     io_uring_cqe_get_data(cqe)
                 )
             );
 
-            size_t result;
-            int error;
-            if (cqe->res >= 0) [[likely]] {
-                result = cqe->res;
-                error = 0;
-            } else {
-                result = 0;
-                error = -cqe->res;
-            }
-
             try {
-                rawstd_trace(
-                    "callback: result = %zu, error = %d\n", result, error
-                );
-                (*p)(result, error, cqe->flags);
+                rawstd_trace("callback: result = %d\n", cqe->res);
+                (*p)(cqe->res, cqe->flags);
                 rawstd_trace("callback success\n");
             } catch (...) {
                 rawstd_trace("callback error\n");
@@ -159,20 +147,12 @@ rawio::Event* Queue::open(
     if (sqe == nullptr) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
     }
-    std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
-        std::make_unique<std::function<void(size_t, int, unsigned int)>>(
-            [cb = std::move(cb),
-             trace_event](size_t result, int error, unsigned int) {
-                RAWSTD_TRACE_EVENT_MESSAGE(
-                    trace_event, "result = %zu, error = %d\n", result, error
-                );
-                if (!error) {
-                    cb(result);
-                } else {
-                    cb(-error);
-                }
-            }
-        );
+    auto p = std::make_unique<std::function<void(ssize_t, unsigned int)>>(
+        [cb = std::move(cb), trace_event](ssize_t result, unsigned int) {
+            RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "result = %zd\n", result);
+            cb(result);
+        }
+    );
     io_uring_prep_openat(sqe, AT_FDCWD, path, flags, mode);
     io_uring_sqe_set_data(sqe, p.get());
 
@@ -185,20 +165,12 @@ rawio::Event* Queue::close(int fd, std::function<void(int)>&& cb) {
     if (sqe == nullptr) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
     }
-    std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
-        std::make_unique<std::function<void(size_t, int, unsigned int)>>(
-            [cb = std::move(cb),
-             trace_event](size_t result, int error, unsigned int) {
-                RAWSTD_TRACE_EVENT_MESSAGE(
-                    trace_event, "result = %zu, error = %d\n", result, error
-                );
-                if (!error) {
-                    cb(result);
-                } else {
-                    cb(-error);
-                }
-            }
-        );
+    auto p = std::make_unique<std::function<void(ssize_t, unsigned int)>>(
+        [cb = std::move(cb), trace_event](ssize_t result, unsigned int) {
+            RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "result = %zd\n", result);
+            cb(result);
+        }
+    );
     io_uring_prep_close(sqe, fd);
     io_uring_sqe_set_data(sqe, p.get());
 
@@ -213,20 +185,12 @@ Queue::poll(int fd, unsigned int mask, std::function<void(int)>&& cb) {
     if (sqe == nullptr) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
     }
-    std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
-        std::make_unique<std::function<void(size_t, int, unsigned int)>>(
-            [cb = std::move(cb),
-             trace_event](size_t result, int error, unsigned int) {
-                RAWSTD_TRACE_EVENT_MESSAGE(
-                    trace_event, "result = %zu, error = %d\n", result, error
-                );
-                if (!error) {
-                    cb(result);
-                } else {
-                    cb(-error);
-                }
-            }
-        );
+    auto p = std::make_unique<std::function<void(ssize_t, unsigned int)>>(
+        [cb = std::move(cb), trace_event](ssize_t result, unsigned int) {
+            RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "result = %zd\n", result);
+            cb(result);
+        }
+    );
     io_uring_prep_poll_add(sqe, fd, mask);
     io_uring_sqe_set_data(sqe, p.get());
     ++_events;
@@ -244,20 +208,12 @@ rawio::Event* Queue::poll_multishot(
         RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
     }
     io_uring_prep_poll_multishot(sqe, fd, mask);
-    std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
-        std::make_unique<std::function<void(size_t, int, unsigned int)>>(
-            [cb = std::move(cb),
-             trace_event](size_t result, int error, unsigned int) {
-                RAWSTD_TRACE_EVENT_MESSAGE(
-                    trace_event, "result = %zu, error = %d\n", result, error
-                );
-                if (!error) {
-                    cb(result);
-                } else {
-                    cb(-error);
-                }
-            }
-        );
+    auto p = std::make_unique<std::function<void(ssize_t, unsigned int)>>(
+        [cb = std::move(cb), trace_event](ssize_t result, unsigned int) {
+            RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "result = %zd\n", result);
+            cb(result);
+        }
+    );
     io_uring_sqe_set_data(sqe, p.get());
 
     return static_cast<rawio::Event*>(p.release());
@@ -271,44 +227,33 @@ rawio::Event* Queue::accept(
     if (sqe == nullptr) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
     }
-    std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
-        std::make_unique<std::function<void(size_t, int, unsigned int)>>(
-            [cb = std::move(cb),
-             trace_event](size_t result, int error, unsigned int) {
-                RAWSTD_TRACE_EVENT_MESSAGE(
-                    trace_event, "result = %zu, error = %d\n", result, error
-                );
-                if (!error) {
-                    try {
-                        rawio::uring::Queue::setup_fd(result);
-                    } catch (const std::system_error& e) {
-                        rawstd_error(
-                            "Failed to setup fd %zu: %s\n", result, e.what()
-                        );
-                        ::close(result);
-                        result = 0;
-                        error = e.code().value();
-                    } catch (const std::exception& e) {
-                        rawstd_error(
-                            "Failed to setup fd %zu: %s\n", result, e.what()
-                        );
-                        ::close(result);
-                        result = 0;
-                        error = EIO;
-                    } catch (...) {
-                        rawstd_error("Failed to setup fd %zu\n", result);
-                        ::close(result);
-                        result = 0;
-                        error = EIO;
-                    }
-                }
-                if (!error) {
-                    cb(result);
-                } else {
-                    cb(-error);
+    auto p = std::make_unique<std::function<void(ssize_t, unsigned int)>>(
+        [cb = std::move(cb), trace_event](ssize_t result, unsigned int) {
+            RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "result = %zd\n", result);
+            if (result >= 0) {
+                try {
+                    rawio::uring::Queue::setup_fd(result);
+                } catch (const std::system_error& e) {
+                    rawstd_error(
+                        "Failed to setup fd %zd: %s\n", result, e.what()
+                    );
+                    ::close(result);
+                    result = -e.code().value();
+                } catch (const std::exception& e) {
+                    rawstd_error(
+                        "Failed to setup fd %zd: %s\n", result, e.what()
+                    );
+                    ::close(result);
+                    result = -EIO;
+                } catch (...) {
+                    rawstd_error("Failed to setup fd %zd\n", result);
+                    ::close(result);
+                    result = -EIO;
                 }
             }
-        );
+            cb(result);
+        }
+    );
     io_uring_prep_accept(sqe, fd, addr, addrlen, 0);
     io_uring_sqe_set_data(sqe, p.get());
     ++_events;
@@ -323,44 +268,54 @@ rawio::Event* Queue::accept_multishot(int fd, std::function<void(int)>&& cb) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
     }
     io_uring_prep_multishot_accept(sqe, fd, nullptr, nullptr, 0);
-    std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
-        std::make_unique<std::function<void(size_t, int, unsigned int)>>(
-            [cb = std::move(cb),
-             trace_event](size_t result, int error, unsigned int) {
-                RAWSTD_TRACE_EVENT_MESSAGE(
-                    trace_event, "result = %zu, error = %d\n", result, error
-                );
-                if (!error) {
-                    try {
-                        rawio::uring::Queue::setup_fd(result);
-                    } catch (const std::system_error& e) {
-                        rawstd_error(
-                            "Failed to setup fd %zu: %s\n", result, e.what()
-                        );
-                        ::close(result);
-                        result = 0;
-                        error = e.code().value();
-                    } catch (const std::exception& e) {
-                        rawstd_error(
-                            "Failed to setup fd %zu: %s\n", result, e.what()
-                        );
-                        ::close(result);
-                        result = 0;
-                        error = EIO;
-                    } catch (...) {
-                        rawstd_error("Failed to setup fd %zu\n", result);
-                        ::close(result);
-                        result = 0;
-                        error = EIO;
-                    }
-                }
-                if (!error) {
-                    cb(result);
-                } else {
-                    cb(-error);
+    auto p = std::make_unique<std::function<void(ssize_t, unsigned int)>>(
+        [cb = std::move(cb), trace_event](ssize_t result, unsigned int) {
+            RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "result = %zd\n", result);
+            if (result >= 0) {
+                try {
+                    rawio::uring::Queue::setup_fd(result);
+                } catch (const std::system_error& e) {
+                    rawstd_error(
+                        "Failed to setup fd %zd: %s\n", result, e.what()
+                    );
+                    ::close(result);
+                    result = -e.code().value();
+                } catch (const std::exception& e) {
+                    rawstd_error(
+                        "Failed to setup fd %zd: %s\n", result, e.what()
+                    );
+                    ::close(result);
+                    result = -EIO;
+                } catch (...) {
+                    rawstd_error("Failed to setup fd %zd\n", result);
+                    ::close(result);
+                    result = -EIO;
                 }
             }
-        );
+            cb(result);
+        }
+    );
+    io_uring_sqe_set_data(sqe, p.get());
+
+    return static_cast<rawio::Event*>(p.release());
+}
+
+rawio::Event* Queue::connect(
+    int fd, const sockaddr* addr, socklen_t addrlen,
+    std::function<void(int)>&& cb
+) {
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('|', "fd = %d\n", fd);
+    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
+    if (sqe == nullptr) {
+        RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
+    }
+    io_uring_prep_connect(sqe, fd, addr, addrlen);
+    auto p = std::make_unique<std::function<void(ssize_t, unsigned int)>>(
+        [cb = std::move(cb), trace_event](ssize_t result, unsigned int) {
+            RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "result = %zd\n", result);
+            cb(static_cast<int>(result));
+        }
+    );
     io_uring_sqe_set_data(sqe, p.get());
 
     return static_cast<rawio::Event*>(p.release());
@@ -376,16 +331,16 @@ rawio::Event* Queue::read(
         RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
     }
     io_uring_prep_read(sqe, fd, buf, size, 0);
-    std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
-        std::make_unique<std::function<void(size_t, int, unsigned int)>>(
-            [cb = std::move(cb),
-             trace_event](size_t result, int error, unsigned int) {
-                RAWSTD_TRACE_EVENT_MESSAGE(
-                    trace_event, "result = %zu, error = %d\n", result, error
-                );
-                cb(result, error);
+    auto p = std::make_unique<std::function<void(ssize_t, unsigned int)>>(
+        [cb = std::move(cb), trace_event](ssize_t result, unsigned int) {
+            RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "result = %zd\n", result);
+            if (result >= 0) {
+                cb(result, 0);
+            } else {
+                cb(0, static_cast<int>(-result));
             }
-        );
+        }
+    );
     io_uring_sqe_set_data(sqe, p.get());
     ++_events;
 
@@ -402,16 +357,16 @@ rawio::Event* Queue::readv(
         RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
     }
     io_uring_prep_readv(sqe, fd, iov, niov, 0);
-    std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
-        std::make_unique<std::function<void(size_t, int, unsigned int)>>(
-            [cb = std::move(cb),
-             trace_event](size_t result, int error, unsigned int) {
-                RAWSTD_TRACE_EVENT_MESSAGE(
-                    trace_event, "result = %zu, error = %d\n", result, error
-                );
-                cb(result, error);
+    auto p = std::make_unique<std::function<void(ssize_t, unsigned int)>>(
+        [cb = std::move(cb), trace_event](ssize_t result, unsigned int) {
+            RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "result = %zd\n", result);
+            if (result >= 0) {
+                cb(result, 0);
+            } else {
+                cb(0, static_cast<int>(-result));
             }
-        );
+        }
+    );
     io_uring_sqe_set_data(sqe, p.get());
     ++_events;
 
@@ -430,16 +385,16 @@ rawio::Event* Queue::pread(
         RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
     }
     io_uring_prep_read(sqe, fd, buf, size, offset);
-    std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
-        std::make_unique<std::function<void(size_t, int, unsigned int)>>(
-            [cb = std::move(cb),
-             trace_event](size_t result, int error, unsigned int) {
-                RAWSTD_TRACE_EVENT_MESSAGE(
-                    trace_event, "result = %zu, error = %d\n", result, error
-                );
-                cb(result, error);
+    auto p = std::make_unique<std::function<void(ssize_t, unsigned int)>>(
+        [cb = std::move(cb), trace_event](ssize_t result, unsigned int) {
+            RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "result = %zd\n", result);
+            if (result >= 0) {
+                cb(result, 0);
+            } else {
+                cb(0, static_cast<int>(-result));
             }
-        );
+        }
+    );
     io_uring_sqe_set_data(sqe, p.get());
     ++_events;
 
@@ -458,16 +413,16 @@ rawio::Event* Queue::preadv(
         RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
     }
     io_uring_prep_readv(sqe, fd, iov, niov, offset);
-    std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
-        std::make_unique<std::function<void(size_t, int, unsigned int)>>(
-            [cb = std::move(cb),
-             trace_event](size_t result, int error, unsigned int) {
-                RAWSTD_TRACE_EVENT_MESSAGE(
-                    trace_event, "result = %zu, error = %d\n", result, error
-                );
-                cb(result, error);
+    auto p = std::make_unique<std::function<void(ssize_t, unsigned int)>>(
+        [cb = std::move(cb), trace_event](ssize_t result, unsigned int) {
+            RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "result = %zd\n", result);
+            if (result >= 0) {
+                cb(result, 0);
+            } else {
+                cb(0, static_cast<int>(-result));
             }
-        );
+        }
+    );
     io_uring_sqe_set_data(sqe, p.get());
     ++_events;
 
@@ -486,16 +441,16 @@ rawio::Event* Queue::recv(
         RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
     }
     io_uring_prep_recv(sqe, fd, buf, size, flags);
-    std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
-        std::make_unique<std::function<void(size_t, int, unsigned int)>>(
-            [cb = std::move(cb),
-             trace_event](size_t result, int error, unsigned int) {
-                RAWSTD_TRACE_EVENT_MESSAGE(
-                    trace_event, "result = %zu, error = %d\n", result, error
-                );
-                cb(result, error);
+    auto p = std::make_unique<std::function<void(ssize_t, unsigned int)>>(
+        [cb = std::move(cb), trace_event](ssize_t result, unsigned int) {
+            RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "result = %zd\n", result);
+            if (result >= 0) {
+                cb(result, 0);
+            } else {
+                cb(0, static_cast<int>(-result));
             }
-        );
+        }
+    );
     io_uring_sqe_set_data(sqe, p.get());
     ++_events;
 
@@ -531,17 +486,18 @@ rawio::Event* Queue::recv_multishot(
     io_uring_prep_recv_multishot(sqe, fd, nullptr, 0, flags);
     sqe->flags |= IOSQE_BUFFER_SELECT;
     sqe->buf_group = buffer->id();
-    std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
-        std::make_unique<std::function<void(size_t, int, unsigned int)>>(
-            [buffer,
-             trace_event](size_t result, int error, unsigned int flags) {
-                RAWSTD_TRACE_EVENT_MESSAGE(
-                    trace_event, "result = %zu, error = %d, flags = %u\n",
-                    result, error, flags
-                );
-                (*buffer)(result, error, flags);
+    auto p = std::make_unique<std::function<void(ssize_t, unsigned int)>>(
+        [buffer, trace_event](ssize_t result, unsigned int flags) {
+            RAWSTD_TRACE_EVENT_MESSAGE(
+                trace_event, "result = %zd, flags = %u\n", result, flags
+            );
+            if (result >= 0) {
+                (*buffer)(result, 0, flags);
+            } else {
+                (*buffer)(0, static_cast<int>(-result), flags);
             }
-        );
+        }
+    );
     io_uring_sqe_set_data(sqe, p.get());
 
     return static_cast<rawio::Event*>(p.release());
@@ -558,16 +514,16 @@ rawio::Event* Queue::recvmsg(
     if (sqe == nullptr) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
     }
-    std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
-        std::make_unique<std::function<void(size_t, int, unsigned int)>>(
-            [cb = std::move(cb),
-             trace_event](size_t result, int error, unsigned int) {
-                RAWSTD_TRACE_EVENT_MESSAGE(
-                    trace_event, "result = %zu, error = %d\n", result, error
-                );
-                cb(result, error);
+    auto p = std::make_unique<std::function<void(ssize_t, unsigned int)>>(
+        [cb = std::move(cb), trace_event](ssize_t result, unsigned int) {
+            RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "result = %zd\n", result);
+            if (result >= 0) {
+                cb(result, 0);
+            } else {
+                cb(0, static_cast<int>(-result));
             }
-        );
+        }
+    );
     io_uring_prep_recvmsg(sqe, fd, msg, flags);
     io_uring_sqe_set_data(sqe, p.get());
     ++_events;
@@ -584,16 +540,16 @@ rawio::Event* Queue::write(
     if (sqe == nullptr) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
     }
-    std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
-        std::make_unique<std::function<void(size_t, int, unsigned int)>>(
-            [cb = std::move(cb),
-             trace_event](size_t result, int error, unsigned int) {
-                RAWSTD_TRACE_EVENT_MESSAGE(
-                    trace_event, "result = %zu, error = %d\n", result, error
-                );
-                cb(result, error);
+    auto p = std::make_unique<std::function<void(ssize_t, unsigned int)>>(
+        [cb = std::move(cb), trace_event](ssize_t result, unsigned int) {
+            RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "result = %zd\n", result);
+            if (result >= 0) {
+                cb(result, 0);
+            } else {
+                cb(0, static_cast<int>(-result));
             }
-        );
+        }
+    );
     io_uring_prep_write(sqe, fd, buf, size, 0);
     io_uring_sqe_set_data(sqe, p.get());
     ++_events;
@@ -611,16 +567,16 @@ rawio::Event* Queue::writev(
     if (sqe == nullptr) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
     }
-    std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
-        std::make_unique<std::function<void(size_t, int, unsigned int)>>(
-            [cb = std::move(cb),
-             trace_event](size_t result, int error, unsigned int) {
-                RAWSTD_TRACE_EVENT_MESSAGE(
-                    trace_event, "result = %zu, error = %d\n", result, error
-                );
-                cb(result, error);
+    auto p = std::make_unique<std::function<void(ssize_t, unsigned int)>>(
+        [cb = std::move(cb), trace_event](ssize_t result, unsigned int) {
+            RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "result = %zd\n", result);
+            if (result >= 0) {
+                cb(result, 0);
+            } else {
+                cb(0, static_cast<int>(-result));
             }
-        );
+        }
+    );
     io_uring_prep_writev(sqe, fd, iov, niov, 0);
     io_uring_sqe_set_data(sqe, p.get());
     ++_events;
@@ -639,16 +595,16 @@ rawio::Event* Queue::pwrite(
     if (sqe == nullptr) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
     }
-    std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
-        std::make_unique<std::function<void(size_t, int, unsigned int)>>(
-            [cb = std::move(cb),
-             trace_event](size_t result, int error, unsigned int) {
-                RAWSTD_TRACE_EVENT_MESSAGE(
-                    trace_event, "result = %zu, error = %d\n", result, error
-                );
-                cb(result, error);
+    auto p = std::make_unique<std::function<void(ssize_t, unsigned int)>>(
+        [cb = std::move(cb), trace_event](ssize_t result, unsigned int) {
+            RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "result = %zd\n", result);
+            if (result >= 0) {
+                cb(result, 0);
+            } else {
+                cb(0, static_cast<int>(-result));
             }
-        );
+        }
+    );
     io_uring_prep_write(sqe, fd, buf, size, offset);
     io_uring_sqe_set_data(sqe, p.get());
     ++_events;
@@ -667,16 +623,16 @@ rawio::Event* Queue::pwritev(
     if (sqe == nullptr) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
     }
-    std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
-        std::make_unique<std::function<void(size_t, int, unsigned int)>>(
-            [cb = std::move(cb),
-             trace_event](size_t result, int error, unsigned int) {
-                RAWSTD_TRACE_EVENT_MESSAGE(
-                    trace_event, "result = %zu, error = %d\n", result, error
-                );
-                cb(result, error);
+    auto p = std::make_unique<std::function<void(ssize_t, unsigned int)>>(
+        [cb = std::move(cb), trace_event](ssize_t result, unsigned int) {
+            RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "result = %zd\n", result);
+            if (result >= 0) {
+                cb(result, 0);
+            } else {
+                cb(0, static_cast<int>(-result));
             }
-        );
+        }
+    );
     io_uring_prep_writev(sqe, fd, iov, niov, offset);
     io_uring_sqe_set_data(sqe, p.get());
     ++_events;
@@ -695,16 +651,16 @@ rawio::Event* Queue::send(
     if (sqe == nullptr) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
     }
-    std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
-        std::make_unique<std::function<void(size_t, int, unsigned int)>>(
-            [cb = std::move(cb),
-             trace_event](size_t result, int error, unsigned int) {
-                RAWSTD_TRACE_EVENT_MESSAGE(
-                    trace_event, "result = %zu, error = %d\n", result, error
-                );
-                cb(result, error);
+    auto p = std::make_unique<std::function<void(ssize_t, unsigned int)>>(
+        [cb = std::move(cb), trace_event](ssize_t result, unsigned int) {
+            RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "result = %zd\n", result);
+            if (result >= 0) {
+                cb(result, 0);
+            } else {
+                cb(0, static_cast<int>(-result));
             }
-        );
+        }
+    );
     io_uring_prep_send(sqe, fd, buf, size, flags);
     io_uring_sqe_set_data(sqe, p.get());
     ++_events;
@@ -723,16 +679,16 @@ rawio::Event* Queue::sendmsg(
     if (sqe == nullptr) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
     }
-    std::unique_ptr<std::function<void(size_t, int, unsigned int)>> p =
-        std::make_unique<std::function<void(size_t, int, unsigned int)>>(
-            [cb = std::move(cb),
-             trace_event](size_t result, int error, unsigned int) {
-                RAWSTD_TRACE_EVENT_MESSAGE(
-                    trace_event, "result = %zu, error = %d\n", result, error
-                );
-                cb(result, error);
+    auto p = std::make_unique<std::function<void(ssize_t, unsigned int)>>(
+        [cb = std::move(cb), trace_event](ssize_t result, unsigned int) {
+            RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "result = %zd\n", result);
+            if (result >= 0) {
+                cb(result, 0);
+            } else {
+                cb(0, static_cast<int>(-result));
             }
-        );
+        }
+    );
     io_uring_prep_sendmsg(sqe, fd, msg, flags);
     io_uring_sqe_set_data(sqe, p.get());
     ++_events;
