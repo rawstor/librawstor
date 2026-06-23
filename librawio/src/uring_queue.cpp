@@ -638,7 +638,7 @@ rawio::Event* Queue::send(
     if (sqe == nullptr) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
     }
-    auto p = std::make_unique<std::function<void(size_t, unsigned int)>>(
+    auto p = std::make_unique<std::function<void(ssize_t, unsigned int)>>(
         [cb = std::move(cb), trace_event](ssize_t result, unsigned int) {
             RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "result = %zd\n", result);
             if (result >= 0) {
