@@ -294,34 +294,31 @@ rawio::Event* Queue::connect(
             if (connect_result != -EINTR && connect_result != -EINPROGRESS) {
                 cb(connect_result);
             } else {
-                poll(
-                    fd, POLLOUT,
-                    [fd, connect_result, cb = std::move(cb)](int poll_result) {
-                        if (poll_result == -1) {
-                            RAWSTD_THROW_ERRNO();
-                        }
-                        if (poll_result == 0) {
-                            cb(ETIMEDOUT);
-                            return;
-                        }
-                        if (!(poll_result & POLLOUT)) {
-                            cb(ENOTCONN);
-                            return;
-                        }
-
-                        int err = 0;
-                        socklen_t len = sizeof(err);
-                        if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len) <
-                            0) {
-                            RAWSTD_THROW_ERRNO();
-                        }
-                        if (err != 0) {
-                            cb(-err);
-                        }
-
-                        cb(connect_result);
+                poll(fd, POLLOUT, [fd, cb = std::move(cb)](int poll_result) {
+                    if (poll_result == -1) {
+                        RAWSTD_THROW_ERRNO();
                     }
-                );
+                    if (poll_result == 0) {
+                        cb(-ETIMEDOUT);
+                        return;
+                    }
+                    if (!(poll_result & POLLOUT)) {
+                        cb(-ENOTCONN);
+                        return;
+                    }
+
+                    int err = 0;
+                    socklen_t len = sizeof(err);
+                    if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len) < 0) {
+                        RAWSTD_THROW_ERRNO();
+                    }
+                    if (err != 0) {
+                        cb(-err);
+                        return;
+                    }
+
+                    cb(0);
+                });
             }
         }
     );
