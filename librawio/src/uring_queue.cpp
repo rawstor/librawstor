@@ -236,7 +236,7 @@ rawio::Event* Queue::accept(
                         "Failed to setup fd %zd: %s\n", result, e.what()
                     );
                     ::close(result);
-                    result = e.code().value();
+                    result = -e.code().value();
                 } catch (const std::exception& e) {
                     rawstd_error(
                         "Failed to setup fd %zd: %s\n", result, e.what()
