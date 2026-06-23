@@ -291,21 +291,34 @@ rawio::Event* Queue::connect(
             return res;
         },
         [this, fd, cb = std::move(cb)](int connect_result) {
-            if (connect_result != -EINTR) {
+            if (connect_result != -EINTR && connect_result != -EINPROGRESS) {
                 cb(connect_result);
             } else {
                 poll(
                     fd, POLLOUT,
-                    [connect_result, cb = std::move(cb)](int poll_result) {
+                    [fd, connect_result, cb = std::move(cb)](int poll_result) {
                         if (poll_result == -1) {
                             RAWSTD_THROW_ERRNO();
                         }
                         if (poll_result == 0) {
-                            RAWSTD_THROW_SYSTEM_ERROR(ETIMEDOUT);
+                            cb(ETIMEDOUT);
+                            return;
                         }
                         if (!(poll_result & POLLOUT)) {
-                            RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
+                            cb(ENOTCONN);
+                            return;
                         }
+
+                        int err = 0;
+                        socklen_t len = sizeof(err);
+                        if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len) <
+                            0) {
+                            RAWSTD_THROW_ERRNO();
+                        }
+                        if (err != 0) {
+                            cb(-err);
+                        }
+
                         cb(connect_result);
                     }
                 );
