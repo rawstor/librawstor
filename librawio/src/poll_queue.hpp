@@ -57,6 +57,11 @@ public:
     rawio::Event*
     accept_multishot(int fd, std::function<void(int)>&& cb) override;
 
+    rawio::Event* connect(
+        int fd, const sockaddr* addr, socklen_t addrlen,
+        std::function<void(int)>&& cb
+    ) override;
+
     rawio::Event* read(
         int fd, void* buf, size_t size, std::function<void(size_t, int)>&& cb
     ) override;
