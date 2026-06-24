@@ -84,30 +84,26 @@ int rawstor_object_spec(
 ) RAWSTOR_NOEXCEPT;
 
 /**
- * @brief Create a new empty object at the specified location.
+ * @brief Create a new empty object at the specified target.
  *
- * This function creates an object at the given location with the specified
- * metadata (e.g., size). Upon success, the target string of the newly created
- * object is written into the provided buffer. The target string follows the
- * format described in Locations and Targets documentation.
+ * This function creates an object at the exact target location given by the
+ * @p target string. The object metadata (such as size) is provided via the
+ * @p spec structure. The target string must follow the format described in the
+ * Locations and Targets documentation (e.g., "ost://host:port/<uuid>" or any
+ * other valid object identifier). The caller is responsible for ensuring that
+ * the target is unique and that the backend can accept the requested location;
+ * if the target already exists, the behaviour is implementation‑defined (likely
+ * an error is returned).
  *
- * @param location  Location string (e.g., "ost://host:port" or a
- *                  comma‑separated list). Specifies which backend(s) should
- *                  store the object.
+ * @param target    Target string specifying the full identifier of the object
+ *                  to be created (e.g., "ost://host:port/<uuid>"). Must not be
+ *                  NULL and must be a valid target as per the library's format.
  * @param spec      Pointer to a RawstorObjectSpec structure containing the
  *                  desired object metadata (e.g., size in bytes). The size
  *                  field must be set to the expected size of the object.
- * @param target    Output buffer that will receive the target string of the
- *                  created object (e.g., "ost://host:port/<uuid>").
- *                  Cannot be NULL.
- * @param size      Size of the target buffer in bytes (including space for
- *                  the null terminator).
  *
- * @return On success, returns the number of characters that would have been
- *         written to target (excluding the terminating null byte), as with
- *         snprintf(). If this value is non‑negative but greater than or equal
- *         to size, the output was truncated.
- * @retval Negative value on error (e.g., -EINVAL for invalid location or spec,
+ * @return 0 on success.
+ * @retval Negative value on error (e.g., -EINVAL for invalid target or spec,
  *         -ENOMEM, -EIO, etc.). The specific negative errno codes are
  *         implementation‑defined.
  *
@@ -116,8 +112,7 @@ int rawstor_object_spec(
  * https://github.com/rawstor/librawstor/blob/main/docs/locations_and_targets.md
  */
 int rawstor_object_create(
-    const char* location, const struct RawstorObjectSpec* spec, char* target,
-    size_t size
+    const char* target, const struct RawstorObjectSpec* spec
 ) RAWSTOR_NOEXCEPT;
 
 /**

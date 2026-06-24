@@ -13,20 +13,16 @@
 namespace {
 
 TEST(FileLifecycleTest, create_spec_remove) {
-    std::filesystem::path path =
-        std::filesystem::temp_directory_path() / "test_objects";
+    std::filesystem::path path = std::filesystem::temp_directory_path() /
+                                 "test_objects" /
+                                 "00000000-0000-7000-8000-000000000000";
     std::ostringstream oss;
     oss << "file://" << path.string();
-    std::string location = oss.str();
+    std::string target = oss.str();
 
     RawstorObjectSpec spec{.size = 1ull << 20};
-    std::string target(1024, '\0');
-    int res = rawstor_object_create(
-        location.c_str(), &spec, target.data(), target.size()
-    );
-    EXPECT_GT(res, 0);
-    EXPECT_LE(res, (int)target.size());
-    target.resize(res);
+    int res = rawstor_object_create(target.c_str(), &spec);
+    EXPECT_EQ(res, 0);
 
     RawstorObjectSpec read_spec;
     res = rawstor_object_spec(target.c_str(), &read_spec);
@@ -39,20 +35,16 @@ TEST(FileLifecycleTest, create_spec_remove) {
 
 TEST(OstLifecycleTest, create_spec_remove) {
     rawstor::tests::Server server(8753, 256);
-    std::string location = "ost://127.0.0.1:8753";
+    std::string target =
+        "ost://127.0.0.1:8753/00000000-0000-7000-8000-000000000000";
 
-    std::string target(1024, '\0');
     {
         rawstor::tests::Session s(server);
 
         RawstorObjectSpec spec{.size = 1ull << 20};
 
-        int res = rawstor_object_create(
-            location.c_str(), &spec, target.data(), target.size()
-        );
-        EXPECT_GT(res, 0);
-        EXPECT_LE(res, (int)target.size());
-        target.resize(res);
+        int res = rawstor_object_create(target.c_str(), &spec);
+        EXPECT_EQ(res, 0);
     }
 
     {

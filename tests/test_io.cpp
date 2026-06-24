@@ -80,20 +80,17 @@ private:
     }
 
 public:
-    Object(Queue& queue, const std::string& location, size_t size) :
+    Object(Queue& queue, const std::string& target, size_t size) :
         _queue(queue),
-        _target(1024, '\0'),
+        _target(target),
         _object(nullptr) {
         RawstorObjectSpec spec{.size = size};
-        int res = rawstor_object_create(
-            location.c_str(), &spec, _target.data(), _target.size()
-        );
+        int res = rawstor_object_create(target.c_str(), &spec);
         if (res < 0) {
             RAWSTD_THROW_SYSTEM_ERROR(-res);
         }
 
         try {
-            _target.resize(res);
             res = rawstor_object_open(_queue, _target.c_str(), &_object);
             if (res < 0) {
                 RAWSTD_THROW_SYSTEM_ERROR(-res);
@@ -180,15 +177,16 @@ public:
 };
 
 TEST(FileIOTest, basics) {
-    std::filesystem::path path =
-        std::filesystem::temp_directory_path() / "test_objects";
+    std::filesystem::path path = std::filesystem::temp_directory_path() /
+                                 "test_objects" /
+                                 "00000000-0000-7000-8000-000000000000";
     std::ostringstream oss;
     oss << "file://" << path.string();
-    std::string location = oss.str();
+    std::string target = oss.str();
 
     Queue queue(16);
 
-    Object object(queue, location, 1ull << 20);
+    Object object(queue, target, 1ull << 20);
 
     std::string write_data = "ping";
     EXPECT_NO_THROW(object.write(write_data.data(), write_data.length()));
@@ -202,7 +200,8 @@ TEST(FileIOTest, basics) {
 TEST(OstIOTest, basics) {
     Queue queue(16);
     rawstor::tests::Server server(8753, 256);
-    std::string location = "ost://127.0.0.1:8753";
+    std::string target =
+        "ost://127.0.0.1:8753/00000000-0000-7000-8000-000000000000";
 
     {
         rawstor::tests::Session s(server);
@@ -216,7 +215,7 @@ TEST(OstIOTest, basics) {
         s.cmd_read(RAWSTOR_MAGIC, 2, "pong", 4);
     }
 
-    Object object(queue, location, 1ull << 20);
+    Object object(queue, target, 1ull << 20);
 
     std::string ping = "ping";
     EXPECT_NO_THROW(object.write(ping.data(), ping.length()));
@@ -229,7 +228,8 @@ TEST(OstIOTest, basics) {
 TEST(OstIOTest, set_object_fail) {
     Queue queue(16);
     rawstor::tests::Server server(8753, 256);
-    std::string location = "ost://127.0.0.1:8753";
+    std::string target =
+        "ost://127.0.0.1:8753/00000000-0000-7000-8000-000000000000";
 
     {
         rawstor::tests::Session s(server);
@@ -242,14 +242,15 @@ TEST(OstIOTest, set_object_fail) {
     }
 
     EXPECT_THROW(
-        { Object object(queue, location, 1ull << 20); }, std::system_error
+        { Object object(queue, target, 1ull << 20); }, std::system_error
     );
 }
 
 TEST(OstIOTest, set_object_error) {
     Queue queue(16);
     rawstor::tests::Server server(8753, 256);
-    std::string location = "ost://127.0.0.1:8753";
+    std::string target =
+        "ost://127.0.0.1:8753/00000000-0000-7000-8000-000000000000";
 
     {
         rawstor::tests::Session s(server);
@@ -262,14 +263,15 @@ TEST(OstIOTest, set_object_error) {
     }
 
     EXPECT_THROW(
-        { Object object(queue, location, 1ull << 20); }, std::system_error
+        { Object object(queue, target, 1ull << 20); }, std::system_error
     );
 }
 
 TEST(OstIOTest, set_object_disconnect) {
     Queue queue(16);
     rawstor::tests::Server server(8753, 256);
-    std::string location = "ost://127.0.0.1:8753";
+    std::string target =
+        "ost://127.0.0.1:8753/00000000-0000-7000-8000-000000000000";
 
     {
         rawstor::tests::Session s(server);
@@ -281,14 +283,15 @@ TEST(OstIOTest, set_object_disconnect) {
     }
 
     EXPECT_THROW(
-        { Object object(queue, location, 1ull << 20); }, std::system_error
+        { Object object(queue, target, 1ull << 20); }, std::system_error
     );
 }
 
 TEST(OstIOTest, write_fail) {
     Queue queue(16);
     rawstor::tests::Server server(8753, 256);
-    std::string location = "ost://127.0.0.1:8753";
+    std::string target =
+        "ost://127.0.0.1:8753/00000000-0000-7000-8000-000000000000";
 
     {
         rawstor::tests::Session s(server);
@@ -301,7 +304,7 @@ TEST(OstIOTest, write_fail) {
         s.cmd_write(0, 1, 4);
     }
 
-    Object object(queue, location, 1ull << 20);
+    Object object(queue, target, 1ull << 20);
 
     std::string ping = "ping";
     EXPECT_THROW(object.write(ping.data(), ping.length()), std::system_error);
@@ -310,7 +313,8 @@ TEST(OstIOTest, write_fail) {
 TEST(OstIOTest, write_error) {
     Queue queue(16);
     rawstor::tests::Server server(8753, 256);
-    std::string location = "ost://127.0.0.1:8753";
+    std::string target =
+        "ost://127.0.0.1:8753/00000000-0000-7000-8000-000000000000";
 
     {
         rawstor::tests::Session s(server);
@@ -324,7 +328,7 @@ TEST(OstIOTest, write_error) {
         s.cmd_write_response(RAWSTOR_MAGIC, 1, -ENOENT);
     }
 
-    Object object(queue, location, 1ull << 20);
+    Object object(queue, target, 1ull << 20);
 
     std::string ping = "ping";
     EXPECT_THROW(object.write(ping.data(), ping.length()), std::system_error);
@@ -333,7 +337,8 @@ TEST(OstIOTest, write_error) {
 TEST(OstIOTest, write_disconnect) {
     Queue queue(16);
     rawstor::tests::Server server(8753, 256);
-    std::string location = "ost://127.0.0.1:8753";
+    std::string target =
+        "ost://127.0.0.1:8753/00000000-0000-7000-8000-000000000000";
 
     {
         rawstor::tests::Session s(server);
@@ -346,7 +351,7 @@ TEST(OstIOTest, write_disconnect) {
         s.cmd_write_request(4);
     }
 
-    Object object(queue, location, 1ull << 20);
+    Object object(queue, target, 1ull << 20);
 
     std::string ping = "ping";
     EXPECT_THROW(object.write(ping.data(), ping.length()), std::system_error);
