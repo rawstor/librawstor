@@ -95,7 +95,7 @@ Object::Object(rawio::Queue& queue, const std::vector<rawstd::URI>& targets) :
 
     std::string id = targets.front().path().filename();
     int res = rawstd_uuid_from_string(&_id, id.c_str());
-    if (res) {
+    if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 
