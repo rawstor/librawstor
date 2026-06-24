@@ -31,7 +31,7 @@ private:
     std::shared_ptr<Context> _context;
 
     int _connect();
-    void _basic(RawstorOSTCommandType cmd, const RawstdUUID& id);
+    void _basic(RawstorOSTCommandType cmd, const RawstdUUID& id, uint64_t val);
     void _set_object(Object* object);
 
 public:

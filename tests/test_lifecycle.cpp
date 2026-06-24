@@ -41,6 +41,7 @@ TEST(OstLifecycleTest, create_spec_remove) {
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
     {

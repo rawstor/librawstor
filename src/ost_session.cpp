@@ -775,7 +775,9 @@ int Session::_connect() {
     return fd;
 }
 
-void Session::_basic(RawstorOSTCommandType cmd, const RawstdUUID& id) {
+void Session::_basic(
+    RawstorOSTCommandType cmd, const RawstdUUID& id, uint64_t val
+) {
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('s', "basic cmd %d\n", cmd);
 
@@ -791,7 +793,7 @@ void Session::_basic(RawstorOSTCommandType cmd, const RawstdUUID& id) {
         .body = {
             .obj_id = {},
             .offset = 0,
-            .val = 0,
+            .val = val,
         },
     };
     memcpy(request.body.obj_id, id.bytes, sizeof(request.body.obj_id));
@@ -855,22 +857,19 @@ void Session::_basic(RawstorOSTCommandType cmd, const RawstdUUID& id) {
 }
 
 void Session::_set_object(Object* object) {
-    rawstd_info("%s: Setting object id\n", str().c_str());
-    _basic(RAWSTOR_CMD_SET_OBJECT, object->id());
-    rawstd_info("%s: Object id successfully set\n", str().c_str());
+    _basic(RAWSTOR_CMD_SET_OBJECT, object->id(), 0);
 }
 
 void Session::create(
-    const RawstdUUID&, const RawstorObjectSpec&, std::function<void(int)>&& cb
+    const RawstdUUID& id, const RawstorObjectSpec& spec,
+    std::function<void(int)>&& cb
 ) {
-    /**
-     * TODO: Implement me.
-     */
+    _basic(RAWSTOR_CMD_ALLOCATE, id, spec.size);
     cb(0);
 }
 
 void Session::remove(const RawstdUUID& id, std::function<void(int)>&& cb) {
-    _basic(RAWSTOR_CMD_RELEASE, id);
+    _basic(RAWSTOR_CMD_RELEASE, id, 0);
     cb(0);
 }
 

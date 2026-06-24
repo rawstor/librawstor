@@ -24,12 +24,30 @@ Session::~Session() {
 }
 
 void Session::cmd_allocate_request() {
+    _server.read(
+        "RAWSTOR_CMD_ALLOCATE <<<", sizeof(RawstorOSTFrameBasic),
+        [](const void*) {}
+    );
 }
 
-void Session::cmd_allocate_response() {
+void Session::cmd_allocate_response(uint32_t magic, uint16_t cid, int32_t res) {
+    RawstorOSTFrameResponse response = {
+        .head{
+            .magic = magic,
+            .cmd = RAWSTOR_CMD_ALLOCATE,
+            .cid = cid,
+        },
+        .body = {
+            .res = res,
+            .hash = 0,
+        },
+    };
+    _server.write("RAWSTOR_CMD_ALLOCATE >>>", &response, sizeof(response));
 }
 
-void Session::cmd_allocate() {
+void Session::cmd_allocate(uint32_t magic, uint16_t cid, int32_t res) {
+    cmd_allocate_request();
+    cmd_allocate_response(magic, cid, res);
 }
 
 void Session::cmd_set_object_request() {

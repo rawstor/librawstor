@@ -395,7 +395,7 @@ Session::_recv_data(const iovec* iov, unsigned int niov, size_t result) {
     return sizeof(RawstorOSTFrameHead);
 }
 
-void Session::_set_object(
+void Session::_allocate(
     const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
 ) {
     if (_object != nullptr) {
@@ -411,11 +411,9 @@ void Session::_set_object(
 
     std::vector<rawstd::URI> targets = _targets(uuid);
 
-    int result = rawstor_object_open(
-        _queue, rawstd::URI::uris(targets).c_str(), &_object
-    );
+    int result = rawstor_object_create(, &spec, rawstd::URI::uris(targets).c_str());
 
-    send_response(_queue, _fd, RAWSTOR_CMD_SET_OBJECT, head.cid, result, 0);
+    send_response(_queue, _fd, RAWSTOR_CMD_ALLOCATE, head.cid, result, 0);
 }
 
 void Session::_release(
@@ -437,6 +435,29 @@ void Session::_release(
     int result = rawstor_object_remove(rawstd::URI::uris(targets).c_str());
 
     send_response(_queue, _fd, RAWSTOR_CMD_RELEASE, head.cid, result, 0);
+}
+
+void Session::_set_object(
+    const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+) {
+    if (_object != nullptr) {
+        int res = rawstor_object_close(_object);
+        if (res < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
+        }
+        _object = nullptr;
+    }
+
+    RawstdUUID uuid;
+    memcpy(uuid.bytes, body.obj_id, sizeof(body.obj_id));
+
+    std::vector<rawstd::URI> targets = _targets(uuid);
+
+    int result = rawstor_object_open(
+        _queue, rawstd::URI::uris(targets).c_str(), &_object
+    );
+
+    send_response(_queue, _fd, RAWSTOR_CMD_SET_OBJECT, head.cid, result, 0);
 }
 
 void Session::_read(

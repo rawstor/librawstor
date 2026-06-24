@@ -20,8 +20,8 @@ public:
     ~Session();
 
     void cmd_allocate_request();
-    void cmd_allocate_response();
-    void cmd_allocate();
+    void cmd_allocate_response(uint32_t magic, uint16_t cid, int32_t res);
+    void cmd_allocate(uint32_t magic, uint16_t cid, int32_t res);
 
     void cmd_set_object_request();
     void cmd_set_object_response(uint32_t magic, uint16_t cid, int32_t res);

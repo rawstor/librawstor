@@ -205,7 +205,7 @@ TEST(OstIOTest, basics) {
 
     {
         rawstor::tests::Session s(server);
-        s.cmd_allocate();
+        s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
     {
@@ -238,7 +238,7 @@ TEST(OstIOTest, set_object_fail) {
 
     {
         rawstor::tests::Session s(server);
-        s.cmd_allocate();
+        s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
     for (unsigned int i = 0; i < 3; ++i) {
@@ -259,7 +259,7 @@ TEST(OstIOTest, set_object_error) {
 
     {
         rawstor::tests::Session s(server);
-        s.cmd_allocate();
+        s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
     for (unsigned int i = 0; i < 3; ++i) {
@@ -280,7 +280,7 @@ TEST(OstIOTest, set_object_disconnect) {
 
     {
         rawstor::tests::Session s(server);
-        s.cmd_allocate();
+        s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
     for (unsigned int i = 0; i < 3; ++i) {
@@ -300,7 +300,7 @@ TEST(OstIOTest, write_fail) {
 
     {
         rawstor::tests::Session s(server);
-        s.cmd_allocate();
+        s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
     for (unsigned int i = 0; i < 3; ++i) {
@@ -328,7 +328,7 @@ TEST(OstIOTest, write_error) {
 
     {
         rawstor::tests::Session s(server);
-        s.cmd_allocate();
+        s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
     for (unsigned int i = 0; i < 3; ++i) {
@@ -357,7 +357,7 @@ TEST(OstIOTest, write_disconnect) {
 
     {
         rawstor::tests::Session s(server);
-        s.cmd_allocate();
+        s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
     for (unsigned int i = 0; i < 3; ++i) {
