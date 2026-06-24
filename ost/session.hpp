@@ -5,6 +5,11 @@
 #include <rawstor/ost_protocol.h>
 #include <rawstor/rawio.h>
 
+#include <rawstd/uri.hpp>
+#include <rawstd/uuid.h>
+
+#include <vector>
+
 namespace rawstor {
 namespace ostbackend {
 
@@ -36,6 +41,9 @@ private:
     void _set_object(
         const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
     );
+    void _release(
+        const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+    );
     void
     _read(const RawstorOSTFrameHead& head, const RawstorOSTFrameIOBody& body);
     void _write(
@@ -45,6 +53,7 @@ private:
     void _discard(
         const RawstorOSTFrameHead& head, const RawstorOSTFrameIOBody& body
     );
+    std::vector<rawstd::URI> _targets(const RawstdUUID& uuid);
 
 public:
     Session(RawIOQueue* queue, Server& server, int fd);

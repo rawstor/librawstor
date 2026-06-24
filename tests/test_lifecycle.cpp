@@ -4,6 +4,7 @@
 #include <rawstd/gpp.hpp>
 
 #include <rawstor/object.h>
+#include <rawstor/ost_protocol.h>
 
 #include <gtest/gtest.h>
 
@@ -40,7 +41,19 @@ TEST(OstLifecycleTest, create_spec_remove) {
 
     {
         rawstor::tests::Session s(server);
+    }
 
+    {
+        rawstor::tests::Session s(server);
+    }
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_release(RAWSTOR_MAGIC, 0, 0);
+    }
+
+    std::string target(1024, '\0');
+    {
         RawstorObjectSpec spec{.size = 1ull << 20};
 
         int res = rawstor_object_create(target.c_str(), &spec);
@@ -48,8 +61,6 @@ TEST(OstLifecycleTest, create_spec_remove) {
     }
 
     {
-        rawstor::tests::Session s(server);
-
         RawstorObjectSpec read_spec;
         int res = rawstor_object_spec(target.c_str(), &read_spec);
         EXPECT_EQ(res, 0);
@@ -58,9 +69,8 @@ TEST(OstLifecycleTest, create_spec_remove) {
     }
 
     {
-        // rawstor_object_remove not implemented for OST
         int res = rawstor_object_remove(target.c_str());
-        EXPECT_EQ(res, -EINVAL);
+        EXPECT_EQ(res, 0);
     }
 }
 

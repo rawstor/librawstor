@@ -215,6 +215,11 @@ TEST(OstIOTest, basics) {
         s.cmd_read(RAWSTOR_MAGIC, 2, "pong", 4);
     }
 
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_release(RAWSTOR_MAGIC, 0, 0);
+    }
+
     Object object(queue, target, 1ull << 20);
 
     std::string ping = "ping";
@@ -304,6 +309,11 @@ TEST(OstIOTest, write_fail) {
         s.cmd_write(0, 1, 4);
     }
 
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_release(RAWSTOR_MAGIC, 0, 0);
+    }
+
     Object object(queue, target, 1ull << 20);
 
     std::string ping = "ping";
@@ -328,6 +338,11 @@ TEST(OstIOTest, write_error) {
         s.cmd_write_response(RAWSTOR_MAGIC, 1, -ENOENT);
     }
 
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_release(RAWSTOR_MAGIC, 0, 0);
+    }
+
     Object object(queue, target, 1ull << 20);
 
     std::string ping = "ping";
@@ -349,6 +364,11 @@ TEST(OstIOTest, write_disconnect) {
         rawstor::tests::Session s(server);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
         s.cmd_write_request(4);
+    }
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_release(RAWSTOR_MAGIC, 0, 0);
     }
 
     Object object(queue, target, 1ull << 20);

@@ -61,6 +61,33 @@ void Session::cmd_set_object(uint32_t magic, uint16_t cid, int32_t res) {
     cmd_set_object_response(magic, cid, res);
 }
 
+void Session::cmd_release_request() {
+    _server.read(
+        "RAWSTOR_CMD_RELEASE <<<", sizeof(RawstorOSTFrameBasic),
+        [](const void*) {}
+    );
+}
+
+void Session::cmd_release_response(uint32_t magic, uint16_t cid, int32_t res) {
+    RawstorOSTFrameResponse response = {
+        .head{
+            .magic = magic,
+            .cmd = RAWSTOR_CMD_RELEASE,
+            .cid = cid,
+        },
+        .body = {
+            .res = res,
+            .hash = 0,
+        },
+    };
+    _server.write("RAWSTOR_CMD_RELEASE >>>", &response, sizeof(response));
+}
+
+void Session::cmd_release(uint32_t magic, uint16_t cid, int32_t res) {
+    cmd_release_request();
+    cmd_release_response(magic, cid, res);
+}
+
 void Session::cmd_read_request() {
     _server.read(
         "RAWSTOR_CMD_READ <<<", sizeof(RawstorOSTFrameIO), [](const void*) {}

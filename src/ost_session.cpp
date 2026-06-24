@@ -818,7 +818,7 @@ void Session::_basic(RawstorOSTCommandType cmd, const RawstdUUID& id) {
     RawstorOSTFrameResponse response;
     queue->read(
         fd(), &response, sizeof(response),
-        [fd = fd(), &response, &completed,
+        [fd = fd(), cmd, &response, &completed,
          trace_event](size_t result, int error) {
             RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "error = %d\n", error);
 
@@ -840,8 +840,7 @@ void Session::_basic(RawstorOSTCommandType cmd, const RawstdUUID& id) {
             }
 
             if (!error) {
-                error =
-                    validate_cmd(fd, response.head.cmd, RAWSTOR_CMD_DISCARD);
+                error = validate_cmd(fd, response.head.cmd, cmd);
             }
 
             if (error) {
@@ -851,93 +850,14 @@ void Session::_basic(RawstorOSTCommandType cmd, const RawstdUUID& id) {
     );
 
     while (!completed) {
-        queue->wait();
+        queue->wait_timeout(5000);
     }
 }
 
 void Session::_set_object(Object* object) {
-    rawstd::TraceEvent trace_event =
-        RAWSTD_TRACE_EVENT('s', "%s\n", "set object");
-
-    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
-
-    RawstorOSTFrameBasic request = {
-        .head =
-            {
-                .magic = RAWSTOR_MAGIC,
-                .cmd = RAWSTOR_CMD_SET_OBJECT,
-                .cid = _cid_counter++,
-            },
-        .body = {
-            .obj_id = {},
-            .offset = 0,
-            .val = 0,
-        },
-    };
-    memcpy(
-        request.body.obj_id, object->id().bytes, sizeof(request.body.obj_id)
-    );
     rawstd_info("%s: Setting object id\n", str().c_str());
-    queue->write(
-        fd(), &request, sizeof(request),
-        [fd = fd(), trace_event](size_t result, int error) {
-            RAWSTD_TRACE_EVENT_MESSAGE(
-                trace_event, "%zu of %zu, error = %d\n", result,
-                sizeof(RawstorOSTFrameBasic), error
-            );
-
-            if (!error) {
-                error =
-                    validate_result(fd, sizeof(RawstorOSTFrameBasic), result);
-            }
-
-            if (error) {
-                RAWSTD_THROW_SYSTEM_ERROR(error);
-            }
-        }
-    );
-
-    bool completed = false;
-    RawstorOSTFrameResponse response;
-    queue->read(
-        fd(), &response, sizeof(response),
-        [fd = fd(), &response, &completed,
-         trace_event](size_t result, int error) {
-            RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "error = %d\n", error);
-
-            completed = true;
-
-            RAWSTD_TRACE_EVENT_MESSAGE(
-                trace_event, "%zu of %zu, error = %d\n", result,
-                sizeof(RawstorOSTFrameResponse), error
-            );
-
-            if (!error) {
-                error = validate_result(
-                    fd, sizeof(RawstorOSTFrameResponse), result
-                );
-            }
-
-            if (!error) {
-                error = validate_response(fd, &response);
-            }
-
-            if (!error) {
-                error =
-                    validate_cmd(fd, response.head.cmd, RAWSTOR_CMD_SET_OBJECT);
-            }
-
-            if (error) {
-                RAWSTD_THROW_SYSTEM_ERROR(error);
-            }
-
-            rawstd_info("fd %d: Object id successfully set\n", fd);
-        }
-    );
-
-    while (!completed) {
-        queue->wait();
-    }
+    _basic(RAWSTOR_CMD_SET_OBJECT, object->id());
+    rawstd_info("%s: Object id successfully set\n", str().c_str());
 }
 
 void Session::create(
@@ -949,83 +869,9 @@ void Session::create(
     cb(0);
 }
 
-void Session::remove(const RawstdUUID& id, std::function<void(int)>&&) {
-    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('s', "%s\n", "remove");
-
-    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
-
-    RawstorOSTFrameBasic request = {
-        .head =
-            {
-                .magic = RAWSTOR_MAGIC,
-                .cmd = RAWSTOR_CMD_DISCARD,
-                .cid = _cid_counter++,
-            },
-        .body = {
-            .obj_id = {},
-            .offset = 0,
-            .val = 0,
-        },
-    };
-    memcpy(request.body.obj_id, id.bytes, sizeof(request.body.obj_id));
-    queue->write(
-        fd(), &request, sizeof(request),
-        [fd = fd(), trace_event](size_t result, int error) {
-            RAWSTD_TRACE_EVENT_MESSAGE(
-                trace_event, "%zu of %zu, error = %d\n", result,
-                sizeof(RawstorOSTFrameBasic), error
-            );
-
-            if (!error) {
-                error =
-                    validate_result(fd, sizeof(RawstorOSTFrameBasic), result);
-            }
-
-            if (error) {
-                RAWSTD_THROW_SYSTEM_ERROR(error);
-            }
-        }
-    );
-
-    bool completed = false;
-    RawstorOSTFrameResponse response;
-    queue->read(
-        fd(), &response, sizeof(response),
-        [fd = fd(), &response, &completed,
-         trace_event](size_t result, int error) {
-            RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "error = %d\n", error);
-
-            completed = true;
-
-            RAWSTD_TRACE_EVENT_MESSAGE(
-                trace_event, "%zu of %zu, error = %d\n", result,
-                sizeof(RawstorOSTFrameResponse), error
-            );
-
-            if (!error) {
-                error = validate_result(
-                    fd, sizeof(RawstorOSTFrameResponse), result
-                );
-            }
-
-            if (!error) {
-                error = validate_response(fd, &response);
-            }
-
-            if (!error) {
-                error =
-                    validate_cmd(fd, response.head.cmd, RAWSTOR_CMD_DISCARD);
-            }
-
-            if (error) {
-                RAWSTD_THROW_SYSTEM_ERROR(error);
-            }
-        }
-    );
-
-    while (!completed) {
-        queue->wait();
-    }
+void Session::remove(const RawstdUUID& id, std::function<void(int)>&& cb) {
+    _basic(RAWSTOR_CMD_RELEASE, id);
+    cb(0);
 }
 
 void Session::spec(
