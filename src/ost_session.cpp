@@ -899,6 +899,13 @@ void Session::set_object(Object* object) {
     _context->setup_recv();
 }
 
+void Session::close(std::function<void(int)>&& cb) {
+    if (_context.get() != nullptr) {
+        _context->teardown_recv();
+        cb(0);
+    }
+}
+
 void Session::pread(
     void* buf, size_t size, off_t offset, std::function<void(size_t, int)>&& cb
 ) {

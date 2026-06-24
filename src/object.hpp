@@ -43,6 +43,8 @@ public:
 
     inline const RawstdUUID& id() const noexcept { return _id; }
 
+    void close(std::function<void(int)>&& cb);
+
     void pread(
         void* buf, size_t size, off_t offset,
         std::function<void(size_t, int)>&& cb

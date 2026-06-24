@@ -35,6 +35,15 @@ int callback(RawstorObject*, size_t, size_t result, int error, void* data) {
     }
 }
 
+int close_cb(int result, void* data) {
+    bool* completed = static_cast<bool*>(data);
+    *completed = true;
+    if (result < 0) {
+        rawstd_warning("Failed to close object: %s\n", strerror(-result));
+    }
+    return 0;
+}
+
 class Queue {
 private:
     RawIOQueue* _queue;
@@ -71,9 +80,20 @@ private:
 
     void _close() {
         if (_object != nullptr) {
-            int res = rawstor_object_close(_object);
-            if (res < 0) {
-                rawstd_error("%s\n", strerror(-res));
+            bool completed = false;
+            int res = rawstor_object_close(_object, close_cb, &completed);
+            if (res >= 0) {
+                while (!completed) {
+                    res = rawio_wait(_queue);
+                    if (res < 0) {
+                        rawstd_warning(
+                            "Failed to wait queue: %s\n", strerror(-res)
+                        );
+                        break;
+                    }
+                }
+            } else {
+                rawstd_warning("Failed to close object: %s\n", strerror(-res));
             }
             _object = nullptr;
         }

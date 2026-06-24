@@ -34,6 +34,8 @@ public:
 
     void set_object(Object* object) override;
 
+    void close(std::function<void(int)>&& cb) override;
+
     void pread(
         void* buf, size_t size, off_t offset,
         std::function<void(size_t, int)>&& cb

@@ -60,10 +60,23 @@ Connection::Connection(rawio::Queue& queue) :
 }
 
 Connection::~Connection() {
-    try {
-        close();
-    } catch (const std::system_error& e) {
-        rawstd_error("Connection::close(): %s\n", e.what());
+    if (_object != nullptr) {
+        try {
+            bool completed = false;
+            close([&completed](int result) {
+                completed = true;
+                if (result < 0) {
+                    rawstd_warning(
+                        "Failed to close connection: %s\n", strerror(-result)
+                    );
+                }
+            });
+            while (!completed) {
+                _queue.wait();
+            }
+        } catch (const std::system_error& e) {
+            rawstd_error("Connection::close(): %s\n", e.what());
+        }
     }
 }
 
@@ -105,6 +118,18 @@ std::vector<std::shared_ptr<Session>> Connection::_open(
     }
 
     return sessions;
+}
+
+bool Connection::_erase_session(const std::shared_ptr<Session>& s) {
+    typename std::vector<std::shared_ptr<Session>>::iterator it =
+        std::find(_sessions.begin(), _sessions.end(), s);
+
+    if (it == _sessions.end()) {
+        return false;
+    }
+
+    _sessions.erase(it);
+    return true;
 }
 
 void Connection::_op(
@@ -199,12 +224,7 @@ std::shared_ptr<Session> Connection::get_next_session() {
 }
 
 void Connection::invalidate_session(const std::shared_ptr<Session>& s) {
-    typename std::vector<std::shared_ptr<Session>>::iterator it =
-        std::find(_sessions.begin(), _sessions.end(), s);
-
-    if (it != _sessions.end()) {
-        _sessions.erase(it);
-
+    if (_erase_session(s)) {
         std::vector<std::shared_ptr<Session>> new_sessions =
             _open(s->location(), _object, 1);
 
@@ -294,8 +314,41 @@ void Connection::open(
     _object = object;
 }
 
-void Connection::close() {
-    _sessions.clear();
+void Connection::close(std::function<void(int)>&& cb) {
+    assert(_object != nullptr);
+
+    if (_sessions.empty()) {
+        cb(0);
+        return;
+    }
+
+    struct Operation {
+        size_t sessions;
+        int error;
+        std::function<void(int)> cb;
+    };
+
+    auto op = std::make_shared<Operation>((Operation){
+        .sessions = _sessions.size(), .error = 0, .cb = std::move(cb)
+    });
+
+    for (auto& session : _sessions) {
+        session->close([this, op, session](int result) {
+            --op->sessions;
+
+            _erase_session(session);
+
+            if (result < 0) {
+                rawstd_error("Failed to close session: %s\n", strerror(-result));
+                op->error = EIO;
+            }
+
+            if (op->sessions == 0) {
+                op->cb(-op->error);
+            }
+        });
+    }
+
     _object = nullptr;
 }
 

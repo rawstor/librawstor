@@ -527,6 +527,15 @@ int set_config(
     }
 }
 
+int close_cb(int result, void* data) noexcept {
+    bool* completed = static_cast<bool*>(data);
+    *completed = true;
+    if (result < 0) {
+        rawstd_warning("Failed to close object: %s", strerror(-result));
+    }
+    return 0;
+}
+
 } // namespace
 
 namespace rawstor {
@@ -665,7 +674,19 @@ Device::Device(unsigned int queue_size, const std::string& target, int fd) :
 Device::~Device() {
     _devices.erase(_dev.sock);
     vu_deinit(&_dev);
-    rawstor_object_close(_object);
+    bool completed = false;
+    int res = rawstor_object_close(_object, close_cb, &completed);
+    if (res >= 0) {
+        while (!completed) {
+            res = rawio_wait(_queue);
+            if (res < 0) {
+                rawstd_warning("Failed to wait queue: %s\n", strerror(-res));
+                break;
+            }
+        }
+    } else {
+        rawstd_warning("Failed to close object: %s\n", strerror(-res));
+    }
     rawio_queue_delete(_queue);
 }
 

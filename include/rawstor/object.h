@@ -205,7 +205,9 @@ int rawstor_object_open(
  *
  * @see rawstor_object_open
  */
-int rawstor_object_close(RawstorObject* object) RAWSTOR_NOEXCEPT;
+int rawstor_object_close(
+    RawstorObject* object, int (*cb)(int result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
 
 /**
  * @brief Retrieve the UUID of an open object.

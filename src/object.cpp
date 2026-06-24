@@ -186,6 +186,40 @@ std::vector<rawstd::URI> Object::locations() const {
     return ret;
 }
 
+void Object::close(std::function<void(int)>&& cb) {
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('o', "%s()\n", "close");
+
+    struct Operation {
+        size_t mirrors;
+        int error;
+        std::function<void(int)> cb;
+    };
+
+    auto op = std::make_shared<Operation>(
+        (Operation){.mirrors = _cns.size(), .error = 0, .cb = std::move(cb)}
+    );
+
+    for (auto& cn : _cns) {
+        cn->close([op, trace_event](int result) {
+            RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "result = %d\n", result);
+
+            --op->mirrors;
+
+            if (result < 0) {
+                rawstd_error("%s\n", strerror(-result));
+                op->error = EIO;
+            }
+
+            if (op->mirrors == 0) {
+                /**
+                 * TODO: Handle partial tasks.
+                 */
+                op->cb(op->error);
+            }
+        });
+    }
+}
+
 void Object::pread(
     void* buf, size_t size, off_t offset, std::function<void(size_t, int)>&& cb
 ) {
@@ -244,11 +278,10 @@ void Object::pwrite(
         std::function<void(size_t, int)> cb;
     };
 
-    std::shared_ptr<Operation> op =
-        std::make_shared<Operation>((Operation){.mirrors = _cns.size(),
-                                                .result = (size_t)-1,
-                                                .error = 0,
-                                                .cb = std::move(cb)});
+    auto op = std::make_shared<Operation>((Operation){.mirrors = _cns.size(),
+                                                      .result = (size_t)-1,
+                                                      .error = 0,
+                                                      .cb = std::move(cb)});
 
     for (auto& cn : _cns) {
         cn->pwrite(
@@ -292,11 +325,10 @@ void Object::pwritev(
         std::function<void(size_t, int)> cb;
     };
 
-    std::shared_ptr<Operation> op =
-        std::make_shared<Operation>((Operation){.mirrors = _cns.size(),
-                                                .result = (size_t)-1,
-                                                .error = 0,
-                                                .cb = std::move(cb)});
+    auto op = std::make_shared<Operation>((Operation){.mirrors = _cns.size(),
+                                                      .result = (size_t)-1,
+                                                      .error = 0,
+                                                      .cb = std::move(cb)});
 
     for (auto& cn : _cns) {
         cn->pwritev(
@@ -409,9 +441,18 @@ int rawstor_object_open(
     }
 }
 
-int rawstor_object_close(RawstorObject* object) noexcept {
+int rawstor_object_close(
+    RawstorObject* object, int (*cb)(int result, void* data), void* data
+) noexcept {
     try {
-        delete static_cast<rawstor::Object*>(object);
+        rawstor::Object* o = static_cast<rawstor::Object*>(object);
+        o->close([o, cb, data](int result) {
+            int res = cb(result, data);
+            if (res < 0) {
+                RAWSTD_THROW_SYSTEM_ERROR(-res);
+            }
+            delete o;
+        });
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();

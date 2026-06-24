@@ -255,6 +255,32 @@ static int srcv_data_sent(
     );
 }
 
+static int close_cb(int result, void* data) {
+    int* completed = (int*)(data);
+    *completed = 1;
+    if (result < 0) {
+        printf("Failed to close object: %s", strerror(-result));
+    }
+    return 0;
+}
+
+static void close_object(RawIOQueue* queue, RawstorObject* object) {
+    int completed = 0;
+    int res = rawstor_object_close(object, close_cb, &completed);
+    if (res >= 0) {
+        while (!completed) {
+            res = rawio_wait(queue);
+            if (res < 0) {
+                fprintf(stderr, "Failed to wait queue: %s\n", strerror(-res));
+                break;
+            }
+        }
+    } else {
+        fprintf(stderr, "rawstor_object_close() failed: %s\n", strerror(-res));
+        return;
+    }
+}
+
 int rawstor_cli_testio(
     unsigned int queue_size, const char* target, size_t block_size,
     unsigned int count, unsigned int io_depth, int vector_mode
@@ -334,10 +360,7 @@ int rawstor_cli_testio(
         }
     }
 
-    res = rawstor_object_close(object);
-    if (res < 0) {
-        fprintf(stderr, "rawstor_object_close() failed: %s\n", strerror(-res));
-    }
+    close_object(queue, object);
 
     for (unsigned int i = 0; i < io_depth; ++i) {
         worker_delete(workers[i]);
@@ -360,10 +383,7 @@ err_worker_create:
     }
     free(workers);
 err_workers:
-    res = rawstor_object_close(object);
-    if (res < 0) {
-        fprintf(stderr, "rawstor_object_close() failed: %s\n", strerror(res));
-    }
+    close_object(queue, object);
 err_open:
     rawio_queue_delete(queue);
 err_queue:

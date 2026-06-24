@@ -154,6 +154,33 @@ void send_response(
     cb.release();
 }
 
+int close_cb(int result, void* data) noexcept {
+    bool* completed = static_cast<bool*>(data);
+    *completed = true;
+    if (result < 0) {
+        rawstd_error("Failed to close object: %s", strerror(-result));
+    }
+    return 0;
+}
+
+void close_object(RawIOQueue* queue, RawstorObject* object) noexcept {
+    bool completed = false;
+    int res = rawstor_object_close(object, close_cb, &completed);
+    if (res >= 0) {
+        while (!completed) {
+            res = rawio_wait(queue);
+            if (res < 0) {
+                rawstd_warning("Failed to wait queue: %s\n", strerror(-res));
+                break;
+            }
+        }
+    } else {
+        rawstd_warning(
+            "Failed to close object in session: %s\n", strerror(-res)
+        );
+    }
+}
+
 } // namespace
 
 namespace rawstor {
@@ -178,12 +205,7 @@ Session::Session(RawIOQueue* queue, Server& server, int fd) :
 
 Session::~Session() noexcept {
     if (_object != nullptr) {
-        int res = rawstor_object_close(_object);
-        if (res < 0) {
-            rawstd_error(
-                "Failed to close object in session: %s\n", strerror(-res)
-            );
-        }
+        close_object(_queue, _object);
         _object = nullptr;
     }
     if (_recv_event != nullptr) {
@@ -379,10 +401,7 @@ void Session::_set_object(
     const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
 ) {
     if (_object != nullptr) {
-        int res = rawstor_object_close(_object);
-        if (res < 0) {
-            RAWSTD_THROW_SYSTEM_ERROR(-res);
-        }
+        close_object(_queue, _object);
         _object = nullptr;
     }
 

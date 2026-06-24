@@ -233,6 +233,12 @@ void Session::set_object(Object* object) {
     set_fd(fd);
 }
 
+void Session::close(std::function<void(int)>&& cb) {
+    rawstd_debug("%s(): fd = %d\n", __FUNCTION__, fd());
+
+    _queue.close(fd(), std::move(cb));
+}
+
 void Session::pread(
     void* buf, size_t size, off_t offset, std::function<void(size_t, int)>&& cb
 ) {

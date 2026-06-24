@@ -59,6 +59,8 @@ public:
 
     virtual void set_object(Object* object) = 0;
 
+    virtual void close(std::function<void(int)>&& cb) = 0;
+
     virtual void pread(
         void* buf, size_t size, off_t offset,
         std::function<void(size_t, int)>&& cb

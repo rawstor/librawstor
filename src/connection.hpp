@@ -30,6 +30,8 @@ private:
     std::vector<std::shared_ptr<Session>>
     _open(const rawstd::URI& location, Object* object, size_t nsessions);
 
+    bool _erase_session(const std::shared_ptr<Session>& s);
+
     void
     _op(const char* func_name, size_t size, off_t offset,
         const std::shared_ptr<std::function<void(size_t, int)>>& cb,
@@ -58,7 +60,7 @@ public:
 
     void open(const rawstd::URI& location, Object* object, size_t nsessions);
 
-    void close();
+    void close(std::function<void(int)>&& cb);
 
     void pread(
         void* buf, size_t size, off_t offset,
