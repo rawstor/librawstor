@@ -2,6 +2,8 @@
 
 #include <rawstd/uri.hpp>
 
+#include <exception>
+#include <stdexcept>
 #include <vector>
 
 int rawstor_cli_location_add_target(
