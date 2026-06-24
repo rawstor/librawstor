@@ -4,6 +4,7 @@
 
 #include <exception>
 #include <stdexcept>
+#include <system_error>
 #include <vector>
 
 int rawstor_cli_location_add_target(
