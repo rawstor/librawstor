@@ -7,7 +7,7 @@
 int rawstor_cli_location_add_target(
     const char* location, const struct RawstdUUID* uuid, char* target,
     size_t size
-) {
+) noexcept {
     try {
         RawstdUUIDString uuid_string;
         rawstd_uuid_to_string(uuid, &uuid_string);
