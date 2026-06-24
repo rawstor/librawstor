@@ -83,9 +83,7 @@ int validate_cmd(
         return 0;
     }
 
-    rawstd_error(
-        "fd %d: Unexpected command: %d, expecting: %d\n", fd, cmd, expected
-    );
+    rawstd_error("fd %d: Unexpected command: %d\n", fd, cmd);
     return EPROTO;
 }
 
