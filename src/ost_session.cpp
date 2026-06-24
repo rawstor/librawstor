@@ -83,7 +83,9 @@ int validate_cmd(
         return 0;
     }
 
-    rawstd_error("fd %d: Unexpected command: %d\n", fd, cmd);
+    rawstd_error(
+        "fd %d: Unexpected command: %d, expecting: %d\n", fd, cmd, expected
+    );
     return EPROTO;
 }
 
@@ -108,6 +110,8 @@ class Context final : public std::enable_shared_from_this<Context> {
 private:
     rawio::Queue& _queue;
     int _fd;
+    rawstor::Object* _object;
+    bool _ready;
     std::unordered_map<uint16_t, std::shared_ptr<SessionOp>> _ops;
     RawIOEvent* _read_event;
 
@@ -124,10 +128,16 @@ private:
     }
 
 public:
-    Context(rawio::Queue& queue, int fd) :
+    Context(rawio::Queue& queue, int fd, rawstor::Object* object) :
         _queue(queue),
         _fd(fd),
+        _object(object),
+        _ready(false),
         _read_event(nullptr) {}
+
+    inline rawstor::Object* object() noexcept { return _object; }
+    inline void set_ready(bool ready) noexcept { _ready = ready; }
+    inline bool ready() const noexcept { return _ready; }
 
     void setup_recv();
     void teardown_recv() noexcept;
@@ -225,6 +235,72 @@ public:
     ) = 0;
 
     virtual void response_body_cb(const iovec*, unsigned int, size_t, int) {}
+};
+
+class SessionOpSetObject final : public SessionOp {
+private:
+    RawstorOSTFrameBasic _request;
+
+public:
+    SessionOpSetObject(
+        const std::shared_ptr<rawstor::ost::Context>& context, uint16_t cid,
+        const rawstd::TraceEvent& trace_event
+    ) :
+        SessionOp(
+            context, cid, trace_event,
+            [context](size_t, int error) {
+                if (error) {
+                    RAWSTD_THROW_SYSTEM_ERROR(error);
+                }
+                context->set_ready(true);
+            }
+        ),
+        _request({
+            .head =
+                {
+                    .magic = RAWSTOR_MAGIC,
+                    .cmd = RAWSTOR_CMD_SET_OBJECT,
+                    .cid = cid,
+                },
+            .body = {
+                .obj_id = {},
+                .offset = 0,
+                .val = 0,
+            },
+        }) {
+        memcpy(
+            _request.body.obj_id, context->object()->id().bytes,
+            sizeof(_request.body.obj_id)
+        );
+    }
+
+    const void* request_data() const noexcept { return &_request; }
+
+    size_t request_size() const noexcept override { return sizeof(_request); }
+
+    void response_head_cb(
+        const RawstorOSTFrameResponse* response, int error, bool* next_head,
+        size_t* next_size
+    ) override {
+        RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
+
+        if (!error) {
+            error = validate_response(_context->fd(), response);
+        }
+
+        if (!error) {
+            error = validate_cmd(
+                _context->fd(), response->head.cmd, RAWSTOR_CMD_SET_OBJECT
+            );
+        }
+
+        _dispatch(
+            !error && response != nullptr ? response->body.res : 0, error
+        );
+
+        *next_head = true;
+        *next_size = error ? 0 : sizeof(RawstorOSTFrameResponse);
+    }
 };
 
 class SessionOpRead final : public SessionOp {
@@ -595,6 +671,7 @@ void Context::setup_recv() {
                             iov, niov, 0, &response, sizeof(response)
                         );
                         cid = response.head.cid;
+                        printf("received cid %d\n", cid);
                         SessionOp& op = context->_find_op(cid);
                         op.response_head_cb(&response, 0, &is_head, &size);
                     } else {
@@ -775,91 +852,6 @@ int Session::_connect() {
     return fd;
 }
 
-void Session::_set_object(Object* object) {
-    rawstd::TraceEvent trace_event =
-        RAWSTD_TRACE_EVENT('s', "%s\n", "set object");
-
-    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
-
-    RawstorOSTFrameBasic request = {
-        .head =
-            {
-                .magic = RAWSTOR_MAGIC,
-                .cmd = RAWSTOR_CMD_SET_OBJECT,
-                .cid = _cid_counter++,
-            },
-        .body = {
-            .obj_id = {},
-            .offset = 0,
-            .val = 0,
-        },
-    };
-    memcpy(
-        request.body.obj_id, object->id().bytes, sizeof(request.body.obj_id)
-    );
-    rawstd_info("%s: Setting object id\n", str().c_str());
-    queue->write(
-        fd(), &request, sizeof(request),
-        [fd = fd(), trace_event](size_t result, int error) {
-            RAWSTD_TRACE_EVENT_MESSAGE(
-                trace_event, "%zu of %zu, error = %d\n", result,
-                sizeof(RawstorOSTFrameBasic), error
-            );
-
-            if (!error) {
-                error =
-                    validate_result(fd, sizeof(RawstorOSTFrameBasic), result);
-            }
-
-            if (error) {
-                RAWSTD_THROW_SYSTEM_ERROR(error);
-            }
-        }
-    );
-
-    bool completed = false;
-    RawstorOSTFrameResponse response;
-    queue->read(
-        fd(), &response, sizeof(response),
-        [fd = fd(), &response, &completed,
-         trace_event](size_t result, int error) {
-            RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "error = %d\n", error);
-
-            completed = true;
-
-            RAWSTD_TRACE_EVENT_MESSAGE(
-                trace_event, "%zu of %zu, error = %d\n", result,
-                sizeof(RawstorOSTFrameResponse), error
-            );
-
-            if (!error) {
-                error = validate_result(
-                    fd, sizeof(RawstorOSTFrameResponse), result
-                );
-            }
-
-            if (!error) {
-                error = validate_response(fd, &response);
-            }
-
-            if (!error) {
-                error =
-                    validate_cmd(fd, response.head.cmd, RAWSTOR_CMD_SET_OBJECT);
-            }
-
-            if (error) {
-                RAWSTD_THROW_SYSTEM_ERROR(error);
-            }
-
-            rawstd_info("fd %d: Object id successfully set\n", fd);
-        }
-    );
-
-    while (!completed) {
-        queue->wait();
-    }
-}
-
 void Session::create(
     const RawstdUUID&, const RawstorObjectSpec&, std::function<void(int)>&& cb
 ) {
@@ -894,8 +886,7 @@ void Session::spec(
 }
 
 void Session::set_object(Object* object) {
-    _set_object(object);
-    _context = std::make_shared<Context>(_queue, fd());
+    _context = std::make_shared<Context>(_queue, fd(), object);
     _context->setup_recv();
 }
 
@@ -911,23 +902,63 @@ void Session::pread(
     );
     _context->register_op(op);
 
-    _queue.write(
-        fd(), op->request_data(), op->request_size(),
-        [op, trace_event](size_t result, int error) {
-            RAWSTD_TRACE_EVENT_MESSAGE(
-                trace_event, "%zu of %zu, error = %d\n", result,
-                op->request_size(), error
-            );
-
-            if (!error) {
-                error = validate_result(
-                    op->context().fd(), op->request_size(), result
+    if (_context->ready()) {
+        _queue.write(
+            fd(), op->request_data(), op->request_size(),
+            [op, trace_event](size_t result, int error) {
+                RAWSTD_TRACE_EVENT_MESSAGE(
+                    trace_event, "%zu of %zu, error = %d\n", result,
+                    op->request_size(), error
                 );
-            }
 
-            op->request_cb(error);
-        }
-    );
+                if (!error) {
+                    error = validate_result(
+                        op->context().fd(), op->request_size(), result
+                    );
+                }
+
+                op->request_cb(error);
+            }
+        );
+    } else {
+        auto set_object_op = std::make_shared<SessionOpSetObject>(
+            _context, _cid_counter++, trace_event
+        );
+        _context->register_op(set_object_op);
+        auto iov = std::make_shared<std::vector<iovec>>(std::vector<iovec>{
+            {
+                .iov_base = const_cast<void*>(set_object_op->request_data()),
+                .iov_len = set_object_op->request_size(),
+            },
+            {
+                .iov_base = const_cast<void*>(op->request_data()),
+                .iov_len = op->request_size(),
+            },
+        });
+        _queue.writev(
+            fd(), iov->data(), iov->size(),
+            [iov, set_object_op, op, trace_event](size_t result, int error) {
+                RAWSTD_TRACE_EVENT_MESSAGE(
+                    trace_event, "%zu of %zu, error = %d\n", result,
+                    op->request_size(), error
+                );
+
+                set_object_op->request_cb(
+                    result >= set_object_op->request_size() ? 0 : error
+                );
+
+                if (!error) {
+                    error = validate_result(
+                        op->context().fd(),
+                        set_object_op->request_size() + op->request_size(),
+                        result
+                    );
+                }
+
+                op->request_cb(error);
+            }
+        );
+    }
 }
 
 void Session::preadv(
@@ -944,23 +975,63 @@ void Session::preadv(
     );
     _context->register_op(op);
 
-    _queue.write(
-        fd(), op->request_data(), op->request_size(),
-        [op, trace_event](size_t result, int error) {
-            RAWSTD_TRACE_EVENT_MESSAGE(
-                trace_event, "%zu of %zu, error = %d\n", result,
-                op->request_size(), error
-            );
-
-            if (!error) {
-                error = validate_result(
-                    op->context().fd(), op->request_size(), result
+    if (_context->ready()) {
+        _queue.write(
+            fd(), op->request_data(), op->request_size(),
+            [op, trace_event](size_t result, int error) {
+                RAWSTD_TRACE_EVENT_MESSAGE(
+                    trace_event, "%zu of %zu, error = %d\n", result,
+                    op->request_size(), error
                 );
-            }
 
-            op->request_cb(error);
-        }
-    );
+                if (!error) {
+                    error = validate_result(
+                        op->context().fd(), op->request_size(), result
+                    );
+                }
+
+                op->request_cb(error);
+            }
+        );
+    } else {
+        auto set_object_op = std::make_shared<SessionOpSetObject>(
+            _context, _cid_counter++, trace_event
+        );
+        _context->register_op(set_object_op);
+        auto iov = std::make_shared<std::vector<iovec>>(std::vector<iovec>{
+            {
+                .iov_base = const_cast<void*>(set_object_op->request_data()),
+                .iov_len = set_object_op->request_size(),
+            },
+            {
+                .iov_base = const_cast<void*>(op->request_data()),
+                .iov_len = op->request_size(),
+            },
+        });
+        _queue.writev(
+            fd(), iov->data(), iov->size(),
+            [iov, set_object_op, op, trace_event](size_t result, int error) {
+                RAWSTD_TRACE_EVENT_MESSAGE(
+                    trace_event, "%zu of %zu, error = %d\n", result,
+                    op->request_size(), error
+                );
+
+                set_object_op->request_cb(
+                    result >= set_object_op->request_size() ? 0 : error
+                );
+
+                if (!error) {
+                    error = validate_result(
+                        op->context().fd(),
+                        set_object_op->request_size() + op->request_size(),
+                        result
+                    );
+                }
+
+                op->request_cb(error);
+            }
+        );
+    }
 }
 
 void Session::pwrite(
@@ -974,25 +1045,73 @@ void Session::pwrite(
     std::shared_ptr<SessionOpWrite> op = std::make_shared<SessionOpWrite>(
         _context, _cid_counter++, buf, size, offset, trace_event, std::move(cb)
     );
+    printf("write cid %d\n", op->cid());
     _context->register_op(op);
 
-    _queue.writev(
-        fd(), op->request_iov(), op->request_niov(),
-        [op, trace_event](size_t result, int error) {
-            RAWSTD_TRACE_EVENT_MESSAGE(
-                trace_event, "%zu of %zu, error = %d\n", result,
-                op->request_size(), error
-            );
-
-            if (!error) {
-                error = validate_result(
-                    op->context().fd(), op->request_size(), result
+    if (_context->ready()) {
+        _queue.writev(
+            fd(), op->request_iov(), op->request_niov(),
+            [op, trace_event](size_t result, int error) {
+                RAWSTD_TRACE_EVENT_MESSAGE(
+                    trace_event, "%zu of %zu, error = %d\n", result,
+                    op->request_size(), error
                 );
-            }
 
-            op->request_cb(error);
+                if (!error) {
+                    error = validate_result(
+                        op->context().fd(), op->request_size(), result
+                    );
+                }
+
+                op->request_cb(error);
+            }
+        );
+    } else {
+        rawstd::TraceEvent set_object_trace_event =
+            RAWSTD_TRACE_EVENT('s', "%s\n", "setting object");
+        auto set_object_op = std::make_shared<SessionOpSetObject>(
+            _context, _cid_counter++, set_object_trace_event
+        );
+        printf("set object cid %d\n", set_object_op->cid());
+        _context->register_op(set_object_op);
+        auto iov = std::make_shared<std::vector<iovec>>();
+        iov->reserve(op->request_niov() + 1);
+        iov->push_back({
+            .iov_base = const_cast<void*>(set_object_op->request_data()),
+            .iov_len = set_object_op->request_size(),
+        });
+        for (unsigned int i = 0; i < op->request_niov(); ++i) {
+            iov->push_back(op->request_iov()[i]);
         }
-    );
+        _queue.writev(
+            fd(), iov->data(), iov->size(),
+            [iov, set_object_op, op, trace_event,
+             set_object_trace_event](size_t result, int error) {
+                RAWSTD_TRACE_EVENT_MESSAGE(
+                    trace_event, "%zu of %zu, error = %d\n", result,
+                    set_object_op->request_size() + op->request_size(), error
+                );
+
+                RAWSTD_TRACE_EVENT_MESSAGE(
+                    set_object_trace_event, "error = %d\n",
+                    result >= set_object_op->request_size() ? 0 : error
+                );
+                set_object_op->request_cb(
+                    result >= set_object_op->request_size() ? 0 : error
+                );
+
+                if (!error) {
+                    error = validate_result(
+                        op->context().fd(),
+                        set_object_op->request_size() + op->request_size(),
+                        result
+                    );
+                }
+
+                op->request_cb(error);
+            }
+        );
+    }
 }
 
 void Session::pwritev(
@@ -1009,23 +1128,62 @@ void Session::pwritev(
     );
     _context->register_op(op);
 
-    _queue.writev(
-        fd(), op->request_iov(), op->request_niov(),
-        [op, trace_event](size_t result, int error) {
-            RAWSTD_TRACE_EVENT_MESSAGE(
-                trace_event, "%zu of %zu, error = %d\n", result,
-                op->request_size(), error
-            );
-
-            if (!error) {
-                error = validate_result(
-                    op->context().fd(), op->request_size(), result
+    if (_context->ready()) {
+        _queue.writev(
+            fd(), op->request_iov(), op->request_niov(),
+            [op, trace_event](size_t result, int error) {
+                RAWSTD_TRACE_EVENT_MESSAGE(
+                    trace_event, "%zu of %zu, error = %d\n", result,
+                    op->request_size(), error
                 );
-            }
 
-            op->request_cb(error);
+                if (!error) {
+                    error = validate_result(
+                        op->context().fd(), op->request_size(), result
+                    );
+                }
+
+                op->request_cb(error);
+            }
+        );
+    } else {
+        auto set_object_op = std::make_shared<SessionOpSetObject>(
+            _context, _cid_counter++, trace_event
+        );
+        _context->register_op(set_object_op);
+        auto iov = std::make_shared<std::vector<iovec>>();
+        iov->reserve(op->request_niov() + 1);
+        iov->push_back({
+            .iov_base = const_cast<void*>(set_object_op->request_data()),
+            .iov_len = set_object_op->request_size(),
+        });
+        for (unsigned int i = 0; i < op->request_niov(); ++i) {
+            iov->push_back(op->request_iov()[i]);
         }
-    );
+        _queue.writev(
+            fd(), iov->data(), iov->size(),
+            [iov, set_object_op, op, trace_event](size_t result, int error) {
+                RAWSTD_TRACE_EVENT_MESSAGE(
+                    trace_event, "%zu of %zu, error = %d\n", result,
+                    op->request_size(), error
+                );
+
+                set_object_op->request_cb(
+                    result >= set_object_op->request_size() ? 0 : error
+                );
+
+                if (!error) {
+                    error = validate_result(
+                        op->context().fd(),
+                        set_object_op->request_size() + op->request_size(),
+                        result
+                    );
+                }
+
+                op->request_cb(error);
+            }
+        );
+    }
 }
 
 } // namespace ost

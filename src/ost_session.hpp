@@ -31,7 +31,6 @@ private:
     std::shared_ptr<Context> _context;
 
     int _connect();
-    void _set_object(Object* object);
 
 public:
     Session(rawio::Queue& queue, const rawstd::URI& location);

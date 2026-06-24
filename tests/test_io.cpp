@@ -211,8 +211,8 @@ TEST(OstIOTest, basics) {
 
     {
         rawstor::tests::Session s(server);
-        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
-        s.cmd_write(RAWSTOR_MAGIC, 1, 4);
+        s.cmd_set_object(RAWSTOR_MAGIC, 1, 0);
+        s.cmd_write(RAWSTOR_MAGIC, 0, 4);
         s.cmd_read(RAWSTOR_MAGIC, 2, "pong", 4);
     }
 
@@ -236,14 +236,12 @@ TEST(OstIOTest, set_object_fail) {
         s.cmd_allocate();
     }
 
-    for (unsigned int i = 0; i < 3; ++i) {
+    {
         rawstor::tests::Session s(server);
         s.cmd_set_object(0, 0, 0);
     }
 
-    EXPECT_THROW(
-        { Object object(queue, location, 1ull << 20); }, std::system_error
-    );
+    EXPECT_NO_THROW({ Object object(queue, location, 1ull << 20); });
 }
 
 TEST(OstIOTest, set_object_error) {
@@ -256,7 +254,7 @@ TEST(OstIOTest, set_object_error) {
         s.cmd_allocate();
     }
 
-    for (unsigned int i = 0; i < 3; ++i) {
+    {
         rawstor::tests::Session s(server);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, -ENOENT);
     }
@@ -276,13 +274,11 @@ TEST(OstIOTest, set_object_disconnect) {
         s.cmd_allocate();
     }
 
-    for (unsigned int i = 0; i < 3; ++i) {
+    {
         rawstor::tests::Session s(server);
     }
 
-    EXPECT_THROW(
-        { Object object(queue, location, 1ull << 20); }, std::system_error
-    );
+    EXPECT_NO_THROW({ Object object(queue, location, 1ull << 20); });
 }
 
 TEST(OstIOTest, write_fail) {
