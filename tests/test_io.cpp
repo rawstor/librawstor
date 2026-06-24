@@ -254,14 +254,14 @@ TEST(OstIOTest, set_object_error) {
         s.cmd_allocate();
     }
 
-    {
+    for (unsigned int i = 0; i < 3; ++i) {
         rawstor::tests::Session s(server);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, -ENOENT);
     }
 
-    EXPECT_THROW(
-        { Object object(queue, location, 1ull << 20); }, std::system_error
-    );
+    Object object(queue, location, 1ull << 20);
+    std::string ping = "ping";
+    EXPECT_THROW(object.write(ping.data(), ping.length()), std::system_error);
 }
 
 TEST(OstIOTest, set_object_disconnect) {
@@ -274,11 +274,14 @@ TEST(OstIOTest, set_object_disconnect) {
         s.cmd_allocate();
     }
 
-    {
+    for (unsigned int i = 0; i < 3; ++i) {
         rawstor::tests::Session s(server);
+        s.cmd_set_object(RAWSTOR_MAGIC, 1, 0);
     }
 
-    EXPECT_NO_THROW({ Object object(queue, location, 1ull << 20); });
+    Object object(queue, location, 1ull << 20);
+    std::string ping = "ping";
+    EXPECT_THROW(object.write(ping.data(), ping.length()), std::system_error);
 }
 
 TEST(OstIOTest, write_fail) {

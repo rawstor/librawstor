@@ -918,8 +918,10 @@ void Session::pread(
             }
         );
     } else {
+        rawstd::TraceEvent set_object_trace_event =
+            RAWSTD_TRACE_EVENT('s', "%s\n", "setting object");
         auto set_object_op = std::make_shared<SessionOpSetObject>(
-            _context, _cid_counter++, trace_event
+            _context, _cid_counter++, set_object_trace_event
         );
         _context->register_op(set_object_op);
         auto iov = std::make_shared<std::vector<iovec>>(std::vector<iovec>{
@@ -934,12 +936,17 @@ void Session::pread(
         });
         _queue.writev(
             fd(), iov->data(), iov->size(),
-            [iov, set_object_op, op, trace_event](size_t result, int error) {
+            [iov, set_object_op, op, trace_event,
+             set_object_trace_event](size_t result, int error) {
                 RAWSTD_TRACE_EVENT_MESSAGE(
                     trace_event, "%zu of %zu, error = %d\n", result,
-                    op->request_size(), error
+                    set_object_op->request_size() + op->request_size(), error
                 );
 
+                RAWSTD_TRACE_EVENT_MESSAGE(
+                    set_object_trace_event, "error = %d\n",
+                    result >= set_object_op->request_size() ? 0 : error
+                );
                 set_object_op->request_cb(
                     result >= set_object_op->request_size() ? 0 : error
                 );
@@ -991,8 +998,10 @@ void Session::preadv(
             }
         );
     } else {
+        rawstd::TraceEvent set_object_trace_event =
+            RAWSTD_TRACE_EVENT('s', "%s\n", "setting object");
         auto set_object_op = std::make_shared<SessionOpSetObject>(
-            _context, _cid_counter++, trace_event
+            _context, _cid_counter++, set_object_trace_event
         );
         _context->register_op(set_object_op);
         auto iov = std::make_shared<std::vector<iovec>>(std::vector<iovec>{
@@ -1007,12 +1016,17 @@ void Session::preadv(
         });
         _queue.writev(
             fd(), iov->data(), iov->size(),
-            [iov, set_object_op, op, trace_event](size_t result, int error) {
+            [iov, set_object_op, op, trace_event,
+             set_object_trace_event](size_t result, int error) {
                 RAWSTD_TRACE_EVENT_MESSAGE(
                     trace_event, "%zu of %zu, error = %d\n", result,
-                    op->request_size(), error
+                    set_object_op->request_size() + op->request_size(), error
                 );
 
+                RAWSTD_TRACE_EVENT_MESSAGE(
+                    set_object_trace_event, "error = %d\n",
+                    result >= set_object_op->request_size() ? 0 : error
+                );
                 set_object_op->request_cb(
                     result >= set_object_op->request_size() ? 0 : error
                 );
@@ -1142,8 +1156,10 @@ void Session::pwritev(
             }
         );
     } else {
+        rawstd::TraceEvent set_object_trace_event =
+            RAWSTD_TRACE_EVENT('s', "%s\n", "setting object");
         auto set_object_op = std::make_shared<SessionOpSetObject>(
-            _context, _cid_counter++, trace_event
+            _context, _cid_counter++, set_object_trace_event
         );
         _context->register_op(set_object_op);
         auto iov = std::make_shared<std::vector<iovec>>();
@@ -1157,12 +1173,17 @@ void Session::pwritev(
         }
         _queue.writev(
             fd(), iov->data(), iov->size(),
-            [iov, set_object_op, op, trace_event](size_t result, int error) {
+            [iov, set_object_op, op, trace_event,
+             set_object_trace_event](size_t result, int error) {
                 RAWSTD_TRACE_EVENT_MESSAGE(
                     trace_event, "%zu of %zu, error = %d\n", result,
-                    op->request_size(), error
+                    set_object_op->request_size() + op->request_size(), error
                 );
 
+                RAWSTD_TRACE_EVENT_MESSAGE(
+                    set_object_trace_event, "error = %d\n",
+                    result >= set_object_op->request_size() ? 0 : error
+                );
                 set_object_op->request_cb(
                     result >= set_object_op->request_size() ? 0 : error
                 );
