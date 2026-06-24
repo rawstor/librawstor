@@ -775,9 +775,9 @@ int Session::_connect() {
     return fd;
 }
 
-void Session::_basic(const RawstdUUID& id, const char* name) {
+void Session::_basic(RawstorOSTCommandType cmd, const RawstdUUID& id) {
     rawstd::TraceEvent trace_event =
-        RAWSTD_TRACE_EVENT('s', "%s\n", "remove");
+        RAWSTD_TRACE_EVENT('s', "basic cmd %d\n", cmd);
 
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
 
@@ -785,7 +785,7 @@ void Session::_basic(const RawstdUUID& id, const char* name) {
         .head =
             {
                 .magic = RAWSTOR_MAGIC,
-                .cmd = RAWSTOR_CMD_DISCARD,
+                .cmd = cmd,
                 .cid = _cid_counter++,
             },
         .body = {
@@ -794,9 +794,7 @@ void Session::_basic(const RawstdUUID& id, const char* name) {
             .val = 0,
         },
     };
-    memcpy(
-        request.body.obj_id, id.bytes, sizeof(request.body.obj_id)
-    );
+    memcpy(request.body.obj_id, id.bytes, sizeof(request.body.obj_id));
     queue->write(
         fd(), &request, sizeof(request),
         [fd = fd(), trace_event](size_t result, int error) {
@@ -952,8 +950,7 @@ void Session::create(
 }
 
 void Session::remove(const RawstdUUID& id, std::function<void(int)>&&) {
-    rawstd::TraceEvent trace_event =
-        RAWSTD_TRACE_EVENT('s', "%s\n", "remove");
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('s', "%s\n", "remove");
 
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
 
@@ -970,9 +967,7 @@ void Session::remove(const RawstdUUID& id, std::function<void(int)>&&) {
             .val = 0,
         },
     };
-    memcpy(
-        request.body.obj_id, id.bytes, sizeof(request.body.obj_id)
-    );
+    memcpy(request.body.obj_id, id.bytes, sizeof(request.body.obj_id));
     queue->write(
         fd(), &request, sizeof(request),
         [fd = fd(), trace_event](size_t result, int error) {
