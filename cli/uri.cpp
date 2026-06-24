@@ -1,0 +1,21 @@
+#include "uri.h"
+
+#include <rawstd/uri.hpp>
+
+#include <vector>
+
+int rawstor_cli_location_add_target(
+    const char* location, const struct RawstdUUID* uuid, char* target,
+    size_t size
+) {
+    RawstdUUIDString uuid_string;
+    rawstd_uuid_to_string(uuid, &uuid_string);
+
+    std::vector<rawstd::URI> uris = rawstd::URI::uriv(location);
+    std::vector<rawstd::URI> ret;
+    ret.reserve(uris.size());
+    for (const auto& location_uri : uris) {
+        ret.emplace_back(location_uri, uuid_string);
+    }
+    return snprintf(target, size, "%s", rawstd::URI::uris(ret).c_str());
+}
