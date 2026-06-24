@@ -33,6 +33,57 @@ void rawio_queue_delete(RawIOQueue* queue) noexcept {
     delete static_cast<rawio::Queue*>(queue);
 }
 
+int rawio_open(
+    RawIOQueue* queue, const char* path, int flags, mode_t mode,
+    int (*cb)(int result, void* data), void* data
+) noexcept {
+    try {
+        static_cast<rawio::Queue*>(queue)->open(
+            path, flags, mode, [cb, data](int result) {
+                int res = cb(result, data);
+                if (res) {
+                    RAWSTD_THROW_SYSTEM_ERROR(-res);
+                }
+            }
+        );
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+int rawio_close(
+    RawIOQueue* queue, int fd, int (*cb)(int result, void* data), void* data
+) noexcept {
+    try {
+        static_cast<rawio::Queue*>(queue)->close(fd, [cb, data](int result) {
+            int res = cb(result, data);
+            if (res) {
+                RAWSTD_THROW_SYSTEM_ERROR(-res);
+            }
+        });
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
 int rawio_poll(
     RawIOQueue* queue, int fd, unsigned int mask,
     int (*cb)(int result, void* data), void* data
@@ -76,6 +127,33 @@ int rawio_poll_multishot(
         if (event != nullptr) {
             *event = e;
         }
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+int rawio_connect(
+    RawIOQueue* queue, int fd, const sockaddr* addr, socklen_t addrlen,
+    int (*cb)(int result, void* data), void* data
+) noexcept {
+    try {
+        static_cast<rawio::Queue*>(queue)->connect(
+            fd, addr, addrlen, [cb, data](int result) {
+                int res = cb(result, data);
+                if (res) {
+                    RAWSTD_THROW_SYSTEM_ERROR(-res);
+                }
+            }
+        );
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
