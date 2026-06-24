@@ -669,7 +669,6 @@ void Context::setup_recv() {
                             iov, niov, 0, &response, sizeof(response)
                         );
                         cid = response.head.cid;
-                        printf("received cid %d\n", cid);
                         SessionOp& op = context->_find_op(cid);
                         op.response_head_cb(&response, 0, &is_head, &size);
                     } else {
@@ -1043,7 +1042,6 @@ void Session::pwrite(
     std::shared_ptr<SessionOpWrite> op = std::make_shared<SessionOpWrite>(
         _context, _cid_counter++, buf, size, offset, trace_event, std::move(cb)
     );
-    printf("write cid %d\n", op->cid());
     _context->register_op(op);
 
     if (_context->ready()) {
@@ -1070,7 +1068,6 @@ void Session::pwrite(
         auto set_object_op = std::make_shared<SessionOpSetObject>(
             _context, _cid_counter++, set_object_trace_event
         );
-        printf("set object cid %d\n", set_object_op->cid());
         _context->register_op(set_object_op);
         auto iov = std::make_shared<std::vector<iovec>>();
         iov->reserve(op->request_niov() + 1);
