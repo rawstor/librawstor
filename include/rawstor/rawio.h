@@ -109,6 +109,112 @@ int rawio_queue_create(unsigned int depth, RawIOQueue** queue) RAWSTOR_NOEXCEPT;
 void rawio_queue_delete(RawIOQueue* queue) RAWSTOR_NOEXCEPT;
 
 /**
+ * @brief Asynchronously opens a file (single-shot).
+ *
+ * This function initiates an asynchronous open operation on the specified file
+ * path. The operation is performed in the background, and the provided callback
+ * is invoked exactly once when the open completes (either successfully or with
+ * an error). After the callback returns, the operation is complete and no
+ * further callbacks will be triggered for this request.
+ *
+ * @param path   Path to the file to open. Must be a valid null‑terminated
+ *               string. The caller must ensure that the memory remains valid
+ *               until the callback is invoked.
+ *
+ * @param flags  File status flags and access modes, as defined in open(2).
+ *               Standard flags include O_RDONLY, O_WRONLY, O_RDWR, O_CREAT,
+ *               O_TRUNC, etc. The exact semantics follow the system's open(2).
+ *
+ * @param mode   File mode (permissions) used when O_CREAT is specified in
+ *               flags. The value is modified by the process's umask in the
+ *               usual way. If O_CREAT is not set, mode is ignored.
+ *
+ * @param cb     Callback function invoked when the open operation completes.
+ *               The callback receives an integer result:
+ *               - If positive, it is the new file descriptor (>= 0) that can
+ *                 be used for subsequent I/O operations.
+ *               - If negative, it is the negative error code (e.g., -ENOENT,
+ *                 -EACCES, -ENFILE). In case of an error, no file descriptor
+ *                 is returned and the operation is considered failed.
+ *
+ * @param data   User-defined context pointer passed unchanged to the callback.
+ *               Can be used to maintain application state.
+ *
+ * @return       0 on successful initiation of the asynchronous open operation.
+ *               Negative error code on immediate failure (e.g., -EINVAL for
+ *               invalid parameters). Note that the actual open result is
+ *               delivered via the callback.
+ *
+ * @warning      The callback may be invoked from an I/O completion context.
+ *               Avoid blocking operations inside the callback; instead, queue
+ *               the file descriptor for later use.
+ *
+ * @warning      The returned file descriptor (if successful) is subject to the
+ *               usual restrictions (e.g., non‑blocking mode may be set
+ *               automatically by the underlying implementation). Check
+ *               the actual flags if needed.
+ *
+ * @see          open(2) for standard synchronous open semantics.
+ * @see          rawio_close() for closing the opened file descriptor.
+ */
+int rawio_open(
+    RawIOQueue* queue, const char* path, int flags, mode_t mode,
+    int (*cb)(int result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Asynchronously closes a file descriptor (single-shot).
+ *
+ * This function initiates an asynchronous close operation on the given file
+ * descriptor. The operation is performed in the background, and the provided
+ * callback is invoked exactly once when the close completes (either
+ * successfully or with an error). After the callback returns, the operation is
+ * complete and no further callbacks will be triggered for this request.
+ *
+ * @param fd    File descriptor to close. Must be a valid, open file descriptor
+ *              that was previously obtained (e.g., from rawio_open() or
+ *              rawio_accept()). After successful close, the descriptor becomes
+ *              invalid and should not be used further.
+ *
+ * @param cb    Callback function invoked when the close operation completes.
+ *              The callback receives an integer result:
+ *              - If zero (0), the descriptor was closed successfully.
+ *              - If negative, it is the negative error code (e.g., -EBADF,
+ *                -EIO). In case of an error, the descriptor may still be
+ *                in an inconsistent state; the application should avoid using
+ *                it.
+ *
+ * @param data  User-defined context pointer passed unchanged to the callback.
+ *              Can be used to maintain application state.
+ *
+ * @return      0 on successful initiation of the asynchronous close operation.
+ *              Negative error code on immediate failure (e.g., -EBADF if the
+ *              descriptor is invalid or already closed). Note that the actual
+ *              close result is delivered via the callback.
+ *
+ * @warning      The callback may be invoked from an I/O completion context.
+ *               Avoid blocking operations inside the callback.
+ *
+ * @warning      After initiating an asynchronous close, the file descriptor
+ *               should be considered "in transition". Do not attempt to use
+ *               the descriptor in other I/O operations until the callback
+ *               confirms completion (success or failure). If the close fails,
+ *               the descriptor may still be open, but its state is unreliable.
+ *
+ * @warning      Closing a descriptor that has pending asynchronous operations
+ *               may lead to those operations being cancelled or yielding errors
+ *               (e.g., -ECANCELED). The behaviour is implementation‑defined,
+ *               but it is recommended to cancel all operations on the fd first
+ *               via rawio_cancel_all() before closing.
+ *
+ * @see          close(2) for standard synchronous close semantics.
+ * @see          rawio_open() for opening files.
+ */
+int rawio_close(
+    RawIOQueue* queue, int fd, int (*cb)(int result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
  * @brief Asynchronously polls a file descriptor for events (single-shot).
  *
  * This function initiates a one‑time asynchronous poll operation on the
@@ -219,6 +325,63 @@ int rawio_poll(
 int rawio_poll_multishot(
     RawIOQueue* queue, int fd, unsigned int mask,
     int (*cb)(int result, void* data), void* data, RawIOEvent** event
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Asynchronously initiates a connection on a socket (single-shot).
+ *
+ * This function starts an asynchronous connect operation on the specified
+ * socket file descriptor. The connection is established in the background,
+ * and the provided callback is invoked exactly once when the operation
+ * completes (either successfully or with an error). After the callback
+ * returns, the operation is complete and no further callbacks will be
+ * triggered for this request.
+ *
+ * @param fd      Socket file descriptor. Must be a valid socket created with
+ *                socket(2). The socket should be set to non‑blocking mode
+ *                (O_NONBLOCK) to ensure proper asynchronous behaviour.
+ *
+ * @param addr    Pointer to a sockaddr structure containing the target address
+ *                to connect to. The structure must remain valid until the
+ *                callback is invoked (i.e., it is the caller's responsibility
+ *                to keep the memory alive).
+ *
+ * @param addrlen Length of the sockaddr structure pointed to by addr.
+ *
+ * @param cb      Callback function invoked when the connect operation
+ *                completes. The callback receives an integer result:
+ *                - If zero, the connection was established successfully.
+ *                - If negative, it is the negative error code (e.g.,
+ * -ECONNREFUSED, -ETIMEDOUT, -EINPROGRESS). In case of an error, the connection
+ * attempt has failed and the socket is left in an unspecified state; the caller
+ * should close the socket.
+ *
+ * @param data    User-defined context pointer passed unchanged to the callback.
+ *                Can be used to maintain application state.
+ *
+ * @return        0 on successful initiation of the asynchronous connect
+ *                operation. Negative error code on immediate failure (e.g.,
+ *                -EBADF, -EINVAL). Note that the actual connection result is
+ *                delivered via the callback.
+ *
+ * @warning       The callback may be invoked from an I/O completion context.
+ *                Avoid blocking operations inside the callback; instead, queue
+ *                the connection result for processing in a separate thread or
+ *                context.
+ *
+ * @warning       The socket must be non‑blocking. If the socket is blocking,
+ *                the asynchronous behaviour may not work as expected.
+ *
+ * @warning       After a failed connection attempt, the socket may be unusable.
+ *                The application should close the socket and create a new one
+ *                for further connection attempts.
+ *
+ * @see           connect(2) for standard synchronous connect semantics.
+ * @see           rawio_accept() for accepting incoming connections.
+ */
+int rawio_connect(
+    RawIOQueue* queue, int fd, const struct sockaddr* addr, socklen_t addrlen,
+    int (*cb)(int result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
 /**
