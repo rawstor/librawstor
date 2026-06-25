@@ -51,9 +51,16 @@ void validate_same_uuid(const std::vector<rawstd::URI>& targets) {
         return;
     }
 
-    std::string uuid = targets.front().path().filename();
+    std::string uuid_string = targets.front().path().filename();
+    RawstdUUID uuid;
+    int res = rawstd_uuid_from_string(&uuid, uuid_string.c_str());
+    if (res < 0) {
+        rawstd_error("Valid UUID expected\n");
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+
     for (const auto& target : targets) {
-        if (target.path().filename() != uuid) {
+        if (target.path().filename() != uuid_string) {
             rawstd_error("Equal UUID expected\n");
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
         }
@@ -88,7 +95,7 @@ Object::Object(rawio::Queue& queue, const std::vector<rawstd::URI>& targets) :
 
     std::string id = targets.front().path().filename();
     int res = rawstd_uuid_from_string(&_id, id.c_str());
-    if (res) {
+    if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 
@@ -102,31 +109,23 @@ Object::Object(rawio::Queue& queue, const std::vector<rawstd::URI>& targets) :
 }
 
 void Object::create(
-    const std::vector<rawstd::URI>& locations, const RawstorObjectSpec& sp,
-    std::vector<rawstd::URI>* targets
+    const std::vector<rawstd::URI>& targets, const RawstorObjectSpec& sp
 ) {
-    validate_not_empty(locations);
-    validate_different_uris(locations);
+    validate_not_empty(targets);
+    validate_different_uris(targets);
+    validate_same_uuid(targets);
 
-    RawstdUUIDString id_string;
-    RawstdUUID id;
-    int res = rawstd_uuid7_init(&id);
-    if (res) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-    rawstd_uuid_to_string(&id, &id_string);
-
-    std::vector<rawstd::URI> ret;
+    std::vector<rawstd::URI> created;
+    created.reserve(targets.size());
     try {
-        for (const auto& location : locations) {
-            rawstd::URI target = rawstd::URI(location, id_string);
+        for (const auto& target : targets) {
             rawstor::Connection::create(target, sp);
-            ret.push_back(target);
+            created.push_back(target);
         }
     } catch (...) {
-        if (!ret.empty()) {
+        if (!created.empty()) {
             try {
-                remove(ret);
+                remove(created);
             } catch (const std::exception& e) {
                 rawstd_error(
                     "Failed to rollback create operation: %s\n", e.what()
@@ -135,7 +134,6 @@ void Object::create(
         }
         throw;
     }
-    *targets = ret;
 }
 
 void Object::remove(const std::vector<rawstd::URI>& targets) {
@@ -329,12 +327,11 @@ void Object::pwritev(
 } // namespace rawstor
 
 int rawstor_object_create(
-    const char* location, const RawstorObjectSpec* sp, char* target, size_t size
+    const char* target, const RawstorObjectSpec* sp
 ) noexcept {
     try {
-        std::vector<rawstd::URI> targets;
-        rawstor::Object::create(rawstd::URI::uriv(location), *sp, &targets);
-        return ::uris(targets, target, size);
+        rawstor::Object::create(rawstd::URI::uriv(target), *sp);
+        return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
     } catch (const std::bad_alloc& e) {

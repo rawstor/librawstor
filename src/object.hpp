@@ -26,8 +26,7 @@ private:
 
 public:
     static void create(
-        const std::vector<rawstd::URI>& locations, const RawstorObjectSpec& sp,
-        std::vector<rawstd::URI>* targets
+        const std::vector<rawstd::URI>& targets, const RawstorObjectSpec& sp
     );
     static void remove(const std::vector<rawstd::URI>& targets);
     static void
