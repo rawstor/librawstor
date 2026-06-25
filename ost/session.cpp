@@ -442,14 +442,6 @@ void Session::_allocate(
 void Session::_release(
     const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
 ) {
-    if (_object != nullptr) {
-        int res = rawstor_object_close(_object);
-        if (res < 0) {
-            RAWSTD_THROW_SYSTEM_ERROR(-res);
-        }
-        _object = nullptr;
-    }
-
     RawstdUUID uuid;
     memcpy(uuid.bytes, body.obj_id, sizeof(body.obj_id));
 
