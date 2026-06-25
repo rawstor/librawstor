@@ -872,7 +872,7 @@ void Session::create(
     } catch (...) {
         error = EIO;
     }
-    cb(-error);
+    cb(error);
 }
 
 void Session::remove(const RawstdUUID& id, std::function<void(int)>&& cb) {
@@ -884,7 +884,7 @@ void Session::remove(const RawstdUUID& id, std::function<void(int)>&& cb) {
     } catch (...) {
         error = EIO;
     }
-    cb(-error);
+    cb(error);
 }
 
 void Session::spec(
