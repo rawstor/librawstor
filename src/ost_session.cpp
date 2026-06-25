@@ -781,6 +781,8 @@ void Session::_basic(
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('s', "basic cmd %d\n", cmd);
 
+    bool completed = false;
+    RawstorOSTFrameResponse response;
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
 
     RawstorOSTFrameBasic request = {
@@ -816,8 +818,6 @@ void Session::_basic(
         }
     );
 
-    bool completed = false;
-    RawstorOSTFrameResponse response;
     queue->read(
         fd(), &response, sizeof(response),
         [fd = fd(), cmd, &response, &completed,
@@ -864,13 +864,27 @@ void Session::create(
     const RawstdUUID& id, const RawstorObjectSpec& spec,
     std::function<void(int)>&& cb
 ) {
-    _basic(RAWSTOR_CMD_ALLOCATE, id, spec.size);
-    cb(0);
+    int error = 0;
+    try {
+        _basic(RAWSTOR_CMD_ALLOCATE, id, spec.size);
+    } catch (const std::system_error& e) {
+        error = e.code().value();
+    } catch (...) {
+        error = EIO;
+    }
+    cb(-error);
 }
 
 void Session::remove(const RawstdUUID& id, std::function<void(int)>&& cb) {
-    _basic(RAWSTOR_CMD_RELEASE, id, 0);
-    cb(0);
+    int error = 0;
+    try {
+        _basic(RAWSTOR_CMD_RELEASE, id, 0);
+    } catch (const std::system_error& e) {
+        error = e.code().value();
+    } catch (...) {
+        error = EIO;
+    }
+    cb(-error);
 }
 
 void Session::spec(

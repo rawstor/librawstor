@@ -257,12 +257,12 @@ Session::_recv_head(const iovec* iov, unsigned int niov, size_t result) {
 
     rawstd_trace("head received: %d\n", _request_head.cmd);
     switch (_request_head.cmd) {
-    case RAWSTOR_CMD_SET_OBJECT:
-        return sizeof(RawstorOSTFrameBasicBody);
     case RAWSTOR_CMD_READ:
     case RAWSTOR_CMD_WRITE:
     case RAWSTOR_CMD_DISCARD:
         return sizeof(RawstorOSTFrameIOBody);
+    case RAWSTOR_CMD_SET_OBJECT:
+    case RAWSTOR_CMD_ALLOCATE:
     case RAWSTOR_CMD_RELEASE:
         return sizeof(RawstorOSTFrameBasicBody);
     }
@@ -348,6 +348,24 @@ Session::_recv_body(const iovec* iov, unsigned int niov, size_t result) {
         );
 
         _discard(_request_head, _request_body.io);
+
+        return sizeof(RawstorOSTFrameHead);
+
+    case RAWSTOR_CMD_ALLOCATE:
+        if (result != sizeof(_request_body.basic)) {
+            rawstd_error(
+                "fd %d: Unexpected request body size: %zu != %zu\n", _fd,
+                result, sizeof(_request_body.basic)
+            );
+
+            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+        }
+
+        rawstd_iovec_to_buf(
+            iov, niov, 0, &_request_body.basic, sizeof(_request_body.basic)
+        );
+
+        _allocate(_request_head, _request_body.basic);
 
         return sizeof(RawstorOSTFrameHead);
 
