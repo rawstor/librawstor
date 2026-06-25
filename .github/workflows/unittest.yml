@@ -61,36 +61,15 @@ jobs:
         make -j$(nproc)
         sudo make install
         popd
-    - uses: actions/checkout@v6
-      id: rawstor_ost_feature_branch
-      continue-on-error: true
-      with:
-        repository: rawstor/rawstor_ost
-        path: rawstor_ost
-        ref: ${{ github.ref }}
-    - uses: actions/checkout@v6
-      if: "${{ steps.rawstor_ost_feature_branch.outcome == 'failure' }}"
-      with:
-        repository: rawstor/rawstor_ost
-        path: rawstor_ost
-        ref: refs/heads/main
-    - name: (ost) install rawstor_ost
+    - name: start rawstor-ost
       run: |
-        pushd .
-        cd ./rawstor_ost
-        ./autogen.sh
-        ./configure --disable-shared
-        make -j$(nproc)
-        sudo make install
-        popd
-    - name: (ost) start rawstor_ost
-      run: |
-        mkdir /tmp/objects
-        ost 8080 /tmp/objects/ &
-        sleep 1
+        mkdir /tmp/ost_objects
+        rawstor-ost --bind 127.0.0.1:8080 --location file:///tmp/ost_objects/ &
+        sleep 10
     - name: create object file,ost
       run: |
-        target=$(rawstor-cli create --location file:///tmp/objects,ost://127.0.0.1:8080 --size=1G)
+        mkdir /tmp/file_objects
+        target=$(rawstor-cli create --location file:///tmp/file_objects,ost://127.0.0.1:8080 --size=1G)
         echo "TARGET=${target}" >> $GITHUB_ENV
     - name: testio file,ost
       run: |
@@ -105,4 +84,4 @@ jobs:
         rawstor-cli testio --target=${TARGET} --block-size=4K --io-depth=1 --count=10
         rawstor-cli testio --target=${TARGET} --block-size=4K --io-depth=1 --count=10 --vector-mode
     - name: (ost) stop rawstor_ost
-      run: killall ost
+      run: killall rawstor-ost

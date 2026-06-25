@@ -775,29 +775,30 @@ int Session::_connect() {
     return fd;
 }
 
-void Session::_set_object(Object* object) {
+void Session::_basic(
+    RawstorOSTCommandType cmd, const RawstdUUID& id, uint64_t val
+) {
     rawstd::TraceEvent trace_event =
-        RAWSTD_TRACE_EVENT('s', "%s\n", "set object");
+        RAWSTD_TRACE_EVENT('s', "basic cmd %d\n", cmd);
 
+    bool completed = false;
+    RawstorOSTFrameResponse response;
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
 
     RawstorOSTFrameBasic request = {
         .head =
             {
                 .magic = RAWSTOR_MAGIC,
-                .cmd = RAWSTOR_CMD_SET_OBJECT,
+                .cmd = cmd,
                 .cid = _cid_counter++,
             },
         .body = {
             .obj_id = {},
             .offset = 0,
-            .val = 0,
+            .val = val,
         },
     };
-    memcpy(
-        request.body.obj_id, object->id().bytes, sizeof(request.body.obj_id)
-    );
-    rawstd_info("%s: Setting object id\n", str().c_str());
+    memcpy(request.body.obj_id, id.bytes, sizeof(request.body.obj_id));
     queue->write(
         fd(), &request, sizeof(request),
         [fd = fd(), trace_event](size_t result, int error) {
@@ -817,11 +818,9 @@ void Session::_set_object(Object* object) {
         }
     );
 
-    bool completed = false;
-    RawstorOSTFrameResponse response;
     queue->read(
         fd(), &response, sizeof(response),
-        [fd = fd(), &response, &completed,
+        [fd = fd(), cmd, &response, &completed,
          trace_event](size_t result, int error) {
             RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "error = %d\n", error);
 
@@ -843,34 +842,49 @@ void Session::_set_object(Object* object) {
             }
 
             if (!error) {
-                error =
-                    validate_cmd(fd, response.head.cmd, RAWSTOR_CMD_SET_OBJECT);
+                error = validate_cmd(fd, response.head.cmd, cmd);
             }
 
             if (error) {
                 RAWSTD_THROW_SYSTEM_ERROR(error);
             }
-
-            rawstd_info("fd %d: Object id successfully set\n", fd);
         }
     );
 
     while (!completed) {
-        queue->wait();
+        queue->wait_timeout(5000);
     }
 }
 
-void Session::create(
-    const RawstdUUID&, const RawstorObjectSpec&, std::function<void(int)>&& cb
-) {
-    /**
-     * TODO: Implement me.
-     */
-    cb(0);
+void Session::_set_object(Object* object) {
+    _basic(RAWSTOR_CMD_SET_OBJECT, object->id(), 0);
 }
 
-void Session::remove(const RawstdUUID&, std::function<void(int)>&&) {
-    throw std::runtime_error("Session::remove() not implemented");
+void Session::create(
+    const RawstdUUID& id, const RawstorObjectSpec& spec,
+    std::function<void(int)>&& cb
+) {
+    int error = 0;
+    try {
+        _basic(RAWSTOR_CMD_ALLOCATE, id, spec.size);
+    } catch (const std::system_error& e) {
+        error = e.code().value();
+    } catch (...) {
+        error = EIO;
+    }
+    cb(error);
+}
+
+void Session::remove(const RawstdUUID& id, std::function<void(int)>&& cb) {
+    int error = 0;
+    try {
+        _basic(RAWSTOR_CMD_RELEASE, id, 0);
+    } catch (const std::system_error& e) {
+        error = e.code().value();
+    } catch (...) {
+        error = EIO;
+    }
+    cb(error);
 }
 
 void Session::spec(

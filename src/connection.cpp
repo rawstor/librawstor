@@ -44,7 +44,7 @@ public:
 
     void wait() {
         while (_operations > 0) {
-            _q->wait();
+            _q->wait_timeout(rawstor_opts_tcp_user_timeout());
         }
     }
 };

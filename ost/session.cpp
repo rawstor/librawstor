@@ -257,12 +257,14 @@ Session::_recv_head(const iovec* iov, unsigned int niov, size_t result) {
 
     rawstd_trace("head received: %d\n", _request_head.cmd);
     switch (_request_head.cmd) {
-    case RAWSTOR_CMD_SET_OBJECT:
-        return sizeof(RawstorOSTFrameBasicBody);
     case RAWSTOR_CMD_READ:
     case RAWSTOR_CMD_WRITE:
     case RAWSTOR_CMD_DISCARD:
         return sizeof(RawstorOSTFrameIOBody);
+    case RAWSTOR_CMD_SET_OBJECT:
+    case RAWSTOR_CMD_ALLOCATE:
+    case RAWSTOR_CMD_RELEASE:
+        return sizeof(RawstorOSTFrameBasicBody);
     }
 
     {
@@ -348,6 +350,42 @@ Session::_recv_body(const iovec* iov, unsigned int niov, size_t result) {
         _discard(_request_head, _request_body.io);
 
         return sizeof(RawstorOSTFrameHead);
+
+    case RAWSTOR_CMD_ALLOCATE:
+        if (result != sizeof(_request_body.basic)) {
+            rawstd_error(
+                "fd %d: Unexpected request body size: %zu != %zu\n", _fd,
+                result, sizeof(_request_body.basic)
+            );
+
+            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+        }
+
+        rawstd_iovec_to_buf(
+            iov, niov, 0, &_request_body.basic, sizeof(_request_body.basic)
+        );
+
+        _allocate(_request_head, _request_body.basic);
+
+        return sizeof(RawstorOSTFrameHead);
+
+    case RAWSTOR_CMD_RELEASE:
+        if (result != sizeof(_request_body.basic)) {
+            rawstd_error(
+                "fd %d: Unexpected request body size: %zu != %zu\n", _fd,
+                result, sizeof(_request_body.basic)
+            );
+
+            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+        }
+
+        rawstd_iovec_to_buf(
+            iov, niov, 0, &_request_body.basic, sizeof(_request_body.basic)
+        );
+
+        _release(_request_head, _request_body.basic);
+
+        return sizeof(RawstorOSTFrameHead);
     }
 
     {
@@ -375,6 +413,45 @@ Session::_recv_data(const iovec* iov, unsigned int niov, size_t result) {
     return sizeof(RawstorOSTFrameHead);
 }
 
+void Session::_allocate(
+    const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+) {
+    if (_object != nullptr) {
+        int res = rawstor_object_close(_object);
+        if (res < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
+        }
+        _object = nullptr;
+    }
+
+    RawstdUUID uuid;
+    memcpy(uuid.bytes, body.obj_id, sizeof(body.obj_id));
+
+    RawstorObjectSpec spec{
+        .size = body.val,
+    };
+
+    std::vector<rawstd::URI> targets = _targets(uuid);
+
+    int result =
+        rawstor_object_create(rawstd::URI::uris(targets).c_str(), &spec);
+
+    send_response(_queue, _fd, RAWSTOR_CMD_ALLOCATE, head.cid, result, 0);
+}
+
+void Session::_release(
+    const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+) {
+    RawstdUUID uuid;
+    memcpy(uuid.bytes, body.obj_id, sizeof(body.obj_id));
+
+    std::vector<rawstd::URI> targets = _targets(uuid);
+
+    int result = rawstor_object_remove(rawstd::URI::uris(targets).c_str());
+
+    send_response(_queue, _fd, RAWSTOR_CMD_RELEASE, head.cid, result, 0);
+}
+
 void Session::_set_object(
     const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
 ) {
@@ -389,15 +466,7 @@ void Session::_set_object(
     RawstdUUID uuid;
     memcpy(uuid.bytes, body.obj_id, sizeof(body.obj_id));
 
-    RawstdUUIDString uuid_string;
-    rawstd_uuid_to_string(&uuid, &uuid_string);
-
-    std::vector<rawstd::URI> targets;
-    targets.reserve(_server.locations().size());
-    for (const auto& location : _server.locations()) {
-        rawstd::URI target = rawstd::URI(location, uuid_string);
-        targets.push_back(target);
-    }
+    std::vector<rawstd::URI> targets = _targets(uuid);
 
     int result = rawstor_object_open(
         _queue, rawstd::URI::uris(targets).c_str(), &_object
@@ -509,6 +578,19 @@ void Session::_discard(
     const RawstorOSTFrameHead& head, const RawstorOSTFrameIOBody&
 ) {
     send_response(_queue, _fd, RAWSTOR_CMD_DISCARD, head.cid, -ENOSYS, 0);
+}
+
+std::vector<rawstd::URI> Session::_targets(const RawstdUUID& uuid) {
+    RawstdUUIDString uuid_string;
+    rawstd_uuid_to_string(&uuid, &uuid_string);
+
+    std::vector<rawstd::URI> ret;
+    ret.reserve(_server.locations().size());
+    for (const auto& location : _server.locations()) {
+        ret.emplace_back(location, uuid_string);
+    }
+
+    return ret;
 }
 
 } // namespace ostbackend

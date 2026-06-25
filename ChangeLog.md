@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - [Location and target](docs/locations_and_targets.md) conception.
 - OST backend implementation.
 - Multiqueue support.
+- Add allocate and release methods to the OST protocol.
 
 ## [0.1.1] - 2025-05-26
 
