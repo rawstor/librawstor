@@ -63,12 +63,13 @@ jobs:
         popd
     - name: start rawstor-ost
       run: |
-        mkdir /tmp/objects
-        rawstor-ost --bind 127.0.0.1:8080 --location file:///tmp/objects/ &
+        mkdir /tmp/ost_objects
+        rawstor-ost --bind 127.0.0.1:8080 --location file:///tmp/ost_objects/ &
         sleep 10
     - name: create object file,ost
       run: |
-        target=$(rawstor-cli create --location file:///tmp/objects,ost://127.0.0.1:8080 --size=1G)
+        mkdir /tmp/file_objects
+        target=$(rawstor-cli create --location file:///tmp/file_objects,ost://127.0.0.1:8080 --size=1G)
         echo "TARGET=${target}" >> $GITHUB_ENV
     - name: testio file,ost
       run: |
