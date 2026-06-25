@@ -53,7 +53,6 @@ TEST(OstLifecycleTest, create_spec_remove) {
         s.cmd_release(RAWSTOR_MAGIC, 0, 0);
     }
 
-    std::string target(1024, '\0');
     {
         RawstorObjectSpec spec{.size = 1ull << 20};
 

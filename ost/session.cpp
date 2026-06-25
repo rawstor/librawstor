@@ -409,9 +409,14 @@ void Session::_allocate(
     RawstdUUID uuid;
     memcpy(uuid.bytes, body.obj_id, sizeof(body.obj_id));
 
+    RawstorObjectSpec spec{
+        .size = body.val,
+    };
+
     std::vector<rawstd::URI> targets = _targets(uuid);
 
-    int result = rawstor_object_create(, &spec, rawstd::URI::uris(targets).c_str());
+    int result =
+        rawstor_object_create(rawstd::URI::uris(targets).c_str(), &spec);
 
     send_response(_queue, _fd, RAWSTOR_CMD_ALLOCATE, head.cid, result, 0);
 }
