@@ -77,7 +77,7 @@ static void command_create_usage(void) {
         "command options:\n"
         "  -h, --help            Show this help message and exit\n"
         "  -s, --size SIZE       Object size with unit suffix (B, K, M, G, "
-        "T).\n"
+        "T, E).\n"
         "                        Examples: 10G, 5M, 2T.\n"
     );
 };
@@ -293,7 +293,7 @@ static void command_testio_usage(void) {
         "\n"
         "command options:\n"
         "  --queue-size SIZE     RawIO queue size (default: %u)\n"
-        "  -b, --block-size SIZE Block size with unit suffix (B, K, M, G, T"
+        "  -b, --block-size SIZE Block size with unit suffix (B, K, M, G, T, E"
         ").\n"
         "  -c, --count COUNT     How many blocks are we going to be\n"
         "                        reading/writing in bytes\n"
