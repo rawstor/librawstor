@@ -55,30 +55,48 @@ static void command_create_usage(void) {
         stdout,
         "Rawstor CLI " PACKAGE_VERSION "\n"
         "\n"
-        "usage: rawstor-cli [options] create [command_options]\n"
+        "usage: rawstor-cli [options] create -l LOCATION [-u UUID] "
+        "[command_options]\n"
+        "       rawstor-cli [options] create -t TARGET [command_options]\n"
+        "\n"
+        "create by location (backend list, optional UUID):\n"
+        "  -l, --location LOCATION\n"
+        "                        Comma-separated list of rawstor backend "
+        "locations.\n"
+        "                        If -u is omitted, a random UUIDv7 is "
+        "generated.\n"
+        "  -u, --uuid UUID       Explicit UUID for the object (only valid with "
+        "-l).\n"
+        "\n"
+        "create by target (pre-formatted targets with embedded UUID):\n"
+        "  -t, --target TARGET   Comma-separated list of rawstor backend "
+        "targets.\n"
+        "                        Each target must include the UUID, e.g. "
+        "ost://host/uuid.\n"
         "\n"
         "command options:\n"
         "  -h, --help            Show this help message and exit\n"
         "  -s, --size SIZE       Object size with unit suffix (B, K, M, G, "
         "T).\n"
         "                        Examples: 10G, 5M, 2T.\n"
-        "  -l, --location LOCATION\n"
-        "                        Comma separated list of rawstor backend "
-        "locations\n"
     );
 };
 
 static int command_create(int argc, char** argv) {
-    const char* optstring = "hs:l:";
+    const char* optstring = "hl:s:t:u:";
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
         {"location", required_argument, NULL, 'l'},
         {"size", required_argument, NULL, 's'},
+        {"target", required_argument, NULL, 't'},
+        {"uuid", required_argument, NULL, 'u'},
         {},
     };
 
-    char* size_arg = NULL;
-    char* location_arg = NULL;
+    const char* location_arg = NULL;
+    const char* size_arg = NULL;
+    const char* target_arg = NULL;
+    const char* uuid_arg = NULL;
     optind = 1;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
@@ -99,6 +117,14 @@ static int command_create(int argc, char** argv) {
             size_arg = optarg;
             break;
 
+        case 't':
+            target_arg = optarg;
+            break;
+
+        case 'u':
+            uuid_arg = optarg;
+            break;
+
         default:
             return EXIT_FAILURE;
         }
@@ -114,8 +140,18 @@ static int command_create(int argc, char** argv) {
         return EXIT_FAILURE;
     }
 
-    if (location_arg == NULL) {
-        fprintf(stderr, "location required\n");
+    if (location_arg == NULL && target_arg == NULL) {
+        fprintf(stderr, "location or target required\n");
+        return EXIT_FAILURE;
+    }
+
+    if (location_arg != NULL && target_arg != NULL) {
+        fprintf(stderr, "location and target are mutually exclusive\n");
+        return EXIT_FAILURE;
+    }
+
+    if (target_arg != NULL && uuid_arg != NULL) {
+        fprintf(stderr, "Unexpected argument: uuid\n");
         return EXIT_FAILURE;
     }
 
@@ -129,7 +165,11 @@ static int command_create(int argc, char** argv) {
         return EXIT_FAILURE;
     }
 
-    return rawstor_cli_create(location_arg, size);
+    if (target_arg != NULL) {
+        return rawstor_cli_create_by_target(target_arg, size);
+    } else {
+        return rawstor_cli_create_by_location(location_arg, uuid_arg, size);
+    }
 }
 
 static void command_remove_usage(void) {

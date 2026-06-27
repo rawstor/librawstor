@@ -11,16 +11,50 @@
 #include <stdlib.h>
 #include <string.h>
 
-int rawstor_cli_create(const char* location, size_t size) {
-    struct RawstdUUID uuid;
-    int res = rawstd_uuid7_init(&uuid);
-    if (res) {
-        fprintf(stderr, "rawstd_uuid7_init() failed: %s\n", strerror(-res));
+int rawstor_cli_create_by_target(const char* target, size_t size) {
+    struct RawstorObjectSpec spec = {
+        .size = size,
+    };
+    char buf[256];
+    rawstor_cli_bytes_to_size(size, buf, sizeof(buf));
+
+    fprintf(stderr, "Creating object with specification:\n");
+    fprintf(stderr, "  size: %s\n", buf);
+
+    int res = rawstor_object_create(target, &spec);
+    if (res < 0) {
+        fprintf(stderr, "rawstor_object_create() failed: %s\n", strerror(-res));
         return EXIT_FAILURE;
     }
 
+    fprintf(stderr, "Object created\n");
+    fprintf(stdout, "%s\n", target);
+
+    return EXIT_SUCCESS;
+}
+
+int rawstor_cli_create_by_location(
+    const char* location, const char* uuid_string, size_t size
+) {
+    struct RawstdUUID uuid;
+    if (uuid_string == NULL) {
+        int res = rawstd_uuid7_init(&uuid);
+        if (res) {
+            fprintf(stderr, "rawstd_uuid7_init() failed: %s\n", strerror(-res));
+            return EXIT_FAILURE;
+        }
+    } else {
+        int res = rawstd_uuid_from_string(&uuid, uuid_string);
+        if (res) {
+            fprintf(
+                stderr, "rawstd_uuid_from_string() failed: %s\n", strerror(-res)
+            );
+            return EXIT_FAILURE;
+        }
+    }
+
     char target[65536];
-    res = rawstor_cli_location_add_target(
+    int res = rawstor_cli_location_add_target(
         location, &uuid, target, sizeof(target)
     );
     if (res < 0) {
@@ -31,23 +65,5 @@ int rawstor_cli_create(const char* location, size_t size) {
         return EXIT_FAILURE;
     }
 
-    struct RawstorObjectSpec spec = {
-        .size = size,
-    };
-    char buf[256];
-    rawstor_cli_bytes_to_size(size, buf, sizeof(buf));
-
-    fprintf(stderr, "Creating object with specification:\n");
-    fprintf(stderr, "  size: %s\n", buf);
-
-    res = rawstor_object_create(target, &spec);
-    if (res < 0) {
-        fprintf(stderr, "rawstor_object_create() failed: %s\n", strerror(-res));
-        return EXIT_FAILURE;
-    }
-
-    fprintf(stderr, "Object created\n");
-    fprintf(stdout, "%s\n", target);
-
-    return EXIT_SUCCESS;
+    return rawstor_cli_create_by_target(target, size);
 }
