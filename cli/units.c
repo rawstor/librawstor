@@ -33,7 +33,7 @@ static int unit_to_shift(const char unit) {
 }
 
 int rawstor_cli_size_to_bytes(const char* s, uint64_t* out) {
-    uint64_t value;
+    unsigned long long value;
     char unit;
     if (sscanf(s, "%llu%c", &value, &unit) != 2) {
         return -EINVAL;
