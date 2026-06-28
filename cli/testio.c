@@ -21,7 +21,7 @@ typedef struct {
 } Worker;
 
 static Worker* worker_create(
-    unsigned int index, size_t block_size, unsigned int* counter,
+    unsigned int index, uint64_t block_size, unsigned int* counter,
     unsigned int niterations
 ) {
     Worker* worker = malloc(sizeof(Worker));
