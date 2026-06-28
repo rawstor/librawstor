@@ -62,5 +62,7 @@ int rawstor_cli_bytes_to_size(uint64_t value, char* buf, size_t size) {
         }
         value >>= 10;
     }
-    return snprintf(buf, size, "%llu%c", value, units[i]);
+    return snprintf(
+        buf, size, "%llu%c", (unsigned long long int)value, units[i]
+    );
 }
