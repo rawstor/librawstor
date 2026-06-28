@@ -21,9 +21,12 @@ static int unit_to_shift(const char unit) {
     case 't':
     case 'T':
         return 40;
+    case 'p':
+    case 'P':
+        return 50;
     case 'e':
     case 'E':
-        return 50;
+        return 60;
     default:
         return -EINVAL;
     }
@@ -51,7 +54,7 @@ int rawstor_cli_size_to_bytes(const char* s, size_t* out) {
 }
 
 int rawstor_cli_bytes_to_size(size_t value, char* buf, size_t size) {
-    const char units[] = "BKMGTE";
+    const char units[] = "BKMGTPE";
     size_t i;
     for (i = 0; i < sizeof(units) - 2; ++i) {
         if (value < 1024 || (value & 1023) != 0) {
