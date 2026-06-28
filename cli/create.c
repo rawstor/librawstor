@@ -64,6 +64,13 @@ int rawstor_cli_create_by_location(
         );
         return EXIT_FAILURE;
     }
+    if (res >= (int)sizeof(target)) {
+        fprintf(
+            stderr,
+            "rawstor_cli_location_add_target() failed: output truncated\n"
+        );
+        return EXIT_FAILURE;
+    }
 
     return rawstor_cli_create_by_target(target, size);
 }

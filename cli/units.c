@@ -44,7 +44,7 @@ int rawstor_cli_size_to_bytes(const char* s, uint64_t* out) {
         return shift;
     }
 
-    if (value > (SIZE_MAX >> shift)) {
+    if (value > (UINT64_MAX >> shift)) {
         return -EOVERFLOW;
     }
 
