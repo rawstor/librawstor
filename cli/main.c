@@ -140,16 +140,6 @@ static int command_create(int argc, char** argv) {
         return EXIT_FAILURE;
     }
 
-    if (uuid_arg != NULL && location_arg == NULL) {
-        fprintf(stderr, "uuid argument requires location\n");
-        return EXIT_FAILURE;
-    }
-
-    if (location_arg == NULL && target_arg == NULL) {
-        fprintf(stderr, "location or target required\n");
-        return EXIT_FAILURE;
-    }
-
     if (location_arg != NULL && target_arg != NULL) {
         fprintf(stderr, "location and target are mutually exclusive\n");
         return EXIT_FAILURE;
@@ -157,6 +147,16 @@ static int command_create(int argc, char** argv) {
 
     if (target_arg != NULL && uuid_arg != NULL) {
         fprintf(stderr, "Unexpected argument: uuid\n");
+        return EXIT_FAILURE;
+    }
+
+    if (uuid_arg != NULL && location_arg == NULL) {
+        fprintf(stderr, "uuid argument requires location\n");
+        return EXIT_FAILURE;
+    }
+
+    if (location_arg == NULL && target_arg == NULL) {
+        fprintf(stderr, "location or target required\n");
         return EXIT_FAILURE;
     }
 
