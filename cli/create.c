@@ -11,7 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-int rawstor_cli_create_by_target(const char* target, size_t size) {
+int rawstor_cli_create_by_target(const char* target, uint64_t size) {
     struct RawstorObjectSpec spec = {
         .size = size,
     };
@@ -34,7 +34,7 @@ int rawstor_cli_create_by_target(const char* target, size_t size) {
 }
 
 int rawstor_cli_create_by_location(
-    const char* location, const char* uuid_string, size_t size
+    const char* location, const char* uuid_string, uint64_t size
 ) {
     struct RawstdUUID uuid;
     if (uuid_string == NULL) {

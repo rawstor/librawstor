@@ -160,7 +160,7 @@ static int command_create(int argc, char** argv) {
         return EXIT_FAILURE;
     }
 
-    size_t size = 0;
+    uint64_t size = 0;
     int res = rawstor_cli_size_to_bytes(size_arg, &size);
     if (res < 0) {
         fprintf(
@@ -389,7 +389,7 @@ static int command_testio(int argc, char** argv) {
         return EXIT_FAILURE;
     }
 
-    size_t block_size = 0;
+    uint64_t block_size = 0;
     int res = rawstor_cli_size_to_bytes(block_size_arg, &block_size);
     if (res < 0) {
         fprintf(
