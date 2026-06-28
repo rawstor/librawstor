@@ -40,7 +40,7 @@ typedef struct RawstorObject RawstorObject;
  * @see rawstor_object_create
  */
 struct RawstorObjectSpec {
-    size_t size; /**< Size of the object in bytes. */
+    uint64_t size; /**< Size of the object in bytes. */
 };
 
 typedef int(RawstorCallback)(

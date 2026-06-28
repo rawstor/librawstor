@@ -3,13 +3,17 @@
 
 #include <rawstor.h>
 
-#include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-int rawstor_cli_create(const char* location, size_t size);
+int rawstor_cli_create_by_target(const char* target, uint64_t size);
+
+int rawstor_cli_create_by_location(
+    const char* location, const char* uuid_string, uint64_t size
+);
 
 #ifdef __cplusplus
 }

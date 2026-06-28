@@ -21,7 +21,7 @@ typedef struct {
 } Worker;
 
 static Worker* worker_create(
-    unsigned int index, size_t block_size, unsigned int* counter,
+    unsigned int index, uint64_t block_size, unsigned int* counter,
     unsigned int niterations
 ) {
     Worker* worker = malloc(sizeof(Worker));
@@ -256,7 +256,7 @@ static int srcv_data_sent(
 }
 
 int rawstor_cli_testio(
-    unsigned int queue_size, const char* target, size_t block_size,
+    unsigned int queue_size, const char* target, uint64_t block_size,
     unsigned int count, unsigned int io_depth, int vector_mode
 ) {
     int res;

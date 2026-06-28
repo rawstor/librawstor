@@ -21,15 +21,21 @@ static int unit_to_shift(const char unit) {
     case 't':
     case 'T':
         return 40;
+    case 'p':
+    case 'P':
+        return 50;
+    case 'e':
+    case 'E':
+        return 60;
     default:
         return -EINVAL;
     }
 }
 
-int rawstor_cli_size_to_bytes(const char* s, size_t* out) {
-    size_t value;
+int rawstor_cli_size_to_bytes(const char* s, uint64_t* out) {
+    unsigned long long value;
     char unit;
-    if (sscanf(s, "%zu%c", &value, &unit) != 2) {
+    if (sscanf(s, "%llu%c", &value, &unit) != 2) {
         return -EINVAL;
     }
 
@@ -38,7 +44,7 @@ int rawstor_cli_size_to_bytes(const char* s, size_t* out) {
         return shift;
     }
 
-    if (value > (SIZE_MAX >> shift)) {
+    if (value > (UINT64_MAX >> shift)) {
         return -EOVERFLOW;
     }
 
@@ -47,8 +53,8 @@ int rawstor_cli_size_to_bytes(const char* s, size_t* out) {
     return 0;
 }
 
-int rawstor_cli_bytes_to_size(size_t value, char* buf, size_t size) {
-    const char units[] = "BKMGT";
+int rawstor_cli_bytes_to_size(uint64_t value, char* buf, size_t size) {
+    const char units[] = "BKMGTPE";
     size_t i;
     for (i = 0; i < sizeof(units) - 2; ++i) {
         if (value < 1024 || (value & 1023) != 0) {
@@ -56,5 +62,7 @@ int rawstor_cli_bytes_to_size(size_t value, char* buf, size_t size) {
         }
         value >>= 10;
     }
-    return snprintf(buf, size, "%zu%c", value, units[i]);
+    return snprintf(
+        buf, size, "%llu%c", (unsigned long long int)value, units[i]
+    );
 }
