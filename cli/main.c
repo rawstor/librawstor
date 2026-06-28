@@ -140,6 +140,11 @@ static int command_create(int argc, char** argv) {
         return EXIT_FAILURE;
     }
 
+    if (uuid_arg != NULL && location_arg == NULL) {
+        fprintf(stderr, "uuid argument requires location\n");
+        return EXIT_FAILURE;
+    }
+
     if (location_arg == NULL && target_arg == NULL) {
         fprintf(stderr, "location or target required\n");
         return EXIT_FAILURE;
