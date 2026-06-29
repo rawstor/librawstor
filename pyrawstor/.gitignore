@@ -7,3 +7,4 @@ __pycache__/
 /dist-stamp
 /Makefile
 /Makefile.in
+/sources-stamp

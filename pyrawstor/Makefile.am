@@ -4,7 +4,7 @@ else
 ENABLE_TESTS = no
 endif
 
-setup.py:
+sources-stamp:
 	if [ "$(srcdir)" != "$(builddir)" ]; then \
 	  cp -fR \
 	    $(srcdir)/rawstor \
@@ -18,8 +18,9 @@ setup.py:
 	      .; \
 	  fi \
 	fi
+	touch $@
 
-$(builddir)/dist-stamp: setup.py config.py MANIFEST.in
+$(builddir)/dist-stamp: sources-stamp
 	$(PYTHON) -m build --outdir $(builddir)/dist
 	touch $@
 
@@ -33,7 +34,7 @@ install-rawstor: build-rawstor
 	  $(builddir)/dist/*.whl
 
 if ENABLE_TESTS
-test: setup.py
+test: sources-stamp
 	$(PYTHON) -m unittest
 endif
 
