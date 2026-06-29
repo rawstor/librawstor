@@ -104,6 +104,12 @@ AM_CONDITIONAL([WITH_PYTHON3], [test "x$with_python3" == "xyes"])
 AS_IF([test "x$with_python3" == "xyes"], [
     AM_PATH_PYTHON([3.8], , [:])
     PKG_CHECK_MODULES([PYTHON3], [python3])
+    AC_MSG_CHECKING([for python3-build usability])
+    AS_IF([$PYTHON -m build --version >/dev/null 2>&1], [
+        AC_MSG_RESULT([yes])
+    ], [
+        AC_MSG_ERROR([python3-build module not found])
+    ])
 ])
 
 
