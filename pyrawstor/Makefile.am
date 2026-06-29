@@ -1,16 +1,21 @@
 build-rawstor:
-	$(PYTHON) -m build
+	cd $(srcdir) && $(PYTHON) -m build --outdir $(builddir)/dist
 
-install-rawstor:
-	$(PYTHON) -m pip install $(srcdir)
+install-rawstor: build-rawstor
+	cd $(srcdir) && \
+	$(PYTHON) -m pip install \
+	  --no-deps \
+	  --no-build-isolation \
+	  --prefix=$(DESTDIR)$(prefix) \
+	  $(builddir)/dist/*.whl
 
 if ENABLE_TESTS
 test:
-	$(PYTHON) -m unittest
+	cd $(srcdir) && $(PYTHON) -m unittest
 endif
 
 clean-local:
-	rm -rf $(srcdir)/build $(srcdir)/dist $(srcdir)/*.egg-info $(srcdir)/__pycache__
+	-rm -rf $(builddir)/dist
 
 all-local: build-rawstor
 
