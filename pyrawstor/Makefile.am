@@ -19,7 +19,7 @@ test:
 	         MANIFEST.in \
 	         setup.py; \
 	fi
-	endif
+endif
 
 clean-local:
 	-rm -rf $(srcdir)/build $(srcdir)/dist $(srcdir)/*.egg-info $(srcdir)/__pycache__
