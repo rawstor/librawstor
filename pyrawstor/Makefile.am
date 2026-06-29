@@ -16,7 +16,7 @@ copy-sources:
 	  fi \
 	fi
 
-build-rawstor:
+build-rawstor: copy-sources
 	$(PYTHON) -m build --outdir $(builddir)/dist
 
 install-rawstor: build-rawstor
@@ -49,7 +49,7 @@ EXTRA_DIST += \
     tests/__init__.py
 endif
 
-PHONY_TARGETS = install-rawstor
+PHONY_TARGETS = copy-sources install-rawstor
 
 if ENABLE_TESTS
 PHONY_TARGETS += test
