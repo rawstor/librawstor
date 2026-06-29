@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OST backend implementation.
 - Multiqueue support.
 - Add allocate and release methods to the OST protocol.
+- Python bindings.
 
 ## [0.1.1] - 2025-05-26
 
