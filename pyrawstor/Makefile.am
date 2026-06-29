@@ -5,7 +5,7 @@ ENABLE_TESTS = no
 endif
 
 sources-stamp:
-	if [ "$(srcdir)" != "$(builddir)" ]; then \
+	@if [ "$(srcdir)" != "$(builddir)" ]; then \
 	  cp -fR --no-preserve=mode \
 	    $(srcdir)/rawstor \
 	    $(srcdir)/config.py \
@@ -63,7 +63,8 @@ EXTRA_DIST = \
 
 if ENABLE_TESTS
 EXTRA_DIST += \
-    tests/__init__.py
+    tests/__init__.py \
+    tests/test_basics.py
 endif
 
 PHONY_TARGETS = install-rawstor
