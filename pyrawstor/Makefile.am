@@ -35,7 +35,7 @@ install-rawstor: build-rawstor
 
 if ENABLE_TESTS
 test: sources-stamp
-	$(PYTHON) -m unittest
+	$(PYTHON) -m unittest discover -s tests
 endif
 
 clean-local:
