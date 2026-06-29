@@ -1,0 +1,7 @@
+/*.egg-info/
+/__pycache__/
+/dist/
+/*.so
+/config.py
+/Makefile
+/Makefile.in
