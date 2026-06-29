@@ -1,3 +1,9 @@
+if ENABLE_TESTS
+ENABLE_TESTS = yes
+else
+ENABLE_TESTS = no
+endif
+
 copy-sources:
 	if [ "$(srcdir)" != "$(builddir)" ]; then \
 	  cp -fR \
@@ -27,7 +33,7 @@ install-rawstor: build-rawstor
 	  $(builddir)/dist/*.whl
 
 if ENABLE_TESTS
-test:
+test: copy-sources
 	$(PYTHON) -m unittest
 endif
 
