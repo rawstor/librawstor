@@ -9,6 +9,10 @@ if ENABLE_TESTS
     SUBDIRS += tests
 endif
 
+if WITH_PYTHON3
+    SUBDIRS += pyrawstor
+endif
+
 
 ACLOCAL_AMFLAGS = -I m4
 

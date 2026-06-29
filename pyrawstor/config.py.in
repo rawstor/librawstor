@@ -1,0 +1,2 @@
+package_version = '@PACKAGE_VERSION@'
+package_version = package_version.replace("-0-", "+")

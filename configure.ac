@@ -96,6 +96,17 @@ AS_IF([test "x$with_libxxhash" == "xyes"], [
 ])
 
 
+AC_ARG_WITH([python3], [AS_HELP_STRING([--without-python3],
+    [disable support for python3 bindings])],
+    [with_python3=$withval],
+    [with_python3="yes"])
+AM_CONDITIONAL([WITH_PYTHON3], [test "x$with_python3" == "xyes"])
+AS_IF([test "x$with_python3" == "xyes"], [
+    AM_PATH_PYTHON([3.8], , [:])
+    PKG_CHECK_MODULES([PYTHON3], [python3])
+])
+
+
 AC_CONFIG_FILES(
     [Makefile]
     [include/rawstor/version.h]
@@ -117,6 +128,8 @@ AC_CONFIG_FILES(
     [tests/Makefile]
     [deb/control]
     [rpm/librawstor.spec]
+    [pyrawstor/config.py]
+    [pyrawstor/Makefile]
 )
 
 AC_OUTPUT
