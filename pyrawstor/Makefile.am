@@ -26,8 +26,10 @@ clean-local:
 
 all-local: build-rawstor
 
-.PHONY: install-rawstor
+PHONY_TARGETS = install-rawstor
 
 if ENABLE_TESTS
-.PHONY: test
+PHONY_TARGETS += test
 endif
+
+.PHONY: $(PHONY_TARGETS)
