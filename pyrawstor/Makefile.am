@@ -1,8 +1,25 @@
+copy-sources:
+	if [ "$(srcdir)" != "$(builddir)" ]; then \
+	  cp -fR \
+	    $(srcdir)/rawstor/module.c \
+	    $(srcdir)/rawstor/rawstor.c \
+	    $(srcdir)/rawstor/rawstor.h \
+	    $(srcdir)/config.py \
+	    $(srcdir)/MANIFEST.in \
+	    $(srcdir)/setup.py \
+	    .;
+	  if [ "x$(ENABLE_TESTS)" = "xyes" ]; then \
+	    cp -fR \
+	      $(srcdir)/tests/__init__.py \
+	      $(srcdir)/tests/test_basics.py \
+	      .; \
+	  fi \
+	fi
+
 build-rawstor:
-	cd $(srcdir) && $(PYTHON) -m build --outdir $(builddir)/dist
+	$(PYTHON) -m build --outdir $(builddir)/dist
 
 install-rawstor: build-rawstor
-	cd $(srcdir) && \
 	$(PYTHON) -m pip install \
 	  --no-deps \
 	  --no-build-isolation \
@@ -11,7 +28,7 @@ install-rawstor: build-rawstor
 
 if ENABLE_TESTS
 test:
-	cd $(srcdir) && $(PYTHON) -m unittest
+	$(PYTHON) -m unittest
 endif
 
 clean-local:
