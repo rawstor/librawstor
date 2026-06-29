@@ -30,8 +30,8 @@ install-rawstor: build-rawstor
 	  $(builddir)/dist/*.whl
 
 if ENABLE_TESTS
-test: copy-sources
-	$(PYTHON) -m unittest
+test:
+	cd $(srcdir) && $(PYTHON) -m unittest
 endif
 
 clean-local:
