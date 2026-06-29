@@ -5,7 +5,7 @@ ENABLE_TESTS = no
 endif
 
 sources-stamp:
-	if [ "$(srcdir)" != "$(builddir)" ]; then \
+	@if [ "$(srcdir)" != "$(builddir)" ]; then \
 	  cp -fR --no-preserve=mode \
 	    $(srcdir)/rawstor \
 	    $(srcdir)/config.py \
