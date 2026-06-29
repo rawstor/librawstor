@@ -4,5 +4,6 @@ __pycache__/
 /dist/
 /*.so
 /config.py
+/dist-stamp
 /Makefile
 /Makefile.in

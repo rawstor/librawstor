@@ -4,7 +4,7 @@ else
 ENABLE_TESTS = no
 endif
 
-copy-sources:
+setup.py:
 	if [ "$(srcdir)" != "$(builddir)" ]; then \
 	  cp -fR \
 	    $(srcdir)/rawstor \
@@ -19,8 +19,11 @@ copy-sources:
 	  fi \
 	fi
 
-build-rawstor: copy-sources
+$(builddir)/dist-stamp: setup.py config.py MANIFEST.in
 	$(PYTHON) -m build --outdir $(builddir)/dist
+	touch $@
+
+build-rawstor: $(builddir)/dist-stamp
 
 install-rawstor: build-rawstor
 	$(PYTHON) -m pip install \
@@ -30,12 +33,12 @@ install-rawstor: build-rawstor
 	  $(builddir)/dist/*.whl
 
 if ENABLE_TESTS
-test:
-	cd $(srcdir) && $(PYTHON) -m unittest
+test: setup.py
+	$(PYTHON) -m unittest
 endif
 
 clean-local:
-	-rm -rf $(builddir)/dist
+	-rm -rf $(builddir)/dist $(builddir)/dist-stamp
 
 all-local: build-rawstor
 
@@ -52,7 +55,7 @@ EXTRA_DIST += \
     tests/__init__.py
 endif
 
-PHONY_TARGETS = copy-sources install-rawstor
+PHONY_TARGETS = install-rawstor
 
 if ENABLE_TESTS
 PHONY_TARGETS += test
