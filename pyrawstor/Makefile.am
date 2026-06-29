@@ -7,17 +7,14 @@ endif
 copy-sources:
 	if [ "$(srcdir)" != "$(builddir)" ]; then \
 	  cp -fR \
-	    $(srcdir)/rawstor/module.c \
-	    $(srcdir)/rawstor/rawstor.c \
-	    $(srcdir)/rawstor/rawstor.h \
+	    $(srcdir)/rawstor \
 	    $(srcdir)/config.py \
 	    $(srcdir)/MANIFEST.in \
 	    $(srcdir)/setup.py \
 	    .; \
 	  if [ "x$(ENABLE_TESTS)" = "xyes" ]; then \
 	    cp -fR \
-	      $(srcdir)/tests/__init__.py \
-	      $(srcdir)/tests/test_basics.py \
+	      $(srcdir)/tests \
 	      .; \
 	  fi \
 	fi
