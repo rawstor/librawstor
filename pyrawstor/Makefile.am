@@ -1,12 +1,12 @@
 build-rawstor:
-	cd $(srcdir) && $(PYTHON) -m build --outdir $(builddir)/dist
+	$(PYTHON) -m build
 
 install-rawstor:
 	$(PYTHON) -m pip install $(srcdir)
 
 if ENABLE_TESTS
 test:
-	cd $(srcdir) && $(PYTHON) -m unittest
+	$(PYTHON) -m unittest
 endif
 
 clean-local:
@@ -18,9 +18,14 @@ EXTRA_DIST = \
     rawstor/module.c \
     rawstor/rawstor.c \
     rawstor/rawstor.h \
-    tests/__init__.py \
+    config.py \
     MANIFEST.in \
     setup.py
+
+if ENABLE_TESTS
+EXTRA_DIST += \
+    tests/__init__.py
+endif
 
 PHONY_TARGETS = install-rawstor
 
