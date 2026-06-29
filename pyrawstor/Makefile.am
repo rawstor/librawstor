@@ -18,9 +18,9 @@ EXTRA_DIST = \
     rawstor/module.c \
     rawstor/rawstor.c \
     rawstor/rawstor.h \
-    tests/__init__.py
+    tests/__init__.py \
     MANIFEST.in \
-    setup.py \
+    setup.py
 
 PHONY_TARGETS = install-rawstor
 
