@@ -12,7 +12,7 @@ jobs:
     - name: install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libxxhash-dev liburing-dev libgtest-dev
+        sudo apt-get install -y libxxhash-dev liburing-dev libgtest-dev python3-build
     - uses: actions/checkout@v7
       with:
         fetch-depth: 0
