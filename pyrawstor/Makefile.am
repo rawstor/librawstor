@@ -39,6 +39,16 @@ test: sources-stamp
 endif
 
 clean-local:
+	if [ "$(srcdir)" != "$(builddir)" ]; then \
+	  rm -rf \
+	    rawstor \
+	    rawstor.egg-info \
+	    tests \
+	    config.py \
+	    MANIFEST.in \
+	    setup.py \
+	    sources-stamp ; \
+	fi
 	-rm -rf $(builddir)/dist $(builddir)/dist-stamp
 
 all-local: build-rawstor
