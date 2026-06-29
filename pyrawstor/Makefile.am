@@ -7,7 +7,7 @@ copy-sources:
 	    $(srcdir)/config.py \
 	    $(srcdir)/MANIFEST.in \
 	    $(srcdir)/setup.py \
-	    .;
+	    .; \
 	  if [ "x$(ENABLE_TESTS)" = "xyes" ]; then \
 	    cp -fR \
 	      $(srcdir)/tests/__init__.py \
