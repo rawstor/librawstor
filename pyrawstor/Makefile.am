@@ -6,14 +6,14 @@ endif
 
 sources-stamp:
 	if [ "$(srcdir)" != "$(builddir)" ]; then \
-	  cp -fR \
+	  cp -fR --no-preserve=mode \
 	    $(srcdir)/rawstor \
 	    $(srcdir)/config.py \
 	    $(srcdir)/MANIFEST.in \
 	    $(srcdir)/setup.py \
 	    .; \
 	  if [ "x$(ENABLE_TESTS)" = "xyes" ]; then \
-	    cp -fR \
+	    cp -fR --no-preserve=mode \
 	      $(srcdir)/tests \
 	      .; \
 	  fi \
