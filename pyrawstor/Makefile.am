@@ -5,7 +5,7 @@ install-rawstor:
 	$(PYTHON) -m pip install $(srcdir)
 
 test:
-	cd $(srcdir) && $(PYTHON) -m pytest
+	cd $(srcdir) && $(PYTHON) -m unittest
 
 clean-local:
 	-rm -rf $(srcdir)/build $(srcdir)/dist $(srcdir)/*.egg-info $(srcdir)/__pycache__
