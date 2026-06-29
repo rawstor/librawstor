@@ -82,6 +82,5 @@ if __name__ == "__main__":
             "rawstor",
             "tests",
         ],
-        test_suite="tests",
         ext_modules=extensions,
     )
