@@ -82,6 +82,7 @@ jobs:
       run: |
         rawstor-cli --version
         rawstor-ost --version
+        python -c "import rawstor; print('OK')"
 
   rpm:
     needs: sources
