@@ -9,7 +9,7 @@ static struct PyModuleDef rawstor_module = {
 };
 
 PyMODINIT_FUNC PyInit_rawstor() {
-    PyObject *m = PyModule_Create(&rawstor_module);
+    PyObject* m = PyModule_Create(&rawstor_module);
     if (m == NULL) {
         return NULL;
     }
