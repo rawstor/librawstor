@@ -1,0 +1,7 @@
+Package: python3-rawstor
+Version: @PACKAGE_VERSION@
+Maintainer: Vasily Stepanov <vasily.stepanov@gmail.com>
+Architecture: amd64
+Depends: python3, librawstor (= @PACKAGE_VERSION_MAJOR@.@PACKAGE_VERSION_MINOR@.0)
+Description: Rawstor python bindings
+Homepage: https://github.com/rawstor/librawstor
