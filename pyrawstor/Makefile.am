@@ -31,7 +31,6 @@ install-exec-local: build-rawstor
 	  --no-deps \
 	  --prefix=$(DESTDIR)$(prefix) \
 	  $(builddir)/dist/*.whl
-	ls -lhR /home/runner/work
 
 uninstall-local:
 	@echo "Uninstalling python package..."
