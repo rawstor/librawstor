@@ -27,11 +27,8 @@ $(builddir)/dist-stamp: sources-stamp
 build-rawstor: $(builddir)/dist-stamp
 
 install-exec-local: build-rawstor
-	echo DESTDIR=${DESTDIR}
-	echo prefix=${prefix}
 	$(PYTHON) -m pip install \
 	  --no-deps \
-	  --no-build-isolation \
 	  --prefix=$(DESTDIR)$(prefix) \
 	  $(builddir)/dist/*.whl
 
@@ -39,10 +36,8 @@ uninstall-local:
 	@echo "Uninstalling python package..."
 	-rm -rf $(DESTDIR)$(prefix)/lib/python*/site-packages/rawstor*
 	-rm -rf $(DESTDIR)$(prefix)/lib/python*/site-packages/rawstor-*.dist-info
-	if [ -z "$(DESTDIR)" ]; then \
-	  rm -rf $(prefix)/lib/python*/dist-packages/rawstor*; \
-	  rm -rf $(prefix)/lib/python*/dist-packages/rawstor-*.dist-info; \
-	fi
+	-rm -rf ./local/lib/python*/dist-packages/rawstor*;
+	-rm -rf ./local/lib/python*/dist-packages/rawstor-*.dist-info;
 
 if ENABLE_TESTS
 test: sources-stamp
