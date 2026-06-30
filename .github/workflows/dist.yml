@@ -45,6 +45,7 @@ jobs:
       run: |
         export LIBRAWSTOR_TAR_GZ=$(ls librawstor-*.tar.gz)
         export LIBRAWSTOR_TAR=${LIBRAWSTOR_TAR_GZ%.*}
+        export LIBRAWSTOR=${LIBRAWSTOR_TAR%.*}
         echo "LIBRAWSTOR_TAR_GZ=${LIBRAWSTOR_TAR_GZ}" >> $GITHUB_ENV
         echo "LIBRAWSTOR=${LIBRAWSTOR}" >> $GITHUB_ENV
     - name: make
@@ -83,6 +84,7 @@ jobs:
       run: |
         export LIBRAWSTOR_TAR_GZ=$(ls librawstor-*.tar.gz)
         export LIBRAWSTOR_TAR=${LIBRAWSTOR_TAR_GZ%.*}
+        export LIBRAWSTOR=${LIBRAWSTOR_TAR%.*}
         echo "LIBRAWSTOR_TAR_GZ=${LIBRAWSTOR_TAR_GZ}" >> $GITHUB_ENV
         echo "LIBRAWSTOR=${LIBRAWSTOR}" >> $GITHUB_ENV
     - name: make
