@@ -80,7 +80,6 @@ if __name__ == "__main__":
         version=config["package_version"],
         packages=[
             "rawstor",
-            "tests",
         ],
         ext_modules=extensions,
     )
