@@ -34,8 +34,8 @@ install-exec-local: build-rawstor
 	  $(builddir)/dist/*.whl
 
 uninstall-local:
-	-rm -rf $(DESTDIR)$(prefix)/lib/python*/dist-packages/rawstor*
-	-rm -rf $(DESTDIR)$(prefix)/lib/python*/dist-packages/rawstor-*.dist-info
+	-rm -rf $(prefix)/lib/python*/dist-packages/rawstor*
+	-rm -rf $(prefix)/lib/python*/dist-packages/rawstor-*.dist-info
 	-rm -rf $(DESTDIR)$(prefix)/lib/python*/site-packages/rawstor*
 	-rm -rf $(DESTDIR)$(prefix)/lib/python*/site-packages/rawstor-*.dist-info
 
