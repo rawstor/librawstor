@@ -106,11 +106,11 @@ jobs:
         cp ../deb/python3-rawstor/rules debian
         cp ../COPYING debian/copyright
         dpkg-buildpackage -us -uc
-        ls -lhR .
+        ls -lhR ..
     - uses: actions/upload-artifact@v7
       with:
         name: python3-rawstor.deb
-        path: build/python3-rawstor-*.deb
+        path: python3-rawstor_*.deb
         if-no-files-found: error
 
   deb-install:
