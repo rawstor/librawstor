@@ -3,7 +3,7 @@ Section: python
 Priority: optional
 Maintainer: Vasily Stepanov <vasily.stepanov@gmail.com>
 Build-Depends: python3-all-dev, debhelper (>= 12)
-Version: @PACKAGE_VERSION@
+Standards-Version: 4.7.0
 
 Package: python3-rawstor
 Architecture: amd64
