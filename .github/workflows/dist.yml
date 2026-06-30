@@ -63,7 +63,7 @@ jobs:
         dpkg-deb --build ${GITHUB_WORKSPACE}/build/librawstor build/${LIBRAWSTOR}.deb
     - uses: actions/upload-artifact@v7
       with:
-        name: deb
+        name: librawstor.deb
         path: build/librawstor-*.deb
         if-no-files-found: error
 
@@ -104,7 +104,7 @@ jobs:
         dpkg-deb --build ${GITHUB_WORKSPACE}/build/python3-rawstor build/python3-rawstor-${PACKAGE_VERSION}.deb
     - uses: actions/upload-artifact@v7
       with:
-        name: deb
+        name: python3-rawstor.deb
         path: build/python3-rawstor-*.deb
         if-no-files-found: error
 
@@ -120,14 +120,14 @@ jobs:
     - name: install-librawstor
       run: |
         ls -lhR
-        sudo apt install -y ./deb/librawstor-*.deb
+        sudo apt install -y ./librawstor.deb/librawstor-*.deb
     - name: test-librawstor
       run: |
         rawstor-cli --version
         rawstor-ost --version
     - name: install-python3-rawstor
       run: |
-        sudo apt install -y ./deb/python3-rawstor-*.deb
+        sudo apt install -y ./python3-rawstor.deb/python3-rawstor-*.deb
     - name: test-python3-rawstor
       run: |
         python -c "import rawstor; print('OK')"
