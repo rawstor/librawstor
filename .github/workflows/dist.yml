@@ -179,7 +179,7 @@ jobs:
     - deb-librawstor
     - deb-python3-rawstor
     - deb-install
-    - rpm
+    - rpm-librawstor
 
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
