@@ -26,7 +26,7 @@ $(builddir)/dist-stamp: sources-stamp
 
 build-rawstor: $(builddir)/dist-stamp
 
-install-rawstor: build-rawstor
+install-exec-local: build-rawstor
 	$(PYTHON) -m pip install \
 	  --no-deps \
 	  --no-build-isolation \
