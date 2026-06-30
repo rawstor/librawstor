@@ -102,8 +102,8 @@ jobs:
         mkdir debian
         cp ../deb/python3-rawstor/control debian
         cp ../deb/python3-rawstor/compat debian
+        cp ../deb/python3-rawstor/changelog debian
         cp ../deb/python3-rawstor/rules debian
-        cp ../ChangeLog.md debian/changelog
         cp ../COPYING debian/copyright
         dpkg-buildpackage -us -uc
         ls -lhR .

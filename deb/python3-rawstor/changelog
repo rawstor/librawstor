@@ -1,0 +1,5 @@
+PACKAGE (VERSION) UNRELEASED; urgency=medium
+
+  * Initial release.
+
+ -- vasily <vasily.stepanov@gmail.com>  Tue, 30 Jun 2026 22:26:30 +0000
