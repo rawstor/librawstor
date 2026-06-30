@@ -59,7 +59,7 @@ jobs:
     - name: dpkg-deb
       run: |
         mkdir ${GITHUB_WORKSPACE}/build/librawstor/DEBIAN
-        cp ${LIBRAWSTOR}/deb/librawstor ${GITHUB_WORKSPACE}/build/librawstor/DEBIAN/control
+        cp ${LIBRAWSTOR}/deb/librawstor/control ${GITHUB_WORKSPACE}/build/librawstor/DEBIAN
         dpkg-deb --build ${GITHUB_WORKSPACE}/build/librawstor build/${LIBRAWSTOR}.deb
     - uses: actions/upload-artifact@v7
       with:
@@ -76,7 +76,7 @@ jobs:
     - name: install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libxxhash-dev liburing-dev libgtest-dev python3-build
+        sudo apt-get install -y libxxhash-dev liburing-dev libgtest-dev python3-build debhelper dh-python python3-all-dev
     - uses: actions/download-artifact@v8
       with:
         name: sources
@@ -93,15 +93,19 @@ jobs:
       run: |
         tar -xzf ${LIBRAWSTOR_TAR_GZ}
         cd ${LIBRAWSTOR}
-        ./configure --prefix=${GITHUB_WORKSPACE}/build/python3-rawstor
+        ./configure
         make -j$(nproc)
         make test
-        make -C pyrawstor install
-    - name: dpkg-deb
+    - name: dvpkg-buildpackage
       run: |
-        mkdir ${GITHUB_WORKSPACE}/build/python3-rawstor/DEBIAN
-        cp ${LIBRAWSTOR}/deb/python3-rawstor ${GITHUB_WORKSPACE}/build/python3-rawstor/DEBIAN/control
-        dpkg-deb --build ${GITHUB_WORKSPACE}/build/python3-rawstor build/python3-rawstor-${PACKAGE_VERSION}.deb
+        cd ${LIBRAWSTOR}/pyrawstor
+        mkdir DEBIAN
+        cp ../deb/python3-rawstor/control DEBIAN
+        cp ../ChangeLog.md DEBIAN/changelog
+        cp ../deb/python3-rawstor/compat DEBIAN
+        cp ../COPYING DEBIAN/copyright
+        dvpkg-buildpackage -us -uc
+        ls -lhR .
     - uses: actions/upload-artifact@v7
       with:
         name: python3-rawstor.deb
