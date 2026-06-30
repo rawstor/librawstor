@@ -97,7 +97,6 @@ jobs:
         make -j$(nproc)
         make test
         make -C pyrawstor install
-        ls -lhR ${GITHUB_WORKSPACE}/build/python3-rawstor 
     - name: dpkg-deb
       run: |
         mkdir ${GITHUB_WORKSPACE}/build/python3-rawstor/DEBIAN
@@ -118,12 +117,11 @@ jobs:
 
     steps:
     - uses: actions/download-artifact@v8
-      with:
-        artifact-ids: deb-librawstor,deb-python3-rawstor
     - name: install-librawstor
       run: |
+        ls -lh
         sudo apt install -y ./librawstor-*.deb
-    - name: test-librastor
+    - name: test-librawstor
       run: |
         rawstor-cli --version
         rawstor-ost --version
