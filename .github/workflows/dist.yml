@@ -85,8 +85,10 @@ jobs:
         export LIBRAWSTOR_TAR_GZ=$(ls librawstor-*.tar.gz)
         export LIBRAWSTOR_TAR=${LIBRAWSTOR_TAR_GZ%.*}
         export LIBRAWSTOR=${LIBRAWSTOR_TAR%.*}
+        export PACKAGE_VERSION=${LIBRAWSTOR#librawstor-}
         echo "LIBRAWSTOR_TAR_GZ=${LIBRAWSTOR_TAR_GZ}" >> $GITHUB_ENV
         echo "LIBRAWSTOR=${LIBRAWSTOR}" >> $GITHUB_ENV
+        echo "PACKAGE_VERSION=${PACKAGE_VERSION}" >> $GITHUB_ENV
     - name: make
       run: |
         tar -xzf ${LIBRAWSTOR_TAR_GZ}
@@ -100,7 +102,7 @@ jobs:
       run: |
         mkdir ${GITHUB_WORKSPACE}/build/python3-rawstor/DEBIAN
         cp ${LIBRAWSTOR}/deb/python3-rawstor ${GITHUB_WORKSPACE}/build/python3-rawstor/DEBIAN/control
-        dpkg-deb --build ${GITHUB_WORKSPACE}/build/python3-rawstor build/${LIBRAWSTOR}.deb
+        dpkg-deb --build ${GITHUB_WORKSPACE}/build/python3-rawstor build/python3-rawstor-${PACKAGE_VERSION}.deb
     - uses: actions/upload-artifact@v7
       with:
         name: deb
