@@ -27,6 +27,8 @@ $(builddir)/dist-stamp: sources-stamp
 build-rawstor: $(builddir)/dist-stamp
 
 install-exec-local: build-rawstor
+	echo DESTDIR=${DESTDIR}
+	echo prefix=${prefix}
 	$(PYTHON) -m pip install \
 	  --no-deps \
 	  --no-build-isolation \
