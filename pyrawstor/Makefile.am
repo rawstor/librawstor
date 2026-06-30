@@ -36,8 +36,8 @@ uninstall-local:
 	@echo "Uninstalling python package..."
 	rm -rf $(DESTDIR)$(prefix)/lib/python*/site-packages/rawstor*
 	rm -rf $(DESTDIR)$(prefix)/lib/python*/site-packages/rawstor-*.dist-info
-	rm -rf $(abs_top_builddir)/local/lib/python*/dist-packages/rawstor*;
-	rm -rf $(abs_top_builddir)/local/lib/python*/dist-packages/rawstor-*.dist-info;
+	rm -r $(abs_top_builddir)/local/lib/python*/dist-packages/rawstor*;
+	rm -r $(abs_top_builddir)/local/lib/python*/dist-packages/rawstor-*.dist-info;
 
 if ENABLE_TESTS
 test: sources-stamp
@@ -56,6 +56,8 @@ clean-local:
 	    sources-stamp ; \
 	fi
 	-rm -rf $(builddir)/dist $(builddir)/dist-stamp
+	-rm -r $(abs_top_builddir)/local/lib/python*/dist-packages/rawstor*;
+	-rm -r $(abs_top_builddir)/local/lib/python*/dist-packages/rawstor-*.dist-info;
 
 all-local: build-rawstor
 
