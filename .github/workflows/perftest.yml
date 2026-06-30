@@ -39,7 +39,7 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y libxxhash-dev libtool pkg-config ${{ matrix.packages }}
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
       with:
         path: librawstor
         fetch-depth: 0
@@ -52,7 +52,7 @@ jobs:
         make -j$(nproc)
         sudo make install
         popd
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
       id: rawstor_ost_feature_branch
       continue-on-error: true
       if: "${{ matrix.backend == 'ost-legacy' }}"
@@ -60,7 +60,7 @@ jobs:
         repository: rawstor/rawstor_ost
         path: rawstor_ost
         ref: ${{ github.ref }}
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
       if: "${{ matrix.backend == 'ost-legacy' && steps.rawstor_ost_feature_branch.outcome == 'failure' }}"
       with:
         repository: rawstor/rawstor_ost
@@ -76,7 +76,7 @@ jobs:
         make -j$(nproc)
         sudo make install
         popd
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
       with:
         repository: rawstor/fio
         path: fio
@@ -122,7 +122,7 @@ jobs:
         echo \`\`\` >> $GITHUB_STEP_SUMMARY
         cat fio.txt >> $GITHUB_STEP_SUMMARY
         echo \`\`\` >> $GITHUB_STEP_SUMMARY
-    - uses: actions/upload-artifact@v4
+    - uses: actions/upload-artifact@v7
       with:
         name: perftest${{ matrix.without-liburing }}-${{ matrix.backend }}-${{ matrix.bs }}-${{ matrix.iodepth }}-${{ matrix.numjobs }}
         path: |
@@ -142,13 +142,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/download-artifact@v5
+    - uses: actions/download-artifact@v8
       with:
         path: ./perftest
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
       with:
         path: librawstor
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
       with:
         repository: rawstor/rawstor_bench
         path: rawstor_bench
