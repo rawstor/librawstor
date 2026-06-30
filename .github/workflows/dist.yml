@@ -174,7 +174,8 @@ jobs:
   release:
     needs:
     - sources
-    - deb
+    - deb-librawstor
+    - deb-python3-rawstor
     - deb-install
     - rpm
 
@@ -208,6 +209,7 @@ jobs:
       with:
         working_directory: ./artifacts
         files: |
-          deb/*
+          deb-librawstor/*
+          deb-python3-rawstor/*
           rpm/*
           sources/*
