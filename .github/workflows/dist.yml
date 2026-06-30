@@ -101,8 +101,9 @@ jobs:
         cd ${LIBRAWSTOR}/pyrawstor
         mkdir DEBIAN
         cp ../deb/python3-rawstor/control DEBIAN
-        cp ../ChangeLog.md DEBIAN/changelog
         cp ../deb/python3-rawstor/compat DEBIAN
+        cp ../deb/python3-rawstor/rules DEBIAN
+        cp ../ChangeLog.md DEBIAN/changelog
         cp ../COPYING DEBIAN/copyright
         dvpkg-buildpackage -us -uc
         ls -lhR .

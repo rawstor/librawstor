@@ -26,7 +26,9 @@ ChangeLog: $(srcdir)/ChangeLog.md
 
 
 EXTRA_DIST = ChangeLog.md \
-             README.md
+             README.md \
+             deb/python3-rawstor/compat \
+             deb/python3-rawstor/rules
 
 
 CLEANFILES = ChangeLog \
