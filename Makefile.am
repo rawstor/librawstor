@@ -28,7 +28,6 @@ ChangeLog: $(srcdir)/ChangeLog.md
 EXTRA_DIST = ChangeLog.md \
              README.md \
              deb/python3-rawstor/compat \
-             deb/python3-rawstor/changelog \
              deb/python3-rawstor/rules
 
 

@@ -136,6 +136,7 @@ AC_CONFIG_FILES(
     [tests/Makefile]
     [deb/librawstor/control]
     [deb/python3-rawstor/control]
+    [deb/python3-rawstor/changelog]
     [rpm/librawstor.spec]
     [pyrawstor/config.py]
     [pyrawstor/Makefile]
