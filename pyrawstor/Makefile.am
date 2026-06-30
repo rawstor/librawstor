@@ -33,6 +33,10 @@ install-exec-local: build-rawstor
 	  --prefix=$(DESTDIR)$(prefix) \
 	  $(builddir)/dist/*.whl
 
+uninstall-local:
+	-rm -rf $(DESTDIR)$(prefix)/lib/python*/site-packages/rawstor*
+	-rm -rf $(DESTDIR)$(prefix)/lib/python*/site-packages/rawstor-*.dist-info
+
 if ENABLE_TESTS
 test: sources-stamp
 	$(PYTHON) -m unittest discover -s tests
