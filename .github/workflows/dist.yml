@@ -14,7 +14,7 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y gnupg
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
     - name: import GPG public keys
       run: gpg --import .github/gpg-keys/*.asc
     - name: fetch all tags
@@ -31,7 +31,7 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y libxxhash-dev liburing-dev libgtest-dev
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
       with:
         fetch-depth: 0
     - name: autogen
@@ -40,7 +40,7 @@ jobs:
       run: ./configure
     - name: make distcheck
       run: make distcheck
-    - uses: actions/upload-artifact@v4
+    - uses: actions/upload-artifact@v7
       with:
         name: sources
         path: librawstor-*.tar.gz
@@ -56,7 +56,7 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y libxxhash-dev liburing-dev libgtest-dev
-    - uses: actions/download-artifact@v5
+    - uses: actions/download-artifact@v8
       with:
         name: sources
     - name: env
@@ -79,7 +79,7 @@ jobs:
         mkdir ${GITHUB_WORKSPACE}/build/librawstor/DEBIAN
         cp ${LIBRAWSTOR}/deb/control ${GITHUB_WORKSPACE}/build/librawstor/DEBIAN
         dpkg-deb --build ${GITHUB_WORKSPACE}/build/librawstor build/${LIBRAWSTOR}.deb
-    - uses: actions/upload-artifact@v4
+    - uses: actions/upload-artifact@v7
       with:
         name: deb
         path: build/librawstor-*.deb
@@ -91,7 +91,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/download-artifact@v5
+    - uses: actions/download-artifact@v8
       with:
         name: deb
     - name: install
@@ -115,7 +115,7 @@ jobs:
       run: |
         mkdir -p ~/rpmbuild/SOURCES
         mkdir -p ~/rpmbuild/SPECS
-    - uses: actions/download-artifact@v5
+    - uses: actions/download-artifact@v8
       with:
         name: sources
     - name: env
@@ -136,7 +136,7 @@ jobs:
         cp ${LIBRAWSTOR_TAR_GZ} ~/rpmbuild/SOURCES
         rpmlint ~/rpmbuild/SPECS/librawstor.spec
         rpmbuild -bb ~/rpmbuild/SPECS/librawstor.spec
-    - uses: actions/upload-artifact@v4
+    - uses: actions/upload-artifact@v7
       with:
         name: rpm
         path: ~/rpmbuild/RPMS/x86_64/librawstor-*.rpm
@@ -156,7 +156,7 @@ jobs:
       contents: write
 
     steps:
-    - uses: actions/download-artifact@v5
+    - uses: actions/download-artifact@v8
       with:
         path: ./artifacts
     - uses: softprops/action-gh-release@v3
