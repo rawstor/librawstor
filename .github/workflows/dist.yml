@@ -174,7 +174,7 @@ jobs:
         rpmbuild -bb ~/rpmbuild/SPECS/librawstor.spec
     - uses: actions/upload-artifact@v7
       with:
-        name: rpm
+        name: rpm-librawstor
         path: ~/rpmbuild/RPMS/x86_64/librawstor-*.rpm
         if-no-files-found: error
 
@@ -218,5 +218,5 @@ jobs:
         files: |
           deb-librawstor/*
           deb-python3-rawstor/*
-          rpm/*
+          rpm-librawstor/*
           sources/*
