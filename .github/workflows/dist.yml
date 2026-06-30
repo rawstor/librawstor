@@ -115,7 +115,7 @@ jobs:
     steps:
     - uses: actions/download-artifact@v8
       with:
-        name:
+        artifact-ids:
         - deb-librawstor
         - deb-python3-rawstor
     - name: install-librawstor
