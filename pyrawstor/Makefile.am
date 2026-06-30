@@ -35,11 +35,10 @@ install-exec-local: build-rawstor
 
 uninstall-local:
 	@echo "Uninstalling python package..."
-	-rm -rf $(DESTDIR)$(prefix)/lib/python*/site-packages/rawstor*
-	-rm -rf $(DESTDIR)$(prefix)/lib/python*/site-packages/rawstor-*.dist-info
-	-rm -r $(abs_top_builddir)/local/lib/python*/dist-packages/rawstor*;
-	-rm -r $(abs_top_builddir)/local/lib/python*/dist-packages/rawstor-*.dist-info;
-	ls -lhR /home/runner/work
+	-rm -r $(DESTDIR)$(prefix)/lib/python*/site-packages/rawstor*
+	-rm -r $(DESTDIR)$(prefix)/lib/python*/site-packages/rawstor-*.dist-info
+	-rm -r $(DESTDIR)$(prefix)/local/lib/python*/dist-packages/rawstor*
+	-rm -r $(DESTDIR)$(prefix)/local/lib/python*/dist-packages/rawstor-*.dist-info
 
 if ENABLE_TESTS
 test: sources-stamp
