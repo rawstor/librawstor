@@ -54,6 +54,7 @@ clean-local:
 	    sources-stamp ; \
 	fi
 	-rm -rf $(builddir)/build $(builddir)/build-stamp
+	-rm -rf $(builddir)/dist
 	-rm *.so
 
 all-local: build-rawstor
