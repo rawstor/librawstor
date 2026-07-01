@@ -20,7 +20,7 @@ sources-stamp:
 	fi
 	touch $@
 
-$(builddir)/build-stamp: sources-stamp
+$(builddir)/build-stamp: sources-stamp setup.py
 	$(PYTHON) setup.py build
 	touch $@
 

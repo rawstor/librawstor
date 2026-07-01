@@ -42,24 +42,29 @@ if __name__ == "__main__":
 
     sources = [
         "rawstor/module.c",
-        "rawstor/rawstor.c",
+        "rawstor/rawstor_bindings.c",
     ]
 
     depends = [
-        "rawstor/rawstor.h",
+        "rawstor/rawstor_bindings.h",
     ]
 
     include_dirs = [
-        "mip_solver/libmipsolver",
+        "../include",
     ]
 
     libraries = [
+        "rawstor",
     ]
 
     library_dirs = [
+        "../src/.libs",
     ]
 
     extra_compile_args = [
+        "-std=gnu99",
+        "-Wall",
+        "-Wextra",
         "-Werror",
     ]
 
