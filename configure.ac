@@ -18,6 +18,8 @@ AC_SUBST([PACKAGE_VERSION_MAJOR], [`echo ${PACKAGE_VERSION_SHORT%%.*}`])
 AC_SUBST([PACKAGE_VERSION_MINOR_PATCH], [`echo ${PACKAGE_VERSION_SHORT#*.}`])
 AC_SUBST([PACKAGE_VERSION_MINOR], [`echo ${PACKAGE_VERSION_MINOR_PATCH%%.*}`])
 AC_SUBST([PACKAGE_VERSION_PATCH], [`echo ${PACKAGE_VERSION_MINOR_PATCH#*.}`])
+AC_SUBST([PACKAGE_VERSION_MAJOR_NEXT], [`expr $PACKAGE_VERSION_MAJOR + 1`])
+AC_SUBST([PACKAGE_VERSION_MINOR_NEXT], [`expr $PACKAGE_VERSION_MINOR + 1`])
 AC_SUBST([RPM_RELEASE], [`[[[ ${PACKAGE_VERSION} == *-* ]]] && RELEASE=${PACKAGE_VERSION#*-} && echo ${RELEASE//-/^} || echo "0"`])
 AC_SUBST([LIBRARY_VERSION], [`VERSION=${PACKAGE_VERSION_SHORT%.*} && echo ${VERSION//./:}:0`])
 
@@ -96,6 +98,23 @@ AS_IF([test "x$with_libxxhash" == "xyes"], [
 ])
 
 
+AC_ARG_WITH([python3], [AS_HELP_STRING([--without-python3],
+    [disable support for python3 bindings])],
+    [with_python3=$withval],
+    [with_python3="yes"])
+AM_CONDITIONAL([WITH_PYTHON3], [test "x$with_python3" == "xyes"])
+AS_IF([test "x$with_python3" == "xyes"], [
+    AM_PATH_PYTHON([3.10], , [:])
+    PKG_CHECK_MODULES([PYTHON3], [python3])
+    AC_MSG_CHECKING([for python3-build usability])
+    AS_IF([$PYTHON -m build --version >/dev/null 2>&1], [
+        AC_MSG_RESULT([yes])
+    ], [
+        AC_MSG_ERROR([python3-build module not found])
+    ])
+])
+
+
 AC_CONFIG_FILES(
     [Makefile]
     [include/rawstor/version.h]
@@ -115,8 +134,13 @@ AC_CONFIG_FILES(
     [vhost/3rdparty/qemu/libvhost-user/Makefile]
     [ost/Makefile]
     [tests/Makefile]
-    [deb/control]
+    [deb/librawstor/control]
+    [deb/python3-rawstor/control]
+    [deb/python3-rawstor/changelog]
     [rpm/librawstor.spec]
+    [rpm/python3-rawstor.spec]
+    [pyrawstor/config.py]
+    [pyrawstor/Makefile]
 )
 
 AC_OUTPUT

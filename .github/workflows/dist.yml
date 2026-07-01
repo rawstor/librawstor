@@ -12,7 +12,7 @@ jobs:
     - name: install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libxxhash-dev liburing-dev libgtest-dev
+        sudo apt-get install -y libxxhash-dev liburing-dev libgtest-dev python3-build
     - uses: actions/checkout@v7
       with:
         fetch-depth: 0
@@ -28,7 +28,7 @@ jobs:
         path: librawstor-*.tar.gz
         if-no-files-found: error
 
-  deb:
+  deb-librawstor:
     needs: sources
 
     runs-on: ubuntu-latest
@@ -52,38 +52,94 @@ jobs:
       run: |
         tar -xzf ${LIBRAWSTOR_TAR_GZ}
         cd ${LIBRAWSTOR}
-        ./configure --prefix=${GITHUB_WORKSPACE}/build/librawstor
+        ./configure --prefix=${GITHUB_WORKSPACE}/build/librawstor --without-python3
         make -j$(nproc)
         make test
         make install
     - name: dpkg-deb
       run: |
         mkdir ${GITHUB_WORKSPACE}/build/librawstor/DEBIAN
-        cp ${LIBRAWSTOR}/deb/control ${GITHUB_WORKSPACE}/build/librawstor/DEBIAN
+        cp ${LIBRAWSTOR}/deb/librawstor/control ${GITHUB_WORKSPACE}/build/librawstor/DEBIAN
         dpkg-deb --build ${GITHUB_WORKSPACE}/build/librawstor build/${LIBRAWSTOR}.deb
     - uses: actions/upload-artifact@v7
       with:
-        name: deb
+        name: librawstor.deb
         path: build/librawstor-*.deb
         if-no-files-found: error
 
+  deb-python3-rawstor:
+    needs: sources
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libxxhash-dev liburing-dev libgtest-dev python3-build debhelper dh-python python3-all-dev build-essential
+    - uses: actions/download-artifact@v8
+      with:
+        name: sources
+    - name: env
+      run: |
+        export LIBRAWSTOR_TAR_GZ=$(ls librawstor-*.tar.gz)
+        export LIBRAWSTOR_TAR=${LIBRAWSTOR_TAR_GZ%.*}
+        export LIBRAWSTOR=${LIBRAWSTOR_TAR%.*}
+        export PACKAGE_VERSION=${LIBRAWSTOR#librawstor-}
+        echo "LIBRAWSTOR_TAR_GZ=${LIBRAWSTOR_TAR_GZ}" >> $GITHUB_ENV
+        echo "LIBRAWSTOR=${LIBRAWSTOR}" >> $GITHUB_ENV
+        echo "PACKAGE_VERSION=${PACKAGE_VERSION}" >> $GITHUB_ENV
+    - name: make
+      run: |
+        tar -xzf ${LIBRAWSTOR_TAR_GZ}
+        cd ${LIBRAWSTOR}
+        ./configure
+        make -j$(nproc)
+        make test
+    - name: dpkg-buildpackage
+      run: |
+        cd ${LIBRAWSTOR}/pyrawstor
+        mkdir debian
+        mkdir debian/source
+        cp ../deb/python3-rawstor/control debian
+        cp ../deb/python3-rawstor/compat debian
+        cp ../deb/python3-rawstor/changelog debian
+        cp ../deb/python3-rawstor/format debian/source
+        cp ../deb/python3-rawstor/rules debian
+        cp ../COPYING debian/copyright
+        dpkg-buildpackage -us -uc
+        mv ../python3-rawstor_*.deb ${GITHUB_WORKSPACE}
+    - uses: actions/upload-artifact@v7
+      with:
+        name: python3-rawstor.deb
+        path: python3-rawstor_*.deb
+        if-no-files-found: error
+
   deb-install:
-    needs: deb
+    needs:
+    - deb-librawstor
+    - deb-python3-rawstor
 
     runs-on: ubuntu-latest
 
     steps:
     - uses: actions/download-artifact@v8
-      with:
-        name: deb
-    - name: install
-      run: sudo apt install -y ./librawstor-*.deb
-    - name: test
+    - name: install-librawstor
+      run: |
+        ls -lhR
+        sudo apt install -y ./librawstor.deb/librawstor-*.deb
+    - name: test-librawstor
       run: |
         rawstor-cli --version
         rawstor-ost --version
+    - name: install-python3-rawstor
+      run: |
+        sudo apt install -y ./python3-rawstor.deb/python3-rawstor_*.deb
+    - name: test-python3-rawstor
+      run: |
+        python -c "import rawstor; print('OK')"
 
-  rpm:
+  rpm-librawstor:
     needs: sources
 
     runs-on: ubuntu-latest
@@ -111,7 +167,7 @@ jobs:
       run: |
         tar -xzf ${LIBRAWSTOR_TAR_GZ}
         cd ${LIBRAWSTOR}
-        ./configure --prefix=${HOME}/rpmbuild/BUILD
+        ./configure --prefix=${HOME}/rpmbuild/BUILD --without-python3
     - name: rpmbuild
       run: |
         cp ${LIBRAWSTOR}/rpm/librawstor.spec ~/rpmbuild/SPECS
@@ -120,16 +176,59 @@ jobs:
         rpmbuild -bb ~/rpmbuild/SPECS/librawstor.spec
     - uses: actions/upload-artifact@v7
       with:
-        name: rpm
+        name: librawstor.rpm
         path: ~/rpmbuild/RPMS/x86_64/librawstor-*.rpm
+        if-no-files-found: error
+
+  rpm-python3-rawstor:
+    needs: sources
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libxxhash-dev liburing-dev libgtest-dev rpm rpmlint python3-build
+    - name: setuptree
+      run: |
+        mkdir -p ~/rpmbuild/SOURCES
+        mkdir -p ~/rpmbuild/SPECS
+    - uses: actions/download-artifact@v8
+      with:
+        name: sources
+    - name: env
+      run: |
+        export LIBRAWSTOR_TAR_GZ=$(ls librawstor-*.tar.gz)
+        export LIBRAWSTOR_TAR=${LIBRAWSTOR_TAR_GZ%.*}
+        export LIBRAWSTOR=${LIBRAWSTOR_TAR%.*}
+        echo "LIBRAWSTOR_TAR_GZ=${LIBRAWSTOR_TAR_GZ}" >> $GITHUB_ENV
+        echo "LIBRAWSTOR=${LIBRAWSTOR}" >> $GITHUB_ENV
+    - name: configure
+      run: |
+        tar -xzf ${LIBRAWSTOR_TAR_GZ}
+        cd ${LIBRAWSTOR}
+        ./configure --prefix=${HOME}/rpmbuild/BUILD
+    - name: rpmbuild
+      run: |
+        cp ${LIBRAWSTOR}/rpm/python3-rawstor.spec ~/rpmbuild/SPECS
+        cp ${LIBRAWSTOR_TAR_GZ} ~/rpmbuild/SOURCES
+        rpmlint ~/rpmbuild/SPECS/python3-rawstor.spec
+        rpmbuild -bb ~/rpmbuild/SPECS/python3-rawstor.spec
+    - uses: actions/upload-artifact@v7
+      with:
+        name: python3-rawstor.rpm
+        path: ~/rpmbuild/RPMS/x86_64/python3-rawstor-*.rpm
         if-no-files-found: error
 
   release:
     needs:
     - sources
-    - deb
+    - deb-librawstor
+    - deb-python3-rawstor
     - deb-install
-    - rpm
+    - rpm-librawstor
+    - rpm-python3-rawstor
 
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
@@ -161,6 +260,8 @@ jobs:
       with:
         working_directory: ./artifacts
         files: |
-          deb/*
-          rpm/*
+          deb-librawstor/*
+          deb-python3-rawstor/*
+          rpm-librawstor/*
+          rpm-python3-rawstor/*
           sources/*

@@ -1,0 +1,5 @@
+rawstor (@PACKAGE_VERSION_SHORT@) UNRELEASED; urgency=medium
+
+  * Initial release.
+
+ -- Vasily Stepanov <vasily.stepanov@gmail.com>  Tue, 30 Jun 2026 22:26:30 +0000

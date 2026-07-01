@@ -9,6 +9,10 @@ if ENABLE_TESTS
     SUBDIRS += tests
 endif
 
+if WITH_PYTHON3
+    SUBDIRS += pyrawstor
+endif
+
 
 ACLOCAL_AMFLAGS = -I m4
 
@@ -22,7 +26,10 @@ ChangeLog: $(srcdir)/ChangeLog.md
 
 
 EXTRA_DIST = ChangeLog.md \
-             README.md
+             README.md \
+             deb/python3-rawstor/compat \
+             deb/python3-rawstor/format \
+             deb/python3-rawstor/rules
 
 
 CLEANFILES = ChangeLog \
@@ -30,10 +37,20 @@ CLEANFILES = ChangeLog \
 
 
 if ENABLE_TESTS
+
+if WITH_PYTHON3
+WITH_PYTHON3 = yes
+else
+WITH_PYTHON3 = no
+endif
+
 test: all
 	make -C librawstd test
 	make -C librawio test
 	make -C tests test
+	@if [ "x$(WITH_PYTHON3)" = "xyes" ]; then \
+	  make -C pyrawstor test; \
+	fi
 
 .PHONY: test
 endif
