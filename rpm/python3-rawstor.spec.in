@@ -2,10 +2,14 @@ Name: python3-rawstor
 Version: @PACKAGE_VERSION_SHORT@
 Release: @RPM_RELEASE@
 Summary: Rawstor python bindings
-
 License: LGPL
 URL: https://github.com/rawstor/librawstor
 Source0: librawstor-@PACKAGE_VERSION@.tar.gz
+
+BuildRequires: python3-devel
+
+Requires: python3
+Requires: librawstor >= @PACKAGE_VERSION_MAJOR@.@PACKAGE_VERSION_MINOR@.0, librawstor < @PACKAGE_VERSION_MAJOR@.@PACKAGE_VERSION_MINOR_NEXT@.0
 
 %description
 Rawstor python bindings
