@@ -189,7 +189,7 @@ jobs:
     - name: install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libxxhash-dev liburing-dev libgtest-dev rpm rpmlint python3-build python3-dev rpm-build
+        sudo apt-get install -y libxxhash-dev liburing-dev libgtest-dev rpm rpmlint python3-build python3-dev
     - name: setuptree
       run: |
         mkdir -p ~/rpmbuild/SOURCES
