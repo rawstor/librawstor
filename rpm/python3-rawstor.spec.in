@@ -5,7 +5,7 @@ Summary: Rawstor python bindings
 
 License: LGPL
 URL: https://github.com/rawstor/librawstor
-Source0: %{name}-@PACKAGE_VERSION@.tar.gz
+Source0: librawstor-@PACKAGE_VERSION@.tar.gz
 
 %description
 Rawstor python bindings
