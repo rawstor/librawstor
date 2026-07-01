@@ -11,7 +11,7 @@ Source0: librawstor-@PACKAGE_VERSION@.tar.gz
 Rawstor python bindings
 
 %prep
-%autosetup -n %{name}-@PACKAGE_VERSION@
+%autosetup -n librawstor-@PACKAGE_VERSION@
 
 %build
 ./configure --prefix=%{_prefix}
