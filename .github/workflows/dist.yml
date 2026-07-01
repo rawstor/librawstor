@@ -132,7 +132,7 @@ jobs:
         rawstor-ost --version
     - name: install-python3-rawstor
       run: |
-        sudo apt install -y ./python3-rawstor.deb/python3-rawstor-*.deb
+        sudo apt install -y ./python3-rawstor.deb/python3-rawstor_*.deb
     - name: test-python3-rawstor
       run: |
         python -c "import rawstor; print('OK')"
