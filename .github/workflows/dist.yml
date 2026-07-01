@@ -106,7 +106,7 @@ jobs:
         cp ../deb/python3-rawstor/rules debian
         cp ../COPYING debian/copyright
         dpkg-buildpackage -us -uc
-        ls -lhR ..
+        mv ../python3-rawstor_*.deb ${GITHUB_WORKSPACE}
     - uses: actions/upload-artifact@v7
       with:
         name: python3-rawstor.deb
