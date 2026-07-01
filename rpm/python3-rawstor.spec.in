@@ -25,4 +25,4 @@ ls -lhR %{buildroot}
 echo ====
 
 %files
-%{_exec_prefix}/lib*/*
+%{python3_sitearch}/*
