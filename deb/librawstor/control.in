@@ -4,6 +4,7 @@ Section: libs
 Priority: optional
 Maintainer: Vasily Stepanov <vasily.stepanov@gmail.com>
 Architecture: amd64
-Depends: liburing2, libxxhash0
+Depends: liburing2,
+         libxxhash0
 Description: Rawstor client library and OST backend
 Homepage: https://github.com/rawstor/librawstor

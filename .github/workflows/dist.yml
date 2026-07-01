@@ -100,9 +100,11 @@ jobs:
       run: |
         cd ${LIBRAWSTOR}/pyrawstor
         mkdir debian
+        mkdir debian/source
         cp ../deb/python3-rawstor/control debian
         cp ../deb/python3-rawstor/compat debian
         cp ../deb/python3-rawstor/changelog debian
+        cp ../deb/python3-rawstor/format debian/source
         cp ../deb/python3-rawstor/rules debian
         cp ../COPYING debian/copyright
         dpkg-buildpackage -us -uc
