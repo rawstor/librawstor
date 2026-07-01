@@ -29,7 +29,7 @@ build-rawstor: $(builddir)/dist-stamp
 install-exec-local: build-rawstor
 	$(PYTHON) -m pip install \
 	  --no-deps \
-	  --prefix=$(DESTDIR)$(prefix) \
+	  --root=$(DESTDIR)$(prefix) \
 	  $(builddir)/dist/*.whl
 
 uninstall-local:
@@ -37,8 +37,6 @@ uninstall-local:
 	cat $(top_srcdir)/configure
 	-rm -r $(DESTDIR)$(prefix)/lib/python*/site-packages/rawstor*
 	-rm -r $(DESTDIR)$(prefix)/lib/python*/site-packages/rawstor-*.dist-info
-	-rm -r $(DESTDIR)$(prefix)/local/lib/python*/dist-packages/rawstor*
-	-rm -r $(DESTDIR)$(prefix)/local/lib/python*/dist-packages/rawstor-*.dist-info
 
 if ENABLE_TESTS
 test: sources-stamp
