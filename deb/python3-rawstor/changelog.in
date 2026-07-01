@@ -1,4 +1,4 @@
-rawstor (@PACKAGE_VERSION@) UNRELEASED; urgency=medium
+rawstor (@PACKAGE_VERSION_SHORT@) UNRELEASED; urgency=medium
 
   * Initial release.
 

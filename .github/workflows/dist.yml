@@ -176,8 +176,49 @@ jobs:
         rpmbuild -bb ~/rpmbuild/SPECS/librawstor.spec
     - uses: actions/upload-artifact@v7
       with:
-        name: rpm-librawstor
+        name: librawstor.rpm
         path: ~/rpmbuild/RPMS/x86_64/librawstor-*.rpm
+        if-no-files-found: error
+
+  rpm-python3-rawstor:
+    needs: sources
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libxxhash-dev liburing-dev libgtest-dev rpm rpmlint python3-build
+    - name: setuptree
+      run: |
+        mkdir -p ~/rpmbuild/SOURCES
+        mkdir -p ~/rpmbuild/SPECS
+    - uses: actions/download-artifact@v8
+      with:
+        name: sources
+    - name: env
+      run: |
+        export LIBRAWSTOR_TAR_GZ=$(ls librawstor-*.tar.gz)
+        export LIBRAWSTOR_TAR=${LIBRAWSTOR_TAR_GZ%.*}
+        export LIBRAWSTOR=${LIBRAWSTOR_TAR%.*}
+        echo "LIBRAWSTOR_TAR_GZ=${LIBRAWSTOR_TAR_GZ}" >> $GITHUB_ENV
+        echo "LIBRAWSTOR=${LIBRAWSTOR}" >> $GITHUB_ENV
+    - name: configure
+      run: |
+        tar -xzf ${LIBRAWSTOR_TAR_GZ}
+        cd ${LIBRAWSTOR}
+        ./configure --prefix=${HOME}/rpmbuild/BUILD
+    - name: rpmbuild
+      run: |
+        cp ${LIBRAWSTOR}/rpm/python3-rawstor.spec ~/rpmbuild/SPECS
+        cp ${LIBRAWSTOR_TAR_GZ} ~/rpmbuild/SOURCES
+        rpmlint ~/rpmbuild/SPECS/python3-rawstor.spec
+        rpmbuild -bb ~/rpmbuild/SPECS/python3-rawstor.spec
+    - uses: actions/upload-artifact@v7
+      with:
+        name: python3-rawstor.rpm
+        path: ~/rpmbuild/RPMS/x86_64/python3-rawstor-*.rpm
         if-no-files-found: error
 
   release:
@@ -187,6 +228,7 @@ jobs:
     - deb-python3-rawstor
     - deb-install
     - rpm-librawstor
+    - rpm-python3-rawstor
 
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
