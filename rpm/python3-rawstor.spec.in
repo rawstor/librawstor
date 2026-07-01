@@ -6,11 +6,7 @@ License: LGPL
 URL: https://github.com/rawstor/librawstor
 Source0: librawstor-@PACKAGE_VERSION@.tar.gz
 
-%if 0%{?rhel} || 0%{?fedora}
-BuildRequires: python3-devel
-%else
-BuildRequires: python3-dev
-%endif
+%global python3_sitearch %(%{__python3} -c "import sysconfig; print(sysconfig.get_path('platlib'))")
 
 Requires: python3
 Requires: librawstor >= @PACKAGE_VERSION_MAJOR@.@PACKAGE_VERSION_MINOR@.0, librawstor < @PACKAGE_VERSION_MAJOR@.@PACKAGE_VERSION_MINOR_NEXT@.0
