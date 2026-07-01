@@ -7,6 +7,7 @@ Standards-Version: 4.7.0
 
 Package: python3-rawstor
 Architecture: amd64
-Depends: python3, librawstor (>= @PACKAGE_VERSION_MAJOR@.@PACKAGE_VERSION_MINOR@.0), librawstor (<< @PACKAGE_VERSION_MAJOR@.@PACKAGE_VERSION_MINOR_NEXT@.0)
+Depends: librawstor (>= @PACKAGE_VERSION_MAJOR@.@PACKAGE_VERSION_MINOR@.0),
+         librawstor (<< @PACKAGE_VERSION_MAJOR@.@PACKAGE_VERSION_MINOR_NEXT@.0)
 Description: Rawstor python bindings
 Homepage: https://github.com/rawstor/librawstor
