@@ -20,9 +20,9 @@ make %{?_smp_mflags}
 %install
 rm -rf %{buildroot}
 make -C pyrawstor install DESTDIR=%{buildroot}
+echo ====
+ls -lhR %{buildroot}
+echo ====
 
 %files
-%{_bindir}/*
-%{_includedir}/*
 %{_exec_prefix}/lib*/*
-%doc README.md COPYING

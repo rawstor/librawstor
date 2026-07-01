@@ -263,4 +263,5 @@ jobs:
           deb-librawstor/*
           deb-python3-rawstor/*
           rpm-librawstor/*
+          rpm-python3-rawstor/*
           sources/*
