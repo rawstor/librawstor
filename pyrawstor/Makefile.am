@@ -20,11 +20,11 @@ sources-stamp:
 	fi
 	touch $@
 
-$(builddir)/dist-stamp: sources-stamp
-	$(PYTHON) -m build --outdir $(builddir)/dist
+$(builddir)/build-stamp: sources-stamp
+	$(PYTHON) setup.py build
 	touch $@
 
-build-rawstor: $(builddir)/dist-stamp
+build-rawstor: $(builddir)/build-stamp
 
 install-exec-local: build-rawstor
 	$(PYTHON) setup.py install \
@@ -53,7 +53,8 @@ clean-local:
 	    setup.py \
 	    sources-stamp ; \
 	fi
-	-rm -rf $(builddir)/dist $(builddir)/dist-stamp
+	-rm -rf $(builddir)/build $(builddir)/build-stamp
+	-rm *.so
 
 all-local: build-rawstor
 
