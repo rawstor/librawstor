@@ -1,6 +1,7 @@
 #!/usr/bin/make -f
 
-export DEB_CONFIGURE_EXTRA_FLAGS = --without-python3
-
 %:
 	dh $@
+
+override_dh_auto_configure:
+	dh_auto_configure -- --without-python3

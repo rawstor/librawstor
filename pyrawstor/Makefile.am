@@ -72,7 +72,7 @@ test: $(builddir)/rawstor.egg-info/PKG-INFO sources-stamp
 endif
 
 clean-local:
-	$(PYTHON) setup.py clean --all
+	$(PYTHON) $(builddir)/setup.py clean --all
 	if [ "$(srcdir)" != "$(builddir)" ]; then \
 	    rm -rf \
 	        rawstor \
