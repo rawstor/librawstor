@@ -68,7 +68,7 @@ jobs:
     - uses: actions/upload-artifact@v7
       with:
         name: librawstor.deb
-        path: build/librawstor-*.deb
+        path: librawstor-*.deb
         if-no-files-found: error
 
   deb-python3-rawstor:
