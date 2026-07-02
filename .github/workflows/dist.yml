@@ -64,7 +64,8 @@ jobs:
         cp deb/librawstor/format debian/source
         cp deb/librawstor/rules debian
         cp COPYING debian/copyright
-        dpkg-buildpackage -us -uc --no-buildinfo
+        export DEB_BUILD_OPTIONS=nobuildinfo
+        dpkg-buildpackage -us -uc
     - uses: actions/upload-artifact@v7
       with:
         name: librawstor.deb
