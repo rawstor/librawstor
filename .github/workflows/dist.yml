@@ -65,12 +65,11 @@ jobs:
         cp deb/librawstor/rules debian
         cp COPYING debian/copyright
         dpkg-buildpackage -us -uc
-        ls -lhR ${GITHUB_WORKSPACE}
-        mv ../librawstor_*.deb ${GITHUB_WORKSPACE}
+        mv librawstor_*.deb ${GITHUB_WORKSPACE}
     - uses: actions/upload-artifact@v7
       with:
         name: librawstor.deb
-        path: librawstor-*.deb
+        path: librawstor_*.deb
         if-no-files-found: error
 
   deb-python3-rawstor:
