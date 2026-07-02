@@ -116,6 +116,69 @@ int rawstor_object_create(
 ) RAWSTOR_NOEXCEPT;
 
 /**
+ * @brief Create an empty object at the specified location with optional UUID,
+ *        and return the constructed target string.
+ *
+ * This function creates a new object at the given @p location. If @p uuid is
+ * NULL, the library automatically generates a unique UUID for the object;
+ * otherwise, the provided UUID is used. The object metadata (size, etc.) is
+ * provided via the @p spec structure.
+ *
+ * The function constructs the full target identifier from @p location and
+ * @p uuid according to the library's target format (e.g.,
+ * "ost://host:port/<uuid>"). It then attempts to copy the resulting string into
+ * the caller‑supplied buffer @p target of size @p size bytes, **including** the
+ * terminating null character.
+ *
+ * The return value follows the semantics of `snprintf()`:
+ * - On success (i.e., the entire target string fits in the buffer), the object
+ *   is created, the full string (including the null terminator) is written to
+ *   @p target, and the function returns the number of characters that would
+ *   have been written (excluding the terminating null) – which is always
+ *   less than @p size.
+ * - If the buffer is too small to hold the complete target string, the object
+ *   is **not** created, no data is written to @p target (or the buffer may be
+ *   left unchanged), and the function returns the number of characters that
+ *   would have been required (excluding the null terminator). This is exactly
+ *   the same behaviour as `snprintf()` when the buffer is too small, except
+ *   that here the object creation is aborted.
+ * - On other errors (e.g., invalid parameters, memory allocation failure, I/O
+ *   problems), a negative error code is returned.
+ *
+ * @param location  Location string specifying the backend and endpoint
+ *                  (e.g., "ost://host:port"). Must not be NULL and must be a
+ *                  valid location as per the library's format.
+ * @param uuid      UUID string for the object. If NULL, a UUID is automatically
+ *                  generated. If not NULL, it must be a valid UUID string.
+ * @param spec      Pointer to a RawstorObjectSpec structure containing the
+ *                  desired object metadata (e.g., size in bytes). The size
+ *                  field must be set to the expected size of the object.
+ * @param target    Output buffer that will receive the full target string
+ *                  (e.g., "ost://host:port/<uuid>"). Must not be NULL.
+ * @param size      Size of the @p target buffer in bytes, including space for
+ *                  the terminating null character. The buffer must be large
+ *                  enough to hold the complete string; if not, the object is
+ *                  not created and the required length is returned.
+ *
+ * @return On success (buffer large enough), returns the length of the target
+ *         string (excluding the terminating null), which is less than @p size.
+ *         If the buffer is too small, returns the required length (excluding
+ *         the null terminator) and does **not** create the object.
+ * @retval Negative value on errors (e.g., -EINVAL for invalid parameters,
+ *         -ENOMEM, -EIO, etc.). The specific negative errno codes are
+ *         implementation‑defined.
+ *
+ * @see RawstorObjectSpec
+ * @see rawstor_object_create
+ * @see Locations and Targets:
+ * https://github.com/rawstor/librawstor/blob/main/docs/locations_and_targets.md
+ */
+int rawstor_object_create_at(
+    const char* location, const char* uuid,
+    const struct RawstorObjectSpec* spec, char* target, size_t size
+) RAWSTOR_NOEXCEPT;
+
+/**
  * @brief Remove an object from the storage system.
  *
  * Given a target string (as defined in the Rawstor location/target syntax),
