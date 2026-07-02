@@ -40,51 +40,37 @@ def pkg_config_libs(module):
 if __name__ == "__main__":
     config = get_config()
 
-    sources = [
-        "rawstor/module.c",
-        "rawstor/rawstor_bindings.c",
-    ]
-
-    depends = [
-        "rawstor/rawstor_bindings.h",
-    ]
-
-    include_dirs = [
-        "../include",
-    ]
-
-    libraries = [
-        "rawstor",
-    ]
-
-    library_dirs = [
-        "../src/.libs",
-    ]
-
-    extra_compile_args = [
-        "-std=gnu99",
-        "-Wall",
-        "-Wextra",
-        "-Werror",
-    ]
-
-    extensions = [
-        Extension(
-            "rawstor",
-            sources=sources,
-            depends=depends,
-            include_dirs=include_dirs,
-            libraries=libraries,
-            library_dirs=library_dirs,
-            extra_compile_args=extra_compile_args,
-        ),
-    ]
-
     setup(
         name="rawstor",
         version=config["package_version"],
         packages=[
             "rawstor",
         ],
-        ext_modules=extensions,
+        ext_modules=[
+            Extension(
+                "rawstor.librawstor",
+                sources=[
+                    "rawstor/librawstor/module.c",
+                    "rawstor/librawstor/object_bindings.c",
+                ],
+                depends=[
+                    "rawstor/librawstor/object_bindings.h",
+                ],
+                include_dirs=[
+                    "../include",
+                ],
+                libraries=[
+                    "rawstor",
+                ],
+                library_dirs=[
+                    "../src/.libs",
+                ],
+                extra_compile_args=[
+                    "-std=gnu99",
+                    "-Wall",
+                    "-Wextra",
+                    "-Werror",
+                ],
+            ),
+        ],
     )

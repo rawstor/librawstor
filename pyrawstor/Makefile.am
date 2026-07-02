@@ -4,23 +4,46 @@ else
 ENABLE_TESTS = no
 endif
 
+C_SOURCES = \
+    rawstor/librawstor/module.c \
+    rawstor/librawstor/object_bindings.c \
+    rawstor/librawstor/object_bindings.h
+
+SOURCES = \
+    $(C_SOURCES) \
+    rawstor/__init__.py \
+    rawstor/object.py \
+    config.py \
+    MANIFEST.in \
+    setup.py
+
+if ENABLE_TESTS
+SOURCES += \
+    tests/__init__.py \
+    tests/test_basics.py
+endif
+
+
 sources-stamp:
 	@if [ "$(srcdir)" != "$(builddir)" ]; then \
-	  cp -fR --no-preserve=mode \
-	    $(srcdir)/rawstor \
-	    $(srcdir)/config.py \
-	    $(srcdir)/MANIFEST.in \
-	    $(srcdir)/setup.py \
-	    .; \
-	  if [ "x$(ENABLE_TESTS)" = "xyes" ]; then \
 	    cp -fR --no-preserve=mode \
-	      $(srcdir)/tests \
-	      .; \
-	  fi \
+	        $(srcdir)/rawstor \
+	        $(srcdir)/config.py \
+	        $(srcdir)/MANIFEST.in \
+	        $(srcdir)/setup.py \
+	        .; \
+	    if [ "x$(ENABLE_TESTS)" = "xyes" ]; then \
+	        cp -fR --no-preserve=mode \
+	            $(srcdir)/tests \
+	            .; \
+	    fi \
 	fi
 	touch $@
 
-$(builddir)/build-stamp: sources-stamp setup.py
+rawstor.egg-info/PKG-INFO: $(C_SOURCES)
+	$(PYTHON) setup.py develop
+
+$(builddir)/build-stamp: $(SOURCES) sources-stamp
 	$(PYTHON) setup.py build
 	touch $@
 
@@ -28,7 +51,7 @@ build-rawstor: $(builddir)/build-stamp
 
 install-exec-local: build-rawstor
 	$(PYTHON) setup.py install \
-	  --prefix=$(DESTDIR)$(prefix)
+	    --prefix=$(DESTDIR)$(prefix)
 
 uninstall-local:
 	@echo "Uninstalling python package..."
@@ -38,40 +61,29 @@ uninstall-local:
 	-rm -r $(DESTDIR)$(prefix)/local/lib/python*/dist-packages/rawstor*
 
 if ENABLE_TESTS
-test: sources-stamp
+test: rawstor.egg-info/PKG-INFO sources-stamp
 	$(PYTHON) -m unittest discover -s tests
 endif
 
 clean-local:
 	if [ "$(srcdir)" != "$(builddir)" ]; then \
-	  rm -rf \
-	    rawstor \
-	    rawstor.egg-info \
-	    tests \
-	    config.py \
-	    MANIFEST.in \
-	    setup.py \
-	    sources-stamp ; \
+	    rm -rf \
+	        rawstor \
+	        tests \
+	        config.py \
+	        MANIFEST.in \
+	        setup.py \
+	        sources-stamp ; \
 	fi
+	-rm -rf rawstor.egg-info
 	-rm -rf $(builddir)/build $(builddir)/build-stamp
 	-rm -rf $(builddir)/dist
-	-rm *.so
+	-find . -name __pycache__ -exec rm -r {} \;
+	-rm -f rawstor/*.so
 
-all-local: build-rawstor
+all-local: rawstor.egg-info/PKG-INFO
 
-EXTRA_DIST = \
-    rawstor/module.c \
-    rawstor/rawstor.c \
-    rawstor/rawstor.h \
-    config.py \
-    MANIFEST.in \
-    setup.py
-
-if ENABLE_TESTS
-EXTRA_DIST += \
-    tests/__init__.py \
-    tests/test_basics.py
-endif
+EXTRA_DIST = $(SOURCES)
 
 PHONY_TARGETS = install-rawstor
 
