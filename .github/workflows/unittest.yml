@@ -28,15 +28,39 @@ jobs:
     - name: autogen
       run: ./autogen.sh
     - name: configure
-      run: ./configure --enable-asan ${{ matrix.without-liburing }}
+      run: ./configure ${{ matrix.without-liburing }}
     - name: make
       run: make -j$(nproc)
-    - name: Set up asan preload
+    - name: make test
+      run: make test
+
+  asan:
+
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        without-liburing:
+        - 
+        - --without-liburing
+        include:
+        - packages: liburing-dev
+          without-liburing:
+
+    env:
+      ASAN_OPTIONS: detect_odr_violation=0
+    steps:
+    - name: install dependencies
       run: |
-        ASAN_LIB=$(gcc -print-file-name=libasan.so)
-        if [[ -f "$ASAN_LIB" ]]; then
-          echo "LD_PRELOAD=$ASAN_LIB" >> $GITHUB_ENV
-        fi
+        sudo apt-get update
+        sudo apt-get install -y libxxhash-dev libgtest-dev ${{ matrix.packages }}
+    - uses: actions/checkout@v7
+    - name: autogen
+      run: ./autogen.sh
+    - name: configure
+      run: ./configure --enable-asan --without-python3 ${{ matrix.without-liburing }}
+    - name: make
+      run: make -j$(nproc)
     - name: make test
       run: make test
 
