@@ -93,7 +93,7 @@ jobs:
         echo "PACKAGE_VERSION=${PACKAGE_VERSION}" >> $GITHUB_ENV
     - name: make
       run: |
-        tar -xzf sources/${LIBRAWSTOR_TAR_GZ}
+        tar -xzf ${LIBRAWSTOR_TAR_GZ}
         cd ${LIBRAWSTOR}
         ./configure
         make -j$(nproc)
