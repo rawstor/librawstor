@@ -41,19 +41,12 @@ sources-stamp:
 	touch $@
 
 rawstor.egg-info/PKG-INFO: $(C_SOURCES)
-	$(PYTHON) setup.py develop
+	$(PYTHON) -m pip install --no-deps -e $(builddir)
 
-develop: rawstor.egg-info/PKG-INFO
+install-exec-local: $(SOURCES) sources-stamp
+	$(PYTHON) -m pip install --no-deps \
+	    --prefix=$(DESTDIR)$(prefix) $(builddir)
 
-$(builddir)/build-stamp: $(SOURCES) sources-stamp
-	$(PYTHON) setup.py build
-	touch $@
-
-build-rawstor: $(builddir)/build-stamp
-
-install-exec-local: build-rawstor
-	$(PYTHON) setup.py install \
-	    --prefix=$(DESTDIR)$(prefix)
 
 uninstall-local:
 	@echo "Uninstalling python package..."
@@ -79,12 +72,11 @@ clean-local:
 	fi
 	$(PYTHON) setup.py clean --all
 	-rm -rf rawstor.egg-info
-	-rm -rf $(builddir)/build-stamp
 	-rm -rf $(builddir)/dist
 	-find . -name __pycache__ -exec rm -r {} \;
 	-rm -f rawstor/*.so
 
-all-local: build-rawstor
+all-local: rawstor.egg-info/PKG-INFO
 
 EXTRA_DIST = $(SOURCES)
 

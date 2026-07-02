@@ -6,7 +6,6 @@ __pycache__/
 /build/
 /dist/
 /config.py
-/build-stamp
 /Makefile
 /Makefile.in
 /sources-stamp
