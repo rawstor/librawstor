@@ -64,9 +64,9 @@ jobs:
         cp deb/librawstor/format debian/source
         cp deb/librawstor/rules debian
         cp COPYING debian/copyright
-        export DEB_BUILD_OPTIONS=nobuildinfo
         dpkg-buildpackage -us -uc
-        mv librawstor_*.deb ${GITHUB_WORKSPACE}
+        ls -lhR ${GITHUB_WORKSPACE}
+        mv ../librawstor_*.deb ${GITHUB_WORKSPACE}
     - uses: actions/upload-artifact@v7
       with:
         name: librawstor.deb
