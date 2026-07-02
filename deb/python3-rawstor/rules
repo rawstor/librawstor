@@ -3,5 +3,5 @@
 	dh $@ --with python3 --buildsystem=pybuild
 
 override_dh_auto_test:
-	LD_LIBRARY_PATH=$(CURDIR)/src/.libs:$$LD_LIBRARY_PATH \
+	LD_LIBRARY_PATH=$(CURDIR)/../src/.libs:$$LD_LIBRARY_PATH \
 	dh_auto_test
