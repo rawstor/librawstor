@@ -68,7 +68,9 @@ jobs:
         if-no-files-found: error
 
   deb-python3-rawstor:
-    needs: sources
+    needs:
+    - sources
+    - deb-librawstor
 
     runs-on: ubuntu-latest
 
@@ -78,11 +80,11 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y libxxhash-dev liburing-dev libgtest-dev python3-build debhelper dh-python python3-all-dev build-essential
     - uses: actions/download-artifact@v8
-      with:
-        name: sources
+    - name: install librawstor
+      run: sudo apt install -y ./librawstor.deb/librawstor-*.deb
     - name: env
       run: |
-        export LIBRAWSTOR_TAR_GZ=$(ls librawstor-*.tar.gz)
+        export LIBRAWSTOR_TAR_GZ=$(cd sources && ls librawstor-*.tar.gz)
         export LIBRAWSTOR_TAR=${LIBRAWSTOR_TAR_GZ%.*}
         export LIBRAWSTOR=${LIBRAWSTOR_TAR%.*}
         export PACKAGE_VERSION=${LIBRAWSTOR#librawstor-}
@@ -91,7 +93,7 @@ jobs:
         echo "PACKAGE_VERSION=${PACKAGE_VERSION}" >> $GITHUB_ENV
     - name: make
       run: |
-        tar -xzf ${LIBRAWSTOR_TAR_GZ}
+        tar -xzf sources/${LIBRAWSTOR_TAR_GZ}
         cd ${LIBRAWSTOR}
         ./configure
         make -j$(nproc)
@@ -125,9 +127,7 @@ jobs:
     steps:
     - uses: actions/download-artifact@v8
     - name: install-librawstor
-      run: |
-        ls -lhR
-        sudo apt install -y ./librawstor.deb/librawstor-*.deb
+      run: sudo apt install -y ./librawstor.deb/librawstor-*.deb
     - name: test-librawstor
       run: |
         rawstor-cli --version
