@@ -2,7 +2,7 @@
 
 #include "server.hpp"
 
-#include <rawstor/ost_protocol.h>
+#include <rawstor/protocol.h>
 
 #include <rawstd/gpp.hpp>
 #include <rawstd/hash.h>

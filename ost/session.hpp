@@ -2,7 +2,7 @@
 #define RAWSTOR_OSTBACKEND_SESSION_HPP
 
 #include <rawstor/object.h>
-#include <rawstor/ost_protocol.h>
+#include <rawstor/protocol.h>
 #include <rawstor/rawio.h>
 
 #include <rawstd/uri.hpp>

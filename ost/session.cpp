@@ -10,7 +10,7 @@
 #include <rawstd/uuid.h>
 
 #include <rawstor/object.h>
-#include <rawstor/ost_protocol.h>
+#include <rawstor/protocol.h>
 #include <rawstor/rawstor.h>
 
 #include <functional>
