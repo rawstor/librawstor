@@ -70,6 +70,8 @@ if __name__ == "__main__":
                     "-Wall",
                     "-Wextra",
                     "-Werror",
+                ],
+                extra_link_args=[
                     "-Wl,-Bdynamic",
                 ],
             ),
