@@ -77,8 +77,9 @@ clean-local:
 	        setup.py \
 	        sources-stamp ; \
 	fi
+	$(PYTHON) setup.py clean --all
 	-rm -rf rawstor.egg-info
-	-rm -rf $(builddir)/build $(builddir)/build-stamp
+	-rm -rf $(builddir)/build-stamp
 	-rm -rf $(builddir)/dist
 	-find . -name __pycache__ -exec rm -r {} \;
 	-rm -f rawstor/*.so
