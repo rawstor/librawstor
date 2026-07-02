@@ -31,17 +31,19 @@ sources-stamp:
 	        $(srcdir)/config.py \
 	        $(srcdir)/MANIFEST.in \
 	        $(srcdir)/setup.py \
-	        .; \
+	        $(builddir); \
 	    if [ "x$(ENABLE_TESTS)" = "xyes" ]; then \
 	        cp -fR --no-preserve=mode \
 	            $(srcdir)/tests \
-	            .; \
+	            $(builddir); \
 	    fi \
 	fi
 	touch $@
 
 rawstor.egg-info/PKG-INFO: $(C_SOURCES)
 	$(PYTHON) setup.py develop
+
+develop: rawstor.egg-info/PKG-INFO
 
 $(builddir)/build-stamp: $(SOURCES) sources-stamp
 	$(PYTHON) setup.py build
@@ -81,7 +83,7 @@ clean-local:
 	-find . -name __pycache__ -exec rm -r {} \;
 	-rm -f rawstor/*.so
 
-all-local: rawstor.egg-info/PKG-INFO
+all-local: build-rawstor
 
 EXTRA_DIST = $(SOURCES)
 
