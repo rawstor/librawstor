@@ -48,8 +48,11 @@ jobs:
         export LIBRAWSTOR=${LIBRAWSTOR_TAR%.*}
         echo "LIBRAWSTOR_TAR_GZ=${LIBRAWSTOR_TAR_GZ}" >> $GITHUB_ENV
         echo "LIBRAWSTOR=${LIBRAWSTOR}" >> $GITHUB_ENV
-    - name: unpack
-      run: tar -xzf ${LIBRAWSTOR_TAR_GZ}
+    - name: configure
+      run: |
+        tar -xzf ${LIBRAWSTOR_TAR_GZ}
+        cd ${LIBRAWSTOR}
+        ./configure --prefix=${HOME}/rpmbuild/BUILD --without-python3
     - name: dpkg-buildpackage
       run: |
         cd ${LIBRAWSTOR}
@@ -98,7 +101,6 @@ jobs:
         tar -xzf sources/${LIBRAWSTOR_TAR_GZ}
         cd ${LIBRAWSTOR}
         ./configure
-        make -j$(nproc)
     - name: dpkg-buildpackage
       run: |
         cd ${LIBRAWSTOR}/pyrawstor

@@ -4,4 +4,4 @@
 	dh $@
 
 override_dh_auto_configure:
-	./configure --without-python3
+	dh_auto_configure -- --without-python3
