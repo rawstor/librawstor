@@ -48,22 +48,19 @@ jobs:
         export LIBRAWSTOR=${LIBRAWSTOR_TAR%.*}
         echo "LIBRAWSTOR_TAR_GZ=${LIBRAWSTOR_TAR_GZ}" >> $GITHUB_ENV
         echo "LIBRAWSTOR=${LIBRAWSTOR}" >> $GITHUB_ENV
-    - name: make
-      run: |
-        tar -xzf ${LIBRAWSTOR_TAR_GZ}
-        cd ${LIBRAWSTOR}
-        ./configure --without-python3
+    - name: unpack
+      run: tar -xzf ${LIBRAWSTOR_TAR_GZ}
     - name: dpkg-buildpackage
       run: |
-        cd ${LIBRAWSTOR}/pyrawstor
+        cd ${LIBRAWSTOR}
         mkdir debian
         mkdir debian/source
-        cp ../deb/librawstor/control debian
-        cp ../deb/librawstor/compat debian
-        cp ../deb/librawstor/changelog debian
-        cp ../deb/librawstor/format debian/source
-        cp ../deb/librawstor/rules debian
-        cp ../COPYING debian/copyright
+        cp deb/librawstor/control debian
+        cp deb/librawstor/compat debian
+        cp deb/librawstor/changelog debian
+        cp deb/librawstor/format debian/source
+        cp deb/librawstor/rules debian
+        cp COPYING debian/copyright
         dpkg-buildpackage -us -uc
         mv ../librawstor_*.deb ${GITHUB_WORKSPACE}
     - uses: actions/upload-artifact@v7
