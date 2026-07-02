@@ -37,7 +37,7 @@ jobs:
     - name: install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libxxhash-dev liburing-dev libgtest-dev build-essential
+        sudo apt-get install -y libxxhash-dev liburing-dev libgtest-dev debhelper build-essential
     - uses: actions/download-artifact@v8
       with:
         name: sources
@@ -52,9 +52,7 @@ jobs:
       run: |
         tar -xzf ${LIBRAWSTOR_TAR_GZ}
         cd ${LIBRAWSTOR}
-        ./configure --prefix=${GITHUB_WORKSPACE}/build/librawstor --without-python3
-        make -j$(nproc)
-        make install
+        ./configure --without-python3
     - name: dpkg-buildpackage
       run: |
         cd ${LIBRAWSTOR}/pyrawstor
