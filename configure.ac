@@ -135,6 +135,7 @@ AC_CONFIG_FILES(
     [ost/Makefile]
     [tests/Makefile]
     [deb/librawstor/control]
+    [deb/librawstor/changelog]
     [deb/python3-rawstor/control]
     [deb/python3-rawstor/changelog]
     [deb/python3-rawstor/rules]

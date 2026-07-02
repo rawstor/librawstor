@@ -55,11 +55,19 @@ jobs:
         ./configure --prefix=${GITHUB_WORKSPACE}/build/librawstor --without-python3
         make -j$(nproc)
         make install
-    - name: dpkg-deb
+    - name: dpkg-buildpackage
       run: |
-        mkdir ${GITHUB_WORKSPACE}/build/librawstor/DEBIAN
-        cp ${LIBRAWSTOR}/deb/librawstor/control ${GITHUB_WORKSPACE}/build/librawstor/DEBIAN
-        dpkg-deb --build ${GITHUB_WORKSPACE}/build/librawstor build/${LIBRAWSTOR}.deb
+        cd ${LIBRAWSTOR}/pyrawstor
+        mkdir debian
+        mkdir debian/source
+        cp ../deb/librawstor/control debian
+        cp ../deb/librawstor/compat debian
+        cp ../deb/librawstor/changelog debian
+        cp ../deb/librawstor/format debian/source
+        cp ../deb/librawstor/rules debian
+        cp ../COPYING debian/copyright
+        dpkg-buildpackage -us -uc
+        mv ../librawstor_*.deb ${GITHUB_WORKSPACE}
     - uses: actions/upload-artifact@v7
       with:
         name: librawstor.deb

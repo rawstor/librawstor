@@ -27,6 +27,9 @@ ChangeLog: $(srcdir)/ChangeLog.md
 
 EXTRA_DIST = ChangeLog.md \
              README.md \
+             deb/librawstor/compat \
+             deb/librawstor/format \
+             deb/librawstor/rules \
              deb/python3-rawstor/compat \
              deb/python3-rawstor/format
 
