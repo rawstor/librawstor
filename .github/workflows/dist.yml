@@ -85,7 +85,7 @@ jobs:
         sudo apt-get install -y libxxhash-dev liburing-dev libgtest-dev python3-build debhelper dh-python python3-all-dev build-essential
     - uses: actions/download-artifact@v8
     - name: install librawstor
-      run: sudo apt install -y ./librawstor.deb/librawstor-*.deb
+      run: sudo apt install -y ./librawstor.deb/librawstor_*.deb
     - name: env
       run: |
         export LIBRAWSTOR_TAR_GZ=$(cd sources && ls librawstor-*.tar.gz)
@@ -129,7 +129,7 @@ jobs:
     steps:
     - uses: actions/download-artifact@v8
     - name: install-librawstor
-      run: sudo apt install -y ./librawstor.deb/librawstor-*.deb
+      run: sudo apt install -y ./librawstor.deb/librawstor_*.deb
     - name: test-librawstor
       run: |
         rawstor-cli --version
