@@ -4,8 +4,8 @@
  * SPDX-License-Identifier: LGPL-3.0
  */
 
-#ifndef RAWSTOR_OST_PROTOCOL_H
-#define RAWSTOR_OST_PROTOCOL_H
+#ifndef RAWSTOR_PROTOCOL_H
+#define RAWSTOR_PROTOCOL_H
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -76,4 +76,4 @@ struct RawstorOSTFrameResponse {
 }
 #endif
 
-#endif // RAWSTOR_OST_PROTOCOL_H
+#endif // RAWSTOR_PROTOCOL_H
