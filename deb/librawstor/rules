@@ -11,3 +11,6 @@ override_dh_auto_configure:
 	dh_auto_configure -- --without-python3
 
 override_dh_buildinfo:
+
+override_dh_binary:
+	dh binary --no-buildinfo
