@@ -1,4 +1,3 @@
-if WITH_PYTHON3
 if ENABLE_TESTS
 ENABLE_TESTS = yes
 else
@@ -99,4 +98,3 @@ PHONY_TARGETS += test
 endif
 
 .PHONY: $(PHONY_TARGETS)
-endif
