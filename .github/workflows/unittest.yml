@@ -31,6 +31,12 @@ jobs:
       run: ./configure --enable-asan ${{ matrix.without-liburing }}
     - name: make
       run: make -j$(nproc)
+    - name: Set up asan preload
+      run: |
+        ASAN_LIB=$(gcc -print-file-name=libasan.so)
+        if [[ -f "$ASAN_LIB" ]]; then
+          echo "LD_PRELOAD=$ASAN_LIB" >> $GITHUB_ENV
+        fi
     - name: make test
       run: make test
 

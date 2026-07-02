@@ -6,7 +6,8 @@ endif
 
 AM_CFLAGS = $(GENERIC_CFLAGS) \
             $(LIBXXHASH_CFLAGS) \
-            $(ASAN_CFLAGS)
+            $(ASAN_CFLAGS) \
+            -I$(top_srcdir)/include
 
 AM_LDFLAGS = $(ASAN_LDFLAGS)
 
