@@ -2,6 +2,7 @@ from subprocess import check_output
 
 from setuptools import setup, Extension
 
+import os
 from pathlib import Path
 
 
@@ -40,6 +41,9 @@ def pkg_config_libs(module):
 if __name__ == "__main__":
     config = get_config()
 
+    cflags = os.getenv('CFLAGS', '')
+    ldflags = os.getenv('LDFLAGS', '')
+
     setup(
         name="rawstor",
         version=config["package_version"],
@@ -65,12 +69,8 @@ if __name__ == "__main__":
                 library_dirs=[
                     "../src/.libs",
                 ],
-                extra_compile_args=[
-                    "-std=gnu99",
-                    "-Wall",
-                    "-Wextra",
-                    "-Werror",
-                ],
+                extra_compile_args=os.getenv('CFLAGS', '').split(),
+                extra_link_args=os.getenv('CFLAGS', '').split(),
                 runtime_library_dirs=[
                     "../src/.libs"
                 ],

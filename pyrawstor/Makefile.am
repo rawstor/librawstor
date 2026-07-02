@@ -4,6 +4,12 @@ else
 ENABLE_TESTS = no
 endif
 
+AM_CFLAGS = $(GENERIC_CFLAGS) \
+            $(LIBXXHASH_CFLAGS) \
+            $(ASAN_CFLAGS)
+
+AM_LDFLAGS = $(ASAN_LDFLAGS)
+
 C_SOURCES = \
     rawstor/librawstor/module.c \
     rawstor/librawstor/object_bindings.c \
@@ -41,9 +47,13 @@ sources-stamp:
 	touch $@
 
 $(builddir)/rawstor.egg-info/PKG-INFO: $(C_SOURCES) sources-stamp
+	CFLAGS="$(CFLAGS) $(AM_CFLAGS)" \
+	LDFLAGS="$(LDFLAGS) $(AM_LDFLAGS)" \
 	$(PYTHON) -m pip install --no-deps -e $(builddir)
 
 install-exec-local: $(SOURCES) sources-stamp
+	CFLAGS="$(CFLAGS) $(AM_CFLAGS)" \
+	LDFLAGS="$(LDFLAGS) $(AM_LDFLAGS)" \
 	$(PYTHON) -m pip install --no-deps \
 	    --prefix=$(DESTDIR)$(prefix) $(builddir)
 
