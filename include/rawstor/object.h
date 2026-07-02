@@ -126,13 +126,24 @@ int rawstor_object_create(
  *
  * The function constructs the full target identifier from @p location and
  * @p uuid according to the library's target format (e.g.,
- * "ost://host:port/<uuid>"). The constructed target string is copied into the
- * caller‑supplied buffer pointed to by @p target, which must be at least @p
- * size bytes long. The target is guaranteed to be null‑terminated upon success.
+ * "ost://host:port/<uuid>"). It then attempts to copy the resulting string into
+ * the caller‑supplied buffer @p target of size @p size bytes, **including** the
+ * terminating null character.
  *
- * The caller is responsible for ensuring that the resulting target is unique;
- * if an object with the same target already exists, the behaviour is
- * implementation‑defined (likely an error is returned).
+ * The return value follows the semantics of `snprintf()`:
+ * - On success (i.e., the entire target string fits in the buffer), the object
+ *   is created, the full string (including the null terminator) is written to
+ *   @p target, and the function returns the number of characters that would
+ *   have been written (excluding the terminating null) – which is always
+ *   less than @p size.
+ * - If the buffer is too small to hold the complete target string, the object
+ *   is **not** created, no data is written to @p target (or the buffer may be
+ *   left unchanged), and the function returns the number of characters that
+ *   would have been required (excluding the null terminator). This is exactly
+ *   the same behaviour as `snprintf()` when the buffer is too small, except
+ *   that here the object creation is aborted.
+ * - On other errors (e.g., invalid parameters, memory allocation failure, I/O
+ *   problems), a negative error code is returned.
  *
  * @param location  Location string specifying the backend and endpoint
  *                  (e.g., "ost://host:port"). Must not be NULL and must be a
@@ -145,15 +156,17 @@ int rawstor_object_create(
  * @param target    Output buffer that will receive the full target string
  *                  (e.g., "ost://host:port/<uuid>"). Must not be NULL.
  * @param size      Size of the @p target buffer in bytes, including space for
- *                  the terminating null character. If the buffer is too small
- *                  to hold the full target, the function fails and returns
- *                  a negative error code (e.g., -ENOSPC). The contents of
- *                  @p target are undefined on failure.
+ *                  the terminating null character. The buffer must be large
+ *                  enough to hold the complete string; if not, the object is
+ *                  not created and the required length is returned.
  *
- * @return 0 on success.
- * @retval Negative value on error (e.g., -EINVAL for invalid parameters,
- *         -ENOMEM, -EIO, -ENOSPC if buffer too small, etc.). The specific
- *         negative errno codes are implementation‑defined.
+ * @return On success (buffer large enough), returns the length of the target
+ *         string (excluding the terminating null), which is less than @p size.
+ *         If the buffer is too small, returns the required length (excluding
+ *         the null terminator) and does **not** create the object.
+ * @retval Negative value on errors (e.g., -EINVAL for invalid parameters,
+ *         -ENOMEM, -EIO, etc.). The specific negative errno codes are
+ *         implementation‑defined.
  *
  * @see RawstorObjectSpec
  * @see rawstor_object_create

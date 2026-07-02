@@ -58,7 +58,8 @@ int rawstor_cli_create_at(
     }
 
     if (res >= (int)sizeof(target)) {
-        fprintf(stderr, "WARNING: output truncated\n");
+        fprintf(stderr, "rawstor_object_create_at(): output truncated\n");
+        return EXIT_FAILURE;
     }
 
     fprintf(stderr, "Object created\n");

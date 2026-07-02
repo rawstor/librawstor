@@ -375,8 +375,16 @@ int rawstor_object_create_at(
             ret.emplace_back(uri, uuid_string);
         }
 
-        rawstor::Object::create(ret, *spec);
-        return snprintf(target, size, "%s", rawstd::URI::uris(ret).c_str());
+        res = snprintf(target, size, "%s", rawstd::URI::uris(ret).c_str());
+        if (res < 0) {
+            return res;
+        }
+
+        if (static_cast<size_t>(res) < size) {
+            rawstor::Object::create(ret, *spec);
+        }
+
+        return res;
     } catch (const std::system_error& e) {
         return -e.code().value();
     } catch (const std::bad_alloc& e) {
