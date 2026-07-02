@@ -116,6 +116,56 @@ int rawstor_object_create(
 ) RAWSTOR_NOEXCEPT;
 
 /**
+ * @brief Create an empty object at the specified location with optional UUID,
+ *        and return the constructed target string.
+ *
+ * This function creates a new object at the given @p location. If @p uuid is
+ * NULL, the library automatically generates a unique UUID for the object;
+ * otherwise, the provided UUID is used. The object metadata (size, etc.) is
+ * provided via the @p spec structure.
+ *
+ * The function constructs the full target identifier from @p location and
+ * @p uuid according to the library's target format (e.g.,
+ * "ost://host:port/<uuid>"). The constructed target string is copied into the
+ * caller‑supplied buffer pointed to by @p target, which must be at least @p
+ * size bytes long. The target is guaranteed to be null‑terminated upon success.
+ *
+ * The caller is responsible for ensuring that the resulting target is unique;
+ * if an object with the same target already exists, the behaviour is
+ * implementation‑defined (likely an error is returned).
+ *
+ * @param location  Location string specifying the backend and endpoint
+ *                  (e.g., "ost://host:port"). Must not be NULL and must be a
+ *                  valid location as per the library's format.
+ * @param uuid      UUID string for the object. If NULL, a UUID is automatically
+ *                  generated. If not NULL, it must be a valid UUID string.
+ * @param spec      Pointer to a RawstorObjectSpec structure containing the
+ *                  desired object metadata (e.g., size in bytes). The size
+ *                  field must be set to the expected size of the object.
+ * @param target    Output buffer that will receive the full target string
+ *                  (e.g., "ost://host:port/<uuid>"). Must not be NULL.
+ * @param size      Size of the @p target buffer in bytes, including space for
+ *                  the terminating null character. If the buffer is too small
+ *                  to hold the full target, the function fails and returns
+ *                  a negative error code (e.g., -ENOSPC). The contents of
+ *                  @p target are undefined on failure.
+ *
+ * @return 0 on success.
+ * @retval Negative value on error (e.g., -EINVAL for invalid parameters,
+ *         -ENOMEM, -EIO, -ENOSPC if buffer too small, etc.). The specific
+ *         negative errno codes are implementation‑defined.
+ *
+ * @see RawstorObjectSpec
+ * @see rawstor_object_create
+ * @see Locations and Targets:
+ * https://github.com/rawstor/librawstor/blob/main/docs/locations_and_targets.md
+ */
+int rawstor_object_create_at(
+    const char* location, const char* uuid,
+    const struct RawstorObjectSpec* spec, char* target, size_t size
+) RAWSTOR_NOEXCEPT;
+
+/**
  * @brief Remove an object from the storage system.
  *
  * Given a target string (as defined in the Rawstor location/target syntax),

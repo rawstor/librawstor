@@ -327,11 +327,56 @@ void Object::pwritev(
 } // namespace rawstor
 
 int rawstor_object_create(
-    const char* target, const RawstorObjectSpec* sp
+    const char* target, const RawstorObjectSpec* spec
 ) noexcept {
     try {
-        rawstor::Object::create(rawstd::URI::uriv(target), *sp);
+        rawstor::Object::create(rawstd::URI::uriv(target), *spec);
         return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+int rawstor_object_create_at(
+    const char* location, const char* uuid,
+    const struct RawstorObjectSpec* spec, char* target, size_t size
+) noexcept {
+    try {
+        RawstdUUID id;
+        int res;
+
+        if (uuid == nullptr) {
+            res = rawstd_uuid7_init(&id);
+            if (res < 0) {
+                RAWSTD_THROW_SYSTEM_ERROR(-res);
+            }
+        } else {
+            res = rawstd_uuid_from_string(&id, uuid);
+            if (res < 0) {
+                RAWSTD_THROW_SYSTEM_ERROR(-res);
+            }
+        }
+
+        RawstdUUIDString uuid_string;
+        rawstd_uuid_to_string(&id, &uuid_string);
+
+        std::vector<rawstd::URI> uris = rawstd::URI::uriv(location);
+        std::vector<rawstd::URI> ret;
+        ret.reserve(uris.size());
+        for (const auto& uri : uris) {
+            ret.emplace_back(uri, uuid_string);
+        }
+
+        rawstor::Object::create(ret, *spec);
+        return snprintf(target, size, "%s", rawstd::URI::uris(ret).c_str());
     } catch (const std::system_error& e) {
         return -e.code().value();
     } catch (const std::bad_alloc& e) {

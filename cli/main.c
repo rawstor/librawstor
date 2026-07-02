@@ -171,9 +171,9 @@ static int command_create(int argc, char** argv) {
     }
 
     if (target_arg != NULL) {
-        return rawstor_cli_create_by_target(target_arg, size);
+        return rawstor_cli_create(target_arg, size);
     } else {
-        return rawstor_cli_create_by_location(location_arg, uuid_arg, size);
+        return rawstor_cli_create_at(location_arg, uuid_arg, size);
     }
 }
 
