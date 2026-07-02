@@ -1,10 +1,10 @@
-Source: librawstor
+Source: @PACKAGE_NAME@
 Section: libs
 Priority: optional
 Maintainer: Vasily Stepanov <vasily.stepanov@gmail.com>
 Standards-Version: 4.7.0
 
-Package: librawstor
+Package: @PACKAGE_NAME@
 Architecture: amd64
 Depends: liburing2,
          libxxhash0
