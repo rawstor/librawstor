@@ -71,9 +71,6 @@ if __name__ == "__main__":
                     "-Wextra",
                     "-Werror",
                 ],
-                extra_link_args=[
-                    "-Wl,-Bdynamic",
-                ],
             ),
         ],
     )
