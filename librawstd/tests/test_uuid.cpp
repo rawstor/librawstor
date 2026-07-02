@@ -34,7 +34,7 @@ TEST(UUIDTest, counter) {
 
 TEST(UUIDTest, version) {
     for (int version = 0; version < 16; ++version) {
-        RawstdUUID uuid;
+        RawstdUUID uuid = {};
         rawstd_uuid_set_version(&uuid, version);
         EXPECT_EQ(rawstd_uuid_get_version(&uuid), version);
     }
@@ -42,7 +42,7 @@ TEST(UUIDTest, version) {
 
 TEST(UUIDTest, variant) {
     for (int variant = 0; variant < 4; ++variant) {
-        RawstdUUID uuid;
+        RawstdUUID uuid = {};
         rawstd_uuid_set_variant(&uuid, variant);
         EXPECT_EQ(rawstd_uuid_get_variant(&uuid), variant);
     }
