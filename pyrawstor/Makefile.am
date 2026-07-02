@@ -52,7 +52,6 @@ $(builddir)/rawstor.egg-info/PKG-INFO: $(C_SOURCES) sources-stamp
 	LDFLAGS="$(LDFLAGS) $(AM_LDFLAGS)" \
 	$(PYTHON) -m pip install --no-deps -e $(builddir)
 
-if WITH_PYTHON3
 install-exec-local: $(SOURCES) sources-stamp
 	CFLAGS="$(CFLAGS) $(AM_CFLAGS)" \
 	LDFLAGS="$(LDFLAGS) $(AM_LDFLAGS)" \
@@ -89,7 +88,6 @@ clean-local:
 	-rm -f rawstor/*.so
 
 all-local: $(builddir)/rawstor.egg-info/PKG-INFO
-endif
 
 EXTRA_DIST = $(SOURCES)
 
