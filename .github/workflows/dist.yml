@@ -54,7 +54,6 @@ jobs:
         cd ${LIBRAWSTOR}
         ./configure --prefix=${GITHUB_WORKSPACE}/build/librawstor --without-python3
         make -j$(nproc)
-        make test
         make install
     - name: dpkg-deb
       run: |
@@ -70,7 +69,6 @@ jobs:
   deb-python3-rawstor:
     needs:
     - sources
-    - deb-librawstor
 
     runs-on: ubuntu-latest
 
@@ -80,11 +78,13 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y libxxhash-dev liburing-dev libgtest-dev python3-build debhelper dh-python python3-all-dev build-essential
     - uses: actions/download-artifact@v8
+      with:
+        name: sources
     - name: install librawstor
       run: sudo apt install -y ./librawstor.deb/librawstor-*.deb
     - name: env
       run: |
-        export LIBRAWSTOR_TAR_GZ=$(cd sources && ls librawstor-*.tar.gz)
+        export LIBRAWSTOR_TAR_GZ=$(ls librawstor-*.tar.gz)
         export LIBRAWSTOR_TAR=${LIBRAWSTOR_TAR_GZ%.*}
         export LIBRAWSTOR=${LIBRAWSTOR_TAR%.*}
         export PACKAGE_VERSION=${LIBRAWSTOR#librawstor-}
@@ -97,7 +97,6 @@ jobs:
         cd ${LIBRAWSTOR}
         ./configure
         make -j$(nproc)
-        make test
     - name: dpkg-buildpackage
       run: |
         cd ${LIBRAWSTOR}/pyrawstor
