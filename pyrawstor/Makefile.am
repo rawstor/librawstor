@@ -31,16 +31,16 @@ sources-stamp:
 	        $(srcdir)/config.py \
 	        $(srcdir)/MANIFEST.in \
 	        $(srcdir)/setup.py \
-	        $(builddir); \
+	        .; \
 	    if [ "x$(ENABLE_TESTS)" = "xyes" ]; then \
 	        cp -fR --no-preserve=mode \
 	            $(srcdir)/tests \
-	            $(builddir); \
+	            .; \
 	    fi \
 	fi
 	touch $@
 
-rawstor.egg-info/PKG-INFO: $(C_SOURCES)
+$(builddir)/rawstor.egg-info/PKG-INFO: $(C_SOURCES) sources-stamp
 	$(PYTHON) -m pip install --no-deps -e $(builddir)
 
 install-exec-local: $(SOURCES) sources-stamp
@@ -56,8 +56,8 @@ uninstall-local:
 	-rm -r $(DESTDIR)$(prefix)/local/lib/python*/dist-packages/rawstor*
 
 if ENABLE_TESTS
-test: rawstor.egg-info/PKG-INFO sources-stamp
-	$(PYTHON) -m unittest discover -s tests
+test: $(builddir)/rawstor.egg-info/PKG-INFO sources-stamp
+	$(PYTHON) -m unittest discover -s $(builddir)/tests
 endif
 
 clean-local:
@@ -76,7 +76,7 @@ clean-local:
 	-find . -name __pycache__ -exec rm -r {} \;
 	-rm -f rawstor/*.so
 
-all-local: rawstor.egg-info/PKG-INFO
+all-local: $(builddir)/rawstor.egg-info/PKG-INFO
 
 EXTRA_DIST = $(SOURCES)
 

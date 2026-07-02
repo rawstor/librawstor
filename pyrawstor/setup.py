@@ -71,6 +71,9 @@ if __name__ == "__main__":
                     "-Wextra",
                     "-Werror",
                 ],
+                runtime_library_dirs=[
+                    "../src/.libs"
+                ],
             ),
         ],
     )
