@@ -1,0 +1,19 @@
+Source: rawstor
+Section: python
+Priority: optional
+Maintainer: Vasily Stepanov <vasily.stepanov@gmail.com>
+Build-Depends: debhelper (>= 12),
+               dh-python,
+               python3-all-dev,
+               python3-setuptools
+Standards-Version: 4.7.0
+
+Package: python3-rawstor
+Architecture: amd64
+Depends: ${misc:Depends},
+         ${python3:Depends},
+         ${shlibs:Depends},
+         librawstor (>= @PACKAGE_VERSION_MAJOR@.@PACKAGE_VERSION_MINOR@.0),
+         librawstor (<< @PACKAGE_VERSION_MAJOR@.@PACKAGE_VERSION_MINOR_NEXT@.0)
+Description: Rawstor python bindings
+Homepage: https://github.com/rawstor/librawstor

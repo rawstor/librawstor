@@ -1,0 +1,32 @@
+Name: python3-rawstor
+Version: @PACKAGE_VERSION_SHORT@
+Release: @RPM_RELEASE@
+Summary: Rawstor python bindings
+License: LGPL
+URL: https://github.com/rawstor/librawstor
+Source0: librawstor-@PACKAGE_VERSION@.tar.gz
+
+%global python3_sitearch %(python3 -c "import sysconfig; print(sysconfig.get_path('platlib'))")
+
+Requires: python3
+Requires: librawstor >= @PACKAGE_VERSION_MAJOR@.@PACKAGE_VERSION_MINOR@.0, librawstor < @PACKAGE_VERSION_MAJOR@.@PACKAGE_VERSION_MINOR_NEXT@.0
+
+%description
+Rawstor python bindings
+
+%prep
+%autosetup -n librawstor-@PACKAGE_VERSION@
+
+%build
+./configure --prefix=%{_prefix}
+make %{?_smp_mflags}
+
+%install
+rm -rf %{buildroot}
+make -C pyrawstor install DESTDIR=%{buildroot}
+echo ====
+ls -lhR %{buildroot}
+echo ====
+
+%files
+%{python3_sitearch}/*

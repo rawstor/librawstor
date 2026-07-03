@@ -1,0 +1,12 @@
+__pycache__/
+
+*.so
+
+/*.egg-info/
+/build/
+/dist/
+/build-stamp
+/config.py
+/Makefile
+/Makefile.in
+/sources-stamp

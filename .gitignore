@@ -4,6 +4,7 @@
 *.o
 .deps/
 .libs/
+.env/
 /.vscode/
 /ChangeLog
 /Makefile
