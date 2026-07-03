@@ -116,7 +116,7 @@ py_rawstor_object_create_at(PyObject* Py_UNUSED(self), PyObject* args) {
     if (!PyArg_ParseTuple(args, "szO", &location, &uuid, &py_spec_obj)) {
         return NULL;
     }
-    if (PyObject_TypeCheck(py_spec_obj, &PyObjectSpecType)) {
+    if (!PyObject_TypeCheck(py_spec_obj, &PyObjectSpecType)) {
         PyErr_SetString(PyExc_TypeError, "spec must be an ObjectSpec instance");
         return NULL;
     }

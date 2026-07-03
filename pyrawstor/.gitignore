@@ -5,6 +5,7 @@ __pycache__/
 /*.egg-info/
 /build/
 /dist/
+/build-stamp
 /config.py
 /Makefile
 /Makefile.in

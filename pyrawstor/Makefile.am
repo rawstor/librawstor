@@ -31,7 +31,7 @@ SOURCES += \
 endif
 
 
-sources-stamp:
+$(builddir)/sources-stamp:
 	@if [ "$(srcdir)" != "$(builddir)" ]; then \
 	    cp -fR --no-preserve=mode \
 	        $(srcdir)/rawstor \
@@ -47,10 +47,11 @@ sources-stamp:
 	fi
 	touch $@
 
-$(builddir)/rawstor.egg-info/PKG-INFO: $(C_SOURCES) sources-stamp
+$(builddir)/build-stamp: $(C_SOURCES) $(builddir)/sources-stamp
 	CFLAGS="$(CFLAGS) $(AM_CFLAGS)" \
 	LDFLAGS="$(LDFLAGS) $(AM_LDFLAGS)" \
 	$(PYTHON) -m pip install --no-deps -e $(builddir)
+	touch $@
 
 if WITH_PYTHON3
 install-exec-local: $(SOURCES) sources-stamp
@@ -68,7 +69,7 @@ uninstall-local:
 	-rm -r $(DESTDIR)$(prefix)/local/lib/python*/dist-packages/rawstor*
 
 if ENABLE_TESTS
-test: $(builddir)/rawstor.egg-info/PKG-INFO sources-stamp
+test: $(builddir)/build-stamp
 	$(PYTHON) -m unittest discover -s $(builddir)/tests
 endif
 
@@ -80,20 +81,20 @@ clean-local:
 	        tests \
 	        config.py \
 	        MANIFEST.in \
-	        setup.py \
-	        sources-stamp ; \
+	        setup.py ; \
 	fi
+	-rm -rf $(builddir)/sources-stamp $(builddir)/build-stamp
 	-rm -rf rawstor.egg-info
 	-rm -rf $(builddir)/dist
 	-find . -name __pycache__ -exec rm -r {} \;
 	-rm -f rawstor/*.so
 
-all-local: $(builddir)/rawstor.egg-info/PKG-INFO
+all-local: $(builddir)/build-stamp
 endif
 
 EXTRA_DIST = $(SOURCES)
 
-PHONY_TARGETS = install-rawstor
+PHONY_TARGETS =
 
 if ENABLE_TESTS
 PHONY_TARGETS += test
