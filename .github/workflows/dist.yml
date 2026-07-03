@@ -262,8 +262,8 @@ jobs:
       with:
         working_directory: ./artifacts
         files: |
-          deb-librawstor/*
-          deb-python3-rawstor/*
-          rpm-librawstor/*
-          rpm-python3-rawstor/*
+          librawstor.deb/*
+          python3-rawstor.deb/*
+          librawstor.rpm/*
+          python3-rawstor.rpm/*
           sources/*
