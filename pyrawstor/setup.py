@@ -46,9 +46,6 @@ if __name__ == "__main__":
                 ],
                 extra_compile_args=os.getenv('CFLAGS', '').split(),
                 extra_link_args=os.getenv('LDFLAGS', '').split(),
-                runtime_library_dirs=[
-                    "../src/.libs"
-                ],
             ),
         ],
     )
