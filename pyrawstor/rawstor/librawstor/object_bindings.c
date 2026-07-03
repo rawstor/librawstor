@@ -116,12 +116,12 @@ PyObject*
 py_rawstor_object_create_at(PyObject* Py_UNUSED(self), PyObject* args) {
     const char* location;
     const char* uuid = NULL;
-    PyObject* py_spec_obj;
+    PyObject* py_spec_obj = NULL;
 
     if (!PyArg_ParseTuple(args, "s|zO", &location, &uuid, &py_spec_obj))
         return NULL;
 
-    if (!PyObject_TypeCheck(py_spec_obj, &PyObjectSpecType)) {
+    if (py_spec_obj == NULL || !PyObject_TypeCheck(py_spec_obj, &PyObjectSpecType)) {
         PyErr_SetString(PyExc_TypeError, "spec must be an ObjectSpec instance");
         return NULL;
     }
@@ -137,7 +137,7 @@ py_rawstor_object_create_at(PyObject* Py_UNUSED(self), PyObject* args) {
         set_os_error(-res);
         return NULL;
     }
-    if ((size_t)res > sizeof(target)) {
+    if ((size_t)res >= sizeof(target)) {
         PyErr_SetString(
             PyExc_TypeError, "rawstor_object_create_at(): output truncated"
         );
@@ -146,7 +146,6 @@ py_rawstor_object_create_at(PyObject* Py_UNUSED(self), PyObject* args) {
 
     PyObject* py_target = PyUnicode_FromString(target);
     if (!py_target) {
-        PyErr_NoMemory();
         return NULL;
     }
 

@@ -57,7 +57,6 @@ PyMODINIT_FUNC PyInit_librawstor() {
         0) {
         Py_DECREF(&PyObjectSpecType);
         Py_DECREF(module);
-        rawstor_terminate();
         return NULL;
     }
 
