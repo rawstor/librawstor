@@ -70,12 +70,14 @@ uninstall-local:
 
 if ENABLE_TESTS
 test: $(builddir)/build-stamp
+	LD_LIBRARY_PATH=$(top_srcdir)/src/.libs:$(LD_LIBRARY_PATH) \
+	DYLD_LIBRARY_PATH=$(top_srcdir)/src/.libs:$(DYLD_LIBRARY_PATH) \
 	$(PYTHON) -m unittest discover -s $(builddir)/tests
 endif
 
 clean-local:
 	$(PYTHON) $(builddir)/setup.py clean --all
-	if [ "$(srcdir)" != "$(builddir)" ]; then \
+	@if [ "$(srcdir)" != "$(builddir)" ]; then \
 	    rm -rf \
 	        rawstor \
 	        tests \
@@ -83,10 +85,12 @@ clean-local:
 	        MANIFEST.in \
 	        setup.py ; \
 	fi
-	-rm -rf $(builddir)/sources-stamp $(builddir)/build-stamp
-	-rm -rf rawstor.egg-info
-	-rm -rf $(builddir)/dist
 	-find . -name __pycache__ -exec rm -r {} \;
+	-rm -rf \
+	    $(builddir)/build-stamp \
+	    $(builddir)/dist \
+	    $(builddir)/sources-stamp
+	-rm -rf rawstor.egg-info
 	-rm -f rawstor/*.so
 
 all-local: $(builddir)/build-stamp
