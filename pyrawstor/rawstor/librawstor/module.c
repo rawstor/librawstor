@@ -8,8 +8,11 @@
 #include <string.h>
 
 static PyMethodDef librawstor_methods[] = {
-    {"object_create", _PyCFunction_CAST(py_rawstor_object_create),
-     METH_VARARGS | METH_KEYWORDS, NULL},
+    {"object_create", py_rawstor_object_create,
+     METH_VARARGS, NULL},
+    {"object_create_at", py_rawstor_object_create_at,
+     METH_VARARGS, NULL},
+    {"object_spec", py_rawstor_object_spec, METH_VARARGS, NULL},
     {"object_remove", py_rawstor_object_remove, METH_VARARGS, NULL},
     {NULL, NULL, 0, NULL}
 };
@@ -40,8 +43,23 @@ PyMODINIT_FUNC PyInit_librawstor() {
         return NULL;
     }
 
+    if (PyType_Ready(&PyObjectSpecType) < 0) {
+        rawstor_terminate();
+        return NULL;
+    }
+
     PyObject* module = PyModule_Create(&librawstor_module);
     if (module == NULL) {
+        rawstor_terminate();
+        return NULL;
+    }
+
+    Py_INCREF(&PyObjectSpecType);
+    if (PyModule_AddObject(module, "ObjectSpec", (PyObject*)&PyObjectSpecType) <
+        0) {
+        Py_DECREF(&PyObjectSpecType);
+        Py_DECREF(module);
+        rawstor_terminate();
         return NULL;
     }
 
