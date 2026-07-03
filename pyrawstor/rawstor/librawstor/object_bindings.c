@@ -31,12 +31,16 @@ static PyObject* PyObjectSpec_new(
 
 static int
 PyObjectSpec_init(PyObjectSpec* self, PyObject* args, PyObject* kwargs) {
-    unsigned long long size = 0;
+    long long size = 0;
     static char* kwlist[] = {"size", NULL};
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|K", kwlist, &size)) {
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|L", kwlist, &size)) {
         return -1;
     }
-    self->size = size;
+    if (size < 0) {
+        PyErr_SetString(PyExc_ValueError, "size cannot be negative");
+        return -1;
+    }
+    self->size = (unsigned long long)size;
     return 0;
 }
 

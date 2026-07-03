@@ -35,7 +35,6 @@ $(builddir)/sources-stamp:
 	@if [ "$(srcdir)" != "$(builddir)" ]; then \
 	    cp -fR --no-preserve=mode \
 	        $(srcdir)/rawstor \
-	        $(srcdir)/config.py \
 	        $(srcdir)/MANIFEST.in \
 	        $(srcdir)/setup.py \
 	        .; \
@@ -81,7 +80,6 @@ clean-local:
 	    rm -rf \
 	        rawstor \
 	        tests \
-	        config.py \
 	        MANIFEST.in \
 	        setup.py ; \
 	fi
