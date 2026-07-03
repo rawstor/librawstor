@@ -3,16 +3,12 @@
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
 
+#include <errno.h>
 #include <string.h>
 
 static void set_os_error(int error) {
-    PyObject* args = Py_BuildValue("(is)", error, strerror(error));
-    if (!args) {
-        return;
-    }
-
-    PyErr_SetObject(PyExc_OSError, args);
-    Py_DECREF(args);
+    errno = error;
+    PyErr_SetFromErrno(PyExc_OSError);
 }
 
 typedef struct {
@@ -118,8 +114,9 @@ py_rawstor_object_create_at(PyObject* Py_UNUSED(self), PyObject* args) {
     const char* uuid = NULL;
     PyObject* py_spec_obj = NULL;
 
-    if (!PyArg_ParseTuple(args, "s|zO", &location, &uuid, &py_spec_obj))
+    if (!PyArg_ParseTuple(args, "s|zO", &location, &uuid, &py_spec_obj)) {
         return NULL;
+    }
 
     if (py_spec_obj == NULL ||
         !PyObject_TypeCheck(py_spec_obj, &PyObjectSpecType)) {
@@ -140,7 +137,7 @@ py_rawstor_object_create_at(PyObject* Py_UNUSED(self), PyObject* args) {
     }
     if ((size_t)res >= sizeof(target)) {
         PyErr_SetString(
-            PyExc_TypeError, "rawstor_object_create_at(): output truncated"
+            PyExc_ValueError, "rawstor_object_create_at(): output truncated"
         );
         return NULL;
     }
@@ -167,8 +164,7 @@ PyObject* py_rawstor_object_spec(PyObject* Py_UNUSED(self), PyObject* args) {
         return NULL;
     }
 
-    PyObjectSpec* py_spec =
-        (PyObjectSpec*)PyObjectSpecType.tp_new(&PyObjectSpecType, NULL, NULL);
+    PyObjectSpec* py_spec = PyObject_New(PyObjectSpec, &PyObjectSpecType);
     if (py_spec == NULL) {
         return NULL;
     }

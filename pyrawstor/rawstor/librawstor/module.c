@@ -52,10 +52,7 @@ PyMODINIT_FUNC PyInit_librawstor() {
         return NULL;
     }
 
-    Py_INCREF(&PyObjectSpecType);
-    if (PyModule_AddObject(module, "ObjectSpec", (PyObject*)&PyObjectSpecType) <
-        0) {
-        Py_DECREF(&PyObjectSpecType);
+    if (PyModule_AddType(module, &PyObjectSpecType) < 0) {
         Py_DECREF(module);
         return NULL;
     }
