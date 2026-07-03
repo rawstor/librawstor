@@ -7,6 +7,3 @@ export LD_LIBRARY_PATH := $(CURDIR)/../src/.libs:$(LD_LIBRARY_PATH)
 
 override_dh_auto_test:
 	dh_auto_test
-
-override_dh_shlibdeps:
-	dh_shlibdeps -l$(CURDIR)/../src/.libs -- -xlibrawstor.so.@PACKAGE_VERSION_MAJOR@

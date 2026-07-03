@@ -112,17 +112,15 @@ PyObject*
 py_rawstor_object_create_at(PyObject* Py_UNUSED(self), PyObject* args) {
     const char* location;
     const char* uuid = NULL;
-    PyObject* py_spec_obj = NULL;
-
-    if (!PyArg_ParseTuple(args, "s|zO", &location, &uuid, &py_spec_obj)) {
+    PyObject* py_spec_obj;
+    if (!PyArg_ParseTuple(args, "szO", &location, &uuid, &py_spec_obj)) {
         return NULL;
     }
-
-    if (py_spec_obj == NULL ||
-        !PyObject_TypeCheck(py_spec_obj, &PyObjectSpecType)) {
+    if (PyObject_TypeCheck(py_spec_obj, &PyObjectSpecType)) {
         PyErr_SetString(PyExc_TypeError, "spec must be an ObjectSpec instance");
         return NULL;
     }
+
     PyObjectSpec* py_spec = (PyObjectSpec*)py_spec_obj;
     struct RawstorObjectSpec spec = {
         .size = py_spec->size,
