@@ -86,11 +86,9 @@ PyTypeObject PyObjectSpecType = {
     .tp_getset = PyObjectSpec_getset,
 };
 
-PyObject* py_rawstor_object_create(
-    PyObject* Py_UNUSED(self), PyObject* args
-) {
-    const char *target;
-    PyObject *spec_obj;
+PyObject* py_rawstor_object_create(PyObject* Py_UNUSED(self), PyObject* args) {
+    const char* target;
+    PyObject* spec_obj;
     struct RawstorObjectSpec spec;
 
     if (!PyArg_ParseTuple(args, "sO", &target, &spec_obj)) {
@@ -102,7 +100,7 @@ PyObject* py_rawstor_object_create(
         return NULL;
     }
 
-    PyObjectSpec *py_spec = (PyObjectSpec *)spec_obj;
+    PyObjectSpec* py_spec = (PyObjectSpec*)spec_obj;
     spec.size = py_spec->size;
 
     int res = rawstor_object_create(target, &spec);
@@ -114,11 +112,10 @@ PyObject* py_rawstor_object_create(
     Py_RETURN_NONE;
 }
 
-PyObject* py_rawstor_object_create_at(
-    PyObject* Py_UNUSED(self), PyObject* args
-) {
-    const char *location;
-    const char *uuid = NULL;
+PyObject*
+py_rawstor_object_create_at(PyObject* Py_UNUSED(self), PyObject* args) {
+    const char* location;
+    const char* uuid = NULL;
     PyObject* py_spec_obj;
 
     if (!PyArg_ParseTuple(args, "s|zO", &location, &uuid, &py_spec_obj))
@@ -128,23 +125,26 @@ PyObject* py_rawstor_object_create_at(
         PyErr_SetString(PyExc_TypeError, "spec must be an ObjectSpec instance");
         return NULL;
     }
-    PyObjectSpec *py_spec = (PyObjectSpec *)py_spec_obj;
+    PyObjectSpec* py_spec = (PyObjectSpec*)py_spec_obj;
     struct RawstorObjectSpec spec = {
         .size = py_spec->size,
     };
 
     char target[65536];
-    int res = rawstor_object_create_at(location, uuid, &spec, target, sizeof(target));
+    int res =
+        rawstor_object_create_at(location, uuid, &spec, target, sizeof(target));
     if (res < 0) {
         set_os_error(-res);
         return NULL;
     }
     if ((size_t)res > sizeof(target)) {
-        PyErr_SetString(PyExc_TypeError, "rawstor_object_create_at(): output truncated");
+        PyErr_SetString(
+            PyExc_TypeError, "rawstor_object_create_at(): output truncated"
+        );
         return NULL;
     }
 
-    PyObject *py_target = PyUnicode_FromString(target);
+    PyObject* py_target = PyUnicode_FromString(target);
     if (!py_target) {
         PyErr_NoMemory();
         return NULL;

@@ -10,14 +10,11 @@ extern "C" {
 
 extern PyTypeObject PyObjectSpecType;
 
-PyObject*
-py_rawstor_object_create(PyObject* self, PyObject* args);
+PyObject* py_rawstor_object_create(PyObject* self, PyObject* args);
 
-PyObject*
-py_rawstor_object_create_at(PyObject* self, PyObject* args);
+PyObject* py_rawstor_object_create_at(PyObject* self, PyObject* args);
 
-PyObject*
-py_rawstor_object_spec(PyObject* self, PyObject* args);
+PyObject* py_rawstor_object_spec(PyObject* self, PyObject* args);
 
 PyObject* py_rawstor_object_remove(PyObject* self, PyObject* args);
 
