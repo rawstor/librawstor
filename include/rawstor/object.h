@@ -207,6 +207,83 @@ int rawstor_object_create_at(
 int rawstor_object_remove(const char* target) RAWSTOR_NOEXCEPT;
 
 /**
+ * @brief Asynchronously retrieve metadata about a stored object.
+ *
+ * Non-blocking variant of rawstor_object_spec(). The operation is driven by
+ * @p queue; @p cb is invoked exactly once from the queue completion context
+ * with 0 on success or a negative errno value on failure. On success @p spec
+ * is filled before @p cb is invoked; it must stay valid until then.
+ *
+ * @param queue   I/O queue that drives the operation.
+ * @param target  Target string, see rawstor_object_spec().
+ * @param spec    Pointer to a RawstorObjectSpec structure that will be
+ *                filled with the object's metadata on success. Must stay
+ *                valid until @p cb is invoked.
+ * @param cb      Completion callback.
+ * @param data    Opaque pointer passed to @p cb.
+ *
+ * @return 0 if the operation was started, negative errno otherwise (in which
+ *         case @p cb is never invoked).
+ *
+ * @see rawstor_object_spec
+ */
+int rawstor_object_spec_async(
+    RawIOQueue* queue, const char* target, struct RawstorObjectSpec* spec,
+    int (*cb)(int result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Asynchronously create a new empty object at the specified target.
+ *
+ * Non-blocking variant of rawstor_object_create(). The operation is driven
+ * by @p queue; @p cb is invoked exactly once from the queue completion
+ * context with 0 on success or a negative errno value on failure. If the
+ * target contains multiple URIs (mirroring or locality), the object is
+ * created on every backend in the list; on failure, targets already created
+ * are removed before @p cb is invoked.
+ *
+ * @param queue   I/O queue that drives the operation.
+ * @param target  Target string, see rawstor_object_create().
+ * @param spec    Desired object metadata. Copied internally; does not need
+ *                to stay valid after the call returns.
+ * @param cb      Completion callback.
+ * @param data    Opaque pointer passed to @p cb.
+ *
+ * @return 0 if the operation was started, negative errno otherwise (in which
+ *         case @p cb is never invoked).
+ *
+ * @see rawstor_object_create
+ */
+int rawstor_object_create_async(
+    RawIOQueue* queue, const char* target, const struct RawstorObjectSpec* spec,
+    int (*cb)(int result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Asynchronously remove an object.
+ *
+ * Non-blocking variant of rawstor_object_remove(). The operation is driven
+ * by @p queue; @p cb is invoked exactly once from the queue completion
+ * context with 0 on success or a negative errno value on failure. If the
+ * target contains multiple URIs, the object is removed from every backend
+ * in the list even if some of them fail; the first error is reported.
+ *
+ * @param queue   I/O queue that drives the operation.
+ * @param target  Target string, see rawstor_object_remove().
+ * @param cb      Completion callback.
+ * @param data    Opaque pointer passed to @p cb.
+ *
+ * @return 0 if the operation was started, negative errno otherwise (in which
+ *         case @p cb is never invoked).
+ *
+ * @see rawstor_object_remove
+ */
+int rawstor_object_remove_async(
+    RawIOQueue* queue, const char* target, int (*cb)(int result, void* data),
+    void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
  * @brief Open an existing object for reading and/or writing.
  *
  * Given a target string (as defined in the Rawstor location/target syntax),

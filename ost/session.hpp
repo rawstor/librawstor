@@ -8,6 +8,7 @@
 #include <rawstd/uri.hpp>
 #include <rawstd/uuid.h>
 
+#include <memory>
 #include <vector>
 
 namespace rawstor {
@@ -28,6 +29,12 @@ private:
         RawstorOSTFrameIOBody io;
     } _request_body;
     RawstorObject* _object;
+
+    /*
+     * Expires on session destruction; async operation completions check it
+     * before touching _fd, which may be closed or reused by then.
+     */
+    std::shared_ptr<int> _alive;
 
     static ssize_t _recv(
         const iovec* iov, unsigned int niov, size_t result, int error,

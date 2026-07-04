@@ -19,38 +19,6 @@
 
 #include <cstring>
 
-namespace {
-
-/**
- * TODO: Remove this class.
- */
-class Queue final {
-private:
-    unsigned int _operations;
-    std::unique_ptr<rawio::Queue> _q;
-
-public:
-    Queue(unsigned int operations) :
-        _operations(operations),
-        _q(rawio::Queue::create(256)) {}
-
-    Queue(const Queue&) = delete;
-
-    Queue& operator=(const Queue&) = delete;
-
-    inline void sub_operation() noexcept { --_operations; }
-
-    inline rawio::Queue& queue() noexcept { return *_q; }
-
-    void wait() {
-        while (_operations > 0) {
-            _q->wait_timeout(rawstor_opts_tcp_user_timeout());
-        }
-    }
-};
-
-} // namespace
-
 namespace rawstor {
 
 Connection::Connection(rawio::Queue& queue) :
@@ -221,7 +189,8 @@ const rawstd::URI* Connection::location() const noexcept {
 }
 
 void Connection::create(
-    const rawstd::URI& target, const RawstorObjectSpec& sp
+    rawio::Queue& queue, const rawstd::URI& target, const RawstorObjectSpec& sp,
+    std::function<void(int)>&& cb
 ) {
     RawstdUUID id;
     int res = rawstd_uuid_from_string(&id, target.path().filename().c_str());
@@ -229,62 +198,48 @@ void Connection::create(
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 
-    Queue q(1);
-
-    std::unique_ptr<Session> s = Session::create(q.queue(), target.parent());
-    s->create(id, sp, [&q](int error) {
-        q.sub_operation();
-
-        if (error) {
-            RAWSTD_THROW_SYSTEM_ERROR(error);
-        }
+    std::shared_ptr<Session> s = Session::create(queue, target.parent());
+    Session* session = s.get();
+    session->create(id, sp, [s = std::move(s), cb = std::move(cb)](int error) {
+        cb(error);
     });
-
-    q.wait();
 }
 
-void Connection::remove(const rawstd::URI& target) {
+void Connection::remove(
+    rawio::Queue& queue, const rawstd::URI& target,
+    std::function<void(int)>&& cb
+) {
     RawstdUUID id;
     int res = rawstd_uuid_from_string(&id, target.path().filename().c_str());
     if (res) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 
-    Queue q(1);
-
-    std::unique_ptr<Session> s = Session::create(q.queue(), target.parent());
-    s->remove(id, [&q](int error) {
-        q.sub_operation();
-
-        if (error) {
-            RAWSTD_THROW_SYSTEM_ERROR(error);
-        }
+    std::shared_ptr<Session> s = Session::create(queue, target.parent());
+    Session* session = s.get();
+    session->remove(id, [s = std::move(s), cb = std::move(cb)](int error) {
+        cb(error);
     });
-
-    q.wait();
 }
 
-void Connection::spec(const rawstd::URI& target, RawstorObjectSpec* sp) {
+void Connection::spec(
+    rawio::Queue& queue, const rawstd::URI& target,
+    std::function<void(const RawstorObjectSpec&, int)>&& cb
+) {
     RawstdUUID id;
     int res = rawstd_uuid_from_string(&id, target.path().filename().c_str());
     if (res) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 
-    Queue q(1);
-
-    std::unique_ptr<Session> s = Session::create(q.queue(), target.parent());
-    s->spec(id, [&q, sp](const RawstorObjectSpec& spec, int error) {
-        q.sub_operation();
-
-        if (error) {
-            RAWSTD_THROW_SYSTEM_ERROR(error);
+    std::shared_ptr<Session> s = Session::create(queue, target.parent());
+    Session* session = s.get();
+    session->spec(
+        id, [s = std::move(s),
+             cb = std::move(cb)](const RawstorObjectSpec& spec, int error) {
+            cb(spec, error);
         }
-
-        *sp = spec;
-    });
-
-    q.wait();
+    );
 }
 
 void Connection::open(

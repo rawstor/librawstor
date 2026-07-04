@@ -39,11 +39,20 @@ private:
         unsigned int attempt);
 
 public:
-    static void create(const rawstd::URI& target, const RawstorObjectSpec& sp);
+    static void create(
+        rawio::Queue& queue, const rawstd::URI& target,
+        const RawstorObjectSpec& sp, std::function<void(int)>&& cb
+    );
 
-    static void remove(const rawstd::URI& target);
+    static void remove(
+        rawio::Queue& queue, const rawstd::URI& target,
+        std::function<void(int)>&& cb
+    );
 
-    static void spec(const rawstd::URI& target, RawstorObjectSpec* sp);
+    static void spec(
+        rawio::Queue& queue, const rawstd::URI& target,
+        std::function<void(const RawstorObjectSpec&, int)>&& cb
+    );
 
     explicit Connection(rawio::Queue& queue);
     Connection(const Connection&) = delete;

@@ -26,6 +26,19 @@ private:
 
 public:
     static void create(
+        rawio::Queue& queue, const std::vector<rawstd::URI>& targets,
+        const RawstorObjectSpec& sp, std::function<void(int)>&& cb
+    );
+    static void remove(
+        rawio::Queue& queue, const std::vector<rawstd::URI>& targets,
+        std::function<void(int)>&& cb
+    );
+    static void spec(
+        rawio::Queue& queue, const std::vector<rawstd::URI>& targets,
+        RawstorObjectSpec* sp, std::function<void(int)>&& cb
+    );
+
+    static void create(
         const std::vector<rawstd::URI>& targets, const RawstorObjectSpec& sp
     );
     static void remove(const std::vector<rawstd::URI>& targets);
