@@ -4,6 +4,9 @@
 #include <rawstd/logging.h>
 #include <rawstd/uuid.h>
 
+#include <cerrno>
+#include <cinttypes>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <sstream>
@@ -53,13 +56,35 @@ void Session::create(
     const RawstdUUID& id, const RawstorObjectSpec& sp,
     std::function<void(int)>&& cb
 ) {
+    /*
+     * zfs-create(8) rejects volume sizes that are not a multiple of
+     * volblocksize (16 KiB by default, 8 KiB on older OpenZFS), so round
+     * the requested size up front.
+     */
+    const uint64_t volblocksize = 16384;
+
+    if (sp.size == 0 || sp.size > UINT64_MAX - (volblocksize - 1)) {
+        rawstd_error("zfs: invalid object size: %" PRIu64 "\n", sp.size);
+        cb(EINVAL);
+        return;
+    }
+
+    uint64_t size = (sp.size + volblocksize - 1) / volblocksize * volblocksize;
+    if (size != sp.size) {
+        rawstd_info(
+            "zfs: rounding volume size up from %" PRIu64 " to %" PRIu64
+            " bytes\n",
+            sp.size, size
+        );
+    }
+
     RawstdUUIDString uuid_str;
     rawstd_uuid_to_string(&id, &uuid_str);
 
     std::string dataset = _parent_dataset + "/" + uuid_str;
 
     char size_buf[64];
-    snprintf(size_buf, sizeof(size_buf), "%zu", sp.size);
+    snprintf(size_buf, sizeof(size_buf), "%" PRIu64, size);
 
     rawstd_info(
         "zfs: creating zvol %s, size %s bytes\n", dataset.c_str(), size_buf

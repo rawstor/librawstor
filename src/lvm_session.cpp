@@ -4,6 +4,8 @@
 #include <rawstd/logging.h>
 #include <rawstd/uuid.h>
 
+#include <cerrno>
+#include <cinttypes>
 #include <cstdio>
 #include <cstring>
 #include <sstream>
@@ -56,11 +58,18 @@ void Session::create(
     const RawstdUUID& id, const RawstorObjectSpec& sp,
     std::function<void(int)>&& cb
 ) {
+    if (sp.size == 0) {
+        rawstd_error("lvm: object size must be positive\n");
+        cb(EINVAL);
+        return;
+    }
+
     RawstdUUIDString uuid_str;
     rawstd_uuid_to_string(&id, &uuid_str);
 
+    /* lvcreate rounds the size up to the VG extent size itself. */
     char size_buf[64];
-    snprintf(size_buf, sizeof(size_buf), "%zub", sp.size);
+    snprintf(size_buf, sizeof(size_buf), "%" PRIu64 "b", sp.size);
 
     rawstd_info(
         "lvm: creating LV %s in VG %s, size %s\n", uuid_str, _vg_name.c_str(),
