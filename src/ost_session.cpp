@@ -603,17 +603,26 @@ void Context::setup_recv() {
                     }
                 } catch (const std::system_error& e) {
                     error = e.code().value();
+                    context->_read_event = nullptr;
                     context->_fail_in_flight(error, &is_head, &size);
                     RAWSTD_THROW_SYSTEM_ERROR(error);
                 } catch (const std::exception& e) {
                     rawstd_error("%s\n", e.what());
                     error = EPROTO;
+                    context->_read_event = nullptr;
                     context->_fail_in_flight(error, &is_head, &size);
                     RAWSTD_THROW_SYSTEM_ERROR(error);
                 }
             }
 
             if (error) {
+                /*
+                 * A terminal error ends the multishot event: the queue
+                 * releases it, so it must not be cancelled in
+                 * teardown_recv() - the stale pointer could alias an event
+                 * of another session by then.
+                 */
+                context->_read_event = nullptr;
                 context->_fail_in_flight(error, &is_head, &size);
             }
 
