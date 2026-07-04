@@ -31,6 +31,7 @@ private:
 
     static void _open_attempt(const std::shared_ptr<OpenState>& st);
     static void _open_next(const std::shared_ptr<OpenState>& st);
+    static void _open_set_object(const std::shared_ptr<OpenState>& st);
     static void _open_failed(const std::shared_ptr<OpenState>& st, int error);
 
     void _open(

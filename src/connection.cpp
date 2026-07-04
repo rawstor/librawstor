@@ -83,6 +83,25 @@ void Connection::_open_next(const std::shared_ptr<OpenState>& st) {
     }
 
     try {
+        st->sessions[st->next]->connect([st](int error) {
+            if (error) {
+                Connection::_open_failed(st, error);
+                return;
+            }
+            Connection::_open_set_object(st);
+        });
+    } catch (const std::system_error& e) {
+        _open_failed(st, e.code().value());
+    } catch (const std::bad_alloc& e) {
+        _open_failed(st, ENOMEM);
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        _open_failed(st, EINVAL);
+    }
+}
+
+void Connection::_open_set_object(const std::shared_ptr<OpenState>& st) {
+    try {
         st->sessions[st->next]->set_object(st->object, [st](int error) {
             if (error) {
                 Connection::_open_failed(st, error);
@@ -286,8 +305,22 @@ void Connection::create(
 
     std::shared_ptr<Session> s = Session::create(queue, target.parent());
     Session* session = s.get();
-    session->create(id, sp, [s = std::move(s), cb = std::move(cb)](int error) {
-        cb(error);
+    session->connect([s = std::move(s), id, sp, cb = std::move(cb)](int error) {
+        if (error) {
+            cb(error);
+            return;
+        }
+
+        try {
+            s->create(id, sp, [s, cb](int error) { cb(error); });
+        } catch (const std::system_error& e) {
+            cb(e.code().value());
+        } catch (const std::bad_alloc& e) {
+            cb(ENOMEM);
+        } catch (const std::exception& e) {
+            rawstd_error("%s\n", e.what());
+            cb(EINVAL);
+        }
     });
 }
 
@@ -303,8 +336,22 @@ void Connection::remove(
 
     std::shared_ptr<Session> s = Session::create(queue, target.parent());
     Session* session = s.get();
-    session->remove(id, [s = std::move(s), cb = std::move(cb)](int error) {
-        cb(error);
+    session->connect([s = std::move(s), id, cb = std::move(cb)](int error) {
+        if (error) {
+            cb(error);
+            return;
+        }
+
+        try {
+            s->remove(id, [s, cb](int error) { cb(error); });
+        } catch (const std::system_error& e) {
+            cb(e.code().value());
+        } catch (const std::bad_alloc& e) {
+            cb(ENOMEM);
+        } catch (const std::exception& e) {
+            rawstd_error("%s\n", e.what());
+            cb(EINVAL);
+        }
     });
 }
 
@@ -320,12 +367,25 @@ void Connection::spec(
 
     std::shared_ptr<Session> s = Session::create(queue, target.parent());
     Session* session = s.get();
-    session->spec(
-        id, [s = std::move(s),
-             cb = std::move(cb)](const RawstorObjectSpec& spec, int error) {
-            cb(spec, error);
+    session->connect([s = std::move(s), id, cb = std::move(cb)](int error) {
+        if (error) {
+            cb({}, error);
+            return;
         }
-    );
+
+        try {
+            s->spec(id, [s, cb](const RawstorObjectSpec& spec, int error) {
+                cb(spec, error);
+            });
+        } catch (const std::system_error& e) {
+            cb({}, e.code().value());
+        } catch (const std::bad_alloc& e) {
+            cb({}, ENOMEM);
+        } catch (const std::exception& e) {
+            rawstd_error("%s\n", e.what());
+            cb({}, EINVAL);
+        }
+    });
 }
 
 void Connection::open(

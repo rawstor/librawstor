@@ -30,7 +30,6 @@ private:
 
     std::shared_ptr<Context> _context;
 
-    int _connect();
     void _basic(
         RawstorOSTCommandType cmd, const RawstdUUID& id, uint64_t val,
         std::function<void(int)>&& cb
@@ -39,6 +38,8 @@ private:
 public:
     Session(rawio::Queue& queue, const rawstd::URI& location);
     ~Session();
+
+    void connect(std::function<void(int)>&& cb) override;
 
     void create(
         const RawstdUUID& id, const RawstorObjectSpec& sp,

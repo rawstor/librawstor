@@ -17,8 +17,6 @@
 
 #include <arpa/inet.h>
 
-#include <poll.h>
-
 #include <algorithm>
 #include <iterator>
 #include <memory>
@@ -642,8 +640,6 @@ void Context::register_op(const std::shared_ptr<SessionOp>& op) {
 Session::Session(rawio::Queue& queue, const rawstd::URI& location) :
     rawstor::Session(queue, location),
     _cid_counter(0) {
-    int fd = _connect();
-    set_fd(fd);
 }
 
 Session::~Session() {
@@ -652,7 +648,7 @@ Session::~Session() {
     }
 }
 
-int Session::_connect() {
+void Session::connect(std::function<void(int)>&& cb) {
     if (!location().path().str().empty() && location().path().str() != "/") {
         rawstd_error("Empty path expected: %s\n", location().str().c_str());
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
@@ -690,12 +686,19 @@ int Session::_connect() {
             }
         }
 
-        sockaddr_in servaddr = {};
-        servaddr.sin_family = AF_INET;
-        servaddr.sin_port = htons(location().port());
+        /*
+         * The address is kept alive by the callback capture: io_uring reads
+         * it when the connect operation is executed, not when submitted.
+         * The socket stays blocking, so SO_SNDTIMEO still bounds the
+         * connect; io_uring runs it in a worker thread without stalling
+         * the event loop.
+         */
+        auto servaddr = std::make_shared<sockaddr_in>();
+        servaddr->sin_family = AF_INET;
+        servaddr->sin_port = htons(location().port());
 
         res = inet_pton(
-            AF_INET, location().hostname().c_str(), &servaddr.sin_addr
+            AF_INET, location().hostname().c_str(), &servaddr->sin_addr
         );
         if (res == 0) {
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
@@ -706,73 +709,38 @@ int Session::_connect() {
         rawstd_info(
             "fd %d: Connecting to %s...\n", fd, location().str().c_str()
         );
-        int res = connect(fd, (sockaddr*)&servaddr, sizeof(servaddr));
-        if (res == -1) {
-            if (errno == EINTR) {
-                errno = 0;
 
-                pollfd fds = {
-                    .fd = fd,
-                    .events = POLLOUT,
-                    .revents = 0,
-                };
-                rawstd_warning("Connect interrupted; polling...\n");
-                for (unsigned int attempt = 1;
-                     attempt <= rawstor_opts_io_attempts(); ++attempt) {
-                    try {
-                        res = poll(&fds, 1, so_sndtimeo);
-                        if (res == -1) {
-                            RAWSTD_THROW_ERRNO();
-                        }
-                        if (res == 0) {
-                            RAWSTD_THROW_SYSTEM_ERROR(ETIMEDOUT);
-                        }
-                        break;
-                    } catch (const std::exception& e) {
-                        if (attempt != rawstor_opts_io_attempts()) {
-                            rawstd_warning(
-                                "Poll failed; error: %s; "
-                                "attempt: %d of %d; retrying...\n",
-                                e.what(), attempt, rawstor_opts_io_attempts()
-                            );
-                        } else {
-                            rawstd_warning(
-                                "Poll failed; error: %s; "
-                                "attempt: %d of %d; failing...\n",
-                                e.what(), attempt, rawstor_opts_io_attempts()
-                            );
-                            throw;
-                        }
-                    }
+        _queue.connect(
+            fd, reinterpret_cast<const sockaddr*>(servaddr.get()),
+            sizeof(*servaddr),
+            [this, fd, servaddr, cb = std::move(cb)](int result) {
+                if (result < 0) {
+                    ::close(fd);
+                    rawstd_info("fd %d: Closed\n", fd);
+                    cb(-result);
+                    return;
                 }
 
-                int value = 0;
-                socklen_t value_len = sizeof(value);
-                res = getsockopt(fd, SOL_SOCKET, SO_ERROR, &value, &value_len);
-                if (res == -1) {
-                    RAWSTD_THROW_ERRNO();
-                }
-                if (value) {
-                    RAWSTD_THROW_SYSTEM_ERROR(value);
+                rawstd_info("fd %d: Connected\n", fd);
+
+                try {
+                    rawio::Queue::setup_fd(fd);
+                } catch (const std::system_error& e) {
+                    ::close(fd);
+                    rawstd_info("fd %d: Closed\n", fd);
+                    cb(e.code().value());
+                    return;
                 }
 
-                if (!(fds.revents & POLLOUT)) {
-                    RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
-                }
-            } else {
-                RAWSTD_THROW_ERRNO();
+                set_fd(fd);
+                cb(0);
             }
-        }
-        rawstd_info("fd %d: Connected\n", fd);
-
-        rawio::Queue::setup_fd(fd);
+        );
     } catch (...) {
         ::close(fd);
         rawstd_info("fd %d: Closed\n", fd);
         throw;
     }
-
-    return fd;
 }
 
 void Session::_basic(
