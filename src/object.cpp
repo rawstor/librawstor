@@ -247,13 +247,64 @@ Object::Object(rawio::Queue& queue, const std::vector<rawstd::URI>& targets) :
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
+}
 
-    _cns.reserve(targets.size());
-    for (const auto& target : targets) {
+/*
+ * Async object opening: one connection per target, opened sequentially.
+ * The object owns itself through the state until the last connection is
+ * bound; on failure the object is destroyed (closing every connection
+ * opened so far) and cb receives nullptr.
+ */
+struct Object::OpenState {
+    std::vector<rawstd::URI> targets;
+    std::function<void(Object*, int)> cb;
+    std::unique_ptr<Object> object;
+    size_t next;
+};
+
+void Object::open(
+    rawio::Queue& queue, const std::vector<rawstd::URI>& targets,
+    std::function<void(Object*, int)>&& cb
+) {
+    std::unique_ptr<Object> object(new Object(queue, targets));
+    Object* raw = object.get();
+
+    std::shared_ptr<OpenState> st = std::make_shared<OpenState>(
+        OpenState{targets, std::move(cb), std::move(object), 0}
+    );
+    raw->_open_next(st);
+}
+
+void Object::_open_next(const std::shared_ptr<OpenState>& st) {
+    if (st->next == st->targets.size()) {
+        st->cb(st->object.release(), 0);
+        return;
+    }
+
+    try {
         std::unique_ptr<rawstor::Connection> cn =
             std::make_unique<rawstor::Connection>(_queue);
-        cn->open(target.parent(), this, rawstor_opts_sessions());
+        Connection* raw = cn.get();
         _cns.push_back(std::move(cn));
+
+        raw->open(
+            st->targets[st->next].parent(), this, rawstor_opts_sessions(),
+            [this, st](int error) {
+                if (error) {
+                    st->cb(nullptr, error);
+                    return;
+                }
+                ++st->next;
+                _open_next(st);
+            }
+        );
+    } catch (const std::system_error& e) {
+        st->cb(nullptr, e.code().value());
+    } catch (const std::bad_alloc& e) {
+        st->cb(nullptr, ENOMEM);
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        st->cb(nullptr, EINVAL);
     }
 }
 
@@ -693,15 +744,58 @@ int rawstor_object_open(
     RawIOQueue* queue, const char* target, RawstorObject** object
 ) noexcept {
     try {
-        std::unique_ptr<rawstor::Object> ret =
-            std::make_unique<rawstor::Object>(
-                *static_cast<rawio::Queue*>(queue), rawstd::URI::uriv(target)
-            );
+        rawio::Queue& q = *static_cast<rawio::Queue*>(queue);
 
-        *object = ret.get();
+        *object = nullptr;
 
-        ret.release();
+        rawstor::Object* ret = nullptr;
+        int result = 0;
+        bool done = false;
 
+        rawstor::Object::open(
+            q, rawstd::URI::uriv(target),
+            [&ret, &result, &done](rawstor::Object* obj, int error) {
+                ret = obj;
+                result = error;
+                done = true;
+            }
+        );
+
+        while (!done) {
+            q.wait_timeout(rawstor_opts_tcp_user_timeout());
+        }
+
+        if (result) {
+            return -result;
+        }
+
+        *object = ret;
+
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+int rawstor_object_open_async(
+    RawIOQueue* queue, const char* target,
+    int (*cb)(RawstorObject* object, int result, void* data), void* data
+) noexcept {
+    try {
+        rawstor::Object::open(
+            *static_cast<rawio::Queue*>(queue), rawstd::URI::uriv(target),
+            [cb, data](rawstor::Object* object, int error) {
+                cb(object, error ? -error : 0, data);
+            }
+        );
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();

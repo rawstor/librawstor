@@ -136,43 +136,60 @@ void BlkdevSession::spec(
     const RawstdUUID& id,
     std::function<void(const RawstorObjectSpec&, int)>&& cb
 ) {
-    std::string path = device_path(id);
+    /*
+     * The path buffer is kept alive by the callback capture: io_uring reads
+     * the string when the openat operation is executed, not when submitted.
+     * Opening a block device may block (suspended DM device, busy pool);
+     * io_uring handles that in a worker thread without stalling the loop.
+     * BLKGETSIZE64 reads an in-memory value and completes immediately.
+     */
+    auto path = std::make_shared<std::string>(device_path(id));
 
-    int fd = open(path.c_str(), O_RDONLY | O_CLOEXEC);
-    if (fd == -1) {
-        cb({}, errno);
-        return;
-    }
+    _queue.open(
+        path->c_str(), O_RDONLY | O_CLOEXEC, 0,
+        [path, cb = std::move(cb)](int result) {
+            if (result < 0) {
+                cb({}, -result);
+                return;
+            }
 
-    uint64_t size = 0;
-    if (ioctl(fd, BLKGETSIZE64, &size) == -1) {
-        int err = errno;
-        close(fd);
-        cb({}, err);
-        return;
-    }
+            uint64_t size = 0;
+            if (ioctl(result, BLKGETSIZE64, &size) == -1) {
+                int err = errno;
+                close(result);
+                cb({}, err);
+                return;
+            }
 
-    close(fd);
+            close(result);
 
-    cb(RawstorObjectSpec{size}, 0);
+            cb(RawstorObjectSpec{size}, 0);
+        }
+    );
 }
 
-void BlkdevSession::set_object(Object* object) {
+void BlkdevSession::set_object(Object* object, std::function<void(int)>&& cb) {
     if (fd() != -1) {
         throw std::runtime_error("Object already set");
     }
 
-    std::string path = device_path(object->id());
+    auto path = std::make_shared<std::string>(device_path(object->id()));
 
-    rawstd_info("Connecting to %s...\n", path.c_str());
+    rawstd_info("Connecting to %s...\n", path->c_str());
 
-    int fd = open(path.c_str(), O_RDWR | O_CLOEXEC);
-    if (fd == -1) {
-        RAWSTD_THROW_ERRNO();
-    }
+    _queue.open(
+        path->c_str(), O_RDWR | O_CLOEXEC, 0,
+        [this, path, cb = std::move(cb)](int result) {
+            if (result < 0) {
+                cb(-result);
+                return;
+            }
 
-    rawstd_info("fd %d: Connected\n", fd);
-    set_fd(fd);
+            rawstd_info("fd %d: Connected\n", result);
+            set_fd(result);
+            cb(0);
+        }
+    );
 }
 
 void BlkdevSession::pread(

@@ -325,6 +325,32 @@ int rawstor_object_open(
 ) RAWSTOR_NOEXCEPT;
 
 /**
+ * @brief Asynchronously open an existing object.
+ *
+ * Non-blocking variant of rawstor_object_open(). The operation is driven by
+ * @p queue; @p cb is invoked exactly once from the queue completion context.
+ * On success @p result is 0 and @p object is a valid handle that must be
+ * closed with rawstor_object_close(). On failure @p result is a negative
+ * errno value and @p object is NULL.
+ *
+ * @param queue   I/O queue that drives the operation and subsequent I/O on
+ *                the opened object.
+ * @param target  Target string, see rawstor_object_open().
+ * @param cb      Completion callback.
+ * @param data    Opaque pointer passed to @p cb.
+ *
+ * @return 0 if the operation was started, negative errno otherwise (in which
+ *         case @p cb is never invoked).
+ *
+ * @see rawstor_object_open
+ * @see rawstor_object_close
+ */
+int rawstor_object_open_async(
+    RawIOQueue* queue, const char* target,
+    int (*cb)(RawstorObject* object, int result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
  * @brief Close an opened object and release associated resources.
  *
  * This function closes a RawstorObject handle previously obtained via

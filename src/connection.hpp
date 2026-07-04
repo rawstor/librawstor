@@ -21,14 +21,22 @@ class Session;
 
 class Connection final {
 private:
+    struct OpenState;
+
     rawio::Queue& _queue;
     Object* _object;
 
     std::vector<std::shared_ptr<Session>> _sessions;
     size_t _session_index;
 
-    std::vector<std::shared_ptr<Session>>
-    _open(const rawstd::URI& location, Object* object, size_t nsessions);
+    static void _open_attempt(const std::shared_ptr<OpenState>& st);
+    static void _open_next(const std::shared_ptr<OpenState>& st);
+    static void _open_failed(const std::shared_ptr<OpenState>& st, int error);
+
+    void _open(
+        const rawstd::URI& location, Object* object, size_t nsessions,
+        std::function<void(std::vector<std::shared_ptr<Session>>&&, int)>&& cb
+    );
 
     void
     _op(const char* func_name, size_t size, off_t offset,
@@ -61,11 +69,16 @@ public:
     Connection& operator=(const Connection&) = delete;
 
     std::shared_ptr<Session> get_next_session();
-    void invalidate_session(const std::shared_ptr<Session>& s);
+    void invalidate_session(
+        const std::shared_ptr<Session>& s, std::function<void(int)>&& cb
+    );
 
     const rawstd::URI* location() const noexcept;
 
-    void open(const rawstd::URI& location, Object* object, size_t nsessions);
+    void open(
+        const rawstd::URI& location, Object* object, size_t nsessions,
+        std::function<void(int)>&& cb
+    );
 
     void close();
 

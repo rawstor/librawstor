@@ -20,11 +20,22 @@ class Connection;
 
 class Object final : public RawstorObject {
 private:
+    struct OpenState;
+
     rawio::Queue& _queue;
     RawstdUUID _id;
     std::vector<std::unique_ptr<rawstor::Connection>> _cns;
 
+    Object(rawio::Queue& queue, const std::vector<rawstd::URI>& targets);
+
+    void _open_next(const std::shared_ptr<OpenState>& st);
+
 public:
+    static void open(
+        rawio::Queue& queue, const std::vector<rawstd::URI>& targets,
+        std::function<void(Object*, int)>&& cb
+    );
+
     static void create(
         rawio::Queue& queue, const std::vector<rawstd::URI>& targets,
         const RawstorObjectSpec& sp, std::function<void(int)>&& cb
@@ -45,7 +56,6 @@ public:
     static void
     spec(const std::vector<rawstd::URI>& targets, RawstorObjectSpec* sp);
 
-    Object(rawio::Queue& queue, const std::vector<rawstd::URI>& targets);
     Object(const Object&) = delete;
     Object(Object&&) = delete;
     Object& operator=(const Object&) = delete;

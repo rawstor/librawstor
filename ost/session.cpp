@@ -168,6 +168,14 @@ struct OpCtx {
     std::weak_ptr<int> alive;
 };
 
+struct OpenCtx {
+    RawIOQueue* queue;
+    int fd;
+    uint16_t cid;
+    std::weak_ptr<int> alive;
+    rawstor::ostbackend::Session* session;
+};
+
 int op_complete(int result, void* data) noexcept {
     std::unique_ptr<OpCtx> ctx(static_cast<OpCtx*>(data));
 
@@ -196,7 +204,8 @@ Session::Session(RawIOQueue* queue, Server& server, int fd) :
     _recv_event(nullptr),
     _next(&Session::_recv_head),
     _object(nullptr),
-    _alive(std::make_shared<int>(0)) {
+    _alive(std::make_shared<int>(0)),
+    _open_pending(false) {
     int res = rawio_recv_multishot(
         _queue, _fd, 1u << 17, 64 * 4, sizeof(_request_head), 0, _recv, this,
         &_recv_event
@@ -503,9 +512,48 @@ void Session::_release(
     ctx.release();
 }
 
+int Session::_open_complete(
+    RawstorObject* object, int result, void* data
+) noexcept {
+    std::unique_ptr<OpenCtx> ctx(static_cast<OpenCtx*>(data));
+
+    if (ctx->alive.expired()) {
+        if (object != nullptr) {
+            int res = rawstor_object_close(object);
+            if (res < 0) {
+                rawstd_error(
+                    "Failed to close orphaned object: %s\n", strerror(-res)
+                );
+            }
+        }
+        return 0;
+    }
+
+    ctx->session->_open_pending = false;
+
+    if (result == 0) {
+        ctx->session->_object = object;
+    }
+
+    try {
+        send_response(
+            ctx->queue, ctx->fd, RAWSTOR_CMD_SET_OBJECT, ctx->cid, result, 0
+        );
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+    }
+
+    return 0;
+}
+
 void Session::_set_object(
     const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
 ) {
+    if (_open_pending) {
+        send_response(_queue, _fd, RAWSTOR_CMD_SET_OBJECT, head.cid, -EBUSY, 0);
+        return;
+    }
+
     if (_object != nullptr) {
         int res = rawstor_object_close(_object);
         if (res < 0) {
@@ -519,11 +567,19 @@ void Session::_set_object(
 
     std::vector<rawstd::URI> targets = _targets(uuid);
 
-    int result = rawstor_object_open(
-        _queue, rawstd::URI::uris(targets).c_str(), &_object
-    );
+    auto ctx =
+        std::make_unique<OpenCtx>(OpenCtx{_queue, _fd, head.cid, _alive, this});
 
-    send_response(_queue, _fd, RAWSTOR_CMD_SET_OBJECT, head.cid, result, 0);
+    int res = rawstor_object_open_async(
+        _queue, rawstd::URI::uris(targets).c_str(), _open_complete, ctx.get()
+    );
+    if (res < 0) {
+        send_response(_queue, _fd, RAWSTOR_CMD_SET_OBJECT, head.cid, res, 0);
+        return;
+    }
+
+    _open_pending = true;
+    ctx.release();
 }
 
 void Session::_read(

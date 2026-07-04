@@ -35,44 +35,101 @@ Connection::~Connection() {
     }
 }
 
-std::vector<std::shared_ptr<Session>> Connection::_open(
-    const rawstd::URI& location, Object* object, size_t nsessions
-) {
+/*
+ * Async session opening chain: each attempt creates nsessions sessions and
+ * binds them to the object one by one via async set_object(); on any failure
+ * the whole batch is dropped and the attempt is retried up to
+ * rawstor_opts_io_attempts() times.
+ */
+struct Connection::OpenState {
+    rawio::Queue& queue;
+    rawstd::URI location;
+    Object* object;
+    size_t nsessions;
+    std::function<void(std::vector<std::shared_ptr<Session>>&&, int)> cb;
     std::vector<std::shared_ptr<Session>> sessions;
+    size_t next;
+    unsigned int attempt;
+};
 
-    for (unsigned int attempt = 1; attempt <= rawstor_opts_io_attempts();
-         ++attempt) {
-        try {
-            sessions.clear();
-            sessions.reserve(nsessions);
-            for (size_t i = 0; i < nsessions; ++i) {
-                sessions.push_back(Session::create(_queue, location));
-            }
+void Connection::_open_attempt(const std::shared_ptr<OpenState>& st) {
+    st->sessions.clear();
+    st->next = 0;
 
-            for (std::shared_ptr<Session> s : sessions) {
-                s->set_object(object);
-            }
-
-            break;
-        } catch (const std::exception& e) {
-            if (attempt != rawstor_opts_io_attempts()) {
-                rawstd_warning(
-                    "Open session failed; error: %s; "
-                    "attempt: %d of %d; retrying...\n",
-                    e.what(), attempt, rawstor_opts_io_attempts()
-                );
-            } else {
-                rawstd_warning(
-                    "Open session failed; error: %s; "
-                    "attempt: %d of %d; failing...\n",
-                    e.what(), attempt, rawstor_opts_io_attempts()
-                );
-                throw;
-            }
+    try {
+        st->sessions.reserve(st->nsessions);
+        for (size_t i = 0; i < st->nsessions; ++i) {
+            st->sessions.push_back(Session::create(st->queue, st->location));
         }
+    } catch (const std::system_error& e) {
+        _open_failed(st, e.code().value());
+        return;
+    } catch (const std::bad_alloc& e) {
+        _open_failed(st, ENOMEM);
+        return;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        _open_failed(st, EINVAL);
+        return;
     }
 
-    return sessions;
+    _open_next(st);
+}
+
+void Connection::_open_next(const std::shared_ptr<OpenState>& st) {
+    if (st->next == st->sessions.size()) {
+        st->cb(std::move(st->sessions), 0);
+        return;
+    }
+
+    try {
+        st->sessions[st->next]->set_object(st->object, [st](int error) {
+            if (error) {
+                Connection::_open_failed(st, error);
+                return;
+            }
+            ++st->next;
+            Connection::_open_next(st);
+        });
+    } catch (const std::system_error& e) {
+        _open_failed(st, e.code().value());
+    } catch (const std::bad_alloc& e) {
+        _open_failed(st, ENOMEM);
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        _open_failed(st, EINVAL);
+    }
+}
+
+void Connection::_open_failed(const std::shared_ptr<OpenState>& st, int error) {
+    if (st->attempt != rawstor_opts_io_attempts()) {
+        rawstd_warning(
+            "Open session failed; error: %s; "
+            "attempt: %d of %d; retrying...\n",
+            std::strerror(error), st->attempt, rawstor_opts_io_attempts()
+        );
+        ++st->attempt;
+        _open_attempt(st);
+        return;
+    }
+
+    rawstd_warning(
+        "Open session failed; error: %s; "
+        "attempt: %d of %d; failing...\n",
+        std::strerror(error), st->attempt, rawstor_opts_io_attempts()
+    );
+    st->sessions.clear();
+    st->cb({}, error);
+}
+
+void Connection::_open(
+    const rawstd::URI& location, Object* object, size_t nsessions,
+    std::function<void(std::vector<std::shared_ptr<Session>>&&, int)>&& cb
+) {
+    std::shared_ptr<OpenState> st = std::make_shared<OpenState>(
+        OpenState{_queue, location, object, nsessions, std::move(cb), {}, 0, 1}
+    );
+    _open_attempt(st);
 }
 
 void Connection::_op(
@@ -132,7 +189,26 @@ void Connection::_op(
             );
 
             try {
-                invalidate_session(s);
+                invalidate_session(
+                    s, [this, s, func_name, size, offset, cb, op, attempt,
+                        result](int error) mutable {
+                        if (error) {
+                            rawstd_error(
+                                "IO %s: size = %zu, offset = %jd; "
+                                "reopen failed on %s: %s; "
+                                "attempt %d of %d; failing...\n",
+                                func_name, size, (intmax_t)offset,
+                                s->str().c_str(), std::strerror(error),
+                                attempt + 1, rawstor_opts_io_attempts()
+                            );
+                            (*cb)(result, error);
+                            return;
+                        }
+
+                        _op(func_name, size, offset, std::move(cb), op,
+                            attempt + 1);
+                    }
+                );
             } catch (const std::system_error& e) {
                 (*cb)(result, e.code().value());
                 return;
@@ -147,8 +223,6 @@ void Connection::_op(
                 (*cb)(result, EIO);
                 return;
             }
-
-            _op(func_name, size, offset, std::move(cb), op, attempt + 1);
         }
     );
 }
@@ -166,18 +240,30 @@ std::shared_ptr<Session> Connection::get_next_session() {
     return s;
 }
 
-void Connection::invalidate_session(const std::shared_ptr<Session>& s) {
+void Connection::invalidate_session(
+    const std::shared_ptr<Session>& s, std::function<void(int)>&& cb
+) {
     typename std::vector<std::shared_ptr<Session>>::iterator it =
         std::find(_sessions.begin(), _sessions.end(), s);
 
-    if (it != _sessions.end()) {
-        _sessions.erase(it);
-
-        std::vector<std::shared_ptr<Session>> new_sessions =
-            _open(s->location(), _object, 1);
-
-        _sessions.push_back(new_sessions.front());
+    if (it == _sessions.end()) {
+        cb(0);
+        return;
     }
+
+    _sessions.erase(it);
+
+    _open(
+        s->location(), _object, 1,
+        [this, cb = std::move(cb)](
+            std::vector<std::shared_ptr<Session>>&& sessions, int error
+        ) {
+            if (!error) {
+                _sessions.push_back(sessions.front());
+            }
+            cb(error);
+        }
+    );
 }
 
 const rawstd::URI* Connection::location() const noexcept {
@@ -243,10 +329,21 @@ void Connection::spec(
 }
 
 void Connection::open(
-    const rawstd::URI& location, Object* object, size_t nsessions
+    const rawstd::URI& location, Object* object, size_t nsessions,
+    std::function<void(int)>&& cb
 ) {
-    _sessions = _open(location, object, nsessions);
-    _object = object;
+    _open(
+        location, object, nsessions,
+        [this, object, cb = std::move(cb)](
+            std::vector<std::shared_ptr<Session>>&& sessions, int error
+        ) {
+            if (!error) {
+                _sessions = std::move(sessions);
+                _object = object;
+            }
+            cb(error);
+        }
+    );
 }
 
 void Connection::close() {

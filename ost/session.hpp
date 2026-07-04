@@ -36,6 +36,12 @@ private:
      */
     std::shared_ptr<int> _alive;
 
+    /* An object open is in flight; concurrent SET_OBJECT gets EBUSY. */
+    bool _open_pending;
+
+    static int
+    _open_complete(RawstorObject* object, int result, void* data) noexcept;
+
     static ssize_t _recv(
         const iovec* iov, unsigned int niov, size_t result, int error,
         void* data
