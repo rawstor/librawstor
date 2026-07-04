@@ -1,7 +1,6 @@
 #include "blkdev_session.hpp"
 
 #include "object.hpp"
-#include "worker.hpp"
 
 #include <rawstd/gpp.hpp>
 #include <rawstd/logging.h>
@@ -12,56 +11,147 @@
 #include <linux/fs.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
+#include <sys/timerfd.h>
 #include <sys/types.h>
 #include <sys/uio.h>
 #include <sys/wait.h>
 
 #include <fcntl.h>
+#include <poll.h>
+#include <spawn.h>
 #include <unistd.h>
 
 #include <cerrno>
+#include <cstdint>
 #include <cstring>
 #include <memory>
 #include <vector>
 
+extern char** environ;
+
 namespace {
 
-int run_command(const char* const* argv) {
-    pid_t pid = fork();
-    if (pid < 0) {
-        return -errno;
+/*
+ * Async external command execution: the command is spawned with
+ * posix_spawnp() and its exit is observed by polling a pidfd on the queue,
+ * so nothing ever blocks the event loop and no worker thread is needed.
+ * If wait_path is set, the block device node is then awaited by re-checking
+ * it on a periodic timerfd driven by the same queue.
+ */
+struct CmdState {
+    rawio::Queue& queue;
+    std::vector<std::string> cmd;
+    std::string wait_path;
+    std::function<void(int)> cb;
+    pid_t pid;
+    int pidfd;
+    int timerfd;
+    uint64_t expirations;
+    int elapsed_ms;
+};
+
+const int wait_device_interval_ms = 50;
+const int wait_device_timeout_ms = 5000;
+
+void cmd_finish(const std::shared_ptr<CmdState>& st, int error) {
+    if (st->pidfd != -1) {
+        close(st->pidfd);
+        st->pidfd = -1;
+    }
+    if (st->timerfd != -1) {
+        close(st->timerfd);
+        st->timerfd = -1;
+    }
+    st->cb(error);
+}
+
+bool device_present(const std::string& path) {
+    struct stat sb;
+    return stat(path.c_str(), &sb) == 0 && S_ISBLK(sb.st_mode);
+}
+
+void wait_device_arm(const std::shared_ptr<CmdState>& st);
+
+void wait_device_check(const std::shared_ptr<CmdState>& st) {
+    if (device_present(st->wait_path)) {
+        cmd_finish(st, 0);
+        return;
     }
 
-    if (pid == 0) {
-        execvp(argv[0], const_cast<char* const*>(argv));
-        _exit(127);
+    if (st->elapsed_ms >= wait_device_timeout_ms) {
+        rawstd_error(
+            "Timed out waiting for device %s\n", st->wait_path.c_str()
+        );
+        cmd_finish(st, ETIMEDOUT);
+        return;
     }
 
+    wait_device_arm(st);
+}
+
+void wait_device_arm(const std::shared_ptr<CmdState>& st) {
+    try {
+        st->queue.read(
+            st->timerfd, &st->expirations, sizeof(st->expirations),
+            [st](size_t, int error) {
+                if (error) {
+                    cmd_finish(st, error);
+                    return;
+                }
+                st->elapsed_ms +=
+                    wait_device_interval_ms * static_cast<int>(st->expirations);
+                wait_device_check(st);
+            }
+        );
+    } catch (const std::system_error& e) {
+        cmd_finish(st, e.code().value());
+    }
+}
+
+void wait_device(const std::shared_ptr<CmdState>& st) {
+    if (device_present(st->wait_path)) {
+        cmd_finish(st, 0);
+        return;
+    }
+
+    st->timerfd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
+    if (st->timerfd == -1) {
+        cmd_finish(st, errno);
+        return;
+    }
+
+    itimerspec its = {};
+    its.it_value.tv_nsec = wait_device_interval_ms * 1000000L;
+    its.it_interval.tv_nsec = wait_device_interval_ms * 1000000L;
+    if (timerfd_settime(st->timerfd, 0, &its, nullptr) == -1) {
+        cmd_finish(st, errno);
+        return;
+    }
+
+    wait_device_arm(st);
+}
+
+void reap_child(const std::shared_ptr<CmdState>& st) {
     int status;
-    if (waitpid(pid, &status, 0) < 0) {
-        return -errno;
+    pid_t rc = waitpid(st->pid, &status, WNOHANG);
+    if (rc <= 0) {
+        /* POLLIN on a pidfd implies the child has already exited. */
+        cmd_finish(st, rc < 0 ? errno : EIO);
+        return;
     }
 
     if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-        return -EIO;
+        cmd_finish(st, EIO);
+        return;
     }
 
-    return 0;
-}
-
-int wait_for_device(const std::string& path, int timeout_ms = 5000) {
-    const int interval_ms = 50;
-    struct stat st;
-
-    for (int elapsed = 0; elapsed < timeout_ms; elapsed += interval_ms) {
-        if (stat(path.c_str(), &st) == 0 && S_ISBLK(st.st_mode)) {
-            return 0;
-        }
-        usleep(interval_ms * 1000);
+    if (st->wait_path.empty()) {
+        cmd_finish(st, 0);
+        return;
     }
 
-    rawstd_error("Timed out waiting for device %s\n", path.c_str());
-    return -ETIMEDOUT;
+    wait_device(st);
 }
 
 } // namespace
@@ -76,32 +166,61 @@ void BlkdevSession::run_async(
     std::vector<std::string> cmd, std::string wait_path,
     std::function<void(int)>&& cb
 ) {
-    run_in_worker(
-        _queue,
-        [cmd = std::move(cmd), wait_path = std::move(wait_path)]() -> int {
-            std::vector<const char*> argv;
-            argv.reserve(cmd.size() + 1);
-            for (const auto& s : cmd) {
-                argv.push_back(s.c_str());
-            }
-            argv.push_back(nullptr);
+    std::shared_ptr<CmdState> st = std::make_shared<CmdState>(CmdState{
+        _queue, std::move(cmd), std::move(wait_path), std::move(cb), -1, -1, -1,
+        0, 0
+    });
 
-            int rc = run_command(argv.data());
-            if (rc != 0) {
-                return -rc;
-            }
+    /*
+     * argv only needs to stay valid until posix_spawnp() returns: glibc
+     * spawns with vfork semantics, so the parent resumes after the child
+     * has exec'ed.
+     */
+    std::vector<char*> argv;
+    argv.reserve(st->cmd.size() + 1);
+    for (auto& s : st->cmd) {
+        argv.push_back(s.data());
+    }
+    argv.push_back(nullptr);
 
-            if (!wait_path.empty()) {
-                rc = wait_for_device(wait_path);
-                if (rc != 0) {
-                    return -rc;
-                }
-            }
+    int rc =
+        posix_spawnp(&st->pid, argv[0], nullptr, nullptr, argv.data(), environ);
+    if (rc != 0) {
+        st->cb(rc);
+        return;
+    }
 
-            return 0;
-        },
-        std::move(cb)
-    );
+    st->pidfd = static_cast<int>(syscall(SYS_pidfd_open, st->pid, 0));
+    if (st->pidfd == -1) {
+        /*
+         * Not expected on kernels recent enough for io_uring; reap
+         * synchronously as a last resort so the child does not linger
+         * as a zombie.
+         */
+        int err = errno;
+        int status;
+        waitpid(st->pid, &status, 0);
+        st->cb(err);
+        return;
+    }
+
+    try {
+        st->queue.poll(st->pidfd, POLLIN, [st](int result) {
+            if (result < 0) {
+                cmd_finish(st, -result);
+                return;
+            }
+            reap_child(st);
+        });
+    } catch (const std::system_error& e) {
+        /*
+         * Queue submission failed; reap synchronously as a last resort so
+         * the child does not linger as a zombie.
+         */
+        int status;
+        waitpid(st->pid, &status, 0);
+        cmd_finish(st, e.code().value());
+    }
 }
 
 void BlkdevSession::spec(
