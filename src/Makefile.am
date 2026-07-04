@@ -42,6 +42,8 @@ librawstor_la_SOURCES = blk_session.cpp \
                         list.c \
                         location.cpp \
                         location.hpp \
+                        lvm_session.cpp \
+                        lvm_session.hpp \
                         object.cpp \
                         object.hpp \
                         object_legacy.cpp \
@@ -51,11 +53,15 @@ librawstor_la_SOURCES = blk_session.cpp \
                         opts.h \
                         session.cpp \
                         session.hpp \
+                        subprocess.cpp \
+                        subprocess.hpp \
                         rawstor.cpp \
                         target.cpp \
                         target.hpp \
                         telemetry.cpp \
-                        telemetry.hpp
+                        telemetry.hpp \
+                        zfs_session.cpp \
+                        zfs_session.hpp
 
 librawstor_la_LDFLAGS = -version-info $(LIBRARY_VERSION)
 
