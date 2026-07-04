@@ -46,6 +46,8 @@ librawstor_la_SOURCES = blkdev_session.cpp \
                         opts.h \
                         session.cpp \
                         session.hpp \
+                        worker.cpp \
+                        worker.hpp \
                         zfs_session.cpp \
                         zfs_session.hpp \
                         rawstor.cpp

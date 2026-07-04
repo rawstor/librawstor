@@ -1,6 +1,7 @@
 #include "blkdev_session.hpp"
 
 #include "object.hpp"
+#include "worker.hpp"
 
 #include <rawstd/gpp.hpp>
 #include <rawstd/logging.h>
@@ -21,7 +22,6 @@
 #include <cerrno>
 #include <cstring>
 #include <memory>
-#include <thread>
 #include <vector>
 
 namespace {
@@ -76,60 +76,32 @@ void BlkdevSession::run_async(
     std::vector<std::string> cmd, std::string wait_path,
     std::function<void(int)>&& cb
 ) {
-    int pipe_fds[2];
-    if (pipe2(pipe_fds, O_CLOEXEC) != 0) {
-        cb(errno);
-        return;
-    }
-
-    /*
-     * Register an async read on the pipe's read end.  When the worker thread
-     * finishes and writes the result, the io_uring completion fires cb without
-     * ever having blocked the event loop.
-     */
-    auto result = std::make_shared<int>(0);
-    int rfd = pipe_fds[0];
-    _queue.read(
-        rfd, result.get(), sizeof(*result),
-        [rfd, result, cb = std::move(cb)](size_t bytes, int error) {
-            close(rfd);
-            cb(error || bytes != sizeof(*result) ? (error ? error : EIO)
-                                                 : *result);
-        }
-    );
-
-    /*
-     * Worker thread: builds argv from the string vector, runs the command,
-     * optionally polls for the block device node, then writes the errno result
-     * (0 = success, positive = errno) to the pipe write end and closes it.
-     * Closing the write end is the only action needed to release the pipe;
-     * the read end is owned by the io_uring completion above.
-     */
-    int wfd = pipe_fds[1];
-    std::thread([cmd = std::move(cmd), wait_path = std::move(wait_path),
-                 wfd]() {
-        std::vector<const char*> argv;
-        argv.reserve(cmd.size() + 1);
-        for (const auto& s : cmd) {
-            argv.push_back(s.c_str());
-        }
-        argv.push_back(nullptr);
-
-        int res = 0;
-        int rc = run_command(argv.data());
-        if (rc != 0) {
-            res = -rc;
-        } else if (!wait_path.empty()) {
-            rc = wait_for_device(wait_path);
-            if (rc != 0) {
-                res = -rc;
+    run_in_worker(
+        _queue,
+        [cmd = std::move(cmd), wait_path = std::move(wait_path)]() -> int {
+            std::vector<const char*> argv;
+            argv.reserve(cmd.size() + 1);
+            for (const auto& s : cmd) {
+                argv.push_back(s.c_str());
             }
-        }
+            argv.push_back(nullptr);
 
-        ssize_t n = write(wfd, &res, sizeof(res));
-        (void)n;
-        close(wfd);
-    }).detach();
+            int rc = run_command(argv.data());
+            if (rc != 0) {
+                return -rc;
+            }
+
+            if (!wait_path.empty()) {
+                rc = wait_for_device(wait_path);
+                if (rc != 0) {
+                    return -rc;
+                }
+            }
+
+            return 0;
+        },
+        std::move(cb)
+    );
 }
 
 void BlkdevSession::spec(
