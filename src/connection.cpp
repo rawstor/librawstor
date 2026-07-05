@@ -17,6 +17,7 @@
 #include <stdexcept>
 #include <string>
 
+#include <cerrno>
 #include <cstring>
 
 namespace rawstor {
@@ -24,7 +25,9 @@ namespace rawstor {
 Connection::Connection(rawio::Queue& queue) :
     _queue(queue),
     _object(nullptr),
-    _session_index(0) {
+    _session_index(0),
+    _alive(std::make_shared<int>(0)),
+    _reopens(0) {
 }
 
 Connection::~Connection() {
@@ -266,21 +269,58 @@ void Connection::invalidate_session(
         std::find(_sessions.begin(), _sessions.end(), s);
 
     if (it == _sessions.end()) {
+        /*
+         * The session was already invalidated by a concurrent operation.
+         * If its reopen is still in flight, the session list may be empty;
+         * park the caller until the reopen settles instead of letting it
+         * retry immediately and fail.
+         */
+        if (_reopens > 0) {
+            _reopen_waiters.push_back(std::move(cb));
+            return;
+        }
         cb(0);
         return;
     }
 
     _sessions.erase(it);
+    ++_reopens;
 
+    std::weak_ptr<int> alive = _alive;
     _open(
         s->location(), _object, 1,
-        [this, cb = std::move(cb)](
+        [this, alive, cb = std::move(cb)](
             std::vector<std::shared_ptr<Session>>&& sessions, int error
         ) {
+            /*
+             * The connection may be closed or destroyed while the reopen
+             * is in flight. The error must be nonzero: on zero the caller
+             * would retry the operation on the dead connection.
+             */
+            if (alive.expired()) {
+                cb(error ? error : ECANCELED);
+                return;
+            }
+
+            --_reopens;
             if (!error) {
                 _sessions.push_back(sessions.front());
             }
+
+            /*
+             * The waiters are drained after the last reopen settles; the
+             * swap keeps the vector consistent when a callback re-enters
+             * invalidate_session().
+             */
+            std::vector<std::function<void(int)>> waiters;
+            if (_reopens == 0) {
+                waiters.swap(_reopen_waiters);
+            }
+
             cb(error);
+            for (std::function<void(int)>& w : waiters) {
+                w(error);
+            }
         }
     );
 }
@@ -392,11 +432,16 @@ void Connection::open(
     const rawstd::URI& location, Object* object, size_t nsessions,
     std::function<void(int)>&& cb
 ) {
+    std::weak_ptr<int> alive = _alive;
     _open(
         location, object, nsessions,
-        [this, object, cb = std::move(cb)](
+        [this, alive, object, cb = std::move(cb)](
             std::vector<std::shared_ptr<Session>>&& sessions, int error
         ) {
+            if (alive.expired()) {
+                cb(error ? error : ECANCELED);
+                return;
+            }
             if (!error) {
                 _sessions = std::move(sessions);
                 _object = object;
@@ -407,6 +452,20 @@ void Connection::open(
 }
 
 void Connection::close() {
+    /*
+     * Expire in-flight open/reopen completions and re-arm for a possible
+     * later open. Parked waiters get a terminal error so their operations
+     * do not hang.
+     */
+    _alive = std::make_shared<int>(0);
+    _reopens = 0;
+
+    std::vector<std::function<void(int)>> waiters;
+    waiters.swap(_reopen_waiters);
+    for (std::function<void(int)>& w : waiters) {
+        w(ECANCELED);
+    }
+
     _sessions.clear();
     _object = nullptr;
 }

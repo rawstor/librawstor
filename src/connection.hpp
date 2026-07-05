@@ -29,6 +29,16 @@ private:
     std::vector<std::shared_ptr<Session>> _sessions;
     size_t _session_index;
 
+    /*
+     * Expires on close()/destruction; async open/reopen completions check
+     * it before touching the connection, which may be gone by then.
+     */
+    std::shared_ptr<int> _alive;
+
+    /* In-flight session reopens and operations waiting for them. */
+    unsigned int _reopens;
+    std::vector<std::function<void(int)>> _reopen_waiters;
+
     static void _open_attempt(const std::shared_ptr<OpenState>& st);
     static void _open_next(const std::shared_ptr<OpenState>& st);
     static void _open_set_object(const std::shared_ptr<OpenState>& st);
