@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - `rawstor create`/`list`/`remove`/`show`/`info` against a multi-backend `LOCATION`/`TARGET` (comma-separated URIs) could intermittently fail with "No buffer space available": the CLI's internal I/O queue was sized for a single backend at a time.
+- The same "No buffer space available" (`ENOBUFS`) failure could also surface under a small enough `--queue-size` (io_uring builds only): the submission ring is now flushed and retried instead of failing outright when it's full of not-yet-submitted entries.
 
 ## [0.2.10] - 2026-08-31
 
