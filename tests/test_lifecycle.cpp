@@ -20,7 +20,7 @@ TEST(FileLifecycleTest, create_spec_remove) {
     std::ostringstream oss;
     oss << "file://" << location_path.string();
     rawstd::URI location_uri(oss.str());
-    std::string uuid = "00000000-0000-7000-8000-000000000000";
+    std::string uuid = "00000000-0000-7000-8000-000000000001";
     std::string target = rawstd::URI(location_uri, uuid).str();
 
     RawstorObjectSpec spec{.size = 1ull << 20};
@@ -53,7 +53,7 @@ TEST(FileLifecycleTest, create_at_default_spec_remove) {
     ASSERT_LT((size_t)res, target.size());
     target.resize(res);
 
-    RawstorObjectSpec read_spec;
+    RawstorObjectSpec read_spec = {};
     res = rawstor_object_spec(target.c_str(), &read_spec);
     EXPECT_EQ(res, 0);
     EXPECT_EQ(read_spec.size, (size_t)(1ull << 20));
@@ -69,7 +69,7 @@ TEST(FileLifecycleTest, create_at_spec_remove) {
     oss << "file://" << location_path.string();
     rawstd::URI location_uri(oss.str());
     std::string location = location_uri.str();
-    std::string uuid = "00000000-0000-7000-8000-000000000000";
+    std::string uuid = "00000000-0000-7000-8000-000000000002";
     std::string target(65536, '\0');
 
     RawstorObjectSpec spec{.size = 1ull << 20};
@@ -81,7 +81,7 @@ TEST(FileLifecycleTest, create_at_spec_remove) {
     target.resize(res);
     EXPECT_EQ(target, rawstd::URI(location_uri, uuid).str());
 
-    RawstorObjectSpec read_spec;
+    RawstorObjectSpec read_spec = {};
     res = rawstor_object_spec(target.c_str(), &read_spec);
     EXPECT_EQ(res, 0);
     EXPECT_EQ(read_spec.size, (size_t)(1ull << 20));
@@ -94,7 +94,7 @@ TEST(OstLifecycleTest, create_spec_remove) {
     rawstor::tests::Server server(8753, 256);
 
     rawstd::URI location_uri("ost://127.0.0.1:8753");
-    std::string uuid = "00000000-0000-7000-8000-000000000000";
+    std::string uuid = "00000000-0000-7000-8000-000000000003";
     std::string target = rawstd::URI(location_uri, uuid).str();
 
     {
@@ -165,7 +165,7 @@ TEST(OstLifecycleTest, create_at_default_spec_remove) {
     }
 
     {
-        RawstorObjectSpec read_spec;
+        RawstorObjectSpec read_spec = {};
         int res = rawstor_object_spec(target.c_str(), &read_spec);
         EXPECT_EQ(res, 0);
         // rawstor_object_spec emulated
@@ -183,7 +183,7 @@ TEST(OstLifecycleTest, create_at_spec_remove) {
 
     rawstd::URI location_uri("ost://127.0.0.1:8753");
     std::string location = location_uri.str();
-    std::string uuid = "00000000-0000-7000-8000-000000000000";
+    std::string uuid = "00000000-0000-7000-8000-000000000004";
     std::string target(65536, '\0');
 
     {
@@ -213,7 +213,7 @@ TEST(OstLifecycleTest, create_at_spec_remove) {
     }
 
     {
-        RawstorObjectSpec read_spec;
+        RawstorObjectSpec read_spec = {};
         int res = rawstor_object_spec(target.c_str(), &read_spec);
         EXPECT_EQ(res, 0);
         // rawstor_object_spec emulated
