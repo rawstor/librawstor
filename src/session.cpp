@@ -4,8 +4,10 @@
 #include "file_session.hpp"
 #include "lvm_session.hpp"
 #include "ost_session.hpp"
+#include "worker.hpp"
 #include "zfs_session.hpp"
 
+#include <rawstd/gpp.hpp>
 #include <rawstd/logging.h>
 #include <rawstd/uri.hpp>
 
@@ -61,6 +63,25 @@ std::string Session::str() const {
     std::ostringstream oss;
     oss << "fd " << _fd;
     return oss.str();
+}
+
+void Session::flush(std::function<void(size_t, int)>&& cb) {
+    int fd = _fd;
+    if (fd == -1) {
+        cb(0, EBADF);
+        return;
+    }
+
+    run_in_worker(
+        _queue,
+        [fd]() -> int {
+            if (fdatasync(fd) == -1) {
+                RAWSTD_THROW_ERRNO();
+            }
+            return 0;
+        },
+        [cb = std::move(cb)](int error) { cb(0, error); }
+    );
 }
 
 } // namespace rawstor

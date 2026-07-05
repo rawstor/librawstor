@@ -27,6 +27,7 @@ private:
     union {
         RawstorOSTFrameBasicBody basic;
         RawstorOSTFrameIOBody io;
+        RawstorOSTFrameMetaBody meta;
     } _request_body;
     RawstorObject* _object;
 
@@ -69,6 +70,15 @@ private:
     void _discard(
         const RawstorOSTFrameHead& head, const RawstorOSTFrameIOBody& body
     );
+    void _spec(
+        const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+    );
+    void _set_state(
+        const RawstorOSTFrameHead& head, const RawstorOSTFrameMetaBody& body
+    );
+    void
+    _flush(const RawstorOSTFrameHead& head, const RawstorOSTFrameIOBody& body);
+    void _unknown(const RawstorOSTFrameHead& head);
     std::vector<rawstd::URI> _targets(const RawstdUUID& uuid);
 
 public:

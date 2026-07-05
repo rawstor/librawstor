@@ -25,6 +25,9 @@ extern "C" {
 #define RAWSTOR_CMD_DISCARD 3
 #define RAWSTOR_CMD_ALLOCATE 4
 #define RAWSTOR_CMD_RELEASE 5
+#define RAWSTOR_CMD_SPEC 6
+#define RAWSTOR_CMD_SET_STATE 7
+#define RAWSTOR_CMD_FLUSH 8
 typedef uint16_t RawstorOSTCommandType;
 
 struct RawstorOSTFrameHead {
@@ -59,6 +62,25 @@ struct RawstorOSTFrameIO {
     struct RawstorOSTFrameIOBody body;
 } RAWSTOR_PACKED;
 
+/*
+ * Object metadata: mirror consistency state (see docs/mirroring.md).
+ * sync_id_history length must match RAWSTOR_OBJECT_SYNC_ID_HISTORY.
+ */
+struct RawstorOSTFrameMetaBody {
+    uint8_t obj_id[16];
+    uint64_t size;
+    uint64_t epoch;
+    uint64_t sync_id;
+    uint64_t sync_id_history[4];
+    uint32_t state;
+} RAWSTOR_PACKED;
+
+/* SET_STATE request */
+struct RawstorOSTFrameMeta {
+    struct RawstorOSTFrameHead head;
+    struct RawstorOSTFrameMetaBody body;
+} RAWSTOR_PACKED;
+
 /* response frames */
 struct RawstorOSTFrameResponseBody {
     // TODO: if we send length in res - it should be the same type
@@ -70,6 +92,16 @@ struct RawstorOSTFrameResponseBody {
 struct RawstorOSTFrameResponse {
     struct RawstorOSTFrameHead head;
     struct RawstorOSTFrameResponseBody body;
+} RAWSTOR_PACKED;
+
+/*
+ * SPEC response: standard response followed by the object metadata.
+ * body.hash covers the meta payload.
+ */
+struct RawstorOSTFrameSpecResponse {
+    struct RawstorOSTFrameHead head;
+    struct RawstorOSTFrameResponseBody body;
+    struct RawstorOSTFrameMetaBody meta;
 } RAWSTOR_PACKED;
 
 #ifdef __cplusplus

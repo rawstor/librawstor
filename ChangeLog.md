@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.3.0] - Unreleased
 
+### Added
+
+- [Mirroring design](docs/mirroring.md): failure model, quorum rules and
+  online resync for N-way mirrors.
+- Per-copy object metadata (state/epoch/sync_id/history) in a versioned
+  `.spec` format; legacy size-only records are read and migrated
+  transparently.
+- SPEC, SET_STATE and FLUSH commands in the OST protocol; unknown commands
+  are now answered with `-ENOSYS` before the connection is closed.
+- `rawstor_object_meta`, `rawstor_object_set_state` (sync and async) and
+  `rawstor_object_flush` public API.
+- Durable metadata updates: object create and state changes are fsynced by
+  the file backend.
+
+### Fixed
+
+- `rawstor_object_spec` over `ost://` returns the real object size instead
+  of a hardcoded stub.
+
 ## [0.2.0] - 2026-06-03
 
 ### Added

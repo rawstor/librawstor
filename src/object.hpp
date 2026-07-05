@@ -48,6 +48,14 @@ public:
         rawio::Queue& queue, const std::vector<rawstd::URI>& targets,
         RawstorObjectSpec* sp, std::function<void(int)>&& cb
     );
+    static void meta(
+        rawio::Queue& queue, const std::vector<rawstd::URI>& targets,
+        RawstorObjectMeta* meta, std::function<void(int)>&& cb
+    );
+    static void set_state(
+        rawio::Queue& queue, const std::vector<rawstd::URI>& targets,
+        const RawstorObjectMeta& meta, std::function<void(int)>&& cb
+    );
 
     static void create(
         const std::vector<rawstd::URI>& targets, const RawstorObjectSpec& sp
@@ -55,6 +63,11 @@ public:
     static void remove(const std::vector<rawstd::URI>& targets);
     static void
     spec(const std::vector<rawstd::URI>& targets, RawstorObjectSpec* sp);
+    static void
+    meta(const std::vector<rawstd::URI>& targets, RawstorObjectMeta* meta);
+    static void set_state(
+        const std::vector<rawstd::URI>& targets, const RawstorObjectMeta& meta
+    );
 
     Object(const Object&) = delete;
     Object(Object&&) = delete;
@@ -84,6 +97,8 @@ public:
         const iovec* iov, unsigned int niov, size_t size, off_t offset,
         std::function<void(size_t, int)>&& cb
     );
+
+    void flush(std::function<void(size_t, int)>&& cb);
 };
 
 } // namespace rawstor

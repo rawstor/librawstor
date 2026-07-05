@@ -223,9 +223,9 @@ void BlkdevSession::run_async(
     }
 }
 
-void BlkdevSession::spec(
+void BlkdevSession::meta(
     const RawstdUUID& id,
-    std::function<void(const RawstorObjectSpec&, int)>&& cb
+    std::function<void(const RawstorObjectMeta&, int)>&& cb
 ) {
     /*
      * The path buffer is kept alive by the callback capture: io_uring reads
@@ -254,9 +254,31 @@ void BlkdevSession::spec(
 
             close(result);
 
-            cb(RawstorObjectSpec{size}, 0);
+            /*
+             * Block-device backends have no metadata storage yet: the
+             * device is the object. Report legacy defaults (see the
+             * set_state() note below).
+             */
+            RawstorObjectMeta meta{};
+            meta.size = size;
+            meta.state = RAWSTOR_OBJECT_STATE_CLEAN;
+
+            cb(meta, 0);
         }
     );
+}
+
+void BlkdevSession::set_state(
+    const RawstdUUID&, const RawstorObjectMeta&, std::function<void(int)>&& cb
+) {
+    /*
+     * There is no place to persist the mirror state for a raw block device
+     * yet; candidates are a sidecar file in a configured directory or a
+     * reserved header region on the device (see docs/mirroring.md). Until
+     * one is implemented, blkdev copies cannot participate in mirror state
+     * tracking.
+     */
+    cb(ENOSYS);
 }
 
 void BlkdevSession::set_object(Object* object, std::function<void(int)>&& cb) {

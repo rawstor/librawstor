@@ -192,6 +192,55 @@ int op_complete(int result, void* data) noexcept {
     return 0;
 }
 
+struct SpecCtx {
+    RawIOQueue* queue;
+    int fd;
+    uint16_t cid;
+    std::weak_ptr<int> alive;
+    uint8_t obj_id[16];
+    RawstorObjectMeta meta;
+};
+
+int spec_complete(int result, void* data) noexcept {
+    std::unique_ptr<SpecCtx> ctx(static_cast<SpecCtx*>(data));
+
+    if (ctx->alive.expired()) {
+        return 0;
+    }
+
+    try {
+        /*
+         * The client always reads a full RawstorOSTFrameSpecResponse, so
+         * the meta payload is sent (zeroed) on error too.
+         */
+        RawstorOSTFrameMetaBody body{};
+        memcpy(body.obj_id, ctx->obj_id, sizeof(body.obj_id));
+        if (result == 0) {
+            body.size = ctx->meta.size;
+            body.epoch = ctx->meta.epoch;
+            body.sync_id = ctx->meta.sync_id;
+            memcpy(
+                body.sync_id_history, ctx->meta.sync_id_history,
+                sizeof(body.sync_id_history)
+            );
+            body.state = ctx->meta.state;
+        }
+
+        auto payload =
+            std::make_shared<std::vector<unsigned char>>(sizeof(body));
+        memcpy(payload->data(), &body, sizeof(body));
+
+        send_response(
+            ctx->queue, ctx->fd, RAWSTOR_CMD_SPEC, ctx->cid, result,
+            rawstd_hash_scalar(payload->data(), payload->size()), payload
+        );
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+    }
+
+    return 0;
+}
+
 } // namespace
 
 namespace rawstor {
@@ -300,18 +349,22 @@ Session::_recv_head(const iovec* iov, unsigned int niov, size_t result) {
     case RAWSTOR_CMD_READ:
     case RAWSTOR_CMD_WRITE:
     case RAWSTOR_CMD_DISCARD:
+    case RAWSTOR_CMD_FLUSH:
         return sizeof(RawstorOSTFrameIOBody);
     case RAWSTOR_CMD_SET_OBJECT:
     case RAWSTOR_CMD_ALLOCATE:
     case RAWSTOR_CMD_RELEASE:
+    case RAWSTOR_CMD_SPEC:
         return sizeof(RawstorOSTFrameBasicBody);
+    case RAWSTOR_CMD_SET_STATE:
+        return sizeof(RawstorOSTFrameMetaBody);
     }
 
-    {
-        std::ostringstream oss;
-        oss << "Unexpected command: " << _request_head.cmd;
-        throw std::runtime_error(oss.str());
-    }
+    _unknown(_request_head);
+
+    _next = &Session::_recv_head;
+
+    return sizeof(RawstorOSTFrameHead);
 }
 
 ssize_t
@@ -424,6 +477,60 @@ Session::_recv_body(const iovec* iov, unsigned int niov, size_t result) {
         );
 
         _release(_request_head, _request_body.basic);
+
+        return sizeof(RawstorOSTFrameHead);
+
+    case RAWSTOR_CMD_SPEC:
+        if (result != sizeof(_request_body.basic)) {
+            rawstd_error(
+                "fd %d: Unexpected request body size: %zu != %zu\n", _fd,
+                result, sizeof(_request_body.basic)
+            );
+
+            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+        }
+
+        rawstd_iovec_to_buf(
+            iov, niov, 0, &_request_body.basic, sizeof(_request_body.basic)
+        );
+
+        _spec(_request_head, _request_body.basic);
+
+        return sizeof(RawstorOSTFrameHead);
+
+    case RAWSTOR_CMD_SET_STATE:
+        if (result != sizeof(_request_body.meta)) {
+            rawstd_error(
+                "fd %d: Unexpected request body size: %zu != %zu\n", _fd,
+                result, sizeof(_request_body.meta)
+            );
+
+            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+        }
+
+        rawstd_iovec_to_buf(
+            iov, niov, 0, &_request_body.meta, sizeof(_request_body.meta)
+        );
+
+        _set_state(_request_head, _request_body.meta);
+
+        return sizeof(RawstorOSTFrameHead);
+
+    case RAWSTOR_CMD_FLUSH:
+        if (result != sizeof(_request_body.io)) {
+            rawstd_error(
+                "fd %d: Unexpected request body size: %zu != %zu\n", _fd,
+                result, sizeof(_request_body.io)
+            );
+
+            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+        }
+
+        rawstd_iovec_to_buf(
+            iov, niov, 0, &_request_body.io, sizeof(_request_body.io)
+        );
+
+        _flush(_request_head, _request_body.io);
 
         return sizeof(RawstorOSTFrameHead);
     }
@@ -685,6 +792,137 @@ void Session::_discard(
     const RawstorOSTFrameHead& head, const RawstorOSTFrameIOBody&
 ) {
     send_response(_queue, _fd, RAWSTOR_CMD_DISCARD, head.cid, -ENOSYS, 0);
+}
+
+void Session::_spec(
+    const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+) {
+    RawstdUUID uuid;
+    memcpy(uuid.bytes, body.obj_id, sizeof(body.obj_id));
+
+    std::vector<rawstd::URI> targets = _targets(uuid);
+
+    auto ctx = std::make_unique<SpecCtx>();
+    ctx->queue = _queue;
+    ctx->fd = _fd;
+    ctx->cid = head.cid;
+    ctx->alive = _alive;
+    memcpy(ctx->obj_id, body.obj_id, sizeof(ctx->obj_id));
+
+    int res = rawstor_object_meta_async(
+        _queue, rawstd::URI::uris(targets).c_str(), &ctx->meta, spec_complete,
+        ctx.get()
+    );
+    if (res < 0) {
+        spec_complete(res, ctx.release());
+        return;
+    }
+
+    ctx.release();
+}
+
+void Session::_set_state(
+    const RawstorOSTFrameHead& head, const RawstorOSTFrameMetaBody& body
+) {
+    RawstdUUID uuid;
+    memcpy(uuid.bytes, body.obj_id, sizeof(body.obj_id));
+
+    RawstorObjectMeta meta{};
+    meta.size = body.size;
+    meta.epoch = body.epoch;
+    meta.sync_id = body.sync_id;
+    memcpy(
+        meta.sync_id_history, body.sync_id_history, sizeof(meta.sync_id_history)
+    );
+    meta.state = body.state;
+
+    std::vector<rawstd::URI> targets = _targets(uuid);
+
+    auto ctx = std::make_unique<OpCtx>(
+        OpCtx{_queue, _fd, RAWSTOR_CMD_SET_STATE, head.cid, _alive}
+    );
+
+    int res = rawstor_object_set_state_async(
+        _queue, rawstd::URI::uris(targets).c_str(), &meta, op_complete,
+        ctx.get()
+    );
+    if (res < 0) {
+        send_response(_queue, _fd, RAWSTOR_CMD_SET_STATE, head.cid, res, 0);
+        return;
+    }
+
+    ctx.release();
+}
+
+void Session::_flush(
+    const RawstorOSTFrameHead& head, const RawstorOSTFrameIOBody&
+) {
+    if (_object == nullptr) {
+        send_response(_queue, _fd, RAWSTOR_CMD_FLUSH, head.cid, -EBADF, 0);
+        return;
+    }
+
+    auto cb = std::make_unique<Callback>(
+        [queue = _queue, fd = _fd,
+         cid = head.cid](RawstorObject*, size_t, size_t, int error) {
+            try {
+                send_response(
+                    queue, fd, RAWSTOR_CMD_FLUSH, cid, error ? -error : 0, 0
+                );
+            } catch (const std::exception& e) {
+                rawstd_error("%s\n", e.what());
+            }
+        }
+    );
+
+    int res = rawstor_object_flush(_object, callback, cb.get());
+    if (res < 0) {
+        rawstd_warning("%s\n", strerror(-res));
+        send_response(_queue, _fd, RAWSTOR_CMD_FLUSH, head.cid, res, 0);
+    } else {
+        cb.release();
+    }
+}
+
+void Session::_unknown(const RawstorOSTFrameHead& head) {
+    rawstd_error("fd %d: Unexpected command: %u\n", _fd, head.cmd);
+
+    /*
+     * The body length of an unknown command is unknown, so the stream
+     * position is lost: answer -ENOSYS and close the session once the
+     * response is flushed.
+     */
+    auto response =
+        std::make_shared<RawstorOSTFrameResponse>((RawstorOSTFrameResponse){
+            .head =
+                {
+                    .magic = RAWSTOR_MAGIC,
+                    .cmd = head.cmd,
+                    .cid = head.cid,
+                },
+            .body = {
+                .res = -ENOSYS,
+                .hash = 0,
+            },
+        });
+
+    auto cb = std::make_unique<IOCallback>([server = &_server, fd = _fd,
+                                            alive = std::weak_ptr<int>(_alive),
+                                            response](size_t, int) {
+        if (alive.expired()) {
+            return;
+        }
+        server->del_session(fd);
+    });
+
+    int res = rawio_write(
+        _queue, _fd, response.get(), sizeof(*response), io_callback, cb.get()
+    );
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+
+    cb.release();
 }
 
 std::vector<rawstd::URI> Session::_targets(const RawstdUUID& uuid) {

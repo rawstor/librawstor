@@ -58,12 +58,28 @@ public:
     virtual void
     remove(const RawstdUUID& id, std::function<void(int)>&& cb) = 0;
 
-    virtual void spec(
+    virtual void meta(
         const RawstdUUID& id,
-        std::function<void(const RawstorObjectSpec&, int)>&& cb
+        std::function<void(const RawstorObjectMeta&, int)>&& cb
+    ) = 0;
+
+    /*
+     * Persists the mirror consistency state of the object durably (synced
+     * to stable storage before cb fires). The size field of meta is ignored:
+     * the stored size is preserved.
+     */
+    virtual void set_state(
+        const RawstdUUID& id, const RawstorObjectMeta& meta,
+        std::function<void(int)>&& cb
     ) = 0;
 
     virtual void set_object(Object* object, std::function<void(int)>&& cb) = 0;
+
+    /*
+     * Syncs completed writes of the bound object to stable storage. The
+     * default implementation runs fdatasync(fd()) in a worker thread.
+     */
+    virtual void flush(std::function<void(size_t, int)>&& cb);
 
     virtual void pread(
         void* buf, size_t size, off_t offset,

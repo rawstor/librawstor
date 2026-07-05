@@ -68,9 +68,14 @@ public:
         std::function<void(int)>&& cb
     );
 
-    static void spec(
+    static void meta(
         rawio::Queue& queue, const rawstd::URI& target,
-        std::function<void(const RawstorObjectSpec&, int)>&& cb
+        std::function<void(const RawstorObjectMeta&, int)>&& cb
+    );
+
+    static void set_state(
+        rawio::Queue& queue, const rawstd::URI& target,
+        const RawstorObjectMeta& meta, std::function<void(int)>&& cb
     );
 
     explicit Connection(rawio::Queue& queue);
@@ -112,6 +117,8 @@ public:
         const iovec* iov, unsigned int niov, size_t size, off_t offset,
         std::function<void(size_t, int)>&& cb
     );
+
+    void flush(std::function<void(size_t, int)>&& cb);
 };
 
 } // namespace rawstor

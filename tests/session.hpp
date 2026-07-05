@@ -1,6 +1,8 @@
 #ifndef RAWSTOR_TESTS_SESSION_HPP
 #define RAWSTOR_TESTS_SESSION_HPP
 
+#include <rawstor/protocol.h>
+
 #include <unistd.h>
 
 #include <cstdint>
@@ -48,6 +50,24 @@ public:
     void cmd_write_request(size_t size);
     void cmd_write_response(uint32_t magic, uint16_t cid, int32_t res);
     void cmd_write(uint32_t magic, uint16_t cid, int32_t res);
+
+    void cmd_spec_request();
+    void cmd_spec_response(
+        uint32_t magic, uint16_t cid, int32_t res,
+        const RawstorOSTFrameMetaBody& meta
+    );
+    void cmd_spec(
+        uint32_t magic, uint16_t cid, int32_t res,
+        const RawstorOSTFrameMetaBody& meta
+    );
+
+    void cmd_set_state_request();
+    void cmd_set_state_response(uint32_t magic, uint16_t cid, int32_t res);
+    void cmd_set_state(uint32_t magic, uint16_t cid, int32_t res);
+
+    void cmd_flush_request();
+    void cmd_flush_response(uint32_t magic, uint16_t cid, int32_t res);
+    void cmd_flush(uint32_t magic, uint16_t cid, int32_t res);
 };
 
 } // namespace tests

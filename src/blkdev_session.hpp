@@ -14,9 +14,9 @@ namespace rawstor {
  *
  * Subclasses implement device_path() to map a UUID to a block device node,
  * and create()/remove() to provision/deprovision that device.
- * All I/O (pread/pwrite) and spec (BLKGETSIZE64) are handled here.
+ * All I/O (pread/pwrite) and meta (BLKGETSIZE64) are handled here.
  *
- * spec() reports the actual device size: LVM rounds the requested size up
+ * meta() reports the actual device size: LVM rounds the requested size up
  * to the VG extent size, and zfs-create(8) rejects sizes that are not a
  * multiple of volblocksize. The file backend reports the requested size
  * verbatim, so the specs of a mixed file/blkdev mirror may disagree.
@@ -40,9 +40,14 @@ protected:
 public:
     BlkdevSession(rawio::Queue& queue, const rawstd::URI& location);
 
-    void spec(
+    void meta(
         const RawstdUUID& id,
-        std::function<void(const RawstorObjectSpec&, int)>&& cb
+        std::function<void(const RawstorObjectMeta&, int)>&& cb
+    ) override;
+
+    void set_state(
+        const RawstdUUID& id, const RawstorObjectMeta& meta,
+        std::function<void(int)>&& cb
     ) override;
 
     void set_object(Object* object, std::function<void(int)>&& cb) override;

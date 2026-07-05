@@ -231,6 +231,54 @@ void remove_next(const std::shared_ptr<RemoveState>& st) {
     }
 }
 
+/*
+ * Async multi-target set_state: the state is persisted on every target even
+ * if some of them fail; cb is invoked with the first error encountered, if
+ * any.
+ */
+struct SetStateState {
+    rawio::Queue& queue;
+    std::vector<rawstd::URI> targets;
+    RawstorObjectMeta meta;
+    std::function<void(int)> cb;
+    size_t next;
+    int error;
+};
+
+void set_state_next(const std::shared_ptr<SetStateState>& st);
+
+void set_state_done(const std::shared_ptr<SetStateState>& st, int error) {
+    if (error) {
+        rawstd_error("%s\n", strerror(error));
+        if (st->error == 0) {
+            st->error = error;
+        }
+    }
+    ++st->next;
+    set_state_next(st);
+}
+
+void set_state_next(const std::shared_ptr<SetStateState>& st) {
+    if (st->next == st->targets.size()) {
+        st->cb(st->error);
+        return;
+    }
+
+    try {
+        rawstor::Connection::set_state(
+            st->queue, st->targets[st->next], st->meta,
+            [st](int error) { set_state_done(st, error); }
+        );
+    } catch (const std::system_error& e) {
+        set_state_done(st, e.code().value());
+    } catch (const std::bad_alloc& e) {
+        set_state_done(st, ENOMEM);
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        set_state_done(st, EINVAL);
+    }
+}
+
 } // namespace
 
 namespace rawstor {
@@ -347,15 +395,48 @@ void Object::spec(
     validate_different_uris(targets);
     validate_same_uuid(targets);
 
-    rawstor::Connection::spec(
+    rawstor::Connection::meta(
         queue, targets.front(),
-        [sp, cb = std::move(cb)](const RawstorObjectSpec& spec, int error) {
+        [sp, cb = std::move(cb)](const RawstorObjectMeta& meta, int error) {
             if (!error) {
-                *sp = spec;
+                sp->size = meta.size;
             }
             cb(error);
         }
     );
+}
+
+void Object::meta(
+    rawio::Queue& queue, const std::vector<rawstd::URI>& targets,
+    RawstorObjectMeta* meta, std::function<void(int)>&& cb
+) {
+    validate_not_empty(targets);
+    validate_different_uris(targets);
+    validate_same_uuid(targets);
+
+    rawstor::Connection::meta(
+        queue, targets.front(),
+        [meta, cb = std::move(cb)](const RawstorObjectMeta& m, int error) {
+            if (!error) {
+                *meta = m;
+            }
+            cb(error);
+        }
+    );
+}
+
+void Object::set_state(
+    rawio::Queue& queue, const std::vector<rawstd::URI>& targets,
+    const RawstorObjectMeta& meta, std::function<void(int)>&& cb
+) {
+    validate_not_empty(targets);
+    validate_different_uris(targets);
+    validate_same_uuid(targets);
+
+    std::shared_ptr<SetStateState> st = std::make_shared<SetStateState>(
+        SetStateState{queue, targets, meta, std::move(cb), 0, 0}
+    );
+    set_state_next(st);
 }
 
 void Object::create(
@@ -399,6 +480,42 @@ void Object::spec(
     int result = 0;
 
     spec(q.queue(), targets, sp, [&q, &result](int error) {
+        q.sub_operation();
+        result = error;
+    });
+
+    q.wait();
+
+    if (result) {
+        RAWSTD_THROW_SYSTEM_ERROR(result);
+    }
+}
+
+void Object::meta(
+    const std::vector<rawstd::URI>& targets, RawstorObjectMeta* m
+) {
+    Queue q(1);
+    int result = 0;
+
+    meta(q.queue(), targets, m, [&q, &result](int error) {
+        q.sub_operation();
+        result = error;
+    });
+
+    q.wait();
+
+    if (result) {
+        RAWSTD_THROW_SYSTEM_ERROR(result);
+    }
+}
+
+void Object::set_state(
+    const std::vector<rawstd::URI>& targets, const RawstorObjectMeta& m
+) {
+    Queue q(1);
+    int result = 0;
+
+    set_state(q.queue(), targets, m, [&q, &result](int error) {
         q.sub_operation();
         result = error;
     });
@@ -560,6 +677,37 @@ void Object::pwritev(
                 }
             }
         );
+    }
+}
+
+void Object::flush(std::function<void(size_t, int)>&& cb) {
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('o', "%s\n", "flush()");
+
+    struct Operation {
+        size_t mirrors;
+        int error;
+        std::function<void(size_t, int)> cb;
+    };
+
+    std::shared_ptr<Operation> op = std::make_shared<Operation>(
+        (Operation){.mirrors = _cns.size(), .error = 0, .cb = std::move(cb)}
+    );
+
+    for (auto& cn : _cns) {
+        cn->flush([op, trace_event](size_t, int error) {
+            RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "error = %d\n", error);
+
+            --op->mirrors;
+
+            if (error) {
+                rawstd_error("%s\n", strerror(error));
+                op->error = EIO;
+            }
+
+            if (op->mirrors == 0) {
+                op->cb(0, op->error);
+            }
+        });
     }
 }
 
@@ -726,6 +874,88 @@ int rawstor_object_remove(const char* target) noexcept {
 int rawstor_object_spec(const char* target, RawstorObjectSpec* sp) noexcept {
     try {
         rawstor::Object::spec(rawstd::URI::uriv(target), sp);
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+int rawstor_object_meta(const char* target, RawstorObjectMeta* meta) noexcept {
+    try {
+        rawstor::Object::meta(rawstd::URI::uriv(target), meta);
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+int rawstor_object_meta_async(
+    RawIOQueue* queue, const char* target, RawstorObjectMeta* meta,
+    int (*cb)(int result, void* data), void* data
+) noexcept {
+    try {
+        rawstor::Object::meta(
+            *static_cast<rawio::Queue*>(queue), rawstd::URI::uriv(target), meta,
+            [cb, data](int error) { cb(error ? -error : 0, data); }
+        );
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+int rawstor_object_set_state(
+    const char* target, const RawstorObjectMeta* meta
+) noexcept {
+    try {
+        rawstor::Object::set_state(rawstd::URI::uriv(target), *meta);
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+int rawstor_object_set_state_async(
+    RawIOQueue* queue, const char* target, const RawstorObjectMeta* meta,
+    int (*cb)(int result, void* data), void* data
+) noexcept {
+    try {
+        rawstor::Object::set_state(
+            *static_cast<rawio::Queue*>(queue), rawstd::URI::uriv(target),
+            *meta, [cb, data](int error) { cb(error ? -error : 0, data); }
+        );
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -966,6 +1196,32 @@ int rawstor_object_pwritev(
             iov, niov, size, offset,
             [object, size, cb, data](size_t result, int error) {
                 int res = cb(object, size, result, error, data);
+                if (res < 0) {
+                    RAWSTD_THROW_SYSTEM_ERROR(-res);
+                }
+            }
+        );
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+int rawstor_object_flush(
+    RawstorObject* object, RawstorCallback* cb, void* data
+) noexcept {
+    try {
+        static_cast<rawstor::Object*>(object)->flush(
+            [object, cb, data](size_t result, int error) {
+                int res = cb(object, 0, result, error, data);
                 if (res < 0) {
                     RAWSTD_THROW_SYSTEM_ERROR(-res);
                 }

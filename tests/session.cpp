@@ -187,5 +187,94 @@ void Session::cmd_write(uint32_t magic, uint16_t cid, int32_t res) {
     cmd_write_response(magic, cid, res);
 }
 
+void Session::cmd_spec_request() {
+    _server.read(
+        "RAWSTOR_CMD_SPEC <<<", sizeof(RawstorOSTFrameBasic), [](const void*) {}
+    );
+}
+
+void Session::cmd_spec_response(
+    uint32_t magic, uint16_t cid, int32_t res,
+    const RawstorOSTFrameMetaBody& meta
+) {
+    RawstorOSTFrameSpecResponse response = {
+        .head{
+            .magic = magic,
+            .cmd = RAWSTOR_CMD_SPEC,
+            .cid = cid,
+        },
+        .body =
+            {
+                .res = res,
+                .hash = rawstd_hash_scalar(&meta, sizeof(meta)),
+            },
+        .meta = meta,
+    };
+    _server.write("RAWSTOR_CMD_SPEC >>>", &response, sizeof(response));
+}
+
+void Session::cmd_spec(
+    uint32_t magic, uint16_t cid, int32_t res,
+    const RawstorOSTFrameMetaBody& meta
+) {
+    cmd_spec_request();
+    cmd_spec_response(magic, cid, res, meta);
+}
+
+void Session::cmd_set_state_request() {
+    _server.read(
+        "RAWSTOR_CMD_SET_STATE <<<", sizeof(RawstorOSTFrameMeta),
+        [](const void*) {}
+    );
+}
+
+void Session::cmd_set_state_response(
+    uint32_t magic, uint16_t cid, int32_t res
+) {
+    RawstorOSTFrameResponse response = {
+        .head{
+            .magic = magic,
+            .cmd = RAWSTOR_CMD_SET_STATE,
+            .cid = cid,
+        },
+        .body = {
+            .res = res,
+            .hash = 0,
+        },
+    };
+    _server.write("RAWSTOR_CMD_SET_STATE >>>", &response, sizeof(response));
+}
+
+void Session::cmd_set_state(uint32_t magic, uint16_t cid, int32_t res) {
+    cmd_set_state_request();
+    cmd_set_state_response(magic, cid, res);
+}
+
+void Session::cmd_flush_request() {
+    _server.read(
+        "RAWSTOR_CMD_FLUSH <<<", sizeof(RawstorOSTFrameIO), [](const void*) {}
+    );
+}
+
+void Session::cmd_flush_response(uint32_t magic, uint16_t cid, int32_t res) {
+    RawstorOSTFrameResponse response = {
+        .head{
+            .magic = magic,
+            .cmd = RAWSTOR_CMD_FLUSH,
+            .cid = cid,
+        },
+        .body = {
+            .res = res,
+            .hash = 0,
+        },
+    };
+    _server.write("RAWSTOR_CMD_FLUSH >>>", &response, sizeof(response));
+}
+
+void Session::cmd_flush(uint32_t magic, uint16_t cid, int32_t res) {
+    cmd_flush_request();
+    cmd_flush_response(magic, cid, res);
+}
+
 } // namespace tests
 } // namespace rawstor

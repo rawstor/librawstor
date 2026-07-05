@@ -25,9 +25,14 @@ public:
 
     void remove(const RawstdUUID& id, std::function<void(int)>&& cb) override;
 
-    void spec(
+    void meta(
         const RawstdUUID& id,
-        std::function<void(const RawstorObjectSpec&, int)>&& cb
+        std::function<void(const RawstorObjectMeta&, int)>&& cb
+    ) override;
+
+    void set_state(
+        const RawstdUUID& id, const RawstorObjectMeta& meta,
+        std::function<void(int)>&& cb
     ) override;
 
     void set_object(Object* object, std::function<void(int)>&& cb) override;

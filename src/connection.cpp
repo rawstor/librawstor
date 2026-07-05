@@ -395,9 +395,9 @@ void Connection::remove(
     });
 }
 
-void Connection::spec(
+void Connection::meta(
     rawio::Queue& queue, const rawstd::URI& target,
-    std::function<void(const RawstorObjectSpec&, int)>&& cb
+    std::function<void(const RawstorObjectMeta&, int)>&& cb
 ) {
     RawstdUUID id;
     int res = rawstd_uuid_from_string(&id, target.path().filename().c_str());
@@ -414,8 +414,8 @@ void Connection::spec(
         }
 
         try {
-            s->spec(id, [s, cb](const RawstorObjectSpec& spec, int error) {
-                cb(spec, error);
+            s->meta(id, [s, cb](const RawstorObjectMeta& meta, int error) {
+                cb(meta, error);
             });
         } catch (const std::system_error& e) {
             cb({}, e.code().value());
@@ -424,6 +424,38 @@ void Connection::spec(
         } catch (const std::exception& e) {
             rawstd_error("%s\n", e.what());
             cb({}, EINVAL);
+        }
+    });
+}
+
+void Connection::set_state(
+    rawio::Queue& queue, const rawstd::URI& target,
+    const RawstorObjectMeta& meta, std::function<void(int)>&& cb
+) {
+    RawstdUUID id;
+    int res = rawstd_uuid_from_string(&id, target.path().filename().c_str());
+    if (res) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+
+    std::shared_ptr<Session> s = Session::create(queue, target.parent());
+    Session* session = s.get();
+    session->connect([s = std::move(s), id, meta,
+                      cb = std::move(cb)](int error) {
+        if (error) {
+            cb(error);
+            return;
+        }
+
+        try {
+            s->set_state(id, meta, [s, cb](int error) { cb(error); });
+        } catch (const std::system_error& e) {
+            cb(e.code().value());
+        } catch (const std::bad_alloc& e) {
+            cb(ENOMEM);
+        } catch (const std::exception& e) {
+            rawstd_error("%s\n", e.what());
+            cb(EINVAL);
         }
     });
 }
@@ -527,6 +559,18 @@ void Connection::pwritev(
         ) { s->pwritev(iov, niov, size, offset, std::move(cb)); }
     );
     _op(__FUNCTION__, size, offset, cbptr, opptr, 0);
+}
+
+void Connection::flush(std::function<void(size_t, int)>&& cb) {
+    auto cbptr =
+        std::make_shared<std::function<void(size_t, int)>>(std::move(cb));
+    auto opptr = std::make_shared<std::function<
+        void(std::shared_ptr<Session>, std::function<void(size_t, int)>&&)>>(
+        [](std::shared_ptr<Session> s, std::function<void(size_t, int)>&& cb) {
+            s->flush(std::move(cb));
+        }
+    );
+    _op(__FUNCTION__, 0, 0, cbptr, opptr, 0);
 }
 
 } // namespace rawstor
