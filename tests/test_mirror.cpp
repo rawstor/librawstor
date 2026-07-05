@@ -1,0 +1,544 @@
+#include "server.hpp"
+#include "session.hpp"
+
+#include <rawstd/gpp.hpp>
+#include <rawstd/logging.h>
+
+#include <rawstor/object.h>
+#include <rawstor/protocol.h>
+
+#include <gtest/gtest.h>
+
+#include <cerrno>
+#include <cstring>
+#include <filesystem>
+#include <functional>
+#include <memory>
+#include <sstream>
+#include <string>
+#include <vector>
+
+namespace {
+
+namespace fs = std::filesystem;
+
+int callback(RawstorObject*, size_t, size_t result, int error, void* data) {
+    std::unique_ptr<std::function<void(size_t, int)>> cb(
+        static_cast<std::function<void(size_t, int)>*>(data)
+    );
+    try {
+        (*cb)(result, error);
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::exception& e) {
+        rawstd_error("Unexpected error: %s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+class Queue {
+private:
+    RawIOQueue* _queue;
+
+public:
+    Queue(unsigned int size) : _queue(nullptr) {
+        int res = rawio_queue_create(size, &_queue);
+        if (res < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
+        }
+    }
+    Queue(const Queue&) = delete;
+    Queue(Queue&&) = delete;
+
+    ~Queue() { rawio_queue_delete(_queue); }
+
+    Queue& operator=(const Queue&) = delete;
+    Queue& operator=(Queue&&) = delete;
+    operator RawIOQueue*() noexcept { return _queue; }
+
+    void wait() {
+        int res = rawio_wait(_queue);
+        if (res < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
+        }
+    }
+};
+
+/*
+ * File-backed mirror arms in per-arm temp directories, sharing one UUID.
+ */
+class Arms {
+private:
+    std::vector<fs::path> _dirs;
+    std::string _uuid;
+
+public:
+    Arms(size_t n, const std::string& uuid) : _uuid(uuid) {
+        for (size_t i = 0; i < n; ++i) {
+            std::ostringstream oss;
+            oss << "test_mirror_arm" << i;
+            fs::path dir = fs::temp_directory_path() / oss.str();
+            fs::remove_all(dir);
+            _dirs.push_back(dir);
+        }
+    }
+
+    ~Arms() {
+        for (const fs::path& dir : _dirs) {
+            std::error_code ec;
+            fs::remove_all(dir, ec);
+        }
+    }
+
+    std::string target(size_t i) const {
+        std::ostringstream oss;
+        oss << "file://" << (_dirs[i] / _uuid).string();
+        return oss.str();
+    }
+
+    std::string target_all() const {
+        std::ostringstream oss;
+        for (size_t i = 0; i < _dirs.size(); ++i) {
+            if (i != 0) {
+                oss << ",";
+            }
+            oss << target(i);
+        }
+        return oss.str();
+    }
+
+    void drop(size_t i) const { fs::remove_all(_dirs[i]); }
+};
+
+void object_write(
+    Queue& queue, RawstorObject* object, const void* buf, size_t size,
+    off_t offset, int expected_error
+) {
+    bool completed = false;
+    auto cb = std::make_unique<std::function<void(size_t, int)>>(
+        [&completed, size, expected_error](size_t result, int error) {
+            EXPECT_EQ(error, expected_error);
+            if (!expected_error) {
+                EXPECT_EQ(result, size);
+            }
+            completed = true;
+        }
+    );
+    int res =
+        rawstor_object_pwrite(object, buf, size, offset, callback, cb.get());
+    ASSERT_EQ(res, 0);
+    cb.release();
+
+    while (!completed) {
+        queue.wait();
+    }
+}
+
+void object_read(
+    Queue& queue, RawstorObject* object, void* buf, size_t size, off_t offset
+) {
+    bool completed = false;
+    auto cb = std::make_unique<std::function<void(size_t, int)>>(
+        [&completed, size](size_t result, int error) {
+            EXPECT_EQ(error, 0);
+            EXPECT_EQ(result, size);
+            completed = true;
+        }
+    );
+    int res =
+        rawstor_object_pread(object, buf, size, offset, callback, cb.get());
+    ASSERT_EQ(res, 0);
+    cb.release();
+
+    while (!completed) {
+        queue.wait();
+    }
+}
+
+int close_cb(int result, void* data) {
+    *static_cast<int*>(data) = result ? result : 1;
+    return 0;
+}
+
+void object_close_clean(Queue& queue, RawstorObject* object) {
+    int done = 0;
+    int res = rawstor_object_close_async(object, close_cb, &done);
+    ASSERT_EQ(res, 0);
+    while (!done) {
+        queue.wait();
+    }
+    EXPECT_EQ(done, 1);
+}
+
+TEST(MirrorQuorumTest, open_refused_without_quorum_n2) {
+    Arms arms(2, "00000000-0000-7000-8000-0000000000a0");
+
+    RawstorObjectSpec spec{.size = 1ull << 20};
+    ASSERT_EQ(rawstor_object_create(arms.target_all().c_str(), &spec), 0);
+
+    arms.drop(1);
+
+    Queue queue(16);
+    RawstorObject* object = nullptr;
+    int res = rawstor_object_open(queue, arms.target_all().c_str(), &object);
+    EXPECT_EQ(res, -ENOTCONN);
+    EXPECT_EQ(object, nullptr);
+}
+
+TEST(MirrorQuorumTest, degraded_open_with_quorum_n3) {
+    Arms arms(3, "00000000-0000-7000-8000-0000000000a1");
+
+    RawstorObjectSpec spec{.size = 1ull << 20};
+    ASSERT_EQ(rawstor_object_create(arms.target_all().c_str(), &spec), 0);
+
+    arms.drop(2);
+
+    Queue queue(16);
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(
+        rawstor_object_open(queue, arms.target_all().c_str(), &object), 0
+    );
+
+    std::string ping = "ping";
+    object_write(queue, object, ping.data(), ping.size(), 0, 0);
+    object_close_clean(queue, object);
+
+    /* The survivors got a fresh sync set; both are CLEAN and identical. */
+    RawstorObjectMeta a{};
+    RawstorObjectMeta b{};
+    ASSERT_EQ(rawstor_object_meta(arms.target(0).c_str(), &a), 0);
+    ASSERT_EQ(rawstor_object_meta(arms.target(1).c_str(), &b), 0);
+    EXPECT_EQ(a.state, RAWSTOR_OBJECT_STATE_CLEAN);
+    EXPECT_EQ(b.state, RAWSTOR_OBJECT_STATE_CLEAN);
+    EXPECT_NE(a.sync_id, 0u);
+    EXPECT_EQ(a.sync_id, b.sync_id);
+    EXPECT_EQ(a.epoch, 1u);
+    EXPECT_EQ(b.epoch, 1u);
+
+    /* Both survivors carry the data. */
+    for (size_t i = 0; i < 2; ++i) {
+        RawstorObject* arm = nullptr;
+        ASSERT_EQ(rawstor_object_open(queue, arms.target(i).c_str(), &arm), 0);
+        std::string data(4, '\0');
+        object_read(queue, arm, data.data(), data.size(), 0);
+        EXPECT_EQ(data, "ping");
+        EXPECT_EQ(rawstor_object_close(arm), 0);
+    }
+}
+
+TEST(MirrorQuorumTest, stale_arm_excluded) {
+    Arms arms(2, "00000000-0000-7000-8000-0000000000a2");
+
+    RawstorObjectSpec spec{.size = 1ull << 20};
+    ASSERT_EQ(rawstor_object_create(arms.target_all().c_str(), &spec), 0);
+
+    /* Arm 0 is one sync set ahead of arm 1. */
+    RawstorObjectMeta fresh{};
+    fresh.epoch = 2;
+    fresh.sync_id = 0x1111111111111111ull;
+    fresh.sync_id_history[0] = 0x2222222222222222ull;
+    fresh.state = RAWSTOR_OBJECT_STATE_CLEAN;
+    ASSERT_EQ(rawstor_object_set_state(arms.target(0).c_str(), &fresh), 0);
+
+    RawstorObjectMeta stale{};
+    stale.epoch = 1;
+    stale.sync_id = 0x2222222222222222ull;
+    stale.state = RAWSTOR_OBJECT_STATE_CLEAN;
+    ASSERT_EQ(rawstor_object_set_state(arms.target(1).c_str(), &stale), 0);
+
+    Queue queue(16);
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(
+        rawstor_object_open(queue, arms.target_all().c_str(), &object), 0
+    );
+
+    std::string ping = "ping";
+    object_write(queue, object, ping.data(), ping.size(), 0, 0);
+    object_close_clean(queue, object);
+
+    /* The fresh arm moved on (membership changed), the stale one did not. */
+    RawstorObjectMeta a{};
+    RawstorObjectMeta b{};
+    ASSERT_EQ(rawstor_object_meta(arms.target(0).c_str(), &a), 0);
+    ASSERT_EQ(rawstor_object_meta(arms.target(1).c_str(), &b), 0);
+    EXPECT_NE(a.sync_id, fresh.sync_id);
+    EXPECT_EQ(a.sync_id_history[0], fresh.sync_id);
+    EXPECT_EQ(a.epoch, 3u);
+    EXPECT_EQ(a.state, RAWSTOR_OBJECT_STATE_CLEAN);
+    EXPECT_EQ(b.sync_id, stale.sync_id);
+    EXPECT_EQ(b.epoch, stale.epoch);
+
+    /* The stale arm did not receive the write. */
+    RawstorObject* arm = nullptr;
+    ASSERT_EQ(rawstor_object_open(queue, arms.target(1).c_str(), &arm), 0);
+    std::string data(4, '\0');
+    object_read(queue, arm, data.data(), data.size(), 0);
+    EXPECT_EQ(data, std::string(4, '\0'));
+    EXPECT_EQ(rawstor_object_close(arm), 0);
+}
+
+TEST(MirrorQuorumTest, split_brain_refused) {
+    Arms arms(2, "00000000-0000-7000-8000-0000000000a3");
+
+    RawstorObjectSpec spec{.size = 1ull << 20};
+    ASSERT_EQ(rawstor_object_create(arms.target_all().c_str(), &spec), 0);
+
+    /* Disjoint histories sharing only a common ancestor. */
+    RawstorObjectMeta a{};
+    a.epoch = 2;
+    a.sync_id = 0x1111111111111111ull;
+    a.sync_id_history[0] = 0x3333333333333333ull;
+    a.state = RAWSTOR_OBJECT_STATE_CLEAN;
+    ASSERT_EQ(rawstor_object_set_state(arms.target(0).c_str(), &a), 0);
+
+    RawstorObjectMeta b{};
+    b.epoch = 2;
+    b.sync_id = 0x2222222222222222ull;
+    b.sync_id_history[0] = 0x3333333333333333ull;
+    b.state = RAWSTOR_OBJECT_STATE_CLEAN;
+    ASSERT_EQ(rawstor_object_set_state(arms.target(1).c_str(), &b), 0);
+
+    Queue queue(16);
+    RawstorObject* object = nullptr;
+    int res = rawstor_object_open(queue, arms.target_all().c_str(), &object);
+    EXPECT_EQ(res, -ENOTRECOVERABLE);
+    EXPECT_EQ(object, nullptr);
+}
+
+TEST(MirrorQuorumTest, all_dirty_same_sync_id_opens) {
+    Arms arms(2, "00000000-0000-7000-8000-0000000000a4");
+
+    RawstorObjectSpec spec{.size = 1ull << 20};
+    ASSERT_EQ(rawstor_object_create(arms.target_all().c_str(), &spec), 0);
+
+    /* Unclean shutdown: every copy DIRTY within the same sync set. */
+    RawstorObjectMeta dirty{};
+    dirty.epoch = 1;
+    dirty.sync_id = 0x4444444444444444ull;
+    dirty.state = RAWSTOR_OBJECT_STATE_DIRTY;
+    ASSERT_EQ(rawstor_object_set_state(arms.target_all().c_str(), &dirty), 0);
+
+    Queue queue(16);
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(
+        rawstor_object_open(queue, arms.target_all().c_str(), &object), 0
+    );
+
+    std::string ping = "ping";
+    object_write(queue, object, ping.data(), ping.size(), 0, 0);
+    object_close_clean(queue, object);
+
+    /* Full membership, established sync set: no identity churn. */
+    RawstorObjectMeta a{};
+    RawstorObjectMeta b{};
+    ASSERT_EQ(rawstor_object_meta(arms.target(0).c_str(), &a), 0);
+    ASSERT_EQ(rawstor_object_meta(arms.target(1).c_str(), &b), 0);
+    EXPECT_EQ(a.sync_id, dirty.sync_id);
+    EXPECT_EQ(b.sync_id, dirty.sync_id);
+    EXPECT_EQ(a.state, RAWSTOR_OBJECT_STATE_CLEAN);
+    EXPECT_EQ(b.state, RAWSTOR_OBJECT_STATE_CLEAN);
+}
+
+TEST(MirrorQuorumTest, syncing_arm_excluded) {
+    Arms arms(2, "00000000-0000-7000-8000-0000000000a5");
+
+    RawstorObjectSpec spec{.size = 1ull << 20};
+    ASSERT_EQ(rawstor_object_create(arms.target_all().c_str(), &spec), 0);
+
+    RawstorObjectMeta established{};
+    established.epoch = 1;
+    established.sync_id = 0x5555555555555555ull;
+    established.state = RAWSTOR_OBJECT_STATE_CLEAN;
+    ASSERT_EQ(
+        rawstor_object_set_state(arms.target_all().c_str(), &established), 0
+    );
+
+    RawstorObjectMeta syncing = established;
+    syncing.state = RAWSTOR_OBJECT_STATE_SYNCING;
+    ASSERT_EQ(rawstor_object_set_state(arms.target(1).c_str(), &syncing), 0);
+
+    Queue queue(16);
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(
+        rawstor_object_open(queue, arms.target_all().c_str(), &object), 0
+    );
+
+    std::string ping = "ping";
+    object_write(queue, object, ping.data(), ping.size(), 0, 0);
+    object_close_clean(queue, object);
+
+    /* The interrupted-resync arm stayed frozen in SYNCING. */
+    RawstorObjectMeta a{};
+    RawstorObjectMeta b{};
+    ASSERT_EQ(rawstor_object_meta(arms.target(0).c_str(), &a), 0);
+    ASSERT_EQ(rawstor_object_meta(arms.target(1).c_str(), &b), 0);
+    EXPECT_NE(a.sync_id, established.sync_id);
+    EXPECT_EQ(a.sync_id_history[0], established.sync_id);
+    EXPECT_EQ(b.state, RAWSTOR_OBJECT_STATE_SYNCING);
+    EXPECT_EQ(b.sync_id, established.sync_id);
+}
+
+TEST(MirrorQuorumTest, clean_close_stable_identity) {
+    Arms arms(2, "00000000-0000-7000-8000-0000000000a6");
+
+    RawstorObjectSpec spec{.size = 1ull << 20};
+    ASSERT_EQ(rawstor_object_create(arms.target_all().c_str(), &spec), 0);
+
+    Queue queue(16);
+
+    /* First session establishes the sync set. */
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(
+        rawstor_object_open(queue, arms.target_all().c_str(), &object), 0
+    );
+    std::string ping = "ping";
+    object_write(queue, object, ping.data(), ping.size(), 0, 0);
+    object_close_clean(queue, object);
+
+    RawstorObjectMeta first{};
+    ASSERT_EQ(rawstor_object_meta(arms.target(0).c_str(), &first), 0);
+    EXPECT_NE(first.sync_id, 0u);
+    EXPECT_EQ(first.state, RAWSTOR_OBJECT_STATE_CLEAN);
+
+    /* A healthy second session must not churn the identity. */
+    ASSERT_EQ(
+        rawstor_object_open(queue, arms.target_all().c_str(), &object), 0
+    );
+    object_write(queue, object, ping.data(), ping.size(), 8, 0);
+    object_close_clean(queue, object);
+
+    RawstorObjectMeta second{};
+    ASSERT_EQ(rawstor_object_meta(arms.target(0).c_str(), &second), 0);
+    EXPECT_EQ(second.sync_id, first.sync_id);
+    EXPECT_EQ(second.epoch, first.epoch);
+    EXPECT_EQ(second.state, RAWSTOR_OBJECT_STATE_CLEAN);
+}
+
+/*
+ * OST mirror over two scripted servers: the first arm fails the read with
+ * a payload error, the second serves the data; the client then repairs the
+ * region on the first arm (dirty gate on both arms + rewrite).
+ */
+TEST(MirrorOstTest, read_failover_and_repair) {
+    Queue queue(16);
+    rawstor::tests::Server server1(8753, 256);
+    rawstor::tests::Server server2(8754, 256);
+    std::string target =
+        "ost://127.0.0.1:8753/00000000-0000-7000-8000-0000000000b0,"
+        "ost://127.0.0.1:8754/00000000-0000-7000-8000-0000000000b0";
+
+    RawstorOSTFrameMetaBody legacy = {
+        .obj_id = {},
+        .size = 1ull << 20,
+        .epoch = 0,
+        .sync_id = 0,
+        .sync_id_history = {},
+        .state = RAWSTOR_OBJECT_STATE_CLEAN,
+    };
+
+    /*
+     * The object is CLEAN, so the connection layer still retries reads
+     * transparently: the arm serves the error on the initial session and
+     * on two reopened ones before the read fails over to the second arm.
+     * The repair then lands on the last reopened session.
+     */
+    {
+        rawstor::tests::Session s(server1);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_spec(RAWSTOR_MAGIC, 1, 0, legacy);
+        s.cmd_read_error(RAWSTOR_MAGIC, 2, -EIO);
+    }
+    {
+        rawstor::tests::Session s(server1);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_read_error(RAWSTOR_MAGIC, 1, -EIO);
+    }
+    {
+        rawstor::tests::Session s(server1);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_read_error(RAWSTOR_MAGIC, 1, -EIO);
+        s.cmd_set_state(RAWSTOR_MAGIC, 2, 0);
+        s.cmd_write(RAWSTOR_MAGIC, 3, 4);
+    }
+
+    {
+        rawstor::tests::Session s(server2);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_spec(RAWSTOR_MAGIC, 1, 0, legacy);
+        s.cmd_read(RAWSTOR_MAGIC, 2, "pong", 4);
+        s.cmd_set_state(RAWSTOR_MAGIC, 3, 0);
+    }
+
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(rawstor_object_open(queue, target.c_str(), &object), 0);
+
+    std::string data(4, '\0');
+    object_read(queue, object, data.data(), data.size(), 0);
+    EXPECT_EQ(data, "pong");
+
+    /* Drain the detached repair before tearing the object down. */
+    for (int i = 0; i < 100; ++i) {
+        rawio_wait_timeout(queue, 10);
+    }
+
+    EXPECT_EQ(rawstor_object_close(object), 0);
+}
+
+/*
+ * Degrade & continue: a write fails on one arm, the survivor durably
+ * records the exclusion (SET_STATE) and the write is acknowledged; the
+ * next write goes to the survivor only.
+ */
+TEST(MirrorOstTest, degrade_and_continue) {
+    Queue queue(16);
+    rawstor::tests::Server server1(8753, 256);
+    rawstor::tests::Server server2(8754, 256);
+    std::string target =
+        "ost://127.0.0.1:8753/00000000-0000-7000-8000-0000000000b1,"
+        "ost://127.0.0.1:8754/00000000-0000-7000-8000-0000000000b1";
+
+    RawstorOSTFrameMetaBody legacy = {
+        .obj_id = {},
+        .size = 1ull << 20,
+        .epoch = 0,
+        .sync_id = 0,
+        .sync_id_history = {},
+        .state = RAWSTOR_OBJECT_STATE_CLEAN,
+    };
+
+    {
+        rawstor::tests::Session s(server1);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_spec(RAWSTOR_MAGIC, 1, 0, legacy);
+        s.cmd_set_state(RAWSTOR_MAGIC, 2, 0);
+        s.cmd_write_request(4);
+        s.cmd_write_response(RAWSTOR_MAGIC, 3, -EIO);
+    }
+
+    {
+        rawstor::tests::Session s(server2);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_spec(RAWSTOR_MAGIC, 1, 0, legacy);
+        s.cmd_set_state(RAWSTOR_MAGIC, 2, 0);
+        s.cmd_write(RAWSTOR_MAGIC, 3, 4);
+        /* Degrade barrier: the exclusion is recorded on the survivor. */
+        s.cmd_set_state(RAWSTOR_MAGIC, 4, 0);
+        /* Subsequent writes go to the survivor only. */
+        s.cmd_write(RAWSTOR_MAGIC, 5, 4);
+    }
+
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(rawstor_object_open(queue, target.c_str(), &object), 0);
+
+    std::string ping = "ping";
+    object_write(queue, object, ping.data(), ping.size(), 0, 0);
+    object_write(queue, object, ping.data(), ping.size(), 8, 0);
+
+    EXPECT_EQ(rawstor_object_close(object), 0);
+}
+
+} // unnamed namespace

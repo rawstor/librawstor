@@ -27,7 +27,8 @@ Connection::Connection(rawio::Queue& queue) :
     _object(nullptr),
     _session_index(0),
     _alive(std::make_shared<int>(0)),
-    _reopens(0) {
+    _reopens(0),
+    _transparent_retry(true) {
 }
 
 Connection::~Connection() {
@@ -189,7 +190,8 @@ void Connection::_op(
                 return;
             }
 
-            if (attempt + 1 >= rawstor_opts_io_attempts()) {
+            if (!_transparent_retry ||
+                attempt + 1 >= rawstor_opts_io_attempts()) {
                 rawstd_error(
                     "IO %s: size = %zu, offset = %jd; "
                     "error on %s: %s; "
@@ -331,6 +333,42 @@ const rawstd::URI* Connection::location() const noexcept {
     }
 
     return &_sessions.front()->location();
+}
+
+void Connection::set_transparent_retry(bool enabled) noexcept {
+    _transparent_retry = enabled;
+}
+
+void Connection::meta(
+    const RawstdUUID& id,
+    std::function<void(const RawstorObjectMeta&, int)>&& cb
+) {
+    try {
+        get_next_session()->meta(id, std::move(cb));
+    } catch (const std::system_error& e) {
+        cb({}, e.code().value());
+    } catch (const std::bad_alloc& e) {
+        cb({}, ENOMEM);
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        cb({}, EINVAL);
+    }
+}
+
+void Connection::set_state(
+    const RawstdUUID& id, const RawstorObjectMeta& meta,
+    std::function<void(int)>&& cb
+) {
+    try {
+        get_next_session()->set_state(id, meta, std::move(cb));
+    } catch (const std::system_error& e) {
+        cb(e.code().value());
+    } catch (const std::bad_alloc& e) {
+        cb(ENOMEM);
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        cb(EINVAL);
+    }
 }
 
 void Connection::create(

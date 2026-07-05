@@ -20,6 +20,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `rawstor_object_flush` public API.
 - Durable metadata updates: object create and state changes are fsynced by
   the file backend.
+- Mirror quorum rules: opening a mirrored object requires a strict
+  majority of reachable arms (`-ENOTCONN` otherwise); stale and
+  interrupted-resync copies are excluded by sync-id comparison; disjoint
+  write histories are refused (`-ENOTRECOVERABLE`).
+- Degrade & continue: a mirrored write that fails on some arms is
+  acknowledged once the exclusion is durably recorded on the survivors;
+  with three or more arms writes freeze below the majority.
+- Read failover across mirror arms with read-repair of corrupted regions.
+- `rawstor_object_close_async`: clean close that flushes and durably marks
+  the copies CLEAN; `rawstor_object_close` stays an unclean close.
 
 ### Fixed
 

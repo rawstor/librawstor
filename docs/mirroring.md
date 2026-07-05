@@ -4,7 +4,9 @@
 
 A comma-separated target list (see [Locations and Targets](locations_and_targets.md)) makes the client keep N identical copies of an object on different backends. This document defines the failure model for N-way mirroring: what can fail, how the client reacts, and how byte-for-byte identity of the copies is restored afterwards. Erasure coding is out of scope.
 
-Status: design. The current implementation covers only part of this document (write fan-out, create/remove rollback); everything else is the specification to implement.
+Status: stages 1 and 2 are implemented (per-copy metadata, quorum open, degrade & continue, read failover/repair, clean close); stage 3 (online resync) is not — a degraded arm stays excluded until it is resynced.
+
+Error codes: open without quorum fails with `-ENOTCONN`; split brain (or no trusted arm) fails with `-ENOTRECOVERABLE`; writes below the write quorum or with no arm left fail with `-EIO`.
 
 ---
 
@@ -98,6 +100,17 @@ Requirements: no downtime, and regions already rewritten by the client onto all 
 5. Bitmap empty → drain in-flight I/O → the SYNCING copy's metadata is set to the source's `sync_id`/`epoch` (fsync) → the mirror is IN-SYNC.
 
 If the client or the target OST crashes mid-resync, the copy remains `SYNCING` and the resync restarts from scratch (F8). A persistent write-intent bitmap (v2) makes it resumable and shrinks the F5 full resync to recently-touched regions.
+
+### Known limitation: the degrade-barrier window
+
+Without per-write fsync there is an irreducible window between an
+acknowledged write and the durable exclusion of a failed arm (one metadata
+round trip): if an OST crash (losing acknowledged writes from page cache)
+is followed by a client crash *before* the F1/F6 barrier lands, the next
+open sees all copies `DIRTY` in the same sync set (F5) and the
+deterministic winner may be the arm that lost data. Closing this window
+requires synchronous writes or a witness; it is accepted for now and
+bounded by the barrier latency.
 
 ---
 

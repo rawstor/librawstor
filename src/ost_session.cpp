@@ -115,6 +115,13 @@ private:
     std::unordered_map<uint16_t, std::shared_ptr<SessionOp>> _ops;
     RawIOEvent* _read_event;
 
+    /*
+     * Set once the receive loop terminates (peer closed the connection or
+     * a protocol failure): responses can never arrive anymore, so new
+     * operations must be refused instead of hanging forever.
+     */
+    bool _dead;
+
     void _fail_in_flight(int error, bool* next_head, size_t* next_size);
 
     SessionOp& _find_op(uint16_t cid) {
@@ -131,12 +138,15 @@ public:
     Context(rawio::Queue& queue, int fd) :
         _queue(queue),
         _fd(fd),
-        _read_event(nullptr) {}
+        _read_event(nullptr),
+        _dead(false) {}
 
     void setup_recv();
     void teardown_recv() noexcept;
 
     int fd() const noexcept { return _fd; }
+
+    bool dead() const noexcept { return _dead; }
 
     void register_op(const std::shared_ptr<SessionOp>& op);
 
@@ -217,6 +227,14 @@ public:
     void request_cb(int error) {
         _in_flight = true;
         RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "%s\n", "in-flight begin");
+
+        /*
+         * The request may complete into the socket buffer after the
+         * receive loop already terminated: no response will ever arrive.
+         */
+        if (!error && _context->dead()) {
+            error = EPIPE;
+        }
 
         if (error) {
             _dispatch(0, error);
@@ -546,6 +564,168 @@ public:
     }
 };
 
+class SessionOpSpec final : public SessionOp {
+private:
+    RawstorOSTFrameBasic _request;
+    RawstorObjectMeta* _out;
+
+    uint64_t _hash;
+
+public:
+    SessionOpSpec(
+        const std::shared_ptr<rawstor::ost::Context>& context, uint16_t cid,
+        const RawstdUUID& id, RawstorObjectMeta* out,
+        const rawstd::TraceEvent& trace_event,
+        std::function<void(size_t, int)>&& cb
+    ) :
+        SessionOp(context, cid, trace_event, std::move(cb)),
+        _request({
+            .head =
+                {
+                    .magic = RAWSTOR_MAGIC,
+                    .cmd = RAWSTOR_CMD_SPEC,
+                    .cid = cid,
+                },
+            .body =
+                {
+                    .obj_id = {},
+                    .offset = 0,
+                    .val = 0,
+                },
+        }),
+        _out(out),
+        _hash(0) {
+        memcpy(_request.body.obj_id, id.bytes, sizeof(_request.body.obj_id));
+    }
+
+    const void* request_data() const noexcept { return &_request; }
+
+    size_t request_size() const noexcept override { return sizeof(_request); }
+
+    void response_head_cb(
+        const RawstorOSTFrameResponse* response, int error, bool* next_head,
+        size_t* next_size
+    ) override {
+        RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
+
+        if (!error) {
+            error = validate_response(_context->fd(), response);
+        }
+
+        if (!error) {
+            error = validate_cmd(
+                _context->fd(), response->head.cmd, RAWSTOR_CMD_SPEC
+            );
+        }
+
+        if (!error) {
+            _hash = response->body.hash;
+            *next_head = false;
+            *next_size = sizeof(RawstorOSTFrameMetaBody);
+        } else {
+            _dispatch(0, error);
+            *next_head = true;
+            *next_size = 0;
+        }
+    }
+
+    void response_body_cb(
+        const iovec* iov, unsigned int niov, size_t result, int error
+    ) override {
+        RAWSTD_TRACE_EVENT_MESSAGE(
+            _trace_event, "niov = %u, result = %zu, error = %d\n", niov, result,
+            error
+        );
+
+        RawstorOSTFrameMetaBody body{};
+
+        if (!error && result != sizeof(body)) {
+            error = EPROTO;
+        }
+
+        if (!error) {
+            rawstd_iovec_to_buf(iov, niov, 0, &body, sizeof(body));
+            error =
+                validate_hash(_context->fd(), hash(&body, sizeof(body)), _hash);
+        }
+
+        if (!error) {
+            _out->size = body.size;
+            _out->epoch = body.epoch;
+            _out->sync_id = body.sync_id;
+            memcpy(
+                _out->sync_id_history, body.sync_id_history,
+                sizeof(_out->sync_id_history)
+            );
+            _out->state = body.state;
+        }
+
+        _dispatch(0, error);
+    }
+};
+
+class SessionOpSetState final : public SessionOp {
+private:
+    RawstorOSTFrameMeta _request;
+
+public:
+    SessionOpSetState(
+        const std::shared_ptr<rawstor::ost::Context>& context, uint16_t cid,
+        const RawstdUUID& id, const RawstorObjectMeta& meta,
+        const rawstd::TraceEvent& trace_event,
+        std::function<void(size_t, int)>&& cb
+    ) :
+        SessionOp(context, cid, trace_event, std::move(cb)),
+        _request({
+            .head =
+                {
+                    .magic = RAWSTOR_MAGIC,
+                    .cmd = RAWSTOR_CMD_SET_STATE,
+                    .cid = cid,
+                },
+            .body = {
+                .obj_id = {},
+                .size = meta.size,
+                .epoch = meta.epoch,
+                .sync_id = meta.sync_id,
+                .sync_id_history = {},
+                .state = meta.state,
+            },
+        }) {
+        memcpy(_request.body.obj_id, id.bytes, sizeof(_request.body.obj_id));
+        memcpy(
+            _request.body.sync_id_history, meta.sync_id_history,
+            sizeof(_request.body.sync_id_history)
+        );
+    }
+
+    const void* request_data() const noexcept { return &_request; }
+
+    size_t request_size() const noexcept override { return sizeof(_request); }
+
+    void response_head_cb(
+        const RawstorOSTFrameResponse* response, int error, bool* next_head,
+        size_t* next_size
+    ) override {
+        RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
+
+        if (!error) {
+            error = validate_response(_context->fd(), response);
+        }
+
+        if (!error) {
+            error = validate_cmd(
+                _context->fd(), response->head.cmd, RAWSTOR_CMD_SET_STATE
+            );
+        }
+
+        _dispatch(0, error);
+
+        *next_head = true;
+        *next_size = error ? 0 : sizeof(RawstorOSTFrameResponse);
+    }
+};
+
 class SessionOpFlush final : public SessionOp {
 private:
     RawstorOSTFrameIO _request;
@@ -605,6 +785,8 @@ namespace rawstor {
 namespace ost {
 
 void Context::_fail_in_flight(int error, bool* next_head, size_t* next_size) {
+    _dead = true;
+
     if (!_ops.empty()) {
         std::vector<std::shared_ptr<SessionOp>> in_flight_ops;
         in_flight_ops.reserve(_ops.size());
@@ -911,6 +1093,41 @@ void Session::meta(
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('s', "%s\n", "spec cmd");
 
+    /*
+     * On an object-bound session the socket is owned by the multishot
+     * receive context: the request must be dispatched as a regular
+     * in-flight operation. The plain request/response exchange below is
+     * only valid before set_object().
+     */
+    if (_context != nullptr) {
+        auto out = std::make_shared<RawstorObjectMeta>();
+
+        std::shared_ptr<SessionOpSpec> op = std::make_shared<SessionOpSpec>(
+            _context, _cid_counter++, id, out.get(), trace_event,
+            [out, cb = std::move(cb)](size_t, int error) { cb(*out, error); }
+        );
+        _context->register_op(op);
+
+        _queue.write(
+            fd(), op->request_data(), op->request_size(),
+            [op, trace_event](size_t result, int error) {
+                RAWSTD_TRACE_EVENT_MESSAGE(
+                    trace_event, "%zu of %zu, error = %d\n", result,
+                    op->request_size(), error
+                );
+
+                if (!error) {
+                    error = validate_result(
+                        op->context().fd(), op->request_size(), result
+                    );
+                }
+
+                op->request_cb(error);
+            }
+        );
+        return;
+    }
+
     auto request =
         std::make_shared<RawstorOSTFrameBasic>((RawstorOSTFrameBasic){
             .head =
@@ -1023,6 +1240,41 @@ void Session::set_state(
     const RawstdUUID& id, const RawstorObjectMeta& meta,
     std::function<void(int)>&& cb
 ) {
+    /*
+     * See meta(): an object-bound session dispatches through the multishot
+     * receive context.
+     */
+    if (_context != nullptr) {
+        rawstd::TraceEvent trace_event =
+            RAWSTD_TRACE_EVENT('s', "%s\n", "set_state cmd");
+
+        std::shared_ptr<SessionOpSetState> op =
+            std::make_shared<SessionOpSetState>(
+                _context, _cid_counter++, id, meta, trace_event,
+                [cb = std::move(cb)](size_t, int error) { cb(error); }
+            );
+        _context->register_op(op);
+
+        _queue.write(
+            fd(), op->request_data(), op->request_size(),
+            [op, trace_event](size_t result, int error) {
+                RAWSTD_TRACE_EVENT_MESSAGE(
+                    trace_event, "%zu of %zu, error = %d\n", result,
+                    op->request_size(), error
+                );
+
+                if (!error) {
+                    error = validate_result(
+                        op->context().fd(), op->request_size(), result
+                    );
+                }
+
+                op->request_cb(error);
+            }
+        );
+        return;
+    }
+
     auto request = std::make_shared<RawstorOSTFrameMeta>((RawstorOSTFrameMeta){
         .head =
             {

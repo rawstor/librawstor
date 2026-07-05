@@ -6,14 +6,19 @@
 #include "file_session.hpp"
 #include "opts.h"
 #include "ost_session.hpp"
+#include "worker.hpp"
 
 #include <rawstd/gpp.hpp>
+#include <rawstd/iovec.h>
 #include <rawstd/logging.hpp>
 #include <rawstd/uri.hpp>
 #include <rawstd/uuid.h>
 
+#include <sys/random.h>
+
 #include <unistd.h>
 
+#include <algorithm>
 #include <exception>
 #include <memory>
 #include <new>
@@ -23,6 +28,7 @@
 #include <utility>
 
 #include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 
@@ -80,6 +86,26 @@ void validate_different_uris(const std::vector<rawstd::URI>& uris) {
         }
         seen.insert(uri);
     }
+}
+
+/* A nonzero random sync-set id; zero is reserved for legacy copies. */
+uint64_t random_sync_id() {
+    uint64_t ret = 0;
+    do {
+        if (getrandom(&ret, sizeof(ret), 0) != sizeof(ret)) {
+            RAWSTD_THROW_ERRNO();
+        }
+    } while (ret == 0);
+    return ret;
+}
+
+bool in_history(const RawstorObjectMeta& meta, uint64_t sync_id) {
+    for (size_t i = 0; i < RAWSTOR_OBJECT_SYNC_ID_HISTORY; ++i) {
+        if (meta.sync_id_history[i] == sync_id) {
+            return true;
+        }
+    }
+    return false;
 }
 
 /**
@@ -285,7 +311,16 @@ namespace rawstor {
 
 Object::Object(rawio::Queue& queue, const std::vector<rawstd::URI>& targets) :
     _queue(queue),
-    _id() {
+    _id(),
+    _nmirrors(targets.size()),
+    _dirty(false),
+    _writes_frozen(false),
+    _meta_op_running(false),
+    _unrecorded_stale(0),
+    _epoch(0),
+    _sync_id(0),
+    _sync_id_history{},
+    _alive(std::make_shared<int>(0)) {
     validate_not_empty(targets);
     validate_different_uris(targets);
     validate_same_uuid(targets);
@@ -297,17 +332,39 @@ Object::Object(rawio::Queue& queue, const std::vector<rawstd::URI>& targets) :
     }
 }
 
+size_t Object::_in_sync_count() const noexcept {
+    size_t ret = 0;
+    for (const Mirror& m : _mirrors) {
+        if (m.state == MirrorState::IN_SYNC) {
+            ++ret;
+        }
+    }
+    return ret;
+}
+
 /*
- * Async object opening: one connection per target, opened sequentially.
- * The object owns itself through the state until the last connection is
- * bound; on failure the object is destroyed (closing every connection
- * opened so far) and cb receives nullptr.
+ * Below-quorum writes freeze for N >= 3 only: with N = 2 a single survivor
+ * may continue, because auto-open requires both arms, so the abandoned peer
+ * can never auto-start alone (docs/mirroring.md, quorum rules).
+ */
+bool Object::_below_write_quorum(size_t survivors) const noexcept {
+    return _nmirrors >= 3 && survivors * 2 <= _nmirrors;
+}
+
+/*
+ * Async object opening. With a single target any failure fails the open.
+ * With N >= 2 unreachable arms are tolerated as long as a strict majority
+ * (> N/2) is reachable; the per-arm metadata is then compared to exclude
+ * stale copies (docs/mirroring.md, case F4).
  */
 struct Object::OpenState {
     std::vector<rawstd::URI> targets;
     std::function<void(Object*, int)> cb;
     std::unique_ptr<Object> object;
     size_t next;
+    std::unique_ptr<Connection> pending;
+    size_t meta_next;
+    int first_error;
 };
 
 void Object::open(
@@ -318,29 +375,62 @@ void Object::open(
     Object* raw = object.get();
 
     std::shared_ptr<OpenState> st = std::make_shared<OpenState>(
-        OpenState{targets, std::move(cb), std::move(object), 0}
+        OpenState{targets, std::move(cb), std::move(object), 0, nullptr, 0, 0}
     );
     raw->_open_next(st);
 }
 
 void Object::_open_next(const std::shared_ptr<OpenState>& st) {
     if (st->next == st->targets.size()) {
-        st->cb(st->object.release(), 0);
+        size_t reachable = _mirrors.size();
+
+        if (reachable == 0) {
+            st->cb(nullptr, st->first_error ? st->first_error : ENOTCONN);
+            return;
+        }
+
+        if (_nmirrors >= 2 && reachable * 2 <= _nmirrors) {
+            rawstd_error(
+                "Mirror quorum not met: %zu of %zu arms reachable\n", reachable,
+                _nmirrors
+            );
+            st->cb(nullptr, ENOTCONN);
+            return;
+        }
+
+        if (_nmirrors == 1) {
+            st->cb(st->object.release(), 0);
+            return;
+        }
+
+        _open_meta_next(st);
         return;
     }
 
     try {
-        std::unique_ptr<rawstor::Connection> cn =
-            std::make_unique<rawstor::Connection>(_queue);
-        Connection* raw = cn.get();
-        _cns.push_back(std::move(cn));
+        st->pending = std::make_unique<rawstor::Connection>(_queue);
+        Connection* raw = st->pending.get();
 
         raw->open(
             st->targets[st->next].parent(), this, rawstor_opts_sessions(),
             [this, st](int error) {
                 if (error) {
-                    st->cb(nullptr, error);
-                    return;
+                    if (_nmirrors == 1) {
+                        st->cb(nullptr, error);
+                        return;
+                    }
+                    rawstd_warning(
+                        "Mirror arm %s is unreachable: %s\n",
+                        st->targets[st->next].str().c_str(), strerror(error)
+                    );
+                    if (st->first_error == 0) {
+                        st->first_error = error;
+                    }
+                    st->pending.reset();
+                } else {
+                    _mirrors.push_back(
+                        Mirror{std::move(st->pending), MirrorState::IN_SYNC, {}}
+                    );
                 }
                 ++st->next;
                 _open_next(st);
@@ -353,6 +443,514 @@ void Object::_open_next(const std::shared_ptr<OpenState>& st) {
     } catch (const std::exception& e) {
         rawstd_error("%s\n", e.what());
         st->cb(nullptr, EINVAL);
+    }
+}
+
+void Object::_open_meta_next(const std::shared_ptr<OpenState>& st) {
+    if (st->meta_next == _mirrors.size()) {
+        _open_analyze(st);
+        return;
+    }
+
+    _mirrors[st->meta_next].cn->meta(
+        _id, [this, st](const RawstorObjectMeta& meta, int error) {
+            if (error) {
+                rawstd_warning(
+                    "Mirror arm metadata unavailable: %s\n", strerror(error)
+                );
+                if (st->first_error == 0) {
+                    st->first_error = error;
+                }
+                _mirrors.erase(_mirrors.begin() + st->meta_next);
+            } else {
+                _mirrors[st->meta_next].meta = meta;
+                ++st->meta_next;
+            }
+            _open_meta_next(st);
+        }
+    );
+}
+
+/*
+ * Metadata comparison (docs/mirroring.md, comparison rules):
+ * - SYNCING copies are untrusted (interrupted resync) and always stale.
+ * - sync_id 0 marks a legacy copy: in-sync when the whole set is legacy,
+ *   stale next to any established sync set.
+ * - the newest sync_id is the one that has every other observed sync_id in
+ *   its history; copies with an older sync_id are stale.
+ * - disjoint histories mean split brain: unreachable through automatic
+ *   paths, so refuse the open.
+ * - all copies DIRTY with the same sync_id (client crash, case F5): they
+ *   diverge only in unacknowledged regions; the front-most in-sync arm
+ *   wins because reads are served from it.
+ */
+void Object::_open_analyze(const std::shared_ptr<OpenState>& st) {
+    size_t reachable = _mirrors.size();
+
+    if (reachable * 2 <= _nmirrors) {
+        rawstd_error(
+            "Mirror quorum not met: %zu of %zu arms reachable\n", reachable,
+            _nmirrors
+        );
+        st->cb(nullptr, ENOTCONN);
+        return;
+    }
+
+    for (size_t i = 1; i < _mirrors.size(); ++i) {
+        if (_mirrors[i].meta.size != _mirrors.front().meta.size) {
+            rawstd_warning(
+                "Mirror arm sizes disagree: %llu != %llu\n",
+                (unsigned long long)_mirrors[i].meta.size,
+                (unsigned long long)_mirrors.front().meta.size
+            );
+        }
+    }
+
+    for (Mirror& m : _mirrors) {
+        if (m.meta.state == RAWSTOR_OBJECT_STATE_SYNCING) {
+            rawstd_warning("Mirror arm with interrupted resync is stale\n");
+            m.state = MirrorState::STALE;
+        }
+    }
+
+    std::vector<uint64_t> ids;
+    for (const Mirror& m : _mirrors) {
+        if (m.state != MirrorState::IN_SYNC || m.meta.sync_id == 0) {
+            continue;
+        }
+        if (std::find(ids.begin(), ids.end(), m.meta.sync_id) == ids.end()) {
+            ids.push_back(m.meta.sync_id);
+        }
+    }
+
+    uint64_t newest = 0;
+
+    if (!ids.empty()) {
+        size_t dominators = 0;
+        for (uint64_t x : ids) {
+            bool dominates = true;
+            for (uint64_t y : ids) {
+                if (y == x) {
+                    continue;
+                }
+                bool found = false;
+                for (const Mirror& m : _mirrors) {
+                    if (m.meta.sync_id == x && in_history(m.meta, y)) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    dominates = false;
+                    break;
+                }
+            }
+            if (dominates) {
+                newest = x;
+                ++dominators;
+            }
+        }
+
+        if (dominators != 1) {
+            rawstd_error(
+                "Mirror arms carry disjoint write histories (split brain); "
+                "refusing to open\n"
+            );
+            st->cb(nullptr, ENOTRECOVERABLE);
+            return;
+        }
+
+        for (Mirror& m : _mirrors) {
+            if (m.state == MirrorState::IN_SYNC && m.meta.sync_id != newest) {
+                rawstd_warning("Stale mirror arm excluded from the set\n");
+                m.state = MirrorState::STALE;
+            }
+        }
+    }
+
+    size_t in_sync = 0;
+    for (const Mirror& m : _mirrors) {
+        if (m.state != MirrorState::IN_SYNC) {
+            continue;
+        }
+        ++in_sync;
+        if (m.meta.epoch > _epoch) {
+            _epoch = m.meta.epoch;
+        }
+        if (_sync_id == 0) {
+            _sync_id = m.meta.sync_id;
+            memcpy(
+                _sync_id_history, m.meta.sync_id_history,
+                sizeof(_sync_id_history)
+            );
+        }
+    }
+
+    if (in_sync == 0) {
+        rawstd_error("No trusted mirror arm to serve from\n");
+        st->cb(nullptr, ENOTRECOVERABLE);
+        return;
+    }
+
+    st->cb(st->object.release(), 0);
+}
+
+void Object::_settle_meta(std::function<void()>&& cont) {
+    if (!_meta_op_running) {
+        cont();
+        return;
+    }
+    _meta_waiters.push_back(std::move(cont));
+}
+
+void Object::_finish_meta_op() {
+    _meta_op_running = false;
+    std::vector<std::function<void()>> waiters;
+    waiters.swap(_meta_waiters);
+    for (std::function<void()>& w : waiters) {
+        w();
+    }
+}
+
+/*
+ * Persists meta on every in-sync arm. Arms that fail the update are marked
+ * STALE (their exclusion is recorded by the very sync_id they now lack);
+ * ENOSYS is tolerated: block-device arms have no metadata storage yet.
+ */
+void Object::_run_meta_fan_out(
+    const RawstorObjectMeta& meta, std::function<void(int)>&& done
+) {
+    std::vector<size_t> idxs;
+    for (size_t i = 0; i < _mirrors.size(); ++i) {
+        if (_mirrors[i].state == MirrorState::IN_SYNC) {
+            idxs.push_back(i);
+        }
+    }
+
+    if (idxs.empty()) {
+        done(EIO);
+        return;
+    }
+
+    struct FanOut {
+        size_t pending;
+        int error;
+        std::function<void(int)> done;
+    };
+
+    auto op = std::make_shared<FanOut>(FanOut{idxs.size(), 0, std::move(done)});
+
+    for (size_t idx : idxs) {
+        _mirrors[idx].cn->set_state(
+            _id, meta,
+            [this, op, idx, alive = std::weak_ptr<int>(_alive)](int error) {
+                if (alive.expired()) {
+                    return;
+                }
+                if (error == ENOSYS) {
+                    rawstd_warning(
+                        "Mirror arm does not support state tracking; "
+                        "treating as legacy\n"
+                    );
+                    error = 0;
+                }
+                if (error) {
+                    rawstd_error(
+                        "Mirror arm state update failed: %s\n", strerror(error)
+                    );
+                    _mirrors[idx].state = MirrorState::STALE;
+                    if (op->error == 0) {
+                        op->error = error;
+                    }
+                }
+                if (--op->pending == 0) {
+                    op->done(op->error);
+                }
+            }
+        );
+    }
+}
+
+/*
+ * Runs cont(0) once DIRTY is durably recorded on the in-sync arms; the
+ * first write (or read-repair) of a mirrored object passes through here
+ * before anything is acknowledged. Membership changes (degraded open,
+ * previously unrecorded stale arms) and legacy sets get a fresh sync_id.
+ */
+void Object::_with_dirty(std::function<void(int)>&& cont) {
+    if (_nmirrors == 1) {
+        cont(0);
+        return;
+    }
+
+    if (_meta_op_running) {
+        _meta_waiters.push_back([this, cont = std::move(cont)]() mutable {
+            _with_dirty(std::move(cont));
+        });
+        return;
+    }
+
+    if (_writes_frozen) {
+        cont(EIO);
+        return;
+    }
+
+    if (_dirty) {
+        cont(0);
+        return;
+    }
+
+    _run_dirty_barrier(std::move(cont));
+}
+
+void Object::_run_dirty_barrier(std::function<void(int)>&& done) {
+    _meta_op_running = true;
+
+    bool bump =
+        _in_sync_count() != _nmirrors || _sync_id == 0 || _unrecorded_stale > 0;
+
+    RawstorObjectMeta m{};
+    m.state = RAWSTOR_OBJECT_STATE_DIRTY;
+    if (bump) {
+        m.epoch = _epoch + 1;
+        m.sync_id = random_sync_id();
+        if (_sync_id != 0) {
+            m.sync_id_history[0] = _sync_id;
+            memcpy(
+                &m.sync_id_history[1], _sync_id_history,
+                (RAWSTOR_OBJECT_SYNC_ID_HISTORY - 1) * sizeof(uint64_t)
+            );
+        } else {
+            memcpy(
+                m.sync_id_history, _sync_id_history, sizeof(m.sync_id_history)
+            );
+        }
+    } else {
+        m.epoch = _epoch;
+        m.sync_id = _sync_id;
+        memcpy(m.sync_id_history, _sync_id_history, sizeof(m.sync_id_history));
+    }
+
+    _run_meta_fan_out(m, [this, m, done = std::move(done)](int) mutable {
+        size_t survivors = _in_sync_count();
+
+        if (survivors == 0) {
+            _finish_meta_op();
+            done(EIO);
+            return;
+        }
+
+        if (_below_write_quorum(survivors)) {
+            rawstd_error(
+                "Mirror survivors below write quorum: freezing writes\n"
+            );
+            _writes_frozen = true;
+            _finish_meta_op();
+            done(EIO);
+            return;
+        }
+
+        _dirty = true;
+        _epoch = m.epoch;
+        _sync_id = m.sync_id;
+        memcpy(_sync_id_history, m.sync_id_history, sizeof(_sync_id_history));
+        _unrecorded_stale = 0;
+        for (Mirror& mirror : _mirrors) {
+            if (mirror.state == MirrorState::IN_SYNC) {
+                mirror.meta.state = m.state;
+                mirror.meta.epoch = m.epoch;
+                mirror.meta.sync_id = m.sync_id;
+                memcpy(
+                    mirror.meta.sync_id_history, m.sync_id_history,
+                    sizeof(mirror.meta.sync_id_history)
+                );
+            }
+            /*
+             * A reopened session may talk to a restarted backend that lost
+             * acknowledged writes: once DIRTY, failures must surface here
+             * and degrade the arm instead of being retried transparently
+             * (docs/mirroring.md, case F6).
+             */
+            mirror.cn->set_transparent_retry(false);
+        }
+
+        _finish_meta_op();
+        done(0);
+    });
+}
+
+/*
+ * Excludes arms from the mirror set. While DIRTY the exclusion must be
+ * durably recorded on the survivors (epoch bump, new sync_id) before any
+ * dependent write is acknowledged (docs/mirroring.md, case F1). While
+ * CLEAN nothing acknowledged can be lost, so the recording is deferred to
+ * the dirty gate.
+ */
+void Object::_degrade(
+    std::vector<size_t>&& idxs, std::function<void(int)>&& done
+) {
+    for (size_t idx : idxs) {
+        if (_mirrors[idx].state == MirrorState::IN_SYNC) {
+            rawstd_error("Mirror arm degraded\n");
+            _mirrors[idx].state = MirrorState::STALE;
+            ++_unrecorded_stale;
+        }
+    }
+
+    if (!_dirty) {
+        done(0);
+        return;
+    }
+
+    if (_meta_op_running) {
+        _meta_waiters.push_back([this, done = std::move(done)]() mutable {
+            _degrade({}, std::move(done));
+        });
+        return;
+    }
+
+    _run_degrade_barrier(std::move(done));
+}
+
+void Object::_run_degrade_barrier(std::function<void(int)>&& done) {
+    if (_unrecorded_stale == 0) {
+        done(0);
+        return;
+    }
+
+    size_t survivors = _in_sync_count();
+
+    if (survivors == 0) {
+        done(EIO);
+        return;
+    }
+
+    if (_below_write_quorum(survivors)) {
+        rawstd_error("Mirror survivors below write quorum: freezing writes\n");
+        _writes_frozen = true;
+        done(EIO);
+        return;
+    }
+
+    _meta_op_running = true;
+
+    RawstorObjectMeta m{};
+    m.state = RAWSTOR_OBJECT_STATE_DIRTY;
+    m.epoch = _epoch + 1;
+    m.sync_id = random_sync_id();
+    if (_sync_id != 0) {
+        m.sync_id_history[0] = _sync_id;
+        memcpy(
+            &m.sync_id_history[1], _sync_id_history,
+            (RAWSTOR_OBJECT_SYNC_ID_HISTORY - 1) * sizeof(uint64_t)
+        );
+    }
+
+    _run_meta_fan_out(m, [this, m, done = std::move(done)](int) mutable {
+        size_t survivors = _in_sync_count();
+
+        if (survivors == 0) {
+            _finish_meta_op();
+            done(EIO);
+            return;
+        }
+
+        if (_below_write_quorum(survivors)) {
+            rawstd_error(
+                "Mirror survivors below write quorum: freezing writes\n"
+            );
+            _writes_frozen = true;
+            _finish_meta_op();
+            done(EIO);
+            return;
+        }
+
+        _epoch = m.epoch;
+        _sync_id = m.sync_id;
+        memcpy(_sync_id_history, m.sync_id_history, sizeof(_sync_id_history));
+        _unrecorded_stale = 0;
+        for (Mirror& mirror : _mirrors) {
+            if (mirror.state == MirrorState::IN_SYNC) {
+                mirror.meta.epoch = m.epoch;
+                mirror.meta.sync_id = m.sync_id;
+                memcpy(
+                    mirror.meta.sync_id_history, m.sync_id_history,
+                    sizeof(mirror.meta.sync_id_history)
+                );
+            }
+        }
+
+        _finish_meta_op();
+        done(0);
+    });
+}
+
+/*
+ * Mirrored write fan-out: the operation is acknowledged only after it
+ * completed on every in-sync arm, or after the failed arms were durably
+ * excluded and it completed on all survivors.
+ */
+void Object::_fan_out_write(
+    std::function<void(Connection&, std::function<void(size_t, int)>&&)>&&
+        issue,
+    std::function<void(size_t, int)>&& cb
+) {
+    std::vector<size_t> idxs;
+    for (size_t i = 0; i < _mirrors.size(); ++i) {
+        if (_mirrors[i].state == MirrorState::IN_SYNC) {
+            idxs.push_back(i);
+        }
+    }
+
+    if (idxs.empty()) {
+        cb(0, EIO);
+        return;
+    }
+
+    struct WriteOp {
+        size_t pending;
+        size_t result;
+        bool any_success;
+        std::vector<size_t> failed;
+        std::function<void(size_t, int)> cb;
+    };
+
+    auto op = std::make_shared<WriteOp>(
+        WriteOp{idxs.size(), (size_t)-1, false, {}, std::move(cb)}
+    );
+
+    for (size_t idx : idxs) {
+        issue(*_mirrors[idx].cn, [this, op, idx](size_t result, int error) {
+            if (error) {
+                rawstd_error("%s\n", strerror(error));
+                op->failed.push_back(idx);
+            } else {
+                op->any_success = true;
+                op->result = std::min(op->result, result);
+            }
+
+            if (--op->pending != 0) {
+                return;
+            }
+
+            if (op->failed.empty()) {
+                op->cb(op->result, 0);
+                return;
+            }
+
+            if (!op->any_success) {
+                op->cb(0, EIO);
+                return;
+            }
+
+            _degrade(std::move(op->failed), [op](int error) {
+                if (error) {
+                    op->cb(0, EIO);
+                } else {
+                    op->cb(op->result, 0);
+                }
+            });
+        });
     }
 }
 
@@ -388,9 +986,6 @@ void Object::spec(
     rawio::Queue& queue, const std::vector<rawstd::URI>& targets,
     RawstorObjectSpec* sp, std::function<void(int)>&& cb
 ) {
-    /**
-     * TODO: Should we read all specs and compare them here?
-     */
     validate_not_empty(targets);
     validate_different_uris(targets);
     validate_same_uuid(targets);
@@ -529,15 +1124,141 @@ void Object::set_state(
 
 std::vector<rawstd::URI> Object::locations() const {
     std::vector<rawstd::URI> ret;
-    ret.reserve(_cns.size());
-    for (const auto& cn : _cns) {
-        const rawstd::URI* location = cn->location();
+    ret.reserve(_mirrors.size());
+    for (const Mirror& m : _mirrors) {
+        const rawstd::URI* location = m.cn->location();
         if (location == nullptr) {
             continue;
         }
         ret.push_back(*location);
     }
     return ret;
+}
+
+/*
+ * Read failover state: in-sync arms are tried in target-list order. A
+ * failed arm is handled once another arm served the data: a payload error
+ * (EPROTO) triggers a read-repair of the region, a transport error marks
+ * the arm stale (with a durable degrade if the object is DIRTY, case F6).
+ * If every arm fails, the error is reported without touching the states.
+ */
+struct Object::ReadState {
+    Object* o;
+    void* buf;
+    iovec* iov;
+    unsigned int niov;
+    size_t size;
+    off_t offset;
+    std::function<void(size_t, int)> cb;
+    std::vector<size_t> order;
+    size_t pos;
+    std::vector<std::pair<size_t, int>> failures;
+    int last_error;
+};
+
+void Object::_read_attempt(const std::shared_ptr<ReadState>& st) {
+    if (st->pos == st->order.size()) {
+        st->cb(0, st->last_error ? st->last_error : EIO);
+        return;
+    }
+
+    size_t idx = st->order[st->pos];
+
+    auto completion = [st, idx](size_t result, int error) {
+        if (!error) {
+            st->o->_read_settle(st, result);
+            return;
+        }
+        rawstd_warning(
+            "Mirror arm read failed: %s; trying next arm\n", strerror(error)
+        );
+        st->failures.push_back({idx, error});
+        st->last_error = error;
+        ++st->pos;
+        st->o->_read_attempt(st);
+    };
+
+    if (st->buf != nullptr) {
+        _mirrors[idx].cn->pread(
+            st->buf, st->size, st->offset, std::move(completion)
+        );
+    } else {
+        _mirrors[idx].cn->preadv(
+            st->iov, st->niov, st->size, st->offset, std::move(completion)
+        );
+    }
+}
+
+void Object::_read_settle(const std::shared_ptr<ReadState>& st, size_t result) {
+    for (const auto& [idx, error] : st->failures) {
+        if (error == EPROTO) {
+            std::vector<char> data(result);
+            if (st->buf != nullptr) {
+                memcpy(data.data(), st->buf, result);
+            } else {
+                rawstd_iovec_to_buf(st->iov, st->niov, 0, data.data(), result);
+            }
+            _read_repair(idx, st->offset, std::move(data));
+        } else if (_dirty) {
+            /*
+             * While DIRTY a lost session may hide a restarted backend that
+             * lost acknowledged writes: the arm must be excluded durably
+             * (docs/mirroring.md, case F6).
+             */
+            _degrade({idx}, [](int) {});
+        }
+        /*
+         * While CLEAN a transport failure loses nothing (a clean close
+         * flushes before marking CLEAN): the arm stays in the set and the
+         * next operation will retry it.
+         */
+    }
+
+    st->cb(result, 0);
+}
+
+/*
+ * Rewrites a region on an arm that served a corrupted payload. The repair
+ * goes through the dirty gate (repairing a CLEAN copy could otherwise
+ * leave a torn region behind a CLEAN mark on a crash) and runs detached
+ * from the read that triggered it.
+ */
+void Object::_read_repair(size_t idx, off_t offset, std::vector<char>&& data) {
+    auto payload = std::make_shared<std::vector<char>>(std::move(data));
+    std::weak_ptr<int> alive = _alive;
+
+    _with_dirty([this, idx, offset, payload, alive](int error) {
+        if (alive.expired()) {
+            return;
+        }
+
+        if (error) {
+            rawstd_error("Read repair aborted: %s\n", strerror(error));
+            return;
+        }
+
+        if (_mirrors[idx].state != MirrorState::IN_SYNC) {
+            return;
+        }
+
+        rawstd_warning("Read repair: rewriting a corrupted region\n");
+
+        _mirrors[idx].cn->pwrite(
+            payload->data(), payload->size(), offset,
+            [this, idx, payload, alive](size_t result, int error) {
+                if (alive.expired()) {
+                    return;
+                }
+                if (error || result != payload->size()) {
+                    rawstd_error(
+                        "Read repair failed: %s\n",
+                        error ? strerror(error) : "short write"
+                    );
+                    _degrade({idx}, [](int) {});
+                }
+            }
+        );
+    });
 }
 
 void Object::pread(
@@ -547,18 +1268,31 @@ void Object::pread(
         'o', "pread(): size = %zu, offset = %jd\n", size, (intmax_t)offset
     );
 
+    if (_nmirrors == 1) {
+        _mirrors.front().cn->pread(
+            buf, size, offset,
+            [trace_event, cb = std::move(cb)](size_t result, int error) {
+                RAWSTD_TRACE_EVENT_MESSAGE(
+                    trace_event, "result = %zu, error = %d\n", result, error
+                );
+                cb(result, error);
+            }
+        );
+        return;
+    }
+
     /**
      * TODO: Can we select fastest connection here?
      */
-    _cns.front()->pread(
-        buf, size, offset,
-        [trace_event, cb = std::move(cb)](size_t result, int error) {
-            RAWSTD_TRACE_EVENT_MESSAGE(
-                trace_event, "result = %zu, error = %d\n", result, error
-            );
-            cb(result, error);
+    auto st = std::make_shared<ReadState>(ReadState{
+        this, buf, nullptr, 0, size, offset, std::move(cb), {}, 0, {}, 0
+    });
+    for (size_t i = 0; i < _mirrors.size(); ++i) {
+        if (_mirrors[i].state == MirrorState::IN_SYNC) {
+            st->order.push_back(i);
         }
-    );
+    }
+    _read_attempt(st);
 }
 
 void Object::preadv(
@@ -569,18 +1303,31 @@ void Object::preadv(
         'o', "preadv(): size = %zu, offset = %jd\n", size, (intmax_t)offset
     );
 
+    if (_nmirrors == 1) {
+        _mirrors.front().cn->preadv(
+            iov, niov, size, offset,
+            [trace_event, cb = std::move(cb)](size_t result, int error) {
+                RAWSTD_TRACE_EVENT_MESSAGE(
+                    trace_event, "result = %zu, error = %d\n", result, error
+                );
+                cb(result, error);
+            }
+        );
+        return;
+    }
+
     /**
      * TODO: Can we select fastest connection here?
      */
-    _cns.front()->preadv(
-        iov, niov, size, offset,
-        [trace_event, cb = std::move(cb)](size_t result, int error) {
-            RAWSTD_TRACE_EVENT_MESSAGE(
-                trace_event, "result = %zu, error = %d\n", result, error
-            );
-            cb(result, error);
+    auto st = std::make_shared<ReadState>(ReadState{
+        this, nullptr, iov, niov, size, offset, std::move(cb), {}, 0, {}, 0
+    });
+    for (size_t i = 0; i < _mirrors.size(); ++i) {
+        if (_mirrors[i].state == MirrorState::IN_SYNC) {
+            st->order.push_back(i);
         }
-    );
+    }
+    _read_attempt(st);
 }
 
 void Object::pwrite(
@@ -591,44 +1338,38 @@ void Object::pwrite(
         'o', "pwrite(): size = %zu, offset = %jd\n", size, (intmax_t)offset
     );
 
-    struct Operation {
-        size_t mirrors;
-        size_t result;
-        int error;
-        std::function<void(size_t, int)> cb;
-    };
-
-    std::shared_ptr<Operation> op =
-        std::make_shared<Operation>((Operation){.mirrors = _cns.size(),
-                                                .result = (size_t)-1,
-                                                .error = 0,
-                                                .cb = std::move(cb)});
-
-    for (auto& cn : _cns) {
-        cn->pwrite(
-            buf, size, offset, [op, trace_event](size_t result, int error) {
+    if (_nmirrors == 1) {
+        _mirrors.front().cn->pwrite(
+            buf, size, offset,
+            [trace_event, cb = std::move(cb)](size_t result, int error) {
                 RAWSTD_TRACE_EVENT_MESSAGE(
                     trace_event, "result = %zu, error = %d\n", result, error
                 );
-
-                --op->mirrors;
-
-                op->result = std::min(op->result, result);
-
-                if (error) {
-                    rawstd_error("%s\n", strerror(error));
-                    op->error = EIO;
-                }
-
-                if (op->mirrors == 0) {
-                    /**
-                     * TODO: Handle partial tasks.
-                     */
-                    op->cb(op->result, op->error);
-                }
+                cb(result, error);
             }
         );
+        return;
     }
+
+    _with_dirty([this, buf, size, offset, trace_event,
+                 cb = std::move(cb)](int error) mutable {
+        if (error) {
+            cb(0, error);
+            return;
+        }
+        _fan_out_write(
+            [buf, size,
+             offset](Connection& cn, std::function<void(size_t, int)>&& c) {
+                cn.pwrite(buf, size, offset, std::move(c));
+            },
+            [trace_event, cb = std::move(cb)](size_t result, int error) {
+                RAWSTD_TRACE_EVENT_MESSAGE(
+                    trace_event, "result = %zu, error = %d\n", result, error
+                );
+                cb(result, error);
+            }
+        );
+    });
 }
 
 void Object::pwritev(
@@ -639,76 +1380,106 @@ void Object::pwritev(
         'o', "pwritev(): size = %zu, offset = %jd\n", size, (intmax_t)offset
     );
 
-    struct Operation {
-        size_t mirrors;
-        size_t result;
-        int error;
-        std::function<void(size_t, int)> cb;
-    };
-
-    std::shared_ptr<Operation> op =
-        std::make_shared<Operation>((Operation){.mirrors = _cns.size(),
-                                                .result = (size_t)-1,
-                                                .error = 0,
-                                                .cb = std::move(cb)});
-
-    for (auto& cn : _cns) {
-        cn->pwritev(
+    if (_nmirrors == 1) {
+        _mirrors.front().cn->pwritev(
             iov, niov, size, offset,
-            [op, trace_event](size_t result, int error) {
+            [trace_event, cb = std::move(cb)](size_t result, int error) {
                 RAWSTD_TRACE_EVENT_MESSAGE(
                     trace_event, "result = %zu, error = %d\n", result, error
                 );
-
-                --op->mirrors;
-
-                op->result = std::min(op->result, result);
-
-                if (error) {
-                    rawstd_error("%s\n", strerror(error));
-                    op->error = EIO;
-                }
-
-                if (op->mirrors == 0) {
-                    /**
-                     * TODO: Handle partial tasks.
-                     */
-                    op->cb(op->result, op->error);
-                }
+                cb(result, error);
             }
         );
+        return;
     }
+
+    _with_dirty([this, iov, niov, size, offset, trace_event,
+                 cb = std::move(cb)](int error) mutable {
+        if (error) {
+            cb(0, error);
+            return;
+        }
+        _fan_out_write(
+            [iov, niov, size,
+             offset](Connection& cn, std::function<void(size_t, int)>&& c) {
+                cn.pwritev(iov, niov, size, offset, std::move(c));
+            },
+            [trace_event, cb = std::move(cb)](size_t result, int error) {
+                RAWSTD_TRACE_EVENT_MESSAGE(
+                    trace_event, "result = %zu, error = %d\n", result, error
+                );
+                cb(result, error);
+            }
+        );
+    });
 }
 
 void Object::flush(std::function<void(size_t, int)>&& cb) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('o', "%s\n", "flush()");
 
-    struct Operation {
-        size_t mirrors;
-        int error;
-        std::function<void(size_t, int)> cb;
-    };
-
-    std::shared_ptr<Operation> op = std::make_shared<Operation>(
-        (Operation){.mirrors = _cns.size(), .error = 0, .cb = std::move(cb)}
-    );
-
-    for (auto& cn : _cns) {
-        cn->flush([op, trace_event](size_t, int error) {
+    if (_nmirrors == 1) {
+        _mirrors.front().cn->flush([trace_event,
+                                    cb = std::move(cb)](size_t, int error) {
             RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "error = %d\n", error);
-
-            --op->mirrors;
-
-            if (error) {
-                rawstd_error("%s\n", strerror(error));
-                op->error = EIO;
-            }
-
-            if (op->mirrors == 0) {
-                op->cb(0, op->error);
-            }
+            cb(0, error);
         });
+        return;
     }
+
+    _fan_out_write(
+        [](Connection& cn, std::function<void(size_t, int)>&& c) {
+            cn.flush(std::move(c));
+        },
+        [trace_event, cb = std::move(cb)](size_t, int error) {
+            RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "error = %d\n", error);
+            cb(0, error);
+        }
+    );
+}
+
+/*
+ * The deletion is deferred to a fresh completion context: the final
+ * callback of the close sequence runs from a session completion owned by
+ * one of the object's own connections.
+ */
+void Object::_teardown(std::function<void(int)>&& cb, int error) {
+    run_in_worker(
+        _queue, []() -> int { return 0; },
+        [this, cb = std::move(cb), error](int) {
+            delete this;
+            cb(error);
+        }
+    );
+}
+
+void Object::close(std::function<void(int)>&& cb) {
+    if (_nmirrors == 1 || !_dirty || _in_sync_count() == 0) {
+        _teardown(std::move(cb), 0);
+        return;
+    }
+
+    _settle_meta([this, cb = std::move(cb)]() mutable {
+        flush([this, cb = std::move(cb)](size_t, int flush_error) mutable {
+            if (_in_sync_count() == 0) {
+                _teardown(std::move(cb), flush_error ? flush_error : EIO);
+                return;
+            }
+
+            RawstorObjectMeta m{};
+            m.state = RAWSTOR_OBJECT_STATE_CLEAN;
+            m.epoch = _epoch;
+            m.sync_id = _sync_id;
+            memcpy(
+                m.sync_id_history, _sync_id_history, sizeof(m.sync_id_history)
+            );
+
+            _run_meta_fan_out(
+                m, [this, cb = std::move(cb), flush_error](int error) mutable {
+                    _teardown(std::move(cb), flush_error ? flush_error : error);
+                }
+            );
+        });
+    });
 }
 
 } // namespace rawstor
@@ -1043,6 +1814,27 @@ int rawstor_object_open_async(
 int rawstor_object_close(RawstorObject* object) noexcept {
     try {
         delete static_cast<rawstor::Object*>(object);
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+int rawstor_object_close_async(
+    RawstorObject* object, int (*cb)(int result, void* data), void* data
+) noexcept {
+    try {
+        static_cast<rawstor::Object*>(object)->close([cb, data](int error) {
+            cb(error ? -error : 0, data);
+        });
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();

@@ -502,6 +502,34 @@ int rawstor_object_open_async(
 int rawstor_object_close(RawstorObject* object) RAWSTOR_NOEXCEPT;
 
 /**
+ * @brief Cleanly close an opened object.
+ *
+ * Flushes completed writes to stable storage, durably marks the in-sync
+ * copies CLEAN and releases the handle. @p cb is invoked exactly once from
+ * the queue completion context; the handle is invalid once this function
+ * returns 0, even if @p cb later reports an error. On errors the affected
+ * copies are left DIRTY (the safe direction: they will be treated as
+ * potentially divergent on the next open) and the first error is reported.
+ *
+ * There must be no I/O in flight on the object when this is called.
+ *
+ * Note that rawstor_object_close() performs an *unclean* close: it releases
+ * the handle without flushing or marking the copies CLEAN.
+ *
+ * @param object  Open object handle obtained from rawstor_object_open().
+ * @param cb      Completion callback.
+ * @param data    Opaque pointer passed to @p cb.
+ *
+ * @return 0 if the close was started, negative errno otherwise (in which
+ *         case @p cb is never invoked and the handle stays valid).
+ *
+ * @see rawstor_object_close
+ */
+int rawstor_object_close_async(
+    RawstorObject* object, int (*cb)(int result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
  * @brief Retrieve the UUID of an open object.
  *
  * Given an open RawstorObject handle, this function writes the object's

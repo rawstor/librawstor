@@ -159,6 +159,23 @@ void Session::cmd_read(
     cmd_read_response(magic, cid, buf, size);
 }
 
+void Session::cmd_read_error(uint32_t magic, uint16_t cid, int32_t res) {
+    cmd_read_request();
+
+    RawstorOSTFrameResponse response = {
+        .head{
+            .magic = magic,
+            .cmd = RAWSTOR_CMD_READ,
+            .cid = cid,
+        },
+        .body = {
+            .res = res,
+            .hash = 0,
+        },
+    };
+    _server.write("RAWSTOR_CMD_READ >>>", &response, sizeof(response));
+}
+
 void Session::cmd_write_request(size_t size) {
     _server.read(
         "RAWSTOR_CMD_WRITE <<<", sizeof(RawstorOSTFrameIO) + size,
