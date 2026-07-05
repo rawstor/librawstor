@@ -6,7 +6,7 @@ A comma-separated target list (see [Locations and Targets](locations_and_targets
 
 Status: stages 1-3 are implemented (per-copy metadata, quorum open, degrade & continue, read failover/repair, clean close, online resync with automatic rejoin through a periodic reconnect probe). Not yet implemented: a persistent write-intent bitmap (a crashed resync restarts from scratch and an unclean shutdown costs a full resync), stored checksums/scrub, the MDS witness.
 
-Error codes: open without quorum fails with `-ENOTCONN`; split brain (or no trusted arm) fails with `-ENOTRECOVERABLE`; writes below the write quorum or with no arm left fail with `-EIO`.
+Error codes: open without quorum fails with `-ENOTCONN`; split brain (or no trusted member) fails with `-ENOTRECOVERABLE`; writes below the write quorum or with no member left fail with `-EIO`.
 
 ---
 
@@ -58,7 +58,7 @@ Key invariant: **every acknowledged write exists on a set of copies that interse
   - N ≥ 3: degrade & continue while more than N/2 mirrors survive; at ≤ N/2 survivors **writes freeze** (policy: error to the caller or block until quorum returns). Otherwise "wrote on minority {A}, later auto-started on majority {B,C}" would orphan acknowledged data.
   - N = 2: **continuing on a single survivor is allowed.** This is safe because auto-start requires both mirrors, and the abandoned peer remains `DIRTY`/ancestor and can never auto-start alone.
 - **`sync_id_history` stays as defense in depth**: it catches consequences of a wrong manual force-open, an OST restored from backup, or bugs.
-- **Roadmap — MDS as witness.** A future MDS participates in quorum as a metadata-only arm (stores `sync_id`/`epoch`, no data). This restores auto-start for 2 data mirrors with one OST down (2 of 3 votes). Not part of v1, but quorum rules and the metadata format are designed so a witness arm fits without schema changes (quorum counts all arms, including metadata-only ones).
+- **Roadmap — MDS as witness.** A future MDS participates in quorum as a metadata-only member (stores `sync_id`/`epoch`, no data). This restores auto-start for 2 data mirrors with one OST down (2 of 3 votes). Not part of v1, but quorum rules and the metadata format are designed so a witness member fits without schema changes (quorum counts all members, including metadata-only ones).
 
 ---
 
@@ -104,11 +104,11 @@ If the client or the target OST crashes mid-resync, the copy remains `SYNCING` a
 ### Known limitation: the degrade-barrier window
 
 Without per-write fsync there is an irreducible window between an
-acknowledged write and the durable exclusion of a failed arm (one metadata
+acknowledged write and the durable exclusion of a failed member (one metadata
 round trip): if an OST crash (losing acknowledged writes from page cache)
 is followed by a client crash *before* the F1/F6 barrier lands, the next
 open sees all copies `DIRTY` in the same sync set (F5) and the
-deterministic winner may be the arm that lost data. Closing this window
+deterministic winner may be the member that lost data. Closing this window
 requires synchronous writes or a witness; it is accepted for now and
 bounded by the barrier latency.
 

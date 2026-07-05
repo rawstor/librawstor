@@ -30,7 +30,7 @@ struct RawstorOpts {
     unsigned int wait_device_timeout;
     /**
      * How often, in milliseconds, an open mirrored object probes its
-     * unreachable arms for reconnection (and resyncs them on success).
+     * unreachable members for reconnection (and resyncs them on success).
      */
     unsigned int mirror_probe_interval;
 };

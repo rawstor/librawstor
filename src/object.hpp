@@ -24,22 +24,22 @@ private:
     struct ResyncState;
 
     /*
-     * IN_SYNC - the arm carries every acknowledged write; serves I/O.
-     * STALE   - the arm is excluded (unreachable, degraded or behind).
-     * SYNCING - an online resync onto the arm is in progress: it receives
+     * IN_SYNC - the member carries every acknowledged write; serves I/O.
+     * STALE   - the member is excluded (unreachable, degraded or behind).
+     * SYNCING - an online resync onto the member is in progress: it receives
      *           client writes but serves no reads yet.
      */
-    enum class MirrorState { IN_SYNC, STALE, SYNCING };
+    enum class MemberState { IN_SYNC, STALE, SYNCING };
 
     /*
-     * One slot per configured arm, in target-list order. Arms that are
+     * One slot per configured member, in target-list order. Members that are
      * currently unusable keep their slot (reachable == false) so the
      * reconnect probe can bring them back.
      */
-    struct Mirror {
+    struct Member {
         std::unique_ptr<rawstor::Connection> cn;
         rawstd::URI target;
-        MirrorState state;
+        MemberState state;
         RawstorObjectMeta meta;
         bool reachable;
     };
@@ -49,12 +49,12 @@ private:
 
     /* Configured mirror width N (the target list length). */
     size_t _nmirrors;
-    std::vector<Mirror> _mirrors;
+    std::vector<Member> _members;
 
     /* Logical object size, adopted from the in-sync metadata at open. */
     uint64_t _size;
 
-    /* DIRTY has been durably recorded on the in-sync arms. */
+    /* DIRTY has been durably recorded on the in-sync members. */
     bool _dirty;
 
     /* Survivors dropped to <= N/2 (N >= 3): writes fail until recovery. */
@@ -68,7 +68,7 @@ private:
     bool _meta_op_running;
     std::vector<std::function<void()>> _meta_waiters;
 
-    /* Arms marked STALE whose exclusion is not yet durably recorded. */
+    /* Members marked STALE whose exclusion is not yet durably recorded. */
     size_t _unrecorded_stale;
 
     /* Current sync-set identity adopted at open / last barrier. */
@@ -87,10 +87,10 @@ private:
     /* Mirrored writes currently in flight (resync drain bookkeeping). */
     size_t _writes_in_flight;
 
-    /* Active online resync, one arm at a time. */
+    /* Active online resync, one member at a time. */
     std::unique_ptr<ResyncState> _resync;
 
-    /* Periodic reconnect probe for unreachable arms. */
+    /* Periodic reconnect probe for unreachable members. */
     int _probe_fd;
     bool _probe_pending;
     uint64_t _probe_expirations;
@@ -210,8 +210,8 @@ public:
     void flush(std::function<void(size_t, int)>&& cb);
 
     /*
-     * Clean close: flushes data and durably marks the in-sync arms CLEAN,
-     * then destroys the object. On any error the affected arms are left
+     * Clean close: flushes data and durably marks the in-sync members CLEAN,
+     * then destroys the object. On any error the affected members are left
      * DIRTY (the safe direction) and the object is destroyed anyway; the
      * first error is reported.
      */

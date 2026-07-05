@@ -343,7 +343,7 @@ Object::Object(rawio::Queue& queue, const std::vector<rawstd::URI>& targets) :
     }
 
     /* Slot indices must stay stable: no reallocation after this. */
-    _mirrors.reserve(_nmirrors);
+    _members.reserve(_nmirrors);
 }
 
 Object::~Object() {
@@ -359,8 +359,8 @@ Object::~Object() {
 
 size_t Object::_in_sync_count() const noexcept {
     size_t ret = 0;
-    for (const Mirror& m : _mirrors) {
-        if (m.state == MirrorState::IN_SYNC) {
+    for (const Member& m : _members) {
+        if (m.state == MemberState::IN_SYNC) {
             ++ret;
         }
     }
@@ -369,7 +369,7 @@ size_t Object::_in_sync_count() const noexcept {
 
 /*
  * Below-quorum writes freeze for N >= 3 only: with N = 2 a single survivor
- * may continue, because auto-open requires both arms, so the abandoned peer
+ * may continue, because auto-open requires both members, so the abandoned peer
  * can never auto-start alone (docs/mirroring.md, quorum rules).
  */
 bool Object::_below_write_quorum(size_t survivors) const noexcept {
@@ -378,8 +378,8 @@ bool Object::_below_write_quorum(size_t survivors) const noexcept {
 
 /*
  * Async object opening. With a single target any failure fails the open.
- * With N >= 2 unreachable arms are tolerated as long as a strict majority
- * (> N/2) is reachable; the per-arm metadata is then compared to exclude
+ * With N >= 2 unreachable members are tolerated as long as a strict majority
+ * (> N/2) is reachable; the per-member metadata is then compared to exclude
  * stale copies (docs/mirroring.md, case F4).
  */
 struct Object::OpenState {
@@ -408,7 +408,7 @@ void Object::open(
 void Object::_open_next(const std::shared_ptr<OpenState>& st) {
     if (st->next == st->targets.size()) {
         size_t reachable = 0;
-        for (const Mirror& m : _mirrors) {
+        for (const Member& m : _members) {
             if (m.reachable) {
                 ++reachable;
             }
@@ -421,8 +421,8 @@ void Object::_open_next(const std::shared_ptr<OpenState>& st) {
 
         if (_nmirrors >= 2 && reachable * 2 <= _nmirrors) {
             rawstd_error(
-                "Mirror quorum not met: %zu of %zu arms reachable\n", reachable,
-                _nmirrors
+                "Mirror quorum not met: %zu of %zu members reachable\n",
+                reachable, _nmirrors
             );
             st->cb(nullptr, ENOTCONN);
             return;
@@ -438,18 +438,18 @@ void Object::_open_next(const std::shared_ptr<OpenState>& st) {
     }
 
     try {
-        _mirrors.push_back(
-            Mirror{
+        _members.push_back(
+            Member{
                 std::make_unique<rawstor::Connection>(_queue),
                 st->targets[st->next],
-                MirrorState::STALE,
+                MemberState::STALE,
                 {},
                 false
             }
         );
-        size_t idx = _mirrors.size() - 1;
+        size_t idx = _members.size() - 1;
 
-        _mirrors[idx].cn->open(
+        _members[idx].cn->open(
             st->targets[st->next].parent(), this, rawstor_opts_sessions(),
             [this, st, idx](int error) {
                 if (error) {
@@ -458,15 +458,15 @@ void Object::_open_next(const std::shared_ptr<OpenState>& st) {
                         return;
                     }
                     rawstd_warning(
-                        "Mirror arm %s is unreachable: %s\n",
+                        "Mirror member %s is unreachable: %s\n",
                         st->targets[st->next].str().c_str(), strerror(error)
                     );
                     if (st->first_error == 0) {
                         st->first_error = error;
                     }
                 } else {
-                    _mirrors[idx].state = MirrorState::IN_SYNC;
-                    _mirrors[idx].reachable = true;
+                    _members[idx].state = MemberState::IN_SYNC;
+                    _members[idx].reachable = true;
                 }
                 ++st->next;
                 _open_next(st);
@@ -483,30 +483,30 @@ void Object::_open_next(const std::shared_ptr<OpenState>& st) {
 }
 
 void Object::_open_meta_next(const std::shared_ptr<OpenState>& st) {
-    while (st->meta_next < _mirrors.size() &&
-           !_mirrors[st->meta_next].reachable) {
+    while (st->meta_next < _members.size() &&
+           !_members[st->meta_next].reachable) {
         ++st->meta_next;
     }
 
-    if (st->meta_next == _mirrors.size()) {
+    if (st->meta_next == _members.size()) {
         _open_analyze(st);
         return;
     }
 
     size_t idx = st->meta_next;
-    _mirrors[idx].cn->meta(
+    _members[idx].cn->meta(
         _id, [this, st, idx](const RawstorObjectMeta& meta, int error) {
             if (error) {
                 rawstd_warning(
-                    "Mirror arm metadata unavailable: %s\n", strerror(error)
+                    "Mirror member metadata unavailable: %s\n", strerror(error)
                 );
                 if (st->first_error == 0) {
                     st->first_error = error;
                 }
-                _mirrors[idx].state = MirrorState::STALE;
-                _mirrors[idx].reachable = false;
+                _members[idx].state = MemberState::STALE;
+                _members[idx].reachable = false;
             } else {
-                _mirrors[idx].meta = meta;
+                _members[idx].meta = meta;
             }
             ++st->meta_next;
             _open_meta_next(st);
@@ -524,12 +524,12 @@ void Object::_open_meta_next(const std::shared_ptr<OpenState>& st) {
  * - disjoint histories mean split brain: unreachable through automatic
  *   paths, so refuse the open.
  * - all copies DIRTY with the same sync_id (client crash, case F5): they
- *   diverge only in unacknowledged regions; the front-most in-sync arm
+ *   diverge only in unacknowledged regions; the front-most in-sync member
  *   wins because reads are served from it.
  */
 void Object::_open_analyze(const std::shared_ptr<OpenState>& st) {
     size_t reachable = 0;
-    for (const Mirror& m : _mirrors) {
+    for (const Member& m : _members) {
         if (m.reachable) {
             ++reachable;
         }
@@ -537,15 +537,15 @@ void Object::_open_analyze(const std::shared_ptr<OpenState>& st) {
 
     if (reachable * 2 <= _nmirrors) {
         rawstd_error(
-            "Mirror quorum not met: %zu of %zu arms reachable\n", reachable,
+            "Mirror quorum not met: %zu of %zu members reachable\n", reachable,
             _nmirrors
         );
         st->cb(nullptr, ENOTCONN);
         return;
     }
 
-    const Mirror* ref = nullptr;
-    for (const Mirror& m : _mirrors) {
+    const Member* ref = nullptr;
+    for (const Member& m : _members) {
         if (!m.reachable) {
             continue;
         }
@@ -553,23 +553,23 @@ void Object::_open_analyze(const std::shared_ptr<OpenState>& st) {
             ref = &m;
         } else if (m.meta.size != ref->meta.size) {
             rawstd_warning(
-                "Mirror arm sizes disagree: %llu != %llu\n",
+                "Mirror member sizes disagree: %llu != %llu\n",
                 (unsigned long long)m.meta.size,
                 (unsigned long long)ref->meta.size
             );
         }
     }
 
-    for (Mirror& m : _mirrors) {
+    for (Member& m : _members) {
         if (m.reachable && m.meta.state == RAWSTOR_OBJECT_STATE_SYNCING) {
-            rawstd_warning("Mirror arm with interrupted resync is stale\n");
-            m.state = MirrorState::STALE;
+            rawstd_warning("Mirror member with interrupted resync is stale\n");
+            m.state = MemberState::STALE;
         }
     }
 
     std::vector<uint64_t> ids;
-    for (const Mirror& m : _mirrors) {
-        if (m.state != MirrorState::IN_SYNC || m.meta.sync_id == 0) {
+    for (const Member& m : _members) {
+        if (m.state != MemberState::IN_SYNC || m.meta.sync_id == 0) {
             continue;
         }
         if (std::find(ids.begin(), ids.end(), m.meta.sync_id) == ids.end()) {
@@ -588,7 +588,7 @@ void Object::_open_analyze(const std::shared_ptr<OpenState>& st) {
                     continue;
                 }
                 bool found = false;
-                for (const Mirror& m : _mirrors) {
+                for (const Member& m : _members) {
                     if (m.meta.sync_id == x && in_history(m.meta, y)) {
                         found = true;
                         break;
@@ -607,24 +607,24 @@ void Object::_open_analyze(const std::shared_ptr<OpenState>& st) {
 
         if (dominators != 1) {
             rawstd_error(
-                "Mirror arms carry disjoint write histories (split brain); "
+                "Mirror members carry disjoint write histories (split brain); "
                 "refusing to open\n"
             );
             st->cb(nullptr, ENOTRECOVERABLE);
             return;
         }
 
-        for (Mirror& m : _mirrors) {
-            if (m.state == MirrorState::IN_SYNC && m.meta.sync_id != newest) {
-                rawstd_warning("Stale mirror arm excluded from the set\n");
-                m.state = MirrorState::STALE;
+        for (Member& m : _members) {
+            if (m.state == MemberState::IN_SYNC && m.meta.sync_id != newest) {
+                rawstd_warning("Stale mirror member excluded from the set\n");
+                m.state = MemberState::STALE;
             }
         }
     }
 
     size_t in_sync = 0;
-    for (const Mirror& m : _mirrors) {
-        if (m.state != MirrorState::IN_SYNC) {
+    for (const Member& m : _members) {
+        if (m.state != MemberState::IN_SYNC) {
             continue;
         }
         ++in_sync;
@@ -644,7 +644,7 @@ void Object::_open_analyze(const std::shared_ptr<OpenState>& st) {
     }
 
     if (in_sync == 0) {
-        rawstd_error("No trusted mirror arm to serve from\n");
+        rawstd_error("No trusted mirror member to serve from\n");
         st->cb(nullptr, ENOTRECOVERABLE);
         return;
     }
@@ -673,16 +673,16 @@ void Object::_finish_meta_op() {
 }
 
 /*
- * Persists meta on every in-sync arm. Arms that fail the update are marked
- * STALE (their exclusion is recorded by the very sync_id they now lack);
- * ENOSYS is tolerated: block-device arms have no metadata storage yet.
+ * Persists meta on every in-sync member. Members that fail the update are
+ * marked STALE (their exclusion is recorded by the very sync_id they now lack);
+ * ENOSYS is tolerated: block-device members have no metadata storage yet.
  */
 void Object::_run_meta_fan_out(
     const RawstorObjectMeta& meta, std::function<void(int)>&& done
 ) {
     std::vector<size_t> idxs;
-    for (size_t i = 0; i < _mirrors.size(); ++i) {
-        if (_mirrors[i].state == MirrorState::IN_SYNC) {
+    for (size_t i = 0; i < _members.size(); ++i) {
+        if (_members[i].state == MemberState::IN_SYNC) {
             idxs.push_back(i);
         }
     }
@@ -701,7 +701,7 @@ void Object::_run_meta_fan_out(
     auto op = std::make_shared<FanOut>(FanOut{idxs.size(), 0, std::move(done)});
 
     for (size_t idx : idxs) {
-        _mirrors[idx].cn->set_state(
+        _members[idx].cn->set_state(
             _id, meta,
             [this, op, idx, alive = std::weak_ptr<int>(_alive)](int error) {
                 if (alive.expired()) {
@@ -709,16 +709,17 @@ void Object::_run_meta_fan_out(
                 }
                 if (error == ENOSYS) {
                     rawstd_warning(
-                        "Mirror arm does not support state tracking; "
+                        "Mirror member does not support state tracking; "
                         "treating as legacy\n"
                     );
                     error = 0;
                 }
                 if (error) {
                     rawstd_error(
-                        "Mirror arm state update failed: %s\n", strerror(error)
+                        "Mirror member state update failed: %s\n",
+                        strerror(error)
                     );
-                    _mirrors[idx].state = MirrorState::STALE;
+                    _members[idx].state = MemberState::STALE;
                     if (op->error == 0) {
                         op->error = error;
                     }
@@ -732,10 +733,10 @@ void Object::_run_meta_fan_out(
 }
 
 /*
- * Runs cont(0) once DIRTY is durably recorded on the in-sync arms; the
+ * Runs cont(0) once DIRTY is durably recorded on the in-sync members; the
  * first write (or read-repair) of a mirrored object passes through here
  * before anything is acknowledged. Membership changes (degraded open,
- * previously unrecorded stale arms) and legacy sets get a fresh sync_id.
+ * previously unrecorded stale members) and legacy sets get a fresh sync_id.
  */
 void Object::_with_dirty(std::function<void(int)>&& cont) {
     if (_nmirrors == 1) {
@@ -815,8 +816,8 @@ void Object::_run_dirty_barrier(std::function<void(int)>&& done) {
         _sync_id = m.sync_id;
         memcpy(_sync_id_history, m.sync_id_history, sizeof(_sync_id_history));
         _unrecorded_stale = 0;
-        for (Mirror& mirror : _mirrors) {
-            if (mirror.state == MirrorState::IN_SYNC) {
+        for (Member& mirror : _members) {
+            if (mirror.state == MemberState::IN_SYNC) {
                 mirror.meta.state = m.state;
                 mirror.meta.epoch = m.epoch;
                 mirror.meta.sync_id = m.sync_id;
@@ -828,7 +829,7 @@ void Object::_run_dirty_barrier(std::function<void(int)>&& done) {
             /*
              * A reopened session may talk to a restarted backend that lost
              * acknowledged writes: once DIRTY, failures must surface here
-             * and degrade the arm instead of being retried transparently
+             * and degrade the member instead of being retried transparently
              * (docs/mirroring.md, case F6).
              */
             mirror.cn->set_transparent_retry(false);
@@ -840,7 +841,7 @@ void Object::_run_dirty_barrier(std::function<void(int)>&& done) {
 }
 
 /*
- * Excludes arms from the mirror set. While DIRTY the exclusion must be
+ * Excludes members from the mirror set. While DIRTY the exclusion must be
  * durably recorded on the survivors (epoch bump, new sync_id) before any
  * dependent write is acknowledged (docs/mirroring.md, case F1). While
  * CLEAN nothing acknowledged can be lost, so the recording is deferred to
@@ -850,11 +851,11 @@ void Object::_degrade(
     std::vector<size_t>&& idxs, std::function<void(int)>&& done
 ) {
     for (size_t idx : idxs) {
-        if (_mirrors[idx].state == MirrorState::IN_SYNC) {
-            rawstd_error("Mirror arm degraded\n");
-            _mirrors[idx].state = MirrorState::STALE;
-            /* The reconnect probe brings the arm back for a resync. */
-            _mirrors[idx].reachable = false;
+        if (_members[idx].state == MemberState::IN_SYNC) {
+            rawstd_error("Mirror member degraded\n");
+            _members[idx].state = MemberState::STALE;
+            /* The reconnect probe brings the member back for a resync. */
+            _members[idx].reachable = false;
             ++_unrecorded_stale;
         }
     }
@@ -931,8 +932,8 @@ void Object::_run_degrade_barrier(std::function<void(int)>&& done) {
         _sync_id = m.sync_id;
         memcpy(_sync_id_history, m.sync_id_history, sizeof(_sync_id_history));
         _unrecorded_stale = 0;
-        for (Mirror& mirror : _mirrors) {
-            if (mirror.state == MirrorState::IN_SYNC) {
+        for (Member& mirror : _members) {
+            if (mirror.state == MemberState::IN_SYNC) {
                 mirror.meta.epoch = m.epoch;
                 mirror.meta.sync_id = m.sync_id;
                 memcpy(
@@ -948,9 +949,9 @@ void Object::_run_degrade_barrier(std::function<void(int)>&& done) {
 }
 
 /*
- * Online resync of one arm (docs/mirroring.md, resync algorithm): a
+ * Online resync of one member (docs/mirroring.md, resync algorithm): a
  * needs-copy bitmap over fixed chunks, client writes duplicated onto the
- * SYNCING arm (a write fully covering a chunk clears its bit), and a
+ * SYNCING member (a write fully covering a chunk clears its bit), and a
  * sweeper copying one chunk at a time from an in-sync source, mutually
  * exclusive with client writes per chunk.
  */
@@ -972,9 +973,9 @@ struct Object::ResyncState {
 
 /*
  * Mirrored write fan-out: the operation is acknowledged only after it
- * completed on every in-sync arm, or after the failed arms were durably
+ * completed on every in-sync member, or after the failed members were durably
  * excluded and it completed on all survivors. During a resync the write
- * is duplicated onto the SYNCING arm; its result does not affect the
+ * is duplicated onto the SYNCING member; its result does not affect the
  * acknowledgement, but a failure aborts the resync.
  */
 void Object::_fan_out_write(
@@ -986,7 +987,7 @@ void Object::_fan_out_write(
     /*
      * A client write overlapping the chunk the sweeper is copying right
      * now parks until the copy completes: the copy would otherwise
-     * overwrite the fresher data on the target arm.
+     * overwrite the fresher data on the target member.
      */
     if (_resync != nullptr && size > 0 && _resync->copying >= 0) {
         uint64_t lo = (uint64_t)_resync->copying * _resync->chunk;
@@ -1002,8 +1003,8 @@ void Object::_fan_out_write(
     }
 
     std::vector<size_t> idxs;
-    for (size_t i = 0; i < _mirrors.size(); ++i) {
-        if (_mirrors[i].state == MirrorState::IN_SYNC) {
+    for (size_t i = 0; i < _members.size(); ++i) {
+        if (_members[i].state == MemberState::IN_SYNC) {
             idxs.push_back(i);
         }
     }
@@ -1015,7 +1016,7 @@ void Object::_fan_out_write(
 
     ssize_t syncing = -1;
     if (_resync != nullptr &&
-        _mirrors[_resync->idx].state == MirrorState::SYNCING) {
+        _members[_resync->idx].state == MemberState::SYNCING) {
         syncing = (ssize_t)_resync->idx;
     }
 
@@ -1067,7 +1068,7 @@ void Object::_fan_out_write(
 
             /*
              * A chunk fully covered by a write that reached the SYNCING
-             * arm no longer needs to be copied.
+             * member no longer needs to be copied.
              */
             if (op->syncing_ok) {
                 for (size_t c = first; c <= last && c < _resync->bits.size();
@@ -1107,7 +1108,7 @@ void Object::_fan_out_write(
     });
 
     for (size_t idx : idxs) {
-        issue(*_mirrors[idx].cn, [op, finish, idx](size_t result, int error) {
+        issue(*_members[idx].cn, [op, finish, idx](size_t result, int error) {
             if (error) {
                 rawstd_error("%s\n", strerror(error));
                 op->failed.push_back(idx);
@@ -1123,7 +1124,7 @@ void Object::_fan_out_write(
     }
 
     if (syncing >= 0) {
-        issue(*_mirrors[syncing].cn, [op, finish](size_t result, int error) {
+        issue(*_members[syncing].cn, [op, finish](size_t result, int error) {
             op->syncing_ok = !error && result == op->size;
 
             if (--op->pending == 0) {
@@ -1164,8 +1165,8 @@ void Object::_resync_maybe_start() {
         return;
     }
 
-    for (const Mirror& m : _mirrors) {
-        if (m.state == MirrorState::SYNCING) {
+    for (const Member& m : _members) {
+        if (m.state == MemberState::SYNCING) {
             /* A start is already in flight. */
             return;
         }
@@ -1175,38 +1176,38 @@ void Object::_resync_maybe_start() {
         return;
     }
 
-    size_t idx = _mirrors.size();
-    for (size_t i = 0; i < _mirrors.size(); ++i) {
-        if (_mirrors[i].state == MirrorState::STALE && _mirrors[i].reachable) {
+    size_t idx = _members.size();
+    for (size_t i = 0; i < _members.size(); ++i) {
+        if (_members[i].state == MemberState::STALE && _members[i].reachable) {
             idx = i;
             break;
         }
     }
-    if (idx == _mirrors.size()) {
+    if (idx == _members.size()) {
         return;
     }
 
-    rawstd_info("Mirror resync: bringing a stale arm back...\n");
+    rawstd_info("Mirror resync: bringing a stale member back...\n");
 
     /*
      * The SYNCING mark must be durable before the copy starts: a crash
-     * mid-resync must leave the arm recognizably untrusted
+     * mid-resync must leave the member recognizably untrusted
      * (docs/mirroring.md, case F8).
      */
-    RawstorObjectMeta m = _mirrors[idx].meta;
+    RawstorObjectMeta m = _members[idx].meta;
     m.state = RAWSTOR_OBJECT_STATE_SYNCING;
 
-    _mirrors[idx].state = MirrorState::SYNCING;
+    _members[idx].state = MemberState::SYNCING;
 
     std::weak_ptr<int> alive = _alive;
-    _mirrors[idx].cn->set_state(_id, m, [this, idx, alive](int error) {
+    _members[idx].cn->set_state(_id, m, [this, idx, alive](int error) {
         if (alive.expired()) {
             return;
         }
 
         if (error == ENOSYS) {
             rawstd_warning(
-                "Mirror arm does not support state tracking; "
+                "Mirror member does not support state tracking; "
                 "resyncing anyway\n"
             );
             error = 0;
@@ -1216,8 +1217,8 @@ void Object::_resync_maybe_start() {
             rawstd_error(
                 "Mirror resync: SYNCING mark failed: %s\n", strerror(error)
             );
-            _mirrors[idx].state = MirrorState::STALE;
-            _mirrors[idx].reachable = false;
+            _members[idx].state = MemberState::STALE;
+            _members[idx].reachable = false;
             return;
         }
 
@@ -1284,14 +1285,14 @@ void Object::_resync_sweep() {
         return;
     }
 
-    size_t src = _mirrors.size();
-    for (size_t i = 0; i < _mirrors.size(); ++i) {
-        if (_mirrors[i].state == MirrorState::IN_SYNC) {
+    size_t src = _members.size();
+    for (size_t i = 0; i < _members.size(); ++i) {
+        if (_members[i].state == MemberState::IN_SYNC) {
             src = i;
             break;
         }
     }
-    if (src == _mirrors.size()) {
+    if (src == _members.size()) {
         _resync_abort("no in-sync source");
         return;
     }
@@ -1302,7 +1303,7 @@ void Object::_resync_sweep() {
     size_t len = (size_t)std::min<uint64_t>(_resync->chunk, _size - off);
 
     std::weak_ptr<int> alive = _alive;
-    _mirrors[src].cn->pread(
+    _members[src].cn->pread(
         _resync->buf.data(), len, (off_t)off,
         [this, c, src, len, off, alive](size_t result, int error) {
             if (alive.expired() || _resync == nullptr) {
@@ -1318,7 +1319,7 @@ void Object::_resync_sweep() {
              * The source may have degraded while the read was in flight;
              * retry the chunk from another source.
              */
-            if (_mirrors[src].state != MirrorState::IN_SYNC) {
+            if (_members[src].state != MemberState::IN_SYNC) {
                 _resync->copying = -1;
                 std::vector<std::function<void()>> waiters =
                     std::move(_resync->chunk_waiters);
@@ -1330,7 +1331,7 @@ void Object::_resync_sweep() {
                 return;
             }
 
-            _mirrors[_resync->idx].cn->pwrite(
+            _members[_resync->idx].cn->pwrite(
                 _resync->buf.data(), len, (off_t)off,
                 [this, c, len, alive](size_t result, int error) {
                     if (alive.expired() || _resync == nullptr) {
@@ -1365,9 +1366,9 @@ void Object::_resync_sweep() {
 
 void Object::_resync_finish() {
     /*
-     * All chunks are copied and no client write is in flight: the arm is
+     * All chunks are copied and no client write is in flight: the member is
      * byte-identical to the in-sync set. Adopt the current identity
-     * durably, then let the arm serve reads.
+     * durably, then let the member serve reads.
      */
     size_t idx = _resync->idx;
 
@@ -1378,7 +1379,7 @@ void Object::_resync_finish() {
     memcpy(m.sync_id_history, _sync_id_history, sizeof(m.sync_id_history));
 
     std::weak_ptr<int> alive = _alive;
-    _mirrors[idx].cn->set_state(_id, m, [this, idx, m, alive](int error) {
+    _members[idx].cn->set_state(_id, m, [this, idx, m, alive](int error) {
         if (alive.expired() || _resync == nullptr) {
             return;
         }
@@ -1392,12 +1393,12 @@ void Object::_resync_finish() {
             return;
         }
 
-        _mirrors[idx].state = MirrorState::IN_SYNC;
-        _mirrors[idx].meta = m;
-        _mirrors[idx].meta.size = _size;
+        _members[idx].state = MemberState::IN_SYNC;
+        _members[idx].meta = m;
+        _members[idx].meta.size = _size;
         _resync.reset();
 
-        rawstd_info("Mirror resync: the arm rejoined the set\n");
+        rawstd_info("Mirror resync: the member rejoined the set\n");
 
         if (_writes_frozen && !_below_write_quorum(_in_sync_count())) {
             rawstd_info("Mirror write quorum restored: unfreezing writes\n");
@@ -1412,8 +1413,8 @@ void Object::_resync_abort(const char* reason) {
     rawstd_error("Mirror resync aborted: %s\n", reason);
 
     size_t idx = _resync->idx;
-    _mirrors[idx].state = MirrorState::STALE;
-    _mirrors[idx].reachable = false;
+    _members[idx].state = MemberState::STALE;
+    _members[idx].reachable = false;
 
     std::vector<std::function<void()>> waiters =
         std::move(_resync->chunk_waiters);
@@ -1486,25 +1487,25 @@ void Object::_probe_tick() {
         return;
     }
 
-    size_t idx = _mirrors.size();
-    for (size_t i = 0; i < _mirrors.size(); ++i) {
-        if (_mirrors[i].state == MirrorState::STALE && !_mirrors[i].reachable) {
+    size_t idx = _members.size();
+    for (size_t i = 0; i < _members.size(); ++i) {
+        if (_members[i].state == MemberState::STALE && !_members[i].reachable) {
             idx = i;
             break;
         }
     }
-    if (idx == _mirrors.size()) {
+    if (idx == _members.size()) {
         return;
     }
 
-    rawstd_info("Mirror probe: reconnecting a stale arm...\n");
+    rawstd_info("Mirror probe: reconnecting a stale member...\n");
     _probe_pending = true;
 
     std::weak_ptr<int> alive = _alive;
     try {
-        _mirrors[idx].cn->close();
-        _mirrors[idx].cn->open(
-            _mirrors[idx].target.parent(), this, rawstor_opts_sessions(),
+        _members[idx].cn->close();
+        _members[idx].cn->open(
+            _members[idx].target.parent(), this, rawstor_opts_sessions(),
             [this, idx, alive](int error) {
                 if (alive.expired()) {
                     return;
@@ -1514,7 +1515,7 @@ void Object::_probe_tick() {
                     /* The next tick retries. */
                     return;
                 }
-                _mirrors[idx].reachable = true;
+                _members[idx].reachable = true;
                 _resync_maybe_start();
             }
         );
@@ -1694,8 +1695,8 @@ void Object::set_state(
 
 std::vector<rawstd::URI> Object::locations() const {
     std::vector<rawstd::URI> ret;
-    ret.reserve(_mirrors.size());
-    for (const Mirror& m : _mirrors) {
+    ret.reserve(_members.size());
+    for (const Member& m : _members) {
         const rawstd::URI* location = m.cn->location();
         if (location == nullptr) {
             continue;
@@ -1706,11 +1707,11 @@ std::vector<rawstd::URI> Object::locations() const {
 }
 
 /*
- * Read failover state: in-sync arms are tried in target-list order. A
- * failed arm is handled once another arm served the data: a payload error
+ * Read failover state: in-sync members are tried in target-list order. A
+ * failed member is handled once another member served the data: a payload error
  * (EPROTO) triggers a read-repair of the region, a transport error marks
- * the arm stale (with a durable degrade if the object is DIRTY, case F6).
- * If every arm fails, the error is reported without touching the states.
+ * the member stale (with a durable degrade if the object is DIRTY, case F6).
+ * If every member fails, the error is reported without touching the states.
  */
 struct Object::ReadState {
     Object* o;
@@ -1740,7 +1741,8 @@ void Object::_read_attempt(const std::shared_ptr<ReadState>& st) {
             return;
         }
         rawstd_warning(
-            "Mirror arm read failed: %s; trying next arm\n", strerror(error)
+            "Mirror member read failed: %s; trying next member\n",
+            strerror(error)
         );
         st->failures.push_back({idx, error});
         st->last_error = error;
@@ -1749,11 +1751,11 @@ void Object::_read_attempt(const std::shared_ptr<ReadState>& st) {
     };
 
     if (st->buf != nullptr) {
-        _mirrors[idx].cn->pread(
+        _members[idx].cn->pread(
             st->buf, st->size, st->offset, std::move(completion)
         );
     } else {
-        _mirrors[idx].cn->preadv(
+        _members[idx].cn->preadv(
             st->iov, st->niov, st->size, st->offset, std::move(completion)
         );
     }
@@ -1772,14 +1774,14 @@ void Object::_read_settle(const std::shared_ptr<ReadState>& st, size_t result) {
         } else if (_dirty) {
             /*
              * While DIRTY a lost session may hide a restarted backend that
-             * lost acknowledged writes: the arm must be excluded durably
+             * lost acknowledged writes: the member must be excluded durably
              * (docs/mirroring.md, case F6).
              */
             _degrade({idx}, [](int) {});
         }
         /*
          * While CLEAN a transport failure loses nothing (a clean close
-         * flushes before marking CLEAN): the arm stays in the set and the
+         * flushes before marking CLEAN): the member stays in the set and the
          * next operation will retry it.
          */
     }
@@ -1788,7 +1790,7 @@ void Object::_read_settle(const std::shared_ptr<ReadState>& st, size_t result) {
 }
 
 /*
- * Rewrites a region on an arm that served a corrupted payload. The repair
+ * Rewrites a region on an member that served a corrupted payload. The repair
  * goes through the dirty gate (repairing a CLEAN copy could otherwise
  * leave a torn region behind a CLEAN mark on a crash) and runs detached
  * from the read that triggered it.
@@ -1807,13 +1809,13 @@ void Object::_read_repair(size_t idx, off_t offset, std::vector<char>&& data) {
             return;
         }
 
-        if (_mirrors[idx].state != MirrorState::IN_SYNC) {
+        if (_members[idx].state != MemberState::IN_SYNC) {
             return;
         }
 
         rawstd_warning("Read repair: rewriting a corrupted region\n");
 
-        _mirrors[idx].cn->pwrite(
+        _members[idx].cn->pwrite(
             payload->data(), payload->size(), offset,
             [this, idx, payload, alive](size_t result, int error) {
                 if (alive.expired()) {
@@ -1839,7 +1841,7 @@ void Object::pread(
     );
 
     if (_nmirrors == 1) {
-        _mirrors.front().cn->pread(
+        _members.front().cn->pread(
             buf, size, offset,
             [trace_event, cb = std::move(cb)](size_t result, int error) {
                 RAWSTD_TRACE_EVENT_MESSAGE(
@@ -1857,8 +1859,8 @@ void Object::pread(
     auto st = std::make_shared<ReadState>(ReadState{
         this, buf, nullptr, 0, size, offset, std::move(cb), {}, 0, {}, 0
     });
-    for (size_t i = 0; i < _mirrors.size(); ++i) {
-        if (_mirrors[i].state == MirrorState::IN_SYNC) {
+    for (size_t i = 0; i < _members.size(); ++i) {
+        if (_members[i].state == MemberState::IN_SYNC) {
             st->order.push_back(i);
         }
     }
@@ -1874,7 +1876,7 @@ void Object::preadv(
     );
 
     if (_nmirrors == 1) {
-        _mirrors.front().cn->preadv(
+        _members.front().cn->preadv(
             iov, niov, size, offset,
             [trace_event, cb = std::move(cb)](size_t result, int error) {
                 RAWSTD_TRACE_EVENT_MESSAGE(
@@ -1892,8 +1894,8 @@ void Object::preadv(
     auto st = std::make_shared<ReadState>(ReadState{
         this, nullptr, iov, niov, size, offset, std::move(cb), {}, 0, {}, 0
     });
-    for (size_t i = 0; i < _mirrors.size(); ++i) {
-        if (_mirrors[i].state == MirrorState::IN_SYNC) {
+    for (size_t i = 0; i < _members.size(); ++i) {
+        if (_members[i].state == MemberState::IN_SYNC) {
             st->order.push_back(i);
         }
     }
@@ -1909,7 +1911,7 @@ void Object::pwrite(
     );
 
     if (_nmirrors == 1) {
-        _mirrors.front().cn->pwrite(
+        _members.front().cn->pwrite(
             buf, size, offset,
             [trace_event, cb = std::move(cb)](size_t result, int error) {
                 RAWSTD_TRACE_EVENT_MESSAGE(
@@ -1952,7 +1954,7 @@ void Object::pwritev(
     );
 
     if (_nmirrors == 1) {
-        _mirrors.front().cn->pwritev(
+        _members.front().cn->pwritev(
             iov, niov, size, offset,
             [trace_event, cb = std::move(cb)](size_t result, int error) {
                 RAWSTD_TRACE_EVENT_MESSAGE(
@@ -1990,7 +1992,7 @@ void Object::flush(std::function<void(size_t, int)>&& cb) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('o', "%s\n", "flush()");
 
     if (_nmirrors == 1) {
-        _mirrors.front().cn->flush([trace_event,
+        _members.front().cn->flush([trace_event,
                                     cb = std::move(cb)](size_t, int error) {
             RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "error = %d\n", error);
             cb(0, error);
