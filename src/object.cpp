@@ -15,6 +15,7 @@
 #include <rawstd/uuid.h>
 
 #include <sys/random.h>
+#include <sys/timerfd.h>
 
 #include <unistd.h>
 
@@ -32,7 +33,12 @@
 #include <cstdlib>
 #include <cstring>
 
+#include <unordered_map>
+
 namespace {
+
+/* Online resync copy granularity (docs/mirroring.md). */
+const size_t RESYNC_CHUNK = 1ull << 20;
 
 int uris(const std::vector<rawstd::URI>& uriv, char* buf, size_t size) {
     std::string s = rawstd::URI::uris(uriv);
@@ -313,6 +319,7 @@ Object::Object(rawio::Queue& queue, const std::vector<rawstd::URI>& targets) :
     _queue(queue),
     _id(),
     _nmirrors(targets.size()),
+    _size(0),
     _dirty(false),
     _writes_frozen(false),
     _meta_op_running(false),
@@ -320,7 +327,11 @@ Object::Object(rawio::Queue& queue, const std::vector<rawstd::URI>& targets) :
     _epoch(0),
     _sync_id(0),
     _sync_id_history{},
-    _alive(std::make_shared<int>(0)) {
+    _alive(std::make_shared<int>(0)),
+    _writes_in_flight(0),
+    _probe_fd(-1),
+    _probe_pending(false),
+    _probe_expirations(0) {
     validate_not_empty(targets);
     validate_different_uris(targets);
     validate_same_uuid(targets);
@@ -329,6 +340,20 @@ Object::Object(rawio::Queue& queue, const std::vector<rawstd::URI>& targets) :
     int res = rawstd_uuid_from_string(&_id, id.c_str());
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+
+    /* Slot indices must stay stable: no reallocation after this. */
+    _mirrors.reserve(_nmirrors);
+}
+
+Object::~Object() {
+    if (_probe_fd != -1) {
+        try {
+            _queue.cancel(_probe_fd);
+        } catch (const std::exception& e) {
+            rawstd_warning("Failed to cancel probe timer: %s\n", e.what());
+        }
+        ::close(_probe_fd);
     }
 }
 
@@ -382,7 +407,12 @@ void Object::open(
 
 void Object::_open_next(const std::shared_ptr<OpenState>& st) {
     if (st->next == st->targets.size()) {
-        size_t reachable = _mirrors.size();
+        size_t reachable = 0;
+        for (const Mirror& m : _mirrors) {
+            if (m.reachable) {
+                ++reachable;
+            }
+        }
 
         if (reachable == 0) {
             st->cb(nullptr, st->first_error ? st->first_error : ENOTCONN);
@@ -408,12 +438,20 @@ void Object::_open_next(const std::shared_ptr<OpenState>& st) {
     }
 
     try {
-        st->pending = std::make_unique<rawstor::Connection>(_queue);
-        Connection* raw = st->pending.get();
+        _mirrors.push_back(
+            Mirror{
+                std::make_unique<rawstor::Connection>(_queue),
+                st->targets[st->next],
+                MirrorState::STALE,
+                {},
+                false
+            }
+        );
+        size_t idx = _mirrors.size() - 1;
 
-        raw->open(
+        _mirrors[idx].cn->open(
             st->targets[st->next].parent(), this, rawstor_opts_sessions(),
-            [this, st](int error) {
+            [this, st, idx](int error) {
                 if (error) {
                     if (_nmirrors == 1) {
                         st->cb(nullptr, error);
@@ -426,11 +464,9 @@ void Object::_open_next(const std::shared_ptr<OpenState>& st) {
                     if (st->first_error == 0) {
                         st->first_error = error;
                     }
-                    st->pending.reset();
                 } else {
-                    _mirrors.push_back(
-                        Mirror{std::move(st->pending), MirrorState::IN_SYNC, {}}
-                    );
+                    _mirrors[idx].state = MirrorState::IN_SYNC;
+                    _mirrors[idx].reachable = true;
                 }
                 ++st->next;
                 _open_next(st);
@@ -447,13 +483,19 @@ void Object::_open_next(const std::shared_ptr<OpenState>& st) {
 }
 
 void Object::_open_meta_next(const std::shared_ptr<OpenState>& st) {
+    while (st->meta_next < _mirrors.size() &&
+           !_mirrors[st->meta_next].reachable) {
+        ++st->meta_next;
+    }
+
     if (st->meta_next == _mirrors.size()) {
         _open_analyze(st);
         return;
     }
 
-    _mirrors[st->meta_next].cn->meta(
-        _id, [this, st](const RawstorObjectMeta& meta, int error) {
+    size_t idx = st->meta_next;
+    _mirrors[idx].cn->meta(
+        _id, [this, st, idx](const RawstorObjectMeta& meta, int error) {
             if (error) {
                 rawstd_warning(
                     "Mirror arm metadata unavailable: %s\n", strerror(error)
@@ -461,11 +503,12 @@ void Object::_open_meta_next(const std::shared_ptr<OpenState>& st) {
                 if (st->first_error == 0) {
                     st->first_error = error;
                 }
-                _mirrors.erase(_mirrors.begin() + st->meta_next);
+                _mirrors[idx].state = MirrorState::STALE;
+                _mirrors[idx].reachable = false;
             } else {
-                _mirrors[st->meta_next].meta = meta;
-                ++st->meta_next;
+                _mirrors[idx].meta = meta;
             }
+            ++st->meta_next;
             _open_meta_next(st);
         }
     );
@@ -485,7 +528,12 @@ void Object::_open_meta_next(const std::shared_ptr<OpenState>& st) {
  *   wins because reads are served from it.
  */
 void Object::_open_analyze(const std::shared_ptr<OpenState>& st) {
-    size_t reachable = _mirrors.size();
+    size_t reachable = 0;
+    for (const Mirror& m : _mirrors) {
+        if (m.reachable) {
+            ++reachable;
+        }
+    }
 
     if (reachable * 2 <= _nmirrors) {
         rawstd_error(
@@ -496,18 +544,24 @@ void Object::_open_analyze(const std::shared_ptr<OpenState>& st) {
         return;
     }
 
-    for (size_t i = 1; i < _mirrors.size(); ++i) {
-        if (_mirrors[i].meta.size != _mirrors.front().meta.size) {
+    const Mirror* ref = nullptr;
+    for (const Mirror& m : _mirrors) {
+        if (!m.reachable) {
+            continue;
+        }
+        if (ref == nullptr) {
+            ref = &m;
+        } else if (m.meta.size != ref->meta.size) {
             rawstd_warning(
                 "Mirror arm sizes disagree: %llu != %llu\n",
-                (unsigned long long)_mirrors[i].meta.size,
-                (unsigned long long)_mirrors.front().meta.size
+                (unsigned long long)m.meta.size,
+                (unsigned long long)ref->meta.size
             );
         }
     }
 
     for (Mirror& m : _mirrors) {
-        if (m.meta.state == RAWSTOR_OBJECT_STATE_SYNCING) {
+        if (m.reachable && m.meta.state == RAWSTOR_OBJECT_STATE_SYNCING) {
             rawstd_warning("Mirror arm with interrupted resync is stale\n");
             m.state = MirrorState::STALE;
         }
@@ -577,6 +631,9 @@ void Object::_open_analyze(const std::shared_ptr<OpenState>& st) {
         if (m.meta.epoch > _epoch) {
             _epoch = m.meta.epoch;
         }
+        if (_size == 0) {
+            _size = m.meta.size;
+        }
         if (_sync_id == 0) {
             _sync_id = m.meta.sync_id;
             memcpy(
@@ -591,6 +648,9 @@ void Object::_open_analyze(const std::shared_ptr<OpenState>& st) {
         st->cb(nullptr, ENOTRECOVERABLE);
         return;
     }
+
+    _probe_setup();
+    _resync_maybe_start();
 
     st->cb(st->object.release(), 0);
 }
@@ -793,6 +853,8 @@ void Object::_degrade(
         if (_mirrors[idx].state == MirrorState::IN_SYNC) {
             rawstd_error("Mirror arm degraded\n");
             _mirrors[idx].state = MirrorState::STALE;
+            /* The reconnect probe brings the arm back for a resync. */
+            _mirrors[idx].reachable = false;
             ++_unrecorded_stale;
         }
     }
@@ -886,15 +948,59 @@ void Object::_run_degrade_barrier(std::function<void(int)>&& done) {
 }
 
 /*
+ * Online resync of one arm (docs/mirroring.md, resync algorithm): a
+ * needs-copy bitmap over fixed chunks, client writes duplicated onto the
+ * SYNCING arm (a write fully covering a chunk clears its bit), and a
+ * sweeper copying one chunk at a time from an in-sync source, mutually
+ * exclusive with client writes per chunk.
+ */
+struct Object::ResyncState {
+    enum class Phase { START_DRAIN, SWEEP, FINISH_DRAIN };
+
+    Phase phase;
+    size_t idx;
+    size_t chunk;
+    std::vector<bool> bits;
+    size_t remaining;
+    size_t cursor;
+    ssize_t copying;
+    bool sweep_blocked;
+    std::vector<char> buf;
+    std::unordered_map<size_t, size_t> inflight;
+    std::vector<std::function<void()>> chunk_waiters;
+};
+
+/*
  * Mirrored write fan-out: the operation is acknowledged only after it
  * completed on every in-sync arm, or after the failed arms were durably
- * excluded and it completed on all survivors.
+ * excluded and it completed on all survivors. During a resync the write
+ * is duplicated onto the SYNCING arm; its result does not affect the
+ * acknowledgement, but a failure aborts the resync.
  */
 void Object::_fan_out_write(
+    off_t offset, size_t size,
     std::function<void(Connection&, std::function<void(size_t, int)>&&)>&&
         issue,
     std::function<void(size_t, int)>&& cb
 ) {
+    /*
+     * A client write overlapping the chunk the sweeper is copying right
+     * now parks until the copy completes: the copy would otherwise
+     * overwrite the fresher data on the target arm.
+     */
+    if (_resync != nullptr && size > 0 && _resync->copying >= 0) {
+        uint64_t lo = (uint64_t)_resync->copying * _resync->chunk;
+        uint64_t hi = lo + _resync->chunk;
+        if ((uint64_t)offset < hi && (uint64_t)offset + size > lo) {
+            _resync->chunk_waiters.push_back([this, offset, size,
+                                              issue = std::move(issue),
+                                              cb = std::move(cb)]() mutable {
+                _fan_out_write(offset, size, std::move(issue), std::move(cb));
+            });
+            return;
+        }
+    }
+
     std::vector<size_t> idxs;
     for (size_t i = 0; i < _mirrors.size(); ++i) {
         if (_mirrors[i].state == MirrorState::IN_SYNC) {
@@ -907,20 +1013,101 @@ void Object::_fan_out_write(
         return;
     }
 
+    ssize_t syncing = -1;
+    if (_resync != nullptr &&
+        _mirrors[_resync->idx].state == MirrorState::SYNCING) {
+        syncing = (ssize_t)_resync->idx;
+    }
+
+    ++_writes_in_flight;
+    if (_resync != nullptr && size > 0) {
+        size_t first = offset / _resync->chunk;
+        size_t last = (offset + size - 1) / _resync->chunk;
+        for (size_t c = first; c <= last; ++c) {
+            ++_resync->inflight[c];
+        }
+    }
+
     struct WriteOp {
         size_t pending;
         size_t result;
         bool any_success;
         std::vector<size_t> failed;
+        bool has_syncing;
+        bool syncing_ok;
+        off_t offset;
+        size_t size;
         std::function<void(size_t, int)> cb;
     };
 
-    auto op = std::make_shared<WriteOp>(
-        WriteOp{idxs.size(), (size_t)-1, false, {}, std::move(cb)}
-    );
+    auto op = std::make_shared<WriteOp>(WriteOp{
+        idxs.size() + (syncing >= 0 ? 1u : 0u),
+        (size_t)-1,
+        false,
+        {},
+        syncing >= 0,
+        false,
+        offset,
+        size,
+        std::move(cb)
+    });
+
+    auto finish = std::make_shared<std::function<void()>>([this, op]() {
+        --_writes_in_flight;
+
+        if (_resync != nullptr && op->size > 0) {
+            size_t first = op->offset / _resync->chunk;
+            size_t last = (op->offset + op->size - 1) / _resync->chunk;
+            for (size_t c = first; c <= last; ++c) {
+                auto it = _resync->inflight.find(c);
+                if (it != _resync->inflight.end() && --it->second == 0) {
+                    _resync->inflight.erase(it);
+                }
+            }
+
+            /*
+             * A chunk fully covered by a write that reached the SYNCING
+             * arm no longer needs to be copied.
+             */
+            if (op->syncing_ok) {
+                for (size_t c = first; c <= last && c < _resync->bits.size();
+                     ++c) {
+                    uint64_t lo = (uint64_t)c * _resync->chunk;
+                    uint64_t hi =
+                        std::min<uint64_t>(lo + _resync->chunk, _size);
+                    if ((uint64_t)op->offset <= lo &&
+                        (uint64_t)op->offset + op->size >= hi &&
+                        _resync->bits[c]) {
+                        _resync->bits[c] = false;
+                        --_resync->remaining;
+                    }
+                }
+            }
+        }
+
+        if (_resync != nullptr && op->has_syncing && !op->syncing_ok) {
+            _resync_abort("write to the resync target failed");
+        }
+
+        if (op->failed.empty()) {
+            op->cb(op->result, 0);
+        } else if (!op->any_success) {
+            op->cb(0, EIO);
+        } else {
+            _degrade(std::move(op->failed), [op](int error) {
+                if (error) {
+                    op->cb(0, EIO);
+                } else {
+                    op->cb(op->result, 0);
+                }
+            });
+        }
+
+        _write_settled();
+    });
 
     for (size_t idx : idxs) {
-        issue(*_mirrors[idx].cn, [this, op, idx](size_t result, int error) {
+        issue(*_mirrors[idx].cn, [op, finish, idx](size_t result, int error) {
             if (error) {
                 rawstd_error("%s\n", strerror(error));
                 op->failed.push_back(idx);
@@ -929,28 +1116,411 @@ void Object::_fan_out_write(
                 op->result = std::min(op->result, result);
             }
 
-            if (--op->pending != 0) {
-                return;
+            if (--op->pending == 0) {
+                (*finish)();
             }
-
-            if (op->failed.empty()) {
-                op->cb(op->result, 0);
-                return;
-            }
-
-            if (!op->any_success) {
-                op->cb(0, EIO);
-                return;
-            }
-
-            _degrade(std::move(op->failed), [op](int error) {
-                if (error) {
-                    op->cb(0, EIO);
-                } else {
-                    op->cb(op->result, 0);
-                }
-            });
         });
+    }
+
+    if (syncing >= 0) {
+        issue(*_mirrors[syncing].cn, [op, finish](size_t result, int error) {
+            op->syncing_ok = !error && result == op->size;
+
+            if (--op->pending == 0) {
+                (*finish)();
+            }
+        });
+    }
+}
+
+void Object::_write_settled() {
+    if (_resync == nullptr) {
+        return;
+    }
+
+    switch (_resync->phase) {
+    case ResyncState::Phase::START_DRAIN:
+        if (_writes_in_flight == 0) {
+            _resync->phase = ResyncState::Phase::SWEEP;
+            _resync_sweep();
+        }
+        break;
+    case ResyncState::Phase::SWEEP:
+        if (_resync->sweep_blocked) {
+            _resync->sweep_blocked = false;
+            _resync_sweep();
+        }
+        break;
+    case ResyncState::Phase::FINISH_DRAIN:
+        if (_writes_in_flight == 0) {
+            _resync_finish();
+        }
+        break;
+    }
+}
+
+void Object::_resync_maybe_start() {
+    if (_nmirrors == 1 || _resync != nullptr || _size == 0) {
+        return;
+    }
+
+    for (const Mirror& m : _mirrors) {
+        if (m.state == MirrorState::SYNCING) {
+            /* A start is already in flight. */
+            return;
+        }
+    }
+
+    if (_in_sync_count() == 0) {
+        return;
+    }
+
+    size_t idx = _mirrors.size();
+    for (size_t i = 0; i < _mirrors.size(); ++i) {
+        if (_mirrors[i].state == MirrorState::STALE && _mirrors[i].reachable) {
+            idx = i;
+            break;
+        }
+    }
+    if (idx == _mirrors.size()) {
+        return;
+    }
+
+    rawstd_info("Mirror resync: bringing a stale arm back...\n");
+
+    /*
+     * The SYNCING mark must be durable before the copy starts: a crash
+     * mid-resync must leave the arm recognizably untrusted
+     * (docs/mirroring.md, case F8).
+     */
+    RawstorObjectMeta m = _mirrors[idx].meta;
+    m.state = RAWSTOR_OBJECT_STATE_SYNCING;
+
+    _mirrors[idx].state = MirrorState::SYNCING;
+
+    std::weak_ptr<int> alive = _alive;
+    _mirrors[idx].cn->set_state(_id, m, [this, idx, alive](int error) {
+        if (alive.expired()) {
+            return;
+        }
+
+        if (error == ENOSYS) {
+            rawstd_warning(
+                "Mirror arm does not support state tracking; "
+                "resyncing anyway\n"
+            );
+            error = 0;
+        }
+
+        if (error) {
+            rawstd_error(
+                "Mirror resync: SYNCING mark failed: %s\n", strerror(error)
+            );
+            _mirrors[idx].state = MirrorState::STALE;
+            _mirrors[idx].reachable = false;
+            return;
+        }
+
+        size_t chunk = RESYNC_CHUNK;
+        size_t nbits = (_size + chunk - 1) / chunk;
+        _resync = std::make_unique<ResyncState>(ResyncState{
+            ResyncState::Phase::START_DRAIN,
+            idx,
+            chunk,
+            std::vector<bool>(nbits, true),
+            nbits,
+            0,
+            -1,
+            false,
+            std::vector<char>(chunk),
+            {},
+            {}
+        });
+
+        /*
+         * Writes issued before the resync started are not tracked in the
+         * chunk bookkeeping: sweep only once they have drained.
+         */
+        if (_writes_in_flight == 0) {
+            _resync->phase = ResyncState::Phase::SWEEP;
+            _resync_sweep();
+        }
+    });
+}
+
+void Object::_resync_sweep() {
+    if (_resync == nullptr || _resync->phase != ResyncState::Phase::SWEEP ||
+        _resync->copying >= 0) {
+        return;
+    }
+
+    if (_resync->remaining == 0) {
+        _resync->phase = ResyncState::Phase::FINISH_DRAIN;
+        if (_writes_in_flight == 0) {
+            _resync_finish();
+        }
+        return;
+    }
+
+    size_t n = _resync->bits.size();
+    size_t found = n;
+    for (size_t scan = 0; scan < n; ++scan) {
+        size_t c = (_resync->cursor + scan) % n;
+        if (!_resync->bits[c]) {
+            continue;
+        }
+        auto it = _resync->inflight.find(c);
+        if (it != _resync->inflight.end() && it->second > 0) {
+            continue;
+        }
+        found = c;
+        break;
+    }
+
+    if (found == n) {
+        /* Every dirty chunk has a client write in flight; resumed by
+         * _write_settled(). */
+        _resync->sweep_blocked = true;
+        return;
+    }
+
+    size_t src = _mirrors.size();
+    for (size_t i = 0; i < _mirrors.size(); ++i) {
+        if (_mirrors[i].state == MirrorState::IN_SYNC) {
+            src = i;
+            break;
+        }
+    }
+    if (src == _mirrors.size()) {
+        _resync_abort("no in-sync source");
+        return;
+    }
+
+    size_t c = found;
+    _resync->copying = (ssize_t)c;
+    uint64_t off = (uint64_t)c * _resync->chunk;
+    size_t len = (size_t)std::min<uint64_t>(_resync->chunk, _size - off);
+
+    std::weak_ptr<int> alive = _alive;
+    _mirrors[src].cn->pread(
+        _resync->buf.data(), len, (off_t)off,
+        [this, c, src, len, off, alive](size_t result, int error) {
+            if (alive.expired() || _resync == nullptr) {
+                return;
+            }
+
+            if (error || result != len) {
+                _resync_abort("source read failed");
+                return;
+            }
+
+            /*
+             * The source may have degraded while the read was in flight;
+             * retry the chunk from another source.
+             */
+            if (_mirrors[src].state != MirrorState::IN_SYNC) {
+                _resync->copying = -1;
+                std::vector<std::function<void()>> waiters =
+                    std::move(_resync->chunk_waiters);
+                _resync->chunk_waiters.clear();
+                for (auto& w : waiters) {
+                    w();
+                }
+                _resync_sweep();
+                return;
+            }
+
+            _mirrors[_resync->idx].cn->pwrite(
+                _resync->buf.data(), len, (off_t)off,
+                [this, c, len, alive](size_t result, int error) {
+                    if (alive.expired() || _resync == nullptr) {
+                        return;
+                    }
+
+                    if (error || result != len) {
+                        _resync_abort("target write failed");
+                        return;
+                    }
+
+                    if (_resync->bits[c]) {
+                        _resync->bits[c] = false;
+                        --_resync->remaining;
+                    }
+                    _resync->cursor = c + 1 < _resync->bits.size() ? c + 1 : 0;
+                    _resync->copying = -1;
+
+                    std::vector<std::function<void()>> waiters =
+                        std::move(_resync->chunk_waiters);
+                    _resync->chunk_waiters.clear();
+                    for (auto& w : waiters) {
+                        w();
+                    }
+
+                    _resync_sweep();
+                }
+            );
+        }
+    );
+}
+
+void Object::_resync_finish() {
+    /*
+     * All chunks are copied and no client write is in flight: the arm is
+     * byte-identical to the in-sync set. Adopt the current identity
+     * durably, then let the arm serve reads.
+     */
+    size_t idx = _resync->idx;
+
+    RawstorObjectMeta m{};
+    m.state = _dirty ? RAWSTOR_OBJECT_STATE_DIRTY : RAWSTOR_OBJECT_STATE_CLEAN;
+    m.epoch = _epoch;
+    m.sync_id = _sync_id;
+    memcpy(m.sync_id_history, _sync_id_history, sizeof(m.sync_id_history));
+
+    std::weak_ptr<int> alive = _alive;
+    _mirrors[idx].cn->set_state(_id, m, [this, idx, m, alive](int error) {
+        if (alive.expired() || _resync == nullptr) {
+            return;
+        }
+
+        if (error == ENOSYS) {
+            error = 0;
+        }
+
+        if (error) {
+            _resync_abort("final state update failed");
+            return;
+        }
+
+        _mirrors[idx].state = MirrorState::IN_SYNC;
+        _mirrors[idx].meta = m;
+        _mirrors[idx].meta.size = _size;
+        _resync.reset();
+
+        rawstd_info("Mirror resync: the arm rejoined the set\n");
+
+        if (_writes_frozen && !_below_write_quorum(_in_sync_count())) {
+            rawstd_info("Mirror write quorum restored: unfreezing writes\n");
+            _writes_frozen = false;
+        }
+
+        _resync_maybe_start();
+    });
+}
+
+void Object::_resync_abort(const char* reason) {
+    rawstd_error("Mirror resync aborted: %s\n", reason);
+
+    size_t idx = _resync->idx;
+    _mirrors[idx].state = MirrorState::STALE;
+    _mirrors[idx].reachable = false;
+
+    std::vector<std::function<void()>> waiters =
+        std::move(_resync->chunk_waiters);
+    _resync.reset();
+    for (auto& w : waiters) {
+        w();
+    }
+}
+
+void Object::_probe_setup() {
+    if (_nmirrors == 1) {
+        return;
+    }
+
+    _probe_fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
+    if (_probe_fd == -1) {
+        rawstd_warning(
+            "Failed to create the mirror probe timer: %s\n", strerror(errno)
+        );
+        errno = 0;
+        return;
+    }
+
+    unsigned int ms = rawstor_opts_mirror_probe_interval();
+    itimerspec its{};
+    its.it_value.tv_sec = ms / 1000;
+    its.it_value.tv_nsec = (long)(ms % 1000) * 1000000L;
+    its.it_interval = its.it_value;
+    if (timerfd_settime(_probe_fd, 0, &its, nullptr) == -1) {
+        rawstd_warning(
+            "Failed to arm the mirror probe timer: %s\n", strerror(errno)
+        );
+        errno = 0;
+        ::close(_probe_fd);
+        _probe_fd = -1;
+        return;
+    }
+
+    _probe_arm();
+}
+
+void Object::_probe_arm() {
+    std::weak_ptr<int> alive = _alive;
+    try {
+        _queue.read(
+            _probe_fd, &_probe_expirations, sizeof(_probe_expirations),
+            [this, alive](size_t, int error) {
+                if (alive.expired()) {
+                    return;
+                }
+                if (error) {
+                    if (error != ECANCELED) {
+                        rawstd_warning(
+                            "Mirror probe timer failed: %s\n", strerror(error)
+                        );
+                    }
+                    return;
+                }
+                _probe_tick();
+                _probe_arm();
+            }
+        );
+    } catch (const std::exception& e) {
+        rawstd_warning("%s\n", e.what());
+    }
+}
+
+void Object::_probe_tick() {
+    if (_probe_pending || _resync != nullptr) {
+        return;
+    }
+
+    size_t idx = _mirrors.size();
+    for (size_t i = 0; i < _mirrors.size(); ++i) {
+        if (_mirrors[i].state == MirrorState::STALE && !_mirrors[i].reachable) {
+            idx = i;
+            break;
+        }
+    }
+    if (idx == _mirrors.size()) {
+        return;
+    }
+
+    rawstd_info("Mirror probe: reconnecting a stale arm...\n");
+    _probe_pending = true;
+
+    std::weak_ptr<int> alive = _alive;
+    try {
+        _mirrors[idx].cn->close();
+        _mirrors[idx].cn->open(
+            _mirrors[idx].target.parent(), this, rawstor_opts_sessions(),
+            [this, idx, alive](int error) {
+                if (alive.expired()) {
+                    return;
+                }
+                _probe_pending = false;
+                if (error) {
+                    /* The next tick retries. */
+                    return;
+                }
+                _mirrors[idx].reachable = true;
+                _resync_maybe_start();
+            }
+        );
+    } catch (const std::exception& e) {
+        rawstd_warning("%s\n", e.what());
+        _probe_pending = false;
     }
 }
 
@@ -1358,6 +1928,7 @@ void Object::pwrite(
             return;
         }
         _fan_out_write(
+            offset, size,
             [buf, size,
              offset](Connection& cn, std::function<void(size_t, int)>&& c) {
                 cn.pwrite(buf, size, offset, std::move(c));
@@ -1400,6 +1971,7 @@ void Object::pwritev(
             return;
         }
         _fan_out_write(
+            offset, size,
             [iov, niov, size,
              offset](Connection& cn, std::function<void(size_t, int)>&& c) {
                 cn.pwritev(iov, niov, size, offset, std::move(c));
@@ -1427,6 +1999,7 @@ void Object::flush(std::function<void(size_t, int)>&& cb) {
     }
 
     _fan_out_write(
+        0, 0,
         [](Connection& cn, std::function<void(size_t, int)>&& c) {
             cn.flush(std::move(c));
         },

@@ -21,18 +21,27 @@ class Connection;
 class Object final : public RawstorObject {
 private:
     struct OpenState;
-
-    enum class MirrorState { IN_SYNC, STALE };
+    struct ResyncState;
 
     /*
-     * A reachable arm of the mirror set. Arms that could not be opened are
-     * not represented: the difference between _nmirrors and _mirrors.size()
-     * is the number of unreachable arms.
+     * IN_SYNC - the arm carries every acknowledged write; serves I/O.
+     * STALE   - the arm is excluded (unreachable, degraded or behind).
+     * SYNCING - an online resync onto the arm is in progress: it receives
+     *           client writes but serves no reads yet.
+     */
+    enum class MirrorState { IN_SYNC, STALE, SYNCING };
+
+    /*
+     * One slot per configured arm, in target-list order. Arms that are
+     * currently unusable keep their slot (reachable == false) so the
+     * reconnect probe can bring them back.
      */
     struct Mirror {
         std::unique_ptr<rawstor::Connection> cn;
+        rawstd::URI target;
         MirrorState state;
         RawstorObjectMeta meta;
+        bool reachable;
     };
 
     rawio::Queue& _queue;
@@ -41,6 +50,9 @@ private:
     /* Configured mirror width N (the target list length). */
     size_t _nmirrors;
     std::vector<Mirror> _mirrors;
+
+    /* Logical object size, adopted from the in-sync metadata at open. */
+    uint64_t _size;
 
     /* DIRTY has been durably recorded on the in-sync arms. */
     bool _dirty;
@@ -65,12 +77,23 @@ private:
     uint64_t _sync_id_history[RAWSTOR_OBJECT_SYNC_ID_HISTORY];
 
     /*
-     * Expires on destruction. Detached background work (read-repair, the
-     * degrade barriers it may trigger) checks it before touching the
-     * object: unlike caller I/O, such work is not covered by the "no I/O
-     * in flight at close" contract.
+     * Expires on destruction. Detached background work (read-repair,
+     * resync, the reconnect probe, the degrade barriers they may trigger)
+     * checks it before touching the object: unlike caller I/O, such work
+     * is not covered by the "no I/O in flight at close" contract.
      */
     std::shared_ptr<int> _alive;
+
+    /* Mirrored writes currently in flight (resync drain bookkeeping). */
+    size_t _writes_in_flight;
+
+    /* Active online resync, one arm at a time. */
+    std::unique_ptr<ResyncState> _resync;
+
+    /* Periodic reconnect probe for unreachable arms. */
+    int _probe_fd;
+    bool _probe_pending;
+    uint64_t _probe_expirations;
 
     Object(rawio::Queue& queue, const std::vector<rawstd::URI>& targets);
 
@@ -92,10 +115,21 @@ private:
     void _finish_meta_op();
 
     void _fan_out_write(
+        off_t offset, size_t size,
         std::function<void(Connection&, std::function<void(size_t, int)>&&)>&&
             issue,
         std::function<void(size_t, int)>&& cb
     );
+    void _write_settled();
+
+    void _resync_maybe_start();
+    void _resync_sweep();
+    void _resync_finish();
+    void _resync_abort(const char* reason);
+
+    void _probe_setup();
+    void _probe_arm();
+    void _probe_tick();
 
     struct ReadState;
     void _read_attempt(const std::shared_ptr<ReadState>& st);
@@ -145,6 +179,7 @@ public:
 
     Object(const Object&) = delete;
     Object(Object&&) = delete;
+    ~Object();
     Object& operator=(const Object&) = delete;
     Object& operator=(Object&&) = delete;
 

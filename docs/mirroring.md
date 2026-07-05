@@ -4,7 +4,7 @@
 
 A comma-separated target list (see [Locations and Targets](locations_and_targets.md)) makes the client keep N identical copies of an object on different backends. This document defines the failure model for N-way mirroring: what can fail, how the client reacts, and how byte-for-byte identity of the copies is restored afterwards. Erasure coding is out of scope.
 
-Status: stages 1 and 2 are implemented (per-copy metadata, quorum open, degrade & continue, read failover/repair, clean close); stage 3 (online resync) is not — a degraded arm stays excluded until it is resynced.
+Status: stages 1-3 are implemented (per-copy metadata, quorum open, degrade & continue, read failover/repair, clean close, online resync with automatic rejoin through a periodic reconnect probe). Not yet implemented: a persistent write-intent bitmap (a crashed resync restarts from scratch and an unclean shutdown costs a full resync), stored checksums/scrub, the MDS witness.
 
 Error codes: open without quorum fails with `-ENOTCONN`; split brain (or no trusted arm) fails with `-ENOTRECOVERABLE`; writes below the write quorum or with no arm left fail with `-EIO`.
 

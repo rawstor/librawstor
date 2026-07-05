@@ -30,6 +30,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Read failover across mirror arms with read-repair of corrupted regions.
 - `rawstor_object_close_async`: clean close that flushes and durably marks
   the copies CLEAN; `rawstor_object_close` stays an unclean close.
+- Online resync: a stale mirror arm is brought back while the object keeps
+  serving I/O — client writes are duplicated onto the joining arm while a
+  sweeper copies the rest chunk by chunk; on completion the arm adopts the
+  current sync set durably and resumes serving reads.
+- Reconnect probe: an open mirrored object periodically retries its
+  unreachable arms (`mirror_probe_interval` option /
+  `RAWSTOR_OPTS_MIRROR_PROBE_INTERVAL`, default 5000 ms) and resyncs them
+  on reconnection, restoring the write quorum automatically.
 
 ### Fixed
 

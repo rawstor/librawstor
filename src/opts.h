@@ -33,6 +33,8 @@ unsigned int rawstor_opts_tcp_user_timeout(void);
 
 unsigned int rawstor_opts_wait_device_timeout(void);
 
+unsigned int rawstor_opts_mirror_probe_interval(void);
+
 #ifdef __cplusplus
 }
 #endif
