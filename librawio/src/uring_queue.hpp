@@ -15,6 +15,8 @@ class Queue final : public rawio::Queue {
 private:
     io_uring _ring;
 
+    io_uring_sqe* _get_sqe();
+
     void _dispatch();
 
 public:

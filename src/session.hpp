@@ -44,6 +44,12 @@ public:
 
     inline int fd() const noexcept { return _fd; }
 
+    /*
+     * Establishes the backend connection. Local backends have nothing to
+     * connect and complete immediately.
+     */
+    virtual void connect(std::function<void(int)>&& cb) { cb(0); }
+
     virtual void create(
         const RawstdUUID& id, const RawstorObjectSpec& sp,
         std::function<void(int)>&& cb
@@ -57,7 +63,7 @@ public:
         std::function<void(const RawstorObjectSpec&, int)>&& cb
     ) = 0;
 
-    virtual void set_object(Object* object) = 0;
+    virtual void set_object(Object* object, std::function<void(int)>&& cb) = 0;
 
     virtual void pread(
         void* buf, size_t size, off_t offset,

@@ -30,13 +30,16 @@ private:
 
     std::shared_ptr<Context> _context;
 
-    int _connect();
-    void _basic(RawstorOSTCommandType cmd, const RawstdUUID& id, uint64_t val);
-    void _set_object(Object* object);
+    void _basic(
+        RawstorOSTCommandType cmd, const RawstdUUID& id, uint64_t val,
+        std::function<void(int)>&& cb
+    );
 
 public:
     Session(rawio::Queue& queue, const rawstd::URI& location);
     ~Session();
+
+    void connect(std::function<void(int)>&& cb) override;
 
     void create(
         const RawstdUUID& id, const RawstorObjectSpec& sp,
@@ -50,7 +53,7 @@ public:
         std::function<void(const RawstorObjectSpec&, int)>&& cb
     ) override;
 
-    void set_object(Object* object) override;
+    void set_object(Object* object, std::function<void(int)>&& cb) override;
 
     void pread(
         void* buf, size_t size, off_t offset,

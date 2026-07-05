@@ -18,8 +18,11 @@ test_all_SOURCES = main.cpp \
                    server.hpp \
                    session.cpp \
                    session.hpp \
+                   test_async_api.cpp \
+                   test_blkdev.cpp \
                    test_io.cpp \
-                   test_lifecycle.cpp
+                   test_lifecycle.cpp \
+                   test_worker.cpp
 test_all_LDADD = $(top_builddir)/src/librawstor.la
 
 

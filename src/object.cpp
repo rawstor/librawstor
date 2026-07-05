@@ -82,6 +82,155 @@ void validate_different_uris(const std::vector<rawstd::URI>& uris) {
     }
 }
 
+/**
+ * TODO: Remove this class.
+ */
+class Queue final {
+private:
+    unsigned int _operations;
+    std::unique_ptr<rawio::Queue> _q;
+
+public:
+    Queue(unsigned int operations) :
+        _operations(operations),
+        _q(rawio::Queue::create(256)) {}
+
+    Queue(const Queue&) = delete;
+
+    Queue& operator=(const Queue&) = delete;
+
+    inline void sub_operation() noexcept { --_operations; }
+
+    inline rawio::Queue& queue() noexcept { return *_q; }
+
+    void wait() {
+        while (_operations > 0) {
+            _q->wait_timeout(rawstor_opts_tcp_user_timeout());
+        }
+    }
+};
+
+/*
+ * Async multi-target create: targets are provisioned one by one; on the
+ * first failure every target created so far is removed (in reverse order)
+ * and cb is invoked with the original error.
+ */
+struct CreateState {
+    rawio::Queue& queue;
+    std::vector<rawstd::URI> targets;
+    RawstorObjectSpec sp;
+    std::function<void(int)> cb;
+    size_t next;
+    size_t created;
+    int error;
+};
+
+void create_next(const std::shared_ptr<CreateState>& st);
+void create_rollback(const std::shared_ptr<CreateState>& st);
+
+void create_next(const std::shared_ptr<CreateState>& st) {
+    if (st->next == st->targets.size()) {
+        st->cb(0);
+        return;
+    }
+
+    try {
+        rawstor::Connection::create(
+            st->queue, st->targets[st->next], st->sp, [st](int error) {
+                if (error) {
+                    st->error = error;
+                    create_rollback(st);
+                    return;
+                }
+                st->created = ++st->next;
+                create_next(st);
+            }
+        );
+    } catch (const std::system_error& e) {
+        st->error = e.code().value();
+        create_rollback(st);
+    } catch (const std::bad_alloc& e) {
+        st->error = ENOMEM;
+        create_rollback(st);
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        st->error = EINVAL;
+        create_rollback(st);
+    }
+}
+
+void create_rollback(const std::shared_ptr<CreateState>& st) {
+    if (st->created == 0) {
+        st->cb(st->error);
+        return;
+    }
+
+    --st->created;
+
+    try {
+        rawstor::Connection::remove(
+            st->queue, st->targets[st->created], [st](int error) {
+                if (error) {
+                    rawstd_error(
+                        "Failed to rollback create operation: %s\n",
+                        strerror(error)
+                    );
+                }
+                create_rollback(st);
+            }
+        );
+    } catch (const std::exception& e) {
+        rawstd_error("Failed to rollback create operation: %s\n", e.what());
+        create_rollback(st);
+    }
+}
+
+/*
+ * Async multi-target remove: every target is removed even if some of them
+ * fail; cb is invoked with the first error encountered, if any.
+ */
+struct RemoveState {
+    rawio::Queue& queue;
+    std::vector<rawstd::URI> targets;
+    std::function<void(int)> cb;
+    size_t next;
+    int error;
+};
+
+void remove_next(const std::shared_ptr<RemoveState>& st);
+
+void remove_done(const std::shared_ptr<RemoveState>& st, int error) {
+    if (error) {
+        rawstd_error("%s\n", strerror(error));
+        if (st->error == 0) {
+            st->error = error;
+        }
+    }
+    ++st->next;
+    remove_next(st);
+}
+
+void remove_next(const std::shared_ptr<RemoveState>& st) {
+    if (st->next == st->targets.size()) {
+        st->cb(st->error);
+        return;
+    }
+
+    try {
+        rawstor::Connection::remove(
+            st->queue, st->targets[st->next],
+            [st](int error) { remove_done(st, error); }
+        );
+    } catch (const std::system_error& e) {
+        remove_done(st, e.code().value());
+    } catch (const std::bad_alloc& e) {
+        remove_done(st, ENOMEM);
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        remove_done(st, EINVAL);
+    }
+}
+
 } // namespace
 
 namespace rawstor {
@@ -98,68 +247,98 @@ Object::Object(rawio::Queue& queue, const std::vector<rawstd::URI>& targets) :
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
+}
 
-    _cns.reserve(targets.size());
-    for (const auto& target : targets) {
+/*
+ * Async object opening: one connection per target, opened sequentially.
+ * The object owns itself through the state until the last connection is
+ * bound; on failure the object is destroyed (closing every connection
+ * opened so far) and cb receives nullptr.
+ */
+struct Object::OpenState {
+    std::vector<rawstd::URI> targets;
+    std::function<void(Object*, int)> cb;
+    std::unique_ptr<Object> object;
+    size_t next;
+};
+
+void Object::open(
+    rawio::Queue& queue, const std::vector<rawstd::URI>& targets,
+    std::function<void(Object*, int)>&& cb
+) {
+    std::unique_ptr<Object> object(new Object(queue, targets));
+    Object* raw = object.get();
+
+    std::shared_ptr<OpenState> st = std::make_shared<OpenState>(
+        OpenState{targets, std::move(cb), std::move(object), 0}
+    );
+    raw->_open_next(st);
+}
+
+void Object::_open_next(const std::shared_ptr<OpenState>& st) {
+    if (st->next == st->targets.size()) {
+        st->cb(st->object.release(), 0);
+        return;
+    }
+
+    try {
         std::unique_ptr<rawstor::Connection> cn =
             std::make_unique<rawstor::Connection>(_queue);
-        cn->open(target.parent(), this, rawstor_opts_sessions());
+        Connection* raw = cn.get();
         _cns.push_back(std::move(cn));
+
+        raw->open(
+            st->targets[st->next].parent(), this, rawstor_opts_sessions(),
+            [this, st](int error) {
+                if (error) {
+                    st->cb(nullptr, error);
+                    return;
+                }
+                ++st->next;
+                _open_next(st);
+            }
+        );
+    } catch (const std::system_error& e) {
+        st->cb(nullptr, e.code().value());
+    } catch (const std::bad_alloc& e) {
+        st->cb(nullptr, ENOMEM);
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        st->cb(nullptr, EINVAL);
     }
 }
 
 void Object::create(
-    const std::vector<rawstd::URI>& targets, const RawstorObjectSpec& sp
+    rawio::Queue& queue, const std::vector<rawstd::URI>& targets,
+    const RawstorObjectSpec& sp, std::function<void(int)>&& cb
 ) {
     validate_not_empty(targets);
     validate_different_uris(targets);
     validate_same_uuid(targets);
 
-    std::vector<rawstd::URI> created;
-    created.reserve(targets.size());
-    try {
-        for (const auto& target : targets) {
-            rawstor::Connection::create(target, sp);
-            created.push_back(target);
-        }
-    } catch (...) {
-        if (!created.empty()) {
-            try {
-                remove(created);
-            } catch (const std::exception& e) {
-                rawstd_error(
-                    "Failed to rollback create operation: %s\n", e.what()
-                );
-            }
-        }
-        throw;
-    }
+    std::shared_ptr<CreateState> st = std::make_shared<CreateState>(
+        CreateState{queue, targets, sp, std::move(cb), 0, 0, 0}
+    );
+    create_next(st);
 }
 
-void Object::remove(const std::vector<rawstd::URI>& targets) {
+void Object::remove(
+    rawio::Queue& queue, const std::vector<rawstd::URI>& targets,
+    std::function<void(int)>&& cb
+) {
     validate_not_empty(targets);
     validate_different_uris(targets);
     validate_same_uuid(targets);
 
-    std::exception_ptr eptr;
-    for (const auto& target : targets) {
-        try {
-            rawstor::Connection::remove(target);
-        } catch (const std::exception& e) {
-            rawstd_error("%s\n", e.what());
-
-            if (!eptr) {
-                eptr = std::current_exception();
-            }
-        }
-    }
-    if (eptr) {
-        std::rethrow_exception(eptr);
-    }
+    std::shared_ptr<RemoveState> st = std::make_shared<RemoveState>(
+        RemoveState{queue, targets, std::move(cb), 0, 0}
+    );
+    remove_next(st);
 }
 
 void Object::spec(
-    const std::vector<rawstd::URI>& targets, RawstorObjectSpec* sp
+    rawio::Queue& queue, const std::vector<rawstd::URI>& targets,
+    RawstorObjectSpec* sp, std::function<void(int)>&& cb
 ) {
     /**
      * TODO: Should we read all specs and compare them here?
@@ -168,7 +347,67 @@ void Object::spec(
     validate_different_uris(targets);
     validate_same_uuid(targets);
 
-    rawstor::Connection::spec(targets.front(), sp);
+    rawstor::Connection::spec(
+        queue, targets.front(),
+        [sp, cb = std::move(cb)](const RawstorObjectSpec& spec, int error) {
+            if (!error) {
+                *sp = spec;
+            }
+            cb(error);
+        }
+    );
+}
+
+void Object::create(
+    const std::vector<rawstd::URI>& targets, const RawstorObjectSpec& sp
+) {
+    Queue q(1);
+    int result = 0;
+
+    create(q.queue(), targets, sp, [&q, &result](int error) {
+        q.sub_operation();
+        result = error;
+    });
+
+    q.wait();
+
+    if (result) {
+        RAWSTD_THROW_SYSTEM_ERROR(result);
+    }
+}
+
+void Object::remove(const std::vector<rawstd::URI>& targets) {
+    Queue q(1);
+    int result = 0;
+
+    remove(q.queue(), targets, [&q, &result](int error) {
+        q.sub_operation();
+        result = error;
+    });
+
+    q.wait();
+
+    if (result) {
+        RAWSTD_THROW_SYSTEM_ERROR(result);
+    }
+}
+
+void Object::spec(
+    const std::vector<rawstd::URI>& targets, RawstorObjectSpec* sp
+) {
+    Queue q(1);
+    int result = 0;
+
+    spec(q.queue(), targets, sp, [&q, &result](int error) {
+        q.sub_operation();
+        result = error;
+    });
+
+    q.wait();
+
+    if (result) {
+        RAWSTD_THROW_SYSTEM_ERROR(result);
+    }
 }
 
 std::vector<rawstd::URI> Object::locations() const {
@@ -398,6 +637,75 @@ int rawstor_object_create_at(
     }
 }
 
+int rawstor_object_spec_async(
+    RawIOQueue* queue, const char* target, RawstorObjectSpec* spec,
+    int (*cb)(int result, void* data), void* data
+) noexcept {
+    try {
+        rawstor::Object::spec(
+            *static_cast<rawio::Queue*>(queue), rawstd::URI::uriv(target), spec,
+            [cb, data](int error) { cb(error ? -error : 0, data); }
+        );
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+int rawstor_object_create_async(
+    RawIOQueue* queue, const char* target, const RawstorObjectSpec* spec,
+    int (*cb)(int result, void* data), void* data
+) noexcept {
+    try {
+        rawstor::Object::create(
+            *static_cast<rawio::Queue*>(queue), rawstd::URI::uriv(target),
+            *spec, [cb, data](int error) { cb(error ? -error : 0, data); }
+        );
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+int rawstor_object_remove_async(
+    RawIOQueue* queue, const char* target, int (*cb)(int result, void* data),
+    void* data
+) noexcept {
+    try {
+        rawstor::Object::remove(
+            *static_cast<rawio::Queue*>(queue), rawstd::URI::uriv(target),
+            [cb, data](int error) { cb(error ? -error : 0, data); }
+        );
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
 int rawstor_object_remove(const char* target) noexcept {
     try {
         rawstor::Object::remove(rawstd::URI::uriv(target));
@@ -436,15 +744,58 @@ int rawstor_object_open(
     RawIOQueue* queue, const char* target, RawstorObject** object
 ) noexcept {
     try {
-        std::unique_ptr<rawstor::Object> ret =
-            std::make_unique<rawstor::Object>(
-                *static_cast<rawio::Queue*>(queue), rawstd::URI::uriv(target)
-            );
+        rawio::Queue& q = *static_cast<rawio::Queue*>(queue);
 
-        *object = ret.get();
+        *object = nullptr;
 
-        ret.release();
+        rawstor::Object* ret = nullptr;
+        int result = 0;
+        bool done = false;
 
+        rawstor::Object::open(
+            q, rawstd::URI::uriv(target),
+            [&ret, &result, &done](rawstor::Object* obj, int error) {
+                ret = obj;
+                result = error;
+                done = true;
+            }
+        );
+
+        while (!done) {
+            q.wait_timeout(rawstor_opts_tcp_user_timeout());
+        }
+
+        if (result) {
+            return -result;
+        }
+
+        *object = ret;
+
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+int rawstor_object_open_async(
+    RawIOQueue* queue, const char* target,
+    int (*cb)(RawstorObject* object, int result, void* data), void* data
+) noexcept {
+    try {
+        rawstor::Object::open(
+            *static_cast<rawio::Queue*>(queue), rawstd::URI::uriv(target),
+            [cb, data](rawstor::Object* object, int error) {
+                cb(object, error ? -error : 0, data);
+            }
+        );
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();

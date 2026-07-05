@@ -2,6 +2,7 @@
 
 #include "object.hpp"
 #include "opts.h"
+#include "worker.hpp"
 
 #include <rawio/queue.hpp>
 
@@ -97,140 +98,165 @@ Session::Session(rawio::Queue& queue, const rawstd::URI& location) :
     rawstor::Session(queue, location) {
 }
 
-int Session::_connect(const RawstdUUID& id) {
-    std::string ost_path = get_ost_path(location());
-
-    RawstdUUIDString id_string;
-    rawstd_uuid_to_string(&id, &id_string);
-    std::string dat_path = get_object_dat_path(ost_path, id_string);
-
-    rawstd_info("Connecting to %s...\n", location().str().c_str());
-    int fd = open(dat_path.c_str(), O_RDWR | O_NONBLOCK);
-    if (fd == -1) {
-        RAWSTD_THROW_ERRNO();
-    }
-    rawstd_info("fd %d: Connected\n", fd);
-    return fd;
-}
-
 void Session::create(
     const RawstdUUID& id, const RawstorObjectSpec& sp,
     std::function<void(int)>&& cb
 ) {
-    std::string ost_path = get_ost_path(location());
-    if (mkdir(ost_path.c_str(), 0755) == -1) {
-        if (errno == EEXIST) {
-            errno = 0;
-        } else {
-            RAWSTD_THROW_ERRNO();
-        }
-    }
+    run_in_worker(
+        _queue,
+        [location = location(), id, sp]() -> int {
+            std::string ost_path = get_ost_path(location);
+            if (mkdir(ost_path.c_str(), 0755) == -1) {
+                if (errno == EEXIST) {
+                    errno = 0;
+                } else {
+                    RAWSTD_THROW_ERRNO();
+                }
+            }
 
-    RawstdUUIDString uuid_string;
-    rawstd_uuid_to_string(&id, &uuid_string);
+            RawstdUUIDString uuid_string;
+            rawstd_uuid_to_string(&id, &uuid_string);
 
-    std::string spec_path;
-    spec_path = get_object_spec_path(ost_path, uuid_string);
+            std::string spec_path;
+            spec_path = get_object_spec_path(ost_path, uuid_string);
 
-    int fd = ::open(
-        spec_path.c_str(), O_EXCL | O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR
+            int fd = ::open(
+                spec_path.c_str(), O_EXCL | O_CREAT | O_WRONLY,
+                S_IRUSR | S_IWUSR
+            );
+            if (fd == -1) {
+                RAWSTD_THROW_ERRNO();
+            }
+
+            try {
+                ssize_t res = ::write(fd, &sp, sizeof(sp));
+                if (res == -1) {
+                    RAWSTD_THROW_ERRNO();
+                }
+
+                write_dat(ost_path, sp, id);
+
+                if (::close(fd) == -1) {
+                    RAWSTD_THROW_ERRNO();
+                }
+            } catch (...) {
+                unlink(spec_path.c_str());
+                ::close(fd);
+                throw;
+            }
+
+            return 0;
+        },
+        std::move(cb)
     );
-    if (fd == -1) {
-        RAWSTD_THROW_ERRNO();
-    }
-
-    try {
-        ssize_t res = ::write(fd, &sp, sizeof(sp));
-        if (res == -1) {
-            RAWSTD_THROW_ERRNO();
-        }
-
-        write_dat(ost_path, sp, id);
-
-        if (::close(fd) == -1) {
-            RAWSTD_THROW_ERRNO();
-        }
-    } catch (...) {
-        unlink(spec_path.c_str());
-        ::close(fd);
-        throw;
-    }
-
-    cb(0);
 }
 
 void Session::remove(const RawstdUUID& id, std::function<void(int)>&& cb) {
-    std::string ost_path = get_ost_path(location());
+    run_in_worker(
+        _queue,
+        [location = location(), id]() -> int {
+            std::string ost_path = get_ost_path(location);
 
-    RawstdUUIDString uuid_string;
-    rawstd_uuid_to_string(&id, &uuid_string);
+            RawstdUUIDString uuid_string;
+            rawstd_uuid_to_string(&id, &uuid_string);
 
-    std::string dat_path = get_object_dat_path(ost_path, uuid_string);
-    if (unlink(dat_path.c_str()) == -1) {
-        if (errno == ENOENT) {
-            errno = 0;
-        } else {
-            RAWSTD_THROW_ERRNO();
-        }
-    }
+            std::string dat_path = get_object_dat_path(ost_path, uuid_string);
+            if (unlink(dat_path.c_str()) == -1) {
+                if (errno == ENOENT) {
+                    errno = 0;
+                } else {
+                    RAWSTD_THROW_ERRNO();
+                }
+            }
 
-    std::string spec_path = get_object_spec_path(ost_path, uuid_string);
-    if (unlink(spec_path.c_str()) == -1) {
-        if (errno == ENOENT) {
-            errno = 0;
-        } else {
-            RAWSTD_THROW_ERRNO();
-        }
-    }
+            std::string spec_path = get_object_spec_path(ost_path, uuid_string);
+            if (unlink(spec_path.c_str()) == -1) {
+                if (errno == ENOENT) {
+                    errno = 0;
+                } else {
+                    RAWSTD_THROW_ERRNO();
+                }
+            }
 
-    cb(0);
+            return 0;
+        },
+        std::move(cb)
+    );
 }
 
 void Session::spec(
     const RawstdUUID& id,
     std::function<void(const RawstorObjectSpec&, int)>&& cb
 ) {
-    std::string ost_path = get_ost_path(location());
+    auto ret = std::make_shared<RawstorObjectSpec>();
 
-    RawstdUUIDString uuid_string;
-    rawstd_uuid_to_string(&id, &uuid_string);
+    run_in_worker(
+        _queue,
+        [location = location(), id, ret]() -> int {
+            std::string ost_path = get_ost_path(location);
 
-    std::string spec_path = get_object_spec_path(ost_path, uuid_string);
+            RawstdUUIDString uuid_string;
+            rawstd_uuid_to_string(&id, &uuid_string);
 
-    int fd = ::open(spec_path.c_str(), O_RDONLY);
-    if (fd == -1) {
-        RAWSTD_THROW_ERRNO();
-    }
+            std::string spec_path = get_object_spec_path(ost_path, uuid_string);
 
-    RawstorObjectSpec ret;
-    try {
-        ssize_t rval = ::read(fd, &ret, sizeof(ret));
-        if (rval == -1) {
-            RAWSTD_THROW_ERRNO();
-        }
+            int fd = ::open(spec_path.c_str(), O_RDONLY);
+            if (fd == -1) {
+                RAWSTD_THROW_ERRNO();
+            }
 
-        if (::close(fd) == -1) {
-            RAWSTD_THROW_ERRNO();
-        }
-    } catch (...) {
-        ::close(fd);
-        throw;
-    }
+            try {
+                ssize_t rval = ::read(fd, ret.get(), sizeof(*ret));
+                if (rval == -1) {
+                    RAWSTD_THROW_ERRNO();
+                }
 
-    cb(ret, 0);
+                if (::close(fd) == -1) {
+                    RAWSTD_THROW_ERRNO();
+                }
+            } catch (...) {
+                ::close(fd);
+                throw;
+            }
+
+            return 0;
+        },
+        [ret, cb = std::move(cb)](int error) { cb(*ret, error); }
+    );
 }
 
-void Session::set_object(Object* object) {
+void Session::set_object(Object* object, std::function<void(int)>&& cb) {
     if (fd() != -1) {
         throw std::runtime_error("Object already set");
     }
 
-    int fd = _connect(object->id());
-    if (fd == -1) {
-        RAWSTD_THROW_ERRNO();
-    }
+    std::string ost_path = get_ost_path(location());
 
-    set_fd(fd);
+    RawstdUUIDString id_string;
+    rawstd_uuid_to_string(&object->id(), &id_string);
+
+    /*
+     * The path buffer is kept alive by the callback capture: io_uring reads
+     * the string when the openat operation is executed, not when submitted.
+     */
+    auto dat_path =
+        std::make_shared<std::string>(get_object_dat_path(ost_path, id_string));
+
+    rawstd_info("Connecting to %s...\n", location().str().c_str());
+
+    _queue.open(
+        dat_path->c_str(), O_RDWR | O_NONBLOCK, 0,
+        [this, dat_path, cb = std::move(cb)](int result) {
+            if (result < 0) {
+                cb(-result);
+                return;
+            }
+
+            rawstd_info("fd %d: Connected\n", result);
+            set_fd(result);
+            cb(0);
+        }
+    );
 }
 
 void Session::pread(

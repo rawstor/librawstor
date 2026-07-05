@@ -30,10 +30,14 @@ librawstor_la_HEADERS = $(top_srcdir)/include/rawstor/object.h \
                         $(top_srcdir)/include/rawstor/rawstor.h \
                         $(top_builddir)/include/rawstor/version.h
 
-librawstor_la_SOURCES = connection.cpp \
+librawstor_la_SOURCES = blkdev_session.cpp \
+                        blkdev_session.hpp \
+                        connection.cpp \
                         connection.hpp \
                         file_session.cpp \
                         file_session.hpp \
+                        lvm_session.cpp \
+                        lvm_session.hpp \
                         object.cpp \
                         object.hpp \
                         ost_session.cpp \
@@ -42,6 +46,10 @@ librawstor_la_SOURCES = connection.cpp \
                         opts.h \
                         session.cpp \
                         session.hpp \
+                        worker.cpp \
+                        worker.hpp \
+                        zfs_session.cpp \
+                        zfs_session.hpp \
                         rawstor.cpp
 
 librawstor_la_LDFLAGS = -version-info $(LIBRARY_VERSION)

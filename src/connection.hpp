@@ -21,14 +21,33 @@ class Session;
 
 class Connection final {
 private:
+    struct OpenState;
+
     rawio::Queue& _queue;
     Object* _object;
 
     std::vector<std::shared_ptr<Session>> _sessions;
     size_t _session_index;
 
-    std::vector<std::shared_ptr<Session>>
-    _open(const rawstd::URI& location, Object* object, size_t nsessions);
+    /*
+     * Expires on close()/destruction; async open/reopen completions check
+     * it before touching the connection, which may be gone by then.
+     */
+    std::shared_ptr<int> _alive;
+
+    /* In-flight session reopens and operations waiting for them. */
+    unsigned int _reopens;
+    std::vector<std::function<void(int)>> _reopen_waiters;
+
+    static void _open_attempt(const std::shared_ptr<OpenState>& st);
+    static void _open_next(const std::shared_ptr<OpenState>& st);
+    static void _open_set_object(const std::shared_ptr<OpenState>& st);
+    static void _open_failed(const std::shared_ptr<OpenState>& st, int error);
+
+    void _open(
+        const rawstd::URI& location, Object* object, size_t nsessions,
+        std::function<void(std::vector<std::shared_ptr<Session>>&&, int)>&& cb
+    );
 
     void
     _op(const char* func_name, size_t size, off_t offset,
@@ -39,11 +58,20 @@ private:
         unsigned int attempt);
 
 public:
-    static void create(const rawstd::URI& target, const RawstorObjectSpec& sp);
+    static void create(
+        rawio::Queue& queue, const rawstd::URI& target,
+        const RawstorObjectSpec& sp, std::function<void(int)>&& cb
+    );
 
-    static void remove(const rawstd::URI& target);
+    static void remove(
+        rawio::Queue& queue, const rawstd::URI& target,
+        std::function<void(int)>&& cb
+    );
 
-    static void spec(const rawstd::URI& target, RawstorObjectSpec* sp);
+    static void spec(
+        rawio::Queue& queue, const rawstd::URI& target,
+        std::function<void(const RawstorObjectSpec&, int)>&& cb
+    );
 
     explicit Connection(rawio::Queue& queue);
     Connection(const Connection&) = delete;
@@ -52,11 +80,16 @@ public:
     Connection& operator=(const Connection&) = delete;
 
     std::shared_ptr<Session> get_next_session();
-    void invalidate_session(const std::shared_ptr<Session>& s);
+    void invalidate_session(
+        const std::shared_ptr<Session>& s, std::function<void(int)>&& cb
+    );
 
     const rawstd::URI* location() const noexcept;
 
-    void open(const rawstd::URI& location, Object* object, size_t nsessions);
+    void open(
+        const rawstd::URI& location, Object* object, size_t nsessions,
+        std::function<void(int)>&& cb
+    );
 
     void close();
 
