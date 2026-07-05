@@ -1,4 +1,5 @@
 #include "object.hpp"
+#include <rawstor/list.h>
 #include <rawstor/object.h>
 
 #include "config.h"
@@ -8,6 +9,7 @@
 #include "ost_session.hpp"
 
 #include <rawstd/gpp.hpp>
+#include <rawstd/list.h>
 #include <rawstd/logging.hpp>
 #include <rawstd/uri.hpp>
 #include <rawstd/uuid.h>
@@ -325,6 +327,60 @@ void Object::pwritev(
 }
 
 } // namespace rawstor
+
+int rawstor_object_list(
+    const char* location, unsigned int offset, unsigned int limit,
+    RawstorStringList** targets, unsigned int *total
+) noexcept {
+    RawstorStringList* list = nullptr;
+    try {
+        unsigned int count;
+        std::vector<rawstd::URI> locations = rawstd::URI::uriv(location);
+        std::vector<std::vector<rawstd::URI>> ret = rawstor::Object::list(
+            locations, offset, limit, &count);
+
+        list = (RawstorStringList*)rawstd_list_create(sizeof(const char*));
+        if (list == nullptr) {
+            throw std::bad_alloc();
+        }
+        for (const auto& t : ret) {
+            std::string target = rawstd::URI::uris(t);
+
+            char** it = (char**)rawstd_list_append((RawstdList*)list);
+            *it = (char*)malloc(target.length() + 1);
+            if (*it == nullptr) {
+                throw std::bad_alloc();
+            }
+            memcpy(*it, target.c_str(), target.length() + 1);
+        }
+
+        *targets = (RawstorStringList*)list;
+        *total = count;
+        return 0;
+    } catch (const std::system_error& e) {
+        if (list != nullptr) {
+            rawstor_string_list_delete(list);
+        }
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        if (list != nullptr) {
+            rawstor_string_list_delete(list);
+        }
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        if (list != nullptr) {
+            rawstor_string_list_delete(list);
+        }
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        if (list != nullptr) {
+            rawstor_string_list_delete(list);
+        }
+        return -EINVAL;
+    }
+}
 
 int rawstor_object_create(
     const char* target, const RawstorObjectSpec* spec

@@ -7,6 +7,7 @@
 #ifndef RAWSTOR_OBJECT_H
 #define RAWSTOR_OBJECT_H
 
+#include <rawstor/list.h>
 #include <rawstor/rawio.h>
 #include <rawstor/rawstor.h>
 
@@ -81,6 +82,11 @@ typedef int(RawstorCallback)(
  */
 int rawstor_object_spec(
     const char* target, struct RawstorObjectSpec* spec
+) RAWSTOR_NOEXCEPT;
+
+int rawstor_object_list(
+    const char* location, unsigned int offset, unsigned int limit,
+    RawstorStringList** targets, unsigned int *total
 ) RAWSTOR_NOEXCEPT;
 
 /**

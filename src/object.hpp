@@ -25,6 +25,10 @@ private:
     std::vector<std::unique_ptr<rawstor::Connection>> _cns;
 
 public:
+    static std::vector<std::vector<rawstd::URI>> list(
+        const std::vector<rawstd::URI>& locations, unsigned int offset,
+        unsigned int limit, unsigned int *total
+    );
     static void create(
         const std::vector<rawstd::URI>& targets, const RawstorObjectSpec& sp
     );

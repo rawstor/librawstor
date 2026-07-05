@@ -3,6 +3,10 @@ from . import librawstor
 
 class Object:
     @staticmethod
+    def list(location: str, offset: int, limit: int) -> None:
+        return librawstor.list(location, offset, limit)
+
+    @staticmethod
     def create(target: str, spec: librawstor.ObjectSpec) -> None:
         librawstor.object_create(target, spec)
 

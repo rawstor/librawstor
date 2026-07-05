@@ -2,8 +2,13 @@
 
 #include <rawstd/list.h>
 
+#include <stdlib.h>
+
 
 void rawstor_string_list_delete(RawstorStringList* list) {
+    for (const char** it = rawstor_string_list_iter(list); it != NULL; it = rawstor_string_list_next(it)) {
+        free((char*)*it);
+    }
     rawstd_list_delete((RawstdList*)list);
 }
 
