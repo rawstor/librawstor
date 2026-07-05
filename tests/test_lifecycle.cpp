@@ -20,7 +20,6 @@ TEST(FileLifecycleTest, create_spec_remove) {
     std::ostringstream oss;
     oss << "file://" << location_path.string();
     rawstd::URI location_uri(oss.str());
-    std::string location = location_uri.str();
     std::string uuid = "00000000-0000-7000-8000-000000000000";
     std::string target = rawstd::URI(location_uri, uuid).str();
 
@@ -32,8 +31,6 @@ TEST(FileLifecycleTest, create_spec_remove) {
     res = rawstor_object_spec(target.c_str(), &read_spec);
     EXPECT_EQ(res, 0);
     EXPECT_EQ(read_spec.size, (size_t)(1ull << 20));
-
-    // res = rawstor_object_list(location.c_str(), )
 
     res = rawstor_object_remove(target.c_str());
     EXPECT_EQ(res, 0);
@@ -97,7 +94,6 @@ TEST(OstLifecycleTest, create_spec_remove) {
     rawstor::tests::Server server(8753, 256);
 
     rawstd::URI location_uri("ost://127.0.0.1:8753");
-    std::string location = location_uri.str();
     std::string uuid = "00000000-0000-7000-8000-000000000000";
     std::string target = rawstd::URI(location_uri, uuid).str();
 
