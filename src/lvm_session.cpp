@@ -4,6 +4,7 @@
 #include <rawstd/logging.h>
 #include <rawstd/uuid.h>
 
+#include <cinttypes>
 #include <cstdio>
 #include <cstring>
 #include <sstream>
@@ -60,7 +61,7 @@ void Session::create(
     rawstd_uuid_to_string(&id, &uuid_str);
 
     char size_buf[64];
-    snprintf(size_buf, sizeof(size_buf), "%zub", sp.size);
+    snprintf(size_buf, sizeof(size_buf), "%" PRIu64 "b", sp.size);
 
     rawstd_info(
         "lvm: creating LV %s in VG %s, size %s\n", uuid_str, _vg_name.c_str(),
