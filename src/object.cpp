@@ -98,7 +98,11 @@ void validate_different_uris(const std::vector<rawstd::URI>& uris) {
 uint64_t random_sync_id() {
     uint64_t ret = 0;
     do {
-        if (getrandom(&ret, sizeof(ret), 0) != sizeof(ret)) {
+        ssize_t res;
+        do {
+            res = getrandom(&ret, sizeof(ret), 0);
+        } while (res == -1 && errno == EINTR);
+        if (res != sizeof(ret)) {
             RAWSTD_THROW_ERRNO();
         }
     } while (ret == 0);
@@ -331,7 +335,7 @@ Object::Object(rawio::Queue& queue, const std::vector<rawstd::URI>& targets) :
     _writes_in_flight(0),
     _probe_fd(-1),
     _probe_pending(false),
-    _probe_expirations(0) {
+    _probe_expirations(std::make_shared<uint64_t>(0)) {
     validate_not_empty(targets);
     validate_different_uris(targets);
     validate_same_uuid(targets);
@@ -631,7 +635,11 @@ void Object::_open_analyze(const std::shared_ptr<OpenState>& st) {
         if (m.meta.epoch > _epoch) {
             _epoch = m.meta.epoch;
         }
-        if (_size == 0) {
+        /*
+         * The minimum across the set is the logical size: block-device
+         * members round the physical size up to their extent size.
+         */
+        if (_size == 0 || m.meta.size < _size) {
             _size = m.meta.size;
         }
         if (_sync_id == 0) {
@@ -966,7 +974,11 @@ struct Object::ResyncState {
     size_t cursor;
     ssize_t copying;
     bool sweep_blocked;
-    std::vector<char> buf;
+    /*
+     * Shared with the in-flight chunk copy: the resync may be aborted (or
+     * the object destroyed) while the kernel still owns the buffer.
+     */
+    std::shared_ptr<std::vector<char>> buf;
     std::unordered_map<size_t, size_t> inflight;
     std::vector<std::function<void()>> chunk_waiters;
 };
@@ -1233,7 +1245,7 @@ void Object::_resync_maybe_start() {
             0,
             -1,
             false,
-            std::vector<char>(chunk),
+            std::make_shared<std::vector<char>>(chunk),
             {},
             {}
         });
@@ -1303,9 +1315,10 @@ void Object::_resync_sweep() {
     size_t len = (size_t)std::min<uint64_t>(_resync->chunk, _size - off);
 
     std::weak_ptr<int> alive = _alive;
+    std::shared_ptr<std::vector<char>> buf = _resync->buf;
     _members[src].cn->pread(
-        _resync->buf.data(), len, (off_t)off,
-        [this, c, src, len, off, alive](size_t result, int error) {
+        buf->data(), len, (off_t)off,
+        [this, c, src, len, off, alive, buf](size_t result, int error) {
             if (alive.expired() || _resync == nullptr) {
                 return;
             }
@@ -1332,8 +1345,8 @@ void Object::_resync_sweep() {
             }
 
             _members[_resync->idx].cn->pwrite(
-                _resync->buf.data(), len, (off_t)off,
-                [this, c, len, alive](size_t result, int error) {
+                buf->data(), len, (off_t)off,
+                [this, c, len, alive, buf](size_t result, int error) {
                     if (alive.expired() || _resync == nullptr) {
                         return;
                     }
@@ -1458,10 +1471,15 @@ void Object::_probe_setup() {
 
 void Object::_probe_arm() {
     std::weak_ptr<int> alive = _alive;
+    /*
+     * The buffer is shared with the read: the object may be destroyed
+     * before an asynchronous cancellation of the timer read settles.
+     */
+    std::shared_ptr<uint64_t> expirations = _probe_expirations;
     try {
         _queue.read(
-            _probe_fd, &_probe_expirations, sizeof(_probe_expirations),
-            [this, alive](size_t, int error) {
+            _probe_fd, expirations.get(), sizeof(*expirations),
+            [this, alive, expirations](size_t, int error) {
                 if (alive.expired()) {
                     return;
                 }
@@ -2028,12 +2046,17 @@ void Object::_teardown(std::function<void(int)>&& cb, int error) {
 }
 
 void Object::close(std::function<void(int)>&& cb) {
-    if (_nmirrors == 1 || !_dirty || _in_sync_count() == 0) {
-        _teardown(std::move(cb), 0);
-        return;
-    }
-
+    /*
+     * A metadata barrier may be in flight even before the first write is
+     * acknowledged (e.g. one triggered by a detached read-repair): settle
+     * it first, or tearing down would leave it half-recorded.
+     */
     _settle_meta([this, cb = std::move(cb)]() mutable {
+        if (_nmirrors == 1 || !_dirty || _in_sync_count() == 0) {
+            _teardown(std::move(cb), 0);
+            return;
+        }
+
         flush([this, cb = std::move(cb)](size_t, int flush_error) mutable {
             if (_in_sync_count() == 0) {
                 _teardown(std::move(cb), flush_error ? flush_error : EIO);

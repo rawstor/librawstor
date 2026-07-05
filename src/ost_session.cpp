@@ -881,6 +881,15 @@ void Context::teardown_recv() noexcept {
         }
         _read_event = nullptr;
     }
+
+    _dead = true;
+
+    /*
+     * Registered operations hold the context and the context holds them:
+     * abandoned operations (e.g. a detached read-repair cut short by the
+     * object teardown) must be dropped here or the cycle leaks both.
+     */
+    _ops.clear();
 }
 
 void Context::register_op(const std::shared_ptr<SessionOp>& op) {
@@ -1179,6 +1188,25 @@ void Session::meta(
                             trace_event, "%zu of %zu, error = %d\n", result,
                             sizeof(RawstorOSTFrameSpecResponse), error
                         );
+
+                        /*
+                         * Servers predating the SPEC command close the
+                         * connection on it. Fall back to the emulated
+                         * metadata the client used to fabricate, so a
+                         * legacy backend keeps working.
+                         */
+                        if (error == ECONNRESET || error == EPIPE ||
+                            (!error && result == 0)) {
+                            rawstd_warning(
+                                "Legacy OST without SPEC support; "
+                                "emulating object metadata\n"
+                            );
+                            RawstorObjectMeta meta{};
+                            meta.size = 1 << 30;
+                            meta.state = RAWSTOR_OBJECT_STATE_CLEAN;
+                            (*cb_sp)(meta, 0);
+                            return;
+                        }
 
                         if (!error) {
                             error = validate_result(

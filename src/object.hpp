@@ -90,10 +90,14 @@ private:
     /* Active online resync, one member at a time. */
     std::unique_ptr<ResyncState> _resync;
 
-    /* Periodic reconnect probe for unreachable members. */
+    /*
+     * Periodic reconnect probe for unreachable members. The expirations
+     * buffer is shared with the in-flight timer read: the object may be
+     * destroyed before an asynchronous cancellation settles.
+     */
     int _probe_fd;
     bool _probe_pending;
-    uint64_t _probe_expirations;
+    std::shared_ptr<uint64_t> _probe_expirations;
 
     Object(rawio::Queue& queue, const std::vector<rawstd::URI>& targets);
 

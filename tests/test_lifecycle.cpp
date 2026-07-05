@@ -210,4 +210,25 @@ TEST(OstLifecycleTest, create_spec_remove) {
     }
 }
 
+TEST(OstLifecycleTest, legacy_spec_fallback) {
+    rawstor::tests::Server server(8753, 256);
+    std::string target =
+        "ost://127.0.0.1:8753/00000000-0000-7000-8000-000000000000";
+
+    /*
+     * A server predating the SPEC command reads the request and closes
+     * the connection; the client must fall back to the emulated metadata
+     * it used to fabricate.
+     */
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_spec_request();
+    }
+
+    RawstorObjectSpec read_spec{};
+    int res = rawstor_object_spec(target.c_str(), &read_spec);
+    EXPECT_EQ(res, 0);
+    EXPECT_EQ(read_spec.size, (size_t)(1ull << 30));
+}
+
 } // unnamed namespace
