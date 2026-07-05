@@ -580,6 +580,27 @@ const std::string& Queue::engine_name() {
     return ::engine_name;
 }
 
+io_uring_sqe* Queue::_get_sqe() {
+    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
+    if (sqe == nullptr) {
+        /*
+         * The submission ring is full of not yet submitted entries: flush
+         * them and retry. Small rings (sized to the caller's iodepth)
+         * overflow easily when completion callbacks prepare follow-up
+         * operations before the next wait submits the backlog.
+         */
+        int res = io_uring_submit(&_ring);
+        if (res < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
+        }
+        sqe = io_uring_get_sqe(&_ring);
+        if (sqe == nullptr) {
+            RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
+        }
+    }
+    return sqe;
+}
+
 void Queue::setup_fd(int fd) {
     int res;
     static unsigned int bufsize = 16 * 1024 * 1024;
@@ -630,10 +651,7 @@ void Queue::setup_fd(int fd) {
 rawio::Awaitable<int> Queue::open(const char* path, int flags, mode_t mode) {
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('|', "flags = %d, mode = %u\n", flags, mode);
-    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
-    if (sqe == nullptr) {
-        RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
-    }
+    io_uring_sqe* sqe = _get_sqe();
     auto c = std::make_unique<Completion>(std::move(trace_event));
     io_uring_prep_openat(sqe, AT_FDCWD, path, flags, mode);
     io_uring_sqe_set_data(sqe, c.get());
@@ -643,10 +661,7 @@ rawio::Awaitable<int> Queue::open(const char* path, int flags, mode_t mode) {
 
 rawio::Awaitable<int> Queue::close(int fd) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('|', "%s\n", "");
-    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
-    if (sqe == nullptr) {
-        RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
-    }
+    io_uring_sqe* sqe = _get_sqe();
     auto c = std::make_unique<Completion>(std::move(trace_event));
     io_uring_prep_close(sqe, fd);
     io_uring_sqe_set_data(sqe, c.get());
@@ -657,10 +672,7 @@ rawio::Awaitable<int> Queue::close(int fd) {
 rawio::Awaitable<int> Queue::poll(int fd, unsigned int mask) {
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('|', "fd = %d, mask = %u\n", fd, mask);
-    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
-    if (sqe == nullptr) {
-        RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
-    }
+    io_uring_sqe* sqe = _get_sqe();
     auto c = std::make_unique<Completion>(std::move(trace_event));
     io_uring_prep_poll_add(sqe, fd, mask);
     io_uring_sqe_set_data(sqe, c.get());
@@ -671,10 +683,7 @@ rawio::Awaitable<int> Queue::poll(int fd, unsigned int mask) {
 rawio::PollStream Queue::poll_multishot(int fd, unsigned int mask) {
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('|', "fd = %d, mask = %u\n", fd, mask);
-    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
-    if (sqe == nullptr) {
-        RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
-    }
+    io_uring_sqe* sqe = _get_sqe();
     io_uring_prep_poll_multishot(sqe, fd, mask);
 
     auto backend =
@@ -691,10 +700,7 @@ rawio::PollStream Queue::poll_multishot(int fd, unsigned int mask) {
 rawio::Awaitable<int>
 Queue::accept(int fd, sockaddr* addr, socklen_t* addrlen) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('|', "fd = %d\n", fd);
-    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
-    if (sqe == nullptr) {
-        RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
-    }
+    io_uring_sqe* sqe = _get_sqe();
     auto c = std::make_unique<AcceptCompletion>(std::move(trace_event));
     io_uring_prep_accept(sqe, fd, addr, addrlen, SOCK_CLOEXEC);
     io_uring_sqe_set_data(sqe, c.get());
@@ -704,10 +710,7 @@ Queue::accept(int fd, sockaddr* addr, socklen_t* addrlen) {
 
 rawio::AcceptStream Queue::accept_multishot(int fd) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('|', "fd = %d\n", fd);
-    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
-    if (sqe == nullptr) {
-        RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
-    }
+    io_uring_sqe* sqe = _get_sqe();
     io_uring_prep_multishot_accept(sqe, fd, nullptr, nullptr, SOCK_CLOEXEC);
 
     auto backend =
@@ -724,10 +727,7 @@ rawio::AcceptStream Queue::accept_multishot(int fd) {
 rawio::Awaitable<int>
 Queue::connect(int fd, const sockaddr* addr, socklen_t addrlen) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('|', "fd = %d\n", fd);
-    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
-    if (sqe == nullptr) {
-        RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
-    }
+    io_uring_sqe* sqe = _get_sqe();
     io_uring_prep_connect(sqe, fd, addr, addrlen);
     auto c = std::make_unique<Completion>(std::move(trace_event));
     io_uring_sqe_set_data(sqe, c.get());
@@ -738,10 +738,7 @@ Queue::connect(int fd, const sockaddr* addr, socklen_t addrlen) {
 rawio::Awaitable<size_t> Queue::read(int fd, void* buf, size_t size) {
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('|', "fd = %d, size = %zu\n", fd, size);
-    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
-    if (sqe == nullptr) {
-        RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
-    }
+    io_uring_sqe* sqe = _get_sqe();
     io_uring_prep_read(sqe, fd, buf, size, 0);
     auto c = std::make_unique<Completion>(std::move(trace_event));
     io_uring_sqe_set_data(sqe, c.get());
@@ -754,10 +751,7 @@ rawio::Awaitable<size_t> Queue::read(int fd, void* buf, size_t size) {
 rawio::Awaitable<size_t> Queue::readv(int fd, iovec* iov, unsigned int niov) {
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('|', "fd = %d, niov = %zu\n", fd, niov);
-    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
-    if (sqe == nullptr) {
-        RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
-    }
+    io_uring_sqe* sqe = _get_sqe();
     io_uring_prep_readv(sqe, fd, iov, niov, 0);
     auto c = std::make_unique<Completion>(std::move(trace_event));
     io_uring_sqe_set_data(sqe, c.get());
@@ -772,10 +766,7 @@ Queue::pread(int fd, void* buf, size_t size, off_t offset) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         '|', "fd = %d, size = %zu, offset = %jd\n", fd, size, (intmax_t)offset
     );
-    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
-    if (sqe == nullptr) {
-        RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
-    }
+    io_uring_sqe* sqe = _get_sqe();
     io_uring_prep_read(sqe, fd, buf, size, offset);
     auto c = std::make_unique<Completion>(std::move(trace_event));
     io_uring_sqe_set_data(sqe, c.get());
@@ -790,10 +781,7 @@ Queue::preadv(int fd, iovec* iov, unsigned int niov, off_t offset) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         '|', "fd = %d, niov = %u, offset = %jd\n", fd, niov, (intmax_t)offset
     );
-    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
-    if (sqe == nullptr) {
-        RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
-    }
+    io_uring_sqe* sqe = _get_sqe();
     io_uring_prep_readv(sqe, fd, iov, niov, offset);
     auto c = std::make_unique<Completion>(std::move(trace_event));
     io_uring_sqe_set_data(sqe, c.get());
@@ -808,10 +796,7 @@ Queue::recv(int fd, void* buf, size_t size, unsigned int flags) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         '|', "fd = %d, size = %zu, flags = %u\n", fd, size, flags
     );
-    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
-    if (sqe == nullptr) {
-        RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
-    }
+    io_uring_sqe* sqe = _get_sqe();
     io_uring_prep_recv(sqe, fd, buf, size, flags);
     auto c = std::make_unique<Completion>(std::move(trace_event));
     io_uring_sqe_set_data(sqe, c.get());
@@ -833,10 +818,7 @@ rawio::RecvStream Queue::recv_multishot(
     std::shared_ptr<BufferRing> buffer =
         std::make_shared<BufferRing>(*this, _ring, entry_size, entries);
 
-    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
-    if (sqe == nullptr) {
-        RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
-    }
+    io_uring_sqe* sqe = _get_sqe();
     io_uring_prep_recv_multishot(sqe, fd, nullptr, 0, flags);
     sqe->flags |= IOSQE_BUFFER_SELECT;
     sqe->buf_group = buffer->id();
@@ -854,10 +836,7 @@ Queue::recvmsg(int fd, msghdr* msg, unsigned int flags) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         '|', "fd = %d, niov = %zu, flags = %u\n", fd, msg->msg_iovlen, flags
     );
-    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
-    if (sqe == nullptr) {
-        RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
-    }
+    io_uring_sqe* sqe = _get_sqe();
     auto c = std::make_unique<Completion>(std::move(trace_event));
     io_uring_prep_recvmsg(sqe, fd, msg, flags);
     io_uring_sqe_set_data(sqe, c.get());
@@ -870,10 +849,7 @@ Queue::recvmsg(int fd, msghdr* msg, unsigned int flags) {
 rawio::Awaitable<size_t> Queue::write(int fd, const void* buf, size_t size) {
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('|', "fd = %d, size = %zu\n", fd, size);
-    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
-    if (sqe == nullptr) {
-        RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
-    }
+    io_uring_sqe* sqe = _get_sqe();
     auto c = std::make_unique<Completion>(std::move(trace_event));
     io_uring_prep_write(sqe, fd, buf, size, 0);
     io_uring_sqe_set_data(sqe, c.get());
@@ -887,10 +863,7 @@ rawio::Awaitable<size_t>
 Queue::writev(int fd, const iovec* iov, unsigned int niov) {
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('|', "fd = %d, niov = %u\n", fd, niov);
-    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
-    if (sqe == nullptr) {
-        RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
-    }
+    io_uring_sqe* sqe = _get_sqe();
     auto c = std::make_unique<Completion>(std::move(trace_event));
     io_uring_prep_writev(sqe, fd, iov, niov, 0);
     io_uring_sqe_set_data(sqe, c.get());
@@ -906,10 +879,7 @@ Queue::pwrite(int fd, const void* buf, size_t size, off_t offset, bool sync) {
         '|', "fd = %d, size = %zu, offset = %jd, sync = %d\n", fd, size,
         (intmax_t)offset, sync
     );
-    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
-    if (sqe == nullptr) {
-        RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
-    }
+    io_uring_sqe* sqe = _get_sqe();
     auto c = std::make_unique<Completion>(std::move(trace_event));
     io_uring_prep_write(sqe, fd, buf, size, offset);
     if (sync) {
@@ -929,10 +899,7 @@ rawio::Awaitable<size_t> Queue::pwritev(
         '|', "fd = %d, niov = %u, offset = %jd, sync = %d\n", fd, niov,
         (intmax_t)offset, sync
     );
-    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
-    if (sqe == nullptr) {
-        RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
-    }
+    io_uring_sqe* sqe = _get_sqe();
     auto c = std::make_unique<Completion>(std::move(trace_event));
     io_uring_prep_writev(sqe, fd, iov, niov, offset);
     if (sync) {
@@ -948,10 +915,7 @@ rawio::Awaitable<size_t> Queue::pwritev(
 rawio::Awaitable<int> Queue::fsync(int fd, bool datasync) {
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('|', "fd = %d, datasync = %d\n", fd, datasync);
-    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
-    if (sqe == nullptr) {
-        RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
-    }
+    io_uring_sqe* sqe = _get_sqe();
     auto c = std::make_unique<Completion>(std::move(trace_event));
     io_uring_prep_fsync(sqe, fd, datasync ? IORING_FSYNC_DATASYNC : 0);
     io_uring_sqe_set_data(sqe, c.get());
@@ -961,10 +925,7 @@ rawio::Awaitable<int> Queue::fsync(int fd, bool datasync) {
 
 rawio::Awaitable<int> Queue::stat(const char* path, struct stat* buf) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('|', "%s\n", "");
-    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
-    if (sqe == nullptr) {
-        RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
-    }
+    io_uring_sqe* sqe = _get_sqe();
     auto c = std::make_unique<StatCompletion>(std::move(trace_event), buf);
     io_uring_prep_statx(sqe, AT_FDCWD, path, 0, STATX_BASIC_STATS, c->stx());
     io_uring_sqe_set_data(sqe, c.get());
@@ -978,10 +939,7 @@ Queue::fallocate(int fd, int mode, off_t offset, off_t len) {
         '|', "fd = %d, mode = %d, offset = %jd, len = %jd\n", fd, mode,
         (intmax_t)offset, (intmax_t)len
     );
-    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
-    if (sqe == nullptr) {
-        RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
-    }
+    io_uring_sqe* sqe = _get_sqe();
     auto c = std::make_unique<Completion>(std::move(trace_event));
     io_uring_prep_fallocate(sqe, fd, mode, offset, len);
     io_uring_sqe_set_data(sqe, c.get());
@@ -994,10 +952,7 @@ Queue::send(int fd, const void* buf, size_t size, unsigned int flags) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         '|', "fd = %d, size = %zu, flags = %u\n", fd, size, flags
     );
-    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
-    if (sqe == nullptr) {
-        RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
-    }
+    io_uring_sqe* sqe = _get_sqe();
     auto c = std::make_unique<Completion>(std::move(trace_event));
     io_uring_prep_send(sqe, fd, buf, size, flags);
     io_uring_sqe_set_data(sqe, c.get());
@@ -1012,10 +967,7 @@ Queue::sendmsg(int fd, const msghdr* msg, unsigned int flags) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         '|', "fd = %d, niov = %zu, flags = %u\n", fd, msg->msg_iovlen, flags
     );
-    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
-    if (sqe == nullptr) {
-        RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
-    }
+    io_uring_sqe* sqe = _get_sqe();
     auto c = std::make_unique<Completion>(std::move(trace_event));
     io_uring_prep_sendmsg(sqe, fd, msg, flags);
     io_uring_sqe_set_data(sqe, c.get());
@@ -1045,10 +997,7 @@ Queue::sendmsg(int fd, const msghdr* msg, unsigned int flags) {
 rawio::Awaitable<void> Queue::timeout(unsigned int usec) {
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('|', "usec = %u\n", usec);
-    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
-    if (sqe == nullptr) {
-        RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
-    }
+    io_uring_sqe* sqe = _get_sqe();
     __kernel_timespec ts = {
         .tv_sec = usec / 1'000'000u,
         .tv_nsec = 1000ll * static_cast<long long>(usec % 1'000'000u),
@@ -1083,10 +1032,7 @@ rawio::Awaitable<void> Queue::timeout(unsigned int usec) {
 rawio::Awaitable<void> Queue::cancel(rawio::Event* event) {
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('|', "event = %p\n", event);
-    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
-    if (sqe == nullptr) {
-        RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
-    }
+    io_uring_sqe* sqe = _get_sqe();
     io_uring_prep_cancel(sqe, event, 0);
     auto c = std::make_unique<CancelCompletion>(std::move(trace_event));
     io_uring_sqe_set_data(sqe, c.get());
@@ -1103,10 +1049,7 @@ rawio::Awaitable<void> Queue::cancel(rawio::Event* event) {
 
 rawio::Awaitable<void> Queue::cancel(int fd) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('|', "fd = %d\n", fd);
-    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
-    if (sqe == nullptr) {
-        RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
-    }
+    io_uring_sqe* sqe = _get_sqe();
     io_uring_prep_cancel_fd(sqe, fd, IORING_ASYNC_CANCEL_ALL);
     auto c = std::make_unique<CancelCompletion>(std::move(trace_event));
     io_uring_sqe_set_data(sqe, c.get());
