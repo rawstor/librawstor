@@ -15,17 +15,22 @@ namespace rawstor {
  * Subclasses implement device_path() to map a UUID to a block device node,
  * and create()/remove() to provision/deprovision that device.
  * All I/O (pread/pwrite) and spec (BLKGETSIZE64) are handled here.
+ *
+ * spec() reports the actual device size: LVM rounds the requested size up
+ * to the VG extent size, and zfs-create(8) rejects sizes that are not a
+ * multiple of volblocksize. The file backend reports the requested size
+ * verbatim, so the specs of a mixed file/blkdev mirror may disagree.
  */
 class BlkdevSession : public Session {
 protected:
     virtual std::string device_path(const RawstdUUID& id) const = 0;
 
     /*
-     * Runs cmd in a detached thread and optionally waits for wait_path to
-     * appear as a block device.  The result is communicated back to the
-     * caller's io_uring ring via a pipe, so the event loop is not blocked.
-     * cb is invoked from an io_uring completion callback with 0 on success
-     * or a positive errno value on failure.
+     * Spawns cmd with posix_spawnp() and observes its exit by polling a
+     * pidfd on the queue; optionally waits for wait_path to appear as a
+     * block device afterwards (bounded by rawstor_opts_wait_device_timeout).
+     * Nothing blocks the event loop. cb is invoked from a queue completion
+     * callback with 0 on success or a positive errno value on failure.
      */
     void run_async(
         std::vector<std::string> cmd, std::string wait_path,

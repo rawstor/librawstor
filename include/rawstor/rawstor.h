@@ -23,6 +23,11 @@ struct RawstorOpts {
     unsigned int so_sndtimeo;
     unsigned int so_rcvtimeo;
     unsigned int tcp_user_timeout;
+    /**
+     * How long to wait, in milliseconds, for a block device node to appear
+     * after a backend provisioning command (lvcreate, zfs create) succeeds.
+     */
+    unsigned int wait_device_timeout;
 };
 
 int rawstor_initialize(const struct RawstorOpts* opts) RAWSTOR_NOEXCEPT;

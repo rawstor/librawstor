@@ -9,6 +9,7 @@
 #define RAWSTOR_OPTS_SO_SNDTIMEO 5000
 #define RAWSTOR_OPTS_SO_RCVTIMEO 5000
 #define RAWSTOR_OPTS_TCP_USER_TIMEOUT 5000
+#define RAWSTOR_OPTS_WAIT_DEVICE_TIMEOUT 5000
 
 static struct RawstorOpts _rawstor_opts = {};
 
@@ -60,6 +61,14 @@ int rawstor_opts_initialize(const struct RawstorOpts* opts) {
                   "RAWSTOR_OPTS_TCP_USER_TIMEOUT", RAWSTOR_OPTS_TCP_USER_TIMEOUT
               );
 
+    _rawstor_opts.wait_device_timeout =
+        (opts != NULL && opts->wait_device_timeout != 0)
+            ? opts->wait_device_timeout
+            : get_env_uint(
+                  "RAWSTOR_OPTS_WAIT_DEVICE_TIMEOUT",
+                  RAWSTOR_OPTS_WAIT_DEVICE_TIMEOUT
+              );
+
     return 0;
 }
 
@@ -87,4 +96,8 @@ unsigned int rawstor_opts_so_rcvtimeo(void) {
 
 unsigned int rawstor_opts_tcp_user_timeout(void) {
     return _rawstor_opts.tcp_user_timeout;
+}
+
+unsigned int rawstor_opts_wait_device_timeout(void) {
+    return _rawstor_opts.wait_device_timeout;
 }

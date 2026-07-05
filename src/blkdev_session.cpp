@@ -1,6 +1,7 @@
 #include "blkdev_session.hpp"
 
 #include "object.hpp"
+#include "opts.h"
 
 #include <rawstd/gpp.hpp>
 #include <rawstd/logging.h>
@@ -52,7 +53,6 @@ struct CmdState {
 };
 
 const int wait_device_interval_ms = 50;
-const int wait_device_timeout_ms = 5000;
 
 void cmd_finish(const std::shared_ptr<CmdState>& st, int error) {
     if (st->pidfd != -1) {
@@ -79,7 +79,7 @@ void wait_device_check(const std::shared_ptr<CmdState>& st) {
         return;
     }
 
-    if (st->elapsed_ms >= wait_device_timeout_ms) {
+    if (st->elapsed_ms >= (int)rawstor_opts_wait_device_timeout()) {
         rawstd_error(
             "Timed out waiting for device %s\n", st->wait_path.c_str()
         );

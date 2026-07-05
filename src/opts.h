@@ -14,6 +14,7 @@ extern "C" {
 //     unsigned int so_sndtimeo;
 //     unsigned int so_rcvtimeo;
 //     unsigned int tcp_user_timeout;
+//     unsigned int wait_device_timeout;
 // };
 
 int rawstor_opts_initialize(const struct RawstorOpts* opts);
@@ -29,6 +30,8 @@ unsigned int rawstor_opts_so_sndtimeo(void);
 unsigned int rawstor_opts_so_rcvtimeo(void);
 
 unsigned int rawstor_opts_tcp_user_timeout(void);
+
+unsigned int rawstor_opts_wait_device_timeout(void);
 
 #ifdef __cplusplus
 }
