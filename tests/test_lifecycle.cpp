@@ -2,6 +2,7 @@
 #include "session.hpp"
 
 #include <rawstd/gpp.hpp>
+#include <rawstd/uri.hpp>
 
 #include <rawstor/object.h>
 #include <rawstor/protocol.h>
@@ -14,16 +15,74 @@
 namespace {
 
 TEST(FileLifecycleTest, create_spec_remove) {
-    std::filesystem::path path = std::filesystem::temp_directory_path() /
-                                 "test_objects" /
-                                 "00000000-0000-7000-8000-000000000000";
+    std::filesystem::path location_path =
+        std::filesystem::temp_directory_path() / "test_objects";
     std::ostringstream oss;
-    oss << "file://" << path.string();
-    std::string target = oss.str();
+    oss << "file://" << location_path.string();
+    rawstd::URI location_uri(oss.str());
+    std::string location = location_uri.str();
+    std::string uuid = "00000000-0000-7000-8000-000000000000";
+    std::string target = rawstd::URI(location_uri, uuid).str();
 
     RawstorObjectSpec spec{.size = 1ull << 20};
     int res = rawstor_object_create(target.c_str(), &spec);
     EXPECT_EQ(res, 0);
+
+    RawstorObjectSpec read_spec;
+    res = rawstor_object_spec(target.c_str(), &read_spec);
+    EXPECT_EQ(res, 0);
+    EXPECT_EQ(read_spec.size, (size_t)(1ull << 20));
+
+    // res = rawstor_object_list(location.c_str(), )
+
+    res = rawstor_object_remove(target.c_str());
+    EXPECT_EQ(res, 0);
+}
+
+TEST(FileLifecycleTest, create_at_default_spec_remove) {
+    std::filesystem::path location_path =
+        std::filesystem::temp_directory_path() / "test_objects";
+    std::ostringstream oss;
+    oss << "file://" << location_path.string();
+    rawstd::URI location_uri(oss.str());
+    std::string location = location_uri.str();
+    std::string target(65536, '\0');
+
+    RawstorObjectSpec spec{.size = 1ull << 20};
+    int res = rawstor_object_create_at(
+        location.c_str(), nullptr, &spec, target.data(), target.size()
+    );
+    ASSERT_GT(res, 0);
+    ASSERT_LT((size_t)res, target.size());
+    target.resize(res);
+
+    RawstorObjectSpec read_spec;
+    res = rawstor_object_spec(target.c_str(), &read_spec);
+    EXPECT_EQ(res, 0);
+    EXPECT_EQ(read_spec.size, (size_t)(1ull << 20));
+
+    res = rawstor_object_remove(target.c_str());
+    EXPECT_EQ(res, 0);
+}
+
+TEST(FileLifecycleTest, create_at_spec_remove) {
+    std::filesystem::path location_path =
+        std::filesystem::temp_directory_path() / "test_objects";
+    std::ostringstream oss;
+    oss << "file://" << location_path.string();
+    rawstd::URI location_uri(oss.str());
+    std::string location = location_uri.str();
+    std::string uuid = "00000000-0000-7000-8000-000000000000";
+    std::string target(65536, '\0');
+
+    RawstorObjectSpec spec{.size = 1ull << 20};
+    int res = rawstor_object_create_at(
+        location.c_str(), uuid.c_str(), &spec, target.data(), target.size()
+    );
+    ASSERT_GT(res, 0);
+    ASSERT_LT((size_t)res, target.size());
+    target.resize(res);
+    EXPECT_EQ(target, rawstd::URI(location_uri, uuid).str());
 
     RawstorObjectSpec read_spec;
     res = rawstor_object_spec(target.c_str(), &read_spec);
@@ -36,8 +95,11 @@ TEST(FileLifecycleTest, create_spec_remove) {
 
 TEST(OstLifecycleTest, create_spec_remove) {
     rawstor::tests::Server server(8753, 256);
-    std::string target =
-        "ost://127.0.0.1:8753/00000000-0000-7000-8000-000000000000";
+
+    rawstd::URI location_uri("ost://127.0.0.1:8753");
+    std::string location = location_uri.str();
+    std::string uuid = "00000000-0000-7000-8000-000000000000";
+    std::string target = rawstd::URI(location_uri, uuid).str();
 
     {
         rawstor::tests::Session s(server);
@@ -58,6 +120,100 @@ TEST(OstLifecycleTest, create_spec_remove) {
 
         int res = rawstor_object_create(target.c_str(), &spec);
         EXPECT_EQ(res, 0);
+    }
+
+    {
+        RawstorObjectSpec read_spec;
+        int res = rawstor_object_spec(target.c_str(), &read_spec);
+        EXPECT_EQ(res, 0);
+        // rawstor_object_spec emulated
+        EXPECT_EQ(read_spec.size, (size_t)(1ull << 30));
+    }
+
+    {
+        int res = rawstor_object_remove(target.c_str());
+        EXPECT_EQ(res, 0);
+    }
+}
+
+TEST(OstLifecycleTest, create_at_default_spec_remove) {
+    rawstor::tests::Server server(8753, 256);
+
+    rawstd::URI location_uri("ost://127.0.0.1:8753");
+    std::string location = location_uri.str();
+    std::string target(65536, '\0');
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
+    }
+
+    {
+        rawstor::tests::Session s(server);
+    }
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_release(RAWSTOR_MAGIC, 0, 0);
+    }
+
+    {
+        RawstorObjectSpec spec{.size = 1ull << 20};
+
+        int res = rawstor_object_create_at(
+            location.c_str(), nullptr, &spec, target.data(), target.size()
+        );
+        ASSERT_GT(res, 0);
+        ASSERT_LT((size_t)res, target.size());
+        target.resize(res);
+    }
+
+    {
+        RawstorObjectSpec read_spec;
+        int res = rawstor_object_spec(target.c_str(), &read_spec);
+        EXPECT_EQ(res, 0);
+        // rawstor_object_spec emulated
+        EXPECT_EQ(read_spec.size, (size_t)(1ull << 30));
+    }
+
+    {
+        int res = rawstor_object_remove(target.c_str());
+        EXPECT_EQ(res, 0);
+    }
+}
+
+TEST(OstLifecycleTest, create_at_spec_remove) {
+    rawstor::tests::Server server(8753, 256);
+
+    rawstd::URI location_uri("ost://127.0.0.1:8753");
+    std::string location = location_uri.str();
+    std::string uuid = "00000000-0000-7000-8000-000000000000";
+    std::string target(65536, '\0');
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
+    }
+
+    {
+        rawstor::tests::Session s(server);
+    }
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_release(RAWSTOR_MAGIC, 0, 0);
+    }
+
+    {
+        RawstorObjectSpec spec{.size = 1ull << 20};
+
+        int res = rawstor_object_create_at(
+            location.c_str(), uuid.c_str(), &spec, target.data(), target.size()
+        );
+        ASSERT_GT(res, 0);
+        ASSERT_LT((size_t)res, target.size());
+        target.resize(res);
+        EXPECT_EQ(target, rawstd::URI(location_uri, uuid).str());
     }
 
     {

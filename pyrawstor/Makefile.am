@@ -49,7 +49,7 @@ $(builddir)/sources-stamp:
 $(builddir)/build-stamp: $(C_SOURCES) $(builddir)/sources-stamp setup.py
 	CFLAGS="$(CFLAGS) $(AM_CFLAGS)" \
 	LDFLAGS="$(LDFLAGS) $(AM_LDFLAGS)" \
-	$(PYTHON) -m pip install --no-deps -e $(builddir)
+	$(PYTHON) -m pip install --no-deps --no-build-isolation -e $(builddir)
 	touch $@
 
 if WITH_PYTHON3
