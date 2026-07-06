@@ -31,6 +31,10 @@ librawstor_la_HEADERS = $(top_srcdir)/include/rawstor/object.h \
                         $(top_builddir)/include/rawstor/version.h
 
 librawstor_la_SOURCES = blkdev_meta.cpp \
+                        mds_client.cpp \
+                        mds_client.hpp \
+                        volume.cpp \
+                        volume.hpp \
                         placement.cpp \
                         placement.hpp \
                         topology.cpp \

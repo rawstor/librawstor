@@ -76,6 +76,8 @@ static void command_create_usage(void) {
         "\n"
         "command options:\n"
         "  -h, --help            Show this help message and exit\n"
+        "  --chunk-size SIZE     Volume chunk size (mds:// only)\n"
+        "  --width N             Copies per chunk (mds:// only)\n"
         "  -s, --size SIZE       Object size with unit suffix (B, K, M, G, "
         "T, P, E).\n"
         "                        Examples: 10G, 5M, 2T.\n"
@@ -83,11 +85,13 @@ static void command_create_usage(void) {
 };
 
 static int command_create(int argc, char** argv) {
-    const char* optstring = "hl:s:t:u:";
+    const char* optstring = "c:hl:s:t:u:w:";
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
         {"location", required_argument, NULL, 'l'},
         {"size", required_argument, NULL, 's'},
+        {"chunk-size", required_argument, NULL, 'c'},
+        {"width", required_argument, NULL, 'w'},
         {"target", required_argument, NULL, 't'},
         {"uuid", required_argument, NULL, 'u'},
         {},
@@ -95,6 +99,8 @@ static int command_create(int argc, char** argv) {
 
     const char* location_arg = NULL;
     const char* size_arg = NULL;
+    const char* chunk_size_arg = NULL;
+    const char* width_arg = NULL;
     const char* target_arg = NULL;
     const char* uuid_arg = NULL;
     optind = 1;
@@ -115,6 +121,14 @@ static int command_create(int argc, char** argv) {
 
         case 's':
             size_arg = optarg;
+            break;
+
+        case 'c':
+            chunk_size_arg = optarg;
+            break;
+
+        case 'w':
+            width_arg = optarg;
             break;
 
         case 't':
@@ -160,6 +174,17 @@ static int command_create(int argc, char** argv) {
         return EXIT_FAILURE;
     }
 
+    uint64_t chunk_size = 0;
+    unsigned width = 0;
+    if (chunk_size_arg != NULL &&
+        rawstor_cli_size_to_bytes(chunk_size_arg, &chunk_size) < 0) {
+        fprintf(stderr, "Failed to parse units: %s\n", chunk_size_arg);
+        return EXIT_FAILURE;
+    }
+    if (width_arg != NULL) {
+        width = (unsigned)atoi(width_arg);
+    }
+
     uint64_t size = 0;
     int res = rawstor_cli_size_to_bytes(size_arg, &size);
     if (res < 0) {
@@ -171,9 +196,11 @@ static int command_create(int argc, char** argv) {
     }
 
     if (target_arg != NULL) {
-        return rawstor_cli_create(target_arg, size);
+        return rawstor_cli_create(target_arg, size, chunk_size, width);
     } else {
-        return rawstor_cli_create_at(location_arg, uuid_arg, size);
+        return rawstor_cli_create_at_vol(
+            location_arg, uuid_arg, size, chunk_size, width
+        );
     }
 }
 

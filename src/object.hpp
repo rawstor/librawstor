@@ -12,7 +12,44 @@
 #include <memory>
 #include <vector>
 
-struct RawstorObject {};
+/*
+ * The C-API object handle: an abstract interface with two
+ * implementations — rawstor::Object (a plain, possibly mirrored object)
+ * and rawstor::Volume (an MDS-backed chunked volume routing I/O onto
+ * per-chunk objects).
+ */
+struct RawstorObject {
+    virtual ~RawstorObject() = default;
+
+    virtual const RawstdUUID& id() const noexcept = 0;
+
+    virtual std::vector<rawstd::URI> locations() const = 0;
+
+    virtual void pread(
+        void* buf, size_t size, off_t offset,
+        std::function<void(size_t, int)>&& cb
+    ) = 0;
+
+    virtual void preadv(
+        iovec* iov, unsigned int niov, size_t size, off_t offset,
+        std::function<void(size_t, int)>&& cb
+    ) = 0;
+
+    virtual void pwrite(
+        const void* buf, size_t size, off_t offset,
+        std::function<void(size_t, int)>&& cb
+    ) = 0;
+
+    virtual void pwritev(
+        const iovec* iov, unsigned int niov, size_t size, off_t offset,
+        std::function<void(size_t, int)>&& cb
+    ) = 0;
+
+    virtual void flush(std::function<void(size_t, int)>&& cb) = 0;
+
+    /* Clean close, then self-destruction; see rawstor::Object::close. */
+    virtual void close(std::function<void(int)>&& cb) = 0;
+};
 
 namespace rawstor {
 
@@ -197,31 +234,31 @@ public:
     Object& operator=(const Object&) = delete;
     Object& operator=(Object&&) = delete;
 
-    std::vector<rawstd::URI> locations() const;
+    std::vector<rawstd::URI> locations() const override;
 
-    inline const RawstdUUID& id() const noexcept { return _id; }
+    inline const RawstdUUID& id() const noexcept override { return _id; }
 
     void pread(
         void* buf, size_t size, off_t offset,
         std::function<void(size_t, int)>&& cb
-    );
+    ) override;
 
     void preadv(
         iovec* iov, unsigned int niov, size_t size, off_t offset,
         std::function<void(size_t, int)>&& cb
-    );
+    ) override;
 
     void pwrite(
         const void* buf, size_t size, off_t offset,
         std::function<void(size_t, int)>&& cb
-    );
+    ) override;
 
     void pwritev(
         const iovec* iov, unsigned int niov, size_t size, off_t offset,
         std::function<void(size_t, int)>&& cb
-    );
+    ) override;
 
-    void flush(std::function<void(size_t, int)>&& cb);
+    void flush(std::function<void(size_t, int)>&& cb) override;
 
     /*
      * Clean close: flushes data and durably marks the in-sync members CLEAN,
@@ -229,7 +266,7 @@ public:
      * DIRTY (the safe direction) and the object is destroyed anyway; the
      * first error is reported.
      */
-    void close(std::function<void(int)>&& cb);
+    void close(std::function<void(int)>&& cb) override;
 };
 
 } // namespace rawstor

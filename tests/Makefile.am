@@ -24,6 +24,7 @@ test_all_SOURCES = main.cpp \
                    test_lifecycle.cpp \
                    test_mirror.cpp \
                    test_placement.cpp \
+                   test_volume.cpp \
                    test_worker.cpp
 test_all_LDADD = $(top_builddir)/src/librawstor.la
 

@@ -62,9 +62,12 @@ public:
 
     const Topology& topology() const noexcept { return _topology; }
 
-    /* Places every chunk up front; the backends stay sparse. */
+    /*
+     * Places every chunk up front; the backends stay sparse. The volume
+     * id is client-generated (like every object id); EEXIST on reuse.
+     */
     VolumeDescriptor create(
-        uint64_t logical_size, uint64_t chunk_size,
+        const RawstdUUID& volume_id, uint64_t logical_size, uint64_t chunk_size,
         const PlacementPolicy& policy
     );
 

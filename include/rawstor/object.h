@@ -41,6 +41,18 @@ typedef struct RawstorObject RawstorObject;
  */
 struct RawstorObjectSpec {
     uint64_t size; /**< Size of the object in bytes. */
+
+    /*
+     * Volume policy, mds:// targets only (rawstor_docs/Mds.md). Zeros are
+     * defaults that degenerate to a single-chunk, single-copy volume -
+     * which behaves exactly like a plain object.
+     */
+    uint64_t chunk_size;    /**< Power of two; 0 = one chunk spans the
+                                 volume. */
+    uint64_t stripe_width;  /**< K; 0 = spread every chunk, 1 =
+                                 volume-local. */
+    uint8_t width;          /**< Copies per chunk; 0 = 1. */
+    uint8_t failure_domain; /**< RAWSTOR_VOL_DOMAIN_*; default server. */
 };
 
 /**
@@ -63,7 +75,7 @@ struct RawstorObjectSpec {
  * @brief Object copy metadata.
  *
  * Extends RawstorObjectSpec with the mirror consistency state of a single
- * object copy (see docs/mirroring.md). A sync_id of 0 marks a legacy copy
+ * object copy (see docs/mirroring.md). A sync_id of 0 marks a blank copy
  * that has never been part of an established sync set; such copies are
  * treated as CLEAN and identical right after creation.
  *

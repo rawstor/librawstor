@@ -22,7 +22,8 @@ TEST(FileLifecycleTest, create_spec_remove) {
     oss << "file://" << path.string();
     std::string target = oss.str();
 
-    RawstorObjectSpec spec{.size = 1ull << 20};
+    RawstorObjectSpec spec{};
+    spec.size = 1ull << 20;
     int res = rawstor_object_create(target.c_str(), &spec);
     EXPECT_EQ(res, 0);
 
@@ -43,7 +44,8 @@ TEST(FileLifecycleTest, meta_set_state) {
     oss << "file://" << path.string();
     std::string target = oss.str();
 
-    RawstorObjectSpec spec{.size = 1ull << 20};
+    RawstorObjectSpec spec{};
+    spec.size = 1ull << 20;
     int res = rawstor_object_create(target.c_str(), &spec);
     EXPECT_EQ(res, 0);
 
@@ -125,7 +127,8 @@ TEST(OstLifecycleTest, create_spec_remove) {
     }
 
     {
-        RawstorObjectSpec spec{.size = 1ull << 20};
+        RawstorObjectSpec spec{};
+        spec.size = 1ull << 20;
 
         int res = rawstor_object_create(target.c_str(), &spec);
         EXPECT_EQ(res, 0);

@@ -43,6 +43,12 @@ std::string db_path(const char* name) {
     return db.string();
 }
 
+RawstdUUID fresh_uuid() {
+    RawstdUUID ret;
+    EXPECT_EQ(rawstd_uuid7_init(&ret), 0);
+    return ret;
+}
+
 PlacementPolicy mirror2() {
     PlacementPolicy policy{};
     policy.width = 2;
@@ -56,7 +62,8 @@ TEST(MdsStoreTest, create_open_map_shape) {
     VolumeStore store(db_path("shape.db"), topology_4_hosts());
 
     /* 8 MiB volume, 1 MiB chunks: 8 chunks x 2 slots. */
-    VolumeDescriptor d = store.create(8ull << 20, 1ull << 20, mirror2());
+    VolumeDescriptor d =
+        store.create(fresh_uuid(), 8ull << 20, 1ull << 20, mirror2());
     EXPECT_EQ(d.map_epoch, 1u);
 
     VolumeMap map = store.open(d.volume_id, 0);
@@ -91,7 +98,8 @@ TEST(MdsStoreTest, map_survives_reopen) {
 
     {
         VolumeStore store(path, topology_4_hosts());
-        VolumeDescriptor d = store.create(4ull << 20, 1ull << 20, mirror2());
+        VolumeDescriptor d =
+            store.create(fresh_uuid(), 4ull << 20, 1ull << 20, mirror2());
         volume_id = d.volume_id;
         before = store.open(volume_id, 0);
     }
@@ -118,7 +126,8 @@ TEST(MdsStoreTest, map_survives_reopen) {
 TEST(MdsStoreTest, resize_grows_and_keeps_old_chunks) {
     VolumeStore store(db_path("resize.db"), topology_4_hosts());
 
-    VolumeDescriptor d = store.create(2ull << 20, 1ull << 20, mirror2());
+    VolumeDescriptor d =
+        store.create(fresh_uuid(), 2ull << 20, 1ull << 20, mirror2());
     VolumeMap before = store.open(d.volume_id, 0);
     ASSERT_EQ(before.chunks.size(), 2u);
 
@@ -149,7 +158,8 @@ TEST(MdsStoreTest, resize_grows_and_keeps_old_chunks) {
 TEST(MdsStoreTest, remove) {
     VolumeStore store(db_path("remove.db"), topology_4_hosts());
 
-    VolumeDescriptor d = store.create(2ull << 20, 1ull << 20, mirror2());
+    VolumeDescriptor d =
+        store.create(fresh_uuid(), 2ull << 20, 1ull << 20, mirror2());
     store.remove(d.volume_id);
 
     EXPECT_THROW(store.open(d.volume_id, 0), std::system_error);
@@ -161,16 +171,20 @@ TEST(MdsStoreTest, invalid_geometry_and_unsatisfiable_policy) {
 
     /* Chunk size must be a power of two. */
     EXPECT_THROW(
-        store.create(8ull << 20, 3ull << 19, mirror2()), std::system_error
+        store.create(fresh_uuid(), 8ull << 20, 3ull << 19, mirror2()),
+        std::system_error
     );
-    EXPECT_THROW(store.create(0, 1ull << 20, mirror2()), std::system_error);
+    EXPECT_THROW(
+        store.create(fresh_uuid(), 0, 1ull << 20, mirror2()), std::system_error
+    );
 
     /* 3 copies over 1 dc is unsatisfiable at the dc level: hard fail. */
     PlacementPolicy policy = mirror2();
     policy.width = 3;
     policy.failure_domain = Level::DC;
     EXPECT_THROW(
-        store.create(8ull << 20, 1ull << 20, policy), std::system_error
+        store.create(fresh_uuid(), 8ull << 20, 1ull << 20, policy),
+        std::system_error
     );
 }
 

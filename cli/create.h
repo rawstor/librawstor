@@ -9,7 +9,14 @@
 extern "C" {
 #endif
 
-int rawstor_cli_create(const char* target, uint64_t size);
+int rawstor_cli_create(
+    const char* target, uint64_t size, uint64_t chunk_size, unsigned width
+);
+
+int rawstor_cli_create_at_vol(
+    const char* location, const char* uuid, uint64_t size,
+    uint64_t chunk_size, unsigned width
+);
 
 int rawstor_cli_create_at(
     const char* location, const char* uuid, uint64_t size

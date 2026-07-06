@@ -254,15 +254,13 @@ VolumeDescriptor VolumeStore::_descriptor(const RawstdUUID& volume_id) {
 }
 
 VolumeDescriptor VolumeStore::create(
-    uint64_t logical_size, uint64_t chunk_size, const PlacementPolicy& policy
+    const RawstdUUID& volume_id, uint64_t logical_size, uint64_t chunk_size,
+    const PlacementPolicy& policy
 ) {
     validate_geometry(logical_size, chunk_size);
 
     VolumeDescriptor ret{};
-    int res = rawstd_uuid7_init(&ret.volume_id);
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
+    ret.volume_id = volume_id;
     ret.logical_size = logical_size;
     ret.chunk_size = chunk_size;
     ret.policy = policy;

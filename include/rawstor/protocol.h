@@ -155,6 +155,7 @@ struct RawstorVolPolicy {
 } RAWSTOR_PACKED;
 
 struct RawstorVolCreateBody {
+    uint8_t volume_id[16]; /* client-generated, like every object id */
     uint64_t logical_size;
     uint64_t chunk_size; /* power of two */
     struct RawstorVolPolicy policy;
@@ -167,7 +168,6 @@ struct RawstorVolCreate {
 
 /* VOL_CREATE response payload. */
 struct RawstorVolCreatedBody {
-    uint8_t volume_id[16];
     uint64_t map_epoch;
 } RAWSTOR_PACKED;
 
@@ -194,9 +194,18 @@ struct RawstorVolChunkEntry {
     uint8_t width;    /* slots that follow */
 } RAWSTOR_PACKED;
 
+/*
+ * ost_id is the stable identity (HRW); the address is advisory routing
+ * data resolved by the MDS from its topology so that clients stay
+ * zero-config. A null-terminated <ip>:<port>; empty when the topology no
+ * longer lists the OST (the client treats such a member as unreachable).
+ */
+#define RAWSTOR_VOL_ADDRESS_LEN 32
+
 struct RawstorVolChunkSlot {
     uint8_t slot_index;
     uint8_t ost_id[16];
+    char address[RAWSTOR_VOL_ADDRESS_LEN];
 } RAWSTOR_PACKED;
 
 /*

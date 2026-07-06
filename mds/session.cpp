@@ -378,15 +378,15 @@ void Session::_vol_create(
     policy.stripe_width = body.policy.stripe_width;
     policy.seed = body.policy.placement_seed;
 
+    RawstdUUID volume_id;
+    memcpy(volume_id.bytes, body.volume_id, sizeof(volume_id.bytes));
+
     try {
-        mds::VolumeDescriptor descriptor =
-            _server.store().create(body.logical_size, body.chunk_size, policy);
+        mds::VolumeDescriptor descriptor = _server.store().create(
+            volume_id, body.logical_size, body.chunk_size, policy
+        );
 
         RawstorVolCreatedBody created{};
-        memcpy(
-            created.volume_id, descriptor.volume_id.bytes,
-            sizeof(created.volume_id)
-        );
         created.map_epoch = descriptor.map_epoch;
 
         auto payload =
@@ -455,6 +455,22 @@ void Session::_vol_open(
                 RawstorVolChunkSlot wire{};
                 wire.slot_index = slot.slot_index;
                 memcpy(wire.ost_id, slot.ost_id.bytes, sizeof(wire.ost_id));
+
+                /* ost_id -> address, resolved from the topology. */
+                for (const mds::TopologyOST& ost :
+                     _server.store().topology().osts()) {
+                    if (memcmp(
+                            ost.id.bytes, slot.ost_id.bytes,
+                            sizeof(ost.id.bytes)
+                        ) == 0) {
+                        strncpy(
+                            wire.address, ost.address.c_str(),
+                            sizeof(wire.address) - 1
+                        );
+                        break;
+                    }
+                }
+
                 append(&wire, sizeof(wire));
             }
         }

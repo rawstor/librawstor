@@ -1,4 +1,6 @@
 #include "object.hpp"
+
+#include "volume.hpp"
 #include <rawstor/object.h>
 
 #include "config.h"
@@ -2203,11 +2205,48 @@ void Object::close(std::function<void(int)>&& cb) {
 
 } // namespace rawstor
 
+namespace {
+
+/* A single mds:// target is a volume (rawstor_docs/Mds.md). */
+bool is_volume_target(const std::vector<rawstd::URI>& uris) {
+    return uris.size() == 1 && uris[0].scheme() == "mds";
+}
+
+/* Sync bridge for the volume control-plane calls. */
+void volume_sync(
+    const std::function<void(rawio::Queue&, std::function<void(int)>&&)>& fn
+) {
+    Queue q(1);
+    int result = 0;
+
+    fn(q.queue(), [&q, &result](int error) {
+        q.sub_operation();
+        result = error;
+    });
+
+    q.wait();
+
+    if (result) {
+        RAWSTD_THROW_SYSTEM_ERROR(result);
+    }
+}
+
+} // namespace
+
 int rawstor_object_create(
     const char* target, const RawstorObjectSpec* spec
 ) noexcept {
     try {
-        rawstor::Object::create(rawstd::URI::uriv(target), *spec);
+        std::vector<rawstd::URI> uris = rawstd::URI::uriv(target);
+        if (is_volume_target(uris)) {
+            volume_sync([&uris, spec](
+                            rawio::Queue& q, std::function<void(int)>&& done
+                        ) {
+                rawstor::Volume::create(q, uris[0], *spec, std::move(done));
+            });
+        } else {
+            rawstor::Object::create(uris, *spec);
+        }
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -2258,7 +2297,15 @@ int rawstor_object_create_at(
         }
 
         if (static_cast<size_t>(res) < size) {
-            rawstor::Object::create(ret, *spec);
+            if (is_volume_target(ret)) {
+                volume_sync([&ret, spec](
+                                rawio::Queue& q, std::function<void(int)>&& done
+                            ) {
+                    rawstor::Volume::create(q, ret[0], *spec, std::move(done));
+                });
+            } else {
+                rawstor::Object::create(ret, *spec);
+            }
         }
 
         return res;
@@ -2280,10 +2327,18 @@ int rawstor_object_spec_async(
     int (*cb)(int result, void* data), void* data
 ) noexcept {
     try {
-        rawstor::Object::spec(
-            *static_cast<rawio::Queue*>(queue), rawstd::URI::uriv(target), spec,
-            [cb, data](int error) { cb(error ? -error : 0, data); }
-        );
+        std::vector<rawstd::URI> uris = rawstd::URI::uriv(target);
+        if (is_volume_target(uris)) {
+            rawstor::Volume::spec(
+                *static_cast<rawio::Queue*>(queue), uris[0], spec,
+                [cb, data](int error) { cb(error ? -error : 0, data); }
+            );
+        } else {
+            rawstor::Object::spec(
+                *static_cast<rawio::Queue*>(queue), uris, spec,
+                [cb, data](int error) { cb(error ? -error : 0, data); }
+            );
+        }
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -2303,10 +2358,18 @@ int rawstor_object_create_async(
     int (*cb)(int result, void* data), void* data
 ) noexcept {
     try {
-        rawstor::Object::create(
-            *static_cast<rawio::Queue*>(queue), rawstd::URI::uriv(target),
-            *spec, [cb, data](int error) { cb(error ? -error : 0, data); }
-        );
+        std::vector<rawstd::URI> uris = rawstd::URI::uriv(target);
+        if (is_volume_target(uris)) {
+            rawstor::Volume::create(
+                *static_cast<rawio::Queue*>(queue), uris[0], *spec,
+                [cb, data](int error) { cb(error ? -error : 0, data); }
+            );
+        } else {
+            rawstor::Object::create(
+                *static_cast<rawio::Queue*>(queue), uris, *spec,
+                [cb, data](int error) { cb(error ? -error : 0, data); }
+            );
+        }
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -2326,10 +2389,18 @@ int rawstor_object_remove_async(
     void* data
 ) noexcept {
     try {
-        rawstor::Object::remove(
-            *static_cast<rawio::Queue*>(queue), rawstd::URI::uriv(target),
-            [cb, data](int error) { cb(error ? -error : 0, data); }
-        );
+        std::vector<rawstd::URI> uris = rawstd::URI::uriv(target);
+        if (is_volume_target(uris)) {
+            rawstor::Volume::remove(
+                *static_cast<rawio::Queue*>(queue), uris[0],
+                [cb, data](int error) { cb(error ? -error : 0, data); }
+            );
+        } else {
+            rawstor::Object::remove(
+                *static_cast<rawio::Queue*>(queue), uris,
+                [cb, data](int error) { cb(error ? -error : 0, data); }
+            );
+        }
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -2346,7 +2417,16 @@ int rawstor_object_remove_async(
 
 int rawstor_object_remove(const char* target) noexcept {
     try {
-        rawstor::Object::remove(rawstd::URI::uriv(target));
+        std::vector<rawstd::URI> uris = rawstd::URI::uriv(target);
+        if (is_volume_target(uris)) {
+            volume_sync(
+                [&uris](rawio::Queue& q, std::function<void(int)>&& done) {
+                    rawstor::Volume::remove(q, uris[0], std::move(done));
+                }
+            );
+        } else {
+            rawstor::Object::remove(uris);
+        }
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -2363,7 +2443,15 @@ int rawstor_object_remove(const char* target) noexcept {
 
 int rawstor_object_spec(const char* target, RawstorObjectSpec* sp) noexcept {
     try {
-        rawstor::Object::spec(rawstd::URI::uriv(target), sp);
+        std::vector<rawstd::URI> uris = rawstd::URI::uriv(target);
+        if (is_volume_target(uris)) {
+            volume_sync([&uris,
+                         sp](rawio::Queue& q, std::function<void(int)>&& done) {
+                rawstor::Volume::spec(q, uris[0], sp, std::move(done));
+            });
+        } else {
+            rawstor::Object::spec(uris, sp);
+        }
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -2468,18 +2556,30 @@ int rawstor_object_open(
 
         *object = nullptr;
 
-        rawstor::Object* ret = nullptr;
+        RawstorObject* ret = nullptr;
         int result = 0;
         bool done = false;
 
-        rawstor::Object::open(
-            q, rawstd::URI::uriv(target),
-            [&ret, &result, &done](rawstor::Object* obj, int error) {
-                ret = obj;
-                result = error;
-                done = true;
-            }
-        );
+        std::vector<rawstd::URI> uris = rawstd::URI::uriv(target);
+        if (is_volume_target(uris)) {
+            rawstor::Volume::open(
+                q, uris[0],
+                [&ret, &result, &done](rawstor::Volume* volume, int error) {
+                    ret = volume;
+                    result = error;
+                    done = true;
+                }
+            );
+        } else {
+            rawstor::Object::open(
+                q, uris,
+                [&ret, &result, &done](rawstor::Object* obj, int error) {
+                    ret = obj;
+                    result = error;
+                    done = true;
+                }
+            );
+        }
 
         while (!done) {
             q.wait_timeout(rawstor_opts_tcp_user_timeout());
@@ -2510,12 +2610,22 @@ int rawstor_object_open_async(
     int (*cb)(RawstorObject* object, int result, void* data), void* data
 ) noexcept {
     try {
-        rawstor::Object::open(
-            *static_cast<rawio::Queue*>(queue), rawstd::URI::uriv(target),
-            [cb, data](rawstor::Object* object, int error) {
-                cb(object, error ? -error : 0, data);
-            }
-        );
+        std::vector<rawstd::URI> uris = rawstd::URI::uriv(target);
+        if (is_volume_target(uris)) {
+            rawstor::Volume::open(
+                *static_cast<rawio::Queue*>(queue), uris[0],
+                [cb, data](rawstor::Volume* volume, int error) {
+                    cb(volume, error ? -error : 0, data);
+                }
+            );
+        } else {
+            rawstor::Object::open(
+                *static_cast<rawio::Queue*>(queue), uris,
+                [cb, data](rawstor::Object* object, int error) {
+                    cb(object, error ? -error : 0, data);
+                }
+            );
+        }
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -2532,7 +2642,7 @@ int rawstor_object_open_async(
 
 int rawstor_object_close(RawstorObject* object) noexcept {
     try {
-        delete static_cast<rawstor::Object*>(object);
+        delete object;
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -2551,9 +2661,7 @@ int rawstor_object_close_async(
     RawstorObject* object, int (*cb)(int result, void* data), void* data
 ) noexcept {
     try {
-        static_cast<rawstor::Object*>(object)->close([cb, data](int error) {
-            cb(error ? -error : 0, data);
-        });
+        object->close([cb, data](int error) { cb(error ? -error : 0, data); });
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -2573,9 +2681,7 @@ int rawstor_object_id(
 ) noexcept {
     try {
         RawstdUUIDString uuid;
-        rawstd_uuid_to_string(
-            &static_cast<const rawstor::Object*>(object)->id(), &uuid
-        );
+        rawstd_uuid_to_string(&object->id(), &uuid);
         int res = snprintf(buf, size, "%s", uuid);
         if (res < 0) {
             RAWSTD_THROW_ERRNO();
@@ -2598,9 +2704,7 @@ int rawstor_object_location(
     const RawstorObject* object, char* buf, size_t size
 ) noexcept {
     try {
-        return uris(
-            static_cast<const rawstor::Object*>(object)->locations(), buf, size
-        );
+        return uris(object->locations(), buf, size);
     } catch (const std::system_error& e) {
         return -e.code().value();
     } catch (const std::bad_alloc& e) {
@@ -2619,7 +2723,7 @@ int rawstor_object_pread(
     RawstorCallback* cb, void* data
 ) noexcept {
     try {
-        static_cast<rawstor::Object*>(object)->pread(
+        object->pread(
             buf, size, offset,
             [object, size, cb, data](size_t result, int error) {
                 int res = cb(object, size, result, error, data);
@@ -2647,7 +2751,7 @@ int rawstor_object_preadv(
     off_t offset, RawstorCallback* cb, void* data
 ) noexcept {
     try {
-        static_cast<rawstor::Object*>(object)->preadv(
+        object->preadv(
             iov, niov, size, offset,
             [object, size, cb, data](size_t result, int error) {
                 int res = cb(object, size, result, error, data);
@@ -2675,7 +2779,7 @@ int rawstor_object_pwrite(
     RawstorCallback* cb, void* data
 ) noexcept {
     try {
-        static_cast<rawstor::Object*>(object)->pwrite(
+        object->pwrite(
             buf, size, offset,
             [object, size, cb, data](size_t result, int error) {
                 int res = cb(object, size, result, error, data);
@@ -2703,7 +2807,7 @@ int rawstor_object_pwritev(
     off_t offset, RawstorCallback* cb, void* data
 ) noexcept {
     try {
-        static_cast<rawstor::Object*>(object)->pwritev(
+        object->pwritev(
             iov, niov, size, offset,
             [object, size, cb, data](size_t result, int error) {
                 int res = cb(object, size, result, error, data);
@@ -2730,14 +2834,12 @@ int rawstor_object_flush(
     RawstorObject* object, RawstorCallback* cb, void* data
 ) noexcept {
     try {
-        static_cast<rawstor::Object*>(object)->flush(
-            [object, cb, data](size_t result, int error) {
-                int res = cb(object, 0, result, error, data);
-                if (res < 0) {
-                    RAWSTD_THROW_SYSTEM_ERROR(-res);
-                }
+        object->flush([object, cb, data](size_t result, int error) {
+            int res = cb(object, 0, result, error, data);
+            if (res < 0) {
+                RAWSTD_THROW_SYSTEM_ERROR(-res);
             }
-        );
+        });
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();

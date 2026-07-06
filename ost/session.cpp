@@ -634,9 +634,8 @@ void Session::_allocate(
     RawstdUUID uuid;
     memcpy(uuid.bytes, body.obj_id, sizeof(body.obj_id));
 
-    RawstorObjectSpec spec{
-        .size = body.val,
-    };
+    RawstorObjectSpec spec{};
+    spec.size = body.val;
 
     std::vector<rawstd::URI> targets = _targets(uuid);
 

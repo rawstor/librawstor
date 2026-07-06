@@ -84,7 +84,8 @@ public:
         _queue(queue),
         _target(target),
         _object(nullptr) {
-        RawstorObjectSpec spec{.size = size};
+        RawstorObjectSpec spec{};
+        spec.size = size;
         int res = rawstor_object_create(target.c_str(), &spec);
         if (res < 0) {
             RAWSTD_THROW_SYSTEM_ERROR(-res);
