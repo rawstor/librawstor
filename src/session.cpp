@@ -2,7 +2,9 @@
 
 #include "config.h"
 #include "file_session.hpp"
+#include "lvm_session.hpp"
 #include "ost_session.hpp"
+#include "zfs_session.hpp"
 
 #include <rawstd/logging.h>
 #include <rawstd/uri.hpp>
@@ -44,6 +46,12 @@ Session::create(rawio::Queue& queue, const rawstd::URI& location) {
     }
     if (location.scheme() == "file") {
         return std::make_unique<rawstor::file::Session>(queue, location);
+    }
+    if (location.scheme() == "lvm") {
+        return std::make_unique<rawstor::lvm::Session>(queue, location);
+    }
+    if (location.scheme() == "zfs") {
+        return std::make_unique<rawstor::zfs::Session>(queue, location);
     }
     rawstd_error("Unexpected URI scheme: %s\n", location.str().c_str());
     RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
