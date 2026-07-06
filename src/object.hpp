@@ -91,6 +91,16 @@ private:
     std::unique_ptr<ResyncState> _resync;
 
     /*
+     * Bumped every time a new ResyncState is created. Chunk-copy
+     * completions capture the generation they were issued under: a
+     * completion whose generation no longer matches _resync's (the
+     * resync it belonged to was aborted and possibly replaced by a new
+     * one) must not touch the current _resync, even though _resync
+     * itself is non-null again.
+     */
+    size_t _resync_generation;
+
+    /*
      * Periodic reconnect probe for unreachable members. The expirations
      * buffer is shared with the in-flight timer read: the object may be
      * destroyed before an asynchronous cancellation settles.

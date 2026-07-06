@@ -315,6 +315,66 @@ void set_state_next(const std::shared_ptr<SetStateState>& st) {
     }
 }
 
+/*
+ * Async multi-target meta query: targets are tried in order and the first
+ * one that answers wins. This is the only lookup available before an
+ * object is open (rawstor_object_spec queries metadata without opening
+ * anything at all), so it must tolerate the same degraded membership an
+ * open would rather than failing outright when targets.front() happens to
+ * be down.
+ */
+struct MetaState {
+    rawio::Queue& queue;
+    std::vector<rawstd::URI> targets;
+    RawstorObjectMeta* meta;
+    std::function<void(int)> cb;
+    size_t next;
+    int first_error;
+};
+
+void meta_next(const std::shared_ptr<MetaState>& st);
+
+void meta_done(
+    const std::shared_ptr<MetaState>& st, const RawstorObjectMeta& m,
+    int error
+) {
+    if (!error) {
+        *st->meta = m;
+        st->cb(0);
+        return;
+    }
+
+    rawstd_error("%s\n", strerror(error));
+    if (st->first_error == 0) {
+        st->first_error = error;
+    }
+    ++st->next;
+    meta_next(st);
+}
+
+void meta_next(const std::shared_ptr<MetaState>& st) {
+    if (st->next == st->targets.size()) {
+        st->cb(st->first_error ? st->first_error : ENOTCONN);
+        return;
+    }
+
+    try {
+        rawstor::Connection::meta(
+            st->queue, st->targets[st->next],
+            [st](const RawstorObjectMeta& m, int error) {
+                meta_done(st, m, error);
+            }
+        );
+    } catch (const std::system_error& e) {
+        meta_done(st, {}, e.code().value());
+    } catch (const std::bad_alloc& e) {
+        meta_done(st, {}, ENOMEM);
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        meta_done(st, {}, EINVAL);
+    }
+}
+
 } // namespace
 
 namespace rawstor {
@@ -333,6 +393,7 @@ Object::Object(rawio::Queue& queue, const std::vector<rawstd::URI>& targets) :
     _sync_id_history{},
     _alive(std::make_shared<int>(0)),
     _writes_in_flight(0),
+    _resync_generation(0),
     _probe_fd(-1),
     _probe_pending(false),
     _probe_expirations(std::make_shared<uint64_t>(0)) {
@@ -775,6 +836,17 @@ void Object::_with_dirty(std::function<void(int)>&& cont) {
 void Object::_run_dirty_barrier(std::function<void(int)>&& done) {
     _meta_op_running = true;
 
+    /*
+     * A degrade can race this barrier while the object is still not
+     * _dirty (e.g. a concurrent read-repair on another member): it takes
+     * the "nothing acked yet" fast path in _degrade() and bumps
+     * _unrecorded_stale without queuing, since _meta_op_running is only
+     * consulted once _dirty is true. Snapshot the count so the completion
+     * below only subtracts what this fan-out actually recorded, instead
+     * of discarding a concurrent increment.
+     */
+    size_t recorded_stale = _unrecorded_stale;
+
     bool bump =
         _in_sync_count() != _nmirrors || _sync_id == 0 || _unrecorded_stale > 0;
 
@@ -800,7 +872,8 @@ void Object::_run_dirty_barrier(std::function<void(int)>&& done) {
         memcpy(m.sync_id_history, _sync_id_history, sizeof(m.sync_id_history));
     }
 
-    _run_meta_fan_out(m, [this, m, done = std::move(done)](int) mutable {
+    _run_meta_fan_out(m, [this, m, recorded_stale,
+                          done = std::move(done)](int) mutable {
         size_t survivors = _in_sync_count();
 
         if (survivors == 0) {
@@ -823,7 +896,7 @@ void Object::_run_dirty_barrier(std::function<void(int)>&& done) {
         _epoch = m.epoch;
         _sync_id = m.sync_id;
         memcpy(_sync_id_history, m.sync_id_history, sizeof(_sync_id_history));
-        _unrecorded_stale = 0;
+        _unrecorded_stale -= recorded_stale;
         for (Member& mirror : _members) {
             if (mirror.state == MemberState::IN_SYNC) {
                 mirror.meta.state = m.state;
@@ -844,6 +917,15 @@ void Object::_run_dirty_barrier(std::function<void(int)>&& done) {
         }
 
         _finish_meta_op();
+
+        /*
+         * A degrade that raced this barrier (see recorded_stale above)
+         * left its exclusion unrecorded on the survivors: now that
+         * _dirty is set, _degrade's own barrier path picks it up.
+         */
+        if (_unrecorded_stale > 0) {
+            _degrade({}, [](int) {});
+        }
         done(0);
     });
 }
@@ -889,6 +971,15 @@ void Object::_run_degrade_barrier(std::function<void(int)>&& done) {
         return;
     }
 
+    /*
+     * A concurrent degrade arriving while this barrier's fan-out is in
+     * flight queues through _meta_waiters (see _degrade()) rather than
+     * racing _unrecorded_stale directly, so it is safe to subtract
+     * exactly what this fan-out recorded below instead of zeroing the
+     * counter outright.
+     */
+    size_t recorded_stale = _unrecorded_stale;
+
     size_t survivors = _in_sync_count();
 
     if (survivors == 0) {
@@ -917,7 +1008,8 @@ void Object::_run_degrade_barrier(std::function<void(int)>&& done) {
         );
     }
 
-    _run_meta_fan_out(m, [this, m, done = std::move(done)](int) mutable {
+    _run_meta_fan_out(m, [this, m, recorded_stale,
+                          done = std::move(done)](int) mutable {
         size_t survivors = _in_sync_count();
 
         if (survivors == 0) {
@@ -939,7 +1031,7 @@ void Object::_run_degrade_barrier(std::function<void(int)>&& done) {
         _epoch = m.epoch;
         _sync_id = m.sync_id;
         memcpy(_sync_id_history, m.sync_id_history, sizeof(_sync_id_history));
-        _unrecorded_stale = 0;
+        _unrecorded_stale -= recorded_stale;
         for (Member& mirror : _members) {
             if (mirror.state == MemberState::IN_SYNC) {
                 mirror.meta.epoch = m.epoch;
@@ -966,6 +1058,11 @@ void Object::_run_degrade_barrier(std::function<void(int)>&& done) {
 struct Object::ResyncState {
     enum class Phase { START_DRAIN, SWEEP, FINISH_DRAIN };
 
+    /*
+     * Captured by every chunk-copy completion so it can tell whether it
+     * still belongs to the current resync (see Object::_resync_generation).
+     */
+    size_t generation;
     Phase phase;
     size_t idx;
     size_t chunk;
@@ -1236,7 +1333,9 @@ void Object::_resync_maybe_start() {
 
         size_t chunk = RESYNC_CHUNK;
         size_t nbits = (_size + chunk - 1) / chunk;
+        ++_resync_generation;
         _resync = std::make_unique<ResyncState>(ResyncState{
+            _resync_generation,
             ResyncState::Phase::START_DRAIN,
             idx,
             chunk,
@@ -1316,10 +1415,20 @@ void Object::_resync_sweep() {
 
     std::weak_ptr<int> alive = _alive;
     std::shared_ptr<std::vector<char>> buf = _resync->buf;
+    size_t generation = _resync->generation;
     _members[src].cn->pread(
         buf->data(), len, (off_t)off,
-        [this, c, src, len, off, alive, buf](size_t result, int error) {
-            if (alive.expired() || _resync == nullptr) {
+        [this, c, src, len, off, alive, buf, generation](
+            size_t result, int error
+        ) {
+            /*
+             * This resync may have been aborted and replaced by a new one
+             * while the read was in flight: _resync itself is non-null
+             * again, but it is not the ResyncState this completion was
+             * issued for, and must not be touched.
+             */
+            if (alive.expired() || _resync == nullptr ||
+                _resync->generation != generation) {
                 return;
             }
 
@@ -1346,8 +1455,11 @@ void Object::_resync_sweep() {
 
             _members[_resync->idx].cn->pwrite(
                 buf->data(), len, (off_t)off,
-                [this, c, len, alive, buf](size_t result, int error) {
-                    if (alive.expired() || _resync == nullptr) {
+                [this, c, len, alive, buf, generation](
+                    size_t result, int error
+                ) {
+                    if (alive.expired() || _resync == nullptr ||
+                        _resync->generation != generation) {
                         return;
                     }
 
@@ -1392,34 +1504,47 @@ void Object::_resync_finish() {
     memcpy(m.sync_id_history, _sync_id_history, sizeof(m.sync_id_history));
 
     std::weak_ptr<int> alive = _alive;
-    _members[idx].cn->set_state(_id, m, [this, idx, m, alive](int error) {
-        if (alive.expired() || _resync == nullptr) {
-            return;
+    size_t generation = _resync->generation;
+    _members[idx].cn->set_state(
+        _id, m,
+        [this, idx, m, alive, generation](int error) {
+            /*
+             * See _resync_sweep(): this resync may have been aborted (a
+             * concurrent write duplicated onto the still-SYNCING target
+             * can fail right up until the state flips below) and
+             * replaced by a new one for a different member.
+             */
+            if (alive.expired() || _resync == nullptr ||
+                _resync->generation != generation) {
+                return;
+            }
+
+            if (error == ENOSYS) {
+                error = 0;
+            }
+
+            if (error) {
+                _resync_abort("final state update failed");
+                return;
+            }
+
+            _members[idx].state = MemberState::IN_SYNC;
+            _members[idx].meta = m;
+            _members[idx].meta.size = _size;
+            _resync.reset();
+
+            rawstd_info("Mirror resync: the member rejoined the set\n");
+
+            if (_writes_frozen && !_below_write_quorum(_in_sync_count())) {
+                rawstd_info(
+                    "Mirror write quorum restored: unfreezing writes\n"
+                );
+                _writes_frozen = false;
+            }
+
+            _resync_maybe_start();
         }
-
-        if (error == ENOSYS) {
-            error = 0;
-        }
-
-        if (error) {
-            _resync_abort("final state update failed");
-            return;
-        }
-
-        _members[idx].state = MemberState::IN_SYNC;
-        _members[idx].meta = m;
-        _members[idx].meta.size = _size;
-        _resync.reset();
-
-        rawstd_info("Mirror resync: the member rejoined the set\n");
-
-        if (_writes_frozen && !_below_write_quorum(_in_sync_count())) {
-            rawstd_info("Mirror write quorum restored: unfreezing writes\n");
-            _writes_frozen = false;
-        }
-
-        _resync_maybe_start();
-    });
+    );
 }
 
 void Object::_resync_abort(const char* reason) {
@@ -1575,15 +1700,12 @@ void Object::spec(
     rawio::Queue& queue, const std::vector<rawstd::URI>& targets,
     RawstorObjectSpec* sp, std::function<void(int)>&& cb
 ) {
-    validate_not_empty(targets);
-    validate_different_uris(targets);
-    validate_same_uuid(targets);
-
-    rawstor::Connection::meta(
-        queue, targets.front(),
-        [sp, cb = std::move(cb)](const RawstorObjectMeta& meta, int error) {
+    auto m = std::make_shared<RawstorObjectMeta>();
+    meta(
+        queue, targets, m.get(),
+        [sp, m, cb = std::move(cb)](int error) {
             if (!error) {
-                sp->size = meta.size;
+                sp->size = m->size;
             }
             cb(error);
         }
@@ -1598,15 +1720,10 @@ void Object::meta(
     validate_different_uris(targets);
     validate_same_uuid(targets);
 
-    rawstor::Connection::meta(
-        queue, targets.front(),
-        [meta, cb = std::move(cb)](const RawstorObjectMeta& m, int error) {
-            if (!error) {
-                *meta = m;
-            }
-            cb(error);
-        }
+    std::shared_ptr<MetaState> st = std::make_shared<MetaState>(
+        MetaState{queue, targets, meta, std::move(cb), 0, 0}
     );
+    meta_next(st);
 }
 
 void Object::set_state(
@@ -2060,6 +2177,17 @@ void Object::close(std::function<void(int)>&& cb) {
         flush([this, cb = std::move(cb)](size_t, int flush_error) mutable {
             if (_in_sync_count() == 0) {
                 _teardown(std::move(cb), flush_error ? flush_error : EIO);
+                return;
+            }
+
+            /*
+             * A copy that failed to flush may not hold the data its
+             * metadata would claim as CLEAN: leave every member DIRTY so
+             * the next open re-validates and resyncs instead of trusting
+             * an unflushed copy.
+             */
+            if (flush_error) {
+                _teardown(std::move(cb), flush_error);
                 return;
             }
 

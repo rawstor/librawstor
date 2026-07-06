@@ -52,6 +52,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for OST servers predating the SPEC command whether they close the
   connection outright or reply with an ordinary error frame for the
   unknown command, matching real legacy server behavior.
+- A clean close no longer marks mirror copies CLEAN when the flush that
+  was supposed to make them consistent failed.
+- A mirror exclusion racing the dirty-gate or degrade barrier is no longer
+  discarded: it stays unrecorded until a barrier actually accounts for it,
+  instead of being silently dropped by the next barrier's completion.
+- An aborted online resync could not be confused for a different resync
+  started right after it: stale chunk-copy completions from the aborted
+  attempt no longer corrupt the new one's state.
+- `rawstor_object_spec`/`rawstor_object_meta` over a mirrored target now
+  fail over across all configured members instead of only ever querying
+  the first one.
+- `rawio::uring::Queue`: a callback throwing mid-batch no longer abandons
+  and leaks the other completions already available in the same batch.
 
 ## [0.2.0] - 2026-06-03
 
