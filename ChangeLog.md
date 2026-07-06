@@ -38,6 +38,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unreachable members (`mirror_probe_interval` option /
   `RAWSTOR_OPTS_MIRROR_PROBE_INTERVAL`, default 5000 ms) and resyncs them
   on reconnection, restoring the write quorum automatically.
+- `lvm://`/`zfs://` mirror members now track real per-copy mirror state
+  (state/epoch/sync_id/history) instead of always reporting a fabricated
+  CLEAN copy: ZFS uses a `rawstor:meta` user property, LVM an
+  `rawstor.meta=...` tag, both set in the same command as object creation
+  and read/replaced natively (`zfs get`/`set`, `lvs`/`lvchange`). A volume
+  with no recorded state (created before this, or by something else) is
+  treated as untrusted and resynced, never assumed CLEAN.
 
 ### Fixed
 

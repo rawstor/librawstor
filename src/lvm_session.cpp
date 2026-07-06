@@ -1,14 +1,24 @@
 #include "lvm_session.hpp"
 
+#include "blkdev_meta.hpp"
+
 #include <rawstd/gpp.hpp>
 #include <rawstd/logging.h>
 #include <rawstd/uuid.h>
 
+#include <cerrno>
 #include <cinttypes>
 #include <cstdio>
 #include <cstring>
 #include <sstream>
 #include <string>
+#include <vector>
+
+namespace {
+
+const char* rawstor_tag_prefix = "rawstor.meta=";
+
+} // namespace
 
 namespace rawstor {
 namespace lvm {
@@ -63,13 +73,25 @@ void Session::create(
     char size_buf[64];
     snprintf(size_buf, sizeof(size_buf), "%" PRIu64 "b", sp.size);
 
+    /*
+     * A fresh copy starts with sync_id 0: it has never been part of an
+     * established sync set (see docs/mirroring.md). Setting the tag in the
+     * same command as creation means there is never a window where the LV
+     * exists without one.
+     */
+    RawstorObjectMeta initial{};
+    initial.state = RAWSTOR_OBJECT_STATE_CLEAN;
+    std::string tag =
+        std::string(rawstor_tag_prefix) + blkdev_meta_encode(initial);
+
     rawstd_info(
         "lvm: creating LV %s in VG %s, size %s\n", uuid_str, _vg_name.c_str(),
         size_buf
     );
 
     run_async(
-        {"lvcreate", "--yes", "-L", size_buf, "-n", uuid_str, _vg_name},
+        {"lvcreate", "--yes", "-L", size_buf, "-n", uuid_str, "--addtag", tag,
+         _vg_name},
         device_path(id),
         [name = std::string(uuid_str), vg = _vg_name,
          cb = std::move(cb)](int error) mutable {
@@ -85,6 +107,7 @@ void Session::create(
 }
 
 void Session::remove(const RawstdUUID& id, std::function<void(int)>&& cb) {
+    /* lvremove removes the tag along with the LV. */
     std::string path = device_path(id);
 
     rawstd_info("lvm: removing LV %s\n", path.c_str());
@@ -99,6 +122,91 @@ void Session::remove(const RawstdUUID& id, std::function<void(int)>&& cb) {
                 );
             }
             cb(error);
+        }
+    );
+}
+
+void Session::_meta_identity(
+    const RawstdUUID& id,
+    std::function<void(const RawstorObjectMeta&, int)>&& cb
+) {
+    std::string path = device_path(id);
+
+    run_async_capture(
+        {"lvs", "-o", "lv_tags", "--noheadings", path},
+        [path, cb = std::move(cb)](std::string output, int error) mutable {
+            if (error) {
+                rawstd_error(
+                    "lvm: failed to read tags of %s: %s\n", path.c_str(),
+                    strerror(error)
+                );
+                cb({}, error);
+                return;
+            }
+
+            std::string tag = blkdev_find_tag(output, rawstor_tag_prefix);
+
+            /*
+             * An empty tag means one was never recorded: an LV created
+             * before this feature, or by something else. Must not be
+             * trusted as CLEAN — the caller treats any error here as
+             * "member stale, needs a resync" (docs/mirroring.md, case F10).
+             */
+            RawstorObjectMeta meta{};
+            if (tag.empty() || !blkdev_meta_decode(tag, &meta)) {
+                cb({}, ENOENT);
+                return;
+            }
+
+            cb(meta, 0);
+        }
+    );
+}
+
+void Session::set_state(
+    const RawstdUUID& id, const RawstorObjectMeta& meta,
+    std::function<void(int)>&& cb
+) {
+    std::string path = device_path(id);
+    std::string new_tag =
+        std::string(rawstor_tag_prefix) + blkdev_meta_encode(meta);
+
+    run_async_capture(
+        {"lvs", "-o", "lv_tags", "--noheadings", path},
+        [this, path, new_tag,
+         cb = std::move(cb)](std::string output, int error) mutable {
+            if (error) {
+                rawstd_error(
+                    "lvm: failed to read tags of %s: %s\n", path.c_str(),
+                    strerror(error)
+                );
+                cb(error);
+                return;
+            }
+
+            std::vector<std::string> cmd = {"lvchange"};
+
+            std::string old_tag = blkdev_find_tag(output, rawstor_tag_prefix);
+            if (!old_tag.empty()) {
+                cmd.push_back("--deltag");
+                cmd.push_back(std::string(rawstor_tag_prefix) + old_tag);
+            }
+            cmd.push_back("--addtag");
+            cmd.push_back(new_tag);
+            cmd.push_back(path);
+
+            run_async(
+                std::move(cmd), "",
+                [path, cb = std::move(cb)](int error) mutable {
+                    if (error != 0) {
+                        rawstd_error(
+                            "lvm: failed to set mirror state on %s: %s\n",
+                            path.c_str(), strerror(error)
+                        );
+                    }
+                    cb(error);
+                }
+            );
         }
     );
 }

@@ -31,6 +31,11 @@ private:
 protected:
     std::string device_path(const RawstdUUID& id) const override;
 
+    void _meta_identity(
+        const RawstdUUID& id,
+        std::function<void(const RawstorObjectMeta&, int)>&& cb
+    ) override;
+
 public:
     Session(rawio::Queue& queue, const rawstd::URI& location);
 
@@ -40,6 +45,11 @@ public:
     ) override;
 
     void remove(const RawstdUUID& id, std::function<void(int)>&& cb) override;
+
+    void set_state(
+        const RawstdUUID& id, const RawstorObjectMeta& meta,
+        std::function<void(int)>&& cb
+    ) override;
 };
 
 } // namespace zfs

@@ -23,10 +23,12 @@
 #include <spawn.h>
 #include <unistd.h>
 
+#include <array>
 #include <cerrno>
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <string>
 #include <vector>
 
 extern char** environ;
@@ -154,6 +156,77 @@ void reap_child(const std::shared_ptr<CmdState>& st) {
     wait_device(st);
 }
 
+/*
+ * Async external command execution that captures stdout instead of waiting
+ * for a device path: used for the query side of native metadata storage
+ * ("zfs get", "lvs -o lv_tags"). Completes once both the child has exited
+ * (observed via pidfd, same as CmdState) and the stdout pipe has reached
+ * EOF; both are independent async completions, so either can arrive first.
+ */
+struct CaptureState {
+    rawio::Queue& queue;
+    std::vector<std::string> cmd;
+    std::function<void(std::string, int)> cb;
+    pid_t pid;
+    int pidfd;
+    int read_fd;
+    std::string output;
+    bool child_exited;
+    bool pipe_eof;
+    int error;
+};
+
+void capture_finish(const std::shared_ptr<CaptureState>& st) {
+    if (!st->child_exited || !st->pipe_eof || !st->cb) {
+        return;
+    }
+    if (st->pidfd != -1) {
+        close(st->pidfd);
+        st->pidfd = -1;
+    }
+    std::function<void(std::string, int)> cb = std::move(st->cb);
+    st->cb = nullptr;
+    cb(std::move(st->output), st->error);
+}
+
+void capture_read_pipe(const std::shared_ptr<CaptureState>& st) {
+    auto buf = std::make_shared<std::array<char, 4096>>();
+    st->queue.read(
+        st->read_fd, buf->data(), buf->size(),
+        [st, buf](size_t result, int error) {
+            if (error || result == 0) {
+                if (error && st->error == 0) {
+                    st->error = error;
+                }
+                st->pipe_eof = true;
+                close(st->read_fd);
+                st->read_fd = -1;
+                capture_finish(st);
+                return;
+            }
+            st->output.append(buf->data(), result);
+            capture_read_pipe(st);
+        }
+    );
+}
+
+void capture_reap_child(const std::shared_ptr<CaptureState>& st) {
+    int status;
+    pid_t rc = waitpid(st->pid, &status, WNOHANG);
+    if (rc <= 0) {
+        /* POLLIN on a pidfd implies the child has already exited. */
+        if (st->error == 0) {
+            st->error = rc < 0 ? errno : EIO;
+        }
+    } else if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        if (st->error == 0) {
+            st->error = EIO;
+        }
+    }
+    st->child_exited = true;
+    capture_finish(st);
+}
+
 } // namespace
 
 namespace rawstor {
@@ -238,7 +311,7 @@ void BlkdevSession::meta(
 
     _queue.open(
         path->c_str(), O_RDONLY | O_CLOEXEC, 0,
-        [path, cb = std::move(cb)](int result) {
+        [this, path, id, cb = std::move(cb)](int result) mutable {
             if (result < 0) {
                 cb({}, -result);
                 return;
@@ -255,30 +328,112 @@ void BlkdevSession::meta(
             close(result);
 
             /*
-             * Block-device backends have no metadata storage yet: the
-             * device is the object. Report legacy defaults (see the
-             * set_state() note below).
+             * The consistency-state fields (state/epoch/sync_id/history)
+             * never live on the device itself; size is the only field the
+             * device can answer for.
              */
-            RawstorObjectMeta meta{};
-            meta.size = size;
-            meta.state = RAWSTOR_OBJECT_STATE_CLEAN;
+            _meta_identity(
+                id, [size, cb = std::move(cb)](
+                        const RawstorObjectMeta& identity, int error
+                    ) {
+                    if (error) {
+                        cb({}, error);
+                        return;
+                    }
 
-            cb(meta, 0);
+                    RawstorObjectMeta meta = identity;
+                    meta.size = size;
+                    cb(meta, 0);
+                }
+            );
         }
     );
 }
 
-void BlkdevSession::set_state(
-    const RawstdUUID&, const RawstorObjectMeta&, std::function<void(int)>&& cb
+void BlkdevSession::run_async_capture(
+    std::vector<std::string> cmd, std::function<void(std::string, int)>&& cb
 ) {
-    /*
-     * There is no place to persist the mirror state for a raw block device
-     * yet; candidates are a sidecar file in a configured directory or a
-     * reserved header region on the device (see docs/mirroring.md). Until
-     * one is implemented, blkdev copies cannot participate in mirror state
-     * tracking.
-     */
-    cb(ENOSYS);
+    int pipefd[2];
+    if (pipe(pipefd) == -1) {
+        cb({}, errno);
+        return;
+    }
+
+    std::shared_ptr<CaptureState> st =
+        std::make_shared<CaptureState>(CaptureState{
+            _queue, std::move(cmd), std::move(cb), -1, -1, pipefd[0], "", false,
+            false, 0
+        });
+
+    std::vector<char*> argv;
+    argv.reserve(st->cmd.size() + 1);
+    for (auto& s : st->cmd) {
+        argv.push_back(s.data());
+    }
+    argv.push_back(nullptr);
+
+    posix_spawn_file_actions_t actions;
+    posix_spawn_file_actions_init(&actions);
+    posix_spawn_file_actions_adddup2(&actions, pipefd[1], STDOUT_FILENO);
+    posix_spawn_file_actions_addclose(&actions, pipefd[0]);
+    posix_spawn_file_actions_addclose(&actions, pipefd[1]);
+
+    int rc = posix_spawnp(
+        &st->pid, argv[0], &actions, nullptr, argv.data(), environ
+    );
+    posix_spawn_file_actions_destroy(&actions);
+    close(pipefd[1]);
+
+    if (rc != 0) {
+        close(pipefd[0]);
+        st->cb({}, rc);
+        return;
+    }
+
+    st->pidfd = static_cast<int>(syscall(SYS_pidfd_open, st->pid, 0));
+    if (st->pidfd == -1) {
+        /*
+         * Not expected on kernels recent enough for io_uring; reap
+         * synchronously as a last resort so the child does not linger
+         * as a zombie.
+         */
+        int err = errno;
+        int status;
+        waitpid(st->pid, &status, 0);
+        close(pipefd[0]);
+        st->cb({}, err);
+        return;
+    }
+
+    try {
+        capture_read_pipe(st);
+        st->queue.poll(st->pidfd, POLLIN, [st](int result) {
+            if (result < 0) {
+                if (st->error == 0) {
+                    st->error = -result;
+                }
+                st->child_exited = true;
+                capture_finish(st);
+                return;
+            }
+            capture_reap_child(st);
+        });
+    } catch (const std::system_error& e) {
+        /*
+         * Queue submission failed; reap synchronously as a last resort so
+         * the child does not linger as a zombie.
+         */
+        int status;
+        waitpid(st->pid, &status, 0);
+        if (st->read_fd != -1) {
+            close(st->read_fd);
+            st->read_fd = -1;
+        }
+        st->error = e.code().value();
+        st->child_exited = true;
+        st->pipe_eof = true;
+        capture_finish(st);
+    }
 }
 
 void BlkdevSession::set_object(Object* object, std::function<void(int)>&& cb) {
