@@ -1242,9 +1242,8 @@ void Session::meta(
                                 [fd, response, cb_sp,
                                  trace_event](size_t result, int error) {
                                     RAWSTD_TRACE_EVENT_MESSAGE(
-                                        trace_event,
-                                        "%zu of %zu, error = %d\n", result,
-                                        sizeof(response->meta), error
+                                        trace_event, "%zu of %zu, error = %d\n",
+                                        result, sizeof(response->meta), error
                                     );
 
                                     if (!error) {

@@ -335,8 +335,7 @@ struct MetaState {
 void meta_next(const std::shared_ptr<MetaState>& st);
 
 void meta_done(
-    const std::shared_ptr<MetaState>& st, const RawstorObjectMeta& m,
-    int error
+    const std::shared_ptr<MetaState>& st, const RawstorObjectMeta& m, int error
 ) {
     if (!error) {
         *st->meta = m;
@@ -872,62 +871,65 @@ void Object::_run_dirty_barrier(std::function<void(int)>&& done) {
         memcpy(m.sync_id_history, _sync_id_history, sizeof(m.sync_id_history));
     }
 
-    _run_meta_fan_out(m, [this, m, recorded_stale,
-                          done = std::move(done)](int) mutable {
-        size_t survivors = _in_sync_count();
+    _run_meta_fan_out(
+        m, [this, m, recorded_stale, done = std::move(done)](int) mutable {
+            size_t survivors = _in_sync_count();
 
-        if (survivors == 0) {
-            _finish_meta_op();
-            done(EIO);
-            return;
-        }
-
-        if (_below_write_quorum(survivors)) {
-            rawstd_error(
-                "Mirror survivors below write quorum: freezing writes\n"
-            );
-            _writes_frozen = true;
-            _finish_meta_op();
-            done(EIO);
-            return;
-        }
-
-        _dirty = true;
-        _epoch = m.epoch;
-        _sync_id = m.sync_id;
-        memcpy(_sync_id_history, m.sync_id_history, sizeof(_sync_id_history));
-        _unrecorded_stale -= recorded_stale;
-        for (Member& mirror : _members) {
-            if (mirror.state == MemberState::IN_SYNC) {
-                mirror.meta.state = m.state;
-                mirror.meta.epoch = m.epoch;
-                mirror.meta.sync_id = m.sync_id;
-                memcpy(
-                    mirror.meta.sync_id_history, m.sync_id_history,
-                    sizeof(mirror.meta.sync_id_history)
-                );
+            if (survivors == 0) {
+                _finish_meta_op();
+                done(EIO);
+                return;
             }
+
+            if (_below_write_quorum(survivors)) {
+                rawstd_error(
+                    "Mirror survivors below write quorum: freezing writes\n"
+                );
+                _writes_frozen = true;
+                _finish_meta_op();
+                done(EIO);
+                return;
+            }
+
+            _dirty = true;
+            _epoch = m.epoch;
+            _sync_id = m.sync_id;
+            memcpy(
+                _sync_id_history, m.sync_id_history, sizeof(_sync_id_history)
+            );
+            _unrecorded_stale -= recorded_stale;
+            for (Member& mirror : _members) {
+                if (mirror.state == MemberState::IN_SYNC) {
+                    mirror.meta.state = m.state;
+                    mirror.meta.epoch = m.epoch;
+                    mirror.meta.sync_id = m.sync_id;
+                    memcpy(
+                        mirror.meta.sync_id_history, m.sync_id_history,
+                        sizeof(mirror.meta.sync_id_history)
+                    );
+                }
+                /*
+                 * A reopened session may talk to a restarted backend that lost
+                 * acknowledged writes: once DIRTY, failures must surface here
+                 * and degrade the member instead of being retried transparently
+                 * (docs/mirroring.md, case F6).
+                 */
+                mirror.cn->set_transparent_retry(false);
+            }
+
+            _finish_meta_op();
+
             /*
-             * A reopened session may talk to a restarted backend that lost
-             * acknowledged writes: once DIRTY, failures must surface here
-             * and degrade the member instead of being retried transparently
-             * (docs/mirroring.md, case F6).
+             * A degrade that raced this barrier (see recorded_stale above)
+             * left its exclusion unrecorded on the survivors: now that
+             * _dirty is set, _degrade's own barrier path picks it up.
              */
-            mirror.cn->set_transparent_retry(false);
+            if (_unrecorded_stale > 0) {
+                _degrade({}, [](int) {});
+            }
+            done(0);
         }
-
-        _finish_meta_op();
-
-        /*
-         * A degrade that raced this barrier (see recorded_stale above)
-         * left its exclusion unrecorded on the survivors: now that
-         * _dirty is set, _degrade's own barrier path picks it up.
-         */
-        if (_unrecorded_stale > 0) {
-            _degrade({}, [](int) {});
-        }
-        done(0);
-    });
+    );
 }
 
 /*
@@ -1008,44 +1010,47 @@ void Object::_run_degrade_barrier(std::function<void(int)>&& done) {
         );
     }
 
-    _run_meta_fan_out(m, [this, m, recorded_stale,
-                          done = std::move(done)](int) mutable {
-        size_t survivors = _in_sync_count();
+    _run_meta_fan_out(
+        m, [this, m, recorded_stale, done = std::move(done)](int) mutable {
+            size_t survivors = _in_sync_count();
 
-        if (survivors == 0) {
-            _finish_meta_op();
-            done(EIO);
-            return;
-        }
-
-        if (_below_write_quorum(survivors)) {
-            rawstd_error(
-                "Mirror survivors below write quorum: freezing writes\n"
-            );
-            _writes_frozen = true;
-            _finish_meta_op();
-            done(EIO);
-            return;
-        }
-
-        _epoch = m.epoch;
-        _sync_id = m.sync_id;
-        memcpy(_sync_id_history, m.sync_id_history, sizeof(_sync_id_history));
-        _unrecorded_stale -= recorded_stale;
-        for (Member& mirror : _members) {
-            if (mirror.state == MemberState::IN_SYNC) {
-                mirror.meta.epoch = m.epoch;
-                mirror.meta.sync_id = m.sync_id;
-                memcpy(
-                    mirror.meta.sync_id_history, m.sync_id_history,
-                    sizeof(mirror.meta.sync_id_history)
-                );
+            if (survivors == 0) {
+                _finish_meta_op();
+                done(EIO);
+                return;
             }
-        }
 
-        _finish_meta_op();
-        done(0);
-    });
+            if (_below_write_quorum(survivors)) {
+                rawstd_error(
+                    "Mirror survivors below write quorum: freezing writes\n"
+                );
+                _writes_frozen = true;
+                _finish_meta_op();
+                done(EIO);
+                return;
+            }
+
+            _epoch = m.epoch;
+            _sync_id = m.sync_id;
+            memcpy(
+                _sync_id_history, m.sync_id_history, sizeof(_sync_id_history)
+            );
+            _unrecorded_stale -= recorded_stale;
+            for (Member& mirror : _members) {
+                if (mirror.state == MemberState::IN_SYNC) {
+                    mirror.meta.epoch = m.epoch;
+                    mirror.meta.sync_id = m.sync_id;
+                    memcpy(
+                        mirror.meta.sync_id_history, m.sync_id_history,
+                        sizeof(mirror.meta.sync_id_history)
+                    );
+                }
+            }
+
+            _finish_meta_op();
+            done(0);
+        }
+    );
 }
 
 /*
@@ -1418,9 +1423,8 @@ void Object::_resync_sweep() {
     size_t generation = _resync->generation;
     _members[src].cn->pread(
         buf->data(), len, (off_t)off,
-        [this, c, src, len, off, alive, buf, generation](
-            size_t result, int error
-        ) {
+        [this, c, src, len, off, alive, buf,
+         generation](size_t result, int error) {
             /*
              * This resync may have been aborted and replaced by a new one
              * while the read was in flight: _resync itself is non-null
@@ -1455,9 +1459,8 @@ void Object::_resync_sweep() {
 
             _members[_resync->idx].cn->pwrite(
                 buf->data(), len, (off_t)off,
-                [this, c, len, alive, buf, generation](
-                    size_t result, int error
-                ) {
+                [this, c, len, alive, buf,
+                 generation](size_t result, int error) {
                     if (alive.expired() || _resync == nullptr ||
                         _resync->generation != generation) {
                         return;
@@ -1506,8 +1509,7 @@ void Object::_resync_finish() {
     std::weak_ptr<int> alive = _alive;
     size_t generation = _resync->generation;
     _members[idx].cn->set_state(
-        _id, m,
-        [this, idx, m, alive, generation](int error) {
+        _id, m, [this, idx, m, alive, generation](int error) {
             /*
              * See _resync_sweep(): this resync may have been aborted (a
              * concurrent write duplicated onto the still-SYNCING target
@@ -1701,15 +1703,12 @@ void Object::spec(
     RawstorObjectSpec* sp, std::function<void(int)>&& cb
 ) {
     auto m = std::make_shared<RawstorObjectMeta>();
-    meta(
-        queue, targets, m.get(),
-        [sp, m, cb = std::move(cb)](int error) {
-            if (!error) {
-                sp->size = m->size;
-            }
-            cb(error);
+    meta(queue, targets, m.get(), [sp, m, cb = std::move(cb)](int error) {
+        if (!error) {
+            sp->size = m->size;
         }
-    );
+        cb(error);
+    });
 }
 
 void Object::meta(
