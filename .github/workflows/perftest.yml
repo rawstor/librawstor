@@ -16,7 +16,6 @@ jobs:
         backend:
         - file
         - ost
-        - ost-legacy
         bs:
         - 4k
         iodepth:
@@ -27,15 +26,10 @@ jobs:
         include:
         - packages: liburing-dev
           without-liburing:
-        - packages: liburing-dev
-          backend: ost-legacy
-          without-liburing: --without-liburing
         - location: file:///tmp/objects
           backend: file
         - location: ost://127.0.0.1:8080
           backend: ost
-        - location: ost://127.0.0.1:8080
-          backend: ost-legacy
 
     steps:
     - name: install dependencies
@@ -52,30 +46,6 @@ jobs:
         cd ./librawstor
         ./autogen.sh
         ./configure --disable-shared --disable-tests --without-python3 ${{ matrix.without-liburing }}
-        make -j$(nproc)
-        sudo make install
-        popd
-    - uses: actions/checkout@v7
-      id: rawstor_ost_feature_branch
-      continue-on-error: true
-      if: "${{ matrix.backend == 'ost-legacy' }}"
-      with:
-        repository: rawstor/rawstor_ost
-        path: rawstor_ost
-        ref: ${{ github.ref }}
-    - uses: actions/checkout@v7
-      if: "${{ matrix.backend == 'ost-legacy' && steps.rawstor_ost_feature_branch.outcome == 'failure' }}"
-      with:
-        repository: rawstor/rawstor_ost
-        path: rawstor_ost
-        ref: refs/heads/main
-    - name: (ost-legacy) install rawstor_ost
-      if: "${{ matrix.backend == 'ost-legacy' }}"
-      run: |
-        pushd .
-        cd ./rawstor_ost
-        ./autogen.sh
-        ./configure --disable-shared
         make -j$(nproc)
         sudo make install
         popd
@@ -98,24 +68,11 @@ jobs:
         mkdir ${GITHUB_WORKSPACE}/objects
         rawstor-ost --bind 127.0.0.1:8080 --location file://${GITHUB_WORKSPACE}/objects &
         sleep 10
-    - name: (ost-legacy) start rawstor_ost
-      if: "${{ matrix.backend == 'ost-legacy' }}"
-      run: |
-        mkdir ${GITHUB_WORKSPACE}/objects
-        truncate -s 2G ${GITHUB_WORKSPACE}/objects/01988675-e1e5-7788-9ed4-2f2d30910d23
-        ost 8080 ${GITHUB_WORKSPACE}/objects/ &
-        sleep 10
     - name: create object
-      if: "${{ matrix.backend != 'ost-legacy' }}"
       run: |
         target=$(rawstor-cli create --location=${{ matrix.location }} --size=1G)
         echo "TARGET=${target}" >> $GITHUB_ENV
         rawstor-cli testio --target=${target} --block-size=4K --io-depth=1 --count=1
-    - name: (ost-legacy) create object
-      if: "${{ matrix.backend == 'ost-legacy' }}"
-      run: |
-        target=${{ matrix.location }}/01988675-e1e5-7788-9ed4-2f2d30910d23
-        echo "TARGET=${target}" >> $GITHUB_ENV
     - name: fio
       run: |
         echo "# perftest" >> $GITHUB_STEP_SUMMARY
@@ -139,14 +96,10 @@ jobs:
           ./fio.json
         if-no-files-found: error
     - name: remove object
-      if: "${{ matrix.backend != 'ost-legacy' }}"
       run: rawstor-cli remove --target=${TARGET}
     - name: (ost) stop rawstor-ost
       if: "${{ matrix.backend == 'ost' }}"
       run: killall rawstor-ost
-    - name: (ost-legacy) stop rawstor_ost
-      if: "${{ matrix.backend == 'ost-legacy' }}"
-      run: killall ost
 
   export:
     needs: perftest

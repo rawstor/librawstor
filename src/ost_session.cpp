@@ -1198,15 +1198,6 @@ void Session::meta(
              * The response is read in two phases: the head+body first, the
              * metadata payload only on success. Error responses carry no
              * payload.
-             *
-             * Servers predating the SPEC command either close the
-             * connection outright, or — as the real legacy rawstor_ost
-             * binary does, since it never had SET_OBJECT called on this
-             * one-shot session either — reply with a well-formed error
-             * frame (res = -1, i.e. EPERM) echoing the SPEC command before
-             * closing. Both signatures fall back to the previously
-             * emulated metadata so a legacy backend keeps working; any
-             * other error is a genuine failure and is propagated as-is.
              */
             auto response = std::make_shared<RawstorOSTFrameSpecResponse>();
 
@@ -1220,41 +1211,24 @@ void Session::meta(
                             sizeof(RawstorOSTFrameResponse), error
                         );
 
-                        bool legacy = error == ECONNRESET ||
-                                      error == EPIPE ||
-                                      (!error && result == 0);
-
-                        if (!legacy && !error) {
+                        if (!error) {
                             error = validate_result(
                                 fd, sizeof(RawstorOSTFrameResponse), result
                             );
                         }
 
-                        if (!legacy && !error) {
+                        if (!error) {
                             error = validate_response(
                                 fd, reinterpret_cast<RawstorOSTFrameResponse*>(
                                         response.get()
                                     )
                             );
-                            legacy = (error == EPERM);
                         }
 
-                        if (!legacy && !error) {
+                        if (!error) {
                             error = validate_cmd(
                                 fd, response->head.cmd, RAWSTOR_CMD_SPEC
                             );
-                        }
-
-                        if (legacy) {
-                            rawstd_warning(
-                                "Legacy OST without SPEC support; "
-                                "emulating object metadata\n"
-                            );
-                            RawstorObjectMeta meta{};
-                            meta.size = 1 << 30;
-                            meta.state = RAWSTOR_OBJECT_STATE_CLEAN;
-                            (*cb_sp)(meta, 0);
-                            return;
                         }
 
                         if (error) {
