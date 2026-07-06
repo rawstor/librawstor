@@ -57,9 +57,13 @@ int validate_result(int fd, size_t size, size_t result) noexcept {
     return EAGAIN;
 }
 
-int validate_response(
-    int fd, const RawstorOSTFrameResponse* response
-) noexcept {
+/*
+ * A failed magic check means the stream framing is lost: the connection
+ * cannot be used anymore. A negative res is a server-side error for one
+ * operation: the real errno is propagated and the stream stays usable
+ * (error responses carry no payload).
+ */
+int validate_frame(int fd, const RawstorOSTFrameResponse* response) noexcept {
     assert(response != nullptr);
 
     if (response->head.magic != RAWSTOR_MAGIC) {
@@ -70,11 +74,22 @@ int validate_response(
         return EPROTO;
     }
 
+    return 0;
+}
+
+int validate_response(
+    int fd, const RawstorOSTFrameResponse* response
+) noexcept {
+    int error = validate_frame(fd, response);
+    if (error) {
+        return error;
+    }
+
     if (response->body.res < 0) {
         rawstd_error(
             "fd %d: Server error: %s\n", fd, strerror(-response->body.res)
         );
-        return EPROTO;
+        return -response->body.res;
     }
 
     return 0;
@@ -101,6 +116,46 @@ int validate_hash(int fd, uint64_t hash, uint64_t expected) noexcept {
         (unsigned long long)expected
     );
     return EPROTO;
+}
+
+/*
+ * Shared response-head handling for in-flight operations: returns 0 when
+ * the response reports success, otherwise the errno to dispatch. *fatal is
+ * set when the stream framing is lost (transport failure, bad magic,
+ * command mixup): the receive loop must stop. A server-side error (res <
+ * 0) is not fatal: error responses carry no payload, so the stream stays
+ * framed.
+ */
+int classify_response(
+    int fd, const RawstorOSTFrameResponse* response, int error,
+    RawstorOSTCommandType expected, bool* fatal
+) noexcept {
+    *fatal = true;
+
+    if (error) {
+        return error;
+    }
+
+    error = validate_frame(fd, response);
+    if (error) {
+        return error;
+    }
+
+    error = validate_cmd(fd, response->head.cmd, expected);
+    if (error) {
+        return error;
+    }
+
+    *fatal = false;
+
+    if (response->body.res < 0) {
+        rawstd_error(
+            "fd %d: Server error: %s\n", fd, strerror(-response->body.res)
+        );
+        return -response->body.res;
+    }
+
+    return 0;
 }
 
 } // namespace
@@ -294,15 +349,10 @@ public:
     ) override {
         RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
 
-        if (!error) {
-            error = validate_response(_context->fd(), response);
-        }
-
-        if (!error) {
-            error = validate_cmd(
-                _context->fd(), response->head.cmd, RAWSTOR_CMD_READ
-            );
-        }
+        bool fatal = false;
+        error = classify_response(
+            _context->fd(), response, error, RAWSTOR_CMD_READ, &fatal
+        );
 
         if (!error) {
             _hash = response->body.hash;
@@ -311,7 +361,7 @@ public:
         } else {
             _dispatch(0, error);
             *next_head = true;
-            *next_size = 0;
+            *next_size = fatal ? 0 : sizeof(RawstorOSTFrameResponse);
         }
     }
 
@@ -382,15 +432,10 @@ public:
     ) override {
         RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
 
-        if (!error) {
-            error = validate_response(_context->fd(), response);
-        }
-
-        if (!error) {
-            error = validate_cmd(
-                _context->fd(), response->head.cmd, RAWSTOR_CMD_READ
-            );
-        }
+        bool fatal = false;
+        error = classify_response(
+            _context->fd(), response, error, RAWSTOR_CMD_READ, &fatal
+        );
 
         if (!error) {
             _hash = response->body.hash;
@@ -399,7 +444,7 @@ public:
         } else {
             _dispatch(0, error);
             *next_head = true;
-            *next_size = 0;
+            *next_size = fatal ? 0 : sizeof(RawstorOSTFrameResponse);
         }
     }
 
@@ -475,22 +520,15 @@ public:
     ) override {
         RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
 
-        if (!error) {
-            error = validate_response(_context->fd(), response);
-        }
-
-        if (!error) {
-            error = validate_cmd(
-                _context->fd(), response->head.cmd, RAWSTOR_CMD_WRITE
-            );
-        }
-
-        _dispatch(
-            !error && response != nullptr ? response->body.res : 0, error
+        bool fatal = false;
+        error = classify_response(
+            _context->fd(), response, error, RAWSTOR_CMD_WRITE, &fatal
         );
 
+        _dispatch(!error ? response->body.res : 0, error);
+
         *next_head = true;
-        *next_size = error ? 0 : sizeof(RawstorOSTFrameResponse);
+        *next_size = fatal ? 0 : sizeof(RawstorOSTFrameResponse);
     }
 };
 
@@ -545,22 +583,15 @@ public:
     ) override {
         RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
 
-        if (!error) {
-            error = validate_response(_context->fd(), response);
-        }
-
-        if (!error) {
-            error = validate_cmd(
-                _context->fd(), response->head.cmd, RAWSTOR_CMD_WRITE
-            );
-        }
-
-        _dispatch(
-            !error && response != nullptr ? response->body.res : 0, error
+        bool fatal = false;
+        error = classify_response(
+            _context->fd(), response, error, RAWSTOR_CMD_WRITE, &fatal
         );
 
+        _dispatch(!error ? response->body.res : 0, error);
+
         *next_head = true;
-        *next_size = error ? 0 : sizeof(RawstorOSTFrameResponse);
+        *next_size = fatal ? 0 : sizeof(RawstorOSTFrameResponse);
     }
 };
 
@@ -608,24 +639,20 @@ public:
     ) override {
         RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
 
-        if (!error) {
-            error = validate_response(_context->fd(), response);
-        }
-
-        if (!error) {
-            error = validate_cmd(
-                _context->fd(), response->head.cmd, RAWSTOR_CMD_SPEC
-            );
-        }
+        bool fatal = false;
+        error = classify_response(
+            _context->fd(), response, error, RAWSTOR_CMD_SPEC, &fatal
+        );
 
         if (!error) {
             _hash = response->body.hash;
             *next_head = false;
             *next_size = sizeof(RawstorOSTFrameMetaBody);
         } else {
+            /* Error responses carry no metadata payload. */
             _dispatch(0, error);
             *next_head = true;
-            *next_size = 0;
+            *next_size = fatal ? 0 : sizeof(RawstorOSTFrameResponse);
         }
     }
 
@@ -709,20 +736,15 @@ public:
     ) override {
         RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
 
-        if (!error) {
-            error = validate_response(_context->fd(), response);
-        }
-
-        if (!error) {
-            error = validate_cmd(
-                _context->fd(), response->head.cmd, RAWSTOR_CMD_SET_STATE
-            );
-        }
+        bool fatal = false;
+        error = classify_response(
+            _context->fd(), response, error, RAWSTOR_CMD_SET_STATE, &fatal
+        );
 
         _dispatch(0, error);
 
         *next_head = true;
-        *next_size = error ? 0 : sizeof(RawstorOSTFrameResponse);
+        *next_size = fatal ? 0 : sizeof(RawstorOSTFrameResponse);
     }
 };
 
@@ -762,20 +784,15 @@ public:
     ) override {
         RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
 
-        if (!error) {
-            error = validate_response(_context->fd(), response);
-        }
-
-        if (!error) {
-            error = validate_cmd(
-                _context->fd(), response->head.cmd, RAWSTOR_CMD_FLUSH
-            );
-        }
+        bool fatal = false;
+        error = classify_response(
+            _context->fd(), response, error, RAWSTOR_CMD_FLUSH, &fatal
+        );
 
         _dispatch(0, error);
 
         *next_head = true;
-        *next_size = error ? 0 : sizeof(RawstorOSTFrameResponse);
+        *next_size = fatal ? 0 : sizeof(RawstorOSTFrameResponse);
     }
 };
 
@@ -1177,26 +1194,58 @@ void Session::meta(
                 return;
             }
 
+            /*
+             * The response is read in two phases: the head+body first, the
+             * metadata payload only on success. Error responses carry no
+             * payload.
+             *
+             * Servers predating the SPEC command either close the
+             * connection outright, or — as the real legacy rawstor_ost
+             * binary does, since it never had SET_OBJECT called on this
+             * one-shot session either — reply with a well-formed error
+             * frame (res = -1, i.e. EPERM) echoing the SPEC command before
+             * closing. Both signatures fall back to the previously
+             * emulated metadata so a legacy backend keeps working; any
+             * other error is a genuine failure and is propagated as-is.
+             */
             auto response = std::make_shared<RawstorOSTFrameSpecResponse>();
 
             try {
                 q->read(
-                    fd, response.get(), sizeof(*response),
-                    [fd, response, cb_sp,
+                    fd, response.get(), sizeof(RawstorOSTFrameResponse),
+                    [q, fd, response, cb_sp,
                      trace_event](size_t result, int error) {
                         RAWSTD_TRACE_EVENT_MESSAGE(
                             trace_event, "%zu of %zu, error = %d\n", result,
-                            sizeof(RawstorOSTFrameSpecResponse), error
+                            sizeof(RawstorOSTFrameResponse), error
                         );
 
-                        /*
-                         * Servers predating the SPEC command close the
-                         * connection on it. Fall back to the emulated
-                         * metadata the client used to fabricate, so a
-                         * legacy backend keeps working.
-                         */
-                        if (error == ECONNRESET || error == EPIPE ||
-                            (!error && result == 0)) {
+                        bool legacy = error == ECONNRESET ||
+                                      error == EPIPE ||
+                                      (!error && result == 0);
+
+                        if (!legacy && !error) {
+                            error = validate_result(
+                                fd, sizeof(RawstorOSTFrameResponse), result
+                            );
+                        }
+
+                        if (!legacy && !error) {
+                            error = validate_response(
+                                fd, reinterpret_cast<RawstorOSTFrameResponse*>(
+                                        response.get()
+                                    )
+                            );
+                            legacy = (error == EPERM);
+                        }
+
+                        if (!legacy && !error) {
+                            error = validate_cmd(
+                                fd, response->head.cmd, RAWSTOR_CMD_SPEC
+                            );
+                        }
+
+                        if (legacy) {
                             rawstd_warning(
                                 "Legacy OST without SPEC support; "
                                 "emulating object metadata\n"
@@ -1208,51 +1257,63 @@ void Session::meta(
                             return;
                         }
 
-                        if (!error) {
-                            error = validate_result(
-                                fd, sizeof(RawstorOSTFrameSpecResponse), result
-                            );
-                        }
-
-                        if (!error) {
-                            error = validate_response(
-                                fd, reinterpret_cast<RawstorOSTFrameResponse*>(
-                                        response.get()
-                                    )
-                            );
-                        }
-
-                        if (!error) {
-                            error = validate_cmd(
-                                fd, response->head.cmd, RAWSTOR_CMD_SPEC
-                            );
-                        }
-
-                        if (!error) {
-                            error = validate_hash(
-                                fd,
-                                hash(&response->meta, sizeof(response->meta)),
-                                response->body.hash
-                            );
-                        }
-
                         if (error) {
                             (*cb_sp)({}, error);
                             return;
                         }
 
-                        RawstorObjectMeta meta{};
-                        meta.size = response->meta.size;
-                        meta.epoch = response->meta.epoch;
-                        meta.sync_id = response->meta.sync_id;
-                        memcpy(
-                            meta.sync_id_history,
-                            response->meta.sync_id_history,
-                            sizeof(meta.sync_id_history)
-                        );
-                        meta.state = response->meta.state;
+                        try {
+                            q->read(
+                                fd, &response->meta, sizeof(response->meta),
+                                [fd, response, cb_sp,
+                                 trace_event](size_t result, int error) {
+                                    RAWSTD_TRACE_EVENT_MESSAGE(
+                                        trace_event,
+                                        "%zu of %zu, error = %d\n", result,
+                                        sizeof(response->meta), error
+                                    );
 
-                        (*cb_sp)(meta, 0);
+                                    if (!error) {
+                                        error = validate_result(
+                                            fd, sizeof(response->meta), result
+                                        );
+                                    }
+
+                                    if (!error) {
+                                        error = validate_hash(
+                                            fd,
+                                            hash(
+                                                &response->meta,
+                                                sizeof(response->meta)
+                                            ),
+                                            response->body.hash
+                                        );
+                                    }
+
+                                    if (error) {
+                                        (*cb_sp)({}, error);
+                                        return;
+                                    }
+
+                                    RawstorObjectMeta meta{};
+                                    meta.size = response->meta.size;
+                                    meta.epoch = response->meta.epoch;
+                                    meta.sync_id = response->meta.sync_id;
+                                    memcpy(
+                                        meta.sync_id_history,
+                                        response->meta.sync_id_history,
+                                        sizeof(meta.sync_id_history)
+                                    );
+                                    meta.state = response->meta.state;
+
+                                    (*cb_sp)(meta, 0);
+                                }
+                            );
+                        } catch (const std::system_error& e) {
+                            (*cb_sp)({}, e.code().value());
+                        } catch (const std::bad_alloc& e) {
+                            (*cb_sp)({}, ENOMEM);
+                        }
                     }
                 );
             } catch (const std::system_error& e) {

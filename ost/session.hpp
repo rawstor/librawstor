@@ -52,6 +52,7 @@ private:
     ssize_t _recv_head(const iovec* iov, unsigned int niov, size_t result);
     ssize_t _recv_body(const iovec* iov, unsigned int niov, size_t result);
     ssize_t _recv_data(const iovec* iov, unsigned int niov, size_t result);
+    ssize_t _recv_ignore(const iovec* iov, unsigned int niov, size_t result);
     void _allocate(
         const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
     );

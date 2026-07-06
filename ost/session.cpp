@@ -209,22 +209,24 @@ int spec_complete(int result, void* data) noexcept {
     }
 
     try {
-        /*
-         * The client always reads a full RawstorOSTFrameSpecResponse, so
-         * the meta payload is sent (zeroed) on error too.
-         */
+        /* Error responses carry no metadata payload. */
+        if (result < 0) {
+            send_response(
+                ctx->queue, ctx->fd, RAWSTOR_CMD_SPEC, ctx->cid, result, 0
+            );
+            return 0;
+        }
+
         RawstorOSTFrameMetaBody body{};
         memcpy(body.obj_id, ctx->obj_id, sizeof(body.obj_id));
-        if (result == 0) {
-            body.size = ctx->meta.size;
-            body.epoch = ctx->meta.epoch;
-            body.sync_id = ctx->meta.sync_id;
-            memcpy(
-                body.sync_id_history, ctx->meta.sync_id_history,
-                sizeof(body.sync_id_history)
-            );
-            body.state = ctx->meta.state;
-        }
+        body.size = ctx->meta.size;
+        body.epoch = ctx->meta.epoch;
+        body.sync_id = ctx->meta.sync_id;
+        memcpy(
+            body.sync_id_history, ctx->meta.sync_id_history,
+            sizeof(body.sync_id_history)
+        );
+        body.state = ctx->meta.state;
 
         auto payload =
             std::make_shared<std::vector<unsigned char>>(sizeof(body));
@@ -362,7 +364,19 @@ Session::_recv_head(const iovec* iov, unsigned int niov, size_t result) {
 
     _unknown(_request_head);
 
-    _next = &Session::_recv_head;
+    /*
+     * The body length of the unknown command is not known, so the stream
+     * position is lost: consume and ignore everything until the deferred
+     * close lands. Parsing must not resume — payload bytes could otherwise
+     * be executed as fabricated frames.
+     */
+    _next = &Session::_recv_ignore;
+
+    return sizeof(RawstorOSTFrameHead);
+}
+
+ssize_t Session::_recv_ignore(const iovec*, unsigned int, size_t) {
+    _next = &Session::_recv_ignore;
 
     return sizeof(RawstorOSTFrameHead);
 }

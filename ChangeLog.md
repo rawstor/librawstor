@@ -43,6 +43,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `rawstor_object_spec` over `ost://` returns the real object size instead
   of a hardcoded stub.
+- OST error responses no longer desync the receive stream: a server-side
+  error carries no payload, but the response frame itself was previously
+  discarded as if the connection had died, corrupting the framing of every
+  request that followed. The real errno is now also propagated instead of
+  being masked as `EPROTO`.
+- `rawstor_object_spec` over `ost://` falls back to the emulated metadata
+  for OST servers predating the SPEC command whether they close the
+  connection outright or reply with an ordinary error frame for the
+  unknown command, matching real legacy server behavior.
 
 ## [0.2.0] - 2026-06-03
 
