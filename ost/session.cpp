@@ -77,6 +77,7 @@ void send_response(
                 },
             .body = {
                 .res = result,
+                .len = 0,
                 .hash = hash,
             },
         });
@@ -117,6 +118,7 @@ void send_response(
                 },
             .body = {
                 .res = result,
+                .len = static_cast<uint32_t>(data->size()),
                 .hash = hash,
             },
         });
@@ -167,6 +169,34 @@ struct OpCtx {
     uint16_t cid;
     std::weak_ptr<int> alive;
 };
+
+/*
+ * SET_OBJECT success response: the server side of the handshake rides as
+ * the payload.
+ */
+void send_hello(RawIOQueue* queue, int fd, uint16_t cid) {
+    RawstorOSTFrameHelloBody hello{
+        .version = RAWSTOR_PROTOCOL_VERSION,
+        .features = 0,
+    };
+
+    auto payload = std::make_shared<std::vector<unsigned char>>(sizeof(hello));
+    memcpy(payload->data(), &hello, sizeof(hello));
+
+    send_response(
+        queue, fd, RAWSTOR_CMD_SET_OBJECT, cid, 0,
+        rawstd_hash_scalar(payload->data(), payload->size()), payload
+    );
+}
+
+bool uuid_is_null(const uint8_t (&id)[16]) {
+    for (uint8_t byte : id) {
+        if (byte != 0) {
+            return false;
+        }
+    }
+    return true;
+}
 
 struct OpenCtx {
     RawIOQueue* queue;
@@ -255,6 +285,7 @@ Session::Session(RawIOQueue* queue, Server& server, int fd) :
     _recv_event(nullptr),
     _next(&Session::_recv_head),
     _object(nullptr),
+    _handshaken(false),
     _alive(std::make_shared<int>(0)),
     _open_pending(false) {
     int res = rawio_recv_multishot(
@@ -354,6 +385,7 @@ Session::_recv_head(const iovec* iov, unsigned int niov, size_t result) {
     case RAWSTOR_CMD_FLUSH:
         return sizeof(RawstorOSTFrameIOBody);
     case RAWSTOR_CMD_SET_OBJECT:
+        return sizeof(RawstorOSTFrameSetObjectBody);
     case RAWSTOR_CMD_ALLOCATE:
     case RAWSTOR_CMD_RELEASE:
     case RAWSTOR_CMD_SPEC:
@@ -385,22 +417,36 @@ ssize_t
 Session::_recv_body(const iovec* iov, unsigned int niov, size_t result) {
     _next = &Session::_recv_head;
 
+    /*
+     * SET_OBJECT is the handshake and must be the first command: a peer
+     * sending anything else first is not a rawstor client (or predates
+     * the version negotiation) — drop the connection.
+     */
+    if (!_handshaken && _request_head.cmd != RAWSTOR_CMD_SET_OBJECT) {
+        rawstd_error(
+            "fd %d: Command %u before the SET_OBJECT handshake\n", _fd,
+            _request_head.cmd
+        );
+
+        RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+    }
+
     switch (_request_head.cmd) {
     case RAWSTOR_CMD_SET_OBJECT:
-        if (result != sizeof(_request_body.basic)) {
+        if (result != sizeof(_request_body.setobj)) {
             rawstd_error(
                 "fd %d: Unexpected request body size: %zu != %zu\n", _fd,
-                result, sizeof(_request_body.basic)
+                result, sizeof(_request_body.setobj)
             );
 
             RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
         }
 
         rawstd_iovec_to_buf(
-            iov, niov, 0, &_request_body.basic, sizeof(_request_body.basic)
+            iov, niov, 0, &_request_body.setobj, sizeof(_request_body.setobj)
         );
 
-        _set_object(_request_head, _request_body.basic);
+        _set_object(_request_head, _request_body.setobj);
 
         return sizeof(RawstorOSTFrameHead);
 
@@ -657,9 +703,13 @@ int Session::_open_complete(
     }
 
     try {
-        send_response(
-            ctx->queue, ctx->fd, RAWSTOR_CMD_SET_OBJECT, ctx->cid, result, 0
-        );
+        if (result == 0) {
+            send_hello(ctx->queue, ctx->fd, ctx->cid);
+        } else {
+            send_response(
+                ctx->queue, ctx->fd, RAWSTOR_CMD_SET_OBJECT, ctx->cid, result, 0
+            );
+        }
     } catch (const std::exception& e) {
         rawstd_error("%s\n", e.what());
     }
@@ -668,8 +718,17 @@ int Session::_open_complete(
 }
 
 void Session::_set_object(
-    const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+    const RawstorOSTFrameHead& head, const RawstorOSTFrameSetObjectBody& body
 ) {
+    if (body.version != RAWSTOR_PROTOCOL_VERSION) {
+        rawstd_error(
+            "fd %d: Unsupported protocol version: %u != %u\n", _fd,
+            body.version, RAWSTOR_PROTOCOL_VERSION
+        );
+        _close_after_response(head, -EPROTONOSUPPORT);
+        return;
+    }
+
     if (_open_pending) {
         send_response(_queue, _fd, RAWSTOR_CMD_SET_OBJECT, head.cid, -EBUSY, 0);
         return;
@@ -681,6 +740,14 @@ void Session::_set_object(
             RAWSTD_THROW_SYSTEM_ERROR(-res);
         }
         _object = nullptr;
+    }
+
+    _handshaken = true;
+
+    /* A null binding is a control connection: nothing to open. */
+    if (uuid_is_null(body.obj_id)) {
+        send_hello(_queue, _fd, head.cid);
+        return;
     }
 
     RawstdUUID uuid;
@@ -906,6 +973,12 @@ void Session::_unknown(const RawstorOSTFrameHead& head) {
      * position is lost: answer -ENOSYS and close the session once the
      * response is flushed.
      */
+    _close_after_response(head, -ENOSYS);
+}
+
+void Session::_close_after_response(
+    const RawstorOSTFrameHead& head, int32_t res
+) {
     auto response =
         std::make_shared<RawstorOSTFrameResponse>((RawstorOSTFrameResponse){
             .head =
@@ -915,7 +988,8 @@ void Session::_unknown(const RawstorOSTFrameHead& head) {
                     .cid = head.cid,
                 },
             .body = {
-                .res = -ENOSYS,
+                .res = res,
+                .len = 0,
                 .hash = 0,
             },
         });
@@ -929,11 +1003,11 @@ void Session::_unknown(const RawstorOSTFrameHead& head) {
         server->del_session(fd);
     });
 
-    int res = rawio_write(
+    int write_res = rawio_write(
         _queue, _fd, response.get(), sizeof(*response), io_callback, cb.get()
     );
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    if (write_res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-write_res);
     }
 
     cb.release();

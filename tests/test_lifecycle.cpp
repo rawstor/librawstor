@@ -80,57 +80,6 @@ TEST(FileLifecycleTest, meta_set_state) {
     EXPECT_EQ(res, 0);
 }
 
-TEST(FileLifecycleTest, legacy_spec_migration) {
-    std::filesystem::path dir =
-        std::filesystem::temp_directory_path() / "test_objects";
-    std::string uuid = "00000000-0000-7000-8000-000000000000";
-    std::ostringstream oss;
-    oss << "file://" << (dir / uuid).string();
-    std::string target = oss.str();
-
-    RawstorObjectSpec spec{.size = 1ull << 20};
-    int res = rawstor_object_create(target.c_str(), &spec);
-    EXPECT_EQ(res, 0);
-
-    /* Rewrite the .spec as a legacy version 0 record (size only). */
-    std::filesystem::path spec_path = dir / (uuid + ".spec");
-    {
-        std::ofstream f(
-            spec_path, std::ios::binary | std::ios::out | std::ios::trunc
-        );
-        f.write(reinterpret_cast<const char*>(&spec), sizeof(spec));
-    }
-    EXPECT_EQ(std::filesystem::file_size(spec_path), sizeof(spec));
-
-    RawstorObjectMeta meta{};
-    res = rawstor_object_meta(target.c_str(), &meta);
-    EXPECT_EQ(res, 0);
-    EXPECT_EQ(meta.size, 1ull << 20);
-    EXPECT_EQ(meta.state, RAWSTOR_OBJECT_STATE_CLEAN);
-    EXPECT_EQ(meta.epoch, 0u);
-    EXPECT_EQ(meta.sync_id, 0u);
-
-    /* set_state migrates the record to version 1, preserving the size. */
-    RawstorObjectMeta next{};
-    next.epoch = 1;
-    next.sync_id = 0x55aa55aa55aa55aaull;
-    next.state = RAWSTOR_OBJECT_STATE_DIRTY;
-    res = rawstor_object_set_state(target.c_str(), &next);
-    EXPECT_EQ(res, 0);
-
-    EXPECT_GT(std::filesystem::file_size(spec_path), sizeof(spec));
-
-    res = rawstor_object_meta(target.c_str(), &meta);
-    EXPECT_EQ(res, 0);
-    EXPECT_EQ(meta.size, 1ull << 20);
-    EXPECT_EQ(meta.state, RAWSTOR_OBJECT_STATE_DIRTY);
-    EXPECT_EQ(meta.epoch, 1u);
-    EXPECT_EQ(meta.sync_id, 0x55aa55aa55aa55aaull);
-
-    res = rawstor_object_remove(target.c_str());
-    EXPECT_EQ(res, 0);
-}
-
 TEST(OstLifecycleTest, create_spec_remove) {
     rawstor::tests::Server server(8753, 256);
     std::string target =
@@ -147,26 +96,31 @@ TEST(OstLifecycleTest, create_spec_remove) {
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_handshake();
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_handshake();
         s.cmd_spec(RAWSTOR_MAGIC, 0, 0, meta_body);
     }
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_handshake();
         s.cmd_spec(RAWSTOR_MAGIC, 0, 0, meta_body);
     }
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_handshake();
         s.cmd_set_state(RAWSTOR_MAGIC, 0, 0);
     }
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_handshake();
         s.cmd_release(RAWSTOR_MAGIC, 0, 0);
     }
 

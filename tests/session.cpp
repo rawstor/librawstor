@@ -39,6 +39,7 @@ void Session::cmd_allocate_response(uint32_t magic, uint16_t cid, int32_t res) {
         },
         .body = {
             .res = res,
+            .len = 0,
             .hash = 0,
         },
     };
@@ -52,7 +53,7 @@ void Session::cmd_allocate(uint32_t magic, uint16_t cid, int32_t res) {
 
 void Session::cmd_set_object_request() {
     _server.read(
-        "RAWSTOR_CMD_SET_OBJECT <<<", sizeof(RawstorOSTFrameBasic),
+        "RAWSTOR_CMD_SET_OBJECT <<<", sizeof(RawstorOSTFrameSetObject),
         [](const void*) {}
     );
 }
@@ -60,6 +61,29 @@ void Session::cmd_set_object_request() {
 void Session::cmd_set_object_response(
     uint32_t magic, uint16_t cid, int32_t res
 ) {
+    if (res < 0) {
+        RawstorOSTFrameResponse response = {
+            .head{
+                .magic = magic,
+                .cmd = RAWSTOR_CMD_SET_OBJECT,
+                .cid = cid,
+            },
+            .body = {
+                .res = res,
+                .len = 0,
+                .hash = 0,
+            },
+        };
+        _server.write(
+            "RAWSTOR_CMD_SET_OBJECT >>>", &response, sizeof(response)
+        );
+        return;
+    }
+
+    RawstorOSTFrameHelloBody hello = {
+        .version = RAWSTOR_PROTOCOL_VERSION,
+        .features = 0,
+    };
     RawstorOSTFrameResponse response = {
         .head{
             .magic = magic,
@@ -68,15 +92,32 @@ void Session::cmd_set_object_response(
         },
         .body = {
             .res = res,
-            .hash = 0,
+            .len = sizeof(hello),
+            .hash = rawstd_hash_scalar(&hello, sizeof(hello)),
         },
     };
-    _server.write("RAWSTOR_CMD_SET_OBJECT >>>", &response, sizeof(response));
+    iovec iov[2] = {
+        {
+            .iov_base = &response,
+            .iov_len = sizeof(response),
+        },
+        {
+            .iov_base = &hello,
+            .iov_len = sizeof(hello),
+        },
+    };
+    _server.writev(
+        "RAWSTOR_CMD_SET_OBJECT >>>", iov, sizeof(iov) / sizeof(iov[0])
+    );
 }
 
 void Session::cmd_set_object(uint32_t magic, uint16_t cid, int32_t res) {
     cmd_set_object_request();
     cmd_set_object_response(magic, cid, res);
+}
+
+void Session::cmd_handshake() {
+    cmd_set_object(RAWSTOR_MAGIC, 0, 0);
 }
 
 void Session::cmd_release_request() {
@@ -95,6 +136,7 @@ void Session::cmd_release_response(uint32_t magic, uint16_t cid, int32_t res) {
         },
         .body = {
             .res = res,
+            .len = 0,
             .hash = 0,
         },
     };
@@ -123,6 +165,7 @@ void Session::cmd_read_response(
         },
         .body = {
             .res = static_cast<int32_t>(size),
+            .len = static_cast<uint32_t>(size),
             .hash = hash,
         },
     };
@@ -170,6 +213,7 @@ void Session::cmd_read_error(uint32_t magic, uint16_t cid, int32_t res) {
         },
         .body = {
             .res = res,
+            .len = 0,
             .hash = 0,
         },
     };
@@ -192,6 +236,7 @@ void Session::cmd_write_response(uint32_t magic, uint16_t cid, int32_t res) {
         },
         .body = {
             .res = res,
+            .len = 0,
             .hash = 0,
         },
     };
@@ -214,6 +259,23 @@ void Session::cmd_spec_response(
     uint32_t magic, uint16_t cid, int32_t res,
     const RawstorOSTFrameMetaBody& meta
 ) {
+    if (res < 0) {
+        RawstorOSTFrameResponse response = {
+            .head{
+                .magic = magic,
+                .cmd = RAWSTOR_CMD_SPEC,
+                .cid = cid,
+            },
+            .body = {
+                .res = res,
+                .len = 0,
+                .hash = 0,
+            },
+        };
+        _server.write("RAWSTOR_CMD_SPEC >>>", &response, sizeof(response));
+        return;
+    }
+
     RawstorOSTFrameSpecResponse response = {
         .head{
             .magic = magic,
@@ -223,6 +285,7 @@ void Session::cmd_spec_response(
         .body =
             {
                 .res = res,
+                .len = sizeof(meta),
                 .hash = rawstd_hash_scalar(&meta, sizeof(meta)),
             },
         .meta = meta,
@@ -256,6 +319,7 @@ void Session::cmd_set_state_response(
         },
         .body = {
             .res = res,
+            .len = 0,
             .hash = 0,
         },
     };
@@ -282,6 +346,7 @@ void Session::cmd_flush_response(uint32_t magic, uint16_t cid, int32_t res) {
         },
         .body = {
             .res = res,
+            .len = 0,
             .hash = 0,
         },
     };

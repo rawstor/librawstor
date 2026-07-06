@@ -30,8 +30,35 @@ private:
 
     std::shared_ptr<Context> _context;
 
+    /* SET_OBJECT (the handshake) was exchanged on this connection. */
+    bool _handshaken;
+
     void _basic(
         RawstorOSTCommandType cmd, const RawstdUUID& id, uint64_t val,
+        std::function<void(int)>&& cb
+    );
+
+    /*
+     * SET_OBJECT exchange: version/features handshake plus the object
+     * binding; id == nullptr sends a null binding (control connection).
+     */
+    void
+    _set_object_exchange(const RawstdUUID* id, std::function<void(int)>&& cb);
+
+    /*
+     * SET_OBJECT must be the first command on a connection: control
+     * operations issued before an object is bound handshake lazily with a
+     * null binding.
+     */
+    void _ensure_handshake(std::function<void(int)>&& cb);
+
+    /* Plain pre-open exchanges, valid only after the handshake. */
+    void _meta_exchange(
+        const RawstdUUID& id,
+        std::function<void(const RawstorObjectMeta&, int)>&& cb
+    );
+    void _set_state_exchange(
+        const RawstdUUID& id, const RawstorObjectMeta& meta,
         std::function<void(int)>&& cb
     );
 

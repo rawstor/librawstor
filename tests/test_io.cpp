@@ -234,6 +234,7 @@ TEST(OstIOTest, basics) {
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_handshake();
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
@@ -247,6 +248,7 @@ TEST(OstIOTest, basics) {
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_handshake();
         s.cmd_release(RAWSTOR_MAGIC, 0, 0);
     }
 
@@ -270,6 +272,7 @@ TEST(OstIOTest, set_object_fail) {
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_handshake();
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
@@ -291,6 +294,7 @@ TEST(OstIOTest, set_object_error) {
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_handshake();
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
@@ -312,6 +316,7 @@ TEST(OstIOTest, set_object_disconnect) {
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_handshake();
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
@@ -332,6 +337,7 @@ TEST(OstIOTest, write_fail) {
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_handshake();
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
@@ -343,6 +349,7 @@ TEST(OstIOTest, write_fail) {
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_handshake();
         s.cmd_release(RAWSTOR_MAGIC, 0, 0);
     }
 
@@ -360,6 +367,7 @@ TEST(OstIOTest, write_error) {
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_handshake();
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
@@ -372,6 +380,7 @@ TEST(OstIOTest, write_error) {
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_handshake();
         s.cmd_release(RAWSTOR_MAGIC, 0, 0);
     }
 
@@ -389,6 +398,7 @@ TEST(OstIOTest, write_disconnect) {
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_handshake();
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
@@ -400,6 +410,7 @@ TEST(OstIOTest, write_disconnect) {
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_handshake();
         s.cmd_release(RAWSTOR_MAGIC, 0, 0);
     }
 

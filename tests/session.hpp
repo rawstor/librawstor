@@ -29,6 +29,12 @@ public:
     void cmd_set_object_response(uint32_t magic, uint16_t cid, int32_t res);
     void cmd_set_object(uint32_t magic, uint16_t cid, int32_t res);
 
+    /*
+     * The null-binding SET_OBJECT exchange a client performs before its
+     * first control command on a connection (the lazy handshake).
+     */
+    void cmd_handshake();
+
     void cmd_release_request();
     void cmd_release_response(uint32_t magic, uint16_t cid, int32_t res);
     void cmd_release(uint32_t magic, uint16_t cid, int32_t res);

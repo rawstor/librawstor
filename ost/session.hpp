@@ -26,10 +26,18 @@ private:
     RawstorOSTFrameHead _request_head;
     union {
         RawstorOSTFrameBasicBody basic;
+        RawstorOSTFrameSetObjectBody setobj;
         RawstorOSTFrameIOBody io;
         RawstorOSTFrameMetaBody meta;
     } _request_body;
     RawstorObject* _object;
+
+    /*
+     * SET_OBJECT (the handshake) was received: it must be the first
+     * command on every connection, anything else before it is a protocol
+     * violation (the misconnection guard).
+     */
+    bool _handshaken;
 
     /*
      * Expires on session destruction; async operation completions check it
@@ -60,7 +68,8 @@ private:
         const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
     );
     void _set_object(
-        const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+        const RawstorOSTFrameHead& head,
+        const RawstorOSTFrameSetObjectBody& body
     );
     void
     _read(const RawstorOSTFrameHead& head, const RawstorOSTFrameIOBody& body);
@@ -80,6 +89,10 @@ private:
     void
     _flush(const RawstorOSTFrameHead& head, const RawstorOSTFrameIOBody& body);
     void _unknown(const RawstorOSTFrameHead& head);
+
+    /* Send a final response, then close the session once it is flushed. */
+    void _close_after_response(const RawstorOSTFrameHead& head, int32_t res);
+
     std::vector<rawstd::URI> _targets(const RawstdUUID& uuid);
 
 public:

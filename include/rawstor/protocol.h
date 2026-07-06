@@ -19,15 +19,31 @@ extern "C" {
 
 #define RAWSTOR_MAGIC 0x72737472 // "rstr" as ascii
 
-#define RAWSTOR_CMD_SET_OBJECT 0
-#define RAWSTOR_CMD_READ 1
-#define RAWSTOR_CMD_WRITE 2
-#define RAWSTOR_CMD_DISCARD 3
-#define RAWSTOR_CMD_ALLOCATE 4
-#define RAWSTOR_CMD_RELEASE 5
-#define RAWSTOR_CMD_SPEC 6
-#define RAWSTOR_CMD_SET_STATE 7
-#define RAWSTOR_CMD_FLUSH 8
+#define RAWSTOR_PROTOCOL_VERSION 1u
+
+/*
+ * One command space for every server role, grouped into reserved ranges
+ * (rawstor_docs/Mds.md, "Wire protocol"):
+ *
+ *   0x00        session   — every role
+ *   0x01..0x1f  data      — OST
+ *   0x20..0x3f  metadata  — shared between OST and MDS (the witness subset)
+ *   0x40..0x5f  volume    — MDS
+ *
+ * A server answers -ENOSYS to any opcode outside its role.
+ */
+#define RAWSTOR_CMD_SET_OBJECT 0x00
+
+#define RAWSTOR_CMD_READ 0x01
+#define RAWSTOR_CMD_WRITE 0x02
+#define RAWSTOR_CMD_DISCARD 0x03
+#define RAWSTOR_CMD_ALLOCATE 0x04
+#define RAWSTOR_CMD_RELEASE 0x05
+#define RAWSTOR_CMD_FLUSH 0x06
+
+#define RAWSTOR_CMD_SPEC 0x20
+#define RAWSTOR_CMD_SET_STATE 0x21
+
 typedef uint16_t RawstorOSTCommandType;
 
 struct RawstorOSTFrameHead {
@@ -48,6 +64,30 @@ struct RawstorOSTFrameBasicBody {
 struct RawstorOSTFrameBasic {
     struct RawstorOSTFrameHead head;
     struct RawstorOSTFrameBasicBody body;
+} RAWSTOR_PACKED;
+
+/*
+ * SET_OBJECT doubles as the connection handshake: it must be the first
+ * command on every connection and carries the protocol version and feature
+ * bits. An all-zero obj_id is a control connection: no object is bound
+ * (volume/metadata commands only).
+ */
+struct RawstorOSTFrameSetObjectBody {
+    uint32_t version;  /* RAWSTOR_PROTOCOL_VERSION */
+    uint64_t features; /* feature bits; none defined yet */
+    uint8_t obj_id[16];
+    uint64_t val; /* reserved (snap_id); 0 = live */
+} RAWSTOR_PACKED;
+
+struct RawstorOSTFrameSetObject {
+    struct RawstorOSTFrameHead head;
+    struct RawstorOSTFrameSetObjectBody body;
+} RAWSTOR_PACKED;
+
+/* SET_OBJECT response payload: the server side of the handshake. */
+struct RawstorOSTFrameHelloBody {
+    uint32_t version;
+    uint64_t features;
 } RAWSTOR_PACKED;
 
 struct RawstorOSTFrameIOBody {
@@ -81,11 +121,15 @@ struct RawstorOSTFrameMeta {
     struct RawstorOSTFrameMetaBody body;
 } RAWSTOR_PACKED;
 
-/* response frames */
+/*
+ * Response frame, one shape for every command: res is the operation
+ * result (>= 0 ok, < 0 -errno), len is the length of the payload that
+ * follows, hash covers that payload (0 when len == 0). Error responses
+ * carry no payload (len == 0).
+ */
 struct RawstorOSTFrameResponseBody {
-    // TODO: if we send length in res - it should be the same type
-    // (signed-unsigned too)
     int32_t res;
+    uint32_t len;
     uint64_t hash;
 } RAWSTOR_PACKED;
 

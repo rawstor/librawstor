@@ -31,11 +31,7 @@
 
 namespace {
 
-/*
- * On-disk .spec layout, format version 1. Version 0 is a bare
- * RawstorObjectSpec (8 bytes, size only) written by older releases; it is
- * detected by file size and rewritten as version 1 on the next set_state().
- */
+/* On-disk .spec layout. */
 constexpr uint32_t META_FORMAT_VERSION = 1;
 
 struct OnDiskMeta {
@@ -51,7 +47,6 @@ struct OnDiskMeta {
 };
 
 static_assert(sizeof(OnDiskMeta) == 128);
-static_assert(sizeof(OnDiskMeta) != sizeof(RawstorObjectSpec));
 
 OnDiskMeta meta_to_disk(const RawstorObjectMeta& meta) {
     OnDiskMeta disk{};
@@ -84,17 +79,6 @@ RawstorObjectMeta read_meta_fd(int fd) {
     ssize_t rval = ::pread(fd, &disk, sizeof(disk), 0);
     if (rval == -1) {
         RAWSTD_THROW_ERRNO();
-    }
-
-    if (rval == sizeof(RawstorObjectSpec)) {
-        /* Legacy version 0: size only. */
-        RawstorObjectSpec sp;
-        memcpy(&sp, &disk, sizeof(sp));
-
-        RawstorObjectMeta meta{};
-        meta.size = sp.size;
-        meta.state = RAWSTOR_OBJECT_STATE_CLEAN;
-        return meta;
     }
 
     if (rval != sizeof(disk) || disk.magic != RAWSTOR_MAGIC) {
@@ -365,10 +349,7 @@ void Session::set_state(
             }
 
             try {
-                /*
-                 * The stored size is preserved; a legacy version 0 record
-                 * is migrated to version 1 by this rewrite.
-                 */
+                /* The stored size is preserved. */
                 RawstorObjectMeta next = meta;
                 next.size = read_meta_fd(fd).size;
 

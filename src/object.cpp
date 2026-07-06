@@ -94,7 +94,7 @@ void validate_different_uris(const std::vector<rawstd::URI>& uris) {
     }
 }
 
-/* A nonzero random sync-set id; zero is reserved for legacy copies. */
+/* A nonzero random sync-set id; zero is reserved for blank copies. */
 uint64_t random_sync_id() {
     uint64_t ret = 0;
     do {
@@ -581,7 +581,8 @@ void Object::_open_meta_next(const std::shared_ptr<OpenState>& st) {
 /*
  * Metadata comparison (docs/mirroring.md, comparison rules):
  * - SYNCING copies are untrusted (interrupted resync) and always stale.
- * - sync_id 0 marks a legacy copy: in-sync when the whole set is legacy,
+ * - sync_id 0 marks a blank copy (fresh create or F10 recreate, never part
+ *   of an established sync set): in-sync when the whole set is blank,
  *   stale next to any established sync set.
  * - the newest sync_id is the one that has every other observed sync_id in
  *   its history; copies with an older sync_id are stale.
@@ -775,13 +776,6 @@ void Object::_run_meta_fan_out(
                 if (alive.expired()) {
                     return;
                 }
-                if (error == ENOSYS) {
-                    rawstd_warning(
-                        "Mirror member does not support state tracking; "
-                        "treating as legacy\n"
-                    );
-                    error = 0;
-                }
                 if (error) {
                     rawstd_error(
                         "Mirror member state update failed: %s\n",
@@ -804,7 +798,7 @@ void Object::_run_meta_fan_out(
  * Runs cont(0) once DIRTY is durably recorded on the in-sync members; the
  * first write (or read-repair) of a mirrored object passes through here
  * before anything is acknowledged. Membership changes (degraded open,
- * previously unrecorded stale members) and legacy sets get a fresh sync_id.
+ * previously unrecorded stale members) and blank sets get a fresh sync_id.
  */
 void Object::_with_dirty(std::function<void(int)>&& cont) {
     if (_nmirrors == 1) {
