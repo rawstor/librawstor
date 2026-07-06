@@ -623,6 +623,13 @@ TEST(MirrorOstTest, read_failover_and_repair) {
         .sync_id = 0,
         .sync_id_history = {},
         .state = RAWSTOR_OBJECT_STATE_CLEAN,
+        .member_kind = 0,
+        .width = 0,
+        .reserved = 0,
+        .volume_id = {},
+        .logical_index = 0,
+        .chunk_size = 0,
+        .snap_version = 0,
     };
 
     /*
@@ -693,6 +700,13 @@ TEST(MirrorOstTest, degrade_and_continue) {
         .sync_id = 0,
         .sync_id_history = {},
         .state = RAWSTOR_OBJECT_STATE_CLEAN,
+        .member_kind = 0,
+        .width = 0,
+        .reserved = 0,
+        .volume_id = {},
+        .logical_index = 0,
+        .chunk_size = 0,
+        .snap_version = 0,
     };
 
     {

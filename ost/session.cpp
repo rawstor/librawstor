@@ -257,6 +257,12 @@ int spec_complete(int result, void* data) noexcept {
             sizeof(body.sync_id_history)
         );
         body.state = ctx->meta.state;
+        body.member_kind = ctx->meta.member_kind;
+        body.width = ctx->meta.width;
+        memcpy(body.volume_id, ctx->meta.volume_id, sizeof(body.volume_id));
+        body.logical_index = ctx->meta.logical_index;
+        body.chunk_size = ctx->meta.chunk_size;
+        body.snap_version = ctx->meta.snap_version;
 
         auto payload =
             std::make_shared<std::vector<unsigned char>>(sizeof(body));
@@ -387,6 +393,7 @@ Session::_recv_head(const iovec* iov, unsigned int niov, size_t result) {
     case RAWSTOR_CMD_SET_OBJECT:
         return sizeof(RawstorOSTFrameSetObjectBody);
     case RAWSTOR_CMD_ALLOCATE:
+        return sizeof(RawstorOSTFrameAllocateBody);
     case RAWSTOR_CMD_RELEASE:
     case RAWSTOR_CMD_SPEC:
         return sizeof(RawstorOSTFrameBasicBody);
@@ -505,20 +512,20 @@ Session::_recv_body(const iovec* iov, unsigned int niov, size_t result) {
         return sizeof(RawstorOSTFrameHead);
 
     case RAWSTOR_CMD_ALLOCATE:
-        if (result != sizeof(_request_body.basic)) {
+        if (result != sizeof(_request_body.alloc)) {
             rawstd_error(
                 "fd %d: Unexpected request body size: %zu != %zu\n", _fd,
-                result, sizeof(_request_body.basic)
+                result, sizeof(_request_body.alloc)
             );
 
             RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
         }
 
         rawstd_iovec_to_buf(
-            iov, niov, 0, &_request_body.basic, sizeof(_request_body.basic)
+            iov, niov, 0, &_request_body.alloc, sizeof(_request_body.alloc)
         );
 
-        _allocate(_request_head, _request_body.basic);
+        _allocate(_request_head, _request_body.alloc);
 
         return sizeof(RawstorOSTFrameHead);
 
@@ -621,7 +628,7 @@ Session::_recv_data(const iovec* iov, unsigned int niov, size_t result) {
 }
 
 void Session::_allocate(
-    const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+    const RawstorOSTFrameHead& head, const RawstorOSTFrameAllocateBody& body
 ) {
     if (_object != nullptr) {
         int res = rawstor_object_close(_object);
@@ -635,7 +642,15 @@ void Session::_allocate(
     memcpy(uuid.bytes, body.obj_id, sizeof(body.obj_id));
 
     RawstorObjectSpec spec{};
-    spec.size = body.val;
+    spec.size = body.size;
+    spec.chunk_size = body.chunk_size;
+    spec.stripe_width = body.stripe_width;
+    spec.width = body.width;
+    spec.failure_domain = body.failure_domain;
+    spec.member_kind = body.member_kind;
+    memcpy(spec.volume_id, body.volume_id, sizeof(spec.volume_id));
+    spec.logical_index = body.logical_index;
+    spec.snap_version = body.snap_version;
 
     std::vector<rawstd::URI> targets = _targets(uuid);
 
@@ -915,6 +930,12 @@ void Session::_set_state(
         meta.sync_id_history, body.sync_id_history, sizeof(meta.sync_id_history)
     );
     meta.state = body.state;
+    meta.member_kind = body.member_kind;
+    meta.width = body.width;
+    memcpy(meta.volume_id, body.volume_id, sizeof(meta.volume_id));
+    meta.logical_index = body.logical_index;
+    meta.chunk_size = body.chunk_size;
+    meta.snap_version = body.snap_version;
 
     std::vector<rawstd::URI> targets = _targets(uuid);
 

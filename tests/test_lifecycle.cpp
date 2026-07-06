@@ -82,6 +82,63 @@ TEST(FileLifecycleTest, meta_set_state) {
     EXPECT_EQ(res, 0);
 }
 
+TEST(FileLifecycleTest, chunk_identity_roundtrip) {
+    std::filesystem::path path = std::filesystem::temp_directory_path() /
+                                 "test_objects" /
+                                 "00000000-0000-7000-8000-00000000c001";
+    std::ostringstream oss;
+    oss << "file://" << path.string();
+    std::string target = oss.str();
+
+    RawstorObjectSpec spec{};
+    spec.size = 1ull << 20;
+    spec.member_kind = RAWSTOR_MEMBER_DATA;
+    spec.width = 2;
+    spec.chunk_size = 1ull << 20;
+    spec.logical_index = 7;
+    spec.snap_version = 0;
+    memset(spec.volume_id, 0xab, sizeof(spec.volume_id));
+
+    int res = rawstor_object_create(target.c_str(), &spec);
+    ASSERT_EQ(res, 0);
+
+    RawstorObjectMeta meta{};
+    res = rawstor_object_meta(target.c_str(), &meta);
+    EXPECT_EQ(res, 0);
+    EXPECT_EQ(meta.member_kind, RAWSTOR_MEMBER_DATA);
+    EXPECT_EQ(meta.width, 2u);
+    EXPECT_EQ(meta.logical_index, 7u);
+    EXPECT_EQ(meta.chunk_size, 1ull << 20);
+    EXPECT_EQ(meta.snap_version, 0u);
+    for (size_t i = 0; i < sizeof(meta.volume_id); ++i) {
+        EXPECT_EQ(meta.volume_id[i], 0xab);
+    }
+
+    /* set_state must never change the identity: the stored values win. */
+    RawstorObjectMeta next{};
+    next.epoch = 1;
+    next.sync_id = 0x1111111111111111ull;
+    next.state = RAWSTOR_OBJECT_STATE_DIRTY;
+    next.logical_index = 999; /* must be ignored */
+    next.chunk_size = 4096;   /* must be ignored */
+    res = rawstor_object_set_state(target.c_str(), &next);
+    EXPECT_EQ(res, 0);
+
+    res = rawstor_object_meta(target.c_str(), &meta);
+    EXPECT_EQ(res, 0);
+    EXPECT_EQ(meta.state, RAWSTOR_OBJECT_STATE_DIRTY);
+    EXPECT_EQ(meta.epoch, 1u);
+    EXPECT_EQ(meta.logical_index, 7u);
+    EXPECT_EQ(meta.chunk_size, 1ull << 20);
+    EXPECT_EQ(meta.width, 2u);
+    for (size_t i = 0; i < sizeof(meta.volume_id); ++i) {
+        EXPECT_EQ(meta.volume_id[i], 0xab);
+    }
+
+    res = rawstor_object_remove(target.c_str());
+    EXPECT_EQ(res, 0);
+}
+
 TEST(OstLifecycleTest, create_spec_remove) {
     rawstor::tests::Server server(8753, 256);
     std::string target =
@@ -94,6 +151,13 @@ TEST(OstLifecycleTest, create_spec_remove) {
         .sync_id = 0x1122334455667788ull,
         .sync_id_history = {0xaabbccddeeff0011ull, 0, 0, 0},
         .state = RAWSTOR_OBJECT_STATE_DIRTY,
+        .member_kind = 0,
+        .width = 0,
+        .reserved = 0,
+        .volume_id = {},
+        .logical_index = 0,
+        .chunk_size = 0,
+        .snap_version = 0,
     };
 
     {

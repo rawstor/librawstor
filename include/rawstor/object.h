@@ -39,6 +39,10 @@ typedef struct RawstorObject RawstorObject;
  * @see rawstor_object_spec
  * @see rawstor_object_create
  */
+/** Chunk member kinds (rawstor_docs/Mds.md, chunk_meta.member_kind). */
+#define RAWSTOR_MEMBER_DATA 0u
+#define RAWSTOR_MEMBER_WITNESS 1u /* metadata-only quorum member; stage 3 */
+
 struct RawstorObjectSpec {
     uint64_t size; /**< Size of the object in bytes. */
 
@@ -53,6 +57,17 @@ struct RawstorObjectSpec {
                                  volume-local. */
     uint8_t width;          /**< Copies per chunk; 0 = 1. */
     uint8_t failure_domain; /**< RAWSTOR_VOL_DOMAIN_*; default server. */
+
+    /*
+     * Placement identity of a chunk object (rawstor_docs/Mds.md,
+     * chunk_meta): stamped at create by the volume layer, immutable
+     * afterwards (set_state never touches it), the source for the map
+     * reconstruct scan. An all-zero volume_id is a standalone object.
+     */
+    uint8_t member_kind;    /**< RAWSTOR_MEMBER_*. */
+    uint8_t volume_id[16];  /**< Parent volume; all-zero = standalone. */
+    uint64_t logical_index; /**< Chunk position within the volume. */
+    uint64_t snap_version;  /**< snap_id this copy belongs to; 0 = live. */
 };
 
 /**
@@ -89,6 +104,18 @@ struct RawstorObjectMeta {
     /** Ancestor sync ids, newest first; 0 marks unused entries. */
     uint64_t sync_id_history[RAWSTOR_OBJECT_SYNC_ID_HISTORY];
     uint32_t state; /**< One of RAWSTOR_OBJECT_STATE_*. */
+
+    /*
+     * Placement identity (see RawstorObjectSpec) plus the volume policy
+     * recorded on the chunk: written at create, immutable, ignored by
+     * rawstor_object_set_state() - the stored values always win.
+     */
+    uint8_t member_kind;
+    uint8_t width; /**< Redundancy: copies per chunk. */
+    uint8_t volume_id[16];
+    uint64_t logical_index;
+    uint64_t chunk_size;
+    uint64_t snap_version;
 };
 
 typedef int(RawstorCallback)(

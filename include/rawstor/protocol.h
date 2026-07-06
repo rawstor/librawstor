@@ -72,6 +72,29 @@ struct RawstorOSTFrameBasic {
 } RAWSTOR_PACKED;
 
 /*
+ * ALLOCATE carries the full creation spec: geometry, volume policy and
+ * the placement identity the backend must record with the object.
+ */
+struct RawstorOSTFrameAllocateBody {
+    uint8_t obj_id[16];
+    uint64_t size;
+    uint64_t chunk_size;
+    uint64_t stripe_width;
+    uint8_t width;
+    uint8_t failure_domain;
+    uint8_t member_kind;
+    uint8_t reserved;
+    uint8_t volume_id[16];
+    uint64_t logical_index;
+    uint64_t snap_version;
+} RAWSTOR_PACKED;
+
+struct RawstorOSTFrameAllocate {
+    struct RawstorOSTFrameHead head;
+    struct RawstorOSTFrameAllocateBody body;
+} RAWSTOR_PACKED;
+
+/*
  * SET_OBJECT doubles as the connection handshake: it must be the first
  * command on every connection and carries the protocol version and feature
  * bits. An all-zero obj_id is a control connection: no object is bound
@@ -118,6 +141,17 @@ struct RawstorOSTFrameMetaBody {
     uint64_t sync_id;
     uint64_t sync_id_history[4];
     uint32_t state;
+    /*
+     * Placement identity (rawstor_docs/Mds.md, chunk_meta): reported by
+     * SPEC, ignored by SET_STATE (the stored values always win).
+     */
+    uint8_t member_kind;
+    uint8_t width; /* redundancy: copies per chunk */
+    uint16_t reserved;
+    uint8_t volume_id[16];
+    uint64_t logical_index;
+    uint64_t chunk_size;
+    uint64_t snap_version;
 } RAWSTOR_PACKED;
 
 /* SET_STATE request */

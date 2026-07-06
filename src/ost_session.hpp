@@ -38,6 +38,11 @@ private:
         std::function<void(int)>&& cb
     );
 
+    void _allocate(
+        const RawstdUUID& id, const RawstorObjectSpec& spec,
+        std::function<void(int)>&& cb
+    );
+
     /*
      * SET_OBJECT exchange: version/features handshake plus the object
      * binding; id == nullptr sends a null binding (control connection).

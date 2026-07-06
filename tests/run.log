@@ -1,0 +1,33 @@
+INFO rawstor.cpp:34 Rawstor compiled with IO queue engine: poll
+[==========] Running 70 tests from 18 test suites.
+[----------] Global test environment set-up.
+[----------] 3 tests from FileAsyncLifecycleTest
+[ RUN      ] FileAsyncLifecycleTest.create_spec_open_remove
+INFO file_session.cpp:431 Connecting to file:///tmp/test_objects_async...
+INFO file_session.cpp:441 fd 3: Connected
+INFO session.cpp:33 fd 3: Close
+ERROR object.cpp:348 No such file or directory
+[       OK ] FileAsyncLifecycleTest.create_spec_open_remove (3 ms)
+[ RUN      ] FileAsyncLifecycleTest.open_missing_object
+INFO file_session.cpp:431 Connecting to file:///tmp/test_objects_async...
+WARNING connection.cpp:129 Open session failed; error: No such file or directory; attempt: 1 of 3; retrying...
+INFO file_session.cpp:431 Connecting to file:///tmp/test_objects_async...
+WARNING connection.cpp:129 Open session failed; error: No such file or directory; attempt: 2 of 3; retrying...
+INFO file_session.cpp:431 Connecting to file:///tmp/test_objects_async...
+WARNING connection.cpp:139 Open session failed; error: No such file or directory; attempt: 3 of 3; failing...
+[       OK ] FileAsyncLifecycleTest.open_missing_object (0 ms)
+[ RUN      ] FileAsyncLifecycleTest.invalid_target_reports_immediately
+ERROR object.cpp:72 Valid UUID expected
+[       OK ] FileAsyncLifecycleTest.invalid_target_reports_immediately (0 ms)
+[----------] 3 tests from FileAsyncLifecycleTest (4 ms total)
+
+[----------] 1 test from FileAsyncCreateTest
+[ RUN      ] FileAsyncCreateTest.rollback_on_partial_failure
+[       OK ] FileAsyncCreateTest.rollback_on_partial_failure (4 ms)
+[----------] 1 test from FileAsyncCreateTest (4 ms total)
+
+[----------] 1 test from OstAsyncLifecycleTest
+[ RUN      ] OstAsyncLifecycleTest.create_remove
+INFO ost_session.cpp:1038 fd 6: Connecting to ost://127.0.0.1:8753/...
+INFO ost_session.cpp:1053 fd 6: Connected
+ERROR server.cpp:219 Unexpected error: Partial read

@@ -32,7 +32,7 @@
 namespace {
 
 /* On-disk .spec layout. */
-constexpr uint32_t META_FORMAT_VERSION = 1;
+constexpr uint32_t META_FORMAT_VERSION = 2;
 
 struct OnDiskMeta {
     uint32_t magic;
@@ -42,11 +42,22 @@ struct OnDiskMeta {
     uint64_t sync_id;
     uint64_t sync_id_history[RAWSTOR_OBJECT_SYNC_ID_HISTORY];
     uint32_t state;
+    /*
+     * Placement identity (rawstor_docs/Mds.md, chunk_meta); immutable:
+     * a chunk is (volume_id, offset = logical_index * chunk_size, length).
+     */
+    uint8_t member_kind;
+    uint8_t width;
+    uint8_t pad[2];
+    uint8_t volume_id[16];
+    uint64_t logical_index;
+    uint64_t chunk_size;
+    uint64_t snap_version;
     /* Reserved for future extensions (snapshot list, stored checksums). */
-    uint8_t reserved[60];
+    uint8_t reserved[80];
 };
 
-static_assert(sizeof(OnDiskMeta) == 128);
+static_assert(sizeof(OnDiskMeta) == 192);
 
 OnDiskMeta meta_to_disk(const RawstorObjectMeta& meta) {
     OnDiskMeta disk{};
@@ -59,6 +70,12 @@ OnDiskMeta meta_to_disk(const RawstorObjectMeta& meta) {
         disk.sync_id_history, meta.sync_id_history, sizeof(disk.sync_id_history)
     );
     disk.state = meta.state;
+    disk.member_kind = meta.member_kind;
+    disk.width = meta.width;
+    memcpy(disk.volume_id, meta.volume_id, sizeof(disk.volume_id));
+    disk.logical_index = meta.logical_index;
+    disk.chunk_size = meta.chunk_size;
+    disk.snap_version = meta.snap_version;
     return disk;
 }
 
@@ -71,6 +88,12 @@ RawstorObjectMeta disk_to_meta(const OnDiskMeta& disk) {
         meta.sync_id_history, disk.sync_id_history, sizeof(meta.sync_id_history)
     );
     meta.state = disk.state;
+    meta.member_kind = disk.member_kind;
+    meta.width = disk.width;
+    memcpy(meta.volume_id, disk.volume_id, sizeof(meta.volume_id));
+    meta.logical_index = disk.logical_index;
+    meta.chunk_size = disk.chunk_size;
+    meta.snap_version = disk.snap_version;
     return meta;
 }
 
@@ -232,6 +255,12 @@ void Session::create(
                 RawstorObjectMeta meta{};
                 meta.size = sp.size;
                 meta.state = RAWSTOR_OBJECT_STATE_CLEAN;
+                meta.member_kind = sp.member_kind;
+                meta.width = sp.width;
+                memcpy(meta.volume_id, sp.volume_id, sizeof(meta.volume_id));
+                meta.logical_index = sp.logical_index;
+                meta.chunk_size = sp.chunk_size;
+                meta.snap_version = sp.snap_version;
 
                 write_meta_fd(fd, meta);
 
@@ -349,9 +378,18 @@ void Session::set_state(
             }
 
             try {
-                /* The stored size is preserved. */
+                /* The stored size and placement identity are preserved. */
+                RawstorObjectMeta stored = read_meta_fd(fd);
                 RawstorObjectMeta next = meta;
-                next.size = read_meta_fd(fd).size;
+                next.size = stored.size;
+                next.member_kind = stored.member_kind;
+                next.width = stored.width;
+                memcpy(
+                    next.volume_id, stored.volume_id, sizeof(next.volume_id)
+                );
+                next.logical_index = stored.logical_index;
+                next.chunk_size = stored.chunk_size;
+                next.snap_version = stored.snap_version;
 
                 write_meta_fd(fd, next);
 

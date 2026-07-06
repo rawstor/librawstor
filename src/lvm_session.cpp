@@ -81,6 +81,12 @@ void Session::create(
      */
     RawstorObjectMeta initial{};
     initial.state = RAWSTOR_OBJECT_STATE_CLEAN;
+    initial.member_kind = sp.member_kind;
+    initial.width = sp.width;
+    memcpy(initial.volume_id, sp.volume_id, sizeof(initial.volume_id));
+    initial.logical_index = sp.logical_index;
+    initial.chunk_size = sp.chunk_size;
+    initial.snap_version = sp.snap_version;
     std::string tag =
         std::string(rawstor_tag_prefix) + blkdev_meta_encode(initial);
 
@@ -168,12 +174,10 @@ void Session::set_state(
     std::function<void(int)>&& cb
 ) {
     std::string path = device_path(id);
-    std::string new_tag =
-        std::string(rawstor_tag_prefix) + blkdev_meta_encode(meta);
 
     run_async_capture(
         {"lvs", "-o", "lv_tags", "--noheadings", path},
-        [this, path, new_tag,
+        [this, path, meta,
          cb = std::move(cb)](std::string output, int error) mutable {
             if (error) {
                 rawstd_error(
@@ -191,6 +195,16 @@ void Session::set_state(
                 cmd.push_back("--deltag");
                 cmd.push_back(std::string(rawstor_tag_prefix) + old_tag);
             }
+
+            /* The stored placement identity is preserved. */
+            RawstorObjectMeta next = meta;
+            RawstorObjectMeta stored{};
+            if (!old_tag.empty() && blkdev_meta_decode(old_tag, &stored)) {
+                blkdev_meta_merge_identity(&next, stored);
+            }
+            std::string new_tag =
+                std::string(rawstor_tag_prefix) + blkdev_meta_encode(next);
+
             cmd.push_back("--addtag");
             cmd.push_back(new_tag);
             cmd.push_back(path);

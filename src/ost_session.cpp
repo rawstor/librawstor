@@ -718,6 +718,12 @@ public:
                 sizeof(_out->sync_id_history)
             );
             _out->state = body.state;
+            _out->member_kind = body.member_kind;
+            _out->width = body.width;
+            memcpy(_out->volume_id, body.volume_id, sizeof(_out->volume_id));
+            _out->logical_index = body.logical_index;
+            _out->chunk_size = body.chunk_size;
+            _out->snap_version = body.snap_version;
         }
 
         _dispatch(0, error);
@@ -750,12 +756,23 @@ public:
                 .sync_id = meta.sync_id,
                 .sync_id_history = {},
                 .state = meta.state,
+                .member_kind = meta.member_kind,
+                .width = meta.width,
+                .reserved = 0,
+                .volume_id = {},
+                .logical_index = meta.logical_index,
+                .chunk_size = meta.chunk_size,
+                .snap_version = meta.snap_version,
             },
         }) {
         memcpy(_request.body.obj_id, id.bytes, sizeof(_request.body.obj_id));
         memcpy(
             _request.body.sync_id_history, meta.sync_id_history,
             sizeof(_request.body.sync_id_history)
+        );
+        memcpy(
+            _request.body.volume_id, meta.volume_id,
+            sizeof(_request.body.volume_id)
         );
     }
 
@@ -1288,15 +1305,109 @@ void Session::create(
     const RawstdUUID& id, const RawstorObjectSpec& spec,
     std::function<void(int)>&& cb
 ) {
-    _ensure_handshake([this, id, size = spec.size,
-                       cb = std::move(cb)](int error) mutable {
+    _ensure_handshake([this, id, spec, cb = std::move(cb)](int error) mutable {
         if (error) {
             cb(error);
             return;
         }
 
-        _basic(RAWSTOR_CMD_ALLOCATE, id, size, std::move(cb));
+        _allocate(id, spec, std::move(cb));
     });
+}
+
+/*
+ * ALLOCATE: like _basic, but the request carries the full creation spec
+ * including the placement identity the backend must record.
+ */
+void Session::_allocate(
+    const RawstdUUID& id, const RawstorObjectSpec& spec,
+    std::function<void(int)>&& cb
+) {
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('s', "%s\n", "allocate cmd");
+
+    auto request =
+        std::make_shared<RawstorOSTFrameAllocate>((RawstorOSTFrameAllocate){
+            .head =
+                {
+                    .magic = RAWSTOR_MAGIC,
+                    .cmd = RAWSTOR_CMD_ALLOCATE,
+                    .cid = _cid_counter++,
+                },
+            .body = {
+                .obj_id = {},
+                .size = spec.size,
+                .chunk_size = spec.chunk_size,
+                .stripe_width = spec.stripe_width,
+                .width = spec.width,
+                .failure_domain = spec.failure_domain,
+                .member_kind = spec.member_kind,
+                .reserved = 0,
+                .volume_id = {},
+                .logical_index = spec.logical_index,
+                .snap_version = spec.snap_version,
+            },
+        });
+    memcpy(request->body.obj_id, id.bytes, sizeof(request->body.obj_id));
+    memcpy(
+        request->body.volume_id, spec.volume_id, sizeof(request->body.volume_id)
+    );
+
+    auto cb_sp = std::make_shared<std::function<void(int)>>(std::move(cb));
+
+    _queue.write(
+        fd(), request.get(), sizeof(*request),
+        [q = &_queue, fd = fd(), request, cb_sp,
+         trace_event](size_t result, int error) {
+            RAWSTD_TRACE_EVENT_MESSAGE(
+                trace_event, "%zu of %zu, error = %d\n", result,
+                sizeof(RawstorOSTFrameAllocate), error
+            );
+
+            if (!error) {
+                error = validate_result(
+                    fd, sizeof(RawstorOSTFrameAllocate), result
+                );
+            }
+
+            if (error) {
+                (*cb_sp)(error);
+                return;
+            }
+
+            auto response = std::make_shared<RawstorOSTFrameResponse>();
+
+            try {
+                q->read(
+                    fd, response.get(), sizeof(*response),
+                    [fd, response, cb_sp,
+                     trace_event](size_t result, int error) {
+                        if (!error) {
+                            error = validate_result(
+                                fd, sizeof(RawstorOSTFrameResponse), result
+                            );
+                        }
+
+                        if (!error) {
+                            error = validate_response(fd, response.get(), 0);
+                        }
+
+                        if (!error) {
+                            error = validate_cmd(
+                                fd, response->head.cmd, RAWSTOR_CMD_ALLOCATE
+                            );
+                        }
+
+                        (*cb_sp)(error);
+                    }
+                );
+            } catch (const std::system_error& e) {
+                (*cb_sp)(e.code().value());
+            } catch (const std::bad_alloc& e) {
+                (*cb_sp)(ENOMEM);
+            }
+        }
+    );
 }
 
 void Session::remove(const RawstdUUID& id, std::function<void(int)>&& cb) {
@@ -1495,6 +1606,19 @@ void Session::_meta_exchange(
                                         sizeof(meta.sync_id_history)
                                     );
                                     meta.state = response->meta.state;
+                                    meta.member_kind =
+                                        response->meta.member_kind;
+                                    meta.width = response->meta.width;
+                                    memcpy(
+                                        meta.volume_id,
+                                        response->meta.volume_id,
+                                        sizeof(meta.volume_id)
+                                    );
+                                    meta.logical_index =
+                                        response->meta.logical_index;
+                                    meta.chunk_size = response->meta.chunk_size;
+                                    meta.snap_version =
+                                        response->meta.snap_version;
 
                                     (*cb_sp)(meta, 0);
                                 }
@@ -1582,12 +1706,22 @@ void Session::_set_state_exchange(
             .sync_id = meta.sync_id,
             .sync_id_history = {},
             .state = meta.state,
+            .member_kind = meta.member_kind,
+            .width = meta.width,
+            .reserved = 0,
+            .volume_id = {},
+            .logical_index = meta.logical_index,
+            .chunk_size = meta.chunk_size,
+            .snap_version = meta.snap_version,
         },
     });
     memcpy(request->body.obj_id, id.bytes, sizeof(request->body.obj_id));
     memcpy(
         request->body.sync_id_history, meta.sync_id_history,
         sizeof(request->body.sync_id_history)
+    );
+    memcpy(
+        request->body.volume_id, meta.volume_id, sizeof(request->body.volume_id)
     );
 
     rawstd::TraceEvent trace_event =

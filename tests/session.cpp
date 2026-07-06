@@ -25,7 +25,7 @@ Session::~Session() {
 
 void Session::cmd_allocate_request() {
     _server.read(
-        "RAWSTOR_CMD_ALLOCATE <<<", sizeof(RawstorOSTFrameBasic),
+        "RAWSTOR_CMD_ALLOCATE <<<", sizeof(RawstorOSTFrameAllocate),
         [](const void*) {}
     );
 }

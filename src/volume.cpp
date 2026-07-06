@@ -109,6 +109,15 @@ void provision_next(const std::shared_ptr<ProvisionState>& st) {
     RawstorObjectSpec sp{};
     sp.size =
         chunk_logical_size(st->map.logical_size, st->map.chunk_size, st->next);
+    /* The placement identity the chunk carries from now on. */
+    sp.member_kind = RAWSTOR_MEMBER_DATA;
+    memcpy(sp.volume_id, st->map.volume_id.bytes, sizeof(sp.volume_id));
+    sp.logical_index = st->next;
+    sp.chunk_size = st->map.chunk_size;
+    sp.snap_version = 0;
+    sp.width = st->map.policy.width;
+    sp.failure_domain = st->map.policy.failure_domain;
+    sp.stripe_width = st->map.policy.stripe_width;
 
     try {
         rawstor::Object::create(

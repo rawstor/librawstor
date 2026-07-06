@@ -83,6 +83,12 @@ void Session::create(
      */
     RawstorObjectMeta initial{};
     initial.state = RAWSTOR_OBJECT_STATE_CLEAN;
+    initial.member_kind = sp.member_kind;
+    initial.width = sp.width;
+    memcpy(initial.volume_id, sp.volume_id, sizeof(initial.volume_id));
+    initial.logical_index = sp.logical_index;
+    initial.chunk_size = sp.chunk_size;
+    initial.snap_version = sp.snap_version;
     std::string prop =
         std::string(rawstor_property) + "=" + blkdev_meta_encode(initial);
 
@@ -170,19 +176,41 @@ void Session::set_state(
     std::function<void(int)>&& cb
 ) {
     std::string dataset = dataset_of(_parent_dataset, id);
-    std::string prop =
-        std::string(rawstor_property) + "=" + blkdev_meta_encode(meta);
 
-    run_async(
-        {"zfs", "set", prop, dataset}, "",
-        [dataset, cb = std::move(cb)](int error) mutable {
-            if (error != 0) {
+    /* The stored placement identity is preserved: read-merge-write. */
+    run_async_capture(
+        {"zfs", "get", "-H", "-o", "value", rawstor_property, dataset},
+        [this, dataset, meta,
+         cb = std::move(cb)](std::string output, int error) mutable {
+            if (error) {
                 rawstd_error(
-                    "zfs: failed to set mirror state on %s: %s\n",
+                    "zfs: failed to read mirror state of %s: %s\n",
                     dataset.c_str(), strerror(error)
                 );
+                cb(error);
+                return;
             }
-            cb(error);
+
+            RawstorObjectMeta next = meta;
+            RawstorObjectMeta stored{};
+            if (blkdev_meta_decode(output, &stored)) {
+                blkdev_meta_merge_identity(&next, stored);
+            }
+            std::string prop =
+                std::string(rawstor_property) + "=" + blkdev_meta_encode(next);
+
+            run_async(
+                {"zfs", "set", prop, dataset}, "",
+                [dataset, cb = std::move(cb)](int error) mutable {
+                    if (error != 0) {
+                        rawstd_error(
+                            "zfs: failed to set mirror state on %s: %s\n",
+                            dataset.c_str(), strerror(error)
+                        );
+                    }
+                    cb(error);
+                }
+            );
         }
     );
 }

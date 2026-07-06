@@ -27,6 +27,7 @@ private:
     union {
         RawstorOSTFrameBasicBody basic;
         RawstorOSTFrameSetObjectBody setobj;
+        RawstorOSTFrameAllocateBody alloc;
         RawstorOSTFrameIOBody io;
         RawstorOSTFrameMetaBody meta;
     } _request_body;
@@ -62,7 +63,7 @@ private:
     ssize_t _recv_data(const iovec* iov, unsigned int niov, size_t result);
     ssize_t _recv_ignore(const iovec* iov, unsigned int niov, size_t result);
     void _allocate(
-        const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+        const RawstorOSTFrameHead& head, const RawstorOSTFrameAllocateBody& body
     );
     void _release(
         const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
