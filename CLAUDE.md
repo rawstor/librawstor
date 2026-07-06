@@ -105,7 +105,7 @@ The C public API is in `include/rawstor/rawstor.h`. Key entry points:
 
 All async functions complete via callbacks (`RawstorIOCallback`). Callbacks run from an I/O completion context — avoid blocking inside them.
 
-Every `RawstorOpts` field (`io_attempts`, `sessions`, `so_sndtimeo`, `so_rcvtimeo`, `tcp_user_timeout`, `wait_device_timeout`) can also be set via an environment variable of the same name: `RAWSTOR_OPTS_<FIELD>` (e.g. `RAWSTOR_OPTS_IO_ATTEMPTS=5`).
+Every `RawstorOpts` field (`io_attempts`, `sessions`, `so_sndtimeo`, `so_rcvtimeo`, `tcp_user_timeout`, `wait_device_timeout`, `mirror_probe_interval`) can also be set via an environment variable of the same name: `RAWSTOR_OPTS_<FIELD>` (e.g. `RAWSTOR_OPTS_IO_ATTEMPTS=5`).
 
 ### Locations and Targets
 
