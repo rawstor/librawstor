@@ -44,6 +44,11 @@ extern "C" {
 #define RAWSTOR_CMD_SPEC 0x20
 #define RAWSTOR_CMD_SET_STATE 0x21
 
+#define RAWSTOR_CMD_VOL_CREATE 0x40
+#define RAWSTOR_CMD_VOL_OPEN 0x41
+#define RAWSTOR_CMD_VOL_RESIZE 0x42
+#define RAWSTOR_CMD_VOL_REMOVE 0x43
+
 typedef uint16_t RawstorOSTCommandType;
 
 struct RawstorOSTFrameHead {
@@ -119,6 +124,79 @@ struct RawstorOSTFrameMetaBody {
 struct RawstorOSTFrameMeta {
     struct RawstorOSTFrameHead head;
     struct RawstorOSTFrameMetaBody body;
+} RAWSTOR_PACKED;
+
+/*
+ * Volume (MDS) commands — rawstor_docs/Mds.md, "Wire protocol".
+ *
+ * VOL_OPEN, VOL_RESIZE and VOL_REMOVE ride RawstorOSTFrameBasic
+ * (obj_id = volume_id; val = snap_id for open, the new size for resize).
+ */
+
+/* Redundancy is a policy, not a wire concept: mirror in v1. */
+#define RAWSTOR_VOL_REDUNDANCY_MIRROR 0
+
+/* Failure-domain levels of the topology tree. */
+#define RAWSTOR_VOL_DOMAIN_DC 0
+#define RAWSTOR_VOL_DOMAIN_RACK 1
+#define RAWSTOR_VOL_DOMAIN_SERVER 2
+#define RAWSTOR_VOL_DOMAIN_OST 3
+
+/* stripe_width: 1 = volume-local (DRBD-like), 0 = spread (Ceph-like). */
+#define RAWSTOR_VOL_STRIPE_ALL 0
+
+struct RawstorVolPolicy {
+    uint8_t redundancy; /* RAWSTOR_VOL_REDUNDANCY_* */
+    uint8_t width;      /* slots per chunk: mirror R */
+    uint8_t failure_domain;
+    uint8_t reserved;
+    uint64_t stripe_width;
+    uint64_t placement_seed;
+} RAWSTOR_PACKED;
+
+struct RawstorVolCreateBody {
+    uint64_t logical_size;
+    uint64_t chunk_size; /* power of two */
+    struct RawstorVolPolicy policy;
+} RAWSTOR_PACKED;
+
+struct RawstorVolCreate {
+    struct RawstorOSTFrameHead head;
+    struct RawstorVolCreateBody body;
+} RAWSTOR_PACKED;
+
+/* VOL_CREATE response payload. */
+struct RawstorVolCreatedBody {
+    uint8_t volume_id[16];
+    uint64_t map_epoch;
+} RAWSTOR_PACKED;
+
+/* VOL_RESIZE response payload. */
+struct RawstorVolResizedBody {
+    uint64_t map_epoch;
+} RAWSTOR_PACKED;
+
+/*
+ * VOL_OPEN response payload: the descriptor followed by nchunks chunk
+ * entries, each entry followed by its width slots.
+ */
+struct RawstorVolDescriptorBody {
+    uint8_t volume_id[16];
+    uint64_t logical_size;
+    uint64_t chunk_size;
+    struct RawstorVolPolicy policy;
+    uint64_t map_epoch;
+    uint32_t nchunks;
+} RAWSTOR_PACKED;
+
+struct RawstorVolChunkEntry {
+    uint64_t version; /* snap_id; 0 = live */
+    uint8_t width;    /* slots that follow */
+} RAWSTOR_PACKED;
+
+struct RawstorVolChunkSlot {
+    uint8_t slot_index;
+    uint8_t ost_id[16];
 } RAWSTOR_PACKED;
 
 /*

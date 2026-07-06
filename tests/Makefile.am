@@ -27,6 +27,12 @@ test_all_SOURCES = main.cpp \
                    test_worker.cpp
 test_all_LDADD = $(top_builddir)/src/librawstor.la
 
+if WITH_MDS
+AM_CXXFLAGS += $(SQLITE3_CFLAGS) -I$(top_srcdir)/mds
+test_all_SOURCES += test_mds_store.cpp
+test_all_LDADD += $(top_builddir)/mds/libmdsstore.la $(SQLITE3_LIBS)
+endif
+
 
 test: all
 	./test_all

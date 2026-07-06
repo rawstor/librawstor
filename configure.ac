@@ -98,6 +98,16 @@ AS_IF([test "x$with_libxxhash" == "xyes"], [
 ])
 
 
+AC_ARG_WITH([mds], [AS_HELP_STRING([--without-mds],
+    [do not build the MDS server (needs sqlite3)])],
+    [with_mds=$withval],
+    [with_mds="yes"])
+AM_CONDITIONAL([WITH_MDS], [test "x$with_mds" == "xyes"])
+AS_IF([test "x$with_mds" == "xyes"], [
+    PKG_CHECK_MODULES([SQLITE3], [sqlite3])
+])
+
+
 AC_ARG_WITH([python3], [AS_HELP_STRING([--without-python3],
     [disable support for python3 bindings])],
     [with_python3=$withval],
@@ -133,6 +143,7 @@ AC_CONFIG_FILES(
     [vhost/3rdparty/qemu/Makefile]
     [vhost/3rdparty/qemu/libvhost-user/Makefile]
     [ost/Makefile]
+    [mds/Makefile]
     [tests/Makefile]
     [deb/librawstor/control]
     [deb/librawstor/changelog]
