@@ -528,6 +528,8 @@ Session::_recv_head(const iovec* iov, unsigned int niov, size_t result) {
     case RAWSTOR_CMD_RELEASE:
     case RAWSTOR_CMD_SPEC:
     case RAWSTOR_CMD_LIST_CHUNKS:
+    case RAWSTOR_CMD_SNAPSHOT:
+    case RAWSTOR_CMD_SNAP_REMOVE:
         return sizeof(RawstorOSTFrameBasicBody);
     case RAWSTOR_CMD_SET_STATE:
         return sizeof(RawstorOSTFrameMetaBody);
@@ -712,6 +714,25 @@ Session::_recv_body(const iovec* iov, unsigned int niov, size_t result) {
         );
 
         _list(_request_head);
+
+        return sizeof(RawstorOSTFrameHead);
+
+    case RAWSTOR_CMD_SNAPSHOT:
+    case RAWSTOR_CMD_SNAP_REMOVE:
+        if (result != sizeof(_request_body.basic)) {
+            rawstd_error(
+                "fd %d: Unexpected request body size: %zu != %zu\n", _fd,
+                result, sizeof(_request_body.basic)
+            );
+
+            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+        }
+
+        rawstd_iovec_to_buf(
+            iov, niov, 0, &_request_body.basic, sizeof(_request_body.basic)
+        );
+
+        _snapshot(_request_head, _request_body.basic);
 
         return sizeof(RawstorOSTFrameHead);
 
@@ -1099,6 +1120,37 @@ void Session::_set_state(
     );
     if (res < 0) {
         send_response(_queue, _fd, RAWSTOR_CMD_SET_STATE, head.cid, res, 0);
+        return;
+    }
+
+    ctx.release();
+}
+
+/* SNAPSHOT / SNAP_REMOVE: fan out to every backend location (val = snap_id). */
+void Session::_snapshot(
+    const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+) {
+    RawstdUUID uuid;
+    memcpy(uuid.bytes, body.obj_id, sizeof(body.obj_id));
+
+    std::vector<rawstd::URI> targets = _targets(uuid);
+
+    auto ctx = std::make_unique<OpCtx>(
+        OpCtx{_queue, _fd, head.cmd, head.cid, _alive}
+    );
+
+    int res =
+        head.cmd == RAWSTOR_CMD_SNAPSHOT
+            ? rawstor_object_snapshot_async(
+                  _queue, rawstd::URI::uris(targets).c_str(), body.val,
+                  op_complete, ctx.get()
+              )
+            : rawstor_object_snap_remove_async(
+                  _queue, rawstd::URI::uris(targets).c_str(), body.val,
+                  op_complete, ctx.get()
+              );
+    if (res < 0) {
+        send_response(_queue, _fd, head.cmd, head.cid, res, 0);
         return;
     }
 

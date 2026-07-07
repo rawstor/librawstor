@@ -54,6 +54,19 @@ public:
     void list(
         std::function<void(std::vector<RawstorObjectListEntry>&&, int)>&& cb
     ) override;
+
+    /*
+     * Native zvol snapshot: <parent>/<uuid>@s<snap_id>. The @s<id> name is
+     * the version key — LIST and the snapshot read path derive snap_id
+     * from it, nothing is stored twice.
+     */
+    void snapshot(
+        const RawstdUUID& id, uint64_t snap_id, std::function<void(int)>&& cb
+    ) override;
+
+    void snap_remove(
+        const RawstdUUID& id, uint64_t snap_id, std::function<void(int)>&& cb
+    ) override;
 };
 
 } // namespace zfs

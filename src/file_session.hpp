@@ -39,6 +39,15 @@ public:
         std::function<void(std::vector<RawstorObjectListEntry>&&, int)>&& cb
     ) override;
 
+    /* No CoW on plain files: ENOTSUP (rawstor_docs/Mds.md, "Snapshots"). */
+    void snapshot(
+        const RawstdUUID& id, uint64_t snap_id, std::function<void(int)>&& cb
+    ) override;
+
+    void snap_remove(
+        const RawstdUUID& id, uint64_t snap_id, std::function<void(int)>&& cb
+    ) override;
+
     void set_object(Object* object, std::function<void(int)>&& cb) override;
 
     void pread(

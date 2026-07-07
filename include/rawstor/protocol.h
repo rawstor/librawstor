@@ -44,6 +44,13 @@ extern "C" {
 #define RAWSTOR_CMD_SPEC 0x20
 #define RAWSTOR_CMD_SET_STATE 0x21
 #define RAWSTOR_CMD_LIST_CHUNKS 0x22
+/*
+ * Native CoW snapshot of one stored object version (rawstor_docs/Mds.md,
+ * "Snapshots"): RawstorOSTFrameBasic, val = snap_id (never 0 - 0 is the
+ * live version). -ENOTSUP on backends without CoW (file://, classic LVM).
+ */
+#define RAWSTOR_CMD_SNAPSHOT 0x23
+#define RAWSTOR_CMD_SNAP_REMOVE 0x24
 
 #define RAWSTOR_CMD_VOL_CREATE 0x40
 #define RAWSTOR_CMD_VOL_OPEN 0x41

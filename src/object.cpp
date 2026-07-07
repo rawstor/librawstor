@@ -318,6 +318,56 @@ void set_state_next(const std::shared_ptr<SetStateState>& st) {
 }
 
 /*
+ * Async multi-target fan-out for per-target control operations (snapshot,
+ * snap_remove): every target is attempted, the first error is kept — the
+ * same semantics as set_state.
+ */
+struct FanoutState {
+    rawio::Queue& queue;
+    std::vector<rawstd::URI> targets;
+    std::function<void(
+        rawio::Queue&, const rawstd::URI&, std::function<void(int)>&&
+    )>
+        op;
+    std::function<void(int)> cb;
+    size_t next;
+    int error;
+};
+
+void fanout_next(const std::shared_ptr<FanoutState>& st);
+
+void fanout_done(const std::shared_ptr<FanoutState>& st, int error) {
+    if (error) {
+        rawstd_error("%s\n", strerror(error));
+        if (st->error == 0) {
+            st->error = error;
+        }
+    }
+    ++st->next;
+    fanout_next(st);
+}
+
+void fanout_next(const std::shared_ptr<FanoutState>& st) {
+    if (st->next == st->targets.size()) {
+        st->cb(st->error);
+        return;
+    }
+
+    try {
+        st->op(st->queue, st->targets[st->next], [st](int error) {
+            fanout_done(st, error);
+        });
+    } catch (const std::system_error& e) {
+        fanout_done(st, e.code().value());
+    } catch (const std::bad_alloc& e) {
+        fanout_done(st, ENOMEM);
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        fanout_done(st, EINVAL);
+    }
+}
+
+/*
  * Async multi-target meta query: targets are tried in order and the first
  * one that answers wins. This is the only lookup available before an
  * object is open (rawstor_object_spec queries metadata without opening
@@ -1823,6 +1873,99 @@ void Object::set_state(
     }
 }
 
+void Object::snapshot(
+    rawio::Queue& queue, const std::vector<rawstd::URI>& targets,
+    uint64_t snap_id, std::function<void(int)>&& cb
+) {
+    validate_not_empty(targets);
+    validate_different_uris(targets);
+    validate_same_uuid(targets);
+
+    /* 0 is the live version, never a snapshot. */
+    if (snap_id == 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+
+    std::shared_ptr<FanoutState> st =
+        std::make_shared<FanoutState>(FanoutState{
+            queue, targets,
+            [snap_id](
+                rawio::Queue& q, const rawstd::URI& target,
+                std::function<void(int)>&& done
+            ) {
+                rawstor::Connection::snapshot(
+                    q, target, snap_id, std::move(done)
+                );
+            },
+            std::move(cb), 0, 0
+        });
+    fanout_next(st);
+}
+
+void Object::snap_remove(
+    rawio::Queue& queue, const std::vector<rawstd::URI>& targets,
+    uint64_t snap_id, std::function<void(int)>&& cb
+) {
+    validate_not_empty(targets);
+    validate_different_uris(targets);
+    validate_same_uuid(targets);
+
+    if (snap_id == 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+
+    std::shared_ptr<FanoutState> st =
+        std::make_shared<FanoutState>(FanoutState{
+            queue, targets,
+            [snap_id](
+                rawio::Queue& q, const rawstd::URI& target,
+                std::function<void(int)>&& done
+            ) {
+                rawstor::Connection::snap_remove(
+                    q, target, snap_id, std::move(done)
+                );
+            },
+            std::move(cb), 0, 0
+        });
+    fanout_next(st);
+}
+
+void Object::snapshot(
+    const std::vector<rawstd::URI>& targets, uint64_t snap_id
+) {
+    Queue q(1);
+    int result = 0;
+
+    snapshot(q.queue(), targets, snap_id, [&q, &result](int error) {
+        q.sub_operation();
+        result = error;
+    });
+
+    q.wait();
+
+    if (result) {
+        RAWSTD_THROW_SYSTEM_ERROR(result);
+    }
+}
+
+void Object::snap_remove(
+    const std::vector<rawstd::URI>& targets, uint64_t snap_id
+) {
+    Queue q(1);
+    int result = 0;
+
+    snap_remove(q.queue(), targets, snap_id, [&q, &result](int error) {
+        q.sub_operation();
+        result = error;
+    });
+
+    q.wait();
+
+    if (result) {
+        RAWSTD_THROW_SYSTEM_ERROR(result);
+    }
+}
+
 std::vector<rawstd::URI> Object::locations() const {
     std::vector<rawstd::URI> ret;
     ret.reserve(_members.size());
@@ -2641,6 +2784,103 @@ int rawstor_object_set_state_async(
         rawstor::Object::set_state(
             *static_cast<rawio::Queue*>(queue), rawstd::URI::uriv(target),
             *meta, [cb, data](int error) { cb(error ? -error : 0, data); }
+        );
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+int rawstor_object_snapshot(const char* target, uint64_t snap_id) noexcept {
+    try {
+        std::vector<rawstd::URI> uris = rawstd::URI::uriv(target);
+        if (is_volume_target(uris)) {
+            /* Volume snapshots need the MDS orchestration (stage 2). */
+            return -ENOSYS;
+        }
+        rawstor::Object::snapshot(uris, snap_id);
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+int rawstor_object_snapshot_async(
+    RawIOQueue* queue, const char* target, uint64_t snap_id,
+    int (*cb)(int result, void* data), void* data
+) noexcept {
+    try {
+        std::vector<rawstd::URI> uris = rawstd::URI::uriv(target);
+        if (is_volume_target(uris)) {
+            return -ENOSYS;
+        }
+        rawstor::Object::snapshot(
+            *static_cast<rawio::Queue*>(queue), uris, snap_id,
+            [cb, data](int error) { cb(error ? -error : 0, data); }
+        );
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+int rawstor_object_snap_remove(const char* target, uint64_t snap_id) noexcept {
+    try {
+        std::vector<rawstd::URI> uris = rawstd::URI::uriv(target);
+        if (is_volume_target(uris)) {
+            return -ENOSYS;
+        }
+        rawstor::Object::snap_remove(uris, snap_id);
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+int rawstor_object_snap_remove_async(
+    RawIOQueue* queue, const char* target, uint64_t snap_id,
+    int (*cb)(int result, void* data), void* data
+) noexcept {
+    try {
+        std::vector<rawstd::URI> uris = rawstd::URI::uriv(target);
+        if (is_volume_target(uris)) {
+            return -ENOSYS;
+        }
+        rawstor::Object::snap_remove(
+            *static_cast<rawio::Queue*>(queue), uris, snap_id,
+            [cb, data](int error) { cb(error ? -error : 0, data); }
         );
         return 0;
     } catch (const std::system_error& e) {

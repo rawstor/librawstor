@@ -25,6 +25,14 @@ dataset_of(const std::string& parent_dataset, const RawstdUUID& id) {
     return parent_dataset + "/" + uuid_str;
 }
 
+std::string snapshot_of(
+    const std::string& parent_dataset, const RawstdUUID& id, uint64_t snap_id
+) {
+    std::ostringstream oss;
+    oss << dataset_of(parent_dataset, id) << "@s" << snap_id;
+    return oss.str();
+}
+
 } // namespace
 
 namespace rawstor {
@@ -283,6 +291,70 @@ void Session::list(
             }
 
             cb(std::move(entries), 0);
+        }
+    );
+}
+
+void Session::snapshot(
+    const RawstdUUID& id, uint64_t snap_id, std::function<void(int)>&& cb
+) {
+    std::string dataset = dataset_of(_parent_dataset, id);
+    std::string snapshot = snapshot_of(_parent_dataset, id, snap_id);
+
+    rawstd_info("zfs: creating snapshot %s\n", snapshot.c_str());
+
+    run_async(
+        {"zfs", "snapshot", snapshot}, "",
+        [this, dataset, snapshot, cb = std::move(cb)](int error) mutable {
+            if (error != 0) {
+                rawstd_error(
+                    "zfs: failed to create snapshot %s: %s\n", snapshot.c_str(),
+                    strerror(error)
+                );
+                cb(error);
+                return;
+            }
+
+            /*
+             * The snapshot read path opens
+             * /dev/zvol/<parent>/<uuid>@s<id>, which exists only with
+             * snapdev=visible on the origin. Set it with the snapshot, so
+             * every snapshot that exists is also openable — one mechanism,
+             * old zvols included.
+             */
+            run_async(
+                {"zfs", "set", "snapdev=visible", dataset}, "",
+                [dataset, cb = std::move(cb)](int error) mutable {
+                    if (error != 0) {
+                        rawstd_error(
+                            "zfs: failed to set snapdev=visible on %s: %s\n",
+                            dataset.c_str(), strerror(error)
+                        );
+                    }
+                    cb(error);
+                }
+            );
+        }
+    );
+}
+
+void Session::snap_remove(
+    const RawstdUUID& id, uint64_t snap_id, std::function<void(int)>&& cb
+) {
+    std::string snapshot = snapshot_of(_parent_dataset, id, snap_id);
+
+    rawstd_info("zfs: destroying snapshot %s\n", snapshot.c_str());
+
+    run_async(
+        {"zfs", "destroy", snapshot}, "",
+        [snapshot, cb = std::move(cb)](int error) mutable {
+            if (error != 0) {
+                rawstd_error(
+                    "zfs: failed to destroy snapshot %s: %s\n",
+                    snapshot.c_str(), strerror(error)
+                );
+            }
+            cb(error);
         }
     );
 }

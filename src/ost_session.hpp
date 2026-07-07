@@ -38,6 +38,16 @@ private:
         std::function<void(int)>&& cb
     );
 
+    /*
+     * Routes a zero-payload basic command through the multishot receive
+     * context when the session is object-bound, or the plain pre-open
+     * exchange (with the lazy handshake) when it is not.
+     */
+    void _basic_or_op(
+        RawstorOSTCommandType cmd, const RawstdUUID& id, uint64_t val,
+        std::function<void(int)>&& cb
+    );
+
     void _allocate(
         const RawstdUUID& id, const RawstorObjectSpec& spec,
         std::function<void(int)>&& cb
@@ -99,6 +109,14 @@ public:
      */
     void list(
         std::function<void(std::vector<RawstorObjectListEntry>&&, int)>&& cb
+    ) override;
+
+    void snapshot(
+        const RawstdUUID& id, uint64_t snap_id, std::function<void(int)>&& cb
+    ) override;
+
+    void snap_remove(
+        const RawstdUUID& id, uint64_t snap_id, std::function<void(int)>&& cb
     ) override;
 
     void set_object(Object* object, std::function<void(int)>&& cb) override;

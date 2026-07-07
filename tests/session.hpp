@@ -73,6 +73,15 @@ public:
     void cmd_set_state_response(uint32_t magic, uint16_t cid, int32_t res);
     void cmd_set_state(uint32_t magic, uint16_t cid, int32_t res);
 
+    void cmd_snapshot_request();
+    void cmd_snapshot_response(
+        RawstorOSTCommandType cmd, uint32_t magic, uint16_t cid, int32_t res
+    );
+    /* cmd = RAWSTOR_CMD_SNAPSHOT or RAWSTOR_CMD_SNAP_REMOVE. */
+    void cmd_snapshot(
+        RawstorOSTCommandType cmd, uint32_t magic, uint16_t cid, int32_t res
+    );
+
     void cmd_list_request();
     void cmd_list_response(
         uint32_t magic, uint16_t cid, int32_t res,

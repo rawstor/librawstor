@@ -93,6 +93,16 @@ public:
         std::function<void(std::vector<RawstorObjectListEntry>&&, int)>&& cb
     );
 
+    static void snapshot(
+        rawio::Queue& queue, const rawstd::URI& target, uint64_t snap_id,
+        std::function<void(int)>&& cb
+    );
+
+    static void snap_remove(
+        rawio::Queue& queue, const rawstd::URI& target, uint64_t snap_id,
+        std::function<void(int)>&& cb
+    );
+
     explicit Connection(rawio::Queue& queue);
     Connection(const Connection&) = delete;
     ~Connection();

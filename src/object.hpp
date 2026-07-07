@@ -216,6 +216,19 @@ public:
         const RawstorObjectMeta& meta, std::function<void(int)>&& cb
     );
 
+    /*
+     * CoW snapshot / snapshot removal on every target; the first error is
+     * kept, the remaining targets are still attempted (like set_state).
+     */
+    static void snapshot(
+        rawio::Queue& queue, const std::vector<rawstd::URI>& targets,
+        uint64_t snap_id, std::function<void(int)>&& cb
+    );
+    static void snap_remove(
+        rawio::Queue& queue, const std::vector<rawstd::URI>& targets,
+        uint64_t snap_id, std::function<void(int)>&& cb
+    );
+
     static void create(
         const std::vector<rawstd::URI>& targets, const RawstorObjectSpec& sp
     );
@@ -227,6 +240,10 @@ public:
     static void set_state(
         const std::vector<rawstd::URI>& targets, const RawstorObjectMeta& meta
     );
+    static void
+    snapshot(const std::vector<rawstd::URI>& targets, uint64_t snap_id);
+    static void
+    snap_remove(const std::vector<rawstd::URI>& targets, uint64_t snap_id);
 
     Object(const Object&) = delete;
     Object(Object&&) = delete;

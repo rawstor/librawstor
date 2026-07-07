@@ -290,6 +290,55 @@ TEST(OstLifecycleTest, create_spec_remove) {
     }
 }
 
+TEST(FileLifecycleTest, snapshot_not_supported) {
+    std::filesystem::path path = std::filesystem::temp_directory_path() /
+                                 "test_objects" /
+                                 "00000000-0000-7000-8000-00000000e001";
+    std::string target = "file://" + path.string();
+
+    RawstorObjectSpec spec{};
+    spec.size = 1ull << 20;
+    ASSERT_EQ(rawstor_object_create(target.c_str(), &spec), 0);
+
+    /* No CoW on plain files: never a hidden fallback copy. */
+    EXPECT_EQ(rawstor_object_snapshot(target.c_str(), 1), -ENOTSUP);
+    EXPECT_EQ(rawstor_object_snap_remove(target.c_str(), 1), -ENOTSUP);
+
+    /* 0 is the live version, not a snapshot. */
+    EXPECT_EQ(rawstor_object_snapshot(target.c_str(), 0), -EINVAL);
+    EXPECT_EQ(rawstor_object_snap_remove(target.c_str(), 0), -EINVAL);
+
+    EXPECT_EQ(rawstor_object_remove(target.c_str()), 0);
+}
+
+TEST(OstLifecycleTest, snapshot) {
+    rawstor::tests::Server server(8753, 256);
+    std::string target =
+        "ost://127.0.0.1:8753/00000000-0000-7000-8000-000000000000";
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_handshake();
+        s.cmd_snapshot(RAWSTOR_CMD_SNAPSHOT, RAWSTOR_MAGIC, 0, 0);
+    }
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_handshake();
+        s.cmd_snapshot(RAWSTOR_CMD_SNAPSHOT, RAWSTOR_MAGIC, 0, -ENOTSUP);
+    }
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_handshake();
+        s.cmd_snapshot(RAWSTOR_CMD_SNAP_REMOVE, RAWSTOR_MAGIC, 0, 0);
+    }
+
+    EXPECT_EQ(rawstor_object_snapshot(target.c_str(), 7), 0);
+    EXPECT_EQ(rawstor_object_snapshot(target.c_str(), 7), -ENOTSUP);
+    EXPECT_EQ(rawstor_object_snap_remove(target.c_str(), 7), 0);
+}
+
 TEST(OstLifecycleTest, list) {
     rawstor::tests::Server server(8753, 256);
     std::string location = "ost://127.0.0.1:8753";

@@ -88,6 +88,9 @@ private:
         const RawstorOSTFrameHead& head, const RawstorOSTFrameMetaBody& body
     );
     void _list(const RawstorOSTFrameHead& head);
+    void _snapshot(
+        const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+    );
     void
     _flush(const RawstorOSTFrameHead& head, const RawstorOSTFrameIOBody& body);
     void _unknown(const RawstorOSTFrameHead& head);

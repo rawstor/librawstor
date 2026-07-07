@@ -525,6 +525,70 @@ void Connection::set_state(
     });
 }
 
+void Connection::snapshot(
+    rawio::Queue& queue, const rawstd::URI& target, uint64_t snap_id,
+    std::function<void(int)>&& cb
+) {
+    RawstdUUID id;
+    int res = rawstd_uuid_from_string(&id, target.path().filename().c_str());
+    if (res) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+
+    std::shared_ptr<Session> s = Session::create(queue, target.parent());
+    Session* session = s.get();
+    session->connect([s = std::move(s), id, snap_id,
+                      cb = std::move(cb)](int error) mutable {
+        if (error) {
+            cb(error);
+            return;
+        }
+
+        try {
+            s->snapshot(id, snap_id, [s, cb](int error) { cb(error); });
+        } catch (const std::system_error& e) {
+            cb(e.code().value());
+        } catch (const std::bad_alloc& e) {
+            cb(ENOMEM);
+        } catch (const std::exception& e) {
+            rawstd_error("%s\n", e.what());
+            cb(EINVAL);
+        }
+    });
+}
+
+void Connection::snap_remove(
+    rawio::Queue& queue, const rawstd::URI& target, uint64_t snap_id,
+    std::function<void(int)>&& cb
+) {
+    RawstdUUID id;
+    int res = rawstd_uuid_from_string(&id, target.path().filename().c_str());
+    if (res) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+
+    std::shared_ptr<Session> s = Session::create(queue, target.parent());
+    Session* session = s.get();
+    session->connect([s = std::move(s), id, snap_id,
+                      cb = std::move(cb)](int error) mutable {
+        if (error) {
+            cb(error);
+            return;
+        }
+
+        try {
+            s->snap_remove(id, snap_id, [s, cb](int error) { cb(error); });
+        } catch (const std::system_error& e) {
+            cb(e.code().value());
+        } catch (const std::bad_alloc& e) {
+            cb(ENOMEM);
+        } catch (const std::exception& e) {
+            rawstd_error("%s\n", e.what());
+            cb(EINVAL);
+        }
+    });
+}
+
 void Connection::open(
     const rawstd::URI& location, Object* object, size_t nsessions,
     std::function<void(int)>&& cb

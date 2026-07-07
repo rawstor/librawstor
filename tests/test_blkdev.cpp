@@ -50,6 +50,17 @@ public:
         cb({}, ENOSYS);
     }
 
+    void snapshot(const RawstdUUID&, uint64_t, std::function<void(int)>&& cb)
+        override {
+        cb(ENOSYS);
+    }
+
+    void
+    snap_remove(const RawstdUUID&, uint64_t, std::function<void(int)>&& cb)
+        override {
+        cb(ENOSYS);
+    }
+
     void
     run(std::vector<std::string> cmd, std::string wait_path,
         std::function<void(int)>&& cb) {

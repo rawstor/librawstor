@@ -85,6 +85,21 @@ public:
         std::function<void(std::vector<RawstorObjectListEntry>&&, int)>&& cb
     ) = 0;
 
+    /*
+     * Native CoW snapshot of the object as version snap_id (never 0 — 0 is
+     * the live version). The caller owns crash consistency: all
+     * acknowledged writes must be flushed before the call. ENOTSUP on
+     * backends without CoW — never a fallback copy behind the caller's
+     * back (rawstor_docs/Mds.md, "Snapshots").
+     */
+    virtual void snapshot(
+        const RawstdUUID& id, uint64_t snap_id, std::function<void(int)>&& cb
+    ) = 0;
+
+    virtual void snap_remove(
+        const RawstdUUID& id, uint64_t snap_id, std::function<void(int)>&& cb
+    ) = 0;
+
     virtual void set_object(Object* object, std::function<void(int)>&& cb) = 0;
 
     /*

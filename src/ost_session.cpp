@@ -798,6 +798,61 @@ public:
     }
 };
 
+/*
+ * A zero-payload basic command (SNAPSHOT, SNAP_REMOVE) dispatched through
+ * the multishot receive context of an object-bound session.
+ */
+class SessionOpBasic final : public SessionOp {
+private:
+    RawstorOSTFrameBasic _request;
+
+public:
+    SessionOpBasic(
+        const std::shared_ptr<rawstor::ost::Context>& context, uint16_t cid,
+        RawstorOSTCommandType cmd, const RawstdUUID& id, uint64_t val,
+        const rawstd::TraceEvent& trace_event,
+        std::function<void(size_t, int)>&& cb
+    ) :
+        SessionOp(context, cid, trace_event, std::move(cb)),
+        _request({
+            .head =
+                {
+                    .magic = RAWSTOR_MAGIC,
+                    .cmd = cmd,
+                    .cid = cid,
+                },
+            .body =
+                {
+                    .obj_id = {},
+                    .offset = 0,
+                    .val = val,
+                },
+        }) {
+        memcpy(_request.body.obj_id, id.bytes, sizeof(_request.body.obj_id));
+    }
+
+    const void* request_data() const noexcept { return &_request; }
+
+    size_t request_size() const noexcept override { return sizeof(_request); }
+
+    void response_head_cb(
+        const RawstorOSTFrameResponse* response, int error, bool* next_head,
+        size_t* next_size
+    ) override {
+        RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
+
+        bool fatal = false;
+        error = classify_response(
+            _context->fd(), response, error, _request.head.cmd, 0, &fatal
+        );
+
+        _dispatch(0, error);
+
+        *next_head = true;
+        *next_size = fatal ? 0 : sizeof(RawstorOSTFrameResponse);
+    }
+};
+
 class SessionOpFlush final : public SessionOp {
 private:
     RawstorOSTFrameIO _request;
@@ -1419,6 +1474,67 @@ void Session::remove(const RawstdUUID& id, std::function<void(int)>&& cb) {
 
         _basic(RAWSTOR_CMD_RELEASE, id, 0, std::move(cb));
     });
+}
+
+/*
+ * See meta(): an object-bound session dispatches through the multishot
+ * receive context, an unbound one runs the plain pre-open exchange.
+ */
+void Session::_basic_or_op(
+    RawstorOSTCommandType cmd, const RawstdUUID& id, uint64_t val,
+    std::function<void(int)>&& cb
+) {
+    if (_context != nullptr) {
+        rawstd::TraceEvent trace_event =
+            RAWSTD_TRACE_EVENT('s', "basic cmd %d\n", cmd);
+
+        std::shared_ptr<SessionOpBasic> op = std::make_shared<SessionOpBasic>(
+            _context, _cid_counter++, cmd, id, val, trace_event,
+            [cb = std::move(cb)](size_t, int error) { cb(error); }
+        );
+        _context->register_op(op);
+
+        _queue.write(
+            fd(), op->request_data(), op->request_size(),
+            [op, trace_event](size_t result, int error) {
+                RAWSTD_TRACE_EVENT_MESSAGE(
+                    trace_event, "%zu of %zu, error = %d\n", result,
+                    op->request_size(), error
+                );
+
+                if (!error) {
+                    error = validate_result(
+                        op->context().fd(), op->request_size(), result
+                    );
+                }
+
+                op->request_cb(error);
+            }
+        );
+        return;
+    }
+
+    _ensure_handshake([this, cmd, id, val,
+                       cb = std::move(cb)](int error) mutable {
+        if (error) {
+            cb(error);
+            return;
+        }
+
+        _basic(cmd, id, val, std::move(cb));
+    });
+}
+
+void Session::snapshot(
+    const RawstdUUID& id, uint64_t snap_id, std::function<void(int)>&& cb
+) {
+    _basic_or_op(RAWSTOR_CMD_SNAPSHOT, id, snap_id, std::move(cb));
+}
+
+void Session::snap_remove(
+    const RawstdUUID& id, uint64_t snap_id, std::function<void(int)>&& cb
+) {
+    _basic_or_op(RAWSTOR_CMD_SNAP_REMOVE, id, snap_id, std::move(cb));
 }
 
 void Session::meta(

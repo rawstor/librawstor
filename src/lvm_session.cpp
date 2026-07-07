@@ -294,5 +294,17 @@ void Session::list(
     );
 }
 
+void Session::snapshot(
+    const RawstdUUID&, uint64_t, std::function<void(int)>&& cb
+) {
+    cb(ENOTSUP);
+}
+
+void Session::snap_remove(
+    const RawstdUUID&, uint64_t, std::function<void(int)>&& cb
+) {
+    cb(ENOTSUP);
+}
+
 } // namespace lvm
 } // namespace rawstor
