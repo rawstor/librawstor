@@ -96,7 +96,7 @@ jobs:
       if: "${{ matrix.backend == 'ost' }}"
       run: |
         mkdir ${GITHUB_WORKSPACE}/objects
-        rawstor-ost --bind 127.0.0.1:8080 --location file://${GITHUB_WORKSPACE}/objects &
+        rawstor-ost --bind 127.0.0.1:8080 --location=file://${GITHUB_WORKSPACE}/objects &
         sleep 10
     - name: (ost-legacy) start rawstor_ost
       if: "${{ matrix.backend == 'ost-legacy' }}"
@@ -110,6 +110,7 @@ jobs:
       run: |
         target=$(rawstor-cli create --location=${{ matrix.location }} --size=1G)
         echo "TARGET=${target}" >> $GITHUB_ENV
+        rawstor-cli list --location=${{ matrix.location }}
         rawstor-cli testio --target=${target} --block-size=4K --io-depth=1 --count=1
     - name: (ost-legacy) create object
       if: "${{ matrix.backend == 'ost-legacy' }}"

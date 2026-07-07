@@ -135,10 +135,6 @@ std::list<std::vector<rawstd::URI>> Object::list(
             targets[uuid].emplace_back(location, uuid_string);
         }
     }
-    for (const auto& it : targets) {
-        RawstdUUIDString uuid;
-        rawstd_uuid_to_string(&it.first, &uuid);
-    }
 
     if (limit == 0) {
         limit = rawstor_opts_list_limit();
