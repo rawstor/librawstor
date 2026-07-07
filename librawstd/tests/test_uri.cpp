@@ -261,4 +261,38 @@ TEST(URIsTest, basics) {
     }
 }
 
+/* An '@' in the path is data (an "<uuid>@<snap>" reference), not userinfo. */
+TEST(URITest, at_sign_in_path) {
+    {
+        rawstd::URI uri("ost://127.0.0.1:8753/uuid@5");
+
+        EXPECT_EQ(uri.scheme(), "ost");
+        EXPECT_EQ(uri.userinfo(), "");
+        EXPECT_EQ(uri.username(), "");
+        EXPECT_EQ(uri.password(), "");
+        EXPECT_EQ(uri.hostname(), "127.0.0.1");
+        EXPECT_EQ(uri.port(), 8753u);
+        EXPECT_EQ(uri.path().str(), "/uuid@5");
+        EXPECT_EQ(uri.path().filename(), "uuid@5");
+    }
+
+    {
+        rawstd::URI uri("file:///tmp/objects/uuid@5");
+
+        EXPECT_EQ(uri.userinfo(), "");
+        EXPECT_EQ(uri.hostname(), "");
+        EXPECT_EQ(uri.path().filename(), "uuid@5");
+    }
+
+    /* Userinfo in the authority still parses. */
+    {
+        rawstd::URI uri("http://user:password@example.com/path@data");
+
+        EXPECT_EQ(uri.username(), "user");
+        EXPECT_EQ(uri.password(), "password");
+        EXPECT_EQ(uri.hostname(), "example.com");
+        EXPECT_EQ(uri.path().str(), "/path@data");
+    }
+}
+
 } // namespace
