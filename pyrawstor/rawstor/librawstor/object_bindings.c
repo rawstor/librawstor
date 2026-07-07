@@ -86,6 +86,101 @@ PyTypeObject PyObjectSpecType = {
     .tp_getset = PyObjectSpec_getset,
 };
 
+PyObject* py_rawstor_object_list(PyObject* Py_UNUSED(self), PyObject* args) {
+    PyObject* new_marker_obj = NULL;
+    PyObject* tuple = NULL;
+
+    const char* location;
+    unsigned int limit;
+    PyObject* marker_obj;
+    if (!PyArg_ParseTuple(args, "sIO", &location, &limit, &marker_obj)) {
+        return NULL;
+    }
+
+    void* marker_ptr = NULL;
+    if (marker_obj != Py_None) {
+        if (!PyCapsule_CheckExact(marker_obj)) {
+            PyErr_SetString(
+                PyExc_TypeError, "marker must be None or a capsule"
+            );
+            return NULL;
+        }
+        marker_ptr = PyCapsule_GetPointer(marker_obj, "marker");
+        if (marker_ptr == NULL) {
+            return NULL;
+        }
+    }
+
+    RawstorStringList* list = NULL;
+    PyObject* py_list = NULL;
+    int res = rawstor_object_list(location, limit, &list, &marker_ptr);
+
+    if (marker_obj != Py_None) {
+        Py_DECREF(marker_obj);
+    }
+
+    if (res < 0) {
+        set_os_error(-res);
+        goto error;
+    }
+
+    py_list = PyList_New(0);
+    if (!py_list) {
+        goto error;
+    }
+
+    const char** iter = rawstor_string_list_iter(list);
+    while (iter != NULL) {
+        const char* target = *iter;
+        PyObject* py_target = PyUnicode_FromString(target);
+        if (!py_target) {
+            goto error;
+        }
+        if (PyList_Append(py_list, py_target) < 0) {
+            Py_DECREF(py_target);
+            goto error;
+        }
+        Py_DECREF(py_target);
+        iter = rawstor_string_list_next(iter);
+    }
+
+    if (marker_ptr != NULL) {
+        new_marker_obj =
+            PyCapsule_New(marker_ptr, "marker", (PyCapsule_Destructor)free);
+        if (new_marker_obj == NULL) {
+            goto error;
+        }
+    } else {
+        new_marker_obj = Py_None;
+        Py_INCREF(Py_None);
+    }
+
+    rawstor_string_list_delete(list);
+
+    tuple = PyTuple_New(2);
+    if (!tuple) {
+        goto error;
+    }
+    PyTuple_SET_ITEM(tuple, 0, py_list);
+    PyTuple_SET_ITEM(tuple, 1, new_marker_obj);
+    return tuple;
+
+error:
+    if (list) {
+        rawstor_string_list_delete(list);
+    }
+    if (marker_ptr != NULL && new_marker_obj == NULL) {
+        free(marker_ptr);
+    }
+    if (py_list != NULL) {
+        Py_DECREF(py_list);
+    }
+    if (new_marker_obj != NULL) {
+        Py_DECREF(new_marker_obj);
+    }
+    return NULL;
+}
+
 PyObject* py_rawstor_object_create(PyObject* Py_UNUSED(self), PyObject* args) {
     const char* target;
     PyObject* spec_obj;

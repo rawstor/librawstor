@@ -21,6 +21,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -28,7 +29,7 @@
 
 namespace {
 
-std::string get_ost_path(const rawstd::URI& location) {
+std::string get_location_path(const rawstd::URI& location) {
     if (location.scheme() != "file") {
         rawstd_error("Unexpected URI scheme: %s\n", location.str().c_str());
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
@@ -41,32 +42,33 @@ std::string get_ost_path(const rawstd::URI& location) {
 }
 
 std::string get_object_spec_path(
-    const std::string& ost_path, const RawstdUUIDString& uuid
+    const std::string& location_path, const RawstdUUIDString& uuid
 ) {
     std::ostringstream oss;
 
-    oss << ost_path << "/" << uuid << ".spec";
+    oss << location_path << "/" << uuid << ".spec";
 
     return oss.str();
 }
 
-std::string
-get_object_dat_path(const std::string& ost_path, const RawstdUUIDString& uuid) {
+std::string get_object_dat_path(
+    const std::string& location_path, const RawstdUUIDString& uuid
+) {
     std::ostringstream oss;
 
-    oss << ost_path << "/" << uuid << ".dat";
+    oss << location_path << "/" << uuid << ".dat";
 
     return oss.str();
 }
 
 void write_dat(
-    const std::string& ost_path, const RawstorObjectSpec& spec,
+    const std::string& location_path, const RawstorObjectSpec& spec,
     const RawstdUUID& id
 ) {
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&id, &uuid_string);
 
-    std::string dat_path = get_object_dat_path(ost_path, uuid_string);
+    std::string dat_path = get_object_dat_path(location_path, uuid_string);
 
     int fd = open(dat_path.c_str(), O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR);
     if (fd == -1) {
@@ -98,11 +100,11 @@ Session::Session(rawio::Queue& queue, const rawstd::URI& location) :
 }
 
 int Session::_connect(const RawstdUUID& id) {
-    std::string ost_path = get_ost_path(location());
+    std::string location_path = get_location_path(location());
 
     RawstdUUIDString id_string;
     rawstd_uuid_to_string(&id, &id_string);
-    std::string dat_path = get_object_dat_path(ost_path, id_string);
+    std::string dat_path = get_object_dat_path(location_path, id_string);
 
     rawstd_info("Connecting to %s...\n", location().str().c_str());
     int fd = open(dat_path.c_str(), O_RDWR | O_NONBLOCK);
@@ -113,12 +115,68 @@ int Session::_connect(const RawstdUUID& id) {
     return fd;
 }
 
+void Session::list(
+    unsigned int limit, const RawstdUUID& marker,
+    std::function<void(std::vector<RawstdUUID>&&, int)>&& cb
+) {
+    std::string location_path = get_location_path(location());
+
+    std::vector<RawstdUUID> uuids;
+    for (const auto& entry :
+         std::filesystem::directory_iterator(location_path)) {
+        if (entry.path().extension().string() != ".dat") {
+            continue;
+        }
+
+        std::string filename = entry.path().stem().string();
+
+        RawstdUUID uuid;
+        int res = rawstd_uuid_from_string(&uuid, filename.c_str());
+        if (res < 0) {
+            rawstd_warning(
+                "%s: %s\n", strerror(-res), entry.path().string().c_str()
+            );
+            continue;
+        }
+
+        uuids.push_back(uuid);
+    }
+
+    std::sort(
+        uuids.begin(), uuids.end(),
+        [](const RawstdUUID& lhs, const RawstdUUID& rhs) {
+            return rawstd_uuid_cmp(&lhs, &rhs);
+        }
+    );
+
+    uuids.erase(
+        uuids.begin(),
+        std::find_if(
+            uuids.begin(), uuids.end(), [&marker](const RawstdUUID& at) {
+                return rawstd_uuid_cmp(&at, &marker) > 0;
+            }
+        )
+    );
+
+    if (limit == 0) {
+        limit = rawstor_opts_list_limit();
+    } else {
+        limit = std::min(limit, rawstor_opts_list_limit());
+    }
+
+    if (uuids.size() > limit) {
+        uuids.resize(limit);
+    }
+
+    cb(std::move(uuids), 0);
+}
+
 void Session::create(
     const RawstdUUID& id, const RawstorObjectSpec& sp,
     std::function<void(int)>&& cb
 ) {
-    std::string ost_path = get_ost_path(location());
-    if (mkdir(ost_path.c_str(), 0755) == -1) {
+    std::string location_path = get_location_path(location());
+    if (mkdir(location_path.c_str(), 0755) == -1) {
         if (errno == EEXIST) {
             errno = 0;
         } else {
@@ -130,7 +188,7 @@ void Session::create(
     rawstd_uuid_to_string(&id, &uuid_string);
 
     std::string spec_path;
-    spec_path = get_object_spec_path(ost_path, uuid_string);
+    spec_path = get_object_spec_path(location_path, uuid_string);
 
     int fd = ::open(
         spec_path.c_str(), O_EXCL | O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR
@@ -145,7 +203,7 @@ void Session::create(
             RAWSTD_THROW_ERRNO();
         }
 
-        write_dat(ost_path, sp, id);
+        write_dat(location_path, sp, id);
 
         if (::close(fd) == -1) {
             RAWSTD_THROW_ERRNO();
@@ -160,12 +218,12 @@ void Session::create(
 }
 
 void Session::remove(const RawstdUUID& id, std::function<void(int)>&& cb) {
-    std::string ost_path = get_ost_path(location());
+    std::string location_path = get_location_path(location());
 
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&id, &uuid_string);
 
-    std::string dat_path = get_object_dat_path(ost_path, uuid_string);
+    std::string dat_path = get_object_dat_path(location_path, uuid_string);
     if (unlink(dat_path.c_str()) == -1) {
         if (errno == ENOENT) {
             errno = 0;
@@ -174,7 +232,7 @@ void Session::remove(const RawstdUUID& id, std::function<void(int)>&& cb) {
         }
     }
 
-    std::string spec_path = get_object_spec_path(ost_path, uuid_string);
+    std::string spec_path = get_object_spec_path(location_path, uuid_string);
     if (unlink(spec_path.c_str()) == -1) {
         if (errno == ENOENT) {
             errno = 0;
@@ -190,12 +248,12 @@ void Session::spec(
     const RawstdUUID& id,
     std::function<void(const RawstorObjectSpec&, int)>&& cb
 ) {
-    std::string ost_path = get_ost_path(location());
+    std::string location_path = get_location_path(location());
 
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&id, &uuid_string);
 
-    std::string spec_path = get_object_spec_path(ost_path, uuid_string);
+    std::string spec_path = get_object_spec_path(location_path, uuid_string);
 
     int fd = ::open(spec_path.c_str(), O_RDONLY);
     if (fd == -1) {

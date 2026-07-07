@@ -4,10 +4,12 @@
 
 #include <stdlib.h>
 
-
 void rawstor_string_list_delete(RawstorStringList* list) {
-    for (const char** it = rawstor_string_list_iter(list); it != NULL; it = rawstor_string_list_next(it)) {
-        free((char*)*it);
+    if (list != NULL) {
+        for (const char** it = rawstor_string_list_iter(list); it != NULL;
+             it = rawstor_string_list_next(it)) {
+            free((char*)*it);
+        }
     }
     rawstd_list_delete((RawstdList*)list);
 }
@@ -27,4 +29,3 @@ int rawstor_string_list_empty(RawstorStringList* list) {
 size_t rawstor_string_list_size(RawstorStringList* list) {
     return rawstd_list_size((RawstdList*)list);
 }
-

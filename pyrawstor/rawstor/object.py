@@ -1,10 +1,18 @@
+from collections.abc import Iterator
+
 from . import librawstor
 
 
 class Object:
     @staticmethod
-    def list(location: str, offset: int, limit: int) -> None:
-        return librawstor.list(location, offset, limit)
+    def list(location: str) -> Iterator[str]:
+        marker = None
+        while True:
+            page, marker = librawstor.object_list(location, 0, marker)
+            for target in page:
+                yield target
+            if marker is None:
+                break
 
     @staticmethod
     def create(target: str, spec: librawstor.ObjectSpec) -> None:

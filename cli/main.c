@@ -233,6 +233,62 @@ static int command_remove(int argc, char** argv) {
     return rawstor_cli_remove(target_arg);
 }
 
+static void command_list_usage(void) {
+    fprintf(
+        stdout,
+        "Rawstor CLI " PACKAGE_VERSION "\n"
+        "\n"
+        "usage: rawstor-cli [options] list [command_options]\n"
+        "\n"
+        "command options:\n"
+        "  -t, --target TARGET   Comma separated list of rawstor backend "
+        "targets\n"
+    );
+};
+
+static int command_list(int argc, char** argv) {
+    const char* optstring = "ht:";
+    struct option longopts[] = {
+        {"help", no_argument, NULL, 'h'},
+        {"target", required_argument, NULL, 't'},
+        {},
+    };
+
+    char* target_arg = NULL;
+    optind = 1;
+    while (1) {
+        int c = getopt_long(argc, argv, optstring, longopts, NULL);
+        if (c == -1) {
+            break;
+        }
+
+        switch (c) {
+        case 'h':
+            command_list_usage();
+            return EXIT_SUCCESS;
+
+        case 't':
+            target_arg = optarg;
+            break;
+
+        default:
+            return EXIT_FAILURE;
+        }
+    }
+
+    if (optind < argc) {
+        fprintf(stderr, "Unexpected argument: %s\n", argv[optind]);
+        return EXIT_FAILURE;
+    }
+
+    if (target_arg == NULL) {
+        fprintf(stderr, "target required\n");
+        return EXIT_FAILURE;
+    }
+
+    return rawstor_cli_show(target_arg);
+}
+
 static void command_show_usage(void) {
     fprintf(
         stdout,
@@ -445,6 +501,8 @@ static int run_command(
         ret = command_create(argc, argv);
     } else if (strcmp(command, "remove") == 0) {
         ret = command_remove(argc, argv);
+    } else if (strcmp(command, "list") == 0) {
+        ret = command_list(argc, argv);
     } else if (strcmp(command, "show") == 0) {
         ret = command_show(argc, argv);
     } else if (strcmp(command, "testio") == 0) {

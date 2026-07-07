@@ -84,9 +84,111 @@ int rawstor_object_spec(
     const char* target, struct RawstorObjectSpec* spec
 ) RAWSTOR_NOEXCEPT;
 
+/**
+ * @brief List objects stored at the given location.
+ *
+ * This function retrieves a list of object identifiers (full target strings)
+ * stored at the specified @p location. The location must be a comma separated
+ * list of valid backend URI as described in the Locations and Targets
+ * documentation. The function supports pagination via the @p marker parameter,
+ * allowing the caller to iterate over large sets of objects.
+ *
+ * The objects are returned in lexicographic order by their UUID. The
+ * @p limit parameter restricts the maximum number of objects returned in a
+ * single call. If @p limit is 0, the backend chooses an appropriate number
+ * of objects to return. The backend may enforce its own maximum limit
+ * (e.g., via the @c RAWSTOR_OPTS_LIST_LIMIT environment variable on the
+ * server side) that caps the actual number of strings returned, regardless
+ * of the @p limit value specified by the caller. If the number of objects
+ * available exceeds the effective limit (either specified by the caller or
+ * chosen by the backend), the function sets @p marker to an opaque string
+ * that must be passed in the subsequent call to continue iteration. When the
+ * end of the list is reached, @p marker is set to NULL.
+ *
+ * The caller is responsible for freeing the returned string list using
+ * @ref rawstor_string_list_delete and for freeing the marker value using
+ * `free()` after the final iteration. The marker is allocated by the library
+ * and must be released by the caller.
+ *
+ * @note The maximum number of strings that can be returned is capped by the
+ *       environment variable @c RAWSTOR_OPTS_LIST_LIMIT if set. If the
+ *       requested @p limit exceeds this cap, the cap value is used instead.
+ *
+ * @param location  Location string specifying the backend and endpoint
+ *                  (e.g., "ost://host:port" or "file:///path"). Must not be
+ *                  NULL and must be a valid location as per the library's
+ *                  format. The behaviour is identical to the @p location
+ *                  parameter of @ref rawstor_object_create_at.
+ * @param limit     Maximum number of objects to return in this call. If 0, the
+ *                  backend chooses the number of objects to return. The actual
+ *                  number of objects returned may also be limited by the
+ *                  backend's internal configuration (e.g., the
+ *                  @c RAWSTOR_OPTS_LIST_LIMIT environment variable on the
+ *                  server side).
+ * @param targets   Output parameter. On success, a pointer to a newly
+ *                  allocated @ref RawstorStringList is stored here. The list
+ *                  contains full target strings (e.g.,
+ *                  "ost://host:port/<uuid>") for each object. The caller must
+ *                  destroy the list using @ref rawstor_string_list_delete when
+ *                  it is no longer needed. The list is owned by the caller
+ *                  after a successful return. On error, the content of this
+ *                  parameter is undefined.
+ * @param marker    Input/Output parameter for pagination. On the first call,
+ *                  the caller must pass a pointer to a NULL pointer
+ *                  (`char **marker = NULL;`). On success, if more objects are
+ *                  available, the function allocates a marker string and stores
+ *                  its address in `*marker`; otherwise, `*marker` is set to
+ *                  NULL. The caller must pass the same marker pointer (with
+ *                  its current value) in subsequent calls to retrieve the next
+ *                  page. After the final iteration (when `*marker` is NULL),
+ *                  the caller must free the last non‑NULL marker value using
+ *                  `free()`. The marker is opaque and must not be modified by
+ *                  the caller.
+ *
+ * @return 0 on success, negative errno on error.
+ * @retval 0         Success. The @p targets list and @p marker are valid.
+ * @retval -ENOMEM   Memory allocation failed (for the list or marker).
+ * @retval -ENOENT   The specified @p location does not exist or is unreachable.
+ * @retval -EIO      I/O error while reading the backend.
+ * @retval -EACCES   Permission denied for the specified location.
+ *
+ * @note If an invalid or corrupted marker is passed (e.g., from a previous
+ *       session or after modifications to the storage), the behaviour is
+ *       undefined; the function may return incomplete or inconsistent results.
+ *
+ * @note The function may return a partial list even if an error occurs
+ *       (e.g., if the backend becomes unavailable mid‑iteration); however,
+ *       in such cases a negative error code is returned and the contents of
+ *       @p targets and @p marker are unspecified. Callers should not rely on
+ *       partial data when an error is returned.
+ *
+ * @see rawstor_string_list_delete
+ * @see rawstor_object_create_at
+ * @see Locations and Targets:
+ * https://github.com/rawstor/librawstor/blob/main/docs/locations_and_targets.md
+ *
+ * @par Example: Iterating over all objects
+ * @code
+ * void* marker = NULL;
+ * do {
+ *     RawstorStringList* list = NULL;
+ *     int ret = rawstor_object_list("ost://localhost:8080", 0, &list, &marker);
+ *     if (ret < 0) {
+ *         // handle error
+ *         break;
+ *     }
+ *     for (const char** iter = rawstor_string_list_iter(); iter != NULL;
+ *          iter = rawstor_string_list_next(iter)) {
+ *         // Process strings in list using *iter.
+ *     }
+ *     rawstor_string_list_delete(list);
+ * } while (marker != NULL);
+ * free(marker); // free the last marker (NULL is safe to free)
+ * @endcode
+ */
 int rawstor_object_list(
-    const char* location, unsigned int offset, unsigned int limit,
-    RawstorStringList** targets, unsigned int *total
+    const char* location, unsigned int limit, RawstorStringList** targets,
+    void** marker
 ) RAWSTOR_NOEXCEPT;
 
 /**

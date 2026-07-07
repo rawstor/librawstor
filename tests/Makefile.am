@@ -19,7 +19,8 @@ test_all_SOURCES = main.cpp \
                    session.cpp \
                    session.hpp \
                    test_io.cpp \
-                   test_lifecycle.cpp
+                   test_lifecycle.cpp \
+                   test_list.cpp
 test_all_LDADD = $(top_builddir)/src/librawstor.la
 
 

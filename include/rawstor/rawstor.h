@@ -23,6 +23,7 @@ struct RawstorOpts {
     unsigned int so_sndtimeo;
     unsigned int so_rcvtimeo;
     unsigned int tcp_user_timeout;
+    unsigned int list_limit;
 };
 
 int rawstor_initialize(const struct RawstorOpts* opts) RAWSTOR_NOEXCEPT;

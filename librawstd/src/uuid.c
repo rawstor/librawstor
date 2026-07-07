@@ -5,6 +5,7 @@
 
 #include <errno.h>
 #include <stdint.h>
+#include <string.h>
 #include <time.h>
 
 static inline uint64_t uuid7_get_timestamp(const struct RawstdUUID* uuid) {
@@ -208,4 +209,10 @@ void rawstd_uuid_to_string(const struct RawstdUUID* uuid, RawstdUUIDString* s) {
         }
     }
     *p = '\0';
+}
+
+int rawstd_uuid_cmp(
+    const struct RawstdUUID* lhs, const struct RawstdUUID* rhs
+) {
+    return memcmp(lhs->bytes, rhs->bytes, sizeof(lhs->bytes));
 }

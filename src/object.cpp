@@ -17,6 +17,8 @@
 #include <unistd.h>
 
 #include <exception>
+#include <list>
+#include <map>
 #include <memory>
 #include <new>
 #include <set>
@@ -108,6 +110,70 @@ Object::Object(rawio::Queue& queue, const std::vector<rawstd::URI>& targets) :
         cn->open(target.parent(), this, rawstor_opts_sessions());
         _cns.push_back(std::move(cn));
     }
+}
+
+std::list<std::vector<rawstd::URI>> Object::list(
+    const std::vector<rawstd::URI>& locations, unsigned int limit, void** marker
+) {
+    validate_not_empty(locations);
+
+    RawstdUUID m = {};
+    if (*marker != nullptr) {
+        m = *static_cast<RawstdUUID*>(*marker);
+    }
+
+    auto cmp = [](const RawstdUUID& lhs, const RawstdUUID& rhs) -> bool {
+        return rawstd_uuid_cmp(&lhs, &rhs) < 0;
+    };
+    std::map<RawstdUUID, std::vector<rawstd::URI>, decltype(cmp)> targets(cmp);
+    for (const auto& location : locations) {
+        std::vector<RawstdUUID> uuids =
+            rawstor::Connection::list(location, limit, m);
+        for (const auto& uuid : uuids) {
+            RawstdUUIDString uuid_string;
+            rawstd_uuid_to_string(&uuid, &uuid_string);
+            targets[uuid].emplace_back(location, uuid_string);
+        }
+    }
+    for (const auto& it : targets) {
+        RawstdUUIDString uuid;
+        rawstd_uuid_to_string(&it.first, &uuid);
+    }
+
+    if (limit == 0) {
+        limit = rawstor_opts_list_limit();
+    } else {
+        limit = std::min(limit, rawstor_opts_list_limit());
+    }
+
+    std::list<std::vector<rawstd::URI>> ret;
+    const RawstdUUID* last_marker = nullptr;
+    bool capped = false;
+    for (const auto& it : targets) {
+        if (ret.size() >= limit) {
+            capped = true;
+            break;
+        }
+        last_marker = &it.first;
+        ret.push_back(it.second);
+    }
+    if (!capped) {
+        last_marker = nullptr;
+    }
+
+    RawstdUUID* next_marker = nullptr;
+    if (last_marker != nullptr) {
+        next_marker = static_cast<RawstdUUID*>(malloc(sizeof(RawstdUUID)));
+        if (next_marker == nullptr) {
+            RAWSTD_THROW_ERRNO();
+        }
+        *next_marker = *last_marker;
+    }
+
+    free(*marker);
+    *marker = next_marker;
+
+    return ret;
 }
 
 void Object::create(
@@ -329,15 +395,14 @@ void Object::pwritev(
 } // namespace rawstor
 
 int rawstor_object_list(
-    const char* location, unsigned int offset, unsigned int limit,
-    RawstorStringList** targets, unsigned int *total
+    const char* location, unsigned int limit, RawstorStringList** targets,
+    void** marker
 ) noexcept {
     RawstorStringList* list = nullptr;
     try {
-        unsigned int count;
         std::vector<rawstd::URI> locations = rawstd::URI::uriv(location);
-        std::vector<std::vector<rawstd::URI>> ret = rawstor::Object::list(
-            locations, offset, limit, &count);
+        std::list<std::vector<rawstd::URI>> ret =
+            rawstor::Object::list(locations, limit, marker);
 
         list = (RawstorStringList*)rawstd_list_create(sizeof(const char*));
         if (list == nullptr) {
@@ -349,35 +414,26 @@ int rawstor_object_list(
             char** it = (char**)rawstd_list_append((RawstdList*)list);
             *it = (char*)malloc(target.length() + 1);
             if (*it == nullptr) {
-                throw std::bad_alloc();
+                RAWSTD_THROW_ERRNO();
             }
             memcpy(*it, target.c_str(), target.length() + 1);
         }
 
         *targets = (RawstorStringList*)list;
-        *total = count;
         return 0;
     } catch (const std::system_error& e) {
-        if (list != nullptr) {
-            rawstor_string_list_delete(list);
-        }
+        rawstor_string_list_delete(list);
         return -e.code().value();
     } catch (const std::bad_alloc& e) {
-        if (list != nullptr) {
-            rawstor_string_list_delete(list);
-        }
+        rawstor_string_list_delete(list);
         return -ENOMEM;
     } catch (const std::exception& e) {
         rawstd_error("%s\n", e.what());
-        if (list != nullptr) {
-            rawstor_string_list_delete(list);
-        }
+        rawstor_string_list_delete(list);
         return -EINVAL;
     } catch (...) {
         rawstd_error("Unexpected error\n");
-        if (list != nullptr) {
-            rawstor_string_list_delete(list);
-        }
+        rawstor_string_list_delete(list);
         return -EINVAL;
     }
 }

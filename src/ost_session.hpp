@@ -13,9 +13,11 @@
 #include <rawstor/rawstor.h>
 
 #include <functional>
+#include <list>
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include <cstddef>
 
@@ -31,12 +33,16 @@ private:
     std::shared_ptr<Context> _context;
 
     int _connect();
-    void _basic(RawstorOSTCommandType cmd, const RawstdUUID& id, uint64_t val);
     void _set_object(Object* object);
 
 public:
     Session(rawio::Queue& queue, const rawstd::URI& location);
     ~Session();
+
+    void list(
+        unsigned int limit, const RawstdUUID& marker,
+        std::function<void(std::vector<RawstdUUID>&&, int)>&& cb
+    ) override;
 
     void create(
         const RawstdUUID& id, const RawstorObjectSpec& sp,
