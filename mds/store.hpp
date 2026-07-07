@@ -133,12 +133,18 @@ public:
      * is the truth, the map is an index over it. Replaces every stored
      * volume in one transaction.
      *
-     * Witness records, standalone objects (all-zero volume_id) and
-     * snapshot versions (stage 2) are skipped. A volume with conflicting
-     * identity records fails with EINVAL, a hole in the chunk index
-     * sequence with EIO: reconstruct must not silently drop a volume it
-     * cannot reassemble, and it cannot invent placement for a chunk with
-     * no surviving copies.
+     * Witness records and standalone objects (all-zero volume_id) are
+     * skipped. A volume with conflicting identity records fails with
+     * EINVAL, a hole in the chunk index sequence with EIO: reconstruct
+     * must not silently drop a volume it cannot reassemble, and it
+     * cannot invent placement for a chunk with no surviving copies.
+     *
+     * Snapshot versions rebuild the registry: a version covering every
+     * one of its chunks is registered (a complete-but-uncommitted
+     * leftover is indistinguishable from a committed snapshot and just
+     * as consistent), a version with a hole is a crashed attempt's
+     * garbage and stays unregistered. Every seen version fences the
+     * volume's next_snap_id either way — reserved ids never repeat.
      *
      * The placement policy knobs (failure_domain, stripe_width, seed) are
      * deliberately not persisted on chunks: the rebuilt descriptor gets

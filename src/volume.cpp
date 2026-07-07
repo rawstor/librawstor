@@ -411,20 +411,34 @@ void Volume::remove(
                     return;
                 }
 
-                auto st = std::make_shared<ProvisionState>(queue);
-                st->map = std::move(map);
-                st->mds = client;
-                st->cb = [id, client, cb = std::move(cb)](int error) mutable {
-                    if (error) {
-                        cb(error);
-                        return;
+                /*
+                 * Unregister first (rawstor_docs/Mds.md, deletion order):
+                 * the MDS is where "the volume still has snapshots"
+                 * refuses with EBUSY — before any data is touched, not
+                 * after — and an unregistered map means no new opens
+                 * while the chunks below are destroyed. A crash in
+                 * between leaves unregistered chunk objects: the same
+                 * garbage class as a crashed snapshot removal.
+                 */
+                client->vol_remove(
+                    id,
+                    [&queue, id, client, map = std::move(map),
+                     cb = std::move(cb)](int error) mutable {
+                        if (error) {
+                            cb(error);
+                            return;
+                        }
+
+                        auto st = std::make_shared<ProvisionState>(queue);
+                        st->map = std::move(map);
+                        st->mds = client;
+                        st->cb = [client,
+                                  cb = std::move(cb)](int error) mutable {
+                            cb(error);
+                        };
+                        remove_next(st);
                     }
-                    client->vol_remove(
-                        id,
-                        [client, cb = std::move(cb)](int error) { cb(error); }
-                    );
-                };
-                remove_next(st);
+                );
             }
         );
     });
@@ -471,6 +485,14 @@ namespace {
  * Per-chunk snapshot walk: open (a regular mirrored open — it establishes
  * exactly the IN-SYNC set), flush + CoW every IN-SYNC member, record the
  * participants, close, next chunk.
+ *
+ * Chunks are walked in DESCENDING index order — chunk 0 is CoW'd last —
+ * so a crashed attempt always leaves a leftover with a hole at the low
+ * indices. The reconstruct scan can then never mistake it for a complete
+ * snapshot: a contiguous 0..max version proves itself, because index 0
+ * exists only when every higher index was already done. (Ascending order
+ * would leave a 0..k prefix, indistinguishable from a legitimately
+ * shorter pre-resize snapshot.)
  */
 struct SnapshotState {
     rawio::Queue& queue;
@@ -478,7 +500,8 @@ struct SnapshotState {
     std::shared_ptr<rawstor::mds::Client> client;
     WireMap map;
     uint64_t snap_id = 0;
-    uint64_t next = 0;
+    /* Counts down; the chunk in flight is remaining - 1. */
+    uint64_t remaining = 0;
     std::vector<rawstor::mds::WireSnapMember> members;
     uint64_t* out = nullptr;
     std::function<void(int)> cb;
@@ -492,7 +515,7 @@ void snapshot_chunk_done(
     const std::shared_ptr<SnapshotState>& st, rawstor::Object* object,
     std::vector<size_t>&& idxs, int error
 ) {
-    uint64_t index = st->next;
+    uint64_t index = st->remaining - 1;
 
     object->close([st, index, idxs = std::move(idxs), error](int close_error
                   ) mutable {
@@ -510,13 +533,13 @@ void snapshot_chunk_done(
             );
         }
 
-        ++st->next;
+        --st->remaining;
         snapshot_next(st);
     });
 }
 
 void snapshot_next(const std::shared_ptr<SnapshotState>& st) {
-    if (st->next == st->map.chunks.size()) {
+    if (st->remaining == 0) {
         st->client->vol_snap_commit(
             st->volume_id, st->snap_id, st->members,
             [st](uint64_t, int error) {
@@ -529,9 +552,11 @@ void snapshot_next(const std::shared_ptr<SnapshotState>& st) {
         return;
     }
 
+    uint64_t index = st->remaining - 1;
+
     try {
         rawstor::Object::open(
-            st->queue, chunk_targets(st->map, st->next),
+            st->queue, chunk_targets(st->map, index),
             [st](rawstor::Object* object, int error) {
                 if (error) {
                     st->cb(error);
@@ -649,6 +674,7 @@ void Volume::snapshot(
                         st->client = client;
                         st->map = std::move(map);
                         st->snap_id = reserved;
+                        st->remaining = st->map.chunks.size();
                         st->out = snap_id;
                         st->cb = std::move(cb);
                         snapshot_next(st);

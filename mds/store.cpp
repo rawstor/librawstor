@@ -445,6 +445,8 @@ void VolumeStore::reconstruct(const std::vector<ScanRecord>& records) {
         uint64_t chunk_size;
         unsigned width;
         std::map<uint64_t, Chunk> chunks;
+        /* snap_id -> its own chunk set (taken before a resize = smaller). */
+        std::map<uint64_t, std::map<uint64_t, Chunk>> snaps;
     };
 
     std::map<std::string, Volume> volumes;
@@ -463,15 +465,6 @@ void VolumeStore::reconstruct(const std::vector<ScanRecord>& records) {
 
         RawstdUUIDString obj_str;
         rawstd_uuid_to_string(&r.obj_id, &obj_str);
-
-        if (r.meta.snap_version != 0) {
-            /* Snapshot views are stage 2. */
-            rawstd_warning(
-                "reconstruct: %s: snapshot version %llu skipped\n", obj_str,
-                static_cast<unsigned long long>(r.meta.snap_version)
-            );
-            continue;
-        }
 
         std::string key(
             reinterpret_cast<const char*>(r.meta.volume_id),
@@ -492,7 +485,12 @@ void VolumeStore::reconstruct(const std::vector<ScanRecord>& records) {
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
         }
 
-        auto [cit, chunk_fresh] = v.chunks.try_emplace(r.meta.logical_index);
+        auto [cit, chunk_fresh] =
+            r.meta.snap_version == 0
+                ? v.chunks.try_emplace(r.meta.logical_index)
+                : v.snaps[r.meta.snap_version].try_emplace(
+                      r.meta.logical_index
+                  );
         Chunk& c = cit->second;
 
         bool duplicate = false;
@@ -520,7 +518,11 @@ void VolumeStore::reconstruct(const std::vector<ScanRecord>& records) {
 
     Transaction tx(_db);
 
-    exec(_db, "DELETE FROM volumes;");
+    exec(
+        _db, "DELETE FROM snapshot_members;"
+             "DELETE FROM snapshots;"
+             "DELETE FROM volumes;"
+    );
 
     for (const auto& [key, v] : volumes) {
         RawstdUUID volume_id;
@@ -534,6 +536,15 @@ void VolumeStore::reconstruct(const std::vector<ScanRecord>& records) {
                 "reconstruct: %s: malformed stored identity\n", vol_str
             );
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
+
+        if (v.chunks.empty()) {
+            /* Snapshot leftovers of a volume whose live data is gone. */
+            rawstd_warning(
+                "reconstruct: %s: only snapshot records survive, skipped\n",
+                vol_str
+            );
+            continue;
         }
 
         /* std::map is ordered: the last key is the highest index. */
@@ -564,6 +575,15 @@ void VolumeStore::reconstruct(const std::vector<ScanRecord>& records) {
         uint64_t logical_size = max_index * v.chunk_size + tail;
 
         /*
+         * Every version ever seen fences the reservation counter — a
+         * leftover of a crashed snapshot attempt must not alias a later
+         * snapshot under a reused id, so it counts even when it is not
+         * registered below.
+         */
+        uint64_t next_snap_id =
+            v.snaps.empty() ? 1 : v.snaps.rbegin()->first + 1;
+
+        /*
          * The policy knobs are not persisted on chunks: existing chunks
          * keep their placement (the map below is explicit), the rebuilt
          * descriptor constrains only future resizes — weakest domain, so
@@ -574,8 +594,8 @@ void VolumeStore::reconstruct(const std::vector<ScanRecord>& records) {
                 _db, "INSERT INTO volumes"
                      " (volume_id, logical_size, chunk_size, width,"
                      " failure_domain, stripe_width, placement_seed,"
-                     " map_epoch, created_at)"
-                     " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);"
+                     " map_epoch, created_at, next_snap_id)"
+                     " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
             );
             insert.bind_blob(1, volume_id.bytes, sizeof(volume_id.bytes))
                 .bind_int64(2, logical_size)
@@ -588,25 +608,81 @@ void VolumeStore::reconstruct(const std::vector<ScanRecord>& records) {
                 .bind_int64(7, 0)
                 .bind_int64(8, 1)
                 .bind_int64(9, static_cast<uint64_t>(time(nullptr)))
+                .bind_int64(10, next_snap_id)
                 .step();
         }
 
-        Stmt insert(
-            _db, "INSERT INTO chunk_map"
-                 " (volume_id, logical_index, slot_index, ost_id)"
-                 " VALUES (?, ?, ?, ?);"
-        );
-        for (const auto& [index, chunk] : v.chunks) {
-            for (size_t slot = 0; slot < chunk.ost_ids.size(); ++slot) {
-                insert.reset();
+        {
+            Stmt insert(
+                _db, "INSERT INTO chunk_map"
+                     " (volume_id, logical_index, slot_index, ost_id)"
+                     " VALUES (?, ?, ?, ?);"
+            );
+            for (const auto& [index, chunk] : v.chunks) {
+                for (size_t slot = 0; slot < chunk.ost_ids.size(); ++slot) {
+                    insert.reset();
+                    insert
+                        .bind_blob(1, volume_id.bytes, sizeof(volume_id.bytes))
+                        .bind_int64(2, index)
+                        .bind_int64(3, slot)
+                        .bind_blob(
+                            4, chunk.ost_ids[slot].bytes,
+                            sizeof(chunk.ost_ids[slot].bytes)
+                        )
+                        .step();
+                }
+            }
+        }
+
+        /*
+         * Snapshot views: a version that covers every one of its chunks
+         * is registered — a complete-but-uncommitted leftover is
+         * indistinguishable from a committed snapshot and just as
+         * consistent (drain + FLUSH preceded its CoWs). A version with a
+         * hole is the leftover of a crashed attempt: garbage, left for
+         * collection, never registered.
+         */
+        for (const auto& [snap_id, snap_chunks] : v.snaps) {
+            uint64_t snap_max = snap_chunks.rbegin()->first;
+            uint64_t snap_tail =
+                std::min(snap_chunks.rbegin()->second.size, v.chunk_size);
+            if (snap_chunks.size() != snap_max + 1 || snap_tail == 0) {
+                rawstd_warning(
+                    "reconstruct: %s@%llu: incomplete snapshot leftover, "
+                    "not registered\n",
+                    vol_str, static_cast<unsigned long long>(snap_id)
+                );
+                continue;
+            }
+
+            {
+                Stmt insert(
+                    _db, "INSERT INTO snapshots"
+                         " (volume_id, snap_id, logical_size, created_at)"
+                         " VALUES (?, ?, ?, ?);"
+                );
                 insert.bind_blob(1, volume_id.bytes, sizeof(volume_id.bytes))
-                    .bind_int64(2, index)
-                    .bind_int64(3, slot)
-                    .bind_blob(
-                        4, chunk.ost_ids[slot].bytes,
-                        sizeof(chunk.ost_ids[slot].bytes)
-                    )
+                    .bind_int64(2, snap_id)
+                    .bind_int64(3, snap_max * v.chunk_size + snap_tail)
+                    .bind_int64(4, static_cast<uint64_t>(time(nullptr)))
                     .step();
+            }
+
+            Stmt insert(
+                _db, "INSERT INTO snapshot_members"
+                     " (volume_id, snap_id, logical_index, ost_id)"
+                     " VALUES (?, ?, ?, ?);"
+            );
+            for (const auto& [index, chunk] : snap_chunks) {
+                for (const RawstdUUID& ost : chunk.ost_ids) {
+                    insert.reset();
+                    insert
+                        .bind_blob(1, volume_id.bytes, sizeof(volume_id.bytes))
+                        .bind_int64(2, snap_id)
+                        .bind_int64(3, index)
+                        .bind_blob(4, ost.bytes, sizeof(ost.bytes))
+                        .step();
+                }
             }
         }
     }

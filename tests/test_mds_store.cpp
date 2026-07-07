@@ -393,6 +393,57 @@ TEST(MdsStoreTest, reconstruct_rebuilds_map) {
     EXPECT_THROW(store.open(stale.volume_id, 0), std::system_error);
 }
 
+TEST(MdsStoreTest, reconstruct_snapshot_views) {
+    Topology topology = topology_4_hosts();
+    const RawstdUUID& ost1 = topology.osts()[0].id;
+    const RawstdUUID& ost2 = topology.osts()[1].id;
+
+    RawstdUUID volume_id = fresh_uuid();
+
+    auto snap_record = [&](const RawstdUUID& ost, uint64_t index,
+                           uint64_t version) {
+        rawstor::mds::ScanRecord r =
+            scan_record(ost, volume_id, index, 1ull << 20, 1ull << 20, 2);
+        r.meta.snap_version = version;
+        return r;
+    };
+
+    std::vector<rawstor::mds::ScanRecord> records = {
+        /* Live: 2 chunks x 2 copies. */
+        scan_record(ost1, volume_id, 0, 1ull << 20, 1ull << 20, 2),
+        scan_record(ost2, volume_id, 0, 1ull << 20, 1ull << 20, 2),
+        scan_record(ost1, volume_id, 1, 1ull << 20, 1ull << 20, 2),
+        scan_record(ost2, volume_id, 1, 1ull << 20, 1ull << 20, 2),
+        /* Snapshot 3: complete — registers. */
+        snap_record(ost1, 0, 3),
+        snap_record(ost2, 0, 3),
+        snap_record(ost1, 1, 3),
+        /*
+         * Snapshot 5: chunk 0 missing — a crashed attempt's garbage.
+         * (Chunks are CoW'd in descending order, so a partial leftover
+         * always misses the low indices and can never be mistaken for a
+         * legitimately shorter pre-resize snapshot.)
+         */
+        snap_record(ost1, 1, 5),
+    };
+
+    VolumeStore store(db_path("reconstruct_snap.db"), topology);
+    store.reconstruct(records);
+
+    /* The complete version is served... */
+    VolumeMap view = store.open(volume_id, 3);
+    EXPECT_EQ(view.descriptor.logical_size, 2ull << 20);
+    ASSERT_EQ(view.chunks.size(), 2u);
+    EXPECT_EQ(view.chunks[0].size(), 2u);
+    EXPECT_EQ(view.chunks[1].size(), 1u);
+
+    /* ...the incomplete one is not. */
+    EXPECT_THROW(store.open(volume_id, 5), std::system_error);
+
+    /* Every seen version fences the counter, garbage included. */
+    EXPECT_EQ(store.snap_begin(volume_id), 6u);
+}
+
 TEST(MdsStoreTest, reconstruct_degraded_and_broken_volumes) {
     Topology topology = topology_4_hosts();
     const RawstdUUID& ost1 = topology.osts()[0].id;

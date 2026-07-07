@@ -347,8 +347,13 @@ int list_complete(int result, void* data) noexcept {
 
         for (size_t i = 0; i < ctx->nentries; ++i) {
             const RawstorObjectListEntry& e = ctx->entries[i];
+            /* Every snapshot version is its own record: dedup by both. */
             std::string key(
                 reinterpret_cast<const char*>(e.obj_id), sizeof(e.obj_id)
+            );
+            key.append(
+                reinterpret_cast<const char*>(&e.meta.snap_version),
+                sizeof(e.meta.snap_version)
             );
             if (!ctx->seen.insert(key).second) {
                 continue;
