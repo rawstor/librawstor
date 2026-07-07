@@ -1,4 +1,5 @@
 #include "create.h"
+#include "list.h"
 #include "remove.h"
 #include "show.h"
 #include "testio.h"
@@ -34,6 +35,7 @@ static void usage(void) {
         "  -v, --version         Rawstor version\n"
         "\n"
         "command:\n"
+        "  list                  List rawstor objects\n"
         "  create                Create rawstor object\n"
         "  remove                Remove rawstor object\n"
         "  show                  Show rawstor object\n"
@@ -238,23 +240,26 @@ static void command_list_usage(void) {
         stdout,
         "Rawstor CLI " PACKAGE_VERSION "\n"
         "\n"
-        "usage: rawstor-cli [options] list [command_options]\n"
+        "usage: rawstor-cli [options] list -l LOCATION [command_options]\n"
+        "\n"
+        "list objects stored at the given location(s):\n"
+        "  -l, --location LOCATION\n"
+        "                        Comma-separated list of rawstor backend locations.\n"
         "\n"
         "command options:\n"
-        "  -t, --target TARGET   Comma separated list of rawstor backend "
-        "targets\n"
+        "  -h, --help            Show this help message and exit\n"
     );
 };
 
 static int command_list(int argc, char** argv) {
-    const char* optstring = "ht:";
+    const char* optstring = "hl:";
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
-        {"target", required_argument, NULL, 't'},
+        {"location", required_argument, NULL, 'l'},
         {},
     };
 
-    char* target_arg = NULL;
+    char* location_arg = NULL;
     optind = 1;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
@@ -267,8 +272,8 @@ static int command_list(int argc, char** argv) {
             command_list_usage();
             return EXIT_SUCCESS;
 
-        case 't':
-            target_arg = optarg;
+        case 'l':
+            location_arg = optarg;
             break;
 
         default:
@@ -281,12 +286,12 @@ static int command_list(int argc, char** argv) {
         return EXIT_FAILURE;
     }
 
-    if (target_arg == NULL) {
-        fprintf(stderr, "target required\n");
+    if (location_arg == NULL) {
+        fprintf(stderr, "location required\n");
         return EXIT_FAILURE;
     }
 
-    return rawstor_cli_show(target_arg);
+    return rawstor_cli_list(location_arg);
 }
 
 static void command_show_usage(void) {

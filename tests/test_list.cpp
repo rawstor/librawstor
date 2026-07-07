@@ -24,7 +24,7 @@ rawstd::URI get_location_uri(const std::string& name) {
 }
 
 TEST(ListTest, empty) {
-    rawstd::URI location = get_location_uri("test_objects1");
+    rawstd::URI location = get_location_uri("test_objects");
 
     RawstorStringList* targets;
     void* marker = nullptr;

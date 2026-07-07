@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+
 typedef struct {
     unsigned int index;
     off_t offset;
@@ -19,6 +20,7 @@ typedef struct {
     unsigned int iteration;
     unsigned int niterations;
 } Worker;
+
 
 static Worker* worker_create(
     unsigned int index, uint64_t block_size, unsigned int* counter,

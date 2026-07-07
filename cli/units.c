@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
+
 static int unit_to_shift(const char unit) {
     switch (unit) {
     case 'b':
