@@ -56,6 +56,17 @@ extern "C" {
 #define RAWSTOR_CMD_VOL_OPEN 0x41
 #define RAWSTOR_CMD_VOL_RESIZE 0x42
 #define RAWSTOR_CMD_VOL_REMOVE 0x43
+/*
+ * Volume snapshots are two-phase (rawstor_docs/Mds.md, "Snapshots"): BEGIN
+ * durably reserves the snap_id (never reused - leftovers of a crashed
+ * attempt must not alias a later snapshot), the client then drains, takes
+ * the per-chunk CoW snapshots, and COMMIT registers exactly who holds
+ * them. REMOVE unregisters first (no new readers) and returns the member
+ * set for the client's fan-out destroy.
+ */
+#define RAWSTOR_CMD_VOL_SNAP_BEGIN 0x44
+#define RAWSTOR_CMD_VOL_SNAP_COMMIT 0x45
+#define RAWSTOR_CMD_VOL_SNAP_REMOVE 0x46
 
 typedef uint16_t RawstorOSTCommandType;
 
@@ -255,6 +266,37 @@ struct RawstorVolChunkSlot {
     uint8_t slot_index;
     uint8_t ost_id[16];
     char address[RAWSTOR_VOL_ADDRESS_LEN];
+} RAWSTOR_PACKED;
+
+/* VOL_SNAP_BEGIN response payload: the durably reserved snap_id. */
+struct RawstorVolSnapBeganBody {
+    uint64_t snap_id;
+} RAWSTOR_PACKED;
+
+/*
+ * VOL_SNAP_COMMIT request: the body is followed by nmembers member
+ * records - the chunk copies that actually hold the snapshot (the
+ * IN-SYNC set at creation; a degraded volume snapshots with less
+ * redundancy, recorded, not repaired - see Mds.md).
+ *
+ * VOL_SNAP_REMOVE rides RawstorOSTFrameBasic (obj_id = volume_id,
+ * val = snap_id); its response payload is res member records: what was
+ * registered, for the fan-out destroy.
+ */
+struct RawstorVolSnapCommitBody {
+    uint8_t volume_id[16];
+    uint64_t snap_id;
+    uint32_t nmembers;
+} RAWSTOR_PACKED;
+
+struct RawstorVolSnapMemberBody {
+    uint64_t logical_index;
+    uint8_t ost_id[16];
+} RAWSTOR_PACKED;
+
+/* VOL_SNAP_COMMIT response payload. */
+struct RawstorVolSnapCommittedBody {
+    uint64_t map_epoch;
 } RAWSTOR_PACKED;
 
 /*

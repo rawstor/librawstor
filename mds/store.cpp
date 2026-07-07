@@ -28,7 +28,8 @@ constexpr const char* SCHEMA =
     "  stripe_width INTEGER NOT NULL,"
     "  placement_seed INTEGER NOT NULL,"
     "  map_epoch INTEGER NOT NULL,"
-    "  created_at INTEGER NOT NULL"
+    "  created_at INTEGER NOT NULL,"
+    "  next_snap_id INTEGER NOT NULL DEFAULT 1"
     ");"
     "CREATE TABLE IF NOT EXISTS chunk_map ("
     "  volume_id BLOB NOT NULL"
@@ -37,6 +38,26 @@ constexpr const char* SCHEMA =
     "  slot_index INTEGER NOT NULL,"
     "  ost_id BLOB NOT NULL,"
     "  PRIMARY KEY (volume_id, logical_index, slot_index)"
+    ") WITHOUT ROWID;"
+    /*
+     * No ON DELETE CASCADE from volumes: a volume with snapshots must
+     * not silently disappear — remove() refuses with EBUSY.
+     */
+    "CREATE TABLE IF NOT EXISTS snapshots ("
+    "  volume_id BLOB NOT NULL REFERENCES volumes(volume_id),"
+    "  snap_id INTEGER NOT NULL,"
+    "  logical_size INTEGER NOT NULL,"
+    "  created_at INTEGER NOT NULL,"
+    "  PRIMARY KEY (volume_id, snap_id)"
+    ") WITHOUT ROWID;"
+    "CREATE TABLE IF NOT EXISTS snapshot_members ("
+    "  volume_id BLOB NOT NULL,"
+    "  snap_id INTEGER NOT NULL,"
+    "  logical_index INTEGER NOT NULL,"
+    "  ost_id BLOB NOT NULL,"
+    "  PRIMARY KEY (volume_id, snap_id, logical_index, ost_id),"
+    "  FOREIGN KEY (volume_id, snap_id)"
+    "    REFERENCES snapshots(volume_id, snap_id) ON DELETE CASCADE"
     ") WITHOUT ROWID;";
 
 [[noreturn]] void throw_sqlite(sqlite3* db, const char* what) {
@@ -222,6 +243,23 @@ VolumeStore::VolumeStore(const std::string& path, Topology topology) :
         exec(_db, "PRAGMA synchronous=FULL;");
         exec(_db, "PRAGMA foreign_keys=ON;");
         exec(_db, SCHEMA);
+
+        /*
+         * A pre-snapshot database has a volumes table without
+         * next_snap_id (CREATE IF NOT EXISTS keeps it as is): the column
+         * itself is the version marker.
+         */
+        sqlite3_stmt* probe = nullptr;
+        if (sqlite3_prepare_v2(
+                _db, "SELECT next_snap_id FROM volumes LIMIT 1;", -1, &probe,
+                nullptr
+            ) != SQLITE_OK) {
+            exec(
+                _db, "ALTER TABLE volumes"
+                     " ADD COLUMN next_snap_id INTEGER NOT NULL DEFAULT 1;"
+            );
+        }
+        sqlite3_finalize(probe);
     } catch (...) {
         sqlite3_close(_db);
         throw;
@@ -307,8 +345,7 @@ VolumeDescriptor VolumeStore::create(
 
 VolumeMap VolumeStore::open(const RawstdUUID& volume_id, uint64_t snap_id) {
     if (snap_id != 0) {
-        /* Snapshots are stage 2. */
-        RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
+        return _open_snapshot(volume_id, snap_id);
     }
 
     VolumeMap ret{};
@@ -586,6 +623,18 @@ void VolumeStore::remove(const RawstdUUID& volume_id) {
     Transaction tx(_db);
 
     {
+        /* A volume with snapshots must not silently disappear. */
+        Stmt busy(
+            _db, "SELECT snap_id FROM snapshots WHERE volume_id = ? LIMIT 1;"
+        );
+        busy.bind_blob(1, volume_id.bytes, sizeof(volume_id.bytes));
+        if (busy.step()) {
+            rawstd_error("Volume has snapshots; remove them first\n");
+            RAWSTD_THROW_SYSTEM_ERROR(EBUSY);
+        }
+    }
+
+    {
         Stmt del(_db, "DELETE FROM volumes WHERE volume_id = ?;");
         del.bind_blob(1, volume_id.bytes, sizeof(volume_id.bytes)).step();
     }
@@ -595,6 +644,229 @@ void VolumeStore::remove(const RawstdUUID& volume_id) {
     }
 
     tx.commit();
+}
+
+VolumeMap
+VolumeStore::_open_snapshot(const RawstdUUID& volume_id, uint64_t snap_id) {
+    VolumeMap ret{};
+    ret.descriptor = _descriptor(volume_id);
+
+    {
+        Stmt select(
+            _db, "SELECT logical_size FROM snapshots"
+                 " WHERE volume_id = ? AND snap_id = ?;"
+        );
+        select.bind_blob(1, volume_id.bytes, sizeof(volume_id.bytes))
+            .bind_int64(2, snap_id);
+        if (!select.step()) {
+            RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
+        }
+        /* The size the volume had when the snapshot was taken. */
+        ret.descriptor.logical_size = select.column_int64(0);
+    }
+
+    uint64_t nchunks =
+        nchunks_of(ret.descriptor.logical_size, ret.descriptor.chunk_size);
+    ret.chunks.resize(nchunks);
+
+    Stmt select(
+        _db, "SELECT logical_index, ost_id FROM snapshot_members"
+             " WHERE volume_id = ? AND snap_id = ?"
+             " ORDER BY logical_index, ost_id;"
+    );
+    select.bind_blob(1, volume_id.bytes, sizeof(volume_id.bytes))
+        .bind_int64(2, snap_id);
+
+    uint64_t prev_index = 0;
+    uint8_t slot = 0;
+    while (select.step()) {
+        uint64_t index = select.column_int64(0);
+        if (index >= nchunks) {
+            rawstd_error("MDS store: snapshot member out of bounds\n");
+            RAWSTD_THROW_SYSTEM_ERROR(EIO);
+        }
+        if (index != prev_index) {
+            prev_index = index;
+            slot = 0;
+        }
+        PlacementSlot member{};
+        member.slot_index = slot++;
+        select.column_uuid(1, &member.ost_id);
+        ret.chunks[index].push_back(member);
+    }
+
+    /* snap_commit() never registers a snapshot with an uncovered chunk. */
+    for (size_t index = 0; index < ret.chunks.size(); ++index) {
+        if (ret.chunks[index].empty()) {
+            rawstd_error("MDS store: snapshot is missing a chunk\n");
+            RAWSTD_THROW_SYSTEM_ERROR(EIO);
+        }
+    }
+
+    return ret;
+}
+
+uint64_t VolumeStore::snap_begin(const RawstdUUID& volume_id) {
+    Transaction tx(_db);
+
+    uint64_t snap_id;
+    {
+        Stmt select(
+            _db, "SELECT next_snap_id FROM volumes WHERE volume_id = ?;"
+        );
+        select.bind_blob(1, volume_id.bytes, sizeof(volume_id.bytes));
+        if (!select.step()) {
+            RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
+        }
+        snap_id = select.column_int64(0);
+    }
+
+    {
+        Stmt update(
+            _db, "UPDATE volumes SET next_snap_id = ? WHERE volume_id = ?;"
+        );
+        update.bind_int64(1, snap_id + 1)
+            .bind_blob(2, volume_id.bytes, sizeof(volume_id.bytes))
+            .step();
+    }
+
+    /* Durable before the id is handed out: reserved ids never repeat. */
+    tx.commit();
+
+    return snap_id;
+}
+
+uint64_t VolumeStore::snap_commit(
+    const RawstdUUID& volume_id, uint64_t snap_id,
+    const std::vector<SnapMember>& members
+) {
+    VolumeDescriptor descriptor = _descriptor(volume_id);
+    uint64_t nchunks =
+        nchunks_of(descriptor.logical_size, descriptor.chunk_size);
+
+    if (snap_id == 0) {
+        rawstd_error("Snapshot id 0 is the live version\n");
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+
+    {
+        /* The id must have been reserved by snap_begin(). */
+        Stmt select(
+            _db, "SELECT next_snap_id FROM volumes WHERE volume_id = ?;"
+        );
+        select.bind_blob(1, volume_id.bytes, sizeof(volume_id.bytes));
+        if (!select.step() || snap_id >= select.column_int64(0)) {
+            rawstd_error("Snapshot id was never reserved\n");
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
+    }
+
+    /*
+     * Every chunk must be covered: an unreadable snapshot is never
+     * registered. (A degraded volume legitimately registers fewer members
+     * per chunk than the policy width — recorded, not repaired.)
+     */
+    std::vector<bool> covered(nchunks, false);
+    for (const SnapMember& m : members) {
+        if (m.logical_index >= nchunks) {
+            rawstd_error("Snapshot member out of volume bounds\n");
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
+        covered[m.logical_index] = true;
+    }
+    for (bool c : covered) {
+        if (!c) {
+            rawstd_error("Snapshot does not cover every chunk\n");
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
+    }
+
+    uint64_t map_epoch = descriptor.map_epoch + 1;
+
+    Transaction tx(_db);
+
+    {
+        Stmt insert(
+            _db, "INSERT INTO snapshots"
+                 " (volume_id, snap_id, logical_size, created_at)"
+                 " VALUES (?, ?, ?, ?);"
+        );
+        insert.bind_blob(1, volume_id.bytes, sizeof(volume_id.bytes))
+            .bind_int64(2, snap_id)
+            .bind_int64(3, descriptor.logical_size)
+            .bind_int64(4, static_cast<uint64_t>(time(nullptr)))
+            .step();
+    }
+
+    {
+        Stmt insert(
+            _db, "INSERT INTO snapshot_members"
+                 " (volume_id, snap_id, logical_index, ost_id)"
+                 " VALUES (?, ?, ?, ?);"
+        );
+        for (const SnapMember& m : members) {
+            insert.reset();
+            insert.bind_blob(1, volume_id.bytes, sizeof(volume_id.bytes))
+                .bind_int64(2, snap_id)
+                .bind_int64(3, m.logical_index)
+                .bind_blob(4, m.ost_id.bytes, sizeof(m.ost_id.bytes))
+                .step();
+        }
+    }
+
+    {
+        Stmt update(
+            _db, "UPDATE volumes SET map_epoch = ? WHERE volume_id = ?;"
+        );
+        update.bind_int64(1, map_epoch)
+            .bind_blob(2, volume_id.bytes, sizeof(volume_id.bytes))
+            .step();
+    }
+
+    tx.commit();
+
+    return map_epoch;
+}
+
+std::vector<SnapMember>
+VolumeStore::snap_remove(const RawstdUUID& volume_id, uint64_t snap_id) {
+    std::vector<SnapMember> ret;
+
+    Transaction tx(_db);
+
+    {
+        Stmt select(
+            _db, "SELECT logical_index, ost_id FROM snapshot_members"
+                 " WHERE volume_id = ? AND snap_id = ?"
+                 " ORDER BY logical_index, ost_id;"
+        );
+        select.bind_blob(1, volume_id.bytes, sizeof(volume_id.bytes))
+            .bind_int64(2, snap_id);
+        while (select.step()) {
+            SnapMember m{};
+            m.logical_index = select.column_int64(0);
+            select.column_uuid(1, &m.ost_id);
+            ret.push_back(m);
+        }
+    }
+
+    {
+        Stmt del(
+            _db, "DELETE FROM snapshots"
+                 " WHERE volume_id = ? AND snap_id = ?;"
+        );
+        del.bind_blob(1, volume_id.bytes, sizeof(volume_id.bytes))
+            .bind_int64(2, snap_id)
+            .step();
+    }
+
+    if (sqlite3_changes(_db) == 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
+    }
+
+    tx.commit();
+
+    return ret;
 }
 
 } // namespace mds

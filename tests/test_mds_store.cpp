@@ -188,6 +188,131 @@ TEST(MdsStoreTest, invalid_geometry_and_unsatisfiable_policy) {
     );
 }
 
+TEST(MdsStoreTest, snapshot_lifecycle) {
+    std::string path = db_path("snapshot.db");
+    Topology topology = topology_4_hosts();
+
+    RawstdUUID volume_id;
+    uint64_t snap_id;
+
+    {
+        VolumeStore store(path, topology);
+
+        /* 2 MiB volume, 1 MiB chunks: 2 chunks x 2 slots. */
+        VolumeDescriptor d =
+            store.create(fresh_uuid(), 2ull << 20, 1ull << 20, mirror2());
+        volume_id = d.volume_id;
+
+        snap_id = store.snap_begin(volume_id);
+        EXPECT_EQ(snap_id, 1u);
+
+        /* Uncommitted: the reservation alone registers nothing. */
+        EXPECT_THROW(store.open(volume_id, snap_id), std::system_error);
+
+        VolumeMap live = store.open(volume_id, 0);
+        std::vector<rawstor::mds::SnapMember> members;
+        for (size_t index = 0; index < live.chunks.size(); ++index) {
+            for (const PlacementSlot& slot : live.chunks[index]) {
+                members.push_back({index, slot.ost_id});
+            }
+        }
+
+        uint64_t map_epoch = store.snap_commit(volume_id, snap_id, members);
+        EXPECT_EQ(map_epoch, 2u);
+
+        /* Registering the same id twice would alias two points in time. */
+        EXPECT_THROW(
+            store.snap_commit(volume_id, snap_id, members), std::system_error
+        );
+        /* An id that was never reserved is refused. */
+        EXPECT_THROW(
+            store.snap_commit(volume_id, 42, members), std::system_error
+        );
+    }
+
+    /* The registry and the reservation counter survive a reopen. */
+    VolumeStore store(path, topology);
+
+    VolumeMap view = store.open(volume_id, snap_id);
+    EXPECT_EQ(view.descriptor.logical_size, 2ull << 20);
+    ASSERT_EQ(view.chunks.size(), 2u);
+    for (const std::vector<PlacementSlot>& slots : view.chunks) {
+        EXPECT_EQ(slots.size(), 2u);
+    }
+
+    /* Reserved ids never repeat, even after the snapshot is gone. */
+    EXPECT_EQ(store.snap_begin(volume_id), 2u);
+
+    /* The volume must not disappear under its snapshots. */
+    EXPECT_THROW(store.remove(volume_id), std::system_error);
+
+    std::vector<rawstor::mds::SnapMember> removed =
+        store.snap_remove(volume_id, snap_id);
+    EXPECT_EQ(removed.size(), 4u);
+    EXPECT_THROW(store.open(volume_id, snap_id), std::system_error);
+    EXPECT_THROW(store.snap_remove(volume_id, snap_id), std::system_error);
+
+    store.remove(volume_id);
+}
+
+TEST(MdsStoreTest, snapshot_must_cover_every_chunk) {
+    VolumeStore store(db_path("snapshot_cover.db"), topology_4_hosts());
+
+    VolumeDescriptor d =
+        store.create(fresh_uuid(), 2ull << 20, 1ull << 20, mirror2());
+
+    uint64_t snap_id = store.snap_begin(d.volume_id);
+
+    VolumeMap live = store.open(d.volume_id, 0);
+
+    /* Chunk 1 has no member: an unreadable snapshot is never registered. */
+    std::vector<rawstor::mds::SnapMember> holed = {
+        {0, live.chunks[0][0].ost_id},
+        {0, live.chunks[0][1].ost_id},
+    };
+    EXPECT_THROW(
+        store.snap_commit(d.volume_id, snap_id, holed), std::system_error
+    );
+
+    /* A degraded snapshot (one member of two on a chunk) registers. */
+    std::vector<rawstor::mds::SnapMember> degraded = {
+        {0, live.chunks[0][0].ost_id},
+        {0, live.chunks[0][1].ost_id},
+        {1, live.chunks[1][0].ost_id},
+    };
+    EXPECT_EQ(store.snap_commit(d.volume_id, snap_id, degraded), 2u);
+
+    VolumeMap view = store.open(d.volume_id, snap_id);
+    ASSERT_EQ(view.chunks.size(), 2u);
+    EXPECT_EQ(view.chunks[0].size(), 2u);
+    EXPECT_EQ(view.chunks[1].size(), 1u);
+}
+
+TEST(MdsStoreTest, snapshot_freezes_size_across_resize) {
+    VolumeStore store(db_path("snapshot_resize.db"), topology_4_hosts());
+
+    VolumeDescriptor d =
+        store.create(fresh_uuid(), 2ull << 20, 1ull << 20, mirror2());
+
+    uint64_t snap_id = store.snap_begin(d.volume_id);
+    VolumeMap live = store.open(d.volume_id, 0);
+    std::vector<rawstor::mds::SnapMember> members;
+    for (size_t index = 0; index < live.chunks.size(); ++index) {
+        for (const PlacementSlot& slot : live.chunks[index]) {
+            members.push_back({index, slot.ost_id});
+        }
+    }
+    store.snap_commit(d.volume_id, snap_id, members);
+
+    store.resize(d.volume_id, 4ull << 20);
+
+    /* The live view grew; the snapshot view kept its size. */
+    EXPECT_EQ(store.open(d.volume_id, 0).chunks.size(), 4u);
+    VolumeMap view = store.open(d.volume_id, snap_id);
+    EXPECT_EQ(view.descriptor.logical_size, 2ull << 20);
+    EXPECT_EQ(view.chunks.size(), 2u);
+}
+
 rawstor::mds::ScanRecord scan_record(
     const RawstdUUID& ost_id, const RawstdUUID& volume_id, uint64_t index,
     uint64_t chunk_size, uint64_t size, unsigned width
