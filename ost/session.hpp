@@ -99,6 +99,8 @@ private:
     void _close_after_response(const RawstorOSTFrameHead& head, int32_t res);
 
     std::vector<rawstd::URI> _targets(const RawstdUUID& uuid);
+    /* snap != 0 appends "@<snap>": the immutable snapshot version. */
+    std::vector<rawstd::URI> _targets(const RawstdUUID& uuid, uint64_t snap);
 
 public:
     Session(RawIOQueue* queue, Server& server, int fd);

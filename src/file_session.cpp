@@ -322,9 +322,15 @@ void Session::remove(const RawstdUUID& id, std::function<void(int)>&& cb) {
 }
 
 void Session::meta(
-    const RawstdUUID& id,
+    const RawstdUUID& id, uint64_t snap,
     std::function<void(const RawstorObjectMeta&, int)>&& cb
 ) {
+    /* No CoW on plain files: there are no snapshot versions to query. */
+    if (snap != 0) {
+        cb({}, ENOTSUP);
+        return;
+    }
+
     auto ret = std::make_shared<RawstorObjectMeta>();
 
     run_in_worker(
@@ -515,6 +521,12 @@ void Session::snap_remove(
 void Session::set_object(Object* object, std::function<void(int)>&& cb) {
     if (fd() != -1) {
         throw std::runtime_error("Object already set");
+    }
+
+    /* No CoW on plain files: no snapshot version to bind. */
+    if (object->snap() != 0) {
+        cb(ENOTSUP);
+        return;
     }
 
     std::string ost_path = get_ost_path(location());

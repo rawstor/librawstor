@@ -938,7 +938,8 @@ void Session::_set_object(
     RawstdUUID uuid;
     memcpy(uuid.bytes, body.obj_id, sizeof(body.obj_id));
 
-    std::vector<rawstd::URI> targets = _targets(uuid);
+    /* val = bound snapshot version (0 = live). */
+    std::vector<rawstd::URI> targets = _targets(uuid, body.val);
 
     auto ctx =
         std::make_unique<OpenCtx>(OpenCtx{_queue, _fd, head.cid, _alive, this});
@@ -1066,7 +1067,8 @@ void Session::_spec(
     RawstdUUID uuid;
     memcpy(uuid.bytes, body.obj_id, sizeof(body.obj_id));
 
-    std::vector<rawstd::URI> targets = _targets(uuid);
+    /* val = queried snapshot version (0 = live). */
+    std::vector<rawstd::URI> targets = _targets(uuid, body.val);
 
     auto ctx = std::make_unique<SpecCtx>();
     ctx->queue = _queue;
@@ -1253,13 +1255,23 @@ void Session::_close_after_response(
 }
 
 std::vector<rawstd::URI> Session::_targets(const RawstdUUID& uuid) {
+    return _targets(uuid, 0);
+}
+
+std::vector<rawstd::URI> Session::_targets(const RawstdUUID& uuid, uint64_t snap) {
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&uuid, &uuid_string);
+
+    std::string name = uuid_string;
+    if (snap != 0) {
+        /* "<uuid>@<snap_id>": an immutable snapshot version. */
+        name += "@" + std::to_string(snap);
+    }
 
     std::vector<rawstd::URI> ret;
     ret.reserve(_server.locations().size());
     for (const auto& location : _server.locations()) {
-        ret.emplace_back(location, uuid_string);
+        ret.emplace_back(location, name);
     }
 
     return ret;

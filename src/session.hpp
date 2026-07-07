@@ -59,8 +59,14 @@ public:
     virtual void
     remove(const RawstdUUID& id, std::function<void(int)>&& cb) = 0;
 
+    /*
+     * Queries the copy metadata of one version of the object: snap = 0 is
+     * the live copy, anything else an immutable snapshot version (its
+     * consistency-state fields are frozen at snapshot time; size is what
+     * matters). ENOTSUP for snapshots on backends without CoW.
+     */
     virtual void meta(
-        const RawstdUUID& id,
+        const RawstdUUID& id, uint64_t snap,
         std::function<void(const RawstorObjectMeta&, int)>&& cb
     ) = 0;
 

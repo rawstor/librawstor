@@ -31,8 +31,12 @@ private:
 protected:
     std::string device_path(const RawstdUUID& id) const override;
 
+    /* /dev/zvol/<parent>/<uuid>@s<snap> (snapdev=visible, see snapshot()). */
+    std::string
+    device_path(const RawstdUUID& id, uint64_t snap) const override;
+
     void _meta_identity(
-        const RawstdUUID& id,
+        const RawstdUUID& id, uint64_t snap,
         std::function<void(const RawstorObjectMeta&, int)>&& cb
     ) override;
 

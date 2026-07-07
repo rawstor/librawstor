@@ -637,7 +637,7 @@ private:
 public:
     SessionOpSpec(
         const std::shared_ptr<rawstor::ost::Context>& context, uint16_t cid,
-        const RawstdUUID& id, RawstorObjectMeta* out,
+        const RawstdUUID& id, uint64_t snap, RawstorObjectMeta* out,
         const rawstd::TraceEvent& trace_event,
         std::function<void(size_t, int)>&& cb
     ) :
@@ -653,7 +653,7 @@ public:
                 {
                     .obj_id = {},
                     .offset = 0,
-                    .val = 0,
+                    .val = snap,
                 },
         }),
         _out(out),
@@ -1208,7 +1208,7 @@ void Session::_basic(
 }
 
 void Session::_set_object_exchange(
-    const RawstdUUID* id, std::function<void(int)>&& cb
+    const RawstdUUID* id, uint64_t val, std::function<void(int)>&& cb
 ) {
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('s', "%s\n", "set_object handshake");
@@ -1225,7 +1225,7 @@ void Session::_set_object_exchange(
                 .version = RAWSTOR_PROTOCOL_VERSION,
                 .features = 0,
                 .obj_id = {},
-                .val = 0,
+                .val = val,
             },
         });
     if (id != nullptr) {
@@ -1353,7 +1353,7 @@ void Session::_ensure_handshake(std::function<void(int)>&& cb) {
         return;
     }
 
-    _set_object_exchange(nullptr, std::move(cb));
+    _set_object_exchange(nullptr, 0, std::move(cb));
 }
 
 void Session::create(
@@ -1538,7 +1538,7 @@ void Session::snap_remove(
 }
 
 void Session::meta(
-    const RawstdUUID& id,
+    const RawstdUUID& id, uint64_t snap,
     std::function<void(const RawstorObjectMeta&, int)>&& cb
 ) {
     rawstd::TraceEvent trace_event =
@@ -1554,7 +1554,7 @@ void Session::meta(
         auto out = std::make_shared<RawstorObjectMeta>();
 
         std::shared_ptr<SessionOpSpec> op = std::make_shared<SessionOpSpec>(
-            _context, _cid_counter++, id, out.get(), trace_event,
+            _context, _cid_counter++, id, snap, out.get(), trace_event,
             [out, cb = std::move(cb)](size_t, int error) { cb(*out, error); }
         );
         _context->register_op(op);
@@ -1579,18 +1579,18 @@ void Session::meta(
         return;
     }
 
-    _ensure_handshake([this, id, cb = std::move(cb)](int error) mutable {
+    _ensure_handshake([this, id, snap, cb = std::move(cb)](int error) mutable {
         if (error) {
             cb({}, error);
             return;
         }
 
-        _meta_exchange(id, std::move(cb));
+        _meta_exchange(id, snap, std::move(cb));
     });
 }
 
 void Session::_meta_exchange(
-    const RawstdUUID& id,
+    const RawstdUUID& id, uint64_t snap,
     std::function<void(const RawstorObjectMeta&, int)>&& cb
 ) {
     rawstd::TraceEvent trace_event =
@@ -1607,7 +1607,7 @@ void Session::_meta_exchange(
             .body = {
                 .obj_id = {},
                 .offset = 0,
-                .val = 0,
+                .val = snap,
             },
         });
     memcpy(request->body.obj_id, id.bytes, sizeof(request->body.obj_id));
@@ -2119,7 +2119,9 @@ void Session::_list_exchange(
 }
 
 void Session::set_object(Object* object, std::function<void(int)>&& cb) {
-    _set_object_exchange(&object->id(), [this, cb = std::move(cb)](int error) {
+    _set_object_exchange(
+        &object->id(), object->snap(),
+        [this, cb = std::move(cb)](int error) {
         if (error) {
             cb(error);
             return;

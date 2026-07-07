@@ -297,7 +297,7 @@ void BlkdevSession::run_async(
 }
 
 void BlkdevSession::meta(
-    const RawstdUUID& id,
+    const RawstdUUID& id, uint64_t snap,
     std::function<void(const RawstorObjectMeta&, int)>&& cb
 ) {
     /*
@@ -307,11 +307,17 @@ void BlkdevSession::meta(
      * io_uring handles that in a worker thread without stalling the loop.
      * BLKGETSIZE64 reads an in-memory value and completes immediately.
      */
-    auto path = std::make_shared<std::string>(device_path(id));
+    std::shared_ptr<std::string> path;
+    try {
+        path = std::make_shared<std::string>(device_path(id, snap));
+    } catch (const std::system_error& e) {
+        cb({}, e.code().value());
+        return;
+    }
 
     _queue.open(
         path->c_str(), O_RDONLY | O_CLOEXEC, 0,
-        [this, path, id, cb = std::move(cb)](int result) mutable {
+        [this, path, id, snap, cb = std::move(cb)](int result) mutable {
             if (result < 0) {
                 cb({}, -result);
                 return;
@@ -333,9 +339,10 @@ void BlkdevSession::meta(
              * device can answer for.
              */
             _meta_identity(
-                id, [size, cb = std::move(cb)](
-                        const RawstorObjectMeta& identity, int error
-                    ) {
+                id, snap,
+                [size, cb = std::move(cb)](
+                    const RawstorObjectMeta& identity, int error
+                ) {
                     if (error) {
                         cb({}, error);
                         return;
@@ -441,12 +448,22 @@ void BlkdevSession::set_object(Object* object, std::function<void(int)>&& cb) {
         throw std::runtime_error("Object already set");
     }
 
-    auto path = std::make_shared<std::string>(device_path(object->id()));
+    std::shared_ptr<std::string> path;
+    try {
+        path = std::make_shared<std::string>(
+            device_path(object->id(), object->snap())
+        );
+    } catch (const std::system_error& e) {
+        cb(e.code().value());
+        return;
+    }
 
     rawstd_info("Connecting to %s...\n", path->c_str());
 
+    /* A snapshot device is immutable: bind it read-only. */
     _queue.open(
-        path->c_str(), O_RDWR | O_CLOEXEC, 0,
+        path->c_str(),
+        (object->snap() != 0 ? O_RDONLY : O_RDWR) | O_CLOEXEC, 0,
         [this, path, cb = std::move(cb)](int result) {
             if (result < 0) {
                 cb(-result);

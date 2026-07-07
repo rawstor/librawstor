@@ -26,7 +26,7 @@ public:
     void remove(const RawstdUUID& id, std::function<void(int)>&& cb) override;
 
     void meta(
-        const RawstdUUID& id,
+        const RawstdUUID& id, uint64_t snap,
         std::function<void(const RawstorObjectMeta&, int)>&& cb
     ) override;
 

@@ -31,7 +31,7 @@ protected:
     std::string device_path(const RawstdUUID& id) const override;
 
     void _meta_identity(
-        const RawstdUUID& id,
+        const RawstdUUID& id, uint64_t snap,
         std::function<void(const RawstorObjectMeta&, int)>&& cb
     ) override;
 

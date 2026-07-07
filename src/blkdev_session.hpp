@@ -3,6 +3,9 @@
 
 #include "session.hpp"
 
+#include <rawstd/gpp.hpp>
+
+#include <cerrno>
 #include <functional>
 #include <string>
 #include <vector>
@@ -32,17 +35,32 @@ protected:
     virtual std::string device_path(const RawstdUUID& id) const = 0;
 
     /*
+     * Device node of one version: snap = 0 is the live device. The base
+     * implementation supports only the live version — a backend with
+     * native CoW (zfs) overrides it; the rest answer ENOTSUP by
+     * construction.
+     */
+    virtual std::string
+    device_path(const RawstdUUID& id, uint64_t snap) const {
+        if (snap != 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+        }
+        return device_path(id);
+    }
+
+    /*
      * Reads the mirror consistency state (state/epoch/sync_id/history) for
-     * id via the backend's native storage. The size field of the returned
-     * meta is ignored by the caller (meta() overwrites it with the live
-     * device size). Must fail (not fabricate CLEAN) when no state has ever
-     * been recorded: an untrusted member is always safer than a trusted
-     * one that happens to be wrong (docs/mirroring.md, case F10 — the
-     * caller already treats any meta() error as "member stale, needs a
-     * resync").
+     * one version of id via the backend's native storage (snap = 0 is the
+     * live copy; a snapshot's state is frozen at snapshot time). The size
+     * field of the returned meta is ignored by the caller (meta()
+     * overwrites it with the device size). Must fail (not fabricate
+     * CLEAN) when no state has ever been recorded: an untrusted member is
+     * always safer than a trusted one that happens to be wrong
+     * (docs/mirroring.md, case F10 — the caller already treats any meta()
+     * error as "member stale, needs a resync").
      */
     virtual void _meta_identity(
-        const RawstdUUID& id,
+        const RawstdUUID& id, uint64_t snap,
         std::function<void(const RawstorObjectMeta&, int)>&& cb
     ) = 0;
 
@@ -74,7 +92,7 @@ public:
     BlkdevSession(rawio::Queue& queue, const rawstd::URI& location);
 
     void meta(
-        const RawstdUUID& id,
+        const RawstdUUID& id, uint64_t snap,
         std::function<void(const RawstorObjectMeta&, int)>&& cb
     ) override;
 

@@ -75,6 +75,16 @@ std::string Session::device_path(const RawstdUUID& id) const {
     return oss.str();
 }
 
+std::string Session::device_path(const RawstdUUID& id, uint64_t snap) const {
+    if (snap == 0) {
+        return device_path(id);
+    }
+
+    std::ostringstream oss;
+    oss << device_path(id) << "@s" << snap;
+    return oss.str();
+}
+
 void Session::create(
     const RawstdUUID& id, const RawstorObjectSpec& sp,
     std::function<void(int)>&& cb
@@ -140,10 +150,13 @@ void Session::remove(const RawstdUUID& id, std::function<void(int)>&& cb) {
 }
 
 void Session::_meta_identity(
-    const RawstdUUID& id,
+    const RawstdUUID& id, uint64_t snap,
     std::function<void(const RawstorObjectMeta&, int)>&& cb
 ) {
-    std::string dataset = dataset_of(_parent_dataset, id);
+    /* A snapshot's property value is the origin's, frozen at snap time. */
+    std::string dataset = snap != 0
+                              ? snapshot_of(_parent_dataset, id, snap)
+                              : dataset_of(_parent_dataset, id);
 
     run_async_capture(
         {"zfs", "get", "-H", "-o", "value", rawstor_property, dataset},
@@ -227,9 +240,14 @@ void Session::set_state(
 void Session::list(
     std::function<void(std::vector<RawstorObjectListEntry>&&, int)>&& cb
 ) {
-    /* -H = no header, tab-separated; -p = raw byte counts. */
+    /*
+     * -H = no header, tab-separated; -p = raw byte counts. Snapshot rows
+     * (<parent>/<uuid>@s<id>, depth 2) are listed too: the @s<id> name is
+     * the version key, so the reported snap_version comes from it — the
+     * stored property is the origin's record frozen at snapshot time.
+     */
     run_async_capture(
-        {"zfs", "list", "-Hp", "-t", "volume", "-d", "1", "-o",
+        {"zfs", "list", "-Hp", "-t", "volume,snapshot", "-d", "2", "-o",
          "name,volsize," + std::string(rawstor_property), _parent_dataset},
         [parent = _parent_dataset,
          cb = std::move(cb)](std::string output, int error) mutable {
@@ -261,6 +279,23 @@ void Session::list(
                 }
                 name.erase(0, parent.size() + 1);
 
+                uint64_t snap = 0;
+                size_t at = name.find('@');
+                if (at != name.npos) {
+                    /* Only our own "@s<id>" snapshots are versions. */
+                    if (name.compare(at + 1, 1, "s") != 0) {
+                        continue;
+                    }
+                    std::string version = name.substr(at + 2);
+                    if (version.empty() ||
+                        version.find_first_not_of("0123456789") !=
+                            version.npos) {
+                        continue;
+                    }
+                    snap = strtoull(version.c_str(), nullptr, 10);
+                    name.resize(at);
+                }
+
                 RawstorObjectListEntry entry{};
                 RawstdUUID id;
                 /* zvols not named after an object UUID are not ours. */
@@ -286,6 +321,9 @@ void Session::list(
 
                 entry.meta.size =
                     strtoull(line.c_str() + name_end + 1, nullptr, 10);
+                if (snap != 0) {
+                    entry.meta.snap_version = snap;
+                }
 
                 entries.push_back(entry);
             }

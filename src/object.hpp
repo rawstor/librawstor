@@ -55,6 +55,15 @@ namespace rawstor {
 
 class Connection;
 
+/*
+ * Parses an object reference filename: "<uuid>" (the live version) or
+ * "<uuid>@<snap_id>" (an immutable snapshot version; snap_id is a positive
+ * decimal). Returns 0 or a negative errno.
+ */
+int parse_object_ref(
+    const std::string& filename, RawstdUUID* id, uint64_t* snap
+) noexcept;
+
 class Object final : public RawstorObject {
 private:
     struct OpenState;
@@ -83,6 +92,16 @@ private:
 
     rawio::Queue& _queue;
     RawstdUUID _id;
+
+    /*
+     * Bound snapshot version; 0 = live. A snapshot is immutable and
+     * consistent by construction (drain + FLUSH at creation, members
+     * recorded in the MDS registry), so opening one skips the whole
+     * mirror state machine — no metadata compare, no quorum, no
+     * barriers, no resync, no reconnect probe — and every write fails
+     * with EROFS. One reachable member is enough to serve reads.
+     */
+    uint64_t _snap;
 
     /* Configured mirror width N (the target list length). */
     size_t _nmirrors;
@@ -254,6 +273,9 @@ public:
     std::vector<rawstd::URI> locations() const override;
 
     inline const RawstdUUID& id() const noexcept override { return _id; }
+
+    /* Bound snapshot version; 0 = live. */
+    inline uint64_t snap() const noexcept { return _snap; }
 
     void pread(
         void* buf, size_t size, off_t offset,

@@ -56,9 +56,11 @@ private:
     /*
      * SET_OBJECT exchange: version/features handshake plus the object
      * binding; id == nullptr sends a null binding (control connection).
+     * val is the bound snapshot version (0 = live).
      */
-    void
-    _set_object_exchange(const RawstdUUID* id, std::function<void(int)>&& cb);
+    void _set_object_exchange(
+        const RawstdUUID* id, uint64_t val, std::function<void(int)>&& cb
+    );
 
     /*
      * SET_OBJECT must be the first command on a connection: control
@@ -69,7 +71,7 @@ private:
 
     /* Plain pre-open exchanges, valid only after the handshake. */
     void _meta_exchange(
-        const RawstdUUID& id,
+        const RawstdUUID& id, uint64_t snap,
         std::function<void(const RawstorObjectMeta&, int)>&& cb
     );
     void _set_state_exchange(
@@ -94,7 +96,7 @@ public:
     void remove(const RawstdUUID& id, std::function<void(int)>&& cb) override;
 
     void meta(
-        const RawstdUUID& id,
+        const RawstdUUID& id, uint64_t snap,
         std::function<void(const RawstorObjectMeta&, int)>&& cb
     ) override;
 

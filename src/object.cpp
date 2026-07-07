@@ -65,16 +65,17 @@ void validate_same_uuid(const std::vector<rawstd::URI>& targets) {
         return;
     }
 
-    std::string uuid_string = targets.front().path().filename();
+    std::string name = targets.front().path().filename();
     RawstdUUID uuid;
-    int res = rawstd_uuid_from_string(&uuid, uuid_string.c_str());
+    uint64_t snap;
+    int res = rawstor::parse_object_ref(name, &uuid, &snap);
     if (res < 0) {
-        rawstd_error("Valid UUID expected\n");
+        rawstd_error("Valid object reference expected\n");
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 
     for (const auto& target : targets) {
-        if (target.path().filename() != uuid_string) {
+        if (target.path().filename() != name) {
             rawstd_error("Equal UUID expected\n");
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
         }
@@ -430,9 +431,39 @@ void meta_next(const std::shared_ptr<MetaState>& st) {
 
 namespace rawstor {
 
+int parse_object_ref(
+    const std::string& filename, RawstdUUID* id, uint64_t* snap
+) noexcept {
+    std::string name = filename;
+    *snap = 0;
+
+    size_t at = name.find('@');
+    if (at != name.npos) {
+        const std::string version = name.substr(at + 1);
+        name.resize(at);
+
+        if (version.empty() ||
+            version.find_first_not_of("0123456789") != version.npos) {
+            rawstd_error("Malformed snapshot version: %s\n", filename.c_str());
+            return -EINVAL;
+        }
+
+        errno = 0;
+        *snap = strtoull(version.c_str(), nullptr, 10);
+        if (errno != 0 || *snap == 0) {
+            errno = 0;
+            rawstd_error("Malformed snapshot version: %s\n", filename.c_str());
+            return -EINVAL;
+        }
+    }
+
+    return rawstd_uuid_from_string(id, name.c_str());
+}
+
 Object::Object(rawio::Queue& queue, const std::vector<rawstd::URI>& targets) :
     _queue(queue),
     _id(),
+    _snap(0),
     _nmirrors(targets.size()),
     _size(0),
     _dirty(false),
@@ -452,8 +483,8 @@ Object::Object(rawio::Queue& queue, const std::vector<rawstd::URI>& targets) :
     validate_different_uris(targets);
     validate_same_uuid(targets);
 
-    std::string id = targets.front().path().filename();
-    int res = rawstd_uuid_from_string(&_id, id.c_str());
+    int res =
+        parse_object_ref(targets.front().path().filename(), &_id, &_snap);
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
@@ -535,6 +566,18 @@ void Object::_open_next(const std::shared_ptr<OpenState>& st) {
             return;
         }
 
+        /*
+         * A snapshot version is immutable and consistent by construction
+         * (drain + FLUSH at creation): its copies need no metadata
+         * compare, no quorum (a quorum protects write consistency; there
+         * are no writes) and no state machinery — one reachable member
+         * serves reads, the rest are failover.
+         */
+        if (_snap != 0) {
+            st->cb(st->object.release(), 0);
+            return;
+        }
+
         if (_nmirrors >= 2 && reachable * 2 <= _nmirrors) {
             rawstd_error(
                 "Mirror quorum not met: %zu of %zu members reachable\n",
@@ -611,7 +654,7 @@ void Object::_open_meta_next(const std::shared_ptr<OpenState>& st) {
 
     size_t idx = st->meta_next;
     _members[idx].cn->meta(
-        _id, [this, st, idx](const RawstorObjectMeta& meta, int error) {
+        _id, _snap, [this, st, idx](const RawstorObjectMeta& meta, int error) {
             if (error) {
                 rawstd_warning(
                     "Mirror member metadata unavailable: %s\n", strerror(error)
@@ -2183,6 +2226,12 @@ void Object::pwrite(
         'o', "pwrite(): size = %zu, offset = %jd\n", size, (intmax_t)offset
     );
 
+    /* A snapshot version is immutable. */
+    if (_snap != 0) {
+        cb(0, EROFS);
+        return;
+    }
+
     if (_nmirrors == 1) {
         _members.front().cn->pwrite(
             buf, size, offset,
@@ -2225,6 +2274,12 @@ void Object::pwritev(
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'o', "pwritev(): size = %zu, offset = %jd\n", size, (intmax_t)offset
     );
+
+    /* A snapshot version is immutable. */
+    if (_snap != 0) {
+        cb(0, EROFS);
+        return;
+    }
 
     if (_nmirrors == 1) {
         _members.front().cn->pwritev(

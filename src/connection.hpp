@@ -117,7 +117,7 @@ public:
     void set_transparent_retry(bool enabled) noexcept;
 
     void meta(
-        const RawstdUUID& id,
+        const RawstdUUID& id, uint64_t snap,
         std::function<void(const RawstorObjectMeta&, int)>&& cb
     );
 
