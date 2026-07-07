@@ -80,7 +80,25 @@ TEST(FileLifecycleTest, create_at_default_spec_list_remove) {
     EXPECT_EQ(res, 0);
     EXPECT_EQ(read_spec.size, (size_t)(1ull << 20));
 
-    // res = rawstor_object_list(location.c_str(), )
+    RawstorStringList* targets;
+    void* marker = nullptr;
+    res = rawstor_object_list(location.c_str(), 0, &targets, &marker);
+    EXPECT_EQ(res, 0);
+    if (res == 0) {
+        EXPECT_EQ(rawstor_string_list_size(targets), static_cast<size_t>(1));
+
+        const char** it = rawstor_string_list_iter(targets);
+        EXPECT_NE(it, nullptr);
+        if (it != nullptr) {
+            EXPECT_EQ(target, *it);
+
+            it = rawstor_string_list_next(it);
+            EXPECT_EQ(it, nullptr);
+        }
+
+        rawstor_string_list_delete(targets);
+    }
+    EXPECT_EQ(marker, nullptr);
 
     res = rawstor_object_remove(target.c_str());
     EXPECT_EQ(res, 0);
@@ -110,7 +128,25 @@ TEST(FileLifecycleTest, create_at_spec_list_remove) {
     EXPECT_EQ(res, 0);
     EXPECT_EQ(read_spec.size, (size_t)(1ull << 20));
 
-    // res = rawstor_object_list(location.c_str(), )
+    RawstorStringList* targets;
+    void* marker = nullptr;
+    res = rawstor_object_list(location.c_str(), 0, &targets, &marker);
+    EXPECT_EQ(res, 0);
+    if (res == 0) {
+        EXPECT_EQ(rawstor_string_list_size(targets), static_cast<size_t>(1));
+
+        const char** it = rawstor_string_list_iter(targets);
+        EXPECT_NE(it, nullptr);
+        if (it != nullptr) {
+            EXPECT_EQ(target, *it);
+
+            it = rawstor_string_list_next(it);
+            EXPECT_EQ(it, nullptr);
+        }
+
+        rawstor_string_list_delete(targets);
+    }
+    EXPECT_EQ(marker, nullptr);
 
     res = rawstor_object_remove(target.c_str());
     EXPECT_EQ(res, 0);
