@@ -5,6 +5,9 @@
 
 #include <sqlite3.h>
 
+#include <algorithm>
+#include <map>
+#include <string>
 #include <utility>
 
 #include <cerrno>
@@ -334,10 +337,22 @@ VolumeMap VolumeStore::open(const RawstdUUID& volume_id, uint64_t snap_id) {
         ret.chunks[index].push_back(slot);
     }
 
-    for (const std::vector<PlacementSlot>& slots : ret.chunks) {
-        if (slots.size() != ret.descriptor.policy.width) {
-            rawstd_error("MDS store: chunk map is missing slots\n");
+    /*
+     * A chunk with no slots at all is unroutable: hard error. Fewer slots
+     * than the policy width is a degraded but usable map (a reconstruct
+     * scan that could not find every copy); the mirror layer handles the
+     * reduced redundancy.
+     */
+    for (size_t index = 0; index < ret.chunks.size(); ++index) {
+        if (ret.chunks[index].empty()) {
+            rawstd_error("MDS store: chunk map is missing a chunk\n");
             RAWSTD_THROW_SYSTEM_ERROR(EIO);
+        }
+        if (ret.chunks[index].size() != ret.descriptor.policy.width) {
+            rawstd_warning(
+                "MDS store: chunk %zu has %zu of %u slots\n", index,
+                ret.chunks[index].size(), ret.descriptor.policy.width
+            );
         }
     }
 
@@ -381,6 +396,190 @@ uint64_t VolumeStore::resize(const RawstdUUID& volume_id, uint64_t new_size) {
     tx.commit();
 
     return map_epoch;
+}
+
+void VolumeStore::reconstruct(const std::vector<ScanRecord>& records) {
+    struct Chunk {
+        uint64_t size;
+        /* Scan order becomes the slot order. */
+        std::vector<RawstdUUID> ost_ids;
+    };
+    struct Volume {
+        uint64_t chunk_size;
+        unsigned width;
+        std::map<uint64_t, Chunk> chunks;
+    };
+
+    std::map<std::string, Volume> volumes;
+
+    for (const ScanRecord& r : records) {
+        /* Witness records are metadata-only votes, not data slots. */
+        if (r.meta.member_kind != RAWSTOR_MEMBER_DATA) {
+            continue;
+        }
+
+        static const uint8_t null_id[16] = {};
+        if (memcmp(r.meta.volume_id, null_id, sizeof(null_id)) == 0) {
+            /* A standalone object, not a volume chunk. */
+            continue;
+        }
+
+        RawstdUUIDString obj_str;
+        rawstd_uuid_to_string(&r.obj_id, &obj_str);
+
+        if (r.meta.snap_version != 0) {
+            /* Snapshot views are stage 2. */
+            rawstd_warning(
+                "reconstruct: %s: snapshot version %llu skipped\n", obj_str,
+                static_cast<unsigned long long>(r.meta.snap_version)
+            );
+            continue;
+        }
+
+        std::string key(
+            reinterpret_cast<const char*>(r.meta.volume_id),
+            sizeof(r.meta.volume_id)
+        );
+
+        auto [it, fresh] = volumes.try_emplace(key);
+        Volume& v = it->second;
+        if (fresh) {
+            v.chunk_size = r.meta.chunk_size;
+            v.width = r.meta.width;
+        } else if (v.chunk_size != r.meta.chunk_size ||
+                   v.width != r.meta.width) {
+            rawstd_error(
+                "reconstruct: %s: identity conflicts with its volume\n",
+                obj_str
+            );
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
+
+        auto [cit, chunk_fresh] = v.chunks.try_emplace(r.meta.logical_index);
+        Chunk& c = cit->second;
+
+        bool duplicate = false;
+        for (const RawstdUUID& ost : c.ost_ids) {
+            if (memcmp(ost.bytes, r.ost_id.bytes, sizeof(ost.bytes)) == 0) {
+                duplicate = true;
+                break;
+            }
+        }
+        if (duplicate) {
+            rawstd_warning(
+                "reconstruct: %s: duplicate record skipped\n", obj_str
+            );
+            continue;
+        }
+
+        c.ost_ids.push_back(r.ost_id);
+        /*
+         * Copies may disagree on size: a block backend rounds the device
+         * up (LVM to the extent, ZFS to the volblocksize). The smallest
+         * copy is the closest bound on what was requested.
+         */
+        c.size = chunk_fresh ? r.meta.size : std::min(c.size, r.meta.size);
+    }
+
+    Transaction tx(_db);
+
+    exec(_db, "DELETE FROM volumes;");
+
+    for (const auto& [key, v] : volumes) {
+        RawstdUUID volume_id;
+        memcpy(volume_id.bytes, key.data(), sizeof(volume_id.bytes));
+        RawstdUUIDString vol_str;
+        rawstd_uuid_to_string(&volume_id, &vol_str);
+
+        if (v.chunk_size == 0 || (v.chunk_size & (v.chunk_size - 1)) != 0 ||
+            v.width == 0) {
+            rawstd_error(
+                "reconstruct: %s: malformed stored identity\n", vol_str
+            );
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
+
+        /* std::map is ordered: the last key is the highest index. */
+        uint64_t max_index = v.chunks.rbegin()->first;
+        if (v.chunks.size() != max_index + 1) {
+            rawstd_error(
+                "reconstruct: %s: no surviving copy of %llu of %llu "
+                "chunks\n",
+                vol_str,
+                static_cast<unsigned long long>(
+                    max_index + 1 - v.chunks.size()
+                ),
+                static_cast<unsigned long long>(max_index + 1)
+            );
+            RAWSTD_THROW_SYSTEM_ERROR(EIO);
+        }
+
+        /*
+         * The tail chunk copy may be rounded up by its backend; clamping
+         * keeps the chunk count consistent with the geometry. The
+         * reconstructed size never shrinks below what was written.
+         */
+        uint64_t tail = std::min(v.chunks.rbegin()->second.size, v.chunk_size);
+        if (tail == 0) {
+            rawstd_error("reconstruct: %s: zero-sized tail chunk\n", vol_str);
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
+        uint64_t logical_size = max_index * v.chunk_size + tail;
+
+        /*
+         * The policy knobs are not persisted on chunks: existing chunks
+         * keep their placement (the map below is explicit), the rebuilt
+         * descriptor constrains only future resizes — weakest domain, so
+         * a reduced post-disaster topology never fails validation.
+         */
+        {
+            Stmt insert(
+                _db, "INSERT INTO volumes"
+                     " (volume_id, logical_size, chunk_size, width,"
+                     " failure_domain, stripe_width, placement_seed,"
+                     " map_epoch, created_at)"
+                     " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);"
+            );
+            insert.bind_blob(1, volume_id.bytes, sizeof(volume_id.bytes))
+                .bind_int64(2, logical_size)
+                .bind_int64(3, v.chunk_size)
+                .bind_int64(4, v.width)
+                .bind_int64(
+                    5, static_cast<uint64_t>(rawstor::mds::Level::OST)
+                )
+                .bind_int64(6, STRIPE_ALL)
+                .bind_int64(7, 0)
+                .bind_int64(8, 1)
+                .bind_int64(9, static_cast<uint64_t>(time(nullptr)))
+                .step();
+        }
+
+        Stmt insert(
+            _db, "INSERT INTO chunk_map"
+                 " (volume_id, logical_index, slot_index, ost_id)"
+                 " VALUES (?, ?, ?, ?);"
+        );
+        for (const auto& [index, chunk] : v.chunks) {
+            for (size_t slot = 0; slot < chunk.ost_ids.size(); ++slot) {
+                insert.reset();
+                insert.bind_blob(1, volume_id.bytes, sizeof(volume_id.bytes))
+                    .bind_int64(2, index)
+                    .bind_int64(3, slot)
+                    .bind_blob(
+                        4, chunk.ost_ids[slot].bytes,
+                        sizeof(chunk.ost_ids[slot].bytes)
+                    )
+                    .step();
+            }
+        }
+    }
+
+    tx.commit();
+
+    rawstd_info(
+        "reconstruct: %zu volumes rebuilt from %zu records\n", volumes.size(),
+        records.size()
+    );
 }
 
 void VolumeStore::remove(const RawstdUUID& volume_id) {

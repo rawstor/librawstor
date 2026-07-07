@@ -2,11 +2,15 @@
 
 #include "config.h"
 
+#include <rawstor/object.h>
+
 #include <getopt.h>
 #include <signal.h>
 
 #include <iostream>
 #include <sstream>
+#include <system_error>
+#include <vector>
 
 #include <cstdio>
 #include <cstdlib>
@@ -32,6 +36,11 @@ void usage() {
               << "  --queue-size SIZE     "
                  "RawIO queue size (default: "
               << DEFAULT_QUEUE_SIZE << ")" << std::endl
+              << "  -r, --reconstruct     "
+                 "Rebuild the volume map by scanning every OST"
+              << std::endl
+              << "                        in the topology, then serve."
+              << std::endl
               << "  -v, --version         Rawstor version" << std::endl
               << std::endl
               << "required arguments:" << std::endl
@@ -73,15 +82,49 @@ void version() {
     std::cout << "Rawstor MDS " << PACKAGE_VERSION << std::endl;
 }
 
+/*
+ * The reconstruct scan (rawstor_docs/Mds.md, "Reconstruct / DR"): every
+ * OST of the topology must answer — a partial scan would silently drop
+ * the unanswered OST's copies from the rebuilt map, so it aborts instead.
+ */
+void reconstruct_from_scan(rawstor::mds::VolumeStore& store) {
+    std::vector<rawstor::mds::ScanRecord> records;
+
+    for (const rawstor::mds::TopologyOST& ost : store.topology().osts()) {
+        std::string location = "ost://" + ost.address;
+
+        RawstorObjectListEntry* entries = nullptr;
+        size_t nentries = 0;
+        int res = rawstor_object_list(location.c_str(), &entries, &nentries);
+        if (res < 0) {
+            throw std::system_error(
+                -res, std::generic_category(), "LIST_CHUNKS " + location
+            );
+        }
+
+        for (size_t i = 0; i < nentries; ++i) {
+            rawstor::mds::ScanRecord r{};
+            r.ost_id = ost.id;
+            memcpy(r.obj_id.bytes, entries[i].obj_id, sizeof(r.obj_id.bytes));
+            r.meta = entries[i].meta;
+            records.push_back(r);
+        }
+        free(entries);
+    }
+
+    store.reconstruct(records);
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
-    const char* optstring = "b:d:ht:v";
+    const char* optstring = "b:d:hrt:v";
     struct option longopts[] = {
         {"bind", required_argument, nullptr, 'b'},
         {"db", required_argument, nullptr, 'd'},
         {"help", no_argument, nullptr, 'h'},
         {"queue-size", required_argument, nullptr, 'q'},
+        {"reconstruct", no_argument, nullptr, 'r'},
         {"topology", required_argument, nullptr, 't'},
         {"version", no_argument, nullptr, 'v'},
         {},
@@ -91,6 +134,7 @@ int main(int argc, char** argv) {
     const char* bind_arg = nullptr;
     const char* db_arg = nullptr;
     const char* topology_arg = nullptr;
+    bool reconstruct_arg = false;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, nullptr);
         if (c == -1) {
@@ -112,6 +156,10 @@ int main(int argc, char** argv) {
 
         case 'q':
             queue_size_arg = optarg;
+            break;
+
+        case 'r':
+            reconstruct_arg = true;
             break;
 
         case 't':
@@ -187,6 +235,9 @@ int main(int argc, char** argv) {
         rawstor::mdsbackend::Server s(
             queue_size, name, port, db_arg, topology_arg
         );
+        if (reconstruct_arg) {
+            reconstruct_from_scan(s.store());
+        }
         s.loop();
     } catch (const std::exception& e) {
         std::cerr << e.what() << std::endl;

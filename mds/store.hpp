@@ -6,6 +6,8 @@
 
 #include <rawstd/uuid.h>
 
+#include <rawstor/object.h>
+
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -27,6 +29,13 @@ struct VolumeMap {
     VolumeDescriptor descriptor;
     /* chunk_map[logical_index] = width slots. */
     std::vector<std::vector<PlacementSlot>> chunks;
+};
+
+/* One stored chunk copy found by the reconstruct scan of one OST. */
+struct ScanRecord {
+    RawstdUUID ost_id;
+    RawstdUUID obj_id;
+    RawstorObjectMeta meta;
 };
 
 /*
@@ -78,6 +87,28 @@ public:
     uint64_t resize(const RawstdUUID& volume_id, uint64_t new_size);
 
     void remove(const RawstdUUID& volume_id);
+
+    /*
+     * Rebuilds the whole map from a scan of every OST in the topology
+     * (rawstor_docs/Mds.md, "Reconstruct / DR"): the stored chunk identity
+     * is the truth, the map is an index over it. Replaces every stored
+     * volume in one transaction.
+     *
+     * Witness records, standalone objects (all-zero volume_id) and
+     * snapshot versions (stage 2) are skipped. A volume with conflicting
+     * identity records fails with EINVAL, a hole in the chunk index
+     * sequence with EIO: reconstruct must not silently drop a volume it
+     * cannot reassemble, and it cannot invent placement for a chunk with
+     * no surviving copies.
+     *
+     * The placement policy knobs (failure_domain, stripe_width, seed) are
+     * deliberately not persisted on chunks: the rebuilt descriptor gets
+     * the weakest constraints (per-OST domain, spread) and width from the
+     * records. The map itself is explicit, so existing chunks keep their
+     * placement; only a later resize places new chunks under the reset
+     * policy.
+     */
+    void reconstruct(const std::vector<ScanRecord>& records);
 };
 
 } // namespace mds

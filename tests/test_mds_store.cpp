@@ -188,4 +188,128 @@ TEST(MdsStoreTest, invalid_geometry_and_unsatisfiable_policy) {
     );
 }
 
+rawstor::mds::ScanRecord scan_record(
+    const RawstdUUID& ost_id, const RawstdUUID& volume_id, uint64_t index,
+    uint64_t chunk_size, uint64_t size, unsigned width
+) {
+    rawstor::mds::ScanRecord r{};
+    r.ost_id = ost_id;
+    EXPECT_EQ(rawstd_uuid7_init(&r.obj_id), 0);
+    r.meta.size = size;
+    r.meta.state = RAWSTOR_OBJECT_STATE_CLEAN;
+    r.meta.member_kind = RAWSTOR_MEMBER_DATA;
+    r.meta.width = static_cast<uint8_t>(width);
+    memcpy(r.meta.volume_id, volume_id.bytes, sizeof(r.meta.volume_id));
+    r.meta.logical_index = index;
+    r.meta.chunk_size = chunk_size;
+    r.meta.snap_version = 0;
+    return r;
+}
+
+TEST(MdsStoreTest, reconstruct_rebuilds_map) {
+    Topology topology = topology_4_hosts();
+    const RawstdUUID& ost1 = topology.osts()[0].id;
+    const RawstdUUID& ost2 = topology.osts()[1].id;
+
+    RawstdUUID volume_id = fresh_uuid();
+
+    /* 2 chunks x 2 copies; the tail chunk is half-filled. */
+    std::vector<rawstor::mds::ScanRecord> records = {
+        scan_record(ost1, volume_id, 0, 1ull << 20, 1ull << 20, 2),
+        scan_record(ost2, volume_id, 0, 1ull << 20, 1ull << 20, 2),
+        scan_record(ost1, volume_id, 1, 1ull << 20, 1ull << 19, 2),
+        scan_record(ost2, volume_id, 1, 1ull << 20, 1ull << 19, 2),
+    };
+
+    /* Records the reconstruct must ignore. */
+    {
+        /* A standalone object: all-zero volume_id. */
+        RawstdUUID null_volume{};
+        records.push_back(
+            scan_record(ost1, null_volume, 0, 1ull << 20, 1ull << 20, 1)
+        );
+        /* A witness slot (stage 3). */
+        rawstor::mds::ScanRecord witness =
+            scan_record(ost1, volume_id, 0, 1ull << 20, 1ull << 20, 2);
+        witness.meta.member_kind = RAWSTOR_MEMBER_WITNESS;
+        records.push_back(witness);
+        /* A snapshot version (stage 2). */
+        rawstor::mds::ScanRecord snap =
+            scan_record(ost1, volume_id, 0, 1ull << 20, 1ull << 20, 2);
+        snap.meta.snap_version = 5;
+        records.push_back(snap);
+    }
+
+    VolumeStore store(db_path("reconstruct.db"), topology);
+
+    /* A pre-existing volume must be replaced by the rebuilt map. */
+    VolumeDescriptor stale =
+        store.create(fresh_uuid(), 1ull << 20, 1ull << 20, mirror2());
+
+    store.reconstruct(records);
+
+    VolumeMap map = store.open(volume_id, 0);
+    EXPECT_EQ(map.descriptor.logical_size, (1ull << 20) + (1ull << 19));
+    EXPECT_EQ(map.descriptor.chunk_size, 1ull << 20);
+    EXPECT_EQ(map.descriptor.policy.width, 2u);
+    EXPECT_EQ(map.descriptor.map_epoch, 1u);
+    ASSERT_EQ(map.chunks.size(), 2u);
+    for (const std::vector<PlacementSlot>& slots : map.chunks) {
+        ASSERT_EQ(slots.size(), 2u);
+        EXPECT_EQ(
+            memcmp(slots[0].ost_id.bytes, ost1.bytes, sizeof(ost1.bytes)), 0
+        );
+        EXPECT_EQ(
+            memcmp(slots[1].ost_id.bytes, ost2.bytes, sizeof(ost2.bytes)), 0
+        );
+    }
+
+    /* The pre-existing volume is gone: the scan is the whole truth. */
+    EXPECT_THROW(store.open(stale.volume_id, 0), std::system_error);
+}
+
+TEST(MdsStoreTest, reconstruct_degraded_and_broken_volumes) {
+    Topology topology = topology_4_hosts();
+    const RawstdUUID& ost1 = topology.osts()[0].id;
+    const RawstdUUID& ost2 = topology.osts()[1].id;
+
+    VolumeStore store(db_path("reconstruct_bad.db"), topology);
+
+    /* One surviving copy of one chunk: degraded but reassemblable. */
+    RawstdUUID degraded = fresh_uuid();
+    store.reconstruct({
+        scan_record(ost1, degraded, 0, 1ull << 20, 1ull << 20, 2),
+        scan_record(ost2, degraded, 0, 1ull << 20, 1ull << 20, 2),
+        scan_record(ost1, degraded, 1, 1ull << 20, 1ull << 20, 2),
+    });
+    VolumeMap map = store.open(degraded, 0);
+    ASSERT_EQ(map.chunks.size(), 2u);
+    EXPECT_EQ(map.chunks[0].size(), 2u);
+    EXPECT_EQ(map.chunks[1].size(), 1u);
+
+    /* A hole in the chunk index sequence: no copy of chunk 1 at all. */
+    RawstdUUID holed = fresh_uuid();
+    EXPECT_THROW(
+        store.reconstruct({
+            scan_record(ost1, holed, 0, 1ull << 20, 1ull << 20, 2),
+            scan_record(ost1, holed, 2, 1ull << 20, 1ull << 20, 2),
+        }),
+        std::system_error
+    );
+
+    /* Conflicting identity records within one volume. */
+    RawstdUUID conflicted = fresh_uuid();
+    EXPECT_THROW(
+        store.reconstruct({
+            scan_record(ost1, conflicted, 0, 1ull << 20, 1ull << 20, 2),
+            scan_record(ost2, conflicted, 0, 1ull << 19, 1ull << 19, 2),
+        }),
+        std::system_error
+    );
+
+    /* A failed reconstruct must not have destroyed the previous map. */
+    map = store.open(degraded, 0);
+    ASSERT_EQ(map.chunks.size(), 2u);
+}
+
 } // unnamed namespace
