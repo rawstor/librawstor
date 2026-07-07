@@ -8,7 +8,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-
 int rawstor_cli_show(const char* target) {
     struct RawstorObjectSpec spec;
     int res = rawstor_object_spec(target, &spec);
