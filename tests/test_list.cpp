@@ -23,6 +23,24 @@ rawstd::URI get_location_uri(const std::string& name) {
     return rawstd::URI(oss.str());
 }
 
+TEST(ListTest, empty) {
+    rawstd::URI location = get_location_uri("test_objects1");
+
+    RawstorStringList* targets;
+    void* marker = nullptr;
+    int res = rawstor_object_list(location.str().c_str(), 0, &targets, &marker);
+    EXPECT_EQ(res, 0);
+    if (res == 0) {
+        EXPECT_EQ(rawstor_string_list_size(targets), static_cast<size_t>(0));
+
+        const char** it = rawstor_string_list_iter(targets);
+        EXPECT_EQ(it, nullptr);
+
+        rawstor_string_list_delete(targets);
+    }
+    EXPECT_EQ(marker, nullptr);
+}
+
 TEST(ListTest, merge) {
     rawstd::URI location1 = get_location_uri("test_objects1");
     rawstd::URI location2 = get_location_uri("test_objects2");
