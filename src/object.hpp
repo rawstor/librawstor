@@ -277,6 +277,23 @@ public:
     /* Bound snapshot version; 0 = live. */
     inline uint64_t snap() const noexcept { return _snap; }
 
+    /*
+     * CoW-snapshots this object as version snap_id on every IN-SYNC
+     * member: flush first (the point-in-time barrier — the caller
+     * guarantees no concurrent writers), then the native snapshot on
+     * each. All members must succeed, or the whole snapshot fails (the
+     * partial CoWs are the documented garbage class, reconciled by the
+     * reconstruct scan). cb receives the member slot indices (target
+     * list positions) that hold the snapshot.
+     */
+    void snapshot(
+        uint64_t snap_id,
+        std::function<void(std::vector<size_t>&&, int)>&& cb
+    );
+
+    /* Destroys version snap_id on every reachable member. */
+    void snap_remove(uint64_t snap_id, std::function<void(int)>&& cb);
+
     void pread(
         void* buf, size_t size, off_t offset,
         std::function<void(size_t, int)>&& cb

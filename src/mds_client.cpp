@@ -485,5 +485,145 @@ void Client::vol_remove(
     );
 }
 
+void Client::vol_snap_begin(
+    const RawstdUUID& volume_id, std::function<void(uint64_t, int)>&& cb
+) {
+    auto request =
+        std::make_shared<RawstorOSTFrameBasic>((RawstorOSTFrameBasic){
+            .head =
+                {
+                    .magic = RAWSTOR_MAGIC,
+                    .cmd = RAWSTOR_CMD_VOL_SNAP_BEGIN,
+                    .cid = _cid_counter++,
+                },
+            .body = {
+                .obj_id = {},
+                .offset = 0,
+                .val = 0,
+            },
+        });
+    memcpy(request->body.obj_id, volume_id.bytes, sizeof(request->body.obj_id));
+
+    _exchange(
+        request.get(), sizeof(*request), RAWSTOR_CMD_VOL_SNAP_BEGIN,
+        [request,
+         cb = std::move(cb)](std::vector<unsigned char>&& payload, int error) {
+            RawstorVolSnapBeganBody began{};
+            if (!error && payload.size() != sizeof(began)) {
+                error = EPROTO;
+            }
+            if (!error) {
+                memcpy(&began, payload.data(), sizeof(began));
+            }
+            cb(began.snap_id, error);
+        }
+    );
+}
+
+void Client::vol_snap_commit(
+    const RawstdUUID& volume_id, uint64_t snap_id,
+    const std::vector<WireSnapMember>& members,
+    std::function<void(uint64_t, int)>&& cb
+) {
+    RawstorOSTFrameHead head{
+        .magic = RAWSTOR_MAGIC,
+        .cmd = RAWSTOR_CMD_VOL_SNAP_COMMIT,
+        .cid = _cid_counter++,
+    };
+    RawstorVolSnapCommitBody body{};
+    memcpy(body.volume_id, volume_id.bytes, sizeof(body.volume_id));
+    body.snap_id = snap_id;
+    body.nmembers = static_cast<uint32_t>(members.size());
+
+    auto request = std::make_shared<std::vector<unsigned char>>();
+    request->reserve(
+        sizeof(head) + sizeof(body) +
+        members.size() * sizeof(RawstorVolSnapMemberBody)
+    );
+
+    auto append = [&request](const void* data, size_t size) {
+        const unsigned char* bytes = static_cast<const unsigned char*>(data);
+        request->insert(request->end(), bytes, bytes + size);
+    };
+
+    append(&head, sizeof(head));
+    append(&body, sizeof(body));
+    for (const WireSnapMember& m : members) {
+        RawstorVolSnapMemberBody wire{};
+        wire.logical_index = m.logical_index;
+        memcpy(wire.ost_id, m.ost_id.bytes, sizeof(wire.ost_id));
+        append(&wire, sizeof(wire));
+    }
+
+    _exchange(
+        request->data(), request->size(), RAWSTOR_CMD_VOL_SNAP_COMMIT,
+        [request,
+         cb = std::move(cb)](std::vector<unsigned char>&& payload, int error) {
+            RawstorVolSnapCommittedBody committed{};
+            if (!error && payload.size() != sizeof(committed)) {
+                error = EPROTO;
+            }
+            if (!error) {
+                memcpy(&committed, payload.data(), sizeof(committed));
+            }
+            cb(committed.map_epoch, error);
+        }
+    );
+}
+
+void Client::vol_snap_remove(
+    const RawstdUUID& volume_id, uint64_t snap_id,
+    std::function<void(std::vector<WireSnapMember>&&, int)>&& cb
+) {
+    auto request =
+        std::make_shared<RawstorOSTFrameBasic>((RawstorOSTFrameBasic){
+            .head =
+                {
+                    .magic = RAWSTOR_MAGIC,
+                    .cmd = RAWSTOR_CMD_VOL_SNAP_REMOVE,
+                    .cid = _cid_counter++,
+                },
+            .body = {
+                .obj_id = {},
+                .offset = 0,
+                .val = snap_id,
+            },
+        });
+    memcpy(request->body.obj_id, volume_id.bytes, sizeof(request->body.obj_id));
+
+    _exchange(
+        request.get(), sizeof(*request), RAWSTOR_CMD_VOL_SNAP_REMOVE,
+        [request,
+         cb = std::move(cb)](std::vector<unsigned char>&& payload, int error) {
+            std::vector<WireSnapMember> members;
+
+            if (!error &&
+                payload.size() % sizeof(RawstorVolSnapMemberBody) != 0) {
+                error = EPROTO;
+            }
+
+            if (!error) {
+                size_t count =
+                    payload.size() / sizeof(RawstorVolSnapMemberBody);
+                members.reserve(count);
+                for (size_t i = 0; i < count; ++i) {
+                    RawstorVolSnapMemberBody wire{};
+                    memcpy(
+                        &wire,
+                        payload.data() + i * sizeof(RawstorVolSnapMemberBody),
+                        sizeof(wire)
+                    );
+                    WireSnapMember m{};
+                    m.logical_index = wire.logical_index;
+                    memcpy(m.ost_id.bytes, wire.ost_id, sizeof(m.ost_id.bytes));
+                    members.push_back(m);
+                }
+            }
+
+            cb(std::move(members), error);
+        }
+    );
+}
+
 } // namespace mds
 } // namespace rawstor

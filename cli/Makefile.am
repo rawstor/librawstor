@@ -16,6 +16,8 @@ rawstor_cli_SOURCES = create.c \
                       remove.h \
                       show.c \
                       show.h \
+                      snapshot.c \
+                      snapshot.h \
                       testio.c \
                       testio.h \
                       units.c \

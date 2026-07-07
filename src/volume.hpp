@@ -57,6 +57,8 @@ private:
 
     rawio::Queue& _queue;
     RawstdUUID _id;
+    /* Bound snapshot version; 0 = live. Snapshot volumes are read-only. */
+    uint64_t _snap;
     std::string _location; /* mds://host:port */
     uint64_t _size;
     uint64_t _chunk_size;
@@ -64,8 +66,8 @@ private:
     std::vector<Chunk> _chunks;
 
     Volume(
-        rawio::Queue& queue, const RawstdUUID& id, std::string location,
-        const mds::WireMap& map
+        rawio::Queue& queue, const RawstdUUID& id, uint64_t snap,
+        std::string location, const mds::WireMap& map
     );
 
     void _with_chunk(uint32_t index, std::function<void(Object*, int)>&& cb);
@@ -96,6 +98,30 @@ public:
 
     static void spec(
         rawio::Queue& queue, const rawstd::URI& target, RawstorObjectSpec* sp,
+        std::function<void(int)>&& cb
+    );
+
+    /*
+     * Snapshots the volume (rawstor_docs/Mds.md, "Snapshots"): reserve
+     * the id at the MDS, drain + FLUSH each chunk through a regular
+     * mirrored open (the IN-SYNC set is exactly what the open
+     * establishes), CoW every IN-SYNC member, then register the
+     * participants. The caller guarantees no concurrent writer (v1: the
+     * drain is the writing client's duty; this entry is for quiesced
+     * volumes). On failure the reserved id and any partial CoWs are the
+     * documented garbage class, reconciled by the reconstruct scan.
+     */
+    static void snapshot(
+        rawio::Queue& queue, const rawstd::URI& target, uint64_t* snap_id,
+        std::function<void(int)>&& cb
+    );
+
+    /*
+     * Unregisters the snapshot at the MDS first (no new readers), then
+     * destroys the per-chunk CoWs on the recorded members.
+     */
+    static void snap_remove(
+        rawio::Queue& queue, const rawstd::URI& target, uint64_t snap_id,
         std::function<void(int)>&& cb
     );
 

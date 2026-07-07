@@ -371,6 +371,36 @@ void Connection::set_state(
     }
 }
 
+void Connection::snapshot(
+    const RawstdUUID& id, uint64_t snap_id, std::function<void(int)>&& cb
+) {
+    try {
+        get_next_session()->snapshot(id, snap_id, std::move(cb));
+    } catch (const std::system_error& e) {
+        cb(e.code().value());
+    } catch (const std::bad_alloc& e) {
+        cb(ENOMEM);
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        cb(EINVAL);
+    }
+}
+
+void Connection::snap_remove(
+    const RawstdUUID& id, uint64_t snap_id, std::function<void(int)>&& cb
+) {
+    try {
+        get_next_session()->snap_remove(id, snap_id, std::move(cb));
+    } catch (const std::system_error& e) {
+        cb(e.code().value());
+    } catch (const std::bad_alloc& e) {
+        cb(ENOMEM);
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        cb(EINVAL);
+    }
+}
+
 void Connection::create(
     rawio::Queue& queue, const rawstd::URI& target, const RawstorObjectSpec& sp,
     std::function<void(int)>&& cb

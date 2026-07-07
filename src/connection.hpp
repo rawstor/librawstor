@@ -126,6 +126,14 @@ public:
         std::function<void(int)>&& cb
     );
 
+    void snapshot(
+        const RawstdUUID& id, uint64_t snap_id, std::function<void(int)>&& cb
+    );
+
+    void snap_remove(
+        const RawstdUUID& id, uint64_t snap_id, std::function<void(int)>&& cb
+    );
+
     const rawstd::URI* location() const noexcept;
 
     void open(
