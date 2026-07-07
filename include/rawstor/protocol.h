@@ -43,6 +43,7 @@ extern "C" {
 
 #define RAWSTOR_CMD_SPEC 0x20
 #define RAWSTOR_CMD_SET_STATE 0x21
+#define RAWSTOR_CMD_LIST_CHUNKS 0x22
 
 #define RAWSTOR_CMD_VOL_CREATE 0x40
 #define RAWSTOR_CMD_VOL_OPEN 0x41
@@ -159,6 +160,13 @@ struct RawstorOSTFrameMeta {
     struct RawstorOSTFrameHead head;
     struct RawstorOSTFrameMetaBody body;
 } RAWSTOR_PACKED;
+
+/*
+ * LIST_CHUNKS (rawstor_docs/Mds.md, "Reconstruct / DR") rides
+ * RawstorOSTFrameBasic (obj_id/offset/val ignored). The response payload is
+ * res RawstorOSTFrameMetaBody records, one per stored object, each with
+ * obj_id set to the object's physical id; body.hash covers the payload.
+ */
 
 /*
  * Volume (MDS) commands — rawstor_docs/Mds.md, "Wire protocol".

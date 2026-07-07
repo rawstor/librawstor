@@ -399,6 +399,61 @@ int rawstor_object_meta_async(
  *
  * @see rawstor_object_set_state
  */
+/**
+ * @brief One stored object of a location listing.
+ *
+ * @see rawstor_object_list
+ */
+struct RawstorObjectListEntry {
+    uint8_t obj_id[16]; /**< Physical object id. */
+    struct RawstorObjectMeta meta;
+};
+
+/**
+ * @brief Enumerate the objects stored at a location.
+ *
+ * Lists every object of a single backend location (not a target: no UUID,
+ * no comma-separated lists) together with its metadata — the source of the
+ * MDS map reconstruct scan (rawstor_docs/Mds.md, "Reconstruct / DR") over
+ * CMD_LIST_CHUNKS. Objects whose metadata cannot be read are skipped with
+ * an error logged: a reconstruct scan must salvage the readable copies, and
+ * every skipped copy is covered by its mirrors.
+ *
+ * @param location  Location string (e.g. "file:///var/rawstor",
+ *                  "ost://127.0.0.1:8080").
+ * @param entries   On success *entries points to a malloc'd array that the
+ *                  caller releases with free(). NULL when *nentries is 0.
+ * @param nentries  Number of entries returned.
+ *
+ * @return 0 on success, negative errno otherwise.
+ *
+ * @see rawstor_object_meta
+ */
+int rawstor_object_list(
+    const char* location, struct RawstorObjectListEntry** entries,
+    size_t* nentries
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Asynchronously enumerate the objects stored at a location.
+ *
+ * Non-blocking variant of rawstor_object_list(). The operation is driven by
+ * @p queue; @p cb is invoked exactly once from the queue completion context
+ * with 0 on success or a negative errno value on failure. On success
+ * *entries and *nentries are filled before @p cb is invoked; both must stay
+ * valid until then. The caller releases *entries with free().
+ *
+ * @return 0 if the operation was started, negative errno otherwise (in
+ *         which case @p cb is never invoked).
+ *
+ * @see rawstor_object_list
+ */
+int rawstor_object_list_async(
+    RawIOQueue* queue, const char* location,
+    struct RawstorObjectListEntry** entries, size_t* nentries,
+    int (*cb)(int result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
 int rawstor_object_set_state_async(
     RawIOQueue* queue, const char* target, const struct RawstorObjectMeta* meta,
     int (*cb)(int result, void* data), void* data

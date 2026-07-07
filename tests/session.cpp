@@ -331,6 +331,72 @@ void Session::cmd_set_state(uint32_t magic, uint16_t cid, int32_t res) {
     cmd_set_state_response(magic, cid, res);
 }
 
+void Session::cmd_list_request() {
+    _server.read(
+        "RAWSTOR_CMD_LIST_CHUNKS <<<", sizeof(RawstorOSTFrameBasic),
+        [](const void*) {}
+    );
+}
+
+void Session::cmd_list_response(
+    uint32_t magic, uint16_t cid, int32_t res,
+    const std::vector<RawstorOSTFrameMetaBody>& records
+) {
+    if (res < 0 || records.empty()) {
+        RawstorOSTFrameResponse response = {
+            .head{
+                .magic = magic,
+                .cmd = RAWSTOR_CMD_LIST_CHUNKS,
+                .cid = cid,
+            },
+            .body = {
+                .res = res,
+                .len = 0,
+                .hash = 0,
+            },
+        };
+        _server.write(
+            "RAWSTOR_CMD_LIST_CHUNKS >>>", &response, sizeof(response)
+        );
+        return;
+    }
+
+    size_t len = records.size() * sizeof(RawstorOSTFrameMetaBody);
+    RawstorOSTFrameResponse response = {
+        .head{
+            .magic = magic,
+            .cmd = RAWSTOR_CMD_LIST_CHUNKS,
+            .cid = cid,
+        },
+        .body = {
+            .res = res,
+            .len = static_cast<uint32_t>(len),
+            .hash = rawstd_hash_scalar(records.data(), len),
+        },
+    };
+    iovec iov[2] = {
+        {
+            .iov_base = &response,
+            .iov_len = sizeof(response),
+        },
+        {
+            .iov_base = const_cast<RawstorOSTFrameMetaBody*>(records.data()),
+            .iov_len = len,
+        },
+    };
+    _server.writev(
+        "RAWSTOR_CMD_LIST_CHUNKS >>>", iov, sizeof(iov) / sizeof(iov[0])
+    );
+}
+
+void Session::cmd_list(
+    uint32_t magic, uint16_t cid, int32_t res,
+    const std::vector<RawstorOSTFrameMetaBody>& records
+) {
+    cmd_list_request();
+    cmd_list_response(magic, cid, res, records);
+}
+
 void Session::cmd_flush_request() {
     _server.read(
         "RAWSTOR_CMD_FLUSH <<<", sizeof(RawstorOSTFrameIO), [](const void*) {}

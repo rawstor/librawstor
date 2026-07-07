@@ -13,6 +13,7 @@
 
 #include <rawstor/protocol.h>
 
+#include <dirent.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/uio.h>
@@ -408,6 +409,94 @@ void Session::set_state(
             return 0;
         },
         std::move(cb)
+    );
+}
+
+void Session::list(
+    std::function<void(std::vector<RawstorObjectListEntry>&&, int)>&& cb
+) {
+    auto ret = std::make_shared<std::vector<RawstorObjectListEntry>>();
+
+    run_in_worker(
+        _queue,
+        [location = location(), ret]() -> int {
+            std::string ost_path = get_ost_path(location);
+
+            DIR* dir = ::opendir(ost_path.c_str());
+            if (dir == nullptr) {
+                /* A location with no objects may not have a directory yet. */
+                if (errno == ENOENT) {
+                    errno = 0;
+                    return 0;
+                }
+                RAWSTD_THROW_ERRNO();
+            }
+
+            try {
+                const std::string suffix = ".spec";
+                errno = 0;
+                for (dirent* e = ::readdir(dir); e != nullptr;
+                     e = ::readdir(dir)) {
+                    std::string name = e->d_name;
+                    if (name.size() <= suffix.size() ||
+                        name.compare(
+                            name.size() - suffix.size(), suffix.size(), suffix
+                        ) != 0) {
+                        errno = 0;
+                        continue;
+                    }
+
+                    std::string stem =
+                        name.substr(0, name.size() - suffix.size());
+                    RawstorObjectListEntry entry{};
+                    RawstdUUID id;
+                    if (rawstd_uuid_from_string(&id, stem.c_str()) != 0) {
+                        rawstd_error(
+                            "%s/%s: not an object spec, skipped\n",
+                            ost_path.c_str(), name.c_str()
+                        );
+                        errno = 0;
+                        continue;
+                    }
+                    memcpy(entry.obj_id, id.bytes, sizeof(entry.obj_id));
+
+                    int fd = ::open(
+                        (ost_path + "/" + name).c_str(), O_RDONLY
+                    );
+                    if (fd == -1) {
+                        rawstd_error(
+                            "%s/%s: %s, skipped\n", ost_path.c_str(),
+                            name.c_str(), strerror(errno)
+                        );
+                        errno = 0;
+                        continue;
+                    }
+
+                    try {
+                        entry.meta = read_meta_fd(fd);
+                        ret->push_back(entry);
+                    } catch (const std::exception& err) {
+                        rawstd_error(
+                            "%s/%s: %s, skipped\n", ost_path.c_str(),
+                            name.c_str(), err.what()
+                        );
+                    }
+                    ::close(fd);
+                    errno = 0;
+                }
+                if (errno != 0) {
+                    RAWSTD_THROW_ERRNO();
+                }
+
+                ::closedir(dir);
+            } catch (...) {
+                ::closedir(dir);
+                throw;
+            }
+
+            return 0;
+        },
+        [ret, cb = std::move(cb)](int error) { cb(std::move(*ret), error); }
     );
 }
 

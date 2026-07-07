@@ -8,9 +8,11 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <vector>
 
 namespace {
 
@@ -139,6 +141,63 @@ TEST(FileLifecycleTest, chunk_identity_roundtrip) {
     EXPECT_EQ(res, 0);
 }
 
+TEST(FileLifecycleTest, list) {
+    std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / "test_objects_list";
+    std::filesystem::remove_all(dir);
+
+    std::string location = "file://" + dir.string();
+
+    /* A location that was never written to lists as empty. */
+    RawstorObjectListEntry* entries = nullptr;
+    size_t nentries = 42;
+    int res = rawstor_object_list(location.c_str(), &entries, &nentries);
+    EXPECT_EQ(res, 0);
+    EXPECT_EQ(nentries, 0u);
+    EXPECT_EQ(entries, nullptr);
+
+    const char* uuids[2] = {
+        "00000000-0000-7000-8000-00000000d001",
+        "00000000-0000-7000-8000-00000000d002",
+    };
+    for (size_t i = 0; i < 2; ++i) {
+        RawstorObjectSpec spec{};
+        spec.size = 1ull << 20;
+        spec.width = 2;
+        spec.chunk_size = 1ull << 20;
+        spec.logical_index = i;
+        memset(spec.volume_id, 0xab, sizeof(spec.volume_id));
+        std::string target = location + "/" + uuids[i];
+        ASSERT_EQ(rawstor_object_create(target.c_str(), &spec), 0);
+    }
+
+    /* Foreign and torn files must be skipped, not fail the scan. */
+    std::ofstream(dir / "not-an-object.spec") << "garbage";
+    std::ofstream(dir / "README") << "text";
+
+    res = rawstor_object_list(location.c_str(), &entries, &nentries);
+    EXPECT_EQ(res, 0);
+    ASSERT_EQ(nentries, 2u);
+    ASSERT_NE(entries, nullptr);
+
+    bool seen[2] = {false, false};
+    for (size_t i = 0; i < nentries; ++i) {
+        EXPECT_EQ(entries[i].meta.size, 1ull << 20);
+        EXPECT_EQ(entries[i].meta.width, 2u);
+        EXPECT_EQ(entries[i].meta.chunk_size, 1ull << 20);
+        for (size_t j = 0; j < sizeof(entries[i].meta.volume_id); ++j) {
+            EXPECT_EQ(entries[i].meta.volume_id[j], 0xab);
+        }
+        ASSERT_LT(entries[i].meta.logical_index, 2u);
+        seen[entries[i].meta.logical_index] = true;
+    }
+    EXPECT_TRUE(seen[0]);
+    EXPECT_TRUE(seen[1]);
+
+    free(entries);
+    std::filesystem::remove_all(dir);
+}
+
 TEST(OstLifecycleTest, create_spec_remove) {
     rawstor::tests::Server server(8753, 256);
     std::string target =
@@ -228,6 +287,77 @@ TEST(OstLifecycleTest, create_spec_remove) {
     {
         int res = rawstor_object_remove(target.c_str());
         EXPECT_EQ(res, 0);
+    }
+}
+
+TEST(OstLifecycleTest, list) {
+    rawstor::tests::Server server(8753, 256);
+    std::string location = "ost://127.0.0.1:8753";
+
+    std::vector<RawstorOSTFrameMetaBody> records(2);
+    for (size_t i = 0; i < records.size(); ++i) {
+        RawstorOSTFrameMetaBody& r = records[i];
+        r = {};
+        memset(r.obj_id, 0x10 + i, sizeof(r.obj_id));
+        r.size = 1ull << 20;
+        r.state = RAWSTOR_OBJECT_STATE_CLEAN;
+        r.member_kind = RAWSTOR_MEMBER_DATA;
+        r.width = 2;
+        memset(r.volume_id, 0xab, sizeof(r.volume_id));
+        r.logical_index = i;
+        r.chunk_size = 1ull << 20;
+    }
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_handshake();
+        s.cmd_list(RAWSTOR_MAGIC, 0, static_cast<int32_t>(records.size()),
+                   records);
+    }
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_handshake();
+        s.cmd_list(RAWSTOR_MAGIC, 0, 0, {});
+    }
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_handshake();
+        s.cmd_list(RAWSTOR_MAGIC, 0, -EIO, {});
+    }
+
+    {
+        RawstorObjectListEntry* entries = nullptr;
+        size_t nentries = 0;
+        int res = rawstor_object_list(location.c_str(), &entries, &nentries);
+        EXPECT_EQ(res, 0);
+        ASSERT_EQ(nentries, 2u);
+        ASSERT_NE(entries, nullptr);
+        for (size_t i = 0; i < nentries; ++i) {
+            EXPECT_EQ(entries[i].obj_id[0], 0x10 + i);
+            EXPECT_EQ(entries[i].meta.size, 1ull << 20);
+            EXPECT_EQ(entries[i].meta.width, 2u);
+            EXPECT_EQ(entries[i].meta.logical_index, i);
+            EXPECT_EQ(entries[i].meta.chunk_size, 1ull << 20);
+        }
+        free(entries);
+    }
+
+    {
+        RawstorObjectListEntry* entries = nullptr;
+        size_t nentries = 42;
+        int res = rawstor_object_list(location.c_str(), &entries, &nentries);
+        EXPECT_EQ(res, 0);
+        EXPECT_EQ(nentries, 0u);
+        EXPECT_EQ(entries, nullptr);
+    }
+
+    {
+        RawstorObjectListEntry* entries = nullptr;
+        size_t nentries = 0;
+        int res = rawstor_object_list(location.c_str(), &entries, &nentries);
+        EXPECT_EQ(res, -EIO);
     }
 }
 

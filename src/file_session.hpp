@@ -35,6 +35,10 @@ public:
         std::function<void(int)>&& cb
     ) override;
 
+    void list(
+        std::function<void(std::vector<RawstorObjectListEntry>&&, int)>&& cb
+    ) override;
+
     void set_object(Object* object, std::function<void(int)>&& cb) override;
 
     void pread(

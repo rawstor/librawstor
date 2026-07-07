@@ -50,6 +50,10 @@ public:
         const RawstdUUID& id, const RawstorObjectMeta& meta,
         std::function<void(int)>&& cb
     ) override;
+
+    void list(
+        std::function<void(std::vector<RawstorObjectListEntry>&&, int)>&& cb
+    ) override;
 };
 
 } // namespace zfs

@@ -87,6 +87,12 @@ public:
         const RawstorObjectMeta& meta, std::function<void(int)>&& cb
     );
 
+    /* Enumerates the objects of a location (no UUID): CMD_LIST_CHUNKS. */
+    static void list(
+        rawio::Queue& queue, const rawstd::URI& location,
+        std::function<void(std::vector<RawstorObjectListEntry>&&, int)>&& cb
+    );
+
     explicit Connection(rawio::Queue& queue);
     Connection(const Connection&) = delete;
     ~Connection();

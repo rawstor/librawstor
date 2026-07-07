@@ -6,6 +6,7 @@
 #include <unistd.h>
 
 #include <cstdint>
+#include <vector>
 
 namespace rawstor {
 namespace tests {
@@ -71,6 +72,16 @@ public:
     void cmd_set_state_request();
     void cmd_set_state_response(uint32_t magic, uint16_t cid, int32_t res);
     void cmd_set_state(uint32_t magic, uint16_t cid, int32_t res);
+
+    void cmd_list_request();
+    void cmd_list_response(
+        uint32_t magic, uint16_t cid, int32_t res,
+        const std::vector<RawstorOSTFrameMetaBody>& records
+    );
+    void cmd_list(
+        uint32_t magic, uint16_t cid, int32_t res,
+        const std::vector<RawstorOSTFrameMetaBody>& records
+    );
 
     void cmd_flush_request();
     void cmd_flush_response(uint32_t magic, uint16_t cid, int32_t res);

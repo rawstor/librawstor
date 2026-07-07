@@ -66,6 +66,9 @@ private:
         const RawstdUUID& id, const RawstorObjectMeta& meta,
         std::function<void(int)>&& cb
     );
+    void _list_exchange(
+        std::function<void(std::vector<RawstorObjectListEntry>&&, int)>&& cb
+    );
 
 public:
     Session(rawio::Queue& queue, const rawstd::URI& location);
@@ -88,6 +91,14 @@ public:
     void set_state(
         const RawstdUUID& id, const RawstorObjectMeta& meta,
         std::function<void(int)>&& cb
+    ) override;
+
+    /*
+     * Valid on an unbound (control) connection only: the reconstruct scan
+     * always opens a fresh one (Connection::list).
+     */
+    void list(
+        std::function<void(std::vector<RawstorObjectListEntry>&&, int)>&& cb
     ) override;
 
     void set_object(Object* object, std::function<void(int)>&& cb) override;

@@ -466,6 +466,33 @@ void Connection::meta(
     });
 }
 
+void Connection::list(
+    rawio::Queue& queue, const rawstd::URI& location,
+    std::function<void(std::vector<RawstorObjectListEntry>&&, int)>&& cb
+) {
+    std::shared_ptr<Session> s = Session::create(queue, location);
+    Session* session = s.get();
+    session->connect([s = std::move(s), cb = std::move(cb)](int error) mutable {
+        if (error) {
+            cb({}, error);
+            return;
+        }
+
+        try {
+            s->list([s, cb = std::move(cb)](
+                        std::vector<RawstorObjectListEntry>&& entries, int error
+                    ) { cb(std::move(entries), error); });
+        } catch (const std::system_error& e) {
+            cb({}, e.code().value());
+        } catch (const std::bad_alloc& e) {
+            cb({}, ENOMEM);
+        } catch (const std::exception& e) {
+            rawstd_error("%s\n", e.what());
+            cb({}, EINVAL);
+        }
+    });
+}
+
 void Connection::set_state(
     rawio::Queue& queue, const rawstd::URI& target,
     const RawstorObjectMeta& meta, std::function<void(int)>&& cb

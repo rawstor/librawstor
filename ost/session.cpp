@@ -16,8 +16,11 @@
 #include <functional>
 #include <memory>
 #include <sstream>
+#include <string>
+#include <unordered_set>
 #include <vector>
 
+#include <cstdlib>
 #include <cstring>
 
 namespace {
@@ -279,6 +282,134 @@ int spec_complete(int result, void* data) noexcept {
     return 0;
 }
 
+/*
+ * LIST_CHUNKS: the backend locations are enumerated one by one; locations
+ * of one OST mirror the same objects, so entries are deduplicated by id
+ * (identity is immutable and equal on every copy — the first copy wins).
+ */
+struct ListCtx {
+    RawIOQueue* queue;
+    int fd;
+    uint16_t cid;
+    std::weak_ptr<int> alive;
+    std::vector<std::string> locations;
+    size_t next;
+    /* rawstor_object_list_async() output for the location in flight. */
+    RawstorObjectListEntry* entries;
+    size_t nentries;
+    std::unordered_set<std::string> seen;
+    std::vector<RawstorOSTFrameMetaBody> records;
+};
+
+void list_next(std::unique_ptr<ListCtx> ctx);
+
+void list_send(std::unique_ptr<ListCtx> ctx) {
+    size_t len = ctx->records.size() * sizeof(RawstorOSTFrameMetaBody);
+
+    /* Same payload bound as the data commands. */
+    if (len > (1ULL << 26)) {
+        send_response(
+            ctx->queue, ctx->fd, RAWSTOR_CMD_LIST_CHUNKS, ctx->cid, -E2BIG, 0
+        );
+        return;
+    }
+
+    if (len == 0) {
+        send_response(
+            ctx->queue, ctx->fd, RAWSTOR_CMD_LIST_CHUNKS, ctx->cid, 0, 0
+        );
+        return;
+    }
+
+    auto payload = std::make_shared<std::vector<unsigned char>>(len);
+    memcpy(payload->data(), ctx->records.data(), len);
+
+    send_response(
+        ctx->queue, ctx->fd, RAWSTOR_CMD_LIST_CHUNKS, ctx->cid,
+        static_cast<int32_t>(ctx->records.size()),
+        rawstd_hash_scalar(payload->data(), payload->size()), payload
+    );
+}
+
+int list_complete(int result, void* data) noexcept {
+    std::unique_ptr<ListCtx> ctx(static_cast<ListCtx*>(data));
+
+    try {
+        if (result < 0) {
+            if (!ctx->alive.expired()) {
+                send_response(
+                    ctx->queue, ctx->fd, RAWSTOR_CMD_LIST_CHUNKS, ctx->cid,
+                    result, 0
+                );
+            }
+            return 0;
+        }
+
+        for (size_t i = 0; i < ctx->nentries; ++i) {
+            const RawstorObjectListEntry& e = ctx->entries[i];
+            std::string key(
+                reinterpret_cast<const char*>(e.obj_id), sizeof(e.obj_id)
+            );
+            if (!ctx->seen.insert(key).second) {
+                continue;
+            }
+
+            RawstorOSTFrameMetaBody body{};
+            memcpy(body.obj_id, e.obj_id, sizeof(body.obj_id));
+            body.size = e.meta.size;
+            body.epoch = e.meta.epoch;
+            body.sync_id = e.meta.sync_id;
+            memcpy(
+                body.sync_id_history, e.meta.sync_id_history,
+                sizeof(body.sync_id_history)
+            );
+            body.state = e.meta.state;
+            body.member_kind = e.meta.member_kind;
+            body.width = e.meta.width;
+            memcpy(body.volume_id, e.meta.volume_id, sizeof(body.volume_id));
+            body.logical_index = e.meta.logical_index;
+            body.chunk_size = e.meta.chunk_size;
+            body.snap_version = e.meta.snap_version;
+            ctx->records.push_back(body);
+        }
+        free(ctx->entries);
+        ctx->entries = nullptr;
+        ctx->nentries = 0;
+
+        if (ctx->alive.expired()) {
+            return 0;
+        }
+
+        ++ctx->next;
+        list_next(std::move(ctx));
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+    }
+
+    return 0;
+}
+
+void list_next(std::unique_ptr<ListCtx> ctx) {
+    if (ctx->next == ctx->locations.size()) {
+        list_send(std::move(ctx));
+        return;
+    }
+
+    ListCtx* raw = ctx.get();
+    int res = rawstor_object_list_async(
+        raw->queue, raw->locations[raw->next].c_str(), &raw->entries,
+        &raw->nentries, list_complete, raw
+    );
+    if (res < 0) {
+        send_response(
+            ctx->queue, ctx->fd, RAWSTOR_CMD_LIST_CHUNKS, ctx->cid, res, 0
+        );
+        return;
+    }
+
+    ctx.release();
+}
+
 } // namespace
 
 namespace rawstor {
@@ -396,6 +527,7 @@ Session::_recv_head(const iovec* iov, unsigned int niov, size_t result) {
         return sizeof(RawstorOSTFrameAllocateBody);
     case RAWSTOR_CMD_RELEASE:
     case RAWSTOR_CMD_SPEC:
+    case RAWSTOR_CMD_LIST_CHUNKS:
         return sizeof(RawstorOSTFrameBasicBody);
     case RAWSTOR_CMD_SET_STATE:
         return sizeof(RawstorOSTFrameMetaBody);
@@ -562,6 +694,24 @@ Session::_recv_body(const iovec* iov, unsigned int niov, size_t result) {
         );
 
         _spec(_request_head, _request_body.basic);
+
+        return sizeof(RawstorOSTFrameHead);
+
+    case RAWSTOR_CMD_LIST_CHUNKS:
+        if (result != sizeof(_request_body.basic)) {
+            rawstd_error(
+                "fd %d: Unexpected request body size: %zu != %zu\n", _fd,
+                result, sizeof(_request_body.basic)
+            );
+
+            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+        }
+
+        rawstd_iovec_to_buf(
+            iov, niov, 0, &_request_body.basic, sizeof(_request_body.basic)
+        );
+
+        _list(_request_head);
 
         return sizeof(RawstorOSTFrameHead);
 
@@ -953,6 +1103,23 @@ void Session::_set_state(
     }
 
     ctx.release();
+}
+
+void Session::_list(const RawstorOSTFrameHead& head) {
+    auto ctx = std::make_unique<ListCtx>();
+    ctx->queue = _queue;
+    ctx->fd = _fd;
+    ctx->cid = head.cid;
+    ctx->alive = _alive;
+    ctx->next = 0;
+    ctx->entries = nullptr;
+    ctx->nentries = 0;
+    ctx->locations.reserve(_server.locations().size());
+    for (const auto& location : _server.locations()) {
+        ctx->locations.push_back(location.str());
+    }
+
+    list_next(std::move(ctx));
 }
 
 void Session::_flush(

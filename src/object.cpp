@@ -2506,6 +2506,114 @@ int rawstor_object_meta_async(
     }
 }
 
+namespace {
+
+/*
+ * The C side of a listing: the vector is copied into a malloc'd array the
+ * caller releases with free().
+ */
+int list_to_c(
+    std::vector<RawstorObjectListEntry>&& v, RawstorObjectListEntry** entries,
+    size_t* nentries
+) {
+    *entries = nullptr;
+    *nentries = 0;
+
+    if (v.empty()) {
+        return 0;
+    }
+
+    RawstorObjectListEntry* ret = static_cast<RawstorObjectListEntry*>(
+        malloc(v.size() * sizeof(RawstorObjectListEntry))
+    );
+    if (ret == nullptr) {
+        return ENOMEM;
+    }
+
+    memcpy(ret, v.data(), v.size() * sizeof(RawstorObjectListEntry));
+    *entries = ret;
+    *nentries = v.size();
+
+    return 0;
+}
+
+rawstd::URI list_location(const char* location) {
+    std::vector<rawstd::URI> uris = rawstd::URI::uriv(location);
+    if (uris.size() != 1) {
+        rawstd_error("A single location expected: %s\n", location);
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+    return uris[0];
+}
+
+} // namespace
+
+int rawstor_object_list(
+    const char* location, RawstorObjectListEntry** entries, size_t* nentries
+) noexcept {
+    try {
+        rawstd::URI uri = list_location(location);
+
+        std::vector<RawstorObjectListEntry> out;
+        volume_sync([&uri,
+                     &out](rawio::Queue& q, std::function<void(int)>&& done) {
+            rawstor::Connection::list(
+                q, uri,
+                [&out, done = std::move(done)](
+                    std::vector<RawstorObjectListEntry>&& v, int error
+                ) mutable {
+                    out = std::move(v);
+                    done(error);
+                }
+            );
+        });
+
+        int error = list_to_c(std::move(out), entries, nentries);
+        return error ? -error : 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+int rawstor_object_list_async(
+    RawIOQueue* queue, const char* location, RawstorObjectListEntry** entries,
+    size_t* nentries, int (*cb)(int result, void* data), void* data
+) noexcept {
+    try {
+        rawstd::URI uri = list_location(location);
+
+        rawstor::Connection::list(
+            *static_cast<rawio::Queue*>(queue), uri,
+            [entries, nentries, cb,
+             data](std::vector<RawstorObjectListEntry>&& v, int error) {
+                if (!error) {
+                    error = list_to_c(std::move(v), entries, nentries);
+                }
+                cb(error ? -error : 0, data);
+            }
+        );
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
 int rawstor_object_set_state(
     const char* target, const RawstorObjectMeta* meta
 ) noexcept {

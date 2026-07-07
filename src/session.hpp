@@ -12,6 +12,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace rawstor {
 
@@ -71,6 +72,17 @@ public:
     virtual void set_state(
         const RawstdUUID& id, const RawstorObjectMeta& meta,
         std::function<void(int)>&& cb
+    ) = 0;
+
+    /*
+     * Enumerates every stored object with its metadata: the source of the
+     * MDS reconstruct scan (CMD_LIST_CHUNKS). Objects whose metadata cannot
+     * be read are skipped with an error logged — the scan salvages the
+     * readable copies; an unreadable copy is unusable anyway and its chunk
+     * is covered by the mirrors.
+     */
+    virtual void list(
+        std::function<void(std::vector<RawstorObjectListEntry>&&, int)>&& cb
     ) = 0;
 
     virtual void set_object(Object* object, std::function<void(int)>&& cb) = 0;
