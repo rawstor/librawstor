@@ -21,6 +21,10 @@ namespace {
 
 rawstd::URI get_location_uri(const std::string& name) {
     std::filesystem::path path = std::filesystem::temp_directory_path() / name;
+    if (!std::filesystem::exists(path)) {
+        std::filesystem::create_directories(path);
+    }
+
     std::ostringstream oss;
     oss << "file://" << path.string();
     return rawstd::URI(oss.str());
