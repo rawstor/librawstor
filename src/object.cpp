@@ -412,12 +412,18 @@ int rawstor_object_list(
         for (const auto& t : ret) {
             std::string target = rawstd::URI::uris(t);
 
-            char** it = (char**)rawstd_list_append((RawstdList*)list);
-            *it = (char*)malloc(target.length() + 1);
-            if (*it == nullptr) {
+            char* str = (char*)malloc(target.length() + 1);
+            if (str == nullptr) {
                 RAWSTD_THROW_ERRNO();
             }
-            memcpy(*it, target.c_str(), target.length() + 1);
+            memcpy(str, target.c_str(), target.length() + 1);
+
+            char** it = (char**)rawstd_list_append((RawstdList*)list);
+            if (it == nullptr) {
+                free(str);
+                RAWSTD_THROW_ERRNO();
+            }
+            *it = str;
         }
 
         *targets = (RawstorStringList*)list;
