@@ -112,27 +112,39 @@ Object::Object(rawio::Queue& queue, const std::vector<rawstd::URI>& targets) :
     }
 }
 
-std::list<std::vector<rawstd::URI>> Object::list(
-    const std::vector<rawstd::URI>& locations, unsigned int limit, void** marker
+void Object::list(
+    const std::vector<rawstd::URI>& locations, unsigned int limit,
+    std::list<std::vector<rawstd::URI>>& targets, RawstorPaginationToken& token
 ) {
     validate_not_empty(locations);
 
-    RawstdUUID m = {};
-    if (*marker != nullptr) {
-        m = *static_cast<RawstdUUID*>(*marker);
-    }
+    RawstdUUID token_uuid = {};
+    memcpy(token_uuid.bytes, token.bytes, sizeof(token.bytes));
 
     auto cmp = [](const RawstdUUID& lhs, const RawstdUUID& rhs) -> bool {
         return rawstd_uuid_cmp(&lhs, &rhs) < 0;
     };
-    std::map<RawstdUUID, std::vector<rawstd::URI>, decltype(cmp)> targets(cmp);
+    std::map<RawstdUUID, std::vector<rawstd::URI>, decltype(cmp)> targets_map(
+        cmp
+    );
+    RawstdUUID empty_uuid = {};
+    RawstdUUID next_token_uuid = empty_uuid;
     for (const auto& location : locations) {
-        std::vector<RawstdUUID> uuids =
-            rawstor::Connection::list(location, limit, m);
-        for (const auto& uuid : uuids) {
+        std::vector<RawstdUUID> loc_uuids;
+        RawstdUUID loc_token_uuid = token_uuid;
+        rawstor::Connection::list(location, limit, loc_uuids, loc_token_uuid);
+        for (const auto& uuid : loc_uuids) {
             RawstdUUIDString uuid_string;
             rawstd_uuid_to_string(&uuid, &uuid_string);
-            targets[uuid].emplace_back(location, uuid_string);
+            targets_map[uuid].emplace_back(location, uuid_string);
+        }
+        if (rawstd_uuid_cmp(&next_token_uuid, &empty_uuid) == 0 &&
+            rawstd_uuid_cmp(&loc_token_uuid, &empty_uuid) == 0) {
+            if (rawstd_uuid_cmp(&loc_token_uuid, &next_token_uuid) < 0) {
+                next_token_uuid = loc_token_uuid;
+            }
+        } else {
+            next_token_uuid = loc_token_uuid;
         }
     }
 
@@ -143,33 +155,25 @@ std::list<std::vector<rawstd::URI>> Object::list(
     }
 
     std::list<std::vector<rawstd::URI>> ret;
-    const RawstdUUID* last_marker = nullptr;
+    const RawstdUUID* last_uuid = nullptr;
     bool capped = false;
-    for (const auto& it : targets) {
+    for (const auto& it : targets_map) {
         if (ret.size() >= limit) {
             capped = true;
             break;
         }
-        last_marker = &it.first;
+        last_uuid = &it.first;
         ret.push_back(it.second);
     }
-    if (!capped) {
-        last_marker = nullptr;
-    }
-
-    RawstdUUID* next_marker = nullptr;
-    if (last_marker != nullptr) {
-        next_marker = static_cast<RawstdUUID*>(malloc(sizeof(RawstdUUID)));
-        if (next_marker == nullptr) {
-            RAWSTD_THROW_ERRNO();
+    if (last_uuid != nullptr) {
+        if (capped && (rawstd_uuid_cmp(&next_token_uuid, &empty_uuid) == 0 ||
+                       rawstd_uuid_cmp(last_uuid, &next_token_uuid) < 0)) {
+            next_token_uuid = *last_uuid;
         }
-        *next_marker = *last_marker;
     }
 
-    free(*marker);
-    *marker = next_marker;
-
-    return ret;
+    targets.swap(ret);
+    memcpy(token.bytes, next_token_uuid.bytes, sizeof(next_token_uuid.bytes));
 }
 
 void Object::create(
@@ -392,13 +396,14 @@ void Object::pwritev(
 
 int rawstor_object_list(
     const char* location, unsigned int limit, RawstorStringList** targets,
-    void** marker
+    RawstorPaginationToken* token
 ) noexcept {
     RawstorStringList* list = nullptr;
     try {
         std::vector<rawstd::URI> locations = rawstd::URI::uriv(location);
-        std::list<std::vector<rawstd::URI>> ret =
-            rawstor::Object::list(locations, limit, marker);
+        std::list<std::vector<rawstd::URI>> ret;
+
+        rawstor::Object::list(locations, limit, ret, *token);
 
         list = (RawstorStringList*)rawstd_list_create(sizeof(const char*));
         if (list == nullptr) {

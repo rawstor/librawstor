@@ -222,16 +222,22 @@ const rawstd::URI* Connection::location() const noexcept {
     return &_sessions.front()->location();
 }
 
-std::vector<RawstdUUID> Connection::list(
-    const rawstd::URI& location, unsigned int limit, const RawstdUUID& marker
+void Connection::list(
+    const rawstd::URI& location, unsigned int limit,
+    std::vector<RawstdUUID>& targets, RawstdUUID& token
 ) {
     Queue q(1);
 
     std::vector<RawstdUUID> ret;
+    RawstdUUID ret_token;
 
     std::unique_ptr<Session> s = Session::create(q.queue(), location);
     s->list(
-        limit, marker, [&q, &ret](std::vector<RawstdUUID>&& uuids, int error) {
+        limit, token,
+        [&q, &ret, &ret_token](
+            std::vector<RawstdUUID>&& uuids, const RawstdUUID& next_token,
+            int error
+        ) {
             q.sub_operation();
 
             if (error) {
@@ -239,12 +245,14 @@ std::vector<RawstdUUID> Connection::list(
             }
 
             ret = std::move(uuids);
+            ret_token = next_token;
         }
     );
 
     q.wait();
 
-    return ret;
+    targets.swap(ret);
+    token = ret_token;
 }
 
 void Connection::create(

@@ -264,6 +264,7 @@ Session::_recv_head(const iovec* iov, unsigned int niov, size_t result) {
     case RAWSTOR_CMD_SET_OBJECT:
     case RAWSTOR_CMD_ALLOCATE:
     case RAWSTOR_CMD_RELEASE:
+    case RAWSTOR_CMD_LIST:
         return sizeof(RawstorOSTFrameBasicBody);
     }
 
@@ -351,6 +352,24 @@ Session::_recv_body(const iovec* iov, unsigned int niov, size_t result) {
 
         return sizeof(RawstorOSTFrameHead);
 
+    case RAWSTOR_CMD_LIST:
+        if (result != sizeof(_request_body.basic)) {
+            rawstd_error(
+                "fd %d: Unexpected request body size: %zu != %zu\n", _fd,
+                result, sizeof(_request_body.basic)
+            );
+
+            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+        }
+
+        rawstd_iovec_to_buf(
+            iov, niov, 0, &_request_body.basic, sizeof(_request_body.basic)
+        );
+
+        _list(_request_head, _request_body.basic);
+
+        return sizeof(RawstorOSTFrameHead);
+
     case RAWSTOR_CMD_ALLOCATE:
         if (result != sizeof(_request_body.basic)) {
             rawstd_error(
@@ -411,6 +430,51 @@ Session::_recv_data(const iovec* iov, unsigned int niov, size_t result) {
     _write(_request_head, _request_body.io, iov, niov, result);
 
     return sizeof(RawstorOSTFrameHead);
+}
+
+void Session::_list(
+    const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+) {
+    if (_object != nullptr) {
+        int res = rawstor_object_close(_object);
+        if (res < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
+        }
+        _object = nullptr;
+    }
+
+    RawstorPaginationToken token;
+    memcpy(token.bytes, body.obj_id, sizeof(body.obj_id));
+
+    RawstorStringList* targets;
+    int result = rawstor_object_list(
+        rawstd::URI::uris(_server.locations()).c_str(), 0, &targets, &token
+    );
+    if (result < 0) {
+        send_response(_queue, _fd, RAWSTOR_CMD_LIST, head.cid, -result, 0);
+        return;
+    }
+
+    try {
+        auto data = std::make_shared<std::vector<unsigned char>>(
+            sizeof(RawstdUUID) * (rawstor_string_list_size(targets) + 1)
+        );
+        RawstdUUID* out_it =
+            static_cast<RawstdUUID*>(static_cast<void*>(data->data()));
+        for (const char** in_it = rawstor_string_list_iter(targets);
+             in_it != NULL; in_it = rawstor_string_list_next(in_it), ++out_it) {
+            rawstd::URI target(*in_it);
+            rawstd_uuid_from_string(out_it, target.path().filename().c_str());
+        }
+        memcpy(out_it, &token, sizeof(token));
+        send_response(
+            _queue, _fd, RAWSTOR_CMD_LIST, head.cid, data->size(), 0, data
+        );
+    } catch (...) {
+        rawstor_string_list_delete(targets);
+        throw;
+    }
+    rawstor_string_list_delete(targets);
 }
 
 void Session::_allocate(

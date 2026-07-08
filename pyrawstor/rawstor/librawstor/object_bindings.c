@@ -87,38 +87,38 @@ PyTypeObject PyObjectSpecType = {
 };
 
 PyObject* py_rawstor_object_list(PyObject* Py_UNUSED(self), PyObject* args) {
-    PyObject* new_marker_obj = NULL;
-    PyObject* tuple = NULL;
-
     const char* location;
     unsigned int limit;
-    PyObject* marker_obj;
-    if (!PyArg_ParseTuple(args, "sIO", &location, &limit, &marker_obj)) {
+    PyObject* py_token;
+    if (!PyArg_ParseTuple(args, "sIO", &location, &limit, &py_token)) {
         return NULL;
     }
 
-    void* marker_ptr = NULL;
-    if (marker_obj != Py_None) {
-        if (!PyCapsule_CheckExact(marker_obj)) {
+    PyObject* py_ret_token = NULL;
+    RawstorStringList* list = NULL;
+    PyObject* py_list = NULL;
+
+    RawstorPaginationToken token = {};
+    if (py_token != Py_None) {
+        if (!PyCapsule_CheckExact(py_token)) {
+            PyErr_SetString(PyExc_TypeError, "token must be None or a capsule");
+            goto error;
+        }
+        if (!PyCapsule_IsValid(py_token, "pagination_token")) {
             PyErr_SetString(
-                PyExc_TypeError, "marker must be None or a capsule"
+                PyExc_ValueError, "invalid token capsule (wrong name)"
             );
             return NULL;
         }
-        marker_ptr = PyCapsule_GetPointer(marker_obj, "marker");
-        if (marker_ptr == NULL) {
-            return NULL;
+        RawstorPaginationToken* token_ptr = (RawstorPaginationToken*)
+            PyCapsule_GetPointer(py_token, "pagination_token");
+        if (token_ptr == NULL) {
+            goto error;
         }
+        token = *token_ptr;
     }
 
-    RawstorStringList* list = NULL;
-    PyObject* py_list = NULL;
-    int res = rawstor_object_list(location, limit, &list, &marker_ptr);
-
-    if (marker_obj != Py_None) {
-        Py_DECREF(marker_obj);
-    }
-
+    int res = rawstor_object_list(location, limit, &list, &token);
     if (res < 0) {
         set_os_error(-res);
         goto error;
@@ -128,11 +128,9 @@ PyObject* py_rawstor_object_list(PyObject* Py_UNUSED(self), PyObject* args) {
     if (!py_list) {
         goto error;
     }
-
-    const char** iter = rawstor_string_list_iter(list);
-    while (iter != NULL) {
-        const char* target = *iter;
-        PyObject* py_target = PyUnicode_FromString(target);
+    for (const char** it = rawstor_string_list_iter(list); it != NULL;
+         it = rawstor_string_list_next(it)) {
+        PyObject* py_target = PyUnicode_FromString(*it);
         if (!py_target) {
             goto error;
         }
@@ -141,43 +139,42 @@ PyObject* py_rawstor_object_list(PyObject* Py_UNUSED(self), PyObject* args) {
             goto error;
         }
         Py_DECREF(py_target);
-        iter = rawstor_string_list_next(iter);
     }
+    rawstor_string_list_delete(list);
+    list = NULL;
 
-    if (marker_ptr != NULL) {
-        new_marker_obj =
-            PyCapsule_New(marker_ptr, "marker", (PyCapsule_Destructor)free);
-        if (new_marker_obj == NULL) {
+    if (rawstor_pagination_token_empty(&token)) {
+        py_ret_token = Py_None;
+        Py_INCREF(Py_None);
+    } else {
+        RawstorPaginationToken* ret_token =
+            (RawstorPaginationToken*)malloc(sizeof(RawstorPaginationToken));
+        if (ret_token == NULL) {
+            PyErr_NoMemory();
             goto error;
         }
-    } else {
-        new_marker_obj = Py_None;
-        Py_INCREF(Py_None);
+        *ret_token = token;
+        py_ret_token = PyCapsule_New(
+            ret_token, "pagination_token", (PyCapsule_Destructor)free
+        );
+        if (py_ret_token == NULL) {
+            free(ret_token);
+            goto error;
+        }
     }
 
-    rawstor_string_list_delete(list);
-
-    tuple = PyTuple_New(2);
+    PyObject* tuple = PyTuple_New(2);
     if (!tuple) {
         goto error;
     }
     PyTuple_SET_ITEM(tuple, 0, py_list);
-    PyTuple_SET_ITEM(tuple, 1, new_marker_obj);
+    PyTuple_SET_ITEM(tuple, 1, py_ret_token);
     return tuple;
 
 error:
-    if (list) {
-        rawstor_string_list_delete(list);
-    }
-    if (marker_ptr != NULL && new_marker_obj == NULL) {
-        free(marker_ptr);
-    }
-    if (py_list != NULL) {
-        Py_DECREF(py_list);
-    }
-    if (new_marker_obj != NULL) {
-        Py_DECREF(new_marker_obj);
-    }
+    Py_XDECREF(py_ret_token);
+    rawstor_string_list_delete(list);
+    Py_XDECREF(py_list);
     return NULL;
 }
 

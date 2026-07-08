@@ -622,6 +622,8 @@ std::vector<T> basic_request(
                         const iovec* iov, unsigned int niov, size_t result,
                         int error
                     ) -> size_t {
+                        completed = true;
+
                         RAWSTD_TRACE_EVENT_MESSAGE(
                             trace_event, "%zu of %zu, error = %d\n", result,
                             response.body.res, error
@@ -633,7 +635,6 @@ std::vector<T> basic_request(
                         }
 
                         if (error) {
-                            completed = true;
                             RAWSTD_THROW_SYSTEM_ERROR(error);
                         }
 
@@ -896,21 +897,33 @@ void Session::_set_object(Object* object) {
 }
 
 void Session::list(
-    unsigned int limit, const RawstdUUID& marker,
-    std::function<void(std::vector<RawstdUUID>&&, int)>&& cb
+    unsigned int limit, const RawstdUUID& token,
+    std::function<void(std::vector<RawstdUUID>&&, const RawstdUUID&, int)>&& cb
 ) {
     int error = 0;
     std::vector<RawstdUUID> uuids;
     try {
         uuids = basic_request<RawstdUUID>(
-            fd(), _cid_counter++, RAWSTOR_CMD_LIST, marker, limit
+            fd(), _cid_counter++, RAWSTOR_CMD_LIST, token, limit
         );
+        // printf("<<<\n");
+        // for (const auto& uuid : uuids) {
+        //     RawstdUUIDString uuid_string;
+        //     rawstd_uuid_to_string(&uuid, &uuid_string);
+        //     printf("%s\n", uuid_string);
+        // }
+        // printf(">>>\n");
     } catch (const std::system_error& e) {
         error = e.code().value();
     } catch (...) {
         error = EIO;
     }
-    cb(std::move(uuids), error);
+    if (uuids.empty()) {
+        RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+    }
+    RawstdUUID next_token = uuids.back();
+    uuids.resize(uuids.size() - 1);
+    cb(std::move(uuids), next_token, error);
 }
 
 void Session::create(

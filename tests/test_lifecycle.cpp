@@ -35,8 +35,8 @@ TEST(FileLifecycleTest, create_spec_list_remove) {
     EXPECT_EQ(read_spec.size, (size_t)(1ull << 20));
 
     RawstorStringList* targets;
-    void* marker = nullptr;
-    res = rawstor_object_list(location.c_str(), 0, &targets, &marker);
+    RawstorPaginationToken token = {};
+    res = rawstor_object_list(location.c_str(), 0, &targets, &token);
     EXPECT_EQ(res, 0);
     if (res == 0) {
         EXPECT_EQ(rawstor_string_list_size(targets), static_cast<size_t>(1));
@@ -52,7 +52,7 @@ TEST(FileLifecycleTest, create_spec_list_remove) {
 
         rawstor_string_list_delete(targets);
     }
-    EXPECT_EQ(marker, nullptr);
+    EXPECT_EQ(rawstor_pagination_token_empty(&token), 1);
 
     res = rawstor_object_remove(target.c_str());
     EXPECT_EQ(res, 0);
@@ -81,8 +81,8 @@ TEST(FileLifecycleTest, create_at_default_spec_list_remove) {
     EXPECT_EQ(read_spec.size, (size_t)(1ull << 20));
 
     RawstorStringList* targets;
-    void* marker = nullptr;
-    res = rawstor_object_list(location.c_str(), 0, &targets, &marker);
+    RawstorPaginationToken token = {};
+    res = rawstor_object_list(location.c_str(), 0, &targets, &token);
     EXPECT_EQ(res, 0);
     if (res == 0) {
         EXPECT_EQ(rawstor_string_list_size(targets), static_cast<size_t>(1));
@@ -98,7 +98,7 @@ TEST(FileLifecycleTest, create_at_default_spec_list_remove) {
 
         rawstor_string_list_delete(targets);
     }
-    EXPECT_EQ(marker, nullptr);
+    EXPECT_EQ(rawstor_pagination_token_empty(&token), 1);
 
     res = rawstor_object_remove(target.c_str());
     EXPECT_EQ(res, 0);
@@ -129,8 +129,8 @@ TEST(FileLifecycleTest, create_at_spec_list_remove) {
     EXPECT_EQ(read_spec.size, (size_t)(1ull << 20));
 
     RawstorStringList* targets;
-    void* marker = nullptr;
-    res = rawstor_object_list(location.c_str(), 0, &targets, &marker);
+    RawstorPaginationToken token = {};
+    res = rawstor_object_list(location.c_str(), 0, &targets, &token);
     EXPECT_EQ(res, 0);
     if (res == 0) {
         EXPECT_EQ(rawstor_string_list_size(targets), static_cast<size_t>(1));
@@ -146,7 +146,7 @@ TEST(FileLifecycleTest, create_at_spec_list_remove) {
 
         rawstor_string_list_delete(targets);
     }
-    EXPECT_EQ(marker, nullptr);
+    EXPECT_EQ(rawstor_pagination_token_empty(&token), 1);
 
     res = rawstor_object_remove(target.c_str());
     EXPECT_EQ(res, 0);

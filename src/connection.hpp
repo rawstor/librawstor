@@ -41,9 +41,9 @@ private:
         unsigned int attempt);
 
 public:
-    static std::vector<RawstdUUID> list(
+    static void list(
         const rawstd::URI& location, unsigned int limit,
-        const RawstdUUID& marker
+        std::vector<RawstdUUID>& uuids, RawstdUUID& token
     );
 
     static void create(const rawstd::URI& target, const RawstorObjectSpec& sp);

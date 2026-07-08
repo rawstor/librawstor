@@ -116,12 +116,12 @@ int Session::_connect(const RawstdUUID& id) {
 }
 
 void Session::list(
-    unsigned int limit, const RawstdUUID& marker,
-    std::function<void(std::vector<RawstdUUID>&&, int)>&& cb
+    unsigned int limit, const RawstdUUID& token,
+    std::function<void(std::vector<RawstdUUID>&&, const RawstdUUID&, int)>&& cb
 ) {
     std::string location_path = get_location_path(location());
 
-    std::vector<RawstdUUID> uuids;
+    std::vector<RawstdUUID> ret_uuids;
     for (const auto& entry :
          std::filesystem::directory_iterator(location_path)) {
         if (entry.path().extension().string() != ".dat") {
@@ -139,21 +139,21 @@ void Session::list(
             continue;
         }
 
-        uuids.push_back(uuid);
+        ret_uuids.push_back(uuid);
     }
 
     std::sort(
-        uuids.begin(), uuids.end(),
+        ret_uuids.begin(), ret_uuids.end(),
         [](const RawstdUUID& lhs, const RawstdUUID& rhs) {
-            return rawstd_uuid_cmp(&lhs, &rhs);
+            return rawstd_uuid_cmp(&lhs, &rhs) < 0;
         }
     );
 
-    uuids.erase(
-        uuids.begin(),
+    ret_uuids.erase(
+        ret_uuids.begin(),
         std::find_if(
-            uuids.begin(), uuids.end(), [&marker](const RawstdUUID& at) {
-                return rawstd_uuid_cmp(&at, &marker) > 0;
+            ret_uuids.begin(), ret_uuids.end(), [&token](const RawstdUUID& at) {
+                return rawstd_uuid_cmp(&token, &at) < 0;
             }
         )
     );
@@ -164,11 +164,13 @@ void Session::list(
         limit = std::min(limit, rawstor_opts_list_limit());
     }
 
-    if (uuids.size() > limit) {
-        uuids.resize(limit);
+    RawstdUUID ret_token = {};
+    if (ret_uuids.size() > limit) {
+        ret_uuids.resize(limit);
+        ret_token = ret_uuids.back();
     }
 
-    cb(std::move(uuids), 0);
+    cb(std::move(ret_uuids), ret_token, 0);
 }
 
 void Session::create(

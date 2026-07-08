@@ -8,9 +8,9 @@
 
 int rawstor_cli_list(const char* location) {
     RawstorStringList* targets;
-    void* marker = NULL;
+    RawstorPaginationToken token = {};
     do {
-        int res = rawstor_object_list(location, 0, &targets, &marker);
+        int res = rawstor_object_list(location, 0, &targets, &token);
         if (res < 0) {
             fprintf(
                 stderr, "rawstor_object_list() failed: %s\n", strerror(-res)
@@ -22,7 +22,7 @@ int rawstor_cli_list(const char* location) {
             printf("%s\n", *it);
         }
         rawstor_string_list_delete(targets);
-    } while (marker != NULL);
+    } while (!rawstor_pagination_token_empty(&token));
 
     return EXIT_SUCCESS;
 }

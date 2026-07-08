@@ -90,7 +90,7 @@ int rawstor_object_spec(
  * This function retrieves a list of object identifiers (full target strings)
  * stored at the specified @p location. The location must be a comma separated
  * list of valid backend URI as described in the Locations and Targets
- * documentation. The function supports pagination via the @p marker parameter,
+ * documentation. The function supports pagination via the @p token parameter,
  * allowing the caller to iterate over large sets of objects.
  *
  * The objects are returned in lexicographic order by their UUID. The
@@ -101,18 +101,15 @@ int rawstor_object_spec(
  * server side) that caps the actual number of strings returned, regardless
  * of the @p limit value specified by the caller. If the number of objects
  * available exceeds the effective limit (either specified by the caller or
- * chosen by the backend), the function sets @p marker to an opaque string
- * that must be passed in the subsequent call to continue iteration. When the
- * end of the list is reached, @p marker is set to NULL.
+ * chosen by the backend), the function fills the @p token with an opaque
+ * pagination token that must be passed in the subsequent call to continue
+ * iteration. When the end of the list is reached, the token is set to an
+ * empty state (as determined by @ref rawstor_pagination_token_empty).
  *
  * The caller is responsible for freeing the returned string list using
- * @ref rawstor_string_list_delete and for freeing the marker value using
- * `free()` after the final iteration. The marker is allocated by the library
- * and must be released by the caller.
- *
- * @note The maximum number of strings that can be returned is capped by the
- *       environment variable @c RAWSTOR_OPTS_LIST_LIMIT if set. If the
- *       requested @p limit exceeds this cap, the cap value is used instead.
+ * @ref rawstor_string_list_delete. The pagination token is a plain structure
+ * of fixed size (16 bytes) and does not require explicit deallocation;
+ * it should be zero‑initialized before the first call.
  *
  * @param location  Location string specifying the backend and endpoint
  *                  (e.g., "ost://host:port" or "file:///path"). Must not be
@@ -133,62 +130,68 @@ int rawstor_object_spec(
  *                  it is no longer needed. The list is owned by the caller
  *                  after a successful return. On error, the content of this
  *                  parameter is undefined.
- * @param marker    Input/Output parameter for pagination. On the first call,
- *                  the caller must pass a pointer to a NULL pointer
- *                  (`char **marker = NULL;`). On success, if more objects are
- *                  available, the function allocates a marker string and stores
- *                  its address in `*marker`; otherwise, `*marker` is set to
- *                  NULL. The caller must pass the same marker pointer (with
- *                  its current value) in subsequent calls to retrieve the next
- *                  page. After the final iteration (when `*marker` is NULL),
- *                  the caller must free the last non‑NULL marker value using
- *                  `free()`. The marker is opaque and must not be modified by
- *                  the caller.
+ * @param token     Input/Output parameter for pagination. On the first call,
+ *                  the caller must zero‑initialize the structure (e.g.,
+ *                  `RawstorPaginationToken token = {};`). On success, if more
+ *                  objects are available, the function fills the token with an
+ *                  opaque value; otherwise, the token is set to an empty state
+ *                  (checkable via @ref rawstor_pagination_token_empty). The
+ *                  caller must pass the same token structure (with the value
+ *                  returned from the previous call) in subsequent calls to
+ *                  retrieve the next page. The token is opaque and must not be
+ *                  modified by the caller.
  *
  * @return 0 on success, negative errno on error.
- * @retval 0         Success. The @p targets list and @p marker are valid.
- * @retval -ENOMEM   Memory allocation failed (for the list or marker).
+ * @retval 0         Success. The @p targets list and @p token are valid.
+ * @retval -EINVAL   Invalid input: @p location is NULL or malformed.
+ * @retval -ENOMEM   Memory allocation failed (for the list).
  * @retval -ENOENT   The specified @p location does not exist or is unreachable.
  * @retval -EIO      I/O error while reading the backend.
  * @retval -EACCES   Permission denied for the specified location.
  *
- * @note If an invalid or corrupted marker is passed (e.g., from a previous
+ * @note If an invalid or corrupted token is passed (e.g., from a previous
  *       session or after modifications to the storage), the behaviour is
  *       undefined; the function may return incomplete or inconsistent results.
  *
  * @note The function may return a partial list even if an error occurs
  *       (e.g., if the backend becomes unavailable mid‑iteration); however,
  *       in such cases a negative error code is returned and the contents of
- *       @p targets and @p marker are unspecified. Callers should not rely on
+ *       @p targets and @p token are unspecified. Callers should not rely on
  *       partial data when an error is returned.
  *
+ * @note Objects inserted into the already‑retrieved portion of the list
+ *       between calls will not be visible in subsequent iterations; the
+ *       token‑based pagination ensures consistency within the current
+ *       iteration session.
+ *
  * @see rawstor_string_list_delete
+ * @see rawstor_pagination_token_empty
  * @see rawstor_object_create_at
  * @see Locations and Targets:
  * https://github.com/rawstor/librawstor/blob/main/docs/locations_and_targets.md
  *
  * @par Example: Iterating over all objects
  * @code
- * void* marker = NULL;
+ * RawstorPaginationToken token = {}; // zero‑initialized
+ *
  * do {
- *     RawstorStringList* list = NULL;
- *     int ret = rawstor_object_list("ost://localhost:8080", 0, &list, &marker);
+ *     RawstorStringList* page;
+ *     int ret = rawstor_object_list("ost://localhost:9090", 0, &page, &token);
  *     if (ret < 0) {
  *         // handle error
  *         break;
  *     }
- *     for (const char** iter = rawstor_string_list_iter(); iter != NULL;
- *          iter = rawstor_string_list_next(iter)) {
- *         // Process strings in list using *iter.
+ *     for (const char** it = rawstor_string_list_iter(page); it != NULL;
+ *          it = rawstor_string_list_next(it)) {
+ *         // Process strings in list using *it.
  *     }
- *     rawstor_string_list_delete(list);
- * } while (marker != NULL);
- * free(marker); // free the last marker (NULL is safe to free)
+ *     rawstor_string_list_delete(page);
+ * } while (!rawstor_pagination_token_empty(&token));
  * @endcode
  */
 int rawstor_object_list(
     const char* location, unsigned int limit, RawstorStringList** targets,
-    void** marker
+    RawstorPaginationToken* token
 ) RAWSTOR_NOEXCEPT;
 
 /**

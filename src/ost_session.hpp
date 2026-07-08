@@ -40,8 +40,9 @@ public:
     ~Session();
 
     void list(
-        unsigned int limit, const RawstdUUID& marker,
-        std::function<void(std::vector<RawstdUUID>&&, int)>&& cb
+        unsigned int limit, const RawstdUUID& token,
+        std::function<void(std::vector<RawstdUUID>&&, const RawstdUUID&, int)>&&
+            cb
     ) override;
 
     void create(
