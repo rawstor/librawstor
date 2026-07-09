@@ -5,10 +5,10 @@ from . import librawstor
 
 class Object:
     @staticmethod
-    def list(location: str) -> Iterator[str]:
+    def list(location: str, limit: int = 0) -> Iterator[str]:
         token = None
         while True:
-            page, token = librawstor.object_list(location, 0, token)
+            page, token = librawstor.object_list(location, limit, token)
             for target in page:
                 yield target
             if token is None:
