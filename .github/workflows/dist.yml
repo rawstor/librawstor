@@ -183,7 +183,7 @@ jobs:
     - name: install-rawstor-ost
       run: |
         sudo apt install -y ./rawstor-ost.deb/rawstor-ost_*.deb
-        sudo systemct start rawstor-ost.service
+        sudo systemctl start rawstor-ost.service
     - name: test-rawstor-ost
       run: |
         rawstor-ost --version
