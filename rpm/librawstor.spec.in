@@ -14,7 +14,7 @@ Rawstor client library
 %autosetup -n %{name}-@PACKAGE_VERSION@
 
 %build
-./configure --prefix=%{_prefix} --without-python3 --disable-ost-backend
+./configure --prefix=%{_prefix} --libdir=%{_libdir} --without-python3 --disable-ost-backend
 make %{?_smp_mflags}
 
 %install

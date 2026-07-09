@@ -107,7 +107,10 @@ jobs:
         cp deb/rawstor-ost/compat debian
         cp deb/rawstor-ost/changelog debian
         cp deb/rawstor-ost/format debian/source
+        cp deb/rawstor-ost/rawstor-ost.postinst debian
+        cp deb/rawstor-ost/rawstor-ost.prerm debian
         cp deb/rawstor-ost/rules debian
+        cp etc/systemd/system/rawstor-ost.service debian
         cp COPYING debian/copyright
         dpkg-buildpackage -us -uc
     - uses: actions/upload-artifact@v7
@@ -175,18 +178,19 @@ jobs:
     - name: install-librawstor
       run: sudo apt install -y ./librawstor.deb/librawstor_*.deb
     - name: test-librawstor
-      run: |
-        rawstor-cli --version
+      run: rawstor-cli --version
     - name: install-rawstor-ost
-      run: sudo apt install -y ./rawstor-ost.deb/rawstor-ost_*.deb
+      run: |
+        sudo apt install -y ./rawstor-ost.deb/rawstor-ost_*.deb
+        sudo systemctl start rawstor-ost.service
     - name: test-rawstor-ost
-      run: rawstor-ost --version
+      run: |
+        rawstor-ost --version
+        rawstor-cli list --location=ost://127.0.0.1:7777
     - name: install-python3-rawstor
-      run: |
-        sudo apt install -y ./python3-rawstor.deb/python3-rawstor_*.deb
+      run: sudo apt install -y ./python3-rawstor.deb/python3-rawstor_*.deb
     - name: test-python3-rawstor
-      run: |
-        python -c "import rawstor; print('OK')"
+      run: python -c "import rawstor; print(list(rawstor.Location('ost://127.0.0.1:7777/'))); print('OK')"
 
   rpm-librawstor:
     needs: sources
