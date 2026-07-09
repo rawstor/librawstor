@@ -1,0 +1,20 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    configure)
+        if ! getent group rawstor >/dev/null; then
+            addgroup --system rawstor
+        fi
+        mkdir -p /var/lib/rawstor
+        chmod 0755 /var/lib/rawstor
+        if ! getent passwd rawstor >/dev/null; then
+            adduser --system --no-create-home --ingroup rawstor --home /var/lib/rawstor --shell /usr/sbin/nologin rawstor
+        fi
+        chown rawstor:rawstor /var/lib/rawstor
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

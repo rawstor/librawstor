@@ -6,21 +6,51 @@ License: LGPL
 URL: https://github.com/rawstor/librawstor
 Source0: librawstor-@PACKAGE_VERSION@.tar.gz
 
+Requires(pre): shadow-utils
 Requires: librawstor >= @PACKAGE_VERSION_MAJOR@.@PACKAGE_VERSION_MINOR@.0, librawstor < @PACKAGE_VERSION_MAJOR@.@PACKAGE_VERSION_MINOR_NEXT@.0
+
+%{!?_unitdir: %global _unitdir /usr/lib/systemd/system}
 
 %description
 Rawstor OST backend
+
+%pre
+getent group rawstor >/dev/null || groupadd -r rawstor
+getent passwd rawstor >/dev/null || useradd -r -g rawstor -d /var/lib/rawstor -s /sbin/nologin -c "Rawstor OST daemon" rawstor
 
 %prep
 %autosetup -n librawstor-@PACKAGE_VERSION@
 
 %build
-./configure --prefix=%{_prefix} --without-python3
+./configure --prefix=%{_prefix} --libdir=%{_libdir} --without-python3
 make %{?_smp_mflags}
 
 %install
 rm -rf %{buildroot}
 make -C ost install DESTDIR=%{buildroot}
+mkdir -p %{buildroot}%{_unitdir}
+install -m 644 etc/systemd/system/rawstor-ost.service %{buildroot}%{_unitdir}/rawstor-ost.service
+mkdir -p %{buildroot}/var/lib/rawstor
+
+%post
+chown rawstor:rawstor /var/lib/rawstor
+if [ $1 -eq 1 ]; then
+    systemctl enable rawstor-ost.service >/dev/null 2>&1 || :
+    systemctl start rawstor-ost.service >/dev/null 2>&1 || :
+fi
+
+%preun
+if [ $1 -eq 0 ]; then
+    systemctl stop rawstor-ost.service >/dev/null 2>&1 || :
+    systemctl disable rawstor-ost.service >/dev/null 2>&1 || :
+fi
+
+%postun
+if [ $1 -ge 1 ]; then
+    systemctl try-restart rawstor-ost.service >/dev/null 2>&1 || :
+fi
 
 %files
 %{_bindir}/*
+%{_unitdir}/rawstor-ost.service
+%dir %attr(0755, rawstor, rawstor) /var/lib/rawstor
