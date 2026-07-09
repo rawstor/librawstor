@@ -181,15 +181,19 @@ jobs:
       run: |
         rawstor-cli --version
     - name: install-rawstor-ost
-      run: sudo apt install -y ./rawstor-ost.deb/rawstor-ost_*.deb
+      run: |
+        sudo apt install -y ./rawstor-ost.deb/rawstor-ost_*.deb
+        sudo systemct start rawstor-ost.service
     - name: test-rawstor-ost
-      run: rawstor-ost --version
+      run: |
+        rawstor-ost --version
+        rawstor-cli list --location=127.0.0.1:7777
     - name: install-python3-rawstor
       run: |
         sudo apt install -y ./python3-rawstor.deb/python3-rawstor_*.deb
     - name: test-python3-rawstor
       run: |
-        python -c "import rawstor; print('OK')"
+        python -c "import rawstor; print(list(rawstor.Location('ost://127.0.0.1:7777/'))); print('OK')"
 
   rpm-librawstor:
     needs: sources
