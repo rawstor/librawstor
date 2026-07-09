@@ -28,11 +28,11 @@ AC_SUBST([GENERIC_CXXFLAGS], ["-std=c++20 -Wall -Wextra -Werror -fPIC"])
 
 
 AC_ARG_ENABLE([tests], [AS_HELP_STRING([--disable-tests],
-    [enable testing code])],
+    [disable testing code])],
     [enable_tests=$enableval],
     [enable_tests="yes"])
-AM_CONDITIONAL([ENABLE_TESTS], [test "x$enable_tests" == "xyes"])
-AS_IF([test "x$enable_tests" == "xyes"], [
+AM_CONDITIONAL([ENABLE_TESTS], [test "x$enable_tests" = "xyes"])
+AS_IF([test "x$enable_tests" = "xyes"], [
     PKG_CHECK_MODULES([GTEST], [gtest])
 ])
 
@@ -41,7 +41,7 @@ AC_ARG_ENABLE([debug], [AS_HELP_STRING([--enable-debug],
     [enable DEBUG logging])],
     [enable_debug=$enableval],
     [enable_debug="no"])
-AS_IF([test "x$enable_debug" == "xyes"], [
+AS_IF([test "x$enable_debug" = "xyes"], [
     AC_SUBST([maybe_loglevel_define], ["#define RAWSTD_LOGLEVEL RAWSTD_LOGLEVEL_DEBUG"])
 ])
 
@@ -50,7 +50,7 @@ AC_ARG_ENABLE([trace], [AS_HELP_STRING([--enable-trace],
     [enable TRACE logging])],
     [enable_trace=$enableval],
     [enable_trace="no"])
-AS_IF([test "x$enable_trace" == "xyes"], [
+AS_IF([test "x$enable_trace" = "xyes"], [
     AC_SUBST([maybe_loglevel_define], ["#define RAWSTD_LOGLEVEL RAWSTD_LOGLEVEL_TRACE"])
 ])
 
@@ -59,7 +59,7 @@ AC_ARG_ENABLE([asan], [AS_HELP_STRING([--enable-asan],
     [Enable address sanitizer])],
     [enable_asan=$enableval],
     [enable_asan="no"])
-AS_IF([test "x$enable_asan" == "xyes"], [
+AS_IF([test "x$enable_asan" = "xyes"], [
     AC_SUBST([ASAN_CFLAGS], ["-fsanitize=address -g"])
     AC_SUBST([ASAN_LDFLAGS], ["-fsanitize=address"])
     AC_SUBST([maybe_asan], ["-fsanitize=address"])
@@ -74,8 +74,8 @@ AC_ARG_WITH([liburing], [AS_HELP_STRING([--without-liburing],
     [disable support for liburing])],
     [with_liburing=$withval],
     [with_liburing="yes"])
-AM_CONDITIONAL([WITH_LIBURING], [test "x$with_liburing" == "xyes"])
-AS_IF([test "x$with_liburing" == "xyes"], [
+AM_CONDITIONAL([WITH_LIBURING], [test "x$with_liburing" = "xyes"])
+AS_IF([test "x$with_liburing" = "xyes"], [
     PKG_CHECK_MODULES([LIBURING], [liburing])
     AC_SUBST([maybe_liburing], ["liburing"])
     AC_DEFINE([RAWIO_WITH_LIBURING], 1, [Enable liburing integration])
@@ -88,8 +88,8 @@ AC_ARG_WITH([libxxhash], [AS_HELP_STRING([--without-libxxhash],
     [disable support for libxxhash])],
     [with_libxxhash=$withval],
     [with_libxxhash="yes"])
-AM_CONDITIONAL([WITH_LIBXXHASH], [test "x$with_libxxhash" == "xyes"])
-AS_IF([test "x$with_libxxhash" == "xyes"], [
+AM_CONDITIONAL([WITH_LIBXXHASH], [test "x$with_libxxhash" = "xyes"])
+AS_IF([test "x$with_libxxhash" = "xyes"], [
     AC_DEFINE([RAWSTOR_WITH_LIBXXHASH], 1, [With libxxhash])
     PKG_CHECK_MODULES([LIBXXHASH], [libxxhash])
     AC_SUBST([maybe_libxxhash], ["libxxhash"])
@@ -98,12 +98,18 @@ AS_IF([test "x$with_libxxhash" == "xyes"], [
 ])
 
 
+AC_ARG_ENABLE([ost-backend], [AS_HELP_STRING([--disable-ost-backend],
+    [disable OST backend])],
+    [enable_ost_backend=$enableval],
+    [enable_ost_backend="yes"])
+AM_CONDITIONAL([ENABLE_OST_BACKEND], [test "x$enable_ost_backend" = "xyes"])
+
 AC_ARG_WITH([python3], [AS_HELP_STRING([--without-python3],
     [disable support for python3 bindings])],
     [with_python3=$withval],
     [with_python3="yes"])
-AM_CONDITIONAL([WITH_PYTHON3], [test "x$with_python3" == "xyes"])
-AS_IF([test "x$with_python3" == "xyes"], [
+AM_CONDITIONAL([WITH_PYTHON3], [test "x$with_python3" = "xyes"])
+AS_IF([test "x$with_python3" = "xyes"], [
     AM_PATH_PYTHON([3.10])
     PKG_CHECK_MODULES([PYTHON3], [python3])
     AC_MSG_CHECKING([for python3-build usability])
@@ -138,9 +144,11 @@ AC_CONFIG_FILES(
     [deb/librawstor/changelog]
     [deb/python3-rawstor/control]
     [deb/python3-rawstor/changelog]
-    [deb/python3-rawstor/rules]
+    [deb/rawstor-ost/control]
+    [deb/rawstor-ost/changelog]
     [rpm/librawstor.spec]
     [rpm/python3-rawstor.spec]
+    [rpm/rawstor-ost.spec]
     [pyrawstor/config.py]
     [pyrawstor/Makefile]
 )
