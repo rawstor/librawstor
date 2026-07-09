@@ -8,8 +8,10 @@
 #include <rawio/queue.hpp>
 
 #include <rawstd/uri.hpp>
+#include <rawstd/uuid.h>
 
 #include <functional>
+#include <list>
 #include <memory>
 #include <vector>
 
@@ -39,6 +41,11 @@ private:
         unsigned int attempt);
 
 public:
+    static void list(
+        const rawstd::URI& location, unsigned int limit,
+        std::vector<RawstdUUID>& uuids, RawstdUUID& token
+    );
+
     static void create(const rawstd::URI& target, const RawstorObjectSpec& sp);
 
     static void remove(const rawstd::URI& target);

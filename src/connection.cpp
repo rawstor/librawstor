@@ -11,8 +11,10 @@
 #include <rawstd/gpp.hpp>
 #include <rawstd/iovec.h>
 #include <rawstd/logging.hpp>
+#include <rawstd/uuid.h>
 
 #include <algorithm>
+#include <list>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -218,6 +220,39 @@ const rawstd::URI* Connection::location() const noexcept {
     }
 
     return &_sessions.front()->location();
+}
+
+void Connection::list(
+    const rawstd::URI& location, unsigned int limit,
+    std::vector<RawstdUUID>& targets, RawstdUUID& token
+) {
+    Queue q(1);
+
+    std::vector<RawstdUUID> ret;
+    RawstdUUID ret_token;
+
+    std::unique_ptr<Session> s = Session::create(q.queue(), location);
+    s->list(
+        limit, token,
+        [&q, &ret, &ret_token](
+            std::vector<RawstdUUID>&& uuids, const RawstdUUID& next_token,
+            int error
+        ) {
+            q.sub_operation();
+
+            if (error) {
+                RAWSTD_THROW_SYSTEM_ERROR(error);
+            }
+
+            ret = std::move(uuids);
+            ret_token = next_token;
+        }
+    );
+
+    q.wait();
+
+    targets.swap(ret);
+    token = ret_token;
 }
 
 void Connection::create(

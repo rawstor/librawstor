@@ -7,6 +7,7 @@
 #ifndef RAWSTOR_H
 #define RAWSTOR_H
 
+#include <rawstor/list.h>
 #include <rawstor/object.h>
 #include <rawstor/protocol.h>
 #include <rawstor/rawio.h>

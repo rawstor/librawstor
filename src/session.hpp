@@ -6,10 +6,12 @@
 #include <rawio/queue.hpp>
 
 #include <rawstd/uri.hpp>
+#include <rawstd/uuid.h>
 
 #include <rawstor/object.h>
 
 #include <functional>
+#include <list>
 #include <memory>
 #include <string>
 
@@ -43,6 +45,12 @@ public:
     inline const rawstd::URI& location() const noexcept { return _location; }
 
     inline int fd() const noexcept { return _fd; }
+
+    virtual void list(
+        unsigned int limit, const RawstdUUID& token,
+        std::function<void(std::vector<RawstdUUID>&&, const RawstdUUID&, int)>&&
+            cb
+    ) = 0;
 
     virtual void create(
         const RawstdUUID& id, const RawstorObjectSpec& sp,

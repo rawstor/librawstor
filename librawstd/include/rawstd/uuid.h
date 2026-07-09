@@ -19,6 +19,8 @@ int rawstd_uuid_from_string(struct RawstdUUID* uuid, const char* s);
 
 void rawstd_uuid_to_string(const struct RawstdUUID* uuid, RawstdUUIDString* s);
 
+int rawstd_uuid_cmp(const struct RawstdUUID* lhs, const struct RawstdUUID* rhs);
+
 #ifdef __cplusplus
 }
 #endif
