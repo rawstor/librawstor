@@ -120,7 +120,7 @@ PyObject* py_rawstor_object_list(PyObject* Py_UNUSED(self), PyObject* args) {
             PyErr_SetString(
                 PyExc_ValueError, "invalid token capsule (wrong name)"
             );
-            return NULL;
+            goto error;
         }
         RawstorPaginationToken* token_ptr = (RawstorPaginationToken*)
             PyCapsule_GetPointer(py_token, "pagination_token");

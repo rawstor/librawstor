@@ -655,7 +655,7 @@ std::vector<T> basic_request(
     );
 
     while (!completed) {
-        queue->wait_timeout(5000);
+        queue->wait_timeout(rawstor_opts_tcp_user_timeout());
     }
 
     return ret;
