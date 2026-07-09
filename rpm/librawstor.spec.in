@@ -1,7 +1,7 @@
 Name: librawstor
 Version: @PACKAGE_VERSION_SHORT@
 Release: @RPM_RELEASE@
-Summary: Rawstor client library and OST backend
+Summary: Rawstor client library
 
 License: LGPL
 URL: https://github.com/rawstor/librawstor
