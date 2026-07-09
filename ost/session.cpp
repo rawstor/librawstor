@@ -465,7 +465,12 @@ void Session::_list(
         for (const char** in_it = rawstor_string_list_iter(targets);
              in_it != NULL; in_it = rawstor_string_list_next(in_it), ++out_it) {
             rawstd::URI target(*in_it);
-            rawstd_uuid_from_string(out_it, target.path().filename().c_str());
+            int res = rawstd_uuid_from_string(
+                out_it, target.path().filename().c_str()
+            );
+            if (res < 0) {
+                RAWSTD_THROW_SYSTEM_ERROR(-res);
+            }
         }
         memcpy(out_it, &token, sizeof(token));
         send_response(

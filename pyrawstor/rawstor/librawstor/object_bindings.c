@@ -87,7 +87,6 @@ PyTypeObject PyObjectSpecType = {
 };
 
 static void free_pagination_token(PyObject* capsule) {
-    free(PyCapsule_GetPointer(capsule, "pagination_token"));
     if (!PyCapsule_CheckExact(capsule)) {
         return;
     }
