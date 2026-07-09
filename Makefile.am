@@ -38,7 +38,7 @@ EXTRA_DIST = ChangeLog.md \
              deb/python3-rawstor/rules \
              deb/rawstor-ost/compat \
              deb/rawstor-ost/format \
-             deb/rawstor-ost/rawstor-ost \
+             deb/rawstor-ost/rawstor-ost.install \
              deb/rawstor-ost/rules
 
 
