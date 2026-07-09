@@ -62,10 +62,7 @@ jobs:
         cp deb/librawstor/compat debian
         cp deb/librawstor/changelog debian
         cp deb/librawstor/format debian/source
-        cp deb/librawstor/librawstor.postinst debian
-        cp deb/librawstor/librawstor.prerm debian
         cp deb/librawstor/rules debian
-        cp etc/systemd/system/rawstor-ost.service debian
         cp COPYING debian/copyright
         dpkg-buildpackage -us -uc
     - uses: actions/upload-artifact@v7
@@ -110,7 +107,10 @@ jobs:
         cp deb/rawstor-ost/compat debian
         cp deb/rawstor-ost/changelog debian
         cp deb/rawstor-ost/format debian/source
+        cp deb/rawstor-ost/rawstor-ost.postinst debian
+        cp deb/rawstor-ost/rawstor-ost.prerm debian
         cp deb/rawstor-ost/rules debian
+        cp etc/systemd/system/rawstor-ost.service debian
         cp COPYING debian/copyright
         dpkg-buildpackage -us -uc
     - uses: actions/upload-artifact@v7

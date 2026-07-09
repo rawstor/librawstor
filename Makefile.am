@@ -39,9 +39,12 @@ EXTRA_DIST = deb/librawstor/compat \
              deb/rawstor-ost/compat \
              deb/rawstor-ost/format \
              deb/rawstor-ost/rules \
-             etc/systemd/system/rawstor-ost.service \
              ChangeLog.md \
              README.md
+
+if ENABLE_OST_BACKEND
+EXTRA_DIST += etc/systemd/system/rawstor-ost.service
+endif
              
 
 CLEANFILES = ChangeLog \
