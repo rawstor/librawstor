@@ -34,7 +34,11 @@ EXTRA_DIST = ChangeLog.md \
              deb/librawstor/format \
              deb/librawstor/rules \
              deb/python3-rawstor/compat \
-             deb/python3-rawstor/format
+             deb/python3-rawstor/format \
+             deb/python3-rawstor/rules \
+             deb/rawstor-ost/compat \
+             deb/rawstor-ost/format \
+             deb/rawstor-ost/rules
 
 
 CLEANFILES = ChangeLog \

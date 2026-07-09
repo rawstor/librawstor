@@ -9,7 +9,7 @@ Package: @PACKAGE_NAME@
 Architecture: amd64
 Depends: ${misc:Depends},
          ${shlibs:Depends},
-         liburing2,
-         libxxhash0
-Description: Rawstor client library and command line tools
+         librawstor (>= @PACKAGE_VERSION_MAJOR@.@PACKAGE_VERSION_MINOR@.0),
+         librawstor (<< @PACKAGE_VERSION_MAJOR@.@PACKAGE_VERSION_MINOR_NEXT@.0)
+Description: Rawstor OST backend
 Homepage: https://github.com/rawstor/librawstor

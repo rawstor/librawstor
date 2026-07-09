@@ -8,4 +8,4 @@ override_dh_clean:
 override_dh_autoreconf:
 
 override_dh_auto_configure:
-	dh_auto_configure -- --without-python3 --disable-ost-backend
+	dh_auto_configure -- --without-python3
