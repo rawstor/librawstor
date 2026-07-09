@@ -52,7 +52,7 @@ jobs:
       run: |
         tar -xzf ${LIBRAWSTOR_TAR_GZ}
         cd ${LIBRAWSTOR}
-        ./configure --prefix=${HOME}/rpmbuild/BUILD --without-python3
+        ./configure --without-python3 --disable-ost-backend
     - name: dpkg-buildpackage
       run: |
         cd ${LIBRAWSTOR}
@@ -69,6 +69,51 @@ jobs:
       with:
         name: librawstor.deb
         path: librawstor_*.deb
+        if-no-files-found: error
+
+  deb-rawstor-ost:
+    needs:
+    - sources
+    - deb-librawstor
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libxxhash-dev liburing-dev libgtest-dev debhelper build-essential
+    - uses: actions/download-artifact@v8
+    - name: install librawstor
+      run: sudo apt install -y ./librawstor.deb/librawstor_*.deb
+    - name: env
+      run: |
+        export LIBRAWSTOR_TAR_GZ=$(cd sources && ls librawstor-*.tar.gz)
+        export LIBRAWSTOR_TAR=${LIBRAWSTOR_TAR_GZ%.*}
+        export LIBRAWSTOR=${LIBRAWSTOR_TAR%.*}
+        echo "LIBRAWSTOR_TAR_GZ=${LIBRAWSTOR_TAR_GZ}" >> $GITHUB_ENV
+        echo "LIBRAWSTOR=${LIBRAWSTOR}" >> $GITHUB_ENV
+    - name: make
+      run: |
+        tar -xzf sources/${LIBRAWSTOR_TAR_GZ}
+        cd ${LIBRAWSTOR}
+        ./configure --without-python3
+    - name: dpkg-buildpackage
+      run: |
+        cd ${LIBRAWSTOR}
+        mkdir debian
+        mkdir debian/source
+        cp deb/rawstor-ost/control debian
+        cp deb/rawstor-ost/compat debian
+        cp deb/rawstor-ost/changelog debian
+        cp deb/rawstor-ost/format debian/source
+        cp deb/rawstor-ost/rules debian
+        cp COPYING debian/copyright
+        dpkg-buildpackage -us -uc
+    - uses: actions/upload-artifact@v7
+      with:
+        name: rawstor-ost.deb
+        path: rawstor-ost_*.deb
         if-no-files-found: error
 
   deb-python3-rawstor:
@@ -91,10 +136,8 @@ jobs:
         export LIBRAWSTOR_TAR_GZ=$(cd sources && ls librawstor-*.tar.gz)
         export LIBRAWSTOR_TAR=${LIBRAWSTOR_TAR_GZ%.*}
         export LIBRAWSTOR=${LIBRAWSTOR_TAR%.*}
-        export PACKAGE_VERSION=${LIBRAWSTOR#librawstor-}
         echo "LIBRAWSTOR_TAR_GZ=${LIBRAWSTOR_TAR_GZ}" >> $GITHUB_ENV
         echo "LIBRAWSTOR=${LIBRAWSTOR}" >> $GITHUB_ENV
-        echo "PACKAGE_VERSION=${PACKAGE_VERSION}" >> $GITHUB_ENV
     - name: make
       run: |
         tar -xzf sources/${LIBRAWSTOR_TAR_GZ}
@@ -122,6 +165,7 @@ jobs:
   deb-install:
     needs:
     - deb-librawstor
+    - deb-rawstor-ost
     - deb-python3-rawstor
 
     runs-on: ubuntu-latest
@@ -133,7 +177,10 @@ jobs:
     - name: test-librawstor
       run: |
         rawstor-cli --version
-        rawstor-ost --version
+    - name: install-rawstor-ost
+      run: sudo apt install -y ./rawstor-ost.deb/rawstor-ost_*.deb
+    - name: test-rawstor-ost
+      run: rawstor-ost --version
     - name: install-python3-rawstor
       run: |
         sudo apt install -y ./python3-rawstor.deb/python3-rawstor_*.deb
@@ -182,6 +229,47 @@ jobs:
         path: ~/rpmbuild/RPMS/x86_64/librawstor-*.rpm
         if-no-files-found: error
 
+  rpm-rawstor-ost:
+    needs: sources
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libxxhash-dev liburing-dev libgtest-dev rpm rpmlint
+    - name: setuptree
+      run: |
+        mkdir -p ~/rpmbuild/SOURCES
+        mkdir -p ~/rpmbuild/SPECS
+    - uses: actions/download-artifact@v8
+      with:
+        name: sources
+    - name: env
+      run: |
+        export LIBRAWSTOR_TAR_GZ=$(ls librawstor-*.tar.gz)
+        export LIBRAWSTOR_TAR=${LIBRAWSTOR_TAR_GZ%.*}
+        export LIBRAWSTOR=${LIBRAWSTOR_TAR%.*}
+        echo "LIBRAWSTOR_TAR_GZ=${LIBRAWSTOR_TAR_GZ}" >> $GITHUB_ENV
+        echo "LIBRAWSTOR=${LIBRAWSTOR}" >> $GITHUB_ENV
+    - name: configure
+      run: |
+        tar -xzf ${LIBRAWSTOR_TAR_GZ}
+        cd ${LIBRAWSTOR}
+        ./configure --prefix=${HOME}/rpmbuild/BUILD --without-python3
+    - name: rpmbuild
+      run: |
+        cp ${LIBRAWSTOR}/rpm/rawstor-ost.spec ~/rpmbuild/SPECS
+        cp ${LIBRAWSTOR_TAR_GZ} ~/rpmbuild/SOURCES
+        rpmlint ~/rpmbuild/SPECS/rawstor-ost.spec
+        rpmbuild -bb ~/rpmbuild/SPECS/rawstor-ost.spec
+    - uses: actions/upload-artifact@v7
+      with:
+        name: rawstor-ost.rpm
+        path: ~/rpmbuild/RPMS/x86_64/rawstor-ost-*.rpm
+        if-no-files-found: error
+
   rpm-python3-rawstor:
     needs: sources
 
@@ -227,9 +315,11 @@ jobs:
     needs:
     - sources
     - deb-librawstor
+    - deb-rawstor-ost
     - deb-python3-rawstor
     - deb-install
     - rpm-librawstor
+    - rpm-rawstor-ost
     - rpm-python3-rawstor
 
     runs-on: ubuntu-latest
@@ -263,7 +353,9 @@ jobs:
         working_directory: ./artifacts
         files: |
           librawstor.deb/*
+          rawstor-ost.deb/*
           python3-rawstor.deb/*
           librawstor.rpm/*
+          rawstor-ost.rpm/*
           python3-rawstor.rpm/*
           sources/*
