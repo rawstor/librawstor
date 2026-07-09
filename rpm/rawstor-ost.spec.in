@@ -6,10 +6,16 @@ License: LGPL
 URL: https://github.com/rawstor/librawstor
 Source0: librawstor-@PACKAGE_VERSION@.tar.gz
 
+%{!?_unitdir: %global _unitdir /usr/lib/systemd/system}
+
 Requires: librawstor >= @PACKAGE_VERSION_MAJOR@.@PACKAGE_VERSION_MINOR@.0, librawstor < @PACKAGE_VERSION_MAJOR@.@PACKAGE_VERSION_MINOR_NEXT@.0
 
 %description
 Rawstor OST backend
+
+%pre
+getent group rawstor >/dev/null || groupadd -r rawstor
+getent passwd rawstor >/dev/null || useradd -r -g rawstor -d /var/lib/rawstor -s /sbin/nologin -c "Rawstor OST daemon" rawstor
 
 %prep
 %autosetup -n librawstor-@PACKAGE_VERSION@
@@ -21,6 +27,20 @@ make %{?_smp_mflags}
 %install
 rm -rf %{buildroot}
 make -C ost install DESTDIR=%{buildroot}
+mkdir -p %{buildroot}%{_unitdir}
+install -m 644 etc/systemd/system/rawstor-ost.service %{buildroot}%{_unitdir}/rawstor-ost.service
+mkdir -p %{buildroot}/var/lib/rawstor
+
+%post
+%systemd_post rawstor-ost.service
+
+%preun
+%systemd_preun rawstor-ost.service
+
+%postun
+%systemd_postun_with_restart rawstor-ost.service
 
 %files
 %{_bindir}/*
+%{_unitdir}/rawstor-ost.service
+%dir %attr(0755, rawstor, rawstor) /var/lib/rawstor

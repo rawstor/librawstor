@@ -7,6 +7,7 @@ case "$1" in
             addgroup --system rawstor
         fi
         mkdir -p /var/lib/rawstor
+        chmod 0755 /var/lib/rawstor
         if ! getent passwd rawstor >/dev/null; then
             adduser --system --no-create-home --ingroup rawstor --home /var/lib/rawstor rawstor
         fi
