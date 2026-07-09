@@ -1,3 +1,2 @@
-from . import librawstor
-from .librawstor import ObjectSpec
-from .object import Object
+from .target import Target
+from .location import Location

@@ -173,7 +173,6 @@ void Session::list(
             ret_token = ret_uuids.back();
         }
     } catch (const std::system_error& e) {
-        rawstd_error("Unexpected error: %s\n", e.what());
         cb({}, {}, e.code().value());
         return;
     } catch (const std::exception& e) {
@@ -181,6 +180,7 @@ void Session::list(
         cb({}, {}, EIO);
         return;
     } catch (...) {
+        rawstd_error("Unexpected error\n");
         cb({}, {}, EIO);
         return;
     }
@@ -242,20 +242,12 @@ void Session::remove(const RawstdUUID& id, std::function<void(int)>&& cb) {
 
     std::string dat_path = get_object_dat_path(location_path, uuid_string);
     if (unlink(dat_path.c_str()) == -1) {
-        if (errno == ENOENT) {
-            errno = 0;
-        } else {
-            RAWSTD_THROW_ERRNO();
-        }
+        RAWSTD_THROW_ERRNO();
     }
 
     std::string spec_path = get_object_spec_path(location_path, uuid_string);
     if (unlink(spec_path.c_str()) == -1) {
-        if (errno == ENOENT) {
-            errno = 0;
-        } else {
-            RAWSTD_THROW_ERRNO();
-        }
+        RAWSTD_THROW_ERRNO();
     }
 
     cb(0);
