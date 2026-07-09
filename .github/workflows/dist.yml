@@ -100,17 +100,16 @@ jobs:
         ./configure --without-python3
     - name: dpkg-buildpackage
       run: |
-        cd ${LIBRAWSTOR}/ost
+        cd ${LIBRAWSTOR}
         mkdir debian
         mkdir debian/source
-        cp ../deb/rawstor-ost/control debian
-        cp ../deb/rawstor-ost/compat debian
-        cp ../deb/rawstor-ost/changelog debian
-        cp ../deb/rawstor-ost/format debian/source
-        cp ../deb/rawstor-ost/rules debian
-        cp ../COPYING debian/copyright
+        cp deb/rawstor-ost/control debian
+        cp deb/rawstor-ost/compat debian
+        cp deb/rawstor-ost/changelog debian
+        cp deb/rawstor-ost/format debian/source
+        cp deb/rawstor-ost/rules debian
+        cp COPYING debian/copyright
         dpkg-buildpackage -us -uc
-        mv ../rawstor-ost_*.deb ${GITHUB_WORKSPACE}
     - uses: actions/upload-artifact@v7
       with:
         name: rawstor-ost.deb
