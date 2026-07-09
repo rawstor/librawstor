@@ -9,16 +9,25 @@ class Target:
     def uri(self):
         return self._uri
 
-    def __hash__(self) -> str:
+    def __hash__(self) -> int:
         return hash(self._uri)
 
     def __repr__(self) -> str:
         return f"<Target {repr(self._uri)}>"
 
-    def __lt__(self, other: Target) -> bool:
+    def __lt__(self, other: "Target") -> bool:
         return self._uri < other._uri
 
-    def __eq__(self, other: Target):
+    def __le__(self, other: "Target") -> bool:
+        return self._uri <= other._uri
+
+    def __gt__(self, other: "Target") -> bool:
+        return self._uri > other._uri
+
+    def __ge__(self, other: "Target") -> bool:
+        return self._uri >= other._uri
+
+    def __eq__(self, other: "Target") -> bool:
         return self._uri == other._uri
 
     def create(self, *, size: int) -> None:
