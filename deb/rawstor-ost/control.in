@@ -1,11 +1,11 @@
-Source: @PACKAGE_NAME@
+Source: rawstor-ost
 Section: libs
 Priority: optional
 Maintainer: Vasily Stepanov <vasily.stepanov@gmail.com>
 Build-Depends: debhelper (>= 12)
 Standards-Version: 4.7.0
 
-Package: @PACKAGE_NAME@
+Package: rawstor-ost
 Architecture: amd64
 Depends: ${misc:Depends},
          ${shlibs:Depends},
