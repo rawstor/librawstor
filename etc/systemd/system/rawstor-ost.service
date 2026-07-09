@@ -15,7 +15,7 @@ EnvironmentFile=-/etc/rawstor-ost.conf
 ExecStart=/usr/bin/rawstor-ost --bind=${BIND_ADDR} --location=${LOCATION}
 Restart=always
 RestartSec=10
-ProtectSystem=strict
+ProtectSystem=full
 ProtectHome=true
 PrivateTmp=true
 NoNewPrivileges=true
