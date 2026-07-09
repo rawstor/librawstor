@@ -6,6 +6,7 @@ License: LGPL
 URL: https://github.com/rawstor/librawstor
 Source0: librawstor-@PACKAGE_VERSION@.tar.gz
 
+Requires(pre): shadow-utils
 Requires: librawstor >= @PACKAGE_VERSION_MAJOR@.@PACKAGE_VERSION_MINOR@.0, librawstor < @PACKAGE_VERSION_MAJOR@.@PACKAGE_VERSION_MINOR_NEXT@.0
 
 %{!?_unitdir: %global _unitdir /usr/lib/systemd/system}
@@ -32,7 +33,6 @@ install -m 644 etc/systemd/system/rawstor-ost.service %{buildroot}%{_unitdir}/ra
 mkdir -p %{buildroot}/var/lib/rawstor
 
 %post
-mkdir -p /var/lib/rawstor
 chown rawstor:rawstor /var/lib/rawstor
 if [ $1 -eq 1 ]; then
     systemctl enable rawstor-ost.service >/dev/null 2>&1 || :
