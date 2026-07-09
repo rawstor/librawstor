@@ -10,12 +10,11 @@ Group=rawstor
 WorkingDirectory=/var/lib/rawstor
 StateDirectory=rawstor
 Environment=BIND_ADDR=0.0.0.0:7777
-Environment=LOCATION=file:///var/lib/rawstor
 EnvironmentFile=-/etc/rawstor-ost.conf
-ExecStart=/usr/bin/rawstor-ost --bind=${BIND_ADDR} --location=${LOCATION}
+ExecStart=/usr/bin/rawstor-ost --bind=${BIND_ADDR} --location=file:///var/lib/rawstor
 Restart=always
 RestartSec=10
-ProtectSystem=full
+ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
 NoNewPrivileges=true
