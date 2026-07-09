@@ -6,10 +6,10 @@ case "$1" in
         if ! getent group rawstor >/dev/null; then
             addgroup --system rawstor
         fi
+        mkdir -p /var/lib/rawstor
         if ! getent passwd rawstor >/dev/null; then
             adduser --system --no-create-home --ingroup rawstor --home /var/lib/rawstor rawstor
         fi
-        mkdir -p /var/lib/rawstor
         chown rawstor:rawstor /var/lib/rawstor
         ;;
 esac

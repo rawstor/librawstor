@@ -187,7 +187,7 @@ jobs:
     - name: test-rawstor-ost
       run: |
         rawstor-ost --version
-        rawstor-cli list --location=127.0.0.1:7777
+        rawstor-cli list --location=ost://127.0.0.1:7777
     - name: install-python3-rawstor
       run: |
         sudo apt install -y ./python3-rawstor.deb/python3-rawstor_*.deb
