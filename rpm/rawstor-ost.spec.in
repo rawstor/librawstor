@@ -33,6 +33,7 @@ Source0: librawstor-@PACKAGE_VERSION@.tar.gz
     fi \
 %{nil}
 
+BuildRequires: gcc, g++, make, autoconf, automake
 Requires: librawstor >= @PACKAGE_VERSION_MAJOR@.@PACKAGE_VERSION_MINOR@.0, librawstor < @PACKAGE_VERSION_MAJOR@.@PACKAGE_VERSION_MINOR_NEXT@.0
 
 %description
@@ -57,13 +58,23 @@ install -m 644 etc/systemd/system/rawstor-ost.service %{buildroot}%{_unitdir}/ra
 mkdir -p %{buildroot}/var/lib/rawstor
 
 %post
-%systemd_post rawstor-ost.service
+mkdir -p /var/lib/rawstor
+chown rawstor:rawstor /var/lib/rawstor
+if [ $1 -eq 1 ]; then
+    systemctl enable rawstor-ost.service >/dev/null 2>&1 || :
+    systemctl start rawstor-ost.service >/dev/null 2>&1 || :
+fi
 
 %preun
-%systemd_preun rawstor-ost.service
+if [ $1 -eq 0 ]; then
+    systemctl stop rawstor-ost.service >/dev/null 2>&1 || :
+    systemctl disable rawstor-ost.service >/dev/null 2>&1 || :
+fi
 
 %postun
-%systemd_postun_with_restart rawstor-ost.service
+if [ $1 -ge 1 ]; then
+    systemctl try-restart rawstor-ost.service >/dev/null 2>&1 || :
+fi
 
 %files
 %{_bindir}/*
