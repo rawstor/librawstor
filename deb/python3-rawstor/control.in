@@ -9,7 +9,7 @@ Build-Depends: debhelper (>= 12),
 Standards-Version: 4.7.0
 
 Package: python3-rawstor
-Architecture: amd64
+Architecture: any
 Depends: ${misc:Depends},
          ${python3:Depends},
          ${shlibs:Depends},
