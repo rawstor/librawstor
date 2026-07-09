@@ -8,6 +8,7 @@ Source0: librawstor-@PACKAGE_VERSION@.tar.gz
 
 %{!?_unitdir: %global _unitdir /usr/lib/systemd/system}
 
+BuildRequires: systemd-rpm-macros
 Requires: librawstor >= @PACKAGE_VERSION_MAJOR@.@PACKAGE_VERSION_MINOR@.0, librawstor < @PACKAGE_VERSION_MAJOR@.@PACKAGE_VERSION_MINOR_NEXT@.0
 
 %description
