@@ -56,17 +56,17 @@ TEST(URITest, file) {
 }
 
 TEST(URITest, empty_path) {
-    rawstd::URI uri("ost://127.0.0.1:8080");
+    rawstd::URI uri("ost://127.0.0.1:7777");
 
-    EXPECT_EQ(uri.str(), "ost://127.0.0.1:8080");
+    EXPECT_EQ(uri.str(), "ost://127.0.0.1:7777");
     EXPECT_EQ(uri.scheme(), "ost");
     EXPECT_EQ(uri.userinfo(), "");
     EXPECT_EQ(uri.username(), "");
     EXPECT_EQ(uri.password(), "");
-    EXPECT_EQ(uri.authority(), "127.0.0.1:8080");
-    EXPECT_EQ(uri.host(), "127.0.0.1:8080");
+    EXPECT_EQ(uri.authority(), "127.0.0.1:7777");
+    EXPECT_EQ(uri.host(), "127.0.0.1:7777");
     EXPECT_EQ(uri.hostname(), "127.0.0.1");
-    EXPECT_EQ(uri.port(), 8080u);
+    EXPECT_EQ(uri.port(), 7777u);
     EXPECT_EQ(uri.path().str(), "");
     EXPECT_EQ(uri.path().dirname(), "/");
     EXPECT_EQ(uri.path().filename(), "");

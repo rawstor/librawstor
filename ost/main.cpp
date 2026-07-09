@@ -37,7 +37,7 @@ void usage() {
               << "required arguments:" << std::endl
               << "  -b, --bind ADDR       Bind address in the format "
               << "<ip>:<port> " << std::endl
-              << "                        (e.g., 127.0.0.1:8080)." << std::endl
+              << "                        (e.g., 127.0.0.1:7777)." << std::endl
               << "  -l, --location LOCATION" << std::endl
               << "                        Comma separated list of rawstor "
                  "backend locations"
