@@ -138,13 +138,11 @@ void Object::list(
             rawstd_uuid_to_string(&uuid, &uuid_string);
             targets_map[uuid].emplace_back(location, uuid_string);
         }
-        if (rawstd_uuid_cmp(&next_token_uuid, &empty_uuid) == 0 &&
-            rawstd_uuid_cmp(&loc_token_uuid, &empty_uuid) == 0) {
-            if (rawstd_uuid_cmp(&loc_token_uuid, &next_token_uuid) < 0) {
+        if (rawstd_uuid_cmp(&loc_token_uuid, &empty_uuid) != 0) {
+            if (rawstd_uuid_cmp(&next_token_uuid, &empty_uuid) == 0 ||
+                rawstd_uuid_cmp(&loc_token_uuid, &next_token_uuid) < 0) {
                 next_token_uuid = loc_token_uuid;
             }
-        } else {
-            next_token_uuid = loc_token_uuid;
         }
     }
 

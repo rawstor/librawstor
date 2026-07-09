@@ -144,11 +144,6 @@ TEST(ListTest, pagination) {
         targets.push_back(target);
     }
     std::sort(targets.begin(), targets.end());
-    printf("etalon targets {\n");
-    for (const auto& target : targets) {
-        printf("%s\n", target.c_str());
-    }
-    printf("etalon targets }\n");
 
     RawstorStringList* page;
     RawstorPaginationToken token = {};
@@ -163,7 +158,6 @@ TEST(ListTest, pagination) {
         size_t i = 0;
         for (const char** it = rawstor_string_list_iter(page); it != NULL;
              it = rawstor_string_list_next(it), ++i) {
-            printf("page[%zu] = %s\n", i, *it);
             EXPECT_LT(i, targets.size());
             if (i < targets.size()) {
                 EXPECT_EQ(*it, targets[i]);

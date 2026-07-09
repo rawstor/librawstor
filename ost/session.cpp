@@ -448,7 +448,8 @@ void Session::_list(
 
     RawstorStringList* targets;
     int result = rawstor_object_list(
-        rawstd::URI::uris(_server.locations()).c_str(), 0, &targets, &token
+        rawstd::URI::uris(_server.locations()).c_str(), body.val, &targets,
+        &token
     );
     if (result < 0) {
         send_response(_queue, _fd, RAWSTOR_CMD_LIST, head.cid, -result, 0);

@@ -119,55 +119,68 @@ void Session::list(
     unsigned int limit, const RawstdUUID& token,
     std::function<void(std::vector<RawstdUUID>&&, const RawstdUUID&, int)>&& cb
 ) {
-    std::string location_path = get_location_path(location());
-
     std::vector<RawstdUUID> ret_uuids;
-    for (const auto& entry :
-         std::filesystem::directory_iterator(location_path)) {
-        if (entry.path().extension().string() != ".dat") {
-            continue;
-        }
-
-        std::string filename = entry.path().stem().string();
-
-        RawstdUUID uuid;
-        int res = rawstd_uuid_from_string(&uuid, filename.c_str());
-        if (res < 0) {
-            rawstd_warning(
-                "%s: %s\n", strerror(-res), entry.path().string().c_str()
-            );
-            continue;
-        }
-
-        ret_uuids.push_back(uuid);
-    }
-
-    std::sort(
-        ret_uuids.begin(), ret_uuids.end(),
-        [](const RawstdUUID& lhs, const RawstdUUID& rhs) {
-            return rawstd_uuid_cmp(&lhs, &rhs) < 0;
-        }
-    );
-
-    ret_uuids.erase(
-        ret_uuids.begin(),
-        std::find_if(
-            ret_uuids.begin(), ret_uuids.end(), [&token](const RawstdUUID& at) {
-                return rawstd_uuid_cmp(&token, &at) < 0;
-            }
-        )
-    );
-
-    if (limit == 0) {
-        limit = rawstor_opts_list_limit();
-    } else {
-        limit = std::min(limit, rawstor_opts_list_limit());
-    }
-
     RawstdUUID ret_token = {};
-    if (ret_uuids.size() > limit) {
-        ret_uuids.resize(limit);
-        ret_token = ret_uuids.back();
+    try {
+        std::string location_path = get_location_path(location());
+
+        for (const auto& entry :
+             std::filesystem::directory_iterator(location_path)) {
+            if (entry.path().extension().string() != ".dat") {
+                continue;
+            }
+
+            std::string filename = entry.path().stem().string();
+
+            RawstdUUID uuid;
+            int res = rawstd_uuid_from_string(&uuid, filename.c_str());
+            if (res < 0) {
+                rawstd_warning(
+                    "%s: %s\n", strerror(-res), entry.path().string().c_str()
+                );
+                continue;
+            }
+
+            ret_uuids.push_back(uuid);
+        }
+
+        std::sort(
+            ret_uuids.begin(), ret_uuids.end(),
+            [](const RawstdUUID& lhs, const RawstdUUID& rhs) {
+                return rawstd_uuid_cmp(&lhs, &rhs) < 0;
+            }
+        );
+
+        ret_uuids.erase(
+            ret_uuids.begin(), std::find_if(
+                                   ret_uuids.begin(), ret_uuids.end(),
+                                   [&token](const RawstdUUID& at) {
+                                       return rawstd_uuid_cmp(&token, &at) < 0;
+                                   }
+                               )
+        );
+
+        if (limit == 0) {
+            limit = rawstor_opts_list_limit();
+        } else {
+            limit = std::min(limit, rawstor_opts_list_limit());
+        }
+
+        if (ret_uuids.size() > limit) {
+            ret_uuids.resize(limit);
+            ret_token = ret_uuids.back();
+        }
+    } catch (const std::system_error& e) {
+        rawstd_error("Unexpected error: %s\n", e.what());
+        cb({}, {}, e.code().value());
+        return;
+    } catch (const std::exception& e) {
+        rawstd_error("Unexpected error: %s\n", e.what());
+        cb({}, {}, EIO);
+        return;
+    } catch (...) {
+        cb({}, {}, EIO);
+        return;
     }
 
     cb(std::move(ret_uuids), ret_token, 0);

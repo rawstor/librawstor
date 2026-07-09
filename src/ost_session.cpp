@@ -906,23 +906,16 @@ void Session::list(
         uuids = basic_request<RawstdUUID>(
             fd(), _cid_counter++, RAWSTOR_CMD_LIST, token, limit
         );
-        // printf("<<<\n");
-        // for (const auto& uuid : uuids) {
-        //     RawstdUUIDString uuid_string;
-        //     rawstd_uuid_to_string(&uuid, &uuid_string);
-        //     printf("%s\n", uuid_string);
-        // }
-        // printf(">>>\n");
     } catch (const std::system_error& e) {
         error = e.code().value();
     } catch (...) {
         error = EIO;
     }
-    if (uuids.empty()) {
-        RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+    RawstdUUID next_token = {};
+    if (!uuids.empty()) {
+        next_token = uuids.back();
+        uuids.resize(uuids.size() - 1);
     }
-    RawstdUUID next_token = uuids.back();
-    uuids.resize(uuids.size() - 1);
     cb(std::move(uuids), next_token, error);
 }
 

@@ -6,12 +6,12 @@ from . import librawstor
 class Object:
     @staticmethod
     def list(location: str) -> Iterator[str]:
-        marker = None
+        token = None
         while True:
-            page, marker = librawstor.object_list(location, 0, marker)
+            page, token = librawstor.object_list(location, 0, token)
             for target in page:
                 yield target
-            if marker is None:
+            if token is None:
                 break
 
     @staticmethod

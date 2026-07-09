@@ -86,6 +86,19 @@ PyTypeObject PyObjectSpecType = {
     .tp_getset = PyObjectSpec_getset,
 };
 
+static void free_pagination_token(PyObject* capsule) {
+    free(PyCapsule_GetPointer(capsule, "pagination_token"));
+    if (!PyCapsule_CheckExact(capsule)) {
+        return;
+    }
+    if (!PyCapsule_IsValid(capsule, "pagination_token")) {
+        return;
+    }
+    RawstorPaginationToken* token = (RawstorPaginationToken*)
+        PyCapsule_GetPointer(capsule, "pagination_token");
+    free(token);
+}
+
 PyObject* py_rawstor_object_list(PyObject* Py_UNUSED(self), PyObject* args) {
     const char* location;
     unsigned int limit;
@@ -154,9 +167,8 @@ PyObject* py_rawstor_object_list(PyObject* Py_UNUSED(self), PyObject* args) {
             goto error;
         }
         *ret_token = token;
-        py_ret_token = PyCapsule_New(
-            ret_token, "pagination_token", (PyCapsule_Destructor)free
-        );
+        py_ret_token =
+            PyCapsule_New(ret_token, "pagination_token", free_pagination_token);
         if (py_ret_token == NULL) {
             free(ret_token);
             goto error;
