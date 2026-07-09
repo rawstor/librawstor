@@ -9,6 +9,7 @@ Package: rawstor-ost
 Architecture: any
 Depends: ${misc:Depends},
          ${shlibs:Depends},
+         adduser,
          librawstor (>= @PACKAGE_VERSION_MAJOR@.@PACKAGE_VERSION_MINOR@.0),
          librawstor (<< @PACKAGE_VERSION_MAJOR@.@PACKAGE_VERSION_MINOR_NEXT@.0)
 Description: Rawstor OST backend

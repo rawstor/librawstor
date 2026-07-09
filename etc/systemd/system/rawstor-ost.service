@@ -1,0 +1,27 @@
+[Unit]
+Description=Rawstor OST backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=rawstor
+Group=rawstor
+WorkingDirectory=/var/lib/rawstor
+StateDirectory=rawstor
+Environment=BIND_ADDR=0.0.0.0:7777
+Environment=LOCATION=file:///var/lib/rawstor
+EnvironmentFile=-/etc/rawstor-ost.conf
+ExecStart=/usr/bin/rawstor-ost --bind=${BIND_ADDR} --location=${LOCATION}
+Restart=always
+RestartSec=10
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
