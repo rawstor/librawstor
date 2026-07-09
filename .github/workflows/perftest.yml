@@ -32,9 +32,9 @@ jobs:
           without-liburing: --without-liburing
         - location: file:///tmp/objects
           backend: file
-        - location: ost://127.0.0.1:8080
+        - location: ost://127.0.0.1:7777
           backend: ost
-        - location: ost://127.0.0.1:8080
+        - location: ost://127.0.0.1:7777
           backend: ost-legacy
 
     steps:
@@ -96,14 +96,14 @@ jobs:
       if: "${{ matrix.backend == 'ost' }}"
       run: |
         mkdir ${GITHUB_WORKSPACE}/objects
-        rawstor-ost --bind 127.0.0.1:8080 --location=file://${GITHUB_WORKSPACE}/objects &
+        rawstor-ost --bind 127.0.0.1:7777 --location=file://${GITHUB_WORKSPACE}/objects &
         sleep 10
     - name: (ost-legacy) start rawstor_ost
       if: "${{ matrix.backend == 'ost-legacy' }}"
       run: |
         mkdir ${GITHUB_WORKSPACE}/objects
         truncate -s 2G ${GITHUB_WORKSPACE}/objects/01988675-e1e5-7788-9ed4-2f2d30910d23
-        ost 8080 ${GITHUB_WORKSPACE}/objects/ &
+        ost 7777 ${GITHUB_WORKSPACE}/objects/ &
         sleep 10
     - name: create object
       if: "${{ matrix.backend != 'ost-legacy' }}"

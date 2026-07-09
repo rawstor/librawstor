@@ -11,7 +11,7 @@ PREFIX=${HOME}/local
 make -j$(nproc)
 make install
 
-OST_ADDR=192.168.0.1:8080
+OST_ADDR=192.168.0.1:7777
 
 ##
 # OST Server
@@ -82,28 +82,28 @@ Default values are shown below.
 |--------|-------------|
 | `-h, --help` | Show help message and exit. |
 | `-l, --location LOCATION` | Comma‑separated list of backend locations (e.g., `file:///path`, `ost://host:port`). |
-| `-b, --bind ADDR` | Bind address in `<ip>:<port>` format (e.g., `127.0.0.1:8080`). |
+| `-b, --bind ADDR` | Bind address in `<ip>:<port>` format (e.g., `127.0.0.1:7777`). |
 
 ### Examples
 
 Serve local directory:
 ```bash
-rawstor-ost -l file:///var/rawstor/data -b 0.0.0.0:8080
+rawstor-ost -l file:///var/rawstor/data -b 0.0.0.0:7777
 ```
 
 Proxy to remote OST:
 ```bash
-rawstor-ost -l ost://192.168.1.100:8080 -b 0.0.0.0:8080
+rawstor-ost -l ost://192.168.1.100:7777 -b 0.0.0.0:7777
 ```
 
 Data locality (local cache + proxy):
 ```bash
-rawstor-ost -l file:///var/rawstor/data,ost://remote:8080 -b 0.0.0.0:8080
+rawstor-ost -l file:///var/rawstor/data,ost://remote:7777 -b 0.0.0.0:7777
 ```
 
 Mirroring between two OST backends:
 ```bash
-rawstor-ost -l ost://left:8080,ost://right:8080 -b 0.0.0.0:8080
+rawstor-ost -l ost://left:7777,ost://right:7777 -b 0.0.0.0:7777
 ```
 
 ## rawstor-vhost
@@ -112,7 +112,7 @@ rawstor-vhost is a userspace VirtIO block device backend that implements the vho
 
 ```
 PREFIX=${HOME}/local
-OST_ADDR=192.168.0.1:8080
+OST_ADDR=192.168.0.1:7777
 OBJECT_ID=...
 VHOST_RUNDIR=${PREFIX}/var/run/rawstor
 
