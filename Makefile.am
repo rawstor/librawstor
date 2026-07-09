@@ -28,9 +28,7 @@ ChangeLog: $(srcdir)/ChangeLog.md
 	cp $(srcdir)/ChangeLog.md ChangeLog
 
 
-EXTRA_DIST = ChangeLog.md \
-             README.md \
-             deb/librawstor/compat \
+EXTRA_DIST = deb/librawstor/compat \
              deb/librawstor/format \
              deb/librawstor/rules \
              deb/python3-rawstor/compat \
@@ -38,8 +36,11 @@ EXTRA_DIST = ChangeLog.md \
              deb/python3-rawstor/rules \
              deb/rawstor-ost/compat \
              deb/rawstor-ost/format \
-             deb/rawstor-ost/rules
-
+             deb/rawstor-ost/rules \
+             etc/systemd/system/rawstor-ost.service \
+             ChangeLog.md \
+             README.md
+             
 
 CLEANFILES = ChangeLog \
              README

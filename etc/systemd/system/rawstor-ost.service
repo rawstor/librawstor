@@ -1,0 +1,18 @@
+[Unit]
+Description=Rawstor OST backend
+After=network.target
+
+[Service]
+Type=simple
+User=rawstor
+Group=rawstor
+WorkingDirectory=/var/lib/rawstor
+ExecStart=/usr/bin/rawstor-ost --bind=0.0.0.1:8080 --location=file:///var/lib/rawstor
+Restart=always
+RestartSec=10
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
