@@ -18,7 +18,7 @@ Rawstor python bindings
 %autosetup -n librawstor-@PACKAGE_VERSION@
 
 %build
-./configure --prefix=%{_prefix} --without-ost-backend
+./configure --prefix=%{_prefix} --disable-ost-backend
 make %{?_smp_mflags}
 
 %install
