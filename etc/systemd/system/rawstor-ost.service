@@ -7,7 +7,7 @@ Type=simple
 User=rawstor
 Group=rawstor
 WorkingDirectory=/var/lib/rawstor
-ExecStart=/usr/bin/rawstor-ost --bind=0.0.0.1:8080 --location=file:///var/lib/rawstor
+ExecStart=/usr/bin/rawstor-ost --bind=0.0.0.0:7777 --location=file:///var/lib/rawstor
 Restart=always
 RestartSec=10
 
