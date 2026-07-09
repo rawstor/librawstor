@@ -638,6 +638,10 @@ std::vector<T> basic_request(
                             RAWSTD_THROW_SYSTEM_ERROR(error);
                         }
 
+                        if (result % sizeof(T) != 0) {
+                            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+                        }
+
                         ret.resize(result / sizeof(T));
                         rawstd_iovec_to_buf(iov, niov, 0, ret.data(), result);
 
