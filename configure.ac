@@ -28,7 +28,7 @@ AC_SUBST([GENERIC_CXXFLAGS], ["-std=c++20 -Wall -Wextra -Werror -fPIC"])
 
 
 AC_ARG_ENABLE([tests], [AS_HELP_STRING([--disable-tests],
-    [enable testing code])],
+    [disable testing code])],
     [enable_tests=$enableval],
     [enable_tests="yes"])
 AM_CONDITIONAL([ENABLE_TESTS], [test "x$enable_tests" == "xyes"])
@@ -97,6 +97,12 @@ AS_IF([test "x$with_libxxhash" == "xyes"], [
     AC_SUBST([maybe_libxxhash], [""])
 ])
 
+
+AC_ARG_ENABLE([ost-backend], [AS_HELP_STRING([--disable-ost-backend],
+    [disable OST backend])],
+    [enable_ost_backend=$enableval],
+    [enable_ost_backend="yes"])
+AM_CONDITIONAL([ENABLE_OST_BACKEND], [test "x$enable_ost_backend" == "xyes"])
 
 AC_ARG_WITH([python3], [AS_HELP_STRING([--without-python3],
     [disable support for python3 bindings])],

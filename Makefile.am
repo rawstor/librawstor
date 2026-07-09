@@ -2,11 +2,14 @@ SUBDIRS = librawstd \
           librawio \
           src \
           cli \
-          vhost \
-          ost
+          vhost
 
 if ENABLE_TESTS
     SUBDIRS += tests
+endif
+
+if ENABLE_OST_BACKEND
+    SUBDIRS += ost
 endif
 
 if WITH_PYTHON3
