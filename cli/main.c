@@ -250,7 +250,7 @@ static void command_list_usage(void) {
         "command options:\n"
         "  -h, --help            Show this help message and exit\n"
     );
-};
+}
 
 static int command_list(int argc, char** argv) {
     const char* optstring = "hl:";
