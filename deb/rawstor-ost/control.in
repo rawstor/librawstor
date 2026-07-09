@@ -6,7 +6,7 @@ Build-Depends: debhelper (>= 12)
 Standards-Version: 4.7.0
 
 Package: rawstor-ost
-Architecture: amd64
+Architecture: any
 Depends: ${misc:Depends},
          ${shlibs:Depends},
          librawstor (>= @PACKAGE_VERSION_MAJOR@.@PACKAGE_VERSION_MINOR@.0),
