@@ -62,7 +62,7 @@ jobs:
         cp deb/librawstor/compat debian
         cp deb/librawstor/changelog debian
         cp deb/librawstor/format debian/source
-        cp deb/librawstor/librawstor.postinstall debian
+        cp deb/librawstor/librawstor.postinst debian
         cp deb/librawstor/librawstor.prerm debian
         cp deb/librawstor/rules debian
         cp etc/systemd/system/rawstor-ost.service debian

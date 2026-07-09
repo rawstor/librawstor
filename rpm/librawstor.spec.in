@@ -15,7 +15,6 @@ Rawstor client library
 %pre
 getent group rawstor >/dev/null || groupadd -r rawstor
 getent passwd rawstor >/dev/null || useradd -r -g rawstor -d /var/lib/rawstor -s /sbin/nologin -c "Rawstor OST daemon" rawstor
-exit 0
 
 %prep
 %autosetup -n %{name}-@PACKAGE_VERSION@
@@ -29,10 +28,9 @@ rm -rf %{buildroot}
 make install DESTDIR=%{buildroot}
 mkdir -p %{buildroot}%{_unitdir}
 install -m 644 etc/systemd/system/rawstor-ost.service %{buildroot}%{_unitdir}/rawstor-ost.service
+mkdir -p %{buildroot}/var/lib/rawstor
 
 %post
-mkdir -p /var/lib/rawstor
-chown rawstor:rawstor /var/lib/rawstor
 %systemd_post rawstor-ost.service
 
 %preun
@@ -47,4 +45,4 @@ chown rawstor:rawstor /var/lib/rawstor
 %{_exec_prefix}/lib*/*
 %{_unitdir}/rawstor-ost.service
 %doc COPYING ChangeLog.md README.md
-# %dir /var/lib/rawstor
+%dir %attr(0755, rawstor, rawstor) /var/lib/rawstor
