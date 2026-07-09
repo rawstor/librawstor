@@ -30,14 +30,14 @@ ChangeLog: $(srcdir)/ChangeLog.md
 
 EXTRA_DIST = deb/librawstor/compat \
              deb/librawstor/format \
-             deb/librawstor/librawstor.postinst \
-             deb/librawstor/librawstor.prerm \
              deb/librawstor/rules \
              deb/python3-rawstor/compat \
              deb/python3-rawstor/format \
              deb/python3-rawstor/rules \
              deb/rawstor-ost/compat \
              deb/rawstor-ost/format \
+             deb/rawstor-ost/rawstor-ost.postinst \
+             deb/rawstor-ost/rawstor-ost.prerm \
              deb/rawstor-ost/rules \
              ChangeLog.md \
              README.md
