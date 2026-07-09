@@ -35,6 +35,7 @@ class TestBasics(unittest.TestCase):
                 target = rawstor.Object.create_at(location, spec)
                 self.addCleanup(rawstor.Object.remove, target)
                 targets.append(target)
+            targets.sort()
 
             read_targets = rawstor.Object.list(location)
             self.assertEqual(list(read_targets), targets)

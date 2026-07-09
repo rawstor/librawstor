@@ -17,6 +17,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
@@ -152,12 +153,13 @@ void Session::list(
         );
 
         ret_uuids.erase(
-            ret_uuids.begin(), std::find_if(
-                                   ret_uuids.begin(), ret_uuids.end(),
-                                   [&token](const RawstdUUID& at) {
-                                       return rawstd_uuid_cmp(&token, &at) < 0;
-                                   }
-                               )
+            ret_uuids.begin(),
+            std::upper_bound(
+                ret_uuids.begin(), ret_uuids.end(), token,
+                [](const RawstdUUID& lhs, const RawstdUUID& rhs) {
+                    return rawstd_uuid_cmp(&lhs, &rhs) < 0;
+                }
+            )
         );
 
         if (limit == 0) {
