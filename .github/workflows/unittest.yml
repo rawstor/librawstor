@@ -94,23 +94,23 @@ jobs:
     - name: start rawstor-ost
       run: |
         mkdir /tmp/ost_objects
-        rawstor-ost --bind 127.0.0.1:8080 --location=file:///tmp/ost_objects/ &
+        rawstor-ost --bind 127.0.0.1:7777 --location=file:///tmp/ost_objects/ &
         sleep 10
     - name: create object file,ost
       run: |
         mkdir /tmp/file_objects
-        target=$(rawstor-cli create --location=file:///tmp/file_objects,ost://127.0.0.1:8080 --size=1G)
+        target=$(rawstor-cli create --location=file:///tmp/file_objects,ost://127.0.0.1:7777 --size=1G)
         echo "TARGET=${target}" >> $GITHUB_ENV
-        rawstor-cli list --location=file:///tmp/file_objects,ost://127.0.0.1:8080
+        rawstor-cli list --location=file:///tmp/file_objects,ost://127.0.0.1:7777
     - name: testio file,ost
       run: |
         rawstor-cli testio --target=${TARGET} --block-size=4K --io-depth=1 --count=10
         rawstor-cli testio --target=${TARGET} --block-size=4K --io-depth=1 --count=10 --vector-mode
     - name: create object ost,file
       run: |
-        target=$(rawstor-cli create --location=ost://127.0.0.1:8080,file:///tmp/file_objects --size=1G)
+        target=$(rawstor-cli create --location=ost://127.0.0.1:7777,file:///tmp/file_objects --size=1G)
         echo "TARGET=${target}" >> $GITHUB_ENV
-        rawstor-cli list --location=ost://127.0.0.1:8080,file:///tmp/file_objects
+        rawstor-cli list --location=ost://127.0.0.1:7777,file:///tmp/file_objects
     - name: testio ost,file
       run: |
         rawstor-cli testio --target=${TARGET} --block-size=4K --io-depth=1 --count=10
