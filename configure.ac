@@ -148,6 +148,7 @@ AC_CONFIG_FILES(
     [deb/rawstor-ost/changelog]
     [rpm/librawstor.spec]
     [rpm/python3-rawstor.spec]
+    [rpm/rawstor-ost.spec]
     [pyrawstor/config.py]
     [pyrawstor/Makefile]
 )

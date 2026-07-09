@@ -7,3 +7,6 @@ export LD_LIBRARY_PATH := $(CURDIR)/../src/.libs:$(LD_LIBRARY_PATH)
 
 override_dh_auto_test:
 	dh_auto_test
+
+override_dh_auto_configure:
+	dh_auto_configure -- --disable-ost-backend

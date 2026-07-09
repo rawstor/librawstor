@@ -1,5 +1,7 @@
 #!/usr/bin/make -f
 
+PACKAGE = rawstor-ost
+
 %:
 	dh $@
 

@@ -1,29 +1,26 @@
-Name: python3-rawstor
+Name: rawstor-ost
 Version: @PACKAGE_VERSION_SHORT@
 Release: @RPM_RELEASE@
-Summary: Rawstor python bindings
+Summary: Rawstor OST backend
 License: LGPL
 URL: https://github.com/rawstor/librawstor
 Source0: librawstor-@PACKAGE_VERSION@.tar.gz
 
-%global python3_sitearch %(python3 -c "import sysconfig; print(sysconfig.get_path('platlib'))")
-
-Requires: python3
 Requires: librawstor >= @PACKAGE_VERSION_MAJOR@.@PACKAGE_VERSION_MINOR@.0, librawstor < @PACKAGE_VERSION_MAJOR@.@PACKAGE_VERSION_MINOR_NEXT@.0
 
 %description
-Rawstor python bindings
+Rawstor OST backend
 
 %prep
-%autosetup -n librawstor-@PACKAGE_VERSION@
+%autosetup -n rawstor-ost-@PACKAGE_VERSION@
 
 %build
-./configure --prefix=%{_prefix} --without-ost-backend
+./configure --prefix=%{_prefix} --without-python3
 make %{?_smp_mflags}
 
 %install
 rm -rf %{buildroot}
-make -C pyrawstor install DESTDIR=%{buildroot}
+make -C ost install DESTDIR=%{buildroot}
 
 %files
-%{python3_sitearch}/*
+%{_bindir}/*

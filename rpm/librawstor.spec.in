@@ -8,13 +8,13 @@ URL: https://github.com/rawstor/librawstor
 Source0: %{name}-@PACKAGE_VERSION@.tar.gz
 
 %description
-Rawstor client library and OST backend
+Rawstor client library
 
 %prep
 %autosetup -n %{name}-@PACKAGE_VERSION@
 
 %build
-./configure --prefix=%{_prefix} --without-python3
+./configure --prefix=%{_prefix} --without-python3 --disable-ost-backend
 make %{?_smp_mflags}
 
 %install
