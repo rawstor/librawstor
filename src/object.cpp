@@ -212,10 +212,10 @@ void Object::remove(const std::vector<rawstd::URI>& targets) {
         try {
             rawstor::Connection::remove(target);
         } catch (const std::exception& e) {
-            rawstd_error("%s\n", e.what());
-
             if (!eptr) {
                 eptr = std::current_exception();
+            } else {
+                rawstd_error("%s\n", e.what());
             }
         }
     }

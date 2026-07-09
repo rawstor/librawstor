@@ -19,7 +19,8 @@ C_SOURCES = \
 SOURCES = \
     $(C_SOURCES) \
     rawstor/__init__.py \
-    rawstor/object.py \
+    rawstor/location.py \
+    rawstor/target.py \
     config.py \
     MANIFEST.in \
     setup.py
@@ -27,7 +28,8 @@ SOURCES = \
 if ENABLE_TESTS
 SOURCES += \
     tests/__init__.py \
-    tests/test_basics.py
+    tests/test_location.py \
+    tests/test_target.py
 endif
 
 
