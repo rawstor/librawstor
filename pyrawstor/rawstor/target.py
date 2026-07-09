@@ -16,18 +16,28 @@ class Target:
         return f"<Target {repr(self._uri)}>"
 
     def __lt__(self, other: "Target") -> bool:
+        if not isinstance(other, Target):
+            return NotImplemented
         return self._uri < other._uri
 
     def __le__(self, other: "Target") -> bool:
+        if not isinstance(other, Target):
+            return NotImplemented
         return self._uri <= other._uri
 
     def __gt__(self, other: "Target") -> bool:
+        if not isinstance(other, Target):
+            return NotImplemented
         return self._uri > other._uri
 
     def __ge__(self, other: "Target") -> bool:
+        if not isinstance(other, Target):
+            return NotImplemented
         return self._uri >= other._uri
 
     def __eq__(self, other: "Target") -> bool:
+        if not isinstance(other, Target):
+            return NotImplemented
         return self._uri == other._uri
 
     def create(self, *, size: int) -> None:

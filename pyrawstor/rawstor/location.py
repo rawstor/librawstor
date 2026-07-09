@@ -19,18 +19,28 @@ class Location:
         return f"<Location {repr(self._uri)}>"
 
     def __lt__(self, other: "Location") -> bool:
+        if not isinstance(other, Location):
+            return NotImplemented
         return self._uri < other._uri
 
     def __le__(self, other: "Location") -> bool:
+        if not isinstance(other, Location):
+            return NotImplemented
         return self._uri <= other._uri
 
     def __gt__(self, other: "Location") -> bool:
+        if not isinstance(other, Location):
+            return NotImplemented
         return self._uri > other._uri
 
     def __ge__(self, other: "Location") -> bool:
+        if not isinstance(other, Location):
+            return NotImplemented
         return self._uri >= other._uri
 
     def __eq__(self, other: "Location") -> bool:
+        if not isinstance(other, Location):
+            return NotImplemented
         return self._uri == other._uri
 
     def create(self, *, size: int, uuid: str | None = None) -> Target:
