@@ -8,7 +8,31 @@ Source0: librawstor-@PACKAGE_VERSION@.tar.gz
 
 %{!?_unitdir: %global _unitdir /usr/lib/systemd/system}
 
-BuildRequires: systemd-rpm-macros
+%systemd_post() \
+    if [ $1 -eq 1 ] ; then \
+        systemctl preset %{?*} >/dev/null 2>&1 || : ; \
+    fi \
+%{nil}
+
+%systemd_preun() \
+    if [ $1 -eq 0 ] ; then \
+        systemctl --no-reload disable %{?*} >/dev/null 2>&1 || : ; \
+        systemctl stop %{?*} >/dev/null 2>&1 || : ; \
+    fi \
+%{nil}
+
+%systemd_postun() \
+    if [ $1 -ge 1 ] ; then \
+        systemctl try-restart %{?*} >/dev/null 2>&1 || : ; \
+    fi \
+%{nil}
+
+%systemd_postun_with_restart() \
+    if [ $1 -ge 1 ] ; then \
+        systemctl try-restart %{?*} >/dev/null 2>&1 || : ; \
+    fi \
+%{nil}
+
 Requires: librawstor >= @PACKAGE_VERSION_MAJOR@.@PACKAGE_VERSION_MINOR@.0, librawstor < @PACKAGE_VERSION_MAJOR@.@PACKAGE_VERSION_MINOR_NEXT@.0
 
 %description
@@ -22,7 +46,7 @@ getent passwd rawstor >/dev/null || useradd -r -g rawstor -d /var/lib/rawstor -s
 %autosetup -n librawstor-@PACKAGE_VERSION@
 
 %build
-./configure --prefix=%{_prefix} --without-python3
+./configure --prefix=%{_prefix} --libdir=%{_libdir} --without-python3
 make %{?_smp_mflags}
 
 %install

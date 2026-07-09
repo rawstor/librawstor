@@ -8,7 +8,11 @@ Type=simple
 User=rawstor
 Group=rawstor
 WorkingDirectory=/var/lib/rawstor
-ExecStart=/usr/bin/rawstor-ost --bind=0.0.0.0:7777 --location=file:///var/lib/rawstor
+StateDirectory=rawstor
+Environment=BIND_ADDR=0.0.0.0:7777
+Environment=LOCATION=file:///var/lib/rawstor
+EnvironmentFile=-/etc/rawstor-ost.conf
+ExecStart=/usr/bin/rawstor-ost --bind=${BIND_ADDR} --location=${LOCATION}
 Restart=always
 RestartSec=10
 
