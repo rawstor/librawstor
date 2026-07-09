@@ -1,4 +1,5 @@
 #include "object.hpp"
+#include <rawstor/list.h>
 #include <rawstor/object.h>
 
 #include "config.h"
@@ -8,6 +9,7 @@
 #include "ost_session.hpp"
 
 #include <rawstd/gpp.hpp>
+#include <rawstd/list.h>
 #include <rawstd/logging.hpp>
 #include <rawstd/uri.hpp>
 #include <rawstd/uuid.h>
@@ -15,6 +17,8 @@
 #include <unistd.h>
 
 #include <exception>
+#include <list>
+#include <map>
 #include <memory>
 #include <new>
 #include <set>
@@ -106,6 +110,68 @@ Object::Object(rawio::Queue& queue, const std::vector<rawstd::URI>& targets) :
         cn->open(target.parent(), this, rawstor_opts_sessions());
         _cns.push_back(std::move(cn));
     }
+}
+
+void Object::list(
+    const std::vector<rawstd::URI>& locations, unsigned int limit,
+    std::list<std::vector<rawstd::URI>>& targets, RawstorPaginationToken& token
+) {
+    validate_not_empty(locations);
+
+    RawstdUUID token_uuid = {};
+    memcpy(token_uuid.bytes, token.bytes, sizeof(token.bytes));
+
+    auto cmp = [](const RawstdUUID& lhs, const RawstdUUID& rhs) -> bool {
+        return rawstd_uuid_cmp(&lhs, &rhs) < 0;
+    };
+    std::map<RawstdUUID, std::vector<rawstd::URI>, decltype(cmp)> targets_map(
+        cmp
+    );
+    RawstdUUID empty_uuid = {};
+    RawstdUUID next_token_uuid = empty_uuid;
+    for (const auto& location : locations) {
+        std::vector<RawstdUUID> loc_uuids;
+        RawstdUUID loc_token_uuid = token_uuid;
+        rawstor::Connection::list(location, limit, loc_uuids, loc_token_uuid);
+        for (const auto& uuid : loc_uuids) {
+            RawstdUUIDString uuid_string;
+            rawstd_uuid_to_string(&uuid, &uuid_string);
+            targets_map[uuid].emplace_back(location, uuid_string);
+        }
+        if (rawstd_uuid_cmp(&loc_token_uuid, &empty_uuid) != 0) {
+            if (rawstd_uuid_cmp(&next_token_uuid, &empty_uuid) == 0 ||
+                rawstd_uuid_cmp(&loc_token_uuid, &next_token_uuid) < 0) {
+                next_token_uuid = loc_token_uuid;
+            }
+        }
+    }
+
+    if (limit == 0) {
+        limit = rawstor_opts_list_limit();
+    } else {
+        limit = std::min(limit, rawstor_opts_list_limit());
+    }
+
+    std::list<std::vector<rawstd::URI>> ret;
+    const RawstdUUID* last_uuid = nullptr;
+    bool capped = false;
+    for (const auto& it : targets_map) {
+        if (ret.size() >= limit) {
+            capped = true;
+            break;
+        }
+        last_uuid = &it.first;
+        ret.push_back(it.second);
+    }
+    if (last_uuid != nullptr) {
+        if (capped && (rawstd_uuid_cmp(&next_token_uuid, &empty_uuid) == 0 ||
+                       rawstd_uuid_cmp(last_uuid, &next_token_uuid) < 0)) {
+            next_token_uuid = *last_uuid;
+        }
+    }
+
+    targets.swap(ret);
+    memcpy(token.bytes, next_token_uuid.bytes, sizeof(next_token_uuid.bytes));
 }
 
 void Object::create(
@@ -325,6 +391,57 @@ void Object::pwritev(
 }
 
 } // namespace rawstor
+
+int rawstor_object_list(
+    const char* location, unsigned int limit, RawstorStringList** targets,
+    RawstorPaginationToken* token
+) noexcept {
+    RawstorStringList* list = nullptr;
+    try {
+        std::vector<rawstd::URI> locations = rawstd::URI::uriv(location);
+        std::list<std::vector<rawstd::URI>> ret;
+
+        rawstor::Object::list(locations, limit, ret, *token);
+
+        list = (RawstorStringList*)rawstd_list_create(sizeof(const char*));
+        if (list == nullptr) {
+            throw std::bad_alloc();
+        }
+        for (const auto& t : ret) {
+            std::string target = rawstd::URI::uris(t);
+
+            char* str = (char*)malloc(target.length() + 1);
+            if (str == nullptr) {
+                RAWSTD_THROW_ERRNO();
+            }
+            memcpy(str, target.c_str(), target.length() + 1);
+
+            char** it = (char**)rawstd_list_append((RawstdList*)list);
+            if (it == nullptr) {
+                free(str);
+                RAWSTD_THROW_ERRNO();
+            }
+            *it = str;
+        }
+
+        *targets = (RawstorStringList*)list;
+        return 0;
+    } catch (const std::system_error& e) {
+        rawstor_string_list_delete(list);
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        rawstor_string_list_delete(list);
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        rawstor_string_list_delete(list);
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        rawstor_string_list_delete(list);
+        return -EINVAL;
+    }
+}
 
 int rawstor_object_create(
     const char* target, const RawstorObjectSpec* spec

@@ -46,7 +46,7 @@ $(builddir)/sources-stamp:
 	fi
 	touch $@
 
-$(builddir)/build-stamp: $(C_SOURCES) $(builddir)/sources-stamp setup.py
+$(builddir)/build-stamp: $(C_SOURCES) $(builddir)/sources-stamp setup.py ../src/.libs/librawstor.la
 	CFLAGS="$(CFLAGS) $(AM_CFLAGS)" \
 	LDFLAGS="$(LDFLAGS) $(AM_LDFLAGS)" \
 	$(PYTHON) -m pip install --no-deps --no-build-isolation -e $(builddir)

@@ -9,6 +9,7 @@
 #define RAWSTOR_OPTS_SO_SNDTIMEO 5000
 #define RAWSTOR_OPTS_SO_RCVTIMEO 5000
 #define RAWSTOR_OPTS_TCP_USER_TIMEOUT 5000
+#define RAWSTOR_OPTS_LIST_LIMIT 10
 
 static struct RawstorOpts _rawstor_opts = {};
 
@@ -60,6 +61,11 @@ int rawstor_opts_initialize(const struct RawstorOpts* opts) {
                   "RAWSTOR_OPTS_TCP_USER_TIMEOUT", RAWSTOR_OPTS_TCP_USER_TIMEOUT
               );
 
+    _rawstor_opts.list_limit =
+        (opts != NULL && opts->list_limit != 0)
+            ? opts->list_limit
+            : get_env_uint("RAWSTOR_OPTS_LIST_LIMIT", RAWSTOR_OPTS_LIST_LIMIT);
+
     return 0;
 }
 
@@ -87,4 +93,8 @@ unsigned int rawstor_opts_so_rcvtimeo(void) {
 
 unsigned int rawstor_opts_tcp_user_timeout(void) {
     return _rawstor_opts.tcp_user_timeout;
+}
+
+unsigned int rawstor_opts_list_limit(void) {
+    return _rawstor_opts.list_limit;
 }

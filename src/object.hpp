@@ -9,6 +9,7 @@
 #include <rawstd/uuid.h>
 
 #include <functional>
+#include <list>
 #include <memory>
 #include <vector>
 
@@ -25,6 +26,11 @@ private:
     std::vector<std::unique_ptr<rawstor::Connection>> _cns;
 
 public:
+    static void list(
+        const std::vector<rawstd::URI>& locations, unsigned int limit,
+        std::list<std::vector<rawstd::URI>>& targets,
+        RawstorPaginationToken& token
+    );
     static void create(
         const std::vector<rawstd::URI>& targets, const RawstorObjectSpec& sp
     );

@@ -22,6 +22,17 @@
 #include <cstdlib>
 #include <cstring>
 
+int rawstor_pagination_token_empty(
+    const RawstorPaginationToken* token
+) noexcept {
+    for (unsigned int i = 0; i < sizeof(token->bytes); ++i) {
+        if (token->bytes[i] != 0) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
 int rawstor_initialize(const RawstorOpts* opts) noexcept {
     try {
         int res = 0;
