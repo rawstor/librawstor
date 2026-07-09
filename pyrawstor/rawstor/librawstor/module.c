@@ -8,6 +8,7 @@
 #include <string.h>
 
 static PyMethodDef librawstor_methods[] = {
+    {"object_list", py_rawstor_object_list, METH_VARARGS, NULL},
     {"object_create", py_rawstor_object_create, METH_VARARGS, NULL},
     {"object_create_at", py_rawstor_object_create_at, METH_VARARGS, NULL},
     {"object_spec", py_rawstor_object_spec, METH_VARARGS, NULL},

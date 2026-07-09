@@ -86,6 +86,25 @@ TEST(UUIDTest, from_string) {
     EXPECT_EQ(rawstd_uuid7_get_counter(&uuid), 1131440955435ul);
 }
 
+TEST(UUIDTest, cmp) {
+    RawstdUUID uuid1 = {};
+    rawstd_uuid7_init(&uuid1);
+
+    RawstdUUID uuid2 = uuid1;
+
+    RawstdUUID uuid3 = {};
+    rawstd_uuid7_init(&uuid3);
+
+    EXPECT_EQ(rawstd_uuid_cmp(&uuid1, &uuid2), 0);
+    EXPECT_EQ(rawstd_uuid_cmp(&uuid2, &uuid1), 0);
+
+    EXPECT_LT(rawstd_uuid_cmp(&uuid1, &uuid3), 0);
+    EXPECT_GT(rawstd_uuid_cmp(&uuid3, &uuid1), 0);
+
+    EXPECT_LT(rawstd_uuid_cmp(&uuid2, &uuid3), 0);
+    EXPECT_GT(rawstd_uuid_cmp(&uuid3, &uuid2), 0);
+}
+
 TEST(UUIDTest, from_string_errors) {
     RawstdUUID uuid;
     EXPECT_EQ(

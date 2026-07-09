@@ -11,6 +11,8 @@ AM_LDFLAGS = $(ASAN_LDFLAGS)
 
 rawstor_cli_SOURCES = create.c \
                       create.h \
+                      list.c \
+                      list.h \
                       main.c \
                       remove.c \
                       remove.h \

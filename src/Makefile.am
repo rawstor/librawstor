@@ -24,7 +24,8 @@ librawstor_base_la_HEADERS = $(top_srcdir)/include/rawstor.h
 
 librawstor_ladir = $(includedir)/rawstor
 
-librawstor_la_HEADERS = $(top_srcdir)/include/rawstor/object.h \
+librawstor_la_HEADERS = $(top_srcdir)/include/rawstor/list.h \
+                        $(top_srcdir)/include/rawstor/object.h \
                         $(top_srcdir)/include/rawstor/protocol.h \
                         $(top_srcdir)/include/rawstor/rawio.h \
                         $(top_srcdir)/include/rawstor/rawstor.h \
@@ -34,6 +35,7 @@ librawstor_la_SOURCES = connection.cpp \
                         connection.hpp \
                         file_session.cpp \
                         file_session.hpp \
+                        list.c \
                         object.cpp \
                         object.hpp \
                         ost_session.cpp \

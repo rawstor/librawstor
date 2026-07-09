@@ -36,6 +36,10 @@ RawstdList* rawstd_list_create(size_t object_size) {
 }
 
 void rawstd_list_delete(RawstdList* list) {
+    if (list == NULL) {
+        return;
+    }
+
     RawstdListItem* item = list->head;
     while (item != NULL) {
         RawstdListItem* next = item->next;

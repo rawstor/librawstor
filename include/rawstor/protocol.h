@@ -25,6 +25,7 @@ extern "C" {
 #define RAWSTOR_CMD_DISCARD 3
 #define RAWSTOR_CMD_ALLOCATE 4
 #define RAWSTOR_CMD_RELEASE 5
+#define RAWSTOR_CMD_LIST 6
 typedef uint16_t RawstorOSTCommandType;
 
 struct RawstorOSTFrameHead {

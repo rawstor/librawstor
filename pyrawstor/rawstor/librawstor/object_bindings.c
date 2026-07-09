@@ -86,6 +86,109 @@ PyTypeObject PyObjectSpecType = {
     .tp_getset = PyObjectSpec_getset,
 };
 
+static void free_pagination_token(PyObject* capsule) {
+    if (!PyCapsule_CheckExact(capsule)) {
+        return;
+    }
+    if (!PyCapsule_IsValid(capsule, "pagination_token")) {
+        return;
+    }
+    RawstorPaginationToken* token = (RawstorPaginationToken*)
+        PyCapsule_GetPointer(capsule, "pagination_token");
+    free(token);
+}
+
+PyObject* py_rawstor_object_list(PyObject* Py_UNUSED(self), PyObject* args) {
+    const char* location;
+    unsigned int limit;
+    PyObject* py_token;
+    if (!PyArg_ParseTuple(args, "sIO", &location, &limit, &py_token)) {
+        return NULL;
+    }
+
+    PyObject* py_ret_token = NULL;
+    RawstorStringList* list = NULL;
+    PyObject* py_list = NULL;
+
+    RawstorPaginationToken token = {};
+    if (py_token != Py_None) {
+        if (!PyCapsule_CheckExact(py_token)) {
+            PyErr_SetString(PyExc_TypeError, "token must be None or a capsule");
+            goto error;
+        }
+        if (!PyCapsule_IsValid(py_token, "pagination_token")) {
+            PyErr_SetString(
+                PyExc_ValueError, "invalid token capsule (wrong name)"
+            );
+            goto error;
+        }
+        RawstorPaginationToken* token_ptr = (RawstorPaginationToken*)
+            PyCapsule_GetPointer(py_token, "pagination_token");
+        if (token_ptr == NULL) {
+            goto error;
+        }
+        token = *token_ptr;
+    }
+
+    int res = rawstor_object_list(location, limit, &list, &token);
+    if (res < 0) {
+        set_os_error(-res);
+        goto error;
+    }
+
+    py_list = PyList_New(0);
+    if (!py_list) {
+        goto error;
+    }
+    for (const char** it = rawstor_string_list_iter(list); it != NULL;
+         it = rawstor_string_list_next(it)) {
+        PyObject* py_target = PyUnicode_FromString(*it);
+        if (!py_target) {
+            goto error;
+        }
+        if (PyList_Append(py_list, py_target) < 0) {
+            Py_DECREF(py_target);
+            goto error;
+        }
+        Py_DECREF(py_target);
+    }
+    rawstor_string_list_delete(list);
+    list = NULL;
+
+    if (rawstor_pagination_token_empty(&token)) {
+        py_ret_token = Py_None;
+        Py_INCREF(Py_None);
+    } else {
+        RawstorPaginationToken* ret_token =
+            (RawstorPaginationToken*)malloc(sizeof(RawstorPaginationToken));
+        if (ret_token == NULL) {
+            PyErr_NoMemory();
+            goto error;
+        }
+        *ret_token = token;
+        py_ret_token =
+            PyCapsule_New(ret_token, "pagination_token", free_pagination_token);
+        if (py_ret_token == NULL) {
+            free(ret_token);
+            goto error;
+        }
+    }
+
+    PyObject* tuple = PyTuple_New(2);
+    if (!tuple) {
+        goto error;
+    }
+    PyTuple_SET_ITEM(tuple, 0, py_list);
+    PyTuple_SET_ITEM(tuple, 1, py_ret_token);
+    return tuple;
+
+error:
+    Py_XDECREF(py_ret_token);
+    rawstor_string_list_delete(list);
+    Py_XDECREF(py_list);
+    return NULL;
+}
+
 PyObject* py_rawstor_object_create(PyObject* Py_UNUSED(self), PyObject* args) {
     const char* target;
     PyObject* spec_obj;

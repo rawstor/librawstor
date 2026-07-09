@@ -10,6 +10,9 @@
 
 #include <rawstor/object.h>
 
+#include <functional>
+#include <list>
+
 namespace rawstor {
 namespace file {
 
@@ -19,6 +22,12 @@ private:
 
 public:
     Session(rawio::Queue& queue, const rawstd::URI& location);
+
+    void list(
+        unsigned int limit, const RawstdUUID& token,
+        std::function<void(std::vector<RawstdUUID>&&, const RawstdUUID&, int)>&&
+            cb
+    ) override;
 
     void create(
         const RawstdUUID& id, const RawstorObjectSpec& sp,

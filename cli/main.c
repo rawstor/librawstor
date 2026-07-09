@@ -1,4 +1,5 @@
 #include "create.h"
+#include "list.h"
 #include "remove.h"
 #include "show.h"
 #include "testio.h"
@@ -34,6 +35,7 @@ static void usage(void) {
         "  -v, --version         Rawstor version\n"
         "\n"
         "command:\n"
+        "  list                  List rawstor objects\n"
         "  create                Create rawstor object\n"
         "  remove                Remove rawstor object\n"
         "  show                  Show rawstor object\n"
@@ -231,6 +233,66 @@ static int command_remove(int argc, char** argv) {
     }
 
     return rawstor_cli_remove(target_arg);
+}
+
+static void command_list_usage(void) {
+    fprintf(
+        stdout,
+        "Rawstor CLI " PACKAGE_VERSION "\n"
+        "\n"
+        "usage: rawstor-cli [options] list -l LOCATION [command_options]\n"
+        "\n"
+        "list objects stored at the given location(s):\n"
+        "  -l, --location LOCATION\n"
+        "                        Comma-separated list of rawstor backend "
+        "locations.\n"
+        "\n"
+        "command options:\n"
+        "  -h, --help            Show this help message and exit\n"
+    );
+}
+
+static int command_list(int argc, char** argv) {
+    const char* optstring = "hl:";
+    struct option longopts[] = {
+        {"help", no_argument, NULL, 'h'},
+        {"location", required_argument, NULL, 'l'},
+        {},
+    };
+
+    char* location_arg = NULL;
+    optind = 1;
+    while (1) {
+        int c = getopt_long(argc, argv, optstring, longopts, NULL);
+        if (c == -1) {
+            break;
+        }
+
+        switch (c) {
+        case 'h':
+            command_list_usage();
+            return EXIT_SUCCESS;
+
+        case 'l':
+            location_arg = optarg;
+            break;
+
+        default:
+            return EXIT_FAILURE;
+        }
+    }
+
+    if (optind < argc) {
+        fprintf(stderr, "Unexpected argument: %s\n", argv[optind]);
+        return EXIT_FAILURE;
+    }
+
+    if (location_arg == NULL) {
+        fprintf(stderr, "location required\n");
+        return EXIT_FAILURE;
+    }
+
+    return rawstor_cli_list(location_arg);
 }
 
 static void command_show_usage(void) {
@@ -445,6 +507,8 @@ static int run_command(
         ret = command_create(argc, argv);
     } else if (strcmp(command, "remove") == 0) {
         ret = command_remove(argc, argv);
+    } else if (strcmp(command, "list") == 0) {
+        ret = command_list(argc, argv);
     } else if (strcmp(command, "show") == 0) {
         ret = command_show(argc, argv);
     } else if (strcmp(command, "testio") == 0) {

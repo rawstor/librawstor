@@ -7,6 +7,8 @@
 #ifndef RAWSTOR_RAWSTOR_H
 #define RAWSTOR_RAWSTOR_H
 
+#include <stdint.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -23,7 +25,39 @@ struct RawstorOpts {
     unsigned int so_sndtimeo;
     unsigned int so_rcvtimeo;
     unsigned int tcp_user_timeout;
+    unsigned int list_limit;
 };
+
+typedef struct {
+    uint8_t bytes[16];
+} RawstorPaginationToken;
+
+/**
+ * @brief Check whether a pagination token is empty.
+ *
+ * This function tests if the given @p token represents an empty state,
+ * indicating that no more objects are available in the listing operation.
+ * An empty token is typically returned by @ref rawstor_object_list when
+ * the end of the object list has been reached.
+ *
+ * The token is considered empty if all its bytes are zero. Callers can
+ * zero‑initialize a token before the first invocation of
+ * @ref rawstor_object_list and then use this function in a loop to
+ * determine when to stop pagination.
+ *
+ * @param token     Pointer to a RawstorPaginationToken structure to check.
+ *                  Must not be NULL.
+ *
+ * @return Non‑zero (true) if the token is empty (all bytes zero), zero
+ *         (false) otherwise.
+ *
+ * @warning Passing NULL results in undefined behaviour.
+ *
+ * @see rawstor_object_list
+ */
+int rawstor_pagination_token_empty(
+    const RawstorPaginationToken* token
+) RAWSTOR_NOEXCEPT;
 
 int rawstor_initialize(const struct RawstorOpts* opts) RAWSTOR_NOEXCEPT;
 
