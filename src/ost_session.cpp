@@ -70,7 +70,7 @@ int validate_response(
         rawstd_error(
             "fd %d: Server error: %s\n", fd, strerror(-response->body.res)
         );
-        return EPROTO;
+        return -response->body.res;
     }
 
     return 0;
