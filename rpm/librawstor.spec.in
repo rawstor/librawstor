@@ -89,6 +89,8 @@ fi
 
 %files -n rawstor-ost
 %{_bindir}/rawstor-ost
+%{_unitdir}/rawstor-ost.service
+%dir %attr(0755, rawstor, rawstor) /var/lib/rawstor
 
 %files -n python3-rawstor
 %{python3_sitearch}/*
