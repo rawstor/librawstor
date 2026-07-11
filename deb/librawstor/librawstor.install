@@ -1,3 +1,2 @@
 usr/bin/rawstor-cli
 usr/lib/*/librawstor.so.*
-usr/share/doc/librawstor/*
