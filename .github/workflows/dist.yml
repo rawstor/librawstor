@@ -273,7 +273,6 @@ jobs:
     needs:
     - sources
     - deb-librawstor
-    - deb-rawstor-ost
     - deb-python3-rawstor
     - deb-install
     - rpm-librawstor
