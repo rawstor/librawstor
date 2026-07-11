@@ -68,6 +68,7 @@ jobs:
         cp deb/librawstor/rawstor-ost.postinst debian
         cp deb/librawstor/rawstor-ost.prerm debian
         cp deb/librawstor/rules debian
+        cp etc/systemd/system/rawstor-ost.service debian
         cp COPYING debian/copyright
         dpkg-buildpackage -us -uc
     - uses: actions/upload-artifact@v7
