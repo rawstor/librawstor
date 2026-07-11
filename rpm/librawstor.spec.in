@@ -8,9 +8,11 @@ URL: https://github.com/rawstor/librawstor
 Source0: %{name}-@PACKAGE_VERSION@.tar.gz
 
 %{!?_unitdir: %global _unitdir /usr/lib/systemd/system}
+%global python3_sitearch %(python3 -c "import sysconfig; print(sysconfig.get_path('platlib'))")
 
 %description
-Rawstor client library
+Rawstor client library.
+
 
 %package devel
 Summary: Development files for %{name}
@@ -20,13 +22,24 @@ Requires: pkgconfig
 %description devel
 Development files for %{name}.
 
+
 %package -n rawstor-ost
 Summary: Rawstor OST backend
 Requires(pre): shadow-utils
 Requires: %{name} = %{version}-%{release}
 
-%description devel
+%description -n rawstor-ost
 Rawstor OST backend.
+
+
+%package -n python3-rawstor
+Summary: Rawstor python bindings
+Requires: python3
+Requires: %{name} = %{version}-%{release}
+
+%description -n python3-rawstor
+Rawstor python bindings.
+
 
 %pre -n rawstor-ost
 getent group rawstor >/dev/null || groupadd -r rawstor
@@ -36,7 +49,7 @@ getent passwd rawstor >/dev/null || useradd -r -g rawstor -d /var/lib/rawstor -s
 %autosetup -n %{name}-@PACKAGE_VERSION@
 
 %build
-./configure --prefix=%{_prefix} --libdir=%{_libdir} --disable-static --without-python3
+./configure --prefix=%{_prefix} --libdir=%{_libdir} --disable-static
 make %{?_smp_mflags}
 
 %install
@@ -76,3 +89,6 @@ fi
 
 %files -n rawstor-ost
 %{_bindir}/rawstor-ost
+
+%files -n python3-rawstor
+%{python3_sitearch}/*
