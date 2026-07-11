@@ -5,7 +5,7 @@ Maintainer: Vasily Stepanov <vasily.stepanov@gmail.com>
 Build-Depends: debhelper (>= 12),
                dh-python,
                python3-all-dev,
-               python3-setuptools
+               python3-setuptools,
                librawstor-dev (>= @PACKAGE_VERSION_MAJOR@.@PACKAGE_VERSION_MINOR@.0),
                librawstor-dev (<< @PACKAGE_VERSION_MAJOR@.@PACKAGE_VERSION_MINOR_NEXT@.0)
 Standards-Version: 4.7.0
