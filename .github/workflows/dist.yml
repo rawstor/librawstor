@@ -62,6 +62,11 @@ jobs:
         cp deb/librawstor/compat debian
         cp deb/librawstor/changelog debian
         cp deb/librawstor/format debian/source
+        cp deb/librawstor/librawstor.install debian
+        cp deb/librawstor/librawstor-dev.install debian
+        cp deb/librawstor/rawstor-ost.install debian
+        cp deb/librawstor/rawstor-ost.postinst debian
+        cp deb/librawstor/rawstor-ost.prerm debian
         cp deb/librawstor/rules debian
         cp COPYING debian/copyright
         dpkg-buildpackage -us -uc
@@ -70,6 +75,7 @@ jobs:
         name: librawstor.deb
         path: |
           librawstor_*.deb
+          librawstor-dev_*.deb
           rawstor-ost_*.deb
         if-no-files-found: error
 
