@@ -13,3 +13,20 @@ Depends: ${misc:Depends},
          libxxhash0
 Description: Rawstor client library and command line tools
 Homepage: https://github.com/rawstor/librawstor
+
+Package: @PACKAGE_NAME@-dev
+Architecture: any
+Depends: ${misc:Depends},
+         ${shlibs:Depends},
+         librawstor (= ${binary:Version})
+Description: Headers and static library for librawstor
+Homepage: https://github.com/rawstor/librawstor
+
+Package: rawstor-ost
+Architecture: any
+Depends: ${misc:Depends},
+         ${shlibs:Depends},
+         adduser,
+         librawstor (= ${binary:Version})
+Description: Rawstor OST backend
+Homepage: https://github.com/rawstor/librawstor

@@ -1,0 +1,3 @@
+usr/bin/rawstor-ost
+usr/lib/systemd/system/*.service
+usr/share/doc/librawstor/*
