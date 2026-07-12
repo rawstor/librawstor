@@ -10,7 +10,7 @@ Build-Depends: debhelper (>= 12),
                librawstor-dev (<< @PACKAGE_VERSION_MAJOR@.@PACKAGE_VERSION_MINOR_NEXT@.0)
 Standards-Version: 4.7.0
 
-Package: python3-rawstor
+Package: python@PYTHON_VERSION@-rawstor
 Architecture: any
 Depends: ${misc:Depends},
          ${python3:Depends},
