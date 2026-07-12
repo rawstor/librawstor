@@ -36,7 +36,7 @@ Rawstor OST backend.
 
 %package -n python%{python3_pkgversion}-rawstor
 Summary: Rawstor python bindings
-BuildRequires: python%{python3_pkgversion}-devel
+# BuildRequires: python%{python3_pkgversion}-devel
 Requires: python(abi) = %{python3_version}
 Requires: %{name} = %{version}-%{release}
 
