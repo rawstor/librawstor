@@ -19,7 +19,7 @@ Architecture: any
 Depends: ${misc:Depends},
          ${shlibs:Depends},
          librawstor (= ${binary:Version}),
-         pkgconfig
+         pkg-config
 Description: Development files for @PACKAGE_NAME@
 Homepage: https://github.com/rawstor/librawstor
 
