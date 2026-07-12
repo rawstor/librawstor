@@ -125,7 +125,7 @@ jobs:
     - uses: actions/upload-artifact@v7
       with:
         name: python3-rawstor.deb
-        path: python3-rawstor_*.deb
+        path: python*-rawstor_*.deb
         if-no-files-found: error
 
   deb-install:
