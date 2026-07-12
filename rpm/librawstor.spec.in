@@ -8,6 +8,8 @@ URL: https://github.com/rawstor/librawstor
 Source0: %{name}-@PACKAGE_VERSION@.tar.gz
 
 %{!?_unitdir: %global _unitdir /usr/lib/systemd/system}
+%global python3_pkgversion 3.12
+%global python3_version %{python3_pkgversion}
 %global python3_sitearch %(python3 -c "import sysconfig; print(sysconfig.get_path('platlib'))")
 
 %description
@@ -32,12 +34,13 @@ Requires: %{name} = %{version}-%{release}
 Rawstor OST backend.
 
 
-%package -n python3-rawstor
+%package -n python%{python3_pkgversion}-rawstor
 Summary: Rawstor python bindings
-Requires: python3
+BuildRequires: python%{python3_pkgversion}-devel
+Requires: python(abi) = %{python3_version}
 Requires: %{name} = %{version}-%{release}
 
-%description -n python3-rawstor
+%description -n python%{python3_pkgversion}-rawstor
 Rawstor python bindings.
 
 
@@ -92,5 +95,5 @@ fi
 %{_unitdir}/rawstor-ost.service
 %dir %attr(0755, rawstor, rawstor) /var/lib/rawstor
 
-%files -n python3-rawstor
+%files -n python%{python3_pkgversion}-rawstor
 %{python3_sitearch}/*
