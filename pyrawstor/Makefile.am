@@ -61,10 +61,12 @@ if WITH_PYTHON3
 install-exec-local: $(SOURCES) sources-stamp
 	if [ -n "$(DESTDIR)" ]; then \
 	    ROOT_ARG="--root=$(DESTDIR)"; \
+		RPM_ENV="RPM_BUILD_ROOT=$(DESTDIR)"; \
 	else \
 	    ROOT_ARG=""; \
+		RPM_ENV=""; \
 	fi; \
-	env CFLAGS="$(CFLAGS) $(AM_CFLAGS)" LDFLAGS="$(LDFLAGS) $(AM_LDFLAGS)" \
+	env $$RPM_ENV CFLAGS="$(CFLAGS) $(AM_CFLAGS)" LDFLAGS="$(LDFLAGS) $(AM_LDFLAGS)" \
 	    $(PYTHON) -m pip install --no-deps $$ROOT_ARG --prefix="$(prefix)" $(builddir)
 
 
