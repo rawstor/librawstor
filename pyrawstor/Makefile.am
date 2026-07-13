@@ -48,7 +48,7 @@ $(builddir)/sources-stamp:
 	fi
 	touch $@
 
-$(builddir)/build-stamp: $(C_SOURCES) $(builddir)/sources-stamp setup.py ../src/.libs/librawstor.la
+$(builddir)/build-stamp: $(C_SOURCES) $(builddir)/sources-stamp setup.py $(top_srcdir)/src/.libs/librawstor.la
 	CFLAGS="$(CFLAGS) $(AM_CFLAGS)" \
 	LDFLAGS="$(LDFLAGS) $(AM_LDFLAGS)" \
 	$(PYTHON) -m pip install \
@@ -70,10 +70,10 @@ install-exec-local: $(SOURCES) sources-stamp
 
 uninstall-local:
 	@echo "Uninstalling python package..."
-	-rm -r $(DESTDIR)$(prefix)/lib/python*/site-packages/rawstor*
-	-rm -r $(DESTDIR)$(prefix)/lib/python*/dist-packages/rawstor*
-	-rm -r $(DESTDIR)$(prefix)/local/lib/python*/site-packages/rawstor*
-	-rm -r $(DESTDIR)$(prefix)/local/lib/python*/dist-packages/rawstor*
+	-rm -r $(DESTDIR)/lib/python*/site-packages/rawstor*
+	-rm -r $(DESTDIR)/lib/python*/dist-packages/rawstor*
+	-rm -r $(DESTDIR)/local/lib/python*/site-packages/rawstor*
+	-rm -r $(DESTDIR)/local/lib/python*/dist-packages/rawstor*
 
 if ENABLE_TESTS
 test: $(builddir)/build-stamp
