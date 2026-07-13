@@ -67,14 +67,14 @@ install-exec-local: $(SOURCES) sources-stamp
 	        --no-deps \
 	        --root=$(DESTDIR) \
 	        --prefix=$(prefix) \
-	        $(builddir)
+	        $(builddir) \
 	else \
 	    CFLAGS="$(CFLAGS) $(AM_CFLAGS)" \
 	    LDFLAGS="$(LDFLAGS) $(AM_LDFLAGS)" \
 	    $(PYTHON) -m pip install \
 	        --no-deps \
 	        --prefix=$(prefix) \
-	        $(builddir)
+	        $(builddir) \
 	fi
 
 
