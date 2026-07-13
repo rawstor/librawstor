@@ -49,13 +49,24 @@ $(builddir)/sources-stamp:
 	touch $@
 
 $(builddir)/build-stamp: $(C_SOURCES) $(builddir)/sources-stamp setup.py $(top_builddir)/src/.libs/librawstor.la
-	CFLAGS="$(CFLAGS) $(AM_CFLAGS)" \
-	LDFLAGS="$(LDFLAGS) $(AM_LDFLAGS)" \
-	$(PYTHON) -m pip install \
-	    --no-deps \
-	    --no-build-isolation \
-	    --prefix=$(prefix) \
-	    -e $(builddir)
+	if [ -n "$(DESTDIR)" ]; then \
+	    CFLAGS="$(CFLAGS) $(AM_CFLAGS)" \
+	    LDFLAGS="$(LDFLAGS) $(AM_LDFLAGS)" \
+	    $(PYTHON) -m pip install \
+	        --no-deps \
+	        --no-build-isolation \
+	        --root=$(DESTDIR) \
+	        --prefix=$(prefix) \
+	        -e $(builddir); \
+	else \
+	    CFLAGS="$(CFLAGS) $(AM_CFLAGS)" \
+	    LDFLAGS="$(LDFLAGS) $(AM_LDFLAGS)" \
+	    $(PYTHON) -m pip install \
+	        --no-deps \
+	        --no-build-isolation \
+	        --prefix=$(prefix) \
+	        -e $(builddir); \
+	fi
 	touch $@
 
 if WITH_PYTHON3
