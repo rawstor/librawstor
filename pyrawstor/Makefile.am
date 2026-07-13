@@ -61,9 +61,14 @@ if WITH_PYTHON3
 install-exec-local: $(SOURCES) sources-stamp
 	CFLAGS="$(CFLAGS) $(AM_CFLAGS)" \
 	LDFLAGS="$(LDFLAGS) $(AM_LDFLAGS)" \
+	@if test -n "$(DESTDIR)"; then \
+	    ROOT_ARG="--root=$(DESTDIR)"
+	else \
+	    ROOT_ARG=""
+	fi
 	$(PYTHON) -m pip install \
 	    --no-deps \
-	    --root=$(DESTDIR) \
+	    $(ROOT_ARG) \
 	    --prefix=$(prefix) \
 	    $(builddir)
 
