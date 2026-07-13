@@ -52,7 +52,7 @@ getent passwd rawstor >/dev/null || useradd -r -g rawstor -d /var/lib/rawstor -s
 %autosetup -n %{name}-@PACKAGE_VERSION@
 
 %build
-./configure --prefix=%{_prefix} --libdir=%{_libdir} --disable-static
+%configure --disable-static
 make %{?_smp_mflags}
 
 %install
