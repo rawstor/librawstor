@@ -51,15 +51,22 @@ $(builddir)/sources-stamp:
 $(builddir)/build-stamp: $(C_SOURCES) $(builddir)/sources-stamp setup.py ../src/.libs/librawstor.la
 	CFLAGS="$(CFLAGS) $(AM_CFLAGS)" \
 	LDFLAGS="$(LDFLAGS) $(AM_LDFLAGS)" \
-	$(PYTHON) -m pip install --no-deps --no-build-isolation -e $(builddir)
+	$(PYTHON) -m pip install \
+	    --no-deps \
+	    --no-build-isolation \
+	    -e $(builddir)
 	touch $@
 
 if WITH_PYTHON3
 install-exec-local: $(SOURCES) sources-stamp
+	echo $(DESTDIR)
+	echo $(prefix)
 	CFLAGS="$(CFLAGS) $(AM_CFLAGS)" \
 	LDFLAGS="$(LDFLAGS) $(AM_LDFLAGS)" \
-	$(PYTHON) -m pip install --no-deps \
-	    --prefix=$(DESTDIR)$(prefix) $(builddir)
+	$(PYTHON) -m pip install \
+	    --no-deps \
+	    --prefix=$(DESTDIR)$(prefix) \
+	    $(builddir)
 
 
 uninstall-local:
