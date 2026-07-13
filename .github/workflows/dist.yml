@@ -71,6 +71,12 @@ jobs:
         cp etc/systemd/system/rawstor-ost.service debian
         cp COPYING debian/copyright
         dpkg-buildpackage -us -uc
+    - name: ls
+      run: |
+        for i in librawstor_*.deb librawstor-dev_*.deb rawstor-ost_*.deb; do \
+          echo dpkg --contents $i; \
+          dpkg --contents $i; \
+        done
     - uses: actions/upload-artifact@v7
       with:
         name: librawstor.deb
@@ -122,6 +128,12 @@ jobs:
         cp ../COPYING debian/copyright
         dpkg-buildpackage -us -uc
         mv ../python*-rawstor_*.deb ${GITHUB_WORKSPACE}
+    - name: ls
+      run: |
+        for i in python*-rawstor_*.deb; do \
+          echo dpkg --contents $i; \
+          dpkg --contents $i; \
+        done
     - uses: actions/upload-artifact@v7
       with:
         name: python3-rawstor.deb

@@ -57,7 +57,7 @@ make %{?_smp_mflags}
 
 %install
 rm -rf %{buildroot}
-make install DESTDIR=%{buildroot}
+make install DESTDIR=%{buildroot} prefix=/usr
 mkdir -p %{buildroot}%{_unitdir}
 install -m 644 etc/systemd/system/rawstor-ost.service %{buildroot}%{_unitdir}/rawstor-ost.service
 mkdir -p %{buildroot}/var/lib/rawstor
