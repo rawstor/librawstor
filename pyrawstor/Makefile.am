@@ -59,7 +59,7 @@ $(builddir)/build-stamp: $(C_SOURCES) $(builddir)/sources-stamp setup.py $(top_b
 
 if WITH_PYTHON3
 install-exec-local: $(SOURCES) sources-stamp
-	@if [ -n "$(DESTDIR)" ]; then \
+	if [ -n "$(DESTDIR)" ]; then \
 	    ROOT_ARG="--root=$(DESTDIR)"; \
 	else \
 	    ROOT_ARG=""; \
