@@ -59,18 +59,13 @@ $(builddir)/build-stamp: $(C_SOURCES) $(builddir)/sources-stamp setup.py $(top_b
 
 if WITH_PYTHON3
 install-exec-local: $(SOURCES) sources-stamp
-	CFLAGS="$(CFLAGS) $(AM_CFLAGS)" \
-	LDFLAGS="$(LDFLAGS) $(AM_LDFLAGS)" \
 	@if [ -n "$(DESTDIR)" ]; then \
 	    ROOT_ARG="--root=$(DESTDIR)"; \
 	else \
 	    ROOT_ARG=""; \
-	fi
-	$(PYTHON) -m pip install \
-	    --no-deps \
-	    $(ROOT_ARG) \
-	    --prefix=$(prefix) \
-	    $(builddir)
+	fi; \
+	env CFLAGS="$(CFLAGS) $(AM_CFLAGS)" LDFLAGS="$(LDFLAGS) $(AM_LDFLAGS)" \
+	    $(PYTHON) -m pip install --no-deps $$ROOT_ARG --prefix="$(prefix)" $(builddir)
 
 
 uninstall-local:
