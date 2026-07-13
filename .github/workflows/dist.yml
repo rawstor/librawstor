@@ -189,9 +189,13 @@ jobs:
         cp ${LIBRAWSTOR}/rpm/librawstor.spec ~/rpmbuild/SPECS
         cp ${LIBRAWSTOR_TAR_GZ} ~/rpmbuild/SOURCES
         rpmlint ~/rpmbuild/SPECS/librawstor.spec
-        echo "!!!"
-        rpm --eval '%{_prefix}'
         rpmbuild -bb ~/rpmbuild/SPECS/librawstor.spec
+    - name: ls
+      run: |
+        for i in ~/rpmbuild/RPMS/x86_64/*.rpm; do \
+          echo rpm -qlp $i; \
+          rpm -qlp $i; \
+        done
     - uses: actions/upload-artifact@v7
       with:
         name: librawstor.rpm
