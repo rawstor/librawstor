@@ -61,13 +61,14 @@ if WITH_PYTHON3
 install-exec-local: $(SOURCES) sources-stamp
 	if [ -n "$(DESTDIR)" ]; then \
 	    ROOT_ARG="--root=$(DESTDIR)"; \
-		RPM_ENV="RPM_BUILD_ROOT=$(DESTDIR)"; \
+	    RPM_ENV="RPM_BUILD_ROOT=$(DESTDIR)"; \
 	else \
 	    ROOT_ARG=""; \
-		RPM_ENV=""; \
+	    RPM_ENV=""; \
 	fi; \
-	env $$RPM_ENV CFLAGS="$(CFLAGS) $(AM_CFLAGS)" LDFLAGS="$(LDFLAGS) $(AM_LDFLAGS)" \
-	    $(PYTHON) -m pip install --no-deps $$ROOT_ARG --prefix="$(prefix)" $(builddir)
+	env $$RPM_ENV PIP_INSTALL_SCHEME=posix_prefix CFLAGS="$(CFLAGS) $(AM_CFLAGS)" LDFLAGS="$(LDFLAGS) $(AM_LDFLAGS)" \
+	echo RPM_ENV=$$RPM_ENV; \
+	$(PYTHON) -m pip install --no-deps $$ROOT_ARG --prefix="$(prefix)" $(builddir)
 
 
 uninstall-local:
