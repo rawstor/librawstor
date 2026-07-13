@@ -54,22 +54,31 @@ $(builddir)/build-stamp: $(C_SOURCES) $(builddir)/sources-stamp setup.py $(top_b
 	$(PYTHON) -m pip install \
 	    --no-deps \
 	    --no-build-isolation \
+	    --prefix=$(prefix) \
 	    -e $(builddir)
 	touch $@
 
 if WITH_PYTHON3
 install-exec-local: $(SOURCES) sources-stamp
-ifeq ($(DESTDIR),)
-	RPM_BUILD_ROOT=$(DESTDIR) \
-	$(PYTHON) -m pip install --no-deps --root=$(DESTDIR) --prefix="$(prefix)" $(builddir)
-else
-	$(PYTHON) -m pip install --no-deps --prefix="$(prefix)" $(builddir)
-endif
+	if [ -n "$(DESTDIR)" ]; then \
+	    CFLAGS="$(CFLAGS) $(AM_CFLAGS)" \
+	    LDFLAGS="$(LDFLAGS) $(AM_LDFLAGS)" \
+	    $(PYTHON) -m pip install \
+	        --no-deps \
+	        --root=$(DESTDIR) \
+	        --prefix=$(prefix) \
+	        $(builddir)
+	else \
+	    CFLAGS="$(CFLAGS) $(AM_CFLAGS)" \
+	    LDFLAGS="$(LDFLAGS) $(AM_LDFLAGS)" \
+	    $(PYTHON) -m pip install \
+	        --no-deps \
+	        --prefix=$(prefix) \
+	        $(builddir)
+	fi
 
 
 uninstall-local:
-	echo $(DESTDIR)
-	echo $(prefix)
 	@echo "Uninstalling python package..."
 	-rm -r $(DESTDIR)$(prefix)/lib/python*/site-packages/rawstor*
 	-rm -r $(DESTDIR)$(prefix)/lib/python*/dist-packages/rawstor*
