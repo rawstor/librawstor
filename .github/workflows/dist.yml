@@ -189,6 +189,8 @@ jobs:
         cp ${LIBRAWSTOR}/rpm/librawstor.spec ~/rpmbuild/SPECS
         cp ${LIBRAWSTOR_TAR_GZ} ~/rpmbuild/SOURCES
         rpmlint ~/rpmbuild/SPECS/librawstor.spec
+        echo "!!!"
+        rpm --eval '%{_prefix}'
         rpmbuild -bb ~/rpmbuild/SPECS/librawstor.spec
     - uses: actions/upload-artifact@v7
       with:
