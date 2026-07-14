@@ -18,7 +18,7 @@ Package: @PACKAGE_NAME@-dev
 Architecture: any
 Depends: ${misc:Depends},
          ${shlibs:Depends},
-         librawstor (= ${binary:Version}),
+         @PACKAGE_NAME@ (= ${binary:Version}),
          pkg-config
 Description: Development files for @PACKAGE_NAME@
 Homepage: https://github.com/rawstor/librawstor
@@ -28,6 +28,6 @@ Architecture: any
 Depends: ${misc:Depends},
          ${shlibs:Depends},
          adduser,
-         librawstor (= ${binary:Version})
+         @PACKAGE_NAME@ (= ${binary:Version})
 Description: Rawstor OST backend
 Homepage: https://github.com/rawstor/librawstor
