@@ -129,9 +129,9 @@ jobs:
           ${{ matrix.numjobs }} \
           fio.txt \
           fio.json
-        echo \`\`\` >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
         cat fio.txt >> $GITHUB_STEP_SUMMARY
-        echo \`\`\` >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
     - uses: actions/upload-artifact@v7
       with:
         name: perftest${{ matrix.without-liburing }}-${{ matrix.backend }}-${{ matrix.bs }}-${{ matrix.iodepth }}-${{ matrix.numjobs }}
