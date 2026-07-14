@@ -10,7 +10,7 @@ Source0: %{name}-@PACKAGE_VERSION@.tar.gz
 %{!?_unitdir: %global _unitdir /usr/lib/systemd/system}
 %global python3_pkgversion 3.12
 %global python3_version %{python3_pkgversion}
-%global python3_sitelib %(python3 -c "import sysconfig; print(sysconfig.get_path('platlib').replace('/local', ''));")
+%global python3_sitelib %(python3 -c "import sysconfig; print(sysconfig.get_path('platlib').replace('/local', '')).replace('/dist-packages', '/site-packages'));")
 
 %description
 Rawstor client library.
