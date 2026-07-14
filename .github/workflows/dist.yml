@@ -152,6 +152,10 @@ jobs:
         tar -xzf ${LIBRAWSTOR_TAR_GZ}
         cd ${LIBRAWSTOR}
         ./configure --enable-asan --disable-tests --without-python3 ${{ matrix.without-liburing }}
+    - name: make
+      run: |
+        cd ${LIBRAWSTOR}
+        make -j${nproc}
     - name: start rawstor-ost
       run: |
         mkdir /tmp/ost_objects
