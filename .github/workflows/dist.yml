@@ -244,7 +244,9 @@ jobs:
       run: |
         for i in librawstor_*.deb librawstor-dev_*.deb rawstor-ost_*.deb; do \
           echo "# $i" >> $GITHUB_STEP_SUMMARY; \
+          echo \`\`\` >> $GITHUB_STEP_SUMMARY
           dpkg --contents $i >> $GITHUB_STEP_SUMMARY; \
+          echo \`\`\` >> $GITHUB_STEP_SUMMARY
         done
     - uses: actions/upload-artifact@v7
       with:
@@ -301,7 +303,9 @@ jobs:
       run: |
         for i in python*-rawstor_*.deb; do \
           echo "# $i" >> $GITHUB_STEP_SUMMARY; \
+          echo \`\`\` >> $GITHUB_STEP_SUMMARY
           dpkg --contents $i >> $GITHUB_STEP_SUMMARY; \
+          echo \`\`\` >> $GITHUB_STEP_SUMMARY
         done
     - uses: actions/upload-artifact@v7
       with:
@@ -374,9 +378,11 @@ jobs:
     - name: ls
       run: |
         cd ~/rpmbuild/RPMS/x86_64
-        for i in \*.rpm; do \
+        for i in $(ls \*.rpm); do \
           echo "# $i" >> $GITHUB_STEP_SUMMARY; \
+          echo \`\`\` >> $GITHUB_STEP_SUMMARY
           rpm -qlp $i >> $GITHUB_STEP_SUMMARY; \
+          echo \`\`\` >> $GITHUB_STEP_SUMMARY
         done
     - uses: actions/upload-artifact@v7
       with:
