@@ -199,11 +199,7 @@ jobs:
         cp ${LIBRAWSTOR}/rpm/librawstor.spec ~/rpmbuild/SPECS
         cp ${LIBRAWSTOR_TAR_GZ} ~/rpmbuild/SOURCES
     - name: rpmlint
-      run: |
-        python3 -m venv env
-        source env/bin/activate
-        pip install rpmlint
-        rpmlint -c ${LIBRAWSTOR}/rpm/rpmlintrc ~/rpmbuild/SPECS/librawstor.spec
+      run: rpmlint ~/rpmbuild/SPECS/librawstor.spec
     - name: rpmbuild
       run: rpmbuild -bb ~/rpmbuild/SPECS/librawstor.spec
     - name: ls
