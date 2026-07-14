@@ -90,10 +90,10 @@ install-exec-local: $(SOURCES) sources-stamp
 
 uninstall-local:
 	@echo "Uninstalling python package..."
-	-rm -r $(DESTDIR)$(prefix)/lib/python*/site-packages/rawstor*
-	-rm -r $(DESTDIR)$(prefix)/lib/python*/dist-packages/rawstor*
-	-rm -r $(DESTDIR)$(prefix)/local/lib/python*/site-packages/rawstor*
-	-rm -r $(DESTDIR)$(prefix)/local/lib/python*/dist-packages/rawstor*
+	-rm -r $(prefix)/lib/python$(PYTHON_VERSION)/site-packages/rawstor*
+	-rm -r $(prefix)/lib/python$(PYTHON_VERSION)/dist-packages/rawstor*
+	-rm -r $(DESTDIR)$(prefix)/lib/python$(PYTHON_VERSION)/site-packages/rawstor*
+	-rm -r $(DESTDIR)$(prefix)/lib/python$(PYTHON_VERSION)/dist-packages/rawstor*
 
 if ENABLE_TESTS
 test: $(builddir)/build-stamp
