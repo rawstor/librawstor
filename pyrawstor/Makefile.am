@@ -75,27 +75,22 @@ install-exec-local: $(SOURCES) sources-stamp
 	    LDFLAGS="$(LDFLAGS) $(AM_LDFLAGS)" \
 	    $(PYTHON) -m pip install \
 	        --no-deps \
-	        --root=$(DESTDIR) \
-	        --prefix=$(prefix) \
+	        --prefix=$(DESTDIR)$(prefix)/lib/python$(PYTHON_VERSION)/dist-packages \
 	        $(builddir); \
 	else \
 	    CFLAGS="$(CFLAGS) $(AM_CFLAGS)" \
 	    LDFLAGS="$(LDFLAGS) $(AM_LDFLAGS)" \
 	    $(PYTHON) -m pip install \
 	        --no-deps \
-	        --prefix=$(prefix) \
+	        --prefix=$(prefix)/lib/python$(PYTHON_VERSION)/dist-packages \
 	        $(builddir); \
 	fi
 
 
 uninstall-local:
 	@echo "Uninstalling python package..."
-	-rm -r $(prefix)/lib/python$(PYTHON_VERSION)/site-packages/rawstor*
-	-rm -r $(prefix)/lib/python$(PYTHON_VERSION)/dist-packages/rawstor*
 	-rm -r $(DESTDIR)$(prefix)/lib/python$(PYTHON_VERSION)/site-packages/rawstor*
 	-rm -r $(DESTDIR)$(prefix)/lib/python$(PYTHON_VERSION)/dist-packages/rawstor*
-	-rm -r $(prefix)/local/lib/python$(PYTHON_VERSION)/site-packages/rawstor*
-	-rm -r $(prefix)/local/lib/python$(PYTHON_VERSION)/dist-packages/rawstor*
 	-rm -r $(DESTDIR)$(prefix)/local/lib/python$(PYTHON_VERSION)/site-packages/rawstor*
 	-rm -r $(DESTDIR)$(prefix)/local/lib/python$(PYTHON_VERSION)/dist-packages/rawstor*
 
