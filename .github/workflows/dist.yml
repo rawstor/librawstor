@@ -117,6 +117,7 @@ jobs:
         make test
 
   sources-testio:
+    needs: sources
 
     runs-on: ubuntu-latest
 
