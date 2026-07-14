@@ -28,16 +28,25 @@ jobs:
         path: librawstor-*.tar.gz
         if-no-files-found: error
 
-  sources-test:
+  sources-unittest:
     needs: sources
 
     runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        without-liburing:
+        - 
+        - --without-liburing
+        include:
+        - packages: liburing-dev
+          without-liburing:
 
     steps:
     - name: install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libxxhash-dev liburing-dev libgtest-dev python3-build
+        sudo apt-get install -y libxxhash-dev libgtest-dev python3-build ${{ matrix.packages }}
     - uses: actions/download-artifact@v8
       with:
         name: sources
@@ -52,7 +61,7 @@ jobs:
       run: |
         tar -xzf ${LIBRAWSTOR_TAR_GZ}
         cd ${LIBRAWSTOR}
-        ./configure
+        ./configure ${{ matrix.without-liburing }}
     - name: make
       run: |
         cd ${LIBRAWSTOR}
@@ -61,6 +70,113 @@ jobs:
       run: |
         cd ${LIBRAWSTOR}
         make test
+
+  sources-asan:
+    needs: sources
+
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        without-liburing:
+        - 
+        - --without-liburing
+        include:
+        - packages: liburing-dev
+          without-liburing:
+
+    env:
+      asan_options: detect_odr_violation=0
+    steps:
+    - name: install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libxxhash-dev libgtest-dev ${{ matrix.packages }}
+    - uses: actions/download-artifact@v8
+      with:
+        name: sources
+    - name: env
+      run: |
+        export LIBRAWSTOR_TAR_GZ=$(ls librawstor-*.tar.gz)
+        export LIBRAWSTOR_TAR=${LIBRAWSTOR_TAR_GZ%.*}
+        export LIBRAWSTOR=${LIBRAWSTOR_TAR%.*}
+        echo "LIBRAWSTOR_TAR_GZ=${LIBRAWSTOR_TAR_GZ}" >> $GITHUB_ENV
+        echo "LIBRAWSTOR=${LIBRAWSTOR}" >> $GITHUB_ENV
+    - name: configure
+      run: |
+        tar -xzf ${LIBRAWSTOR_TAR_GZ}
+        cd ${LIBRAWSTOR}
+        ./configure --enable-asan --without-python3 ${{ matrix.without-liburing }}
+    - name: make
+      run: |
+        cd ${LIBRAWSTOR}
+        make -j${nproc}
+    - name: make test
+      run: |
+        cd ${LIBRAWSTOR}
+        make test
+
+  sources-testio:
+
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        without-liburing:
+        - 
+        - --without-liburing
+        include:
+        - packages: liburing-dev
+          without-liburing:
+
+    env:
+      asan_options: detect_odr_violation=0
+    steps:
+    - name: install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libxxhash-dev python3-build ${{ matrix.packages }}
+    - uses: actions/download-artifact@v8
+      with:
+        name: sources
+    - name: env
+      run: |
+        export LIBRAWSTOR_TAR_GZ=$(ls librawstor-*.tar.gz)
+        export LIBRAWSTOR_TAR=${LIBRAWSTOR_TAR_GZ%.*}
+        export LIBRAWSTOR=${LIBRAWSTOR_TAR%.*}
+        echo "LIBRAWSTOR_TAR_GZ=${LIBRAWSTOR_TAR_GZ}" >> $GITHUB_ENV
+        echo "LIBRAWSTOR=${LIBRAWSTOR}" >> $GITHUB_ENV
+    - name: configure
+      run: |
+        tar -xzf ${LIBRAWSTOR_TAR_GZ}
+        cd ${LIBRAWSTOR}
+        ./configure --enable-asan --disable-tests --without-python3 ${{ matrix.without-liburing }}
+    - name: start rawstor-ost
+      run: |
+        mkdir /tmp/ost_objects
+        ./${LIBRAWSTOR}/ost/rawstor-ost --bind 127.0.0.1:7777 --location=file:///tmp/ost_objects/ &
+        sleep 10
+    - name: create object file,ost
+      run: |
+        mkdir /tmp/file_objects
+        target=$(./${LIBRAWSTOR}/cli/rawstor-cli create --location=file:///tmp/file_objects,ost://127.0.0.1:7777 --size=1G)
+        echo "TARGET=${target}" >> $GITHUB_ENV
+        ./${LIBRAWSTOR}/cli/rawstor-cli list --location=file:///tmp/file_objects,ost://127.0.0.1:7777
+    - name: testio file,ost
+      run: |
+        ./${LIBRAWSTOR}/cli/rawstor-cli testio --target=${TARGET} --block-size=4K --io-depth=1 --count=10
+        ./${LIBRAWSTOR}/cli/rawstor-cli testio --target=${TARGET} --block-size=4K --io-depth=1 --count=10 --vector-mode
+    - name: create object ost,file
+      run: |
+        target=$(./${LIBRAWSTOR}/cli/rawstor-cli create --location=ost://127.0.0.1:7777,file:///tmp/file_objects --size=1G)
+        echo "TARGET=${target}" >> $GITHUB_ENV
+        ./${LIBRAWSTOR}/cli/rawstor-cli list --location=ost://127.0.0.1:7777,file:///tmp/file_objects
+    - name: testio ost,file
+      run: |
+        ./${LIBRAWSTOR}/cli/rawstor-cli testio --target=${TARGET} --block-size=4K --io-depth=1 --count=10
+        ./${LIBRAWSTOR}/cli/rawstor-cli testio --target=${TARGET} --block-size=4K --io-depth=1 --count=10 --vector-mode
+    - name: stop rawstor_ost
+      run: killall rawstor-ost
 
   deb-librawstor:
     needs: sources
@@ -251,7 +367,9 @@ jobs:
   release:
     needs:
     - sources
-    - sources-test
+    - sources-unittest
+    - sources-asan
+    - sources-testio
     - deb-librawstor
     - deb-python3-rawstor
     - deb-install
