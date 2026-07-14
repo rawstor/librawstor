@@ -40,6 +40,7 @@ EXTRA_DIST = deb/librawstor/compat \
              deb/python3-rawstor/format \
              deb/python3-rawstor/rules \
              etc/systemd/system/rawstor-ost.service \
+             rpm/rpmlintrc \
              ChangeLog.md \
              README.md
 

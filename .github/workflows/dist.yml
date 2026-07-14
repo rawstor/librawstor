@@ -199,8 +199,9 @@ jobs:
     - name: rpmbuild
       run: |
         cp ${LIBRAWSTOR}/rpm/librawstor.spec ~/rpmbuild/SPECS
+        cp 
         cp ${LIBRAWSTOR_TAR_GZ} ~/rpmbuild/SOURCES
-        rpmlint --exclude=hardcoded-library-path ~/rpmbuild/SPECS/librawstor.spec
+        rpmlint -c ${LIBRAWSTOR}/rpm/rpmlintrc ~/rpmbuild/SPECS/librawstor.spec
         rpmbuild -bb ~/rpmbuild/SPECS/librawstor.spec
     - name: ls
       run: |
