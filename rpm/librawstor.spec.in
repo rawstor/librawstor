@@ -10,7 +10,7 @@ Source0: %{name}-@PACKAGE_VERSION@.tar.gz
 %{!?_unitdir: %global _unitdir /usr/lib/systemd/system}
 %global python3_pkgversion 3.12
 %global python3_version %{python3_pkgversion}
-%global python3_sitelib %(RPM_BUILD_ROOT=/some/path && python3 -c "import sysconfig; print(sysconfig.get_path('platlib'))")
+%global python3_sitelib %(python3 -c "import sysconfig; print(sysconfig.get_path('platlib').replace('/local', '')")
 
 %description
 Rawstor client library.
@@ -63,9 +63,6 @@ mkdir -p %{buildroot}/var/lib/rawstor
 
 PYTHON_LIB=%{buildroot}%{python3_sitelib}
 PYTHON_LOCAL=%{buildroot}/usr/local/lib/python%{python3_version}/dist-packages
-
-echo PYTHON_LIB=%{buildroot}%{python3_sitelib}
-echo PYTHON_LOCAL=%{buildroot}/usr/local/lib/python%{python3_version}/dist-packages
 
 if [ -d "$PYTHON_LOCAL/rawstor" ]; then
     mkdir -p "$PYTHON_LIB"
