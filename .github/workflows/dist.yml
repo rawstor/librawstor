@@ -378,7 +378,7 @@ jobs:
     - name: ls
       run: |
         cd ~/rpmbuild/RPMS/x86_64
-        for i in $(ls \*.rpm); do \
+        for i in "*.rpm"; do \
           echo "# $i" >> $GITHUB_STEP_SUMMARY; \
           echo \`\`\` >> $GITHUB_STEP_SUMMARY
           rpm -qlp $i >> $GITHUB_STEP_SUMMARY; \
