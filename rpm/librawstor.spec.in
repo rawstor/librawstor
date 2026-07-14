@@ -108,4 +108,5 @@ fi
 %dir %attr(0755, rawstor, rawstor) /var/lib/rawstor
 
 %files -n python%{python3_pkgversion}-rawstor
-%{python3_sitearch}/*
+/usr/lib/python%{python3_version}/dist-packages/rawstor
+/usr/lib/python%{python3_version}/dist-packages/rawstor-*.dist-info
