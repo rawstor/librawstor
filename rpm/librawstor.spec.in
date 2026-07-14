@@ -10,7 +10,8 @@ Source0: %{name}-@PACKAGE_VERSION@.tar.gz
 %{!?_unitdir: %global _unitdir /usr/lib/systemd/system}
 %global python3_pkgversion 3.12
 %global python3_version %{python3_pkgversion}
-%global python3_sitearch %(python3 -c "import sysconfig; print(sysconfig.get_path('platlib'))")
+%define python3_sitelib %{_prefix}/lib/python%{python3_version}/dist-packages
+%define python3_sitearch %{python3_sitelib}
 
 %description
 Rawstor client library.
@@ -36,7 +37,6 @@ Rawstor OST backend.
 
 %package -n python%{python3_pkgversion}-rawstor
 Summary: Rawstor python bindings
-# BuildRequires: python%{python3_pkgversion}-devel
 Requires: python(abi) = %{python3_version}
 Requires: %{name} = %{version}-%{release}
 
@@ -62,13 +62,11 @@ mkdir -p %{buildroot}%{_unitdir}
 install -m 644 etc/systemd/system/rawstor-ost.service %{buildroot}%{_unitdir}/rawstor-ost.service
 mkdir -p %{buildroot}/var/lib/rawstor
 
-echo python3_sitearch=%{python3_sitearch}
-
-PYTHON_LIB=%{buildroot}/usr/lib/python%{python3_version}/dist-packages
+PYTHON_LIB=%{buildroot}%{python3_sitelib}
 PYTHON_LOCAL=%{buildroot}/usr/local/lib/python%{python3_version}/dist-packages
 
 if [ -d "$PYTHON_LOCAL/rawstor" ]; then
-    mkdir -p "$(dirname $PYTHON_LIB)"
+    mkdir -p "$PYTHON_LIB"
     mv "$PYTHON_LOCAL/rawstor" "$PYTHON_LIB/"
     mv "$PYTHON_LOCAL/rawstor-"*.dist-info "$PYTHON_LIB/"
     rm -rf %{buildroot}/usr/local
@@ -108,5 +106,5 @@ fi
 %dir %attr(0755, rawstor, rawstor) /var/lib/rawstor
 
 %files -n python%{python3_pkgversion}-rawstor
-/usr/lib/python%{python3_version}/dist-packages/rawstor
-/usr/lib/python%{python3_version}/dist-packages/rawstor-*.dist-info
+%{python3_sitelib}/rawstor
+%{python3_sitelib}/rawstor-*.dist-info
