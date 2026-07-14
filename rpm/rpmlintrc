@@ -1,1 +1,1 @@
-AddFilter: hardcoded-library-path
+addFilter("hardcoded-library-path")
