@@ -28,6 +28,36 @@ jobs:
         path: librawstor-*.tar.gz
         if-no-files-found: error
 
+  sources-test:
+    needs: sources
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libxxhash-dev liburing-dev libgtest-dev python3-build
+    - uses: actions/download-artifact@v8
+      with:
+        name: sources
+    - name: env
+      run: |
+        export LIBRAWSTOR_TAR_GZ=$(ls librawstor-*.tar.gz)
+        export LIBRAWSTOR_TAR=${LIBRAWSTOR_TAR_GZ%.*}
+        export LIBRAWSTOR=${LIBRAWSTOR_TAR%.*}
+        echo "LIBRAWSTOR_TAR_GZ=${LIBRAWSTOR_TAR_GZ}" >> $GITHUB_ENV
+        echo "LIBRAWSTOR=${LIBRAWSTOR}" >> $GITHUB_ENV
+    - name: configure
+      run: |
+        tar -xzf ${LIBRAWSTOR_TAR_GZ}
+        cd ${LIBRAWSTOR}
+        ./configure
+    - name: make
+      run: make -j${nproc}
+    - name: make test
+      run: make test
+
   deb-librawstor:
     needs: sources
 
@@ -52,7 +82,7 @@ jobs:
       run: |
         tar -xzf ${LIBRAWSTOR_TAR_GZ}
         cd ${LIBRAWSTOR}
-        ./configure --without-python3 --disable-ost-backend
+        ./configure --without-python3
     - name: dpkg-buildpackage
       run: |
         cd ${LIBRAWSTOR}
@@ -217,6 +247,7 @@ jobs:
   release:
     needs:
     - sources
+    - sources-test
     - deb-librawstor
     - deb-python3-rawstor
     - deb-install
