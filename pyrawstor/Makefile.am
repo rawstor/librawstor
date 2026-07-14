@@ -56,7 +56,7 @@ $(builddir)/build-stamp: $(C_SOURCES) $(builddir)/sources-stamp setup.py $(top_b
 	        --no-deps \
 	        --no-build-isolation \
 	        --root=$(DESTDIR) \
-	        --prefix=$(prefix)/lib/python$(PYTHON_VERSION)/dist-packages \
+	        --prefix=$(prefix) \
 	        -e $(builddir); \
 	else \
 	    CFLAGS="$(CFLAGS) $(AM_CFLAGS)" \
@@ -64,7 +64,7 @@ $(builddir)/build-stamp: $(C_SOURCES) $(builddir)/sources-stamp setup.py $(top_b
 	    $(PYTHON) -m pip install \
 	        --no-deps \
 	        --no-build-isolation \
-	        --prefix=$(prefix)/lib/python$(PYTHON_VERSION)/dist-packages \
+	        --prefix=$(prefix) \
 	        -e $(builddir); \
 	fi
 	touch $@
@@ -77,14 +77,14 @@ install-exec-local: $(SOURCES) sources-stamp
 	    $(PYTHON) -m pip install \
 	        --no-deps \
 	        --root=$(DESTDIR) \
-	        --prefix=$(prefix)/lib/python$(PYTHON_VERSION)/dist-packages \
+	        --prefix=$(prefix) \
 	        $(builddir); \
 	else \
 	    CFLAGS="$(CFLAGS) $(AM_CFLAGS)" \
 	    LDFLAGS="$(LDFLAGS) $(AM_LDFLAGS)" \
 	    $(PYTHON) -m pip install \
 	        --no-deps \
-	        --prefix=$(prefix)/lib/python$(PYTHON_VERSION)/dist-packages \
+	        --prefix=$(prefix) \
 	        $(builddir); \
 	fi
 
