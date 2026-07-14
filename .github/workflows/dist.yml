@@ -54,9 +54,13 @@ jobs:
         cd ${LIBRAWSTOR}
         ./configure
     - name: make
-      run: make -j${nproc}
+      run: |
+        cd ${LIBRAWSTOR}
+        make -j${nproc}
     - name: make test
-      run: make test
+      run: |
+        cd ${LIBRAWSTOR}
+        make test
 
   deb-librawstor:
     needs: sources
