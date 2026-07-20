@@ -317,7 +317,7 @@ jobs:
         done
     - uses: actions/upload-artifact@v7
       with:
-        name: python3-rawstor.deb-${{ matrix.os }}
+        name: python3-rawstor-${{ matrix.os }}.deb
         path: python*-rawstor_*.deb
         if-no-files-found: error
 
@@ -355,7 +355,7 @@ jobs:
         rawstor-cli create --size=1M --location=ost://127.0.0.1:7777
         rawstor-cli list --location=ost://127.0.0.1:7777
     - name: install-python3-rawstor
-      run: sudo apt install -y ./python3-rawstor.deb-${{ matrix.os }}/python*-rawstor_*.deb
+      run: sudo apt install -y ./python3-rawstor-${{ matrix.os }}.deb/python*-rawstor_*.deb
     - name: test-python3-rawstor
       run: python -c "import rawstor; print(list(rawstor.Location('ost://127.0.0.1:7777/'))); print('OK')"
 
@@ -452,6 +452,6 @@ jobs:
         working_directory: ./artifacts
         files: |
           librawstor.deb/*
-          python3-rawstor.deb-*/*
+          python3-rawstor-*.deb/*
           librawstor.rpm/*
           sources/*
