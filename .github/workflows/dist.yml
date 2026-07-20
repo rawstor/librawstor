@@ -269,13 +269,13 @@ jobs:
     steps:
     - name: install dependencies
       run: |
-        sudo apt-get update
-        sudo apt-get install -y libxxhash-dev liburing-dev libgtest-dev python3-build debhelper dh-python python3-all-dev build-essential pkg-config
+        apt-get update
+        apt-get install -y libxxhash-dev liburing-dev libgtest-dev python3-build debhelper dh-python python3-all-dev build-essential pkg-config
     - uses: actions/download-artifact@v8
     - name: install librawstor
       run: |
-        sudo apt install -y ./librawstor.deb/librawstor_*.deb
-        sudo apt install -y ./librawstor.deb/librawstor-dev_*.deb
+        apt install -y ./librawstor.deb/librawstor_*.deb
+        apt install -y ./librawstor.deb/librawstor-dev_*.deb
     - name: env
       run: |
         export LIBRAWSTOR_TAR_GZ=$(cd sources && ls librawstor-*.tar.gz)
