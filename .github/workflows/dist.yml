@@ -270,7 +270,10 @@ jobs:
     - name: install dependencies
       run: |
         apt-get update
-        apt-get install -y libxxhash-dev liburing-dev libgtest-dev python3-build debhelper dh-python python3-all-dev build-essential pkg-config
+        apt-get install -y libxxhash-dev liburing-dev libgtest-dev debhelper dh-python python3-all-dev build-essential pkg-config
+        # apt's python3-build targets apt's own python3, not the image's /usr/local/bin/python3
+        # that ./configure actually uses, so install the "build" module for that one via pip.
+        python3 -m pip install --no-cache-dir build
     - uses: actions/download-artifact@v8
     - name: install librawstor
       run: |
