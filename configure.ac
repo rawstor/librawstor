@@ -112,7 +112,7 @@ AC_ARG_WITH([python3], [AS_HELP_STRING([--without-python3],
     [with_python3="yes"])
 AM_CONDITIONAL([WITH_PYTHON3], [test "x$with_python3" = "xyes"])
 AS_IF([test "x$with_python3" = "xyes"], [
-    AM_PATH_PYTHON([3.10])
+    AM_PATH_PYTHON([3.9])
     PKG_CHECK_MODULES([PYTHON3], [python3])
     AC_MSG_CHECKING([for python3-build usability])
     AS_IF([$PYTHON -m build --version >/dev/null 2>&1], [
@@ -147,6 +147,7 @@ AC_CONFIG_FILES(
     [deb/python3-rawstor/control]
     [deb/python3-rawstor/changelog]
     [rpm/librawstor.spec]
+    [rpm/python3-rawstor.spec]
     [pyrawstor/config.py]
     [pyrawstor/Makefile]
 )

@@ -1,0 +1,38 @@
+Name: python@PYTHON_VERSION@-rawstor
+Version: @PACKAGE_VERSION_SHORT@
+Release: @RPM_RELEASE@
+Summary: Rawstor python bindings
+
+License: LGPL
+URL: https://github.com/rawstor/librawstor
+Source0: librawstor-@PACKAGE_VERSION@.tar.gz
+
+BuildRequires: librawstor-devel >= @PACKAGE_VERSION_MAJOR@.@PACKAGE_VERSION_MINOR@.0
+BuildRequires: librawstor-devel < @PACKAGE_VERSION_MAJOR@.@PACKAGE_VERSION_MINOR_NEXT@.0
+BuildRequires: python3-devel
+BuildRequires: python3-rpm-macros
+BuildRequires: python3-pip
+BuildRequires: python3-wheel
+BuildRequires: python3-build
+
+Requires: python(abi) = @PYTHON_VERSION@
+Requires: librawstor >= @PACKAGE_VERSION_MAJOR@.@PACKAGE_VERSION_MINOR@.0
+Requires: librawstor < @PACKAGE_VERSION_MAJOR@.@PACKAGE_VERSION_MINOR_NEXT@.0
+
+%description
+Rawstor python bindings.
+
+%prep
+%autosetup -n librawstor-@PACKAGE_VERSION@
+
+%build
+%configure
+
+%install
+rm -rf %{buildroot}
+cd pyrawstor
+%{__python3} -m pip install --no-deps --root=%{buildroot} --prefix=/usr .
+
+%files
+%{python3_sitearch}/rawstor
+%{python3_sitearch}/rawstor-*.dist-info

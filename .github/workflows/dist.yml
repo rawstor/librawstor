@@ -361,11 +361,14 @@ jobs:
 
     runs-on: ubuntu-latest
 
+    container: almalinux:9
+
     steps:
     - name: install dependencies
       run: |
-        sudo apt-get update
-        sudo apt-get install -y libxxhash-dev liburing-dev libgtest-dev rpm rpmlint python3-build
+        dnf -y install epel-release
+        dnf config-manager --set-enabled crb
+        dnf -y install xxhash-devel liburing-devel gtest-devel gcc-c++ make pkgconfig systemd-rpm-macros rpm-build rpmlint
     - uses: actions/download-artifact@v8
       with:
         name: sources
@@ -380,7 +383,7 @@ jobs:
       run: |
         tar -xzf ${LIBRAWSTOR_TAR_GZ}
         cd ${LIBRAWSTOR}
-        ./configure --prefix=${HOME}/rpmbuild/BUILD --without-python3
+        ./configure --without-python3
     - name: setuptree
       run: |
         mkdir -p ~/rpmbuild/SOURCES
@@ -406,6 +409,124 @@ jobs:
         path: ~/rpmbuild/RPMS/x86_64/*.rpm
         if-no-files-found: error
 
+  rpm-python3-rawstor:
+    needs:
+    - sources
+    - rpm-librawstor
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+        - almalinux9
+        - almalinux10
+        include:
+        - os: almalinux9
+          image: almalinux:9
+        - os: almalinux10
+          image: almalinux:10
+
+    runs-on: ubuntu-latest
+
+    container: ${{ matrix.image }}
+
+    steps:
+    - name: install dependencies
+      run: |
+        dnf -y install epel-release
+        dnf config-manager --set-enabled crb
+        dnf -y install xxhash-devel liburing-devel gtest-devel gcc-c++ make pkgconfig python3-devel python3-rpm-macros python3-pip python3-wheel python3-build rpm-build rpmlint
+    - uses: actions/download-artifact@v8
+    - name: install librawstor
+      run: dnf -y install ./librawstor.rpm/librawstor-[0-9]*.rpm ./librawstor.rpm/librawstor-devel-*.rpm
+    - name: env
+      run: |
+        export LIBRAWSTOR_TAR_GZ=$(cd sources && ls librawstor-*.tar.gz)
+        export LIBRAWSTOR_TAR=${LIBRAWSTOR_TAR_GZ%.*}
+        export LIBRAWSTOR=${LIBRAWSTOR_TAR%.*}
+        echo "LIBRAWSTOR_TAR_GZ=${LIBRAWSTOR_TAR_GZ}" >> $GITHUB_ENV
+        echo "LIBRAWSTOR=${LIBRAWSTOR}" >> $GITHUB_ENV
+    - name: configure
+      run: |
+        tar -xzf sources/${LIBRAWSTOR_TAR_GZ}
+        cd ${LIBRAWSTOR}
+        ./configure
+    - name: setuptree
+      run: |
+        mkdir -p ~/rpmbuild/SOURCES
+        mkdir -p ~/rpmbuild/SPECS
+        cp ${LIBRAWSTOR}/rpm/python3-rawstor.spec ~/rpmbuild/SPECS
+        cp sources/${LIBRAWSTOR_TAR_GZ} ~/rpmbuild/SOURCES
+    - name: rpmlint
+      run: rpmlint ~/rpmbuild/SPECS/python3-rawstor.spec
+    - name: rpmbuild
+      run: rpmbuild -bb ~/rpmbuild/SPECS/python3-rawstor.spec
+    - name: ls
+      run: |
+        cd ~/rpmbuild/RPMS/x86_64
+        for i in *.rpm; do \
+          echo "# $i" >> $GITHUB_STEP_SUMMARY; \
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          rpm -qlp $i >> $GITHUB_STEP_SUMMARY; \
+          echo '```' >> $GITHUB_STEP_SUMMARY
+        done
+    - uses: actions/upload-artifact@v7
+      with:
+        name: python3-rawstor-${{ matrix.os }}.rpm
+        path: ~/rpmbuild/RPMS/x86_64/*.rpm
+        if-no-files-found: error
+
+  rpm-install:
+    needs:
+    - rpm-librawstor
+    - rpm-python3-rawstor
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+        - almalinux9
+        - almalinux10
+        include:
+        - os: almalinux9
+          image: almalinux:9
+        - os: almalinux10
+          image: almalinux:10
+
+    runs-on: ubuntu-latest
+
+    container: ${{ matrix.image }}
+
+    steps:
+    - name: install dependencies
+      run: |
+        dnf -y install epel-release
+        dnf config-manager --set-enabled crb
+    - uses: actions/download-artifact@v8
+    - name: install-librawstor
+      run: dnf -y install ./librawstor.rpm/librawstor-[0-9]*.rpm
+    - name: test-librawstor
+      run: rawstor-cli --version
+    - name: install-rawstor-ost
+      run: dnf -y install ./librawstor.rpm/rawstor-ost-[0-9]*.rpm
+    - name: test-rawstor-ost
+      # containers have no systemd/PID 1, so the .service unit cannot be
+      # started via systemctl here -- run the same command it would, by hand.
+      run: |
+        rawstor-ost --version
+        rawstor-ost --bind=127.0.0.1:7777 --location=file:///var/lib/rawstor &
+        OST_PID=$!
+        sleep 10
+        rawstor-cli create --size=1M --location=ost://127.0.0.1:7777
+        rawstor-cli list --location=ost://127.0.0.1:7777
+        kill ${OST_PID}
+    - name: install-python3-rawstor
+      run: dnf -y install ./python3-rawstor-${{ matrix.os }}.rpm/python3*-rawstor-[0-9]*.rpm
+    - name: test-python3-rawstor
+      run: |
+        mkdir -p /tmp/rawstor-install-test
+        python3 -c "import rawstor; print(list(rawstor.Location('file:///tmp/rawstor-install-test'))); print('OK')"
+
   release:
     needs:
     - clang-format
@@ -417,6 +538,8 @@ jobs:
     - deb-python3-rawstor
     - deb-install
     - rpm-librawstor
+    - rpm-python3-rawstor
+    - rpm-install
 
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
@@ -451,4 +574,5 @@ jobs:
           librawstor.deb/*
           python3-rawstor-*.deb/*
           librawstor.rpm/*
+          python3-rawstor-*.rpm/*
           sources/*

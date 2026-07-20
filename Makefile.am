@@ -28,6 +28,10 @@ ChangeLog: $(srcdir)/ChangeLog.md
 	cp $(srcdir)/ChangeLog.md ChangeLog
 
 
+NEWS: $(srcdir)/NEWS.md
+	cp $(srcdir)/NEWS.md NEWS
+
+
 EXTRA_DIST = deb/librawstor/compat \
              deb/librawstor/format \
              deb/librawstor/librawstor.install \
@@ -41,11 +45,13 @@ EXTRA_DIST = deb/librawstor/compat \
              deb/python3-rawstor/rules \
              etc/systemd/system/rawstor-ost.service \
              ChangeLog.md \
-             README.md
+             README.md \
+             NEWS.md
 
 
 CLEANFILES = ChangeLog \
-             README
+             README \
+             NEWS
 
 
 if ENABLE_TESTS
