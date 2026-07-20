@@ -262,23 +262,26 @@ jobs:
     - sources
     - deb-librawstor
 
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+        - ubuntu-22.04
+        - ubuntu-24.04
+        - ubuntu-26.04
 
-    container: python:3.12
+    runs-on: ${{ matrix.os }}
 
     steps:
     - name: install dependencies
       run: |
-        apt-get update
-        apt-get install -y libxxhash-dev liburing-dev libgtest-dev debhelper dh-python python3-all-dev build-essential pkg-config
-        # apt's python3-build targets apt's own python3, not the image's /usr/local/bin/python3
-        # that ./configure actually uses, so install the "build" module for that one via pip.
-        python3 -m pip install --no-cache-dir build
+        sudo apt-get update
+        sudo apt-get install -y libxxhash-dev liburing-dev libgtest-dev python3-build debhelper dh-python python3-all-dev build-essential pkg-config
     - uses: actions/download-artifact@v8
     - name: install librawstor
       run: |
-        apt install -y ./librawstor.deb/librawstor_*.deb
-        apt install -y ./librawstor.deb/librawstor-dev_*.deb
+        sudo apt install -y ./librawstor.deb/librawstor_*.deb
+        sudo apt install -y ./librawstor.deb/librawstor-dev_*.deb
     - name: env
       run: |
         export LIBRAWSTOR_TAR_GZ=$(cd sources && ls librawstor-*.tar.gz)
@@ -314,7 +317,7 @@ jobs:
         done
     - uses: actions/upload-artifact@v7
       with:
-        name: python3-rawstor.deb
+        name: python3-rawstor.deb-${{ matrix.os }}
         path: python*-rawstor_*.deb
         if-no-files-found: error
 
@@ -323,7 +326,10 @@ jobs:
     - deb-librawstor
     - deb-python3-rawstor
 
-    runs-on: ubuntu-latest
+    # librawstor.deb is built once on ubuntu-24.04 (see deb-librawstor), so it's
+    # installed here on a matching OS; pick the python3-rawstor.deb artifact
+    # for the same OS out of the deb-python3-rawstor matrix.
+    runs-on: ubuntu-24.04
 
     steps:
     - uses: actions/download-artifact@v8
@@ -341,7 +347,7 @@ jobs:
         rawstor-cli create --size=1M --location=ost://127.0.0.1:7777
         rawstor-cli list --location=ost://127.0.0.1:7777
     - name: install-python3-rawstor
-      run: sudo apt install -y ./python3-rawstor.deb/python*-rawstor_*.deb
+      run: sudo apt install -y ./python3-rawstor.deb-ubuntu-24.04/python*-rawstor_*.deb
     - name: test-python3-rawstor
       run: python -c "import rawstor; print(list(rawstor.Location('ost://127.0.0.1:7777/'))); print('OK')"
 
@@ -438,6 +444,6 @@ jobs:
         working_directory: ./artifacts
         files: |
           librawstor.deb/*
-          python3-rawstor.deb/*
+          python3-rawstor.deb-*/*
           librawstor.rpm/*
           sources/*
