@@ -266,7 +266,8 @@ jobs:
       fail-fast: false
       matrix:
         os:
-        - ubuntu-22.04
+        # ubuntu-22.04 ships liburing 2.1, too old for the io_uring APIs this
+        # codebase uses (needs >=2.3) -- can't build or run there at all.
         - ubuntu-24.04
         - ubuntu-26.04
 
@@ -330,13 +331,9 @@ jobs:
       fail-fast: false
       matrix:
         os:
-        - ubuntu-22.04
         - ubuntu-24.04
         - ubuntu-26.04
 
-    # librawstor.deb is built once on ubuntu-24.04 (see deb-librawstor) and
-    # installed here on every matrix OS -- ubuntu-22.04 may fail here due to
-    # older glibc than the binary was built against.
     runs-on: ${{ matrix.os }}
 
     steps:
