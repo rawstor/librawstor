@@ -7,6 +7,9 @@ License: LGPL
 URL: https://github.com/rawstor/librawstor
 Source0: %{name}-@PACKAGE_VERSION@.tar.gz
 
+BuildRequires: liburing-devel >= @LIBURING_MIN_VERSION@
+Requires: liburing >= @LIBURING_MIN_VERSION@
+
 %{!?_unitdir: %global _unitdir /usr/lib/systemd/system}
 %global python3_pkgversion 3.12
 %global python3_version %{python3_pkgversion}

@@ -9,7 +9,7 @@ Package: @PACKAGE_NAME@
 Architecture: any
 Depends: ${misc:Depends},
          ${shlibs:Depends},
-         liburing2,
+         liburing2 (>= @LIBURING_MIN_VERSION@),
          libxxhash0
 Description: Rawstor client library and command line tools
 Homepage: https://github.com/rawstor/librawstor

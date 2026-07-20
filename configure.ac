@@ -70,13 +70,15 @@ AS_IF([test "x$enable_asan" = "xyes"], [
 ])
 
 
+AC_SUBST([LIBURING_MIN_VERSION], ["2.3"])
+
 AC_ARG_WITH([liburing], [AS_HELP_STRING([--without-liburing],
     [disable support for liburing])],
     [with_liburing=$withval],
     [with_liburing="yes"])
 AM_CONDITIONAL([WITH_LIBURING], [test "x$with_liburing" = "xyes"])
 AS_IF([test "x$with_liburing" = "xyes"], [
-    PKG_CHECK_MODULES([LIBURING], [liburing])
+    PKG_CHECK_MODULES([LIBURING], [liburing >= $LIBURING_MIN_VERSION])
     AC_SUBST([maybe_liburing], ["liburing"])
     AC_DEFINE([RAWIO_WITH_LIBURING], 1, [Enable liburing integration])
 ], [
