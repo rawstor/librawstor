@@ -1,7 +1,7 @@
 Source: rawstor
 Section: python
 Priority: optional
-Maintainer: Vasily Stepanov <vasily.stepanov@gmail.com>
+Maintainer: @MAINTAINER@
 Build-Depends: debhelper (>= 12),
                dh-python,
                python3-all-dev,
