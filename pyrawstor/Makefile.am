@@ -87,7 +87,7 @@ uninstall-local:
 if ENABLE_TESTS
 test: $(builddir)/build-stamp
 	if [ -n "$(ASAN_LDFLAGS)" ]; then \
-	    export LD_PRELOAD="$$($(CC) -print-file-name=libasan.so):$$($(CC) -print-file-name=libstdc++.so)"; \
+	    export LD_PRELOAD="$$($(CC) -print-file-name=libasan.so):$$($(CC) -print-file-name=libstdc++.so)$${LD_PRELOAD:+:$$LD_PRELOAD}"; \
 	    export ASAN_OPTIONS="detect_odr_violation=0$${ASAN_OPTIONS:+,$$ASAN_OPTIONS}"; \
 	fi; \
 	LD_LIBRARY_PATH=$(top_srcdir)/src/.libs:$(LD_LIBRARY_PATH) \
