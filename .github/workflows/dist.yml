@@ -179,6 +179,7 @@ jobs:
         tar -xzf ${LIBRAWSTOR_TAR_GZ}
         cd ${LIBRAWSTOR}
         ./configure --without-python3
+        make deb/librawstor/changelog
     - name: dpkg-buildpackage
       run: |
         cd ${LIBRAWSTOR}
@@ -199,6 +200,10 @@ jobs:
         dpkg-buildpackage -us -uc
     - name: ls
       run: |
+        echo "# changelog" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        cat ${LIBRAWSTOR}/deb/librawstor/changelog >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
         for i in librawstor_*.deb librawstor-dev_*.deb rawstor-ost_*.deb; do \
           echo "# $i" >> $GITHUB_STEP_SUMMARY; \
           echo '```' >> $GITHUB_STEP_SUMMARY
@@ -251,6 +256,7 @@ jobs:
         tar -xzf sources/${LIBRAWSTOR_TAR_GZ}
         cd ${LIBRAWSTOR}
         ./configure
+        make deb/python3-rawstor/changelog
     - name: dpkg-buildpackage
       run: |
         cd ${LIBRAWSTOR}/pyrawstor
@@ -266,6 +272,10 @@ jobs:
         mv ../python*-rawstor_*.deb ${GITHUB_WORKSPACE}
     - name: ls
       run: |
+        echo "# changelog" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        cat ${LIBRAWSTOR}/deb/python3-rawstor/changelog >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
         for i in python*-rawstor_*.deb; do \
           echo "# $i" >> $GITHUB_STEP_SUMMARY; \
           echo '```' >> $GITHUB_STEP_SUMMARY

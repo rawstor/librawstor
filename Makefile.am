@@ -32,6 +32,30 @@ NEWS: $(srcdir)/NEWS.md
 	cp $(srcdir)/NEWS.md NEWS
 
 
+deb/librawstor/changelog: $(srcdir)/ChangeLog.md $(srcdir)/.github/tools/deb-changelog.sh
+	{ \
+	  echo "librawstor ($(PACKAGE_VERSION_SHORT)) UNRELEASED; urgency=medium"; \
+	  echo; \
+	  $(srcdir)/.github/tools/deb-changelog.sh body $(srcdir)/ChangeLog.md; \
+	  echo; \
+	  echo " -- Vasily Stepanov <vasily.stepanov@gmail.com>  $$($(srcdir)/.github/tools/deb-changelog.sh date $(srcdir)/ChangeLog.md)"; \
+	  echo; \
+	  $(srcdir)/.github/tools/deb-changelog.sh history librawstor $(srcdir)/ChangeLog.md; \
+	} > $@
+
+
+deb/python3-rawstor/changelog: $(srcdir)/ChangeLog.md $(srcdir)/.github/tools/deb-changelog.sh
+	{ \
+	  echo "rawstor ($(PACKAGE_VERSION_SHORT)) UNRELEASED; urgency=medium"; \
+	  echo; \
+	  $(srcdir)/.github/tools/deb-changelog.sh body $(srcdir)/ChangeLog.md; \
+	  echo; \
+	  echo " -- Vasily Stepanov <vasily.stepanov@gmail.com>  $$($(srcdir)/.github/tools/deb-changelog.sh date $(srcdir)/ChangeLog.md)"; \
+	  echo; \
+	  $(srcdir)/.github/tools/deb-changelog.sh history rawstor $(srcdir)/ChangeLog.md; \
+	} > $@
+
+
 EXTRA_DIST = deb/librawstor/compat \
              deb/librawstor/format \
              deb/librawstor/librawstor.install \
@@ -44,6 +68,7 @@ EXTRA_DIST = deb/librawstor/compat \
              deb/python3-rawstor/format \
              deb/python3-rawstor/rules \
              etc/systemd/system/rawstor-ost.service \
+             .github/tools/deb-changelog.sh \
              ChangeLog.md \
              README.md \
              NEWS.md
@@ -51,7 +76,9 @@ EXTRA_DIST = deb/librawstor/compat \
 
 CLEANFILES = ChangeLog \
              README \
-             NEWS
+             NEWS \
+             deb/librawstor/changelog \
+             deb/python3-rawstor/changelog
 
 
 if ENABLE_TESTS
