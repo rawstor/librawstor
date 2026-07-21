@@ -409,7 +409,7 @@ jobs:
       run: |
         dnf -y install epel-release
         dnf config-manager --set-enabled crb
-        dnf -y install xxhash-devel liburing-devel gtest-devel gcc-c++ make pkgconfig python3-devel python3-rpm-macros python3-pip python3-wheel python3-build rpm-build rpmlint
+        dnf -y install xxhash-devel liburing-devel gtest-devel gcc-c++ make pkgconfig python3-devel python3-rpm-macros python3-pip python3-wheel python3-build python3-setuptools rpm-build rpmlint
     - uses: actions/download-artifact@v8
     - name: install librawstor
       run: dnf -y install ./librawstor.rpm/librawstor-[0-9]*.rpm ./librawstor.rpm/librawstor-devel-*.rpm
