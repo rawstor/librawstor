@@ -220,7 +220,6 @@ jobs:
     - deb-librawstor
 
     strategy:
-      fail-fast: false
       matrix:
         os:
         # ubuntu-22.04 ships liburing 2.1, too old for the io_uring APIs this
@@ -285,7 +284,6 @@ jobs:
     - deb-python3-rawstor
 
     strategy:
-      fail-fast: false
       matrix:
         os:
         - ubuntu-24.04
@@ -372,7 +370,6 @@ jobs:
     - rpm-librawstor
 
     strategy:
-      fail-fast: false
       matrix:
         os:
         - almalinux9
@@ -439,7 +436,6 @@ jobs:
     - rpm-python3-rawstor
 
     strategy:
-      fail-fast: false
       matrix:
         os:
         - almalinux9
