@@ -33,11 +33,11 @@ NEWS: $(srcdir)/NEWS.md
 
 
 deb/librawstor/changelog: $(srcdir)/ChangeLog.md $(srcdir)/.github/tools/deb-changelog.sh
-	MAINTAINER='$(MAINTAINER)' $(srcdir)/.github/tools/deb-changelog.sh librawstor $(PACKAGE_VERSION_SHORT) $(srcdir)/ChangeLog.md > $@
+	MAINTAINER='$(MAINTAINER)' $(srcdir)/.github/tools/deb-changelog.sh librawstor $(PACKAGE_VERSION_SHORT) $(srcdir)/ChangeLog.md $(srcdir)/changelog-authors.tsv > $@
 
 
 deb/python3-rawstor/changelog: $(srcdir)/ChangeLog.md $(srcdir)/.github/tools/deb-changelog.sh
-	MAINTAINER='$(MAINTAINER)' $(srcdir)/.github/tools/deb-changelog.sh rawstor $(PACKAGE_VERSION_SHORT) $(srcdir)/ChangeLog.md > $@
+	MAINTAINER='$(MAINTAINER)' $(srcdir)/.github/tools/deb-changelog.sh rawstor $(PACKAGE_VERSION_SHORT) $(srcdir)/ChangeLog.md $(srcdir)/changelog-authors.tsv > $@
 
 
 EXTRA_DIST = deb/librawstor/compat \
@@ -55,7 +55,8 @@ EXTRA_DIST = deb/librawstor/compat \
              .github/tools/deb-changelog.sh \
              ChangeLog.md \
              README.md \
-             NEWS.md
+             NEWS.md \
+             changelog-authors.tsv
 
 
 CLEANFILES = ChangeLog \

@@ -5,16 +5,20 @@
 # actually being built) with the first ChangeLog.md section as its body,
 # followed by every prior section as its own dated, versioned entry.
 #
-# Usage: deb-changelog.sh <package-name> <version> <ChangeLog.md>
+# Usage: deb-changelog.sh <package-name> <version> <ChangeLog.md> [<authors-file>]
 #
-# The maintainer line defaults to the last git committer but can be
-# overridden via the MAINTAINER environment variable.
+# <authors-file>, if given, is a "<version><TAB><name> <email>" mapping
+# (see gen-changelog-authors.sh) used to credit each historical entry to
+# whoever actually tagged that release. The current (top) entry, and any
+# historical one missing from the file, falls back to the MAINTAINER
+# environment variable, or the last git committer if that's unset too.
 
 set -e
 
 pkg=$1
 version=$2
 md=$3
+authors_file=$4
 
 declare -a versions dates items
 
@@ -61,23 +65,35 @@ print_body() {
     fi
 }
 
+default_author() {
+    echo "${MAINTAINER:-$(git log -1 --format='%cn <%ce>' 2> /dev/null || echo "unknown <unknown@example.com>")}"
+}
+
+author_for() {
+    local entry_version=$1 found=""
+    if [ -n "$authors_file" ] && [ -f "$authors_file" ]; then
+        found=$(awk -F'\t' -v v="$entry_version" '$1 == v { print $2; exit }' "$authors_file")
+    fi
+    echo "${found:-$(default_author)}"
+}
+
 print_entry() {
-    local idx=$1 entry_version=$2 distribution=$3
+    local idx=$1 entry_version=$2 distribution=$3 author=$4
     echo "${pkg} (${entry_version}) ${distribution}; urgency=medium"
     echo
     print_body "$idx"
     echo
-    echo " -- ${MAINTAINER:-$(git log -1 --format='%cn <%ce>' 2> /dev/null || echo "unknown <unknown@example.com>")}  $(to_rfc2822 "${dates[$idx]}")"
+    echo " -- ${author}  $(to_rfc2822 "${dates[$idx]}")"
 }
 
 read_sections
 
 # The current, in-progress entry: always the version actually being
 # built, not whatever ChangeLog.md's own top section happens to say.
-print_entry 0 "$version" UNRELEASED
+print_entry 0 "$version" UNRELEASED "$(default_author)"
 
-# Everything else is a real past release.
+# Everything else is a real past release, credited to whoever tagged it.
 for ((i = 1; i <= section; i++)); do
     echo
-    print_entry "$i" "${versions[$i]}" unstable
+    print_entry "$i" "${versions[$i]}" unstable "$(author_for "${versions[$i]}")"
 done

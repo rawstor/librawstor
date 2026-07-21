@@ -7,3 +7,5 @@ aclocal -I m4
 autoheader
 autoconf
 automake -a -c
+
+.github/tools/gen-changelog-authors.sh ChangeLog.md > changelog-authors.tsv
