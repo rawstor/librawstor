@@ -20,6 +20,16 @@ version=$2
 md=$3
 authors_file=$4
 
+if [ -z "$pkg" ] || [ -z "$version" ] || [ -z "$md" ]; then
+    echo "usage: $0 <package-name> <version> <ChangeLog.md> [<authors-file>]" >&2
+    exit 1
+fi
+
+if [ ! -f "$md" ]; then
+    echo "error: changelog file '$md' not found" >&2
+    exit 1
+fi
+
 declare -a versions dates items
 
 section=-1
@@ -39,7 +49,7 @@ read_sections() {
             versions[$section]="${BASH_REMATCH[1]}"
             dates[$section]="${BASH_REMATCH[2]}"
             current_items=""
-        elif [ $section -ge 0 ] && [[ "$line" =~ ^-\ (.*)$ ]]; then
+        elif [ $section -ge 0 ] && [[ "$line" =~ ^[[:space:]]*[-*][[:space:]]+(.*)$ ]]; then
             current_items+="${BASH_REMATCH[1]}"$'\n'
         fi
     done < "$md"
@@ -88,12 +98,27 @@ print_entry() {
 
 read_sections
 
+# Find the ChangeLog.md section matching the version actually being
+# built. This is normally section 0 (the top, in-progress one), but
+# doesn't have to be -- e.g. when backporting a fix to an older release
+# while ChangeLog.md's top section already describes newer, unreleased
+# work. Default to 0 if $version isn't recorded in ChangeLog.md at all.
+target_idx=0
+for ((idx = 0; idx <= section; idx++)); do
+    if [ "${versions[$idx]}" = "$version" ]; then
+        target_idx=$idx
+        break
+    fi
+done
+
 # The current, in-progress entry: always the version actually being
 # built, not whatever ChangeLog.md's own top section happens to say.
-print_entry 0 "$version" UNRELEASED "$(default_author)"
+print_entry "$target_idx" "$version" UNRELEASED "$(default_author)"
 
-# Everything else is a real past release, credited to whoever tagged it.
-for ((i = 1; i <= section; i++)); do
+# Everything older is a real past release, credited to whoever tagged
+# it. Sections newer than target_idx (if any) are skipped, since they
+# describe work that hasn't shipped as $version.
+for ((i = target_idx + 1; i <= section; i++)); do
     echo
     print_entry "$i" "${versions[$i]}" unstable "$(author_for "${versions[$i]}")"
 done

@@ -14,6 +14,16 @@ set -e
 
 md=$1
 
+if [ -z "$md" ]; then
+    echo "usage: $0 <ChangeLog.md>" >&2
+    exit 1
+fi
+
+if [ ! -f "$md" ]; then
+    echo "error: changelog file '$md' not found" >&2
+    exit 1
+fi
+
 while IFS= read -r line || [ -n "$line" ]; do
     if [[ "$line" =~ ^##\ \[([^]]+)\]\ -\ (.*)$ ]]; then
         version="${BASH_REMATCH[1]}"

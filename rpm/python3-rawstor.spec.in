@@ -14,6 +14,7 @@ BuildRequires: python3-rpm-macros
 BuildRequires: python3-pip
 BuildRequires: python3-wheel
 BuildRequires: python3-build
+BuildRequires: python3-setuptools
 
 Requires: python(abi) = @PYTHON_VERSION@
 Requires: librawstor >= @PACKAGE_VERSION_MAJOR@.@PACKAGE_VERSION_MINOR@.0
@@ -26,7 +27,10 @@ Rawstor python bindings.
 %autosetup -n librawstor-@PACKAGE_VERSION@
 
 %build
-%configure
+# Only pyrawstor/config.py is needed from this -- librawstor itself is
+# already installed via the librawstor-devel BuildRequires above, so skip
+# the checks for its own build dependencies (liburing, libxxhash, gtest).
+%configure --without-liburing --without-libxxhash --disable-tests
 
 %install
 rm -rf %{buildroot}
