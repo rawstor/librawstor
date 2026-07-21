@@ -50,12 +50,14 @@ jobs:
     strategy:
       matrix:
         without-liburing:
-        - 
+        -
         - --without-liburing
         include:
         - packages: liburing-dev
           without-liburing:
 
+    env:
+      ASAN_OPTIONS: detect_odr_violation=0
     steps:
     - name: install dependencies
       run: |
@@ -75,52 +77,7 @@ jobs:
       run: |
         tar -xzf ${LIBRAWSTOR_TAR_GZ}
         cd ${LIBRAWSTOR}
-        ./configure ${{ matrix.without-liburing }}
-    - name: make
-      run: |
-        cd ${LIBRAWSTOR}
-        make -j${nproc}
-    - name: make test
-      run: |
-        cd ${LIBRAWSTOR}
-        make test
-
-  sources-asan:
-    needs: sources
-
-    runs-on: ubuntu-latest
-
-    strategy:
-      matrix:
-        without-liburing:
-        - 
-        - --without-liburing
-        include:
-        - packages: liburing-dev
-          without-liburing:
-
-    env:
-      asan_options: detect_odr_violation=0
-    steps:
-    - name: install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y libxxhash-dev libgtest-dev ${{ matrix.packages }}
-    - uses: actions/download-artifact@v8
-      with:
-        name: sources
-    - name: env
-      run: |
-        export LIBRAWSTOR_TAR_GZ=$(ls librawstor-*.tar.gz)
-        export LIBRAWSTOR_TAR=${LIBRAWSTOR_TAR_GZ%.*}
-        export LIBRAWSTOR=${LIBRAWSTOR_TAR%.*}
-        echo "LIBRAWSTOR_TAR_GZ=${LIBRAWSTOR_TAR_GZ}" >> $GITHUB_ENV
-        echo "LIBRAWSTOR=${LIBRAWSTOR}" >> $GITHUB_ENV
-    - name: configure
-      run: |
-        tar -xzf ${LIBRAWSTOR_TAR_GZ}
-        cd ${LIBRAWSTOR}
-        ./configure --enable-asan --without-python3 ${{ matrix.without-liburing }}
+        ./configure --enable-asan ${{ matrix.without-liburing }}
     - name: make
       run: |
         cd ${LIBRAWSTOR}
@@ -222,6 +179,7 @@ jobs:
         tar -xzf ${LIBRAWSTOR_TAR_GZ}
         cd ${LIBRAWSTOR}
         ./configure --without-python3
+        make deb/librawstor/changelog
     - name: dpkg-buildpackage
       run: |
         cd ${LIBRAWSTOR}
@@ -240,9 +198,16 @@ jobs:
         cp etc/systemd/system/rawstor-ost.service debian
         cp COPYING debian/copyright
         dpkg-buildpackage -us -uc
+    - name: changelog
+      run: |
+        echo "# changelog" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        cat ${LIBRAWSTOR}/debian/changelog >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
     - name: ls
       run: |
-        for i in librawstor_*.deb librawstor-dev_*.deb rawstor-ost_*.deb; do \
+        for i in librawstor_*.deb librawstor-dev_*.deb rawstor-ost_*.deb *.ddeb; do \
+          [ -e "$i" ] || continue; \
           echo "# $i" >> $GITHUB_STEP_SUMMARY; \
           echo '```' >> $GITHUB_STEP_SUMMARY
           dpkg --contents $i >> $GITHUB_STEP_SUMMARY; \
@@ -255,6 +220,7 @@ jobs:
           librawstor_*.deb
           librawstor-dev_*.deb
           rawstor-ost_*.deb
+          *.ddeb
         if-no-files-found: error
 
   deb-python3-rawstor:
@@ -262,7 +228,15 @@ jobs:
     - sources
     - deb-librawstor
 
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os:
+        # ubuntu-22.04 ships liburing 2.1, too old for the io_uring APIs this
+        # codebase uses (needs >=2.3) -- can't build or run there at all.
+        - ubuntu-24.04
+        - ubuntu-26.04
+
+    runs-on: ${{ matrix.os }}
 
     steps:
     - name: install dependencies
@@ -286,6 +260,7 @@ jobs:
         tar -xzf sources/${LIBRAWSTOR_TAR_GZ}
         cd ${LIBRAWSTOR}
         ./configure
+        make deb/python3-rawstor/changelog
     - name: dpkg-buildpackage
       run: |
         cd ${LIBRAWSTOR}/pyrawstor
@@ -299,9 +274,17 @@ jobs:
         cp ../COPYING debian/copyright
         dpkg-buildpackage -us -uc
         mv ../python*-rawstor_*.deb ${GITHUB_WORKSPACE}
+        mv ../python*-rawstor-dbgsym_*.ddeb ${GITHUB_WORKSPACE} 2> /dev/null || true
+    - name: changelog
+      run: |
+        echo "# changelog" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        cat ${LIBRAWSTOR}/pyrawstor/debian/changelog >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
     - name: ls
       run: |
-        for i in python*-rawstor_*.deb; do \
+        for i in python*-rawstor_*.deb python*-rawstor-dbgsym_*.ddeb; do \
+          [ -e "$i" ] || continue; \
           echo "# $i" >> $GITHUB_STEP_SUMMARY; \
           echo '```' >> $GITHUB_STEP_SUMMARY
           dpkg --contents $i >> $GITHUB_STEP_SUMMARY; \
@@ -309,8 +292,10 @@ jobs:
         done
     - uses: actions/upload-artifact@v7
       with:
-        name: python3-rawstor.deb
-        path: python*-rawstor_*.deb
+        name: python3-rawstor-${{ matrix.os }}.deb
+        path: |
+          python*-rawstor_*.deb
+          python*-rawstor-dbgsym_*.ddeb
         if-no-files-found: error
 
   deb-install:
@@ -318,7 +303,13 @@ jobs:
     - deb-librawstor
     - deb-python3-rawstor
 
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os:
+        - ubuntu-24.04
+        - ubuntu-26.04
+
+    runs-on: ${{ matrix.os }}
 
     steps:
     - uses: actions/download-artifact@v8
@@ -336,7 +327,7 @@ jobs:
         rawstor-cli create --size=1M --location=ost://127.0.0.1:7777
         rawstor-cli list --location=ost://127.0.0.1:7777
     - name: install-python3-rawstor
-      run: sudo apt install -y ./python3-rawstor.deb/python*-rawstor_*.deb
+      run: sudo apt install -y ./python3-rawstor-${{ matrix.os }}.deb/python*-rawstor_*.deb
     - name: test-python3-rawstor
       run: python -c "import rawstor; print(list(rawstor.Location('ost://127.0.0.1:7777/'))); print('OK')"
 
@@ -345,11 +336,14 @@ jobs:
 
     runs-on: ubuntu-latest
 
+    container: almalinux:9
+
     steps:
     - name: install dependencies
       run: |
-        sudo apt-get update
-        sudo apt-get install -y libxxhash-dev liburing-dev libgtest-dev rpm rpmlint python3-build
+        dnf -y install epel-release
+        dnf config-manager --set-enabled crb
+        dnf -y install xxhash-devel liburing-devel gtest-devel gcc-c++ make pkgconfig systemd-rpm-macros rpm-build rpmlint
     - uses: actions/download-artifact@v8
       with:
         name: sources
@@ -364,7 +358,7 @@ jobs:
       run: |
         tar -xzf ${LIBRAWSTOR_TAR_GZ}
         cd ${LIBRAWSTOR}
-        ./configure --prefix=${HOME}/rpmbuild/BUILD --without-python3
+        ./configure --without-python3
     - name: setuptree
       run: |
         mkdir -p ~/rpmbuild/SOURCES
@@ -390,17 +384,139 @@ jobs:
         path: ~/rpmbuild/RPMS/x86_64/*.rpm
         if-no-files-found: error
 
+  rpm-python3-rawstor:
+    needs:
+    - sources
+    - rpm-librawstor
+
+    strategy:
+      matrix:
+        os:
+        - almalinux9
+        - almalinux10
+        include:
+        - os: almalinux9
+          image: almalinux:9
+        - os: almalinux10
+          image: almalinux:10
+
+    runs-on: ubuntu-latest
+
+    container: ${{ matrix.image }}
+
+    steps:
+    - name: install dependencies
+      run: |
+        dnf -y install epel-release
+        dnf config-manager --set-enabled crb
+        dnf -y install xxhash-devel liburing-devel gtest-devel gcc-c++ make pkgconfig python3-devel python3-rpm-macros python3-pip python3-wheel python3-build python3-setuptools rpm-build rpmlint
+    - uses: actions/download-artifact@v8
+    - name: install librawstor
+      run: dnf -y install ./librawstor.rpm/librawstor-[0-9]*.rpm ./librawstor.rpm/librawstor-devel-*.rpm
+    - name: env
+      run: |
+        export LIBRAWSTOR_TAR_GZ=$(cd sources && ls librawstor-*.tar.gz)
+        export LIBRAWSTOR_TAR=${LIBRAWSTOR_TAR_GZ%.*}
+        export LIBRAWSTOR=${LIBRAWSTOR_TAR%.*}
+        echo "LIBRAWSTOR_TAR_GZ=${LIBRAWSTOR_TAR_GZ}" >> $GITHUB_ENV
+        echo "LIBRAWSTOR=${LIBRAWSTOR}" >> $GITHUB_ENV
+    - name: configure
+      run: |
+        tar -xzf sources/${LIBRAWSTOR_TAR_GZ}
+        cd ${LIBRAWSTOR}
+        ./configure
+    - name: setuptree
+      run: |
+        mkdir -p ~/rpmbuild/SOURCES
+        mkdir -p ~/rpmbuild/SPECS
+        cp ${LIBRAWSTOR}/rpm/python3-rawstor.spec ~/rpmbuild/SPECS
+        cp sources/${LIBRAWSTOR_TAR_GZ} ~/rpmbuild/SOURCES
+    - name: rpmlint
+      run: rpmlint ~/rpmbuild/SPECS/python3-rawstor.spec
+    - name: rpmbuild
+      run: rpmbuild -bb ~/rpmbuild/SPECS/python3-rawstor.spec
+    - name: ls
+      run: |
+        cd ~/rpmbuild/RPMS/x86_64
+        for i in *.rpm; do \
+          echo "# $i" >> $GITHUB_STEP_SUMMARY; \
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          rpm -qlp $i >> $GITHUB_STEP_SUMMARY; \
+          echo '```' >> $GITHUB_STEP_SUMMARY
+        done
+    - uses: actions/upload-artifact@v7
+      with:
+        name: python3-rawstor-${{ matrix.os }}.rpm
+        path: ~/rpmbuild/RPMS/x86_64/*.rpm
+        if-no-files-found: error
+
+  rpm-install:
+    needs:
+    - rpm-librawstor
+    - rpm-python3-rawstor
+
+    strategy:
+      matrix:
+        os:
+        - almalinux9
+        - almalinux10
+        include:
+        - os: almalinux9
+          image: almalinux:9
+        - os: almalinux10
+          image: almalinux:10
+
+    runs-on: ubuntu-latest
+
+    # rawstor-ost uses io_uring at runtime, which the default container
+    # seccomp profile blocks (build/install steps never execute it, only
+    # this job actually runs the binary).
+    container:
+      image: ${{ matrix.image }}
+      options: --security-opt seccomp=unconfined
+
+    steps:
+    - name: install dependencies
+      run: |
+        dnf -y install epel-release
+        dnf config-manager --set-enabled crb
+    - uses: actions/download-artifact@v8
+    - name: install-librawstor
+      run: dnf -y install ./librawstor.rpm/librawstor-[0-9]*.rpm
+    - name: test-librawstor
+      run: rawstor-cli --version
+    - name: install-rawstor-ost
+      run: dnf -y install ./librawstor.rpm/rawstor-ost-[0-9]*.rpm
+    - name: test-rawstor-ost
+      # containers have no systemd/PID 1, so the .service unit cannot be
+      # started via systemctl here -- run the same command it would, by hand.
+      run: |
+        rawstor-ost --version
+        rawstor-ost --bind=127.0.0.1:7777 --location=file:///var/lib/rawstor &
+        OST_PID=$!
+        sleep 10
+        rawstor-cli create --size=1M --location=ost://127.0.0.1:7777
+        rawstor-cli list --location=ost://127.0.0.1:7777
+        kill ${OST_PID}
+    - name: install-python3-rawstor
+      run: dnf -y install ./python3-rawstor-${{ matrix.os }}.rpm/python3*-rawstor-[0-9]*.rpm
+    - name: test-python3-rawstor
+      run: |
+        mkdir -p /tmp/rawstor-install-test
+        python3 -c "import rawstor; print(list(rawstor.Location('file:///tmp/rawstor-install-test'))); print('OK')"
+
   release:
     needs:
     - clang-format
     - sources
     - sources-unittest
-    - sources-asan
     - sources-testio
     - deb-librawstor
     - deb-python3-rawstor
     - deb-install
     - rpm-librawstor
+    - rpm-python3-rawstor
+    - rpm-install
 
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
@@ -433,6 +549,7 @@ jobs:
         working_directory: ./artifacts
         files: |
           librawstor.deb/*
-          python3-rawstor.deb/*
+          python3-rawstor-*.deb/*
           librawstor.rpm/*
+          python3-rawstor-*.rpm/*
           sources/*

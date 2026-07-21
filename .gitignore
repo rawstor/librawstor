@@ -7,6 +7,7 @@
 .env/
 /.vscode/
 /ChangeLog
+/changelog-authors.tsv
 /Makefile
 /Makefile.in
 /README
