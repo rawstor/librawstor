@@ -91,7 +91,11 @@ print_body() {
 }
 
 default_author() {
-    echo "${MAINTAINER:-$(git log -1 --format='%cn <%ce>' 2> /dev/null || echo "unknown <unknown@example.com>")}"
+    if [ -n "$MAINTAINER" ] && [ "$MAINTAINER" != "unknown <unknown@example.com>" ]; then
+        echo "$MAINTAINER"
+    else
+        git log -1 --format='%cn <%ce>' 2> /dev/null || echo "unknown <unknown@example.com>"
+    fi
 }
 
 tag_info_for() {

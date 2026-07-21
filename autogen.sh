@@ -8,4 +8,6 @@ autoheader
 autoconf
 automake -a -c
 
-.github/tools/gen-changelog-authors.sh ChangeLog.md > changelog-authors.tsv
+if [ -d .git ]; then
+    .github/tools/gen-changelog-authors.sh ChangeLog.md > changelog-authors.tsv
+fi
