@@ -35,7 +35,7 @@ Rawstor python bindings.
 %install
 rm -rf %{buildroot}
 cd pyrawstor
-@PYTHON@ -m pip install --no-deps --root=%{buildroot} --prefix=/usr .
+@PYTHON@ -m pip install --no-deps --no-build-isolation --root=%{buildroot} --prefix=/usr .
 
 %files
 %{python3_sitearch}/rawstor
