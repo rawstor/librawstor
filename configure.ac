@@ -23,6 +23,8 @@ AC_SUBST([PACKAGE_VERSION_MINOR_NEXT], [`expr $PACKAGE_VERSION_MINOR + 1`])
 AC_SUBST([RPM_RELEASE], [`[[[ ${PACKAGE_VERSION} == *-* ]]] && RELEASE=${PACKAGE_VERSION#*-} && echo ${RELEASE//-/^} || echo "0"`])
 AC_SUBST([LIBRARY_VERSION], [`VERSION=${PACKAGE_VERSION_SHORT%.*} && echo ${VERSION//./:}:0`])
 
+AC_SUBST([MAINTAINER], ["m4_esyscmd_s([.github/tools/git-committer.sh])"])
+
 AC_SUBST([GENERIC_CFLAGS], ["-std=gnu99 -Wall -Wextra -Werror -fPIC"])
 AC_SUBST([GENERIC_CXXFLAGS], ["-std=c++20 -Wall -Wextra -Werror -fPIC"])
 

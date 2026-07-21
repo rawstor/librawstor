@@ -33,27 +33,11 @@ NEWS: $(srcdir)/NEWS.md
 
 
 deb/librawstor/changelog: $(srcdir)/ChangeLog.md $(srcdir)/.github/tools/deb-changelog.sh
-	{ \
-	  echo "librawstor ($(PACKAGE_VERSION_SHORT)) UNRELEASED; urgency=medium"; \
-	  echo; \
-	  $(srcdir)/.github/tools/deb-changelog.sh body $(srcdir)/ChangeLog.md; \
-	  echo; \
-	  echo " -- Vasily Stepanov <vasily.stepanov@gmail.com>  $$($(srcdir)/.github/tools/deb-changelog.sh date $(srcdir)/ChangeLog.md)"; \
-	  echo; \
-	  $(srcdir)/.github/tools/deb-changelog.sh history librawstor $(srcdir)/ChangeLog.md; \
-	} > $@
+	MAINTAINER='$(MAINTAINER)' $(srcdir)/.github/tools/deb-changelog.sh librawstor $(PACKAGE_VERSION_SHORT) $(srcdir)/ChangeLog.md > $@
 
 
 deb/python3-rawstor/changelog: $(srcdir)/ChangeLog.md $(srcdir)/.github/tools/deb-changelog.sh
-	{ \
-	  echo "rawstor ($(PACKAGE_VERSION_SHORT)) UNRELEASED; urgency=medium"; \
-	  echo; \
-	  $(srcdir)/.github/tools/deb-changelog.sh body $(srcdir)/ChangeLog.md; \
-	  echo; \
-	  echo " -- Vasily Stepanov <vasily.stepanov@gmail.com>  $$($(srcdir)/.github/tools/deb-changelog.sh date $(srcdir)/ChangeLog.md)"; \
-	  echo; \
-	  $(srcdir)/.github/tools/deb-changelog.sh history rawstor $(srcdir)/ChangeLog.md; \
-	} > $@
+	MAINTAINER='$(MAINTAINER)' $(srcdir)/.github/tools/deb-changelog.sh rawstor $(PACKAGE_VERSION_SHORT) $(srcdir)/ChangeLog.md > $@
 
 
 EXTRA_DIST = deb/librawstor/compat \

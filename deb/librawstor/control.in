@@ -1,7 +1,7 @@
 Source: @PACKAGE_NAME@
 Section: libs
 Priority: optional
-Maintainer: Vasily Stepanov <vasily.stepanov@gmail.com>
+Maintainer: @MAINTAINER@
 Build-Depends: debhelper (>= 12)
 Standards-Version: 4.7.0
 

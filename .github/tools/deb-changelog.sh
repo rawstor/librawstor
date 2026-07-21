@@ -1,23 +1,22 @@
 #!/bin/bash
 #
-# Converts ChangeLog.md (Keep a Changelog format) into Debian changelog
-# entries.
+# Converts ChangeLog.md (Keep a Changelog format) into a full Debian
+# changelog: the top entry uses the given package name/version (the one
+# actually being built) with the first ChangeLog.md section as its body,
+# followed by every prior section as its own dated, versioned entry.
 #
-# Usage:
-#   deb-changelog.sh body <ChangeLog.md>
-#     Prints the bullet items of the first (current/unreleased) section.
-#   deb-changelog.sh date <ChangeLog.md>
-#     Prints the RFC 2822 date for the first section (today if it has no
-#     real date, e.g. "Unreleased").
-#   deb-changelog.sh history <package-name> <ChangeLog.md>
-#     Prints all remaining sections as full Debian changelog entries.
+# Usage: deb-changelog.sh <package-name> <version> <ChangeLog.md>
+#
+# The maintainer line defaults to the last git committer but can be
+# overridden via the MAINTAINER environment variable.
 
 set -e
 
-mode=$1
+pkg=$1
+version=$2
+md=$3
 
-declare -a versions dates
-declare -a items
+declare -a versions dates items
 
 section=-1
 current_items=""
@@ -29,7 +28,6 @@ flush() {
 }
 
 read_sections() {
-    local md=$1
     while IFS= read -r line || [ -n "$line" ]; do
         if [[ "$line" =~ ^##\ \[([^]]+)\]\ -\ (.*)$ ]]; then
             flush
@@ -63,31 +61,23 @@ print_body() {
     fi
 }
 
-case "$mode" in
-    body)
-        read_sections "$2"
-        print_body 0
-        ;;
-    date)
-        read_sections "$2"
-        to_rfc2822 "${dates[0]}"
-        ;;
-    history)
-        pkg=$2
-        read_sections "$3"
-        for ((i = 1; i <= section; i++)); do
-            echo "${pkg} (${versions[$i]}) unstable; urgency=medium"
-            echo
-            print_body "$i"
-            echo
-            echo " -- Vasily Stepanov <vasily.stepanov@gmail.com>  $(to_rfc2822 "${dates[$i]}")"
-            if [ $i -lt $section ]; then
-                echo
-            fi
-        done
-        ;;
-    *)
-        echo "usage: $0 {body|date} <ChangeLog.md> | $0 history <package> <ChangeLog.md>" >&2
-        exit 1
-        ;;
-esac
+print_entry() {
+    local idx=$1 entry_version=$2 distribution=$3
+    echo "${pkg} (${entry_version}) ${distribution}; urgency=medium"
+    echo
+    print_body "$idx"
+    echo
+    echo " -- ${MAINTAINER:-$(git log -1 --format='%cn <%ce>' 2> /dev/null || echo "unknown <unknown@example.com>")}  $(to_rfc2822 "${dates[$idx]}")"
+}
+
+read_sections
+
+# The current, in-progress entry: always the version actually being
+# built, not whatever ChangeLog.md's own top section happens to say.
+print_entry 0 "$version" UNRELEASED
+
+# Everything else is a real past release.
+for ((i = 1; i <= section; i++)); do
+    echo
+    print_entry "$i" "${versions[$i]}" unstable
+done
