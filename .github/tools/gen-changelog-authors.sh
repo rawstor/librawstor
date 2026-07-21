@@ -1,9 +1,11 @@
 #!/bin/bash
 #
-# For each released version in ChangeLog.md (Keep a Changelog format),
-# looks up the committer of the matching "vX.Y.Z" git tag and prints a
-# "<version><TAB><committer>" line for it. Versions with no matching tag
-# (including the current "Unreleased" one) are skipped.
+# For each version in ChangeLog.md (Keep a Changelog format) that has a
+# matching "vX.Y.Z" git tag, prints a "<version><TAB><committer><TAB><date>"
+# line with that tag's committer and commit date (RFC 2822). Versions with
+# no matching tag yet (including, usually, the current one) are skipped --
+# ChangeLog.md's own "Unreleased" placeholder text is not consulted, only
+# whether the tag actually exists.
 #
 # Usage: gen-changelog-authors.sh <ChangeLog.md>
 #
@@ -27,10 +29,7 @@ fi
 while IFS= read -r line || [ -n "$line" ]; do
     if [[ "$line" =~ ^##\ \[([^]]+)\]\ -\ (.*)$ ]]; then
         version="${BASH_REMATCH[1]}"
-        date="${BASH_REMATCH[2]}"
-        if [ "$date" != "Unreleased" ]; then
-            author=$(git log -1 --format='%cn <%ce>' "v${version}" 2> /dev/null || true)
-            [ -n "$author" ] && printf '%s\t%s\n' "$version" "$author"
-        fi
+        info=$(git log -1 --format='%cn <%ce>%x09%cd' --date=rfc2822 "v${version}" 2> /dev/null || true)
+        [ -n "$info" ] && printf '%s\t%s\n' "$version" "$info"
     fi
 done < "$md"

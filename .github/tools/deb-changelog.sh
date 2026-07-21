@@ -14,11 +14,12 @@
 # (no such suffix), the top entry's distribution is "unstable" instead of
 # "UNRELEASED".
 #
-# <authors-file>, if given, is a "<version><TAB><name> <email>" mapping
-# (see gen-changelog-authors.sh) used to credit each historical entry to
-# whoever actually tagged that release. The current (top) entry, and any
-# historical one missing from the file, falls back to the MAINTAINER
-# environment variable, or the last git committer if that's unset too.
+# <authors-file>, if given, is a "<version><TAB><name> <email><TAB><date>"
+# mapping (see gen-changelog-authors.sh) crediting each entry to whoever
+# actually tagged that release, dated to that tag's own commit date. Any
+# entry missing from the file (usually only the current one, when it's
+# not an exact tag build) falls back to the MAINTAINER environment
+# variable (or the last git committer) and the current date/time.
 
 set -e
 
@@ -93,21 +94,29 @@ default_author() {
     echo "${MAINTAINER:-$(git log -1 --format='%cn <%ce>' 2> /dev/null || echo "unknown <unknown@example.com>")}"
 }
 
-author_for() {
-    local entry_version=$1 found=""
+tag_info_for() {
+    local entry_version=$1
     if [ -n "$authors_file" ] && [ -f "$authors_file" ]; then
-        found=$(awk -F'\t' -v v="$entry_version" '$1 == v { print $2; exit }' "$authors_file")
+        awk -F'\t' -v v="$entry_version" '$1 == v { print $2 "\t" $3; exit }' "$authors_file"
     fi
-    echo "${found:-$(default_author)}"
 }
 
 print_entry() {
-    local idx=$1 entry_version=$2 distribution=$3 author=$4
+    local idx=$1 entry_version=$2 distribution=$3
+    local info author date_str
+    info=$(tag_info_for "$entry_version")
+    if [ -n "$info" ]; then
+        author=${info%%$'\t'*}
+        date_str=${info#*$'\t'}
+    else
+        author=$(default_author)
+        date_str=$(to_rfc2822 "${dates[$idx]}")
+    fi
     echo "${pkg} (${entry_version}) ${distribution}; urgency=medium"
     echo
     print_body "$idx"
     echo
-    echo " -- ${author}  $(to_rfc2822 "${dates[$idx]}")"
+    echo " -- ${author}  ${date_str}"
 }
 
 read_sections
@@ -127,12 +136,12 @@ done
 
 # The current, in-progress entry: always the version actually being
 # built, not whatever ChangeLog.md's own top section happens to say.
-print_entry "$target_idx" "$version" "$distribution" "$(default_author)"
+print_entry "$target_idx" "$version" "$distribution"
 
-# Everything older is a real past release, credited to whoever tagged
-# it. Sections newer than target_idx (if any) are skipped, since they
-# describe work that hasn't shipped as $version.
+# Everything older is a real past release, credited (and dated) to
+# whoever tagged it. Sections newer than target_idx (if any) are
+# skipped, since they describe work that hasn't shipped as $version.
 for ((i = target_idx + 1; i <= section; i++)); do
     echo
-    print_entry "$i" "${versions[$i]}" unstable "$(author_for "${versions[$i]}")"
+    print_entry "$i" "${versions[$i]}" unstable
 done
