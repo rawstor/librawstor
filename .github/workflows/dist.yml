@@ -452,7 +452,12 @@ jobs:
 
     runs-on: ubuntu-latest
 
-    container: ${{ matrix.image }}
+    # rawstor-ost uses io_uring at runtime, which the default container
+    # seccomp profile blocks (build/install steps never execute it, only
+    # this job actually runs the binary).
+    container:
+      image: ${{ matrix.image }}
+      options: --security-opt seccomp=unconfined
 
     steps:
     - name: install dependencies
