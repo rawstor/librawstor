@@ -50,12 +50,14 @@ jobs:
     strategy:
       matrix:
         without-liburing:
-        - 
+        -
         - --without-liburing
         include:
         - packages: liburing-dev
           without-liburing:
 
+    env:
+      ASAN_OPTIONS: detect_odr_violation=0
     steps:
     - name: install dependencies
       run: |
@@ -75,52 +77,7 @@ jobs:
       run: |
         tar -xzf ${LIBRAWSTOR_TAR_GZ}
         cd ${LIBRAWSTOR}
-        ./configure ${{ matrix.without-liburing }}
-    - name: make
-      run: |
-        cd ${LIBRAWSTOR}
-        make -j${nproc}
-    - name: make test
-      run: |
-        cd ${LIBRAWSTOR}
-        make test
-
-  sources-asan:
-    needs: sources
-
-    runs-on: ubuntu-latest
-
-    strategy:
-      matrix:
-        without-liburing:
-        - 
-        - --without-liburing
-        include:
-        - packages: liburing-dev
-          without-liburing:
-
-    env:
-      asan_options: detect_odr_violation=0
-    steps:
-    - name: install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y libxxhash-dev libgtest-dev ${{ matrix.packages }}
-    - uses: actions/download-artifact@v8
-      with:
-        name: sources
-    - name: env
-      run: |
-        export LIBRAWSTOR_TAR_GZ=$(ls librawstor-*.tar.gz)
-        export LIBRAWSTOR_TAR=${LIBRAWSTOR_TAR_GZ%.*}
-        export LIBRAWSTOR=${LIBRAWSTOR_TAR%.*}
-        echo "LIBRAWSTOR_TAR_GZ=${LIBRAWSTOR_TAR_GZ}" >> $GITHUB_ENV
-        echo "LIBRAWSTOR=${LIBRAWSTOR}" >> $GITHUB_ENV
-    - name: configure
-      run: |
-        tar -xzf ${LIBRAWSTOR_TAR_GZ}
-        cd ${LIBRAWSTOR}
-        ./configure --enable-asan --without-python3 ${{ matrix.without-liburing }}
+        ./configure --enable-asan ${{ matrix.without-liburing }}
     - name: make
       run: |
         cd ${LIBRAWSTOR}
@@ -532,7 +489,6 @@ jobs:
     - clang-format
     - sources
     - sources-unittest
-    - sources-asan
     - sources-testio
     - deb-librawstor
     - deb-python3-rawstor
