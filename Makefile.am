@@ -28,6 +28,18 @@ ChangeLog: $(srcdir)/ChangeLog.md
 	cp $(srcdir)/ChangeLog.md ChangeLog
 
 
+NEWS: $(srcdir)/NEWS.md
+	cp $(srcdir)/NEWS.md NEWS
+
+
+deb/librawstor/changelog: $(srcdir)/ChangeLog.md $(srcdir)/.github/tools/deb-changelog.sh
+	MAINTAINER="$(MAINTAINER)" $(srcdir)/.github/tools/deb-changelog.sh librawstor $(PACKAGE_VERSION_SHORT) $(PACKAGE_VERSION) $(srcdir)/ChangeLog.md $(srcdir)/changelog-authors.tsv > $@
+
+
+deb/python3-rawstor/changelog: $(srcdir)/ChangeLog.md $(srcdir)/.github/tools/deb-changelog.sh
+	MAINTAINER="$(MAINTAINER)" $(srcdir)/.github/tools/deb-changelog.sh rawstor $(PACKAGE_VERSION_SHORT) $(PACKAGE_VERSION) $(srcdir)/ChangeLog.md $(srcdir)/changelog-authors.tsv > $@
+
+
 EXTRA_DIST = deb/librawstor/compat \
              deb/librawstor/format \
              deb/librawstor/librawstor.install \
@@ -40,12 +52,18 @@ EXTRA_DIST = deb/librawstor/compat \
              deb/python3-rawstor/format \
              deb/python3-rawstor/rules \
              etc/systemd/system/rawstor-ost.service \
+             .github/tools/deb-changelog.sh \
              ChangeLog.md \
-             README.md
+             README.md \
+             NEWS.md \
+             changelog-authors.tsv
 
 
 CLEANFILES = ChangeLog \
-             README
+             README \
+             NEWS \
+             deb/librawstor/changelog \
+             deb/python3-rawstor/changelog
 
 
 if ENABLE_TESTS
