@@ -5,7 +5,14 @@
 # actually being built) with the first ChangeLog.md section as its body,
 # followed by every prior section as its own dated, versioned entry.
 #
-# Usage: deb-changelog.sh <package-name> <version> <ChangeLog.md> [<authors-file>]
+# Usage: deb-changelog.sh <package-name> <version> <full-version> <ChangeLog.md> [<authors-file>]
+#
+# <full-version> is the untruncated build version (e.g. autoconf's
+# PACKAGE_VERSION, which keeps a "-N-gSHA" suffix unless this is an exact
+# tag build -- see .github/tools/git-version.sh). It's used only to tell a
+# real release from a dev/snapshot build: when it equals <version> exactly
+# (no such suffix), the top entry's distribution is "unstable" instead of
+# "UNRELEASED".
 #
 # <authors-file>, if given, is a "<version><TAB><name> <email>" mapping
 # (see gen-changelog-authors.sh) used to credit each historical entry to
@@ -17,12 +24,19 @@ set -e
 
 pkg=$1
 version=$2
-md=$3
-authors_file=$4
+full_version=$3
+md=$4
+authors_file=$5
 
-if [ -z "$pkg" ] || [ -z "$version" ] || [ -z "$md" ]; then
-    echo "usage: $0 <package-name> <version> <ChangeLog.md> [<authors-file>]" >&2
+if [ -z "$pkg" ] || [ -z "$version" ] || [ -z "$full_version" ] || [ -z "$md" ]; then
+    echo "usage: $0 <package-name> <version> <full-version> <ChangeLog.md> [<authors-file>]" >&2
     exit 1
+fi
+
+if [ "$version" = "$full_version" ]; then
+    distribution=unstable
+else
+    distribution=UNRELEASED
 fi
 
 if [ ! -f "$md" ]; then
@@ -113,7 +127,7 @@ done
 
 # The current, in-progress entry: always the version actually being
 # built, not whatever ChangeLog.md's own top section happens to say.
-print_entry "$target_idx" "$version" UNRELEASED "$(default_author)"
+print_entry "$target_idx" "$version" "$distribution" "$(default_author)"
 
 # Everything older is a real past release, credited to whoever tagged
 # it. Sections newer than target_idx (if any) are skipped, since they

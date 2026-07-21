@@ -33,11 +33,11 @@ NEWS: $(srcdir)/NEWS.md
 
 
 deb/librawstor/changelog: $(srcdir)/ChangeLog.md $(srcdir)/.github/tools/deb-changelog.sh
-	MAINTAINER="$(MAINTAINER)" $(srcdir)/.github/tools/deb-changelog.sh librawstor $(PACKAGE_VERSION_SHORT) $(srcdir)/ChangeLog.md $(srcdir)/changelog-authors.tsv > $@
+	MAINTAINER="$(MAINTAINER)" $(srcdir)/.github/tools/deb-changelog.sh librawstor $(PACKAGE_VERSION_SHORT) $(PACKAGE_VERSION) $(srcdir)/ChangeLog.md $(srcdir)/changelog-authors.tsv > $@
 
 
 deb/python3-rawstor/changelog: $(srcdir)/ChangeLog.md $(srcdir)/.github/tools/deb-changelog.sh
-	MAINTAINER="$(MAINTAINER)" $(srcdir)/.github/tools/deb-changelog.sh rawstor $(PACKAGE_VERSION_SHORT) $(srcdir)/ChangeLog.md $(srcdir)/changelog-authors.tsv > $@
+	MAINTAINER="$(MAINTAINER)" $(srcdir)/.github/tools/deb-changelog.sh rawstor $(PACKAGE_VERSION_SHORT) $(PACKAGE_VERSION) $(srcdir)/ChangeLog.md $(srcdir)/changelog-authors.tsv > $@
 
 
 EXTRA_DIST = deb/librawstor/compat \
