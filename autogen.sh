@@ -8,6 +8,6 @@ autoheader
 autoconf
 automake -a -c
 
-if [ -d .git ]; then
+if git rev-parse --is-inside-work-tree > /dev/null 2>&1; then
     .github/tools/gen-changelog-authors.sh ChangeLog.md > changelog-authors.tsv
 fi
