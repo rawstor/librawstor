@@ -2,7 +2,7 @@ if ENABLE_TESTS
 SUBDIRS = tests
 endif
 
-noinst_PROGRAMS = rawstor-vhost
+bin_PROGRAMS = rawstor-vhost
 
 AM_CXXFLAGS = $(GENERIC_CXXFLAGS) \
               $(ASAN_CFLAGS) \
