@@ -15,33 +15,30 @@
 #include <cstring>
 #include <stdexcept>
 
-
 namespace {
-
 
 using rawstor::vhost::Device;
 using rawstor::vhost::VirtQueue;
 
-
-void close_fd(int fd, const char *what) {
+void close_fd(int fd, const char* what) {
     rawstd_info("fd %d: Close (%s)\n", fd, what);
     if (close(fd) == -1) {
         int error = errno;
         errno = 0;
-        rawstd_error("VirtQueue: close(%s) failed: %s\n", what, strerror(error));
+        rawstd_error(
+            "VirtQueue: close(%s) failed: %s\n", what, strerror(error)
+        );
     }
 }
 
-
 struct KickCtx {
-    Device *device;
-    VirtQueue *vq;
+    Device* device;
+    VirtQueue* vq;
     size_t index;
     uint64_t value;
 };
 
-
-int kick_cb(size_t result, int error, void *data) {
+int kick_cb(size_t result, int error, void* data) {
     std::unique_ptr<KickCtx> ctx(static_cast<KickCtx*>(data));
 
     if (error == ECANCELED) {
@@ -54,18 +51,17 @@ int kick_cb(size_t result, int error, void *data) {
     }
 
     if (result != sizeof(ctx->value)) {
-        rawstd_error(
-            "vhost: unexpected kick_fd read size: %zu\n", result);
+        rawstd_error("vhost: unexpected kick_fd read size: %zu\n", result);
         return 0;
     }
 
-    VirtQueue *vq = ctx->vq;
-    Device *device = ctx->device;
+    VirtQueue* vq = ctx->vq;
+    Device* device = ctx->device;
     size_t index = ctx->index;
 
     try {
         device->process_queue(index);
-    } catch (const std::exception &e) {
+    } catch (const std::exception& e) {
         rawstd_error("vhost: error processing virtqueue: %s\n", e.what());
     }
 
@@ -76,13 +72,11 @@ int kick_cb(size_t result, int error, void *data) {
     return 0;
 }
 
-
 struct NotifyCtx {
     uint64_t value;
 };
 
-
-int notify_cb(size_t result, int error, void *data) {
+int notify_cb(size_t result, int error, void* data) {
     std::unique_ptr<NotifyCtx> ctx(static_cast<NotifyCtx*>(data));
 
     if (error != 0 && error != ECANCELED) {
@@ -91,19 +85,16 @@ int notify_cb(size_t result, int error, void *data) {
     }
 
     if (error == 0 && result != sizeof(ctx->value)) {
-        rawstd_error(
-            "vhost: unexpected call_fd write size: %zu\n", result);
+        rawstd_error("vhost: unexpected call_fd write size: %zu\n", result);
     }
 
     return 0;
 }
 
-
-} // unnamed
+} // namespace
 
 namespace rawstor {
 namespace vhost {
-
 
 VirtQueue::~VirtQueue() {
     if (_kick_fd != -1) {
@@ -117,8 +108,7 @@ VirtQueue::~VirtQueue() {
     }
 }
 
-
-void VirtQueue::arm_kick(Device &device, size_t index) {
+void VirtQueue::arm_kick(Device& device, size_t index) {
     if (_kick_armed || _kick_fd == -1) {
         return;
     }
@@ -131,7 +121,8 @@ void VirtQueue::arm_kick(Device &device, size_t index) {
 
     int res = rawio_read(
         device.queue(), _kick_fd, &ctx->value, sizeof(ctx->value), kick_cb,
-        ctx.get());
+        ctx.get()
+    );
     if (res) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
@@ -140,14 +131,14 @@ void VirtQueue::arm_kick(Device &device, size_t index) {
     ctx.release();
 }
 
-
-void VirtQueue::set_kick_fd(Device &device, size_t index, int fd) {
+void VirtQueue::set_kick_fd(Device& device, size_t index, int fd) {
     if (_kick_fd != -1) {
         int res = rawio_cancel_all(device.queue(), _kick_fd);
         if (res && res != -ENOENT) {
             rawstd_error(
                 "vhost: failed to cancel pending kick_fd ops: %s\n",
-                strerror(-res));
+                strerror(-res)
+            );
         }
         close_fd(_kick_fd, "kick_fd");
     }
@@ -160,14 +151,12 @@ void VirtQueue::set_kick_fd(Device &device, size_t index, int fd) {
     }
 }
 
-
 void VirtQueue::set_call_fd(int fd) {
     if (_call_fd != -1) {
         close_fd(_call_fd, "call_fd");
     }
     _call_fd = fd;
 }
-
 
 void VirtQueue::set_err_fd(int fd) {
     if (_err_fd != -1) {
@@ -176,10 +165,9 @@ void VirtQueue::set_err_fd(int fd) {
     _err_fd = fd;
 }
 
-
 void VirtQueue::set_vring_addr(
-    const AddressTranslator &translate, const vhost_vring_addr &vra)
-{
+    const AddressTranslator& translate, const vhost_vring_addr& vra
+) {
     _ring.set_addr(translate, vra);
 
     /*
@@ -191,17 +179,16 @@ void VirtQueue::set_vring_addr(
     _used_idx = RAWSTD_LE16TOH(_ring.used_idx());
 }
 
-
 void VirtQueue::set_vring_addr(
-    const Device& device, const vhost_vring_addr &vra)
-{
+    const Device& device, const vhost_vring_addr& vra
+) {
     set_vring_addr(
         [&device](uint64_t addr) { return device.userspace_va_to_va(addr); },
-        vra);
+        vra
+    );
 }
 
-
-void VirtQueue::set_enabled(Device &device, size_t index, bool enabled) {
+void VirtQueue::set_enabled(Device& device, size_t index, bool enabled) {
     _enabled = enabled;
 
     if (_enabled) {
@@ -211,21 +198,20 @@ void VirtQueue::set_enabled(Device &device, size_t index, bool enabled) {
         if (res && res != -ENOENT) {
             rawstd_error(
                 "vhost: failed to cancel pending kick_fd ops: %s\n",
-                strerror(-res));
+                strerror(-res)
+            );
         }
         _kick_armed = false;
     }
 }
 
-
-std::unique_ptr<DescChain> VirtQueue::pop(const Device &device) {
+std::unique_ptr<DescChain> VirtQueue::pop(const Device& device) {
     return pop([&device](uint64_t addr) {
         return device.userspace_va_to_va(addr);
     });
 }
 
-
-std::unique_ptr<DescChain> VirtQueue::pop(const AddressTranslator &translate) {
+std::unique_ptr<DescChain> VirtQueue::pop(const AddressTranslator& translate) {
     unsigned int num = _ring.num();
     if (num == 0 || !_ring.mapped()) {
         return nullptr;
@@ -236,8 +222,7 @@ std::unique_ptr<DescChain> VirtQueue::pop(const AddressTranslator &translate) {
         return nullptr;
     }
 
-    uint16_t head =
-        RAWSTD_LE16TOH(_ring.avail_ring(_last_avail_idx));
+    uint16_t head = RAWSTD_LE16TOH(_ring.avail_ring(_last_avail_idx));
     _last_avail_idx = static_cast<uint16_t>(_last_avail_idx + 1);
 
     if (head >= num) {
@@ -247,15 +232,16 @@ std::unique_ptr<DescChain> VirtQueue::pop(const AddressTranslator &translate) {
     std::unique_ptr<DescChain> chain = std::make_unique<DescChain>();
     chain->head = head;
 
-    const vring_desc *table = nullptr;
+    const vring_desc* table = nullptr;
     unsigned int table_size = num;
     bool indirect = false;
     uint16_t idx = head;
 
-    for (unsigned int steps = 0; ; ++steps) {
+    for (unsigned int steps = 0;; ++steps) {
         if (steps > table_size) {
             throw std::runtime_error(
-                "vhost: descriptor chain too long or cyclic");
+                "vhost: descriptor chain too long or cyclic"
+            );
         }
 
         vring_desc d = indirect ? table[idx] : _ring.desc(idx);
@@ -264,20 +250,23 @@ std::unique_ptr<DescChain> VirtQueue::pop(const AddressTranslator &translate) {
         if (flags & VRING_DESC_F_INDIRECT) {
             if (indirect) {
                 throw std::runtime_error(
-                    "vhost: nested indirect descriptors are not allowed");
+                    "vhost: nested indirect descriptors are not allowed"
+                );
             }
 
             uint32_t len = RAWSTD_LE32TOH(d.len);
             if (len == 0 || len % sizeof(vring_desc) != 0) {
                 throw std::runtime_error(
-                    "vhost: invalid indirect descriptor table length");
+                    "vhost: invalid indirect descriptor table length"
+                );
             }
 
             uint64_t addr = RAWSTD_LE64TOH(d.addr);
-            void *va = translate(addr);
+            void* va = translate(addr);
             if (va == nullptr) {
                 throw std::runtime_error(
-                    "vhost: invalid indirect descriptor table address");
+                    "vhost: invalid indirect descriptor table address"
+                );
             }
 
             table = static_cast<const vring_desc*>(va);
@@ -292,7 +281,7 @@ std::unique_ptr<DescChain> VirtQueue::pop(const AddressTranslator &translate) {
         uint32_t len = RAWSTD_LE32TOH(d.len);
 
         if (len > 0) {
-            void *va = translate(addr);
+            void* va = translate(addr);
             if (va == nullptr) {
                 throw std::runtime_error("vhost: invalid descriptor address");
             }
@@ -321,13 +310,12 @@ std::unique_ptr<DescChain> VirtQueue::pop(const AddressTranslator &translate) {
     return chain;
 }
 
-
 void VirtQueue::push(uint16_t head, uint32_t len) {
     uint16_t pos = _used_idx;
 
     _ring.set_used(
-        pos, RAWSTD_LE32TOH(static_cast<uint32_t>(head)),
-        RAWSTD_LE32TOH(len));
+        pos, RAWSTD_LE32TOH(static_cast<uint32_t>(head)), RAWSTD_LE32TOH(len)
+    );
 
     _used_idx = static_cast<uint16_t>(_used_idx + 1);
 
@@ -340,7 +328,6 @@ void VirtQueue::push(uint16_t head, uint32_t len) {
     _ring.set_used_idx(RAWSTD_LE16TOH(_used_idx));
 }
 
-
 bool VirtQueue::should_notify(bool event_idx_negotiated) const noexcept {
     /*
      * Make sure we observe the driver's latest avail->flags / used_event
@@ -352,16 +339,14 @@ bool VirtQueue::should_notify(bool event_idx_negotiated) const noexcept {
         uint16_t event = RAWSTD_LE16TOH(_ring.used_event());
         uint16_t new_idx = _used_idx;
         uint16_t old_idx = static_cast<uint16_t>(_used_idx - 1);
-        return
-            static_cast<uint16_t>(new_idx - event - 1) <
-            static_cast<uint16_t>(new_idx - old_idx);
+        return static_cast<uint16_t>(new_idx - event - 1) <
+               static_cast<uint16_t>(new_idx - old_idx);
     }
 
     return !(RAWSTD_LE16TOH(_ring.avail_flags()) & VRING_AVAIL_F_NO_INTERRUPT);
 }
 
-
-void VirtQueue::notify(Device &device, bool event_idx_negotiated) {
+void VirtQueue::notify(Device& device, bool event_idx_negotiated) {
     if (_call_fd == -1) {
         return;
     }
@@ -375,7 +360,8 @@ void VirtQueue::notify(Device &device, bool event_idx_negotiated) {
 
     int res = rawio_write(
         device.queue(), _call_fd, &ctx->value, sizeof(ctx->value), notify_cb,
-        ctx.get());
+        ctx.get()
+    );
     if (res) {
         rawstd_error("vhost: failed to notify call_fd: %s\n", strerror(-res));
         return;
@@ -384,5 +370,5 @@ void VirtQueue::notify(Device &device, bool event_idx_negotiated) {
     ctx.release();
 }
 
-
-}} // rawstor::vhost
+} // namespace vhost
+} // namespace rawstor

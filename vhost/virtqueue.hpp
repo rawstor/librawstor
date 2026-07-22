@@ -10,15 +10,13 @@
 #include <memory>
 #include <vector>
 
-#include <cstdint>
 #include <cstddef>
+#include <cstdint>
 
 namespace rawstor {
 namespace vhost {
 
-
 class Device;
-
 
 /**
  * A single descriptor chain popped from the avail ring, split into the
@@ -31,124 +29,111 @@ struct DescChain {
     std::vector<iovec> writable;
 };
 
-
 class VirtQueue final {
-    private:
-        Ring _ring;
+private:
+    Ring _ring;
 
-        /* Next head to pop from the avail ring. */
-        uint16_t _last_avail_idx;
+    /* Next head to pop from the avail ring. */
+    uint16_t _last_avail_idx;
 
-        /* Next index we will publish into the used ring. */
-        uint16_t _used_idx;
+    /* Next index we will publish into the used ring. */
+    uint16_t _used_idx;
 
-        int _kick_fd;
-        int _call_fd;
-        int _err_fd;
-        bool _enabled;
-        bool _kick_armed;
+    int _kick_fd;
+    int _call_fd;
+    int _err_fd;
+    bool _enabled;
+    bool _kick_armed;
 
-    public:
-        VirtQueue():
-            _last_avail_idx(0),
-            _used_idx(0),
-            _kick_fd(-1),
-            _call_fd(-1),
-            _err_fd(-1),
-            _enabled(false),
-            _kick_armed(false)
-        {}
-        VirtQueue(const VirtQueue &) = delete;
-        VirtQueue(VirtQueue &&) = delete;
-        ~VirtQueue();
+public:
+    VirtQueue() :
+        _last_avail_idx(0),
+        _used_idx(0),
+        _kick_fd(-1),
+        _call_fd(-1),
+        _err_fd(-1),
+        _enabled(false),
+        _kick_armed(false) {}
+    VirtQueue(const VirtQueue&) = delete;
+    VirtQueue(VirtQueue&&) = delete;
+    ~VirtQueue();
 
-        VirtQueue& operator=(const VirtQueue &) = delete;
-        VirtQueue& operator=(VirtQueue &&) = delete;
+    VirtQueue& operator=(const VirtQueue&) = delete;
+    VirtQueue& operator=(VirtQueue&&) = delete;
 
-        inline bool enabled() const noexcept {
-            return _enabled;
-        }
+    inline bool enabled() const noexcept { return _enabled; }
 
-        inline int kick_fd() const noexcept {
-            return _kick_fd;
-        }
+    inline int kick_fd() const noexcept { return _kick_fd; }
 
-        inline int call_fd() const noexcept {
-            return _call_fd;
-        }
+    inline int call_fd() const noexcept { return _call_fd; }
 
-        inline uint16_t last_avail_idx() const noexcept {
-            return _last_avail_idx;
-        }
+    inline uint16_t last_avail_idx() const noexcept { return _last_avail_idx; }
 
-        void set_vring_size(unsigned int size) {
-            _ring.set_num(size);
-        }
+    void set_vring_size(unsigned int size) { _ring.set_num(size); }
 
-        void set_vring_base(uint16_t idx) noexcept {
-            _last_avail_idx = idx;
-        }
+    void set_vring_base(uint16_t idx) noexcept { _last_avail_idx = idx; }
 
-        void set_kick_fd(Device &device, size_t index, int fd);
+    void set_kick_fd(Device& device, size_t index, int fd);
 
-        /**
-         * Arm (or re-arm) the asynchronous read that waits for the next
-         * kick on this virtqueue's kick_fd. A no-op if already armed, kick
-         * processing is disabled, or no kick_fd is set.
-         */
-        void arm_kick(Device &device, size_t index);
+    /**
+     * Arm (or re-arm) the asynchronous read that waits for the next
+     * kick on this virtqueue's kick_fd. A no-op if already armed, kick
+     * processing is disabled, or no kick_fd is set.
+     */
+    void arm_kick(Device& device, size_t index);
 
-        void set_call_fd(int fd);
+    void set_call_fd(int fd);
 
-        void set_err_fd(int fd);
+    void set_err_fd(int fd);
 
-        void set_vring_addr(
-            const AddressTranslator &translate, const vhost_vring_addr &vra);
+    void set_vring_addr(
+        const AddressTranslator& translate, const vhost_vring_addr& vra
+    );
 
-        void set_vring_addr(const Device& device, const vhost_vring_addr &vra);
+    void set_vring_addr(const Device& device, const vhost_vring_addr& vra);
 
-        /**
-         * Enable or disable request processing for this virtqueue. While
-         * disabled, kicks are ignored and no descriptors are popped.
-         */
-        void set_enabled(Device &device, size_t index, bool enabled);
+    /**
+     * Enable or disable request processing for this virtqueue. While
+     * disabled, kicks are ignored and no descriptors are popped.
+     */
+    void set_enabled(Device& device, size_t index, bool enabled);
 
-        /**
-         * Pop the next available descriptor chain, translating guest
-         * addresses (including a single level of indirection) into host
-         * virtual addresses via `translate`. Returns nullptr if nothing is
-         * available.
-         */
-        std::unique_ptr<DescChain> pop(const AddressTranslator &translate);
+    /**
+     * Pop the next available descriptor chain, translating guest
+     * addresses (including a single level of indirection) into host
+     * virtual addresses via `translate`. Returns nullptr if nothing is
+     * available.
+     */
+    std::unique_ptr<DescChain> pop(const AddressTranslator& translate);
 
-        /**
-         * Convenience overload translating addresses via
-         * device.userspace_va_to_va().
-         */
-        std::unique_ptr<DescChain> pop(const Device &device);
+    /**
+     * Convenience overload translating addresses via
+     * device.userspace_va_to_va().
+     */
+    std::unique_ptr<DescChain> pop(const Device& device);
 
-        /**
-         * Publish a completion for the descriptor chain starting at `head`
-         * with `len` bytes written into the writable buffers.
-         */
-        void push(uint16_t head, uint32_t len);
+    /**
+     * Publish a completion for the descriptor chain starting at `head`
+     * with `len` bytes written into the writable buffers.
+     */
+    void push(uint16_t head, uint32_t len);
 
-        /**
-         * Whether the driver currently needs to be signalled (via call_fd),
-         * given VIRTIO_RING_F_EVENT_IDX negotiation state. Pure decision
-         * logic, no I/O; must be evaluated once per push(), immediately
-         * after it.
-         */
-        bool should_notify(bool event_idx_negotiated) const noexcept;
+    /**
+     * Whether the driver currently needs to be signalled (via call_fd),
+     * given VIRTIO_RING_F_EVENT_IDX negotiation state. Pure decision
+     * logic, no I/O; must be evaluated once per push(), immediately
+     * after it.
+     */
+    bool should_notify(bool event_idx_negotiated) const noexcept;
 
-        /**
-         * Signal the driver (write to call_fd) if should_notify() holds.
-         * Must be called once per push(), immediately after it.
-         */
-        void notify(Device &device, bool event_idx_negotiated);
+    /**
+     * Signal the driver (write to call_fd) if should_notify() holds.
+     * Must be called once per push(), immediately after it.
+     */
+    void notify(Device& device, bool event_idx_negotiated);
 };
 
-
-}} // rawstor::vhost
+} // namespace vhost
+} // namespace rawstor
 
 #endif // RAWSTOR_VHOST_VIRTQUEUE_HPP

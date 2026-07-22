@@ -37,9 +37,7 @@ public:
 
     explicit FakeQueueMemory(unsigned int num) :
         descs(num),
-        avail_storage(
-            sizeof(vring_avail) + (num + 1) * sizeof(uint16_t), 0
-        ),
+        avail_storage(sizeof(vring_avail) + (num + 1) * sizeof(uint16_t), 0),
         used_storage(
             sizeof(vring_used) + (num + 1) * sizeof(vring_used_elem_t), 0
         ) {
@@ -51,9 +49,8 @@ public:
         vhost_vring_addr vra{};
         vra.index = 0;
         vra.flags = 0;
-        vra.desc_user_addr = reinterpret_cast<uint64_t>(
-            const_cast<vring_desc*>(descs.data())
-        );
+        vra.desc_user_addr =
+            reinterpret_cast<uint64_t>(const_cast<vring_desc*>(descs.data()));
         vra.avail_user_addr = reinterpret_cast<uint64_t>(avail);
         vra.used_user_addr = reinterpret_cast<uint64_t>(used);
         vra.log_guest_addr = 0;
@@ -246,4 +243,4 @@ TEST_F(VirtQueueTest, SetVringBaseSeedsAvailConsumerPosition) {
     EXPECT_EQ(vq.last_avail_idx(), 4);
 }
 
-} // unnamed
+} // namespace

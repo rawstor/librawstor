@@ -20,16 +20,13 @@
 // #define HUGETLBFS_MAGIC 0x958458f6
 #endif
 
-
 /* Round number down to multiple */
 #define ALIGN_DOWN(n, m) ((n) / (m) * (m))
 
 /* Round number up to multiple */
 #define ALIGN_UP(n, m) ALIGN_DOWN((n) + (m) - 1, (m))
 
-
 namespace {
-
 
 size_t get_fd_hugepagesize(int fd) {
 #if defined(RAWSTD_ON_LINUX)
@@ -48,16 +45,14 @@ size_t get_fd_hugepagesize(int fd) {
     return 0;
 }
 
-
-} // unnamed
+} // namespace
 
 namespace rawstor {
 namespace vhost {
 
-
 DevRegion::DevRegion(
-    const VhostUserMemoryRegion &m, int fd, bool postcopy_listening)
-{
+    const VhostUserMemoryRegion& m, int fd, bool postcopy_listening
+) {
     /**
      * In postcopy we're using PROT_NONE here to catch anyone
      * accessing it before we userfault
@@ -84,9 +79,10 @@ DevRegion::DevRegion(
         mmap_offset = 0;
     }
 
-    void *mmap_addr = mmap(
-        0, m.memory_size + mmap_offset,
-        prot, MAP_SHARED | MAP_NORESERVE, fd, fd_offset);
+    void* mmap_addr = mmap(
+        0, m.memory_size + mmap_offset, prot, MAP_SHARED | MAP_NORESERVE, fd,
+        fd_offset
+    );
     if (mmap_addr == MAP_FAILED) {
         RAWSTD_THROW_ERRNO();
     }
@@ -103,15 +99,15 @@ DevRegion::DevRegion(
     _mmap_offset = mmap_offset;
 }
 
-
 DevRegion::~DevRegion() {
     if (munmap(_mmap_addr, _memory_size + _mmap_offset) == -1) {
         int error = errno;
         errno = 0;
         rawstd_error(
-            "DevRegion::~DevRegion(): Close failed: %s\n", strerror(error));
+            "DevRegion::~DevRegion(): Close failed: %s\n", strerror(error)
+        );
     }
 }
 
-
-}} // rawstor::vhost
+} // namespace vhost
+} // namespace rawstor

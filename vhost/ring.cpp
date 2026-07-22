@@ -6,14 +6,12 @@
 
 #include <stdexcept>
 
-
 namespace rawstor {
 namespace vhost {
 
-
 void Ring::set_addr(
-    const AddressTranslator &translate, const vhost_vring_addr &vra)
-{
+    const AddressTranslator& translate, const vhost_vring_addr& vra
+) {
     _flags = vra.flags;
     _log_guest_addr = vra.log_guest_addr;
 
@@ -31,12 +29,12 @@ void Ring::set_addr(
     }
 }
 
-
-void Ring::set_addr(const Device &device, const vhost_vring_addr &vra) {
+void Ring::set_addr(const Device& device, const vhost_vring_addr& vra) {
     set_addr(
         [&device](uint64_t addr) { return device.userspace_va_to_va(addr); },
-        vra);
+        vra
+    );
 }
 
-
-}} // rawstor::vhost
+} // namespace vhost
+} // namespace rawstor
