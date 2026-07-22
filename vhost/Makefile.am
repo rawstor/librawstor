@@ -1,3 +1,7 @@
+if ENABLE_TESTS
+SUBDIRS = tests
+endif
+
 noinst_PROGRAMS = rawstor-vhost
 
 AM_CXXFLAGS = $(GENERIC_CXXFLAGS) \
@@ -28,3 +32,11 @@ rawstor_vhost_SOURCES = stdheaders/linux/types.h \
                         virtqueue.hpp
 
 rawstor_vhost_LDADD = $(top_builddir)/src/librawstor.la
+
+
+if ENABLE_TESTS
+test: all
+	make -C tests test
+
+.PHONY: test
+endif

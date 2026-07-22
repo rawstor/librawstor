@@ -6,6 +6,7 @@
 
 #include <sys/uio.h>
 
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -101,6 +102,9 @@ class VirtQueue final {
 
         void set_err_fd(int fd);
 
+        void set_vring_addr(
+            const AddressTranslator &translate, const vhost_vring_addr &vra);
+
         void set_vring_addr(const Device& device, const vhost_vring_addr &vra);
 
         /**
@@ -112,7 +116,14 @@ class VirtQueue final {
         /**
          * Pop the next available descriptor chain, translating guest
          * addresses (including a single level of indirection) into host
-         * virtual addresses. Returns nullptr if nothing is available.
+         * virtual addresses via `translate`. Returns nullptr if nothing is
+         * available.
+         */
+        std::unique_ptr<DescChain> pop(const AddressTranslator &translate);
+
+        /**
+         * Convenience overload translating addresses via
+         * device.userspace_va_to_va().
          */
         std::unique_ptr<DescChain> pop(const Device &device);
 
@@ -123,9 +134,16 @@ class VirtQueue final {
         void push(uint16_t head, uint32_t len);
 
         /**
-         * Signal the driver (write to call_fd) if it is currently waiting
-         * for a notification, given VIRTIO_RING_F_EVENT_IDX negotiation
-         * state. Must be called once per push(), immediately after it.
+         * Whether the driver currently needs to be signalled (via call_fd),
+         * given VIRTIO_RING_F_EVENT_IDX negotiation state. Pure decision
+         * logic, no I/O; must be evaluated once per push(), immediately
+         * after it.
+         */
+        bool should_notify(bool event_idx_negotiated) const noexcept;
+
+        /**
+         * Signal the driver (write to call_fd) if should_notify() holds.
+         * Must be called once per push(), immediately after it.
          */
         void notify(Device &device, bool event_idx_negotiated);
 };

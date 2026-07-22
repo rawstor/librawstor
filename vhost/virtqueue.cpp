@@ -178,9 +178,9 @@ void VirtQueue::set_err_fd(int fd) {
 
 
 void VirtQueue::set_vring_addr(
-    const Device& device, const vhost_vring_addr &vra)
+    const AddressTranslator &translate, const vhost_vring_addr &vra)
 {
-    _ring.set_addr(device, vra);
+    _ring.set_addr(translate, vra);
 
     /*
      * Fresh (or reconnecting) rings start with used->idx already reflecting
@@ -189,6 +189,15 @@ void VirtQueue::set_vring_addr(
      * driver has not consumed yet.
      */
     _used_idx = RAWSTD_LE16TOH(_ring.used_idx());
+}
+
+
+void VirtQueue::set_vring_addr(
+    const Device& device, const vhost_vring_addr &vra)
+{
+    set_vring_addr(
+        [&device](uint64_t addr) { return device.userspace_va_to_va(addr); },
+        vra);
 }
 
 
@@ -210,6 +219,13 @@ void VirtQueue::set_enabled(Device &device, size_t index, bool enabled) {
 
 
 std::unique_ptr<DescChain> VirtQueue::pop(const Device &device) {
+    return pop([&device](uint64_t addr) {
+        return device.userspace_va_to_va(addr);
+    });
+}
+
+
+std::unique_ptr<DescChain> VirtQueue::pop(const AddressTranslator &translate) {
     unsigned int num = _ring.num();
     if (num == 0 || !_ring.mapped()) {
         return nullptr;
@@ -258,7 +274,7 @@ std::unique_ptr<DescChain> VirtQueue::pop(const Device &device) {
             }
 
             uint64_t addr = RAWSTD_LE64TOH(d.addr);
-            void *va = device.userspace_va_to_va(addr);
+            void *va = translate(addr);
             if (va == nullptr) {
                 throw std::runtime_error(
                     "vhost: invalid indirect descriptor table address");
@@ -276,7 +292,7 @@ std::unique_ptr<DescChain> VirtQueue::pop(const Device &device) {
         uint32_t len = RAWSTD_LE32TOH(d.len);
 
         if (len > 0) {
-            void *va = device.userspace_va_to_va(addr);
+            void *va = translate(addr);
             if (va == nullptr) {
                 throw std::runtime_error("vhost: invalid descriptor address");
             }
@@ -325,31 +341,32 @@ void VirtQueue::push(uint16_t head, uint32_t len) {
 }
 
 
-void VirtQueue::notify(Device &device, bool event_idx_negotiated) {
-    if (_call_fd == -1) {
-        return;
-    }
-
+bool VirtQueue::should_notify(bool event_idx_negotiated) const noexcept {
     /*
      * Make sure we observe the driver's latest avail->flags / used_event
      * before deciding whether to skip the notification.
      */
     __sync_synchronize();
 
-    bool need_notify;
     if (event_idx_negotiated) {
         uint16_t event = RAWSTD_LE16TOH(_ring.used_event());
         uint16_t new_idx = _used_idx;
         uint16_t old_idx = static_cast<uint16_t>(_used_idx - 1);
-        need_notify =
+        return
             static_cast<uint16_t>(new_idx - event - 1) <
             static_cast<uint16_t>(new_idx - old_idx);
-    } else {
-        need_notify =
-            !(RAWSTD_LE16TOH(_ring.avail_flags()) & VRING_AVAIL_F_NO_INTERRUPT);
     }
 
-    if (!need_notify) {
+    return !(RAWSTD_LE16TOH(_ring.avail_flags()) & VRING_AVAIL_F_NO_INTERRUPT);
+}
+
+
+void VirtQueue::notify(Device &device, bool event_idx_negotiated) {
+    if (_call_fd == -1) {
+        return;
+    }
+
+    if (!should_notify(event_idx_negotiated)) {
         return;
     }
 

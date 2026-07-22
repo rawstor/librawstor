@@ -5,6 +5,8 @@
 #include "stdheaders/linux/vhost_types.h"
 #include "stdheaders/linux/virtio_ring.h"
 
+#include <functional>
+
 #include <cstdint>
 
 namespace rawstor {
@@ -12,6 +14,15 @@ namespace vhost {
 
 
 class Device;
+
+
+/**
+ * Translates a front-end (guest) address, as found in vhost-user memory
+ * region and vring descriptor messages, into a host virtual address.
+ * Returns nullptr if the address does not fall within any known memory
+ * region.
+ */
+using AddressTranslator = std::function<void*(uint64_t)>;
 
 
 class Ring final {
@@ -37,6 +48,8 @@ class Ring final {
 
         Ring& operator=(const Ring &) = delete;
         Ring& operator=(Ring &&) = delete;
+
+        void set_addr(const AddressTranslator &translate, const vhost_vring_addr &vra);
 
         void set_addr(const Device &device, const vhost_vring_addr &vra);
 

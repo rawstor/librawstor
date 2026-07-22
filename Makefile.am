@@ -77,6 +77,7 @@ endif
 test: all
 	make -C librawstd test
 	make -C librawio test
+	make -C vhost test
 	make -C tests test
 	@if [ "x$(WITH_PYTHON3)" = "xyes" ]; then \
 	  make -C pyrawstor test; \
