@@ -1,21 +1,30 @@
-SUBDIRS = 3rdparty
-
 noinst_PROGRAMS = rawstor-vhost
 
 AM_CXXFLAGS = $(GENERIC_CXXFLAGS) \
               $(ASAN_CFLAGS) \
               -I$(top_srcdir)/librawstd/include \
-              -I$(top_srcdir)/include \
-              -I$(srcdir)/3rdparty/qemu/libvhost-user
+              -I$(top_srcdir)/include
 
 AM_LDFLAGS = $(ASAN_LDFLAGS)
 
 
-rawstor_vhost_SOURCES = device.cpp \
+rawstor_vhost_SOURCES = stdheaders/linux/types.h \
+                        stdheaders/linux/vhost_types.h \
+                        stdheaders/linux/virtio_blk.h \
+                        stdheaders/linux/virtio_config.h \
+                        stdheaders/linux/virtio_ring.h \
+                        stdheaders/linux/virtio_types.h \
+                        device.cpp \
                         device.hpp \
+                        devregion.cpp \
+                        devregion.hpp \
                         main.cpp \
+                        protocol.h \
+                        ring.cpp \
+                        ring.hpp \
                         server.cpp \
-                        server.hpp
+                        server.hpp \
+                        virtqueue.cpp \
+                        virtqueue.hpp
 
-rawstor_vhost_LDADD = $(top_builddir)/src/librawstor.la \
-                      $(top_builddir)/vhost/3rdparty/qemu/libvhost-user/libvhost-user.la
+rawstor_vhost_LDADD = $(top_builddir)/src/librawstor.la

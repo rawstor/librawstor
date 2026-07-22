@@ -1,120 +1,167 @@
 #ifndef RAWSTOR_VHOST_DEVICE_HPP
 #define RAWSTOR_VHOST_DEVICE_HPP
 
+#include "devregion.hpp"
+#include "protocol.h"
+#include "virtqueue.hpp"
+#include "stdheaders/linux/virtio_blk.h"
+
 #include <rawstor/object.h>
 #include <rawstor/rawio.h>
 
-extern "C" {
-#include "libvhost-user.h"
-}
+#include <rawstd/gpp.hpp>
+
+#include <unistd.h>
 
 #include <memory>
 #include <string>
-#include <unordered_map>
+#include <vector>
 
 #include <cstdint>
 
-struct virtio_blk_config;
 
 namespace rawstor {
 namespace vhost {
 
-class Device;
-
-class Watcher final {
-private:
-    RawIOQueue* _queue;
-    RawIOEvent* _event;
-    int _counter;
-
-public:
-    Watcher(
-        RawIOQueue* queue, rawstor::vhost::Device& device, int fd,
-        int condition, vu_watch_cb cb, void* data
-    );
-    Watcher(const Watcher&) = delete;
-    Watcher(Watcher&&) = delete;
-    ~Watcher();
-
-    Watcher& operator=(const Watcher&) = delete;
-    Watcher& operator=(Watcher&&) = delete;
-
-    int inc_counter() noexcept { return ++_counter; }
-    int dec_counter() noexcept { return --_counter; }
-};
 
 class Device final {
-private:
-    static std::unordered_map<int, Device*> _devices;
+    private:
+        int _fd;
+        RawIOQueue* _queue;
+        RawstorObject* _object;
+        std::vector<std::unique_ptr<DevRegion>> _regions;
+        std::vector<VirtQueue> _vqs;
+        int _backend_fd;
+        uint64_t _features;
+        uint64_t _protocol_features;
+        virtio_blk_config _config;
+        bool _postcopy_listening;
 
-    RawIOQueue* _queue;
-    RawstorObjectSpec _spec;
-    RawstorObject* _object;
+    public:
+        Device(unsigned int queue_size, const std::string &target, int fd);
 
-    VuDev _dev;
-    VuDevIface _iface;
-    uint64_t _features;
-    uint64_t _protocol_features;
-    std::unique_ptr<virtio_blk_config> _blk_config;
-    std::unordered_map<int, std::unique_ptr<Watcher>> _watchers;
+        Device(const Device &) = delete;
+        Device(Device &&) = delete;
+        ~Device();
 
-public:
-    static Device& get(int fd);
-    static Device* find(int fd);
+        Device& operator=(const Device &) = delete;
+        Device& operator=(Device &&) = delete;
 
-    Device(unsigned int queue_size, const std::string& target, int fd);
-    Device(const Device&) = delete;
-    Device(Device&&) = delete;
-    ~Device();
+        inline int fd() const noexcept {
+            return _fd;
+        }
 
-    Device& operator=(const Device&) = delete;
-    Device& operator=(Device&&) = delete;
+        inline RawIOQueue* queue() const noexcept {
+            return _queue;
+        }
 
-    inline RawIOQueue* queue() noexcept { return _queue; }
+        inline RawstorObject* object() const noexcept {
+            return _object;
+        }
 
-    inline RawstorObject* object() noexcept { return _object; }
+        uint64_t get_features() const noexcept {
+            return _features;
+        }
 
-    inline VuDev* dev() noexcept { return &_dev; }
+        void set_features(uint64_t features);
 
-    void dispatch();
+        inline bool event_idx_negotiated() const noexcept {
+            return _features & (1ull << VIRTIO_RING_F_EVENT_IDX);
+        }
 
-    inline uint64_t get_features() const noexcept { return _features; }
+        uint64_t get_protocol_features() const noexcept;
 
-    inline void set_features(uint64_t features) noexcept {
-        _features = features;
-    }
+        void set_protocol_features(uint64_t features) noexcept {
+            _protocol_features = features;
+        }
 
-    inline uint64_t get_protocol_features() const noexcept {
-        return 1ULL << VHOST_USER_PROTOCOL_F_MQ |
-               1ULL << VHOST_USER_PROTOCOL_F_LOG_SHMFD |
-               1ULL << VHOST_USER_PROTOCOL_F_BACKEND_REQ |
-               1ULL << VHOST_USER_PROTOCOL_F_HOST_NOTIFIER |
-               1ULL << VHOST_USER_PROTOCOL_F_BACKEND_SEND_FD |
-               1ULL << VHOST_USER_PROTOCOL_F_REPLY_ACK |
-               1ULL << VHOST_USER_PROTOCOL_F_CONFIGURE_MEM_SLOTS |
-               1ULL << VHOST_USER_PROTOCOL_F_CONFIG | _protocol_features;
-    }
+        void set_backend_fd(int fd) {
+            if (_backend_fd != -1) {
+                if (close(_backend_fd)) {
+                    RAWSTD_THROW_ERRNO();
+                }
+            }
+            _backend_fd = fd;
+        }
 
-    inline void set_protocol_features(uint64_t features) noexcept {
-        _protocol_features = features;
-    }
+        inline size_t nregions() const noexcept {
+            return _regions.size();
+        }
 
-    void get_config(uint8_t* config, uint32_t len) const;
+        inline size_t nqueues() const noexcept {
+            return _vqs.size();
+        }
 
-    void set_config(
-        const uint8_t* data, uint32_t offset, uint32_t size, uint32_t flags
-    );
+        inline bool postcopy_listening() const noexcept {
+            return _postcopy_listening;
+        }
 
-    void set_watch(int fd, int condition, vu_watch_cb cb, void* data);
+        void set_vring_size(size_t index, unsigned int size);
 
-    void remove_watch(int fd);
+        void set_vring_base(size_t index, unsigned int idx);
 
-    bool has_watch(int fd) const noexcept;
+        void set_vring_kick(size_t index, int fd);
 
-    void loop();
+        void set_vring_call(size_t index, int fd);
+
+        void set_vring_err(size_t index, int fd);
+
+        void set_vring_addr(const vhost_vring_addr &vra);
+
+        void set_vring_enable(size_t index, bool enabled);
+
+        uint16_t get_vring_base(size_t index);
+
+        /**
+         * Translate a front-end (QEMU) virtual address, as seen in vring
+         * descriptors and vhost-user memory region messages, to a host
+         * virtual address in one of our mmap()'d guest memory regions.
+         * Returns nullptr if the address does not fall within any known
+         * region.
+         */
+        void* userspace_va_to_va(uint64_t userspace_addr) const noexcept;
+
+        const virtio_blk_config& get_config() const noexcept {
+            return _config;
+        }
+
+        void set_config(
+            const uint8_t* data, uint32_t offset, uint32_t size,
+            uint32_t flags
+        );
+
+        uint64_t get_max_mem_slots() const noexcept {
+            /**
+             * vhost in the kernel usually supports 509 mem slots. 509 used to
+             * be the KVM limit, it supported 512, but 3 were used for internal
+             * purposes. This limit is sufficient to support many DIMMs and
+             * virtio-mem in "dynamic-memslots" mode.
+             */
+            return VHOST_USER_MAX_RAM_SLOTS;
+        }
+
+        uint64_t add_mem_reg(const VhostUserMemoryRegion &m, int fd);
+
+        void rem_mem_reg(const VhostUserMemoryRegion &m);
+
+        /**
+         * Drain and process every descriptor chain currently available on
+         * virtqueue `index`, dispatching each as a virtio-blk request against
+         * the backing rawstor object. Called from the virtqueue's kick_fd
+         * handler; may leave I/O in flight (it never blocks).
+         */
+        void process_queue(size_t index);
+
+        /**
+         * Publish a completion (used-ring push + notify) for the descriptor
+         * chain identified by `head` on virtqueue `index`.
+         */
+        void complete_request(size_t index, uint16_t head, uint32_t len);
+
+        void loop();
 };
 
-} // namespace vhost
-} // namespace rawstor
+
+}} // rawstor::vhost
 
 #endif // RAWSTOR_VHOST_DEVICE_HPP

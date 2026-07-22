@@ -2,8 +2,6 @@
 
 #include "config.h"
 
-#include <rawstor.h>
-
 #include <getopt.h>
 #include <signal.h>
 
