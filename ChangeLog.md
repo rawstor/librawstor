@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.2.2] - Unreleased
 
+### Added
+- `rawstor-vhost`, a native vhost-user-blk backend replacing the bundled qemu libvhost-user library.
+
 ### Changed
 - deb/rpm python bindings now build natively per-OS (Ubuntu 24.04/26.04, AlmaLinux 9/10).
 - `debian/changelog` generated from real `ChangeLog.md`, credited per release.
