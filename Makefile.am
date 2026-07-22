@@ -2,7 +2,8 @@ SUBDIRS = librawstd \
           librawio \
           src \
           cli \
-          vhost
+          vhost \
+          vhost-qemu
 
 if ENABLE_TESTS
     SUBDIRS += tests

@@ -131,6 +131,14 @@ qemu-system-x86_64 \
     -device vhost-user-blk-pci,chardev=rawstor1,num-queues=1,disable-legacy=on
 ```
 
+### rawstor-vhost-qemu
+
+`vhost-qemu/` builds `rawstor-vhost-qemu`, a second vhost-user-blk backend
+built on qemu's `libvhost-user` library instead of the native protocol
+implementation in `vhost/`. It takes the same command-line arguments as
+`rawstor-vhost` and is kept around for performance comparison between the
+two implementations.
+
 ## Testing
 
 ```
