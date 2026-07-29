@@ -918,6 +918,14 @@ void TaskReadUserHeader::operator()(size_t result, int error) {
         RAWSTD_THROW_SYSTEM_ERROR(error);
     }
 
+    if (result == 0) {
+        // Front-end closed the connection at a message boundary: a normal
+        // disconnect, not a malformed request. Treat it like EPIPE so
+        // Device::loop() exits cleanly instead of reporting it as a
+        // protocol error.
+        RAWSTD_THROW_SYSTEM_ERROR(EPIPE);
+    }
+
     if (result != size()) {
         rawstd_error("Unexpected request header size: %zu\n", result);
         RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
