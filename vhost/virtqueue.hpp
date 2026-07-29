@@ -82,6 +82,13 @@ public:
      */
     void arm_kick(Device& device, size_t index);
 
+    /**
+     * Mark the previously armed kick read as no longer in flight. Must
+     * be called once that read completes, before arm_kick() can rearm
+     * it for the next kick.
+     */
+    void clear_kick_armed() noexcept { _kick_armed = false; }
+
     void set_call_fd(int fd);
 
     void set_err_fd(int fd);

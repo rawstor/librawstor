@@ -41,6 +41,11 @@ struct KickCtx {
 int kick_cb(size_t result, int error, void* data) {
     std::unique_ptr<KickCtx> ctx(static_cast<KickCtx*>(data));
 
+    // The armed read this callback belongs to has now completed one way
+    // or another; clear it up front so a re-arm below (or a later call
+    // to arm_kick()) is not mistaken for one already in flight.
+    ctx->vq->clear_kick_armed();
+
     if (error == ECANCELED) {
         return 0;
     }
