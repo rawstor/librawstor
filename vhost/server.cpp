@@ -110,13 +110,23 @@ Server::~Server() {
 void Server::loop() {
     rawstd_info("Listening %s\n", _socket_path.c_str());
 
-    int fd = ::accept(_fd, NULL, NULL);
-    if (fd < 0) {
-        RAWSTD_THROW_ERRNO();
-    }
+    while (true) {
+        int fd = ::accept(_fd, NULL, NULL);
+        if (fd < 0) {
+            if (errno == EINTR) {
+                errno = 0;
+                break;
+            }
+            RAWSTD_THROW_ERRNO();
+        }
 
-    Device device(_queue_size, _target, fd);
-    device.loop();
+        try {
+            Device device(_queue_size, _target, fd);
+            device.loop();
+        } catch (const std::exception& e) {
+            rawstd_error("%s\n", e.what());
+        }
+    }
 }
 
 } // namespace vhost
