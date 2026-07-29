@@ -99,13 +99,22 @@ public:
     uint16_t get_vring_base(size_t index);
 
     /**
-     * Translate a front-end (QEMU) virtual address, as seen in vring
-     * descriptors and vhost-user memory region messages, to a host
-     * virtual address in one of our mmap()'d guest memory regions.
-     * Returns nullptr if the address does not fall within any known
-     * region.
+     * Translate a front-end (QEMU) virtual address, as seen in the
+     * desc/avail/used addresses of a VHOST_USER_SET_VRING_ADDR message,
+     * to a host virtual address in one of our mmap()'d guest memory
+     * regions. Returns nullptr if the address does not fall within any
+     * known region.
      */
     void* userspace_va_to_va(uint64_t userspace_addr) const noexcept;
+
+    /**
+     * Translate a guest physical address, as seen in vring descriptors
+     * (populated by the guest driver itself, in its own address space),
+     * to a host virtual address in one of our mmap()'d guest memory
+     * regions. Returns nullptr if the address does not fall within any
+     * known region.
+     */
+    void* guest_phys_to_va(uint64_t gpa) const noexcept;
 
     const virtio_blk_config& get_config() const noexcept { return _config; }
 

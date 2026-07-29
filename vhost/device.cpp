@@ -1471,6 +1471,19 @@ void* Device::userspace_va_to_va(uint64_t userspace_addr) const noexcept {
     return nullptr;
 }
 
+void* Device::guest_phys_to_va(uint64_t gpa) const noexcept {
+    // Find matching memory region.
+    for (auto& r : _regions) {
+        if ((gpa >= r->guest_phys_addr()) &&
+            (gpa < (r->guest_phys_addr() + r->memory_size()))) {
+            uint64_t offset = gpa - r->guest_phys_addr();
+            return (char*)r->mmap_addr() + r->mmap_offset() + offset;
+        }
+    }
+
+    return nullptr;
+}
+
 void Device::set_config(
     const uint8_t* data, uint32_t offset, uint32_t size, uint32_t flags
 ) {

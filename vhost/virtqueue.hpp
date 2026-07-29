@@ -114,8 +114,9 @@ public:
     std::unique_ptr<DescChain> pop(const AddressTranslator& translate);
 
     /**
-     * Convenience overload translating addresses via
-     * device.userspace_va_to_va().
+     * Convenience overload translating addresses (guest physical
+     * addresses, as written by the guest driver into the descriptors)
+     * via device.guest_phys_to_va().
      */
     std::unique_ptr<DescChain> pop(const Device& device);
 

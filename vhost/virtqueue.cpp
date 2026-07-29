@@ -212,7 +212,7 @@ void VirtQueue::set_enabled(Device& device, size_t index, bool enabled) {
 
 std::unique_ptr<DescChain> VirtQueue::pop(const Device& device) {
     return pop([&device](uint64_t addr) {
-        return device.userspace_va_to_va(addr);
+        return device.guest_phys_to_va(addr);
     });
 }
 
