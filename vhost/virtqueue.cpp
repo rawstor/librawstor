@@ -64,6 +64,8 @@ int kick_cb(size_t result, int error, void* data) {
     Device* device = ctx->device;
     size_t index = ctx->index;
 
+    rawstd_debug("vhost: kick_fd fired for vq %zu\n", index);
+
     try {
         device->process_queue(index);
     } catch (const std::exception& e) {
@@ -353,12 +355,16 @@ bool VirtQueue::should_notify(bool event_idx_negotiated) const noexcept {
 
 void VirtQueue::notify(Device& device, bool event_idx_negotiated) {
     if (_call_fd == -1) {
+        rawstd_debug("vhost: notify: no call_fd, skipping\n");
         return;
     }
 
     if (!should_notify(event_idx_negotiated)) {
+        rawstd_debug("vhost: notify: should_notify() is false, skipping\n");
         return;
     }
+
+    rawstd_debug("vhost: notify: writing call_fd %d\n", _call_fd);
 
     std::unique_ptr<NotifyCtx> ctx = std::make_unique<NotifyCtx>();
     ctx->value = 1;

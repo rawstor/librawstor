@@ -1166,6 +1166,7 @@ void ObjectTask::operator()(size_t size, size_t result, int error) {
         return;
     }
 
+    rawstd_debug("vhost: object operation completed, %zu bytes\n", result);
     _req->push(VIRTIO_BLK_S_OK, result);
 }
 
@@ -1193,6 +1194,12 @@ void ObjectTask::pwritev() {
 
 void process_request(std::unique_ptr<Request> req) {
     size_t in_size = rawstd_iovec_size(req->in_iov(), req->in_niov());
+    size_t out_size = rawstd_iovec_size(req->out_iov(), req->out_niov());
+
+    rawstd_debug(
+        "vhost: request type %u offset %llu in_size %zu out_size %zu\n",
+        req->type(), (unsigned long long)req->offset(), in_size, out_size
+    );
 
     switch (req->type()) {
     case VIRTIO_BLK_T_IN: {
@@ -1556,11 +1563,13 @@ void Device::rem_mem_reg(const VhostUserMemoryRegion& m) {
 void Device::process_queue(size_t index) {
     VirtQueue& vq = _vqs.at(index);
 
+    unsigned int npopped = 0;
     while (true) {
         std::unique_ptr<DescChain> chain = vq.pop(*this);
         if (chain == nullptr) {
             break;
         }
+        ++npopped;
 
         try {
             std::unique_ptr<Request> req =
@@ -1570,9 +1579,15 @@ void Device::process_queue(size_t index) {
             rawstd_error("%s\n", e.what());
         }
     }
+
+    rawstd_debug("vhost: process_queue(%zu): popped %u chain(s)\n", index,
+                 npopped);
 }
 
 void Device::complete_request(size_t index, uint16_t head, uint32_t len) {
+    rawstd_debug(
+        "vhost: complete_request(%zu): head %u len %u\n", index, head, len
+    );
     VirtQueue& vq = _vqs.at(index);
     vq.push(head, len);
     vq.notify(*this, event_idx_negotiated());
