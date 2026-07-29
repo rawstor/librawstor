@@ -93,7 +93,10 @@ int notify_cb(size_t result, int error, void* data) {
 
     if (error == 0 && result != sizeof(ctx->value)) {
         rawstd_error("vhost: unexpected call_fd write size: %zu\n", result);
+        return 0;
     }
+
+    rawstd_debug("vhost: notify: call_fd write completed\n");
 
     return 0;
 }
