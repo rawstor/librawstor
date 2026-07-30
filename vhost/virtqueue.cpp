@@ -73,7 +73,11 @@ int kick_cb(size_t result, int error, void* data) {
     }
 
     if (vq->enabled() && vq->kick_fd() != -1) {
-        vq->arm_kick(*device, index);
+        try {
+            vq->arm_kick(*device, index);
+        } catch (const std::exception& e) {
+            rawstd_error("vhost: failed to rearm kick_fd: %s\n", e.what());
+        }
     }
 
     return 0;
@@ -106,6 +110,36 @@ int notify_cb(size_t result, int error, void* data) {
 namespace rawstor {
 namespace vhost {
 
+void VirtQueue::prime_call_fd() noexcept {
+    if (_call_fd == -1) {
+        return;
+    }
+
+    /*
+     * The front-end's interrupt route for call_fd (e.g. a KVM irqfd) is
+     * not necessarily wired up the instant it hands us the fd or
+     * (re-)enables the queue -- notably across a reconnect/
+     * renegotiation, where SET_VRING_ENABLE toggles off and back on
+     * around a new SET_VRING_ADDR without necessarily replacing
+     * call_fd itself. A notify() landing in that gap increments the
+     * eventfd's counter without ever triggering an interrupt, and
+     * nothing re-checks a stale non-zero counter once the route is
+     * finally established, so the driver would wait for that
+     * completion forever. Priming here mirrors libvhost-user's
+     * vu_set_vring_call_exec(), which does the same "in case of I/O
+     * hang after reconnecting" -- except we also do it on every enable,
+     * since re-enabling appears to re-establish the route just as a
+     * fresh SET_VRING_CALL does.
+     */
+    uint64_t one = 1;
+    if (write(_call_fd, &one, sizeof(one)) != sizeof(one)) {
+        rawstd_error(
+            "vhost: failed to prime call_fd %d: %s\n", _call_fd,
+            strerror(errno)
+        );
+    }
+}
+
 VirtQueue::~VirtQueue() {
     if (_kick_fd != -1) {
         close_fd(_kick_fd, "kick_fd");
@@ -119,6 +153,11 @@ VirtQueue::~VirtQueue() {
 }
 
 void VirtQueue::arm_kick(Device& device, size_t index) {
+    rawstd_debug(
+        "vhost: arm_kick(vq=%zu): kick_armed=%d kick_fd=%d\n", index,
+        _kick_armed, _kick_fd
+    );
+
     if (_kick_armed || _kick_fd == -1) {
         return;
     }
@@ -166,6 +205,7 @@ void VirtQueue::set_call_fd(int fd) {
         close_fd(_call_fd, "call_fd");
     }
     _call_fd = fd;
+    prime_call_fd();
 }
 
 void VirtQueue::set_err_fd(int fd) {
@@ -187,6 +227,14 @@ void VirtQueue::set_vring_addr(
      * driver has not consumed yet.
      */
     _used_idx = RAWSTD_LE16TOH(_ring.used_idx());
+
+    /*
+     * The driver's used_event in this (possibly brand new) ring memory
+     * cannot be assumed consistent with our freshly-adopted _used_idx;
+     * force the next completion to notify unconditionally rather than
+     * risk should_notify() silently agreeing to skip it forever.
+     */
+    _signalled_used_valid = false;
 }
 
 void VirtQueue::set_vring_addr(
@@ -202,6 +250,7 @@ void VirtQueue::set_enabled(Device& device, size_t index, bool enabled) {
     _enabled = enabled;
 
     if (_enabled) {
+        prime_call_fd();
         arm_kick(device, index);
     } else if (_kick_fd != -1) {
         int res = rawio_cancel_all(device.queue(), _kick_fd);
@@ -338,7 +387,7 @@ void VirtQueue::push(uint16_t head, uint32_t len) {
     _ring.set_used_idx(RAWSTD_LE16TOH(_used_idx));
 }
 
-bool VirtQueue::should_notify(bool event_idx_negotiated) const noexcept {
+bool VirtQueue::should_notify(bool event_idx_negotiated) noexcept {
     /*
      * Make sure we observe the driver's latest avail->flags / used_event
      * before deciding whether to skip the notification.
@@ -346,6 +395,13 @@ bool VirtQueue::should_notify(bool event_idx_negotiated) const noexcept {
     __sync_synchronize();
 
     if (event_idx_negotiated) {
+        bool was_valid = _signalled_used_valid;
+        _signalled_used_valid = true;
+
+        if (!was_valid) {
+            return true;
+        }
+
         uint16_t event = RAWSTD_LE16TOH(_ring.used_event());
         uint16_t new_idx = _used_idx;
         uint16_t old_idx = static_cast<uint16_t>(_used_idx - 1);

@@ -207,20 +207,32 @@ TEST_F(VirtQueueTest, ShouldNotifyWithoutEventIdxRespectsNoInterruptFlag) {
 }
 
 TEST_F(VirtQueueTest, ShouldNotifyWithEventIdxFiresExactlyAtRequestedIndex) {
-    // Driver is waiting to be woken right after the used index reaches 1
-    // (i.e. used_event == old_idx == 0).
-    mem.avail->ring[kQueueSize] = 0;
+    // The first should_notify() after a (re)connect always fires,
+    // regardless of used_event: the driver's used_event in this ring
+    // memory isn't necessarily consistent with our freshly-adopted
+    // _used_idx yet (see set_vring_addr()).
+    vq.push(0, 1);
+    EXPECT_TRUE(vq.should_notify(true));
 
-    vq.push(0, 1); // old_idx=0, new_idx=1
+    // From here on the EVENT_IDX formula actually governs. Driver is
+    // waiting to be woken right after the used index reaches 2
+    // (i.e. used_event == old_idx == 1).
+    mem.avail->ring[kQueueSize] = 1;
+    vq.push(1, 1); // old_idx=1, new_idx=2
     EXPECT_TRUE(vq.should_notify(true));
 }
 
 TEST_F(VirtQueueTest, ShouldNotifyWithEventIdxSkipsUnrelatedCompletions) {
-    // Driver only wants to be woken after used index 5; the very first
-    // completion (old_idx=0 -> new_idx=1) must not trigger a notification.
-    mem.avail->ring[kQueueSize] = 4;
-
+    // Consume the guaranteed first notification so the completion below
+    // is actually exercising the EVENT_IDX formula, not the
+    // just-(re)connected safety net.
     vq.push(0, 1);
+    EXPECT_TRUE(vq.should_notify(true));
+
+    // Driver only wants to be woken after used index 5; this completion
+    // (old_idx=1 -> new_idx=2) must not trigger a notification.
+    mem.avail->ring[kQueueSize] = 4;
+    vq.push(1, 1);
     EXPECT_FALSE(vq.should_notify(true));
 }
 
