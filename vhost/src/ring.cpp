@@ -1,4 +1,4 @@
-#include <rawvhost/ring.hpp>
+#include <vhost/ring.hpp>
 
 #include "device.hpp"
 

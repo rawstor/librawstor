@@ -50,7 +50,7 @@ librawstor/
 ├── cli/              rawstor-cli command-line client (create/list/show/remove/testio)
 ├── ost/              rawstor-ost — the OST protocol server (serves file://, proxies/mirrors to ost://)
 ├── vhost/             rawstor-vhost — native vhost-user-blk backend (no qemu library dependency)
-│   ├── include/rawvhost/  public headers vhost/tests needs: protocol.h, ring.hpp, virtqueue.hpp
+│   ├── include/vhost/  public headers vhost/tests needs: protocol.h, ring.hpp, virtqueue.hpp
 │   ├── include/stdheaders/ vendored/trimmed Linux virtio/vhost kernel headers
 │   ├── src/          device/devregion/ring/server/virtqueue implementation + main.cpp
 │   └── tests/         gtest suite (currently: VirtQueue/ring logic)
@@ -130,7 +130,7 @@ backends and the io_uring/poll RawIO backends.
   of what it enforces (angle-bracket includes sort alphabetically within
   their block).
 - Cross-directory includes use angle brackets and are namespaced by
-  directory (`<rawio/queue.hpp>`, `<rawvhost/ring.hpp>`,
+  directory (`<rawio/queue.hpp>`, `<vhost/ring.hpp>`,
   `<rawstd/logging.h>`, `<rawstor/object.h>`); same-directory private
   headers use quotes (`"device.hpp"`).
 - Public API headers (`include/rawstor/*.h`) carry an LGPL-3.0 SPDX header

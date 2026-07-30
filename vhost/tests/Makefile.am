@@ -14,7 +14,7 @@ AM_LDFLAGS = $(ASAN_LDFLAGS) \
 
 test_all_SOURCES = main.cpp \
                    test_virtqueue.cpp
-test_all_LDADD = $(top_builddir)/vhost/src/librawvhost.la \
+test_all_LDADD = $(top_builddir)/vhost/src/libvhost.la \
                  $(top_builddir)/src/librawstor.la \
                  $(top_builddir)/librawstd/src/librawstd.la
 

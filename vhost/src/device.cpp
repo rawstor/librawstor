@@ -1,9 +1,9 @@
 #include "device.hpp"
 
-#include <rawvhost/protocol.h>
 #include <stdheaders/linux/virtio_blk.h>
 #include <stdheaders/linux/virtio_config.h>
 #include <stdheaders/linux/virtio_ring.h>
+#include <vhost/protocol.h>
 
 #include <rawstd/endian.h>
 #include <rawstd/gpp.hpp>

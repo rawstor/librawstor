@@ -2,9 +2,9 @@
 #define RAWSTOR_VHOST_DEVICE_HPP
 
 #include "devregion.hpp"
-#include <rawvhost/protocol.h>
-#include <rawvhost/virtqueue.hpp>
 #include <stdheaders/linux/virtio_blk.h>
+#include <vhost/protocol.h>
+#include <vhost/virtqueue.hpp>
 
 #include <rawstor/object.h>
 #include <rawstor/rawio.h>

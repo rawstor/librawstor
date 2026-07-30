@@ -1,6 +1,6 @@
-#include <rawvhost/ring.hpp>
-#include <rawvhost/virtqueue.hpp>
 #include <stdheaders/linux/virtio_ring.h>
+#include <vhost/ring.hpp>
+#include <vhost/virtqueue.hpp>
 
 #include <gtest/gtest.h>
 

@@ -1,9 +1,9 @@
 #ifndef RAWSTOR_VHOST_RING_HPP
 #define RAWSTOR_VHOST_RING_HPP
 
-#include <rawvhost/protocol.h>
 #include <stdheaders/linux/vhost_types.h>
 #include <stdheaders/linux/virtio_ring.h>
+#include <vhost/protocol.h>
 
 #include <functional>
 
