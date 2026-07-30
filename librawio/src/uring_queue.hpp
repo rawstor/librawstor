@@ -15,6 +15,22 @@ class Queue final : public rawio::Queue {
 private:
     io_uring _ring;
 
+    /*
+     * Bumped once per _dispatch() call (one reap of the completion ring).
+     * IORING_POLL_ADD_MULTI can post more than one completion for a
+     * single registration within the very same reap batch -- eventfd_write()
+     * wakes the poll waitqueue on every write, so N writes coalesced
+     * before we get around to draining can yield N CQEs even though a
+     * single read() would drain all of them at once. Handing every one
+     * of those to the caller's callback lets it observe "readable" with
+     * nothing left to read (e.g. eventfd EAGAIN) purely because an
+     * earlier callback in the *same* batch already drained it.
+     * poll_multishot() callbacks compare their own last-seen generation
+     * against this counter to collapse such same-batch duplicates into a
+     * single callback invocation.
+     */
+    unsigned int _dispatch_generation;
+
     void _dispatch();
 
 public:

@@ -243,14 +243,18 @@ public:
 class EventSimplexPollMultishot final : public EventSimplexPoll {
 private:
     std::function<void(int)> _cb;
+    // See Queue::_dispatch_generation: collapses same-batch duplicate
+    // wakeups (this event is re-armed into the same session and could in
+    // principle be re-evaluated more than once before the caller's
+    // callback has a chance to drain whatever made it readable) into a
+    // single callback invocation.
+    unsigned int _last_generation;
 
 public:
     EventSimplexPollMultishot(
         Queue& q, int fd, unsigned int mask,
         const rawstd::TraceEvent& trace_event, std::function<void(int)>&& cb
-    ) :
-        EventSimplexPoll(q, fd, mask, trace_event),
-        _cb(std::move(cb)) {}
+    );
 
     void dispatch() override final;
 
