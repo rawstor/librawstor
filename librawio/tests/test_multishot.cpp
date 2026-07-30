@@ -126,7 +126,7 @@ TEST_F(MultishotBurstTest, poll_eventfd_burst_no_torn_read) {
     // registration is live and armed in the kernel *before* any of the
     // writes below happen -- otherwise every write would land before the
     // poll request even exists and there would be nothing to race.
-    _wait_all();
+    EXPECT_NO_THROW(_wait_all());
 
     // Pile up every write *before* the registration gets a chance to
     // drain any of them. That's deliberate and deterministic (no racing
@@ -141,13 +141,26 @@ TEST_F(MultishotBurstTest, poll_eventfd_burst_no_torn_read) {
         ASSERT_EQ(::write(fd, &one, sizeof(one)), (ssize_t)sizeof(one));
     }
 
-    _wait_all();
+    // Unlike the two _wait_all() calls above and below, this one can't be
+    // non-blocking: right after the burst there is no guarantee the
+    // kernel has already posted every completion it owes us, and
+    // wait_timeout(0) racing that would just be a coin flip. Block with a
+    // real timeout and keep going until every write is accounted for.
+    for (unsigned int i = 0;
+         i < total_writes + 10 && total_reads < total_writes && !torn_read;
+         ++i) {
+        try {
+            _queue->wait_timeout(50);
+        } catch (const std::system_error& e) {
+            ASSERT_EQ(e.code().value(), ETIME);
+        }
+    }
 
     EXPECT_FALSE(torn_read);
     EXPECT_EQ(total_reads, total_writes);
 
     _queue->cancel(event);
-    _wait_all();
+    EXPECT_NO_THROW(_wait_all());
 
     ::close(fd);
 }
