@@ -6,10 +6,14 @@
 
 #include <gtest/gtest.h>
 
+#include <sys/eventfd.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 
 #include <poll.h>
+#include <unistd.h>
+
+#include <system_error>
 
 namespace {
 
@@ -39,6 +43,15 @@ public:
 class MultishotTest : public rawio::tests::QueueTest {
 protected:
     MultishotTest() : rawio::tests::QueueTest(1) {}
+};
+
+class MultishotBurstTest : public rawio::tests::QueueTest {
+protected:
+    // A generously-sized queue: this test's whole point is to pile up a
+    // burst of writes before they can be drained, and MultishotTest's
+    // depth (sized for the other, low-volume multishot tests) is nowhere
+    // near big enough not to overflow under that load.
+    MultishotBurstTest() : rawio::tests::QueueTest(512) {}
 };
 
 TEST_F(MultishotTest, poll) {
@@ -72,6 +85,71 @@ TEST_F(MultishotTest, poll) {
     EXPECT_NO_THROW(_queue->wait_timeout(0));
     EXPECT_EQ(result, -ECANCELED);
     EXPECT_EQ(count, 3u);
+}
+
+// Regression test for a same-batch duplicate poll_multishot wakeup landing
+// on a coalescing resource (eventfd): a burst of writes before the
+// registration gets a chance to drain any of them can make the backend
+// observe "readable" more than once for writes that a single drain
+// already accounts for in full. A caller that -- like libvhost-user's
+// vu_kick_cb() -- treats every wakeup as carrying data to read would see
+// a torn, empty read (EAGAIN) on the redundant one.
+TEST_F(MultishotBurstTest, poll_eventfd_burst_no_torn_read) {
+    int fd = eventfd(0, EFD_NONBLOCK);
+    ASSERT_GE(fd, 0);
+
+    static constexpr unsigned int total_writes = 64;
+
+    bool torn_read = false;
+    uint64_t total_reads = 0;
+
+    rawio::Event* event = _queue->poll_multishot(
+        fd, POLLIN, [fd, &torn_read, &total_reads](int result) {
+            if (result != POLLIN) {
+                return;
+            }
+            eventfd_t value = 0;
+            if (eventfd_read(fd, &value) == -1) {
+                // This is exactly the failure mode the fix prevents:
+                // being told "readable" for a wakeup that a prior,
+                // same-batch callback invocation already fully drained.
+                torn_read = true;
+                return;
+            }
+            total_reads += value;
+        }
+    );
+
+    // poll_multishot() only prepares the SQE locally; it isn't actually
+    // submitted to the kernel until the next wait()/wait_timeout() call.
+    // Force that submission now, while the eventfd is still at 0, so the
+    // registration is live and armed in the kernel *before* any of the
+    // writes below happen -- otherwise every write would land before the
+    // poll request even exists and there would be nothing to race.
+    _wait_all();
+
+    // Pile up every write *before* the registration gets a chance to
+    // drain any of them. That's deliberate and deterministic (no racing
+    // against a second thread's scheduling): each eventfd_write() wakes
+    // the poll waitqueue regardless of whether anything drained the
+    // previous one, so by the time we drain below, the kernel has as
+    // many "became readable" wakeups queued up for this one registration
+    // as it's going to get from this burst -- exactly the condition a
+    // bursty real kicker produces, just guaranteed instead of hoped for.
+    for (unsigned int i = 0; i < total_writes; ++i) {
+        eventfd_t one = 1;
+        ASSERT_EQ(::write(fd, &one, sizeof(one)), (ssize_t)sizeof(one));
+    }
+
+    _wait_all();
+
+    EXPECT_FALSE(torn_read);
+    EXPECT_EQ(total_reads, total_writes);
+
+    _queue->cancel(event);
+    _wait_all();
+
+    ::close(fd);
 }
 
 TEST_F(MultishotTest, accept) {
