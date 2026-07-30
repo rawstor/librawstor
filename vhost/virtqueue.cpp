@@ -195,7 +195,7 @@ void VirtQueue::set_kick_fd(Device& device, size_t index, int fd) {
     _kick_fd = fd;
     _kick_armed = false;
 
-    if (_enabled && _kick_fd != -1) {
+    if (_enable_count > 0 && _kick_fd != -1) {
         arm_kick(device, index);
     }
 }
@@ -247,12 +247,25 @@ void VirtQueue::set_vring_addr(
 }
 
 void VirtQueue::set_enabled(Device& device, size_t index, bool enabled) {
-    _enabled = enabled;
+    if (enabled) {
+        if (_enable_count++ > 0) {
+            return;
+        }
 
-    if (_enabled) {
         prime_call_fd();
         arm_kick(device, index);
-    } else if (_kick_fd != -1) {
+        return;
+    }
+
+    if (_enable_count == 0) {
+        return;
+    }
+
+    if (--_enable_count > 0) {
+        return;
+    }
+
+    if (_kick_fd != -1) {
         int res = rawio_cancel_all(device.queue(), _kick_fd);
         if (res && res != -ENOENT) {
             rawstd_error(
@@ -265,9 +278,24 @@ void VirtQueue::set_enabled(Device& device, size_t index, bool enabled) {
 }
 
 std::unique_ptr<DescChain> VirtQueue::pop(const Device& device) {
-    return pop([&device](uint64_t addr) {
+    std::unique_ptr<DescChain> chain = pop([&device](uint64_t addr) {
         return device.guest_phys_to_va(addr);
     });
+
+    /*
+     * Mirrors libvhost-user's vu_queue_pop(): with EVENT_IDX negotiated,
+     * the device must tell the driver (via avail_event, the used ring's
+     * counterpart to used_event) not to bother kicking again until
+     * last_avail_idx has moved past this point. Without this, the driver
+     * may legitimately decide -- based on its own EVENT_IDX arithmetic
+     * against a stale avail_event -- that a later kick is unnecessary,
+     * and we would then wait forever for a kick that never comes.
+     */
+    if (chain && device.event_idx_negotiated()) {
+        _ring.set_avail_event(RAWSTD_LE16TOH(_last_avail_idx));
+    }
+
+    return chain;
 }
 
 std::unique_ptr<DescChain> VirtQueue::pop(const AddressTranslator& translate) {

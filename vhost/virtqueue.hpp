@@ -42,7 +42,16 @@ private:
     int _kick_fd;
     int _call_fd;
     int _err_fd;
-    bool _enabled;
+    /*
+     * Reference count of independent reasons this virtqueue should be
+     * considered enabled (protocol SET_VRING_ENABLE plus any other
+     * caller, e.g. GET_VRING_BASE's forced stop). kick_fd only actually
+     * gets armed/disarmed on the 0<->1 transition, mirroring
+     * rawstor-vhost-qemu's Watcher ref-count around set_watch/
+     * remove_watch: overlapping enable/disable calls must not tear down
+     * (or redundantly re-arm) state that another caller still needs.
+     */
+    int _enable_count;
     bool _kick_armed;
 
     /*
@@ -74,7 +83,7 @@ public:
         _kick_fd(-1),
         _call_fd(-1),
         _err_fd(-1),
-        _enabled(false),
+        _enable_count(0),
         _kick_armed(false),
         _signalled_used_valid(false) {}
     VirtQueue(const VirtQueue&) = delete;
@@ -84,7 +93,7 @@ public:
     VirtQueue& operator=(const VirtQueue&) = delete;
     VirtQueue& operator=(VirtQueue&&) = delete;
 
-    inline bool enabled() const noexcept { return _enabled; }
+    inline bool enabled() const noexcept { return _enable_count > 0; }
 
     inline int kick_fd() const noexcept { return _kick_fd; }
 
