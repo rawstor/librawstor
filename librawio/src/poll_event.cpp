@@ -112,7 +112,24 @@ void EventSimplexPollOneshot::dispatch() {
     }
 }
 
+EventSimplexPollMultishot::EventSimplexPollMultishot(
+    Queue& q, int fd, unsigned int mask, const rawstd::TraceEvent& trace_event,
+    std::function<void(int)>&& cb
+) :
+    EventSimplexPoll(q, fd, mask, trace_event),
+    _cb(std::move(cb)),
+    _last_generation(q.dispatch_generation()) {
+}
+
 void EventSimplexPollMultishot::dispatch() {
+    if (_last_generation == _q.dispatch_generation()) {
+        // Same-batch duplicate wakeup (see Queue::_dispatch_generation) --
+        // an earlier dispatch in this very batch already accounted for it.
+        _result = 0;
+        return;
+    }
+    _last_generation = _q.dispatch_generation();
+
     if (!_error) {
         ::dispatch(trace_event, _cb, _result);
     } else {
