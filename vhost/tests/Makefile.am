@@ -6,7 +6,7 @@ AM_CXXFLAGS = $(GENERIC_CXXFLAGS) \
               $(GTEST_CFLAGS) \
               -I$(top_srcdir)/librawstd/include \
               -I$(top_srcdir)/include \
-              -I$(top_srcdir)/vhost
+              -I$(top_srcdir)/vhost/include
 
 AM_LDFLAGS = $(ASAN_LDFLAGS) \
              $(GTEST_LIBS)
@@ -14,7 +14,7 @@ AM_LDFLAGS = $(ASAN_LDFLAGS) \
 
 test_all_SOURCES = main.cpp \
                    test_virtqueue.cpp
-test_all_LDADD = $(top_builddir)/vhost/librawvhost.la \
+test_all_LDADD = $(top_builddir)/vhost/src/librawvhost.la \
                  $(top_builddir)/src/librawstor.la \
                  $(top_builddir)/librawstd/src/librawstd.la
 

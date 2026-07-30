@@ -139,6 +139,7 @@ AC_CONFIG_FILES(
     [src/rawstor.pc]
     [cli/Makefile]
     [vhost/Makefile]
+    [vhost/src/Makefile]
     [vhost/tests/Makefile]
     [vhost-qemu/Makefile]
     [vhost-qemu/3rdparty/Makefile]
