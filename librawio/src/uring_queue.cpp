@@ -20,7 +20,9 @@ std::string engine_name = "uring";
 namespace rawio {
 namespace uring {
 
-Queue::Queue(unsigned int depth) : rawio::Queue(depth) {
+Queue::Queue(unsigned int depth) :
+    rawio::Queue(depth),
+    _dispatch_generation(0) {
     int res = io_uring_queue_init(
         depth, &_ring, IORING_SETUP_SUBMIT_ALL | IORING_SETUP_COOP_TASKRUN
     );
@@ -61,6 +63,8 @@ Queue::~Queue() {
 
 void Queue::_dispatch() {
     unsigned int nr = 0;
+
+    ++_dispatch_generation;
 
     try {
         unsigned int head;
@@ -206,9 +210,18 @@ rawio::Event* Queue::poll_multishot(
         RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
     }
     io_uring_prep_poll_multishot(sqe, fd, mask);
+    unsigned int last_generation = _dispatch_generation;
     auto p = std::make_unique<std::function<void(ssize_t, unsigned int)>>(
-        [cb = std::move(cb), trace_event](ssize_t result, unsigned int) {
+        [this, cb = std::move(cb), trace_event,
+         last_generation](ssize_t result, unsigned int) mutable {
             RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "result = %zd\n", result);
+            if (last_generation == _dispatch_generation) {
+                // Same-batch duplicate readiness notification for this
+                // registration (see _dispatch_generation) -- an earlier
+                // callback in this very reap already accounted for it.
+                return;
+            }
+            last_generation = _dispatch_generation;
             cb(result);
         }
     );

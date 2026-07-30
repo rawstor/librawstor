@@ -25,6 +25,16 @@ private:
     rawstd::RingBuf<Event> _cqes;
     Event* _current_event;
 
+    /*
+     * Bumped once per ::poll() readiness batch. Mirrors the uring
+     * backend's _dispatch_generation: lets multishot poll events collapse
+     * same-batch duplicate wakeups into a single callback invocation, so
+     * both backends give callers (e.g. an eventfd drain that can hit
+     * EAGAIN if invoked twice for one accumulated write) the same
+     * at-most-once-per-batch guarantee.
+     */
+    unsigned int _dispatch_generation;
+
     Session& _get_session(int fd);
 
     void _wait_timeout(int timeout);
@@ -38,7 +48,12 @@ public:
     explicit Queue(unsigned int depth) :
         rawio::Queue(depth),
         _cqes(depth),
-        _current_event(nullptr) {}
+        _current_event(nullptr),
+        _dispatch_generation(0) {}
+
+    inline unsigned int dispatch_generation() const noexcept {
+        return _dispatch_generation;
+    }
 
     rawio::Event* open(
         const char* path, int flags, mode_t mode, std::function<void(int)>&& cb

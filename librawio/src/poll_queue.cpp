@@ -38,6 +38,15 @@ Session& Queue::_get_session(int fd) {
 }
 
 void Queue::_wait_timeout(int timeout) {
+    /*
+     * One generation per _wait_timeout() call, covering however this
+     * particular batch of _cqes got filled -- a fresh ::poll() readiness
+     * pass below, or events already sitting in _cqes from cancel()/eval()
+     * that bypass it entirely. Either way, everything dispatched during
+     * this call is "the same batch" for de-duplication purposes.
+     */
+    ++_dispatch_generation;
+
     while (!_eval_sqes.empty()) {
         std::unique_ptr<EventEval> event = std::move(_eval_sqes.front());
         _eval_sqes.pop_front();
