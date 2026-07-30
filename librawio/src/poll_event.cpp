@@ -113,12 +113,13 @@ void EventSimplexPollOneshot::dispatch() {
 }
 
 EventSimplexPollMultishot::EventSimplexPollMultishot(
-    Queue& q, int fd, unsigned int mask,
-    const rawstd::TraceEvent& trace_event, std::function<void(int)>&& cb
+    Queue& q, int fd, unsigned int mask, const rawstd::TraceEvent& trace_event,
+    std::function<void(int)>&& cb
 ) :
     EventSimplexPoll(q, fd, mask, trace_event),
     _cb(std::move(cb)),
-    _last_generation(q.dispatch_generation()) {}
+    _last_generation(q.dispatch_generation()) {
+}
 
 void EventSimplexPollMultishot::dispatch() {
     if (_last_generation == _q.dispatch_generation()) {
