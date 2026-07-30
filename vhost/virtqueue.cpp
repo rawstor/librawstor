@@ -134,8 +134,7 @@ void VirtQueue::prime_call_fd() noexcept {
     uint64_t one = 1;
     if (write(_call_fd, &one, sizeof(one)) != sizeof(one)) {
         rawstd_error(
-            "vhost: failed to prime call_fd %d: %s\n", _call_fd,
-            strerror(errno)
+            "vhost: failed to prime call_fd %d: %s\n", _call_fd, strerror(errno)
         );
     }
 }
@@ -278,9 +277,8 @@ void VirtQueue::set_enabled(Device& device, size_t index, bool enabled) {
 }
 
 std::unique_ptr<DescChain> VirtQueue::pop(const Device& device) {
-    std::unique_ptr<DescChain> chain = pop([&device](uint64_t addr) {
-        return device.guest_phys_to_va(addr);
-    });
+    std::unique_ptr<DescChain> chain =
+        pop([&device](uint64_t addr) { return device.guest_phys_to_va(addr); });
 
     /*
      * Mirrors libvhost-user's vu_queue_pop(): with EVENT_IDX negotiated,

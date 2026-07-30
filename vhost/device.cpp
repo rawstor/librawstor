@@ -1580,8 +1580,9 @@ void Device::process_queue(size_t index) {
         }
     }
 
-    rawstd_debug("vhost: process_queue(%zu): popped %u chain(s)\n", index,
-                 npopped);
+    rawstd_debug(
+        "vhost: process_queue(%zu): popped %u chain(s)\n", index, npopped
+    );
 }
 
 void Device::complete_request(size_t index, uint16_t head, uint32_t len) {
