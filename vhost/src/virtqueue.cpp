@@ -1,7 +1,7 @@
-#include "virtqueue.hpp"
+#include <rawvhost/virtqueue.hpp>
 
 #include "device.hpp"
-#include "stdheaders/linux/virtio_ring.h"
+#include <stdheaders/linux/virtio_ring.h>
 
 #include <rawstd/endian.h>
 #include <rawstd/gpp.hpp>

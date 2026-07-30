@@ -1,6 +1,6 @@
 #include "devregion.hpp"
 
-#include "protocol.h"
+#include <rawvhost/protocol.h>
 
 #include <rawstd/gpp.hpp>
 #include <rawstd/logging.h>

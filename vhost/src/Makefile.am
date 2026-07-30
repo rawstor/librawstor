@@ -11,9 +11,9 @@ AM_CXXFLAGS = $(GENERIC_CXXFLAGS) \
 AM_LDFLAGS = $(ASAN_LDFLAGS)
 
 
-librawvhost_la_SOURCES = $(top_srcdir)/vhost/include/protocol.h \
-                         $(top_srcdir)/vhost/include/ring.hpp \
-                         $(top_srcdir)/vhost/include/virtqueue.hpp \
+librawvhost_la_SOURCES = $(top_srcdir)/vhost/include/rawvhost/protocol.h \
+                         $(top_srcdir)/vhost/include/rawvhost/ring.hpp \
+                         $(top_srcdir)/vhost/include/rawvhost/virtqueue.hpp \
                          $(top_srcdir)/vhost/include/stdheaders/linux/types.h \
                          $(top_srcdir)/vhost/include/stdheaders/linux/vhost_types.h \
                          $(top_srcdir)/vhost/include/stdheaders/linux/virtio_blk.h \

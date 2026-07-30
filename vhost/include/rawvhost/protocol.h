@@ -1,7 +1,7 @@
 #ifndef RAWSTOR_VHOST_USER_PROTOCOL_H
 #define RAWSTOR_VHOST_USER_PROTOCOL_H
 
-#include "stdheaders/linux/vhost_types.h"
+#include <stdheaders/linux/vhost_types.h>
 
 #include <stdint.h>
 
