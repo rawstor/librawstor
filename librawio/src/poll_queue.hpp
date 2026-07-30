@@ -39,7 +39,7 @@ private:
 
     void _wait_timeout(int timeout);
 
-    void _eval(std::unique_ptr<EventEval>&& event);
+    void _eval(std::unique_ptr<EventEval> event);
 
 public:
     static const std::string& engine_name();
