@@ -3,13 +3,13 @@
 
 #include <rawstd/gpp.hpp>
 #include <rawstd/iovec.h>
+#include <rawstd/socket.h>
 
 #include <gtest/gtest.h>
 
 #include <sys/socket.h>
 #include <sys/un.h>
 
-#include <fcntl.h>
 #include <poll.h>
 #include <unistd.h>
 
@@ -101,7 +101,7 @@ TEST_F(MultishotBurstTest, poll_pipe_burst_no_torn_read) {
     ASSERT_EQ(::pipe(fds), 0);
     int read_fd = fds[0];
     int write_fd = fds[1];
-    ASSERT_NE(::fcntl(read_fd, F_SETFL, O_NONBLOCK), -1);
+    ASSERT_EQ(rawstd_socket_set_nonblock(read_fd), 0);
 
     bool torn_read = false;
     unsigned int total_reads = 0;
