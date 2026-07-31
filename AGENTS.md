@@ -155,6 +155,15 @@ backends and the io_uring/poll RawIO backends.
 
 ## Gotchas worth knowing
 
+- macOS compatibility matters: everything outside `librawio`'s io_uring
+  backend (`uring_queue.*`, inherently Linux-only) should stay buildable
+  on macOS, which means `--without-liburing` (the `poll()` backend) there.
+  Avoid Linux-only APIs (e.g. `eventfd()`/`<sys/eventfd.h>`, `pipe2()`) in
+  portable code and tests — prefer a portable equivalent (e.g. a plain
+  `pipe()` + `fcntl(O_NONBLOCK)`) when one exists. For the rare case where
+  platform-specific code is genuinely unavoidable, `librawstd/include/
+  rawstd/gcc.h` defines `RAWSTD_ON_MACOS`/`RAWSTD_ON_LINUX` for `#if`
+  guards — see `librawstd/include/rawstd/endian.h` for the pattern.
 - `vhost-qemu/3rdparty/qemu/` is vendored upstream QEMU/libvhost-user
   code. Never patch it — if a bug surfaces there (e.g. `vu_kick_cb()`
   treating a failed `eventfd_read()` as fatal and tearing down the
