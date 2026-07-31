@@ -3,10 +3,10 @@
 
 #include <rawstd/gpp.hpp>
 #include <rawstd/iovec.h>
+#include <rawstd/socket.h>
 
 #include <gtest/gtest.h>
 
-#include <sys/eventfd.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 
@@ -88,41 +88,45 @@ TEST_F(MultishotTest, poll) {
 }
 
 // Regression test for a same-batch duplicate poll_multishot wakeup landing
-// on a coalescing resource (eventfd): a burst of writes before the
+// on a coalescing resource (a pipe): a burst of writes before the
 // registration gets a chance to drain any of them can make the backend
 // observe "readable" more than once for writes that a single drain
 // already accounts for in full. A caller that -- like libvhost-user's
 // vu_kick_cb() -- treats every wakeup as carrying data to read would see
 // a torn, empty read (EAGAIN) on the redundant one.
-TEST_F(MultishotBurstTest, poll_eventfd_burst_no_torn_read) {
-    int fd = eventfd(0, EFD_NONBLOCK);
-    ASSERT_GE(fd, 0);
-
+TEST_F(MultishotBurstTest, poll_pipe_burst_no_torn_read) {
     static constexpr unsigned int total_writes = 64;
 
+    int fds[2];
+    ASSERT_EQ(::pipe(fds), 0);
+    int read_fd = fds[0];
+    int write_fd = fds[1];
+    ASSERT_EQ(rawstd_socket_set_nonblock(read_fd), 0);
+
     bool torn_read = false;
-    uint64_t total_reads = 0;
+    unsigned int total_reads = 0;
 
     rawio::Event* event = _queue->poll_multishot(
-        fd, POLLIN, [fd, &torn_read, &total_reads](int result) {
+        read_fd, POLLIN, [read_fd, &torn_read, &total_reads](int result) {
             if (result != POLLIN) {
                 return;
             }
-            eventfd_t value = 0;
-            if (eventfd_read(fd, &value) == -1) {
+            char buf[total_writes];
+            ssize_t n = ::read(read_fd, buf, sizeof(buf));
+            if (n == -1) {
                 // This is exactly the failure mode the fix prevents:
                 // being told "readable" for a wakeup that a prior,
                 // same-batch callback invocation already fully drained.
                 torn_read = true;
                 return;
             }
-            total_reads += value;
+            total_reads += n;
         }
     );
 
     // poll_multishot() only prepares the SQE locally; it isn't actually
     // submitted to the kernel until the next wait()/wait_timeout() call.
-    // Force that submission now, while the eventfd is still at 0, so the
+    // Force that submission now, while the pipe is still empty, so the
     // registration is live and armed in the kernel *before* any of the
     // writes below happen -- otherwise every write would land before the
     // poll request even exists and there would be nothing to race.
@@ -130,15 +134,15 @@ TEST_F(MultishotBurstTest, poll_eventfd_burst_no_torn_read) {
 
     // Pile up every write *before* the registration gets a chance to
     // drain any of them. That's deliberate and deterministic (no racing
-    // against a second thread's scheduling): each eventfd_write() wakes
-    // the poll waitqueue regardless of whether anything drained the
-    // previous one, so by the time we drain below, the kernel has as
-    // many "became readable" wakeups queued up for this one registration
-    // as it's going to get from this burst -- exactly the condition a
-    // bursty real kicker produces, just guaranteed instead of hoped for.
+    // against a second thread's scheduling): each write() wakes the poll
+    // waitqueue regardless of whether anything drained the previous one,
+    // so by the time we drain below, the kernel has as many "became
+    // readable" wakeups queued up for this one registration as it's
+    // going to get from this burst -- exactly the condition a bursty
+    // real kicker produces, just guaranteed instead of hoped for.
     for (unsigned int i = 0; i < total_writes; ++i) {
-        eventfd_t one = 1;
-        ASSERT_EQ(::write(fd, &one, sizeof(one)), (ssize_t)sizeof(one));
+        char one = 1;
+        ASSERT_EQ(::write(write_fd, &one, sizeof(one)), (ssize_t)sizeof(one));
     }
 
     // Unlike the two _wait_all() calls above and below, this one can't be
@@ -162,7 +166,8 @@ TEST_F(MultishotBurstTest, poll_eventfd_burst_no_torn_read) {
     _queue->cancel(event);
     EXPECT_NO_THROW(_wait_all());
 
-    ::close(fd);
+    ::close(read_fd);
+    ::close(write_fd);
 }
 
 TEST_F(MultishotTest, accept) {
