@@ -134,7 +134,7 @@ void Queue::_wait_timeout(int timeout) {
     }
 }
 
-void Queue::_eval(std::unique_ptr<EventEval>&& event) {
+void Queue::_eval(std::unique_ptr<EventEval> event) {
     _eval_sqes.push_back(std::move(event));
 }
 
