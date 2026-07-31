@@ -20,8 +20,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed                                                                                                                                                                                             
 - Python bindings now work with `--enable-asan`.
 - `rawstor-vhost` now serves front-end connections in a loop and handles a front-end disconnect cleanly, so it survives QEMU's `reconnect=1` without needing an external supervisor.
-- `rawstor-vhost` no longer stops listening for virtqueue kicks after the first one, which previously stalled all I/O past the first batch of requests.
-- `rawstor-vhost` now resolves virtqueue descriptor addresses (guest physical addresses) correctly instead of against the unrelated QEMU-process address range, which previously failed most real I/O with "invalid descriptor address".
 - `librawio`'s multishot poll no longer redelivers a same-batch duplicate completion, which previously crashed `rawstor-vhost-qemu` at higher queue depths.
 
 ### Removed

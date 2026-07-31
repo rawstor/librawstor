@@ -3,7 +3,7 @@
 #include <stdheaders/linux/virtio_blk.h>
 #include <stdheaders/linux/virtio_config.h>
 #include <stdheaders/linux/virtio_ring.h>
-#include <vhost/protocol.h>
+#include <vhost/user_protocol.h>
 
 #include <rawstd/endian.h>
 #include <rawstd/gpp.hpp>
@@ -1479,12 +1479,25 @@ void* Device::userspace_va_to_va(uint64_t userspace_addr) const noexcept {
 }
 
 void* Device::guest_phys_to_va(uint64_t gpa) const noexcept {
-    // Find matching memory region.
-    for (auto& r : _regions) {
-        if ((gpa >= r->guest_phys_addr()) &&
-            (gpa < (r->guest_phys_addr() + r->memory_size()))) {
-            uint64_t offset = gpa - r->guest_phys_addr();
-            return (char*)r->mmap_addr() + r->mmap_offset() + offset;
+    // _regions is kept sorted (and non-overlapping) by guest_phys_addr --
+    // see find_mem_region_pos() -- so, unlike userspace_va_to_va() above,
+    // the containing region can be found with a binary search instead of
+    // a linear scan. This is the hot path (once per virtqueue descriptor),
+    // so it matters.
+    size_t low = 0;
+    size_t high = _regions.size();
+
+    while (low < high) {
+        size_t mid = low + (high - low) / 2;
+        const DevRegion& r = *_regions[mid];
+
+        if (gpa < r.guest_phys_addr()) {
+            high = mid;
+        } else if (gpa >= r.guest_phys_addr() + r.memory_size()) {
+            low = mid + 1;
+        } else {
+            uint64_t offset = gpa - r.guest_phys_addr();
+            return (char*)r.mmap_addr() + r.mmap_offset() + offset;
         }
     }
 

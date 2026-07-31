@@ -3,7 +3,7 @@
 
 #include <stdheaders/linux/vhost_types.h>
 #include <stdheaders/linux/virtio_ring.h>
-#include <vhost/protocol.h>
+#include <vhost/user_protocol.h>
 
 #include <functional>
 

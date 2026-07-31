@@ -3,7 +3,7 @@
 
 #include "devregion.hpp"
 #include <stdheaders/linux/virtio_blk.h>
-#include <vhost/protocol.h>
+#include <vhost/user_protocol.h>
 #include <vhost/virtqueue.hpp>
 
 #include <rawstor/object.h>

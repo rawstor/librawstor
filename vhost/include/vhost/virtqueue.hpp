@@ -1,8 +1,8 @@
 #ifndef RAWSTOR_VHOST_VIRTQUEUE_HPP
 #define RAWSTOR_VHOST_VIRTQUEUE_HPP
 
-#include <vhost/protocol.h>
 #include <vhost/ring.hpp>
+#include <vhost/user_protocol.h>
 
 #include <sys/uio.h>
 

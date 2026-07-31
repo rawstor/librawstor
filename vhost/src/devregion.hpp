@@ -1,7 +1,7 @@
 #ifndef RAWSTOR_VHOST_DEVREGION_HPP
 #define RAWSTOR_VHOST_DEVREGION_HPP
 
-#include <vhost/protocol.h>
+#include <vhost/user_protocol.h>
 
 #include <utility>
 

@@ -182,4 +182,4 @@ typedef struct {
 }
 #endif
 
-#endif // RAWSTOR_VHOST_SERVER_H
+#endif // RAWSTOR_VHOST_USER_PROTOCOL_H

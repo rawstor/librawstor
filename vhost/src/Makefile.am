@@ -11,7 +11,7 @@ AM_CXXFLAGS = $(GENERIC_CXXFLAGS) \
 AM_LDFLAGS = $(ASAN_LDFLAGS)
 
 
-libvhost_la_SOURCES = $(top_srcdir)/vhost/include/vhost/protocol.h \
+libvhost_la_SOURCES = $(top_srcdir)/vhost/include/vhost/user_protocol.h \
                       $(top_srcdir)/vhost/include/vhost/ring.hpp \
                       $(top_srcdir)/vhost/include/vhost/virtqueue.hpp \
                       $(top_srcdir)/vhost/include/stdheaders/linux/types.h \
