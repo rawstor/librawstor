@@ -24,6 +24,7 @@ fio \
   --size=1G \
   --numjobs=${NUMJOBS} \
   --runtime=10 \
+  --ramp_time=3 \
   --time_based \
   --group_reporting \
   \
@@ -35,6 +36,7 @@ fio \
   --size=1G \
   --numjobs=${NUMJOBS} \
   --runtime=10 \
+  --ramp_time=3 \
   --time_based \
   --group_reporting
 
