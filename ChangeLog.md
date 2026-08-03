@@ -19,7 +19,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed                                                                                                                                                                                             
 - Python bindings now work with `--enable-asan`.
-- `rawstor-vhost` now serves front-end connections in a loop and handles a front-end disconnect cleanly, so it survives QEMU's `reconnect=1` without needing an external supervisor.
 - `librawio`'s multishot poll no longer redelivers a same-batch duplicate completion, which previously crashed `rawstor-vhost-qemu` at higher queue depths.
 
 ### Removed

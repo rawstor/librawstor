@@ -110,19 +110,17 @@ Server::~Server() {
 void Server::loop() {
     rawstd_info("Listening %s\n", _socket_path.c_str());
 
-    while (true) {
-        int fd = ::accept(_fd, NULL, NULL);
-        if (fd < 0) {
-            if (errno == EINTR) {
-                errno = 0;
-                break;
-            }
-            RAWSTD_THROW_ERRNO();
+    int fd = ::accept(_fd, NULL, NULL);
+    if (fd < 0) {
+        if (errno == EINTR) {
+            errno = 0;
+            return;
         }
-
-        Device device(_queue_size, _target, fd);
-        device.loop();
+        RAWSTD_THROW_ERRNO();
     }
+
+    Device device(_queue_size, _target, fd);
+    device.loop();
 }
 
 } // namespace vhost
