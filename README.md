@@ -106,9 +106,37 @@ Mirroring between two OST backends:
 rawstor-ost -l ost://left:7777,ost://right:7777 -b 0.0.0.0:7777
 ```
 
-## rawstor-vhost
+## rawstor-vhost – vhost-user-blk Backend
 
-rawstor-vhost is a userspace VirtIO block device backend that implements the vhost-user protocol. It allows virtual machines to access block storage via shared memory, bypassing the host kernel for improved performance.
+`rawstor-vhost` is a userspace VirtIO block device backend implementing the
+[vhost-user protocol](https://qemu-project.gitlab.io/qemu/interop/vhost-user.html)
+for `virtio-blk-pci`/`vhost-user-blk-pci` devices. It gives a guest direct,
+zero-copy access to a rawstor object's data: virtqueue descriptors are
+resolved straight into the guest's shared memory regions and read from or
+written to the backing object via `librawstor`'s native `io_uring`-based
+object I/O, with no host-side kernel block layer or copy in between.
+
+The vhost-user protocol itself (feature/memory-region negotiation,
+virtqueue kick/call handling, request dispatch) is implemented natively in
+`vhost/` — it does not depend on qemu's `libvhost-user` library. Every I/O
+path, including the control socket, is asynchronous and non-blocking, and
+multiple in-flight requests on a virtqueue may complete out of order.
+
+### Usage
+
+`rawstor-vhost [-h] -s SOCKET_PATH -t TARGET [--queue-size SIZE] [-v]`
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `-h, --help` | Show help message and exit. |
+| `-s, --socket-path PATH` | Location of the vhost-user Unix domain socket. |
+| `-t, --target TARGET` | Comma‑separated list of rawstor backend targets (see [Locations and Targets](https://github.com/rawstor/librawstor/blob/main/docs/locations_and_targets.md)). |
+| `--queue-size SIZE` | RawIO queue (`io_uring`) depth. Default: `256`. |
+| `-v, --version` | Print version and exit. |
+
+### Example
 
 ```
 PREFIX=${HOME}/local
@@ -130,6 +158,29 @@ qemu-system-x86_64 \
     -chardev socket,id=rawstor1,reconnect=1,path=${VHOST_RUNDIR}/rawstor1.sock \
     -device vhost-user-blk-pci,chardev=rawstor1,num-queues=1,disable-legacy=on
 ```
+
+### Supported virtio-blk features
+
+`rawstor-vhost` negotiates `VIRTIO_BLK_F_SIZE_MAX`, `VIRTIO_BLK_F_SEG_MAX`,
+`VIRTIO_BLK_F_BLK_SIZE`, `VIRTIO_BLK_F_TOPOLOGY`, `VIRTIO_BLK_F_MQ`,
+`VIRTIO_RING_F_INDIRECT_DESC` and `VIRTIO_RING_F_EVENT_IDX`, and services
+read (`VIRTIO_BLK_T_IN`), write (`VIRTIO_BLK_T_OUT`) and identify
+(`VIRTIO_BLK_T_GET_ID`) requests. `VIRTIO_BLK_T_FLUSH`, `_DISCARD` and
+`_WRITE_ZEROES` are not implemented and are answered with
+`VIRTIO_BLK_S_UNSUPP`. Although `VIRTIO_BLK_F_MQ` is negotiated (so a
+front-end may query the queue count via `VHOST_USER_GET_QUEUE_NUM`), only a
+single virtqueue is actually serviced per device.
+
+### Notes
+
+`rawstor-vhost` serves exactly one front-end connection per process
+invocation: it accepts a connection on the socket, serves it until the
+front-end disconnects (exiting cleanly), and then exits. A setup or
+protocol error (e.g. a mismatched `num-queues`) is reported and also exits
+the process, rather than silently waiting for another connection. Pair it
+with `reconnect=1` on the QEMU chardev and an external supervisor (e.g.
+`systemd` with `Restart=always`, or a wrapper loop) if the backend needs to
+survive guest-side reconnects. Send `SIGINT`/`SIGTERM` to stop it.
 
 ## Testing
 

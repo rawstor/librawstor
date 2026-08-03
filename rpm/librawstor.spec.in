@@ -64,6 +64,7 @@ mkdir -p %{buildroot}/var/lib/rawstor
 
 %files
 %{_bindir}/rawstor-cli
+%{_bindir}/rawstor-vhost
 %{_libdir}/librawstor.so.*
 %doc COPYING ChangeLog.md README.md
 
