@@ -195,7 +195,7 @@ jobs:
         cp deb/librawstor/rawstor-ost.postinst debian
         cp deb/librawstor/rawstor-ost.prerm debian
         cp deb/librawstor/rules debian
-        cp etc/systemd/system/rawstor-ost.service debian
+        cp systemd/rawstor-ost.service debian
         cp COPYING debian/copyright
         dpkg-buildpackage -us -uc
     - name: changelog
@@ -326,6 +326,15 @@ jobs:
         rawstor-ost --version
         rawstor-cli create --size=1M --location=ost://127.0.0.1:7777
         rawstor-cli list --location=ost://127.0.0.1:7777
+    - name: test-rawstor-vhost
+      run: |
+        TARGET=$(rawstor-cli create --size=1M --location=ost://127.0.0.1:7777)
+        UUID=${TARGET##*/}
+        sudo systemctl enable --now rawstor-vhost@${UUID}.service
+        sleep 1
+        systemctl is-active rawstor-vhost@${UUID}.service
+        test -S /run/rawstor/${UUID}.sock
+        sudo systemctl disable --now rawstor-vhost@${UUID}.service
     - name: install-python3-rawstor
       run: sudo apt install -y ./python3-rawstor-${{ matrix.os }}.deb/python*-rawstor_*.deb
     - name: test-python3-rawstor
