@@ -174,10 +174,12 @@ single virtqueue is actually serviced per device.
 ### Notes
 
 `rawstor-vhost` accepts front-end connections one at a time, in a loop: once
-a connection ends (front-end disconnect, or a setup error such as a
-mismatched `num-queues`), it goes back to listening on the socket for the
-next one, so `reconnect=1` on the QEMU chardev works without needing an
-external supervisor. Send `SIGINT`/`SIGTERM` to stop it.
+a connection ends with a clean front-end disconnect, it goes back to
+listening on the socket for the next one, so `reconnect=1` on the QEMU
+chardev works without needing an external supervisor. An actual error
+(e.g. a setup error such as a mismatched `num-queues`) is not treated as a
+disconnect: it is reported and the process exits, rather than silently
+waiting for another connection. Send `SIGINT`/`SIGTERM` to stop it.
 
 ## Testing
 

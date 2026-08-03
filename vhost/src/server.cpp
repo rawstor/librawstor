@@ -120,12 +120,8 @@ void Server::loop() {
             RAWSTD_THROW_ERRNO();
         }
 
-        try {
-            Device device(_queue_size, _target, fd);
-            device.loop();
-        } catch (const std::exception& e) {
-            rawstd_error("%s\n", e.what());
-        }
+        Device device(_queue_size, _target, fd);
+        device.loop();
     }
 }
 
