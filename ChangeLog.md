@@ -7,8 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.3.0] - Unreleased
 
+## [0.2.3] - Unreleased
+
 ### Added
-- `rawstor-vhost@.service`, a systemd template unit (packaged in `librawstor`) so callers can `systemctl enable --now rawstor-vhost@<uuid>` instead of supervising `rawstor-vhost` themselves. Derives its target from the instance name alone: `ost://127.0.0.1:7777/<uuid>`.
+- `rawstor-vhost@.service`, a systemd template unit (packaged in `librawstor`) so callers can `systemctl enable --now rawstor-vhost@<uuid>` instead of supervising `rawstor-vhost` themselves. Derives its target from the instance name alone: `${RAWSTOR_LOCATION}/<uuid>`.
 
 ## [0.2.2] - 2026-08-03
 
