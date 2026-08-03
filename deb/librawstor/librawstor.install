@@ -1,3 +1,4 @@
 usr/bin/rawstor-cli
 usr/bin/rawstor-vhost
 usr/lib/*/librawstor.so.*
+etc/systemd/system/rawstor-vhost@.service usr/lib/systemd/system

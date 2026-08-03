@@ -1,0 +1,23 @@
+[Unit]
+Description=Rawstor vhost-user-blk backend for object %i
+After=network-online.target rawstor-ost.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=rawstor
+Group=rawstor
+RuntimeDirectory=rawstor
+ExecStart=/usr/bin/rawstor-vhost --socket-path=/run/rawstor/%i.sock --target=ost://127.0.0.1:7777/%i
+Restart=always
+RestartSec=2
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

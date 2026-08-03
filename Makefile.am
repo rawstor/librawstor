@@ -53,6 +53,7 @@ EXTRA_DIST = deb/librawstor/compat \
              deb/python3-rawstor/format \
              deb/python3-rawstor/rules \
              etc/systemd/system/rawstor-ost.service \
+             etc/systemd/system/rawstor-vhost@.service \
              .github/tools/deb-changelog.sh \
              ChangeLog.md \
              README.md \
