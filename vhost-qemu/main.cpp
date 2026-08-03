@@ -22,9 +22,11 @@ namespace {
 struct sigaction sact = {};
 
 void usage() {
-    std::cout << "Rawstor VHOST " << PACKAGE_VERSION << std::endl
+    std::cout << "Rawstor VHOST (qemu libvhost-user backend) "
+              << PACKAGE_VERSION << std::endl
               << std::endl
-              << "usage: rawstor-vhost [options] -s PATH -t TARGET" << std::endl
+              << "usage: rawstor-vhost-qemu [options] -s PATH -t TARGET"
+              << std::endl
               << std::endl
               << "options:" << std::endl
               << "  -h, --help            "
@@ -49,7 +51,8 @@ void usage() {
 }
 
 void version() {
-    std::cout << "Rawstor VHOST " << PACKAGE_VERSION << std::endl;
+    std::cout << "Rawstor VHOST (qemu libvhost-user backend) "
+              << PACKAGE_VERSION << std::endl;
 }
 
 void sact_handler(int) {
