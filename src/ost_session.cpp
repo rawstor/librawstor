@@ -953,23 +953,34 @@ void Session::remove(const RawstdUUID& id, std::function<void(int)>&& cb) {
 }
 
 void Session::spec(
-    const RawstdUUID&, std::function<void(const RawstorObjectSpec&, int)>&& cb
+    const RawstdUUID& id,
+    std::function<void(const RawstorObjectSpec&, int)>&& cb
 ) {
     rawstd_info("%s: Reading object specification...\n", str().c_str());
 
-    /**
-     * TODO: Implement me.
-     */
-    RawstorObjectSpec ret = {
-        .size = 1 << 30,
-    };
+    int error = 0;
+    RawstorObjectSpec ret = {};
+    try {
+        std::vector<RawstorObjectSpec> specs = basic_request<RawstorObjectSpec>(
+            fd(), _cid_counter++, RAWSTOR_CMD_SPEC, id, 0
+        );
+        if (specs.size() != 1) {
+            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+        }
+        ret = specs.front();
+    } catch (const std::system_error& e) {
+        error = e.code().value();
+    } catch (...) {
+        error = EIO;
+    }
 
-    rawstd_info(
-        "%s: Object specification successfully received (emulated)\n",
-        str().c_str()
-    );
+    if (!error) {
+        rawstd_info(
+            "%s: Object specification successfully received\n", str().c_str()
+        );
+    }
 
-    cb(ret, 0);
+    cb(ret, error);
 }
 
 void Session::set_object(Object* object) {

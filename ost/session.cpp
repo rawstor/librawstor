@@ -265,6 +265,7 @@ Session::_recv_head(const iovec* iov, unsigned int niov, size_t result) {
     case RAWSTOR_CMD_ALLOCATE:
     case RAWSTOR_CMD_RELEASE:
     case RAWSTOR_CMD_LIST:
+    case RAWSTOR_CMD_SPEC:
         return sizeof(RawstorOSTFrameBasicBody);
     }
 
@@ -405,6 +406,24 @@ Session::_recv_body(const iovec* iov, unsigned int niov, size_t result) {
         _release(_request_head, _request_body.basic);
 
         return sizeof(RawstorOSTFrameHead);
+
+    case RAWSTOR_CMD_SPEC:
+        if (result != sizeof(_request_body.basic)) {
+            rawstd_error(
+                "fd %d: Unexpected request body size: %zu != %zu\n", _fd,
+                result, sizeof(_request_body.basic)
+            );
+
+            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+        }
+
+        rawstd_iovec_to_buf(
+            iov, niov, 0, &_request_body.basic, sizeof(_request_body.basic)
+        );
+
+        _spec(_request_head, _request_body.basic);
+
+        return sizeof(RawstorOSTFrameHead);
     }
 
     {
@@ -520,6 +539,29 @@ void Session::_release(
     int result = rawstor_object_remove(rawstd::URI::uris(targets).c_str());
 
     send_response(_queue, _fd, RAWSTOR_CMD_RELEASE, head.cid, result, 0);
+}
+
+void Session::_spec(
+    const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+) {
+    RawstdUUID uuid;
+    memcpy(uuid.bytes, body.obj_id, sizeof(body.obj_id));
+
+    std::vector<rawstd::URI> targets = _targets(uuid);
+
+    RawstorObjectSpec spec{};
+    int result = rawstor_object_spec(rawstd::URI::uris(targets).c_str(), &spec);
+    if (result < 0) {
+        send_response(_queue, _fd, RAWSTOR_CMD_SPEC, head.cid, result, 0);
+        return;
+    }
+
+    auto data = std::make_shared<std::vector<unsigned char>>(sizeof(spec));
+    memcpy(data->data(), &spec, sizeof(spec));
+
+    send_response(
+        _queue, _fd, RAWSTOR_CMD_SPEC, head.cid, data->size(), 0, data
+    );
 }
 
 void Session::_set_object(

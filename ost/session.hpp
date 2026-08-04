@@ -47,6 +47,9 @@ private:
     void _release(
         const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
     );
+    void _spec(
+        const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+    );
     void _set_object(
         const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
     );
