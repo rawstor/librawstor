@@ -961,13 +961,14 @@ void Session::spec(
     int error = 0;
     RawstorObjectSpec ret = {};
     try {
-        std::vector<RawstorObjectSpec> specs = basic_request<RawstorObjectSpec>(
-            fd(), _cid_counter++, RAWSTOR_CMD_SPEC, id, 0
-        );
-        if (specs.size() != 1) {
+        std::vector<char> response =
+            basic_request(fd(), _cid_counter++, RAWSTOR_CMD_SPEC, id, 0);
+        if (response.size() != sizeof(ret)) {
             RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
         }
-        ret = specs.front();
+        ret = *static_cast<RawstorObjectSpec*>(
+            static_cast<void*>(response.data())
+        );
     } catch (const std::system_error& e) {
         error = e.code().value();
     } catch (...) {

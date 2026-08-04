@@ -471,7 +471,7 @@ void Session::_list(
         &token
     );
     if (result < 0) {
-        send_response(_queue, _fd, RAWSTOR_CMD_LIST, head.cid, -result, 0);
+        send_response(_queue, _fd, RAWSTOR_CMD_LIST, head.cid, result, 0);
         return;
     }
 
