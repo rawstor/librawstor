@@ -66,14 +66,14 @@ jobs:
       if: "${{ matrix.backend == 'ost' }}"
       run: |
         mkdir ${GITHUB_WORKSPACE}/objects
-        rawstor-ost --bind 127.0.0.1:7777 --location=file://${GITHUB_WORKSPACE}/objects &
+        rawstor-ost --bind 127.0.0.1:7777 file://${GITHUB_WORKSPACE}/objects &
         sleep 10
     - name: create object
       run: |
-        target=$(rawstor-cli create --location=${{ matrix.location }} --size=1G)
+        target=$(rawstor-cli create ${{ matrix.location }} --size=1G)
         echo "TARGET=${target}" >> $GITHUB_ENV
-        rawstor-cli list --location=${{ matrix.location }}
-        rawstor-cli testio --target=${target} --block-size=4K --io-depth=1 --count=1
+        rawstor-cli list ${{ matrix.location }}
+        rawstor-cli testio ${target} --block-size=4K --io-depth=1 --count=1
     - name: fio
       run: |
         echo "# perftest" >> $GITHUB_STEP_SUMMARY
@@ -97,7 +97,7 @@ jobs:
           ./fio.json
         if-no-files-found: error
     - name: remove object
-      run: rawstor-cli remove --target=${TARGET}
+      run: rawstor-cli remove ${TARGET}
     - name: (ost) stop rawstor-ost
       if: "${{ matrix.backend == 'ost' }}"
       run: killall rawstor-ost

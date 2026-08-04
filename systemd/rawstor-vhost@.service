@@ -10,7 +10,7 @@ Group=rawstor
 RuntimeDirectory=rawstor
 Environment=RAWSTOR_LOCATION=ost://127.0.0.1:7777
 EnvironmentFile=-/etc/rawstor-vhost.conf
-ExecStart=/usr/bin/rawstor-vhost --socket-path=/run/rawstor/%i.sock --target=${RAWSTOR_LOCATION}/%i
+ExecStart=/usr/bin/rawstor-vhost --socket-path=/run/rawstor/%i.sock ${RAWSTOR_LOCATION}/%i
 Restart=always
 RestartSec=2
 ProtectSystem=strict

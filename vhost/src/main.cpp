@@ -22,7 +22,7 @@ struct sigaction sact = {};
 void usage() {
     std::cout << "Rawstor VHOST " << PACKAGE_VERSION << std::endl
               << std::endl
-              << "usage: rawstor-vhost [options] -s PATH -t TARGET" << std::endl
+              << "usage: rawstor-vhost [options] -s PATH TARGET" << std::endl
               << std::endl
               << "options:" << std::endl
               << "  -h, --help            "
@@ -41,8 +41,11 @@ void usage() {
               << "                        "
                  "vhost-user Unix domain socket."
               << std::endl
-              << "  -t, --target TARGET   Comma separated list of rawstor "
+              << "  TARGET                Comma separated list of rawstor "
                  "backend targets"
+              << std::endl
+              << "  -t, --target TARGET   Same as the positional TARGET "
+                 "argument."
               << std::endl;
 }
 
@@ -107,6 +110,11 @@ int main(int argc, char** argv) {
         default:
             return EXIT_FAILURE;
         }
+    }
+
+    if (target_arg == nullptr && optind < argc) {
+        target_arg = argv[optind];
+        optind++;
     }
 
     if (optind < argc) {
