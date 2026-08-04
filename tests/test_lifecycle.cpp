@@ -11,7 +11,6 @@
 #include <gtest/gtest.h>
 
 #include <filesystem>
-#include <memory>
 
 #include <cstring>
 
@@ -166,15 +165,15 @@ TEST(OstLifecycleTest, create_spec_list_remove) {
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
-    /**
-     * Kept alive until after the real spec() round trip below: closing it
-     * eagerly (like the other scripted sessions) races the client's
-     * second-phase read of the spec payload.
-     */
-    auto spec_session = std::make_unique<rawstor::tests::Session>(server);
-    spec_session->cmd_spec(
-        RAWSTOR_MAGIC, 0, RawstorObjectSpec{.size = 1ull << 20}
-    );
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_spec(RAWSTOR_MAGIC, 0, RawstorObjectSpec{.size = 1ull << 20});
+    }
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_release(RAWSTOR_MAGIC, 0, 0);
+    }
 
     {
         RawstorObjectSpec spec{.size = 1ull << 20};
@@ -188,12 +187,6 @@ TEST(OstLifecycleTest, create_spec_list_remove) {
         int res = rawstor_object_spec(target.c_str(), &read_spec);
         EXPECT_EQ(res, 0);
         EXPECT_EQ(read_spec.size, (size_t)(1ull << 20));
-    }
-    spec_session.reset();
-
-    {
-        rawstor::tests::Session s(server);
-        s.cmd_release(RAWSTOR_MAGIC, 0, 0);
     }
 
     {
@@ -214,15 +207,15 @@ TEST(OstLifecycleTest, create_at_default_spec_remove) {
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
-    /**
-     * Kept alive until after the real spec() round trip below: closing it
-     * eagerly (like the other scripted sessions) races the client's
-     * second-phase read of the spec payload.
-     */
-    auto spec_session = std::make_unique<rawstor::tests::Session>(server);
-    spec_session->cmd_spec(
-        RAWSTOR_MAGIC, 0, RawstorObjectSpec{.size = 1ull << 20}
-    );
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_spec(RAWSTOR_MAGIC, 0, RawstorObjectSpec{.size = 1ull << 20});
+    }
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_release(RAWSTOR_MAGIC, 0, 0);
+    }
 
     {
         RawstorObjectSpec spec{.size = 1ull << 20};
@@ -240,12 +233,6 @@ TEST(OstLifecycleTest, create_at_default_spec_remove) {
         int res = rawstor_object_spec(target.c_str(), &read_spec);
         EXPECT_EQ(res, 0);
         EXPECT_EQ(read_spec.size, (size_t)(1ull << 20));
-    }
-    spec_session.reset();
-
-    {
-        rawstor::tests::Session s(server);
-        s.cmd_release(RAWSTOR_MAGIC, 0, 0);
     }
 
     {
@@ -267,15 +254,15 @@ TEST(OstLifecycleTest, create_at_spec_remove) {
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
-    /**
-     * Kept alive until after the real spec() round trip below: closing it
-     * eagerly (like the other scripted sessions) races the client's
-     * second-phase read of the spec payload.
-     */
-    auto spec_session = std::make_unique<rawstor::tests::Session>(server);
-    spec_session->cmd_spec(
-        RAWSTOR_MAGIC, 0, RawstorObjectSpec{.size = 1ull << 20}
-    );
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_spec(RAWSTOR_MAGIC, 0, RawstorObjectSpec{.size = 1ull << 20});
+    }
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_release(RAWSTOR_MAGIC, 0, 0);
+    }
 
     {
         RawstorObjectSpec spec{.size = 1ull << 20};
@@ -294,12 +281,6 @@ TEST(OstLifecycleTest, create_at_spec_remove) {
         int res = rawstor_object_spec(target.c_str(), &read_spec);
         EXPECT_EQ(res, 0);
         EXPECT_EQ(read_spec.size, (size_t)(1ull << 20));
-    }
-    spec_session.reset();
-
-    {
-        rawstor::tests::Session s(server);
-        s.cmd_release(RAWSTOR_MAGIC, 0, 0);
     }
 
     {

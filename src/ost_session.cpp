@@ -622,30 +622,61 @@ std::vector<T> basic_request(
                         const iovec* iov, unsigned int niov, size_t result,
                         int error
                     ) -> size_t {
-                        completed = true;
-
                         RAWSTD_TRACE_EVENT_MESSAGE(
                             trace_event, "%zu of %zu, error = %d\n", result,
                             response.body.res, error
                         );
 
+                        /**
+                         * A multishot registration keeps delivering
+                         * completions after it has already been
+                         * satisfied once: the queue's single
+                         * io_uring_for_each_cqe pass can contain both the
+                         * full payload AND a trailing hangup/cancel
+                         * completion for this same registration (the OST
+                         * protocol closes the connection right after
+                         * this response), and both get dispatched before
+                         * the caller's `while (!completed)` loop ever
+                         * gets to check the flag. Once satisfied, ignore
+                         * anything further.
+                         */
+                        if (completed) {
+                            return 0;
+                        }
+
+                        /**
+                         * The buffer ring flushes whatever it has
+                         * accumulated so far both when the requested size
+                         * is reached AND when the peer hangs up (see
+                         * BufferRing::operator()) -- a payload that
+                         * arrived in full right before that close can
+                         * therefore show up here as a complete, valid
+                         * chunk with error also set. Check the size we
+                         * actually got before treating error as fatal, or
+                         * a legitimately-delivered payload gets thrown
+                         * away.
+                         */
+                        if (result == static_cast<size_t>(response.body.res)) {
+                            completed = true;
+
+                            if (result % sizeof(T) != 0) {
+                                RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+                            }
+
+                            ret.resize(result / sizeof(T));
+                            rawstd_iovec_to_buf(
+                                iov, niov, 0, ret.data(), result
+                            );
+
+                            return 0;
+                        }
+
+                        completed = true;
                         if (!error) {
                             error =
                                 validate_result(fd, response.body.res, result);
                         }
-
-                        if (error) {
-                            RAWSTD_THROW_SYSTEM_ERROR(error);
-                        }
-
-                        if (result % sizeof(T) != 0) {
-                            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
-                        }
-
-                        ret.resize(result / sizeof(T));
-                        rawstd_iovec_to_buf(iov, niov, 0, ret.data(), result);
-
-                        return 0;
+                        RAWSTD_THROW_SYSTEM_ERROR(error);
                     }
                 );
             } else {
