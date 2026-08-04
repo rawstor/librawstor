@@ -1,4 +1,2 @@
 usr/bin/rawstor
-usr/bin/rawstor-vhost
 usr/lib/*/librawstor.so.*
-systemd/rawstor-vhost@.service usr/lib/systemd/system

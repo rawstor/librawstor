@@ -5,6 +5,23 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+# User=/Group= (and any other directive here) is a *systemd unit* setting,
+# not something EnvironmentFile= below can touch -- EnvironmentFile= only
+# feeds environment variables to the process, it cannot change unit
+# directives. To run under a different user/group (e.g. to match whatever
+# user your qemu/libvirt setup actually uses instead of granting it access
+# via the "rawstor" group), add a drop-in instead of editing this file:
+#   systemctl edit rawstor-vhost@.service            # applies to every instance
+#   systemctl edit rawstor-vhost@<uuid>.service       # applies to just <uuid>
+# then put e.g.
+#   [Service]
+#   User=libvirt-qemu
+#   Group=libvirt-qemu
+# in the editor that opens; systemd stores it under
+# /etc/systemd/system/rawstor-vhost@.service.d/override.conf (or the
+# per-instance equivalent) and layers it on top of this file, which
+# package upgrades never touch. See systemd.unit(5), "Automatic
+# manipulation of unit files".
 User=rawstor
 Group=rawstor
 RuntimeDirectory=rawstor

@@ -182,6 +182,36 @@ with `reconnect=1` on the QEMU chardev and an external supervisor (e.g.
 `systemd` with `Restart=always`, or a wrapper loop) if the backend needs to
 survive guest-side reconnects. Send `SIGINT`/`SIGTERM` to stop it.
 
+### Packaging and QEMU access
+
+`rawstor-vhost` ships in its own `rawstor-vhost` deb/rpm package (separate
+from `librawstor`), along with the `rawstor-vhost@.service` systemd
+template unit. The package creates the same system user/group (`rawstor`)
+that `rawstor-ost` uses, if it doesn't already exist — it does **not**
+depend on `libvirt`, since `rawstor-vhost` has no need for it (it talks to
+QEMU purely over a vhost-user Unix socket, negotiated when QEMU connects).
+
+Whatever user actually runs QEMU (`libvirt-qemu` on Debian/Ubuntu, `qemu`
+on Fedora/RHEL, or something else entirely if you invoke QEMU by hand)
+needs permission to connect to the socket under `RuntimeDirectory=rawstor`
+(`/run/rawstor/*.sock`). Add that user to the `rawstor` group rather than
+running `rawstor-vhost` as it:
+
+```bash
+sudo usermod -aG rawstor libvirt-qemu   # Debian/Ubuntu + libvirt
+sudo usermod -aG rawstor qemu           # Fedora/RHEL + libvirt
+```
+
+If `User=`/`Group=rawstor` in the unit doesn't fit your setup (e.g. you'd
+rather run `rawstor-vhost` as the same user QEMU runs as, instead of
+sharing access via the group), override it with a drop-in instead of
+editing the shipped unit file — `systemctl edit rawstor-vhost@.service`
+(all instances) or `systemctl edit rawstor-vhost@<uuid>.service` (one
+instance) opens an editor and saves the result under
+`/etc/systemd/system/…/override.conf`, which survives package upgrades.
+See the comment above `User=` in `systemd/rawstor-vhost@.service` and
+`systemd.unit(5)` for details.
+
 ## Testing
 
 ```
