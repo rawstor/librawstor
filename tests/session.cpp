@@ -106,6 +106,46 @@ void Session::cmd_release(uint32_t magic, uint16_t cid, int32_t res) {
     cmd_release_response(magic, cid, res);
 }
 
+void Session::cmd_spec_request() {
+    _server.read(
+        "RAWSTOR_CMD_SPEC <<<", sizeof(RawstorOSTFrameBasic), [](const void*) {}
+    );
+}
+
+void Session::cmd_spec_response(
+    uint32_t magic, uint16_t cid, const RawstorObjectSpec& spec
+) {
+    RawstorOSTFrameResponse response = {
+        .head{
+            .magic = magic,
+            .cmd = RAWSTOR_CMD_SPEC,
+            .cid = cid,
+        },
+        .body = {
+            .res = static_cast<int32_t>(sizeof(spec)),
+            .hash = 0,
+        },
+    };
+    iovec iov[2] = {
+        {
+            .iov_base = &response,
+            .iov_len = sizeof(response),
+        },
+        {
+            .iov_base = const_cast<RawstorObjectSpec*>(&spec),
+            .iov_len = sizeof(spec),
+        },
+    };
+    _server.writev("RAWSTOR_CMD_SPEC >>>", iov, sizeof(iov) / sizeof(iov[0]));
+}
+
+void Session::cmd_spec(
+    uint32_t magic, uint16_t cid, const RawstorObjectSpec& spec
+) {
+    cmd_spec_request();
+    cmd_spec_response(magic, cid, spec);
+}
+
 void Session::cmd_read_request() {
     _server.read(
         "RAWSTOR_CMD_READ <<<", sizeof(RawstorOSTFrameIO), [](const void*) {}

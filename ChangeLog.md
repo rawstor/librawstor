@@ -5,10 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - Unreleased
+
 ## [0.2.3] - Unreleased
 
 ### Added
 - `rawstor-vhost@.service`, a systemd template unit (packaged in `librawstor`) so callers can `systemctl enable --now rawstor-vhost@<uuid>` instead of supervising `rawstor-vhost` themselves. Derives its target from the instance name alone: `${RAWSTOR_LOCATION}/<uuid>`.
+- `rawstor-ost` now serves `SPEC` over the wire (new `RAWSTOR_CMD_SPEC` command); `librawstor`'s `ost://` client implements `rawstor_object_spec()` for real instead of returning an emulated fixed size.
 
 ## [0.2.2] - 2026-08-03
 
