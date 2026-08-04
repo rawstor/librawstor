@@ -202,17 +202,15 @@ sudo usermod -aG rawstor libvirt-qemu   # Debian/Ubuntu + libvirt
 sudo usermod -aG rawstor qemu           # Fedora/RHEL + libvirt
 ```
 
-This only works because the unit sets `UMask=0007`: on Linux, `connect(2)`
-to a UNIX stream socket requires *write* permission on the socket file
-itself (not just directory access), and `rawstor-vhost` doesn't `chmod()`
-the socket after creating it — its mode comes straight from `bind(2)` under
-whatever umask the process had (`0777 & ~UMask`). The systemd default,
-`UMask=0022`, would leave the socket at `0755` (group gets read+execute
-only, no write) and group membership alone would silently fail to connect;
-`0007` yields `0770` (owner and group get read+write, "other" gets
-nothing), which is what actually lets a `rawstor`-group member connect. If
-you override `User=`/`Group=` below to something other than `rawstor` via
-a drop-in, keep (or re-derive) an equivalent `UMask=` alongside it.
+This works because `rawstor-vhost` `chmod()`s the socket to `0660` itself
+right after creating it, regardless of the caller's umask — on Linux,
+`connect(2)` to a UNIX stream socket requires *write* permission on the
+socket file itself (not just directory access), so leaving it at whatever
+`bind(2)` produced under the process's umask (commonly `0755`, i.e.
+group gets read+execute but no write) would silently prevent anyone but
+the socket's owner from ever connecting. Since the daemon enforces this
+itself, it holds regardless of how or by whom `rawstor-vhost` is invoked —
+including if you override `User=`/`Group=` below via a drop-in.
 
 If `User=`/`Group=rawstor` in the unit doesn't fit your setup (e.g. you'd
 rather run `rawstor-vhost` as the same user QEMU runs as, instead of

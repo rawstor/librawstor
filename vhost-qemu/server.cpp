@@ -9,6 +9,7 @@
 
 #include <inttypes.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/un.h>
 #include <unistd.h>
 
@@ -51,6 +52,20 @@ int open_unix_socket(const std::string& socket_path) {
         }
 
         try {
+            // bind(2) leaves the socket's mode at 0777 masked by whatever
+            // umask the caller happened to have -- pin it down explicitly
+            // instead of relying on that. connect(2) to a UNIX stream
+            // socket requires *write* permission on the socket file itself
+            // (see unix(7)), so group-readable-only (e.g. mode 0755 under
+            // the common umask 0022) would silently prevent anyone but the
+            // owner from connecting; 0660 grants owner and group, nobody
+            // else. Note: fchmod(2) on the socket fd does *not* affect the
+            // bound pathname's permissions on Linux -- this must be a
+            // path-based chmod(2).
+            if (chmod(socket_path.c_str(), 0660)) {
+                RAWSTD_THROW_ERRNO();
+            }
+
             if (listen(server_socket, 1)) {
                 RAWSTD_THROW_ERRNO();
             }

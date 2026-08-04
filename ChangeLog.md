@@ -9,7 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - `rawstor-vhost` and `rawstor-vhost@.service` now ship in their own `rawstor-vhost` deb/rpm package instead of being bundled in `librawstor`. Creates the same `rawstor` system user/group as `rawstor-ost` (not a dedicated one) if not already present, and does not depend on `libvirt`; see the README's "Packaging and QEMU access" section for how to grant the actual QEMU user access to the vhost-user socket.
-- `rawstor-vhost@.service` now sets `UMask=0007`, so the vhost-user socket it creates is mode `0770` instead of the systemd-default `0755` -- without this, a QEMU user merely added to the `rawstor` group could not actually `connect()` to the socket (Linux requires write permission on a UNIX socket to connect to it, and `rawstor-vhost` doesn't `chmod()` it after `bind()`).
+
+### Fixed
+- `rawstor-vhost` and `rawstor-vhost-qemu` now `chmod()` their vhost-user socket to `0660` right after `bind()`. Previously its mode came straight from `bind(2)` under the caller's umask (commonly `0755` under a systemd service's default `UMask=0022`), and since `connect(2)` to a UNIX stream socket requires *write* permission on the socket file itself, a QEMU user merely added to the socket owner's group -- as `rawstor-vhost@.service`'s own docs recommend -- could never actually connect.
 
 ## [0.2.3] - 2026-08-04
 

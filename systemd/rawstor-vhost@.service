@@ -25,17 +25,11 @@ Type=simple
 User=rawstor
 Group=rawstor
 RuntimeDirectory=rawstor
+# rawstor-vhost chmod()s the vhost-user socket to 0660 itself right after
+# creating it, so QEMU only needs to be in the "rawstor" group (see below)
+# -- no UMask= needed here for that. 0750 just keeps unrelated local users
+# from listing /run/rawstor's contents.
 RuntimeDirectoryMode=0750
-# rawstor-vhost doesn't chmod() the vhost-user socket after creating it, so
-# its permissions come straight from bind(2) + this umask: 0777 & ~UMask.
-# On Linux, connect(2) to a UNIX stream socket requires *write* permission
-# on the socket file itself (see unix(7), "Pathname socket ownership and
-# permissions") -- the default UMask=0022 would produce mode 0755, which
-# gives QEMU's group membership read+execute but no write, i.e. it could
-# never actually connect. 0007 yields 0770 (rw for owner and group, nothing
-# for other), which is what makes "add the qemu user to the rawstor group"
-# below actually work.
-UMask=0007
 Environment=RAWSTOR_LOCATION=ost://127.0.0.1:7777
 EnvironmentFile=-/etc/rawstor-vhost.conf
 ExecStart=/usr/bin/rawstor-vhost --socket-path=/run/rawstor/%i.sock ${RAWSTOR_LOCATION}/%i
