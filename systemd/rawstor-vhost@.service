@@ -27,9 +27,10 @@ Group=rawstor
 RuntimeDirectory=rawstor
 # rawstor-vhost chmod()s the vhost-user socket to 0660 itself right after
 # creating it, so QEMU only needs to be in the "rawstor" group (see below)
-# -- no UMask= needed here for that. 0750 just keeps unrelated local users
-# from listing /run/rawstor's contents.
-RuntimeDirectoryMode=0750
+# -- the directory itself is left at the systemd default (0755) so that
+# unprivileged tools (health checks, `test -S`, monitoring) can still stat
+# the socket path without being root or in the "rawstor" group; connect(2)
+# is still blocked for them by the socket file's own 0660 mode.
 Environment=RAWSTOR_LOCATION=ost://127.0.0.1:7777
 EnvironmentFile=-/etc/rawstor-vhost.conf
 ExecStart=/usr/bin/rawstor-vhost --socket-path=/run/rawstor/%i.sock ${RAWSTOR_LOCATION}/%i
