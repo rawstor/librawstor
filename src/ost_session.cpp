@@ -616,34 +616,43 @@ std::vector<T> basic_request(
             }
 
             if (response.body.res > 0) {
+                if (response.body.res % sizeof(T) != 0) {
+                    RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+                }
+
                 queue->recv_multishot(
                     fd, 1u << 17, 64 * 4, response.body.res, 0,
                     [fd, &completed, &response, trace_event, &ret](
                         const iovec* iov, unsigned int niov, size_t result,
                         int error
                     ) -> size_t {
-                        completed = true;
-
                         RAWSTD_TRACE_EVENT_MESSAGE(
                             trace_event, "%zu of %zu, error = %d\n", result,
                             response.body.res, error
                         );
+
+                        if (completed) {
+                            return 0;
+                        }
+
+                        completed = true;
 
                         if (!error) {
                             error =
                                 validate_result(fd, response.body.res, result);
                         }
 
+                        if (result == static_cast<size_t>(response.body.res)) {
+                            ret.resize(result / sizeof(T));
+                            rawstd_iovec_to_buf(
+                                iov, niov, 0, ret.data(), result
+                            );
+                            error = 0;
+                        }
+
                         if (error) {
                             RAWSTD_THROW_SYSTEM_ERROR(error);
                         }
-
-                        if (result % sizeof(T) != 0) {
-                            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
-                        }
-
-                        ret.resize(result / sizeof(T));
-                        rawstd_iovec_to_buf(iov, niov, 0, ret.data(), result);
 
                         return 0;
                     }
@@ -953,23 +962,35 @@ void Session::remove(const RawstdUUID& id, std::function<void(int)>&& cb) {
 }
 
 void Session::spec(
-    const RawstdUUID&, std::function<void(const RawstorObjectSpec&, int)>&& cb
+    const RawstdUUID& id,
+    std::function<void(const RawstorObjectSpec&, int)>&& cb
 ) {
     rawstd_info("%s: Reading object specification...\n", str().c_str());
 
-    /**
-     * TODO: Implement me.
-     */
-    RawstorObjectSpec ret = {
-        .size = 1 << 30,
-    };
+    int error = 0;
+    RawstorObjectSpec ret = {};
+    try {
+        std::vector<char> response =
+            basic_request(fd(), _cid_counter++, RAWSTOR_CMD_SPEC, id, 0);
+        if (response.size() != sizeof(ret)) {
+            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+        }
+        ret = *static_cast<RawstorObjectSpec*>(
+            static_cast<void*>(response.data())
+        );
+    } catch (const std::system_error& e) {
+        error = e.code().value();
+    } catch (...) {
+        error = EIO;
+    }
 
-    rawstd_info(
-        "%s: Object specification successfully received (emulated)\n",
-        str().c_str()
-    );
+    if (!error) {
+        rawstd_info(
+            "%s: Object specification successfully received\n", str().c_str()
+        );
+    }
 
-    cb(ret, 0);
+    cb(ret, error);
 }
 
 void Session::set_object(Object* object) {

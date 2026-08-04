@@ -1,6 +1,8 @@
 #ifndef RAWSTOR_TESTS_SESSION_HPP
 #define RAWSTOR_TESTS_SESSION_HPP
 
+#include <rawstor/object.h>
+
 #include <unistd.h>
 
 #include <cstdint>
@@ -30,6 +32,12 @@ public:
     void cmd_release_request();
     void cmd_release_response(uint32_t magic, uint16_t cid, int32_t res);
     void cmd_release(uint32_t magic, uint16_t cid, int32_t res);
+
+    void cmd_spec_request();
+    void cmd_spec_response(
+        uint32_t magic, uint16_t cid, const RawstorObjectSpec& spec
+    );
+    void cmd_spec(uint32_t magic, uint16_t cid, const RawstorObjectSpec& spec);
 
     void cmd_read_request();
     void cmd_read_response(
