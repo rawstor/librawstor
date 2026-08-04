@@ -10,8 +10,9 @@
 
 #include <gtest/gtest.h>
 
-#include <cstring>
 #include <filesystem>
+
+#include <cstring>
 
 namespace {
 
@@ -166,6 +167,7 @@ TEST(OstLifecycleTest, create_spec_list_remove) {
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_spec(RAWSTOR_MAGIC, 0, RawstorObjectSpec{.size = 1ull << 20});
     }
 
     {
@@ -184,8 +186,7 @@ TEST(OstLifecycleTest, create_spec_list_remove) {
         RawstorObjectSpec read_spec;
         int res = rawstor_object_spec(target.c_str(), &read_spec);
         EXPECT_EQ(res, 0);
-        // rawstor_object_spec emulated
-        EXPECT_EQ(read_spec.size, (size_t)(1ull << 30));
+        EXPECT_EQ(read_spec.size, (size_t)(1ull << 20));
     }
 
     {
@@ -208,6 +209,7 @@ TEST(OstLifecycleTest, create_at_default_spec_remove) {
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_spec(RAWSTOR_MAGIC, 0, RawstorObjectSpec{.size = 1ull << 20});
     }
 
     {
@@ -230,8 +232,7 @@ TEST(OstLifecycleTest, create_at_default_spec_remove) {
         RawstorObjectSpec read_spec = {};
         int res = rawstor_object_spec(target.c_str(), &read_spec);
         EXPECT_EQ(res, 0);
-        // rawstor_object_spec emulated
-        EXPECT_EQ(read_spec.size, (size_t)(1ull << 30));
+        EXPECT_EQ(read_spec.size, (size_t)(1ull << 20));
     }
 
     {
@@ -255,6 +256,7 @@ TEST(OstLifecycleTest, create_at_spec_remove) {
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_spec(RAWSTOR_MAGIC, 0, RawstorObjectSpec{.size = 1ull << 20});
     }
 
     {
@@ -278,8 +280,7 @@ TEST(OstLifecycleTest, create_at_spec_remove) {
         RawstorObjectSpec read_spec = {};
         int res = rawstor_object_spec(target.c_str(), &read_spec);
         EXPECT_EQ(res, 0);
-        // rawstor_object_spec emulated
-        EXPECT_EQ(read_spec.size, (size_t)(1ull << 30));
+        EXPECT_EQ(read_spec.size, (size_t)(1ull << 20));
     }
 
     {
