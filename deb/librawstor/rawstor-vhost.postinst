@@ -9,6 +9,12 @@ case "$1" in
         if ! getent passwd rawstor >/dev/null; then
             adduser --system --no-create-home --ingroup rawstor --home /var/lib/rawstor --shell /usr/sbin/nologin rawstor
         fi
+
+        if [ -n "$2" ]; then
+            echo "rawstor-vhost upgraded: running rawstor-vhost@*.service instances are still using the previous binary."
+            echo "Restart them to pick up the update, e.g.:"
+            echo "  systemctl restart 'rawstor-vhost@*.service'"
+        fi
         ;;
 esac
 
