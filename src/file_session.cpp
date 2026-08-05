@@ -17,7 +17,6 @@
 
 #include <algorithm>
 #include <cerrno>
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -50,85 +49,6 @@ std::string get_target_path(
     return oss.str();
 }
 
-// Pre-0.2.4 objects were stored as a pair of files: "<uuid>.dat" (raw
-// content) and "<uuid>.spec" (a serialized RawstorObjectSpec). Since 0.2.4
-// an object is a single bare "<uuid>" file whose size doubles as its spec.
-std::string get_legacy_dat_path(
-    const std::string& location_path, const RawstdUUIDString& uuid
-) {
-    std::ostringstream oss;
-
-    oss << location_path << "/" << uuid << ".dat";
-
-    return oss.str();
-}
-
-std::string get_legacy_spec_path(
-    const std::string& location_path, const RawstdUUIDString& uuid
-) {
-    std::ostringstream oss;
-
-    oss << location_path << "/" << uuid << ".spec";
-
-    return oss.str();
-}
-
-bool path_exists(const std::string& path) {
-    try {
-        struct stat st;
-        if (stat(path.c_str(), &st) == -1) {
-            RAWSTD_THROW_ERRNO();
-        }
-        return true;
-    } catch (const std::system_error& e) {
-        if (e.code().value() == ENOENT) {
-            return false;
-        }
-        throw;
-    }
-}
-
-bool path_unlink(const std::string& path) {
-    try {
-        if (unlink(path.c_str()) == -1) {
-            RAWSTD_THROW_ERRNO();
-        }
-        return true;
-    } catch (const std::system_error& e) {
-        if (e.code().value() == ENOENT) {
-            return false;
-        }
-        throw;
-    }
-}
-
-// If the object still exists in the legacy ".dat"/".spec" form, renames the
-// ".dat" file to the current bare-file target path and drops the ".spec"
-// file. Also finishes an interrupted migration (bare file already present,
-// stray ".spec" left behind). No-op if the object doesn't exist yet.
-void migrate_legacy(
-    const std::string& location_path, const RawstdUUIDString& uuid
-) {
-    std::string target_path = get_target_path(location_path, uuid);
-    std::string legacy_spec_path = get_legacy_spec_path(location_path, uuid);
-
-    if (path_exists(target_path)) {
-        path_unlink(legacy_spec_path);
-        return;
-    }
-
-    std::string legacy_dat_path = get_legacy_dat_path(location_path, uuid);
-    if (!path_exists(legacy_dat_path)) {
-        return;
-    }
-
-    if (rename(legacy_dat_path.c_str(), target_path.c_str()) == -1) {
-        RAWSTD_THROW_ERRNO();
-    }
-
-    path_unlink(legacy_spec_path);
-}
-
 } // unnamed namespace
 
 namespace rawstor {
@@ -143,8 +63,6 @@ int Session::_connect(const RawstdUUID& id) {
 
     RawstdUUIDString id_string;
     rawstd_uuid_to_string(&id, &id_string);
-
-    migrate_legacy(location_path, id_string);
 
     std::string target_path = get_target_path(location_path, id_string);
 
@@ -168,18 +86,10 @@ void Session::list(
 
         for (const auto& entry :
              std::filesystem::directory_iterator(location_path)) {
-            std::string extension = entry.path().extension().string();
-
-            std::string filename;
-            if (extension.empty()) {
-                filename = entry.path().filename().string();
-            } else if (extension == ".dat") {
-                // Not-yet-migrated legacy object.
-                filename = entry.path().stem().string();
-            } else {
-                // ".spec" (legacy) or anything else.
+            if (!entry.path().extension().empty()) {
                 continue;
             }
+            std::string filename = entry.path().filename().string();
 
             RawstdUUID uuid;
             int res = rawstd_uuid_from_string(&uuid, filename.c_str());
@@ -285,15 +195,9 @@ void Session::remove(const RawstdUUID& id, std::function<void(int)>&& cb) {
     rawstd_uuid_to_string(&id, &uuid_string);
 
     std::string target_path = get_target_path(location_path, uuid_string);
-    if (!path_unlink(target_path)) {
-        std::string legacy_dat_path =
-            get_legacy_dat_path(location_path, uuid_string);
-        if (unlink(legacy_dat_path.c_str()) == -1) {
-            RAWSTD_THROW_ERRNO();
-        }
+    if (unlink(target_path.c_str()) == -1) {
+        RAWSTD_THROW_ERRNO();
     }
-
-    path_unlink(get_legacy_spec_path(location_path, uuid_string));
 
     cb(0);
 }
@@ -306,8 +210,6 @@ void Session::spec(
 
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&id, &uuid_string);
-
-    migrate_legacy(location_path, uuid_string);
 
     std::string target_path = get_target_path(location_path, uuid_string);
 
@@ -332,9 +234,7 @@ void Session::info(std::function<void(const RawstorLocationInfo&, int)>&& cb) {
         uint64_t used = 0;
         for (const auto& entry :
              std::filesystem::directory_iterator(location_path)) {
-            std::string extension = entry.path().extension().string();
-            if (!extension.empty() && extension != ".dat") {
-                // ".spec" (legacy) or anything else.
+            if (!entry.path().extension().empty()) {
                 continue;
             }
 
