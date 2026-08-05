@@ -195,6 +195,9 @@ jobs:
         cp deb/librawstor/rawstor-ost.install debian
         cp deb/librawstor/rawstor-ost.postinst debian
         cp deb/librawstor/rawstor-ost.prerm debian
+        cp deb/librawstor/rawstor-vhost.install debian
+        cp deb/librawstor/rawstor-vhost.postinst debian
+        cp deb/librawstor/rawstor-vhost.prerm debian
         cp deb/librawstor/rules debian
         cp systemd/rawstor-ost.service debian
         cp COPYING debian/copyright
@@ -207,7 +210,7 @@ jobs:
         echo '```' >> $GITHUB_STEP_SUMMARY
     - name: ls
       run: |
-        for i in librawstor_*.deb librawstor-dev_*.deb rawstor-ost_*.deb *.ddeb; do \
+        for i in librawstor_*.deb librawstor-dev_*.deb rawstor-ost_*.deb rawstor-vhost_*.deb *.ddeb; do \
           [ -e "$i" ] || continue; \
           echo "# $i" >> $GITHUB_STEP_SUMMARY; \
           echo '```' >> $GITHUB_STEP_SUMMARY
@@ -221,6 +224,7 @@ jobs:
           librawstor_*.deb
           librawstor-dev_*.deb
           rawstor-ost_*.deb
+          rawstor-vhost_*.deb
           *.ddeb
         if-no-files-found: error
 
@@ -327,6 +331,8 @@ jobs:
         rawstor-ost --version
         rawstor create --size=1M ost://127.0.0.1:7777
         rawstor list ost://127.0.0.1:7777
+    - name: install-rawstor-vhost
+      run: sudo apt install -y ./librawstor.deb/rawstor-vhost_*.deb
     - name: test-rawstor-vhost
       run: |
         TARGET=$(rawstor create --size=1M ost://127.0.0.1:7777)
@@ -508,6 +514,12 @@ jobs:
         rawstor create --size=1M ost://127.0.0.1:7777
         rawstor list ost://127.0.0.1:7777
         kill ${OST_PID}
+    - name: install-rawstor-vhost
+      run: dnf -y install ./librawstor.rpm/rawstor-vhost-[0-9]*.rpm
+    - name: test-rawstor-vhost
+      # containers have no systemd/PID 1, so the @-instance unit cannot be
+      # started via systemctl here -- just confirm the binary is installed.
+      run: rawstor-vhost --version
     - name: install-python3-rawstor
       run: dnf -y install ./python3-rawstor-${{ matrix.os }}.rpm/python3*-rawstor-[0-9]*.rpm
     - name: test-python3-rawstor

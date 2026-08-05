@@ -38,6 +38,21 @@ Rawstor OST backend.
 getent group rawstor >/dev/null || groupadd -r rawstor
 getent passwd rawstor >/dev/null || useradd -r -g rawstor -d /var/lib/rawstor -s /sbin/nologin -c "Rawstor OST daemon" rawstor
 
+
+%package -n rawstor-vhost
+Summary: Rawstor vhost-user-blk backend for QEMU
+Requires(pre): shadow-utils
+Requires: %{name} = %{version}-%{release}
+%{?systemd_requires}
+
+%description -n rawstor-vhost
+Rawstor vhost-user-blk backend for QEMU.
+
+
+%pre -n rawstor-vhost
+getent group rawstor >/dev/null || groupadd -r rawstor
+getent passwd rawstor >/dev/null || useradd -r -g rawstor -d /var/lib/rawstor -s /sbin/nologin -c "Rawstor daemon" rawstor
+
 %prep
 %autosetup -n %{name}-@PACKAGE_VERSION@
 
@@ -67,8 +82,6 @@ mkdir -p %{buildroot}/var/lib/rawstor
 %files
 %{_bindir}/rawstor
 %{_bindir}/rawstor-cli
-%{_bindir}/rawstor-vhost
-%{_unitdir}/rawstor-vhost@.service
 %{_libdir}/librawstor.so.*
 %doc COPYING ChangeLog.md README.md
 
@@ -81,3 +94,7 @@ mkdir -p %{buildroot}/var/lib/rawstor
 %{_bindir}/rawstor-ost
 %{_unitdir}/rawstor-ost.service
 %dir %attr(0755, rawstor, rawstor) /var/lib/rawstor
+
+%files -n rawstor-vhost
+%{_bindir}/rawstor-vhost
+%{_unitdir}/rawstor-vhost@.service
