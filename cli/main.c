@@ -27,7 +27,7 @@ static void usage(void) {
         stdout,
         "Rawstor CLI " PACKAGE_VERSION "\n"
         "\n"
-        "usage: rawstor-cli [options] <command> [command_options]\n"
+        "usage: rawstor [options] <command> [command_options]\n"
         "\n"
         "options:\n"
         "  -h, --help            Show this help message and exit\n"
@@ -57,18 +57,17 @@ static void command_create_usage(void) {
         stdout,
         "Rawstor CLI " PACKAGE_VERSION "\n"
         "\n"
-        "usage: rawstor-cli [options] create -l LOCATION [-u UUID] "
+        "usage: rawstor [options] create LOCATION [-u UUID] "
         "[command_options]\n"
-        "       rawstor-cli [options] create -t TARGET [command_options]\n"
+        "       rawstor [options] create -t TARGET [command_options]\n"
         "\n"
         "create by location (backend list, optional UUID):\n"
-        "  -l, --location LOCATION\n"
-        "                        Comma-separated list of rawstor backend "
+        "  LOCATION              Comma-separated list of rawstor backend "
         "locations.\n"
         "                        If -u is omitted, a random UUIDv7 is "
         "generated.\n"
-        "  -u, --uuid UUID       Explicit UUID for the object (only valid with "
-        "-l).\n"
+        "  -u, --uuid UUID       Explicit UUID for the object (only valid "
+        "when creating by location).\n"
         "\n"
         "create by target (pre-formatted targets with embedded UUID):\n"
         "  -t, --target TARGET   Comma-separated list of rawstor backend "
@@ -99,7 +98,7 @@ static int command_create(int argc, char** argv) {
     const char* size_arg = NULL;
     const char* target_arg = NULL;
     const char* uuid_arg = NULL;
-    optind = 1;
+    optind = 0;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
         if (c == -1) {
@@ -130,6 +129,11 @@ static int command_create(int argc, char** argv) {
         default:
             return EXIT_FAILURE;
         }
+    }
+
+    if (location_arg == NULL && target_arg == NULL && optind < argc) {
+        location_arg = argv[optind];
+        optind++;
     }
 
     if (optind < argc) {
@@ -181,14 +185,12 @@ static int command_create(int argc, char** argv) {
 
 static void command_remove_usage(void) {
     fprintf(
-        stdout,
-        "Rawstor CLI " PACKAGE_VERSION "\n"
-        "\n"
-        "usage: rawstor-cli [options] remove [command_options]\n"
-        "\n"
-        "command options:\n"
-        "  -t, --target TARGET   Comma separated list of rawstor backend "
-        "targets\n"
+        stdout, "Rawstor CLI " PACKAGE_VERSION "\n"
+                "\n"
+                "usage: rawstor [options] remove TARGET [command_options]\n"
+                "\n"
+                "command options:\n"
+                "  -h, --help            Show this help message and exit\n"
     );
 };
 
@@ -201,7 +203,7 @@ static int command_remove(int argc, char** argv) {
     };
 
     char* target_arg = NULL;
-    optind = 1;
+    optind = 0;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
         if (c == -1) {
@@ -222,6 +224,11 @@ static int command_remove(int argc, char** argv) {
         }
     }
 
+    if (target_arg == NULL && optind < argc) {
+        target_arg = argv[optind];
+        optind++;
+    }
+
     if (optind < argc) {
         fprintf(stderr, "Unexpected argument: %s\n", argv[optind]);
         return EXIT_FAILURE;
@@ -237,18 +244,12 @@ static int command_remove(int argc, char** argv) {
 
 static void command_list_usage(void) {
     fprintf(
-        stdout,
-        "Rawstor CLI " PACKAGE_VERSION "\n"
-        "\n"
-        "usage: rawstor-cli [options] list -l LOCATION [command_options]\n"
-        "\n"
-        "list objects stored at the given location(s):\n"
-        "  -l, --location LOCATION\n"
-        "                        Comma-separated list of rawstor backend "
-        "locations.\n"
-        "\n"
-        "command options:\n"
-        "  -h, --help            Show this help message and exit\n"
+        stdout, "Rawstor CLI " PACKAGE_VERSION "\n"
+                "\n"
+                "usage: rawstor [options] list LOCATION [command_options]\n"
+                "\n"
+                "command options:\n"
+                "  -h, --help            Show this help message and exit\n"
     );
 }
 
@@ -261,7 +262,7 @@ static int command_list(int argc, char** argv) {
     };
 
     char* location_arg = NULL;
-    optind = 1;
+    optind = 0;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
         if (c == -1) {
@@ -282,6 +283,11 @@ static int command_list(int argc, char** argv) {
         }
     }
 
+    if (location_arg == NULL && optind < argc) {
+        location_arg = argv[optind];
+        optind++;
+    }
+
     if (optind < argc) {
         fprintf(stderr, "Unexpected argument: %s\n", argv[optind]);
         return EXIT_FAILURE;
@@ -297,14 +303,12 @@ static int command_list(int argc, char** argv) {
 
 static void command_show_usage(void) {
     fprintf(
-        stdout,
-        "Rawstor CLI " PACKAGE_VERSION "\n"
-        "\n"
-        "usage: rawstor-cli [options] show [command_options]\n"
-        "\n"
-        "command options:\n"
-        "  -t, --target TARGET   Comma separated list of rawstor backend "
-        "targets\n"
+        stdout, "Rawstor CLI " PACKAGE_VERSION "\n"
+                "\n"
+                "usage: rawstor [options] show TARGET [command_options]\n"
+                "\n"
+                "command options:\n"
+                "  -h, --help            Show this help message and exit\n"
     );
 };
 
@@ -317,7 +321,7 @@ static int command_show(int argc, char** argv) {
     };
 
     char* target_arg = NULL;
-    optind = 1;
+    optind = 0;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
         if (c == -1) {
@@ -338,6 +342,11 @@ static int command_show(int argc, char** argv) {
         }
     }
 
+    if (target_arg == NULL && optind < argc) {
+        target_arg = argv[optind];
+        optind++;
+    }
+
     if (optind < argc) {
         fprintf(stderr, "Unexpected argument: %s\n", argv[optind]);
         return EXIT_FAILURE;
@@ -356,7 +365,7 @@ static void command_testio_usage(void) {
         stdout,
         "Rawstor CLI " PACKAGE_VERSION "\n"
         "\n"
-        "usage: rawstor-cli [options] testio [command_options]\n"
+        "usage: rawstor [options] testio TARGET [command_options]\n"
         "\n"
         "command options:\n"
         "  --queue-size SIZE     RawIO queue size (default: %u)\n"
@@ -366,8 +375,6 @@ static void command_testio_usage(void) {
         "                        reading/writing in bytes\n"
         "  -d, --io-depth DEPTH  IO depth\n"
         "  -h, --help            Show this help message and exit\n"
-        "  -t, --target TARGET   Comma separated list of rawstor backend "
-        "targets\n"
         "  --vector-mode         Use readv/writev\n",
         DEFAULT_QUEUE_SIZE
     );
@@ -392,7 +399,7 @@ static int command_testio(int argc, char** argv) {
     char* io_depth_arg = NULL;
     char* target_arg = NULL;
     int vector_mode = 0;
-    optind = 1;
+    optind = 0;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
         if (c == -1) {
@@ -431,6 +438,11 @@ static int command_testio(int argc, char** argv) {
         default:
             return EXIT_FAILURE;
         }
+    }
+
+    if (target_arg == NULL && optind < argc) {
+        target_arg = argv[optind];
+        optind++;
     }
 
     if (optind < argc) {
