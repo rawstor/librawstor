@@ -7,6 +7,7 @@
 
 #include "config.h"
 
+#include <rawstd/exitcode.h>
 #include <rawstd/gcc.h>
 
 #include <rawstor.h>
@@ -17,6 +18,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sysexits.h>
 
 #define DEFAULT_QUEUE_SIZE 256
 
@@ -127,7 +129,7 @@ static int command_create(int argc, char** argv) {
             break;
 
         default:
-            return EXIT_FAILURE;
+            return EX_USAGE;
         }
     }
 
@@ -138,32 +140,32 @@ static int command_create(int argc, char** argv) {
 
     if (optind < argc) {
         fprintf(stderr, "Unexpected argument: %s\n", argv[optind]);
-        return EXIT_FAILURE;
+        return EX_USAGE;
     }
 
     if (size_arg == NULL) {
         fprintf(stderr, "size required\n");
-        return EXIT_FAILURE;
+        return EX_USAGE;
     }
 
     if (location_arg != NULL && target_arg != NULL) {
         fprintf(stderr, "location and target are mutually exclusive\n");
-        return EXIT_FAILURE;
+        return EX_USAGE;
     }
 
     if (target_arg != NULL && uuid_arg != NULL) {
         fprintf(stderr, "Unexpected argument: uuid\n");
-        return EXIT_FAILURE;
+        return EX_USAGE;
     }
 
     if (uuid_arg != NULL && location_arg == NULL) {
         fprintf(stderr, "uuid argument requires location\n");
-        return EXIT_FAILURE;
+        return EX_USAGE;
     }
 
     if (location_arg == NULL && target_arg == NULL) {
         fprintf(stderr, "location or target required\n");
-        return EXIT_FAILURE;
+        return EX_USAGE;
     }
 
     uint64_t size = 0;
@@ -173,7 +175,7 @@ static int command_create(int argc, char** argv) {
             stderr, "Failed to parse units: %s\nError: %s\n", size_arg,
             strerror(-res)
         );
-        return EXIT_FAILURE;
+        return EX_USAGE;
     }
 
     if (target_arg != NULL) {
@@ -220,7 +222,7 @@ static int command_remove(int argc, char** argv) {
             break;
 
         default:
-            return EXIT_FAILURE;
+            return EX_USAGE;
         }
     }
 
@@ -231,12 +233,12 @@ static int command_remove(int argc, char** argv) {
 
     if (optind < argc) {
         fprintf(stderr, "Unexpected argument: %s\n", argv[optind]);
-        return EXIT_FAILURE;
+        return EX_USAGE;
     }
 
     if (target_arg == NULL) {
         fprintf(stderr, "target required\n");
-        return EXIT_FAILURE;
+        return EX_USAGE;
     }
 
     return rawstor_cli_remove(target_arg);
@@ -279,7 +281,7 @@ static int command_list(int argc, char** argv) {
             break;
 
         default:
-            return EXIT_FAILURE;
+            return EX_USAGE;
         }
     }
 
@@ -290,12 +292,12 @@ static int command_list(int argc, char** argv) {
 
     if (optind < argc) {
         fprintf(stderr, "Unexpected argument: %s\n", argv[optind]);
-        return EXIT_FAILURE;
+        return EX_USAGE;
     }
 
     if (location_arg == NULL) {
         fprintf(stderr, "location required\n");
-        return EXIT_FAILURE;
+        return EX_USAGE;
     }
 
     return rawstor_cli_list(location_arg);
@@ -338,7 +340,7 @@ static int command_show(int argc, char** argv) {
             break;
 
         default:
-            return EXIT_FAILURE;
+            return EX_USAGE;
         }
     }
 
@@ -349,12 +351,12 @@ static int command_show(int argc, char** argv) {
 
     if (optind < argc) {
         fprintf(stderr, "Unexpected argument: %s\n", argv[optind]);
-        return EXIT_FAILURE;
+        return EX_USAGE;
     }
 
     if (target_arg == NULL) {
         fprintf(stderr, "target required\n");
-        return EXIT_FAILURE;
+        return EX_USAGE;
     }
 
     return rawstor_cli_show(target_arg);
@@ -436,7 +438,7 @@ static int command_testio(int argc, char** argv) {
             break;
 
         default:
-            return EXIT_FAILURE;
+            return EX_USAGE;
         }
     }
 
@@ -447,20 +449,20 @@ static int command_testio(int argc, char** argv) {
 
     if (optind < argc) {
         fprintf(stderr, "Unexpected argument: %s\n", argv[optind]);
-        return EXIT_FAILURE;
+        return EX_USAGE;
     }
 
     unsigned int queue_size = DEFAULT_QUEUE_SIZE;
     if (queue_size_arg != NULL) {
         if (sscanf(queue_size_arg, "%u", &queue_size) != 1) {
             fprintf(stderr, "queue-size argument must be unsigned integer\n");
-            return EXIT_FAILURE;
+            return EX_USAGE;
         }
     }
 
     if (block_size_arg == NULL) {
         fprintf(stderr, "block-size required\n");
-        return EXIT_FAILURE;
+        return EX_USAGE;
     }
 
     uint64_t block_size = 0;
@@ -470,34 +472,34 @@ static int command_testio(int argc, char** argv) {
             stderr, "Failed to parse units: %s\nError: %s\n", block_size_arg,
             strerror(-res)
         );
-        return EXIT_FAILURE;
+        return EX_USAGE;
     }
 
     if (count_arg == NULL) {
         fprintf(stderr, "count required\n");
-        return EXIT_FAILURE;
+        return EX_USAGE;
     }
 
     unsigned int count = 0;
     if (sscanf(count_arg, "%u", &count) != 1) {
         fprintf(stderr, "count argument must be unsigned integer\n");
-        return EXIT_FAILURE;
+        return EX_USAGE;
     }
 
     if (io_depth_arg == NULL) {
         fprintf(stderr, "io-depth required\n");
-        return EXIT_FAILURE;
+        return EX_USAGE;
     }
 
     unsigned int io_depth = 0;
     if (sscanf(io_depth_arg, "%u", &io_depth) != 1) {
         fprintf(stderr, "io-depth argument must be unsigned integer\n");
-        return EXIT_FAILURE;
+        return EX_USAGE;
     }
 
     if (target_arg == NULL) {
         fprintf(stderr, "target required\n");
-        return EXIT_FAILURE;
+        return EX_USAGE;
     }
 
     return rawstor_cli_testio(
@@ -511,7 +513,7 @@ static int run_command(
     int res = rawstor_initialize(opts);
     if (res) {
         fprintf(stderr, "rawstor_initialize() failed: %s\n", strerror(-res));
-        return EXIT_FAILURE;
+        return rawstd_exitcode_for_errno(-res);
     }
 
     int ret;
@@ -527,7 +529,7 @@ static int run_command(
         ret = command_testio(argc, argv);
     } else {
         printf("Unexpected command: %s\n", command);
-        ret = EXIT_FAILURE;
+        ret = EX_USAGE;
     }
 
     rawstor_terminate();
@@ -564,13 +566,13 @@ int main(int argc, char** argv) {
             return EXIT_SUCCESS;
 
         default:
-            return EXIT_FAILURE;
+            return EX_USAGE;
         }
     }
 
     if (optind > argc - 1) {
         usage();
-        return EXIT_FAILURE;
+        return EX_USAGE;
     }
 
     struct RawstorOpts opts = {};
@@ -578,7 +580,7 @@ int main(int argc, char** argv) {
     if (sessions_arg != NULL) {
         if (sscanf(sessions_arg, "%u", &opts.sessions) != 1) {
             fprintf(stderr, "sessions argument must be unsigned integer\n");
-            return EXIT_FAILURE;
+            return EX_USAGE;
         }
     }
 
@@ -590,7 +592,7 @@ int main(int argc, char** argv) {
         fprintf(
             stderr, "Failed to register SIGINT handler: %s\n", strerror(errsv)
         );
-        return EXIT_FAILURE;
+        return rawstd_exitcode_for_errno(errsv);
     }
     if (sigaction(SIGTERM, &sact, NULL) == -1) {
         int errsv = errno;
@@ -598,7 +600,7 @@ int main(int argc, char** argv) {
         fprintf(
             stderr, "Failed to register SIGTERM handler: %s\n", strerror(errsv)
         );
-        return EXIT_FAILURE;
+        return rawstd_exitcode_for_errno(errsv);
     }
 
     int ret = run_command(argv[optind], &opts, argc - optind, &argv[optind]);

@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.3.0] - Unreleased
 
 ### Changed
-- `rawstor-vhost` now exits `2` (instead of the generic `1`) when the target object doesn't exist on any backend; `rawstor-vhost@.service` won't restart-loop on that exit code.
+- `rawstor`, `rawstor-ost` and `rawstor-vhost` now exit with `sysexits.h` codes (`EX_USAGE`, `EX_NOINPUT`, `EX_UNAVAILABLE`, `EX_NOPERM`, ...) instead of a generic `1` for every failure; `rawstor-ost.service`/`rawstor-vhost@.service` won't restart-loop on `EX_NOINPUT`/`EX_NOPERM`.
 
 ## [0.2.4] - Unreleased
 
