@@ -49,6 +49,9 @@ EXTRA_DIST = deb/librawstor/compat \
              deb/librawstor/rawstor-ost.install \
              deb/librawstor/rawstor-ost.postinst \
              deb/librawstor/rawstor-ost.prerm \
+             deb/librawstor/rawstor-vhost.install \
+             deb/librawstor/rawstor-vhost.postinst \
+             deb/librawstor/rawstor-vhost.prerm \
              deb/librawstor/rules \
              deb/python3-rawstor/compat \
              deb/python3-rawstor/format \

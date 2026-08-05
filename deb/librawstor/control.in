@@ -31,3 +31,12 @@ Depends: ${misc:Depends},
          @PACKAGE_NAME@ (= ${binary:Version})
 Description: Rawstor OST backend
 Homepage: https://github.com/rawstor/librawstor
+
+Package: rawstor-vhost
+Architecture: any
+Depends: ${misc:Depends},
+         ${shlibs:Depends},
+         adduser,
+         @PACKAGE_NAME@ (= ${binary:Version})
+Description: Rawstor vhost-user-blk backend for QEMU
+Homepage: https://github.com/rawstor/librawstor
