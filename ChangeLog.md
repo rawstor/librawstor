@@ -8,7 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.3.0] - Unreleased
 
 ### Changed
-- `rawstor-cli list`/`create`/`remove`/`show`/`testio`, `rawstor-ost` and `rawstor-vhost` now take their main argument (`LOCATION`/`TARGET`) positionally instead of requiring `-l`/`-t`; the flags still work for compatibility.
+- `rawstor-cli` binary renamed to `rawstor`; packages ship `rawstor-cli` as a compat symlink to it.
+- `rawstor list`/`create`/`remove`/`show`/`testio`, `rawstor-ost` and `rawstor-vhost` now take their main argument (`LOCATION`/`TARGET`) positionally instead of requiring `-l`/`-t`; the flags still work for compatibility.
 
 ## [0.2.3] - 2026-08-04
 

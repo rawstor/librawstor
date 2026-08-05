@@ -27,7 +27,7 @@ static void usage(void) {
         stdout,
         "Rawstor CLI " PACKAGE_VERSION "\n"
         "\n"
-        "usage: rawstor-cli [options] <command> [command_options]\n"
+        "usage: rawstor [options] <command> [command_options]\n"
         "\n"
         "options:\n"
         "  -h, --help            Show this help message and exit\n"
@@ -57,9 +57,9 @@ static void command_create_usage(void) {
         stdout,
         "Rawstor CLI " PACKAGE_VERSION "\n"
         "\n"
-        "usage: rawstor-cli [options] create LOCATION [-u UUID] "
+        "usage: rawstor [options] create LOCATION [-u UUID] "
         "[command_options]\n"
-        "       rawstor-cli [options] create -t TARGET [command_options]\n"
+        "       rawstor [options] create -t TARGET [command_options]\n"
         "\n"
         "create by location (backend list, optional UUID):\n"
         "  LOCATION              Comma-separated list of rawstor backend "
@@ -191,7 +191,7 @@ static void command_remove_usage(void) {
         stdout,
         "Rawstor CLI " PACKAGE_VERSION "\n"
         "\n"
-        "usage: rawstor-cli [options] remove TARGET [command_options]\n"
+        "usage: rawstor [options] remove TARGET [command_options]\n"
         "\n"
         "command options:\n"
         "  -t, --target TARGET   Comma separated list of rawstor backend "
@@ -252,7 +252,7 @@ static void command_list_usage(void) {
         stdout,
         "Rawstor CLI " PACKAGE_VERSION "\n"
         "\n"
-        "usage: rawstor-cli [options] list LOCATION [command_options]\n"
+        "usage: rawstor [options] list LOCATION [command_options]\n"
         "\n"
         "command options:\n"
         "  -h, --help            Show this help message and exit\n"
@@ -315,7 +315,7 @@ static void command_show_usage(void) {
         stdout,
         "Rawstor CLI " PACKAGE_VERSION "\n"
         "\n"
-        "usage: rawstor-cli [options] show TARGET [command_options]\n"
+        "usage: rawstor [options] show TARGET [command_options]\n"
         "\n"
         "command options:\n"
         "  -t, --target TARGET   Comma separated list of rawstor backend "
@@ -376,7 +376,7 @@ static void command_testio_usage(void) {
         stdout,
         "Rawstor CLI " PACKAGE_VERSION "\n"
         "\n"
-        "usage: rawstor-cli [options] testio TARGET [command_options]\n"
+        "usage: rawstor [options] testio TARGET [command_options]\n"
         "\n"
         "command options:\n"
         "  --queue-size SIZE     RawIO queue size (default: %u)\n"
