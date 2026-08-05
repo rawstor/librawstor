@@ -81,7 +81,8 @@ Default values are shown below.
 | Option | Description |
 |--------|-------------|
 | `-h, --help` | Show help message and exit. |
-| `LOCATION` | Comma‑separated list of backend locations (e.g., `file:///path`, `ost://host:port`). Can also be passed as `-l, --location LOCATION`. |
+| `LOCATION` | Comma‑separated list of backend locations (e.g., `file:///path`, `ost://host:port`). |
+| `-l, --location LOCATION` | Comma‑separated list of backend locations (e.g., `file:///path`, `ost://host:port`). |
 | `-b, --bind ADDR` | Bind address in `<ip>:<port>` format (e.g., `127.0.0.1:7777`). |
 
 ### Examples
@@ -132,7 +133,8 @@ multiple in-flight requests on a virtqueue may complete out of order.
 |--------|-------------|
 | `-h, --help` | Show help message and exit. |
 | `-s, --socket-path PATH` | Location of the vhost-user Unix domain socket. |
-| `TARGET` | Comma‑separated list of rawstor backend targets (see [Locations and Targets](https://github.com/rawstor/librawstor/blob/main/docs/locations_and_targets.md)). Can also be passed as `-t, --target TARGET`. |
+| `TARGET` | Comma‑separated list of rawstor backend targets (see [Locations and Targets](https://github.com/rawstor/librawstor/blob/main/docs/locations_and_targets.md)). |
+| `-t, --target TARGET` | Comma‑separated list of rawstor backend targets (see [Locations and Targets](https://github.com/rawstor/librawstor/blob/main/docs/locations_and_targets.md)). |
 | `--queue-size SIZE` | RawIO queue (`io_uring`) depth. Default: `256`. |
 | `-v, --version` | Print version and exit. |
 

@@ -42,8 +42,8 @@ void usage() {
                  "backend locations"
               << std::endl
               << "  -l, --location LOCATION" << std::endl
-              << "                        Same as the positional LOCATION "
-                 "argument."
+              << "                        Comma separated list of rawstor "
+                 "backend locations"
               << std::endl;
 }
 

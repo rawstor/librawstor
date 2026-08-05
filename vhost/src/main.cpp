@@ -44,8 +44,8 @@ void usage() {
               << "  TARGET                Comma separated list of rawstor "
                  "backend targets"
               << std::endl
-              << "  -t, --target TARGET   Same as the positional TARGET "
-                 "argument."
+              << "  -t, --target TARGET   Comma separated list of rawstor "
+                 "backend targets"
               << std::endl;
 }
 
