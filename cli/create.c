@@ -4,11 +4,13 @@
 
 #include <rawstor.h>
 
+#include <rawstd/exitcode.h>
 #include <rawstd/uuid.h>
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sysexits.h>
 
 static void log_spec(FILE* output, const struct RawstorObjectSpec* spec) {
     char buf[256];
@@ -28,7 +30,7 @@ int rawstor_cli_create(const char* target, uint64_t size) {
     int res = rawstor_object_create(target, &spec);
     if (res < 0) {
         fprintf(stderr, "rawstor_object_create() failed: %s\n", strerror(-res));
-        return EXIT_FAILURE;
+        return rawstd_exitcode_for_errno(-res);
     }
 
     fprintf(stderr, "Object created\n");
@@ -54,12 +56,12 @@ int rawstor_cli_create_at(
         fprintf(
             stderr, "rawstor_object_create_at() failed: %s\n", strerror(-res)
         );
-        return EXIT_FAILURE;
+        return rawstd_exitcode_for_errno(-res);
     }
 
     if (res >= (int)sizeof(target)) {
         fprintf(stderr, "rawstor_object_create_at(): output truncated\n");
-        return EXIT_FAILURE;
+        return EX_SOFTWARE;
     }
 
     fprintf(stderr, "Object created\n");

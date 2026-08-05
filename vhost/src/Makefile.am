@@ -32,4 +32,5 @@ libvhost_la_SOURCES = $(top_srcdir)/vhost/include/vhost/user_protocol.h \
 rawstor_vhost_SOURCES = main.cpp
 
 rawstor_vhost_LDADD = libvhost.la \
-                      $(top_builddir)/src/librawstor.la
+                      $(top_builddir)/src/librawstor.la \
+                      $(top_builddir)/librawstd/src/librawstd.la

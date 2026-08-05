@@ -2,6 +2,8 @@
 
 #include <rawstor.h>
 
+#include <rawstd/exitcode.h>
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,7 +14,7 @@ int rawstor_cli_remove(const char* target) {
     int res = rawstor_object_remove(target);
     if (res) {
         fprintf(stderr, "rawstor_object_remove() failed: %s\n", strerror(-res));
-        return EXIT_FAILURE;
+        return rawstd_exitcode_for_errno(-res);
     }
 
     fprintf(stderr, "Object removed\n");

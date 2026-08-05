@@ -2,15 +2,19 @@
 
 #include "config.h"
 
+#include <rawstd/exitcode.h>
+
 #include <getopt.h>
 #include <signal.h>
 
 #include <iostream>
 #include <sstream>
+#include <system_error>
 
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <sysexits.h>
 
 #define DEFAULT_QUEUE_SIZE 256
 
@@ -123,7 +127,7 @@ int main(int argc, char** argv) {
             return EXIT_SUCCESS;
 
         default:
-            return EXIT_FAILURE;
+            return EX_USAGE;
         }
     }
 
@@ -134,7 +138,7 @@ int main(int argc, char** argv) {
 
     if (optind < argc) {
         std::cerr << "Unexpected argument: " << argv[optind] << std::endl;
-        return EXIT_FAILURE;
+        return EX_USAGE;
     }
 
     unsigned int queue_size = DEFAULT_QUEUE_SIZE;
@@ -143,18 +147,18 @@ int main(int argc, char** argv) {
         if (iss.peek() < '0' || iss.peek() > '9' || !(iss >> queue_size) ||
             !iss.eof()) {
             std::cerr << "queue-size must be unsigned integer" << std::endl;
-            return EXIT_FAILURE;
+            return EX_USAGE;
         }
     }
 
     if (location_arg == nullptr) {
         std::cerr << "location argument required" << std::endl;
-        return EXIT_FAILURE;
+        return EX_USAGE;
     }
 
     if (bind_arg == nullptr) {
         std::cerr << "bind argument required" << std::endl;
-        return EXIT_FAILURE;
+        return EX_USAGE;
     }
 
     sact.sa_handler = sact_handler;
@@ -164,14 +168,14 @@ int main(int argc, char** argv) {
         errno = 0;
         std::cerr << "Failed to register SIGINT handler: " << strerror(errsv)
                   << std::endl;
-        return EXIT_FAILURE;
+        return rawstd_exitcode_for_errno(errsv);
     }
     if (sigaction(SIGTERM, &sact, nullptr) == -1) {
         int errsv = errno;
         errno = 0;
         std::cerr << "Failed to register SIGTERM handler: " << strerror(errsv)
                   << std::endl;
-        return EXIT_FAILURE;
+        return rawstd_exitcode_for_errno(errsv);
     }
 
     std::string name;
@@ -180,14 +184,17 @@ int main(int argc, char** argv) {
     if (port == 0) {
         std::cerr << "Invalid bind address: port is missing or invalid in \""
                   << bind_arg << "\"" << std::endl;
-        return EXIT_FAILURE;
+        return EX_USAGE;
     }
 
     try {
         ost(queue_size, name, port, location_arg);
+    } catch (const std::system_error& e) {
+        std::cerr << e.what() << std::endl;
+        return rawstd_exitcode_for_errno(e.code().value());
     } catch (const std::exception& e) {
         std::cerr << e.what() << std::endl;
-        return EXIT_FAILURE;
+        return EX_SOFTWARE;
     }
 
     return EXIT_SUCCESS;

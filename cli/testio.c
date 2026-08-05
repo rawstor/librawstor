@@ -2,6 +2,8 @@
 
 #include <rawstor.h>
 
+#include <rawstd/exitcode.h>
+
 #include <assert.h>
 #include <errno.h>
 #include <stdio.h>
@@ -260,11 +262,13 @@ int rawstor_cli_testio(
     unsigned int count, unsigned int io_depth, int vector_mode
 ) {
     int res;
+    int err = 0;
 
     RawIOQueue* queue;
     res = rawio_queue_create(queue_size, &queue);
     if (res < 0) {
         fprintf(stderr, "rawio_queue_create() failed: %s\n", strerror(-res));
+        err = -res;
         goto err_queue;
     }
 
@@ -272,6 +276,7 @@ int rawstor_cli_testio(
     res = rawstor_object_open(queue, target, &object);
     if (res < 0) {
         fprintf(stderr, "rawstor_object_open() failed: %s\n", strerror(-res));
+        err = -res;
         goto err_open;
     }
 
@@ -279,12 +284,14 @@ int rawstor_cli_testio(
     Worker** workers = calloc(io_depth, sizeof(Worker*));
     if (workers == NULL) {
         fprintf(stderr, "calloc() failed: %s\n", strerror(errno));
+        err = errno;
         goto err_workers;
     }
     for (unsigned int i = 0; i < io_depth; ++i) {
         workers[i] = worker_create(i, block_size, &counter, count);
         if (workers[i] == NULL) {
             fprintf(stderr, "worker_create() failed: %s\n", strerror(errno));
+            err = errno;
             goto err_worker_create;
         }
     }
@@ -304,6 +311,7 @@ int rawstor_cli_testio(
                     stderr, "rawstor_object_pwrite() failed: %s\n",
                     strerror(-res)
                 );
+                err = -res;
                 goto err_pwrite;
             }
         }
@@ -321,6 +329,7 @@ int rawstor_cli_testio(
                     stderr, "rawstor_object_pwritev() failed: %s\n",
                     strerror(-res)
                 );
+                err = -res;
                 goto err_pwrite;
             }
         }
@@ -330,6 +339,7 @@ int rawstor_cli_testio(
         int res = rawio_wait(queue);
         if (res < 0) {
             fprintf(stderr, "rawstor_wait() failed: %s\n", strerror(-res));
+            err = -res;
             goto err_wait;
         }
     }
@@ -362,10 +372,10 @@ err_worker_create:
 err_workers:
     res = rawstor_object_close(object);
     if (res < 0) {
-        fprintf(stderr, "rawstor_object_close() failed: %s\n", strerror(res));
+        fprintf(stderr, "rawstor_object_close() failed: %s\n", strerror(-res));
     }
 err_open:
     rawio_queue_delete(queue);
 err_queue:
-    return EXIT_FAILURE;
+    return rawstd_exitcode_for_errno(err);
 }
