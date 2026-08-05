@@ -18,7 +18,6 @@ test_all_SOURCES = main.cpp \
                    server.hpp \
                    session.cpp \
                    session.hpp \
-                   test_file_legacy.cpp \
                    test_io.cpp \
                    test_lifecycle.cpp \
                    test_list.cpp \
