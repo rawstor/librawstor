@@ -22,7 +22,7 @@ void usage() {
     std::cout << "Rawstor OST backend " << PACKAGE_VERSION << std::endl
               << std::endl
               << "usage: rawstor-ost "
-                 "[options] -b ADDR -l LOCATION"
+                 "[options] -b ADDR LOCATION"
               << std::endl
               << std::endl
               << "options:" << std::endl
@@ -38,8 +38,7 @@ void usage() {
               << "  -b, --bind ADDR       Bind address in the format "
               << "<ip>:<port> " << std::endl
               << "                        (e.g., 127.0.0.1:7777)." << std::endl
-              << "  -l, --location LOCATION" << std::endl
-              << "                        Comma separated list of rawstor "
+              << "  LOCATION              Comma separated list of rawstor "
                  "backend locations"
               << std::endl;
 }
@@ -126,6 +125,11 @@ int main(int argc, char** argv) {
         default:
             return EXIT_FAILURE;
         }
+    }
+
+    if (location_arg == nullptr && optind < argc) {
+        location_arg = argv[optind];
+        optind++;
     }
 
     if (optind < argc) {

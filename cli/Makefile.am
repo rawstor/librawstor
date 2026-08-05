@@ -1,4 +1,4 @@
-bin_PROGRAMS = rawstor-cli
+bin_PROGRAMS = rawstor
 
 AM_CFLAGS = $(GENERIC_CFLAGS) \
             $(ASAN_CFLAGS) \
@@ -9,18 +9,18 @@ AM_CFLAGS = $(GENERIC_CFLAGS) \
 AM_LDFLAGS = $(ASAN_LDFLAGS)
 
 
-rawstor_cli_SOURCES = create.c \
-                      create.h \
-                      list.c \
-                      list.h \
-                      main.c \
-                      remove.c \
-                      remove.h \
-                      show.c \
-                      show.h \
-                      testio.c \
-                      testio.h \
-                      units.c \
-                      units.h
+rawstor_SOURCES = create.c \
+                  create.h \
+                  list.c \
+                  list.h \
+                  main.c \
+                  remove.c \
+                  remove.h \
+                  show.c \
+                  show.h \
+                  testio.c \
+                  testio.h \
+                  units.c \
+                  units.h
 
-rawstor_cli_LDADD = $(top_builddir)/src/librawstor.la -lstdc++
+rawstor_LDADD = $(top_builddir)/src/librawstor.la -lstdc++

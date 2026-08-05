@@ -1,1 +1,1 @@
-# rawstor-cli
+# rawstor
