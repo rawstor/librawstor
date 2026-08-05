@@ -36,6 +36,11 @@ EnvironmentFile=-/etc/rawstor-vhost.conf
 ExecStart=/usr/bin/rawstor-vhost --socket-path=/run/rawstor/%i.sock ${RAWSTOR_LOCATION}/%i
 Restart=always
 RestartSec=2
+# Exit code 2 means rawstor-vhost couldn't find the target object on any
+# backend (ENOENT) -- it was removed out from under this instance, so
+# retrying is pointless; leave the unit failed instead of restart-looping.
+# Keep in sync with EXIT_TARGET_NOT_FOUND in vhost/src/main.cpp.
+RestartPreventExitStatus=2
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true

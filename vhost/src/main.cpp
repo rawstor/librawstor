@@ -12,8 +12,16 @@
 
 #include <iostream>
 #include <sstream>
+#include <system_error>
 
 #define DEFAULT_QUEUE_SIZE 256
+
+// Target object doesn't exist on any backend (ENOENT) -- distinct from
+// EXIT_FAILURE so systemd's RestartPreventExitStatus= can tell "the target
+// is gone, retrying won't help" apart from a transient failure worth
+// retrying. Keep in sync with RestartPreventExitStatus= in
+// systemd/rawstor-vhost@.service.
+#define EXIT_TARGET_NOT_FOUND 2
 
 namespace {
 
@@ -158,6 +166,12 @@ int main(int argc, char** argv) {
 
     try {
         server(queue_size, target_arg, socket_path_arg);
+    } catch (const std::system_error& e) {
+        std::cerr << e.what() << std::endl;
+        if (e.code() == std::errc::no_such_file_or_directory) {
+            return EXIT_TARGET_NOT_FOUND;
+        }
+        return EXIT_FAILURE;
     } catch (const std::exception& e) {
         std::cerr << e.what() << std::endl;
         return EXIT_FAILURE;

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.3.0] - Unreleased
 
+### Changed
+- `rawstor-vhost` now exits `2` (instead of the generic `1`) when the target object doesn't exist on any backend; `rawstor-vhost@.service` won't restart-loop on that exit code.
+
 ## [0.2.4] - Unreleased
 
 ### Changed
