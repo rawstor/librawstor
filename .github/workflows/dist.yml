@@ -130,27 +130,27 @@ jobs:
     - name: start rawstor-ost
       run: |
         mkdir /tmp/ost_objects
-        ./${LIBRAWSTOR}/ost/rawstor-ost --bind 127.0.0.1:7777 --location=file:///tmp/ost_objects/ &
+        ./${LIBRAWSTOR}/ost/rawstor-ost --bind 127.0.0.1:7777 file:///tmp/ost_objects/ &
         sleep 10
     - name: create object file,ost
       run: |
         mkdir /tmp/file_objects
-        target=$(./${LIBRAWSTOR}/cli/rawstor-cli create --location=file:///tmp/file_objects,ost://127.0.0.1:7777 --size=1G)
+        target=$(./${LIBRAWSTOR}/cli/rawstor create file:///tmp/file_objects,ost://127.0.0.1:7777 --size=1G)
         echo "TARGET=${target}" >> $GITHUB_ENV
-        ./${LIBRAWSTOR}/cli/rawstor-cli list --location=file:///tmp/file_objects,ost://127.0.0.1:7777
+        ./${LIBRAWSTOR}/cli/rawstor list file:///tmp/file_objects,ost://127.0.0.1:7777
     - name: testio file,ost
       run: |
-        ./${LIBRAWSTOR}/cli/rawstor-cli testio --target=${TARGET} --block-size=4K --io-depth=1 --count=10
-        ./${LIBRAWSTOR}/cli/rawstor-cli testio --target=${TARGET} --block-size=4K --io-depth=1 --count=10 --vector-mode
+        ./${LIBRAWSTOR}/cli/rawstor testio ${TARGET} --block-size=4K --io-depth=1 --count=10
+        ./${LIBRAWSTOR}/cli/rawstor testio ${TARGET} --block-size=4K --io-depth=1 --count=10 --vector-mode
     - name: create object ost,file
       run: |
-        target=$(./${LIBRAWSTOR}/cli/rawstor-cli create --location=ost://127.0.0.1:7777,file:///tmp/file_objects --size=1G)
+        target=$(./${LIBRAWSTOR}/cli/rawstor create ost://127.0.0.1:7777,file:///tmp/file_objects --size=1G)
         echo "TARGET=${target}" >> $GITHUB_ENV
-        ./${LIBRAWSTOR}/cli/rawstor-cli list --location=ost://127.0.0.1:7777,file:///tmp/file_objects
+        ./${LIBRAWSTOR}/cli/rawstor list ost://127.0.0.1:7777,file:///tmp/file_objects
     - name: testio ost,file
       run: |
-        ./${LIBRAWSTOR}/cli/rawstor-cli testio --target=${TARGET} --block-size=4K --io-depth=1 --count=10
-        ./${LIBRAWSTOR}/cli/rawstor-cli testio --target=${TARGET} --block-size=4K --io-depth=1 --count=10 --vector-mode
+        ./${LIBRAWSTOR}/cli/rawstor testio ${TARGET} --block-size=4K --io-depth=1 --count=10
+        ./${LIBRAWSTOR}/cli/rawstor testio ${TARGET} --block-size=4K --io-depth=1 --count=10 --vector-mode
     - name: stop rawstor_ost
       run: killall rawstor-ost
 
@@ -190,6 +190,7 @@ jobs:
         cp deb/librawstor/changelog debian
         cp deb/librawstor/format debian/source
         cp deb/librawstor/librawstor.install debian
+        cp deb/librawstor/librawstor.links debian
         cp deb/librawstor/librawstor-dev.install debian
         cp deb/librawstor/rawstor-ost.install debian
         cp deb/librawstor/rawstor-ost.postinst debian
@@ -316,7 +317,7 @@ jobs:
     - name: install-librawstor
       run: sudo apt install -y ./librawstor.deb/librawstor_*.deb
     - name: test-librawstor
-      run: rawstor-cli --version
+      run: rawstor --version
     - name: install-rawstor-ost
       run: |
         sudo apt install -y ./librawstor.deb/rawstor-ost_*.deb
@@ -324,11 +325,11 @@ jobs:
     - name: test-rawstor-ost
       run: |
         rawstor-ost --version
-        rawstor-cli create --size=1M --location=ost://127.0.0.1:7777
-        rawstor-cli list --location=ost://127.0.0.1:7777
+        rawstor create --size=1M ost://127.0.0.1:7777
+        rawstor list ost://127.0.0.1:7777
     - name: test-rawstor-vhost
       run: |
-        TARGET=$(rawstor-cli create --size=1M --location=ost://127.0.0.1:7777)
+        TARGET=$(rawstor create --size=1M ost://127.0.0.1:7777)
         UUID=${TARGET##*/}
         sudo systemctl enable --now rawstor-vhost@${UUID}.service
         sleep 1
@@ -493,7 +494,7 @@ jobs:
     - name: install-librawstor
       run: dnf -y install ./librawstor.rpm/librawstor-[0-9]*.rpm
     - name: test-librawstor
-      run: rawstor-cli --version
+      run: rawstor --version
     - name: install-rawstor-ost
       run: dnf -y install ./librawstor.rpm/rawstor-ost-[0-9]*.rpm
     - name: test-rawstor-ost
@@ -501,11 +502,11 @@ jobs:
       # started via systemctl here -- run the same command it would, by hand.
       run: |
         rawstor-ost --version
-        rawstor-ost --bind=127.0.0.1:7777 --location=file:///var/lib/rawstor &
+        rawstor-ost --bind=127.0.0.1:7777 file:///var/lib/rawstor &
         OST_PID=$!
         sleep 10
-        rawstor-cli create --size=1M --location=ost://127.0.0.1:7777
-        rawstor-cli list --location=ost://127.0.0.1:7777
+        rawstor create --size=1M ost://127.0.0.1:7777
+        rawstor list ost://127.0.0.1:7777
         kill ${OST_PID}
     - name: install-python3-rawstor
       run: dnf -y install ./python3-rawstor-${{ matrix.os }}.rpm/python3*-rawstor-[0-9]*.rpm

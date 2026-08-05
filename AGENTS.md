@@ -7,8 +7,8 @@ family of servers/backends that let a network-addressable "object"
 (identified by a UUID v7) be read and written like a raw block device.
 The two headline consumers are:
 
-- `rawstor-cli` / `librawstor` client API — create/open/read/write/list
-  objects directly.
+- `rawstor` (the CLI, `cli/`) / `librawstor` client API —
+  create/open/read/write/list objects directly.
 - `rawstor-vhost` / `rawstor-vhost-qemu` — expose a rawstor object to a
   QEMU guest as a `virtio-blk` disk via the vhost-user protocol, so a VM's
   virtual disk is really just a rawstor object over the network.
@@ -47,7 +47,7 @@ librawstor/
 ├── librawio/         async I/O abstraction (see RawIO above); src/ (impl) + include/rawio/ (public) + tests/
 ├── src/              core librawstor C++ library (librawstor.la, rawstor.pc); public C API in include/rawstor/
 ├── include/rawstor/  public C API headers: rawstor.h, object.h, list.h, rawio.h, protocol.h, version.h
-├── cli/              rawstor-cli command-line client (create/list/show/remove/testio)
+├── cli/              rawstor command-line client (create/list/show/remove/testio)
 ├── ost/              rawstor-ost — the OST protocol server (serves file://, proxies/mirrors to ost://)
 ├── vhost/             rawstor-vhost — native vhost-user-blk backend (no qemu library dependency)
 │   ├── include/vhost/  public headers vhost/tests needs: protocol.h, ring.hpp, virtqueue.hpp

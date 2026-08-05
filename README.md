@@ -22,12 +22,12 @@ mkdir -p ${OST_DATADIR}
 
 rawstor-ost \
     --bind ${OST_ADDR} \
-    --location file://${OST_DATADIR}
+    file://${OST_DATADIR}
 
 ##
 # Client
 #
-OBJECT_TARGET=$(rawstor-cli create --size=1G --location=ost://${OST_ADDR})
+OBJECT_TARGET=$(rawstor create ost://${OST_ADDR} --size=1G)
 
 VHOST_RUNDIR=${PREFIX}/var/run/rawstor
 
@@ -35,7 +35,7 @@ mkdir -p ${VHOST_RUNDIR}
 
 ./vhost/rawstor-vhost \
     --socket-path=${VHOST_RUNDIR}/rawstor1.sock \
-    --target=${OBJECT_TARGET}
+    ${OBJECT_TARGET}
 
 qemu-system-x86_64 \
     -enable-kvm \
@@ -74,36 +74,36 @@ Default values are shown below.
 
 ### Usage
 
-`rawstor-ost [-h] -l LOCATION -b ADDR`
+`rawstor-ost [-h] -b ADDR LOCATION`
 
 ### Options
 
 | Option | Description |
 |--------|-------------|
 | `-h, --help` | Show help message and exit. |
-| `-l, --location LOCATION` | Comma‑separated list of backend locations (e.g., `file:///path`, `ost://host:port`). |
+| `LOCATION` | Comma‑separated list of backend locations (e.g., `file:///path`, `ost://host:port`). |
 | `-b, --bind ADDR` | Bind address in `<ip>:<port>` format (e.g., `127.0.0.1:7777`). |
 
 ### Examples
 
 Serve local directory:
 ```bash
-rawstor-ost -l file:///var/rawstor/data -b 0.0.0.0:7777
+rawstor-ost -b 0.0.0.0:7777 file:///var/rawstor/data
 ```
 
 Proxy to remote OST:
 ```bash
-rawstor-ost -l ost://192.168.1.100:7777 -b 0.0.0.0:7777
+rawstor-ost -b 0.0.0.0:7777 ost://192.168.1.100:7777
 ```
 
 Data locality (local cache + proxy):
 ```bash
-rawstor-ost -l file:///var/rawstor/data,ost://remote:7777 -b 0.0.0.0:7777
+rawstor-ost -b 0.0.0.0:7777 file:///var/rawstor/data,ost://remote:7777
 ```
 
 Mirroring between two OST backends:
 ```bash
-rawstor-ost -l ost://left:7777,ost://right:7777 -b 0.0.0.0:7777
+rawstor-ost -b 0.0.0.0:7777 ost://left:7777,ost://right:7777
 ```
 
 ## rawstor-vhost – vhost-user-blk Backend
@@ -124,7 +124,7 @@ multiple in-flight requests on a virtqueue may complete out of order.
 
 ### Usage
 
-`rawstor-vhost [-h] -s SOCKET_PATH -t TARGET [--queue-size SIZE] [-v]`
+`rawstor-vhost [-h] -s SOCKET_PATH TARGET [--queue-size SIZE] [-v]`
 
 ### Options
 
@@ -132,7 +132,7 @@ multiple in-flight requests on a virtqueue may complete out of order.
 |--------|-------------|
 | `-h, --help` | Show help message and exit. |
 | `-s, --socket-path PATH` | Location of the vhost-user Unix domain socket. |
-| `-t, --target TARGET` | Comma‑separated list of rawstor backend targets (see [Locations and Targets](https://github.com/rawstor/librawstor/blob/main/docs/locations_and_targets.md)). |
+| `TARGET` | Comma‑separated list of rawstor backend targets (see [Locations and Targets](https://github.com/rawstor/librawstor/blob/main/docs/locations_and_targets.md)). |
 | `--queue-size SIZE` | RawIO queue (`io_uring`) depth. Default: `256`. |
 | `-v, --version` | Print version and exit. |
 
@@ -146,7 +146,7 @@ VHOST_RUNDIR=${PREFIX}/var/run/rawstor
 
 rawstor-vhost \
     --socket-path=${VHOST_RUNDIR}/rawstor1.sock \
-    --target=ost://${OST_ADDR}/${OBJECT_ID}
+    ost://${OST_ADDR}/${OBJECT_ID}
 
 qemu-system-x86_64 \
     -enable-kvm \
