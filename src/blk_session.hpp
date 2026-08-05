@@ -27,27 +27,27 @@ protected:
 public:
     Session(rawio::Queue& queue, const rawstd::URI& location);
 
-    void set_object(Object* object) override;
+    void set_object(Object* object) override final;
 
     void pread(
         void* buf, size_t size, off_t offset,
         std::function<void(size_t, int)>&& cb
-    ) override;
+    ) override final;
 
     void preadv(
         iovec* iov, unsigned int niov, size_t size, off_t offset,
         std::function<void(size_t, int)>&& cb
-    ) override;
+    ) override final;
 
     void pwrite(
         const void* buf, size_t size, off_t offset,
         std::function<void(size_t, int)>&& cb
-    ) override;
+    ) override final;
 
     void pwritev(
         const iovec* iov, unsigned int niov, size_t size, off_t offset,
         std::function<void(size_t, int)>&& cb
-    ) override;
+    ) override final;
 };
 
 } // namespace blk
