@@ -7,11 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.3.0] - Unreleased
 
-### Changed
-- `file://` backend objects are now stored as a single bare file per object instead of a `<uuid>.dat`/`<uuid>.spec` pair; there is no migration from the old layout, so objects created by an older version are no longer readable.
-
 ### Removed
 - Dropped the deprecated `-l`/`--location` and `-t`/`--target` flags (`rawstor list`/`create`/`remove`/`show`/`testio`, `rawstor-ost`, `rawstor-vhost`) in favor of the positional `LOCATION`/`TARGET` argument; `rawstor create -t TARGET` (create-by-target) is unaffected. Also dropped the `rawstor-cli` compat symlink from the deb/rpm packages — use `rawstor`.
+- Dropped the automatic migration of pre-0.2.4 `file://` objects (`<uuid>.dat`/`<uuid>.spec` pairs) to the current single-file format; such objects are no longer readable.
 
 ## [0.2.4] - Unreleased
 
@@ -21,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - `rawstor-vhost` now ships as its own deb/rpm package instead of being bundled in `librawstor`; shares `rawstor-ost`'s `rawstor` user/group, no `libvirt` dependency.
 - `rawstor`, `rawstor-ost` and `rawstor-vhost` now exit with `sysexits.h` codes (`EX_USAGE`, `EX_NOINPUT`, `EX_UNAVAILABLE`, `EX_NOPERM`, ...) instead of a generic `1` for every failure; `rawstor-ost.service`/`rawstor-vhost@.service` won't restart-loop on `EX_NOINPUT`/`EX_NOPERM`.
+- `file://` backend objects are now stored as a single bare file per object instead of a `<uuid>.dat`/`<uuid>.spec` pair; a pre-existing `.dat`/`.spec` pair is transparently migrated to the new format (and the old files removed) the next time the object is accessed.
 
 ### Fixed
 - `rawstor-vhost` now `chmod()` its vhost-user socket to `0660` after `bind()`, instead of leaving it at the umask default (`0755`), which silently blocked group-based QEMU access.
