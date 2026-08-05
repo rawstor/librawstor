@@ -1,6 +1,7 @@
 #ifndef RAWSTOR_TESTS_SESSION_HPP
 #define RAWSTOR_TESTS_SESSION_HPP
 
+#include <rawstor/location.h>
 #include <rawstor/object.h>
 
 #include <unistd.h>
@@ -38,6 +39,14 @@ public:
         uint32_t magic, uint16_t cid, const RawstorObjectSpec& spec
     );
     void cmd_spec(uint32_t magic, uint16_t cid, const RawstorObjectSpec& spec);
+
+    void cmd_location_info_request();
+    void cmd_location_info_response(
+        uint32_t magic, uint16_t cid, const RawstorLocationInfo& info
+    );
+    void cmd_location_info(
+        uint32_t magic, uint16_t cid, const RawstorLocationInfo& info
+    );
 
     void cmd_read_request();
     void cmd_read_response(
