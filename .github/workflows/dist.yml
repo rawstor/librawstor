@@ -190,7 +190,6 @@ jobs:
         cp deb/librawstor/changelog debian
         cp deb/librawstor/format debian/source
         cp deb/librawstor/librawstor.install debian
-        cp deb/librawstor/librawstor.links debian
         cp deb/librawstor/librawstor-dev.install debian
         cp deb/librawstor/rawstor-ost.install debian
         cp deb/librawstor/rawstor-ost.postinst debian

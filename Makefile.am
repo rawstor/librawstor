@@ -44,7 +44,6 @@ deb/python3-rawstor/changelog: $(srcdir)/ChangeLog.md $(srcdir)/.github/tools/de
 EXTRA_DIST = deb/librawstor/compat \
              deb/librawstor/format \
              deb/librawstor/librawstor.install \
-             deb/librawstor/librawstor.links \
              deb/librawstor/librawstor-dev.install \
              deb/librawstor/rawstor-ost.install \
              deb/librawstor/rawstor-ost.postinst \

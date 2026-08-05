@@ -86,11 +86,10 @@ void version() {
 } // namespace
 
 int main(int argc, char** argv) {
-    const char* optstring = "b:hl:v";
+    const char* optstring = "b:hv";
     struct option longopts[] = {
         {"bind", required_argument, nullptr, 'b'},
         {"help", no_argument, nullptr, 'h'},
-        {"location", required_argument, nullptr, 'l'},
         {"queue-size", required_argument, nullptr, 'q'},
         {"version", no_argument, nullptr, 'v'},
         {},
@@ -114,10 +113,6 @@ int main(int argc, char** argv) {
             usage();
             return EXIT_SUCCESS;
 
-        case 'l':
-            location_arg = optarg;
-            break;
-
         case 'q':
             queue_size_arg = optarg;
             break;
@@ -131,7 +126,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    if (location_arg == nullptr && optind < argc) {
+    if (optind < argc) {
         location_arg = argv[optind];
         optind++;
     }

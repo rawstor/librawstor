@@ -86,10 +86,9 @@ static void command_create_usage(void) {
 };
 
 static int command_create(int argc, char** argv) {
-    const char* optstring = "hl:s:t:u:";
+    const char* optstring = "hs:t:u:";
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
-        {"location", required_argument, NULL, 'l'},
         {"size", required_argument, NULL, 's'},
         {"target", required_argument, NULL, 't'},
         {"uuid", required_argument, NULL, 'u'},
@@ -112,10 +111,6 @@ static int command_create(int argc, char** argv) {
             command_create_usage();
             return EXIT_SUCCESS;
 
-        case 'l':
-            location_arg = optarg;
-            break;
-
         case 's':
             size_arg = optarg;
             break;
@@ -133,7 +128,7 @@ static int command_create(int argc, char** argv) {
         }
     }
 
-    if (location_arg == NULL && target_arg == NULL && optind < argc) {
+    if (target_arg == NULL && optind < argc) {
         location_arg = argv[optind];
         optind++;
     }
@@ -197,10 +192,9 @@ static void command_remove_usage(void) {
 };
 
 static int command_remove(int argc, char** argv) {
-    const char* optstring = "ht:";
+    const char* optstring = "h";
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
-        {"target", required_argument, NULL, 't'},
         {},
     };
 
@@ -217,16 +211,12 @@ static int command_remove(int argc, char** argv) {
             command_remove_usage();
             return EXIT_SUCCESS;
 
-        case 't':
-            target_arg = optarg;
-            break;
-
         default:
             return EX_USAGE;
         }
     }
 
-    if (target_arg == NULL && optind < argc) {
+    if (optind < argc) {
         target_arg = argv[optind];
         optind++;
     }
@@ -256,10 +246,9 @@ static void command_list_usage(void) {
 }
 
 static int command_list(int argc, char** argv) {
-    const char* optstring = "hl:";
+    const char* optstring = "h";
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
-        {"location", required_argument, NULL, 'l'},
         {},
     };
 
@@ -276,16 +265,12 @@ static int command_list(int argc, char** argv) {
             command_list_usage();
             return EXIT_SUCCESS;
 
-        case 'l':
-            location_arg = optarg;
-            break;
-
         default:
             return EX_USAGE;
         }
     }
 
-    if (location_arg == NULL && optind < argc) {
+    if (optind < argc) {
         location_arg = argv[optind];
         optind++;
     }
@@ -315,10 +300,9 @@ static void command_show_usage(void) {
 };
 
 static int command_show(int argc, char** argv) {
-    const char* optstring = "ht:";
+    const char* optstring = "h";
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
-        {"target", required_argument, NULL, 't'},
         {},
     };
 
@@ -335,16 +319,12 @@ static int command_show(int argc, char** argv) {
             command_show_usage();
             return EXIT_SUCCESS;
 
-        case 't':
-            target_arg = optarg;
-            break;
-
         default:
             return EX_USAGE;
         }
     }
 
-    if (target_arg == NULL && optind < argc) {
+    if (optind < argc) {
         target_arg = argv[optind];
         optind++;
     }
@@ -383,14 +363,13 @@ static void command_testio_usage(void) {
 };
 
 static int command_testio(int argc, char** argv) {
-    const char* optstring = "b:c:d:ht:";
+    const char* optstring = "b:c:d:h";
     struct option longopts[] = {
         {"queue-size", required_argument, NULL, 'q'},
         {"block-size", required_argument, NULL, 'b'},
         {"count", required_argument, NULL, 'c'},
         {"help", no_argument, NULL, 'h'},
         {"io-depth", required_argument, NULL, 'd'},
-        {"target", required_argument, NULL, 't'},
         {"vector-mode", no_argument, NULL, 'v'},
         {},
     };
@@ -429,10 +408,6 @@ static int command_testio(int argc, char** argv) {
             command_testio_usage();
             return EXIT_SUCCESS;
 
-        case 't':
-            target_arg = optarg;
-            break;
-
         case 'v':
             vector_mode = 1;
             break;
@@ -442,7 +417,7 @@ static int command_testio(int argc, char** argv) {
         }
     }
 
-    if (target_arg == NULL && optind < argc) {
+    if (optind < argc) {
         target_arg = argv[optind];
         optind++;
     }

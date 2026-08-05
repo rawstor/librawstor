@@ -68,12 +68,11 @@ void server(
 } // namespace
 
 int main(int argc, char** argv) {
-    const char* optstring = "hs:t:v";
+    const char* optstring = "hs:v";
     struct option longopts[] = {
         {"help", no_argument, nullptr, 'h'},
         {"queue-size", required_argument, nullptr, 'q'},
         {"socket-path", required_argument, nullptr, 's'},
-        {"target", required_argument, nullptr, 't'},
         {"version", no_argument, nullptr, 'v'},
         {},
     };
@@ -100,10 +99,6 @@ int main(int argc, char** argv) {
             socket_path_arg = optarg;
             break;
 
-        case 't':
-            target_arg = optarg;
-            break;
-
         case 'v':
             version();
             return EXIT_SUCCESS;
@@ -113,7 +108,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    if (target_arg == nullptr && optind < argc) {
+    if (optind < argc) {
         target_arg = argv[optind];
         optind++;
     }
