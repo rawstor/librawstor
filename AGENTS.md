@@ -142,8 +142,10 @@ backends and the io_uring/poll RawIO backends.
 
 ## Git conventions
 
-- Branch names: `add/<feature>`, `fix/<bug>`, `ref/<component>` (see
-  README's Contributing section).
+- Branch names: `<type>/<descriptive-name>` — `add/<feature-name>` for new
+  features, `fix/<bug-description>` for bug fixes, `ref/<component-name>`
+  for refactoring (see README's Contributing section for the full
+  contributor workflow: fork, branch, PR).
 - Commit subjects: `<type>(<scope>): <summary>`, lowercase, imperative
   mood — observed types across history: `add`, `fix`, `ref`, `docs`,
   `test`, `del`, `debug`. Scope is usually the component directory

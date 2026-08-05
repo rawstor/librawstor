@@ -1,19 +1,16 @@
 #include "file_session.hpp"
 
-#include "object.hpp"
 #include "opts.h"
 
 #include <rawio/queue.hpp>
 
 #include <rawstd/gpp.hpp>
-#include <rawstd/iovec.h>
 #include <rawstd/logging.h>
 #include <rawstd/uuid.h>
 
 #include <sys/stat.h>
 #include <sys/statvfs.h>
 #include <sys/types.h>
-#include <sys/uio.h>
 
 #include <fcntl.h>
 #include <unistd.h>
@@ -43,17 +40,20 @@ std::string get_location_path(const rawstd::URI& location) {
     return location.path().str();
 }
 
-std::string get_object_spec_path(
+std::string get_target_path(
     const std::string& location_path, const RawstdUUIDString& uuid
 ) {
     std::ostringstream oss;
 
-    oss << location_path << "/" << uuid << ".spec";
+    oss << location_path << "/" << uuid;
 
     return oss.str();
 }
 
-std::string get_object_dat_path(
+// Pre-0.2.4 objects were stored as a pair of files: "<uuid>.dat" (raw
+// content) and "<uuid>.spec" (a serialized RawstorObjectSpec). Since 0.2.4
+// an object is a single bare "<uuid>" file whose size doubles as its spec.
+std::string get_legacy_dat_path(
     const std::string& location_path, const RawstdUUIDString& uuid
 ) {
     std::ostringstream oss;
@@ -63,33 +63,70 @@ std::string get_object_dat_path(
     return oss.str();
 }
 
-void write_dat(
-    const std::string& location_path, const RawstorObjectSpec& spec,
-    const RawstdUUID& id
+std::string get_legacy_spec_path(
+    const std::string& location_path, const RawstdUUIDString& uuid
 ) {
-    RawstdUUIDString uuid_string;
-    rawstd_uuid_to_string(&id, &uuid_string);
+    std::ostringstream oss;
 
-    std::string dat_path = get_object_dat_path(location_path, uuid_string);
+    oss << location_path << "/" << uuid << ".spec";
 
-    int fd = open(dat_path.c_str(), O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR);
-    if (fd == -1) {
+    return oss.str();
+}
+
+bool path_exists(const std::string& path) {
+    try {
+        struct stat st;
+        if (stat(path.c_str(), &st) == -1) {
+            RAWSTD_THROW_ERRNO();
+        }
+        return true;
+    } catch (const std::system_error& e) {
+        if (e.code().value() == ENOENT) {
+            return false;
+        }
+        throw;
+    }
+}
+
+bool path_unlink(const std::string& path) {
+    try {
+        if (unlink(path.c_str()) == -1) {
+            RAWSTD_THROW_ERRNO();
+        }
+        return true;
+    } catch (const std::system_error& e) {
+        if (e.code().value() == ENOENT) {
+            return false;
+        }
+        throw;
+    }
+}
+
+// If the object still exists in the legacy ".dat"/".spec" form, renames the
+// ".dat" file to the current bare-file target path and drops the ".spec"
+// file. Also finishes an interrupted migration (bare file already present,
+// stray ".spec" left behind). No-op if the object doesn't exist yet.
+void migrate_legacy(
+    const std::string& location_path, const RawstdUUIDString& uuid
+) {
+    std::string target_path = get_target_path(location_path, uuid);
+    std::string legacy_spec_path = get_legacy_spec_path(location_path, uuid);
+
+    if (path_exists(target_path)) {
+        path_unlink(legacy_spec_path);
+        return;
+    }
+
+    std::string legacy_dat_path = get_legacy_dat_path(location_path, uuid);
+    if (!path_exists(legacy_dat_path)) {
+        return;
+    }
+
+    if (rename(legacy_dat_path.c_str(), target_path.c_str()) == -1) {
         RAWSTD_THROW_ERRNO();
     }
 
-    try {
-        if (ftruncate(fd, spec.size) == -1) {
-            RAWSTD_THROW_ERRNO();
-        }
-
-        if (close(fd) == -1) {
-            RAWSTD_THROW_ERRNO();
-        }
-    } catch (const std::system_error& e) {
-        close(fd);
-        unlink(dat_path.c_str());
-        throw;
-    }
+    path_unlink(legacy_spec_path);
 }
 
 } // unnamed namespace
@@ -98,7 +135,7 @@ namespace rawstor {
 namespace file {
 
 Session::Session(rawio::Queue& queue, const rawstd::URI& location) :
-    rawstor::Session(queue, location) {
+    rawstor::blk::Session(queue, location) {
 }
 
 int Session::_connect(const RawstdUUID& id) {
@@ -106,10 +143,13 @@ int Session::_connect(const RawstdUUID& id) {
 
     RawstdUUIDString id_string;
     rawstd_uuid_to_string(&id, &id_string);
-    std::string dat_path = get_object_dat_path(location_path, id_string);
+
+    migrate_legacy(location_path, id_string);
+
+    std::string target_path = get_target_path(location_path, id_string);
 
     rawstd_info("Connecting to %s...\n", location().str().c_str());
-    int fd = open(dat_path.c_str(), O_RDWR | O_NONBLOCK);
+    int fd = open(target_path.c_str(), O_RDWR | O_NONBLOCK);
     if (fd == -1) {
         RAWSTD_THROW_ERRNO();
     }
@@ -128,11 +168,18 @@ void Session::list(
 
         for (const auto& entry :
              std::filesystem::directory_iterator(location_path)) {
-            if (entry.path().extension().string() != ".dat") {
+            std::string extension = entry.path().extension().string();
+
+            std::string filename;
+            if (extension.empty()) {
+                filename = entry.path().filename().string();
+            } else if (extension == ".dat") {
+                // Not-yet-migrated legacy object.
+                filename = entry.path().stem().string();
+            } else {
+                // ".spec" (legacy) or anything else.
                 continue;
             }
-
-            std::string filename = entry.path().stem().string();
 
             RawstdUUID uuid;
             int res = rawstd_uuid_from_string(&uuid, filename.c_str());
@@ -205,29 +252,25 @@ void Session::create(
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&id, &uuid_string);
 
-    std::string spec_path;
-    spec_path = get_object_spec_path(location_path, uuid_string);
+    std::string target_path = get_target_path(location_path, uuid_string);
 
     int fd = ::open(
-        spec_path.c_str(), O_EXCL | O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR
+        target_path.c_str(), O_EXCL | O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR
     );
     if (fd == -1) {
         RAWSTD_THROW_ERRNO();
     }
 
     try {
-        ssize_t res = ::write(fd, &sp, sizeof(sp));
-        if (res == -1) {
+        if (ftruncate(fd, sp.size) == -1) {
             RAWSTD_THROW_ERRNO();
         }
-
-        write_dat(location_path, sp, id);
 
         if (::close(fd) == -1) {
             RAWSTD_THROW_ERRNO();
         }
     } catch (...) {
-        unlink(spec_path.c_str());
+        unlink(target_path.c_str());
         ::close(fd);
         throw;
     }
@@ -241,15 +284,16 @@ void Session::remove(const RawstdUUID& id, std::function<void(int)>&& cb) {
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&id, &uuid_string);
 
-    std::string dat_path = get_object_dat_path(location_path, uuid_string);
-    if (unlink(dat_path.c_str()) == -1) {
-        RAWSTD_THROW_ERRNO();
+    std::string target_path = get_target_path(location_path, uuid_string);
+    if (!path_unlink(target_path)) {
+        std::string legacy_dat_path =
+            get_legacy_dat_path(location_path, uuid_string);
+        if (unlink(legacy_dat_path.c_str()) == -1) {
+            RAWSTD_THROW_ERRNO();
+        }
     }
 
-    std::string spec_path = get_object_spec_path(location_path, uuid_string);
-    if (unlink(spec_path.c_str()) == -1) {
-        RAWSTD_THROW_ERRNO();
-    }
+    path_unlink(get_legacy_spec_path(location_path, uuid_string));
 
     cb(0);
 }
@@ -263,34 +307,18 @@ void Session::spec(
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&id, &uuid_string);
 
-    std::string spec_path = get_object_spec_path(location_path, uuid_string);
+    migrate_legacy(location_path, uuid_string);
 
-    int fd = ::open(spec_path.c_str(), O_RDONLY);
-    if (fd == -1) {
-        RAWSTD_THROW_ERRNO();
-    }
+    std::string target_path = get_target_path(location_path, uuid_string);
 
-    RawstorObjectSpec ret;
-    try {
-        ssize_t rval = ::read(fd, &ret, sizeof(ret));
-        if (rval == -1) {
-            RAWSTD_THROW_ERRNO();
-        }
-
-        if (::close(fd) == -1) {
-            RAWSTD_THROW_ERRNO();
-        }
-    } catch (...) {
-        ::close(fd);
-        throw;
-    }
+    RawstorObjectSpec ret{
+        .size = std::filesystem::file_size(target_path),
+    };
 
     cb(ret, 0);
 }
 
-void Session::location_info(
-    std::function<void(const RawstorLocationInfo&, int)>&& cb
-) {
+void Session::info(std::function<void(const RawstorLocationInfo&, int)>&& cb) {
     RawstorLocationInfo ret = {};
     try {
         std::string location_path = get_location_path(location());
@@ -304,7 +332,9 @@ void Session::location_info(
         uint64_t used = 0;
         for (const auto& entry :
              std::filesystem::directory_iterator(location_path)) {
-            if (entry.path().extension().string() != ".dat") {
+            std::string extension = entry.path().extension().string();
+            if (!extension.empty() && extension != ".dat") {
+                // ".spec" (legacy) or anything else.
                 continue;
             }
 
@@ -332,66 +362,6 @@ void Session::location_info(
     }
 
     cb(ret, 0);
-}
-
-void Session::set_object(Object* object) {
-    if (fd() != -1) {
-        throw std::runtime_error("Object already set");
-    }
-
-    int fd = _connect(object->id());
-    if (fd == -1) {
-        RAWSTD_THROW_ERRNO();
-    }
-
-    set_fd(fd);
-}
-
-void Session::pread(
-    void* buf, size_t size, off_t offset, std::function<void(size_t, int)>&& cb
-) {
-    rawstd_debug(
-        "%s(): fd = %d, size = %zu, offset = %jd\n", __FUNCTION__, fd(), size,
-        (intmax_t)offset
-    );
-
-    _queue.pread(fd(), buf, size, offset, std::move(cb));
-}
-
-void Session::preadv(
-    iovec* iov, unsigned int niov, size_t size, off_t offset,
-    std::function<void(size_t, int)>&& cb
-) {
-    rawstd_debug(
-        "%s(): fd = %d, size = %zu, offset = %jd\n", __FUNCTION__, fd(), size,
-        (intmax_t)offset
-    );
-
-    _queue.preadv(fd(), iov, niov, offset, std::move(cb));
-}
-
-void Session::pwrite(
-    const void* buf, size_t size, off_t offset,
-    std::function<void(size_t, int)>&& cb
-) {
-    rawstd_debug(
-        "%s(): fd = %d, size = %zu, offset = %jd\n", __FUNCTION__, fd(), size,
-        (intmax_t)offset
-    );
-
-    _queue.pwrite(fd(), buf, size, offset, std::move(cb));
-}
-
-void Session::pwritev(
-    const iovec* iov, unsigned int niov, size_t size, off_t offset,
-    std::function<void(size_t, int)>&& cb
-) {
-    rawstd_debug(
-        "%s(): fd = %d, size = %zu, offset = %jd\n", __FUNCTION__, fd(), size,
-        (intmax_t)offset
-    );
-
-    _queue.pwritev(fd(), iov, niov, offset, std::move(cb));
 }
 
 } // namespace file

@@ -32,7 +32,9 @@ librawstor_la_HEADERS = $(top_srcdir)/include/rawstor/list.h \
                         $(top_srcdir)/include/rawstor/rawstor.h \
                         $(top_builddir)/include/rawstor/version.h
 
-librawstor_la_SOURCES = connection.cpp \
+librawstor_la_SOURCES = blk_session.cpp \
+                        blk_session.hpp \
+                        connection.cpp \
                         connection.hpp \
                         file_session.cpp \
                         file_session.hpp \

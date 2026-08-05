@@ -176,7 +176,7 @@ void Object::list(
     memcpy(token.bytes, next_token_uuid.bytes, sizeof(next_token_uuid.bytes));
 }
 
-void Object::location_info(
+void Object::info(
     const std::vector<rawstd::URI>& locations, RawstorLocationInfo* info
 ) {
     validate_not_empty(locations);
@@ -186,7 +186,7 @@ void Object::location_info(
     bool first = true;
     for (const auto& location : locations) {
         RawstorLocationInfo loc_info{};
-        rawstor::Connection::location_info(location, &loc_info);
+        rawstor::Connection::info(location, &loc_info);
 
         if (first) {
             ret = loc_info;
@@ -476,7 +476,7 @@ int rawstor_location_info(
     const char* location, RawstorLocationInfo* info
 ) noexcept {
     try {
-        rawstor::Object::location_info(rawstd::URI::uriv(location), info);
+        rawstor::Object::info(rawstd::URI::uriv(location), info);
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
