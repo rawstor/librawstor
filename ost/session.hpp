@@ -51,7 +51,7 @@ private:
     void _spec(
         const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
     );
-    void _location_info(
+    void _info(
         const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
     );
     void _set_object(

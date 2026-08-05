@@ -32,9 +32,8 @@ public:
         std::list<std::vector<rawstd::URI>>& targets,
         RawstorPaginationToken& token
     );
-    static void location_info(
-        const std::vector<rawstd::URI>& locations, RawstorLocationInfo* info
-    );
+    static void
+    info(const std::vector<rawstd::URI>& locations, RawstorLocationInfo* info);
     static void create(
         const std::vector<rawstd::URI>& targets, const RawstorObjectSpec& sp
     );
