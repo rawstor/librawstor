@@ -1,3 +1,4 @@
+#include <rawstor/location.h>
 #include <rawstor/object.h>
 
 #define PY_SSIZE_T_CLEAN
@@ -84,6 +85,46 @@ PyTypeObject PyObjectSpecType = {
     .tp_init = (initproc)PyObjectSpec_init,
     .tp_new = PyObjectSpec_new,
     .tp_getset = PyObjectSpec_getset,
+};
+
+typedef struct {
+    PyObject_HEAD unsigned long long used;
+    unsigned long long total;
+} PyLocationInfo;
+
+static void PyLocationInfo_dealloc(PyLocationInfo* self) {
+    Py_TYPE(self)->tp_free((PyObject*)self);
+}
+
+static PyObject* PyLocationInfo_repr(PyLocationInfo* self) {
+    return PyUnicode_FromFormat(
+        "LocationInfo(used=%llu, total=%llu)", self->used, self->total
+    );
+}
+
+static PyObject*
+PyLocationInfo_get_used(PyLocationInfo* self, void* Py_UNUSED(closure)) {
+    return PyLong_FromUnsignedLongLong(self->used);
+}
+
+static PyObject*
+PyLocationInfo_get_total(PyLocationInfo* self, void* Py_UNUSED(closure)) {
+    return PyLong_FromUnsignedLongLong(self->total);
+}
+
+static PyGetSetDef PyLocationInfo_getset[] = {
+    {"used", (getter)PyLocationInfo_get_used, NULL, NULL, NULL},
+    {"total", (getter)PyLocationInfo_get_total, NULL, NULL, NULL},
+    {NULL, NULL, NULL, NULL, NULL}
+};
+
+PyTypeObject PyLocationInfoType = {
+    PyVarObject_HEAD_INIT(NULL, 0).tp_name = "rawstor.LocationInfo",
+    .tp_basicsize = sizeof(PyLocationInfo),
+    .tp_dealloc = (destructor)PyLocationInfo_dealloc,
+    .tp_repr = (reprfunc)PyLocationInfo_repr,
+    .tp_flags = Py_TPFLAGS_DEFAULT,
+    .tp_getset = PyLocationInfo_getset,
 };
 
 static void free_pagination_token(PyObject* capsule) {
@@ -291,4 +332,27 @@ PyObject* py_rawstor_object_remove(PyObject* Py_UNUSED(self), PyObject* args) {
     }
 
     Py_RETURN_NONE;
+}
+
+PyObject* py_rawstor_location_info(PyObject* Py_UNUSED(self), PyObject* args) {
+    const char* location;
+    if (!PyArg_ParseTuple(args, "s", &location)) {
+        return NULL;
+    }
+
+    struct RawstorLocationInfo info;
+    int res = rawstor_location_info(location, &info);
+    if (res < 0) {
+        set_os_error(-res);
+        return NULL;
+    }
+
+    PyLocationInfo* py_info = PyObject_New(PyLocationInfo, &PyLocationInfoType);
+    if (py_info == NULL) {
+        return NULL;
+    }
+    py_info->used = info.used;
+    py_info->total = info.total;
+
+    return (PyObject*)py_info;
 }

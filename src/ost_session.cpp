@@ -12,6 +12,7 @@
 #include <rawstd/socket.h>
 #include <rawstd/uuid.h>
 
+#include <rawstor/location.h>
 #include <rawstor/object.h>
 #include <rawstor/protocol.h>
 
@@ -988,6 +989,37 @@ void Session::spec(
         rawstd_info(
             "%s: Object specification successfully received\n", str().c_str()
         );
+    }
+
+    cb(ret, error);
+}
+
+void Session::location_info(
+    std::function<void(const RawstorLocationInfo&, int)>&& cb
+) {
+    rawstd_info("%s: Reading location info...\n", str().c_str());
+
+    int error = 0;
+    RawstorLocationInfo ret = {};
+    try {
+        RawstdUUID unused_id = {};
+        std::vector<char> response = basic_request(
+            fd(), _cid_counter++, RAWSTOR_CMD_LOCATION_INFO, unused_id, 0
+        );
+        if (response.size() != sizeof(ret)) {
+            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+        }
+        ret = *static_cast<RawstorLocationInfo*>(
+            static_cast<void*>(response.data())
+        );
+    } catch (const std::system_error& e) {
+        error = e.code().value();
+    } catch (...) {
+        error = EIO;
+    }
+
+    if (!error) {
+        rawstd_info("%s: Location info successfully received\n", str().c_str());
     }
 
     cb(ret, error);
