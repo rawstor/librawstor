@@ -584,10 +584,8 @@ void Session::_spec(
 }
 
 void Session::_location_info(
-    const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+    const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody&
 ) {
-    (void)body; // no object id -- this command is location-scoped
-
     RawstorLocationInfo info{};
     int result = rawstor_location_info(
         rawstd::URI::uris(_server.locations()).c_str(), &info
