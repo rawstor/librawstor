@@ -66,9 +66,8 @@ public:
         std::function<void(const RawstorObjectSpec&, int)>&& cb
     ) = 0;
 
-    virtual void location_info(
-        std::function<void(const RawstorLocationInfo&, int)>&& cb
-    ) = 0;
+    virtual void
+    info(std::function<void(const RawstorLocationInfo&, int)>&& cb) = 0;
 
     virtual void set_object(Object* object) = 0;
 

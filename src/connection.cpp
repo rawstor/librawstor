@@ -323,13 +323,11 @@ void Connection::spec(const rawstd::URI& target, RawstorObjectSpec* sp) {
     q.wait();
 }
 
-void Connection::location_info(
-    const rawstd::URI& location, RawstorLocationInfo* info
-) {
+void Connection::info(const rawstd::URI& location, RawstorLocationInfo* info) {
     Queue q(1);
 
     std::unique_ptr<Session> s = Session::create(q.queue(), location);
-    s->location_info([&q, info](const RawstorLocationInfo& li, int error) {
+    s->info([&q, info](const RawstorLocationInfo& li, int error) {
         q.sub_operation();
 
         if (error) {

@@ -440,7 +440,7 @@ Session::_recv_body(const iovec* iov, unsigned int niov, size_t result) {
             iov, niov, 0, &_request_body.basic, sizeof(_request_body.basic)
         );
 
-        _location_info(_request_head, _request_body.basic);
+        _info(_request_head, _request_body.basic);
 
         return sizeof(RawstorOSTFrameHead);
     }
@@ -583,7 +583,7 @@ void Session::_spec(
     );
 }
 
-void Session::_location_info(
+void Session::_info(
     const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody&
 ) {
     RawstorLocationInfo info{};
