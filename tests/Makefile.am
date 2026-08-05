@@ -21,6 +21,7 @@ test_all_SOURCES = main.cpp \
                    test_io.cpp \
                    test_lifecycle.cpp \
                    test_list.cpp \
+                   test_location_info.cpp \
                    test_pagination_token.cpp
 test_all_LDADD = $(top_builddir)/src/librawstor.la
 
