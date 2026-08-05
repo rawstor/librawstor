@@ -1,4 +1,5 @@
 #include "create.h"
+#include "info.h"
 #include "list.h"
 #include "remove.h"
 #include "show.h"
@@ -41,6 +42,7 @@ static void usage(void) {
         "  create                Create rawstor object\n"
         "  remove                Remove rawstor object\n"
         "  show                  Show rawstor object\n"
+        "  info                  Show rawstor location info\n"
         "  testio                Test rawstor IO routines\n"
         "\n"
         "command options:        Run `<command> --help` to show command usage\n"
@@ -303,6 +305,60 @@ static int command_list(int argc, char** argv) {
     return rawstor_cli_list(location_arg);
 }
 
+static void command_info_usage(void) {
+    fprintf(
+        stdout, "Rawstor CLI " PACKAGE_VERSION "\n"
+                "\n"
+                "usage: rawstor [options] info LOCATION [command_options]\n"
+                "\n"
+                "command options:\n"
+                "  -h, --help            Show this help message and exit\n"
+    );
+}
+
+static int command_info(int argc, char** argv) {
+    const char* optstring = "h";
+    struct option longopts[] = {
+        {"help", no_argument, NULL, 'h'},
+        {},
+    };
+
+    char* location_arg = NULL;
+    optind = 0;
+    while (1) {
+        int c = getopt_long(argc, argv, optstring, longopts, NULL);
+        if (c == -1) {
+            break;
+        }
+
+        switch (c) {
+        case 'h':
+            command_info_usage();
+            return EXIT_SUCCESS;
+
+        default:
+            return EX_USAGE;
+        }
+    }
+
+    if (optind < argc) {
+        location_arg = argv[optind];
+        optind++;
+    }
+
+    if (optind < argc) {
+        fprintf(stderr, "Unexpected argument: %s\n", argv[optind]);
+        return EX_USAGE;
+    }
+
+    if (location_arg == NULL) {
+        fprintf(stderr, "location required\n");
+        return EX_USAGE;
+    }
+
+    return rawstor_cli_info(location_arg);
+}
+
 static void command_show_usage(void) {
     fprintf(
         stdout, "Rawstor CLI " PACKAGE_VERSION "\n"
@@ -525,6 +581,8 @@ static int run_command(
         ret = command_list(argc, argv);
     } else if (strcmp(command, "show") == 0) {
         ret = command_show(argc, argv);
+    } else if (strcmp(command, "info") == 0) {
+        ret = command_info(argc, argv);
     } else if (strcmp(command, "testio") == 0) {
         ret = command_testio(argc, argv);
     } else {

@@ -8,6 +8,7 @@
 #include <rawstd/uri.hpp>
 #include <rawstd/uuid.h>
 
+#include <rawstor/location.h>
 #include <rawstor/object.h>
 
 #include <functional>
@@ -63,6 +64,10 @@ public:
     virtual void spec(
         const RawstdUUID& id,
         std::function<void(const RawstorObjectSpec&, int)>&& cb
+    ) = 0;
+
+    virtual void location_info(
+        std::function<void(const RawstorLocationInfo&, int)>&& cb
     ) = 0;
 
     virtual void set_object(Object* object) = 0;

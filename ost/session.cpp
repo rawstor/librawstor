@@ -266,6 +266,7 @@ Session::_recv_head(const iovec* iov, unsigned int niov, size_t result) {
     case RAWSTOR_CMD_RELEASE:
     case RAWSTOR_CMD_LIST:
     case RAWSTOR_CMD_SPEC:
+    case RAWSTOR_CMD_LOCATION_INFO:
         return sizeof(RawstorOSTFrameBasicBody);
     }
 
@@ -424,6 +425,24 @@ Session::_recv_body(const iovec* iov, unsigned int niov, size_t result) {
         _spec(_request_head, _request_body.basic);
 
         return sizeof(RawstorOSTFrameHead);
+
+    case RAWSTOR_CMD_LOCATION_INFO:
+        if (result != sizeof(_request_body.basic)) {
+            rawstd_error(
+                "fd %d: Unexpected request body size: %zu != %zu\n", _fd,
+                result, sizeof(_request_body.basic)
+            );
+
+            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+        }
+
+        rawstd_iovec_to_buf(
+            iov, niov, 0, &_request_body.basic, sizeof(_request_body.basic)
+        );
+
+        _location_info(_request_head, _request_body.basic);
+
+        return sizeof(RawstorOSTFrameHead);
     }
 
     {
@@ -561,6 +580,28 @@ void Session::_spec(
 
     send_response(
         _queue, _fd, RAWSTOR_CMD_SPEC, head.cid, data->size(), 0, data
+    );
+}
+
+void Session::_location_info(
+    const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody&
+) {
+    RawstorLocationInfo info{};
+    int result = rawstor_location_info(
+        rawstd::URI::uris(_server.locations()).c_str(), &info
+    );
+    if (result < 0) {
+        send_response(
+            _queue, _fd, RAWSTOR_CMD_LOCATION_INFO, head.cid, result, 0
+        );
+        return;
+    }
+
+    auto data = std::make_shared<std::vector<unsigned char>>(sizeof(info));
+    memcpy(data->data(), &info, sizeof(info));
+
+    send_response(
+        _queue, _fd, RAWSTOR_CMD_LOCATION_INFO, head.cid, data->size(), 0, data
     );
 }
 

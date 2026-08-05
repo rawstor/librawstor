@@ -11,6 +11,7 @@
 #include <rawstd/uuid.h>
 
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 #include <sys/types.h>
 #include <sys/uio.h>
 
@@ -282,6 +283,52 @@ void Session::spec(
     } catch (...) {
         ::close(fd);
         throw;
+    }
+
+    cb(ret, 0);
+}
+
+void Session::location_info(
+    std::function<void(const RawstorLocationInfo&, int)>&& cb
+) {
+    RawstorLocationInfo ret = {};
+    try {
+        std::string location_path = get_location_path(location());
+
+        struct statvfs vfs;
+        if (statvfs(location_path.c_str(), &vfs) == -1) {
+            RAWSTD_THROW_ERRNO();
+        }
+        ret.total = static_cast<uint64_t>(vfs.f_blocks) * vfs.f_frsize;
+
+        uint64_t used = 0;
+        for (const auto& entry :
+             std::filesystem::directory_iterator(location_path)) {
+            if (entry.path().extension().string() != ".dat") {
+                continue;
+            }
+
+            struct stat st;
+            if (stat(entry.path().c_str(), &st) == -1) {
+                // Object removed concurrently between the directory read
+                // and this stat(); just skip it rather than failing the
+                // whole aggregate.
+                continue;
+            }
+            used += static_cast<uint64_t>(st.st_size);
+        }
+        ret.used = used;
+    } catch (const std::system_error& e) {
+        cb({}, e.code().value());
+        return;
+    } catch (const std::exception& e) {
+        rawstd_error("Unexpected error: %s\n", e.what());
+        cb({}, EIO);
+        return;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        cb({}, EIO);
+        return;
     }
 
     cb(ret, 0);

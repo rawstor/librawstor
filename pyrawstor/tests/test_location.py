@@ -42,3 +42,18 @@ class TestLocation(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             location = rawstor.Location(f"file://{temp_dir}_not_found")
             self.assertRaises(FileNotFoundError, lambda: list(location))
+
+    def test_info(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            location = rawstor.Location(f"file://{temp_dir}")
+
+            info = location.info()
+            self.assertEqual(info.used, 0)
+            self.assertGreater(info.total, 0)
+
+            target = location.create(size=1 << 20)
+
+            info = location.info()
+            self.assertEqual(info.used, 1 << 20)
+
+            target.remove()
