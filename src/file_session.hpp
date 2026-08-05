@@ -1,7 +1,7 @@
 #ifndef RAWSTOR_FILE_SESSION_HPP
 #define RAWSTOR_FILE_SESSION_HPP
 
-#include "session.hpp"
+#include "blk_session.hpp"
 
 #include <rawio/queue.hpp>
 
@@ -17,9 +17,9 @@
 namespace rawstor {
 namespace file {
 
-class Session final : public rawstor::Session {
+class Session final : public rawstor::blk::Session {
 private:
-    int _connect(const RawstdUUID& id);
+    int _connect(const RawstdUUID& id) override;
 
 public:
     Session(rawio::Queue& queue, const rawstd::URI& location);
@@ -44,28 +44,6 @@ public:
 
     void location_info(
         std::function<void(const RawstorLocationInfo&, int)>&& cb
-    ) override;
-
-    void set_object(Object* object) override;
-
-    void pread(
-        void* buf, size_t size, off_t offset,
-        std::function<void(size_t, int)>&& cb
-    ) override;
-
-    void preadv(
-        iovec* iov, unsigned int niov, size_t size, off_t offset,
-        std::function<void(size_t, int)>&& cb
-    ) override;
-
-    void pwrite(
-        const void* buf, size_t size, off_t offset,
-        std::function<void(size_t, int)>&& cb
-    ) override;
-
-    void pwritev(
-        const iovec* iov, unsigned int niov, size_t size, off_t offset,
-        std::function<void(size_t, int)>&& cb
     ) override;
 };
 
