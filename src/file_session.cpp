@@ -93,25 +93,6 @@ bool path_exists(const std::string& path) {
     return false;
 }
 
-// Unlinks the given path if it exists; returns whether it existed.
-// Swallows ENOENT, since these callers only care about a path that was
-// already removed, not about the removal itself.
-bool unlink_ignore_enoent(const std::string& path) {
-    if (unlink(path.c_str()) == 0) {
-        return true;
-    }
-
-    try {
-        RAWSTD_THROW_ERRNO();
-    } catch (const std::system_error& e) {
-        if (e.code().value() != ENOENT) {
-            throw;
-        }
-    }
-
-    return false;
-}
-
 // If the object still exists in the legacy ".dat"/".spec" form, renames the
 // ".dat" file to the current bare-file target path and drops the ".spec"
 // file. Also finishes an interrupted migration (bare file already present,
@@ -123,7 +104,15 @@ void migrate_legacy(
     std::string legacy_spec_path = get_legacy_spec_path(location_path, uuid);
 
     if (path_exists(target_path)) {
-        unlink_ignore_enoent(legacy_spec_path);
+        try {
+            if (unlink(legacy_spec_path.c_str()) == -1) {
+                RAWSTD_THROW_ERRNO();
+            }
+        } catch (const std::system_error& e) {
+            if (e.code().value() != ENOENT) {
+                throw;
+            }
+        }
         return;
     }
 
@@ -136,7 +125,15 @@ void migrate_legacy(
         RAWSTD_THROW_ERRNO();
     }
 
-    unlink_ignore_enoent(legacy_spec_path);
+    try {
+        if (unlink(legacy_spec_path.c_str()) == -1) {
+            RAWSTD_THROW_ERRNO();
+        }
+    } catch (const std::system_error& e) {
+        if (e.code().value() != ENOENT) {
+            throw;
+        }
+    }
 }
 
 } // unnamed namespace
@@ -295,7 +292,19 @@ void Session::remove(const RawstdUUID& id, std::function<void(int)>&& cb) {
     rawstd_uuid_to_string(&id, &uuid_string);
 
     std::string target_path = get_target_path(location_path, uuid_string);
-    if (!unlink_ignore_enoent(target_path)) {
+    bool target_removed = true;
+    try {
+        if (unlink(target_path.c_str()) == -1) {
+            RAWSTD_THROW_ERRNO();
+        }
+    } catch (const std::system_error& e) {
+        if (e.code().value() != ENOENT) {
+            throw;
+        }
+        target_removed = false;
+    }
+
+    if (!target_removed) {
         std::string legacy_dat_path =
             get_legacy_dat_path(location_path, uuid_string);
         if (unlink(legacy_dat_path.c_str()) == -1) {
@@ -303,7 +312,17 @@ void Session::remove(const RawstdUUID& id, std::function<void(int)>&& cb) {
         }
     }
 
-    unlink_ignore_enoent(get_legacy_spec_path(location_path, uuid_string));
+    std::string legacy_spec_path =
+        get_legacy_spec_path(location_path, uuid_string);
+    try {
+        if (unlink(legacy_spec_path.c_str()) == -1) {
+            RAWSTD_THROW_ERRNO();
+        }
+    } catch (const std::system_error& e) {
+        if (e.code().value() != ENOENT) {
+            throw;
+        }
+    }
 
     cb(0);
 }
