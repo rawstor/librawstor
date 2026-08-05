@@ -77,20 +77,17 @@ std::string get_legacy_spec_path(
 }
 
 bool path_exists(const std::string& path) {
-    struct stat st;
-    if (stat(path.c_str(), &st) == 0) {
-        return true;
-    }
-
     try {
-        RAWSTD_THROW_ERRNO();
+        struct stat st;
+        if (stat(path.c_str(), &st) == -1) {
+            RAWSTD_THROW_ERRNO();
+        }
+        return true;
     } catch (const std::system_error& e) {
-        if (e.code().value() != ENOENT) {
-            throw;
+        if (e.code().value() == ENOENT) {
+            return false
         }
     }
-
-    return false;
 }
 
 // If the object still exists in the legacy ".dat"/".spec" form, renames the
