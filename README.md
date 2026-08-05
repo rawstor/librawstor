@@ -33,7 +33,7 @@ VHOST_RUNDIR=${PREFIX}/var/run/rawstor
 
 mkdir -p ${VHOST_RUNDIR}
 
-./vhost/rawstor-vhost \
+rawstor-vhost \
     --socket-path=${VHOST_RUNDIR}/rawstor1.sock \
     ${OBJECT_TARGET}
 

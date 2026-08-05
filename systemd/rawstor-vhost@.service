@@ -36,6 +36,12 @@ EnvironmentFile=-/etc/rawstor-vhost.conf
 ExecStart=/usr/bin/rawstor-vhost --socket-path=/run/rawstor/%i.sock ${RAWSTOR_LOCATION}/%i
 Restart=always
 RestartSec=2
+# sysexits.h codes rawstor-vhost exits with when retrying won't help:
+# EX_NOINPUT (66) the target object doesn't exist on any backend (removed
+# out from under this instance) and EX_NOPERM (77) permission denied. Leave
+# the unit failed instead of restart-looping; other exit codes (e.g.
+# EX_UNAVAILABLE for a backend that's merely down right now) still retry.
+RestartPreventExitStatus=66 77
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true

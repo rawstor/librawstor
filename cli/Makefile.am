@@ -23,4 +23,6 @@ rawstor_SOURCES = create.c \
                   units.c \
                   units.h
 
-rawstor_LDADD = $(top_builddir)/src/librawstor.la -lstdc++
+rawstor_LDADD = $(top_builddir)/src/librawstor.la \
+                $(top_builddir)/librawstd/src/librawstd.la \
+                -lstdc++

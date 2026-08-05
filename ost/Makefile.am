@@ -14,4 +14,6 @@ rawstor_ost_SOURCES = main.cpp \
                       session.cpp \
                       session.hpp
 
-rawstor_ost_LDADD = $(top_builddir)/src/librawstor.la -lstdc++
+rawstor_ost_LDADD = $(top_builddir)/src/librawstor.la \
+                    $(top_builddir)/librawstd/src/librawstd.la \
+                    -lstdc++
