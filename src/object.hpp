@@ -1,6 +1,7 @@
 #ifndef RAWSTOR_OBJECT_HPP
 #define RAWSTOR_OBJECT_HPP
 
+#include <rawstor/location.h>
 #include <rawstor/object.h>
 
 #include <rawio/queue.hpp>
@@ -30,6 +31,9 @@ public:
         const std::vector<rawstd::URI>& locations, unsigned int limit,
         std::list<std::vector<rawstd::URI>>& targets,
         RawstorPaginationToken& token
+    );
+    static void location_info(
+        const std::vector<rawstd::URI>& locations, RawstorLocationInfo* info
     );
     static void create(
         const std::vector<rawstd::URI>& targets, const RawstorObjectSpec& sp

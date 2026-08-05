@@ -9,6 +9,7 @@ extern "C" {
 #endif
 
 extern PyTypeObject PyObjectSpecType;
+extern PyTypeObject PyLocationInfoType;
 
 PyObject* py_rawstor_object_list(PyObject* self, PyObject* args);
 
@@ -19,6 +20,8 @@ PyObject* py_rawstor_object_create_at(PyObject* self, PyObject* args);
 PyObject* py_rawstor_object_spec(PyObject* self, PyObject* args);
 
 PyObject* py_rawstor_object_remove(PyObject* self, PyObject* args);
+
+PyObject* py_rawstor_location_info(PyObject* self, PyObject* args);
 
 #ifdef __cplusplus
 }

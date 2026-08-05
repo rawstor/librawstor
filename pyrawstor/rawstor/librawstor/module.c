@@ -13,6 +13,7 @@ static PyMethodDef librawstor_methods[] = {
     {"object_create_at", py_rawstor_object_create_at, METH_VARARGS, NULL},
     {"object_spec", py_rawstor_object_spec, METH_VARARGS, NULL},
     {"object_remove", py_rawstor_object_remove, METH_VARARGS, NULL},
+    {"location_info", py_rawstor_location_info, METH_VARARGS, NULL},
     {NULL, NULL, 0, NULL}
 };
 
@@ -47,6 +48,11 @@ PyMODINIT_FUNC PyInit_librawstor() {
         return NULL;
     }
 
+    if (PyType_Ready(&PyLocationInfoType) < 0) {
+        rawstor_terminate();
+        return NULL;
+    }
+
     PyObject* module = PyModule_Create(&librawstor_module);
     if (module == NULL) {
         rawstor_terminate();
@@ -54,6 +60,11 @@ PyMODINIT_FUNC PyInit_librawstor() {
     }
 
     if (PyModule_AddType(module, &PyObjectSpecType) < 0) {
+        Py_DECREF(module);
+        return NULL;
+    }
+
+    if (PyModule_AddType(module, &PyLocationInfoType) < 0) {
         Py_DECREF(module);
         return NULL;
     }

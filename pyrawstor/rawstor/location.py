@@ -50,6 +50,9 @@ class Location:
             librawstor.object_create_at(
                 self._uri, uuid, librawstor.ObjectSpec(size=size)))
 
+    def info(self) -> librawstor.LocationInfo:
+        return librawstor.location_info(self._uri)
+
     def __iter__(self) -> Iterator[Target]:
         token = None
         while True:

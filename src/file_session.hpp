@@ -8,6 +8,7 @@
 #include <rawstd/uri.hpp>
 #include <rawstd/uuid.h>
 
+#include <rawstor/location.h>
 #include <rawstor/object.h>
 
 #include <functional>
@@ -39,6 +40,10 @@ public:
     void spec(
         const RawstdUUID& id,
         std::function<void(const RawstorObjectSpec&, int)>&& cb
+    ) override;
+
+    void location_info(
+        std::function<void(const RawstorLocationInfo&, int)>&& cb
     ) override;
 
     void set_object(Object* object) override;
