@@ -151,7 +151,12 @@ backends and the io_uring/poll RawIO backends.
 - `ChangeLog.md` follows Keep a Changelog; entries go under
   `## [x.y.z] - Unreleased` in the matching `### Added/Changed/Fixed/Removed`
   subsection. `debian/changelog` and the rpm spec changelog are generated
-  from it at build time — don't hand-edit them.
+  from it at build time — don't hand-edit them. Only user-visible,
+  notable changes earn an entry (new/changed/removed functionality, a bug
+  a user could have hit, a packaging change) — not every commit, and not
+  internal refactors, test-only changes, or comment/doc tweaks. Keep each
+  entry to one short sentence; save the "why" and implementation detail
+  for the commit message, not the changelog.
 
 ## Gotchas worth knowing
 
