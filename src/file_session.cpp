@@ -85,8 +85,23 @@ bool path_exists(const std::string& path) {
         return true;
     } catch (const std::system_error& e) {
         if (e.code().value() == ENOENT) {
-            return false
+            return false;
         }
+        throw;
+    }
+}
+
+bool path_unlink(const std::string& path) {
+    try {
+        if (unlink(path.c_str()) == -1) {
+            RAWSTD_THROW_ERRNO();
+        }
+        return true;
+    } catch (const std::system_error& e) {
+        if (e.code().value() == ENOENT) {
+            return false;
+        }
+        throw;
     }
 }
 
@@ -101,15 +116,7 @@ void migrate_legacy(
     std::string legacy_spec_path = get_legacy_spec_path(location_path, uuid);
 
     if (path_exists(target_path)) {
-        try {
-            if (unlink(legacy_spec_path.c_str()) == -1) {
-                RAWSTD_THROW_ERRNO();
-            }
-        } catch (const std::system_error& e) {
-            if (e.code().value() != ENOENT) {
-                throw;
-            }
-        }
+        path_unlink(legacy_spec_path);
         return;
     }
 
@@ -122,15 +129,7 @@ void migrate_legacy(
         RAWSTD_THROW_ERRNO();
     }
 
-    try {
-        if (unlink(legacy_spec_path.c_str()) == -1) {
-            RAWSTD_THROW_ERRNO();
-        }
-    } catch (const std::system_error& e) {
-        if (e.code().value() != ENOENT) {
-            throw;
-        }
-    }
+    path_unlink(legacy_spec_path);
 }
 
 } // unnamed namespace
@@ -289,19 +288,7 @@ void Session::remove(const RawstdUUID& id, std::function<void(int)>&& cb) {
     rawstd_uuid_to_string(&id, &uuid_string);
 
     std::string target_path = get_target_path(location_path, uuid_string);
-    bool target_removed = true;
-    try {
-        if (unlink(target_path.c_str()) == -1) {
-            RAWSTD_THROW_ERRNO();
-        }
-    } catch (const std::system_error& e) {
-        if (e.code().value() != ENOENT) {
-            throw;
-        }
-        target_removed = false;
-    }
-
-    if (!target_removed) {
+    if (!path_unlink(target_path)) {
         std::string legacy_dat_path =
             get_legacy_dat_path(location_path, uuid_string);
         if (unlink(legacy_dat_path.c_str()) == -1) {
@@ -309,17 +296,7 @@ void Session::remove(const RawstdUUID& id, std::function<void(int)>&& cb) {
         }
     }
 
-    std::string legacy_spec_path =
-        get_legacy_spec_path(location_path, uuid_string);
-    try {
-        if (unlink(legacy_spec_path.c_str()) == -1) {
-            RAWSTD_THROW_ERRNO();
-        }
-    } catch (const std::system_error& e) {
-        if (e.code().value() != ENOENT) {
-            throw;
-        }
-    }
+    path_unlink(get_legacy_spec_path(location_path, uuid_string));
 
     cb(0);
 }
