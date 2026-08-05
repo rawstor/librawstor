@@ -42,9 +42,8 @@ public:
         std::function<void(const RawstorObjectSpec&, int)>&& cb
     ) override;
 
-    void location_info(
-        std::function<void(const RawstorLocationInfo&, int)>&& cb
-    ) override;
+    void
+    info(std::function<void(const RawstorLocationInfo&, int)>&& cb) override;
 };
 
 } // namespace file

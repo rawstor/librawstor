@@ -52,8 +52,7 @@ public:
 
     static void spec(const rawstd::URI& target, RawstorObjectSpec* sp);
 
-    static void
-    location_info(const rawstd::URI& location, RawstorLocationInfo* info);
+    static void info(const rawstd::URI& location, RawstorLocationInfo* info);
 
     explicit Connection(rawio::Queue& queue);
     Connection(const Connection&) = delete;

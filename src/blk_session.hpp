@@ -18,8 +18,8 @@ namespace blk {
 // Base for any Session backed by a plain fd read/written via the io queue
 // (rawio::Queue::pread()/pwrite()/...). Concrete backends only need to
 // implement how to get from an object id to an open fd (_connect()) plus
-// the metadata operations (list()/create()/remove()/spec()/
-// location_info()), which stay backend-specific.
+// the metadata operations (list()/create()/remove()/spec()/info()), which
+// stay backend-specific.
 class Session : public rawstor::Session {
 protected:
     virtual int _connect(const RawstdUUID& id) = 0;

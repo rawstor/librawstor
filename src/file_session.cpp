@@ -318,9 +318,7 @@ void Session::spec(
     cb(ret, 0);
 }
 
-void Session::location_info(
-    std::function<void(const RawstorLocationInfo&, int)>&& cb
-) {
+void Session::info(std::function<void(const RawstorLocationInfo&, int)>&& cb) {
     RawstorLocationInfo ret = {};
     try {
         std::string location_path = get_location_path(location());

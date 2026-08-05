@@ -994,9 +994,7 @@ void Session::spec(
     cb(ret, error);
 }
 
-void Session::location_info(
-    std::function<void(const RawstorLocationInfo&, int)>&& cb
-) {
+void Session::info(std::function<void(const RawstorLocationInfo&, int)>&& cb) {
     rawstd_info("%s: Reading location info...\n", str().c_str());
 
     int error = 0;
