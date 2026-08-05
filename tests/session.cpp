@@ -146,6 +146,49 @@ void Session::cmd_spec(
     cmd_spec_response(magic, cid, spec);
 }
 
+void Session::cmd_location_info_request() {
+    _server.read(
+        "RAWSTOR_CMD_LOCATION_INFO <<<", sizeof(RawstorOSTFrameBasic),
+        [](const void*) {}
+    );
+}
+
+void Session::cmd_location_info_response(
+    uint32_t magic, uint16_t cid, const RawstorLocationInfo& info
+) {
+    RawstorOSTFrameResponse response = {
+        .head{
+            .magic = magic,
+            .cmd = RAWSTOR_CMD_LOCATION_INFO,
+            .cid = cid,
+        },
+        .body = {
+            .res = static_cast<int32_t>(sizeof(info)),
+            .hash = 0,
+        },
+    };
+    iovec iov[2] = {
+        {
+            .iov_base = &response,
+            .iov_len = sizeof(response),
+        },
+        {
+            .iov_base = const_cast<RawstorLocationInfo*>(&info),
+            .iov_len = sizeof(info),
+        },
+    };
+    _server.writev(
+        "RAWSTOR_CMD_LOCATION_INFO >>>", iov, sizeof(iov) / sizeof(iov[0])
+    );
+}
+
+void Session::cmd_location_info(
+    uint32_t magic, uint16_t cid, const RawstorLocationInfo& info
+) {
+    cmd_location_info_request();
+    cmd_location_info_response(magic, cid, info);
+}
+
 void Session::cmd_read_request() {
     _server.read(
         "RAWSTOR_CMD_READ <<<", sizeof(RawstorOSTFrameIO), [](const void*) {}
