@@ -2,6 +2,8 @@
 
 #include <rawstor.h>
 
+#include <rawstd/exitcode.h>
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,7 +17,7 @@ int rawstor_cli_list(const char* location) {
             fprintf(
                 stderr, "rawstor_object_list() failed: %s\n", strerror(-res)
             );
-            return EXIT_FAILURE;
+            return rawstd_exitcode_for_errno(-res);
         }
         for (const char** it = rawstor_string_list_iter(targets); it != NULL;
              it = rawstor_string_list_next(it)) {

@@ -4,6 +4,8 @@
 
 #include <rawstor.h>
 
+#include <rawstd/exitcode.h>
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,7 +15,7 @@ int rawstor_cli_show(const char* target) {
     int res = rawstor_object_spec(target, &spec);
     if (res) {
         fprintf(stderr, "rawstor_object_spec() failed: %s\n", strerror(-res));
-        return EXIT_FAILURE;
+        return rawstd_exitcode_for_errno(-res);
     }
 
     char buf[256];
