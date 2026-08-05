@@ -66,9 +66,6 @@ static void command_create_usage(void) {
         "locations.\n"
         "                        If -u is omitted, a random UUIDv7 is "
         "generated.\n"
-        "  -l, --location LOCATION\n"
-        "                        Comma-separated list of rawstor backend "
-        "locations.\n"
         "  -u, --uuid UUID       Explicit UUID for the object (only valid "
         "when creating by location).\n"
         "\n"
@@ -188,14 +185,12 @@ static int command_create(int argc, char** argv) {
 
 static void command_remove_usage(void) {
     fprintf(
-        stdout,
-        "Rawstor CLI " PACKAGE_VERSION "\n"
-        "\n"
-        "usage: rawstor [options] remove TARGET [command_options]\n"
-        "\n"
-        "command options:\n"
-        "  -t, --target TARGET   Comma separated list of rawstor backend "
-        "targets\n"
+        stdout, "Rawstor CLI " PACKAGE_VERSION "\n"
+                "\n"
+                "usage: rawstor [options] remove TARGET [command_options]\n"
+                "\n"
+                "command options:\n"
+                "  -h, --help            Show this help message and exit\n"
     );
 };
 
@@ -249,16 +244,12 @@ static int command_remove(int argc, char** argv) {
 
 static void command_list_usage(void) {
     fprintf(
-        stdout,
-        "Rawstor CLI " PACKAGE_VERSION "\n"
-        "\n"
-        "usage: rawstor [options] list LOCATION [command_options]\n"
-        "\n"
-        "command options:\n"
-        "  -h, --help            Show this help message and exit\n"
-        "  -l, --location LOCATION\n"
-        "                        Comma-separated list of rawstor backend "
-        "locations.\n"
+        stdout, "Rawstor CLI " PACKAGE_VERSION "\n"
+                "\n"
+                "usage: rawstor [options] list LOCATION [command_options]\n"
+                "\n"
+                "command options:\n"
+                "  -h, --help            Show this help message and exit\n"
     );
 }
 
@@ -312,14 +303,12 @@ static int command_list(int argc, char** argv) {
 
 static void command_show_usage(void) {
     fprintf(
-        stdout,
-        "Rawstor CLI " PACKAGE_VERSION "\n"
-        "\n"
-        "usage: rawstor [options] show TARGET [command_options]\n"
-        "\n"
-        "command options:\n"
-        "  -t, --target TARGET   Comma separated list of rawstor backend "
-        "targets\n"
+        stdout, "Rawstor CLI " PACKAGE_VERSION "\n"
+                "\n"
+                "usage: rawstor [options] show TARGET [command_options]\n"
+                "\n"
+                "command options:\n"
+                "  -h, --help            Show this help message and exit\n"
     );
 };
 
@@ -386,8 +375,6 @@ static void command_testio_usage(void) {
         "                        reading/writing in bytes\n"
         "  -d, --io-depth DEPTH  IO depth\n"
         "  -h, --help            Show this help message and exit\n"
-        "  -t, --target TARGET   Comma separated list of rawstor backend "
-        "targets\n"
         "  --vector-mode         Use readv/writev\n",
         DEFAULT_QUEUE_SIZE
     );

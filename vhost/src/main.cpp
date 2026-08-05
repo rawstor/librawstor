@@ -43,9 +43,6 @@ void usage() {
               << std::endl
               << "  TARGET                Comma separated list of rawstor "
                  "backend targets"
-              << std::endl
-              << "  -t, --target TARGET   Comma separated list of rawstor "
-                 "backend targets"
               << std::endl;
 }
 

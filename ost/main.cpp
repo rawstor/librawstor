@@ -40,10 +40,6 @@ void usage() {
               << "                        (e.g., 127.0.0.1:7777)." << std::endl
               << "  LOCATION              Comma separated list of rawstor "
                  "backend locations"
-              << std::endl
-              << "  -l, --location LOCATION" << std::endl
-              << "                        Comma separated list of rawstor "
-                 "backend locations"
               << std::endl;
 }
 
