@@ -53,6 +53,13 @@ Rawstor vhost-user-blk backend for QEMU.
 getent group rawstor >/dev/null || groupadd -r rawstor
 getent passwd rawstor >/dev/null || useradd -r -g rawstor -d /var/lib/rawstor -s /sbin/nologin -c "Rawstor daemon" rawstor
 
+%post -n rawstor-vhost
+if [ "$1" -gt 1 ]; then
+    echo "rawstor-vhost upgraded: running rawstor-vhost@*.service instances are still using the previous binary."
+    echo "Restart them to pick up the update, e.g.:"
+    echo "  systemctl restart 'rawstor-vhost@*.service'"
+fi
+
 %prep
 %autosetup -n %{name}-@PACKAGE_VERSION@
 
