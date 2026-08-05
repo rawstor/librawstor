@@ -8,6 +8,7 @@
 #include <rawstd/ringbuf.hpp>
 #include <rawstd/uri.hpp>
 
+#include <rawstor/location.h>
 #include <rawstor/object.h>
 #include <rawstor/protocol.h>
 #include <rawstor/rawstor.h>
@@ -55,6 +56,10 @@ public:
     void spec(
         const RawstdUUID& id,
         std::function<void(const RawstorObjectSpec&, int)>&& cb
+    ) override;
+
+    void location_info(
+        std::function<void(const RawstorLocationInfo&, int)>&& cb
     ) override;
 
     void set_object(Object* object) override;

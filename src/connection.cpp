@@ -4,6 +4,7 @@
 #include "opts.h"
 #include "session.hpp"
 
+#include <rawstor/location.h>
 #include <rawstor/object.h>
 
 #include <rawio/queue.hpp>
@@ -317,6 +318,25 @@ void Connection::spec(const rawstd::URI& target, RawstorObjectSpec* sp) {
         }
 
         *sp = spec;
+    });
+
+    q.wait();
+}
+
+void Connection::location_info(
+    const rawstd::URI& location, RawstorLocationInfo* info
+) {
+    Queue q(1);
+
+    std::unique_ptr<Session> s = Session::create(q.queue(), location);
+    s->location_info([&q, info](const RawstorLocationInfo& li, int error) {
+        q.sub_operation();
+
+        if (error) {
+            RAWSTD_THROW_SYSTEM_ERROR(error);
+        }
+
+        *info = li;
     });
 
     q.wait();

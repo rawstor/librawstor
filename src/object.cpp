@@ -1,5 +1,6 @@
 #include "object.hpp"
 #include <rawstor/list.h>
+#include <rawstor/location.h>
 #include <rawstor/object.h>
 
 #include "config.h"
@@ -16,6 +17,7 @@
 
 #include <unistd.h>
 
+#include <algorithm>
 #include <exception>
 #include <list>
 #include <map>
@@ -172,6 +174,33 @@ void Object::list(
 
     targets.swap(ret);
     memcpy(token.bytes, next_token_uuid.bytes, sizeof(next_token_uuid.bytes));
+}
+
+void Object::location_info(
+    const std::vector<rawstd::URI>& locations, RawstorLocationInfo* info
+) {
+    validate_not_empty(locations);
+    validate_different_uris(locations);
+
+    RawstorLocationInfo ret{};
+    bool first = true;
+    for (const auto& location : locations) {
+        RawstorLocationInfo loc_info{};
+        rawstor::Connection::location_info(location, &loc_info);
+
+        if (first) {
+            ret = loc_info;
+            first = false;
+        } else {
+            // total is capped by the smallest backend; used takes the
+            // largest reported value so a mirror that's behind on writes
+            // doesn't make the location look emptier than it is.
+            ret.total = std::min(ret.total, loc_info.total);
+            ret.used = std::max(ret.used, loc_info.used);
+        }
+    }
+
+    *info = ret;
 }
 
 void Object::create(
@@ -439,6 +468,25 @@ int rawstor_object_list(
     } catch (...) {
         rawstd_error("Unexpected error\n");
         rawstor_string_list_delete(list);
+        return -EINVAL;
+    }
+}
+
+int rawstor_location_info(
+    const char* location, RawstorLocationInfo* info
+) noexcept {
+    try {
+        rawstor::Object::location_info(rawstd::URI::uriv(location), info);
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
         return -EINVAL;
     }
 }

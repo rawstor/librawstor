@@ -1,6 +1,7 @@
 #ifndef RAWSTOR_OSTBACKEND_SESSION_HPP
 #define RAWSTOR_OSTBACKEND_SESSION_HPP
 
+#include <rawstor/location.h>
 #include <rawstor/object.h>
 #include <rawstor/protocol.h>
 #include <rawstor/rawio.h>
@@ -48,6 +49,9 @@ private:
         const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
     );
     void _spec(
+        const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+    );
+    void _location_info(
         const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
     );
     void _set_object(
