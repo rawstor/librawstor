@@ -39,21 +39,6 @@ When multiple URIs are listed, the client interprets the list according to speci
 
 ---
 
-## Location info
-
-A location's used/total space (in bytes) can be queried directly, analogous to querying an object's spec: `rawstor_location_info()` in `librawstor`, `rawstor info LOCATION` on the CLI, `Location.info()` in `pyrawstor`.
-
-`used` is the sum of the sizes of the rawstor objects stored at the location; `total` is the backend's total capacity.
-
-For a comma-separated location, the two fields are aggregated independently across backends:
-
-| Field   | Aggregation | Rationale |
-|---------|-------------|-----------|
-| `total` | minimum     | The location's usable capacity is bounded by its smallest backend. |
-| `used`  | maximum     | Backends can be briefly out of sync (e.g. an object created on one mirror but not yet on another); taking the maximum avoids reporting a location as emptier than it is. |
-
----
-
 ## Target
 
 A **target** identifies a specific data object. For a single target, the format is `<scheme>://<endpoint>/<uuid>`. For multiple targets, the UUID must be appended to each URI: `<scheme1>://<endpoint1>/<uuid>,<scheme2>://<endpoint2>/<uuid>,...`
