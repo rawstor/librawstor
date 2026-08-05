@@ -64,7 +64,6 @@ make %{?_smp_mflags}
 rm -rf %{buildroot}
 make install DESTDIR=%{buildroot} prefix=%{_prefix}
 find %{buildroot} -name '*.la' -delete
-ln -sf rawstor %{buildroot}%{_bindir}/rawstor-cli
 mkdir -p %{buildroot}%{_unitdir}
 install -m 644 systemd/rawstor-ost.service %{buildroot}%{_unitdir}/rawstor-ost.service
 install -m 644 systemd/rawstor-vhost@.service %{buildroot}%{_unitdir}/rawstor-vhost@.service
@@ -81,7 +80,6 @@ mkdir -p %{buildroot}/var/lib/rawstor
 
 %files
 %{_bindir}/rawstor
-%{_bindir}/rawstor-cli
 %{_libdir}/librawstor.so.*
 %doc COPYING ChangeLog.md README.md
 
