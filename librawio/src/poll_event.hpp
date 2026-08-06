@@ -613,11 +613,12 @@ private:
     const void* _buf;
     size_t _size;
     off_t _offset;
+    bool _sync;
     std::function<void(size_t, int)> _cb;
 
 public:
     EventSimplexScalarPositionalWrite(
-        Queue& q, int fd, const void* buf, size_t size, off_t offset,
+        Queue& q, int fd, const void* buf, size_t size, off_t offset, bool sync,
         const rawstd::TraceEvent& trace_event,
         std::function<void(size_t, int)>&& cb
     ) :
@@ -625,6 +626,7 @@ public:
         _buf(buf),
         _size(size),
         _offset(offset),
+        _sync(sync),
         _cb(std::move(cb)) {}
 
     void dispatch() override final;
@@ -643,18 +645,20 @@ private:
     const iovec* _iov;
     unsigned int _niov;
     off_t _offset;
+    bool _sync;
     std::function<void(size_t, int)> _cb;
 
 public:
     EventSimplexVectorPositionalWrite(
         Queue& q, int fd, const iovec* iov, unsigned int niov, off_t offset,
-        const rawstd::TraceEvent& trace_event,
+        bool sync, const rawstd::TraceEvent& trace_event,
         std::function<void(size_t, int)>&& cb
     ) :
         EventSimplex(q, fd, trace_event),
         _iov(iov),
         _niov(niov),
         _offset(offset),
+        _sync(sync),
         _cb(std::move(cb)) {}
 
     void dispatch() override final;

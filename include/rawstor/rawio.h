@@ -13,6 +13,7 @@
 #include <sys/types.h>
 #include <sys/uio.h>
 
+#include <stdbool.h>
 #include <stddef.h>
 
 #ifdef __cplusplus
@@ -604,6 +605,11 @@ int rawio_pwrite(
 int rawio_pwritev(
     RawIOQueue* queue, int fd, const struct iovec* iov, unsigned int niov,
     off_t offset, RawIOCallback* cb, void* data
+) RAWSTOR_NOEXCEPT;
+
+int rawio_fsync(
+    RawIOQueue* queue, int fd, bool datasync, int (*cb)(int result, void* data),
+    void* data
 ) RAWSTOR_NOEXCEPT;
 
 int rawio_send(

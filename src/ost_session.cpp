@@ -413,7 +413,7 @@ private:
 public:
     SessionOpWrite(
         const std::shared_ptr<rawstor::ost::Context>& context, uint16_t cid,
-        const void* buf, size_t size, off_t offset,
+        const void* buf, size_t size, off_t offset, bool sync,
         const rawstd::TraceEvent& trace_event,
         std::function<void(size_t, int)>&& cb
     ) :
@@ -429,7 +429,7 @@ public:
                 .offset = (uint64_t)offset,
                 .len = (uint32_t)size,
                 .hash = hash(buf, size),
-                .sync = 0,
+                .sync = sync,
             },
         }) {
         _iov.reserve(2);
@@ -493,7 +493,7 @@ public:
     SessionOpWriteV(
         const std::shared_ptr<rawstor::ost::Context>& context, uint16_t cid,
         const iovec* iov, unsigned int niov, size_t size, off_t offset,
-        const rawstd::TraceEvent& trace_event,
+        bool sync, const rawstd::TraceEvent& trace_event,
         std::function<void(size_t, int)>&& cb
     ) :
         SessionOp(context, cid, trace_event, std::move(cb)),
@@ -508,7 +508,7 @@ public:
                 .offset = (uint64_t)offset,
                 .len = (uint32_t)size,
                 .hash = hash(iov, niov),
-                .sync = 0,
+                .sync = sync,
             },
         }) {
         _iov.reserve(1 + niov);
@@ -555,6 +555,58 @@ public:
         _dispatch(
             !error && response != nullptr ? response->body.res : 0, error
         );
+
+        *next_head = true;
+        *next_size = error ? 0 : sizeof(RawstorOSTFrameResponse);
+    }
+};
+
+class SessionOpFlush final : public SessionOp {
+private:
+    RawstorOSTFrameBasic _request;
+
+public:
+    SessionOpFlush(
+        const std::shared_ptr<rawstor::ost::Context>& context, uint16_t cid,
+        const rawstd::TraceEvent& trace_event,
+        std::function<void(size_t, int)>&& cb
+    ) :
+        SessionOp(context, cid, trace_event, std::move(cb)),
+        _request({
+            .head =
+                {
+                    .magic = RAWSTOR_MAGIC,
+                    .cmd = RAWSTOR_CMD_FLUSH,
+                    .cid = cid,
+                },
+            .body = {
+                .obj_id = {},
+                .offset = 0,
+                .val = 0,
+            },
+        }) {}
+
+    const void* request_data() const noexcept { return &_request; }
+
+    size_t request_size() const noexcept override { return sizeof(_request); }
+
+    void response_head_cb(
+        const RawstorOSTFrameResponse* response, int error, bool* next_head,
+        size_t* next_size
+    ) override {
+        RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
+
+        if (!error) {
+            error = validate_response(_context->fd(), response);
+        }
+
+        if (!error) {
+            error = validate_cmd(
+                _context->fd(), response->head.cmd, RAWSTOR_CMD_FLUSH
+            );
+        }
+
+        _dispatch(0, error);
 
         *next_head = true;
         *next_size = error ? 0 : sizeof(RawstorOSTFrameResponse);
@@ -1117,15 +1169,17 @@ void Session::preadv(
 }
 
 void Session::pwrite(
-    const void* buf, size_t size, off_t offset,
+    const void* buf, size_t size, off_t offset, bool sync,
     std::function<void(size_t, int)>&& cb
 ) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
-        's', "fd = %d, size = %zu, offset = %jd\n", fd(), size, (intmax_t)offset
+        's', "fd = %d, size = %zu, offset = %jd, sync = %d\n", fd(), size,
+        (intmax_t)offset, sync
     );
 
     std::shared_ptr<SessionOpWrite> op = std::make_shared<SessionOpWrite>(
-        _context, _cid_counter++, buf, size, offset, trace_event, std::move(cb)
+        _context, _cid_counter++, buf, size, offset, sync, trace_event,
+        std::move(cb)
     );
     _context->register_op(op);
 
@@ -1149,21 +1203,50 @@ void Session::pwrite(
 }
 
 void Session::pwritev(
-    const iovec* iov, unsigned int niov, size_t size, off_t offset,
+    const iovec* iov, unsigned int niov, size_t size, off_t offset, bool sync,
     std::function<void(size_t, int)>&& cb
 ) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
-        's', "fd = %d, size = %zu, offset = %jd\n", fd(), size, (intmax_t)offset
+        's', "fd = %d, size = %zu, offset = %jd, sync = %d\n", fd(), size,
+        (intmax_t)offset, sync
     );
 
     std::shared_ptr<SessionOpWriteV> op = std::make_shared<SessionOpWriteV>(
-        _context, _cid_counter++, iov, niov, size, offset, trace_event,
+        _context, _cid_counter++, iov, niov, size, offset, sync, trace_event,
         std::move(cb)
     );
     _context->register_op(op);
 
     _queue.sendmsg(
         fd(), op->request_msg(), RAWSTD_MSG_NOSIGNAL,
+        [op, trace_event](size_t result, int error) {
+            RAWSTD_TRACE_EVENT_MESSAGE(
+                trace_event, "%zu of %zu, error = %d\n", result,
+                op->request_size(), error
+            );
+
+            if (!error) {
+                error = validate_result(
+                    op->context().fd(), op->request_size(), result
+                );
+            }
+
+            op->request_cb(error);
+        }
+    );
+}
+
+void Session::flush(std::function<void(int)>&& cb) {
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('s', "fd = %d\n", fd());
+
+    std::shared_ptr<SessionOpFlush> op = std::make_shared<SessionOpFlush>(
+        _context, _cid_counter++, trace_event,
+        [cb = std::move(cb)](size_t, int error) { cb(error); }
+    );
+    _context->register_op(op);
+
+    _queue.send(
+        fd(), op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL,
         [op, trace_event](size_t result, int error) {
             RAWSTD_TRACE_EVENT_MESSAGE(
                 trace_event, "%zu of %zu, error = %d\n", result,

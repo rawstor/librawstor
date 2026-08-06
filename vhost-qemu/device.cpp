@@ -362,6 +362,52 @@ void ObjectTask::pwritev() {
     }
 }
 
+class ObjectFlushTask final {
+protected:
+    std::unique_ptr<Request> _req;
+
+public:
+    static int callback(RawstorObject*, size_t, size_t, int error, void* data) {
+        std::unique_ptr<ObjectFlushTask> t(static_cast<ObjectFlushTask*>(data));
+        try {
+            (*t)(error);
+            return 0;
+        } catch (const std::system_error& e) {
+            return -e.code().value();
+        }
+    }
+
+    ObjectFlushTask(std::unique_ptr<Request> req) : _req(std::move(req)) {}
+    ObjectFlushTask(const ObjectFlushTask&) = delete;
+    ObjectFlushTask(ObjectFlushTask&&) = delete;
+    ~ObjectFlushTask() = default;
+
+    ObjectFlushTask& operator=(const ObjectFlushTask&) = delete;
+    ObjectFlushTask& operator=(ObjectFlushTask&&) = delete;
+
+    void flush();
+    inline Request* req() noexcept { return _req.get(); }
+
+    void operator()(int error);
+};
+
+void ObjectFlushTask::operator()(int error) {
+    if (error != 0) {
+        rawstd_error("%s\n", strerror(error));
+        _req->push(VIRTIO_BLK_S_IOERR, 0);
+        return;
+    }
+
+    _req->push(VIRTIO_BLK_S_OK, 0);
+}
+
+void ObjectFlushTask::flush() {
+    int res = rawstor_object_flush(_req->device().object(), callback, this);
+    if (res) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+}
+
 void panic(VuDev*, const char* err) {
     rawstd_error("libvhost-user: %s\n", err);
 }
@@ -464,7 +510,19 @@ void process_request(std::unique_ptr<Request> req) {
         break;
     }
 
-    case VIRTIO_BLK_T_FLUSH:
+    case VIRTIO_BLK_T_FLUSH: {
+        std::unique_ptr<ObjectFlushTask> t =
+            std::make_unique<ObjectFlushTask>(std::move(req));
+        try {
+            t->flush();
+            t.release();
+        } catch (const std::exception& e) {
+            rawstd_error("%s\n", e.what());
+            t->req()->push(VIRTIO_BLK_S_IOERR, in_size);
+        }
+        break;
+    }
+
     case VIRTIO_BLK_T_DISCARD:
     case VIRTIO_BLK_T_WRITE_ZEROES:
     default:
@@ -577,10 +635,9 @@ Device::Device(unsigned int queue_size, const std::string& target, int fd) :
     _features(
         1ull << VIRTIO_BLK_F_SIZE_MAX | 1ull << VIRTIO_BLK_F_SEG_MAX |
         1ull << VIRTIO_BLK_F_BLK_SIZE | 1ull << VIRTIO_BLK_F_TOPOLOGY |
-        1ull << VIRTIO_BLK_F_MQ | 1ull << VIRTIO_F_VERSION_1 |
-        1ull << VIRTIO_RING_F_INDIRECT_DESC | 1ull << VIRTIO_RING_F_EVENT_IDX |
-        1ull << VHOST_USER_F_PROTOCOL_FEATURES
-        // 1ull << VIRTIO_BLK_F_FLUSH |
+        1ull << VIRTIO_BLK_F_MQ | 1ull << VIRTIO_BLK_F_FLUSH |
+        1ull << VIRTIO_F_VERSION_1 | 1ull << VIRTIO_RING_F_INDIRECT_DESC |
+        1ull << VIRTIO_RING_F_EVENT_IDX | 1ull << VHOST_USER_F_PROTOCOL_FEATURES
         // 1ull << VIRTIO_BLK_F_DISCARD |
         // 1ull << VIRTIO_BLK_F_WRITE_ZEROES |
     ),

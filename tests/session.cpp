@@ -270,5 +270,32 @@ void Session::cmd_write(uint32_t magic, uint16_t cid, int32_t res) {
     cmd_write_response(magic, cid, res);
 }
 
+void Session::cmd_flush_request() {
+    _server.read(
+        "RAWSTOR_CMD_FLUSH <<<", sizeof(RawstorOSTFrameBasic),
+        [](const void*) {}
+    );
+}
+
+void Session::cmd_flush_response(uint32_t magic, uint16_t cid, int32_t res) {
+    RawstorOSTFrameResponse response = {
+        .head{
+            .magic = magic,
+            .cmd = RAWSTOR_CMD_FLUSH,
+            .cid = cid,
+        },
+        .body = {
+            .res = res,
+            .hash = 0,
+        },
+    };
+    _server.write("RAWSTOR_CMD_FLUSH >>>", &response, sizeof(response));
+}
+
+void Session::cmd_flush(uint32_t magic, uint16_t cid, int32_t res) {
+    cmd_flush_request();
+    cmd_flush_response(magic, cid, res);
+}
+
 } // namespace tests
 } // namespace rawstor

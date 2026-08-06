@@ -466,6 +466,17 @@ int rawstor_object_pwritev(
     size_t size, off_t offset, RawstorCallback* cb, void* data
 ) RAWSTOR_NOEXCEPT;
 
+/**
+ * @brief Flushes an object's previously written data to stable storage.
+ *
+ * A durability barrier: once the callback reports success, every write that
+ * completed before this call is guaranteed durable. It carries no size or
+ * offset -- @p cb is invoked with `size = 0, result = 0`.
+ */
+int rawstor_object_flush(
+    RawstorObject* object, RawstorCallback* cb, void* data
+) RAWSTOR_NOEXCEPT;
+
 #ifdef __cplusplus
 }
 #endif

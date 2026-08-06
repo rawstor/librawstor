@@ -66,6 +66,9 @@ private:
     void _discard(
         const RawstorOSTFrameHead& head, const RawstorOSTFrameIOBody& body
     );
+    void _flush(
+        const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+    );
     std::vector<rawstd::URI> _targets(const RawstdUUID& uuid);
 
 public:

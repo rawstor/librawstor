@@ -111,14 +111,17 @@ public:
     ) = 0;
 
     virtual Event* pwrite(
-        int fd, const void* buf, size_t size, off_t offset,
+        int fd, const void* buf, size_t size, off_t offset, bool sync,
         std::function<void(size_t, int)>&& cb
     ) = 0;
 
     virtual Event* pwritev(
-        int fd, const iovec* iov, unsigned int niov, off_t offset,
+        int fd, const iovec* iov, unsigned int niov, off_t offset, bool sync,
         std::function<void(size_t, int)>&& cb
     ) = 0;
+
+    virtual Event*
+    fsync(int fd, bool datasync, std::function<void(int)>&& cb) = 0;
 
     virtual Event* send(
         int fd, const void* buf, size_t size, unsigned int flags,
