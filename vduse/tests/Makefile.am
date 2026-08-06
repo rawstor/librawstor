@@ -14,7 +14,7 @@ AM_LDFLAGS = $(ASAN_LDFLAGS) \
 
 test_all_SOURCES = main.cpp \
                    test_request.cpp
-test_all_LDADD = $(top_builddir)/vduse/src/librawstor-vduse.la \
+test_all_LDADD = $(top_builddir)/vduse/src/libvduse.la \
                  $(top_builddir)/src/librawstor.la \
                  $(top_builddir)/librawstd/src/librawstd.la
 
