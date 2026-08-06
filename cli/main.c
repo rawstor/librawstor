@@ -413,6 +413,8 @@ static void command_testio_usage(void) {
         "                        reading/writing in bytes\n"
         "  -d, --io-depth DEPTH  IO depth\n"
         "  -h, --help            Show this help message and exit\n"
+        "  --sync                Every write is durable on completion "
+        "(RWF_DSYNC-equivalent)\n"
         "  --vector-mode         Use readv/writev\n",
         DEFAULT_QUEUE_SIZE
     );
@@ -426,6 +428,7 @@ static int command_testio(int argc, char** argv) {
         {"count", required_argument, NULL, 'c'},
         {"help", no_argument, NULL, 'h'},
         {"io-depth", required_argument, NULL, 'd'},
+        {"sync", no_argument, NULL, 's'},
         {"vector-mode", no_argument, NULL, 'v'},
         {},
     };
@@ -436,6 +439,7 @@ static int command_testio(int argc, char** argv) {
     char* io_depth_arg = NULL;
     char* target_arg = NULL;
     int vector_mode = 0;
+    int sync = 0;
     optind = 0;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
@@ -463,6 +467,10 @@ static int command_testio(int argc, char** argv) {
         case 'h':
             command_testio_usage();
             return EXIT_SUCCESS;
+
+        case 's':
+            sync = 1;
+            break;
 
         case 'v':
             vector_mode = 1;
@@ -534,7 +542,7 @@ static int command_testio(int argc, char** argv) {
     }
 
     return rawstor_cli_testio(
-        queue_size, target_arg, block_size, count, io_depth, vector_mode
+        queue_size, target_arg, block_size, count, io_depth, vector_mode, sync
     );
 }
 

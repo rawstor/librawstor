@@ -20,11 +20,12 @@ typedef struct {
     unsigned int* counter;
     unsigned int iteration;
     unsigned int niterations;
+    int sync;
 } Worker;
 
 static Worker* worker_create(
     unsigned int index, uint64_t block_size, unsigned int* counter,
-    unsigned int niterations
+    unsigned int niterations, int sync
 ) {
     Worker* worker = malloc(sizeof(Worker));
     if (worker == NULL) {
@@ -39,6 +40,7 @@ static Worker* worker_create(
         .counter = counter,
         .iteration = 0,
         .niterations = niterations,
+        .sync = sync,
     };
 
     worker->src_iov.iov_base = malloc(block_size);
@@ -151,7 +153,7 @@ static int dst_data_received(
 
     return rawstor_object_pwrite(
         object, worker->src_iov.iov_base, worker->src_iov.iov_len,
-        worker->offset, false, src_data_sent, worker
+        worker->offset, worker->sync, src_data_sent, worker
     );
 }
 
@@ -203,7 +205,7 @@ static int dstv_data_received(
 
     return rawstor_object_pwritev(
         object, &worker->src_iov, 1, worker->src_iov.iov_len, worker->offset,
-        false, srcv_data_sent, worker
+        worker->sync, srcv_data_sent, worker
     );
 }
 
@@ -259,7 +261,7 @@ static int srcv_data_sent(
 
 int rawstor_cli_testio(
     unsigned int queue_size, const char* target, uint64_t block_size,
-    unsigned int count, unsigned int io_depth, int vector_mode
+    unsigned int count, unsigned int io_depth, int vector_mode, int sync
 ) {
     int res;
     int err = 0;
@@ -288,7 +290,7 @@ int rawstor_cli_testio(
         goto err_workers;
     }
     for (unsigned int i = 0; i < io_depth; ++i) {
-        workers[i] = worker_create(i, block_size, &counter, count);
+        workers[i] = worker_create(i, block_size, &counter, count, sync);
         if (workers[i] == NULL) {
             fprintf(stderr, "worker_create() failed: %s\n", strerror(errno));
             err = errno;
@@ -303,7 +305,7 @@ int rawstor_cli_testio(
             );
             res = rawstor_object_pwrite(
                 object, workers[i]->src_iov.iov_base,
-                workers[i]->src_iov.iov_len, workers[i]->offset, false,
+                workers[i]->src_iov.iov_len, workers[i]->offset, sync,
                 src_data_sent, workers[i]
             );
             if (res < 0) {
@@ -322,7 +324,7 @@ int rawstor_cli_testio(
             );
             res = rawstor_object_pwritev(
                 object, &workers[i]->src_iov, 1, workers[i]->src_iov.iov_len,
-                workers[i]->offset, false, srcv_data_sent, workers[i]
+                workers[i]->offset, sync, srcv_data_sent, workers[i]
             );
             if (res < 0) {
                 fprintf(
