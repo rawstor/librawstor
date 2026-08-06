@@ -115,7 +115,7 @@ const std::string& Queue::engine_name() {
 
 void Queue::setup_fd(int fd) {
     int res;
-    static unsigned int bufsize = 4096 * 64 * 4;
+    static unsigned int bufsize = 16 * 1024 * 1024;
 
     res = rawstd_socket_set_snd_bufsize(fd, bufsize);
     if (res) {

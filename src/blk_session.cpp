@@ -11,8 +11,8 @@
 namespace rawstor {
 namespace blk {
 
-Session::Session(rawio::Queue& queue, const rawstd::URI& location) :
-    rawstor::Session(queue, location) {
+Session::Session(Private p, rawio::Queue& queue, const rawstd::URI& location) :
+    rawstor::Session(p, queue, location) {
 }
 
 void Session::set_object(Object* object) {
