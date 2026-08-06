@@ -296,9 +296,9 @@ qemu-system-x86_64 \
 ### Supported virtio-blk features
 
 `rawstor-vduse` negotiates `VIRTIO_BLK_F_SEG_MAX`, `VIRTIO_BLK_F_BLK_SIZE`,
-`VIRTIO_BLK_F_TOPOLOGY`, `VIRTIO_BLK_F_FLUSH`, `VIRTIO_BLK_F_CONFIG_WCE`,
-plus whatever baseline virtio/ring features the kernel VDUSE driver itself
-requires (`VIRTIO_F_VERSION_1`, `VIRTIO_F_ACCESS_PLATFORM`,
+`VIRTIO_BLK_F_TOPOLOGY`, `VIRTIO_BLK_F_FLUSH`, plus whatever baseline
+virtio/ring features the kernel VDUSE driver itself requires
+(`VIRTIO_F_VERSION_1`, `VIRTIO_F_ACCESS_PLATFORM`,
 `VIRTIO_F_NOTIFY_ON_EMPTY`, `VIRTIO_RING_F_EVENT_IDX`,
 `VIRTIO_RING_F_INDIRECT_DESC`), and services read (`VIRTIO_BLK_T_IN`), write
 (`VIRTIO_BLK_T_OUT`), flush (`VIRTIO_BLK_T_FLUSH`) and identify
@@ -306,9 +306,17 @@ requires (`VIRTIO_F_VERSION_1`, `VIRTIO_F_ACCESS_PLATFORM`,
 implemented and are answered with `VIRTIO_BLK_S_UNSUPP`. Only a single
 virtqueue is serviced (`VIRTIO_BLK_F_MQ` is not negotiated).
 
-Unlike vhost-user, VDUSE has no driver-writable config space: there is no
-protocol message equivalent to `VHOST_USER_SET_CONFIG`, so `--write-cache`
-only sets the value advertised at device-creation time.
+Unlike vhost-user, VDUSE has no driver-writable config space at all --
+there is no protocol message equivalent to `VHOST_USER_SET_CONFIG` -- and
+the kernel VDUSE driver unconditionally rejects `VIRTIO_BLK_F_CONFIG_WCE`
+for virtio-blk devices (device creation fails outright if it's
+advertised), so `rawstor-vduse` doesn't negotiate it. `--write-cache`
+still works: Linux's `virtio_blk` driver enables its write-cache
+(flush-before-trusting-durability) assumption whenever
+`VIRTIO_BLK_F_FLUSH` is negotiated regardless of `CONFIG_WCE`, so the
+guest always issues `FLUSH` appropriately either way -- the flag purely
+controls whether `rawstor-vduse` itself additionally makes every write
+durable on completion or relies solely on that `FLUSH`.
 
 ### Notes
 
