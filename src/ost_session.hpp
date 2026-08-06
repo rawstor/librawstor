@@ -25,19 +25,32 @@
 namespace rawstor {
 namespace ost {
 
-class Context;
+class SessionOp;
 
 class Session final : public rawstor::Session {
+    friend class SessionOp;
+
 private:
     uint16_t _cid_counter;
 
-    std::shared_ptr<Context> _context;
+    RawIOEvent* _read_event;
+    std::unordered_map<uint16_t, std::shared_ptr<SessionOp>> _ops;
 
     int _connect();
     void _set_object(Object* object);
+    void _fail_in_flight(int error, bool* next_head, size_t* next_size);
+    // Returns nullptr, rather than throwing, for an unregistered cid: a
+    // response can legitimately race with Connection::_op() already having
+    // failed and retried that same op on a different session (e.g. after a
+    // send-side error on this connection), in which case the cid was
+    // already unregistered and the response is stale, not a corrupted
+    // stream.
+    SessionOp* _find_op(uint16_t cid);
+    void _add_op(const std::shared_ptr<SessionOp>& op);
+    void _remove_op(uint16_t cid);
 
 public:
-    Session(rawio::Queue& queue, const rawstd::URI& location);
+    Session(Private p, rawio::Queue& queue, const rawstd::URI& location);
     ~Session();
 
     void list(
