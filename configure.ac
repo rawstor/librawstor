@@ -5,6 +5,8 @@ AM_INIT_AUTOMAKE([1.9 tar-pax])
 
 AC_CONFIG_HEADERS([config.h])
 
+AC_CANONICAL_HOST
+
 AC_PROG_CC
 AC_PROG_CXX
 
@@ -108,6 +110,18 @@ AC_ARG_ENABLE([ost-backend], [AS_HELP_STRING([--disable-ost-backend],
     [enable_ost_backend="yes"])
 AM_CONDITIONAL([ENABLE_OST_BACKEND], [test "x$enable_ost_backend" = "xyes"])
 
+
+AS_CASE([$host_os],
+    [linux*], [vduse_backend_default="yes"],
+    [vduse_backend_default="no"]
+)
+AC_ARG_ENABLE([vduse-backend], [AS_HELP_STRING([--disable-vduse-backend],
+    [disable VDUSE backend (Linux-only; the VDUSE kernel uAPI it vendors
+     headers for does not exist on other platforms)])],
+    [enable_vduse_backend=$enableval],
+    [enable_vduse_backend=$vduse_backend_default])
+AM_CONDITIONAL([ENABLE_VDUSE_BACKEND], [test "x$enable_vduse_backend" = "xyes"])
+
 AC_ARG_WITH([python3], [AS_HELP_STRING([--without-python3],
     [disable support for python3 bindings])],
     [with_python3=$withval],
@@ -145,6 +159,12 @@ AC_CONFIG_FILES(
     [vhost-qemu/3rdparty/Makefile]
     [vhost-qemu/3rdparty/qemu/Makefile]
     [vhost-qemu/3rdparty/qemu/libvhost-user/Makefile]
+    [vduse/Makefile]
+    [vduse/src/Makefile]
+    [vduse/tests/Makefile]
+    [vduse/3rdparty/Makefile]
+    [vduse/3rdparty/qemu/Makefile]
+    [vduse/3rdparty/qemu/libvduse/Makefile]
     [ost/Makefile]
     [tests/Makefile]
     [deb/librawstor/control]
