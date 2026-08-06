@@ -60,6 +60,32 @@ if [ "$1" -gt 1 ]; then
     echo "  systemctl restart 'rawstor-vhost@*.service'"
 fi
 
+
+%package -n rawstor-vduse
+Summary: Rawstor VDUSE virtio-blk backend
+Requires(pre): shadow-utils
+Requires: %{name} = %{version}-%{release}
+%{?systemd_requires}
+
+%description -n rawstor-vduse
+Rawstor VDUSE (vDPA Device in Userspace) virtio-blk backend.
+
+
+%pre -n rawstor-vduse
+getent group rawstor >/dev/null || groupadd -r rawstor
+getent passwd rawstor >/dev/null || useradd -r -g rawstor -d /var/lib/rawstor -s /sbin/nologin -c "Rawstor daemon" rawstor
+
+%post -n rawstor-vduse
+if [ -x /usr/bin/udevadm ]; then
+    udevadm control --reload-rules || :
+    udevadm trigger --subsystem-match=vduse || :
+fi
+if [ "$1" -gt 1 ]; then
+    echo "rawstor-vduse upgraded: running rawstor-vduse@*.service instances are still using the previous binary."
+    echo "Restart them to pick up the update, e.g.:"
+    echo "  systemctl restart 'rawstor-vduse@*.service'"
+fi
+
 %prep
 %autosetup -n %{name}-@PACKAGE_VERSION@
 
@@ -74,6 +100,9 @@ find %{buildroot} -name '*.la' -delete
 mkdir -p %{buildroot}%{_unitdir}
 install -m 644 systemd/rawstor-ost.service %{buildroot}%{_unitdir}/rawstor-ost.service
 install -m 644 systemd/rawstor-vhost@.service %{buildroot}%{_unitdir}/rawstor-vhost@.service
+install -m 644 systemd/rawstor-vduse@.service %{buildroot}%{_unitdir}/rawstor-vduse@.service
+mkdir -p %{buildroot}/usr/lib/udev/rules.d
+install -m 644 udev/60-rawstor-vduse.rules %{buildroot}/usr/lib/udev/rules.d/60-rawstor-vduse.rules
 mkdir -p %{buildroot}/var/lib/rawstor
 
 %post -n rawstor-ost
@@ -103,3 +132,8 @@ mkdir -p %{buildroot}/var/lib/rawstor
 %files -n rawstor-vhost
 %{_bindir}/rawstor-vhost
 %{_unitdir}/rawstor-vhost@.service
+
+%files -n rawstor-vduse
+%{_bindir}/rawstor-vduse
+%{_unitdir}/rawstor-vduse@.service
+/usr/lib/udev/rules.d/60-rawstor-vduse.rules

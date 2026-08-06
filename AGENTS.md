@@ -12,6 +12,9 @@ The two headline consumers are:
 - `rawstor-vhost` / `rawstor-vhost-qemu` — expose a rawstor object to a
   QEMU guest as a `virtio-blk` disk via the vhost-user protocol, so a VM's
   virtual disk is really just a rawstor object over the network.
+- `rawstor-vduse` — same idea, over the Linux kernel's VDUSE (vDPA Device
+  in Userspace) protocol instead of vhost-user: creates a real kernel vDPA
+  device any `virtio-vdpa`/`vhost-vdpa` consumer can use, not just QEMU.
 
 ## Core concepts
 
@@ -70,6 +73,10 @@ librawstor/
 ├── vhost-qemu/       rawstor-vhost-qemu — alternate vhost-user-blk backend built on vendored
 │                     qemu libvhost-user (3rdparty/qemu/libvhost-user), kept side-by-side with
 │                     vhost/ purely to performance-compare the native vs qemu-library implementation
+├── vduse/            rawstor-vduse — VDUSE virtio-blk backend (Linux-only); same include/ +
+│                     src/ + tests/ split as vhost/, but the VDUSE kernel control-plane
+│                     protocol itself comes from vendored qemu libvduse
+│                     (3rdparty/qemu/libvduse), the way vhost-qemu/ uses libvhost-user
 ├── pyrawstor/        Python 3 bindings (location/target helpers)
 ├── tests/            top-level librawstor integration/unit tests (own in-process test server)
 └── docs/             locations_and_targets.md (the OST wire protocol itself is documented
@@ -200,6 +207,15 @@ backends and the io_uring/poll RawIO backends.
   (typically in `librawio`), not in the vendored copy. `vhost-qemu`
   exists specifically as a performance/behavior baseline to compare
   `vhost/`'s native implementation against, not as something to extend.
+- `vduse/3rdparty/qemu/libvduse/` is likewise vendored upstream QEMU code
+  (`subprojects/libvduse`, GPL-2.0) — never patch it either; unlike
+  `vhost-qemu`, though, `vduse/` is a real shipped backend (its own
+  deb/rpm package, systemd unit), not just a comparison baseline, so a bug
+  found there is worth reporting upstream. VDUSE itself is Linux-only
+  (`--disable-vduse-backend` at `configure` time, or auto-disabled on
+  non-Linux hosts) and needs the `vduse` kernel module plus
+  `/dev/vduse/control` access at runtime — see the top-level README's
+  "rawstor-vduse" section.
 - virtio `EVENT_IDX` is a *bidirectional* suppression handshake:
   `used_event` (driver→device, suppresses interrupts) and `avail_event`
   (device→driver, suppresses kicks) are independent and both must be

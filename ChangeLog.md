@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.3.0] - Unreleased
 
 ### Added
+- `rawstor-vduse`: a new virtio-blk backend using the [VDUSE](https://docs.kernel.org/userspace-api/vduse.html) (vDPA Device in Userspace) kernel protocol, alongside `rawstor-vhost`, in its own deb/rpm package with a `rawstor-vduse@.service` systemd template unit and udev rule. Built on vendored qemu `libvduse` (`vduse/3rdparty/qemu/libvduse/`), Linux-only. See the top-level README's "rawstor-vduse" section.
 - `--write-cache=on|off` for `rawstor-vhost` and `rawstor-vhost-qemu` (default `off`, write-through): advertises `VIRTIO_BLK_F_CONFIG_WCE` and honors the guest live-toggling it via `SET_CONFIG`. With write-cache off, every write is made durable (`sync=true`) since the guest treats a completed write as already durable and won't issue a `FLUSH`.
 
 ### Changed
