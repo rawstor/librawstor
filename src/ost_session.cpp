@@ -20,6 +20,8 @@
 
 #include <poll.h>
 
+#include <sys/socket.h>
+
 #include <algorithm>
 #include <iterator>
 #include <memory>
@@ -406,6 +408,7 @@ class SessionOpWrite final : public SessionOp {
 private:
     std::vector<iovec> _iov;
     RawstorOSTFrameIO _request;
+    msghdr _msg;
 
 public:
     SessionOpWrite(
@@ -438,11 +441,18 @@ public:
             .iov_base = const_cast<void*>(buf),
             .iov_len = size,
         });
+        _msg = {
+            .msg_name = nullptr,
+            .msg_namelen = 0,
+            .msg_iov = _iov.data(),
+            .msg_iovlen = _iov.size(),
+            .msg_control = nullptr,
+            .msg_controllen = 0,
+            .msg_flags = 0,
+        };
     }
 
-    const iovec* request_iov() const noexcept { return _iov.data(); }
-
-    unsigned int request_niov() const noexcept { return _iov.size(); }
+    const msghdr* request_msg() const noexcept { return &_msg; }
 
     size_t request_size() const noexcept override {
         return sizeof(_request) + _request.body.len;
@@ -477,6 +487,7 @@ class SessionOpWriteV final : public SessionOp {
 private:
     RawstorOSTFrameIO _request;
     std::vector<iovec> _iov;
+    msghdr _msg;
 
 public:
     SessionOpWriteV(
@@ -508,11 +519,18 @@ public:
         for (unsigned int i = 0; i < niov; ++i) {
             _iov.push_back(iov[i]);
         }
+        _msg = {
+            .msg_name = nullptr,
+            .msg_namelen = 0,
+            .msg_iov = _iov.data(),
+            .msg_iovlen = _iov.size(),
+            .msg_control = nullptr,
+            .msg_controllen = 0,
+            .msg_flags = 0,
+        };
     }
 
-    const iovec* request_iov() const noexcept { return _iov.data(); }
-
-    unsigned int request_niov() const noexcept { return _iov.size(); }
+    const msghdr* request_msg() const noexcept { return &_msg; }
 
     size_t request_size() const noexcept override {
         return sizeof(_request) + _request.body.len;
@@ -569,8 +587,8 @@ std::vector<T> basic_request(
         },
     };
     memcpy(request.body.obj_id, id.bytes, sizeof(request.body.obj_id));
-    queue->write(
-        fd, &request, sizeof(request),
+    queue->send(
+        fd, &request, sizeof(request), RAWSTD_MSG_NOSIGNAL,
         [fd, trace_event](size_t result, int error) {
             RAWSTD_TRACE_EVENT_MESSAGE(
                 trace_event, "%zu of %zu, error = %d\n", result,
@@ -795,6 +813,11 @@ int Session::_connect() {
     }
 
     try {
+        res = rawstd_socket_set_nosigpipe(fd);
+        if (res < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
+        }
+
         unsigned int so_sndtimeo = rawstor_opts_so_sndtimeo();
         if (so_sndtimeo != 0) {
             res = rawstd_socket_set_snd_timeout(fd, so_sndtimeo);
@@ -1041,8 +1064,8 @@ void Session::pread(
     );
     _context->register_op(op);
 
-    _queue.write(
-        fd(), op->request_data(), op->request_size(),
+    _queue.send(
+        fd(), op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL,
         [op, trace_event](size_t result, int error) {
             RAWSTD_TRACE_EVENT_MESSAGE(
                 trace_event, "%zu of %zu, error = %d\n", result,
@@ -1074,8 +1097,8 @@ void Session::preadv(
     );
     _context->register_op(op);
 
-    _queue.write(
-        fd(), op->request_data(), op->request_size(),
+    _queue.send(
+        fd(), op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL,
         [op, trace_event](size_t result, int error) {
             RAWSTD_TRACE_EVENT_MESSAGE(
                 trace_event, "%zu of %zu, error = %d\n", result,
@@ -1106,8 +1129,8 @@ void Session::pwrite(
     );
     _context->register_op(op);
 
-    _queue.writev(
-        fd(), op->request_iov(), op->request_niov(),
+    _queue.sendmsg(
+        fd(), op->request_msg(), RAWSTD_MSG_NOSIGNAL,
         [op, trace_event](size_t result, int error) {
             RAWSTD_TRACE_EVENT_MESSAGE(
                 trace_event, "%zu of %zu, error = %d\n", result,
@@ -1139,8 +1162,8 @@ void Session::pwritev(
     );
     _context->register_op(op);
 
-    _queue.writev(
-        fd(), op->request_iov(), op->request_niov(),
+    _queue.sendmsg(
+        fd(), op->request_msg(), RAWSTD_MSG_NOSIGNAL,
         [op, trace_event](size_t result, int error) {
             RAWSTD_TRACE_EVENT_MESSAGE(
                 trace_event, "%zu of %zu, error = %d\n", result,

@@ -131,6 +131,11 @@ int Server::_accept(int result) {
 
 void Server::_add_session(int fd) {
     try {
+        int res = rawstd_socket_set_nosigpipe(fd);
+        if (res < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
+        }
+
         _sessions.emplace(fd, std::make_unique<Session>(_queue, *this, fd));
     } catch (...) {
         close(fd);

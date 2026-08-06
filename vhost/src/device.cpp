@@ -9,6 +9,7 @@
 #include <rawstd/gpp.hpp>
 #include <rawstd/iovec.h>
 #include <rawstd/logging.h>
+#include <rawstd/socket.h>
 
 #include <rawstor/object.h>
 #include <rawstor/rawio.h>
@@ -247,7 +248,7 @@ public:
         return _iov[0].iov_len + _iov[1].iov_len;
     }
 
-    inline int flags() const noexcept override { return 0; }
+    inline int flags() const noexcept override { return RAWSTD_MSG_NOSIGNAL; }
 
     virtual std::string str() const = 0;
 };

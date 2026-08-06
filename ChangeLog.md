@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.2.5] - Unreleased
 
+### Changed
+- `librawstor` no longer ignores `SIGPIPE` process-wide; OST client/server writes and the `rawstor-vhost` control-socket write now suppress it per-call via `MSG_NOSIGNAL` (`SO_NOSIGPIPE` on macOS) instead. `rawstor-vhost-qemu` still ignores `SIGPIPE` process-wide, since the vendored `libvhost-user` writes to its control socket without `MSG_NOSIGNAL` and can't be patched.
+
 ## [0.2.4] - 2026-08-06
 
 ### Added
