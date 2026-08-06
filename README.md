@@ -233,17 +233,21 @@ vDPA device: once attached to the vDPA bus, it can be driven either by
 framework directly -- no VMM involved at all, e.g. for containers) or by
 `vhost-vdpa` (a VMM such as QEMU drives it through `/dev/vhost-vdpa-N`).
 
-The VDUSE control-plane protocol (device/virtqueue setup, IOTLB-backed
-memory mapping, kick/interrupt handling) is implemented by vendoring qemu's
-`libvduse` (`vduse/3rdparty/qemu/libvduse/`, never patched -- see
-`AGENTS.md`), the same reference implementation qemu's own
-`storage-daemon --export vduse-blk` uses; `rawstor-vduse` itself only
-supplies the virtio-blk request handling and RawIO event-loop glue,
-structured like `vhost/` (`include/` + `src/` + `tests/`).
+The VDUSE control-plane protocol (device/virtqueue setup via ioctl(2) on
+`/dev/vduse/control` and `/dev/vduse/$NAME`, IOTLB-backed memory mapping,
+kick/interrupt handling) is implemented natively in `vduse/` -- like
+`vhost/`, it does not vendor or link against any third-party protocol
+library (qemu's `libvduse` included); only the kernel uAPI struct/ioctl
+definitions themselves are vendored (`vduse/include/stdheaders/linux/`,
+trimmed the same way `vhost/include/stdheaders/` vendors its own kernel
+headers). Every I/O path, including the control channel, is asynchronous
+and non-blocking via RawIO, and multiple in-flight requests on a virtqueue
+may complete out of order -- the same design `vhost/` uses for
+vhost-user.
 
 ### Usage
 
-`rawstor-vduse [-h] -n NAME TARGET [--queue-size SIZE] [--reconnect-file PATH] [--write-cache on|off] [-v]`
+`rawstor-vduse [-h] -n NAME TARGET [--queue-size SIZE] [--write-cache on|off] [-v]`
 
 ### Options
 
@@ -253,7 +257,6 @@ structured like `vhost/` (`include/` + `src/` + `tests/`).
 | `-n, --name NAME` | VDUSE device name; creates `/dev/vduse/NAME`. |
 | `TARGET` | Comma‑separated list of rawstor backend targets (see [Locations and Targets](https://github.com/rawstor/librawstor/blob/main/docs/locations_and_targets.md)). |
 | `--queue-size SIZE` | Virtqueue size, a power of two. Default: `256`, max `1024`. |
-| `--reconnect-file PATH` | Where to keep the inflight-request log libvduse needs to resubmit requests still outstanding after a backend restart. Default: under `$TMPDIR` (or `/tmp`), named after `NAME`. |
 | `--write-cache on\|off` | Advertise a writeback (`on`) or write-through (`off`, default) cache to the guest. |
 | `-v, --version` | Print version and exit. |
 
@@ -306,7 +309,11 @@ device itself is destroyed out from under it -- unlike `rawstor-vhost`,
 there is no per-connection front-end to disconnect from, since the kernel
 is always "connected". Attaching the created device to the vDPA bus (`vdpa
 dev add name NAME mgmtdev vduse`) and, if applicable, driving it from a
-VMM, are separate, external steps.
+VMM, are separate, external steps. If the process is restarted while
+requests are in flight, it does not attempt to resubmit them (no
+inflight-request log is kept) -- a crash mid-request is visible to the
+guest as that request never completing, the same failure mode a guest
+already has to tolerate from a host crash.
 
 ### Packaging and access
 

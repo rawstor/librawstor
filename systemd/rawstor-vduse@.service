@@ -30,14 +30,13 @@ Type=simple
 # (udev/60-rawstor-vduse.rules), which grants it to the "rawstor" group.
 User=rawstor
 Group=rawstor
-StateDirectory=rawstor
 # write-through (off) makes every guest write durable on completion;
 # writeback (on) is faster but relies on the guest issuing an explicit
 # flush, and only helps if the guest actually does.
 Environment=RAWSTOR_LOCATION=ost://127.0.0.1:7777
 Environment=RAWSTOR_WRITE_CACHE=off
 EnvironmentFile=-/etc/rawstor-vduse.conf
-ExecStart=/usr/bin/rawstor-vduse --name=%i --reconnect-file=/var/lib/rawstor/%i.vduse-reconnect --write-cache=${RAWSTOR_WRITE_CACHE} ${RAWSTOR_LOCATION}/%i
+ExecStart=/usr/bin/rawstor-vduse --name=%i --write-cache=${RAWSTOR_WRITE_CACHE} ${RAWSTOR_LOCATION}/%i
 Restart=always
 RestartSec=2
 # sysexits.h codes rawstor-vduse exits with when retrying won't help:

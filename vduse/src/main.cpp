@@ -18,7 +18,11 @@
 #include <system_error>
 
 #define DEFAULT_QUEUE_SIZE 256
-#define MAX_QUEUE_SIZE 1024 // VIRTQUEUE_MAX_SIZE, see libvduse.h
+// The kernel's vduse_vq_config.max_size is a plain __u16 (no fixed cap),
+// but virtqueue sizes are conventionally powers of two and this is a
+// generous upper bound in practice (matches e.g. qemu's own vduse-blk
+// export default limit).
+#define MAX_QUEUE_SIZE 1024
 
 namespace {
 
@@ -26,17 +30,6 @@ struct sigaction sact = {};
 
 bool is_power_of_2(unsigned int n) {
     return n != 0 && (n & (n - 1)) == 0;
-}
-
-std::string default_reconnect_file(const std::string& name) {
-    const char* dir = getenv("TMPDIR");
-    if (dir == nullptr || dir[0] == '\0') {
-        dir = "/tmp";
-    }
-
-    std::ostringstream oss;
-    oss << dir << "/rawstor-vduse-" << name << ".reconnect";
-    return oss.str();
 }
 
 void usage() {
@@ -51,15 +44,6 @@ void usage() {
               << "  --queue-size SIZE     "
                  "Virtqueue size, a power of two (default: "
               << DEFAULT_QUEUE_SIZE << ", max: " << MAX_QUEUE_SIZE << ")"
-              << std::endl
-              << "  --reconnect-file PATH "
-                 "Where to keep the inflight-request log libvduse needs to"
-              << std::endl
-              << "                        "
-                 "resubmit requests after a backend restart (default: under"
-              << std::endl
-              << "                        "
-                 "$TMPDIR or /tmp, named after NAME)"
               << std::endl
               << "  --write-cache on|off  "
                  "Advertise a writeback (on) or write-through (off, default)"
@@ -99,11 +83,9 @@ void sact_handler(int) {
 
 void server(
     unsigned int queue_size, const std::string& target, const std::string& name,
-    const std::string& reconnect_file, bool write_cache_enabled
+    bool write_cache_enabled
 ) {
-    rawstor::vduse::Server s(
-        queue_size, target, name, reconnect_file, write_cache_enabled
-    );
+    rawstor::vduse::Server s(queue_size, target, name, write_cache_enabled);
     s.loop();
 }
 
@@ -115,7 +97,6 @@ int main(int argc, char** argv) {
         {"help", no_argument, nullptr, 'h'},
         {"name", required_argument, nullptr, 'n'},
         {"queue-size", required_argument, nullptr, 'q'},
-        {"reconnect-file", required_argument, nullptr, 'r'},
         {"version", no_argument, nullptr, 'v'},
         {"write-cache", required_argument, nullptr, 'w'},
         {},
@@ -123,7 +104,6 @@ int main(int argc, char** argv) {
 
     const char* name_arg = nullptr;
     const char* queue_size_arg = nullptr;
-    const char* reconnect_file_arg = nullptr;
     const char* target_arg = nullptr;
     const char* write_cache_arg = nullptr;
     while (1) {
@@ -143,10 +123,6 @@ int main(int argc, char** argv) {
 
         case 'q':
             queue_size_arg = optarg;
-            break;
-
-        case 'r':
-            reconnect_file_arg = optarg;
             break;
 
         case 'v':
@@ -199,10 +175,6 @@ int main(int argc, char** argv) {
         return EX_USAGE;
     }
 
-    std::string reconnect_file = reconnect_file_arg != nullptr
-                                     ? reconnect_file_arg
-                                     : default_reconnect_file(name_arg);
-
     bool write_cache_enabled = false;
     if (write_cache_arg != nullptr) {
         std::string write_cache(write_cache_arg);
@@ -234,10 +206,7 @@ int main(int argc, char** argv) {
     }
 
     try {
-        server(
-            queue_size, target_arg, name_arg, reconnect_file,
-            write_cache_enabled
-        );
+        server(queue_size, target_arg, name_arg, write_cache_enabled);
     } catch (const std::system_error& e) {
         std::cerr << e.what() << std::endl;
         return rawstd_exitcode_for_errno(e.code().value());

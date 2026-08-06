@@ -1,15 +1,6 @@
 #include <vduse/request.hpp>
 
-// Vendored qemu headers assume QEMU_PACKED (and friends) is already
-// defined by the time any "standard-headers/..." header is included --
-// normally guaranteed by qemu's own osdep.h include chain. Without it,
-// `} QEMU_PACKED;` at the end of a struct silently parses as a tentative
-// definition of a global variable literally named QEMU_PACKED instead of
-// a packed-attribute struct, which links but collides across translation
-// units ("multiple definition of `QEMU_PACKED'").
-#include "include/compiler.h"
-
-#include "standard-headers/linux/virtio_blk.h"
+#include <stdheaders/linux/virtio_blk.h>
 
 #include <rawstd/endian.h>
 #include <rawstd/gpp.hpp>
