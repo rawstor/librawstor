@@ -1,0 +1,28 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    configure)
+        if ! getent group rawstor >/dev/null; then
+            addgroup --system rawstor
+        fi
+        if ! getent passwd rawstor >/dev/null; then
+            adduser --system --no-create-home --ingroup rawstor --home /var/lib/rawstor --shell /usr/sbin/nologin rawstor
+        fi
+
+        if [ -x /usr/bin/udevadm ]; then
+            udevadm control --reload-rules || true
+            udevadm trigger --subsystem-match=vduse || true
+        fi
+
+        if [ -n "$2" ]; then
+            echo "rawstor-vduse upgraded: running rawstor-vduse@*.service instances are still using the previous binary."
+            echo "Restart them to pick up the update, e.g.:"
+            echo "  systemctl restart 'rawstor-vduse@*.service'"
+        fi
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0
