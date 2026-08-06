@@ -228,12 +228,18 @@ void Connection::invalidate_session(const std::shared_ptr<Session>& s) {
         std::find(_sessions.begin(), _sessions.end(), s);
 
     if (it != _sessions.end()) {
-        _sessions.erase(it);
-
+        // Open the replacement before touching _sessions: if _open() itself
+        // fails (e.g. the server is unreachable under load, exhausting its
+        // own internal retries), leave the broken-but-present session in
+        // place rather than erasing it first and never getting a
+        // replacement -- an empty _sessions permanently breaks every
+        // future op on this Connection (get_next_session() throws), while
+        // leaving the stale entry just means the next op that picks it up
+        // retries invalidate_session() again instead of failing forever.
         std::vector<std::shared_ptr<Session>> new_sessions =
             _open(s->location(), _object, 1);
 
-        _sessions.push_back(new_sessions.front());
+        *it = new_sessions.front();
     }
 }
 
