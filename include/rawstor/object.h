@@ -456,14 +456,22 @@ int rawstor_object_preadv(
     off_t offset, RawstorCallback* cb, void* data
 ) RAWSTOR_NOEXCEPT;
 
+/**
+ * @param sync If true, the write is durable on stable storage by the time
+ *             @p cb reports success (equivalent to O_DSYNC per-call).
+ */
 int rawstor_object_pwrite(
     RawstorObject* object, const void* buf, size_t size, off_t offset,
-    RawstorCallback* cb, void* data
+    bool sync, RawstorCallback* cb, void* data
 ) RAWSTOR_NOEXCEPT;
 
+/**
+ * @param sync If true, the write is durable on stable storage by the time
+ *             @p cb reports success (equivalent to O_DSYNC per-call).
+ */
 int rawstor_object_pwritev(
     RawstorObject* object, const struct iovec* iov, unsigned int niov,
-    size_t size, off_t offset, RawstorCallback* cb, void* data
+    size_t size, off_t offset, bool sync, RawstorCallback* cb, void* data
 ) RAWSTOR_NOEXCEPT;
 
 /**

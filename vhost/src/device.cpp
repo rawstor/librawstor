@@ -1186,7 +1186,7 @@ void ObjectTask::pwritev() {
     int res = rawstor_object_pwritev(
         _req->device().object(), _req->out_iov(), _req->out_niov(),
         rawstd_iovec_size(_req->out_iov(), _req->out_niov()), _req->offset(),
-        callback, this
+        /*sync=*/false, callback, this
     );
     if (res) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);

@@ -151,7 +151,7 @@ static int dst_data_received(
 
     return rawstor_object_pwrite(
         object, worker->src_iov.iov_base, worker->src_iov.iov_len,
-        worker->offset, src_data_sent, worker
+        worker->offset, false, src_data_sent, worker
     );
 }
 
@@ -203,7 +203,7 @@ static int dstv_data_received(
 
     return rawstor_object_pwritev(
         object, &worker->src_iov, 1, worker->src_iov.iov_len, worker->offset,
-        srcv_data_sent, worker
+        false, srcv_data_sent, worker
     );
 }
 
@@ -303,8 +303,8 @@ int rawstor_cli_testio(
             );
             res = rawstor_object_pwrite(
                 object, workers[i]->src_iov.iov_base,
-                workers[i]->src_iov.iov_len, workers[i]->offset, src_data_sent,
-                workers[i]
+                workers[i]->src_iov.iov_len, workers[i]->offset, false,
+                src_data_sent, workers[i]
             );
             if (res < 0) {
                 fprintf(
@@ -322,7 +322,7 @@ int rawstor_cli_testio(
             );
             res = rawstor_object_pwritev(
                 object, &workers[i]->src_iov, 1, workers[i]->src_iov.iov_len,
-                workers[i]->offset, srcv_data_sent, workers[i]
+                workers[i]->offset, false, srcv_data_sent, workers[i]
             );
             if (res < 0) {
                 fprintf(

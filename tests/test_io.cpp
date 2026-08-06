@@ -157,8 +157,9 @@ public:
                 completed = true;
             }
         );
-        int res =
-            rawstor_object_pwrite(_object, buf, size, 0, callback, cb.get());
+        int res = rawstor_object_pwrite(
+            _object, buf, size, 0, false, callback, cb.get()
+        );
         if (res < 0) {
             RAWSTD_THROW_SYSTEM_ERROR(-res);
         }
