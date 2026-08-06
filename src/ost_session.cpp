@@ -404,7 +404,7 @@ public:
             .msg_name = nullptr,
             .msg_namelen = 0,
             .msg_iov = _iov.data(),
-            .msg_iovlen = _iov.size(),
+            .msg_iovlen = static_cast<decltype(_msg.msg_iovlen)>(_iov.size()),
             .msg_control = nullptr,
             .msg_controllen = 0,
             .msg_flags = 0,
@@ -480,7 +480,7 @@ public:
             .msg_name = nullptr,
             .msg_namelen = 0,
             .msg_iov = _iov.data(),
-            .msg_iovlen = _iov.size(),
+            .msg_iovlen = static_cast<decltype(_msg.msg_iovlen)>(_iov.size()),
             .msg_control = nullptr,
             .msg_controllen = 0,
             .msg_flags = 0,
@@ -594,7 +594,7 @@ std::vector<T> basic_request(
     memcpy(request.body.obj_id, id.bytes, sizeof(request.body.obj_id));
     queue->send(
         fd, &request, sizeof(request), RAWSTD_MSG_NOSIGNAL,
-        [fd, trace_event](size_t result, int error) {
+        [trace_event](size_t result, int error) {
             RAWSTD_TRACE_EVENT_MESSAGE(
                 trace_event, "%zu of %zu, error = %d\n", result,
                 sizeof(RawstorOSTFrameBasic), error
@@ -645,7 +645,7 @@ std::vector<T> basic_request(
 
                 queue->recv_multishot(
                     fd, 1u << 17, 64 * 4, response.body.res, 0,
-                    [fd, &completed, &response, trace_event, &ret](
+                    [&completed, &response, trace_event, &ret](
                         const iovec* iov, unsigned int niov, size_t result,
                         int error
                     ) -> size_t {
