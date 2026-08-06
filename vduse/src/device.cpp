@@ -468,17 +468,29 @@ Device::Device(
         _config.alignment_offset = 0;
         _config.min_io_size = 1;
         _config.opt_io_size = 1;
-        _config.wce = write_cache_enabled; // VIRTIO_BLK_F_CONFIG_WCE
         _config.num_queues = static_cast<uint16_t>(_vqs.size());
         // discard/write-zeroes fields are left zero: unsupported, and the
-        // corresponding feature bits are not advertised below.
+        // corresponding feature bits are not advertised below. wce is left
+        // zero too: see the VIRTIO_BLK_F_CONFIG_WCE comment below.
 
         uint64_t init_features =
             1ull << VIRTIO_F_VERSION_1 | 1ull << VIRTIO_F_ACCESS_PLATFORM |
             1ull << VIRTIO_F_NOTIFY_ON_EMPTY | 1ull << VIRTIO_RING_F_EVENT_IDX |
             1ull << VIRTIO_RING_F_INDIRECT_DESC | 1ull << VIRTIO_BLK_F_SEG_MAX |
             1ull << VIRTIO_BLK_F_TOPOLOGY | 1ull << VIRTIO_BLK_F_BLK_SIZE |
-            1ull << VIRTIO_BLK_F_FLUSH | 1ull << VIRTIO_BLK_F_CONFIG_WCE;
+            1ull << VIRTIO_BLK_F_FLUSH;
+        // Unlike vhost-user, the VDUSE kernel driver unconditionally
+        // rejects VIRTIO_BLK_F_CONFIG_WCE for virtio-blk devices
+        // (vduse_dev.c's features_is_valid(): "we only support read-only
+        // configuration space") -- VDUSE has no driver-writable config
+        // space at all, so there is no SET_CONFIG-equivalent to honor a
+        // live toggle through anyway. This doesn't make --write-cache a
+        // no-op: Linux's virtio_blk driver enables its write-cache
+        // (flush-before-trusting-durability) assumption whenever
+        // VIRTIO_BLK_F_FLUSH is negotiated, regardless of CONFIG_WCE, so
+        // the guest always issues FLUSH appropriately either way; our
+        // own write_cache_enabled() still controls whether *we*
+        // additionally fsync every write or rely solely on that FLUSH.
 
         _ctrl_fd = open("/dev/vduse/control", O_RDWR);
         if (_ctrl_fd == -1) {
