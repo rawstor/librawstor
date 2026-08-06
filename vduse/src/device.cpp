@@ -417,8 +417,7 @@ namespace rawstor {
 namespace vduse {
 
 Device::Device(
-    unsigned int queue_size, const std::string& target, const std::string& name,
-    bool write_cache_enabled
+    unsigned int queue_size, const std::string& target, bool write_cache_enabled
 ) :
     _ctrl_fd(-1),
     _fd(-1),
@@ -429,15 +428,6 @@ Device::Device(
     _features(0),
     _config{},
     _write_cache_enabled(write_cache_enabled) {
-    if (name.empty() || name.size() >= sizeof(_name_buf) ||
-        name.find("..") != std::string::npos) {
-        throw std::runtime_error(
-            "VDUSE device name must be non-empty, shorter than " +
-            std::to_string(sizeof(_name_buf)) + " bytes, and not contain \"..\""
-        );
-    }
-    std::memcpy(_name_buf, name.c_str(), name.size() + 1);
-
     int ires = rawio_queue_create(queue_size, &_queue);
     if (ires) {
         RAWSTD_THROW_SYSTEM_ERROR(-ires);
@@ -454,6 +444,22 @@ Device::Device(
         if (ires) {
             RAWSTD_THROW_SYSTEM_ERROR(-ires);
         }
+
+        // The VDUSE device name is the object's own UUID: it already
+        // uniquely and stably identifies what this process exports, so
+        // there is no separate name for the caller to pick (or get
+        // wrong/colliding).
+        int nres = rawstor_object_id(_object, _name_buf, sizeof(_name_buf));
+        if (nres < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-nres);
+        }
+        if (static_cast<size_t>(nres) >= sizeof(_name_buf)) {
+            throw std::runtime_error("object UUID does not fit VDUSE_NAME_MAX");
+        }
+        rawstd_info(
+            "vduse: exporting %s as VDUSE device %s\n", target.c_str(),
+            _name_buf
+        );
 
         _config.capacity = spec.size >> VIRTIO_BLK_SECTOR_BITS;
         _config.seg_max = queue_size > 2 ? queue_size - 2 : 0; // _F_SEG_MAX
