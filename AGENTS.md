@@ -50,14 +50,15 @@ librawstor/
 ├── librawio/         async I/O abstraction (see RawIO above); src/ (impl) + include/rawio/ (public) + tests/
 ├── src/              core librawstor C++ library (librawstor.la, rawstor.pc); public C API in include/rawstor/
 ├── include/rawstor/  public C API headers: rawstor.h, object.h, list.h, rawio.h, protocol.h, version.h
-├── include/stdheaders/ vendored/trimmed Linux virtio kernel headers shared by vhost/ and vduse/
-│                     (types.h, virtio_types.h, virtio_ring.h, virtio_blk.h, virtio_config.h)
+├── include/stdheaders/ vendored/trimmed Linux kernel uAPI headers used by vhost/ and vduse/ —
+│                     types.h, virtio_types.h, virtio_ring.h, virtio_blk.h, virtio_config.h
+│                     (shared by both), vhost_types.h (vhost/ only), vduse.h (vduse/ only); all
+│                     kept in one place regardless of how many components use each, rather than
+│                     split per-component
 ├── cli/              rawstor command-line client (create/list/show/remove/testio)
 ├── ost/              rawstor-ost — the OST protocol server (serves file://, proxies/mirrors to ost://)
 ├── vhost/             rawstor-vhost — native vhost-user-blk backend (no qemu library dependency)
 │   ├── include/vhost/  public headers vhost/tests needs: protocol.h, ring.hpp, virtqueue.hpp
-│   ├── include/stdheaders/ vendored vhost_types.h (vhost-user specific; shared kernel headers
-│   │                   live in the top-level include/stdheaders/ above)
 │   ├── src/          device/devregion/ring/server/virtqueue implementation + main.cpp
 │   └── tests/         gtest suite (currently: VirtQueue/ring logic)
 ├── vhost-qemu/       rawstor-vhost-qemu — alternate vhost-user-blk backend built on vendored
@@ -65,9 +66,7 @@ librawstor/
 │                     vhost/ purely to performance-compare the native vs qemu-library implementation
 ├── vduse/            rawstor-vduse — VDUSE virtio-blk backend (Linux-only); same include/ +
 │                     src/ + tests/ split as vhost/, and like vhost/ implements the protocol
-│                     natively (no vendored qemu libvduse or other third-party library) —
-│                     include/stdheaders/ here holds only vduse.h (VDUSE-specific; shared
-│                     kernel headers live in the top-level include/stdheaders/ above)
+│                     natively (no vendored qemu libvduse or other third-party library)
 ├── pyrawstor/        Python 3 bindings (location/target helpers)
 ├── tests/            top-level librawstor integration/unit tests (own in-process test server)
 └── docs/             locations_and_targets.md (the OST wire protocol itself is documented
@@ -193,10 +192,8 @@ backends and the io_uring/poll RawIO backends.
   library — it implements the VDUSE control-plane protocol (ioctls on
   `/dev/vduse/control`/`/dev/vduse/$NAME`, IOTLB-backed memory mapping)
   natively, the same way `vhost/` implements vhost-user natively.
-  `vduse/include/stdheaders/linux/vduse.h` is a trimmed vendored copy of
-  the Linux kernel's own uAPI header (like the top-level
-  `include/stdheaders/` vendors the virtio kernel headers `vhost/` and
-  `vduse/` share) — if trimming it further, keep any union
+  `include/stdheaders/linux/vduse.h` is a trimmed vendored copy of the
+  Linux kernel's own uAPI header — if trimming it further, keep any union
   member sharing storage with a field still in use (e.g.
   `vduse_vq_state_packed`, unused since only the split-ring layout is
   implemented), since removing it would shrink the union and shift every
