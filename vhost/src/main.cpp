@@ -35,6 +35,18 @@ void usage() {
               << "  --queue-size SIZE     "
                  "RawIO queue size (default: "
               << DEFAULT_QUEUE_SIZE << ")" << std::endl
+              << "  --write-cache on|off  "
+                 "Advertise a writeback (on) or write-through (off, default)"
+              << std::endl
+              << "                        "
+                 "cache to the guest; write-through makes every write"
+              << std::endl
+              << "                        "
+                 "durable on completion, writeback relies on the guest"
+              << std::endl
+              << "                        "
+                 "issuing an explicit flush"
+              << std::endl
               << "  -v, --version         Rawstor version" << std::endl
               << std::endl
               << "required arguments:" << std::endl
@@ -59,9 +71,11 @@ void sact_handler(int) {
 
 void server(
     unsigned int queue_size, const std::string& target,
-    const std::string& socket_path
+    const std::string& socket_path, bool write_cache_enabled
 ) {
-    rawstor::vhost::Server s(queue_size, target, socket_path);
+    rawstor::vhost::Server s(
+        queue_size, target, socket_path, write_cache_enabled
+    );
     s.loop();
 }
 
@@ -74,12 +88,14 @@ int main(int argc, char** argv) {
         {"queue-size", required_argument, nullptr, 'q'},
         {"socket-path", required_argument, nullptr, 's'},
         {"version", no_argument, nullptr, 'v'},
+        {"write-cache", required_argument, nullptr, 'w'},
         {},
     };
 
     const char* queue_size_arg = nullptr;
     const char* socket_path_arg = nullptr;
     const char* target_arg = nullptr;
+    const char* write_cache_arg = nullptr;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, nullptr);
         if (c == -1) {
@@ -102,6 +118,10 @@ int main(int argc, char** argv) {
         case 'v':
             version();
             return EXIT_SUCCESS;
+
+        case 'w':
+            write_cache_arg = optarg;
+            break;
 
         default:
             return EX_USAGE;
@@ -138,6 +158,19 @@ int main(int argc, char** argv) {
         return EX_USAGE;
     }
 
+    bool write_cache_enabled = false;
+    if (write_cache_arg != nullptr) {
+        std::string write_cache(write_cache_arg);
+        if (write_cache == "on") {
+            write_cache_enabled = true;
+        } else if (write_cache == "off") {
+            write_cache_enabled = false;
+        } else {
+            std::cerr << "write-cache must be 'on' or 'off'" << std::endl;
+            return EX_USAGE;
+        }
+    }
+
     sact.sa_handler = sact_handler;
     sigemptyset(&sact.sa_mask);
     if (sigaction(SIGINT, &sact, nullptr) == -1) {
@@ -156,7 +189,7 @@ int main(int argc, char** argv) {
     }
 
     try {
-        server(queue_size, target_arg, socket_path_arg);
+        server(queue_size, target_arg, socket_path_arg, write_cache_enabled);
     } catch (const std::system_error& e) {
         std::cerr << e.what() << std::endl;
         return rawstd_exitcode_for_errno(e.code().value());

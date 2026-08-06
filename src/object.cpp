@@ -779,13 +779,11 @@ int rawstor_object_preadv(
 
 int rawstor_object_pwrite(
     RawstorObject* object, const void* buf, size_t size, off_t offset,
-    RawstorCallback* cb, void* data
+    bool sync, RawstorCallback* cb, void* data
 ) noexcept {
     try {
-        // sync stays hardcoded until rawstor_object_pwrite() itself gains a
-        // sync parameter.
         static_cast<rawstor::Object*>(object)->pwrite(
-            buf, size, offset, /*sync=*/false,
+            buf, size, offset, sync,
             [object, size, cb, data](size_t result, int error) {
                 int res = cb(object, size, result, error, data);
                 if (res < 0) {
@@ -809,13 +807,11 @@ int rawstor_object_pwrite(
 
 int rawstor_object_pwritev(
     RawstorObject* object, const iovec* iov, unsigned int niov, size_t size,
-    off_t offset, RawstorCallback* cb, void* data
+    off_t offset, bool sync, RawstorCallback* cb, void* data
 ) noexcept {
     try {
-        // sync stays hardcoded until rawstor_object_pwritev() itself gains a
-        // sync parameter.
         static_cast<rawstor::Object*>(object)->pwritev(
-            iov, niov, size, offset, /*sync=*/false,
+            iov, niov, size, offset, sync,
             [object, size, cb, data](size_t result, int error) {
                 int res = cb(object, size, result, error, data);
                 if (res < 0) {

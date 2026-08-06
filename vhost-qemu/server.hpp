@@ -11,12 +11,13 @@ private:
     unsigned int _queue_size;
     std::string _target;
     std::string _socket_path;
+    bool _write_cache_enabled;
     int _fd;
 
 public:
     Server(
         unsigned int queue_size, const std::string& target,
-        const std::string& socket_path
+        const std::string& socket_path, bool write_cache_enabled
     );
     Server(const Server&) = delete;
     Server(Server&&) = delete;

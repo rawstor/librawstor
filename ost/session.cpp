@@ -750,7 +750,8 @@ void Session::_write(
     );
 
     int res = rawstor_object_pwrite(
-        _object, data->data(), data->size(), body.offset, callback, cb.get()
+        _object, data->data(), data->size(), body.offset, body.sync, callback,
+        cb.get()
     );
     if (res < 0) {
         rawstd_warning("%s\n", strerror(-res));

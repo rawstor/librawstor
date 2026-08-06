@@ -36,7 +36,10 @@ private:
     bool _postcopy_listening;
 
 public:
-    Device(unsigned int queue_size, const std::string& target, int fd);
+    Device(
+        unsigned int queue_size, const std::string& target, int fd,
+        bool write_cache_enabled
+    );
 
     Device(const Device&) = delete;
     Device(Device&&) = delete;
