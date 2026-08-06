@@ -125,7 +125,14 @@ private:
 
 protected:
     rawstd::TraceEvent _trace_event;
-    rawstor::ost::Session& _session;
+    // A strong reference, not just a back-pointer: a SessionOp can outlive
+    // Session::_ops's own copy of it (e.g. a still-pending send/sendmsg
+    // completion keeps a SessionOp alive independently, via its own
+    // captured shared_ptr, even after the owning Session is gone from
+    // Connection::_sessions and its _ops member has been destroyed). This
+    // keeps the Session itself alive for as long as any SessionOp -- in
+    // _ops or floating in a pending completion closure -- still needs it.
+    std::shared_ptr<rawstor::ost::Session> _session;
     RawstorOSTFrameResponse _response;
 
     std::function<void(size_t, int)> _cb;
@@ -137,16 +144,16 @@ protected:
         try {
             _cb(result, error);
         } catch (...) {
-            _session._remove_op(_cid);
+            _session->_remove_op(_cid);
             throw;
         }
 
-        _session._remove_op(_cid);
+        _session->_remove_op(_cid);
     }
 
 public:
     SessionOp(
-        rawstor::ost::Session& session, uint16_t cid,
+        const std::shared_ptr<rawstor::ost::Session>& session, uint16_t cid,
         const rawstd::TraceEvent& trace_event,
         std::function<void(size_t, int)>&& cb
     ) :
@@ -196,8 +203,9 @@ private:
 
 public:
     SessionOpRead(
-        rawstor::ost::Session& session, uint16_t cid, void* buf, size_t size,
-        off_t offset, const rawstd::TraceEvent& trace_event,
+        const std::shared_ptr<rawstor::ost::Session>& session, uint16_t cid,
+        void* buf, size_t size, off_t offset,
+        const rawstd::TraceEvent& trace_event,
         std::function<void(size_t, int)>&& cb
     ) :
         SessionOp(session, cid, trace_event, std::move(cb)),
@@ -280,8 +288,8 @@ private:
 
 public:
     SessionOpReadV(
-        rawstor::ost::Session& session, uint16_t cid, iovec* iov,
-        unsigned int niov, size_t size, off_t offset,
+        const std::shared_ptr<rawstor::ost::Session>& session, uint16_t cid,
+        iovec* iov, unsigned int niov, size_t size, off_t offset,
         const rawstd::TraceEvent& trace_event,
         std::function<void(size_t, int)>&& cb
     ) :
@@ -363,8 +371,8 @@ private:
 
 public:
     SessionOpWrite(
-        rawstor::ost::Session& session, uint16_t cid, const void* buf,
-        size_t size, off_t offset, bool sync,
+        const std::shared_ptr<rawstor::ost::Session>& session, uint16_t cid,
+        const void* buf, size_t size, off_t offset, bool sync,
         const rawstd::TraceEvent& trace_event,
         std::function<void(size_t, int)>&& cb
     ) :
@@ -440,9 +448,9 @@ private:
 
 public:
     SessionOpWriteV(
-        rawstor::ost::Session& session, uint16_t cid, const iovec* iov,
-        unsigned int niov, size_t size, off_t offset, bool sync,
-        const rawstd::TraceEvent& trace_event,
+        const std::shared_ptr<rawstor::ost::Session>& session, uint16_t cid,
+        const iovec* iov, unsigned int niov, size_t size, off_t offset,
+        bool sync, const rawstd::TraceEvent& trace_event,
         std::function<void(size_t, int)>&& cb
     ) :
         SessionOp(session, cid, trace_event, std::move(cb)),
@@ -514,7 +522,7 @@ private:
 
 public:
     SessionOpFlush(
-        rawstor::ost::Session& session, uint16_t cid,
+        const std::shared_ptr<rawstor::ost::Session>& session, uint16_t cid,
         const rawstd::TraceEvent& trace_event,
         std::function<void(size_t, int)>&& cb
     ) :
@@ -1075,7 +1083,8 @@ void Session::pread(
     );
 
     std::shared_ptr<SessionOpRead> op = std::make_shared<SessionOpRead>(
-        *this, _cid_counter++, buf, size, offset, trace_event, std::move(cb)
+        std::static_pointer_cast<Session>(shared_from_this()), _cid_counter++,
+        buf, size, offset, trace_event, std::move(cb)
     );
     _add_op(op);
 
@@ -1105,8 +1114,8 @@ void Session::preadv(
     );
 
     std::shared_ptr<SessionOpReadV> op = std::make_shared<SessionOpReadV>(
-        *this, _cid_counter++, iov, niov, size, offset, trace_event,
-        std::move(cb)
+        std::static_pointer_cast<Session>(shared_from_this()), _cid_counter++,
+        iov, niov, size, offset, trace_event, std::move(cb)
     );
     _add_op(op);
 
@@ -1137,8 +1146,8 @@ void Session::pwrite(
     );
 
     std::shared_ptr<SessionOpWrite> op = std::make_shared<SessionOpWrite>(
-        *this, _cid_counter++, buf, size, offset, sync, trace_event,
-        std::move(cb)
+        std::static_pointer_cast<Session>(shared_from_this()), _cid_counter++,
+        buf, size, offset, sync, trace_event, std::move(cb)
     );
     _add_op(op);
 
@@ -1169,8 +1178,8 @@ void Session::pwritev(
     );
 
     std::shared_ptr<SessionOpWriteV> op = std::make_shared<SessionOpWriteV>(
-        *this, _cid_counter++, iov, niov, size, offset, sync, trace_event,
-        std::move(cb)
+        std::static_pointer_cast<Session>(shared_from_this()), _cid_counter++,
+        iov, niov, size, offset, sync, trace_event, std::move(cb)
     );
     _add_op(op);
 
@@ -1195,8 +1204,8 @@ void Session::flush(std::function<void(int)>&& cb) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('s', "fd = %d\n", fd());
 
     std::shared_ptr<SessionOpFlush> op = std::make_shared<SessionOpFlush>(
-        *this, _cid_counter++, trace_event,
-        [cb = std::move(cb)](size_t, int error) { cb(error); }
+        std::static_pointer_cast<Session>(shared_from_this()), _cid_counter++,
+        trace_event, [cb = std::move(cb)](size_t, int error) { cb(error); }
     );
     _add_op(op);
 
