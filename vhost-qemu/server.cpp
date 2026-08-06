@@ -99,11 +99,12 @@ namespace vhost {
 
 Server::Server(
     unsigned int queue_size, const std::string& target,
-    const std::string& socket_path
+    const std::string& socket_path, bool write_cache_enabled
 ) :
     _queue_size(queue_size),
     _target(target),
     _socket_path(socket_path),
+    _write_cache_enabled(write_cache_enabled),
     _fd(open_unix_socket(_socket_path)) {
     int res = rawstor_initialize(NULL);
     if (res) {
@@ -136,7 +137,7 @@ void Server::loop() {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 
-    Device d(_queue_size, _target, fd);
+    Device d(_queue_size, _target, fd, _write_cache_enabled);
     d.loop();
 }
 

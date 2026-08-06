@@ -1183,10 +1183,14 @@ void ObjectTask::preadv() {
 }
 
 void ObjectTask::pwritev() {
+    // Writeback caching (wce) means the guest is expected to issue an
+    // explicit FLUSH when it needs durability; without it (write-through),
+    // every write must already be durable by the time it completes.
+    bool sync = !_req->device().get_config().wce;
     int res = rawstor_object_pwritev(
         _req->device().object(), _req->out_iov(), _req->out_niov(),
         rawstd_iovec_size(_req->out_iov(), _req->out_niov()), _req->offset(),
-        /*sync=*/false, callback, this
+        sync, callback, this
     );
     if (res) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
@@ -1333,7 +1337,10 @@ void process_request(std::unique_ptr<Request> req) {
 namespace rawstor {
 namespace vhost {
 
-Device::Device(unsigned int queue_size, const std::string& target, int fd) :
+Device::Device(
+    unsigned int queue_size, const std::string& target, int fd,
+    bool write_cache_enabled
+) :
     _fd(fd),
     _queue(nullptr),
     _object(nullptr),
@@ -1343,8 +1350,9 @@ Device::Device(unsigned int queue_size, const std::string& target, int fd) :
         1ull << VIRTIO_BLK_F_SIZE_MAX | 1ull << VIRTIO_BLK_F_SEG_MAX |
         1ull << VIRTIO_BLK_F_BLK_SIZE | 1ull << VIRTIO_BLK_F_TOPOLOGY |
         1ull << VIRTIO_BLK_F_MQ | 1ull << VIRTIO_BLK_F_FLUSH |
-        1ull << VIRTIO_F_VERSION_1 | 1ull << VIRTIO_RING_F_INDIRECT_DESC |
-        1ull << VIRTIO_RING_F_EVENT_IDX | 1ull << VHOST_USER_F_PROTOCOL_FEATURES
+        1ull << VIRTIO_BLK_F_CONFIG_WCE | 1ull << VIRTIO_F_VERSION_1 |
+        1ull << VIRTIO_RING_F_INDIRECT_DESC | 1ull << VIRTIO_RING_F_EVENT_IDX |
+        1ull << VHOST_USER_F_PROTOCOL_FEATURES
     ),
     _protocol_features(0),
     _config{},
@@ -1383,7 +1391,7 @@ Device::Device(unsigned int queue_size, const std::string& target, int fd) :
         _config.min_io_size = 1;
         _config.opt_io_size = 1;
 
-        _config.wce = 0; // VIRTIO_BLK_F_CONFIG_WCE
+        _config.wce = write_cache_enabled; // VIRTIO_BLK_F_CONFIG_WCE
 
         _config.num_queues = nqueues(); // VIRTIO_BLK_F_MQ
 

@@ -32,8 +32,12 @@ RuntimeDirectory=rawstor
 # the socket path without being root or in the "rawstor" group; connect(2)
 # is still blocked for them by the socket file's own 0660 mode.
 Environment=RAWSTOR_LOCATION=ost://127.0.0.1:7777
+# write-through (off) makes every guest write durable on completion;
+# writeback (on) is faster but relies on the guest issuing an explicit
+# flush, and only helps if the guest actually does.
+Environment=RAWSTOR_WRITE_CACHE=off
 EnvironmentFile=-/etc/rawstor-vhost.conf
-ExecStart=/usr/bin/rawstor-vhost --socket-path=/run/rawstor/%i.sock ${RAWSTOR_LOCATION}/%i
+ExecStart=/usr/bin/rawstor-vhost --socket-path=/run/rawstor/%i.sock --write-cache=${RAWSTOR_WRITE_CACHE} ${RAWSTOR_LOCATION}/%i
 Restart=always
 RestartSec=2
 # sysexits.h codes rawstor-vhost exits with when retrying won't help:

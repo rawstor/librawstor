@@ -62,7 +62,10 @@ public:
     static Device& get(int fd);
     static Device* find(int fd);
 
-    Device(unsigned int queue_size, const std::string& target, int fd);
+    Device(
+        unsigned int queue_size, const std::string& target, int fd,
+        bool write_cache_enabled
+    );
     Device(const Device&) = delete;
     Device(Device&&) = delete;
     ~Device();
@@ -104,6 +107,8 @@ public:
     void set_config(
         const uint8_t* data, uint32_t offset, uint32_t size, uint32_t flags
     );
+
+    bool write_cache_enabled() const noexcept;
 
     void set_watch(int fd, int condition, vu_watch_cb cb, void* data);
 

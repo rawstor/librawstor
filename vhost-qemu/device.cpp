@@ -352,10 +352,14 @@ void ObjectTask::preadv() {
 }
 
 void ObjectTask::pwritev() {
+    // Writeback caching (wce) means the guest is expected to issue an
+    // explicit FLUSH when it needs durability; without it (write-through),
+    // every write must already be durable by the time it completes.
+    bool sync = !_req->device().write_cache_enabled();
     int res = rawstor_object_pwritev(
         _req->device().object(), _req->out_iov(), _req->out_niov(),
         rawstd_iovec_size(_req->out_iov(), _req->out_niov()), _req->offset(),
-        /*sync=*/false, callback, this
+        sync, callback, this
     );
     if (res) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
@@ -617,7 +621,10 @@ Watcher::~Watcher() {
 
 std::unordered_map<int, Device*> Device::_devices;
 
-Device::Device(unsigned int queue_size, const std::string& target, int fd) :
+Device::Device(
+    unsigned int queue_size, const std::string& target, int fd,
+    bool write_cache_enabled
+) :
     _queue(nullptr),
     _object(nullptr),
     _iface{
@@ -636,8 +643,9 @@ Device::Device(unsigned int queue_size, const std::string& target, int fd) :
         1ull << VIRTIO_BLK_F_SIZE_MAX | 1ull << VIRTIO_BLK_F_SEG_MAX |
         1ull << VIRTIO_BLK_F_BLK_SIZE | 1ull << VIRTIO_BLK_F_TOPOLOGY |
         1ull << VIRTIO_BLK_F_MQ | 1ull << VIRTIO_BLK_F_FLUSH |
-        1ull << VIRTIO_F_VERSION_1 | 1ull << VIRTIO_RING_F_INDIRECT_DESC |
-        1ull << VIRTIO_RING_F_EVENT_IDX | 1ull << VHOST_USER_F_PROTOCOL_FEATURES
+        1ull << VIRTIO_BLK_F_CONFIG_WCE | 1ull << VIRTIO_F_VERSION_1 |
+        1ull << VIRTIO_RING_F_INDIRECT_DESC | 1ull << VIRTIO_RING_F_EVENT_IDX |
+        1ull << VHOST_USER_F_PROTOCOL_FEATURES
         // 1ull << VIRTIO_BLK_F_DISCARD |
         // 1ull << VIRTIO_BLK_F_WRITE_ZEROES |
     ),
@@ -680,7 +688,7 @@ Device::Device(unsigned int queue_size, const std::string& target, int fd) :
         _blk_config->min_io_size = 1;        // VIRTIO_BLK_F_TOPOLOGY
         _blk_config->opt_io_size = 1;        // VIRTIO_BLK_F_TOPOLOGY
 
-        _blk_config->wce = 0; // VIRTIO_BLK_F_CONFIG_WCE
+        _blk_config->wce = write_cache_enabled; // VIRTIO_BLK_F_CONFIG_WCE
 
         _blk_config->num_queues = 1; // VIRTIO_BLK_F_MQ
 
@@ -771,6 +779,10 @@ void Device::set_config(
     }
 
     _blk_config->wce = *data;
+}
+
+bool Device::write_cache_enabled() const noexcept {
+    return _blk_config->wce != 0;
 }
 
 void Device::set_watch(int fd, int condition, vu_watch_cb cb, void* data) {
