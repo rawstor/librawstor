@@ -44,6 +44,33 @@ struct RawstorObjectSpec {
     uint64_t size; /**< Size of the object in bytes. */
 };
 
+/**
+ * @brief Generic callback for asynchronous object I/O operations.
+ *
+ * Used by rawstor_object_pread(), rawstor_object_preadv(),
+ * rawstor_object_pwrite(), rawstor_object_pwritev() and
+ * rawstor_object_flush() to report completion of the requested operation.
+ *
+ * @param object  The same RawstorObject handle passed to the initiating
+ *                function.
+ * @param size    The size requested by the initiating call (the @p size
+ *                argument passed to it). For rawstor_object_flush(), always
+ *                0.
+ * @param result  Number of bytes actually transferred.
+ *                - For read/write operations: may be less than @p size on a
+ *                  short read/write.
+ *                - For rawstor_object_flush(): always 0.
+ * @param error   Error code from the operation. Zero indicates successful
+ *                completion; a non-zero value is a positive errno.
+ * @param data    User-defined context pointer passed unchanged from the
+ *                initiating function.
+ *
+ * @return        Zero on success. A negative errno value signals an error
+ *                back into the I/O completion machinery.
+ *
+ * @note          The callback may be invoked from an I/O completion context.
+ *                Avoid blocking operations inside the callback.
+ */
 typedef int(RawstorCallback)(
     RawstorObject* object, size_t size, size_t result, int error, void* data
 );
@@ -446,19 +473,92 @@ int rawstor_object_location(
     const RawstorObject* object, char* buf, size_t size
 ) RAWSTOR_NOEXCEPT;
 
+/**
+ * @brief Asynchronously read data from an object at a given offset.
+ *
+ * Queues a read of @p size bytes starting at @p offset into @p buf. This
+ * function returns immediately; the actual result is reported via @p cb once
+ * the operation completes.
+ *
+ * @param object  Open object handle obtained from rawstor_object_open().
+ * @param buf     Destination buffer for the read data. Must remain valid
+ *                until @p cb is invoked.
+ * @param size    Number of bytes to read.
+ * @param offset  Byte offset within the object to read from.
+ * @param cb      Callback invoked on completion. See RawstorCallback.
+ * @param data    User-defined context pointer passed unchanged to @p cb.
+ *
+ * @return 0 if the read was successfully queued; negative errno on immediate
+ *         failure (in which case @p cb is never invoked). The actual read
+ *         result (success or failure) is delivered via @p cb.
+ *
+ * @see RawstorCallback
+ * @see rawstor_object_preadv
+ * @see rawstor_object_pwrite
+ */
 int rawstor_object_pread(
     RawstorObject* object, void* buf, size_t size, off_t offset,
     RawstorCallback* cb, void* data
 ) RAWSTOR_NOEXCEPT;
 
+/**
+ * @brief Asynchronously read data from an object into multiple buffers
+ *        (scatter-gather).
+ *
+ * Vectored equivalent of rawstor_object_pread(): reads @p size bytes total
+ * starting at @p offset, scattered across the buffers described by @p iov.
+ *
+ * @param object  Open object handle obtained from rawstor_object_open().
+ * @param iov     Array of buffers to scatter the read data into. Must remain
+ *                valid until @p cb is invoked.
+ * @param niov    Number of entries in @p iov.
+ * @param size    Total number of bytes to read, summed across all @p iov
+ *                entries.
+ * @param offset  Byte offset within the object to read from.
+ * @param cb      Callback invoked on completion. See RawstorCallback.
+ * @param data    User-defined context pointer passed unchanged to @p cb.
+ *
+ * @return 0 if the read was successfully queued; negative errno on immediate
+ *         failure (in which case @p cb is never invoked). The actual read
+ *         result (success or failure) is delivered via @p cb.
+ *
+ * @see RawstorCallback
+ * @see rawstor_object_pread
+ * @see rawstor_object_pwritev
+ */
 int rawstor_object_preadv(
     RawstorObject* object, struct iovec* iov, unsigned int niov, size_t size,
     off_t offset, RawstorCallback* cb, void* data
 ) RAWSTOR_NOEXCEPT;
 
 /**
- * @param sync If true, the write is durable on stable storage by the time
- *             @p cb reports success (equivalent to O_DSYNC per-call).
+ * @brief Asynchronously write data to an object at a given offset.
+ *
+ * Queues a write of @p size bytes from @p buf starting at @p offset. This
+ * function returns immediately; the actual result is reported via @p cb once
+ * the operation completes.
+ *
+ * @param object  Open object handle obtained from rawstor_object_open().
+ * @param buf     Source buffer to write from. Must remain valid until @p cb
+ *                is invoked.
+ * @param size    Number of bytes to write.
+ * @param offset  Byte offset within the object to write to.
+ * @param sync    If true, the write is durable on stable storage by the time
+ *                @p cb reports success (equivalent to O_DSYNC per-call). If
+ *                false, durability is only guaranteed after a subsequent
+ *                rawstor_object_flush() whose own completion callback fires
+ *                after this write's.
+ * @param cb      Callback invoked on completion. See RawstorCallback.
+ * @param data    User-defined context pointer passed unchanged to @p cb.
+ *
+ * @return 0 if the write was successfully queued; negative errno on
+ *         immediate failure (in which case @p cb is never invoked). The
+ *         actual write result (success or failure) is delivered via @p cb.
+ *
+ * @see RawstorCallback
+ * @see rawstor_object_pwritev
+ * @see rawstor_object_flush
+ * @see rawstor_object_pread
  */
 int rawstor_object_pwrite(
     RawstorObject* object, const void* buf, size_t size, off_t offset,
@@ -466,8 +566,36 @@ int rawstor_object_pwrite(
 ) RAWSTOR_NOEXCEPT;
 
 /**
- * @param sync If true, the write is durable on stable storage by the time
- *             @p cb reports success (equivalent to O_DSYNC per-call).
+ * @brief Asynchronously write data to an object from multiple buffers
+ *        (scatter-gather).
+ *
+ * Vectored equivalent of rawstor_object_pwrite(): writes @p size bytes
+ * total starting at @p offset, gathered from the buffers described by
+ * @p iov.
+ *
+ * @param object  Open object handle obtained from rawstor_object_open().
+ * @param iov     Array of buffers to gather the write data from. Must
+ *                remain valid until @p cb is invoked.
+ * @param niov    Number of entries in @p iov.
+ * @param size    Total number of bytes to write, summed across all @p iov
+ *                entries.
+ * @param offset  Byte offset within the object to write to.
+ * @param sync    If true, the write is durable on stable storage by the time
+ *                @p cb reports success (equivalent to O_DSYNC per-call). If
+ *                false, durability is only guaranteed after a subsequent
+ *                rawstor_object_flush() whose own completion callback fires
+ *                after this write's.
+ * @param cb      Callback invoked on completion. See RawstorCallback.
+ * @param data    User-defined context pointer passed unchanged to @p cb.
+ *
+ * @return 0 if the write was successfully queued; negative errno on
+ *         immediate failure (in which case @p cb is never invoked). The
+ *         actual write result (success or failure) is delivered via @p cb.
+ *
+ * @see RawstorCallback
+ * @see rawstor_object_pwrite
+ * @see rawstor_object_flush
+ * @see rawstor_object_preadv
  */
 int rawstor_object_pwritev(
     RawstorObject* object, const struct iovec* iov, unsigned int niov,
@@ -475,11 +603,29 @@ int rawstor_object_pwritev(
 ) RAWSTOR_NOEXCEPT;
 
 /**
- * @brief Flushes an object's previously written data to stable storage.
+ * @brief Flush an object's previously written data to stable storage.
  *
- * A durability barrier: once the callback reports success, every write that
- * completed before this call is guaranteed durable. It carries no size or
- * offset -- @p cb is invoked with `size = 0, result = 0`.
+ * A durability barrier: once @p cb reports success, every write whose own
+ * completion callback had already fired before this function was called is
+ * guaranteed durable.
+ *
+ * This does **not** cover writes that are merely queued but still in flight
+ * (i.e. rawstor_object_pwrite()/pwritev() was called but its own @p cb has
+ * not fired yet) at the time rawstor_object_flush() is called -- wait for
+ * their completion first if they need to be covered by this flush.
+ *
+ * @param object  Open object handle obtained from rawstor_object_open().
+ * @param cb      Callback invoked on completion. See RawstorCallback.
+ *                Always invoked with `size = 0, result = 0`.
+ * @param data    User-defined context pointer passed unchanged to @p cb.
+ *
+ * @return 0 if the flush was successfully queued; negative errno on
+ *         immediate failure (in which case @p cb is never invoked). The
+ *         actual flush result (success or failure) is delivered via @p cb.
+ *
+ * @see RawstorCallback
+ * @see rawstor_object_pwrite
+ * @see rawstor_object_pwritev
  */
 int rawstor_object_flush(
     RawstorObject* object, RawstorCallback* cb, void* data
