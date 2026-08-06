@@ -9,6 +9,7 @@
 #include <rawstd/uri.hpp>
 #include <rawstd/uuid.h>
 
+#include <memory>
 #include <vector>
 
 namespace rawstor {
@@ -21,6 +22,12 @@ private:
     RawIOQueue* _queue;
     Server& _server;
     int _fd;
+    // Shared with pending object I/O completion callbacks (_read/_write/
+    // _flush) so they can detect this Session having been torn down (e.g.
+    // by a sibling in-flight op's send_response() failing) before they use
+    // their own captured fd -- which by then may be closed, or worse,
+    // reused by an unrelated connection.
+    std::shared_ptr<bool> _alive;
     RawIOEvent* _recv_event;
     ssize_t (Session::*_next)(const iovec*, unsigned int, size_t);
     RawstorOSTFrameHead _request_head;

@@ -181,6 +181,7 @@ Session::Session(RawIOQueue* queue, Server& server, int fd) :
     _queue(queue),
     _server(server),
     _fd(fd),
+    _alive(std::make_shared<bool>(true)),
     _recv_event(nullptr),
     _next(&Session::_recv_head),
     _object(nullptr) {
@@ -195,6 +196,7 @@ Session::Session(RawIOQueue* queue, Server& server, int fd) :
 }
 
 Session::~Session() noexcept {
+    *_alive = false;
     if (_object != nullptr) {
         int res = rawstor_object_close(_object);
         if (res < 0) {
@@ -698,8 +700,12 @@ void Session::_read(
     auto data = std::make_shared<std::vector<unsigned char>>(body.len);
 
     auto cb = std::make_unique<Callback>(
-        [queue = _queue, fd = _fd, &server = _server, cid = head.cid,
+        [queue = _queue, fd = _fd, &server = _server, alive = _alive,
+         cid = head.cid,
          data](RawstorObject*, size_t, size_t result, int error) {
+            if (!*alive) {
+                return;
+            }
             try {
                 send_response(
                     queue, fd, server, RAWSTOR_CMD_READ, cid,
@@ -761,8 +767,12 @@ void Session::_write(
     }
 
     auto cb = std::make_unique<Callback>(
-        [queue = _queue, fd = _fd, &server = _server, cid = head.cid,
+        [queue = _queue, fd = _fd, &server = _server, alive = _alive,
+         cid = head.cid,
          data](RawstorObject*, size_t, size_t result, int error) {
+            if (!*alive) {
+                return;
+            }
             try {
                 send_response(
                     queue, fd, server, RAWSTOR_CMD_WRITE, cid,
@@ -800,8 +810,11 @@ void Session::_flush(
     }
 
     auto cb = std::make_unique<Callback>(
-        [queue = _queue, fd = _fd, &server = _server,
+        [queue = _queue, fd = _fd, &server = _server, alive = _alive,
          cid = head.cid](RawstorObject*, size_t, size_t, int error) {
+            if (!*alive) {
+                return;
+            }
             try {
                 send_response(
                     queue, fd, server, RAWSTOR_CMD_FLUSH, cid,
