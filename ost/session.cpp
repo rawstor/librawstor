@@ -181,7 +181,6 @@ Session::Session(RawIOQueue* queue, Server& server, int fd) :
     _queue(queue),
     _server(server),
     _fd(fd),
-    _alive(std::make_shared<bool>(true)),
     _recv_event(nullptr),
     _next(&Session::_recv_head),
     _object(nullptr) {
@@ -196,7 +195,6 @@ Session::Session(RawIOQueue* queue, Server& server, int fd) :
 }
 
 Session::~Session() noexcept {
-    *_alive = false;
     if (_object != nullptr) {
         int res = rawstor_object_close(_object);
         if (res < 0) {
@@ -700,15 +698,16 @@ void Session::_read(
     auto data = std::make_shared<std::vector<unsigned char>>(body.len);
 
     auto cb = std::make_unique<Callback>(
-        [queue = _queue, fd = _fd, &server = _server, alive = _alive,
-         cid = head.cid,
+        [weak = weak_from_this(), cid = head.cid,
          data](RawstorObject*, size_t, size_t result, int error) {
-            if (!*alive) {
+            std::shared_ptr<Session> session = weak.lock();
+            if (session == nullptr) {
                 return;
             }
             try {
                 send_response(
-                    queue, fd, server, RAWSTOR_CMD_READ, cid,
+                    session->_queue, session->_fd, session->_server,
+                    RAWSTOR_CMD_READ, cid,
                     error ? -error : static_cast<int32_t>(result),
                     error ? 0 : rawstd_hash_scalar(data->data(), data->size()),
                     data
@@ -767,15 +766,16 @@ void Session::_write(
     }
 
     auto cb = std::make_unique<Callback>(
-        [queue = _queue, fd = _fd, &server = _server, alive = _alive,
-         cid = head.cid,
+        [weak = weak_from_this(), cid = head.cid,
          data](RawstorObject*, size_t, size_t result, int error) {
-            if (!*alive) {
+            std::shared_ptr<Session> session = weak.lock();
+            if (session == nullptr) {
                 return;
             }
             try {
                 send_response(
-                    queue, fd, server, RAWSTOR_CMD_WRITE, cid,
+                    session->_queue, session->_fd, session->_server,
+                    RAWSTOR_CMD_WRITE, cid,
                     error ? -error : static_cast<int32_t>(result),
                     error ? 0 : rawstd_hash_scalar(data->data(), data->size())
                 );
@@ -810,15 +810,16 @@ void Session::_flush(
     }
 
     auto cb = std::make_unique<Callback>(
-        [queue = _queue, fd = _fd, &server = _server, alive = _alive,
+        [weak = weak_from_this(),
          cid = head.cid](RawstorObject*, size_t, size_t, int error) {
-            if (!*alive) {
+            std::shared_ptr<Session> session = weak.lock();
+            if (session == nullptr) {
                 return;
             }
             try {
                 send_response(
-                    queue, fd, server, RAWSTOR_CMD_FLUSH, cid,
-                    error ? -error : 0, 0
+                    session->_queue, session->_fd, session->_server,
+                    RAWSTOR_CMD_FLUSH, cid, error ? -error : 0, 0
                 );
             } catch (const std::exception& e) {
                 rawstd_error("%s\n", e.what());
