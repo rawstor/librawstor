@@ -62,6 +62,30 @@ int rawstd_socket_set_nodelay(int fd) {
     return 0;
 }
 
+int rawstd_socket_set_nosigpipe(int fd) {
+#if defined(RAWSTD_ON_LINUX)
+    // Linux suppresses SIGPIPE per-call via MSG_NOSIGNAL on send()/sendmsg()
+    // instead; nothing to set on the socket itself.
+    (void)fd;
+    return 0;
+#elif defined(RAWSTD_ON_MACOS)
+    int error;
+
+    int onoff = 1;
+    if (setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &onoff, sizeof(onoff)) == -1) {
+        error = errno;
+        errno = 0;
+        return -error;
+    }
+
+    rawstd_debug("fd %d: SOL_SOCKET/SO_NOSIGPIPE\n", fd);
+
+    return 0;
+#else
+#error "Unexpected platform"
+#endif
+}
+
 int rawstd_socket_set_reuse(int fd) {
     int error;
 
