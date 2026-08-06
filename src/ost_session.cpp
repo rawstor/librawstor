@@ -116,14 +116,20 @@ private:
 
     void _fail_in_flight(int error, bool* next_head, size_t* next_size);
 
-    SessionOp& _find_op(uint16_t cid) {
+    // Returns nullptr, rather than throwing, for an unregistered cid: a
+    // response can legitimately race with Connection::_op() already having
+    // failed and retried that same op on a different session (e.g. after a
+    // send-side error on this connection), in which case the cid was
+    // already unregistered and the response is stale, not a corrupted
+    // stream. That case must not be conflated with a live op's callback
+    // throwing, which setup_recv() still needs to propagate.
+    SessionOp* _find_op(uint16_t cid) {
         auto it = _ops.find(cid);
         if (it == _ops.end()) {
-            rawstd_error("Unexpected cid: %u\n", cid);
-            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+            return nullptr;
         }
 
-        return *it->second.get();
+        return it->second.get();
     }
 
 public:
@@ -794,11 +800,30 @@ void Context::setup_recv() {
                             iov, niov, 0, &response, sizeof(response)
                         );
                         cid = response.head.cid;
-                        SessionOp& op = context->_find_op(cid);
-                        op.response_head_cb(&response, 0, &is_head, &size);
+                        SessionOp* op = context->_find_op(cid);
+                        if (op == nullptr) {
+                            // A stray/late response for an op this
+                            // connection already failed and that
+                            // Connection::_op() has since retried on a
+                            // different session (e.g. after a send-side
+                            // error here). Not a live op's callback
+                            // throwing, so fail whatever is still in
+                            // flight and stop -- do not propagate, that
+                            // would tear down the whole rawio::Queue
+                            // instead of just this connection.
+                            rawstd_error("Unexpected cid: %u\n", cid);
+                            context->_fail_in_flight(EPROTO, &is_head, &size);
+                            return size;
+                        }
+                        op->response_head_cb(&response, 0, &is_head, &size);
                     } else {
-                        SessionOp& op = context->_find_op(cid);
-                        op.response_body_cb(iov, niov, result, error);
+                        SessionOp* op = context->_find_op(cid);
+                        if (op == nullptr) {
+                            rawstd_error("Unexpected cid: %u\n", cid);
+                            context->_fail_in_flight(EPROTO, &is_head, &size);
+                            return size;
+                        }
+                        op->response_body_cb(iov, niov, result, error);
                         is_head = true;
                         size = sizeof(RawstorOSTFrameResponse);
                     }
