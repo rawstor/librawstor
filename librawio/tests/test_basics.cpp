@@ -197,6 +197,47 @@ TEST(OpenCloseTest, basics) {
     EXPECT_EQ(fd, 0);
 }
 
+TEST(FsyncTest, basics) {
+    std::filesystem::path path =
+        std::filesystem::temp_directory_path() / "rawio_tests";
+    std::ostringstream oss;
+    std::filesystem::create_directory(path);
+    oss << path.string() << "/fsync.test";
+    std::string filename = oss.str();
+
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(1);
+
+    int fd = -1;
+    queue->open(
+        filename.c_str(), O_CREAT | O_RDWR, S_IRUSR | S_IWUSR,
+        [&fd](int result) { fd = result; }
+    );
+    queue->wait();
+    ASSERT_GT(fd, 0);
+
+    char buf[] = "data";
+    size_t result = 0;
+    int error = -1;
+    queue->pwrite(
+        fd, buf, sizeof(buf), 0, /*sync=*/true,
+        [&result, &error](size_t r, int e) {
+            result = r;
+            error = e;
+        }
+    );
+    queue->wait();
+    EXPECT_EQ(result, sizeof(buf));
+    EXPECT_EQ(error, 0);
+
+    error = -1;
+    queue->fsync(fd, /*datasync=*/true, [&error](int e) { error = e; });
+    queue->wait();
+    EXPECT_EQ(error, 0);
+
+    queue->close(fd, [](int) {});
+    queue->wait();
+}
+
 TEST(ConnectTest, basics) {
     rawio::tests::Server server;
 

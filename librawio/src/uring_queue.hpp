@@ -112,14 +112,17 @@ public:
     ) override;
 
     rawio::Event* pwrite(
-        int fd, const void* buf, size_t size, off_t offset,
+        int fd, const void* buf, size_t size, off_t offset, bool sync,
         std::function<void(size_t, int)>&& cb
     ) override;
 
     rawio::Event* pwritev(
-        int fd, const iovec* iov, unsigned int niov, off_t offset,
+        int fd, const iovec* iov, unsigned int niov, off_t offset, bool sync,
         std::function<void(size_t, int)>&& cb
     ) override;
+
+    rawio::Event*
+    fsync(int fd, bool datasync, std::function<void(int)>&& cb) override;
 
     rawio::Event* send(
         int fd, const void* buf, size_t size, unsigned int flags,

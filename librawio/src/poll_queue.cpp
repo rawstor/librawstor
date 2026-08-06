@@ -3,6 +3,7 @@
 #include "poll_event.hpp"
 #include "poll_session.hpp"
 
+#include <rawstd/gcc.h>
 #include <rawstd/gpp.hpp>
 #include <rawstd/logging.h>
 #include <rawstd/socket.h>
@@ -14,6 +15,7 @@
 
 #include <cassert>
 #include <cstring>
+#include <fcntl.h>
 
 namespace {
 
@@ -505,17 +507,18 @@ rawio::Event* Queue::writev(
 }
 
 rawio::Event* Queue::pwrite(
-    int fd, const void* buf, size_t size, off_t offset,
+    int fd, const void* buf, size_t size, off_t offset, bool sync,
     std::function<void(size_t, int)>&& cb
 ) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
-        '|', "fd = %d, size = %zu, offset = %jd\n", fd, size, (intmax_t)offset
+        '|', "fd = %d, size = %zu, offset = %jd, sync = %d\n", fd, size,
+        (intmax_t)offset, sync
     );
     Session& s = _get_session(fd);
 
     std::unique_ptr<Event> event =
         std::make_unique<EventSimplexScalarPositionalWrite>(
-            *this, fd, buf, size, offset, trace_event, std::move(cb)
+            *this, fd, buf, size, offset, sync, trace_event, std::move(cb)
         );
 
     rawio::Event* ret = static_cast<rawio::Event*>(event.get());
@@ -524,21 +527,53 @@ rawio::Event* Queue::pwrite(
 }
 
 rawio::Event* Queue::pwritev(
-    int fd, const iovec* iov, unsigned int niov, off_t offset,
+    int fd, const iovec* iov, unsigned int niov, off_t offset, bool sync,
     std::function<void(size_t, int)>&& cb
 ) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
-        '|', "fd = %d, niov = %u, offset = %jd\n", fd, niov, (intmax_t)offset
+        '|', "fd = %d, niov = %u, offset = %jd, sync = %d\n", fd, niov,
+        (intmax_t)offset, sync
     );
     Session& s = _get_session(fd);
 
     std::unique_ptr<Event> event =
         std::make_unique<EventSimplexVectorPositionalWrite>(
-            *this, fd, iov, niov, offset, trace_event, std::move(cb)
+            *this, fd, iov, niov, offset, sync, trace_event, std::move(cb)
         );
 
     rawio::Event* ret = static_cast<rawio::Event*>(event.get());
     s.write(std::move(event));
+    return ret;
+}
+
+rawio::Event*
+Queue::fsync(int fd, bool datasync, std::function<void(int)>&& cb) {
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('|', "fd = %d, datasync = %d\n", fd, datasync);
+
+    std::unique_ptr<EventEval> event = std::make_unique<EventEval>(
+        *this, trace_event,
+        [fd, datasync]() -> int {
+            int res;
+#if defined(RAWSTD_ON_LINUX)
+            res = datasync ? ::fdatasync(fd) : ::fsync(fd);
+#elif defined(RAWSTD_ON_MACOS)
+            (void)datasync;
+            res = ::fcntl(fd, F_FULLFSYNC);
+#else
+#error "Unexpected platform"
+#endif
+            if (res == -1) {
+                res = -errno;
+                errno = 0;
+            }
+            return res;
+        },
+        std::move(cb)
+    );
+
+    rawio::Event* ret = static_cast<rawio::Event*>(event.get());
+    _eval(std::move(event));
     return ret;
 }
 

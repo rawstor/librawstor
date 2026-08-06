@@ -587,11 +587,12 @@ rawio::Event* Queue::writev(
 }
 
 rawio::Event* Queue::pwrite(
-    int fd, const void* buf, size_t size, off_t offset,
+    int fd, const void* buf, size_t size, off_t offset, bool sync,
     std::function<void(size_t, int)>&& cb
 ) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
-        '|', "fd = %d, size = %zu, offset = %jd\n", fd, size, (intmax_t)offset
+        '|', "fd = %d, size = %zu, offset = %jd, sync = %d\n", fd, size,
+        (intmax_t)offset, sync
     );
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
@@ -608,17 +609,21 @@ rawio::Event* Queue::pwrite(
         }
     );
     io_uring_prep_write(sqe, fd, buf, size, offset);
+    if (sync) {
+        sqe->rw_flags |= RWF_DSYNC;
+    }
     io_uring_sqe_set_data(sqe, p.get());
 
     return static_cast<rawio::Event*>(p.release());
 }
 
 rawio::Event* Queue::pwritev(
-    int fd, const iovec* iov, unsigned int niov, off_t offset,
+    int fd, const iovec* iov, unsigned int niov, off_t offset, bool sync,
     std::function<void(size_t, int)>&& cb
 ) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
-        '|', "fd = %d, niov = %u, offset = %jd\n", fd, niov, (intmax_t)offset
+        '|', "fd = %d, niov = %u, offset = %jd, sync = %d\n", fd, niov,
+        (intmax_t)offset, sync
     );
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
@@ -635,6 +640,29 @@ rawio::Event* Queue::pwritev(
         }
     );
     io_uring_prep_writev(sqe, fd, iov, niov, offset);
+    if (sync) {
+        sqe->rw_flags |= RWF_DSYNC;
+    }
+    io_uring_sqe_set_data(sqe, p.get());
+
+    return static_cast<rawio::Event*>(p.release());
+}
+
+rawio::Event*
+Queue::fsync(int fd, bool datasync, std::function<void(int)>&& cb) {
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('|', "fd = %d, datasync = %d\n", fd, datasync);
+    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
+    if (sqe == nullptr) {
+        RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
+    }
+    auto p = std::make_unique<std::function<void(ssize_t, unsigned int)>>(
+        [cb = std::move(cb), trace_event](ssize_t result, unsigned int) {
+            RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "result = %zd\n", result);
+            cb(static_cast<int>(result));
+        }
+    );
+    io_uring_prep_fsync(sqe, fd, datasync ? IORING_FSYNC_DATASYNC : 0);
     io_uring_sqe_set_data(sqe, p.get());
 
     return static_cast<rawio::Event*>(p.release());

@@ -2,6 +2,7 @@
 
 #include "poll_queue.hpp"
 
+#include <rawstd/gcc.h>
 #include <rawstd/iovec.h>
 #include <rawstd/logging.h>
 
@@ -12,6 +13,7 @@
 #include <sys/types.h>
 #include <sys/uio.h>
 
+#include <fcntl.h>
 #include <unistd.h>
 
 namespace {
@@ -524,8 +526,25 @@ void EventSimplexScalarPositionalWrite::dispatch() {
 }
 
 ssize_t EventSimplexScalarPositionalWrite::process() noexcept {
+#if defined(RAWSTD_ON_LINUX)
+    // There is no scalar pwrite2(2) syscall on Linux, only the vectored
+    // preadv2/pwritev2 family -- wrap the buffer in a single-element iovec
+    // to reach RWF_DSYNC.
+    RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "pwritev2()");
+    iovec iov{.iov_base = const_cast<void*>(_buf), .iov_len = _size};
+    ssize_t res = ::pwritev2(_fd, &iov, 1, _offset, _sync ? RWF_DSYNC : 0);
+#elif defined(RAWSTD_ON_MACOS)
     RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "pwrite()");
     ssize_t res = ::pwrite(_fd, _buf, _size, _offset);
+    if (res >= 0 && _sync && ::fcntl(_fd, F_FULLFSYNC) == -1) {
+        int error = errno;
+        errno = 0;
+        set_error(error);
+        return -1;
+    }
+#else
+#error "Unexpected platform"
+#endif
     if (res >= 0) {
         _result = res;
 #ifdef RAWSTD_TRACE_EVENTS
@@ -548,8 +567,21 @@ void EventSimplexVectorPositionalWrite::dispatch() {
 }
 
 ssize_t EventSimplexVectorPositionalWrite::process() noexcept {
+#if defined(RAWSTD_ON_LINUX)
+    RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "pwritev2()");
+    ssize_t res = ::pwritev2(_fd, _iov, _niov, _offset, _sync ? RWF_DSYNC : 0);
+#elif defined(RAWSTD_ON_MACOS)
     RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "pwritev()");
     ssize_t res = ::pwritev(_fd, _iov, _niov, _offset);
+    if (res >= 0 && _sync && ::fcntl(_fd, F_FULLFSYNC) == -1) {
+        int error = errno;
+        errno = 0;
+        set_error(error);
+        return -1;
+    }
+#else
+#error "Unexpected platform"
+#endif
     if (res >= 0) {
         _result = res;
 #ifdef RAWSTD_TRACE_EVENTS
