@@ -71,7 +71,12 @@ int validate_result(int fd, size_t size, size_t result) noexcept {
 namespace rawstor {
 namespace ostbackend {
 
-Session::Session(RawIOQueue* queue, Server& server, int fd) :
+std::shared_ptr<Session>
+Session::create(RawIOQueue* queue, Server& server, int fd) {
+    return std::make_shared<Session>(Private(), queue, server, fd);
+}
+
+Session::Session(Private, RawIOQueue* queue, Server& server, int fd) :
     _queue(queue),
     _server(server),
     _fd(fd),

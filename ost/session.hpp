@@ -19,6 +19,10 @@ class Server;
 
 class Session final : public std::enable_shared_from_this<Session> {
 private:
+    struct Private {
+        explicit Private() = default;
+    };
+
     RawIOQueue* _queue;
     Server& _server;
     int _fd;
@@ -84,7 +88,10 @@ private:
     );
 
 public:
-    Session(RawIOQueue* queue, Server& server, int fd);
+    static std::shared_ptr<Session>
+    create(RawIOQueue* queue, Server& server, int fd);
+
+    Session(Private, RawIOQueue* queue, Server& server, int fd);
     Session(const Session&) = delete;
     Session(Session&&) = delete;
     ~Session() noexcept;
