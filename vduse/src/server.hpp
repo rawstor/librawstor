@@ -10,13 +10,12 @@ class Server final {
 private:
     unsigned int _queue_size;
     std::string _target;
-    std::string _name;
     bool _write_cache_enabled;
 
 public:
     Server(
         unsigned int queue_size, const std::string& target,
-        const std::string& name, bool write_cache_enabled
+        bool write_cache_enabled
     );
     Server(const Server&) = delete;
     Server(Server&&) = delete;

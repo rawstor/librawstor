@@ -257,15 +257,14 @@ vhost-user.
 
 ### Usage
 
-`rawstor-vduse [-h] -n NAME TARGET [--queue-size SIZE] [--write-cache on|off] [-v]`
+`rawstor-vduse [-h] TARGET [--queue-size SIZE] [--write-cache on|off] [-v]`
 
 ### Options
 
 | Option | Description |
 |--------|-------------|
 | `-h, --help` | Show help message and exit. |
-| `-n, --name NAME` | VDUSE device name; creates `/dev/vduse/NAME`. |
-| `TARGET` | Comma‑separated list of rawstor backend targets (see [Locations and Targets](https://github.com/rawstor/librawstor/blob/main/docs/locations_and_targets.md)). |
+| `TARGET` | Comma‑separated list of rawstor backend targets (see [Locations and Targets](https://github.com/rawstor/librawstor/blob/main/docs/locations_and_targets.md)). Creates `/dev/vduse/UUID`, where `UUID` is the target object's own UUID -- there is no separate name to pick, since the UUID already uniquely and stably identifies it. |
 | `--queue-size SIZE` | Virtqueue size, a power of two. Default: `256`, max `1024`. |
 | `--write-cache on\|off` | Advertise a writeback (`on`) or write-through (`off`, default) cache to the guest. |
 | `-v, --version` | Print version and exit. |
@@ -280,11 +279,11 @@ OBJECT_ID=...
 sudo modprobe vduse
 
 sudo ${PREFIX}/bin/rawstor-vduse \
-    --name=rawstor1 \
     ost://${OST_ADDR}/${OBJECT_ID} &
 
-# Attach the device to the vDPA bus once rawstor-vduse has created it:
-sudo vdpa dev add name rawstor1 mgmtdev vduse
+# Attach the device to the vDPA bus once rawstor-vduse has created it
+# (named after OBJECT_ID, i.e. /dev/vduse/${OBJECT_ID}):
+sudo vdpa dev add name ${OBJECT_ID} mgmtdev vduse
 
 # Either hand it to a guest's virtio-vdpa driver directly (no VMM), or
 # drive it from QEMU over /dev/vhost-vdpa-N:
@@ -318,7 +317,7 @@ running until the process is stopped (`SIGINT`/`SIGTERM`) or the VDUSE
 device itself is destroyed out from under it -- unlike `rawstor-vhost`,
 there is no per-connection front-end to disconnect from, since the kernel
 is always "connected". Attaching the created device to the vDPA bus (`vdpa
-dev add name NAME mgmtdev vduse`) and, if applicable, driving it from a
+dev add name UUID mgmtdev vduse`) and, if applicable, driving it from a
 VMM, are separate, external steps. If the process is restarted while
 requests are in flight, it does not attempt to resubmit them (no
 inflight-request log is kept) -- a crash mid-request is visible to the

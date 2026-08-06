@@ -35,7 +35,7 @@ bool is_power_of_2(unsigned int n) {
 void usage() {
     std::cout << "Rawstor VDUSE " << PACKAGE_VERSION << std::endl
               << std::endl
-              << "usage: rawstor-vduse [options] -n NAME TARGET" << std::endl
+              << "usage: rawstor-vduse [options] TARGET" << std::endl
               << std::endl
               << "options:" << std::endl
               << "  -h, --help            "
@@ -60,17 +60,23 @@ void usage() {
               << "  -v, --version         Rawstor version" << std::endl
               << std::endl
               << "required arguments:" << std::endl
-              << "  -n, --name NAME       "
-                 "VDUSE device name; creates /dev/vduse/NAME. Attaching it to"
-              << std::endl
-              << "                        "
-                 "the vDPA bus (e.g. `vdpa dev add name NAME mgmtdev vduse`)"
-              << std::endl
-              << "                        "
-                 "is a separate, external step."
-              << std::endl
               << "  TARGET                Comma separated list of rawstor "
                  "backend targets"
+              << std::endl
+              << "                        "
+                 "Creates /dev/vduse/UUID, where UUID is the target"
+              << std::endl
+              << "                        "
+                 "object's own UUID -- there is no separate name to"
+              << std::endl
+              << "                        "
+                 "pick. Attaching it to the vDPA bus (e.g. `vdpa dev"
+              << std::endl
+              << "                        "
+                 "add name UUID mgmtdev vduse`) is a separate,"
+              << std::endl
+              << "                        "
+                 "external step."
               << std::endl;
 }
 
@@ -82,27 +88,24 @@ void sact_handler(int) {
 }
 
 void server(
-    unsigned int queue_size, const std::string& target, const std::string& name,
-    bool write_cache_enabled
+    unsigned int queue_size, const std::string& target, bool write_cache_enabled
 ) {
-    rawstor::vduse::Server s(queue_size, target, name, write_cache_enabled);
+    rawstor::vduse::Server s(queue_size, target, write_cache_enabled);
     s.loop();
 }
 
 } // namespace
 
 int main(int argc, char** argv) {
-    const char* optstring = "hn:v";
+    const char* optstring = "hv";
     struct option longopts[] = {
         {"help", no_argument, nullptr, 'h'},
-        {"name", required_argument, nullptr, 'n'},
         {"queue-size", required_argument, nullptr, 'q'},
         {"version", no_argument, nullptr, 'v'},
         {"write-cache", required_argument, nullptr, 'w'},
         {},
     };
 
-    const char* name_arg = nullptr;
     const char* queue_size_arg = nullptr;
     const char* target_arg = nullptr;
     const char* write_cache_arg = nullptr;
@@ -116,10 +119,6 @@ int main(int argc, char** argv) {
         case 'h':
             usage();
             return EXIT_SUCCESS;
-
-        case 'n':
-            name_arg = optarg;
-            break;
 
         case 'q':
             queue_size_arg = optarg;
@@ -165,11 +164,6 @@ int main(int argc, char** argv) {
         }
     }
 
-    if (name_arg == nullptr) {
-        std::cerr << "name argument required" << std::endl;
-        return EX_USAGE;
-    }
-
     if (target_arg == nullptr) {
         std::cerr << "target argument required" << std::endl;
         return EX_USAGE;
@@ -206,7 +200,7 @@ int main(int argc, char** argv) {
     }
 
     try {
-        server(queue_size, target_arg, name_arg, write_cache_enabled);
+        server(queue_size, target_arg, write_cache_enabled);
     } catch (const std::system_error& e) {
         std::cerr << e.what() << std::endl;
         return rawstd_exitcode_for_errno(e.code().value());
