@@ -323,11 +323,12 @@ void Object::preadv(
 }
 
 void Object::pwrite(
-    const void* buf, size_t size, off_t offset,
+    const void* buf, size_t size, off_t offset, bool sync,
     std::function<void(size_t, int)>&& cb
 ) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
-        'o', "pwrite(): size = %zu, offset = %jd\n", size, (intmax_t)offset
+        'o', "pwrite(): size = %zu, offset = %jd, sync = %d\n", size,
+        (intmax_t)offset, sync
     );
 
     struct Operation {
@@ -345,7 +346,8 @@ void Object::pwrite(
 
     for (auto& cn : _cns) {
         cn->pwrite(
-            buf, size, offset, [op, trace_event](size_t result, int error) {
+            buf, size, offset, sync,
+            [op, trace_event](size_t result, int error) {
                 RAWSTD_TRACE_EVENT_MESSAGE(
                     trace_event, "result = %zu, error = %d\n", result, error
                 );
@@ -371,11 +373,12 @@ void Object::pwrite(
 }
 
 void Object::pwritev(
-    const iovec* iov, unsigned int niov, size_t size, off_t offset,
+    const iovec* iov, unsigned int niov, size_t size, off_t offset, bool sync,
     std::function<void(size_t, int)>&& cb
 ) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
-        'o', "pwritev(): size = %zu, offset = %jd\n", size, (intmax_t)offset
+        'o', "pwritev(): size = %zu, offset = %jd, sync = %d\n", size,
+        (intmax_t)offset, sync
     );
 
     struct Operation {
@@ -393,7 +396,7 @@ void Object::pwritev(
 
     for (auto& cn : _cns) {
         cn->pwritev(
-            iov, niov, size, offset,
+            iov, niov, size, offset, sync,
             [op, trace_event](size_t result, int error) {
                 RAWSTD_TRACE_EVENT_MESSAGE(
                     trace_event, "result = %zu, error = %d\n", result, error
@@ -416,6 +419,37 @@ void Object::pwritev(
                 }
             }
         );
+    }
+}
+
+void Object::flush(std::function<void(int)>&& cb) {
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('o', "%s\n", "flush()");
+
+    struct Operation {
+        size_t mirrors;
+        int error;
+        std::function<void(int)> cb;
+    };
+
+    std::shared_ptr<Operation> op = std::make_shared<Operation>(
+        (Operation){.mirrors = _cns.size(), .error = 0, .cb = std::move(cb)}
+    );
+
+    for (auto& cn : _cns) {
+        cn->flush([op, trace_event](int error) {
+            RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "error = %d\n", error);
+
+            --op->mirrors;
+
+            if (error) {
+                rawstd_error("%s\n", strerror(error));
+                op->error = EIO;
+            }
+
+            if (op->mirrors == 0) {
+                op->cb(op->error);
+            }
+        });
     }
 }
 
@@ -748,8 +782,10 @@ int rawstor_object_pwrite(
     RawstorCallback* cb, void* data
 ) noexcept {
     try {
+        // sync stays hardcoded until rawstor_object_pwrite() itself gains a
+        // sync parameter.
         static_cast<rawstor::Object*>(object)->pwrite(
-            buf, size, offset,
+            buf, size, offset, /*sync=*/false,
             [object, size, cb, data](size_t result, int error) {
                 int res = cb(object, size, result, error, data);
                 if (res < 0) {
@@ -776,8 +812,10 @@ int rawstor_object_pwritev(
     off_t offset, RawstorCallback* cb, void* data
 ) noexcept {
     try {
+        // sync stays hardcoded until rawstor_object_pwritev() itself gains a
+        // sync parameter.
         static_cast<rawstor::Object*>(object)->pwritev(
-            iov, niov, size, offset,
+            iov, niov, size, offset, /*sync=*/false,
             [object, size, cb, data](size_t result, int error) {
                 int res = cb(object, size, result, error, data);
                 if (res < 0) {
@@ -785,6 +823,31 @@ int rawstor_object_pwritev(
                 }
             }
         );
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+int rawstor_object_flush(
+    RawstorObject* object, RawstorCallback* cb, void* data
+) noexcept {
+    try {
+        static_cast<rawstor::Object*>(object)->flush([object, cb,
+                                                      data](int error) {
+            int res = cb(object, 0, 0, error, data);
+            if (res < 0) {
+                RAWSTD_THROW_SYSTEM_ERROR(-res);
+            }
+        });
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();

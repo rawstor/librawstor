@@ -382,33 +382,46 @@ void Connection::preadv(
 }
 
 void Connection::pwrite(
-    const void* buf, size_t size, off_t offset,
+    const void* buf, size_t size, off_t offset, bool sync,
     std::function<void(size_t, int)>&& cb
 ) {
     auto cbptr =
         std::make_shared<std::function<void(size_t, int)>>(std::move(cb));
     auto opptr = std::make_shared<std::function<
         void(std::shared_ptr<Session>, std::function<void(size_t, int)>&&)>>(
-        [buf, size, offset](
+        [buf, size, offset, sync](
             std::shared_ptr<Session> s, std::function<void(size_t, int)>&& cb
-        ) { s->pwrite(buf, size, offset, std::move(cb)); }
+        ) { s->pwrite(buf, size, offset, sync, std::move(cb)); }
     );
     _op(__FUNCTION__, size, offset, cbptr, opptr, 0);
 }
 
 void Connection::pwritev(
-    const iovec* iov, unsigned int niov, size_t size, off_t offset,
+    const iovec* iov, unsigned int niov, size_t size, off_t offset, bool sync,
     std::function<void(size_t, int)>&& cb
 ) {
     auto cbptr =
         std::make_shared<std::function<void(size_t, int)>>(std::move(cb));
     auto opptr = std::make_shared<std::function<
         void(std::shared_ptr<Session>, std::function<void(size_t, int)>&&)>>(
-        [iov, niov, size, offset](
+        [iov, niov, size, offset, sync](
             std::shared_ptr<Session> s, std::function<void(size_t, int)>&& cb
-        ) { s->pwritev(iov, niov, size, offset, std::move(cb)); }
+        ) { s->pwritev(iov, niov, size, offset, sync, std::move(cb)); }
     );
     _op(__FUNCTION__, size, offset, cbptr, opptr, 0);
+}
+
+void Connection::flush(std::function<void(int)>&& cb) {
+    auto cbptr = std::make_shared<std::function<void(size_t, int)>>(
+        [cb = std::move(cb)](size_t, int error) { cb(error); }
+    );
+    auto opptr = std::make_shared<std::function<
+        void(std::shared_ptr<Session>, std::function<void(size_t, int)>&&)>>(
+        [](std::shared_ptr<Session> s, std::function<void(size_t, int)>&& cb) {
+            s->flush([cb = std::move(cb)](int error) { cb(0, error); });
+        }
+    );
+    _op(__FUNCTION__, 0, 0, cbptr, opptr, 0);
 }
 
 } // namespace rawstor

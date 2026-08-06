@@ -82,14 +82,16 @@ public:
     ) = 0;
 
     virtual void pwrite(
-        const void* buf, size_t size, off_t offset,
+        const void* buf, size_t size, off_t offset, bool sync,
         std::function<void(size_t, int)>&& cb
     ) = 0;
 
     virtual void pwritev(
         const iovec* iov, unsigned int niov, size_t size, off_t offset,
-        std::function<void(size_t, int)>&& cb
+        bool sync, std::function<void(size_t, int)>&& cb
     ) = 0;
+
+    virtual void flush(std::function<void(int)>&& cb) = 0;
 };
 
 } // namespace rawstor

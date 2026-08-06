@@ -481,8 +481,11 @@ int rawio_pwrite(
     RawIOCallback* cb, void* data
 ) noexcept {
     try {
+        // sync stays hardcoded until rawio_pwrite() itself gains a sync
+        // parameter (tracked alongside rawstor_object_pwrite()'s own).
         static_cast<rawio::Queue*>(queue)->pwrite(
-            fd, buf, size, offset, [cb, data](size_t result, int error) {
+            fd, buf, size, offset, /*sync=*/false,
+            [cb, data](size_t result, int error) {
                 int res = cb(result, error, data);
                 if (res) {
                     RAWSTD_THROW_SYSTEM_ERROR(-res);
@@ -508,9 +511,39 @@ int rawio_pwritev(
     off_t offset, RawIOCallback* cb, void* data
 ) noexcept {
     try {
+        // sync stays hardcoded until rawio_pwritev() itself gains a sync
+        // parameter (tracked alongside rawstor_object_pwritev()'s own).
         static_cast<rawio::Queue*>(queue)->pwritev(
-            fd, iov, niov, offset, [cb, data](size_t result, int error) {
+            fd, iov, niov, offset, /*sync=*/false,
+            [cb, data](size_t result, int error) {
                 int res = cb(result, error, data);
+                if (res) {
+                    RAWSTD_THROW_SYSTEM_ERROR(-res);
+                }
+            }
+        );
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+int rawio_fsync(
+    RawIOQueue* queue, int fd, bool datasync, int (*cb)(int result, void* data),
+    void* data
+) noexcept {
+    try {
+        static_cast<rawio::Queue*>(queue)->fsync(
+            fd, datasync, [cb, data](int result) {
+                int res = cb(result, data);
                 if (res) {
                     RAWSTD_THROW_SYSTEM_ERROR(-res);
                 }
