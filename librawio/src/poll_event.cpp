@@ -527,12 +527,20 @@ void EventSimplexScalarPositionalWrite::dispatch() {
 
 ssize_t EventSimplexScalarPositionalWrite::process() noexcept {
 #if defined(RAWSTD_ON_LINUX)
-    // There is no scalar pwrite2(2) syscall on Linux, only the vectored
-    // preadv2/pwritev2 family -- wrap the buffer in a single-element iovec
-    // to reach RWF_DSYNC.
-    RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "pwritev2()");
-    iovec iov{.iov_base = const_cast<void*>(_buf), .iov_len = _size};
-    ssize_t res = ::pwritev2(_fd, &iov, 1, _offset, _sync ? RWF_DSYNC : 0);
+    ssize_t res;
+    if (_sync) {
+        // There is no scalar pwrite2(2) syscall on Linux, only the vectored
+        // preadv2/pwritev2 family -- wrap the buffer in a single-element
+        // iovec to reach RWF_DSYNC. Only worth the vectored-I/O overhead
+        // (import_iovec() on every call) when a flag actually needs it;
+        // plain pwrite() below is cheaper for the common non-sync case.
+        RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "pwritev2()");
+        iovec iov{.iov_base = const_cast<void*>(_buf), .iov_len = _size};
+        res = ::pwritev2(_fd, &iov, 1, _offset, RWF_DSYNC);
+    } else {
+        RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "pwrite()");
+        res = ::pwrite(_fd, _buf, _size, _offset);
+    }
 #elif defined(RAWSTD_ON_MACOS)
     RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "pwrite()");
     ssize_t res = ::pwrite(_fd, _buf, _size, _offset);
@@ -568,6 +576,10 @@ void EventSimplexVectorPositionalWrite::dispatch() {
 
 ssize_t EventSimplexVectorPositionalWrite::process() noexcept {
 #if defined(RAWSTD_ON_LINUX)
+    // Unlike the scalar case, no branching needed here: the kernel routes
+    // pwritev(2) and pwritev2(2) through the same import_iovec()+vectored
+    // write path regardless, so pwritev2(..., 0) costs nothing extra over
+    // pwritev() -- this call was already paying that cost either way.
     RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "pwritev2()");
     ssize_t res = ::pwritev2(_fd, _iov, _niov, _offset, _sync ? RWF_DSYNC : 0);
 #elif defined(RAWSTD_ON_MACOS)
