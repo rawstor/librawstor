@@ -174,6 +174,33 @@ public:
             }
         }
     }
+
+    void flush() {
+        bool completed = false;
+        auto cb = std::make_unique<std::function<void(size_t, int)>>(
+            [&completed](size_t, int error) {
+                if (error) {
+                    RAWSTD_THROW_SYSTEM_ERROR(error);
+                }
+                completed = true;
+            }
+        );
+        int res = rawstor_object_flush(_object, callback, cb.get());
+        if (res < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
+        }
+        cb.release();
+
+        while (!completed) {
+            try {
+                _queue.wait();
+            } catch (...) {
+                if (!completed) {
+                    throw;
+                }
+            }
+        }
+    }
 };
 
 TEST(FileIOTest, basics) {
@@ -195,6 +222,23 @@ TEST(FileIOTest, basics) {
     EXPECT_NO_THROW(object.read(read_data.data(), read_data.length()));
 
     EXPECT_EQ(read_data, "ping");
+}
+
+TEST(FileIOTest, flush) {
+    std::filesystem::path path = std::filesystem::temp_directory_path() /
+                                 "test_objects" /
+                                 "00000000-0000-7000-8000-000000000001";
+    std::ostringstream oss;
+    oss << "file://" << path.string();
+    std::string target = oss.str();
+
+    Queue queue(16);
+
+    Object object(queue, target, 1ull << 20);
+
+    std::string write_data = "ping";
+    EXPECT_NO_THROW(object.write(write_data.data(), write_data.length()));
+    EXPECT_NO_THROW(object.flush());
 }
 
 TEST(OstIOTest, basics) {
@@ -228,6 +272,36 @@ TEST(OstIOTest, basics) {
     std::string pong(4, '\0');
     EXPECT_NO_THROW(object.read(pong.data(), pong.length()));
     EXPECT_EQ(pong, "pong");
+}
+
+TEST(OstIOTest, flush) {
+    Queue queue(16);
+    rawstor::tests::Server server(8753, 256);
+    std::string target =
+        "ost://127.0.0.1:8753/00000000-0000-7000-8000-000000000000";
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
+    }
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_write(RAWSTOR_MAGIC, 1, 4);
+        s.cmd_flush(RAWSTOR_MAGIC, 2, 0);
+    }
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_release(RAWSTOR_MAGIC, 0, 0);
+    }
+
+    Object object(queue, target, 1ull << 20);
+
+    std::string ping = "ping";
+    EXPECT_NO_THROW(object.write(ping.data(), ping.length()));
+    EXPECT_NO_THROW(object.flush());
 }
 
 TEST(OstIOTest, set_object_fail) {

@@ -281,6 +281,7 @@ Session::_recv_head(const iovec* iov, unsigned int niov, size_t result) {
     case RAWSTOR_CMD_LIST:
     case RAWSTOR_CMD_SPEC:
     case RAWSTOR_CMD_LOCATION_INFO:
+    case RAWSTOR_CMD_FLUSH:
         return sizeof(RawstorOSTFrameBasicBody);
     }
 
@@ -455,6 +456,24 @@ Session::_recv_body(const iovec* iov, unsigned int niov, size_t result) {
         );
 
         _info(_request_head, _request_body.basic);
+
+        return sizeof(RawstorOSTFrameHead);
+
+    case RAWSTOR_CMD_FLUSH:
+        if (result != sizeof(_request_body.basic)) {
+            rawstd_error(
+                "fd %d: Unexpected request body size: %zu != %zu\n", _fd,
+                result, sizeof(_request_body.basic)
+            );
+
+            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+        }
+
+        rawstd_iovec_to_buf(
+            iov, niov, 0, &_request_body.basic, sizeof(_request_body.basic)
+        );
+
+        _flush(_request_head, _request_body.basic);
 
         return sizeof(RawstorOSTFrameHead);
     }
@@ -736,6 +755,36 @@ void Session::_write(
     if (res < 0) {
         rawstd_warning("%s\n", strerror(-res));
         send_response(_queue, _fd, RAWSTOR_CMD_WRITE, head.cid, res, 0);
+    } else {
+        cb.release();
+    }
+}
+
+void Session::_flush(
+    const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody&
+) {
+    if (_object == nullptr) {
+        send_response(_queue, _fd, RAWSTOR_CMD_FLUSH, head.cid, -EBADF, 0);
+        return;
+    }
+
+    auto cb = std::make_unique<Callback>(
+        [queue = _queue, fd = _fd,
+         cid = head.cid](RawstorObject*, size_t, size_t, int error) {
+            try {
+                send_response(
+                    queue, fd, RAWSTOR_CMD_FLUSH, cid, error ? -error : 0, 0
+                );
+            } catch (const std::exception& e) {
+                rawstd_error("%s\n", e.what());
+            }
+        }
+    );
+
+    int res = rawstor_object_flush(_object, callback, cb.get());
+    if (res < 0) {
+        rawstd_warning("%s\n", strerror(-res));
+        send_response(_queue, _fd, RAWSTOR_CMD_FLUSH, head.cid, res, 0);
     } else {
         cb.release();
     }
