@@ -17,40 +17,10 @@
 
 #include <unistd.h>
 
-#include <functional>
 #include <sstream>
 #include <string>
 
 #include <cstring>
-
-namespace {
-
-typedef std::function<void(size_t, int)> IOCallback;
-
-int io_callback(size_t result, int error, void* data) {
-    std::unique_ptr<IOCallback> cb(static_cast<IOCallback*>(data));
-
-    try {
-        (*cb)(result, error);
-        return 0;
-    } catch (const std::system_error& e) {
-        return -e.code().value();
-    }
-}
-
-int validate_result(int fd, size_t size, size_t result) noexcept {
-    if (result == size) {
-        return 0;
-    }
-
-    rawstd_error(
-        "fd %d: Unexpected event size: %zu != %zu\n", fd, result, size
-    );
-
-    return EIO;
-}
-
-} // namespace
 
 namespace rawstor {
 namespace ostbackend {
@@ -197,110 +167,6 @@ void Server::loop() {
             RAWSTD_THROW_SYSTEM_ERROR(-res);
         }
     }
-}
-
-void Server::send_response(
-    int fd, const RawstorOSTCommandType& type, uint16_t cid, int32_t result,
-    uint64_t hash
-) {
-    auto response =
-        std::make_shared<RawstorOSTFrameResponse>((RawstorOSTFrameResponse){
-            .head =
-                {
-                    .magic = RAWSTOR_MAGIC,
-                    .cmd = type,
-                    .cid = cid,
-                },
-            .body = {
-                .res = result,
-                .hash = hash,
-            },
-        });
-
-    auto cb =
-        std::make_unique<IOCallback>([this, fd,
-                                      response](size_t result, int error) {
-            if (!error) {
-                error = validate_result(fd, sizeof(*response), result);
-            }
-
-            if (error) {
-                rawstd_error("%s\n", strerror(error));
-                del_session(fd);
-            }
-        });
-
-    int res = rawio_send(
-        _queue, fd, response.get(), sizeof(*response), RAWSTD_MSG_NOSIGNAL,
-        io_callback, cb.get()
-    );
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-
-    cb.release();
-}
-
-void Server::send_response(
-    int fd, const RawstorOSTCommandType& type, uint16_t cid, int32_t result,
-    uint64_t hash, const std::shared_ptr<std::vector<unsigned char>>& data
-) {
-    auto response =
-        std::make_shared<RawstorOSTFrameResponse>((RawstorOSTFrameResponse){
-            .head =
-                {
-                    .magic = RAWSTOR_MAGIC,
-                    .cmd = type,
-                    .cid = cid,
-                },
-            .body = {
-                .res = result,
-                .hash = hash,
-            },
-        });
-
-    auto iov = std::make_shared<std::vector<iovec>>(std::vector<iovec>{
-        {
-            .iov_base = response.get(),
-            .iov_len = sizeof(*response),
-        },
-        {
-            .iov_base = data->data(),
-            .iov_len = data->size(),
-        },
-    });
-
-    auto msg = std::make_shared<msghdr>((msghdr){
-        .msg_name = nullptr,
-        .msg_namelen = 0,
-        .msg_iov = iov->data(),
-        .msg_iovlen = iov->size(),
-        .msg_control = nullptr,
-        .msg_controllen = 0,
-        .msg_flags = 0,
-    });
-
-    auto cb = std::make_unique<IOCallback>([this, fd, data, response, iov,
-                                            msg](size_t result, int error) {
-        if (!error) {
-            error =
-                validate_result(fd, sizeof(*response) + data->size(), result);
-        }
-
-        if (error) {
-            rawstd_error("%s\n", strerror(error));
-            del_session(fd);
-        }
-    });
-
-    int res = rawio_sendmsg(
-        _queue, fd, msg.get(), RAWSTD_MSG_NOSIGNAL, io_callback, cb.get()
-    );
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-
-    cb.release();
 }
 
 } // namespace ostbackend

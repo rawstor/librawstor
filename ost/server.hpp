@@ -3,7 +3,6 @@
 
 #include <rawstd/uri.hpp>
 
-#include <rawstor/protocol.h>
 #include <rawstor/rawio.h>
 
 #include <memory>
@@ -46,17 +45,6 @@ public:
 
     void del_session(int fd) noexcept;
     void loop();
-
-    // Sends a response frame to fd, tearing the session down via
-    // del_session() if the send itself fails (e.g. a short write).
-    void send_response(
-        int fd, const RawstorOSTCommandType& type, uint16_t cid, int32_t result,
-        uint64_t hash
-    );
-    void send_response(
-        int fd, const RawstorOSTCommandType& type, uint16_t cid, int32_t result,
-        uint64_t hash, const std::shared_ptr<std::vector<unsigned char>>& data
-    );
 };
 
 } // namespace ostbackend

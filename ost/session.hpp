@@ -72,6 +72,17 @@ private:
     );
     std::vector<rawstd::URI> _targets(const RawstdUUID& uuid);
 
+    // Tears the session down via Server::del_session() if the send itself
+    // fails (e.g. a short write).
+    void send_response(
+        const RawstorOSTCommandType& type, uint16_t cid, int32_t result,
+        uint64_t hash
+    );
+    void send_response(
+        const RawstorOSTCommandType& type, uint16_t cid, int32_t result,
+        uint64_t hash, const std::shared_ptr<std::vector<unsigned char>>& data
+    );
+
 public:
     Session(RawIOQueue* queue, Server& server, int fd);
     Session(const Session&) = delete;
