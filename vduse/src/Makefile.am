@@ -14,7 +14,7 @@ AM_LDFLAGS = $(ASAN_LDFLAGS)
 librawstor_vduse_la_SOURCES = $(top_srcdir)/vduse/include/vduse/ring.hpp \
                               $(top_srcdir)/vduse/include/vduse/request.hpp \
                               $(top_srcdir)/vduse/include/vduse/virtqueue.hpp \
-                              $(top_srcdir)/vduse/include/stdheaders/linux/vduse.h \
+                              $(top_srcdir)/include/stdheaders/linux/vduse.h \
                               $(top_srcdir)/include/stdheaders/linux/types.h \
                               $(top_srcdir)/include/stdheaders/linux/virtio_blk.h \
                               $(top_srcdir)/include/stdheaders/linux/virtio_config.h \
