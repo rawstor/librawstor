@@ -1,6 +1,8 @@
 #include "fixture.hpp"
 #include "server.hpp"
 
+#include <rawstd/socket.h>
+
 #include <gtest/gtest.h>
 
 #include <poll.h>
@@ -57,15 +59,15 @@ TEST_F(PollHupTest, read) {
     EXPECT_EQ(strncmp(client_buf, server_buf, 5), 0);
 }
 
-TEST_F(PollHupTest, write) {
+TEST_F(PollHupTest, send) {
     _server.close();
     _server.wait();
 
     char client_buf[] = "data";
     size_t result = 0;
     int error = 0;
-    _queue->write(
-        _fd, client_buf, sizeof(client_buf),
+    _queue->send(
+        _fd, client_buf, sizeof(client_buf), RAWSTD_MSG_NOSIGNAL,
         [&result, &error](size_t r, int e) {
             result = r;
             error = e;

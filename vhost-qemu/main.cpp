@@ -139,6 +139,20 @@ int main(int argc, char** argv) {
         return EXIT_FAILURE;
     }
 
+    // libvhost-user (vendored in 3rdparty/qemu) writes to the vhost-user
+    // control socket without MSG_NOSIGNAL and can't be patched, so unlike
+    // the rest of rawstor it still needs SIGPIPE ignored process-wide.
+    struct sigaction sigpipe_sact = {};
+    sigpipe_sact.sa_handler = SIG_IGN;
+    sigemptyset(&sigpipe_sact.sa_mask);
+    if (sigaction(SIGPIPE, &sigpipe_sact, nullptr) == -1) {
+        int errsv = errno;
+        errno = 0;
+        std::cerr << "Failed to ignore SIGPIPE: " << strerror(errsv)
+                  << std::endl;
+        return EXIT_FAILURE;
+    }
+
     sact.sa_handler = sact_handler;
     sigemptyset(&sact.sa_mask);
     if (sigaction(SIGINT, &sact, nullptr) == -1) {

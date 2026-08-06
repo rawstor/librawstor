@@ -6,12 +6,15 @@
 #include <rawstd/hash.h>
 #include <rawstd/iovec.h>
 #include <rawstd/logging.hpp>
+#include <rawstd/socket.h>
 #include <rawstd/uri.hpp>
 #include <rawstd/uuid.h>
 
 #include <rawstor/object.h>
 #include <rawstor/protocol.h>
 #include <rawstor/rawstor.h>
+
+#include <sys/socket.h>
 
 #include <functional>
 #include <memory>
@@ -92,8 +95,9 @@ void send_response(
             }
         });
 
-    int res = rawio_write(
-        queue, fd, response.get(), sizeof(*response), io_callback, cb.get()
+    int res = rawio_send(
+        queue, fd, response.get(), sizeof(*response), RAWSTD_MSG_NOSIGNAL,
+        io_callback, cb.get()
     );
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
@@ -132,8 +136,18 @@ void send_response(
         },
     });
 
-    auto cb = std::make_unique<IOCallback>([fd, data, response,
-                                            iov](size_t result, int error) {
+    auto msg = std::make_shared<msghdr>((msghdr){
+        .msg_name = nullptr,
+        .msg_namelen = 0,
+        .msg_iov = iov->data(),
+        .msg_iovlen = iov->size(),
+        .msg_control = nullptr,
+        .msg_controllen = 0,
+        .msg_flags = 0,
+    });
+
+    auto cb = std::make_unique<IOCallback>([fd, data, response, iov,
+                                            msg](size_t result, int error) {
         if (!error) {
             error =
                 validate_result(fd, sizeof(*response) + data->size(), result);
@@ -144,8 +158,8 @@ void send_response(
         }
     });
 
-    int res = rawio_writev(
-        queue, fd, iov->data(), iov->size(), io_callback, cb.get()
+    int res = rawio_sendmsg(
+        queue, fd, msg.get(), RAWSTD_MSG_NOSIGNAL, io_callback, cb.get()
     );
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);

@@ -4,6 +4,7 @@
 
 #include <rawstd/gpp.hpp>
 #include <rawstd/logging.h>
+#include <rawstd/socket.h>
 
 #include <rawstor.h>
 
@@ -128,6 +129,11 @@ void Server::loop() {
     int fd = ::accept(_fd, NULL, NULL);
     if (fd < 0) {
         RAWSTD_THROW_ERRNO();
+    }
+
+    int res = rawstd_socket_set_nosigpipe(fd);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 
     Device d(_queue_size, _target, fd);
