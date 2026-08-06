@@ -337,17 +337,6 @@ vduse`), and attaching it to the vDPA bus requires the `vdpa` tool
 (`iproute2`) and `CAP_NET_ADMIN` -- neither is something `rawstor-vduse`
 itself does; both are external, one-time-per-device administrative steps.
 
-### Testing
-
-```
-make test
-```
-
-The `vduse/tests` suite covers the transport-independent virtio-blk request
-parsing only (`BlkRequest`); exercising a live VDUSE device requires the
-`vduse` kernel module and elevated privileges, so that is not part of the
-automated test suite.
-
 ## Testing
 
 ```
