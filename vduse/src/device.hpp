@@ -39,9 +39,16 @@ private:
     void remove_iova_regions(uint64_t start, uint64_t last);
 
 public:
+    /**
+     * `target` names exactly one rawstor object (or a mirrored/cached set
+     * of locations for the same object -- see docs/locations_and_targets.md);
+     * the VDUSE device name is that object's UUID (rawstor_object_id()),
+     * not something the caller picks, since it already uniquely and
+     * stably identifies the device this process is exporting.
+     */
     Device(
         unsigned int queue_size, const std::string& target,
-        const std::string& name, bool write_cache_enabled
+        bool write_cache_enabled
     );
     Device(const Device&) = delete;
     Device(Device&&) = delete;
@@ -51,6 +58,9 @@ public:
     Device& operator=(Device&&) = delete;
 
     inline int fd() const noexcept { return _fd; }
+
+    /** VDUSE device name -- the target object's UUID. */
+    inline const char* name() const noexcept { return _name_buf; }
 
     inline RawIOQueue* queue() const noexcept { return _queue; }
 
