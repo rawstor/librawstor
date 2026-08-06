@@ -136,7 +136,7 @@ void Server::_add_session(int fd) {
             RAWSTD_THROW_SYSTEM_ERROR(-res);
         }
 
-        _sessions.emplace(fd, std::make_unique<Session>(_queue, *this, fd));
+        _sessions.emplace(fd, Session::create(_queue, *this, fd));
     } catch (...) {
         close(fd);
         throw;

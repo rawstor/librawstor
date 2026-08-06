@@ -134,8 +134,8 @@ void migrate_legacy(
 namespace rawstor {
 namespace file {
 
-Session::Session(rawio::Queue& queue, const rawstd::URI& location) :
-    rawstor::blk::Session(queue, location) {
+Session::Session(Private p, rawio::Queue& queue, const rawstd::URI& location) :
+    rawstor::blk::Session(p, queue, location) {
 }
 
 int Session::_connect(const RawstdUUID& id) {

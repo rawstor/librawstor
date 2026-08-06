@@ -22,7 +22,7 @@ private:
     int _connect(const RawstdUUID& id) override;
 
 public:
-    Session(rawio::Queue& queue, const rawstd::URI& location);
+    Session(Private p, rawio::Queue& queue, const rawstd::URI& location);
 
     void list(
         unsigned int limit, const RawstdUUID& token,
