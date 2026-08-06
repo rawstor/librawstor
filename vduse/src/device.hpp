@@ -1,40 +1,47 @@
 #ifndef RAWSTOR_VDUSE_DEVICE_HPP
 #define RAWSTOR_VDUSE_DEVICE_HPP
 
+#include "iovaregion.hpp"
+
+#include <stdheaders/linux/vduse.h>
+#include <stdheaders/linux/virtio_blk.h>
+#include <vduse/virtqueue.hpp>
+
 #include <rawstor/object.h>
 #include <rawstor/rawio.h>
 
-extern "C" {
-#include "libvduse.h"
-}
-
 #include <memory>
 #include <string>
+#include <vector>
 
 #include <cstdint>
-
-struct virtio_blk_config;
 
 namespace rawstor {
 namespace vduse {
 
 class Device final {
 private:
+    int _ctrl_fd; // /dev/vduse/control
+    int _fd;      // /dev/vduse/$NAME
+    char _name_buf[VDUSE_NAME_MAX];
     RawIOQueue* _queue;
     RawstorObject* _object;
-    VduseDev* _dev;
-    VduseOps _ops;
-    std::unique_ptr<virtio_blk_config> _blk_config;
-    std::string _reconnect_file;
+    std::vector<std::unique_ptr<IovaRegion>> _regions;
+    std::vector<VirtQueue> _vqs;
+    uint64_t _features;
+    virtio_blk_config _config;
     bool _write_cache_enabled;
-    VduseVirtq* _vq;
-    bool _kick_armed;
+
+    void enable_queue(size_t index);
+    void disable_queue(size_t index);
+    void start_dataplane();
+    void stop_dataplane();
+    void remove_iova_regions(uint64_t start, uint64_t last);
 
 public:
     Device(
         unsigned int queue_size, const std::string& target,
-        const std::string& name, const std::string& reconnect_file,
-        bool write_cache_enabled
+        const std::string& name, bool write_cache_enabled
     );
     Device(const Device&) = delete;
     Device(Device&&) = delete;
@@ -43,64 +50,59 @@ public:
     Device& operator=(const Device&) = delete;
     Device& operator=(Device&&) = delete;
 
-    inline RawIOQueue* queue() noexcept { return _queue; }
+    inline int fd() const noexcept { return _fd; }
 
-    inline RawstorObject* object() noexcept { return _object; }
+    inline RawIOQueue* queue() const noexcept { return _queue; }
+
+    inline RawstorObject* object() const noexcept { return _object; }
 
     inline bool write_cache_enabled() const noexcept {
         return _write_cache_enabled;
     }
 
-    /**
-     * Called (via the VduseOps callback trampoline) when the kernel marks
-     * virtqueue `vq` ready for processing -- at initial setup if the guest
-     * driver already kicked DRIVER_OK, or later in response to a
-     * VDUSE_SET_STATUS control message. Arms the kick_fd poll.
-     */
-    void enable_queue(VduseVirtq* vq);
+    inline bool event_idx_negotiated() const noexcept {
+        return _features & (1ull << VIRTIO_RING_F_EVENT_IDX);
+    }
+
+    inline size_t nqueues() const noexcept { return _vqs.size(); }
 
     /**
-     * Called (via the VduseOps callback trampoline) when the kernel is
-     * about to tear virtqueue `vq` down (device reset or a reconnect).
-     * Cancels the kick_fd poll before libvduse closes the fd out from
-     * under it.
+     * Translate an IOVA (as found in a virtqueue's desc/driver/device
+     * addresses, or in a descriptor written by the guest driver) to a
+     * host virtual address. On a cache miss, resolves it via
+     * VDUSE_IOTLB_GET_FD and mmap()s the returned region. Returns
+     * nullptr if the kernel doesn't know this IOVA either.
      */
-    void disable_queue(VduseVirtq* vq);
+    void* iova_to_va(uint64_t iova);
 
-    /** Drain and process every descriptor chain available on `vq`. */
-    void process_vq(VduseVirtq* vq);
+    /** Signal the driver for virtqueue `index` (VDUSE_VQ_INJECT_IRQ). */
+    void inject_irq(size_t index);
 
     /**
-     * Read and reply to one pending control message (VDUSE_SET_STATUS,
-     * VDUSE_UPDATE_IOTLB, ...) on the device control fd. Throws
-     * std::system_error if the read/write on the control fd itself fails
-     * (as opposed to the request being merely refused, which
-     * vduse_dev_handler() already reports as a VDUSE_REQ_RESULT_FAILED
-     * reply rather than a return error).
+     * Drain and process every descriptor chain currently available on
+     * virtqueue `index`, dispatching each as a virtio-blk request against
+     * the backing rawstor object. Called from the virtqueue's kick_fd
+     * handler; may leave I/O in flight (it never blocks).
      */
-    void handle_control();
+    void process_queue(size_t index);
 
     /**
-     * Arm a single-shot read of vq's kick_fd (an eventfd); a no-op if
-     * already armed or the queue has no fd. Public so the kick_fd
-     * completion callback (device.cpp) can re-arm it after each drain --
-     * mirrors vhost::VirtQueue::arm_kick().
+     * Publish a completion (used-ring push + notify) for the descriptor
+     * chain identified by `head` on virtqueue `index`.
      */
-    void arm_kick();
-
-    /** Cancel a pending kick_fd read, if any. */
-    void cancel_kick();
-
-    /** Clear the "read is in flight" flag; see vhost::VirtQueue for why
-     *  this is a separate step from arm_kick(). */
-    inline void clear_kick_armed() noexcept { _kick_armed = false; }
+    void complete_request(size_t index, uint16_t head, uint32_t len);
 
     /**
-     * Arm a single-shot poll of the VDUSE control fd. Public so the
-     * completion callback (device.cpp) can re-arm it after each control
-     * message.
+     * Arm a single-shot read of the next control request on the device
+     * fd. Public so the read/write completion callbacks (device.cpp) can
+     * re-arm it after each request/response round-trip.
      */
-    void arm_dev_poll();
+    void arm_control();
+
+    /** Fill `resp` for control request `req`. Public for the same reason
+     *  as arm_control(). */
+    void
+    dispatch_control(const vduse_dev_request& req, vduse_dev_response& resp);
 
     void loop();
 };

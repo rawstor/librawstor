@@ -1,25 +1,16 @@
 #include "device.hpp"
 
-// See request.cpp for why this must come before any "standard-headers/..."
-// header: QEMU_PACKED (and friends) must already be defined, or
-// `} QEMU_PACKED;` silently misparses instead of failing to compile.
-#include "include/compiler.h"
-
-extern "C" {
-#include "libvduse.h"
-#include "standard-headers/linux/virtio_blk.h"
-#include "standard-headers/linux/virtio_ids.h"
-}
-
+#include <stdheaders/linux/virtio_config.h>
+#include <stdheaders/linux/virtio_ring.h>
 #include <vduse/request.hpp>
 
 #include <rawstd/gpp.hpp>
 #include <rawstd/iovec.h>
 #include <rawstd/logging.h>
 
-#include <rawstor.h>
-
-#include <poll.h>
+#include <fcntl.h>
+#include <sys/ioctl.h>
+#include <sys/mman.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -34,42 +25,58 @@ extern "C" {
 #include <cstdlib>
 #include <cstring>
 
+// virtio device id for a block device (standard-headers/linux/virtio_ids.h
+// upstream; not worth vendoring a whole header for one constant).
+#define VIRTIO_ID_BLOCK 2
+
+// Allocation alignment VDUSE expects for a virtqueue's desc/avail/used
+// areas -- the legacy split-ring alignment, i.e. the host page size.
+#define VDUSE_VQ_ALIGN 4096
+
 #define VIRTIO_BLK_SECTOR_BITS 9
 
 namespace {
 
 using rawstor::vduse::BlkRequest;
+using rawstor::vduse::DescChain;
 using rawstor::vduse::Device;
 
-void free_elem(void* p) {
-    free(p);
+int perm_to_prot(uint8_t perm) {
+    switch (perm) {
+    case VDUSE_ACCESS_WO:
+        return PROT_WRITE;
+    case VDUSE_ACCESS_RO:
+        return PROT_READ;
+    case VDUSE_ACCESS_RW:
+        return PROT_READ | PROT_WRITE;
+    default:
+        return 0;
+    }
 }
-
-// vduse_queue_pop() allocates the returned VduseVirtqElement with malloc(),
-// so it must be released with free(), not delete.
-using ElemPtr = std::unique_ptr<VduseVirtqElement, void (*)(void*)>;
 
 //
 // virtio-blk data plane: turns descriptor chains popped off a virtqueue
-// into asynchronous rawstor object I/O. libvduse has already translated
-// every descriptor's guest IOVA into a host virtual address by the time
-// vduse_queue_pop() hands us the element, so -- unlike vhost/'s own
-// hand-rolled VirtQueue -- there is no address translation step here.
+// into asynchronous rawstor object I/O. Transport-independent (BlkRequest
+// just works on raw iovec arrays), so this mirrors vhost/'s own
+// Request/ObjectTask/ObjectFlushTask/process_request almost verbatim.
 //
 
 class Request final {
 private:
     Device& _device;
-    VduseVirtq* _vq;
-    ElemPtr _elem;
+    size_t _index;
+    std::unique_ptr<DescChain> _chain;
     BlkRequest _blk;
 
 public:
-    Request(Device& device, VduseVirtq* vq, ElemPtr elem) :
+    Request(Device& device, size_t index, std::unique_ptr<DescChain> chain) :
         _device(device),
-        _vq(vq),
-        _elem(std::move(elem)),
-        _blk(_elem->out_sg, _elem->out_num, _elem->in_sg, _elem->in_num) {}
+        _index(index),
+        _chain(std::move(chain)),
+        _blk(
+            _chain->readable.data(), _chain->readable.size(),
+            _chain->writable.data(), _chain->writable.size()
+        ) {}
 
     inline Device& device() noexcept { return _device; }
 
@@ -87,8 +94,10 @@ public:
 
     void push(unsigned char status, size_t size) {
         _blk.set_status(status);
-        vduse_queue_push(_vq, _elem.get(), size + sizeof(unsigned char));
-        vduse_queue_notify(_vq);
+        _device.complete_request(
+            _index, _chain->head,
+            static_cast<uint32_t>(size + sizeof(unsigned char))
+        );
     }
 };
 
@@ -305,110 +314,101 @@ void process_request(std::unique_ptr<Request> req) {
 }
 
 //
-// Kernel-facing glue: bridges libvduse's two fd surfaces (the per-vq
-// kick_fd eventfd, and the device control fd) onto rawio's completion
-// callbacks, and the VduseOps struct onto Device.
+// Control channel: fixed-size read(2)/write(2) of struct
+// vduse_dev_request/vduse_dev_response on the device fd -- unlike
+// vhost-user, there is no variable-size payload to split into a second
+// read.
 //
 
-struct KickCtx {
+struct ControlCtx {
     Device* device;
-    VduseVirtq* vq;
-    uint64_t value;
+    vduse_dev_request req;
+    vduse_dev_response resp;
 };
 
-int kick_cb(size_t result, int error, void* data) {
-    std::unique_ptr<KickCtx> ctx(static_cast<KickCtx*>(data));
-
-    // The armed read this callback belongs to has now completed one way
-    // or another; clear it up front so a re-arm below is not mistaken for
-    // one already in flight.
-    ctx->device->clear_kick_armed();
+int control_write_cb(size_t result, int error, void* data) {
+    std::unique_ptr<ControlCtx> ctx(static_cast<ControlCtx*>(data));
 
     if (error == ECANCELED) {
         return 0;
     }
 
     if (error != 0) {
-        rawstd_error("vduse: kick_fd read failed: %s\n", strerror(error));
+        rawstd_error(
+            "vduse: control response write failed: %s\n", strerror(error)
+        );
         return 0;
     }
 
-    if (result != sizeof(ctx->value)) {
-        rawstd_error("vduse: unexpected kick_fd read size: %zu\n", result);
+    if (result != sizeof(ctx->resp)) {
+        rawstd_error(
+            "vduse: unexpected control response write size: %zu\n", result
+        );
         return 0;
     }
 
     try {
-        ctx->device->process_vq(ctx->vq);
+        ctx->device->arm_control();
     } catch (const std::exception& e) {
-        rawstd_error("vduse: error processing virtqueue: %s\n", e.what());
-    }
-
-    try {
-        ctx->device->arm_kick();
-    } catch (const std::exception& e) {
-        rawstd_error("vduse: failed to rearm kick_fd: %s\n", e.what());
+        rawstd_error("vduse: failed to re-arm control read: %s\n", e.what());
     }
 
     return 0;
 }
 
-int dev_poll_cb(int result, void* data) {
-    Device* device = static_cast<Device*>(data);
+int control_read_cb(size_t result, int error, void* data) {
+    std::unique_ptr<ControlCtx> ctx(static_cast<ControlCtx*>(data));
 
-    if (result < 0) {
-        if (result == -ECANCELED) {
-            return 0;
-        }
-        rawstd_error("vduse: control fd poll failed: %s\n", strerror(-result));
-        return result;
-    }
-
-    if (result & POLLNVAL) {
+    if (error == ECANCELED) {
         return 0;
     }
 
-    if (result & POLLERR) {
-        rawstd_error("vduse: control fd reported POLLERR\n");
-        return -EBADF;
+    if (error != 0) {
+        rawstd_error(
+            "vduse: control request read failed: %s\n", strerror(error)
+        );
+        return 0;
     }
 
-    // Handle whatever is pending before treating a hangup as terminal, so
-    // a final control message racing with device teardown is not dropped.
-    if (result & POLLIN) {
-        try {
-            device->handle_control();
-        } catch (const std::exception& e) {
-            rawstd_error(
-                "vduse: control message handling failed: %s\n", e.what()
-            );
-            return -EIO;
-        }
+    if (result == 0) {
+        // The device node was closed/destroyed out from under us; stop
+        // watching the control fd instead of busy-looping on EOF.
+        rawstd_info("vduse: control fd closed\n");
+        return 0;
     }
 
-    if (result & POLLHUP) {
-        rawstd_error("vduse: control fd reported POLLHUP\n");
-        return -EPIPE;
+    if (result != sizeof(ctx->req)) {
+        rawstd_error(
+            "vduse: unexpected control request read size: %zu\n", result
+        );
+        return 0;
     }
+
+    ctx->resp = {};
+    ctx->resp.request_id = ctx->req.request_id;
+    ctx->resp.result = VDUSE_REQ_RESULT_FAILED;
 
     try {
-        device->arm_dev_poll();
+        ctx->device->dispatch_control(ctx->req, ctx->resp);
     } catch (const std::exception& e) {
-        rawstd_error("vduse: failed to rearm control fd poll: %s\n", e.what());
-        return -EIO;
+        rawstd_error("vduse: control request handling failed: %s\n", e.what());
+        ctx->resp.result = VDUSE_REQ_RESULT_FAILED;
     }
 
+    Device* device = ctx->device;
+    int res = rawio_write(
+        device->queue(), device->fd(), &ctx->resp, sizeof(ctx->resp),
+        control_write_cb, ctx.get()
+    );
+    if (res) {
+        rawstd_error(
+            "vduse: failed to write control response: %s\n", strerror(-res)
+        );
+        return 0;
+    }
+    ctx.release();
+
     return 0;
-}
-
-void enable_queue(VduseDev* dev, VduseVirtq* vq) {
-    Device* self = static_cast<Device*>(vduse_dev_get_priv(dev));
-    self->enable_queue(vq);
-}
-
-void disable_queue(VduseDev* dev, VduseVirtq* vq) {
-    Device* self = static_cast<Device*>(vduse_dev_get_priv(dev));
-    self->disable_queue(vq);
 }
 
 } // namespace
@@ -418,18 +418,25 @@ namespace vduse {
 
 Device::Device(
     unsigned int queue_size, const std::string& target, const std::string& name,
-    const std::string& reconnect_file, bool write_cache_enabled
+    bool write_cache_enabled
 ) :
+    _ctrl_fd(-1),
+    _fd(-1),
+    _name_buf{},
     _queue(nullptr),
     _object(nullptr),
-    _dev(nullptr),
-    _ops{.enable_queue = ::enable_queue, .disable_queue = ::disable_queue},
-    _blk_config(std::make_unique<virtio_blk_config>()),
-    _reconnect_file(reconnect_file),
-    _write_cache_enabled(write_cache_enabled),
-    _vq(nullptr),
-    _kick_armed(false) {
-    memset(_blk_config.get(), 0, sizeof(*_blk_config.get()));
+    _vqs(1),
+    _features(0),
+    _config{},
+    _write_cache_enabled(write_cache_enabled) {
+    if (name.empty() || name.size() >= sizeof(_name_buf) ||
+        name.find("..") != std::string::npos) {
+        throw std::runtime_error(
+            "VDUSE device name must be non-empty, shorter than " +
+            std::to_string(sizeof(_name_buf)) + " bytes, and not contain \"..\""
+        );
+    }
+    std::memcpy(_name_buf, name.c_str(), name.size() + 1);
 
     int ires = rawio_queue_create(queue_size, &_queue);
     if (ires) {
@@ -448,56 +455,84 @@ Device::Device(
             RAWSTD_THROW_SYSTEM_ERROR(-ires);
         }
 
-        _blk_config->capacity = spec.size >> VIRTIO_BLK_SECTOR_BITS;
-        _blk_config->seg_max = VIRTQUEUE_MAX_SIZE - 2; // VIRTIO_BLK_F_SEG_MAX
-        _blk_config->blk_size = 1 << VIRTIO_BLK_SECTOR_BITS; // _F_BLK_SIZE
-        _blk_config->physical_block_exp = 0; // VIRTIO_BLK_F_TOPOLOGY
-        _blk_config->alignment_offset = 0;
-        _blk_config->min_io_size = 1;
-        _blk_config->opt_io_size = 1;
-        _blk_config->wce = write_cache_enabled; // VIRTIO_BLK_F_CONFIG_WCE
-        _blk_config->num_queues = 1; // VIRTIO_BLK_F_MQ (single queue: unset)
+        _config.capacity = spec.size >> VIRTIO_BLK_SECTOR_BITS;
+        _config.seg_max = queue_size > 2 ? queue_size - 2 : 0; // _F_SEG_MAX
+        _config.blk_size = 1 << VIRTIO_BLK_SECTOR_BITS;        // _F_BLK_SIZE
+        _config.physical_block_exp = 0; // VIRTIO_BLK_F_TOPOLOGY
+        _config.alignment_offset = 0;
+        _config.min_io_size = 1;
+        _config.opt_io_size = 1;
+        _config.wce = write_cache_enabled; // VIRTIO_BLK_F_CONFIG_WCE
+        _config.num_queues = static_cast<uint16_t>(_vqs.size());
         // discard/write-zeroes fields are left zero: unsupported, and the
         // corresponding feature bits are not advertised below.
 
-        uint64_t features =
-            vduse_get_virtio_features() | 1ull << VIRTIO_BLK_F_SEG_MAX |
+        uint64_t init_features =
+            1ull << VIRTIO_F_VERSION_1 | 1ull << VIRTIO_F_ACCESS_PLATFORM |
+            1ull << VIRTIO_F_NOTIFY_ON_EMPTY | 1ull << VIRTIO_RING_F_EVENT_IDX |
+            1ull << VIRTIO_RING_F_INDIRECT_DESC | 1ull << VIRTIO_BLK_F_SEG_MAX |
             1ull << VIRTIO_BLK_F_TOPOLOGY | 1ull << VIRTIO_BLK_F_BLK_SIZE |
             1ull << VIRTIO_BLK_F_FLUSH | 1ull << VIRTIO_BLK_F_CONFIG_WCE;
 
-        _dev = vduse_dev_create(
-            name.c_str(), VIRTIO_ID_BLOCK, 0, features, 1,
-            sizeof(virtio_blk_config),
-            reinterpret_cast<char*>(_blk_config.get()), &_ops, this
+        _ctrl_fd = open("/dev/vduse/control", O_RDWR);
+        if (_ctrl_fd == -1) {
+            RAWSTD_THROW_ERRNO();
+        }
+
+        uint64_t api_version = VDUSE_API_VERSION;
+        if (ioctl(_ctrl_fd, VDUSE_SET_API_VERSION, &api_version)) {
+            RAWSTD_THROW_ERRNO();
+        }
+
+        size_t config_size = sizeof(virtio_blk_config);
+        std::vector<uint8_t> cfgbuf(
+            offsetof(vduse_dev_config, config) + config_size
         );
-        if (_dev == nullptr) {
-            int errsv = errno == 0 ? EINVAL : errno;
-            errno = 0;
-            std::ostringstream oss;
-            oss << "Failed to create VDUSE device " << name;
-            rawstd_error("%s\n", oss.str().c_str());
-            RAWSTD_THROW_SYSTEM_ERROR(errsv);
+        vduse_dev_config* devcfg =
+            reinterpret_cast<vduse_dev_config*>(cfgbuf.data());
+        std::memcpy(devcfg->name, _name_buf, sizeof(_name_buf));
+        devcfg->vendor_id = 0;
+        devcfg->device_id = VIRTIO_ID_BLOCK;
+        devcfg->features = init_features;
+        devcfg->vq_num = static_cast<uint32_t>(_vqs.size());
+        devcfg->vq_align = VDUSE_VQ_ALIGN;
+        devcfg->ngroups = 0;
+        devcfg->nas = 0;
+        std::memset(devcfg->reserved, 0, sizeof(devcfg->reserved));
+        devcfg->config_size = static_cast<uint32_t>(config_size);
+        std::memcpy(devcfg->config, &_config, config_size);
+
+        // Tolerate EEXIST: a previous instance of this process may have
+        // crashed and left the kernel-side device around without ever
+        // reaching VDUSE_DESTROY_DEV; reattach to it instead of failing.
+        if (ioctl(_ctrl_fd, VDUSE_CREATE_DEV, devcfg) && errno != EEXIST) {
+            RAWSTD_THROW_ERRNO();
+        }
+        errno = 0;
+
+        std::string dev_path = std::string("/dev/vduse/") + _name_buf;
+        _fd = open(dev_path.c_str(), O_RDWR);
+        if (_fd == -1) {
+            RAWSTD_THROW_ERRNO();
         }
 
-        // Mandatory: vduse_queue_enable() (called for every queue as soon
-        // as it becomes ready) unconditionally dereferences the inflight
-        // log libvduse uses to resubmit requests the kernel still
-        // considers outstanding after a backend restart -- skipping this
-        // is a guaranteed NULL deref the first time a queue comes up.
-        int rres = vduse_set_reconnect_log_file(_dev, _reconnect_file.c_str());
-        if (rres) {
-            RAWSTD_THROW_SYSTEM_ERROR(-rres);
+        for (size_t i = 0; i < _vqs.size(); ++i) {
+            vduse_vq_config vqcfg = {};
+            vqcfg.index = static_cast<uint32_t>(i);
+            vqcfg.max_size = static_cast<uint16_t>(queue_size);
+            if (ioctl(_fd, VDUSE_VQ_SETUP, &vqcfg)) {
+                RAWSTD_THROW_ERRNO();
+            }
         }
 
-        int qres = vduse_dev_setup_queue(_dev, 0, queue_size);
-        if (qres) {
-            RAWSTD_THROW_SYSTEM_ERROR(-qres);
-        }
-
-        arm_dev_poll();
+        arm_control();
     } catch (...) {
-        if (_dev != nullptr) {
-            vduse_dev_destroy(_dev);
+        if (_fd != -1) {
+            close(_fd);
+        }
+        if (_ctrl_fd != -1) {
+            ioctl(_ctrl_fd, VDUSE_DESTROY_DEV, _name_buf);
+            close(_ctrl_fd);
         }
         if (_object != nullptr) {
             rawstor_object_close(_object);
@@ -508,30 +543,40 @@ Device::Device(
 }
 
 Device::~Device() {
-    if (_dev != nullptr) {
-        int fd = vduse_dev_get_fd(_dev);
-        int cres = rawio_cancel_all(_queue, fd);
+    if (_fd != -1) {
+        int cres = rawio_cancel_all(_queue, _fd);
         if (cres && cres != -ENOENT) {
             rawstd_error(
                 "Failed to cancel pending control fd ops: %s\n", strerror(-cres)
             );
         }
 
-        cancel_kick();
-
-        int dres = vduse_dev_destroy(_dev);
-        if (dres) {
-            // -EBUSY means the kernel still considers the device attached
-            // (e.g. to the vDPA bus); the reconnect log is still needed
-            // for a future reconnect in that case, so only clean it up on
-            // a clean destroy, mirroring qemu's own vduse-blk export.
-            if (dres != -EBUSY) {
-                rawstd_error(
-                    "Failed to destroy VDUSE device: %s\n", strerror(-dres)
-                );
+        for (size_t i = 0; i < _vqs.size(); ++i) {
+            if (_vqs[i].enabled()) {
+                disable_queue(i);
             }
-        } else {
-            unlink(_reconnect_file.c_str());
+        }
+
+        if (close(_fd)) {
+            rawstd_error(
+                "Failed to close VDUSE device fd: %s\n", strerror(errno)
+            );
+            errno = 0;
+        }
+    }
+
+    if (_ctrl_fd != -1) {
+        if (ioctl(_ctrl_fd, VDUSE_DESTROY_DEV, _name_buf)) {
+            rawstd_error(
+                "Failed to destroy VDUSE device: %s\n", strerror(errno)
+            );
+            errno = 0;
+        }
+        if (close(_ctrl_fd)) {
+            rawstd_error(
+                "Failed to close VDUSE control fd: %s\n", strerror(errno)
+            );
+            errno = 0;
         }
     }
 
@@ -545,98 +590,236 @@ Device::~Device() {
     rawio_queue_delete(_queue);
 }
 
-void Device::enable_queue(VduseVirtq* vq) {
-    _vq = vq;
-    arm_kick();
-}
-
-void Device::disable_queue(VduseVirtq*) {
-    cancel_kick();
-}
-
-void Device::arm_kick() {
-    if (_kick_armed || _vq == nullptr) {
-        return;
-    }
-
-    int fd = vduse_queue_get_fd(_vq);
-    if (fd == -1) {
-        return;
-    }
-
-    std::unique_ptr<KickCtx> ctx = std::make_unique<KickCtx>();
-    ctx->device = this;
-    ctx->vq = _vq;
-    ctx->value = 0;
-
-    int res = rawio_read(
-        _queue, fd, &ctx->value, sizeof(ctx->value), kick_cb, ctx.get()
-    );
-    if (res) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-
-    _kick_armed = true;
-    ctx.release();
-}
-
-void Device::cancel_kick() {
-    if (!_kick_armed || _vq == nullptr) {
-        return;
-    }
-
-    int fd = vduse_queue_get_fd(_vq);
-    if (fd != -1) {
-        int res = rawio_cancel_all(_queue, fd);
-        if (res && res != -ENOENT) {
-            rawstd_error(
-                "Failed to cancel pending kick_fd ops: %s\n", strerror(-res)
-            );
+void* Device::iova_to_va(uint64_t iova) {
+    for (auto& r : _regions) {
+        if (iova >= r->iova() && iova < r->iova() + r->size()) {
+            return static_cast<char*>(r->mmap_addr()) + r->mmap_offset() +
+                   (iova - r->iova());
         }
     }
 
-    _kick_armed = false;
+    vduse_iotlb_entry entry = {};
+    entry.start = iova;
+    entry.last = iova + 1;
+    int fd = ioctl(_fd, VDUSE_IOTLB_GET_FD, &entry);
+    if (fd < 0) {
+        return nullptr;
+    }
+
+    uint64_t region_size = entry.last - entry.start + 1;
+    int prot = perm_to_prot(entry.perm);
+    _regions.push_back(
+        std::make_unique<IovaRegion>(
+            fd, entry.offset, entry.start, region_size, prot
+        )
+    );
+
+    return iova_to_va(iova);
 }
 
-void Device::process_vq(VduseVirtq* vq) {
+void Device::inject_irq(size_t index) {
+    uint32_t idx = static_cast<uint32_t>(index);
+    if (ioctl(_fd, VDUSE_VQ_INJECT_IRQ, &idx)) {
+        rawstd_error(
+            "vduse: failed to inject irq for vq %zu: %s\n", index,
+            strerror(errno)
+        );
+        errno = 0;
+    }
+}
+
+void Device::process_queue(size_t index) {
+    VirtQueue& vq = _vqs.at(index);
+
     unsigned int npopped = 0;
     while (true) {
-        ElemPtr elem(
-            static_cast<VduseVirtqElement*>(
-                vduse_queue_pop(vq, sizeof(VduseVirtqElement))
-            ),
-            free_elem
-        );
-        if (elem == nullptr) {
+        std::unique_ptr<DescChain> chain = vq.pop(*this);
+        if (chain == nullptr) {
             break;
         }
         ++npopped;
 
         try {
             std::unique_ptr<Request> req =
-                std::make_unique<Request>(*this, vq, std::move(elem));
+                std::make_unique<Request>(*this, index, std::move(chain));
             process_request(std::move(req));
         } catch (const std::exception& e) {
             rawstd_error("%s\n", e.what());
         }
     }
 
-    rawstd_debug("vduse: process_vq: popped %u chain(s)\n", npopped);
+    rawstd_debug(
+        "vduse: process_queue(%zu): popped %u chain(s)\n", index, npopped
+    );
 }
 
-void Device::handle_control() {
-    int res = vduse_dev_handler(_dev);
+void Device::complete_request(size_t index, uint16_t head, uint32_t len) {
+    rawstd_debug(
+        "vduse: complete_request(%zu): head %u len %u\n", index, head, len
+    );
+    VirtQueue& vq = _vqs.at(index);
+    vq.push(head, len);
+    vq.notify(*this, index, event_idx_negotiated());
+}
+
+void Device::arm_control() {
+    std::unique_ptr<ControlCtx> ctx = std::make_unique<ControlCtx>();
+    ctx->device = this;
+
+    int res = rawio_read(
+        _queue, _fd, &ctx->req, sizeof(ctx->req), control_read_cb, ctx.get()
+    );
     if (res) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
+    ctx.release();
 }
 
-void Device::arm_dev_poll() {
-    int res =
-        rawio_poll(_queue, vduse_dev_get_fd(_dev), POLLIN, dev_poll_cb, this);
-    if (res) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
+void Device::dispatch_control(
+    const vduse_dev_request& req, vduse_dev_response& resp
+) {
+    switch (req.type) {
+    case VDUSE_GET_VQ_STATE: {
+        VirtQueue& vq = _vqs.at(req.vq_state.index);
+        resp.vq_state.split.avail_index = vq.last_avail_idx();
+        resp.result = VDUSE_REQ_RESULT_OK;
+        break;
     }
+
+    case VDUSE_SET_STATUS:
+        if (req.s.status & VIRTIO_CONFIG_S_DRIVER_OK) {
+            start_dataplane();
+        } else if (req.s.status == 0) {
+            stop_dataplane();
+        }
+        resp.result = VDUSE_REQ_RESULT_OK;
+        break;
+
+    case VDUSE_UPDATE_IOTLB:
+        // The IOVA range is going away; drop cached translations for it
+        // and, for any virtqueue currently relying on one, re-resolve
+        // immediately -- their old host pointers are about to dangle.
+        remove_iova_regions(req.iova.start, req.iova.last);
+        for (size_t i = 0; i < _vqs.size(); ++i) {
+            if (!_vqs[i].enabled()) {
+                continue;
+            }
+            try {
+                _vqs[i].retranslate_vring_addr([this](uint64_t iova) {
+                    return iova_to_va(iova);
+                });
+            } catch (const std::exception& e) {
+                rawstd_error(
+                    "vduse: failed to update vring for vq %zu: %s\n", i,
+                    e.what()
+                );
+            }
+        }
+        resp.result = VDUSE_REQ_RESULT_OK;
+        break;
+
+    default:
+        rawstd_error("vduse: unexpected control request type: %u\n", req.type);
+        resp.result = VDUSE_REQ_RESULT_FAILED;
+        break;
+    }
+}
+
+void Device::enable_queue(size_t index) {
+    VirtQueue& vq = _vqs.at(index);
+
+    vduse_vq_info info = {};
+    info.index = static_cast<uint32_t>(index);
+    if (ioctl(_fd, VDUSE_VQ_GET_INFO, &info)) {
+        rawstd_error(
+            "vduse: failed to get vq[%zu] info: %s\n", index, strerror(errno)
+        );
+        errno = 0;
+        return;
+    }
+
+    if (!info.ready) {
+        return;
+    }
+
+    vq.set_vring_size(info.num);
+    vq.set_vring_addr(
+        [this](uint64_t iova) { return iova_to_va(iova); }, info.desc_addr,
+        info.driver_addr, info.device_addr
+    );
+
+    int kfd = vq.create_kick_fd();
+
+    vduse_vq_eventfd ev = {};
+    ev.index = static_cast<uint32_t>(index);
+    ev.fd = kfd;
+    if (ioctl(_fd, VDUSE_VQ_SETUP_KICKFD, &ev)) {
+        rawstd_error(
+            "vduse: failed to set up kick_fd for vq[%zu]: %s\n", index,
+            strerror(errno)
+        );
+        errno = 0;
+        vq.close_kick_fd();
+        return;
+    }
+
+    vq.set_enabled(*this, index, true);
+}
+
+void Device::disable_queue(size_t index) {
+    VirtQueue& vq = _vqs.at(index);
+    if (!vq.enabled()) {
+        return;
+    }
+
+    vq.set_enabled(*this, index, false);
+
+    vduse_vq_eventfd ev = {};
+    ev.index = static_cast<uint32_t>(index);
+    ev.fd = VDUSE_EVENTFD_DEASSIGN;
+    // Best-effort, matching the reference implementation: the device may
+    // already be gone by the time this runs during teardown.
+    ioctl(_fd, VDUSE_VQ_SETUP_KICKFD, &ev);
+    errno = 0;
+
+    vq.close_kick_fd();
+    vq.clear_vring_addr();
+}
+
+void Device::start_dataplane() {
+    uint64_t features = 0;
+    if (ioctl(_fd, VDUSE_DEV_GET_FEATURES, &features)) {
+        RAWSTD_THROW_ERRNO();
+    }
+    _features = features;
+
+    for (size_t i = 0; i < _vqs.size(); ++i) {
+        enable_queue(i);
+    }
+}
+
+void Device::stop_dataplane() {
+    for (size_t i = 0; i < _vqs.size(); ++i) {
+        disable_queue(i);
+    }
+    _features = 0;
+    _regions.clear();
+}
+
+void Device::remove_iova_regions(uint64_t start, uint64_t last) {
+    if (last == start) {
+        return;
+    }
+
+    _regions.erase(
+        std::remove_if(
+            _regions.begin(), _regions.end(),
+            [start, last](const std::unique_ptr<IovaRegion>& r) {
+                return start <= r->iova() && last >= r->iova() + r->size() - 1;
+            }
+        ),
+        _regions.end()
+    );
 }
 
 void Device::loop() {
