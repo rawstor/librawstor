@@ -21,7 +21,7 @@ private:
     int _fd;
     std::vector<rawstd::URI> _locations;
     RawIOEvent* _accept_event;
-    std::unordered_map<int, std::unique_ptr<Session>> _sessions;
+    std::unordered_map<int, std::shared_ptr<Session>> _sessions;
 
     static int _accept(int result, void* data) noexcept;
     int _accept(int result);

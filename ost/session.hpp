@@ -9,6 +9,7 @@
 #include <rawstd/uri.hpp>
 #include <rawstd/uuid.h>
 
+#include <memory>
 #include <vector>
 
 namespace rawstor {
@@ -16,8 +17,12 @@ namespace ostbackend {
 
 class Server;
 
-class Session final {
+class Session final : public std::enable_shared_from_this<Session> {
 private:
+    struct Private {
+        explicit Private() = default;
+    };
+
     RawIOQueue* _queue;
     Server& _server;
     int _fd;
@@ -71,8 +76,22 @@ private:
     );
     std::vector<rawstd::URI> _targets(const RawstdUUID& uuid);
 
+    // Tears the session down via Server::del_session() if the send itself
+    // fails (e.g. a short write).
+    void _send_response(
+        const RawstorOSTCommandType& type, uint16_t cid, int32_t result,
+        uint64_t hash
+    );
+    void _send_response(
+        const RawstorOSTCommandType& type, uint16_t cid, int32_t result,
+        uint64_t hash, const std::shared_ptr<std::vector<unsigned char>>& data
+    );
+
 public:
-    Session(RawIOQueue* queue, Server& server, int fd);
+    static std::shared_ptr<Session>
+    create(RawIOQueue* queue, Server& server, int fd);
+
+    Session(Private, RawIOQueue* queue, Server& server, int fd);
     Session(const Session&) = delete;
     Session(Session&&) = delete;
     ~Session() noexcept;

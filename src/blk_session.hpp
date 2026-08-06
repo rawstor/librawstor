@@ -25,7 +25,7 @@ protected:
     virtual int _connect(const RawstdUUID& id) = 0;
 
 public:
-    Session(rawio::Queue& queue, const rawstd::URI& location);
+    Session(Private p, rawio::Queue& queue, const rawstd::URI& location);
 
     void set_object(Object* object) override final;
 

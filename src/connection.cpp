@@ -52,6 +52,28 @@ public:
     }
 };
 
+void retry(const char* func_name, const std::function<void()>& f) {
+    for (unsigned int attempt = 1; attempt <= rawstor_opts_io_attempts();
+         ++attempt) {
+        try {
+            f();
+            return;
+        } catch (const std::exception& e) {
+            if (attempt == rawstor_opts_io_attempts()) {
+                rawstd_error(
+                    "%s: error: %s; attempt: %d of %d; failing...\n", func_name,
+                    e.what(), attempt, rawstor_opts_io_attempts()
+                );
+                throw;
+            }
+            rawstd_warning(
+                "%s: error: %s; attempt: %d of %d; retrying...\n", func_name,
+                e.what(), attempt, rawstor_opts_io_attempts()
+            );
+        }
+    }
+}
+
 } // namespace
 
 namespace rawstor {
@@ -206,12 +228,18 @@ void Connection::invalidate_session(const std::shared_ptr<Session>& s) {
         std::find(_sessions.begin(), _sessions.end(), s);
 
     if (it != _sessions.end()) {
-        _sessions.erase(it);
-
+        // Open the replacement before touching _sessions: if _open() itself
+        // fails (e.g. the server is unreachable under load, exhausting its
+        // own internal retries), leave the broken-but-present session in
+        // place rather than erasing it first and never getting a
+        // replacement -- an empty _sessions permanently breaks every
+        // future op on this Connection (get_next_session() throws), while
+        // leaving the stale entry just means the next op that picks it up
+        // retries invalidate_session() again instead of failing forever.
         std::vector<std::shared_ptr<Session>> new_sessions =
             _open(s->location(), _object, 1);
 
-        _sessions.push_back(new_sessions.front());
+        *it = new_sessions.front();
     }
 }
 
@@ -227,30 +255,32 @@ void Connection::list(
     const rawstd::URI& location, unsigned int limit,
     std::vector<RawstdUUID>& targets, RawstdUUID& token
 ) {
-    Queue q(1);
-
     std::vector<RawstdUUID> ret;
     RawstdUUID ret_token;
 
-    std::unique_ptr<Session> s = Session::create(q.queue(), location);
-    s->list(
-        limit, token,
-        [&q, &ret, &ret_token](
-            std::vector<RawstdUUID>&& uuids, const RawstdUUID& next_token,
-            int error
-        ) {
-            q.sub_operation();
+    retry(__FUNCTION__, [&]() {
+        Queue q(1);
 
-            if (error) {
-                RAWSTD_THROW_SYSTEM_ERROR(error);
+        std::unique_ptr<Session> s = Session::create(q.queue(), location);
+        s->list(
+            limit, token,
+            [&q, &ret, &ret_token](
+                std::vector<RawstdUUID>&& uuids, const RawstdUUID& next_token,
+                int error
+            ) {
+                q.sub_operation();
+
+                if (error) {
+                    RAWSTD_THROW_SYSTEM_ERROR(error);
+                }
+
+                ret = std::move(uuids);
+                ret_token = next_token;
             }
+        );
 
-            ret = std::move(uuids);
-            ret_token = next_token;
-        }
-    );
-
-    q.wait();
+        q.wait();
+    });
 
     targets.swap(ret);
     token = ret_token;
@@ -265,18 +295,21 @@ void Connection::create(
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 
-    Queue q(1);
+    retry(__FUNCTION__, [&]() {
+        Queue q(1);
 
-    std::unique_ptr<Session> s = Session::create(q.queue(), target.parent());
-    s->create(id, sp, [&q](int error) {
-        q.sub_operation();
+        std::unique_ptr<Session> s =
+            Session::create(q.queue(), target.parent());
+        s->create(id, sp, [&q](int error) {
+            q.sub_operation();
 
-        if (error) {
-            RAWSTD_THROW_SYSTEM_ERROR(error);
-        }
+            if (error) {
+                RAWSTD_THROW_SYSTEM_ERROR(error);
+            }
+        });
+
+        q.wait();
     });
-
-    q.wait();
 }
 
 void Connection::remove(const rawstd::URI& target) {
@@ -286,18 +319,21 @@ void Connection::remove(const rawstd::URI& target) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 
-    Queue q(1);
+    retry(__FUNCTION__, [&]() {
+        Queue q(1);
 
-    std::unique_ptr<Session> s = Session::create(q.queue(), target.parent());
-    s->remove(id, [&q](int error) {
-        q.sub_operation();
+        std::unique_ptr<Session> s =
+            Session::create(q.queue(), target.parent());
+        s->remove(id, [&q](int error) {
+            q.sub_operation();
 
-        if (error) {
-            RAWSTD_THROW_SYSTEM_ERROR(error);
-        }
+            if (error) {
+                RAWSTD_THROW_SYSTEM_ERROR(error);
+            }
+        });
+
+        q.wait();
     });
-
-    q.wait();
 }
 
 void Connection::spec(const rawstd::URI& target, RawstorObjectSpec* sp) {
@@ -307,37 +343,42 @@ void Connection::spec(const rawstd::URI& target, RawstorObjectSpec* sp) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 
-    Queue q(1);
+    retry(__FUNCTION__, [&]() {
+        Queue q(1);
 
-    std::unique_ptr<Session> s = Session::create(q.queue(), target.parent());
-    s->spec(id, [&q, sp](const RawstorObjectSpec& spec, int error) {
-        q.sub_operation();
+        std::unique_ptr<Session> s =
+            Session::create(q.queue(), target.parent());
+        s->spec(id, [&q, sp](const RawstorObjectSpec& spec, int error) {
+            q.sub_operation();
 
-        if (error) {
-            RAWSTD_THROW_SYSTEM_ERROR(error);
-        }
+            if (error) {
+                RAWSTD_THROW_SYSTEM_ERROR(error);
+            }
 
-        *sp = spec;
+            *sp = spec;
+        });
+
+        q.wait();
     });
-
-    q.wait();
 }
 
 void Connection::info(const rawstd::URI& location, RawstorLocationInfo* info) {
-    Queue q(1);
+    retry(__FUNCTION__, [&]() {
+        Queue q(1);
 
-    std::unique_ptr<Session> s = Session::create(q.queue(), location);
-    s->info([&q, info](const RawstorLocationInfo& li, int error) {
-        q.sub_operation();
+        std::unique_ptr<Session> s = Session::create(q.queue(), location);
+        s->info([&q, info](const RawstorLocationInfo& li, int error) {
+            q.sub_operation();
 
-        if (error) {
-            RAWSTD_THROW_SYSTEM_ERROR(error);
-        }
+            if (error) {
+                RAWSTD_THROW_SYSTEM_ERROR(error);
+            }
 
-        *info = li;
+            *info = li;
+        });
+
+        q.wait();
     });
-
-    q.wait();
 }
 
 void Connection::open(
