@@ -1,5 +1,4 @@
-SUBDIRS = 3rdparty \
-          src
+SUBDIRS = src
 
 if ENABLE_TESTS
     SUBDIRS += tests

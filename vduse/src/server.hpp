@@ -11,14 +11,12 @@ private:
     unsigned int _queue_size;
     std::string _target;
     std::string _name;
-    std::string _reconnect_file;
     bool _write_cache_enabled;
 
 public:
     Server(
         unsigned int queue_size, const std::string& target,
-        const std::string& name, const std::string& reconnect_file,
-        bool write_cache_enabled
+        const std::string& name, bool write_cache_enabled
     );
     Server(const Server&) = delete;
     Server(Server&&) = delete;

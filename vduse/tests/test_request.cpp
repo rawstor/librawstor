@@ -2,10 +2,7 @@
 
 #include <vduse/request.hpp>
 
-// See vduse/src/request.cpp for why this must come first.
-#include "include/compiler.h"
-
-#include "standard-headers/linux/virtio_blk.h"
+#include <stdheaders/linux/virtio_blk.h>
 
 #include <sys/uio.h>
 

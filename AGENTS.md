@@ -63,20 +63,24 @@ librawstor/
 ├── librawio/         async I/O abstraction (see RawIO above); src/ (impl) + include/rawio/ (public) + tests/
 ├── src/              core librawstor C++ library (librawstor.la, rawstor.pc); public C API in include/rawstor/
 ├── include/rawstor/  public C API headers: rawstor.h, object.h, list.h, rawio.h, protocol.h, version.h
+├── include/stdheaders/ vendored/trimmed Linux virtio kernel headers shared by vhost/ and vduse/
+│                     (types.h, virtio_types.h, virtio_ring.h, virtio_blk.h, virtio_config.h)
 ├── cli/              rawstor command-line client (create/list/show/remove/testio)
 ├── ost/              rawstor-ost — the OST protocol server (serves file://, proxies/mirrors to ost://)
 ├── vhost/             rawstor-vhost — native vhost-user-blk backend (no qemu library dependency)
 │   ├── include/vhost/  public headers vhost/tests needs: protocol.h, ring.hpp, virtqueue.hpp
-│   ├── include/stdheaders/ vendored/trimmed Linux virtio/vhost kernel headers
+│   ├── include/stdheaders/ vendored vhost_types.h (vhost-user specific; shared kernel headers
+│   │                   live in the top-level include/stdheaders/ above)
 │   ├── src/          device/devregion/ring/server/virtqueue implementation + main.cpp
 │   └── tests/         gtest suite (currently: VirtQueue/ring logic)
 ├── vhost-qemu/       rawstor-vhost-qemu — alternate vhost-user-blk backend built on vendored
 │                     qemu libvhost-user (3rdparty/qemu/libvhost-user), kept side-by-side with
 │                     vhost/ purely to performance-compare the native vs qemu-library implementation
 ├── vduse/            rawstor-vduse — VDUSE virtio-blk backend (Linux-only); same include/ +
-│                     src/ + tests/ split as vhost/, but the VDUSE kernel control-plane
-│                     protocol itself comes from vendored qemu libvduse
-│                     (3rdparty/qemu/libvduse), the way vhost-qemu/ uses libvhost-user
+│                     src/ + tests/ split as vhost/, and like vhost/ implements the protocol
+│                     natively (no vendored qemu libvduse or other third-party library) —
+│                     include/stdheaders/ here holds only vduse.h (VDUSE-specific; shared
+│                     kernel headers live in the top-level include/stdheaders/ above)
 ├── pyrawstor/        Python 3 bindings (location/target helpers)
 ├── tests/            top-level librawstor integration/unit tests (own in-process test server)
 └── docs/             locations_and_targets.md (the OST wire protocol itself is documented
@@ -207,15 +211,22 @@ backends and the io_uring/poll RawIO backends.
   (typically in `librawio`), not in the vendored copy. `vhost-qemu`
   exists specifically as a performance/behavior baseline to compare
   `vhost/`'s native implementation against, not as something to extend.
-- `vduse/3rdparty/qemu/libvduse/` is likewise vendored upstream QEMU code
-  (`subprojects/libvduse`, GPL-2.0) — never patch it either; unlike
-  `vhost-qemu`, though, `vduse/` is a real shipped backend (its own
-  deb/rpm package, systemd unit), not just a comparison baseline, so a bug
-  found there is worth reporting upstream. VDUSE itself is Linux-only
-  (`--disable-vduse-backend` at `configure` time, or auto-disabled on
-  non-Linux hosts) and needs the `vduse` kernel module plus
-  `/dev/vduse/control` access at runtime — see the top-level README's
-  "rawstor-vduse" section.
+- `vduse/`, unlike `vhost-qemu/`, does not vendor a third-party protocol
+  library — it implements the VDUSE control-plane protocol (ioctls on
+  `/dev/vduse/control`/`/dev/vduse/$NAME`, IOTLB-backed memory mapping)
+  natively, the same way `vhost/` implements vhost-user natively.
+  `vduse/include/stdheaders/linux/vduse.h` is a trimmed vendored copy of
+  the Linux kernel's own uAPI header (like the top-level
+  `include/stdheaders/` vendors the virtio kernel headers `vhost/` and
+  `vduse/` share) — if trimming it further, keep any union
+  member sharing storage with a field still in use (e.g.
+  `vduse_vq_state_packed`, unused since only the split-ring layout is
+  implemented), since removing it would shrink the union and shift every
+  field the kernel places after it, silently breaking the ioctl ABI.
+  VDUSE itself is Linux-only (`--disable-vduse-backend` at `configure`
+  time, or auto-disabled on non-Linux hosts) and needs the `vduse` kernel
+  module plus `/dev/vduse/control` access at runtime — see the top-level
+  README's "rawstor-vduse" section.
 - virtio `EVENT_IDX` is a *bidirectional* suppression handshake:
   `used_event` (driver→device, suppresses interrupts) and `avail_event`
   (device→driver, suppresses kicks) are independent and both must be
