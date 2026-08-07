@@ -508,15 +508,13 @@ TEST(OstIOTest, write_disconnect_concurrent) {
     std::string pong = "pong";
 
     int res = rawstor_object_pwrite(
-        object.raw(), ping.data(), ping.length(), 0, false, callback,
-        cb1.get()
+        object.raw(), ping.data(), ping.length(), 0, false, callback, cb1.get()
     );
     ASSERT_GE(res, 0);
     cb1.release();
 
     res = rawstor_object_pwrite(
-        object.raw(), pong.data(), pong.length(), 4, false, callback,
-        cb2.get()
+        object.raw(), pong.data(), pong.length(), 4, false, callback, cb2.get()
     );
     ASSERT_GE(res, 0);
     cb2.release();
@@ -532,8 +530,8 @@ TEST(OstIOTest, write_disconnect_concurrent) {
         }
     }
 
-    EXPECT_TRUE(done1) << "first write never completed (orphaned in-flight op)";
-    EXPECT_TRUE(done2) << "second write never completed (orphaned in-flight op)";
+    EXPECT_TRUE(done1) << "first write orphaned (never completed)";
+    EXPECT_TRUE(done2) << "second write orphaned (never completed)";
     EXPECT_NE(err1, 0);
     EXPECT_NE(err2, 0);
 }
