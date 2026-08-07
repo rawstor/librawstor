@@ -791,7 +791,7 @@ void Session::_send_response(
         .msg_name = nullptr,
         .msg_namelen = 0,
         .msg_iov = iov->data(),
-        .msg_iovlen = iov->size(),
+        .msg_iovlen = static_cast<decltype(msghdr::msg_iovlen)>(iov->size()),
         .msg_control = nullptr,
         .msg_controllen = 0,
         .msg_flags = 0,

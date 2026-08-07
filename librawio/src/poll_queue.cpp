@@ -615,6 +615,10 @@ rawio::Event* Queue::sendmsg(
 }
 
 void Queue::cancel(rawio::Event* e) {
+    if (_tearing_down) {
+        return;
+    }
+
     for (auto& it : _sessions) {
         if (it.second->cancel(e, _cqes)) {
             return;
@@ -628,6 +632,10 @@ void Queue::cancel(rawio::Event* e) {
 }
 
 void Queue::cancel(int fd) {
+    if (_tearing_down) {
+        return;
+    }
+
     auto it = _sessions.find(fd);
     if (it != _sessions.end()) {
         it->second->cancel(_cqes);

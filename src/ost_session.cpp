@@ -404,7 +404,7 @@ public:
             .msg_name = nullptr,
             .msg_namelen = 0,
             .msg_iov = _iov.data(),
-            .msg_iovlen = _iov.size(),
+            .msg_iovlen = static_cast<decltype(_msg.msg_iovlen)>(_iov.size()),
             .msg_control = nullptr,
             .msg_controllen = 0,
             .msg_flags = 0,
@@ -480,7 +480,7 @@ public:
             .msg_name = nullptr,
             .msg_namelen = 0,
             .msg_iov = _iov.data(),
-            .msg_iovlen = _iov.size(),
+            .msg_iovlen = static_cast<decltype(_msg.msg_iovlen)>(_iov.size()),
             .msg_control = nullptr,
             .msg_controllen = 0,
             .msg_flags = 0,
@@ -594,7 +594,7 @@ std::vector<T> basic_request(
     memcpy(request.body.obj_id, id.bytes, sizeof(request.body.obj_id));
     queue->send(
         fd, &request, sizeof(request), RAWSTD_MSG_NOSIGNAL,
-        [fd, trace_event](size_t result, int error) {
+        [trace_event](size_t result, int error) {
             RAWSTD_TRACE_EVENT_MESSAGE(
                 trace_event, "%zu of %zu, error = %d\n", result,
                 sizeof(RawstorOSTFrameBasic), error
@@ -645,7 +645,7 @@ std::vector<T> basic_request(
 
                 queue->recv_multishot(
                     fd, 1u << 17, 64 * 4, response.body.res, 0,
-                    [fd, &completed, &response, trace_event, &ret](
+                    [&completed, &response, trace_event, &ret](
                         const iovec* iov, unsigned int niov, size_t result,
                         int error
                     ) -> size_t {
@@ -1001,14 +1001,29 @@ void Session::set_object(Object* object) {
         RAWSTD_TRACE_EVENT('m', "%s\n", "multishot recv");
     _read_event = _queue.recv_multishot(
         fd(), 1u << 17, 64 * 4, sizeof(RawstorOSTFrameResponse), 0,
-        [session = std::static_pointer_cast<rawstor::ost::Session>(
-             shared_from_this()
+        [weak = std::weak_ptr<rawstor::ost::Session>(
+             std::static_pointer_cast<rawstor::ost::Session>(shared_from_this())
          ),
          cid = 0, is_head = true, size = sizeof(RawstorOSTFrameResponse),
          trace_event](
             const iovec* iov, unsigned int niov, size_t result, int error
         ) mutable -> size_t {
             if (error == ECANCELED) {
+                return 0;
+            }
+
+            // A strong self-reference here (instead of weak_ptr::lock())
+            // would keep this Session alive purely because its own recv
+            // registration exists -- including while this very lambda's
+            // captured shared_ptr is what's being torn down as part of
+            // the *owning* rawio::Queue's own destruction (e.g. process
+            // shutdown), which would then call back into that same,
+            // still-destructing Queue via ~Session()'s _queue.cancel(),
+            // a reentrant heap-use-after-free. A missing session here
+            // means it was already destroyed via some other, unrelated
+            // reference dropping -- nothing to do.
+            std::shared_ptr<rawstor::ost::Session> session = weak.lock();
+            if (session == nullptr) {
                 return 0;
             }
 
