@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dropped the deprecated `-l`/`--location` and `-t`/`--target` flags (`rawstor list`/`create`/`remove`/`show`/`testio`, `rawstor-ost`, `rawstor-vhost`) in favor of the positional `LOCATION`/`TARGET` argument; `rawstor create -t TARGET` (create-by-target) is unaffected. Also dropped the `rawstor-cli` compat symlink from the deb/rpm packages — use `rawstor`.
 - Dropped the automatic migration of pre-0.2.4 `file://` objects (`<uuid>.dat`/`<uuid>.spec` pairs) to the current single-file format; such objects are no longer readable.
 
+## [0.2.6] - Unreleased
+
+### Fixed
+- An OST client/server request whose own send hadn't finished yet when its connection failed and reconnected could be permanently stranded — never receiving a response or an error — hanging its caller indefinitely instead of failing or retrying.
+
 ## [0.2.5] - 2026-08-07
 
 ### Added
