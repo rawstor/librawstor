@@ -1,0 +1,3 @@
+usr/bin/rawstor-vduse
+systemd/rawstor-vduse@.service usr/lib/systemd/system
+udev/60-rawstor-vduse.rules lib/udev/rules.d

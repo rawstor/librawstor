@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dropped the deprecated `-l`/`--location` and `-t`/`--target` flags (`rawstor list`/`create`/`remove`/`show`/`testio`, `rawstor-ost`, `rawstor-vhost`) in favor of the positional `LOCATION`/`TARGET` argument; `rawstor create -t TARGET` (create-by-target) is unaffected. Also dropped the `rawstor-cli` compat symlink from the deb/rpm packages — use `rawstor`.
 - Dropped the automatic migration of pre-0.2.4 `file://` objects (`<uuid>.dat`/`<uuid>.spec` pairs) to the current single-file format; such objects are no longer readable.
 
+## [0.2.6] - Unreleased
+
+### Added
+- `rawstor-vduse`: a new virtio-blk backend using the [VDUSE](https://docs.kernel.org/userspace-api/vduse.html) (vDPA Device in Userspace) kernel protocol, alongside `rawstor-vhost`. Implements the protocol natively (no vendored third-party library, same approach as `vhost/`), in its own deb/rpm package with a `rawstor-vduse@.service` systemd template unit and udev rule. Linux-only. See the top-level README's "rawstor-vduse" section.
+
 ## [0.2.5] - Unreleased
 
 ### Added
