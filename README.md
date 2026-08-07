@@ -60,7 +60,7 @@ Default values are shown below.
 | `RAWSTOR_OPTS_SO_SNDTIMEO` | `5000` | Socket send timeout. Sets `SO_SNDTIMEO` for network sockets. |
 | `RAWSTOR_OPTS_SO_RCVTIMEO` | `5000` | Socket receive timeout. Sets `SO_RCVTIMEO` for network sockets. |
 | `RAWSTOR_OPTS_TCP_USER_TIMEOUT` | `5000` | TCP user timeout (Linux `TCP_USER_TIMEOUT`). Defines how long transmitted data may remain unacknowledged before the connection is closed. |
-| `RAWSTOR_OPTS_LIST_LIMIT` | `10` | The maximum number of rows that can be returned in list functions. |
+| `RAWSTOR_OPTS_LIST_LIMIT` | `1000` | Server-side page size cap for list operations: the maximum number of objects returned in a single call, regardless of the caller-requested limit. Larger listings are paginated across multiple calls. |
 
 > **Note:** All timeout values are expressed in milliseconds unless stated otherwise.
 

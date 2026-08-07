@@ -10,6 +10,15 @@ Group=rawstor
 WorkingDirectory=/var/lib/rawstor
 StateDirectory=rawstor
 Environment=BIND_ADDR=0.0.0.0:7777
+# librawstor client/server tuning knobs (see README.md's "Environment
+# Variables" section for what each one does); uncomment to override a
+# default, or set them in /etc/rawstor-ost.conf below instead.
+#Environment=RAWSTOR_OPTS_IO_ATTEMPTS=3
+#Environment=RAWSTOR_OPTS_SESSIONS=1
+#Environment=RAWSTOR_OPTS_SO_SNDTIMEO=5000
+#Environment=RAWSTOR_OPTS_SO_RCVTIMEO=5000
+#Environment=RAWSTOR_OPTS_TCP_USER_TIMEOUT=5000
+#Environment=RAWSTOR_OPTS_LIST_LIMIT=1000
 EnvironmentFile=-/etc/rawstor-ost.conf
 ExecStart=/usr/bin/rawstor-ost --bind=${BIND_ADDR} file:///var/lib/rawstor
 Restart=always
