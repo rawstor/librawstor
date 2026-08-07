@@ -45,6 +45,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.2.6] - 2026-08-10
 
+### Added
+- `rawstor-vduse`: a new virtio-blk backend using the [VDUSE](https://docs.kernel.org/userspace-api/vduse.html) (vDPA Device in Userspace) kernel protocol, alongside `rawstor-vhost`. Implements the protocol natively (no vendored third-party library, same approach as `vhost/`), in its own deb/rpm package with a `rawstor-vduse@.service` systemd template unit and udev rule. Linux-only. See the top-level README's "rawstor-vduse" section.
+
 ### Changed
 - `rawstor-ost.service`/`rawstor-vhost@.service` now document and pass through all `RAWSTOR_OPTS_*` client/server tuning environment variables (previously only `BIND_ADDR`/`RAWSTOR_LOCATION`/`RAWSTOR_WRITE_CACHE`).
 
@@ -54,7 +57,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.2.5] - 2026-08-07
 
 ### Added
-- `rawstor-vduse`: a new virtio-blk backend using the [VDUSE](https://docs.kernel.org/userspace-api/vduse.html) (vDPA Device in Userspace) kernel protocol, alongside `rawstor-vhost`. Implements the protocol natively (no vendored third-party library, same approach as `vhost/`), in its own deb/rpm package with a `rawstor-vduse@.service` systemd template unit and udev rule. Linux-only. See the top-level README's "rawstor-vduse" section.
 - `rawstor_object_flush()`: a durability barrier — once its callback reports success, every write that completed before the call is guaranteed durable. Backed by `fdatasync()` (`F_FULLFSYNC` on macOS) for `file://`, and a new `RAWSTOR_CMD_FLUSH` OST wire command for `ost://`.
 - `rawstor-vhost` and `rawstor-vhost-qemu` now implement `VIRTIO_BLK_T_FLUSH` (via `rawstor_object_flush()`) instead of responding `VIRTIO_BLK_S_UNSUPP`, and advertise the `VIRTIO_BLK_F_FLUSH` feature.
 
