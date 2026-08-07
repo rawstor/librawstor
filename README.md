@@ -1,6 +1,6 @@
 # Rawstor library and tools
 
-[![Unit Test Status](https://github.com/rawstor/librawstor/actions/workflows/unittest.yml/badge.svg?branch=main)](https://github.com/rawstor/librawstor/actions/workflows/unittest.yml)
+[![Unit Test Status](https://github.com/rawstor/librawstor/actions/workflows/dist.yml/badge.svg)](https://github.com/rawstor/librawstor/actions/workflows/dist.yml)
 
 ## TL;DR
 ```

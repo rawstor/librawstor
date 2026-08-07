@@ -32,6 +32,8 @@ Queue::Queue(unsigned int depth) :
 }
 
 Queue::~Queue() {
+    _tearing_down = true;
+
     int res = io_uring_submit(&_ring);
     if (res < 0) {
         rawstd_error("Failed to submit sqes: %s\n", strerror(-res));
@@ -723,6 +725,10 @@ rawio::Event* Queue::sendmsg(
 }
 
 void Queue::cancel(rawio::Event* event) {
+    if (_tearing_down) {
+        return;
+    }
+
     int res = io_uring_submit(&_ring);
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
@@ -737,6 +743,10 @@ void Queue::cancel(rawio::Event* event) {
 }
 
 void Queue::cancel(int fd) {
+    if (_tearing_down) {
+        return;
+    }
+
     int res = io_uring_submit(&_ring);
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);

@@ -22,6 +22,17 @@ class Queue : public RawIOQueue {
 private:
     unsigned int _depth;
 
+protected:
+    // Set by a subclass's destructor, before it starts tearing itself
+    // down, to true. A completion callback delivered during that teardown
+    // (e.g. uring::Queue::~Queue() synchronously delivering ECANCELED to
+    // every still-pending op) can release the last shared_ptr keeping some
+    // unrelated object alive, whose own destructor calls back into
+    // cancel() on this same, still-destructing Queue. cancel() checks this
+    // flag and becomes a safe no-op in that case: the Queue is going away
+    // regardless, so there is nothing left to cancel.
+    bool _tearing_down = false;
+
 public:
     static const std::string& engine_name();
     static void setup_fd(int fd);
