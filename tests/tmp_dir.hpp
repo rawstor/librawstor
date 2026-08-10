@@ -1,13 +1,8 @@
 #ifndef RAWSTOR_TESTS_TMP_DIR_HPP
 #define RAWSTOR_TESTS_TMP_DIR_HPP
 
-#include <rawstd/gpp.hpp>
-
 #include <filesystem>
-#include <sstream>
 #include <string>
-
-#include <unistd.h>
 
 namespace rawstor {
 namespace tests {
@@ -21,33 +16,17 @@ private:
     std::filesystem::path _path;
 
 public:
-    TmpDir() {
-        std::string tmpl =
-            (std::filesystem::temp_directory_path() / "rawstor-test-XXXXXX")
-                .string();
-        if (mkdtemp(tmpl.data()) == nullptr) {
-            RAWSTD_THROW_ERRNO();
-        }
-        _path = tmpl;
-    }
+    TmpDir();
+    ~TmpDir();
 
     TmpDir(const TmpDir&) = delete;
     TmpDir& operator=(const TmpDir&) = delete;
+    TmpDir(TmpDir&&) = delete;
+    TmpDir& operator=(TmpDir&&) = delete;
 
-    ~TmpDir() {
-        std::error_code ec;
-        std::filesystem::remove_all(_path, ec);
-    }
+    const std::filesystem::path& path() const noexcept;
 
-    const std::filesystem::path& path() const {
-        return _path;
-    }
-
-    std::string uri() const {
-        std::ostringstream oss;
-        oss << "file://" << _path.string();
-        return oss.str();
-    }
+    std::string uri() const;
 };
 
 } // namespace tests

@@ -18,6 +18,7 @@ test_all_SOURCES = main.cpp \
                    server.hpp \
                    session.cpp \
                    session.hpp \
+                   tmp_dir.cpp \
                    tmp_dir.hpp \
                    test_io.cpp \
                    test_lifecycle.cpp \
