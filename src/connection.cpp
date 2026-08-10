@@ -35,7 +35,7 @@ private:
 public:
     Queue(unsigned int operations) :
         _operations(operations),
-        _q(rawio::Queue::create(256)) {}
+        _q(rawio::Queue::create(operations)) {}
 
     Queue(const Queue&) = delete;
 

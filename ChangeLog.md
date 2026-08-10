@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - An OST client/server request whose own send hadn't finished yet when its connection failed and reconnected could be permanently stranded — never receiving a response or an error — hanging its caller indefinitely instead of failing or retrying.
+- `rawstor create`/`remove`/`list`/`spec`/`info` (and the `ost://`/`file://` equivalents) each set up an oversized 256-entry IO queue for what's always exactly one in-flight operation; a caller issuing many of these back-to-back (e.g. paginating a large listing) could exhaust IO resources well before actually needing to.
 
 ## [0.2.5] - 2026-08-07
 
