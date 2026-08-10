@@ -10,6 +10,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cerrno>
 #include <cstring>
 #include <filesystem>
 #include <functional>
@@ -112,6 +113,8 @@ public:
     Object& operator=(Object&&) = delete;
 
     inline const std::string& target() const noexcept { return _target; }
+
+    inline RawstorObject* raw() const noexcept { return _object; }
 
     void read(void* buf, size_t size) {
         bool completed = false;
@@ -450,6 +453,87 @@ TEST(OstIOTest, write_disconnect) {
 
     std::string ping = "ping";
     EXPECT_THROW(object.write(ping.data(), ping.length()), std::system_error);
+}
+
+TEST(OstIOTest, write_disconnect_concurrent) {
+    Queue queue(16);
+    rawstor::tests::Server server(8753, 256);
+    std::string target =
+        "ost://127.0.0.1:8753/00000000-0000-7000-8000-000000000000";
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
+    }
+
+    // The object-open session, and each of its retries below, disconnects
+    // right after SET_OBJECT succeeds -- before either concurrent write
+    // further down is even attempted on it. Both rawstor_object_pwrite()
+    // calls below are issued back to back with no rawio_wait_timeout() in
+    // between, so Session::_add_op() runs for both before the client's
+    // event loop has had any chance to deliver either op's own request
+    // send completion. This is the window a stranded op used to fall
+    // into: registered in Session::_ops, but not yet "in flight" by
+    // SessionOp::in_flight()'s old (now removed) definition.
+    for (unsigned int i = 0; i < 3; ++i) {
+        rawstor::tests::Session s(server);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+    }
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_release(RAWSTOR_MAGIC, 0, 0);
+    }
+
+    Object object(queue, target, 1ull << 20);
+
+    bool done1 = false;
+    bool done2 = false;
+    int err1 = 0;
+    int err2 = 0;
+    auto cb1 = std::make_unique<std::function<void(size_t, int)>>(
+        [&done1, &err1](size_t, int error) {
+            done1 = true;
+            err1 = error;
+        }
+    );
+    auto cb2 = std::make_unique<std::function<void(size_t, int)>>(
+        [&done2, &err2](size_t, int error) {
+            done2 = true;
+            err2 = error;
+        }
+    );
+
+    std::string ping = "ping";
+    std::string pong = "pong";
+
+    int res = rawstor_object_pwrite(
+        object.raw(), ping.data(), ping.length(), 0, false, callback, cb1.get()
+    );
+    ASSERT_GE(res, 0);
+    cb1.release();
+
+    res = rawstor_object_pwrite(
+        object.raw(), pong.data(), pong.length(), 4, false, callback, cb2.get()
+    );
+    ASSERT_GE(res, 0);
+    cb2.release();
+
+    // A bounded, timeout-based pump rather than the blocking
+    // Object::write() helper: an orphaned op would otherwise hang this
+    // loop -- and the whole test binary -- forever instead of failing
+    // the test.
+    for (unsigned int i = 0; i < 50 && !(done1 && done2); ++i) {
+        int wres = rawio_wait_timeout(queue, 100);
+        if (wres < 0 && wres != -ETIME) {
+            break;
+        }
+    }
+
+    EXPECT_TRUE(done1) << "first write orphaned (never completed)";
+    EXPECT_TRUE(done2) << "second write orphaned (never completed)";
+    EXPECT_NE(err1, 0);
+    EXPECT_NE(err2, 0);
 }
 
 } // unnamed namespace

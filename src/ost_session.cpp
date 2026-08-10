@@ -121,7 +121,7 @@ namespace ost {
 class SessionOp {
 private:
     uint16_t _cid;
-    bool _in_flight;
+    bool _dispatched;
 
 protected:
     rawstd::TraceEvent _trace_event;
@@ -138,7 +138,16 @@ protected:
     std::function<void(size_t, int)> _cb;
 
     inline void _dispatch(size_t result, int error) {
-        _in_flight = false;
+        if (_dispatched) {
+            // Already delivered -- e.g. Session::_fail_in_flight() forced
+            // this op's callback while its own request send was still
+            // pending, and that send has now independently completed (with
+            // its own success or error). The caller has already been
+            // notified once; do not notify it again, and do not touch
+            // _session (already removed from its _ops, possibly gone).
+            return;
+        }
+        _dispatched = true;
         RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "%s\n", "in-flight end");
 
         try {
@@ -158,7 +167,7 @@ public:
         std::function<void(size_t, int)>&& cb
     ) :
         _cid(cid),
-        _in_flight(false),
+        _dispatched(false),
         _trace_event(trace_event),
         _session(session),
         _cb(std::move(cb)) {}
@@ -172,12 +181,9 @@ public:
 
     inline uint16_t cid() const noexcept { return _cid; }
 
-    inline bool in_flight() const noexcept { return _in_flight; }
-
     virtual size_t request_size() const noexcept = 0;
 
     void request_cb(int error) {
-        _in_flight = true;
         RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "%s\n", "in-flight begin");
 
         if (error) {
@@ -694,14 +700,21 @@ std::vector<T> basic_request(
 
 void Session::_fail_in_flight(int error, bool* next_head, size_t* next_size) {
     if (!_ops.empty()) {
-        std::vector<std::shared_ptr<SessionOp>> in_flight_ops;
-        in_flight_ops.reserve(_ops.size());
+        // Every op still in _ops needs this, not just the ones whose
+        // request has already finished sending: an op between _add_op() and
+        // its own request_cb() firing is just as stranded by this session
+        // going away, and its pending send is not guaranteed to itself
+        // complete with an error (e.g. if the socket is never explicitly
+        // closed/cancelled once this session is replaced) -- skipping it
+        // here left it waiting forever. SessionOp guards against the
+        // resulting double dispatch if that pending send does independently
+        // complete afterwards.
+        std::vector<std::shared_ptr<SessionOp>> ops;
+        ops.reserve(_ops.size());
         for (const auto& i : _ops) {
-            if (i.second->in_flight()) {
-                in_flight_ops.push_back(i.second);
-            }
+            ops.push_back(i.second);
         }
-        for (const auto& i : in_flight_ops) {
+        for (const auto& i : ops) {
             i->response_head_cb(nullptr, error, next_head, next_size);
         }
     }
