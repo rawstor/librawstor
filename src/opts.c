@@ -9,7 +9,7 @@
 #define RAWSTOR_OPTS_SO_SNDTIMEO 5000
 #define RAWSTOR_OPTS_SO_RCVTIMEO 5000
 #define RAWSTOR_OPTS_TCP_USER_TIMEOUT 5000
-#define RAWSTOR_OPTS_LIST_LIMIT 10
+#define RAWSTOR_OPTS_LIST_LIMIT 1000
 
 static struct RawstorOpts _rawstor_opts = {};
 

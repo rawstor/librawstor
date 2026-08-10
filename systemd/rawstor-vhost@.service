@@ -36,6 +36,15 @@ Environment=RAWSTOR_LOCATION=ost://127.0.0.1:7777
 # writeback (on) is faster but relies on the guest issuing an explicit
 # flush, and only helps if the guest actually does.
 Environment=RAWSTOR_WRITE_CACHE=off
+# librawstor client/server tuning knobs (see README.md's "Environment
+# Variables" section for what each one does); uncomment to override a
+# default, or set them in /etc/rawstor-vhost.conf below instead.
+#Environment=RAWSTOR_OPTS_IO_ATTEMPTS=3
+#Environment=RAWSTOR_OPTS_SESSIONS=1
+#Environment=RAWSTOR_OPTS_SO_SNDTIMEO=5000
+#Environment=RAWSTOR_OPTS_SO_RCVTIMEO=5000
+#Environment=RAWSTOR_OPTS_TCP_USER_TIMEOUT=5000
+#Environment=RAWSTOR_OPTS_LIST_LIMIT=1000
 EnvironmentFile=-/etc/rawstor-vhost.conf
 ExecStart=/usr/bin/rawstor-vhost --socket-path=/run/rawstor/%i.sock --write-cache=${RAWSTOR_WRITE_CACHE} ${RAWSTOR_LOCATION}/%i
 Restart=always
