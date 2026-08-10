@@ -1,5 +1,6 @@
 #include "server.hpp"
 #include "session.hpp"
+#include "tmp_dir.hpp"
 
 #include "opts.h"
 
@@ -14,24 +15,13 @@
 
 #include <algorithm>
 #include <cstring>
-#include <filesystem>
 #include <string>
 
 namespace {
 
-rawstd::URI get_location_uri(const std::string& name) {
-    std::filesystem::path path = std::filesystem::temp_directory_path() / name;
-    if (!std::filesystem::exists(path)) {
-        std::filesystem::create_directories(path);
-    }
-
-    std::ostringstream oss;
-    oss << "file://" << path.string();
-    return rawstd::URI(oss.str());
-}
-
 TEST(ListTest, empty) {
-    rawstd::URI location = get_location_uri("test_objects");
+    rawstor::tests::TmpDir dir;
+    rawstd::URI location(dir.uri());
 
     RawstorStringList* targets;
     RawstorPaginationToken token = {};
@@ -49,8 +39,10 @@ TEST(ListTest, empty) {
 }
 
 TEST(ListTest, merge) {
-    rawstd::URI location1 = get_location_uri("test_objects1");
-    rawstd::URI location2 = get_location_uri("test_objects2");
+    rawstor::tests::TmpDir dir1;
+    rawstor::tests::TmpDir dir2;
+    rawstd::URI location1(dir1.uri());
+    rawstd::URI location2(dir2.uri());
 
     rawstd::URI target11 =
         rawstd::URI(location1, "00000000-0000-7000-8000-000000000001");
@@ -113,7 +105,8 @@ TEST(ListTest, merge) {
 }
 
 TEST(ListTest, pagination) {
-    rawstd::URI location = get_location_uri("test_objects");
+    rawstor::tests::TmpDir dir;
+    rawstd::URI location(dir.uri());
 
     {
         RawstorStringList* page;

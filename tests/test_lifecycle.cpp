@@ -1,5 +1,6 @@
 #include "server.hpp"
 #include "session.hpp"
+#include "tmp_dir.hpp"
 
 #include <rawstd/gpp.hpp>
 #include <rawstd/uri.hpp>
@@ -10,18 +11,13 @@
 
 #include <gtest/gtest.h>
 
-#include <filesystem>
-
 #include <cstring>
 
 namespace {
 
 TEST(FileLifecycleTest, create_spec_list_remove) {
-    std::filesystem::path location_path =
-        std::filesystem::temp_directory_path() / "test_objects";
-    std::ostringstream oss;
-    oss << "file://" << location_path.string();
-    rawstd::URI location_uri(oss.str());
+    rawstor::tests::TmpDir dir;
+    rawstd::URI location_uri(dir.uri());
     std::string location = location_uri.str();
     std::string uuid = "00000000-0000-7000-8000-000000000001";
     std::string target = rawstd::URI(location_uri, uuid).str();
@@ -60,11 +56,8 @@ TEST(FileLifecycleTest, create_spec_list_remove) {
 }
 
 TEST(FileLifecycleTest, create_at_default_spec_list_remove) {
-    std::filesystem::path location_path =
-        std::filesystem::temp_directory_path() / "test_objects";
-    std::ostringstream oss;
-    oss << "file://" << location_path.string();
-    rawstd::URI location_uri(oss.str());
+    rawstor::tests::TmpDir dir;
+    rawstd::URI location_uri(dir.uri());
     std::string location = location_uri.str();
     std::string target(65536, '\0');
 
@@ -106,11 +99,8 @@ TEST(FileLifecycleTest, create_at_default_spec_list_remove) {
 }
 
 TEST(FileLifecycleTest, create_at_spec_list_remove) {
-    std::filesystem::path location_path =
-        std::filesystem::temp_directory_path() / "test_objects";
-    std::ostringstream oss;
-    oss << "file://" << location_path.string();
-    rawstd::URI location_uri(oss.str());
+    rawstor::tests::TmpDir dir;
+    rawstd::URI location_uri(dir.uri());
     std::string location = location_uri.str();
     std::string uuid = "00000000-0000-7000-8000-000000000002";
     std::string target(65536, '\0');
