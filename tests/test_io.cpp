@@ -1,5 +1,6 @@
 #include "server.hpp"
 #include "session.hpp"
+#include "tmp_dir.hpp"
 
 #include <rawstd/gpp.hpp>
 #include <rawstd/hash.h>
@@ -207,9 +208,9 @@ public:
 };
 
 TEST(FileIOTest, basics) {
-    std::filesystem::path path = std::filesystem::temp_directory_path() /
-                                 "test_objects" /
-                                 "00000000-0000-7000-8000-000000000000";
+    rawstor::tests::TmpDir dir;
+    std::filesystem::path path =
+        dir.path() / "00000000-0000-7000-8000-000000000000";
     std::ostringstream oss;
     oss << "file://" << path.string();
     std::string target = oss.str();
@@ -228,9 +229,9 @@ TEST(FileIOTest, basics) {
 }
 
 TEST(FileIOTest, flush) {
-    std::filesystem::path path = std::filesystem::temp_directory_path() /
-                                 "test_objects" /
-                                 "00000000-0000-7000-8000-000000000001";
+    rawstor::tests::TmpDir dir;
+    std::filesystem::path path =
+        dir.path() / "00000000-0000-7000-8000-000000000001";
     std::ostringstream oss;
     oss << "file://" << path.string();
     std::string target = oss.str();
