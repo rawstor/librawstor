@@ -1,5 +1,6 @@
 #include "device.hpp"
 
+#include <stdheaders/linux/virtio_blk.h>
 #include <stdheaders/linux/virtio_config.h>
 #include <stdheaders/linux/virtio_ring.h>
 #include <vduse/request.hpp>
@@ -426,7 +427,6 @@ Device::Device(
     _object(nullptr),
     _vqs(1),
     _features(0),
-    _config{},
     _write_cache_enabled(write_cache_enabled) {
     int ires = rawio_queue_create(queue_size, &_queue);
     if (ires) {
@@ -461,14 +461,15 @@ Device::Device(
             _name_buf
         );
 
-        _config.capacity = spec.size >> VIRTIO_BLK_SECTOR_BITS;
-        _config.seg_max = queue_size > 2 ? queue_size - 2 : 0; // _F_SEG_MAX
-        _config.blk_size = 1 << VIRTIO_BLK_SECTOR_BITS;        // _F_BLK_SIZE
-        _config.physical_block_exp = 0; // VIRTIO_BLK_F_TOPOLOGY
-        _config.alignment_offset = 0;
-        _config.min_io_size = 1;
-        _config.opt_io_size = 1;
-        _config.num_queues = static_cast<uint16_t>(_vqs.size());
+        virtio_blk_config config{};
+        config.capacity = spec.size >> VIRTIO_BLK_SECTOR_BITS;
+        config.seg_max = queue_size > 2 ? queue_size - 2 : 0; // _F_SEG_MAX
+        config.blk_size = 1 << VIRTIO_BLK_SECTOR_BITS;        // _F_BLK_SIZE
+        config.physical_block_exp = 0; // VIRTIO_BLK_F_TOPOLOGY
+        config.alignment_offset = 0;
+        config.min_io_size = 1;
+        config.opt_io_size = 1;
+        config.num_queues = static_cast<uint16_t>(_vqs.size());
         // discard/write-zeroes fields are left zero: unsupported, and the
         // corresponding feature bits are not advertised below. wce is left
         // zero too: see the VIRTIO_BLK_F_CONFIG_WCE comment below.
@@ -518,7 +519,7 @@ Device::Device(
         devcfg->nas = 0;
         std::memset(devcfg->reserved, 0, sizeof(devcfg->reserved));
         devcfg->config_size = static_cast<uint32_t>(config_size);
-        std::memcpy(devcfg->config, &_config, config_size);
+        std::memcpy(devcfg->config, &config, config_size);
 
         // Tolerate EEXIST: a previous instance of this process may have
         // crashed and left the kernel-side device around without ever
