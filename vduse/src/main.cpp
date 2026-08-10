@@ -1,8 +1,11 @@
-#include "server.hpp"
+#include "device.hpp"
 
 #include "config.h"
 
 #include <rawstd/exitcode.h>
+#include <rawstd/gpp.hpp>
+
+#include <rawstor.h>
 
 #include <getopt.h>
 #include <signal.h>
@@ -90,8 +93,19 @@ void sact_handler(int) {
 void server(
     unsigned int queue_size, const std::string& target, bool write_cache_enabled
 ) {
-    rawstor::vduse::Server s(queue_size, target, write_cache_enabled);
-    s.loop();
+    int res = rawstor_initialize(NULL);
+    if (res) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+
+    try {
+        rawstor::vduse::Device d(queue_size, target, write_cache_enabled);
+        d.loop();
+    } catch (...) {
+        rawstor_terminate();
+        throw;
+    }
+    rawstor_terminate();
 }
 
 } // namespace
