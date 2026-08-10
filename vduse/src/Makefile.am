@@ -26,8 +26,6 @@ libvduse_la_SOURCES = $(top_srcdir)/vduse/include/vduse/ring.hpp \
                       iovaregion.hpp \
                       request.cpp \
                       ring.cpp \
-                      server.cpp \
-                      server.hpp \
                       virtqueue.cpp
 
 rawstor_vduse_SOURCES = main.cpp
