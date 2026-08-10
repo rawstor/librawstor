@@ -4,7 +4,6 @@
 #include "iovaregion.hpp"
 
 #include <stdheaders/linux/vduse.h>
-#include <stdheaders/linux/virtio_blk.h>
 #include <vduse/virtqueue.hpp>
 
 #include <rawstor/object.h>
@@ -29,7 +28,6 @@ private:
     std::vector<std::unique_ptr<IovaRegion>> _regions;
     std::vector<VirtQueue> _vqs;
     uint64_t _features;
-    virtio_blk_config _config;
     bool _write_cache_enabled;
 
     void enable_queue(size_t index);
