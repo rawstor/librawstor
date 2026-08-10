@@ -17,11 +17,11 @@ private:
 
 public:
     TmpDir();
+    TmpDir(const TmpDir&) = delete;
+    TmpDir(TmpDir&&) = delete;
     ~TmpDir();
 
-    TmpDir(const TmpDir&) = delete;
     TmpDir& operator=(const TmpDir&) = delete;
-    TmpDir(TmpDir&&) = delete;
     TmpDir& operator=(TmpDir&&) = delete;
 
     const std::filesystem::path& path() const noexcept;
