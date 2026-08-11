@@ -160,6 +160,8 @@ backends and the io_uring/poll RawIO backends.
   internal refactors, test-only changes, or comment/doc tweaks. Keep each
   entry to one short sentence; save the "why" and implementation detail
   for the commit message, not the changelog.
+- Never push, including to a new branch. Commit locally and stop there —
+  the user reviews what's about to be pushed and pushes it themselves.
 
 ## Gotchas worth knowing
 
