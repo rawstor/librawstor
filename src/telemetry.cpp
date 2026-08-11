@@ -46,21 +46,16 @@ public:
     void add(const SlowOp& op) {
         std::lock_guard<std::mutex> lock(_mutex);
 
-        // std::push_heap/pop_heap build a max-heap by default; a reversed
-        // comparator turns that into a min-heap, so the *smallest* lat --
-        // the one to evict first when a bigger one shows up -- sits at
-        // heap.front().
-        auto by_lat = [](const SlowOp& a, const SlowOp& b) {
-            return a.lat > b.lat;
-        };
-
+        // std::push_heap/pop_heap build a max-heap by SlowOp::operator<,
+        // which is reversed -- so the *smallest* lat, the one to evict
+        // first when a bigger one shows up, sits at heap.front().
         if (_heap.size() < _capacity) {
             _heap.push_back(op);
-            std::push_heap(_heap.begin(), _heap.end(), by_lat);
-        } else if (!_heap.empty() && op.lat > _heap.front().lat) {
-            std::pop_heap(_heap.begin(), _heap.end(), by_lat);
+            std::push_heap(_heap.begin(), _heap.end());
+        } else if (!_heap.empty() && op < _heap.front()) {
+            std::pop_heap(_heap.begin(), _heap.end());
             _heap.back() = op;
-            std::push_heap(_heap.begin(), _heap.end(), by_lat);
+            std::push_heap(_heap.begin(), _heap.end());
         }
     }
 
@@ -68,9 +63,7 @@ public:
     std::vector<SlowOp> sorted() const {
         std::lock_guard<std::mutex> lock(_mutex);
         std::vector<SlowOp> ret(_heap);
-        std::sort(ret.begin(), ret.end(), [](const SlowOp& a, const SlowOp& b) {
-            return a.lat > b.lat;
-        });
+        std::sort(ret.begin(), ret.end());
         return ret;
     }
 };

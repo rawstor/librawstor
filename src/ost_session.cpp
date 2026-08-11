@@ -132,10 +132,10 @@ private:
     // ready is rtt, and the _cb() call itself is clat. Default-constructed
     // (epoch) _t_send_done marks "never sent", so _dispatch() can tell a
     // send that never completed apart from a real zero-length gap.
-    std::chrono::steady_clock::time_point _t_send_done;
+    rawstor::telemetry::clock::time_point _t_send_done;
 
 protected:
-    std::chrono::steady_clock::time_point _t_created;
+    rawstor::telemetry::clock::time_point _t_created;
 
     rawstd::TraceEvent _trace_event;
     // A strong reference, not just a back-pointer: a SessionOp can outlive
@@ -168,10 +168,10 @@ protected:
         // send, a stray cid, or a torn-down session all reach here with
         // an error and nothing useful to measure.
         bool timed =
-            !error && _t_send_done != std::chrono::steady_clock::time_point();
-        std::chrono::steady_clock::time_point t_response_ready;
+            !error && _t_send_done != rawstor::telemetry::clock::time_point();
+        rawstor::telemetry::clock::time_point t_response_ready;
         if (timed) {
-            t_response_ready = std::chrono::steady_clock::now();
+            t_response_ready = rawstor::telemetry::clock::now();
             rawstor::telemetry::record_rtt(t_response_ready - _t_send_done);
         }
 
@@ -180,7 +180,7 @@ protected:
         } catch (...) {
             if (timed) {
                 rawstor::telemetry::record_clat(
-                    std::chrono::steady_clock::now() - t_response_ready
+                    rawstor::telemetry::clock::now() - t_response_ready
                 );
             }
             _session->_remove_op(_cid);
@@ -189,7 +189,7 @@ protected:
 
         if (timed) {
             rawstor::telemetry::record_clat(
-                std::chrono::steady_clock::now() - t_response_ready
+                rawstor::telemetry::clock::now() - t_response_ready
             );
         }
 
@@ -204,7 +204,7 @@ public:
     ) :
         _cid(cid),
         _dispatched(false),
-        _t_created(std::chrono::steady_clock::now()),
+        _t_created(rawstor::telemetry::clock::now()),
         _trace_event(trace_event),
         _session(session),
         _cb(std::move(cb)) {}
@@ -224,7 +224,7 @@ public:
         RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "%s\n", "in-flight begin");
 
         if (!error) {
-            _t_send_done = std::chrono::steady_clock::now();
+            _t_send_done = rawstor::telemetry::clock::now();
             rawstor::telemetry::record_slat(_t_send_done - _t_created);
         } else {
             _dispatch(0, error);
