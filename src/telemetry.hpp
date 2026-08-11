@@ -46,7 +46,7 @@ inline TimePoint now() noexcept {
 void record_slat(TimePoint ns);
 void record_rtt(TimePoint ns);
 void record_clat(TimePoint ns);
-void record_lat(TimePoint ns, unsigned int retries);
+void record_lat(TimePoint ns, unsigned int attempts);
 // `op` is a static string (__FUNCTION__), not owned. Feeds the top-N
 // slowest-requests report.
 void record_op(
