@@ -17,18 +17,18 @@ namespace telemetry {
 
 namespace {
 
-rawstd::Stats g_slat;
-rawstd::Stats g_rtt;
-rawstd::Stats g_clat;
-rawstd::Stats g_lat;
-rawstd::Stats g_retries;
-rawstd::Stats g_in_flight_stats;
+rawstd::Stats slat_stats;
+rawstd::Stats rtt_stats;
+rawstd::Stats clat_stats;
+rawstd::Stats lat_stats;
+rawstd::Stats retries_stats;
+rawstd::Stats in_flight_stats;
 
-std::atomic<int> g_in_flight{0};
+std::atomic<int> in_flight{0};
 
 // Bounded top-N by SlowOp::lat, backed by a small binary min-heap so the
 // current slowest-of-the-kept-N is found/evicted in O(log N). Only ever
-// used here, as g_top_slow below -- not a general-purpose utility.
+// used here, as top_slow below -- not a general-purpose utility.
 class TopN {
 private:
     mutable std::mutex _mutex;
@@ -68,7 +68,7 @@ public:
     }
 };
 
-TopN g_top_slow(10);
+TopN top_slow(10);
 
 double usec(TimePoint ns) {
     return static_cast<double>(ns) / 1000.0;
@@ -88,52 +88,52 @@ void print_stat(const char* label, const rawstd::Stats& s) {
 } // namespace
 
 void record_slat(TimePoint ns) {
-    g_slat.add(usec(ns));
+    slat_stats.add(usec(ns));
 }
 
 void record_rtt(TimePoint ns) {
-    g_rtt.add(usec(ns));
+    rtt_stats.add(usec(ns));
 }
 
 void record_clat(TimePoint ns) {
-    g_clat.add(usec(ns));
+    clat_stats.add(usec(ns));
 }
 
 void record_lat(TimePoint ns, unsigned int retries) {
-    g_lat.add(usec(ns));
-    g_retries.add(static_cast<double>(retries));
+    lat_stats.add(usec(ns));
+    retries_stats.add(static_cast<double>(retries));
 }
 
 void record_op(const SlowOp& op) {
-    g_top_slow.add(op);
+    top_slow.add(op);
 }
 
 void op_started() {
-    int n = g_in_flight.fetch_add(1, std::memory_order_relaxed) + 1;
-    g_in_flight_stats.add(static_cast<double>(n));
+    int n = in_flight.fetch_add(1, std::memory_order_relaxed) + 1;
+    in_flight_stats.add(static_cast<double>(n));
 }
 
 void op_finished() {
-    int n = g_in_flight.fetch_sub(1, std::memory_order_relaxed) - 1;
-    g_in_flight_stats.add(static_cast<double>(n));
+    int n = in_flight.fetch_sub(1, std::memory_order_relaxed) - 1;
+    in_flight_stats.add(static_cast<double>(n));
 }
 
 void dump() {
-    if (g_lat.count() == 0) {
+    if (lat_stats.count() == 0) {
         // Telemetry was built in, but no I/O ever ran -- nothing
         // to report.
         return;
     }
 
     std::fprintf(stderr, "rawstor: telemetry\n");
-    print_stat("slat (usec)", g_slat);
-    print_stat("rtt  (usec)", g_rtt);
-    print_stat("clat (usec)", g_clat);
-    print_stat("lat  (usec)", g_lat);
-    print_stat("retries", g_retries);
-    print_stat("in-flight requests", g_in_flight_stats);
+    print_stat("slat (usec)", slat_stats);
+    print_stat("rtt  (usec)", rtt_stats);
+    print_stat("clat (usec)", clat_stats);
+    print_stat("lat  (usec)", lat_stats);
+    print_stat("retries", retries_stats);
+    print_stat("in-flight requests", in_flight_stats);
 
-    std::vector<SlowOp> slow = g_top_slow.sorted();
+    std::vector<SlowOp> slow = top_slow.sorted();
     if (!slow.empty()) {
         std::fprintf(stderr, "  top %zu slowest requests:\n", slow.size());
         unsigned int i = 1;
