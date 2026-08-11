@@ -129,13 +129,14 @@ private:
     // fully on the wire; _t_created (below, stamped at construction --
     // effectively the moment Connection::_op() dispatched this attempt)
     // to _t_send_done is slat, _t_send_done to the moment a response is
-    // ready is rtt, and the _cb() call itself is clat. Default-constructed
-    // (epoch) _t_send_done marks "never sent", so _dispatch() can tell a
-    // send that never completed apart from a real zero-length gap.
-    rawstor::telemetry::clock::time_point _t_send_done;
+    // ready is rtt, and the _cb() call itself is clat. 0 (never a real
+    // timestamp, see telemetry::now()) marks "never sent", so _dispatch()
+    // can tell a send that never completed apart from a real zero-length
+    // gap.
+    rawstor::telemetry::TimePoint _t_send_done;
 
 protected:
-    rawstor::telemetry::clock::time_point _t_created;
+    rawstor::telemetry::TimePoint _t_created;
 
     rawstd::TraceEvent _trace_event;
     // A strong reference, not just a back-pointer: a SessionOp can outlive
@@ -167,11 +168,10 @@ protected:
         // it onto the wire and got a real response back -- a failed
         // send, a stray cid, or a torn-down session all reach here with
         // an error and nothing useful to measure.
-        bool timed =
-            !error && _t_send_done != rawstor::telemetry::clock::time_point();
-        rawstor::telemetry::clock::time_point t_response_ready;
+        bool timed = !error && _t_send_done != 0;
+        rawstor::telemetry::TimePoint t_response_ready = 0;
         if (timed) {
-            t_response_ready = rawstor::telemetry::clock::now();
+            t_response_ready = rawstor::telemetry::now();
             rawstor::telemetry::record_rtt(t_response_ready - _t_send_done);
         }
 
@@ -180,7 +180,7 @@ protected:
         } catch (...) {
             if (timed) {
                 rawstor::telemetry::record_clat(
-                    rawstor::telemetry::clock::now() - t_response_ready
+                    rawstor::telemetry::now() - t_response_ready
                 );
             }
             _session->_remove_op(_cid);
@@ -189,7 +189,7 @@ protected:
 
         if (timed) {
             rawstor::telemetry::record_clat(
-                rawstor::telemetry::clock::now() - t_response_ready
+                rawstor::telemetry::now() - t_response_ready
             );
         }
 
@@ -204,7 +204,8 @@ public:
     ) :
         _cid(cid),
         _dispatched(false),
-        _t_created(rawstor::telemetry::clock::now()),
+        _t_send_done(0),
+        _t_created(rawstor::telemetry::now()),
         _trace_event(trace_event),
         _session(session),
         _cb(std::move(cb)) {}
@@ -224,7 +225,7 @@ public:
         RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "%s\n", "in-flight begin");
 
         if (!error) {
-            _t_send_done = rawstor::telemetry::clock::now();
+            _t_send_done = rawstor::telemetry::now();
             rawstor::telemetry::record_slat(_t_send_done - _t_created);
         } else {
             _dispatch(0, error);

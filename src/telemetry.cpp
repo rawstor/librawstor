@@ -70,8 +70,8 @@ public:
 
 TopN g_top_slow(10);
 
-double usec(std::chrono::steady_clock::duration d) {
-    return std::chrono::duration<double, std::micro>(d).count();
+double usec(TimePoint ns) {
+    return static_cast<double>(ns) / 1000.0;
 }
 
 void print_stat(const char* label, const rawstd::Stats& s) {
@@ -87,20 +87,20 @@ void print_stat(const char* label, const rawstd::Stats& s) {
 
 } // namespace
 
-void record_slat(std::chrono::steady_clock::duration d) {
-    g_slat.add(usec(d));
+void record_slat(TimePoint ns) {
+    g_slat.add(usec(ns));
 }
 
-void record_rtt(std::chrono::steady_clock::duration d) {
-    g_rtt.add(usec(d));
+void record_rtt(TimePoint ns) {
+    g_rtt.add(usec(ns));
 }
 
-void record_clat(std::chrono::steady_clock::duration d) {
-    g_clat.add(usec(d));
+void record_clat(TimePoint ns) {
+    g_clat.add(usec(ns));
 }
 
-void record_lat(std::chrono::steady_clock::duration d, unsigned int retries) {
-    g_lat.add(usec(d));
+void record_lat(TimePoint ns, unsigned int retries) {
+    g_lat.add(usec(ns));
     g_retries.add(static_cast<double>(retries));
 }
 

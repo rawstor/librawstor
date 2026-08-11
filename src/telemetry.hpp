@@ -8,43 +8,43 @@
 #include <chrono>
 
 #include <cstddef>
+#include <cstdint>
 
 namespace rawstor {
 namespace telemetry {
 
+// A raw nanosecond count -- both a timestamp (now()) and a duration
+// (a difference of two timestamps) -- plain enough that call sites
+// (SessionOp, Connection::_op) can stamp every op unconditionally without
+// an #ifdef, and (unlike a double) exact under subtraction no matter how
+// long the process has been up.
+using TimePoint = int64_t;
+
 #ifdef RAWSTOR_TELEMETRY
 
-using clock = std::chrono::steady_clock;
+inline TimePoint now() noexcept {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+               std::chrono::steady_clock::now().time_since_epoch()
+    )
+        .count();
+}
 
 #else
 
-// Call sites (SessionOp, Connection::_op) timestamp every op unconditionally
-// -- #ifdef'ing each one out would make them unreadable. Standing in for
-// std::chrono::steady_clock when telemetry is disabled, this now()/
-// time_point subtraction is trivial and side-effect free, so an optimizing
-// build (-O1+) discards it entirely instead of paying for a real clock read
-// that's only ever handed to a no-op record_*() sink.
-struct clock {
-    struct time_point {
-        friend std::chrono::steady_clock::duration
-        operator-(time_point, time_point) noexcept {
-            return std::chrono::steady_clock::duration::zero();
-        }
-        friend bool operator==(time_point, time_point) noexcept { return true; }
-        friend bool operator!=(time_point, time_point) noexcept {
-            return false;
-        }
-    };
-
-    static time_point now() noexcept { return time_point{}; }
-};
+// Always 0 here, so a call site's now()/subtraction is a compile-time
+// constant an optimizing build (-O1+) discards entirely, instead of
+// paying for a real clock read whose result only ever reaches a no-op
+// record_*() sink.
+inline TimePoint now() noexcept {
+    return 0;
+}
 
 #endif
 
-// One slow-op sample, for the top-10 report. `op` is a static string
-// (__FUNCTION__), not owned.
+// One slow-op sample, for the top-10 report. `lat` is in nanoseconds.
+// `op` is a static string (__FUNCTION__), not owned.
 struct SlowOp {
-    std::chrono::steady_clock::duration lat;
+    TimePoint lat;
     const char* op;
     size_t size;
     off_t offset;
@@ -60,10 +60,10 @@ struct SlowOp {
 
 #ifdef RAWSTOR_TELEMETRY
 
-void record_slat(std::chrono::steady_clock::duration d);
-void record_rtt(std::chrono::steady_clock::duration d);
-void record_clat(std::chrono::steady_clock::duration d);
-void record_lat(std::chrono::steady_clock::duration d, unsigned int retries);
+void record_slat(TimePoint ns);
+void record_rtt(TimePoint ns);
+void record_clat(TimePoint ns);
+void record_lat(TimePoint ns, unsigned int retries);
 void record_op(const SlowOp& op);
 void op_started();
 void op_finished();
@@ -71,13 +71,13 @@ void dump();
 
 #else
 
-inline void record_slat(std::chrono::steady_clock::duration) {
+inline void record_slat(TimePoint) {
 }
-inline void record_rtt(std::chrono::steady_clock::duration) {
+inline void record_rtt(TimePoint) {
 }
-inline void record_clat(std::chrono::steady_clock::duration) {
+inline void record_clat(TimePoint) {
 }
-inline void record_lat(std::chrono::steady_clock::duration, unsigned int) {
+inline void record_lat(TimePoint, unsigned int) {
 }
 inline void record_op(const SlowOp&) {
 }

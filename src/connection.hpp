@@ -39,7 +39,7 @@ private:
         const std::shared_ptr<std::function<void(
             std::shared_ptr<Session>, std::function<void(size_t, int)>&&
         )>>& op,
-        unsigned int attempt, rawstor::telemetry::clock::time_point t_call);
+        unsigned int attempt, rawstor::telemetry::TimePoint t_call);
 
 public:
     static void list(

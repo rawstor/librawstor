@@ -16,7 +16,6 @@
 #include <rawstd/uuid.h>
 
 #include <algorithm>
-#include <chrono>
 #include <list>
 #include <sstream>
 #include <stdexcept>
@@ -140,7 +139,7 @@ void Connection::_op(
     const std::shared_ptr<std::function<
         void(std::shared_ptr<Session>, std::function<void(size_t, int)>&&)>>&
         op,
-    unsigned int attempt, rawstor::telemetry::clock::time_point t_call
+    unsigned int attempt, rawstor::telemetry::TimePoint t_call
 ) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'c', "%s(): size = %zu, offset = %jd\n", func_name, size,
@@ -161,8 +160,8 @@ void Connection::_op(
             // (if slow enough) the top-N sample at that same point,
             // spanning every attempt this logical op took.
             auto finish = [&](size_t finish_result, int finish_error) {
-                std::chrono::steady_clock::duration lat =
-                    rawstor::telemetry::clock::now() - t_call;
+                rawstor::telemetry::TimePoint lat =
+                    rawstor::telemetry::now() - t_call;
                 rawstor::telemetry::record_lat(lat, attempt);
                 rawstor::telemetry::record_op(
                     rawstor::telemetry::SlowOp{
@@ -424,8 +423,7 @@ void Connection::pread(
             std::shared_ptr<Session> s, std::function<void(size_t, int)>&& cb
         ) { s->pread(buf, size, offset, std::move(cb)); }
     );
-    _op(__FUNCTION__, size, offset, cbptr, opptr, 0,
-        rawstor::telemetry::clock::now());
+    _op(__FUNCTION__, size, offset, cbptr, opptr, 0, rawstor::telemetry::now());
 }
 
 void Connection::preadv(
@@ -440,8 +438,7 @@ void Connection::preadv(
             std::shared_ptr<Session> s, std::function<void(size_t, int)>&& cb
         ) { s->preadv(iov, niov, size, offset, std::move(cb)); }
     );
-    _op(__FUNCTION__, size, offset, cbptr, opptr, 0,
-        rawstor::telemetry::clock::now());
+    _op(__FUNCTION__, size, offset, cbptr, opptr, 0, rawstor::telemetry::now());
 }
 
 void Connection::pwrite(
@@ -456,8 +453,7 @@ void Connection::pwrite(
             std::shared_ptr<Session> s, std::function<void(size_t, int)>&& cb
         ) { s->pwrite(buf, size, offset, sync, std::move(cb)); }
     );
-    _op(__FUNCTION__, size, offset, cbptr, opptr, 0,
-        rawstor::telemetry::clock::now());
+    _op(__FUNCTION__, size, offset, cbptr, opptr, 0, rawstor::telemetry::now());
 }
 
 void Connection::pwritev(
@@ -472,8 +468,7 @@ void Connection::pwritev(
             std::shared_ptr<Session> s, std::function<void(size_t, int)>&& cb
         ) { s->pwritev(iov, niov, size, offset, sync, std::move(cb)); }
     );
-    _op(__FUNCTION__, size, offset, cbptr, opptr, 0,
-        rawstor::telemetry::clock::now());
+    _op(__FUNCTION__, size, offset, cbptr, opptr, 0, rawstor::telemetry::now());
 }
 
 void Connection::flush(std::function<void(int)>&& cb) {
@@ -486,7 +481,7 @@ void Connection::flush(std::function<void(int)>&& cb) {
             s->flush([cb = std::move(cb)](int error) { cb(0, error); });
         }
     );
-    _op(__FUNCTION__, 0, 0, cbptr, opptr, 0, rawstor::telemetry::clock::now());
+    _op(__FUNCTION__, 0, 0, cbptr, opptr, 0, rawstor::telemetry::now());
 }
 
 } // namespace rawstor
