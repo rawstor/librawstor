@@ -11,7 +11,6 @@ AM_CFLAGS = $(GENERIC_CFLAGS) \
 AM_CXXFLAGS = $(GENERIC_CXXFLAGS) \
               $(LIBXXHASH_CFLAGS) \
               $(ASAN_CFLAGS) \
-              $(maybe_telemetry) \
               -I$(top_srcdir)/librawstd/include \
               -I$(top_srcdir)/librawio/include \
               -I$(top_srcdir)/include

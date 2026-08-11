@@ -1,6 +1,8 @@
 #ifndef RAWSTOR_TELEMETRY_HPP
 #define RAWSTOR_TELEMETRY_HPP
 
+#include "config.h"
+
 #include <sys/types.h>
 
 #include <algorithm>
@@ -31,17 +33,6 @@ struct SlowOp {
 // lives here rather than in librawstd.
 class TopN {
 private:
-    struct ByLat {
-        inline bool
-        operator()(const SlowOp& a, const SlowOp& b) const noexcept {
-            // std::push_heap/pop_heap build a max-heap by default; a
-            // reversed comparator turns that into a min-heap, so the
-            // *smallest* lat -- the one to evict first when a bigger one
-            // shows up -- sits at heap.front().
-            return a.lat > b.lat;
-        }
-    };
-
     mutable std::mutex _mutex;
     size_t _capacity;
     std::vector<SlowOp> _heap;
@@ -57,13 +48,21 @@ public:
     void add(const SlowOp& op) {
         std::lock_guard<std::mutex> lock(_mutex);
 
+        // std::push_heap/pop_heap build a max-heap by default; a reversed
+        // comparator turns that into a min-heap, so the *smallest* lat --
+        // the one to evict first when a bigger one shows up -- sits at
+        // heap.front().
+        auto by_lat = [](const SlowOp& a, const SlowOp& b) {
+            return a.lat > b.lat;
+        };
+
         if (_heap.size() < _capacity) {
             _heap.push_back(op);
-            std::push_heap(_heap.begin(), _heap.end(), ByLat());
+            std::push_heap(_heap.begin(), _heap.end(), by_lat);
         } else if (!_heap.empty() && op.lat > _heap.front().lat) {
-            std::pop_heap(_heap.begin(), _heap.end(), ByLat());
+            std::pop_heap(_heap.begin(), _heap.end(), by_lat);
             _heap.back() = op;
-            std::push_heap(_heap.begin(), _heap.end(), ByLat());
+            std::push_heap(_heap.begin(), _heap.end(), by_lat);
         }
     }
 

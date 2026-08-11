@@ -88,7 +88,7 @@ Notable `configure` flags:
 |---|---|
 | `--enable-debug` / `--enable-trace` | raise `RAWSTD_LOGLEVEL` |
 | `--enable-asan` | build with `-fsanitize=address` |
-| `--enable-telemetry` | collect I/O latency/queue-depth stats, reported on `rawstor_terminate()` |
+| `--disable-telemetry` | skip collecting/reporting I/O latency/queue-depth stats (collected by default, reported on `rawstor_terminate()`) |
 | `--without-liburing` | use librawio's `poll()` backend instead of io_uring |
 | `--without-libxxhash` | disable xxhash support |
 | `--without-python3` | skip `pyrawstor` |
