@@ -143,6 +143,8 @@ backends and the io_uring/poll RawIO backends.
 
 ## Git conventions
 
+- Use a git worktree for code changes — isolate each task from the main
+  checkout and from other work happening concurrently.
 - Branch names: `<type>/<descriptive-name>` — `add/<feature-name>` for new
   features, `fix/<bug-description>` for bug fixes, `ref/<component-name>`
   for refactoring (see README's Contributing section for the full
