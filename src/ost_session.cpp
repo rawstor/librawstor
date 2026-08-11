@@ -2,6 +2,7 @@
 
 #include "object.hpp"
 #include "opts.h"
+#include "telemetry.hpp"
 
 #include <rawio/queue.hpp>
 
@@ -23,6 +24,7 @@
 #include <sys/socket.h>
 
 #include <algorithm>
+#include <chrono>
 #include <iterator>
 #include <memory>
 #include <stdexcept>
@@ -123,7 +125,18 @@ private:
     uint16_t _cid;
     bool _dispatched;
 
+    // telemetry: request_cb() stamps _t_send_done once the request is
+    // fully on the wire; _t_created (below, stamped at construction --
+    // effectively the moment Connection::_op() dispatched this attempt)
+    // to _t_send_done is slat, _t_send_done to the moment a response is
+    // ready is rtt, and the _cb() call itself is clat. Default-constructed
+    // (epoch) _t_send_done marks "never sent", so _dispatch() can tell a
+    // send that never completed apart from a real zero-length gap.
+    std::chrono::steady_clock::time_point _t_send_done;
+
 protected:
+    std::chrono::steady_clock::time_point _t_created;
+
     rawstd::TraceEvent _trace_event;
     // A strong reference, not just a back-pointer: a SessionOp can outlive
     // Session::_ops's own copy of it (e.g. a still-pending send/sendmsg
@@ -150,11 +163,34 @@ protected:
         _dispatched = true;
         RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "%s\n", "in-flight end");
 
+        // rtt/clat only mean something for a request that actually made
+        // it onto the wire and got a real response back -- a failed
+        // send, a stray cid, or a torn-down session all reach here with
+        // an error and nothing useful to measure.
+        bool timed =
+            !error && _t_send_done != std::chrono::steady_clock::time_point();
+        std::chrono::steady_clock::time_point t_response_ready;
+        if (timed) {
+            t_response_ready = std::chrono::steady_clock::now();
+            rawstor::telemetry::record_rtt(t_response_ready - _t_send_done);
+        }
+
         try {
             _cb(result, error);
         } catch (...) {
+            if (timed) {
+                rawstor::telemetry::record_clat(
+                    std::chrono::steady_clock::now() - t_response_ready
+                );
+            }
             _session->_remove_op(_cid);
             throw;
+        }
+
+        if (timed) {
+            rawstor::telemetry::record_clat(
+                std::chrono::steady_clock::now() - t_response_ready
+            );
         }
 
         _session->_remove_op(_cid);
@@ -168,6 +204,7 @@ public:
     ) :
         _cid(cid),
         _dispatched(false),
+        _t_created(std::chrono::steady_clock::now()),
         _trace_event(trace_event),
         _session(session),
         _cb(std::move(cb)) {}
@@ -186,7 +223,10 @@ public:
     void request_cb(int error) {
         RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "%s\n", "in-flight begin");
 
-        if (error) {
+        if (!error) {
+            _t_send_done = std::chrono::steady_clock::now();
+            rawstor::telemetry::record_slat(_t_send_done - _t_created);
+        } else {
             _dispatch(0, error);
         }
     }
@@ -733,10 +773,12 @@ SessionOp* Session::_find_op(uint16_t cid) {
 
 void Session::_add_op(const std::shared_ptr<SessionOp>& op) {
     _ops[op->cid()] = op;
+    rawstor::telemetry::op_started();
 }
 
 void Session::_remove_op(uint16_t cid) {
     _ops.erase(cid);
+    rawstor::telemetry::op_finished();
 }
 
 Session::Session(Private p, rawio::Queue& queue, const rawstd::URI& location) :
@@ -1012,13 +1054,14 @@ void Session::set_object(Object* object) {
 
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('m', "%s\n", "multishot recv");
+    constexpr size_t recv_entry_size = 1u << 17;
     _read_event = _queue.recv_multishot(
-        fd(), 1u << 17, 64 * 4, sizeof(RawstorOSTFrameResponse), 0,
+        fd(), recv_entry_size, 64 * 4, sizeof(RawstorOSTFrameResponse), 0,
         [weak = std::weak_ptr<rawstor::ost::Session>(
              std::static_pointer_cast<rawstor::ost::Session>(shared_from_this())
          ),
          cid = 0, is_head = true, size = sizeof(RawstorOSTFrameResponse),
-         trace_event](
+         trace_event, recv_entry_size](
             const iovec* iov, unsigned int niov, size_t result, int error
         ) mutable -> size_t {
             if (error == ECANCELED) {
@@ -1047,6 +1090,24 @@ void Session::set_object(Object* object) {
             if (!error) {
                 error = validate_result(size, result);
             }
+
+#ifdef RAWSTOR_TELEMETRY
+            // Guarded here, not just inside the record_*() sinks: without
+            // this, recv_ring_entries_in_use() (a dynamic_cast on the
+            // poll backend) would run on every single completion even
+            // with telemetry compiled out.
+            if (!error) {
+                rawstor::telemetry::record_ring_utilization(
+                    static_cast<double>(result) /
+                    static_cast<double>(recv_entry_size)
+                );
+                rawstor::telemetry::record_ring_entries_in_use(
+                    session->_queue.recv_ring_entries_in_use(
+                        session->_read_event
+                    )
+                );
+            }
+#endif
 
             if (!error) {
                 try {

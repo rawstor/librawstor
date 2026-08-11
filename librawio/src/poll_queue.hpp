@@ -118,6 +118,9 @@ public:
         std::function<void(size_t, int)>&& cb
     ) override;
 
+    unsigned int
+    recv_ring_entries_in_use(rawio::Event* event) const noexcept override;
+
     rawio::Event* write(
         int fd, const void* buf, size_t size,
         std::function<void(size_t, int)>&& cb

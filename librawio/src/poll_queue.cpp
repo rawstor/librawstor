@@ -453,6 +453,18 @@ rawio::Event* Queue::recv_multishot(
     return ret;
 }
 
+unsigned int
+Queue::recv_ring_entries_in_use(rawio::Event* event) const noexcept {
+    EventSimplexVectorRecvMultishot* m =
+        dynamic_cast<EventSimplexVectorRecvMultishot*>(
+            static_cast<Event*>(event)
+        );
+    if (m == nullptr) {
+        return 0;
+    }
+    return static_cast<unsigned int>(m->pending_entries_size());
+}
+
 rawio::Event* Queue::recvmsg(
     int fd, msghdr* msg, unsigned int flags,
     std::function<void(size_t, int)>&& cb

@@ -72,6 +72,17 @@ AS_IF([test "x$enable_asan" = "xyes"], [
 ])
 
 
+AC_ARG_ENABLE([telemetry], [AS_HELP_STRING([--enable-telemetry],
+    [collect and report ost:// I/O latency/queue-depth/buffer-ring statistics])],
+    [enable_telemetry=$enableval],
+    [enable_telemetry="no"])
+AS_IF([test "x$enable_telemetry" = "xyes"], [
+    AC_SUBST([maybe_telemetry], ["-DRAWSTOR_TELEMETRY"])
+], [
+    AC_SUBST([maybe_telemetry], [""])
+])
+
+
 AC_SUBST([LIBURING_MIN_VERSION], ["2.3"])
 
 AC_ARG_WITH([liburing], [AS_HELP_STRING([--without-liburing],

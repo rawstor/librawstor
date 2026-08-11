@@ -11,6 +11,7 @@ AM_CFLAGS = $(GENERIC_CFLAGS) \
 AM_CXXFLAGS = $(GENERIC_CXXFLAGS) \
               $(LIBXXHASH_CFLAGS) \
               $(ASAN_CFLAGS) \
+              $(maybe_telemetry) \
               -I$(top_srcdir)/librawstd/include \
               -I$(top_srcdir)/librawio/include \
               -I$(top_srcdir)/include
@@ -47,7 +48,9 @@ librawstor_la_SOURCES = blk_session.cpp \
                         opts.h \
                         session.cpp \
                         session.hpp \
-                        rawstor.cpp
+                        rawstor.cpp \
+                        telemetry.cpp \
+                        telemetry.hpp
 
 librawstor_la_LDFLAGS = -version-info $(LIBRARY_VERSION)
 

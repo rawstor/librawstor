@@ -1,12 +1,15 @@
 #ifndef RAWIO_URING_QUEUE_HPP
 #define RAWIO_URING_QUEUE_HPP
 
+#include "uring_buffer.hpp"
+
 #include <rawio/queue.hpp>
 
 #include <liburing.h>
 
 #include <memory>
 #include <string>
+#include <unordered_map>
 
 namespace rawio {
 namespace uring {
@@ -14,6 +17,15 @@ namespace uring {
 class Queue final : public rawio::Queue {
 private:
     io_uring _ring;
+
+    // Keyed by the Event* recv_multishot() returned (the completion
+    // closure's own address, see recv_multishot()) so
+    // recv_ring_entries_in_use() can find the BufferRing backing a given
+    // registration. Entry is added when the registration is created and
+    // erased in _dispatch() once its final completion (no
+    // IORING_CQE_F_MORE) is reaped.
+    std::unordered_map<rawio::Event*, std::shared_ptr<BufferRing>>
+        _buffer_rings;
 
     /*
      * Bumped once per _dispatch() call (one reap of the completion ring).
@@ -100,6 +112,9 @@ public:
         int fd, msghdr* msg, unsigned int flags,
         std::function<void(size_t, int)>&& cb
     ) override;
+
+    unsigned int
+    recv_ring_entries_in_use(rawio::Event* event) const noexcept override;
 
     rawio::Event* write(
         int fd, const void* buf, size_t size,

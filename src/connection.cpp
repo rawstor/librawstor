@@ -3,6 +3,7 @@
 #include "object.hpp"
 #include "opts.h"
 #include "session.hpp"
+#include "telemetry.hpp"
 
 #include <rawstor/location.h>
 #include <rawstor/object.h>
@@ -15,6 +16,7 @@
 #include <rawstd/uuid.h>
 
 #include <algorithm>
+#include <chrono>
 #include <list>
 #include <sstream>
 #include <stdexcept>
@@ -138,7 +140,7 @@ void Connection::_op(
     const std::shared_ptr<std::function<
         void(std::shared_ptr<Session>, std::function<void(size_t, int)>&&)>>&
         op,
-    unsigned int attempt
+    unsigned int attempt, std::chrono::steady_clock::time_point t_call
 ) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'c', "%s(): size = %zu, offset = %jd\n", func_name, size,
@@ -147,11 +149,28 @@ void Connection::_op(
 
     std::shared_ptr<Session> s = get_next_session();
     (*op)(
-        s, [this, s, func_name, size, offset, cb, op, attempt,
+        s, [this, s, func_name, size, offset, cb, op, attempt, t_call,
             trace_event](size_t result, int error) mutable {
             RAWSTD_TRACE_EVENT_MESSAGE(
                 trace_event, "result = %zu, error = %d\n", result, error
             );
+
+            // Every terminal path below -- success, final failure, or a
+            // reconnect itself failing -- calls the caller's cb exactly
+            // once; record the total call-to-cb latency, retry count, and
+            // (if slow enough) the top-N sample at that same point,
+            // spanning every attempt this logical op took.
+            auto finish = [&](size_t finish_result, int finish_error) {
+                std::chrono::steady_clock::duration lat =
+                    std::chrono::steady_clock::now() - t_call;
+                rawstor::telemetry::record_lat(lat, attempt);
+                rawstor::telemetry::record_op(
+                    rawstor::telemetry::SlowOp{
+                        lat, func_name, size, offset, attempt
+                    }
+                );
+                (*cb)(finish_result, finish_error);
+            };
 
             if (!error) {
                 if (attempt > 0) {
@@ -163,7 +182,7 @@ void Connection::_op(
                         attempt + 1, rawstor_opts_io_attempts()
                     );
                 }
-                (*cb)(result, error);
+                finish(result, error);
                 return;
             }
 
@@ -176,7 +195,7 @@ void Connection::_op(
                     std::strerror(error), attempt + 1,
                     rawstor_opts_io_attempts()
                 );
-                (*cb)(result, error);
+                finish(result, error);
                 return;
             }
 
@@ -191,7 +210,7 @@ void Connection::_op(
             try {
                 invalidate_session(s);
             } catch (const std::system_error& e) {
-                (*cb)(result, e.code().value());
+                finish(result, e.code().value());
                 return;
             } catch (const std::exception& e) {
                 rawstd_error(
@@ -201,11 +220,12 @@ void Connection::_op(
                     func_name, size, (intmax_t)offset, s->str().c_str(),
                     e.what(), attempt + 1, rawstor_opts_io_attempts()
                 );
-                (*cb)(result, EIO);
+                finish(result, EIO);
                 return;
             }
 
-            _op(func_name, size, offset, std::move(cb), op, attempt + 1);
+            _op(func_name, size, offset, std::move(cb), op, attempt + 1,
+                t_call);
         }
     );
 }
@@ -404,7 +424,8 @@ void Connection::pread(
             std::shared_ptr<Session> s, std::function<void(size_t, int)>&& cb
         ) { s->pread(buf, size, offset, std::move(cb)); }
     );
-    _op(__FUNCTION__, size, offset, cbptr, opptr, 0);
+    _op(__FUNCTION__, size, offset, cbptr, opptr, 0,
+        std::chrono::steady_clock::now());
 }
 
 void Connection::preadv(
@@ -419,7 +440,8 @@ void Connection::preadv(
             std::shared_ptr<Session> s, std::function<void(size_t, int)>&& cb
         ) { s->preadv(iov, niov, size, offset, std::move(cb)); }
     );
-    _op(__FUNCTION__, size, offset, cbptr, opptr, 0);
+    _op(__FUNCTION__, size, offset, cbptr, opptr, 0,
+        std::chrono::steady_clock::now());
 }
 
 void Connection::pwrite(
@@ -434,7 +456,8 @@ void Connection::pwrite(
             std::shared_ptr<Session> s, std::function<void(size_t, int)>&& cb
         ) { s->pwrite(buf, size, offset, sync, std::move(cb)); }
     );
-    _op(__FUNCTION__, size, offset, cbptr, opptr, 0);
+    _op(__FUNCTION__, size, offset, cbptr, opptr, 0,
+        std::chrono::steady_clock::now());
 }
 
 void Connection::pwritev(
@@ -449,7 +472,8 @@ void Connection::pwritev(
             std::shared_ptr<Session> s, std::function<void(size_t, int)>&& cb
         ) { s->pwritev(iov, niov, size, offset, sync, std::move(cb)); }
     );
-    _op(__FUNCTION__, size, offset, cbptr, opptr, 0);
+    _op(__FUNCTION__, size, offset, cbptr, opptr, 0,
+        std::chrono::steady_clock::now());
 }
 
 void Connection::flush(std::function<void(int)>&& cb) {
@@ -462,7 +486,7 @@ void Connection::flush(std::function<void(int)>&& cb) {
             s->flush([cb = std::move(cb)](int error) { cb(0, error); });
         }
     );
-    _op(__FUNCTION__, 0, 0, cbptr, opptr, 0);
+    _op(__FUNCTION__, 0, 0, cbptr, opptr, 0, std::chrono::steady_clock::now());
 }
 
 } // namespace rawstor
