@@ -133,6 +133,18 @@ std::vector<std::shared_ptr<Session>> Connection::_open(
     return sessions;
 }
 
+void Connection::_finish(
+    const char* func_name, size_t size, off_t offset,
+    const std::shared_ptr<std::function<void(size_t, int)>>& cb,
+    unsigned int attempt, rawstor::telemetry::TimePoint t_call, size_t result,
+    int error
+) {
+    rawstor::telemetry::TimePoint lat = rawstor::telemetry::now() - t_call;
+    rawstor::telemetry::record_lat(lat, attempt);
+    rawstor::telemetry::record_op(lat, func_name, size, offset, attempt);
+    (*cb)(result, error);
+}
+
 void Connection::_op(
     const char* func_name, size_t size, off_t offset,
     const std::shared_ptr<std::function<void(size_t, int)>>& cb,
@@ -154,23 +166,6 @@ void Connection::_op(
                 trace_event, "result = %zu, error = %d\n", result, error
             );
 
-            // Every terminal path below -- success, final failure, or a
-            // reconnect itself failing -- calls the caller's cb exactly
-            // once; record the total call-to-cb latency, retry count, and
-            // (if slow enough) the top-N sample at that same point,
-            // spanning every attempt this logical op took.
-            auto finish = [&](size_t finish_result, int finish_error) {
-                rawstor::telemetry::TimePoint lat =
-                    rawstor::telemetry::now() - t_call;
-                rawstor::telemetry::record_lat(lat, attempt);
-                rawstor::telemetry::record_op(
-                    rawstor::telemetry::SlowOp{
-                        lat, func_name, size, offset, attempt
-                    }
-                );
-                (*cb)(finish_result, finish_error);
-            };
-
             if (!error) {
                 if (attempt > 0) {
                     rawstd_warning(
@@ -181,7 +176,9 @@ void Connection::_op(
                         attempt + 1, rawstor_opts_io_attempts()
                     );
                 }
-                finish(result, error);
+                _finish(
+                    func_name, size, offset, cb, attempt, t_call, result, error
+                );
                 return;
             }
 
@@ -194,7 +191,9 @@ void Connection::_op(
                     std::strerror(error), attempt + 1,
                     rawstor_opts_io_attempts()
                 );
-                finish(result, error);
+                _finish(
+                    func_name, size, offset, cb, attempt, t_call, result, error
+                );
                 return;
             }
 
@@ -209,7 +208,10 @@ void Connection::_op(
             try {
                 invalidate_session(s);
             } catch (const std::system_error& e) {
-                finish(result, e.code().value());
+                _finish(
+                    func_name, size, offset, cb, attempt, t_call, result,
+                    e.code().value()
+                );
                 return;
             } catch (const std::exception& e) {
                 rawstd_error(
@@ -219,7 +221,9 @@ void Connection::_op(
                     func_name, size, (intmax_t)offset, s->str().c_str(),
                     e.what(), attempt + 1, rawstor_opts_io_attempts()
                 );
-                finish(result, EIO);
+                _finish(
+                    func_name, size, offset, cb, attempt, t_call, result, EIO
+                );
                 return;
             }
 

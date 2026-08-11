@@ -26,14 +26,29 @@ rawstd::Stats in_flight_stats;
 
 std::atomic<int> in_flight{0};
 
-// Bounded top-N by SlowOp::lat, backed by a small binary min-heap so the
-// current slowest-of-the-kept-N is found/evicted in O(log N). Only ever
-// used here, as top_slow below -- not a general-purpose utility.
+// One slow-op sample, for the top-10 report. `op` is a static string
+// (__FUNCTION__), not owned. Internal to this file: record_op() takes
+// its fields individually, so nothing outside needs the type itself.
+struct Op {
+    TimePoint lat;
+    const char* op;
+    size_t size;
+    off_t offset;
+    unsigned int attempts;
+
+    // Deliberately reversed (bigger lat sorts first): lets TopN drive
+    // std::push_heap/pop_heap/sort with the default comparator, no
+    // separate predicate needed.
+    bool operator<(const Op& other) const noexcept { return lat > other.lat; }
+};
+
+// Bounded top-N by Op::lat, backed by a small binary min-heap so the
+// current slowest-of-the-kept-N is found/evicted in O(log N).
 class TopN {
 private:
     mutable std::mutex _mutex;
     size_t _capacity;
-    std::vector<SlowOp> _heap;
+    std::vector<Op> _heap;
 
 public:
     explicit TopN(size_t capacity) : _capacity(capacity) {}
@@ -43,12 +58,12 @@ public:
     TopN& operator=(const TopN&) = delete;
     TopN& operator=(TopN&&) = delete;
 
-    void add(const SlowOp& op) {
+    void add(const Op& op) {
         std::lock_guard<std::mutex> lock(_mutex);
 
-        // std::push_heap/pop_heap build a max-heap by SlowOp::operator<,
-        // which is reversed -- so the *smallest* lat, the one to evict
-        // first when a bigger one shows up, sits at heap.front().
+        // std::push_heap/pop_heap build a max-heap by Op::operator<, which
+        // is reversed -- so the *smallest* lat, the one to evict first
+        // when a bigger one shows up, sits at heap.front().
         if (_heap.size() < _capacity) {
             _heap.push_back(op);
             std::push_heap(_heap.begin(), _heap.end());
@@ -60,9 +75,9 @@ public:
     }
 
     // Sorted by descending lat, for dump().
-    std::vector<SlowOp> sorted() const {
+    std::vector<Op> sorted() const {
         std::lock_guard<std::mutex> lock(_mutex);
-        std::vector<SlowOp> ret(_heap);
+        std::vector<Op> ret(_heap);
         std::sort(ret.begin(), ret.end());
         return ret;
     }
@@ -104,8 +119,11 @@ void record_lat(TimePoint ns, unsigned int retries) {
     retries_stats.add(static_cast<double>(retries));
 }
 
-void record_op(const SlowOp& op) {
-    top_slow.add(op);
+void record_op(
+    TimePoint lat, const char* op, size_t size, off_t offset,
+    unsigned int attempts
+) {
+    top_slow.add(Op{lat, op, size, offset, attempts});
 }
 
 void op_started() {
@@ -133,17 +151,17 @@ void dump() {
     print_stat("retries", retries_stats);
     print_stat("in-flight requests", in_flight_stats);
 
-    std::vector<SlowOp> slow = top_slow.sorted();
+    std::vector<Op> slow = top_slow.sorted();
     if (!slow.empty()) {
         std::fprintf(stderr, "  top %zu slowest requests:\n", slow.size());
         unsigned int i = 1;
-        for (const SlowOp& op : slow) {
+        for (const Op& op : slow) {
             std::fprintf(
                 stderr,
-                "    %2u. %-7s size=%-8zu offset=%-10jd retries=%u "
+                "    %2u. %-7s size=%-8zu offset=%-10jd attempts=%u "
                 "lat=%.0f usec\n",
                 i++, op.op, op.size, static_cast<intmax_t>(op.offset),
-                op.retries, usec(op.lat)
+                op.attempts, usec(op.lat)
             );
         }
     }

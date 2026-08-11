@@ -41,30 +41,18 @@ inline TimePoint now() noexcept {
 
 #endif
 
-// One slow-op sample, for the top-10 report. `lat` is in nanoseconds.
-// `op` is a static string (__FUNCTION__), not owned.
-struct SlowOp {
-    TimePoint lat;
-    const char* op;
-    size_t size;
-    off_t offset;
-    unsigned int retries;
-
-    // Deliberately reversed (bigger lat sorts first): lets TopN drive
-    // std::push_heap/pop_heap/sort with the default comparator, no
-    // separate predicate needed.
-    bool operator<(const SlowOp& other) const noexcept {
-        return lat > other.lat;
-    }
-};
-
 #ifdef RAWSTOR_TELEMETRY
 
 void record_slat(TimePoint ns);
 void record_rtt(TimePoint ns);
 void record_clat(TimePoint ns);
 void record_lat(TimePoint ns, unsigned int retries);
-void record_op(const SlowOp& op);
+// `op` is a static string (__FUNCTION__), not owned. Feeds the top-N
+// slowest-requests report.
+void record_op(
+    TimePoint lat, const char* op, size_t size, off_t offset,
+    unsigned int attempts
+);
 void op_started();
 void op_finished();
 void dump();
@@ -79,7 +67,7 @@ inline void record_clat(TimePoint) {
 }
 inline void record_lat(TimePoint, unsigned int) {
 }
-inline void record_op(const SlowOp&) {
+inline void record_op(TimePoint, const char*, size_t, off_t, unsigned int) {
 }
 inline void op_started() {
 }
