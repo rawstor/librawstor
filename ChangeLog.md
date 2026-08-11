@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.7] - Unreleased
+
+### Added
+- `librawstor` tracks I/O latency breakdown (submission/round-trip/callback/total), retry counts, concurrent in-flight requests, and the 10 slowest requests, reporting them to stderr from `rawstor_terminate()`. Collected by default; pass `--disable-telemetry` to `configure` to opt out (no-op and zero-cost when disabled).
+
 ## [0.2.6] - 2026-08-10
 
 ### Changed
