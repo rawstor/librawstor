@@ -120,12 +120,12 @@ void op_finished() {
 
 void dump() {
     if (g_lat.count() == 0) {
-        // Telemetry was built in, but no ost:// I/O ever ran -- nothing
+        // Telemetry was built in, but no I/O ever ran -- nothing
         // to report.
         return;
     }
 
-    std::fprintf(stderr, "rawstor: telemetry (ost:// I/O)\n");
+    std::fprintf(stderr, "rawstor: telemetry\n");
     print_stat("slat (usec)", g_slat);
     print_stat("rtt  (usec)", g_rtt);
     print_stat("clat (usec)", g_clat);
@@ -136,7 +136,7 @@ void dump() {
     std::vector<SlowOp> slow = g_top_slow.sorted();
     if (!slow.empty()) {
         std::fprintf(
-            stderr, "  top %zu slowest ost:// requests:\n", slow.size()
+            stderr, "  top %zu slowest requests:\n", slow.size()
         );
         unsigned int i = 1;
         for (const SlowOp& op : slow) {
