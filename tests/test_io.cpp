@@ -1,3 +1,4 @@
+#include "opts.h"
 #include "server.hpp"
 #include "session.hpp"
 #include "tmp_dir.hpp"
@@ -523,8 +524,17 @@ TEST(OstIOTest, write_disconnect_concurrent) {
     // A bounded, timeout-based pump rather than the blocking
     // Object::write() helper: an orphaned op would otherwise hang this
     // loop -- and the whole test binary -- forever instead of failing
-    // the test.
-    for (unsigned int i = 0; i < 50 && !(done1 && done2); ++i) {
+    // the test. A write whose send() happens to succeed against an
+    // already-dead connection (a real possibility: the RST from the
+    // server closing early can still be in flight when the client's own
+    // send() call goes out, so the kernel briefly accepts the data) has
+    // no way to fail until TCP_USER_TIMEOUT gives up on it -- so this
+    // budget must comfortably exceed rawstor_opts_tcp_user_timeout(), or
+    // this loop can lose that race and fail the test even though the op
+    // would have completed a moment later.
+    unsigned int budget_ms = rawstor_opts_tcp_user_timeout() + 5000;
+    for (unsigned int elapsed_ms = 0;
+         elapsed_ms < budget_ms && !(done1 && done2); elapsed_ms += 100) {
         int wres = rawio_wait_timeout(queue, 100);
         if (wres < 0 && wres != -ETIME) {
             break;
