@@ -24,7 +24,6 @@
 #include <sys/socket.h>
 
 #include <algorithm>
-#include <chrono>
 #include <iterator>
 #include <memory>
 #include <stdexcept>

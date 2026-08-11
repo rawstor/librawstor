@@ -135,9 +135,7 @@ void dump() {
 
     std::vector<SlowOp> slow = g_top_slow.sorted();
     if (!slow.empty()) {
-        std::fprintf(
-            stderr, "  top %zu slowest requests:\n", slow.size()
-        );
+        std::fprintf(stderr, "  top %zu slowest requests:\n", slow.size());
         unsigned int i = 1;
         for (const SlowOp& op : slow) {
             std::fprintf(
