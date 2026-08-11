@@ -227,8 +227,7 @@ void Connection::_op(
                 return;
             }
 
-            _op(func_name, size, offset, std::move(cb), op, attempt + 1,
-                t_call);
+            _op(func_name, size, offset, cb, op, attempt + 1, t_call);
         }
     );
 }
