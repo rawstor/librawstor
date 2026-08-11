@@ -167,13 +167,13 @@ void Connection::_op(
             );
 
             if (!error) {
-                if (attempt > 0) {
+                if (attempt > 1) {
                     rawstd_warning(
                         "IO %s: size = %zu, offset = %jd; "
                         "success on %s; "
                         "attempt: %d of %d\n",
                         func_name, size, (intmax_t)offset, s->str().c_str(),
-                        attempt + 1, rawstor_opts_io_attempts()
+                        attempt, rawstor_opts_io_attempts()
                     );
                 }
                 _finish(
@@ -182,14 +182,13 @@ void Connection::_op(
                 return;
             }
 
-            if (attempt + 1 >= rawstor_opts_io_attempts()) {
+            if (attempt >= rawstor_opts_io_attempts()) {
                 rawstd_error(
                     "IO %s: size = %zu, offset = %jd; "
                     "error on %s: %s; "
                     "attempt %d of %d; failing...\n",
                     func_name, size, (intmax_t)offset, s->str().c_str(),
-                    std::strerror(error), attempt + 1,
-                    rawstor_opts_io_attempts()
+                    std::strerror(error), attempt, rawstor_opts_io_attempts()
                 );
                 _finish(
                     func_name, size, offset, cb, attempt, t_call, result, error
@@ -202,7 +201,7 @@ void Connection::_op(
                 "error on %s: %s; "
                 "attempt: %d of %d; retrying...\n",
                 func_name, size, (intmax_t)offset, s->str().c_str(),
-                std::strerror(error), attempt + 1, rawstor_opts_io_attempts()
+                std::strerror(error), attempt, rawstor_opts_io_attempts()
             );
 
             try {
@@ -219,7 +218,7 @@ void Connection::_op(
                     "exception on %s: %s; "
                     "attempt %d of %d; failing...\n",
                     func_name, size, (intmax_t)offset, s->str().c_str(),
-                    e.what(), attempt + 1, rawstor_opts_io_attempts()
+                    e.what(), attempt, rawstor_opts_io_attempts()
                 );
                 _finish(
                     func_name, size, offset, cb, attempt, t_call, result, EIO
@@ -426,7 +425,7 @@ void Connection::pread(
             std::shared_ptr<Session> s, std::function<void(size_t, int)>&& cb
         ) { s->pread(buf, size, offset, std::move(cb)); }
     );
-    _op(__FUNCTION__, size, offset, cbptr, opptr, 0, rawstor::telemetry::now());
+    _op(__FUNCTION__, size, offset, cbptr, opptr, 1, rawstor::telemetry::now());
 }
 
 void Connection::preadv(
@@ -441,7 +440,7 @@ void Connection::preadv(
             std::shared_ptr<Session> s, std::function<void(size_t, int)>&& cb
         ) { s->preadv(iov, niov, size, offset, std::move(cb)); }
     );
-    _op(__FUNCTION__, size, offset, cbptr, opptr, 0, rawstor::telemetry::now());
+    _op(__FUNCTION__, size, offset, cbptr, opptr, 1, rawstor::telemetry::now());
 }
 
 void Connection::pwrite(
@@ -456,7 +455,7 @@ void Connection::pwrite(
             std::shared_ptr<Session> s, std::function<void(size_t, int)>&& cb
         ) { s->pwrite(buf, size, offset, sync, std::move(cb)); }
     );
-    _op(__FUNCTION__, size, offset, cbptr, opptr, 0, rawstor::telemetry::now());
+    _op(__FUNCTION__, size, offset, cbptr, opptr, 1, rawstor::telemetry::now());
 }
 
 void Connection::pwritev(
@@ -471,7 +470,7 @@ void Connection::pwritev(
             std::shared_ptr<Session> s, std::function<void(size_t, int)>&& cb
         ) { s->pwritev(iov, niov, size, offset, sync, std::move(cb)); }
     );
-    _op(__FUNCTION__, size, offset, cbptr, opptr, 0, rawstor::telemetry::now());
+    _op(__FUNCTION__, size, offset, cbptr, opptr, 1, rawstor::telemetry::now());
 }
 
 void Connection::flush(std::function<void(int)>&& cb) {
@@ -484,7 +483,7 @@ void Connection::flush(std::function<void(int)>&& cb) {
             s->flush([cb = std::move(cb)](int error) { cb(0, error); });
         }
     );
-    _op(__FUNCTION__, 0, 0, cbptr, opptr, 0, rawstor::telemetry::now());
+    _op(__FUNCTION__, 0, 0, cbptr, opptr, 1, rawstor::telemetry::now());
 }
 
 } // namespace rawstor
