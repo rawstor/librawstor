@@ -4,7 +4,10 @@
 
 #include <rawstd/stats.hpp>
 
+#include <algorithm>
 #include <atomic>
+#include <mutex>
+#include <vector>
 
 #include <cstdint>
 #include <cstdio>
@@ -22,6 +25,55 @@ rawstd::Stats g_retries;
 rawstd::Stats g_in_flight_stats;
 
 std::atomic<int> g_in_flight{0};
+
+// Bounded top-N by SlowOp::lat, backed by a small binary min-heap so the
+// current slowest-of-the-kept-N is found/evicted in O(log N). Only ever
+// used here, as g_top_slow below -- not a general-purpose utility.
+class TopN {
+private:
+    mutable std::mutex _mutex;
+    size_t _capacity;
+    std::vector<SlowOp> _heap;
+
+public:
+    explicit TopN(size_t capacity) : _capacity(capacity) {}
+
+    TopN(const TopN&) = delete;
+    TopN(TopN&&) = delete;
+    TopN& operator=(const TopN&) = delete;
+    TopN& operator=(TopN&&) = delete;
+
+    void add(const SlowOp& op) {
+        std::lock_guard<std::mutex> lock(_mutex);
+
+        // std::push_heap/pop_heap build a max-heap by default; a reversed
+        // comparator turns that into a min-heap, so the *smallest* lat --
+        // the one to evict first when a bigger one shows up -- sits at
+        // heap.front().
+        auto by_lat = [](const SlowOp& a, const SlowOp& b) {
+            return a.lat > b.lat;
+        };
+
+        if (_heap.size() < _capacity) {
+            _heap.push_back(op);
+            std::push_heap(_heap.begin(), _heap.end(), by_lat);
+        } else if (!_heap.empty() && op.lat > _heap.front().lat) {
+            std::pop_heap(_heap.begin(), _heap.end(), by_lat);
+            _heap.back() = op;
+            std::push_heap(_heap.begin(), _heap.end(), by_lat);
+        }
+    }
+
+    // Sorted by descending lat, for dump().
+    std::vector<SlowOp> sorted() const {
+        std::lock_guard<std::mutex> lock(_mutex);
+        std::vector<SlowOp> ret(_heap);
+        std::sort(ret.begin(), ret.end(), [](const SlowOp& a, const SlowOp& b) {
+            return a.lat > b.lat;
+        });
+        return ret;
+    }
+};
 
 TopN g_top_slow(10);
 
