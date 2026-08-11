@@ -9,7 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - `--write-cache=on|off` for `rawstor-vhost` and `rawstor-vhost-qemu` (default `off`, write-through): advertises `VIRTIO_BLK_F_CONFIG_WCE` and honors the guest live-toggling it via `SET_CONFIG`. With write-cache off, every write is made durable (`sync=true`) since the guest treats a completed write as already durable and won't issue a `FLUSH`.
-- `--enable-telemetry` build flag: `librawstor` tracks `ost://` I/O latency breakdown (submission/round-trip/callback/total), retry counts, concurrent in-flight requests, and the 10 slowest requests, reporting them to stderr from `rawstor_terminate()`. No-op and zero-cost when not built with the flag.
 
 ### Changed
 - `rawstor_object_pwrite()`/`rawstor_object_pwritev()` gained a `sync` parameter — when true, the write is durable on stable storage by the time the callback reports success. Breaking C API change; existing callers need to pass a `sync` argument (`false` preserves the old behavior).
@@ -19,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dropped the automatic migration of pre-0.2.4 `file://` objects (`<uuid>.dat`/`<uuid>.spec` pairs) to the current single-file format; such objects are no longer readable.
 
 ## [0.2.6] - Unreleased
+
+### Added
+- `--enable-telemetry` build flag: `librawstor` tracks I/O latency breakdown (submission/round-trip/callback/total), retry counts, concurrent in-flight requests, and the 10 slowest requests, reporting them to stderr from `rawstor_terminate()`. No-op and zero-cost when not built with the flag.
 
 ### Changed
 - `rawstor-ost.service`/`rawstor-vhost@.service` now document and pass through all `RAWSTOR_OPTS_*` client/server tuning environment variables (previously only `BIND_ADDR`/`RAWSTOR_LOCATION`/`RAWSTOR_WRITE_CACHE`).
