@@ -20,8 +20,6 @@ rawstd::Stats g_clat;
 rawstd::Stats g_lat;
 rawstd::Stats g_retries;
 rawstd::Stats g_in_flight_stats;
-rawstd::Stats g_ring_util;
-rawstd::Stats g_ring_entries;
 
 std::atomic<int> g_in_flight{0};
 
@@ -65,14 +63,6 @@ void record_op(const SlowOp& op) {
     g_top_slow.add(op);
 }
 
-void record_ring_utilization(double fraction) {
-    g_ring_util.add(fraction * 100.0);
-}
-
-void record_ring_entries_in_use(unsigned int n) {
-    g_ring_entries.add(static_cast<double>(n));
-}
-
 void op_started() {
     int n = g_in_flight.fetch_add(1, std::memory_order_relaxed) + 1;
     g_in_flight_stats.add(static_cast<double>(n));
@@ -97,8 +87,6 @@ void dump() {
     print_stat("lat  (usec)", g_lat);
     print_stat("retries", g_retries);
     print_stat("in-flight requests", g_in_flight_stats);
-    print_stat("recv ring util (%)", g_ring_util);
-    print_stat("recv ring entries in use", g_ring_entries);
 
     std::vector<SlowOp> slow = g_top_slow.sorted();
     if (!slow.empty()) {

@@ -544,10 +544,6 @@ public:
     bool is_write() const noexcept override final { return false; }
 
     ssize_t process() noexcept override final;
-
-    inline size_t pending_entries_size() const noexcept {
-        return _pending_entries.size();
-    }
 };
 
 class EventSimplexMessageRead final : public EventSimplex {

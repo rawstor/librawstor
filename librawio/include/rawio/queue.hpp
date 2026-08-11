@@ -111,13 +111,6 @@ public:
         std::function<void(size_t, int)>&& cb
     ) = 0;
 
-    // Entries of a recv_multishot() provided-buffer ring currently checked
-    // out (received but not yet fully delivered to its callback). event is
-    // the Event* recv_multishot() returned; 0 if it names an event with no
-    // such notion (or is stale/unknown).
-    virtual unsigned int
-    recv_ring_entries_in_use(Event* event) const noexcept = 0;
-
     virtual Event* write(
         int fd, const void* buf, size_t size,
         std::function<void(size_t, int)>&& cb

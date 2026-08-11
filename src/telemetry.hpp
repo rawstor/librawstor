@@ -83,8 +83,6 @@ void record_rtt(std::chrono::steady_clock::duration d);
 void record_clat(std::chrono::steady_clock::duration d);
 void record_lat(std::chrono::steady_clock::duration d, unsigned int retries);
 void record_op(const SlowOp& op);
-void record_ring_utilization(double fraction);
-void record_ring_entries_in_use(unsigned int n);
 void op_started();
 void op_finished();
 void dump();
@@ -100,10 +98,6 @@ inline void record_clat(std::chrono::steady_clock::duration) {
 inline void record_lat(std::chrono::steady_clock::duration, unsigned int) {
 }
 inline void record_op(const SlowOp&) {
-}
-inline void record_ring_utilization(double) {
-}
-inline void record_ring_entries_in_use(unsigned int) {
 }
 inline void op_started() {
 }

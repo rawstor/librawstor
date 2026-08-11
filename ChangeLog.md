@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - `--write-cache=on|off` for `rawstor-vhost` and `rawstor-vhost-qemu` (default `off`, write-through): advertises `VIRTIO_BLK_F_CONFIG_WCE` and honors the guest live-toggling it via `SET_CONFIG`. With write-cache off, every write is made durable (`sync=true`) since the guest treats a completed write as already durable and won't issue a `FLUSH`.
-- `--enable-telemetry` build flag: `librawstor` tracks `ost://` I/O latency breakdown (submission/round-trip/callback/total), retry counts, concurrent in-flight requests, provided-buffer-ring utilization, and the 10 slowest requests, reporting them to stderr from `rawstor_terminate()`. No-op and zero-cost when not built with the flag.
+- `--enable-telemetry` build flag: `librawstor` tracks `ost://` I/O latency breakdown (submission/round-trip/callback/total), retry counts, concurrent in-flight requests, and the 10 slowest requests, reporting them to stderr from `rawstor_terminate()`. No-op and zero-cost when not built with the flag.
 
 ### Changed
 - `rawstor_object_pwrite()`/`rawstor_object_pwritev()` gained a `sync` parameter — when true, the write is durable on stable storage by the time the callback reports success. Breaking C API change; existing callers need to pass a `sync` argument (`false` preserves the old behavior).

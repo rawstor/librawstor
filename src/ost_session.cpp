@@ -1054,14 +1054,13 @@ void Session::set_object(Object* object) {
 
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('m', "%s\n", "multishot recv");
-    constexpr size_t recv_entry_size = 1u << 17;
     _read_event = _queue.recv_multishot(
-        fd(), recv_entry_size, 64 * 4, sizeof(RawstorOSTFrameResponse), 0,
+        fd(), 1u << 17, 64 * 4, sizeof(RawstorOSTFrameResponse), 0,
         [weak = std::weak_ptr<rawstor::ost::Session>(
              std::static_pointer_cast<rawstor::ost::Session>(shared_from_this())
          ),
          cid = 0, is_head = true, size = sizeof(RawstorOSTFrameResponse),
-         trace_event, recv_entry_size](
+         trace_event](
             const iovec* iov, unsigned int niov, size_t result, int error
         ) mutable -> size_t {
             if (error == ECANCELED) {
@@ -1090,24 +1089,6 @@ void Session::set_object(Object* object) {
             if (!error) {
                 error = validate_result(size, result);
             }
-
-#ifdef RAWSTOR_TELEMETRY
-            // Guarded here, not just inside the record_*() sinks: without
-            // this, recv_ring_entries_in_use() (a dynamic_cast on the
-            // poll backend) would run on every single completion even
-            // with telemetry compiled out.
-            if (!error) {
-                rawstor::telemetry::record_ring_utilization(
-                    static_cast<double>(result) /
-                    static_cast<double>(recv_entry_size)
-                );
-                rawstor::telemetry::record_ring_entries_in_use(
-                    session->_queue.recv_ring_entries_in_use(
-                        session->_read_event
-                    )
-                );
-            }
-#endif
 
             if (!error) {
                 try {

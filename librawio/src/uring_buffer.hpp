@@ -77,13 +77,6 @@ public:
     void operator()(size_t result, int error, unsigned int flags);
 
     unsigned int id() const noexcept;
-
-    // Entries currently checked out of the ring (received but not yet
-    // fully handed to _cb) -- _pending_entries already tracks exactly
-    // this, no separate counter needed.
-    inline unsigned int entries_in_use() const noexcept {
-        return static_cast<unsigned int>(_pending_entries.size());
-    }
 };
 
 } // namespace uring

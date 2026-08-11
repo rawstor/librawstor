@@ -90,20 +90,12 @@ void Queue::_dispatch() {
                 rawstd_trace("callback error\n");
                 if (cqe->flags & IORING_CQE_F_MORE) {
                     p.release();
-                } else {
-                    // Last completion for this registration (e.g. a
-                    // cancelled/failed recv_multishot) -- if it was one,
-                    // drop its now-stale entry. A no-op erase() for every
-                    // other op type.
-                    _buffer_rings.erase(static_cast<rawio::Event*>(p.get()));
                 }
                 throw;
             }
 
             if (cqe->flags & IORING_CQE_F_MORE) {
                 p.release();
-            } else {
-                _buffer_rings.erase(static_cast<rawio::Event*>(p.get()));
             }
         }
     } catch (...) {
@@ -515,18 +507,7 @@ rawio::Event* Queue::recv_multishot(
     );
     io_uring_sqe_set_data(sqe, p.get());
 
-    _buffer_rings[static_cast<rawio::Event*>(p.get())] = buffer;
-
     return static_cast<rawio::Event*>(p.release());
-}
-
-unsigned int
-Queue::recv_ring_entries_in_use(rawio::Event* event) const noexcept {
-    auto it = _buffer_rings.find(event);
-    if (it == _buffer_rings.end()) {
-        return 0;
-    }
-    return it->second->entries_in_use();
 }
 
 rawio::Event* Queue::recvmsg(
