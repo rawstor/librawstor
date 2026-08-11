@@ -2,6 +2,7 @@
 
 #include "object.hpp"
 #include "opts.h"
+#include "telemetry.hpp"
 
 #include <rawio/queue.hpp>
 
@@ -123,7 +124,19 @@ private:
     uint16_t _cid;
     bool _dispatched;
 
+    // telemetry: request_cb() stamps _t_send_done once the request is
+    // fully on the wire; _t_created (below, stamped at construction --
+    // effectively the moment Connection::_op() dispatched this attempt)
+    // to _t_send_done is slat, _t_send_done to the moment a response is
+    // ready is rtt, and the _cb() call itself is clat. 0 (never a real
+    // timestamp, see telemetry::now()) marks "never sent", so _dispatch()
+    // can tell a send that never completed apart from a real zero-length
+    // gap.
+    rawstor::telemetry::TimePoint _t_send_done;
+
 protected:
+    rawstor::telemetry::TimePoint _t_created;
+
     rawstd::TraceEvent _trace_event;
     // A strong reference, not just a back-pointer: a SessionOp can outlive
     // Session::_ops's own copy of it (e.g. a still-pending send/sendmsg
@@ -150,11 +163,33 @@ protected:
         _dispatched = true;
         RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "%s\n", "in-flight end");
 
+        // rtt/clat only mean something for a request that actually made
+        // it onto the wire and got a real response back -- a failed
+        // send, a stray cid, or a torn-down session all reach here with
+        // an error and nothing useful to measure.
+        bool timed = !error && _t_send_done != 0;
+        rawstor::telemetry::TimePoint t_response_ready = 0;
+        if (timed) {
+            t_response_ready = rawstor::telemetry::now();
+            rawstor::telemetry::record_rtt(t_response_ready - _t_send_done);
+        }
+
         try {
             _cb(result, error);
         } catch (...) {
+            if (timed) {
+                rawstor::telemetry::record_clat(
+                    rawstor::telemetry::now() - t_response_ready
+                );
+            }
             _session->_remove_op(_cid);
             throw;
+        }
+
+        if (timed) {
+            rawstor::telemetry::record_clat(
+                rawstor::telemetry::now() - t_response_ready
+            );
         }
 
         _session->_remove_op(_cid);
@@ -168,6 +203,8 @@ public:
     ) :
         _cid(cid),
         _dispatched(false),
+        _t_send_done(0),
+        _t_created(rawstor::telemetry::now()),
         _trace_event(trace_event),
         _session(session),
         _cb(std::move(cb)) {}
@@ -186,7 +223,10 @@ public:
     void request_cb(int error) {
         RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "%s\n", "in-flight begin");
 
-        if (error) {
+        if (!error) {
+            _t_send_done = rawstor::telemetry::now();
+            rawstor::telemetry::record_slat(_t_send_done - _t_created);
+        } else {
             _dispatch(0, error);
         }
     }
@@ -733,10 +773,12 @@ SessionOp* Session::_find_op(uint16_t cid) {
 
 void Session::_add_op(const std::shared_ptr<SessionOp>& op) {
     _ops[op->cid()] = op;
+    rawstor::telemetry::op_started();
 }
 
 void Session::_remove_op(uint16_t cid) {
     _ops.erase(cid);
+    rawstor::telemetry::op_finished();
 }
 
 Session::Session(Private p, rawio::Queue& queue, const rawstd::URI& location) :

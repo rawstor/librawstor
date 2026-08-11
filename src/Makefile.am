@@ -47,7 +47,9 @@ librawstor_la_SOURCES = blk_session.cpp \
                         opts.h \
                         session.cpp \
                         session.hpp \
-                        rawstor.cpp
+                        rawstor.cpp \
+                        telemetry.cpp \
+                        telemetry.hpp
 
 librawstor_la_LDFLAGS = -version-info $(LIBRARY_VERSION)
 

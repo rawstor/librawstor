@@ -12,6 +12,13 @@ LT_INIT
 
 AC_CONFIG_MACRO_DIRS([m4])
 
+# rawstd::Stats::stddev() (librawstd/src/stats.cpp) uses std::sqrt(). A
+# shared build gets libm transitively via libstdc++'s own dependency, but
+# --disable-shared's static archives don't propagate that to consumers --
+# add -lm to LIBS globally so every binary's link line gets it, rather
+# than one static-only fixup per consumer (cli, ost, vhost, tests, ...).
+AC_SEARCH_LIBS([sqrt], [m])
+
 
 AC_SUBST([PACKAGE_VERSION_SHORT], [`echo ${PACKAGE_VERSION%%-*}`])
 AC_SUBST([PACKAGE_VERSION_MAJOR], [`echo ${PACKAGE_VERSION_SHORT%%.*}`])
@@ -69,6 +76,16 @@ AS_IF([test "x$enable_asan" = "xyes"], [
     AC_SUBST([ASAN_CFLAGS], [""])
     AC_SUBST([ASAN_LDFLAGS], [""])
     AC_SUBST([maybe_asan], [""])
+])
+
+
+AC_ARG_ENABLE([telemetry], [AS_HELP_STRING([--disable-telemetry],
+    [do not collect and report I/O latency/queue-depth statistics])],
+    [enable_telemetry=$enableval],
+    [enable_telemetry="yes"])
+AS_IF([test "x$enable_telemetry" = "xyes"], [
+    AC_DEFINE([RAWSTOR_TELEMETRY], 1,
+        [Collect and report I/O latency/queue-depth statistics])
 ])
 
 

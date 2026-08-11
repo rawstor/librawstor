@@ -1,6 +1,7 @@
 #include <rawstor/rawstor.h>
 
 #include "opts.h"
+#include "telemetry.hpp"
 
 #include <rawio/queue.hpp>
 
@@ -68,6 +69,7 @@ int rawstor_initialize(const RawstorOpts* opts) noexcept {
 }
 
 void rawstor_terminate() noexcept {
+    rawstor::telemetry::dump();
     rawstor_opts_terminate();
     rawstd_logging_terminate();
 }
