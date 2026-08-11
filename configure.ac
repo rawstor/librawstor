@@ -73,7 +73,7 @@ AS_IF([test "x$enable_asan" = "xyes"], [
 
 
 AC_ARG_ENABLE([telemetry], [AS_HELP_STRING([--enable-telemetry],
-    [collect and report ost:// I/O latency/queue-depth/buffer-ring statistics])],
+    [collect and report I/O latency/queue-depth/buffer-ring statistics])],
     [enable_telemetry=$enableval],
     [enable_telemetry="no"])
 AS_IF([test "x$enable_telemetry" = "xyes"], [
