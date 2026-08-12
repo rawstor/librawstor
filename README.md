@@ -55,6 +55,7 @@ Default values are shown below.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `RAWSTOR_LOCATION` | *(none)* | Fallback `LOCATION` for `rawstor create`/`list`/`info` when it's omitted from the command line. |
 | `RAWSTOR_OPTS_IO_ATTEMPTS` | `3` | Number of retry attempts for I/O operations that encounter recoverable errors. |
 | `RAWSTOR_OPTS_SESSIONS` | `1` | Number of concurrent sessions that Rawstor client will open for each object. |
 | `RAWSTOR_OPTS_SO_SNDTIMEO` | `5000` | Socket send timeout. Sets `SO_SNDTIMEO` for network sockets. |
