@@ -68,6 +68,8 @@ static void command_create_usage(void) {
         "create by location (backend list, optional UUID):\n"
         "  LOCATION              Comma-separated list of rawstor backend "
         "locations.\n"
+        "                        If omitted, falls back to the "
+        "RAWSTOR_LOCATION environment variable.\n"
         "                        If -u is omitted, a random UUIDv7 is "
         "generated.\n"
         "  -u, --uuid UUID       Explicit UUID for the object (only valid "
@@ -138,6 +140,10 @@ static int command_create(int argc, char** argv) {
     if (optind < argc) {
         fprintf(stderr, "Unexpected argument: %s\n", argv[optind]);
         return EX_USAGE;
+    }
+
+    if (location_arg == NULL && target_arg == NULL) {
+        location_arg = getenv("RAWSTOR_LOCATION");
     }
 
     if (size_arg == NULL) {
@@ -242,6 +248,11 @@ static void command_list_usage(void) {
                 "\n"
                 "usage: rawstor [options] list LOCATION [command_options]\n"
                 "\n"
+                "  LOCATION              Comma-separated list of rawstor "
+                "backend locations.\n"
+                "                        If omitted, falls back to the "
+                "RAWSTOR_LOCATION environment variable.\n"
+                "\n"
                 "command options:\n"
                 "  -h, --help            Show this help message and exit\n"
     );
@@ -283,6 +294,10 @@ static int command_list(int argc, char** argv) {
     }
 
     if (location_arg == NULL) {
+        location_arg = getenv("RAWSTOR_LOCATION");
+    }
+
+    if (location_arg == NULL) {
         fprintf(stderr, "location required\n");
         return EX_USAGE;
     }
@@ -295,6 +310,11 @@ static void command_info_usage(void) {
         stdout, "Rawstor CLI " PACKAGE_VERSION "\n"
                 "\n"
                 "usage: rawstor [options] info LOCATION [command_options]\n"
+                "\n"
+                "  LOCATION              Comma-separated list of rawstor "
+                "backend locations.\n"
+                "                        If omitted, falls back to the "
+                "RAWSTOR_LOCATION environment variable.\n"
                 "\n"
                 "command options:\n"
                 "  -h, --help            Show this help message and exit\n"
@@ -334,6 +354,10 @@ static int command_info(int argc, char** argv) {
     if (optind < argc) {
         fprintf(stderr, "Unexpected argument: %s\n", argv[optind]);
         return EX_USAGE;
+    }
+
+    if (location_arg == NULL) {
+        location_arg = getenv("RAWSTOR_LOCATION");
     }
 
     if (location_arg == NULL) {
