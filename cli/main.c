@@ -318,17 +318,36 @@ static void command_info_usage(void) {
                 "\n"
                 "command options:\n"
                 "  -h, --help            Show this help message and exit\n"
+                "  -b, --bytes           Show sizes in bytes\n"
+                "  -k, --kib             Show sizes in KiB\n"
+                "  -m, --mib             Show sizes in MiB\n"
+                "  -g, --gib             Show sizes in GiB\n"
+                "  -t, --tib             Show sizes in TiB\n"
+                "  -p, --pib             Show sizes in PiB\n"
+                "  -e, --eib             Show sizes in EiB\n"
+                "                        Without a unit option, sizes are "
+                "shown in a human-\n"
+                "                        readable unit. Rounded values are "
+                "prefixed with '~'.\n"
     );
 }
 
 static int command_info(int argc, char** argv) {
-    const char* optstring = "h";
+    const char* optstring = "hbkmgtpe";
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
+        {"bytes", no_argument, NULL, 'b'},
+        {"kib", no_argument, NULL, 'k'},
+        {"mib", no_argument, NULL, 'm'},
+        {"gib", no_argument, NULL, 'g'},
+        {"tib", no_argument, NULL, 't'},
+        {"pib", no_argument, NULL, 'p'},
+        {"eib", no_argument, NULL, 'e'},
         {},
     };
 
     char* location_arg = NULL;
+    char unit_arg = 0;
     optind = 0;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
@@ -340,6 +359,20 @@ static int command_info(int argc, char** argv) {
         case 'h':
             command_info_usage();
             return EXIT_SUCCESS;
+
+        case 'b':
+        case 'k':
+        case 'm':
+        case 'g':
+        case 't':
+        case 'p':
+        case 'e':
+            if (unit_arg != 0) {
+                fprintf(stderr, "Unit options are mutually exclusive\n");
+                return EX_USAGE;
+            }
+            unit_arg = (char)c;
+            break;
 
         default:
             return EX_USAGE;
@@ -365,7 +398,7 @@ static int command_info(int argc, char** argv) {
         return EX_USAGE;
     }
 
-    return rawstor_cli_info(location_arg);
+    return rawstor_cli_info(location_arg, unit_arg);
 }
 
 static void command_show_usage(void) {
