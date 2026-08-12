@@ -17,11 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dropped the deprecated `-l`/`--location` and `-t`/`--target` flags (`rawstor list`/`create`/`remove`/`show`/`testio`, `rawstor-ost`, `rawstor-vhost`) in favor of the positional `LOCATION`/`TARGET` argument; `rawstor create -t TARGET` (create-by-target) is unaffected. Also dropped the `rawstor-cli` compat symlink from the deb/rpm packages — use `rawstor`.
 - Dropped the automatic migration of pre-0.2.4 `file://` objects (`<uuid>.dat`/`<uuid>.spec` pairs) to the current single-file format; such objects are no longer readable.
 
-## [0.2.7] - Unreleased
+## [0.2.7] - 2026-08-13
 
 ### Added
 - `librawstor` tracks I/O latency breakdown (submission/round-trip/callback/total), retry counts, concurrent in-flight requests, and the 10 slowest requests, reporting them to stderr from `rawstor_terminate()`. Collected by default; pass `--disable-telemetry` to `configure` to opt out (no-op and zero-cost when disabled).
 - Publish the Python bindings as a single `abi3` wheel (Python >= 3.9), dynamically linked against a separately-installed `librawstor`, alongside the existing `python3-rawstor` deb/rpm packages.
+- `rawstor create`/`list`/`info` fall back to the `RAWSTOR_LOCATION` environment variable when `LOCATION` is omitted from the command line.
+- `rawstor info` rounds `used`/`available`/`total` to a human-readable unit by default (e.g. `~140G` instead of `147357440K`), prefixing rounded values with `~`; `-b`/`-k`/`-m`/`-g`/`-t`/`-p`/`-e` force a specific unit instead.
 
 ## [0.2.6] - 2026-08-10
 

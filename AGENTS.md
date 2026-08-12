@@ -145,6 +145,8 @@ backends and the io_uring/poll RawIO backends.
 
 - Use a git worktree for code changes — isolate each task from the main
   checkout and from other work happening concurrently.
+- Name the worktree after the branch it holds, replacing `/` with `+`
+  (e.g. branch `add/v0.2.7` -> worktree `add+v0.2.7`).
 - Branch names: `<type>/<descriptive-name>` — `add/<feature-name>` for new
   features, `fix/<bug-description>` for bug fixes, `ref/<component-name>`
   for refactoring (see README's Contributing section for the full

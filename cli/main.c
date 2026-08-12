@@ -68,6 +68,8 @@ static void command_create_usage(void) {
         "create by location (backend list, optional UUID):\n"
         "  LOCATION              Comma-separated list of rawstor backend "
         "locations.\n"
+        "                        If omitted, falls back to the "
+        "RAWSTOR_LOCATION environment variable.\n"
         "                        If -u is omitted, a random UUIDv7 is "
         "generated.\n"
         "  -u, --uuid UUID       Explicit UUID for the object (only valid "
@@ -138,6 +140,10 @@ static int command_create(int argc, char** argv) {
     if (optind < argc) {
         fprintf(stderr, "Unexpected argument: %s\n", argv[optind]);
         return EX_USAGE;
+    }
+
+    if (location_arg == NULL && target_arg == NULL) {
+        location_arg = getenv("RAWSTOR_LOCATION");
     }
 
     if (size_arg == NULL) {
@@ -242,6 +248,11 @@ static void command_list_usage(void) {
                 "\n"
                 "usage: rawstor [options] list LOCATION [command_options]\n"
                 "\n"
+                "  LOCATION              Comma-separated list of rawstor "
+                "backend locations.\n"
+                "                        If omitted, falls back to the "
+                "RAWSTOR_LOCATION environment variable.\n"
+                "\n"
                 "command options:\n"
                 "  -h, --help            Show this help message and exit\n"
     );
@@ -283,6 +294,10 @@ static int command_list(int argc, char** argv) {
     }
 
     if (location_arg == NULL) {
+        location_arg = getenv("RAWSTOR_LOCATION");
+    }
+
+    if (location_arg == NULL) {
         fprintf(stderr, "location required\n");
         return EX_USAGE;
     }
@@ -296,19 +311,43 @@ static void command_info_usage(void) {
                 "\n"
                 "usage: rawstor [options] info LOCATION [command_options]\n"
                 "\n"
+                "  LOCATION              Comma-separated list of rawstor "
+                "backend locations.\n"
+                "                        If omitted, falls back to the "
+                "RAWSTOR_LOCATION environment variable.\n"
+                "\n"
                 "command options:\n"
                 "  -h, --help            Show this help message and exit\n"
+                "  -b, --bytes           Show sizes in bytes\n"
+                "  -k, --kib             Show sizes in KiB\n"
+                "  -m, --mib             Show sizes in MiB\n"
+                "  -g, --gib             Show sizes in GiB\n"
+                "  -t, --tib             Show sizes in TiB\n"
+                "  -p, --pib             Show sizes in PiB\n"
+                "  -e, --eib             Show sizes in EiB\n"
+                "                        Without a unit option, sizes are "
+                "shown in a human-\n"
+                "                        readable unit. Rounded values are "
+                "prefixed with '~'.\n"
     );
 }
 
 static int command_info(int argc, char** argv) {
-    const char* optstring = "h";
+    const char* optstring = "hbkmgtpe";
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
+        {"bytes", no_argument, NULL, 'b'},
+        {"kib", no_argument, NULL, 'k'},
+        {"mib", no_argument, NULL, 'm'},
+        {"gib", no_argument, NULL, 'g'},
+        {"tib", no_argument, NULL, 't'},
+        {"pib", no_argument, NULL, 'p'},
+        {"eib", no_argument, NULL, 'e'},
         {},
     };
 
     char* location_arg = NULL;
+    char unit_arg = 0;
     optind = 0;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
@@ -320,6 +359,20 @@ static int command_info(int argc, char** argv) {
         case 'h':
             command_info_usage();
             return EXIT_SUCCESS;
+
+        case 'b':
+        case 'k':
+        case 'm':
+        case 'g':
+        case 't':
+        case 'p':
+        case 'e':
+            if (unit_arg != 0) {
+                fprintf(stderr, "Unit options are mutually exclusive\n");
+                return EX_USAGE;
+            }
+            unit_arg = (char)c;
+            break;
 
         default:
             return EX_USAGE;
@@ -337,11 +390,15 @@ static int command_info(int argc, char** argv) {
     }
 
     if (location_arg == NULL) {
+        location_arg = getenv("RAWSTOR_LOCATION");
+    }
+
+    if (location_arg == NULL) {
         fprintf(stderr, "location required\n");
         return EX_USAGE;
     }
 
-    return rawstor_cli_info(location_arg);
+    return rawstor_cli_info(location_arg, unit_arg);
 }
 
 static void command_show_usage(void) {
