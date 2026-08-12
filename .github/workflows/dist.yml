@@ -567,17 +567,41 @@ jobs:
       run: |
         cd ${LIBRAWSTOR}/pyrawstor
         python3 -m build --no-isolation --outdir ${GITHUB_WORKSPACE}/dist .
+    - name: compute auditwheel excludes
+      # Thin wheel: everything the extension links against beyond the
+      # baseline glibc/libstdc++ pieces manylinux always assumes present
+      # must come from the system (matching python3-rawstor's deb/rpm
+      # dependency on librawstor), not get vendored into the wheel by
+      # auditwheel. Derive the exclude list from `ldd`'s full transitive
+      # resolution of the built .so -- not just its own direct NEEDED
+      # entries, since liburing/libxxhash are only pulled in transitively
+      # via librawstor.so itself -- instead of hand-listing sonames, so a
+      # soname bump (e.g. librawstor's own, which tracks its major
+      # version) or a future new dependency is excluded automatically
+      # instead of silently vendored if nobody remembers to update this
+      # step.
+      run: |
+        mkdir -p /tmp/wheel-inspect
+        python3 -m zipfile -e ${GITHUB_WORKSPACE}/dist/*.whl /tmp/wheel-inspect
+        SO=$(find /tmp/wheel-inspect -name '*.so')
+        DEPS=$(ldd "${SO}" | awk '$2 == "=>" {print $1}')
+        ALLOW='^(libc\.so\.|libm\.so\.|libpthread\.so\.|libdl\.so\.|librt\.so\.|libstdc\+\+\.so\.|libgcc_s\.so\.)'
+        EXCLUDES=""
+        for lib in ${DEPS}; do
+          if ! echo "${lib}" | grep -Eq "${ALLOW}"; then
+            EXCLUDES="${EXCLUDES} --exclude ${lib}"
+          fi
+        done
+        echo "found deps: ${DEPS}" >> $GITHUB_STEP_SUMMARY
+        echo "excluding from wheel: ${EXCLUDES}" >> $GITHUB_STEP_SUMMARY
+        echo "AUDITWHEEL_EXCLUDES=${EXCLUDES}" >> $GITHUB_ENV
     - name: auditwheel repair
       # PyPI rejects a plain "linux_x86_64" platform tag, so the wheel
-      # still needs auditwheel's manylinux tag rewrite -- but --exclude
-      # keeps librawstor/liburing/libxxhash OUT of the wheel. This is a
-      # thin binding: the user is expected to install the librawstor
-      # package (matching python3-rawstor's deb/rpm dependency) themselves.
+      # still needs auditwheel's manylinux tag rewrite -- the excludes
+      # computed above keep everything system-provided OUT of the wheel.
       run: |
         python3 -m auditwheel repair \
-          --exclude librawstor.so.99 \
-          --exclude liburing.so.2 \
-          --exclude libxxhash.so.0 \
+          ${AUDITWHEEL_EXCLUDES} \
           ${GITHUB_WORKSPACE}/dist/*.whl -w ${GITHUB_WORKSPACE}/wheelhouse
     - name: auditwheel show
       run: |
