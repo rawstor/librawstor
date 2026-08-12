@@ -568,10 +568,17 @@ jobs:
         cd ${LIBRAWSTOR}/pyrawstor
         python3 -m build --no-isolation --outdir ${GITHUB_WORKSPACE}/dist .
     - name: auditwheel repair
-      # vendors librawstor/liburing/libxxhash .so's into the wheel, since a
-      # plain `pip install` target has none of them -- unlike deb/rpm
-      # installs, which pull librawstor in via the package manager.
-      run: python3 -m auditwheel repair ${GITHUB_WORKSPACE}/dist/*.whl -w ${GITHUB_WORKSPACE}/wheelhouse
+      # PyPI rejects a plain "linux_x86_64" platform tag, so the wheel
+      # still needs auditwheel's manylinux tag rewrite -- but --exclude
+      # keeps librawstor/liburing/libxxhash OUT of the wheel. This is a
+      # thin binding: the user is expected to install the librawstor
+      # package (matching python3-rawstor's deb/rpm dependency) themselves.
+      run: |
+        python3 -m auditwheel repair \
+          --exclude librawstor.so.99 \
+          --exclude liburing.so.2 \
+          --exclude libxxhash.so.0 \
+          ${GITHUB_WORKSPACE}/dist/*.whl -w ${GITHUB_WORKSPACE}/wheelhouse
     - name: auditwheel show
       run: |
         echo "# auditwheel show" >> $GITHUB_STEP_SUMMARY
@@ -590,7 +597,9 @@ jobs:
         if-no-files-found: error
 
   wheel-install:
-    needs: wheels
+    needs:
+    - deb-librawstor
+    - wheels
 
     strategy:
       matrix:
@@ -606,11 +615,18 @@ jobs:
         python-version: ${{ matrix.python-version }}
     - uses: actions/download-artifact@v8
       with:
+        name: librawstor.deb
+        path: librawstor.deb
+    - name: install-librawstor
+      # the wheel is thin (librawstor/liburing/libxxhash excluded from it,
+      # see the wheels job) -- it's on the user to have librawstor
+      # installed already, same as the python3-rawstor deb/rpm packages.
+      run: sudo apt install -y ./librawstor.deb/librawstor_*.deb
+    - uses: actions/download-artifact@v8
+      with:
         name: python3-rawstor.whl
         path: wheelhouse
     - name: install-python3-rawstor
-      # a bare pip install with no system librawstor/liburing/libxxhash --
-      # this is what proves the wheel is actually self-contained.
       run: pip install wheelhouse/*.whl
     - name: test-python3-rawstor
       run: |
