@@ -143,6 +143,8 @@ backends and the io_uring/poll RawIO backends.
 
 ## Git conventions
 
+- Use a git worktree for code changes — isolate each task from the main
+  checkout and from other work happening concurrently.
 - Branch names: `<type>/<descriptive-name>` — `add/<feature-name>` for new
   features, `fix/<bug-description>` for bug fixes, `ref/<component-name>`
   for refactoring (see README's Contributing section for the full
@@ -160,6 +162,8 @@ backends and the io_uring/poll RawIO backends.
   internal refactors, test-only changes, or comment/doc tweaks. Keep each
   entry to one short sentence; save the "why" and implementation detail
   for the commit message, not the changelog.
+- Never push, including to a new branch. Commit locally and stop there —
+  the user reviews what's about to be pushed and pushes it themselves.
 
 ## Gotchas worth knowing
 

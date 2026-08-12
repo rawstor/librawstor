@@ -153,6 +153,14 @@ void Queue::setup_fd(int fd) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 
+    // No-op on Linux (send()/sendmsg() suppress SIGPIPE per-call via
+    // MSG_NOSIGNAL instead); on macOS this is the only way to suppress it,
+    // since macOS has no per-call flag equivalent.
+    res = rawstd_socket_set_nosigpipe(fd);
+    if (res) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+
     res = rawstd_socket_set_snd_bufsize(fd, bufsize);
     if (res) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
