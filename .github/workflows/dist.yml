@@ -693,7 +693,11 @@ jobs:
     - release
 
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
+    # Temporarily disabled: the wheel/sdist already land on the GitHub
+    # Release (see release's `files:`) -- hold off on PyPI publishing until
+    # the thin-wheel approach has been confirmed working end-to-end and the
+    # PyPI trusted-publisher/environment setup is in place.
+    if: false
     environment: pypi
     permissions:
       id-token: write
