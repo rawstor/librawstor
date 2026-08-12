@@ -1127,17 +1127,37 @@ void Session::set_object(Object* object) {
                 } catch (const std::system_error& e) {
                     error = e.code().value();
                     session->_fail_in_flight(error, &is_head, &size);
+                    // dispatch()'s caller rethrows out of _wait_timeout(),
+                    // destroying this registration's Event via stack
+                    // unwinding -- and poll::Queue::_wait_timeout() only
+                    // re-arms a multishot event when it *isn't* left with
+                    // an error, which an exception escaping dispatch()
+                    // never allows. _read_event would otherwise dangle
+                    // until ~Session() cancel()s it, at which point the
+                    // freed Event's address may already belong to some
+                    // other, unrelated live registration.
+                    session->_read_event = nullptr;
                     RAWSTD_THROW_SYSTEM_ERROR(error);
                 } catch (const std::exception& e) {
                     rawstd_error("%s\n", e.what());
                     error = EPROTO;
                     session->_fail_in_flight(error, &is_head, &size);
+                    session->_read_event = nullptr;
                     RAWSTD_THROW_SYSTEM_ERROR(error);
                 }
             }
 
             if (error) {
                 session->_fail_in_flight(error, &is_head, &size);
+                // A real transport-level error (as opposed to the
+                // in-protocol "unexpected cid" case above, which leaves
+                // the registration live and doesn't reach here): dispatch()
+                // reports it to the callback exactly when its own event
+                // won't be re-armed by poll::Queue::_wait_timeout() (it
+                // only re-arms is_multishot() events without an error), so
+                // this Event is about to be destroyed. See the matching
+                // comment above for why _read_event must not outlive it.
+                session->_read_event = nullptr;
             }
 
             return size;
