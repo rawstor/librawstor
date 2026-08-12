@@ -43,29 +43,15 @@ PyMODINIT_FUNC PyInit_librawstor() {
         return NULL;
     }
 
-    if (PyType_Ready(&PyObjectSpecType) < 0) {
-        rawstor_terminate();
-        return NULL;
-    }
-
-    if (PyType_Ready(&PyLocationInfoType) < 0) {
-        rawstor_terminate();
-        return NULL;
-    }
-
     PyObject* module = PyModule_Create(&librawstor_module);
     if (module == NULL) {
         rawstor_terminate();
         return NULL;
     }
 
-    if (PyModule_AddType(module, &PyObjectSpecType) < 0) {
+    if (py_rawstor_types_init(module) < 0) {
         Py_DECREF(module);
-        return NULL;
-    }
-
-    if (PyModule_AddType(module, &PyLocationInfoType) < 0) {
-        Py_DECREF(module);
+        rawstor_terminate();
         return NULL;
     }
 

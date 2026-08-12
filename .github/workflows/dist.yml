@@ -526,6 +526,137 @@ jobs:
         mkdir -p /tmp/rawstor-install-test
         python3 -c "import rawstor; print(list(rawstor.Location('file:///tmp/rawstor-install-test'))); print('OK')"
 
+  wheel:
+    needs:
+    - sources
+    - rpm-librawstor
+
+    runs-on: ubuntu-latest
+
+    # almalinux:9 (same base rpm-librawstor already builds against) gives
+    # the wheel's manylinux_2_34 glibc floor -- consistent with the
+    # distros this project already supports (no Ubuntu 22.04, no RHEL8).
+    container: almalinux:9
+
+    steps:
+    - name: install dependencies
+      run: |
+        dnf -y install epel-release
+        dnf config-manager --set-enabled crb
+        dnf -y install xxhash-devel liburing-devel gtest-devel gcc-c++ make pkgconfig python3-devel python3-pip python3-wheel python3-build python3-setuptools patchelf
+        python3 -m pip install auditwheel
+    - uses: actions/download-artifact@v8
+    - name: install librawstor
+      run: dnf -y install ./librawstor.rpm/librawstor-[0-9]*.rpm ./librawstor.rpm/librawstor-devel-*.rpm
+    - name: env
+      run: |
+        export LIBRAWSTOR_TAR_GZ=$(cd sources && ls librawstor-*.tar.gz)
+        export LIBRAWSTOR_TAR=${LIBRAWSTOR_TAR_GZ%.*}
+        export LIBRAWSTOR=${LIBRAWSTOR_TAR%.*}
+        echo "LIBRAWSTOR_TAR_GZ=${LIBRAWSTOR_TAR_GZ}" >> $GITHUB_ENV
+        echo "LIBRAWSTOR=${LIBRAWSTOR}" >> $GITHUB_ENV
+    - name: configure
+      run: |
+        tar -xzf sources/${LIBRAWSTOR_TAR_GZ}
+        cd ${LIBRAWSTOR}
+        ./configure
+    - name: build wheel and sdist
+      # a single cp39-abi3 build works unmodified on every Python >= 3.9
+      # (see pyrawstor/setup.py), so one wheel covers the whole matrix --
+      # no per-Python-version build needed.
+      run: |
+        cd ${LIBRAWSTOR}/pyrawstor
+        python3 -m build --no-isolation --outdir ${GITHUB_WORKSPACE}/dist .
+    - name: compute auditwheel excludes
+      # Thin wheel: everything the extension links against beyond the
+      # baseline glibc/libstdc++ pieces manylinux always assumes present
+      # must come from the system (matching python3-rawstor's deb/rpm
+      # dependency on librawstor), not get vendored into the wheel by
+      # auditwheel. Derive the exclude list from `ldd`'s full transitive
+      # resolution of the built .so -- not just its own direct NEEDED
+      # entries, since liburing/libxxhash are only pulled in transitively
+      # via librawstor.so itself -- instead of hand-listing sonames, so a
+      # soname bump (e.g. librawstor's own, which tracks its major
+      # version) or a future new dependency is excluded automatically
+      # instead of silently vendored if nobody remembers to update this
+      # step.
+      run: |
+        mkdir -p /tmp/wheel-inspect
+        python3 -m zipfile -e ${GITHUB_WORKSPACE}/dist/*.whl /tmp/wheel-inspect
+        SO=$(find /tmp/wheel-inspect -name '*.so')
+        DEPS=$(ldd "${SO}" | awk '$2 == "=>" {print $1}')
+        ALLOW='^(libc\.so\.|libm\.so\.|libpthread\.so\.|libdl\.so\.|librt\.so\.|libstdc\+\+\.so\.|libgcc_s\.so\.)'
+        EXCLUDES=""
+        for lib in ${DEPS}; do
+          if ! echo "${lib}" | grep -Eq "${ALLOW}"; then
+            EXCLUDES="${EXCLUDES} --exclude ${lib}"
+          fi
+        done
+        echo "found deps: ${DEPS}" >> $GITHUB_STEP_SUMMARY
+        echo "excluding from wheel: ${EXCLUDES}" >> $GITHUB_STEP_SUMMARY
+        echo "AUDITWHEEL_EXCLUDES=${EXCLUDES}" >> $GITHUB_ENV
+    - name: auditwheel repair
+      # PyPI rejects a plain "linux_x86_64" platform tag, so the wheel
+      # still needs auditwheel's manylinux tag rewrite -- the excludes
+      # computed above keep everything system-provided OUT of the wheel.
+      run: |
+        python3 -m auditwheel repair \
+          ${AUDITWHEEL_EXCLUDES} \
+          ${GITHUB_WORKSPACE}/dist/*.whl -w ${GITHUB_WORKSPACE}/wheelhouse
+    - name: auditwheel show
+      run: |
+        echo "# auditwheel show" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        python3 -m auditwheel show ${GITHUB_WORKSPACE}/wheelhouse/*.whl >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+    - uses: actions/upload-artifact@v7
+      with:
+        name: python3-rawstor.whl
+        path: wheelhouse/*.whl
+        if-no-files-found: error
+    - uses: actions/upload-artifact@v7
+      with:
+        name: python3-rawstor.sdist
+        path: dist/*.tar.gz
+        if-no-files-found: error
+
+  wheel-install:
+    needs:
+    - deb-librawstor
+    - wheel
+
+    strategy:
+      matrix:
+        python-version:
+        - "3.9"
+        - "3.13"
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+    - uses: actions/download-artifact@v8
+      with:
+        name: librawstor.deb
+        path: librawstor.deb
+    - name: install-librawstor
+      # the wheel is thin (librawstor/liburing/libxxhash excluded from it,
+      # see the wheel job) -- it's on the user to have librawstor
+      # installed already, same as the python3-rawstor deb/rpm packages.
+      run: sudo apt install -y ./librawstor.deb/librawstor_*.deb
+    - uses: actions/download-artifact@v8
+      with:
+        name: python3-rawstor.whl
+        path: wheelhouse
+    - name: install-python3-rawstor
+      run: pip install wheelhouse/*.whl
+    - name: test-python3-rawstor
+      run: |
+        mkdir -p /tmp/rawstor-wheel-install-test
+        python -c "import rawstor; print(list(rawstor.Location('file:///tmp/rawstor-wheel-install-test'))); print('OK')"
+
   release:
     needs:
     - clang-format
@@ -538,6 +669,8 @@ jobs:
     - rpm-librawstor
     - rpm-python3-rawstor
     - rpm-install
+    - wheel
+    - wheel-install
 
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
@@ -573,4 +706,34 @@ jobs:
           python3-rawstor-*.deb/*
           librawstor.rpm/*
           python3-rawstor-*.rpm/*
+          python3-rawstor.whl/*
+          python3-rawstor.sdist/*
           sources/*
+
+  pypi:
+    needs:
+    - wheel
+    - release
+
+    runs-on: ubuntu-latest
+    # Temporarily disabled: the wheel/sdist already land on the GitHub
+    # Release (see release's `files:`) -- hold off on PyPI publishing until
+    # the thin-wheel approach has been confirmed working end-to-end and the
+    # PyPI trusted-publisher/environment setup is in place.
+    if: false
+    environment: pypi
+    permissions:
+      id-token: write
+
+    steps:
+    - uses: actions/download-artifact@v8
+      with:
+        name: python3-rawstor.whl
+        path: dist
+    - uses: actions/download-artifact@v8
+      with:
+        name: python3-rawstor.sdist
+        path: dist
+    - uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        packages-dir: dist
