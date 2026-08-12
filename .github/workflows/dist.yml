@@ -526,7 +526,7 @@ jobs:
         mkdir -p /tmp/rawstor-install-test
         python3 -c "import rawstor; print(list(rawstor.Location('file:///tmp/rawstor-install-test'))); print('OK')"
 
-  wheels:
+  wheel:
     needs:
     - sources
     - rpm-librawstor
@@ -599,7 +599,7 @@ jobs:
   wheel-install:
     needs:
     - deb-librawstor
-    - wheels
+    - wheel
 
     strategy:
       matrix:
@@ -619,7 +619,7 @@ jobs:
         path: librawstor.deb
     - name: install-librawstor
       # the wheel is thin (librawstor/liburing/libxxhash excluded from it,
-      # see the wheels job) -- it's on the user to have librawstor
+      # see the wheel job) -- it's on the user to have librawstor
       # installed already, same as the python3-rawstor deb/rpm packages.
       run: sudo apt install -y ./librawstor.deb/librawstor_*.deb
     - uses: actions/download-artifact@v8
@@ -645,7 +645,7 @@ jobs:
     - rpm-librawstor
     - rpm-python3-rawstor
     - rpm-install
-    - wheels
+    - wheel
     - wheel-install
 
     runs-on: ubuntu-latest
@@ -688,7 +688,7 @@ jobs:
 
   pypi:
     needs:
-    - wheels
+    - wheel
     - wheel-install
     - release
 
