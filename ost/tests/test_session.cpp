@@ -113,7 +113,7 @@ bool pump_until(
 }
 
 // A Session needs a real Server for locations()/write_throttle_limit()/
-// write_backlog_limit(), but not its listening socket or accept loop --
+// write_backlog_capacity(), but not its listening socket or accept loop --
 // port 0 leaves that socket bound but otherwise unused (the OS picks it,
 // so there's no fixed-port collision risk either). The other half of the
 // pair, wired directly into Session::create() below, stands in for what
@@ -265,18 +265,18 @@ TEST(OstSessionTest, write_throttle_limit) {
     }
 }
 
-TEST(OstSessionTest, write_backlog_limit) {
+TEST(OstSessionTest, write_backlog_capacity) {
     // A throttle-limit of 1 puts every write from the second one onward on
     // the backlog check's path immediately, without waiting on real
     // storage-completion timing to get there.
     constexpr unsigned int kThrottleLimit = 1;
     const std::string payload(16, 'x');
-    const uint64_t kBacklogLimit = payload.size() * 3;
+    const uint64_t kBacklogCapacity = payload.size() * 3;
     constexpr unsigned int kWrites = 50;
 
     TmpDir dir;
     rawstor::ostbackend::Server server(
-        256, kThrottleLimit, kBacklogLimit, "127.0.0.1", 0, dir.uri().c_str()
+        256, kThrottleLimit, kBacklogCapacity, "127.0.0.1", 0, dir.uri().c_str()
     );
 
     Queue queue;
@@ -321,12 +321,12 @@ TEST(OstSessionTest, write_backlog_limit) {
         10000
     ));
 
-    // The invariant write-backlog-limit exists for: the backlog never grew
+    // The invariant write-backlog-capacity exists for: the backlog never grew
     // past the configured cap...
-    EXPECT_LE(peak_pending_bytes, kBacklogLimit);
+    EXPECT_LE(peak_pending_bytes, kBacklogCapacity);
     // ...and it wasn't just coincidentally low: it must have actually
     // filled up at some point, or nothing here was capped at all.
-    EXPECT_EQ(peak_pending_bytes, kBacklogLimit);
+    EXPECT_EQ(peak_pending_bytes, kBacklogCapacity);
 
     unsigned int accepted = 0;
     unsigned int rejected = 0;

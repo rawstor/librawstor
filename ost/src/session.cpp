@@ -638,7 +638,7 @@ void Session::_write(
     bool throttled = _writes_in_flight >= _server.write_throttle_limit();
 
     if (throttled &&
-        _pending_writes_bytes + size > _server.write_backlog_limit()) {
+        _pending_writes_bytes + size > _server.write_backlog_capacity()) {
         // Recv keeps running regardless (see _recv_data()), so nothing
         // else caps how much an already-throttled session could pile into
         // _pending_writes -- reject outright, before even copying the

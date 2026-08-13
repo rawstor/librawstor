@@ -27,7 +27,7 @@ namespace ostbackend {
 
 Server::Server(
     unsigned int queue_size, unsigned int write_throttle_limit,
-    uint64_t write_backlog_limit, const std::string& addr, unsigned int port,
+    uint64_t write_backlog_capacity, const std::string& addr, unsigned int port,
     const char* location
 ) :
     _queue(nullptr),
@@ -35,7 +35,7 @@ Server::Server(
     _locations(rawstd::URI::uriv(location)),
     _accept_event(nullptr),
     _write_throttle_limit(write_throttle_limit),
-    _write_backlog_limit(write_backlog_limit) {
+    _write_backlog_capacity(write_backlog_capacity) {
 
     int res = rawstor_initialize(nullptr);
     if (res < 0) {

@@ -3,6 +3,7 @@
 #include "config.h"
 
 #include <rawstd/exitcode.h>
+#include <rawstd/units.h>
 
 #include <getopt.h>
 #include <signal.h>
@@ -19,13 +20,19 @@
 
 #define DEFAULT_QUEUE_SIZE 4096
 #define DEFAULT_WRITE_THROTTLE_LIMIT 128
-#define DEFAULT_WRITE_BACKLOG_LIMIT (256ull * 1024 * 1024)
+#define DEFAULT_WRITE_BACKLOG_CAPACITY (256ull * 1024 * 1024)
 
 namespace {
 
 struct sigaction sact = {};
 
 void usage() {
+    char write_backlog_capacity_buf[32];
+    rawstd_bytes_to_size(
+        DEFAULT_WRITE_BACKLOG_CAPACITY, write_backlog_capacity_buf,
+        sizeof(write_backlog_capacity_buf)
+    );
+
     std::cout << "Rawstor OST backend " << PACKAGE_VERSION << std::endl
               << std::endl
               << "usage: rawstor-ost "
@@ -49,16 +56,19 @@ void usage() {
               << "                        "
                  "reading further requests (default: "
               << DEFAULT_WRITE_THROTTLE_LIMIT << ")" << std::endl
-              << "  --write-backlog-limit BYTES" << std::endl
+              << "  --write-backlog-capacity SIZE" << std::endl
               << "                        "
-                 "Per-session cap, in bytes, on writes queued behind"
+                 "Per-session cap on writes queued behind"
               << std::endl
               << "                        "
                  "write-throttle-limit but not yet dispatched; queuing"
               << std::endl
               << "                        "
-                 "past it is rejected with EBUSY instead (default: "
-              << DEFAULT_WRITE_BACKLOG_LIMIT << ")" << std::endl
+                 "past it is rejected with EBUSY instead. SIZE takes a unit"
+              << std::endl
+              << "                        "
+                 "suffix (B, K, M, G, T, P, E), e.g. 256M (default: "
+              << write_backlog_capacity_buf << ")" << std::endl
               << "  -v, --version         Rawstor version" << std::endl
               << std::endl
               << "required arguments:" << std::endl
@@ -75,11 +85,11 @@ void sact_handler(int) {
 
 void ost(
     unsigned int queue_size, unsigned int write_throttle_limit,
-    uint64_t write_backlog_limit, const std::string& addr, unsigned int port,
+    uint64_t write_backlog_capacity, const std::string& addr, unsigned int port,
     const char* location
 ) {
     rawstor::ostbackend::Server s(
-        queue_size, write_throttle_limit, write_backlog_limit, addr, port,
+        queue_size, write_throttle_limit, write_backlog_capacity, addr, port,
         location
     );
     s.loop();
@@ -119,14 +129,14 @@ int main(int argc, char** argv) {
         {"help", no_argument, nullptr, 'h'},
         {"queue-size", required_argument, nullptr, 'q'},
         {"write-throttle-limit", required_argument, nullptr, 'w'},
-        {"write-backlog-limit", required_argument, nullptr, 'l'},
+        {"write-backlog-capacity", required_argument, nullptr, 'l'},
         {"version", no_argument, nullptr, 'v'},
         {},
     };
 
     const char* queue_size_arg = nullptr;
     const char* write_throttle_limit_arg = nullptr;
-    const char* write_backlog_limit_arg = nullptr;
+    const char* write_backlog_capacity_arg = nullptr;
     const char* location_arg = nullptr;
     const char* bind_arg = nullptr;
     while (1) {
@@ -153,7 +163,7 @@ int main(int argc, char** argv) {
             break;
 
         case 'l':
-            write_backlog_limit_arg = optarg;
+            write_backlog_capacity_arg = optarg;
             break;
 
         case 'v':
@@ -196,12 +206,14 @@ int main(int argc, char** argv) {
         }
     }
 
-    uint64_t write_backlog_limit = DEFAULT_WRITE_BACKLOG_LIMIT;
-    if (write_backlog_limit_arg != nullptr) {
-        std::istringstream iss(write_backlog_limit_arg);
-        if (iss.peek() < '0' || iss.peek() > '9' ||
-            !(iss >> write_backlog_limit) || !iss.eof()) {
-            std::cerr << "write-backlog-limit must be unsigned integer"
+    uint64_t write_backlog_capacity = DEFAULT_WRITE_BACKLOG_CAPACITY;
+    if (write_backlog_capacity_arg != nullptr) {
+        int res = rawstd_size_to_bytes(
+            write_backlog_capacity_arg, &write_backlog_capacity
+        );
+        if (res < 0) {
+            std::cerr << "write-backlog-capacity must be a size with a unit "
+                         "suffix (B, K, M, G, T, P, E), e.g. 256M"
                       << std::endl;
             return EX_USAGE;
         }
@@ -259,8 +271,8 @@ int main(int argc, char** argv) {
     }
 
     try {
-        ost(queue_size, write_throttle_limit, write_backlog_limit, name, port,
-            location_arg);
+        ost(queue_size, write_throttle_limit, write_backlog_capacity, name,
+            port, location_arg);
     } catch (const std::system_error& e) {
         std::cerr << e.what() << std::endl;
         return rawstd_exitcode_for_errno(e.code().value());

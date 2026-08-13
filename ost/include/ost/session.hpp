@@ -51,7 +51,7 @@ private:
     unsigned int _writes_in_flight;
     std::deque<PendingWrite> _pending_writes;
     // Sum of PendingWrite::data->size() across _pending_writes -- see
-    // _write()'s use of it against Server::write_backlog_limit() to reject
+    // _write()'s use of it against Server::write_backlog_capacity() to reject
     // a write outright rather than let it grow _pending_writes without
     // bound.
     uint64_t _pending_writes_bytes;
