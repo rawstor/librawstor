@@ -12,10 +12,6 @@
 
 #include <cstring>
 
-namespace rawstor {
-namespace ostbackend {
-namespace tests {
-
 namespace {
 
 void send_all(int fd, const void* buf, size_t size) {
@@ -46,6 +42,10 @@ void recv_all(int fd, void* buf, size_t size) {
 }
 
 } // namespace
+
+namespace rawstor {
+namespace ostbackend {
+namespace tests {
 
 Client::Client(int fd) : _fd(fd), _next_cid(0) {
 }
