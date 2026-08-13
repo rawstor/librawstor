@@ -124,10 +124,6 @@ AC_ARG_ENABLE([ost-backend], [AS_HELP_STRING([--disable-ost-backend],
     [enable_ost_backend=$enableval],
     [enable_ost_backend="yes"])
 AM_CONDITIONAL([ENABLE_OST_BACKEND], [test "x$enable_ost_backend" = "xyes"])
-# For the top-level `test:` recipe, which needs a plain yes/no it can
-# test in a shell `if` (an AM_CONDITIONAL only controls which
-# Makefile.am lines are included at all, not something a recipe's shell
-# commands can query).
 AC_SUBST([ENABLE_OST_BACKEND], [$enable_ost_backend])
 
 AC_ARG_WITH([python3], [AS_HELP_STRING([--without-python3],
