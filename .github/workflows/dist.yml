@@ -698,9 +698,20 @@ jobs:
     - uses: actions/download-artifact@v8
       with:
         path: ./artifacts
+    - name: build release notes
+      # GitHub Releases has no folder/grouping support for the assets
+      # list itself -- it's always one flat, alphabetically-sorted list.
+      # This is the workaround: a curated, categorized index (plus this
+      # version's ChangeLog.md section) in the release body, on top of
+      # (not instead of) that flat list.
+      run: |
+        librawstor/.github/tools/release-notes.sh \
+          "${{ github.ref_name }}" ./artifacts "${{ github.repository }}" \
+          > "${{ github.workspace }}/release-notes.md"
     - uses: softprops/action-gh-release@v3
       with:
         working_directory: ./artifacts
+        body_path: ${{ github.workspace }}/release-notes.md
         files: |
           librawstor.deb/*
           python3-rawstor-*.deb/*
