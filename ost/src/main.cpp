@@ -85,7 +85,7 @@ void sact_handler(int) {
 
 void ost(
     unsigned int queue_size, unsigned int write_throttle_limit,
-    uint64_t write_backlog_capacity, const std::string& addr, unsigned int port,
+    size_t write_backlog_capacity, const std::string& addr, unsigned int port,
     const char* location
 ) {
     rawstor::ostbackend::Server s(
@@ -206,17 +206,21 @@ int main(int argc, char** argv) {
         }
     }
 
-    uint64_t write_backlog_capacity = DEFAULT_WRITE_BACKLOG_CAPACITY;
+    size_t write_backlog_capacity = DEFAULT_WRITE_BACKLOG_CAPACITY;
     if (write_backlog_capacity_arg != nullptr) {
-        int res = rawstd_size_to_bytes(
-            write_backlog_capacity_arg, &write_backlog_capacity
-        );
+        // rawstd_size_to_bytes() parses into a fixed-width uint64_t --
+        // narrow to size_t (what write_backlog_capacity is actually
+        // bounding: an in-memory backlog, capped by the address space
+        // regardless) once parsing itself has succeeded.
+        uint64_t parsed = 0;
+        int res = rawstd_size_to_bytes(write_backlog_capacity_arg, &parsed);
         if (res < 0) {
             std::cerr << "write-backlog-capacity must be a size with a unit "
                          "suffix (B, K, M, G, T, P, E), e.g. 256M"
                       << std::endl;
             return EX_USAGE;
         }
+        write_backlog_capacity = static_cast<size_t>(parsed);
     }
 
     // Every session throttled at the cap alone can account for that many

@@ -27,7 +27,7 @@ namespace ostbackend {
 
 Server::Server(
     unsigned int queue_size, unsigned int write_throttle_limit,
-    uint64_t write_backlog_capacity, const std::string& addr, unsigned int port,
+    size_t write_backlog_capacity, const std::string& addr, unsigned int port,
     const char* location
 ) :
     _queue(nullptr),
