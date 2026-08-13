@@ -21,6 +21,7 @@
 #include <sstream>
 #include <vector>
 
+#include <cerrno>
 #include <cstring>
 
 namespace {
@@ -73,7 +74,16 @@ namespace ostbackend {
 
 std::shared_ptr<Session>
 Session::create(RawIOQueue* queue, Server& server, int fd) {
-    return std::make_shared<Session>(Private(), queue, server, fd);
+    // _arm_recv() needs weak_from_this(), which isn't wired up yet while
+    // the constructor itself is still running (enable_shared_from_this's
+    // weak_ptr is only set by make_shared() right before returning) --
+    // arm the recv here instead. If it throws, `session` was fully
+    // constructed already, so its own destructor (which closes fd) runs
+    // normally during unwinding.
+    std::shared_ptr<Session> session =
+        std::make_shared<Session>(Private(), queue, server, fd);
+    session->_arm_recv();
+    return session;
 }
 
 Session::Session(Private, RawIOQueue* queue, Server& server, int fd) :
@@ -85,22 +95,25 @@ Session::Session(Private, RawIOQueue* queue, Server& server, int fd) :
     _object(nullptr),
     _writes_in_flight(0),
     _pending_writes_bytes(0) {
-    try {
-        _arm_recv();
-    } catch (...) {
-        close(_fd);
-        throw;
-    }
 }
 
 void Session::_arm_recv() {
+    // A multishot recv's terminal completion (peer disconnect -> EPIPE,
+    // ENOBUFS, ... -- any error is terminal, not just ECANCELED; see
+    // rawio.h) can already be sitting unprocessed in the completion queue
+    // by the time this Session is destroyed, so ~Session()'s rawio_cancel()
+    // can be too late to stop it (see there). Passing a weak_ptr instead of a
+    // raw `this` lets that final callback tell a since-destroyed Session
+    // apart from a live one instead of touching freed memory.
+    auto holder = std::make_unique<std::weak_ptr<Session>>(weak_from_this());
     int res = rawio_recv_multishot(
-        _queue, _fd, 1u << 17, 64 * 4, sizeof(_request_head), 0, _recv, this,
-        &_recv_event
+        _queue, _fd, 1u << 17, 64 * 4, sizeof(_request_head), 0, _recv,
+        holder.get(), &_recv_event
     );
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
+    holder.release(); // owned by the eventual terminal callback now
 }
 
 Session::~Session() noexcept {
@@ -115,7 +128,11 @@ Session::~Session() noexcept {
     }
     if (_recv_event != nullptr) {
         int res = rawio_cancel(_queue, _recv_event);
-        if (res < 0) {
+        // ENOENT means the multishot recv already terminated on its own
+        // (e.g. the peer disconnected) and its completion is already
+        // queued, uncancellable -- not an error, just too late; see
+        // _arm_recv()'s comment for how the eventual callback copes.
+        if (res < 0 && res != -ENOENT) {
             rawstd_error("Failed to cancel event: %s\n", strerror(-res));
         }
     }
@@ -125,10 +142,22 @@ Session::~Session() noexcept {
 ssize_t Session::_recv(
     const iovec* iov, unsigned int niov, size_t result, int error, void* data
 ) noexcept {
+    auto* weak = static_cast<std::weak_ptr<Session>*>(data);
+    // Any non-zero error (not just ECANCELED) terminates this multishot
+    // registration -- this is the one and only callback still holding
+    // `weak` alive, so it's this callback's job to free it.
+    std::unique_ptr<std::weak_ptr<Session>> owner(error ? weak : nullptr);
+
+    std::shared_ptr<Session> session = weak->lock();
+    if (session == nullptr) {
+        // The Session is already gone -- its terminal completion was
+        // already queued, uncancellable, by the time it was destroyed
+        // (see ~Session()).
+        return 0;
+    }
     if (error == ECANCELED) {
         return 0;
     }
-    Session* session = static_cast<Session*>(data);
     try {
         return session->_recv(iov, niov, result, error);
     } catch (const std::system_error& e) {
