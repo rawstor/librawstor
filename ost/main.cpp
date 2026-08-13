@@ -17,7 +17,7 @@
 #include <sysexits.h>
 
 #define DEFAULT_QUEUE_SIZE 4096
-#define DEFAULT_MAX_PENDING_WRITES 128
+#define DEFAULT_WRITE_THROTTLE_LIMIT 128
 
 namespace {
 
@@ -37,7 +37,7 @@ void usage() {
               << "  --queue-size SIZE     "
                  "RawIO queue size (default: "
               << DEFAULT_QUEUE_SIZE << ")" << std::endl
-              << "  --max-pending-writes SIZE" << std::endl
+              << "  --write-throttle-limit SIZE" << std::endl
               << "                        "
                  "Per-session cap on writes dispatched to storage without"
               << std::endl
@@ -46,7 +46,7 @@ void usage() {
               << std::endl
               << "                        "
                  "reading further requests (default: "
-              << DEFAULT_MAX_PENDING_WRITES << ")" << std::endl
+              << DEFAULT_WRITE_THROTTLE_LIMIT << ")" << std::endl
               << "  -v, --version         Rawstor version" << std::endl
               << std::endl
               << "required arguments:" << std::endl
@@ -62,11 +62,11 @@ void sact_handler(int) {
 }
 
 void ost(
-    unsigned int queue_size, unsigned int max_pending_writes,
+    unsigned int queue_size, unsigned int write_throttle_limit,
     const std::string& addr, unsigned int port, const char* location
 ) {
     rawstor::ostbackend::Server s(
-        queue_size, max_pending_writes, addr, port, location
+        queue_size, write_throttle_limit, addr, port, location
     );
     s.loop();
 }
@@ -104,13 +104,13 @@ int main(int argc, char** argv) {
         {"bind", required_argument, nullptr, 'b'},
         {"help", no_argument, nullptr, 'h'},
         {"queue-size", required_argument, nullptr, 'q'},
-        {"max-pending-writes", required_argument, nullptr, 'w'},
+        {"write-throttle-limit", required_argument, nullptr, 'w'},
         {"version", no_argument, nullptr, 'v'},
         {},
     };
 
     const char* queue_size_arg = nullptr;
-    const char* max_pending_writes_arg = nullptr;
+    const char* write_throttle_limit_arg = nullptr;
     const char* location_arg = nullptr;
     const char* bind_arg = nullptr;
     while (1) {
@@ -133,7 +133,7 @@ int main(int argc, char** argv) {
             break;
 
         case 'w':
-            max_pending_writes_arg = optarg;
+            write_throttle_limit_arg = optarg;
             break;
 
         case 'v':
@@ -165,15 +165,30 @@ int main(int argc, char** argv) {
         }
     }
 
-    unsigned int max_pending_writes = DEFAULT_MAX_PENDING_WRITES;
-    if (max_pending_writes_arg != nullptr) {
-        std::istringstream iss(max_pending_writes_arg);
+    unsigned int write_throttle_limit = DEFAULT_WRITE_THROTTLE_LIMIT;
+    if (write_throttle_limit_arg != nullptr) {
+        std::istringstream iss(write_throttle_limit_arg);
         if (iss.peek() < '0' || iss.peek() > '9' ||
-            !(iss >> max_pending_writes) || !iss.eof()) {
-            std::cerr << "max-pending-writes must be unsigned integer"
+            !(iss >> write_throttle_limit) || !iss.eof()) {
+            std::cerr << "write-throttle-limit must be unsigned integer"
                       << std::endl;
             return EX_USAGE;
         }
+    }
+
+    // Every session throttled at the cap alone can account for that many
+    // pending writes, all competing for the same shared queue_size-deep
+    // io_uring ring alongside every other session's own writes, recv, and
+    // response sends -- a write-throttle-limit this close to queue_size
+    // leaves no headroom for any of that, and (with more than one busy
+    // session) ring exhaustion elsewhere becomes likely. Not fatal: still
+    // caps writes to *some* bound, just a less useful one.
+    if (write_throttle_limit >= queue_size) {
+        std::cerr << "warning: --write-throttle-limit (" << write_throttle_limit
+                  << ") is not comfortably below --queue-size (" << queue_size
+                  << "); a single throttled session could exhaust the "
+                     "shared io_uring queue on its own"
+                  << std::endl;
     }
 
     if (location_arg == nullptr) {
@@ -213,7 +228,7 @@ int main(int argc, char** argv) {
     }
 
     try {
-        ost(queue_size, max_pending_writes, name, port, location_arg);
+        ost(queue_size, write_throttle_limit, name, port, location_arg);
     } catch (const std::system_error& e) {
         std::cerr << e.what() << std::endl;
         return rawstd_exitcode_for_errno(e.code().value());

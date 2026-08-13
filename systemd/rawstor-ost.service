@@ -10,10 +10,10 @@ Group=rawstor
 WorkingDirectory=/var/lib/rawstor
 StateDirectory=rawstor
 Environment=BIND_ADDR=0.0.0.0:7777
-# rawstor-ost's own --queue-size/--max-pending-writes (see its --help);
+# rawstor-ost's own --queue-size/--write-throttle-limit (see its --help);
 # override in /etc/rawstor-ost.conf below rather than editing this file.
 Environment=QUEUE_SIZE=4096
-Environment=MAX_PENDING_WRITES=128
+Environment=WRITE_THROTTLE_LIMIT=128
 # librawstor client/server tuning knobs (see README.md's "Environment
 # Variables" section for what each one does); uncomment to override a
 # default, or set them in /etc/rawstor-ost.conf below instead.
@@ -24,7 +24,7 @@ Environment=MAX_PENDING_WRITES=128
 #Environment=RAWSTOR_OPTS_TCP_USER_TIMEOUT=5000
 #Environment=RAWSTOR_OPTS_LIST_LIMIT=1000
 EnvironmentFile=-/etc/rawstor-ost.conf
-ExecStart=/usr/bin/rawstor-ost --bind=${BIND_ADDR} --queue-size=${QUEUE_SIZE} --max-pending-writes=${MAX_PENDING_WRITES} file:///var/lib/rawstor
+ExecStart=/usr/bin/rawstor-ost --bind=${BIND_ADDR} --queue-size=${QUEUE_SIZE} --write-throttle-limit=${WRITE_THROTTLE_LIMIT} file:///var/lib/rawstor
 Restart=always
 RestartSec=10
 # sysexits.h codes rawstor-ost exits with when retrying won't help:

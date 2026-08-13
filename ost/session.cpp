@@ -104,7 +104,7 @@ void Session::_arm_recv() {
 
 void Session::_resume_recv_if_paused() {
     if (_recv_event != nullptr ||
-        _writes_in_flight >= _server.max_pending_writes()) {
+        _writes_in_flight >= _server.write_throttle_limit()) {
         return;
     }
 
@@ -426,7 +426,7 @@ Session::_recv_data(const iovec* iov, unsigned int niov, size_t result) {
 
     _write(_request_head, _request_body.io, iov, niov, result);
 
-    if (_writes_in_flight >= _server.max_pending_writes()) {
+    if (_writes_in_flight >= _server.write_throttle_limit()) {
         // Too many writes already in flight for this session -- stop
         // reading further requests off the wire until _resume_recv_if_
         // paused() re-arms once one of them completes. The multishot recv
