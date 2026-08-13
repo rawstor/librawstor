@@ -34,7 +34,19 @@ private:
         RawstorOSTFrameIOBody io;
     } _request_body;
     RawstorObject* _object;
+    // Writes dispatched to rawstor_object_pwrite() whose completion hasn't
+    // arrived yet -- see _recv_data()'s use of it to pause reading further
+    // requests off the wire once too many pile up.
+    unsigned int _writes_in_flight;
 
+    // (Re-)arms the multishot recv, starting at a fresh request head. Used
+    // both from the constructor and to resume reading after a pause (see
+    // _recv_data()/_resume_recv_if_paused()).
+    void _arm_recv();
+    // Resumes the paused recv (see _recv_data()) once a completed write has
+    // brought _writes_in_flight back under the cap. A no-op if recv isn't
+    // currently paused, or is still over the cap.
+    void _resume_recv_if_paused();
     static ssize_t _recv(
         const iovec* iov, unsigned int niov, size_t result, int error,
         void* data

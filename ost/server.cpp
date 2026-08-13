@@ -26,13 +26,14 @@ namespace rawstor {
 namespace ostbackend {
 
 Server::Server(
-    unsigned int queue_size, const std::string& addr, unsigned int port,
-    const char* location
+    unsigned int queue_size, unsigned int max_pending_writes,
+    const std::string& addr, unsigned int port, const char* location
 ) :
     _queue(nullptr),
     _fd(-1),
     _locations(rawstd::URI::uriv(location)),
-    _accept_event(nullptr) {
+    _accept_event(nullptr),
+    _max_pending_writes(max_pending_writes) {
 
     int res = rawstor_initialize(nullptr);
     if (res < 0) {

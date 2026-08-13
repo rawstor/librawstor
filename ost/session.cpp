@@ -82,14 +82,37 @@ Session::Session(Private, RawIOQueue* queue, Server& server, int fd) :
     _fd(fd),
     _recv_event(nullptr),
     _next(&Session::_recv_head),
-    _object(nullptr) {
+    _object(nullptr),
+    _writes_in_flight(0) {
+    try {
+        _arm_recv();
+    } catch (...) {
+        close(_fd);
+        throw;
+    }
+}
+
+void Session::_arm_recv() {
     int res = rawio_recv_multishot(
         _queue, _fd, 1u << 17, 64 * 4, sizeof(_request_head), 0, _recv, this,
         &_recv_event
     );
     if (res < 0) {
-        close(_fd);
         RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+}
+
+void Session::_resume_recv_if_paused() {
+    if (_recv_event != nullptr ||
+        _writes_in_flight >= _server.max_pending_writes()) {
+        return;
+    }
+
+    try {
+        _arm_recv();
+    } catch (const std::system_error& e) {
+        rawstd_error("%s\n", e.what());
+        _server.del_session(_fd);
     }
 }
 
@@ -403,6 +426,17 @@ Session::_recv_data(const iovec* iov, unsigned int niov, size_t result) {
 
     _write(_request_head, _request_body.io, iov, niov, result);
 
+    if (_writes_in_flight >= _server.max_pending_writes()) {
+        // Too many writes already in flight for this session -- stop
+        // reading further requests off the wire until _resume_recv_if_
+        // paused() re-arms once one of them completes. The multishot recv
+        // has already terminated itself on a negative return (see
+        // rawio_recv_multishot()'s contract), so null _recv_event to match,
+        // same as on a real recv error -- ~Session() must not cancel() it.
+        _recv_event = nullptr;
+        return -ECANCELED;
+    }
+
     return sizeof(RawstorOSTFrameHead);
 }
 
@@ -640,6 +674,8 @@ void Session::_write(
             if (session == nullptr) {
                 return;
             }
+            --session->_writes_in_flight;
+            session->_resume_recv_if_paused();
             try {
                 session->_send_response(
                     RAWSTOR_CMD_WRITE, cid,
@@ -660,6 +696,7 @@ void Session::_write(
         rawstd_warning("%s\n", strerror(-res));
         _send_response(RAWSTOR_CMD_WRITE, head.cid, res, 0);
     } else {
+        ++_writes_in_flight;
         cb.release();
     }
 }

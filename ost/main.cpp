@@ -16,7 +16,8 @@
 #include <cstring>
 #include <sysexits.h>
 
-#define DEFAULT_QUEUE_SIZE 256
+#define DEFAULT_QUEUE_SIZE 4096
+#define DEFAULT_MAX_PENDING_WRITES 128
 
 namespace {
 
@@ -36,6 +37,16 @@ void usage() {
               << "  --queue-size SIZE     "
                  "RawIO queue size (default: "
               << DEFAULT_QUEUE_SIZE << ")" << std::endl
+              << "  --max-pending-writes SIZE" << std::endl
+              << "                        "
+                 "Per-session cap on writes dispatched to storage without"
+              << std::endl
+              << "                        "
+                 "their completion arriving yet, before this session stops"
+              << std::endl
+              << "                        "
+                 "reading further requests (default: "
+              << DEFAULT_MAX_PENDING_WRITES << ")" << std::endl
               << "  -v, --version         Rawstor version" << std::endl
               << std::endl
               << "required arguments:" << std::endl
@@ -51,10 +62,12 @@ void sact_handler(int) {
 }
 
 void ost(
-    unsigned int queue_size, const std::string& addr, unsigned int port,
-    const char* location
+    unsigned int queue_size, unsigned int max_pending_writes,
+    const std::string& addr, unsigned int port, const char* location
 ) {
-    rawstor::ostbackend::Server s(queue_size, addr, port, location);
+    rawstor::ostbackend::Server s(
+        queue_size, max_pending_writes, addr, port, location
+    );
     s.loop();
 }
 
@@ -91,11 +104,13 @@ int main(int argc, char** argv) {
         {"bind", required_argument, nullptr, 'b'},
         {"help", no_argument, nullptr, 'h'},
         {"queue-size", required_argument, nullptr, 'q'},
+        {"max-pending-writes", required_argument, nullptr, 'w'},
         {"version", no_argument, nullptr, 'v'},
         {},
     };
 
     const char* queue_size_arg = nullptr;
+    const char* max_pending_writes_arg = nullptr;
     const char* location_arg = nullptr;
     const char* bind_arg = nullptr;
     while (1) {
@@ -115,6 +130,10 @@ int main(int argc, char** argv) {
 
         case 'q':
             queue_size_arg = optarg;
+            break;
+
+        case 'w':
+            max_pending_writes_arg = optarg;
             break;
 
         case 'v':
@@ -142,6 +161,17 @@ int main(int argc, char** argv) {
         if (iss.peek() < '0' || iss.peek() > '9' || !(iss >> queue_size) ||
             !iss.eof()) {
             std::cerr << "queue-size must be unsigned integer" << std::endl;
+            return EX_USAGE;
+        }
+    }
+
+    unsigned int max_pending_writes = DEFAULT_MAX_PENDING_WRITES;
+    if (max_pending_writes_arg != nullptr) {
+        std::istringstream iss(max_pending_writes_arg);
+        if (iss.peek() < '0' || iss.peek() > '9' ||
+            !(iss >> max_pending_writes) || !iss.eof()) {
+            std::cerr << "max-pending-writes must be unsigned integer"
+                      << std::endl;
             return EX_USAGE;
         }
     }
@@ -183,7 +213,7 @@ int main(int argc, char** argv) {
     }
 
     try {
-        ost(queue_size, name, port, location_arg);
+        ost(queue_size, max_pending_writes, name, port, location_arg);
     } catch (const std::system_error& e) {
         std::cerr << e.what() << std::endl;
         return rawstd_exitcode_for_errno(e.code().value());

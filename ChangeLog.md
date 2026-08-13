@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - `rawstor_object_pwrite()`/`rawstor_object_pwritev()` gained a `sync` parameter — when true, the write is durable on stable storage by the time the callback reports success. Breaking C API change; existing callers need to pass a `sync` argument (`false` preserves the old behavior).
+- `rawstor-ost --queue-size`'s default raised from 256 to 4096, now that per-session write concurrency is bounded (see Fixed below) and no longer needs a small ring to keep worst-case exposure in check.
+
+### Fixed
+- `rawstor-ost` had no limit on how many WRITEs a session could have dispatched to storage at once; against a backing store much slower than the incoming write rate, that queue grew without bound instead of applying ordinary backpressure, eventually stalling the session (and, under sustained pressure, the whole process) for an effectively unbounded time. Now capped per session via the new `--max-pending-writes` (default 128).
 
 ### Removed
 - Dropped the deprecated `-l`/`--location` and `-t`/`--target` flags (`rawstor list`/`create`/`remove`/`show`/`testio`, `rawstor-ost`, `rawstor-vhost`) in favor of the positional `LOCATION`/`TARGET` argument; `rawstor create -t TARGET` (create-by-target) is unaffected. Also dropped the `rawstor-cli` compat symlink from the deb/rpm packages — use `rawstor`.
