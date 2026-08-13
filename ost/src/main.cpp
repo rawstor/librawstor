@@ -11,6 +11,7 @@
 #include <sstream>
 #include <system_error>
 
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -18,6 +19,7 @@
 
 #define DEFAULT_QUEUE_SIZE 4096
 #define DEFAULT_WRITE_THROTTLE_LIMIT 128
+#define DEFAULT_WRITE_BACKLOG_LIMIT (256ull * 1024 * 1024)
 
 namespace {
 
@@ -47,6 +49,16 @@ void usage() {
               << "                        "
                  "reading further requests (default: "
               << DEFAULT_WRITE_THROTTLE_LIMIT << ")" << std::endl
+              << "  --write-backlog-limit BYTES" << std::endl
+              << "                        "
+                 "Per-session cap, in bytes, on writes queued behind"
+              << std::endl
+              << "                        "
+                 "write-throttle-limit but not yet dispatched; queuing"
+              << std::endl
+              << "                        "
+                 "past it is rejected with EBUSY instead (default: "
+              << DEFAULT_WRITE_BACKLOG_LIMIT << ")" << std::endl
               << "  -v, --version         Rawstor version" << std::endl
               << std::endl
               << "required arguments:" << std::endl
@@ -63,10 +75,12 @@ void sact_handler(int) {
 
 void ost(
     unsigned int queue_size, unsigned int write_throttle_limit,
-    const std::string& addr, unsigned int port, const char* location
+    uint64_t write_backlog_limit, const std::string& addr, unsigned int port,
+    const char* location
 ) {
     rawstor::ostbackend::Server s(
-        queue_size, write_throttle_limit, addr, port, location
+        queue_size, write_throttle_limit, write_backlog_limit, addr, port,
+        location
     );
     s.loop();
 }
@@ -105,12 +119,14 @@ int main(int argc, char** argv) {
         {"help", no_argument, nullptr, 'h'},
         {"queue-size", required_argument, nullptr, 'q'},
         {"write-throttle-limit", required_argument, nullptr, 'w'},
+        {"write-backlog-limit", required_argument, nullptr, 'l'},
         {"version", no_argument, nullptr, 'v'},
         {},
     };
 
     const char* queue_size_arg = nullptr;
     const char* write_throttle_limit_arg = nullptr;
+    const char* write_backlog_limit_arg = nullptr;
     const char* location_arg = nullptr;
     const char* bind_arg = nullptr;
     while (1) {
@@ -134,6 +150,10 @@ int main(int argc, char** argv) {
 
         case 'w':
             write_throttle_limit_arg = optarg;
+            break;
+
+        case 'l':
+            write_backlog_limit_arg = optarg;
             break;
 
         case 'v':
@@ -171,6 +191,17 @@ int main(int argc, char** argv) {
         if (iss.peek() < '0' || iss.peek() > '9' ||
             !(iss >> write_throttle_limit) || !iss.eof()) {
             std::cerr << "write-throttle-limit must be unsigned integer"
+                      << std::endl;
+            return EX_USAGE;
+        }
+    }
+
+    uint64_t write_backlog_limit = DEFAULT_WRITE_BACKLOG_LIMIT;
+    if (write_backlog_limit_arg != nullptr) {
+        std::istringstream iss(write_backlog_limit_arg);
+        if (iss.peek() < '0' || iss.peek() > '9' ||
+            !(iss >> write_backlog_limit) || !iss.eof()) {
+            std::cerr << "write-backlog-limit must be unsigned integer"
                       << std::endl;
             return EX_USAGE;
         }
@@ -228,7 +259,8 @@ int main(int argc, char** argv) {
     }
 
     try {
-        ost(queue_size, write_throttle_limit, name, port, location_arg);
+        ost(queue_size, write_throttle_limit, write_backlog_limit, name, port,
+            location_arg);
     } catch (const std::system_error& e) {
         std::cerr << e.what() << std::endl;
         return rawstd_exitcode_for_errno(e.code().value());

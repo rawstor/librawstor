@@ -5,6 +5,7 @@
 
 #include <rawstor/rawio.h>
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -22,6 +23,7 @@ private:
     std::vector<rawstd::URI> _locations;
     RawIOEvent* _accept_event;
     unsigned int _write_throttle_limit;
+    uint64_t _write_backlog_limit;
     std::unordered_map<int, std::shared_ptr<Session>> _sessions;
 
     static int _accept(int result, void* data) noexcept;
@@ -31,7 +33,8 @@ private:
 public:
     Server(
         unsigned int queue_size, unsigned int write_throttle_limit,
-        const std::string& addr, unsigned int port, const char* location
+        uint64_t write_backlog_limit, const std::string& addr,
+        unsigned int port, const char* location
     );
     Server(const Server&) = delete;
     Server(Server&&) = delete;
@@ -48,6 +51,12 @@ public:
     // completion arriving yet -- see Session::_recv_data().
     inline unsigned int write_throttle_limit() const noexcept {
         return _write_throttle_limit;
+    }
+
+    // Per-session cap, in bytes, on writes queued behind
+    // write_throttle_limit() but not yet dispatched -- see Session::_write().
+    inline uint64_t write_backlog_limit() const noexcept {
+        return _write_backlog_limit;
     }
 
     void del_session(int fd) noexcept;

@@ -83,7 +83,8 @@ Session::Session(Private, RawIOQueue* queue, Server& server, int fd) :
     _recv_event(nullptr),
     _next(&Session::_recv_head),
     _object(nullptr),
-    _writes_in_flight(0) {
+    _writes_in_flight(0),
+    _pending_writes_bytes(0) {
     try {
         _arm_recv();
     } catch (...) {
@@ -634,6 +635,20 @@ void Session::_write(
         return;
     }
 
+    bool throttled = _writes_in_flight >= _server.write_throttle_limit();
+
+    if (throttled &&
+        _pending_writes_bytes + size > _server.write_backlog_limit()) {
+        // Recv keeps running regardless (see _recv_data()), so nothing
+        // else caps how much an already-throttled session could pile into
+        // _pending_writes -- reject outright, before even copying the
+        // payload out, once queuing it would push the backlog over the
+        // cap, rather than let payload copies grow without bound while
+        // storage catches up.
+        _send_response(RAWSTOR_CMD_WRITE, head.cid, -EBUSY, 0);
+        return;
+    }
+
     // iov points into the recv buffer ring's own memory -- it's only
     // valid for the duration of this call, so the payload has to be
     // copied out now regardless of whether this write is about to be
@@ -653,12 +668,12 @@ void Session::_write(
         return;
     }
 
-    if (_writes_in_flight >= _server.write_throttle_limit()) {
-        // Recv keeps running regardless (see _recv_data()) -- capping
-        // dispatch, not intake, is what keeps a backing store slower
-        // than the incoming write rate from piling up an unbounded
-        // number of buffered pwrite()s at once; this queue is what makes
-        // that safe to defer rather than dispatching immediately.
+    if (throttled) {
+        // Capping dispatch, not intake, is what keeps a backing store
+        // slower than the incoming write rate from piling up an unbounded
+        // number of concurrent pwrite()s at once; the backlog check above
+        // is what keeps deferring writes like this one safe to do at all.
+        _pending_writes_bytes += size;
         _pending_writes.push_back(
             {.head = head,
              .offset = body.offset,
@@ -716,6 +731,7 @@ void Session::_dispatch_next_pending_write() {
 
     PendingWrite next = std::move(_pending_writes.front());
     _pending_writes.pop_front();
+    _pending_writes_bytes -= next.data->size();
     _dispatch_write(next.head, next.offset, next.sync, next.data);
 }
 

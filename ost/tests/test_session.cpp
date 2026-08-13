@@ -112,11 +112,11 @@ bool pump_until(
     return done();
 }
 
-// A Session needs a real Server for locations()/write_throttle_limit(),
-// but not its listening socket or accept loop -- port 0 leaves that
-// socket bound but otherwise unused (the OS picks it, so there's no
-// fixed-port collision risk either). The other half of the pair, wired
-// directly into Session::create() below, stands in for what
+// A Session needs a real Server for locations()/write_throttle_limit()/
+// write_backlog_limit(), but not its listening socket or accept loop --
+// port 0 leaves that socket bound but otherwise unused (the OS picks it,
+// so there's no fixed-port collision risk either). The other half of the
+// pair, wired directly into Session::create() below, stands in for what
 // Server::_add_session() would otherwise do with a real accept()ed fd.
 std::pair<std::shared_ptr<rawstor::ostbackend::Session>, int>
 connect_session(rawstor::ostbackend::Server& server, RawIOQueue* queue) {
@@ -140,7 +140,7 @@ connect_session(rawstor::ostbackend::Server& server, RawIOQueue* queue) {
 TEST(OstSessionTest, simple_success) {
     TmpDir dir;
     rawstor::ostbackend::Server server(
-        256, 128, "127.0.0.1", 0, dir.uri().c_str()
+        256, 128, 1u << 20, "127.0.0.1", 0, dir.uri().c_str()
     );
 
     Queue queue;
@@ -200,7 +200,7 @@ TEST(OstSessionTest, write_throttle_limit) {
 
     TmpDir dir;
     rawstor::ostbackend::Server server(
-        256, kLimit, "127.0.0.1", 0, dir.uri().c_str()
+        256, kLimit, 1u << 20, "127.0.0.1", 0, dir.uri().c_str()
     );
 
     Queue queue;
@@ -263,4 +263,88 @@ TEST(OstSessionTest, write_throttle_limit) {
         EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_WRITE);
         EXPECT_EQ(response.body.res, static_cast<int32_t>(payload.size()));
     }
+}
+
+TEST(OstSessionTest, write_backlog_limit) {
+    // A throttle-limit of 1 puts every write from the second one onward on
+    // the backlog check's path immediately, without waiting on real
+    // storage-completion timing to get there.
+    constexpr unsigned int kThrottleLimit = 1;
+    const std::string payload(16, 'x');
+    const uint64_t kBacklogLimit = payload.size() * 3;
+    constexpr unsigned int kWrites = 50;
+
+    TmpDir dir;
+    rawstor::ostbackend::Server server(
+        256, kThrottleLimit, kBacklogLimit, "127.0.0.1", 0, dir.uri().c_str()
+    );
+
+    Queue queue;
+    auto [session, client_fd] = connect_session(server, queue);
+    rawstor::ostbackend::tests::Client client(client_fd);
+
+    RawstdUUID id;
+    ASSERT_EQ(rawstd_uuid7_init(&id), 0);
+
+    client.send_allocate(id, 1u << 20);
+    ASSERT_TRUE(pump_until(queue, [&] {
+        return client.bytes_available() >= sizeof(RawstorOSTFrameResponse);
+    }));
+    ASSERT_EQ(client.recv_response().body.res, 0);
+
+    client.send_set_object(id);
+    ASSERT_TRUE(pump_until(queue, [&] {
+        return client.bytes_available() >= sizeof(RawstorOSTFrameResponse);
+    }));
+    ASSERT_EQ(client.recv_response().body.res, 0);
+
+    // Fire every write back to back, without reading any response in
+    // between, so the whole burst is already sitting in the kernel's
+    // socket buffer before the session is pumped even once -- exactly the
+    // scenario that would let an already-throttled session's pending-write
+    // backlog grow without bound if nothing capped it.
+    for (unsigned int i = 0; i < kWrites; ++i) {
+        client.send_write(
+            i * payload.size(), payload.data(), payload.size(), false
+        );
+    }
+
+    uint64_t peak_pending_bytes = 0;
+    ASSERT_TRUE(pump_until(
+        queue,
+        [&] {
+            peak_pending_bytes =
+                std::max(peak_pending_bytes, session->pending_writes_bytes());
+            return client.bytes_available() >=
+                   kWrites * sizeof(RawstorOSTFrameResponse);
+        },
+        10000
+    ));
+
+    // The invariant write-backlog-limit exists for: the backlog never grew
+    // past the configured cap...
+    EXPECT_LE(peak_pending_bytes, kBacklogLimit);
+    // ...and it wasn't just coincidentally low: it must have actually
+    // filled up at some point, or nothing here was capped at all.
+    EXPECT_EQ(peak_pending_bytes, kBacklogLimit);
+
+    unsigned int accepted = 0;
+    unsigned int rejected = 0;
+    for (unsigned int i = 0; i < kWrites; ++i) {
+        RawstorOSTFrameResponse response = client.recv_response();
+        EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_WRITE);
+        if (response.body.res == static_cast<int32_t>(payload.size())) {
+            ++accepted;
+        } else {
+            EXPECT_EQ(response.body.res, -EBUSY);
+            ++rejected;
+        }
+    }
+
+    // With 50 writes fired at a backlog that only fits 3 at once, some
+    // must have been accepted and some must have been rejected with
+    // EBUSY -- otherwise the cap wasn't actually exercised.
+    EXPECT_GT(accepted, 0u);
+    EXPECT_GT(rejected, 0u);
+    EXPECT_EQ(accepted + rejected, kWrites);
 }

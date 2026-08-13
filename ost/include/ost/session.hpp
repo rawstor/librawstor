@@ -50,6 +50,11 @@ private:
     // dispatch once too many pile up.
     unsigned int _writes_in_flight;
     std::deque<PendingWrite> _pending_writes;
+    // Sum of PendingWrite::data->size() across _pending_writes -- see
+    // _write()'s use of it against Server::write_backlog_limit() to reject
+    // a write outright rather than let it grow _pending_writes without
+    // bound.
+    uint64_t _pending_writes_bytes;
 
     // Arms the multishot recv; only ever called once, from the
     // constructor.
@@ -132,6 +137,11 @@ public:
     // depending on real storage-completion timing.
     inline unsigned int writes_in_flight() const noexcept {
         return _writes_in_flight;
+    }
+
+    // For ost/tests/ to verify the write backlog cap (see _write()).
+    inline uint64_t pending_writes_bytes() const noexcept {
+        return _pending_writes_bytes;
     }
 };
 
