@@ -9,6 +9,8 @@
 #include <rawstd/uri.hpp>
 #include <rawstd/uuid.h>
 
+#include <cstdint>
+#include <deque>
 #include <memory>
 #include <vector>
 
@@ -23,6 +25,15 @@ private:
         explicit Private() = default;
     };
 
+    // A fully-received WRITE waiting for a free dispatch slot -- see
+    // _write()/_dispatch_write()/_dispatch_next_pending_write().
+    struct PendingWrite {
+        RawstorOSTFrameHead head;
+        uint64_t offset;
+        bool sync;
+        std::shared_ptr<std::vector<unsigned char>> data;
+    };
+
     RawIOQueue* _queue;
     Server& _server;
     int _fd;
@@ -35,18 +46,14 @@ private:
     } _request_body;
     RawstorObject* _object;
     // Writes dispatched to rawstor_object_pwrite() whose completion hasn't
-    // arrived yet -- see _recv_data()'s use of it to pause reading further
-    // requests off the wire once too many pile up.
+    // arrived yet -- see _write()'s use of it to queue rather than
+    // dispatch once too many pile up.
     unsigned int _writes_in_flight;
+    std::deque<PendingWrite> _pending_writes;
 
-    // (Re-)arms the multishot recv, starting at a fresh request head. Used
-    // both from the constructor and to resume reading after a pause (see
-    // _recv_data()/_resume_recv_if_paused()).
+    // Arms the multishot recv; only ever called once, from the
+    // constructor.
     void _arm_recv();
-    // Resumes the paused recv (see _recv_data()) once a completed write has
-    // brought _writes_in_flight back under the cap. A no-op if recv isn't
-    // currently paused, or is still over the cap.
-    void _resume_recv_if_paused();
     static ssize_t _recv(
         const iovec* iov, unsigned int niov, size_t result, int error,
         void* data
@@ -80,6 +87,16 @@ private:
         const RawstorOSTFrameHead& head, const RawstorOSTFrameIOBody& body,
         const iovec* iov, unsigned int niov, size_t size
     );
+    // Actually issues a validated WRITE to storage -- from _write()
+    // directly if under write_throttle_limit(), or later from
+    // _dispatch_next_pending_write() once a slot frees up.
+    void _dispatch_write(
+        const RawstorOSTFrameHead& head, uint64_t offset, bool sync,
+        const std::shared_ptr<std::vector<unsigned char>>& data
+    );
+    // Called from a write's completion callback: dispatches the oldest
+    // queued write, if any and if there's room for it now.
+    void _dispatch_next_pending_write();
     void _discard(
         const RawstorOSTFrameHead& head, const RawstorOSTFrameIOBody& body
     );
@@ -110,6 +127,12 @@ public:
 
     Session& operator=(const Session&) = delete;
     Session& operator=(Session&&) = delete;
+
+    // For ost/tests/ to verify write-throttling (see _recv_data()) without
+    // depending on real storage-completion timing.
+    inline unsigned int writes_in_flight() const noexcept {
+        return _writes_in_flight;
+    }
 };
 
 } // namespace ostbackend

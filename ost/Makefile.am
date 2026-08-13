@@ -1,19 +1,13 @@
-bin_PROGRAMS = rawstor-ost
+SUBDIRS = src
 
-AM_CXXFLAGS = $(GENERIC_CXXFLAGS) \
-              $(ASAN_CFLAGS) \
-              -I$(top_srcdir)/librawstd/include \
-              -I$(top_srcdir)/include
-
-AM_LDFLAGS = $(ASAN_LDFLAGS)
+if ENABLE_TESTS
+    SUBDIRS += tests
+endif
 
 
-rawstor_ost_SOURCES = main.cpp \
-                      server.cpp \
-                      server.hpp \
-                      session.cpp \
-                      session.hpp
+if ENABLE_TESTS
+test: all
+	make -C tests test
 
-rawstor_ost_LDADD = $(top_builddir)/src/librawstor.la \
-                    $(top_builddir)/librawstd/src/librawstd.la \
-                    -lstdc++
+.PHONY: test
+endif

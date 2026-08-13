@@ -1,4 +1,4 @@
-#include "server.hpp"
+#include <ost/server.hpp>
 
 #include "config.h"
 

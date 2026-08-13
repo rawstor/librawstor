@@ -1,6 +1,6 @@
-#include "session.hpp"
+#include <ost/session.hpp>
 
-#include "server.hpp"
+#include <ost/server.hpp>
 
 #include <rawstd/gpp.hpp>
 #include <rawstd/hash.h>
@@ -99,20 +99,6 @@ void Session::_arm_recv() {
     );
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-}
-
-void Session::_resume_recv_if_paused() {
-    if (_recv_event != nullptr ||
-        _writes_in_flight >= _server.write_throttle_limit()) {
-        return;
-    }
-
-    try {
-        _arm_recv();
-    } catch (const std::system_error& e) {
-        rawstd_error("%s\n", e.what());
-        _server.del_session(_fd);
     }
 }
 
@@ -424,18 +410,14 @@ Session::_recv_data(const iovec* iov, unsigned int niov, size_t result) {
         RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
     }
 
+    // Always keeps reading -- see _write()'s own use of
+    // write_throttle_limit() to decide whether *this* request gets
+    // dispatched to storage now or queued for later, instead of pausing
+    // the recv itself. (An earlier version paused recv here instead, by
+    // canceling it: unreliable in practice -- re-arming it once a slot
+    // freed up wouldn't pick up data the kernel had already buffered
+    // while it was paused, stalling the session forever.)
     _write(_request_head, _request_body.io, iov, niov, result);
-
-    if (_writes_in_flight >= _server.write_throttle_limit()) {
-        // Too many writes already in flight for this session -- stop
-        // reading further requests off the wire until _resume_recv_if_
-        // paused() re-arms once one of them completes. The multishot recv
-        // has already terminated itself on a negative return (see
-        // rawio_recv_multishot()'s contract), so null _recv_event to match,
-        // same as on a real recv error -- ~Session() must not cancel() it.
-        _recv_event = nullptr;
-        return -ECANCELED;
-    }
 
     return sizeof(RawstorOSTFrameHead);
 }
@@ -652,6 +634,10 @@ void Session::_write(
         return;
     }
 
+    // iov points into the recv buffer ring's own memory -- it's only
+    // valid for the duration of this call, so the payload has to be
+    // copied out now regardless of whether this write is about to be
+    // dispatched or queued for later.
     auto data = std::make_shared<std::vector<unsigned char>>(size);
     rawstd_iovec_to_buf(iov, niov, 0, data->data(), size);
 
@@ -667,6 +653,28 @@ void Session::_write(
         return;
     }
 
+    if (_writes_in_flight >= _server.write_throttle_limit()) {
+        // Recv keeps running regardless (see _recv_data()) -- capping
+        // dispatch, not intake, is what keeps a backing store slower
+        // than the incoming write rate from piling up an unbounded
+        // number of buffered pwrite()s at once; this queue is what makes
+        // that safe to defer rather than dispatching immediately.
+        _pending_writes.push_back(
+            {.head = head,
+             .offset = body.offset,
+             .sync = body.sync != 0,
+             .data = data}
+        );
+        return;
+    }
+
+    _dispatch_write(head, body.offset, body.sync != 0, data);
+}
+
+void Session::_dispatch_write(
+    const RawstorOSTFrameHead& head, uint64_t offset, bool sync,
+    const std::shared_ptr<std::vector<unsigned char>>& data
+) {
     auto cb = std::make_unique<Callback>(
         [weak = weak_from_this(), cid = head.cid,
          data](RawstorObject*, size_t, size_t result, int error) {
@@ -675,7 +683,7 @@ void Session::_write(
                 return;
             }
             --session->_writes_in_flight;
-            session->_resume_recv_if_paused();
+            session->_dispatch_next_pending_write();
             try {
                 session->_send_response(
                     RAWSTOR_CMD_WRITE, cid,
@@ -689,8 +697,7 @@ void Session::_write(
     );
 
     int res = rawstor_object_pwrite(
-        _object, data->data(), data->size(), body.offset, body.sync, callback,
-        cb.get()
+        _object, data->data(), data->size(), offset, sync, callback, cb.get()
     );
     if (res < 0) {
         rawstd_warning("%s\n", strerror(-res));
@@ -699,6 +706,17 @@ void Session::_write(
         ++_writes_in_flight;
         cb.release();
     }
+}
+
+void Session::_dispatch_next_pending_write() {
+    if (_pending_writes.empty() ||
+        _writes_in_flight >= _server.write_throttle_limit()) {
+        return;
+    }
+
+    PendingWrite next = std::move(_pending_writes.front());
+    _pending_writes.pop_front();
+    _dispatch_write(next.head, next.offset, next.sync, next.data);
 }
 
 void Session::_flush(

@@ -73,17 +73,14 @@ CLEANFILES = ChangeLog \
 
 if ENABLE_TESTS
 
-if WITH_PYTHON3
-WITH_PYTHON3 = yes
-else
-WITH_PYTHON3 = no
-endif
-
 test: all
 	make -C librawstd test
 	make -C librawio test
 	make -C vhost test
 	make -C tests test
+	@if [ "x$(ENABLE_OST_BACKEND)" = "xyes" ]; then \
+	  make -C ost test; \
+	fi
 	@if [ "x$(WITH_PYTHON3)" = "xyes" ]; then \
 	  make -C pyrawstor test; \
 	fi
