@@ -12,15 +12,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - `rawstor_object_pwrite()`/`rawstor_object_pwritev()` gained a `sync` parameter — when true, the write is durable on stable storage by the time the callback reports success. Breaking C API change; existing callers need to pass a `sync` argument (`false` preserves the old behavior).
+
+### Removed
+- Dropped the deprecated `-l`/`--location` and `-t`/`--target` flags (`rawstor list`/`create`/`remove`/`show`/`testio`, `rawstor-ost`, `rawstor-vhost`) in favor of the positional `LOCATION`/`TARGET` argument; `rawstor create -t TARGET` (create-by-target) is unaffected. Also dropped the `rawstor-cli` compat symlink from the deb/rpm packages — use `rawstor`.
+- Dropped the automatic migration of pre-0.2.4 `file://` objects (`<uuid>.dat`/`<uuid>.spec` pairs) to the current single-file format; such objects are no longer readable.
+
+## [0.2.8] - Unreleased
+
+### Changed
 - `rawstor-ost --queue-size`'s default raised from 256 to 4096, now that per-session write concurrency is bounded (see Fixed below) and no longer needs a small ring to keep worst-case exposure in check.
 - `rawstor-ost.service` exposes `--queue-size`/`--write-throttle-limit` as the `QUEUE_SIZE`/`WRITE_THROTTLE_LIMIT` environment variables, overridable in `/etc/rawstor-ost.conf` like the rest of its tuning knobs.
 
 ### Fixed
 - `rawstor-ost` had no limit on how many WRITEs a session could have dispatched to storage at once; against a backing store much slower than the incoming write rate, that queue grew without bound instead of applying ordinary backpressure, eventually stalling the session (and, under sustained pressure, the whole process) for an effectively unbounded time. Now capped per session via the new `--write-throttle-limit` (default 128); `rawstor-ost` also now warns on startup if it's set too close to `--queue-size` to leave any real headroom.
-
-### Removed
-- Dropped the deprecated `-l`/`--location` and `-t`/`--target` flags (`rawstor list`/`create`/`remove`/`show`/`testio`, `rawstor-ost`, `rawstor-vhost`) in favor of the positional `LOCATION`/`TARGET` argument; `rawstor create -t TARGET` (create-by-target) is unaffected. Also dropped the `rawstor-cli` compat symlink from the deb/rpm packages — use `rawstor`.
-- Dropped the automatic migration of pre-0.2.4 `file://` objects (`<uuid>.dat`/`<uuid>.spec` pairs) to the current single-file format; such objects are no longer readable.
 
 ## [0.2.7] - 2026-08-13
 
