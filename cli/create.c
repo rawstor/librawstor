@@ -1,10 +1,9 @@
 #include "create.h"
 
-#include "units.h"
-
 #include <rawstor.h>
 
 #include <rawstd/exitcode.h>
+#include <rawstd/units.h>
 #include <rawstd/uuid.h>
 
 #include <stdio.h>
@@ -14,7 +13,7 @@
 
 static void log_spec(FILE* output, const struct RawstorObjectSpec* spec) {
     char buf[256];
-    rawstor_cli_bytes_to_size(spec->size, buf, sizeof(buf));
+    rawstd_bytes_to_size(spec->size, buf, sizeof(buf));
 
     fprintf(output, "  size: %s\n", buf);
 }

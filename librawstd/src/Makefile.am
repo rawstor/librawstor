@@ -30,6 +30,7 @@ librawstd_la_SOURCES = $(top_srcdir)/librawstd/include/rawstd/endian.h \
                        $(top_srcdir)/librawstd/include/rawstd/socket.h \
                        $(top_srcdir)/librawstd/include/rawstd/stats.hpp \
                        $(top_srcdir)/librawstd/include/rawstd/threading.h \
+                       $(top_srcdir)/librawstd/include/rawstd/units.h \
                        $(top_srcdir)/librawstd/include/rawstd/uri.hpp \
                        $(top_srcdir)/librawstd/include/rawstd/uuid.h \
                        exitcode.c \
@@ -41,6 +42,7 @@ librawstd_la_SOURCES = $(top_srcdir)/librawstd/include/rawstd/endian.h \
                        socket.c \
                        stats.cpp \
                        threading.c \
+                       units.c \
                        uri.cpp \
                        uuid.c \
                        uuid_internals.h

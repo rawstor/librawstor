@@ -18,6 +18,7 @@ test_all_SOURCES = test_hash.cpp \
                    test_mempool.cpp \
                    test_ringbuf.cpp \
                    test_threading.cpp \
+                   test_units.cpp \
                    test_uri.cpp \
                    test_uuid.cpp
 test_all_LDADD = $(top_builddir)/librawstd/src/librawstd.la -lgtest_main
