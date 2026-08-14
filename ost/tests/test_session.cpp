@@ -347,16 +347,30 @@ TEST(OstSessionTest, disconnect_races_session_destruction) {
 
         // Drop the only owning shared_ptr: ~Session() runs here,
         // synchronously, calling rawio_cancel() on a registration that
-        // may have already self-terminated (-ENOENT, "too late").
+        // may have already self-terminated (-ENOENT, "too late"). Its
+        // terminal completion -- where the old code dereferenced freed
+        // memory, and the fixed code's weak_ptr::lock() just no-ops --
+        // isn't drained here; see the catch-all drain after this loop for
+        // why.
         session.reset();
+    }
 
-        // Drain whatever's left. If the terminal completion was already
-        // queued before session.reset() ran above, this is where the old
-        // code dereferenced freed memory; the fixed code's
-        // weak_ptr::lock() just no-ops.
-        for (unsigned int drain = 0; drain < 3; ++drain) {
-            int res = rawio_wait_timeout(queue, 5);
-            ASSERT_TRUE(res >= 0 || res == -ETIME);
-        }
+    // Flush every terminal completion (self-termination or cancellation)
+    // the 100 iterations above triggered, however long the kernel/backend
+    // actually takes to deliver each one. A short, fixed per-iteration
+    // drain budget isn't safe here: the callback data each recv
+    // registration owns (a heap-allocated weak_ptr<Session>, see
+    // _arm_recv()) is only freed once its completion is actually
+    // dispatched, so a completion still in flight when the process exits
+    // is exactly what a leak looks like to LeakSanitizer -- not a bug in
+    // the fix, just this test giving up on draining too early. Stop once a
+    // few consecutive waits come back empty, rather than always burning
+    // the full budget.
+    unsigned int idle = 0;
+    for (unsigned int elapsed_ms = 0; elapsed_ms < 5000 && idle < 5;
+         elapsed_ms += 20) {
+        int res = rawio_wait_timeout(queue, 20);
+        ASSERT_TRUE(res >= 0 || res == -ETIME);
+        idle = (res == -ETIME) ? idle + 1 : 0;
     }
 }
