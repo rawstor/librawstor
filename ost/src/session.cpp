@@ -1,6 +1,6 @@
-#include "session.hpp"
+#include <ost/session.hpp>
 
-#include "server.hpp"
+#include <ost/server.hpp>
 
 #include <rawstd/gpp.hpp>
 #include <rawstd/hash.h>
@@ -21,6 +21,7 @@
 #include <sstream>
 #include <vector>
 
+#include <cerrno>
 #include <cstring>
 
 namespace {
@@ -73,7 +74,16 @@ namespace ostbackend {
 
 std::shared_ptr<Session>
 Session::create(RawIOQueue* queue, Server& server, int fd) {
-    return std::make_shared<Session>(Private(), queue, server, fd);
+    // _arm_recv() needs weak_from_this(), which isn't wired up yet while
+    // the constructor itself is still running (enable_shared_from_this's
+    // weak_ptr is only set by make_shared() right before returning) --
+    // arm the recv here instead. If it throws, `session` was fully
+    // constructed already, so its own destructor (which closes fd) runs
+    // normally during unwinding.
+    std::shared_ptr<Session> session =
+        std::make_shared<Session>(Private(), queue, server, fd);
+    session->_arm_recv();
+    return session;
 }
 
 Session::Session(Private, RawIOQueue* queue, Server& server, int fd) :
@@ -82,15 +92,28 @@ Session::Session(Private, RawIOQueue* queue, Server& server, int fd) :
     _fd(fd),
     _recv_event(nullptr),
     _next(&Session::_recv_head),
-    _object(nullptr) {
+    _object(nullptr),
+    _writes_in_flight(0),
+    _pending_writes_bytes(0) {
+}
+
+void Session::_arm_recv() {
+    // A multishot recv's terminal completion (peer disconnect -> EPIPE,
+    // ENOBUFS, ... -- any error is terminal, not just ECANCELED; see
+    // rawio.h) can already be sitting unprocessed in the completion queue
+    // by the time this Session is destroyed, so ~Session()'s rawio_cancel()
+    // can be too late to stop it (see there). Passing a weak_ptr instead of a
+    // raw `this` lets that final callback tell a since-destroyed Session
+    // apart from a live one instead of touching freed memory.
+    auto holder = std::make_unique<std::weak_ptr<Session>>(weak_from_this());
     int res = rawio_recv_multishot(
-        _queue, _fd, 1u << 17, 64 * 4, sizeof(_request_head), 0, _recv, this,
-        &_recv_event
+        _queue, _fd, 1u << 17, 64 * 4, sizeof(_request_head), 0, _recv,
+        holder.get(), &_recv_event
     );
     if (res < 0) {
-        close(_fd);
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
+    holder.release(); // owned by the eventual terminal callback now
 }
 
 Session::~Session() noexcept {
@@ -105,7 +128,11 @@ Session::~Session() noexcept {
     }
     if (_recv_event != nullptr) {
         int res = rawio_cancel(_queue, _recv_event);
-        if (res < 0) {
+        // ENOENT means the multishot recv already terminated on its own
+        // (e.g. the peer disconnected) and its completion is already
+        // queued, uncancellable -- not an error, just too late; see
+        // _arm_recv()'s comment for how the eventual callback copes.
+        if (res < 0 && res != -ENOENT) {
             rawstd_error("Failed to cancel event: %s\n", strerror(-res));
         }
     }
@@ -115,10 +142,22 @@ Session::~Session() noexcept {
 ssize_t Session::_recv(
     const iovec* iov, unsigned int niov, size_t result, int error, void* data
 ) noexcept {
+    auto* weak = static_cast<std::weak_ptr<Session>*>(data);
+    // Any non-zero error (not just ECANCELED) terminates this multishot
+    // registration -- this is the one and only callback still holding
+    // `weak` alive, so it's this callback's job to free it.
+    std::unique_ptr<std::weak_ptr<Session>> owner(error ? weak : nullptr);
+
+    std::shared_ptr<Session> session = weak->lock();
+    if (session == nullptr) {
+        // The Session is already gone -- its terminal completion was
+        // already queued, uncancellable, by the time it was destroyed
+        // (see ~Session()).
+        return 0;
+    }
     if (error == ECANCELED) {
         return 0;
     }
-    Session* session = static_cast<Session*>(data);
     try {
         return session->_recv(iov, niov, result, error);
     } catch (const std::system_error& e) {
@@ -249,6 +288,18 @@ Session::_recv_body(const iovec* iov, unsigned int niov, size_t result) {
         rawstd_iovec_to_buf(
             iov, niov, 0, &_request_body.io, sizeof(_request_body.io)
         );
+
+        // 64MB limit -- reject before committing to receive this many
+        // bytes of payload off the wire at all, rather than after
+        // already reading the whole (possibly much larger) thing in
+        // full just to then reject it in _write().
+        if (_request_body.io.len > (1ULL << 26)) {
+            rawstd_error(
+                "fd %d: WRITE len too large: %u\n", _fd, _request_body.io.len
+            );
+
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
 
         _next = &Session::_recv_data;
 
@@ -401,6 +452,13 @@ Session::_recv_data(const iovec* iov, unsigned int niov, size_t result) {
         RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
     }
 
+    // Always keeps reading -- see _write()'s own use of
+    // write_throttle_limit() to decide whether *this* request gets
+    // dispatched to storage now or queued for later, instead of pausing
+    // the recv itself. (An earlier version paused recv here instead, by
+    // canceling it: unreliable in practice -- re-arming it once a slot
+    // freed up wouldn't pick up data the kernel had already buffered
+    // while it was paused, stalling the session forever.)
     _write(_request_head, _request_body.io, iov, niov, result);
 
     return sizeof(RawstorOSTFrameHead);
@@ -612,16 +670,27 @@ void Session::_write(
         return;
     }
 
-    // 64MB limit
-    if (body.len > (1ULL << 26)) {
-        _send_response(RAWSTOR_CMD_WRITE, head.cid, -EINVAL, 0);
+    bool throttled = _writes_in_flight >= _server.write_throttle_limit();
+
+    if (throttled &&
+        _pending_writes_bytes + size > _server.write_backlog_capacity()) {
+        // Recv keeps running regardless (see _recv_data()), so nothing
+        // else caps how much an already-throttled session could pile into
+        // _pending_writes -- reject outright, before even copying the
+        // payload out, once queuing it would push the backlog over the
+        // cap, rather than let payload copies grow without bound while
+        // storage catches up.
+        _send_response(RAWSTOR_CMD_WRITE, head.cid, -EBUSY, 0);
         return;
     }
 
-    auto data = std::make_shared<std::vector<unsigned char>>(size);
-    rawstd_iovec_to_buf(iov, niov, 0, data->data(), size);
-
-    uint64_t hash = rawstd_hash_scalar(data->data(), data->size());
+    // Hash iov directly -- no need to pay for the copy below at all if the
+    // write is about to be rejected anyway.
+    uint64_t hash;
+    int hash_res = rawstd_hash_vector(iov, niov, &hash);
+    if (hash_res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-hash_res);
+    }
 
     if (hash != body.hash) {
         rawstd_error(
@@ -633,6 +702,35 @@ void Session::_write(
         return;
     }
 
+    // iov points into the recv buffer ring's own memory -- it's only
+    // valid for the duration of this call, so the payload has to be
+    // copied out now regardless of whether this write is about to be
+    // dispatched or queued for later.
+    auto data = std::make_shared<std::vector<unsigned char>>(size);
+    rawstd_iovec_to_buf(iov, niov, 0, data->data(), size);
+
+    if (throttled) {
+        // Capping dispatch, not intake, is what keeps a backing store
+        // slower than the incoming write rate from piling up an unbounded
+        // number of concurrent pwrite()s at once; the backlog check above
+        // is what keeps deferring writes like this one safe to do at all.
+        _pending_writes_bytes += size;
+        _pending_writes.push_back(
+            {.head = head,
+             .offset = body.offset,
+             .sync = body.sync != 0,
+             .data = data}
+        );
+        return;
+    }
+
+    _dispatch_write(head, body.offset, body.sync != 0, data);
+}
+
+void Session::_dispatch_write(
+    const RawstorOSTFrameHead& head, uint64_t offset, bool sync,
+    const std::shared_ptr<std::vector<unsigned char>>& data
+) {
     auto cb = std::make_unique<Callback>(
         [weak = weak_from_this(), cid = head.cid,
          data](RawstorObject*, size_t, size_t result, int error) {
@@ -640,6 +738,8 @@ void Session::_write(
             if (session == nullptr) {
                 return;
             }
+            --session->_writes_in_flight;
+            session->_dispatch_next_pending_write();
             try {
                 session->_send_response(
                     RAWSTOR_CMD_WRITE, cid,
@@ -653,15 +753,27 @@ void Session::_write(
     );
 
     int res = rawstor_object_pwrite(
-        _object, data->data(), data->size(), body.offset, body.sync, callback,
-        cb.get()
+        _object, data->data(), data->size(), offset, sync, callback, cb.get()
     );
     if (res < 0) {
         rawstd_warning("%s\n", strerror(-res));
         _send_response(RAWSTOR_CMD_WRITE, head.cid, res, 0);
     } else {
+        ++_writes_in_flight;
         cb.release();
     }
+}
+
+void Session::_dispatch_next_pending_write() {
+    if (_pending_writes.empty() ||
+        _writes_in_flight >= _server.write_throttle_limit()) {
+        return;
+    }
+
+    PendingWrite next = std::move(_pending_writes.front());
+    _pending_writes.pop_front();
+    _pending_writes_bytes -= next.data->size();
+    _dispatch_write(next.head, next.offset, next.sync, next.data);
 }
 
 void Session::_flush(

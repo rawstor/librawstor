@@ -1,10 +1,9 @@
 #include "info.h"
 
-#include "units.h"
-
 #include <rawstor.h>
 
 #include <rawstd/exitcode.h>
+#include <rawstd/units.h>
 
 #include <stdint.h>
 #include <stdio.h>
@@ -25,19 +24,13 @@ int rawstor_cli_info(const char* location, char unit) {
     char total_buf[256];
     char avail_buf[256];
     if (unit == 0) {
-        rawstor_cli_bytes_to_size_human(info.used, used_buf, sizeof(used_buf));
-        rawstor_cli_bytes_to_size_human(avail, avail_buf, sizeof(avail_buf));
-        rawstor_cli_bytes_to_size_human(
-            info.total, total_buf, sizeof(total_buf)
-        );
+        rawstd_bytes_to_size_human(info.used, used_buf, sizeof(used_buf));
+        rawstd_bytes_to_size_human(avail, avail_buf, sizeof(avail_buf));
+        rawstd_bytes_to_size_human(info.total, total_buf, sizeof(total_buf));
     } else {
-        rawstor_cli_bytes_to_size_unit(
-            info.used, unit, used_buf, sizeof(used_buf)
-        );
-        rawstor_cli_bytes_to_size_unit(
-            avail, unit, avail_buf, sizeof(avail_buf)
-        );
-        rawstor_cli_bytes_to_size_unit(
+        rawstd_bytes_to_size_unit(info.used, unit, used_buf, sizeof(used_buf));
+        rawstd_bytes_to_size_unit(avail, unit, avail_buf, sizeof(avail_buf));
+        rawstd_bytes_to_size_unit(
             info.total, unit, total_buf, sizeof(total_buf)
         );
     }

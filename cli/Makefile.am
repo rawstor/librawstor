@@ -21,9 +21,7 @@ rawstor_SOURCES = create.c \
                   show.c \
                   show.h \
                   testio.c \
-                  testio.h \
-                  units.c \
-                  units.h
+                  testio.h
 
 rawstor_LDADD = $(top_builddir)/src/librawstor.la \
                 $(top_builddir)/librawstd/src/librawstd.la \

@@ -1,10 +1,9 @@
 #include "show.h"
 
-#include "units.h"
-
 #include <rawstor.h>
 
 #include <rawstd/exitcode.h>
+#include <rawstd/units.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,7 +18,7 @@ int rawstor_cli_show(const char* target) {
     }
 
     char buf[256];
-    rawstor_cli_bytes_to_size(spec.size, buf, sizeof(buf));
+    rawstd_bytes_to_size(spec.size, buf, sizeof(buf));
 
     printf("target: %s\n", target);
     printf("size: %s\n", buf);

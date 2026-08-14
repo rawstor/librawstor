@@ -429,6 +429,43 @@ TEST(OstIOTest, write_error) {
     EXPECT_THROW(object.write(ping.data(), ping.length()), std::system_error);
 }
 
+TEST(OstIOTest, write_busy_retries_without_reconnect) {
+    Queue queue(16);
+    rawstor::tests::Server server(8753, 256);
+    std::string target =
+        "ost://127.0.0.1:8753/00000000-0000-7000-8000-000000000000";
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
+    }
+
+    // A single session handles SET_OBJECT, an EBUSY response to the first
+    // WRITE, and a second WRITE that succeeds -- all on the SAME
+    // connection. If the retry reconnected instead (like it does for
+    // every other error), this session would never see that second WRITE
+    // and the test would hang waiting for a connection nothing here
+    // accepts.
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_write_request(4);
+        s.cmd_write_response(RAWSTOR_MAGIC, 1, -EBUSY);
+        s.cmd_write_request(4);
+        s.cmd_write_response(RAWSTOR_MAGIC, 2, 4);
+    }
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_release(RAWSTOR_MAGIC, 0, 0);
+    }
+
+    Object object(queue, target, 1ull << 20);
+
+    std::string ping = "ping";
+    EXPECT_NO_THROW(object.write(ping.data(), ping.length()));
+}
+
 TEST(OstIOTest, write_disconnect) {
     Queue queue(16);
     rawstor::tests::Server server(8753, 256);

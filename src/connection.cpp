@@ -21,6 +21,7 @@
 #include <stdexcept>
 #include <string>
 
+#include <cerrno>
 #include <cstring>
 
 namespace {
@@ -204,26 +205,35 @@ void Connection::_op(
                 std::strerror(error), attempt, rawstor_opts_io_attempts()
             );
 
-            try {
-                invalidate_session(s);
-            } catch (const std::system_error& e) {
-                _finish(
-                    func_name, size, offset, cb, attempt, t_call, result,
-                    e.code().value()
-                );
-                return;
-            } catch (const std::exception& e) {
-                rawstd_error(
-                    "IO %s: size = %zu, offset = %jd; "
-                    "exception on %s: %s; "
-                    "attempt %d of %d; failing...\n",
-                    func_name, size, (intmax_t)offset, s->str().c_str(),
-                    e.what(), attempt, rawstor_opts_io_attempts()
-                );
-                _finish(
-                    func_name, size, offset, cb, attempt, t_call, result, EIO
-                );
-                return;
+            // EBUSY means the session itself is fine, just backed up
+            // against the server's per-session write-throttle-limit/
+            // write-backlog-capacity -- invalidate_session() would just
+            // reconnect and re-SET_OBJECT for no benefit (the server is
+            // still just as busy) at the cost of a needless round-trip,
+            // so only a genuine transport/session error pays for it here.
+            if (error != EBUSY) {
+                try {
+                    invalidate_session(s);
+                } catch (const std::system_error& e) {
+                    _finish(
+                        func_name, size, offset, cb, attempt, t_call, result,
+                        e.code().value()
+                    );
+                    return;
+                } catch (const std::exception& e) {
+                    rawstd_error(
+                        "IO %s: size = %zu, offset = %jd; "
+                        "exception on %s: %s; "
+                        "attempt %d of %d; failing...\n",
+                        func_name, size, (intmax_t)offset, s->str().c_str(),
+                        e.what(), attempt, rawstor_opts_io_attempts()
+                    );
+                    _finish(
+                        func_name, size, offset, cb, attempt, t_call, result,
+                        EIO
+                    );
+                    return;
+                }
             }
 
             _op(func_name, size, offset, cb, op, attempt + 1, t_call);
