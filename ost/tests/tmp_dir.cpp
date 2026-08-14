@@ -4,7 +4,7 @@
 
 #include <sstream>
 
-#include <cstdlib>
+#include <unistd.h>
 
 namespace rawstor {
 namespace ostbackend {
