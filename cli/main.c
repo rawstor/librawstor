@@ -4,12 +4,12 @@
 #include "remove.h"
 #include "show.h"
 #include "testio.h"
-#include "units.h"
 
 #include "config.h"
 
 #include <rawstd/exitcode.h>
 #include <rawstd/gcc.h>
+#include <rawstd/units.h>
 
 #include <rawstor.h>
 
@@ -177,7 +177,7 @@ static int command_create(int argc, char** argv) {
     }
 
     uint64_t size = 0;
-    int res = rawstor_cli_size_to_bytes(size_arg, &size);
+    int res = rawstd_size_to_bytes(size_arg, &size);
     if (res < 0) {
         fprintf(
             stderr, "Failed to parse units: %s\nError: %s\n", size_arg,
@@ -579,7 +579,7 @@ static int command_testio(int argc, char** argv) {
     }
 
     uint64_t block_size = 0;
-    int res = rawstor_cli_size_to_bytes(block_size_arg, &block_size);
+    int res = rawstd_size_to_bytes(block_size_arg, &block_size);
     if (res < 0) {
         fprintf(
             stderr, "Failed to parse units: %s\nError: %s\n", block_size_arg,

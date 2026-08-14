@@ -21,6 +21,14 @@ function find_cmd() {
     cmd+="\( "
     local is_first=1
     for path in $paths; do
+        # find .'s own output is always "./"-prefixed, so a plain relative
+        # path (no leading "./", "/", or glob) would otherwise never match
+        # anything -- silently checking zero files rather than failing.
+        case "$path" in
+        ./* | /* | \**) ;;
+        *) path="./${path}" ;;
+        esac
+
         if [ $is_first -ne 1 ]; then
             cmd+="-o "
         fi
@@ -52,14 +60,21 @@ function main() {
     echo -e "Sources: $input_pattern"
     local cmd="$(find_cmd "${input_pattern}")"
     local -a issues=()
+    local checked=0
 
     for file in $(eval $cmd); do
+        checked=$((checked + 1))
         echo -e "Checking file: $file"
         check_file "$file"
         if [ $? -ne 0 ]; then
             issues+=("$file")
         fi
     done
+
+    if [ $checked -eq 0 ]; then
+        echo -e "No files matched \"$input_pattern\" -- nothing was checked." >&2
+        exit 1
+    fi
 
     if [ ${#issues[@]} -eq 0 ]; then
         echo -e "Success!!! The sources are clang formatted."

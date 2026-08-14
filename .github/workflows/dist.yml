@@ -130,7 +130,7 @@ jobs:
     - name: start rawstor-ost
       run: |
         mkdir /tmp/ost_objects
-        ./${LIBRAWSTOR}/ost/rawstor-ost --bind 127.0.0.1:7777 file:///tmp/ost_objects/ &
+        ./${LIBRAWSTOR}/ost/src/rawstor-ost --bind 127.0.0.1:7777 file:///tmp/ost_objects/ &
         sleep 10
     - name: create object file,ost
       run: |

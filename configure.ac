@@ -124,12 +124,14 @@ AC_ARG_ENABLE([ost-backend], [AS_HELP_STRING([--disable-ost-backend],
     [enable_ost_backend=$enableval],
     [enable_ost_backend="yes"])
 AM_CONDITIONAL([ENABLE_OST_BACKEND], [test "x$enable_ost_backend" = "xyes"])
+AC_SUBST([ENABLE_OST_BACKEND], [$enable_ost_backend])
 
 AC_ARG_WITH([python3], [AS_HELP_STRING([--without-python3],
     [disable support for python3 bindings])],
     [with_python3=$withval],
     [with_python3="yes"])
 AM_CONDITIONAL([WITH_PYTHON3], [test "x$with_python3" = "xyes"])
+AC_SUBST([WITH_PYTHON3], [$with_python3])
 AS_IF([test "x$with_python3" = "xyes"], [
     AM_PATH_PYTHON([3.9])
     PKG_CHECK_MODULES([PYTHON3], [python3])
@@ -163,6 +165,8 @@ AC_CONFIG_FILES(
     [vhost-qemu/3rdparty/qemu/Makefile]
     [vhost-qemu/3rdparty/qemu/libvhost-user/Makefile]
     [ost/Makefile]
+    [ost/src/Makefile]
+    [ost/tests/Makefile]
     [tests/Makefile]
     [deb/librawstor/control]
     [deb/python3-rawstor/control]
