@@ -1,4 +1,6 @@
 #include "client.hpp"
+#include "queue.hpp"
+#include "tmp_dir.hpp"
 
 #include <ost/server.hpp>
 #include <ost/session.hpp>
@@ -16,78 +18,12 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
-#include <filesystem>
 #include <functional>
-#include <sstream>
 #include <string>
 
 #include <cerrno>
 
 namespace {
-
-// A fresh, uniquely-named temporary directory, removed (recursively) when
-// the instance is destroyed -- so a file:// Server under test never
-// shares, and can't be polluted by or race against, another test's
-// on-disk location. (Deliberately not reusing tests/tmp_dir.hpp: this
-// binary doesn't otherwise link anything from tests/, and duplicating
-// fifteen lines beats pulling in a cross-directory source dependency for
-// them.)
-class TmpDir final {
-private:
-    std::filesystem::path _path;
-
-public:
-    TmpDir() {
-        std::string tmpl =
-            (std::filesystem::temp_directory_path() / "rawstor-ost-test-XXXXXX")
-                .string();
-        if (mkdtemp(tmpl.data()) == nullptr) {
-            RAWSTD_THROW_ERRNO();
-        }
-        _path = tmpl;
-    }
-
-    TmpDir(const TmpDir&) = delete;
-    TmpDir(TmpDir&&) = delete;
-
-    ~TmpDir() {
-        std::error_code ec;
-        std::filesystem::remove_all(_path, ec);
-    }
-
-    TmpDir& operator=(const TmpDir&) = delete;
-    TmpDir& operator=(TmpDir&&) = delete;
-
-    std::string uri() const {
-        std::ostringstream oss;
-        oss << "file://" << _path.string();
-        return oss.str();
-    }
-};
-
-// Owns a rawio queue for the lifetime of a test, and drives it.
-class Queue final {
-private:
-    RawIOQueue* _queue;
-
-public:
-    Queue() : _queue(nullptr) {
-        int res = rawio_queue_create(256, &_queue);
-        if (res < 0) {
-            RAWSTD_THROW_SYSTEM_ERROR(-res);
-        }
-    }
-
-    Queue(const Queue&) = delete;
-    Queue(Queue&&) = delete;
-
-    ~Queue() { rawio_queue_delete(_queue); }
-
-    Queue& operator=(const Queue&) = delete;
-    Queue& operator=(Queue&&) = delete;
-
-    operator RawIOQueue*() noexcept { return _queue; }
-};
 
 // Pumps `queue` until `done()` returns true or `budget_ms` elapses,
 // calling `done()` once more right before giving up. Mirrors the
@@ -138,12 +74,12 @@ connect_session(rawstor::ostbackend::Server& server, RawIOQueue* queue) {
 } // namespace
 
 TEST(OstSessionTest, simple_success) {
-    TmpDir dir;
+    rawstor::ostbackend::tests::TmpDir dir;
     rawstor::ostbackend::Server server(
         256, 128, 1u << 20, "127.0.0.1", 0, dir.uri().c_str()
     );
 
-    Queue queue;
+    rawstor::ostbackend::tests::Queue queue;
     auto [session, client_fd] = connect_session(server, queue);
     (void)session;
     rawstor::ostbackend::tests::Client client(client_fd);
@@ -195,15 +131,15 @@ TEST(OstSessionTest, simple_success) {
 }
 
 TEST(OstSessionTest, write_throttle_limit) {
-    constexpr unsigned int kLimit = 4;
-    constexpr unsigned int kWrites = 20;
+    constexpr unsigned int limit = 4;
+    constexpr unsigned int writes = 20;
 
-    TmpDir dir;
+    rawstor::ostbackend::tests::TmpDir dir;
     rawstor::ostbackend::Server server(
-        256, kLimit, 1u << 20, "127.0.0.1", 0, dir.uri().c_str()
+        256, limit, 1u << 20, "127.0.0.1", 0, dir.uri().c_str()
     );
 
-    Queue queue;
+    rawstor::ostbackend::tests::Queue queue;
     auto [session, client_fd] = connect_session(server, queue);
     rawstor::ostbackend::tests::Client client(client_fd);
 
@@ -227,7 +163,7 @@ TEST(OstSessionTest, write_throttle_limit) {
     // a session facing a backing store slower than the incoming write
     // rate buffer an unbounded number of writes at once.
     std::string payload = "throttle-me";
-    for (unsigned int i = 0; i < kWrites; ++i) {
+    for (unsigned int i = 0; i < writes; ++i) {
         client.send_write(
             i * payload.size(), payload.data(), payload.size(), false
         );
@@ -244,7 +180,7 @@ TEST(OstSessionTest, write_throttle_limit) {
             peak_in_flight =
                 std::max(peak_in_flight, session->writes_in_flight());
             return client.bytes_available() >=
-                   kWrites * sizeof(RawstorOSTFrameResponse);
+                   writes * sizeof(RawstorOSTFrameResponse);
         },
         10000
     ));
@@ -252,13 +188,13 @@ TEST(OstSessionTest, write_throttle_limit) {
     // The invariant write-throttle-limit exists for: no matter how
     // pumping happened to batch things, the session never had more than
     // the configured cap of writes dispatched to storage at once.
-    EXPECT_LE(peak_in_flight, kLimit);
+    EXPECT_LE(peak_in_flight, limit);
     // And it wasn't just coincidentally low: with 20 writes fired at a
     // cap of 4, the session must have actually hit the cap at some
     // point, or nothing here was throttled at all.
-    EXPECT_EQ(peak_in_flight, kLimit);
+    EXPECT_EQ(peak_in_flight, limit);
 
-    for (unsigned int i = 0; i < kWrites; ++i) {
+    for (unsigned int i = 0; i < writes; ++i) {
         RawstorOSTFrameResponse response = client.recv_response();
         EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_WRITE);
         EXPECT_EQ(response.body.res, static_cast<int32_t>(payload.size()));
@@ -269,17 +205,17 @@ TEST(OstSessionTest, write_backlog_capacity) {
     // A throttle-limit of 1 puts every write from the second one onward on
     // the backlog check's path immediately, without waiting on real
     // storage-completion timing to get there.
-    constexpr unsigned int kThrottleLimit = 1;
+    constexpr unsigned int throttle_limit = 1;
     const std::string payload(16, 'x');
-    const uint64_t kBacklogCapacity = payload.size() * 3;
-    constexpr unsigned int kWrites = 50;
+    const size_t backlog_capacity = payload.size() * 3;
+    constexpr unsigned int writes = 50;
 
-    TmpDir dir;
+    rawstor::ostbackend::tests::TmpDir dir;
     rawstor::ostbackend::Server server(
-        256, kThrottleLimit, kBacklogCapacity, "127.0.0.1", 0, dir.uri().c_str()
+        256, throttle_limit, backlog_capacity, "127.0.0.1", 0, dir.uri().c_str()
     );
 
-    Queue queue;
+    rawstor::ostbackend::tests::Queue queue;
     auto [session, client_fd] = connect_session(server, queue);
     rawstor::ostbackend::tests::Client client(client_fd);
 
@@ -303,34 +239,34 @@ TEST(OstSessionTest, write_backlog_capacity) {
     // socket buffer before the session is pumped even once -- exactly the
     // scenario that would let an already-throttled session's pending-write
     // backlog grow without bound if nothing capped it.
-    for (unsigned int i = 0; i < kWrites; ++i) {
+    for (unsigned int i = 0; i < writes; ++i) {
         client.send_write(
             i * payload.size(), payload.data(), payload.size(), false
         );
     }
 
-    uint64_t peak_pending_bytes = 0;
+    size_t peak_pending_bytes = 0;
     ASSERT_TRUE(pump_until(
         queue,
         [&] {
             peak_pending_bytes =
                 std::max(peak_pending_bytes, session->pending_writes_bytes());
             return client.bytes_available() >=
-                   kWrites * sizeof(RawstorOSTFrameResponse);
+                   writes * sizeof(RawstorOSTFrameResponse);
         },
         10000
     ));
 
     // The invariant write-backlog-capacity exists for: the backlog never grew
     // past the configured cap...
-    EXPECT_LE(peak_pending_bytes, kBacklogCapacity);
+    EXPECT_LE(peak_pending_bytes, backlog_capacity);
     // ...and it wasn't just coincidentally low: it must have actually
     // filled up at some point, or nothing here was capped at all.
-    EXPECT_EQ(peak_pending_bytes, kBacklogCapacity);
+    EXPECT_EQ(peak_pending_bytes, backlog_capacity);
 
     unsigned int accepted = 0;
     unsigned int rejected = 0;
-    for (unsigned int i = 0; i < kWrites; ++i) {
+    for (unsigned int i = 0; i < writes; ++i) {
         RawstorOSTFrameResponse response = client.recv_response();
         EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_WRITE);
         if (response.body.res == static_cast<int32_t>(payload.size())) {
@@ -346,5 +282,5 @@ TEST(OstSessionTest, write_backlog_capacity) {
     // EBUSY -- otherwise the cap wasn't actually exercised.
     EXPECT_GT(accepted, 0u);
     EXPECT_GT(rejected, 0u);
-    EXPECT_EQ(accepted + rejected, kWrites);
+    EXPECT_EQ(accepted + rejected, writes);
 }
