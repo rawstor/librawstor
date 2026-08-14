@@ -684,14 +684,13 @@ void Session::_write(
         return;
     }
 
-    // iov points into the recv buffer ring's own memory -- it's only
-    // valid for the duration of this call, so the payload has to be
-    // copied out now regardless of whether this write is about to be
-    // dispatched or queued for later.
-    auto data = std::make_shared<std::vector<unsigned char>>(size);
-    rawstd_iovec_to_buf(iov, niov, 0, data->data(), size);
-
-    uint64_t hash = rawstd_hash_scalar(data->data(), data->size());
+    // Hash iov directly -- no need to pay for the copy below at all if the
+    // write is about to be rejected anyway.
+    uint64_t hash;
+    int hash_res = rawstd_hash_vector(iov, niov, &hash);
+    if (hash_res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-hash_res);
+    }
 
     if (hash != body.hash) {
         rawstd_error(
@@ -702,6 +701,13 @@ void Session::_write(
         _send_response(RAWSTOR_CMD_WRITE, head.cid, -EIO, 0);
         return;
     }
+
+    // iov points into the recv buffer ring's own memory -- it's only
+    // valid for the duration of this call, so the payload has to be
+    // copied out now regardless of whether this write is about to be
+    // dispatched or queued for later.
+    auto data = std::make_shared<std::vector<unsigned char>>(size);
+    rawstd_iovec_to_buf(iov, niov, 0, data->data(), size);
 
     if (throttled) {
         // Capping dispatch, not intake, is what keeps a backing store
