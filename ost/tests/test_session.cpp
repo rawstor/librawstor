@@ -87,6 +87,51 @@ connect_session(rawstor::ostbackend::Server& server, RawIOQueue* queue) {
     return {session, fds[1]};
 }
 
+// RAII wrapper around the Session connect_session() returns: drops it and
+// drains `queue` until idle before letting the destructor run, rather than
+// just letting the shared_ptr go out of scope on its own. Session::_arm_recv()
+// hands its multishot recv registration a heap-allocated weak_ptr<Session>
+// as callback data, freed only once that registration's terminal completion
+// (self-termination or the cancellation ~Session() triggers) is actually
+// dispatched -- one still in flight when `queue` gets torn down right after
+// is exactly what LeakSanitizer reports as a leak. Runs via RAII, not
+// "cleanup code at the end of the test", so it still happens even if an
+// ASSERT_* returns from the test body early.
+class SessionCleanup final {
+private:
+    std::shared_ptr<rawstor::ostbackend::Session> _session;
+    RawIOQueue* _queue;
+
+public:
+    SessionCleanup(
+        std::shared_ptr<rawstor::ostbackend::Session> session, RawIOQueue* queue
+    ) :
+        _session(std::move(session)),
+        _queue(queue) {}
+    SessionCleanup(const SessionCleanup&) = delete;
+    SessionCleanup(SessionCleanup&&) = delete;
+
+    ~SessionCleanup() {
+        _session.reset();
+        unsigned int idle = 0;
+        for (unsigned int elapsed_ms = 0; elapsed_ms < 2000 && idle < 5;
+             elapsed_ms += 20) {
+            int res = rawio_wait_timeout(_queue, 20);
+            if (res < 0 && res != -ETIME) {
+                break;
+            }
+            idle = (res == -ETIME) ? idle + 1 : 0;
+        }
+    }
+
+    SessionCleanup& operator=(const SessionCleanup&) = delete;
+    SessionCleanup& operator=(SessionCleanup&&) = delete;
+
+    rawstor::ostbackend::Session* operator->() const noexcept {
+        return _session.get();
+    }
+};
+
 } // namespace
 
 TEST(OstSessionTest, simple_success) {
@@ -96,8 +141,8 @@ TEST(OstSessionTest, simple_success) {
     );
 
     rawstor::ostbackend::tests::Queue queue;
-    auto [session, client_fd] = connect_session(server, queue);
-    (void)session;
+    auto [raw_session, client_fd] = connect_session(server, queue);
+    SessionCleanup session(std::move(raw_session), queue);
     rawstor::ostbackend::tests::Client client(client_fd);
 
     RawstdUUID id;
@@ -156,7 +201,8 @@ TEST(OstSessionTest, write_throttle_limit) {
     );
 
     rawstor::ostbackend::tests::Queue queue;
-    auto [session, client_fd] = connect_session(server, queue);
+    auto [raw_session, client_fd] = connect_session(server, queue);
+    SessionCleanup session(std::move(raw_session), queue);
     rawstor::ostbackend::tests::Client client(client_fd);
 
     RawstdUUID id;
@@ -232,7 +278,8 @@ TEST(OstSessionTest, write_backlog_capacity) {
     );
 
     rawstor::ostbackend::tests::Queue queue;
-    auto [session, client_fd] = connect_session(server, queue);
+    auto [raw_session, client_fd] = connect_session(server, queue);
+    SessionCleanup session(std::move(raw_session), queue);
     rawstor::ostbackend::tests::Client client(client_fd);
 
     RawstdUUID id;
@@ -321,6 +368,20 @@ TEST(OstSessionTest, write_backlog_capacity) {
 // CI's asan job builds), same as how the original bug was only ever caught
 // there: on the pre-fix code, enough iterations reliably abort the process;
 // on the fixed code, weak_ptr::lock() just no-ops and the loop completes.
+//
+// Each iteration drains right after session.reset() -- not just for
+// timing, but because skipping it entirely (an earlier version of this
+// test did, to give draining a single generous pass at the end instead)
+// starved the poll backend's completion queue (librawio/src/poll_queue.hpp's
+// _cqes, a fixed-capacity rawstd::RingBuf sized to the Queue's `depth`) of
+// ever being serviced across all 100 iterations. Once _cqes fills up,
+// RingBuf::push() throws ENOBUFS from inside rawio_cancel() itself, so the
+// cancel never completes and that session's registration -- and the
+// weak_ptr<Session> its callback data owns (_arm_recv()) -- is orphaned
+// for good; no amount of draining afterwards recovers from a cancel that
+// already failed. CI's asan job (--without-liburing) caught exactly this,
+// twice, as a LeakSanitizer failure even after the drain-more-at-the-end
+// attempt.
 TEST(OstSessionTest, disconnect_races_session_destruction) {
     constexpr unsigned int iterations = 100;
 
@@ -347,27 +408,27 @@ TEST(OstSessionTest, disconnect_races_session_destruction) {
 
         // Drop the only owning shared_ptr: ~Session() runs here,
         // synchronously, calling rawio_cancel() on a registration that
-        // may have already self-terminated (-ENOENT, "too late"). Its
-        // terminal completion -- where the old code dereferenced freed
-        // memory, and the fixed code's weak_ptr::lock() just no-ops --
-        // isn't drained here; see the catch-all drain after this loop for
-        // why.
+        // may have already self-terminated (-ENOENT, "too late").
         session.reset();
+
+        // Service whatever's ready so far. If the terminal completion was
+        // already queued before session.reset() ran above, this is where
+        // the old code dereferenced freed memory; the fixed code's
+        // weak_ptr::lock() just no-ops. Just as importantly, this keeps
+        // the poll backend's completion queue from filling up over 100
+        // iterations -- see the comment above the test for what happens
+        // if it does.
+        int res = rawio_wait_timeout(queue, 5);
+        ASSERT_TRUE(res >= 0 || res == -ETIME);
     }
 
-    // Flush every terminal completion (self-termination or cancellation)
-    // the 100 iterations above triggered, however long the kernel/backend
-    // actually takes to deliver each one. A short, fixed per-iteration
-    // drain budget isn't safe here: the callback data each recv
-    // registration owns (a heap-allocated weak_ptr<Session>, see
-    // _arm_recv()) is only freed once its completion is actually
-    // dispatched, so a completion still in flight when the process exits
-    // is exactly what a leak looks like to LeakSanitizer -- not a bug in
-    // the fix, just this test giving up on draining too early. Stop once a
-    // few consecutive waits come back empty, rather than always burning
-    // the full budget.
+    // Catch-all for any stragglers the per-iteration drains above didn't
+    // happen to catch (the kernel/backend can still take a little longer
+    // than one 5ms wait to actually deliver a given completion). Stop
+    // once a few consecutive waits come back empty rather than always
+    // burning the full budget.
     unsigned int idle = 0;
-    for (unsigned int elapsed_ms = 0; elapsed_ms < 5000 && idle < 5;
+    for (unsigned int elapsed_ms = 0; elapsed_ms < 2000 && idle < 5;
          elapsed_ms += 20) {
         int res = rawio_wait_timeout(queue, 20);
         ASSERT_TRUE(res >= 0 || res == -ETIME);
