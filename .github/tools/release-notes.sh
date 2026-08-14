@@ -8,19 +8,24 @@
 # workaround: a curated, categorized index in the release body, on top of
 # (not instead of) that flat list.
 #
-# Usage: release-notes.sh TAG ARTIFACTS_DIR REPO
-#   TAG           git tag being released, e.g. v0.2.7
-#   ARTIFACTS_DIR directory of per-job artifact subdirectories, as laid
-#                 out by `actions/download-artifact` with no `name:`
-#                 (one subdirectory per upload-artifact `name:` in
-#                 dist.yml, containing that job's files)
-#   REPO          "owner/repo", for building asset download URLs
+# Usage: release-notes.sh TAG ARTIFACTS_DIR REPO CHANGELOG_FILE
+#   TAG            git tag being released, e.g. v0.2.7
+#   ARTIFACTS_DIR  directory of per-job artifact subdirectories, as laid
+#                  out by `actions/download-artifact` with no `name:`
+#                  (one subdirectory per upload-artifact `name:` in
+#                  dist.yml, containing that job's files)
+#   REPO           "owner/repo", for building asset download URLs
+#   CHANGELOG_FILE path to ChangeLog.md -- not assumed to be relative to
+#                  the caller's cwd (e.g. dist.yml's release job runs this
+#                  from the workspace root, one level above the checkout)
 
 set -euo pipefail
 
-TAG="${1:?usage: release-notes.sh TAG ARTIFACTS_DIR REPO}"
-ARTIFACTS_DIR="${2:?usage: release-notes.sh TAG ARTIFACTS_DIR REPO}"
-REPO="${3:?usage: release-notes.sh TAG ARTIFACTS_DIR REPO}"
+USAGE="usage: release-notes.sh TAG ARTIFACTS_DIR REPO CHANGELOG_FILE"
+TAG="${1:?$USAGE}"
+ARTIFACTS_DIR="${2:?$USAGE}"
+REPO="${3:?$USAGE}"
+CHANGELOG_FILE="${4:?$USAGE}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -44,7 +49,7 @@ category_for() {
     esac
 }
 
-changelog="$("$SCRIPT_DIR/changelog-section.sh" "$TAG")"
+changelog="$("$SCRIPT_DIR/changelog-section.sh" "$TAG" "$CHANGELOG_FILE")"
 if [ -n "$changelog" ]; then
     printf '## Changelog\n\n%s\n\n' "$changelog"
 fi
