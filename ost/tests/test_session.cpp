@@ -335,7 +335,9 @@ TEST(OstSessionTest, disconnect_races_session_destruction) {
 
         // Disconnect: closing the client's end terminates the session's
         // already-armed recv with EPIPE once the kernel gets to it.
-        { rawstor::ostbackend::tests::Client client(client_fd); }
+        {
+            rawstor::ostbackend::tests::Client client(client_fd);
+        }
 
         // Give the kernel a chance to actually post that terminal
         // completion into the queue before the next line runs, without
