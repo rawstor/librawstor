@@ -5,6 +5,8 @@
 #include <rawstd/exitcode.h>
 #include <rawstd/units.h>
 
+#include <rawstor/rawstor.h>
+
 #include <getopt.h>
 #include <signal.h>
 
@@ -274,16 +276,26 @@ int main(int argc, char** argv) {
         return EX_USAGE;
     }
 
+    int res = rawstor_initialize(nullptr);
+    if (res < 0) {
+        std::cerr << "Failed to initialize rawstor: " << strerror(-res)
+                  << std::endl;
+        return rawstd_exitcode_for_errno(-res);
+    }
+
+    int exit_code = EXIT_SUCCESS;
     try {
         ost(queue_size, write_throttle_limit, write_backlog_capacity, name,
             port, location_arg);
     } catch (const std::system_error& e) {
         std::cerr << e.what() << std::endl;
-        return rawstd_exitcode_for_errno(e.code().value());
+        exit_code = rawstd_exitcode_for_errno(e.code().value());
     } catch (const std::exception& e) {
         std::cerr << e.what() << std::endl;
-        return EX_SOFTWARE;
+        exit_code = EX_SOFTWARE;
     }
 
-    return EXIT_SUCCESS;
+    rawstor_terminate();
+
+    return exit_code;
 }

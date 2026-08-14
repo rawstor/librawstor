@@ -7,8 +7,6 @@
 #include <rawstd/socket.h>
 #include <rawstd/uri.hpp>
 
-#include <rawstor/rawstor.h>
-
 #include <arpa/inet.h>
 
 #include <netinet/tcp.h>
@@ -37,13 +35,8 @@ Server::Server(
     _write_throttle_limit(write_throttle_limit),
     _write_backlog_capacity(write_backlog_capacity) {
 
-    int res = rawstor_initialize(nullptr);
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-
     try {
-        res = rawio_queue_create(queue_size, &_queue);
+        int res = rawio_queue_create(queue_size, &_queue);
         if (res < 0) {
             RAWSTD_THROW_SYSTEM_ERROR(-res);
         }
@@ -86,7 +79,6 @@ Server::Server(
         if (_queue != nullptr) {
             rawio_queue_delete(_queue);
         }
-        rawstor_terminate();
         throw;
     }
 }
@@ -106,8 +98,6 @@ Server::~Server() {
     }
 
     rawio_queue_delete(_queue);
-
-    rawstor_terminate();
 }
 
 int Server::_accept(int result, void* data) noexcept {
