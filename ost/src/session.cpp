@@ -289,6 +289,18 @@ Session::_recv_body(const iovec* iov, unsigned int niov, size_t result) {
             iov, niov, 0, &_request_body.io, sizeof(_request_body.io)
         );
 
+        // 64MB limit -- reject before committing to receive this many
+        // bytes of payload off the wire at all, rather than after
+        // already reading the whole (possibly much larger) thing in
+        // full just to then reject it in _write().
+        if (_request_body.io.len > (1ULL << 26)) {
+            rawstd_error(
+                "fd %d: WRITE len too large: %u\n", _fd, _request_body.io.len
+            );
+
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
+
         _next = &Session::_recv_data;
 
         return _request_body.io.len;
@@ -655,12 +667,6 @@ void Session::_write(
 ) {
     if (_object == nullptr) {
         _send_response(RAWSTOR_CMD_WRITE, head.cid, -EBADF, 0);
-        return;
-    }
-
-    // 64MB limit
-    if (body.len > (1ULL << 26)) {
-        _send_response(RAWSTOR_CMD_WRITE, head.cid, -EINVAL, 0);
         return;
     }
 
