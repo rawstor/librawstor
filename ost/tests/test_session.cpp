@@ -68,6 +68,20 @@ connect_session(rawstor::ostbackend::Server& server, RawIOQueue* queue) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 
+    // A real accept()ed fd gets this for free, set internally by
+    // rawio_accept_multishot()'s own setup_fd() call (both backends --
+    // see e.g. librawio/src/poll_event.cpp's EventSimplexAcceptMultishot);
+    // fabricating a fake "accepted" fd via socketpair() instead, bypassing
+    // rawio_accept_multishot() entirely, skips that. Needed regardless: the
+    // poll backend's recv_multishot loops recv() until EAGAIN to know it
+    // has drained everything currently available, which a still-blocking
+    // fd never delivers -- that next recv() call blocks the whole event
+    // loop solid instead. io_uring doesn't care either way.
+    res = rawstd_socket_set_nonblock(fds[0]);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+
     std::shared_ptr<rawstor::ostbackend::Session> session =
         rawstor::ostbackend::Session::create(queue, server, fds[0]);
     return {session, fds[1]};
