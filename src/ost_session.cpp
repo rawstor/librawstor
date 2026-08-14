@@ -482,7 +482,15 @@ public:
         );
 
         *next_head = true;
-        *next_size = error ? 0 : sizeof(RawstorOSTFrameResponse);
+        // EBUSY is the one error Connection::_op() retries on this same
+        // session/connection instead of invalidate_session()-ing it (see
+        // there) -- keep this recv_multishot registration alive so that
+        // retry's response (and anything else still in flight on this
+        // connection) still gets read. Every other error means the
+        // session is about to be torn down anyway, so there's nothing
+        // left to keep listening for.
+        *next_size =
+            (error && error != EBUSY) ? 0 : sizeof(RawstorOSTFrameResponse);
     }
 };
 
@@ -558,7 +566,12 @@ public:
         );
 
         *next_head = true;
-        *next_size = error ? 0 : sizeof(RawstorOSTFrameResponse);
+        // See SessionOpWrite::response_head_cb()'s matching comment: EBUSY
+        // retries on this same connection, so recv has to stay armed for
+        // it, unlike every other error here (which means invalidate_
+        // session() is about to tear this connection down anyway).
+        *next_size =
+            (error && error != EBUSY) ? 0 : sizeof(RawstorOSTFrameResponse);
     }
 };
 

@@ -1,8 +1,11 @@
-#include "server.hpp"
+#include <ost/server.hpp>
 
 #include "config.h"
 
 #include <rawstd/exitcode.h>
+#include <rawstd/units.h>
+
+#include <rawstor/rawstor.h>
 
 #include <getopt.h>
 #include <signal.h>
@@ -11,18 +14,27 @@
 #include <sstream>
 #include <system_error>
 
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <sysexits.h>
 
-#define DEFAULT_QUEUE_SIZE 256
+#define DEFAULT_QUEUE_SIZE 4096
+#define DEFAULT_WRITE_THROTTLE_LIMIT 128
+#define DEFAULT_WRITE_BACKLOG_CAPACITY (1ull << 28)
 
 namespace {
 
 struct sigaction sact = {};
 
 void usage() {
+    char write_backlog_capacity_buf[32];
+    rawstd_bytes_to_size(
+        DEFAULT_WRITE_BACKLOG_CAPACITY, write_backlog_capacity_buf,
+        sizeof(write_backlog_capacity_buf)
+    );
+
     std::cout << "Rawstor OST backend " << PACKAGE_VERSION << std::endl
               << std::endl
               << "usage: rawstor-ost "
@@ -36,6 +48,29 @@ void usage() {
               << "  --queue-size SIZE     "
                  "RawIO queue size (default: "
               << DEFAULT_QUEUE_SIZE << ")" << std::endl
+              << "  --write-throttle-limit SIZE" << std::endl
+              << "                        "
+                 "Per-session cap on writes dispatched to storage without"
+              << std::endl
+              << "                        "
+                 "their completion arriving yet, before this session stops"
+              << std::endl
+              << "                        "
+                 "reading further requests (default: "
+              << DEFAULT_WRITE_THROTTLE_LIMIT << ")" << std::endl
+              << "  --write-backlog-capacity SIZE" << std::endl
+              << "                        "
+                 "Per-session cap on writes queued behind"
+              << std::endl
+              << "                        "
+                 "write-throttle-limit but not yet dispatched; queuing"
+              << std::endl
+              << "                        "
+                 "past it is rejected with EBUSY instead. SIZE takes a unit"
+              << std::endl
+              << "                        "
+                 "suffix (B, K, M, G, T, P, E), e.g. 256M (default: "
+              << write_backlog_capacity_buf << ")" << std::endl
               << "  -v, --version         Rawstor version" << std::endl
               << std::endl
               << "required arguments:" << std::endl
@@ -51,10 +86,14 @@ void sact_handler(int) {
 }
 
 void ost(
-    unsigned int queue_size, const std::string& addr, unsigned int port,
+    unsigned int queue_size, unsigned int write_throttle_limit,
+    size_t write_backlog_capacity, const std::string& addr, unsigned int port,
     const char* location
 ) {
-    rawstor::ostbackend::Server s(queue_size, addr, port, location);
+    rawstor::ostbackend::Server s(
+        queue_size, write_throttle_limit, write_backlog_capacity, addr, port,
+        location
+    );
     s.loop();
 }
 
@@ -92,11 +131,15 @@ int main(int argc, char** argv) {
         {"help", no_argument, nullptr, 'h'},
         {"location", required_argument, nullptr, 'l'},
         {"queue-size", required_argument, nullptr, 'q'},
+        {"write-throttle-limit", required_argument, nullptr, 'w'},
+        {"write-backlog-capacity", required_argument, nullptr, 'c'},
         {"version", no_argument, nullptr, 'v'},
         {},
     };
 
     const char* queue_size_arg = nullptr;
+    const char* write_throttle_limit_arg = nullptr;
+    const char* write_backlog_capacity_arg = nullptr;
     const char* location_arg = nullptr;
     const char* bind_arg = nullptr;
     while (1) {
@@ -120,6 +163,14 @@ int main(int argc, char** argv) {
 
         case 'q':
             queue_size_arg = optarg;
+            break;
+
+        case 'w':
+            write_throttle_limit_arg = optarg;
+            break;
+
+        case 'c':
+            write_backlog_capacity_arg = optarg;
             break;
 
         case 'v':
@@ -149,6 +200,49 @@ int main(int argc, char** argv) {
             std::cerr << "queue-size must be unsigned integer" << std::endl;
             return EX_USAGE;
         }
+    }
+
+    unsigned int write_throttle_limit = DEFAULT_WRITE_THROTTLE_LIMIT;
+    if (write_throttle_limit_arg != nullptr) {
+        std::istringstream iss(write_throttle_limit_arg);
+        if (iss.peek() < '0' || iss.peek() > '9' ||
+            !(iss >> write_throttle_limit) || !iss.eof()) {
+            std::cerr << "write-throttle-limit must be unsigned integer"
+                      << std::endl;
+            return EX_USAGE;
+        }
+    }
+
+    size_t write_backlog_capacity = DEFAULT_WRITE_BACKLOG_CAPACITY;
+    if (write_backlog_capacity_arg != nullptr) {
+        // rawstd_size_to_bytes() parses into a fixed-width uint64_t --
+        // narrow to size_t (what write_backlog_capacity is actually
+        // bounding: an in-memory backlog, capped by the address space
+        // regardless) once parsing itself has succeeded.
+        uint64_t parsed = 0;
+        int res = rawstd_size_to_bytes(write_backlog_capacity_arg, &parsed);
+        if (res < 0) {
+            std::cerr << "write-backlog-capacity must be a size with a unit "
+                         "suffix (B, K, M, G, T, P, E), e.g. 256M"
+                      << std::endl;
+            return EX_USAGE;
+        }
+        write_backlog_capacity = static_cast<size_t>(parsed);
+    }
+
+    // Every session throttled at the cap alone can account for that many
+    // pending writes, all competing for the same shared queue_size-deep
+    // io_uring ring alongside every other session's own writes, recv, and
+    // response sends -- a write-throttle-limit this close to queue_size
+    // leaves no headroom for any of that, and (with more than one busy
+    // session) ring exhaustion elsewhere becomes likely. Not fatal: still
+    // caps writes to *some* bound, just a less useful one.
+    if (write_throttle_limit >= queue_size) {
+        std::cerr << "warning: --write-throttle-limit (" << write_throttle_limit
+                  << ") is not comfortably below --queue-size (" << queue_size
+                  << "); a single throttled session could exhaust the "
+                     "shared io_uring queue on its own"
+                  << std::endl;
     }
 
     if (location_arg == nullptr) {
@@ -187,15 +281,26 @@ int main(int argc, char** argv) {
         return EX_USAGE;
     }
 
-    try {
-        ost(queue_size, name, port, location_arg);
-    } catch (const std::system_error& e) {
-        std::cerr << e.what() << std::endl;
-        return rawstd_exitcode_for_errno(e.code().value());
-    } catch (const std::exception& e) {
-        std::cerr << e.what() << std::endl;
-        return EX_SOFTWARE;
+    int res = rawstor_initialize(nullptr);
+    if (res < 0) {
+        std::cerr << "Failed to initialize rawstor: " << strerror(-res)
+                  << std::endl;
+        return rawstd_exitcode_for_errno(-res);
     }
 
-    return EXIT_SUCCESS;
+    int exit_code = EXIT_SUCCESS;
+    try {
+        ost(queue_size, write_throttle_limit, write_backlog_capacity, name,
+            port, location_arg);
+    } catch (const std::system_error& e) {
+        std::cerr << e.what() << std::endl;
+        exit_code = rawstd_exitcode_for_errno(e.code().value());
+    } catch (const std::exception& e) {
+        std::cerr << e.what() << std::endl;
+        exit_code = EX_SOFTWARE;
+    }
+
+    rawstor_terminate();
+
+    return exit_code;
 }

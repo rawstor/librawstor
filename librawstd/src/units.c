@@ -1,4 +1,4 @@
-#include "units.h"
+#include "rawstd/units.h"
 
 #include <errno.h>
 #include <stdint.h>
@@ -32,7 +32,7 @@ static int unit_to_shift(const char unit) {
     }
 }
 
-int rawstor_cli_size_to_bytes(const char* s, uint64_t* out) {
+int rawstd_size_to_bytes(const char* s, uint64_t* out) {
     unsigned long long value;
     char unit;
     if (sscanf(s, "%llu%c", &value, &unit) != 2) {
@@ -55,7 +55,7 @@ int rawstor_cli_size_to_bytes(const char* s, uint64_t* out) {
 
 static const char UNITS[] = "BKMGTPE";
 
-int rawstor_cli_bytes_to_size(uint64_t value, char* buf, size_t size) {
+int rawstd_bytes_to_size(uint64_t value, char* buf, size_t size) {
     size_t i;
     for (i = 0; i < sizeof(UNITS) - 2; ++i) {
         if (value < 1024 || (value & 1023) != 0) {
@@ -79,7 +79,7 @@ static int bytes_to_size_shift(
     );
 }
 
-int rawstor_cli_bytes_to_size_human(uint64_t value, char* buf, size_t size) {
+int rawstd_bytes_to_size_human(uint64_t value, char* buf, size_t size) {
     size_t i = 0;
     uint64_t v = value;
     while (v >= 1024 && i < sizeof(UNITS) - 2) {
@@ -89,7 +89,7 @@ int rawstor_cli_bytes_to_size_human(uint64_t value, char* buf, size_t size) {
     return bytes_to_size_shift(value, (int)i * 10, UNITS[i], buf, size);
 }
 
-int rawstor_cli_bytes_to_size_unit(
+int rawstd_bytes_to_size_unit(
     uint64_t value, char unit, char* buf, size_t size
 ) {
     int shift = unit_to_shift(unit);

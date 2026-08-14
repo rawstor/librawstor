@@ -1,13 +1,11 @@
-#include "server.hpp"
+#include <ost/server.hpp>
 
-#include "session.hpp"
+#include <ost/session.hpp>
 
 #include <rawstd/gpp.hpp>
 #include <rawstd/logging.hpp>
 #include <rawstd/socket.h>
 #include <rawstd/uri.hpp>
-
-#include <rawstor/rawstor.h>
 
 #include <arpa/inet.h>
 
@@ -26,21 +24,19 @@ namespace rawstor {
 namespace ostbackend {
 
 Server::Server(
-    unsigned int queue_size, const std::string& addr, unsigned int port,
+    unsigned int queue_size, unsigned int write_throttle_limit,
+    size_t write_backlog_capacity, const std::string& addr, unsigned int port,
     const char* location
 ) :
     _queue(nullptr),
     _fd(-1),
     _locations(rawstd::URI::uriv(location)),
-    _accept_event(nullptr) {
-
-    int res = rawstor_initialize(nullptr);
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
+    _accept_event(nullptr),
+    _write_throttle_limit(write_throttle_limit),
+    _write_backlog_capacity(write_backlog_capacity) {
 
     try {
-        res = rawio_queue_create(queue_size, &_queue);
+        int res = rawio_queue_create(queue_size, &_queue);
         if (res < 0) {
             RAWSTD_THROW_SYSTEM_ERROR(-res);
         }
@@ -83,7 +79,6 @@ Server::Server(
         if (_queue != nullptr) {
             rawio_queue_delete(_queue);
         }
-        rawstor_terminate();
         throw;
     }
 }
@@ -103,8 +98,6 @@ Server::~Server() {
     }
 
     rawio_queue_delete(_queue);
-
-    rawstor_terminate();
 }
 
 int Server::_accept(int result, void* data) noexcept {
