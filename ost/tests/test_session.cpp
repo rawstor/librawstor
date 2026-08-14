@@ -18,8 +18,10 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <chrono>
 #include <functional>
 #include <string>
+#include <thread>
 
 #include <cerrno>
 
@@ -283,4 +285,62 @@ TEST(OstSessionTest, write_backlog_capacity) {
     EXPECT_GT(accepted, 0u);
     EXPECT_GT(rejected, 0u);
     EXPECT_EQ(accepted + rejected, writes);
+}
+
+// Regression test for the heap-use-after-free ASan caught in CI (built off
+// commit d023d65, ost/src/session.cpp:154, fixed by 1c260e1): a peer
+// disconnect terminates the session's already-armed multishot recv with
+// EPIPE (BufferRing::operator(), librawio/src/uring_buffer.cpp synthesizes
+// it for a 0-byte/EOF recv) -- same as any other terminal error, not just
+// ECANCELED. If that terminal completion is already sitting in the
+// completion queue, unprocessed, by the time the Session is destroyed,
+// ~Session()'s rawio_cancel() has nothing left to cancel (-ENOENT) and the
+// completion still fires later, into what used to be a raw `this` pointer.
+//
+// Whether the kernel has actually posted that completion by the time
+// session.reset() below runs is real scheduling timing, not something this
+// test controls directly -- the short sleep after disconnect just biases
+// the odds toward "already posted", and looping raises the odds of hitting
+// that window at least once per run; neither guarantees it (600 ASan
+// repeats of the pre-fix suite never reproduced this locally either, per
+// 1c260e1's commit message). This test's teeth are under --enable-asan (as
+// CI's asan job builds), same as how the original bug was only ever caught
+// there: on the pre-fix code, enough iterations reliably abort the process;
+// on the fixed code, weak_ptr::lock() just no-ops and the loop completes.
+TEST(OstSessionTest, disconnect_races_session_destruction) {
+    constexpr unsigned int iterations = 100;
+
+    rawstor::ostbackend::tests::TmpDir dir;
+    rawstor::ostbackend::Server server(
+        256, 128, 1u << 20, "127.0.0.1", 0, dir.uri().c_str()
+    );
+    rawstor::ostbackend::tests::Queue queue;
+
+    for (unsigned int i = 0; i < iterations; ++i) {
+        auto [session, client_fd] = connect_session(server, queue);
+
+        // Disconnect: closing the client's end terminates the session's
+        // already-armed recv with EPIPE once the kernel gets to it.
+        { rawstor::ostbackend::tests::Client client(client_fd); }
+
+        // Give the kernel a chance to actually post that terminal
+        // completion into the queue before the next line runs, without
+        // ever draining it ourselves -- the window ~Session() must cope
+        // with.
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+
+        // Drop the only owning shared_ptr: ~Session() runs here,
+        // synchronously, calling rawio_cancel() on a registration that
+        // may have already self-terminated (-ENOENT, "too late").
+        session.reset();
+
+        // Drain whatever's left. If the terminal completion was already
+        // queued before session.reset() ran above, this is where the old
+        // code dereferenced freed memory; the fixed code's
+        // weak_ptr::lock() just no-ops.
+        for (unsigned int drain = 0; drain < 3; ++drain) {
+            int res = rawio_wait_timeout(queue, 5);
+            ASSERT_TRUE(res >= 0 || res == -ETIME);
+        }
+    }
 }
