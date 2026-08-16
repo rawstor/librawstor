@@ -2,8 +2,11 @@
 
 #include "config.h"
 #include "file_session.hpp"
+#include "lvm_session.hpp"
 #include "ost_session.hpp"
+#include "zfs_session.hpp"
 
+#include <rawstd/gpp.hpp>
 #include <rawstd/logging.h>
 #include <rawstd/uri.hpp>
 
@@ -46,6 +49,16 @@ Session::create(rawio::Queue& queue, const rawstd::URI& location) {
     }
     if (location.scheme() == "file") {
         return std::make_unique<rawstor::file::Session>(
+            Private(), queue, location
+        );
+    }
+    if (location.scheme() == "lvm") {
+        return std::make_unique<rawstor::lvm::Session>(
+            Private(), queue, location
+        );
+    }
+    if (location.scheme() == "zfs") {
+        return std::make_unique<rawstor::zfs::Session>(
             Private(), queue, location
         );
     }

@@ -19,8 +19,6 @@
 
 #include <arpa/inet.h>
 
-#include <poll.h>
-
 #include <sys/socket.h>
 
 #include <algorithm>
@@ -55,7 +53,23 @@ int validate_result(size_t size, size_t result) noexcept {
     return EAGAIN;
 }
 
-int validate_response(const RawstorOSTFrameResponse* response) noexcept {
+/*
+ * Every response carries the payload length: a success response must
+ * announce exactly the payload the command expects, an error response
+ * carries none. Any other length means the stream framing is lost.
+ */
+int validate_len(uint32_t len, uint32_t expected) noexcept {
+    if (len == expected) {
+        return 0;
+    }
+
+    rawstd_error("Unexpected payload length: %u != %u\n", len, expected);
+    return EPROTO;
+}
+
+int validate_response(
+    const RawstorOSTFrameResponse* response, uint32_t expected_len = 0
+) noexcept {
     assert(response != nullptr);
 
     if (response->head.magic != RAWSTOR_MAGIC) {
@@ -67,11 +81,15 @@ int validate_response(const RawstorOSTFrameResponse* response) noexcept {
     }
 
     if (response->body.res < 0) {
+        int error = validate_len(response->body.len, 0);
+        if (error) {
+            return error;
+        }
         rawstd_error("Server error: %s\n", strerror(-response->body.res));
         return -response->body.res;
     }
 
-    return 0;
+    return validate_len(response->body.len, expected_len);
 }
 
 int validate_cmd(
@@ -83,6 +101,97 @@ int validate_cmd(
 
     rawstd_error("Unexpected command: %d\n", cmd);
     return EPROTO;
+}
+
+RawstorObjectMeta meta_from_body(const RawstorOSTFrameMetaBody& body) noexcept {
+    RawstorObjectMeta meta{};
+    meta.size = body.size;
+    meta.epoch = body.epoch;
+    meta.sync_id = body.sync_id;
+    memcpy(
+        meta.sync_id_history, body.sync_id_history, sizeof(meta.sync_id_history)
+    );
+    meta.state = body.state;
+    meta.member_kind = body.member_kind;
+    meta.width = body.width;
+    memcpy(meta.volume_id, body.volume_id, sizeof(meta.volume_id));
+    meta.logical_index = body.logical_index;
+    meta.chunk_size = body.chunk_size;
+    meta.snap_version = body.snap_version;
+    return meta;
+}
+
+RawstorOSTFrameMetaBody
+meta_to_body(const RawstdUUID& id, const RawstorObjectMeta& meta) noexcept {
+    RawstorOSTFrameMetaBody body{};
+    memcpy(body.obj_id, id.bytes, sizeof(body.obj_id));
+    body.size = meta.size;
+    body.epoch = meta.epoch;
+    body.sync_id = meta.sync_id;
+    memcpy(
+        body.sync_id_history, meta.sync_id_history, sizeof(body.sync_id_history)
+    );
+    body.state = meta.state;
+    body.member_kind = meta.member_kind;
+    body.width = meta.width;
+    memcpy(body.volume_id, meta.volume_id, sizeof(body.volume_id));
+    body.logical_index = meta.logical_index;
+    body.chunk_size = meta.chunk_size;
+    body.snap_version = meta.snap_version;
+    return body;
+}
+
+/*
+ * Shared response-head handling for in-flight operations: returns 0 when
+ * the response reports success, otherwise the errno to dispatch. *fatal is
+ * set when the stream framing is lost (transport failure, bad magic,
+ * command mixup, payload length mismatch): the receive loop must stop. A
+ * server-side error (res < 0) is not fatal -- error responses carry no
+ * payload, so the next frame still starts right after this one, and
+ * treating it as fatal used to corrupt the framing of every request that
+ * followed.
+ */
+int classify_response(
+    const RawstorOSTFrameResponse* response, int error,
+    RawstorOSTCommandType expected, bool* fatal, uint32_t expected_len = 0
+) noexcept {
+    *fatal = true;
+
+    if (error) {
+        return error;
+    }
+
+    if (response->head.magic != RAWSTOR_MAGIC) {
+        rawstd_error(
+            "Unexpected magic number: %x != %x\n", response->head.magic,
+            RAWSTOR_MAGIC
+        );
+        return EPROTO;
+    }
+
+    error = validate_cmd(response->head.cmd, expected);
+    if (error) {
+        return error;
+    }
+
+    if (response->body.res < 0) {
+        error = validate_len(response->body.len, 0);
+        if (error) {
+            return error;
+        }
+        *fatal = false;
+        rawstd_error("Server error: %s\n", strerror(-response->body.res));
+        return -response->body.res;
+    }
+
+    error = validate_len(response->body.len, expected_len);
+    if (error) {
+        return error;
+    }
+
+    *fatal = false;
+
+    return 0;
 }
 
 int validate_hash(uint64_t hash, uint64_t expected) noexcept {
@@ -284,13 +393,10 @@ public:
     ) override {
         RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
 
-        if (!error) {
-            error = validate_response(response);
-        }
-
-        if (!error) {
-            error = validate_cmd(response->head.cmd, RAWSTOR_CMD_READ);
-        }
+        bool fatal = false;
+        error = classify_response(
+            response, error, RAWSTOR_CMD_READ, &fatal, (uint32_t)_size
+        );
 
         if (!error) {
             _hash = response->body.hash;
@@ -370,13 +476,10 @@ public:
     ) override {
         RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
 
-        if (!error) {
-            error = validate_response(response);
-        }
-
-        if (!error) {
-            error = validate_cmd(response->head.cmd, RAWSTOR_CMD_READ);
-        }
+        bool fatal = false;
+        error = classify_response(
+            response, error, RAWSTOR_CMD_READ, &fatal, (uint32_t)_size
+        );
 
         if (!error) {
             _hash = response->body.hash;
@@ -469,17 +572,8 @@ public:
     ) override {
         RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
 
-        if (!error) {
-            error = validate_response(response);
-        }
-
-        if (!error) {
-            error = validate_cmd(response->head.cmd, RAWSTOR_CMD_WRITE);
-        }
-
-        _dispatch(
-            !error && response != nullptr ? response->body.res : 0, error
-        );
+        bool fatal = false;
+        error = classify_response(response, error, RAWSTOR_CMD_WRITE, &fatal);
 
         *next_head = true;
         // EBUSY is the one error Connection::_op() retries on this same
@@ -553,17 +647,8 @@ public:
     ) override {
         RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
 
-        if (!error) {
-            error = validate_response(response);
-        }
-
-        if (!error) {
-            error = validate_cmd(response->head.cmd, RAWSTOR_CMD_WRITE);
-        }
-
-        _dispatch(
-            !error && response != nullptr ? response->body.res : 0, error
-        );
+        bool fatal = false;
+        error = classify_response(response, error, RAWSTOR_CMD_WRITE, &fatal);
 
         *next_head = true;
         // See SessionOpWrite::response_head_cb()'s matching comment: EBUSY
@@ -572,6 +657,190 @@ public:
         // session() is about to tear this connection down anyway).
         *next_size =
             (error && error != EBUSY) ? 0 : sizeof(RawstorOSTFrameResponse);
+    }
+};
+
+class SessionOpMeta final : public SessionOp {
+private:
+    RawstorOSTFrameBasic _request;
+    RawstorObjectMeta* _out;
+
+    uint64_t _hash;
+
+public:
+    SessionOpMeta(
+        const std::shared_ptr<rawstor::ost::Session>& session, uint16_t cid,
+        const RawstdUUID& id, uint64_t snap, RawstorObjectMeta* out,
+        const rawstd::TraceEvent& trace_event,
+        std::function<void(size_t, int)>&& cb
+    ) :
+        SessionOp(session, cid, trace_event, std::move(cb)),
+        _request({
+            .head =
+                {
+                    .magic = RAWSTOR_MAGIC,
+                    .cmd = RAWSTOR_CMD_META,
+                    .cid = cid,
+                },
+            .body =
+                {
+                    .obj_id = {},
+                    .offset = 0,
+                    .val = snap,
+                },
+        }),
+        _out(out),
+        _hash(0) {
+        memcpy(_request.body.obj_id, id.bytes, sizeof(_request.body.obj_id));
+    }
+
+    const void* request_data() const noexcept { return &_request; }
+
+    size_t request_size() const noexcept override { return sizeof(_request); }
+
+    void response_head_cb(
+        const RawstorOSTFrameResponse* response, int error, bool* next_head,
+        size_t* next_size
+    ) override {
+        RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
+
+        bool fatal = false;
+        error = classify_response(
+            response, error, RAWSTOR_CMD_META, &fatal,
+            sizeof(RawstorOSTFrameMetaBody)
+        );
+
+        if (!error) {
+            _hash = response->body.hash;
+            *next_head = false;
+            *next_size = sizeof(RawstorOSTFrameMetaBody);
+        } else {
+            /* Error responses carry no metadata payload. */
+            _dispatch(0, error);
+            *next_head = true;
+            *next_size = fatal ? 0 : sizeof(RawstorOSTFrameResponse);
+        }
+    }
+
+    void response_body_cb(
+        const iovec* iov, unsigned int niov, size_t result, int error
+    ) override {
+        RAWSTD_TRACE_EVENT_MESSAGE(
+            _trace_event, "niov = %u, result = %zu, error = %d\n", niov, result,
+            error
+        );
+
+        RawstorOSTFrameMetaBody body{};
+
+        if (!error && result != sizeof(body)) {
+            error = EPROTO;
+        }
+
+        if (!error) {
+            rawstd_iovec_to_buf(iov, niov, 0, &body, sizeof(body));
+            error = validate_hash(hash(&body, sizeof(body)), _hash);
+        }
+
+        if (!error) {
+            *_out = meta_from_body(body);
+        }
+
+        _dispatch(0, error);
+    }
+};
+
+class SessionOpSetState final : public SessionOp {
+private:
+    RawstorOSTFrameMeta _request;
+
+public:
+    SessionOpSetState(
+        const std::shared_ptr<rawstor::ost::Session>& session, uint16_t cid,
+        const RawstdUUID& id, const RawstorObjectMeta& meta,
+        const rawstd::TraceEvent& trace_event,
+        std::function<void(size_t, int)>&& cb
+    ) :
+        SessionOp(session, cid, trace_event, std::move(cb)),
+        _request({
+            .head =
+                {
+                    .magic = RAWSTOR_MAGIC,
+                    .cmd = RAWSTOR_CMD_SET_STATE,
+                    .cid = cid,
+                },
+            .body = meta_to_body(id, meta),
+        }) {}
+
+    const void* request_data() const noexcept { return &_request; }
+
+    size_t request_size() const noexcept override { return sizeof(_request); }
+
+    void response_head_cb(
+        const RawstorOSTFrameResponse* response, int error, bool* next_head,
+        size_t* next_size
+    ) override {
+        RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
+
+        bool fatal = false;
+        error =
+            classify_response(response, error, RAWSTOR_CMD_SET_STATE, &fatal);
+
+        _dispatch(0, error);
+
+        *next_head = true;
+        *next_size = fatal ? 0 : sizeof(RawstorOSTFrameResponse);
+    }
+};
+
+/*
+ * A zero-payload basic command (SNAPSHOT, SNAP_REMOVE) dispatched through
+ * the multishot receive context of an object-bound session.
+ */
+class SessionOpBasic final : public SessionOp {
+private:
+    RawstorOSTFrameBasic _request;
+
+public:
+    SessionOpBasic(
+        const std::shared_ptr<rawstor::ost::Session>& session, uint16_t cid,
+        RawstorOSTCommandType cmd, const RawstdUUID& id, uint64_t val,
+        const rawstd::TraceEvent& trace_event,
+        std::function<void(size_t, int)>&& cb
+    ) :
+        SessionOp(session, cid, trace_event, std::move(cb)),
+        _request({
+            .head =
+                {
+                    .magic = RAWSTOR_MAGIC,
+                    .cmd = cmd,
+                    .cid = cid,
+                },
+            .body = {
+                .obj_id = {},
+                .offset = 0,
+                .val = val,
+            },
+        }) {
+        memcpy(_request.body.obj_id, id.bytes, sizeof(_request.body.obj_id));
+    }
+
+    const void* request_data() const noexcept { return &_request; }
+
+    size_t request_size() const noexcept override { return sizeof(_request); }
+
+    void response_head_cb(
+        const RawstorOSTFrameResponse* response, int error, bool* next_head,
+        size_t* next_size
+    ) override {
+        RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
+
+        bool fatal = false;
+        error = classify_response(response, error, _request.head.cmd, &fatal);
+
+        _dispatch(0, error);
+
+        *next_head = true;
+        *next_size = fatal ? 0 : sizeof(RawstorOSTFrameResponse);
     }
 };
 
@@ -610,20 +879,104 @@ public:
     ) override {
         RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
 
-        if (!error) {
-            error = validate_response(response);
-        }
-
-        if (!error) {
-            error = validate_cmd(response->head.cmd, RAWSTOR_CMD_FLUSH);
-        }
+        bool fatal = false;
+        error = classify_response(response, error, RAWSTOR_CMD_FLUSH, &fatal);
 
         _dispatch(0, error);
 
         *next_head = true;
-        *next_size = error ? 0 : sizeof(RawstorOSTFrameResponse);
+        *next_size = fatal ? 0 : sizeof(RawstorOSTFrameResponse);
     }
 };
+
+/*
+ * Synchronous SET_STATE for a session with no object bound yet (and so no
+ * multishot recv to demultiplex responses) -- the counterpart of
+ * basic_request() for a metadata-body request.
+ */
+void meta_request(
+    int fd, uint16_t cid, const RawstdUUID& id, const RawstorObjectMeta& meta
+) {
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('s', "%s\n", "set_state cmd");
+
+    bool completed = false;
+    RawstorOSTFrameResponse response;
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
+
+    RawstorOSTFrameMeta request = {
+        .head =
+            {
+                .magic = RAWSTOR_MAGIC,
+                .cmd = RAWSTOR_CMD_SET_STATE,
+                .cid = cid,
+            },
+        .body = meta_to_body(id, meta),
+    };
+
+    queue->send(
+        fd, &request, sizeof(request), RAWSTD_MSG_NOSIGNAL,
+        [trace_event](size_t result, int error) {
+            RAWSTD_TRACE_EVENT_MESSAGE(
+                trace_event, "%zu of %zu, error = %d\n", result,
+                sizeof(RawstorOSTFrameMeta), error
+            );
+
+            if (!error) {
+                error = validate_result(sizeof(RawstorOSTFrameMeta), result);
+            }
+
+            if (error) {
+                RAWSTD_THROW_SYSTEM_ERROR(error);
+            }
+        }
+    );
+
+    queue->read(
+        fd, &response, sizeof(response),
+        [&response, &completed, trace_event](size_t result, int error) {
+            RAWSTD_TRACE_EVENT_MESSAGE(
+                trace_event, "%zu of %zu, error = %d\n", result,
+                sizeof(response), error
+            );
+
+            completed = true;
+
+            if (!error) {
+                error = validate_result(sizeof(response), result);
+            }
+
+            if (!error) {
+                error = validate_response(&response, response.body.len);
+            }
+
+            if (!error && response.body.res > 0 &&
+                response.body.len != static_cast<uint32_t>(response.body.res)) {
+                /*
+                 * res doubles as the payload size for these commands, so a
+                 * len that disagrees with it means the framing is lost.
+                 */
+                rawstd_error(
+                    "Payload length disagrees with the result: %u != %d\n",
+                    response.body.len, response.body.res
+                );
+                error = EPROTO;
+            }
+
+            if (!error) {
+                error = validate_cmd(response.head.cmd, RAWSTOR_CMD_SET_STATE);
+            }
+
+            if (error) {
+                RAWSTD_THROW_SYSTEM_ERROR(error);
+            }
+        }
+    );
+
+    while (!completed) {
+        queue->wait_timeout(rawstor_opts_tcp_user_timeout());
+    }
+}
 
 template <typename T = char>
 std::vector<T> basic_request(
@@ -798,8 +1151,6 @@ Session::Session(Private p, rawio::Queue& queue, const rawstd::URI& location) :
     rawstor::Session(p, queue, location),
     _cid_counter(0),
     _read_event(nullptr) {
-    int fd = _connect();
-    set_fd(fd);
 }
 
 Session::~Session() {
@@ -813,7 +1164,7 @@ Session::~Session() {
     }
 }
 
-int Session::_connect() {
+void Session::connect(std::function<void(int)>&& cb) {
     if (!location().path().str().empty() && location().path().str() != "/") {
         rawstd_error("Empty path expected: %s\n", location().str().c_str());
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
@@ -856,12 +1207,19 @@ int Session::_connect() {
             }
         }
 
-        sockaddr_in servaddr = {};
-        servaddr.sin_family = AF_INET;
-        servaddr.sin_port = htons(location().port());
+        /*
+         * The address is kept alive by the callback capture: io_uring reads
+         * it when the connect operation is executed, not when submitted.
+         * The socket stays blocking, so SO_SNDTIMEO still bounds the
+         * connect; io_uring runs it in a worker thread without stalling
+         * the event loop.
+         */
+        auto servaddr = std::make_shared<sockaddr_in>();
+        servaddr->sin_family = AF_INET;
+        servaddr->sin_port = htons(location().port());
 
         res = inet_pton(
-            AF_INET, location().hostname().c_str(), &servaddr.sin_addr
+            AF_INET, location().hostname().c_str(), &servaddr->sin_addr
         );
         if (res == 0) {
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
@@ -872,78 +1230,126 @@ int Session::_connect() {
         rawstd_info(
             "fd %d: Connecting to %s...\n", fd, location().str().c_str()
         );
-        int res = connect(fd, (sockaddr*)&servaddr, sizeof(servaddr));
-        if (res == -1) {
-            if (errno == EINTR) {
-                errno = 0;
 
-                pollfd fds = {
-                    .fd = fd,
-                    .events = POLLOUT,
-                    .revents = 0,
-                };
-                rawstd_warning("Connect interrupted; polling...\n");
-                for (unsigned int attempt = 1;
-                     attempt <= rawstor_opts_io_attempts(); ++attempt) {
-                    try {
-                        res = poll(&fds, 1, so_sndtimeo);
-                        if (res == -1) {
-                            RAWSTD_THROW_ERRNO();
-                        }
-                        if (res == 0) {
-                            RAWSTD_THROW_SYSTEM_ERROR(ETIMEDOUT);
-                        }
-                        break;
-                    } catch (const std::exception& e) {
-                        if (attempt != rawstor_opts_io_attempts()) {
-                            rawstd_warning(
-                                "Poll failed; error: %s; "
-                                "attempt: %d of %d; retrying...\n",
-                                e.what(), attempt, rawstor_opts_io_attempts()
-                            );
-                        } else {
-                            rawstd_warning(
-                                "Poll failed; error: %s; "
-                                "attempt: %d of %d; failing...\n",
-                                e.what(), attempt, rawstor_opts_io_attempts()
-                            );
-                            throw;
-                        }
-                    }
+        _queue.connect(
+            fd, reinterpret_cast<const sockaddr*>(servaddr.get()),
+            sizeof(*servaddr),
+            [this, fd, servaddr, cb = std::move(cb)](int result) {
+                if (result < 0) {
+                    ::close(fd);
+                    rawstd_info("fd %d: Closed\n", fd);
+                    cb(-result);
+                    return;
                 }
 
-                int value = 0;
-                socklen_t value_len = sizeof(value);
-                res = getsockopt(fd, SOL_SOCKET, SO_ERROR, &value, &value_len);
-                if (res == -1) {
-                    RAWSTD_THROW_ERRNO();
-                }
-                if (value) {
-                    RAWSTD_THROW_SYSTEM_ERROR(value);
+                rawstd_info("fd %d: Connected\n", fd);
+
+                try {
+                    rawio::Queue::setup_fd(fd);
+                } catch (const std::system_error& e) {
+                    ::close(fd);
+                    rawstd_info("fd %d: Closed\n", fd);
+                    cb(e.code().value());
+                    return;
                 }
 
-                if (!(fds.revents & POLLOUT)) {
-                    RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
-                }
-            } else {
-                RAWSTD_THROW_ERRNO();
+                set_fd(fd);
+                cb(0);
             }
-        }
-        rawstd_info("fd %d: Connected\n", fd);
-
-        rawio::Queue::setup_fd(fd);
+        );
     } catch (...) {
         ::close(fd);
         rawstd_info("fd %d: Closed\n", fd);
         throw;
     }
-
-    return fd;
 }
 
-void Session::_set_object(Object* object) {
-    basic_request(
-        fd(), _cid_counter++, RAWSTOR_CMD_SET_OBJECT, object->id(), 0
+/*
+ * Async counterpart of basic_request() for the commands the async object
+ * API drives (ALLOCATE, RELEASE, SET_OBJECT): the request is sent and its
+ * fixed-size response read on the session's own queue, with the result
+ * delivered through cb instead of a blocking wait loop. Commands with a
+ * variable-length response body (LIST, SPEC, LOCATION_INFO) still use
+ * basic_request().
+ */
+void Session::_basic(
+    RawstorOSTCommandType cmd, const RawstdUUID& id, uint64_t val,
+    std::function<void(int)>&& cb
+) {
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('s', "basic cmd %d\n", cmd);
+
+    auto request =
+        std::make_shared<RawstorOSTFrameBasic>((RawstorOSTFrameBasic){
+            .head =
+                {
+                    .magic = RAWSTOR_MAGIC,
+                    .cmd = cmd,
+                    .cid = _cid_counter++,
+                },
+            .body = {
+                .obj_id = {},
+                .offset = 0,
+                .val = val,
+            },
+        });
+    memcpy(request->body.obj_id, id.bytes, sizeof(request->body.obj_id));
+
+    auto cb_sp = std::make_shared<std::function<void(int)>>(std::move(cb));
+
+    _queue.send(
+        fd(), request.get(), sizeof(*request), RAWSTD_MSG_NOSIGNAL,
+        [q = &_queue, fd = fd(), cmd, request, cb_sp,
+         trace_event](size_t result, int error) {
+            RAWSTD_TRACE_EVENT_MESSAGE(
+                trace_event, "%zu of %zu, error = %d\n", result,
+                sizeof(RawstorOSTFrameBasic), error
+            );
+
+            if (!error) {
+                error = validate_result(sizeof(RawstorOSTFrameBasic), result);
+            }
+
+            if (error) {
+                (*cb_sp)(error);
+                return;
+            }
+
+            auto response = std::make_shared<RawstorOSTFrameResponse>();
+
+            try {
+                q->read(
+                    fd, response.get(), sizeof(*response),
+                    [cmd, response, cb_sp,
+                     trace_event](size_t result, int error) {
+                        RAWSTD_TRACE_EVENT_MESSAGE(
+                            trace_event, "%zu of %zu, error = %d\n", result,
+                            sizeof(RawstorOSTFrameResponse), error
+                        );
+
+                        if (!error) {
+                            error = validate_result(
+                                sizeof(RawstorOSTFrameResponse), result
+                            );
+                        }
+
+                        if (!error) {
+                            error = validate_response(response.get());
+                        }
+
+                        if (!error) {
+                            error = validate_cmd(response->head.cmd, cmd);
+                        }
+
+                        (*cb_sp)(error);
+                    }
+                );
+            } catch (const std::system_error& e) {
+                (*cb_sp)(e.code().value());
+            } catch (const std::bad_alloc&) {
+                (*cb_sp)(ENOMEM);
+            }
+        }
     );
 }
 
@@ -970,33 +1376,269 @@ void Session::list(
     cb(std::move(uuids), next_token, error);
 }
 
+void Session::_set_object_exchange(
+    const RawstdUUID* id, uint64_t val, std::function<void(int)>&& cb
+) {
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('s', "%s\n", "set_object handshake");
+
+    auto request =
+        std::make_shared<RawstorOSTFrameSetObject>((RawstorOSTFrameSetObject){
+            .head =
+                {
+                    .magic = RAWSTOR_MAGIC,
+                    .cmd = RAWSTOR_CMD_SET_OBJECT,
+                    .cid = _cid_counter++,
+                },
+            .body = {
+                .version = RAWSTOR_PROTOCOL_VERSION,
+                .features = 0,
+                .obj_id = {},
+                .val = val,
+            },
+        });
+    if (id != nullptr) {
+        memcpy(request->body.obj_id, id->bytes, sizeof(request->body.obj_id));
+    }
+
+    auto cb_sp = std::make_shared<std::function<void(int)>>(std::move(cb));
+
+    _queue.write(
+        fd(), request.get(), sizeof(*request),
+        [this, q = &_queue, fd = fd(), request, cb_sp,
+         trace_event](size_t result, int error) {
+            RAWSTD_TRACE_EVENT_MESSAGE(
+                trace_event, "%zu of %zu, error = %d\n", result,
+                sizeof(RawstorOSTFrameSetObject), error
+            );
+
+            if (!error) {
+                error =
+                    validate_result(sizeof(RawstorOSTFrameSetObject), result);
+            }
+
+            if (error) {
+                (*cb_sp)(error);
+                return;
+            }
+
+            auto response = std::make_shared<RawstorOSTFrameResponse>();
+
+            try {
+                q->read(
+                    fd, response.get(), sizeof(*response),
+                    [this, q, fd, response, cb_sp,
+                     trace_event](size_t result, int error) {
+                        RAWSTD_TRACE_EVENT_MESSAGE(
+                            trace_event, "%zu of %zu, error = %d\n", result,
+                            sizeof(RawstorOSTFrameResponse), error
+                        );
+
+                        if (!error) {
+                            error = validate_result(
+                                sizeof(RawstorOSTFrameResponse), result
+                            );
+                        }
+
+                        if (!error) {
+                            error = validate_response(
+                                response.get(), sizeof(RawstorOSTFrameHelloBody)
+                            );
+                        }
+
+                        if (!error) {
+                            error = validate_cmd(
+                                response->head.cmd, RAWSTOR_CMD_SET_OBJECT
+                            );
+                        }
+
+                        if (error) {
+                            (*cb_sp)(error);
+                            return;
+                        }
+
+                        auto hello =
+                            std::make_shared<RawstorOSTFrameHelloBody>();
+
+                        try {
+                            q->read(
+                                fd, hello.get(), sizeof(*hello),
+                                [this, fd, response, hello,
+                                 cb_sp](size_t result, int error) {
+                                    if (!error) {
+                                        error = validate_result(
+                                            sizeof(*hello), result
+                                        );
+                                    }
+
+                                    if (!error) {
+                                        error = validate_hash(
+                                            hash(hello.get(), sizeof(*hello)),
+                                            response->body.hash
+                                        );
+                                    }
+
+                                    if (!error &&
+                                        hello->version !=
+                                            RAWSTOR_PROTOCOL_VERSION) {
+                                        rawstd_error(
+                                            "fd %d: Unsupported server "
+                                            "protocol version: %u != %u\n",
+                                            fd, hello->version,
+                                            RAWSTOR_PROTOCOL_VERSION
+                                        );
+                                        error = EPROTONOSUPPORT;
+                                    }
+
+                                    if (!error) {
+                                        _handshaken = true;
+                                    }
+
+                                    (*cb_sp)(error);
+                                }
+                            );
+                        } catch (const std::system_error& e) {
+                            (*cb_sp)(e.code().value());
+                        } catch (const std::bad_alloc& e) {
+                            (*cb_sp)(ENOMEM);
+                        }
+                    }
+                );
+            } catch (const std::system_error& e) {
+                (*cb_sp)(e.code().value());
+            } catch (const std::bad_alloc& e) {
+                (*cb_sp)(ENOMEM);
+            }
+        }
+    );
+}
+
+void Session::_ensure_handshake(std::function<void(int)>&& cb) {
+    if (_handshaken) {
+        cb(0);
+        return;
+    }
+
+    _set_object_exchange(nullptr, 0, std::move(cb));
+}
+
 void Session::create(
     const RawstdUUID& id, const RawstorObjectSpec& spec,
     std::function<void(int)>&& cb
 ) {
-    int error = 0;
-    try {
-        basic_request(
-            fd(), _cid_counter++, RAWSTOR_CMD_ALLOCATE, id, spec.size
-        );
-    } catch (const std::system_error& e) {
-        error = e.code().value();
-    } catch (...) {
-        error = EIO;
-    }
-    cb(error);
+    _ensure_handshake([this, id, spec, cb = std::move(cb)](int error) mutable {
+        if (error) {
+            cb(error);
+            return;
+        }
+
+        _allocate(id, spec, std::move(cb));
+    });
+}
+
+/*
+ * ALLOCATE: like _basic, but the request carries the full creation spec
+ * including the placement identity the backend must record.
+ */
+void Session::_allocate(
+    const RawstdUUID& id, const RawstorObjectSpec& spec,
+    std::function<void(int)>&& cb
+) {
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('s', "%s\n", "allocate cmd");
+
+    auto request =
+        std::make_shared<RawstorOSTFrameAllocate>((RawstorOSTFrameAllocate){
+            .head =
+                {
+                    .magic = RAWSTOR_MAGIC,
+                    .cmd = RAWSTOR_CMD_ALLOCATE,
+                    .cid = _cid_counter++,
+                },
+            .body = {
+                .obj_id = {},
+                .size = spec.size,
+                .chunk_size = spec.chunk_size,
+                .stripe_width = spec.stripe_width,
+                .width = spec.width,
+                .failure_domain = spec.failure_domain,
+                .member_kind = spec.member_kind,
+                .reserved = 0,
+                .volume_id = {},
+                .logical_index = spec.logical_index,
+                .snap_version = spec.snap_version,
+            },
+        });
+    memcpy(request->body.obj_id, id.bytes, sizeof(request->body.obj_id));
+    memcpy(
+        request->body.volume_id, spec.volume_id, sizeof(request->body.volume_id)
+    );
+
+    auto cb_sp = std::make_shared<std::function<void(int)>>(std::move(cb));
+
+    _queue.write(
+        fd(), request.get(), sizeof(*request),
+        [q = &_queue, fd = fd(), request, cb_sp,
+         trace_event](size_t result, int error) {
+            RAWSTD_TRACE_EVENT_MESSAGE(
+                trace_event, "%zu of %zu, error = %d\n", result,
+                sizeof(RawstorOSTFrameAllocate), error
+            );
+
+            if (!error) {
+                error =
+                    validate_result(sizeof(RawstorOSTFrameAllocate), result);
+            }
+
+            if (error) {
+                (*cb_sp)(error);
+                return;
+            }
+
+            auto response = std::make_shared<RawstorOSTFrameResponse>();
+
+            try {
+                q->read(
+                    fd, response.get(), sizeof(*response),
+                    [fd, response, cb_sp,
+                     trace_event](size_t result, int error) {
+                        if (!error) {
+                            error = validate_result(
+                                sizeof(RawstorOSTFrameResponse), result
+                            );
+                        }
+
+                        if (!error) {
+                            error = validate_response(response.get(), 0);
+                        }
+
+                        if (!error) {
+                            error = validate_cmd(
+                                response->head.cmd, RAWSTOR_CMD_ALLOCATE
+                            );
+                        }
+
+                        (*cb_sp)(error);
+                    }
+                );
+            } catch (const std::system_error& e) {
+                (*cb_sp)(e.code().value());
+            } catch (const std::bad_alloc& e) {
+                (*cb_sp)(ENOMEM);
+            }
+        }
+    );
 }
 
 void Session::remove(const RawstdUUID& id, std::function<void(int)>&& cb) {
-    int error = 0;
-    try {
-        basic_request(fd(), _cid_counter++, RAWSTOR_CMD_RELEASE, id, 0);
-    } catch (const std::system_error& e) {
-        error = e.code().value();
-    } catch (...) {
-        error = EIO;
-    }
-    cb(error);
+    _ensure_handshake([this, id, cb = std::move(cb)](int error) mutable {
+        if (error) {
+            cb(error);
+            return;
+        }
+
+        _basic(RAWSTOR_CMD_RELEASE, id, 0, std::move(cb));
+    });
 }
 
 void Session::spec(
@@ -1031,6 +1673,399 @@ void Session::spec(
     cb(ret, error);
 }
 
+/*
+ * See meta(): an object-bound session dispatches through the multishot
+ * receive context, an unbound one runs the plain pre-open exchange.
+ */
+void Session::_basic_or_op(
+    RawstorOSTCommandType cmd, const RawstdUUID& id, uint64_t val,
+    std::function<void(int)>&& cb
+) {
+    if (_read_event != nullptr) {
+        rawstd::TraceEvent trace_event =
+            RAWSTD_TRACE_EVENT('s', "basic cmd %d\n", cmd);
+
+        std::shared_ptr<SessionOpBasic> op = std::make_shared<SessionOpBasic>(
+            std::static_pointer_cast<Session>(shared_from_this()),
+            _cid_counter++, cmd, id, val, trace_event,
+            [cb = std::move(cb)](size_t, int error) { cb(error); }
+        );
+        _add_op(op);
+
+        _queue.send(
+            fd(), op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL,
+            [op, trace_event](size_t result, int error) {
+                RAWSTD_TRACE_EVENT_MESSAGE(
+                    trace_event, "%zu of %zu, error = %d\n", result,
+                    op->request_size(), error
+                );
+
+                if (!error) {
+                    error = validate_result(op->request_size(), result);
+                }
+
+                op->request_cb(error);
+            }
+        );
+        return;
+    }
+
+    _ensure_handshake([this, cmd, id, val,
+                       cb = std::move(cb)](int error) mutable {
+        if (error) {
+            cb(error);
+            return;
+        }
+
+        _basic(cmd, id, val, std::move(cb));
+    });
+}
+
+void Session::snapshot(
+    const RawstdUUID& id, uint64_t snap_id, std::function<void(int)>&& cb
+) {
+    _basic_or_op(RAWSTOR_CMD_SNAPSHOT, id, snap_id, std::move(cb));
+}
+
+void Session::snap_remove(
+    const RawstdUUID& id, uint64_t snap_id, std::function<void(int)>&& cb
+) {
+    _basic_or_op(RAWSTOR_CMD_SNAP_REMOVE, id, snap_id, std::move(cb));
+}
+
+void Session::meta(
+    const RawstdUUID& id, uint64_t snap,
+    std::function<void(const RawstorObjectMeta&, int)>&& cb
+) {
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('s', "%s\n", "meta cmd");
+
+    /*
+     * Once an object is bound the socket belongs to the multishot recv, so
+     * the request has to go out as a regular in-flight op. The plain
+     * request/response exchange below is only valid before set_object().
+     */
+    if (_read_event != nullptr) {
+        auto out = std::make_shared<RawstorObjectMeta>();
+
+        std::shared_ptr<SessionOpMeta> op = std::make_shared<SessionOpMeta>(
+            std::static_pointer_cast<Session>(shared_from_this()),
+            _cid_counter++, id, snap, out.get(), trace_event,
+            [out, cb = std::move(cb)](size_t, int error) { cb(*out, error); }
+        );
+        _add_op(op);
+
+        _queue.send(
+            fd(), op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL,
+            [op, trace_event](size_t result, int error) {
+                RAWSTD_TRACE_EVENT_MESSAGE(
+                    trace_event, "%zu of %zu, error = %d\n", result,
+                    op->request_size(), error
+                );
+
+                if (!error) {
+                    error = validate_result(op->request_size(), result);
+                }
+
+                op->request_cb(error);
+            }
+        );
+        return;
+    }
+
+    _ensure_handshake([this, id, snap, cb = std::move(cb)](int error) mutable {
+        if (error) {
+            cb({}, error);
+            return;
+        }
+
+        _meta_exchange(id, snap, std::move(cb));
+    });
+}
+
+void Session::_meta_exchange(
+    const RawstdUUID& id, uint64_t snap,
+    std::function<void(const RawstorObjectMeta&, int)>&& cb
+) {
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('s', "%s\n", "spec cmd");
+
+    auto request =
+        std::make_shared<RawstorOSTFrameBasic>((RawstorOSTFrameBasic){
+            .head =
+                {
+                    .magic = RAWSTOR_MAGIC,
+                    .cmd = RAWSTOR_CMD_META,
+                    .cid = _cid_counter++,
+                },
+            .body = {
+                .obj_id = {},
+                .offset = 0,
+                .val = snap,
+            },
+        });
+    memcpy(request->body.obj_id, id.bytes, sizeof(request->body.obj_id));
+
+    auto cb_sp =
+        std::make_shared<std::function<void(const RawstorObjectMeta&, int)>>(
+            std::move(cb)
+        );
+
+    _queue.write(
+        fd(), request.get(), sizeof(*request),
+        [q = &_queue, fd = fd(), request, cb_sp,
+         trace_event](size_t result, int error) {
+            RAWSTD_TRACE_EVENT_MESSAGE(
+                trace_event, "%zu of %zu, error = %d\n", result,
+                sizeof(RawstorOSTFrameBasic), error
+            );
+
+            if (!error) {
+                error = validate_result(sizeof(RawstorOSTFrameBasic), result);
+            }
+
+            if (error) {
+                (*cb_sp)({}, error);
+                return;
+            }
+
+            /*
+             * The response is read in two phases: the head+body first, the
+             * metadata payload only on success. Error responses carry no
+             * payload.
+             */
+            auto response = std::make_shared<RawstorOSTFrameMetaResponse>();
+
+            try {
+                q->read(
+                    fd, response.get(), sizeof(RawstorOSTFrameResponse),
+                    [q, fd, response, cb_sp,
+                     trace_event](size_t result, int error) {
+                        RAWSTD_TRACE_EVENT_MESSAGE(
+                            trace_event, "%zu of %zu, error = %d\n", result,
+                            sizeof(RawstorOSTFrameResponse), error
+                        );
+
+                        if (!error) {
+                            error = validate_result(
+                                sizeof(RawstorOSTFrameResponse), result
+                            );
+                        }
+
+                        if (!error) {
+                            error = validate_response(
+                                reinterpret_cast<RawstorOSTFrameResponse*>(
+                                    response.get()
+                                ),
+                                sizeof(response->meta)
+                            );
+                        }
+
+                        if (!error) {
+                            error = validate_cmd(
+                                response->head.cmd, RAWSTOR_CMD_META
+                            );
+                        }
+
+                        if (error) {
+                            (*cb_sp)({}, error);
+                            return;
+                        }
+
+                        try {
+                            q->read(
+                                fd, &response->meta, sizeof(response->meta),
+                                [fd, response, cb_sp,
+                                 trace_event](size_t result, int error) {
+                                    RAWSTD_TRACE_EVENT_MESSAGE(
+                                        trace_event, "%zu of %zu, error = %d\n",
+                                        result, sizeof(response->meta), error
+                                    );
+
+                                    if (!error) {
+                                        error = validate_result(
+                                            sizeof(response->meta), result
+                                        );
+                                    }
+
+                                    if (!error) {
+                                        error = validate_hash(
+                                            hash(
+                                                &response->meta,
+                                                sizeof(response->meta)
+                                            ),
+                                            response->body.hash
+                                        );
+                                    }
+
+                                    if (error) {
+                                        (*cb_sp)({}, error);
+                                        return;
+                                    }
+
+                                    RawstorObjectMeta meta{};
+                                    meta.size = response->meta.size;
+                                    meta.epoch = response->meta.epoch;
+                                    meta.sync_id = response->meta.sync_id;
+                                    memcpy(
+                                        meta.sync_id_history,
+                                        response->meta.sync_id_history,
+                                        sizeof(meta.sync_id_history)
+                                    );
+                                    meta.state = response->meta.state;
+                                    meta.member_kind =
+                                        response->meta.member_kind;
+                                    meta.width = response->meta.width;
+                                    memcpy(
+                                        meta.volume_id,
+                                        response->meta.volume_id,
+                                        sizeof(meta.volume_id)
+                                    );
+                                    meta.logical_index =
+                                        response->meta.logical_index;
+                                    meta.chunk_size = response->meta.chunk_size;
+                                    meta.snap_version =
+                                        response->meta.snap_version;
+
+                                    (*cb_sp)(meta, 0);
+                                }
+                            );
+                        } catch (const std::system_error& e) {
+                            (*cb_sp)({}, e.code().value());
+                        } catch (const std::bad_alloc& e) {
+                            (*cb_sp)({}, ENOMEM);
+                        }
+                    }
+                );
+            } catch (const std::system_error& e) {
+                (*cb_sp)({}, e.code().value());
+            } catch (const std::bad_alloc& e) {
+                (*cb_sp)({}, ENOMEM);
+            }
+        }
+    );
+}
+
+void Session::set_state(
+    const RawstdUUID& id, const RawstorObjectMeta& meta,
+    std::function<void(int)>&& cb
+) {
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('s', "%s\n", "set_state cmd");
+
+    if (_read_event != nullptr) {
+        std::shared_ptr<SessionOpSetState> op =
+            std::make_shared<SessionOpSetState>(
+                std::static_pointer_cast<Session>(shared_from_this()),
+                _cid_counter++, id, meta, trace_event,
+                [cb = std::move(cb)](size_t, int error) { cb(error); }
+            );
+        _add_op(op);
+
+        _queue.send(
+            fd(), op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL,
+            [op, trace_event](size_t result, int error) {
+                RAWSTD_TRACE_EVENT_MESSAGE(
+                    trace_event, "%zu of %zu, error = %d\n", result,
+                    op->request_size(), error
+                );
+
+                if (!error) {
+                    error = validate_result(op->request_size(), result);
+                }
+
+                op->request_cb(error);
+            }
+        );
+        return;
+    }
+
+    _ensure_handshake([this, id, meta, cb = std::move(cb)](int error) mutable {
+        if (error) {
+            cb(error);
+            return;
+        }
+
+        _set_state_exchange(id, meta, std::move(cb));
+    });
+}
+
+void Session::_set_state_exchange(
+    const RawstdUUID& id, const RawstorObjectMeta& meta,
+    std::function<void(int)>&& cb
+) {
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('s', "%s\n", "set_state cmd");
+
+    auto request = std::make_shared<RawstorOSTFrameMeta>((RawstorOSTFrameMeta){
+        .head =
+            {
+                .magic = RAWSTOR_MAGIC,
+                .cmd = RAWSTOR_CMD_SET_STATE,
+                .cid = _cid_counter++,
+            },
+        .body = meta_to_body(id, meta),
+    });
+
+    auto cb_sp = std::make_shared<std::function<void(int)>>(std::move(cb));
+
+    _queue.write(
+        fd(), request.get(), sizeof(*request),
+        [q = &_queue, fd = fd(), request, cb_sp,
+         trace_event](size_t result, int error) {
+            RAWSTD_TRACE_EVENT_MESSAGE(
+                trace_event, "%zu of %zu, error = %d\n", result,
+                sizeof(RawstorOSTFrameMeta), error
+            );
+
+            if (!error) {
+                error = validate_result(sizeof(RawstorOSTFrameMeta), result);
+            }
+
+            if (error) {
+                (*cb_sp)(error);
+                return;
+            }
+
+            auto response = std::make_shared<RawstorOSTFrameResponse>();
+
+            try {
+                q->read(
+                    fd, response.get(), sizeof(*response),
+                    [response, cb_sp, trace_event](size_t result, int error) {
+                        RAWSTD_TRACE_EVENT_MESSAGE(
+                            trace_event, "%zu of %zu, error = %d\n", result,
+                            sizeof(RawstorOSTFrameResponse), error
+                        );
+
+                        if (!error) {
+                            error = validate_result(
+                                sizeof(RawstorOSTFrameResponse), result
+                            );
+                        }
+
+                        if (!error) {
+                            error = validate_response(response.get());
+                        }
+
+                        if (!error) {
+                            error = validate_cmd(
+                                response->head.cmd, RAWSTOR_CMD_SET_STATE
+                            );
+                        }
+
+                        (*cb_sp)(error);
+                    }
+                );
+            } catch (const std::system_error& e) {
+                (*cb_sp)(e.code().value());
+            } catch (const std::bad_alloc&) {
+                (*cb_sp)(ENOMEM);
+            }
+        }
+    );
+}
+
 void Session::info(std::function<void(const RawstorLocationInfo&, int)>&& cb) {
     rawstd_info("%s: Reading location info...\n", str().c_str());
 
@@ -1060,11 +2095,242 @@ void Session::info(std::function<void(const RawstorLocationInfo&, int)>&& cb) {
     cb(ret, error);
 }
 
-void Session::set_object(Object* object) {
-    assert(_read_event == nullptr);
+void Session::list_chunks(
+    std::function<void(std::vector<RawstorObjectListEntry>&&, int)>&& cb
+) {
+    /*
+     * Only the plain pre-open exchange is implemented: the scan always
+     * runs on a fresh control connection (Connection::list), never on an
+     * object-bound session.
+     */
+    if (_read_event != nullptr) {
+        cb({}, ENOTSUP);
+        return;
+    }
 
-    _set_object(object);
+    _ensure_handshake([this, cb = std::move(cb)](int error) mutable {
+        if (error) {
+            cb({}, error);
+            return;
+        }
 
+        _list_exchange(std::move(cb));
+    });
+}
+
+void Session::_list_exchange(
+    std::function<void(std::vector<RawstorObjectListEntry>&&, int)>&& cb
+) {
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('s', "%s\n", "list_chunks cmd");
+
+    auto request =
+        std::make_shared<RawstorOSTFrameBasic>((RawstorOSTFrameBasic){
+            .head =
+                {
+                    .magic = RAWSTOR_MAGIC,
+                    .cmd = RAWSTOR_CMD_LIST_CHUNKS,
+                    .cid = _cid_counter++,
+                },
+            .body = {
+                .obj_id = {},
+                .offset = 0,
+                .val = 0,
+            },
+        });
+
+    auto cb_sp = std::make_shared<
+        std::function<void(std::vector<RawstorObjectListEntry>&&, int)>>(
+        std::move(cb)
+    );
+
+    _queue.write(
+        fd(), request.get(), sizeof(*request),
+        [q = &_queue, fd = fd(), request, cb_sp,
+         trace_event](size_t result, int error) {
+            RAWSTD_TRACE_EVENT_MESSAGE(
+                trace_event, "%zu of %zu, error = %d\n", result,
+                sizeof(RawstorOSTFrameBasic), error
+            );
+
+            if (!error) {
+                error = validate_result(sizeof(RawstorOSTFrameBasic), result);
+            }
+
+            if (error) {
+                (*cb_sp)({}, error);
+                return;
+            }
+
+            /*
+             * The payload length is variable: the head is read first, the
+             * record array only on success. Error responses carry no
+             * payload.
+             */
+            auto response = std::make_shared<RawstorOSTFrameResponse>();
+
+            try {
+                q->read(
+                    fd, response.get(), sizeof(*response),
+                    [q, fd, response, cb_sp,
+                     trace_event](size_t result, int error) {
+                        RAWSTD_TRACE_EVENT_MESSAGE(
+                            trace_event, "%zu of %zu, error = %d\n", result,
+                            sizeof(RawstorOSTFrameResponse), error
+                        );
+
+                        if (!error) {
+                            error = validate_result(
+                                sizeof(RawstorOSTFrameResponse), result
+                            );
+                        }
+
+                        if (!error) {
+                            error = validate_response(
+                                response.get(), response->body.len
+                            );
+                        }
+
+                        if (!error) {
+                            error = validate_cmd(
+                                response->head.cmd, RAWSTOR_CMD_LIST_CHUNKS
+                            );
+                        }
+
+                        constexpr size_t record_size =
+                            sizeof(RawstorOSTFrameMetaBody);
+                        uint32_t len = response->body.len;
+
+                        /* Same payload bound as the data commands. */
+                        if (!error &&
+                            (len % record_size != 0 || len > (1u << 26) ||
+                             static_cast<uint32_t>(response->body.res) !=
+                                 len / record_size)) {
+                            rawstd_error(
+                                "fd %d: Malformed list payload length: %u\n",
+                                fd, len
+                            );
+                            error = EPROTO;
+                        }
+
+                        if (error) {
+                            (*cb_sp)({}, error);
+                            return;
+                        }
+
+                        if (len == 0) {
+                            (*cb_sp)({}, 0);
+                            return;
+                        }
+
+                        auto records = std::make_shared<
+                            std::vector<RawstorOSTFrameMetaBody>>(
+                            len / record_size
+                        );
+
+                        try {
+                            q->read(
+                                fd, records->data(), len,
+                                [fd, response, records, len, cb_sp,
+                                 trace_event](size_t result, int error) {
+                                    RAWSTD_TRACE_EVENT_MESSAGE(
+                                        trace_event, "%zu of %u, error = %d\n",
+                                        result, len, error
+                                    );
+
+                                    if (!error) {
+                                        error = validate_result(len, result);
+                                    }
+
+                                    if (!error) {
+                                        error = validate_hash(
+                                            hash(records->data(), len),
+                                            response->body.hash
+                                        );
+                                    }
+
+                                    if (error) {
+                                        (*cb_sp)({}, error);
+                                        return;
+                                    }
+
+                                    std::vector<RawstorObjectListEntry> entries;
+                                    entries.reserve(records->size());
+                                    for (const RawstorOSTFrameMetaBody& body :
+                                         *records) {
+                                        RawstorObjectListEntry entry{};
+                                        memcpy(
+                                            entry.obj_id, body.obj_id,
+                                            sizeof(entry.obj_id)
+                                        );
+                                        entry.meta.size = body.size;
+                                        entry.meta.epoch = body.epoch;
+                                        entry.meta.sync_id = body.sync_id;
+                                        memcpy(
+                                            entry.meta.sync_id_history,
+                                            body.sync_id_history,
+                                            sizeof(entry.meta.sync_id_history)
+                                        );
+                                        entry.meta.state = body.state;
+                                        entry.meta.member_kind =
+                                            body.member_kind;
+                                        entry.meta.width = body.width;
+                                        memcpy(
+                                            entry.meta.volume_id,
+                                            body.volume_id,
+                                            sizeof(entry.meta.volume_id)
+                                        );
+                                        entry.meta.logical_index =
+                                            body.logical_index;
+                                        entry.meta.chunk_size = body.chunk_size;
+                                        entry.meta.snap_version =
+                                            body.snap_version;
+                                        entries.push_back(entry);
+                                    }
+
+                                    (*cb_sp)(std::move(entries), 0);
+                                }
+                            );
+                        } catch (const std::system_error& e) {
+                            (*cb_sp)({}, e.code().value());
+                        } catch (const std::bad_alloc& e) {
+                            (*cb_sp)({}, ENOMEM);
+                        }
+                    }
+                );
+            } catch (const std::system_error& e) {
+                (*cb_sp)({}, e.code().value());
+            } catch (const std::bad_alloc& e) {
+                (*cb_sp)({}, ENOMEM);
+            }
+        }
+    );
+}
+
+void Session::set_object(Object* object, std::function<void(int)>&& cb) {
+    _set_object_exchange(
+        &object->id(), object->snap(), [this, cb = std::move(cb)](int error) {
+            if (error) {
+                cb(error);
+                return;
+            }
+
+            try {
+                _arm_recv();
+            } catch (const std::system_error& e) {
+                cb(e.code().value());
+                return;
+            } catch (const std::bad_alloc& e) {
+                cb(ENOMEM);
+                return;
+            }
+
+            cb(0);
+        }
+    );
+}
+
+void Session::_arm_recv() {
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('m', "%s\n", "multishot recv");
     _read_event = _queue.recv_multishot(

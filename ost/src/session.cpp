@@ -19,9 +19,12 @@
 #include <functional>
 #include <memory>
 #include <sstream>
+#include <string>
+#include <unordered_set>
 #include <vector>
 
 #include <cerrno>
+#include <cstdlib>
 #include <cstring>
 
 namespace {
@@ -67,6 +70,15 @@ int validate_result(int fd, size_t size, size_t result) noexcept {
     return EIO;
 }
 
+bool uuid_is_null(const uint8_t (&id)[16]) {
+    for (uint8_t byte : id) {
+        if (byte != 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
 } // namespace
 
 namespace rawstor {
@@ -94,7 +106,9 @@ Session::Session(Private, RawIOQueue* queue, Server& server, int fd) :
     _next(&Session::_recv_head),
     _object(nullptr),
     _writes_in_flight(0),
-    _pending_writes_bytes(0) {
+    _pending_writes_bytes(0),
+    _handshaken(false),
+    _open_pending(false) {
 }
 
 void Session::_arm_recv() {
@@ -218,42 +232,76 @@ Session::_recv_head(const iovec* iov, unsigned int niov, size_t result) {
     case RAWSTOR_CMD_DISCARD:
         return sizeof(RawstorOSTFrameIOBody);
     case RAWSTOR_CMD_SET_OBJECT:
+        return sizeof(RawstorOSTFrameSetObjectBody);
     case RAWSTOR_CMD_ALLOCATE:
+        return sizeof(RawstorOSTFrameAllocateBody);
     case RAWSTOR_CMD_RELEASE:
     case RAWSTOR_CMD_LIST:
     case RAWSTOR_CMD_SPEC:
+    case RAWSTOR_CMD_META:
+    case RAWSTOR_CMD_LIST_CHUNKS:
     case RAWSTOR_CMD_LOCATION_INFO:
     case RAWSTOR_CMD_FLUSH:
+    case RAWSTOR_CMD_SNAPSHOT:
+    case RAWSTOR_CMD_SNAP_REMOVE:
         return sizeof(RawstorOSTFrameBasicBody);
+    case RAWSTOR_CMD_SET_STATE:
+        return sizeof(RawstorOSTFrameMetaBody);
     }
 
-    {
-        std::ostringstream oss;
-        oss << "Unexpected command: " << _request_head.cmd;
-        throw std::runtime_error(oss.str());
-    }
+    _unknown(_request_head);
+
+    /*
+     * The body length of the unknown command is not known, so the stream
+     * position is lost: consume and ignore everything until the deferred
+     * close lands. Parsing must not resume — payload bytes could otherwise
+     * be executed as fabricated frames.
+     */
+    _next = &Session::_recv_ignore;
+
+    return sizeof(RawstorOSTFrameHead);
+}
+
+ssize_t Session::_recv_ignore(const iovec*, unsigned int, size_t) {
+    _next = &Session::_recv_ignore;
+
+    return sizeof(RawstorOSTFrameHead);
 }
 
 ssize_t
 Session::_recv_body(const iovec* iov, unsigned int niov, size_t result) {
     _next = &Session::_recv_head;
 
+    /*
+     * SET_OBJECT is the handshake and must be the first command: a peer
+     * sending anything else first is not a rawstor client (or predates
+     * the version negotiation) — drop the connection.
+     */
+    if (!_handshaken && _request_head.cmd != RAWSTOR_CMD_SET_OBJECT) {
+        rawstd_error(
+            "fd %d: Command %u before the SET_OBJECT handshake\n", _fd,
+            _request_head.cmd
+        );
+
+        RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+    }
+
     switch (_request_head.cmd) {
     case RAWSTOR_CMD_SET_OBJECT:
-        if (result != sizeof(_request_body.basic)) {
+        if (result != sizeof(_request_body.setobj)) {
             rawstd_error(
                 "fd %d: Unexpected request body size: %zu != %zu\n", _fd,
-                result, sizeof(_request_body.basic)
+                result, sizeof(_request_body.setobj)
             );
 
             RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
         }
 
         rawstd_iovec_to_buf(
-            iov, niov, 0, &_request_body.basic, sizeof(_request_body.basic)
+            iov, niov, 0, &_request_body.setobj, sizeof(_request_body.setobj)
         );
 
-        _set_object(_request_head, _request_body.basic);
+        _set_object(_request_head, _request_body.setobj);
 
         return sizeof(RawstorOSTFrameHead);
 
@@ -342,20 +390,20 @@ Session::_recv_body(const iovec* iov, unsigned int niov, size_t result) {
         return sizeof(RawstorOSTFrameHead);
 
     case RAWSTOR_CMD_ALLOCATE:
-        if (result != sizeof(_request_body.basic)) {
+        if (result != sizeof(_request_body.alloc)) {
             rawstd_error(
                 "fd %d: Unexpected request body size: %zu != %zu\n", _fd,
-                result, sizeof(_request_body.basic)
+                result, sizeof(_request_body.alloc)
             );
 
             RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
         }
 
         rawstd_iovec_to_buf(
-            iov, niov, 0, &_request_body.basic, sizeof(_request_body.basic)
+            iov, niov, 0, &_request_body.alloc, sizeof(_request_body.alloc)
         );
 
-        _allocate(_request_head, _request_body.basic);
+        _allocate(_request_head, _request_body.alloc);
 
         return sizeof(RawstorOSTFrameHead);
 
@@ -392,6 +440,79 @@ Session::_recv_body(const iovec* iov, unsigned int niov, size_t result) {
         );
 
         _spec(_request_head, _request_body.basic);
+
+        return sizeof(RawstorOSTFrameHead);
+
+    case RAWSTOR_CMD_META:
+        if (result != sizeof(_request_body.basic)) {
+            rawstd_error(
+                "fd %d: Unexpected request body size: %zu != %zu\n", _fd,
+                result, sizeof(_request_body.basic)
+            );
+
+            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+        }
+
+        rawstd_iovec_to_buf(
+            iov, niov, 0, &_request_body.basic, sizeof(_request_body.basic)
+        );
+
+        _meta(_request_head, _request_body.basic);
+
+        return sizeof(RawstorOSTFrameHead);
+
+    case RAWSTOR_CMD_LIST_CHUNKS:
+        if (result != sizeof(_request_body.basic)) {
+            rawstd_error(
+                "fd %d: Unexpected request body size: %zu != %zu\n", _fd,
+                result, sizeof(_request_body.basic)
+            );
+
+            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+        }
+
+        rawstd_iovec_to_buf(
+            iov, niov, 0, &_request_body.basic, sizeof(_request_body.basic)
+        );
+
+        _list_chunks(_request_head);
+
+        return sizeof(RawstorOSTFrameHead);
+
+    case RAWSTOR_CMD_SNAPSHOT:
+    case RAWSTOR_CMD_SNAP_REMOVE:
+        if (result != sizeof(_request_body.basic)) {
+            rawstd_error(
+                "fd %d: Unexpected request body size: %zu != %zu\n", _fd,
+                result, sizeof(_request_body.basic)
+            );
+
+            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+        }
+
+        rawstd_iovec_to_buf(
+            iov, niov, 0, &_request_body.basic, sizeof(_request_body.basic)
+        );
+
+        _snapshot(_request_head, _request_body.basic);
+
+        return sizeof(RawstorOSTFrameHead);
+
+    case RAWSTOR_CMD_SET_STATE:
+        if (result != sizeof(_request_body.meta)) {
+            rawstd_error(
+                "fd %d: Unexpected request body size: %zu != %zu\n", _fd,
+                result, sizeof(_request_body.meta)
+            );
+
+            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+        }
+
+        rawstd_iovec_to_buf(
+            iov, niov, 0, &_request_body.meta, sizeof(_request_body.meta)
+        );
+
+        _set_state(_request_head, _request_body.meta);
 
         return sizeof(RawstorOSTFrameHead);
 
@@ -514,7 +635,7 @@ void Session::_list(
 }
 
 void Session::_allocate(
-    const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+    const RawstorOSTFrameHead& head, const RawstorOSTFrameAllocateBody& body
 ) {
     if (_object != nullptr) {
         int res = rawstor_object_close(_object);
@@ -527,16 +648,33 @@ void Session::_allocate(
     RawstdUUID uuid;
     memcpy(uuid.bytes, body.obj_id, sizeof(body.obj_id));
 
-    RawstorObjectSpec spec{
-        .size = body.val,
-    };
+    RawstorObjectSpec spec{};
+    spec.size = body.size;
+    spec.chunk_size = body.chunk_size;
+    spec.stripe_width = body.stripe_width;
+    spec.width = body.width;
+    spec.failure_domain = body.failure_domain;
+    spec.member_kind = body.member_kind;
+    memcpy(spec.volume_id, body.volume_id, sizeof(spec.volume_id));
+    spec.logical_index = body.logical_index;
+    spec.snap_version = body.snap_version;
 
     std::vector<rawstd::URI> targets = _targets(uuid);
 
-    int result =
-        rawstor_object_create(rawstd::URI::uris(targets).c_str(), &spec);
+    auto ctx = std::make_unique<OpCtx>(
+        OpCtx{weak_from_this(), RAWSTOR_CMD_ALLOCATE, head.cid}
+    );
 
-    _send_response(RAWSTOR_CMD_ALLOCATE, head.cid, result, 0);
+    int res = rawstor_object_create_async(
+        _queue, rawstd::URI::uris(targets).c_str(), &spec, _op_complete,
+        ctx.get()
+    );
+    if (res < 0) {
+        _send_response(RAWSTOR_CMD_ALLOCATE, head.cid, res, 0);
+        return;
+    }
+
+    ctx.release();
 }
 
 void Session::_release(
@@ -547,9 +685,19 @@ void Session::_release(
 
     std::vector<rawstd::URI> targets = _targets(uuid);
 
-    int result = rawstor_object_remove(rawstd::URI::uris(targets).c_str());
+    auto ctx = std::make_unique<OpCtx>(
+        OpCtx{weak_from_this(), RAWSTOR_CMD_RELEASE, head.cid}
+    );
 
-    _send_response(RAWSTOR_CMD_RELEASE, head.cid, result, 0);
+    int res = rawstor_object_remove_async(
+        _queue, rawstd::URI::uris(targets).c_str(), _op_complete, ctx.get()
+    );
+    if (res < 0) {
+        _send_response(RAWSTOR_CMD_RELEASE, head.cid, res, 0);
+        return;
+    }
+
+    ctx.release();
 }
 
 void Session::_spec(
@@ -591,9 +739,77 @@ void Session::_info(
     _send_response(RAWSTOR_CMD_LOCATION_INFO, head.cid, data->size(), 0, data);
 }
 
+int Session::_op_complete(int result, void* data) noexcept {
+    std::unique_ptr<OpCtx> ctx(static_cast<OpCtx*>(data));
+
+    std::shared_ptr<Session> session = ctx->session.lock();
+    if (!session) {
+        return 0;
+    }
+
+    try {
+        session->_send_response(ctx->cmd, ctx->cid, result, 0);
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+    }
+
+    return 0;
+}
+
+int Session::_open_complete(
+    RawstorObject* object, int result, void* data
+) noexcept {
+    std::unique_ptr<OpCtx> ctx(static_cast<OpCtx*>(data));
+
+    std::shared_ptr<Session> session = ctx->session.lock();
+    if (!session) {
+        if (object != nullptr) {
+            int res = rawstor_object_close(object);
+            if (res < 0) {
+                rawstd_error(
+                    "Failed to close orphaned object: %s\n", strerror(-res)
+                );
+            }
+        }
+        return 0;
+    }
+
+    session->_open_pending = false;
+
+    if (result == 0) {
+        session->_object = object;
+    }
+
+    try {
+        if (result == 0) {
+            session->_send_hello(ctx->cid);
+        } else {
+            session->_send_response(ctx->cmd, ctx->cid, result, 0);
+        }
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+    }
+
+    return 0;
+}
+
 void Session::_set_object(
-    const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+    const RawstorOSTFrameHead& head, const RawstorOSTFrameSetObjectBody& body
 ) {
+    if (body.version != RAWSTOR_PROTOCOL_VERSION) {
+        rawstd_error(
+            "fd %d: Unsupported protocol version: %u != %u\n", _fd,
+            body.version, RAWSTOR_PROTOCOL_VERSION
+        );
+        _close_after_response(head, -EPROTONOSUPPORT);
+        return;
+    }
+
+    if (_open_pending) {
+        _send_response(RAWSTOR_CMD_SET_OBJECT, head.cid, -EBUSY, 0);
+        return;
+    }
+
     if (_object != nullptr) {
         int res = rawstor_object_close(_object);
         if (res < 0) {
@@ -602,16 +818,34 @@ void Session::_set_object(
         _object = nullptr;
     }
 
+    _handshaken = true;
+
+    /* A null binding is a control connection: nothing to open. */
+    if (uuid_is_null(body.obj_id)) {
+        _send_hello(head.cid);
+        return;
+    }
+
     RawstdUUID uuid;
     memcpy(uuid.bytes, body.obj_id, sizeof(body.obj_id));
 
-    std::vector<rawstd::URI> targets = _targets(uuid);
+    /* val = bound snapshot version (0 = live). */
+    std::vector<rawstd::URI> targets = _targets(uuid, body.val);
 
-    int result = rawstor_object_open(
-        _queue, rawstd::URI::uris(targets).c_str(), &_object
+    auto ctx = std::make_unique<OpCtx>(
+        OpCtx{weak_from_this(), RAWSTOR_CMD_SET_OBJECT, head.cid}
     );
 
-    _send_response(RAWSTOR_CMD_SET_OBJECT, head.cid, result, 0);
+    int res = rawstor_object_open_async(
+        _queue, rawstd::URI::uris(targets).c_str(), _open_complete, ctx.get()
+    );
+    if (res < 0) {
+        _send_response(RAWSTOR_CMD_SET_OBJECT, head.cid, res, 0);
+        return;
+    }
+
+    _open_pending = true;
+    ctx.release();
 }
 
 void Session::_read(
@@ -816,14 +1050,362 @@ void Session::_discard(
     _send_response(RAWSTOR_CMD_DISCARD, head.cid, -ENOSYS, 0);
 }
 
+int Session::_meta_complete(int result, void* data) noexcept {
+    std::unique_ptr<MetaCtx> ctx(static_cast<MetaCtx*>(data));
+
+    std::shared_ptr<Session> session = ctx->session.lock();
+    if (!session) {
+        return 0;
+    }
+
+    try {
+        /* Error responses carry no metadata payload. */
+        if (result < 0) {
+            session->_send_response(RAWSTOR_CMD_META, ctx->cid, result, 0);
+            return 0;
+        }
+
+        RawstorOSTFrameMetaBody body{};
+        memcpy(body.obj_id, ctx->obj_id, sizeof(body.obj_id));
+        body.size = ctx->meta.size;
+        body.epoch = ctx->meta.epoch;
+        body.sync_id = ctx->meta.sync_id;
+        memcpy(
+            body.sync_id_history, ctx->meta.sync_id_history,
+            sizeof(body.sync_id_history)
+        );
+        body.state = ctx->meta.state;
+
+        auto payload =
+            std::make_shared<std::vector<unsigned char>>(sizeof(body));
+        memcpy(payload->data(), &body, sizeof(body));
+
+        session->_send_response(
+            RAWSTOR_CMD_META, ctx->cid, payload->size(),
+            rawstd_hash_scalar(payload->data(), payload->size()), payload
+        );
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+    }
+
+    return 0;
+}
+
+void Session::_meta(
+    const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+) {
+    RawstdUUID uuid;
+    memcpy(uuid.bytes, body.obj_id, sizeof(body.obj_id));
+
+    /* val = queried snapshot version (0 = live). */
+    std::vector<rawstd::URI> targets = _targets(uuid, body.val);
+
+    auto ctx = std::make_unique<MetaCtx>();
+    ctx->session = weak_from_this();
+    ctx->cid = head.cid;
+    memcpy(ctx->obj_id, body.obj_id, sizeof(ctx->obj_id));
+
+    int res = rawstor_object_meta_async(
+        _queue, rawstd::URI::uris(targets).c_str(), &ctx->meta, _meta_complete,
+        ctx.get()
+    );
+    if (res < 0) {
+        _meta_complete(res, ctx.release());
+        return;
+    }
+
+    ctx.release();
+}
+
+void Session::_set_state(
+    const RawstorOSTFrameHead& head, const RawstorOSTFrameMetaBody& body
+) {
+    RawstdUUID uuid;
+    memcpy(uuid.bytes, body.obj_id, sizeof(body.obj_id));
+
+    RawstorObjectMeta meta{};
+    meta.size = body.size;
+    meta.epoch = body.epoch;
+    meta.sync_id = body.sync_id;
+    memcpy(
+        meta.sync_id_history, body.sync_id_history, sizeof(meta.sync_id_history)
+    );
+    meta.state = body.state;
+    meta.member_kind = body.member_kind;
+    meta.width = body.width;
+    memcpy(meta.volume_id, body.volume_id, sizeof(meta.volume_id));
+    meta.logical_index = body.logical_index;
+    meta.chunk_size = body.chunk_size;
+    meta.snap_version = body.snap_version;
+
+    std::vector<rawstd::URI> targets = _targets(uuid);
+
+    auto ctx = std::make_unique<OpCtx>(
+        OpCtx{weak_from_this(), RAWSTOR_CMD_SET_STATE, head.cid}
+    );
+
+    int res = rawstor_object_set_state_async(
+        _queue, rawstd::URI::uris(targets).c_str(), &meta, _op_complete,
+        ctx.get()
+    );
+    if (res < 0) {
+        _send_response(RAWSTOR_CMD_SET_STATE, head.cid, res, 0);
+        return;
+    }
+
+    ctx.release();
+}
+
+/*
+ * SET_OBJECT success response: the server side of the handshake rides as
+ * the payload.
+ */
+void Session::_send_hello(uint16_t cid) {
+    RawstorOSTFrameHelloBody hello{
+        .version = RAWSTOR_PROTOCOL_VERSION,
+        .features = 0,
+    };
+
+    auto payload = std::make_shared<std::vector<unsigned char>>(sizeof(hello));
+    memcpy(payload->data(), &hello, sizeof(hello));
+
+    _send_response(
+        RAWSTOR_CMD_SET_OBJECT, cid, 0,
+        rawstd_hash_scalar(payload->data(), payload->size()), payload
+    );
+}
+
+void Session::_list_send(std::unique_ptr<ListCtx> ctx) {
+    std::shared_ptr<Session> session = ctx->session.lock();
+    if (!session) {
+        return;
+    }
+
+    size_t len = ctx->records.size() * sizeof(RawstorOSTFrameMetaBody);
+
+    /* Same payload bound as the data commands. */
+    if (len > (1ULL << 26)) {
+        session->_send_response(RAWSTOR_CMD_LIST_CHUNKS, ctx->cid, -E2BIG, 0);
+        return;
+    }
+
+    if (len == 0) {
+        session->_send_response(RAWSTOR_CMD_LIST_CHUNKS, ctx->cid, 0, 0);
+        return;
+    }
+
+    auto payload = std::make_shared<std::vector<unsigned char>>(len);
+    memcpy(payload->data(), ctx->records.data(), len);
+
+    session->_send_response(
+        RAWSTOR_CMD_LIST_CHUNKS, ctx->cid,
+        static_cast<int32_t>(ctx->records.size()),
+        rawstd_hash_scalar(payload->data(), payload->size()), payload
+    );
+}
+
+int Session::_list_complete(int result, void* data) noexcept {
+    std::unique_ptr<ListCtx> ctx(static_cast<ListCtx*>(data));
+
+    try {
+        if (result < 0) {
+            std::shared_ptr<Session> session = ctx->session.lock();
+            if (session) {
+                session->_send_response(
+                    RAWSTOR_CMD_LIST_CHUNKS, ctx->cid, result, 0
+                );
+            }
+            return 0;
+        }
+
+        for (size_t i = 0; i < ctx->nentries; ++i) {
+            const RawstorObjectListEntry& e = ctx->entries[i];
+            std::string key(
+                reinterpret_cast<const char*>(e.obj_id), sizeof(e.obj_id)
+            );
+            if (!ctx->seen.insert(key).second) {
+                continue;
+            }
+
+            RawstorOSTFrameMetaBody body{};
+            memcpy(body.obj_id, e.obj_id, sizeof(body.obj_id));
+            body.size = e.meta.size;
+            body.epoch = e.meta.epoch;
+            body.sync_id = e.meta.sync_id;
+            memcpy(
+                body.sync_id_history, e.meta.sync_id_history,
+                sizeof(body.sync_id_history)
+            );
+            body.state = e.meta.state;
+            body.member_kind = e.meta.member_kind;
+            body.width = e.meta.width;
+            memcpy(body.volume_id, e.meta.volume_id, sizeof(body.volume_id));
+            body.logical_index = e.meta.logical_index;
+            body.chunk_size = e.meta.chunk_size;
+            body.snap_version = e.meta.snap_version;
+            ctx->records.push_back(body);
+        }
+        free(ctx->entries);
+        ctx->entries = nullptr;
+        ctx->nentries = 0;
+
+        if (ctx->session.expired()) {
+            return 0;
+        }
+
+        ++ctx->next;
+        _list_next(std::move(ctx));
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+    }
+
+    return 0;
+}
+
+void Session::_list_next(std::unique_ptr<ListCtx> ctx) {
+    if (ctx->next == ctx->locations.size()) {
+        _list_send(std::move(ctx));
+        return;
+    }
+
+    std::shared_ptr<Session> session = ctx->session.lock();
+    if (!session) {
+        return;
+    }
+
+    ListCtx* raw = ctx.get();
+    int res = rawstor_object_list_chunks_async(
+        session->_queue, raw->locations[raw->next].c_str(), &raw->entries,
+        &raw->nentries, _list_complete, raw
+    );
+    if (res < 0) {
+        session->_send_response(RAWSTOR_CMD_LIST_CHUNKS, ctx->cid, res, 0);
+        return;
+    }
+
+    ctx.release();
+}
+
+/* SNAPSHOT / SNAP_REMOVE: fan out to every backend location (val = snap_id). */
+void Session::_snapshot(
+    const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+) {
+    RawstdUUID uuid;
+    memcpy(uuid.bytes, body.obj_id, sizeof(body.obj_id));
+
+    std::vector<rawstd::URI> targets = _targets(uuid);
+
+    auto ctx =
+        std::make_unique<OpCtx>(OpCtx{weak_from_this(), head.cmd, head.cid});
+
+    int res = head.cmd == RAWSTOR_CMD_SNAPSHOT
+                  ? rawstor_object_snapshot_async(
+                        _queue, rawstd::URI::uris(targets).c_str(), body.val,
+                        _op_complete, ctx.get()
+                    )
+                  : rawstor_object_snap_remove_async(
+                        _queue, rawstd::URI::uris(targets).c_str(), body.val,
+                        _op_complete, ctx.get()
+                    );
+    if (res < 0) {
+        _send_response(head.cmd, head.cid, res, 0);
+        return;
+    }
+
+    ctx.release();
+}
+
+/*
+ * LIST_CHUNKS: the backend locations are enumerated one by one; locations
+ * of one OST mirror the same objects, so entries are deduplicated by id
+ * (identity is immutable and equal on every copy -- the first copy wins).
+ */
+void Session::_list_chunks(const RawstorOSTFrameHead& head) {
+    auto ctx = std::make_unique<ListCtx>();
+    ctx->session = weak_from_this();
+    ctx->cid = head.cid;
+    ctx->next = 0;
+    ctx->entries = nullptr;
+    ctx->nentries = 0;
+    ctx->locations.reserve(_server.locations().size());
+    for (const auto& location : _server.locations()) {
+        ctx->locations.push_back(location.str());
+    }
+
+    _list_next(std::move(ctx));
+}
+
+void Session::_unknown(const RawstorOSTFrameHead& head) {
+    rawstd_error("fd %d: Unexpected command: %u\n", _fd, head.cmd);
+
+    /*
+     * The body length of an unknown command is unknown, so the stream
+     * position is lost: answer -ENOSYS and close the session once the
+     * response is flushed.
+     */
+    _close_after_response(head, -ENOSYS);
+}
+
+void Session::_close_after_response(
+    const RawstorOSTFrameHead& head, int32_t res
+) {
+    auto response =
+        std::make_shared<RawstorOSTFrameResponse>((RawstorOSTFrameResponse){
+            .head =
+                {
+                    .magic = RAWSTOR_MAGIC,
+                    .cmd = head.cmd,
+                    .cid = head.cid,
+                },
+            .body = {
+                .res = res,
+                .len = 0,
+                .hash = 0,
+            },
+        });
+
+    auto cb = std::make_unique<IOCallback>([weak = weak_from_this(),
+                                            server = &_server, fd = _fd,
+                                            response](size_t, int) {
+        /*
+         * The session may already be gone, in which case fd is closed
+         * (and possibly reused) and there is nothing left to tear down.
+         */
+        if (weak.expired()) {
+            return;
+        }
+        server->del_session(fd);
+    });
+
+    int write_res = rawio_write(
+        _queue, _fd, response.get(), sizeof(*response), io_callback, cb.get()
+    );
+    if (write_res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-write_res);
+    }
+
+    cb.release();
+}
+
 std::vector<rawstd::URI> Session::_targets(const RawstdUUID& uuid) {
+    return _targets(uuid, 0);
+}
+
+std::vector<rawstd::URI>
+Session::_targets(const RawstdUUID& uuid, uint64_t snap) {
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&uuid, &uuid_string);
+
+    std::string name = uuid_string;
+    if (snap != 0) {
+        /* "<uuid>@<snap_id>": an immutable snapshot version. */
+        name += "@" + std::to_string(snap);
+    }
 
     std::vector<rawstd::URI> ret;
     ret.reserve(_server.locations().size());
     for (const auto& location : _server.locations()) {
-        ret.emplace_back(location, uuid_string);
+        ret.emplace_back(location, name);
     }
 
     return ret;
@@ -843,6 +1425,7 @@ void Session::_send_response(
                 },
             .body = {
                 .res = result,
+                .len = 0,
                 .hash = hash,
             },
         });
@@ -885,6 +1468,7 @@ void Session::_send_response(
                 },
             .body = {
                 .res = result,
+                .len = static_cast<uint32_t>(data->size()),
                 .hash = hash,
             },
         });

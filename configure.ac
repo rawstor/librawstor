@@ -126,6 +126,15 @@ AC_ARG_ENABLE([ost-backend], [AS_HELP_STRING([--disable-ost-backend],
 AM_CONDITIONAL([ENABLE_OST_BACKEND], [test "x$enable_ost_backend" = "xyes"])
 AC_SUBST([ENABLE_OST_BACKEND], [$enable_ost_backend])
 
+AC_ARG_WITH([mds], [AS_HELP_STRING([--without-mds],
+    [do not build the MDS server (needs sqlite3)])],
+    [with_mds=$withval],
+    [with_mds="yes"])
+AM_CONDITIONAL([WITH_MDS], [test "x$with_mds" == "xyes"])
+AS_IF([test "x$with_mds" == "xyes"], [
+    PKG_CHECK_MODULES([SQLITE3], [sqlite3])
+])
+
 AC_ARG_WITH([python3], [AS_HELP_STRING([--without-python3],
     [disable support for python3 bindings])],
     [with_python3=$withval],
@@ -167,6 +176,7 @@ AC_CONFIG_FILES(
     [ost/Makefile]
     [ost/src/Makefile]
     [ost/tests/Makefile]
+    [mds/Makefile]
     [tests/Makefile]
     [deb/librawstor/control]
     [deb/python3-rawstor/control]

@@ -9,6 +9,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - `--write-cache=on|off` for `rawstor-vhost` and `rawstor-vhost-qemu` (default `off`, write-through): advertises `VIRTIO_BLK_F_CONFIG_WCE` and honors the guest live-toggling it via `SET_CONFIG`. With write-cache off, every write is made durable (`sync=true`) since the guest treats a completed write as already durable and won't issue a `FLUSH`.
+- [Mirroring design](docs/mirroring.md): failure model, quorum rules and
+  online resync for N-way mirrors.
+- Per-copy object metadata (state/epoch/sync_id/history) alongside each
+  object copy; copies with no recorded metadata are read as legacy
+  size-only records.
+- `RAWSTOR_CMD_SET_STATE` in the OST protocol; unknown commands are now
+  answered with `-ENOSYS` before the connection is closed.
+- `rawstor_object_meta` and `rawstor_object_set_state` (sync and async)
+  public API.
+- Durable metadata updates: object create and state changes are fsynced by
+  the file backend.
+- Mirror quorum rules: opening a mirrored object requires a strict
+  majority of reachable members (`-ENOTCONN` otherwise); stale and
+  interrupted-resync copies are excluded by sync-id comparison; disjoint
+  write histories are refused (`-ENOTRECOVERABLE`).
+- Degrade & continue: a mirrored write that fails on some members is
+  acknowledged once the exclusion is durably recorded on the survivors;
+  with three or more members writes freeze below the majority.
+- Read failover across mirror members with read-repair of corrupted regions.
+- `rawstor_object_close_async`: clean close that flushes and durably marks
+  the copies CLEAN; `rawstor_object_close` stays an unclean close.
+- Online resync: a stale mirror member is brought back while the object keeps
+  serving I/O — client writes are duplicated onto the joining member while a
+  sweeper copies the rest chunk by chunk; on completion the member adopts the
+  current sync set durably and resumes serving reads.
+- Reconnect probe: an open mirrored object periodically retries its
+  unreachable members (`mirror_probe_interval` option /
+  `RAWSTOR_OPTS_MIRROR_PROBE_INTERVAL`, default 5000 ms) and resyncs them
+  on reconnection, restoring the write quorum automatically.
+- `lvm://`/`zfs://` mirror members now track real per-copy mirror state
+  (state/epoch/sync_id/history) instead of always reporting a fabricated
+  CLEAN copy: ZFS uses a `rawstor:meta` user property, LVM an
+  `rawstor.meta=...` tag, both set in the same command as object creation
+  and read/replaced natively (`zfs get`/`set`, `lvs`/`lvchange`). A volume
+  with no recorded state (created before this, or by something else) is
+  treated as untrusted and resynced, never assumed CLEAN.
+
+### Fixed
+- OST error responses no longer desync the receive stream: a server-side
+  error carries no payload, but the response frame itself was previously
+  discarded as if the connection had died, corrupting the framing of every
+  request that followed. The real errno is now also propagated instead of
+  being masked as `EPROTO`.
+- A clean close no longer marks mirror copies CLEAN when the flush that
+  was supposed to make them consistent failed.
+- A mirror exclusion racing the dirty-gate or degrade barrier is no longer
+  discarded: it stays unrecorded until a barrier actually accounts for it,
+  instead of being silently dropped by the next barrier's completion.
+- An aborted online resync could not be confused for a different resync
+  started right after it: stale chunk-copy completions from the aborted
+  attempt no longer corrupt the new one's state.
+- `rawstor_object_spec`/`rawstor_object_meta` over a mirrored target now
+  fail over across all configured members instead of only ever querying
+  the first one.
+- `rawio::uring::Queue`: a callback throwing mid-batch no longer abandons
+  and leaks the other completions already available in the same batch.
 
 ### Changed
 - `rawstor_object_pwrite()`/`rawstor_object_pwritev()` gained a `sync` parameter — when true, the write is durable on stable storage by the time the callback reports success. Breaking C API change; existing callers need to pass a `sync` argument (`false` preserves the old behavior).

@@ -87,7 +87,8 @@ public:
         _queue(queue),
         _target(target),
         _object(nullptr) {
-        RawstorObjectSpec spec{.size = size};
+        RawstorObjectSpec spec{};
+        spec.size = size;
         int res = rawstor_object_create(target.c_str(), &spec);
         if (res < 0) {
             RAWSTD_THROW_SYSTEM_ERROR(-res);
@@ -224,6 +225,8 @@ TEST(FileIOTest, basics) {
     std::string write_data = "ping";
     EXPECT_NO_THROW(object.write(write_data.data(), write_data.length()));
 
+    EXPECT_NO_THROW(object.flush());
+
     std::string read_data(4, '\0');
     EXPECT_NO_THROW(object.read(read_data.data(), read_data.length()));
 
@@ -255,6 +258,7 @@ TEST(OstIOTest, basics) {
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_handshake();
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
@@ -262,11 +266,13 @@ TEST(OstIOTest, basics) {
         rawstor::tests::Session s(server);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
         s.cmd_write(RAWSTOR_MAGIC, 1, 4);
-        s.cmd_read(RAWSTOR_MAGIC, 2, "pong", 4);
+        s.cmd_flush(RAWSTOR_MAGIC, 2, 0);
+        s.cmd_read(RAWSTOR_MAGIC, 3, "pong", 4);
     }
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_handshake();
         s.cmd_release(RAWSTOR_MAGIC, 0, 0);
     }
 
@@ -274,6 +280,8 @@ TEST(OstIOTest, basics) {
 
     std::string ping = "ping";
     EXPECT_NO_THROW(object.write(ping.data(), ping.length()));
+
+    EXPECT_NO_THROW(object.flush());
 
     std::string pong(4, '\0');
     EXPECT_NO_THROW(object.read(pong.data(), pong.length()));
@@ -318,6 +326,7 @@ TEST(OstIOTest, set_object_fail) {
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_handshake();
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
@@ -339,6 +348,7 @@ TEST(OstIOTest, set_object_error) {
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_handshake();
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
@@ -360,6 +370,7 @@ TEST(OstIOTest, set_object_disconnect) {
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_handshake();
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
@@ -380,6 +391,7 @@ TEST(OstIOTest, write_fail) {
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_handshake();
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
@@ -391,6 +403,7 @@ TEST(OstIOTest, write_fail) {
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_handshake();
         s.cmd_release(RAWSTOR_MAGIC, 0, 0);
     }
 
@@ -408,6 +421,7 @@ TEST(OstIOTest, write_error) {
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_handshake();
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
@@ -420,6 +434,7 @@ TEST(OstIOTest, write_error) {
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_handshake();
         s.cmd_release(RAWSTOR_MAGIC, 0, 0);
     }
 
@@ -474,6 +489,7 @@ TEST(OstIOTest, write_disconnect) {
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_handshake();
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
@@ -485,6 +501,7 @@ TEST(OstIOTest, write_disconnect) {
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_handshake();
         s.cmd_release(RAWSTOR_MAGIC, 0, 0);
     }
 
@@ -582,6 +599,79 @@ TEST(OstIOTest, write_disconnect_concurrent) {
     EXPECT_TRUE(done2) << "second write orphaned (never completed)";
     EXPECT_NE(err1, 0);
     EXPECT_NE(err2, 0);
+}
+
+TEST(OstIOTest, snapshot_read_only) {
+    Queue queue(16);
+    rawstor::tests::Server server(8753, 256);
+
+    /*
+     * A two-member snapshot target with the second member down: an
+     * immutable snapshot version needs no quorum — one reachable member
+     * serves reads, and the mirror state machine is bypassed (no
+     * metadata compare, no barriers).
+     */
+    std::string target =
+        "ost://127.0.0.1:8753/00000000-0000-7000-8000-000000000000@5"
+        ",ost://127.0.0.1:8754/00000000-0000-7000-8000-000000000000@5";
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_read(RAWSTOR_MAGIC, 1, "snap", 4);
+    }
+
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(rawstor_object_open(queue, target.c_str(), &object), 0);
+
+    {
+        char buf[4] = {};
+        bool completed = false;
+        auto cb = std::make_unique<std::function<void(size_t, int)>>(
+            [&completed](size_t result, int error) {
+                EXPECT_EQ(error, 0);
+                EXPECT_EQ(result, 4u);
+                completed = true;
+            }
+        );
+        ASSERT_EQ(
+            rawstor_object_pread(
+                object, buf, sizeof(buf), 0, callback, cb.get()
+            ),
+            0
+        );
+        cb.release();
+        while (!completed) {
+            queue.wait();
+        }
+        EXPECT_EQ(memcmp(buf, "snap", 4), 0);
+    }
+
+    {
+        /* Writes to an immutable version fail without touching the wire. */
+        char buf[4] = {};
+        bool completed = false;
+        int write_error = 0;
+        auto cb = std::make_unique<std::function<void(size_t, int)>>(
+            [&completed, &write_error](size_t, int error) {
+                write_error = error;
+                completed = true;
+            }
+        );
+        ASSERT_EQ(
+            rawstor_object_pwrite(
+                object, buf, sizeof(buf), 0, /*sync=*/false, callback, cb.get()
+            ),
+            0
+        );
+        cb.release();
+        while (!completed) {
+            queue.wait();
+        }
+        EXPECT_EQ(write_error, EROFS);
+    }
+
+    EXPECT_EQ(rawstor_object_close(object), 0);
 }
 
 } // unnamed namespace

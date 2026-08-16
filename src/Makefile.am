@@ -34,22 +34,40 @@ librawstor_la_HEADERS = $(top_srcdir)/include/rawstor/list.h \
 
 librawstor_la_SOURCES = blk_session.cpp \
                         blk_session.hpp \
+                        blkdev_meta.cpp \
+                        blkdev_meta.hpp \
+                        blkdev_session.cpp \
+                        blkdev_session.hpp \
                         connection.cpp \
                         connection.hpp \
                         file_session.cpp \
                         file_session.hpp \
                         list.c \
+                        lvm_session.cpp \
+                        lvm_session.hpp \
+                        mds_client.cpp \
+                        mds_client.hpp \
                         object.cpp \
                         object.hpp \
                         ost_session.cpp \
                         ost_session.hpp \
                         opts.c \
                         opts.h \
+                        placement.cpp \
+                        placement.hpp \
                         session.cpp \
                         session.hpp \
                         rawstor.cpp \
                         telemetry.cpp \
-                        telemetry.hpp
+                        telemetry.hpp \
+                        topology.cpp \
+                        topology.hpp \
+                        volume.cpp \
+                        volume.hpp \
+                        worker.cpp \
+                        worker.hpp \
+                        zfs_session.cpp \
+                        zfs_session.hpp
 
 librawstor_la_LDFLAGS = -version-info $(LIBRARY_VERSION)
 

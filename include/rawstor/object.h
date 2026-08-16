@@ -40,8 +40,35 @@ typedef struct RawstorObject RawstorObject;
  * @see rawstor_object_spec
  * @see rawstor_object_create
  */
+/** Chunk member kinds (rawstor_docs/Mds.md, chunk_meta.member_kind). */
+#define RAWSTOR_MEMBER_DATA 0u
+#define RAWSTOR_MEMBER_WITNESS 1u /* metadata-only quorum member; stage 3 */
+
 struct RawstorObjectSpec {
     uint64_t size; /**< Size of the object in bytes. */
+
+    /*
+     * Volume policy, mds:// targets only (rawstor_docs/Mds.md). Zeros are
+     * defaults that degenerate to a single-chunk, single-copy volume -
+     * which behaves exactly like a plain object.
+     */
+    uint64_t chunk_size;    /**< Power of two; 0 = one chunk spans the
+                                 volume. */
+    uint64_t stripe_width;  /**< K; 0 = spread every chunk, 1 =
+                                 volume-local. */
+    uint8_t width;          /**< Copies per chunk; 0 = 1. */
+    uint8_t failure_domain; /**< RAWSTOR_VOL_DOMAIN_*; default server. */
+
+    /*
+     * Placement identity of a chunk object (rawstor_docs/Mds.md,
+     * chunk_meta): stamped at create by the volume layer, immutable
+     * afterwards (set_state never touches it), the source for the map
+     * reconstruct scan. An all-zero volume_id is a standalone object.
+     */
+    uint8_t member_kind;    /**< RAWSTOR_MEMBER_*. */
+    uint8_t volume_id[16];  /**< Parent volume; all-zero = standalone. */
+    uint64_t logical_index; /**< Chunk position within the volume. */
+    uint64_t snap_version;  /**< snap_id this copy belongs to; 0 = live. */
 };
 
 /**
@@ -71,9 +98,58 @@ struct RawstorObjectSpec {
  * @note          The callback may be invoked from an I/O completion context.
  *                Avoid blocking operations inside the callback.
  */
+
 typedef int(RawstorCallback)(
     RawstorObject* object, size_t size, size_t result, int error, void* data
 );
+
+/**
+ * Mirror consistency states of an object copy (see docs/mirroring.md).
+ *
+ * CLEAN   - the copy was closed correctly; all acknowledged writes are on it.
+ * DIRTY   - the copy is open for writing; it may diverge from its mirrors in
+ *           regions covered by unacknowledged writes.
+ * SYNCING - a resync onto this copy was started and has not completed; the
+ *           copy content must not be trusted.
+ */
+#define RAWSTOR_OBJECT_STATE_CLEAN 0u
+#define RAWSTOR_OBJECT_STATE_DIRTY 1u
+#define RAWSTOR_OBJECT_STATE_SYNCING 2u
+
+/** Number of ancestor sync ids kept in RawstorObjectMeta. */
+#define RAWSTOR_OBJECT_SYNC_ID_HISTORY 4
+
+/**
+ * @brief Object copy metadata.
+ *
+ * Extends RawstorObjectSpec with the mirror consistency state of a single
+ * object copy (see docs/mirroring.md). A sync_id of 0 marks a blank copy
+ * that has never been part of an established sync set; such copies are
+ * treated as CLEAN and identical right after creation.
+ *
+ * @see rawstor_object_meta
+ * @see rawstor_object_set_state
+ */
+struct RawstorObjectMeta {
+    uint64_t size;    /**< Size of the object in bytes. */
+    uint64_t epoch;   /**< Bumped on every mirror-set health change. */
+    uint64_t sync_id; /**< Id of the sync set this copy belongs to. */
+    /** Ancestor sync ids, newest first; 0 marks unused entries. */
+    uint64_t sync_id_history[RAWSTOR_OBJECT_SYNC_ID_HISTORY];
+    uint32_t state; /**< One of RAWSTOR_OBJECT_STATE_*. */
+
+    /*
+     * Placement identity (see RawstorObjectSpec) plus the volume policy
+     * recorded on the chunk: written at create, immutable, ignored by
+     * rawstor_object_set_state() - the stored values always win.
+     */
+    uint8_t member_kind;
+    uint8_t width; /**< Redundancy: copies per chunk. */
+    uint8_t volume_id[16];
+    uint64_t logical_index;
+    uint64_t chunk_size;
+    uint64_t snap_version;
+};
 
 /**
  * @brief Retrieve metadata about a stored object.
@@ -222,6 +298,52 @@ int rawstor_object_list(
 ) RAWSTOR_NOEXCEPT;
 
 /**
+ * @brief Retrieve full metadata of a stored object copy.
+ *
+ * Like rawstor_object_spec(), but fills the full per-copy metadata record
+ * including the mirror consistency state. Only the first target of a
+ * comma-separated list is queried.
+ *
+ * Legacy copies created before metadata support report size only, with
+ * state CLEAN, epoch 0 and sync_id 0.
+ *
+ * @param target  Target string, see rawstor_object_spec().
+ * @param meta    Pointer to a RawstorObjectMeta structure that will be
+ *                filled with the copy's metadata on success.
+ *
+ * @return 0 on success, negative errno on error.
+ *
+ * @see RawstorObjectMeta
+ * @see rawstor_object_spec
+ */
+int rawstor_object_meta(
+    const char* target, struct RawstorObjectMeta* meta
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Update the mirror consistency state of an object.
+ *
+ * Persists the state, epoch, sync_id and sync_id_history fields of @p meta
+ * on every backend listed in @p target; the first error encountered is
+ * reported. The object size cannot be changed through this call: the size
+ * field of @p meta is ignored and the stored size is preserved.
+ *
+ * The update is durable: it is synced to stable storage before the call
+ * completes successfully.
+ *
+ * @param target  Target string, see rawstor_object_spec().
+ * @param meta    Metadata record to persist (size field ignored).
+ *
+ * @return 0 on success, negative errno on error.
+ *
+ * @see RawstorObjectMeta
+ * @see rawstor_object_meta
+ */
+int rawstor_object_set_state(
+    const char* target, const struct RawstorObjectMeta* meta
+) RAWSTOR_NOEXCEPT;
+
+/**
  * @brief Create a new empty object at the specified target.
  *
  * This function creates an object at the exact target location given by the
@@ -345,6 +467,299 @@ int rawstor_object_create_at(
 int rawstor_object_remove(const char* target) RAWSTOR_NOEXCEPT;
 
 /**
+ * @brief Asynchronously retrieve metadata about a stored object.
+ *
+ * Non-blocking variant of rawstor_object_spec(). The operation is driven by
+ * @p queue; @p cb is invoked exactly once from the queue completion context
+ * with 0 on success or a negative errno value on failure. On success @p spec
+ * is filled before @p cb is invoked; it must stay valid until then.
+ *
+ * @param queue   I/O queue that drives the operation.
+ * @param target  Target string, see rawstor_object_spec().
+ * @param spec    Pointer to a RawstorObjectSpec structure that will be
+ *                filled with the object's metadata on success. Must stay
+ *                valid until @p cb is invoked.
+ * @param cb      Completion callback.
+ * @param data    Opaque pointer passed to @p cb.
+ *
+ * @return 0 if the operation was started, negative errno otherwise (in which
+ *         case @p cb is never invoked).
+ *
+ * @see rawstor_object_spec
+ */
+int rawstor_object_spec_async(
+    RawIOQueue* queue, const char* target, struct RawstorObjectSpec* spec,
+    int (*cb)(int result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Asynchronously retrieve full metadata of a stored object copy.
+ *
+ * Non-blocking variant of rawstor_object_meta(). The operation is driven by
+ * @p queue; @p cb is invoked exactly once from the queue completion context
+ * with 0 on success or a negative errno value on failure. On success @p meta
+ * is filled before @p cb is invoked; it must stay valid until then.
+ *
+ * @param queue   I/O queue that drives the operation.
+ * @param target  Target string, see rawstor_object_spec().
+ * @param meta    Pointer to a RawstorObjectMeta structure that will be
+ *                filled with the copy's metadata on success. Must stay
+ *                valid until @p cb is invoked.
+ * @param cb      Completion callback.
+ * @param data    Opaque pointer passed to @p cb.
+ *
+ * @return 0 if the operation was started, negative errno otherwise (in which
+ *         case @p cb is never invoked).
+ *
+ * @see rawstor_object_meta
+ */
+int rawstor_object_meta_async(
+    RawIOQueue* queue, const char* target, struct RawstorObjectMeta* meta,
+    int (*cb)(int result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Asynchronously update the mirror consistency state of an object.
+ *
+ * Non-blocking variant of rawstor_object_set_state(). The operation is
+ * driven by @p queue; @p cb is invoked exactly once from the queue
+ * completion context with 0 on success or a negative errno value on failure.
+ *
+ * @param queue   I/O queue that drives the operation.
+ * @param target  Target string, see rawstor_object_spec().
+ * @param meta    Metadata record to persist (size field ignored). Copied
+ *                internally; does not need to stay valid after the call
+ *                returns.
+ * @param cb      Completion callback.
+ * @param data    Opaque pointer passed to @p cb.
+ *
+ * @return 0 if the operation was started, negative errno otherwise (in which
+ *         case @p cb is never invoked).
+ *
+ * @see rawstor_object_set_state
+ */
+/**
+ * @brief One stored object of a location listing.
+ *
+ * @see rawstor_object_list
+ */
+struct RawstorObjectListEntry {
+    uint8_t obj_id[16]; /**< Physical object id. */
+    struct RawstorObjectMeta meta;
+};
+
+/**
+ * @brief Enumerate the objects stored at a location.
+ *
+ * Lists every object of a single backend location (not a target: no UUID,
+ * no comma-separated lists) together with its metadata — the source of the
+ * MDS map reconstruct scan (rawstor_docs/Mds.md, "Reconstruct / DR") over
+ * CMD_LIST_CHUNKS. Objects whose metadata cannot be read are skipped with
+ * an error logged: a reconstruct scan must salvage the readable copies, and
+ * every skipped copy is covered by its mirrors.
+ *
+ * @param location  Location string (e.g. "file:///var/rawstor",
+ *                  "ost://127.0.0.1:8080").
+ * @param entries   On success *entries points to a malloc'd array that the
+ *                  caller releases with free(). NULL when *nentries is 0.
+ * @param nentries  Number of entries returned.
+ *
+ * @return 0 on success, negative errno otherwise.
+ *
+ * @see rawstor_object_meta
+ */
+int rawstor_object_list_chunks(
+    const char* location, struct RawstorObjectListEntry** entries,
+    size_t* nentries
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Asynchronously enumerate the objects stored at a location.
+ *
+ * Non-blocking variant of rawstor_object_list(). The operation is driven by
+ * @p queue; @p cb is invoked exactly once from the queue completion context
+ * with 0 on success or a negative errno value on failure. On success
+ * *entries and *nentries are filled before @p cb is invoked; both must stay
+ * valid until then. The caller releases *entries with free().
+ *
+ * @return 0 if the operation was started, negative errno otherwise (in
+ *         which case @p cb is never invoked).
+ *
+ * @see rawstor_object_list
+ */
+int rawstor_object_list_chunks_async(
+    RawIOQueue* queue, const char* location,
+    struct RawstorObjectListEntry** entries, size_t* nentries,
+    int (*cb)(int result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+int rawstor_object_set_state_async(
+    RawIOQueue* queue, const char* target, const struct RawstorObjectMeta* meta,
+    int (*cb)(int result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Take a native CoW snapshot of an object as version @p snap_id.
+ *
+ * The snapshot is taken on every backend listed in @p target; the first
+ * error encountered is returned, the remaining backends are still
+ * attempted. The caller owns crash consistency: all acknowledged writes
+ * must be flushed before the call (rawstor_docs/Mds.md, "Snapshots").
+ *
+ * @param target   Target string, see rawstor_object_spec().
+ * @param snap_id  Version id; must not be 0 (0 is the live version).
+ *
+ * @return 0 on success, negative errno otherwise.
+ * @retval -ENOTSUP  A backend has no CoW (file://, classic LVM) — no
+ *                   fallback copies are made behind the caller's back.
+ */
+int rawstor_object_snapshot(
+    const char* target, uint64_t snap_id
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Non-blocking variant of rawstor_object_snapshot().
+ *
+ * @return 0 if the operation was started, negative errno otherwise (in
+ *         which case @p cb is never invoked).
+ */
+int rawstor_object_snapshot_async(
+    RawIOQueue* queue, const char* target, uint64_t snap_id,
+    int (*cb)(int result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Destroy snapshot version @p snap_id of an object.
+ *
+ * Fan-out semantics as rawstor_object_snapshot().
+ *
+ * @return 0 on success, negative errno otherwise.
+ */
+int rawstor_object_snap_remove(
+    const char* target, uint64_t snap_id
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Non-blocking variant of rawstor_object_snap_remove().
+ *
+ * @return 0 if the operation was started, negative errno otherwise (in
+ *         which case @p cb is never invoked).
+ */
+int rawstor_object_snap_remove_async(
+    RawIOQueue* queue, const char* target, uint64_t snap_id,
+    int (*cb)(int result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Snapshot an MDS-backed volume.
+ *
+ * Two-phase, per rawstor_docs/Mds.md "Snapshots": the MDS reserves the
+ * snap_id, every chunk is opened (a regular mirrored open — it
+ * establishes the IN-SYNC member set), flushed and CoW-snapshotted on
+ * its IN-SYNC members, and the participants are registered. The caller
+ * guarantees no concurrent writer. The snapshot is later read through
+ * the regular open with an "@<snap_id>" target suffix
+ * (mds://host:port/<volume_id>@<snap_id>) and is immutable.
+ *
+ * @param target   A single mds:// volume target.
+ * @param snap_id  Filled with the created snapshot id on success.
+ *
+ * @return 0 on success, negative errno otherwise.
+ * @retval -ENOTSUP  A chunk member has no CoW backend (file://, classic
+ *                   LVM) — nothing is registered.
+ */
+int rawstor_volume_snapshot(
+    const char* target, uint64_t* snap_id
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Non-blocking variant of rawstor_volume_snapshot().
+ *
+ * @return 0 if the operation was started, negative errno otherwise (in
+ *         which case @p cb is never invoked).
+ */
+int rawstor_volume_snapshot_async(
+    RawIOQueue* queue, const char* target, uint64_t* snap_id,
+    int (*cb)(int result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Remove a volume snapshot.
+ *
+ * The MDS unregisters the snapshot first (no new readers), then the
+ * per-chunk CoWs are destroyed on the recorded members. A crash in
+ * between leaves unregistered backend snapshots — garbage reconciled by
+ * the reconstruct scan, never a dangling registration.
+ *
+ * @return 0 on success, negative errno otherwise.
+ */
+int rawstor_volume_snap_remove(
+    const char* target, uint64_t snap_id
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Non-blocking variant of rawstor_volume_snap_remove().
+ *
+ * @return 0 if the operation was started, negative errno otherwise (in
+ *         which case @p cb is never invoked).
+ */
+int rawstor_volume_snap_remove_async(
+    RawIOQueue* queue, const char* target, uint64_t snap_id,
+    int (*cb)(int result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Asynchronously create a new empty object at the specified target.
+ *
+ * Non-blocking variant of rawstor_object_create(). The operation is driven
+ * by @p queue; @p cb is invoked exactly once from the queue completion
+ * context with 0 on success or a negative errno value on failure. If the
+ * target contains multiple URIs (mirroring or locality), the object is
+ * created on every backend in the list; on failure, targets already created
+ * are removed before @p cb is invoked.
+ *
+ * @param queue   I/O queue that drives the operation.
+ * @param target  Target string, see rawstor_object_create().
+ * @param spec    Desired object metadata. Copied internally; does not need
+ *                to stay valid after the call returns.
+ * @param cb      Completion callback.
+ * @param data    Opaque pointer passed to @p cb.
+ *
+ * @return 0 if the operation was started, negative errno otherwise (in which
+ *         case @p cb is never invoked).
+ *
+ * @see rawstor_object_create
+ */
+int rawstor_object_create_async(
+    RawIOQueue* queue, const char* target, const struct RawstorObjectSpec* spec,
+    int (*cb)(int result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Asynchronously remove an object.
+ *
+ * Non-blocking variant of rawstor_object_remove(). The operation is driven
+ * by @p queue; @p cb is invoked exactly once from the queue completion
+ * context with 0 on success or a negative errno value on failure. If the
+ * target contains multiple URIs, the object is removed from every backend
+ * in the list even if some of them fail; the first error is reported.
+ *
+ * @param queue   I/O queue that drives the operation.
+ * @param target  Target string, see rawstor_object_remove().
+ * @param cb      Completion callback.
+ * @param data    Opaque pointer passed to @p cb.
+ *
+ * @return 0 if the operation was started, negative errno otherwise (in which
+ *         case @p cb is never invoked).
+ *
+ * @see rawstor_object_remove
+ */
+int rawstor_object_remove_async(
+    RawIOQueue* queue, const char* target, int (*cb)(int result, void* data),
+    void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
  * @brief Open an existing object for reading and/or writing.
  *
  * Given a target string (as defined in the Rawstor location/target syntax),
@@ -386,6 +801,32 @@ int rawstor_object_open(
 ) RAWSTOR_NOEXCEPT;
 
 /**
+ * @brief Asynchronously open an existing object.
+ *
+ * Non-blocking variant of rawstor_object_open(). The operation is driven by
+ * @p queue; @p cb is invoked exactly once from the queue completion context.
+ * On success @p result is 0 and @p object is a valid handle that must be
+ * closed with rawstor_object_close(). On failure @p result is a negative
+ * errno value and @p object is NULL.
+ *
+ * @param queue   I/O queue that drives the operation and subsequent I/O on
+ *                the opened object.
+ * @param target  Target string, see rawstor_object_open().
+ * @param cb      Completion callback.
+ * @param data    Opaque pointer passed to @p cb.
+ *
+ * @return 0 if the operation was started, negative errno otherwise (in which
+ *         case @p cb is never invoked).
+ *
+ * @see rawstor_object_open
+ * @see rawstor_object_close
+ */
+int rawstor_object_open_async(
+    RawIOQueue* queue, const char* target,
+    int (*cb)(RawstorObject* object, int result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
  * @brief Close an opened object and release associated resources.
  *
  * This function closes a RawstorObject handle previously obtained via
@@ -402,6 +843,34 @@ int rawstor_object_open(
  * @see rawstor_object_open
  */
 int rawstor_object_close(RawstorObject* object) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Cleanly close an opened object.
+ *
+ * Flushes completed writes to stable storage, durably marks the in-sync
+ * copies CLEAN and releases the handle. @p cb is invoked exactly once from
+ * the queue completion context; the handle is invalid once this function
+ * returns 0, even if @p cb later reports an error. On errors the affected
+ * copies are left DIRTY (the safe direction: they will be treated as
+ * potentially divergent on the next open) and the first error is reported.
+ *
+ * There must be no I/O in flight on the object when this is called.
+ *
+ * Note that rawstor_object_close() performs an *unclean* close: it releases
+ * the handle without flushing or marking the copies CLEAN.
+ *
+ * @param object  Open object handle obtained from rawstor_object_open().
+ * @param cb      Completion callback.
+ * @param data    Opaque pointer passed to @p cb.
+ *
+ * @return 0 if the close was started, negative errno otherwise (in which
+ *         case @p cb is never invoked and the handle stays valid).
+ *
+ * @see rawstor_object_close
+ */
+int rawstor_object_close_async(
+    RawstorObject* object, int (*cb)(int result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
 
 /**
  * @brief Retrieve the UUID of an open object.

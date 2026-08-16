@@ -15,6 +15,7 @@ extern "C" {
 //     unsigned int so_rcvtimeo;
 //     unsigned int tcp_user_timeout;
 //     unsigned int list_limit;
+//     unsigned int wait_device_timeout;
 // };
 
 int rawstor_opts_initialize(const struct RawstorOpts* opts);
@@ -32,6 +33,10 @@ unsigned int rawstor_opts_so_rcvtimeo(void);
 unsigned int rawstor_opts_tcp_user_timeout(void);
 
 unsigned int rawstor_opts_list_limit(void);
+
+unsigned int rawstor_opts_wait_device_timeout(void);
+
+unsigned int rawstor_opts_mirror_probe_interval(void);
 
 #ifdef __cplusplus
 }

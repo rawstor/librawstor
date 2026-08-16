@@ -12,6 +12,8 @@
 #include <cstdint>
 #include <deque>
 #include <memory>
+#include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace rawstor {
@@ -34,6 +36,39 @@ private:
         std::shared_ptr<std::vector<unsigned char>> data;
     };
 
+    /*
+     * Completion context for an async object operation (allocate/release/
+     * open). The session may be destroyed while the operation is in
+     * flight, in which case the weak_ptr fails to lock and no response is
+     * sent: _fd may already be closed or reused by another session.
+     */
+    struct OpCtx {
+        std::weak_ptr<Session> session;
+        RawstorOSTCommandType cmd;
+        uint16_t cid;
+    };
+
+    /* Accumulator for the LIST_CHUNKS scan; see _list_chunks(). */
+    struct ListCtx {
+        std::weak_ptr<Session> session;
+        uint16_t cid;
+        std::vector<std::string> locations;
+        size_t next;
+        /* rawstor_object_list_async() output for the location in flight. */
+        RawstorObjectListEntry* entries;
+        size_t nentries;
+        std::unordered_set<std::string> seen;
+        std::vector<RawstorOSTFrameMetaBody> records;
+    };
+
+    /* Completion context for the async META query; see _meta(). */
+    struct MetaCtx {
+        std::weak_ptr<Session> session;
+        uint16_t cid;
+        uint8_t obj_id[16];
+        RawstorObjectMeta meta;
+    };
+
     RawIOQueue* _queue;
     Server& _server;
     int _fd;
@@ -42,7 +77,10 @@ private:
     RawstorOSTFrameHead _request_head;
     union {
         RawstorOSTFrameBasicBody basic;
+        RawstorOSTFrameSetObjectBody setobj;
+        RawstorOSTFrameAllocateBody alloc;
         RawstorOSTFrameIOBody io;
+        RawstorOSTFrameMetaBody meta;
     } _request_body;
     RawstorObject* _object;
     // Writes dispatched to rawstor_object_pwrite() whose completion hasn't
@@ -56,9 +94,33 @@ private:
     // bound.
     size_t _pending_writes_bytes;
 
+    /*
+     * SET_OBJECT (the handshake) was received: it must be the first
+     * command on every connection, anything else before it is a protocol
+     * violation (the misconnection guard).
+     */
+    bool _handshaken;
+
+    /* An object open is in flight; a concurrent SET_OBJECT gets EBUSY. */
+    bool _open_pending;
+
     // Arms the multishot recv; only ever called once, from the
     // constructor.
     void _arm_recv();
+    // Completions of the async object operations started by _allocate(),
+    // _release() and _set_object(); each takes ownership of the OpCtx
+    // passed as `data`.
+    static int _op_complete(int result, void* data) noexcept;
+    static int
+    _open_complete(RawstorObject* object, int result, void* data) noexcept;
+    static int _meta_complete(int result, void* data) noexcept;
+
+    static void _list_next(std::unique_ptr<ListCtx> ctx);
+    static void _list_send(std::unique_ptr<ListCtx> ctx);
+    static int _list_complete(int result, void* data) noexcept;
+
+    void _send_hello(uint16_t cid);
+
     static ssize_t _recv(
         const iovec* iov, unsigned int niov, size_t result, int error,
         void* data
@@ -68,11 +130,14 @@ private:
     ssize_t _recv_head(const iovec* iov, unsigned int niov, size_t result);
     ssize_t _recv_body(const iovec* iov, unsigned int niov, size_t result);
     ssize_t _recv_data(const iovec* iov, unsigned int niov, size_t result);
+    // Drains and discards the body of a request this server cannot serve,
+    // so the stream stays framed after an -ENOSYS response.
+    ssize_t _recv_ignore(const iovec* iov, unsigned int niov, size_t result);
     void _list(
         const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
     );
     void _allocate(
-        const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+        const RawstorOSTFrameHead& head, const RawstorOSTFrameAllocateBody& body
     );
     void _release(
         const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
@@ -84,7 +149,8 @@ private:
         const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
     );
     void _set_object(
-        const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+        const RawstorOSTFrameHead& head,
+        const RawstorOSTFrameSetObjectBody& body
     );
     void
     _read(const RawstorOSTFrameHead& head, const RawstorOSTFrameIOBody& body);
@@ -105,10 +171,28 @@ private:
     void _discard(
         const RawstorOSTFrameHead& head, const RawstorOSTFrameIOBody& body
     );
+    void _meta(
+        const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+    );
+    void _set_state(
+        const RawstorOSTFrameHead& head, const RawstorOSTFrameMetaBody& body
+    );
+    /* CMD_LIST_CHUNKS: enumerate every object with its metadata. */
+    void _list_chunks(const RawstorOSTFrameHead& head);
+    void _snapshot(
+        const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+    );
     void _flush(
         const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
     );
+    void _unknown(const RawstorOSTFrameHead& head);
+
+    /* Send a final response, then close the session once it is flushed. */
+    void _close_after_response(const RawstorOSTFrameHead& head, int32_t res);
+
     std::vector<rawstd::URI> _targets(const RawstdUUID& uuid);
+    /* snap != 0 appends "@<snap>": the immutable snapshot version. */
+    std::vector<rawstd::URI> _targets(const RawstdUUID& uuid, uint64_t snap);
 
     // Tears the session down via Server::del_session() if the send itself
     // fails (e.g. a short write).

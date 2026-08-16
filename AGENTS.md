@@ -17,12 +17,41 @@ The two headline consumers are:
 
 - **Location**: address of a backend store, `<scheme>://<endpoint>`,
   comma-separated for multiple backends. Schemes: `ost://host:port` (a
-  server speaking the OST wire protocol) and `file:///path` (local
-  filesystem). Multiple comma-separated locations mean either mirroring
-  (two `ost://`) or data locality (a `file://` cache in front of an
-  `ost://` remote). See `docs/locations_and_targets.md`.
+  server speaking the OST wire protocol), `file:///path` (local
+  filesystem), `lvm:///dev/<vg>` (an LV per object) and
+  `zfs:///<dataset>` (a zvol per object). Multiple comma-separated
+  locations mean either mirroring (two `ost://`) or data locality (a
+  `file://` cache in front of an `ost://` remote). See
+  `docs/locations_and_targets.md`.
+- **Storage backends**: every backend implements the `rawstor::Session`
+  abstract class (`src/session.hpp`); the factory that maps a scheme to
+  one is in `src/session.cpp`. `lvm://` and `zfs://` share the
+  `rawstor::BlkdevSession` base (`src/blkdev_session.{hpp,cpp}`), which
+  covers `spec` (`ioctl BLKGETSIZE64`), `set_object` (open the device
+  node) and the whole pread/pwrite path; the subclasses only supply
+  `create`/`remove`, which shell out to `lvcreate`/`lvremove` and
+  `zfs create`/`zfs destroy` via `posix_spawnp` and observe the exit
+  through a pidfd on the io queue. After a create, the device node is
+  awaited on a timerfd bounded by the `wait_device_timeout` option.
+  Sizes are rounded up by the backend (LVM to the VG extent size, ZFS to
+  volblocksize), so `spec` reports the real device size, not the
+  requested one. Both need `lvcreate`/`lvremove`/`zfs` in `PATH` and the
+  privileges to run them.
 - **Target**: a Location with a UUID appended to each URI — addresses one
   specific object, possibly replicated across the backends in the list.
+- **Mirroring**: a multi-backend target is an N-way mirror, and each copy
+  carries its own metadata record (state CLEAN/DIRTY/SYNCING, epoch,
+  sync_id and a short sync_id history) rather than having its health
+  inferred from I/O errors. Opening needs a strict majority of reachable
+  members; a member that fails a write is degraded out of the sync set
+  (durably, on the survivors) and the write is still acknowledged; reads
+  fail over to a healthy member and read-repair what they find corrupted.
+  A degraded member rejoins through an online resync that runs while the
+  object keeps serving I/O, and an open object re-probes its unreachable
+  members every `mirror_probe_interval` ms. `lvm://`/`zfs://` copies store
+  the same record natively (an LVM tag / a ZFS user property) instead of a
+  sidecar file. The full failure model and the rules that follow from it
+  are in `docs/mirroring.md` — read it before touching this code.
 - **OST protocol**: the binary wire protocol `rawstor-ost` speaks and
   `librawstor`'s client implements. Frame layout (magic, command, cid) is
   in `include/rawstor/protocol.h`; the authoritative spec lives in the
@@ -38,6 +67,17 @@ The two headline consumers are:
   completion (io_uring's `IORING_POLL_ADD_MULTI` and the `poll()` backend
   can otherwise redeliver "readable" more than once per batch for a single
   registration).
+- **Async control plane**: create/remove/spec/open and `set_object` all
+  have async forms that take a caller-supplied queue and complete via a
+  callback — `rawstor_object_{create,remove,spec,open}_async()` in the
+  public API, `Connection::{create,remove,spec}()` and
+  `Session::set_object()` internally. The synchronous entry points are
+  thin wrappers around them. This is what lets `rawstor-ost` serve
+  ALLOCATE/RELEASE/SET_OBJECT without blocking its event loop; the
+  completion callback holds a `weak_ptr` to the session, so a response is
+  simply dropped if the session died while the operation was in flight
+  (its fd may already be closed or reused). Callbacks run from an I/O
+  completion context — never block inside one.
 
 ## Layout
 

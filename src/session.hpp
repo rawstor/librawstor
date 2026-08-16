@@ -15,6 +15,7 @@
 #include <list>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace rawstor {
 
@@ -57,6 +58,12 @@ public:
             cb
     ) = 0;
 
+    /*
+     * Establishes the backend connection. Local backends have nothing to
+     * connect and complete immediately.
+     */
+    virtual void connect(std::function<void(int)>&& cb) { cb(0); }
+
     virtual void create(
         const RawstdUUID& id, const RawstorObjectSpec& sp,
         std::function<void(int)>&& cb
@@ -70,10 +77,61 @@ public:
         std::function<void(const RawstorObjectSpec&, int)>&& cb
     ) = 0;
 
+    /*
+     * Like spec(), but reports the full per-copy record including the
+     * mirror consistency state (see docs/mirroring.md), for one version of
+     * the object: snap = 0 is the live copy, anything else an immutable
+     * snapshot version (its consistency-state fields are frozen at
+     * snapshot time; size is what matters). ENOTSUP for snapshots on
+     * backends without CoW.
+     */
+    virtual void meta(
+        const RawstdUUID& id, uint64_t snap,
+        std::function<void(const RawstorObjectMeta&, int)>&& cb
+    ) = 0;
+
+    /*
+     * Persists the mirror consistency state of the object durably (synced
+     * to stable storage before cb fires). The size field of meta is ignored:
+     * the stored size is preserved.
+     */
+    virtual void set_state(
+        const RawstdUUID& id, const RawstorObjectMeta& meta,
+        std::function<void(int)>&& cb
+    ) = 0;
+
     virtual void
     info(std::function<void(const RawstorLocationInfo&, int)>&& cb) = 0;
 
-    virtual void set_object(Object* object) = 0;
+    /*
+     * Enumerates every stored object with its metadata: the source of the
+     * MDS reconstruct scan (CMD_LIST_CHUNKS). Unlike list(), which paginates
+     * bare UUIDs for `rawstor list`, this reports the full per-copy record
+     * and does so in one shot. Objects whose metadata cannot be read are
+     * skipped with an error logged -- the scan salvages the readable
+     * copies; an unreadable copy is unusable anyway and its chunk is
+     * covered by the mirrors.
+     */
+    virtual void list_chunks(
+        std::function<void(std::vector<RawstorObjectListEntry>&&, int)>&& cb
+    ) = 0;
+
+    /*
+     * Native CoW snapshot of the object as version snap_id (never 0 — 0 is
+     * the live version). The caller owns crash consistency: all
+     * acknowledged writes must be flushed before the call. ENOTSUP on
+     * backends without CoW — never a fallback copy behind the caller's
+     * back (rawstor_docs/Mds.md, "Snapshots").
+     */
+    virtual void snapshot(
+        const RawstdUUID& id, uint64_t snap_id, std::function<void(int)>&& cb
+    ) = 0;
+
+    virtual void snap_remove(
+        const RawstdUUID& id, uint64_t snap_id, std::function<void(int)>&& cb
+    ) = 0;
+
+    virtual void set_object(Object* object, std::function<void(int)>&& cb) = 0;
 
     virtual void pread(
         void* buf, size_t size, off_t offset,

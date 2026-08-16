@@ -5,6 +5,10 @@ SUBDIRS = librawstd \
           vhost \
           vhost-qemu
 
+if WITH_MDS
+    SUBDIRS += mds
+endif
+
 if ENABLE_TESTS
     SUBDIRS += tests
 endif

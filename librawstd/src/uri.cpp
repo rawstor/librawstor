@@ -30,8 +30,17 @@ void parse_uri(
         scheme_delim = 0;
     }
 
+    /*
+     * Userinfo lives in the authority only: an '@' at or past the first
+     * '/' is path data (e.g. an "<uuid>@<snap_id>" object reference).
+     */
+    size_t authority_end = uri.find('/', scheme_delim);
+    if (authority_end == uri.npos) {
+        authority_end = uri.length();
+    }
+
     size_t at_delim = uri.find('@', scheme_delim);
-    if (at_delim != uri.npos) {
+    if (at_delim != uri.npos && at_delim < authority_end) {
         at_delim += 1;
         size_t colon_delim = uri.find(":", scheme_delim);
         if (colon_delim != uri.npos && colon_delim < at_delim) {

@@ -22,12 +22,23 @@ namespace blk {
 // stay backend-specific.
 class Session : public rawstor::Session {
 protected:
-    virtual int _connect(const RawstdUUID& id) = 0;
+    /*
+     * Opens the fd backing one version of `id`: snap = 0 is the live copy,
+     * anything else an immutable snapshot version (bound read-only, and
+     * ENOTSUP on a backend without CoW). Completes with the open fd, or
+     * with a negative errno value on failure. Backends whose open can
+     * block (a suspended DM device, a busy pool) submit it to the io queue
+     * rather than calling open(2) inline.
+     */
+    virtual void _connect(
+        const RawstdUUID& id, uint64_t snap, std::function<void(int)>&& cb
+    ) = 0;
 
 public:
     Session(Private p, rawio::Queue& queue, const rawstd::URI& location);
 
-    void set_object(Object* object) override final;
+    void
+    set_object(Object* object, std::function<void(int)>&& cb) override final;
 
     void pread(
         void* buf, size_t size, off_t offset,
