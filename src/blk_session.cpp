@@ -15,17 +15,20 @@ Session::Session(Private p, rawio::Queue& queue, const rawstd::URI& location) :
     rawstor::Session(p, queue, location) {
 }
 
-void Session::set_object(Object* object) {
+void Session::set_object(Object* object, std::function<void(int)>&& cb) {
     if (fd() != -1) {
         throw std::runtime_error("Object already set");
     }
 
-    int fd = _connect(object->id());
-    if (fd == -1) {
-        RAWSTD_THROW_ERRNO();
-    }
+    _connect(object->id(), [this, cb = std::move(cb)](int result) {
+        if (result < 0) {
+            cb(-result);
+            return;
+        }
 
-    set_fd(fd);
+        set_fd(result);
+        cb(0);
+    });
 }
 
 void Session::pread(

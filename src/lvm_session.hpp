@@ -31,7 +31,7 @@ protected:
     std::string device_path(const RawstdUUID& id) const override;
 
 public:
-    Session(rawio::Queue& queue, const rawstd::URI& location);
+    Session(Private p, rawio::Queue& queue, const rawstd::URI& location);
 
     void create(
         const RawstdUUID& id, const RawstorObjectSpec& sp,

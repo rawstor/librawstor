@@ -4,6 +4,7 @@
 #include <rawstd/logging.h>
 #include <rawstd/uuid.h>
 
+#include <cinttypes>
 #include <cstdio>
 #include <cstring>
 #include <sstream>
@@ -35,8 +36,8 @@ static std::string parse_parent_dataset(const rawstd::URI& location) {
     return path;
 }
 
-Session::Session(rawio::Queue& queue, const rawstd::URI& location) :
-    BlkdevSession(queue, location),
+Session::Session(Private p, rawio::Queue& queue, const rawstd::URI& location) :
+    BlkdevSession(p, queue, location),
     _parent_dataset(parse_parent_dataset(location)) {
 }
 
@@ -59,7 +60,7 @@ void Session::create(
     std::string dataset = _parent_dataset + "/" + uuid_str;
 
     char size_buf[64];
-    snprintf(size_buf, sizeof(size_buf), "%zu", sp.size);
+    snprintf(size_buf, sizeof(size_buf), "%" PRIu64, sp.size);
 
     rawstd_info(
         "zfs: creating zvol %s, size %s bytes\n", dataset.c_str(), size_buf

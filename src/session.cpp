@@ -52,10 +52,14 @@ Session::create(rawio::Queue& queue, const rawstd::URI& location) {
         );
     }
     if (location.scheme() == "lvm") {
-        return std::make_unique<rawstor::lvm::Session>(queue, location);
+        return std::make_unique<rawstor::lvm::Session>(
+            Private(), queue, location
+        );
     }
     if (location.scheme() == "zfs") {
-        return std::make_unique<rawstor::zfs::Session>(queue, location);
+        return std::make_unique<rawstor::zfs::Session>(
+            Private(), queue, location
+        );
     }
     rawstd_error("Unexpected URI scheme: %s\n", location.str().c_str());
     RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
