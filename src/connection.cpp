@@ -466,11 +466,11 @@ void Connection::set_transparent_retry(bool enabled) noexcept {
 }
 
 void Connection::meta(
-    const RawstdUUID& id,
+    const RawstdUUID& id, uint64_t snap,
     std::function<void(const RawstorObjectMeta&, int)>&& cb
 ) {
     try {
-        get_next_session()->meta(id, std::move(cb));
+        get_next_session()->meta(id, snap, std::move(cb));
     } catch (const std::system_error& e) {
         cb({}, e.code().value());
     } catch (const std::bad_alloc& e) {
@@ -487,6 +487,36 @@ void Connection::set_state(
 ) {
     try {
         get_next_session()->set_state(id, meta, std::move(cb));
+    } catch (const std::system_error& e) {
+        cb(e.code().value());
+    } catch (const std::bad_alloc& e) {
+        cb(ENOMEM);
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        cb(EINVAL);
+    }
+}
+
+void Connection::snapshot(
+    const RawstdUUID& id, uint64_t snap_id, std::function<void(int)>&& cb
+) {
+    try {
+        get_next_session()->snapshot(id, snap_id, std::move(cb));
+    } catch (const std::system_error& e) {
+        cb(e.code().value());
+    } catch (const std::bad_alloc& e) {
+        cb(ENOMEM);
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        cb(EINVAL);
+    }
+}
+
+void Connection::snap_remove(
+    const RawstdUUID& id, uint64_t snap_id, std::function<void(int)>&& cb
+) {
+    try {
+        get_next_session()->snap_remove(id, snap_id, std::move(cb));
     } catch (const std::system_error& e) {
         cb(e.code().value());
     } catch (const std::bad_alloc& e) {
@@ -597,23 +627,27 @@ void Connection::meta(
     std::function<void(const RawstorObjectMeta&, int)>&& cb
 ) {
     RawstdUUID id;
-    int res = rawstd_uuid_from_string(&id, target.path().filename().c_str());
+    uint64_t snap;
+    int res = parse_object_ref(target.path().filename(), &id, &snap);
     if (res) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 
     std::shared_ptr<Session> s = Session::create(queue, target.parent());
     Session* session = s.get();
-    session->connect([s = std::move(s), id, cb = std::move(cb)](int error) {
+    session->connect([s = std::move(s), id, snap,
+                      cb = std::move(cb)](int error) {
         if (error) {
             cb({}, error);
             return;
         }
 
         try {
-            s->meta(id, [s, cb](const RawstorObjectMeta& meta, int error) {
-                cb(meta, error);
-            });
+            s->meta(
+                id, snap, [s, cb](const RawstorObjectMeta& meta, int error) {
+                    cb(meta, error);
+                }
+            );
         } catch (const std::system_error& e) {
             cb({}, e.code().value());
         } catch (const std::bad_alloc& e) {
@@ -674,6 +708,70 @@ void Connection::set_state(
 
         try {
             s->set_state(id, meta, [s, cb](int error) { cb(error); });
+        } catch (const std::system_error& e) {
+            cb(e.code().value());
+        } catch (const std::bad_alloc& e) {
+            cb(ENOMEM);
+        } catch (const std::exception& e) {
+            rawstd_error("%s\n", e.what());
+            cb(EINVAL);
+        }
+    });
+}
+
+void Connection::snapshot(
+    rawio::Queue& queue, const rawstd::URI& target, uint64_t snap_id,
+    std::function<void(int)>&& cb
+) {
+    RawstdUUID id;
+    int res = rawstd_uuid_from_string(&id, target.path().filename().c_str());
+    if (res) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+
+    std::shared_ptr<Session> s = Session::create(queue, target.parent());
+    Session* session = s.get();
+    session->connect([s = std::move(s), id, snap_id,
+                      cb = std::move(cb)](int error) mutable {
+        if (error) {
+            cb(error);
+            return;
+        }
+
+        try {
+            s->snapshot(id, snap_id, [s, cb](int error) { cb(error); });
+        } catch (const std::system_error& e) {
+            cb(e.code().value());
+        } catch (const std::bad_alloc& e) {
+            cb(ENOMEM);
+        } catch (const std::exception& e) {
+            rawstd_error("%s\n", e.what());
+            cb(EINVAL);
+        }
+    });
+}
+
+void Connection::snap_remove(
+    rawio::Queue& queue, const rawstd::URI& target, uint64_t snap_id,
+    std::function<void(int)>&& cb
+) {
+    RawstdUUID id;
+    int res = rawstd_uuid_from_string(&id, target.path().filename().c_str());
+    if (res) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+
+    std::shared_ptr<Session> s = Session::create(queue, target.parent());
+    Session* session = s.get();
+    session->connect([s = std::move(s), id, snap_id,
+                      cb = std::move(cb)](int error) mutable {
+        if (error) {
+            cb(error);
+            return;
+        }
+
+        try {
+            s->snap_remove(id, snap_id, [s, cb](int error) { cb(error); });
         } catch (const std::system_error& e) {
             cb(e.code().value());
         } catch (const std::bad_alloc& e) {

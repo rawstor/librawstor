@@ -242,6 +242,8 @@ Session::_recv_head(const iovec* iov, unsigned int niov, size_t result) {
     case RAWSTOR_CMD_LIST_CHUNKS:
     case RAWSTOR_CMD_LOCATION_INFO:
     case RAWSTOR_CMD_FLUSH:
+    case RAWSTOR_CMD_SNAPSHOT:
+    case RAWSTOR_CMD_SNAP_REMOVE:
         return sizeof(RawstorOSTFrameBasicBody);
     case RAWSTOR_CMD_SET_STATE:
         return sizeof(RawstorOSTFrameMetaBody);
@@ -474,6 +476,25 @@ Session::_recv_body(const iovec* iov, unsigned int niov, size_t result) {
         );
 
         _list_chunks(_request_head);
+
+        return sizeof(RawstorOSTFrameHead);
+
+    case RAWSTOR_CMD_SNAPSHOT:
+    case RAWSTOR_CMD_SNAP_REMOVE:
+        if (result != sizeof(_request_body.basic)) {
+            rawstd_error(
+                "fd %d: Unexpected request body size: %zu != %zu\n", _fd,
+                result, sizeof(_request_body.basic)
+            );
+
+            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+        }
+
+        rawstd_iovec_to_buf(
+            iov, niov, 0, &_request_body.basic, sizeof(_request_body.basic)
+        );
+
+        _snapshot(_request_head, _request_body.basic);
 
         return sizeof(RawstorOSTFrameHead);
 
@@ -808,7 +829,8 @@ void Session::_set_object(
     RawstdUUID uuid;
     memcpy(uuid.bytes, body.obj_id, sizeof(body.obj_id));
 
-    std::vector<rawstd::URI> targets = _targets(uuid);
+    /* val = bound snapshot version (0 = live). */
+    std::vector<rawstd::URI> targets = _targets(uuid, body.val);
 
     auto ctx = std::make_unique<OpCtx>(
         OpCtx{weak_from_this(), RAWSTOR_CMD_SET_OBJECT, head.cid}
@@ -1075,7 +1097,8 @@ void Session::_meta(
     RawstdUUID uuid;
     memcpy(uuid.bytes, body.obj_id, sizeof(body.obj_id));
 
-    std::vector<rawstd::URI> targets = _targets(uuid);
+    /* val = queried snapshot version (0 = live). */
+    std::vector<rawstd::URI> targets = _targets(uuid, body.val);
 
     auto ctx = std::make_unique<MetaCtx>();
     ctx->session = weak_from_this();
@@ -1263,6 +1286,35 @@ void Session::_list_next(std::unique_ptr<ListCtx> ctx) {
     ctx.release();
 }
 
+/* SNAPSHOT / SNAP_REMOVE: fan out to every backend location (val = snap_id). */
+void Session::_snapshot(
+    const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+) {
+    RawstdUUID uuid;
+    memcpy(uuid.bytes, body.obj_id, sizeof(body.obj_id));
+
+    std::vector<rawstd::URI> targets = _targets(uuid);
+
+    auto ctx =
+        std::make_unique<OpCtx>(OpCtx{weak_from_this(), head.cmd, head.cid});
+
+    int res = head.cmd == RAWSTOR_CMD_SNAPSHOT
+                  ? rawstor_object_snapshot_async(
+                        _queue, rawstd::URI::uris(targets).c_str(), body.val,
+                        _op_complete, ctx.get()
+                    )
+                  : rawstor_object_snap_remove_async(
+                        _queue, rawstd::URI::uris(targets).c_str(), body.val,
+                        _op_complete, ctx.get()
+                    );
+    if (res < 0) {
+        _send_response(head.cmd, head.cid, res, 0);
+        return;
+    }
+
+    ctx.release();
+}
+
 /*
  * LIST_CHUNKS: the backend locations are enumerated one by one; locations
  * of one OST mirror the same objects, so entries are deduplicated by id
@@ -1336,13 +1388,24 @@ void Session::_close_after_response(
 }
 
 std::vector<rawstd::URI> Session::_targets(const RawstdUUID& uuid) {
+    return _targets(uuid, 0);
+}
+
+std::vector<rawstd::URI>
+Session::_targets(const RawstdUUID& uuid, uint64_t snap) {
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&uuid, &uuid_string);
+
+    std::string name = uuid_string;
+    if (snap != 0) {
+        /* "<uuid>@<snap_id>": an immutable snapshot version. */
+        name += "@" + std::to_string(snap);
+    }
 
     std::vector<rawstd::URI> ret;
     ret.reserve(_server.locations().size());
     for (const auto& location : _server.locations()) {
-        ret.emplace_back(location, uuid_string);
+        ret.emplace_back(location, name);
     }
 
     return ret;

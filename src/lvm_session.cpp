@@ -134,9 +134,15 @@ void Session::remove(const RawstdUUID& id, std::function<void(int)>&& cb) {
 }
 
 void Session::_meta_identity(
-    const RawstdUUID& id,
+    const RawstdUUID& id, uint64_t snap,
     std::function<void(const RawstorObjectMeta&, int)>&& cb
 ) {
+    /* Classic LVs have no snapshot versions (see snapshot()). */
+    if (snap != 0) {
+        cb({}, ENOTSUP);
+        return;
+    }
+
     std::string path = device_path(id);
 
     run_async_capture(
@@ -291,6 +297,18 @@ void Session::list_chunks(
             cb(std::move(entries), 0);
         }
     );
+}
+
+void Session::snapshot(
+    const RawstdUUID&, uint64_t, std::function<void(int)>&& cb
+) {
+    cb(ENOTSUP);
+}
+
+void Session::snap_remove(
+    const RawstdUUID&, uint64_t, std::function<void(int)>&& cb
+) {
+    cb(ENOTSUP);
 }
 
 } // namespace lvm

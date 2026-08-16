@@ -31,7 +31,7 @@ protected:
     std::string device_path(const RawstdUUID& id) const override;
 
     void _meta_identity(
-        const RawstdUUID& id,
+        const RawstdUUID& id, uint64_t snap,
         std::function<void(const RawstorObjectMeta&, int)>&& cb
     ) override;
 
@@ -52,6 +52,20 @@ public:
 
     void list_chunks(
         std::function<void(std::vector<RawstorObjectListEntry>&&, int)>&& cb
+    ) override;
+
+    /*
+     * ENOTSUP: this backend creates classic (fully provisioned) LVs, and a
+     * classic LVM snapshot needs a preallocated COW area — a hidden
+     * full-size copy is exactly the fallback rawstor_docs/Mds.md rules
+     * out. CoW snapshots need an lvm-thin backend (future work).
+     */
+    void snapshot(
+        const RawstdUUID& id, uint64_t snap_id, std::function<void(int)>&& cb
+    ) override;
+
+    void snap_remove(
+        const RawstdUUID& id, uint64_t snap_id, std::function<void(int)>&& cb
     ) override;
 };
 

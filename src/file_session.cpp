@@ -225,7 +225,15 @@ Session::Session(Private p, rawio::Queue& queue, const rawstd::URI& location) :
     rawstor::blk::Session(p, queue, location) {
 }
 
-void Session::_connect(const RawstdUUID& id, std::function<void(int)>&& cb) {
+void Session::_connect(
+    const RawstdUUID& id, uint64_t snap, std::function<void(int)>&& cb
+) {
+    /* No CoW on plain files: no snapshot version to bind. */
+    if (snap != 0) {
+        cb(-ENOTSUP);
+        return;
+    }
+
     std::string location_path = get_location_path(location());
 
     RawstdUUIDString id_string;
@@ -454,9 +462,15 @@ void Session::spec(
 }
 
 void Session::meta(
-    const RawstdUUID& id,
+    const RawstdUUID& id, uint64_t snap,
     std::function<void(const RawstorObjectMeta&, int)>&& cb
 ) {
+    /* No CoW on plain files: there are no snapshot versions to query. */
+    if (snap != 0) {
+        cb({}, ENOTSUP);
+        return;
+    }
+
     auto ret = std::make_shared<RawstorObjectMeta>();
 
     run_in_worker(
@@ -599,6 +613,18 @@ void Session::list_chunks(
         },
         [ret, cb = std::move(cb)](int error) { cb(std::move(*ret), error); }
     );
+}
+
+void Session::snapshot(
+    const RawstdUUID&, uint64_t, std::function<void(int)>&& cb
+) {
+    cb(ENOTSUP);
+}
+
+void Session::snap_remove(
+    const RawstdUUID&, uint64_t, std::function<void(int)>&& cb
+) {
+    cb(ENOTSUP);
 }
 
 void Session::info(std::function<void(const RawstorLocationInfo&, int)>&& cb) {

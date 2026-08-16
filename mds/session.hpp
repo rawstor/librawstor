@@ -33,6 +33,7 @@ private:
         RawstorOSTFrameBasicBody basic;
         RawstorOSTFrameSetObjectBody setobj;
         RawstorVolCreateBody vol_create;
+        RawstorVolSnapCommitBody vol_snap_commit;
     } _request_body;
 
     /* SET_OBJECT (the handshake) was received on this connection. */
@@ -48,6 +49,9 @@ private:
     _recv(const iovec* iov, unsigned int niov, size_t result, int error);
     ssize_t _recv_head(const iovec* iov, unsigned int niov, size_t result);
     ssize_t _recv_body(const iovec* iov, unsigned int niov, size_t result);
+    /* The VOL_SNAP_COMMIT member records following its body. */
+    ssize_t
+    _recv_snap_members(const iovec* iov, unsigned int niov, size_t result);
     ssize_t _recv_ignore(const iovec* iov, unsigned int niov, size_t result);
 
     void _set_object(
@@ -64,6 +68,16 @@ private:
         const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
     );
     void _vol_remove(
+        const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+    );
+    void _vol_snap_begin(
+        const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+    );
+    void _vol_snap_commit(
+        const RawstorOSTFrameHead& head, const RawstorVolSnapCommitBody& body,
+        const iovec* iov, unsigned int niov
+    );
+    void _vol_snap_remove(
         const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
     );
 

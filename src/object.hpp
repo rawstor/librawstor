@@ -57,6 +57,15 @@ namespace rawstor {
 
 class Connection;
 
+/*
+ * Parses an object reference filename: "<uuid>" (the live version) or
+ * "<uuid>@<snap_id>" (an immutable snapshot version; snap_id is a positive
+ * decimal). Returns 0 or a negative errno.
+ */
+int parse_object_ref(
+    const std::string& filename, RawstdUUID* id, uint64_t* snap
+) noexcept;
+
 class Object final : public RawstorObject {
 private:
     struct OpenState;
@@ -85,6 +94,16 @@ private:
 
     rawio::Queue& _queue;
     RawstdUUID _id;
+
+    /*
+     * Bound snapshot version; 0 = live. A snapshot is immutable and
+     * consistent by construction (drain + FLUSH at creation, members
+     * recorded in the MDS registry), so opening one skips the whole
+     * mirror state machine — no metadata compare, no quorum, no
+     * barriers, no resync, no reconnect probe — and every write fails
+     * with EROFS. One reachable member is enough to serve reads.
+     */
+    uint64_t _snap;
 
     /* Configured mirror width N (the target list length). */
     size_t _nmirrors;
@@ -226,6 +245,19 @@ public:
         const RawstorObjectMeta& meta, std::function<void(int)>&& cb
     );
 
+    /*
+     * CoW snapshot / snapshot removal on every target; the first error is
+     * kept, the remaining targets are still attempted (like set_state).
+     */
+    static void snapshot(
+        rawio::Queue& queue, const std::vector<rawstd::URI>& targets,
+        uint64_t snap_id, std::function<void(int)>&& cb
+    );
+    static void snap_remove(
+        rawio::Queue& queue, const std::vector<rawstd::URI>& targets,
+        uint64_t snap_id, std::function<void(int)>&& cb
+    );
+
     static void create(
         const std::vector<rawstd::URI>& targets, const RawstorObjectSpec& sp
     );
@@ -237,6 +269,10 @@ public:
     static void set_state(
         const std::vector<rawstd::URI>& targets, const RawstorObjectMeta& meta
     );
+    static void
+    snapshot(const std::vector<rawstd::URI>& targets, uint64_t snap_id);
+    static void
+    snap_remove(const std::vector<rawstd::URI>& targets, uint64_t snap_id);
 
     Object(const Object&) = delete;
     Object(Object&&) = delete;
@@ -247,6 +283,25 @@ public:
     std::vector<rawstd::URI> locations() const override;
 
     inline const RawstdUUID& id() const noexcept override { return _id; }
+
+    /* Bound snapshot version; 0 = live. */
+    inline uint64_t snap() const noexcept { return _snap; }
+
+    /*
+     * CoW-snapshots this object as version snap_id on every IN-SYNC
+     * member: flush first (the point-in-time barrier — the caller
+     * guarantees no concurrent writers), then the native snapshot on
+     * each. All members must succeed, or the whole snapshot fails (the
+     * partial CoWs are the documented garbage class, reconciled by the
+     * reconstruct scan). cb receives the member slot indices (target
+     * list positions) that hold the snapshot.
+     */
+    void snapshot(
+        uint64_t snap_id, std::function<void(std::vector<size_t>&&, int)>&& cb
+    );
+
+    /* Destroys version snap_id on every reachable member. */
+    void snap_remove(uint64_t snap_id, std::function<void(int)>&& cb);
 
     void pread(
         void* buf, size_t size, off_t offset,

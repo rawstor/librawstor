@@ -119,6 +119,16 @@ public:
         std::function<void(std::vector<RawstorObjectListEntry>&&, int)>&& cb
     );
 
+    static void snapshot(
+        rawio::Queue& queue, const rawstd::URI& target, uint64_t snap_id,
+        std::function<void(int)>&& cb
+    );
+
+    static void snap_remove(
+        rawio::Queue& queue, const rawstd::URI& target, uint64_t snap_id,
+        std::function<void(int)>&& cb
+    );
+
     explicit Connection(rawio::Queue& queue);
     Connection(const Connection&) = delete;
     ~Connection();
@@ -133,13 +143,21 @@ public:
     void set_transparent_retry(bool enabled) noexcept;
 
     void meta(
-        const RawstdUUID& id,
+        const RawstdUUID& id, uint64_t snap,
         std::function<void(const RawstorObjectMeta&, int)>&& cb
     );
 
     void set_state(
         const RawstdUUID& id, const RawstorObjectMeta& meta,
         std::function<void(int)>&& cb
+    );
+
+    void snapshot(
+        const RawstdUUID& id, uint64_t snap_id, std::function<void(int)>&& cb
+    );
+
+    void snap_remove(
+        const RawstdUUID& id, uint64_t snap_id, std::function<void(int)>&& cb
     );
 
     const rawstd::URI* location() const noexcept;

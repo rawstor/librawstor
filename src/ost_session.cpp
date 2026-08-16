@@ -670,7 +670,7 @@ private:
 public:
     SessionOpMeta(
         const std::shared_ptr<rawstor::ost::Session>& session, uint16_t cid,
-        const RawstdUUID& id, RawstorObjectMeta* out,
+        const RawstdUUID& id, uint64_t snap, RawstorObjectMeta* out,
         const rawstd::TraceEvent& trace_event,
         std::function<void(size_t, int)>&& cb
     ) :
@@ -686,7 +686,7 @@ public:
                 {
                     .obj_id = {},
                     .offset = 0,
-                    .val = 0,
+                    .val = snap,
                 },
         }),
         _out(out),
@@ -784,6 +784,58 @@ public:
         bool fatal = false;
         error =
             classify_response(response, error, RAWSTOR_CMD_SET_STATE, &fatal);
+
+        _dispatch(0, error);
+
+        *next_head = true;
+        *next_size = fatal ? 0 : sizeof(RawstorOSTFrameResponse);
+    }
+};
+
+/*
+ * A zero-payload basic command (SNAPSHOT, SNAP_REMOVE) dispatched through
+ * the multishot receive context of an object-bound session.
+ */
+class SessionOpBasic final : public SessionOp {
+private:
+    RawstorOSTFrameBasic _request;
+
+public:
+    SessionOpBasic(
+        const std::shared_ptr<rawstor::ost::Session>& session, uint16_t cid,
+        RawstorOSTCommandType cmd, const RawstdUUID& id, uint64_t val,
+        const rawstd::TraceEvent& trace_event,
+        std::function<void(size_t, int)>&& cb
+    ) :
+        SessionOp(session, cid, trace_event, std::move(cb)),
+        _request({
+            .head =
+                {
+                    .magic = RAWSTOR_MAGIC,
+                    .cmd = cmd,
+                    .cid = cid,
+                },
+            .body = {
+                .obj_id = {},
+                .offset = 0,
+                .val = val,
+            },
+        }) {
+        memcpy(_request.body.obj_id, id.bytes, sizeof(_request.body.obj_id));
+    }
+
+    const void* request_data() const noexcept { return &_request; }
+
+    size_t request_size() const noexcept override { return sizeof(_request); }
+
+    void response_head_cb(
+        const RawstorOSTFrameResponse* response, int error, bool* next_head,
+        size_t* next_size
+    ) override {
+        RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
+
+        bool fatal = false;
+        error = classify_response(response, error, _request.head.cmd, &fatal);
 
         _dispatch(0, error);
 
@@ -1325,7 +1377,7 @@ void Session::list(
 }
 
 void Session::_set_object_exchange(
-    const RawstdUUID* id, std::function<void(int)>&& cb
+    const RawstdUUID* id, uint64_t val, std::function<void(int)>&& cb
 ) {
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('s', "%s\n", "set_object handshake");
@@ -1342,7 +1394,7 @@ void Session::_set_object_exchange(
                 .version = RAWSTOR_PROTOCOL_VERSION,
                 .features = 0,
                 .obj_id = {},
-                .val = 0,
+                .val = val,
             },
         });
     if (id != nullptr) {
@@ -1467,7 +1519,7 @@ void Session::_ensure_handshake(std::function<void(int)>&& cb) {
         return;
     }
 
-    _set_object_exchange(nullptr, std::move(cb));
+    _set_object_exchange(nullptr, 0, std::move(cb));
 }
 
 void Session::create(
@@ -1621,8 +1673,68 @@ void Session::spec(
     cb(ret, error);
 }
 
+/*
+ * See meta(): an object-bound session dispatches through the multishot
+ * receive context, an unbound one runs the plain pre-open exchange.
+ */
+void Session::_basic_or_op(
+    RawstorOSTCommandType cmd, const RawstdUUID& id, uint64_t val,
+    std::function<void(int)>&& cb
+) {
+    if (_read_event != nullptr) {
+        rawstd::TraceEvent trace_event =
+            RAWSTD_TRACE_EVENT('s', "basic cmd %d\n", cmd);
+
+        std::shared_ptr<SessionOpBasic> op = std::make_shared<SessionOpBasic>(
+            std::static_pointer_cast<Session>(shared_from_this()),
+            _cid_counter++, cmd, id, val, trace_event,
+            [cb = std::move(cb)](size_t, int error) { cb(error); }
+        );
+        _add_op(op);
+
+        _queue.send(
+            fd(), op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL,
+            [op, trace_event](size_t result, int error) {
+                RAWSTD_TRACE_EVENT_MESSAGE(
+                    trace_event, "%zu of %zu, error = %d\n", result,
+                    op->request_size(), error
+                );
+
+                if (!error) {
+                    error = validate_result(op->request_size(), result);
+                }
+
+                op->request_cb(error);
+            }
+        );
+        return;
+    }
+
+    _ensure_handshake([this, cmd, id, val,
+                       cb = std::move(cb)](int error) mutable {
+        if (error) {
+            cb(error);
+            return;
+        }
+
+        _basic(cmd, id, val, std::move(cb));
+    });
+}
+
+void Session::snapshot(
+    const RawstdUUID& id, uint64_t snap_id, std::function<void(int)>&& cb
+) {
+    _basic_or_op(RAWSTOR_CMD_SNAPSHOT, id, snap_id, std::move(cb));
+}
+
+void Session::snap_remove(
+    const RawstdUUID& id, uint64_t snap_id, std::function<void(int)>&& cb
+) {
+    _basic_or_op(RAWSTOR_CMD_SNAP_REMOVE, id, snap_id, std::move(cb));
+}
+
 void Session::meta(
-    const RawstdUUID& id,
+    const RawstdUUID& id, uint64_t snap,
     std::function<void(const RawstorObjectMeta&, int)>&& cb
 ) {
     rawstd::TraceEvent trace_event =
@@ -1638,7 +1750,7 @@ void Session::meta(
 
         std::shared_ptr<SessionOpMeta> op = std::make_shared<SessionOpMeta>(
             std::static_pointer_cast<Session>(shared_from_this()),
-            _cid_counter++, id, out.get(), trace_event,
+            _cid_counter++, id, snap, out.get(), trace_event,
             [out, cb = std::move(cb)](size_t, int error) { cb(*out, error); }
         );
         _add_op(op);
@@ -1661,18 +1773,18 @@ void Session::meta(
         return;
     }
 
-    _ensure_handshake([this, id, cb = std::move(cb)](int error) mutable {
+    _ensure_handshake([this, id, snap, cb = std::move(cb)](int error) mutable {
         if (error) {
             cb({}, error);
             return;
         }
 
-        _meta_exchange(id, std::move(cb));
+        _meta_exchange(id, snap, std::move(cb));
     });
 }
 
 void Session::_meta_exchange(
-    const RawstdUUID& id,
+    const RawstdUUID& id, uint64_t snap,
     std::function<void(const RawstorObjectMeta&, int)>&& cb
 ) {
     rawstd::TraceEvent trace_event =
@@ -1689,7 +1801,7 @@ void Session::_meta_exchange(
             .body = {
                 .obj_id = {},
                 .offset = 0,
-                .val = 0,
+                .val = snap,
             },
         });
     memcpy(request->body.obj_id, id.bytes, sizeof(request->body.obj_id));
@@ -2196,24 +2308,26 @@ void Session::_list_exchange(
 }
 
 void Session::set_object(Object* object, std::function<void(int)>&& cb) {
-    _set_object_exchange(&object->id(), [this, cb = std::move(cb)](int error) {
-        if (error) {
-            cb(error);
-            return;
-        }
+    _set_object_exchange(
+        &object->id(), object->snap(), [this, cb = std::move(cb)](int error) {
+            if (error) {
+                cb(error);
+                return;
+            }
 
-        try {
-            _arm_recv();
-        } catch (const std::system_error& e) {
-            cb(e.code().value());
-            return;
-        } catch (const std::bad_alloc& e) {
-            cb(ENOMEM);
-            return;
-        }
+            try {
+                _arm_recv();
+            } catch (const std::system_error& e) {
+                cb(e.code().value());
+                return;
+            } catch (const std::bad_alloc& e) {
+                cb(ENOMEM);
+                return;
+            }
 
-        cb(0);
-    });
+            cb(0);
+        }
+    );
 }
 
 void Session::_arm_recv() {

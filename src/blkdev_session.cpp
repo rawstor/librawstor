@@ -312,7 +312,7 @@ void BlkdevSession::info(
 }
 
 void BlkdevSession::_size(
-    const RawstdUUID& id, std::function<void(uint64_t, int)>&& cb
+    const RawstdUUID& id, uint64_t snap, std::function<void(uint64_t, int)>&& cb
 ) {
     /*
      * The path buffer is kept alive by the callback capture: io_uring reads
@@ -321,7 +321,13 @@ void BlkdevSession::_size(
      * io_uring handles that in a worker thread without stalling the loop.
      * BLKGETSIZE64 reads an in-memory value and completes immediately.
      */
-    auto path = std::make_shared<std::string>(device_path(id));
+    std::shared_ptr<std::string> path;
+    try {
+        path = std::make_shared<std::string>(device_path(id, snap));
+    } catch (const std::system_error& e) {
+        cb({}, e.code().value());
+        return;
+    }
 
     _queue.open(
         path->c_str(), O_RDONLY | O_CLOEXEC, 0,
@@ -350,7 +356,7 @@ void BlkdevSession::spec(
     const RawstdUUID& id,
     std::function<void(const RawstorObjectSpec&, int)>&& cb
 ) {
-    _size(id, [cb = std::move(cb)](uint64_t size, int error) {
+    _size(id, 0, [cb = std::move(cb)](uint64_t size, int error) {
         if (error) {
             cb({}, error);
             return;
@@ -363,35 +369,39 @@ void BlkdevSession::spec(
 }
 
 void BlkdevSession::meta(
-    const RawstdUUID& id,
+    const RawstdUUID& id, uint64_t snap,
     std::function<void(const RawstorObjectMeta&, int)>&& cb
 ) {
-    _size(id, [this, id, cb = std::move(cb)](uint64_t size, int error) mutable {
-        if (error) {
-            cb({}, error);
-            return;
-        }
-
-        /*
-         * The consistency-state fields (state/epoch/sync_id/history)
-         * never live on the device itself; size is the only field the
-         * device can answer for.
-         */
-        _meta_identity(
-            id,
-            [size,
-             cb = std::move(cb)](const RawstorObjectMeta& identity, int error) {
-                if (error) {
-                    cb({}, error);
-                    return;
-                }
-
-                RawstorObjectMeta meta = identity;
-                meta.size = size;
-                cb(meta, 0);
+    _size(
+        id, snap,
+        [this, id, snap, cb = std::move(cb)](uint64_t size, int error) mutable {
+            if (error) {
+                cb({}, error);
+                return;
             }
-        );
-    });
+
+            /*
+             * The consistency-state fields (state/epoch/sync_id/history)
+             * never live on the device itself; size is the only field the
+             * device can answer for.
+             */
+            _meta_identity(
+                id, snap,
+                [size, cb = std::move(cb)](
+                    const RawstorObjectMeta& identity, int error
+                ) {
+                    if (error) {
+                        cb({}, error);
+                        return;
+                    }
+
+                    RawstorObjectMeta meta = identity;
+                    meta.size = size;
+                    cb(meta, 0);
+                }
+            );
+        }
+    );
 }
 
 void BlkdevSession::run_async_capture(
@@ -481,7 +491,7 @@ void BlkdevSession::run_async_capture(
 }
 
 void BlkdevSession::_connect(
-    const RawstdUUID& id, std::function<void(int)>&& cb
+    const RawstdUUID& id, uint64_t snap, std::function<void(int)>&& cb
 ) {
     /*
      * The path buffer is kept alive by the callback capture: io_uring reads
@@ -489,12 +499,19 @@ void BlkdevSession::_connect(
      * Opening a block device may block (suspended DM device, busy pool);
      * io_uring handles that in a worker thread without stalling the loop.
      */
-    auto path = std::make_shared<std::string>(device_path(id));
+    std::shared_ptr<std::string> path;
+    try {
+        path = std::make_shared<std::string>(device_path(id, snap));
+    } catch (const std::system_error& e) {
+        cb(-e.code().value());
+        return;
+    }
 
     rawstd_info("Connecting to %s...\n", path->c_str());
 
+    /* A snapshot device is immutable: bind it read-only. */
     _queue.open(
-        path->c_str(), O_RDWR | O_CLOEXEC, 0,
+        path->c_str(), (snap != 0 ? O_RDONLY : O_RDWR) | O_CLOEXEC, 0,
         [path, cb = std::move(cb)](int result) {
             if (result >= 0) {
                 rawstd_info("fd %d: Connected\n", result);

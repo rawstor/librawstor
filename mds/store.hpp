@@ -38,6 +38,12 @@ struct ScanRecord {
     RawstorObjectMeta meta;
 };
 
+/* One chunk copy holding a snapshot version. */
+struct SnapMember {
+    uint64_t logical_index;
+    RawstdUUID ost_id;
+};
+
 /*
  * The explicit volume map, stored in SQLite (rawstor_docs/Mds.md, "MDS
  * server, v1"): WAL journal, synchronous=FULL — crash-safety by
@@ -59,6 +65,7 @@ private:
     Topology _topology;
 
     VolumeDescriptor _descriptor(const RawstdUUID& volume_id);
+    VolumeMap _open_snapshot(const RawstdUUID& volume_id, uint64_t snap_id);
 
 public:
     VolumeStore(const std::string& path, Topology topology);
@@ -80,13 +87,45 @@ public:
         const PlacementPolicy& policy
     );
 
-    /* snap_id != 0 is ENOENT until snapshots (stage 2). */
+    /*
+     * snap_id != 0 opens the registered snapshot view: the logical size
+     * frozen at commit, chunks routed to the recorded members only.
+     */
     VolumeMap open(const RawstdUUID& volume_id, uint64_t snap_id);
 
     /* Grow-only in v1; returns the new map_epoch. */
     uint64_t resize(const RawstdUUID& volume_id, uint64_t new_size);
 
+    /* EBUSY while snapshots exist: they must be removed explicitly. */
     void remove(const RawstdUUID& volume_id);
+
+    /*
+     * Durably reserves the next snap_id of the volume. A reserved id is
+     * never handed out again, even across a crash before commit — the
+     * CoW leftovers of a crashed attempt must not alias a later
+     * snapshot under the same id.
+     */
+    uint64_t snap_begin(const RawstdUUID& volume_id);
+
+    /*
+     * Registers the snapshot: members = exactly the chunk copies that
+     * hold it. Every chunk of the volume must be covered (an unreadable
+     * snapshot is never registered — EINVAL), the id must come from
+     * snap_begin (EINVAL) and not be registered yet (EEXIST). The
+     * volume's logical size is frozen into the snapshot. Returns the
+     * bumped map_epoch.
+     */
+    uint64_t snap_commit(
+        const RawstdUUID& volume_id, uint64_t snap_id,
+        const std::vector<SnapMember>& members
+    );
+
+    /*
+     * Unregisters the snapshot (no new readers) and returns what was
+     * registered: the member set for the caller's fan-out destroy.
+     */
+    std::vector<SnapMember>
+    snap_remove(const RawstdUUID& volume_id, uint64_t snap_id);
 
     /*
      * Rebuilds the whole map from a scan of every OST in the topology
@@ -94,12 +133,18 @@ public:
      * is the truth, the map is an index over it. Replaces every stored
      * volume in one transaction.
      *
-     * Witness records, standalone objects (all-zero volume_id) and
-     * snapshot versions (stage 2) are skipped. A volume with conflicting
-     * identity records fails with EINVAL, a hole in the chunk index
-     * sequence with EIO: reconstruct must not silently drop a volume it
-     * cannot reassemble, and it cannot invent placement for a chunk with
-     * no surviving copies.
+     * Witness records and standalone objects (all-zero volume_id) are
+     * skipped. A volume with conflicting identity records fails with
+     * EINVAL, a hole in the chunk index sequence with EIO: reconstruct
+     * must not silently drop a volume it cannot reassemble, and it
+     * cannot invent placement for a chunk with no surviving copies.
+     *
+     * Snapshot versions rebuild the registry: a version covering every
+     * one of its chunks is registered (a complete-but-uncommitted
+     * leftover is indistinguishable from a committed snapshot and just
+     * as consistent), a version with a hole is a crashed attempt's
+     * garbage and stays unregistered. Every seen version fences the
+     * volume's next_snap_id either way — reserved ids never repeat.
      *
      * The placement policy knobs (failure_domain, stripe_width, seed) are
      * deliberately not persisted on chunks: the rebuilt descriptor gets

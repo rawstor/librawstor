@@ -32,6 +32,12 @@ struct WireMap {
     std::vector<std::vector<WireSlot>> chunks;
 };
 
+/* One chunk copy holding a snapshot version. */
+struct WireSnapMember {
+    uint64_t logical_index;
+    RawstdUUID ost_id;
+};
+
 /*
  * Control-plane client for the volume commands of an MDS
  * (rawstor_docs/Mds.md). One connection, plain request/response
@@ -78,6 +84,24 @@ public:
     );
 
     void vol_remove(const RawstdUUID& volume_id, std::function<void(int)>&& cb);
+
+    /* Durably reserves the next snap_id (rawstor_docs/Mds.md, two-phase). */
+    void vol_snap_begin(
+        const RawstdUUID& volume_id, std::function<void(uint64_t, int)>&& cb
+    );
+
+    /* Registers the snapshot; cb gets the bumped map_epoch. */
+    void vol_snap_commit(
+        const RawstdUUID& volume_id, uint64_t snap_id,
+        const std::vector<WireSnapMember>& members,
+        std::function<void(uint64_t, int)>&& cb
+    );
+
+    /* Unregisters and returns the member set for the fan-out destroy. */
+    void vol_snap_remove(
+        const RawstdUUID& volume_id, uint64_t snap_id,
+        std::function<void(std::vector<WireSnapMember>&&, int)>&& cb
+    );
 };
 
 } // namespace mds
