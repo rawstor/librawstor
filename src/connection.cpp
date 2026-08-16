@@ -135,14 +135,12 @@ std::vector<std::shared_ptr<Session>> Connection::_open(
 }
 
 void Connection::_finish(
-    const char* func_name, size_t size, off_t offset,
     const std::shared_ptr<std::function<void(size_t, int)>>& cb,
     unsigned int attempt, rawstor::telemetry::TimePoint t_call, size_t result,
     int error
 ) {
     rawstor::telemetry::TimePoint lat = rawstor::telemetry::now() - t_call;
     rawstor::telemetry::record_lat(lat, attempt);
-    rawstor::telemetry::record_op(lat, func_name, size, offset, attempt);
     (*cb)(result, error);
 }
 
@@ -177,9 +175,7 @@ void Connection::_op(
                         attempt, rawstor_opts_io_attempts()
                     );
                 }
-                _finish(
-                    func_name, size, offset, cb, attempt, t_call, result, error
-                );
+                _finish(cb, attempt, t_call, result, error);
                 return;
             }
 
@@ -191,9 +187,7 @@ void Connection::_op(
                     func_name, size, (intmax_t)offset, s->str().c_str(),
                     std::strerror(error), attempt, rawstor_opts_io_attempts()
                 );
-                _finish(
-                    func_name, size, offset, cb, attempt, t_call, result, error
-                );
+                _finish(cb, attempt, t_call, result, error);
                 return;
             }
 
@@ -215,10 +209,7 @@ void Connection::_op(
                 try {
                     invalidate_session(s);
                 } catch (const std::system_error& e) {
-                    _finish(
-                        func_name, size, offset, cb, attempt, t_call, result,
-                        e.code().value()
-                    );
+                    _finish(cb, attempt, t_call, result, e.code().value());
                     return;
                 } catch (const std::exception& e) {
                     rawstd_error(
@@ -228,10 +219,7 @@ void Connection::_op(
                         func_name, size, (intmax_t)offset, s->str().c_str(),
                         e.what(), attempt, rawstor_opts_io_attempts()
                     );
-                    _finish(
-                        func_name, size, offset, cb, attempt, t_call, result,
-                        EIO
-                    );
+                    _finish(cb, attempt, t_call, result, EIO);
                     return;
                 }
             }
