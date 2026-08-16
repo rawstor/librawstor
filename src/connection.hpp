@@ -113,6 +113,12 @@ public:
 
     static void info(const rawstd::URI& location, RawstorLocationInfo* info);
 
+    /* Enumerates the objects of a location (no UUID): CMD_LIST_CHUNKS. */
+    static void list_chunks(
+        rawio::Queue& queue, const rawstd::URI& location,
+        std::function<void(std::vector<RawstorObjectListEntry>&&, int)>&& cb
+    );
+
     explicit Connection(rawio::Queue& queue);
     Connection(const Connection&) = delete;
     ~Connection();

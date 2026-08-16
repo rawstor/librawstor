@@ -45,17 +45,25 @@ librawstor_la_SOURCES = blk_session.cpp \
                         list.c \
                         lvm_session.cpp \
                         lvm_session.hpp \
+                        mds_client.cpp \
+                        mds_client.hpp \
                         object.cpp \
                         object.hpp \
                         ost_session.cpp \
                         ost_session.hpp \
                         opts.c \
                         opts.h \
+                        placement.cpp \
+                        placement.hpp \
                         session.cpp \
                         session.hpp \
                         rawstor.cpp \
                         telemetry.cpp \
                         telemetry.hpp \
+                        topology.cpp \
+                        topology.hpp \
+                        volume.cpp \
+                        volume.hpp \
                         worker.cpp \
                         worker.hpp \
                         zfs_session.cpp \

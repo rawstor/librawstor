@@ -9,6 +9,7 @@
 #include <cerrno>
 #include <cinttypes>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <sstream>
 #include <string>
@@ -81,6 +82,12 @@ void Session::create(
      */
     RawstorObjectMeta initial{};
     initial.state = RAWSTOR_OBJECT_STATE_CLEAN;
+    initial.member_kind = sp.member_kind;
+    initial.width = sp.width;
+    memcpy(initial.volume_id, sp.volume_id, sizeof(initial.volume_id));
+    initial.logical_index = sp.logical_index;
+    initial.chunk_size = sp.chunk_size;
+    initial.snap_version = sp.snap_version;
     std::string tag =
         std::string(rawstor_tag_prefix) + blkdev_meta_encode(initial);
 
@@ -168,12 +175,10 @@ void Session::set_state(
     std::function<void(int)>&& cb
 ) {
     std::string path = device_path(id);
-    std::string new_tag =
-        std::string(rawstor_tag_prefix) + blkdev_meta_encode(meta);
 
     run_async_capture(
         {"lvs", "-o", "lv_tags", "--noheadings", path},
-        [this, path, new_tag,
+        [this, path, meta,
          cb = std::move(cb)](std::string output, int error) mutable {
             if (error) {
                 rawstd_error(
@@ -191,6 +196,16 @@ void Session::set_state(
                 cmd.push_back("--deltag");
                 cmd.push_back(std::string(rawstor_tag_prefix) + old_tag);
             }
+
+            /* The stored placement identity is preserved. */
+            RawstorObjectMeta next = meta;
+            RawstorObjectMeta stored{};
+            if (!old_tag.empty() && blkdev_meta_decode(old_tag, &stored)) {
+                blkdev_meta_merge_identity(&next, stored);
+            }
+            std::string new_tag =
+                std::string(rawstor_tag_prefix) + blkdev_meta_encode(next);
+
             cmd.push_back("--addtag");
             cmd.push_back(new_tag);
             cmd.push_back(path);
@@ -207,6 +222,73 @@ void Session::set_state(
                     cb(error);
                 }
             );
+        }
+    );
+}
+
+void Session::list_chunks(
+    std::function<void(std::vector<RawstorObjectListEntry>&&, int)>&& cb
+) {
+    /*
+     * ';' never appears in a tag or an LV name, so it splits the columns
+     * unambiguously even when lv_tags is empty.
+     */
+    run_async_capture(
+        {"lvs", "--noheadings", "--units", "b", "--nosuffix", "--separator",
+         ";", "-o", "lv_name,lv_size,lv_tags", _vg_name},
+        [vg = _vg_name,
+         cb = std::move(cb)](std::string output, int error) mutable {
+            if (error) {
+                rawstd_error(
+                    "lvm: failed to list LVs of VG %s: %s\n", vg.c_str(),
+                    strerror(error)
+                );
+                cb({}, error);
+                return;
+            }
+
+            std::vector<RawstorObjectListEntry> entries;
+
+            std::istringstream iss(output);
+            std::string line;
+            while (std::getline(iss, line)) {
+                size_t name_end = line.find(';');
+                size_t size_end = name_end == line.npos
+                                      ? line.npos
+                                      : line.find(';', name_end + 1);
+                if (size_end == line.npos) {
+                    continue;
+                }
+
+                std::string name = line.substr(0, name_end);
+                name.erase(0, name.find_first_not_of(" \t"));
+
+                RawstorObjectListEntry entry{};
+                RawstdUUID id;
+                /* LVs not named after an object UUID are not ours. */
+                if (rawstd_uuid_from_string(&id, name.c_str()) != 0) {
+                    continue;
+                }
+                memcpy(entry.obj_id, id.bytes, sizeof(entry.obj_id));
+
+                std::string tag = blkdev_find_tag(
+                    line.substr(size_end + 1), rawstor_tag_prefix
+                );
+                if (tag.empty() || !blkdev_meta_decode(tag, &entry.meta)) {
+                    rawstd_error(
+                        "lvm: %s/%s: no valid mirror state tag, skipped\n",
+                        vg.c_str(), name.c_str()
+                    );
+                    continue;
+                }
+
+                entry.meta.size =
+                    strtoull(line.c_str() + name_end + 1, nullptr, 10);
+
+                entries.push_back(entry);
+            }
+
+            cb(std::move(entries), 0);
         }
     );
 }

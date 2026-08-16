@@ -18,9 +18,13 @@ static void log_spec(FILE* output, const struct RawstorObjectSpec* spec) {
     fprintf(output, "  size: %s\n", buf);
 }
 
-int rawstor_cli_create(const char* target, uint64_t size) {
+int rawstor_cli_create(
+    const char* target, uint64_t size, uint64_t chunk_size, unsigned width
+) {
     struct RawstorObjectSpec spec = {
         .size = size,
+        .chunk_size = chunk_size,
+        .width = (uint8_t)width,
     };
 
     fprintf(stderr, "Creating object with specification:\n");
@@ -41,8 +45,17 @@ int rawstor_cli_create(const char* target, uint64_t size) {
 int rawstor_cli_create_at(
     const char* location, const char* uuid, uint64_t size
 ) {
+    return rawstor_cli_create_at_vol(location, uuid, size, 0, 0);
+}
+
+int rawstor_cli_create_at_vol(
+    const char* location, const char* uuid, uint64_t size, uint64_t chunk_size,
+    unsigned width
+) {
     struct RawstorObjectSpec spec = {
         .size = size,
+        .chunk_size = chunk_size,
+        .width = (uint8_t)width,
     };
 
     fprintf(stderr, "Creating object with specification:\n");

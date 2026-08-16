@@ -356,7 +356,9 @@ void BlkdevSession::spec(
             return;
         }
 
-        cb(RawstorObjectSpec{size}, 0);
+        RawstorObjectSpec spec{};
+        spec.size = size;
+        cb(spec, 0);
     });
 }
 

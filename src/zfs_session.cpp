@@ -9,6 +9,7 @@
 #include <cerrno>
 #include <cinttypes>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <sstream>
 #include <string>
@@ -83,6 +84,12 @@ void Session::create(
      */
     RawstorObjectMeta initial{};
     initial.state = RAWSTOR_OBJECT_STATE_CLEAN;
+    initial.member_kind = sp.member_kind;
+    initial.width = sp.width;
+    memcpy(initial.volume_id, sp.volume_id, sizeof(initial.volume_id));
+    initial.logical_index = sp.logical_index;
+    initial.chunk_size = sp.chunk_size;
+    initial.snap_version = sp.snap_version;
     std::string prop =
         std::string(rawstor_property) + "=" + blkdev_meta_encode(initial);
 
@@ -170,19 +177,112 @@ void Session::set_state(
     std::function<void(int)>&& cb
 ) {
     std::string dataset = dataset_of(_parent_dataset, id);
-    std::string prop =
-        std::string(rawstor_property) + "=" + blkdev_meta_encode(meta);
 
-    run_async(
-        {"zfs", "set", prop, dataset}, "",
-        [dataset, cb = std::move(cb)](int error) mutable {
-            if (error != 0) {
+    /* The stored placement identity is preserved: read-merge-write. */
+    run_async_capture(
+        {"zfs", "get", "-H", "-o", "value", rawstor_property, dataset},
+        [this, dataset, meta,
+         cb = std::move(cb)](std::string output, int error) mutable {
+            if (error) {
                 rawstd_error(
-                    "zfs: failed to set mirror state on %s: %s\n",
+                    "zfs: failed to read mirror state of %s: %s\n",
                     dataset.c_str(), strerror(error)
                 );
+                cb(error);
+                return;
             }
-            cb(error);
+
+            RawstorObjectMeta next = meta;
+            RawstorObjectMeta stored{};
+            if (blkdev_meta_decode(output, &stored)) {
+                blkdev_meta_merge_identity(&next, stored);
+            }
+            std::string prop =
+                std::string(rawstor_property) + "=" + blkdev_meta_encode(next);
+
+            run_async(
+                {"zfs", "set", prop, dataset}, "",
+                [dataset, cb = std::move(cb)](int error) mutable {
+                    if (error != 0) {
+                        rawstd_error(
+                            "zfs: failed to set mirror state on %s: %s\n",
+                            dataset.c_str(), strerror(error)
+                        );
+                    }
+                    cb(error);
+                }
+            );
+        }
+    );
+}
+
+void Session::list_chunks(
+    std::function<void(std::vector<RawstorObjectListEntry>&&, int)>&& cb
+) {
+    /* -H = no header, tab-separated; -p = raw byte counts. */
+    run_async_capture(
+        {"zfs", "list", "-Hp", "-t", "volume", "-d", "1", "-o",
+         "name,volsize," + std::string(rawstor_property), _parent_dataset},
+        [parent = _parent_dataset,
+         cb = std::move(cb)](std::string output, int error) mutable {
+            if (error) {
+                rawstd_error(
+                    "zfs: failed to list zvols of %s: %s\n", parent.c_str(),
+                    strerror(error)
+                );
+                cb({}, error);
+                return;
+            }
+
+            std::vector<RawstorObjectListEntry> entries;
+
+            std::istringstream iss(output);
+            std::string line;
+            while (std::getline(iss, line)) {
+                size_t name_end = line.find('\t');
+                size_t size_end = name_end == line.npos
+                                      ? line.npos
+                                      : line.find('\t', name_end + 1);
+                if (size_end == line.npos) {
+                    continue;
+                }
+
+                std::string name = line.substr(0, name_end);
+                if (name.compare(0, parent.size() + 1, parent + "/") != 0) {
+                    continue;
+                }
+                name.erase(0, parent.size() + 1);
+
+                RawstorObjectListEntry entry{};
+                RawstdUUID id;
+                /* zvols not named after an object UUID are not ours. */
+                if (rawstd_uuid_from_string(&id, name.c_str()) != 0) {
+                    continue;
+                }
+                memcpy(entry.obj_id, id.bytes, sizeof(entry.obj_id));
+
+                std::string value = line.substr(size_end + 1);
+                while (!value.empty() &&
+                       (value.back() == '\n' || value.back() == '\r')) {
+                    value.pop_back();
+                }
+                if (value.empty() || value == "-" ||
+                    !blkdev_meta_decode(value, &entry.meta)) {
+                    rawstd_error(
+                        "zfs: %s/%s: no valid mirror state property, "
+                        "skipped\n",
+                        parent.c_str(), name.c_str()
+                    );
+                    continue;
+                }
+
+                entry.meta.size =
+                    strtoull(line.c_str() + name_end + 1, nullptr, 10);
+
+                entries.push_back(entry);
+            }
+
+            cb(std::move(entries), 0);
         }
     );
 }

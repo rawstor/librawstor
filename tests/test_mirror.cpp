@@ -224,7 +224,8 @@ bool wait_member_synced(
 TEST(MirrorQuorumTest, open_refused_without_quorum_n2) {
     Members members(2, "00000000-0000-7000-8000-0000000000a0");
 
-    RawstorObjectSpec spec{.size = 1ull << 20};
+    RawstorObjectSpec spec{};
+    spec.size = 1ull << 20;
     ASSERT_EQ(rawstor_object_create(members.target_all().c_str(), &spec), 0);
 
     members.drop(1);
@@ -239,7 +240,8 @@ TEST(MirrorQuorumTest, open_refused_without_quorum_n2) {
 TEST(MirrorQuorumTest, degraded_open_with_quorum_n3) {
     Members members(3, "00000000-0000-7000-8000-0000000000a1");
 
-    RawstorObjectSpec spec{.size = 1ull << 20};
+    RawstorObjectSpec spec{};
+    spec.size = 1ull << 20;
     ASSERT_EQ(rawstor_object_create(members.target_all().c_str(), &spec), 0);
 
     members.drop(2);
@@ -282,7 +284,8 @@ TEST(MirrorQuorumTest, degraded_open_with_quorum_n3) {
 TEST(MirrorQuorumTest, stale_arm_resynced) {
     Members members(2, "00000000-0000-7000-8000-0000000000a2");
 
-    RawstorObjectSpec spec{.size = 1ull << 20};
+    RawstorObjectSpec spec{};
+    spec.size = 1ull << 20;
     ASSERT_EQ(rawstor_object_create(members.target_all().c_str(), &spec), 0);
 
     /* Arm 0 is one sync set ahead of member 1. */
@@ -339,7 +342,8 @@ TEST(MirrorQuorumTest, stale_arm_resynced) {
 TEST(MirrorQuorumTest, split_brain_refused) {
     Members members(2, "00000000-0000-7000-8000-0000000000a3");
 
-    RawstorObjectSpec spec{.size = 1ull << 20};
+    RawstorObjectSpec spec{};
+    spec.size = 1ull << 20;
     ASSERT_EQ(rawstor_object_create(members.target_all().c_str(), &spec), 0);
 
     /* Disjoint histories sharing only a common ancestor. */
@@ -367,7 +371,8 @@ TEST(MirrorQuorumTest, split_brain_refused) {
 TEST(MirrorQuorumTest, all_dirty_same_sync_id_opens) {
     Members members(2, "00000000-0000-7000-8000-0000000000a4");
 
-    RawstorObjectSpec spec{.size = 1ull << 20};
+    RawstorObjectSpec spec{};
+    spec.size = 1ull << 20;
     ASSERT_EQ(rawstor_object_create(members.target_all().c_str(), &spec), 0);
 
     /* Unclean shutdown: every copy DIRTY within the same sync set. */
@@ -403,7 +408,8 @@ TEST(MirrorQuorumTest, all_dirty_same_sync_id_opens) {
 TEST(MirrorQuorumTest, syncing_arm_resynced) {
     Members members(2, "00000000-0000-7000-8000-0000000000a5");
 
-    RawstorObjectSpec spec{.size = 1ull << 20};
+    RawstorObjectSpec spec{};
+    spec.size = 1ull << 20;
     ASSERT_EQ(rawstor_object_create(members.target_all().c_str(), &spec), 0);
 
     RawstorObjectMeta established{};
@@ -457,7 +463,8 @@ TEST(MirrorResyncTest, resync_under_concurrent_writes) {
     Members members(2, "00000000-0000-7000-8000-0000000000a7");
 
     const uint64_t size = 8ull << 20;
-    RawstorObjectSpec spec{.size = size};
+    RawstorObjectSpec spec{};
+    spec.size = size;
     ASSERT_EQ(rawstor_object_create(members.target_all().c_str(), &spec), 0);
 
     RawstorObjectMeta fresh{};
@@ -518,7 +525,8 @@ TEST(MirrorResyncTest, resync_under_concurrent_writes) {
 TEST(MirrorResyncTest, probe_rejoins_recreated_arm) {
     Members members(3, "00000000-0000-7000-8000-0000000000a8");
 
-    RawstorObjectSpec spec{.size = 1ull << 20};
+    RawstorObjectSpec spec{};
+    spec.size = 1ull << 20;
     ASSERT_EQ(rawstor_object_create(members.target_all().c_str(), &spec), 0);
 
     /* The third member is lost entirely (disk gone). */
@@ -562,7 +570,8 @@ TEST(MirrorResyncTest, probe_rejoins_recreated_arm) {
 TEST(MirrorQuorumTest, clean_close_stable_identity) {
     Members members(2, "00000000-0000-7000-8000-0000000000a6");
 
-    RawstorObjectSpec spec{.size = 1ull << 20};
+    RawstorObjectSpec spec{};
+    spec.size = 1ull << 20;
     ASSERT_EQ(rawstor_object_create(members.target_all().c_str(), &spec), 0);
 
     Queue queue(16);
@@ -615,6 +624,13 @@ TEST(MirrorOstTest, read_failover_and_repair) {
         .sync_id = 0,
         .sync_id_history = {},
         .state = RAWSTOR_OBJECT_STATE_CLEAN,
+        .member_kind = 0,
+        .width = 0,
+        .reserved = 0,
+        .volume_id = {},
+        .logical_index = 0,
+        .chunk_size = 0,
+        .snap_version = 0,
     };
 
     /*
@@ -685,6 +701,13 @@ TEST(MirrorOstTest, degrade_and_continue) {
         .sync_id = 0,
         .sync_id_history = {},
         .state = RAWSTOR_OBJECT_STATE_CLEAN,
+        .member_kind = 0,
+        .width = 0,
+        .reserved = 0,
+        .volume_id = {},
+        .logical_index = 0,
+        .chunk_size = 0,
+        .snap_version = 0,
     };
 
     {

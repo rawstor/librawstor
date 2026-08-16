@@ -40,8 +40,35 @@ typedef struct RawstorObject RawstorObject;
  * @see rawstor_object_spec
  * @see rawstor_object_create
  */
+/** Chunk member kinds (rawstor_docs/Mds.md, chunk_meta.member_kind). */
+#define RAWSTOR_MEMBER_DATA 0u
+#define RAWSTOR_MEMBER_WITNESS 1u /* metadata-only quorum member; stage 3 */
+
 struct RawstorObjectSpec {
     uint64_t size; /**< Size of the object in bytes. */
+
+    /*
+     * Volume policy, mds:// targets only (rawstor_docs/Mds.md). Zeros are
+     * defaults that degenerate to a single-chunk, single-copy volume -
+     * which behaves exactly like a plain object.
+     */
+    uint64_t chunk_size;    /**< Power of two; 0 = one chunk spans the
+                                 volume. */
+    uint64_t stripe_width;  /**< K; 0 = spread every chunk, 1 =
+                                 volume-local. */
+    uint8_t width;          /**< Copies per chunk; 0 = 1. */
+    uint8_t failure_domain; /**< RAWSTOR_VOL_DOMAIN_*; default server. */
+
+    /*
+     * Placement identity of a chunk object (rawstor_docs/Mds.md,
+     * chunk_meta): stamped at create by the volume layer, immutable
+     * afterwards (set_state never touches it), the source for the map
+     * reconstruct scan. An all-zero volume_id is a standalone object.
+     */
+    uint8_t member_kind;    /**< RAWSTOR_MEMBER_*. */
+    uint8_t volume_id[16];  /**< Parent volume; all-zero = standalone. */
+    uint64_t logical_index; /**< Chunk position within the volume. */
+    uint64_t snap_version;  /**< snap_id this copy belongs to; 0 = live. */
 };
 
 /**
@@ -96,7 +123,7 @@ typedef int(RawstorCallback)(
  * @brief Object copy metadata.
  *
  * Extends RawstorObjectSpec with the mirror consistency state of a single
- * object copy (see docs/mirroring.md). A sync_id of 0 marks a legacy copy
+ * object copy (see docs/mirroring.md). A sync_id of 0 marks a blank copy
  * that has never been part of an established sync set; such copies are
  * treated as CLEAN and identical right after creation.
  *
@@ -110,6 +137,18 @@ struct RawstorObjectMeta {
     /** Ancestor sync ids, newest first; 0 marks unused entries. */
     uint64_t sync_id_history[RAWSTOR_OBJECT_SYNC_ID_HISTORY];
     uint32_t state; /**< One of RAWSTOR_OBJECT_STATE_*. */
+
+    /*
+     * Placement identity (see RawstorObjectSpec) plus the volume policy
+     * recorded on the chunk: written at create, immutable, ignored by
+     * rawstor_object_set_state() - the stored values always win.
+     */
+    uint8_t member_kind;
+    uint8_t width; /**< Redundancy: copies per chunk. */
+    uint8_t volume_id[16];
+    uint64_t logical_index;
+    uint64_t chunk_size;
+    uint64_t snap_version;
 };
 
 /**
@@ -499,6 +538,61 @@ int rawstor_object_meta_async(
  *
  * @see rawstor_object_set_state
  */
+/**
+ * @brief One stored object of a location listing.
+ *
+ * @see rawstor_object_list
+ */
+struct RawstorObjectListEntry {
+    uint8_t obj_id[16]; /**< Physical object id. */
+    struct RawstorObjectMeta meta;
+};
+
+/**
+ * @brief Enumerate the objects stored at a location.
+ *
+ * Lists every object of a single backend location (not a target: no UUID,
+ * no comma-separated lists) together with its metadata — the source of the
+ * MDS map reconstruct scan (rawstor_docs/Mds.md, "Reconstruct / DR") over
+ * CMD_LIST_CHUNKS. Objects whose metadata cannot be read are skipped with
+ * an error logged: a reconstruct scan must salvage the readable copies, and
+ * every skipped copy is covered by its mirrors.
+ *
+ * @param location  Location string (e.g. "file:///var/rawstor",
+ *                  "ost://127.0.0.1:8080").
+ * @param entries   On success *entries points to a malloc'd array that the
+ *                  caller releases with free(). NULL when *nentries is 0.
+ * @param nentries  Number of entries returned.
+ *
+ * @return 0 on success, negative errno otherwise.
+ *
+ * @see rawstor_object_meta
+ */
+int rawstor_object_list_chunks(
+    const char* location, struct RawstorObjectListEntry** entries,
+    size_t* nentries
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Asynchronously enumerate the objects stored at a location.
+ *
+ * Non-blocking variant of rawstor_object_list(). The operation is driven by
+ * @p queue; @p cb is invoked exactly once from the queue completion context
+ * with 0 on success or a negative errno value on failure. On success
+ * *entries and *nentries are filled before @p cb is invoked; both must stay
+ * valid until then. The caller releases *entries with free().
+ *
+ * @return 0 if the operation was started, negative errno otherwise (in
+ *         which case @p cb is never invoked).
+ *
+ * @see rawstor_object_list
+ */
+int rawstor_object_list_chunks_async(
+    RawIOQueue* queue, const char* location,
+    struct RawstorObjectListEntry** entries, size_t* nentries,
+    int (*cb)(int result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
 int rawstor_object_set_state_async(
     RawIOQueue* queue, const char* target, const struct RawstorObjectMeta* meta,
     int (*cb)(int result, void* data), void* data

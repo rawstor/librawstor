@@ -44,6 +44,12 @@ public:
         const RawstdUUID&, const RawstorObjectMeta&, std::function<void(int)>&&
     ) override {}
 
+    void list_chunks(
+        std::function<void(std::vector<RawstorObjectListEntry>&&, int)>&& cb
+    ) override {
+        cb({}, ENOSYS);
+    }
+
     void
     run(std::vector<std::string> cmd, std::string wait_path,
         std::function<void(int)>&& cb) {

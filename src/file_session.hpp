@@ -54,6 +54,10 @@ public:
 
     void
     info(std::function<void(const RawstorLocationInfo&, int)>&& cb) override;
+
+    void list_chunks(
+        std::function<void(std::vector<RawstorObjectListEntry>&&, int)>&& cb
+    ) override;
 };
 
 } // namespace file

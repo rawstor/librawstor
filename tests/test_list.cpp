@@ -54,7 +54,8 @@ TEST(ListTest, merge) {
         rawstd::URI(location2, "00000000-0000-7000-8000-000000000003");
 
     int res;
-    RawstorObjectSpec spec{.size = 1ull << 20};
+    RawstorObjectSpec spec{};
+    spec.size = 1ull << 20;
     res = rawstor_object_create(target11.str().c_str(), &spec);
     ASSERT_EQ(res, 0);
     res = rawstor_object_create(target12.str().c_str(), &spec);
@@ -126,7 +127,8 @@ TEST(ListTest, pagination) {
     std::vector<std::string> targets;
     targets.reserve(total);
     for (unsigned int i = 0; i < total; ++i) {
-        RawstorObjectSpec spec{.size = 1ull << 10};
+        RawstorObjectSpec spec{};
+        spec.size = 1ull << 10;
 
         char target[65536];
         int res = rawstor_object_create_at(
