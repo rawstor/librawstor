@@ -15,6 +15,7 @@
 #include <list>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace rawstor {
 
@@ -97,6 +98,19 @@ public:
 
     virtual void
     info(std::function<void(const RawstorLocationInfo&, int)>&& cb) = 0;
+
+    /*
+     * Enumerates every stored object with its metadata: the source of the
+     * MDS reconstruct scan (CMD_LIST_CHUNKS). Unlike list(), which paginates
+     * bare UUIDs for `rawstor list`, this reports the full per-copy record
+     * and does so in one shot. Objects whose metadata cannot be read are
+     * skipped with an error logged -- the scan salvages the readable
+     * copies; an unreadable copy is unusable anyway and its chunk is
+     * covered by the mirrors.
+     */
+    virtual void list_chunks(
+        std::function<void(std::vector<RawstorObjectListEntry>&&, int)>&& cb
+    ) = 0;
 
     virtual void set_object(Object* object, std::function<void(int)>&& cb) = 0;
 

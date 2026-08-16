@@ -12,6 +12,8 @@
 #include <cstdint>
 #include <deque>
 #include <memory>
+#include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace rawstor {
@@ -46,6 +48,19 @@ private:
         uint16_t cid;
     };
 
+    /* Accumulator for the LIST_CHUNKS scan; see _list_chunks(). */
+    struct ListCtx {
+        std::weak_ptr<Session> session;
+        uint16_t cid;
+        std::vector<std::string> locations;
+        size_t next;
+        /* rawstor_object_list_async() output for the location in flight. */
+        RawstorObjectListEntry* entries;
+        size_t nentries;
+        std::unordered_set<std::string> seen;
+        std::vector<RawstorOSTFrameMetaBody> records;
+    };
+
     /* Completion context for the async META query; see _meta(). */
     struct MetaCtx {
         std::weak_ptr<Session> session;
@@ -62,6 +77,8 @@ private:
     RawstorOSTFrameHead _request_head;
     union {
         RawstorOSTFrameBasicBody basic;
+        RawstorOSTFrameSetObjectBody setobj;
+        RawstorOSTFrameAllocateBody alloc;
         RawstorOSTFrameIOBody io;
         RawstorOSTFrameMetaBody meta;
     } _request_body;
@@ -77,6 +94,13 @@ private:
     // bound.
     size_t _pending_writes_bytes;
 
+    /*
+     * SET_OBJECT (the handshake) was received: it must be the first
+     * command on every connection, anything else before it is a protocol
+     * violation (the misconnection guard).
+     */
+    bool _handshaken;
+
     /* An object open is in flight; a concurrent SET_OBJECT gets EBUSY. */
     bool _open_pending;
 
@@ -90,6 +114,12 @@ private:
     static int
     _open_complete(RawstorObject* object, int result, void* data) noexcept;
     static int _meta_complete(int result, void* data) noexcept;
+
+    static void _list_next(std::unique_ptr<ListCtx> ctx);
+    static void _list_send(std::unique_ptr<ListCtx> ctx);
+    static int _list_complete(int result, void* data) noexcept;
+
+    void _send_hello(uint16_t cid);
 
     static ssize_t _recv(
         const iovec* iov, unsigned int niov, size_t result, int error,
@@ -107,7 +137,7 @@ private:
         const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
     );
     void _allocate(
-        const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+        const RawstorOSTFrameHead& head, const RawstorOSTFrameAllocateBody& body
     );
     void _release(
         const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
@@ -119,7 +149,8 @@ private:
         const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
     );
     void _set_object(
-        const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+        const RawstorOSTFrameHead& head,
+        const RawstorOSTFrameSetObjectBody& body
     );
     void
     _read(const RawstorOSTFrameHead& head, const RawstorOSTFrameIOBody& body);
@@ -146,10 +177,16 @@ private:
     void _set_state(
         const RawstorOSTFrameHead& head, const RawstorOSTFrameMetaBody& body
     );
+    /* CMD_LIST_CHUNKS: enumerate every object with its metadata. */
+    void _list_chunks(const RawstorOSTFrameHead& head);
     void _flush(
         const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
     );
     void _unknown(const RawstorOSTFrameHead& head);
+
+    /* Send a final response, then close the session once it is flushed. */
+    void _close_after_response(const RawstorOSTFrameHead& head, int32_t res);
+
     std::vector<rawstd::URI> _targets(const RawstdUUID& uuid);
 
     // Tears the session down via Server::del_session() if the send itself

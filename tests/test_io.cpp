@@ -87,7 +87,8 @@ public:
         _queue(queue),
         _target(target),
         _object(nullptr) {
-        RawstorObjectSpec spec{.size = size};
+        RawstorObjectSpec spec{};
+        spec.size = size;
         int res = rawstor_object_create(target.c_str(), &spec);
         if (res < 0) {
             RAWSTD_THROW_SYSTEM_ERROR(-res);
@@ -257,6 +258,7 @@ TEST(OstIOTest, basics) {
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_handshake();
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
@@ -270,6 +272,7 @@ TEST(OstIOTest, basics) {
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_handshake();
         s.cmd_release(RAWSTOR_MAGIC, 0, 0);
     }
 
@@ -293,6 +296,7 @@ TEST(OstIOTest, flush) {
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_handshake();
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
@@ -305,6 +309,7 @@ TEST(OstIOTest, flush) {
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_handshake();
         s.cmd_release(RAWSTOR_MAGIC, 0, 0);
     }
 
@@ -323,6 +328,7 @@ TEST(OstIOTest, set_object_fail) {
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_handshake();
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
@@ -344,6 +350,7 @@ TEST(OstIOTest, set_object_error) {
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_handshake();
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
@@ -365,6 +372,7 @@ TEST(OstIOTest, set_object_disconnect) {
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_handshake();
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
@@ -385,6 +393,7 @@ TEST(OstIOTest, write_fail) {
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_handshake();
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
@@ -396,6 +405,7 @@ TEST(OstIOTest, write_fail) {
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_handshake();
         s.cmd_release(RAWSTOR_MAGIC, 0, 0);
     }
 
@@ -413,6 +423,7 @@ TEST(OstIOTest, write_error) {
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_handshake();
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
@@ -425,6 +436,7 @@ TEST(OstIOTest, write_error) {
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_handshake();
         s.cmd_release(RAWSTOR_MAGIC, 0, 0);
     }
 
@@ -442,6 +454,7 @@ TEST(OstIOTest, write_busy_retries_without_reconnect) {
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_handshake();
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
@@ -462,6 +475,7 @@ TEST(OstIOTest, write_busy_retries_without_reconnect) {
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_handshake();
         s.cmd_release(RAWSTOR_MAGIC, 0, 0);
     }
 
@@ -479,6 +493,7 @@ TEST(OstIOTest, write_disconnect) {
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_handshake();
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
@@ -490,6 +505,7 @@ TEST(OstIOTest, write_disconnect) {
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_handshake();
         s.cmd_release(RAWSTOR_MAGIC, 0, 0);
     }
 
@@ -507,6 +523,7 @@ TEST(OstIOTest, write_disconnect_concurrent) {
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_handshake();
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
@@ -526,6 +543,7 @@ TEST(OstIOTest, write_disconnect_concurrent) {
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_handshake();
         s.cmd_release(RAWSTOR_MAGIC, 0, 0);
     }
 

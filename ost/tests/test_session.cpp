@@ -148,6 +148,20 @@ TEST(OstSessionTest, simple_success) {
     RawstdUUID id;
     ASSERT_EQ(rawstd_uuid7_init(&id), 0);
 
+    // SET_OBJECT is the handshake and must come first on a connection;
+    // its response carries the server's protocol version.
+    RawstorOSTFrameHelloBody hello{};
+    client.send_handshake();
+    ASSERT_TRUE(pump_until(queue, [&] {
+        return client.bytes_available() >=
+               sizeof(RawstorOSTFrameResponse) + sizeof(hello);
+    }));
+    RawstorOSTFrameResponse hello_response =
+        client.recv_response(&hello, sizeof(hello));
+    EXPECT_EQ(hello_response.head.cmd, RAWSTOR_CMD_SET_OBJECT);
+    EXPECT_EQ(hello_response.body.res, 0);
+    EXPECT_EQ(hello.version, RAWSTOR_PROTOCOL_VERSION);
+
     // ALLOCATE: creates the object file:// will open next.
     client.send_allocate(id, 4096);
     ASSERT_TRUE(pump_until(queue, [&] {
@@ -158,11 +172,12 @@ TEST(OstSessionTest, simple_success) {
     EXPECT_EQ(response.body.res, 0);
 
     // SET_OBJECT: opens it for this session's subsequent READ/WRITE.
-    client.send_set_object(id);
+    client.send_set_object(&id);
     ASSERT_TRUE(pump_until(queue, [&] {
-        return client.bytes_available() >= sizeof(RawstorOSTFrameResponse);
+        return client.bytes_available() >=
+               sizeof(RawstorOSTFrameResponse) + sizeof(hello);
     }));
-    response = client.recv_response();
+    response = client.recv_response(&hello, sizeof(hello));
     EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_SET_OBJECT);
     EXPECT_EQ(response.body.res, 0);
 
@@ -208,17 +223,30 @@ TEST(OstSessionTest, write_throttle_limit) {
     RawstdUUID id;
     ASSERT_EQ(rawstd_uuid7_init(&id), 0);
 
+    // See simple_success(): SET_OBJECT is the handshake.
+    RawstorOSTFrameHelloBody hello{};
+    client.send_handshake();
+    ASSERT_TRUE(pump_until(queue, [&] {
+        return client.bytes_available() >=
+               sizeof(RawstorOSTFrameResponse) + sizeof(hello);
+    }));
+    RawstorOSTFrameResponse hello_response =
+        client.recv_response(&hello, sizeof(hello));
+    EXPECT_EQ(hello_response.head.cmd, RAWSTOR_CMD_SET_OBJECT);
+    EXPECT_EQ(hello_response.body.res, 0);
+
     client.send_allocate(id, 1u << 20);
     ASSERT_TRUE(pump_until(queue, [&] {
         return client.bytes_available() >= sizeof(RawstorOSTFrameResponse);
     }));
     ASSERT_EQ(client.recv_response().body.res, 0);
 
-    client.send_set_object(id);
+    client.send_set_object(&id);
     ASSERT_TRUE(pump_until(queue, [&] {
-        return client.bytes_available() >= sizeof(RawstorOSTFrameResponse);
+        return client.bytes_available() >=
+               sizeof(RawstorOSTFrameResponse) + sizeof(hello);
     }));
-    ASSERT_EQ(client.recv_response().body.res, 0);
+    ASSERT_EQ(client.recv_response(&hello, sizeof(hello)).body.res, 0);
 
     // Fire every write back to back, without reading any response in
     // between -- exactly the pattern that, pre-write-throttle-limit, let
@@ -285,17 +313,30 @@ TEST(OstSessionTest, write_backlog_capacity) {
     RawstdUUID id;
     ASSERT_EQ(rawstd_uuid7_init(&id), 0);
 
+    // See simple_success(): SET_OBJECT is the handshake.
+    RawstorOSTFrameHelloBody hello{};
+    client.send_handshake();
+    ASSERT_TRUE(pump_until(queue, [&] {
+        return client.bytes_available() >=
+               sizeof(RawstorOSTFrameResponse) + sizeof(hello);
+    }));
+    RawstorOSTFrameResponse hello_response =
+        client.recv_response(&hello, sizeof(hello));
+    EXPECT_EQ(hello_response.head.cmd, RAWSTOR_CMD_SET_OBJECT);
+    EXPECT_EQ(hello_response.body.res, 0);
+
     client.send_allocate(id, 1u << 20);
     ASSERT_TRUE(pump_until(queue, [&] {
         return client.bytes_available() >= sizeof(RawstorOSTFrameResponse);
     }));
     ASSERT_EQ(client.recv_response().body.res, 0);
 
-    client.send_set_object(id);
+    client.send_set_object(&id);
     ASSERT_TRUE(pump_until(queue, [&] {
-        return client.bytes_available() >= sizeof(RawstorOSTFrameResponse);
+        return client.bytes_available() >=
+               sizeof(RawstorOSTFrameResponse) + sizeof(hello);
     }));
-    ASSERT_EQ(client.recv_response().body.res, 0);
+    ASSERT_EQ(client.recv_response(&hello, sizeof(hello)).body.res, 0);
 
     // Fire every write back to back, without reading any response in
     // between, so the whole burst is already sitting in the kernel's

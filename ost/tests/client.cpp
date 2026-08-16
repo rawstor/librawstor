@@ -58,34 +58,57 @@ Client::~Client() {
 
 uint16_t Client::send_allocate(const RawstdUUID& id, uint64_t size) {
     uint16_t cid = _next_cid++;
-    RawstorOSTFrameBasic frame = {
+    RawstorOSTFrameAllocate frame = {
         .head =
             {
                 .magic = RAWSTOR_MAGIC,
                 .cmd = RAWSTOR_CMD_ALLOCATE,
                 .cid = cid,
             },
-        .body = {.obj_id = {}, .offset = 0, .val = size},
+        .body = {
+            .obj_id = {},
+            .size = size,
+            .chunk_size = 0,
+            .stripe_width = 0,
+            .width = 0,
+            .failure_domain = 0,
+            .member_kind = 0,
+            .reserved = 0,
+            .volume_id = {},
+            .logical_index = 0,
+            .snap_version = 0,
+        },
     };
     std::memcpy(frame.body.obj_id, id.bytes, sizeof(id.bytes));
     send_all(_fd, &frame, sizeof(frame));
     return cid;
 }
 
-uint16_t Client::send_set_object(const RawstdUUID& id) {
+uint16_t Client::send_set_object(const RawstdUUID* id) {
     uint16_t cid = _next_cid++;
-    RawstorOSTFrameBasic frame = {
+    RawstorOSTFrameSetObject frame = {
         .head =
             {
                 .magic = RAWSTOR_MAGIC,
                 .cmd = RAWSTOR_CMD_SET_OBJECT,
                 .cid = cid,
             },
-        .body = {.obj_id = {}, .offset = 0, .val = 0},
+        .body = {
+            .version = RAWSTOR_PROTOCOL_VERSION,
+            .features = 0,
+            .obj_id = {},
+            .val = 0,
+        },
     };
-    std::memcpy(frame.body.obj_id, id.bytes, sizeof(id.bytes));
+    if (id != nullptr) {
+        std::memcpy(frame.body.obj_id, id->bytes, sizeof(id->bytes));
+    }
     send_all(_fd, &frame, sizeof(frame));
     return cid;
+}
+
+uint16_t Client::send_handshake() {
+    return send_set_object(nullptr);
 }
 
 uint16_t

@@ -32,6 +32,14 @@ bool blkdev_meta_decode(const std::string& value, RawstorObjectMeta* out);
 std::string
 blkdev_find_tag(const std::string& tag_list, const std::string& prefix);
 
+/*
+ * Copies the placement identity of stored into *meta: set_state must
+ * never change it (the stored values always win).
+ */
+void blkdev_meta_merge_identity(
+    RawstorObjectMeta* meta, const RawstorObjectMeta& stored
+);
+
 } // namespace rawstor
 
 #endif // RAWSTOR_BLKDEV_META_HPP

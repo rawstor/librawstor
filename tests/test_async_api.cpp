@@ -94,7 +94,8 @@ TEST(FileAsyncLifecycleTest, create_spec_open_remove) {
     Queue q(64);
 
     {
-        RawstorObjectSpec spec{.size = 1ull << 20};
+        RawstorObjectSpec spec{};
+        spec.size = 1ull << 20;
         AsyncResult r;
         ASSERT_EQ(
             rawstor_object_create_async(q, target.c_str(), &spec, async_cb, &r),
@@ -177,7 +178,8 @@ TEST(FileAsyncLifecycleTest, invalid_target_reports_immediately) {
     Queue q(64);
 
     /* The target filename is not a valid UUID. */
-    RawstorObjectSpec spec{.size = 1ull << 20};
+    RawstorObjectSpec spec{};
+    spec.size = 1ull << 20;
     AsyncResult r;
     EXPECT_LT(
         rawstor_object_create_async(
@@ -212,7 +214,8 @@ TEST(FileAsyncCreateTest, rollback_on_partial_failure) {
 
     Queue q(64);
 
-    RawstorObjectSpec spec{.size = 1ull << 20};
+    RawstorObjectSpec spec{};
+    spec.size = 1ull << 20;
     AsyncResult r;
     ASSERT_EQ(
         rawstor_object_create_async(q, target.c_str(), &spec, async_cb, &r), 0
@@ -238,18 +241,21 @@ TEST(OstAsyncLifecycleTest, create_remove) {
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_handshake();
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_handshake();
         s.cmd_release(RAWSTOR_MAGIC, 0, 0);
     }
 
     Queue q(256);
 
     {
-        RawstorObjectSpec spec{.size = 1ull << 20};
+        RawstorObjectSpec spec{};
+        spec.size = 1ull << 20;
         AsyncResult r;
         ASSERT_EQ(
             rawstor_object_create_async(q, target.c_str(), &spec, async_cb, &r),

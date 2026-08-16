@@ -11,6 +11,7 @@
 
 #include <rawstor/protocol.h>
 
+#include <dirent.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
 #include <sys/types.h>
@@ -59,7 +60,7 @@ std::string get_target_path(
  * -- an object created before mirroring, or by an older release -- is a
  * legacy copy: CLEAN with sync_id 0, never part of an established sync set.
  */
-constexpr uint32_t META_FORMAT_VERSION = 1;
+constexpr uint32_t META_FORMAT_VERSION = 2;
 
 struct OnDiskMeta {
     uint32_t magic;
@@ -69,11 +70,22 @@ struct OnDiskMeta {
     uint64_t sync_id;
     uint64_t sync_id_history[RAWSTOR_OBJECT_SYNC_ID_HISTORY];
     uint32_t state;
+    /*
+     * Placement identity (rawstor_docs/Mds.md, chunk_meta); immutable:
+     * a chunk is (volume_id, offset = logical_index * chunk_size, length).
+     */
+    uint8_t member_kind;
+    uint8_t width;
+    uint8_t pad[2];
+    uint8_t volume_id[16];
+    uint64_t logical_index;
+    uint64_t chunk_size;
+    uint64_t snap_version;
     /* Reserved for future extensions (snapshot list, stored checksums). */
-    uint8_t reserved[60];
+    uint8_t reserved[80];
 };
 
-static_assert(sizeof(OnDiskMeta) == 128);
+static_assert(sizeof(OnDiskMeta) == 192);
 
 std::string
 get_meta_path(const std::string& location_path, const RawstdUUIDString& uuid) {
@@ -95,6 +107,12 @@ OnDiskMeta meta_to_disk(const RawstorObjectMeta& meta) {
         disk.sync_id_history, meta.sync_id_history, sizeof(disk.sync_id_history)
     );
     disk.state = meta.state;
+    disk.member_kind = meta.member_kind;
+    disk.width = meta.width;
+    memcpy(disk.volume_id, meta.volume_id, sizeof(disk.volume_id));
+    disk.logical_index = meta.logical_index;
+    disk.chunk_size = meta.chunk_size;
+    disk.snap_version = meta.snap_version;
     return disk;
 }
 
@@ -107,6 +125,12 @@ RawstorObjectMeta disk_to_meta(const OnDiskMeta& disk) {
         meta.sync_id_history, disk.sync_id_history, sizeof(meta.sync_id_history)
     );
     meta.state = disk.state;
+    meta.member_kind = disk.member_kind;
+    meta.width = disk.width;
+    memcpy(meta.volume_id, disk.volume_id, sizeof(meta.volume_id));
+    meta.logical_index = disk.logical_index;
+    meta.chunk_size = disk.chunk_size;
+    meta.snap_version = disk.snap_version;
     return meta;
 }
 
@@ -351,6 +375,12 @@ void Session::create(
                 RawstorObjectMeta meta{};
                 meta.size = sp.size;
                 meta.state = RAWSTOR_OBJECT_STATE_CLEAN;
+                meta.member_kind = sp.member_kind;
+                meta.width = sp.width;
+                memcpy(meta.volume_id, sp.volume_id, sizeof(meta.volume_id));
+                meta.logical_index = sp.logical_index;
+                meta.chunk_size = sp.chunk_size;
+                meta.snap_version = sp.snap_version;
 
                 write_meta_path(meta_path, meta);
 
@@ -465,20 +495,109 @@ void Session::set_state(
             RawstdUUIDString uuid_string;
             rawstd_uuid_to_string(&id, &uuid_string);
 
+            std::string meta_path = get_meta_path(location_path, uuid_string);
+
             /*
-             * The stored size is the data file's; the size field of meta is
-             * ignored, and the sidecar keeps a copy purely for diagnostics.
+             * The size is the data file's (the size field of meta is
+             * ignored), and the placement identity is immutable: both are
+             * carried over from what is already recorded.
              */
+            RawstorObjectMeta stored = read_meta_path(meta_path);
             RawstorObjectMeta next = meta;
             next.size = std::filesystem::file_size(
                 get_target_path(location_path, uuid_string)
             );
+            next.member_kind = stored.member_kind;
+            next.width = stored.width;
+            memcpy(next.volume_id, stored.volume_id, sizeof(next.volume_id));
+            next.logical_index = stored.logical_index;
+            next.chunk_size = stored.chunk_size;
+            next.snap_version = stored.snap_version;
 
-            write_meta_path(get_meta_path(location_path, uuid_string), next);
+            write_meta_path(meta_path, next);
 
             return 0;
         },
         std::move(cb)
+    );
+}
+
+void Session::list_chunks(
+    std::function<void(std::vector<RawstorObjectListEntry>&&, int)>&& cb
+) {
+    auto ret = std::make_shared<std::vector<RawstorObjectListEntry>>();
+
+    run_in_worker(
+        _queue,
+        [location = location(), ret]() -> int {
+            std::string location_path = get_location_path(location);
+
+            DIR* dir = ::opendir(location_path.c_str());
+            if (dir == nullptr) {
+                /* A location with no objects may not have a directory yet. */
+                if (errno == ENOENT) {
+                    errno = 0;
+                    return 0;
+                }
+                RAWSTD_THROW_ERRNO();
+            }
+
+            try {
+                const std::string suffix = ".meta";
+                errno = 0;
+                for (dirent* e = ::readdir(dir); e != nullptr;
+                     e = ::readdir(dir)) {
+                    std::string name = e->d_name;
+                    if (name.size() <= suffix.size() ||
+                        name.compare(
+                            name.size() - suffix.size(), suffix.size(), suffix
+                        ) != 0) {
+                        errno = 0;
+                        continue;
+                    }
+
+                    std::string stem =
+                        name.substr(0, name.size() - suffix.size());
+                    RawstorObjectListEntry entry{};
+                    RawstdUUID id;
+                    if (rawstd_uuid_from_string(&id, stem.c_str()) != 0) {
+                        rawstd_error(
+                            "%s/%s: not an object metadata record, skipped\n",
+                            location_path.c_str(), name.c_str()
+                        );
+                        errno = 0;
+                        continue;
+                    }
+                    memcpy(entry.obj_id, id.bytes, sizeof(entry.obj_id));
+
+                    try {
+                        entry.meta = read_meta_path(location_path + "/" + name);
+                        /* The size is the data file's, as in meta(). */
+                        entry.meta.size = std::filesystem::file_size(
+                            location_path + "/" + stem
+                        );
+                        ret->push_back(entry);
+                    } catch (const std::exception& err) {
+                        rawstd_error(
+                            "%s/%s: %s, skipped\n", location_path.c_str(),
+                            name.c_str(), err.what()
+                        );
+                    }
+                    errno = 0;
+                }
+                if (errno != 0) {
+                    RAWSTD_THROW_ERRNO();
+                }
+
+                ::closedir(dir);
+            } catch (...) {
+                ::closedir(dir);
+                throw;
+            }
+
+            return 0;
+        },
+        [ret, cb = std::move(cb)](int error) { cb(std::move(*ret), error); }
     );
 }
 

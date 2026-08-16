@@ -36,7 +36,12 @@ public:
     // Each send_*() returns the cid it used, for matching against the
     // eventual recv_response().
     uint16_t send_allocate(const RawstdUUID& id, uint64_t size);
-    uint16_t send_set_object(const RawstdUUID& id);
+    // SET_OBJECT doubles as the connection handshake and must be the
+    // first command on a connection; a null id binds no object (a
+    // control connection). Its success response carries a
+    // RawstorOSTFrameHelloBody payload.
+    uint16_t send_set_object(const RawstdUUID* id);
+    uint16_t send_handshake();
     uint16_t
     send_write(uint64_t offset, const void* buf, size_t size, bool sync);
     uint16_t send_read(uint64_t offset, uint32_t size);

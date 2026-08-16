@@ -31,7 +31,8 @@ TEST(FileLocationInfoTest, empty_then_used) {
     EXPECT_EQ(info.used, (uint64_t)0);
     EXPECT_GT(info.total, (uint64_t)0);
 
-    RawstorObjectSpec spec{.size = 1ull << 20};
+    RawstorObjectSpec spec{};
+    spec.size = 1ull << 20;
     res = rawstor_object_create(target.c_str(), &spec);
     EXPECT_EQ(res, 0);
 
@@ -63,11 +64,13 @@ TEST(FileLocationInfoTest, multi_location_aggregation) {
     std::string target_a = rawstd::URI(location_a_uri, uuid_a).str();
     std::string target_b = rawstd::URI(location_b_uri, uuid_b).str();
 
-    RawstorObjectSpec spec_a{.size = 1ull << 20};
+    RawstorObjectSpec spec_a{};
+    spec_a.size = 1ull << 20;
     int res = rawstor_object_create(target_a.c_str(), &spec_a);
     EXPECT_EQ(res, 0);
 
-    RawstorObjectSpec spec_b{.size = 3ull << 20};
+    RawstorObjectSpec spec_b{};
+    spec_b.size = 3ull << 20;
     res = rawstor_object_create(target_b.c_str(), &spec_b);
     EXPECT_EQ(res, 0);
 
@@ -111,6 +114,7 @@ TEST(OstLocationInfoTest, location_info) {
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_handshake();
         s.cmd_location_info(RAWSTOR_MAGIC, 0, sent_info);
     }
 
