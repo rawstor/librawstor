@@ -36,6 +36,8 @@ unsigned int rawstor_opts_list_limit(void);
 
 unsigned int rawstor_opts_wait_device_timeout(void);
 
+unsigned int rawstor_opts_mirror_probe_interval(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -39,6 +39,19 @@ The two headline consumers are:
   privileges to run them.
 - **Target**: a Location with a UUID appended to each URI — addresses one
   specific object, possibly replicated across the backends in the list.
+- **Mirroring**: a multi-backend target is an N-way mirror, and each copy
+  carries its own metadata record (state CLEAN/DIRTY/SYNCING, epoch,
+  sync_id and a short sync_id history) rather than having its health
+  inferred from I/O errors. Opening needs a strict majority of reachable
+  members; a member that fails a write is degraded out of the sync set
+  (durably, on the survivors) and the write is still acknowledged; reads
+  fail over to a healthy member and read-repair what they find corrupted.
+  A degraded member rejoins through an online resync that runs while the
+  object keeps serving I/O, and an open object re-probes its unreachable
+  members every `mirror_probe_interval` ms. `lvm://`/`zfs://` copies store
+  the same record natively (an LVM tag / a ZFS user property) instead of a
+  sidecar file. The full failure model and the rules that follow from it
+  are in `docs/mirroring.md` — read it before touching this code.
 - **OST protocol**: the binary wire protocol `rawstor-ost` speaks and
   `librawstor`'s client implements. Frame layout (magic, command, cid) is
   in `include/rawstor/protocol.h`; the authoritative spec lives in the

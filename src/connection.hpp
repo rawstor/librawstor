@@ -42,6 +42,15 @@ private:
     unsigned int _reopens;
     std::vector<std::function<void(int)>> _reopen_waiters;
 
+    /*
+     * When false, failed operations are not retried through a session
+     * reopen: the error surfaces to the owner. A mirrored object disables
+     * transparent retries once it is DIRTY — a reopened session may talk
+     * to a restarted backend that lost acknowledged writes, so the owner
+     * must degrade the mirror instead (docs/mirroring.md, case F6).
+     */
+    bool _transparent_retry;
+
     static void _open_attempt(const std::shared_ptr<OpenState>& st);
     static void _open_next(const std::shared_ptr<OpenState>& st);
     static void _open_set_object(const std::shared_ptr<OpenState>& st);
@@ -92,6 +101,16 @@ public:
         std::function<void(const RawstorObjectSpec&, int)>&& cb
     );
 
+    static void meta(
+        rawio::Queue& queue, const rawstd::URI& target,
+        std::function<void(const RawstorObjectMeta&, int)>&& cb
+    );
+
+    static void set_state(
+        rawio::Queue& queue, const rawstd::URI& target,
+        const RawstorObjectMeta& meta, std::function<void(int)>&& cb
+    );
+
     static void info(const rawstd::URI& location, RawstorLocationInfo* info);
 
     explicit Connection(rawio::Queue& queue);
@@ -103,6 +122,18 @@ public:
     std::shared_ptr<Session> get_next_session();
     void invalidate_session(
         const std::shared_ptr<Session>& s, std::function<void(int)>&& cb
+    );
+
+    void set_transparent_retry(bool enabled) noexcept;
+
+    void meta(
+        const RawstdUUID& id,
+        std::function<void(const RawstorObjectMeta&, int)>&& cb
+    );
+
+    void set_state(
+        const RawstdUUID& id, const RawstorObjectMeta& meta,
+        std::function<void(int)>&& cb
     );
 
     const rawstd::URI* location() const noexcept;

@@ -76,6 +76,25 @@ public:
         std::function<void(const RawstorObjectSpec&, int)>&& cb
     ) = 0;
 
+    /*
+     * Like spec(), but reports the full per-copy record including the
+     * mirror consistency state (see docs/mirroring.md).
+     */
+    virtual void meta(
+        const RawstdUUID& id,
+        std::function<void(const RawstorObjectMeta&, int)>&& cb
+    ) = 0;
+
+    /*
+     * Persists the mirror consistency state of the object durably (synced
+     * to stable storage before cb fires). The size field of meta is ignored:
+     * the stored size is preserved.
+     */
+    virtual void set_state(
+        const RawstdUUID& id, const RawstorObjectMeta& meta,
+        std::function<void(int)>&& cb
+    ) = 0;
+
     virtual void
     info(std::function<void(const RawstorLocationInfo&, int)>&& cb) = 0;
 

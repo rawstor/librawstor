@@ -78,10 +78,22 @@ public:
         std::function<void(const RawstorObjectSpec&, int)>&& cb
     ) override;
 
+    void meta(
+        const RawstdUUID& id,
+        std::function<void(const RawstorObjectMeta&, int)>&& cb
+    ) override;
+
+    void set_state(
+        const RawstdUUID& id, const RawstorObjectMeta& meta,
+        std::function<void(int)>&& cb
+    ) override;
+
     void
     info(std::function<void(const RawstorLocationInfo&, int)>&& cb) override;
 
     void set_object(Object* object, std::function<void(int)>&& cb) override;
+
+    void flush(std::function<void(int)>&& cb) override;
 
     void pread(
         void* buf, size_t size, off_t offset,
@@ -102,8 +114,6 @@ public:
         const iovec* iov, unsigned int niov, size_t size, off_t offset,
         bool sync, std::function<void(size_t, int)>&& cb
     ) override;
-
-    void flush(std::function<void(int)>&& cb) override;
 };
 
 } // namespace ost

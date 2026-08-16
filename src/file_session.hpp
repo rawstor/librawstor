@@ -19,8 +19,7 @@ namespace file {
 
 class Session final : public rawstor::blk::Session {
 private:
-    void
-    _connect(const RawstdUUID& id, std::function<void(int)>&& cb) override;
+    void _connect(const RawstdUUID& id, std::function<void(int)>&& cb) override;
 
 public:
     Session(Private p, rawio::Queue& queue, const rawstd::URI& location);
@@ -41,6 +40,16 @@ public:
     void spec(
         const RawstdUUID& id,
         std::function<void(const RawstorObjectSpec&, int)>&& cb
+    ) override;
+
+    void meta(
+        const RawstdUUID& id,
+        std::function<void(const RawstorObjectMeta&, int)>&& cb
+    ) override;
+
+    void set_state(
+        const RawstdUUID& id, const RawstorObjectMeta& meta,
+        std::function<void(int)>&& cb
     ) override;
 
     void

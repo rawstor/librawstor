@@ -29,6 +29,15 @@ extern "C" {
 #define RAWSTOR_CMD_SPEC 7
 #define RAWSTOR_CMD_LOCATION_INFO 8
 #define RAWSTOR_CMD_FLUSH 9
+
+/*
+ * Metadata-plane commands live at 0x20 and up, leaving room for the
+ * object I/O commands above to keep growing contiguously. META is the
+ * per-copy mirror record (see RawstorObjectMeta); SPEC stays at 7 and
+ * keeps reporting the object size only, so pre-0.3 peers are unaffected.
+ */
+#define RAWSTOR_CMD_META 0x20
+#define RAWSTOR_CMD_SET_STATE 0x21
 typedef uint16_t RawstorOSTCommandType;
 
 struct RawstorOSTFrameHead {
@@ -63,6 +72,25 @@ struct RawstorOSTFrameIO {
     struct RawstorOSTFrameIOBody body;
 } RAWSTOR_PACKED;
 
+/*
+ * Object metadata: mirror consistency state (see docs/mirroring.md).
+ * sync_id_history length must match RAWSTOR_OBJECT_SYNC_ID_HISTORY.
+ */
+struct RawstorOSTFrameMetaBody {
+    uint8_t obj_id[16];
+    uint64_t size;
+    uint64_t epoch;
+    uint64_t sync_id;
+    uint64_t sync_id_history[4];
+    uint32_t state;
+} RAWSTOR_PACKED;
+
+/* SET_STATE request */
+struct RawstorOSTFrameMeta {
+    struct RawstorOSTFrameHead head;
+    struct RawstorOSTFrameMetaBody body;
+} RAWSTOR_PACKED;
+
 /* response frames */
 struct RawstorOSTFrameResponseBody {
     // TODO: if we send length in res - it should be the same type
@@ -74,6 +102,16 @@ struct RawstorOSTFrameResponseBody {
 struct RawstorOSTFrameResponse {
     struct RawstorOSTFrameHead head;
     struct RawstorOSTFrameResponseBody body;
+} RAWSTOR_PACKED;
+
+/*
+ * META response: standard response followed by the object metadata.
+ * body.hash covers the meta payload.
+ */
+struct RawstorOSTFrameMetaResponse {
+    struct RawstorOSTFrameHead head;
+    struct RawstorOSTFrameResponseBody body;
+    struct RawstorOSTFrameMetaBody meta;
 } RAWSTOR_PACKED;
 
 #ifdef __cplusplus

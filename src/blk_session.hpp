@@ -34,8 +34,8 @@ protected:
 public:
     Session(Private p, rawio::Queue& queue, const rawstd::URI& location);
 
-    void set_object(Object* object, std::function<void(int)>&& cb)
-        override final;
+    void
+    set_object(Object* object, std::function<void(int)>&& cb) override final;
 
     void pread(
         void* buf, size_t size, off_t offset,

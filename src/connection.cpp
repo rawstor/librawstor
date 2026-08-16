@@ -85,7 +85,8 @@ Connection::Connection(rawio::Queue& queue) :
     _object(nullptr),
     _session_index(0),
     _alive(std::make_shared<int>(0)),
-    _reopens(0) {
+    _reopens(0),
+    _transparent_retry(true) {
 }
 
 Connection::~Connection() {
@@ -261,7 +262,7 @@ void Connection::_op(
                 return;
             }
 
-            if (attempt >= rawstor_opts_io_attempts()) {
+            if (!_transparent_retry || attempt >= rawstor_opts_io_attempts()) {
                 rawstd_error(
                     "IO %s: size = %zu, offset = %jd; "
                     "error on %s: %s; "
@@ -460,6 +461,42 @@ void Connection::list(
     token = ret_token;
 }
 
+void Connection::set_transparent_retry(bool enabled) noexcept {
+    _transparent_retry = enabled;
+}
+
+void Connection::meta(
+    const RawstdUUID& id,
+    std::function<void(const RawstorObjectMeta&, int)>&& cb
+) {
+    try {
+        get_next_session()->meta(id, std::move(cb));
+    } catch (const std::system_error& e) {
+        cb({}, e.code().value());
+    } catch (const std::bad_alloc& e) {
+        cb({}, ENOMEM);
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        cb({}, EINVAL);
+    }
+}
+
+void Connection::set_state(
+    const RawstdUUID& id, const RawstorObjectMeta& meta,
+    std::function<void(int)>&& cb
+) {
+    try {
+        get_next_session()->set_state(id, meta, std::move(cb));
+    } catch (const std::system_error& e) {
+        cb(e.code().value());
+    } catch (const std::bad_alloc& e) {
+        cb(ENOMEM);
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        cb(EINVAL);
+    }
+}
+
 void Connection::create(
     rawio::Queue& queue, const rawstd::URI& target, const RawstorObjectSpec& sp,
     std::function<void(int)>&& cb
@@ -551,6 +588,71 @@ void Connection::spec(
         } catch (const std::exception& e) {
             rawstd_error("%s\n", e.what());
             cb({}, EINVAL);
+        }
+    });
+}
+
+void Connection::meta(
+    rawio::Queue& queue, const rawstd::URI& target,
+    std::function<void(const RawstorObjectMeta&, int)>&& cb
+) {
+    RawstdUUID id;
+    int res = rawstd_uuid_from_string(&id, target.path().filename().c_str());
+    if (res) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+
+    std::shared_ptr<Session> s = Session::create(queue, target.parent());
+    Session* session = s.get();
+    session->connect([s = std::move(s), id, cb = std::move(cb)](int error) {
+        if (error) {
+            cb({}, error);
+            return;
+        }
+
+        try {
+            s->meta(id, [s, cb](const RawstorObjectMeta& meta, int error) {
+                cb(meta, error);
+            });
+        } catch (const std::system_error& e) {
+            cb({}, e.code().value());
+        } catch (const std::bad_alloc& e) {
+            cb({}, ENOMEM);
+        } catch (const std::exception& e) {
+            rawstd_error("%s\n", e.what());
+            cb({}, EINVAL);
+        }
+    });
+}
+
+void Connection::set_state(
+    rawio::Queue& queue, const rawstd::URI& target,
+    const RawstorObjectMeta& meta, std::function<void(int)>&& cb
+) {
+    RawstdUUID id;
+    int res = rawstd_uuid_from_string(&id, target.path().filename().c_str());
+    if (res) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+
+    std::shared_ptr<Session> s = Session::create(queue, target.parent());
+    Session* session = s.get();
+    session->connect([s = std::move(s), id, meta,
+                      cb = std::move(cb)](int error) {
+        if (error) {
+            cb(error);
+            return;
+        }
+
+        try {
+            s->set_state(id, meta, [s, cb](int error) { cb(error); });
+        } catch (const std::system_error& e) {
+            cb(e.code().value());
+        } catch (const std::bad_alloc& e) {
+            cb(ENOMEM);
+        } catch (const std::exception& e) {
+            rawstd_error("%s\n", e.what());
+            cb(EINVAL);
         }
     });
 }

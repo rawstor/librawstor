@@ -11,6 +11,7 @@
 #define RAWSTOR_OPTS_TCP_USER_TIMEOUT 5000
 #define RAWSTOR_OPTS_LIST_LIMIT 1000
 #define RAWSTOR_OPTS_WAIT_DEVICE_TIMEOUT 5000
+#define RAWSTOR_OPTS_MIRROR_PROBE_INTERVAL 5000
 
 static struct RawstorOpts _rawstor_opts = {};
 
@@ -74,6 +75,14 @@ int rawstor_opts_initialize(const struct RawstorOpts* opts) {
                   RAWSTOR_OPTS_WAIT_DEVICE_TIMEOUT
               );
 
+    _rawstor_opts.mirror_probe_interval =
+        (opts != NULL && opts->mirror_probe_interval != 0)
+            ? opts->mirror_probe_interval
+            : get_env_uint(
+                  "RAWSTOR_OPTS_MIRROR_PROBE_INTERVAL",
+                  RAWSTOR_OPTS_MIRROR_PROBE_INTERVAL
+              );
+
     return 0;
 }
 
@@ -109,4 +118,8 @@ unsigned int rawstor_opts_list_limit(void) {
 
 unsigned int rawstor_opts_wait_device_timeout(void) {
     return _rawstor_opts.wait_device_timeout;
+}
+
+unsigned int rawstor_opts_mirror_probe_interval(void) {
+    return _rawstor_opts.mirror_probe_interval;
 }
