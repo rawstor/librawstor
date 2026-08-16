@@ -27,14 +27,17 @@ rawstd::Stats in_flight_stats;
 std::atomic<int> in_flight{0};
 
 // One slow-op sample, for the top-10 report. `op` is a static string
-// (__FUNCTION__), not owned. Internal to this file: record_op() takes
-// its fields individually, so nothing outside needs the type itself.
+// (a string literal in the caller), not owned. Internal to this file:
+// record_op() takes its fields individually, so nothing outside needs
+// the type itself.
 struct Op {
     TimePoint lat;
+    TimePoint slat;
+    TimePoint rtt;
+    TimePoint clat;
     const char* op;
     size_t size;
     off_t offset;
-    unsigned int attempts;
 
     // Deliberately reversed (bigger lat sorts first): lets TopN drive
     // std::push_heap/pop_heap/sort with the default comparator, no
@@ -120,10 +123,10 @@ void record_lat(TimePoint ns, unsigned int attempts) {
 }
 
 void record_op(
-    TimePoint lat, const char* op, size_t size, off_t offset,
-    unsigned int attempts
+    TimePoint lat, TimePoint slat, TimePoint rtt, TimePoint clat,
+    const char* op, size_t size, off_t offset
 ) {
-    top_slow.add(Op{lat, op, size, offset, attempts});
+    top_slow.add(Op{lat, slat, rtt, clat, op, size, offset});
 }
 
 void op_started() {
@@ -158,10 +161,10 @@ void dump() {
         for (const Op& op : slow) {
             std::fprintf(
                 stderr,
-                "    %2u. %-7s size=%-8zu offset=%-10jd attempts=%u "
-                "lat=%.0f usec\n",
+                "    %2u. %-7s size=%-8zu offset=%-10jd "
+                "slat=%.0f rtt=%.0f clat=%.0f lat=%.0f usec\n",
                 i++, op.op, op.size, static_cast<intmax_t>(op.offset),
-                op.attempts, usec(op.lat)
+                usec(op.slat), usec(op.rtt), usec(op.clat), usec(op.lat)
             );
         }
     }

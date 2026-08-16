@@ -136,6 +136,13 @@ private:
 
 protected:
     rawstor::telemetry::TimePoint _t_created;
+    // A string literal (e.g. "pread"/"pwrite"/"flush"), not owned; size
+    // and offset are 0 for ops without either (flush). Set once at
+    // construction by each subclass, purely for _dispatch()'s
+    // telemetry::record_op() call.
+    const char* _op_name;
+    size_t _op_size;
+    off_t _op_offset;
 
     rawstd::TraceEvent _trace_event;
     // A strong reference, not just a back-pointer: a SessionOp can outlive
@@ -169,28 +176,39 @@ protected:
         // an error and nothing useful to measure.
         bool timed = !error && _t_send_done != 0;
         rawstor::telemetry::TimePoint t_response_ready = 0;
+        rawstor::telemetry::TimePoint slat = 0;
+        rawstor::telemetry::TimePoint rtt = 0;
         if (timed) {
             t_response_ready = rawstor::telemetry::now();
-            rawstor::telemetry::record_rtt(t_response_ready - _t_send_done);
+            slat = _t_send_done - _t_created;
+            rtt = t_response_ready - _t_send_done;
+            rawstor::telemetry::record_rtt(rtt);
         }
+
+        // clat/lat and the top-10 sample are only meaningful alongside
+        // rtt, so this shares the same `timed` gate.
+        auto record_clat_and_op = [&]() {
+            if (!timed) {
+                return;
+            }
+            rawstor::telemetry::TimePoint t_now = rawstor::telemetry::now();
+            rawstor::telemetry::TimePoint clat = t_now - t_response_ready;
+            rawstor::telemetry::record_clat(clat);
+            rawstor::telemetry::record_op(
+                t_now - _t_created, slat, rtt, clat, _op_name, _op_size,
+                _op_offset
+            );
+        };
 
         try {
             _cb(result, error);
         } catch (...) {
-            if (timed) {
-                rawstor::telemetry::record_clat(
-                    rawstor::telemetry::now() - t_response_ready
-                );
-            }
+            record_clat_and_op();
             _session->_remove_op(_cid);
             throw;
         }
 
-        if (timed) {
-            rawstor::telemetry::record_clat(
-                rawstor::telemetry::now() - t_response_ready
-            );
-        }
+        record_clat_and_op();
 
         _session->_remove_op(_cid);
     }
@@ -199,12 +217,16 @@ public:
     SessionOp(
         const std::shared_ptr<rawstor::ost::Session>& session, uint16_t cid,
         const rawstd::TraceEvent& trace_event,
-        std::function<void(size_t, int)>&& cb
+        std::function<void(size_t, int)>&& cb, const char* op_name,
+        size_t op_size, off_t op_offset
     ) :
         _cid(cid),
         _dispatched(false),
         _t_send_done(0),
         _t_created(rawstor::telemetry::now()),
+        _op_name(op_name),
+        _op_size(op_size),
+        _op_offset(op_offset),
         _trace_event(trace_event),
         _session(session),
         _cb(std::move(cb)) {}
@@ -254,7 +276,9 @@ public:
         const rawstd::TraceEvent& trace_event,
         std::function<void(size_t, int)>&& cb
     ) :
-        SessionOp(session, cid, trace_event, std::move(cb)),
+        SessionOp(
+            session, cid, trace_event, std::move(cb), "pread", size, offset
+        ),
         _buf(buf),
         _size(size),
         _request({
@@ -339,7 +363,9 @@ public:
         const rawstd::TraceEvent& trace_event,
         std::function<void(size_t, int)>&& cb
     ) :
-        SessionOp(session, cid, trace_event, std::move(cb)),
+        SessionOp(
+            session, cid, trace_event, std::move(cb), "preadv", size, offset
+        ),
         _iov(iov),
         _niov(niov),
         _size(size),
@@ -422,7 +448,9 @@ public:
         const rawstd::TraceEvent& trace_event,
         std::function<void(size_t, int)>&& cb
     ) :
-        SessionOp(session, cid, trace_event, std::move(cb)),
+        SessionOp(
+            session, cid, trace_event, std::move(cb), "pwrite", size, offset
+        ),
         _request({
             .head =
                 {
@@ -507,7 +535,9 @@ public:
         bool sync, const rawstd::TraceEvent& trace_event,
         std::function<void(size_t, int)>&& cb
     ) :
-        SessionOp(session, cid, trace_event, std::move(cb)),
+        SessionOp(
+            session, cid, trace_event, std::move(cb), "pwritev", size, offset
+        ),
         _request({
             .head =
                 {
@@ -585,7 +615,7 @@ public:
         const rawstd::TraceEvent& trace_event,
         std::function<void(size_t, int)>&& cb
     ) :
-        SessionOp(session, cid, trace_event, std::move(cb)),
+        SessionOp(session, cid, trace_event, std::move(cb), "flush", 0, 0),
         _request({
             .head =
                 {
