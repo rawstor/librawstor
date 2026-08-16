@@ -19,8 +19,6 @@
 
 #include <arpa/inet.h>
 
-#include <poll.h>
-
 #include <sys/socket.h>
 
 #include <algorithm>
@@ -798,8 +796,6 @@ Session::Session(Private p, rawio::Queue& queue, const rawstd::URI& location) :
     rawstor::Session(p, queue, location),
     _cid_counter(0),
     _read_event(nullptr) {
-    int fd = _connect();
-    set_fd(fd);
 }
 
 Session::~Session() {
@@ -813,7 +809,7 @@ Session::~Session() {
     }
 }
 
-int Session::_connect() {
+void Session::connect(std::function<void(int)>&& cb) {
     if (!location().path().str().empty() && location().path().str() != "/") {
         rawstd_error("Empty path expected: %s\n", location().str().c_str());
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
@@ -856,12 +852,19 @@ int Session::_connect() {
             }
         }
 
-        sockaddr_in servaddr = {};
-        servaddr.sin_family = AF_INET;
-        servaddr.sin_port = htons(location().port());
+        /*
+         * The address is kept alive by the callback capture: io_uring reads
+         * it when the connect operation is executed, not when submitted.
+         * The socket stays blocking, so SO_SNDTIMEO still bounds the
+         * connect; io_uring runs it in a worker thread without stalling
+         * the event loop.
+         */
+        auto servaddr = std::make_shared<sockaddr_in>();
+        servaddr->sin_family = AF_INET;
+        servaddr->sin_port = htons(location().port());
 
         res = inet_pton(
-            AF_INET, location().hostname().c_str(), &servaddr.sin_addr
+            AF_INET, location().hostname().c_str(), &servaddr->sin_addr
         );
         if (res == 0) {
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
@@ -872,79 +875,131 @@ int Session::_connect() {
         rawstd_info(
             "fd %d: Connecting to %s...\n", fd, location().str().c_str()
         );
-        int res = connect(fd, (sockaddr*)&servaddr, sizeof(servaddr));
-        if (res == -1) {
-            if (errno == EINTR) {
-                errno = 0;
 
-                pollfd fds = {
-                    .fd = fd,
-                    .events = POLLOUT,
-                    .revents = 0,
-                };
-                rawstd_warning("Connect interrupted; polling...\n");
-                for (unsigned int attempt = 1;
-                     attempt <= rawstor_opts_io_attempts(); ++attempt) {
-                    try {
-                        res = poll(&fds, 1, so_sndtimeo);
-                        if (res == -1) {
-                            RAWSTD_THROW_ERRNO();
-                        }
-                        if (res == 0) {
-                            RAWSTD_THROW_SYSTEM_ERROR(ETIMEDOUT);
-                        }
-                        break;
-                    } catch (const std::exception& e) {
-                        if (attempt != rawstor_opts_io_attempts()) {
-                            rawstd_warning(
-                                "Poll failed; error: %s; "
-                                "attempt: %d of %d; retrying...\n",
-                                e.what(), attempt, rawstor_opts_io_attempts()
-                            );
-                        } else {
-                            rawstd_warning(
-                                "Poll failed; error: %s; "
-                                "attempt: %d of %d; failing...\n",
-                                e.what(), attempt, rawstor_opts_io_attempts()
-                            );
-                            throw;
-                        }
-                    }
+        _queue.connect(
+            fd, reinterpret_cast<const sockaddr*>(servaddr.get()),
+            sizeof(*servaddr),
+            [this, fd, servaddr, cb = std::move(cb)](int result) {
+                if (result < 0) {
+                    ::close(fd);
+                    rawstd_info("fd %d: Closed\n", fd);
+                    cb(-result);
+                    return;
                 }
 
-                int value = 0;
-                socklen_t value_len = sizeof(value);
-                res = getsockopt(fd, SOL_SOCKET, SO_ERROR, &value, &value_len);
-                if (res == -1) {
-                    RAWSTD_THROW_ERRNO();
-                }
-                if (value) {
-                    RAWSTD_THROW_SYSTEM_ERROR(value);
+                rawstd_info("fd %d: Connected\n", fd);
+
+                try {
+                    rawio::Queue::setup_fd(fd);
+                } catch (const std::system_error& e) {
+                    ::close(fd);
+                    rawstd_info("fd %d: Closed\n", fd);
+                    cb(e.code().value());
+                    return;
                 }
 
-                if (!(fds.revents & POLLOUT)) {
-                    RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
-                }
-            } else {
-                RAWSTD_THROW_ERRNO();
+                set_fd(fd);
+                cb(0);
             }
-        }
-        rawstd_info("fd %d: Connected\n", fd);
-
-        rawio::Queue::setup_fd(fd);
+        );
     } catch (...) {
         ::close(fd);
         rawstd_info("fd %d: Closed\n", fd);
         throw;
     }
-
-    return fd;
 }
 
-void Session::_set_object(Object* object) {
-    basic_request(
-        fd(), _cid_counter++, RAWSTOR_CMD_SET_OBJECT, object->id(), 0
+/*
+ * Async counterpart of basic_request() for the commands the async object
+ * API drives (ALLOCATE, RELEASE, SET_OBJECT): the request is sent and its
+ * fixed-size response read on the session's own queue, with the result
+ * delivered through cb instead of a blocking wait loop. Commands with a
+ * variable-length response body (LIST, SPEC, LOCATION_INFO) still use
+ * basic_request().
+ */
+void Session::_basic(
+    RawstorOSTCommandType cmd, const RawstdUUID& id, uint64_t val,
+    std::function<void(int)>&& cb
+) {
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('s', "basic cmd %d\n", cmd);
+
+    auto request =
+        std::make_shared<RawstorOSTFrameBasic>((RawstorOSTFrameBasic){
+            .head =
+                {
+                    .magic = RAWSTOR_MAGIC,
+                    .cmd = cmd,
+                    .cid = _cid_counter++,
+                },
+            .body = {
+                .obj_id = {},
+                .offset = 0,
+                .val = val,
+            },
+        });
+    memcpy(request->body.obj_id, id.bytes, sizeof(request->body.obj_id));
+
+    auto cb_sp = std::make_shared<std::function<void(int)>>(std::move(cb));
+
+    _queue.send(
+        fd(), request.get(), sizeof(*request), RAWSTD_MSG_NOSIGNAL,
+        [q = &_queue, fd = fd(), cmd, request, cb_sp,
+         trace_event](size_t result, int error) {
+            RAWSTD_TRACE_EVENT_MESSAGE(
+                trace_event, "%zu of %zu, error = %d\n", result,
+                sizeof(RawstorOSTFrameBasic), error
+            );
+
+            if (!error) {
+                error = validate_result(sizeof(RawstorOSTFrameBasic), result);
+            }
+
+            if (error) {
+                (*cb_sp)(error);
+                return;
+            }
+
+            auto response = std::make_shared<RawstorOSTFrameResponse>();
+
+            try {
+                q->read(
+                    fd, response.get(), sizeof(*response),
+                    [cmd, response, cb_sp,
+                     trace_event](size_t result, int error) {
+                        RAWSTD_TRACE_EVENT_MESSAGE(
+                            trace_event, "%zu of %zu, error = %d\n", result,
+                            sizeof(RawstorOSTFrameResponse), error
+                        );
+
+                        if (!error) {
+                            error = validate_result(
+                                sizeof(RawstorOSTFrameResponse), result
+                            );
+                        }
+
+                        if (!error) {
+                            error = validate_response(response.get());
+                        }
+
+                        if (!error) {
+                            error = validate_cmd(response->head.cmd, cmd);
+                        }
+
+                        (*cb_sp)(error);
+                    }
+                );
+            } catch (const std::system_error& e) {
+                (*cb_sp)(e.code().value());
+            } catch (const std::bad_alloc&) {
+                (*cb_sp)(ENOMEM);
+            }
+        }
     );
+}
+
+void Session::_set_object(Object* object, std::function<void(int)>&& cb) {
+    _basic(RAWSTOR_CMD_SET_OBJECT, object->id(), 0, std::move(cb));
 }
 
 void Session::list(
@@ -974,29 +1029,11 @@ void Session::create(
     const RawstdUUID& id, const RawstorObjectSpec& spec,
     std::function<void(int)>&& cb
 ) {
-    int error = 0;
-    try {
-        basic_request(
-            fd(), _cid_counter++, RAWSTOR_CMD_ALLOCATE, id, spec.size
-        );
-    } catch (const std::system_error& e) {
-        error = e.code().value();
-    } catch (...) {
-        error = EIO;
-    }
-    cb(error);
+    _basic(RAWSTOR_CMD_ALLOCATE, id, spec.size, std::move(cb));
 }
 
 void Session::remove(const RawstdUUID& id, std::function<void(int)>&& cb) {
-    int error = 0;
-    try {
-        basic_request(fd(), _cid_counter++, RAWSTOR_CMD_RELEASE, id, 0);
-    } catch (const std::system_error& e) {
-        error = e.code().value();
-    } catch (...) {
-        error = EIO;
-    }
-    cb(error);
+    _basic(RAWSTOR_CMD_RELEASE, id, 0, std::move(cb));
 }
 
 void Session::spec(
@@ -1060,11 +1097,30 @@ void Session::info(std::function<void(const RawstorLocationInfo&, int)>&& cb) {
     cb(ret, error);
 }
 
-void Session::set_object(Object* object) {
+void Session::set_object(Object* object, std::function<void(int)>&& cb) {
     assert(_read_event == nullptr);
 
-    _set_object(object);
+    _set_object(object, [this, cb = std::move(cb)](int error) {
+        if (error) {
+            cb(error);
+            return;
+        }
 
+        try {
+            _arm_recv();
+        } catch (const std::system_error& e) {
+            cb(e.code().value());
+            return;
+        } catch (const std::bad_alloc&) {
+            cb(ENOMEM);
+            return;
+        }
+
+        cb(0);
+    });
+}
+
+void Session::_arm_recv() {
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('m', "%s\n", "multishot recv");
     _read_event = _queue.recv_multishot(

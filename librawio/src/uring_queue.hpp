@@ -31,6 +31,8 @@ private:
      */
     unsigned int _dispatch_generation;
 
+    io_uring_sqe* _get_sqe();
+
     void _dispatch();
 
 public:

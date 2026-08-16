@@ -54,6 +54,8 @@ librawstor_la_SOURCES = blk_session.cpp \
                         rawstor.cpp \
                         telemetry.cpp \
                         telemetry.hpp \
+                        worker.cpp \
+                        worker.hpp \
                         zfs_session.cpp \
                         zfs_session.hpp
 

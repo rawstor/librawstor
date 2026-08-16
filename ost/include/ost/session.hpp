@@ -34,6 +34,18 @@ private:
         std::shared_ptr<std::vector<unsigned char>> data;
     };
 
+    /*
+     * Completion context for an async object operation (allocate/release/
+     * open). The session may be destroyed while the operation is in
+     * flight, in which case the weak_ptr fails to lock and no response is
+     * sent: _fd may already be closed or reused by another session.
+     */
+    struct OpCtx {
+        std::weak_ptr<Session> session;
+        RawstorOSTCommandType cmd;
+        uint16_t cid;
+    };
+
     RawIOQueue* _queue;
     Server& _server;
     int _fd;
@@ -56,9 +68,19 @@ private:
     // bound.
     size_t _pending_writes_bytes;
 
+    /* An object open is in flight; a concurrent SET_OBJECT gets EBUSY. */
+    bool _open_pending;
+
     // Arms the multishot recv; only ever called once, from the
     // constructor.
     void _arm_recv();
+    // Completions of the async object operations started by _allocate(),
+    // _release() and _set_object(); each takes ownership of the OpCtx
+    // passed as `data`.
+    static int _op_complete(int result, void* data) noexcept;
+    static int
+    _open_complete(RawstorObject* object, int result, void* data) noexcept;
+
     static ssize_t _recv(
         const iovec* iov, unsigned int niov, size_t result, int error,
         void* data

@@ -1,6 +1,7 @@
 #include "file_session.hpp"
 
 #include "opts.h"
+#include "worker.hpp"
 
 #include <rawio/queue.hpp>
 
@@ -58,21 +59,31 @@ Session::Session(Private p, rawio::Queue& queue, const rawstd::URI& location) :
     rawstor::blk::Session(p, queue, location) {
 }
 
-int Session::_connect(const RawstdUUID& id) {
+void Session::_connect(const RawstdUUID& id, std::function<void(int)>&& cb) {
     std::string location_path = get_location_path(location());
 
     RawstdUUIDString id_string;
     rawstd_uuid_to_string(&id, &id_string);
 
-    std::string target_path = get_target_path(location_path, id_string);
+    /*
+     * The path buffer is kept alive by the callback capture: io_uring reads
+     * the string when the openat operation is executed, not when submitted.
+     */
+    auto target_path = std::make_shared<std::string>(
+        get_target_path(location_path, id_string)
+    );
 
     rawstd_info("Connecting to %s...\n", location().str().c_str());
-    int fd = open(target_path.c_str(), O_RDWR | O_NONBLOCK);
-    if (fd == -1) {
-        RAWSTD_THROW_ERRNO();
-    }
-    rawstd_info("fd %d: Connected\n", fd);
-    return fd;
+
+    _queue.open(
+        target_path->c_str(), O_RDWR | O_NONBLOCK, 0,
+        [target_path, cb = std::move(cb)](int result) {
+            if (result >= 0) {
+                rawstd_info("fd %d: Connected\n", result);
+            }
+            cb(result);
+        }
+    );
 }
 
 void Session::list(
@@ -150,74 +161,96 @@ void Session::create(
     const RawstdUUID& id, const RawstorObjectSpec& sp,
     std::function<void(int)>&& cb
 ) {
-    std::string location_path = get_location_path(location());
-    if (mkdir(location_path.c_str(), 0755) == -1) {
-        if (errno == EEXIST) {
-            errno = 0;
-        } else {
-            RAWSTD_THROW_ERRNO();
-        }
-    }
+    run_in_worker(
+        _queue,
+        [location = location(), id, sp]() -> int {
+            std::string location_path = get_location_path(location);
+            if (mkdir(location_path.c_str(), 0755) == -1) {
+                if (errno == EEXIST) {
+                    errno = 0;
+                } else {
+                    RAWSTD_THROW_ERRNO();
+                }
+            }
 
-    RawstdUUIDString uuid_string;
-    rawstd_uuid_to_string(&id, &uuid_string);
+            RawstdUUIDString uuid_string;
+            rawstd_uuid_to_string(&id, &uuid_string);
 
-    std::string target_path = get_target_path(location_path, uuid_string);
+            std::string target_path =
+                get_target_path(location_path, uuid_string);
 
-    int fd = ::open(
-        target_path.c_str(), O_EXCL | O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR
+            int fd = ::open(
+                target_path.c_str(), O_EXCL | O_CREAT | O_WRONLY,
+                S_IRUSR | S_IWUSR
+            );
+            if (fd == -1) {
+                RAWSTD_THROW_ERRNO();
+            }
+
+            try {
+                if (ftruncate(fd, sp.size) == -1) {
+                    RAWSTD_THROW_ERRNO();
+                }
+
+                if (::close(fd) == -1) {
+                    RAWSTD_THROW_ERRNO();
+                }
+            } catch (...) {
+                unlink(target_path.c_str());
+                ::close(fd);
+                throw;
+            }
+
+            return 0;
+        },
+        std::move(cb)
     );
-    if (fd == -1) {
-        RAWSTD_THROW_ERRNO();
-    }
-
-    try {
-        if (ftruncate(fd, sp.size) == -1) {
-            RAWSTD_THROW_ERRNO();
-        }
-
-        if (::close(fd) == -1) {
-            RAWSTD_THROW_ERRNO();
-        }
-    } catch (...) {
-        unlink(target_path.c_str());
-        ::close(fd);
-        throw;
-    }
-
-    cb(0);
 }
 
 void Session::remove(const RawstdUUID& id, std::function<void(int)>&& cb) {
-    std::string location_path = get_location_path(location());
+    run_in_worker(
+        _queue,
+        [location = location(), id]() -> int {
+            std::string location_path = get_location_path(location);
 
-    RawstdUUIDString uuid_string;
-    rawstd_uuid_to_string(&id, &uuid_string);
+            RawstdUUIDString uuid_string;
+            rawstd_uuid_to_string(&id, &uuid_string);
 
-    std::string target_path = get_target_path(location_path, uuid_string);
-    if (unlink(target_path.c_str()) == -1) {
-        RAWSTD_THROW_ERRNO();
-    }
+            std::string target_path =
+                get_target_path(location_path, uuid_string);
+            if (unlink(target_path.c_str()) == -1) {
+                RAWSTD_THROW_ERRNO();
+            }
 
-    cb(0);
+            return 0;
+        },
+        std::move(cb)
+    );
 }
 
 void Session::spec(
     const RawstdUUID& id,
     std::function<void(const RawstorObjectSpec&, int)>&& cb
 ) {
-    std::string location_path = get_location_path(location());
+    auto ret = std::make_shared<RawstorObjectSpec>();
 
-    RawstdUUIDString uuid_string;
-    rawstd_uuid_to_string(&id, &uuid_string);
+    run_in_worker(
+        _queue,
+        [location = location(), id, ret]() -> int {
+            std::string location_path = get_location_path(location);
 
-    std::string target_path = get_target_path(location_path, uuid_string);
+            RawstdUUIDString uuid_string;
+            rawstd_uuid_to_string(&id, &uuid_string);
 
-    RawstorObjectSpec ret{
-        .size = std::filesystem::file_size(target_path),
-    };
+            std::string target_path =
+                get_target_path(location_path, uuid_string);
 
-    cb(ret, 0);
+            ret->size = std::filesystem::file_size(target_path);
+
+            return 0;
+        },
+        [ret, cb = std::move(cb)](int error) { cb(*ret, error); }
+    );
 }
 
 void Session::info(std::function<void(const RawstorLocationInfo&, int)>&& cb) {

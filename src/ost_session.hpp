@@ -36,8 +36,10 @@ private:
     RawIOEvent* _read_event;
     std::unordered_map<uint16_t, std::shared_ptr<SessionOp>> _ops;
 
-    int _connect();
-    void _set_object(Object* object);
+    void _set_object(Object* object, std::function<void(int)>&& cb);
+    // Arms the multishot recv that demultiplexes responses to in-flight
+    // ops; called once SET_OBJECT has been acknowledged.
+    void _arm_recv();
     void _fail_in_flight(int error, bool* next_head, size_t* next_size);
     // Returns nullptr, rather than throwing, for an unregistered cid: a
     // response can legitimately race with Connection::_op() already having
@@ -48,6 +50,10 @@ private:
     SessionOp* _find_op(uint16_t cid);
     void _add_op(const std::shared_ptr<SessionOp>& op);
     void _remove_op(uint16_t cid);
+    void _basic(
+        RawstorOSTCommandType cmd, const RawstdUUID& id, uint64_t val,
+        std::function<void(int)>&& cb
+    );
 
 public:
     Session(Private p, rawio::Queue& queue, const rawstd::URI& location);
@@ -58,6 +64,7 @@ public:
         std::function<void(std::vector<RawstdUUID>&&, const RawstdUUID&, int)>&&
             cb
     ) override;
+    void connect(std::function<void(int)>&& cb) override;
 
     void create(
         const RawstdUUID& id, const RawstorObjectSpec& sp,
@@ -74,7 +81,7 @@ public:
     void
     info(std::function<void(const RawstorLocationInfo&, int)>&& cb) override;
 
-    void set_object(Object* object) override;
+    void set_object(Object* object, std::function<void(int)>&& cb) override;
 
     void pread(
         void* buf, size_t size, off_t offset,
