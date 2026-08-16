@@ -47,11 +47,16 @@ void record_slat(TimePoint ns);
 void record_rtt(TimePoint ns);
 void record_clat(TimePoint ns);
 void record_lat(TimePoint ns, unsigned int attempts);
-// `op` is a static string (__FUNCTION__), not owned. Feeds the top-N
-// slowest-requests report.
+// Called by SessionOp::_dispatch() (ost sessions only) once slat/rtt/clat
+// are all known for this attempt, i.e. after its callback chain returns.
+// `op` is a static string (a string literal in the caller), not owned.
+// Feeds the top-N slowest-requests report. `lat` here is this single
+// attempt's own span (slat+rtt+clat) -- unlike record_lat()'s aggregate,
+// it does not span retries, since an attempt that gets retried is a new
+// SessionOp with no memory of earlier attempts.
 void record_op(
-    TimePoint lat, const char* op, size_t size, off_t offset,
-    unsigned int attempts
+    TimePoint lat, TimePoint slat, TimePoint rtt, TimePoint clat,
+    const char* op, size_t size, off_t offset
 );
 void op_started();
 void op_finished();
@@ -67,7 +72,9 @@ inline void record_clat(TimePoint) {
 }
 inline void record_lat(TimePoint, unsigned int) {
 }
-inline void record_op(TimePoint, const char*, size_t, off_t, unsigned int) {
+inline void record_op(
+    TimePoint, TimePoint, TimePoint, TimePoint, const char*, size_t, off_t
+) {
 }
 inline void op_started() {
 }

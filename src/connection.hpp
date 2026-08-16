@@ -43,10 +43,9 @@ private:
 
     // Every _op() terminal path -- success, final failure, or a reconnect
     // itself failing -- calls the caller's cb through here exactly once;
-    // records the total call-to-cb latency and the top-N sample at that
-    // same point, spanning every attempt this logical op took.
+    // records the total call-to-cb latency, spanning every attempt this
+    // logical op took.
     void _finish(
-        const char* func_name, size_t size, off_t offset,
         const std::shared_ptr<std::function<void(size_t, int)>>& cb,
         unsigned int attempt, rawstor::telemetry::TimePoint t_call,
         size_t result, int error
