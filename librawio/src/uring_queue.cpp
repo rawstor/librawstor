@@ -9,6 +9,7 @@
 #include <cstring>
 #include <ctime>
 
+#include <exception>
 #include <system_error>
 
 namespace {
@@ -65,49 +66,54 @@ Queue::~Queue() {
 
 void Queue::_dispatch() {
     unsigned int nr = 0;
+    std::exception_ptr pending;
 
     ++_dispatch_generation;
 
-    try {
-        unsigned int head;
-        io_uring_cqe* cqe;
-        io_uring_for_each_cqe(&_ring, head, cqe) {
-            rawstd_trace("cqe->res = %d\n", cqe->res);
+    unsigned int head;
+    io_uring_cqe* cqe;
+    io_uring_for_each_cqe(&_ring, head, cqe) {
+        rawstd_trace("cqe->res = %d\n", cqe->res);
 
-            ++nr;
+        ++nr;
 
-            std::unique_ptr<std::function<void(ssize_t, unsigned int)>> p(
-                static_cast<std::function<void(ssize_t, unsigned int)>*>(
-                    io_uring_cqe_get_data(cqe)
-                )
-            );
+        std::unique_ptr<std::function<void(ssize_t, unsigned int)>> p(
+            static_cast<std::function<void(ssize_t, unsigned int)>*>(
+                io_uring_cqe_get_data(cqe)
+            )
+        );
 
-            try {
-                rawstd_trace("callback: result = %d\n", cqe->res);
-                (*p)(cqe->res, cqe->flags);
-                rawstd_trace("callback success\n");
-            } catch (...) {
-                rawstd_trace("callback error\n");
-                if (cqe->flags & IORING_CQE_F_MORE) {
-                    p.release();
-                }
-                throw;
-            }
-
-            if (cqe->flags & IORING_CQE_F_MORE) {
-                p.release();
+        try {
+            rawstd_trace("callback: result = %d\n", cqe->res);
+            (*p)(cqe->res, cqe->flags);
+            rawstd_trace("callback success\n");
+        } catch (...) {
+            rawstd_trace("callback error\n");
+            /*
+             * A callback throwing must not abandon the rest of this
+             * completion batch: every other cqe still in it owns a
+             * heap-allocated callback (or, for a multishot op, needs its
+             * ownership released below) that would otherwise leak and
+             * never reach io_uring_cq_advance. Run the whole batch and
+             * re-raise the first exception once it is fully drained.
+             */
+            if (!pending) {
+                pending = std::current_exception();
             }
         }
-    } catch (...) {
-        if (nr) {
-            io_uring_cq_advance(&_ring, nr);
+
+        if (cqe->flags & IORING_CQE_F_MORE) {
+            p.release();
         }
-        throw;
     }
 
     if (nr) {
         // TODO: use __io_uring_buf_ring_cq_advance here
         io_uring_cq_advance(&_ring, nr);
+    }
+
+    if (pending) {
+        std::rethrow_exception(pending);
     }
 }
 

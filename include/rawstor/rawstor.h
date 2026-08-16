@@ -32,6 +32,11 @@ struct RawstorOpts {
      * after a backend provisioning command (lvcreate, zfs create) succeeds.
      */
     unsigned int wait_device_timeout;
+    /**
+     * How often, in milliseconds, an open mirrored object probes its
+     * unreachable members for reconnection (and resyncs them on success).
+     */
+    unsigned int mirror_probe_interval;
 };
 
 typedef struct {

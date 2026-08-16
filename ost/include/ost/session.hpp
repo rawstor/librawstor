@@ -46,6 +46,14 @@ private:
         uint16_t cid;
     };
 
+    /* Completion context for the async META query; see _meta(). */
+    struct MetaCtx {
+        std::weak_ptr<Session> session;
+        uint16_t cid;
+        uint8_t obj_id[16];
+        RawstorObjectMeta meta;
+    };
+
     RawIOQueue* _queue;
     Server& _server;
     int _fd;
@@ -55,6 +63,7 @@ private:
     union {
         RawstorOSTFrameBasicBody basic;
         RawstorOSTFrameIOBody io;
+        RawstorOSTFrameMetaBody meta;
     } _request_body;
     RawstorObject* _object;
     // Writes dispatched to rawstor_object_pwrite() whose completion hasn't
@@ -80,6 +89,7 @@ private:
     static int _op_complete(int result, void* data) noexcept;
     static int
     _open_complete(RawstorObject* object, int result, void* data) noexcept;
+    static int _meta_complete(int result, void* data) noexcept;
 
     static ssize_t _recv(
         const iovec* iov, unsigned int niov, size_t result, int error,
@@ -90,6 +100,9 @@ private:
     ssize_t _recv_head(const iovec* iov, unsigned int niov, size_t result);
     ssize_t _recv_body(const iovec* iov, unsigned int niov, size_t result);
     ssize_t _recv_data(const iovec* iov, unsigned int niov, size_t result);
+    // Drains and discards the body of a request this server cannot serve,
+    // so the stream stays framed after an -ENOSYS response.
+    ssize_t _recv_ignore(const iovec* iov, unsigned int niov, size_t result);
     void _list(
         const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
     );
@@ -127,9 +140,16 @@ private:
     void _discard(
         const RawstorOSTFrameHead& head, const RawstorOSTFrameIOBody& body
     );
+    void _meta(
+        const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+    );
+    void _set_state(
+        const RawstorOSTFrameHead& head, const RawstorOSTFrameMetaBody& body
+    );
     void _flush(
         const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
     );
+    void _unknown(const RawstorOSTFrameHead& head);
     std::vector<rawstd::URI> _targets(const RawstdUUID& uuid);
 
     // Tears the session down via Server::del_session() if the send itself

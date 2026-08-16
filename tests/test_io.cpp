@@ -224,6 +224,8 @@ TEST(FileIOTest, basics) {
     std::string write_data = "ping";
     EXPECT_NO_THROW(object.write(write_data.data(), write_data.length()));
 
+    EXPECT_NO_THROW(object.flush());
+
     std::string read_data(4, '\0');
     EXPECT_NO_THROW(object.read(read_data.data(), read_data.length()));
 
@@ -262,7 +264,8 @@ TEST(OstIOTest, basics) {
         rawstor::tests::Session s(server);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
         s.cmd_write(RAWSTOR_MAGIC, 1, 4);
-        s.cmd_read(RAWSTOR_MAGIC, 2, "pong", 4);
+        s.cmd_flush(RAWSTOR_MAGIC, 2, 0);
+        s.cmd_read(RAWSTOR_MAGIC, 3, "pong", 4);
     }
 
     {
@@ -274,6 +277,8 @@ TEST(OstIOTest, basics) {
 
     std::string ping = "ping";
     EXPECT_NO_THROW(object.write(ping.data(), ping.length()));
+
+    EXPECT_NO_THROW(object.flush());
 
     std::string pong(4, '\0');
     EXPECT_NO_THROW(object.read(pong.data(), pong.length()));

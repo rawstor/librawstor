@@ -6,6 +6,7 @@
 #include "ost_session.hpp"
 #include "zfs_session.hpp"
 
+#include <rawstd/gpp.hpp>
 #include <rawstd/logging.h>
 #include <rawstd/uri.hpp>
 

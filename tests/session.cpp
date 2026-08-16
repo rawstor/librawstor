@@ -242,6 +242,23 @@ void Session::cmd_read(
     cmd_read_response(magic, cid, buf, size);
 }
 
+void Session::cmd_read_error(uint32_t magic, uint16_t cid, int32_t res) {
+    cmd_read_request();
+
+    RawstorOSTFrameResponse response = {
+        .head{
+            .magic = magic,
+            .cmd = RAWSTOR_CMD_READ,
+            .cid = cid,
+        },
+        .body = {
+            .res = res,
+            .hash = 0,
+        },
+    };
+    _server.write("RAWSTOR_CMD_READ >>>", &response, sizeof(response));
+}
+
 void Session::cmd_write_request(size_t size) {
     _server.read(
         "RAWSTOR_CMD_WRITE <<<", sizeof(RawstorOSTFrameIO) + size,
@@ -268,6 +285,69 @@ void Session::cmd_write(uint32_t magic, uint16_t cid, int32_t res) {
     assert(res > 0);
     cmd_write_request(static_cast<size_t>(res));
     cmd_write_response(magic, cid, res);
+}
+
+void Session::cmd_meta_request() {
+    _server.read(
+        "RAWSTOR_CMD_META <<<", sizeof(RawstorOSTFrameBasic), [](const void*) {}
+    );
+}
+
+void Session::cmd_meta_response(
+    uint32_t magic, uint16_t cid, int32_t res,
+    const RawstorOSTFrameMetaBody& meta
+) {
+    RawstorOSTFrameMetaResponse response = {
+        .head{
+            .magic = magic,
+            .cmd = RAWSTOR_CMD_META,
+            .cid = cid,
+        },
+        .body =
+            {
+                .res = res,
+                .hash = rawstd_hash_scalar(&meta, sizeof(meta)),
+            },
+        .meta = meta,
+    };
+    _server.write("RAWSTOR_CMD_META >>>", &response, sizeof(response));
+}
+
+void Session::cmd_meta(
+    uint32_t magic, uint16_t cid, int32_t res,
+    const RawstorOSTFrameMetaBody& meta
+) {
+    cmd_meta_request();
+    cmd_meta_response(magic, cid, res, meta);
+}
+
+void Session::cmd_set_state_request() {
+    _server.read(
+        "RAWSTOR_CMD_SET_STATE <<<", sizeof(RawstorOSTFrameMeta),
+        [](const void*) {}
+    );
+}
+
+void Session::cmd_set_state_response(
+    uint32_t magic, uint16_t cid, int32_t res
+) {
+    RawstorOSTFrameResponse response = {
+        .head{
+            .magic = magic,
+            .cmd = RAWSTOR_CMD_SET_STATE,
+            .cid = cid,
+        },
+        .body = {
+            .res = res,
+            .hash = 0,
+        },
+    };
+    _server.write("RAWSTOR_CMD_SET_STATE >>>", &response, sizeof(response));
+}
+
+void Session::cmd_set_state(uint32_t magic, uint16_t cid, int32_t res) {
+    cmd_set_state_request();
+    cmd_set_state_response(magic, cid, res);
 }
 
 void Session::cmd_flush_request() {

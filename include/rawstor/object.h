@@ -71,9 +71,46 @@ struct RawstorObjectSpec {
  * @note          The callback may be invoked from an I/O completion context.
  *                Avoid blocking operations inside the callback.
  */
+
 typedef int(RawstorCallback)(
     RawstorObject* object, size_t size, size_t result, int error, void* data
 );
+
+/**
+ * Mirror consistency states of an object copy (see docs/mirroring.md).
+ *
+ * CLEAN   - the copy was closed correctly; all acknowledged writes are on it.
+ * DIRTY   - the copy is open for writing; it may diverge from its mirrors in
+ *           regions covered by unacknowledged writes.
+ * SYNCING - a resync onto this copy was started and has not completed; the
+ *           copy content must not be trusted.
+ */
+#define RAWSTOR_OBJECT_STATE_CLEAN 0u
+#define RAWSTOR_OBJECT_STATE_DIRTY 1u
+#define RAWSTOR_OBJECT_STATE_SYNCING 2u
+
+/** Number of ancestor sync ids kept in RawstorObjectMeta. */
+#define RAWSTOR_OBJECT_SYNC_ID_HISTORY 4
+
+/**
+ * @brief Object copy metadata.
+ *
+ * Extends RawstorObjectSpec with the mirror consistency state of a single
+ * object copy (see docs/mirroring.md). A sync_id of 0 marks a legacy copy
+ * that has never been part of an established sync set; such copies are
+ * treated as CLEAN and identical right after creation.
+ *
+ * @see rawstor_object_meta
+ * @see rawstor_object_set_state
+ */
+struct RawstorObjectMeta {
+    uint64_t size;    /**< Size of the object in bytes. */
+    uint64_t epoch;   /**< Bumped on every mirror-set health change. */
+    uint64_t sync_id; /**< Id of the sync set this copy belongs to. */
+    /** Ancestor sync ids, newest first; 0 marks unused entries. */
+    uint64_t sync_id_history[RAWSTOR_OBJECT_SYNC_ID_HISTORY];
+    uint32_t state; /**< One of RAWSTOR_OBJECT_STATE_*. */
+};
 
 /**
  * @brief Retrieve metadata about a stored object.
@@ -219,6 +256,52 @@ int rawstor_object_spec(
 int rawstor_object_list(
     const char* location, unsigned int limit, RawstorStringList** targets,
     RawstorPaginationToken* token
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Retrieve full metadata of a stored object copy.
+ *
+ * Like rawstor_object_spec(), but fills the full per-copy metadata record
+ * including the mirror consistency state. Only the first target of a
+ * comma-separated list is queried.
+ *
+ * Legacy copies created before metadata support report size only, with
+ * state CLEAN, epoch 0 and sync_id 0.
+ *
+ * @param target  Target string, see rawstor_object_spec().
+ * @param meta    Pointer to a RawstorObjectMeta structure that will be
+ *                filled with the copy's metadata on success.
+ *
+ * @return 0 on success, negative errno on error.
+ *
+ * @see RawstorObjectMeta
+ * @see rawstor_object_spec
+ */
+int rawstor_object_meta(
+    const char* target, struct RawstorObjectMeta* meta
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Update the mirror consistency state of an object.
+ *
+ * Persists the state, epoch, sync_id and sync_id_history fields of @p meta
+ * on every backend listed in @p target; the first error encountered is
+ * reported. The object size cannot be changed through this call: the size
+ * field of @p meta is ignored and the stored size is preserved.
+ *
+ * The update is durable: it is synced to stable storage before the call
+ * completes successfully.
+ *
+ * @param target  Target string, see rawstor_object_spec().
+ * @param meta    Metadata record to persist (size field ignored).
+ *
+ * @return 0 on success, negative errno on error.
+ *
+ * @see RawstorObjectMeta
+ * @see rawstor_object_meta
+ */
+int rawstor_object_set_state(
+    const char* target, const struct RawstorObjectMeta* meta
 ) RAWSTOR_NOEXCEPT;
 
 /**
@@ -371,6 +454,57 @@ int rawstor_object_spec_async(
 ) RAWSTOR_NOEXCEPT;
 
 /**
+ * @brief Asynchronously retrieve full metadata of a stored object copy.
+ *
+ * Non-blocking variant of rawstor_object_meta(). The operation is driven by
+ * @p queue; @p cb is invoked exactly once from the queue completion context
+ * with 0 on success or a negative errno value on failure. On success @p meta
+ * is filled before @p cb is invoked; it must stay valid until then.
+ *
+ * @param queue   I/O queue that drives the operation.
+ * @param target  Target string, see rawstor_object_spec().
+ * @param meta    Pointer to a RawstorObjectMeta structure that will be
+ *                filled with the copy's metadata on success. Must stay
+ *                valid until @p cb is invoked.
+ * @param cb      Completion callback.
+ * @param data    Opaque pointer passed to @p cb.
+ *
+ * @return 0 if the operation was started, negative errno otherwise (in which
+ *         case @p cb is never invoked).
+ *
+ * @see rawstor_object_meta
+ */
+int rawstor_object_meta_async(
+    RawIOQueue* queue, const char* target, struct RawstorObjectMeta* meta,
+    int (*cb)(int result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Asynchronously update the mirror consistency state of an object.
+ *
+ * Non-blocking variant of rawstor_object_set_state(). The operation is
+ * driven by @p queue; @p cb is invoked exactly once from the queue
+ * completion context with 0 on success or a negative errno value on failure.
+ *
+ * @param queue   I/O queue that drives the operation.
+ * @param target  Target string, see rawstor_object_spec().
+ * @param meta    Metadata record to persist (size field ignored). Copied
+ *                internally; does not need to stay valid after the call
+ *                returns.
+ * @param cb      Completion callback.
+ * @param data    Opaque pointer passed to @p cb.
+ *
+ * @return 0 if the operation was started, negative errno otherwise (in which
+ *         case @p cb is never invoked).
+ *
+ * @see rawstor_object_set_state
+ */
+int rawstor_object_set_state_async(
+    RawIOQueue* queue, const char* target, const struct RawstorObjectMeta* meta,
+    int (*cb)(int result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
  * @brief Asynchronously create a new empty object at the specified target.
  *
  * Non-blocking variant of rawstor_object_create(). The operation is driven
@@ -505,6 +639,34 @@ int rawstor_object_open_async(
  * @see rawstor_object_open
  */
 int rawstor_object_close(RawstorObject* object) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Cleanly close an opened object.
+ *
+ * Flushes completed writes to stable storage, durably marks the in-sync
+ * copies CLEAN and releases the handle. @p cb is invoked exactly once from
+ * the queue completion context; the handle is invalid once this function
+ * returns 0, even if @p cb later reports an error. On errors the affected
+ * copies are left DIRTY (the safe direction: they will be treated as
+ * potentially divergent on the next open) and the first error is reported.
+ *
+ * There must be no I/O in flight on the object when this is called.
+ *
+ * Note that rawstor_object_close() performs an *unclean* close: it releases
+ * the handle without flushing or marking the copies CLEAN.
+ *
+ * @param object  Open object handle obtained from rawstor_object_open().
+ * @param cb      Completion callback.
+ * @param data    Opaque pointer passed to @p cb.
+ *
+ * @return 0 if the close was started, negative errno otherwise (in which
+ *         case @p cb is never invoked and the handle stays valid).
+ *
+ * @see rawstor_object_close
+ */
+int rawstor_object_close_async(
+    RawstorObject* object, int (*cb)(int result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
 
 /**
  * @brief Retrieve the UUID of an open object.
