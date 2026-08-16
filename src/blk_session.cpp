@@ -20,15 +20,17 @@ void Session::set_object(Object* object, std::function<void(int)>&& cb) {
         throw std::runtime_error("Object already set");
     }
 
-    _connect(object->id(), [this, cb = std::move(cb)](int result) {
-        if (result < 0) {
-            cb(-result);
-            return;
-        }
+    _connect(
+        object->id(), object->snap(), [this, cb = std::move(cb)](int result) {
+            if (result < 0) {
+                cb(-result);
+                return;
+            }
 
-        set_fd(result);
-        cb(0);
-    });
+            set_fd(result);
+            cb(0);
+        }
+    );
 }
 
 void Session::pread(

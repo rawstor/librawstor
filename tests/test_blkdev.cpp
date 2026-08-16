@@ -27,7 +27,8 @@ protected:
     std::string device_path(const RawstdUUID&) const override { return ""; }
 
     void _meta_identity(
-        const RawstdUUID&, std::function<void(const RawstorObjectMeta&, int)>&&
+        const RawstdUUID&, uint64_t,
+        std::function<void(const RawstorObjectMeta&, int)>&&
     ) override {}
 
 public:
@@ -48,6 +49,18 @@ public:
         std::function<void(std::vector<RawstorObjectListEntry>&&, int)>&& cb
     ) override {
         cb({}, ENOSYS);
+    }
+
+    void snapshot(
+        const RawstdUUID&, uint64_t, std::function<void(int)>&& cb
+    ) override {
+        cb(ENOSYS);
+    }
+
+    void snap_remove(
+        const RawstdUUID&, uint64_t, std::function<void(int)>&& cb
+    ) override {
+        cb(ENOSYS);
     }
 
     void

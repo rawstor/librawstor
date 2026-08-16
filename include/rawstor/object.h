@@ -599,6 +599,116 @@ int rawstor_object_set_state_async(
 ) RAWSTOR_NOEXCEPT;
 
 /**
+ * @brief Take a native CoW snapshot of an object as version @p snap_id.
+ *
+ * The snapshot is taken on every backend listed in @p target; the first
+ * error encountered is returned, the remaining backends are still
+ * attempted. The caller owns crash consistency: all acknowledged writes
+ * must be flushed before the call (rawstor_docs/Mds.md, "Snapshots").
+ *
+ * @param target   Target string, see rawstor_object_spec().
+ * @param snap_id  Version id; must not be 0 (0 is the live version).
+ *
+ * @return 0 on success, negative errno otherwise.
+ * @retval -ENOTSUP  A backend has no CoW (file://, classic LVM) — no
+ *                   fallback copies are made behind the caller's back.
+ */
+int rawstor_object_snapshot(
+    const char* target, uint64_t snap_id
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Non-blocking variant of rawstor_object_snapshot().
+ *
+ * @return 0 if the operation was started, negative errno otherwise (in
+ *         which case @p cb is never invoked).
+ */
+int rawstor_object_snapshot_async(
+    RawIOQueue* queue, const char* target, uint64_t snap_id,
+    int (*cb)(int result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Destroy snapshot version @p snap_id of an object.
+ *
+ * Fan-out semantics as rawstor_object_snapshot().
+ *
+ * @return 0 on success, negative errno otherwise.
+ */
+int rawstor_object_snap_remove(
+    const char* target, uint64_t snap_id
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Non-blocking variant of rawstor_object_snap_remove().
+ *
+ * @return 0 if the operation was started, negative errno otherwise (in
+ *         which case @p cb is never invoked).
+ */
+int rawstor_object_snap_remove_async(
+    RawIOQueue* queue, const char* target, uint64_t snap_id,
+    int (*cb)(int result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Snapshot an MDS-backed volume.
+ *
+ * Two-phase, per rawstor_docs/Mds.md "Snapshots": the MDS reserves the
+ * snap_id, every chunk is opened (a regular mirrored open — it
+ * establishes the IN-SYNC member set), flushed and CoW-snapshotted on
+ * its IN-SYNC members, and the participants are registered. The caller
+ * guarantees no concurrent writer. The snapshot is later read through
+ * the regular open with an "@<snap_id>" target suffix
+ * (mds://host:port/<volume_id>@<snap_id>) and is immutable.
+ *
+ * @param target   A single mds:// volume target.
+ * @param snap_id  Filled with the created snapshot id on success.
+ *
+ * @return 0 on success, negative errno otherwise.
+ * @retval -ENOTSUP  A chunk member has no CoW backend (file://, classic
+ *                   LVM) — nothing is registered.
+ */
+int rawstor_volume_snapshot(
+    const char* target, uint64_t* snap_id
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Non-blocking variant of rawstor_volume_snapshot().
+ *
+ * @return 0 if the operation was started, negative errno otherwise (in
+ *         which case @p cb is never invoked).
+ */
+int rawstor_volume_snapshot_async(
+    RawIOQueue* queue, const char* target, uint64_t* snap_id,
+    int (*cb)(int result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Remove a volume snapshot.
+ *
+ * The MDS unregisters the snapshot first (no new readers), then the
+ * per-chunk CoWs are destroyed on the recorded members. A crash in
+ * between leaves unregistered backend snapshots — garbage reconciled by
+ * the reconstruct scan, never a dangling registration.
+ *
+ * @return 0 on success, negative errno otherwise.
+ */
+int rawstor_volume_snap_remove(
+    const char* target, uint64_t snap_id
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Non-blocking variant of rawstor_volume_snap_remove().
+ *
+ * @return 0 if the operation was started, negative errno otherwise (in
+ *         which case @p cb is never invoked).
+ */
+int rawstor_volume_snap_remove_async(
+    RawIOQueue* queue, const char* target, uint64_t snap_id,
+    int (*cb)(int result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
  * @brief Asynchronously create a new empty object at the specified target.
  *
  * Non-blocking variant of rawstor_object_create(). The operation is driven

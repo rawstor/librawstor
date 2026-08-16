@@ -416,6 +416,38 @@ void Session::cmd_set_state(uint32_t magic, uint16_t cid, int32_t res) {
     cmd_set_state_response(magic, cid, res);
 }
 
+void Session::cmd_snapshot_request() {
+    _server.read(
+        "RAWSTOR_CMD_SNAPSHOT <<<", sizeof(RawstorOSTFrameBasic),
+        [](const void*) {}
+    );
+}
+
+void Session::cmd_snapshot_response(
+    RawstorOSTCommandType cmd, uint32_t magic, uint16_t cid, int32_t res
+) {
+    RawstorOSTFrameResponse response = {
+        .head{
+            .magic = magic,
+            .cmd = cmd,
+            .cid = cid,
+        },
+        .body = {
+            .res = res,
+            .len = 0,
+            .hash = 0,
+        },
+    };
+    _server.write("RAWSTOR_CMD_SNAPSHOT >>>", &response, sizeof(response));
+}
+
+void Session::cmd_snapshot(
+    RawstorOSTCommandType cmd, uint32_t magic, uint16_t cid, int32_t res
+) {
+    cmd_snapshot_request();
+    cmd_snapshot_response(cmd, magic, cid, res);
+}
+
 void Session::cmd_list_request() {
     _server.read(
         "RAWSTOR_CMD_LIST_CHUNKS <<<", sizeof(RawstorOSTFrameBasic),

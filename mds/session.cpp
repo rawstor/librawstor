@@ -229,7 +229,11 @@ Session::_recv_head(const iovec* iov, unsigned int niov, size_t result) {
     case RAWSTOR_CMD_VOL_OPEN:
     case RAWSTOR_CMD_VOL_RESIZE:
     case RAWSTOR_CMD_VOL_REMOVE:
+    case RAWSTOR_CMD_VOL_SNAP_BEGIN:
+    case RAWSTOR_CMD_VOL_SNAP_REMOVE:
         return sizeof(RawstorOSTFrameBasicBody);
+    case RAWSTOR_CMD_VOL_SNAP_COMMIT:
+        return sizeof(RawstorVolSnapCommitBody);
     }
 
     /*
@@ -308,6 +312,8 @@ Session::_recv_body(const iovec* iov, unsigned int niov, size_t result) {
     case RAWSTOR_CMD_VOL_OPEN:
     case RAWSTOR_CMD_VOL_RESIZE:
     case RAWSTOR_CMD_VOL_REMOVE:
+    case RAWSTOR_CMD_VOL_SNAP_BEGIN:
+    case RAWSTOR_CMD_VOL_SNAP_REMOVE:
         if (result != sizeof(_request_body.basic)) {
             rawstd_error(
                 "fd %d: Unexpected request body size: %zu != %zu\n", _fd,
@@ -325,15 +331,71 @@ Session::_recv_body(const iovec* iov, unsigned int niov, size_t result) {
             _vol_open(_request_head, _request_body.basic);
         } else if (_request_head.cmd == RAWSTOR_CMD_VOL_RESIZE) {
             _vol_resize(_request_head, _request_body.basic);
+        } else if (_request_head.cmd == RAWSTOR_CMD_VOL_SNAP_BEGIN) {
+            _vol_snap_begin(_request_head, _request_body.basic);
+        } else if (_request_head.cmd == RAWSTOR_CMD_VOL_SNAP_REMOVE) {
+            _vol_snap_remove(_request_head, _request_body.basic);
         } else {
             _vol_remove(_request_head, _request_body.basic);
         }
 
         return sizeof(RawstorOSTFrameHead);
+
+    case RAWSTOR_CMD_VOL_SNAP_COMMIT: {
+        if (result != sizeof(_request_body.vol_snap_commit)) {
+            rawstd_error(
+                "fd %d: Unexpected request body size: %zu != %zu\n", _fd,
+                result, sizeof(_request_body.vol_snap_commit)
+            );
+
+            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+        }
+
+        rawstd_iovec_to_buf(
+            iov, niov, 0, &_request_body.vol_snap_commit,
+            sizeof(_request_body.vol_snap_commit)
+        );
+
+        size_t nmembers = _request_body.vol_snap_commit.nmembers;
+
+        /* Same payload bound as the data commands. */
+        if (nmembers == 0 ||
+            nmembers * sizeof(RawstorVolSnapMemberBody) > (1ULL << 26)) {
+            rawstd_error(
+                "fd %d: Malformed snapshot member count: %zu\n", _fd, nmembers
+            );
+            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+        }
+
+        _next = &Session::_recv_snap_members;
+
+        return nmembers * sizeof(RawstorVolSnapMemberBody);
+    }
     }
 
     rawstd_error("fd %d: Unexpected command: %u\n", _fd, _request_head.cmd);
     RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+}
+
+ssize_t Session::_recv_snap_members(
+    const iovec* iov, unsigned int niov, size_t result
+) {
+    _next = &Session::_recv_head;
+
+    size_t expected = _request_body.vol_snap_commit.nmembers *
+                      sizeof(RawstorVolSnapMemberBody);
+    if (result != expected) {
+        rawstd_error(
+            "fd %d: Unexpected request data size: %zu != %zu\n", _fd, result,
+            expected
+        );
+
+        RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+    }
+
+    _vol_snap_commit(_request_head, _request_body.vol_snap_commit, iov, niov);
+
+    return sizeof(RawstorOSTFrameHead);
 }
 
 void Session::_set_object(
@@ -447,7 +509,7 @@ void Session::_vol_open(
 
         for (const std::vector<mds::PlacementSlot>& slots : map.chunks) {
             RawstorVolChunkEntry entry{};
-            entry.version = 0;
+            entry.version = body.val;
             entry.width = static_cast<uint8_t>(slots.size());
             append(&entry, sizeof(entry));
 
@@ -519,6 +581,102 @@ void Session::_vol_remove(
     } catch (const std::system_error& e) {
         send_response(
             _queue, _fd, RAWSTOR_CMD_VOL_REMOVE, head.cid, -error_of(e)
+        );
+    }
+}
+
+void Session::_vol_snap_begin(
+    const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+) {
+    RawstdUUID volume_id;
+    memcpy(volume_id.bytes, body.obj_id, sizeof(volume_id.bytes));
+
+    try {
+        RawstorVolSnapBeganBody began{};
+        began.snap_id = _server.store().snap_begin(volume_id);
+
+        auto payload =
+            std::make_shared<std::vector<unsigned char>>(sizeof(began));
+        memcpy(payload->data(), &began, sizeof(began));
+
+        send_response(
+            _queue, _fd, RAWSTOR_CMD_VOL_SNAP_BEGIN, head.cid, 0, payload
+        );
+    } catch (const std::system_error& e) {
+        send_response(
+            _queue, _fd, RAWSTOR_CMD_VOL_SNAP_BEGIN, head.cid, -error_of(e)
+        );
+    }
+}
+
+void Session::_vol_snap_commit(
+    const RawstorOSTFrameHead& head, const RawstorVolSnapCommitBody& body,
+    const iovec* iov, unsigned int niov
+) {
+    RawstdUUID volume_id;
+    memcpy(volume_id.bytes, body.volume_id, sizeof(volume_id.bytes));
+
+    std::vector<RawstorVolSnapMemberBody> wire(body.nmembers);
+    rawstd_iovec_to_buf(
+        iov, niov, 0, wire.data(),
+        wire.size() * sizeof(RawstorVolSnapMemberBody)
+    );
+
+    std::vector<mds::SnapMember> members;
+    members.reserve(wire.size());
+    for (const RawstorVolSnapMemberBody& m : wire) {
+        mds::SnapMember member{};
+        member.logical_index = m.logical_index;
+        memcpy(member.ost_id.bytes, m.ost_id, sizeof(member.ost_id.bytes));
+        members.push_back(member);
+    }
+
+    try {
+        RawstorVolSnapCommittedBody committed{};
+        committed.map_epoch =
+            _server.store().snap_commit(volume_id, body.snap_id, members);
+
+        auto payload =
+            std::make_shared<std::vector<unsigned char>>(sizeof(committed));
+        memcpy(payload->data(), &committed, sizeof(committed));
+
+        send_response(
+            _queue, _fd, RAWSTOR_CMD_VOL_SNAP_COMMIT, head.cid, 0, payload
+        );
+    } catch (const std::system_error& e) {
+        send_response(
+            _queue, _fd, RAWSTOR_CMD_VOL_SNAP_COMMIT, head.cid, -error_of(e)
+        );
+    }
+}
+
+void Session::_vol_snap_remove(
+    const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+) {
+    RawstdUUID volume_id;
+    memcpy(volume_id.bytes, body.obj_id, sizeof(volume_id.bytes));
+
+    try {
+        std::vector<mds::SnapMember> members =
+            _server.store().snap_remove(volume_id, body.val);
+
+        auto payload = std::make_shared<std::vector<unsigned char>>(
+            members.size() * sizeof(RawstorVolSnapMemberBody)
+        );
+        for (size_t i = 0; i < members.size(); ++i) {
+            RawstorVolSnapMemberBody m{};
+            m.logical_index = members[i].logical_index;
+            memcpy(m.ost_id, members[i].ost_id.bytes, sizeof(m.ost_id));
+            memcpy(payload->data() + i * sizeof(m), &m, sizeof(m));
+        }
+
+        send_response(
+            _queue, _fd, RAWSTOR_CMD_VOL_SNAP_REMOVE, head.cid,
+            static_cast<int32_t>(members.size()), payload
+        );
+    } catch (const std::system_error& e) {
+        send_response(
+            _queue, _fd, RAWSTOR_CMD_VOL_SNAP_REMOVE, head.cid, -error_of(e)
         );
     }
 }

@@ -3,6 +3,7 @@
 #include "list.h"
 #include "remove.h"
 #include "show.h"
+#include "snapshot.h"
 #include "testio.h"
 
 #include "config.h"
@@ -43,6 +44,7 @@ static void usage(void) {
         "  remove                Remove rawstor object\n"
         "  show                  Show rawstor object\n"
         "  info                  Show rawstor location info\n"
+        "  snapshot              Snapshot an mds:// volume\n"
         "  testio                Test rawstor IO routines\n"
         "\n"
         "command options:        Run `<command> --help` to show command usage\n"
@@ -482,6 +484,83 @@ static int command_show(int argc, char** argv) {
     return rawstor_cli_show(target_arg);
 }
 
+static void command_snapshot_usage(void) {
+    fprintf(
+        stdout,
+        "Rawstor CLI " PACKAGE_VERSION "\n"
+        "\n"
+        "usage: rawstor-cli [options] snapshot -t TARGET [-r SNAP_ID]\n"
+        "\n"
+        "Without -r creates a snapshot of an mds:// volume and prints its\n"
+        "id; the snapshot is then read as <target>@<id>. With -r removes\n"
+        "the snapshot.\n"
+        "\n"
+        "command options:\n"
+        "  -t, --target TARGET   An mds:// volume target\n"
+        "  -r, --remove SNAP_ID  Remove the snapshot instead\n"
+    );
+};
+
+static int command_snapshot(int argc, char** argv) {
+    const char* optstring = "hr:t:";
+    struct option longopts[] = {
+        {"help", no_argument, NULL, 'h'},
+        {"remove", required_argument, NULL, 'r'},
+        {"target", required_argument, NULL, 't'},
+        {},
+    };
+
+    char* target_arg = NULL;
+    char* remove_arg = NULL;
+    optind = 1;
+    while (1) {
+        int c = getopt_long(argc, argv, optstring, longopts, NULL);
+        if (c == -1) {
+            break;
+        }
+
+        switch (c) {
+        case 'h':
+            command_snapshot_usage();
+            return EXIT_SUCCESS;
+
+        case 'r':
+            remove_arg = optarg;
+            break;
+
+        case 't':
+            target_arg = optarg;
+            break;
+
+        default:
+            return EXIT_FAILURE;
+        }
+    }
+
+    if (optind < argc) {
+        fprintf(stderr, "Unexpected argument: %s\n", argv[optind]);
+        return EXIT_FAILURE;
+    }
+
+    if (target_arg == NULL) {
+        fprintf(stderr, "target required\n");
+        return EXIT_FAILURE;
+    }
+
+    if (remove_arg != NULL) {
+        char* end = NULL;
+        errno = 0;
+        unsigned long long snap_id = strtoull(remove_arg, &end, 10);
+        if (errno != 0 || end == remove_arg || *end != '\0' || snap_id == 0) {
+            fprintf(stderr, "Malformed snapshot id: %s\n", remove_arg);
+            return EXIT_FAILURE;
+        }
+        return rawstor_cli_snap_remove(target_arg, snap_id);
+    }
+
+    return rawstor_cli_snapshot(target_arg);
+}
+
 static void command_testio_usage(void) {
     fprintf(
         stdout,
@@ -650,6 +729,8 @@ static int run_command(
         ret = command_show(argc, argv);
     } else if (strcmp(command, "info") == 0) {
         ret = command_info(argc, argv);
+    } else if (strcmp(command, "snapshot") == 0) {
+        ret = command_snapshot(argc, argv);
     } else if (strcmp(command, "testio") == 0) {
         ret = command_testio(argc, argv);
     } else {

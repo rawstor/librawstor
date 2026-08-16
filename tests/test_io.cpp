@@ -607,4 +607,77 @@ TEST(OstIOTest, write_disconnect_concurrent) {
     EXPECT_NE(err2, 0);
 }
 
+TEST(OstIOTest, snapshot_read_only) {
+    Queue queue(16);
+    rawstor::tests::Server server(8753, 256);
+
+    /*
+     * A two-member snapshot target with the second member down: an
+     * immutable snapshot version needs no quorum — one reachable member
+     * serves reads, and the mirror state machine is bypassed (no
+     * metadata compare, no barriers).
+     */
+    std::string target =
+        "ost://127.0.0.1:8753/00000000-0000-7000-8000-000000000000@5"
+        ",ost://127.0.0.1:8754/00000000-0000-7000-8000-000000000000@5";
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_read(RAWSTOR_MAGIC, 1, "snap", 4);
+    }
+
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(rawstor_object_open(queue, target.c_str(), &object), 0);
+
+    {
+        char buf[4] = {};
+        bool completed = false;
+        auto cb = std::make_unique<std::function<void(size_t, int)>>(
+            [&completed](size_t result, int error) {
+                EXPECT_EQ(error, 0);
+                EXPECT_EQ(result, 4u);
+                completed = true;
+            }
+        );
+        ASSERT_EQ(
+            rawstor_object_pread(
+                object, buf, sizeof(buf), 0, callback, cb.get()
+            ),
+            0
+        );
+        cb.release();
+        while (!completed) {
+            queue.wait();
+        }
+        EXPECT_EQ(memcmp(buf, "snap", 4), 0);
+    }
+
+    {
+        /* Writes to an immutable version fail without touching the wire. */
+        char buf[4] = {};
+        bool completed = false;
+        int write_error = 0;
+        auto cb = std::make_unique<std::function<void(size_t, int)>>(
+            [&completed, &write_error](size_t, int error) {
+                write_error = error;
+                completed = true;
+            }
+        );
+        ASSERT_EQ(
+            rawstor_object_pwrite(
+                object, buf, sizeof(buf), 0, /*sync=*/false, callback, cb.get()
+            ),
+            0
+        );
+        cb.release();
+        while (!completed) {
+            queue.wait();
+        }
+        EXPECT_EQ(write_error, EROFS);
+    }
+
+    EXPECT_EQ(rawstor_object_close(object), 0);
+}
+
 } // unnamed namespace

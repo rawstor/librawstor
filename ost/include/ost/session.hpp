@@ -179,6 +179,9 @@ private:
     );
     /* CMD_LIST_CHUNKS: enumerate every object with its metadata. */
     void _list_chunks(const RawstorOSTFrameHead& head);
+    void _snapshot(
+        const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+    );
     void _flush(
         const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
     );
@@ -188,6 +191,8 @@ private:
     void _close_after_response(const RawstorOSTFrameHead& head, int32_t res);
 
     std::vector<rawstd::URI> _targets(const RawstdUUID& uuid);
+    /* snap != 0 appends "@<snap>": the immutable snapshot version. */
+    std::vector<rawstd::URI> _targets(const RawstdUUID& uuid, uint64_t snap);
 
     // Tears the session down via Server::del_session() if the send itself
     // fails (e.g. a short write).
