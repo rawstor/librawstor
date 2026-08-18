@@ -2,6 +2,9 @@
 
 #include "poll_event.hpp"
 #include "poll_session.hpp"
+#include "poll_stream_backend.hpp"
+
+#include <rawio/awaitable.hpp>
 
 #include <rawstd/gcc.h>
 #include <rawstd/gpp.hpp>
@@ -185,206 +188,202 @@ void Queue::setup_fd(int fd) {
     }
 }
 
-rawio::Event* Queue::open(
-    const char* path, int flags, mode_t mode, std::function<void(int)>&& cb
-) {
+rawio::Awaitable<int> Queue::open(const char* path, int flags, mode_t mode) {
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('|', "flags = %d, mode = %d\n", flags, mode);
 
     std::unique_ptr<EventEval> event = std::make_unique<EventEval>(
-        *this, trace_event,
-        [path, flags, mode]() -> int {
+        *this, trace_event, [path, flags, mode]() -> int {
             int res = ::open(path, flags, mode);
             if (res == -1) {
                 res = -errno;
                 errno = 0;
             }
             return res;
-        },
-        std::move(cb)
+        }
     );
 
     rawio::Event* ret = static_cast<rawio::Event*>(event.get());
     _eval(std::move(event));
-    return ret;
+    return rawio::Awaitable<int>(this, ret);
 }
 
-rawio::Event* Queue::close(int fd, std::function<void(int)>&& cb) {
+rawio::Awaitable<int> Queue::close(int fd) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('|', "%s\n", "");
 
-    std::unique_ptr<EventEval> event = std::make_unique<EventEval>(
-        *this, trace_event,
-        [fd]() -> int {
+    std::unique_ptr<EventEval> event =
+        std::make_unique<EventEval>(*this, trace_event, [fd]() -> int {
             int res = ::close(fd);
             if (res == -1) {
                 res = -errno;
                 errno = 0;
             }
             return res;
-        },
-        std::move(cb)
-    );
+        });
 
     rawio::Event* ret = static_cast<rawio::Event*>(event.get());
     _eval(std::move(event));
-    return ret;
+    return rawio::Awaitable<int>(this, ret);
 }
 
-rawio::Event*
-Queue::poll(int fd, unsigned int mask, std::function<void(int)>&& cb) {
+rawio::Awaitable<int> Queue::poll(int fd, unsigned int mask) {
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('|', "fd = %d, mask = %u\n", fd, mask);
     Session& s = _get_session(fd);
 
     std::unique_ptr<EventSimplexPollOneshot> event =
-        std::make_unique<EventSimplexPollOneshot>(
-            *this, fd, mask, trace_event, std::move(cb)
-        );
+        std::make_unique<EventSimplexPollOneshot>(*this, fd, mask, trace_event);
 
     rawio::Event* ret = static_cast<rawio::Event*>(event.get());
     s.poll(std::move(event));
-    return ret;
+    return rawio::Awaitable<int>(this, ret);
 }
 
-rawio::Event* Queue::poll_multishot(
-    int fd, unsigned int mask, std::function<void(int)>&& cb
-) {
+rawio::PollStream Queue::poll_multishot(int fd, unsigned int mask) {
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('|', "fd = %d, mask = %u\n", fd, mask);
     Session& s = _get_session(fd);
 
+    auto backend =
+        std::make_shared<PollMultishotBackend>(*this, _dispatch_generation);
     std::unique_ptr<EventSimplexPollMultishot> event =
         std::make_unique<EventSimplexPollMultishot>(
-            *this, fd, mask, trace_event, std::move(cb)
+            *this, fd, mask, trace_event, backend
         );
 
-    rawio::Event* ret = static_cast<rawio::Event*>(event.get());
+    backend->set_event(event.get());
     s.poll(std::move(event));
-    return ret;
+    return rawio::PollStream(std::move(backend));
 }
 
-rawio::Event* Queue::accept(
-    int fd, sockaddr* addr, socklen_t* addrlen, std::function<void(int)>&& cb
-) {
+rawio::Awaitable<int>
+Queue::accept(int fd, sockaddr* addr, socklen_t* addrlen) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('|', "fd = %d\n", fd);
     Session& s = _get_session(fd);
 
     std::unique_ptr<EventSimplexAcceptOneshot> event =
         std::make_unique<EventSimplexAcceptOneshot>(
-            *this, fd, addr, addrlen, trace_event, std::move(cb)
+            *this, fd, addr, addrlen, trace_event
         );
 
     rawio::Event* ret = static_cast<rawio::Event*>(event.get());
     s.accept(std::move(event));
-    return ret;
+    return rawio::Awaitable<int>(this, ret);
 }
 
-rawio::Event* Queue::accept_multishot(int fd, std::function<void(int)>&& cb) {
+rawio::AcceptStream Queue::accept_multishot(int fd) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('|', "fd = %d\n", fd);
     Session& s = _get_session(fd);
 
+    auto backend =
+        std::make_shared<AcceptMultishotBackend>(*this, _dispatch_generation);
     std::unique_ptr<EventSimplexAcceptMultishot> event =
         std::make_unique<EventSimplexAcceptMultishot>(
-            *this, fd, trace_event, std::move(cb)
+            *this, fd, trace_event, backend
         );
 
-    rawio::Event* ret = static_cast<rawio::Event*>(event.get());
+    backend->set_event(event.get());
     s.accept(std::move(event));
-    return ret;
+    return rawio::AcceptStream(std::move(backend));
 }
 
-rawio::Event* Queue::connect(
-    int fd, const sockaddr* addr, socklen_t addrlen,
-    std::function<void(int)>&& cb
-) {
+rawio::Awaitable<int>
+Queue::connect(int fd, const sockaddr* addr, socklen_t addrlen) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('|', "fd = %d\n", fd);
 
     std::unique_ptr<EventEval> event = std::make_unique<EventEval>(
-        *this, trace_event,
-        [fd, addr, addrlen]() -> int {
+        *this, trace_event, [fd, addr, addrlen]() -> int {
             int res = ::connect(fd, addr, addrlen);
             if (res == -1) {
                 res = -errno;
                 errno = 0;
             }
             return res;
-        },
-        [this, fd, cb = std::move(cb)](int connect_result) {
-            if (connect_result != -EINTR && connect_result != -EINPROGRESS) {
-                cb(connect_result);
-            } else {
-                poll(fd, POLLOUT, [fd, cb = std::move(cb)](int poll_result) {
-                    if (poll_result == -1) {
-                        RAWSTD_THROW_ERRNO();
-                    }
-                    if (poll_result == 0) {
-                        cb(-ETIMEDOUT);
-                        return;
-                    }
-                    if (!(poll_result & POLLOUT)) {
-                        cb(-ENOTCONN);
-                        return;
-                    }
-
-                    int err = 0;
-                    socklen_t len = sizeof(err);
-                    if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len) < 0) {
-                        RAWSTD_THROW_ERRNO();
-                    }
-                    if (err != 0) {
-                        cb(-err);
-                        return;
-                    }
-
-                    cb(0);
-                });
-            }
         }
     );
+    // The non-blocking ::connect() attempt above resolves this event
+    // directly unless it needs a POLLOUT retry (EINPROGRESS/EINTR) -- in
+    // that case, whoever ends up co_await-ing this connect() actually
+    // gets resumed once the *retry* poll() event resolves, via
+    // adopt_attachment() handing this event's pending attachment over to
+    // it (submission already happened, so the caller's eventual co_await
+    // just attaches to whichever Event object is still holding the
+    // pointers by then).
+    event->set_on_dispatch([this, fd](Event& e) {
+        int connect_result = static_cast<int>(e.result());
+        if (connect_result != -EINTR && connect_result != -EINPROGRESS) {
+            e.resolve_one_shot_raw(connect_result);
+            return;
+        }
+
+        Session& s = _get_session(fd);
+        std::unique_ptr<EventSimplexPollOneshot> poll_event =
+            std::make_unique<EventSimplexPollOneshot>(
+                *this, fd, POLLOUT, e.trace_event
+            );
+        poll_event->adopt_attachment(e);
+        poll_event->set_on_dispatch([fd](Event& pe) {
+            int poll_result =
+                pe.error() ? -pe.error() : static_cast<int>(pe.result());
+            if (poll_result == -1) {
+                RAWSTD_THROW_ERRNO();
+            }
+            if (poll_result == 0) {
+                pe.resolve_one_shot_raw(-ETIMEDOUT);
+                return;
+            }
+            if (!(poll_result & POLLOUT)) {
+                pe.resolve_one_shot_raw(-ENOTCONN);
+                return;
+            }
+
+            int err = 0;
+            socklen_t len = sizeof(err);
+            if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len) < 0) {
+                RAWSTD_THROW_ERRNO();
+            }
+            pe.resolve_one_shot_raw(err != 0 ? -err : 0);
+        });
+        s.poll(std::move(poll_event));
+    });
 
     rawio::Event* ret = static_cast<rawio::Event*>(event.get());
     _eval(std::move(event));
-    return ret;
+    return rawio::Awaitable<int>(this, ret);
 }
 
-rawio::Event* Queue::read(
-    int fd, void* buf, size_t size, std::function<void(size_t, int)>&& cb
-) {
+rawio::Awaitable<size_t> Queue::read(int fd, void* buf, size_t size) {
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('|', "fd = %d, size = %zu\n", fd, size);
     Session& s = _get_session(fd);
 
     std::unique_ptr<EventSimplex> event =
         std::make_unique<EventSimplexScalarRead>(
-            *this, fd, buf, size, trace_event, std::move(cb)
+            *this, fd, buf, size, trace_event
         );
 
     rawio::Event* ret = static_cast<rawio::Event*>(event.get());
     s.read(std::move(event));
-    return ret;
+    return rawio::Awaitable<size_t>(this, ret);
 }
 
-rawio::Event* Queue::readv(
-    int fd, iovec* iov, unsigned int niov, std::function<void(size_t, int)>&& cb
-) {
+rawio::Awaitable<size_t> Queue::readv(int fd, iovec* iov, unsigned int niov) {
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('|', "fd = %d, niov = %u\n", fd, niov);
     Session& s = _get_session(fd);
 
     std::unique_ptr<EventSimplex> event =
         std::make_unique<EventSimplexVectorRead>(
-            *this, fd, iov, niov, trace_event, std::move(cb)
+            *this, fd, iov, niov, trace_event
         );
 
     rawio::Event* ret = static_cast<rawio::Event*>(event.get());
     s.read(std::move(event));
-    return ret;
+    return rawio::Awaitable<size_t>(this, ret);
 }
 
-rawio::Event* Queue::pread(
-    int fd, void* buf, size_t size, off_t offset,
-    std::function<void(size_t, int)>&& cb
-) {
+rawio::Awaitable<size_t>
+Queue::pread(int fd, void* buf, size_t size, off_t offset) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         '|', "fd = %d, size = %zu, offset = %jd\n", fd, size, (intmax_t)offset
     );
@@ -392,18 +391,16 @@ rawio::Event* Queue::pread(
 
     std::unique_ptr<EventSimplex> event =
         std::make_unique<rawio::poll::EventSimplexScalarPositionalRead>(
-            *this, fd, buf, size, offset, trace_event, std::move(cb)
+            *this, fd, buf, size, offset, trace_event
         );
 
     rawio::Event* ret = static_cast<rawio::Event*>(event.get());
     s.read(std::move(event));
-    return ret;
+    return rawio::Awaitable<size_t>(this, ret);
 }
 
-rawio::Event* Queue::preadv(
-    int fd, iovec* iov, unsigned int niov, off_t offset,
-    std::function<void(size_t, int)>&& cb
-) {
+rawio::Awaitable<size_t>
+Queue::preadv(int fd, iovec* iov, unsigned int niov, off_t offset) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         '|', "fd = %d, niov = %u, offset = %jd\n", fd, niov, (intmax_t)offset
     );
@@ -411,18 +408,16 @@ rawio::Event* Queue::preadv(
 
     std::unique_ptr<EventSimplex> event =
         std::make_unique<EventSimplexVectorPositionalRead>(
-            *this, fd, iov, niov, offset, trace_event, std::move(cb)
+            *this, fd, iov, niov, offset, trace_event
         );
 
     rawio::Event* ret = static_cast<rawio::Event*>(event.get());
     s.read(std::move(event));
-    return ret;
+    return rawio::Awaitable<size_t>(this, ret);
 }
 
-rawio::Event* Queue::recv(
-    int fd, void* buf, size_t size, unsigned int flags,
-    std::function<void(size_t, int)>&& cb
-) {
+rawio::Awaitable<size_t>
+Queue::recv(int fd, void* buf, size_t size, unsigned int flags) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         '|', "fd = %d, size = %zu, flags = %u\n", fd, size, flags
     );
@@ -430,18 +425,17 @@ rawio::Event* Queue::recv(
 
     std::unique_ptr<EventSimplex> event =
         std::make_unique<EventSimplexScalarRecv>(
-            *this, fd, buf, size, flags, trace_event, std::move(cb)
+            *this, fd, buf, size, flags, trace_event
         );
 
     rawio::Event* ret = static_cast<rawio::Event*>(event.get());
     s.read(std::move(event));
-    return ret;
+    return rawio::Awaitable<size_t>(this, ret);
 }
 
-rawio::Event* Queue::recv_multishot(
+rawio::RecvStream Queue::recv_multishot(
     int fd, size_t entry_size, unsigned int entries, size_t size,
-    unsigned int flags,
-    std::function<size_t(const iovec*, unsigned int, size_t, int)>&& cb
+    unsigned int flags
 ) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         '|',
@@ -450,21 +444,19 @@ rawio::Event* Queue::recv_multishot(
     );
     Session& s = _get_session(fd);
 
+    auto backend = std::make_shared<RecvMultishotBackend>(*this, entries);
     std::unique_ptr<EventSimplexVectorRecvMultishot> event =
         std::make_unique<EventSimplexVectorRecvMultishot>(
-            *this, fd, entry_size, entries, size, flags, trace_event,
-            std::move(cb)
+            *this, fd, entry_size, flags, trace_event, backend
         );
 
-    rawio::Event* ret = static_cast<rawio::Event*>(event.get());
+    backend->set_event(event.get());
     s.read(std::move(event));
-    return ret;
+    return rawio::RecvStream(std::move(backend));
 }
 
-rawio::Event* Queue::recvmsg(
-    int fd, msghdr* msg, unsigned int flags,
-    std::function<void(size_t, int)>&& cb
-) {
+rawio::Awaitable<size_t>
+Queue::recvmsg(int fd, msghdr* msg, unsigned int flags) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         '|', "fd = %d, niov = %u, flags = %u\n", fd,
         (unsigned int)msg->msg_iovlen, flags
@@ -473,51 +465,45 @@ rawio::Event* Queue::recvmsg(
 
     std::unique_ptr<EventSimplex> event =
         std::make_unique<EventSimplexMessageRead>(
-            *this, fd, msg, flags, trace_event, std::move(cb)
+            *this, fd, msg, flags, trace_event
         );
 
     rawio::Event* ret = static_cast<rawio::Event*>(event.get());
     s.read(std::move(event));
-    return ret;
+    return rawio::Awaitable<size_t>(this, ret);
 }
 
-rawio::Event* Queue::write(
-    int fd, const void* buf, size_t size, std::function<void(size_t, int)>&& cb
-) {
+rawio::Awaitable<size_t> Queue::write(int fd, const void* buf, size_t size) {
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('|', "fd = %d, size = %zu\n", fd, size);
     Session& s = _get_session(fd);
 
     std::unique_ptr<Event> event = std::make_unique<EventMultiplexScalarWrite>(
-        *this, fd, buf, size, trace_event, std::move(cb)
+        *this, fd, buf, size, trace_event
     );
 
     rawio::Event* ret = static_cast<rawio::Event*>(event.get());
     s.write(std::move(event));
-    return ret;
+    return rawio::Awaitable<size_t>(this, ret);
 }
 
-rawio::Event* Queue::writev(
-    int fd, const iovec* iov, unsigned int niov,
-    std::function<void(size_t, int)>&& cb
-) {
+rawio::Awaitable<size_t>
+Queue::writev(int fd, const iovec* iov, unsigned int niov) {
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('|', "fd = %d, niov = %u\n", fd, niov);
     Session& s = _get_session(fd);
 
     std::unique_ptr<Event> event = std::make_unique<EventMultiplexVectorWrite>(
-        *this, fd, iov, niov, trace_event, std::move(cb)
+        *this, fd, iov, niov, trace_event
     );
 
     rawio::Event* ret = static_cast<rawio::Event*>(event.get());
     s.write(std::move(event));
-    return ret;
+    return rawio::Awaitable<size_t>(this, ret);
 }
 
-rawio::Event* Queue::pwrite(
-    int fd, const void* buf, size_t size, off_t offset, bool sync,
-    std::function<void(size_t, int)>&& cb
-) {
+rawio::Awaitable<size_t>
+Queue::pwrite(int fd, const void* buf, size_t size, off_t offset, bool sync) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         '|', "fd = %d, size = %zu, offset = %jd, sync = %d\n", fd, size,
         (intmax_t)offset, sync
@@ -526,17 +512,16 @@ rawio::Event* Queue::pwrite(
 
     std::unique_ptr<Event> event =
         std::make_unique<EventSimplexScalarPositionalWrite>(
-            *this, fd, buf, size, offset, sync, trace_event, std::move(cb)
+            *this, fd, buf, size, offset, sync, trace_event
         );
 
     rawio::Event* ret = static_cast<rawio::Event*>(event.get());
     s.write(std::move(event));
-    return ret;
+    return rawio::Awaitable<size_t>(this, ret);
 }
 
-rawio::Event* Queue::pwritev(
-    int fd, const iovec* iov, unsigned int niov, off_t offset, bool sync,
-    std::function<void(size_t, int)>&& cb
+rawio::Awaitable<size_t> Queue::pwritev(
+    int fd, const iovec* iov, unsigned int niov, off_t offset, bool sync
 ) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         '|', "fd = %d, niov = %u, offset = %jd, sync = %d\n", fd, niov,
@@ -546,22 +531,20 @@ rawio::Event* Queue::pwritev(
 
     std::unique_ptr<Event> event =
         std::make_unique<EventSimplexVectorPositionalWrite>(
-            *this, fd, iov, niov, offset, sync, trace_event, std::move(cb)
+            *this, fd, iov, niov, offset, sync, trace_event
         );
 
     rawio::Event* ret = static_cast<rawio::Event*>(event.get());
     s.write(std::move(event));
-    return ret;
+    return rawio::Awaitable<size_t>(this, ret);
 }
 
-rawio::Event*
-Queue::fsync(int fd, bool datasync, std::function<void(int)>&& cb) {
+rawio::Awaitable<int> Queue::fsync(int fd, bool datasync) {
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('|', "fd = %d, datasync = %d\n", fd, datasync);
 
     std::unique_ptr<EventEval> event = std::make_unique<EventEval>(
-        *this, trace_event,
-        [fd, datasync]() -> int {
+        *this, trace_event, [fd, datasync]() -> int {
             int res;
 #if defined(RAWSTD_ON_LINUX)
             res = datasync ? ::fdatasync(fd) : ::fsync(fd);
@@ -576,37 +559,32 @@ Queue::fsync(int fd, bool datasync, std::function<void(int)>&& cb) {
                 errno = 0;
             }
             return res;
-        },
-        std::move(cb)
+        }
     );
 
     rawio::Event* ret = static_cast<rawio::Event*>(event.get());
     _eval(std::move(event));
-    return ret;
+    return rawio::Awaitable<int>(this, ret);
 }
 
-rawio::Event* Queue::send(
-    int fd, const void* buf, size_t size, unsigned int flags,
-    std::function<void(size_t, int)>&& cb
-) {
+rawio::Awaitable<size_t>
+Queue::send(int fd, const void* buf, size_t size, unsigned int flags) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         '|', "fd = %d, size = %zu, flags = %u\n", fd, size, flags
     );
     Session& s = _get_session(fd);
 
     std::unique_ptr<Event> event = std::make_unique<EventSimplexScalarSend>(
-        *this, fd, buf, size, flags, trace_event, std::move(cb)
+        *this, fd, buf, size, flags, trace_event
     );
 
     rawio::Event* ret = static_cast<rawio::Event*>(event.get());
     s.write(std::move(event));
-    return ret;
+    return rawio::Awaitable<size_t>(this, ret);
 }
 
-rawio::Event* Queue::sendmsg(
-    int fd, const msghdr* msg, unsigned int flags,
-    std::function<void(size_t, int)>&& cb
-) {
+rawio::Awaitable<size_t>
+Queue::sendmsg(int fd, const msghdr* msg, unsigned int flags) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         '|', "fd = %d, niov = %u, flags = %u\n", fd,
         (unsigned int)msg->msg_iovlen, flags
@@ -614,12 +592,18 @@ rawio::Event* Queue::sendmsg(
     Session& s = _get_session(fd);
 
     std::unique_ptr<Event> event = std::make_unique<EventSimplexMessageWrite>(
-        *this, fd, msg, flags, trace_event, std::move(cb)
+        *this, fd, msg, flags, trace_event
     );
 
     rawio::Event* ret = static_cast<rawio::Event*>(event.get());
     s.write(std::move(event));
-    return ret;
+    return rawio::Awaitable<size_t>(this, ret);
+}
+
+void Queue::_attach(
+    rawio::Event* event, std::coroutine_handle<> h, size_t* value, int* error
+) noexcept {
+    static_cast<Event*>(event)->attach(h, value, error);
 }
 
 void Queue::cancel(rawio::Event* e) {

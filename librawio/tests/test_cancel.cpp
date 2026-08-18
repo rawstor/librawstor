@@ -2,11 +2,15 @@
 #include "fixture.hpp"
 #include "server.hpp"
 
+#include <rawio/awaitable.hpp>
+#include <rawstd/coro.hpp>
+
 #include <gtest/gtest.h>
 
 #include <poll.h>
 
 #include <system_error>
+#include <utility>
 
 namespace {
 
@@ -22,8 +26,11 @@ TEST_F(CancelTest, cancel_noent) {
 
 TEST_F(CancelTest, poll) {
     int result = 0;
-    rawio::Event* event =
-        _queue->poll(_fd, POLLIN, [&result](int r) { result = r; });
+    int error = 0;
+    rawio::Awaitable<int> aw = _queue->poll(_fd, POLLIN);
+    rawio::Event* event = aw.event();
+    rawstd::Task<void> t =
+        rawio::tests::await_into(std::move(aw), &result, &error);
 
     EXPECT_THROW(_queue->wait_timeout(0), std::system_error);
 
@@ -32,7 +39,8 @@ TEST_F(CancelTest, poll) {
     EXPECT_NO_THROW(_queue->wait_timeout(0));
     EXPECT_THROW(_queue->wait_timeout(0), std::system_error);
 
-    EXPECT_EQ(result, -ECANCELED);
+    EXPECT_EQ(result, 0);
+    EXPECT_EQ(error, ECANCELED);
 }
 
 TEST_F(CancelTest, poll_completed) {
@@ -41,8 +49,9 @@ TEST_F(CancelTest, poll_completed) {
     _server.wait();
 
     int result = 0;
-    rawio::Event* event =
-        _queue->poll(_fd, POLLIN, [&result](int r) { result = r; });
+    rawio::Awaitable<int> aw = _queue->poll(_fd, POLLIN);
+    rawio::Event* event = aw.event();
+    rawstd::Task<void> t = rawio::tests::await_into(std::move(aw), &result);
 
     _queue->wait_timeout(0);
 
@@ -54,13 +63,11 @@ TEST_F(CancelTest, read) {
     char client_buf[10];
     size_t result = 0;
     int error = 0;
-    rawio::Event* event = _queue->read(
-        _fd, client_buf, sizeof(client_buf),
-        [&result, &error](size_t r, int e) {
-            result = r;
-            error = e;
-        }
-    );
+    rawio::Awaitable<size_t> aw =
+        _queue->read(_fd, client_buf, sizeof(client_buf));
+    rawio::Event* event = aw.event();
+    rawstd::Task<void> t =
+        rawio::tests::await_into(std::move(aw), &result, &error);
 
     EXPECT_THROW(_queue->wait_timeout(0), std::system_error);
 
@@ -81,20 +88,15 @@ TEST_F(CancelTest, read_completed) {
 
     char client_buf[sizeof(server_buf)];
     size_t result = 0;
-    int error = 0;
-    rawio::Event* event = _queue->read(
-        _fd, client_buf, sizeof(client_buf),
-        [&result, &error](size_t r, int e) {
-            result = r;
-            error = e;
-        }
-    );
+    rawio::Awaitable<size_t> aw =
+        _queue->read(_fd, client_buf, sizeof(client_buf));
+    rawio::Event* event = aw.event();
+    rawstd::Task<void> t = rawio::tests::await_into(std::move(aw), &result);
 
     _queue->wait_timeout(0);
 
     EXPECT_THROW(_queue->cancel(event), std::system_error);
     EXPECT_EQ(result, sizeof(client_buf));
-    EXPECT_EQ(error, 0);
 }
 
 TEST_F(CancelTest, write) {
@@ -105,14 +107,11 @@ TEST_F(CancelTest, write) {
     char client_buf[] = "data";
     size_t result = 0;
     int error = 0;
-    rawio::Event* event = nullptr;
-    event = _queue->write(
-        _fd, client_buf, sizeof(client_buf),
-        [&result, &error](size_t r, int e) {
-            result = r;
-            error = e;
-        }
-    );
+    rawio::Awaitable<size_t> aw =
+        _queue->write(_fd, client_buf, sizeof(client_buf));
+    rawio::Event* event = aw.event();
+    rawstd::Task<void> t =
+        rawio::tests::await_into(std::move(aw), &result, &error);
 
     _queue->cancel(event);
 
@@ -127,14 +126,10 @@ TEST_F(CancelTest, write) {
 TEST_F(CancelTest, write_completed) {
     char client_buf[] = "data";
     size_t result = 0;
-    int error = 0;
-    rawio::Event* event = _queue->write(
-        _fd, client_buf, sizeof(client_buf),
-        [&result, &error](size_t r, int e) {
-            result = r;
-            error = e;
-        }
-    );
+    rawio::Awaitable<size_t> aw =
+        _queue->write(_fd, client_buf, sizeof(client_buf));
+    rawio::Event* event = aw.event();
+    rawstd::Task<void> t = rawio::tests::await_into(std::move(aw), &result);
     _queue->wait_timeout(0);
 
     char server_buf[sizeof(client_buf)];
@@ -143,41 +138,38 @@ TEST_F(CancelTest, write_completed) {
 
     EXPECT_THROW(_queue->cancel(event), std::system_error);
     EXPECT_EQ(result, sizeof(client_buf));
-    EXPECT_EQ(error, 0);
     EXPECT_EQ(strcmp(server_buf, client_buf), 0);
 }
 
 TEST_F(CancelTest, cancel_all) {
     int result_poll = 0;
-    _queue->poll(_fd, POLLIN, [&result_poll](int r) { result_poll = r; });
+    int error_poll = 0;
+    rawstd::Task<void> t_poll = rawio::tests::await_into(
+        _queue->poll(_fd, POLLIN), &result_poll, &error_poll
+    );
 
     char client_buf_read[10];
     size_t result_read = 0;
     int error_read = 0;
-    _queue->read(
-        _fd, client_buf_read, sizeof(client_buf_read),
-        [&result_read, &error_read](size_t r, int e) {
-            result_read = r;
-            error_read = e;
-        }
+    rawstd::Task<void> t_read = rawio::tests::await_into(
+        _queue->read(_fd, client_buf_read, sizeof(client_buf_read)),
+        &result_read, &error_read
     );
 
     char client_buf_write[] = "data";
     size_t result_write = 0;
     int error_write = 0;
-    _queue->write(
-        _fd, client_buf_write, sizeof(client_buf_write),
-        [&result_write, &error_write](size_t r, int e) {
-            result_write = r;
-            error_write = e;
-        }
+    rawstd::Task<void> t_write = rawio::tests::await_into(
+        _queue->write(_fd, client_buf_write, sizeof(client_buf_write)),
+        &result_write, &error_write
     );
 
     _queue->cancel(_fd);
 
     EXPECT_NO_THROW(_wait_all());
 
-    EXPECT_EQ(result_poll, -ECANCELED);
+    EXPECT_EQ(result_poll, 0);
+    EXPECT_EQ(error_poll, ECANCELED);
     EXPECT_EQ(result_read, (size_t)0);
     EXPECT_EQ(error_read, ECANCELED);
 #ifndef RAWIO_WITH_LIBURING

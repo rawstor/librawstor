@@ -1,7 +1,7 @@
 #ifndef RAWIO_QUEUE_HPP
 #define RAWIO_QUEUE_HPP
 
-#include <functional>
+#include <coroutine>
 #include <memory>
 #include <string>
 
@@ -18,20 +18,46 @@ namespace rawio {
 
 typedef void Event;
 
+template <typename T>
+class Awaitable;
+
+class PollStream;
+class AcceptStream;
+class RecvStream;
+
 class Queue : public RawIOQueue {
+    // Awaitable<T>::await_suspend() is the only caller of the protected
+    // _attach() hook below; see <rawio/awaitable.hpp>.
+    template <typename T>
+    friend class Awaitable;
+
 private:
     unsigned int _depth;
 
 protected:
     // Set by a subclass's destructor, before it starts tearing itself
-    // down, to true. A completion callback delivered during that teardown
-    // (e.g. uring::Queue::~Queue() synchronously delivering ECANCELED to
-    // every still-pending op) can release the last shared_ptr keeping some
+    // down, to true. A completion delivered during that teardown (e.g.
+    // uring::Queue::~Queue() synchronously resuming every still-pending
+    // op with ECANCELED) can release the last shared_ptr keeping some
     // unrelated object alive, whose own destructor calls back into
     // cancel() on this same, still-destructing Queue. cancel() checks this
     // flag and becomes a safe no-op in that case: the Queue is going away
     // regardless, so there is nothing left to cancel.
     bool _tearing_down = false;
+
+    // The single hook every backend implements to make Awaitable<T>
+    // backend-agnostic (Awaitable<T> itself is a concrete, non-virtual
+    // template shared by every backend -- C++ virtual overrides require
+    // identical return types, so a bespoke per-backend awaitable isn't an
+    // option). Called exactly once per Awaitable<T>, from
+    // Awaitable<T>::await_suspend(), i.e. always before the next
+    // wait()/wait_timeout() call. `value`/`error` point into the (still
+    // alive -- see Awaitable<T>'s class comment) awaitable itself; the
+    // backend writes the outcome into them and resumes `h` once the
+    // operation completes.
+    virtual void _attach(
+        Event* event, std::coroutine_handle<> h, size_t* value, int* error
+    ) noexcept = 0;
 
 public:
     static const std::string& engine_name();
@@ -47,102 +73,66 @@ public:
 
     inline unsigned int depth() const noexcept { return _depth; }
 
-    virtual Event* open(
-        const char* path, int flags, mode_t mode, std::function<void(int)>&& cb
-    ) = 0;
+    virtual Awaitable<int> open(const char* path, int flags, mode_t mode) = 0;
 
-    virtual Event* close(int fd, std::function<void(int)>&& cb) = 0;
+    virtual Awaitable<int> close(int fd) = 0;
 
-    virtual Event*
-    poll(int fd, unsigned int mask, std::function<void(int)>&& cb) = 0;
+    virtual Awaitable<int> poll(int fd, unsigned int mask) = 0;
 
-    virtual Event* poll_multishot(
-        int fd, unsigned int mask, std::function<void(int)>&& cb
-    ) = 0;
+    virtual PollStream poll_multishot(int fd, unsigned int mask) = 0;
 
-    virtual Event* accept(
-        int fd, sockaddr* addr, socklen_t* addrlen,
-        std::function<void(int)>&& cb
-    ) = 0;
+    virtual Awaitable<int>
+    accept(int fd, sockaddr* addr, socklen_t* addrlen) = 0;
 
-    virtual Event* accept_multishot(int fd, std::function<void(int)>&& cb) = 0;
+    virtual AcceptStream accept_multishot(int fd) = 0;
 
-    virtual Event* connect(
-        int fd, const sockaddr* addr, socklen_t addrlen,
-        std::function<void(int)>&& cb
-    ) = 0;
+    virtual Awaitable<int>
+    connect(int fd, const sockaddr* addr, socklen_t addrlen) = 0;
 
-    virtual Event* read(
-        int fd, void* buf, size_t size, std::function<void(size_t, int)>&& cb
-    ) = 0;
+    virtual Awaitable<size_t> read(int fd, void* buf, size_t size) = 0;
 
-    virtual Event* readv(
-        int fd, iovec* iov, unsigned int niov,
-        std::function<void(size_t, int)>&& cb
-    ) = 0;
+    virtual Awaitable<size_t> readv(int fd, iovec* iov, unsigned int niov) = 0;
 
-    virtual Event* pread(
-        int fd, void* buf, size_t size, off_t offset,
-        std::function<void(size_t, int)>&& cb
-    ) = 0;
+    virtual Awaitable<size_t>
+    pread(int fd, void* buf, size_t size, off_t offset) = 0;
 
-    virtual Event* preadv(
-        int fd, iovec* iov, unsigned int niov, off_t offset,
-        std::function<void(size_t, int)>&& cb
-    ) = 0;
+    virtual Awaitable<size_t>
+    preadv(int fd, iovec* iov, unsigned int niov, off_t offset) = 0;
 
-    virtual Event* recv(
-        int fd, void* buf, size_t size, unsigned int flags,
-        std::function<void(size_t, int)>&& cb
-    ) = 0;
+    virtual Awaitable<size_t>
+    recv(int fd, void* buf, size_t size, unsigned int flags) = 0;
 
     /**
      * entry_size: must be a power of two.
      * entries: must be a power of two.
      */
-    virtual Event* recv_multishot(
+    virtual RecvStream recv_multishot(
         int fd, size_t entry_size, unsigned int entries, size_t size,
-        unsigned int flags,
-        std::function<size_t(const iovec*, unsigned int, size_t, int)>&& cb
+        unsigned int flags
     ) = 0;
 
-    virtual Event* recvmsg(
-        int fd, msghdr* msg, unsigned int flags,
-        std::function<void(size_t, int)>&& cb
+    virtual Awaitable<size_t>
+    recvmsg(int fd, msghdr* msg, unsigned int flags) = 0;
+
+    virtual Awaitable<size_t> write(int fd, const void* buf, size_t size) = 0;
+
+    virtual Awaitable<size_t>
+    writev(int fd, const iovec* iov, unsigned int niov) = 0;
+
+    virtual Awaitable<size_t>
+    pwrite(int fd, const void* buf, size_t size, off_t offset, bool sync) = 0;
+
+    virtual Awaitable<size_t> pwritev(
+        int fd, const iovec* iov, unsigned int niov, off_t offset, bool sync
     ) = 0;
 
-    virtual Event* write(
-        int fd, const void* buf, size_t size,
-        std::function<void(size_t, int)>&& cb
-    ) = 0;
+    virtual Awaitable<int> fsync(int fd, bool datasync) = 0;
 
-    virtual Event* writev(
-        int fd, const iovec* iov, unsigned int niov,
-        std::function<void(size_t, int)>&& cb
-    ) = 0;
+    virtual Awaitable<size_t>
+    send(int fd, const void* buf, size_t size, unsigned int flags) = 0;
 
-    virtual Event* pwrite(
-        int fd, const void* buf, size_t size, off_t offset, bool sync,
-        std::function<void(size_t, int)>&& cb
-    ) = 0;
-
-    virtual Event* pwritev(
-        int fd, const iovec* iov, unsigned int niov, off_t offset, bool sync,
-        std::function<void(size_t, int)>&& cb
-    ) = 0;
-
-    virtual Event*
-    fsync(int fd, bool datasync, std::function<void(int)>&& cb) = 0;
-
-    virtual Event* send(
-        int fd, const void* buf, size_t size, unsigned int flags,
-        std::function<void(size_t, int)>&& cb
-    ) = 0;
-
-    virtual Event* sendmsg(
-        int fd, const msghdr* msg, unsigned int flags,
-        std::function<void(size_t, int)>&& cb
-    ) = 0;
+    virtual Awaitable<size_t>
+    sendmsg(int fd, const msghdr* msg, unsigned int flags) = 0;
 
     virtual void cancel(Event* event) = 0;
 

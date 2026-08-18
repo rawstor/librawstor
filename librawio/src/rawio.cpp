@@ -1,14 +1,130 @@
 #include <rawstor/rawio.h>
 
+#include <rawstd/coro.hpp>
 #include <rawstd/gpp.hpp>
 #include <rawstd/logging.h>
 
+#include "rawio/awaitable.hpp"
 #include "rawio/queue.hpp"
+#include "rawio/stream.hpp"
 
 #include <exception>
 #include <stdexcept>
+#include <utility>
 
 #include <cerrno>
+
+namespace {
+
+/*
+ * Launches (eagerly, immediately, on the caller's stack) a detached
+ * coroutine that co_await's an already-submitted single-shot int-result
+ * Awaitable<int> (open/close/poll/connect/fsync/accept) and, once it
+ * completes, invokes the stored C completion callback with the same
+ * "raw, possibly-negative errno" convention those C functions have
+ * always used. A negative return from the C callback re-throws via
+ * rawstd::DetachedTask's unhandled_exception(), which propagates it out
+ * of whichever coroutine_handle::resume() call is currently resuming
+ * this one (i.e. out of rawio_wait()/rawio_wait_timeout() again).
+ */
+rawstd::DetachedTask launch_int_op(
+    rawio::Awaitable<int> aw, int (*cb)(int result, void* data), void* data
+) {
+    int result = 0;
+    try {
+        result = co_await aw;
+    } catch (const std::system_error& e) {
+        result = -e.code().value();
+    }
+    int res = cb(result, data);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+}
+
+/*
+ * Same as launch_int_op(), for the read/write family's size_t-result
+ * Awaitable<size_t> and RawIOCallback's separate result/error parameters.
+ */
+rawstd::DetachedTask
+launch_size_op(rawio::Awaitable<size_t> aw, RawIOCallback* cb, void* data) {
+    size_t result = 0;
+    int error = 0;
+    try {
+        result = co_await aw;
+    } catch (const std::system_error& e) {
+        error = e.code().value();
+    }
+    int res = cb(result, error, data);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+}
+
+/*
+ * Launches a detached coroutine that pulls from an already-submitted
+ * PollStream/AcceptStream forever, translating each item (or the
+ * terminating error -- ECANCELED after cancel(), or the new ENOBUFS
+ * overflow condition, see rawio/stream.hpp) into one call to the stored
+ * C completion callback with the same "raw, possibly-negative errno"
+ * convention rawio_poll/rawio_accept single-shot ops use. A negative
+ * return from the C callback re-throws exactly like the single-shot
+ * adapters above -- see launch_int_op()'s comment.
+ */
+template <typename Stream>
+rawstd::DetachedTask
+launch_stream_op(Stream stream, int (*cb)(int result, void* data), void* data) {
+    while (true) {
+        int result = 0;
+        try {
+            result = co_await stream.next();
+        } catch (const std::system_error& e) {
+            int res = cb(-e.code().value(), data);
+            if (res < 0) {
+                RAWSTD_THROW_SYSTEM_ERROR(-res);
+            }
+            co_return;
+        }
+        int res = cb(result, data);
+        if (res < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
+        }
+    }
+}
+
+/*
+ * Same idea for recv_multishot()'s RecvStream: pulls items forever,
+ * feeding each call's return value back in as the next `want`, so the
+ * size requested for the next pull is driven by what the C callback
+ * reported wanting last. A terminal error (possibly following one last
+ * successful, data-bearing call -- see RecvStream::Next's doc comment on
+ * why data and a trailing error are never delivered in a single call) is
+ * delivered as one final zero-data callback invocation.
+ */
+rawstd::DetachedTask launch_recv_stream_op(
+    rawio::RecvStream stream, size_t want, RawIOMultishotVectorCallback* cb,
+    void* data
+) {
+    while (true) {
+        rawio::RecvStream::Item item;
+        try {
+            item = co_await stream.next(want);
+        } catch (const std::system_error& e) {
+            ssize_t res = cb(nullptr, 0, 0, e.code().value(), data);
+            if (res < 0) {
+                RAWSTD_THROW_SYSTEM_ERROR(-res);
+            }
+            co_return;
+        }
+        ssize_t res = cb(item.iov(), item.niov(), item.size(), 0, data);
+        if (res < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
+        }
+        want = static_cast<size_t>(res);
+    }
+}
+
+} // namespace
 
 int rawio_queue_create(unsigned int depth, RawIOQueue** queue) noexcept {
     try {
@@ -38,13 +154,8 @@ int rawio_open(
     int (*cb)(int result, void* data), void* data
 ) noexcept {
     try {
-        static_cast<rawio::Queue*>(queue)->open(
-            path, flags, mode, [cb, data](int result) {
-                int res = cb(result, data);
-                if (res) {
-                    RAWSTD_THROW_SYSTEM_ERROR(-res);
-                }
-            }
+        launch_int_op(
+            static_cast<rawio::Queue*>(queue)->open(path, flags, mode), cb, data
         );
         return 0;
     } catch (const std::system_error& e) {
@@ -64,12 +175,7 @@ int rawio_close(
     RawIOQueue* queue, int fd, int (*cb)(int result, void* data), void* data
 ) noexcept {
     try {
-        static_cast<rawio::Queue*>(queue)->close(fd, [cb, data](int result) {
-            int res = cb(result, data);
-            if (res) {
-                RAWSTD_THROW_SYSTEM_ERROR(-res);
-            }
-        });
+        launch_int_op(static_cast<rawio::Queue*>(queue)->close(fd), cb, data);
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -89,13 +195,8 @@ int rawio_poll(
     int (*cb)(int result, void* data), void* data
 ) noexcept {
     try {
-        static_cast<rawio::Queue*>(queue)->poll(
-            fd, mask, [cb, data](int result) {
-                int res = cb(result, data);
-                if (res) {
-                    RAWSTD_THROW_SYSTEM_ERROR(-res);
-                }
-            }
+        launch_int_op(
+            static_cast<rawio::Queue*>(queue)->poll(fd, mask), cb, data
         );
         return 0;
     } catch (const std::system_error& e) {
@@ -116,14 +217,10 @@ int rawio_poll_multishot(
     int (*cb)(int result, void* data), void* data, RawIOEvent** event
 ) noexcept {
     try {
-        RawIOEvent* e = static_cast<rawio::Queue*>(queue)->poll_multishot(
-            fd, mask, [cb, data](int result) {
-                int res = cb(result, data);
-                if (res) {
-                    RAWSTD_THROW_SYSTEM_ERROR(-res);
-                }
-            }
-        );
+        rawio::PollStream stream =
+            static_cast<rawio::Queue*>(queue)->poll_multishot(fd, mask);
+        RawIOEvent* e = stream.event();
+        launch_stream_op(std::move(stream), cb, data);
         if (event != nullptr) {
             *event = e;
         }
@@ -146,13 +243,9 @@ int rawio_connect(
     int (*cb)(int result, void* data), void* data
 ) noexcept {
     try {
-        static_cast<rawio::Queue*>(queue)->connect(
-            fd, addr, addrlen, [cb, data](int result) {
-                int res = cb(result, data);
-                if (res) {
-                    RAWSTD_THROW_SYSTEM_ERROR(-res);
-                }
-            }
+        launch_int_op(
+            static_cast<rawio::Queue*>(queue)->connect(fd, addr, addrlen), cb,
+            data
         );
         return 0;
     } catch (const std::system_error& e) {
@@ -173,13 +266,9 @@ int rawio_accept(
     int (*cb)(int result, void* data), void* data
 ) noexcept {
     try {
-        static_cast<rawio::Queue*>(queue)->accept(
-            fd, addr, addrlen, [cb, data](int result) {
-                int res = cb(result, data);
-                if (res) {
-                    RAWSTD_THROW_SYSTEM_ERROR(-res);
-                }
-            }
+        launch_int_op(
+            static_cast<rawio::Queue*>(queue)->accept(fd, addr, addrlen), cb,
+            data
         );
         return 0;
     } catch (const std::system_error& e) {
@@ -200,14 +289,10 @@ int rawio_accept_multishot(
     RawIOEvent** event
 ) noexcept {
     try {
-        RawIOEvent* e = static_cast<rawio::Queue*>(queue)->accept_multishot(
-            fd, [cb, data](int result) {
-                int res = cb(result, data);
-                if (res) {
-                    RAWSTD_THROW_SYSTEM_ERROR(-res);
-                }
-            }
-        );
+        rawio::AcceptStream stream =
+            static_cast<rawio::Queue*>(queue)->accept_multishot(fd);
+        RawIOEvent* e = stream.event();
+        launch_stream_op(std::move(stream), cb, data);
         if (event != nullptr) {
             *event = e;
         }
@@ -230,13 +315,8 @@ int rawio_read(
     void* data
 ) noexcept {
     try {
-        static_cast<rawio::Queue*>(queue)->read(
-            fd, buf, size, [cb, data](size_t result, int error) {
-                int res = cb(result, error, data);
-                if (res) {
-                    RAWSTD_THROW_SYSTEM_ERROR(-res);
-                }
-            }
+        launch_size_op(
+            static_cast<rawio::Queue*>(queue)->read(fd, buf, size), cb, data
         );
         return 0;
     } catch (const std::system_error& e) {
@@ -257,13 +337,8 @@ int rawio_readv(
     void* data
 ) noexcept {
     try {
-        static_cast<rawio::Queue*>(queue)->readv(
-            fd, iov, niov, [cb, data](size_t result, int error) {
-                int res = cb(result, error, data);
-                if (res) {
-                    RAWSTD_THROW_SYSTEM_ERROR(-res);
-                }
-            }
+        launch_size_op(
+            static_cast<rawio::Queue*>(queue)->readv(fd, iov, niov), cb, data
         );
         return 0;
     } catch (const std::system_error& e) {
@@ -284,13 +359,9 @@ int rawio_pread(
     RawIOCallback* cb, void* data
 ) noexcept {
     try {
-        static_cast<rawio::Queue*>(queue)->pread(
-            fd, buf, size, offset, [cb, data](size_t result, int error) {
-                int res = cb(result, error, data);
-                if (res) {
-                    RAWSTD_THROW_SYSTEM_ERROR(-res);
-                }
-            }
+        launch_size_op(
+            static_cast<rawio::Queue*>(queue)->pread(fd, buf, size, offset), cb,
+            data
         );
         return 0;
     } catch (const std::system_error& e) {
@@ -311,13 +382,9 @@ int rawio_preadv(
     RawIOCallback* cb, void* data
 ) noexcept {
     try {
-        static_cast<rawio::Queue*>(queue)->preadv(
-            fd, iov, niov, offset, [cb, data](size_t result, int error) {
-                int res = cb(result, error, data);
-                if (res) {
-                    RAWSTD_THROW_SYSTEM_ERROR(-res);
-                }
-            }
+        launch_size_op(
+            static_cast<rawio::Queue*>(queue)->preadv(fd, iov, niov, offset),
+            cb, data
         );
         return 0;
     } catch (const std::system_error& e) {
@@ -338,13 +405,9 @@ int rawio_recv(
     RawIOCallback* cb, void* data
 ) noexcept {
     try {
-        static_cast<rawio::Queue*>(queue)->recv(
-            fd, buf, size, flags, [cb, data](size_t result, int error) {
-                int res = cb(result, error, data);
-                if (res) {
-                    RAWSTD_THROW_SYSTEM_ERROR(-res);
-                }
-            }
+        launch_size_op(
+            static_cast<rawio::Queue*>(queue)->recv(fd, buf, size, flags), cb,
+            data
         );
         return 0;
     } catch (const std::system_error& e) {
@@ -366,18 +429,12 @@ int rawio_recv_multishot(
     void* data, RawIOEvent** event
 ) noexcept {
     try {
-        RawIOEvent* e = static_cast<rawio::Queue*>(queue)->recv_multishot(
-            fd, entry_size, entries, size, flags,
-            [cb, data](
-                const iovec* iov, unsigned int niov, size_t result, int error
-            ) -> size_t {
-                ssize_t res = cb(iov, niov, result, error, data);
-                if (res < 0) {
-                    RAWSTD_THROW_SYSTEM_ERROR(-res);
-                }
-                return res;
-            }
-        );
+        rawio::RecvStream stream =
+            static_cast<rawio::Queue*>(queue)->recv_multishot(
+                fd, entry_size, entries, size, flags
+            );
+        RawIOEvent* e = stream.event();
+        launch_recv_stream_op(std::move(stream), size, cb, data);
         if (event != nullptr) {
             *event = e;
         }
@@ -400,13 +457,8 @@ int rawio_recvmsg(
     RawIOCallback* cb, void* data
 ) noexcept {
     try {
-        static_cast<rawio::Queue*>(queue)->recvmsg(
-            fd, msg, flags, [cb, data](size_t result, int error) {
-                int res = cb(result, error, data);
-                if (res) {
-                    RAWSTD_THROW_SYSTEM_ERROR(-res);
-                }
-            }
+        launch_size_op(
+            static_cast<rawio::Queue*>(queue)->recvmsg(fd, msg, flags), cb, data
         );
         return 0;
     } catch (const std::system_error& e) {
@@ -427,13 +479,8 @@ int rawio_write(
     void* data
 ) noexcept {
     try {
-        static_cast<rawio::Queue*>(queue)->write(
-            fd, buf, size, [cb, data](size_t result, int error) {
-                int res = cb(result, error, data);
-                if (res) {
-                    RAWSTD_THROW_SYSTEM_ERROR(-res);
-                }
-            }
+        launch_size_op(
+            static_cast<rawio::Queue*>(queue)->write(fd, buf, size), cb, data
         );
         return 0;
     } catch (const std::system_error& e) {
@@ -454,13 +501,8 @@ int rawio_writev(
     RawIOCallback* cb, void* data
 ) noexcept {
     try {
-        static_cast<rawio::Queue*>(queue)->writev(
-            fd, iov, niov, [cb, data](size_t result, int error) {
-                int res = cb(result, error, data);
-                if (res) {
-                    RAWSTD_THROW_SYSTEM_ERROR(-res);
-                }
-            }
+        launch_size_op(
+            static_cast<rawio::Queue*>(queue)->writev(fd, iov, niov), cb, data
         );
         return 0;
     } catch (const std::system_error& e) {
@@ -483,14 +525,11 @@ int rawio_pwrite(
     try {
         // sync stays hardcoded until rawio_pwrite() itself gains a sync
         // parameter (tracked alongside rawstor_object_pwrite()'s own).
-        static_cast<rawio::Queue*>(queue)->pwrite(
-            fd, buf, size, offset, /*sync=*/false,
-            [cb, data](size_t result, int error) {
-                int res = cb(result, error, data);
-                if (res) {
-                    RAWSTD_THROW_SYSTEM_ERROR(-res);
-                }
-            }
+        launch_size_op(
+            static_cast<rawio::Queue*>(queue)->pwrite(
+                fd, buf, size, offset, /*sync=*/false
+            ),
+            cb, data
         );
         return 0;
     } catch (const std::system_error& e) {
@@ -513,14 +552,11 @@ int rawio_pwritev(
     try {
         // sync stays hardcoded until rawio_pwritev() itself gains a sync
         // parameter (tracked alongside rawstor_object_pwritev()'s own).
-        static_cast<rawio::Queue*>(queue)->pwritev(
-            fd, iov, niov, offset, /*sync=*/false,
-            [cb, data](size_t result, int error) {
-                int res = cb(result, error, data);
-                if (res) {
-                    RAWSTD_THROW_SYSTEM_ERROR(-res);
-                }
-            }
+        launch_size_op(
+            static_cast<rawio::Queue*>(queue)->pwritev(
+                fd, iov, niov, offset, /*sync=*/false
+            ),
+            cb, data
         );
         return 0;
     } catch (const std::system_error& e) {
@@ -541,13 +577,8 @@ int rawio_fsync(
     void* data
 ) noexcept {
     try {
-        static_cast<rawio::Queue*>(queue)->fsync(
-            fd, datasync, [cb, data](int result) {
-                int res = cb(result, data);
-                if (res) {
-                    RAWSTD_THROW_SYSTEM_ERROR(-res);
-                }
-            }
+        launch_int_op(
+            static_cast<rawio::Queue*>(queue)->fsync(fd, datasync), cb, data
         );
         return 0;
     } catch (const std::system_error& e) {
@@ -568,13 +599,9 @@ int rawio_send(
     RawIOCallback* cb, void* data
 ) noexcept {
     try {
-        static_cast<rawio::Queue*>(queue)->send(
-            fd, buf, size, flags, [cb, data](size_t result, int error) {
-                int res = cb(result, error, data);
-                if (res) {
-                    RAWSTD_THROW_SYSTEM_ERROR(-res);
-                }
-            }
+        launch_size_op(
+            static_cast<rawio::Queue*>(queue)->send(fd, buf, size, flags), cb,
+            data
         );
         return 0;
     } catch (const std::system_error& e) {
@@ -595,13 +622,8 @@ int rawio_sendmsg(
     RawIOCallback* cb, void* data
 ) noexcept {
     try {
-        static_cast<rawio::Queue*>(queue)->sendmsg(
-            fd, msg, flags, [cb, data](size_t result, int error) {
-                int res = cb(result, error, data);
-                if (res) {
-                    RAWSTD_THROW_SYSTEM_ERROR(-res);
-                }
-            }
+        launch_size_op(
+            static_cast<rawio::Queue*>(queue)->sendmsg(fd, msg, flags), cb, data
         );
         return 0;
     } catch (const std::system_error& e) {

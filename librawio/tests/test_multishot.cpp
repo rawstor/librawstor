@@ -1,6 +1,8 @@
 #include "fixture.hpp"
 #include "server.hpp"
 
+#include <rawio/stream.hpp>
+#include <rawstd/coro.hpp>
 #include <rawstd/gpp.hpp>
 #include <rawstd/iovec.h>
 #include <rawstd/socket.h>
@@ -40,6 +42,22 @@ public:
     int error() const noexcept { return _error; }
 };
 
+// Pulls exactly one item from `stream` and appends it to `items` -- a
+// terminal error becomes a zero-result item carrying that error.
+void pull(
+    rawio::Queue& q, rawio::RecvStream& stream, size_t want,
+    std::vector<MultishotVectorItem>& items
+) {
+    try {
+        rawio::RecvStream::Item item = rawio::tests::run(
+            q, rawio::tests::wrap<rawio::RecvStream::Item>(stream.next(want))
+        );
+        items.emplace_back(item.iov(), item.niov(), item.size(), 0);
+    } catch (const std::system_error& e) {
+        items.emplace_back(nullptr, 0, 0, e.code().value());
+    }
+}
+
 class MultishotTest : public rawio::tests::QueueTest {
 protected:
     MultishotTest() : rawio::tests::QueueTest(1) {}
@@ -59,32 +77,27 @@ TEST_F(MultishotTest, poll) {
     _server.write(server_buf, sizeof(server_buf));
     _server.wait();
 
-    int result = 0;
-    unsigned int count = 0;
-    rawio::Event* event =
-        _queue->poll_multishot(_fd, POLLIN, [&result, &count](int r) {
-            result = r;
-            ++count;
-        });
+    rawio::PollStream stream = _queue->poll_multishot(_fd, POLLIN);
 
-    EXPECT_NO_THROW(_queue->wait_timeout(0));
+    int result =
+        rawio::tests::run(*_queue, rawio::tests::wrap<int>(stream.next()));
     EXPECT_EQ(result, POLLIN);
-    EXPECT_EQ(count, 1u);
 
     _server.write(server_buf, sizeof(server_buf));
     _server.wait();
 
-    result = 0;
-    EXPECT_NO_THROW(_queue->wait_timeout(0));
+    result = rawio::tests::run(*_queue, rawio::tests::wrap<int>(stream.next()));
     EXPECT_EQ(result, POLLIN);
-    EXPECT_EQ(count, 2u);
 
+    rawio::Event* event = stream.event();
     EXPECT_NO_THROW(_queue->cancel(event));
 
-    result = 0;
-    EXPECT_NO_THROW(_queue->wait_timeout(0));
-    EXPECT_EQ(result, -ECANCELED);
-    EXPECT_EQ(count, 3u);
+    try {
+        rawio::tests::run(*_queue, rawio::tests::wrap<int>(stream.next()));
+        FAIL() << "expected ECANCELED";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), ECANCELED);
+    }
 }
 
 // Regression test for a same-batch duplicate poll_multishot wakeup landing
@@ -106,23 +119,8 @@ TEST_F(MultishotBurstTest, poll_pipe_burst_no_torn_read) {
     bool torn_read = false;
     unsigned int total_reads = 0;
 
-    rawio::Event* event = _queue->poll_multishot(
-        read_fd, POLLIN, [read_fd, &torn_read, &total_reads](int result) {
-            if (result != POLLIN) {
-                return;
-            }
-            char buf[total_writes];
-            ssize_t n = ::read(read_fd, buf, sizeof(buf));
-            if (n == -1) {
-                // This is exactly the failure mode the fix prevents:
-                // being told "readable" for a wakeup that a prior,
-                // same-batch callback invocation already fully drained.
-                torn_read = true;
-                return;
-            }
-            total_reads += n;
-        }
-    );
+    rawio::PollStream stream = _queue->poll_multishot(read_fd, POLLIN);
+    rawio::Event* event = stream.event();
 
     // poll_multishot() only prepares the SQE locally; it isn't actually
     // submitted to the kernel until the next wait()/wait_timeout() call.
@@ -145,19 +143,36 @@ TEST_F(MultishotBurstTest, poll_pipe_burst_no_torn_read) {
         ASSERT_EQ(::write(write_fd, &one, sizeof(one)), (ssize_t)sizeof(one));
     }
 
-    // Unlike the two _wait_all() calls above and below, this one can't be
+    // Unlike the _wait_all() calls above and below, next() here can't be
     // non-blocking: right after the burst there is no guarantee the
-    // kernel has already posted every completion it owes us, and
-    // wait_timeout(0) racing that would just be a coin flip. Block with a
-    // real timeout and keep going until every write is accounted for.
+    // kernel has already posted every completion it owes us, and a 0ms
+    // timeout racing that would just be a coin flip. Use a real timeout
+    // and keep going until every write is accounted for.
     for (unsigned int i = 0;
          i < total_writes + 10 && total_reads < total_writes && !torn_read;
          ++i) {
+        int result = 0;
         try {
-            _queue->wait_timeout(50);
+            result = rawio::tests::run(
+                *_queue, rawio::tests::wrap<int>(stream.next())
+            );
         } catch (const std::system_error& e) {
             ASSERT_EQ(e.code().value(), ETIME);
+            continue;
         }
+        if (result != POLLIN) {
+            continue;
+        }
+        char buf[total_writes];
+        ssize_t n = ::read(read_fd, buf, sizeof(buf));
+        if (n == -1) {
+            // This is exactly the failure mode the fix prevents: being
+            // told "readable" for a wakeup that a prior, same-batch
+            // delivery already fully drained.
+            torn_read = true;
+            break;
+        }
+        total_reads += n;
     }
 
     EXPECT_FALSE(torn_read);
@@ -191,34 +206,29 @@ TEST_F(MultishotTest, accept) {
     );
     _server.wait();
 
-    int result = 0;
-    unsigned int count = 0;
-    rawio::Event* event =
-        _queue->accept_multishot(client_socket.fd(), [&result, &count](int r) {
-            result = r;
-            ++count;
-        });
+    rawio::AcceptStream stream = _queue->accept_multishot(client_socket.fd());
 
-    EXPECT_NO_THROW(_queue->wait_timeout(0));
+    int result =
+        rawio::tests::run(*_queue, rawio::tests::wrap<int>(stream.next()));
     EXPECT_GT(result, 0);
-    EXPECT_EQ(count, 1u);
 
     _server.connect(
         server_socket2.fd(), reinterpret_cast<sockaddr*>(&addr), sizeof(addr)
     );
     _server.wait();
 
-    result = 0;
-    EXPECT_NO_THROW(_queue->wait_timeout(0));
+    result = rawio::tests::run(*_queue, rawio::tests::wrap<int>(stream.next()));
     EXPECT_GT(result, 0);
-    EXPECT_EQ(count, 2u);
 
+    rawio::Event* event = stream.event();
     EXPECT_NO_THROW(_queue->cancel(event));
 
-    result = 0;
-    EXPECT_NO_THROW(_queue->wait_timeout(0));
-    EXPECT_EQ(result, -ECANCELED);
-    EXPECT_EQ(count, 3u);
+    try {
+        rawio::tests::run(*_queue, rawio::tests::wrap<int>(stream.next()));
+        FAIL() << "expected ECANCELED";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), ECANCELED);
+    }
 }
 
 TEST_F(MultishotTest, recv) {
@@ -227,16 +237,11 @@ TEST_F(MultishotTest, recv) {
     _server.wait();
 
     std::vector<MultishotVectorItem> items;
-    rawio::Event* event = _queue->recv_multishot(
-        _fd, 4, 4, 4, 0,
-        [&items](const iovec* iov, unsigned int niov, size_t result, int error)
-            -> size_t {
-            items.emplace_back(iov, niov, result, error);
-            return 4;
-        }
-    );
+    rawio::RecvStream stream = _queue->recv_multishot(_fd, 4, 4, 4, 0);
 
-    EXPECT_NO_THROW(_wait_all());
+    pull(*_queue, stream, 4, items);
+    pull(*_queue, stream, 4, items);
+
     EXPECT_EQ(items.size(), (size_t)2);
     if (items.size() >= 1) {
         EXPECT_EQ(items[0].result(), (size_t)4);
@@ -255,7 +260,9 @@ TEST_F(MultishotTest, recv) {
         _server.wait();
     }
 
-    EXPECT_NO_THROW(_wait_all());
+    pull(*_queue, stream, 4, items);
+    pull(*_queue, stream, 4, items);
+
     EXPECT_EQ(items.size(), (size_t)4);
     if (items.size() >= 3) {
         EXPECT_EQ(items[2].result(), (size_t)4);
@@ -268,17 +275,15 @@ TEST_F(MultishotTest, recv) {
         EXPECT_EQ(strncmp(items[3].data(), "dat4", 4), 0);
     }
 
+    rawio::Event* event = stream.event();
     EXPECT_NO_THROW(_queue->cancel(event));
 
-    EXPECT_NO_THROW(_wait_all());
+    pull(*_queue, stream, 4, items);
     EXPECT_EQ(items.size(), (size_t)5);
     if (items.size() >= 5) {
         EXPECT_EQ(items[4].result(), (size_t)0);
         EXPECT_EQ(items[4].error(), ECANCELED);
     }
-
-    EXPECT_THROW(_queue->wait_timeout(0), std::system_error);
-    EXPECT_EQ(items.size(), (size_t)5);
 }
 
 TEST_F(MultishotTest, recv_overflow) {
@@ -292,16 +297,12 @@ TEST_F(MultishotTest, recv_overflow) {
      * NOTE: entry_size=4, entries=4 not working for uring in linux-6.11.0
      */
     std::vector<MultishotVectorItem> items;
-    rawio::Event* event = _queue->recv_multishot(
-        _fd, 8, 2, 4, 0,
-        [&items](const iovec* iov, unsigned int niov, size_t result, int error)
-            -> size_t {
-            items.emplace_back(iov, niov, result, error);
-            return 4;
-        }
-    );
+    rawio::RecvStream stream = _queue->recv_multishot(_fd, 8, 2, 4, 0);
 
-    EXPECT_NO_THROW(_wait_all());
+    for (int i = 0; i < 5; ++i) {
+        pull(*_queue, stream, 4, items);
+    }
+
     EXPECT_EQ(items.size(), (size_t)5);
     if (items.size() >= 1) {
         EXPECT_EQ(items[0].result(), (size_t)4);
@@ -328,22 +329,12 @@ TEST_F(MultishotTest, recv_overflow) {
         EXPECT_EQ(items[4].error(), ENOBUFS);
     }
 
-    EXPECT_THROW(_queue->cancel(event), std::system_error);
-
-    EXPECT_THROW(_queue->wait_timeout(0), std::system_error);
-    EXPECT_EQ(items.size(), (size_t)5);
+    EXPECT_THROW(_queue->cancel(stream.event()), std::system_error);
 }
 
 TEST_F(MultishotTest, recv_partial) {
     std::vector<MultishotVectorItem> items;
-    rawio::Event* event = _queue->recv_multishot(
-        _fd, 4, 4, 3, 0,
-        [&items](const iovec* iov, unsigned int niov, size_t result, int error)
-            -> size_t {
-            items.emplace_back(iov, niov, result, error);
-            return 3;
-        }
-    );
+    rawio::RecvStream stream = _queue->recv_multishot(_fd, 4, 4, 3, 0);
 
     {
         const char server_buf[] = "1234";
@@ -351,7 +342,7 @@ TEST_F(MultishotTest, recv_partial) {
         _server.wait();
     }
 
-    EXPECT_NO_THROW(_wait_all());
+    pull(*_queue, stream, 3, items);
     EXPECT_EQ(items.size(), (size_t)1);
     if (items.size() >= 1) {
         EXPECT_EQ(items[0].result(), (size_t)3);
@@ -365,7 +356,7 @@ TEST_F(MultishotTest, recv_partial) {
         _server.wait();
     }
 
-    EXPECT_NO_THROW(_wait_all());
+    pull(*_queue, stream, 3, items);
     EXPECT_EQ(items.size(), (size_t)2);
     if (items.size() >= 2) {
         EXPECT_EQ(items[1].result(), (size_t)3);
@@ -379,7 +370,8 @@ TEST_F(MultishotTest, recv_partial) {
         _server.wait();
     }
 
-    EXPECT_NO_THROW(_wait_all());
+    pull(*_queue, stream, 3, items);
+    pull(*_queue, stream, 3, items);
     EXPECT_EQ(items.size(), (size_t)4);
     if (items.size() >= 3) {
         EXPECT_EQ(items[2].result(), (size_t)3);
@@ -392,27 +384,29 @@ TEST_F(MultishotTest, recv_partial) {
         EXPECT_EQ(strncmp(items[3].data(), "012", 3), 0);
     }
 
+    rawio::Event* event = stream.event();
     EXPECT_NO_THROW(_queue->cancel(event));
 
-    EXPECT_NO_THROW(_queue->wait_timeout(0));
-    EXPECT_EQ(items.size(), (size_t)5);
+    // The trailing data ("3") and the terminal ECANCELED arrive as two
+    // separate pulls: the last byte on one next() and the terminal error
+    // on the following one (see RecvStream::Next's doc comment).
+    pull(*_queue, stream, 3, items);
+    pull(*_queue, stream, 3, items);
+    EXPECT_EQ(items.size(), (size_t)6);
     if (items.size() >= 5) {
         EXPECT_EQ(items[4].result(), (size_t)1);
-        EXPECT_EQ(items[4].error(), ECANCELED);
+        EXPECT_EQ(items[4].error(), 0);
         EXPECT_EQ(strncmp(items[4].data(), "3", 1), 0);
+    }
+    if (items.size() >= 6) {
+        EXPECT_EQ(items[5].result(), (size_t)0);
+        EXPECT_EQ(items[5].error(), ECANCELED);
     }
 }
 
 TEST_F(MultishotTest, recv_fill_buf) {
     std::vector<MultishotVectorItem> items;
-    rawio::Event* event = _queue->recv_multishot(
-        _fd, 4, 4, 4, 0,
-        [&items](const iovec* iov, unsigned int niov, size_t result, int error)
-            -> size_t {
-            items.emplace_back(iov, niov, result, error);
-            return 4;
-        }
-    );
+    rawio::RecvStream stream = _queue->recv_multishot(_fd, 4, 4, 4, 0);
 
     {
         const char server_buf[] = "123";
@@ -420,6 +414,10 @@ TEST_F(MultishotTest, recv_fill_buf) {
         _server.wait();
     }
 
+    // Nobody's pulling yet: in a pull model there is nothing to assert
+    // here beyond "the registration accepts the data without anyone
+    // consuming it" -- delivery only ever happens in response to a
+    // next() call, so under-full data can never be delivered eagerly.
     EXPECT_NO_THROW(_wait_all());
     EXPECT_EQ(items.size(), (size_t)0);
 
@@ -428,8 +426,9 @@ TEST_F(MultishotTest, recv_fill_buf) {
         _server.write(server_buf, sizeof(server_buf) - 1);
         _server.wait();
     }
-
     EXPECT_NO_THROW(_wait_all());
+
+    pull(*_queue, stream, 4, items);
     EXPECT_EQ(items.size(), (size_t)1);
     if (items.size() >= 1) {
         EXPECT_EQ(items[0].result(), (size_t)4);
@@ -442,8 +441,9 @@ TEST_F(MultishotTest, recv_fill_buf) {
         _server.write(server_buf, sizeof(server_buf) - 1);
         _server.wait();
     }
-
     EXPECT_NO_THROW(_wait_all());
+
+    pull(*_queue, stream, 4, items);
     EXPECT_EQ(items.size(), (size_t)2);
     if (items.size() >= 2) {
         EXPECT_EQ(items[1].result(), (size_t)4);
@@ -456,8 +456,9 @@ TEST_F(MultishotTest, recv_fill_buf) {
         _server.write(server_buf, sizeof(server_buf) - 1);
         _server.wait();
     }
-
     EXPECT_NO_THROW(_wait_all());
+
+    pull(*_queue, stream, 4, items);
     EXPECT_EQ(items.size(), (size_t)3);
     if (items.size() >= 3) {
         EXPECT_EQ(items[2].result(), (size_t)4);
@@ -465,9 +466,10 @@ TEST_F(MultishotTest, recv_fill_buf) {
         EXPECT_EQ(strncmp(items[2].data(), "9012", 3), 0);
     }
 
+    rawio::Event* event = stream.event();
     EXPECT_NO_THROW(_queue->cancel(event));
 
-    EXPECT_NO_THROW(_wait_all());
+    pull(*_queue, stream, 4, items);
     EXPECT_EQ(items.size(), (size_t)4);
     if (items.size() >= 4) {
         EXPECT_EQ(items[3].result(), (size_t)0);
@@ -483,16 +485,9 @@ TEST_F(MultishotTest, stop_iteration) {
     }
 
     std::vector<MultishotVectorItem> items;
-    rawio::Event* event = _queue->recv_multishot(
-        _fd, 8, 4, 4, 0,
-        [&items](const iovec* iov, unsigned int niov, size_t result, int error)
-            -> size_t {
-            items.emplace_back(iov, niov, result, error);
-            return 0;
-        }
-    );
+    rawio::RecvStream stream = _queue->recv_multishot(_fd, 8, 4, 4, 0);
 
-    EXPECT_NO_THROW(_wait_all());
+    pull(*_queue, stream, 4, items);
     EXPECT_EQ(items.size(), (size_t)1);
     if (items.size() >= 1) {
         EXPECT_EQ(items[0].result(), (size_t)4);
@@ -500,9 +495,12 @@ TEST_F(MultishotTest, stop_iteration) {
         EXPECT_EQ(strncmp(items[0].data(), "dat1", 4), 0);
     }
 
+    // Not calling next() again until more data is wanted is how the pull
+    // model pauses a registration.
+    rawio::Event* event = stream.event();
     EXPECT_NO_THROW(_queue->cancel(event));
 
-    EXPECT_NO_THROW(_wait_all());
+    pull(*_queue, stream, 0, items);
     EXPECT_EQ(items.size(), (size_t)2);
     if (items.size() >= 2) {
         EXPECT_EQ(items[1].result(), (size_t)0);
@@ -518,16 +516,9 @@ TEST_F(MultishotTest, stop_iteration_overflow) {
     }
 
     std::vector<MultishotVectorItem> items;
-    rawio::Event* event = _queue->recv_multishot(
-        _fd, 8, 4, 4, 0,
-        [&items](const iovec* iov, unsigned int niov, size_t result, int error)
-            -> size_t {
-            items.emplace_back(iov, niov, result, error);
-            return 0;
-        }
-    );
+    rawio::RecvStream stream = _queue->recv_multishot(_fd, 8, 4, 4, 0);
 
-    EXPECT_NO_THROW(_wait_all());
+    pull(*_queue, stream, 4, items);
     EXPECT_EQ(items.size(), (size_t)1);
     if (items.size() >= 1) {
         EXPECT_EQ(items[0].result(), (size_t)4);
@@ -541,16 +532,17 @@ TEST_F(MultishotTest, stop_iteration_overflow) {
         _server.wait();
     }
 
-    EXPECT_NO_THROW(_wait_all());
+    // Still "paused" (never asked for more than 0 again), but the kernel
+    // ran the provided-buffer pool dry regardless -- that overflow must
+    // still surface.
+    pull(*_queue, stream, 0, items);
     EXPECT_EQ(items.size(), (size_t)2);
     if (items.size() >= 2) {
         EXPECT_EQ(items[1].result(), (size_t)0);
         EXPECT_EQ(items[1].error(), ENOBUFS);
     }
 
-    EXPECT_THROW(_queue->cancel(event), std::system_error);
-    EXPECT_NO_THROW(_wait_all());
-    EXPECT_EQ(items.size(), (size_t)2);
+    EXPECT_THROW(_queue->cancel(stream.event()), std::system_error);
 }
 
 TEST_F(MultishotTest, recv_close_partial) {
@@ -562,17 +554,17 @@ TEST_F(MultishotTest, recv_close_partial) {
     }
 
     std::vector<MultishotVectorItem> items;
-    rawio::Event* event = _queue->recv_multishot(
-        _fd, 8, 4, 4, 0,
-        [&items](const iovec* iov, unsigned int niov, size_t result, int error)
-            -> size_t {
-            items.emplace_back(iov, niov, result, error);
-            return 4;
-        }
-    );
+    rawio::RecvStream stream = _queue->recv_multishot(_fd, 8, 4, 4, 0);
 
-    EXPECT_NO_THROW(_wait_all());
-    EXPECT_EQ(items.size(), (size_t)3);
+    pull(*_queue, stream, 4, items);
+    pull(*_queue, stream, 4, items);
+    // The trailing "dat" and the terminal EPIPE arrive as two separate
+    // pulls: the trailing data on one next() and the terminal error on
+    // the following one (see RecvStream::Next's doc comment).
+    pull(*_queue, stream, 4, items);
+    pull(*_queue, stream, 4, items);
+
+    EXPECT_EQ(items.size(), (size_t)4);
     if (items.size() >= 1) {
         EXPECT_EQ(items[0].result(), (size_t)4);
         EXPECT_EQ(items[0].error(), 0);
@@ -585,14 +577,15 @@ TEST_F(MultishotTest, recv_close_partial) {
     }
     if (items.size() >= 3) {
         EXPECT_EQ(items[2].result(), (size_t)3);
-        EXPECT_EQ(items[2].error(), EPIPE);
+        EXPECT_EQ(items[2].error(), 0);
         EXPECT_EQ(strncmp(items[2].data(), "dat", 3), 0);
     }
+    if (items.size() >= 4) {
+        EXPECT_EQ(items[3].result(), (size_t)0);
+        EXPECT_EQ(items[3].error(), EPIPE);
+    }
 
-    EXPECT_THROW(_queue->cancel(event), std::system_error);
-
-    EXPECT_NO_THROW(_wait_all());
-    EXPECT_EQ(items.size(), (size_t)3);
+    EXPECT_THROW(_queue->cancel(stream.event()), std::system_error);
 }
 
 TEST_F(MultishotTest, recv_close_full) {
@@ -604,16 +597,13 @@ TEST_F(MultishotTest, recv_close_full) {
     }
 
     std::vector<MultishotVectorItem> items;
-    rawio::Event* event = _queue->recv_multishot(
-        _fd, 8, 4, 4, 0,
-        [&items](const iovec* iov, unsigned int niov, size_t result, int error)
-            -> size_t {
-            items.emplace_back(iov, niov, result, error);
-            return 4;
-        }
-    );
+    rawio::RecvStream stream = _queue->recv_multishot(_fd, 8, 4, 4, 0);
 
-    EXPECT_NO_THROW(_wait_all());
+    pull(*_queue, stream, 4, items);
+    pull(*_queue, stream, 4, items);
+    pull(*_queue, stream, 4, items);
+    pull(*_queue, stream, 4, items);
+
     EXPECT_EQ(items.size(), (size_t)4);
     if (items.size() >= 1) {
         EXPECT_EQ(items[0].result(), (size_t)4);
@@ -635,10 +625,7 @@ TEST_F(MultishotTest, recv_close_full) {
         EXPECT_EQ(items[3].error(), EPIPE);
     }
 
-    EXPECT_THROW(_queue->cancel(event), std::system_error);
-
-    EXPECT_NO_THROW(_wait_all());
-    EXPECT_EQ(items.size(), (size_t)4);
+    EXPECT_THROW(_queue->cancel(stream.event()), std::system_error);
 }
 
 TEST_F(MultishotTest, recv_cancel_in_cb) {
@@ -649,20 +636,20 @@ TEST_F(MultishotTest, recv_cancel_in_cb) {
     }
 
     std::vector<MultishotVectorItem> items;
-    rawio::Event* event = _queue->recv_multishot(
-        _fd, 8, 4, 4, 0,
-        [&items, &queue = _queue, &event](
-            const iovec* iov, unsigned int niov, size_t result, int error
-        ) -> size_t {
-            if (!error) {
-                EXPECT_NO_THROW(queue->cancel(event));
-            }
-            items.emplace_back(iov, niov, result, error);
-            return 4;
-        }
-    );
+    rawio::RecvStream stream = _queue->recv_multishot(_fd, 8, 4, 4, 0);
 
-    EXPECT_NO_THROW(_wait_all());
+    try {
+        rawio::RecvStream::Item item = rawio::tests::run(
+            *_queue, rawio::tests::wrap<rawio::RecvStream::Item>(stream.next(4))
+        );
+        EXPECT_NO_THROW(_queue->cancel(stream.event()));
+        items.emplace_back(item.iov(), item.niov(), item.size(), 0);
+    } catch (const std::system_error& e) {
+        items.emplace_back(nullptr, 0, 0, e.code().value());
+    }
+
+    pull(*_queue, stream, 4, items);
+
     EXPECT_EQ(items.size(), (size_t)2);
     if (items.size() >= 1) {
         EXPECT_EQ(items[0].result(), (size_t)4);
@@ -674,10 +661,7 @@ TEST_F(MultishotTest, recv_cancel_in_cb) {
         EXPECT_EQ(items[1].error(), ECANCELED);
     }
 
-    EXPECT_THROW(_queue->cancel(event), std::system_error);
-
-    EXPECT_NO_THROW(_wait_all());
-    EXPECT_EQ(items.size(), (size_t)2);
+    EXPECT_THROW(_queue->cancel(stream.event()), std::system_error);
 }
 
 } // unnamed namespace

@@ -37,5 +37,6 @@ else
                            poll_queue.cpp \
                            poll_queue.hpp \
                            poll_session.cpp \
-                           poll_session.hpp
+                           poll_session.hpp \
+                           poll_stream_backend.hpp
 endif
