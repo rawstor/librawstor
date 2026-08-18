@@ -47,8 +47,7 @@ private:
     // logical op took.
     void _finish(
         const std::shared_ptr<std::function<void(size_t, int)>>& cb,
-        unsigned int attempt, rawstor::telemetry::TimePoint t_call,
-        size_t result, int error
+        rawstor::telemetry::TimePoint t_call, size_t result, int error
     );
 
 public:
