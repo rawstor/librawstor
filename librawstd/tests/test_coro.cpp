@@ -146,6 +146,17 @@ rawstd::Task<int> link(rawstd::Task<int> prev) {
 }
 
 TEST(TaskTest, deep_chain_resumes_without_stack_growth) {
+#if defined(__SANITIZE_ADDRESS__)
+    // AddressSanitizer instruments every sanitized function with stack
+    // redzone poisoning that keeps the frame alive across the call, which
+    // defeats the compiler's tail-call elimination -- the very mechanism
+    // final_suspend()'s symmetric transfer relies on for O(1) stack usage.
+    // Under ASan, resuming this chain is genuine unbounded native
+    // recursion by design of the sanitizer, not a regression in Task<T>,
+    // so the guarantee this test checks isn't observable in an ASan build.
+    GTEST_SKIP() << "symmetric transfer's O(1) stack guarantee relies on "
+                    "tail-call elimination, which AddressSanitizer disables";
+#endif
     constexpr int N = 100000;
 
     std::coroutine_handle<> slot;
