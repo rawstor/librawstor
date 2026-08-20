@@ -38,7 +38,7 @@ private:
 
     int _connect();
     void _set_object(Object* object);
-    void _fail_in_flight(int error, bool* next_head, size_t* next_size);
+    void _fail_in_flight(int error);
     // Returns nullptr, rather than throwing, for an unregistered cid: a
     // response can legitimately race with Connection::_op() already having
     // failed and retried that same op on a different session (e.g. after a
