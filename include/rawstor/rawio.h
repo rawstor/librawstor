@@ -310,7 +310,7 @@ int rawio_poll(
  *
  * @warning     After an error occurs, the operation automatically terminates.
  *              Calling rawio_cancel() on an already-terminated event is
- *              unnecessary and will return -ENOENT.
+ *              unnecessary and has no observable effect.
  *
  * @warning     The callback may be invoked from a completion context. Avoid
  *              blocking operations in the callback; instead, queue events for
@@ -474,8 +474,8 @@ int rawio_accept(
  *                - An error occurs (e.g., the listening socket is closed)
  *
  * @warning       After an error occurs, the operation automatically terminates.
- *                Calling `rawio_cancel()` on an already‑terminated event
- *                returns `-ENOENT` and no further callbacks are invoked.
+ *                Calling `rawio_cancel()` on an already‑terminated event has
+ *                no observable effect and no further callbacks are invoked.
  *
  * @warning       The callback is invoked from an I/O completion context.
  *                To maintain high throughput, avoid blocking operations inside
@@ -571,8 +571,7 @@ int rawio_recv(
  *
  * @warning          After an error occurs, the operation automatically cancels
  *                   itself. Calling rawio_cancel() on an already-terminated
- *                   event is unnecessary and will return
- *                   -ENOENT.
+ *                   event is unnecessary and has no observable effect.
  *
  * @see              rawio_cancel() for operation termination.
  */
@@ -645,28 +644,30 @@ int rawio_wait_timeout(
  *              should not be used further. The caller does not need to free
  *              the handle - all associated resources are managed internally.
  *
- * @return      0 on successful cancellation.
- *              Negative error code on failure:
- *              -ENOENT Event handle does not correspond to an active operation
- *              (possibly already cleaned up)
+ * @return      0 once the cancellation request has been submitted.
+ *              Negative error code only on a genuine failure to submit that
+ *              request; whether the target was actually found and canceled
+ *              is not reported here.
  *
- * @note        Cancellation is synchronous from the caller's perspective: the
- *              function returns immediately after initiating the cancellation.
- *              However, the completion callback will still be invoked once
- *              with the ECANCELED error code to indicate that the operation
- *              has been canceled. After that callback returns, the operation is
- *              fully terminated, all resources are released, and no further
- *              callbacks will occur. If the operation was already completed or
- *              terminated due to an error, calling this function will return
- *              -ENOENT and no additional callback will be invoked. The event
- *              handle becomes invalid immediately upon successful return from
- *              rawio_cancel() and must not be used afterwards, even though the
- *              cancellation callback may still be pending.
+ * @note        This function is fire-and-forget: it returns as soon as the
+ *              cancellation request has been submitted, without waiting for
+ *              or reporting its outcome. If the target operation is still
+ *              active, its completion callback will still be invoked once
+ *              with the ECANCELED error code; after that callback returns,
+ *              the operation is fully terminated and all resources are
+ *              released. If the operation had already completed or
+ *              terminated (including "already canceled") by the time this
+ *              request reaches it, no additional callback is invoked and no
+ *              error is reported -- that outcome is indistinguishable from
+ *              an ordinary successful cancellation from the caller's side.
+ *              The event handle must not be used again after calling
+ *              rawio_cancel() on it, even though its cancellation callback
+ *              may still be pending.
  *
  * @warning     After an error occurs in the multishot operation (e.g., socket
  *              error, ring buffer overflow with ENOBUFS), the operation
  *              automatically terminates. Calling `rawio_cancel()` in such
- *              cases is unnecessary and will return -ENOENT.
+ *              cases is unnecessary and has no observable effect.
  *
  * @see         rawio_poll_multishot(), rawio_recv_multishot() for
  *              establishing multishot operations.
@@ -694,14 +695,16 @@ int rawio_cancel(RawIOQueue* queue, RawIOEvent* event) RAWSTOR_NOEXCEPT;
  * @param fd    File descriptor whose pending I/O operations should be
  *              cancelled.
  *
- * @return      0 on success (all operations cancelled). Negative error code on
- *              failure.
+ * @return      0 once the cancellation request has been submitted. Negative
+ *              error code only on a genuine failure to submit that request.
  *
- * @note        The cancellation is synchronous from the caller's perspective.
- *              However, completion callbacks for the cancelled operations will
- *              still be invoked once with the ECANCELED error code (e.g., via
- *              rawstor_wait()) before the operations are fully terminated.
- *              After those callbacks return, no further callbacks will occur.
+ * @note        This function is fire-and-forget: it returns as soon as the
+ *              cancellation request has been submitted, without waiting for
+ *              it to take effect. Completion callbacks for the cancelled
+ *              operations will still be invoked once with the ECANCELED
+ *              error code (e.g., via rawstor_wait()) before the operations
+ *              are fully terminated. After those callbacks return, no
+ *              further callbacks will occur.
  *
  * @see         rawio_cancel(RawIOEvent*)
  */

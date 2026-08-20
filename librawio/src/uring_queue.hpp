@@ -112,9 +112,9 @@ public:
     rawio::Awaitable<size_t>
     sendmsg(int fd, const msghdr* msg, unsigned int flags) override;
 
-    void cancel(rawio::Event* event) override;
+    rawio::Awaitable<void> cancel(rawio::Event* event) override;
 
-    void cancel(int fd) override;
+    rawio::Awaitable<void> cancel(int fd) override;
 
     void wait() override;
 

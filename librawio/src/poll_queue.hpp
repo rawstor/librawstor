@@ -57,7 +57,7 @@ public:
         _current_event(nullptr),
         _dispatch_generation(0) {}
 
-    ~Queue() override { _tearing_down = true; }
+    ~Queue() override = default;
 
     inline unsigned int dispatch_generation() const noexcept {
         return _dispatch_generation;
@@ -124,9 +124,9 @@ public:
     rawio::Awaitable<size_t>
     sendmsg(int fd, const msghdr* msg, unsigned int flags) override;
 
-    void cancel(rawio::Event* e) override;
+    rawio::Awaitable<void> cancel(rawio::Event* e) override;
 
-    void cancel(int fd) override;
+    rawio::Awaitable<void> cancel(int fd) override;
 
     void wait() override;
 

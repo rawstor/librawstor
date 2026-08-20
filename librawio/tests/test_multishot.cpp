@@ -329,7 +329,7 @@ TEST_F(MultishotTest, recv_overflow) {
         EXPECT_EQ(items[4].error(), ENOBUFS);
     }
 
-    EXPECT_THROW(_queue->cancel(stream.event()), std::system_error);
+    EXPECT_NO_THROW(_queue->cancel(stream.event()));
 }
 
 TEST_F(MultishotTest, recv_partial) {
@@ -542,7 +542,7 @@ TEST_F(MultishotTest, stop_iteration_overflow) {
         EXPECT_EQ(items[1].error(), ENOBUFS);
     }
 
-    EXPECT_THROW(_queue->cancel(stream.event()), std::system_error);
+    EXPECT_NO_THROW(_queue->cancel(stream.event()));
 }
 
 TEST_F(MultishotTest, recv_close_partial) {
@@ -585,7 +585,7 @@ TEST_F(MultishotTest, recv_close_partial) {
         EXPECT_EQ(items[3].error(), EPIPE);
     }
 
-    EXPECT_THROW(_queue->cancel(stream.event()), std::system_error);
+    EXPECT_NO_THROW(_queue->cancel(stream.event()));
 }
 
 TEST_F(MultishotTest, recv_close_full) {
@@ -625,7 +625,7 @@ TEST_F(MultishotTest, recv_close_full) {
         EXPECT_EQ(items[3].error(), EPIPE);
     }
 
-    EXPECT_THROW(_queue->cancel(stream.event()), std::system_error);
+    EXPECT_NO_THROW(_queue->cancel(stream.event()));
 }
 
 TEST_F(MultishotTest, recv_cancel_in_cb) {
@@ -661,7 +661,7 @@ TEST_F(MultishotTest, recv_cancel_in_cb) {
         EXPECT_EQ(items[1].error(), ECANCELED);
     }
 
-    EXPECT_THROW(_queue->cancel(stream.event()), std::system_error);
+    EXPECT_NO_THROW(_queue->cancel(stream.event()));
 }
 
 } // unnamed namespace

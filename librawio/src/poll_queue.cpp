@@ -606,33 +606,51 @@ void Queue::_attach(
     static_cast<Event*>(event)->attach(h, value, error);
 }
 
-void Queue::cancel(rawio::Event* e) {
-    if (_tearing_down) {
-        return;
-    }
+// Deferred through EventEval, exactly like open()/close() above, so
+// cancel()'s own resolution -- like every other op's -- never happens
+// before the next wait()/wait_timeout() call. Always resolves
+// successfully for an awaiter: whether the target was actually found is
+// not reported here (see cancel()'s doc comment in <rawio/queue.hpp>),
+// only that the request itself has been fully processed. The target
+// event's own completion, if it was still pending, was already queued
+// into _cqes by Session::cancel() by the time that happens.
+rawio::Awaitable<void> Queue::cancel(rawio::Event* e) {
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('|', "event = %p\n", e);
 
-    for (auto& it : _sessions) {
-        if (it.second->cancel(e, _cqes)) {
-            return;
-        }
-    }
-    if (_current_event != nullptr && e == _current_event) {
-        _current_event->set_error(ECANCELED);
-        return;
-    }
-    RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
+    std::unique_ptr<EventEval> event =
+        std::make_unique<EventEval>(*this, trace_event, [this, e]() -> int {
+            for (auto& it : _sessions) {
+                if (it.second->cancel(e, _cqes)) {
+                    return 0;
+                }
+            }
+            if (_current_event != nullptr && e == _current_event) {
+                _current_event->set_error(ECANCELED);
+            }
+            return 0;
+        });
+
+    rawio::Event* ret = static_cast<rawio::Event*>(event.get());
+    _eval(std::move(event));
+    return rawio::Awaitable<void>(this, ret);
 }
 
-void Queue::cancel(int fd) {
-    if (_tearing_down) {
-        return;
-    }
+rawio::Awaitable<void> Queue::cancel(int fd) {
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('|', "fd = %d\n", fd);
 
-    auto it = _sessions.find(fd);
-    if (it != _sessions.end()) {
-        it->second->cancel(_cqes);
-        _sessions.erase(it);
-    }
+    std::unique_ptr<EventEval> event =
+        std::make_unique<EventEval>(*this, trace_event, [this, fd]() -> int {
+            auto it = _sessions.find(fd);
+            if (it != _sessions.end()) {
+                it->second->cancel(_cqes);
+                _sessions.erase(it);
+            }
+            return 0;
+        });
+
+    rawio::Event* ret = static_cast<rawio::Event*>(event.get());
+    _eval(std::move(event));
+    return rawio::Awaitable<void>(this, ret);
 }
 
 void Queue::wait() {

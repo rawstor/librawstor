@@ -14,6 +14,8 @@
 #include "poll_event.hpp"
 #include "poll_queue.hpp"
 
+#include <rawio/awaitable.hpp>
+
 #include <algorithm>
 #include <utility>
 

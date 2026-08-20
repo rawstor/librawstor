@@ -2,6 +2,8 @@
 
 #include "uring_queue.hpp"
 
+#include <rawio/awaitable.hpp>
+
 #include <rawstd/gpp.hpp>
 #include <rawstd/logging.h>
 

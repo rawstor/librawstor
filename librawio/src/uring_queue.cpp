@@ -136,6 +136,35 @@ public:
     }
 };
 
+// cancel()'s own completion token: fire-and-forget, nothing to resume and
+// no result the caller can observe -- the cancellation's actual effect (if
+// any) is the target operation's own eventual completion (ECANCELED, or
+// its natural result if the cancellation lost the race). -ENOENT (target
+// already gone) and -EALREADY (cancellation already in flight) are both
+// entirely ordinary outcomes here, not failures worth logging; anything
+// else is unexpected enough to warn about.
+class CancelCompletion final : public Completion {
+public:
+    explicit CancelCompletion(rawstd::TraceEvent trace_event) :
+        Completion(std::move(trace_event)) {}
+
+    void complete(int raw_result, unsigned int flags) override {
+        if (raw_result < 0 && raw_result != -ENOENT &&
+            raw_result != -EALREADY) {
+            rawstd_warning(
+                "Unexpected cancel completion result: %d\n", raw_result
+            );
+        }
+        // Resolve successfully for an awaiter regardless of the raw
+        // result -- ENOENT/EALREADY are ordinary outcomes here, not
+        // failures, and an awaiter only ever learns that the
+        // cancellation request itself has been fully processed, never
+        // whether the target was actually found (see cancel()'s doc
+        // comment in <rawio/queue.hpp>).
+        Completion::complete(0, flags);
+    }
+};
+
 /*
  * Shared single-slot "pull" backend for poll_multishot()/
  * accept_multishot(): both just deliver a plain int (revents mask, or an
@@ -381,8 +410,6 @@ Queue::Queue(unsigned int depth) :
 }
 
 Queue::~Queue() {
-    _tearing_down = true;
-
     int res = io_uring_submit(&_ring);
     if (res < 0) {
         rawstd_error("Failed to submit sqes: %s\n", strerror(-res));
@@ -861,41 +888,58 @@ Queue::sendmsg(int fd, const msghdr* msg, unsigned int flags) {
     );
 }
 
-void Queue::cancel(rawio::Event* event) {
-    if (_tearing_down) {
-        return;
+// Both overloads below submit an IORING_OP_ASYNC_CANCEL request and return
+// as soon as it's submitted -- unlike io_uring_register_sync_cancel() (the
+// previous implementation), submitting an SQE never reaps completions off
+// this ring, so this is safe to call from anywhere, including from a
+// Completion::complete() callback invoked by _dispatch() itself while it's
+// still mid-batch (e.g. a coroutine's destructor unwinding synchronously
+// as a side effect of a completion it didn't ask for). Awaiting the
+// returned Awaitable<void> is optional -- see cancel()'s doc comment in
+// <rawio/queue.hpp>; CancelCompletion above always resolves it
+// successfully, whatever the cancel op's own raw result. The target
+// operation's own eventual completion (ECANCELED, or its natural result if
+// the cancellation lost the race) is the only place the caller can observe
+// the actual effect.
+rawio::Awaitable<void> Queue::cancel(rawio::Event* event) {
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('|', "event = %p\n", event);
+    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
+    if (sqe == nullptr) {
+        RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
     }
+    io_uring_prep_cancel(sqe, event, 0);
+    auto c = std::make_unique<CancelCompletion>(std::move(trace_event));
+    io_uring_sqe_set_data(sqe, c.get());
 
     int res = io_uring_submit(&_ring);
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 
-    io_uring_sync_cancel_reg req = {};
-    req.addr = (__u64)event;
-    res = io_uring_register_sync_cancel(&_ring, &req);
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
+    return rawio::Awaitable<void>(
+        this, static_cast<rawio::Event*>(c.release())
+    );
 }
 
-void Queue::cancel(int fd) {
-    if (_tearing_down) {
-        return;
+rawio::Awaitable<void> Queue::cancel(int fd) {
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('|', "fd = %d\n", fd);
+    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
+    if (sqe == nullptr) {
+        RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
     }
+    io_uring_prep_cancel_fd(sqe, fd, IORING_ASYNC_CANCEL_ALL);
+    auto c = std::make_unique<CancelCompletion>(std::move(trace_event));
+    io_uring_sqe_set_data(sqe, c.get());
 
     int res = io_uring_submit(&_ring);
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 
-    io_uring_sync_cancel_reg req = {};
-    req.fd = fd;
-    req.flags = IORING_ASYNC_CANCEL_ALL | IORING_ASYNC_CANCEL_FD;
-    res = io_uring_register_sync_cancel(&_ring, &req);
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
+    return rawio::Awaitable<void>(
+        this, static_cast<rawio::Event*>(c.release())
+    );
 }
 
 void Queue::wait() {

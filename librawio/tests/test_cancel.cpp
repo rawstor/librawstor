@@ -20,7 +20,10 @@ protected:
 };
 
 TEST_F(CancelTest, cancel_noent) {
-    EXPECT_THROW(_queue->cancel(nullptr), std::system_error);
+    // cancel() is fire-and-forget: targeting an already-gone/unknown event
+    // or fd is an entirely ordinary outcome, not a failure -- see
+    // rawio::Queue::cancel()'s doc comment.
+    EXPECT_NO_THROW(_queue->cancel(nullptr));
     EXPECT_NO_THROW(_queue->cancel(0));
 }
 
@@ -43,6 +46,30 @@ TEST_F(CancelTest, poll) {
     EXPECT_EQ(error, ECANCELED);
 }
 
+// cancel() is normally fire-and-forget (every other test here just
+// discards its return value, exactly like a destructor would), but it
+// returns an ordinary Awaitable<void> like every other op, so it can be
+// co_await-ed too -- verify that path actually resumes instead of hanging.
+TEST_F(CancelTest, cancel_awaited) {
+    int result = 0;
+    int error = 0;
+    rawio::Awaitable<int> aw = _queue->poll(_fd, POLLIN);
+    rawio::Event* event = aw.event();
+    rawstd::Task<void> t =
+        rawio::tests::await_into(std::move(aw), &result, &error);
+
+    EXPECT_THROW(_queue->wait_timeout(0), std::system_error);
+
+    EXPECT_NO_THROW(
+        rawio::tests::run(
+            *_queue, rawio::tests::wrap<void>(_queue->cancel(event))
+        )
+    );
+
+    EXPECT_EQ(result, 0);
+    EXPECT_EQ(error, ECANCELED);
+}
+
 TEST_F(CancelTest, poll_completed) {
     const char server_buf[] = "data";
     _server.write(server_buf, sizeof(server_buf));
@@ -55,7 +82,7 @@ TEST_F(CancelTest, poll_completed) {
 
     _queue->wait_timeout(0);
 
-    EXPECT_THROW(_queue->cancel(event), std::system_error);
+    EXPECT_NO_THROW(_queue->cancel(event));
     EXPECT_EQ(result, POLLIN);
 }
 
@@ -95,7 +122,7 @@ TEST_F(CancelTest, read_completed) {
 
     _queue->wait_timeout(0);
 
-    EXPECT_THROW(_queue->cancel(event), std::system_error);
+    EXPECT_NO_THROW(_queue->cancel(event));
     EXPECT_EQ(result, sizeof(client_buf));
 }
 
@@ -136,7 +163,7 @@ TEST_F(CancelTest, write_completed) {
     _server.read(server_buf, sizeof(server_buf));
     _server.wait();
 
-    EXPECT_THROW(_queue->cancel(event), std::system_error);
+    EXPECT_NO_THROW(_queue->cancel(event));
     EXPECT_EQ(result, sizeof(client_buf));
     EXPECT_EQ(strcmp(server_buf, client_buf), 0);
 }

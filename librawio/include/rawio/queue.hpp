@@ -35,16 +35,6 @@ private:
     unsigned int _depth;
 
 protected:
-    // Set by a subclass's destructor, before it starts tearing itself
-    // down, to true. A completion delivered during that teardown (e.g.
-    // uring::Queue::~Queue() synchronously resuming every still-pending
-    // op with ECANCELED) can release the last shared_ptr keeping some
-    // unrelated object alive, whose own destructor calls back into
-    // cancel() on this same, still-destructing Queue. cancel() checks this
-    // flag and becomes a safe no-op in that case: the Queue is going away
-    // regardless, so there is nothing left to cancel.
-    bool _tearing_down = false;
-
     // The single hook every backend implements to make Awaitable<T>
     // backend-agnostic (Awaitable<T> itself is a concrete, non-virtual
     // template shared by every backend -- C++ virtual overrides require
@@ -134,9 +124,20 @@ public:
     virtual Awaitable<size_t>
     sendmsg(int fd, const msghdr* msg, unsigned int flags) = 0;
 
-    virtual void cancel(Event* event) = 0;
+    // Requests cancellation; submission already happens before this
+    // returns, exactly like every op above -- awaiting the result is
+    // optional. Discarding the returned Awaitable<void> (the common case,
+    // e.g. from a destructor, which can't co_await anything) is a safe,
+    // ordinary fire-and-forget cancellation. Awaiting it only tells you
+    // the cancellation request itself has been fully processed -- it
+    // never reports whether the target was actually found, and it never
+    // throws for that reason (ENOENT/EALREADY are ordinary outcomes here, not
+    // failures). The target operation's own eventual completion
+    // (ECANCELED, or its natural result if the cancellation lost the
+    // race) is the only place that outcome is observable.
+    virtual Awaitable<void> cancel(Event* event) = 0;
 
-    virtual void cancel(int fd) = 0;
+    virtual Awaitable<void> cancel(int fd) = 0;
 
     virtual void wait() = 0;
 
