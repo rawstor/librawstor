@@ -6,10 +6,10 @@
 
 #include <rawio/queue.hpp>
 
+#include <rawstd/coro.hpp>
 #include <rawstd/uri.hpp>
 #include <rawstd/uuid.h>
 
-#include <functional>
 #include <list>
 #include <memory>
 #include <vector>
@@ -51,27 +51,20 @@ public:
 
     inline const RawstdUUID& id() const noexcept { return _id; }
 
-    void pread(
-        void* buf, size_t size, off_t offset,
-        std::function<void(size_t, int)>&& cb
-    );
+    rawstd::Task<size_t> pread(void* buf, size_t size, off_t offset);
 
-    void preadv(
-        iovec* iov, unsigned int niov, size_t size, off_t offset,
-        std::function<void(size_t, int)>&& cb
-    );
+    rawstd::Task<size_t>
+    preadv(iovec* iov, unsigned int niov, size_t size, off_t offset);
 
-    void pwrite(
-        const void* buf, size_t size, off_t offset, bool sync,
-        std::function<void(size_t, int)>&& cb
-    );
+    rawstd::Task<size_t>
+    pwrite(const void* buf, size_t size, off_t offset, bool sync);
 
-    void pwritev(
+    rawstd::Task<size_t> pwritev(
         const iovec* iov, unsigned int niov, size_t size, off_t offset,
-        bool sync, std::function<void(size_t, int)>&& cb
+        bool sync
     );
 
-    void flush(std::function<void(int)>&& cb);
+    rawstd::Task<void> flush();
 };
 
 } // namespace rawstor

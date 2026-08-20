@@ -16,64 +16,56 @@
 #include <rawstd/uuid.h>
 
 #include <algorithm>
-#include <list>
-#include <sstream>
-#include <stdexcept>
-#include <string>
+#include <system_error>
+#include <type_traits>
 
 #include <cerrno>
 #include <cstring>
 
 namespace {
 
-/**
- * TODO: Remove this class.
- */
-class Queue final {
-private:
-    unsigned int _operations;
-    std::unique_ptr<rawio::Queue> _q;
-
-public:
-    Queue(unsigned int operations) :
-        _operations(operations),
-        _q(rawio::Queue::create(operations)) {}
-
-    Queue(const Queue&) = delete;
-
-    Queue& operator=(const Queue&) = delete;
-
-    inline void sub_operation() noexcept { --_operations; }
-
-    inline rawio::Queue& queue() noexcept { return *_q; }
-
-    void wait() {
-        while (_operations > 0) {
-            _q->wait_timeout(rawstor_opts_tcp_user_timeout());
-        }
-    }
-};
-
-void retry(const char* func_name, const std::function<void()>& f) {
-    for (unsigned int attempt = 1; attempt <= rawstor_opts_io_attempts();
-         ++attempt) {
+// Retries `attempt()` up to rawstor_opts_io_attempts() times, sharing the
+// same "log and retry, or log and rethrow on the last one" shape across
+// every bounded-retry loop in this file that doesn't need the
+// EBUSY-vs-reconnect policy: session (re-)creation and the five
+// synchronous metadata calls below. The data-path methods (pread/preadv/
+// pwrite/pwritev/flush) each run their own inline retry loop instead --
+// same overall shape, but with that extra policy, so sharing this one
+// wouldn't fit them without a callback out for it.
+template <typename F>
+auto retry_n(const char* func_name, F&& attempt) -> decltype(attempt()) {
+    for (unsigned int i = 1; i <= rawstor_opts_io_attempts(); ++i) {
         try {
-            f();
-            return;
+            return attempt();
         } catch (const std::exception& e) {
-            if (attempt == rawstor_opts_io_attempts()) {
+            if (i == rawstor_opts_io_attempts()) {
                 rawstd_error(
                     "%s: error: %s; attempt: %d of %d; failing...\n", func_name,
-                    e.what(), attempt, rawstor_opts_io_attempts()
+                    e.what(), i, rawstor_opts_io_attempts()
                 );
                 throw;
             }
             rawstd_warning(
                 "%s: error: %s; attempt: %d of %d; retrying...\n", func_name,
-                e.what(), attempt, rawstor_opts_io_attempts()
+                e.what(), i, rawstor_opts_io_attempts()
             );
         }
     }
+    // Only reachable if rawstor_opts_io_attempts() == 0.
+    RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+}
+
+// Synchronously pumps `t` to completion by driving `q` -- the coroutine
+// equivalent of the old Queue wrapper's operation-counter/wait() dance,
+// used by the five metadata calls below to stay synchronous at their own
+// (frozen) public signature while their Session-level implementation is
+// now genuinely co_await-based.
+template <typename T>
+T run(rawio::Queue& q, rawstd::Task<T> t) {
+    while (!t.done()) {
+        q.wait_timeout(rawstor_opts_tcp_user_timeout());
+    }
+    return t.get();
 }
 
 } // namespace
@@ -97,105 +89,85 @@ Connection::~Connection() {
 std::vector<std::shared_ptr<Session>> Connection::_open(
     const rawstd::URI& location, Object* object, size_t nsessions
 ) {
-    std::vector<std::shared_ptr<Session>> sessions;
-
-    for (unsigned int attempt = 1; attempt <= rawstor_opts_io_attempts();
-         ++attempt) {
-        try {
-            sessions.clear();
-            sessions.reserve(nsessions);
-            for (size_t i = 0; i < nsessions; ++i) {
-                sessions.push_back(Session::create(_queue, location));
-            }
-
-            for (std::shared_ptr<Session> s : sessions) {
-                s->set_object(object);
-            }
-
-            break;
-        } catch (const std::exception& e) {
-            if (attempt != rawstor_opts_io_attempts()) {
-                rawstd_warning(
-                    "Open session failed; error: %s; "
-                    "attempt: %d of %d; retrying...\n",
-                    e.what(), attempt, rawstor_opts_io_attempts()
-                );
-            } else {
-                rawstd_warning(
-                    "Open session failed; error: %s; "
-                    "attempt: %d of %d; failing...\n",
-                    e.what(), attempt, rawstor_opts_io_attempts()
-                );
-                throw;
-            }
+    return retry_n("Connection::_open", [&]() {
+        std::vector<std::shared_ptr<Session>> sessions;
+        sessions.reserve(nsessions);
+        for (size_t i = 0; i < nsessions; ++i) {
+            sessions.push_back(Session::create(_queue, location));
         }
-    }
 
-    return sessions;
+        for (std::shared_ptr<Session>& s : sessions) {
+            s->set_object(object);
+        }
+
+        return sessions;
+    });
 }
 
-void Connection::_finish(
-    const std::shared_ptr<std::function<void(size_t, int)>>& cb,
-    rawstor::telemetry::TimePoint t_call, size_t result, int error
-) {
+void Connection::_finish(rawstor::telemetry::TimePoint t_call) {
     rawstor::telemetry::TimePoint lat = rawstor::telemetry::now() - t_call;
     rawstor::telemetry::record_lat(lat);
-    (*cb)(result, error);
 }
 
-void Connection::_op(
-    const char* func_name, size_t size, off_t offset,
-    const std::shared_ptr<std::function<void(size_t, int)>>& cb,
-    const std::shared_ptr<std::function<
-        void(std::shared_ptr<Session>, std::function<void(size_t, int)>&&)>>&
-        op,
-    unsigned int attempt, rawstor::telemetry::TimePoint t_call
+template <typename T, typename... Args>
+rawstd::Task<T> Connection::_with_retry(
+    const char* func_name, rawstd::TraceEvent& trace_event,
+    rawstd::Task<T> (Session::*method)(Args...), Args... args
 ) {
-    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
-        'c', "%s(): size = %zu, offset = %jd\n", func_name, size,
-        (intmax_t)offset
-    );
+    for (unsigned int attempt = 1; attempt <= rawstor_opts_io_attempts();
+         ++attempt) {
+        std::shared_ptr<Session> s = get_next_session();
 
-    std::shared_ptr<Session> s = get_next_session();
-    (*op)(
-        s, [this, s, func_name, size, offset, cb, op, attempt, t_call,
-            trace_event](size_t result, int error) mutable {
-            RAWSTD_TRACE_EVENT_MESSAGE(
-                trace_event, "result = %zu, error = %d\n", result, error
-            );
+        try {
+            if constexpr (std::is_void_v<T>) {
+                co_await (s.get()->*method)(args...);
+                RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "error = 0");
 
-            if (!error) {
                 if (attempt > 1) {
                     rawstd_warning(
-                        "IO %s: size = %zu, offset = %jd; "
-                        "success on %s; "
-                        "attempt: %d of %d\n",
-                        func_name, size, (intmax_t)offset, s->str().c_str(),
-                        attempt, rawstor_opts_io_attempts()
+                        "IO %s: success on %s; attempt: %d of %d\n", func_name,
+                        s->str().c_str(), attempt, rawstor_opts_io_attempts()
                     );
                 }
-                _finish(cb, t_call, result, error);
-                return;
+                co_return;
+            } else {
+                T result = co_await (s.get()->*method)(args...);
+                RAWSTD_TRACE_EVENT_MESSAGE(
+                    trace_event, "result = %zu, error = 0\n", result
+                );
+
+                if (attempt > 1) {
+                    rawstd_warning(
+                        "IO %s: success on %s; attempt: %d of %d\n", func_name,
+                        s->str().c_str(), attempt, rawstor_opts_io_attempts()
+                    );
+                }
+                co_return result;
+            }
+        } catch (const std::system_error& e) {
+            int error = e.code().value();
+
+            if constexpr (std::is_void_v<T>) {
+                RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "error = %d\n", error);
+            } else {
+                RAWSTD_TRACE_EVENT_MESSAGE(
+                    trace_event, "result = 0, error = %d\n", error
+                );
             }
 
             if (attempt >= rawstor_opts_io_attempts()) {
                 rawstd_error(
-                    "IO %s: size = %zu, offset = %jd; "
-                    "error on %s: %s; "
-                    "attempt %d of %d; failing...\n",
-                    func_name, size, (intmax_t)offset, s->str().c_str(),
-                    std::strerror(error), attempt, rawstor_opts_io_attempts()
+                    "IO %s: error on %s: %s; attempt %d of %d; failing...\n",
+                    func_name, s->str().c_str(), std::strerror(error), attempt,
+                    rawstor_opts_io_attempts()
                 );
-                _finish(cb, t_call, result, error);
-                return;
+                throw;
             }
 
             rawstd_warning(
-                "IO %s: size = %zu, offset = %jd; "
-                "error on %s: %s; "
-                "attempt: %d of %d; retrying...\n",
-                func_name, size, (intmax_t)offset, s->str().c_str(),
-                std::strerror(error), attempt, rawstor_opts_io_attempts()
+                "IO %s: error on %s: %s; attempt: %d of %d; retrying...\n",
+                func_name, s->str().c_str(), std::strerror(error), attempt,
+                rawstor_opts_io_attempts()
             );
 
             // EBUSY means the session itself is fine, just backed up
@@ -207,25 +179,22 @@ void Connection::_op(
             if (error != EBUSY) {
                 try {
                     invalidate_session(s);
-                } catch (const std::system_error& e) {
-                    _finish(cb, t_call, result, e.code().value());
-                    return;
-                } catch (const std::exception& e) {
+                } catch (const std::system_error&) {
+                    throw;
+                } catch (const std::exception& e2) {
                     rawstd_error(
-                        "IO %s: size = %zu, offset = %jd; "
-                        "exception on %s: %s; "
-                        "attempt %d of %d; failing...\n",
-                        func_name, size, (intmax_t)offset, s->str().c_str(),
-                        e.what(), attempt, rawstor_opts_io_attempts()
+                        "IO %s: exception on %s: %s; attempt %d of %d; "
+                        "failing...\n",
+                        func_name, s->str().c_str(), e2.what(), attempt,
+                        rawstor_opts_io_attempts()
                     );
-                    _finish(cb, t_call, result, EIO);
-                    return;
+                    RAWSTD_THROW_SYSTEM_ERROR(EIO);
                 }
             }
-
-            _op(func_name, size, offset, cb, op, attempt + 1, t_call);
         }
-    );
+    }
+    // Falls off the end if rawstor_opts_io_attempts() == 0 -- same as
+    // every method that used to have its own copy of this loop.
 }
 
 std::shared_ptr<Session> Connection::get_next_session() {
@@ -274,30 +243,12 @@ void Connection::list(
     std::vector<RawstdUUID>& targets, RawstdUUID& token
 ) {
     std::vector<RawstdUUID> ret;
-    RawstdUUID ret_token;
+    RawstdUUID ret_token = {};
 
-    retry(__FUNCTION__, [&]() {
-        Queue q(1);
-
-        std::unique_ptr<Session> s = Session::create(q.queue(), location);
-        s->list(
-            limit, token,
-            [&q, &ret, &ret_token](
-                std::vector<RawstdUUID>&& uuids, const RawstdUUID& next_token,
-                int error
-            ) {
-                q.sub_operation();
-
-                if (error) {
-                    RAWSTD_THROW_SYSTEM_ERROR(error);
-                }
-
-                ret = std::move(uuids);
-                ret_token = next_token;
-            }
-        );
-
-        q.wait();
+    retry_n(__FUNCTION__, [&]() {
+        std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(1);
+        std::unique_ptr<Session> s = Session::create(*queue, location);
+        ret = run(*queue, s->list(limit, token, ret_token));
     });
 
     targets.swap(ret);
@@ -313,20 +264,10 @@ void Connection::create(
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 
-    retry(__FUNCTION__, [&]() {
-        Queue q(1);
-
-        std::unique_ptr<Session> s =
-            Session::create(q.queue(), target.parent());
-        s->create(id, sp, [&q](int error) {
-            q.sub_operation();
-
-            if (error) {
-                RAWSTD_THROW_SYSTEM_ERROR(error);
-            }
-        });
-
-        q.wait();
+    retry_n(__FUNCTION__, [&]() {
+        std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(1);
+        std::unique_ptr<Session> s = Session::create(*queue, target.parent());
+        run(*queue, s->create(id, sp));
     });
 }
 
@@ -337,20 +278,10 @@ void Connection::remove(const rawstd::URI& target) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 
-    retry(__FUNCTION__, [&]() {
-        Queue q(1);
-
-        std::unique_ptr<Session> s =
-            Session::create(q.queue(), target.parent());
-        s->remove(id, [&q](int error) {
-            q.sub_operation();
-
-            if (error) {
-                RAWSTD_THROW_SYSTEM_ERROR(error);
-            }
-        });
-
-        q.wait();
+    retry_n(__FUNCTION__, [&]() {
+        std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(1);
+        std::unique_ptr<Session> s = Session::create(*queue, target.parent());
+        run(*queue, s->remove(id));
     });
 }
 
@@ -361,41 +292,18 @@ void Connection::spec(const rawstd::URI& target, RawstorObjectSpec* sp) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 
-    retry(__FUNCTION__, [&]() {
-        Queue q(1);
-
-        std::unique_ptr<Session> s =
-            Session::create(q.queue(), target.parent());
-        s->spec(id, [&q, sp](const RawstorObjectSpec& spec, int error) {
-            q.sub_operation();
-
-            if (error) {
-                RAWSTD_THROW_SYSTEM_ERROR(error);
-            }
-
-            *sp = spec;
-        });
-
-        q.wait();
+    retry_n(__FUNCTION__, [&]() {
+        std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(1);
+        std::unique_ptr<Session> s = Session::create(*queue, target.parent());
+        *sp = run(*queue, s->spec(id));
     });
 }
 
 void Connection::info(const rawstd::URI& location, RawstorLocationInfo* info) {
-    retry(__FUNCTION__, [&]() {
-        Queue q(1);
-
-        std::unique_ptr<Session> s = Session::create(q.queue(), location);
-        s->info([&q, info](const RawstorLocationInfo& li, int error) {
-            q.sub_operation();
-
-            if (error) {
-                RAWSTD_THROW_SYSTEM_ERROR(error);
-            }
-
-            *info = li;
-        });
-
-        q.wait();
+    retry_n(__FUNCTION__, [&]() {
+        std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(1);
+        std::unique_ptr<Session> s = Session::create(*queue, location);
+        *info = run(*queue, s->info());
     });
 }
 
@@ -411,76 +319,105 @@ void Connection::close() {
     _object = nullptr;
 }
 
-void Connection::pread(
-    void* buf, size_t size, off_t offset, std::function<void(size_t, int)>&& cb
-) {
-    auto cbptr =
-        std::make_shared<std::function<void(size_t, int)>>(std::move(cb));
-    auto opptr = std::make_shared<std::function<
-        void(std::shared_ptr<Session>, std::function<void(size_t, int)>&&)>>(
-        [buf, size, offset](
-            std::shared_ptr<Session> s, std::function<void(size_t, int)>&& cb
-        ) { s->pread(buf, size, offset, std::move(cb)); }
+rawstd::Task<size_t> Connection::pread(void* buf, size_t size, off_t offset) {
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
+        'c', "%s(): size = %zu, offset = %jd\n", func_name, size,
+        (intmax_t)offset
     );
-    _op(__FUNCTION__, size, offset, cbptr, opptr, 1, rawstor::telemetry::now());
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        size_t result = co_await _with_retry(
+            func_name, trace_event, &Session::pread, buf, size, offset
+        );
+        _finish(t_call);
+        co_return result;
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
 }
 
-void Connection::preadv(
-    iovec* iov, unsigned int niov, size_t size, off_t offset,
-    std::function<void(size_t, int)>&& cb
-) {
-    auto cbptr =
-        std::make_shared<std::function<void(size_t, int)>>(std::move(cb));
-    auto opptr = std::make_shared<std::function<
-        void(std::shared_ptr<Session>, std::function<void(size_t, int)>&&)>>(
-        [iov, niov, size, offset](
-            std::shared_ptr<Session> s, std::function<void(size_t, int)>&& cb
-        ) { s->preadv(iov, niov, size, offset, std::move(cb)); }
+rawstd::Task<size_t>
+Connection::preadv(iovec* iov, unsigned int niov, size_t size, off_t offset) {
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
+        'c', "%s(): size = %zu, offset = %jd\n", func_name, size,
+        (intmax_t)offset
     );
-    _op(__FUNCTION__, size, offset, cbptr, opptr, 1, rawstor::telemetry::now());
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        size_t result = co_await _with_retry(
+            func_name, trace_event, &Session::preadv, iov, niov, size, offset
+        );
+        _finish(t_call);
+        co_return result;
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
 }
 
-void Connection::pwrite(
-    const void* buf, size_t size, off_t offset, bool sync,
-    std::function<void(size_t, int)>&& cb
-) {
-    auto cbptr =
-        std::make_shared<std::function<void(size_t, int)>>(std::move(cb));
-    auto opptr = std::make_shared<std::function<
-        void(std::shared_ptr<Session>, std::function<void(size_t, int)>&&)>>(
-        [buf, size, offset, sync](
-            std::shared_ptr<Session> s, std::function<void(size_t, int)>&& cb
-        ) { s->pwrite(buf, size, offset, sync, std::move(cb)); }
+rawstd::Task<size_t>
+Connection::pwrite(const void* buf, size_t size, off_t offset, bool sync) {
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
+        'c', "%s(): size = %zu, offset = %jd\n", func_name, size,
+        (intmax_t)offset
     );
-    _op(__FUNCTION__, size, offset, cbptr, opptr, 1, rawstor::telemetry::now());
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        size_t result = co_await _with_retry(
+            func_name, trace_event, &Session::pwrite, buf, size, offset, sync
+        );
+        _finish(t_call);
+        co_return result;
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
 }
 
-void Connection::pwritev(
-    const iovec* iov, unsigned int niov, size_t size, off_t offset, bool sync,
-    std::function<void(size_t, int)>&& cb
+rawstd::Task<size_t> Connection::pwritev(
+    const iovec* iov, unsigned int niov, size_t size, off_t offset, bool sync
 ) {
-    auto cbptr =
-        std::make_shared<std::function<void(size_t, int)>>(std::move(cb));
-    auto opptr = std::make_shared<std::function<
-        void(std::shared_ptr<Session>, std::function<void(size_t, int)>&&)>>(
-        [iov, niov, size, offset, sync](
-            std::shared_ptr<Session> s, std::function<void(size_t, int)>&& cb
-        ) { s->pwritev(iov, niov, size, offset, sync, std::move(cb)); }
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
+        'c', "%s(): size = %zu, offset = %jd\n", func_name, size,
+        (intmax_t)offset
     );
-    _op(__FUNCTION__, size, offset, cbptr, opptr, 1, rawstor::telemetry::now());
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        size_t result = co_await _with_retry(
+            func_name, trace_event, &Session::pwritev, iov, niov, size, offset,
+            sync
+        );
+        _finish(t_call);
+        co_return result;
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
 }
 
-void Connection::flush(std::function<void(int)>&& cb) {
-    auto cbptr = std::make_shared<std::function<void(size_t, int)>>(
-        [cb = std::move(cb)](size_t, int error) { cb(error); }
-    );
-    auto opptr = std::make_shared<std::function<
-        void(std::shared_ptr<Session>, std::function<void(size_t, int)>&&)>>(
-        [](std::shared_ptr<Session> s, std::function<void(size_t, int)>&& cb) {
-            s->flush([cb = std::move(cb)](int error) { cb(0, error); });
-        }
-    );
-    _op(__FUNCTION__, 0, 0, cbptr, opptr, 1, rawstor::telemetry::now());
+rawstd::Task<void> Connection::flush() {
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        co_await _with_retry(func_name, trace_event, &Session::flush);
+        _finish(t_call);
+        co_return;
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
 }
 
 } // namespace rawstor

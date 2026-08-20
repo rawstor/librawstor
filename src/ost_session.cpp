@@ -4,7 +4,9 @@
 #include "opts.h"
 #include "telemetry.hpp"
 
+#include <rawio/awaitable.hpp>
 #include <rawio/queue.hpp>
+#include <rawio/stream.hpp>
 
 #include <rawstd/gpp.hpp>
 #include <rawstd/hash.h>
@@ -128,11 +130,20 @@ private:
     // fully on the wire; _t_created (below, stamped at construction --
     // effectively the moment Connection::_op() dispatched this attempt)
     // to _t_send_done is slat, _t_send_done to the moment a response is
-    // ready is rtt, and the _cb() call itself is clat. 0 (never a real
+    // ready is rtt, and the co_await resolving is clat. 0 (never a real
     // timestamp, see telemetry::now()) marks "never sent", so _dispatch()
     // can tell a send that never completed apart from a real zero-length
     // gap.
     rawstor::telemetry::TimePoint _t_send_done;
+
+    // Set by await_suspend() once whoever co_await's this op (always
+    // exactly one caller, right after submitting the request) is known;
+    // _dispatch() writes _result/_error and resumes it -- same split
+    // value/error-then-resume shape as librawio's own Completion/
+    // PollStream::Next.
+    std::coroutine_handle<> _handle;
+    size_t _result;
+    int _error;
 
 protected:
     rawstor::telemetry::TimePoint _t_created;
@@ -155,12 +166,10 @@ protected:
     std::shared_ptr<rawstor::ost::Session> _session;
     RawstorOSTFrameResponse _response;
 
-    std::function<void(size_t, int)> _cb;
-
     inline void _dispatch(size_t result, int error) {
         if (_dispatched) {
             // Already delivered -- e.g. Session::_fail_in_flight() forced
-            // this op's callback while its own request send was still
+            // this op's completion while its own request send was still
             // pending, and that send has now independently completed (with
             // its own success or error). The caller has already been
             // notified once; do not notify it again, and do not touch
@@ -185,12 +194,13 @@ protected:
             rawstor::telemetry::record_rtt(rtt);
         }
 
+        _result = result;
+        _error = error;
+        _session->_remove_op(_cid);
+
         // clat/lat and the top-10 sample are only meaningful alongside
         // rtt, so this shares the same `timed` gate.
-        auto record_clat_and_op = [&]() {
-            if (!timed) {
-                return;
-            }
+        if (timed) {
             rawstor::telemetry::TimePoint t_now = rawstor::telemetry::now();
             rawstor::telemetry::TimePoint clat = t_now - t_response_ready;
             rawstor::telemetry::record_clat(clat);
@@ -198,38 +208,31 @@ protected:
                 t_now - _t_created, slat, rtt, clat, _op_name, _op_size,
                 _op_offset
             );
-        };
-
-        try {
-            _cb(result, error);
-        } catch (...) {
-            record_clat_and_op();
-            _session->_remove_op(_cid);
-            throw;
         }
 
-        record_clat_and_op();
-
-        _session->_remove_op(_cid);
+        if (_handle) {
+            _handle.resume();
+        }
     }
 
 public:
     SessionOp(
         const std::shared_ptr<rawstor::ost::Session>& session, uint16_t cid,
-        const rawstd::TraceEvent& trace_event,
-        std::function<void(size_t, int)>&& cb, const char* op_name,
+        const rawstd::TraceEvent& trace_event, const char* op_name,
         size_t op_size, off_t op_offset
     ) :
         _cid(cid),
         _dispatched(false),
         _t_send_done(0),
+        _handle(),
+        _result(0),
+        _error(0),
         _t_created(rawstor::telemetry::now()),
         _op_name(op_name),
         _op_size(op_size),
         _op_offset(op_offset),
         _trace_event(trace_event),
-        _session(session),
-        _cb(std::move(cb)) {}
+        _session(session) {}
 
     SessionOp(const SessionOp&) = delete;
     SessionOp(SessionOp&&) = delete;
@@ -259,6 +262,19 @@ public:
     ) = 0;
 
     virtual void response_body_cb(const iovec*, unsigned int, size_t, int) {}
+
+    // Awaiter protocol: co_await *op right after submitting the request.
+    // await_ready() covers the case where _dispatch() already fired
+    // synchronously (an immediate send failure via request_cb()) before
+    // the co_await is even reached.
+    bool await_ready() const noexcept { return _dispatched; }
+    void await_suspend(std::coroutine_handle<> h) noexcept { _handle = h; }
+    size_t await_resume() {
+        if (_error) {
+            RAWSTD_THROW_SYSTEM_ERROR(_error);
+        }
+        return _result;
+    }
 };
 
 class SessionOpRead final : public SessionOp {
@@ -273,12 +289,9 @@ public:
     SessionOpRead(
         const std::shared_ptr<rawstor::ost::Session>& session, uint16_t cid,
         void* buf, size_t size, off_t offset,
-        const rawstd::TraceEvent& trace_event,
-        std::function<void(size_t, int)>&& cb
+        const rawstd::TraceEvent& trace_event
     ) :
-        SessionOp(
-            session, cid, trace_event, std::move(cb), "pread", size, offset
-        ),
+        SessionOp(session, cid, trace_event, "pread", size, offset),
         _buf(buf),
         _size(size),
         _request({
@@ -360,12 +373,9 @@ public:
     SessionOpReadV(
         const std::shared_ptr<rawstor::ost::Session>& session, uint16_t cid,
         iovec* iov, unsigned int niov, size_t size, off_t offset,
-        const rawstd::TraceEvent& trace_event,
-        std::function<void(size_t, int)>&& cb
+        const rawstd::TraceEvent& trace_event
     ) :
-        SessionOp(
-            session, cid, trace_event, std::move(cb), "preadv", size, offset
-        ),
+        SessionOp(session, cid, trace_event, "preadv", size, offset),
         _iov(iov),
         _niov(niov),
         _size(size),
@@ -445,12 +455,9 @@ public:
     SessionOpWrite(
         const std::shared_ptr<rawstor::ost::Session>& session, uint16_t cid,
         const void* buf, size_t size, off_t offset, bool sync,
-        const rawstd::TraceEvent& trace_event,
-        std::function<void(size_t, int)>&& cb
+        const rawstd::TraceEvent& trace_event
     ) :
-        SessionOp(
-            session, cid, trace_event, std::move(cb), "pwrite", size, offset
-        ),
+        SessionOp(session, cid, trace_event, "pwrite", size, offset),
         _request({
             .head =
                 {
@@ -532,12 +539,9 @@ public:
     SessionOpWriteV(
         const std::shared_ptr<rawstor::ost::Session>& session, uint16_t cid,
         const iovec* iov, unsigned int niov, size_t size, off_t offset,
-        bool sync, const rawstd::TraceEvent& trace_event,
-        std::function<void(size_t, int)>&& cb
+        bool sync, const rawstd::TraceEvent& trace_event
     ) :
-        SessionOp(
-            session, cid, trace_event, std::move(cb), "pwritev", size, offset
-        ),
+        SessionOp(session, cid, trace_event, "pwritev", size, offset),
         _request({
             .head =
                 {
@@ -612,10 +616,9 @@ private:
 public:
     SessionOpFlush(
         const std::shared_ptr<rawstor::ost::Session>& session, uint16_t cid,
-        const rawstd::TraceEvent& trace_event,
-        std::function<void(size_t, int)>&& cb
+        const rawstd::TraceEvent& trace_event
     ) :
-        SessionOp(session, cid, trace_event, std::move(cb), "flush", 0, 0),
+        SessionOp(session, cid, trace_event, "flush", 0, 0),
         _request({
             .head =
                 {
@@ -656,16 +659,12 @@ public:
 };
 
 template <typename T = char>
-std::vector<T> basic_request(
-    int fd, uint16_t cid, RawstorOSTCommandType cmd, const RawstdUUID& id,
-    uint64_t val
+rawstd::Task<std::vector<T>> basic_request_async(
+    rawio::Queue& queue, int fd, uint16_t cid, RawstorOSTCommandType cmd,
+    const RawstdUUID& id, uint64_t val
 ) {
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('s', "basic cmd %d\n", cmd);
-
-    bool completed = false;
-    RawstorOSTFrameResponse response;
-    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
 
     RawstorOSTFrameBasic request = {
         .head =
@@ -681,104 +680,88 @@ std::vector<T> basic_request(
         },
     };
     memcpy(request.body.obj_id, id.bytes, sizeof(request.body.obj_id));
-    queue->send(
-        fd, &request, sizeof(request), RAWSTD_MSG_NOSIGNAL,
-        [trace_event](size_t result, int error) {
-            RAWSTD_TRACE_EVENT_MESSAGE(
-                trace_event, "%zu of %zu, error = %d\n", result,
-                sizeof(RawstorOSTFrameBasic), error
-            );
 
-            if (!error) {
-                error = validate_result(sizeof(RawstorOSTFrameBasic), result);
-            }
-
-            if (error) {
-                RAWSTD_THROW_SYSTEM_ERROR(error);
-            }
-        }
+    size_t send_result =
+        co_await queue.send(fd, &request, sizeof(request), RAWSTD_MSG_NOSIGNAL);
+    RAWSTD_TRACE_EVENT_MESSAGE(
+        trace_event, "%zu of %zu\n", send_result, sizeof(RawstorOSTFrameBasic)
     );
-
-    std::vector<T> ret;
-
-    queue->read(
-        fd, &response, sizeof(response),
-        [&queue, fd, cmd, &response, &completed, trace_event,
-         &ret](size_t result, int error) {
-            RAWSTD_TRACE_EVENT_MESSAGE(
-                trace_event, "%zu of %zu, error = %d\n", result,
-                sizeof(response), error
-            );
-
-            if (!error) {
-                error = validate_result(sizeof(response), result);
-            }
-
-            if (!error) {
-                error = validate_response(&response);
-            }
-
-            if (!error) {
-                error = validate_cmd(response.head.cmd, cmd);
-            }
-
-            if (error) {
-                completed = true;
-                RAWSTD_THROW_SYSTEM_ERROR(error);
-            }
-
-            if (response.body.res > 0) {
-                if (response.body.res % sizeof(T) != 0) {
-                    RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
-                }
-
-                queue->recv_multishot(
-                    fd, 1u << 17, 64 * 4, response.body.res, 0,
-                    [&completed, &response, trace_event, &ret](
-                        const iovec* iov, unsigned int niov, size_t result,
-                        int error
-                    ) -> size_t {
-                        RAWSTD_TRACE_EVENT_MESSAGE(
-                            trace_event, "%zu of %zu, error = %d\n", result,
-                            response.body.res, error
-                        );
-
-                        if (completed) {
-                            return 0;
-                        }
-
-                        completed = true;
-
-                        if (!error) {
-                            error = validate_result(response.body.res, result);
-                        }
-
-                        if (result == static_cast<size_t>(response.body.res)) {
-                            ret.resize(result / sizeof(T));
-                            rawstd_iovec_to_buf(
-                                iov, niov, 0, ret.data(), result
-                            );
-                            error = 0;
-                        }
-
-                        if (error) {
-                            RAWSTD_THROW_SYSTEM_ERROR(error);
-                        }
-
-                        return 0;
-                    }
-                );
-            } else {
-                completed = true;
-            }
-        }
-    );
-
-    while (!completed) {
-        queue->wait_timeout(rawstor_opts_tcp_user_timeout());
+    int error = validate_result(sizeof(RawstorOSTFrameBasic), send_result);
+    if (error) {
+        RAWSTD_THROW_SYSTEM_ERROR(error);
     }
 
-    return ret;
+    RawstorOSTFrameResponse response;
+    size_t read_result = co_await queue.read(fd, &response, sizeof(response));
+    RAWSTD_TRACE_EVENT_MESSAGE(
+        trace_event, "%zu of %zu\n", read_result, sizeof(response)
+    );
+    error = validate_result(sizeof(response), read_result);
+    if (!error) {
+        error = validate_response(&response);
+    }
+    if (!error) {
+        error = validate_cmd(response.head.cmd, cmd);
+    }
+    if (error) {
+        RAWSTD_THROW_SYSTEM_ERROR(error);
+    }
+
+    std::vector<T> ret;
+    if (response.body.res > 0) {
+        if (response.body.res % sizeof(T) != 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+        }
+
+        rawio::RecvStream stream =
+            queue.recv_multishot(fd, 1u << 17, 64 * 4, response.body.res, 0);
+        rawio::RecvStream::Item item =
+            co_await stream.next(static_cast<size_t>(response.body.res));
+
+        RAWSTD_TRACE_EVENT_MESSAGE(
+            trace_event, "%zu of %zu\n", item.size(), response.body.res
+        );
+
+        error = validate_result(
+            static_cast<size_t>(response.body.res), item.size()
+        );
+        if (error) {
+            RAWSTD_THROW_SYSTEM_ERROR(error);
+        }
+
+        ret.resize(item.size() / sizeof(T));
+        rawstd_iovec_to_buf(
+            item.iov(), item.niov(), 0, ret.data(), item.size()
+        );
+    }
+
+    co_return ret;
+}
+
+// Deliberately drives basic_request_async() on its own private, one-shot
+// Queue rather than the session's shared `_queue`: this can run from
+// within Connection::_op()'s retry path (invalidate_session() ->
+// Session::create() -> set_object() -> here), which is itself reachable
+// synchronously, nested, from inside the shared Queue's own _dispatch()
+// (a completion resuming a coroutine whose retry logic replaces the
+// session it came from). Pumping the shared queue's wait_timeout() from
+// in there would reenter Queue::_dispatch() on the same io_uring ring
+// mid-reap -- corrupting its io_uring_for_each_cqe iteration and reading
+// past already-freed/reused Completions. A private Queue has no such
+// relationship to whatever might already be dispatching, at any nesting
+// depth, so pumping it here is always safe.
+template <typename T = char>
+std::vector<T> basic_request(
+    int fd, uint16_t cid, RawstorOSTCommandType cmd, const RawstdUUID& id,
+    uint64_t val
+) {
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
+    rawstd::Task<std::vector<T>> t =
+        basic_request_async<T>(*queue, fd, cid, cmd, id, val);
+    while (!t.done()) {
+        queue->wait_timeout(rawstor_opts_tcp_user_timeout());
+    }
+    return t.get();
 }
 
 void Session::_fail_in_flight(int error, bool* next_head, size_t* next_size) {
@@ -977,65 +960,55 @@ void Session::_set_object(Object* object) {
     );
 }
 
-void Session::list(
-    unsigned int limit, const RawstdUUID& token,
-    std::function<void(std::vector<RawstdUUID>&&, const RawstdUUID&, int)>&& cb
+rawstd::Task<std::vector<RawstdUUID>> Session::list(
+    unsigned int limit, const RawstdUUID& token, RawstdUUID& next_token
 ) {
-    int error = 0;
     std::vector<RawstdUUID> uuids;
     try {
         uuids = basic_request<RawstdUUID>(
             fd(), _cid_counter++, RAWSTOR_CMD_LIST, token, limit
         );
-    } catch (const std::system_error& e) {
-        error = e.code().value();
+    } catch (const std::system_error&) {
+        throw;
     } catch (...) {
-        error = EIO;
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
     }
-    RawstdUUID next_token = {};
+
+    next_token = {};
     if (!uuids.empty()) {
         next_token = uuids.back();
         uuids.resize(uuids.size() - 1);
     }
-    cb(std::move(uuids), next_token, error);
+
+    co_return uuids;
 }
 
-void Session::create(
-    const RawstdUUID& id, const RawstorObjectSpec& spec,
-    std::function<void(int)>&& cb
-) {
-    int error = 0;
+rawstd::Task<void>
+Session::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
     try {
-        basic_request(
-            fd(), _cid_counter++, RAWSTOR_CMD_ALLOCATE, id, spec.size
-        );
-    } catch (const std::system_error& e) {
-        error = e.code().value();
+        basic_request(fd(), _cid_counter++, RAWSTOR_CMD_ALLOCATE, id, sp.size);
+    } catch (const std::system_error&) {
+        throw;
     } catch (...) {
-        error = EIO;
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
     }
-    cb(error);
+    co_return;
 }
 
-void Session::remove(const RawstdUUID& id, std::function<void(int)>&& cb) {
-    int error = 0;
+rawstd::Task<void> Session::remove(const RawstdUUID& id) {
     try {
         basic_request(fd(), _cid_counter++, RAWSTOR_CMD_RELEASE, id, 0);
-    } catch (const std::system_error& e) {
-        error = e.code().value();
+    } catch (const std::system_error&) {
+        throw;
     } catch (...) {
-        error = EIO;
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
     }
-    cb(error);
+    co_return;
 }
 
-void Session::spec(
-    const RawstdUUID& id,
-    std::function<void(const RawstorObjectSpec&, int)>&& cb
-) {
+rawstd::Task<RawstorObjectSpec> Session::spec(const RawstdUUID& id) {
     rawstd_info("%s: Reading object specification...\n", str().c_str());
 
-    int error = 0;
     RawstorObjectSpec ret = {};
     try {
         std::vector<char> response =
@@ -1046,25 +1019,22 @@ void Session::spec(
         ret = *static_cast<RawstorObjectSpec*>(
             static_cast<void*>(response.data())
         );
-    } catch (const std::system_error& e) {
-        error = e.code().value();
+    } catch (const std::system_error&) {
+        throw;
     } catch (...) {
-        error = EIO;
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
     }
 
-    if (!error) {
-        rawstd_info(
-            "%s: Object specification successfully received\n", str().c_str()
-        );
-    }
+    rawstd_info(
+        "%s: Object specification successfully received\n", str().c_str()
+    );
 
-    cb(ret, error);
+    co_return ret;
 }
 
-void Session::info(std::function<void(const RawstorLocationInfo&, int)>&& cb) {
+rawstd::Task<RawstorLocationInfo> Session::info() {
     rawstd_info("%s: Reading location info...\n", str().c_str());
 
-    int error = 0;
     RawstorLocationInfo ret = {};
     try {
         RawstdUUID unused_id = {};
@@ -1077,17 +1047,15 @@ void Session::info(std::function<void(const RawstorLocationInfo&, int)>&& cb) {
         ret = *static_cast<RawstorLocationInfo*>(
             static_cast<void*>(response.data())
         );
-    } catch (const std::system_error& e) {
-        error = e.code().value();
+    } catch (const std::system_error&) {
+        throw;
     } catch (...) {
-        error = EIO;
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
     }
 
-    if (!error) {
-        rawstd_info("%s: Location info successfully received\n", str().c_str());
-    }
+    rawstd_info("%s: Location info successfully received\n", str().c_str());
 
-    cb(ret, error);
+    co_return ret;
 }
 
 void Session::set_object(Object* object) {
@@ -1097,22 +1065,38 @@ void Session::set_object(Object* object) {
 
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('m', "%s\n", "multishot recv");
-    _read_event = _queue.recv_multishot(
-        fd(), 1u << 17, 64 * 4, sizeof(RawstorOSTFrameResponse), 0,
-        [weak = std::weak_ptr<rawstor::ost::Session>(
-             std::static_pointer_cast<rawstor::ost::Session>(shared_from_this())
-         ),
-         cid = 0, is_head = true, size = sizeof(RawstorOSTFrameResponse),
-         trace_event](
-            const iovec* iov, unsigned int niov, size_t result, int error
-        ) mutable -> size_t {
-            if (error == ECANCELED) {
-                return 0;
+    rawio::RecvStream stream = _queue.recv_multishot(
+        fd(), 1u << 17, 64 * 4, sizeof(RawstorOSTFrameResponse), 0
+    );
+    _read_event = stream.event();
+    _recv_pump(
+        std::static_pointer_cast<Session>(shared_from_this()),
+        std::move(stream), trace_event
+    );
+}
+
+// See ost_session.hpp's doc comment on why `weak`, not a strong
+// shared_ptr/`this`-capturing member coroutine.
+rawstd::DetachedTask Session::_recv_pump(
+    std::weak_ptr<Session> weak, rawio::RecvStream stream,
+    rawstd::TraceEvent trace_event
+) {
+    uint16_t cid = 0;
+    bool is_head = true;
+    size_t size = sizeof(RawstorOSTFrameResponse);
+
+    while (true) {
+        rawio::RecvStream::Item item;
+        try {
+            item = co_await stream.next(size);
+        } catch (const std::system_error& e) {
+            if (e.code().value() == ECANCELED) {
+                co_return;
             }
 
             // A strong self-reference here (instead of weak_ptr::lock())
             // would keep this Session alive purely because its own recv
-            // registration exists -- including while this very lambda's
+            // registration exists -- including while this very pump's
             // captured shared_ptr is what's being torn down as part of
             // the *owning* rawio::Queue's own destruction (e.g. process
             // shutdown), which would then call back into that same,
@@ -1120,159 +1104,151 @@ void Session::set_object(Object* object) {
             // a reentrant heap-use-after-free. A missing session here
             // means it was already destroyed via some other, unrelated
             // reference dropping -- nothing to do.
-            std::shared_ptr<rawstor::ost::Session> session = weak.lock();
+            std::shared_ptr<Session> session = weak.lock();
             if (session == nullptr) {
-                return 0;
+                co_return;
             }
 
-            RAWSTD_TRACE_EVENT_MESSAGE(
-                trace_event, "%zu of %zu, error = %d\n", result, size, error
-            );
-
-            if (!error) {
-                error = validate_result(size, result);
-            }
-
-            if (!error) {
-                try {
-                    if (is_head) {
-                        RawstorOSTFrameResponse response;
-                        rawstd_iovec_to_buf(
-                            iov, niov, 0, &response, sizeof(response)
-                        );
-                        cid = response.head.cid;
-                        SessionOp* op = session->_find_op(cid);
-                        if (op == nullptr) {
-                            // A stray/late response for an op this
-                            // connection already failed and that
-                            // Connection::_op() has since retried on a
-                            // different session. Not a live op's callback
-                            // throwing, so fail whatever is still in
-                            // flight and stop -- do not propagate, that
-                            // would tear down the whole rawio::Queue
-                            // instead of just this connection.
-                            rawstd_error("Unexpected cid: %u\n", cid);
-                            session->_fail_in_flight(EPROTO, &is_head, &size);
-                            return size;
-                        }
-                        op->response_head_cb(&response, 0, &is_head, &size);
-                    } else {
-                        SessionOp* op = session->_find_op(cid);
-                        if (op == nullptr) {
-                            rawstd_error("Unexpected cid: %u\n", cid);
-                            session->_fail_in_flight(EPROTO, &is_head, &size);
-                            return size;
-                        }
-                        op->response_body_cb(iov, niov, result, error);
-                        is_head = true;
-                        size = sizeof(RawstorOSTFrameResponse);
-                    }
-                } catch (const std::system_error& e) {
-                    error = e.code().value();
-                    session->_fail_in_flight(error, &is_head, &size);
-                    // dispatch()'s caller rethrows out of _wait_timeout(),
-                    // destroying this registration's Event via stack
-                    // unwinding -- and poll::Queue::_wait_timeout() only
-                    // re-arms a multishot event when it *isn't* left with
-                    // an error, which an exception escaping dispatch()
-                    // never allows. _read_event would otherwise dangle
-                    // until ~Session() cancel()s it, at which point the
-                    // freed Event's address may already belong to some
-                    // other, unrelated live registration.
-                    session->_read_event = nullptr;
-                    RAWSTD_THROW_SYSTEM_ERROR(error);
-                } catch (const std::exception& e) {
-                    rawstd_error("%s\n", e.what());
-                    error = EPROTO;
-                    session->_fail_in_flight(error, &is_head, &size);
-                    session->_read_event = nullptr;
-                    RAWSTD_THROW_SYSTEM_ERROR(error);
-                }
-            }
-
-            if (error) {
-                session->_fail_in_flight(error, &is_head, &size);
-                // A real transport-level error (as opposed to the
-                // in-protocol "unexpected cid" case above, which leaves
-                // the registration live and doesn't reach here): dispatch()
-                // reports it to the callback exactly when its own event
-                // won't be re-armed by poll::Queue::_wait_timeout() (it
-                // only re-arms is_multishot() events without an error), so
-                // this Event is about to be destroyed. See the matching
-                // comment above for why _read_event must not outlive it.
-                session->_read_event = nullptr;
-            }
-
-            return size;
+            session->_fail_in_flight(e.code().value(), &is_head, &size);
+            session->_read_event = nullptr;
+            co_return;
         }
-    );
+
+        std::shared_ptr<Session> session = weak.lock();
+        if (session == nullptr) {
+            co_return;
+        }
+
+        RAWSTD_TRACE_EVENT_MESSAGE(
+            trace_event, "%zu of %zu\n", item.size(), size
+        );
+
+        int error = validate_result(size, item.size());
+
+        RawstorOSTFrameResponse response;
+        bool have_head = false;
+        SessionOp* op = nullptr;
+
+        if (!error) {
+            // Deliberately narrow: only this response's own framing
+            // (rawstd_iovec_to_buf()'s parse) can legitimately throw from
+            // its own logic. op->response_head_cb()/response_body_cb()
+            // below are called *outside* this try -- they synchronously
+            // resume whatever is co_await-ing that op (Connection::_op()'s
+            // retry chain, eventually a detached C-ABI adapter rethrowing
+            // after its callback signalled failure), and an exception
+            // escaping *that* is unrelated to this response's framing. It
+            // needs to propagate all the way out to Queue::_dispatch()'s
+            // own catch (see Completion::complete()'s doc comment), not
+            // be misread here as a protocol error on this pump.
+            try {
+                if (is_head) {
+                    rawstd_iovec_to_buf(
+                        item.iov(), item.niov(), 0, &response, sizeof(response)
+                    );
+                    cid = response.head.cid;
+                    have_head = true;
+                }
+                op = session->_find_op(cid);
+            } catch (const std::system_error& e) {
+                error = e.code().value();
+            } catch (const std::exception& e) {
+                rawstd_error("%s\n", e.what());
+                error = EPROTO;
+            }
+        }
+
+        if (!error) {
+            if (op == nullptr) {
+                // A stray/late response for an op this connection already
+                // failed and that Connection::_op() has since retried on
+                // a different session. Not a live op's completion
+                // throwing, so fail whatever is still in flight and pause
+                // (next_size == 0, see _fail_in_flight()) -- do not tear
+                // down the whole pump, that would need to propagate all
+                // the way out through the shared rawio::Queue instead of
+                // just this connection.
+                rawstd_error("Unexpected cid: %u\n", cid);
+                session->_fail_in_flight(EPROTO, &is_head, &size);
+                continue;
+            }
+            if (have_head) {
+                op->response_head_cb(&response, 0, &is_head, &size);
+            } else {
+                op->response_body_cb(item.iov(), item.niov(), item.size(), 0);
+                is_head = true;
+                size = sizeof(RawstorOSTFrameResponse);
+            }
+            continue;
+        }
+
+        // A real transport-level or protocol-framing error (as opposed to
+        // the in-protocol "unexpected cid" case above, which pauses and
+        // keeps the pump alive): the stream is no longer trustworthy, so
+        // fail everything still in flight and stop the pump for good.
+        // _read_event must not outlive it -- ~Session() would otherwise
+        // try to cancel() an Event that's already gone.
+        session->_fail_in_flight(error, &is_head, &size);
+        session->_read_event = nullptr;
+        co_return;
+    }
 }
 
-void Session::pread(
-    void* buf, size_t size, off_t offset, std::function<void(size_t, int)>&& cb
-) {
+rawstd::Task<size_t> Session::pread(void* buf, size_t size, off_t offset) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         's', "fd = %d, size = %zu, offset = %jd\n", fd(), size, (intmax_t)offset
     );
 
     std::shared_ptr<SessionOpRead> op = std::make_shared<SessionOpRead>(
         std::static_pointer_cast<Session>(shared_from_this()), _cid_counter++,
-        buf, size, offset, trace_event, std::move(cb)
+        buf, size, offset, trace_event
     );
     _add_op(op);
 
-    _queue.send(
-        fd(), op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL,
-        [op, trace_event](size_t result, int error) {
-            RAWSTD_TRACE_EVENT_MESSAGE(
-                trace_event, "%zu of %zu, error = %d\n", result,
-                op->request_size(), error
-            );
+    try {
+        size_t result = co_await _queue.send(
+            fd(), op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
+        );
+        RAWSTD_TRACE_EVENT_MESSAGE(
+            trace_event, "%zu of %zu\n", result, op->request_size()
+        );
+        op->request_cb(validate_result(op->request_size(), result));
+    } catch (const std::system_error& e) {
+        op->request_cb(e.code().value());
+    }
 
-            if (!error) {
-                error = validate_result(op->request_size(), result);
-            }
-
-            op->request_cb(error);
-        }
-    );
+    co_return co_await *op;
 }
 
-void Session::preadv(
-    iovec* iov, unsigned int niov, size_t size, off_t offset,
-    std::function<void(size_t, int)>&& cb
-) {
+rawstd::Task<size_t>
+Session::preadv(iovec* iov, unsigned int niov, size_t size, off_t offset) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         's', "fd = %d, size = %zu, offset = %jd\n", fd(), size, (intmax_t)offset
     );
 
     std::shared_ptr<SessionOpReadV> op = std::make_shared<SessionOpReadV>(
         std::static_pointer_cast<Session>(shared_from_this()), _cid_counter++,
-        iov, niov, size, offset, trace_event, std::move(cb)
+        iov, niov, size, offset, trace_event
     );
     _add_op(op);
 
-    _queue.send(
-        fd(), op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL,
-        [op, trace_event](size_t result, int error) {
-            RAWSTD_TRACE_EVENT_MESSAGE(
-                trace_event, "%zu of %zu, error = %d\n", result,
-                op->request_size(), error
-            );
+    try {
+        size_t result = co_await _queue.send(
+            fd(), op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
+        );
+        RAWSTD_TRACE_EVENT_MESSAGE(
+            trace_event, "%zu of %zu\n", result, op->request_size()
+        );
+        op->request_cb(validate_result(op->request_size(), result));
+    } catch (const std::system_error& e) {
+        op->request_cb(e.code().value());
+    }
 
-            if (!error) {
-                error = validate_result(op->request_size(), result);
-            }
-
-            op->request_cb(error);
-        }
-    );
+    co_return co_await *op;
 }
 
-void Session::pwrite(
-    const void* buf, size_t size, off_t offset, bool sync,
-    std::function<void(size_t, int)>&& cb
-) {
+rawstd::Task<size_t>
+Session::pwrite(const void* buf, size_t size, off_t offset, bool sync) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         's', "fd = %d, size = %zu, offset = %jd, sync = %d\n", fd(), size,
         (intmax_t)offset, sync
@@ -1280,30 +1256,27 @@ void Session::pwrite(
 
     std::shared_ptr<SessionOpWrite> op = std::make_shared<SessionOpWrite>(
         std::static_pointer_cast<Session>(shared_from_this()), _cid_counter++,
-        buf, size, offset, sync, trace_event, std::move(cb)
+        buf, size, offset, sync, trace_event
     );
     _add_op(op);
 
-    _queue.sendmsg(
-        fd(), op->request_msg(), RAWSTD_MSG_NOSIGNAL,
-        [op, trace_event](size_t result, int error) {
-            RAWSTD_TRACE_EVENT_MESSAGE(
-                trace_event, "%zu of %zu, error = %d\n", result,
-                op->request_size(), error
-            );
+    try {
+        size_t result = co_await _queue.sendmsg(
+            fd(), op->request_msg(), RAWSTD_MSG_NOSIGNAL
+        );
+        RAWSTD_TRACE_EVENT_MESSAGE(
+            trace_event, "%zu of %zu\n", result, op->request_size()
+        );
+        op->request_cb(validate_result(op->request_size(), result));
+    } catch (const std::system_error& e) {
+        op->request_cb(e.code().value());
+    }
 
-            if (!error) {
-                error = validate_result(op->request_size(), result);
-            }
-
-            op->request_cb(error);
-        }
-    );
+    co_return co_await *op;
 }
 
-void Session::pwritev(
-    const iovec* iov, unsigned int niov, size_t size, off_t offset, bool sync,
-    std::function<void(size_t, int)>&& cb
+rawstd::Task<size_t> Session::pwritev(
+    const iovec* iov, unsigned int niov, size_t size, off_t offset, bool sync
 ) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         's', "fd = %d, size = %zu, offset = %jd, sync = %d\n", fd(), size,
@@ -1312,51 +1285,47 @@ void Session::pwritev(
 
     std::shared_ptr<SessionOpWriteV> op = std::make_shared<SessionOpWriteV>(
         std::static_pointer_cast<Session>(shared_from_this()), _cid_counter++,
-        iov, niov, size, offset, sync, trace_event, std::move(cb)
+        iov, niov, size, offset, sync, trace_event
     );
     _add_op(op);
 
-    _queue.sendmsg(
-        fd(), op->request_msg(), RAWSTD_MSG_NOSIGNAL,
-        [op, trace_event](size_t result, int error) {
-            RAWSTD_TRACE_EVENT_MESSAGE(
-                trace_event, "%zu of %zu, error = %d\n", result,
-                op->request_size(), error
-            );
+    try {
+        size_t result = co_await _queue.sendmsg(
+            fd(), op->request_msg(), RAWSTD_MSG_NOSIGNAL
+        );
+        RAWSTD_TRACE_EVENT_MESSAGE(
+            trace_event, "%zu of %zu\n", result, op->request_size()
+        );
+        op->request_cb(validate_result(op->request_size(), result));
+    } catch (const std::system_error& e) {
+        op->request_cb(e.code().value());
+    }
 
-            if (!error) {
-                error = validate_result(op->request_size(), result);
-            }
-
-            op->request_cb(error);
-        }
-    );
+    co_return co_await *op;
 }
 
-void Session::flush(std::function<void(int)>&& cb) {
+rawstd::Task<void> Session::flush() {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('s', "fd = %d\n", fd());
 
     std::shared_ptr<SessionOpFlush> op = std::make_shared<SessionOpFlush>(
         std::static_pointer_cast<Session>(shared_from_this()), _cid_counter++,
-        trace_event, [cb = std::move(cb)](size_t, int error) { cb(error); }
+        trace_event
     );
     _add_op(op);
 
-    _queue.send(
-        fd(), op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL,
-        [op, trace_event](size_t result, int error) {
-            RAWSTD_TRACE_EVENT_MESSAGE(
-                trace_event, "%zu of %zu, error = %d\n", result,
-                op->request_size(), error
-            );
+    try {
+        size_t result = co_await _queue.send(
+            fd(), op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
+        );
+        RAWSTD_TRACE_EVENT_MESSAGE(
+            trace_event, "%zu of %zu\n", result, op->request_size()
+        );
+        op->request_cb(validate_result(op->request_size(), result));
+    } catch (const std::system_error& e) {
+        op->request_cb(e.code().value());
+    }
 
-            if (!error) {
-                error = validate_result(op->request_size(), result);
-            }
-
-            op->request_cb(error);
-        }
-    );
+    co_await *op;
 }
 
 } // namespace ost

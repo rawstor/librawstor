@@ -5,20 +5,18 @@
 
 #include <rawio/queue.hpp>
 
+#include <rawstd/coro.hpp>
 #include <rawstd/uri.hpp>
 #include <rawstd/uuid.h>
 
 #include <rawstor/location.h>
 #include <rawstor/object.h>
 
-#include <functional>
-#include <list>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace rawstor {
-
-class Task;
 
 class Session : public std::enable_shared_from_this<Session> {
 private:
@@ -51,51 +49,39 @@ public:
 
     inline int fd() const noexcept { return _fd; }
 
-    virtual void list(
-        unsigned int limit, const RawstdUUID& token,
-        std::function<void(std::vector<RawstdUUID>&&, const RawstdUUID&, int)>&&
-            cb
+    // `next_token` is written on success (pagination cursor for the
+    // following call); `token` is this call's own cursor, unchanged by
+    // the callee.
+    virtual rawstd::Task<std::vector<RawstdUUID>> list(
+        unsigned int limit, const RawstdUUID& token, RawstdUUID& next_token
     ) = 0;
 
-    virtual void create(
-        const RawstdUUID& id, const RawstorObjectSpec& sp,
-        std::function<void(int)>&& cb
-    ) = 0;
+    virtual rawstd::Task<void>
+    create(const RawstdUUID& id, const RawstorObjectSpec& sp) = 0;
 
-    virtual void
-    remove(const RawstdUUID& id, std::function<void(int)>&& cb) = 0;
+    virtual rawstd::Task<void> remove(const RawstdUUID& id) = 0;
 
-    virtual void spec(
-        const RawstdUUID& id,
-        std::function<void(const RawstorObjectSpec&, int)>&& cb
-    ) = 0;
+    virtual rawstd::Task<RawstorObjectSpec> spec(const RawstdUUID& id) = 0;
 
-    virtual void
-    info(std::function<void(const RawstorLocationInfo&, int)>&& cb) = 0;
+    virtual rawstd::Task<RawstorLocationInfo> info() = 0;
 
     virtual void set_object(Object* object) = 0;
 
-    virtual void pread(
-        void* buf, size_t size, off_t offset,
-        std::function<void(size_t, int)>&& cb
-    ) = 0;
+    virtual rawstd::Task<size_t>
+    pread(void* buf, size_t size, off_t offset) = 0;
 
-    virtual void preadv(
-        iovec* iov, unsigned int niov, size_t size, off_t offset,
-        std::function<void(size_t, int)>&& cb
-    ) = 0;
+    virtual rawstd::Task<size_t>
+    preadv(iovec* iov, unsigned int niov, size_t size, off_t offset) = 0;
 
-    virtual void pwrite(
-        const void* buf, size_t size, off_t offset, bool sync,
-        std::function<void(size_t, int)>&& cb
-    ) = 0;
+    virtual rawstd::Task<size_t>
+    pwrite(const void* buf, size_t size, off_t offset, bool sync) = 0;
 
-    virtual void pwritev(
+    virtual rawstd::Task<size_t> pwritev(
         const iovec* iov, unsigned int niov, size_t size, off_t offset,
-        bool sync, std::function<void(size_t, int)>&& cb
+        bool sync
     ) = 0;
 
-    virtual void flush(std::function<void(int)>&& cb) = 0;
+    virtual rawstd::Task<void> flush() = 0;
 };
 
 } // namespace rawstor

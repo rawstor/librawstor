@@ -34,6 +34,43 @@
 
 namespace {
 
+// C ABI adapters for the I/O group (rawstor_object_pread/_preadv/_pwrite/
+// _pwritev/_flush): launch a detached coroutine that co_await's the
+// already-submitted rawstd::Task, catches std::system_error, and invokes
+// the originally-passed RawstorCallback* with the translated result --
+// the same one-layer-up shape as librawio/src/rawio.cpp's launch_size_op.
+rawstd::DetachedTask launch_io_op(
+    RawstorObject* object, size_t size, rawstd::Task<size_t> t,
+    RawstorCallback* cb, void* data
+) {
+    size_t result = 0;
+    int error = 0;
+    try {
+        result = co_await t;
+    } catch (const std::system_error& e) {
+        error = e.code().value();
+    }
+    int res = cb(object, size, result, error, data);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+}
+
+rawstd::DetachedTask launch_flush_op(
+    RawstorObject* object, rawstd::Task<void> t, RawstorCallback* cb, void* data
+) {
+    int error = 0;
+    try {
+        co_await t;
+    } catch (const std::system_error& e) {
+        error = e.code().value();
+    }
+    int res = cb(object, 0, 0, error, data);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+}
+
 int uris(const std::vector<rawstd::URI>& uriv, char* buf, size_t size) {
     std::string s = rawstd::URI::uris(uriv);
     int res = snprintf(buf, size, "%s", s.c_str());
@@ -279,9 +316,7 @@ std::vector<rawstd::URI> Object::locations() const {
     return ret;
 }
 
-void Object::pread(
-    void* buf, size_t size, off_t offset, std::function<void(size_t, int)>&& cb
-) {
+rawstd::Task<size_t> Object::pread(void* buf, size_t size, off_t offset) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'o', "pread(): size = %zu, offset = %jd\n", size, (intmax_t)offset
     );
@@ -289,21 +324,22 @@ void Object::pread(
     /**
      * TODO: Can we select fastest connection here?
      */
-    _cns.front()->pread(
-        buf, size, offset,
-        [trace_event, cb = std::move(cb)](size_t result, int error) {
-            RAWSTD_TRACE_EVENT_MESSAGE(
-                trace_event, "result = %zu, error = %d\n", result, error
-            );
-            cb(result, error);
-        }
-    );
+    try {
+        size_t result = co_await _cns.front()->pread(buf, size, offset);
+        RAWSTD_TRACE_EVENT_MESSAGE(
+            trace_event, "result = %zu, error = 0\n", result
+        );
+        co_return result;
+    } catch (const std::system_error& e) {
+        RAWSTD_TRACE_EVENT_MESSAGE(
+            trace_event, "result = 0, error = %d\n", e.code().value()
+        );
+        throw;
+    }
 }
 
-void Object::preadv(
-    iovec* iov, unsigned int niov, size_t size, off_t offset,
-    std::function<void(size_t, int)>&& cb
-) {
+rawstd::Task<size_t>
+Object::preadv(iovec* iov, unsigned int niov, size_t size, off_t offset) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'o', "preadv(): size = %zu, offset = %jd\n", size, (intmax_t)offset
     );
@@ -311,145 +347,120 @@ void Object::preadv(
     /**
      * TODO: Can we select fastest connection here?
      */
-    _cns.front()->preadv(
-        iov, niov, size, offset,
-        [trace_event, cb = std::move(cb)](size_t result, int error) {
-            RAWSTD_TRACE_EVENT_MESSAGE(
-                trace_event, "result = %zu, error = %d\n", result, error
-            );
-            cb(result, error);
-        }
-    );
+    try {
+        size_t result = co_await _cns.front()->preadv(iov, niov, size, offset);
+        RAWSTD_TRACE_EVENT_MESSAGE(
+            trace_event, "result = %zu, error = 0\n", result
+        );
+        co_return result;
+    } catch (const std::system_error& e) {
+        RAWSTD_TRACE_EVENT_MESSAGE(
+            trace_event, "result = 0, error = %d\n", e.code().value()
+        );
+        throw;
+    }
 }
 
-void Object::pwrite(
-    const void* buf, size_t size, off_t offset, bool sync,
-    std::function<void(size_t, int)>&& cb
-) {
+rawstd::Task<size_t>
+Object::pwrite(const void* buf, size_t size, off_t offset, bool sync) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'o', "pwrite(): size = %zu, offset = %jd, sync = %d\n", size,
         (intmax_t)offset, sync
     );
 
-    struct Operation {
-        size_t mirrors;
-        size_t result;
-        int error;
-        std::function<void(size_t, int)> cb;
-    };
-
-    std::shared_ptr<Operation> op =
-        std::make_shared<Operation>((Operation){.mirrors = _cns.size(),
-                                                .result = (size_t)-1,
-                                                .error = 0,
-                                                .cb = std::move(cb)});
-
+    std::vector<rawstd::Task<size_t>> tasks;
+    tasks.reserve(_cns.size());
     for (auto& cn : _cns) {
-        cn->pwrite(
-            buf, size, offset, sync,
-            [op, trace_event](size_t result, int error) {
-                RAWSTD_TRACE_EVENT_MESSAGE(
-                    trace_event, "result = %zu, error = %d\n", result, error
-                );
-
-                --op->mirrors;
-
-                op->result = std::min(op->result, result);
-
-                if (error) {
-                    rawstd_error("%s\n", strerror(error));
-                    op->error = EIO;
-                }
-
-                if (op->mirrors == 0) {
-                    /**
-                     * TODO: Handle partial tasks.
-                     */
-                    op->cb(op->result, op->error);
-                }
-            }
-        );
+        tasks.push_back(cn->pwrite(buf, size, offset, sync));
     }
+
+    size_t result = (size_t)-1;
+    int error = 0;
+    for (auto& t : tasks) {
+        try {
+            result = std::min(result, co_await t);
+        } catch (const std::system_error& e) {
+            rawstd_error("%s\n", strerror(e.code().value()));
+            error = EIO;
+        }
+    }
+
+    RAWSTD_TRACE_EVENT_MESSAGE(
+        trace_event, "result = %zu, error = %d\n", result, error
+    );
+
+    /**
+     * TODO: Handle partial tasks.
+     */
+    if (error) {
+        RAWSTD_THROW_SYSTEM_ERROR(error);
+    }
+
+    co_return result;
 }
 
-void Object::pwritev(
-    const iovec* iov, unsigned int niov, size_t size, off_t offset, bool sync,
-    std::function<void(size_t, int)>&& cb
+rawstd::Task<size_t> Object::pwritev(
+    const iovec* iov, unsigned int niov, size_t size, off_t offset, bool sync
 ) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'o', "pwritev(): size = %zu, offset = %jd, sync = %d\n", size,
         (intmax_t)offset, sync
     );
 
-    struct Operation {
-        size_t mirrors;
-        size_t result;
-        int error;
-        std::function<void(size_t, int)> cb;
-    };
-
-    std::shared_ptr<Operation> op =
-        std::make_shared<Operation>((Operation){.mirrors = _cns.size(),
-                                                .result = (size_t)-1,
-                                                .error = 0,
-                                                .cb = std::move(cb)});
-
+    std::vector<rawstd::Task<size_t>> tasks;
+    tasks.reserve(_cns.size());
     for (auto& cn : _cns) {
-        cn->pwritev(
-            iov, niov, size, offset, sync,
-            [op, trace_event](size_t result, int error) {
-                RAWSTD_TRACE_EVENT_MESSAGE(
-                    trace_event, "result = %zu, error = %d\n", result, error
-                );
-
-                --op->mirrors;
-
-                op->result = std::min(op->result, result);
-
-                if (error) {
-                    rawstd_error("%s\n", strerror(error));
-                    op->error = EIO;
-                }
-
-                if (op->mirrors == 0) {
-                    /**
-                     * TODO: Handle partial tasks.
-                     */
-                    op->cb(op->result, op->error);
-                }
-            }
-        );
+        tasks.push_back(cn->pwritev(iov, niov, size, offset, sync));
     }
-}
 
-void Object::flush(std::function<void(int)>&& cb) {
-    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('o', "%s\n", "flush()");
+    size_t result = (size_t)-1;
+    int error = 0;
+    for (auto& t : tasks) {
+        try {
+            result = std::min(result, co_await t);
+        } catch (const std::system_error& e) {
+            rawstd_error("%s\n", strerror(e.code().value()));
+            error = EIO;
+        }
+    }
 
-    struct Operation {
-        size_t mirrors;
-        int error;
-        std::function<void(int)> cb;
-    };
-
-    std::shared_ptr<Operation> op = std::make_shared<Operation>(
-        (Operation){.mirrors = _cns.size(), .error = 0, .cb = std::move(cb)}
+    RAWSTD_TRACE_EVENT_MESSAGE(
+        trace_event, "result = %zu, error = %d\n", result, error
     );
 
+    /**
+     * TODO: Handle partial tasks.
+     */
+    if (error) {
+        RAWSTD_THROW_SYSTEM_ERROR(error);
+    }
+
+    co_return result;
+}
+
+rawstd::Task<void> Object::flush() {
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('o', "%s\n", "flush()");
+
+    std::vector<rawstd::Task<void>> tasks;
+    tasks.reserve(_cns.size());
     for (auto& cn : _cns) {
-        cn->flush([op, trace_event](int error) {
-            RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "error = %d\n", error);
+        tasks.push_back(cn->flush());
+    }
 
-            --op->mirrors;
+    int error = 0;
+    for (auto& t : tasks) {
+        try {
+            co_await t;
+        } catch (const std::system_error& e) {
+            rawstd_error("%s\n", strerror(e.code().value()));
+            error = EIO;
+        }
+    }
 
-            if (error) {
-                rawstd_error("%s\n", strerror(error));
-                op->error = EIO;
-            }
+    RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "error = %d\n", error);
 
-            if (op->mirrors == 0) {
-                op->cb(op->error);
-            }
-        });
+    if (error) {
+        RAWSTD_THROW_SYSTEM_ERROR(error);
     }
 }
 
@@ -726,14 +737,10 @@ int rawstor_object_pread(
     RawstorCallback* cb, void* data
 ) noexcept {
     try {
-        static_cast<rawstor::Object*>(object)->pread(
-            buf, size, offset,
-            [object, size, cb, data](size_t result, int error) {
-                int res = cb(object, size, result, error, data);
-                if (res < 0) {
-                    RAWSTD_THROW_SYSTEM_ERROR(-res);
-                }
-            }
+        launch_io_op(
+            object, size,
+            static_cast<rawstor::Object*>(object)->pread(buf, size, offset), cb,
+            data
         );
         return 0;
     } catch (const std::system_error& e) {
@@ -754,14 +761,12 @@ int rawstor_object_preadv(
     off_t offset, RawstorCallback* cb, void* data
 ) noexcept {
     try {
-        static_cast<rawstor::Object*>(object)->preadv(
-            iov, niov, size, offset,
-            [object, size, cb, data](size_t result, int error) {
-                int res = cb(object, size, result, error, data);
-                if (res < 0) {
-                    RAWSTD_THROW_SYSTEM_ERROR(-res);
-                }
-            }
+        launch_io_op(
+            object, size,
+            static_cast<rawstor::Object*>(object)->preadv(
+                iov, niov, size, offset
+            ),
+            cb, data
         );
         return 0;
     } catch (const std::system_error& e) {
@@ -782,14 +787,12 @@ int rawstor_object_pwrite(
     bool sync, RawstorCallback* cb, void* data
 ) noexcept {
     try {
-        static_cast<rawstor::Object*>(object)->pwrite(
-            buf, size, offset, sync,
-            [object, size, cb, data](size_t result, int error) {
-                int res = cb(object, size, result, error, data);
-                if (res < 0) {
-                    RAWSTD_THROW_SYSTEM_ERROR(-res);
-                }
-            }
+        launch_io_op(
+            object, size,
+            static_cast<rawstor::Object*>(object)->pwrite(
+                buf, size, offset, sync
+            ),
+            cb, data
         );
         return 0;
     } catch (const std::system_error& e) {
@@ -810,14 +813,12 @@ int rawstor_object_pwritev(
     off_t offset, bool sync, RawstorCallback* cb, void* data
 ) noexcept {
     try {
-        static_cast<rawstor::Object*>(object)->pwritev(
-            iov, niov, size, offset, sync,
-            [object, size, cb, data](size_t result, int error) {
-                int res = cb(object, size, result, error, data);
-                if (res < 0) {
-                    RAWSTD_THROW_SYSTEM_ERROR(-res);
-                }
-            }
+        launch_io_op(
+            object, size,
+            static_cast<rawstor::Object*>(object)->pwritev(
+                iov, niov, size, offset, sync
+            ),
+            cb, data
         );
         return 0;
     } catch (const std::system_error& e) {
@@ -837,13 +838,9 @@ int rawstor_object_flush(
     RawstorObject* object, RawstorCallback* cb, void* data
 ) noexcept {
     try {
-        static_cast<rawstor::Object*>(object)->flush([object, cb,
-                                                      data](int error) {
-            int res = cb(object, 0, 0, error, data);
-            if (res < 0) {
-                RAWSTD_THROW_SYSTEM_ERROR(-res);
-            }
-        });
+        launch_flush_op(
+            object, static_cast<rawstor::Object*>(object)->flush(), cb, data
+        );
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();

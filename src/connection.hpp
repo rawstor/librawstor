@@ -8,11 +8,11 @@
 
 #include <rawio/queue.hpp>
 
+#include <rawstd/coro.hpp>
+#include <rawstd/logging.hpp>
 #include <rawstd/uri.hpp>
 #include <rawstd/uuid.h>
 
-#include <functional>
-#include <list>
 #include <memory>
 #include <vector>
 
@@ -33,21 +33,28 @@ private:
     std::vector<std::shared_ptr<Session>>
     _open(const rawstd::URI& location, Object* object, size_t nsessions);
 
-    void
-    _op(const char* func_name, size_t size, off_t offset,
-        const std::shared_ptr<std::function<void(size_t, int)>>& cb,
-        const std::shared_ptr<std::function<void(
-            std::shared_ptr<Session>, std::function<void(size_t, int)>&&
-        )>>& op,
-        unsigned int attempt, rawstor::telemetry::TimePoint t_call);
+    // Every data-path method's terminal path -- success or final failure
+    // -- runs through here exactly once; records the cross-retry
+    // call-to-completion latency. Per-attempt telemetry, including the
+    // top-N slowest-requests sample, lives in ost::SessionOp::_dispatch()
+    // instead -- Connection is transport-agnostic and has nothing else to
+    // report here.
+    void _finish(rawstor::telemetry::TimePoint t_call);
 
-    // Every _op() terminal path -- success, final failure, or a reconnect
-    // itself failing -- calls the caller's cb through here exactly once;
-    // records the total call-to-cb latency, spanning every attempt this
-    // logical op took.
-    void _finish(
-        const std::shared_ptr<std::function<void(size_t, int)>>& cb,
-        rawstor::telemetry::TimePoint t_call, size_t result, int error
+    // Shared retry-loop body for every data-path method: tries `method`
+    // against successive sessions from the pool, up to
+    // rawstor_opts_io_attempts() times -- EBUSY (server-side backpressure,
+    // the session itself is fine) retries on the same session; any other
+    // error reconnects via invalidate_session() first. `T`/`Args...` are
+    // deduced straight from `method`'s own pointer-to-member-function
+    // type (e.g. &Session::pread), so the wrapped operation's natural
+    // result -- size_t for the four byte-count ops, nothing for flush --
+    // flows straight through with no caller-supplied template argument
+    // and no faked value for the void case.
+    template <typename T, typename... Args>
+    rawstd::Task<T> _with_retry(
+        const char* func_name, rawstd::TraceEvent& trace_event,
+        rawstd::Task<T> (Session::*method)(Args...), Args... args
     );
 
 public:
@@ -79,27 +86,20 @@ public:
 
     void close();
 
-    void pread(
-        void* buf, size_t size, off_t offset,
-        std::function<void(size_t, int)>&& cb
-    );
+    rawstd::Task<size_t> pread(void* buf, size_t size, off_t offset);
 
-    void preadv(
-        iovec* iov, unsigned int niov, size_t size, off_t offset,
-        std::function<void(size_t, int)>&& cb
-    );
+    rawstd::Task<size_t>
+    preadv(iovec* iov, unsigned int niov, size_t size, off_t offset);
 
-    void pwrite(
-        const void* buf, size_t size, off_t offset, bool sync,
-        std::function<void(size_t, int)>&& cb
-    );
+    rawstd::Task<size_t>
+    pwrite(const void* buf, size_t size, off_t offset, bool sync);
 
-    void pwritev(
+    rawstd::Task<size_t> pwritev(
         const iovec* iov, unsigned int niov, size_t size, off_t offset,
-        bool sync, std::function<void(size_t, int)>&& cb
+        bool sync
     );
 
-    void flush(std::function<void(int)>&& cb);
+    rawstd::Task<void> flush();
 };
 
 } // namespace rawstor
