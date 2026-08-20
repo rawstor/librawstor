@@ -960,13 +960,13 @@ void Session::_set_object(Object* object) {
     );
 }
 
-rawstd::Task<std::vector<RawstdUUID>> Session::list(
-    unsigned int limit, const RawstdUUID& token, RawstdUUID& next_token
+rawstd::Task<void> Session::list(
+    unsigned int limit, std::vector<RawstdUUID>& targets, RawstdUUID& token
 ) {
-    std::vector<RawstdUUID> uuids;
+    RawstdUUID input_token = token;
     try {
-        uuids = basic_request<RawstdUUID>(
-            fd(), _cid_counter++, RAWSTOR_CMD_LIST, token, limit
+        targets = basic_request<RawstdUUID>(
+            fd(), _cid_counter++, RAWSTOR_CMD_LIST, input_token, limit
         );
     } catch (const std::system_error&) {
         throw;
@@ -974,13 +974,13 @@ rawstd::Task<std::vector<RawstdUUID>> Session::list(
         RAWSTD_THROW_SYSTEM_ERROR(EIO);
     }
 
-    next_token = {};
-    if (!uuids.empty()) {
-        next_token = uuids.back();
-        uuids.resize(uuids.size() - 1);
+    token = {};
+    if (!targets.empty()) {
+        token = targets.back();
+        targets.resize(targets.size() - 1);
     }
 
-    co_return uuids;
+    co_return;
 }
 
 rawstd::Task<void>

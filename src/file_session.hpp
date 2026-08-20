@@ -22,8 +22,8 @@ private:
 public:
     Session(Private p, rawio::Queue& queue, const rawstd::URI& location);
 
-    rawstd::Task<std::vector<RawstdUUID>> list(
-        unsigned int limit, const RawstdUUID& token, RawstdUUID& next_token
+    rawstd::Task<void> list(
+        unsigned int limit, std::vector<RawstdUUID>& targets, RawstdUUID& token
     ) override;
 
     rawstd::Task<void>

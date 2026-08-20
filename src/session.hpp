@@ -49,11 +49,11 @@ public:
 
     inline int fd() const noexcept { return _fd; }
 
-    // `next_token` is written on success (pagination cursor for the
-    // following call); `token` is this call's own cursor, unchanged by
-    // the callee.
-    virtual rawstd::Task<std::vector<RawstdUUID>> list(
-        unsigned int limit, const RawstdUUID& token, RawstdUUID& next_token
+    // `targets`: overwritten with this page's UUIDs. `token`: this
+    // call's pagination cursor on entry, overwritten with the next
+    // page's cursor on return (zeroed once there's nothing left).
+    virtual rawstd::Task<void> list(
+        unsigned int limit, std::vector<RawstdUUID>& targets, RawstdUUID& token
     ) = 0;
 
     virtual rawstd::Task<void>

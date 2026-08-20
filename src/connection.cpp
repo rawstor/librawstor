@@ -248,7 +248,12 @@ void Connection::list(
     retry_n(__FUNCTION__, [&]() {
         std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(1);
         std::unique_ptr<Session> s = Session::create(*queue, location);
-        ret = run(*queue, s->list(limit, token, ret_token));
+        // Reset from the caller's original token on every attempt --
+        // list() now overwrites token in place, so a failed attempt
+        // that got partway through must not leak its own next-page
+        // cursor into the following retry's input.
+        ret_token = token;
+        run(*queue, s->list(limit, ret, ret_token));
     });
 
     targets.swap(ret);

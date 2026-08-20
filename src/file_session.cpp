@@ -74,11 +74,12 @@ int Session::_connect(const RawstdUUID& id) {
     return fd;
 }
 
-rawstd::Task<std::vector<RawstdUUID>> Session::list(
-    unsigned int limit, const RawstdUUID& token, RawstdUUID& next_token
+rawstd::Task<void> Session::list(
+    unsigned int limit, std::vector<RawstdUUID>& targets, RawstdUUID& token
 ) {
-    std::vector<RawstdUUID> ret_uuids;
-    next_token = {};
+    RawstdUUID input_token = token;
+    targets.clear();
+    token = {};
     try {
         std::string location_path = get_location_path(location());
 
@@ -98,20 +99,20 @@ rawstd::Task<std::vector<RawstdUUID>> Session::list(
                 continue;
             }
 
-            ret_uuids.push_back(uuid);
+            targets.push_back(uuid);
         }
 
         std::sort(
-            ret_uuids.begin(), ret_uuids.end(),
+            targets.begin(), targets.end(),
             [](const RawstdUUID& lhs, const RawstdUUID& rhs) {
                 return rawstd_uuid_cmp(&lhs, &rhs) < 0;
             }
         );
 
-        ret_uuids.erase(
-            ret_uuids.begin(),
+        targets.erase(
+            targets.begin(),
             std::upper_bound(
-                ret_uuids.begin(), ret_uuids.end(), token,
+                targets.begin(), targets.end(), input_token,
                 [](const RawstdUUID& lhs, const RawstdUUID& rhs) {
                     return rawstd_uuid_cmp(&lhs, &rhs) < 0;
                 }
@@ -124,9 +125,9 @@ rawstd::Task<std::vector<RawstdUUID>> Session::list(
             limit = std::min(limit, rawstor_opts_list_limit());
         }
 
-        if (ret_uuids.size() > limit) {
-            ret_uuids.resize(limit);
-            next_token = ret_uuids.back();
+        if (targets.size() > limit) {
+            targets.resize(limit);
+            token = targets.back();
         }
     } catch (const std::system_error&) {
         throw;
@@ -138,7 +139,7 @@ rawstd::Task<std::vector<RawstdUUID>> Session::list(
         RAWSTD_THROW_SYSTEM_ERROR(EIO);
     }
 
-    co_return ret_uuids;
+    co_return;
 }
 
 rawstd::Task<void>
