@@ -72,6 +72,7 @@ AS_IF([test "x$enable_asan" = "xyes"], [
     AC_SUBST([ASAN_CFLAGS], ["-fsanitize=address -g"])
     AC_SUBST([ASAN_LDFLAGS], ["-fsanitize=address"])
     AC_SUBST([maybe_asan], ["-fsanitize=address"])
+    AC_DEFINE([RAWSTOR_ASAN], 1, [Built with AddressSanitizer])
 ], [
     AC_SUBST([ASAN_CFLAGS], [""])
     AC_SUBST([ASAN_LDFLAGS], [""])

@@ -1,5 +1,7 @@
 #include "rawstd/coro.hpp"
 
+#include "config.h"
+
 #include <gtest/gtest.h>
 
 #include <coroutine>
@@ -146,7 +148,7 @@ rawstd::Task<int> link(rawstd::Task<int> prev) {
 }
 
 TEST(TaskTest, deep_chain_resumes_without_stack_growth) {
-#if defined(__SANITIZE_ADDRESS__)
+#ifdef RAWSTOR_ASAN
     // AddressSanitizer instruments every sanitized function with stack
     // redzone poisoning that keeps the frame alive across the call, which
     // defeats the compiler's tail-call elimination -- the very mechanism
