@@ -23,7 +23,6 @@
 #include <memory>
 #include <sstream>
 #include <string>
-#include <utility>
 
 namespace {
 
@@ -75,12 +74,12 @@ int Session::_connect(const RawstdUUID& id) {
     return fd;
 }
 
-void Session::list(
-    unsigned int limit, const RawstdUUID& token,
-    std::function<void(std::vector<RawstdUUID>&&, const RawstdUUID&, int)>&& cb
+rawstd::Task<void> Session::list(
+    unsigned int limit, std::vector<RawstdUUID>& targets, RawstdUUID& token
 ) {
-    std::vector<RawstdUUID> ret_uuids;
-    RawstdUUID ret_token = {};
+    RawstdUUID input_token = token;
+    targets.clear();
+    token = {};
     try {
         std::string location_path = get_location_path(location());
 
@@ -100,20 +99,20 @@ void Session::list(
                 continue;
             }
 
-            ret_uuids.push_back(uuid);
+            targets.push_back(uuid);
         }
 
         std::sort(
-            ret_uuids.begin(), ret_uuids.end(),
+            targets.begin(), targets.end(),
             [](const RawstdUUID& lhs, const RawstdUUID& rhs) {
                 return rawstd_uuid_cmp(&lhs, &rhs) < 0;
             }
         );
 
-        ret_uuids.erase(
-            ret_uuids.begin(),
+        targets.erase(
+            targets.begin(),
             std::upper_bound(
-                ret_uuids.begin(), ret_uuids.end(), token,
+                targets.begin(), targets.end(), input_token,
                 [](const RawstdUUID& lhs, const RawstdUUID& rhs) {
                     return rawstd_uuid_cmp(&lhs, &rhs) < 0;
                 }
@@ -126,30 +125,25 @@ void Session::list(
             limit = std::min(limit, rawstor_opts_list_limit());
         }
 
-        if (ret_uuids.size() > limit) {
-            ret_uuids.resize(limit);
-            ret_token = ret_uuids.back();
+        if (targets.size() > limit) {
+            targets.resize(limit);
+            token = targets.back();
         }
-    } catch (const std::system_error& e) {
-        cb({}, {}, e.code().value());
-        return;
+    } catch (const std::system_error&) {
+        throw;
     } catch (const std::exception& e) {
         rawstd_error("Unexpected error: %s\n", e.what());
-        cb({}, {}, EIO);
-        return;
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
     } catch (...) {
         rawstd_error("Unexpected error\n");
-        cb({}, {}, EIO);
-        return;
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
     }
 
-    cb(std::move(ret_uuids), ret_token, 0);
+    co_return;
 }
 
-void Session::create(
-    const RawstdUUID& id, const RawstorObjectSpec& sp,
-    std::function<void(int)>&& cb
-) {
+rawstd::Task<void>
+Session::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
     std::string location_path = get_location_path(location());
     if (mkdir(location_path.c_str(), 0755) == -1) {
         if (errno == EEXIST) {
@@ -185,10 +179,10 @@ void Session::create(
         throw;
     }
 
-    cb(0);
+    co_return;
 }
 
-void Session::remove(const RawstdUUID& id, std::function<void(int)>&& cb) {
+rawstd::Task<void> Session::remove(const RawstdUUID& id) {
     std::string location_path = get_location_path(location());
 
     RawstdUUIDString uuid_string;
@@ -199,13 +193,10 @@ void Session::remove(const RawstdUUID& id, std::function<void(int)>&& cb) {
         RAWSTD_THROW_ERRNO();
     }
 
-    cb(0);
+    co_return;
 }
 
-void Session::spec(
-    const RawstdUUID& id,
-    std::function<void(const RawstorObjectSpec&, int)>&& cb
-) {
+rawstd::Task<RawstorObjectSpec> Session::spec(const RawstdUUID& id) {
     std::string location_path = get_location_path(location());
 
     RawstdUUIDString uuid_string;
@@ -217,10 +208,10 @@ void Session::spec(
         .size = std::filesystem::file_size(target_path),
     };
 
-    cb(ret, 0);
+    co_return ret;
 }
 
-void Session::info(std::function<void(const RawstorLocationInfo&, int)>&& cb) {
+rawstd::Task<RawstorLocationInfo> Session::info() {
     RawstorLocationInfo ret = {};
     try {
         std::string location_path = get_location_path(location());
@@ -248,20 +239,17 @@ void Session::info(std::function<void(const RawstorLocationInfo&, int)>&& cb) {
             used += static_cast<uint64_t>(st.st_size);
         }
         ret.used = used;
-    } catch (const std::system_error& e) {
-        cb({}, e.code().value());
-        return;
+    } catch (const std::system_error&) {
+        throw;
     } catch (const std::exception& e) {
         rawstd_error("Unexpected error: %s\n", e.what());
-        cb({}, EIO);
-        return;
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
     } catch (...) {
         rawstd_error("Unexpected error\n");
-        cb({}, EIO);
-        return;
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
     }
 
-    cb(ret, 0);
+    co_return ret;
 }
 
 } // namespace file

@@ -34,6 +34,62 @@
 
 namespace {
 
+// C ABI adapters for the I/O group (rawstor_object_pread/_preadv/_pwrite/
+// _pwritev/_flush): launch a detached coroutine that co_await's the
+// already-submitted rawstd::Task, catches std::system_error, and invokes
+// the originally-passed RawstorCallback* with the translated result --
+// the same one-layer-up shape as librawio/src/rawio.cpp's
+// launch_size_op_coro(). A negative return from the C callback throws --
+// see the non-coroutine launch_io_op()/launch_flush_op() wrappers below
+// (not these functions) for how that's actually delivered back out; see
+// rawstd::DetachedTask's own doc comment for why the indirection exists.
+rawstd::DetachedTask launch_io_op_coro(
+    RawstorObject* object, size_t size, rawstd::Task<size_t> t,
+    RawstorCallback* cb, void* data
+) {
+    size_t result = 0;
+    int error = 0;
+    try {
+        result = co_await t;
+    } catch (const std::system_error& e) {
+        error = e.code().value();
+    }
+    int res = cb(object, size, result, error, data);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+}
+
+void launch_io_op(
+    RawstorObject* object, size_t size, rawstd::Task<size_t> t,
+    RawstorCallback* cb, void* data
+) {
+    launch_io_op_coro(object, size, std::move(t), cb, data);
+    rawstd::DetachedTask::rethrow_if_pending();
+}
+
+rawstd::DetachedTask launch_flush_op_coro(
+    RawstorObject* object, rawstd::Task<void> t, RawstorCallback* cb, void* data
+) {
+    int error = 0;
+    try {
+        co_await t;
+    } catch (const std::system_error& e) {
+        error = e.code().value();
+    }
+    int res = cb(object, 0, 0, error, data);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+}
+
+void launch_flush_op(
+    RawstorObject* object, rawstd::Task<void> t, RawstorCallback* cb, void* data
+) {
+    launch_flush_op_coro(object, std::move(t), cb, data);
+    rawstd::DetachedTask::rethrow_if_pending();
+}
+
 int uris(const std::vector<rawstd::URI>& uriv, char* buf, size_t size) {
     std::string s = rawstd::URI::uris(uriv);
     int res = snprintf(buf, size, "%s", s.c_str());
@@ -88,6 +144,24 @@ void validate_different_uris(const std::vector<rawstd::URI>& uris) {
     }
 }
 
+// Synchronously pumps `t` to completion by driving `q` -- the boundary
+// where this file's synchronous C ABI (rawstor_object_list/_create/
+// _remove/_spec, rawstor_location_info) meets the now fully co_await
+// -composed rawstor::Object/Connection internals: each of those C
+// functions creates exactly one Queue for its whole call (however many
+// locations/targets it loops over internally) and pumps the single
+// Object::* Task<T> it awaits through here. Deliberately a local
+// duplicate of connection.cpp's own `run()`, rather than a shared
+// dependency, since it's four lines and object.cpp has no other reason to
+// know about connection.cpp's internals.
+template <typename T>
+T run(rawio::Queue& q, rawstd::Task<T> t) {
+    while (!t.done()) {
+        q.wait_timeout(rawstor_opts_tcp_user_timeout());
+    }
+    return t.get();
+}
+
 } // namespace
 
 namespace rawstor {
@@ -114,9 +188,10 @@ Object::Object(rawio::Queue& queue, const std::vector<rawstd::URI>& targets) :
     }
 }
 
-void Object::list(
-    const std::vector<rawstd::URI>& locations, unsigned int limit,
-    std::list<std::vector<rawstd::URI>>& targets, RawstorPaginationToken& token
+rawstd::Task<void> Object::list(
+    rawio::Queue& queue, const std::vector<rawstd::URI>& locations,
+    unsigned int limit, std::list<std::vector<rawstd::URI>>& targets,
+    RawstorPaginationToken& token
 ) {
     validate_not_empty(locations);
 
@@ -134,7 +209,9 @@ void Object::list(
     for (const auto& location : locations) {
         std::vector<RawstdUUID> loc_uuids;
         RawstdUUID loc_token_uuid = token_uuid;
-        rawstor::Connection::list(location, limit, loc_uuids, loc_token_uuid);
+        co_await rawstor::Connection::list(
+            queue, location, limit, loc_uuids, loc_token_uuid
+        );
         for (const auto& uuid : loc_uuids) {
             RawstdUUIDString uuid_string;
             rawstd_uuid_to_string(&uuid, &uuid_string);
@@ -176,17 +253,16 @@ void Object::list(
     memcpy(token.bytes, next_token_uuid.bytes, sizeof(next_token_uuid.bytes));
 }
 
-void Object::info(
-    const std::vector<rawstd::URI>& locations, RawstorLocationInfo* info
-) {
+rawstd::Task<RawstorLocationInfo>
+Object::info(rawio::Queue& queue, const std::vector<rawstd::URI>& locations) {
     validate_not_empty(locations);
     validate_different_uris(locations);
 
     RawstorLocationInfo ret{};
     bool first = true;
     for (const auto& location : locations) {
-        RawstorLocationInfo loc_info{};
-        rawstor::Connection::info(location, &loc_info);
+        RawstorLocationInfo loc_info =
+            co_await rawstor::Connection::info(queue, location);
 
         if (first) {
             ret = loc_info;
@@ -200,11 +276,12 @@ void Object::info(
         }
     }
 
-    *info = ret;
+    co_return ret;
 }
 
-void Object::create(
-    const std::vector<rawstd::URI>& targets, const RawstorObjectSpec& sp
+rawstd::Task<void> Object::create(
+    rawio::Queue& queue, const std::vector<rawstd::URI>& targets,
+    const RawstorObjectSpec& sp
 ) {
     validate_not_empty(targets);
     validate_different_uris(targets);
@@ -212,26 +289,38 @@ void Object::create(
 
     std::vector<rawstd::URI> created;
     created.reserve(targets.size());
-    try {
-        for (const auto& target : targets) {
-            rawstor::Connection::create(target, sp);
+
+    // co_await is not permitted inside a catch handler, so unlike the old
+    // synchronous version this can't roll back from directly within a
+    // catch(...) around the whole loop: capture the failure, stop, and
+    // roll back afterwards instead, outside any handler.
+    std::exception_ptr eptr;
+    for (const auto& target : targets) {
+        try {
+            co_await rawstor::Connection::create(queue, target, sp);
             created.push_back(target);
+        } catch (...) {
+            eptr = std::current_exception();
+            break;
         }
-    } catch (...) {
+    }
+
+    if (eptr) {
         if (!created.empty()) {
             try {
-                remove(created);
+                co_await remove(queue, created);
             } catch (const std::exception& e) {
                 rawstd_error(
                     "Failed to rollback create operation: %s\n", e.what()
                 );
             }
         }
-        throw;
+        std::rethrow_exception(eptr);
     }
 }
 
-void Object::remove(const std::vector<rawstd::URI>& targets) {
+rawstd::Task<void>
+Object::remove(rawio::Queue& queue, const std::vector<rawstd::URI>& targets) {
     validate_not_empty(targets);
     validate_different_uris(targets);
     validate_same_uuid(targets);
@@ -239,7 +328,7 @@ void Object::remove(const std::vector<rawstd::URI>& targets) {
     std::exception_ptr eptr;
     for (const auto& target : targets) {
         try {
-            rawstor::Connection::remove(target);
+            co_await rawstor::Connection::remove(queue, target);
         } catch (const std::exception& e) {
             if (!eptr) {
                 eptr = std::current_exception();
@@ -253,9 +342,8 @@ void Object::remove(const std::vector<rawstd::URI>& targets) {
     }
 }
 
-void Object::spec(
-    const std::vector<rawstd::URI>& targets, RawstorObjectSpec* sp
-) {
+rawstd::Task<RawstorObjectSpec>
+Object::spec(rawio::Queue& queue, const std::vector<rawstd::URI>& targets) {
     /**
      * TODO: Should we read all specs and compare them here?
      */
@@ -263,7 +351,7 @@ void Object::spec(
     validate_different_uris(targets);
     validate_same_uuid(targets);
 
-    rawstor::Connection::spec(targets.front(), sp);
+    co_return co_await rawstor::Connection::spec(queue, targets.front());
 }
 
 std::vector<rawstd::URI> Object::locations() const {
@@ -279,9 +367,7 @@ std::vector<rawstd::URI> Object::locations() const {
     return ret;
 }
 
-void Object::pread(
-    void* buf, size_t size, off_t offset, std::function<void(size_t, int)>&& cb
-) {
+rawstd::Task<size_t> Object::pread(void* buf, size_t size, off_t offset) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'o', "pread(): size = %zu, offset = %jd\n", size, (intmax_t)offset
     );
@@ -289,21 +375,22 @@ void Object::pread(
     /**
      * TODO: Can we select fastest connection here?
      */
-    _cns.front()->pread(
-        buf, size, offset,
-        [trace_event, cb = std::move(cb)](size_t result, int error) {
-            RAWSTD_TRACE_EVENT_MESSAGE(
-                trace_event, "result = %zu, error = %d\n", result, error
-            );
-            cb(result, error);
-        }
-    );
+    try {
+        size_t result = co_await _cns.front()->pread(buf, size, offset);
+        RAWSTD_TRACE_EVENT_MESSAGE(
+            trace_event, "result = %zu, error = 0\n", result
+        );
+        co_return result;
+    } catch (const std::system_error& e) {
+        RAWSTD_TRACE_EVENT_MESSAGE(
+            trace_event, "result = 0, error = %d\n", e.code().value()
+        );
+        throw;
+    }
 }
 
-void Object::preadv(
-    iovec* iov, unsigned int niov, size_t size, off_t offset,
-    std::function<void(size_t, int)>&& cb
-) {
+rawstd::Task<size_t>
+Object::preadv(iovec* iov, unsigned int niov, size_t size, off_t offset) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'o', "preadv(): size = %zu, offset = %jd\n", size, (intmax_t)offset
     );
@@ -311,145 +398,120 @@ void Object::preadv(
     /**
      * TODO: Can we select fastest connection here?
      */
-    _cns.front()->preadv(
-        iov, niov, size, offset,
-        [trace_event, cb = std::move(cb)](size_t result, int error) {
-            RAWSTD_TRACE_EVENT_MESSAGE(
-                trace_event, "result = %zu, error = %d\n", result, error
-            );
-            cb(result, error);
-        }
-    );
+    try {
+        size_t result = co_await _cns.front()->preadv(iov, niov, size, offset);
+        RAWSTD_TRACE_EVENT_MESSAGE(
+            trace_event, "result = %zu, error = 0\n", result
+        );
+        co_return result;
+    } catch (const std::system_error& e) {
+        RAWSTD_TRACE_EVENT_MESSAGE(
+            trace_event, "result = 0, error = %d\n", e.code().value()
+        );
+        throw;
+    }
 }
 
-void Object::pwrite(
-    const void* buf, size_t size, off_t offset, bool sync,
-    std::function<void(size_t, int)>&& cb
-) {
+rawstd::Task<size_t>
+Object::pwrite(const void* buf, size_t size, off_t offset, bool sync) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'o', "pwrite(): size = %zu, offset = %jd, sync = %d\n", size,
         (intmax_t)offset, sync
     );
 
-    struct Operation {
-        size_t mirrors;
-        size_t result;
-        int error;
-        std::function<void(size_t, int)> cb;
-    };
-
-    std::shared_ptr<Operation> op =
-        std::make_shared<Operation>((Operation){.mirrors = _cns.size(),
-                                                .result = (size_t)-1,
-                                                .error = 0,
-                                                .cb = std::move(cb)});
-
+    std::vector<rawstd::Task<size_t>> tasks;
+    tasks.reserve(_cns.size());
     for (auto& cn : _cns) {
-        cn->pwrite(
-            buf, size, offset, sync,
-            [op, trace_event](size_t result, int error) {
-                RAWSTD_TRACE_EVENT_MESSAGE(
-                    trace_event, "result = %zu, error = %d\n", result, error
-                );
-
-                --op->mirrors;
-
-                op->result = std::min(op->result, result);
-
-                if (error) {
-                    rawstd_error("%s\n", strerror(error));
-                    op->error = EIO;
-                }
-
-                if (op->mirrors == 0) {
-                    /**
-                     * TODO: Handle partial tasks.
-                     */
-                    op->cb(op->result, op->error);
-                }
-            }
-        );
+        tasks.push_back(cn->pwrite(buf, size, offset, sync));
     }
+
+    size_t result = (size_t)-1;
+    int error = 0;
+    for (auto& t : tasks) {
+        try {
+            result = std::min(result, co_await t);
+        } catch (const std::system_error& e) {
+            rawstd_error("%s\n", strerror(e.code().value()));
+            error = EIO;
+        }
+    }
+
+    RAWSTD_TRACE_EVENT_MESSAGE(
+        trace_event, "result = %zu, error = %d\n", result, error
+    );
+
+    /**
+     * TODO: Handle partial tasks.
+     */
+    if (error) {
+        RAWSTD_THROW_SYSTEM_ERROR(error);
+    }
+
+    co_return result;
 }
 
-void Object::pwritev(
-    const iovec* iov, unsigned int niov, size_t size, off_t offset, bool sync,
-    std::function<void(size_t, int)>&& cb
+rawstd::Task<size_t> Object::pwritev(
+    const iovec* iov, unsigned int niov, size_t size, off_t offset, bool sync
 ) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'o', "pwritev(): size = %zu, offset = %jd, sync = %d\n", size,
         (intmax_t)offset, sync
     );
 
-    struct Operation {
-        size_t mirrors;
-        size_t result;
-        int error;
-        std::function<void(size_t, int)> cb;
-    };
-
-    std::shared_ptr<Operation> op =
-        std::make_shared<Operation>((Operation){.mirrors = _cns.size(),
-                                                .result = (size_t)-1,
-                                                .error = 0,
-                                                .cb = std::move(cb)});
-
+    std::vector<rawstd::Task<size_t>> tasks;
+    tasks.reserve(_cns.size());
     for (auto& cn : _cns) {
-        cn->pwritev(
-            iov, niov, size, offset, sync,
-            [op, trace_event](size_t result, int error) {
-                RAWSTD_TRACE_EVENT_MESSAGE(
-                    trace_event, "result = %zu, error = %d\n", result, error
-                );
-
-                --op->mirrors;
-
-                op->result = std::min(op->result, result);
-
-                if (error) {
-                    rawstd_error("%s\n", strerror(error));
-                    op->error = EIO;
-                }
-
-                if (op->mirrors == 0) {
-                    /**
-                     * TODO: Handle partial tasks.
-                     */
-                    op->cb(op->result, op->error);
-                }
-            }
-        );
+        tasks.push_back(cn->pwritev(iov, niov, size, offset, sync));
     }
-}
 
-void Object::flush(std::function<void(int)>&& cb) {
-    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('o', "%s\n", "flush()");
+    size_t result = (size_t)-1;
+    int error = 0;
+    for (auto& t : tasks) {
+        try {
+            result = std::min(result, co_await t);
+        } catch (const std::system_error& e) {
+            rawstd_error("%s\n", strerror(e.code().value()));
+            error = EIO;
+        }
+    }
 
-    struct Operation {
-        size_t mirrors;
-        int error;
-        std::function<void(int)> cb;
-    };
-
-    std::shared_ptr<Operation> op = std::make_shared<Operation>(
-        (Operation){.mirrors = _cns.size(), .error = 0, .cb = std::move(cb)}
+    RAWSTD_TRACE_EVENT_MESSAGE(
+        trace_event, "result = %zu, error = %d\n", result, error
     );
 
+    /**
+     * TODO: Handle partial tasks.
+     */
+    if (error) {
+        RAWSTD_THROW_SYSTEM_ERROR(error);
+    }
+
+    co_return result;
+}
+
+rawstd::Task<void> Object::flush() {
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('o', "%s\n", "flush()");
+
+    std::vector<rawstd::Task<void>> tasks;
+    tasks.reserve(_cns.size());
     for (auto& cn : _cns) {
-        cn->flush([op, trace_event](int error) {
-            RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "error = %d\n", error);
+        tasks.push_back(cn->flush());
+    }
 
-            --op->mirrors;
+    int error = 0;
+    for (auto& t : tasks) {
+        try {
+            co_await t;
+        } catch (const std::system_error& e) {
+            rawstd_error("%s\n", strerror(e.code().value()));
+            error = EIO;
+        }
+    }
 
-            if (error) {
-                rawstd_error("%s\n", strerror(error));
-                op->error = EIO;
-            }
+    RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "error = %d\n", error);
 
-            if (op->mirrors == 0) {
-                op->cb(op->error);
-            }
-        });
+    if (error) {
+        RAWSTD_THROW_SYSTEM_ERROR(error);
     }
 }
 
@@ -464,7 +526,9 @@ int rawstor_object_list(
         std::vector<rawstd::URI> locations = rawstd::URI::uriv(location);
         std::list<std::vector<rawstd::URI>> ret;
 
-        rawstor::Object::list(locations, limit, ret, *token);
+        std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
+        run(*queue,
+            rawstor::Object::list(*queue, locations, limit, ret, *token));
 
         list = (RawstorStringList*)rawstd_list_create(sizeof(const char*));
         if (list == nullptr) {
@@ -510,7 +574,10 @@ int rawstor_location_info(
     const char* location, RawstorLocationInfo* info
 ) noexcept {
     try {
-        rawstor::Object::info(rawstd::URI::uriv(location), info);
+        std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
+        *info =
+            run(*queue,
+                rawstor::Object::info(*queue, rawstd::URI::uriv(location)));
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -529,7 +596,9 @@ int rawstor_object_create(
     const char* target, const RawstorObjectSpec* spec
 ) noexcept {
     try {
-        rawstor::Object::create(rawstd::URI::uriv(target), *spec);
+        std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
+        run(*queue,
+            rawstor::Object::create(*queue, rawstd::URI::uriv(target), *spec));
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -580,7 +649,8 @@ int rawstor_object_create_at(
         }
 
         if (static_cast<size_t>(res) < size) {
-            rawstor::Object::create(ret, *spec);
+            std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
+            run(*queue, rawstor::Object::create(*queue, ret, *spec));
         }
 
         return res;
@@ -599,7 +669,8 @@ int rawstor_object_create_at(
 
 int rawstor_object_remove(const char* target) noexcept {
     try {
-        rawstor::Object::remove(rawstd::URI::uriv(target));
+        std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
+        run(*queue, rawstor::Object::remove(*queue, rawstd::URI::uriv(target)));
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -616,7 +687,10 @@ int rawstor_object_remove(const char* target) noexcept {
 
 int rawstor_object_spec(const char* target, RawstorObjectSpec* sp) noexcept {
     try {
-        rawstor::Object::spec(rawstd::URI::uriv(target), sp);
+        std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
+        *sp =
+            run(*queue,
+                rawstor::Object::spec(*queue, rawstd::URI::uriv(target)));
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -726,14 +800,10 @@ int rawstor_object_pread(
     RawstorCallback* cb, void* data
 ) noexcept {
     try {
-        static_cast<rawstor::Object*>(object)->pread(
-            buf, size, offset,
-            [object, size, cb, data](size_t result, int error) {
-                int res = cb(object, size, result, error, data);
-                if (res < 0) {
-                    RAWSTD_THROW_SYSTEM_ERROR(-res);
-                }
-            }
+        launch_io_op(
+            object, size,
+            static_cast<rawstor::Object*>(object)->pread(buf, size, offset), cb,
+            data
         );
         return 0;
     } catch (const std::system_error& e) {
@@ -754,14 +824,12 @@ int rawstor_object_preadv(
     off_t offset, RawstorCallback* cb, void* data
 ) noexcept {
     try {
-        static_cast<rawstor::Object*>(object)->preadv(
-            iov, niov, size, offset,
-            [object, size, cb, data](size_t result, int error) {
-                int res = cb(object, size, result, error, data);
-                if (res < 0) {
-                    RAWSTD_THROW_SYSTEM_ERROR(-res);
-                }
-            }
+        launch_io_op(
+            object, size,
+            static_cast<rawstor::Object*>(object)->preadv(
+                iov, niov, size, offset
+            ),
+            cb, data
         );
         return 0;
     } catch (const std::system_error& e) {
@@ -782,14 +850,12 @@ int rawstor_object_pwrite(
     bool sync, RawstorCallback* cb, void* data
 ) noexcept {
     try {
-        static_cast<rawstor::Object*>(object)->pwrite(
-            buf, size, offset, sync,
-            [object, size, cb, data](size_t result, int error) {
-                int res = cb(object, size, result, error, data);
-                if (res < 0) {
-                    RAWSTD_THROW_SYSTEM_ERROR(-res);
-                }
-            }
+        launch_io_op(
+            object, size,
+            static_cast<rawstor::Object*>(object)->pwrite(
+                buf, size, offset, sync
+            ),
+            cb, data
         );
         return 0;
     } catch (const std::system_error& e) {
@@ -810,14 +876,12 @@ int rawstor_object_pwritev(
     off_t offset, bool sync, RawstorCallback* cb, void* data
 ) noexcept {
     try {
-        static_cast<rawstor::Object*>(object)->pwritev(
-            iov, niov, size, offset, sync,
-            [object, size, cb, data](size_t result, int error) {
-                int res = cb(object, size, result, error, data);
-                if (res < 0) {
-                    RAWSTD_THROW_SYSTEM_ERROR(-res);
-                }
-            }
+        launch_io_op(
+            object, size,
+            static_cast<rawstor::Object*>(object)->pwritev(
+                iov, niov, size, offset, sync
+            ),
+            cb, data
         );
         return 0;
     } catch (const std::system_error& e) {
@@ -837,13 +901,9 @@ int rawstor_object_flush(
     RawstorObject* object, RawstorCallback* cb, void* data
 ) noexcept {
     try {
-        static_cast<rawstor::Object*>(object)->flush([object, cb,
-                                                      data](int error) {
-            int res = cb(object, 0, 0, error, data);
-            if (res < 0) {
-                RAWSTD_THROW_SYSTEM_ERROR(-res);
-            }
-        });
+        launch_flush_op(
+            object, static_cast<rawstor::Object*>(object)->flush(), cb, data
+        );
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();

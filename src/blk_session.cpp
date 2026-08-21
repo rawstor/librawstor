@@ -2,11 +2,12 @@
 
 #include "object.hpp"
 
+#include <rawio/awaitable.hpp>
+
 #include <rawstd/gpp.hpp>
 #include <rawstd/logging.h>
 
 #include <stdexcept>
-#include <utility>
 
 namespace rawstor {
 namespace blk {
@@ -15,7 +16,7 @@ Session::Session(Private p, rawio::Queue& queue, const rawstd::URI& location) :
     rawstor::Session(p, queue, location) {
 }
 
-void Session::set_object(Object* object) {
+rawstd::Task<void> Session::set_object(Object* object) {
     if (fd() != -1) {
         throw std::runtime_error("Object already set");
     }
@@ -26,59 +27,53 @@ void Session::set_object(Object* object) {
     }
 
     set_fd(fd);
+    co_return;
 }
 
-void Session::pread(
-    void* buf, size_t size, off_t offset, std::function<void(size_t, int)>&& cb
-) {
+rawstd::Task<size_t> Session::pread(void* buf, size_t size, off_t offset) {
     rawstd_debug(
         "%s(): fd = %d, size = %zu, offset = %jd\n", __FUNCTION__, fd(), size,
         (intmax_t)offset
     );
 
-    _queue.pread(fd(), buf, size, offset, std::move(cb));
+    co_return co_await _queue.pread(fd(), buf, size, offset);
 }
 
-void Session::preadv(
-    iovec* iov, unsigned int niov, size_t size, off_t offset,
-    std::function<void(size_t, int)>&& cb
-) {
+rawstd::Task<size_t>
+Session::preadv(iovec* iov, unsigned int niov, size_t size, off_t offset) {
     rawstd_debug(
         "%s(): fd = %d, size = %zu, offset = %jd\n", __FUNCTION__, fd(), size,
         (intmax_t)offset
     );
 
-    _queue.preadv(fd(), iov, niov, offset, std::move(cb));
+    co_return co_await _queue.preadv(fd(), iov, niov, offset);
 }
 
-void Session::pwrite(
-    const void* buf, size_t size, off_t offset, bool sync,
-    std::function<void(size_t, int)>&& cb
+rawstd::Task<size_t>
+Session::pwrite(const void* buf, size_t size, off_t offset, bool sync) {
+    rawstd_debug(
+        "%s(): fd = %d, size = %zu, offset = %jd, sync = %d\n", __FUNCTION__,
+        fd(), size, (intmax_t)offset, sync
+    );
+
+    co_return co_await _queue.pwrite(fd(), buf, size, offset, sync);
+}
+
+rawstd::Task<size_t> Session::pwritev(
+    const iovec* iov, unsigned int niov, size_t size, off_t offset, bool sync
 ) {
     rawstd_debug(
         "%s(): fd = %d, size = %zu, offset = %jd, sync = %d\n", __FUNCTION__,
         fd(), size, (intmax_t)offset, sync
     );
 
-    _queue.pwrite(fd(), buf, size, offset, sync, std::move(cb));
+    co_return co_await _queue.pwritev(fd(), iov, niov, offset, sync);
 }
 
-void Session::pwritev(
-    const iovec* iov, unsigned int niov, size_t size, off_t offset, bool sync,
-    std::function<void(size_t, int)>&& cb
-) {
-    rawstd_debug(
-        "%s(): fd = %d, size = %zu, offset = %jd, sync = %d\n", __FUNCTION__,
-        fd(), size, (intmax_t)offset, sync
-    );
-
-    _queue.pwritev(fd(), iov, niov, offset, sync, std::move(cb));
-}
-
-void Session::flush(std::function<void(int)>&& cb) {
+rawstd::Task<void> Session::flush() {
     rawstd_debug("%s(): fd = %d\n", __FUNCTION__, fd());
 
-    _queue.fsync(fd(), /*datasync=*/true, std::move(cb));
+    co_await _queue.fsync(fd(), /*datasync=*/true);
 }
 
 } // namespace blk

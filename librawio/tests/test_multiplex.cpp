@@ -17,53 +17,35 @@ TEST_F(MultiplexTest, read) {
 
     char client_buf1[5];
     size_t result1 = 0;
-    int error1 = 0;
-    _queue->read(
-        _fd, client_buf1, sizeof(client_buf1),
-        [&result1, &error1](size_t r, int e) {
-            result1 = r;
-            error1 = e;
-        }
+    rawstd::Task<void> t1 = rawio::tests::await_into(
+        _queue->read(_fd, client_buf1, sizeof(client_buf1)), &result1
     );
 
     char client_buf2[5];
     size_t result2 = 0;
-    int error2 = 0;
-    _queue->read(
-        _fd, client_buf2, sizeof(client_buf2),
-        [&result2, &error2](size_t r, int e) {
-            result2 = r;
-            error2 = e;
-        }
+    rawstd::Task<void> t2 = rawio::tests::await_into(
+        _queue->read(_fd, client_buf2, sizeof(client_buf2)), &result2
     );
 
     EXPECT_NO_THROW(_wait_all());
 
     EXPECT_EQ(result1, (size_t)5);
-    EXPECT_EQ(error1, 0);
     EXPECT_EQ(strncmp(client_buf1, "data1", 5), 0);
 
     EXPECT_EQ(result2, (size_t)5);
-    EXPECT_EQ(error2, 0);
     EXPECT_EQ(strncmp(client_buf2, "data2", 5), 0);
 }
 
 TEST_F(MultiplexTest, write) {
     char client_buf1[] = "data1";
     size_t result1 = 0;
-    int error1 = 0;
-    _queue->write(_fd, client_buf1, 5, [&result1, &error1](size_t r, int e) {
-        result1 = r;
-        error1 = e;
-    });
+    rawstd::Task<void> t1 =
+        rawio::tests::await_into(_queue->write(_fd, client_buf1, 5), &result1);
 
     char client_buf2[] = "data2";
     size_t result2 = 0;
-    int error2 = 0;
-    _queue->write(_fd, client_buf2, 5, [&result2, &error2](size_t r, int e) {
-        result2 = r;
-        error2 = e;
-    });
+    rawstd::Task<void> t2 =
+        rawio::tests::await_into(_queue->write(_fd, client_buf2, 5), &result2);
 
     EXPECT_NO_THROW(_wait_all());
 
@@ -72,10 +54,7 @@ TEST_F(MultiplexTest, write) {
     _server.wait();
 
     EXPECT_EQ(result1, (size_t)5);
-    EXPECT_EQ(error1, 0);
-
     EXPECT_EQ(result2, (size_t)5);
-    EXPECT_EQ(error2, 0);
 
     EXPECT_EQ(strncmp(server_buf, "data1data2", sizeof(server_buf)), 0);
 }

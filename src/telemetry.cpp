@@ -21,7 +21,6 @@ rawstd::Stats slat_stats;
 rawstd::Stats rtt_stats;
 rawstd::Stats clat_stats;
 rawstd::Stats lat_stats;
-rawstd::Stats attempts_stats;
 rawstd::Stats in_flight_stats;
 
 std::atomic<int> in_flight{0};
@@ -117,9 +116,8 @@ void record_clat(TimePoint ns) {
     clat_stats.add(usec(ns));
 }
 
-void record_lat(TimePoint ns, unsigned int attempts) {
+void record_lat(TimePoint ns) {
     lat_stats.add(usec(ns));
-    attempts_stats.add(static_cast<double>(attempts));
 }
 
 void record_op(
@@ -151,7 +149,6 @@ void dump() {
     print_stat("rtt  (usec)", rtt_stats);
     print_stat("clat (usec)", clat_stats);
     print_stat("lat  (usec)", lat_stats);
-    print_stat("attempts", attempts_stats);
     print_stat("in-flight requests", in_flight_stats);
 
     std::vector<Op> slow = top_slow.sorted();

@@ -26,8 +26,10 @@ TEST_F(BasicsTest, empty) {
     _server.wait();
     EXPECT_THROW(_queue->wait_timeout(0), std::system_error);
 
-    int result = 0;
-    _queue->poll(_fd, POLLIN, [&result](int r) { result = r; });
+    // Submitted but never co_await-ed: fire-and-forget, exercises that an
+    // Awaitable<T> whose completion has no attached handle is a safe
+    // no-op (see Queue::_attach()/resolve_one_shot()'s null checks).
+    _queue->poll(_fd, POLLIN);
 
     EXPECT_NO_THROW(_queue->wait_timeout(0));
 
@@ -40,7 +42,8 @@ TEST_F(BasicsTest, pollin) {
     _server.wait();
 
     int result = 0;
-    _queue->poll(_fd, POLLIN, [&result](int r) { result = r; });
+    rawstd::Task<void> t =
+        rawio::tests::await_into(_queue->poll(_fd, POLLIN), &result);
     _queue->wait_timeout(0);
 
     EXPECT_EQ(result, POLLIN);
@@ -48,7 +51,8 @@ TEST_F(BasicsTest, pollin) {
 
 TEST_F(BasicsTest, pollout) {
     int result = 0;
-    _queue->poll(_fd, POLLOUT, [&result](int r) { result = r; });
+    rawstd::Task<void> t =
+        rawio::tests::await_into(_queue->poll(_fd, POLLOUT), &result);
     _queue->wait_timeout(0);
 
     EXPECT_EQ(result, POLLOUT);
@@ -75,9 +79,9 @@ TEST_F(BasicsTest, accept) {
     _server.wait();
 
     int result = -1;
-    _queue->accept(client_socket.fd(), nullptr, nullptr, [&result](int r) {
-        result = r;
-    });
+    rawstd::Task<void> t = rawio::tests::await_into(
+        _queue->accept(client_socket.fd(), nullptr, nullptr), &result
+    );
 
     EXPECT_NO_THROW(_queue->wait_timeout(0));
     EXPECT_GE(result, 0);
@@ -91,18 +95,12 @@ TEST_F(BasicsTest, read) {
     _server.wait();
 
     size_t result = 0;
-    int error = 0;
-    _queue->read(
-        _fd, client_buf, sizeof(client_buf),
-        [&result, &error](size_t r, int e) {
-            result = r;
-            error = e;
-        }
+    rawstd::Task<void> t = rawio::tests::await_into(
+        _queue->read(_fd, client_buf, sizeof(client_buf)), &result
     );
     _queue->wait_timeout(0);
 
     EXPECT_EQ(result, sizeof(client_buf));
-    EXPECT_EQ(error, 0);
     EXPECT_EQ(strcmp(client_buf, server_buf), 0);
 }
 
@@ -113,31 +111,20 @@ TEST_F(BasicsTest, recv) {
 
     char client_buf[sizeof(server_buf)];
     size_t result = 0;
-    int error = 0;
-    _queue->recv(
-        _fd, client_buf, sizeof(client_buf), 0,
-        [&result, &error](size_t r, int e) {
-            result = r;
-            error = e;
-        }
+    rawstd::Task<void> t = rawio::tests::await_into(
+        _queue->recv(_fd, client_buf, sizeof(client_buf), 0), &result
     );
     _queue->wait_timeout(0);
 
     EXPECT_EQ(result, sizeof(client_buf));
-    EXPECT_EQ(error, 0);
     EXPECT_EQ(strcmp(client_buf, server_buf), 0);
 }
 
 TEST_F(BasicsTest, write) {
     char client_buf[] = "data";
     size_t result = 0;
-    int error = 0;
-    _queue->write(
-        _fd, client_buf, sizeof(client_buf),
-        [&result, &error](size_t r, int e) {
-            result = r;
-            error = e;
-        }
+    rawstd::Task<void> t = rawio::tests::await_into(
+        _queue->write(_fd, client_buf, sizeof(client_buf)), &result
     );
     _queue->wait_timeout(0);
 
@@ -146,20 +133,14 @@ TEST_F(BasicsTest, write) {
     _server.wait();
 
     EXPECT_EQ(result, sizeof(client_buf));
-    EXPECT_EQ(error, 0);
     EXPECT_EQ(strcmp(server_buf, client_buf), 0);
 }
 
 TEST_F(BasicsTest, send) {
     char client_buf[] = "data";
     size_t result = 0;
-    int error = 0;
-    _queue->send(
-        _fd, client_buf, sizeof(client_buf), 0,
-        [&result, &error](size_t r, int e) {
-            result = r;
-            error = e;
-        }
+    rawstd::Task<void> t = rawio::tests::await_into(
+        _queue->send(_fd, client_buf, sizeof(client_buf), 0), &result
     );
     _queue->wait_timeout(0);
 
@@ -168,7 +149,6 @@ TEST_F(BasicsTest, send) {
     _server.wait();
 
     EXPECT_EQ(result, sizeof(client_buf));
-    EXPECT_EQ(error, 0);
     EXPECT_EQ(strcmp(server_buf, client_buf), 0);
 }
 
@@ -183,15 +163,16 @@ TEST(OpenCloseTest, basics) {
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(1);
 
     int fd = -1;
-    queue->open(
-        filename.c_str(), O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR,
-        [&fd](int result) { fd = result; }
+    rawstd::Task<void> open_task = rawio::tests::await_into(
+        queue->open(filename.c_str(), O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR),
+        &fd
     );
     EXPECT_EQ(fd, -1);
     queue->wait();
     EXPECT_GT(fd, 0);
 
-    queue->close(fd, [&fd](int result) { fd = result; });
+    rawstd::Task<void> close_task =
+        rawio::tests::await_into(queue->close(fd), &fd);
     EXPECT_GT(fd, 0);
     queue->wait();
     EXPECT_EQ(fd, 0);
@@ -208,33 +189,30 @@ TEST(FsyncTest, basics) {
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(1);
 
     int fd = -1;
-    queue->open(
-        filename.c_str(), O_CREAT | O_RDWR, S_IRUSR | S_IWUSR,
-        [&fd](int result) { fd = result; }
+    rawstd::Task<void> open_task = rawio::tests::await_into(
+        queue->open(filename.c_str(), O_CREAT | O_RDWR, S_IRUSR | S_IWUSR), &fd
     );
     queue->wait();
     ASSERT_GT(fd, 0);
 
     char buf[] = "data";
     size_t result = 0;
-    int error = -1;
-    queue->pwrite(
-        fd, buf, sizeof(buf), 0, /*sync=*/true,
-        [&result, &error](size_t r, int e) {
-            result = r;
-            error = e;
-        }
+    rawstd::Task<void> pwrite_task = rawio::tests::await_into(
+        queue->pwrite(fd, buf, sizeof(buf), 0, /*sync=*/true), &result
     );
     queue->wait();
     EXPECT_EQ(result, sizeof(buf));
-    EXPECT_EQ(error, 0);
 
-    error = -1;
-    queue->fsync(fd, /*datasync=*/true, [&error](int e) { error = e; });
+    int fsync_result = -1;
+    rawstd::Task<void> fsync_task = rawio::tests::await_into(
+        queue->fsync(fd, /*datasync=*/true), &fsync_result
+    );
     queue->wait();
-    EXPECT_EQ(error, 0);
+    EXPECT_EQ(fsync_result, 0);
 
-    queue->close(fd, [](int) {});
+    // Fire-and-forget: nothing left in this test cares about close()'s
+    // outcome.
+    queue->close(fd);
     queue->wait();
 }
 
@@ -255,9 +233,11 @@ TEST(ConnectTest, basics) {
     }
 
     int result = -1;
-    queue->connect(
-        socket.fd(), reinterpret_cast<sockaddr*>(&addr), sizeof(addr),
-        [&result](int r) { result = r; }
+    rawstd::Task<void> t = rawio::tests::await_into(
+        queue->connect(
+            socket.fd(), reinterpret_cast<sockaddr*>(&addr), sizeof(addr)
+        ),
+        &result
     );
 
     EXPECT_NO_THROW(queue->wait_timeout(0));

@@ -46,7 +46,7 @@ inline TimePoint now() noexcept {
 void record_slat(TimePoint ns);
 void record_rtt(TimePoint ns);
 void record_clat(TimePoint ns);
-void record_lat(TimePoint ns, unsigned int attempts);
+void record_lat(TimePoint ns);
 // Called by SessionOp::_dispatch() (ost sessions only) once slat/rtt/clat
 // are all known for this attempt, i.e. after its callback chain returns.
 // `op` is a static string (a string literal in the caller), not owned.
@@ -70,7 +70,7 @@ inline void record_rtt(TimePoint) {
 }
 inline void record_clat(TimePoint) {
 }
-inline void record_lat(TimePoint, unsigned int) {
+inline void record_lat(TimePoint) {
 }
 inline void record_op(
     TimePoint, TimePoint, TimePoint, TimePoint, const char*, size_t, off_t
