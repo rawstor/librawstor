@@ -717,32 +717,6 @@ rawstd::Task<std::vector<T>> basic_request_async(
     co_return ret;
 }
 
-// Deliberately drives basic_request_async() on its own private, one-shot
-// Queue rather than the session's shared `_queue`: this can run from
-// within Connection::_op()'s retry path (invalidate_session() ->
-// Session::create() -> set_object() -> here), which is itself reachable
-// synchronously, nested, from inside the shared Queue's own _dispatch()
-// (a completion resuming a coroutine whose retry logic replaces the
-// session it came from). Pumping the shared queue's wait_timeout() from
-// in there would reenter Queue::_dispatch() on the same io_uring ring
-// mid-reap -- corrupting its io_uring_for_each_cqe iteration and reading
-// past already-freed/reused Completions. A private Queue has no such
-// relationship to whatever might already be dispatching, at any nesting
-// depth, so pumping it here is always safe.
-template <typename T = char>
-std::vector<T> basic_request(
-    int fd, uint16_t cid, RawstorOSTCommandType cmd, const RawstdUUID& id,
-    uint64_t val
-) {
-    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
-    rawstd::Task<std::vector<T>> t =
-        basic_request_async<T>(*queue, fd, cid, cmd, id, val);
-    while (!t.done()) {
-        queue->wait_timeout(rawstor_opts_tcp_user_timeout());
-    }
-    return t.get();
-}
-
 void Session::_fail_in_flight(int error) {
     if (_ops.empty()) {
         return;
@@ -937,9 +911,9 @@ int Session::_connect() {
     return fd;
 }
 
-void Session::_set_object(Object* object) {
-    basic_request(
-        fd(), _cid_counter++, RAWSTOR_CMD_SET_OBJECT, object->id(), 0
+rawstd::Task<void> Session::_set_object(Object* object) {
+    co_await basic_request_async(
+        _queue, fd(), _cid_counter++, RAWSTOR_CMD_SET_OBJECT, object->id(), 0
     );
 }
 
@@ -948,8 +922,8 @@ rawstd::Task<void> Session::list(
 ) {
     RawstdUUID input_token = token;
     try {
-        targets = basic_request<RawstdUUID>(
-            fd(), _cid_counter++, RAWSTOR_CMD_LIST, input_token, limit
+        targets = co_await basic_request_async<RawstdUUID>(
+            _queue, fd(), _cid_counter++, RAWSTOR_CMD_LIST, input_token, limit
         );
     } catch (const std::system_error&) {
         throw;
@@ -969,7 +943,9 @@ rawstd::Task<void> Session::list(
 rawstd::Task<void>
 Session::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
     try {
-        basic_request(fd(), _cid_counter++, RAWSTOR_CMD_ALLOCATE, id, sp.size);
+        co_await basic_request_async(
+            _queue, fd(), _cid_counter++, RAWSTOR_CMD_ALLOCATE, id, sp.size
+        );
     } catch (const std::system_error&) {
         throw;
     } catch (...) {
@@ -980,7 +956,9 @@ Session::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
 
 rawstd::Task<void> Session::remove(const RawstdUUID& id) {
     try {
-        basic_request(fd(), _cid_counter++, RAWSTOR_CMD_RELEASE, id, 0);
+        co_await basic_request_async(
+            _queue, fd(), _cid_counter++, RAWSTOR_CMD_RELEASE, id, 0
+        );
     } catch (const std::system_error&) {
         throw;
     } catch (...) {
@@ -994,8 +972,9 @@ rawstd::Task<RawstorObjectSpec> Session::spec(const RawstdUUID& id) {
 
     RawstorObjectSpec ret = {};
     try {
-        std::vector<char> response =
-            basic_request(fd(), _cid_counter++, RAWSTOR_CMD_SPEC, id, 0);
+        std::vector<char> response = co_await basic_request_async(
+            _queue, fd(), _cid_counter++, RAWSTOR_CMD_SPEC, id, 0
+        );
         if (response.size() != sizeof(ret)) {
             RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
         }
@@ -1021,8 +1000,9 @@ rawstd::Task<RawstorLocationInfo> Session::info() {
     RawstorLocationInfo ret = {};
     try {
         RawstdUUID unused_id = {};
-        std::vector<char> response = basic_request(
-            fd(), _cid_counter++, RAWSTOR_CMD_LOCATION_INFO, unused_id, 0
+        std::vector<char> response = co_await basic_request_async(
+            _queue, fd(), _cid_counter++, RAWSTOR_CMD_LOCATION_INFO, unused_id,
+            0
         );
         if (response.size() != sizeof(ret)) {
             RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
@@ -1041,10 +1021,16 @@ rawstd::Task<RawstorLocationInfo> Session::info() {
     co_return ret;
 }
 
-void Session::set_object(Object* object) {
+rawstd::Task<void> Session::set_object(Object* object) {
     assert(_read_event == nullptr);
 
-    _set_object(object);
+    // The SET_OBJECT round-trip must fully complete before the
+    // recv_multishot registration below starts: basic_request_async()'s
+    // plain co_await queue.read(fd, ...) for the response head reads
+    // directly off the fd, which would race with the multishot pump if
+    // both were active on the same fd/queue at once. Sequential coroutine
+    // execution already guarantees that ordering here.
+    co_await _set_object(object);
 
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('m', "%s\n", "multishot recv");

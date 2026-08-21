@@ -26,7 +26,7 @@ protected:
 public:
     Session(Private p, rawio::Queue& queue, const rawstd::URI& location);
 
-    void set_object(Object* object) override final;
+    rawstd::Task<void> set_object(Object* object) override final;
 
     rawstd::Task<size_t>
     pread(void* buf, size_t size, off_t offset) override final;

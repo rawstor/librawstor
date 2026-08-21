@@ -27,16 +27,21 @@ namespace {
 // Retries `attempt()` up to rawstor_opts_io_attempts() times, sharing the
 // same "log and retry, or log and rethrow on the last one" shape across
 // every bounded-retry loop in this file that doesn't need the
-// EBUSY-vs-reconnect policy: session (re-)creation and the five
-// synchronous metadata calls below. The data-path methods (pread/preadv/
-// pwrite/pwritev/flush) each run their own inline retry loop instead --
-// same overall shape, but with that extra policy, so sharing this one
-// wouldn't fit them without a callback out for it.
+// EBUSY-vs-reconnect policy: session (re-)creation and the five metadata
+// calls below. `attempt()` returns a Task<T> that this coroutine itself
+// co_await's, so retrying composes as an ordinary suspension/resumption
+// instead of a nested synchronous pump -- unlike the old callback-based
+// retry_n() this replaces, nothing here ever needs a private Queue of its
+// own to drive `attempt()` to completion. The data-path methods (pread/
+// preadv/pwrite/pwritev/flush) each run their own inline retry loop
+// instead -- same overall shape, but with the extra EBUSY-vs-reconnect
+// policy, so sharing this one wouldn't fit them without a callback out
+// for it.
 template <typename F>
-auto retry_n(const char* func_name, F&& attempt) -> decltype(attempt()) {
+auto retry_n_async(const char* func_name, F&& attempt) -> decltype(attempt()) {
     for (unsigned int i = 1; i <= rawstor_opts_io_attempts(); ++i) {
         try {
-            return attempt();
+            co_return co_await attempt();
         } catch (const std::exception& e) {
             if (i == rawstor_opts_io_attempts()) {
                 rawstd_error(
@@ -86,22 +91,25 @@ Connection::~Connection() {
     }
 }
 
-std::vector<std::shared_ptr<Session>> Connection::_open(
+rawstd::Task<std::vector<std::shared_ptr<Session>>> Connection::_open(
     const rawstd::URI& location, Object* object, size_t nsessions
 ) {
-    return retry_n("Connection::_open", [&]() {
-        std::vector<std::shared_ptr<Session>> sessions;
-        sessions.reserve(nsessions);
-        for (size_t i = 0; i < nsessions; ++i) {
-            sessions.push_back(Session::create(_queue, location));
-        }
+    co_return co_await retry_n_async(
+        "Connection::_open",
+        [&]() -> rawstd::Task<std::vector<std::shared_ptr<Session>>> {
+            std::vector<std::shared_ptr<Session>> sessions;
+            sessions.reserve(nsessions);
+            for (size_t i = 0; i < nsessions; ++i) {
+                sessions.push_back(Session::create(_queue, location));
+            }
 
-        for (std::shared_ptr<Session>& s : sessions) {
-            s->set_object(object);
-        }
+            for (std::shared_ptr<Session>& s : sessions) {
+                co_await s->set_object(object);
+            }
 
-        return sessions;
-    });
+            co_return sessions;
+        }
+    );
 }
 
 void Connection::_finish(rawstor::telemetry::TimePoint t_call) {
@@ -117,6 +125,13 @@ rawstd::Task<T> Connection::_with_retry(
     for (unsigned int attempt = 1; attempt <= rawstor_opts_io_attempts();
          ++attempt) {
         std::shared_ptr<Session> s = get_next_session();
+
+        // co_await is not permitted inside a catch handler, so this only
+        // records what happened; invalidate_session() itself is co_await
+        // -ed below, outside any handler, once execution has left the
+        // catch block below entirely.
+        bool caught = false;
+        int error = 0;
 
         try {
             if constexpr (std::is_void_v<T>) {
@@ -145,7 +160,8 @@ rawstd::Task<T> Connection::_with_retry(
                 co_return result;
             }
         } catch (const std::system_error& e) {
-            int error = e.code().value();
+            caught = true;
+            error = e.code().value();
 
             if constexpr (std::is_void_v<T>) {
                 RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "error = %d\n", error);
@@ -169,7 +185,9 @@ rawstd::Task<T> Connection::_with_retry(
                 func_name, s->str().c_str(), std::strerror(error), attempt,
                 rawstor_opts_io_attempts()
             );
+        }
 
+        if (caught) {
             // EBUSY means the session itself is fine, just backed up
             // against the server's per-session write-throttle-limit/
             // write-backlog-capacity -- invalidate_session() would just
@@ -178,7 +196,7 @@ rawstd::Task<T> Connection::_with_retry(
             // so only a genuine transport/session error pays for it here.
             if (error != EBUSY) {
                 try {
-                    invalidate_session(s);
+                    co_await invalidate_session(s);
                 } catch (const std::system_error&) {
                     throw;
                 } catch (const std::exception& e2) {
@@ -210,11 +228,37 @@ std::shared_ptr<Session> Connection::get_next_session() {
     return s;
 }
 
-void Connection::invalidate_session(const std::shared_ptr<Session>& s) {
+rawstd::Task<void>
+Connection::invalidate_session(const std::shared_ptr<Session>& s) {
     typename std::vector<std::shared_ptr<Session>>::iterator it =
         std::find(_sessions.begin(), _sessions.end(), s);
 
-    if (it != _sessions.end()) {
+    if (it == _sessions.end()) {
+        // Already replaced (or removed) by someone else -- nothing to do.
+        co_return;
+    }
+
+    // Two concurrent callers can both observe the exact same broken
+    // session here: e.g. two pwrite()s in flight against the sole session
+    // of a single-session Connection both fail once it drops, and both
+    // reach this same point before either has had a chance to replace it
+    // (this is now a real suspension point, not the old fully-blocking
+    // call that accidentally serialized these). Without deduplication
+    // both would open their own independent replacement connection for
+    // the *same* failure -- wasteful, and observably wrong for a caller
+    // that expects at most one reconnect per broken session (e.g. a
+    // scripted test server good for exactly N connections). Only the
+    // first caller for a given session actually reconnects; a second,
+    // concurrent caller just returns immediately and lets its own next
+    // attempt pick up whatever ends up installed via get_next_session()
+    // -- the still-stale session if the winner hasn't finished yet (that
+    // attempt simply fails fast and retries again, same as before this
+    // dedup existed), or the fresh replacement if it has.
+    if (!_reconnecting.insert(s.get()).second) {
+        co_return;
+    }
+
+    try {
         // Open the replacement before touching _sessions: if _open() itself
         // fails (e.g. the server is unreachable under load, exhausting its
         // own internal retries), leave the broken-but-present session in
@@ -224,9 +268,21 @@ void Connection::invalidate_session(const std::shared_ptr<Session>& s) {
         // leaving the stale entry just means the next op that picks it up
         // retries invalidate_session() again instead of failing forever.
         std::vector<std::shared_ptr<Session>> new_sessions =
-            _open(s->location(), _object, 1);
+            co_await _open(s->location(), _object, 1);
+        _reconnecting.erase(s.get());
 
-        *it = new_sessions.front();
+        // Re-locate s's slot instead of trusting `it` across the co_await
+        // above: close() or another, unrelated invalidate_session() cycle
+        // for this same session (started after this one released it from
+        // _reconnecting) could have altered _sessions while this one was
+        // suspended.
+        it = std::find(_sessions.begin(), _sessions.end(), s);
+        if (it != _sessions.end()) {
+            *it = new_sessions.front();
+        }
+    } catch (...) {
+        _reconnecting.erase(s.get());
+        throw;
     }
 }
 
@@ -238,30 +294,29 @@ const rawstd::URI* Connection::location() const noexcept {
     return &_sessions.front()->location();
 }
 
-void Connection::list(
-    const rawstd::URI& location, unsigned int limit,
+rawstd::Task<void> Connection::list(
+    rawio::Queue& queue, const rawstd::URI& location, unsigned int limit,
     std::vector<RawstdUUID>& targets, RawstdUUID& token
 ) {
     std::vector<RawstdUUID> ret;
     RawstdUUID ret_token = {};
 
-    retry_n(__FUNCTION__, [&]() {
-        std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(1);
-        std::unique_ptr<Session> s = Session::create(*queue, location);
+    co_await retry_n_async(__FUNCTION__, [&]() -> rawstd::Task<void> {
+        std::unique_ptr<Session> s = Session::create(queue, location);
         // Reset from the caller's original token on every attempt --
         // list() now overwrites token in place, so a failed attempt
         // that got partway through must not leak its own next-page
         // cursor into the following retry's input.
         ret_token = token;
-        run(*queue, s->list(limit, ret, ret_token));
+        co_await s->list(limit, ret, ret_token);
     });
 
     targets.swap(ret);
     token = ret_token;
 }
 
-void Connection::create(
-    const rawstd::URI& target, const RawstorObjectSpec& sp
+rawstd::Task<void> Connection::create(
+    rawio::Queue& queue, const rawstd::URI& target, const RawstorObjectSpec& sp
 ) {
     RawstdUUID id;
     int res = rawstd_uuid_from_string(&id, target.path().filename().c_str());
@@ -269,53 +324,57 @@ void Connection::create(
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 
-    retry_n(__FUNCTION__, [&]() {
-        std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(1);
-        std::unique_ptr<Session> s = Session::create(*queue, target.parent());
-        run(*queue, s->create(id, sp));
+    co_await retry_n_async(__FUNCTION__, [&]() -> rawstd::Task<void> {
+        std::unique_ptr<Session> s = Session::create(queue, target.parent());
+        co_await s->create(id, sp);
     });
 }
 
-void Connection::remove(const rawstd::URI& target) {
+rawstd::Task<void>
+Connection::remove(rawio::Queue& queue, const rawstd::URI& target) {
     RawstdUUID id;
     int res = rawstd_uuid_from_string(&id, target.path().filename().c_str());
     if (res) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 
-    retry_n(__FUNCTION__, [&]() {
-        std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(1);
-        std::unique_ptr<Session> s = Session::create(*queue, target.parent());
-        run(*queue, s->remove(id));
+    co_await retry_n_async(__FUNCTION__, [&]() -> rawstd::Task<void> {
+        std::unique_ptr<Session> s = Session::create(queue, target.parent());
+        co_await s->remove(id);
     });
 }
 
-void Connection::spec(const rawstd::URI& target, RawstorObjectSpec* sp) {
+rawstd::Task<RawstorObjectSpec>
+Connection::spec(rawio::Queue& queue, const rawstd::URI& target) {
     RawstdUUID id;
     int res = rawstd_uuid_from_string(&id, target.path().filename().c_str());
     if (res) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 
-    retry_n(__FUNCTION__, [&]() {
-        std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(1);
-        std::unique_ptr<Session> s = Session::create(*queue, target.parent());
-        *sp = run(*queue, s->spec(id));
-    });
+    co_return co_await retry_n_async(
+        __FUNCTION__, [&]() -> rawstd::Task<RawstorObjectSpec> {
+            std::unique_ptr<Session> s =
+                Session::create(queue, target.parent());
+            co_return co_await s->spec(id);
+        }
+    );
 }
 
-void Connection::info(const rawstd::URI& location, RawstorLocationInfo* info) {
-    retry_n(__FUNCTION__, [&]() {
-        std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(1);
-        std::unique_ptr<Session> s = Session::create(*queue, location);
-        *info = run(*queue, s->info());
-    });
+rawstd::Task<RawstorLocationInfo>
+Connection::info(rawio::Queue& queue, const rawstd::URI& location) {
+    co_return co_await retry_n_async(
+        __FUNCTION__, [&]() -> rawstd::Task<RawstorLocationInfo> {
+            std::unique_ptr<Session> s = Session::create(queue, location);
+            co_return co_await s->info();
+        }
+    );
 }
 
 void Connection::open(
     const rawstd::URI& location, Object* object, size_t nsessions
 ) {
-    _sessions = _open(location, object, nsessions);
+    _sessions = run(_queue, _open(location, object, nsessions));
     _object = object;
 }
 

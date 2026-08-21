@@ -27,19 +27,21 @@ private:
     std::vector<std::unique_ptr<rawstor::Connection>> _cns;
 
 public:
-    static void list(
-        const std::vector<rawstd::URI>& locations, unsigned int limit,
-        std::list<std::vector<rawstd::URI>>& targets,
+    static rawstd::Task<void> list(
+        rawio::Queue& queue, const std::vector<rawstd::URI>& locations,
+        unsigned int limit, std::list<std::vector<rawstd::URI>>& targets,
         RawstorPaginationToken& token
     );
-    static void
-    info(const std::vector<rawstd::URI>& locations, RawstorLocationInfo* info);
-    static void create(
-        const std::vector<rawstd::URI>& targets, const RawstorObjectSpec& sp
+    static rawstd::Task<RawstorLocationInfo>
+    info(rawio::Queue& queue, const std::vector<rawstd::URI>& locations);
+    static rawstd::Task<void> create(
+        rawio::Queue& queue, const std::vector<rawstd::URI>& targets,
+        const RawstorObjectSpec& sp
     );
-    static void remove(const std::vector<rawstd::URI>& targets);
-    static void
-    spec(const std::vector<rawstd::URI>& targets, RawstorObjectSpec* sp);
+    static rawstd::Task<void>
+    remove(rawio::Queue& queue, const std::vector<rawstd::URI>& targets);
+    static rawstd::Task<RawstorObjectSpec>
+    spec(rawio::Queue& queue, const std::vector<rawstd::URI>& targets);
 
     Object(rawio::Queue& queue, const std::vector<rawstd::URI>& targets);
     Object(const Object&) = delete;

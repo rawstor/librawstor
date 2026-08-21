@@ -37,7 +37,7 @@ private:
     std::unordered_map<uint16_t, std::shared_ptr<SessionOp>> _ops;
 
     int _connect();
-    void _set_object(Object* object);
+    rawstd::Task<void> _set_object(Object* object);
     void _fail_in_flight(int error);
     // Returns nullptr, rather than throwing, for an unregistered cid: a
     // response can legitimately race with Connection::_op() already having
@@ -79,7 +79,7 @@ public:
 
     rawstd::Task<RawstorLocationInfo> info() override;
 
-    void set_object(Object* object) override;
+    rawstd::Task<void> set_object(Object* object) override;
 
     rawstd::Task<size_t> pread(void* buf, size_t size, off_t offset) override;
 

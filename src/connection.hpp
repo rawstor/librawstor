@@ -14,6 +14,7 @@
 #include <rawstd/uuid.h>
 
 #include <memory>
+#include <unordered_set>
 #include <vector>
 
 #include <cstddef>
@@ -30,7 +31,13 @@ private:
     std::vector<std::shared_ptr<Session>> _sessions;
     size_t _session_index;
 
-    std::vector<std::shared_ptr<Session>>
+    // Sessions currently being replaced by an in-flight
+    // invalidate_session() call -- see that method's own doc comment for
+    // why this is needed now that it's a real coroutine instead of a
+    // fully-blocking call.
+    std::unordered_set<Session*> _reconnecting;
+
+    rawstd::Task<std::vector<std::shared_ptr<Session>>>
     _open(const rawstd::URI& location, Object* object, size_t nsessions);
 
     // Every data-path method's terminal path -- success or final failure
@@ -58,18 +65,24 @@ private:
     );
 
 public:
-    static void list(
-        const rawstd::URI& location, unsigned int limit,
+    static rawstd::Task<void> list(
+        rawio::Queue& queue, const rawstd::URI& location, unsigned int limit,
         std::vector<RawstdUUID>& uuids, RawstdUUID& token
     );
 
-    static void create(const rawstd::URI& target, const RawstorObjectSpec& sp);
+    static rawstd::Task<void> create(
+        rawio::Queue& queue, const rawstd::URI& target,
+        const RawstorObjectSpec& sp
+    );
 
-    static void remove(const rawstd::URI& target);
+    static rawstd::Task<void>
+    remove(rawio::Queue& queue, const rawstd::URI& target);
 
-    static void spec(const rawstd::URI& target, RawstorObjectSpec* sp);
+    static rawstd::Task<RawstorObjectSpec>
+    spec(rawio::Queue& queue, const rawstd::URI& target);
 
-    static void info(const rawstd::URI& location, RawstorLocationInfo* info);
+    static rawstd::Task<RawstorLocationInfo>
+    info(rawio::Queue& queue, const rawstd::URI& location);
 
     explicit Connection(rawio::Queue& queue);
     Connection(const Connection&) = delete;
@@ -78,7 +91,7 @@ public:
     Connection& operator=(const Connection&) = delete;
 
     std::shared_ptr<Session> get_next_session();
-    void invalidate_session(const std::shared_ptr<Session>& s);
+    rawstd::Task<void> invalidate_session(const std::shared_ptr<Session>& s);
 
     const rawstd::URI* location() const noexcept;
 

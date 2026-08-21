@@ -65,7 +65,7 @@ public:
 
     virtual rawstd::Task<RawstorLocationInfo> info() = 0;
 
-    virtual void set_object(Object* object) = 0;
+    virtual rawstd::Task<void> set_object(Object* object) = 0;
 
     virtual rawstd::Task<size_t>
     pread(void* buf, size_t size, off_t offset) = 0;

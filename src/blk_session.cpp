@@ -16,7 +16,7 @@ Session::Session(Private p, rawio::Queue& queue, const rawstd::URI& location) :
     rawstor::Session(p, queue, location) {
 }
 
-void Session::set_object(Object* object) {
+rawstd::Task<void> Session::set_object(Object* object) {
     if (fd() != -1) {
         throw std::runtime_error("Object already set");
     }
@@ -27,6 +27,7 @@ void Session::set_object(Object* object) {
     }
 
     set_fd(fd);
+    co_return;
 }
 
 rawstd::Task<size_t> Session::pread(void* buf, size_t size, off_t offset) {
