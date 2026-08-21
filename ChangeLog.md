@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - `--write-cache=on|off` for `rawstor-vhost` and `rawstor-vhost-qemu` (default `off`, write-through): advertises `VIRTIO_BLK_F_CONFIG_WCE` and honors the guest live-toggling it via `SET_CONFIG`. With write-cache off, every write is made durable (`sync=true`) since the guest treats a completed write as already durable and won't issue a `FLUSH`.
+- `rawstor-vduse`: a new virtio-blk backend using the [VDUSE](https://docs.kernel.org/userspace-api/vduse.html) (vDPA Device in Userspace) kernel protocol, alongside `rawstor-vhost`. Implements the protocol natively (no vendored third-party library, same approach as `vhost/`), in its own deb/rpm package with a `rawstor-vduse@.service` systemd template unit and udev rule. Linux-only. See the top-level README's "rawstor-vduse" section.
 
 ### Changed
 - The packaged `rawstor-vhost@.service` systemd unit now defaults `RAWSTOR_WRITE_CACHE` to `on` instead of `off`: forcing a journal commit on every write (write-cache off) was measured to stall write round-trip times into the tens of seconds under concurrent load on a host whose backing filesystem commits slowly, while any modern guest kernel already issues an explicit flush when it needs durability.
@@ -68,9 +69,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `rawstor info` rounds `used`/`available`/`total` to a human-readable unit by default (e.g. `~140G` instead of `147357440K`), prefixing rounded values with `~`; `-b`/`-k`/`-m`/`-g`/`-t`/`-p`/`-e` force a specific unit instead.
 
 ## [0.2.6] - 2026-08-10
-
-### Added
-- `rawstor-vduse`: a new virtio-blk backend using the [VDUSE](https://docs.kernel.org/userspace-api/vduse.html) (vDPA Device in Userspace) kernel protocol, alongside `rawstor-vhost`. Implements the protocol natively (no vendored third-party library, same approach as `vhost/`), in its own deb/rpm package with a `rawstor-vduse@.service` systemd template unit and udev rule. Linux-only. See the top-level README's "rawstor-vduse" section.
 
 ### Changed
 - `rawstor-ost.service`/`rawstor-vhost@.service` now document and pass through all `RAWSTOR_OPTS_*` client/server tuning environment variables (previously only `BIND_ADDR`/`RAWSTOR_LOCATION`/`RAWSTOR_WRITE_CACHE`).
