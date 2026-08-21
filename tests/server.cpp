@@ -1,5 +1,7 @@
 #include "server.hpp"
 
+#include <rawio/awaitable.hpp>
+
 #include <rawstd/gpp.hpp>
 #include <rawstd/iovec.h>
 #include <rawstd/logging.hpp>
@@ -138,7 +140,6 @@ Server::Server(int port, unsigned int depth) :
     _fd(-1),
     _in(-1),
     _out(-1),
-    _exit(false),
     _client_fd(-1),
     _depth(depth),
     _thread(nullptr) {
@@ -236,25 +237,15 @@ void Server::_notify() {
 void Server::_loop() {
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(_depth);
 
-    std::shared_ptr<std::function<void(size_t, int)>> cb =
-        std::make_shared<std::function<void(size_t, int)>>();
+    rawstd::Task<void> t = _run(*queue);
+    while (!t.done()) {
+        queue->wait();
+    }
+    t.get();
+}
 
-    auto wrapper = [cb]() {
-        return [cb](size_t result, int error) { (*cb)(result, error); };
-    };
-
-    unsigned int value;
-    *cb = [this, &queue, &value, &wrapper](size_t result, int error) {
-        if (error) {
-            RAWSTD_THROW_SYSTEM_ERROR(error);
-        }
-        if (result == 0) {
-            RAWSTD_THROW_SYSTEM_ERROR(EPIPE);
-        }
-        if (result != sizeof(value)) {
-            throw std::runtime_error("Partial read");
-        }
-
+rawstd::Task<void> Server::_run(rawio::Queue& queue) {
+    while (true) {
         std::shared_ptr<Command> command;
         {
             std::unique_lock lock(_mutex);
@@ -264,59 +255,54 @@ void Server::_loop() {
             }
         }
 
-        if (command.get() != nullptr) {
-            switch (command->type()) {
-            case CT_ACCEPT:
-                _do_accept(*queue.get(), command);
-                break;
-            case CT_CLOSE:
-                _do_close(*queue.get(), command);
-                break;
-            case CT_READ:
-                _do_read(*queue.get(), command);
-                break;
-            case CT_STOP:
-                _exit = 1;
-                return;
-            case CT_WRITE:
-                _do_write(*queue.get(), command);
-                break;
-            case CT_WRITEV:
-                _do_writev(*queue.get(), command);
-                break;
+        if (command == nullptr) {
+            unsigned int value;
+            size_t result = co_await queue.read(_out, &value, sizeof(value));
+            if (result == 0) {
+                RAWSTD_THROW_SYSTEM_ERROR(EPIPE);
             }
+            if (result != sizeof(value)) {
+                throw std::runtime_error("Partial read");
+            }
+            continue;
         }
 
-        queue->read(_out, &value, sizeof(value), wrapper());
-    };
-    queue->read(_out, &value, sizeof(value), wrapper());
-
-    while (!_exit) {
-        queue->wait();
+        switch (command->type()) {
+        case CT_ACCEPT:
+            co_await _do_accept(queue, command);
+            break;
+        case CT_CLOSE:
+            _do_close(queue, command);
+            break;
+        case CT_READ:
+            co_await _do_read(queue, command);
+            break;
+        case CT_STOP:
+            co_return;
+        case CT_WRITE:
+            co_await _do_write(queue, command);
+            break;
+        case CT_WRITEV:
+            co_await _do_writev(queue, command);
+            break;
+        }
     }
-
-    queue.reset();
 }
 
-void Server::_do_accept(rawio::Queue& queue, std::shared_ptr<Command> command) {
+rawstd::Task<void>
+Server::_do_accept(rawio::Queue& queue, std::shared_ptr<Command> command) {
     auto command_accept = std::dynamic_pointer_cast<CommandAccept>(command);
-    queue.accept(_fd, nullptr, nullptr, [this, command_accept](int result) {
-        _notify();
 
-        if (result < 0) {
-            RAWSTD_THROW_SYSTEM_ERROR(-result);
-        }
-        RAWSTD_TRACE_EVENT_MESSAGE(
-            command_accept->trace_event, "accepted on fd: %d\n", result
-        );
-        assert(_client_fd == -1);
-        _client_fd = result;
-    });
+    int result = co_await queue.accept(_fd, nullptr, nullptr);
+
+    RAWSTD_TRACE_EVENT_MESSAGE(
+        command_accept->trace_event, "accepted on fd: %d\n", result
+    );
+    assert(_client_fd == -1);
+    _client_fd = result;
 }
 
 void Server::_do_close(rawio::Queue&, std::shared_ptr<Command> command) {
-    _notify();
-
     int res = ::close(_client_fd);
     if (res == -1) {
         RAWSTD_THROW_ERRNO();
@@ -327,80 +313,60 @@ void Server::_do_close(rawio::Queue&, std::shared_ptr<Command> command) {
     _client_fd = -1;
 }
 
-void Server::_do_read(rawio::Queue& queue, std::shared_ptr<Command> command) {
+rawstd::Task<void>
+Server::_do_read(rawio::Queue& queue, std::shared_ptr<Command> command) {
     assert(_client_fd != -1);
 
     auto command_read = std::dynamic_pointer_cast<CommandRead>(command);
-    queue.read(
-        _client_fd, command_read->buf(), command_read->size(),
-        [this, command_read](size_t result, int error) {
-            _notify();
-
-            RAWSTD_TRACE_EVENT_MESSAGE(
-                command_read->trace_event, "read(): result = %zu, error = %d\n",
-                result, error
-            );
-            if (error) {
-                RAWSTD_THROW_SYSTEM_ERROR(error);
-            }
-            if (result == 0) {
-                RAWSTD_THROW_SYSTEM_ERROR(EPIPE);
-            }
-            if (static_cast<size_t>(result) != command_read->size()) {
-                throw std::runtime_error("Partial read");
-            }
-            command_read->cb();
-        }
+    size_t result = co_await queue.read(
+        _client_fd, command_read->buf(), command_read->size()
     );
+
+    RAWSTD_TRACE_EVENT_MESSAGE(
+        command_read->trace_event, "read(): result = %zu, error = 0\n", result
+    );
+    if (result == 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(EPIPE);
+    }
+    if (result != command_read->size()) {
+        throw std::runtime_error("Partial read");
+    }
+    command_read->cb();
 }
 
-void Server::_do_write(rawio::Queue& queue, std::shared_ptr<Command> command) {
+rawstd::Task<void>
+Server::_do_write(rawio::Queue& queue, std::shared_ptr<Command> command) {
     assert(_client_fd != -1);
 
     auto command_write = std::dynamic_pointer_cast<CommandWrite>(command);
-    queue.write(
-        _client_fd, command_write->buf(), command_write->size(),
-        [this, command_write](size_t result, int error) {
-            _notify();
-
-            RAWSTD_TRACE_EVENT_MESSAGE(
-                command_write->trace_event,
-                "write(): result = %zu, error = %d\n", result, error
-            );
-            if (error) {
-                RAWSTD_THROW_SYSTEM_ERROR(error);
-            }
-            if (static_cast<size_t>(result) != command_write->size()) {
-                throw std::runtime_error("Partial write");
-            }
-        }
+    size_t result = co_await queue.write(
+        _client_fd, command_write->buf(), command_write->size()
     );
+
+    RAWSTD_TRACE_EVENT_MESSAGE(
+        command_write->trace_event, "write(): result = %zu, error = 0\n", result
+    );
+    if (result != command_write->size()) {
+        throw std::runtime_error("Partial write");
+    }
 }
 
-void Server::_do_writev(rawio::Queue& queue, std::shared_ptr<Command> command) {
+rawstd::Task<void>
+Server::_do_writev(rawio::Queue& queue, std::shared_ptr<Command> command) {
     assert(_client_fd != -1);
 
     auto command_writev = std::dynamic_pointer_cast<CommandWriteV>(command);
-    queue.writev(
-        _client_fd, command_writev->iov(), command_writev->niov(),
-        [this, command_writev](size_t result, int error) {
-            _notify();
-
-            RAWSTD_TRACE_EVENT_MESSAGE(
-                command_writev->trace_event, "result = %zu, error = %d\n",
-                result, error
-            );
-            if (error) {
-                RAWSTD_THROW_SYSTEM_ERROR(error);
-            }
-            if (static_cast<size_t>(result) !=
-                rawstd_iovec_size(
-                    command_writev->iov(), command_writev->niov()
-                )) {
-                throw std::runtime_error("Partial write");
-            }
-        }
+    size_t result = co_await queue.writev(
+        _client_fd, command_writev->iov(), command_writev->niov()
     );
+
+    RAWSTD_TRACE_EVENT_MESSAGE(
+        command_writev->trace_event, "result = %zu, error = 0\n", result
+    );
+    if (result !=
+        rawstd_iovec_size(command_writev->iov(), command_writev->niov())) {
+        throw std::runtime_error("Partial write");
+    }
 }
 
 void Server::_stop() {

@@ -1,6 +1,7 @@
 #include "fixture.hpp"
 #include "server.hpp"
 
+#include <rawstd/coro.hpp>
 #include <rawstd/socket.h>
 
 #include <gtest/gtest.h>
@@ -21,7 +22,8 @@ TEST_F(PollHupTest, pollin) {
     _server.wait();
 
     int result = 0;
-    _queue->poll(_fd, POLLIN, [&result](int r) { result = r; });
+    rawstd::Task<void> t =
+        rawio::tests::await_into(_queue->poll(_fd, POLLIN), &result);
     _queue->wait_timeout(0);
 
     EXPECT_TRUE(result & POLLIN);
@@ -33,7 +35,8 @@ TEST_F(PollHupTest, pollout) {
     _server.wait();
 
     int result = 0;
-    _queue->poll(_fd, POLLOUT, [&result](int r) { result = r; });
+    rawstd::Task<void> t =
+        rawio::tests::await_into(_queue->poll(_fd, POLLOUT), &result);
     _queue->wait_timeout(0);
 
     EXPECT_TRUE(result & POLLHUP);
@@ -47,15 +50,11 @@ TEST_F(PollHupTest, read) {
 
     char client_buf[sizeof(server_buf)];
     size_t result = 0;
-    int error = 0;
-    _queue->read(_fd, client_buf, 10, [&result, &error](size_t r, int e) {
-        result = r;
-        error = e;
-    });
+    rawstd::Task<void> t =
+        rawio::tests::await_into(_queue->read(_fd, client_buf, 10), &result);
     _queue->wait_timeout(0);
 
     EXPECT_EQ(result, (size_t)5);
-    EXPECT_EQ(error, 0);
     EXPECT_EQ(strncmp(client_buf, server_buf, 5), 0);
 }
 
@@ -66,12 +65,9 @@ TEST_F(PollHupTest, send) {
     char client_buf[] = "data";
     size_t result = 0;
     int error = 0;
-    _queue->send(
-        _fd, client_buf, sizeof(client_buf), RAWSTD_MSG_NOSIGNAL,
-        [&result, &error](size_t r, int e) {
-            result = r;
-            error = e;
-        }
+    rawstd::Task<void> t = rawio::tests::await_into(
+        _queue->send(_fd, client_buf, sizeof(client_buf), RAWSTD_MSG_NOSIGNAL),
+        &result, &error
     );
     _queue->wait_timeout(0);
 

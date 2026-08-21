@@ -5,12 +5,11 @@
 
 #include <rawio/queue.hpp>
 
+#include <rawstd/coro.hpp>
 #include <rawstd/uri.hpp>
 #include <rawstd/uuid.h>
 
 #include <rawstor/object.h>
-
-#include <functional>
 
 namespace rawstor {
 namespace blk {
@@ -27,29 +26,25 @@ protected:
 public:
     Session(Private p, rawio::Queue& queue, const rawstd::URI& location);
 
-    void set_object(Object* object) override final;
+    rawstd::Task<void> set_object(Object* object) override final;
 
-    void pread(
-        void* buf, size_t size, off_t offset,
-        std::function<void(size_t, int)>&& cb
+    rawstd::Task<size_t>
+    pread(void* buf, size_t size, off_t offset) override final;
+
+    rawstd::Task<size_t> preadv(
+        iovec* iov, unsigned int niov, size_t size, off_t offset
     ) override final;
 
-    void preadv(
-        iovec* iov, unsigned int niov, size_t size, off_t offset,
-        std::function<void(size_t, int)>&& cb
+    rawstd::Task<size_t> pwrite(
+        const void* buf, size_t size, off_t offset, bool sync
     ) override final;
 
-    void pwrite(
-        const void* buf, size_t size, off_t offset, bool sync,
-        std::function<void(size_t, int)>&& cb
-    ) override final;
-
-    void pwritev(
+    rawstd::Task<size_t> pwritev(
         const iovec* iov, unsigned int niov, size_t size, off_t offset,
-        bool sync, std::function<void(size_t, int)>&& cb
+        bool sync
     ) override final;
 
-    void flush(std::function<void(int)>&& cb) override final;
+    rawstd::Task<void> flush() override final;
 };
 
 } // namespace blk

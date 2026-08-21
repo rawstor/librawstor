@@ -41,6 +41,12 @@ private:
 
     void _eval(std::unique_ptr<EventEval> event);
 
+protected:
+    void _attach(
+        rawio::Event* event, std::coroutine_handle<> h, size_t* value,
+        int* error
+    ) noexcept override;
+
 public:
     static const std::string& engine_name();
     static void setup_fd(int fd);
@@ -51,109 +57,76 @@ public:
         _current_event(nullptr),
         _dispatch_generation(0) {}
 
-    ~Queue() override { _tearing_down = true; }
+    ~Queue() override;
 
     inline unsigned int dispatch_generation() const noexcept {
         return _dispatch_generation;
     }
 
-    rawio::Event* open(
-        const char* path, int flags, mode_t mode, std::function<void(int)>&& cb
-    ) override;
+    rawio::Awaitable<int>
+    open(const char* path, int flags, mode_t mode) override;
 
-    rawio::Event* close(int fd, std::function<void(int)>&& cb) override;
+    rawio::Awaitable<int> close(int fd) override;
 
-    rawio::Event*
-    poll(int fd, unsigned int mask, std::function<void(int)>&& cb) override;
+    rawio::Awaitable<int> poll(int fd, unsigned int mask) override;
 
-    rawio::Event* poll_multishot(
-        int fd, unsigned int mask, std::function<void(int)>&& cb
-    ) override;
+    rawio::PollStream poll_multishot(int fd, unsigned int mask) override;
 
-    rawio::Event* accept(
-        int fd, sockaddr* addr, socklen_t* addrlen,
-        std::function<void(int)>&& cb
-    ) override;
+    rawio::Awaitable<int>
+    accept(int fd, sockaddr* addr, socklen_t* addrlen) override;
 
-    rawio::Event*
-    accept_multishot(int fd, std::function<void(int)>&& cb) override;
+    rawio::AcceptStream accept_multishot(int fd) override;
 
-    rawio::Event* connect(
-        int fd, const sockaddr* addr, socklen_t addrlen,
-        std::function<void(int)>&& cb
-    ) override;
+    rawio::Awaitable<int>
+    connect(int fd, const sockaddr* addr, socklen_t addrlen) override;
 
-    rawio::Event* read(
-        int fd, void* buf, size_t size, std::function<void(size_t, int)>&& cb
-    ) override;
+    rawio::Awaitable<size_t> read(int fd, void* buf, size_t size) override;
 
-    rawio::Event* readv(
-        int fd, iovec* iov, unsigned int niov,
-        std::function<void(size_t, int)>&& cb
-    ) override;
+    rawio::Awaitable<size_t>
+    readv(int fd, iovec* iov, unsigned int niov) override;
 
-    rawio::Event* pread(
-        int fd, void* buf, size_t size, off_t offset,
-        std::function<void(size_t, int)>&& cb
-    ) override;
+    rawio::Awaitable<size_t>
+    pread(int fd, void* buf, size_t size, off_t offset) override;
 
-    rawio::Event* preadv(
-        int fd, iovec* iov, unsigned int niov, off_t offset,
-        std::function<void(size_t, int)>&& cb
-    ) override;
+    rawio::Awaitable<size_t>
+    preadv(int fd, iovec* iov, unsigned int niov, off_t offset) override;
 
-    rawio::Event* recv(
-        int fd, void* buf, size_t size, unsigned int flags,
-        std::function<void(size_t, int)>&& cb
-    ) override;
+    rawio::Awaitable<size_t>
+    recv(int fd, void* buf, size_t size, unsigned int flags) override;
 
-    rawio::Event* recv_multishot(
+    rawio::RecvStream recv_multishot(
         int fd, size_t entry_size, unsigned int entries, size_t size,
-        unsigned int flags,
-        std::function<size_t(const iovec*, unsigned int, size_t, int)>&& cb
+        unsigned int flags
     ) override;
 
-    rawio::Event* recvmsg(
-        int fd, msghdr* msg, unsigned int flags,
-        std::function<void(size_t, int)>&& cb
+    rawio::Awaitable<size_t>
+    recvmsg(int fd, msghdr* msg, unsigned int flags) override;
+
+    rawio::Awaitable<size_t>
+    write(int fd, const void* buf, size_t size) override;
+
+    rawio::Awaitable<size_t>
+    writev(int fd, const iovec* iov, unsigned int niov) override;
+
+    rawio::Awaitable<size_t> pwrite(
+        int fd, const void* buf, size_t size, off_t offset, bool sync
     ) override;
 
-    rawio::Event* write(
-        int fd, const void* buf, size_t size,
-        std::function<void(size_t, int)>&& cb
+    rawio::Awaitable<size_t> pwritev(
+        int fd, const iovec* iov, unsigned int niov, off_t offset, bool sync
     ) override;
 
-    rawio::Event* writev(
-        int fd, const iovec* iov, unsigned int niov,
-        std::function<void(size_t, int)>&& cb
-    ) override;
+    rawio::Awaitable<int> fsync(int fd, bool datasync) override;
 
-    rawio::Event* pwrite(
-        int fd, const void* buf, size_t size, off_t offset, bool sync,
-        std::function<void(size_t, int)>&& cb
-    ) override;
+    rawio::Awaitable<size_t>
+    send(int fd, const void* buf, size_t size, unsigned int flags) override;
 
-    rawio::Event* pwritev(
-        int fd, const iovec* iov, unsigned int niov, off_t offset, bool sync,
-        std::function<void(size_t, int)>&& cb
-    ) override;
+    rawio::Awaitable<size_t>
+    sendmsg(int fd, const msghdr* msg, unsigned int flags) override;
 
-    rawio::Event*
-    fsync(int fd, bool datasync, std::function<void(int)>&& cb) override;
+    rawio::Awaitable<void> cancel(rawio::Event* e) override;
 
-    rawio::Event* send(
-        int fd, const void* buf, size_t size, unsigned int flags,
-        std::function<void(size_t, int)>&& cb
-    ) override;
-
-    rawio::Event* sendmsg(
-        int fd, const msghdr* msg, unsigned int flags,
-        std::function<void(size_t, int)>&& cb
-    ) override;
-
-    void cancel(rawio::Event* e) override;
-
-    void cancel(int fd) override;
+    rawio::Awaitable<void> cancel(int fd) override;
 
     void wait() override;
 

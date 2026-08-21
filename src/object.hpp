@@ -6,10 +6,10 @@
 
 #include <rawio/queue.hpp>
 
+#include <rawstd/coro.hpp>
 #include <rawstd/uri.hpp>
 #include <rawstd/uuid.h>
 
-#include <functional>
 #include <list>
 #include <memory>
 #include <vector>
@@ -27,19 +27,21 @@ private:
     std::vector<std::unique_ptr<rawstor::Connection>> _cns;
 
 public:
-    static void list(
-        const std::vector<rawstd::URI>& locations, unsigned int limit,
-        std::list<std::vector<rawstd::URI>>& targets,
+    static rawstd::Task<void> list(
+        rawio::Queue& queue, const std::vector<rawstd::URI>& locations,
+        unsigned int limit, std::list<std::vector<rawstd::URI>>& targets,
         RawstorPaginationToken& token
     );
-    static void
-    info(const std::vector<rawstd::URI>& locations, RawstorLocationInfo* info);
-    static void create(
-        const std::vector<rawstd::URI>& targets, const RawstorObjectSpec& sp
+    static rawstd::Task<RawstorLocationInfo>
+    info(rawio::Queue& queue, const std::vector<rawstd::URI>& locations);
+    static rawstd::Task<void> create(
+        rawio::Queue& queue, const std::vector<rawstd::URI>& targets,
+        const RawstorObjectSpec& sp
     );
-    static void remove(const std::vector<rawstd::URI>& targets);
-    static void
-    spec(const std::vector<rawstd::URI>& targets, RawstorObjectSpec* sp);
+    static rawstd::Task<void>
+    remove(rawio::Queue& queue, const std::vector<rawstd::URI>& targets);
+    static rawstd::Task<RawstorObjectSpec>
+    spec(rawio::Queue& queue, const std::vector<rawstd::URI>& targets);
 
     Object(rawio::Queue& queue, const std::vector<rawstd::URI>& targets);
     Object(const Object&) = delete;
@@ -51,27 +53,20 @@ public:
 
     inline const RawstdUUID& id() const noexcept { return _id; }
 
-    void pread(
-        void* buf, size_t size, off_t offset,
-        std::function<void(size_t, int)>&& cb
-    );
+    rawstd::Task<size_t> pread(void* buf, size_t size, off_t offset);
 
-    void preadv(
-        iovec* iov, unsigned int niov, size_t size, off_t offset,
-        std::function<void(size_t, int)>&& cb
-    );
+    rawstd::Task<size_t>
+    preadv(iovec* iov, unsigned int niov, size_t size, off_t offset);
 
-    void pwrite(
-        const void* buf, size_t size, off_t offset, bool sync,
-        std::function<void(size_t, int)>&& cb
-    );
+    rawstd::Task<size_t>
+    pwrite(const void* buf, size_t size, off_t offset, bool sync);
 
-    void pwritev(
+    rawstd::Task<size_t> pwritev(
         const iovec* iov, unsigned int niov, size_t size, off_t offset,
-        bool sync, std::function<void(size_t, int)>&& cb
+        bool sync
     );
 
-    void flush(std::function<void(int)>&& cb);
+    rawstd::Task<void> flush();
 };
 
 } // namespace rawstor
