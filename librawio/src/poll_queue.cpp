@@ -53,15 +53,43 @@ void Queue::_wait_timeout(int timeout) {
      */
     ++_dispatch_generation;
 
+    // Dispatched immediately, one at a time, rather than deferred through
+    // _cqes like everything else: _cqes's capacity is sized to `depth`
+    // (the number of real I/O ops that can be in flight at once), but an
+    // eval's own callback can independently push into _cqes as a side
+    // effect (cancel()'s does, force-completing the target it found) --
+    // pushing the EventEval itself in *addition* to that, into the same
+    // bounded ring, could overflow it (ENOBUFS) even though nothing is
+    // actually over its real in-flight-ops capacity. An EventEval isn't
+    // an I/O op competing for a `depth` slot, so it doesn't need one. This
+    // also means a burst of N evals queued before the next wait_timeout()
+    // (e.g. cancelling everything in flight during shutdown) can never
+    // overflow _cqes, since none of them consume a slot just to be
+    // dispatched.
+    //
+    // Processing at least one eval already counts as this call having made
+    // progress -- skip the blocking poll() phase below even if none of
+    // them happened to also leave anything in _cqes (e.g. open()/close(),
+    // whose callbacks don't touch _cqes at all), the same way a non-empty
+    // _cqes would have skipped it.
+    bool evaluated = !_eval_sqes.empty();
     while (!_eval_sqes.empty()) {
         std::unique_ptr<EventEval> event = std::move(_eval_sqes.front());
         _eval_sqes.pop_front();
 
         event->process();
-        _cqes.push(std::move(event));
+        _current_event = event.get();
+        try {
+            event->dispatch();
+            rawstd::DetachedTask::rethrow_if_pending();
+        } catch (...) {
+            _current_event = nullptr;
+            throw;
+        }
+        _current_event = nullptr;
     }
 
-    while (_cqes.empty()) {
+    while (_cqes.empty() && !evaluated) {
         std::vector<pollfd> fds;
         fds.reserve(_sessions.size());
 
