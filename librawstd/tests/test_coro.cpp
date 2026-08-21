@@ -210,8 +210,15 @@ rawstd::DetachedTask detached_throws_immediately() {
     co_return; // NOLINT: unreachable, keeps this a coroutine
 }
 
-TEST(DetachedTaskTest, exception_propagates_from_initial_call) {
-    EXPECT_THROW(detached_throws_immediately(), std::runtime_error);
+TEST(DetachedTaskTest, exception_pending_from_initial_call) {
+    // unhandled_exception() stashes rather than rethrowing directly (see
+    // DetachedTask's own doc comment for why) -- callers must check
+    // rethrow_if_pending() themselves, immediately after.
+    detached_throws_immediately();
+    EXPECT_THROW(
+        rawstd::DetachedTask::rethrow_if_pending(), std::runtime_error
+    );
+    EXPECT_NO_THROW(rawstd::DetachedTask::rethrow_if_pending());
 }
 
 rawstd::DetachedTask
@@ -220,12 +227,16 @@ detached_throws_after_resume(std::coroutine_handle<>* slot) {
     throw std::runtime_error("detached boom after resume");
 }
 
-TEST(DetachedTaskTest, exception_propagates_from_resume) {
+TEST(DetachedTaskTest, exception_pending_from_resume) {
     std::coroutine_handle<> slot;
     detached_throws_after_resume(&slot);
 
     ASSERT_TRUE(slot);
-    EXPECT_THROW(slot.resume(), std::runtime_error);
+    slot.resume();
+    EXPECT_THROW(
+        rawstd::DetachedTask::rethrow_if_pending(), std::runtime_error
+    );
+    EXPECT_NO_THROW(rawstd::DetachedTask::rethrow_if_pending());
 }
 
 } // namespace

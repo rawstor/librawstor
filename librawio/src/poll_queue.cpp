@@ -6,6 +6,7 @@
 
 #include <rawio/awaitable.hpp>
 
+#include <rawstd/coro.hpp>
 #include <rawstd/gcc.h>
 #include <rawstd/gpp.hpp>
 #include <rawstd/logging.h>
@@ -105,6 +106,12 @@ void Queue::_wait_timeout(int timeout) {
         _current_event = event.get();
         try {
             event->dispatch();
+            // dispatch() may have resumed a rawstd::DetachedTask that
+            // threw -- see DetachedTask's own doc comment for why that
+            // can't be delivered by rethrowing directly out of
+            // dispatch()/resume() itself, and rethrow_if_pending()'s for
+            // why this is one of only two places that need to check.
+            rawstd::DetachedTask::rethrow_if_pending();
         } catch (...) {
             _current_event = nullptr;
             throw;

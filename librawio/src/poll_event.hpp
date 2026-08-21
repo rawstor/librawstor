@@ -114,13 +114,10 @@ public:
 
     // Resolves the attached co_await (if any) from the current
     // _result(non-negative on success)/_error(errno on failure) split
-    // fields, and resumes it. Deliberately NOT noexcept: resuming a
-    // rawstd::DetachedTask (the rawio.cpp C shim's adapters are the only
-    // thing that ever attaches one here) can legitimately throw --
-    // DetachedTask::promise_type::unhandled_exception() rethrows by
-    // design, see its doc comment -- and that exception must propagate
-    // all the way out to _wait_timeout()'s own try/catch, not be turned
-    // into a std::terminate() by a noexcept boundary partway there.
+    // fields, and resumes it. Resuming a rawstd::DetachedTask here that
+    // then throws doesn't throw back out of resume() itself -- see
+    // DetachedTask's own doc comment -- Queue::_wait_timeout() checks
+    // DetachedTask::rethrow_if_pending() right after dispatching.
     inline void resolve_one_shot() {
         if (_error) {
             if (_value_ptr) {

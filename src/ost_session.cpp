@@ -1056,6 +1056,10 @@ void Session::set_object(Object* object) {
         std::static_pointer_cast<Session>(shared_from_this()),
         std::move(stream), trace_event
     );
+    // _recv_pump() may have stored a pending exception instead of
+    // throwing it directly -- see rawstd::DetachedTask's own doc comment
+    // for why, and why this is the one call site that needs to check.
+    rawstd::DetachedTask::rethrow_if_pending();
 }
 
 // See ost_session.hpp's doc comment on why `weak`, not a strong

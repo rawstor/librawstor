@@ -22,12 +22,11 @@ namespace {
  * Awaitable<int> (open/close/poll/connect/fsync/accept) and, once it
  * completes, invokes the stored C completion callback with the same
  * "raw, possibly-negative errno" convention those C functions have
- * always used. A negative return from the C callback re-throws via
- * rawstd::DetachedTask's unhandled_exception(), which propagates it out
- * of whichever coroutine_handle::resume() call is currently resuming
- * this one (i.e. out of rawio_wait()/rawio_wait_timeout() again).
+ * always used. A negative return from the C callback throws -- see
+ * launch_int_op() (the non-coroutine wrapper below, not this function)
+ * for how that's actually delivered back out.
  */
-rawstd::DetachedTask launch_int_op(
+rawstd::DetachedTask launch_int_op_coro(
     rawio::Awaitable<int> aw, int (*cb)(int result, void* data), void* data
 ) {
     int result = 0;
@@ -42,12 +41,26 @@ rawstd::DetachedTask launch_int_op(
     }
 }
 
+// See DetachedTask's own doc comment for why this indirection exists:
+// launch_int_op_coro() may store a pending exception instead of throwing
+// it directly, and every caller that launches (or resumes) a
+// DetachedTask must check for one -- rather than rely on every call site
+// below to remember that, this ordinary (non-coroutine) function does it
+// once, right here, so none of them have to.
+void launch_int_op(
+    rawio::Awaitable<int> aw, int (*cb)(int result, void* data), void* data
+) {
+    launch_int_op_coro(std::move(aw), cb, data);
+    rawstd::DetachedTask::rethrow_if_pending();
+}
+
 /*
- * Same as launch_int_op(), for the read/write family's size_t-result
+ * Same as launch_int_op_coro(), for the read/write family's size_t-result
  * Awaitable<size_t> and RawIOCallback's separate result/error parameters.
  */
-rawstd::DetachedTask
-launch_size_op(rawio::Awaitable<size_t> aw, RawIOCallback* cb, void* data) {
+rawstd::DetachedTask launch_size_op_coro(
+    rawio::Awaitable<size_t> aw, RawIOCallback* cb, void* data
+) {
     size_t result = 0;
     int error = 0;
     try {
@@ -61,6 +74,14 @@ launch_size_op(rawio::Awaitable<size_t> aw, RawIOCallback* cb, void* data) {
     }
 }
 
+// See launch_int_op()'s comment.
+void launch_size_op(
+    rawio::Awaitable<size_t> aw, RawIOCallback* cb, void* data
+) {
+    launch_size_op_coro(std::move(aw), cb, data);
+    rawstd::DetachedTask::rethrow_if_pending();
+}
+
 /*
  * Launches a detached coroutine that pulls from an already-submitted
  * PollStream/AcceptStream forever, translating each item (or the
@@ -69,11 +90,12 @@ launch_size_op(rawio::Awaitable<size_t> aw, RawIOCallback* cb, void* data) {
  * C completion callback with the same "raw, possibly-negative errno"
  * convention rawio_poll/rawio_accept single-shot ops use. A negative
  * return from the C callback re-throws exactly like the single-shot
- * adapters above -- see launch_int_op()'s comment.
+ * adapters above -- see launch_int_op_coro()'s comment.
  */
 template <typename Stream>
-rawstd::DetachedTask
-launch_stream_op(Stream stream, int (*cb)(int result, void* data), void* data) {
+rawstd::DetachedTask launch_stream_op_coro(
+    Stream stream, int (*cb)(int result, void* data), void* data
+) {
     while (true) {
         int result = 0;
         try {
@@ -92,6 +114,15 @@ launch_stream_op(Stream stream, int (*cb)(int result, void* data), void* data) {
     }
 }
 
+// See launch_int_op()'s comment.
+template <typename Stream>
+void launch_stream_op(
+    Stream stream, int (*cb)(int result, void* data), void* data
+) {
+    launch_stream_op_coro(std::move(stream), cb, data);
+    rawstd::DetachedTask::rethrow_if_pending();
+}
+
 /*
  * Same idea for recv_multishot()'s RecvStream: pulls items forever,
  * feeding each call's return value back in as the next `want`, so the
@@ -101,7 +132,7 @@ launch_stream_op(Stream stream, int (*cb)(int result, void* data), void* data) {
  * why data and a trailing error are never delivered in a single call) is
  * delivered as one final zero-data callback invocation.
  */
-rawstd::DetachedTask launch_recv_stream_op(
+rawstd::DetachedTask launch_recv_stream_op_coro(
     rawio::RecvStream stream, size_t want, RawIOMultishotVectorCallback* cb,
     void* data
 ) {
@@ -122,6 +153,15 @@ rawstd::DetachedTask launch_recv_stream_op(
         }
         want = static_cast<size_t>(res);
     }
+}
+
+// See launch_int_op()'s comment.
+void launch_recv_stream_op(
+    rawio::RecvStream stream, size_t want, RawIOMultishotVectorCallback* cb,
+    void* data
+) {
+    launch_recv_stream_op_coro(std::move(stream), want, cb, data);
+    rawstd::DetachedTask::rethrow_if_pending();
 }
 
 } // namespace

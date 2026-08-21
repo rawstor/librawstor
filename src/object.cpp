@@ -38,8 +38,12 @@ namespace {
 // _pwritev/_flush): launch a detached coroutine that co_await's the
 // already-submitted rawstd::Task, catches std::system_error, and invokes
 // the originally-passed RawstorCallback* with the translated result --
-// the same one-layer-up shape as librawio/src/rawio.cpp's launch_size_op.
-rawstd::DetachedTask launch_io_op(
+// the same one-layer-up shape as librawio/src/rawio.cpp's
+// launch_size_op_coro(). A negative return from the C callback throws --
+// see the non-coroutine launch_io_op()/launch_flush_op() wrappers below
+// (not these functions) for how that's actually delivered back out; see
+// rawstd::DetachedTask's own doc comment for why the indirection exists.
+rawstd::DetachedTask launch_io_op_coro(
     RawstorObject* object, size_t size, rawstd::Task<size_t> t,
     RawstorCallback* cb, void* data
 ) {
@@ -56,7 +60,15 @@ rawstd::DetachedTask launch_io_op(
     }
 }
 
-rawstd::DetachedTask launch_flush_op(
+void launch_io_op(
+    RawstorObject* object, size_t size, rawstd::Task<size_t> t,
+    RawstorCallback* cb, void* data
+) {
+    launch_io_op_coro(object, size, std::move(t), cb, data);
+    rawstd::DetachedTask::rethrow_if_pending();
+}
+
+rawstd::DetachedTask launch_flush_op_coro(
     RawstorObject* object, rawstd::Task<void> t, RawstorCallback* cb, void* data
 ) {
     int error = 0;
@@ -69,6 +81,13 @@ rawstd::DetachedTask launch_flush_op(
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
+}
+
+void launch_flush_op(
+    RawstorObject* object, rawstd::Task<void> t, RawstorCallback* cb, void* data
+) {
+    launch_flush_op_coro(object, std::move(t), cb, data);
+    rawstd::DetachedTask::rethrow_if_pending();
 }
 
 int uris(const std::vector<rawstd::URI>& uriv, char* buf, size_t size) {

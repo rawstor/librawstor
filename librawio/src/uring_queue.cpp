@@ -4,6 +4,7 @@
 
 #include <rawio/awaitable.hpp>
 
+#include <rawstd/coro.hpp>
 #include <rawstd/gpp.hpp>
 #include <rawstd/logging.hpp>
 #include <rawstd/socket.h>
@@ -95,12 +96,11 @@ public:
     // flags (unused by single-shot ops, which never carry
     // IORING_CQE_F_MORE); multishot subclasses use it.
     //
-    // Deliberately NOT noexcept: resuming a rawstd::DetachedTask (the
-    // rawio.cpp C shim's adapters are the only thing that ever attaches
-    // one via attach()) can legitimately throw -- its
-    // unhandled_exception() rethrows by design -- and that exception
-    // must reach _dispatch()'s own try/catch a few frames up, not hit a
-    // noexcept boundary and std::terminate() first.
+    // Resuming a rawstd::DetachedTask (the rawio.cpp C shim's adapters
+    // are the only thing that ever attaches one via attach()) that then
+    // throws doesn't throw back out of resume() itself -- see
+    // DetachedTask's own doc comment -- but _dispatch() still needs to
+    // check DetachedTask::rethrow_if_pending() right after this call.
     virtual void complete(int raw_result, unsigned int /*flags*/) {
         if (raw_result >= 0) {
             if (_value_ptr) {
@@ -272,13 +272,10 @@ public:
 
     // Called from the uring completion path (see poll_multishot()/
     // accept_multishot() below) with the already-setup_fd()-resolved,
-    // negative-errno-or-non-negative-value convention. Deliberately NOT
-    // noexcept: resuming a rawstd::DetachedTask (the rawio.cpp C shim's
-    // adapters are the only thing that ever attaches one here) can
-    // legitimately throw -- see Completion::complete()'s comment above
-    // (same reasoning) -- and _dispatch()'s try/catch further up the call chain
-    // needs to actually receive that exception rather than have it turn
-    // into a std::terminate() at this noexcept boundary.
+    // negative-errno-or-non-negative-value convention. Resuming a
+    // rawstd::DetachedTask here that then throws is handled the same way
+    // as Completion::complete() above -- see its comment and
+    // DetachedTask's own doc comment.
     void on_completion(int value, int error) {
         if (_closed) {
             return;
@@ -463,6 +460,13 @@ void Queue::_dispatch() {
 
             try {
                 c->complete(cqe->res, cqe->flags);
+                // complete() may have resumed a rawstd::DetachedTask that
+                // threw -- see DetachedTask's own doc comment for why
+                // that can't be delivered by rethrowing directly out of
+                // complete()/resume() itself, and rethrow_if_pending()'s
+                // for why this is one of only two places that need to
+                // check.
+                rawstd::DetachedTask::rethrow_if_pending();
             } catch (...) {
                 rawstd_trace("complete error\n");
                 if (cqe->flags & IORING_CQE_F_MORE) {
