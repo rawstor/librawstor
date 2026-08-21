@@ -223,6 +223,119 @@ instance) opens an editor and saves the result under
 See the comment above `User=` in `systemd/rawstor-vhost@.service` and
 `systemd.unit(5)` for details.
 
+## rawstor-vduse – VDUSE virtio-blk Backend
+
+`rawstor-vduse` is a userspace VirtIO block device backend implementing the
+[VDUSE](https://docs.kernel.org/userspace-api/vduse.html) (vDPA Device in
+Userspace) protocol for `virtio-blk` devices. Unlike `rawstor-vhost`
+(vhost-user, a QEMU-only Unix-socket protocol), VDUSE creates a real kernel
+vDPA device: once attached to the vDPA bus, it can be driven either by
+`virtio-vdpa` (the guest's virtio-blk driver talks to the kernel vDPA
+framework directly -- no VMM involved at all, e.g. for containers) or by
+`vhost-vdpa` (a VMM such as QEMU drives it through `/dev/vhost-vdpa-N`).
+
+The VDUSE control-plane protocol (device/virtqueue setup via ioctl(2) on
+`/dev/vduse/control` and `/dev/vduse/$NAME`, IOTLB-backed memory mapping,
+kick/interrupt handling) is implemented natively in `vduse/` -- like
+`vhost/`, it does not vendor or link against any third-party protocol
+library (qemu's `libvduse` included); only the kernel uAPI struct/ioctl
+definitions themselves are vendored (`vduse/include/stdheaders/linux/`,
+trimmed the same way `vhost/include/stdheaders/` vendors its own kernel
+headers). Every I/O path, including the control channel, is asynchronous
+and non-blocking via RawIO, and multiple in-flight requests on a virtqueue
+may complete out of order -- the same design `vhost/` uses for
+vhost-user.
+
+### Usage
+
+`rawstor-vduse [-h] TARGET [--queue-size SIZE] [--write-cache on|off] [-v]`
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `-h, --help` | Show help message and exit. |
+| `TARGET` | Comma‑separated list of rawstor backend targets (see [Locations and Targets](https://github.com/rawstor/librawstor/blob/main/docs/locations_and_targets.md)). Creates `/dev/vduse/UUID`, where `UUID` is the target object's own UUID -- there is no separate name to pick, since the UUID already uniquely and stably identifies it. |
+| `--queue-size SIZE` | Virtqueue size, a power of two. Default: `256`, max `1024`. |
+| `--write-cache on\|off` | Advertise a writeback (`on`) or write-through (`off`, default) cache to the guest. |
+| `-v, --version` | Print version and exit. |
+
+### Example
+
+```
+PREFIX=${HOME}/local
+OST_ADDR=192.168.0.1:7777
+OBJECT_ID=...
+
+sudo modprobe vduse
+
+sudo ${PREFIX}/bin/rawstor-vduse \
+    ost://${OST_ADDR}/${OBJECT_ID} &
+
+# Attach the device to the vDPA bus once rawstor-vduse has created it
+# (named after OBJECT_ID, i.e. /dev/vduse/${OBJECT_ID}):
+sudo vdpa dev add name ${OBJECT_ID} mgmtdev vduse
+
+# Either hand it to a guest's virtio-vdpa driver directly (no VMM), or
+# drive it from QEMU over /dev/vhost-vdpa-N:
+qemu-system-x86_64 \
+    -enable-kvm \
+    -m 4G \
+    -device vhost-vdpa-device-pci,vhostdev=/dev/vhost-vdpa-0
+```
+
+### Supported virtio-blk features
+
+`rawstor-vduse` negotiates `VIRTIO_BLK_F_SEG_MAX`, `VIRTIO_BLK_F_BLK_SIZE`,
+`VIRTIO_BLK_F_TOPOLOGY`, `VIRTIO_BLK_F_FLUSH`, plus whatever baseline
+virtio/ring features the kernel VDUSE driver itself requires
+(`VIRTIO_F_VERSION_1`, `VIRTIO_F_ACCESS_PLATFORM`,
+`VIRTIO_F_NOTIFY_ON_EMPTY`, `VIRTIO_RING_F_EVENT_IDX`,
+`VIRTIO_RING_F_INDIRECT_DESC`), and services read (`VIRTIO_BLK_T_IN`), write
+(`VIRTIO_BLK_T_OUT`), flush (`VIRTIO_BLK_T_FLUSH`) and identify
+(`VIRTIO_BLK_T_GET_ID`) requests. `_DISCARD` and `_WRITE_ZEROES` are not
+implemented and are answered with `VIRTIO_BLK_S_UNSUPP`. Only a single
+virtqueue is serviced (`VIRTIO_BLK_F_MQ` is not negotiated).
+
+Unlike vhost-user, VDUSE has no driver-writable config space at all --
+there is no protocol message equivalent to `VHOST_USER_SET_CONFIG` -- and
+the kernel VDUSE driver unconditionally rejects `VIRTIO_BLK_F_CONFIG_WCE`
+for virtio-blk devices (device creation fails outright if it's
+advertised), so `rawstor-vduse` doesn't negotiate it. `--write-cache`
+still works: Linux's `virtio_blk` driver enables its write-cache
+(flush-before-trusting-durability) assumption whenever
+`VIRTIO_BLK_F_FLUSH` is negotiated regardless of `CONFIG_WCE`, so the
+guest always issues `FLUSH` appropriately either way -- the flag purely
+controls whether `rawstor-vduse` itself additionally makes every write
+durable on completion or relies solely on that `FLUSH`.
+
+### Notes
+
+`rawstor-vduse` creates one VDUSE device per process invocation and keeps
+running until the process is stopped (`SIGINT`/`SIGTERM`) or the VDUSE
+device itself is destroyed out from under it -- unlike `rawstor-vhost`,
+there is no per-connection front-end to disconnect from, since the kernel
+is always "connected". Attaching the created device to the vDPA bus (`vdpa
+dev add name UUID mgmtdev vduse`) and, if applicable, driving it from a
+VMM, are separate, external steps. If the process is restarted while
+requests are in flight, it does not attempt to resubmit them (no
+inflight-request log is kept) -- a crash mid-request is visible to the
+guest as that request never completing, the same failure mode a guest
+already has to tolerate from a host crash.
+
+### Packaging and access
+
+`rawstor-vduse` ships in its own `rawstor-vduse` deb/rpm package (separate
+from `librawstor`), along with the `rawstor-vduse@.service` systemd
+template unit and a udev rule granting the `rawstor` system user/group
+(shared with `rawstor-ost`/`rawstor-vhost`) access to `/dev/vduse/control`
+and the device nodes it creates under `/dev/vduse/`.
+
+Creating a VDUSE device requires the `vduse` kernel module (`modprobe
+vduse`), and attaching it to the vDPA bus requires the `vdpa` tool
+(`iproute2`) and `CAP_NET_ADMIN` -- neither is something `rawstor-vduse`
+itself does; both are external, one-time-per-device administrative steps.
+
 ## Testing
 
 ```
