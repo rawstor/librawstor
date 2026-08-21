@@ -30,13 +30,26 @@ The two headline consumers are:
 - **RawIO**: `librawio`'s internal async I/O abstraction (`rawio::Queue`),
   with two interchangeable backends selected at `configure` time:
   `rawio::uring` (io_uring, default, requires liburing >= 2.3) and
-  `rawio::poll` (`poll()`-based fallback, `--without-liburing`). Both
-  support one-shot and multishot registrations
-  (`poll_multishot`/`accept_multishot`/`recv_multishot`); each backend
-  keeps a per-`Queue` `_dispatch_generation` counter so a multishot
-  registration can tell a real new event apart from a same-batch duplicate
-  completion (io_uring's `IORING_POLL_ADD_MULTI` and the `poll()` backend
-  can otherwise redeliver "readable" more than once per batch for a single
+  `rawio::poll` (`poll()`-based fallback, `--without-liburing`). Fully
+  C++20-coroutine-based: single-shot ops (`read`/`write`/`accept`/...)
+  return a `co_await`-able `Queue::Awaitable<T>`; the 3 multishot ops
+  (`poll_multishot`/`accept_multishot`/`recv_multishot`) return a
+  pull-stream (`PollStream`/`AcceptStream`/`RecvStream`,
+  `include/rawio/stream.hpp`) consumed as `while (auto x = co_await
+  stream.next())`. Errors surface uniformly as a thrown
+  `std::system_error`. Submission is still eager and the reactor still
+  single-threaded/pull-based (`Queue::wait()`/`wait_timeout()` is the only
+  thing that drives progress, resuming coroutines inline from inside that
+  call) -- `co_await` only attaches a resumption point to an
+  already-submitted operation. The public C ABI
+  (`include/rawstor/rawio.h`) is unchanged (function-pointer callbacks);
+  `librawio/src/rawio.cpp` is a thin coroutine-to-callback adapter over
+  the C++ API, using `rawstd::task<T>`/`rawstd::detached_task`
+  (`librawstd/include/rawstd/coro.hpp`) under the hood. Each backend keeps
+  a per-`Queue` `_dispatch_generation` counter so a multishot registration
+  can tell a real new event apart from a same-batch duplicate completion
+  (io_uring's `IORING_POLL_ADD_MULTI` and the `poll()` backend can
+  otherwise redeliver "readable" more than once per batch for a single
   registration).
 
 ## Layout
@@ -193,9 +206,10 @@ backends and the io_uring/poll RawIO backends.
 - A multishot poll registration (io_uring `IORING_POLL_ADD_MULTI`, or the
   `poll` backend's multishot path) can legitimately deliver more than one
   "readable" completion per reap batch for the same fd (e.g. an eventfd
-  written to multiple times before it's drained) — a callback that reacts
-  to every completion as if it were a fresh event can observe a drained
-  resource (e.g. `EAGAIN` on `eventfd_read()`) and misbehave. This is what
+  written to multiple times before it's drained) — a stream consumer
+  (`while (auto x = co_await stream.next())`) that reacts to every
+  completion as if it were a fresh event can observe a drained resource
+  (e.g. `EAGAIN` on `eventfd_read()`) and misbehave. This is what
   `_dispatch_generation` (see RawIO above) exists to prevent; keep it in
   mind when adding new multishot call sites.
 - This is a shared-checkout environment: other sessions/the maintainer

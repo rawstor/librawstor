@@ -3,6 +3,8 @@
 
 #include <rawio/queue.hpp>
 
+#include <rawstd/coro.hpp>
+
 #include <sys/uio.h>
 
 #include <condition_variable>
@@ -25,7 +27,6 @@ private:
     int _fd;
     int _in;
     int _out;
-    bool _exit;
     int _client_fd;
     unsigned int _depth;
 
@@ -37,12 +38,23 @@ private:
     static void _main(Server* server) noexcept;
     void _notify();
     void _loop();
+    // Pops and dispatches one command per iteration, blocking on the
+    // self-pipe (_out) only when the queue is empty -- a caller only
+    // _notify()'s on the empty-to-non-empty transition, so draining a
+    // burst of several commands pushed under one notification relies on
+    // this loop re-checking _commands directly rather than waiting for a
+    // matching pipe byte per command.
+    rawstd::Task<void> _run(rawio::Queue& queue);
 
-    void _do_accept(rawio::Queue& queue, std::shared_ptr<Command> command);
+    rawstd::Task<void>
+    _do_accept(rawio::Queue& queue, std::shared_ptr<Command> command);
     void _do_close(rawio::Queue& queue, std::shared_ptr<Command> command);
-    void _do_read(rawio::Queue& queue, std::shared_ptr<Command> command);
-    void _do_write(rawio::Queue& queue, std::shared_ptr<Command> command);
-    void _do_writev(rawio::Queue& queue, std::shared_ptr<Command> command);
+    rawstd::Task<void>
+    _do_read(rawio::Queue& queue, std::shared_ptr<Command> command);
+    rawstd::Task<void>
+    _do_write(rawio::Queue& queue, std::shared_ptr<Command> command);
+    rawstd::Task<void>
+    _do_writev(rawio::Queue& queue, std::shared_ptr<Command> command);
 
     void _stop();
 
