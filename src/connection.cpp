@@ -211,8 +211,8 @@ rawstd::Task<T> Connection::_with_retry(
             }
         }
     }
-    // Falls off the end if rawstor_opts_io_attempts() == 0 -- same as
-    // every method that used to have its own copy of this loop.
+    // Only reachable if rawstor_opts_io_attempts() == 0.
+    RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
 }
 
 std::shared_ptr<Session> Connection::get_next_session() {
