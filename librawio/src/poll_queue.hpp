@@ -57,7 +57,7 @@ public:
         _current_event(nullptr),
         _dispatch_generation(0) {}
 
-    ~Queue() override = default;
+    ~Queue() override;
 
     inline unsigned int dispatch_generation() const noexcept {
         return _dispatch_generation;

@@ -30,6 +30,46 @@ std::string engine_name = "poll";
 namespace rawio {
 namespace poll {
 
+// Cancels and drains every still-registered session one at a time, rather
+// than cancelling them all up front: Session::cancel(cqes) pushes
+// straight into the bounded _cqes ring (the same thing Queue::cancel(fd)'s
+// eval callback does live), and doing that for every session before any
+// of them get dispatched could overflow it (ENOBUFS) if the combined
+// pending-event count across sessions exceeds depth. Draining via
+// wait_timeout(0) after each session's cancel() keeps at most one
+// session's worth of cancelled events in _cqes at a time. Safe to do now
+// that Object/Connection/Session's internals are genuinely
+// co_await-composed on the shared Queue instead of nesting a private,
+// throwaway one's own synchronous pump inside this Queue's own dispatch
+// (the reentrancy hazard that made an earlier version of this destructor
+// corrupt memory -- see ref/librawio-coroutines' history).
+Queue::~Queue() {
+    try {
+        while (!_sessions.empty()) {
+            std::unordered_map<int, std::shared_ptr<Session>>::iterator it =
+                _sessions.begin();
+            it->second->cancel(_cqes);
+            _sessions.erase(it);
+
+            while (true) {
+                try {
+                    wait_timeout(0);
+                } catch (const std::system_error& e) {
+                    if (e.code().value() != ETIME) {
+                        rawstd_error("Failed to wait: %s\n", e.what());
+                    }
+                    break;
+                } catch (const std::exception& e) {
+                    rawstd_error("Failed to wait: %s\n", e.what());
+                    break;
+                }
+            }
+        }
+    } catch (const std::exception& e) {
+        rawstd_error("Failed to cancel sessions: %s\n", e.what());
+    }
+}
+
 Session& Queue::_get_session(int fd) {
     std::unordered_map<int, std::shared_ptr<Session>>::iterator it =
         _sessions.find(fd);
