@@ -5,14 +5,12 @@
 
 #include <rawio/queue.hpp>
 
+#include <rawstd/coro.hpp>
 #include <rawstd/uri.hpp>
 #include <rawstd/uuid.h>
 
 #include <rawstor/location.h>
 #include <rawstor/object.h>
-
-#include <functional>
-#include <list>
 
 namespace rawstor {
 namespace file {
@@ -24,26 +22,18 @@ private:
 public:
     Session(Private p, rawio::Queue& queue, const rawstd::URI& location);
 
-    void list(
-        unsigned int limit, const RawstdUUID& token,
-        std::function<void(std::vector<RawstdUUID>&&, const RawstdUUID&, int)>&&
-            cb
+    rawstd::Task<void> list(
+        unsigned int limit, std::vector<RawstdUUID>& targets, RawstdUUID& token
     ) override;
 
-    void create(
-        const RawstdUUID& id, const RawstorObjectSpec& sp,
-        std::function<void(int)>&& cb
-    ) override;
+    rawstd::Task<void>
+    create(const RawstdUUID& id, const RawstorObjectSpec& sp) override;
 
-    void remove(const RawstdUUID& id, std::function<void(int)>&& cb) override;
+    rawstd::Task<void> remove(const RawstdUUID& id) override;
 
-    void spec(
-        const RawstdUUID& id,
-        std::function<void(const RawstorObjectSpec&, int)>&& cb
-    ) override;
+    rawstd::Task<RawstorObjectSpec> spec(const RawstdUUID& id) override;
 
-    void
-    info(std::function<void(const RawstorLocationInfo&, int)>&& cb) override;
+    rawstd::Task<RawstorLocationInfo> info() override;
 };
 
 } // namespace file

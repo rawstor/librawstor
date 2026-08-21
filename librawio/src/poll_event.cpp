@@ -1,6 +1,7 @@
 #include "poll_event.hpp"
 
 #include "poll_queue.hpp"
+#include "poll_stream_backend.hpp"
 
 #include <rawstd/gcc.h>
 #include <rawstd/iovec.h>
@@ -16,34 +17,15 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-namespace {
-
-template <typename T, typename... Args>
-inline void
-dispatch(const rawstd::TraceEvent& trace_event, T&& cb, Args&&... args) {
-    RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "callback");
-#ifdef RAWSTD_TRACE_EVENTS
-    try {
-#endif
-        std::forward<T>(cb)(std::forward<Args>(args)...);
-#ifdef RAWSTD_TRACE_EVENTS
-    } catch (const std::exception& e) {
-        RAWSTD_TRACE_EVENT_MESSAGE(
-            trace_event, "callback error: %s\n", e.what()
-        );
-        throw;
-    }
-#endif
-    RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "callback success");
-}
-
-} // unnamed namespace
-
 namespace rawio {
 namespace poll {
 
 void EventEval::dispatch() {
-    ::dispatch(trace_event, _cb, _result);
+    if (_on_dispatch) {
+        _on_dispatch(*this);
+    } else {
+        resolve_one_shot_raw(_result);
+    }
 }
 
 ssize_t EventEval::process() noexcept {
@@ -51,8 +33,20 @@ ssize_t EventEval::process() noexcept {
     return _result;
 }
 
+void EventSimplex::dispatch() {
+    if (_on_dispatch) {
+        _on_dispatch(*this);
+    } else {
+        resolve_one_shot();
+    }
+}
+
 void EventMultiplex::dispatch() {
-    ::dispatch(trace_event, _cb, _result, _error);
+    if (_on_dispatch) {
+        _on_dispatch(*this);
+    } else {
+        resolve_one_shot();
+    }
 }
 
 size_t EventMultiplexScalar::shift(size_t shift) noexcept {
@@ -106,36 +100,11 @@ ssize_t EventSimplexPoll::process() noexcept {
     return 0;
 }
 
-void EventSimplexPollOneshot::dispatch() {
-    if (!_error) {
-        ::dispatch(trace_event, _cb, _result);
-    } else {
-        ::dispatch(trace_event, _cb, -_error);
-    }
-}
-
-EventSimplexPollMultishot::EventSimplexPollMultishot(
-    Queue& q, int fd, unsigned int mask, const rawstd::TraceEvent& trace_event,
-    std::function<void(int)>&& cb
-) :
-    EventSimplexPoll(q, fd, mask, trace_event),
-    _cb(std::move(cb)),
-    _last_generation(q.dispatch_generation()) {
-}
-
 void EventSimplexPollMultishot::dispatch() {
-    if (_last_generation == _q.dispatch_generation()) {
-        // Same-batch duplicate wakeup (see Queue::_dispatch_generation) --
-        // an earlier dispatch in this very batch already accounted for it.
-        _result = 0;
-        return;
-    }
-    _last_generation = _q.dispatch_generation();
-
-    if (!_error) {
-        ::dispatch(trace_event, _cb, _result);
+    if (_error) {
+        _backend->on_completion(0, _error);
     } else {
-        ::dispatch(trace_event, _cb, -_error);
+        _backend->on_completion(static_cast<int>(_result), 0);
     }
     _result = 0;
 }
@@ -174,14 +143,6 @@ ssize_t EventSimplexAcceptOneshot::process() noexcept {
     return res;
 }
 
-void EventSimplexAcceptOneshot::dispatch() {
-    if (!_error) {
-        ::dispatch(trace_event, _cb, _result);
-    } else {
-        ::dispatch(trace_event, _cb, -_error);
-    }
-}
-
 ssize_t EventSimplexAcceptMultishot::process() noexcept {
     RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "accept()");
     ssize_t res = ::accept(_fd, nullptr, nullptr);
@@ -217,16 +178,12 @@ ssize_t EventSimplexAcceptMultishot::process() noexcept {
 }
 
 void EventSimplexAcceptMultishot::dispatch() {
-    if (!_error) {
-        ::dispatch(trace_event, _cb, _result);
+    if (_error) {
+        _backend->on_completion(0, _error);
     } else {
-        ::dispatch(trace_event, _cb, -_error);
+        _backend->on_completion(static_cast<int>(_result), 0);
     }
     _result = 0;
-}
-
-void EventSimplexScalarRead::dispatch() {
-    ::dispatch(trace_event, _cb, _result, _error);
 }
 
 ssize_t EventSimplexScalarRead::process() noexcept {
@@ -249,10 +206,6 @@ ssize_t EventSimplexScalarRead::process() noexcept {
     return res;
 }
 
-void EventSimplexVectorRead::dispatch() {
-    ::dispatch(trace_event, _cb, _result, _error);
-}
-
 ssize_t EventSimplexVectorRead::process() noexcept {
     RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "readv()");
     ssize_t res = ::readv(_fd, _iov, _niov);
@@ -271,10 +224,6 @@ ssize_t EventSimplexVectorRead::process() noexcept {
         set_error(error);
     }
     return res;
-}
-
-void EventSimplexScalarPositionalRead::dispatch() {
-    ::dispatch(trace_event, _cb, _result, _error);
 }
 
 ssize_t EventSimplexScalarPositionalRead::process() noexcept {
@@ -297,10 +246,6 @@ ssize_t EventSimplexScalarPositionalRead::process() noexcept {
     return res;
 }
 
-void EventSimplexVectorPositionalRead::dispatch() {
-    ::dispatch(trace_event, _cb, _result, _error);
-}
-
 ssize_t EventSimplexVectorPositionalRead::process() noexcept {
     RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "preadv()");
     ssize_t res = ::preadv(_fd, _iov, _niov, _offset);
@@ -319,10 +264,6 @@ ssize_t EventSimplexVectorPositionalRead::process() noexcept {
         set_error(error);
     }
     return res;
-}
-
-void EventSimplexScalarRecv::dispatch() {
-    ::dispatch(trace_event, _cb, _result, _error);
 }
 
 ssize_t EventSimplexScalarRecv::process() noexcept {
@@ -345,93 +286,24 @@ ssize_t EventSimplexScalarRecv::process() noexcept {
     return res;
 }
 
-bool EventSimplexVectorRecvMultishot::is_completed() const noexcept {
-    return _pending_size >= _size;
-}
-
 void EventSimplexVectorRecvMultishot::dispatch() {
-    bool full = _pending_entries.full();
-
-    while (_pending_size >= _size || _error) {
-        std::list<std::unique_ptr<EventSimplexVectorRecvMultishotEntry>>
-            entries;
-        std::vector<iovec> iov;
-        size_t iov_size = 0;
-        iov.reserve(_pending_entries.size());
-
-        while (!_pending_entries.empty() && _size) {
-            EventSimplexVectorRecvMultishotEntry& e = _pending_entries.tail();
-            void* e_data = static_cast<char*>(e.data()) + _pending_offset;
-            size_t e_size = e.result() - _pending_offset;
-            if (e_size <= _size - iov_size) [[likely]] {
-                iov.push_back({.iov_base = e_data, .iov_len = e_size});
-                _pending_offset = 0;
-                _pending_size -= e_size;
-                entries.push_back(_pending_entries.pop());
-                iov_size += e_size;
-                if (iov_size == _size) {
-                    break;
-                }
-            } else {
-                iov.push_back(
-                    {.iov_base = e_data, .iov_len = _size - iov_size}
-                );
-                _pending_offset += iov.back().iov_len;
-                _pending_size -= iov.back().iov_len;
-                iov_size += iov.back().iov_len;
-                break;
-            }
-        }
-
-        if (!_size && !_error) {
-            break;
-        }
-
-        _result = iov_size;
-        try {
-            RAWSTD_TRACE_EVENT_MESSAGE(
-                trace_event,
-                "sending iov: niov = %zu, size = %zu, error = %d\n", iov.size(),
-                iov_size, _error
-            );
-            RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "callback");
-            int report_error = (iov_size < _size || !_size) ? _error : 0;
-            _size = _cb(iov.data(), iov.size(), _result, report_error);
-            RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "callback success");
-            if (report_error) {
-                break;
-            }
-        } catch (const std::exception& e) {
-            RAWSTD_TRACE_EVENT_MESSAGE(
-                trace_event, "callback error: %s\n", e.what()
-            );
-            throw;
-        }
-    }
-
-    if (full && !_error) {
-        _result = 0;
+    bool terminal = _backend->on_arrival(_error);
+    if (terminal && !_error) {
+        // The backend reached a terminal condition on its own (the
+        // provided-buffer pool running dry, detected independently of
+        // whatever `process()` saw) -- reflect that on the Event itself
+        // too, so _wait_timeout()'s "stop re-arming a multishot event
+        // once it has errored" check actually stops re-arming this one
+        // (matches cancel() throwing ENOENT afterwards, since the event
+        // is gone rather than still live and re-armed).
         set_error(ENOBUFS);
-        try {
-            RAWSTD_TRACE_EVENT_MESSAGE(
-                trace_event, "sending iov: niov = %u, size = %u\n", 0, 0
-            );
-            RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "callback");
-            _size = _cb(nullptr, 0, _result, _error);
-            RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "callback success");
-        } catch (const std::exception& e) {
-            RAWSTD_TRACE_EVENT_MESSAGE(
-                trace_event, "callback error: %s\n", e.what()
-            );
-            throw;
-        }
     }
 }
 
 ssize_t EventSimplexVectorRecvMultishot::process() noexcept {
     ssize_t res = -ENOBUFS;
 
-    while (!_pending_entries.full()) {
+    while (!_backend->full()) {
         RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "recv()");
         std::unique_ptr<EventSimplexVectorRecvMultishotEntry> entry =
             std::make_unique<EventSimplexVectorRecvMultishotEntry>(_entry_size);
@@ -439,16 +311,8 @@ ssize_t EventSimplexVectorRecvMultishot::process() noexcept {
 
         if (res > 0) {
             entry->set_result(res);
-            _pending_size += res;
-            _pending_entries.push(std::move(entry));
-
-#ifdef RAWSTD_TRACE_EVENTS
-            if (_pending_size >= _size) {
-                RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "completed");
-            } else {
-                RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "partial");
-            }
-#endif
+            RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "partial");
+            _backend->add_entry(std::move(entry));
         } else if (res == 0) {
             set_error(EPIPE);
             break;
@@ -468,10 +332,6 @@ ssize_t EventSimplexVectorRecvMultishot::process() noexcept {
     }
 
     return res;
-}
-
-void EventSimplexMessageRead::dispatch() {
-    ::dispatch(trace_event, _cb, _result, _error);
 }
 
 ssize_t EventSimplexMessageRead::process() noexcept {
@@ -521,10 +381,6 @@ ssize_t EventMultiplexVectorWrite::process() noexcept {
     return res;
 }
 
-void EventSimplexScalarPositionalWrite::dispatch() {
-    ::dispatch(trace_event, _cb, _result, _error);
-}
-
 ssize_t EventSimplexScalarPositionalWrite::process() noexcept {
 #if defined(RAWSTD_ON_LINUX)
     ssize_t res;
@@ -570,10 +426,6 @@ ssize_t EventSimplexScalarPositionalWrite::process() noexcept {
     return res;
 }
 
-void EventSimplexVectorPositionalWrite::dispatch() {
-    ::dispatch(trace_event, _cb, _result, _error);
-}
-
 ssize_t EventSimplexVectorPositionalWrite::process() noexcept {
 #if defined(RAWSTD_ON_LINUX)
     // Unlike the scalar case, no branching needed here: the kernel routes
@@ -611,10 +463,6 @@ ssize_t EventSimplexVectorPositionalWrite::process() noexcept {
     return res;
 }
 
-void EventSimplexScalarSend::dispatch() {
-    ::dispatch(trace_event, _cb, _result, _error);
-}
-
 ssize_t EventSimplexScalarSend::process() noexcept {
     RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "send()");
     ssize_t res = ::send(_fd, _buf, _size, _flags);
@@ -633,10 +481,6 @@ ssize_t EventSimplexScalarSend::process() noexcept {
         set_error(error);
     }
     return res;
-}
-
-void EventSimplexMessageWrite::dispatch() {
-    ::dispatch(trace_event, _cb, _result, _error);
 }
 
 ssize_t EventSimplexMessageWrite::process() noexcept {

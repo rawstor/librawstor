@@ -1,6 +1,8 @@
 #ifndef RAWIO_POLL_EVENT_HPP
 #define RAWIO_POLL_EVENT_HPP
 
+#include <rawio/stream.hpp>
+
 #include <rawstd/iovec.h>
 #include <rawstd/logging.hpp>
 #include <rawstd/ringbuf.hpp>
@@ -11,6 +13,7 @@
 
 #include <unistd.h>
 
+#include <coroutine>
 #include <functional>
 #include <list>
 #include <memory>
@@ -32,6 +35,24 @@ protected:
     ssize_t _result;
     int _error;
 
+    // Set via attach() (called from Queue::_attach(), i.e. from some
+    // Awaitable<T>::await_suspend()) once whoever co_await-ed this
+    // operation is known. resolve_one_shot()/resolve_one_shot_raw() write
+    // the outcome into _value_ptr/_error_ptr and resume _handle -- see
+    // rawio::Awaitable<T> in <rawio/awaitable.hpp> for the other end of
+    // this contract.
+    std::coroutine_handle<> _handle;
+    size_t* _value_ptr;
+    int* _error_ptr;
+
+    // Optional override of the default "resolve and resume" dispatch
+    // behavior. Empty for almost every event; connect()'s
+    // EINPROGRESS-then-poll(POLLOUT)-then-getsockopt retry chain is the
+    // one case that needs to inspect an intermediate result and decide
+    // whether to resolve now or hand the attachment off to a follow-up
+    // event (see adopt_attachment()).
+    std::function<void(Event&)> _on_dispatch;
+
 public:
     rawstd::TraceEvent trace_event;
 
@@ -40,6 +61,9 @@ public:
         _fd(fd),
         _result(0),
         _error(0),
+        _handle(),
+        _value_ptr(nullptr),
+        _error_ptr(nullptr),
         trace_event(trace_event) {}
     Event(const Event&) = delete;
     Event(Event&&) = delete;
@@ -60,6 +84,73 @@ public:
     }
 
     inline int error() const noexcept { return _error; }
+    inline ssize_t result() const noexcept { return _result; }
+
+    inline void attach(
+        std::coroutine_handle<> h, size_t* value_ptr, int* error_ptr
+    ) noexcept {
+        _handle = h;
+        _value_ptr = value_ptr;
+        _error_ptr = error_ptr;
+    }
+
+    // Transfers a pending attach()-ment from `other` to *this, clearing
+    // it on `other` -- used when one syscall-driven Event's completion
+    // determines that a *different* Event will actually deliver the
+    // eventual result (connect()'s retry chain).
+    inline void adopt_attachment(Event& other) noexcept {
+        _handle = other._handle;
+        _value_ptr = other._value_ptr;
+        _error_ptr = other._error_ptr;
+        other._handle = nullptr;
+        other._value_ptr = nullptr;
+        other._error_ptr = nullptr;
+    }
+
+    inline void
+    set_on_dispatch(std::function<void(Event&)>&& on_dispatch) noexcept {
+        _on_dispatch = std::move(on_dispatch);
+    }
+
+    // Resolves the attached co_await (if any) from the current
+    // _result(non-negative on success)/_error(errno on failure) split
+    // fields, and resumes it. Resuming a rawstd::DetachedTask here that
+    // then throws doesn't throw back out of resume() itself -- see
+    // DetachedTask's own doc comment -- Queue::_wait_timeout() checks
+    // DetachedTask::rethrow_if_pending() right after dispatching.
+    inline void resolve_one_shot() {
+        if (_error) {
+            if (_value_ptr) {
+                *_value_ptr = 0;
+            }
+            if (_error_ptr) {
+                *_error_ptr = _error;
+            }
+        } else {
+            if (_value_ptr) {
+                *_value_ptr = static_cast<size_t>(_result);
+            }
+            if (_error_ptr) {
+                *_error_ptr = 0;
+            }
+        }
+        if (_handle) {
+            _handle.resume();
+        }
+    }
+
+    // Same, but for EventEval's single-combined-field convention
+    // (negative = -errno, non-negative = success value). See
+    // resolve_one_shot()'s comment for why this isn't noexcept either.
+    inline void resolve_one_shot_raw(ssize_t raw_result) {
+        if (raw_result < 0) {
+            set_error(static_cast<int>(-raw_result));
+            _result = 0;
+        } else {
+            _result = raw_result;
+        }
+        resolve_one_shot();
+    }
 
     virtual void dispatch() = 0;
 
@@ -76,19 +167,184 @@ public:
     int fd() const noexcept { return _fd; }
 };
 
+class EventSimplexVectorRecvMultishotEntry final {
+private:
+    std::vector<char> _data;
+    size_t _result;
+
+public:
+    EventSimplexVectorRecvMultishotEntry(size_t size) :
+        _data(size),
+        _result(0) {}
+
+    EventSimplexVectorRecvMultishotEntry(
+        const EventSimplexVectorRecvMultishotEntry&
+    ) = delete;
+
+    EventSimplexVectorRecvMultishotEntry(
+        EventSimplexVectorRecvMultishotEntry&& other
+    ) noexcept :
+        _data(std::move(other._data)),
+        _result(std::exchange(other._result, 0)) {}
+
+    EventSimplexVectorRecvMultishotEntry&
+    operator=(const EventSimplexVectorRecvMultishotEntry&) = delete;
+
+    EventSimplexVectorRecvMultishotEntry&
+    operator=(EventSimplexVectorRecvMultishotEntry&& other) noexcept {
+        EventSimplexVectorRecvMultishotEntry temp(std::move(other));
+        swap(temp);
+        return *this;
+    }
+
+    inline void* data() noexcept { return _data.data(); }
+    inline size_t size() const noexcept { return _data.size(); }
+    inline size_t result() const noexcept { return _result; }
+    inline void set_result(size_t result) noexcept { _result = result; };
+
+    void swap(EventSimplexVectorRecvMultishotEntry& other) noexcept {
+        std::swap(_data, other._data);
+        std::swap(_result, other._result);
+    }
+};
+
+/**
+ * Shared single-slot "pull" backend for poll_multishot()/
+ * accept_multishot() -- the poll-backend counterpart of uring::
+ * SingleSlotStreamBackend (see uring_queue.cpp's doc comment for the
+ * design and the same-batch-dedup/overflow rules; identical here except
+ * `_q`/`cancel()`/`dispatch_generation()` go through rawio::poll::Queue
+ * instead of rawio::uring::Queue). `EventSimplexPollMultishot`/
+ * `EventSimplexAcceptMultishot` each own one of these via a shared_ptr
+ * (not by inheriting it directly: the Event itself is unique_ptr-owned by
+ * Session/`_cqes`, while the stream wrapper handed back to the caller
+ * needs shared, independent ownership of the backend).
+ */
+template <typename BackendBase, bool dedup>
+class SingleSlotStreamBackend final : public BackendBase {
+private:
+    Queue& _q;
+    unsigned int _last_generation;
+
+    std::coroutine_handle<> _waiter;
+    int* _waiter_out;
+    int* _waiter_error;
+
+    bool _has_pending;
+    int _pending_value;
+    int _pending_error;
+    bool _pending_overflow;
+
+    bool _closed;
+    bool _terminated;
+    int _terminal_error;
+
+    Event* _event;
+
+public:
+    SingleSlotStreamBackend(Queue& q, unsigned int last_generation);
+
+    inline void set_event(Event* event) noexcept { _event = event; }
+
+    bool try_produce(int& out, int& error) noexcept override;
+    void set_waiter(
+        std::coroutine_handle<> h, int* out, int* error
+    ) noexcept override;
+    void close() noexcept override;
+    rawio::Event* event() const noexcept override { return _event; }
+
+    // Called from EventSimplexPollMultishot::dispatch()/
+    // EventSimplexAcceptMultishot::dispatch() with the already-resolved
+    // (setup_fd()-applied, for accept) negative-errno-or-non-negative-value
+    // convention. Deliberately NOT noexcept -- see
+    // Event::resolve_one_shot()'s comment.
+    void on_completion(int value, int error);
+};
+
+using PollMultishotBackend =
+    SingleSlotStreamBackend<rawio::PollStream::Backend, /*dedup=*/true>;
+using AcceptMultishotBackend =
+    SingleSlotStreamBackend<rawio::AcceptStream::Backend, /*dedup=*/false>;
+
+/**
+ * RecvStream::Backend for the poll backend's recv_multishot(): owns the
+ * same "keep receiving into local buffers until EAGAIN or full"
+ * accounting `EventSimplexVectorRecvMultishot::process()` always had
+ * (`_pending_entries`/`_pending_offset`/`_pending_size`, now living here
+ * instead of on the Event itself, for the same shared-ownership reason as
+ * SingleSlotStreamBackend above), plus the produce-or-park logic shared
+ * with uring::BufferRing (see its doc comment for the exact
+ * want/terminal-error precedence rules, identical here).
+ */
+class RecvMultishotBackend final : public rawio::RecvStream::Backend {
+private:
+    void _extract(size_t want, rawio::RecvStream::Item& out);
+
+    Queue& _q;
+    size_t _pending_offset;
+    size_t _pending_size;
+    rawstd::RingBuf<EventSimplexVectorRecvMultishotEntry> _pending_entries;
+
+    std::coroutine_handle<> _waiter;
+    size_t _waiter_want;
+    rawio::RecvStream::Item* _waiter_item;
+    int* _waiter_error;
+
+    bool _has_terminal;
+    int _terminal_error;
+    bool _closed;
+
+    Event* _event;
+
+public:
+    RecvMultishotBackend(Queue& q, unsigned int entries);
+
+    inline bool full() const noexcept { return _pending_entries.full(); }
+
+    inline void
+    add_entry(std::unique_ptr<EventSimplexVectorRecvMultishotEntry> entry) {
+        _pending_size += entry->result();
+        _pending_entries.push(std::move(entry));
+    }
+
+    inline void set_event(Event* event) noexcept { _event = event; }
+
+    // Called from EventSimplexVectorRecvMultishot::dispatch() once per
+    // readiness round, after process() has already drained whatever it
+    // could into add_entry() above; `error` is the Event's own _error
+    // (0 if nothing went wrong this round). Returns true once this
+    // backend has reached a terminal condition (which can happen here
+    // even if `error` was 0: the provided-buffer pool running dry is
+    // detected independently, inside this call) -- the caller must then
+    // make sure its own Event::_error reflects that too, so the outer
+    // dispatch loop's "stop re-arming a multishot event once it has
+    // errored" check actually stops re-arming this one.
+    // Deliberately NOT noexcept -- see Event::resolve_one_shot()'s
+    // comment.
+    bool on_arrival(int error);
+
+    bool try_produce(
+        size_t want, rawio::RecvStream::Item& out, int& error
+    ) noexcept override;
+    void set_waiter(
+        std::coroutine_handle<> h, size_t want, rawio::RecvStream::Item* out,
+        int* error
+    ) noexcept override;
+    void close() noexcept override;
+    rawio::Event* event() const noexcept override { return _event; }
+};
+
 class EventEval final : public Event {
 private:
     std::function<int()> _eval;
-    std::function<void(int)> _cb;
 
 public:
     EventEval(
         Queue& q, const rawstd::TraceEvent& trace_event,
-        std::function<int()>&& eval, std::function<void(int)>&& cb
+        std::function<int()>&& eval
     ) :
         Event(q, -1, trace_event),
-        _eval(std::move(eval)),
-        _cb(std::move(cb)) {}
+        _eval(std::move(eval)) {}
 
     void dispatch() override;
 
@@ -111,19 +367,20 @@ public:
     virtual ~EventSimplex() override = default;
 
     bool is_multiplex() const noexcept override final { return false; }
+
+    // Default one-shot behavior shared by every EventSimplex-derived
+    // class that doesn't need anything fancier: resolve_one_shot(), or
+    // _on_dispatch(*this) if set. Not `final` -- the multishot siblings
+    // (EventSimplexPollMultishot/EventSimplexAcceptMultishot/
+    // EventSimplexVectorRecvMultishot) still override this with their
+    // own multishot-specific dispatch.
+    void dispatch() override;
 };
 
 class EventMultiplex : public Event {
-private:
-    std::function<void(size_t, int)> _cb;
-
 public:
-    EventMultiplex(
-        Queue& q, int fd, const rawstd::TraceEvent& trace_event,
-        std::function<void(size_t, int)>&& cb
-    ) :
-        Event(q, fd, trace_event),
-        _cb(std::move(cb)) {}
+    EventMultiplex(Queue& q, int fd, const rawstd::TraceEvent& trace_event) :
+        Event(q, fd, trace_event) {}
 
     virtual ~EventMultiplex() override = default;
 
@@ -146,10 +403,9 @@ protected:
 public:
     EventMultiplexScalar(
         Queue& q, int fd, const void* buf, size_t size,
-        const rawstd::TraceEvent& trace_event,
-        std::function<void(size_t, int)>&& cb
+        const rawstd::TraceEvent& trace_event
     ) :
-        EventMultiplex(q, fd, trace_event, std::move(cb)),
+        EventMultiplex(q, fd, trace_event),
         _buf_at(buf),
         _size_at(size) {}
 
@@ -174,10 +430,9 @@ protected:
 public:
     EventMultiplexVector(
         Queue& q, int fd, const iovec* iov, unsigned int niov,
-        const rawstd::TraceEvent& trace_event,
-        std::function<void(size_t, int)>&& cb
+        const rawstd::TraceEvent& trace_event
     ) :
-        EventMultiplex(q, fd, trace_event, std::move(cb)),
+        EventMultiplex(q, fd, trace_event),
         _niov_at(niov),
         _size_at(rawstd_iovec_size(iov, niov)) {
         _iov.reserve(_niov_at);
@@ -226,35 +481,26 @@ public:
 };
 
 class EventSimplexPollOneshot final : public EventSimplexPoll {
-private:
-    std::function<void(int)> _cb;
-
 public:
     EventSimplexPollOneshot(
         Queue& q, int fd, unsigned int mask,
-        const rawstd::TraceEvent& trace_event, std::function<void(int)>&& cb
+        const rawstd::TraceEvent& trace_event
     ) :
-        EventSimplexPoll(q, fd, mask, trace_event),
-        _cb(std::move(cb)) {}
-
-    void dispatch() override final;
+        EventSimplexPoll(q, fd, mask, trace_event) {}
 };
 
 class EventSimplexPollMultishot final : public EventSimplexPoll {
 private:
-    std::function<void(int)> _cb;
-    // See Queue::_dispatch_generation: collapses same-batch duplicate
-    // wakeups (this event is re-armed into the same session and could in
-    // principle be re-evaluated more than once before the caller's
-    // callback has a chance to drain whatever made it readable) into a
-    // single callback invocation.
-    unsigned int _last_generation;
+    std::shared_ptr<PollMultishotBackend> _backend;
 
 public:
     EventSimplexPollMultishot(
         Queue& q, int fd, unsigned int mask,
-        const rawstd::TraceEvent& trace_event, std::function<void(int)>&& cb
-    );
+        const rawstd::TraceEvent& trace_event,
+        std::shared_ptr<PollMultishotBackend> backend
+    ) :
+        EventSimplexPoll(q, fd, mask, trace_event),
+        _backend(std::move(backend)) {}
 
     void dispatch() override final;
 
@@ -283,36 +529,33 @@ class EventSimplexAcceptOneshot final : public EventSimplexAccept {
 private:
     sockaddr* _addr;
     socklen_t* _addrlen;
-    std::function<void(int)> _cb;
 
 public:
     EventSimplexAcceptOneshot(
         Queue& q, int fd, sockaddr* addr, socklen_t* addrlen,
-        const rawstd::TraceEvent& trace_event, std::function<void(int)>&& cb
+        const rawstd::TraceEvent& trace_event
     ) :
         EventSimplexAccept(q, fd, trace_event),
         _addr(addr),
-        _addrlen(addrlen),
-        _cb(std::move(cb)) {}
+        _addrlen(addrlen) {}
 
     inline sockaddr* addr() const noexcept { return _addr; }
     inline socklen_t* addrlen() const noexcept { return _addrlen; }
 
-    void dispatch() override final;
     ssize_t process() noexcept override final;
 };
 
 class EventSimplexAcceptMultishot final : public EventSimplexAccept {
 private:
-    std::function<void(int)> _cb;
+    std::shared_ptr<AcceptMultishotBackend> _backend;
 
 public:
     EventSimplexAcceptMultishot(
         Queue& q, int fd, const rawstd::TraceEvent& trace_event,
-        std::function<void(int)>&& cb
+        std::shared_ptr<AcceptMultishotBackend> backend
     ) :
         EventSimplexAccept(q, fd, trace_event),
-        _cb(std::move(cb)) {}
+        _backend(std::move(backend)) {}
 
     void dispatch() override final;
 
@@ -325,20 +568,15 @@ class EventSimplexScalarRead final : public EventSimplex {
 private:
     void* _buf;
     size_t _size;
-    std::function<void(size_t, int)> _cb;
 
 public:
     EventSimplexScalarRead(
         Queue& q, int fd, void* buf, size_t size,
-        const rawstd::TraceEvent& trace_event,
-        std::function<void(size_t, int)>&& cb
+        const rawstd::TraceEvent& trace_event
     ) :
         EventSimplex(q, fd, trace_event),
         _buf(buf),
-        _size(size),
-        _cb(std::move(cb)) {}
-
-    void dispatch() override final;
+        _size(size) {}
 
     bool is_completed() const noexcept override final { return true; }
     bool is_poll() const noexcept override final { return false; }
@@ -353,20 +591,15 @@ class EventSimplexVectorRead final : public EventSimplex {
 private:
     iovec* _iov;
     unsigned int _niov;
-    std::function<void(size_t, int)> _cb;
 
 public:
     EventSimplexVectorRead(
         Queue& q, int fd, iovec* iov, unsigned int niov,
-        const rawstd::TraceEvent& trace_event,
-        std::function<void(size_t, int)>&& cb
+        const rawstd::TraceEvent& trace_event
     ) :
         EventSimplex(q, fd, trace_event),
         _iov(iov),
-        _niov(niov),
-        _cb(std::move(cb)) {}
-
-    void dispatch() override final;
+        _niov(niov) {}
 
     bool is_completed() const noexcept override final { return true; }
     bool is_poll() const noexcept override final { return false; }
@@ -382,21 +615,16 @@ private:
     void* _buf;
     size_t _size;
     off_t _offset;
-    std::function<void(size_t, int)> _cb;
 
 public:
     EventSimplexScalarPositionalRead(
         Queue& q, int fd, void* buf, size_t size, off_t offset,
-        const rawstd::TraceEvent& trace_event,
-        std::function<void(size_t, int)>&& cb
+        const rawstd::TraceEvent& trace_event
     ) :
         EventSimplex(q, fd, trace_event),
         _buf(buf),
         _size(size),
-        _offset(offset),
-        _cb(std::move(cb)) {}
-
-    void dispatch() override final;
+        _offset(offset) {}
 
     bool is_completed() const noexcept override final { return true; }
     bool is_poll() const noexcept override final { return false; }
@@ -412,21 +640,16 @@ private:
     iovec* _iov;
     unsigned int _niov;
     off_t _offset;
-    std::function<void(size_t, int)> _cb;
 
 public:
     EventSimplexVectorPositionalRead(
         Queue& q, int fd, iovec* iov, unsigned int niov, off_t offset,
-        const rawstd::TraceEvent& trace_event,
-        std::function<void(size_t, int)>&& cb
+        const rawstd::TraceEvent& trace_event
     ) :
         EventSimplex(q, fd, trace_event),
         _iov(iov),
         _niov(niov),
-        _offset(offset),
-        _cb(std::move(cb)) {}
-
-    void dispatch() override final;
+        _offset(offset) {}
 
     bool is_completed() const noexcept override final { return true; }
     bool is_poll() const noexcept override final { return false; }
@@ -442,21 +665,16 @@ private:
     void* _buf;
     size_t _size;
     unsigned int _flags;
-    std::function<void(size_t, int)> _cb;
 
 public:
     EventSimplexScalarRecv(
         Queue& q, int fd, void* buf, size_t size, unsigned int flags,
-        const rawstd::TraceEvent& trace_event,
-        std::function<void(size_t, int)>&& cb
+        const rawstd::TraceEvent& trace_event
     ) :
         EventSimplex(q, fd, trace_event),
         _buf(buf),
         _size(size),
-        _flags(flags),
-        _cb(std::move(cb)) {}
-
-    void dispatch() override final;
+        _flags(flags) {}
 
     bool is_completed() const noexcept override final { return true; }
     bool is_poll() const noexcept override final { return false; }
@@ -467,76 +685,26 @@ public:
     ssize_t process() noexcept override final;
 };
 
-class EventSimplexVectorRecvMultishotEntry final {
-private:
-    std::vector<char> _data;
-    size_t _result;
-
-public:
-    EventSimplexVectorRecvMultishotEntry(size_t size) :
-        _data(size),
-        _result(0) {}
-
-    EventSimplexVectorRecvMultishotEntry(
-        const EventSimplexVectorRecvMultishotEntry&
-    ) = delete;
-
-    EventSimplexVectorRecvMultishotEntry(
-        EventSimplexVectorRecvMultishotEntry&& other
-    ) noexcept :
-        _data(std::move(other._data)),
-        _result(std::exchange(other._result, 0)) {}
-
-    EventSimplexVectorRecvMultishotEntry&
-    operator=(const EventSimplexVectorRecvMultishotEntry&) = delete;
-
-    EventSimplexVectorRecvMultishotEntry&
-    operator=(EventSimplexVectorRecvMultishotEntry&& other) noexcept {
-        EventSimplexVectorRecvMultishotEntry temp(std::move(other));
-        swap(temp);
-        return *this;
-    }
-
-    inline void* data() noexcept { return _data.data(); }
-    inline size_t size() const noexcept { return _data.size(); }
-    inline size_t result() const noexcept { return _result; }
-    inline void set_result(size_t result) noexcept { _result = result; };
-
-    void swap(EventSimplexVectorRecvMultishotEntry& other) noexcept {
-        std::swap(_data, other._data);
-        std::swap(_result, other._result);
-    }
-};
-
 class EventSimplexVectorRecvMultishot final : public EventSimplex {
 private:
     size_t _entry_size;
-    size_t _size;
-    size_t _pending_offset;
-    size_t _pending_size;
-    rawstd::RingBuf<EventSimplexVectorRecvMultishotEntry> _pending_entries;
     unsigned int _flags;
-    std::function<size_t(const iovec* iov, unsigned int niov, size_t, int)> _cb;
+    std::shared_ptr<RecvMultishotBackend> _backend;
 
 public:
     EventSimplexVectorRecvMultishot(
-        Queue& q, int fd, size_t entry_size, unsigned int entries, size_t size,
-        unsigned int flags, const rawstd::TraceEvent& trace_event,
-        std::function<
-            size_t(const iovec* iov, unsigned int niov, size_t, int)>&& cb
+        Queue& q, int fd, size_t entry_size, unsigned int flags,
+        const rawstd::TraceEvent& trace_event,
+        std::shared_ptr<RecvMultishotBackend> backend
     ) :
         EventSimplex(q, fd, trace_event),
         _entry_size(entry_size),
-        _size(size),
-        _pending_offset(0),
-        _pending_size(0),
-        _pending_entries(entries),
         _flags(flags),
-        _cb(std::move(cb)) {}
+        _backend(std::move(backend)) {}
 
     void dispatch() override final;
 
-    bool is_completed() const noexcept override final;
+    bool is_completed() const noexcept override final { return true; }
     bool is_multishot() const noexcept override final { return true; }
     bool is_poll() const noexcept override final { return false; }
     bool is_accept() const noexcept override final { return false; }
@@ -550,20 +718,15 @@ class EventSimplexMessageRead final : public EventSimplex {
 private:
     msghdr* _msg;
     unsigned int _flags;
-    std::function<void(size_t, int)> _cb;
 
 public:
     EventSimplexMessageRead(
         Queue& q, int fd, msghdr* msg, unsigned int flags,
-        const rawstd::TraceEvent& trace_event,
-        std::function<void(size_t, int)>&& cb
+        const rawstd::TraceEvent& trace_event
     ) :
         EventSimplex(q, fd, trace_event),
         _msg(msg),
-        _flags(flags),
-        _cb(std::move(cb)) {}
-
-    void dispatch() override final;
+        _flags(flags) {}
 
     bool is_completed() const noexcept override final { return true; }
     bool is_poll() const noexcept override final { return false; }
@@ -578,10 +741,9 @@ class EventMultiplexScalarWrite final : public EventMultiplexScalar {
 public:
     EventMultiplexScalarWrite(
         Queue& q, int fd, const void* buf, size_t size,
-        const rawstd::TraceEvent& trace_event,
-        std::function<void(size_t, int)>&& cb
+        const rawstd::TraceEvent& trace_event
     ) :
-        EventMultiplexScalar(q, fd, buf, size, trace_event, std::move(cb)) {}
+        EventMultiplexScalar(q, fd, buf, size, trace_event) {}
 
     bool is_poll() const noexcept override final { return false; }
     bool is_accept() const noexcept override final { return false; }
@@ -595,10 +757,9 @@ class EventMultiplexVectorWrite final : public EventMultiplexVector {
 public:
     EventMultiplexVectorWrite(
         Queue& q, int fd, const iovec* iov, unsigned int niov,
-        const rawstd::TraceEvent& trace_event,
-        std::function<void(size_t, int)>&& cb
+        const rawstd::TraceEvent& trace_event
     ) :
-        EventMultiplexVector(q, fd, iov, niov, trace_event, std::move(cb)) {}
+        EventMultiplexVector(q, fd, iov, niov, trace_event) {}
 
     bool is_poll() const noexcept override final { return false; }
     bool is_accept() const noexcept override final { return false; }
@@ -614,22 +775,17 @@ private:
     size_t _size;
     off_t _offset;
     bool _sync;
-    std::function<void(size_t, int)> _cb;
 
 public:
     EventSimplexScalarPositionalWrite(
         Queue& q, int fd, const void* buf, size_t size, off_t offset, bool sync,
-        const rawstd::TraceEvent& trace_event,
-        std::function<void(size_t, int)>&& cb
+        const rawstd::TraceEvent& trace_event
     ) :
         EventSimplex(q, fd, trace_event),
         _buf(buf),
         _size(size),
         _offset(offset),
-        _sync(sync),
-        _cb(std::move(cb)) {}
-
-    void dispatch() override final;
+        _sync(sync) {}
 
     bool is_completed() const noexcept override final { return true; }
     bool is_poll() const noexcept override final { return false; }
@@ -646,22 +802,17 @@ private:
     unsigned int _niov;
     off_t _offset;
     bool _sync;
-    std::function<void(size_t, int)> _cb;
 
 public:
     EventSimplexVectorPositionalWrite(
         Queue& q, int fd, const iovec* iov, unsigned int niov, off_t offset,
-        bool sync, const rawstd::TraceEvent& trace_event,
-        std::function<void(size_t, int)>&& cb
+        bool sync, const rawstd::TraceEvent& trace_event
     ) :
         EventSimplex(q, fd, trace_event),
         _iov(iov),
         _niov(niov),
         _offset(offset),
-        _sync(sync),
-        _cb(std::move(cb)) {}
-
-    void dispatch() override final;
+        _sync(sync) {}
 
     bool is_completed() const noexcept override final { return true; }
     bool is_poll() const noexcept override final { return false; }
@@ -677,21 +828,16 @@ private:
     const void* _buf;
     size_t _size;
     unsigned int _flags;
-    std::function<void(size_t, int)> _cb;
 
 public:
     EventSimplexScalarSend(
         Queue& q, int fd, const void* buf, size_t size, unsigned int flags,
-        const rawstd::TraceEvent& trace_event,
-        std::function<void(size_t, int)>&& cb
+        const rawstd::TraceEvent& trace_event
     ) :
         EventSimplex(q, fd, trace_event),
         _buf(buf),
         _size(size),
-        _flags(flags),
-        _cb(std::move(cb)) {}
-
-    void dispatch() override final;
+        _flags(flags) {}
 
     bool is_completed() const noexcept override final { return true; }
     bool is_poll() const noexcept override final { return false; }
@@ -706,20 +852,15 @@ class EventSimplexMessageWrite final : public EventSimplex {
 private:
     const msghdr* _msg;
     unsigned int _flags;
-    std::function<void(size_t, int)> _cb;
 
 public:
     EventSimplexMessageWrite(
         Queue& q, int fd, const msghdr* msg, unsigned int flags,
-        const rawstd::TraceEvent& trace_event,
-        std::function<void(size_t, int)>&& cb
+        const rawstd::TraceEvent& trace_event
     ) :
         EventSimplex(q, fd, trace_event),
         _msg(msg),
-        _flags(flags),
-        _cb(std::move(cb)) {}
-
-    void dispatch() override final;
+        _flags(flags) {}
 
     bool is_completed() const noexcept override final { return true; }
     bool is_poll() const noexcept override final { return false; }

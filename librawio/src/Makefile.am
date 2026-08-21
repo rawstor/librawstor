@@ -16,7 +16,9 @@ AM_CXXFLAGS = $(GENERIC_CXXFLAGS) \
 AM_LDFLAGS = $(ASAN_LDFLAGS)
 
 
-librawio_la_SOURCES = $(top_srcdir)/librawio/include/rawio/queue.hpp \
+librawio_la_SOURCES = $(top_srcdir)/librawio/include/rawio/awaitable.hpp \
+                      $(top_srcdir)/librawio/include/rawio/queue.hpp \
+                      $(top_srcdir)/librawio/include/rawio/stream.hpp \
                       queue.cpp \
                       rawio.cpp
 
@@ -37,5 +39,6 @@ else
                            poll_queue.cpp \
                            poll_queue.hpp \
                            poll_session.cpp \
-                           poll_session.hpp
+                           poll_session.hpp \
+                           poll_stream_backend.hpp
 endif

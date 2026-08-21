@@ -1,16 +1,20 @@
 #ifndef RAWIO_URING_BUFFER_HPP
 #define RAWIO_URING_BUFFER_HPP
 
+#include <rawio/stream.hpp>
+
 #include <rawstd/ringbuf.hpp>
 
 #include <liburing.h>
 
-#include <functional>
+#include <coroutine>
 #include <list>
 #include <memory>
 
 namespace rawio {
 namespace uring {
+
+class Queue;
 
 class BufferRingEntry final {
 private:
@@ -38,10 +42,21 @@ public:
     inline size_t result() noexcept { return _result; }
 };
 
-class BufferRing final {
+/**
+ * Owns the io_uring provided-buffer-ring registration for one
+ * recv_multishot() registration, and implements RecvStream::Backend on
+ * top of it: `on_arrival()` (called from the completion path once per
+ * CQE) accounts newly-arrived data into `_pending_entries`;
+ * `try_produce()` (called both directly by RecvStream::Next::await_ready()
+ * and internally, for a parked waiter, from on_arrival()) is the one
+ * place that turns pending entries into a delivered item -- see the .cpp
+ * for the exact want/terminal-error precedence rules.
+ */
+class BufferRing final : public rawio::RecvStream::Backend {
 private:
     static __u16 _id_counter;
 
+    Queue& _q;
     io_uring& _ring;
 
     const size_t _entry_size;
@@ -53,30 +68,55 @@ private:
     int _mask;
     char* _entries_base;
 
-    size_t _size;
     size_t _pending_offset;
     size_t _pending_size;
     rawstd::RingBuf<BufferRingEntry> _pending_entries;
 
-    std::function<size_t(const iovec* iov, unsigned int niov, size_t, int)> _cb;
+    std::coroutine_handle<> _waiter;
+    size_t _waiter_want;
+    rawio::RecvStream::Item* _waiter_item;
+    int* _waiter_error;
+
+    bool _has_terminal;
+    int _terminal_error;
+    bool _closed;
+
+    Event* _event;
 
     void* _get_entry(unsigned int index);
 
+    void _extract(size_t want, rawio::RecvStream::Item& out);
+
 public:
     BufferRing(
-        io_uring& ring, size_t entry_size, unsigned int entries, size_t size,
-        std::function<size_t(const iovec*, unsigned int, size_t, int)>&& cb
+        Queue& q, io_uring& ring, size_t entry_size, unsigned int entries
     );
     BufferRing(const BufferRing&) = delete;
     BufferRing(BufferRing&&) = delete;
 
-    ~BufferRing();
+    ~BufferRing() override;
 
     BufferRing& operator=(const BufferRing&) = delete;
     BufferRing& operator=(BufferRing&&) = delete;
-    void operator()(size_t result, int error, unsigned int flags);
 
     unsigned int id() const noexcept;
+
+    inline void set_event(Event* event) noexcept { _event = event; }
+
+    // Called once per CQE belonging to this registration: `result` is the
+    // raw signed CQE result (negative -errno, or a non-negative byte
+    // count), `flags` is the CQE's flags (IORING_CQE_F_BUFFER handling).
+    void on_arrival(int result, unsigned int flags);
+
+    bool try_produce(
+        size_t want, rawio::RecvStream::Item& out, int& error
+    ) noexcept override;
+    void set_waiter(
+        std::coroutine_handle<> h, size_t want, rawio::RecvStream::Item* out,
+        int* error
+    ) noexcept override;
+    void close() noexcept override;
+    rawio::Event* event() const noexcept override { return _event; }
 };
 
 } // namespace uring
