@@ -1064,12 +1064,10 @@ rawstd::DetachedTask Session::_recv_pump(
     std::weak_ptr<Session> weak, rawio::RecvStream stream,
     rawstd::TraceEvent trace_event
 ) {
-    while (true) {
-        // --- read and parse this message's frame head ---
-        RawstorOSTFrameResponse response;
-        uint16_t cid;
-        SessionOp* op;
-        try {
+    try {
+        while (true) {
+            // --- read and parse this message's frame head ---
+            RawstorOSTFrameResponse response;
             rawio::RecvStream::Item head_item =
                 co_await stream.next(sizeof(response));
 
@@ -1095,9 +1093,9 @@ rawstd::DetachedTask Session::_recv_pump(
                 head_item.iov(), head_item.niov(), 0, &response,
                 sizeof(response)
             );
-            cid = response.head.cid;
+            uint16_t cid = response.head.cid;
 
-            op = session->_find_op(cid);
+            SessionOp* op = session->_find_op(cid);
             if (op == nullptr) {
                 // A stray/late response for an op this connection
                 // already failed and that Connection::_op() has since
@@ -1109,58 +1107,30 @@ rawstd::DetachedTask Session::_recv_pump(
                 rawstd_error("Unexpected cid: %u\n", cid);
                 RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
             }
-        } catch (const std::system_error& e) {
-            if (e.code().value() == ECANCELED) {
-                co_return;
+
+            // op->response_head_cb() synchronously resumes whatever is
+            // co_await-ing that op (Connection::_op()'s retry chain,
+            // eventually a detached C-ABI adapter rethrowing after its
+            // callback signalled failure) -- but resuming a
+            // rawstd::Task<T> never lets an exception escape back into
+            // its resumer (Task<T>::unhandled_exception() stores it for
+            // later, it doesn't rethrow), so nothing from *that* should
+            // reach here in practice. What can still throw is
+            // response_head_cb() itself (e.g. std::bad_alloc); once that
+            // happens we can no longer trust that body_size was ever
+            // determined, so we can't safely know where the next head
+            // starts either -- the catch clauses below treat it exactly
+            // like a framing error either way.
+            size_t body_size = op->response_head_cb(&response, 0);
+            if (body_size == 0) {
+                continue;
             }
 
-            // A strong self-reference here (instead of weak_ptr::lock())
-            // would keep this Session alive purely because its own recv
-            // registration exists -- including while this very pump's
-            // captured shared_ptr is what's being torn down as part of
-            // the *owning* rawio::Queue's own destruction (e.g. process
-            // shutdown), which would then call back into that same,
-            // still-destructing Queue via ~Session()'s _queue.cancel(),
-            // a reentrant heap-use-after-free. A missing session here
-            // means it was already destroyed via some other, unrelated
-            // reference dropping -- nothing to do.
-            std::shared_ptr<Session> session = weak.lock();
-            if (session == nullptr) {
-                co_return;
-            }
+            // --- this response carries a body: read it too, before
+            // moving on to the next message's head ---
+            rawio::RecvStream::Item body_item = co_await stream.next(body_size);
 
-            // The stream is no longer trustworthy (either a real
-            // transport-level/framing error, or a cid we can't resync
-            // past): fail everything still in flight and stop the pump
-            // for good. _read_event must not outlive it -- ~Session()
-            // would otherwise try to cancel() an Event that's already
-            // gone.
-            session->_fail_in_flight(e.code().value());
-            session->_read_event = nullptr;
-            co_return;
-        }
-
-        // op->response_head_cb()/response_body_cb() below are called
-        // outside any try/catch of ours -- they synchronously resume
-        // whatever is co_await-ing that op (Connection::_op()'s retry
-        // chain, eventually a detached C-ABI adapter rethrowing after
-        // its callback signalled failure), and an exception escaping
-        // *that* is unrelated to this response's own framing. It needs
-        // to propagate all the way out to Queue::_dispatch()'s own catch
-        // (see Completion::complete()'s doc comment), not be misread
-        // here as a protocol error on this pump.
-        size_t body_size = op->response_head_cb(&response, 0);
-        if (body_size == 0) {
-            continue;
-        }
-
-        // --- this response carries a body: read it too, before moving
-        // on to the next message's head ---
-        rawio::RecvStream::Item body_item;
-        try {
-            body_item = co_await stream.next(body_size);
-
-            std::shared_ptr<Session> session = weak.lock();
+            session = weak.lock();
             if (session == nullptr) {
                 co_return;
             }
@@ -1169,7 +1139,7 @@ rawstd::DetachedTask Session::_recv_pump(
                 trace_event, "%zu of %zu\n", body_item.size(), body_size
             );
 
-            int error = validate_result(body_size, body_item.size());
+            error = validate_result(body_size, body_item.size());
             if (error) {
                 RAWSTD_THROW_SYSTEM_ERROR(error);
             }
@@ -1183,24 +1153,58 @@ rawstd::DetachedTask Session::_recv_pump(
                 rawstd_error("Unexpected cid: %u\n", cid);
                 RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
             }
-        } catch (const std::system_error& e) {
-            if (e.code().value() == ECANCELED) {
-                co_return;
-            }
 
-            std::shared_ptr<Session> session = weak.lock();
-            if (session == nullptr) {
-                co_return;
-            }
-
-            session->_fail_in_flight(e.code().value());
-            session->_read_event = nullptr;
+            // Same reasoning as response_head_cb() above: an exception
+            // here can only come from response_body_cb() itself, not
+            // from resuming a rawstd::Task<T>.
+            op->response_body_cb(
+                body_item.iov(), body_item.niov(), body_item.size()
+            );
+        }
+    } catch (const std::system_error& e) {
+        if (e.code().value() == ECANCELED) {
             co_return;
         }
 
-        op->response_body_cb(
-            body_item.iov(), body_item.niov(), body_item.size()
-        );
+        // A strong self-reference here (instead of weak_ptr::lock())
+        // would keep this Session alive purely because its own recv
+        // registration exists -- including while this very pump's
+        // captured shared_ptr is what's being torn down as part of the
+        // *owning* rawio::Queue's own destruction (e.g. process
+        // shutdown), which would then call back into that same,
+        // still-destructing Queue via ~Session()'s _queue.cancel(), a
+        // reentrant heap-use-after-free. A missing session here means it
+        // was already destroyed via some other, unrelated reference
+        // dropping -- nothing to do.
+        std::shared_ptr<Session> session = weak.lock();
+        if (session == nullptr) {
+            co_return;
+        }
+
+        // The stream is no longer trustworthy (either a real
+        // transport-level/framing error, or a cid we can't resync past):
+        // fail everything still in flight and stop the pump for good.
+        // _read_event must not outlive it -- ~Session() would otherwise
+        // try to cancel() an Event that's already gone.
+        session->_fail_in_flight(e.code().value());
+        session->_read_event = nullptr;
+        co_return;
+    } catch (const std::exception& e) {
+        // Not a system_error: only reachable from
+        // response_head_cb()/response_body_cb()'s own body (see above)
+        // -- e.g. a std::bad_alloc. Same fate as any other error above:
+        // we can no longer trust our position in the stream, so fail
+        // everything in flight and stop.
+        rawstd_error("_recv_pump: %s\n", e.what());
+
+        std::shared_ptr<Session> session = weak.lock();
+        if (session == nullptr) {
+            co_return;
+        }
+
+        session->_fail_in_flight(EIO);
+        session->_read_event = nullptr;
+        co_return;
     }
 }
 
