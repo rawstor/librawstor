@@ -151,6 +151,22 @@ rawstd::Task<std::vector<std::shared_ptr<Session>>> Connection::_open(
     );
 }
 
+rawstd::Task<void> Connection::_close() {
+    std::vector<rawstd::Task<void>> closes;
+    closes.reserve(_sessions.size());
+    for (std::shared_ptr<Session>& s : _sessions) {
+        closes.push_back(s->close());
+    }
+
+    for (rawstd::Task<void>& t : closes) {
+        try {
+            co_await t;
+        } catch (const std::exception& e) {
+            rawstd_error("Connection::close(): %s\n", e.what());
+        }
+    }
+}
+
 void Connection::_finish(rawstor::telemetry::TimePoint t_call) {
     rawstor::telemetry::TimePoint lat = rawstor::telemetry::now() - t_call;
     rawstor::telemetry::record_lat(lat);
@@ -348,6 +364,7 @@ rawstd::Task<void> Connection::list(
         // cursor into the following retry's input.
         ret_token = token;
         co_await s->list(limit, ret, ret_token);
+        co_await s->close();
     });
 
     targets.swap(ret);
@@ -367,6 +384,7 @@ rawstd::Task<void> Connection::create(
         std::shared_ptr<Session> s =
             co_await Session::create(queue, target.parent());
         co_await s->create(id, sp);
+        co_await s->close();
     });
 }
 
@@ -382,6 +400,7 @@ Connection::remove(rawio::Queue& queue, const rawstd::URI& target) {
         std::shared_ptr<Session> s =
             co_await Session::create(queue, target.parent());
         co_await s->remove(id);
+        co_await s->close();
     });
 }
 
@@ -397,7 +416,9 @@ Connection::spec(rawio::Queue& queue, const rawstd::URI& target) {
         __FUNCTION__, [&]() -> rawstd::Task<RawstorObjectSpec> {
             std::shared_ptr<Session> s =
                 co_await Session::create(queue, target.parent());
-            co_return co_await s->spec(id);
+            RawstorObjectSpec spec = co_await s->spec(id);
+            co_await s->close();
+            co_return spec;
         }
     );
 }
@@ -408,7 +429,9 @@ Connection::info(rawio::Queue& queue, const rawstd::URI& location) {
         __FUNCTION__, [&]() -> rawstd::Task<RawstorLocationInfo> {
             std::shared_ptr<Session> s =
                 co_await Session::create(queue, location);
-            co_return co_await s->info();
+            RawstorLocationInfo info = co_await s->info();
+            co_await s->close();
+            co_return info;
         }
     );
 }
@@ -421,6 +444,9 @@ void Connection::open(
 }
 
 void Connection::close() {
+    if (!_sessions.empty()) {
+        run(_queue, _close());
+    }
     _sessions.clear();
     _object = nullptr;
 }

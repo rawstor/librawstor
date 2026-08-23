@@ -40,6 +40,12 @@ private:
     rawstd::Task<std::vector<std::shared_ptr<Session>>>
     _open(const rawstd::URI& location, Object* object, size_t nsessions);
 
+    // Closes every session in _sessions concurrently (same vector<Task<T>>
+    // -then-await-each idiom as _open()); a session that fails to close
+    // is logged and otherwise ignored, not propagated -- this is
+    // best-effort teardown, not something callers can retry.
+    rawstd::Task<void> _close();
+
     // Every data-path method's terminal path -- success or final failure
     // -- runs through here exactly once; records the cross-retry
     // call-to-completion latency. Per-attempt telemetry, including the
