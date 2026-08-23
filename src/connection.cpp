@@ -80,33 +80,17 @@ rawstd::Task<std::unique_ptr<Connection>> Connection::create(
     // Object's constructor) is each caller's own job, not this one's.
     //
     // Task<T> starts eagerly, right up to its first real suspension
-    // point -- building the whole vector before awaiting any of it
-    // submits every session's connect up front, so they run
-    // concurrently instead of one full round-trip at a time. Every task
-    // is still awaited even after a failure, never left dangling
-    // suspended: destroying a Task<T> that's still waiting on a
-    // completion that will arrive later is undefined behavior.
+    // point -- building the whole vector before handing it to gather()
+    // submits every session's connect up front, so they run concurrently
+    // instead of one full round-trip at a time.
     std::vector<rawstd::Task<std::shared_ptr<Session>>> creates;
     creates.reserve(nsessions);
     for (size_t i = 0; i < nsessions; ++i) {
         creates.push_back(Session::create(queue, location));
     }
 
-    std::vector<std::shared_ptr<Session>> sessions;
-    sessions.reserve(nsessions);
-    std::exception_ptr error;
-    for (rawstd::Task<std::shared_ptr<Session>>& t : creates) {
-        try {
-            sessions.push_back(co_await t);
-        } catch (...) {
-            if (!error) {
-                error = std::current_exception();
-            }
-        }
-    }
-    if (error) {
-        std::rethrow_exception(error);
-    }
+    std::vector<std::shared_ptr<Session>> sessions =
+        co_await rawstd::gather(std::move(creates));
 
     std::unique_ptr<Connection> cn =
         std::make_unique<Connection>(Private(), queue);
@@ -394,8 +378,7 @@ rawstd::Task<void> Connection::open(Object* object) {
     // itself, using this same member.
     _object = object;
 
-    // Same eager-Task<T>-then-await-each idiom as create() itself:
-    // every session's SET_OBJECT goes out up front, so they run
+    // Every session's SET_OBJECT goes out up front, so they run
     // concurrently.
     std::vector<rawstd::Task<void>> set_objects;
     set_objects.reserve(_sessions.size());
@@ -403,46 +386,47 @@ rawstd::Task<void> Connection::open(Object* object) {
         set_objects.push_back(s->set_object(object));
     }
 
-    for (size_t i = 0; i < _sessions.size(); ++i) {
-        // co_await isn't allowed inside a catch block, so the failure is
-        // recorded here and acted on just below, outside the handler.
-        bool failed = false;
-        try {
-            co_await set_objects[i];
-        } catch (const std::system_error&) {
-            failed = true;
+    // co_await isn't allowed inside a catch block, so the failure is only
+    // recorded here; acting on it happens just below, outside the
+    // handler.
+    bool failed = false;
+    try {
+        co_await rawstd::gather(std::move(set_objects));
+    } catch (const std::system_error&) {
+        failed = true;
+    }
+
+    if (failed) {
+        // gather() only says *that* at least one session failed, not
+        // which -- so every session in the pool gets reconnected, not
+        // just the failed one(s). invalidate_session() has its own retry
+        // (rawstor_opts_io_attempts() attempts each); if any of those
+        // still fails, that exception propagates straight out.
+        std::vector<rawstd::Task<void>> invalidates;
+        invalidates.reserve(_sessions.size());
+        for (std::shared_ptr<Session>& s : _sessions) {
+            invalidates.push_back(invalidate_session(s));
         }
-        if (failed) {
-            // invalidate_session() reconnects and set_object()s the
-            // replacement with its own retry (rawstor_opts_io_attempts()
-            // attempts) -- nothing more to do here on success; if it
-            // still fails, that exception propagates straight out,
-            // matching every other in-flight session here still only
-            // getting the one attempt _with_retry()'s own callers get.
-            co_await invalidate_session(_sessions[i]);
-        }
+        co_await rawstd::gather(std::move(invalidates));
     }
 }
 
 rawstd::Task<void> Connection::close() {
-    // Task<T> starts eagerly, right up to its first real suspension
-    // point -- building the whole vector before awaiting any of it
-    // closes every session concurrently instead of one at a time (same
-    // idiom as create()). A session that fails to close is logged and
-    // otherwise ignored, not propagated -- this is best-effort teardown,
-    // not something the caller can retry.
+    // Every session's close goes out up front, so they run concurrently
+    // instead of one at a time.
     std::vector<rawstd::Task<void>> closes;
     closes.reserve(_sessions.size());
     for (std::shared_ptr<Session>& s : _sessions) {
         closes.push_back(s->close());
     }
 
-    for (rawstd::Task<void>& t : closes) {
-        try {
-            co_await t;
-        } catch (const std::exception& e) {
-            rawstd_error("Connection::close(): %s\n", e.what());
-        }
+    try {
+        co_await rawstd::gather(std::move(closes));
+    } catch (const std::exception& e) {
+        // Best-effort teardown -- gather() only surfaces the first
+        // session's failure, not which one, but that's fine here: this
+        // is diagnostic only, nothing a caller could retry on.
+        rawstd_error("Connection::close(): %s\n", e.what());
     }
 
     _sessions.clear();
