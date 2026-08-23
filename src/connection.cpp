@@ -259,7 +259,17 @@ Connection::invalidate_session(const std::shared_ptr<Session>& s) {
             [&]() -> rawstd::Task<std::shared_ptr<Session>> {
                 std::shared_ptr<Session> session =
                     co_await Session::create(_queue, s->location());
-                co_await session->set_object(_object);
+                // _object is only set once open() has run (see its own
+                // doc comment) -- a Connection used purely for metadata
+                // (list/create/remove/spec/info) never calls open(), so
+                // _object stays null and every Session::set_object()
+                // implementation would dereference it unconditionally
+                // (e.g. blk::Session::set_object() reading object->id()).
+                // Metadata ops don't need SET_OBJECT first, so just skip
+                // it here.
+                if (_object != nullptr) {
+                    co_await session->set_object(_object);
+                }
                 co_return session;
             }
         );
