@@ -114,7 +114,12 @@ public:
 
     // set_object()s every session in the pool create() populated --
     // must be called (at most once) after create(), before any data-path
-    // method below.
+    // method below. A session that fails is fixed up via
+    // invalidate_session(), same recovery as the data-path/metadata
+    // methods get from _with_retry() -- not literally _with_retry()
+    // itself, since that picks one session from the pool per call
+    // (retrying against another on failure) rather than target every
+    // session the way this needs to.
     rawstd::Task<void> open(Object* object);
 
     // Not called implicitly by ~Connection() (a coroutine can't run in a

@@ -389,6 +389,11 @@ rawstd::Task<RawstorLocationInfo> Connection::info() {
 }
 
 rawstd::Task<void> Connection::open(Object* object) {
+    // Set before any of the set_object() calls below: on failure,
+    // invalidate_session() reconnects and set_object()s the replacement
+    // itself, using this same member.
+    _object = object;
+
     // Same eager-Task<T>-then-await-each idiom as create() itself:
     // every session's SET_OBJECT goes out up front, so they run
     // concurrently.
@@ -398,21 +403,25 @@ rawstd::Task<void> Connection::open(Object* object) {
         set_objects.push_back(s->set_object(object));
     }
 
-    std::exception_ptr error;
-    for (rawstd::Task<void>& t : set_objects) {
+    for (size_t i = 0; i < _sessions.size(); ++i) {
+        // co_await isn't allowed inside a catch block, so the failure is
+        // recorded here and acted on just below, outside the handler.
+        bool failed = false;
         try {
-            co_await t;
-        } catch (...) {
-            if (!error) {
-                error = std::current_exception();
-            }
+            co_await set_objects[i];
+        } catch (const std::system_error&) {
+            failed = true;
+        }
+        if (failed) {
+            // invalidate_session() reconnects and set_object()s the
+            // replacement with its own retry (rawstor_opts_io_attempts()
+            // attempts) -- nothing more to do here on success; if it
+            // still fails, that exception propagates straight out,
+            // matching every other in-flight session here still only
+            // getting the one attempt _with_retry()'s own callers get.
+            co_await invalidate_session(_sessions[i]);
         }
     }
-    if (error) {
-        std::rethrow_exception(error);
-    }
-
-    _object = object;
 }
 
 rawstd::Task<void> Connection::close() {

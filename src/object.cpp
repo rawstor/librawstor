@@ -174,36 +174,6 @@ T run(rawio::Queue& q, rawstd::Task<T> t) {
     return t.get();
 }
 
-// Retries `attempt()` up to rawstor_opts_io_attempts() times -- used by
-// Object's constructor to retry rawstor::Connection::create() + open()
-// together as one all-or-nothing attempt (a fresh session pool each
-// time, not just retrying set_object() against whatever connect()
-// already produced). Deliberately a local duplicate of connection.cpp's
-// own `retry_n_async`, rather than a shared dependency, for the same
-// reason `run()` above is.
-template <typename F>
-auto retry_n_async(const char* func_name, F&& attempt) -> decltype(attempt()) {
-    for (unsigned int i = 1; i <= rawstor_opts_io_attempts(); ++i) {
-        try {
-            co_return co_await attempt();
-        } catch (const std::exception& e) {
-            if (i == rawstor_opts_io_attempts()) {
-                rawstd_error(
-                    "%s: error: %s; attempt: %d of %d; failing...\n", func_name,
-                    e.what(), i, rawstor_opts_io_attempts()
-                );
-                throw;
-            }
-            rawstd_warning(
-                "%s: error: %s; attempt: %d of %d; retrying...\n", func_name,
-                e.what(), i, rawstor_opts_io_attempts()
-            );
-        }
-    }
-    // Only reachable if rawstor_opts_io_attempts() == 0.
-    RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-}
-
 } // namespace
 
 namespace rawstor {
@@ -223,24 +193,11 @@ Object::Object(rawio::Queue& queue, const std::vector<rawstd::URI>& targets) :
 
     _cns.reserve(targets.size());
     for (const auto& target : targets) {
-        // A fresh session pool each retry, not just a retried
-        // set_object() against whatever connect() already produced --
-        // same all-or-nothing semantics per attempt this used to get for
-        // free inside the old, single Connection::open().
-        std::unique_ptr<rawstor::Connection> cn = run(
-            _queue,
-            retry_n_async(
-                "Object::Object",
-                [&]() -> rawstd::Task<std::unique_ptr<rawstor::Connection>> {
-                    std::unique_ptr<rawstor::Connection> cn =
-                        co_await rawstor::Connection::create(
+        std::unique_ptr<rawstor::Connection> cn =
+            run(_queue, rawstor::Connection::create(
                             _queue, target.parent(), rawstor_opts_sessions()
-                        );
-                    co_await cn->open(this);
-                    co_return cn;
-                }
-            )
-        );
+                        ));
+        run(_queue, cn->open(this));
         _cns.push_back(std::move(cn));
     }
 }
