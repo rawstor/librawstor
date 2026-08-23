@@ -37,10 +37,6 @@ private:
     std::unordered_map<uint16_t, std::shared_ptr<SessionOp>> _ops;
 
     rawstd::Task<void> _connect() override;
-    // The actual socket()/setsockopt()/connect() sequence _connect()
-    // runs before starting the recv pump -- split out under its own name
-    // to not collide with the base class's _connect() it's called from.
-    rawstd::Task<int> _dial();
     rawstd::Task<void> _set_object(Object* object);
     // The cid-dispatched counterpart of the old basic_request_async():
     // sends a RawstorOSTFrameBasic-shaped request (list/create/remove/

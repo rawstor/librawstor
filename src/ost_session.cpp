@@ -758,7 +758,7 @@ void Session::_add_op(const std::shared_ptr<SessionOp>& op) {
     if (_read_event == nullptr) {
         // _recv_pump has already exited (e.g. the connection died right
         // after a previous op's response, before this one was ever
-        // issued -- _connect()'s dial and this op's own caller can both
+        // issued -- _connect() itself and this op's own caller can both
         // legitimately run to completion in between, with nothing to
         // co_await in the meantime that would surface that death
         // earlier). Nobody will ever demultiplex a response for this op,
@@ -797,7 +797,7 @@ Session::~Session() {
     }
 }
 
-rawstd::Task<int> Session::_dial() {
+rawstd::Task<void> Session::_connect() {
     if (!location().path().str().empty() && location().path().str() != "/") {
         rawstd_error("Empty path expected: %s\n", location().str().c_str());
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
@@ -864,11 +864,6 @@ rawstd::Task<int> Session::_dial() {
         throw;
     }
 
-    co_return fd;
-}
-
-rawstd::Task<void> Session::_connect() {
-    int fd = co_await _dial();
     set_fd(fd);
 
     rawstd::TraceEvent trace_event =
