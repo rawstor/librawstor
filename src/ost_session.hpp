@@ -36,8 +36,18 @@ private:
     rawio::Event* _read_event;
     std::unordered_map<uint16_t, std::shared_ptr<SessionOp>> _ops;
 
-    int _connect();
-    rawstd::Task<void> _set_object(Object* object);
+    rawstd::Task<void> _connect() override;
+    // The cid-dispatched counterpart of the old basic_request_async():
+    // sends a RawstorOSTFrameBasic-shaped request (list/create/remove/
+    // spec/info/set_object all share this shape) and awaits its response
+    // through the same _ops demultiplex mechanism as every other op --
+    // requires _recv_pump to already be running, i.e. _connect() to have
+    // completed.
+    template <typename T = char>
+    rawstd::Task<std::vector<T>> _basic_request(
+        RawstorOSTCommandType cmd, const char* op_name, const RawstdUUID& id,
+        uint64_t val
+    );
     void _fail_in_flight(int error);
     // Returns nullptr, rather than throwing, for an unregistered cid: a
     // response can legitimately race with Connection::_op() already having
@@ -65,6 +75,8 @@ private:
 public:
     Session(Private p, rawio::Queue& queue, const rawstd::URI& location);
     ~Session();
+
+    rawstd::Task<void> close() override;
 
     rawstd::Task<void> list(
         unsigned int limit, std::vector<RawstdUUID>& targets, RawstdUUID& token

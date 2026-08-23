@@ -21,8 +21,6 @@
 
 #include <arpa/inet.h>
 
-#include <poll.h>
-
 #include <sys/socket.h>
 
 #include <algorithm>
@@ -637,85 +635,87 @@ public:
     }
 };
 
+// The cid-dispatched counterpart of SessionOpRead/SessionOpWrite/
+// SessionOpFlush above, for the RawstorOSTFrameBasic-shaped commands
+// (list/create/remove/spec/info/set_object) -- these carry no hash and
+// have either no response body or a body of some number of T's, per
+// response.body.res. Routed through the same _recv_pump demultiplex
+// mechanism as every other op, now that the pump starts in
+// Session::_connect() instead of after the first request round-trips.
 template <typename T = char>
-rawstd::Task<std::vector<T>> basic_request_async(
-    rawio::Queue& queue, int fd, uint16_t cid, RawstorOSTCommandType cmd,
-    const RawstdUUID& id, uint64_t val
-) {
-    rawstd::TraceEvent trace_event =
-        RAWSTD_TRACE_EVENT('s', "basic cmd %d\n", cmd);
+class SessionOpBasic final : public SessionOp {
+private:
+    RawstorOSTCommandType _cmd;
+    RawstorOSTFrameBasic _request;
+    std::vector<T> _response_data;
 
-    RawstorOSTFrameBasic request = {
-        .head =
-            {
-                .magic = RAWSTOR_MAGIC,
-                .cmd = cmd,
-                .cid = cid,
+public:
+    SessionOpBasic(
+        const std::shared_ptr<rawstor::ost::Session>& session, uint16_t cid,
+        RawstorOSTCommandType cmd, const char* op_name, const RawstdUUID& id,
+        uint64_t val, const rawstd::TraceEvent& trace_event
+    ) :
+        SessionOp(session, cid, trace_event, op_name, 0, 0),
+        _cmd(cmd),
+        _request({
+            .head =
+                {
+                    .magic = RAWSTOR_MAGIC,
+                    .cmd = cmd,
+                    .cid = cid,
+                },
+            .body = {
+                .obj_id = {},
+                .offset = 0,
+                .val = val,
             },
-        .body = {
-            .obj_id = {},
-            .offset = 0,
-            .val = val,
-        },
-    };
-    memcpy(request.body.obj_id, id.bytes, sizeof(request.body.obj_id));
-
-    size_t send_result =
-        co_await queue.send(fd, &request, sizeof(request), RAWSTD_MSG_NOSIGNAL);
-    RAWSTD_TRACE_EVENT_MESSAGE(
-        trace_event, "%zu of %zu\n", send_result, sizeof(RawstorOSTFrameBasic)
-    );
-    int error = validate_result(sizeof(RawstorOSTFrameBasic), send_result);
-    if (error) {
-        RAWSTD_THROW_SYSTEM_ERROR(error);
+        }) {
+        memcpy(_request.body.obj_id, id.bytes, sizeof(_request.body.obj_id));
     }
 
-    RawstorOSTFrameResponse response;
-    size_t read_result = co_await queue.read(fd, &response, sizeof(response));
-    RAWSTD_TRACE_EVENT_MESSAGE(
-        trace_event, "%zu of %zu\n", read_result, sizeof(response)
-    );
-    error = validate_result(sizeof(response), read_result);
-    if (!error) {
-        error = validate_response(&response);
-    }
-    if (!error) {
-        error = validate_cmd(response.head.cmd, cmd);
-    }
-    if (error) {
-        RAWSTD_THROW_SYSTEM_ERROR(error);
-    }
+    const void* request_data() const noexcept { return &_request; }
 
-    std::vector<T> ret;
-    if (response.body.res > 0) {
-        if (response.body.res % sizeof(T) != 0) {
-            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+    size_t request_size() const noexcept override { return sizeof(_request); }
+
+    size_t response_head_cb(
+        const RawstorOSTFrameResponse* response, int error
+    ) override {
+        RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
+
+        if (!error) {
+            error = validate_response(response);
         }
 
-        rawio::RecvStream stream =
-            queue.recv_multishot(fd, 1u << 17, 64 * 4, response.body.res, 0);
-        rawio::RecvStream::Item item =
-            co_await stream.next(static_cast<size_t>(response.body.res));
-
-        RAWSTD_TRACE_EVENT_MESSAGE(
-            trace_event, "%zu of %zu\n", item.size(), response.body.res
-        );
-
-        error = validate_result(
-            static_cast<size_t>(response.body.res), item.size()
-        );
-        if (error) {
-            RAWSTD_THROW_SYSTEM_ERROR(error);
+        if (!error) {
+            error = validate_cmd(response->head.cmd, _cmd);
         }
 
-        ret.resize(item.size() / sizeof(T));
-        rawstd_iovec_to_buf(
-            item.iov(), item.niov(), 0, ret.data(), item.size()
-        );
+        if (!error && response->body.res > 0) {
+            // A malformed body size means we can no longer trust where
+            // the next frame starts either -- letting this throw (per
+            // response_head_cb()'s documented contract) fails every op
+            // still in flight on this session instead of silently
+            // desyncing the stream.
+            if (response->body.res % sizeof(T) != 0) {
+                RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+            }
+            return static_cast<size_t>(response->body.res);
+        }
+
+        _dispatch(0, error);
+        return 0;
     }
 
-    co_return ret;
-}
+    void response_body_cb(
+        const iovec* iov, unsigned int niov, size_t result
+    ) override {
+        _response_data.resize(result / sizeof(T));
+        rawstd_iovec_to_buf(iov, niov, 0, _response_data.data(), result);
+        _dispatch(result, 0);
+    }
+
+    std::vector<T> take_response_data() { return std::move(_response_data); }
+};
 
 void Session::_fail_in_flight(int error) {
     if (_ops.empty()) {
@@ -755,6 +755,22 @@ SessionOp* Session::_find_op(uint16_t cid) {
 }
 
 void Session::_add_op(const std::shared_ptr<SessionOp>& op) {
+    if (_read_event == nullptr) {
+        // _recv_pump has already exited (e.g. the connection died right
+        // after a previous op's response, before this one was ever
+        // issued -- _connect() itself and this op's own caller can both
+        // legitimately run to completion in between, with nothing to
+        // co_await in the meantime that would surface that death
+        // earlier). Nobody will ever demultiplex a response for this op,
+        // so fail it immediately instead of registering it into _ops,
+        // where it would sit forever unanswered. The caller still goes
+        // on to attempt its own send -- wasted but harmless, since
+        // response_head_cb() below has already resolved this op and
+        // request_cb()'s own _dispatch() call is a no-op past that
+        // point.
+        op->response_head_cb(nullptr, ECONNRESET);
+        return;
+    }
     _ops[op->cid()] = op;
     rawstor::telemetry::op_started();
 }
@@ -768,8 +784,6 @@ Session::Session(Private p, rawio::Queue& queue, const rawstd::URI& location) :
     rawstor::Session(p, queue, location),
     _cid_counter(0),
     _read_event(nullptr) {
-    int fd = _connect();
-    set_fd(fd);
 }
 
 Session::~Session() {
@@ -783,7 +797,7 @@ Session::~Session() {
     }
 }
 
-int Session::_connect() {
+rawstd::Task<void> Session::_connect() {
     if (!location().path().str().empty() && location().path().str() != "/") {
         rawstd_error("Empty path expected: %s\n", location().str().c_str());
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
@@ -797,10 +811,10 @@ int Session::_connect() {
     }
 
     try {
-        res = rawstd_socket_set_nosigpipe(fd);
-        if (res < 0) {
-            RAWSTD_THROW_SYSTEM_ERROR(-res);
-        }
+        // Also puts fd in non-blocking mode, which the async connect()
+        // below relies on (the poll backend needs a non-blocking
+        // ::connect() to return EINPROGRESS instead of blocking inline).
+        rawio::Queue::setup_fd(fd);
 
         unsigned int so_sndtimeo = rawstor_opts_so_sndtimeo();
         if (so_sndtimeo != 0) {
@@ -842,79 +856,72 @@ int Session::_connect() {
         rawstd_info(
             "fd %d: Connecting to %s...\n", fd, location().str().c_str()
         );
-        int res = connect(fd, (sockaddr*)&servaddr, sizeof(servaddr));
-        if (res == -1) {
-            if (errno == EINTR) {
-                errno = 0;
-
-                pollfd fds = {
-                    .fd = fd,
-                    .events = POLLOUT,
-                    .revents = 0,
-                };
-                rawstd_warning("Connect interrupted; polling...\n");
-                for (unsigned int attempt = 1;
-                     attempt <= rawstor_opts_io_attempts(); ++attempt) {
-                    try {
-                        res = poll(&fds, 1, so_sndtimeo);
-                        if (res == -1) {
-                            RAWSTD_THROW_ERRNO();
-                        }
-                        if (res == 0) {
-                            RAWSTD_THROW_SYSTEM_ERROR(ETIMEDOUT);
-                        }
-                        break;
-                    } catch (const std::exception& e) {
-                        if (attempt != rawstor_opts_io_attempts()) {
-                            rawstd_warning(
-                                "Poll failed; error: %s; "
-                                "attempt: %d of %d; retrying...\n",
-                                e.what(), attempt, rawstor_opts_io_attempts()
-                            );
-                        } else {
-                            rawstd_warning(
-                                "Poll failed; error: %s; "
-                                "attempt: %d of %d; failing...\n",
-                                e.what(), attempt, rawstor_opts_io_attempts()
-                            );
-                            throw;
-                        }
-                    }
-                }
-
-                int value = 0;
-                socklen_t value_len = sizeof(value);
-                res = getsockopt(fd, SOL_SOCKET, SO_ERROR, &value, &value_len);
-                if (res == -1) {
-                    RAWSTD_THROW_ERRNO();
-                }
-                if (value) {
-                    RAWSTD_THROW_SYSTEM_ERROR(value);
-                }
-
-                if (!(fds.revents & POLLOUT)) {
-                    RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
-                }
-            } else {
-                RAWSTD_THROW_ERRNO();
-            }
-        }
+        co_await _queue.connect(fd, (sockaddr*)&servaddr, sizeof(servaddr));
         rawstd_info("fd %d: Connected\n", fd);
-
-        rawio::Queue::setup_fd(fd);
     } catch (...) {
         ::close(fd);
         rawstd_info("fd %d: Closed\n", fd);
         throw;
     }
 
-    return fd;
+    set_fd(fd);
+
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('m', "%s\n", "multishot recv");
+    rawio::RecvStream stream = _queue.recv_multishot(
+        fd, 1u << 17, 64 * 4, sizeof(RawstorOSTFrameResponse), 0
+    );
+    _read_event = stream.event();
+    _recv_pump(
+        std::static_pointer_cast<Session>(shared_from_this()),
+        std::move(stream), trace_event
+    );
+    // _recv_pump() may have stored a pending exception instead of
+    // throwing it directly -- see rawstd::DetachedTask's own doc comment
+    // for why, and why this is the one call site that needs to check.
+    rawstd::DetachedTask::rethrow_if_pending();
 }
 
-rawstd::Task<void> Session::_set_object(Object* object) {
-    co_await basic_request_async(
-        _queue, fd(), _cid_counter++, RAWSTOR_CMD_SET_OBJECT, object->id(), 0
+rawstd::Task<void> Session::close() {
+    if (_read_event != nullptr) {
+        co_await _queue.cancel(_read_event);
+        _read_event = nullptr;
+    }
+
+    int f = fd();
+    if (f != -1) {
+        set_fd(-1);
+        co_await _queue.close(f);
+    }
+}
+
+template <typename T>
+rawstd::Task<std::vector<T>> Session::_basic_request(
+    RawstorOSTCommandType cmd, const char* op_name, const RawstdUUID& id,
+    uint64_t val
+) {
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('s', "%s\n", op_name);
+
+    std::shared_ptr<SessionOpBasic<T>> op = std::make_shared<SessionOpBasic<T>>(
+        std::static_pointer_cast<Session>(shared_from_this()), _cid_counter++,
+        cmd, op_name, id, val, trace_event
     );
+    _add_op(op);
+
+    try {
+        size_t result = co_await _queue.send(
+            fd(), op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
+        );
+        RAWSTD_TRACE_EVENT_MESSAGE(
+            trace_event, "%zu of %zu\n", result, op->request_size()
+        );
+        op->request_cb(validate_result(op->request_size(), result));
+    } catch (const std::system_error& e) {
+        op->request_cb(e.code().value());
+    }
+
+    co_await *op;
+    co_return op->take_response_data();
 }
 
 rawstd::Task<void> Session::list(
@@ -922,8 +929,8 @@ rawstd::Task<void> Session::list(
 ) {
     RawstdUUID input_token = token;
     try {
-        targets = co_await basic_request_async<RawstdUUID>(
-            _queue, fd(), _cid_counter++, RAWSTOR_CMD_LIST, input_token, limit
+        targets = co_await _basic_request<RawstdUUID>(
+            RAWSTOR_CMD_LIST, "list", input_token, limit
         );
     } catch (const std::system_error&) {
         throw;
@@ -943,9 +950,7 @@ rawstd::Task<void> Session::list(
 rawstd::Task<void>
 Session::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
     try {
-        co_await basic_request_async(
-            _queue, fd(), _cid_counter++, RAWSTOR_CMD_ALLOCATE, id, sp.size
-        );
+        co_await _basic_request(RAWSTOR_CMD_ALLOCATE, "create", id, sp.size);
     } catch (const std::system_error&) {
         throw;
     } catch (...) {
@@ -956,9 +961,7 @@ Session::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
 
 rawstd::Task<void> Session::remove(const RawstdUUID& id) {
     try {
-        co_await basic_request_async(
-            _queue, fd(), _cid_counter++, RAWSTOR_CMD_RELEASE, id, 0
-        );
+        co_await _basic_request(RAWSTOR_CMD_RELEASE, "remove", id, 0);
     } catch (const std::system_error&) {
         throw;
     } catch (...) {
@@ -972,9 +975,8 @@ rawstd::Task<RawstorObjectSpec> Session::spec(const RawstdUUID& id) {
 
     RawstorObjectSpec ret = {};
     try {
-        std::vector<char> response = co_await basic_request_async(
-            _queue, fd(), _cid_counter++, RAWSTOR_CMD_SPEC, id, 0
-        );
+        std::vector<char> response =
+            co_await _basic_request(RAWSTOR_CMD_SPEC, "spec", id, 0);
         if (response.size() != sizeof(ret)) {
             RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
         }
@@ -1000,9 +1002,8 @@ rawstd::Task<RawstorLocationInfo> Session::info() {
     RawstorLocationInfo ret = {};
     try {
         RawstdUUID unused_id = {};
-        std::vector<char> response = co_await basic_request_async(
-            _queue, fd(), _cid_counter++, RAWSTOR_CMD_LOCATION_INFO, unused_id,
-            0
+        std::vector<char> response = co_await _basic_request(
+            RAWSTOR_CMD_LOCATION_INFO, "info", unused_id, 0
         );
         if (response.size() != sizeof(ret)) {
             RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
@@ -1022,30 +1023,14 @@ rawstd::Task<RawstorLocationInfo> Session::info() {
 }
 
 rawstd::Task<void> Session::set_object(Object* object) {
-    assert(_read_event == nullptr);
+    // The demultiplex pump is already running by now -- _connect() starts it
+    // before this is ever reachable -- so this is just another
+    // cid-dispatched request like list()/create()/....
+    assert(_read_event != nullptr);
 
-    // The SET_OBJECT round-trip must fully complete before the
-    // recv_multishot registration below starts: basic_request_async()'s
-    // plain co_await queue.read(fd, ...) for the response head reads
-    // directly off the fd, which would race with the multishot pump if
-    // both were active on the same fd/queue at once. Sequential coroutine
-    // execution already guarantees that ordering here.
-    co_await _set_object(object);
-
-    rawstd::TraceEvent trace_event =
-        RAWSTD_TRACE_EVENT('m', "%s\n", "multishot recv");
-    rawio::RecvStream stream = _queue.recv_multishot(
-        fd(), 1u << 17, 64 * 4, sizeof(RawstorOSTFrameResponse), 0
+    co_await _basic_request(
+        RAWSTOR_CMD_SET_OBJECT, "set_object", object->id(), 0
     );
-    _read_event = stream.event();
-    _recv_pump(
-        std::static_pointer_cast<Session>(shared_from_this()),
-        std::move(stream), trace_event
-    );
-    // _recv_pump() may have stored a pending exception instead of
-    // throwing it directly -- see rawstd::DetachedTask's own doc comment
-    // for why, and why this is the one call site that needs to check.
-    rawstd::DetachedTask::rethrow_if_pending();
 }
 
 // See ost_session.hpp's doc comment on why `weak`, not a strong

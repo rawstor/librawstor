@@ -5,6 +5,7 @@
 #include <exception>
 #include <utility>
 #include <variant>
+#include <vector>
 
 namespace rawstd {
 
@@ -224,6 +225,62 @@ public:
 
     void get() { _rethrow_if_needed(); }
 };
+
+/**
+ * Runs every Task<T> in `tasks` to completion, in the order given, without
+ * ever destroying one that's still suspended -- Task<T>'s own precondition
+ * (see above) forbids that, so every task is `co_await`-ed even after an
+ * earlier one has already failed. On success, returns each task's result
+ * in the same order; if any task threw, the first exception seen (in
+ * award order) is rethrown once every task has finished, and whatever
+ * partial results were collected are discarded.
+ *
+ * This intentionally carries no per-task identity: a caller that needs to
+ * know *which* task failed (e.g. to reconnect just that one session)
+ * doesn't fit gather() and should keep its own loop instead. Every
+ * current call site either wants all-or-nothing (a fresh session pool, a
+ * mirrored write) or reacts to the batch as a whole regardless of which
+ * member failed (re-set_object()ing every session in the pool, logging
+ * one line instead of one per session on teardown).
+ */
+template <typename T>
+Task<std::vector<T>> gather(std::vector<Task<T>> tasks) {
+    std::vector<T> results;
+    results.reserve(tasks.size());
+    std::exception_ptr error;
+    for (Task<T>& t : tasks) {
+        try {
+            results.push_back(co_await t);
+        } catch (...) {
+            if (!error) {
+                error = std::current_exception();
+            }
+        }
+    }
+    if (error) {
+        std::rethrow_exception(error);
+    }
+    co_return results;
+}
+
+// std::vector<void> can't be named, so T = void gets its own overload
+// instead of an explicit specialization of the one above (which would
+// have to name Task<std::vector<void>> just to declare it).
+inline Task<void> gather(std::vector<Task<void>> tasks) {
+    std::exception_ptr error;
+    for (Task<void>& t : tasks) {
+        try {
+            co_await t;
+        } catch (...) {
+            if (!error) {
+                error = std::current_exception();
+            }
+        }
+    }
+    if (error) {
+        std::rethrow_exception(error);
+    }
+}
 
 namespace detail {
 

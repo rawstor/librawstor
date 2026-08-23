@@ -37,20 +37,23 @@ Session::~Session() {
     }
 }
 
-std::unique_ptr<Session>
+rawstd::Task<std::shared_ptr<Session>>
 Session::create(rawio::Queue& queue, const rawstd::URI& location) {
+    std::shared_ptr<Session> session;
     if (location.scheme() == "ost") {
-        return std::make_unique<rawstor::ost::Session>(
+        session =
+            std::make_shared<rawstor::ost::Session>(Private(), queue, location);
+    } else if (location.scheme() == "file") {
+        session = std::make_shared<rawstor::file::Session>(
             Private(), queue, location
         );
+    } else {
+        rawstd_error("Unexpected URI scheme: %s\n", location.str().c_str());
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
-    if (location.scheme() == "file") {
-        return std::make_unique<rawstor::file::Session>(
-            Private(), queue, location
-        );
-    }
-    rawstd_error("Unexpected URI scheme: %s\n", location.str().c_str());
-    RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+
+    co_await session->_connect();
+    co_return session;
 }
 
 std::string Session::str() const {
