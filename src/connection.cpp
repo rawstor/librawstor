@@ -71,63 +71,38 @@ Connection::Connection(rawio::Queue& queue) :
     _session_index(0) {
 }
 
-rawstd::Task<std::vector<std::shared_ptr<Session>>> Connection::_open(
-    const rawstd::URI& location, Object* object, size_t nsessions
-) {
-    co_return co_await retry_n_async(
-        "Connection::_open",
-        [&]() -> rawstd::Task<std::vector<std::shared_ptr<Session>>> {
-            // Task<T> starts eagerly, right up to its first real
-            // suspension point -- building the whole vector before
-            // awaiting any of it submits every session's connect (and
-            // below, every SET_OBJECT) up front, so they run concurrently
-            // instead of one full round-trip at a time. Every task is
-            // still awaited even after a failure, never left dangling
-            // suspended: destroying a Task<T> that's still waiting on a
-            // completion that will arrive later is undefined behavior.
-            std::vector<rawstd::Task<std::shared_ptr<Session>>> creates;
-            creates.reserve(nsessions);
-            for (size_t i = 0; i < nsessions; ++i) {
-                creates.push_back(Session::create(_queue, location));
-            }
+rawstd::Task<std::vector<std::shared_ptr<Session>>>
+Connection::_connect(const rawstd::URI& location, size_t nsessions) {
+    // Task<T> starts eagerly, right up to its first real suspension
+    // point -- building the whole vector before awaiting any of it
+    // submits every session's connect up front, so they run
+    // concurrently instead of one full round-trip at a time. Every task
+    // is still awaited even after a failure, never left dangling
+    // suspended: destroying a Task<T> that's still waiting on a
+    // completion that will arrive later is undefined behavior.
+    std::vector<rawstd::Task<std::shared_ptr<Session>>> creates;
+    creates.reserve(nsessions);
+    for (size_t i = 0; i < nsessions; ++i) {
+        creates.push_back(Session::create(_queue, location));
+    }
 
-            std::vector<std::shared_ptr<Session>> sessions;
-            sessions.reserve(nsessions);
-            std::exception_ptr error;
-            for (rawstd::Task<std::shared_ptr<Session>>& t : creates) {
-                try {
-                    sessions.push_back(co_await t);
-                } catch (...) {
-                    if (!error) {
-                        error = std::current_exception();
-                    }
-                }
+    std::vector<std::shared_ptr<Session>> sessions;
+    sessions.reserve(nsessions);
+    std::exception_ptr error;
+    for (rawstd::Task<std::shared_ptr<Session>>& t : creates) {
+        try {
+            sessions.push_back(co_await t);
+        } catch (...) {
+            if (!error) {
+                error = std::current_exception();
             }
-            if (error) {
-                std::rethrow_exception(error);
-            }
-
-            std::vector<rawstd::Task<void>> set_objects;
-            set_objects.reserve(sessions.size());
-            for (std::shared_ptr<Session>& s : sessions) {
-                set_objects.push_back(s->set_object(object));
-            }
-            for (rawstd::Task<void>& t : set_objects) {
-                try {
-                    co_await t;
-                } catch (...) {
-                    if (!error) {
-                        error = std::current_exception();
-                    }
-                }
-            }
-            if (error) {
-                std::rethrow_exception(error);
-            }
-
-            co_return sessions;
         }
-    );
+    }
+    if (error) {
+        std::rethrow_exception(error);
+    }
+
+    co_return sessions;
 }
 
 void Connection::_finish(rawstor::telemetry::TimePoint t_call) {
@@ -277,16 +252,23 @@ Connection::invalidate_session(const std::shared_ptr<Session>& s) {
     }
 
     try {
-        // Open the replacement before touching _sessions: if _open() itself
-        // fails (e.g. the server is unreachable under load, exhausting its
-        // own internal retries), leave the broken-but-present session in
-        // place rather than erasing it first and never getting a
+        // Open the replacement before touching _sessions: if this itself
+        // fails (e.g. the server is unreachable under load, exhausting
+        // its own retries below), leave the broken-but-present session
+        // in place rather than erasing it first and never getting a
         // replacement -- an empty _sessions permanently breaks every
         // future op on this Connection (get_next_session() throws), while
         // leaving the stale entry just means the next op that picks it up
         // retries invalidate_session() again instead of failing forever.
-        std::vector<std::shared_ptr<Session>> new_sessions =
-            co_await _open(s->location(), _object, 1);
+        std::shared_ptr<Session> new_session = co_await retry_n_async(
+            "Connection::invalidate_session",
+            [&]() -> rawstd::Task<std::shared_ptr<Session>> {
+                std::vector<std::shared_ptr<Session>> sessions =
+                    co_await _connect(s->location(), 1);
+                co_await sessions.front()->set_object(_object);
+                co_return sessions.front();
+            }
+        );
         _reconnecting.erase(s.get());
 
         // Re-locate s's slot instead of trusting `it` across the co_await
@@ -296,7 +278,7 @@ Connection::invalidate_session(const std::shared_ptr<Session>& s) {
         // suspended.
         it = std::find(_sessions.begin(), _sessions.end(), s);
         if (it != _sessions.end()) {
-            *it = new_sessions.front();
+            *it = new_session;
         }
     } catch (...) {
         _reconnecting.erase(s.get());
@@ -399,7 +381,38 @@ Connection::info(const rawstd::URI& location) {
 rawstd::Task<void> Connection::open(
     const rawstd::URI& location, Object* object, size_t nsessions
 ) {
-    _sessions = co_await _open(location, object, nsessions);
+    _sessions = co_await retry_n_async(
+        "Connection::open",
+        [&]() -> rawstd::Task<std::vector<std::shared_ptr<Session>>> {
+            std::vector<std::shared_ptr<Session>> sessions =
+                co_await _connect(location, nsessions);
+
+            // Same eager-Task<T>-then-await-each idiom as _connect()
+            // itself: every session's SET_OBJECT goes out up front, so
+            // they run concurrently.
+            std::vector<rawstd::Task<void>> set_objects;
+            set_objects.reserve(sessions.size());
+            for (std::shared_ptr<Session>& s : sessions) {
+                set_objects.push_back(s->set_object(object));
+            }
+
+            std::exception_ptr error;
+            for (rawstd::Task<void>& t : set_objects) {
+                try {
+                    co_await t;
+                } catch (...) {
+                    if (!error) {
+                        error = std::current_exception();
+                    }
+                }
+            }
+            if (error) {
+                std::rethrow_exception(error);
+            }
+
+            co_return sessions;
+        }
+    );
     _object = object;
 }
 
@@ -407,7 +420,7 @@ rawstd::Task<void> Connection::close() {
     // Task<T> starts eagerly, right up to its first real suspension
     // point -- building the whole vector before awaiting any of it
     // closes every session concurrently instead of one at a time (same
-    // idiom as _open()). A session that fails to close is logged and
+    // idiom as _connect()). A session that fails to close is logged and
     // otherwise ignored, not propagated -- this is best-effort teardown,
     // not something the caller can retry.
     std::vector<rawstd::Task<void>> closes;

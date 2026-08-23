@@ -37,8 +37,12 @@ private:
     // fully-blocking call.
     std::unordered_set<Session*> _reconnecting;
 
+    // Creates and _connect()s `nsessions` sessions against `location`
+    // concurrently -- no set_object() here, that's each caller's own job
+    // (open() sets up every session in the pool; invalidate_session()
+    // just the one replacement).
     rawstd::Task<std::vector<std::shared_ptr<Session>>>
-    _open(const rawstd::URI& location, Object* object, size_t nsessions);
+    _connect(const rawstd::URI& location, size_t nsessions);
 
     // Every data-path method's terminal path -- success or final failure
     // -- runs through here exactly once; records the cross-retry
