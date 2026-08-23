@@ -467,29 +467,23 @@ Object::pwrite(const void* buf, size_t size, off_t offset, bool sync) {
         tasks.push_back(cn->pwrite(buf, size, offset, sync));
     }
 
-    size_t result = (size_t)-1;
-    int error = 0;
-    for (auto& t : tasks) {
-        try {
-            result = std::min(result, co_await t);
-        } catch (const std::system_error& e) {
-            rawstd_error("%s\n", strerror(e.code().value()));
-            error = EIO;
-        }
-    }
-
-    RAWSTD_TRACE_EVENT_MESSAGE(
-        trace_event, "result = %zu, error = %d\n", result, error
-    );
-
     /**
      * TODO: Handle partial tasks.
      */
-    if (error) {
-        RAWSTD_THROW_SYSTEM_ERROR(error);
+    try {
+        std::vector<size_t> results = co_await rawstd::gather(std::move(tasks));
+        size_t result = *std::min_element(results.begin(), results.end());
+        RAWSTD_TRACE_EVENT_MESSAGE(
+            trace_event, "result = %zu, error = 0\n", result
+        );
+        co_return result;
+    } catch (const std::system_error& e) {
+        rawstd_error("%s\n", strerror(e.code().value()));
+        RAWSTD_TRACE_EVENT_MESSAGE(
+            trace_event, "result = 0, error = %d\n", EIO
+        );
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
     }
-
-    co_return result;
 }
 
 rawstd::Task<size_t> Object::pwritev(
@@ -506,29 +500,23 @@ rawstd::Task<size_t> Object::pwritev(
         tasks.push_back(cn->pwritev(iov, niov, size, offset, sync));
     }
 
-    size_t result = (size_t)-1;
-    int error = 0;
-    for (auto& t : tasks) {
-        try {
-            result = std::min(result, co_await t);
-        } catch (const std::system_error& e) {
-            rawstd_error("%s\n", strerror(e.code().value()));
-            error = EIO;
-        }
-    }
-
-    RAWSTD_TRACE_EVENT_MESSAGE(
-        trace_event, "result = %zu, error = %d\n", result, error
-    );
-
     /**
      * TODO: Handle partial tasks.
      */
-    if (error) {
-        RAWSTD_THROW_SYSTEM_ERROR(error);
+    try {
+        std::vector<size_t> results = co_await rawstd::gather(std::move(tasks));
+        size_t result = *std::min_element(results.begin(), results.end());
+        RAWSTD_TRACE_EVENT_MESSAGE(
+            trace_event, "result = %zu, error = 0\n", result
+        );
+        co_return result;
+    } catch (const std::system_error& e) {
+        rawstd_error("%s\n", strerror(e.code().value()));
+        RAWSTD_TRACE_EVENT_MESSAGE(
+            trace_event, "result = 0, error = %d\n", EIO
+        );
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
     }
-
-    co_return result;
 }
 
 rawstd::Task<void> Object::flush() {
@@ -540,20 +528,13 @@ rawstd::Task<void> Object::flush() {
         tasks.push_back(cn->flush());
     }
 
-    int error = 0;
-    for (auto& t : tasks) {
-        try {
-            co_await t;
-        } catch (const std::system_error& e) {
-            rawstd_error("%s\n", strerror(e.code().value()));
-            error = EIO;
-        }
-    }
-
-    RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "error = %d\n", error);
-
-    if (error) {
-        RAWSTD_THROW_SYSTEM_ERROR(error);
+    try {
+        co_await rawstd::gather(std::move(tasks));
+        RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "error = 0\n");
+    } catch (const std::system_error& e) {
+        rawstd_error("%s\n", strerror(e.code().value()));
+        RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "error = %d\n", EIO);
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
     }
 }
 
