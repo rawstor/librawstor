@@ -32,8 +32,16 @@ protected:
 
     inline void set_fd(int fd) noexcept { _fd = fd; }
 
+    // Establishes whatever this backend needs before any other call
+    // below is usable (e.g. the OST backend's TCP connect + the start of
+    // its response demultiplex pump). Called exactly once by create(),
+    // before it hands the Session back.
+    virtual rawstd::Task<void> _open() = 0;
+
 public:
-    static std::shared_ptr<Session>
+    // Constructs the right backend for `location`'s scheme and _open()s
+    // it -- the returned Session is immediately usable.
+    static rawstd::Task<std::shared_ptr<Session>>
     create(rawio::Queue& queue, const rawstd::URI& location);
 
     Session(Private, rawio::Queue& queue, const rawstd::URI& location);
@@ -49,13 +57,7 @@ public:
 
     inline int fd() const noexcept { return _fd; }
 
-    // Establishes whatever this backend needs before any other call
-    // below is usable (e.g. the OST backend's TCP connect + the start of
-    // its response demultiplex pump). Must be co_await-ed exactly once,
-    // right after create(), before any other method.
-    virtual rawstd::Task<void> open() = 0;
-
-    // Tears down what open() set up. Not called implicitly by
+    // Tears down what _open() set up. Not called implicitly by
     // ~Session() (a coroutine can't run in a destructor) -- callers that
     // want a graceful async teardown must co_await this themselves.
     virtual rawstd::Task<void> close() = 0;

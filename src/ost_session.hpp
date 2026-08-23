@@ -36,13 +36,14 @@ private:
     rawio::Event* _read_event;
     std::unordered_map<uint16_t, std::shared_ptr<SessionOp>> _ops;
 
+    rawstd::Task<void> _open() override;
     rawstd::Task<int> _connect();
     rawstd::Task<void> _set_object(Object* object);
     // The cid-dispatched counterpart of the old basic_request_async():
     // sends a RawstorOSTFrameBasic-shaped request (list/create/remove/
     // spec/info/set_object all share this shape) and awaits its response
     // through the same _ops demultiplex mechanism as every other op --
-    // requires _recv_pump to already be running, i.e. open() to have
+    // requires _recv_pump to already be running, i.e. _open() to have
     // completed.
     template <typename T = char>
     rawstd::Task<std::vector<T>> _basic_request(
@@ -76,8 +77,6 @@ private:
 public:
     Session(Private p, rawio::Queue& queue, const rawstd::URI& location);
     ~Session();
-
-    rawstd::Task<void> open() override;
 
     rawstd::Task<void> close() override;
 

@@ -641,7 +641,7 @@ public:
 // have either no response body or a body of some number of T's, per
 // response.body.res. Routed through the same _recv_pump demultiplex
 // mechanism as every other op, now that the pump starts in
-// Session::open() instead of after the first request round-trips.
+// Session::_open() instead of after the first request round-trips.
 template <typename T = char>
 class SessionOpBasic final : public SessionOp {
 private:
@@ -758,7 +758,7 @@ void Session::_add_op(const std::shared_ptr<SessionOp>& op) {
     if (_read_event == nullptr) {
         // _recv_pump has already exited (e.g. the connection died right
         // after a previous op's response, before this one was ever
-        // issued -- open()'s connect and this op's own caller can both
+        // issued -- _open()'s connect and this op's own caller can both
         // legitimately run to completion in between, with nothing to
         // co_await in the meantime that would surface that death
         // earlier). Nobody will ever demultiplex a response for this op,
@@ -867,7 +867,7 @@ rawstd::Task<int> Session::_connect() {
     co_return fd;
 }
 
-rawstd::Task<void> Session::open() {
+rawstd::Task<void> Session::_open() {
     int fd = co_await _connect();
     set_fd(fd);
 
@@ -1034,7 +1034,7 @@ rawstd::Task<RawstorLocationInfo> Session::info() {
 }
 
 rawstd::Task<void> Session::set_object(Object* object) {
-    // The demultiplex pump is already running by now -- open() starts it
+    // The demultiplex pump is already running by now -- _open() starts it
     // before this is ever reachable -- so this is just another
     // cid-dispatched request like list()/create()/....
     assert(_read_event != nullptr);
