@@ -392,8 +392,11 @@ rawstd::Task<void> Connection::open(Object* object) {
     bool failed = false;
     try {
         co_await rawstd::gather(std::move(set_objects));
-    } catch (const std::system_error&) {
+    } catch (const std::system_error& e) {
         failed = true;
+        rawstd_warning(
+            "Connection::open(): %s; reconnecting every session\n", e.what()
+        );
     }
 
     if (failed) {
