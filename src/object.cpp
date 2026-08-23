@@ -216,12 +216,11 @@ rawstd::Task<void> Object::list(
     );
     RawstdUUID empty_uuid = {};
     RawstdUUID next_token_uuid = empty_uuid;
+    rawstor::Connection cn(queue);
     for (const auto& location : locations) {
         std::vector<RawstdUUID> loc_uuids;
         RawstdUUID loc_token_uuid = token_uuid;
-        co_await rawstor::Connection::list(
-            queue, location, limit, loc_uuids, loc_token_uuid
-        );
+        co_await cn.list(location, limit, loc_uuids, loc_token_uuid);
         for (const auto& uuid : loc_uuids) {
             RawstdUUIDString uuid_string;
             rawstd_uuid_to_string(&uuid, &uuid_string);
@@ -270,9 +269,9 @@ Object::info(rawio::Queue& queue, const std::vector<rawstd::URI>& locations) {
 
     RawstorLocationInfo ret{};
     bool first = true;
+    rawstor::Connection cn(queue);
     for (const auto& location : locations) {
-        RawstorLocationInfo loc_info =
-            co_await rawstor::Connection::info(queue, location);
+        RawstorLocationInfo loc_info = co_await cn.info(location);
 
         if (first) {
             ret = loc_info;
@@ -305,9 +304,10 @@ rawstd::Task<void> Object::create(
     // catch(...) around the whole loop: capture the failure, stop, and
     // roll back afterwards instead, outside any handler.
     std::exception_ptr eptr;
+    rawstor::Connection cn(queue);
     for (const auto& target : targets) {
         try {
-            co_await rawstor::Connection::create(queue, target, sp);
+            co_await cn.create(target, sp);
             created.push_back(target);
         } catch (...) {
             eptr = std::current_exception();
@@ -336,9 +336,10 @@ Object::remove(rawio::Queue& queue, const std::vector<rawstd::URI>& targets) {
     validate_same_uuid(targets);
 
     std::exception_ptr eptr;
+    rawstor::Connection cn(queue);
     for (const auto& target : targets) {
         try {
-            co_await rawstor::Connection::remove(queue, target);
+            co_await cn.remove(target);
         } catch (const std::exception& e) {
             if (!eptr) {
                 eptr = std::current_exception();
@@ -361,7 +362,8 @@ Object::spec(rawio::Queue& queue, const std::vector<rawstd::URI>& targets) {
     validate_different_uris(targets);
     validate_same_uuid(targets);
 
-    co_return co_await rawstor::Connection::spec(queue, targets.front());
+    rawstor::Connection cn(queue);
+    co_return co_await cn.spec(targets.front());
 }
 
 std::vector<rawstd::URI> Object::locations() const {

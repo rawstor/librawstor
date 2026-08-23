@@ -65,25 +65,6 @@ private:
     );
 
 public:
-    static rawstd::Task<void> list(
-        rawio::Queue& queue, const rawstd::URI& location, unsigned int limit,
-        std::vector<RawstdUUID>& uuids, RawstdUUID& token
-    );
-
-    static rawstd::Task<void> create(
-        rawio::Queue& queue, const rawstd::URI& target,
-        const RawstorObjectSpec& sp
-    );
-
-    static rawstd::Task<void>
-    remove(rawio::Queue& queue, const rawstd::URI& target);
-
-    static rawstd::Task<RawstorObjectSpec>
-    spec(rawio::Queue& queue, const rawstd::URI& target);
-
-    static rawstd::Task<RawstorLocationInfo>
-    info(rawio::Queue& queue, const rawstd::URI& location);
-
     explicit Connection(rawio::Queue& queue);
     Connection(const Connection&) = delete;
 
@@ -93,6 +74,24 @@ public:
     rawstd::Task<void> invalidate_session(const std::shared_ptr<Session>& s);
 
     const rawstd::URI* location() const noexcept;
+
+    // Metadata operations: each opens its own one-off Session against
+    // `location`/`target`'s own location, independent of open()'s
+    // persistent session pool below -- callable on a Connection that was
+    // never (or not yet) open()ed.
+    rawstd::Task<void> list(
+        const rawstd::URI& location, unsigned int limit,
+        std::vector<RawstdUUID>& uuids, RawstdUUID& token
+    );
+
+    rawstd::Task<void>
+    create(const rawstd::URI& target, const RawstorObjectSpec& sp);
+
+    rawstd::Task<void> remove(const rawstd::URI& target);
+
+    rawstd::Task<RawstorObjectSpec> spec(const rawstd::URI& target);
+
+    rawstd::Task<RawstorLocationInfo> info(const rawstd::URI& location);
 
     rawstd::Task<void>
     open(const rawstd::URI& location, Object* object, size_t nsessions);
