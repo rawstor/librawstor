@@ -100,7 +100,9 @@ rawstd::Task<std::vector<std::shared_ptr<Session>>> Connection::_open(
             std::vector<std::shared_ptr<Session>> sessions;
             sessions.reserve(nsessions);
             for (size_t i = 0; i < nsessions; ++i) {
-                sessions.push_back(Session::create(_queue, location));
+                std::shared_ptr<Session> s = Session::create(_queue, location);
+                co_await s->open();
+                sessions.push_back(std::move(s));
             }
 
             for (std::shared_ptr<Session>& s : sessions) {
@@ -302,7 +304,8 @@ rawstd::Task<void> Connection::list(
     RawstdUUID ret_token = {};
 
     co_await retry_n_async(__FUNCTION__, [&]() -> rawstd::Task<void> {
-        std::unique_ptr<Session> s = Session::create(queue, location);
+        std::shared_ptr<Session> s = Session::create(queue, location);
+        co_await s->open();
         // Reset from the caller's original token on every attempt --
         // list() now overwrites token in place, so a failed attempt
         // that got partway through must not leak its own next-page
@@ -325,7 +328,8 @@ rawstd::Task<void> Connection::create(
     }
 
     co_await retry_n_async(__FUNCTION__, [&]() -> rawstd::Task<void> {
-        std::unique_ptr<Session> s = Session::create(queue, target.parent());
+        std::shared_ptr<Session> s = Session::create(queue, target.parent());
+        co_await s->open();
         co_await s->create(id, sp);
     });
 }
@@ -339,7 +343,8 @@ Connection::remove(rawio::Queue& queue, const rawstd::URI& target) {
     }
 
     co_await retry_n_async(__FUNCTION__, [&]() -> rawstd::Task<void> {
-        std::unique_ptr<Session> s = Session::create(queue, target.parent());
+        std::shared_ptr<Session> s = Session::create(queue, target.parent());
+        co_await s->open();
         co_await s->remove(id);
     });
 }
@@ -354,8 +359,9 @@ Connection::spec(rawio::Queue& queue, const rawstd::URI& target) {
 
     co_return co_await retry_n_async(
         __FUNCTION__, [&]() -> rawstd::Task<RawstorObjectSpec> {
-            std::unique_ptr<Session> s =
+            std::shared_ptr<Session> s =
                 Session::create(queue, target.parent());
+            co_await s->open();
             co_return co_await s->spec(id);
         }
     );
@@ -365,7 +371,8 @@ rawstd::Task<RawstorLocationInfo>
 Connection::info(rawio::Queue& queue, const rawstd::URI& location) {
     co_return co_await retry_n_async(
         __FUNCTION__, [&]() -> rawstd::Task<RawstorLocationInfo> {
-            std::unique_ptr<Session> s = Session::create(queue, location);
+            std::shared_ptr<Session> s = Session::create(queue, location);
+            co_await s->open();
             co_return co_await s->info();
         }
     );

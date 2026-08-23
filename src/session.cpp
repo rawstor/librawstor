@@ -37,15 +37,15 @@ Session::~Session() {
     }
 }
 
-std::unique_ptr<Session>
+std::shared_ptr<Session>
 Session::create(rawio::Queue& queue, const rawstd::URI& location) {
     if (location.scheme() == "ost") {
-        return std::make_unique<rawstor::ost::Session>(
+        return std::make_shared<rawstor::ost::Session>(
             Private(), queue, location
         );
     }
     if (location.scheme() == "file") {
-        return std::make_unique<rawstor::file::Session>(
+        return std::make_shared<rawstor::file::Session>(
             Private(), queue, location
         );
     }

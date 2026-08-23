@@ -33,7 +33,7 @@ protected:
     inline void set_fd(int fd) noexcept { _fd = fd; }
 
 public:
-    static std::unique_ptr<Session>
+    static std::shared_ptr<Session>
     create(rawio::Queue& queue, const rawstd::URI& location);
 
     Session(Private, rawio::Queue& queue, const rawstd::URI& location);
@@ -48,6 +48,17 @@ public:
     inline const rawstd::URI& location() const noexcept { return _location; }
 
     inline int fd() const noexcept { return _fd; }
+
+    // Establishes whatever this backend needs before any other call
+    // below is usable (e.g. the OST backend's TCP connect + the start of
+    // its response demultiplex pump). Must be co_await-ed exactly once,
+    // right after create(), before any other method.
+    virtual rawstd::Task<void> open() = 0;
+
+    // Tears down what open() set up. Not called implicitly by
+    // ~Session() (a coroutine can't run in a destructor) -- callers that
+    // want a graceful async teardown must co_await this themselves.
+    virtual rawstd::Task<void> close() = 0;
 
     // `targets`: overwritten with this page's UUIDs. `token`: this
     // call's pagination cursor on entry, overwritten with the next

@@ -16,6 +16,22 @@ Session::Session(Private p, rawio::Queue& queue, const rawstd::URI& location) :
     rawstor::Session(p, queue, location) {
 }
 
+rawstd::Task<void> Session::open() {
+    // The fd is opened lazily, by _connect(), once set_object() knows
+    // which object id to open -- nothing to do upfront.
+    co_return;
+}
+
+rawstd::Task<void> Session::close() {
+    if (fd() == -1) {
+        co_return;
+    }
+
+    int f = fd();
+    set_fd(-1);
+    co_await _queue.close(f);
+}
+
 rawstd::Task<void> Session::set_object(Object* object) {
     if (fd() != -1) {
         throw std::runtime_error("Object already set");
