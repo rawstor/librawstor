@@ -179,6 +179,8 @@ backends and the io_uring/poll RawIO backends.
   for the commit message, not the changelog.
 - Never push, including to a new branch. Commit locally and stop there —
   the user reviews what's about to be pushed and pushes it themselves.
+- Do not add a `Claude-Session:` (or similar session/tool attribution)
+  trailer to commit messages in this repo.
 
 ## Gotchas worth knowing
 
