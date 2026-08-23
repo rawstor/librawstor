@@ -156,6 +156,57 @@ RawstdUUID uuid_from_target(const rawstd::URI& target) {
     return id;
 }
 
+// One location's worth of Object::create()/remove()/info() work: connect
+// a single-session Connection just for this call, do the one metadata op,
+// close it again. Factored out so each of Object::create()/remove()/
+// info()/list() below can fan these out across every location/target via
+// rawstd::gather() instead of awaiting them one at a time.
+rawstd::Task<void> create_one(
+    rawio::Queue& queue, const rawstd::URI& target, const RawstorObjectSpec& sp
+) {
+    RawstdUUID id = uuid_from_target(target);
+    std::unique_ptr<rawstor::Connection> cn =
+        co_await rawstor::Connection::create(queue, target.parent(), 1);
+    co_await cn->create(id, sp);
+    co_await cn->close();
+}
+
+rawstd::Task<void> remove_one(rawio::Queue& queue, const rawstd::URI& target) {
+    RawstdUUID id = uuid_from_target(target);
+    std::unique_ptr<rawstor::Connection> cn =
+        co_await rawstor::Connection::create(queue, target.parent(), 1);
+    co_await cn->remove(id);
+    co_await cn->close();
+}
+
+rawstd::Task<RawstorLocationInfo>
+info_one(rawio::Queue& queue, const rawstd::URI& location) {
+    std::unique_ptr<rawstor::Connection> cn =
+        co_await rawstor::Connection::create(queue, location, 1);
+    RawstorLocationInfo ret = co_await cn->info();
+    co_await cn->close();
+    co_return ret;
+}
+
+// Object::list()'s per-location result: the uuids it found plus the
+// pagination token it reported (seeded from the caller's incoming token,
+// same as the old sequential loop's per-iteration `loc_token_uuid`
+// local) -- .first/.second are unpacked back into those same names via
+// structured bindings at every call site below, so the pair itself never
+// needs to be read directly.
+rawstd::Task<std::pair<std::vector<RawstdUUID>, RawstdUUID>> list_one(
+    rawio::Queue& queue, const rawstd::URI& location, unsigned int limit,
+    RawstdUUID token_uuid
+) {
+    std::pair<std::vector<RawstdUUID>, RawstdUUID> ret;
+    ret.second = token_uuid;
+    std::unique_ptr<rawstor::Connection> cn =
+        co_await rawstor::Connection::create(queue, location, 1);
+    co_await cn->list(limit, ret.first, ret.second);
+    co_await cn->close();
+    co_return ret;
+}
+
 // Synchronously pumps `t` to completion by driving `q` -- the boundary
 // where this file's synchronous C ABI (rawstor_object_list/_create/
 // _remove/_spec, rawstor_location_info) meets the now fully co_await
@@ -222,6 +273,18 @@ rawstd::Task<void> Object::list(
     RawstdUUID token_uuid = {};
     memcpy(token_uuid.bytes, token.bytes, sizeof(token.bytes));
 
+    // Every location's LIST goes out concurrently instead of one at a
+    // time; the per-location uuids/token are only merged below, once
+    // every location has answered.
+    std::vector<rawstd::Task<std::pair<std::vector<RawstdUUID>, RawstdUUID>>>
+        tasks;
+    tasks.reserve(locations.size());
+    for (const auto& location : locations) {
+        tasks.push_back(list_one(queue, location, limit, token_uuid));
+    }
+    std::vector<std::pair<std::vector<RawstdUUID>, RawstdUUID>> listings =
+        co_await rawstd::gather(std::move(tasks));
+
     auto cmp = [](const RawstdUUID& lhs, const RawstdUUID& rhs) -> bool {
         return rawstd_uuid_cmp(&lhs, &rhs) < 0;
     };
@@ -230,13 +293,9 @@ rawstd::Task<void> Object::list(
     );
     RawstdUUID empty_uuid = {};
     RawstdUUID next_token_uuid = empty_uuid;
-    for (const auto& location : locations) {
-        std::vector<RawstdUUID> loc_uuids;
-        RawstdUUID loc_token_uuid = token_uuid;
-        std::unique_ptr<rawstor::Connection> cn =
-            co_await rawstor::Connection::create(queue, location, 1);
-        co_await cn->list(limit, loc_uuids, loc_token_uuid);
-        co_await cn->close();
+    for (size_t i = 0; i < locations.size(); ++i) {
+        const rawstd::URI& location = locations[i];
+        const auto& [loc_uuids, loc_token_uuid] = listings[i];
         for (const auto& uuid : loc_uuids) {
             RawstdUUIDString uuid_string;
             rawstd_uuid_to_string(&uuid, &uuid_string);
@@ -283,24 +342,21 @@ Object::info(rawio::Queue& queue, const std::vector<rawstd::URI>& locations) {
     validate_not_empty(locations);
     validate_different_uris(locations);
 
-    RawstorLocationInfo ret{};
-    bool first = true;
+    std::vector<rawstd::Task<RawstorLocationInfo>> tasks;
+    tasks.reserve(locations.size());
     for (const auto& location : locations) {
-        std::unique_ptr<rawstor::Connection> cn =
-            co_await rawstor::Connection::create(queue, location, 1);
-        RawstorLocationInfo loc_info = co_await cn->info();
-        co_await cn->close();
+        tasks.push_back(info_one(queue, location));
+    }
+    std::vector<RawstorLocationInfo> infos =
+        co_await rawstd::gather(std::move(tasks));
 
-        if (first) {
-            ret = loc_info;
-            first = false;
-        } else {
-            // total is capped by the smallest backend; used takes the
-            // largest reported value so a mirror that's behind on writes
-            // doesn't make the location look emptier than it is.
-            ret.total = std::min(ret.total, loc_info.total);
-            ret.used = std::max(ret.used, loc_info.used);
-        }
+    RawstorLocationInfo ret = infos.front();
+    for (size_t i = 1; i < infos.size(); ++i) {
+        // total is capped by the smallest backend; used takes the
+        // largest reported value so a mirror that's behind on writes
+        // doesn't make the location look emptier than it is.
+        ret.total = std::min(ret.total, infos[i].total);
+        ret.used = std::max(ret.used, infos[i].used);
     }
 
     co_return ret;
@@ -314,37 +370,35 @@ rawstd::Task<void> Object::create(
     validate_different_uris(targets);
     validate_same_uuid(targets);
 
-    std::vector<rawstd::URI> created;
-    created.reserve(targets.size());
-
-    // co_await is not permitted inside a catch handler, so unlike the old
-    // synchronous version this can't roll back from directly within a
-    // catch(...) around the whole loop: capture the failure, stop, and
-    // roll back afterwards instead, outside any handler.
-    std::exception_ptr eptr;
+    // Every target's CREATE goes out concurrently instead of one at a
+    // time.
+    std::vector<rawstd::Task<void>> tasks;
+    tasks.reserve(targets.size());
     for (const auto& target : targets) {
-        try {
-            RawstdUUID id = uuid_from_target(target);
-            std::unique_ptr<rawstor::Connection> cn =
-                co_await rawstor::Connection::create(queue, target.parent(), 1);
-            co_await cn->create(id, sp);
-            co_await cn->close();
-            created.push_back(target);
-        } catch (...) {
-            eptr = std::current_exception();
-            break;
-        }
+        tasks.push_back(create_one(queue, target, sp));
+    }
+
+    // co_await isn't allowed inside a catch block, so the failure is only
+    // recorded here; rolling back happens just below, outside the
+    // handler.
+    std::exception_ptr eptr;
+    try {
+        co_await rawstd::gather(std::move(tasks));
+    } catch (...) {
+        eptr = std::current_exception();
     }
 
     if (eptr) {
-        if (!created.empty()) {
-            try {
-                co_await remove(queue, created);
-            } catch (const std::exception& e) {
-                rawstd_error(
-                    "Failed to rollback create operation: %s\n", e.what()
-                );
-            }
+        // gather() only says *that* at least one target failed, not
+        // which -- so every target gets rolled back, not just the ones
+        // that actually got created. remove()-ing a target that was
+        // never created is expected to fail harmlessly there (nothing to
+        // remove), same as it already could for a target this rolls back
+        // more than once.
+        try {
+            co_await remove(queue, targets);
+        } catch (const std::exception& e) {
+            rawstd_error("Failed to rollback create operation: %s\n", e.what());
         }
         std::rethrow_exception(eptr);
     }
@@ -356,24 +410,24 @@ Object::remove(rawio::Queue& queue, const std::vector<rawstd::URI>& targets) {
     validate_different_uris(targets);
     validate_same_uuid(targets);
 
-    std::exception_ptr eptr;
+    // Every target's REMOVE goes out concurrently instead of one at a
+    // time.
+    std::vector<rawstd::Task<void>> tasks;
+    tasks.reserve(targets.size());
     for (const auto& target : targets) {
-        try {
-            RawstdUUID id = uuid_from_target(target);
-            std::unique_ptr<rawstor::Connection> cn =
-                co_await rawstor::Connection::create(queue, target.parent(), 1);
-            co_await cn->remove(id);
-            co_await cn->close();
-        } catch (const std::exception& e) {
-            if (!eptr) {
-                eptr = std::current_exception();
-            } else {
-                rawstd_error("%s\n", e.what());
-            }
-        }
+        tasks.push_back(remove_one(queue, target));
     }
-    if (eptr) {
-        std::rethrow_exception(eptr);
+
+    try {
+        co_await rawstd::gather(std::move(tasks));
+    } catch (const std::exception& e) {
+        // gather() only surfaces the first target's failure, not which
+        // one, but every target was still attempted (gather() never
+        // abandons one still in flight just because an earlier one
+        // failed) -- this is best-effort, so log and rethrow rather than
+        // silently discarding which target(s) actually failed to remove.
+        rawstd_error("%s\n", e.what());
+        throw;
     }
 }
 
