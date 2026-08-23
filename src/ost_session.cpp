@@ -924,12 +924,6 @@ rawstd::Task<std::vector<T>> Session::_basic_request(
     co_return op->take_response_data();
 }
 
-rawstd::Task<void> Session::_set_object(Object* object) {
-    co_await _basic_request(
-        RAWSTOR_CMD_SET_OBJECT, "set_object", object->id(), 0
-    );
-}
-
 rawstd::Task<void> Session::list(
     unsigned int limit, std::vector<RawstdUUID>& targets, RawstdUUID& token
 ) {
@@ -1034,7 +1028,9 @@ rawstd::Task<void> Session::set_object(Object* object) {
     // cid-dispatched request like list()/create()/....
     assert(_read_event != nullptr);
 
-    co_await _set_object(object);
+    co_await _basic_request(
+        RAWSTOR_CMD_SET_OBJECT, "set_object", object->id(), 0
+    );
 }
 
 // See ost_session.hpp's doc comment on why `weak`, not a strong

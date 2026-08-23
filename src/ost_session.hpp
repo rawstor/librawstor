@@ -37,7 +37,6 @@ private:
     std::unordered_map<uint16_t, std::shared_ptr<SessionOp>> _ops;
 
     rawstd::Task<void> _connect() override;
-    rawstd::Task<void> _set_object(Object* object);
     // The cid-dispatched counterpart of the old basic_request_async():
     // sends a RawstorOSTFrameBasic-shaped request (list/create/remove/
     // spec/info/set_object all share this shape) and awaits its response
