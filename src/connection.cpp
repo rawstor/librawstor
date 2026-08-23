@@ -130,22 +130,6 @@ rawstd::Task<std::vector<std::shared_ptr<Session>>> Connection::_open(
     );
 }
 
-rawstd::Task<void> Connection::_close() {
-    std::vector<rawstd::Task<void>> closes;
-    closes.reserve(_sessions.size());
-    for (std::shared_ptr<Session>& s : _sessions) {
-        closes.push_back(s->close());
-    }
-
-    for (rawstd::Task<void>& t : closes) {
-        try {
-            co_await t;
-        } catch (const std::exception& e) {
-            rawstd_error("Connection::close(): %s\n", e.what());
-        }
-    }
-}
-
 void Connection::_finish(rawstor::telemetry::TimePoint t_call) {
     rawstor::telemetry::TimePoint lat = rawstor::telemetry::now() - t_call;
     rawstor::telemetry::record_lat(lat);
@@ -423,7 +407,26 @@ rawstd::Task<void> Connection::open(
 }
 
 rawstd::Task<void> Connection::close() {
-    co_await _close();
+    // Task<T> starts eagerly, right up to its first real suspension
+    // point -- building the whole vector before awaiting any of it
+    // closes every session concurrently instead of one at a time (same
+    // idiom as _open()). A session that fails to close is logged and
+    // otherwise ignored, not propagated -- this is best-effort teardown,
+    // not something the caller can retry.
+    std::vector<rawstd::Task<void>> closes;
+    closes.reserve(_sessions.size());
+    for (std::shared_ptr<Session>& s : _sessions) {
+        closes.push_back(s->close());
+    }
+
+    for (rawstd::Task<void>& t : closes) {
+        try {
+            co_await t;
+        } catch (const std::exception& e) {
+            rawstd_error("Connection::close(): %s\n", e.what());
+        }
+    }
+
     _sessions.clear();
     _object = nullptr;
 }
