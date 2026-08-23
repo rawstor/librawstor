@@ -8,6 +8,7 @@
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -175,6 +176,100 @@ TEST(TaskTest, deep_chain_resumes_without_stack_growth) {
 
     EXPECT_TRUE(t.done());
     EXPECT_EQ(t.get(), N);
+}
+
+// ---------------------------------------------------------------------
+// gather()
+// ---------------------------------------------------------------------
+
+rawstd::Task<int> gather_throws(const char* msg) {
+    throw std::runtime_error(msg);
+    co_return 0; // NOLINT: unreachable, keeps this a coroutine
+}
+
+TEST(GatherTest, collects_results_in_order) {
+    std::vector<rawstd::Task<int>> tasks;
+    tasks.push_back(immediate_value(1));
+    tasks.push_back(immediate_value(2));
+    tasks.push_back(immediate_value(3));
+
+    rawstd::Task<std::vector<int>> t = rawstd::gather(std::move(tasks));
+    EXPECT_TRUE(t.done());
+    EXPECT_EQ(t.get(), (std::vector<int>{1, 2, 3}));
+}
+
+TEST(GatherTest, empty_input_returns_empty_vector) {
+    std::vector<rawstd::Task<int>> tasks;
+
+    rawstd::Task<std::vector<int>> t = rawstd::gather(std::move(tasks));
+    EXPECT_TRUE(t.done());
+    EXPECT_TRUE(t.get().empty());
+}
+
+TEST(GatherTest, rethrows_first_exception_after_awaiting_all) {
+    std::vector<rawstd::Task<int>> tasks;
+    tasks.push_back(gather_throws("first"));
+    tasks.push_back(immediate_value(2));
+    tasks.push_back(gather_throws("second"));
+
+    rawstd::Task<std::vector<int>> t = rawstd::gather(std::move(tasks));
+    EXPECT_TRUE(t.done());
+    try {
+        t.get();
+        FAIL() << "expected gather() to rethrow";
+    } catch (const std::runtime_error& e) {
+        EXPECT_STREQ(e.what(), "first");
+    }
+}
+
+rawstd::Task<int> suspend_then_throw(std::coroutine_handle<>* slot) {
+    co_await suspend_once{slot};
+    throw std::runtime_error("suspended boom");
+    co_return 0; // NOLINT: unreachable, keeps this a coroutine
+}
+
+TEST(GatherTest, awaits_every_task_even_after_an_earlier_failure) {
+    // gather()'s whole point is never abandoning a still-suspended
+    // Task<T> just because an earlier one in the batch already failed --
+    // it must keep awaiting task[1] here before it's allowed to finish at
+    // all, even though task[0] has already thrown.
+    std::coroutine_handle<> slot;
+    std::vector<rawstd::Task<int>> tasks;
+    tasks.push_back(gather_throws("early"));
+    tasks.push_back(suspend_then_throw(&slot));
+
+    rawstd::Task<std::vector<int>> t = rawstd::gather(std::move(tasks));
+    EXPECT_FALSE(t.done());
+
+    ASSERT_TRUE(slot);
+    slot.resume();
+
+    EXPECT_TRUE(t.done());
+    EXPECT_THROW(t.get(), std::runtime_error);
+}
+
+rawstd::Task<void> void_ok() {
+    co_return;
+}
+
+TEST(GatherTest, void_overload_succeeds) {
+    std::vector<rawstd::Task<void>> tasks;
+    tasks.push_back(void_ok());
+    tasks.push_back(void_ok());
+
+    rawstd::Task<void> t = rawstd::gather(std::move(tasks));
+    EXPECT_TRUE(t.done());
+    EXPECT_NO_THROW(t.get());
+}
+
+TEST(GatherTest, void_overload_rethrows) {
+    std::vector<rawstd::Task<void>> tasks;
+    tasks.push_back(void_ok());
+    tasks.push_back(void_throws());
+
+    rawstd::Task<void> t = rawstd::gather(std::move(tasks));
+    EXPECT_TRUE(t.done());
+    EXPECT_THROW(t.get(), std::runtime_error);
 }
 
 rawstd::DetachedTask detached_immediate(bool* ran) {

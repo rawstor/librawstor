@@ -46,6 +46,7 @@ public:
     Object(rawio::Queue& queue, const std::vector<rawstd::URI>& targets);
     Object(const Object&) = delete;
     Object(Object&&) = delete;
+    ~Object();
     Object& operator=(const Object&) = delete;
     Object& operator=(Object&&) = delete;
 

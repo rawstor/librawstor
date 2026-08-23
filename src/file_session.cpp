@@ -148,7 +148,7 @@ int Session::_connect(const RawstdUUID& id) {
     std::string target_path = get_target_path(location_path, id_string);
 
     rawstd_info("Connecting to %s...\n", location().str().c_str());
-    int fd = open(target_path.c_str(), O_RDWR | O_NONBLOCK);
+    int fd = ::open(target_path.c_str(), O_RDWR | O_NONBLOCK);
     if (fd == -1) {
         RAWSTD_THROW_ERRNO();
     }
