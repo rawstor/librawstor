@@ -92,7 +92,6 @@ public:
 
     explicit Connection(rawio::Queue& queue);
     Connection(const Connection&) = delete;
-    ~Connection();
 
     Connection& operator=(const Connection&) = delete;
 
@@ -101,9 +100,15 @@ public:
 
     const rawstd::URI* location() const noexcept;
 
-    void open(const rawstd::URI& location, Object* object, size_t nsessions);
+    rawstd::Task<void>
+    open(const rawstd::URI& location, Object* object, size_t nsessions);
 
-    void close();
+    // Not called implicitly by ~Connection() (a coroutine can't run in a
+    // destructor, and there's no other synchronous fallback here beyond
+    // each Session's own -- see Session::close()'s doc comment) --
+    // callers that want a graceful async teardown must co_await this
+    // themselves.
+    rawstd::Task<void> close();
 
     rawstd::Task<size_t> pread(void* buf, size_t size, off_t offset);
 

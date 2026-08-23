@@ -61,19 +61,6 @@ auto retry_n_async(const char* func_name, F&& attempt) -> decltype(attempt()) {
     RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
 }
 
-// Synchronously pumps `t` to completion by driving `q` -- the coroutine
-// equivalent of the old Queue wrapper's operation-counter/wait() dance,
-// used by the five metadata calls below to stay synchronous at their own
-// (frozen) public signature while their Session-level implementation is
-// now genuinely co_await-based.
-template <typename T>
-T run(rawio::Queue& q, rawstd::Task<T> t) {
-    while (!t.done()) {
-        q.wait_timeout(rawstor_opts_tcp_user_timeout());
-    }
-    return t.get();
-}
-
 } // namespace
 
 namespace rawstor {
@@ -82,14 +69,6 @@ Connection::Connection(rawio::Queue& queue) :
     _queue(queue),
     _object(nullptr),
     _session_index(0) {
-}
-
-Connection::~Connection() {
-    try {
-        close();
-    } catch (const std::system_error& e) {
-        rawstd_error("Connection::close(): %s\n", e.what());
-    }
 }
 
 rawstd::Task<std::vector<std::shared_ptr<Session>>> Connection::_open(
@@ -436,17 +415,15 @@ Connection::info(rawio::Queue& queue, const rawstd::URI& location) {
     );
 }
 
-void Connection::open(
+rawstd::Task<void> Connection::open(
     const rawstd::URI& location, Object* object, size_t nsessions
 ) {
-    _sessions = run(_queue, _open(location, object, nsessions));
+    _sessions = co_await _open(location, object, nsessions);
     _object = object;
 }
 
-void Connection::close() {
-    if (!_sessions.empty()) {
-        run(_queue, _close());
-    }
+rawstd::Task<void> Connection::close() {
+    co_await _close();
     _sessions.clear();
     _object = nullptr;
 }

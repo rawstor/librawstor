@@ -183,8 +183,18 @@ Object::Object(rawio::Queue& queue, const std::vector<rawstd::URI>& targets) :
     for (const auto& target : targets) {
         std::unique_ptr<rawstor::Connection> cn =
             std::make_unique<rawstor::Connection>(_queue);
-        cn->open(target.parent(), this, rawstor_opts_sessions());
+        run(_queue, cn->open(target.parent(), this, rawstor_opts_sessions()));
         _cns.push_back(std::move(cn));
+    }
+}
+
+Object::~Object() {
+    for (auto& cn : _cns) {
+        try {
+            run(_queue, cn->close());
+        } catch (const std::exception& e) {
+            rawstd_error("Object::~Object(): %s\n", e.what());
+        }
     }
 }
 
