@@ -24,11 +24,11 @@ rawstd::Task<void> Session::_connect() {
 }
 
 rawstd::Task<void> Session::close() {
-    if (fd() == -1) {
+    int f = fd();
+    if (f == -1) {
         co_return;
     }
 
-    int f = fd();
     set_fd(-1);
     co_await _queue.close(f);
 }

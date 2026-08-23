@@ -893,8 +893,8 @@ rawstd::Task<void> Session::close() {
         _read_event = nullptr;
     }
 
-    if (fd() != -1) {
-        int f = fd();
+    int f = fd();
+    if (f != -1) {
         set_fd(-1);
         co_await _queue.close(f);
     }
