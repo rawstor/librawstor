@@ -16,6 +16,7 @@
 #include <rawstd/uuid.h>
 
 #include <algorithm>
+#include <exception>
 #include <system_error>
 #include <type_traits>
 
@@ -97,14 +98,52 @@ rawstd::Task<std::vector<std::shared_ptr<Session>>> Connection::_open(
     co_return co_await retry_n_async(
         "Connection::_open",
         [&]() -> rawstd::Task<std::vector<std::shared_ptr<Session>>> {
-            std::vector<std::shared_ptr<Session>> sessions;
-            sessions.reserve(nsessions);
+            // Task<T> starts eagerly, right up to its first real
+            // suspension point -- building the whole vector before
+            // awaiting any of it submits every session's connect (and
+            // below, every SET_OBJECT) up front, so they run concurrently
+            // instead of one full round-trip at a time. Every task is
+            // still awaited even after a failure, never left dangling
+            // suspended: destroying a Task<T> that's still waiting on a
+            // completion that will arrive later is undefined behavior.
+            std::vector<rawstd::Task<std::shared_ptr<Session>>> creates;
+            creates.reserve(nsessions);
             for (size_t i = 0; i < nsessions; ++i) {
-                sessions.push_back(co_await Session::create(_queue, location));
+                creates.push_back(Session::create(_queue, location));
             }
 
+            std::vector<std::shared_ptr<Session>> sessions;
+            sessions.reserve(nsessions);
+            std::exception_ptr error;
+            for (rawstd::Task<std::shared_ptr<Session>>& t : creates) {
+                try {
+                    sessions.push_back(co_await t);
+                } catch (...) {
+                    if (!error) {
+                        error = std::current_exception();
+                    }
+                }
+            }
+            if (error) {
+                std::rethrow_exception(error);
+            }
+
+            std::vector<rawstd::Task<void>> set_objects;
+            set_objects.reserve(sessions.size());
             for (std::shared_ptr<Session>& s : sessions) {
-                co_await s->set_object(object);
+                set_objects.push_back(s->set_object(object));
+            }
+            for (rawstd::Task<void>& t : set_objects) {
+                try {
+                    co_await t;
+                } catch (...) {
+                    if (!error) {
+                        error = std::current_exception();
+                    }
+                }
+            }
+            if (error) {
+                std::rethrow_exception(error);
             }
 
             co_return sessions;
