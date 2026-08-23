@@ -28,16 +28,17 @@ namespace {
 // Retries `attempt()` up to rawstor_opts_io_attempts() times, sharing the
 // same "log and retry, or log and rethrow on the last one" shape across
 // every bounded-retry loop in this file that doesn't need the
-// EBUSY-vs-reconnect policy: session (re-)creation and the five metadata
-// calls below. `attempt()` returns a Task<T> that this coroutine itself
-// co_await's, so retrying composes as an ordinary suspension/resumption
-// instead of a nested synchronous pump -- unlike the old callback-based
-// retry_n() this replaces, nothing here ever needs a private Queue of its
-// own to drive `attempt()` to completion. The data-path methods (pread/
-// preadv/pwrite/pwritev/flush) each run their own inline retry loop
-// instead -- same overall shape, but with the extra EBUSY-vs-reconnect
-// policy, so sharing this one wouldn't fit them without a callback out
-// for it.
+// EBUSY-vs-reconnect policy: Connection::create()'s session-pool
+// (re-)connect and invalidate_session()'s single-session replacement.
+// `attempt()` returns a Task<T> that this coroutine itself co_await's, so
+// retrying composes as an ordinary suspension/resumption instead of a
+// nested synchronous pump -- unlike the old callback-based retry_n() this
+// replaces, nothing here ever needs a private Queue of its own to drive
+// `attempt()` to completion. The data-path/metadata methods
+// (pread/preadv/pwrite/pwritev/flush/list/create/remove/spec/info) each
+// go through _with_retry() instead -- same overall shape, but with the
+// extra EBUSY-vs-reconnect policy and no set-up/tear-down step, so
+// sharing this one wouldn't fit them without a callback out for it.
 template <typename F>
 auto retry_n_async(const char* func_name, F&& attempt) -> decltype(attempt()) {
     for (unsigned int i = 1; i <= rawstor_opts_io_attempts(); ++i) {
@@ -65,14 +66,19 @@ auto retry_n_async(const char* func_name, F&& attempt) -> decltype(attempt()) {
 
 namespace rawstor {
 
-Connection::Connection(rawio::Queue& queue) :
+Connection::Connection(Private, rawio::Queue& queue) :
     _queue(queue),
     _object(nullptr),
     _session_index(0) {
 }
 
-rawstd::Task<std::vector<std::shared_ptr<Session>>>
-Connection::_connect(const rawstd::URI& location, size_t nsessions) {
+rawstd::Task<std::unique_ptr<Connection>> Connection::create(
+    rawio::Queue& queue, const rawstd::URI& location, size_t nsessions
+) {
+    // A single attempt, same as Session::create() -- retrying a broken
+    // connect (or a set_object() done afterwards by a caller, e.g.
+    // Object's constructor) is each caller's own job, not this one's.
+    //
     // Task<T> starts eagerly, right up to its first real suspension
     // point -- building the whole vector before awaiting any of it
     // submits every session's connect up front, so they run
@@ -83,7 +89,7 @@ Connection::_connect(const rawstd::URI& location, size_t nsessions) {
     std::vector<rawstd::Task<std::shared_ptr<Session>>> creates;
     creates.reserve(nsessions);
     for (size_t i = 0; i < nsessions; ++i) {
-        creates.push_back(Session::create(_queue, location));
+        creates.push_back(Session::create(queue, location));
     }
 
     std::vector<std::shared_ptr<Session>> sessions;
@@ -102,7 +108,10 @@ Connection::_connect(const rawstd::URI& location, size_t nsessions) {
         std::rethrow_exception(error);
     }
 
-    co_return sessions;
+    std::unique_ptr<Connection> cn =
+        std::make_unique<Connection>(Private(), queue);
+    cn->_sessions = std::move(sessions);
+    co_return cn;
 }
 
 void Connection::_finish(rawstor::telemetry::TimePoint t_call) {
@@ -113,7 +122,8 @@ void Connection::_finish(rawstor::telemetry::TimePoint t_call) {
 template <typename T, typename... Args>
 rawstd::Task<T> Connection::_with_retry(
     const char* func_name, rawstd::TraceEvent& trace_event,
-    rawstd::Task<T> (Session::*method)(Args...), Args... args
+    rawstd::Task<T> (Session::*method)(Args...),
+    std::type_identity_t<Args>... args
 ) {
     for (unsigned int attempt = 1; attempt <= rawstor_opts_io_attempts();
          ++attempt) {
@@ -263,10 +273,10 @@ Connection::invalidate_session(const std::shared_ptr<Session>& s) {
         std::shared_ptr<Session> new_session = co_await retry_n_async(
             "Connection::invalidate_session",
             [&]() -> rawstd::Task<std::shared_ptr<Session>> {
-                std::vector<std::shared_ptr<Session>> sessions =
-                    co_await _connect(s->location(), 1);
-                co_await sessions.front()->set_object(_object);
-                co_return sessions.front();
+                std::shared_ptr<Session> session =
+                    co_await Session::create(_queue, s->location());
+                co_await session->set_object(_object);
+                co_return session;
             }
         );
         _reconnecting.erase(s.get());
@@ -295,124 +305,113 @@ const rawstd::URI* Connection::location() const noexcept {
 }
 
 rawstd::Task<void> Connection::list(
-    const rawstd::URI& location, unsigned int limit,
-    std::vector<RawstdUUID>& targets, RawstdUUID& token
+    unsigned int limit, std::vector<RawstdUUID>& targets, RawstdUUID& token
 ) {
-    std::vector<RawstdUUID> ret;
-    RawstdUUID ret_token = {};
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
 
-    co_await retry_n_async(__FUNCTION__, [&]() -> rawstd::Task<void> {
-        std::shared_ptr<Session> s = co_await Session::create(_queue, location);
-        // Reset from the caller's original token on every attempt --
-        // list() now overwrites token in place, so a failed attempt
-        // that got partway through must not leak its own next-page
-        // cursor into the following retry's input.
-        ret_token = token;
-        co_await s->list(limit, ret, ret_token);
-        co_await s->close();
-    });
-
-    targets.swap(ret);
-    token = ret_token;
+    try {
+        co_await _with_retry(
+            func_name, trace_event, &Session::list, limit, targets, token
+        );
+        _finish(t_call);
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
 }
 
 rawstd::Task<void>
-Connection::create(const rawstd::URI& target, const RawstorObjectSpec& sp) {
-    RawstdUUID id;
-    int res = rawstd_uuid_from_string(&id, target.path().filename().c_str());
-    if (res) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
+Connection::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        co_await _with_retry(func_name, trace_event, &Session::create, id, sp);
+        _finish(t_call);
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
+rawstd::Task<void> Connection::remove(const RawstdUUID& id) {
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        co_await _with_retry(func_name, trace_event, &Session::remove, id);
+        _finish(t_call);
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
+rawstd::Task<RawstorObjectSpec> Connection::spec(const RawstdUUID& id) {
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        RawstorObjectSpec result =
+            co_await _with_retry(func_name, trace_event, &Session::spec, id);
+        _finish(t_call);
+        co_return result;
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
+rawstd::Task<RawstorLocationInfo> Connection::info() {
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        RawstorLocationInfo result =
+            co_await _with_retry(func_name, trace_event, &Session::info);
+        _finish(t_call);
+        co_return result;
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
+rawstd::Task<void> Connection::open(Object* object) {
+    // Same eager-Task<T>-then-await-each idiom as create() itself:
+    // every session's SET_OBJECT goes out up front, so they run
+    // concurrently.
+    std::vector<rawstd::Task<void>> set_objects;
+    set_objects.reserve(_sessions.size());
+    for (std::shared_ptr<Session>& s : _sessions) {
+        set_objects.push_back(s->set_object(object));
     }
 
-    co_await retry_n_async(__FUNCTION__, [&]() -> rawstd::Task<void> {
-        std::shared_ptr<Session> s =
-            co_await Session::create(_queue, target.parent());
-        co_await s->create(id, sp);
-        co_await s->close();
-    });
-}
-
-rawstd::Task<void> Connection::remove(const rawstd::URI& target) {
-    RawstdUUID id;
-    int res = rawstd_uuid_from_string(&id, target.path().filename().c_str());
-    if (res) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    std::exception_ptr error;
+    for (rawstd::Task<void>& t : set_objects) {
+        try {
+            co_await t;
+        } catch (...) {
+            if (!error) {
+                error = std::current_exception();
+            }
+        }
+    }
+    if (error) {
+        std::rethrow_exception(error);
     }
 
-    co_await retry_n_async(__FUNCTION__, [&]() -> rawstd::Task<void> {
-        std::shared_ptr<Session> s =
-            co_await Session::create(_queue, target.parent());
-        co_await s->remove(id);
-        co_await s->close();
-    });
-}
-
-rawstd::Task<RawstorObjectSpec> Connection::spec(const rawstd::URI& target) {
-    RawstdUUID id;
-    int res = rawstd_uuid_from_string(&id, target.path().filename().c_str());
-    if (res) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-
-    co_return co_await retry_n_async(
-        __FUNCTION__, [&]() -> rawstd::Task<RawstorObjectSpec> {
-            std::shared_ptr<Session> s =
-                co_await Session::create(_queue, target.parent());
-            RawstorObjectSpec spec = co_await s->spec(id);
-            co_await s->close();
-            co_return spec;
-        }
-    );
-}
-
-rawstd::Task<RawstorLocationInfo>
-Connection::info(const rawstd::URI& location) {
-    co_return co_await retry_n_async(
-        __FUNCTION__, [&]() -> rawstd::Task<RawstorLocationInfo> {
-            std::shared_ptr<Session> s =
-                co_await Session::create(_queue, location);
-            RawstorLocationInfo info = co_await s->info();
-            co_await s->close();
-            co_return info;
-        }
-    );
-}
-
-rawstd::Task<void> Connection::open(
-    const rawstd::URI& location, Object* object, size_t nsessions
-) {
-    _sessions = co_await retry_n_async(
-        "Connection::open",
-        [&]() -> rawstd::Task<std::vector<std::shared_ptr<Session>>> {
-            std::vector<std::shared_ptr<Session>> sessions =
-                co_await _connect(location, nsessions);
-
-            // Same eager-Task<T>-then-await-each idiom as _connect()
-            // itself: every session's SET_OBJECT goes out up front, so
-            // they run concurrently.
-            std::vector<rawstd::Task<void>> set_objects;
-            set_objects.reserve(sessions.size());
-            for (std::shared_ptr<Session>& s : sessions) {
-                set_objects.push_back(s->set_object(object));
-            }
-
-            std::exception_ptr error;
-            for (rawstd::Task<void>& t : set_objects) {
-                try {
-                    co_await t;
-                } catch (...) {
-                    if (!error) {
-                        error = std::current_exception();
-                    }
-                }
-            }
-            if (error) {
-                std::rethrow_exception(error);
-            }
-
-            co_return sessions;
-        }
-    );
     _object = object;
 }
 
@@ -420,7 +419,7 @@ rawstd::Task<void> Connection::close() {
     // Task<T> starts eagerly, right up to its first real suspension
     // point -- building the whole vector before awaiting any of it
     // closes every session concurrently instead of one at a time (same
-    // idiom as _connect()). A session that fails to close is logged and
+    // idiom as create()). A session that fails to close is logged and
     // otherwise ignored, not propagated -- this is best-effort teardown,
     // not something the caller can retry.
     std::vector<rawstd::Task<void>> closes;

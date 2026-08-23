@@ -144,6 +144,18 @@ void validate_different_uris(const std::vector<rawstd::URI>& uris) {
     }
 }
 
+// A connect()ed Connection's metadata methods take a bare id (like the
+// Session methods they wrap) rather than a full target -- extract it
+// once here instead of in every one of this file's own call sites.
+RawstdUUID uuid_from_target(const rawstd::URI& target) {
+    RawstdUUID id;
+    int res = rawstd_uuid_from_string(&id, target.path().filename().c_str());
+    if (res) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+    return id;
+}
+
 // Synchronously pumps `t` to completion by driving `q` -- the boundary
 // where this file's synchronous C ABI (rawstor_object_list/_create/
 // _remove/_spec, rawstor_location_info) meets the now fully co_await
@@ -160,6 +172,36 @@ T run(rawio::Queue& q, rawstd::Task<T> t) {
         q.wait_timeout(rawstor_opts_tcp_user_timeout());
     }
     return t.get();
+}
+
+// Retries `attempt()` up to rawstor_opts_io_attempts() times -- used by
+// Object's constructor to retry rawstor::Connection::create() + open()
+// together as one all-or-nothing attempt (a fresh session pool each
+// time, not just retrying set_object() against whatever connect()
+// already produced). Deliberately a local duplicate of connection.cpp's
+// own `retry_n_async`, rather than a shared dependency, for the same
+// reason `run()` above is.
+template <typename F>
+auto retry_n_async(const char* func_name, F&& attempt) -> decltype(attempt()) {
+    for (unsigned int i = 1; i <= rawstor_opts_io_attempts(); ++i) {
+        try {
+            co_return co_await attempt();
+        } catch (const std::exception& e) {
+            if (i == rawstor_opts_io_attempts()) {
+                rawstd_error(
+                    "%s: error: %s; attempt: %d of %d; failing...\n", func_name,
+                    e.what(), i, rawstor_opts_io_attempts()
+                );
+                throw;
+            }
+            rawstd_warning(
+                "%s: error: %s; attempt: %d of %d; retrying...\n", func_name,
+                e.what(), i, rawstor_opts_io_attempts()
+            );
+        }
+    }
+    // Only reachable if rawstor_opts_io_attempts() == 0.
+    RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
 }
 
 } // namespace
@@ -181,9 +223,24 @@ Object::Object(rawio::Queue& queue, const std::vector<rawstd::URI>& targets) :
 
     _cns.reserve(targets.size());
     for (const auto& target : targets) {
-        std::unique_ptr<rawstor::Connection> cn =
-            std::make_unique<rawstor::Connection>(_queue);
-        run(_queue, cn->open(target.parent(), this, rawstor_opts_sessions()));
+        // A fresh session pool each retry, not just a retried
+        // set_object() against whatever connect() already produced --
+        // same all-or-nothing semantics per attempt this used to get for
+        // free inside the old, single Connection::open().
+        std::unique_ptr<rawstor::Connection> cn = run(
+            _queue,
+            retry_n_async(
+                "Object::Object",
+                [&]() -> rawstd::Task<std::unique_ptr<rawstor::Connection>> {
+                    std::unique_ptr<rawstor::Connection> cn =
+                        co_await rawstor::Connection::create(
+                            _queue, target.parent(), rawstor_opts_sessions()
+                        );
+                    co_await cn->open(this);
+                    co_return cn;
+                }
+            )
+        );
         _cns.push_back(std::move(cn));
     }
 }
@@ -216,11 +273,13 @@ rawstd::Task<void> Object::list(
     );
     RawstdUUID empty_uuid = {};
     RawstdUUID next_token_uuid = empty_uuid;
-    rawstor::Connection cn(queue);
     for (const auto& location : locations) {
         std::vector<RawstdUUID> loc_uuids;
         RawstdUUID loc_token_uuid = token_uuid;
-        co_await cn.list(location, limit, loc_uuids, loc_token_uuid);
+        std::unique_ptr<rawstor::Connection> cn =
+            co_await rawstor::Connection::create(queue, location, 1);
+        co_await cn->list(limit, loc_uuids, loc_token_uuid);
+        co_await cn->close();
         for (const auto& uuid : loc_uuids) {
             RawstdUUIDString uuid_string;
             rawstd_uuid_to_string(&uuid, &uuid_string);
@@ -269,9 +328,11 @@ Object::info(rawio::Queue& queue, const std::vector<rawstd::URI>& locations) {
 
     RawstorLocationInfo ret{};
     bool first = true;
-    rawstor::Connection cn(queue);
     for (const auto& location : locations) {
-        RawstorLocationInfo loc_info = co_await cn.info(location);
+        std::unique_ptr<rawstor::Connection> cn =
+            co_await rawstor::Connection::create(queue, location, 1);
+        RawstorLocationInfo loc_info = co_await cn->info();
+        co_await cn->close();
 
         if (first) {
             ret = loc_info;
@@ -304,10 +365,13 @@ rawstd::Task<void> Object::create(
     // catch(...) around the whole loop: capture the failure, stop, and
     // roll back afterwards instead, outside any handler.
     std::exception_ptr eptr;
-    rawstor::Connection cn(queue);
     for (const auto& target : targets) {
         try {
-            co_await cn.create(target, sp);
+            RawstdUUID id = uuid_from_target(target);
+            std::unique_ptr<rawstor::Connection> cn =
+                co_await rawstor::Connection::create(queue, target.parent(), 1);
+            co_await cn->create(id, sp);
+            co_await cn->close();
             created.push_back(target);
         } catch (...) {
             eptr = std::current_exception();
@@ -336,10 +400,13 @@ Object::remove(rawio::Queue& queue, const std::vector<rawstd::URI>& targets) {
     validate_same_uuid(targets);
 
     std::exception_ptr eptr;
-    rawstor::Connection cn(queue);
     for (const auto& target : targets) {
         try {
-            co_await cn.remove(target);
+            RawstdUUID id = uuid_from_target(target);
+            std::unique_ptr<rawstor::Connection> cn =
+                co_await rawstor::Connection::create(queue, target.parent(), 1);
+            co_await cn->remove(id);
+            co_await cn->close();
         } catch (const std::exception& e) {
             if (!eptr) {
                 eptr = std::current_exception();
@@ -362,8 +429,14 @@ Object::spec(rawio::Queue& queue, const std::vector<rawstd::URI>& targets) {
     validate_different_uris(targets);
     validate_same_uuid(targets);
 
-    rawstor::Connection cn(queue);
-    co_return co_await cn.spec(targets.front());
+    RawstdUUID id = uuid_from_target(targets.front());
+    std::unique_ptr<rawstor::Connection> cn =
+        co_await rawstor::Connection::create(
+            queue, targets.front().parent(), 1
+        );
+    RawstorObjectSpec ret = co_await cn->spec(id);
+    co_await cn->close();
+    co_return ret;
 }
 
 std::vector<rawstd::URI> Object::locations() const {
