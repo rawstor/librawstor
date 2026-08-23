@@ -36,14 +36,17 @@ private:
     rawio::Event* _read_event;
     std::unordered_map<uint16_t, std::shared_ptr<SessionOp>> _ops;
 
-    rawstd::Task<void> _open() override;
-    rawstd::Task<int> _connect();
+    rawstd::Task<void> _connect() override;
+    // The actual socket()/setsockopt()/connect() sequence _connect()
+    // runs before starting the recv pump -- split out under its own name
+    // to not collide with the base class's _connect() it's called from.
+    rawstd::Task<int> _dial();
     rawstd::Task<void> _set_object(Object* object);
     // The cid-dispatched counterpart of the old basic_request_async():
     // sends a RawstorOSTFrameBasic-shaped request (list/create/remove/
     // spec/info/set_object all share this shape) and awaits its response
     // through the same _ops demultiplex mechanism as every other op --
-    // requires _recv_pump to already be running, i.e. _open() to have
+    // requires _recv_pump to already be running, i.e. _connect() to have
     // completed.
     template <typename T = char>
     rawstd::Task<std::vector<T>> _basic_request(

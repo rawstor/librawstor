@@ -16,9 +16,10 @@ Session::Session(Private p, rawio::Queue& queue, const rawstd::URI& location) :
     rawstor::Session(p, queue, location) {
 }
 
-rawstd::Task<void> Session::_open() {
-    // The fd is opened lazily, by _connect(), once set_object() knows
-    // which object id to open -- nothing to do upfront.
+rawstd::Task<void> Session::_connect() {
+    // The fd is opened lazily, by _connect(const RawstdUUID&), once
+    // set_object() knows which object id to open -- nothing to do
+    // upfront.
     co_return;
 }
 

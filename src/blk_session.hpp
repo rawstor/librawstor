@@ -24,9 +24,9 @@ protected:
     virtual int _connect(const RawstdUUID& id) = 0;
 
     // A blk-backed session has no upfront connection step: the fd is
-    // opened lazily, by _connect(), once set_object() knows which object
-    // id to open.
-    rawstd::Task<void> _open() override final;
+    // opened lazily, by _connect(const RawstdUUID&) above, once
+    // set_object() knows which object id to open.
+    rawstd::Task<void> _connect() override final;
 
 public:
     Session(Private p, rawio::Queue& queue, const rawstd::URI& location);

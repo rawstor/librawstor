@@ -52,7 +52,7 @@ Session::create(rawio::Queue& queue, const rawstd::URI& location) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
 
-    co_await session->_open();
+    co_await session->_connect();
     co_return session;
 }
 
