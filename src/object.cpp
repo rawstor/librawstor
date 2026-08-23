@@ -371,34 +371,48 @@ rawstd::Task<void> Object::create(
     validate_same_uuid(targets);
 
     // Every target's CREATE goes out concurrently instead of one at a
-    // time.
+    // time. This can't just gather() them, though: on failure, only the
+    // targets THIS call actually created may be rolled back -- e.g.
+    // test_create_twice creating an already-existing target fails with
+    // EEXIST, and rolling back every target regardless (as if
+    // remove()-ing an uncreated one were always harmless) would delete
+    // the pre-existing object a completely unrelated, earlier call
+    // created. So each task's own success/failure is tracked here
+    // instead of going through gather()'s single pass/fail-the-whole-
+    // batch result.
     std::vector<rawstd::Task<void>> tasks;
     tasks.reserve(targets.size());
     for (const auto& target : targets) {
         tasks.push_back(create_one(queue, target, sp));
     }
 
+    std::vector<rawstd::URI> created;
+    created.reserve(targets.size());
+
     // co_await isn't allowed inside a catch block, so the failure is only
     // recorded here; rolling back happens just below, outside the
     // handler.
     std::exception_ptr eptr;
-    try {
-        co_await rawstd::gather(std::move(tasks));
-    } catch (...) {
-        eptr = std::current_exception();
+    for (size_t i = 0; i < targets.size(); ++i) {
+        try {
+            co_await tasks[i];
+            created.push_back(targets[i]);
+        } catch (...) {
+            if (!eptr) {
+                eptr = std::current_exception();
+            }
+        }
     }
 
     if (eptr) {
-        // gather() only says *that* at least one target failed, not
-        // which -- so every target gets rolled back, not just the ones
-        // that actually got created. remove()-ing a target that was
-        // never created is expected to fail harmlessly there (nothing to
-        // remove), same as it already could for a target this rolls back
-        // more than once.
-        try {
-            co_await remove(queue, targets);
-        } catch (const std::exception& e) {
-            rawstd_error("Failed to rollback create operation: %s\n", e.what());
+        if (!created.empty()) {
+            try {
+                co_await remove(queue, created);
+            } catch (const std::exception& e) {
+                rawstd_error(
+                    "Failed to rollback create operation: %s\n", e.what()
+                );
+            }
         }
         std::rethrow_exception(eptr);
     }
