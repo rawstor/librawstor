@@ -321,7 +321,11 @@ TEST(OstIOTest, set_object_fail) {
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
-    for (unsigned int i = 0; i < 3; ++i) {
+    // Connection::open()'s own first attempt (against the session
+    // create() already connected) plus invalidate_session()'s own
+    // internal retry (rawstor_opts_io_attempts() attempts) -- one more
+    // than io_attempts total.
+    for (unsigned int i = 0; i < 4; ++i) {
         rawstor::tests::Session s(server);
         s.cmd_set_object(0, 0, 0);
     }
@@ -342,7 +346,9 @@ TEST(OstIOTest, set_object_error) {
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
-    for (unsigned int i = 0; i < 3; ++i) {
+    // See set_object_fail above for why this is one more than
+    // rawstor_opts_io_attempts().
+    for (unsigned int i = 0; i < 4; ++i) {
         rawstor::tests::Session s(server);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, -ENOENT);
     }
@@ -363,7 +369,9 @@ TEST(OstIOTest, set_object_disconnect) {
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
-    for (unsigned int i = 0; i < 3; ++i) {
+    // See set_object_fail above for why this is one more than
+    // rawstor_opts_io_attempts().
+    for (unsigned int i = 0; i < 4; ++i) {
         rawstor::tests::Session s(server);
     }
 

@@ -2,7 +2,10 @@
 #include "session.hpp"
 #include "tmp_dir.hpp"
 
+#include "connection.hpp"
 #include "opts.h"
+
+#include <rawio/queue.hpp>
 
 #include <rawstd/gpp.hpp>
 #include <rawstd/uri.hpp>
@@ -15,9 +18,20 @@
 
 #include <algorithm>
 #include <cstring>
+#include <memory>
 #include <string>
 
 namespace {
+
+// Duplicate of object.cpp's own `run()` -- see that one's doc comment for
+// why it isn't shared.
+template <typename T>
+T run(rawio::Queue& q, rawstd::Task<T> t) {
+    while (!t.done()) {
+        q.wait_timeout(rawstor_opts_tcp_user_timeout());
+    }
+    return t.get();
+}
 
 TEST(ListTest, empty) {
     rawstor::tests::TmpDir dir;
@@ -189,6 +203,29 @@ TEST(ListTest, pagination) {
         int res = rawstor_object_remove(target.c_str());
         EXPECT_EQ(res, 0);
     }
+}
+
+// Object::list()/create()/remove()/spec()/info() all use a
+// Connection::create()-only, never-open()-ed Connection for their
+// metadata work -- unlike a data-path Connection, _object stays null on
+// one of these for its whole lifetime. invalidate_session()'s reconnect
+// path used to call the replacement session's set_object(_object)
+// unconditionally regardless, and every backend's set_object()
+// dereferences its Object* argument (e.g. blk::Session::set_object()
+// reading object->id()) -- a null-pointer crash the very first time a
+// metadata op actually needed to reconnect a session, not something any
+// of ListTest's other cases above exercise (they never fail an op in the
+// first place).
+TEST(ListTest, invalidate_session_on_metadata_only_connection) {
+    rawstor::tests::TmpDir dir;
+    rawstd::URI location(dir.uri());
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+
+    std::unique_ptr<rawstor::Connection> cn =
+        run(*queue, rawstor::Connection::create(*queue, location, 1));
+    std::shared_ptr<rawstor::Session> s = cn->get_next_session();
+
+    EXPECT_NO_THROW(run(*queue, cn->invalidate_session(s)));
 }
 
 } // unnamed namespace

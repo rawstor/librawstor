@@ -11,6 +11,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cerrno>
 #include <cstring>
 
 namespace {
@@ -50,6 +51,31 @@ TEST(FileLifecycleTest, create_spec_list_remove) {
         rawstor_string_list_delete(targets);
     }
     EXPECT_EQ(rawstor_pagination_token_empty(&token), 1);
+
+    res = rawstor_object_remove(target.c_str());
+    EXPECT_EQ(res, 0);
+}
+
+// A failed create() must only roll back what THIS call itself created --
+// a second create() on an already-existing target fails with EEXIST, and
+// must not remove() the target the first call created.
+TEST(FileLifecycleTest, create_twice_preserves_existing) {
+    rawstor::tests::TmpDir dir;
+    rawstd::URI location_uri(dir.uri());
+    std::string uuid = "00000000-0000-7000-8000-000000000001";
+    std::string target = rawstd::URI(location_uri, uuid).str();
+
+    RawstorObjectSpec spec{.size = 1ull << 20};
+    int res = rawstor_object_create(target.c_str(), &spec);
+    EXPECT_EQ(res, 0);
+
+    res = rawstor_object_create(target.c_str(), &spec);
+    EXPECT_EQ(res, -EEXIST);
+
+    RawstorObjectSpec read_spec;
+    res = rawstor_object_spec(target.c_str(), &read_spec);
+    EXPECT_EQ(res, 0);
+    EXPECT_EQ(read_spec.size, (size_t)(1ull << 20));
 
     res = rawstor_object_remove(target.c_str());
     EXPECT_EQ(res, 0);
