@@ -411,24 +411,17 @@ Object::remove(rawio::Queue& queue, const std::vector<rawstd::URI>& targets) {
     validate_same_uuid(targets);
 
     // Every target's REMOVE goes out concurrently instead of one at a
-    // time.
+    // time; every one is still attempted regardless of an earlier
+    // failure (gather() never abandons a task still in flight), same as
+    // the old sequential loop. On failure, gather() surfaces exactly one
+    // exception (not one per failed target) -- unchanged and rethrown as-
+    // is, for the caller to log/handle same as any other failure here.
     std::vector<rawstd::Task<void>> tasks;
     tasks.reserve(targets.size());
     for (const auto& target : targets) {
         tasks.push_back(remove_one(queue, target));
     }
-
-    try {
-        co_await rawstd::gather(std::move(tasks));
-    } catch (const std::exception& e) {
-        // gather() only surfaces the first target's failure, not which
-        // one, but every target was still attempted (gather() never
-        // abandons one still in flight just because an earlier one
-        // failed) -- this is best-effort, so log and rethrow rather than
-        // silently discarding which target(s) actually failed to remove.
-        rawstd_error("%s\n", e.what());
-        throw;
-    }
+    co_await rawstd::gather(std::move(tasks));
 }
 
 rawstd::Task<RawstorObjectSpec>
