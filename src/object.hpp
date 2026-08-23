@@ -26,6 +26,14 @@ private:
     RawstdUUID _id;
     std::vector<std::unique_ptr<rawstor::Connection>> _cns;
 
+    // Object is final -- unlike Session::Private (which every backend
+    // subclass's own constructor also needs to name), nothing but
+    // create() itself ever needs this, so it stays private rather than
+    // protected.
+    struct Private {
+        explicit Private() = default;
+    };
+
 public:
     static rawstd::Task<void> list(
         rawio::Queue& queue, const std::vector<rawstd::URI>& locations,
@@ -34,16 +42,17 @@ public:
     );
     static rawstd::Task<RawstorLocationInfo>
     info(rawio::Queue& queue, const std::vector<rawstd::URI>& locations);
-    static rawstd::Task<void> create(
-        rawio::Queue& queue, const std::vector<rawstd::URI>& targets,
-        const RawstorObjectSpec& sp
-    );
-    static rawstd::Task<void>
-    remove(rawio::Queue& queue, const std::vector<rawstd::URI>& targets);
-    static rawstd::Task<RawstorObjectSpec>
-    spec(rawio::Queue& queue, const std::vector<rawstd::URI>& targets);
 
-    Object(rawio::Queue& queue, const std::vector<rawstd::URI>& targets);
+    // Creates a Connection (with its own session pool) against every
+    // target and open()s each -- the returned Object's data-path methods
+    // are ready for use. By analogy with Connection::create(): the heavy
+    // async work lives here, not in the constructor.
+    static rawstd::Task<std::unique_ptr<Object>>
+    create(rawio::Queue& queue, const std::vector<rawstd::URI>& targets);
+
+    Object(
+        Private, rawio::Queue& queue, const std::vector<rawstd::URI>& targets
+    );
     Object(const Object&) = delete;
     Object(Object&&) = delete;
     ~Object();

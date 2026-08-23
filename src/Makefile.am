@@ -48,6 +48,8 @@ librawstor_la_SOURCES = blk_session.cpp \
                         session.cpp \
                         session.hpp \
                         rawstor.cpp \
+                        target.cpp \
+                        target.hpp \
                         telemetry.cpp \
                         telemetry.hpp
 

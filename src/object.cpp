@@ -8,6 +8,7 @@
 #include "file_session.hpp"
 #include "opts.h"
 #include "ost_session.hpp"
+#include "target.hpp"
 
 #include <rawstd/gpp.hpp>
 #include <rawstd/list.h>
@@ -144,41 +145,13 @@ void validate_different_uris(const std::vector<rawstd::URI>& uris) {
     }
 }
 
-// A connect()ed Connection's metadata methods take a bare id (like the
-// Session methods they wrap) rather than a full target -- extract it
-// once here instead of in every one of this file's own call sites.
-RawstdUUID uuid_from_target(const rawstd::URI& target) {
-    RawstdUUID id;
-    int res = rawstd_uuid_from_string(&id, target.path().filename().c_str());
-    if (res) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-    return id;
-}
-
-// One location's worth of Object::create()/remove()/info() work: connect
-// a single-session Connection just for this call, do the one metadata op,
-// close it again. Factored out so each of Object::create()/remove()/
-// info()/list() below can fan these out across every location/target via
-// rawstd::gather() instead of awaiting them one at a time.
-rawstd::Task<void> create_one(
-    rawio::Queue& queue, const rawstd::URI& target, const RawstorObjectSpec& sp
-) {
-    RawstdUUID id = uuid_from_target(target);
-    std::unique_ptr<rawstor::Connection> cn =
-        co_await rawstor::Connection::create(queue, target.parent(), 1);
-    co_await cn->create(id, sp);
-    co_await cn->close();
-}
-
-rawstd::Task<void> remove_one(rawio::Queue& queue, const rawstd::URI& target) {
-    RawstdUUID id = uuid_from_target(target);
-    std::unique_ptr<rawstor::Connection> cn =
-        co_await rawstor::Connection::create(queue, target.parent(), 1);
-    co_await cn->remove(id);
-    co_await cn->close();
-}
-
+// One location's worth of Object::info() work: connect a single-session
+// Connection just for this call, do the one metadata op, close it again.
+// Factored out so each of Object::info()/list() below can fan these out
+// across every location via rawstd::gather() instead of awaiting them one
+// at a time. (The per-target equivalents used to live here too, but moved
+// to target.cpp along with Object::create()/spec()/remove() -- see
+// rawstor::Target.)
 rawstd::Task<RawstorLocationInfo>
 info_one(rawio::Queue& queue, const rawstd::URI& location) {
     std::unique_ptr<rawstor::Connection> cn =
@@ -229,7 +202,9 @@ T run(rawio::Queue& q, rawstd::Task<T> t) {
 
 namespace rawstor {
 
-Object::Object(rawio::Queue& queue, const std::vector<rawstd::URI>& targets) :
+Object::Object(
+    Private, rawio::Queue& queue, const std::vector<rawstd::URI>& targets
+) :
     _queue(queue),
     _id() {
     validate_not_empty(targets);
@@ -240,16 +215,6 @@ Object::Object(rawio::Queue& queue, const std::vector<rawstd::URI>& targets) :
     int res = rawstd_uuid_from_string(&_id, id.c_str());
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-
-    _cns.reserve(targets.size());
-    for (const auto& target : targets) {
-        std::unique_ptr<rawstor::Connection> cn =
-            run(_queue, rawstor::Connection::create(
-                            _queue, target.parent(), rawstor_opts_sessions()
-                        ));
-        run(_queue, cn->open(this));
-        _cns.push_back(std::move(cn));
     }
 }
 
@@ -362,99 +327,21 @@ Object::info(rawio::Queue& queue, const std::vector<rawstd::URI>& locations) {
     co_return ret;
 }
 
-rawstd::Task<void> Object::create(
-    rawio::Queue& queue, const std::vector<rawstd::URI>& targets,
-    const RawstorObjectSpec& sp
-) {
-    validate_not_empty(targets);
-    validate_different_uris(targets);
-    validate_same_uuid(targets);
+rawstd::Task<std::unique_ptr<Object>>
+Object::create(rawio::Queue& queue, const std::vector<rawstd::URI>& targets) {
+    std::unique_ptr<Object> obj =
+        std::make_unique<Object>(Private(), queue, targets);
 
-    // Every target's CREATE goes out concurrently instead of one at a
-    // time. This can't just gather() them, though: on failure, only the
-    // targets THIS call actually created may be rolled back -- e.g.
-    // test_create_twice creating an already-existing target fails with
-    // EEXIST, and rolling back every target regardless (as if
-    // remove()-ing an uncreated one were always harmless) would delete
-    // the pre-existing object a completely unrelated, earlier call
-    // created. So each task's own success/failure is tracked here
-    // instead of going through gather()'s single pass/fail-the-whole-
-    // batch result.
-    std::vector<rawstd::Task<void>> tasks;
-    tasks.reserve(targets.size());
+    obj->_cns.reserve(targets.size());
     for (const auto& target : targets) {
-        tasks.push_back(create_one(queue, target, sp));
-    }
-
-    std::vector<rawstd::URI> created;
-    created.reserve(targets.size());
-
-    // co_await isn't allowed inside a catch block, so the failure is only
-    // recorded here; rolling back happens just below, outside the
-    // handler.
-    std::exception_ptr eptr;
-    for (size_t i = 0; i < targets.size(); ++i) {
-        try {
-            co_await tasks[i];
-            created.push_back(targets[i]);
-        } catch (...) {
-            if (!eptr) {
-                eptr = std::current_exception();
-            }
-        }
-    }
-
-    if (eptr) {
-        if (!created.empty()) {
-            try {
-                co_await remove(queue, created);
-            } catch (const std::exception& e) {
-                rawstd_error(
-                    "Failed to rollback create operation: %s\n", e.what()
-                );
-            }
-        }
-        std::rethrow_exception(eptr);
-    }
-}
-
-rawstd::Task<void>
-Object::remove(rawio::Queue& queue, const std::vector<rawstd::URI>& targets) {
-    validate_not_empty(targets);
-    validate_different_uris(targets);
-    validate_same_uuid(targets);
-
-    // Every target's REMOVE goes out concurrently instead of one at a
-    // time; every one is still attempted regardless of an earlier
-    // failure (gather() never abandons a task still in flight), same as
-    // the old sequential loop. On failure, gather() surfaces exactly one
-    // exception (not one per failed target) -- unchanged and rethrown as-
-    // is, for the caller to log/handle same as any other failure here.
-    std::vector<rawstd::Task<void>> tasks;
-    tasks.reserve(targets.size());
-    for (const auto& target : targets) {
-        tasks.push_back(remove_one(queue, target));
-    }
-    co_await rawstd::gather(std::move(tasks));
-}
-
-rawstd::Task<RawstorObjectSpec>
-Object::spec(rawio::Queue& queue, const std::vector<rawstd::URI>& targets) {
-    /**
-     * TODO: Should we read all specs and compare them here?
-     */
-    validate_not_empty(targets);
-    validate_different_uris(targets);
-    validate_same_uuid(targets);
-
-    RawstdUUID id = uuid_from_target(targets.front());
-    std::unique_ptr<rawstor::Connection> cn =
-        co_await rawstor::Connection::create(
-            queue, targets.front().parent(), 1
+        std::unique_ptr<rawstor::Connection> cn = co_await Connection::create(
+            queue, target.parent(), rawstor_opts_sessions()
         );
-    RawstorObjectSpec ret = co_await cn->spec(id);
-    co_await cn->close();
-    co_return ret;
+        co_await cn->open(obj.get());
+        obj->_cns.push_back(std::move(cn));
+    }
+
+    co_return obj;
 }
 
 std::vector<rawstd::URI> Object::locations() const {
@@ -681,8 +568,8 @@ int rawstor_object_create(
 ) noexcept {
     try {
         std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
-        run(*queue,
-            rawstor::Object::create(*queue, rawstd::URI::uriv(target), *spec));
+        rawstor::Target t(rawstd::URI::uriv(target));
+        run(*queue, t.create(*queue, *spec));
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -734,7 +621,8 @@ int rawstor_object_create_at(
 
         if (static_cast<size_t>(res) < size) {
             std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
-            run(*queue, rawstor::Object::create(*queue, ret, *spec));
+            rawstor::Target t(ret);
+            run(*queue, t.create(*queue, *spec));
         }
 
         return res;
@@ -754,7 +642,8 @@ int rawstor_object_create_at(
 int rawstor_object_remove(const char* target) noexcept {
     try {
         std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
-        run(*queue, rawstor::Object::remove(*queue, rawstd::URI::uriv(target)));
+        rawstor::Target t(rawstd::URI::uriv(target));
+        run(*queue, t.remove(*queue));
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -772,9 +661,8 @@ int rawstor_object_remove(const char* target) noexcept {
 int rawstor_object_spec(const char* target, RawstorObjectSpec* sp) noexcept {
     try {
         std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
-        *sp =
-            run(*queue,
-                rawstor::Object::spec(*queue, rawstd::URI::uriv(target)));
+        rawstor::Target t(rawstd::URI::uriv(target));
+        *sp = run(*queue, t.spec(*queue));
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -793,10 +681,10 @@ int rawstor_object_open(
     RawIOQueue* queue, const char* target, RawstorObject** object
 ) noexcept {
     try {
+        rawstor::Target t(rawstd::URI::uriv(target));
         std::unique_ptr<rawstor::Object> ret =
-            std::make_unique<rawstor::Object>(
-                *static_cast<rawio::Queue*>(queue), rawstd::URI::uriv(target)
-            );
+            run(*static_cast<rawio::Queue*>(queue),
+                t.open(*static_cast<rawio::Queue*>(queue)));
 
         *object = ret.get();
 
