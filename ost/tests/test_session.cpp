@@ -191,6 +191,61 @@ TEST(OstSessionTest, simple_success) {
     EXPECT_EQ(read_back, payload);
 }
 
+TEST(OstSessionTest, set_object_twice_does_not_crash) {
+    rawstor::ostbackend::tests::TmpDir dir;
+    rawstor::ostbackend::Server server(
+        256, 128, 1u << 20, "127.0.0.1", 0, dir.uri().c_str()
+    );
+
+    rawstor::ostbackend::tests::Queue queue;
+    auto [raw_session, client_fd] = connect_session(server, queue);
+    SessionCleanup session(std::move(raw_session), queue);
+    rawstor::ostbackend::tests::Client client(client_fd);
+
+    RawstdUUID id;
+    ASSERT_EQ(rawstd_uuid7_init(&id), 0);
+
+    // ALLOCATE: creates the object file:// will open next.
+    client.send_allocate(id, 4096);
+    ASSERT_TRUE(pump_until(queue, [&] {
+        return client.bytes_available() >= sizeof(RawstorOSTFrameResponse);
+    }));
+    RawstorOSTFrameResponse response = client.recv_response();
+    EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_ALLOCATE);
+    EXPECT_EQ(response.body.res, 0);
+
+    // First SET_OBJECT: the session's _object starts null, so this only
+    // exercises rawstor_object_open() (same as simple_success above).
+    client.send_set_object(id);
+    ASSERT_TRUE(pump_until(queue, [&] {
+        return client.bytes_available() >= sizeof(RawstorOSTFrameResponse);
+    }));
+    response = client.recv_response();
+    EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_SET_OBJECT);
+    EXPECT_EQ(response.body.res, 0);
+
+    // Second SET_OBJECT on the same session: _object is already set, so
+    // the server's Session::_set_object() first rawstor_object_close()s
+    // it before opening again -- exercising Object::~Object()'s
+    // run(_queue, cn->close()) from *inside* the server's own
+    // already-executing Queue::_dispatch() call (the one dispatching
+    // this very SET_OBJECT frame's completion). blk::Session::close()
+    // used to co_await an actual io_uring close op there, which needs a
+    // real completion round-trip to resume -- reentering _dispatch() on
+    // a queue it's already mid-iteration on, an ASan-confirmed
+    // heap-use-after-free (a RecvMultishotCompletion the still-in-
+    // progress outer iteration needed got freed by the reentrant inner
+    // one first). Now synchronous, like _connect() already was, so this
+    // must complete cleanly.
+    client.send_set_object(id);
+    ASSERT_TRUE(pump_until(queue, [&] {
+        return client.bytes_available() >= sizeof(RawstorOSTFrameResponse);
+    }));
+    response = client.recv_response();
+    EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_SET_OBJECT);
+    EXPECT_EQ(response.body.res, 0);
+}
+
 TEST(OstSessionTest, write_throttle_limit) {
     constexpr unsigned int limit = 4;
     constexpr unsigned int writes = 20;
