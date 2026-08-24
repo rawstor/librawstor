@@ -1,7 +1,6 @@
 #ifndef RAWSTOR_OBJECT_HPP
 #define RAWSTOR_OBJECT_HPP
 
-#include <rawstor/location.h>
 #include <rawstor/object.h>
 
 #include <rawio/queue.hpp>
@@ -10,7 +9,6 @@
 #include <rawstd/uri.hpp>
 #include <rawstd/uuid.h>
 
-#include <list>
 #include <memory>
 #include <vector>
 
@@ -35,14 +33,6 @@ private:
     };
 
 public:
-    static rawstd::Task<void> list(
-        rawio::Queue& queue, const std::vector<rawstd::URI>& locations,
-        unsigned int limit, std::list<std::vector<rawstd::URI>>& targets,
-        RawstorPaginationToken& token
-    );
-    static rawstd::Task<RawstorLocationInfo>
-    info(rawio::Queue& queue, const std::vector<rawstd::URI>& locations);
-
     // Creates a Connection (with its own session pool) against every
     // target and open()s each -- the returned Object's data-path methods
     // are ready for use. By analogy with Connection::create(): the heavy

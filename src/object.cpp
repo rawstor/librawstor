@@ -6,6 +6,7 @@
 #include "config.h"
 #include "connection.hpp"
 #include "file_session.hpp"
+#include "location.hpp"
 #include "opts.h"
 #include "ost_session.hpp"
 #include "target.hpp"
@@ -21,7 +22,6 @@
 #include <algorithm>
 #include <exception>
 #include <list>
-#include <map>
 #include <memory>
 #include <new>
 #include <set>
@@ -145,41 +145,6 @@ void validate_different_uris(const std::vector<rawstd::URI>& uris) {
     }
 }
 
-// One location's worth of Object::info() work: connect a single-session
-// Connection just for this call, do the one metadata op, close it again.
-// Factored out so each of Object::info()/list() below can fan these out
-// across every location via rawstd::gather() instead of awaiting them one
-// at a time. (The per-target equivalents used to live here too, but moved
-// to target.cpp along with Object::create()/spec()/remove() -- see
-// rawstor::Target.)
-rawstd::Task<RawstorLocationInfo>
-info_one(rawio::Queue& queue, const rawstd::URI& location) {
-    std::unique_ptr<rawstor::Connection> cn =
-        co_await rawstor::Connection::create(queue, location, 1);
-    RawstorLocationInfo ret = co_await cn->info();
-    co_await cn->close();
-    co_return ret;
-}
-
-// Object::list()'s per-location result: the uuids it found plus the
-// pagination token it reported (seeded from the caller's incoming token,
-// same as the old sequential loop's per-iteration `loc_token_uuid`
-// local) -- .first/.second are unpacked back into those same names via
-// structured bindings at every call site below, so the pair itself never
-// needs to be read directly.
-rawstd::Task<std::pair<std::vector<RawstdUUID>, RawstdUUID>> list_one(
-    rawio::Queue& queue, const rawstd::URI& location, unsigned int limit,
-    RawstdUUID token_uuid
-) {
-    std::pair<std::vector<RawstdUUID>, RawstdUUID> ret;
-    ret.second = token_uuid;
-    std::unique_ptr<rawstor::Connection> cn =
-        co_await rawstor::Connection::create(queue, location, 1);
-    co_await cn->list(limit, ret.first, ret.second);
-    co_await cn->close();
-    co_return ret;
-}
-
 // Synchronously pumps `t` to completion by driving `q` -- the boundary
 // where this file's synchronous C ABI (rawstor_object_list/_create/
 // _remove/_spec, rawstor_location_info) meets the now fully co_await
@@ -226,105 +191,6 @@ Object::~Object() {
             rawstd_error("Object::~Object(): %s\n", e.what());
         }
     }
-}
-
-rawstd::Task<void> Object::list(
-    rawio::Queue& queue, const std::vector<rawstd::URI>& locations,
-    unsigned int limit, std::list<std::vector<rawstd::URI>>& targets,
-    RawstorPaginationToken& token
-) {
-    validate_not_empty(locations);
-
-    RawstdUUID token_uuid = {};
-    memcpy(token_uuid.bytes, token.bytes, sizeof(token.bytes));
-
-    // Every location's LIST goes out concurrently instead of one at a
-    // time; the per-location uuids/token are only merged below, once
-    // every location has answered.
-    std::vector<rawstd::Task<std::pair<std::vector<RawstdUUID>, RawstdUUID>>>
-        tasks;
-    tasks.reserve(locations.size());
-    for (const auto& location : locations) {
-        tasks.push_back(list_one(queue, location, limit, token_uuid));
-    }
-    std::vector<std::pair<std::vector<RawstdUUID>, RawstdUUID>> listings =
-        co_await rawstd::gather(std::move(tasks));
-
-    auto cmp = [](const RawstdUUID& lhs, const RawstdUUID& rhs) -> bool {
-        return rawstd_uuid_cmp(&lhs, &rhs) < 0;
-    };
-    std::map<RawstdUUID, std::vector<rawstd::URI>, decltype(cmp)> targets_map(
-        cmp
-    );
-    RawstdUUID empty_uuid = {};
-    RawstdUUID next_token_uuid = empty_uuid;
-    for (size_t i = 0; i < locations.size(); ++i) {
-        const rawstd::URI& location = locations[i];
-        const auto& [loc_uuids, loc_token_uuid] = listings[i];
-        for (const auto& uuid : loc_uuids) {
-            RawstdUUIDString uuid_string;
-            rawstd_uuid_to_string(&uuid, &uuid_string);
-            targets_map[uuid].emplace_back(location, uuid_string);
-        }
-        if (rawstd_uuid_cmp(&loc_token_uuid, &empty_uuid) != 0) {
-            if (rawstd_uuid_cmp(&next_token_uuid, &empty_uuid) == 0 ||
-                rawstd_uuid_cmp(&loc_token_uuid, &next_token_uuid) < 0) {
-                next_token_uuid = loc_token_uuid;
-            }
-        }
-    }
-
-    if (limit == 0) {
-        limit = rawstor_opts_list_limit();
-    } else {
-        limit = std::min(limit, rawstor_opts_list_limit());
-    }
-
-    std::list<std::vector<rawstd::URI>> ret;
-    const RawstdUUID* last_uuid = nullptr;
-    bool capped = false;
-    for (const auto& it : targets_map) {
-        if (ret.size() >= limit) {
-            capped = true;
-            break;
-        }
-        last_uuid = &it.first;
-        ret.push_back(it.second);
-    }
-    if (last_uuid != nullptr) {
-        if (capped && (rawstd_uuid_cmp(&next_token_uuid, &empty_uuid) == 0 ||
-                       rawstd_uuid_cmp(last_uuid, &next_token_uuid) < 0)) {
-            next_token_uuid = *last_uuid;
-        }
-    }
-
-    targets.swap(ret);
-    memcpy(token.bytes, next_token_uuid.bytes, sizeof(next_token_uuid.bytes));
-}
-
-rawstd::Task<RawstorLocationInfo>
-Object::info(rawio::Queue& queue, const std::vector<rawstd::URI>& locations) {
-    validate_not_empty(locations);
-    validate_different_uris(locations);
-
-    std::vector<rawstd::Task<RawstorLocationInfo>> tasks;
-    tasks.reserve(locations.size());
-    for (const auto& location : locations) {
-        tasks.push_back(info_one(queue, location));
-    }
-    std::vector<RawstorLocationInfo> infos =
-        co_await rawstd::gather(std::move(tasks));
-
-    RawstorLocationInfo ret = infos.front();
-    for (size_t i = 1; i < infos.size(); ++i) {
-        // total is capped by the smallest backend; used takes the
-        // largest reported value so a mirror that's behind on writes
-        // doesn't make the location look emptier than it is.
-        ret.total = std::min(ret.total, infos[i].total);
-        ret.used = std::max(ret.used, infos[i].used);
-    }
-
-    co_return ret;
 }
 
 rawstd::Task<std::unique_ptr<Object>>
@@ -494,12 +360,11 @@ int rawstor_object_list(
 ) noexcept {
     RawstorStringList* list = nullptr;
     try {
-        std::vector<rawstd::URI> locations = rawstd::URI::uriv(location);
+        rawstor::Location loc(rawstd::URI::uriv(location));
         std::list<std::vector<rawstd::URI>> ret;
 
         std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
-        run(*queue,
-            rawstor::Object::list(*queue, locations, limit, ret, *token));
+        run(*queue, loc.list(*queue, limit, ret, *token));
 
         list = (RawstorStringList*)rawstd_list_create(sizeof(const char*));
         if (list == nullptr) {
@@ -546,9 +411,8 @@ int rawstor_location_info(
 ) noexcept {
     try {
         std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
-        *info =
-            run(*queue,
-                rawstor::Object::info(*queue, rawstd::URI::uriv(location)));
+        rawstor::Location loc(rawstd::URI::uriv(location));
+        *info = run(*queue, loc.info(*queue));
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
