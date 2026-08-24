@@ -74,10 +74,11 @@ int Session::_connect(const RawstdUUID& id) {
     return fd;
 }
 
-rawstd::Task<void>
-Session::list(unsigned int limit, Target& targets, RawstdUUID& token) {
+rawstd::Task<void> Session::list(
+    unsigned int limit, std::vector<RawstdUUID>& targets, RawstdUUID& token
+) {
     RawstdUUID input_token = token;
-    std::vector<RawstdUUID> uuids;
+    targets.clear();
     token = {};
     try {
         std::string location_path = get_location_path(location());
@@ -98,20 +99,20 @@ Session::list(unsigned int limit, Target& targets, RawstdUUID& token) {
                 continue;
             }
 
-            uuids.push_back(uuid);
+            targets.push_back(uuid);
         }
 
         std::sort(
-            uuids.begin(), uuids.end(),
+            targets.begin(), targets.end(),
             [](const RawstdUUID& lhs, const RawstdUUID& rhs) {
                 return rawstd_uuid_cmp(&lhs, &rhs) < 0;
             }
         );
 
-        uuids.erase(
-            uuids.begin(),
+        targets.erase(
+            targets.begin(),
             std::upper_bound(
-                uuids.begin(), uuids.end(), input_token,
+                targets.begin(), targets.end(), input_token,
                 [](const RawstdUUID& lhs, const RawstdUUID& rhs) {
                     return rawstd_uuid_cmp(&lhs, &rhs) < 0;
                 }
@@ -124,9 +125,9 @@ Session::list(unsigned int limit, Target& targets, RawstdUUID& token) {
             limit = std::min(limit, rawstor_opts_list_limit());
         }
 
-        if (uuids.size() > limit) {
-            uuids.resize(limit);
-            token = uuids.back();
+        if (targets.size() > limit) {
+            targets.resize(limit);
+            token = targets.back();
         }
     } catch (const std::system_error&) {
         throw;
@@ -137,13 +138,6 @@ Session::list(unsigned int limit, Target& targets, RawstdUUID& token) {
         rawstd_error("Unexpected error\n");
         RAWSTD_THROW_SYSTEM_ERROR(EIO);
     }
-
-    std::vector<rawstd::URI> uris;
-    uris.reserve(uuids.size());
-    for (const auto& uuid : uuids) {
-        uris.push_back(_uri(uuid));
-    }
-    targets = Target(uris);
 
     co_return;
 }

@@ -67,37 +67,23 @@ info_one(rawio::Queue& queue, const rawstd::URI& location) {
     co_return ret;
 }
 
-// Every URI in a Connection::list()/Session::list() result already has a
-// UUID appended (see Session::_uri()) -- this pulls it back out so
-// Location::list() can group these bag-of-URI results by object.
-RawstdUUID uuid_from_uri(const rawstd::URI& uri) {
-    RawstdUUID id;
-    int res = rawstd_uuid_from_string(&id, uri.path().filename().c_str());
-    if (res) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-    return id;
-}
-
-// Location::list()'s per-URI result: the bag-of-URI Target it found
-// (Connection::list()'s own shape -- one URI per object at that one
-// location, not yet a real per-object Target) plus the pagination token
-// it reported (seeded from the caller's incoming token, same as the old
-// sequential loop's per-iteration `loc_token_uuid` local) -- .first/
-// .second are unpacked back into those same names via structured
-// bindings at every call site below, so the pair itself never needs to
-// be read directly.
-rawstd::Task<std::pair<rawstor::Target, RawstdUUID>> list_one(
+// Location::list()'s per-URI result: the uuids it found plus the
+// pagination token it reported (seeded from the caller's incoming token,
+// same as the old sequential loop's per-iteration `loc_token_uuid` local)
+// -- .first/.second are unpacked back into those same names via
+// structured bindings at every call site below, so the pair itself never
+// needs to be read directly.
+rawstd::Task<std::pair<std::vector<RawstdUUID>, RawstdUUID>> list_one(
     rawio::Queue& queue, const rawstd::URI& location, unsigned int limit,
     RawstdUUID token_uuid
 ) {
-    rawstor::Target targets({});
-    RawstdUUID next_token = token_uuid;
+    std::pair<std::vector<RawstdUUID>, RawstdUUID> ret;
+    ret.second = token_uuid;
     std::unique_ptr<rawstor::Connection> cn =
         co_await rawstor::Connection::create(queue, location, 1);
-    co_await cn->list(limit, targets, next_token);
+    co_await cn->list(limit, ret.first, ret.second);
     co_await cn->close();
-    co_return std::make_pair(targets, next_token);
+    co_return ret;
 }
 
 // Synchronously pumps `t` to completion by driving `q` -- the boundary
@@ -160,14 +146,15 @@ rawstd::Task<void> Location::list(
     memcpy(token_uuid.bytes, token.bytes, sizeof(token.bytes));
 
     // Every URI's LIST goes out concurrently instead of one at a time;
-    // the per-URI results/token are only merged below, once every URI
-    // has answered.
-    std::vector<rawstd::Task<std::pair<Target, RawstdUUID>>> tasks;
+    // the per-URI uuids/token are only merged below, once every URI has
+    // answered.
+    std::vector<rawstd::Task<std::pair<std::vector<RawstdUUID>, RawstdUUID>>>
+        tasks;
     tasks.reserve(_uris.size());
     for (const auto& location : _uris) {
         tasks.push_back(list_one(queue, location, limit, token_uuid));
     }
-    std::vector<std::pair<Target, RawstdUUID>> listings =
+    std::vector<std::pair<std::vector<RawstdUUID>, RawstdUUID>> listings =
         co_await rawstd::gather(std::move(tasks));
 
     auto cmp = [](const RawstdUUID& lhs, const RawstdUUID& rhs) -> bool {
@@ -179,9 +166,12 @@ rawstd::Task<void> Location::list(
     RawstdUUID empty_uuid = {};
     RawstdUUID next_token_uuid = empty_uuid;
     for (size_t i = 0; i < _uris.size(); ++i) {
-        const auto& [loc_targets, loc_token_uuid] = listings[i];
-        for (const auto& uri : loc_targets.uris()) {
-            targets_map[uuid_from_uri(uri)].push_back(uri);
+        const rawstd::URI& location = _uris[i];
+        const auto& [loc_uuids, loc_token_uuid] = listings[i];
+        for (const auto& uuid : loc_uuids) {
+            RawstdUUIDString uuid_string;
+            rawstd_uuid_to_string(&uuid, &uuid_string);
+            targets_map[uuid].emplace_back(location, uuid_string);
         }
         if (rawstd_uuid_cmp(&loc_token_uuid, &empty_uuid) != 0) {
             if (rawstd_uuid_cmp(&next_token_uuid, &empty_uuid) == 0 ||

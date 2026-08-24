@@ -6,13 +6,11 @@
 
 #include <rawstd/logging.h>
 #include <rawstd/uri.hpp>
-#include <rawstd/uuid.h>
 
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
-#include <vector>
 
 #include <unistd.h>
 
@@ -24,12 +22,6 @@ Session::Session(Private, rawio::Queue& queue, const rawstd::URI& location) :
     _location(location),
     _fd(-1),
     _queue(queue) {
-}
-
-rawstd::URI Session::_uri(const RawstdUUID& id) const {
-    RawstdUUIDString id_string;
-    rawstd_uuid_to_string(&id, &id_string);
-    return rawstd::URI(_location, id_string);
 }
 
 Session::~Session() {

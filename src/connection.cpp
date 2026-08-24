@@ -299,8 +299,9 @@ const rawstd::URI* Connection::location() const noexcept {
     return &_sessions.front()->location();
 }
 
-rawstd::Task<void>
-Connection::list(unsigned int limit, Target& targets, RawstdUUID& token) {
+rawstd::Task<void> Connection::list(
+    unsigned int limit, std::vector<RawstdUUID>& targets, RawstdUUID& token
+) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);

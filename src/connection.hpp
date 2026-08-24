@@ -2,7 +2,6 @@
 #define RAWSTOR_CONNECTION_HPP
 
 #include "object.hpp"
-#include "target.hpp"
 #include "telemetry.hpp"
 
 #include <rawstor/location.h>
@@ -103,7 +102,7 @@ public:
     // methods they wrap, since a connect()ed Connection is (like a
     // Session) already bound to one location.
     rawstd::Task<void>
-    list(unsigned int limit, Target& targets, RawstdUUID& token);
+    list(unsigned int limit, std::vector<RawstdUUID>& uuids, RawstdUUID& token);
 
     rawstd::Task<void>
     create(const RawstdUUID& id, const RawstorObjectSpec& sp);
