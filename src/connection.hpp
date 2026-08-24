@@ -4,6 +4,7 @@
 #include "object.hpp"
 #include "telemetry.hpp"
 
+#include <rawstor/location.h>
 #include <rawstor/rawstor.h>
 
 #include <rawio/queue.hpp>

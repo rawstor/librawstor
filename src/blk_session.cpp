@@ -1,6 +1,7 @@
 #include "blk_session.hpp"
 
 #include "object.hpp"
+#include "target.hpp"
 
 #include <rawio/awaitable.hpp>
 
@@ -54,7 +55,7 @@ rawstd::Task<void> Session::set_object(Object* object) {
         throw std::runtime_error("Object already set");
     }
 
-    int fd = _connect(object->id());
+    int fd = _connect(object->target().id());
     if (fd == -1) {
         RAWSTD_THROW_ERRNO();
     }

@@ -39,6 +39,8 @@ librawstor_la_SOURCES = blk_session.cpp \
                         file_session.cpp \
                         file_session.hpp \
                         list.c \
+                        location.cpp \
+                        location.hpp \
                         object.cpp \
                         object.hpp \
                         ost_session.cpp \
@@ -48,6 +50,8 @@ librawstor_la_SOURCES = blk_session.cpp \
                         session.cpp \
                         session.hpp \
                         rawstor.cpp \
+                        target.cpp \
+                        target.hpp \
                         telemetry.cpp \
                         telemetry.hpp
 
