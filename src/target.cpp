@@ -117,6 +117,21 @@ remove_many(rawio::Queue& queue, const std::vector<rawstd::URI>& targets) {
     co_await rawstd::gather(std::move(tasks));
 }
 
+// One URI's worth of Target::open() work: stand up a Connection (its own
+// session pool) against it and open() it against `object`. Factored out
+// so open() can fan these out across every URI via gather()-like
+// concurrency instead of awaiting them one at a time, by analogy with
+// Connection::create()'s own session pool.
+rawstd::Task<std::unique_ptr<rawstor::Connection>>
+open_one(rawio::Queue& queue, const rawstd::URI& uri, rawstor::Object* object) {
+    std::unique_ptr<rawstor::Connection> cn =
+        co_await rawstor::Connection::create(
+            queue, uri.parent(), rawstor_opts_sessions()
+        );
+    co_await cn->open(object);
+    co_return cn;
+}
+
 // Synchronously pumps `t` to completion by driving `q` -- the boundary
 // where this file's synchronous C ABI (rawstor_object_create/_create_at/
 // _remove/_spec/_open) meets the now fully co_await-composed
@@ -249,15 +264,52 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
     std::unique_ptr<Object> obj =
         std::make_unique<Object>(Object::Private(), queue, *this);
 
-    obj->_cns.reserve(_uris.size());
+    // Every URI's Connection goes out concurrently instead of one at a
+    // time.
+    std::vector<rawstd::Task<std::unique_ptr<Connection>>> tasks;
+    tasks.reserve(_uris.size());
     for (const auto& uri : _uris) {
-        std::unique_ptr<Connection> cn = co_await Connection::create(
-            queue, uri.parent(), rawstor_opts_sessions()
-        );
-        co_await cn->open(obj.get());
-        obj->_cns.push_back(std::move(cn));
+        tasks.push_back(open_one(queue, uri, obj.get()));
     }
 
+    // co_await isn't allowed inside a catch block, so each task's own
+    // failure is only recorded here; rolling back the ones that DID
+    // succeed happens just below, outside the handler -- same shape as
+    // create()'s own rollback above.
+    std::vector<std::unique_ptr<Connection>> cns;
+    cns.reserve(_uris.size());
+    std::exception_ptr eptr;
+    for (auto& task : tasks) {
+        try {
+            cns.push_back(co_await task);
+        } catch (...) {
+            if (!eptr) {
+                eptr = std::current_exception();
+            }
+        }
+    }
+
+    if (eptr) {
+        // Close every Connection that DID succeed gracefully via
+        // co_await right here, rather than leaving it for ~Object()'s
+        // own run()-pumped synchronous cleanup: this coroutine can
+        // itself be driven by an outer synchronous run() pump (e.g.
+        // rawstor_object_open()'s own call into us), and ~Object()
+        // reentering that same dispatch loop via a *nested* run() is
+        // undefined behavior (same hazard blk::Session::close()'s own
+        // doc comment describes) -- obj->_cns never gets populated in
+        // this path, so ~Object() has nothing left to do anyway.
+        for (auto& cn : cns) {
+            try {
+                co_await cn->close();
+            } catch (const std::exception& e) {
+                rawstd_warning("Target::open(): %s\n", e.what());
+            }
+        }
+        std::rethrow_exception(eptr);
+    }
+
+    obj->_cns = std::move(cns);
     co_return obj;
 }
 
