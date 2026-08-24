@@ -1,12 +1,13 @@
 #ifndef RAWSTOR_OBJECT_HPP
 #define RAWSTOR_OBJECT_HPP
 
+#include "target.hpp"
+
 #include <rawstor/object.h>
 
 #include <rawio/queue.hpp>
 
 #include <rawstd/coro.hpp>
-#include <rawstd/uri.hpp>
 
 #include <memory>
 #include <vector>
@@ -16,12 +17,11 @@ struct RawstorObject {};
 namespace rawstor {
 
 class Connection;
-class Target;
 
 class Object final : public RawstorObject {
 private:
     rawio::Queue& _queue;
-    std::vector<rawstd::URI> _uris;
+    Target _target;
     std::vector<std::unique_ptr<rawstor::Connection>> _cns;
 
     // Object is final -- unlike Session::Private (which every backend
@@ -35,17 +35,14 @@ private:
     friend class Target;
 
 public:
-    Object(
-        Private, rawio::Queue& queue, const std::vector<rawstd::URI>& targets
-    );
+    Object(Private, rawio::Queue& queue, const Target& target);
     Object(const Object&) = delete;
     Object(Object&&) = delete;
     ~Object();
     Object& operator=(const Object&) = delete;
     Object& operator=(Object&&) = delete;
 
-    // This Object's own target -- the same URIs (each already carrying
-    // this Object's UUID) it was built from.
+    // This Object's own target -- the same Target it was built from.
     Target target() const;
 
     rawstd::Task<size_t> pread(void* buf, size_t size, off_t offset);

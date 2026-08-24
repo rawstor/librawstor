@@ -1,8 +1,6 @@
 #ifndef RAWSTOR_TARGET_HPP
 #define RAWSTOR_TARGET_HPP
 
-#include "object.hpp"
-
 #include <rawstor/object.h>
 
 #include <rawio/queue.hpp>
@@ -17,6 +15,11 @@
 namespace rawstor {
 
 class Location;
+// Only named here as std::unique_ptr<Object>'s pointee (open()'s return
+// type) -- Object itself needs Target's full definition (it holds one as
+// a member), so this stays a forward declaration to avoid a header
+// cycle; target.cpp includes "object.hpp" for the definition.
+class Object;
 
 // A Target addresses one specific object across every URI in `uris` (see
 // docs/locations_and_targets.md). Deliberately lightweight -- unlike

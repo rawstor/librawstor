@@ -20,7 +20,6 @@
 #include <exception>
 #include <memory>
 #include <new>
-#include <set>
 #include <system_error>
 #include <utility>
 
@@ -94,51 +93,6 @@ int uris(const std::vector<rawstd::URI>& uriv, char* buf, size_t size) {
     return res;
 }
 
-void validate_not_empty(const std::vector<rawstd::URI>& uris) {
-    if (!uris.empty()) {
-        return;
-    }
-
-    rawstd_error("Empty uri list\n");
-    RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-}
-
-void validate_same_uuid(const std::vector<rawstd::URI>& targets) {
-    if (targets.empty()) {
-        return;
-    }
-
-    std::string uuid_string = targets.front().path().filename();
-    RawstdUUID uuid;
-    int res = rawstd_uuid_from_string(&uuid, uuid_string.c_str());
-    if (res < 0) {
-        rawstd_error("Valid UUID expected\n");
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-
-    for (const auto& target : targets) {
-        if (target.path().filename() != uuid_string) {
-            rawstd_error("Equal UUID expected\n");
-            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-        }
-    }
-}
-
-void validate_different_uris(const std::vector<rawstd::URI>& uris) {
-    if (uris.empty()) {
-        return;
-    }
-
-    std::set<rawstd::URI> seen;
-    for (const auto& uri : uris) {
-        if (seen.find(uri) != seen.end()) {
-            rawstd_error("Different uris expected\n");
-            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-        }
-        seen.insert(uri);
-    }
-}
-
 // Synchronously pumps `t` to completion by driving `q` -- used by
 // ~Object() to co_await each Connection's close() from a plain (non-
 // coroutine) destructor. Deliberately a local duplicate of connection.cpp/
@@ -157,14 +111,12 @@ T run(rawio::Queue& q, rawstd::Task<T> t) {
 
 namespace rawstor {
 
-Object::Object(
-    Private, rawio::Queue& queue, const std::vector<rawstd::URI>& targets
-) :
+// Trivial by design -- by analogy with Connection(Private, queue), the
+// validation and heavy async work both live in Target::open(), the one
+// place that actually constructs an Object.
+Object::Object(Private, rawio::Queue& queue, const Target& target) :
     _queue(queue),
-    _uris(targets) {
-    validate_not_empty(targets);
-    validate_different_uris(targets);
-    validate_same_uuid(targets);
+    _target(target) {
 }
 
 Object::~Object() {
@@ -178,7 +130,7 @@ Object::~Object() {
 }
 
 Target Object::target() const {
-    return Target(_uris);
+    return _target;
 }
 
 rawstd::Task<size_t> Object::pread(void* buf, size_t size, off_t offset) {

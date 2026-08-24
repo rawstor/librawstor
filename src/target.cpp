@@ -2,6 +2,7 @@
 
 #include "connection.hpp"
 #include "location.hpp"
+#include "object.hpp"
 #include "opts.h"
 
 #include <rawio/queue.hpp>
@@ -236,13 +237,17 @@ rawstd::Task<void> Target::remove(rawio::Queue& queue) {
 }
 
 rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
+    validate_not_empty(_uris);
+    validate_different_uris(_uris);
+    validate_same_uuid(_uris);
+
     // Object's constructor is Private-gated -- Target is a friend (see
     // object.hpp's own doc comment on why), so this is the one place
     // that actually builds one, by analogy with Connection::create():
     // the heavy async work (standing up a Connection per URI and
     // open()ing it) lives here, not in the constructor itself.
     std::unique_ptr<Object> obj =
-        std::make_unique<Object>(Object::Private(), queue, _uris);
+        std::make_unique<Object>(Object::Private(), queue, *this);
 
     obj->_cns.reserve(_uris.size());
     for (const auto& uri : _uris) {
