@@ -115,30 +115,18 @@ namespace rawstor {
 Target::Target(const std::vector<rawstd::URI>& uris) : _uris(uris) {
 }
 
-RawstdUUID Target::id() const noexcept {
-    RawstdUUID id = {};
-    try {
-        if (!_uris.empty()) {
-            rawstd_uuid_from_string(
-                &id, _uris.front().path().filename().c_str()
-            );
-        }
-    } catch (...) {
-    }
-    return id;
+RawstdUUID Target::id() const {
+    validate_not_empty(_uris);
+    return uuid_from_target(_uris.front());
 }
 
-Location Target::location() const noexcept {
-    try {
-        std::vector<rawstd::URI> uris;
-        uris.reserve(_uris.size());
-        for (const auto& uri : _uris) {
-            uris.push_back(uri.parent());
-        }
-        return Location(uris);
-    } catch (...) {
-        return Location({});
+Location Target::location() const {
+    std::vector<rawstd::URI> uris;
+    uris.reserve(_uris.size());
+    for (const auto& uri : _uris) {
+        uris.push_back(uri.parent());
     }
+    return Location(uris);
 }
 
 rawstd::Task<void>

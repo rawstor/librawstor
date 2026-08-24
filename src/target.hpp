@@ -37,12 +37,11 @@ public:
     }
 
     // The UUID shared by every URI in `uris` -- parsed from the first one.
-    // Zero-valued if `uris` is empty or its filename isn't a valid UUID.
-    RawstdUUID id() const noexcept;
+    RawstdUUID id() const;
 
     // The Location `uris` was created under -- each URI with its UUID
     // path segment stripped back off (the inverse of Location::create()).
-    Location location() const noexcept;
+    Location location() const;
 
     rawstd::Task<void> create(rawio::Queue& queue, const RawstorObjectSpec& sp);
     rawstd::Task<RawstorObjectSpec> spec(rawio::Queue& queue);
