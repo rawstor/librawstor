@@ -1,6 +1,4 @@
 #include "object.hpp"
-#include <rawstor/list.h>
-#include <rawstor/location.h>
 #include <rawstor/object.h>
 
 #include "config.h"
@@ -12,7 +10,6 @@
 #include "target.hpp"
 
 #include <rawstd/gpp.hpp>
-#include <rawstd/list.h>
 #include <rawstd/logging.hpp>
 #include <rawstd/uri.hpp>
 #include <rawstd/uuid.h>
@@ -21,16 +18,13 @@
 
 #include <algorithm>
 #include <exception>
-#include <list>
 #include <memory>
 #include <new>
 #include <set>
-#include <stdexcept>
 #include <system_error>
 #include <utility>
 
 #include <cstddef>
-#include <cstdlib>
 #include <cstring>
 
 namespace {
@@ -145,16 +139,12 @@ void validate_different_uris(const std::vector<rawstd::URI>& uris) {
     }
 }
 
-// Synchronously pumps `t` to completion by driving `q` -- the boundary
-// where this file's synchronous C ABI (rawstor_object_list/_create/
-// _remove/_spec, rawstor_location_info) meets the now fully co_await
-// -composed rawstor::Object/Connection internals: each of those C
-// functions creates exactly one Queue for its whole call (however many
-// locations/targets it loops over internally) and pumps the single
-// Object::* Task<T> it awaits through here. Deliberately a local
-// duplicate of connection.cpp's own `run()`, rather than a shared
-// dependency, since it's four lines and object.cpp has no other reason to
-// know about connection.cpp's internals.
+// Synchronously pumps `t` to completion by driving `q` -- used by
+// ~Object() to co_await each Connection's close() from a plain (non-
+// coroutine) destructor. Deliberately a local duplicate of connection.cpp/
+// target.cpp/location.cpp's own `run()`, rather than a shared dependency,
+// since it's four lines and object.cpp has no other reason to know about
+// those files' internals.
 template <typename T>
 T run(rawio::Queue& q, rawstd::Task<T> t) {
     while (!t.done()) {
@@ -321,220 +311,6 @@ rawstd::Task<void> Object::flush() {
 }
 
 } // namespace rawstor
-
-int rawstor_object_list(
-    const char* location, unsigned int limit, RawstorStringList** targets,
-    RawstorPaginationToken* token
-) noexcept {
-    RawstorStringList* list = nullptr;
-    try {
-        rawstor::Location loc(rawstd::URI::uriv(location));
-        std::list<rawstor::Target> ret;
-
-        std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
-        run(*queue, loc.list(*queue, limit, ret, *token));
-
-        list = (RawstorStringList*)rawstd_list_create(sizeof(const char*));
-        if (list == nullptr) {
-            throw std::bad_alloc();
-        }
-        for (const auto& t : ret) {
-            std::string target = rawstd::URI::uris(t.uris());
-
-            char* str = (char*)malloc(target.length() + 1);
-            if (str == nullptr) {
-                RAWSTD_THROW_ERRNO();
-            }
-            memcpy(str, target.c_str(), target.length() + 1);
-
-            char** it = (char**)rawstd_list_append((RawstdList*)list);
-            if (it == nullptr) {
-                free(str);
-                RAWSTD_THROW_ERRNO();
-            }
-            *it = str;
-        }
-
-        *targets = (RawstorStringList*)list;
-        return 0;
-    } catch (const std::system_error& e) {
-        rawstor_string_list_delete(list);
-        return -e.code().value();
-    } catch (const std::bad_alloc& e) {
-        rawstor_string_list_delete(list);
-        return -ENOMEM;
-    } catch (const std::exception& e) {
-        rawstd_error("%s\n", e.what());
-        rawstor_string_list_delete(list);
-        return -EINVAL;
-    } catch (...) {
-        rawstd_error("Unexpected error\n");
-        rawstor_string_list_delete(list);
-        return -EINVAL;
-    }
-}
-
-int rawstor_location_info(
-    const char* location, RawstorLocationInfo* info
-) noexcept {
-    try {
-        std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
-        rawstor::Location loc(rawstd::URI::uriv(location));
-        *info = run(*queue, loc.info(*queue));
-        return 0;
-    } catch (const std::system_error& e) {
-        return -e.code().value();
-    } catch (const std::bad_alloc& e) {
-        return -ENOMEM;
-    } catch (const std::exception& e) {
-        rawstd_error("%s\n", e.what());
-        return -EINVAL;
-    } catch (...) {
-        rawstd_error("Unexpected error\n");
-        return -EINVAL;
-    }
-}
-
-int rawstor_object_create(
-    const char* target, const RawstorObjectSpec* spec
-) noexcept {
-    try {
-        std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
-        rawstor::Target t(rawstd::URI::uriv(target));
-        run(*queue, t.create(*queue, *spec));
-        return 0;
-    } catch (const std::system_error& e) {
-        return -e.code().value();
-    } catch (const std::bad_alloc& e) {
-        return -ENOMEM;
-    } catch (const std::exception& e) {
-        rawstd_error("%s\n", e.what());
-        return -EINVAL;
-    } catch (...) {
-        rawstd_error("Unexpected error\n");
-        return -EINVAL;
-    }
-}
-
-int rawstor_object_create_at(
-    const char* location, const char* uuid,
-    const struct RawstorObjectSpec* spec, char* target, size_t size
-) noexcept {
-    try {
-        RawstdUUID id;
-        int res;
-
-        if (uuid == nullptr) {
-            res = rawstd_uuid7_init(&id);
-            if (res < 0) {
-                RAWSTD_THROW_SYSTEM_ERROR(-res);
-            }
-        } else {
-            res = rawstd_uuid_from_string(&id, uuid);
-            if (res < 0) {
-                RAWSTD_THROW_SYSTEM_ERROR(-res);
-            }
-        }
-
-        RawstdUUIDString uuid_string;
-        rawstd_uuid_to_string(&id, &uuid_string);
-
-        std::vector<rawstd::URI> uris = rawstd::URI::uriv(location);
-        std::vector<rawstd::URI> ret;
-        ret.reserve(uris.size());
-        for (const auto& uri : uris) {
-            ret.emplace_back(uri, uuid_string);
-        }
-
-        res = snprintf(target, size, "%s", rawstd::URI::uris(ret).c_str());
-        if (res < 0) {
-            return res;
-        }
-
-        if (static_cast<size_t>(res) < size) {
-            std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
-            rawstor::Target t(ret);
-            run(*queue, t.create(*queue, *spec));
-        }
-
-        return res;
-    } catch (const std::system_error& e) {
-        return -e.code().value();
-    } catch (const std::bad_alloc& e) {
-        return -ENOMEM;
-    } catch (const std::exception& e) {
-        rawstd_error("%s\n", e.what());
-        return -EINVAL;
-    } catch (...) {
-        rawstd_error("Unexpected error\n");
-        return -EINVAL;
-    }
-}
-
-int rawstor_object_remove(const char* target) noexcept {
-    try {
-        std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
-        rawstor::Target t(rawstd::URI::uriv(target));
-        run(*queue, t.remove(*queue));
-        return 0;
-    } catch (const std::system_error& e) {
-        return -e.code().value();
-    } catch (const std::bad_alloc& e) {
-        return -ENOMEM;
-    } catch (const std::exception& e) {
-        rawstd_error("%s\n", e.what());
-        return -EINVAL;
-    } catch (...) {
-        rawstd_error("Unexpected error\n");
-        return -EINVAL;
-    }
-}
-
-int rawstor_object_spec(const char* target, RawstorObjectSpec* sp) noexcept {
-    try {
-        std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
-        rawstor::Target t(rawstd::URI::uriv(target));
-        *sp = run(*queue, t.spec(*queue));
-        return 0;
-    } catch (const std::system_error& e) {
-        return -e.code().value();
-    } catch (const std::bad_alloc& e) {
-        return -ENOMEM;
-    } catch (const std::exception& e) {
-        rawstd_error("%s\n", e.what());
-        return -EINVAL;
-    } catch (...) {
-        rawstd_error("Unexpected error\n");
-        return -EINVAL;
-    }
-}
-
-int rawstor_object_open(
-    RawIOQueue* queue, const char* target, RawstorObject** object
-) noexcept {
-    try {
-        rawstor::Target t(rawstd::URI::uriv(target));
-        std::unique_ptr<rawstor::Object> ret =
-            run(*static_cast<rawio::Queue*>(queue),
-                t.open(*static_cast<rawio::Queue*>(queue)));
-
-        *object = ret.get();
-
-        ret.release();
-
-        return 0;
-    } catch (const std::system_error& e) {
-        return -e.code().value();
-    } catch (const std::bad_alloc& e) {
-        return -ENOMEM;
-    } catch (const std::exception& e) {
-        rawstd_error("%s\n", e.what());
-        return -EINVAL;
-    } catch (...) {
-        rawstd_error("Unexpected error\n");
-        return -EINVAL;
-    }
-}
 
 int rawstor_object_close(RawstorObject* object) noexcept {
     try {

@@ -4,17 +4,28 @@
 #include "opts.h"
 #include "target.hpp"
 
+#include <rawstor/list.h>
+
+#include <rawio/queue.hpp>
+
 #include <rawstd/gpp.hpp>
+#include <rawstd/list.h>
 #include <rawstd/logging.hpp>
+#include <rawstd/uri.hpp>
 #include <rawstd/uuid.h>
 
 #include <algorithm>
+#include <exception>
 #include <map>
 #include <memory>
+#include <new>
 #include <set>
+#include <string>
+#include <system_error>
 #include <utility>
 
 #include <cerrno>
+#include <cstdlib>
 #include <cstring>
 
 namespace {
@@ -87,6 +98,23 @@ rawstd::Task<std::pair<rawstor::Target, RawstdUUID>> list_one(
     co_await cn->list(limit, targets, next_token);
     co_await cn->close();
     co_return std::make_pair(targets, next_token);
+}
+
+// Synchronously pumps `t` to completion by driving `q` -- the boundary
+// where this file's synchronous C ABI (rawstor_object_list,
+// rawstor_location_info) meets the now fully co_await-composed
+// rawstor::Location/Connection internals: each of those C functions
+// creates exactly one Queue for its whole call and pumps the single
+// Task<T> it awaits through here. Deliberately a local duplicate of
+// connection.cpp/object.cpp/target.cpp's own `run()`, rather than a
+// shared dependency, since it's four lines and location.cpp has no other
+// reason to know about those files' internals.
+template <typename T>
+T run(rawio::Queue& q, rawstd::Task<T> t) {
+    while (!t.done()) {
+        q.wait_timeout(rawstor_opts_tcp_user_timeout());
+    }
+    return t.get();
 }
 
 } // namespace
@@ -224,3 +252,76 @@ rawstd::Task<Target> Location::create(
 }
 
 } // namespace rawstor
+
+int rawstor_object_list(
+    const char* location, unsigned int limit, RawstorStringList** targets,
+    RawstorPaginationToken* token
+) noexcept {
+    RawstorStringList* list = nullptr;
+    try {
+        rawstor::Location loc(rawstd::URI::uriv(location));
+        std::list<rawstor::Target> ret;
+
+        std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
+        run(*queue, loc.list(*queue, limit, ret, *token));
+
+        list = (RawstorStringList*)rawstd_list_create(sizeof(const char*));
+        if (list == nullptr) {
+            throw std::bad_alloc();
+        }
+        for (const auto& t : ret) {
+            std::string target = rawstd::URI::uris(t.uris());
+
+            char* str = (char*)malloc(target.length() + 1);
+            if (str == nullptr) {
+                RAWSTD_THROW_ERRNO();
+            }
+            memcpy(str, target.c_str(), target.length() + 1);
+
+            char** it = (char**)rawstd_list_append((RawstdList*)list);
+            if (it == nullptr) {
+                free(str);
+                RAWSTD_THROW_ERRNO();
+            }
+            *it = str;
+        }
+
+        *targets = (RawstorStringList*)list;
+        return 0;
+    } catch (const std::system_error& e) {
+        rawstor_string_list_delete(list);
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        rawstor_string_list_delete(list);
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        rawstor_string_list_delete(list);
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        rawstor_string_list_delete(list);
+        return -EINVAL;
+    }
+}
+
+int rawstor_location_info(
+    const char* location, RawstorLocationInfo* info
+) noexcept {
+    try {
+        std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
+        rawstor::Location loc(rawstd::URI::uriv(location));
+        *info = run(*queue, loc.info(*queue));
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
