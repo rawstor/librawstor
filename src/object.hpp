@@ -43,7 +43,7 @@ public:
     Object& operator=(Object&&) = delete;
 
     // This Object's own target -- the same Target it was built from.
-    Target target() const;
+    inline const Target& target() const noexcept { return _target; }
 
     rawstd::Task<size_t> pread(void* buf, size_t size, off_t offset);
 

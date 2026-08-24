@@ -129,10 +129,6 @@ Object::~Object() {
     }
 }
 
-Target Object::target() const {
-    return _target;
-}
-
 rawstd::Task<size_t> Object::pread(void* buf, size_t size, off_t offset) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'o', "pread(): size = %zu, offset = %jd\n", size, (intmax_t)offset
