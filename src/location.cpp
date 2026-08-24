@@ -107,8 +107,8 @@ rawstd::Task<RawstorLocationInfo> Location::info(rawio::Queue& queue) {
 }
 
 rawstd::Task<void> Location::list(
-    rawio::Queue& queue, unsigned int limit,
-    std::list<std::vector<rawstd::URI>>& targets, RawstorPaginationToken& token
+    rawio::Queue& queue, unsigned int limit, std::list<Target>& targets,
+    RawstorPaginationToken& token
 ) {
     validate_not_empty(_uris);
 
@@ -157,7 +157,7 @@ rawstd::Task<void> Location::list(
         limit = std::min(limit, rawstor_opts_list_limit());
     }
 
-    std::list<std::vector<rawstd::URI>> ret;
+    std::list<Target> ret;
     const RawstdUUID* last_uuid = nullptr;
     bool capped = false;
     for (const auto& it : targets_map) {
@@ -166,7 +166,7 @@ rawstd::Task<void> Location::list(
             break;
         }
         last_uuid = &it.first;
-        ret.push_back(it.second);
+        ret.emplace_back(it.second);
     }
     if (last_uuid != nullptr) {
         if (capped && (rawstd_uuid_cmp(&next_token_uuid, &empty_uuid) == 0 ||

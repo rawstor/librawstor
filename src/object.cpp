@@ -361,7 +361,7 @@ int rawstor_object_list(
     RawstorStringList* list = nullptr;
     try {
         rawstor::Location loc(rawstd::URI::uriv(location));
-        std::list<std::vector<rawstd::URI>> ret;
+        std::list<rawstor::Target> ret;
 
         std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
         run(*queue, loc.list(*queue, limit, ret, *token));
@@ -371,7 +371,7 @@ int rawstor_object_list(
             throw std::bad_alloc();
         }
         for (const auto& t : ret) {
-            std::string target = rawstd::URI::uris(t);
+            std::string target = rawstd::URI::uris(t.uris());
 
             char* str = (char*)malloc(target.length() + 1);
             if (str == nullptr) {

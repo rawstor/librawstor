@@ -39,8 +39,7 @@ public:
     rawstd::Task<RawstorLocationInfo> info(rawio::Queue& queue);
 
     rawstd::Task<void> list(
-        rawio::Queue& queue, unsigned int limit,
-        std::list<std::vector<rawstd::URI>>& targets,
+        rawio::Queue& queue, unsigned int limit, std::list<Target>& targets,
         RawstorPaginationToken& token
     );
 
