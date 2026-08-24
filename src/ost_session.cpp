@@ -149,7 +149,7 @@ protected:
     // A string literal (e.g. "pread"/"pwrite"/"flush"), not owned; size
     // and offset are 0 for ops without either (flush). Set once at
     // construction by each subclass, purely for _dispatch()'s
-    // telemetry::record_op() call.
+    // telemetry::ost::record_op() call.
     const char* _op_name;
     size_t _op_size;
     off_t _op_offset;
@@ -190,7 +190,7 @@ protected:
             t_response_ready = rawstor::telemetry::now();
             slat = _t_send_done - _t_created;
             rtt = t_response_ready - _t_send_done;
-            rawstor::telemetry::record_rtt(rtt);
+            rawstor::telemetry::ost::record_rtt(rtt);
         }
 
         _result = result;
@@ -202,8 +202,8 @@ protected:
         if (timed) {
             rawstor::telemetry::TimePoint t_now = rawstor::telemetry::now();
             rawstor::telemetry::TimePoint clat = t_now - t_response_ready;
-            rawstor::telemetry::record_clat(clat);
-            rawstor::telemetry::record_op(
+            rawstor::telemetry::ost::record_clat(clat);
+            rawstor::telemetry::ost::record_op(
                 t_now - _t_created, slat, rtt, clat, _op_name, _op_size,
                 _op_offset
             );
@@ -249,7 +249,7 @@ public:
 
         if (!error) {
             _t_send_done = rawstor::telemetry::now();
-            rawstor::telemetry::record_slat(_t_send_done - _t_created);
+            rawstor::telemetry::ost::record_slat(_t_send_done - _t_created);
         } else {
             _dispatch(0, error);
         }
@@ -773,12 +773,12 @@ void Session::_add_op(const std::shared_ptr<SessionOp>& op) {
         return;
     }
     _ops[op->cid()] = op;
-    rawstor::telemetry::op_started();
+    rawstor::telemetry::ost::op_started();
 }
 
 void Session::_remove_op(uint16_t cid) {
     _ops.erase(cid);
-    rawstor::telemetry::op_finished();
+    rawstor::telemetry::ost::op_finished();
 }
 
 Session::Session(Private p, rawio::Queue& queue, const rawstd::URI& location) :

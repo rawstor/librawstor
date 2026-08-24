@@ -41,10 +41,12 @@ private:
 
     // Every data-path/metadata method's terminal path -- success or final
     // failure -- runs through here exactly once; records the cross-retry
-    // call-to-completion latency. Per-attempt telemetry, including the
-    // top-N slowest-requests sample, lives in ost::SessionOp::_dispatch()
-    // instead -- Connection is transport-agnostic and has nothing else to
-    // report here.
+    // call-to-completion latency, shared across every backend. Per-attempt
+    // telemetry, including the top-N slowest-requests sample, is split by
+    // backend and lives in ost::SessionOp::_dispatch() / blk::Session's
+    // own data-path methods (telemetry::ost / telemetry::blk) instead --
+    // Connection is transport-agnostic and has nothing else to report
+    // here.
     void _finish(rawstor::telemetry::TimePoint t_call);
 
     // Shared retry-loop body for every data-path/metadata method: tries
