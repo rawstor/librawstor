@@ -924,12 +924,12 @@ rawstd::Task<std::vector<T>> Session::_basic_request(
     co_return op->take_response_data();
 }
 
-rawstd::Task<void> Session::list(
-    unsigned int limit, std::vector<RawstdUUID>& targets, RawstdUUID& token
-) {
+rawstd::Task<void>
+Session::list(unsigned int limit, Target& targets, RawstdUUID& token) {
     RawstdUUID input_token = token;
+    std::vector<RawstdUUID> uuids;
     try {
-        targets = co_await _basic_request<RawstdUUID>(
+        uuids = co_await _basic_request<RawstdUUID>(
             RAWSTOR_CMD_LIST, "list", input_token, limit
         );
     } catch (const std::system_error&) {
@@ -939,10 +939,17 @@ rawstd::Task<void> Session::list(
     }
 
     token = {};
-    if (!targets.empty()) {
-        token = targets.back();
-        targets.resize(targets.size() - 1);
+    if (!uuids.empty()) {
+        token = uuids.back();
+        uuids.resize(uuids.size() - 1);
     }
+
+    std::vector<rawstd::URI> uris;
+    uris.reserve(uuids.size());
+    for (const auto& uuid : uuids) {
+        uris.push_back(_uri(uuid));
+    }
+    targets = Target(uris);
 
     co_return;
 }

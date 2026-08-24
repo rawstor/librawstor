@@ -2,6 +2,7 @@
 #define RAWSTOR_SESSION_HPP
 
 #include "object.hpp"
+#include "target.hpp"
 
 #include <rawio/queue.hpp>
 
@@ -31,6 +32,11 @@ protected:
     rawio::Queue& _queue;
 
     inline void set_fd(int fd) noexcept { _fd = fd; }
+
+    // `id` as a full target-address URI under this Session's own
+    // location -- shared by every backend's list() to turn the bare
+    // RawstdUUIDs it enumerates into URIs the caller can act on directly.
+    rawstd::URI _uri(const RawstdUUID& id) const;
 
     // Establishes whatever this backend needs before any other call
     // below is usable (e.g. the OST backend's TCP connect + the start of
@@ -62,12 +68,15 @@ public:
     // want a graceful async teardown must co_await this themselves.
     virtual rawstd::Task<void> close() = 0;
 
-    // `targets`: overwritten with this page's UUIDs. `token`: this
-    // call's pagination cursor on entry, overwritten with the next
-    // page's cursor on return (zeroed once there's nothing left).
-    virtual rawstd::Task<void> list(
-        unsigned int limit, std::vector<RawstdUUID>& targets, RawstdUUID& token
-    ) = 0;
+    // `targets`: overwritten with this page's results -- `targets.uris()`
+    // holds one URI per object found at this Session's own location (a
+    // different UUID each; unlike a Target's usual one-object/many-URI
+    // shape, Location::list() is what regroups these into real
+    // per-object Targets). `token`: this call's pagination cursor on
+    // entry, overwritten with the next page's cursor on return (zeroed
+    // once there's nothing left).
+    virtual rawstd::Task<void>
+    list(unsigned int limit, Target& targets, RawstdUUID& token) = 0;
 
     virtual rawstd::Task<void>
     create(const RawstdUUID& id, const RawstorObjectSpec& sp) = 0;

@@ -74,11 +74,10 @@ int Session::_connect(const RawstdUUID& id) {
     return fd;
 }
 
-rawstd::Task<void> Session::list(
-    unsigned int limit, std::vector<RawstdUUID>& targets, RawstdUUID& token
-) {
+rawstd::Task<void>
+Session::list(unsigned int limit, Target& targets, RawstdUUID& token) {
     RawstdUUID input_token = token;
-    targets.clear();
+    std::vector<RawstdUUID> uuids;
     token = {};
     try {
         std::string location_path = get_location_path(location());
@@ -99,20 +98,20 @@ rawstd::Task<void> Session::list(
                 continue;
             }
 
-            targets.push_back(uuid);
+            uuids.push_back(uuid);
         }
 
         std::sort(
-            targets.begin(), targets.end(),
+            uuids.begin(), uuids.end(),
             [](const RawstdUUID& lhs, const RawstdUUID& rhs) {
                 return rawstd_uuid_cmp(&lhs, &rhs) < 0;
             }
         );
 
-        targets.erase(
-            targets.begin(),
+        uuids.erase(
+            uuids.begin(),
             std::upper_bound(
-                targets.begin(), targets.end(), input_token,
+                uuids.begin(), uuids.end(), input_token,
                 [](const RawstdUUID& lhs, const RawstdUUID& rhs) {
                     return rawstd_uuid_cmp(&lhs, &rhs) < 0;
                 }
@@ -125,9 +124,9 @@ rawstd::Task<void> Session::list(
             limit = std::min(limit, rawstor_opts_list_limit());
         }
 
-        if (targets.size() > limit) {
-            targets.resize(limit);
-            token = targets.back();
+        if (uuids.size() > limit) {
+            uuids.resize(limit);
+            token = uuids.back();
         }
     } catch (const std::system_error&) {
         throw;
@@ -138,6 +137,13 @@ rawstd::Task<void> Session::list(
         rawstd_error("Unexpected error\n");
         RAWSTD_THROW_SYSTEM_ERROR(EIO);
     }
+
+    std::vector<rawstd::URI> uris;
+    uris.reserve(uuids.size());
+    for (const auto& uuid : uuids) {
+        uris.push_back(_uri(uuid));
+    }
+    targets = Target(uris);
 
     co_return;
 }

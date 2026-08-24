@@ -22,9 +22,8 @@ private:
 public:
     Session(Private p, rawio::Queue& queue, const rawstd::URI& location);
 
-    rawstd::Task<void> list(
-        unsigned int limit, std::vector<RawstdUUID>& targets, RawstdUUID& token
-    ) override;
+    rawstd::Task<void>
+    list(unsigned int limit, Target& targets, RawstdUUID& token) override;
 
     rawstd::Task<void>
     create(const RawstdUUID& id, const RawstorObjectSpec& sp) override;
