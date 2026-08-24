@@ -199,8 +199,7 @@ Location::create(rawio::Queue& queue, const RawstorObjectSpec& sp) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 
-    Target t = co_await create(queue, id, sp);
-    co_return t;
+    co_return co_await create(queue, id, sp);
 }
 
 rawstd::Task<Target> Location::create(

@@ -205,17 +205,17 @@ TEST(ListTest, pagination) {
     }
 }
 
-// Object::list()/create()/remove()/spec()/info() all use a
-// Connection::create()-only, never-open()-ed Connection for their
+// Location::list()/create() and Target::create()/remove()/spec() all use
+// a Connection::create()-only, never-open()-ed Connection for their
 // metadata work -- unlike a data-path Connection, _object stays null on
 // one of these for its whole lifetime. invalidate_session()'s reconnect
 // path used to call the replacement session's set_object(_object)
 // unconditionally regardless, and every backend's set_object()
 // dereferences its Object* argument (e.g. blk::Session::set_object()
-// reading object->id()) -- a null-pointer crash the very first time a
-// metadata op actually needed to reconnect a session, not something any
-// of ListTest's other cases above exercise (they never fail an op in the
-// first place).
+// reading object->target()) -- a null-pointer crash the very first time
+// a metadata op actually needed to reconnect a session, not something
+// any of ListTest's other cases above exercise (they never fail an op
+// in the first place).
 TEST(ListTest, invalidate_session_on_metadata_only_connection) {
     rawstor::tests::TmpDir dir;
     rawstd::URI location(dir.uri());

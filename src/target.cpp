@@ -2,6 +2,7 @@
 
 #include "connection.hpp"
 #include "location.hpp"
+#include "opts.h"
 
 #include <rawstd/gpp.hpp>
 #include <rawstd/logging.hpp>
@@ -211,7 +212,24 @@ rawstd::Task<void> Target::remove(rawio::Queue& queue) {
 }
 
 rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
-    co_return co_await Object::create(queue, _uris);
+    // Object's constructor is Private-gated -- Target is a friend (see
+    // object.hpp's own doc comment on why), so this is the one place
+    // that actually builds one, by analogy with Connection::create():
+    // the heavy async work (standing up a Connection per URI and
+    // open()ing it) lives here, not in the constructor itself.
+    std::unique_ptr<Object> obj =
+        std::make_unique<Object>(Object::Private(), queue, _uris);
+
+    obj->_cns.reserve(_uris.size());
+    for (const auto& uri : _uris) {
+        std::unique_ptr<Connection> cn = co_await Connection::create(
+            queue, uri.parent(), rawstor_opts_sessions()
+        );
+        co_await cn->open(obj.get());
+        obj->_cns.push_back(std::move(cn));
+    }
+
+    co_return obj;
 }
 
 } // namespace rawstor

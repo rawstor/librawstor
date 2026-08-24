@@ -171,16 +171,10 @@ Object::Object(
     Private, rawio::Queue& queue, const std::vector<rawstd::URI>& targets
 ) :
     _queue(queue),
-    _id() {
+    _uris(targets) {
     validate_not_empty(targets);
     validate_different_uris(targets);
     validate_same_uuid(targets);
-
-    std::string id = targets.front().path().filename();
-    int res = rawstd_uuid_from_string(&_id, id.c_str());
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
 }
 
 Object::~Object() {
@@ -193,34 +187,8 @@ Object::~Object() {
     }
 }
 
-rawstd::Task<std::unique_ptr<Object>>
-Object::create(rawio::Queue& queue, const std::vector<rawstd::URI>& targets) {
-    std::unique_ptr<Object> obj =
-        std::make_unique<Object>(Private(), queue, targets);
-
-    obj->_cns.reserve(targets.size());
-    for (const auto& target : targets) {
-        std::unique_ptr<rawstor::Connection> cn = co_await Connection::create(
-            queue, target.parent(), rawstor_opts_sessions()
-        );
-        co_await cn->open(obj.get());
-        obj->_cns.push_back(std::move(cn));
-    }
-
-    co_return obj;
-}
-
-std::vector<rawstd::URI> Object::locations() const {
-    std::vector<rawstd::URI> ret;
-    ret.reserve(_cns.size());
-    for (const auto& cn : _cns) {
-        const rawstd::URI* location = cn->location();
-        if (location == nullptr) {
-            continue;
-        }
-        ret.push_back(*location);
-    }
-    return ret;
+Target Object::target() const {
+    return Target(_uris);
 }
 
 rawstd::Task<size_t> Object::pread(void* buf, size_t size, off_t offset) {
@@ -589,10 +557,10 @@ int rawstor_object_id(
     const RawstorObject* object, char* buf, size_t size
 ) noexcept {
     try {
+        RawstdUUID id =
+            static_cast<const rawstor::Object*>(object)->target().id();
         RawstdUUIDString uuid;
-        rawstd_uuid_to_string(
-            &static_cast<const rawstor::Object*>(object)->id(), &uuid
-        );
+        rawstd_uuid_to_string(&id, &uuid);
         int res = snprintf(buf, size, "%s", uuid);
         if (res < 0) {
             RAWSTD_THROW_ERRNO();
@@ -616,7 +584,11 @@ int rawstor_object_location(
 ) noexcept {
     try {
         return uris(
-            static_cast<const rawstor::Object*>(object)->locations(), buf, size
+            static_cast<const rawstor::Object*>(object)
+                ->target()
+                .location()
+                .uris(),
+            buf, size
         );
     } catch (const std::system_error& e) {
         return -e.code().value();

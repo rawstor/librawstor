@@ -2,6 +2,7 @@
 
 #include "object.hpp"
 #include "opts.h"
+#include "target.hpp"
 #include "telemetry.hpp"
 
 #include <rawio/awaitable.hpp>
@@ -1036,7 +1037,7 @@ rawstd::Task<void> Session::set_object(Object* object) {
     assert(_read_event != nullptr);
 
     co_await _basic_request(
-        RAWSTOR_CMD_SET_OBJECT, "set_object", object->id(), 0
+        RAWSTOR_CMD_SET_OBJECT, "set_object", object->target().id(), 0
     );
 }
 

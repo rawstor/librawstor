@@ -264,7 +264,8 @@ Connection::invalidate_session(const std::shared_ptr<Session>& s) {
                 // (list/create/remove/spec/info) never calls open(), so
                 // _object stays null and every Session::set_object()
                 // implementation would dereference it unconditionally
-                // (e.g. blk::Session::set_object() reading object->id()).
+                // (e.g. blk::Session::set_object() reading
+                // object->target()).
                 // Metadata ops don't need SET_OBJECT first, so just skip
                 // it here.
                 if (_object != nullptr) {

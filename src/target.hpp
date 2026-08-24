@@ -24,7 +24,9 @@ class Location;
 // remove() each open a Connection per URI just for that one call and
 // close it again before returning, same as the code they replace used to
 // do. open() is the one exception that needs a Connection to survive past
-// the call -- it delegates to Object::create(), which keeps its own pool.
+// the call -- it builds the returned Object itself (a friend of Object,
+// by analogy with Connection::create()), keeping one Connection per URI
+// alive in the Object's own pool.
 class Target final {
 private:
     std::vector<rawstd::URI> _uris;
