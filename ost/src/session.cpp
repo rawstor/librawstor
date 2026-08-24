@@ -92,9 +92,7 @@ Session::Session(Private, RawIOQueue* queue, Server& server, int fd) :
     _fd(fd),
     _recv_event(nullptr),
     _next(&Session::_recv_head),
-    _object(nullptr),
-    _writes_in_flight(0),
-    _pending_writes_bytes(0) {
+    _object(nullptr) {
 }
 
 void Session::_arm_recv() {
@@ -452,13 +450,14 @@ Session::_recv_data(const iovec* iov, unsigned int niov, size_t result) {
         RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
     }
 
-    // Always keeps reading -- see _write()'s own use of
-    // write_throttle_limit() to decide whether *this* request gets
-    // dispatched to storage now or queued for later, instead of pausing
-    // the recv itself. (An earlier version paused recv here instead, by
-    // canceling it: unreliable in practice -- re-arming it once a slot
-    // freed up wouldn't pick up data the kernel had already buffered
-    // while it was paused, stalling the session forever.)
+    // Always keeps reading -- rawstor_object_pwrite()'s underlying
+    // blk::Session applies write-throttling itself (see blk_session.hpp's
+    // _throttle_acquire()), so nothing here needs to pause the recv while
+    // a write waits for a dispatch slot. (An earlier version paused recv
+    // here instead, by canceling it: unreliable in practice -- re-arming
+    // it once a slot freed up wouldn't pick up data the kernel had
+    // already buffered while it was paused, stalling the session
+    // forever.)
     _write(_request_head, _request_body.io, iov, niov, result);
 
     return sizeof(RawstorOSTFrameHead);
@@ -670,22 +669,6 @@ void Session::_write(
         return;
     }
 
-    bool throttled = _writes_in_flight >= _server.write_throttle_limit();
-
-    if (throttled &&
-        _pending_writes_bytes + size > _server.write_backlog_capacity()) {
-        // Recv keeps running regardless (see _recv_data()), so nothing
-        // else caps how much an already-throttled session could pile into
-        // _pending_writes -- reject outright, before even copying the
-        // payload out, once queuing it would push the backlog over the
-        // cap, rather than let payload copies grow without bound while
-        // storage catches up.
-        _send_response(RAWSTOR_CMD_WRITE, head.cid, -EBUSY, 0);
-        return;
-    }
-
-    // Hash iov directly -- no need to pay for the copy below at all if the
-    // write is about to be rejected anyway.
     uint64_t hash;
     int hash_res = rawstd_hash_vector(iov, niov, &hash);
     if (hash_res < 0) {
@@ -704,25 +687,11 @@ void Session::_write(
 
     // iov points into the recv buffer ring's own memory -- it's only
     // valid for the duration of this call, so the payload has to be
-    // copied out now regardless of whether this write is about to be
-    // dispatched or queued for later.
+    // copied out now, before rawstor_object_pwrite() -- and the
+    // write-throttling its underlying blk::Session applies -- can even
+    // run.
     auto data = std::make_shared<std::vector<unsigned char>>(size);
     rawstd_iovec_to_buf(iov, niov, 0, data->data(), size);
-
-    if (throttled) {
-        // Capping dispatch, not intake, is what keeps a backing store
-        // slower than the incoming write rate from piling up an unbounded
-        // number of concurrent pwrite()s at once; the backlog check above
-        // is what keeps deferring writes like this one safe to do at all.
-        _pending_writes_bytes += size;
-        _pending_writes.push_back(
-            {.head = head,
-             .offset = body.offset,
-             .sync = body.sync != 0,
-             .data = data}
-        );
-        return;
-    }
 
     _dispatch_write(head, body.offset, body.sync != 0, data);
 }
@@ -738,8 +707,6 @@ void Session::_dispatch_write(
             if (session == nullptr) {
                 return;
             }
-            --session->_writes_in_flight;
-            session->_dispatch_next_pending_write();
             try {
                 session->_send_response(
                     RAWSTOR_CMD_WRITE, cid,
@@ -759,21 +726,8 @@ void Session::_dispatch_write(
         rawstd_warning("%s\n", strerror(-res));
         _send_response(RAWSTOR_CMD_WRITE, head.cid, res, 0);
     } else {
-        ++_writes_in_flight;
         cb.release();
     }
-}
-
-void Session::_dispatch_next_pending_write() {
-    if (_pending_writes.empty() ||
-        _writes_in_flight >= _server.write_throttle_limit()) {
-        return;
-    }
-
-    PendingWrite next = std::move(_pending_writes.front());
-    _pending_writes.pop_front();
-    _pending_writes_bytes -= next.data->size();
-    _dispatch_write(next.head, next.offset, next.sync, next.data);
 }
 
 void Session::_flush(

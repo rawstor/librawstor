@@ -17,13 +17,10 @@
 
 #include <gtest/gtest.h>
 
-#include <algorithm>
 #include <chrono>
 #include <functional>
 #include <string>
 #include <thread>
-
-#include <cerrno>
 
 namespace {
 
@@ -50,10 +47,10 @@ bool pump_until(
     return done();
 }
 
-// A Session needs a real Server for locations()/write_throttle_limit()/
-// write_backlog_capacity(), but not its listening socket or accept loop --
-// port 0 leaves that socket bound but otherwise unused (the OS picks it,
-// so there's no fixed-port collision risk either). The other half of the
+// A Session needs a real Server for locations(), but not its listening
+// socket or accept loop -- port 0 leaves that socket bound but otherwise
+// unused (the OS picks it, so there's no fixed-port collision risk
+// either). The other half of the
 // pair, wired directly into Session::create() below, stands in for what
 // Server::_add_session() would otherwise do with a real accept()ed fd.
 std::pair<std::shared_ptr<rawstor::ostbackend::Session>, int>
@@ -136,9 +133,7 @@ public:
 
 TEST(OstSessionTest, simple_success) {
     rawstor::ostbackend::tests::TmpDir dir;
-    rawstor::ostbackend::Server server(
-        256, 128, 1u << 20, "127.0.0.1", 0, dir.uri().c_str()
-    );
+    rawstor::ostbackend::Server server(256, "127.0.0.1", 0, dir.uri().c_str());
 
     rawstor::ostbackend::tests::Queue queue;
     auto [raw_session, client_fd] = connect_session(server, queue);
@@ -193,9 +188,7 @@ TEST(OstSessionTest, simple_success) {
 
 TEST(OstSessionTest, set_object_twice_does_not_crash) {
     rawstor::ostbackend::tests::TmpDir dir;
-    rawstor::ostbackend::Server server(
-        256, 128, 1u << 20, "127.0.0.1", 0, dir.uri().c_str()
-    );
+    rawstor::ostbackend::Server server(256, "127.0.0.1", 0, dir.uri().c_str());
 
     rawstor::ostbackend::tests::Queue queue;
     auto [raw_session, client_fd] = connect_session(server, queue);
@@ -246,163 +239,6 @@ TEST(OstSessionTest, set_object_twice_does_not_crash) {
     EXPECT_EQ(response.body.res, 0);
 }
 
-TEST(OstSessionTest, write_throttle_limit) {
-    constexpr unsigned int limit = 4;
-    constexpr unsigned int writes = 20;
-
-    rawstor::ostbackend::tests::TmpDir dir;
-    rawstor::ostbackend::Server server(
-        256, limit, 1u << 20, "127.0.0.1", 0, dir.uri().c_str()
-    );
-
-    rawstor::ostbackend::tests::Queue queue;
-    auto [raw_session, client_fd] = connect_session(server, queue);
-    SessionCleanup session(std::move(raw_session), queue);
-    rawstor::ostbackend::tests::Client client(client_fd);
-
-    RawstdUUID id;
-    ASSERT_EQ(rawstd_uuid7_init(&id), 0);
-
-    client.send_allocate(id, 1u << 20);
-    ASSERT_TRUE(pump_until(queue, [&] {
-        return client.bytes_available() >= sizeof(RawstorOSTFrameResponse);
-    }));
-    ASSERT_EQ(client.recv_response().body.res, 0);
-
-    client.send_set_object(id);
-    ASSERT_TRUE(pump_until(queue, [&] {
-        return client.bytes_available() >= sizeof(RawstorOSTFrameResponse);
-    }));
-    ASSERT_EQ(client.recv_response().body.res, 0);
-
-    // Fire every write back to back, without reading any response in
-    // between -- exactly the pattern that, pre-write-throttle-limit, let
-    // a session facing a backing store slower than the incoming write
-    // rate buffer an unbounded number of writes at once.
-    std::string payload = "throttle-me";
-    for (unsigned int i = 0; i < writes; ++i) {
-        client.send_write(
-            i * payload.size(), payload.data(), payload.size(), false
-        );
-    }
-
-    // Sampled after every pump above (see pump_until()): however many
-    // completions any single rawio_wait_timeout() call happened to
-    // batch, this is the most writes the session ever had dispatched to
-    // storage at once.
-    unsigned int peak_in_flight = 0;
-    ASSERT_TRUE(pump_until(
-        queue,
-        [&] {
-            peak_in_flight =
-                std::max(peak_in_flight, session->writes_in_flight());
-            return client.bytes_available() >=
-                   writes * sizeof(RawstorOSTFrameResponse);
-        },
-        10000
-    ));
-
-    // The invariant write-throttle-limit exists for: no matter how
-    // pumping happened to batch things, the session never had more than
-    // the configured cap of writes dispatched to storage at once.
-    EXPECT_LE(peak_in_flight, limit);
-    // And it wasn't just coincidentally low: with 20 writes fired at a
-    // cap of 4, the session must have actually hit the cap at some
-    // point, or nothing here was throttled at all.
-    EXPECT_EQ(peak_in_flight, limit);
-
-    for (unsigned int i = 0; i < writes; ++i) {
-        RawstorOSTFrameResponse response = client.recv_response();
-        EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_WRITE);
-        EXPECT_EQ(response.body.res, static_cast<int32_t>(payload.size()));
-    }
-}
-
-TEST(OstSessionTest, write_backlog_capacity) {
-    // A throttle-limit of 1 puts every write from the second one onward on
-    // the backlog check's path immediately, without waiting on real
-    // storage-completion timing to get there.
-    constexpr unsigned int throttle_limit = 1;
-    const std::string payload(16, 'x');
-    const size_t backlog_capacity = payload.size() * 3;
-    constexpr unsigned int writes = 50;
-
-    rawstor::ostbackend::tests::TmpDir dir;
-    rawstor::ostbackend::Server server(
-        256, throttle_limit, backlog_capacity, "127.0.0.1", 0, dir.uri().c_str()
-    );
-
-    rawstor::ostbackend::tests::Queue queue;
-    auto [raw_session, client_fd] = connect_session(server, queue);
-    SessionCleanup session(std::move(raw_session), queue);
-    rawstor::ostbackend::tests::Client client(client_fd);
-
-    RawstdUUID id;
-    ASSERT_EQ(rawstd_uuid7_init(&id), 0);
-
-    client.send_allocate(id, 1u << 20);
-    ASSERT_TRUE(pump_until(queue, [&] {
-        return client.bytes_available() >= sizeof(RawstorOSTFrameResponse);
-    }));
-    ASSERT_EQ(client.recv_response().body.res, 0);
-
-    client.send_set_object(id);
-    ASSERT_TRUE(pump_until(queue, [&] {
-        return client.bytes_available() >= sizeof(RawstorOSTFrameResponse);
-    }));
-    ASSERT_EQ(client.recv_response().body.res, 0);
-
-    // Fire every write back to back, without reading any response in
-    // between, so the whole burst is already sitting in the kernel's
-    // socket buffer before the session is pumped even once -- exactly the
-    // scenario that would let an already-throttled session's pending-write
-    // backlog grow without bound if nothing capped it.
-    for (unsigned int i = 0; i < writes; ++i) {
-        client.send_write(
-            i * payload.size(), payload.data(), payload.size(), false
-        );
-    }
-
-    size_t peak_pending_bytes = 0;
-    ASSERT_TRUE(pump_until(
-        queue,
-        [&] {
-            peak_pending_bytes =
-                std::max(peak_pending_bytes, session->pending_writes_bytes());
-            return client.bytes_available() >=
-                   writes * sizeof(RawstorOSTFrameResponse);
-        },
-        10000
-    ));
-
-    // The invariant write-backlog-capacity exists for: the backlog never grew
-    // past the configured cap...
-    EXPECT_LE(peak_pending_bytes, backlog_capacity);
-    // ...and it wasn't just coincidentally low: it must have actually
-    // filled up at some point, or nothing here was capped at all.
-    EXPECT_EQ(peak_pending_bytes, backlog_capacity);
-
-    unsigned int accepted = 0;
-    unsigned int rejected = 0;
-    for (unsigned int i = 0; i < writes; ++i) {
-        RawstorOSTFrameResponse response = client.recv_response();
-        EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_WRITE);
-        if (response.body.res == static_cast<int32_t>(payload.size())) {
-            ++accepted;
-        } else {
-            EXPECT_EQ(response.body.res, -EBUSY);
-            ++rejected;
-        }
-    }
-
-    // With 50 writes fired at a backlog that only fits 3 at once, some
-    // must have been accepted and some must have been rejected with
-    // EBUSY -- otherwise the cap wasn't actually exercised.
-    EXPECT_GT(accepted, 0u);
-    EXPECT_GT(rejected, 0u);
-    EXPECT_EQ(accepted + rejected, writes);
-}
-
 // Regression test for the heap-use-after-free ASan caught in CI (built off
 // commit d023d65, ost/src/session.cpp:154, fixed by 1c260e1): a peer
 // disconnect terminates the session's already-armed multishot recv with
@@ -441,9 +277,7 @@ TEST(OstSessionTest, disconnect_races_session_destruction) {
     constexpr unsigned int iterations = 100;
 
     rawstor::ostbackend::tests::TmpDir dir;
-    rawstor::ostbackend::Server server(
-        256, 128, 1u << 20, "127.0.0.1", 0, dir.uri().c_str()
-    );
+    rawstor::ostbackend::Server server(256, "127.0.0.1", 0, dir.uri().c_str());
     rawstor::ostbackend::tests::Queue queue;
 
     for (unsigned int i = 0; i < iterations; ++i) {

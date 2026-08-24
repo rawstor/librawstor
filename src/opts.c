@@ -10,6 +10,8 @@
 #define RAWSTOR_OPTS_SO_RCVTIMEO 5000
 #define RAWSTOR_OPTS_TCP_USER_TIMEOUT 5000
 #define RAWSTOR_OPTS_LIST_LIMIT 1000
+#define RAWSTOR_OPTS_WRITE_THROTTLE_LIMIT 128
+#define RAWSTOR_OPTS_WRITE_BACKLOG_CAPACITY (256u * 1024 * 1024)
 
 static struct RawstorOpts _rawstor_opts = {};
 
@@ -66,6 +68,22 @@ int rawstor_opts_initialize(const struct RawstorOpts* opts) {
             ? opts->list_limit
             : get_env_uint("RAWSTOR_OPTS_LIST_LIMIT", RAWSTOR_OPTS_LIST_LIMIT);
 
+    _rawstor_opts.write_throttle_limit =
+        (opts != NULL && opts->write_throttle_limit != 0)
+            ? opts->write_throttle_limit
+            : get_env_uint(
+                  "RAWSTOR_OPTS_WRITE_THROTTLE_LIMIT",
+                  RAWSTOR_OPTS_WRITE_THROTTLE_LIMIT
+              );
+
+    _rawstor_opts.write_backlog_capacity =
+        (opts != NULL && opts->write_backlog_capacity != 0)
+            ? opts->write_backlog_capacity
+            : get_env_uint(
+                  "RAWSTOR_OPTS_WRITE_BACKLOG_CAPACITY",
+                  RAWSTOR_OPTS_WRITE_BACKLOG_CAPACITY
+              );
+
     return 0;
 }
 
@@ -97,4 +115,12 @@ unsigned int rawstor_opts_tcp_user_timeout(void) {
 
 unsigned int rawstor_opts_list_limit(void) {
     return _rawstor_opts.list_limit;
+}
+
+unsigned int rawstor_opts_write_throttle_limit(void) {
+    return _rawstor_opts.write_throttle_limit;
+}
+
+unsigned int rawstor_opts_write_backlog_capacity(void) {
+    return _rawstor_opts.write_backlog_capacity;
 }

@@ -24,16 +24,13 @@ namespace rawstor {
 namespace ostbackend {
 
 Server::Server(
-    unsigned int queue_size, unsigned int write_throttle_limit,
-    size_t write_backlog_capacity, const std::string& addr, unsigned int port,
+    unsigned int queue_size, const std::string& addr, unsigned int port,
     const char* location
 ) :
     _queue(nullptr),
     _fd(-1),
     _locations(rawstd::URI::uriv(location)),
-    _accept_event(nullptr),
-    _write_throttle_limit(write_throttle_limit),
-    _write_backlog_capacity(write_backlog_capacity) {
+    _accept_event(nullptr) {
 
     try {
         int res = rawio_queue_create(queue_size, &_queue);
