@@ -264,11 +264,36 @@ Connection::invalidate_session(const std::shared_ptr<Session>& s) {
                 // (list/create/remove/spec/info) never calls open(), so
                 // _object stays null and every Session::set_object()
                 // implementation would dereference it unconditionally
-                // (e.g. blk::Session::set_object() reading object->id()).
+                // (e.g. blk::Session::set_object() reading
+                // object->target()).
                 // Metadata ops don't need SET_OBJECT first, so just skip
                 // it here.
                 if (_object != nullptr) {
-                    co_await session->set_object(_object);
+                    // A session that fails set_object() never makes it
+                    // into _sessions, so nothing else will ever close()
+                    // it -- do that here before rethrowing, or it leaks
+                    // its recv-multishot registration. co_await isn't
+                    // allowed inside a catch block, so the failure is
+                    // only recorded here; close()ing happens just below,
+                    // outside the handler.
+                    std::exception_ptr eptr;
+                    try {
+                        co_await session->set_object(_object);
+                    } catch (...) {
+                        eptr = std::current_exception();
+                    }
+                    if (eptr) {
+                        try {
+                            co_await session->close();
+                        } catch (const std::exception& e) {
+                            rawstd_warning(
+                                "Connection::invalidate_session(): close "
+                                "after failed set_object(): %s\n",
+                                e.what()
+                            );
+                        }
+                        std::rethrow_exception(eptr);
+                    }
                 }
                 co_return session;
             }
@@ -282,7 +307,23 @@ Connection::invalidate_session(const std::shared_ptr<Session>& s) {
         // suspended.
         it = std::find(_sessions.begin(), _sessions.end(), s);
         if (it != _sessions.end()) {
+            std::shared_ptr<Session> old_session = *it;
             *it = new_session;
+
+            // The slot no longer references it, but old_session (the very
+            // session that got broken in the first place) is still
+            // connected -- close() it gracefully rather than letting this
+            // local go out of scope and destruct it, or it leaks its
+            // recv-multishot registration.
+            try {
+                co_await old_session->close();
+            } catch (const std::exception& e) {
+                rawstd_warning(
+                    "Connection::invalidate_session(): close on replaced "
+                    "session: %s\n",
+                    e.what()
+                );
+            }
         }
     } catch (...) {
         _reconnecting.erase(s.get());
