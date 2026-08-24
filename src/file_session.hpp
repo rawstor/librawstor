@@ -12,6 +12,8 @@
 #include <rawstor/location.h>
 #include <rawstor/object.h>
 
+#include <vector>
+
 namespace rawstor {
 namespace file {
 
