@@ -179,7 +179,7 @@ rawstd::Task<void> Location::list(
     memcpy(token.bytes, next_token_uuid.bytes, sizeof(next_token_uuid.bytes));
 }
 
-rawstd::Task<std::vector<rawstd::URI>>
+rawstd::Task<Target>
 Location::create(rawio::Queue& queue, const RawstorObjectSpec& sp) {
     RawstdUUID id;
     int res = rawstd_uuid7_init(&id);
@@ -187,11 +187,11 @@ Location::create(rawio::Queue& queue, const RawstorObjectSpec& sp) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 
-    std::vector<rawstd::URI> ret = co_await create(queue, id, sp);
-    co_return ret;
+    Target t = co_await create(queue, id, sp);
+    co_return t;
 }
 
-rawstd::Task<std::vector<rawstd::URI>> Location::create(
+rawstd::Task<Target> Location::create(
     rawio::Queue& queue, const RawstdUUID& uuid, const RawstorObjectSpec& sp
 ) {
     validate_not_empty(_uris);
@@ -209,7 +209,7 @@ rawstd::Task<std::vector<rawstd::URI>> Location::create(
     Target t(targets);
     co_await t.create(queue, sp);
 
-    co_return targets;
+    co_return t;
 }
 
 } // namespace rawstor

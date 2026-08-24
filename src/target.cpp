@@ -1,6 +1,7 @@
 #include "target.hpp"
 
 #include "connection.hpp"
+#include "location.hpp"
 
 #include <rawstd/gpp.hpp>
 #include <rawstd/logging.hpp>
@@ -112,6 +113,32 @@ remove_many(rawio::Queue& queue, const std::vector<rawstd::URI>& targets) {
 namespace rawstor {
 
 Target::Target(const std::vector<rawstd::URI>& uris) : _uris(uris) {
+}
+
+RawstdUUID Target::id() const noexcept {
+    RawstdUUID id = {};
+    try {
+        if (!_uris.empty()) {
+            rawstd_uuid_from_string(
+                &id, _uris.front().path().filename().c_str()
+            );
+        }
+    } catch (...) {
+    }
+    return id;
+}
+
+Location Target::location() const noexcept {
+    try {
+        std::vector<rawstd::URI> uris;
+        uris.reserve(_uris.size());
+        for (const auto& uri : _uris) {
+            uris.push_back(uri.parent());
+        }
+        return Location(uris);
+    } catch (...) {
+        return Location({});
+    }
 }
 
 rawstd::Task<void>

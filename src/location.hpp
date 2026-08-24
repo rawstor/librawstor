@@ -2,6 +2,7 @@
 #define RAWSTOR_LOCATION_HPP
 
 #include "object.hpp"
+#include "target.hpp"
 
 #include <rawstor/location.h>
 #include <rawstor/object.h>
@@ -31,6 +32,10 @@ private:
 public:
     explicit Location(const std::vector<rawstd::URI>& uris);
 
+    inline const std::vector<rawstd::URI>& uris() const noexcept {
+        return _uris;
+    }
+
     rawstd::Task<RawstorLocationInfo> info(rawio::Queue& queue);
 
     rawstd::Task<void> list(
@@ -40,12 +45,12 @@ public:
     );
 
     // Creates a new object at this location under a fresh UUID v7 and
-    // returns its per-URI target list.
-    rawstd::Task<std::vector<rawstd::URI>>
+    // returns the Target addressing it.
+    rawstd::Task<Target>
     create(rawio::Queue& queue, const RawstorObjectSpec& sp);
 
     // Same, but under the caller-supplied UUID.
-    rawstd::Task<std::vector<rawstd::URI>> create(
+    rawstd::Task<Target> create(
         rawio::Queue& queue, const RawstdUUID& uuid, const RawstorObjectSpec& sp
     );
 };

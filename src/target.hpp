@@ -9,11 +9,14 @@
 
 #include <rawstd/coro.hpp>
 #include <rawstd/uri.hpp>
+#include <rawstd/uuid.h>
 
 #include <memory>
 #include <vector>
 
 namespace rawstor {
+
+class Location;
 
 // A Target addresses one specific object across every URI in `uris` (see
 // docs/locations_and_targets.md). Deliberately lightweight -- unlike
@@ -28,6 +31,18 @@ private:
 
 public:
     explicit Target(const std::vector<rawstd::URI>& uris);
+
+    inline const std::vector<rawstd::URI>& uris() const noexcept {
+        return _uris;
+    }
+
+    // The UUID shared by every URI in `uris` -- parsed from the first one.
+    // Zero-valued if `uris` is empty or its filename isn't a valid UUID.
+    RawstdUUID id() const noexcept;
+
+    // The Location `uris` was created under -- each URI with its UUID
+    // path segment stripped back off (the inverse of Location::create()).
+    Location location() const noexcept;
 
     rawstd::Task<void> create(rawio::Queue& queue, const RawstorObjectSpec& sp);
     rawstd::Task<RawstorObjectSpec> spec(rawio::Queue& queue);
