@@ -109,12 +109,14 @@ rawstd::Task<RawstorLocationInfo> Location::info(rawio::Queue& queue) {
         co_await rawstd::gather(std::move(tasks));
 
     RawstorLocationInfo ret = infos.front();
-    for (size_t i = 1; i < infos.size(); ++i) {
+    for (const auto& it : infos) {
         // total is capped by the smallest backend; used takes the
         // largest reported value so a mirror that's behind on writes
-        // doesn't make the location look emptier than it is.
-        ret.total = std::min(ret.total, infos[i].total);
-        ret.used = std::max(ret.used, infos[i].used);
+        // doesn't make the location look emptier than it is. Includes
+        // `ret`'s own source element (infos.front()) -- min/max against
+        // itself is a no-op, so no need to skip it.
+        ret.total = std::min(ret.total, it.total);
+        ret.used = std::max(ret.used, it.used);
     }
 
     co_return ret;
