@@ -39,9 +39,11 @@ if __name__ == "__main__":
                 sources=[
                     "rawstor/librawstor/module.c",
                     "rawstor/librawstor/object_bindings.c",
+                    "rawstor/librawstor/rawio_sync.c",
                 ],
                 depends=[
                     "rawstor/librawstor/object_bindings.h",
+                    "rawstor/librawstor/rawio_sync.h",
                 ],
                 include_dirs=[
                     "../include",

@@ -14,9 +14,9 @@ namespace tests {
 
 // A minimal, synchronous OST-protocol client wrapping one end of an
 // already-connected stream socket (see test_session.cpp: a socketpair(),
-// the other end handed directly to Session::create() -- no real Server,
-// no TCP) -- deliberately not librawstor's own async client, so a test
-// controls exactly what bytes go out and when, independent of
+// the other end handed directly to ostbackend::Client::create() -- no real
+// Server, no TCP) -- deliberately not librawstor's own async client, so a
+// test controls exactly what bytes go out and when, independent of
 // Connection/Session's own pipelining and retry behavior.
 class Client final {
 private:

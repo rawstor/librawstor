@@ -1,7 +1,7 @@
 #ifndef RAWSTOR_TARGET_HPP
 #define RAWSTOR_TARGET_HPP
 
-#include <rawstor/object.h>
+#include <rawstor/target.h>
 
 #include <rawio/queue.hpp>
 

@@ -5,6 +5,7 @@ extern "C" {
 #include "standard-headers/linux/virtio_blk.h"
 }
 
+#include <rawstd/coro.hpp>
 #include <rawstd/endian.h>
 #include <rawstd/gpp.hpp>
 #include <rawstd/iovec.h>
@@ -122,38 +123,6 @@ void Request::push(unsigned char status, size_t size) {
     vu_queue_notify(_device.dev(), _vq);
 }
 
-class ObjectTask final {
-protected:
-    std::unique_ptr<Request> _req;
-
-public:
-    static int callback(
-        RawstorObject*, size_t size, size_t result, int error, void* data
-    ) {
-        std::unique_ptr<ObjectTask> t(static_cast<ObjectTask*>(data));
-        try {
-            (*t)(size, result, error);
-            return 0;
-        } catch (const std::system_error& e) {
-            return -e.code().value();
-        }
-    }
-
-    ObjectTask(std::unique_ptr<Request> req) : _req(std::move(req)) {}
-    ObjectTask(const ObjectTask&) = delete;
-    ObjectTask(ObjectTask&&) = delete;
-    ~ObjectTask() = default;
-
-    ObjectTask& operator=(const ObjectTask&) = delete;
-    ObjectTask& operator=(ObjectTask&&) = delete;
-
-    void preadv();
-    void pwritev();
-    inline Request* req() noexcept { return _req.get(); }
-
-    void operator()(size_t size, size_t result, int error);
-};
-
 template <typename... Args>
 class Task {
 protected:
@@ -200,16 +169,16 @@ public:
     virtual void operator()(Args... args) = 0;
 };
 
-class TaskPoll : public Task<int> {
+class TaskPoll : public Task<ssize_t> {
 public:
-    explicit TaskPoll(rawstor::vhost::Device& device) : Task<int>(device) {}
+    explicit TaskPoll(rawstor::vhost::Device& device) : Task<ssize_t>(device) {}
     virtual ~TaskPoll() override = default;
 
     virtual unsigned int mask() = 0;
 };
 
 void poll(RawIOQueue* queue, int fd, std::unique_ptr<TaskPoll> t) {
-    int res = rawio_poll(queue, fd, t->mask(), t->callback, t.get());
+    int res = rawio_poll2(queue, fd, t->mask(), t->callback, t.get());
     if (res) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
@@ -222,10 +191,10 @@ public:
 
     unsigned int mask() override { return POLLIN; }
 
-    void operator()(int result) override;
+    void operator()(ssize_t result) override;
 };
 
-class TaskWatch final : public TaskMultishot<int> {
+class TaskWatch final : public TaskMultishot<ssize_t> {
 private:
     int _fd;
     int _condition;
@@ -234,7 +203,7 @@ private:
     void* _data;
 
 public:
-    static int callback(int result, void* data) {
+    static int callback(ssize_t result, void* data) {
         std::unique_ptr<TaskWatch> t(static_cast<TaskWatch*>(data));
 
         try {
@@ -255,7 +224,7 @@ public:
         rawstor::vhost::Device& device, int fd, int condition, vu_watch_cb cb,
         void* data
     ) :
-        TaskMultishot<int>(device),
+        TaskMultishot<ssize_t>(device),
         _fd(fd),
         _condition(condition),
         _mask(0),
@@ -271,10 +240,10 @@ public:
 
     unsigned int mask() { return _mask; }
 
-    void operator()(int result) override;
+    void operator()(ssize_t result) override;
 };
 
-void TaskDispatch::operator()(int result) {
+void TaskDispatch::operator()(ssize_t result) {
     if (result < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-result);
     }
@@ -299,7 +268,7 @@ void TaskDispatch::operator()(int result) {
     poll(_device.queue(), _device.dev()->sock, std::move(t));
 }
 
-void TaskWatch::operator()(int result) {
+void TaskWatch::operator()(ssize_t result) {
     if (result < 0) {
         if (result == -ECANCELED) {
             return;
@@ -324,92 +293,157 @@ void TaskWatch::operator()(int result) {
     }
 }
 
-void ObjectTask::operator()(size_t size, size_t result, int error) {
-    if (error != 0) {
-        rawstd_error("%s\n", strerror(error));
-        _req->push(VIRTIO_BLK_S_IOERR, result);
-        return;
-    }
+// ---------------------------------------------------------------------
+// rawstd::CallbackAwaitable<T> bridge over the async rawstor/object.h C
+// API for the data path (control-path messaging above still uses
+// Task<Args...>/TaskMultishot's own callback machinery -- a different C
+// API, with no coroutine wrapper of its own here). See
+// rawstd::CallbackAwaitable<T>'s own doc comment for the general shape
+// this follows.
+// ---------------------------------------------------------------------
 
-    if (result != size) {
-        rawstd_error("Partial object operation: %zu != %zu\n", result, size);
-        _req->push(VIRTIO_BLK_S_IOERR, result);
-        return;
-    }
-
-    _req->push(VIRTIO_BLK_S_OK, result);
+int io_trampoline(size_t result, int error, void* data) {
+    static_cast<rawstd::CallbackAwaitable<size_t>*>(data)->complete(
+        result, error
+    );
+    return 0;
 }
 
-void ObjectTask::preadv() {
-    int res = rawstor_object_preadv(
-        _req->device().object(), _req->in_iov(), _req->in_niov(),
-        rawstd_iovec_size(_req->in_iov(), _req->in_niov()), _req->offset(),
-        callback, this
+rawstd::Task<size_t> co_object_preadv(
+    RawstorObject* object, iovec* iov, unsigned int niov, size_t size,
+    off_t offset
+) {
+    rawstd::CallbackAwaitable<size_t> awaiter;
+    int res = rawstor_object_preadv2(
+        object, iov, niov, size, offset, io_trampoline, &awaiter
     );
-    if (res) {
+    if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
+    co_return co_await awaiter;
 }
 
-void ObjectTask::pwritev() {
+rawstd::Task<size_t> co_object_pwritev(
+    RawstorObject* object, const iovec* iov, unsigned int niov, size_t size,
+    off_t offset, bool sync
+) {
+    rawstd::CallbackAwaitable<size_t> awaiter;
+    int res = rawstor_object_pwritev2(
+        object, iov, niov, size, offset, sync, io_trampoline, &awaiter
+    );
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+    co_return co_await awaiter;
+}
+
+// rawstor_object_flush2()'s own callback shape (ssize_t result) --
+// there's nothing else to report, unlike io_trampoline()'s preadv2/
+// pwritev2 group above.
+int flush_trampoline(ssize_t result, void* data) {
+    static_cast<rawstd::CallbackAwaitable<void>*>(data)->complete(result);
+    return 0;
+}
+
+rawstd::Task<void> co_object_flush(RawstorObject* object) {
+    rawstd::CallbackAwaitable<void> awaiter;
+    int res = rawstor_object_flush2(object, flush_trampoline, &awaiter);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+    co_await awaiter;
+}
+
+// process_vq() (the only caller of process_request(), several frames up)
+// already logs-and-continues on any exception escaping here, so none of
+// these *_task() coroutines need their own top-level try/catch beyond the
+// one around each async op itself -- an immediate submission failure and
+// a later-reported one both surface identically via
+// CallbackAwaitable<T> (see its own doc comment), so there's only one
+// error path to handle either way.
+
+rawstd::DetachedTask preadv_task(std::unique_ptr<Request> req) {
+    size_t size = rawstd_iovec_size(req->in_iov(), req->in_niov());
+    size_t result = 0;
+    int error = 0;
+    try {
+        result = co_await co_object_preadv(
+            req->device().object(), req->in_iov(), req->in_niov(), size,
+            req->offset()
+        );
+    } catch (const std::system_error& e) {
+        error = e.code().value();
+    }
+    if (error != 0) {
+        rawstd_error("%s\n", strerror(error));
+        req->push(VIRTIO_BLK_S_IOERR, result);
+        co_return;
+    }
+    if (result != size) {
+        rawstd_error("Partial object operation: %zu != %zu\n", result, size);
+        req->push(VIRTIO_BLK_S_IOERR, result);
+        co_return;
+    }
+    req->push(VIRTIO_BLK_S_OK, result);
+}
+
+void preadv(std::unique_ptr<Request> req) {
+    preadv_task(std::move(req));
+    rawstd::DetachedTask::rethrow_if_pending();
+}
+
+rawstd::DetachedTask pwritev_task(std::unique_ptr<Request> req) {
     // Writeback caching (wce) means the guest is expected to issue an
     // explicit FLUSH when it needs durability; without it (write-through),
     // every write must already be durable by the time it completes.
-    bool sync = !_req->device().write_cache_enabled();
-    int res = rawstor_object_pwritev(
-        _req->device().object(), _req->out_iov(), _req->out_niov(),
-        rawstd_iovec_size(_req->out_iov(), _req->out_niov()), _req->offset(),
-        sync, callback, this
-    );
-    if (res) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    bool sync = !req->device().write_cache_enabled();
+    size_t size = rawstd_iovec_size(req->out_iov(), req->out_niov());
+    size_t result = 0;
+    int error = 0;
+    try {
+        result = co_await co_object_pwritev(
+            req->device().object(), req->out_iov(), req->out_niov(), size,
+            req->offset(), sync
+        );
+    } catch (const std::system_error& e) {
+        error = e.code().value();
     }
-}
-
-class ObjectFlushTask final {
-protected:
-    std::unique_ptr<Request> _req;
-
-public:
-    static int callback(RawstorObject*, size_t, size_t, int error, void* data) {
-        std::unique_ptr<ObjectFlushTask> t(static_cast<ObjectFlushTask*>(data));
-        try {
-            (*t)(error);
-            return 0;
-        } catch (const std::system_error& e) {
-            return -e.code().value();
-        }
-    }
-
-    ObjectFlushTask(std::unique_ptr<Request> req) : _req(std::move(req)) {}
-    ObjectFlushTask(const ObjectFlushTask&) = delete;
-    ObjectFlushTask(ObjectFlushTask&&) = delete;
-    ~ObjectFlushTask() = default;
-
-    ObjectFlushTask& operator=(const ObjectFlushTask&) = delete;
-    ObjectFlushTask& operator=(ObjectFlushTask&&) = delete;
-
-    void flush();
-    inline Request* req() noexcept { return _req.get(); }
-
-    void operator()(int error);
-};
-
-void ObjectFlushTask::operator()(int error) {
     if (error != 0) {
         rawstd_error("%s\n", strerror(error));
-        _req->push(VIRTIO_BLK_S_IOERR, 0);
-        return;
+        req->push(VIRTIO_BLK_S_IOERR, result);
+        co_return;
     }
-
-    _req->push(VIRTIO_BLK_S_OK, 0);
+    if (result != size) {
+        rawstd_error("Partial object operation: %zu != %zu\n", result, size);
+        req->push(VIRTIO_BLK_S_IOERR, result);
+        co_return;
+    }
+    req->push(VIRTIO_BLK_S_OK, result);
 }
 
-void ObjectFlushTask::flush() {
-    int res = rawstor_object_flush(_req->device().object(), callback, this);
-    if (res) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
+void pwritev(std::unique_ptr<Request> req) {
+    pwritev_task(std::move(req));
+    rawstd::DetachedTask::rethrow_if_pending();
+}
+
+rawstd::DetachedTask flush_task(std::unique_ptr<Request> req) {
+    int error = 0;
+    try {
+        co_await co_object_flush(req->device().object());
+    } catch (const std::system_error& e) {
+        error = e.code().value();
     }
+    if (error != 0) {
+        rawstd_error("%s\n", strerror(error));
+        req->push(VIRTIO_BLK_S_IOERR, 0);
+        co_return;
+    }
+    req->push(VIRTIO_BLK_S_OK, 0);
+}
+
+void flush(std::unique_ptr<Request> req) {
+    flush_task(std::move(req));
+    rawstd::DetachedTask::rethrow_if_pending();
 }
 
 void panic(VuDev*, const char* err) {
@@ -460,37 +494,20 @@ void process_request(std::unique_ptr<Request> req) {
     size_t in_size = rawstd_iovec_size(req->in_iov(), req->in_niov());
 
     switch (req->type()) {
-    case VIRTIO_BLK_T_IN: {
-        std::unique_ptr<ObjectTask> t =
-            std::make_unique<ObjectTask>(std::move(req));
-        try {
-            t->preadv();
-            t.release();
-        } catch (const std::exception& e) {
-            rawstd_error("%s\n", e.what());
-            t->req()->push(VIRTIO_BLK_S_IOERR, in_size);
-        }
+    case VIRTIO_BLK_T_IN:
+        preadv(std::move(req));
         break;
-    }
 
-    case VIRTIO_BLK_T_OUT: {
-        std::unique_ptr<ObjectTask> t =
-            std::make_unique<ObjectTask>(std::move(req));
-        try {
-            t->pwritev();
-            t.release();
-        } catch (const std::exception& e) {
-            rawstd_error("%s\n", e.what());
-            t->req()->push(VIRTIO_BLK_S_IOERR, in_size);
-        }
+    case VIRTIO_BLK_T_OUT:
+        pwritev(std::move(req));
         break;
-    }
 
     case VIRTIO_BLK_T_GET_ID: {
         try {
             char uuid[37];
-            int res =
-                rawstor_object_id(req->device().object(), uuid, sizeof(uuid));
+            int res = rawstor_target_id(
+                req->device().target().c_str(), uuid, sizeof(uuid)
+            );
             if (res < 0) {
                 RAWSTD_THROW_SYSTEM_ERROR(-res);
             }
@@ -514,18 +531,9 @@ void process_request(std::unique_ptr<Request> req) {
         break;
     }
 
-    case VIRTIO_BLK_T_FLUSH: {
-        std::unique_ptr<ObjectFlushTask> t =
-            std::make_unique<ObjectFlushTask>(std::move(req));
-        try {
-            t->flush();
-            t.release();
-        } catch (const std::exception& e) {
-            rawstd_error("%s\n", e.what());
-            t->req()->push(VIRTIO_BLK_S_IOERR, in_size);
-        }
+    case VIRTIO_BLK_T_FLUSH:
+        flush(std::move(req));
         break;
-    }
 
     case VIRTIO_BLK_T_DISCARD:
     case VIRTIO_BLK_T_WRITE_ZEROES:
@@ -589,6 +597,91 @@ int set_config(
     }
 }
 
+// Synchronous open()/close() shims for Device's constructor/destructor:
+// both run before loop()/dispatch() starts or after it returns, i.e.
+// never from inside dispatch()'s own processing of `queue` -- spinning
+// `queue` here to wait for the callback is therefore safe, unlike doing
+// so from a context that's itself already being dispatched by the same
+// queue (see ost::Session's own async close()/open() handling for that
+// hazard).
+// Shared by open_object()/close_object()/spec_object() below:
+// rawstor_target_open()'s opened object is written directly into the
+// caller's own `object` out-param (see open_object()), not routed through
+// this struct, so there's nothing left for open's own Result to carry
+// beyond what close's already needs -- the two (and spec's) are
+// identical. rawstor_target_open()/rawstor_object_close2()/_spec() all
+// share the same ssize_t result callback shape (negative -> -errno, zero
+// -> success -- see rawstor/target.h's own doc comment for the general
+// convention), so one trampoline suffices for all three.
+struct Result {
+    int error = 0;
+    bool done = false;
+};
+
+int result_cb(ssize_t result, void* data) {
+    Result* r = static_cast<Result*>(data);
+    r->error = result < 0 ? static_cast<int>(-result) : 0;
+    r->done = true;
+    return 0;
+}
+
+RawstorObject* open_object(RawIOQueue* queue, const std::string& target) {
+    RawstorObject* object = nullptr;
+    Result result;
+    int res =
+        rawstor_target_open(queue, target.c_str(), &object, result_cb, &result);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+    while (!result.done) {
+        int wres = rawio_wait(queue);
+        if (wres < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-wres);
+        }
+    }
+    if (result.error) {
+        RAWSTD_THROW_SYSTEM_ERROR(result.error);
+    }
+    return object;
+}
+
+void close_object(RawIOQueue* queue, RawstorObject* object) {
+    Result result;
+    int res = rawstor_object_close2(object, result_cb, &result);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+    while (!result.done) {
+        int wres = rawio_wait(queue);
+        if (wres < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-wres);
+        }
+    }
+    if (result.error) {
+        RAWSTD_THROW_SYSTEM_ERROR(result.error);
+    }
+}
+
+RawstorObjectSpec spec_object(RawIOQueue* queue, const std::string& target) {
+    RawstorObjectSpec spec{};
+    Result result;
+    int res =
+        rawstor_target_spec(queue, target.c_str(), &spec, result_cb, &result);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+    while (!result.done) {
+        int wres = rawio_wait(queue);
+        if (wres < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-wres);
+        }
+    }
+    if (result.error) {
+        RAWSTD_THROW_SYSTEM_ERROR(result.error);
+    }
+    return spec;
+}
+
 } // namespace
 
 namespace rawstor {
@@ -603,7 +696,7 @@ Watcher::Watcher(
     _counter(1) {
     std::unique_ptr<TaskWatch> t =
         std::make_unique<TaskWatch>(device, fd, condition, cb, data);
-    int res = rawio_poll_multishot(
+    int res = rawio_poll_multishot2(
         _queue, fd, t->mask(), t->callback, t.get(), &_event
     );
     if (res) {
@@ -626,6 +719,7 @@ Device::Device(
     bool write_cache_enabled
 ) :
     _queue(nullptr),
+    _target(target),
     _object(nullptr),
     _iface{
         .get_features = ::get_features,
@@ -659,15 +753,9 @@ Device::Device(
     }
 
     try {
-        ires = rawstor_object_spec(target.c_str(), &_spec);
-        if (ires) {
-            RAWSTD_THROW_SYSTEM_ERROR(-ires);
-        }
+        _spec = spec_object(_queue, target);
 
-        ires = rawstor_object_open(_queue, target.c_str(), &_object);
-        if (ires) {
-            RAWSTD_THROW_SYSTEM_ERROR(-ires);
-        }
+        _object = open_object(_queue, target);
 
         _blk_config->capacity = _spec.size >> VIRTIO_BLK_SECTOR_BITS;
 
@@ -730,7 +818,11 @@ Device::Device(
 Device::~Device() {
     _devices.erase(_dev.sock);
     vu_deinit(&_dev);
-    rawstor_object_close(_object);
+    try {
+        close_object(_queue, _object);
+    } catch (const std::exception& e) {
+        rawstd_error("Failed to close object: %s\n", e.what());
+    }
     rawio_queue_delete(_queue);
 }
 

@@ -1,7 +1,8 @@
 #include <ost/server.hpp>
 
-#include <ost/session.hpp>
+#include <ost/client.hpp>
 
+#include <rawstd/coro.hpp>
 #include <rawstd/gpp.hpp>
 #include <rawstd/logging.hpp>
 #include <rawstd/socket.h>
@@ -15,10 +16,51 @@
 
 #include <unistd.h>
 
+#include <exception>
 #include <sstream>
 #include <string>
+#include <system_error>
 
+#include <cerrno>
 #include <cstring>
+
+namespace {
+
+// C ABI adapter for rawio_accept_multishot2(): mirrors ost/src/client.cpp's
+// own trampolines over the CallbackAwaitable<T> bridge, but for
+// CallbackStream<T> instead -- see there and CallbackStream<T>'s own doc
+// comment for the general shape.
+int accept_trampoline(ssize_t result, void* data) {
+    auto* stream = static_cast<rawstd::CallbackStream<int>*>(data);
+    if (result < 0) {
+        stream->complete(0, static_cast<int>(-result));
+    } else {
+        stream->complete(static_cast<int>(result), 0);
+    }
+    return 0;
+}
+
+// rawio_close2()'s callback delivers a single combined "0 or -errno"
+// result, the same shape CallbackAwaitable<void>::complete() itself
+// takes. Mirrors ost/src/client.cpp's own close_fd_trampoline()/
+// co_close_fd() (each file keeps its own copy of these small per-C-API
+// trampolines rather than sharing a header -- see CallbackAwaitable<T>'s
+// own doc comment for why).
+int close_fd_trampoline(ssize_t result, void* data) {
+    static_cast<rawstd::CallbackAwaitable<void>*>(data)->complete(result);
+    return 0;
+}
+
+rawstd::Task<void> co_close_fd(RawIOQueue* queue, int fd) {
+    rawstd::CallbackAwaitable<void> awaiter;
+    int res = rawio_close2(queue, fd, close_fd_trampoline, &awaiter);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+    co_await awaiter;
+}
+
+} // namespace
 
 namespace rawstor {
 namespace ostbackend {
@@ -81,7 +123,7 @@ Server::Server(
 }
 
 Server::~Server() {
-    _sessions.clear();
+    _clients.clear();
 
     if (_fd != -1) {
         close(_fd);
@@ -90,62 +132,98 @@ Server::~Server() {
     if (_accept_event != nullptr) {
         int res = rawio_cancel(_queue, _accept_event);
         if (res < 0) {
-            rawstd_error("Failed to cancel event: %s\n", strerror(-res));
+            rawstd_warning("Failed to cancel event: %s\n", strerror(-res));
         }
     }
 
     rawio_queue_delete(_queue);
 }
 
-int Server::_accept(int result, void* data) noexcept {
-    Server* server = static_cast<Server*>(data);
-
+rawstd::Task<void> Server::_add_client(int fd) {
+    // co_await isn't allowed inside a catch block (the language forbids
+    // suspending while an exception is active), so the fd cleanup below
+    // has to run after leaving the handler -- stash the exception instead
+    // of an immediate `throw;`, close, then rethrow it.
+    std::exception_ptr error;
+    std::shared_ptr<Client> client;
     try {
-        return server->_accept(result);
-    } catch (const std::exception& e) {
-        rawstd_error("%s\n", e.what());
+        client = co_await Client::create(_queue, *this, fd);
+    } catch (...) {
+        error = std::current_exception();
     }
 
-    return 0;
-}
-
-int Server::_accept(int result) {
-    if (result < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-result);
+    if (error) {
+        // Client::create() never closes `fd` itself on failure (see its
+        // own comment) -- always ours to close here, on any failure.
+        try {
+            co_await co_close_fd(_queue, fd);
+        } catch (const std::system_error& e) {
+            rawstd_error(
+                "Failed to close fd %d: %s\n", fd, strerror(e.code().value())
+            );
+        }
+        std::rethrow_exception(error);
     }
 
-    _add_session(result);
-
-    return 0;
+    _clients.emplace(fd, std::move(client));
 }
 
-void Server::_add_session(int fd) {
-    try {
-        int res = rawstd_socket_set_nosigpipe(fd);
-        if (res < 0) {
-            RAWSTD_THROW_SYSTEM_ERROR(-res);
+rawstd::Task<void> Server::del_client(int fd) {
+    auto it = _clients.find(fd);
+    if (it == _clients.end()) {
+        co_return;
+    }
+    std::shared_ptr<Client> client = std::move(it->second);
+    _clients.erase(it);
+
+    // This Server's own reference (just moved out and dropped from
+    // _clients) and this coroutine's local `client` are the only two
+    // guaranteed to have existed -- if `client` is the sole owner left,
+    // no other in-flight _*_task() still holds its own shared_ptr<Client>
+    // (or a raw RawstorObject*/fd captured from one) that close() could
+    // race with, so it's safe to close its object/fd right now instead
+    // of leaving that to whenever the last other reference eventually
+    // drops (~Client()'s synchronous fallback, still exactly correct for
+    // that case). Single-threaded reactor, so this check race-free.
+    if (client.use_count() == 1) {
+        co_await client->close();
+    }
+}
+
+rawstd::DetachedTask Server::_accept_task() {
+    rawstd::CallbackStream<int> stream;
+    int res = rawio_accept_multishot2(
+        _queue, _fd, accept_trampoline, &stream, &_accept_event
+    );
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+
+    while (true) {
+        int fd;
+        try {
+            fd = co_await stream.next();
+        } catch (const std::system_error& e) {
+            // ECANCELED is ~Server()'s own rawio_cancel() -- an ordinary,
+            // silent shutdown, not a failure worth logging (matches
+            // Client::_recv()'s own handling of the same case).
+            if (e.code().value() != ECANCELED) {
+                rawstd_error("%s\n", e.what());
+            }
+            co_return;
         }
 
-        _sessions.emplace(fd, Session::create(_queue, *this, fd));
-    } catch (...) {
-        close(fd);
-        throw;
-    }
-}
-
-void Server::del_session(int fd) noexcept {
-    auto it = _sessions.find(fd);
-    if (it != _sessions.end()) {
-        _sessions.erase(it);
+        try {
+            co_await _add_client(fd);
+        } catch (const std::exception& e) {
+            rawstd_error("%s\n", e.what());
+        }
     }
 }
 
 void Server::loop() {
-    int res =
-        rawio_accept_multishot(_queue, _fd, _accept, this, &_accept_event);
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
+    _accept_task();
+    rawstd::DetachedTask::rethrow_if_pending();
 
     while (true) {
         int res = rawio_wait(_queue);

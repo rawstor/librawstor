@@ -38,7 +38,7 @@ struct KickCtx {
     uint64_t value;
 };
 
-int kick_cb(size_t result, int error, void* data) {
+int kick_cb(ssize_t result, void* data) {
     std::unique_ptr<KickCtx> ctx(static_cast<KickCtx*>(data));
 
     // The armed read this callback belongs to has now completed one way
@@ -46,17 +46,17 @@ int kick_cb(size_t result, int error, void* data) {
     // to arm_kick()) is not mistaken for one already in flight.
     ctx->vq->clear_kick_armed();
 
-    if (error == ECANCELED) {
+    if (result == -ECANCELED) {
         return 0;
     }
 
-    if (error != 0) {
-        rawstd_error("vhost: kick_fd read failed: %s\n", strerror(error));
+    if (result < 0) {
+        rawstd_error("vhost: kick_fd read failed: %s\n", strerror(-result));
         return 0;
     }
 
-    if (result != sizeof(ctx->value)) {
-        rawstd_error("vhost: unexpected kick_fd read size: %zu\n", result);
+    if (static_cast<size_t>(result) != sizeof(ctx->value)) {
+        rawstd_error("vhost: unexpected kick_fd read size: %zd\n", result);
         return 0;
     }
 
@@ -87,16 +87,16 @@ struct NotifyCtx {
     uint64_t value;
 };
 
-int notify_cb(size_t result, int error, void* data) {
+int notify_cb(ssize_t result, void* data) {
     std::unique_ptr<NotifyCtx> ctx(static_cast<NotifyCtx*>(data));
 
-    if (error != 0 && error != ECANCELED) {
-        rawstd_error("vhost: call_fd write failed: %s\n", strerror(error));
+    if (result < 0 && result != -ECANCELED) {
+        rawstd_error("vhost: call_fd write failed: %s\n", strerror(-result));
         return 0;
     }
 
-    if (error == 0 && result != sizeof(ctx->value)) {
-        rawstd_error("vhost: unexpected call_fd write size: %zu\n", result);
+    if (result >= 0 && static_cast<size_t>(result) != sizeof(ctx->value)) {
+        rawstd_error("vhost: unexpected call_fd write size: %zd\n", result);
         return 0;
     }
 
@@ -167,7 +167,7 @@ void VirtQueue::arm_kick(Device& device, size_t index) {
     ctx->index = index;
     ctx->value = 0;
 
-    int res = rawio_read(
+    int res = rawio_read2(
         device.queue(), _kick_fd, &ctx->value, sizeof(ctx->value), kick_cb,
         ctx.get()
     );
@@ -454,7 +454,7 @@ void VirtQueue::notify(Device& device, bool event_idx_negotiated) {
     std::unique_ptr<NotifyCtx> ctx = std::make_unique<NotifyCtx>();
     ctx->value = 1;
 
-    int res = rawio_write(
+    int res = rawio_write2(
         device.queue(), _call_fd, &ctx->value, sizeof(ctx->value), notify_cb,
         ctx.get()
     );

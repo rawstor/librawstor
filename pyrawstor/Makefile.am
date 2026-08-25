@@ -14,7 +14,9 @@ AM_LDFLAGS = $(ASAN_LDFLAGS)
 C_SOURCES = \
     rawstor/librawstor/module.c \
     rawstor/librawstor/object_bindings.c \
-    rawstor/librawstor/object_bindings.h
+    rawstor/librawstor/object_bindings.h \
+    rawstor/librawstor/rawio_sync.c \
+    rawstor/librawstor/rawio_sync.h
 
 SOURCES = \
     $(C_SOURCES) \

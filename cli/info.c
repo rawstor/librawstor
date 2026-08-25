@@ -1,5 +1,7 @@
 #include "info.h"
 
+#include "rawio_sync.h"
+
 #include <rawstor.h>
 
 #include <rawstd/exitcode.h>
@@ -12,10 +14,25 @@
 
 int rawstor_cli_info(const char* location, char unit) {
     struct RawstorLocationInfo info;
-    int res = rawstor_location_info(location, &info);
-    if (res) {
-        fprintf(stderr, "rawstor_location_info() failed: %s\n", strerror(-res));
+
+    RawstorCliOp op;
+    int res = rawstor_cli_op_init(&op);
+    if (res < 0) {
+        fprintf(stderr, "Failed to create queue: %s\n", strerror(-res));
         return rawstd_exitcode_for_errno(-res);
+    }
+
+    int sres = rawstor_location_info(
+        op.queue, location, &info, rawstor_cli_op_cb, &op
+    );
+    ssize_t result = rawstor_cli_op_wait(&op, sres);
+    rawstor_cli_op_destroy(&op);
+    if (result < 0) {
+        fprintf(
+            stderr, "rawstor_location_info() failed: %s\n",
+            strerror((int)-result)
+        );
+        return rawstd_exitcode_for_errno((int)-result);
     }
 
     uint64_t avail = info.total > info.used ? info.total - info.used : 0;
