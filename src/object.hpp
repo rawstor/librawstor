@@ -45,11 +45,6 @@ public:
     // This Object's own target -- the same Target it was built from.
     inline const Target& target() const noexcept { return _target; }
 
-    // The queue this Object was opened on -- needed only by the backport
-    // shim's blocking rawstor_object_close() (see src/object_legacy.cpp),
-    // which has no queue parameter of its own to pump.
-    inline rawio::Queue& queue() const noexcept { return _queue; }
-
     rawstd::Task<size_t> pread(void* buf, size_t size, off_t offset);
 
     rawstd::Task<size_t>

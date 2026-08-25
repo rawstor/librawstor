@@ -150,7 +150,7 @@ static int dst_data_received(size_t result, int error, void* data) {
         worker->iteration
     );
 
-    return rawstor_object_pwrite2(
+    return rawstor_object_pwrite(
         worker->object, worker->src_iov.iov_base, worker->src_iov.iov_len,
         worker->offset, worker->sync, src_data_sent, worker
     );
@@ -203,7 +203,7 @@ static int dstv_data_received(size_t result, int error, void* data) {
         worker->iteration
     );
 
-    return rawstor_object_pwritev2(
+    return rawstor_object_pwritev(
         worker->object, &worker->src_iov, 1, worker->src_iov.iov_len,
         worker->offset, worker->sync, srcv_data_sent, worker
     );
@@ -226,7 +226,7 @@ static int src_data_sent(size_t result, int error, void* data) {
         return -EIO;
     }
 
-    return rawstor_object_pread2(
+    return rawstor_object_pread(
         worker->object, worker->dst_iov.iov_base, worker->dst_iov.iov_len,
         worker->offset, dst_data_received, worker
     );
@@ -249,14 +249,14 @@ static int srcv_data_sent(size_t result, int error, void* data) {
         return -EIO;
     }
 
-    return rawstor_object_preadv2(
+    return rawstor_object_preadv(
         worker->object, &worker->dst_iov, 1, worker->dst_iov.iov_len,
         worker->offset, dstv_data_received, worker
     );
 }
 
 /* Synchronous open()/close() shims around the now-asynchronous
- * rawstor_target_open()/rawstor_object_close2(): rawstor_cli_testio() below
+ * rawstor_target_open()/rawstor_object_close(): rawstor_cli_testio() below
  * runs no other queue activity while opening/closing (all its own I/O is
  * queued only after open() and awaited only before close()), so spinning
  * `queue` here to wait for the callback is safe. */
@@ -265,7 +265,7 @@ static int srcv_data_sent(size_t result, int error, void* data) {
  * out-param (see open_object()), not routed through this struct, so
  * there's nothing left for open's own result to carry beyond what
  * close's already needs -- the two are identical. rawstor_target_open()/
- * rawstor_object_close2() share the same ssize_t result callback shape
+ * rawstor_object_close() share the same ssize_t result callback shape
  * (negative -> -errno, zero -> success), so one trampoline suffices for
  * both. */
 typedef struct {
@@ -301,7 +301,7 @@ open_object(RawIOQueue* queue, const char* target, RawstorObject** object) {
 
 static int close_object(RawIOQueue* queue, RawstorObject* object) {
     Result result = {0};
-    int res = rawstor_object_close2(object, result_cb, &result);
+    int res = rawstor_object_close(object, result_cb, &result);
     if (res < 0) {
         return res;
     }
@@ -362,14 +362,14 @@ int rawstor_cli_testio(
             fill(
                 workers[i]->src_iov.iov_base, workers[i]->src_iov.iov_len, i, 0
             );
-            res = rawstor_object_pwrite2(
+            res = rawstor_object_pwrite(
                 object, workers[i]->src_iov.iov_base,
                 workers[i]->src_iov.iov_len, workers[i]->offset, sync,
                 src_data_sent, workers[i]
             );
             if (res < 0) {
                 fprintf(
-                    stderr, "rawstor_object_pwrite2() failed: %s\n",
+                    stderr, "rawstor_object_pwrite() failed: %s\n",
                     strerror(-res)
                 );
                 err = -res;
@@ -381,13 +381,13 @@ int rawstor_cli_testio(
             fill(
                 workers[i]->src_iov.iov_base, workers[i]->src_iov.iov_len, i, 0
             );
-            res = rawstor_object_pwritev2(
+            res = rawstor_object_pwritev(
                 object, &workers[i]->src_iov, 1, workers[i]->src_iov.iov_len,
                 workers[i]->offset, sync, srcv_data_sent, workers[i]
             );
             if (res < 0) {
                 fprintf(
-                    stderr, "rawstor_object_pwritev2() failed: %s\n",
+                    stderr, "rawstor_object_pwritev() failed: %s\n",
                     strerror(-res)
                 );
                 err = -res;
@@ -407,7 +407,7 @@ int rawstor_cli_testio(
 
     res = close_object(queue, object);
     if (res < 0) {
-        fprintf(stderr, "rawstor_object_close2() failed: %s\n", strerror(-res));
+        fprintf(stderr, "rawstor_object_close() failed: %s\n", strerror(-res));
     }
 
     for (unsigned int i = 0; i < io_depth; ++i) {
@@ -433,7 +433,7 @@ err_worker_create:
 err_workers:
     res = close_object(queue, object);
     if (res < 0) {
-        fprintf(stderr, "rawstor_object_close2() failed: %s\n", strerror(-res));
+        fprintf(stderr, "rawstor_object_close() failed: %s\n", strerror(-res));
     }
 err_open:
     rawio_queue_delete(queue);

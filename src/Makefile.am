@@ -44,7 +44,6 @@ librawstor_la_SOURCES = blk_session.cpp \
                         location.hpp \
                         object.cpp \
                         object.hpp \
-                        object_legacy.cpp \
                         ost_session.cpp \
                         ost_session.hpp \
                         opts.c \

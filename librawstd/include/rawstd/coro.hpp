@@ -420,8 +420,8 @@ public:
  * The C callback trampoline registered as `cb` isn't a fixed shape here
  * (unlike DetachedTask, which only ever wraps rawstd::Task<T>/DetachedTask
  * producers) -- every C API in this codebase shapes its callback
- * differently (rawstor_object_pread2()'s result/error/data,
- * rawio_send2()'s single signed result/data, ...). Each call site supplies
+ * differently (rawstor_object_pread()'s result/error/data,
+ * rawio_send()'s single signed result/data, ...). Each call site supplies
  * its own small trampoline matching the C function it's adapting, whose
  * only job is extracting `data` back to `CallbackAwaitable<T>*` and calling
  * complete() -- see ost::Session/rawstor::vhost::Device's own

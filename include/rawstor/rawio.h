@@ -28,12 +28,6 @@ int rawio_queue_create(unsigned int depth, RawIOQueue** queue) RAWSTOR_NOEXCEPT;
 
 void rawio_queue_delete(RawIOQueue* queue) RAWSTOR_NOEXCEPT;
 
-/** @deprecated Use rawio_open2() instead. See rawio_read()'s note. */
-int rawio_open(
-    RawIOQueue* queue, const char* path, int flags, mode_t mode,
-    int (*cb)(int result, void* data), void* data
-) RAWSTOR_NOEXCEPT;
-
 /**
  * @brief Asynchronously opens a file (single-shot).
  *
@@ -81,16 +75,11 @@ int rawio_open(
  *               the actual flags if needed.
  *
  * @see          open(2) for standard synchronous open semantics.
- * @see          rawio_close2() for closing the opened file descriptor.
+ * @see          rawio_close() for closing the opened file descriptor.
  */
-int rawio_open2(
+int rawio_open(
     RawIOQueue* queue, const char* path, int flags, mode_t mode,
     int (*cb)(ssize_t result, void* data), void* data
-) RAWSTOR_NOEXCEPT;
-
-/** @deprecated Use rawio_close2() instead. See rawio_read()'s note. */
-int rawio_close(
-    RawIOQueue* queue, int fd, int (*cb)(int result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
 /**
@@ -103,8 +92,8 @@ int rawio_close(
  * complete and no further callbacks will be triggered for this request.
  *
  * @param fd    File descriptor to close. Must be a valid, open file descriptor
- *              that was previously obtained (e.g., from rawio_open2() or
- *              rawio_accept2()). After successful close, the descriptor becomes
+ *              that was previously obtained (e.g., from rawio_open() or
+ *              rawio_accept()). After successful close, the descriptor becomes
  *              invalid and should not be used further.
  *
  * @param cb    Callback function invoked when the close operation completes.
@@ -139,16 +128,10 @@ int rawio_close(
  *               via rawio_cancel_all() before closing.
  *
  * @see          close(2) for standard synchronous close semantics.
- * @see          rawio_open2() for opening files.
+ * @see          rawio_open() for opening files.
  */
-int rawio_close2(
+int rawio_close(
     RawIOQueue* queue, int fd, int (*cb)(ssize_t result, void* data), void* data
-) RAWSTOR_NOEXCEPT;
-
-/** @deprecated Use rawio_poll2() instead. See rawio_read()'s note. */
-int rawio_poll(
-    RawIOQueue* queue, int fd, unsigned int mask,
-    int (*cb)(int result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
 /**
@@ -193,19 +176,12 @@ int rawio_poll(
  *              may result in immediate callback invocation with an appropriate
  *              error code.
  *
- * @see         rawio_poll_multishot2() for a persistent (multishot) version.
+ * @see         rawio_poll_multishot() for a persistent (multishot) version.
  * @see         poll(2) for standard poll semantics and event definitions.
  */
-int rawio_poll2(
+int rawio_poll(
     RawIOQueue* queue, int fd, unsigned int mask,
     int (*cb)(ssize_t result, void* data), void* data
-) RAWSTOR_NOEXCEPT;
-
-/** @deprecated Use rawio_poll_multishot2() instead. See rawio_read()'s
- * note. */
-int rawio_poll_multishot(
-    RawIOQueue* queue, int fd, unsigned int mask,
-    int (*cb)(int result, void* data), void* data, RawIOEvent** event
 ) RAWSTOR_NOEXCEPT;
 
 /**
@@ -266,15 +242,9 @@ int rawio_poll_multishot(
  * @see         rawio_cancel() for operation termination.
  * @see         poll(2) for standard poll semantics and event definitions.
  */
-int rawio_poll_multishot2(
+int rawio_poll_multishot(
     RawIOQueue* queue, int fd, unsigned int mask,
     int (*cb)(ssize_t result, void* data), void* data, RawIOEvent** event
-) RAWSTOR_NOEXCEPT;
-
-/** @deprecated Use rawio_connect2() instead. See rawio_read()'s note. */
-int rawio_connect(
-    RawIOQueue* queue, int fd, const struct sockaddr* addr, socklen_t addrlen,
-    int (*cb)(int result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
 /**
@@ -327,17 +297,11 @@ int rawio_connect(
  *                for further connection attempts.
  *
  * @see           connect(2) for standard synchronous connect semantics.
- * @see           rawio_accept2() for accepting incoming connections.
+ * @see           rawio_accept() for accepting incoming connections.
  */
-int rawio_connect2(
+int rawio_connect(
     RawIOQueue* queue, int fd, const struct sockaddr* addr, socklen_t addrlen,
     int (*cb)(ssize_t result, void* data), void* data
-) RAWSTOR_NOEXCEPT;
-
-/** @deprecated Use rawio_accept2() instead. See rawio_read()'s note. */
-int rawio_accept(
-    RawIOQueue* queue, int fd, struct sockaddr* addr, socklen_t* addrlen,
-    int (*cb)(int result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
 /**
@@ -382,19 +346,12 @@ int rawio_accept(
  *                Avoid blocking operations inside the callback; instead, queue
  *                the new socket for processing in a separate thread or context.
  *
- * @see           rawio_accept_multishot2() for a persistent version.
+ * @see           rawio_accept_multishot() for a persistent version.
  * @see           accept(2) for standard synchronous accept semantics.
  */
-int rawio_accept2(
+int rawio_accept(
     RawIOQueue* queue, int fd, struct sockaddr* addr, socklen_t* addrlen,
     int (*cb)(ssize_t result, void* data), void* data
-) RAWSTOR_NOEXCEPT;
-
-/** @deprecated Use rawio_accept_multishot2() instead. See rawio_read()'s
- * note. */
-int rawio_accept_multishot(
-    RawIOQueue* queue, int fd, int (*cb)(int result, void* data), void* data,
-    RawIOEvent** event
 ) RAWSTOR_NOEXCEPT;
 
 /**
@@ -444,166 +401,19 @@ int rawio_accept_multishot(
  *                the callback. Instead, queue the accepted socket for later
  *                processing.
  *
- * @see           rawio_accept2() for a single‑shot version.
+ * @see           rawio_accept() for a single‑shot version.
  * @see           rawio_cancel() for terminating the operation.
  * @see           accept(2), getpeername(2).
  */
-int rawio_accept_multishot2(
+int rawio_accept_multishot(
     RawIOQueue* queue, int fd, int (*cb)(ssize_t result, void* data),
     void* data, RawIOEvent** event
 ) RAWSTOR_NOEXCEPT;
 
 /**
- * @brief Deprecated completion callback shape for the read/write family
- *        below. Superseded by the collapsed single-`ssize_t` shape used by
- *        rawio_read2()/_readv2()/_pread2()/_preadv2()/_recv2()/_recvmsg2()/
- *        _write2()/_writev2()/_pwrite2()/_pwritev2()/_send2()/_sendmsg2().
- *
- * @param result Operation-specific result value (bytes read/written, may be
- *               less than requested due to EOF or a partial transfer).
- * @param error  Error code from the operation. Zero indicates success; a
- *               non-zero value is a positive errno.
- * @param data   User-defined context pointer passed from the initiating
- *               function.
- *
- * @return       Operation control flag. Zero on success, negative on error.
- *
- * @deprecated   Use the collapsed `ssize_t result` shape instead.
- */
-typedef int(RawIOCallback)(size_t result, int error, void* data);
-
-/**
- * @brief Deprecated completion callback shape for rawio_recv_multishot()
- *        below. Superseded by rawio_recv_multishot2()'s callback, which
- *        collapses `size_t result, int error` into a single `ssize_t
- *        result`.
- *
- * @param iov    Scatter-gather vectors pointing to the received data.
- * @param niov   Number of valid entries in @p iov.
- * @param result Total bytes received in this operation.
- * @param error  Error code from the operation; zero on success. `ENOBUFS`
- *               indicates ring buffer overflow -- no further callbacks are
- *               invoked after any non-zero @p error.
- * @param data   User context pointer from rawio_recv_multishot().
- *
- * @return       Size for the next buffer allocation; negative terminates
- *               the multishot operation immediately.
- *
- * @deprecated   Use rawio_recv_multishot2()'s collapsed callback shape
- *               instead.
- */
-typedef ssize_t(RawIOMultishotVectorCallback)(
-    const struct iovec* iov, unsigned int niov, size_t result, int error,
-    void* data
-);
-
-/**
- * @brief Deprecated -- see rawio_read2(). Same operation, old RawIOCallback
- *        shape (separate `result`/`error` rather than one signed value).
- *
- * @deprecated Use rawio_read2() instead.
- */
-int rawio_read(
-    RawIOQueue* queue, int fd, void* buf, size_t size, RawIOCallback* cb,
-    void* data
-) RAWSTOR_NOEXCEPT;
-
-/** @deprecated Use rawio_readv2() instead. See rawio_read()'s note. */
-int rawio_readv(
-    RawIOQueue* queue, int fd, struct iovec* iov, unsigned int niov,
-    RawIOCallback* cb, void* data
-) RAWSTOR_NOEXCEPT;
-
-/** @deprecated Use rawio_pread2() instead. See rawio_read()'s note. */
-int rawio_pread(
-    RawIOQueue* queue, int fd, void* buf, size_t size, off_t offset,
-    RawIOCallback* cb, void* data
-) RAWSTOR_NOEXCEPT;
-
-/** @deprecated Use rawio_preadv2() instead. See rawio_read()'s note. */
-int rawio_preadv(
-    RawIOQueue* queue, int fd, struct iovec* iov, unsigned int niov,
-    off_t offset, RawIOCallback* cb, void* data
-) RAWSTOR_NOEXCEPT;
-
-/** @deprecated Use rawio_recv2() instead. See rawio_read()'s note. */
-int rawio_recv(
-    RawIOQueue* queue, int fd, void* buf, size_t size, unsigned int flags,
-    RawIOCallback* cb, void* data
-) RAWSTOR_NOEXCEPT;
-
-/**
- * @brief Deprecated -- see rawio_recv_multishot2(). Same operation, old
- *        RawIOMultishotVectorCallback shape.
- *
- * @deprecated Use rawio_recv_multishot2() instead.
- */
-int rawio_recv_multishot(
-    RawIOQueue* queue, int fd, size_t entry_size, unsigned int entries,
-    size_t size, unsigned int flags, RawIOMultishotVectorCallback* cb,
-    void* data, RawIOEvent** event
-) RAWSTOR_NOEXCEPT;
-
-/** @deprecated Use rawio_recvmsg2() instead. See rawio_read()'s note. */
-int rawio_recvmsg(
-    RawIOQueue* queue, int fd, struct msghdr* msg, unsigned int flags,
-    RawIOCallback* cb, void* data
-) RAWSTOR_NOEXCEPT;
-
-/** @deprecated Use rawio_write2() instead. See rawio_read()'s note. */
-int rawio_write(
-    RawIOQueue* queue, int fd, const void* buf, size_t size, RawIOCallback* cb,
-    void* data
-) RAWSTOR_NOEXCEPT;
-
-/** @deprecated Use rawio_writev2() instead. See rawio_read()'s note. */
-int rawio_writev(
-    RawIOQueue* queue, int fd, const struct iovec* iov, unsigned int niov,
-    RawIOCallback* cb, void* data
-) RAWSTOR_NOEXCEPT;
-
-/** @deprecated Use rawio_pwrite2() instead. See rawio_read()'s note. */
-int rawio_pwrite(
-    RawIOQueue* queue, int fd, const void* buf, size_t size, off_t offset,
-    RawIOCallback* cb, void* data
-) RAWSTOR_NOEXCEPT;
-
-/** @deprecated Use rawio_pwritev2() instead. See rawio_read()'s note. */
-int rawio_pwritev(
-    RawIOQueue* queue, int fd, const struct iovec* iov, unsigned int niov,
-    off_t offset, RawIOCallback* cb, void* data
-) RAWSTOR_NOEXCEPT;
-
-/**
- * @brief Deprecated -- see rawio_fsync2(). Same operation, same "raw,
- *        possibly-negative errno" result convention (unchanged from this
- *        function's own long-standing shape) -- only @p cb's `result`
- *        parameter widens from int to ssize_t, matching every other
- *        rawio_*2() function's own callback shape.
- *
- * @deprecated Use rawio_fsync2() instead.
- */
-int rawio_fsync(
-    RawIOQueue* queue, int fd, bool datasync, int (*cb)(int result, void* data),
-    void* data
-) RAWSTOR_NOEXCEPT;
-
-/** @deprecated Use rawio_send2() instead. See rawio_read()'s note. */
-int rawio_send(
-    RawIOQueue* queue, int fd, const void* buf, size_t size, unsigned int flags,
-    RawIOCallback* cb, void* data
-) RAWSTOR_NOEXCEPT;
-
-/** @deprecated Use rawio_sendmsg2() instead. See rawio_read()'s note. */
-int rawio_sendmsg(
-    RawIOQueue* queue, int fd, const struct msghdr* msg, unsigned int flags,
-    RawIOCallback* cb, void* data
-) RAWSTOR_NOEXCEPT;
-
-/**
- * @brief Shared completion callback shape for rawio_read2()/_readv2()/
- *        _pread2()/_preadv2()/_recv2()/_recvmsg2()/_write2()/_writev2()/
- *        _pwrite2()/_pwritev2()/_send2()/_sendmsg2() below.
+ * @brief Shared completion callback shape for rawio_read()/_readv()/
+ *        _pread()/_preadv()/_recv()/_recvmsg()/_write()/_writev()/
+ *        _pwrite()/_pwritev()/_send()/_sendmsg() below.
  *
  * @param result Non-negative on success -- the operation-specific result
  *               (e.g. number of bytes read/written, which may be less than
@@ -624,27 +434,27 @@ int rawio_sendmsg(
  *               callback; instead, queue data or events for processing in a
  *               separate thread or context.
  */
-int rawio_read2(
+int rawio_read(
     RawIOQueue* queue, int fd, void* buf, size_t size,
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
-int rawio_readv2(
+int rawio_readv(
     RawIOQueue* queue, int fd, struct iovec* iov, unsigned int niov,
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
-int rawio_pread2(
+int rawio_pread(
     RawIOQueue* queue, int fd, void* buf, size_t size, off_t offset,
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
-int rawio_preadv2(
+int rawio_preadv(
     RawIOQueue* queue, int fd, struct iovec* iov, unsigned int niov,
     off_t offset, int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
-int rawio_recv2(
+int rawio_recv(
     RawIOQueue* queue, int fd, void* buf, size_t size, unsigned int flags,
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
@@ -732,7 +542,7 @@ int rawio_recv2(
  *
  * @see              rawio_cancel() for operation termination.
  */
-int rawio_recv_multishot2(
+int rawio_recv_multishot(
     RawIOQueue* queue, int fd, size_t entry_size, unsigned int entries,
     size_t size, unsigned int flags,
     ssize_t (*cb)(
@@ -741,27 +551,27 @@ int rawio_recv_multishot2(
     void* data, RawIOEvent** event
 ) RAWSTOR_NOEXCEPT;
 
-int rawio_recvmsg2(
+int rawio_recvmsg(
     RawIOQueue* queue, int fd, struct msghdr* msg, unsigned int flags,
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
-int rawio_write2(
+int rawio_write(
     RawIOQueue* queue, int fd, const void* buf, size_t size,
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
-int rawio_writev2(
+int rawio_writev(
     RawIOQueue* queue, int fd, const struct iovec* iov, unsigned int niov,
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
-int rawio_pwrite2(
+int rawio_pwrite(
     RawIOQueue* queue, int fd, const void* buf, size_t size, off_t offset,
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
-int rawio_pwritev2(
+int rawio_pwritev(
     RawIOQueue* queue, int fd, const struct iovec* iov, unsigned int niov,
     off_t offset, int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
@@ -779,8 +589,8 @@ int rawio_pwritev2(
  *                  - @p result is zero on success, or a negative errno on
  *                    failure. There's nothing else to report -- this
  *                    function has always used this combined result on its
- *                    own, unlike the read/write family's shared
- *                    rawio_read2() et al. callback shape.
+ *                    own, unlike the read/write family's shared callback
+ *                    shape.
  *                  - @p data is the same pointer passed as @p data below.
  *                  - Return zero on success. A negative errno value signals
  *                    an error back into the I/O completion machinery.
@@ -790,17 +600,17 @@ int rawio_pwritev2(
  *         immediate failure (in which case @p cb is never invoked). The
  *         actual sync result (success or failure) is delivered via @p cb.
  */
-int rawio_fsync2(
+int rawio_fsync(
     RawIOQueue* queue, int fd, bool datasync,
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
-int rawio_send2(
+int rawio_send(
     RawIOQueue* queue, int fd, const void* buf, size_t size, unsigned int flags,
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
-int rawio_sendmsg2(
+int rawio_sendmsg(
     RawIOQueue* queue, int fd, const struct msghdr* msg, unsigned int flags,
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
@@ -853,7 +663,7 @@ int rawio_wait_timeout(
  *              automatically terminates. Calling `rawio_cancel()` in such
  *              cases is unnecessary and has no observable effect.
  *
- * @see         rawio_poll_multishot(), rawio_recv_multishot2() for
+ * @see         rawio_poll_multishot(), rawio_recv_multishot() for
  *              establishing multishot operations.
  *
  */

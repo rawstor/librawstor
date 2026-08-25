@@ -125,7 +125,7 @@ private:
         RawstorOSTFrameIOBody body,
         std::shared_ptr<std::vector<unsigned char>> data
     );
-    // Issues a validated WRITE to storage -- rawstor_object_pwrite2()'s
+    // Issues a validated WRITE to storage -- rawstor_object_pwrite()'s
     // underlying blk::Session applies write-throttling itself (see
     // blk_session.hpp's _throttle_acquire()), so this just dispatches.
     void _dispatch_write(

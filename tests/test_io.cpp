@@ -40,7 +40,7 @@ int callback(size_t result, int error, void* data) {
     }
 }
 
-// Used by Object's close (in _close()): rawstor_object_close2()'s
+// Used by Object's close (in _close()): rawstor_object_close()'s
 // ssize_t result callback shape (negative -> -errno, zero -> success)
 // has nothing else to report.
 struct Result {
@@ -92,7 +92,7 @@ private:
     void _close() {
         if (_object != nullptr) {
             Result result;
-            int res = rawstor_object_close2(_object, result_cb, &result);
+            int res = rawstor_object_close(_object, result_cb, &result);
             if (res < 0) {
                 rawstd_error("%s\n", strerror(-res));
             } else {
@@ -177,7 +177,7 @@ public:
             }
         );
         int res =
-            rawstor_object_pread2(_object, buf, size, 0, callback, cb.get());
+            rawstor_object_pread(_object, buf, size, 0, callback, cb.get());
         if (res < 0) {
             RAWSTD_THROW_SYSTEM_ERROR(-res);
         }
@@ -207,7 +207,7 @@ public:
                 completed = true;
             }
         );
-        int res = rawstor_object_pwrite2(
+        int res = rawstor_object_pwrite(
             _object, buf, size, 0, false, callback, cb.get()
         );
         if (res < 0) {
@@ -229,7 +229,7 @@ public:
     void flush() {
         ssize_t res =
             rawstor::tests::sync_run(_queue, [&](auto cb, void* data) {
-                return rawstor_object_flush2(_object, cb, data);
+                return rawstor_object_flush(_object, cb, data);
             });
         if (res < 0) {
             RAWSTD_THROW_SYSTEM_ERROR((int)-res);
@@ -543,7 +543,7 @@ TEST(OstIOTest, write_disconnect_concurrent) {
 
     // The object-open session, and each of its retries below, disconnects
     // right after SET_OBJECT succeeds -- before either concurrent write
-    // further down is even attempted on it. Both rawstor_object_pwrite2()
+    // further down is even attempted on it. Both rawstor_object_pwrite()
     // calls below are issued back to back with no rawio_wait_timeout() in
     // between, so Session::_add_op() runs for both before the client's
     // event loop has had any chance to deliver either op's own request
@@ -582,13 +582,13 @@ TEST(OstIOTest, write_disconnect_concurrent) {
     std::string ping = "ping";
     std::string pong = "pong";
 
-    int res = rawstor_object_pwrite2(
+    int res = rawstor_object_pwrite(
         object.raw(), ping.data(), ping.length(), 0, false, callback, cb1.get()
     );
     ASSERT_GE(res, 0);
     cb1.release();
 
-    res = rawstor_object_pwrite2(
+    res = rawstor_object_pwrite(
         object.raw(), pong.data(), pong.length(), 4, false, callback, cb2.get()
     );
     ASSERT_GE(res, 0);
