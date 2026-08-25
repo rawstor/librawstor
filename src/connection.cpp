@@ -176,11 +176,12 @@ rawstd::Task<T> Connection::_with_retry(
 
         if (caught) {
             // EBUSY means the session itself is fine, just backed up
-            // against the server's per-session write-throttle-limit/
-            // write-backlog-capacity -- invalidate_session() would just
-            // reconnect and re-SET_OBJECT for no benefit (the server is
-            // still just as busy) at the cost of a needless round-trip,
-            // so only a genuine transport/session error pays for it here.
+            // against the remote server's own write-throttling (see
+            // blk_session.hpp's _throttle_acquire()) -- invalidate_session()
+            // would just reconnect and re-SET_OBJECT for no benefit (the
+            // server is still just as busy) at the cost of a needless
+            // round-trip, so only a genuine transport/session error pays
+            // for it here.
             if (error != EBUSY) {
                 try {
                     co_await invalidate_session(s);

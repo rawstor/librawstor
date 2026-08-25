@@ -1,6 +1,10 @@
 #include "opts.h"
 
+#include <rawstd/units.h>
+
 #include <assert.h>
+#include <limits.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -10,6 +14,8 @@
 #define RAWSTOR_OPTS_SO_RCVTIMEO 5000
 #define RAWSTOR_OPTS_TCP_USER_TIMEOUT 5000
 #define RAWSTOR_OPTS_LIST_LIMIT 1000
+#define RAWSTOR_OPTS_WRITE_THROTTLE_LIMIT 128
+#define RAWSTOR_OPTS_WRITE_BACKLOG_CAPACITY (256u * 1024 * 1024)
 
 static struct RawstorOpts _rawstor_opts = {};
 
@@ -17,6 +23,28 @@ static unsigned int get_env_uint(const char* name, int def) {
     const char* strval = getenv(name);
     if (strval == NULL) {
         return def;
+    }
+
+    unsigned int uintval;
+    if (sscanf(strval, "%u", &uintval) != 1) {
+        return def;
+    }
+
+    return uintval;
+}
+
+// Like get_env_uint(), but for a byte count -- also accepts a size with a
+// unit suffix (B, K, M, G, T, P, E), e.g. "256M", same as rawstor-ost's own
+// former --write-backlog-capacity flag did.
+static unsigned int get_env_bytes(const char* name, unsigned int def) {
+    const char* strval = getenv(name);
+    if (strval == NULL) {
+        return def;
+    }
+
+    uint64_t bytes;
+    if (rawstd_size_to_bytes(strval, &bytes) == 0) {
+        return bytes <= UINT_MAX ? (unsigned int)bytes : def;
     }
 
     unsigned int uintval;
@@ -66,6 +94,22 @@ int rawstor_opts_initialize(const struct RawstorOpts* opts) {
             ? opts->list_limit
             : get_env_uint("RAWSTOR_OPTS_LIST_LIMIT", RAWSTOR_OPTS_LIST_LIMIT);
 
+    _rawstor_opts.write_throttle_limit =
+        (opts != NULL && opts->write_throttle_limit != 0)
+            ? opts->write_throttle_limit
+            : get_env_uint(
+                  "RAWSTOR_OPTS_WRITE_THROTTLE_LIMIT",
+                  RAWSTOR_OPTS_WRITE_THROTTLE_LIMIT
+              );
+
+    _rawstor_opts.write_backlog_capacity =
+        (opts != NULL && opts->write_backlog_capacity != 0)
+            ? opts->write_backlog_capacity
+            : get_env_bytes(
+                  "RAWSTOR_OPTS_WRITE_BACKLOG_CAPACITY",
+                  RAWSTOR_OPTS_WRITE_BACKLOG_CAPACITY
+              );
+
     return 0;
 }
 
@@ -97,4 +141,12 @@ unsigned int rawstor_opts_tcp_user_timeout(void) {
 
 unsigned int rawstor_opts_list_limit(void) {
     return _rawstor_opts.list_limit;
+}
+
+unsigned int rawstor_opts_write_throttle_limit(void) {
+    return _rawstor_opts.write_throttle_limit;
+}
+
+unsigned int rawstor_opts_write_backlog_capacity(void) {
+    return _rawstor_opts.write_backlog_capacity;
 }
