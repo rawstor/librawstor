@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - `rawstor_object_pwrite()`/`rawstor_object_pwritev()` gained a `sync` parameter — when true, the write is durable on stable storage by the time the callback reports success. Breaking C API change; existing callers need to pass a `sync` argument (`false` preserves the old behavior).
+- `rawstor_object_spec()`/`_list()`/`_create()`/`_create_at()`/`_remove()`/`_open()`/`_id()`/`_location()` dropped in favor of the async `rawstor_target_spec()`/`_create()`/`_remove()`/`_open()`/`_id()`/`_location()` (`<rawstor/target.h>`) and `rawstor_location_list()`/`_create()` (`<rawstor/location.h>`) API, and `rawstor_object_close()` is now async too (queues and returns immediately, reporting completion via a new callback parameter that no longer carries the redundant `RawstorObject* object`). Breaking C API change; `<rawstor.h>` still pulls in every header.
 
 ### Removed
 - Dropped the deprecated `-l`/`--location` and `-t`/`--target` flags (`rawstor list`/`create`/`remove`/`show`/`testio`, `rawstor-ost`, `rawstor-vhost`) in favor of the positional `LOCATION`/`TARGET` argument; `rawstor create -t TARGET` (create-by-target) is unaffected. Also dropped the `rawstor-cli` compat symlink from the deb/rpm packages — use `rawstor`.
@@ -21,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - `librawstor`'s top-10 slowest-requests report now shows each entry's own submission/round-trip/callback latency breakdown, not just its total.
+- `rawio_fsync()`/`_open()`/`_close()`/`_poll()`/`_poll_multishot()`/`_connect()`/`_accept()`/`_accept_multishot()` gained `_2`-suffixed siblings with a single collapsed `ssize_t` result callback, ahead of the breaking rename in 0.3.0.
+- New async `rawstor_target_spec()`/`_create()`/`_remove()`/`_open()`/`_id()`/`_location()` and `rawstor_location_list()`/`_create()` API (`<rawstor/target.h>`, `<rawstor/location.h>`), plus async completion for `rawstor_object_close()`; the existing synchronous `rawstor_object_*()` API keeps working unchanged.
 
 ### Changed
 - `librawio` and `librawstor`'s client-side (`Session`/`Connection`/`Object`) internals moved from callback-based async I/O to C++20 coroutines; no public API change.

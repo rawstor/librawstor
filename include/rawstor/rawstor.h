@@ -39,12 +39,12 @@ typedef struct {
  *
  * This function tests if the given @p token represents an empty state,
  * indicating that no more objects are available in the listing operation.
- * An empty token is typically returned by @ref rawstor_object_list when
+ * An empty token is typically returned by @ref rawstor_location_list when
  * the end of the object list has been reached.
  *
  * The token is considered empty if all its bytes are zero. Callers can
  * zero‑initialize a token before the first invocation of
- * @ref rawstor_object_list and then use this function in a loop to
+ * @ref rawstor_location_list and then use this function in a loop to
  * determine when to stop pagination.
  *
  * @param token     Pointer to a RawstorPaginationToken structure to check.
@@ -55,7 +55,7 @@ typedef struct {
  *
  * @warning Passing NULL results in undefined behaviour.
  *
- * @see rawstor_object_list
+ * @see rawstor_location_list
  */
 int rawstor_pagination_token_empty(
     const RawstorPaginationToken* token

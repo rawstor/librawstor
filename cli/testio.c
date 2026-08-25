@@ -11,6 +11,7 @@
 #include <string.h>
 
 typedef struct {
+    RawstorObject* object;
     unsigned int index;
     off_t offset;
 
@@ -24,8 +25,8 @@ typedef struct {
 } Worker;
 
 static Worker* worker_create(
-    unsigned int index, uint64_t block_size, unsigned int* counter,
-    unsigned int niterations, int sync
+    RawstorObject* object, unsigned int index, uint64_t block_size,
+    unsigned int* counter, unsigned int niterations, int sync
 ) {
     Worker* worker = malloc(sizeof(Worker));
     if (worker == NULL) {
@@ -33,6 +34,7 @@ static Worker* worker_create(
     }
 
     *worker = (Worker){
+        .object = object,
         .index = index,
         .offset = block_size * index,
         .src_iov.iov_len = block_size,
@@ -97,17 +99,11 @@ fill(char* buffer, size_t size, unsigned int index, unsigned int iteration) {
     }
 }
 
-static int src_data_sent(
-    RawstorObject* object, size_t size, size_t result, int error, void* data
-);
+static int src_data_sent(size_t result, int error, void* data);
 
-static int srcv_data_sent(
-    RawstorObject* object, size_t size, size_t res, int error, void* data
-);
+static int srcv_data_sent(size_t result, int error, void* data);
 
-static int dst_data_received(
-    RawstorObject* object, size_t size, size_t result, int error, void* data
-) {
+static int dst_data_received(size_t result, int error, void* data) {
     Worker* worker = (Worker*)data;
 
     printf("(%u) %s(): result = %zd\n", worker->index, __FUNCTION__, result);
@@ -116,15 +112,18 @@ static int dst_data_received(
         return -error;
     }
 
-    if (result != size) {
+    if (result != worker->dst_iov.iov_len) {
         printf(
             "(%u) %s(): Partial read: %zu != %zu\n", worker->index,
-            __FUNCTION__, result, size
+            __FUNCTION__, result, worker->dst_iov.iov_len
         );
         return -EIO;
     }
 
-    if (strncmp(worker->src_iov.iov_base, worker->dst_iov.iov_base, size)) {
+    if (strncmp(
+            worker->src_iov.iov_base, worker->dst_iov.iov_base,
+            worker->dst_iov.iov_len
+        )) {
         printf("(%u) %s(): src != dst\n", worker->index, __FUNCTION__);
         printf("(%u) %s(): src = ", worker->index, __FUNCTION__);
         print_buf(worker->src_iov.iov_base, worker->src_iov.iov_len);
@@ -151,15 +150,13 @@ static int dst_data_received(
         worker->iteration
     );
 
-    return rawstor_object_pwrite(
-        object, worker->src_iov.iov_base, worker->src_iov.iov_len,
+    return rawstor_object_pwrite2(
+        worker->object, worker->src_iov.iov_base, worker->src_iov.iov_len,
         worker->offset, worker->sync, src_data_sent, worker
     );
 }
 
-static int dstv_data_received(
-    RawstorObject* object, size_t size, size_t result, int error, void* data
-) {
+static int dstv_data_received(size_t result, int error, void* data) {
     Worker* worker = (Worker*)data;
 
     printf("(%u) %s(): result = %zd\n", worker->index, __FUNCTION__, result);
@@ -168,15 +165,18 @@ static int dstv_data_received(
         return -error;
     }
 
-    if (result != size) {
+    if (result != worker->dst_iov.iov_len) {
         printf(
             "(%u) %s(): Partial read: %zu != %zu\n", worker->index,
-            __FUNCTION__, result, size
+            __FUNCTION__, result, worker->dst_iov.iov_len
         );
         return -EIO;
     }
 
-    if (strncmp(worker->src_iov.iov_base, worker->dst_iov.iov_base, size)) {
+    if (strncmp(
+            worker->src_iov.iov_base, worker->dst_iov.iov_base,
+            worker->dst_iov.iov_len
+        )) {
         printf("(%u) %s(): src != dst\n", worker->index, __FUNCTION__);
         printf("(%u) %s(): src = ", worker->index, __FUNCTION__);
         print_buf(worker->src_iov.iov_base, worker->src_iov.iov_len);
@@ -203,15 +203,13 @@ static int dstv_data_received(
         worker->iteration
     );
 
-    return rawstor_object_pwritev(
-        object, &worker->src_iov, 1, worker->src_iov.iov_len, worker->offset,
-        worker->sync, srcv_data_sent, worker
+    return rawstor_object_pwritev2(
+        worker->object, &worker->src_iov, 1, worker->src_iov.iov_len,
+        worker->offset, worker->sync, srcv_data_sent, worker
     );
 }
 
-static int src_data_sent(
-    RawstorObject* object, size_t size, size_t result, int error, void* data
-) {
+static int src_data_sent(size_t result, int error, void* data) {
     Worker* worker = (Worker*)data;
 
     printf("(%u) %s(): result = %zd\n", worker->index, __FUNCTION__, result);
@@ -220,23 +218,21 @@ static int src_data_sent(
         return -error;
     }
 
-    if (result != size) {
+    if (result != worker->src_iov.iov_len) {
         printf(
             "(%u) %s(): Partial write: %zu != %zu\n", worker->index,
-            __FUNCTION__, result, size
+            __FUNCTION__, result, worker->src_iov.iov_len
         );
         return -EIO;
     }
 
-    return rawstor_object_pread(
-        object, worker->dst_iov.iov_base, worker->dst_iov.iov_len,
+    return rawstor_object_pread2(
+        worker->object, worker->dst_iov.iov_base, worker->dst_iov.iov_len,
         worker->offset, dst_data_received, worker
     );
 }
 
-static int srcv_data_sent(
-    RawstorObject* object, size_t size, size_t result, int error, void* data
-) {
+static int srcv_data_sent(size_t result, int error, void* data) {
     Worker* worker = (Worker*)data;
 
     printf("(%u) %s(): result = %zd\n", worker->index, __FUNCTION__, result);
@@ -245,18 +241,80 @@ static int srcv_data_sent(
         return -error;
     }
 
-    if (result != size) {
+    if (result != worker->src_iov.iov_len) {
         printf(
             "(%u) %s(): Partial write: %zu != %zu\n", worker->index,
-            __FUNCTION__, result, size
+            __FUNCTION__, result, worker->src_iov.iov_len
         );
         return -EIO;
     }
 
-    return rawstor_object_preadv(
-        object, &worker->dst_iov, 1, worker->dst_iov.iov_len, worker->offset,
-        dstv_data_received, worker
+    return rawstor_object_preadv2(
+        worker->object, &worker->dst_iov, 1, worker->dst_iov.iov_len,
+        worker->offset, dstv_data_received, worker
     );
+}
+
+/* Synchronous open()/close() shims around the now-asynchronous
+ * rawstor_target_open()/rawstor_object_close2(): rawstor_cli_testio() below
+ * runs no other queue activity while opening/closing (all its own I/O is
+ * queued only after open() and awaited only before close()), so spinning
+ * `queue` here to wait for the callback is safe. */
+/* Shared by open_object()/close_object() below: rawstor_target_open()'s
+ * opened object is written directly into the caller-supplied `object`
+ * out-param (see open_object()), not routed through this struct, so
+ * there's nothing left for open's own result to carry beyond what
+ * close's already needs -- the two are identical. rawstor_target_open()/
+ * rawstor_object_close2() share the same ssize_t result callback shape
+ * (negative -> -errno, zero -> success), so one trampoline suffices for
+ * both. */
+typedef struct {
+    int error;
+    int done;
+} Result;
+
+static int result_cb(ssize_t result, void* data) {
+    Result* r = (Result*)data;
+    r->error = result < 0 ? (int)-result : 0;
+    r->done = 1;
+    return 0;
+}
+
+static int
+open_object(RawIOQueue* queue, const char* target, RawstorObject** object) {
+    Result result = {0};
+    int res = rawstor_target_open(queue, target, object, result_cb, &result);
+    if (res < 0) {
+        return res;
+    }
+    while (!result.done) {
+        int wres = rawio_wait(queue);
+        if (wres < 0) {
+            return wres;
+        }
+    }
+    if (result.error) {
+        return -result.error;
+    }
+    return 0;
+}
+
+static int close_object(RawIOQueue* queue, RawstorObject* object) {
+    Result result = {0};
+    int res = rawstor_object_close2(object, result_cb, &result);
+    if (res < 0) {
+        return res;
+    }
+    while (!result.done) {
+        int wres = rawio_wait(queue);
+        if (wres < 0) {
+            return wres;
+        }
+    }
+    if (result.error) {
+        return -result.error;
+    }
+    return 0;
 }
 
 int rawstor_cli_testio(
@@ -274,10 +332,10 @@ int rawstor_cli_testio(
         goto err_queue;
     }
 
-    RawstorObject* object;
-    res = rawstor_object_open(queue, target, &object);
+    RawstorObject* object = NULL;
+    res = open_object(queue, target, &object);
     if (res < 0) {
-        fprintf(stderr, "rawstor_object_open() failed: %s\n", strerror(-res));
+        fprintf(stderr, "rawstor_target_open() failed: %s\n", strerror(-res));
         err = -res;
         goto err_open;
     }
@@ -290,7 +348,8 @@ int rawstor_cli_testio(
         goto err_workers;
     }
     for (unsigned int i = 0; i < io_depth; ++i) {
-        workers[i] = worker_create(i, block_size, &counter, count, sync);
+        workers[i] =
+            worker_create(object, i, block_size, &counter, count, sync);
         if (workers[i] == NULL) {
             fprintf(stderr, "worker_create() failed: %s\n", strerror(errno));
             err = errno;
@@ -303,14 +362,14 @@ int rawstor_cli_testio(
             fill(
                 workers[i]->src_iov.iov_base, workers[i]->src_iov.iov_len, i, 0
             );
-            res = rawstor_object_pwrite(
+            res = rawstor_object_pwrite2(
                 object, workers[i]->src_iov.iov_base,
                 workers[i]->src_iov.iov_len, workers[i]->offset, sync,
                 src_data_sent, workers[i]
             );
             if (res < 0) {
                 fprintf(
-                    stderr, "rawstor_object_pwrite() failed: %s\n",
+                    stderr, "rawstor_object_pwrite2() failed: %s\n",
                     strerror(-res)
                 );
                 err = -res;
@@ -322,13 +381,13 @@ int rawstor_cli_testio(
             fill(
                 workers[i]->src_iov.iov_base, workers[i]->src_iov.iov_len, i, 0
             );
-            res = rawstor_object_pwritev(
+            res = rawstor_object_pwritev2(
                 object, &workers[i]->src_iov, 1, workers[i]->src_iov.iov_len,
                 workers[i]->offset, sync, srcv_data_sent, workers[i]
             );
             if (res < 0) {
                 fprintf(
-                    stderr, "rawstor_object_pwritev() failed: %s\n",
+                    stderr, "rawstor_object_pwritev2() failed: %s\n",
                     strerror(-res)
                 );
                 err = -res;
@@ -346,9 +405,9 @@ int rawstor_cli_testio(
         }
     }
 
-    res = rawstor_object_close(object);
+    res = close_object(queue, object);
     if (res < 0) {
-        fprintf(stderr, "rawstor_object_close() failed: %s\n", strerror(-res));
+        fprintf(stderr, "rawstor_object_close2() failed: %s\n", strerror(-res));
     }
 
     for (unsigned int i = 0; i < io_depth; ++i) {
@@ -372,9 +431,9 @@ err_worker_create:
     }
     free(workers);
 err_workers:
-    res = rawstor_object_close(object);
+    res = close_object(queue, object);
     if (res < 0) {
-        fprintf(stderr, "rawstor_object_close() failed: %s\n", strerror(-res));
+        fprintf(stderr, "rawstor_object_close2() failed: %s\n", strerror(-res));
     }
 err_open:
     rawio_queue_delete(queue);

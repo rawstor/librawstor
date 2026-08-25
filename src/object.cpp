@@ -11,8 +11,6 @@
 
 #include <rawstd/gpp.hpp>
 #include <rawstd/logging.hpp>
-#include <rawstd/uri.hpp>
-#include <rawstd/uuid.h>
 
 #include <unistd.h>
 
@@ -28,18 +26,18 @@
 
 namespace {
 
-// C ABI adapters for the I/O group (rawstor_object_pread/_preadv/_pwrite/
-// _pwritev/_flush): launch a detached coroutine that co_await's the
+// C ABI adapters for the I/O group (rawstor_object_pread2/_preadv/_pwrite/
+// _pwritev): launch a detached coroutine that co_await's the
 // already-submitted rawstd::Task, catches std::system_error, and invokes
-// the originally-passed RawstorCallback* with the translated result --
+// the originally-passed completion callback with the translated result --
 // the same one-layer-up shape as librawio/src/rawio.cpp's
 // launch_size_op_coro(). A negative return from the C callback throws --
-// see the non-coroutine launch_io_op()/launch_flush_op() wrappers below
-// (not these functions) for how that's actually delivered back out; see
-// rawstd::DetachedTask's own doc comment for why the indirection exists.
+// see the non-coroutine launch_io_op() wrapper below (not this function)
+// for how that's actually delivered back out; see rawstd::DetachedTask's
+// own doc comment for why the indirection exists.
 rawstd::DetachedTask launch_io_op_coro(
-    RawstorObject* object, size_t size, rawstd::Task<size_t> t,
-    RawstorCallback* cb, void* data
+    rawstd::Task<size_t> t, int (*cb)(size_t result, int error, void* data),
+    void* data
 ) {
     size_t result = 0;
     int error = 0;
@@ -48,49 +46,77 @@ rawstd::DetachedTask launch_io_op_coro(
     } catch (const std::system_error& e) {
         error = e.code().value();
     }
-    int res = cb(object, size, result, error, data);
+    int res = cb(result, error, data);
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 }
 
 void launch_io_op(
-    RawstorObject* object, size_t size, rawstd::Task<size_t> t,
-    RawstorCallback* cb, void* data
+    rawstd::Task<size_t> t, int (*cb)(size_t result, int error, void* data),
+    void* data
 ) {
-    launch_io_op_coro(object, size, std::move(t), cb, data);
+    launch_io_op_coro(std::move(t), cb, data);
     rawstd::DetachedTask::rethrow_if_pending();
 }
 
+// C ABI adapter for rawstor_object_flush2(): same launch pattern as
+// launch_io_op_coro() above, but flush2()'s own callback shape collapses
+// onto a single ssize_t result (negative -> -errno, zero -> success --
+// there's nothing else to report) rather than the I/O group's separate
+// result/error pair.
 rawstd::DetachedTask launch_flush_op_coro(
-    RawstorObject* object, rawstd::Task<void> t, RawstorCallback* cb, void* data
+    rawstd::Task<void> t, int (*cb)(ssize_t result, void* data), void* data
 ) {
-    int error = 0;
+    ssize_t result = 0;
     try {
         co_await t;
     } catch (const std::system_error& e) {
-        error = e.code().value();
+        result = -e.code().value();
     }
-    int res = cb(object, 0, 0, error, data);
+    int res = cb(result, data);
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 }
 
 void launch_flush_op(
-    RawstorObject* object, rawstd::Task<void> t, RawstorCallback* cb, void* data
+    rawstd::Task<void> t, int (*cb)(ssize_t result, void* data), void* data
 ) {
-    launch_flush_op_coro(object, std::move(t), cb, data);
+    launch_flush_op_coro(std::move(t), cb, data);
     rawstd::DetachedTask::rethrow_if_pending();
 }
 
-int uris(const std::vector<rawstd::URI>& uriv, char* buf, size_t size) {
-    std::string s = rawstd::URI::uris(uriv);
-    int res = snprintf(buf, size, "%s", s.c_str());
-    if (res < 0) {
-        RAWSTD_THROW_ERRNO();
+// C ABI adapter for rawstor_object_close2(): same shape as
+// launch_flush_op_coro(), but unlike every other adapter here, `object`
+// is deleted once its close() Task completes (successfully or not),
+// before `cb` is invoked. `object` is not passed to `cb` at all: by the
+// time `cb` runs, it no longer identifies anything usable, and the caller
+// already knows which close this is (it's the one they just called
+// rawstor_object_close2() for).
+rawstd::DetachedTask launch_close_op_coro(
+    RawstorObject* object, rawstd::Task<void> t,
+    int (*cb)(ssize_t result, void* data), void* data
+) {
+    ssize_t result = 0;
+    try {
+        co_await t;
+    } catch (const std::system_error& e) {
+        result = -e.code().value();
     }
-    return res;
+    delete static_cast<rawstor::Object*>(object);
+    int res = cb(result, data);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+}
+
+void launch_close_op(
+    RawstorObject* object, rawstd::Task<void> t,
+    int (*cb)(ssize_t result, void* data), void* data
+) {
+    launch_close_op_coro(object, std::move(t), cb, data);
+    rawstd::DetachedTask::rethrow_if_pending();
 }
 
 // Synchronously pumps `t` to completion by driving `q` -- used by
@@ -258,11 +284,42 @@ rawstd::Task<void> Object::flush() {
     }
 }
 
+rawstd::Task<void> Object::close() {
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('o', "%s\n", "close()");
+
+    std::vector<rawstd::Task<void>> tasks;
+    tasks.reserve(_cns.size());
+    for (auto& cn : _cns) {
+        tasks.push_back(cn->close());
+    }
+
+    // Every Connection is closed concurrently; every one is still attempted
+    // regardless of an earlier failure (gather() never abandons a task
+    // still in flight). _cns is cleared either way once gather() returns --
+    // by then every close() has actually been attempted, so ~Object()
+    // (which still runs once the caller deletes this Object after this
+    // Task completes) has nothing left to close.
+    try {
+        co_await rawstd::gather(std::move(tasks));
+        RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "error = 0\n");
+    } catch (const std::system_error& e) {
+        _cns.clear();
+        rawstd_error("%s\n", strerror(e.code().value()));
+        RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "error = %d\n", EIO);
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
+    }
+    _cns.clear();
+}
+
 } // namespace rawstor
 
-int rawstor_object_close(RawstorObject* object) noexcept {
+int rawstor_object_close2(
+    RawstorObject* object, int (*cb)(ssize_t result, void* data), void* data
+) noexcept {
     try {
-        delete static_cast<rawstor::Object*>(object);
+        launch_close_op(
+            object, static_cast<rawstor::Object*>(object)->close(), cb, data
+        );
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -277,63 +334,12 @@ int rawstor_object_close(RawstorObject* object) noexcept {
     }
 }
 
-int rawstor_object_id(
-    const RawstorObject* object, char* buf, size_t size
-) noexcept {
-    try {
-        RawstdUUID id =
-            static_cast<const rawstor::Object*>(object)->target().id();
-        RawstdUUIDString uuid;
-        rawstd_uuid_to_string(&id, &uuid);
-        int res = snprintf(buf, size, "%s", uuid);
-        if (res < 0) {
-            RAWSTD_THROW_ERRNO();
-        }
-        return res;
-    } catch (const std::system_error& e) {
-        return -e.code().value();
-    } catch (const std::bad_alloc& e) {
-        return -ENOMEM;
-    } catch (const std::exception& e) {
-        rawstd_error("%s\n", e.what());
-        return -EINVAL;
-    } catch (...) {
-        rawstd_error("Unexpected error\n");
-        return -EINVAL;
-    }
-}
-
-int rawstor_object_location(
-    const RawstorObject* object, char* buf, size_t size
-) noexcept {
-    try {
-        return uris(
-            static_cast<const rawstor::Object*>(object)
-                ->target()
-                .location()
-                .uris(),
-            buf, size
-        );
-    } catch (const std::system_error& e) {
-        return -e.code().value();
-    } catch (const std::bad_alloc& e) {
-        return -ENOMEM;
-    } catch (const std::exception& e) {
-        rawstd_error("%s\n", e.what());
-        return -EINVAL;
-    } catch (...) {
-        rawstd_error("Unexpected error\n");
-        return -EINVAL;
-    }
-}
-
-int rawstor_object_pread(
+int rawstor_object_pread2(
     RawstorObject* object, void* buf, size_t size, off_t offset,
-    RawstorCallback* cb, void* data
+    int (*cb)(size_t result, int error, void* data), void* data
 ) noexcept {
     try {
         launch_io_op(
-            object, size,
             static_cast<rawstor::Object*>(object)->pread(buf, size, offset), cb,
             data
         );
@@ -351,13 +357,12 @@ int rawstor_object_pread(
     }
 }
 
-int rawstor_object_preadv(
+int rawstor_object_preadv2(
     RawstorObject* object, iovec* iov, unsigned int niov, size_t size,
-    off_t offset, RawstorCallback* cb, void* data
+    off_t offset, int (*cb)(size_t result, int error, void* data), void* data
 ) noexcept {
     try {
         launch_io_op(
-            object, size,
             static_cast<rawstor::Object*>(object)->preadv(
                 iov, niov, size, offset
             ),
@@ -377,13 +382,12 @@ int rawstor_object_preadv(
     }
 }
 
-int rawstor_object_pwrite(
+int rawstor_object_pwrite2(
     RawstorObject* object, const void* buf, size_t size, off_t offset,
-    bool sync, RawstorCallback* cb, void* data
+    bool sync, int (*cb)(size_t result, int error, void* data), void* data
 ) noexcept {
     try {
         launch_io_op(
-            object, size,
             static_cast<rawstor::Object*>(object)->pwrite(
                 buf, size, offset, sync
             ),
@@ -403,13 +407,13 @@ int rawstor_object_pwrite(
     }
 }
 
-int rawstor_object_pwritev(
+int rawstor_object_pwritev2(
     RawstorObject* object, const iovec* iov, unsigned int niov, size_t size,
-    off_t offset, bool sync, RawstorCallback* cb, void* data
+    off_t offset, bool sync, int (*cb)(size_t result, int error, void* data),
+    void* data
 ) noexcept {
     try {
         launch_io_op(
-            object, size,
             static_cast<rawstor::Object*>(object)->pwritev(
                 iov, niov, size, offset, sync
             ),
@@ -429,12 +433,12 @@ int rawstor_object_pwritev(
     }
 }
 
-int rawstor_object_flush(
-    RawstorObject* object, RawstorCallback* cb, void* data
+int rawstor_object_flush2(
+    RawstorObject* object, int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
         launch_flush_op(
-            object, static_cast<rawstor::Object*>(object)->flush(), cb, data
+            static_cast<rawstor::Object*>(object)->flush(), cb, data
         );
         return 0;
     } catch (const std::system_error& e) {

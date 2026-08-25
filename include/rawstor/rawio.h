@@ -20,87 +20,6 @@
 extern "C" {
 #endif
 
-/**
- * @brief Generic callback for asynchronous I/O operations.
- *
- * This callback is used for various asynchronous operations including read,
- * write, and poll. The meaning of the `result` parameter varies depending on
- * the operation type, while the error and data parameters remain consistent
- * across all operations.
- *
- * @param result Operation-specific result value:
- *               - For read operations: Number of bytes successfully read.
- *                 May be less than requested due to EOF or partial reads.
- *               - For write operations: Number of bytes successfully written.
- *                 May be less than requested due to partial writes.
- *               - For poll operations: Bitmask of events that occurred.
- *                 This is a subset of the events requested in the poll call.
- *
- * @param error  Error code from the operation.
- *               Zero indicates successful completion.
- *               Non-zero values indicate errors specific to the operation.
- *
- * @param data   User-defined context pointer passed from the initiating
- *               function. This pointer is passed unchanged and can be used to
- *               maintain application state across asynchronous operations.
- *
- * @return       Operation control flag. Zero on success, negative on error.
- *
- * @note         The callback may be invoked from an I/O completion context
- *               (e.g., completion handler). Avoid blocking operations in the
- *               callback; instead, queue data or events for processing in a
- *               separate thread or context.
- */
-typedef int(RawIOCallback)(size_t result, int error, void* data);
-
-/**
- * @brief Callback for multishot receive operations with scatter-gather
- *        semantics.
- *
- * @param iov    Array of I/O vectors pointing to received data in the ring
- *               buffer. Each iovec represents a contiguous chunk of received
- *               data. The total data received across all vectors equals
- *               'result'.
- *
- * @param niov   Number of valid iovec entries in the array. Indicates how many
- *               buffer fragments contain received data.
- *
- * @param result Total number of bytes received in this operation. This is the
- *               sum of data across all iovec entries. May be less than the
- *               requested size for partial receives. Zero indicates EOF
- *               (connection closed gracefully).
- *
- * @param error  Error code from the receive operation.
- *               Zero indicates success.
- *               ENOBUFS indicates ring buffer overflow - the receive operation
- *               has been automatically terminated due to producer overtaking
- *               consumer.
- *               No further callbacks will be invoked. Other errors indicate
- *               socket or I/O errors.
- *
- * @param data   User context pointer from rawio_recv_multishot().
- *
- * @return       Specifies the size for the next buffer allocation in bytes.
- *               Positive value: Requested size for next receive operation.
- *               Negative value: Terminate the multishot operation immediately.
- *               The exact negative value may be propagated as an error code.
- *
- * @note         This callback is invoked from an completion context.
- *               For optimal performance:
- *               1. Process data quickly or copy to a separate buffer
- *               2. Avoid system calls or blocking operations
- *               3. Keep the ring buffer moving by returning promptly
- *
- * @warning      After returning a negative value or when error != 0, no further
- *               callbacks will be invoked, and the multishot operation
- *               terminates. The event handle becomes invalid and should not be
- *               canceled.
- */
-typedef ssize_t(RawIOMultishotVectorCallback)(
-    const struct iovec* iov, unsigned int niov, size_t result, int error,
-    void* data
-);
-
 typedef struct RawIOQueue RawIOQueue;
 
 typedef void RawIOEvent;
@@ -108,6 +27,12 @@ typedef void RawIOEvent;
 int rawio_queue_create(unsigned int depth, RawIOQueue** queue) RAWSTOR_NOEXCEPT;
 
 void rawio_queue_delete(RawIOQueue* queue) RAWSTOR_NOEXCEPT;
+
+/** @deprecated Use rawio_open2() instead. See rawio_read()'s note. */
+int rawio_open(
+    RawIOQueue* queue, const char* path, int flags, mode_t mode,
+    int (*cb)(int result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
 
 /**
  * @brief Asynchronously opens a file (single-shot).
@@ -131,7 +56,7 @@ void rawio_queue_delete(RawIOQueue* queue) RAWSTOR_NOEXCEPT;
  *               usual way. If O_CREAT is not set, mode is ignored.
  *
  * @param cb     Callback function invoked when the open operation completes.
- *               The callback receives an integer result:
+ *               The callback receives a ssize_t result:
  *               - If positive, it is the new file descriptor (>= 0) that can
  *                 be used for subsequent I/O operations.
  *               - If negative, it is the negative error code (e.g., -ENOENT,
@@ -156,11 +81,16 @@ void rawio_queue_delete(RawIOQueue* queue) RAWSTOR_NOEXCEPT;
  *               the actual flags if needed.
  *
  * @see          open(2) for standard synchronous open semantics.
- * @see          rawio_close() for closing the opened file descriptor.
+ * @see          rawio_close2() for closing the opened file descriptor.
  */
-int rawio_open(
+int rawio_open2(
     RawIOQueue* queue, const char* path, int flags, mode_t mode,
-    int (*cb)(int result, void* data), void* data
+    int (*cb)(ssize_t result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/** @deprecated Use rawio_close2() instead. See rawio_read()'s note. */
+int rawio_close(
+    RawIOQueue* queue, int fd, int (*cb)(int result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
 /**
@@ -173,12 +103,12 @@ int rawio_open(
  * complete and no further callbacks will be triggered for this request.
  *
  * @param fd    File descriptor to close. Must be a valid, open file descriptor
- *              that was previously obtained (e.g., from rawio_open() or
- *              rawio_accept()). After successful close, the descriptor becomes
+ *              that was previously obtained (e.g., from rawio_open2() or
+ *              rawio_accept2()). After successful close, the descriptor becomes
  *              invalid and should not be used further.
  *
  * @param cb    Callback function invoked when the close operation completes.
- *              The callback receives an integer result:
+ *              The callback receives a ssize_t result:
  *              - If zero (0), the descriptor was closed successfully.
  *              - If negative, it is the negative error code (e.g., -EBADF,
  *                -EIO). In case of an error, the descriptor may still be
@@ -209,10 +139,16 @@ int rawio_open(
  *               via rawio_cancel_all() before closing.
  *
  * @see          close(2) for standard synchronous close semantics.
- * @see          rawio_open() for opening files.
+ * @see          rawio_open2() for opening files.
  */
-int rawio_close(
-    RawIOQueue* queue, int fd, int (*cb)(int result, void* data), void* data
+int rawio_close2(
+    RawIOQueue* queue, int fd, int (*cb)(ssize_t result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/** @deprecated Use rawio_poll2() instead. See rawio_read()'s note. */
+int rawio_poll(
+    RawIOQueue* queue, int fd, unsigned int mask,
+    int (*cb)(int result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
 /**
@@ -232,7 +168,7 @@ int rawio_close(
  *              using bitwise OR.
  *
  * @param cb    Callback function invoked when the poll completes. The
- *              callback receives an integer result:
+ *              callback receives a ssize_t result:
  *              - If positive, it is the bitmask of events that occurred
  *                (subset of the requested mask).
  *              - If negative, it is the negative error code (e.g., -EBADF,
@@ -257,12 +193,19 @@ int rawio_close(
  *              may result in immediate callback invocation with an appropriate
  *              error code.
  *
- * @see         rawio_poll_multishot() for a persistent (multishot) version.
+ * @see         rawio_poll_multishot2() for a persistent (multishot) version.
  * @see         poll(2) for standard poll semantics and event definitions.
  */
-int rawio_poll(
+int rawio_poll2(
     RawIOQueue* queue, int fd, unsigned int mask,
-    int (*cb)(int result, void* data), void* data
+    int (*cb)(ssize_t result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/** @deprecated Use rawio_poll_multishot2() instead. See rawio_read()'s
+ * note. */
+int rawio_poll_multishot(
+    RawIOQueue* queue, int fd, unsigned int mask,
+    int (*cb)(int result, void* data), void* data, RawIOEvent** event
 ) RAWSTOR_NOEXCEPT;
 
 /**
@@ -284,7 +227,7 @@ int rawio_poll(
  *              descriptor types.
  *
  * @param cb    Callback function invoked when monitored events occur or an
- *              error happens. The callback receives an integer result:
+ *              error happens. The callback receives a ssize_t result:
  *              - If positive, it is the bitmask of events that occurred
  *                (subset of the requested mask).
  *              - If negative, it is the negative error code (e.g., -EBADF,
@@ -323,9 +266,15 @@ int rawio_poll(
  * @see         rawio_cancel() for operation termination.
  * @see         poll(2) for standard poll semantics and event definitions.
  */
-int rawio_poll_multishot(
+int rawio_poll_multishot2(
     RawIOQueue* queue, int fd, unsigned int mask,
-    int (*cb)(int result, void* data), void* data, RawIOEvent** event
+    int (*cb)(ssize_t result, void* data), void* data, RawIOEvent** event
+) RAWSTOR_NOEXCEPT;
+
+/** @deprecated Use rawio_connect2() instead. See rawio_read()'s note. */
+int rawio_connect(
+    RawIOQueue* queue, int fd, const struct sockaddr* addr, socklen_t addrlen,
+    int (*cb)(int result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
 /**
@@ -350,7 +299,7 @@ int rawio_poll_multishot(
  * @param addrlen Length of the sockaddr structure pointed to by addr.
  *
  * @param cb      Callback function invoked when the connect operation
- *                completes. The callback receives an integer result:
+ *                completes. The callback receives a ssize_t result:
  *                - If zero, the connection was established successfully.
  *                - If negative, it is the negative error code (e.g.,
  * -ECONNREFUSED, -ETIMEDOUT, -EINPROGRESS). In case of an error, the connection
@@ -378,10 +327,16 @@ int rawio_poll_multishot(
  *                for further connection attempts.
  *
  * @see           connect(2) for standard synchronous connect semantics.
- * @see           rawio_accept() for accepting incoming connections.
+ * @see           rawio_accept2() for accepting incoming connections.
  */
-int rawio_connect(
+int rawio_connect2(
     RawIOQueue* queue, int fd, const struct sockaddr* addr, socklen_t addrlen,
+    int (*cb)(ssize_t result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/** @deprecated Use rawio_accept2() instead. See rawio_read()'s note. */
+int rawio_accept(
+    RawIOQueue* queue, int fd, struct sockaddr* addr, socklen_t* addrlen,
     int (*cb)(int result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
@@ -408,7 +363,7 @@ int rawio_connect(
  *                to the input value). Cannot be NULL if addr is non-NULL.
  *
  * @param cb      Callback function invoked when the accept operation completes.
- *                The callback receives an integer result:
+ *                The callback receives a ssize_t result:
  *                - If positive, it is the new connected socket descriptor.
  *                - If negative, it is the negative error code (e.g., -EAGAIN,
  *                  -ECONNABORTED). In case of an error, the operation is
@@ -427,12 +382,19 @@ int rawio_connect(
  *                Avoid blocking operations inside the callback; instead, queue
  *                the new socket for processing in a separate thread or context.
  *
- * @see           rawio_accept_multishot() for a persistent version.
+ * @see           rawio_accept_multishot2() for a persistent version.
  * @see           accept(2) for standard synchronous accept semantics.
  */
-int rawio_accept(
+int rawio_accept2(
     RawIOQueue* queue, int fd, struct sockaddr* addr, socklen_t* addrlen,
-    int (*cb)(int result, void* data), void* data
+    int (*cb)(ssize_t result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/** @deprecated Use rawio_accept_multishot2() instead. See rawio_read()'s
+ * note. */
+int rawio_accept_multishot(
+    RawIOQueue* queue, int fd, int (*cb)(int result, void* data), void* data,
+    RawIOEvent** event
 ) RAWSTOR_NOEXCEPT;
 
 /**
@@ -449,7 +411,7 @@ int rawio_accept(
  * @param fd      Listening socket file descriptor. Must be bound and listening.
  *
  * @param cb      Callback function invoked for each incoming connection.
- *                The callback receives an integer result:
+ *                The callback receives a ssize_t result:
  *                - If positive, it is the new connected socket descriptor.
  *                - If negative, it is the negative error code (e.g., -EBADF,
  *                  -EINVAL). In case of an error, the multishot operation is
@@ -482,38 +444,209 @@ int rawio_accept(
  *                the callback. Instead, queue the accepted socket for later
  *                processing.
  *
- * @see           rawio_accept() for a single‑shot version.
+ * @see           rawio_accept2() for a single‑shot version.
  * @see           rawio_cancel() for terminating the operation.
  * @see           accept(2), getpeername(2).
  */
-int rawio_accept_multishot(
-    RawIOQueue* queue, int fd, int (*cb)(int result, void* data), void* data,
-    RawIOEvent** event
+int rawio_accept_multishot2(
+    RawIOQueue* queue, int fd, int (*cb)(ssize_t result, void* data),
+    void* data, RawIOEvent** event
 ) RAWSTOR_NOEXCEPT;
 
+/**
+ * @brief Deprecated completion callback shape for the read/write family
+ *        below. Superseded by the collapsed single-`ssize_t` shape used by
+ *        rawio_read2()/_readv2()/_pread2()/_preadv2()/_recv2()/_recvmsg2()/
+ *        _write2()/_writev2()/_pwrite2()/_pwritev2()/_send2()/_sendmsg2().
+ *
+ * @param result Operation-specific result value (bytes read/written, may be
+ *               less than requested due to EOF or a partial transfer).
+ * @param error  Error code from the operation. Zero indicates success; a
+ *               non-zero value is a positive errno.
+ * @param data   User-defined context pointer passed from the initiating
+ *               function.
+ *
+ * @return       Operation control flag. Zero on success, negative on error.
+ *
+ * @deprecated   Use the collapsed `ssize_t result` shape instead.
+ */
+typedef int(RawIOCallback)(size_t result, int error, void* data);
+
+/**
+ * @brief Deprecated completion callback shape for rawio_recv_multishot()
+ *        below. Superseded by rawio_recv_multishot2()'s callback, which
+ *        collapses `size_t result, int error` into a single `ssize_t
+ *        result`.
+ *
+ * @param iov    Scatter-gather vectors pointing to the received data.
+ * @param niov   Number of valid entries in @p iov.
+ * @param result Total bytes received in this operation.
+ * @param error  Error code from the operation; zero on success. `ENOBUFS`
+ *               indicates ring buffer overflow -- no further callbacks are
+ *               invoked after any non-zero @p error.
+ * @param data   User context pointer from rawio_recv_multishot().
+ *
+ * @return       Size for the next buffer allocation; negative terminates
+ *               the multishot operation immediately.
+ *
+ * @deprecated   Use rawio_recv_multishot2()'s collapsed callback shape
+ *               instead.
+ */
+typedef ssize_t(RawIOMultishotVectorCallback)(
+    const struct iovec* iov, unsigned int niov, size_t result, int error,
+    void* data
+);
+
+/**
+ * @brief Deprecated -- see rawio_read2(). Same operation, old RawIOCallback
+ *        shape (separate `result`/`error` rather than one signed value).
+ *
+ * @deprecated Use rawio_read2() instead.
+ */
 int rawio_read(
     RawIOQueue* queue, int fd, void* buf, size_t size, RawIOCallback* cb,
     void* data
 ) RAWSTOR_NOEXCEPT;
 
+/** @deprecated Use rawio_readv2() instead. See rawio_read()'s note. */
 int rawio_readv(
     RawIOQueue* queue, int fd, struct iovec* iov, unsigned int niov,
     RawIOCallback* cb, void* data
 ) RAWSTOR_NOEXCEPT;
 
+/** @deprecated Use rawio_pread2() instead. See rawio_read()'s note. */
 int rawio_pread(
     RawIOQueue* queue, int fd, void* buf, size_t size, off_t offset,
     RawIOCallback* cb, void* data
 ) RAWSTOR_NOEXCEPT;
 
+/** @deprecated Use rawio_preadv2() instead. See rawio_read()'s note. */
 int rawio_preadv(
     RawIOQueue* queue, int fd, struct iovec* iov, unsigned int niov,
     off_t offset, RawIOCallback* cb, void* data
 ) RAWSTOR_NOEXCEPT;
 
+/** @deprecated Use rawio_recv2() instead. See rawio_read()'s note. */
 int rawio_recv(
     RawIOQueue* queue, int fd, void* buf, size_t size, unsigned int flags,
     RawIOCallback* cb, void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Deprecated -- see rawio_recv_multishot2(). Same operation, old
+ *        RawIOMultishotVectorCallback shape.
+ *
+ * @deprecated Use rawio_recv_multishot2() instead.
+ */
+int rawio_recv_multishot(
+    RawIOQueue* queue, int fd, size_t entry_size, unsigned int entries,
+    size_t size, unsigned int flags, RawIOMultishotVectorCallback* cb,
+    void* data, RawIOEvent** event
+) RAWSTOR_NOEXCEPT;
+
+/** @deprecated Use rawio_recvmsg2() instead. See rawio_read()'s note. */
+int rawio_recvmsg(
+    RawIOQueue* queue, int fd, struct msghdr* msg, unsigned int flags,
+    RawIOCallback* cb, void* data
+) RAWSTOR_NOEXCEPT;
+
+/** @deprecated Use rawio_write2() instead. See rawio_read()'s note. */
+int rawio_write(
+    RawIOQueue* queue, int fd, const void* buf, size_t size, RawIOCallback* cb,
+    void* data
+) RAWSTOR_NOEXCEPT;
+
+/** @deprecated Use rawio_writev2() instead. See rawio_read()'s note. */
+int rawio_writev(
+    RawIOQueue* queue, int fd, const struct iovec* iov, unsigned int niov,
+    RawIOCallback* cb, void* data
+) RAWSTOR_NOEXCEPT;
+
+/** @deprecated Use rawio_pwrite2() instead. See rawio_read()'s note. */
+int rawio_pwrite(
+    RawIOQueue* queue, int fd, const void* buf, size_t size, off_t offset,
+    RawIOCallback* cb, void* data
+) RAWSTOR_NOEXCEPT;
+
+/** @deprecated Use rawio_pwritev2() instead. See rawio_read()'s note. */
+int rawio_pwritev(
+    RawIOQueue* queue, int fd, const struct iovec* iov, unsigned int niov,
+    off_t offset, RawIOCallback* cb, void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Deprecated -- see rawio_fsync2(). Same operation, same "raw,
+ *        possibly-negative errno" result convention (unchanged from this
+ *        function's own long-standing shape) -- only @p cb's `result`
+ *        parameter widens from int to ssize_t, matching every other
+ *        rawio_*2() function's own callback shape.
+ *
+ * @deprecated Use rawio_fsync2() instead.
+ */
+int rawio_fsync(
+    RawIOQueue* queue, int fd, bool datasync, int (*cb)(int result, void* data),
+    void* data
+) RAWSTOR_NOEXCEPT;
+
+/** @deprecated Use rawio_send2() instead. See rawio_read()'s note. */
+int rawio_send(
+    RawIOQueue* queue, int fd, const void* buf, size_t size, unsigned int flags,
+    RawIOCallback* cb, void* data
+) RAWSTOR_NOEXCEPT;
+
+/** @deprecated Use rawio_sendmsg2() instead. See rawio_read()'s note. */
+int rawio_sendmsg(
+    RawIOQueue* queue, int fd, const struct msghdr* msg, unsigned int flags,
+    RawIOCallback* cb, void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Shared completion callback shape for rawio_read2()/_readv2()/
+ *        _pread2()/_preadv2()/_recv2()/_recvmsg2()/_write2()/_writev2()/
+ *        _pwrite2()/_pwritev2()/_send2()/_sendmsg2() below.
+ *
+ * @param result Non-negative on success -- the operation-specific result
+ *               (e.g. number of bytes read/written, which may be less than
+ *               requested due to EOF or a partial transfer). Negative on
+ *               error: the (negated) errno for the operation, folding what
+ *               used to be a separate `error` parameter into this same
+ *               value instead of a second one.
+ *
+ * @param data   User-defined context pointer passed from the initiating
+ *               function. This pointer is passed unchanged and can be used
+ *               to maintain application state across asynchronous
+ *               operations.
+ *
+ * @return       Operation control flag. Zero on success, negative on error.
+ *
+ * @note         The callback may be invoked from an I/O completion context
+ *               (e.g., completion handler). Avoid blocking operations in the
+ *               callback; instead, queue data or events for processing in a
+ *               separate thread or context.
+ */
+int rawio_read2(
+    RawIOQueue* queue, int fd, void* buf, size_t size,
+    int (*cb)(ssize_t result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+int rawio_readv2(
+    RawIOQueue* queue, int fd, struct iovec* iov, unsigned int niov,
+    int (*cb)(ssize_t result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+int rawio_pread2(
+    RawIOQueue* queue, int fd, void* buf, size_t size, off_t offset,
+    int (*cb)(ssize_t result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+int rawio_preadv2(
+    RawIOQueue* queue, int fd, struct iovec* iov, unsigned int niov,
+    off_t offset, int (*cb)(ssize_t result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+int rawio_recv2(
+    RawIOQueue* queue, int fd, void* buf, size_t size, unsigned int flags,
+    int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
 /**
@@ -543,9 +676,33 @@ int rawio_recv(
  *                   Standard socket flags. Refer to recv(2) for details.
  *
  * @param cb         Callback function invoked when receive operations
- *                   complete. The callback receives scatter-gather vectors
- *                   pointing to the received data. The return value specifies
- *                   the size for the next buffer (see callback documentation).
+ *                   complete.
+ *                   - @p iov/@p niov are scatter-gather vectors pointing to
+ *                     the received data in the ring buffer; the total data
+ *                     received across all vectors equals @p result.
+ *                   - @p result is non-negative on success -- the total
+ *                     number of bytes received in this operation (may be
+ *                     less than the requested size for partial receives;
+ *                     zero indicates EOF, i.e. the connection closed
+ *                     gracefully) -- or negative on error: the (negated)
+ *                     errno for the operation. @c -ENOBUFS indicates ring
+ *                     buffer overflow -- the receive operation has been
+ *                     automatically terminated due to the producer
+ *                     overtaking the consumer. No further callbacks are
+ *                     invoked after any negative @p result. Other negative
+ *                     values indicate socket or I/O errors.
+ *                   - @p data is the same pointer passed as @p data below.
+ *                   - Return value specifies the size for the next buffer
+ *                     allocation in bytes: a non-negative value requests
+ *                     that size for the next receive operation; a negative
+ *                     value terminates the multishot operation immediately
+ *                     (the exact negative value may be propagated as an
+ *                     error code).
+ *                   This callback is invoked from a completion context. For
+ *                   optimal performance: process data quickly or copy to a
+ *                   separate buffer, avoid system calls or blocking
+ *                   operations, and keep the ring buffer moving by
+ *                   returning promptly.
  *
  * @param data       User-defined context pointer passed unchanged to each
  *                   callback invocation. Useful for maintaining application
@@ -575,50 +732,77 @@ int rawio_recv(
  *
  * @see              rawio_cancel() for operation termination.
  */
-int rawio_recv_multishot(
+int rawio_recv_multishot2(
     RawIOQueue* queue, int fd, size_t entry_size, unsigned int entries,
-    size_t size, unsigned int flags, RawIOMultishotVectorCallback* cb,
+    size_t size, unsigned int flags,
+    ssize_t (*cb)(
+        const struct iovec* iov, unsigned int niov, ssize_t result, void* data
+    ),
     void* data, RawIOEvent** event
 ) RAWSTOR_NOEXCEPT;
 
-int rawio_recvmsg(
+int rawio_recvmsg2(
     RawIOQueue* queue, int fd, struct msghdr* msg, unsigned int flags,
-    RawIOCallback* cb, void* data
+    int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
-int rawio_write(
-    RawIOQueue* queue, int fd, const void* buf, size_t size, RawIOCallback* cb,
-    void* data
+int rawio_write2(
+    RawIOQueue* queue, int fd, const void* buf, size_t size,
+    int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
-int rawio_writev(
+int rawio_writev2(
     RawIOQueue* queue, int fd, const struct iovec* iov, unsigned int niov,
-    RawIOCallback* cb, void* data
+    int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
-int rawio_pwrite(
+int rawio_pwrite2(
     RawIOQueue* queue, int fd, const void* buf, size_t size, off_t offset,
-    RawIOCallback* cb, void* data
+    int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
-int rawio_pwritev(
+int rawio_pwritev2(
     RawIOQueue* queue, int fd, const struct iovec* iov, unsigned int niov,
-    off_t offset, RawIOCallback* cb, void* data
+    off_t offset, int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
-int rawio_fsync(
-    RawIOQueue* queue, int fd, bool datasync, int (*cb)(int result, void* data),
-    void* data
+/**
+ * @brief Request that previously submitted writes to @p fd reach stable
+ *        storage.
+ *
+ * @param queue     Queue previously created by rawio_queue_create().
+ * @param fd        File descriptor to sync.
+ * @param datasync  If true, only data (not file metadata) needs to reach
+ *                  stable storage (like `fdatasync()`); if false, both
+ *                  data and metadata are synced (like `fsync()`).
+ * @param cb        Callback invoked on completion.
+ *                  - @p result is zero on success, or a negative errno on
+ *                    failure. There's nothing else to report -- this
+ *                    function has always used this combined result on its
+ *                    own, unlike the read/write family's shared
+ *                    rawio_read2() et al. callback shape.
+ *                  - @p data is the same pointer passed as @p data below.
+ *                  - Return zero on success. A negative errno value signals
+ *                    an error back into the I/O completion machinery.
+ * @param data      User-defined context pointer passed unchanged to @p cb.
+ *
+ * @return 0 if the sync was successfully queued; negative errno on
+ *         immediate failure (in which case @p cb is never invoked). The
+ *         actual sync result (success or failure) is delivered via @p cb.
+ */
+int rawio_fsync2(
+    RawIOQueue* queue, int fd, bool datasync,
+    int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
-int rawio_send(
+int rawio_send2(
     RawIOQueue* queue, int fd, const void* buf, size_t size, unsigned int flags,
-    RawIOCallback* cb, void* data
+    int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
-int rawio_sendmsg(
+int rawio_sendmsg2(
     RawIOQueue* queue, int fd, const struct msghdr* msg, unsigned int flags,
-    RawIOCallback* cb, void* data
+    int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
 int rawio_wait(RawIOQueue* queue) RAWSTOR_NOEXCEPT;
@@ -669,7 +853,7 @@ int rawio_wait_timeout(
  *              automatically terminates. Calling `rawio_cancel()` in such
  *              cases is unnecessary and has no observable effect.
  *
- * @see         rawio_poll_multishot(), rawio_recv_multishot() for
+ * @see         rawio_poll_multishot(), rawio_recv_multishot2() for
  *              establishing multishot operations.
  *
  */

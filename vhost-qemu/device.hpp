@@ -3,6 +3,7 @@
 
 #include <rawstor/object.h>
 #include <rawstor/rawio.h>
+#include <rawstor/target.h>
 
 extern "C" {
 #include "libvhost-user.h"
@@ -48,6 +49,7 @@ private:
     static std::unordered_map<int, Device*> _devices;
 
     RawIOQueue* _queue;
+    std::string _target;
     RawstorObjectSpec _spec;
     RawstorObject* _object;
 
@@ -74,6 +76,8 @@ public:
     Device& operator=(Device&&) = delete;
 
     inline RawIOQueue* queue() noexcept { return _queue; }
+
+    inline const std::string& target() const noexcept { return _target; }
 
     inline RawstorObject* object() noexcept { return _object; }
 

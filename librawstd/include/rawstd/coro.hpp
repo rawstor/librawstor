@@ -1,11 +1,15 @@
 #ifndef RAWSTD_CORO_HPP
 #define RAWSTD_CORO_HPP
 
+#include <rawstd/gpp.hpp>
+
 #include <coroutine>
 #include <exception>
 #include <utility>
 #include <variant>
 #include <vector>
+
+#include <sys/types.h>
 
 namespace rawstd {
 
@@ -379,6 +383,226 @@ public:
             std::exception_ptr ex =
                 std::exchange(detail::detached_task_pending_exception, nullptr);
             std::rethrow_exception(ex);
+        }
+    }
+};
+
+/**
+ * The opposite direction from DetachedTask's own C-callback adapter use
+ * case: a co_await-able bridge over a single-shot, C-callback-based async
+ * operation -- any function shaped `int op(..., Callback* cb, void* data)`
+ * whose `cb` fires exactly once, asynchronously (e.g. every function in
+ * rawstor/object.h, rawstor/target.h). Lets C++ code written against such
+ * an API be a coroutine itself instead of hand-written continuation-passing.
+ *
+ * The operation must already be submitted by the time this object is
+ * co_await-ed, matching the "submission is eager, co_await only attaches a
+ * resumption point" model used throughout this codebase (see e.g.
+ * rawio::Awaitable<T>): construct a named local `CallbackAwaitable<T>`,
+ * pass its address as `data` to the C call, submit it, *then* `co_await`
+ * it. Because its address is handed out before the first suspension, this
+ * type is neither movable nor copyable -- relocating it after that point
+ * would leave the C callback holding a dangling pointer. This is safe as a
+ * named local in a coroutine body: such locals live in the coroutine frame
+ * itself, which does not move across suspension.
+ *
+ * Unlike rawio::Awaitable<T> (only ever constructed once an event is
+ * already known to be genuinely in flight, driven by the reactor and
+ * therefore never completing before the next wait()/wait_timeout() call),
+ * nothing about the C APIs this wraps promises the callback won't fire
+ * *synchronously*, inline, as part of the very call that submits the
+ * operation -- before this object has even reached its own co_await yet.
+ * complete() therefore tolerates running before await_suspend() has
+ * stored a handle to resume: it just records the result and lets
+ * await_ready() report done immediately, skipping the suspend/resume
+ * dance entirely for that case.
+ *
+ * The C callback trampoline registered as `cb` isn't a fixed shape here
+ * (unlike DetachedTask, which only ever wraps rawstd::Task<T>/DetachedTask
+ * producers) -- every C API in this codebase shapes its callback
+ * differently (rawstor_object_pread2()'s result/error/data,
+ * rawio_send2()'s single signed result/data, ...). Each call site supplies
+ * its own small trampoline matching the C function it's adapting, whose
+ * only job is extracting `data` back to `CallbackAwaitable<T>*` and calling
+ * complete() -- see ost::Session/rawstor::vhost::Device's own
+ * co_object_*() wrappers for the pattern.
+ *
+ * Every error surfaces uniformly as a thrown std::system_error from
+ * await_resume()/co_await, exactly like rawio::Awaitable<T>.
+ */
+template <typename T>
+class CallbackAwaitable {
+private:
+    std::coroutine_handle<> _h;
+    T _value;
+    int _error;
+    bool _done;
+
+public:
+    CallbackAwaitable() noexcept : _h(), _value(), _error(0), _done(false) {}
+    CallbackAwaitable(const CallbackAwaitable&) = delete;
+    CallbackAwaitable& operator=(const CallbackAwaitable&) = delete;
+    CallbackAwaitable(CallbackAwaitable&&) = delete;
+    CallbackAwaitable& operator=(CallbackAwaitable&&) = delete;
+
+    // True if complete() already ran -- a synchronous completion,
+    // reported before this object was ever co_await-ed (see the class
+    // doc comment). Skips the suspend/resume dance entirely for that
+    // case: await_suspend() is never even called.
+    bool await_ready() const noexcept { return _done; }
+
+    void await_suspend(std::coroutine_handle<> h) noexcept { _h = h; }
+
+    T await_resume() {
+        if (_error) {
+            RAWSTD_THROW_SYSTEM_ERROR(_error);
+        }
+        return std::move(_value);
+    }
+
+    // Called by the caller-supplied C callback trampoline, exactly once,
+    // once the wrapped operation completes -- possibly synchronously,
+    // before await_suspend() has stored a handle to resume (_h is then
+    // still empty, so there is nothing to resume: await_ready() picks the
+    // result up directly instead).
+    void complete(T value, int error) noexcept {
+        _value = std::move(value);
+        _error = error;
+        _done = true;
+        if (_h) {
+            _h.resume();
+        }
+    }
+};
+
+// void can't be a CallbackAwaitable<T>::_value, so T = void gets its own
+// specialization instead (same split as Task<T>/Task<void> above).
+template <>
+class CallbackAwaitable<void> {
+private:
+    std::coroutine_handle<> _h;
+    int _error;
+    bool _done;
+
+public:
+    CallbackAwaitable() noexcept : _h(), _error(0), _done(false) {}
+    CallbackAwaitable(const CallbackAwaitable&) = delete;
+    CallbackAwaitable& operator=(const CallbackAwaitable&) = delete;
+    CallbackAwaitable(CallbackAwaitable&&) = delete;
+    CallbackAwaitable& operator=(CallbackAwaitable&&) = delete;
+
+    bool await_ready() const noexcept { return _done; }
+
+    void await_suspend(std::coroutine_handle<> h) noexcept { _h = h; }
+
+    void await_resume() {
+        if (_error) {
+            RAWSTD_THROW_SYSTEM_ERROR(_error);
+        }
+    }
+
+    // For trampolines over a C callback shaped `int (*)(ssize_t result,
+    // void* data)` (negative -> -errno, zero -> success, no other value
+    // to report) -- the target/location group's own convention (see e.g.
+    // rawstor_target_open()'s doc comment), and the only one this
+    // codebase still uses for a value-less completion: every C callback
+    // that used to hand this class a raw positive errno directly has
+    // itself moved to this same negative-on-error convention (see
+    // rawstor_object_close()/_target_open()'s own history), so there's
+    // no longer a second shape worth a separate overload for.
+    void complete(ssize_t result) noexcept {
+        _error = result < 0 ? static_cast<int>(-result) : 0;
+        _done = true;
+        if (_h) {
+            _h.resume();
+        }
+    }
+};
+
+/**
+ * The multishot analog of CallbackAwaitable<T>: a co_await-able bridge
+ * over a C callback that fires repeatedly, once per item, for any
+ * function shaped `int op(..., int (*cb)(T result, ..., void* data),
+ * void* data, ...)` whose `cb` keeps firing until a terminal error ends
+ * the operation -- e.g. rawio_accept_multishot(). Mirrors the shape of
+ * librawio's own internal pull-streams (rawio::AcceptStream/PollStream/
+ * RecvStream: `while (auto x = co_await stream.next())`), but over the C
+ * ABI rather than librawio's internal Queue, for code (ost/, vhost/,
+ * vhost-qemu/) that only ever sees that C ABI.
+ *
+ * Same construction discipline as CallbackAwaitable<T>: a named local in
+ * the coroutine body that submits the multishot op, whose address is
+ * handed to the C call as `data` -- neither movable nor copyable, for the
+ * same reason. Only one item is ever buffered: the C API this wraps only
+ * ever invokes its callback again once the coroutine consuming the
+ * previous item has returned control back up to it (there is no
+ * concurrent producer), so complete() is never called a second time
+ * before the pending one has been consumed via next().
+ *
+ * complete() tolerates running before the first next() has even been
+ * co_await-ed, exactly like CallbackAwaitable<T>::complete() -- the
+ * wrapped C API may deliver its very first item synchronously, inline,
+ * during registration.
+ *
+ * Every error -- a genuine failure or the operation's ordinary end (e.g.
+ * ECANCELED after rawio_cancel()) -- surfaces uniformly as a thrown
+ * std::system_error from next()'s await_resume(), exactly like
+ * AcceptStream::Next/PollStream::Next. There is no sentinel end-of-stream
+ * value: a plain `while (true) { T x = co_await stream.next(); ... }`
+ * loop ends naturally via that exception.
+ */
+template <typename T>
+class CallbackStream {
+private:
+    std::coroutine_handle<> _h;
+    T _value;
+    int _error;
+    bool _pending;
+
+public:
+    CallbackStream() noexcept : _h(), _value(), _error(0), _pending(false) {}
+    CallbackStream(const CallbackStream&) = delete;
+    CallbackStream& operator=(const CallbackStream&) = delete;
+    CallbackStream(CallbackStream&&) = delete;
+    CallbackStream& operator=(CallbackStream&&) = delete;
+
+    class Next {
+    private:
+        CallbackStream* _stream;
+
+    public:
+        explicit Next(CallbackStream* stream) noexcept : _stream(stream) {}
+
+        // True if complete() already ran for this item -- see the class
+        // doc comment on synchronous completion.
+        bool await_ready() const noexcept { return _stream->_pending; }
+
+        void await_suspend(std::coroutine_handle<> h) noexcept {
+            _stream->_h = h;
+        }
+
+        T await_resume() {
+            _stream->_pending = false;
+            if (_stream->_error) {
+                RAWSTD_THROW_SYSTEM_ERROR(_stream->_error);
+            }
+            return std::move(_stream->_value);
+        }
+    };
+
+    // Returns a fresh awaitable for the next item; call again (typically
+    // from a loop) after each await_resume().
+    Next next() noexcept { return Next(this); }
+
+    // Called by the caller-supplied C callback trampoline: once per item
+    // (error == 0), or once, terminally (error != 0 -- no further calls
+    // follow).
+    void complete(T value, int error) noexcept {
+        _value = std::move(value);
+        _error = error;
+        _pending = true;
+        if (_h) {
+            std::exchange(_h, {}).resume();
         }
     }
 };

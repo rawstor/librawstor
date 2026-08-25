@@ -13,6 +13,7 @@
 #include <rawstor/protocol.h>
 #include <rawstor/rawio.h>
 #include <rawstor/rawstor.h>
+#include <rawstor/target.h>
 #include <rawstor/version.h>
 
 #endif // RAWSTOR_H

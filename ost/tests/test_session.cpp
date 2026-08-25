@@ -2,8 +2,8 @@
 #include "queue.hpp"
 #include "tmp_dir.hpp"
 
+#include <ost/client.hpp>
 #include <ost/server.hpp>
-#include <ost/session.hpp>
 
 #include <rawstor/protocol.h>
 #include <rawstor/rawio.h>
@@ -47,13 +47,13 @@ bool pump_until(
     return done();
 }
 
-// A Session needs a real Server for locations(), but not its listening
+// A Client needs a real Server for locations(), but not its listening
 // socket or accept loop -- port 0 leaves that socket bound but otherwise
 // unused (the OS picks it, so there's no fixed-port collision risk
 // either). The other half of the
-// pair, wired directly into Session::create() below, stands in for what
-// Server::_add_session() would otherwise do with a real accept()ed fd.
-std::pair<std::shared_ptr<rawstor::ostbackend::Session>, int>
+// pair, wired directly into Client::create() below, stands in for what
+// Server::_add_client() would otherwise do with a real accept()ed fd.
+std::pair<std::shared_ptr<rawstor::ostbackend::Client>, int>
 connect_session(rawstor::ostbackend::Server& server, RawIOQueue* queue) {
     int fds[2];
     if (::socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == -1) {
@@ -79,29 +79,29 @@ connect_session(rawstor::ostbackend::Server& server, RawIOQueue* queue) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 
-    std::shared_ptr<rawstor::ostbackend::Session> session =
-        rawstor::ostbackend::Session::create(queue, server, fds[0]);
+    std::shared_ptr<rawstor::ostbackend::Client> session =
+        rawstor::ostbackend::Client::create(queue, server, fds[0]).get();
     return {session, fds[1]};
 }
 
-// RAII wrapper around the Session connect_session() returns: drops it and
+// RAII wrapper around the Client connect_session() returns: drops it and
 // drains `queue` until idle before letting the destructor run, rather than
-// just letting the shared_ptr go out of scope on its own. Session::_arm_recv()
-// hands its multishot recv registration a heap-allocated weak_ptr<Session>
+// just letting the shared_ptr go out of scope on its own. Client::_arm_recv()
+// hands its multishot recv registration a heap-allocated weak_ptr<Client>
 // as callback data, freed only once that registration's terminal completion
-// (self-termination or the cancellation ~Session() triggers) is actually
+// (self-termination or the cancellation ~Client() triggers) is actually
 // dispatched -- one still in flight when `queue` gets torn down right after
 // is exactly what LeakSanitizer reports as a leak. Runs via RAII, not
 // "cleanup code at the end of the test", so it still happens even if an
 // ASSERT_* returns from the test body early.
 class SessionCleanup final {
 private:
-    std::shared_ptr<rawstor::ostbackend::Session> _session;
+    std::shared_ptr<rawstor::ostbackend::Client> _session;
     RawIOQueue* _queue;
 
 public:
     SessionCleanup(
-        std::shared_ptr<rawstor::ostbackend::Session> session, RawIOQueue* queue
+        std::shared_ptr<rawstor::ostbackend::Client> session, RawIOQueue* queue
     ) :
         _session(std::move(session)),
         _queue(queue) {}
@@ -124,7 +124,7 @@ public:
     SessionCleanup& operator=(const SessionCleanup&) = delete;
     SessionCleanup& operator=(SessionCleanup&&) = delete;
 
-    rawstor::ostbackend::Session* operator->() const noexcept {
+    rawstor::ostbackend::Client* operator->() const noexcept {
         return _session.get();
     }
 };
@@ -208,7 +208,7 @@ TEST(OstSessionTest, set_object_twice_does_not_crash) {
     EXPECT_EQ(response.body.res, 0);
 
     // First SET_OBJECT: the session's _object starts null, so this only
-    // exercises rawstor_object_open() (same as simple_success above).
+    // exercises rawstor_target_open() (same as simple_success above).
     client.send_set_object(id);
     ASSERT_TRUE(pump_until(queue, [&] {
         return client.bytes_available() >= sizeof(RawstorOSTFrameResponse);
@@ -218,18 +218,18 @@ TEST(OstSessionTest, set_object_twice_does_not_crash) {
     EXPECT_EQ(response.body.res, 0);
 
     // Second SET_OBJECT on the same session: _object is already set, so
-    // the server's Session::_set_object() first rawstor_object_close()s
-    // it before opening again -- exercising Object::~Object()'s
-    // run(_queue, cn->close()) from *inside* the server's own
-    // already-executing Queue::_dispatch() call (the one dispatching
-    // this very SET_OBJECT frame's completion). blk::Session::close()
-    // used to co_await an actual io_uring close op there, which needs a
-    // real completion round-trip to resume -- reentering _dispatch() on
-    // a queue it's already mid-iteration on, an ASan-confirmed
-    // heap-use-after-free (a RecvMultishotCompletion the still-in-
-    // progress outer iteration needed got freed by the reentrant inner
-    // one first). Now synchronous, like _connect() already was, so this
-    // must complete cleanly.
+    // the server's Client::_set_object() first closes it (via
+    // Client::_close_current_object(), asynchronously --
+    // rawstor_object_close2() queues the close and returns immediately,
+    // deferring the actual open-a-new-object work to its own completion
+    // callback) before opening again. This used to be where a nested
+    // run()-pumped synchronous close from *inside* the server's own
+    // already-executing Queue::_dispatch() call (the one dispatching this very
+    // SET_OBJECT frame's completion) caused an ASan-confirmed
+    // heap-use-after-free (a RecvMultishotCompletion the still-in-progress
+    // outer iteration needed got freed by the reentrant inner one first);
+    // staying fully async end-to-end here avoids ever reentering _dispatch() in
+    // the first place, so this must still complete cleanly.
     client.send_set_object(id);
     ASSERT_TRUE(pump_until(queue, [&] {
         return client.bytes_available() >= sizeof(RawstorOSTFrameResponse);
@@ -245,8 +245,8 @@ TEST(OstSessionTest, set_object_twice_does_not_crash) {
 // EPIPE (BufferRing::operator(), librawio/src/uring_buffer.cpp synthesizes
 // it for a 0-byte/EOF recv) -- same as any other terminal error, not just
 // ECANCELED. If that terminal completion is already sitting in the
-// completion queue, unprocessed, by the time the Session is destroyed,
-// ~Session()'s rawio_cancel() has nothing left to cancel (-ENOENT) and the
+// completion queue, unprocessed, by the time the Client is destroyed,
+// ~Client()'s rawio_cancel() has nothing left to cancel (-ENOENT) and the
 // completion still fires later, into what used to be a raw `this` pointer.
 //
 // Whether the kernel has actually posted that completion by the time
@@ -268,7 +268,7 @@ TEST(OstSessionTest, set_object_twice_does_not_crash) {
 // ever being serviced across all 100 iterations. Once _cqes fills up,
 // RingBuf::push() throws ENOBUFS from inside rawio_cancel() itself, so the
 // cancel never completes and that session's registration -- and the
-// weak_ptr<Session> its callback data owns (_arm_recv()) -- is orphaned
+// weak_ptr<Client> its callback data owns (_arm_recv()) -- is orphaned
 // for good; no amount of draining afterwards recovers from a cancel that
 // already failed. CI's asan job (--without-liburing) caught exactly this,
 // twice, as a LeakSanitizer failure even after the drain-more-at-the-end
@@ -291,11 +291,11 @@ TEST(OstSessionTest, disconnect_races_session_destruction) {
 
         // Give the kernel a chance to actually post that terminal
         // completion into the queue before the next line runs, without
-        // ever draining it ourselves -- the window ~Session() must cope
+        // ever draining it ourselves -- the window ~Client() must cope
         // with.
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
 
-        // Drop the only owning shared_ptr: ~Session() runs here,
+        // Drop the only owning shared_ptr: ~Client() runs here,
         // synchronously, calling rawio_cancel() on a registration that
         // may have already self-terminated (-ENOENT, "too late").
         session.reset();

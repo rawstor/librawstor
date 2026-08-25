@@ -25,6 +25,7 @@
 #include <utility>
 
 #include <cerrno>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
@@ -86,21 +87,158 @@ rawstd::Task<std::pair<std::vector<RawstdUUID>, RawstdUUID>> list_one(
     co_return ret;
 }
 
-// Synchronously pumps `t` to completion by driving `q` -- the boundary
-// where this file's synchronous C ABI (rawstor_object_list,
-// rawstor_location_info) meets the now fully co_await-composed
-// rawstor::Location/Connection internals: each of those C functions
-// creates exactly one Queue for its whole call and pumps the single
-// Task<T> it awaits through here. Deliberately a local duplicate of
-// connection.cpp/object.cpp/target.cpp's own `run()`, rather than a
-// shared dependency, since it's four lines and location.cpp has no other
-// reason to know about those files' internals.
-template <typename T>
-T run(rawio::Queue& q, rawstd::Task<T> t) {
-    while (!t.done()) {
-        q.wait_timeout(rawstor_opts_tcp_user_timeout());
+// C ABI adapter for rawstor_location_info(): `loc`/`queue` are captured by
+// value/pointer into the coroutine's own frame rather than taken as a
+// pre-built Task<RawstorLocationInfo> -- unlike ost/src/client.cpp's own
+// launch-a-Task style adapters, Location::info() itself needs to be
+// *called* from inside a coroutine that survives the whole await (a
+// reference parameter to a coroutine isn't lifetime-extended past the
+// initiating call the way an ordinary function's would be -- see co_
+// target_open()'s own doc comment in ost/src/client.cpp for the general
+// hazard), so this one calls it itself instead of receiving an
+// already-submitted Task from its own (synchronous) caller. `info` is
+// written exactly once, immediately before `cb` runs (same out-parameter
+// convention as every other async rawstor_*() call in this codebase).
+rawstd::DetachedTask launch_info_op_coro(
+    rawstor::Location loc, rawio::Queue* queue, RawstorLocationInfo* info,
+    int (*cb)(ssize_t result, void* data), void* data
+) {
+    ssize_t result = 0;
+    try {
+        *info = co_await loc.info(*queue);
+    } catch (const std::system_error& e) {
+        result = -e.code().value();
+    } catch (const std::bad_alloc&) {
+        result = -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        result = -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        result = -EINVAL;
     }
-    return t.get();
+    int res = cb(result, data);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+}
+
+void launch_info_op(
+    rawstor::Location loc, rawio::Queue* queue, RawstorLocationInfo* info,
+    int (*cb)(ssize_t result, void* data), void* data
+) {
+    launch_info_op_coro(std::move(loc), queue, info, cb, data);
+    rawstd::DetachedTask::rethrow_if_pending();
+}
+
+// C ABI adapter for rawstor_location_list(): same "call Location::list()
+// itself" shape as launch_info_op_coro() above and for the same reason
+// (`targets`); `list_targets` is a coroutine-frame-local Location::list()
+// fills, converted into the RawstorStringList* handed to `*targets` here
+// -- exactly the post-processing rawstor_location_list()'s old
+// synchronous body used to do right after its own run(), just moved to
+// run after the now-async co_await instead.
+rawstd::DetachedTask launch_list_op_coro(
+    rawstor::Location loc, rawio::Queue* queue, unsigned int limit,
+    RawstorStringList** targets, RawstorPaginationToken* token,
+    int (*cb)(ssize_t result, void* data), void* data
+) {
+    ssize_t result = 0;
+    RawstorStringList* list = nullptr;
+    try {
+        std::list<rawstor::Target> list_targets;
+        co_await loc.list(*queue, limit, list_targets, *token);
+
+        list = (RawstorStringList*)rawstd_list_create(sizeof(const char*));
+        if (list == nullptr) {
+            throw std::bad_alloc();
+        }
+        for (const auto& t : list_targets) {
+            std::string target = rawstd::URI::uris(t.uris());
+
+            char* str = (char*)malloc(target.length() + 1);
+            if (str == nullptr) {
+                RAWSTD_THROW_ERRNO();
+            }
+            memcpy(str, target.c_str(), target.length() + 1);
+
+            char** it = (char**)rawstd_list_append((RawstdList*)list);
+            if (it == nullptr) {
+                free(str);
+                RAWSTD_THROW_ERRNO();
+            }
+            *it = str;
+        }
+
+        *targets = list;
+    } catch (const std::system_error& e) {
+        rawstor_string_list_delete(list);
+        result = -e.code().value();
+    } catch (const std::bad_alloc&) {
+        rawstor_string_list_delete(list);
+        result = -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        rawstor_string_list_delete(list);
+        result = -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        rawstor_string_list_delete(list);
+        result = -EINVAL;
+    }
+    int res = cb(result, data);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+}
+
+void launch_list_op(
+    rawstor::Location loc, rawio::Queue* queue, unsigned int limit,
+    RawstorStringList** targets, RawstorPaginationToken* token,
+    int (*cb)(ssize_t result, void* data), void* data
+) {
+    launch_list_op_coro(std::move(loc), queue, limit, targets, token, cb, data);
+    rawstd::DetachedTask::rethrow_if_pending();
+}
+
+// C ABI adapter for rawstor_location_create()'s actual object-creation
+// step, once the target string is already known to fit the caller's
+// buffer (see rawstor_location_create() itself for the synchronous,
+// no-I/O-needed length computation and the too-small case, which never
+// reaches this at all). `length` is threaded through as the success
+// result -- rawstor_location_create() keeps its snprintf()-style
+// contract (the target string's length, always < the buffer size on
+// success) even though the actual CREATE is now asynchronous.
+rawstd::DetachedTask launch_create_op_coro(
+    rawstor::Target t, rawio::Queue* queue, RawstorObjectSpec spec,
+    ssize_t length, int (*cb)(ssize_t result, void* data), void* data
+) {
+    ssize_t result = length;
+    try {
+        co_await t.create(*queue, spec);
+    } catch (const std::system_error& e) {
+        result = -e.code().value();
+    } catch (const std::bad_alloc&) {
+        result = -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        result = -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        result = -EINVAL;
+    }
+    int res = cb(result, data);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+}
+
+void launch_create_op(
+    rawstor::Target t, rawio::Queue* queue, const RawstorObjectSpec& spec,
+    ssize_t length, int (*cb)(ssize_t result, void* data), void* data
+) {
+    launch_create_op_coro(std::move(t), queue, spec, length, cb, data);
+    rawstd::DetachedTask::rethrow_if_pending();
 }
 
 } // namespace
@@ -243,65 +381,106 @@ rawstd::Task<Target> Location::create(
 
 } // namespace rawstor
 
-int rawstor_object_list(
-    const char* location, unsigned int limit, RawstorStringList** targets,
-    RawstorPaginationToken* token
+int rawstor_location_list(
+    RawIOQueue* queue, const char* location, unsigned int limit,
+    RawstorStringList** targets, RawstorPaginationToken* token,
+    int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
-    RawstorStringList* list = nullptr;
     try {
         rawstor::Location loc(rawstd::URI::uriv(location));
-        std::list<rawstor::Target> ret;
-
-        std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
-        run(*queue, loc.list(*queue, limit, ret, *token));
-
-        list = (RawstorStringList*)rawstd_list_create(sizeof(const char*));
-        if (list == nullptr) {
-            throw std::bad_alloc();
-        }
-        for (const auto& t : ret) {
-            std::string target = rawstd::URI::uris(t.uris());
-
-            char* str = (char*)malloc(target.length() + 1);
-            if (str == nullptr) {
-                RAWSTD_THROW_ERRNO();
-            }
-            memcpy(str, target.c_str(), target.length() + 1);
-
-            char** it = (char**)rawstd_list_append((RawstdList*)list);
-            if (it == nullptr) {
-                free(str);
-                RAWSTD_THROW_ERRNO();
-            }
-            *it = str;
-        }
-
-        *targets = (RawstorStringList*)list;
+        launch_list_op(
+            std::move(loc), static_cast<rawio::Queue*>(queue), limit, targets,
+            token, cb, data
+        );
         return 0;
     } catch (const std::system_error& e) {
-        rawstor_string_list_delete(list);
         return -e.code().value();
     } catch (const std::bad_alloc& e) {
-        rawstor_string_list_delete(list);
         return -ENOMEM;
     } catch (const std::exception& e) {
         rawstd_error("%s\n", e.what());
-        rawstor_string_list_delete(list);
         return -EINVAL;
     } catch (...) {
         rawstd_error("Unexpected error\n");
-        rawstor_string_list_delete(list);
         return -EINVAL;
     }
 }
 
 int rawstor_location_info(
-    const char* location, RawstorLocationInfo* info
+    RawIOQueue* queue, const char* location, RawstorLocationInfo* info,
+    int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
-        std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
         rawstor::Location loc(rawstd::URI::uriv(location));
-        *info = run(*queue, loc.info(*queue));
+        launch_info_op(
+            std::move(loc), static_cast<rawio::Queue*>(queue), info, cb, data
+        );
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+int rawstor_location_create(
+    RawIOQueue* queue, const char* location, const char* uuid,
+    const struct RawstorObjectSpec* spec, char* target, size_t size,
+    int (*cb)(ssize_t result, void* data), void* data
+) noexcept {
+    try {
+        RawstdUUID id;
+        int res;
+
+        if (uuid == nullptr) {
+            res = rawstd_uuid7_init(&id);
+            if (res < 0) {
+                RAWSTD_THROW_SYSTEM_ERROR(-res);
+            }
+        } else {
+            res = rawstd_uuid_from_string(&id, uuid);
+            if (res < 0) {
+                RAWSTD_THROW_SYSTEM_ERROR(-res);
+            }
+        }
+
+        RawstdUUIDString uuid_string;
+        rawstd_uuid_to_string(&id, &uuid_string);
+
+        std::vector<rawstd::URI> uris = rawstd::URI::uriv(location);
+        std::vector<rawstd::URI> ret;
+        ret.reserve(uris.size());
+        for (const auto& uri : uris) {
+            ret.emplace_back(uri, uuid_string);
+        }
+
+        res = snprintf(target, size, "%s", rawstd::URI::uris(ret).c_str());
+        if (res < 0) {
+            return res;
+        }
+
+        if (static_cast<size_t>(res) >= size) {
+            // Buffer too small -- nothing was queued (the target string is
+            // fully known without any I/O), so this reports synchronously,
+            // right here, rather than waiting for a rawio_wait() that will
+            // never see this operation at all.
+            int cbres = cb(res, data);
+            if (cbres < 0) {
+                RAWSTD_THROW_SYSTEM_ERROR(-cbres);
+            }
+            return 0;
+        }
+
+        launch_create_op(
+            rawstor::Target(ret), static_cast<rawio::Queue*>(queue), *spec, res,
+            cb, data
+        );
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();

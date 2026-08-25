@@ -16,6 +16,8 @@ rawstor_SOURCES = create.c \
                   list.c \
                   list.h \
                   main.c \
+                  rawio_sync.c \
+                  rawio_sync.h \
                   remove.c \
                   remove.h \
                   show.c \

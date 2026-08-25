@@ -5,6 +5,8 @@
 #include "object.hpp"
 #include "opts.h"
 
+#include <rawstor/target.h>
+
 #include <rawio/queue.hpp>
 
 #include <rawstd/gpp.hpp>
@@ -132,21 +134,167 @@ open_one(rawio::Queue& queue, const rawstd::URI& uri, rawstor::Object* object) {
     co_return cn;
 }
 
-// Synchronously pumps `t` to completion by driving `q` -- the boundary
-// where this file's synchronous C ABI (rawstor_object_create/_create_at/
-// _remove/_spec/_open) meets the now fully co_await-composed
-// rawstor::Target/Object internals: each of those C functions creates
-// exactly one Queue for its whole call and pumps the single Task<T> it
-// awaits through here. Deliberately a local duplicate of connection.cpp/
-// object.cpp/location.cpp's own `run()`, rather than a shared dependency,
-// since it's four lines and target.cpp has no other reason to know about
-// those files' internals.
-template <typename T>
-T run(rawio::Queue& q, rawstd::Task<T> t) {
-    while (!t.done()) {
-        q.wait_timeout(rawstor_opts_tcp_user_timeout());
+// C ABI adapter for rawstor_target_open(): mirrors the rest of the
+// target/location group's ssize_t result/data callback shape (negative on
+// error, zero on success -- there's nothing else to report here, since
+// the opened object itself is delivered through `object` instead, an
+// out-parameter written here immediately before `cb` runs) -- co_await's
+// the already-submitted Task, catches std::system_error, and writes the
+// newly opened object (or NULL on failure) to `*object`. A negative return
+// from the C callback throws -- see the non-coroutine launch_open_op()
+// wrapper below (not this function) for how that's actually delivered back
+// out.
+rawstd::DetachedTask launch_open_op_coro(
+    rawstd::Task<std::unique_ptr<rawstor::Object>> t, RawstorObject** object,
+    int (*cb)(ssize_t result, void* data), void* data
+) {
+    ssize_t result = 0;
+    *object = nullptr;
+    try {
+        // GCC 11 (RHEL 9/AlmaLinux 9) hits an internal "no suspend point
+        // info" LTO diagnostic bug when a non-trivial local (here, a
+        // std::unique_ptr) is direct-initialized from co_await inside a
+        // DetachedTask coroutine's try block -- chaining .release() on
+        // the co_await'd temporary directly, without a named local,
+        // sidesteps it.
+        *object = (co_await t).release();
+    } catch (const std::system_error& e) {
+        result = -e.code().value();
     }
-    return t.get();
+    int res = cb(result, data);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+}
+
+void launch_open_op(
+    rawstd::Task<std::unique_ptr<rawstor::Object>> t, RawstorObject** object,
+    int (*cb)(ssize_t result, void* data), void* data
+) {
+    launch_open_op_coro(std::move(t), object, cb, data);
+    rawstd::DetachedTask::rethrow_if_pending();
+}
+
+// C ABI adapters for rawstor_target_create()/_remove()/_spec(): `t` is
+// taken by value into the coroutine's own frame -- unlike
+// launch_open_op_coro() above (which is handed an already-submitted
+// Task<T>), Target::create()/remove()/spec() need to be *called* from
+// inside a coroutine that survives their own await (a coroutine method
+// call's `this` is a plain pointer into whatever object it was called
+// on, not lifetime-extended past that call the way a by-value coroutine
+// *parameter* is -- see co_target_open()'s own doc comment in ost/src/
+// client.cpp for the general hazard this avoids; Target::create()'s own
+// _uris[i] access right after its own `co_await tasks[i]` is a real,
+// confirmed instance of it, not just a theoretical one). Each reports a
+// result code via `cb` -- 0 on success, negative errno on failure
+// (mirroring every other error/result callback in this codebase, e.g.
+// close_trampoline() in ost/src/client.cpp) -- and catches every
+// exception type the old synchronous wrappers used to (not just
+// std::system_error, unlike launch_open_op_coro() above): those wrappers
+// mapped std::bad_alloc/std::exception/... to -ENOMEM/-EINVAL too, and
+// this is the only place left to preserve that once the call is async --
+// an uncaught exception here would instead leak out as an unrelated
+// DetachedTask exception on whatever rawio_wait() happens to resume this
+// next (see DetachedTask's own doc comment), not surface through `cb` at
+// all.
+rawstd::DetachedTask launch_create_op_coro(
+    rawstor::Target t, rawio::Queue* queue, RawstorObjectSpec spec,
+    int (*cb)(ssize_t result, void* data), void* data
+) {
+    ssize_t result = 0;
+    try {
+        co_await t.create(*queue, spec);
+    } catch (const std::system_error& e) {
+        result = -e.code().value();
+    } catch (const std::bad_alloc&) {
+        result = -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        result = -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        result = -EINVAL;
+    }
+    int res = cb(result, data);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+}
+
+void launch_create_op(
+    rawstor::Target t, rawio::Queue* queue, const RawstorObjectSpec& spec,
+    int (*cb)(ssize_t result, void* data), void* data
+) {
+    launch_create_op_coro(std::move(t), queue, spec, cb, data);
+    rawstd::DetachedTask::rethrow_if_pending();
+}
+
+rawstd::DetachedTask launch_remove_op_coro(
+    rawstor::Target t, rawio::Queue* queue,
+    int (*cb)(ssize_t result, void* data), void* data
+) {
+    ssize_t result = 0;
+    try {
+        co_await t.remove(*queue);
+    } catch (const std::system_error& e) {
+        result = -e.code().value();
+    } catch (const std::bad_alloc&) {
+        result = -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        result = -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        result = -EINVAL;
+    }
+    int res = cb(result, data);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+}
+
+void launch_remove_op(
+    rawstor::Target t, rawio::Queue* queue,
+    int (*cb)(ssize_t result, void* data), void* data
+) {
+    launch_remove_op_coro(std::move(t), queue, cb, data);
+    rawstd::DetachedTask::rethrow_if_pending();
+}
+
+// Same shape as launch_create_op_coro()/launch_remove_op_coro() above,
+// except the retrieved RawstorObjectSpec is delivered through `spec`, an
+// out-parameter written here immediately before `cb` runs (same
+// convention as launch_open_op_coro()'s `object`).
+rawstd::DetachedTask launch_spec_op_coro(
+    rawstor::Target t, rawio::Queue* queue, RawstorObjectSpec* spec,
+    int (*cb)(ssize_t result, void* data), void* data
+) {
+    ssize_t result = 0;
+    try {
+        *spec = co_await t.spec(*queue);
+    } catch (const std::system_error& e) {
+        result = -e.code().value();
+    } catch (const std::bad_alloc&) {
+        result = -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        result = -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        result = -EINVAL;
+    }
+    int res = cb(result, data);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+}
+
+void launch_spec_op(
+    rawstor::Target t, rawio::Queue* queue, RawstorObjectSpec* spec,
+    int (*cb)(ssize_t result, void* data), void* data
+) {
+    launch_spec_op_coro(std::move(t), queue, spec, cb, data);
+    rawstd::DetachedTask::rethrow_if_pending();
 }
 
 } // namespace
@@ -294,11 +442,12 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
         // co_await right here, rather than leaving it for ~Object()'s
         // own run()-pumped synchronous cleanup: this coroutine can
         // itself be driven by an outer synchronous run() pump (e.g.
-        // rawstor_object_open()'s own call into us), and ~Object()
-        // reentering that same dispatch loop via a *nested* run() is
-        // undefined behavior (same hazard blk::Session::close()'s own
-        // doc comment describes) -- obj->_cns never gets populated in
-        // this path, so ~Object() has nothing left to do anyway.
+        // tests/test_blk_session.cpp's own direct run()-pumped call
+        // into us), and ~Object() reentering that same dispatch loop
+        // via a *nested* run() is undefined behavior (same hazard
+        // blk::Session::close()'s own doc comment describes) --
+        // obj->_cns never gets populated in this path, so ~Object()
+        // has nothing left to do anyway.
         for (auto& cn : cns) {
             try {
                 co_await cn->close();
@@ -315,13 +464,15 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
 
 } // namespace rawstor
 
-int rawstor_object_create(
-    const char* target, const RawstorObjectSpec* spec
+int rawstor_target_create(
+    RawIOQueue* queue, const char* target, const RawstorObjectSpec* spec,
+    int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
-        std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
         rawstor::Target t(rawstd::URI::uriv(target));
-        run(*queue, t.create(*queue, *spec));
+        launch_create_op(
+            std::move(t), static_cast<rawio::Queue*>(queue), *spec, cb, data
+        );
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -336,47 +487,85 @@ int rawstor_object_create(
     }
 }
 
-int rawstor_object_create_at(
-    const char* location, const char* uuid,
-    const struct RawstorObjectSpec* spec, char* target, size_t size
+int rawstor_target_remove(
+    RawIOQueue* queue, const char* target,
+    int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
-        RawstdUUID id;
-        int res;
+        rawstor::Target t(rawstd::URI::uriv(target));
+        launch_remove_op(
+            std::move(t), static_cast<rawio::Queue*>(queue), cb, data
+        );
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
 
-        if (uuid == nullptr) {
-            res = rawstd_uuid7_init(&id);
-            if (res < 0) {
-                RAWSTD_THROW_SYSTEM_ERROR(-res);
-            }
-        } else {
-            res = rawstd_uuid_from_string(&id, uuid);
-            if (res < 0) {
-                RAWSTD_THROW_SYSTEM_ERROR(-res);
-            }
-        }
+int rawstor_target_spec(
+    RawIOQueue* queue, const char* target, RawstorObjectSpec* sp,
+    int (*cb)(ssize_t result, void* data), void* data
+) noexcept {
+    try {
+        rawstor::Target t(rawstd::URI::uriv(target));
+        launch_spec_op(
+            std::move(t), static_cast<rawio::Queue*>(queue), sp, cb, data
+        );
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
 
-        RawstdUUIDString uuid_string;
-        rawstd_uuid_to_string(&id, &uuid_string);
+int rawstor_target_open(
+    RawIOQueue* queue, const char* target, RawstorObject** object,
+    int (*cb)(ssize_t result, void* data), void* data
+) noexcept {
+    try {
+        rawstor::Target t(rawstd::URI::uriv(target));
+        launch_open_op(
+            t.open(*static_cast<rawio::Queue*>(queue)), object, cb, data
+        );
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
 
-        std::vector<rawstd::URI> uris = rawstd::URI::uriv(location);
-        std::vector<rawstd::URI> ret;
-        ret.reserve(uris.size());
-        for (const auto& uri : uris) {
-            ret.emplace_back(uri, uuid_string);
-        }
-
-        res = snprintf(target, size, "%s", rawstd::URI::uris(ret).c_str());
+int rawstor_target_id(const char* target, char* buf, size_t size) noexcept {
+    try {
+        rawstor::Target t(rawstd::URI::uriv(target));
+        RawstdUUID id = t.id();
+        RawstdUUIDString uuid;
+        rawstd_uuid_to_string(&id, &uuid);
+        int res = snprintf(buf, size, "%s", uuid);
         if (res < 0) {
-            return res;
+            RAWSTD_THROW_ERRNO();
         }
-
-        if (static_cast<size_t>(res) < size) {
-            std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
-            rawstor::Target t(ret);
-            run(*queue, t.create(*queue, *spec));
-        }
-
         return res;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -391,58 +580,17 @@ int rawstor_object_create_at(
     }
 }
 
-int rawstor_object_remove(const char* target) noexcept {
-    try {
-        std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
-        rawstor::Target t(rawstd::URI::uriv(target));
-        run(*queue, t.remove(*queue));
-        return 0;
-    } catch (const std::system_error& e) {
-        return -e.code().value();
-    } catch (const std::bad_alloc& e) {
-        return -ENOMEM;
-    } catch (const std::exception& e) {
-        rawstd_error("%s\n", e.what());
-        return -EINVAL;
-    } catch (...) {
-        rawstd_error("Unexpected error\n");
-        return -EINVAL;
-    }
-}
-
-int rawstor_object_spec(const char* target, RawstorObjectSpec* sp) noexcept {
-    try {
-        std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
-        rawstor::Target t(rawstd::URI::uriv(target));
-        *sp = run(*queue, t.spec(*queue));
-        return 0;
-    } catch (const std::system_error& e) {
-        return -e.code().value();
-    } catch (const std::bad_alloc& e) {
-        return -ENOMEM;
-    } catch (const std::exception& e) {
-        rawstd_error("%s\n", e.what());
-        return -EINVAL;
-    } catch (...) {
-        rawstd_error("Unexpected error\n");
-        return -EINVAL;
-    }
-}
-
-int rawstor_object_open(
-    RawIOQueue* queue, const char* target, RawstorObject** object
+int rawstor_target_location(
+    const char* target, char* buf, size_t size
 ) noexcept {
     try {
         rawstor::Target t(rawstd::URI::uriv(target));
-        std::unique_ptr<rawstor::Object> ret =
-            run(*static_cast<rawio::Queue*>(queue),
-                t.open(*static_cast<rawio::Queue*>(queue)));
-
-        *object = ret.get();
-
-        ret.release();
-
-        return 0;
+        std::string s = rawstd::URI::uris(t.location().uris());
+        int res = snprintf(buf, size, "%s", s.c_str());
+        if (res < 0) {
+            RAWSTD_THROW_ERRNO();
+        }
+        return res;
     } catch (const std::system_error& e) {
         return -e.code().value();
     } catch (const std::bad_alloc& e) {
