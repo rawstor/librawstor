@@ -12,10 +12,32 @@
 #include <rawstor/rawstor.h>
 
 #include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/**
+ * @brief Object metadata structure.
+ *
+ * Contains information about a stored object. This structure is used both for
+ * retrieving existing object metadata (via rawstor_target_spec()) and for
+ * specifying parameters when creating a new object (via
+ * rawstor_target_create()).
+ *
+ * When used with rawstor_target_create(), the size field must be set to the
+ * desired size of the object to be created.
+ *
+ * When used with rawstor_target_spec(), the size field is filled with the
+ * actual size of the existing object in bytes.
+ *
+ * @see rawstor_target_spec
+ * @see rawstor_target_create
+ */
+struct RawstorObjectSpec {
+    uint64_t size; /**< Size of the object in bytes. */
+};
 
 /**
  * @brief Asynchronously retrieve metadata about a stored object.
@@ -62,14 +84,6 @@ extern "C" {
  * @see Location and Target documentation in Rawstor user guide:
  * https://github.com/rawstor/librawstor/blob/main/docs/locations_and_targets.md
  */
-/**
- * @brief Object metadata structure. See RawstorObjectSpec's own doc
- *        comment in <rawstor/object.h> (its canonical home -- RawstorObject
- *        lives there too, and every old-API compat function that predates
- *        target.h/location.h needs it reachable via a plain
- *        `#include <rawstor/object.h>`).
- */
-
 int rawstor_target_spec(
     RawIOQueue* queue, const char* target, struct RawstorObjectSpec* spec,
     int (*cb)(ssize_t result, void* data), void* data
@@ -181,7 +195,7 @@ int rawstor_target_remove(
  * policy defined for that target.
  *
  * The RawstorObject handle written to @p object must be closed with
- * rawstor_object_close2() to release resources.
+ * rawstor_object_close() to release resources.
  *
  * @param queue   Queue used to drive the asynchronous open.
  * @param target  Target string identifying the object to open, e.g.:
@@ -213,7 +227,7 @@ int rawstor_target_remove(
  *         delivered via @p object/@p cb.
  *
  * @see RawstorObject
- * @see rawstor_object_close2
+ * @see rawstor_object_close
  * @see Locations and Targets:
  * https://github.com/rawstor/librawstor/blob/main/docs/locations_and_targets.md
  */

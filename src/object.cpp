@@ -26,7 +26,7 @@
 
 namespace {
 
-// C ABI adapters for the I/O group (rawstor_object_pread2/_preadv/_pwrite/
+// C ABI adapters for the I/O group (rawstor_object_pread/_preadv/_pwrite/
 // _pwritev): launch a detached coroutine that co_await's the
 // already-submitted rawstd::Task, catches std::system_error, and invokes
 // the originally-passed completion callback with the translated result --
@@ -60,8 +60,8 @@ void launch_io_op(
     rawstd::DetachedTask::rethrow_if_pending();
 }
 
-// C ABI adapter for rawstor_object_flush2(): same launch pattern as
-// launch_io_op_coro() above, but flush2()'s own callback shape collapses
+// C ABI adapter for rawstor_object_flush(): same launch pattern as
+// launch_io_op_coro() above, but flush()'s own callback shape collapses
 // onto a single ssize_t result (negative -> -errno, zero -> success --
 // there's nothing else to report) rather than the I/O group's separate
 // result/error pair.
@@ -87,13 +87,13 @@ void launch_flush_op(
     rawstd::DetachedTask::rethrow_if_pending();
 }
 
-// C ABI adapter for rawstor_object_close2(): same shape as
+// C ABI adapter for rawstor_object_close(): same shape as
 // launch_flush_op_coro(), but unlike every other adapter here, `object`
 // is deleted once its close() Task completes (successfully or not),
 // before `cb` is invoked. `object` is not passed to `cb` at all: by the
 // time `cb` runs, it no longer identifies anything usable, and the caller
 // already knows which close this is (it's the one they just called
-// rawstor_object_close2() for).
+// rawstor_object_close() for).
 rawstd::DetachedTask launch_close_op_coro(
     RawstorObject* object, rawstd::Task<void> t,
     int (*cb)(ssize_t result, void* data), void* data
@@ -313,7 +313,7 @@ rawstd::Task<void> Object::close() {
 
 } // namespace rawstor
 
-int rawstor_object_close2(
+int rawstor_object_close(
     RawstorObject* object, int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
@@ -334,7 +334,7 @@ int rawstor_object_close2(
     }
 }
 
-int rawstor_object_pread2(
+int rawstor_object_pread(
     RawstorObject* object, void* buf, size_t size, off_t offset,
     int (*cb)(size_t result, int error, void* data), void* data
 ) noexcept {
@@ -357,7 +357,7 @@ int rawstor_object_pread2(
     }
 }
 
-int rawstor_object_preadv2(
+int rawstor_object_preadv(
     RawstorObject* object, iovec* iov, unsigned int niov, size_t size,
     off_t offset, int (*cb)(size_t result, int error, void* data), void* data
 ) noexcept {
@@ -382,7 +382,7 @@ int rawstor_object_preadv2(
     }
 }
 
-int rawstor_object_pwrite2(
+int rawstor_object_pwrite(
     RawstorObject* object, const void* buf, size_t size, off_t offset,
     bool sync, int (*cb)(size_t result, int error, void* data), void* data
 ) noexcept {
@@ -407,7 +407,7 @@ int rawstor_object_pwrite2(
     }
 }
 
-int rawstor_object_pwritev2(
+int rawstor_object_pwritev(
     RawstorObject* object, const iovec* iov, unsigned int niov, size_t size,
     off_t offset, bool sync, int (*cb)(size_t result, int error, void* data),
     void* data
@@ -433,7 +433,7 @@ int rawstor_object_pwritev2(
     }
 }
 
-int rawstor_object_flush2(
+int rawstor_object_flush(
     RawstorObject* object, int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {

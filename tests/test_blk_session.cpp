@@ -113,7 +113,7 @@ rawstor::blk::Session* open_blk_session(
 } // namespace
 
 // A backing store slower than the incoming write rate must not let
-// rawstor_object_pwrite2() dispatch an unbounded number of concurrent
+// rawstor_object_pwrite() dispatch an unbounded number of concurrent
 // writes to it -- see blk_session.hpp's _throttle_acquire(). Firing every
 // write back to back, with nothing pumping the queue in between, means
 // none of them can have completed yet by the time writes_in_flight() is

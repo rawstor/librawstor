@@ -26,7 +26,7 @@
 
 namespace {
 
-// C ABI adapter for rawio_accept_multishot2(): mirrors ost/src/client.cpp's
+// C ABI adapter for rawio_accept_multishot(): mirrors ost/src/client.cpp's
 // own trampolines over the CallbackAwaitable<T> bridge, but for
 // CallbackStream<T> instead -- see there and CallbackStream<T>'s own doc
 // comment for the general shape.
@@ -40,7 +40,7 @@ int accept_trampoline(ssize_t result, void* data) {
     return 0;
 }
 
-// rawio_close2()'s callback delivers a single combined "0 or -errno"
+// rawio_close()'s callback delivers a single combined "0 or -errno"
 // result, the same shape CallbackAwaitable<void>::complete() itself
 // takes. Mirrors ost/src/client.cpp's own close_fd_trampoline()/
 // co_close_fd() (each file keeps its own copy of these small per-C-API
@@ -53,7 +53,7 @@ int close_fd_trampoline(ssize_t result, void* data) {
 
 rawstd::Task<void> co_close_fd(RawIOQueue* queue, int fd) {
     rawstd::CallbackAwaitable<void> awaiter;
-    int res = rawio_close2(queue, fd, close_fd_trampoline, &awaiter);
+    int res = rawio_close(queue, fd, close_fd_trampoline, &awaiter);
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
@@ -192,7 +192,7 @@ rawstd::Task<void> Server::del_client(int fd) {
 
 rawstd::DetachedTask Server::_accept_task() {
     rawstd::CallbackStream<int> stream;
-    int res = rawio_accept_multishot2(
+    int res = rawio_accept_multishot(
         _queue, _fd, accept_trampoline, &stream, &_accept_event
     );
     if (res < 0) {

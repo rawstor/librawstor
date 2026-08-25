@@ -219,17 +219,17 @@ TEST(OstSessionTest, set_object_twice_does_not_crash) {
 
     // Second SET_OBJECT on the same session: _object is already set, so
     // the server's Client::_set_object() first closes it (via
-    // Client::_close_current_object(), asynchronously --
-    // rawstor_object_close2() queues the close and returns immediately,
-    // deferring the actual open-a-new-object work to its own completion
-    // callback) before opening again. This used to be where a nested
-    // run()-pumped synchronous close from *inside* the server's own
-    // already-executing Queue::_dispatch() call (the one dispatching this very
-    // SET_OBJECT frame's completion) caused an ASan-confirmed
-    // heap-use-after-free (a RecvMultishotCompletion the still-in-progress
-    // outer iteration needed got freed by the reentrant inner one first);
-    // staying fully async end-to-end here avoids ever reentering _dispatch() in
-    // the first place, so this must still complete cleanly.
+    // Client::_close_current_object(), asynchronously -- rawstor_object_close()
+    // queues the close and returns immediately, deferring the actual
+    // open-a-new-object work to its own completion callback) before
+    // opening again. This used to be where a nested run()-pumped
+    // synchronous close from *inside* the server's own already-executing
+    // Queue::_dispatch() call (the one dispatching this very SET_OBJECT
+    // frame's completion) caused an ASan-confirmed heap-use-after-free (a
+    // RecvMultishotCompletion the still-in-progress outer iteration needed
+    // got freed by the reentrant inner one first); staying fully async
+    // end-to-end here avoids ever reentering _dispatch() in the first
+    // place, so this must still complete cleanly.
     client.send_set_object(id);
     ASSERT_TRUE(pump_until(queue, [&] {
         return client.bytes_available() >= sizeof(RawstorOSTFrameResponse);

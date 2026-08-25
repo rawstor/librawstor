@@ -102,7 +102,7 @@ int close_trampoline(ssize_t result, void* data) {
 
 rawstd::Task<void> co_object_close(RawstorObject* object) {
     rawstd::CallbackAwaitable<void> awaiter;
-    int res = rawstor_object_close2(object, close_trampoline, &awaiter);
+    int res = rawstor_object_close(object, close_trampoline, &awaiter);
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
@@ -122,7 +122,7 @@ int io_trampoline(size_t result, int error, void* data) {
 rawstd::Task<size_t>
 co_object_pread(RawstorObject* object, void* buf, size_t size, off_t offset) {
     rawstd::CallbackAwaitable<size_t> awaiter;
-    int res = rawstor_object_pread2(
+    int res = rawstor_object_pread(
         object, buf, size, offset, io_trampoline, &awaiter
     );
     if (res < 0) {
@@ -135,7 +135,7 @@ rawstd::Task<size_t> co_object_pwrite(
     RawstorObject* object, const void* buf, size_t size, off_t offset, bool sync
 ) {
     rawstd::CallbackAwaitable<size_t> awaiter;
-    int res = rawstor_object_pwrite2(
+    int res = rawstor_object_pwrite(
         object, buf, size, offset, sync, io_trampoline, &awaiter
     );
     if (res < 0) {
@@ -144,9 +144,9 @@ rawstd::Task<size_t> co_object_pwrite(
     co_return co_await awaiter;
 }
 
-// rawstor_object_flush2()'s own callback shape (ssize_t result) --
-// there's nothing else to report, unlike io_trampoline()'s pread2/pwrite2
-// group above.
+// rawstor_object_flush()'s own callback shape (ssize_t result) -- there's
+// nothing else to report, unlike io_trampoline()'s pread/pwrite group
+// above.
 int flush_trampoline(ssize_t result, void* data) {
     static_cast<rawstd::CallbackAwaitable<void>*>(data)->complete(result);
     return 0;
@@ -154,16 +154,16 @@ int flush_trampoline(ssize_t result, void* data) {
 
 rawstd::Task<void> co_object_flush(RawstorObject* object) {
     rawstd::CallbackAwaitable<void> awaiter;
-    int res = rawstor_object_flush2(object, flush_trampoline, &awaiter);
+    int res = rawstor_object_flush(object, flush_trampoline, &awaiter);
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
     co_await awaiter;
 }
 
-// rawio_close2()'s callback delivers a single combined "0 or -errno" result,
-// same shape rawstor_object_close2()'s close_trampoline() above already
-// works with.
+// rawio_close()'s callback delivers a single combined "0 or -errno"
+// result, same shape rawstor_object_close()'s close_trampoline() above
+// already works with.
 int close_fd_trampoline(ssize_t result, void* data) {
     static_cast<rawstd::CallbackAwaitable<void>*>(data)->complete(result);
     return 0;
@@ -171,7 +171,7 @@ int close_fd_trampoline(ssize_t result, void* data) {
 
 rawstd::Task<void> co_close_fd(RawIOQueue* queue, int fd) {
     rawstd::CallbackAwaitable<void> awaiter;
-    int res = rawio_close2(queue, fd, close_fd_trampoline, &awaiter);
+    int res = rawio_close(queue, fd, close_fd_trampoline, &awaiter);
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
@@ -262,7 +262,7 @@ rawstd::Task<void> co_location_list(
     co_await awaiter;
 }
 
-// rawio_send2()/rawio_sendmsg2() share this callback shape (ssize_t
+// rawio_send()/rawio_sendmsg() share this callback shape (ssize_t
 // result/data, same as co_close_fd()'s close_fd_trampoline() above, but
 // non-negative on success rather than close_fd_trampoline()'s "0 or
 // -errno"). CallbackAwaitable<size_t>::complete() still wants a
@@ -282,7 +282,7 @@ rawstd::Task<size_t> co_send(
 ) {
     rawstd::CallbackAwaitable<size_t> awaiter;
     int res =
-        rawio_send2(queue, fd, buf, size, flags, send_trampoline, &awaiter);
+        rawio_send(queue, fd, buf, size, flags, send_trampoline, &awaiter);
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
@@ -292,7 +292,7 @@ rawstd::Task<size_t> co_send(
 rawstd::Task<size_t>
 co_sendmsg(RawIOQueue* queue, int fd, const msghdr* msg, unsigned int flags) {
     rawstd::CallbackAwaitable<size_t> awaiter;
-    int res = rawio_sendmsg2(queue, fd, msg, flags, send_trampoline, &awaiter);
+    int res = rawio_sendmsg(queue, fd, msg, flags, send_trampoline, &awaiter);
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
@@ -300,7 +300,7 @@ co_sendmsg(RawIOQueue* queue, int fd, const msghdr* msg, unsigned int flags) {
 }
 
 // ---------------------------------------------------------------------
-// rawstd::CallbackStream<T> bridge over rawio_recv_multishot2()'s "want N
+// rawstd::CallbackStream<T> bridge over rawio_recv_multishot()'s "want N
 // bytes next" flow control (the callback's return value specifies the
 // size of the next buffer): wraps CallbackStream<vector<unsigned char>>
 // (an owned copy of each delivery, since the ring buffer's iovecs are
@@ -426,7 +426,7 @@ Client::create(RawIOQueue* queue, Server& server, int fd) {
     std::shared_ptr<Client> client =
         std::make_shared<Client>(Private(), queue, server, fd);
     // A DetachedTask never throws directly -- it stashes a synchronous
-    // failure (e.g. rawio_recv_multishot2()'s own registration call
+    // failure (e.g. rawio_recv_multishot()'s own registration call
     // rejecting fd/queue) for this to surface immediately after.
     _recv_pump(client, queue, fd);
     try {
@@ -465,7 +465,7 @@ Client::~Client() noexcept {
         // so it completes fine whether or not this destructor's caller
         // sticks around to see it -- same as ~Object()'s own connection
         // cleanup doesn't need Client to still exist either.
-        int res = rawstor_object_close2(_object, ignore_close_result, nullptr);
+        int res = rawstor_object_close(_object, ignore_close_result, nullptr);
         if (res < 0) {
             rawstd_error(
                 "Failed to close object in client: %s\n", strerror(-res)
@@ -536,7 +536,7 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
     auto stream_owner = std::make_unique<RecvCallbackStream>();
     RecvCallbackStream* stream = stream_owner.get();
     RawIOEvent* event = nullptr;
-    int res = rawio_recv_multishot2(
+    int res = rawio_recv_multishot(
         queue, fd, 1u << 17, 64 * 4, sizeof(RawstorOSTFrameHead), 0,
         recv_trampoline, stream, &event
     );
@@ -748,7 +748,7 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
                     RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
                 }
 
-                // Always keeps reading -- rawstor_object_pwrite2()'s
+                // Always keeps reading -- rawstor_object_pwrite()'s
                 // underlying blk::Session applies write-throttling
                 // itself (see blk_session.hpp's _throttle_acquire()), so
                 // nothing here needs to pause the recv while a write
@@ -1143,7 +1143,7 @@ rawstd::DetachedTask Client::_set_object_task(
         // Nobody left to hand `object` to (and nothing left to respond
         // to) -- close it ourselves so it doesn't leak.
         if (object != nullptr) {
-            rawstor_object_close2(object, ignore_close_result, nullptr);
+            rawstor_object_close(object, ignore_close_result, nullptr);
         }
         co_return;
     }

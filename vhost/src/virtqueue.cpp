@@ -167,7 +167,7 @@ void VirtQueue::arm_kick(Device& device, size_t index) {
     ctx->index = index;
     ctx->value = 0;
 
-    int res = rawio_read2(
+    int res = rawio_read(
         device.queue(), _kick_fd, &ctx->value, sizeof(ctx->value), kick_cb,
         ctx.get()
     );
@@ -454,7 +454,7 @@ void VirtQueue::notify(Device& device, bool event_idx_negotiated) {
     std::unique_ptr<NotifyCtx> ctx = std::make_unique<NotifyCtx>();
     ctx->value = 1;
 
-    int res = rawio_write2(
+    int res = rawio_write(
         device.queue(), _call_fd, &ctx->value, sizeof(ctx->value), notify_cb,
         ctx.get()
     );

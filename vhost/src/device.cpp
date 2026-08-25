@@ -76,7 +76,7 @@ public:
 
 // ---------------------------------------------------------------------
 // rawstd::CallbackAwaitable<size_t> bridge over the control path's
-// rawio.h ops -- rawio_read2()/rawio_recvmsg2()/rawio_sendmsg2() all share
+// rawio.h ops -- rawio_read()/rawio_recvmsg()/rawio_sendmsg() all share
 // the same ssize_t result/data callback shape, so a single trampoline
 // suffices for all three co_*() wrappers below. See
 // rawstd::CallbackAwaitable<T>'s own doc comment for the general shape
@@ -98,7 +98,7 @@ int rawio_trampoline(ssize_t result, void* data) {
 rawstd::Task<size_t>
 co_read(RawIOQueue* queue, int fd, void* buf, size_t size) {
     rawstd::CallbackAwaitable<size_t> awaiter;
-    int res = rawio_read2(queue, fd, buf, size, rawio_trampoline, &awaiter);
+    int res = rawio_read(queue, fd, buf, size, rawio_trampoline, &awaiter);
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
@@ -108,7 +108,7 @@ co_read(RawIOQueue* queue, int fd, void* buf, size_t size) {
 rawstd::Task<size_t>
 co_recvmsg(RawIOQueue* queue, int fd, msghdr* msg, unsigned int flags) {
     rawstd::CallbackAwaitable<size_t> awaiter;
-    int res = rawio_recvmsg2(queue, fd, msg, flags, rawio_trampoline, &awaiter);
+    int res = rawio_recvmsg(queue, fd, msg, flags, rawio_trampoline, &awaiter);
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
@@ -118,7 +118,7 @@ co_recvmsg(RawIOQueue* queue, int fd, msghdr* msg, unsigned int flags) {
 rawstd::Task<size_t>
 co_sendmsg(RawIOQueue* queue, int fd, msghdr* msg, unsigned int flags) {
     rawstd::CallbackAwaitable<size_t> awaiter;
-    int res = rawio_sendmsg2(queue, fd, msg, flags, rawio_trampoline, &awaiter);
+    int res = rawio_sendmsg(queue, fd, msg, flags, rawio_trampoline, &awaiter);
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
@@ -144,7 +144,7 @@ void notify_eventfd(RawIOQueue* queue, int fd, uint64_t value) {
     auto v = std::make_unique<uint64_t>(value);
     uint64_t* buf = v.get();
     int res =
-        rawio_write2(queue, fd, buf, sizeof(*buf), notify_eventfd_cb, v.get());
+        rawio_write(queue, fd, buf, sizeof(*buf), notify_eventfd_cb, v.get());
     if (res < 0) {
         rawstd_error("Failed to notify eventfd: %s\n", strerror(-res));
         return;
@@ -1072,7 +1072,7 @@ rawstd::Task<size_t> co_object_preadv(
     off_t offset
 ) {
     rawstd::CallbackAwaitable<size_t> awaiter;
-    int res = rawstor_object_preadv2(
+    int res = rawstor_object_preadv(
         object, iov, niov, size, offset, io_trampoline, &awaiter
     );
     if (res < 0) {
@@ -1086,7 +1086,7 @@ rawstd::Task<size_t> co_object_pwritev(
     off_t offset, bool sync
 ) {
     rawstd::CallbackAwaitable<size_t> awaiter;
-    int res = rawstor_object_pwritev2(
+    int res = rawstor_object_pwritev(
         object, iov, niov, size, offset, sync, io_trampoline, &awaiter
     );
     if (res < 0) {
@@ -1095,9 +1095,9 @@ rawstd::Task<size_t> co_object_pwritev(
     co_return co_await awaiter;
 }
 
-// rawstor_object_flush2()'s own callback shape (ssize_t result) --
-// there's nothing else to report, unlike io_trampoline()'s preadv2/
-// pwritev2 group above.
+// rawstor_object_flush()'s own callback shape (ssize_t result) -- there's
+// nothing else to report, unlike io_trampoline()'s preadv/pwritev group
+// above.
 int flush_trampoline(ssize_t result, void* data) {
     static_cast<rawstd::CallbackAwaitable<void>*>(data)->complete(result);
     return 0;
@@ -1105,7 +1105,7 @@ int flush_trampoline(ssize_t result, void* data) {
 
 rawstd::Task<void> co_object_flush(RawstorObject* object) {
     rawstd::CallbackAwaitable<void> awaiter;
-    int res = rawstor_object_flush2(object, flush_trampoline, &awaiter);
+    int res = rawstor_object_flush(object, flush_trampoline, &awaiter);
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
@@ -1279,7 +1279,7 @@ void process_request(std::unique_ptr<Request> req) {
 // caller's own `object` out-param (see open_object()), not routed through
 // this struct, so there's nothing left for open's own Result to carry
 // beyond what close's already needs -- the two (and spec's) are
-// identical. rawstor_target_open()/rawstor_object_close2()/_spec() all
+// identical. rawstor_target_open()/rawstor_object_close()/_spec() all
 // share the same ssize_t result callback shape (negative -> -errno, zero
 // -> success -- see rawstor/target.h's own doc comment for the general
 // convention), so one trampoline suffices for all three.
@@ -1317,7 +1317,7 @@ RawstorObject* open_object(RawIOQueue* queue, const std::string& target) {
 
 void close_object(RawIOQueue* queue, RawstorObject* object) {
     Result result;
-    int res = rawstor_object_close2(object, result_cb, &result);
+    int res = rawstor_object_close(object, result_cb, &result);
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }

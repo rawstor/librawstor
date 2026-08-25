@@ -42,7 +42,7 @@ int nonzero_return_cb(ssize_t result, void* data) {
 
 TEST_F(RawioCApiTest, write_callback_nonzero_return_propagates) {
     char buf[] = "data";
-    int res = rawio_write2(
+    int res = rawio_write(
         _queue.get(), _fd, buf, sizeof(buf), nonzero_return_cb, nullptr
     );
     ASSERT_EQ(res, 0);
@@ -56,7 +56,7 @@ TEST_F(RawioCApiTest, read_callback_nonzero_return_propagates) {
     _server.wait();
 
     char client_buf[sizeof(server_buf)];
-    int res = rawio_read2(
+    int res = rawio_read(
         _queue.get(), _fd, client_buf, sizeof(client_buf), nonzero_return_cb,
         nullptr
     );
@@ -79,7 +79,7 @@ TEST_F(RawioCApiTest, read_basic) {
 
     char client_buf[sizeof(server_buf)];
     int count = 0;
-    int res = rawio_read2(
+    int res = rawio_read(
         _queue.get(), _fd, client_buf, sizeof(client_buf), counting_read_cb,
         &count
     );
@@ -90,62 +90,11 @@ TEST_F(RawioCApiTest, read_basic) {
     EXPECT_EQ(strcmp(client_buf, server_buf), 0);
 }
 
-// Backport shim coverage: rawio_write()/rawio_read() (old RawIOCallback
-// shape -- separate `size_t result, int error` -- rather than
-// rawio_write2()/rawio_read2()'s collapsed `ssize_t result`).
-int legacy_write_cb(size_t result, int error, void* data) {
-    bool* completed = static_cast<bool*>(data);
-    EXPECT_EQ(error, 0);
-    EXPECT_GT(result, (size_t)0);
-    *completed = true;
-    return 0;
-}
-
-int legacy_read_cb(size_t result, int error, void* data) {
-    int* count = static_cast<int*>(data);
-    EXPECT_EQ(error, 0);
-    EXPECT_GT(result, (size_t)0);
-    ++(*count);
-    return 0;
-}
-
-TEST_F(RawioCApiTest, legacy_read_write_basic) {
-    char buf[] = "legacy data";
-    bool write_completed = false;
-    int res = rawio_write(
-        _queue.get(), _fd, buf, sizeof(buf), legacy_write_cb, &write_completed
-    );
-    ASSERT_EQ(res, 0);
-    EXPECT_EQ(rawio_wait_timeout(_queue.get(), 1000), 0);
-    EXPECT_TRUE(write_completed);
-
-    _server.wait();
-
-    char server_buf[sizeof(buf)];
-    _server.read(server_buf, sizeof(server_buf));
-    _server.wait();
-    EXPECT_EQ(strcmp(server_buf, buf), 0);
-
-    _server.write(buf, sizeof(buf));
-    _server.wait();
-
-    char client_buf[sizeof(buf)];
-    int count = 0;
-    res = rawio_read(
-        _queue.get(), _fd, client_buf, sizeof(client_buf), legacy_read_cb,
-        &count
-    );
-    ASSERT_EQ(res, 0);
-    EXPECT_EQ(rawio_wait_timeout(_queue.get(), 1000), 0);
-    EXPECT_EQ(count, 1);
-    EXPECT_EQ(strcmp(client_buf, buf), 0);
-}
-
 int poll_multishot_count_cb(ssize_t result, void* data) {
     int* count = static_cast<int*>(data);
     // First delivery: real POLLIN readiness (non-negative). Second
     // delivery (post-cancel()): the terminal ECANCELED notification,
-    // negative per rawio_poll_multishot2()'s raw-ssize_t convention.
+    // negative per rawio_poll_multishot()'s raw-ssize_t convention.
     if (*count == 0) {
         EXPECT_GE(result, 0);
     } else {
@@ -162,7 +111,7 @@ TEST_F(RawioCApiTest, poll_multishot_basic) {
 
     int count = 0;
     RawIOEvent* event = nullptr;
-    int res = rawio_poll_multishot2(
+    int res = rawio_poll_multishot(
         _queue.get(), _fd, POLLIN, poll_multishot_count_cb, &count, &event
     );
     ASSERT_EQ(res, 0);
