@@ -1,4 +1,5 @@
 #include "opts.h"
+#include "rawio_sync.hpp"
 #include "server.hpp"
 #include "session.hpp"
 #include "tmp_dir.hpp"
@@ -9,6 +10,7 @@
 
 #include <rawstor/object.h>
 #include <rawstor/protocol.h>
+#include <rawstor/target.h>
 
 #include <gtest/gtest.h>
 
@@ -20,7 +22,7 @@
 
 namespace {
 
-int callback(RawstorObject*, size_t, size_t result, int error, void* data) {
+int callback(size_t result, int error, void* data) {
     std::unique_ptr<std::function<void(size_t, int)>> cb(
         static_cast<std::function<void(size_t, int)>*>(data)
     );
@@ -36,6 +38,21 @@ int callback(RawstorObject*, size_t, size_t result, int error, void* data) {
         rawstd_error("Unexpected error\n");
         return -EINVAL;
     }
+}
+
+// Used by Object's close (in _close()): rawstor_object_close2()'s
+// ssize_t result callback shape (negative -> -errno, zero -> success)
+// has nothing else to report.
+struct Result {
+    int error = 0;
+    bool done = false;
+};
+
+int result_cb(ssize_t result, void* data) {
+    Result* r = static_cast<Result*>(data);
+    r->error = result < 0 ? static_cast<int>(-result) : 0;
+    r->done = true;
+    return 0;
 }
 
 class Queue {
@@ -74,9 +91,21 @@ private:
 
     void _close() {
         if (_object != nullptr) {
-            int res = rawstor_object_close(_object);
+            Result result;
+            int res = rawstor_object_close2(_object, result_cb, &result);
             if (res < 0) {
                 rawstd_error("%s\n", strerror(-res));
+            } else {
+                try {
+                    while (!result.done) {
+                        _queue.wait();
+                    }
+                } catch (const std::exception& e) {
+                    rawstd_error("%s\n", e.what());
+                }
+                if (result.error) {
+                    rawstd_error("%s\n", strerror(result.error));
+                }
             }
             _object = nullptr;
         }
@@ -88,15 +117,25 @@ public:
         _target(target),
         _object(nullptr) {
         RawstorObjectSpec spec{.size = size};
-        int res = rawstor_object_create(target.c_str(), &spec);
+        ssize_t res =
+            rawstor::tests::sync_run(_queue, [&](auto cb, void* data) {
+                return rawstor_target_create(
+                    _queue, target.c_str(), &spec, cb, data
+                );
+            });
         if (res < 0) {
-            RAWSTD_THROW_SYSTEM_ERROR(-res);
+            RAWSTD_THROW_SYSTEM_ERROR((int)-res);
         }
 
         try {
-            res = rawstor_object_open(_queue, _target.c_str(), &_object);
-            if (res < 0) {
-                RAWSTD_THROW_SYSTEM_ERROR(-res);
+            ssize_t ores =
+                rawstor::tests::sync_run(_queue, [&](auto cb, void* data) {
+                    return rawstor_target_open(
+                        _queue, _target.c_str(), &_object, cb, data
+                    );
+                });
+            if (ores < 0) {
+                RAWSTD_THROW_SYSTEM_ERROR((int)-ores);
             }
         } catch (...) {
             _close();
@@ -108,7 +147,13 @@ public:
     Object(Object&&) = delete;
     ~Object() {
         _close();
-        rawstor_object_remove(_target.c_str());
+        try {
+            rawstor::tests::sync_run(_queue, [&](auto cb, void* data) {
+                return rawstor_target_remove(_queue, _target.c_str(), cb, data);
+            });
+        } catch (const std::exception& e) {
+            rawstd_error("%s\n", e.what());
+        }
     }
 
     Object& operator=(const Object&) = delete;
@@ -132,7 +177,7 @@ public:
             }
         );
         int res =
-            rawstor_object_pread(_object, buf, size, 0, callback, cb.get());
+            rawstor_object_pread2(_object, buf, size, 0, callback, cb.get());
         if (res < 0) {
             RAWSTD_THROW_SYSTEM_ERROR(-res);
         }
@@ -162,8 +207,9 @@ public:
                 completed = true;
             }
         );
-        int res =
-            rawstor_object_pwrite(_object, buf, size, 0, callback, cb.get());
+        int res = rawstor_object_pwrite2(
+            _object, buf, size, 0, false, callback, cb.get()
+        );
         if (res < 0) {
             RAWSTD_THROW_SYSTEM_ERROR(-res);
         }
@@ -181,29 +227,12 @@ public:
     }
 
     void flush() {
-        bool completed = false;
-        auto cb = std::make_unique<std::function<void(size_t, int)>>(
-            [&completed](size_t, int error) {
-                if (error) {
-                    RAWSTD_THROW_SYSTEM_ERROR(error);
-                }
-                completed = true;
-            }
-        );
-        int res = rawstor_object_flush(_object, callback, cb.get());
+        ssize_t res =
+            rawstor::tests::sync_run(_queue, [&](auto cb, void* data) {
+                return rawstor_object_flush2(_object, cb, data);
+            });
         if (res < 0) {
-            RAWSTD_THROW_SYSTEM_ERROR(-res);
-        }
-        cb.release();
-
-        while (!completed) {
-            try {
-                _queue.wait();
-            } catch (...) {
-                if (!completed) {
-                    throw;
-                }
-            }
+            RAWSTD_THROW_SYSTEM_ERROR((int)-res);
         }
     }
 };
@@ -514,7 +543,7 @@ TEST(OstIOTest, write_disconnect_concurrent) {
 
     // The object-open session, and each of its retries below, disconnects
     // right after SET_OBJECT succeeds -- before either concurrent write
-    // further down is even attempted on it. Both rawstor_object_pwrite()
+    // further down is even attempted on it. Both rawstor_object_pwrite2()
     // calls below are issued back to back with no rawio_wait_timeout() in
     // between, so Session::_add_op() runs for both before the client's
     // event loop has had any chance to deliver either op's own request
@@ -553,14 +582,14 @@ TEST(OstIOTest, write_disconnect_concurrent) {
     std::string ping = "ping";
     std::string pong = "pong";
 
-    int res = rawstor_object_pwrite(
-        object.raw(), ping.data(), ping.length(), 0, callback, cb1.get()
+    int res = rawstor_object_pwrite2(
+        object.raw(), ping.data(), ping.length(), 0, false, callback, cb1.get()
     );
     ASSERT_GE(res, 0);
     cb1.release();
 
-    res = rawstor_object_pwrite(
-        object.raw(), pong.data(), pong.length(), 4, callback, cb2.get()
+    res = rawstor_object_pwrite2(
+        object.raw(), pong.data(), pong.length(), 4, false, callback, cb2.get()
     );
     ASSERT_GE(res, 0);
     cb2.release();

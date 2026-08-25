@@ -2,3 +2,4 @@ include config.py
 include COPYING
 include NOTICE.md
 include rawstor/librawstor/object_bindings.h
+include rawstor/librawstor/rawio_sync.h

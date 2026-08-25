@@ -500,6 +500,14 @@ void Queue::setup_fd(int fd) {
     int res;
     static unsigned int bufsize = 16 * 1024 * 1024;
 
+    // No-op on Linux (send()/sendmsg() suppress SIGPIPE per-call via
+    // MSG_NOSIGNAL instead); kept for parity with the poll backend, which
+    // also runs on macOS, where this is the only way to suppress it.
+    res = rawstd_socket_set_nosigpipe(fd);
+    if (res) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+
     res = rawstd_socket_set_snd_bufsize(fd, bufsize);
     if (res) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);

@@ -1,5 +1,8 @@
+#include "rawio_sync.h"
+
 #include <rawstor/location.h>
 #include <rawstor/object.h>
+#include <rawstor/target.h>
 
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
@@ -225,9 +228,19 @@ PyObject* py_rawstor_object_list(PyObject* Py_UNUSED(self), PyObject* args) {
         token = *token_ptr;
     }
 
-    int res = rawstor_object_list(location, limit, &list, &token);
+    RawstorSyncOp op;
+    int ires = rawstor_sync_op_init(&op);
+    if (ires < 0) {
+        set_os_error(-ires);
+        goto error;
+    }
+    int sres = rawstor_location_list(
+        op.queue, location, limit, &list, &token, rawstor_sync_op_cb, &op
+    );
+    ssize_t res = rawstor_sync_op_wait(&op, sres);
+    rawstor_sync_op_destroy(&op);
     if (res < 0) {
-        set_os_error(-res);
+        set_os_error((int)-res);
         goto error;
     }
 
@@ -303,9 +316,18 @@ PyObject* py_rawstor_object_create(PyObject* Py_UNUSED(self), PyObject* args) {
     PyObjectSpec* py_spec = (PyObjectSpec*)spec_obj;
     spec.size = py_spec->size;
 
-    int res = rawstor_object_create(target, &spec);
+    RawstorSyncOp op;
+    int ires = rawstor_sync_op_init(&op);
+    if (ires < 0) {
+        set_os_error(-ires);
+        return NULL;
+    }
+    int sres =
+        rawstor_target_create(op.queue, target, &spec, rawstor_sync_op_cb, &op);
+    ssize_t res = rawstor_sync_op_wait(&op, sres);
+    rawstor_sync_op_destroy(&op);
     if (res < 0) {
-        set_os_error(-res);
+        set_os_error((int)-res);
         return NULL;
     }
 
@@ -331,15 +353,25 @@ py_rawstor_object_create_at(PyObject* Py_UNUSED(self), PyObject* args) {
     };
 
     char target[65536];
-    int res =
-        rawstor_object_create_at(location, uuid, &spec, target, sizeof(target));
+    RawstorSyncOp op;
+    int ires = rawstor_sync_op_init(&op);
+    if (ires < 0) {
+        set_os_error(-ires);
+        return NULL;
+    }
+    int sres = rawstor_location_create(
+        op.queue, location, uuid, &spec, target, sizeof(target),
+        rawstor_sync_op_cb, &op
+    );
+    ssize_t res = rawstor_sync_op_wait(&op, sres);
+    rawstor_sync_op_destroy(&op);
     if (res < 0) {
-        set_os_error(-res);
+        set_os_error((int)-res);
         return NULL;
     }
     if ((size_t)res >= sizeof(target)) {
         PyErr_SetString(
-            PyExc_ValueError, "rawstor_object_create_at(): output truncated"
+            PyExc_ValueError, "rawstor_location_create(): output truncated"
         );
         return NULL;
     }
@@ -360,9 +392,18 @@ PyObject* py_rawstor_object_spec(PyObject* Py_UNUSED(self), PyObject* args) {
         return NULL;
     }
 
-    int res = rawstor_object_spec(target, &spec);
+    RawstorSyncOp op;
+    int ires = rawstor_sync_op_init(&op);
+    if (ires < 0) {
+        set_os_error(-ires);
+        return NULL;
+    }
+    int sres =
+        rawstor_target_spec(op.queue, target, &spec, rawstor_sync_op_cb, &op);
+    ssize_t res = rawstor_sync_op_wait(&op, sres);
+    rawstor_sync_op_destroy(&op);
     if (res < 0) {
-        set_os_error(-res);
+        set_os_error((int)-res);
         return NULL;
     }
 
@@ -381,9 +422,17 @@ PyObject* py_rawstor_object_remove(PyObject* Py_UNUSED(self), PyObject* args) {
         return NULL;
     }
 
-    int res = rawstor_object_remove(target);
+    RawstorSyncOp op;
+    int ires = rawstor_sync_op_init(&op);
+    if (ires < 0) {
+        set_os_error(-ires);
+        return NULL;
+    }
+    int sres = rawstor_target_remove(op.queue, target, rawstor_sync_op_cb, &op);
+    ssize_t res = rawstor_sync_op_wait(&op, sres);
+    rawstor_sync_op_destroy(&op);
     if (res < 0) {
-        set_os_error(-res);
+        set_os_error((int)-res);
         return NULL;
     }
 
@@ -397,9 +446,19 @@ PyObject* py_rawstor_location_info(PyObject* Py_UNUSED(self), PyObject* args) {
     }
 
     struct RawstorLocationInfo info;
-    int res = rawstor_location_info(location, &info);
+    RawstorSyncOp op;
+    int ires = rawstor_sync_op_init(&op);
+    if (ires < 0) {
+        set_os_error(-ires);
+        return NULL;
+    }
+    int sres = rawstor_location_info(
+        op.queue, location, &info, rawstor_sync_op_cb, &op
+    );
+    ssize_t res = rawstor_sync_op_wait(&op, sres);
+    rawstor_sync_op_destroy(&op);
     if (res < 0) {
-        set_os_error(-res);
+        set_os_error((int)-res);
         return NULL;
     }
 

@@ -5,6 +5,7 @@
 #include <stdheaders/linux/virtio_ring.h>
 #include <vhost/user_protocol.h>
 
+#include <rawstd/coro.hpp>
 #include <rawstd/endian.h>
 #include <rawstd/gpp.hpp>
 #include <rawstd/iovec.h>
@@ -13,6 +14,7 @@
 
 #include <rawstor/object.h>
 #include <rawstor/rawio.h>
+#include <rawstor/target.h>
 
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -42,21 +44,28 @@
 
 namespace {
 
+// One vhost-user control message's worth of state: the request header,
+// its (union-typed) payload, and any fds carried alongside it. A stack
+// local of the coroutine driving dispatch_loop() below -- unlike
+// ost/src/client.cpp's analogous per-request state, nothing here needs to
+// outlive a single loop iteration or be shared across concurrently
+// in-flight operations, so this is a plain reference-bound aggregate, not
+// a heap-allocated, shared_ptr-tracked object.
 class DeviceOp {
 private:
-    rawstor::vhost::Device& _client;
+    rawstor::vhost::Device& _device;
     VhostUserHeader _header;
     VhostUserPayload _payload;
     VhostUserFds _fds;
 
 public:
-    DeviceOp(rawstor::vhost::Device& client) : _client(client) {}
+    DeviceOp(rawstor::vhost::Device& device) : _device(device) {}
     DeviceOp(const DeviceOp&) = delete;
     DeviceOp(DeviceOp&&) = delete;
     DeviceOp& operator=(const DeviceOp&) = delete;
     DeviceOp& operator=(DeviceOp&&) = delete;
 
-    inline rawstor::vhost::Device& device() noexcept { return _client; }
+    inline rawstor::vhost::Device& device() noexcept { return _device; }
 
     inline VhostUserHeader& header() noexcept { return _header; }
 
@@ -65,130 +74,106 @@ public:
     inline VhostUserFds& fds() noexcept { return _fds; }
 };
 
-class Task {
-protected:
-    std::shared_ptr<DeviceOp> _op;
+// ---------------------------------------------------------------------
+// rawstd::CallbackAwaitable<size_t> bridge over the control path's
+// rawio.h ops -- rawio_read2()/rawio_recvmsg2()/rawio_sendmsg2() all share
+// the same ssize_t result/data callback shape, so a single trampoline
+// suffices for all three co_*() wrappers below. See
+// rawstd::CallbackAwaitable<T>'s own doc comment for the general shape
+// this follows, and this file's own io_trampoline() (over the data
+// path's rawstor_object_*() ops) for why this one is named
+// differently despite the similar role -- distinct C callback shapes,
+// distinct bridges, one per file convention throughout this codebase.
+// ---------------------------------------------------------------------
 
-public:
-    static int callback(size_t result, int error, void* data) {
-        std::unique_ptr<Task> t(static_cast<Task*>(data));
-        try {
-            (*t)(result, error);
-            return 0;
-        } catch (const std::system_error& e) {
-            return -e.code().value();
-        } catch (const std::exception& e) {
-            rawstd_error("%s\n", e.what());
-            return -EINVAL;
-        }
-    }
-
-    Task(const std::shared_ptr<DeviceOp>& op) : _op(op) {}
-    Task(const Task&) = delete;
-    Task(Task&&) = delete;
-    virtual ~Task() {}
-
-    Task& operator=(const Task&) = delete;
-    Task& operator=(Task&&) = delete;
-
-    virtual void operator()(size_t result, int error) = 0;
-};
-
-class TaskScalar : public Task {
-public:
-    TaskScalar(const std::shared_ptr<DeviceOp>& op) : Task(op) {}
-
-    virtual void* buf() noexcept = 0;
-    virtual size_t size() const noexcept = 0;
-};
-
-class TaskMessage : public Task {
-public:
-    TaskMessage(const std::shared_ptr<DeviceOp>& op) : Task(op) {}
-
-    virtual msghdr* msg() noexcept = 0;
-    virtual size_t size() const noexcept = 0;
-    virtual int flags() const noexcept = 0;
-};
-
-void read(RawIOQueue* queue, int fd, std::unique_ptr<TaskScalar> t) {
-    int res = rawio_read(queue, fd, t->buf(), t->size(), t->callback, t.get());
-    if (res) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-    t.release();
+int rawio_trampoline(ssize_t result, void* data) {
+    size_t value = result < 0 ? 0 : static_cast<size_t>(result);
+    int error = result < 0 ? static_cast<int>(-result) : 0;
+    static_cast<rawstd::CallbackAwaitable<size_t>*>(data)->complete(
+        value, error
+    );
+    return 0;
 }
 
-void read(RawIOQueue* queue, int fd, std::unique_ptr<TaskMessage> t) {
+rawstd::Task<size_t>
+co_read(RawIOQueue* queue, int fd, void* buf, size_t size) {
+    rawstd::CallbackAwaitable<size_t> awaiter;
+    int res = rawio_read2(queue, fd, buf, size, rawio_trampoline, &awaiter);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+    co_return co_await awaiter;
+}
+
+rawstd::Task<size_t>
+co_recvmsg(RawIOQueue* queue, int fd, msghdr* msg, unsigned int flags) {
+    rawstd::CallbackAwaitable<size_t> awaiter;
+    int res = rawio_recvmsg2(queue, fd, msg, flags, rawio_trampoline, &awaiter);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+    co_return co_await awaiter;
+}
+
+rawstd::Task<size_t>
+co_sendmsg(RawIOQueue* queue, int fd, msghdr* msg, unsigned int flags) {
+    rawstd::CallbackAwaitable<size_t> awaiter;
+    int res = rawio_sendmsg2(queue, fd, msg, flags, rawio_trampoline, &awaiter);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+    co_return co_await awaiter;
+}
+
+// Fire-and-forget notification -- unlike every reply above, nothing
+// awaits this (it's a best-effort "in case of I/O hang after
+// reconnecting" poke, not part of the request/response flow itself), so
+// a failure is logged and otherwise ignored rather than torn down
+// through dispatch_loop()'s own error handling.
+int notify_eventfd_cb(ssize_t result, void* data) {
+    std::unique_ptr<uint64_t> value(static_cast<uint64_t*>(data));
+    if (result < 0) {
+        rawstd_error("Failed to notify eventfd: %s\n", strerror(-result));
+    } else if (static_cast<size_t>(result) != sizeof(*value)) {
+        rawstd_error("Unexpected eventfd write size: %zd\n", result);
+    }
+    return 0;
+}
+
+void notify_eventfd(RawIOQueue* queue, int fd, uint64_t value) {
+    auto v = std::make_unique<uint64_t>(value);
+    uint64_t* buf = v.get();
     int res =
-        rawio_recvmsg(queue, fd, t->msg(), t->flags(), t->callback, t.get());
-    if (res) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
+        rawio_write2(queue, fd, buf, sizeof(*buf), notify_eventfd_cb, v.get());
+    if (res < 0) {
+        rawstd_error("Failed to notify eventfd: %s\n", strerror(-res));
+        return;
     }
-    t.release();
+    v.release();
 }
 
-void write(RawIOQueue* queue, int fd, std::unique_ptr<TaskScalar> t) {
-    int res = rawio_write(queue, fd, t->buf(), t->size(), t->callback, t.get());
-    if (res) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-    t.release();
-}
-
-void write(RawIOQueue* queue, int fd, std::unique_ptr<TaskMessage> t) {
-    int res =
-        rawio_sendmsg(queue, fd, t->msg(), t->flags(), t->callback, t.get());
-    if (res) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-    t.release();
-}
-
-class TaskEventFd final : public TaskScalar {
-private:
-    uint64_t _value;
-
-public:
-    TaskEventFd(const std::shared_ptr<DeviceOp>& op, uint64_t value) :
-        TaskScalar(op),
-        _value(value) {}
-
-    void* buf() noexcept { return &_value; }
-
-    size_t size() const noexcept { return sizeof(_value); }
-
-    void operator()(size_t result, int error) {
-        if (error) {
-            RAWSTD_THROW_SYSTEM_ERROR(error);
-        }
-
-        if (result != sizeof(uint64_t)) {
-            rawstd_error("Unexpected eventfd size: %zu\n", result);
-            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
-        }
-    }
-};
-
-class TaskWriteMsg : public TaskMessage {
+// A reply message's wire-format builder: computes the header/payload/fds
+// iovec+control-buffer shape for one vhost-user response, ready for
+// dispatch_loop() to co_await co_sendmsg() with. No longer a Task
+// subclass (there's nothing left to bridge to a C callback here --
+// dispatch_loop() sends and validates it directly), so only str() (for
+// the debug trace) is a customization point; msg()/size()/flags() are
+// the same for every reply shape.
+class Reply {
 private:
     iovec _iov[2];
     char _control[CMSG_SPACE(VHOST_MEMORY_BASELINE_NREGIONS * sizeof(int))];
     msghdr _msg;
 
 public:
-    TaskWriteMsg(
-        const std::shared_ptr<DeviceOp>& op, size_t payload_size,
-        uint32_t flags, int nfds
-    ) :
-        TaskMessage(op),
+    Reply(DeviceOp& op, size_t payload_size, uint32_t flags, int nfds) :
         _iov{
             {
-                .iov_base = &op->header(),
-                .iov_len = sizeof(op->header()),
+                .iov_base = &op.header(),
+                .iov_len = sizeof(op.header()),
             },
             {
-                .iov_base = &op->payload(),
+                .iov_base = &op.payload(),
                 .iov_len = payload_size,
             }
         },
@@ -206,7 +191,7 @@ public:
             _msg.msg_iovlen = 1;
         }
 
-        VhostUserHeader& header = _op->header();
+        VhostUserHeader& header = op.header();
 
         header.flags = flags;
         header.flags &= ~VHOST_USER_VERSION_MASK;
@@ -215,7 +200,7 @@ public:
 
         header.size = payload_size;
 
-        const VhostUserFds& fds = _op->fds();
+        const VhostUserFds& fds = op.fds();
         assert(nfds <= VHOST_MEMORY_BASELINE_NREGIONS);
         if (nfds > 0) {
             size_t fdsize = nfds * sizeof(int);
@@ -229,80 +214,79 @@ public:
         }
     }
 
-    void operator()(size_t result, int error) override {
-        if (error != 0) {
-            RAWSTD_THROW_SYSTEM_ERROR(error);
-        }
+    Reply(const Reply&) = delete;
+    Reply(Reply&&) = delete;
+    virtual ~Reply() = default;
 
-        if (result != size()) {
-            rawstd_error("Unexpected response size: %zu\n", result);
-            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
-        }
+    Reply& operator=(const Reply&) = delete;
+    Reply& operator=(Reply&&) = delete;
 
-        rawstd_debug("Message sent: %zu bytes\n", result);
-    }
+    inline msghdr* msg() noexcept { return &_msg; }
 
-    inline msghdr* msg() noexcept override { return &_msg; }
+    size_t size() const noexcept { return _iov[0].iov_len + _iov[1].iov_len; }
 
-    size_t size() const noexcept override {
-        return _iov[0].iov_len + _iov[1].iov_len;
-    }
-
-    inline int flags() const noexcept override { return RAWSTD_MSG_NOSIGNAL; }
+    inline int flags() const noexcept { return RAWSTD_MSG_NOSIGNAL; }
 
     virtual std::string str() const = 0;
 };
 
-class TaskWriteEmpty : public TaskWriteMsg {
+class EmptyReply : public Reply {
 public:
-    TaskWriteEmpty(const std::shared_ptr<DeviceOp>& op) :
-        TaskWriteMsg(op, 0, 0, 0) {}
+    EmptyReply(DeviceOp& op) : Reply(op, 0, 0, 0) {}
 
     std::string str() const override { return "empty"; }
 };
 
-class TaskWriteU64 : public TaskWriteMsg {
+class U64Reply : public Reply {
+private:
+    DeviceOp& _op;
+
 public:
-    TaskWriteU64(const std::shared_ptr<DeviceOp>& op, uint64_t value) :
-        TaskWriteMsg(op, sizeof(op->payload().u64), 0, 0) {
-        VhostUserPayload& payload = _op->payload();
+    U64Reply(DeviceOp& op, uint64_t value) :
+        Reply(op, sizeof(op.payload().u64), 0, 0),
+        _op(op) {
+        VhostUserPayload& payload = _op.payload();
 
         payload.u64 = value;
     }
 
     std::string str() const override {
         std::ostringstream oss;
-        oss << "u64: 0x" << std::hex << _op->payload().u64;
+        oss << "u64: 0x" << std::hex << _op.payload().u64;
         return oss.str();
     }
 };
 
-class TaskWriteState : public TaskWriteMsg {
+class StateReply : public Reply {
+private:
+    DeviceOp& _op;
+
 public:
-    TaskWriteState(
-        const std::shared_ptr<DeviceOp>& op, const vhost_vring_state& state
-    ) :
-        TaskWriteMsg(op, sizeof(op->payload().state), 0, 0) {
-        VhostUserPayload& payload = _op->payload();
+    StateReply(DeviceOp& op, const vhost_vring_state& state) :
+        Reply(op, sizeof(op.payload().state), 0, 0),
+        _op(op) {
+        VhostUserPayload& payload = _op.payload();
 
         payload.state = state;
     }
 
     std::string str() const override {
         std::ostringstream oss;
-        const vhost_vring_state& state = _op->payload().state;
+        const vhost_vring_state& state = _op.payload().state;
         oss << "state(index=" << state.index << ", num=" << state.num << ")";
         return oss.str();
     }
 };
 
-class TaskWriteConfig : public TaskWriteMsg {
+class ConfigReply : public Reply {
+private:
+    DeviceOp& _op;
+
 public:
-    TaskWriteConfig(
-        const std::shared_ptr<DeviceOp>& op, const virtio_blk_config& config
-    ) :
-        TaskWriteMsg(op, op->header().size, 0, 0) {
-        VhostUserPayload& payload = _op->payload();
+    ConfigReply(DeviceOp& op, const virtio_blk_config& config) :
+        Reply(op, op.header().size, 0, 0),
+        _op(op) {
+        VhostUserPayload& payload = _op.payload();
         assert(payload.config.size <= sizeof(virtio_blk_config));
 
         memcpy(payload.config.region, &config, payload.config.size);
@@ -310,20 +294,22 @@ public:
 
     std::string str() const override {
         std::ostringstream oss;
-        VhostUserPayload& payload = _op->payload();
+        VhostUserPayload& payload = _op.payload();
 
         oss << "config(" << payload.config.size << ")";
         return oss.str();
     }
 };
 
-class TaskWriteMemRegMsg : public TaskWriteMsg {
+class MemRegReply : public Reply {
+private:
+    DeviceOp& _op;
+
 public:
-    TaskWriteMemRegMsg(
-        const std::shared_ptr<DeviceOp>& op, const VhostUserMemRegMsg& msg
-    ) :
-        TaskWriteMsg(op, sizeof(TaskWriteMemRegMsg), 0, 0) {
-        VhostUserPayload& payload = _op->payload();
+    MemRegReply(DeviceOp& op, const VhostUserMemRegMsg& msg) :
+        Reply(op, sizeof(MemRegReply), 0, 0),
+        _op(op) {
+        VhostUserPayload& payload = _op.payload();
 
         payload.memreg = msg;
     }
@@ -342,9 +328,8 @@ void close_fds(VhostUserFds& fds) {
  * bit VHOST_USER_F_PROTOCOL_FEATURES signals back-end support for
  * VHOST_USER_GET_PROTOCOL_FEATURES and VHOST_USER_SET_PROTOCOL_FEATURES.
  */
-std::unique_ptr<TaskWriteMsg>
-get_features(const std::shared_ptr<DeviceOp>& op) {
-    return std::make_unique<TaskWriteU64>(op, op->device().get_features());
+std::unique_ptr<Reply> get_features(DeviceOp& op) {
+    return std::make_unique<U64Reply>(op, op.device().get_features());
 }
 
 /**
@@ -352,11 +337,10 @@ get_features(const std::shared_ptr<DeviceOp>& op) {
  * Feature bit VHOST_USER_F_PROTOCOL_FEATURES signals back-end support for
  * VHOST_USER_GET_PROTOCOL_FEATURES and VHOST_USER_SET_PROTOCOL_FEATURES.
  */
-std::unique_ptr<TaskWriteMsg>
-set_features(const std::shared_ptr<DeviceOp>& op) {
-    const VhostUserPayload& payload = op->payload();
+std::unique_ptr<Reply> set_features(DeviceOp& op) {
+    const VhostUserPayload& payload = op.payload();
 
-    op->device().set_features(payload.u64);
+    op.device().set_features(payload.u64);
 
     return nullptr;
 }
@@ -366,16 +350,15 @@ set_features(const std::shared_ptr<DeviceOp>& op) {
  * front-end that owns of the session. This can be used on the back-end as a
  * "session start" flag.
  */
-std::unique_ptr<TaskWriteMsg> set_owner(const std::shared_ptr<DeviceOp>&) {
+std::unique_ptr<Reply> set_owner(DeviceOp&) {
     return nullptr;
 }
 
 /**
  * Set the size of the queue.
  */
-std::unique_ptr<TaskWriteMsg>
-set_vring_num(const std::shared_ptr<DeviceOp>& op) {
-    const VhostUserPayload& payload = op->payload();
+std::unique_ptr<Reply> set_vring_num(DeviceOp& op) {
+    const VhostUserPayload& payload = op.payload();
 
     unsigned int index = payload.state.index;
     unsigned int num = payload.state.num;
@@ -383,7 +366,7 @@ set_vring_num(const std::shared_ptr<DeviceOp>& op) {
     rawstd_debug("State.index: %u\n", index);
     rawstd_debug("State.num:   %u\n", num);
 
-    op->device().set_vring_size(index, num);
+    op.device().set_vring_size(index, num);
 
     return nullptr;
 }
@@ -391,9 +374,8 @@ set_vring_num(const std::shared_ptr<DeviceOp>& op) {
 /**
  * Sets the addresses of the different aspects of the vring.
  */
-std::unique_ptr<TaskWriteMsg>
-set_vring_addr(const std::shared_ptr<DeviceOp>& op) {
-    const VhostUserPayload& payload = op->payload();
+std::unique_ptr<Reply> set_vring_addr(DeviceOp& op) {
+    const VhostUserPayload& payload = op.payload();
     const vhost_vring_addr& vra = payload.addr;
 
     rawstd_debug("vhost_vring_addr:\n");
@@ -413,7 +395,7 @@ set_vring_addr(const std::shared_ptr<DeviceOp>& op) {
         "    log_guest_addr:   0x%llx\n", (unsigned long long)vra.log_guest_addr
     );
 
-    op->device().set_vring_addr(vra);
+    op.device().set_vring_addr(vra);
 
     return nullptr;
 }
@@ -421,9 +403,8 @@ set_vring_addr(const std::shared_ptr<DeviceOp>& op) {
 /**
  * Sets the next index to use for descriptors in this vring.
  */
-std::unique_ptr<TaskWriteMsg>
-set_vring_base(const std::shared_ptr<DeviceOp>& op) {
-    const VhostUserPayload& payload = op->payload();
+std::unique_ptr<Reply> set_vring_base(DeviceOp& op) {
+    const VhostUserPayload& payload = op.payload();
 
     unsigned int index = payload.state.index;
     unsigned int num = payload.state.num;
@@ -431,7 +412,7 @@ set_vring_base(const std::shared_ptr<DeviceOp>& op) {
     rawstd_debug("State.index: %u\n", index);
     rawstd_debug("State.num:   %u\n", num);
 
-    op->device().set_vring_base(index, num);
+    op.device().set_vring_base(index, num);
 
     return nullptr;
 }
@@ -440,11 +421,10 @@ set_vring_base(const std::shared_ptr<DeviceOp>& op) {
  * Set the event file descriptor for adding buffers to the vring. It is passed
  * in the ancillary data.
  */
-std::unique_ptr<TaskWriteMsg>
-set_vring_kick(const std::shared_ptr<DeviceOp>& op) {
-    const VhostUserHeader& header = op->header();
-    const VhostUserPayload& payload = op->payload();
-    VhostUserFds& fds = op->fds();
+std::unique_ptr<Reply> set_vring_kick(DeviceOp& op) {
+    const VhostUserHeader& header = op.header();
+    const VhostUserPayload& payload = op.payload();
+    VhostUserFds& fds = op.fds();
 
     int index = payload.u64 & VHOST_USER_VRING_IDX_MASK;
     bool nofd = payload.u64 & VHOST_USER_VRING_NOFD_MASK;
@@ -463,7 +443,7 @@ set_vring_kick(const std::shared_ptr<DeviceOp>& op) {
     }
 
     try {
-        op->device().set_vring_kick(index, fd);
+        op.device().set_vring_kick(index, fd);
     } catch (...) {
         if (fd != -1) {
             close(fd);
@@ -478,11 +458,10 @@ set_vring_kick(const std::shared_ptr<DeviceOp>& op) {
  * Set the event file descriptor to signal when buffers are used. It is passed
  * in the ancillary data.
  */
-std::unique_ptr<TaskWriteMsg>
-set_vring_call(const std::shared_ptr<DeviceOp>& op) {
-    const VhostUserHeader& header = op->header();
-    const VhostUserPayload& payload = op->payload();
-    VhostUserFds& fds = op->fds();
+std::unique_ptr<Reply> set_vring_call(DeviceOp& op) {
+    const VhostUserHeader& header = op.header();
+    const VhostUserPayload& payload = op.payload();
+    VhostUserFds& fds = op.fds();
 
     int index = payload.u64 & VHOST_USER_VRING_IDX_MASK;
     bool nofd = payload.u64 & VHOST_USER_VRING_NOFD_MASK;
@@ -501,7 +480,7 @@ set_vring_call(const std::shared_ptr<DeviceOp>& op) {
     }
 
     try {
-        op->device().set_vring_call(index, fd);
+        op.device().set_vring_call(index, fd);
     } catch (...) {
         if (fd != -1) {
             close(fd);
@@ -511,8 +490,7 @@ set_vring_call(const std::shared_ptr<DeviceOp>& op) {
 
     // in case of I/O hang after reconnecting
     if (fd != -1) {
-        std::unique_ptr<TaskEventFd> t = std::make_unique<TaskEventFd>(op, 1);
-        write(op->device().queue(), fd, std::move(t));
+        notify_eventfd(op.device().queue(), fd, 1);
     }
 
     return nullptr;
@@ -522,11 +500,10 @@ set_vring_call(const std::shared_ptr<DeviceOp>& op) {
  * Set the event file descriptor to signal when error occurs. It is passed in
  * the ancillary data.
  */
-std::unique_ptr<TaskWriteMsg>
-set_vring_err(const std::shared_ptr<DeviceOp>& op) {
-    const VhostUserHeader& header = op->header();
-    const VhostUserPayload& payload = op->payload();
-    VhostUserFds& fds = op->fds();
+std::unique_ptr<Reply> set_vring_err(DeviceOp& op) {
+    const VhostUserHeader& header = op.header();
+    const VhostUserPayload& payload = op.payload();
+    VhostUserFds& fds = op.fds();
 
     int index = payload.u64 & VHOST_USER_VRING_IDX_MASK;
     bool nofd = payload.u64 & VHOST_USER_VRING_NOFD_MASK;
@@ -545,7 +522,7 @@ set_vring_err(const std::shared_ptr<DeviceOp>& op) {
     }
 
     try {
-        op->device().set_vring_err(index, fd);
+        op.device().set_vring_err(index, fd);
     } catch (...) {
         if (fd != -1) {
             close(fd);
@@ -561,9 +538,8 @@ set_vring_err(const std::shared_ptr<DeviceOp>& op) {
  * VHOST_USER_PROTOCOL_F_MQ (or REPLY_ACK) negotiation requires explicit
  * start/stop of individual rings.
  */
-std::unique_ptr<TaskWriteMsg>
-set_vring_enable(const std::shared_ptr<DeviceOp>& op) {
-    const VhostUserPayload& payload = op->payload();
+std::unique_ptr<Reply> set_vring_enable(DeviceOp& op) {
+    const VhostUserPayload& payload = op.payload();
 
     unsigned int index = payload.state.index;
     bool enable = payload.state.num != 0;
@@ -571,7 +547,7 @@ set_vring_enable(const std::shared_ptr<DeviceOp>& op) {
     rawstd_debug("State.index:  %u\n", index);
     rawstd_debug("State.enable: %u\n", enable);
 
-    op->device().set_vring_enable(index, enable);
+    op.device().set_vring_enable(index, enable);
 
     return nullptr;
 }
@@ -581,42 +557,37 @@ set_vring_enable(const std::shared_ptr<DeviceOp>& op) {
  * or migrating a ring. The back-end must stop processing the ring and reply
  * with the index up to which it has consumed the avail ring.
  */
-std::unique_ptr<TaskWriteMsg>
-get_vring_base(const std::shared_ptr<DeviceOp>& op) {
-    VhostUserPayload& payload = op->payload();
+std::unique_ptr<Reply> get_vring_base(DeviceOp& op) {
+    VhostUserPayload& payload = op.payload();
 
     unsigned int index = payload.state.index;
 
     vhost_vring_state state;
     state.index = index;
-    state.num = op->device().get_vring_base(index);
+    state.num = op.device().get_vring_base(index);
 
-    return std::make_unique<TaskWriteState>(op, state);
+    return std::make_unique<StateReply>(op, state);
 }
 
 /**
  * Get the protocol feature bitmask from the underlying vhost implementation.
  */
-std::unique_ptr<TaskWriteMsg>
-get_protocol_features(const std::shared_ptr<DeviceOp>& op) {
-    return std::make_unique<TaskWriteU64>(
-        op, op->device().get_protocol_features()
-    );
+std::unique_ptr<Reply> get_protocol_features(DeviceOp& op) {
+    return std::make_unique<U64Reply>(op, op.device().get_protocol_features());
 }
 
 /**
  * Enable protocol features in the underlying vhost implementation using a
  * bitmask.
  */
-std::unique_ptr<TaskWriteMsg>
-set_protocol_features(const std::shared_ptr<DeviceOp>& op) {
-    const VhostUserPayload& payload = op->payload();
+std::unique_ptr<Reply> set_protocol_features(DeviceOp& op) {
+    const VhostUserPayload& payload = op.payload();
 
     rawstd_debug(
         "Setting features u64: 0x%llx\n", (unsigned long long)payload.u64
     );
 
-    op->device().set_protocol_features(payload.u64);
+    op.device().set_protocol_features(payload.u64);
 
     return nullptr;
 }
@@ -624,18 +595,16 @@ set_protocol_features(const std::shared_ptr<DeviceOp>& op) {
 /**
  * Query how many queues the back-end supports.
  */
-std::unique_ptr<TaskWriteMsg>
-get_queue_num(const std::shared_ptr<DeviceOp>& op) {
-    return std::make_unique<TaskWriteU64>(op, op->device().nqueues());
+std::unique_ptr<Reply> get_queue_num(DeviceOp& op) {
+    return std::make_unique<U64Reply>(op, op.device().nqueues());
 }
 
 /**
  * Set the socket file descriptor for back-end initiated requests. It is
  * passed in the ancillary data.
  */
-std::unique_ptr<TaskWriteMsg>
-set_backend_req_fd(const std::shared_ptr<DeviceOp>& op) {
-    VhostUserFds& fds = op->fds();
+std::unique_ptr<Reply> set_backend_req_fd(DeviceOp& op) {
+    VhostUserFds& fds = op.fds();
 
     if (fds.fd_num != 1) {
         rawstd_error("Invalid backend_req_fd message (%d fd's)", fds.fd_num);
@@ -644,7 +613,7 @@ set_backend_req_fd(const std::shared_ptr<DeviceOp>& op) {
     }
 
     rawstd_debug("Got backend_fd: %d\n", fds.fds[0]);
-    op->device().set_backend_fd(fds.fds[0]);
+    op.device().set_backend_fd(fds.fds[0]);
 
     return nullptr;
 }
@@ -654,36 +623,36 @@ set_backend_req_fd(const std::shared_ptr<DeviceOp>& op) {
  * by the vhost-user front-end to fetch the contents of the virtio device
  * configuration space.
  */
-std::unique_ptr<TaskWriteMsg> get_config(const std::shared_ptr<DeviceOp>& op) {
-    const VhostUserPayload& payload = op->payload();
+std::unique_ptr<Reply> get_config(DeviceOp& op) {
+    const VhostUserPayload& payload = op.payload();
     if (payload.config.size > sizeof(virtio_blk_config)) {
         /**
          * Return zero to indicate an error to frontend
          */
-        return std::make_unique<TaskWriteEmpty>(op);
+        return std::make_unique<EmptyReply>(op);
     }
 
-    return std::make_unique<TaskWriteConfig>(op, op->device().get_config());
+    return std::make_unique<ConfigReply>(op, op.device().get_config());
 }
 
 /**
  * The front-end updates a portion of the virtio device configuration space.
  */
-std::unique_ptr<TaskWriteMsg> set_config(const std::shared_ptr<DeviceOp>& op) {
-    const VhostUserHeader& header = op->header();
-    const VhostUserPayload& payload = op->payload();
+std::unique_ptr<Reply> set_config(DeviceOp& op) {
+    const VhostUserHeader& header = op.header();
+    const VhostUserPayload& payload = op.payload();
     const VhostUserConfig& c = payload.config;
 
     bool need_reply = header.flags & VHOST_USER_NEED_REPLY_MASK;
 
     try {
-        op->device().set_config(c.region, c.offset, c.size, c.flags);
+        op.device().set_config(c.region, c.offset, c.size, c.flags);
     } catch (const std::exception& e) {
         rawstd_error("%s\n", e.what());
-        return need_reply ? std::make_unique<TaskWriteU64>(op, 1) : nullptr;
+        return need_reply ? std::make_unique<U64Reply>(op, 1) : nullptr;
     }
 
-    return need_reply ? std::make_unique<TaskWriteU64>(op, 0) : nullptr;
+    return need_reply ? std::make_unique<U64Reply>(op, 0) : nullptr;
 }
 
 /**
@@ -692,9 +661,8 @@ std::unique_ptr<TaskWriteMsg> set_config(const std::shared_ptr<DeviceOp>& op) {
  * to the back-end to learn the maximum number of memory slots it may expose
  * to the guest.
  */
-std::unique_ptr<TaskWriteMsg>
-get_max_mem_slots(const std::shared_ptr<DeviceOp>& op) {
-    return std::make_unique<TaskWriteU64>(op, op->device().get_max_mem_slots());
+std::unique_ptr<Reply> get_max_mem_slots(DeviceOp& op) {
+    return std::make_unique<U64Reply>(op, op.device().get_max_mem_slots());
 }
 
 /**
@@ -702,10 +670,10 @@ get_max_mem_slots(const std::shared_ptr<DeviceOp>& op) {
  * descriptor from which the memory is mapped is passed in the ancillary
  * data.
  */
-std::unique_ptr<TaskWriteMsg> add_mem_reg(const std::shared_ptr<DeviceOp>& op) {
-    const VhostUserHeader& header = op->header();
-    VhostUserPayload& payload = op->payload();
-    VhostUserFds& fds = op->fds();
+std::unique_ptr<Reply> add_mem_reg(DeviceOp& op) {
+    const VhostUserHeader& header = op.header();
+    VhostUserPayload& payload = op.payload();
+    VhostUserFds& fds = op.fds();
 
     VhostUserMemRegMsg& m = payload.memreg;
 
@@ -729,7 +697,7 @@ std::unique_ptr<TaskWriteMsg> add_mem_reg(const std::shared_ptr<DeviceOp>& op) {
         return nullptr;
     }
 
-    if (op->device().nregions() == VHOST_USER_MAX_RAM_SLOTS) {
+    if (op.device().nregions() == VHOST_USER_MAX_RAM_SLOTS) {
         rawstd_error(
             "failing attempt to hot add memory via "
             "VHOST_USER_ADD_MEM_REG message because the backend has "
@@ -739,7 +707,7 @@ std::unique_ptr<TaskWriteMsg> add_mem_reg(const std::shared_ptr<DeviceOp>& op) {
         return nullptr;
     }
 
-    m.region.userspace_addr = op->device().add_mem_reg(m.region, fds.fds[0]);
+    m.region.userspace_addr = op.device().add_mem_reg(m.region, fds.fds[0]);
 
     close(fds.fds[0]);
 
@@ -753,10 +721,10 @@ std::unique_ptr<TaskWriteMsg> add_mem_reg(const std::shared_ptr<DeviceOp>& op) {
  * VHOST_USER_ADD_MEM_REG. Identified by guest physical address and size; the
  * file descriptor, if any is attached, is not used.
  */
-std::unique_ptr<TaskWriteMsg> rem_mem_reg(const std::shared_ptr<DeviceOp>& op) {
-    const VhostUserHeader& header = op->header();
-    VhostUserPayload& payload = op->payload();
-    VhostUserFds& fds = op->fds();
+std::unique_ptr<Reply> rem_mem_reg(DeviceOp& op) {
+    const VhostUserHeader& header = op.header();
+    VhostUserPayload& payload = op.payload();
+    VhostUserFds& fds = op.fds();
 
     if (fds.fd_num > 0) {
         close_fds(fds);
@@ -771,7 +739,7 @@ std::unique_ptr<TaskWriteMsg> rem_mem_reg(const std::shared_ptr<DeviceOp>& op) {
         return nullptr;
     }
 
-    op->device().rem_mem_reg(payload.memreg.region);
+    op.device().rem_mem_reg(payload.memreg.region);
 
     return nullptr;
 }
@@ -780,12 +748,12 @@ std::unique_ptr<TaskWriteMsg> rem_mem_reg(const std::shared_ptr<DeviceOp>& op) {
  * Reset feature negotiation; sent rarely by modern front-ends. We simply
  * acknowledge it.
  */
-std::unique_ptr<TaskWriteMsg> reset_owner(const std::shared_ptr<DeviceOp>&) {
+std::unique_ptr<Reply> reset_owner(DeviceOp&) {
     return nullptr;
 }
 
-std::unique_ptr<TaskWriteMsg> response(const std::shared_ptr<DeviceOp>& op) {
-    switch (op->header().request) {
+std::unique_ptr<Reply> response(DeviceOp& op) {
+    switch (op.header().request) {
     case VHOST_USER_GET_FEATURES:
         return get_features(op);
     case VHOST_USER_SET_FEATURES:
@@ -829,166 +797,130 @@ std::unique_ptr<TaskWriteMsg> response(const std::shared_ptr<DeviceOp>& op) {
     case VHOST_USER_REM_MEM_REG:
         return rem_mem_reg(op);
     default:
-        rawstd_error("Unexpected request: %d\n", op->header().request);
+        rawstd_error("Unexpected request: %d\n", op.header().request);
         throw std::runtime_error("Unexpected request");
     };
 }
 
-void dispatch(const std::shared_ptr<DeviceOp>& op) {
-    VhostUserHeader& header = op->header();
+// Drives one vhost-user control connection's whole lifetime: loops
+// reading one length-prefixed message at a time (header, then -- if
+// header.size != 0 -- its payload), dispatching each to response() and
+// co_awaiting the reply (if any) before reading the next message. No
+// pipelining of reads-vs-replies here (unlike ost::Client's _recv_pump(),
+// which fires off each command's I/O and keeps reading so a slow
+// storage op doesn't stall the next request): every response() handler
+// here is a synchronous, in-memory Device state mutation with no I/O of
+// its own, so there is no slow op to pipeline around, and real front-ends
+// (QEMU/libvhost-user) address this control channel strictly
+// request-then-reply anyway -- sequential co_await is both simpler and a
+// closer match to how it's actually used.
+//
+// Sets `done` (a Device::loop() stack local, safe to bind by reference:
+// this coroutine is only ever resumed from inside a rawio_wait(queue)
+// call Device::loop() itself makes, so its frame is guaranteed alive at
+// that point) right before returning on a clean, message-boundary
+// disconnect, so Device::loop()'s own pump knows to stop. Any other
+// error (malformed input, a genuine I/O failure) is left to propagate as
+// an unhandled exception out of this DetachedTask -- automatically
+// rethrown the next time anything resumes a coroutine on this thread
+// (see DetachedTask's own doc comment), which -- since this is the only
+// coroutine Device::loop() drives -- is exactly the very rawio_wait()
+// call that resumed this in the first place.
+rawstd::DetachedTask dispatch_loop(
+    RawIOQueue* queue, int fd, rawstor::vhost::Device& device, bool& done
+) {
+    while (true) {
+        DeviceOp op(device);
 
-    rawstd_debug("============= Vhost user message =============\n");
-    rawstd_debug("Request: %d\n", header.request);
-    rawstd_debug("Flags:   0x%x\n", header.flags);
-    rawstd_debug("Size:    %u\n", header.size);
-
-#if RAWSTD_LOGLEVEL >= RAWSTD_LOGLEVEL_DEBUG
-    VhostUserFds& fds = op->fds();
-    if (fds.fd_num) {
-        std::ostringstream oss;
-        for (unsigned int i = 0; i < fds.fd_num; i++) {
-            oss << " " << fds.fds[i];
-        }
-        rawstd_debug("Fds:    %s\n", oss.str().c_str());
-    }
-#endif
-
-    rawstd_debug("==============================================\n");
-
-    bool need_reply = header.flags & VHOST_USER_NEED_REPLY_MASK;
-
-    std::unique_ptr<TaskWriteMsg> t = response(op);
-    if (t.get() == nullptr && need_reply) {
-        t = std::make_unique<TaskWriteU64>(op, 0);
-    }
-    if (t.get() != nullptr) {
-        rawstd_debug("Sending back to guest: %s\n", t->str().c_str());
-        write(op->device().queue(), op->device().fd(), std::move(t));
-    }
-}
-
-class TaskReadUserHeader final : public TaskMessage {
-private:
-    iovec _iov;
-    char _control[CMSG_SPACE(VHOST_MEMORY_BASELINE_NREGIONS * sizeof(int))];
-    msghdr _msg;
-
-public:
-    TaskReadUserHeader(const std::shared_ptr<DeviceOp>& op) :
-        TaskMessage(op),
-        _iov{.iov_base = &_op->header(), .iov_len = sizeof(_op->header())},
-        _msg{
+        iovec iov{
+            .iov_base = &op.header(),
+            .iov_len = sizeof(op.header()),
+        };
+        char control[CMSG_SPACE(VHOST_MEMORY_BASELINE_NREGIONS * sizeof(int))];
+        msghdr msg{
             .msg_name = nullptr,
             .msg_namelen = 0,
-            .msg_iov = &_iov,
+            .msg_iov = &iov,
             .msg_iovlen = 1,
-            .msg_control = &_control,
-            .msg_controllen = sizeof(_control),
+            .msg_control = control,
+            .msg_controllen = sizeof(control),
             .msg_flags = 0,
-        } {}
+        };
 
-    inline msghdr* msg() noexcept override { return &_msg; }
-
-    size_t size() const noexcept override { return sizeof(_op->header()); }
-
-    inline int flags() const noexcept override { return MSG_WAITALL; }
-
-    void operator()(size_t result, int error) override;
-};
-
-class TaskReadUserPayload final : public TaskScalar {
-private:
-    size_t _payload_size;
-
-public:
-    TaskReadUserPayload(
-        const std::shared_ptr<DeviceOp>& op, size_t payload_size
-    ) :
-        TaskScalar(op),
-        _payload_size(payload_size) {}
-
-    inline void* buf() noexcept override { return &_op->payload(); }
-
-    size_t size() const noexcept override { return _payload_size; }
-
-    void operator()(size_t result, int error) override;
-};
-
-void TaskReadUserHeader::operator()(size_t result, int error) {
-    if (error != 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(error);
-    }
-
-    if (result == 0) {
-        // Front-end closed the connection at a message boundary: a normal
-        // disconnect, not a malformed request. Treat it like EPIPE so
-        // Device::loop() exits cleanly instead of reporting it as a
-        // protocol error.
-        RAWSTD_THROW_SYSTEM_ERROR(EPIPE);
-    }
-
-    if (result != size()) {
-        rawstd_error("Unexpected request header size: %zu\n", result);
-        RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
-    }
-
-    VhostUserFds& fds = _op->fds();
-    fds.fd_num = 0;
-    cmsghdr* cmsg;
-    for (cmsg = CMSG_FIRSTHDR(&_msg); cmsg != NULL;
-         cmsg = CMSG_NXTHDR(&_msg, cmsg)) {
-        if (cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SCM_RIGHTS) {
-            size_t fd_size = cmsg->cmsg_len - CMSG_LEN(0);
-            fds.fd_num = fd_size / sizeof(int);
-            assert(fds.fd_num <= VHOST_MEMORY_BASELINE_NREGIONS);
-            memcpy(fds.fds, CMSG_DATA(cmsg), fd_size);
-            break;
+        size_t result = co_await co_recvmsg(queue, fd, &msg, MSG_WAITALL);
+        if (result == 0) {
+            // Front-end closed the connection at a message boundary: a
+            // normal disconnect, not a malformed request.
+            done = true;
+            co_return;
         }
-    }
-
-    const VhostUserHeader& header = _op->header();
-    if (header.size != 0) {
-        if (header.size > sizeof(VhostUserPayload)) {
-            rawstd_error(
-                "Unexpected request payload size: %u\n",
-                (unsigned int)header.size
-            );
+        if (result != sizeof(op.header())) {
+            rawstd_error("Unexpected request header size: %zu\n", result);
             RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
         }
-        std::unique_ptr<TaskReadUserPayload> t =
-            std::make_unique<TaskReadUserPayload>(_op, header.size);
-        read(_op->device().queue(), _op->device().fd(), std::move(t));
-        return;
+
+        VhostUserFds& fds = op.fds();
+        fds.fd_num = 0;
+        for (cmsghdr* cmsg = CMSG_FIRSTHDR(&msg); cmsg != NULL;
+             cmsg = CMSG_NXTHDR(&msg, cmsg)) {
+            if (cmsg->cmsg_level == SOL_SOCKET &&
+                cmsg->cmsg_type == SCM_RIGHTS) {
+                size_t fd_size = cmsg->cmsg_len - CMSG_LEN(0);
+                fds.fd_num = fd_size / sizeof(int);
+                assert(fds.fd_num <= VHOST_MEMORY_BASELINE_NREGIONS);
+                memcpy(fds.fds, CMSG_DATA(cmsg), fd_size);
+                break;
+            }
+        }
+
+        VhostUserHeader& header = op.header();
+        if (header.size != 0) {
+            if (header.size > sizeof(VhostUserPayload)) {
+                rawstd_error(
+                    "Unexpected request payload size: %u\n",
+                    (unsigned int)header.size
+                );
+                RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+            }
+            size_t presult =
+                co_await co_read(queue, fd, &op.payload(), header.size);
+            if (presult != header.size) {
+                rawstd_error("Unexpected request payload size: %zu\n", presult);
+                RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+            }
+        }
+
+        rawstd_debug("============= Vhost user message =============\n");
+        rawstd_debug("Request: %d\n", header.request);
+        rawstd_debug("Flags:   0x%x\n", header.flags);
+        rawstd_debug("Size:    %u\n", header.size);
+#if RAWSTD_LOGLEVEL >= RAWSTD_LOGLEVEL_DEBUG
+        if (fds.fd_num) {
+            std::ostringstream oss;
+            for (unsigned int i = 0; i < fds.fd_num; i++) {
+                oss << " " << fds.fds[i];
+            }
+            rawstd_debug("Fds:    %s\n", oss.str().c_str());
+        }
+#endif
+        rawstd_debug("==============================================\n");
+
+        bool need_reply = header.flags & VHOST_USER_NEED_REPLY_MASK;
+        std::unique_ptr<Reply> reply = response(op);
+        if (reply == nullptr && need_reply) {
+            reply = std::make_unique<U64Reply>(op, 0);
+        }
+        if (reply != nullptr) {
+            rawstd_debug("Sending back to guest: %s\n", reply->str().c_str());
+            size_t sent =
+                co_await co_sendmsg(queue, fd, reply->msg(), reply->flags());
+            if (sent != reply->size()) {
+                rawstd_error("Unexpected response size: %zu\n", sent);
+                RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+            }
+            rawstd_debug("Message sent: %zu bytes\n", sent);
+        }
     }
-
-    dispatch(_op);
-
-    if (header.request == VHOST_USER_NONE) {
-        return;
-    }
-
-    std::shared_ptr<DeviceOp> op = std::make_shared<DeviceOp>(_op->device());
-    std::unique_ptr<TaskReadUserHeader> t =
-        std::make_unique<TaskReadUserHeader>(op);
-    read(op->device().queue(), op->device().fd(), std::move(t));
-}
-
-void TaskReadUserPayload::operator()(size_t result, int error) {
-    if (error != 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(error);
-    }
-
-    if (result != size()) {
-        rawstd_error("Unexpected request payload size: %zu\n", result);
-        RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
-    }
-
-    dispatch(_op);
-
-    std::shared_ptr<DeviceOp> op = std::make_shared<DeviceOp>(_op->device());
-    std::unique_ptr<TaskReadUserHeader> t =
-        std::make_unique<TaskReadUserHeader>(op);
-    read(op->device().queue(), op->device().fd(), std::move(t));
 }
 
 size_t find_mem_region_pos(
@@ -1119,128 +1051,161 @@ public:
     }
 };
 
-class ObjectTask final {
-protected:
-    std::unique_ptr<Request> _req;
+// ---------------------------------------------------------------------
+// rawstd::CallbackAwaitable<T> bridge over the async rawstor/object.h C
+// API for the data path (control-path messaging above still uses
+// DeviceOp/Task/TaskScalar/TaskMessage's own callback machinery -- that's
+// a different C API, rawio.h's, with no coroutine wrapper of its own
+// here). See rawstd::CallbackAwaitable<T>'s own doc comment for the
+// general shape this follows.
+// ---------------------------------------------------------------------
 
-public:
-    static int callback(
-        RawstorObject*, size_t size, size_t result, int error, void* data
-    ) {
-        std::unique_ptr<ObjectTask> t(static_cast<ObjectTask*>(data));
-        try {
-            (*t)(size, result, error);
-            return 0;
-        } catch (const std::system_error& e) {
-            return -e.code().value();
-        } catch (const std::exception& e) {
-            rawstd_error("%s\n", e.what());
-            return -EINVAL;
-        }
+int io_trampoline(size_t result, int error, void* data) {
+    static_cast<rawstd::CallbackAwaitable<size_t>*>(data)->complete(
+        result, error
+    );
+    return 0;
+}
+
+rawstd::Task<size_t> co_object_preadv(
+    RawstorObject* object, iovec* iov, unsigned int niov, size_t size,
+    off_t offset
+) {
+    rawstd::CallbackAwaitable<size_t> awaiter;
+    int res = rawstor_object_preadv2(
+        object, iov, niov, size, offset, io_trampoline, &awaiter
+    );
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
+    co_return co_await awaiter;
+}
 
-    ObjectTask(std::unique_ptr<Request> req) : _req(std::move(req)) {}
-    ObjectTask(const ObjectTask&) = delete;
-    ObjectTask(ObjectTask&&) = delete;
-    ~ObjectTask() = default;
+rawstd::Task<size_t> co_object_pwritev(
+    RawstorObject* object, const iovec* iov, unsigned int niov, size_t size,
+    off_t offset, bool sync
+) {
+    rawstd::CallbackAwaitable<size_t> awaiter;
+    int res = rawstor_object_pwritev2(
+        object, iov, niov, size, offset, sync, io_trampoline, &awaiter
+    );
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+    co_return co_await awaiter;
+}
 
-    ObjectTask& operator=(const ObjectTask&) = delete;
-    ObjectTask& operator=(ObjectTask&&) = delete;
+// rawstor_object_flush2()'s own callback shape (ssize_t result) --
+// there's nothing else to report, unlike io_trampoline()'s preadv2/
+// pwritev2 group above.
+int flush_trampoline(ssize_t result, void* data) {
+    static_cast<rawstd::CallbackAwaitable<void>*>(data)->complete(result);
+    return 0;
+}
 
-    void preadv();
-    void pwritev();
-    inline Request* req() noexcept { return _req.get(); }
+rawstd::Task<void> co_object_flush(RawstorObject* object) {
+    rawstd::CallbackAwaitable<void> awaiter;
+    int res = rawstor_object_flush2(object, flush_trampoline, &awaiter);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+    co_await awaiter;
+}
 
-    void operator()(size_t size, size_t result, int error);
-};
+// Both process_queue() (the only caller of process_request(), several
+// frames up) and this file's own launch_*()-style wrappers below already
+// log-and-continue on any exception escaping here, so none of these
+// *_task() coroutines need their own top-level try/catch beyond the one
+// around each async op itself -- an immediate submission failure and a
+// later-reported one both surface identically via CallbackAwaitable<T>
+// (see its own doc comment), so there's only one error path to handle
+// either way.
 
-void ObjectTask::operator()(size_t size, size_t result, int error) {
+rawstd::DetachedTask preadv_task(std::unique_ptr<Request> req) {
+    size_t size = rawstd_iovec_size(req->in_iov(), req->in_niov());
+    size_t result = 0;
+    int error = 0;
+    try {
+        result = co_await co_object_preadv(
+            req->device().object(), req->in_iov(), req->in_niov(), size,
+            req->offset()
+        );
+    } catch (const std::system_error& e) {
+        error = e.code().value();
+    }
     if (error != 0) {
         rawstd_error("%s\n", strerror(error));
-        _req->push(VIRTIO_BLK_S_IOERR, result);
-        return;
+        req->push(VIRTIO_BLK_S_IOERR, result);
+        co_return;
     }
-
     if (result != size) {
         rawstd_error("Partial object operation: %zu != %zu\n", result, size);
-        _req->push(VIRTIO_BLK_S_IOERR, result);
-        return;
+        req->push(VIRTIO_BLK_S_IOERR, result);
+        co_return;
     }
-
     rawstd_debug("vhost: object operation completed, %zu bytes\n", result);
-    _req->push(VIRTIO_BLK_S_OK, result);
+    req->push(VIRTIO_BLK_S_OK, result);
 }
 
-void ObjectTask::preadv() {
-    int res = rawstor_object_preadv(
-        _req->device().object(), _req->in_iov(), _req->in_niov(),
-        rawstd_iovec_size(_req->in_iov(), _req->in_niov()), _req->offset(),
-        callback, this
-    );
-    if (res) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
+void preadv(std::unique_ptr<Request> req) {
+    preadv_task(std::move(req));
+    rawstd::DetachedTask::rethrow_if_pending();
 }
 
-void ObjectTask::pwritev() {
-    int res = rawstor_object_pwritev(
-        _req->device().object(), _req->out_iov(), _req->out_niov(),
-        rawstd_iovec_size(_req->out_iov(), _req->out_niov()), _req->offset(),
-        callback, this
-    );
-    if (res) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
+rawstd::DetachedTask pwritev_task(std::unique_ptr<Request> req) {
+    // Writeback caching (wce) means the guest is expected to issue an
+    // explicit FLUSH when it needs durability; without it (write-through),
+    // every write must already be durable by the time it completes.
+    bool sync = !req->device().get_config().wce;
+    size_t size = rawstd_iovec_size(req->out_iov(), req->out_niov());
+    size_t result = 0;
+    int error = 0;
+    try {
+        result = co_await co_object_pwritev(
+            req->device().object(), req->out_iov(), req->out_niov(), size,
+            req->offset(), sync
+        );
+    } catch (const std::system_error& e) {
+        error = e.code().value();
     }
-}
-
-class ObjectFlushTask final {
-protected:
-    std::unique_ptr<Request> _req;
-
-public:
-    static int callback(RawstorObject*, size_t, size_t, int error, void* data) {
-        std::unique_ptr<ObjectFlushTask> t(static_cast<ObjectFlushTask*>(data));
-        try {
-            (*t)(error);
-            return 0;
-        } catch (const std::system_error& e) {
-            return -e.code().value();
-        } catch (const std::exception& e) {
-            rawstd_error("%s\n", e.what());
-            return -EINVAL;
-        }
-    }
-
-    ObjectFlushTask(std::unique_ptr<Request> req) : _req(std::move(req)) {}
-    ObjectFlushTask(const ObjectFlushTask&) = delete;
-    ObjectFlushTask(ObjectFlushTask&&) = delete;
-    ~ObjectFlushTask() = default;
-
-    ObjectFlushTask& operator=(const ObjectFlushTask&) = delete;
-    ObjectFlushTask& operator=(ObjectFlushTask&&) = delete;
-
-    void flush();
-    inline Request* req() noexcept { return _req.get(); }
-
-    void operator()(int error);
-};
-
-void ObjectFlushTask::operator()(int error) {
     if (error != 0) {
         rawstd_error("%s\n", strerror(error));
-        _req->push(VIRTIO_BLK_S_IOERR, 0);
-        return;
+        req->push(VIRTIO_BLK_S_IOERR, result);
+        co_return;
     }
-
-    rawstd_debug("vhost: flush completed\n");
-    _req->push(VIRTIO_BLK_S_OK, 0);
+    if (result != size) {
+        rawstd_error("Partial object operation: %zu != %zu\n", result, size);
+        req->push(VIRTIO_BLK_S_IOERR, result);
+        co_return;
+    }
+    rawstd_debug("vhost: object operation completed, %zu bytes\n", result);
+    req->push(VIRTIO_BLK_S_OK, result);
 }
 
-void ObjectFlushTask::flush() {
-    int res = rawstor_object_flush(_req->device().object(), callback, this);
-    if (res) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
+void pwritev(std::unique_ptr<Request> req) {
+    pwritev_task(std::move(req));
+    rawstd::DetachedTask::rethrow_if_pending();
+}
+
+rawstd::DetachedTask flush_task(std::unique_ptr<Request> req) {
+    int error = 0;
+    try {
+        co_await co_object_flush(req->device().object());
+    } catch (const std::system_error& e) {
+        error = e.code().value();
     }
+    if (error != 0) {
+        rawstd_error("%s\n", strerror(error));
+        req->push(VIRTIO_BLK_S_IOERR, 0);
+        co_return;
+    }
+    rawstd_debug("vhost: flush completed\n");
+    req->push(VIRTIO_BLK_S_OK, 0);
+}
+
+void flush(std::unique_ptr<Request> req) {
+    flush_task(std::move(req));
+    rawstd::DetachedTask::rethrow_if_pending();
 }
 
 void process_request(std::unique_ptr<Request> req) {
@@ -1253,37 +1218,20 @@ void process_request(std::unique_ptr<Request> req) {
     );
 
     switch (req->type()) {
-    case VIRTIO_BLK_T_IN: {
-        std::unique_ptr<ObjectTask> t =
-            std::make_unique<ObjectTask>(std::move(req));
-        try {
-            t->preadv();
-            t.release();
-        } catch (const std::exception& e) {
-            rawstd_error("%s\n", e.what());
-            t->req()->push(VIRTIO_BLK_S_IOERR, in_size);
-        }
+    case VIRTIO_BLK_T_IN:
+        preadv(std::move(req));
         break;
-    }
 
-    case VIRTIO_BLK_T_OUT: {
-        std::unique_ptr<ObjectTask> t =
-            std::make_unique<ObjectTask>(std::move(req));
-        try {
-            t->pwritev();
-            t.release();
-        } catch (const std::exception& e) {
-            rawstd_error("%s\n", e.what());
-            t->req()->push(VIRTIO_BLK_S_IOERR, in_size);
-        }
+    case VIRTIO_BLK_T_OUT:
+        pwritev(std::move(req));
         break;
-    }
 
     case VIRTIO_BLK_T_GET_ID: {
         try {
             char uuid[37];
-            int res =
-                rawstor_object_id(req->device().object(), uuid, sizeof(uuid));
+            int res = rawstor_target_id(
+                req->device().target().c_str(), uuid, sizeof(uuid)
+            );
             if (res < 0) {
                 RAWSTD_THROW_SYSTEM_ERROR(-res);
             }
@@ -1307,18 +1255,9 @@ void process_request(std::unique_ptr<Request> req) {
         break;
     }
 
-    case VIRTIO_BLK_T_FLUSH: {
-        std::unique_ptr<ObjectFlushTask> t =
-            std::make_unique<ObjectFlushTask>(std::move(req));
-        try {
-            t->flush();
-            t.release();
-        } catch (const std::exception& e) {
-            rawstd_error("%s\n", e.what());
-            t->req()->push(VIRTIO_BLK_S_IOERR, in_size);
-        }
+    case VIRTIO_BLK_T_FLUSH:
+        flush(std::move(req));
         break;
-    }
 
     case VIRTIO_BLK_T_DISCARD:
     case VIRTIO_BLK_T_WRITE_ZEROES:
@@ -1326,6 +1265,91 @@ void process_request(std::unique_ptr<Request> req) {
         req->push(VIRTIO_BLK_S_UNSUPP, in_size);
         break;
     }
+}
+
+// Synchronous open()/close() shims for Device's constructor/destructor:
+// both run before loop() starts or after it returns, i.e. never from
+// inside process_queue()'s own dispatch of `queue` -- spinning `queue`
+// here to wait for the callback is therefore safe, unlike doing so from a
+// context that's itself already being dispatched by the same queue (see
+// ost::Session's own async close()/open() handling for that hazard).
+//
+// Shared by open_object()/close_object()/spec_object() below:
+// rawstor_target_open()'s opened object is written directly into the
+// caller's own `object` out-param (see open_object()), not routed through
+// this struct, so there's nothing left for open's own Result to carry
+// beyond what close's already needs -- the two (and spec's) are
+// identical. rawstor_target_open()/rawstor_object_close2()/_spec() all
+// share the same ssize_t result callback shape (negative -> -errno, zero
+// -> success -- see rawstor/target.h's own doc comment for the general
+// convention), so one trampoline suffices for all three.
+struct Result {
+    int error = 0;
+    bool done = false;
+};
+
+int result_cb(ssize_t result, void* data) {
+    Result* r = static_cast<Result*>(data);
+    r->error = result < 0 ? static_cast<int>(-result) : 0;
+    r->done = true;
+    return 0;
+}
+
+RawstorObject* open_object(RawIOQueue* queue, const std::string& target) {
+    RawstorObject* object = nullptr;
+    Result result;
+    int res =
+        rawstor_target_open(queue, target.c_str(), &object, result_cb, &result);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+    while (!result.done) {
+        int wres = rawio_wait(queue);
+        if (wres < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-wres);
+        }
+    }
+    if (result.error) {
+        RAWSTD_THROW_SYSTEM_ERROR(result.error);
+    }
+    return object;
+}
+
+void close_object(RawIOQueue* queue, RawstorObject* object) {
+    Result result;
+    int res = rawstor_object_close2(object, result_cb, &result);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+    while (!result.done) {
+        int wres = rawio_wait(queue);
+        if (wres < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-wres);
+        }
+    }
+    if (result.error) {
+        RAWSTD_THROW_SYSTEM_ERROR(result.error);
+    }
+}
+
+RawstorObjectSpec spec_object(RawIOQueue* queue, const std::string& target) {
+    RawstorObjectSpec spec{};
+    Result result;
+    int res =
+        rawstor_target_spec(queue, target.c_str(), &spec, result_cb, &result);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+    while (!result.done) {
+        int wres = rawio_wait(queue);
+        if (wres < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-wres);
+        }
+    }
+    if (result.error) {
+        RAWSTD_THROW_SYSTEM_ERROR(result.error);
+    }
+    return spec;
 }
 
 } // namespace
@@ -1336,6 +1360,7 @@ namespace vhost {
 Device::Device(unsigned int queue_size, const std::string& target, int fd) :
     _fd(fd),
     _queue(nullptr),
+    _target(target),
     _object(nullptr),
     _vqs(1),
     _backend_fd(-1),
@@ -1357,16 +1382,9 @@ Device::Device(unsigned int queue_size, const std::string& target, int fd) :
     }
 
     try {
-        RawstorObjectSpec spec;
-        res = rawstor_object_spec(target.c_str(), &spec);
-        if (res) {
-            RAWSTD_THROW_SYSTEM_ERROR(-res);
-        }
+        RawstorObjectSpec spec = spec_object(_queue, target);
 
-        res = rawstor_object_open(_queue, target.c_str(), &_object);
-        if (res) {
-            RAWSTD_THROW_SYSTEM_ERROR(-res);
-        }
+        _object = open_object(_queue, target);
 
         _config.capacity = spec.size >> VIRTIO_BLK_SECTOR_BITS;
 
@@ -1405,7 +1423,10 @@ Device::Device(unsigned int queue_size, const std::string& target, int fd) :
         _config.zoned = {}; // VIRTIO_BLK_F_ZONED (unsupported)
     } catch (...) {
         if (_object != nullptr) {
-            rawstor_object_close(_object);
+            try {
+                close_object(_queue, _object);
+            } catch (...) {
+            }
         }
         rawio_queue_delete(_queue);
         throw;
@@ -1440,9 +1461,10 @@ Device::~Device() {
     }
 
     if (_object != nullptr) {
-        int res = rawstor_object_close(_object);
-        if (res < 0) {
-            rawstd_error("Failed to close object: %s\n", strerror(-res));
+        try {
+            close_object(_queue, _object);
+        } catch (const std::exception& e) {
+            rawstd_error("Failed to close object: %s\n", e.what());
         }
     }
 
@@ -1671,15 +1693,14 @@ void Device::complete_request(size_t index, uint16_t head, uint32_t len) {
 }
 
 void Device::loop() {
-    std::shared_ptr<DeviceOp> op = std::make_shared<DeviceOp>(*this);
-    std::unique_ptr<TaskReadUserHeader> t =
-        std::make_unique<TaskReadUserHeader>(op);
-    read(_queue, _fd, std::move(t));
+    bool done = false;
+    dispatch_loop(_queue, _fd, *this, done);
+    rawstd::DetachedTask::rethrow_if_pending();
 
-    while (true) {
+    while (!done) {
         int res = rawio_wait(_queue);
-        if (res == -EPIPE || res == -EINTR) {
-            break;
+        if (res == -EINTR) {
+            return;
         }
 
         if (res < 0) {

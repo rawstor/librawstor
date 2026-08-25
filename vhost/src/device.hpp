@@ -26,6 +26,7 @@ class Device final {
 private:
     int _fd;
     RawIOQueue* _queue;
+    std::string _target;
     RawstorObject* _object;
     std::vector<std::unique_ptr<DevRegion>> _regions;
     std::vector<VirtQueue> _vqs;
@@ -48,6 +49,8 @@ public:
     inline int fd() const noexcept { return _fd; }
 
     inline RawIOQueue* queue() const noexcept { return _queue; }
+
+    inline const std::string& target() const noexcept { return _target; }
 
     inline RawstorObject* object() const noexcept { return _object; }
 

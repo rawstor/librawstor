@@ -12,9 +12,9 @@ AM_LDFLAGS = $(ASAN_LDFLAGS)
 
 
 libost_la_SOURCES = $(top_srcdir)/ost/include/ost/server.hpp \
-                    $(top_srcdir)/ost/include/ost/session.hpp \
+                    $(top_srcdir)/ost/include/ost/client.hpp \
                     server.cpp \
-                    session.cpp
+                    client.cpp
 
 rawstor_ost_SOURCES = main.cpp
 

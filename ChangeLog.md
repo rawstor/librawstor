@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - `librawstor`'s top-10 slowest-requests report now shows each entry's own submission/round-trip/callback latency breakdown, not just its total.
+- `rawio_fsync()`/`_open()`/`_close()`/`_poll()`/`_poll_multishot()`/`_connect()`/`_accept()`/`_accept_multishot()` gained `_2`-suffixed siblings with a single collapsed `ssize_t` result callback, ahead of the breaking rename in 0.3.0.
+- New async `rawstor_target_spec()`/`_create()`/`_remove()`/`_open()`/`_id()`/`_location()` and `rawstor_location_list()`/`_create()` API (`<rawstor/target.h>`, `<rawstor/location.h>`), plus async completion for `rawstor_object_close()`; the existing synchronous `rawstor_object_*()` API keeps working unchanged.
 
 ### Changed
 - `librawio` and `librawstor`'s client-side (`Session`/`Connection`/`Object`) internals moved from callback-based async I/O to C++20 coroutines; no public API change.

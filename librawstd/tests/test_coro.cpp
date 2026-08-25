@@ -6,9 +6,12 @@
 
 #include <coroutine>
 #include <stdexcept>
+#include <system_error>
 #include <type_traits>
 #include <utility>
 #include <vector>
+
+#include <cerrno>
 
 namespace {
 
@@ -332,6 +335,192 @@ TEST(DetachedTaskTest, exception_pending_from_resume) {
         rawstd::DetachedTask::rethrow_if_pending(), std::runtime_error
     );
     EXPECT_NO_THROW(rawstd::DetachedTask::rethrow_if_pending());
+}
+
+// ---------------------------------------------------------------------
+// CallbackAwaitable<T>
+// ---------------------------------------------------------------------
+
+TEST(CallbackAwaitableTest, move_and_copy_disabled) {
+    EXPECT_FALSE(std::is_copy_constructible_v<rawstd::CallbackAwaitable<int>>);
+    EXPECT_FALSE(std::is_copy_assignable_v<rawstd::CallbackAwaitable<int>>);
+    EXPECT_FALSE(std::is_move_constructible_v<rawstd::CallbackAwaitable<int>>);
+    EXPECT_FALSE(std::is_move_assignable_v<rawstd::CallbackAwaitable<int>>);
+}
+
+rawstd::Task<int>
+await_callback_value(rawstd::CallbackAwaitable<int>* awaiter) {
+    int v = co_await *awaiter;
+    co_return v + 1;
+}
+
+TEST(CallbackAwaitableTest, resumes_with_value_on_success) {
+    rawstd::CallbackAwaitable<int> awaiter;
+    rawstd::Task<int> t = await_callback_value(&awaiter);
+
+    EXPECT_FALSE(t.done());
+    awaiter.complete(41, 0);
+    EXPECT_TRUE(t.done());
+    EXPECT_EQ(t.get(), 42);
+}
+
+TEST(CallbackAwaitableTest, throws_system_error_on_failure) {
+    rawstd::CallbackAwaitable<int> awaiter;
+    rawstd::Task<int> t = await_callback_value(&awaiter);
+
+    EXPECT_FALSE(t.done());
+    awaiter.complete(0, EIO);
+    EXPECT_TRUE(t.done());
+    try {
+        t.get();
+        FAIL() << "expected a thrown std::system_error";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), EIO);
+    }
+}
+
+rawstd::Task<void>
+await_callback_void(rawstd::CallbackAwaitable<void>* awaiter) {
+    co_await *awaiter;
+}
+
+TEST(CallbackAwaitableTest, void_specialization_success) {
+    rawstd::CallbackAwaitable<void> awaiter;
+    rawstd::Task<void> t = await_callback_void(&awaiter);
+
+    EXPECT_FALSE(t.done());
+    awaiter.complete(0);
+    EXPECT_TRUE(t.done());
+    EXPECT_NO_THROW(t.get());
+}
+
+TEST(CallbackAwaitableTest, void_specialization_failure) {
+    rawstd::CallbackAwaitable<void> awaiter;
+    rawstd::Task<void> t = await_callback_void(&awaiter);
+
+    EXPECT_FALSE(t.done());
+    awaiter.complete(-ENOENT);
+    EXPECT_TRUE(t.done());
+    try {
+        t.get();
+        FAIL() << "expected a thrown std::system_error";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), ENOENT);
+    }
+}
+
+// Regression test: the wrapped C API offers no guarantee its callback
+// won't fire synchronously, inline, as part of the very call that submits
+// the operation -- i.e. complete() can run *before* the coroutine that
+// will co_await this object has even started (let alone reached
+// await_suspend() to store a handle). Resuming a not-yet-suspended
+// coroutine (or .resume()-ing an empty coroutine_handle<>) is undefined
+// behavior, so await_ready() must report done immediately in this case
+// instead of ever calling await_suspend().
+TEST(CallbackAwaitableTest, tolerates_synchronous_completion_before_await) {
+    rawstd::CallbackAwaitable<int> awaiter;
+    awaiter.complete(41, 0);
+
+    rawstd::Task<int> t = await_callback_value(&awaiter);
+    EXPECT_TRUE(t.done());
+    EXPECT_EQ(t.get(), 42);
+}
+
+TEST(CallbackAwaitableTest, tolerates_synchronous_failure_before_await) {
+    rawstd::CallbackAwaitable<int> awaiter;
+    awaiter.complete(0, EIO);
+
+    rawstd::Task<int> t = await_callback_value(&awaiter);
+    EXPECT_TRUE(t.done());
+    try {
+        t.get();
+        FAIL() << "expected a thrown std::system_error";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), EIO);
+    }
+}
+
+TEST(
+    CallbackAwaitableTest, void_specialization_tolerates_synchronous_completion
+) {
+    rawstd::CallbackAwaitable<void> awaiter;
+    awaiter.complete(0);
+
+    rawstd::Task<void> t = await_callback_void(&awaiter);
+    EXPECT_TRUE(t.done());
+    EXPECT_NO_THROW(t.get());
+}
+
+// ---------------------------------------------------------------------
+// CallbackStream<T>
+// ---------------------------------------------------------------------
+
+TEST(CallbackStreamTest, move_and_copy_disabled) {
+    EXPECT_FALSE(std::is_copy_constructible_v<rawstd::CallbackStream<int>>);
+    EXPECT_FALSE(std::is_copy_assignable_v<rawstd::CallbackStream<int>>);
+    EXPECT_FALSE(std::is_move_constructible_v<rawstd::CallbackStream<int>>);
+    EXPECT_FALSE(std::is_move_assignable_v<rawstd::CallbackStream<int>>);
+}
+
+rawstd::Task<std::vector<int>>
+drain_callback_stream(rawstd::CallbackStream<int>* stream) {
+    std::vector<int> values;
+    try {
+        while (true) {
+            values.push_back(co_await stream->next());
+        }
+    } catch (const std::system_error&) {
+    }
+    co_return values;
+}
+
+TEST(CallbackStreamTest, resumes_with_each_value_in_order) {
+    rawstd::CallbackStream<int> stream;
+    rawstd::Task<std::vector<int>> t = drain_callback_stream(&stream);
+
+    EXPECT_FALSE(t.done());
+    stream.complete(1, 0);
+    EXPECT_FALSE(t.done());
+    stream.complete(2, 0);
+    EXPECT_FALSE(t.done());
+    stream.complete(0, ECANCELED);
+
+    EXPECT_TRUE(t.done());
+    EXPECT_EQ(t.get(), (std::vector<int>{1, 2}));
+}
+
+TEST(CallbackStreamTest, throws_system_error_on_terminal_error) {
+    rawstd::CallbackStream<int> stream;
+    rawstd::Task<int> t =
+        [](rawstd::CallbackStream<int>* s) -> rawstd::Task<int> {
+        co_return co_await s->next();
+    }(&stream);
+
+    EXPECT_FALSE(t.done());
+    stream.complete(0, EIO);
+    EXPECT_TRUE(t.done());
+    try {
+        t.get();
+        FAIL() << "expected a thrown std::system_error";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), EIO);
+    }
+}
+
+// Regression test: same synchronous-completion race as
+// CallbackAwaitable<T> -- the wrapped C API may deliver the very first
+// item inline, during registration, before the coroutine that will
+// co_await this stream has even started.
+TEST(CallbackStreamTest, tolerates_synchronous_completion_before_await) {
+    rawstd::CallbackStream<int> stream;
+    stream.complete(41, 0);
+
+    rawstd::Task<int> t =
+        [](rawstd::CallbackStream<int>* s) -> rawstd::Task<int> {
+        co_return co_await s->next();
+    }(&stream);
+    EXPECT_TRUE(t.done());
+    EXPECT_EQ(t.get(), 41);
 }
 
 } // namespace

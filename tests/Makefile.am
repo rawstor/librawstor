@@ -14,6 +14,7 @@ AM_LDFLAGS = $(ASAN_LDFLAGS) \
 
 
 test_all_SOURCES = main.cpp \
+                   rawio_sync.hpp \
                    server.cpp \
                    server.hpp \
                    session.cpp \
@@ -22,6 +23,7 @@ test_all_SOURCES = main.cpp \
                    tmp_dir.hpp \
                    test_blk_session.cpp \
                    test_io.cpp \
+                   test_legacy_api.cpp \
                    test_lifecycle.cpp \
                    test_list.cpp \
                    test_location_info.cpp \
