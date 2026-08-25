@@ -12,7 +12,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - `rawstor_object_pwrite()`/`rawstor_object_pwritev()` gained a `sync` parameter — when true, the write is durable on stable storage by the time the callback reports success. Breaking C API change; existing callers need to pass a `sync` argument (`false` preserves the old behavior).
-- Write-throttling (in-flight cap + backlog cap on writes headed to a `file://` backing store) moved from `rawstor-ost` itself into `librawstor`'s own `file://` write path, so it now applies to any writer against a `file://` location, not just `rawstor-ost`. `rawstor-ost --write-throttle-limit`/`--write-backlog-capacity` are gone; tune the same caps via the `RAWSTOR_OPTS_WRITE_THROTTLE_LIMIT`/`RAWSTOR_OPTS_WRITE_BACKLOG_CAPACITY` environment variables instead (same defaults, 128 and 256MiB) — `rawstor-ost.service` no longer warns on startup if the limit sits too close to `--queue-size`.
 
 ### Removed
 - Dropped the deprecated `-l`/`--location` and `-t`/`--target` flags (`rawstor list`/`create`/`remove`/`show`/`testio`, `rawstor-ost`, `rawstor-vhost`) in favor of the positional `LOCATION`/`TARGET` argument; `rawstor create -t TARGET` (create-by-target) is unaffected. Also dropped the `rawstor-cli` compat symlink from the deb/rpm packages — use `rawstor`.
@@ -25,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - `librawio` and `librawstor`'s client-side (`Session`/`Connection`/`Object`) internals moved from callback-based async I/O to C++20 coroutines; no public API change.
+- Write-throttling (in-flight cap + backlog cap on writes headed to a `file://` backing store) moved from `rawstor-ost` itself into `librawstor`'s own `file://` write path, so it now applies to any writer against a `file://` location, not just `rawstor-ost`. `rawstor-ost --write-throttle-limit`/`--write-backlog-capacity` are gone; tune the same caps via the `RAWSTOR_OPTS_WRITE_THROTTLE_LIMIT`/`RAWSTOR_OPTS_WRITE_BACKLOG_CAPACITY` environment variables instead (same defaults, 128 and 256MiB) — `rawstor-ost.service` no longer warns on startup if the limit sits too close to `--queue-size`.
 
 ## [0.2.8] - 2026-08-15
 
