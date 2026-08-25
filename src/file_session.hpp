@@ -11,6 +11,7 @@
 
 #include <rawstor/location.h>
 #include <rawstor/object.h>
+#include <rawstor/target.h>
 
 #include <vector>
 

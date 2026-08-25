@@ -30,6 +30,7 @@ librawstor_la_HEADERS = $(top_srcdir)/include/rawstor/list.h \
                         $(top_srcdir)/include/rawstor/protocol.h \
                         $(top_srcdir)/include/rawstor/rawio.h \
                         $(top_srcdir)/include/rawstor/rawstor.h \
+                        $(top_srcdir)/include/rawstor/target.h \
                         $(top_builddir)/include/rawstor/version.h
 
 librawstor_la_SOURCES = blk_session.cpp \
@@ -43,6 +44,7 @@ librawstor_la_SOURCES = blk_session.cpp \
                         location.hpp \
                         object.cpp \
                         object.hpp \
+                        object_legacy.cpp \
                         ost_session.cpp \
                         ost_session.hpp \
                         opts.c \

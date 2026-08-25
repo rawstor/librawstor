@@ -20,7 +20,8 @@ librawio_la_SOURCES = $(top_srcdir)/librawio/include/rawio/awaitable.hpp \
                       $(top_srcdir)/librawio/include/rawio/queue.hpp \
                       $(top_srcdir)/librawio/include/rawio/stream.hpp \
                       queue.cpp \
-                      rawio.cpp
+                      rawio.cpp \
+                      rawio_legacy.cpp
 
 librawio_la_LIBADD =
 

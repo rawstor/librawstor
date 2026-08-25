@@ -45,6 +45,11 @@ public:
     // This Object's own target -- the same Target it was built from.
     inline const Target& target() const noexcept { return _target; }
 
+    // The queue this Object was opened on -- needed only by the backport
+    // shim's blocking rawstor_object_close() (see src/object_legacy.cpp),
+    // which has no queue parameter of its own to pump.
+    inline rawio::Queue& queue() const noexcept { return _queue; }
+
     rawstd::Task<size_t> pread(void* buf, size_t size, off_t offset);
 
     rawstd::Task<size_t>
@@ -59,6 +64,12 @@ public:
     );
 
     rawstd::Task<void> flush();
+
+    // Async counterpart to ~Object()'s own run()-pumped connection cleanup:
+    // co_awaits every Connection's close() concurrently, then clears _cns so
+    // ~Object() (which still runs once the caller deletes this Object after
+    // the returned Task completes) has nothing left to close.
+    rawstd::Task<void> close();
 };
 
 } // namespace rawstor

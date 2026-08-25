@@ -19,17 +19,19 @@ namespace {
 /*
  * Launches (eagerly, immediately, on the caller's stack) a detached
  * coroutine that co_await's an already-submitted single-shot int-result
- * Awaitable<int> (open/close/poll/connect/fsync/accept) and, once it
+ * Awaitable<int> (open/close/poll/connect/accept/fsync) and, once it
  * completes, invokes the stored C completion callback with the same
  * "raw, possibly-negative errno" convention those C functions have
- * always used. A negative return from the C callback throws -- see
- * launch_int_op() (the non-coroutine wrapper below, not this function)
- * for how that's actually delivered back out.
+ * always used, widened to ssize_t (matching the read/write family's own
+ * callback shape) -- see e.g. rawio_fsync2()'s doc comment. A negative
+ * return from the C callback throws -- see launch_int_op2() (the
+ * non-coroutine wrapper below, not this function) for how that's
+ * actually delivered back out.
  */
-rawstd::DetachedTask launch_int_op_coro(
-    rawio::Awaitable<int> aw, int (*cb)(int result, void* data), void* data
+rawstd::DetachedTask launch_int_op2_coro(
+    rawio::Awaitable<int> aw, int (*cb)(ssize_t result, void* data), void* data
 ) {
-    int result = 0;
+    ssize_t result = 0;
     try {
         result = co_await aw;
     } catch (const std::system_error& e) {
@@ -42,62 +44,63 @@ rawstd::DetachedTask launch_int_op_coro(
 }
 
 // See DetachedTask's own doc comment for why this indirection exists:
-// launch_int_op_coro() may store a pending exception instead of throwing
+// launch_int_op2_coro() may store a pending exception instead of throwing
 // it directly, and every caller that launches (or resumes) a
 // DetachedTask must check for one -- rather than rely on every call site
 // below to remember that, this ordinary (non-coroutine) function does it
 // once, right here, so none of them have to.
-void launch_int_op(
-    rawio::Awaitable<int> aw, int (*cb)(int result, void* data), void* data
+void launch_int_op2(
+    rawio::Awaitable<int> aw, int (*cb)(ssize_t result, void* data), void* data
 ) {
-    launch_int_op_coro(std::move(aw), cb, data);
+    launch_int_op2_coro(std::move(aw), cb, data);
     rawstd::DetachedTask::rethrow_if_pending();
 }
 
 /*
- * Same as launch_int_op_coro(), for the read/write family's size_t-result
- * Awaitable<size_t> and RawIOCallback's separate result/error parameters.
+ * Same as launch_int_op2_coro(), for the read/write family's size_t-result
+ * Awaitable<size_t>, folded into the single signed ssize_t result the C
+ * callback now takes (negative on error, matching launch_int_op2_coro()'s
+ * own convention) instead of a separate result/error pair.
  */
 rawstd::DetachedTask launch_size_op_coro(
-    rawio::Awaitable<size_t> aw, RawIOCallback* cb, void* data
+    rawio::Awaitable<size_t> aw, int (*cb)(ssize_t result, void* data),
+    void* data
 ) {
-    size_t result = 0;
-    int error = 0;
+    ssize_t result = 0;
     try {
-        result = co_await aw;
+        result = static_cast<ssize_t>(co_await aw);
     } catch (const std::system_error& e) {
-        error = e.code().value();
+        result = -e.code().value();
     }
-    int res = cb(result, error, data);
+    int res = cb(result, data);
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 }
 
-// See launch_int_op()'s comment.
+// See launch_int_op2()'s comment.
 void launch_size_op(
-    rawio::Awaitable<size_t> aw, RawIOCallback* cb, void* data
+    rawio::Awaitable<size_t> aw, int (*cb)(ssize_t result, void* data),
+    void* data
 ) {
     launch_size_op_coro(std::move(aw), cb, data);
     rawstd::DetachedTask::rethrow_if_pending();
 }
 
-/*
- * Launches a detached coroutine that pulls from an already-submitted
- * PollStream/AcceptStream forever, translating each item (or the
- * terminating error -- ECANCELED after cancel(), or the new ENOBUFS
- * overflow condition, see rawio/stream.hpp) into one call to the stored
- * C completion callback with the same "raw, possibly-negative errno"
- * convention rawio_poll/rawio_accept single-shot ops use. A negative
- * return from the C callback re-throws exactly like the single-shot
- * adapters above -- see launch_int_op_coro()'s comment.
- */
+// Same idea, for a PollStream/AcceptStream that fires repeatedly
+// (rawio_poll_multishot2()/_accept_multishot2()): translates each item
+// (or the terminating error -- ECANCELED after cancel(), or the new
+// ENOBUFS overflow condition, see rawio/stream.hpp) into one call to the
+// stored C completion callback, widened to ssize_t like
+// launch_int_op2()'s single-shot counterpart. A negative return from the
+// C callback re-throws exactly like the single-shot adapters above -- see
+// launch_int_op2_coro()'s comment.
 template <typename Stream>
-rawstd::DetachedTask launch_stream_op_coro(
-    Stream stream, int (*cb)(int result, void* data), void* data
+rawstd::DetachedTask launch_stream_op2_coro(
+    Stream stream, int (*cb)(ssize_t result, void* data), void* data
 ) {
     while (true) {
-        int result = 0;
+        ssize_t result = 0;
         try {
             result = co_await stream.next();
         } catch (const std::system_error& e) {
@@ -114,12 +117,12 @@ rawstd::DetachedTask launch_stream_op_coro(
     }
 }
 
-// See launch_int_op()'s comment.
+// See launch_int_op2()'s comment.
 template <typename Stream>
-void launch_stream_op(
-    Stream stream, int (*cb)(int result, void* data), void* data
+void launch_stream_op2(
+    Stream stream, int (*cb)(ssize_t result, void* data), void* data
 ) {
-    launch_stream_op_coro(std::move(stream), cb, data);
+    launch_stream_op2_coro(std::move(stream), cb, data);
     rawstd::DetachedTask::rethrow_if_pending();
 }
 
@@ -130,10 +133,15 @@ void launch_stream_op(
  * reported wanting last. A terminal error (possibly following one last
  * successful, data-bearing call -- see RecvStream::Next's doc comment on
  * why data and a trailing error are never delivered in a single call) is
- * delivered as one final zero-data callback invocation.
+ * delivered as one final zero-data callback invocation, with `result`
+ * negative -- folded into the same single signed value as every other
+ * callback here, rather than a separate result/error pair.
  */
 rawstd::DetachedTask launch_recv_stream_op_coro(
-    rawio::RecvStream stream, size_t want, RawIOMultishotVectorCallback* cb,
+    rawio::RecvStream stream, size_t want,
+    ssize_t (*cb)(
+        const iovec* iov, unsigned int niov, ssize_t result, void* data
+    ),
     void* data
 ) {
     while (true) {
@@ -141,13 +149,15 @@ rawstd::DetachedTask launch_recv_stream_op_coro(
         try {
             item = co_await stream.next(want);
         } catch (const std::system_error& e) {
-            ssize_t res = cb(nullptr, 0, 0, e.code().value(), data);
+            ssize_t res = cb(nullptr, 0, -e.code().value(), data);
             if (res < 0) {
                 RAWSTD_THROW_SYSTEM_ERROR(-res);
             }
             co_return;
         }
-        ssize_t res = cb(item.iov(), item.niov(), item.size(), 0, data);
+        ssize_t res =
+            cb(item.iov(), item.niov(), static_cast<ssize_t>(item.size()),
+               data);
         if (res < 0) {
             RAWSTD_THROW_SYSTEM_ERROR(-res);
         }
@@ -155,9 +165,12 @@ rawstd::DetachedTask launch_recv_stream_op_coro(
     }
 }
 
-// See launch_int_op()'s comment.
+// See launch_int_op2()'s comment.
 void launch_recv_stream_op(
-    rawio::RecvStream stream, size_t want, RawIOMultishotVectorCallback* cb,
+    rawio::RecvStream stream, size_t want,
+    ssize_t (*cb)(
+        const iovec* iov, unsigned int niov, ssize_t result, void* data
+    ),
     void* data
 ) {
     launch_recv_stream_op_coro(std::move(stream), want, cb, data);
@@ -189,12 +202,12 @@ void rawio_queue_delete(RawIOQueue* queue) noexcept {
     delete static_cast<rawio::Queue*>(queue);
 }
 
-int rawio_open(
+int rawio_open2(
     RawIOQueue* queue, const char* path, int flags, mode_t mode,
-    int (*cb)(int result, void* data), void* data
+    int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
-        launch_int_op(
+        launch_int_op2(
             static_cast<rawio::Queue*>(queue)->open(path, flags, mode), cb, data
         );
         return 0;
@@ -211,11 +224,11 @@ int rawio_open(
     }
 }
 
-int rawio_close(
-    RawIOQueue* queue, int fd, int (*cb)(int result, void* data), void* data
+int rawio_close2(
+    RawIOQueue* queue, int fd, int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
-        launch_int_op(static_cast<rawio::Queue*>(queue)->close(fd), cb, data);
+        launch_int_op2(static_cast<rawio::Queue*>(queue)->close(fd), cb, data);
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -230,12 +243,12 @@ int rawio_close(
     }
 }
 
-int rawio_poll(
+int rawio_poll2(
     RawIOQueue* queue, int fd, unsigned int mask,
-    int (*cb)(int result, void* data), void* data
+    int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
-        launch_int_op(
+        launch_int_op2(
             static_cast<rawio::Queue*>(queue)->poll(fd, mask), cb, data
         );
         return 0;
@@ -252,15 +265,15 @@ int rawio_poll(
     }
 }
 
-int rawio_poll_multishot(
+int rawio_poll_multishot2(
     RawIOQueue* queue, int fd, unsigned int mask,
-    int (*cb)(int result, void* data), void* data, RawIOEvent** event
+    int (*cb)(ssize_t result, void* data), void* data, RawIOEvent** event
 ) noexcept {
     try {
         rawio::PollStream stream =
             static_cast<rawio::Queue*>(queue)->poll_multishot(fd, mask);
         RawIOEvent* e = stream.event();
-        launch_stream_op(std::move(stream), cb, data);
+        launch_stream_op2(std::move(stream), cb, data);
         if (event != nullptr) {
             *event = e;
         }
@@ -278,12 +291,12 @@ int rawio_poll_multishot(
     }
 }
 
-int rawio_connect(
+int rawio_connect2(
     RawIOQueue* queue, int fd, const sockaddr* addr, socklen_t addrlen,
-    int (*cb)(int result, void* data), void* data
+    int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
-        launch_int_op(
+        launch_int_op2(
             static_cast<rawio::Queue*>(queue)->connect(fd, addr, addrlen), cb,
             data
         );
@@ -301,12 +314,12 @@ int rawio_connect(
     }
 }
 
-int rawio_accept(
+int rawio_accept2(
     RawIOQueue* queue, int fd, sockaddr* addr, socklen_t* addrlen,
-    int (*cb)(int result, void* data), void* data
+    int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
-        launch_int_op(
+        launch_int_op2(
             static_cast<rawio::Queue*>(queue)->accept(fd, addr, addrlen), cb,
             data
         );
@@ -324,15 +337,15 @@ int rawio_accept(
     }
 }
 
-int rawio_accept_multishot(
-    RawIOQueue* queue, int fd, int (*cb)(int result, void* data), void* data,
-    RawIOEvent** event
+int rawio_accept_multishot2(
+    RawIOQueue* queue, int fd, int (*cb)(ssize_t result, void* data),
+    void* data, RawIOEvent** event
 ) noexcept {
     try {
         rawio::AcceptStream stream =
             static_cast<rawio::Queue*>(queue)->accept_multishot(fd);
         RawIOEvent* e = stream.event();
-        launch_stream_op(std::move(stream), cb, data);
+        launch_stream_op2(std::move(stream), cb, data);
         if (event != nullptr) {
             *event = e;
         }
@@ -350,9 +363,9 @@ int rawio_accept_multishot(
     }
 }
 
-int rawio_read(
-    RawIOQueue* queue, int fd, void* buf, size_t size, RawIOCallback* cb,
-    void* data
+int rawio_read2(
+    RawIOQueue* queue, int fd, void* buf, size_t size,
+    int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
         launch_size_op(
@@ -372,9 +385,9 @@ int rawio_read(
     }
 }
 
-int rawio_readv(
-    RawIOQueue* queue, int fd, iovec* iov, unsigned int niov, RawIOCallback* cb,
-    void* data
+int rawio_readv2(
+    RawIOQueue* queue, int fd, iovec* iov, unsigned int niov,
+    int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
         launch_size_op(
@@ -394,9 +407,9 @@ int rawio_readv(
     }
 }
 
-int rawio_pread(
+int rawio_pread2(
     RawIOQueue* queue, int fd, void* buf, size_t size, off_t offset,
-    RawIOCallback* cb, void* data
+    int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
         launch_size_op(
@@ -417,9 +430,9 @@ int rawio_pread(
     }
 }
 
-int rawio_preadv(
+int rawio_preadv2(
     RawIOQueue* queue, int fd, iovec* iov, unsigned int niov, off_t offset,
-    RawIOCallback* cb, void* data
+    int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
         launch_size_op(
@@ -440,9 +453,9 @@ int rawio_preadv(
     }
 }
 
-int rawio_recv(
+int rawio_recv2(
     RawIOQueue* queue, int fd, void* buf, size_t size, unsigned int flags,
-    RawIOCallback* cb, void* data
+    int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
         launch_size_op(
@@ -463,9 +476,12 @@ int rawio_recv(
     }
 }
 
-int rawio_recv_multishot(
+int rawio_recv_multishot2(
     RawIOQueue* queue, int fd, size_t entry_size, unsigned int entries,
-    size_t size, unsigned int flags, RawIOMultishotVectorCallback* cb,
+    size_t size, unsigned int flags,
+    ssize_t (*cb)(
+        const struct iovec* iov, unsigned int niov, ssize_t result, void* data
+    ),
     void* data, RawIOEvent** event
 ) noexcept {
     try {
@@ -492,9 +508,9 @@ int rawio_recv_multishot(
     }
 }
 
-int rawio_recvmsg(
+int rawio_recvmsg2(
     RawIOQueue* queue, int fd, msghdr* msg, unsigned int flags,
-    RawIOCallback* cb, void* data
+    int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
         launch_size_op(
@@ -514,9 +530,9 @@ int rawio_recvmsg(
     }
 }
 
-int rawio_write(
-    RawIOQueue* queue, int fd, const void* buf, size_t size, RawIOCallback* cb,
-    void* data
+int rawio_write2(
+    RawIOQueue* queue, int fd, const void* buf, size_t size,
+    int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
         launch_size_op(
@@ -536,9 +552,9 @@ int rawio_write(
     }
 }
 
-int rawio_writev(
+int rawio_writev2(
     RawIOQueue* queue, int fd, const iovec* iov, unsigned int niov,
-    RawIOCallback* cb, void* data
+    int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
         launch_size_op(
@@ -558,13 +574,13 @@ int rawio_writev(
     }
 }
 
-int rawio_pwrite(
+int rawio_pwrite2(
     RawIOQueue* queue, int fd, const void* buf, size_t size, off_t offset,
-    RawIOCallback* cb, void* data
+    int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
-        // sync stays hardcoded until rawio_pwrite() itself gains a sync
-        // parameter (tracked alongside rawstor_object_pwrite()'s own).
+        // sync stays hardcoded until rawio_pwrite2() itself gains a sync
+        // parameter (tracked alongside rawstor_object_pwrite2()'s own).
         launch_size_op(
             static_cast<rawio::Queue*>(queue)->pwrite(
                 fd, buf, size, offset, /*sync=*/false
@@ -585,13 +601,13 @@ int rawio_pwrite(
     }
 }
 
-int rawio_pwritev(
+int rawio_pwritev2(
     RawIOQueue* queue, int fd, const iovec* iov, unsigned int niov,
-    off_t offset, RawIOCallback* cb, void* data
+    off_t offset, int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
-        // sync stays hardcoded until rawio_pwritev() itself gains a sync
-        // parameter (tracked alongside rawstor_object_pwritev()'s own).
+        // sync stays hardcoded until rawio_pwritev2() itself gains a sync
+        // parameter (tracked alongside rawstor_object_pwritev2()'s own).
         launch_size_op(
             static_cast<rawio::Queue*>(queue)->pwritev(
                 fd, iov, niov, offset, /*sync=*/false
@@ -612,12 +628,12 @@ int rawio_pwritev(
     }
 }
 
-int rawio_fsync(
-    RawIOQueue* queue, int fd, bool datasync, int (*cb)(int result, void* data),
-    void* data
+int rawio_fsync2(
+    RawIOQueue* queue, int fd, bool datasync,
+    int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
-        launch_int_op(
+        launch_int_op2(
             static_cast<rawio::Queue*>(queue)->fsync(fd, datasync), cb, data
         );
         return 0;
@@ -634,9 +650,9 @@ int rawio_fsync(
     }
 }
 
-int rawio_send(
+int rawio_send2(
     RawIOQueue* queue, int fd, const void* buf, size_t size, unsigned int flags,
-    RawIOCallback* cb, void* data
+    int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
         launch_size_op(
@@ -657,9 +673,9 @@ int rawio_send(
     }
 }
 
-int rawio_sendmsg(
+int rawio_sendmsg2(
     RawIOQueue* queue, int fd, const msghdr* msg, unsigned int flags,
-    RawIOCallback* cb, void* data
+    int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
         launch_size_op(

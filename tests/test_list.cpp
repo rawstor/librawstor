@@ -4,6 +4,7 @@
 
 #include "connection.hpp"
 #include "opts.h"
+#include "rawio_sync.hpp"
 
 #include <rawio/queue.hpp>
 
@@ -11,8 +12,10 @@
 #include <rawstd/uri.hpp>
 
 #include <rawstor/list.h>
+#include <rawstor/location.h>
 #include <rawstor/object.h>
 #include <rawstor/protocol.h>
+#include <rawstor/target.h>
 
 #include <gtest/gtest.h>
 
@@ -36,10 +39,17 @@ T run(rawio::Queue& q, rawstd::Task<T> t) {
 TEST(ListTest, empty) {
     rawstor::tests::TmpDir dir;
     rawstd::URI location(dir.uri());
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
 
     RawstorStringList* targets;
     RawstorPaginationToken token = {};
-    int res = rawstor_object_list(location.str().c_str(), 0, &targets, &token);
+    ssize_t res =
+        rawstor::tests::sync_run(queue.get(), [&](auto cb, void* data) {
+            return rawstor_location_list(
+                queue.get(), location.str().c_str(), 0, &targets, &token, cb,
+                data
+            );
+        });
     EXPECT_EQ(res, 0);
     if (res == 0) {
         EXPECT_EQ(rawstor_string_list_size(targets), static_cast<size_t>(0));
@@ -67,22 +77,36 @@ TEST(ListTest, merge) {
     rawstd::URI target23 =
         rawstd::URI(location2, "00000000-0000-7000-8000-000000000003");
 
-    int res;
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
+    auto create = [&](const rawstd::URI& target,
+                      const RawstorObjectSpec& spec) {
+        return rawstor::tests::sync_run(queue.get(), [&](auto cb, void* data) {
+            return rawstor_target_create(
+                queue.get(), target.str().c_str(), &spec, cb, data
+            );
+        });
+    };
+
+    ssize_t res;
     RawstorObjectSpec spec{.size = 1ull << 20};
-    res = rawstor_object_create(target11.str().c_str(), &spec);
+    res = create(target11, spec);
     ASSERT_EQ(res, 0);
-    res = rawstor_object_create(target12.str().c_str(), &spec);
+    res = create(target12, spec);
     ASSERT_EQ(res, 0);
-    res = rawstor_object_create(target22.str().c_str(), &spec);
+    res = create(target22, spec);
     ASSERT_EQ(res, 0);
-    res = rawstor_object_create(target23.str().c_str(), &spec);
+    res = create(target23, spec);
     ASSERT_EQ(res, 0);
 
     std::string locations = rawstd::URI::uris({location1, location2});
 
     RawstorStringList* targets;
     RawstorPaginationToken token = {};
-    res = rawstor_object_list(locations.c_str(), 0, &targets, &token);
+    res = rawstor::tests::sync_run(queue.get(), [&](auto cb, void* data) {
+        return rawstor_location_list(
+            queue.get(), locations.c_str(), 0, &targets, &token, cb, data
+        );
+    });
     EXPECT_EQ(res, 0);
     if (res == 0) {
         EXPECT_EQ(rawstor_string_list_size(targets), static_cast<size_t>(3));
@@ -108,24 +132,40 @@ TEST(ListTest, merge) {
     }
     EXPECT_TRUE(rawstor_pagination_token_empty(&token));
 
-    res = rawstor_object_remove(target11.str().c_str());
+    auto remove = [&](const rawstd::URI& target) {
+        return rawstor::tests::sync_run(queue.get(), [&](auto cb, void* data) {
+            return rawstor_target_remove(
+                queue.get(), target.str().c_str(), cb, data
+            );
+        });
+    };
+    res = remove(target11);
     EXPECT_EQ(res, 0);
-    res = rawstor_object_remove(target12.str().c_str());
+    res = remove(target12);
     EXPECT_EQ(res, 0);
-    res = rawstor_object_remove(target22.str().c_str());
+    res = remove(target22);
     EXPECT_EQ(res, 0);
-    res = rawstor_object_remove(target23.str().c_str());
+    res = remove(target23);
     EXPECT_EQ(res, 0);
 }
 
 TEST(ListTest, pagination) {
     rawstor::tests::TmpDir dir;
     rawstd::URI location(dir.uri());
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
+
+    auto list = [&](RawstorStringList** page, RawstorPaginationToken* token) {
+        return rawstor::tests::sync_run(queue.get(), [&](auto cb, void* data) {
+            return rawstor_location_list(
+                queue.get(), location.str().c_str(), 0, page, token, cb, data
+            );
+        });
+    };
 
     {
         RawstorStringList* page;
         RawstorPaginationToken token = {};
-        int res = rawstor_object_list(location.str().c_str(), 0, &page, &token);
+        ssize_t res = list(&page, &token);
         EXPECT_EQ(res, 0);
         if (res == 0) {
             EXPECT_EQ(rawstor_string_list_size(page), static_cast<size_t>(0));
@@ -143,9 +183,13 @@ TEST(ListTest, pagination) {
         RawstorObjectSpec spec{.size = 1ull << 10};
 
         char target[65536];
-        int res = rawstor_object_create_at(
-            location.str().c_str(), nullptr, &spec, target, sizeof(target)
-        );
+        ssize_t res =
+            rawstor::tests::sync_run(queue.get(), [&](auto cb, void* data) {
+                return rawstor_location_create(
+                    queue.get(), location.str().c_str(), nullptr, &spec, target,
+                    sizeof(target), cb, data
+                );
+            });
         EXPECT_GT(res, 0);
 
         targets.push_back(target);
@@ -154,7 +198,7 @@ TEST(ListTest, pagination) {
 
     RawstorStringList* page;
     RawstorPaginationToken token = {};
-    int res = rawstor_object_list(location.str().c_str(), 0, &page, &token);
+    ssize_t res = list(&page, &token);
     EXPECT_EQ(res, 0);
     if (res == 0) {
         EXPECT_EQ(
@@ -175,8 +219,7 @@ TEST(ListTest, pagination) {
 
         EXPECT_FALSE(rawstor_pagination_token_empty(&token));
         if (!rawstor_pagination_token_empty(&token)) {
-            int res =
-                rawstor_object_list(location.str().c_str(), 0, &page, &token);
+            ssize_t res = list(&page, &token);
             EXPECT_EQ(res, 0);
             if (res == 0) {
                 EXPECT_EQ(
@@ -200,7 +243,12 @@ TEST(ListTest, pagination) {
     }
 
     for (const auto& target : targets) {
-        int res = rawstor_object_remove(target.c_str());
+        ssize_t res =
+            rawstor::tests::sync_run(queue.get(), [&](auto cb, void* data) {
+                return rawstor_target_remove(
+                    queue.get(), target.c_str(), cb, data
+                );
+            });
         EXPECT_EQ(res, 0);
     }
 }
