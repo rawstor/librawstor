@@ -26,6 +26,8 @@ struct RawstorOpts {
     unsigned int so_rcvtimeo;
     unsigned int tcp_user_timeout;
     unsigned int list_limit;
+    unsigned int write_throttle_limit;
+    unsigned int write_backlog_capacity;
 };
 
 typedef struct {
