@@ -172,7 +172,8 @@ Object::Object(Private, rawio::Queue& queue, const Target& target) :
     _queue(queue),
     _target(target),
     _writes_issued(0),
-    _writes_completed(0) {
+    _writes_completed(0),
+    _dirty(false) {
 }
 
 void Object::_write_finished() noexcept {
@@ -262,6 +263,7 @@ Object::pwrite(const void* buf, size_t size, off_t offset, bool sync) {
     try {
         std::vector<size_t> results = co_await rawstd::gather(std::move(tasks));
         _write_finished();
+        _dirty = true;
         size_t result = *std::min_element(results.begin(), results.end());
         RAWSTD_TRACE_EVENT_MESSAGE(
             trace_event, "result = %zu, error = 0\n", result
@@ -299,6 +301,7 @@ rawstd::Task<size_t> Object::pwritev(
     try {
         std::vector<size_t> results = co_await rawstd::gather(std::move(tasks));
         _write_finished();
+        _dirty = true;
         size_t result = *std::min_element(results.begin(), results.end());
         RAWSTD_TRACE_EVENT_MESSAGE(
             trace_event, "result = %zu, error = 0\n", result
@@ -329,6 +332,15 @@ rawstd::Task<void> Object::flush() {
         _writes_issued, _writes_completed, _flush_waiters
     );
 
+    // Nothing written since the last successful flush (or ever) -- every
+    // connection's own flush() below would be a pure no-op round trip, so
+    // skip dispatching it at all. Not cleared on failure below: a failed
+    // flush leaves whatever was dirty still not durable.
+    if (!_dirty) {
+        RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "error = 0 (nothing dirty)\n");
+        co_return;
+    }
+
     std::vector<rawstd::Task<void>> tasks;
     tasks.reserve(_cns.size());
     for (auto& cn : _cns) {
@@ -337,6 +349,7 @@ rawstd::Task<void> Object::flush() {
 
     try {
         co_await rawstd::gather(std::move(tasks));
+        _dirty = false;
         RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "error = 0\n");
     } catch (const std::system_error& e) {
         rawstd_error("%s\n", strerror(e.code().value()));
@@ -347,6 +360,25 @@ rawstd::Task<void> Object::flush() {
 
 rawstd::Task<void> Object::close() {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('o', "%s\n", "close()");
+
+    // Every write issued before this call is guaranteed durable before
+    // this function's own Task completes -- matches this function's
+    // documented contract ("pending write buffers are flushed... before
+    // the close completes"), and flush() already handles waiting for a
+    // write still in flight (its own @p cb not fired yet) rather than
+    // racing its connection/fd out from under it. Every connection below
+    // is still closed regardless of a flush failure -- leaking them over
+    // it would be worse than reporting the failure alongside an otherwise
+    // clean close.
+    bool flush_failed = false;
+    try {
+        co_await flush();
+    } catch (const std::system_error& e) {
+        flush_failed = true;
+        rawstd_error(
+            "Object::close(): flush failed: %s\n", strerror(e.code().value())
+        );
+    }
 
     std::vector<rawstd::Task<void>> tasks;
     tasks.reserve(_cns.size());
@@ -362,6 +394,10 @@ rawstd::Task<void> Object::close() {
     // Task completes) has nothing left to close.
     try {
         co_await rawstd::gather(std::move(tasks));
+        if (flush_failed) {
+            RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "error = %d\n", EIO);
+            RAWSTD_THROW_SYSTEM_ERROR(EIO);
+        }
         RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "error = 0\n");
     } catch (const std::system_error& e) {
         _cns.clear();

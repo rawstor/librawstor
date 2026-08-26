@@ -291,6 +291,10 @@ TEST(OstIOTest, basics) {
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
         s.cmd_write(RAWSTOR_MAGIC, 1, 4);
         s.cmd_read(RAWSTOR_MAGIC, 2, "pong", 4);
+        // Object's destructor closes -- close() now flushes first (see
+        // Object::close()'s own doc comment) since the write above left it
+        // dirty.
+        s.cmd_flush(RAWSTOR_MAGIC, 3, 0);
     }
 
     {
@@ -489,6 +493,9 @@ TEST(OstIOTest, write_busy_retries_without_reconnect) {
         s.cmd_write_response(RAWSTOR_MAGIC, 1, -EBUSY);
         s.cmd_write_request(4);
         s.cmd_write_response(RAWSTOR_MAGIC, 2, 4);
+        // Object's destructor closes -- close() now flushes first since
+        // the write above left it dirty.
+        s.cmd_flush(RAWSTOR_MAGIC, 3, 0);
     }
 
     {

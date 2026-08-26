@@ -30,6 +30,27 @@ T run(rawio::Queue& q, rawstd::Task<T> t) {
     return t.get();
 }
 
+// Duplicate of test_blk_session.cpp's own ThrottleOptsOverride -- see that
+// one's doc comment for why it isn't shared.
+class ThrottleOptsOverride final {
+public:
+    ThrottleOptsOverride(
+        unsigned int write_throttle_limit, unsigned int write_backlog_capacity
+    ) {
+        RawstorOpts opts{};
+        opts.write_throttle_limit = write_throttle_limit;
+        opts.write_backlog_capacity = write_backlog_capacity;
+        rawstor_opts_initialize(&opts);
+    }
+    ThrottleOptsOverride(const ThrottleOptsOverride&) = delete;
+    ThrottleOptsOverride(ThrottleOptsOverride&&) = delete;
+
+    ~ThrottleOptsOverride() { rawstor_opts_initialize(nullptr); }
+
+    ThrottleOptsOverride& operator=(const ThrottleOptsOverride&) = delete;
+    ThrottleOptsOverride& operator=(ThrottleOptsOverride&&) = delete;
+};
+
 // Stands up a real file:// object for the test to drive Object::pwrite()/
 // flush() directly -- and inspect writes_in_flight()/flush()'s wait for it.
 std::unique_ptr<rawstor::Object>
@@ -97,20 +118,36 @@ TEST(ObjectTest, flush_waits_for_writes_issued_before_it) {
 // are still outstanding once flush() resolves demonstrates flush() is
 // waiting for its own fixed snapshot (see object.hpp), not for the backlog
 // to empty out.
+//
+// A throttle limit of 1 is what keeps this deterministic rather than a
+// timing race: with it, write #2 onward cannot even be *dispatched* until
+// its predecessor completes (see blk_session.hpp's _throttle_acquire()),
+// so draining all of them takes extra_writes strictly sequential round
+// trips -- while flush() only ever needs write_task's single completion
+// plus its own durability op, a handful at most. Without the throttle, a
+// backend fast enough (observed on CI, against a tmpfs-backed file) can
+// race every extra write to completion before flush() is even checked
+// again, making the assertion below flaky.
 TEST(ObjectTest, flush_does_not_wait_for_writes_issued_after_it) {
+    constexpr unsigned int throttle_limit = 1;
+    constexpr unsigned int extra_writes = 500;
+    std::string payload = "durable-me";
+    ThrottleOptsOverride opts_override(
+        throttle_limit,
+        static_cast<unsigned int>(payload.size() * (extra_writes + 1))
+    );
+
     rawstor::tests::TmpDir dir;
     rawstd::URI location(dir.uri());
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(256);
 
     std::unique_ptr<rawstor::Object> object = open_object(*queue, location);
 
-    std::string payload = "durable-me";
     rawstd::Task<size_t> write_task =
         object->pwrite(payload.data(), payload.size(), 0, false);
 
     rawstd::Task<void> flush_task = object->flush();
 
-    constexpr unsigned int extra_writes = 500;
     std::vector<rawstd::Task<size_t>> extra;
     extra.reserve(extra_writes);
     for (unsigned int i = 0; i < extra_writes; ++i) {
@@ -181,4 +218,37 @@ TEST(ObjectTest, concurrent_flush_calls_all_resolve) {
         queue->wait_timeout(rawstor_opts_tcp_user_timeout());
     }
     EXPECT_EQ(write2.get(), payload.size());
+}
+
+// close() must not proceed to close a connection while a write issued
+// before it is still outstanding -- otherwise that write's own I/O could
+// race the connection/fd being torn down under it. See Object::close()'s
+// own doc comment (it calls flush(), which already has this wait).
+TEST(ObjectTest, close_waits_for_writes_issued_before_it) {
+    rawstor::tests::TmpDir dir;
+    rawstd::URI location(dir.uri());
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(256);
+
+    std::unique_ptr<rawstor::Object> object = open_object(*queue, location);
+
+    std::string payload = "durable-me";
+    rawstd::Task<size_t> write_task =
+        object->pwrite(payload.data(), payload.size(), 0, false);
+    ASSERT_FALSE(write_task.done());
+
+    rawstd::Task<void> close_task = object->close();
+
+    while (!write_task.done()) {
+        // The write hasn't completed yet -- close() must still be
+        // waiting for it, not racing ahead to tear down its connection.
+        ASSERT_FALSE(close_task.done());
+        queue->wait_timeout(rawstor_opts_tcp_user_timeout());
+    }
+
+    while (!close_task.done()) {
+        queue->wait_timeout(rawstor_opts_tcp_user_timeout());
+    }
+
+    EXPECT_EQ(write_task.get(), payload.size());
+    close_task.get();
 }

@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - `rawstor_object_flush()` could report success while a `pwrite()`/`pwritev()` issued just before it was still outstanding, so its data wasn't actually guaranteed durable yet; `flush()` now waits for every write issued before it to complete first.
+- `rawstor_object_close()` didn't actually flush pending writes before completing, despite already being documented to -- it now does, and also waits for any write still in flight rather than racing its connection out from under it.
 
 ## [0.2.8] - 2026-08-15
 

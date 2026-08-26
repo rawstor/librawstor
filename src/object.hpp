@@ -53,6 +53,14 @@ private:
     // _write_finished() wakes every entry whose target has been reached,
     // in order, as _writes_completed advances (see flush()).
     std::deque<std::pair<unsigned int, std::coroutine_handle<>>> _flush_waiters;
+    // Set once a pwrite()/pwritev() call *succeeds*, cleared once flush()
+    // actually dispatches a durability op that covers it -- lets flush()
+    // (and close(), which calls it) skip that dispatch entirely when
+    // nothing written since the last flush needs it: a never-written or
+    // already-flushed object, or one whose only writes so far all failed
+    // (nothing to flush() failed writes -- there's no data to make
+    // durable), shouldn't pay for a round trip that would be a pure no-op.
+    bool _dirty;
 
     // Called once a pwrite()/pwritev() call that incremented
     // _writes_issued finishes, success or failure -- advances
@@ -100,10 +108,11 @@ public:
     // could report success before that write's data is actually durable.
     rawstd::Task<void> flush();
 
-    // Async counterpart to ~Object()'s own run()-pumped connection cleanup:
-    // co_awaits every Connection's close() concurrently, then clears _cns so
-    // ~Object() (which still runs once the caller deletes this Object after
-    // the returned Task completes) has nothing left to close.
+    // flush()es (see above) before co_awaiting every Connection's close()
+    // concurrently, then clears _cns so ~Object() (which still runs once
+    // the caller deletes this Object after the returned Task completes)
+    // has nothing left to close -- the async counterpart to ~Object()'s
+    // own run()-pumped connection cleanup.
     rawstd::Task<void> close();
 
     // For tests/ to verify flush()'s wait for in-flight writes (see
