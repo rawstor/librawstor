@@ -86,6 +86,7 @@ Default values are shown below.
 | `-h, --help` | Show help message and exit. |
 | `LOCATION` | Comma‑separated list of backend locations (e.g., `file:///path`, `ost://host:port`). |
 | `-b, --bind ADDR` | Bind address in `<ip>:<port>` format (e.g., `127.0.0.1:7777`). |
+| `-w, --workers N` | Number of worker threads, each with its own client connections and I/O queue, all accepting on the same listening socket (default: `12`). |
 
 ### Examples
 
