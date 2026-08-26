@@ -769,6 +769,13 @@ void Session::_add_op(const std::shared_ptr<SessionOp>& op) {
         // response_head_cb() below has already resolved this op and
         // request_cb()'s own _dispatch() call is a no-op past that
         // point.
+        //
+        // response_head_cb() below still runs this op through
+        // SessionOp::_dispatch(), which unconditionally calls
+        // _remove_op() -> telemetry::op_finished() -- so this op needs a
+        // matching op_started() here despite never reaching _ops, or
+        // in-flight goes negative for every op forced through this path.
+        rawstor::telemetry::op_started();
         op->response_head_cb(nullptr, ECONNRESET);
         return;
     }
