@@ -4,10 +4,10 @@
 
 #include <rawstd/exitcode.h>
 #include <rawstd/logging.hpp>
+#include <rawstd/socket.h>
 
 #include <rawstor/rawstor.h>
 
-#include <fcntl.h>
 #include <getopt.h>
 #include <signal.h>
 #include <unistd.h>
@@ -98,13 +98,16 @@ void open_wake_pipe(int* read_fd, int* write_fd) {
         errno = 0;
         throw std::system_error(errsv, std::generic_category(), "pipe");
     }
-    if (fcntl(fds[0], F_SETFL, O_NONBLOCK) == -1 ||
-        fcntl(fds[1], F_SETFL, O_NONBLOCK) == -1) {
-        int errsv = errno;
-        errno = 0;
+    int res = rawstd_socket_set_nonblock(fds[0]);
+    if (res == 0) {
+        res = rawstd_socket_set_nonblock(fds[1]);
+    }
+    if (res < 0) {
         close(fds[0]);
         close(fds[1]);
-        throw std::system_error(errsv, std::generic_category(), "fcntl");
+        throw std::system_error(
+            -res, std::generic_category(), "rawstd_socket_set_nonblock"
+        );
     }
     *read_fd = fds[0];
     *write_fd = fds[1];
