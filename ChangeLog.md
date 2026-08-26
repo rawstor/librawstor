@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - `rawstor_object_flush()` could report success while a `pwrite()`/`pwritev()` issued just before it was still outstanding, so its data wasn't actually guaranteed durable yet; `flush()` now waits for every write issued before it to complete first.
 - `rawstor_object_close()` didn't actually flush pending writes before completing, despite already being documented to -- it now does, and also waits for any write still in flight rather than racing its connection out from under it.
+- `rawstor-ost` and the client's own OST session each registered a 32MiB `recv_multishot` buffer pool, undersized for `rawstor-vhost`'s own healthy worst case (its default write-throttle-limit of 128 concurrent requests at a realistic virtio-blk transfer size); a client pipelining that many requests could overflow it, forcing a reconnect that immediately overflowed again under the same sustained load and exhausted the retry budget for real. Raised to 128MiB on both sides.
+- Telemetry's in-flight-requests count could go negative: an op whose session had already died before it was ever registered still ran through the same completion path as a normal one, decrementing a count it had never gotten to increment.
 
 ## [0.2.8] - 2026-08-15
 
