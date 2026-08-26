@@ -2,6 +2,7 @@
 
 #include "opts.h"
 
+#include <rawio/awaitable.hpp>
 #include <rawio/queue.hpp>
 
 #include <rawstd/gpp.hpp>
@@ -137,7 +138,7 @@ Session::Session(Private p, rawio::Queue& queue, const rawstd::URI& location) :
     rawstor::blk::Session(p, queue, location) {
 }
 
-int Session::_connect(const RawstdUUID& id) {
+rawstd::Task<int> Session::_connect(const RawstdUUID& id) {
     std::string location_path = get_location_path(location());
 
     RawstdUUIDString id_string;
@@ -148,12 +149,9 @@ int Session::_connect(const RawstdUUID& id) {
     std::string target_path = get_target_path(location_path, id_string);
 
     rawstd_info("Connecting to %s...\n", location().str().c_str());
-    int fd = ::open(target_path.c_str(), O_RDWR | O_NONBLOCK);
-    if (fd == -1) {
-        RAWSTD_THROW_ERRNO();
-    }
+    int fd = co_await _queue.open(target_path.c_str(), O_RDWR | O_NONBLOCK, 0);
     rawstd_info("fd %d: Connected\n", fd);
-    return fd;
+    co_return fd;
 }
 
 rawstd::Task<void> Session::list(
