@@ -28,28 +28,36 @@ private:
     Target _target;
     std::vector<std::unique_ptr<rawstor::Connection>> _cns;
 
-    // Number of pwrite()/pwritev() calls dispatched to every connection in
-    // _cns but not yet complete -- gives flush() (see _flush_waiters below)
-    // a precise "every write issued so far has completed" signal. This is
-    // *not* a backpressure mechanism -- pwrite()/pwritev() never suspend
-    // because of it -- concurrency limiting
+    // Monotonically increasing count of pwrite()/pwritev() calls dispatched
+    // to every connection in _cns so far (_writes_issued) and of how many
+    // of those have since completed, success or failure (_writes_completed).
+    // flush() (see _flush_waiters below) snapshots _writes_issued as its
+    // own target and waits for _writes_completed to reach it -- neither
+    // counter is a live in-flight gauge, deliberately: waiting for
+    // "currently outstanding == 0" instead would starve flush() forever
+    // under a continuous write stream, where a new write can always slip
+    // into a slot a completing one just freed before the count ever
+    // touches zero. A fixed target, snapshotted once, isn't affected by
+    // writes issued after flush() was called -- same as fsync() never
+    // covering a write that hasn't happened yet. This is *not* a
+    // backpressure mechanism -- pwrite()/pwritev() never suspend because
+    // of it -- concurrency limiting
     // (rawstor_opts_write_throttle_limit()/write_backlog_capacity()) stays
     // blk::Session's own job (see blk_session.hpp's _throttle_acquire()),
-    // one level down; this is a separate, simpler count that exists purely
-    // for flush()'s barrier.
-    unsigned int _writes_in_flight;
-    // flush() suspends here when _writes_in_flight is nonzero at the time
-    // it's called -- _write_finished() wakes every one of these, in order,
-    // once the count reaches zero (see flush()'s own doc comment for why
-    // "reaches zero" -- not "started at zero" -- is precise enough: with a
-    // single-threaded, cooperatively-scheduled reactor, a write issued
-    // after flush() has already registered here cannot slip in between
-    // _writes_in_flight hitting zero and these waiters being resumed).
-    std::deque<std::coroutine_handle<>> _flush_waiters;
+    // one level down; these are a separate, simpler pair of counts that
+    // exist purely for flush()'s barrier.
+    size_t _writes_issued;
+    size_t _writes_completed;
+    // flush() suspends here when its target (a snapshot of _writes_issued)
+    // is greater than _writes_completed at the time it's called --
+    // _write_finished() wakes every entry whose target has been reached,
+    // in order, as _writes_completed advances (see flush()).
+    std::deque<std::pair<size_t, std::coroutine_handle<>>> _flush_waiters;
 
     // Called once a pwrite()/pwritev() call that incremented
-    // _writes_in_flight finishes, success or failure -- decrements it and,
-    // once it reaches zero, wakes every _flush_waiters entry (see flush()).
+    // _writes_issued finishes, success or failure -- advances
+    // _writes_completed and wakes every _flush_waiters entry whose target
+    // has now been reached (see flush()).
     void _write_finished() noexcept;
 
     // Object is final -- unlike Session::Private (which every backend
@@ -99,10 +107,10 @@ public:
     rawstd::Task<void> close();
 
     // For tests/ to verify flush()'s wait for in-flight writes (see
-    // _writes_in_flight above) without depending on real storage-completion
-    // timing.
-    inline unsigned int writes_in_flight() const noexcept {
-        return _writes_in_flight;
+    // _writes_issued/_writes_completed above) without depending on real
+    // storage-completion timing.
+    inline size_t writes_in_flight() const noexcept {
+        return _writes_issued - _writes_completed;
     }
 };
 

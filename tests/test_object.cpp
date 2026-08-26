@@ -16,6 +16,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -53,7 +54,7 @@ open_object(rawio::Queue& queue, const rawstd::URI& location) {
 // flush() must not report success while a write issued before it is still
 // outstanding -- otherwise a caller relying on flush() for durability could
 // observe success before that write's data is actually durable. See
-// object.hpp's _writes_in_flight/_flush_waiters.
+// object.hpp's _writes_issued/_writes_completed/_flush_waiters.
 TEST(ObjectTest, flush_waits_for_writes_issued_before_it) {
     rawstor::tests::TmpDir dir;
     rawstd::URI location(dir.uri());
@@ -86,4 +87,59 @@ TEST(ObjectTest, flush_waits_for_writes_issued_before_it) {
 
     EXPECT_EQ(write_task.get(), payload.size());
     flush_task.get();
+}
+
+// flush() must not wait for writes issued *after* it either -- otherwise,
+// under a continuous write stream (a new write always dispatched before an
+// older one completes), the "everything outstanding has drained" condition
+// could never actually occur and flush() would starve forever. Issuing a
+// large batch of writes strictly after flush() and confirming most of them
+// are still outstanding once flush() resolves demonstrates flush() is
+// waiting for its own fixed snapshot (see object.hpp), not for the backlog
+// to empty out.
+TEST(ObjectTest, flush_does_not_wait_for_writes_issued_after_it) {
+    rawstor::tests::TmpDir dir;
+    rawstd::URI location(dir.uri());
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(256);
+
+    std::unique_ptr<rawstor::Object> object = open_object(*queue, location);
+
+    std::string payload = "durable-me";
+    rawstd::Task<size_t> write_task =
+        object->pwrite(payload.data(), payload.size(), 0, false);
+
+    rawstd::Task<void> flush_task = object->flush();
+
+    constexpr unsigned int extra_writes = 500;
+    std::vector<rawstd::Task<size_t>> extra;
+    extra.reserve(extra_writes);
+    for (unsigned int i = 0; i < extra_writes; ++i) {
+        extra.push_back(object->pwrite(
+            payload.data(), payload.size(), (i + 1) * payload.size(), false
+        ));
+    }
+
+    while (!flush_task.done()) {
+        queue->wait_timeout(rawstor_opts_tcp_user_timeout());
+    }
+    flush_task.get();
+    EXPECT_EQ(write_task.get(), payload.size());
+
+    unsigned int extra_done = 0;
+    for (const auto& t : extra) {
+        if (t.done()) {
+            ++extra_done;
+        }
+    }
+    // If flush() had (incorrectly) waited for the backlog to empty out
+    // instead of just the write issued before it, every one of these would
+    // already be done by the time flush() resolved.
+    EXPECT_LT(extra_done, extra_writes);
+
+    for (auto& t : extra) {
+        while (!t.done()) {
+            queue->wait_timeout(rawstor_opts_tcp_user_timeout());
+        }
+        EXPECT_EQ(t.get(), payload.size());
+    }
 }

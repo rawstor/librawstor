@@ -26,26 +26,30 @@
 
 namespace {
 
-// Suspends the awaiting coroutine unless `writes_in_flight` is already
-// zero, queuing its handle onto `waiters` for
-// rawstor::Object::_write_finished() to resume once it reaches zero --
-// see Object::flush()'s use of this.
+// Suspends the awaiting coroutine unless `writes_completed` has already
+// reached `target` (a caller-supplied snapshot of _writes_issued taken at
+// flush() call time -- see that function), queuing its handle onto
+// `waiters` for rawstor::Object::_write_finished() to resume once it has.
 class FlushBarrierAwaiter final {
 private:
-    const unsigned int& _writes_in_flight;
-    std::deque<std::coroutine_handle<>>& _waiters;
+    size_t _target;
+    const size_t& _writes_completed;
+    std::deque<std::pair<size_t, std::coroutine_handle<>>>& _waiters;
 
 public:
     FlushBarrierAwaiter(
-        const unsigned int& writes_in_flight,
-        std::deque<std::coroutine_handle<>>& waiters
+        size_t target, const size_t& writes_completed,
+        std::deque<std::pair<size_t, std::coroutine_handle<>>>& waiters
     ) :
-        _writes_in_flight(writes_in_flight),
+        _target(target),
+        _writes_completed(writes_completed),
         _waiters(waiters) {}
 
-    bool await_ready() const noexcept { return _writes_in_flight == 0; }
+    bool await_ready() const noexcept { return _writes_completed >= _target; }
 
-    void await_suspend(std::coroutine_handle<> h) { _waiters.push_back(h); }
+    void await_suspend(std::coroutine_handle<> h) {
+        _waiters.push_back({_target, h});
+    }
 
     void await_resume() const noexcept {}
 };
@@ -167,18 +171,18 @@ namespace rawstor {
 Object::Object(Private, rawio::Queue& queue, const Target& target) :
     _queue(queue),
     _target(target),
-    _writes_in_flight(0) {
+    _writes_issued(0),
+    _writes_completed(0) {
 }
 
 void Object::_write_finished() noexcept {
-    --_writes_in_flight;
+    ++_writes_completed;
 
-    if (_writes_in_flight == 0) {
-        while (!_flush_waiters.empty()) {
-            std::coroutine_handle<> h = _flush_waiters.front();
-            _flush_waiters.pop_front();
-            h.resume();
-        }
+    while (!_flush_waiters.empty() &&
+           _flush_waiters.front().first <= _writes_completed) {
+        std::coroutine_handle<> h = _flush_waiters.front().second;
+        _flush_waiters.pop_front();
+        h.resume();
     }
 }
 
@@ -244,7 +248,7 @@ Object::pwrite(const void* buf, size_t size, off_t offset, bool sync) {
         (intmax_t)offset, sync
     );
 
-    ++_writes_in_flight;
+    ++_writes_issued;
 
     std::vector<rawstd::Task<size_t>> tasks;
     tasks.reserve(_cns.size());
@@ -281,7 +285,7 @@ rawstd::Task<size_t> Object::pwritev(
         (intmax_t)offset, sync
     );
 
-    ++_writes_in_flight;
+    ++_writes_issued;
 
     std::vector<rawstd::Task<size_t>> tasks;
     tasks.reserve(_cns.size());
@@ -313,13 +317,17 @@ rawstd::Task<size_t> Object::pwritev(
 rawstd::Task<void> Object::flush() {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('o', "%s\n", "flush()");
 
-    // Every pwrite()/pwritev() issued before this call has already
-    // incremented _writes_in_flight (before its own first suspension
-    // point) -- waiting for it to reach zero here means every one of them
-    // has completed before the connections below are flushed. A write
-    // issued concurrently with (or after) this flush() call isn't waited
-    // on, same as fsync() never covering a write that hasn't happened yet.
-    co_await FlushBarrierAwaiter(_writes_in_flight, _flush_waiters);
+    // Snapshotting _writes_issued now, rather than just waiting for
+    // "nothing outstanding", is what keeps this from starving under a
+    // continuous write stream: a live in-flight count can hover above zero
+    // forever if a new write always fills the slot a completing one just
+    // freed, but this target is fixed the moment flush() is called, so
+    // _writes_completed reaching it is only ever a matter of the writes
+    // already issued finishing -- unaffected by anything issued afterward,
+    // same as fsync() never covering a write that hasn't happened yet.
+    co_await FlushBarrierAwaiter(
+        _writes_issued, _writes_completed, _flush_waiters
+    );
 
     std::vector<rawstd::Task<void>> tasks;
     tasks.reserve(_cns.size());
