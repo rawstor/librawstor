@@ -24,6 +24,7 @@ private:
     int _fd;      // /dev/vduse/$NAME
     char _name_buf[VDUSE_NAME_MAX];
     RawIOQueue* _queue;
+    std::string _target;
     RawstorObject* _object;
     std::vector<std::unique_ptr<IovaRegion>> _regions;
     std::vector<VirtQueue> _vqs;
@@ -40,7 +41,7 @@ public:
     /**
      * `target` names exactly one rawstor object (or a mirrored/cached set
      * of locations for the same object -- see docs/locations_and_targets.md);
-     * the VDUSE device name is that object's UUID (rawstor_object_id()),
+     * the VDUSE device name is that object's UUID (rawstor_target_id()),
      * not something the caller picks, since it already uniquely and
      * stably identifies the device this process is exporting.
      */
@@ -61,6 +62,9 @@ public:
     inline const char* name() const noexcept { return _name_buf; }
 
     inline RawIOQueue* queue() const noexcept { return _queue; }
+
+    /** The target string this device was opened against. */
+    inline const std::string& target() const noexcept { return _target; }
 
     inline RawstorObject* object() const noexcept { return _object; }
 
@@ -101,14 +105,9 @@ public:
     void complete_request(size_t index, uint16_t head, uint32_t len);
 
     /**
-     * Arm a single-shot read of the next control request on the device
-     * fd. Public so the read/write completion callbacks (device.cpp) can
-     * re-arm it after each request/response round-trip.
+     * Fill `resp` for control request `req`. Public so device.cpp's own
+     * control-channel coroutine (dispatch_loop()) can call it.
      */
-    void arm_control();
-
-    /** Fill `resp` for control request `req`. Public for the same reason
-     *  as arm_control(). */
     void
     dispatch_control(const vduse_dev_request& req, vduse_dev_response& resp);
 

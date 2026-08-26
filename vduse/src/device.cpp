@@ -5,9 +5,12 @@
 #include <stdheaders/linux/virtio_ring.h>
 #include <vduse/request.hpp>
 
+#include <rawstd/coro.hpp>
 #include <rawstd/gpp.hpp>
 #include <rawstd/iovec.h>
 #include <rawstd/logging.h>
+
+#include <rawstor/target.h>
 
 #include <fcntl.h>
 #include <sys/ioctl.h>
@@ -59,7 +62,8 @@ int perm_to_prot(uint8_t perm) {
 // virtio-blk data plane: turns descriptor chains popped off a virtqueue
 // into asynchronous rawstor object I/O. Transport-independent (BlkRequest
 // just works on raw iovec arrays), so this mirrors vhost/'s own
-// Request/ObjectTask/ObjectFlushTask/process_request almost verbatim.
+// Request/preadv_task/pwritev_task/flush_task/process_request almost
+// verbatim.
 //
 
 class Request final {
@@ -102,132 +106,158 @@ public:
     }
 };
 
-class ObjectTask final {
-protected:
-    std::unique_ptr<Request> _req;
+// ---------------------------------------------------------------------
+// rawstd::CallbackAwaitable<T> bridge over the async rawstor/object.h C
+// API for the data path -- see rawstd::CallbackAwaitable<T>'s own doc
+// comment for the general shape this follows. Mirrors vhost/'s own
+// io_trampoline()/flush_trampoline()/co_object_*() almost verbatim.
+// ---------------------------------------------------------------------
 
-public:
-    static int callback(
-        RawstorObject*, size_t size, size_t result, int error, void* data
-    ) {
-        std::unique_ptr<ObjectTask> t(static_cast<ObjectTask*>(data));
-        try {
-            (*t)(size, result, error);
-            return 0;
-        } catch (const std::system_error& e) {
-            return -e.code().value();
-        } catch (const std::exception& e) {
-            rawstd_error("%s\n", e.what());
-            return -EINVAL;
-        }
-    }
-
-    ObjectTask(std::unique_ptr<Request> req) : _req(std::move(req)) {}
-    ObjectTask(const ObjectTask&) = delete;
-    ObjectTask(ObjectTask&&) = delete;
-    ~ObjectTask() = default;
-
-    ObjectTask& operator=(const ObjectTask&) = delete;
-    ObjectTask& operator=(ObjectTask&&) = delete;
-
-    void preadv();
-    void pwritev();
-    inline Request* req() noexcept { return _req.get(); }
-
-    void operator()(size_t size, size_t result, int error);
-};
-
-void ObjectTask::operator()(size_t size, size_t result, int error) {
-    if (error != 0) {
-        rawstd_error("%s\n", strerror(error));
-        _req->push(VIRTIO_BLK_S_IOERR, result);
-        return;
-    }
-
-    if (result != size) {
-        rawstd_error("Partial object operation: %zu != %zu\n", result, size);
-        _req->push(VIRTIO_BLK_S_IOERR, result);
-        return;
-    }
-
-    rawstd_debug("vduse: object operation completed, %zu bytes\n", result);
-    _req->push(VIRTIO_BLK_S_OK, result);
+int io_trampoline(size_t result, int error, void* data) {
+    static_cast<rawstd::CallbackAwaitable<size_t>*>(data)->complete(
+        result, error
+    );
+    return 0;
 }
 
-void ObjectTask::preadv() {
+rawstd::Task<size_t> co_object_preadv(
+    RawstorObject* object, iovec* iov, unsigned int niov, size_t size,
+    off_t offset
+) {
+    rawstd::CallbackAwaitable<size_t> awaiter;
     int res = rawstor_object_preadv(
-        _req->device().object(), _req->in_iov(), _req->in_niov(),
-        rawstd_iovec_size(_req->in_iov(), _req->in_niov()), _req->offset(),
-        callback, this
+        object, iov, niov, size, offset, io_trampoline, &awaiter
     );
-    if (res) {
+    if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
+    co_return co_await awaiter;
 }
 
-void ObjectTask::pwritev() {
+rawstd::Task<size_t> co_object_pwritev(
+    RawstorObject* object, const iovec* iov, unsigned int niov, size_t size,
+    off_t offset, bool sync
+) {
+    rawstd::CallbackAwaitable<size_t> awaiter;
+    int res = rawstor_object_pwritev(
+        object, iov, niov, size, offset, sync, io_trampoline, &awaiter
+    );
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+    co_return co_await awaiter;
+}
+
+// rawstor_object_flush()'s own callback shape (ssize_t result) -- there's
+// nothing else to report, unlike io_trampoline()'s preadv/pwritev group
+// above.
+int flush_trampoline(ssize_t result, void* data) {
+    static_cast<rawstd::CallbackAwaitable<void>*>(data)->complete(result);
+    return 0;
+}
+
+rawstd::Task<void> co_object_flush(RawstorObject* object) {
+    rawstd::CallbackAwaitable<void> awaiter;
+    int res = rawstor_object_flush(object, flush_trampoline, &awaiter);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+    co_await awaiter;
+}
+
+// process_queue() (the only caller of process_request(), a few frames
+// up) already logs and continues on any exception escaping here, so none
+// of these *_task() coroutines need their own top-level try/catch beyond
+// the one around each async op itself -- an immediate submission failure
+// and a later-reported one both surface identically via
+// CallbackAwaitable<T> (see its own doc comment), so there's only one
+// error path to handle either way.
+
+rawstd::DetachedTask preadv_task(std::unique_ptr<Request> req) {
+    size_t size = rawstd_iovec_size(req->in_iov(), req->in_niov());
+    size_t result = 0;
+    int error = 0;
+    try {
+        result = co_await co_object_preadv(
+            req->device().object(), req->in_iov(), req->in_niov(), size,
+            req->offset()
+        );
+    } catch (const std::system_error& e) {
+        error = e.code().value();
+    }
+    if (error != 0) {
+        rawstd_error("%s\n", strerror(error));
+        req->push(VIRTIO_BLK_S_IOERR, result);
+        co_return;
+    }
+    if (result != size) {
+        rawstd_error("Partial object operation: %zu != %zu\n", result, size);
+        req->push(VIRTIO_BLK_S_IOERR, result);
+        co_return;
+    }
+    rawstd_debug("vduse: object operation completed, %zu bytes\n", result);
+    req->push(VIRTIO_BLK_S_OK, result);
+}
+
+void preadv(std::unique_ptr<Request> req) {
+    preadv_task(std::move(req));
+    rawstd::DetachedTask::rethrow_if_pending();
+}
+
+rawstd::DetachedTask pwritev_task(std::unique_ptr<Request> req) {
     // Writeback caching (wce) means the guest is expected to issue an
     // explicit FLUSH when it needs durability; without it (write-through),
     // every write must already be durable by the time it completes.
-    bool sync = !_req->device().write_cache_enabled();
-    int res = rawstor_object_pwritev(
-        _req->device().object(), _req->out_iov(), _req->out_niov(),
-        rawstd_iovec_size(_req->out_iov(), _req->out_niov()), _req->offset(),
-        sync, callback, this
-    );
-    if (res) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    bool sync = !req->device().write_cache_enabled();
+    size_t size = rawstd_iovec_size(req->out_iov(), req->out_niov());
+    size_t result = 0;
+    int error = 0;
+    try {
+        result = co_await co_object_pwritev(
+            req->device().object(), req->out_iov(), req->out_niov(), size,
+            req->offset(), sync
+        );
+    } catch (const std::system_error& e) {
+        error = e.code().value();
     }
-}
-
-class ObjectFlushTask final {
-protected:
-    std::unique_ptr<Request> _req;
-
-public:
-    static int callback(RawstorObject*, size_t, size_t, int error, void* data) {
-        std::unique_ptr<ObjectFlushTask> t(static_cast<ObjectFlushTask*>(data));
-        try {
-            (*t)(error);
-            return 0;
-        } catch (const std::system_error& e) {
-            return -e.code().value();
-        } catch (const std::exception& e) {
-            rawstd_error("%s\n", e.what());
-            return -EINVAL;
-        }
-    }
-
-    ObjectFlushTask(std::unique_ptr<Request> req) : _req(std::move(req)) {}
-    ObjectFlushTask(const ObjectFlushTask&) = delete;
-    ObjectFlushTask(ObjectFlushTask&&) = delete;
-    ~ObjectFlushTask() = default;
-
-    ObjectFlushTask& operator=(const ObjectFlushTask&) = delete;
-    ObjectFlushTask& operator=(ObjectFlushTask&&) = delete;
-
-    void flush();
-    inline Request* req() noexcept { return _req.get(); }
-
-    void operator()(int error);
-};
-
-void ObjectFlushTask::operator()(int error) {
     if (error != 0) {
         rawstd_error("%s\n", strerror(error));
-        _req->push(VIRTIO_BLK_S_IOERR, 0);
-        return;
+        req->push(VIRTIO_BLK_S_IOERR, result);
+        co_return;
     }
-
-    rawstd_debug("vduse: flush completed\n");
-    _req->push(VIRTIO_BLK_S_OK, 0);
+    if (result != size) {
+        rawstd_error("Partial object operation: %zu != %zu\n", result, size);
+        req->push(VIRTIO_BLK_S_IOERR, result);
+        co_return;
+    }
+    rawstd_debug("vduse: object operation completed, %zu bytes\n", result);
+    req->push(VIRTIO_BLK_S_OK, result);
 }
 
-void ObjectFlushTask::flush() {
-    int res = rawstor_object_flush(_req->device().object(), callback, this);
-    if (res) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
+void pwritev(std::unique_ptr<Request> req) {
+    pwritev_task(std::move(req));
+    rawstd::DetachedTask::rethrow_if_pending();
+}
+
+rawstd::DetachedTask flush_task(std::unique_ptr<Request> req) {
+    int error = 0;
+    try {
+        co_await co_object_flush(req->device().object());
+    } catch (const std::system_error& e) {
+        error = e.code().value();
     }
+    if (error != 0) {
+        rawstd_error("%s\n", strerror(error));
+        req->push(VIRTIO_BLK_S_IOERR, 0);
+        co_return;
+    }
+    rawstd_debug("vduse: flush completed\n");
+    req->push(VIRTIO_BLK_S_OK, 0);
+}
+
+void flush(std::unique_ptr<Request> req) {
+    flush_task(std::move(req));
+    rawstd::DetachedTask::rethrow_if_pending();
 }
 
 void process_request(std::unique_ptr<Request> req) {
@@ -239,37 +269,20 @@ void process_request(std::unique_ptr<Request> req) {
     );
 
     switch (req->type()) {
-    case VIRTIO_BLK_T_IN: {
-        std::unique_ptr<ObjectTask> t =
-            std::make_unique<ObjectTask>(std::move(req));
-        try {
-            t->preadv();
-            t.release();
-        } catch (const std::exception& e) {
-            rawstd_error("%s\n", e.what());
-            t->req()->push(VIRTIO_BLK_S_IOERR, in_size);
-        }
+    case VIRTIO_BLK_T_IN:
+        preadv(std::move(req));
         break;
-    }
 
-    case VIRTIO_BLK_T_OUT: {
-        std::unique_ptr<ObjectTask> t =
-            std::make_unique<ObjectTask>(std::move(req));
-        try {
-            t->pwritev();
-            t.release();
-        } catch (const std::exception& e) {
-            rawstd_error("%s\n", e.what());
-            t->req()->push(VIRTIO_BLK_S_IOERR, in_size);
-        }
+    case VIRTIO_BLK_T_OUT:
+        pwritev(std::move(req));
         break;
-    }
 
     case VIRTIO_BLK_T_GET_ID: {
         try {
             char uuid[37];
-            int res =
-                rawstor_object_id(req->device().object(), uuid, sizeof(uuid));
+            int res = rawstor_target_id(
+                req->device().target().c_str(), uuid, sizeof(uuid)
+            );
             if (res < 0) {
                 RAWSTD_THROW_SYSTEM_ERROR(-res);
             }
@@ -293,18 +306,9 @@ void process_request(std::unique_ptr<Request> req) {
         break;
     }
 
-    case VIRTIO_BLK_T_FLUSH: {
-        std::unique_ptr<ObjectFlushTask> t =
-            std::make_unique<ObjectFlushTask>(std::move(req));
-        try {
-            t->flush();
-            t.release();
-        } catch (const std::exception& e) {
-            rawstd_error("%s\n", e.what());
-            t->req()->push(VIRTIO_BLK_S_IOERR, in_size);
-        }
+    case VIRTIO_BLK_T_FLUSH:
+        flush(std::move(req));
         break;
-    }
 
     case VIRTIO_BLK_T_DISCARD:
     case VIRTIO_BLK_T_WRITE_ZEROES:
@@ -314,102 +318,173 @@ void process_request(std::unique_ptr<Request> req) {
     }
 }
 
-//
-// Control channel: fixed-size read(2)/write(2) of struct
-// vduse_dev_request/vduse_dev_response on the device fd -- unlike
-// vhost-user, there is no variable-size payload to split into a second
-// read.
-//
+// ---------------------------------------------------------------------
+// rawstd::CallbackAwaitable<size_t> bridge over the control path's
+// rawio_read()/rawio_write() -- both share the same collapsed ssize_t
+// result callback shape, so a single trampoline suffices for the two
+// co_*() wrappers below. See rawstd::CallbackAwaitable<T>'s own doc
+// comment for the general shape this follows, and vhost/'s own
+// (near-identical) rawio_trampoline()/co_read() for the same pattern
+// over its own control path.
+// ---------------------------------------------------------------------
 
-struct ControlCtx {
-    Device* device;
-    vduse_dev_request req;
-    vduse_dev_response resp;
-};
-
-int control_write_cb(size_t result, int error, void* data) {
-    std::unique_ptr<ControlCtx> ctx(static_cast<ControlCtx*>(data));
-
-    if (error == ECANCELED) {
-        return 0;
-    }
-
-    if (error != 0) {
-        rawstd_error(
-            "vduse: control response write failed: %s\n", strerror(error)
-        );
-        return 0;
-    }
-
-    if (result != sizeof(ctx->resp)) {
-        rawstd_error(
-            "vduse: unexpected control response write size: %zu\n", result
-        );
-        return 0;
-    }
-
-    try {
-        ctx->device->arm_control();
-    } catch (const std::exception& e) {
-        rawstd_error("vduse: failed to re-arm control read: %s\n", e.what());
-    }
-
+int rawio_trampoline(ssize_t result, void* data) {
+    size_t value = result < 0 ? 0 : static_cast<size_t>(result);
+    int error = result < 0 ? static_cast<int>(-result) : 0;
+    static_cast<rawstd::CallbackAwaitable<size_t>*>(data)->complete(
+        value, error
+    );
     return 0;
 }
 
-int control_read_cb(size_t result, int error, void* data) {
-    std::unique_ptr<ControlCtx> ctx(static_cast<ControlCtx*>(data));
-
-    if (error == ECANCELED) {
-        return 0;
+rawstd::Task<size_t>
+co_read(RawIOQueue* queue, int fd, void* buf, size_t size) {
+    rawstd::CallbackAwaitable<size_t> awaiter;
+    int res = rawio_read(queue, fd, buf, size, rawio_trampoline, &awaiter);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
+    co_return co_await awaiter;
+}
 
-    if (error != 0) {
-        rawstd_error(
-            "vduse: control request read failed: %s\n", strerror(error)
-        );
-        return 0;
+rawstd::Task<size_t>
+co_write(RawIOQueue* queue, int fd, const void* buf, size_t size) {
+    rawstd::CallbackAwaitable<size_t> awaiter;
+    int res = rawio_write(queue, fd, buf, size, rawio_trampoline, &awaiter);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
+    co_return co_await awaiter;
+}
 
-    if (result == 0) {
-        // The device node was closed/destroyed out from under us; stop
-        // watching the control fd instead of busy-looping on EOF.
-        rawstd_info("vduse: control fd closed\n");
-        return 0;
+// Drives the control channel's whole lifetime: a fixed-size read(2)/
+// write(2) of struct vduse_dev_request/vduse_dev_response on the device
+// fd, one request-then-reply round trip at a time -- unlike vhost-user,
+// there is no variable-size payload to split into a second read, and (as
+// with vhost/'s own dispatch_loop(), see its doc comment there) no reason
+// to pipeline reads ahead of replies: every dispatch_control() call below
+// is a synchronous, in-memory Device state mutation with no I/O of its
+// own.
+//
+// Unlike vhost/'s dispatch_loop(), a clean EOF here doesn't signal
+// Device::loop() to stop: the control fd is the persistent
+// /dev/vduse/$NAME character device, not a front-end's own connection, so
+// losing it doesn't mean the device itself is gone -- this just stops
+// watching it; kick_fd-driven data-path I/O keeps working regardless.
+rawstd::DetachedTask dispatch_loop(RawIOQueue* queue, int fd, Device& device) {
+    while (true) {
+        vduse_dev_request req;
+        size_t result = co_await co_read(queue, fd, &req, sizeof(req));
+        if (result == 0) {
+            rawstd_info("vduse: control fd closed\n");
+            co_return;
+        }
+        if (result != sizeof(req)) {
+            rawstd_error(
+                "vduse: unexpected control request read size: %zu\n", result
+            );
+            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+        }
+
+        vduse_dev_response resp{};
+        resp.request_id = req.request_id;
+        resp.result = VDUSE_REQ_RESULT_FAILED;
+
+        try {
+            device.dispatch_control(req, resp);
+        } catch (const std::exception& e) {
+            rawstd_error(
+                "vduse: control request handling failed: %s\n", e.what()
+            );
+            resp.result = VDUSE_REQ_RESULT_FAILED;
+        }
+
+        size_t sent = co_await co_write(queue, fd, &resp, sizeof(resp));
+        if (sent != sizeof(resp)) {
+            rawstd_error(
+                "vduse: unexpected control response write size: %zu\n", sent
+            );
+            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+        }
     }
+}
 
-    if (result != sizeof(ctx->req)) {
-        rawstd_error(
-            "vduse: unexpected control request read size: %zu\n", result
-        );
-        return 0;
-    }
+// Synchronous open()/close()/spec() shims for Device's constructor/
+// destructor: both run before loop() starts or after it returns, i.e.
+// never from inside process_queue()'s own dispatch of `queue` --
+// spinning `queue` here to wait for the callback is therefore safe,
+// unlike doing so from a context that's itself already being dispatched
+// by the same queue (see ost::Session's own async close()/open() handling
+// for that hazard). Verbatim copies of vhost/'s own
+// open_object()/close_object()/spec_object() -- see there for the fuller
+// rationale on the shared Result/result_cb().
+struct Result {
+    int error = 0;
+    bool done = false;
+};
 
-    ctx->resp = {};
-    ctx->resp.request_id = ctx->req.request_id;
-    ctx->resp.result = VDUSE_REQ_RESULT_FAILED;
-
-    try {
-        ctx->device->dispatch_control(ctx->req, ctx->resp);
-    } catch (const std::exception& e) {
-        rawstd_error("vduse: control request handling failed: %s\n", e.what());
-        ctx->resp.result = VDUSE_REQ_RESULT_FAILED;
-    }
-
-    Device* device = ctx->device;
-    int res = rawio_write(
-        device->queue(), device->fd(), &ctx->resp, sizeof(ctx->resp),
-        control_write_cb, ctx.get()
-    );
-    if (res) {
-        rawstd_error(
-            "vduse: failed to write control response: %s\n", strerror(-res)
-        );
-        return 0;
-    }
-    ctx.release();
-
+int result_cb(ssize_t result, void* data) {
+    Result* r = static_cast<Result*>(data);
+    r->error = result < 0 ? static_cast<int>(-result) : 0;
+    r->done = true;
     return 0;
+}
+
+RawstorObject* open_object(RawIOQueue* queue, const std::string& target) {
+    RawstorObject* object = nullptr;
+    Result result;
+    int res =
+        rawstor_target_open(queue, target.c_str(), &object, result_cb, &result);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+    while (!result.done) {
+        int wres = rawio_wait(queue);
+        if (wres < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-wres);
+        }
+    }
+    if (result.error) {
+        RAWSTD_THROW_SYSTEM_ERROR(result.error);
+    }
+    return object;
+}
+
+void close_object(RawIOQueue* queue, RawstorObject* object) {
+    Result result;
+    int res = rawstor_object_close(object, result_cb, &result);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+    while (!result.done) {
+        int wres = rawio_wait(queue);
+        if (wres < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-wres);
+        }
+    }
+    if (result.error) {
+        RAWSTD_THROW_SYSTEM_ERROR(result.error);
+    }
+}
+
+RawstorObjectSpec spec_object(RawIOQueue* queue, const std::string& target) {
+    RawstorObjectSpec spec{};
+    Result result;
+    int res =
+        rawstor_target_spec(queue, target.c_str(), &spec, result_cb, &result);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+    while (!result.done) {
+        int wres = rawio_wait(queue);
+        if (wres < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-wres);
+        }
+    }
+    if (result.error) {
+        RAWSTD_THROW_SYSTEM_ERROR(result.error);
+    }
+    return spec;
 }
 
 } // namespace
@@ -424,6 +499,7 @@ Device::Device(
     _fd(-1),
     _name_buf{},
     _queue(nullptr),
+    _target(target),
     _object(nullptr),
     _vqs(1),
     _features(0),
@@ -434,28 +510,24 @@ Device::Device(
     }
 
     try {
-        RawstorObjectSpec spec;
-        ires = rawstor_object_spec(target.c_str(), &spec);
-        if (ires) {
-            RAWSTD_THROW_SYSTEM_ERROR(-ires);
-        }
-
-        ires = rawstor_object_open(_queue, target.c_str(), &_object);
-        if (ires) {
-            RAWSTD_THROW_SYSTEM_ERROR(-ires);
-        }
-
         // The VDUSE device name is the object's own UUID: it already
         // uniquely and stably identifies what this process exports, so
         // there is no separate name for the caller to pick (or get
-        // wrong/colliding).
-        int nres = rawstor_object_id(_object, _name_buf, sizeof(_name_buf));
+        // wrong/colliding). A pure parse of `target` (see
+        // rawstor_target_id()'s own doc comment), so this doesn't need
+        // the object open yet.
+        int nres =
+            rawstor_target_id(target.c_str(), _name_buf, sizeof(_name_buf));
         if (nres < 0) {
             RAWSTD_THROW_SYSTEM_ERROR(-nres);
         }
         if (static_cast<size_t>(nres) >= sizeof(_name_buf)) {
             throw std::runtime_error("object UUID does not fit VDUSE_NAME_MAX");
         }
+
+        RawstorObjectSpec spec = spec_object(_queue, target);
+        _object = open_object(_queue, target);
+
         rawstd_info(
             "vduse: exporting %s as VDUSE device %s\n", target.c_str(),
             _name_buf
@@ -543,8 +615,6 @@ Device::Device(
                 RAWSTD_THROW_ERRNO();
             }
         }
-
-        arm_control();
     } catch (...) {
         if (_fd != -1) {
             close(_fd);
@@ -554,7 +624,10 @@ Device::Device(
             close(_ctrl_fd);
         }
         if (_object != nullptr) {
-            rawstor_object_close(_object);
+            try {
+                close_object(_queue, _object);
+            } catch (...) {
+            }
         }
         rawio_queue_delete(_queue);
         throw;
@@ -600,9 +673,10 @@ Device::~Device() {
     }
 
     if (_object != nullptr) {
-        int res = rawstor_object_close(_object);
-        if (res < 0) {
-            rawstd_error("Failed to close object: %s\n", strerror(-res));
+        try {
+            close_object(_queue, _object);
+        } catch (const std::exception& e) {
+            rawstd_error("Failed to close object: %s\n", e.what());
         }
     }
 
@@ -679,19 +753,6 @@ void Device::complete_request(size_t index, uint16_t head, uint32_t len) {
     VirtQueue& vq = _vqs.at(index);
     vq.push(head, len);
     vq.notify(*this, index, event_idx_negotiated());
-}
-
-void Device::arm_control() {
-    std::unique_ptr<ControlCtx> ctx = std::make_unique<ControlCtx>();
-    ctx->device = this;
-
-    int res = rawio_read(
-        _queue, _fd, &ctx->req, sizeof(ctx->req), control_read_cb, ctx.get()
-    );
-    if (res) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-    ctx.release();
 }
 
 void Device::dispatch_control(
@@ -842,6 +903,9 @@ void Device::remove_iova_regions(uint64_t start, uint64_t last) {
 }
 
 void Device::loop() {
+    dispatch_loop(_queue, _fd, *this);
+    rawstd::DetachedTask::rethrow_if_pending();
+
     while (true) {
         int res = rawio_wait(_queue);
         if (res == -EPIPE || res == -EINTR) {

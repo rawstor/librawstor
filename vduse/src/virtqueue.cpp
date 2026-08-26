@@ -41,7 +41,7 @@ struct KickCtx {
     uint64_t value;
 };
 
-int kick_cb(size_t result, int error, void* data) {
+int kick_cb(ssize_t result, void* data) {
     std::unique_ptr<KickCtx> ctx(static_cast<KickCtx*>(data));
 
     // The armed read this callback belongs to has now completed one way
@@ -49,17 +49,17 @@ int kick_cb(size_t result, int error, void* data) {
     // to arm_kick()) is not mistaken for one already in flight.
     ctx->vq->clear_kick_armed();
 
-    if (error == ECANCELED) {
+    if (result == -ECANCELED) {
         return 0;
     }
 
-    if (error != 0) {
-        rawstd_error("vduse: kick_fd read failed: %s\n", strerror(error));
+    if (result < 0) {
+        rawstd_error("vduse: kick_fd read failed: %s\n", strerror(-result));
         return 0;
     }
 
-    if (result != sizeof(ctx->value)) {
-        rawstd_error("vduse: unexpected kick_fd read size: %zu\n", result);
+    if (static_cast<size_t>(result) != sizeof(ctx->value)) {
+        rawstd_error("vduse: unexpected kick_fd read size: %zd\n", result);
         return 0;
     }
 
