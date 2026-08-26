@@ -206,9 +206,7 @@ Session::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
             RAWSTD_THROW_ERRNO();
         }
 #else
-        if (ftruncate(fd, sp.size) == -1) {
-            RAWSTD_THROW_ERRNO();
-        }
+#error "file:// object creation needs a real-preallocation path here too"
 #endif
 
         if (::close(fd) == -1) {
