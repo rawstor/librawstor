@@ -69,7 +69,7 @@ static int rawstor_cli_info_physical(const char* location, char unit) {
 /* Sums every object's own declared size (one rawstor_target_spec() call per
  * target) instead of asking the backend for its actual physical usage --
  * see info.h's own doc comment for why the two can diverge. Reuses the
- * same op/queue across the whole list()+spec() sequence, same as
+ * same op/queue across the whole list()+spec()+info() sequence, same as
  * rawstor_cli_list()'s own pagination loop. */
 static int rawstor_cli_info_logical(const char* location, char unit) {
     RawstorCliOp op;
@@ -125,17 +125,44 @@ static int rawstor_cli_info_logical(const char* location, char unit) {
         rawstor_string_list_delete(targets);
     } while (!rawstor_pagination_token_empty(&token));
 
+    /* total has no logical counterpart of its own (there's no location-wide
+     * logical capacity) -- borrowed from the same physical info() the
+     * non-logical path uses, so use% still means something (how much of
+     * the location's actual capacity the declared sizes account for). */
+    struct RawstorLocationInfo info;
+    op.done = 0;
+    int info_sres = rawstor_location_info(
+        op.queue, location, &info, rawstor_cli_op_cb, &op
+    );
+    ssize_t info_result = rawstor_cli_op_wait(&op, info_sres);
     rawstor_cli_op_destroy(&op);
+    if (info_result < 0) {
+        fprintf(
+            stderr, "rawstor_location_info() failed: %s\n",
+            strerror((int)-info_result)
+        );
+        return rawstd_exitcode_for_errno((int)-info_result);
+    }
 
     char used_buf[256];
+    char total_buf[256];
     if (unit == 0) {
         rawstd_bytes_to_size_human(used, used_buf, sizeof(used_buf));
+        rawstd_bytes_to_size_human(info.total, total_buf, sizeof(total_buf));
     } else {
         rawstd_bytes_to_size_unit(used, unit, used_buf, sizeof(used_buf));
+        rawstd_bytes_to_size_unit(
+            info.total, unit, total_buf, sizeof(total_buf)
+        );
     }
+
+    double percent =
+        info.total > 0 ? (double)used / (double)info.total * 100.0 : 0.0;
 
     printf("location: %s\n", location);
     printf("used: %s\n", used_buf);
+    printf("total: %s\n", total_buf);
+    printf("use%%: %.1f%%\n", percent);
 
     return EXIT_SUCCESS;
 }
