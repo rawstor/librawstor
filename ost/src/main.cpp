@@ -16,6 +16,7 @@
 #include <sstream>
 #include <system_error>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include <cstdio>
@@ -30,13 +31,52 @@ namespace {
 
 struct sigaction sact = {};
 
+// Move-only RAII owner for a raw fd: closes it in the destructor (and on
+// reset()/move-assignment over a still-owned one), so ost() below doesn't
+// need its own close()-on-every-exit-path bookkeeping for the fds it opens.
+// A default-constructed or moved-from UniqueFd holds no fd (get() == -1).
+class UniqueFd final {
+private:
+    int _fd;
+
+public:
+    UniqueFd() noexcept : _fd(-1) {}
+    explicit UniqueFd(int fd) noexcept : _fd(fd) {}
+    UniqueFd(const UniqueFd&) = delete;
+    UniqueFd(UniqueFd&& other) noexcept : _fd(std::exchange(other._fd, -1)) {}
+    ~UniqueFd() { reset(); }
+
+    UniqueFd& operator=(const UniqueFd&) = delete;
+    UniqueFd& operator=(UniqueFd&& other) noexcept {
+        if (this != &other) {
+            reset(std::exchange(other._fd, -1));
+        }
+        return *this;
+    }
+
+    int get() const noexcept { return _fd; }
+
+    // Gives up ownership without closing the fd; the caller now owns it --
+    // used to hand a wake fd off to a Server, which manages it itself from
+    // that point on.
+    int release() noexcept { return std::exchange(_fd, -1); }
+
+    // Closes the currently-owned fd (if any), then takes over `fd`.
+    void reset(int fd = -1) noexcept {
+        if (_fd != -1) {
+            close(_fd);
+        }
+        _fd = fd;
+    }
+};
+
 // Write end of each worker's wake-up pipe (ost::Server::_wake_task() reads
 // the other end -- see there for why a self-pipe instead of relying on
 // EINTR). Filled once by ost() before SIGINT/SIGTERM get registered, then
 // never resized/reassigned again -- sact_handler() only ever reads it, and
 // write() to a pipe is async-signal-safe, so this needs no locking either
 // way.
-std::vector<int> wake_write_fds;
+std::vector<UniqueFd> wake_write_fds;
 
 void usage() {
     std::cout << "Rawstor OST backend " << PACKAGE_VERSION << std::endl
@@ -80,37 +120,41 @@ void usage() {
 // stale one -- harmless, so this needs no "already signalled" guard.
 void sact_handler(int) {
     char byte = 0;
-    for (int fd : wake_write_fds) {
-        ssize_t n = write(fd, &byte, 1);
+    for (const UniqueFd& fd : wake_write_fds) {
+        ssize_t n = write(fd.get(), &byte, 1);
         (void)n;
     }
 }
 
-// Opens a pipe and sets O_NONBLOCK on both ends: the write end so
-// sact_handler() (see there) can never block, the read end so a spurious
-// extra wakeup byte (e.g. two shutdown signals racing) never makes
-// Server::_wake_task()'s rawio_read() actually block waiting for a second
-// byte that isn't coming.
-void open_wake_pipe(int* read_fd, int* write_fd) {
+// Opens a pipe and sets O_NONBLOCK on both ends -- non-blocking regardless
+// of what it ends up used for; the wake pipe specifically wants this so a
+// spurious extra wakeup byte (e.g. two shutdown signals racing) never
+// makes Server::_wake_task()'s rawio_read() actually block waiting for a
+// second byte that isn't coming, or sact_handler()'s write() block at all.
+// Both ends are wrapped in UniqueFd immediately, so a failure partway
+// through (the O_NONBLOCK calls) closes whichever end(s) were already
+// opened via plain stack unwinding, no explicit cleanup needed.
+std::pair<UniqueFd, UniqueFd> open_pipe() {
     int fds[2];
     if (pipe(fds) == -1) {
         int errsv = errno;
         errno = 0;
         throw std::system_error(errsv, std::generic_category(), "pipe");
     }
-    int res = rawstd_socket_set_nonblock(fds[0]);
+    UniqueFd read_fd(fds[0]);
+    UniqueFd write_fd(fds[1]);
+
+    int res = rawstd_socket_set_nonblock(read_fd.get());
     if (res == 0) {
-        res = rawstd_socket_set_nonblock(fds[1]);
+        res = rawstd_socket_set_nonblock(write_fd.get());
     }
     if (res < 0) {
-        close(fds[0]);
-        close(fds[1]);
         throw std::system_error(
             -res, std::generic_category(), "rawstd_socket_set_nonblock"
         );
     }
-    *read_fd = fds[0];
-    *write_fd = fds[1];
+
+    return {std::move(read_fd), std::move(write_fd)};
 }
 
 // Each worker is a thread with its own rawstor::ostbackend::Server (own
@@ -120,37 +164,33 @@ void open_wake_pipe(int* read_fd, int* write_fd) {
 // and the kernel wakes exactly one of them per incoming connection, so
 // each ends up handing itself its own Client the same way the
 // single-worker case always has (Server::_add_client()). Each worker also
-// gets its own wake pipe (see open_wake_pipe()/sact_handler()) so
-// SIGINT/SIGTERM can ask it to stop.
+// gets its own wake pipe (see open_pipe()/sact_handler()) so SIGINT/SIGTERM
+// can ask it to stop.
 void ost(
     unsigned int queue_size, unsigned int workers, const std::string& addr,
     unsigned int port, const char* location
 ) {
-    int listen_fd = rawstor::ostbackend::Server::bind_listen(addr, port);
+    UniqueFd listen_fd(rawstor::ostbackend::Server::bind_listen(addr, port));
     rawstd_info(
         "Waiting for connections on %s:%u with %u worker(s)\n", addr.c_str(),
         port, workers
     );
 
-    std::vector<int> wake_read_fds;
+    std::vector<UniqueFd> wake_read_fds;
     wake_read_fds.reserve(workers);
     wake_write_fds.reserve(workers);
     try {
         for (unsigned int i = 0; i < workers; i++) {
-            int read_fd;
-            int write_fd;
-            open_wake_pipe(&read_fd, &write_fd);
-            wake_read_fds.push_back(read_fd);
-            wake_write_fds.push_back(write_fd);
+            auto [read_fd, write_fd] = open_pipe();
+            wake_read_fds.push_back(std::move(read_fd));
+            wake_write_fds.push_back(std::move(write_fd));
         }
     } catch (...) {
-        for (int fd : wake_read_fds) {
-            close(fd);
-        }
-        for (int fd : wake_write_fds) {
-            close(fd);
-        }
-        close(listen_fd);
+        // wake_read_fds and listen_fd are locals -- stack unwinding closes
+        // them on their own. wake_write_fds is the module-global
+        // sact_handler() reads, so it outlives this stack frame and needs
+        // clearing explicitly.
+        wake_write_fds.clear();
         throw;
     }
 
@@ -173,11 +213,12 @@ void ost(
     std::vector<std::thread> threads;
     threads.reserve(workers);
     for (unsigned int i = 0; i < workers; i++) {
-        threads.emplace_back([&errors, i, queue_size, listen_fd, location,
-                              wake_fd = wake_read_fds[i]]() {
+        threads.emplace_back([&errors, i, queue_size, fd = listen_fd.get(),
+                              location,
+                              wake_fd = std::move(wake_read_fds[i])]() mutable {
             try {
                 rawstor::ostbackend::Server s(
-                    queue_size, listen_fd, location, wake_fd
+                    queue_size, fd, location, wake_fd.release()
                 );
                 s.loop();
             } catch (...) {
@@ -190,10 +231,7 @@ void ost(
         t.join();
     }
 
-    close(listen_fd);
-    for (int fd : wake_write_fds) {
-        close(fd);
-    }
+    wake_write_fds.clear();
 
     for (std::exception_ptr& error : errors) {
         if (error) {

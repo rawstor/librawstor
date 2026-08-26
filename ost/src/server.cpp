@@ -114,12 +114,10 @@ int Server::bind_listen(const std::string& addr, unsigned int port) {
 }
 
 Server::Server(
-    unsigned int queue_size, const std::string& addr, unsigned int port,
-    const char* location, int wake_fd
+    unsigned int queue_size, int listen_fd, const char* location, int wake_fd
 ) :
     _queue(nullptr),
-    _fd(-1),
-    _owns_fd(true),
+    _fd(listen_fd),
     _wake_fd(wake_fd),
     _stop(false),
     _locations(rawstd::URI::uriv(location)),
@@ -130,44 +128,16 @@ Server::Server(
         if (res < 0) {
             RAWSTD_THROW_SYSTEM_ERROR(-res);
         }
-
-        _fd = bind_listen(addr, port);
-
-        rawstd_info("Waiting for connections on %s:%u\n", addr.c_str(), port);
     } catch (...) {
-        if (_fd != -1) {
-            close(_fd);
-        }
-        if (_queue != nullptr) {
-            rawio_queue_delete(_queue);
+        if (_wake_fd != -1) {
+            close(_wake_fd);
         }
         throw;
     }
 }
 
-Server::Server(
-    unsigned int queue_size, int listen_fd, const char* location, int wake_fd
-) :
-    _queue(nullptr),
-    _fd(listen_fd),
-    _owns_fd(false),
-    _wake_fd(wake_fd),
-    _stop(false),
-    _locations(rawstd::URI::uriv(location)),
-    _accept_event(nullptr) {
-
-    int res = rawio_queue_create(queue_size, &_queue);
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-}
-
 Server::~Server() {
     _clients.clear();
-
-    if (_owns_fd && _fd != -1) {
-        close(_fd);
-    }
 
     if (_wake_fd != -1) {
         close(_wake_fd);
