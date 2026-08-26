@@ -14,6 +14,37 @@
 
 #include <errno.h>
 
+/* Shared by both info_physical/info_logical below -- only `used` and its
+ * label differ between them; available/total/use% are always derived from
+ * the location's actual physical capacity. */
+static void rawstor_cli_info_print(
+    const char* location, const char* used_label, uint64_t used, uint64_t total,
+    char unit
+) {
+    uint64_t avail = total > used ? total - used : 0;
+
+    char used_buf[256];
+    char total_buf[256];
+    char avail_buf[256];
+    if (unit == 0) {
+        rawstd_bytes_to_size_human(used, used_buf, sizeof(used_buf));
+        rawstd_bytes_to_size_human(avail, avail_buf, sizeof(avail_buf));
+        rawstd_bytes_to_size_human(total, total_buf, sizeof(total_buf));
+    } else {
+        rawstd_bytes_to_size_unit(used, unit, used_buf, sizeof(used_buf));
+        rawstd_bytes_to_size_unit(avail, unit, avail_buf, sizeof(avail_buf));
+        rawstd_bytes_to_size_unit(total, unit, total_buf, sizeof(total_buf));
+    }
+
+    double percent = total > 0 ? (double)used / (double)total * 100.0 : 0.0;
+
+    printf("location: %s\n", location);
+    printf("%s: %s\n", used_label, used_buf);
+    printf("available: %s\n", avail_buf);
+    printf("total: %s\n", total_buf);
+    printf("use%%: %.1f%%\n", percent);
+}
+
 static int rawstor_cli_info_physical(const char* location, char unit) {
     struct RawstorLocationInfo info;
 
@@ -37,31 +68,7 @@ static int rawstor_cli_info_physical(const char* location, char unit) {
         return rawstd_exitcode_for_errno((int)-result);
     }
 
-    uint64_t avail = info.total > info.used ? info.total - info.used : 0;
-
-    char used_buf[256];
-    char total_buf[256];
-    char avail_buf[256];
-    if (unit == 0) {
-        rawstd_bytes_to_size_human(info.used, used_buf, sizeof(used_buf));
-        rawstd_bytes_to_size_human(avail, avail_buf, sizeof(avail_buf));
-        rawstd_bytes_to_size_human(info.total, total_buf, sizeof(total_buf));
-    } else {
-        rawstd_bytes_to_size_unit(info.used, unit, used_buf, sizeof(used_buf));
-        rawstd_bytes_to_size_unit(avail, unit, avail_buf, sizeof(avail_buf));
-        rawstd_bytes_to_size_unit(
-            info.total, unit, total_buf, sizeof(total_buf)
-        );
-    }
-
-    double percent =
-        info.total > 0 ? (double)info.used / (double)info.total * 100.0 : 0.0;
-
-    printf("location: %s\n", location);
-    printf("used: %s\n", used_buf);
-    printf("available: %s\n", avail_buf);
-    printf("total: %s\n", total_buf);
-    printf("use%%: %.1f%%\n", percent);
+    rawstor_cli_info_print(location, "used", info.used, info.total, unit);
 
     return EXIT_SUCCESS;
 }
@@ -125,10 +132,11 @@ static int rawstor_cli_info_logical(const char* location, char unit) {
         rawstor_string_list_delete(targets);
     } while (!rawstor_pagination_token_empty(&token));
 
-    /* total has no logical counterpart of its own (there's no location-wide
-     * logical capacity) -- borrowed from the same physical info() the
-     * non-logical path uses, so use% still means something (how much of
-     * the location's actual capacity the declared sizes account for). */
+    /* available/total/use% have no logical counterpart of their own (there's
+     * no location-wide logical capacity) -- borrowed from the same physical
+     * info() the non-logical path uses, so use% still means something (how
+     * much of the location's actual capacity the declared sizes account
+     * for). */
     struct RawstorLocationInfo info;
     op.done = 0;
     int info_sres = rawstor_location_info(
@@ -144,25 +152,7 @@ static int rawstor_cli_info_logical(const char* location, char unit) {
         return rawstd_exitcode_for_errno((int)-info_result);
     }
 
-    char used_buf[256];
-    char total_buf[256];
-    if (unit == 0) {
-        rawstd_bytes_to_size_human(used, used_buf, sizeof(used_buf));
-        rawstd_bytes_to_size_human(info.total, total_buf, sizeof(total_buf));
-    } else {
-        rawstd_bytes_to_size_unit(used, unit, used_buf, sizeof(used_buf));
-        rawstd_bytes_to_size_unit(
-            info.total, unit, total_buf, sizeof(total_buf)
-        );
-    }
-
-    double percent =
-        info.total > 0 ? (double)used / (double)info.total * 100.0 : 0.0;
-
-    printf("location: %s\n", location);
-    printf("used: %s\n", used_buf);
-    printf("total: %s\n", total_buf);
-    printf("use%%: %.1f%%\n", percent);
+    rawstor_cli_info_print(location, "used (logical)", used, info.total, unit);
 
     return EXIT_SUCCESS;
 }
