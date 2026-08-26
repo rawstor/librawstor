@@ -26,6 +26,30 @@
 
 namespace {
 
+// Suspends the awaiting coroutine unless `writes_in_flight` is already
+// zero, queuing its handle onto `waiters` for
+// rawstor::Object::_write_finished() to resume once it reaches zero --
+// see Object::flush()'s use of this.
+class FlushBarrierAwaiter final {
+private:
+    const unsigned int& _writes_in_flight;
+    std::deque<std::coroutine_handle<>>& _waiters;
+
+public:
+    FlushBarrierAwaiter(
+        const unsigned int& writes_in_flight,
+        std::deque<std::coroutine_handle<>>& waiters
+    ) :
+        _writes_in_flight(writes_in_flight),
+        _waiters(waiters) {}
+
+    bool await_ready() const noexcept { return _writes_in_flight == 0; }
+
+    void await_suspend(std::coroutine_handle<> h) { _waiters.push_back(h); }
+
+    void await_resume() const noexcept {}
+};
+
 // C ABI adapters for the I/O group (rawstor_object_pread/_preadv/_pwrite/
 // _pwritev): launch a detached coroutine that co_await's the
 // already-submitted rawstd::Task, catches std::system_error, and invokes
@@ -142,7 +166,20 @@ namespace rawstor {
 // place that actually constructs an Object.
 Object::Object(Private, rawio::Queue& queue, const Target& target) :
     _queue(queue),
-    _target(target) {
+    _target(target),
+    _writes_in_flight(0) {
+}
+
+void Object::_write_finished() noexcept {
+    --_writes_in_flight;
+
+    if (_writes_in_flight == 0) {
+        while (!_flush_waiters.empty()) {
+            std::coroutine_handle<> h = _flush_waiters.front();
+            _flush_waiters.pop_front();
+            h.resume();
+        }
+    }
 }
 
 Object::~Object() {
@@ -207,6 +244,8 @@ Object::pwrite(const void* buf, size_t size, off_t offset, bool sync) {
         (intmax_t)offset, sync
     );
 
+    ++_writes_in_flight;
+
     std::vector<rawstd::Task<size_t>> tasks;
     tasks.reserve(_cns.size());
     for (auto& cn : _cns) {
@@ -218,12 +257,14 @@ Object::pwrite(const void* buf, size_t size, off_t offset, bool sync) {
      */
     try {
         std::vector<size_t> results = co_await rawstd::gather(std::move(tasks));
+        _write_finished();
         size_t result = *std::min_element(results.begin(), results.end());
         RAWSTD_TRACE_EVENT_MESSAGE(
             trace_event, "result = %zu, error = 0\n", result
         );
         co_return result;
     } catch (const std::system_error& e) {
+        _write_finished();
         rawstd_error("%s\n", strerror(e.code().value()));
         RAWSTD_TRACE_EVENT_MESSAGE(
             trace_event, "result = 0, error = %d\n", EIO
@@ -240,6 +281,8 @@ rawstd::Task<size_t> Object::pwritev(
         (intmax_t)offset, sync
     );
 
+    ++_writes_in_flight;
+
     std::vector<rawstd::Task<size_t>> tasks;
     tasks.reserve(_cns.size());
     for (auto& cn : _cns) {
@@ -251,12 +294,14 @@ rawstd::Task<size_t> Object::pwritev(
      */
     try {
         std::vector<size_t> results = co_await rawstd::gather(std::move(tasks));
+        _write_finished();
         size_t result = *std::min_element(results.begin(), results.end());
         RAWSTD_TRACE_EVENT_MESSAGE(
             trace_event, "result = %zu, error = 0\n", result
         );
         co_return result;
     } catch (const std::system_error& e) {
+        _write_finished();
         rawstd_error("%s\n", strerror(e.code().value()));
         RAWSTD_TRACE_EVENT_MESSAGE(
             trace_event, "result = 0, error = %d\n", EIO
@@ -267,6 +312,14 @@ rawstd::Task<size_t> Object::pwritev(
 
 rawstd::Task<void> Object::flush() {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('o', "%s\n", "flush()");
+
+    // Every pwrite()/pwritev() issued before this call has already
+    // incremented _writes_in_flight (before its own first suspension
+    // point) -- waiting for it to reach zero here means every one of them
+    // has completed before the connections below are flushed. A write
+    // issued concurrently with (or after) this flush() call isn't waited
+    // on, same as fsync() never covering a write that hasn't happened yet.
+    co_await FlushBarrierAwaiter(_writes_in_flight, _flush_waiters);
 
     std::vector<rawstd::Task<void>> tasks;
     tasks.reserve(_cns.size());
