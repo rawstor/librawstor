@@ -32,14 +32,14 @@ namespace {
 // `waiters` for rawstor::Object::_write_finished() to resume once it has.
 class FlushBarrierAwaiter final {
 private:
-    size_t _target;
-    const size_t& _writes_completed;
-    std::deque<std::pair<size_t, std::coroutine_handle<>>>& _waiters;
+    unsigned int _target;
+    const unsigned int& _writes_completed;
+    std::deque<std::pair<unsigned int, std::coroutine_handle<>>>& _waiters;
 
 public:
     FlushBarrierAwaiter(
-        size_t target, const size_t& writes_completed,
-        std::deque<std::pair<size_t, std::coroutine_handle<>>>& waiters
+        unsigned int target, const unsigned int& writes_completed,
+        std::deque<std::pair<unsigned int, std::coroutine_handle<>>>& waiters
     ) :
         _target(target),
         _writes_completed(writes_completed),

@@ -46,13 +46,13 @@ private:
     // blk::Session's own job (see blk_session.hpp's _throttle_acquire()),
     // one level down; these are a separate, simpler pair of counts that
     // exist purely for flush()'s barrier.
-    size_t _writes_issued;
-    size_t _writes_completed;
+    unsigned int _writes_issued;
+    unsigned int _writes_completed;
     // flush() suspends here when its target (a snapshot of _writes_issued)
     // is greater than _writes_completed at the time it's called --
     // _write_finished() wakes every entry whose target has been reached,
     // in order, as _writes_completed advances (see flush()).
-    std::deque<std::pair<size_t, std::coroutine_handle<>>> _flush_waiters;
+    std::deque<std::pair<unsigned int, std::coroutine_handle<>>> _flush_waiters;
 
     // Called once a pwrite()/pwritev() call that incremented
     // _writes_issued finishes, success or failure -- advances
@@ -109,7 +109,7 @@ public:
     // For tests/ to verify flush()'s wait for in-flight writes (see
     // _writes_issued/_writes_completed above) without depending on real
     // storage-completion timing.
-    inline size_t writes_in_flight() const noexcept {
+    inline unsigned int writes_in_flight() const noexcept {
         return _writes_issued - _writes_completed;
     }
 };
