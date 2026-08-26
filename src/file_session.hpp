@@ -20,7 +20,7 @@ namespace file {
 
 class Session final : public rawstor::blk::Session {
 private:
-    int _connect(const RawstdUUID& id) override;
+    rawstd::Task<int> _connect(const RawstdUUID& id) override;
 
 public:
     Session(Private p, rawio::Queue& queue, const rawstd::URI& location);

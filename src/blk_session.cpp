@@ -11,10 +11,6 @@
 
 #include <stdexcept>
 
-#include <unistd.h>
-
-#include <cerrno>
-
 namespace {
 
 // Suspends the awaiting coroutine unconditionally, queuing its handle onto
@@ -85,27 +81,13 @@ rawstd::Task<void> Session::_connect() {
 }
 
 rawstd::Task<void> Session::close() {
-    // A plain, synchronous ::close() rather than co_await _queue.close(f)
-    // (a real io_uring op, needing an actual completion round-trip to
-    // resume) -- same reasoning as _connect() staying synchronous: this
-    // Session can be closed from rawstor-ost's own internal use of
-    // librawstor against its own file:// backing store, i.e. from
-    // *inside* an already-executing Queue::_dispatch() call on the same
-    // queue as the server's own event loop. Any real suspension point
-    // here would need run()'s synchronous pump (see object.cpp) to drive
-    // it, reentering _dispatch() on a queue it's already iterating --
-    // undefined behavior (confirmed via ASan: heap-use-after-free on a
-    // completion object the outer, still-in-progress iteration still
-    // needed).
     int f = fd();
     if (f == -1) {
         co_return;
     }
 
     set_fd(-1);
-    if (::close(f) == -1) {
-        RAWSTD_THROW_ERRNO();
-    }
+    co_await _queue.close(f);
 }
 
 rawstd::Task<void> Session::set_object(Object* object) {
@@ -113,13 +95,8 @@ rawstd::Task<void> Session::set_object(Object* object) {
         throw std::runtime_error("Object already set");
     }
 
-    int fd = _connect(object->target().id());
-    if (fd == -1) {
-        RAWSTD_THROW_ERRNO();
-    }
-
+    int fd = co_await _connect(object->target().id());
     set_fd(fd);
-    co_return;
 }
 
 rawstd::Task<size_t> Session::pread(void* buf, size_t size, off_t offset) {
