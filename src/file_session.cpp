@@ -5,6 +5,7 @@
 #include <rawio/awaitable.hpp>
 #include <rawio/queue.hpp>
 
+#include <rawstd/gcc.h>
 #include <rawstd/gpp.hpp>
 #include <rawstd/logging.h>
 #include <rawstd/uuid.h>
@@ -164,9 +165,49 @@ Session::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
     }
 
     try {
+#ifdef RAWSTD_ON_LINUX
+        // fallocate() actually reserves real blocks -- this file backs a
+        // virtio-blk-style virtual disk, so a write into unallocated
+        // territory otherwise depends on the filesystem's own delayed
+        // allocation, which under ext4's data=ordered journaling must
+        // land before the next journal commit. Many concurrent writes
+        // into a still-sparse object (a fresh, mostly-unwritten one is
+        // the common case) can then back up behind that commit interval
+        // -- multiple seconds under sustained load even with the stock
+        // 5s commit interval, tens of seconds observed with an
+        // unusually long one. Preallocating up front removes writes
+        // from that dependency entirely.
+        if (fallocate(fd, 0, 0, sp.size) == -1) {
+            RAWSTD_THROW_ERRNO();
+        }
+#elif defined(RAWSTD_ON_MACOS)
+        // F_PREALLOCATE is APFS/HFS+'s equivalent of fallocate() above --
+        // same reasoning, a write into unallocated territory otherwise
+        // depends on delayed allocation and thus filesystem journal
+        // timing -- but it only reserves the blocks, so ftruncate() still
+        // follows to make the file report the requested size.
+        // F_ALLOCATECONTIG (contiguous, best-effort) is tried first;
+        // falling back to F_ALLOCATEALL (fragmentation allowed) matches
+        // the common pattern for this call, since contiguous space this
+        // large is often unavailable.
+        fstore_t fstore = {
+            .fst_flags = F_ALLOCATECONTIG,
+            .fst_posmode = F_PEOFPOSMODE,
+            .fst_offset = 0,
+            .fst_length = static_cast<off_t>(sp.size),
+        };
+        if (fcntl(fd, F_PREALLOCATE, &fstore) == -1) {
+            fstore.fst_flags = F_ALLOCATEALL;
+            if (fcntl(fd, F_PREALLOCATE, &fstore) == -1) {
+                RAWSTD_THROW_ERRNO();
+            }
+        }
         if (ftruncate(fd, sp.size) == -1) {
             RAWSTD_THROW_ERRNO();
         }
+#else
+#error "file:// object creation needs a real-preallocation path here too"
+#endif
 
         if (::close(fd) == -1) {
             RAWSTD_THROW_ERRNO();
