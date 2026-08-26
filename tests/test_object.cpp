@@ -143,3 +143,42 @@ TEST(ObjectTest, flush_does_not_wait_for_writes_issued_after_it) {
         EXPECT_EQ(t.get(), payload.size());
     }
 }
+
+// Multiple flush() calls in flight at once (e.g. two independent callers,
+// or a caller that didn't wait for its own previous flush() before issuing
+// another) must each resolve correctly, independent of one another --
+// _flush_waiters holds one (target, handle) entry per call, so this isn't
+// a single shared piece of state that a second flush() could stomp on.
+TEST(ObjectTest, concurrent_flush_calls_all_resolve) {
+    rawstor::tests::TmpDir dir;
+    rawstd::URI location(dir.uri());
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(256);
+
+    std::unique_ptr<rawstor::Object> object = open_object(*queue, location);
+
+    std::string payload = "durable-me";
+    rawstd::Task<size_t> write1 =
+        object->pwrite(payload.data(), payload.size(), 0, false);
+
+    // Two flush() calls sharing the same target -- no write issued between
+    // them -- both must resolve once write1 completes.
+    rawstd::Task<void> flush1 = object->flush();
+    rawstd::Task<void> flush2 = object->flush();
+
+    // A write issued after both flush() calls -- neither should wait for
+    // it (see flush_does_not_wait_for_writes_issued_after_it above).
+    rawstd::Task<size_t> write2 =
+        object->pwrite(payload.data(), payload.size(), payload.size(), false);
+
+    while (!flush1.done() || !flush2.done()) {
+        queue->wait_timeout(rawstor_opts_tcp_user_timeout());
+    }
+    flush1.get();
+    flush2.get();
+    EXPECT_EQ(write1.get(), payload.size());
+
+    while (!write2.done()) {
+        queue->wait_timeout(rawstor_opts_tcp_user_timeout());
+    }
+    EXPECT_EQ(write2.get(), payload.size());
+}
