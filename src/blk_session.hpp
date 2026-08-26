@@ -25,7 +25,7 @@ namespace blk {
 // stay backend-specific.
 class Session : public rawstor::Session {
 protected:
-    virtual int _connect(const RawstdUUID& id) = 0;
+    virtual rawstd::Task<int> _connect(const RawstdUUID& id) = 0;
 
     // A blk-backed session has no upfront connection step: the fd is
     // opened lazily, by _connect(const RawstdUUID&) above, once
