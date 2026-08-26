@@ -333,6 +333,16 @@ static void command_info_usage(void) {
                 "\n"
                 "command options:\n"
                 "  -h, --help            Show this help message and exit\n"
+                "  -l, --logical         Also show \"used (logical)\": the "
+                "sum of each\n"
+                "                        object's own declared size, "
+                "alongside (not instead\n"
+                "                        of) the usual physical \"used\" "
+                "(the two can diverge,\n"
+                "                        e.g. for sparse objects). "
+                "available/total/use%% are\n"
+                "                        unaffected -- still derived from "
+                "physical \"used\".\n"
                 "  -b, --bytes           Show sizes in bytes\n"
                 "  -k, --kib             Show sizes in KiB\n"
                 "  -m, --mib             Show sizes in MiB\n"
@@ -348,21 +358,18 @@ static void command_info_usage(void) {
 }
 
 static int command_info(int argc, char** argv) {
-    const char* optstring = "hbkmgtpe";
+    const char* optstring = "hlbkmgtpe";
     struct option longopts[] = {
-        {"help", no_argument, NULL, 'h'},
-        {"bytes", no_argument, NULL, 'b'},
-        {"kib", no_argument, NULL, 'k'},
-        {"mib", no_argument, NULL, 'm'},
-        {"gib", no_argument, NULL, 'g'},
-        {"tib", no_argument, NULL, 't'},
-        {"pib", no_argument, NULL, 'p'},
-        {"eib", no_argument, NULL, 'e'},
-        {},
+        {"help", no_argument, NULL, 'h'},  {"logical", no_argument, NULL, 'l'},
+        {"bytes", no_argument, NULL, 'b'}, {"kib", no_argument, NULL, 'k'},
+        {"mib", no_argument, NULL, 'm'},   {"gib", no_argument, NULL, 'g'},
+        {"tib", no_argument, NULL, 't'},   {"pib", no_argument, NULL, 'p'},
+        {"eib", no_argument, NULL, 'e'},   {},
     };
 
     char* location_arg = NULL;
     char unit_arg = 0;
+    int logical_arg = 0;
     optind = 0;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
@@ -374,6 +381,10 @@ static int command_info(int argc, char** argv) {
         case 'h':
             command_info_usage();
             return EXIT_SUCCESS;
+
+        case 'l':
+            logical_arg = 1;
+            break;
 
         case 'b':
         case 'k':
@@ -413,7 +424,7 @@ static int command_info(int argc, char** argv) {
         return EX_USAGE;
     }
 
-    return rawstor_cli_info(location_arg, unit_arg);
+    return rawstor_cli_info(location_arg, unit_arg, logical_arg);
 }
 
 static void command_show_usage(void) {
