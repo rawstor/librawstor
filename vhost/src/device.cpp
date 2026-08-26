@@ -1401,7 +1401,17 @@ Device::Device(unsigned int queue_size, const std::string& target, int fd) :
         _config.min_io_size = 1;
         _config.opt_io_size = 1;
 
-        _config.wce = 0; // VIRTIO_BLK_F_CONFIG_WCE
+        // Write-through (wce=0) forces sync=true on every write (see
+        // _dispatch_write() below), which requires a journal commit to
+        // land before the write completes -- on a host whose backing
+        // filesystem commits slowly, concurrent writes under load were
+        // measured stalling round-trip times into the tens of seconds.
+        // Writeback (wce=1) relies on the guest issuing an explicit flush
+        // for durability instead, same as any real disk with a volatile
+        // write cache; any modern guest kernel does this correctly. This
+        // branch has no --write-cache CLI flag to make it configurable
+        // (see main's 65fbf34/#584), so it's hardcoded on instead.
+        _config.wce = 1; // VIRTIO_BLK_F_CONFIG_WCE
 
         _config.num_queues = nqueues(); // VIRTIO_BLK_F_MQ
 
