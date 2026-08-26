@@ -869,8 +869,15 @@ rawstd::Task<void> Session::_connect() {
 
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('m', "%s\n", "multishot recv");
+    // 64 * 16 buffers of 1u<<17 (128KiB) each = 128MiB: comfortably covers
+    // rawstor-vhost's usual worst case (its default write-throttle-limit
+    // of 128 concurrent requests, each up to a virtio-blk transfer's
+    // realistic ~512KiB) with headroom, so a healthy client pipelining
+    // that many in-flight requests doesn't overflow this ring and force a
+    // reconnect (see ost/src/client.cpp's matching registration for the
+    // request-reading side of the same problem).
     rawio::RecvStream stream = _queue.recv_multishot(
-        fd, 1u << 17, 64 * 4, sizeof(RawstorOSTFrameResponse), 0
+        fd, 1u << 17, 64 * 16, sizeof(RawstorOSTFrameResponse), 0
     );
     _read_event = stream.event();
     _recv_pump(

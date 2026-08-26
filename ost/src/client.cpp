@@ -536,8 +536,21 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
     auto stream_owner = std::make_unique<RecvCallbackStream>();
     RecvCallbackStream* stream = stream_owner.get();
     RawIOEvent* event = nullptr;
+    // 64 * 16 buffers of 1u<<17 (128KiB) each = 128MiB: comfortably covers
+    // this client's usual worst case (rawstor-vhost's default
+    // write-throttle-limit of 128 concurrent requests, each up to a
+    // virtio-blk transfer's realistic ~512KiB) with headroom. Undersized
+    // (the previous 64 * 4 = 32MiB), this ring overflows well within that
+    // healthy range: the kernel can't find a free buffer for more
+    // incoming data, the multishot registration terminates with ENOBUFS,
+    // and whatever request was mid-read gets torn down as a short read
+    // (client.cpp:406's "Unexpected request data size") -- indistinguishable
+    // from a real transport failure to everything downstream, so it
+    // reconnects and retries, immediately overflowing again under the same
+    // sustained load and burning through rawstor_opts_io_attempts() for
+    // real.
     int res = rawio_recv_multishot(
-        queue, fd, 1u << 17, 64 * 4, sizeof(RawstorOSTFrameHead), 0,
+        queue, fd, 1u << 17, 64 * 16, sizeof(RawstorOSTFrameHead), 0,
         recv_trampoline, stream, &event
     );
     if (res < 0) {
