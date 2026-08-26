@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.10] - Unreleased
+
+### Fixed
+- `file://`'s `Session::create()` only `ftruncate()`d a new object to its full size, leaving it sparse; a write into never-touched territory then depends on the filesystem's own delayed allocation, which under `data=ordered` journaling must land before the next journal commit -- on an ext4 mount with an unusually long `commit=` interval, many concurrent writes into a still-sparse object could each back up behind that interval, measured as tens of seconds of `rawstor-vhost`/OST session round-trip latency under sustained load. `create()` now preallocates the object's real blocks up front (`fallocate()` on Linux, `fcntl(F_PREALLOCATE)` on macOS), removing that dependency entirely.
+
 ## [0.3.0] - Unreleased
 
 ### Added
