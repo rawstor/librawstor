@@ -60,32 +60,28 @@ rawstd::Task<void> co_close_fd(RawIOQueue* queue, int fd) {
     co_await awaiter;
 }
 
+// rawio_read()'s callback delivers a single combined "byte count or
+// -errno" result -- same shape CallbackAwaitable<void>::complete() takes;
+// Server::_wake_task() only cares that the read succeeded, not how many
+// bytes came back.
+int wake_read_trampoline(ssize_t result, void* data) {
+    static_cast<rawstd::CallbackAwaitable<void>*>(data)->complete(result);
+    return 0;
+}
+
 } // namespace
 
 namespace rawstor {
 namespace ostbackend {
 
-Server::Server(
-    unsigned int queue_size, const std::string& addr, unsigned int port,
-    const char* location
-) :
-    _queue(nullptr),
-    _fd(-1),
-    _locations(rawstd::URI::uriv(location)),
-    _accept_event(nullptr) {
+int Server::bind_listen(const std::string& addr, unsigned int port) {
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd == -1) {
+        RAWSTD_THROW_ERRNO();
+    }
 
     try {
-        int res = rawio_queue_create(queue_size, &_queue);
-        if (res < 0) {
-            RAWSTD_THROW_SYSTEM_ERROR(-res);
-        }
-
-        _fd = socket(AF_INET, SOCK_STREAM, 0);
-        if (_fd == -1) {
-            RAWSTD_THROW_ERRNO();
-        }
-
-        res = rawstd_socket_set_reuse(_fd);
+        int res = rawstd_socket_set_reuse(fd);
         if (res < 0) {
             RAWSTD_THROW_SYSTEM_ERROR(-res);
         }
@@ -102,21 +98,39 @@ Server::Server(
         }
         sin.sin_port = htons(port);
 
-        if (bind(_fd, reinterpret_cast<sockaddr*>(&sin), sizeof(sin)) == -1) {
+        if (bind(fd, reinterpret_cast<sockaddr*>(&sin), sizeof(sin)) == -1) {
             RAWSTD_THROW_ERRNO();
         }
 
-        if (listen(_fd, SOMAXCONN) == -1) {
+        if (listen(fd, SOMAXCONN) == -1) {
             RAWSTD_THROW_ERRNO();
         }
-
-        rawstd_info("Waiting for connections on %s:%u\n", addr.c_str(), port);
     } catch (...) {
-        if (_fd != -1) {
-            close(_fd);
+        close(fd);
+        throw;
+    }
+
+    return fd;
+}
+
+Server::Server(
+    unsigned int queue_size, int listen_fd, const char* location, int wake_fd
+) :
+    _queue(nullptr),
+    _fd(listen_fd),
+    _wake_fd(wake_fd),
+    _stop(false),
+    _locations(rawstd::URI::uriv(location)),
+    _accept_event(nullptr) {
+
+    try {
+        int res = rawio_queue_create(queue_size, &_queue);
+        if (res < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
         }
-        if (_queue != nullptr) {
-            rawio_queue_delete(_queue);
+    } catch (...) {
+        if (_wake_fd != -1) {
+            close(_wake_fd);
         }
         throw;
     }
@@ -125,8 +139,8 @@ Server::Server(
 Server::~Server() {
     _clients.clear();
 
-    if (_fd != -1) {
-        close(_fd);
+    if (_wake_fd != -1) {
+        close(_wake_fd);
     }
 
     if (_accept_event != nullptr) {
@@ -221,11 +235,27 @@ rawstd::DetachedTask Server::_accept_task() {
     }
 }
 
+rawstd::DetachedTask Server::_wake_task() {
+    char buf[1];
+    rawstd::CallbackAwaitable<void> awaiter;
+    int res = rawio_read(
+        _queue, _wake_fd, buf, sizeof(buf), wake_read_trampoline, &awaiter
+    );
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+    co_await awaiter;
+    _stop = true;
+}
+
 void Server::loop() {
     _accept_task();
+    if (_wake_fd != -1) {
+        _wake_task();
+    }
     rawstd::DetachedTask::rethrow_if_pending();
 
-    while (true) {
+    while (!_stop) {
         int res = rawio_wait(_queue);
         if (res == -EINTR) {
             break;
