@@ -19,9 +19,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dropped the deprecated `-l`/`--location` and `-t`/`--target` flags (`rawstor list`/`create`/`remove`/`show`/`testio`, `rawstor-ost`, `rawstor-vhost`) in favor of the positional `LOCATION`/`TARGET` argument; `rawstor create -t TARGET` (create-by-target) is unaffected. Also dropped the `rawstor-cli` compat symlink from the deb/rpm packages — use `rawstor`.
 - Dropped the automatic migration of pre-0.2.4 `file://` objects (`<uuid>.dat`/`<uuid>.spec` pairs) to the current single-file format; such objects are no longer readable.
 
-### Fixed
-- `rawstor_object_flush()` could report success while a `pwrite()`/`pwritev()` issued just before it was still outstanding, so its data wasn't actually guaranteed durable yet; `flush()` now waits for every write issued before it to complete first.
-
 ## [0.2.9] - Unreleased
 
 ### Added
@@ -32,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - `librawio` and `librawstor`'s client-side (`Session`/`Connection`/`Object`) internals moved from callback-based async I/O to C++20 coroutines; no public API change.
 - Write-throttling (in-flight cap + backlog cap on writes headed to a `file://` backing store) moved from `rawstor-ost` itself into `librawstor`'s own `file://` write path, so it now applies to any writer against a `file://` location, not just `rawstor-ost`. `rawstor-ost --write-throttle-limit`/`--write-backlog-capacity` are gone; tune the same caps via the `RAWSTOR_OPTS_WRITE_THROTTLE_LIMIT`/`RAWSTOR_OPTS_WRITE_BACKLOG_CAPACITY` environment variables instead (same defaults, 128 and 256MiB) — `rawstor-ost.service` no longer warns on startup if the limit sits too close to `--queue-size`.
+
+### Fixed
+- `rawstor_object_flush()` could report success while a `pwrite()`/`pwritev()` issued just before it was still outstanding, so its data wasn't actually guaranteed durable yet; `flush()` now waits for every write issued before it to complete first.
 
 ## [0.2.8] - 2026-08-15
 
