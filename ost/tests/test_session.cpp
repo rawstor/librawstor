@@ -133,7 +133,8 @@ public:
 
 TEST(OstSessionTest, simple_success) {
     rawstor::ostbackend::tests::TmpDir dir;
-    rawstor::ostbackend::Server server(256, "127.0.0.1", 0, dir.uri().c_str());
+    int listen_fd = rawstor::ostbackend::Server::bind_listen("127.0.0.1", 0);
+    rawstor::ostbackend::Server server(256, listen_fd, dir.uri().c_str());
 
     rawstor::ostbackend::tests::Queue queue;
     auto [raw_session, client_fd] = connect_session(server, queue);
@@ -188,7 +189,8 @@ TEST(OstSessionTest, simple_success) {
 
 TEST(OstSessionTest, set_object_twice_does_not_crash) {
     rawstor::ostbackend::tests::TmpDir dir;
-    rawstor::ostbackend::Server server(256, "127.0.0.1", 0, dir.uri().c_str());
+    int listen_fd = rawstor::ostbackend::Server::bind_listen("127.0.0.1", 0);
+    rawstor::ostbackend::Server server(256, listen_fd, dir.uri().c_str());
 
     rawstor::ostbackend::tests::Queue queue;
     auto [raw_session, client_fd] = connect_session(server, queue);
@@ -277,7 +279,8 @@ TEST(OstSessionTest, disconnect_races_session_destruction) {
     constexpr unsigned int iterations = 100;
 
     rawstor::ostbackend::tests::TmpDir dir;
-    rawstor::ostbackend::Server server(256, "127.0.0.1", 0, dir.uri().c_str());
+    int listen_fd = rawstor::ostbackend::Server::bind_listen("127.0.0.1", 0);
+    rawstor::ostbackend::Server server(256, listen_fd, dir.uri().c_str());
     rawstor::ostbackend::tests::Queue queue;
 
     for (unsigned int i = 0; i < iterations; ++i) {
