@@ -337,8 +337,9 @@ int rawstor_object_preadv2(
  * @param sync    If true, the write is durable on stable storage by the time
  *                @p cb reports success (equivalent to O_DSYNC per-call). If
  *                false, durability is only guaranteed after a subsequent
- *                rawstor_object_flush2() whose own completion callback fires
- *                after this write's.
+ *                rawstor_object_flush2() call issued after this one --
+ *                flush2() itself waits for this write to complete, so @p cb
+ *                need not have fired yet by the time flush2() is called.
  * @param cb      Callback invoked on completion.
  * @param data    User-defined context pointer passed unchanged to @p cb.
  *
@@ -373,8 +374,9 @@ int rawstor_object_pwrite2(
  * @param sync    If true, the write is durable on stable storage by the time
  *                @p cb reports success (equivalent to O_DSYNC per-call). If
  *                false, durability is only guaranteed after a subsequent
- *                rawstor_object_flush2() whose own completion callback fires
- *                after this write's.
+ *                rawstor_object_flush2() call issued after this one --
+ *                flush2() itself waits for this write to complete, so @p cb
+ *                need not have fired yet by the time flush2() is called.
  * @param cb      Callback invoked on completion.
  * @param data    User-defined context pointer passed unchanged to @p cb.
  *
@@ -395,14 +397,13 @@ int rawstor_object_pwritev2(
 /**
  * @brief Flush an object's previously written data to stable storage.
  *
- * A durability barrier: once @p cb reports success, every write whose own
- * completion callback had already fired before this function was called is
- * guaranteed durable.
- *
- * This does **not** cover writes that are merely queued but still in flight
- * (i.e. rawstor_object_pwrite2()/pwritev() was called but its own @p cb has
- * not fired yet) at the time rawstor_object_flush2() is called -- wait for
- * their completion first if they need to be covered by this flush.
+ * A durability barrier: once @p cb reports success, every
+ * rawstor_object_pwrite2()/pwritev2() call issued before this function was
+ * called is guaranteed durable -- including one still in flight (its own
+ * @p cb not fired yet) at the time this function is called; flush2() waits
+ * for it internally. A write issued concurrently with, or after, this call
+ * isn't covered, same as fsync() never covering a write that hasn't
+ * happened yet.
  *
  * @param object  Open object handle obtained from rawstor_target_open().
  * @param cb      Callback invoked on completion.

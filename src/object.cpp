@@ -26,6 +26,34 @@
 
 namespace {
 
+// Suspends the awaiting coroutine unless `writes_completed` has already
+// reached `target` (a caller-supplied snapshot of _writes_issued taken at
+// flush() call time -- see that function), queuing its handle onto
+// `waiters` for rawstor::Object::_write_finished() to resume once it has.
+class FlushBarrierAwaiter final {
+private:
+    unsigned int _target;
+    const unsigned int& _writes_completed;
+    std::deque<std::pair<unsigned int, std::coroutine_handle<>>>& _waiters;
+
+public:
+    FlushBarrierAwaiter(
+        unsigned int target, const unsigned int& writes_completed,
+        std::deque<std::pair<unsigned int, std::coroutine_handle<>>>& waiters
+    ) :
+        _target(target),
+        _writes_completed(writes_completed),
+        _waiters(waiters) {}
+
+    bool await_ready() const noexcept { return _writes_completed >= _target; }
+
+    void await_suspend(std::coroutine_handle<> h) {
+        _waiters.push_back({_target, h});
+    }
+
+    void await_resume() const noexcept {}
+};
+
 // C ABI adapters for the I/O group (rawstor_object_pread2/_preadv/_pwrite/
 // _pwritev): launch a detached coroutine that co_await's the
 // already-submitted rawstd::Task, catches std::system_error, and invokes
@@ -142,7 +170,21 @@ namespace rawstor {
 // place that actually constructs an Object.
 Object::Object(Private, rawio::Queue& queue, const Target& target) :
     _queue(queue),
-    _target(target) {
+    _target(target),
+    _writes_issued(0),
+    _writes_completed(0),
+    _dirty(false) {
+}
+
+void Object::_write_finished() noexcept {
+    ++_writes_completed;
+
+    while (!_flush_waiters.empty() &&
+           _flush_waiters.front().first <= _writes_completed) {
+        std::coroutine_handle<> h = _flush_waiters.front().second;
+        _flush_waiters.pop_front();
+        h.resume();
+    }
 }
 
 Object::~Object() {
@@ -207,6 +249,8 @@ Object::pwrite(const void* buf, size_t size, off_t offset, bool sync) {
         (intmax_t)offset, sync
     );
 
+    ++_writes_issued;
+
     std::vector<rawstd::Task<size_t>> tasks;
     tasks.reserve(_cns.size());
     for (auto& cn : _cns) {
@@ -218,12 +262,15 @@ Object::pwrite(const void* buf, size_t size, off_t offset, bool sync) {
      */
     try {
         std::vector<size_t> results = co_await rawstd::gather(std::move(tasks));
+        _write_finished();
+        _dirty = true;
         size_t result = *std::min_element(results.begin(), results.end());
         RAWSTD_TRACE_EVENT_MESSAGE(
             trace_event, "result = %zu, error = 0\n", result
         );
         co_return result;
     } catch (const std::system_error& e) {
+        _write_finished();
         rawstd_error("%s\n", strerror(e.code().value()));
         RAWSTD_TRACE_EVENT_MESSAGE(
             trace_event, "result = 0, error = %d\n", EIO
@@ -240,6 +287,8 @@ rawstd::Task<size_t> Object::pwritev(
         (intmax_t)offset, sync
     );
 
+    ++_writes_issued;
+
     std::vector<rawstd::Task<size_t>> tasks;
     tasks.reserve(_cns.size());
     for (auto& cn : _cns) {
@@ -251,12 +300,15 @@ rawstd::Task<size_t> Object::pwritev(
      */
     try {
         std::vector<size_t> results = co_await rawstd::gather(std::move(tasks));
+        _write_finished();
+        _dirty = true;
         size_t result = *std::min_element(results.begin(), results.end());
         RAWSTD_TRACE_EVENT_MESSAGE(
             trace_event, "result = %zu, error = 0\n", result
         );
         co_return result;
     } catch (const std::system_error& e) {
+        _write_finished();
         rawstd_error("%s\n", strerror(e.code().value()));
         RAWSTD_TRACE_EVENT_MESSAGE(
             trace_event, "result = 0, error = %d\n", EIO
@@ -268,6 +320,27 @@ rawstd::Task<size_t> Object::pwritev(
 rawstd::Task<void> Object::flush() {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('o', "%s\n", "flush()");
 
+    // Snapshotting _writes_issued now, rather than just waiting for
+    // "nothing outstanding", is what keeps this from starving under a
+    // continuous write stream: a live in-flight count can hover above zero
+    // forever if a new write always fills the slot a completing one just
+    // freed, but this target is fixed the moment flush() is called, so
+    // _writes_completed reaching it is only ever a matter of the writes
+    // already issued finishing -- unaffected by anything issued afterward,
+    // same as fsync() never covering a write that hasn't happened yet.
+    co_await FlushBarrierAwaiter(
+        _writes_issued, _writes_completed, _flush_waiters
+    );
+
+    // Nothing written since the last successful flush (or ever) -- every
+    // connection's own flush() below would be a pure no-op round trip, so
+    // skip dispatching it at all. Not cleared on failure below: a failed
+    // flush leaves whatever was dirty still not durable.
+    if (!_dirty) {
+        RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "error = 0 (nothing dirty)\n");
+        co_return;
+    }
+
     std::vector<rawstd::Task<void>> tasks;
     tasks.reserve(_cns.size());
     for (auto& cn : _cns) {
@@ -276,6 +349,7 @@ rawstd::Task<void> Object::flush() {
 
     try {
         co_await rawstd::gather(std::move(tasks));
+        _dirty = false;
         RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "error = 0\n");
     } catch (const std::system_error& e) {
         rawstd_error("%s\n", strerror(e.code().value()));
@@ -286,6 +360,25 @@ rawstd::Task<void> Object::flush() {
 
 rawstd::Task<void> Object::close() {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('o', "%s\n", "close()");
+
+    // Every write issued before this call is guaranteed durable before
+    // this function's own Task completes -- matches this function's
+    // documented contract ("pending write buffers are flushed... before
+    // the close completes"), and flush() already handles waiting for a
+    // write still in flight (its own @p cb not fired yet) rather than
+    // racing its connection/fd out from under it. Every connection below
+    // is still closed regardless of a flush failure -- leaking them over
+    // it would be worse than reporting the failure alongside an otherwise
+    // clean close.
+    bool flush_failed = false;
+    try {
+        co_await flush();
+    } catch (const std::system_error& e) {
+        flush_failed = true;
+        rawstd_error(
+            "Object::close(): flush failed: %s\n", strerror(e.code().value())
+        );
+    }
 
     std::vector<rawstd::Task<void>> tasks;
     tasks.reserve(_cns.size());
@@ -301,6 +394,10 @@ rawstd::Task<void> Object::close() {
     // Task completes) has nothing left to close.
     try {
         co_await rawstd::gather(std::move(tasks));
+        if (flush_failed) {
+            RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "error = %d\n", EIO);
+            RAWSTD_THROW_SYSTEM_ERROR(EIO);
+        }
         RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "error = 0\n");
     } catch (const std::system_error& e) {
         _cns.clear();
