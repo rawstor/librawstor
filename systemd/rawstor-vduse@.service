@@ -35,13 +35,19 @@ Group=rawstor
 # file. One worker thread (and one connection to the backend) per
 # virtqueue; raise NUM_QUEUES for guests with more vCPUs queuing on more
 # virtio-blk queues, lower it to shrink the number of connections this
-# instance opens to the backend target. write-through (off) makes every
-# guest write durable on completion; writeback (on) is faster but relies
-# on the guest issuing an explicit flush, and only helps if the guest
-# actually does.
+# instance opens to the backend target. write-through (WRITE_CACHE=off)
+# makes every guest write durable on completion by forcing a journal
+# commit per write -- fine on a host whose filesystem commits quickly,
+# but observed to stall write RTTs into the tens of seconds under
+# concurrent load on a host where the backing disk's journal commit is
+# slow (same as rawstor-vhost@.service's own default, see there). VDUSE
+# has no CONFIG_WCE-equivalent live toggle, so the guest always issues an
+# explicit flush when it needs durability regardless of this setting (see
+# README's "rawstor-vduse" section) -- writeback (on) just avoids paying
+# for the redundant per-write journal commit on top of that flush.
 Environment=LOCATION=ost://127.0.0.1:7777
 Environment=NUM_QUEUES=16
-Environment=WRITE_CACHE=off
+Environment=WRITE_CACHE=on
 # librawstor client/server tuning knobs (see README.md's "Environment
 # Variables" section for what each one does); uncomment to override a
 # default, or set them in /etc/rawstor-vduse.conf below instead.
