@@ -7,16 +7,47 @@
 #include <rawstd/endian.h>
 #include <rawstd/gpp.hpp>
 #include <rawstd/logging.h>
+#include <rawstd/socket.h>
 
 #include <rawstor/rawio.h>
 
-#include <sys/eventfd.h>
-
+#include <pthread.h>
+#include <signal.h>
 #include <unistd.h>
 
 #include <cerrno>
 #include <cstring>
 #include <stdexcept>
+
+// ---------------------------------------------------------------------
+// This file owns two things: the ring mechanism (set_vring_size/
+// set_vring_base/set_vring_addr(AddressTranslator, ...)/pop/push/
+// should_notify, plain and synchronous), and the cross-thread *policy*
+// that lets Device's control-plane thread safely reach a VirtQueue that
+// owns and is driven by its own OS thread:
+//
+//   - post_*()/get_vq_state()/pause()/resume(), called only from the
+//     control-plane thread on a running() VirtQueue, enqueue a Command
+//     into `_cmds` (guarded by `_cmd_mutex`) and wake the owning thread's
+//     reactor via a self-pipe (`_wake_read_fd`/`_wake_write_fd` -- a
+//     plain pipe rather than eventfd(), matching CLAUDE.md's portability
+//     guidance outside librawio's io_uring backend). get_vq_state()/
+//     pause() additionally block on a std::promise/future pair
+//     (Reply<T>) until the owning thread has actually applied the
+//     command -- acceptable only because both are rare, off-the-hot-path
+//     control-plane operations.
+//   - The owning thread's reactor (run(), in virtqueue_worker.cpp) keeps
+//     a read armed on `_wake_read_fd` via this same VirtQueue's own
+//     `_queue`, mirroring kick_fd's arm_kick()/kick_cb rearm pattern
+//     below. Each wakeup drains and applies every queued Command in
+//     order (drain_commands()/apply()), then rearms.
+//
+// Every apply() overload runs exclusively on the owning thread, so it's
+// free to touch `_kick_fd`/`_queue` et al. directly with no locking of
+// its own -- the whole point of routing through the command queue is
+// that nothing else ever does. Mirrors vhost/src/virtqueue.cpp almost
+// verbatim; see there for the design this is adapted from.
+// ---------------------------------------------------------------------
 
 namespace {
 
@@ -35,9 +66,7 @@ void close_fd(int fd, const char* what) {
 }
 
 struct KickCtx {
-    Device* device;
     VirtQueue* vq;
-    size_t index;
     uint64_t value;
 };
 
@@ -64,23 +93,47 @@ int kick_cb(ssize_t result, void* data) {
     }
 
     VirtQueue* vq = ctx->vq;
-    Device* device = ctx->device;
-    size_t index = ctx->index;
-
-    rawstd_debug("vduse: kick_fd fired for vq %zu\n", index);
 
     try {
-        device->process_queue(index);
+        vq->process_queue();
     } catch (const std::exception& e) {
         rawstd_error("vduse: error processing virtqueue: %s\n", e.what());
     }
 
-    if (vq->enabled() && vq->kick_fd() != -1) {
-        try {
-            vq->arm_kick(*device, index);
-        } catch (const std::exception& e) {
-            rawstd_error("vduse: failed to rearm kick_fd: %s\n", e.what());
-        }
+    try {
+        vq->arm_kick();
+    } catch (const std::exception& e) {
+        rawstd_error("vduse: failed to rearm kick_fd: %s\n", e.what());
+    }
+
+    return 0;
+}
+
+struct WakeCtx {
+    VirtQueue* vq;
+    char byte;
+};
+
+int wake_cb(ssize_t result, void* data) {
+    std::unique_ptr<WakeCtx> ctx(static_cast<WakeCtx*>(data));
+
+    if (result == -ECANCELED) {
+        return 0;
+    }
+
+    if (result < 0) {
+        rawstd_error("vduse: wake_fd read failed: %s\n", strerror(-result));
+        return 0;
+    }
+
+    VirtQueue* vq = ctx->vq;
+
+    vq->drain_commands();
+
+    try {
+        vq->arm_wake();
+    } catch (const std::exception& e) {
+        rawstd_error("vduse: failed to rearm wake_fd: %s\n", e.what());
     }
 
     return 0;
@@ -92,9 +145,307 @@ namespace rawstor {
 namespace vduse {
 
 VirtQueue::~VirtQueue() {
+    if (running()) {
+        stop();
+    }
+
     if (_kick_fd != -1) {
         close_fd(_kick_fd, "kick_fd");
     }
+    if (_wake_read_fd != -1) {
+        close_fd(_wake_read_fd, "wake_read_fd");
+    }
+    if (_wake_write_fd != -1) {
+        close_fd(_wake_write_fd, "wake_write_fd");
+    }
+}
+
+void VirtQueue::start(const std::string& target, unsigned int queue_size) {
+    int pipefd[2];
+    if (pipe(pipefd) == -1) {
+        RAWSTD_THROW_ERRNO();
+    }
+    _wake_read_fd = pipefd[0];
+    _wake_write_fd = pipefd[1];
+
+    int nonblock_res = rawstd_socket_set_nonblock(_wake_read_fd);
+    if (!nonblock_res) {
+        nonblock_res = rawstd_socket_set_nonblock(_wake_write_fd);
+    }
+    if (nonblock_res) {
+        RAWSTD_THROW_SYSTEM_ERROR(-nonblock_res);
+    }
+
+    std::promise<void> ready;
+    std::future<void> ready_future = ready.get_future();
+
+    // SIGINT/SIGTERM are process-wide: the kernel delivers them to some
+    // arbitrary thread that doesn't have them blocked, which could just
+    // as well be this new worker thread as the control-plane thread that
+    // actually knows how to act on them. Block every signal on this
+    // (control-plane) thread before spawning, so the child inherits an
+    // all-blocked mask, then restore this thread's own mask right after
+    // -- standard "spawn workers with signals blocked" idiom, mirroring
+    // vhost::VirtQueue::start().
+    sigset_t all_signals, old_mask;
+    sigfillset(&all_signals);
+    pthread_sigmask(SIG_BLOCK, &all_signals, &old_mask);
+
+    _thread = std::thread(
+        &VirtQueue::run, this, target, queue_size, std::move(ready)
+    );
+
+    pthread_sigmask(SIG_SETMASK, &old_mask, nullptr);
+
+    // Propagates whatever exception run() hit trying to create
+    // _queue/_object -- in which case run() has already returned (the
+    // thread function exits without entering its reactor loop), so
+    // join() right after rethrowing below leaves this VirtQueue back in
+    // its not-started state (running() false) rather than leaking a
+    // detached thread.
+    try {
+        ready_future.get();
+    } catch (...) {
+        _thread.join();
+        throw;
+    }
+}
+
+void VirtQueue::stop() noexcept {
+    if (!running()) {
+        return;
+    }
+    post(Shutdown{});
+    _thread.join();
+}
+
+void VirtQueue::post(Command cmd) {
+    {
+        std::lock_guard<std::mutex> lock(_cmd_mutex);
+        _cmds.push_back(std::move(cmd));
+    }
+    char b = 1;
+    // Best effort: the pipe is non-blocking and its buffer is many
+    // orders of magnitude larger than the command traffic this ever
+    // sees, so EAGAIN here just means a wakeup byte from an earlier
+    // post() is already pending -- the command we just enqueued will
+    // still be drained by the wakeup that byte causes, so it's not an
+    // error, merely redundant.
+    ssize_t res = write(_wake_write_fd, &b, 1);
+    if (res == -1 && errno != EAGAIN) {
+        rawstd_error(
+            "vduse: failed to wake virtqueue worker: %s\n", strerror(errno)
+        );
+    }
+    errno = 0;
+}
+
+void VirtQueue::post_set_vring_size(unsigned int size) {
+    post(SetVringSize{size});
+}
+
+void VirtQueue::post_set_vring_addr(
+    uint64_t desc_addr, uint64_t driver_addr, uint64_t device_addr
+) {
+    post(SetVringAddr{desc_addr, driver_addr, device_addr});
+}
+
+void VirtQueue::post_set_kick_fd(int fd) {
+    post(SetKickFd{fd});
+}
+
+void VirtQueue::post_set_enabled(bool enabled) {
+    post(SetEnabled{enabled});
+}
+
+void VirtQueue::post_retranslate() {
+    post(Retranslate{});
+}
+
+uint16_t VirtQueue::get_vq_state() {
+    GetVqState cmd;
+    std::future<uint16_t> f = cmd.reply.promise.get_future();
+    post(std::move(cmd));
+    return f.get();
+}
+
+void VirtQueue::pause() {
+    Pause cmd;
+    std::future<void> f = cmd.reply.promise.get_future();
+    post(std::move(cmd));
+    f.get();
+}
+
+void VirtQueue::resume() {
+    post(Resume{});
+}
+
+std::future<void> VirtQueue::post_flush() {
+    FlushObject cmd;
+    std::future<void> f = cmd.reply.promise.get_future();
+    post(std::move(cmd));
+    return f;
+}
+
+void VirtQueue::drain_commands() {
+    std::deque<Command> local;
+    {
+        std::lock_guard<std::mutex> lock(_cmd_mutex);
+        local.swap(_cmds);
+    }
+    for (Command& cmd : local) {
+        std::visit([this](auto&& c) { apply(std::move(c)); }, std::move(cmd));
+    }
+}
+
+void VirtQueue::apply(SetVringSize&& cmd) {
+    set_vring_size(cmd.size);
+}
+
+void VirtQueue::apply(SetVringAddr&& cmd) {
+    Device& device = *_device;
+    set_vring_addr(
+        [&device](uint64_t iova) { return device.iova_to_va(iova); },
+        cmd.desc_addr, cmd.driver_addr, cmd.device_addr
+    );
+}
+
+void VirtQueue::apply(SetKickFd&& cmd) {
+    set_kick_fd(cmd.fd);
+}
+
+void VirtQueue::apply(SetEnabled&& cmd) {
+    set_enabled(cmd.enabled);
+}
+
+void VirtQueue::apply(Retranslate&& /*cmd*/) {
+    if (!_ring.mapped()) {
+        return;
+    }
+    Device& device = *_device;
+    _ring.retranslate([&device](uint64_t iova) {
+        return device.iova_to_va(iova);
+    });
+}
+
+void VirtQueue::apply(GetVqState&& cmd) {
+    cmd.reply.promise.set_value(_last_avail_idx);
+}
+
+void VirtQueue::apply(Pause&& cmd) {
+    _paused = true;
+    if (_inflight == 0) {
+        cmd.reply.promise.set_value();
+    } else {
+        _pending_pauses.push_back(std::move(cmd.reply));
+    }
+}
+
+void VirtQueue::apply(Resume&& /*cmd*/) {
+    _paused = false;
+    try {
+        process_queue();
+    } catch (const std::exception& e) {
+        rawstd_error("vduse: error processing virtqueue: %s\n", e.what());
+    }
+}
+
+void VirtQueue::apply(Shutdown&& /*cmd*/) {
+    _stop_requested = true;
+}
+
+void VirtQueue::arm_kick() {
+    rawstd_debug(
+        "vduse: arm_kick(vq=%zu): kick_armed=%d kick_fd=%d\n", _index,
+        _kick_armed, _kick_fd
+    );
+
+    if (_kick_armed || _kick_fd == -1) {
+        return;
+    }
+
+    std::unique_ptr<KickCtx> ctx = std::make_unique<KickCtx>();
+    ctx->vq = this;
+    ctx->value = 0;
+
+    int res = rawio_read(
+        _queue, _kick_fd, &ctx->value, sizeof(ctx->value), kick_cb, ctx.get()
+    );
+    if (res) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+
+    _kick_armed = true;
+    ctx.release();
+}
+
+void VirtQueue::arm_wake() {
+    std::unique_ptr<WakeCtx> ctx = std::make_unique<WakeCtx>();
+    ctx->vq = this;
+    ctx->byte = 0;
+
+    int res =
+        rawio_read(_queue, _wake_read_fd, &ctx->byte, 1, wake_cb, ctx.get());
+    if (res) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+
+    ctx.release();
+}
+
+void VirtQueue::set_kick_fd(int fd) {
+    if (_kick_fd != -1) {
+        int res = rawio_cancel_all(_queue, _kick_fd);
+        if (res && res != -ENOENT) {
+            rawstd_error(
+                "vduse: failed to cancel pending kick_fd ops: %s\n",
+                strerror(-res)
+            );
+        }
+        close_fd(_kick_fd, "kick_fd");
+    }
+
+    _kick_fd = fd;
+    _kick_armed = false;
+
+    if (_enabled && _kick_fd != -1) {
+        arm_kick();
+    }
+}
+
+void VirtQueue::set_enabled(bool enabled) {
+    if (enabled == _enabled) {
+        return;
+    }
+    _enabled = enabled;
+
+    if (enabled) {
+        if (_kick_fd != -1) {
+            arm_kick();
+        }
+        return;
+    }
+
+    // vduse always tears kick_fd and the ring mapping fully down on
+    // disable (unlike vhost-user, which may toggle SET_VRING_ENABLE
+    // without a fresh SET_VRING_KICK/SET_VRING_ADDR) -- mirrors the
+    // pre-multiqueue single-threaded Device::disable_queue()'s own
+    // close_kick_fd()+clear_vring_addr() sequence, just applied here on
+    // this VirtQueue's own thread instead of directly from the
+    // control-plane thread.
+    if (_kick_fd != -1) {
+        int res = rawio_cancel_all(_queue, _kick_fd);
+        if (res && res != -ENOENT) {
+            rawstd_error(
+                "vduse: failed to cancel pending kick_fd ops: %s\n",
+                strerror(-res)
+            );
+        }
+        close_fd(_kick_fd, "kick_fd");
+        _kick_fd = -1;
+    }
+    _kick_armed = false;
+    clear_vring_addr();
 }
 
 void VirtQueue::set_vring_addr(
@@ -118,83 +469,6 @@ void VirtQueue::set_vring_addr(
      * force the next completion to notify unconditionally.
      */
     _signalled_used_valid = false;
-}
-
-int VirtQueue::create_kick_fd() {
-    if (_kick_fd != -1) {
-        close_fd(_kick_fd, "kick_fd");
-        _kick_fd = -1;
-    }
-
-    int fd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
-    if (fd == -1) {
-        RAWSTD_THROW_ERRNO();
-    }
-
-    _kick_fd = fd;
-    _kick_armed = false;
-    return fd;
-}
-
-void VirtQueue::close_kick_fd() {
-    if (_kick_fd != -1) {
-        close_fd(_kick_fd, "kick_fd");
-        _kick_fd = -1;
-    }
-    _kick_armed = false;
-}
-
-void VirtQueue::arm_kick(Device& device, size_t index) {
-    rawstd_debug(
-        "vduse: arm_kick(vq=%zu): kick_armed=%d kick_fd=%d\n", index,
-        _kick_armed, _kick_fd
-    );
-
-    if (_kick_armed || _kick_fd == -1) {
-        return;
-    }
-
-    std::unique_ptr<KickCtx> ctx = std::make_unique<KickCtx>();
-    ctx->device = &device;
-    ctx->vq = this;
-    ctx->index = index;
-    ctx->value = 0;
-
-    int res = rawio_read(
-        device.queue(), _kick_fd, &ctx->value, sizeof(ctx->value), kick_cb,
-        ctx.get()
-    );
-    if (res) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-
-    _kick_armed = true;
-    ctx.release();
-}
-
-void VirtQueue::set_enabled(Device& device, size_t index, bool enabled) {
-    if (enabled == _enabled) {
-        return;
-    }
-    _enabled = enabled;
-
-    if (!enabled) {
-        if (_kick_fd != -1) {
-            int res = rawio_cancel_all(device.queue(), _kick_fd);
-            if (res && res != -ENOENT) {
-                rawstd_error(
-                    "vduse: failed to cancel pending kick_fd ops: %s\n",
-                    strerror(-res)
-                );
-            }
-            _kick_armed = false;
-        }
-        return;
-    }
-
-    if (_kick_fd != -1) {
-        arm_kick(device, index);
-    }
 }
 
 std::unique_ptr<DescChain> VirtQueue::pop(Device& device) {
@@ -356,17 +630,15 @@ bool VirtQueue::should_notify(bool event_idx_negotiated) noexcept {
     return !(RAWSTD_LE16TOH(_ring.avail_flags()) & VRING_AVAIL_F_NO_INTERRUPT);
 }
 
-void VirtQueue::notify(
-    Device& device, size_t index, bool event_idx_negotiated
-) {
+void VirtQueue::notify(Device& device, bool event_idx_negotiated) {
     if (!should_notify(event_idx_negotiated)) {
         rawstd_debug("vduse: notify: should_notify() is false, skipping\n");
         return;
     }
 
-    rawstd_debug("vduse: notify: injecting irq for vq %zu\n", index);
+    rawstd_debug("vduse: notify: injecting irq for vq %zu\n", _index);
 
-    device.inject_irq(index);
+    device.inject_irq(_index);
 }
 
 } // namespace vduse

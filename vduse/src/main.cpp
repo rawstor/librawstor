@@ -26,6 +26,7 @@
 // generous upper bound in practice (matches e.g. qemu's own vduse-blk
 // export default limit).
 #define MAX_QUEUE_SIZE 1024
+#define DEFAULT_NUM_QUEUES 16
 
 namespace {
 
@@ -48,6 +49,10 @@ void usage() {
                  "Virtqueue size, a power of two (default: "
               << DEFAULT_QUEUE_SIZE << ", max: " << MAX_QUEUE_SIZE << ")"
               << std::endl
+              << "  --num-queues N        "
+                 "Number of virtqueues, each served by its own thread "
+                 "(default: "
+              << DEFAULT_NUM_QUEUES << ")" << std::endl
               << "  --write-cache on|off  "
                  "Advertise a writeback (on) or write-through (off, default)"
               << std::endl
@@ -91,7 +96,8 @@ void sact_handler(int) {
 }
 
 void server(
-    unsigned int queue_size, const std::string& target, bool write_cache_enabled
+    unsigned int queue_size, unsigned int num_queues, const std::string& target,
+    bool write_cache_enabled
 ) {
     int res = rawstor_initialize(NULL);
     if (res) {
@@ -99,7 +105,9 @@ void server(
     }
 
     try {
-        rawstor::vduse::Device d(queue_size, target, write_cache_enabled);
+        rawstor::vduse::Device d(
+            queue_size, num_queues, target, write_cache_enabled
+        );
         d.loop();
     } catch (...) {
         rawstor_terminate();
@@ -114,12 +122,14 @@ int main(int argc, char** argv) {
     const char* optstring = "hv";
     struct option longopts[] = {
         {"help", no_argument, nullptr, 'h'},
+        {"num-queues", required_argument, nullptr, 'n'},
         {"queue-size", required_argument, nullptr, 'q'},
         {"version", no_argument, nullptr, 'v'},
         {"write-cache", required_argument, nullptr, 'w'},
         {},
     };
 
+    const char* num_queues_arg = nullptr;
     const char* queue_size_arg = nullptr;
     const char* target_arg = nullptr;
     const char* write_cache_arg = nullptr;
@@ -133,6 +143,10 @@ int main(int argc, char** argv) {
         case 'h':
             usage();
             return EXIT_SUCCESS;
+
+        case 'n':
+            num_queues_arg = optarg;
+            break;
 
         case 'q':
             queue_size_arg = optarg;
@@ -183,6 +197,20 @@ int main(int argc, char** argv) {
         return EX_USAGE;
     }
 
+    unsigned int num_queues = DEFAULT_NUM_QUEUES;
+    if (num_queues_arg != nullptr) {
+        std::istringstream iss(num_queues_arg);
+        if (iss.peek() < '0' || iss.peek() > '9' || !(iss >> num_queues) ||
+            !iss.eof()) {
+            std::cerr << "num-queues must be unsigned integer" << std::endl;
+            return EX_USAGE;
+        }
+    }
+    if (num_queues == 0) {
+        std::cerr << "num-queues must be at least 1" << std::endl;
+        return EX_USAGE;
+    }
+
     bool write_cache_enabled = false;
     if (write_cache_arg != nullptr) {
         std::string write_cache(write_cache_arg);
@@ -214,7 +242,7 @@ int main(int argc, char** argv) {
     }
 
     try {
-        server(queue_size, target_arg, write_cache_enabled);
+        server(queue_size, num_queues, target_arg, write_cache_enabled);
     } catch (const std::system_error& e) {
         std::cerr << e.what() << std::endl;
         return rawstd_exitcode_for_errno(e.code().value());

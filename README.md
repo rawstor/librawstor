@@ -257,7 +257,7 @@ vhost-user.
 
 ### Usage
 
-`rawstor-vduse [-h] TARGET [--queue-size SIZE] [--write-cache on|off] [-v]`
+`rawstor-vduse [-h] TARGET [--queue-size SIZE] [--num-queues N] [--write-cache on|off] [-v]`
 
 ### Options
 
@@ -265,7 +265,8 @@ vhost-user.
 |--------|-------------|
 | `-h, --help` | Show help message and exit. |
 | `TARGET` | Comma‑separated list of rawstor backend targets (see [Locations and Targets](https://github.com/rawstor/librawstor/blob/main/docs/locations_and_targets.md)). Creates `/dev/vduse/UUID`, where `UUID` is the target object's own UUID -- there is no separate name to pick, since the UUID already uniquely and stably identifies it. |
-| `--queue-size SIZE` | Virtqueue size, a power of two. Default: `256`, max `1024`. |
+| `--queue-size SIZE` | Virtqueue size, a power of two, of each virtqueue's own queue. Default: `256`, max `1024`. |
+| `--num-queues N` | Number of virtqueues advertised to the guest, each serviced by its own thread and its own connection to `TARGET`. Default: `16`. |
 | `--write-cache on\|off` | Advertise a writeback (`on`) or write-through (`off`, default) cache to the guest. |
 | `-v, --version` | Print version and exit. |
 
@@ -296,15 +297,21 @@ qemu-system-x86_64 \
 ### Supported virtio-blk features
 
 `rawstor-vduse` negotiates `VIRTIO_BLK_F_SEG_MAX`, `VIRTIO_BLK_F_BLK_SIZE`,
-`VIRTIO_BLK_F_TOPOLOGY`, `VIRTIO_BLK_F_FLUSH`, plus whatever baseline
+`VIRTIO_BLK_F_TOPOLOGY`, `VIRTIO_BLK_F_FLUSH`, `VIRTIO_BLK_F_MQ`,
+`VIRTIO_BLK_F_DISCARD`, `VIRTIO_BLK_F_WRITE_ZEROES`, plus whatever baseline
 virtio/ring features the kernel VDUSE driver itself requires
 (`VIRTIO_F_VERSION_1`, `VIRTIO_F_ACCESS_PLATFORM`,
 `VIRTIO_F_NOTIFY_ON_EMPTY`, `VIRTIO_RING_F_EVENT_IDX`,
 `VIRTIO_RING_F_INDIRECT_DESC`), and services read (`VIRTIO_BLK_T_IN`), write
-(`VIRTIO_BLK_T_OUT`), flush (`VIRTIO_BLK_T_FLUSH`) and identify
-(`VIRTIO_BLK_T_GET_ID`) requests. `_DISCARD` and `_WRITE_ZEROES` are not
-implemented and are answered with `VIRTIO_BLK_S_UNSUPP`. Only a single
-virtqueue is serviced (`VIRTIO_BLK_F_MQ` is not negotiated).
+(`VIRTIO_BLK_T_OUT`), flush (`VIRTIO_BLK_T_FLUSH`), discard
+(`VIRTIO_BLK_T_DISCARD`), write-zeroes (`VIRTIO_BLK_T_WRITE_ZEROES`) and
+identify (`VIRTIO_BLK_T_GET_ID`) requests. A flush is device-wide: since
+each virtqueue has its own connection to `TARGET` (see below), a
+`VIRTIO_BLK_T_FLUSH` arriving on one makes durable every write issued
+through *any* of them, not just its own. `VIRTIO_BLK_F_MQ` is negotiated
+and genuinely serviced: `rawstor-vduse` advertises up to `--num-queues`
+virtqueues, each processed on its own thread and its own connection to
+`TARGET` in parallel.
 
 Unlike vhost-user, VDUSE has no driver-writable config space at all --
 there is no protocol message equivalent to `VHOST_USER_SET_CONFIG` -- and

@@ -30,13 +30,20 @@ Type=simple
 # (udev/60-rawstor-vduse.rules), which grants it to the "rawstor" group.
 User=rawstor
 Group=rawstor
-# write-through (off) makes every guest write durable on completion;
-# writeback (on) is faster but relies on the guest issuing an explicit
-# flush, and only helps if the guest actually does.
+# rawstor-vduse's own --num-queues/--write-cache (see its --help);
+# override in /etc/rawstor-vduse.conf below rather than editing this
+# file. One worker thread (and one connection to the backend) per
+# virtqueue; raise NUM_QUEUES for guests with more vCPUs queuing on more
+# virtio-blk queues, lower it to shrink the number of connections this
+# instance opens to the backend target. write-through (off) makes every
+# guest write durable on completion; writeback (on) is faster but relies
+# on the guest issuing an explicit flush, and only helps if the guest
+# actually does.
 Environment=RAWSTOR_LOCATION=ost://127.0.0.1:7777
+Environment=NUM_QUEUES=16
 Environment=RAWSTOR_WRITE_CACHE=off
 EnvironmentFile=-/etc/rawstor-vduse.conf
-ExecStart=/usr/bin/rawstor-vduse --write-cache=${RAWSTOR_WRITE_CACHE} ${RAWSTOR_LOCATION}/%i
+ExecStart=/usr/bin/rawstor-vduse --num-queues=${NUM_QUEUES} --write-cache=${RAWSTOR_WRITE_CACHE} ${RAWSTOR_LOCATION}/%i
 Restart=always
 RestartSec=2
 # sysexits.h codes rawstor-vduse exits with when retrying won't help:
