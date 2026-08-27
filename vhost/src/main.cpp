@@ -3,9 +3,11 @@
 #include "config.h"
 
 #include <rawstd/exitcode.h>
+#include <rawstd/socket.h>
 
 #include <getopt.h>
 #include <signal.h>
+#include <unistd.h>
 
 #include <cerrno>
 #include <cstdio>
@@ -23,6 +25,18 @@
 namespace {
 
 struct sigaction sact = {};
+
+// Write end of the wake pipe sact_handler() below signals through --
+// Device::loop()'s own wake_task() (device.cpp) reads the other end, via
+// Server. Filled once by main() before SIGINT/SIGTERM get registered,
+// then never reassigned again, so sact_handler() needs no
+// synchronization to read it; write() to a pipe is async-signal-safe.
+// See vduse/src/main.cpp's own (near-identical) wake_write_fd for the
+// fuller rationale -- vhost only ever has one control-plane thread of
+// its own too (each VirtQueue's worker thread blocks every signal before
+// it's spawned, see VirtQueue::start()), so this is the only thread a
+// signal can ever land on.
+int wake_write_fd = -1;
 
 void usage() {
     std::cout << "Rawstor VHOST " << PACKAGE_VERSION << std::endl
@@ -71,15 +85,27 @@ void version() {
     std::cout << "Rawstor VHOST " << PACKAGE_VERSION << std::endl;
 }
 
+// Async-signal-safe (write(2) is on the short list, see signal-safety(7)):
+// wakes Device::loop() out of a blocking rawio_wait() reliably, unlike
+// relying on -EINTR alone (io_uring_enter() has been observed to swallow
+// a single interrupting signal and only actually surface -EINTR on a
+// second one -- unusable for a single-shot shutdown signal).
 void sact_handler(int) {
+    if (wake_write_fd == -1) {
+        return;
+    }
+    char byte = 0;
+    ssize_t n = write(wake_write_fd, &byte, 1);
+    (void)n;
 }
 
 void server(
     unsigned int queue_size, unsigned int num_queues, const std::string& target,
-    const std::string& socket_path, bool write_cache_enabled
+    const std::string& socket_path, bool write_cache_enabled, int wake_fd
 ) {
     rawstor::vhost::Server s(
-        queue_size, num_queues, target, socket_path, write_cache_enabled
+        queue_size, num_queues, target, socket_path, write_cache_enabled,
+        wake_fd
     );
     s.loop();
 }
@@ -196,6 +222,29 @@ int main(int argc, char** argv) {
         }
     }
 
+    int wake_fds[2] = {-1, -1};
+    if (pipe(wake_fds) == -1) {
+        int errsv = errno;
+        errno = 0;
+        std::cerr << "Failed to create wake pipe: " << strerror(errsv)
+                  << std::endl;
+        return rawstd_exitcode_for_errno(errsv);
+    }
+    int wake_read_fd = wake_fds[0];
+    wake_write_fd = wake_fds[1];
+
+    int nonblock_res = rawstd_socket_set_nonblock(wake_read_fd);
+    if (!nonblock_res) {
+        nonblock_res = rawstd_socket_set_nonblock(wake_write_fd);
+    }
+    if (nonblock_res) {
+        std::cerr << "Failed to set wake pipe non-blocking: "
+                  << strerror(-nonblock_res) << std::endl;
+        close(wake_read_fd);
+        close(wake_write_fd);
+        return rawstd_exitcode_for_errno(-nonblock_res);
+    }
+
     sact.sa_handler = sact_handler;
     sigemptyset(&sact.sa_mask);
     if (sigaction(SIGINT, &sact, nullptr) == -1) {
@@ -216,7 +265,7 @@ int main(int argc, char** argv) {
     try {
         server(
             queue_size, num_queues, target_arg, socket_path_arg,
-            write_cache_enabled
+            write_cache_enabled, wake_read_fd
         );
     } catch (const std::system_error& e) {
         std::cerr << e.what() << std::endl;

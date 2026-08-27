@@ -126,6 +126,19 @@ co_sendmsg(RawIOQueue* queue, int fd, msghdr* msg, unsigned int flags) {
     co_return co_await awaiter;
 }
 
+// Wakes Device::loop() out of a blocking rawio_wait() reliably on the
+// first SIGINT/SIGTERM, the same way dispatch_loop() below wakes it on a
+// clean disconnect: written to by main.cpp's sact_handler (via Server's
+// own wake_fd), read back here and folded into the very `done` flag
+// dispatch_loop() itself sets, so loop()'s pump doesn't need to
+// distinguish why it's stopping. See Device's own constructor doc
+// comment for why relying on rawio_wait()'s -EINTR alone isn't enough.
+rawstd::DetachedTask wake_task(RawIOQueue* queue, int wake_fd, bool& done) {
+    char buf[1];
+    co_await co_read(queue, wake_fd, buf, sizeof(buf));
+    done = true;
+}
+
 // Fire-and-forget notification -- unlike every reply above, nothing
 // awaits this (it's a best-effort "in case of I/O hang after
 // reconnecting" poke, not part of the request/response flow itself), so
@@ -1018,7 +1031,7 @@ namespace vhost {
 
 Device::Device(
     unsigned int queue_size, unsigned int num_queues, const std::string& target,
-    int fd, bool write_cache_enabled
+    int fd, bool write_cache_enabled, int wake_fd
 ) :
     _fd(fd),
     _queue(nullptr),
@@ -1037,7 +1050,8 @@ Device::Device(
     _protocol_features(0),
     _config{},
     _wce_enabled(write_cache_enabled),
-    _postcopy_listening(false) {
+    _postcopy_listening(false),
+    _wake_fd(wake_fd) {
     _regions.reserve(VHOST_USER_MAX_RAM_SLOTS);
 
     int res = rawio_queue_create(queue_size, &_queue);
@@ -1120,6 +1134,9 @@ Device::Device(
                 vq.stop();
             }
         }
+        if (_wake_fd != -1) {
+            close(_wake_fd);
+        }
         rawio_queue_delete(_queue);
         throw;
     }
@@ -1139,6 +1156,25 @@ Device::~Device() {
         rawstd_error(
             "Failed to cancel pending control socket ops: %s\n", strerror(-cres)
         );
+    }
+
+    if (_wake_fd != -1) {
+        int wcres = rawio_cancel_all(_queue, _wake_fd);
+        if (wcres && wcres != -ENOENT) {
+            rawstd_error(
+                "Failed to cancel pending wake fd ops: %s\n", strerror(-wcres)
+            );
+        }
+
+        try {
+            if (close(_wake_fd)) {
+                RAWSTD_THROW_ERRNO();
+            }
+        } catch (std::exception& e) {
+            std::ostringstream oss;
+            oss << "Failed to close wake fd: " << e.what();
+            rawstd_error("%s\n", oss.str().c_str());
+        }
     }
 
     rawio_queue_delete(_queue);
@@ -1381,6 +1417,9 @@ std::vector<std::future<void>> Device::post_flush_others(VirtQueue& requester) {
 void Device::loop() {
     bool done = false;
     dispatch_loop(_queue, _fd, *this, done);
+    if (_wake_fd != -1) {
+        wake_task(_queue, _wake_fd, done);
+    }
     rawstd::DetachedTask::rethrow_if_pending();
 
     while (!done) {
