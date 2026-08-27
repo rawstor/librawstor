@@ -6,6 +6,8 @@
 #include <stdheaders/linux/vduse.h>
 #include <vduse/virtqueue.hpp>
 
+#include <rawstd/coro.hpp>
+
 #include <rawstor/object.h>
 #include <rawstor/rawio.h>
 
@@ -69,6 +71,8 @@ private:
     std::vector<VirtQueue> _vqs;
     std::atomic<uint64_t> _features;
     bool _write_cache_enabled;
+    int _wake_fd;
+    bool _stop_requested;
 
     void enable_queue(size_t index);
     void disable_queue(size_t index);
@@ -76,17 +80,32 @@ private:
     void stop_dataplane();
     void remove_iova_regions(uint64_t start, uint64_t last);
 
+    /**
+     * Only launched from loop() when `_wake_fd` holds a real fd (see the
+     * constructor): a single-shot read of one byte from it, written to by
+     * main.cpp's SIGINT/SIGTERM handler as a cross-thread "stop" request.
+     * rawio_wait()'s own -EINTR isn't reliable enough to depend on alone --
+     * io_uring_enter() has been observed to swallow a single interrupting
+     * signal and only actually surface -EINTR to Queue::wait() on a second
+     * one. Sets _stop_requested and returns once the read completes;
+     * loop() checks it after every rawio_wait().
+     */
+    rawstd::DetachedTask _wake_task();
+
 public:
     /**
      * `target` names exactly one rawstor object (or a mirrored/cached set
      * of locations for the same object -- see docs/locations_and_targets.md);
      * the VDUSE device name is that object's UUID (rawstor_target_id()),
      * not something the caller picks, since it already uniquely and
-     * stably identifies the device this process is exporting.
+     * stably identifies the device this process is exporting. `wake_fd`,
+     * if not -1, is instead taken over by this Device (closed in
+     * ~Device()) and treated as a stop request the moment it becomes
+     * readable -- see _wake_task().
      */
     Device(
         unsigned int queue_size, unsigned int num_queues,
-        const std::string& target, bool write_cache_enabled
+        const std::string& target, bool write_cache_enabled, int wake_fd = -1
     );
     Device(const Device&) = delete;
     Device(Device&&) = delete;

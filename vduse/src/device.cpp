@@ -106,6 +106,14 @@ co_write(RawIOQueue* queue, int fd, const void* buf, size_t size) {
     co_return co_await awaiter;
 }
 
+// rawio_read()'s own collapsed ssize_t result callback shape, matching
+// rawstd::CallbackAwaitable<void>::complete()'s own -- see Device::
+// _wake_task(), the only caller.
+int wake_read_trampoline(ssize_t result, void* data) {
+    static_cast<rawstd::CallbackAwaitable<void>*>(data)->complete(result);
+    return 0;
+}
+
 rawstd::DetachedTask dispatch_loop(RawIOQueue* queue, int fd, Device& device) {
     while (true) {
         vduse_dev_request req;
@@ -188,7 +196,7 @@ namespace vduse {
 
 Device::Device(
     unsigned int queue_size, unsigned int num_queues, const std::string& target,
-    bool write_cache_enabled
+    bool write_cache_enabled, int wake_fd
 ) :
     _ctrl_fd(-1),
     _fd(-1),
@@ -197,7 +205,9 @@ Device::Device(
     _target(target),
     _vqs(num_queues),
     _features(0),
-    _write_cache_enabled(write_cache_enabled) {
+    _write_cache_enabled(write_cache_enabled),
+    _wake_fd(wake_fd),
+    _stop_requested(false) {
     int ires = rawio_queue_create(queue_size, &_queue);
     if (ires) {
         RAWSTD_THROW_SYSTEM_ERROR(-ires);
@@ -361,6 +371,9 @@ Device::Device(
             ioctl(_ctrl_fd, VDUSE_DESTROY_DEV, _name_buf);
             close(_ctrl_fd);
         }
+        if (_wake_fd != -1) {
+            close(_wake_fd);
+        }
         rawio_queue_delete(_queue);
         throw;
     }
@@ -415,6 +428,19 @@ Device::~Device() {
             rawstd_error(
                 "Failed to close VDUSE control fd: %s\n", strerror(errno)
             );
+            errno = 0;
+        }
+    }
+
+    if (_wake_fd != -1) {
+        int cres = rawio_cancel_all(_queue, _wake_fd);
+        if (cres && cres != -ENOENT) {
+            rawstd_error(
+                "Failed to cancel pending wake fd ops: %s\n", strerror(-cres)
+            );
+        }
+        if (close(_wake_fd)) {
+            rawstd_error("Failed to close wake fd: %s\n", strerror(errno));
             errno = 0;
         }
     }
@@ -651,11 +677,27 @@ std::vector<std::future<void>> Device::post_flush_others(VirtQueue& requester) {
     return futures;
 }
 
+rawstd::DetachedTask Device::_wake_task() {
+    char buf[1];
+    rawstd::CallbackAwaitable<void> awaiter;
+    int res = rawio_read(
+        _queue, _wake_fd, buf, sizeof(buf), wake_read_trampoline, &awaiter
+    );
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+    co_await awaiter;
+    _stop_requested = true;
+}
+
 void Device::loop() {
     dispatch_loop(_queue, _fd, *this);
+    if (_wake_fd != -1) {
+        _wake_task();
+    }
     rawstd::DetachedTask::rethrow_if_pending();
 
-    while (true) {
+    while (!_stop_requested) {
         int res = rawio_wait(_queue);
         if (res == -EPIPE || res == -EINTR) {
             break;
