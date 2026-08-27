@@ -165,7 +165,6 @@ Session::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
     }
 
     try {
-#ifdef RAWSTD_ON_LINUX
         // fallocate() actually reserves real blocks -- this file backs a
         // virtio-blk-style virtual disk, so a write into unallocated
         // territory otherwise depends on the filesystem's own delayed
@@ -176,38 +175,45 @@ Session::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
         // -- multiple seconds under sustained load even with the stock
         // 5s commit interval, tens of seconds observed with an
         // unusually long one. Preallocating up front removes writes
-        // from that dependency entirely.
-        if (fallocate(fd, 0, 0, sp.size) == -1) {
-            RAWSTD_THROW_ERRNO();
-        }
-#elif defined(RAWSTD_ON_MACOS)
-        // F_PREALLOCATE is APFS/HFS+'s equivalent of fallocate() above --
-        // same reasoning, a write into unallocated territory otherwise
-        // depends on delayed allocation and thus filesystem journal
-        // timing -- but it only reserves the blocks, so ftruncate() still
-        // follows to make the file report the requested size.
-        // F_ALLOCATECONTIG (contiguous, best-effort) is tried first;
-        // falling back to F_ALLOCATEALL (fragmentation allowed) matches
-        // the common pattern for this call, since contiguous space this
-        // large is often unavailable.
-        fstore_t fstore = {
-            .fst_flags = F_ALLOCATECONTIG,
-            .fst_posmode = F_PEOFPOSMODE,
-            .fst_offset = 0,
-            .fst_length = static_cast<off_t>(sp.size),
-        };
-        if (fcntl(fd, F_PREALLOCATE, &fstore) == -1) {
-            fstore.fst_flags = F_ALLOCATEALL;
+        // from that dependency entirely; mode 0 (no FALLOC_FL_KEEP_SIZE)
+        // also extends the file to sp.size, so nothing else needs to on
+        // that path.
+        try {
+            co_await _queue.fallocate(fd, 0, 0, static_cast<off_t>(sp.size));
+        } catch (const std::system_error& e) {
+#if defined(RAWSTD_ON_MACOS)
+            if (e.code().value() != ENOSYS) {
+                throw;
+            }
+            // Queue::fallocate() has no macOS equivalent of Linux's
+            // fallocate() to call (see its own doc comment,
+            // librawio/include/rawio/queue.hpp) -- F_PREALLOCATE is
+            // APFS/HFS+'s, same reasoning as above, but it only reserves
+            // the blocks, so ftruncate() still follows to make the file
+            // report the requested size. F_ALLOCATECONTIG (contiguous,
+            // best-effort) is tried first; falling back to
+            // F_ALLOCATEALL (fragmentation allowed) matches the common
+            // pattern for this call, since contiguous space this large
+            // is often unavailable.
+            fstore_t fstore = {
+                .fst_flags = F_ALLOCATECONTIG,
+                .fst_posmode = F_PEOFPOSMODE,
+                .fst_offset = 0,
+                .fst_length = static_cast<off_t>(sp.size),
+            };
             if (fcntl(fd, F_PREALLOCATE, &fstore) == -1) {
+                fstore.fst_flags = F_ALLOCATEALL;
+                if (fcntl(fd, F_PREALLOCATE, &fstore) == -1) {
+                    RAWSTD_THROW_ERRNO();
+                }
+            }
+            if (ftruncate(fd, sp.size) == -1) {
                 RAWSTD_THROW_ERRNO();
             }
-        }
-        if (ftruncate(fd, sp.size) == -1) {
-            RAWSTD_THROW_ERRNO();
-        }
 #else
-#error "file:// object creation needs a real-preallocation path here too"
+            throw;
 #endif
+        }
 
         if (::close(fd) == -1) {
             RAWSTD_THROW_ERRNO();
