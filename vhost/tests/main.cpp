@@ -1,10 +1,18 @@
 #include <gtest/gtest.h>
 
 #include <rawstd/gpp.hpp>
-#include <rawstd/logging.h>
+
+#include <rawstor/rawstor.h>
 
 int main(int argc, char** argv) {
-    int res = rawstd_logging_initialize();
+    // rawstor_initialize() takes care of rawstd_logging_initialize() (and
+    // undoes it via rawstor_terminate()) internally -- calling either
+    // logging function directly here too, on top of it, would double up
+    // (and, at rawstor_terminate() time, double-free) that setup. See
+    // tests/main.cpp for the same pattern; vhost/tests/ only started
+    // needing rawstor_initialize() itself once test_virtqueue_worker.cpp
+    // started standing up real rawstor objects.
+    int res = rawstor_initialize(nullptr);
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
@@ -13,7 +21,7 @@ int main(int argc, char** argv) {
 
     res = RUN_ALL_TESTS();
 
-    rawstd_logging_terminate();
+    rawstor_terminate();
 
     return res;
 }

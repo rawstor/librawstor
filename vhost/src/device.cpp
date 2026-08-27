@@ -490,7 +490,7 @@ std::unique_ptr<Reply> set_vring_call(DeviceOp& op) {
 
     // in case of I/O hang after reconnecting
     if (fd != -1) {
-        notify_eventfd(op.device().queue(), fd, 1);
+        op.device().notify_reconnect_hint(fd);
     }
 
     return nullptr;
@@ -966,323 +966,18 @@ size_t find_mem_region_pos(
     return low;
 }
 
-//
-// virtio-blk data plane: turns descriptor chains popped off a virtqueue into
-// asynchronous rawstor object I/O.
-//
-
-struct virtio_blk_inhdr {
-    unsigned char status;
-};
-
-class Request final {
-private:
-    rawstor::vhost::Device& _device;
-    size_t _index;
-    std::unique_ptr<rawstor::vhost::DescChain> _chain;
-    virtio_blk_inhdr* _in;
-    iovec* _in_iov;
-    unsigned int _in_niov;
-    virtio_blk_outhdr _out;
-    iovec* _out_iov;
-    unsigned int _out_niov;
-
-public:
-    Request(
-        rawstor::vhost::Device& device, size_t index,
-        std::unique_ptr<rawstor::vhost::DescChain> chain
-    ) :
-        _device(device),
-        _index(index),
-        _chain(std::move(chain)),
-        _in_iov(_chain->writable.data()),
-        _in_niov(_chain->writable.size()),
-        _out_iov(_chain->readable.data()),
-        _out_niov(_chain->readable.size()) {
-        if (_out_niov == 0 ||
-            rawstd_iovec_to_buf(_out_iov, _out_niov, 0, &_out, sizeof(_out)) !=
-                sizeof(_out)) {
-            rawstd_error("virtio-blk request outhdr too short\n");
-            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-        }
-
-        rawstd_iovec_discard_front(&_out_iov, &_out_niov, sizeof(_out));
-
-        if (_in_niov == 0 ||
-            _in_iov[_in_niov - 1].iov_len < sizeof(virtio_blk_inhdr)) {
-            rawstd_error("virtio-blk request inhdr too short\n");
-            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-        }
-
-        _in = reinterpret_cast<virtio_blk_inhdr*>(
-            static_cast<char*>(_in_iov[_in_niov - 1].iov_base) +
-            _in_iov[_in_niov - 1].iov_len - sizeof(virtio_blk_inhdr)
-        );
-
-        rawstd_iovec_discard_back(
-            &_in_iov, &_in_niov, sizeof(virtio_blk_inhdr)
-        );
-    }
-
-    inline rawstor::vhost::Device& device() noexcept { return _device; }
-
-    inline iovec* in_iov() noexcept { return _in_iov; }
-
-    inline unsigned int in_niov() noexcept { return _in_niov; }
-
-    inline iovec* out_iov() noexcept { return _out_iov; }
-
-    inline unsigned int out_niov() noexcept { return _out_niov; }
-
-    inline uint32_t type() noexcept {
-        return RAWSTD_LE32TOH(_out.type) & ~(uint32_t)VIRTIO_BLK_T_BARRIER;
-    }
-
-    inline uint64_t offset() noexcept {
-        return RAWSTD_LE64TOH(_out.sector) << VIRTIO_BLK_SECTOR_BITS;
-    }
-
-    void push(unsigned char status, size_t size) {
-        _in->status = status;
-        _device.complete_request(
-            _index, _chain->head,
-            static_cast<uint32_t>(size + sizeof(virtio_blk_inhdr))
-        );
-    }
-};
-
-// ---------------------------------------------------------------------
-// rawstd::CallbackAwaitable<T> bridge over the async rawstor/object.h C
-// API for the data path (control-path messaging above still uses
-// DeviceOp/Task/TaskScalar/TaskMessage's own callback machinery -- that's
-// a different C API, rawio.h's, with no coroutine wrapper of its own
-// here). See rawstd::CallbackAwaitable<T>'s own doc comment for the
-// general shape this follows.
-// ---------------------------------------------------------------------
-
-int io_trampoline(size_t result, int error, void* data) {
-    static_cast<rawstd::CallbackAwaitable<size_t>*>(data)->complete(
-        result, error
-    );
-    return 0;
-}
-
-rawstd::Task<size_t> co_object_preadv(
-    RawstorObject* object, iovec* iov, unsigned int niov, size_t size,
-    off_t offset
-) {
-    rawstd::CallbackAwaitable<size_t> awaiter;
-    int res = rawstor_object_preadv(
-        object, iov, niov, size, offset, io_trampoline, &awaiter
-    );
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-    co_return co_await awaiter;
-}
-
-rawstd::Task<size_t> co_object_pwritev(
-    RawstorObject* object, const iovec* iov, unsigned int niov, size_t size,
-    off_t offset, bool sync
-) {
-    rawstd::CallbackAwaitable<size_t> awaiter;
-    int res = rawstor_object_pwritev(
-        object, iov, niov, size, offset, sync, io_trampoline, &awaiter
-    );
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-    co_return co_await awaiter;
-}
-
-// rawstor_object_flush()'s own callback shape (ssize_t result) -- there's
-// nothing else to report, unlike io_trampoline()'s preadv/pwritev group
-// above.
-int flush_trampoline(ssize_t result, void* data) {
-    static_cast<rawstd::CallbackAwaitable<void>*>(data)->complete(result);
-    return 0;
-}
-
-rawstd::Task<void> co_object_flush(RawstorObject* object) {
-    rawstd::CallbackAwaitable<void> awaiter;
-    int res = rawstor_object_flush(object, flush_trampoline, &awaiter);
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-    co_await awaiter;
-}
-
-// Both process_queue() (the only caller of process_request(), several
-// frames up) and this file's own launch_*()-style wrappers below already
-// log-and-continue on any exception escaping here, so none of these
-// *_task() coroutines need their own top-level try/catch beyond the one
-// around each async op itself -- an immediate submission failure and a
-// later-reported one both surface identically via CallbackAwaitable<T>
-// (see its own doc comment), so there's only one error path to handle
-// either way.
-
-rawstd::DetachedTask preadv_task(std::unique_ptr<Request> req) {
-    size_t size = rawstd_iovec_size(req->in_iov(), req->in_niov());
-    size_t result = 0;
-    int error = 0;
-    try {
-        result = co_await co_object_preadv(
-            req->device().object(), req->in_iov(), req->in_niov(), size,
-            req->offset()
-        );
-    } catch (const std::system_error& e) {
-        error = e.code().value();
-    }
-    if (error != 0) {
-        rawstd_error("%s\n", strerror(error));
-        req->push(VIRTIO_BLK_S_IOERR, result);
-        co_return;
-    }
-    if (result != size) {
-        rawstd_error("Partial object operation: %zu != %zu\n", result, size);
-        req->push(VIRTIO_BLK_S_IOERR, result);
-        co_return;
-    }
-    rawstd_debug("vhost: object operation completed, %zu bytes\n", result);
-    req->push(VIRTIO_BLK_S_OK, result);
-}
-
-void preadv(std::unique_ptr<Request> req) {
-    preadv_task(std::move(req));
-    rawstd::DetachedTask::rethrow_if_pending();
-}
-
-rawstd::DetachedTask pwritev_task(std::unique_ptr<Request> req) {
-    // Writeback caching (wce) means the guest is expected to issue an
-    // explicit FLUSH when it needs durability; without it (write-through),
-    // every write must already be durable by the time it completes.
-    bool sync = !req->device().get_config().wce;
-    size_t size = rawstd_iovec_size(req->out_iov(), req->out_niov());
-    size_t result = 0;
-    int error = 0;
-    try {
-        result = co_await co_object_pwritev(
-            req->device().object(), req->out_iov(), req->out_niov(), size,
-            req->offset(), sync
-        );
-    } catch (const std::system_error& e) {
-        error = e.code().value();
-    }
-    if (error != 0) {
-        rawstd_error("%s\n", strerror(error));
-        req->push(VIRTIO_BLK_S_IOERR, result);
-        co_return;
-    }
-    if (result != size) {
-        rawstd_error("Partial object operation: %zu != %zu\n", result, size);
-        req->push(VIRTIO_BLK_S_IOERR, result);
-        co_return;
-    }
-    rawstd_debug("vhost: object operation completed, %zu bytes\n", result);
-    req->push(VIRTIO_BLK_S_OK, result);
-}
-
-void pwritev(std::unique_ptr<Request> req) {
-    pwritev_task(std::move(req));
-    rawstd::DetachedTask::rethrow_if_pending();
-}
-
-rawstd::DetachedTask flush_task(std::unique_ptr<Request> req) {
-    int error = 0;
-    try {
-        co_await co_object_flush(req->device().object());
-    } catch (const std::system_error& e) {
-        error = e.code().value();
-    }
-    if (error != 0) {
-        rawstd_error("%s\n", strerror(error));
-        req->push(VIRTIO_BLK_S_IOERR, 0);
-        co_return;
-    }
-    rawstd_debug("vhost: flush completed\n");
-    req->push(VIRTIO_BLK_S_OK, 0);
-}
-
-void flush(std::unique_ptr<Request> req) {
-    flush_task(std::move(req));
-    rawstd::DetachedTask::rethrow_if_pending();
-}
-
-void process_request(std::unique_ptr<Request> req) {
-    size_t in_size = rawstd_iovec_size(req->in_iov(), req->in_niov());
-    size_t out_size = rawstd_iovec_size(req->out_iov(), req->out_niov());
-
-    rawstd_debug(
-        "vhost: request type %u offset %llu in_size %zu out_size %zu\n",
-        req->type(), (unsigned long long)req->offset(), in_size, out_size
-    );
-
-    switch (req->type()) {
-    case VIRTIO_BLK_T_IN:
-        preadv(std::move(req));
-        break;
-
-    case VIRTIO_BLK_T_OUT:
-        pwritev(std::move(req));
-        break;
-
-    case VIRTIO_BLK_T_GET_ID: {
-        try {
-            char uuid[37];
-            int res = rawstor_target_id(
-                req->device().target().c_str(), uuid, sizeof(uuid)
-            );
-            if (res < 0) {
-                RAWSTD_THROW_SYSTEM_ERROR(-res);
-            }
-
-            size_t size = std::min(in_size, (size_t)VIRTIO_BLK_ID_BYTES);
-
-            char* at = uuid;
-            if (size < sizeof(uuid)) {
-                at += sizeof(uuid) - size;
-            } else {
-                size = sizeof(uuid);
-            }
-
-            rawstd_iovec_from_buf(req->in_iov(), req->in_niov(), 0, at, size);
-
-            req->push(VIRTIO_BLK_S_OK, in_size);
-        } catch (const std::exception& e) {
-            rawstd_error("%s\n", e.what());
-            req->push(VIRTIO_BLK_S_IOERR, in_size);
-        }
-        break;
-    }
-
-    case VIRTIO_BLK_T_FLUSH:
-        flush(std::move(req));
-        break;
-
-    case VIRTIO_BLK_T_DISCARD:
-    case VIRTIO_BLK_T_WRITE_ZEROES:
-    default:
-        req->push(VIRTIO_BLK_S_UNSUPP, in_size);
-        break;
-    }
-}
-
-// Synchronous open()/close() shims for Device's constructor/destructor:
-// both run before loop() starts or after it returns, i.e. never from
-// inside process_queue()'s own dispatch of `queue` -- spinning `queue`
-// here to wait for the callback is therefore safe, unlike doing so from a
-// context that's itself already being dispatched by the same queue (see
-// ost::Session's own async close()/open() handling for that hazard).
-//
-// Shared by open_object()/close_object()/spec_object() below:
-// rawstor_target_open()'s opened object is written directly into the
-// caller's own `object` out-param (see open_object()), not routed through
-// this struct, so there's nothing left for open's own Result to carry
-// beyond what close's already needs -- the two (and spec's) are
-// identical. rawstor_target_open()/rawstor_object_close()/_spec() all
-// share the same ssize_t result callback shape (negative -> -errno, zero
-// -> success -- see rawstor/target.h's own doc comment for the general
-// convention), so one trampoline suffices for all three.
+// Synchronous shim for Device's constructor: runs before loop() starts,
+// i.e. never from inside dispatch_loop()'s own dispatch of `queue` --
+// spinning `queue` here to wait for the callback is therefore safe,
+// unlike doing so from a context that's itself already being dispatched
+// by the same queue (see ost::Session's own async close()/open()
+// handling for that hazard, and virtqueue_worker.cpp's open_object()/
+// close_object() for the equivalent shims each VirtQueue's own thread
+// uses around its own RawstorObject). rawstor_target_spec() shares its
+// ssize_t result callback shape (negative -> -errno, zero -> success)
+// with rawstor_target_open()/rawstor_object_close(), but this file no
+// longer calls either of those -- see rawstor/target.h's own doc comment
+// for the general convention.
 struct Result {
     int error = 0;
     bool done = false;
@@ -1293,43 +988,6 @@ int result_cb(ssize_t result, void* data) {
     r->error = result < 0 ? static_cast<int>(-result) : 0;
     r->done = true;
     return 0;
-}
-
-RawstorObject* open_object(RawIOQueue* queue, const std::string& target) {
-    RawstorObject* object = nullptr;
-    Result result;
-    int res =
-        rawstor_target_open(queue, target.c_str(), &object, result_cb, &result);
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-    while (!result.done) {
-        int wres = rawio_wait(queue);
-        if (wres < 0) {
-            RAWSTD_THROW_SYSTEM_ERROR(-wres);
-        }
-    }
-    if (result.error) {
-        RAWSTD_THROW_SYSTEM_ERROR(result.error);
-    }
-    return object;
-}
-
-void close_object(RawIOQueue* queue, RawstorObject* object) {
-    Result result;
-    int res = rawstor_object_close(object, result_cb, &result);
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-    while (!result.done) {
-        int wres = rawio_wait(queue);
-        if (wres < 0) {
-            RAWSTD_THROW_SYSTEM_ERROR(-wres);
-        }
-    }
-    if (result.error) {
-        RAWSTD_THROW_SYSTEM_ERROR(result.error);
-    }
 }
 
 RawstorObjectSpec spec_object(RawIOQueue* queue, const std::string& target) {
@@ -1358,14 +1016,13 @@ namespace rawstor {
 namespace vhost {
 
 Device::Device(
-    unsigned int queue_size, const std::string& target, int fd,
-    bool write_cache_enabled
+    unsigned int queue_size, unsigned int num_queues, const std::string& target,
+    int fd, bool write_cache_enabled
 ) :
     _fd(fd),
     _queue(nullptr),
     _target(target),
-    _object(nullptr),
-    _vqs(1),
+    _vqs(num_queues),
     _backend_fd(-1),
     _features(
         1ull << VIRTIO_BLK_F_SIZE_MAX | 1ull << VIRTIO_BLK_F_SEG_MAX |
@@ -1377,6 +1034,7 @@ Device::Device(
     ),
     _protocol_features(0),
     _config{},
+    _wce_enabled(write_cache_enabled),
     _postcopy_listening(false) {
     _regions.reserve(VHOST_USER_MAX_RAM_SLOTS);
 
@@ -1386,9 +1044,11 @@ Device::Device(
     }
 
     try {
+        // rawstor_target_spec() (unlike rawstor_target_open()) fetches an
+        // object's spec without opening it -- exactly what's needed here,
+        // since nothing on Device itself does data-plane I/O against the
+        // target: each VirtQueue below opens its own RawstorObject.
         RawstorObjectSpec spec = spec_object(_queue, target);
-
-        _object = open_object(_queue, target);
 
         _config.capacity = spec.size >> VIRTIO_BLK_SECTOR_BITS;
 
@@ -1425,11 +1085,25 @@ Device::Device(
         _config.secure_erase_sector_alignment = 0;
 
         _config.zoned = {}; // VIRTIO_BLK_F_ZONED (unsupported)
+
+        for (size_t i = 0; i < _vqs.size(); ++i) {
+            _vqs[i].attach(*this, i);
+        }
+
+        // Each VirtQueue opens its own RawstorObject (a fresh
+        // rawstor_target_open() against the same target) and runs on its
+        // own thread from here on -- see VirtQueue's class comment for
+        // why sharing one RawstorObject across threads isn't an option.
+        // start() blocks until each is actually up, so a failure partway
+        // through leaves only the earlier ones running, which the catch
+        // below stops before rethrowing.
+        for (auto& vq : _vqs) {
+            vq.start(target, queue_size);
+        }
     } catch (...) {
-        if (_object != nullptr) {
-            try {
-                close_object(_queue, _object);
-            } catch (...) {
+        for (auto& vq : _vqs) {
+            if (vq.running()) {
+                vq.stop();
             }
         }
         rawio_queue_delete(_queue);
@@ -1438,23 +1112,12 @@ Device::Device(
 }
 
 Device::~Device() {
+    // Each VirtQueue tears down its own kick_fd/call_fd ops, its own
+    // RawstorObject and its own RawIOQueue on its own thread as part of
+    // stop() -- see VirtQueue::run(). A no-op for any VirtQueue that
+    // never started.
     for (auto& vq : _vqs) {
-        if (vq.kick_fd() != -1) {
-            int res = rawio_cancel_all(_queue, vq.kick_fd());
-            if (res && res != -ENOENT) {
-                rawstd_error(
-                    "Failed to cancel pending kick_fd ops: %s\n", strerror(-res)
-                );
-            }
-        }
-        if (vq.call_fd() != -1) {
-            int res = rawio_cancel_all(_queue, vq.call_fd());
-            if (res && res != -ENOENT) {
-                rawstd_error(
-                    "Failed to cancel pending call_fd ops: %s\n", strerror(-res)
-                );
-            }
-        }
+        vq.stop();
     }
 
     int cres = rawio_cancel_all(_queue, _fd);
@@ -1462,14 +1125,6 @@ Device::~Device() {
         rawstd_error(
             "Failed to cancel pending control socket ops: %s\n", strerror(-cres)
         );
-    }
-
-    if (_object != nullptr) {
-        try {
-            close_object(_queue, _object);
-        } catch (const std::exception& e) {
-            rawstd_error("Failed to close object: %s\n", e.what());
-        }
     }
 
     rawio_queue_delete(_queue);
@@ -1497,16 +1152,20 @@ Device::~Device() {
     }
 }
 
+void Device::notify_reconnect_hint(int fd) {
+    notify_eventfd(_queue, fd, 1);
+}
+
 void Device::set_features(uint64_t features) {
     if (!(features & (1ull << VIRTIO_F_VERSION_1))) {
         throw std::runtime_error("virtio legacy devices are not supported");
     }
 
-    _features = features;
+    _features.store(features, std::memory_order_relaxed);
 
-    if (!(_features & (1ull << VHOST_USER_F_PROTOCOL_FEATURES))) {
-        for (size_t i = 0; i < _vqs.size(); ++i) {
-            _vqs[i].set_enabled(*this, i, true);
+    if (!(features & (1ull << VHOST_USER_F_PROTOCOL_FEATURES))) {
+        for (auto& vq : _vqs) {
+            vq.post_set_enabled(true);
         }
     }
 }
@@ -1521,40 +1180,40 @@ uint64_t Device::get_protocol_features() const noexcept {
 }
 
 void Device::set_vring_size(size_t index, unsigned int size) {
-    _vqs.at(index).set_vring_size(size);
+    _vqs.at(index).post_set_vring_size(size);
 }
 
 void Device::set_vring_base(size_t index, unsigned int idx) {
-    _vqs.at(index).set_vring_base(idx);
+    _vqs.at(index).post_set_vring_base(idx);
 }
 
 void Device::set_vring_kick(size_t index, int fd) {
-    _vqs.at(index).set_kick_fd(*this, index, fd);
+    _vqs.at(index).post_set_kick_fd(fd);
 }
 
 void Device::set_vring_call(size_t index, int fd) {
-    _vqs.at(index).set_call_fd(fd);
+    _vqs.at(index).post_set_call_fd(fd);
 }
 
 void Device::set_vring_err(size_t index, int fd) {
-    _vqs.at(index).set_err_fd(fd);
+    _vqs.at(index).post_set_err_fd(fd);
 }
 
 void Device::set_vring_addr(const vhost_vring_addr& vra) {
-    _vqs.at(vra.index).set_vring_addr(*this, vra);
+    _vqs.at(vra.index).post_set_vring_addr(vra);
 }
 
 void Device::set_vring_enable(size_t index, bool enabled) {
-    _vqs.at(index).set_enabled(*this, index, enabled);
+    _vqs.at(index).post_set_enabled(enabled);
 }
 
 uint16_t Device::get_vring_base(size_t index) {
-    VirtQueue& vq = _vqs.at(index);
-    vq.set_enabled(*this, index, false);
-    return vq.last_avail_idx();
+    return _vqs.at(index).get_vring_base();
 }
 
 void* Device::userspace_va_to_va(uint64_t userspace_addr) const noexcept {
+    std::shared_lock lock(_regions_mutex);
+
     // Find matching memory region.
     for (auto& r : _regions) {
         if ((userspace_addr >= r->userspace_address()) &&
@@ -1571,8 +1230,12 @@ void* Device::guest_phys_to_va(uint64_t gpa) const noexcept {
     // _regions is kept sorted (and non-overlapping) by guest_phys_addr --
     // see find_mem_region_pos() -- so, unlike userspace_va_to_va() above,
     // the containing region can be found with a binary search instead of
-    // a linear scan. This is the hot path (once per virtqueue descriptor),
-    // so it matters.
+    // a linear scan. This is the hot path (once per virtqueue descriptor,
+    // now on whichever VirtQueue thread that descriptor belongs to), so
+    // it matters -- the shared_lock below only ever contends with
+    // add_mem_reg()/rem_mem_reg(), both rare control-plane events.
+    std::shared_lock lock(_regions_mutex);
+
     size_t low = 0;
     size_t high = _regions.size();
 
@@ -1610,9 +1273,12 @@ void Device::set_config(
     }
 
     _config.wce = *data;
+    _wce_enabled.store(*data != 0, std::memory_order_relaxed);
 }
 
 uint64_t Device::add_mem_reg(const VhostUserMemoryRegion& m, int fd) {
+    std::unique_lock lock(_regions_mutex);
+
     if (_regions.size() >= VHOST_USER_MAX_RAM_SLOTS) {
         throw std::runtime_error(
             "failing attempt to hot add memory region because the backend has "
@@ -1644,56 +1310,47 @@ uint64_t Device::add_mem_reg(const VhostUserMemoryRegion& m, int fd) {
 }
 
 void Device::rem_mem_reg(const VhostUserMemoryRegion& m) {
-    for (auto it = _regions.begin(); it != _regions.end(); ++it) {
-        if ((*it)->guest_phys_addr() == m.guest_phys_addr &&
-            (*it)->memory_size() == m.memory_size) {
-            rawstd_debug(
-                "Removing region at gpa 0x%llx\n",
-                (unsigned long long)m.guest_phys_addr
-            );
-            _regions.erase(it);
-            return;
+    // Pausing every VirtQueue first (and only resuming once the region
+    // is actually gone) closes a use-after-unmap window that a lock
+    // around _regions alone wouldn't: DevRegion::~DevRegion() munmap()s
+    // immediately on erase() below, and a VirtQueue thread could
+    // otherwise be handed a pointer into this region by guest_phys_to_va()
+    // moments before that munmap() -- pause() guarantees no VirtQueue is
+    // popping new descriptors (so can't start a fresh translation into
+    // this region) and that every request it had already translated has
+    // fully completed before we get here.
+    for (auto& vq : _vqs) {
+        vq.pause();
+    }
+
+    bool removed = false;
+    {
+        std::unique_lock lock(_regions_mutex);
+
+        for (auto it = _regions.begin(); it != _regions.end(); ++it) {
+            if ((*it)->guest_phys_addr() == m.guest_phys_addr &&
+                (*it)->memory_size() == m.memory_size) {
+                rawstd_debug(
+                    "Removing region at gpa 0x%llx\n",
+                    (unsigned long long)m.guest_phys_addr
+                );
+                _regions.erase(it);
+                removed = true;
+                break;
+            }
         }
     }
 
-    rawstd_warning(
-        "VHOST_USER_REM_MEM_REG: no matching region for gpa 0x%llx\n",
-        (unsigned long long)m.guest_phys_addr
-    );
-}
-
-void Device::process_queue(size_t index) {
-    VirtQueue& vq = _vqs.at(index);
-
-    unsigned int npopped = 0;
-    while (true) {
-        std::unique_ptr<DescChain> chain = vq.pop(*this);
-        if (chain == nullptr) {
-            break;
-        }
-        ++npopped;
-
-        try {
-            std::unique_ptr<Request> req =
-                std::make_unique<Request>(*this, index, std::move(chain));
-            process_request(std::move(req));
-        } catch (const std::exception& e) {
-            rawstd_error("%s\n", e.what());
-        }
+    for (auto& vq : _vqs) {
+        vq.resume();
     }
 
-    rawstd_debug(
-        "vhost: process_queue(%zu): popped %u chain(s)\n", index, npopped
-    );
-}
-
-void Device::complete_request(size_t index, uint16_t head, uint32_t len) {
-    rawstd_debug(
-        "vhost: complete_request(%zu): head %u len %u\n", index, head, len
-    );
-    VirtQueue& vq = _vqs.at(index);
-    vq.push(head, len);
-    vq.notify(*this, event_idx_negotiated());
+    if (!removed) {
+        rawstd_warning(
+            "VHOST_USER_REM_MEM_REG: no matching region for gpa 0x%llx\n",
+            (unsigned long long)m.guest_phys_addr
+        );
+    }
 }
 
 void Device::loop() {

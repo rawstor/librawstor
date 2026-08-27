@@ -27,7 +27,8 @@ libvhost_la_SOURCES = $(top_srcdir)/vhost/include/vhost/user_protocol.h \
                       ring.cpp \
                       server.cpp \
                       server.hpp \
-                      virtqueue.cpp
+                      virtqueue.cpp \
+                      virtqueue_worker.cpp
 
 rawstor_vhost_SOURCES = main.cpp
 

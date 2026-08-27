@@ -13,7 +13,9 @@
 
 #include <unistd.h>
 
+#include <atomic>
 #include <memory>
+#include <shared_mutex>
 #include <string>
 #include <vector>
 
@@ -22,24 +24,51 @@
 namespace rawstor {
 namespace vhost {
 
+/**
+ * A vhost-user-blk device, driving one connection's whole vhost-user
+ * control-plane dialogue on the thread that calls loop() (`_fd`,
+ * `dispatch_loop()`), while each of its `_vqs` makes I/O progress on its
+ * own thread and its own `RawIOQueue`/`RawstorObject` -- see VirtQueue's
+ * own class comment for that half.
+ *
+ * State genuinely shared between the control-plane thread and every
+ * VirtQueue worker thread is limited to what's below, each with its own
+ * synchronization:
+ *  - `_regions` (guest memory map): `_regions_mutex`, a shared_mutex --
+ *    guest_phys_to_va()/userspace_va_to_va() (the per-descriptor hot
+ *    path) take a shared_lock, add_mem_reg()/rem_mem_reg() (rare
+ *    control-plane events) take a unique_lock. rem_mem_reg() additionally
+ *    pause()s every VirtQueue first -- see its own doc comment for why a
+ *    lock around the container alone isn't enough.
+ *  - `_features`: `std::atomic<uint64_t>` (event_idx_negotiated() is
+ *    read on every request completion, on whichever VirtQueue thread
+ *    that happens to be on).
+ *  - `_config.wce`: mirrored into `_wce_enabled`, a `std::atomic<bool>`
+ *    (the only field of `_config` read from a VirtQueue thread, once
+ *    per write request).
+ *  - `_object`/`_backend_fd`/`_config` (everything else) are either
+ *    read-only after construction or touched only from the control-plane
+ *    thread, same as before VirtQueue owned its own threads.
+ */
 class Device final {
 private:
     int _fd;
     RawIOQueue* _queue;
     std::string _target;
-    RawstorObject* _object;
+    mutable std::shared_mutex _regions_mutex;
     std::vector<std::unique_ptr<DevRegion>> _regions;
     std::vector<VirtQueue> _vqs;
     int _backend_fd;
-    uint64_t _features;
+    std::atomic<uint64_t> _features;
     uint64_t _protocol_features;
     virtio_blk_config _config;
+    std::atomic<bool> _wce_enabled;
     bool _postcopy_listening;
 
 public:
     Device(
-        unsigned int queue_size, const std::string& target, int fd,
-        bool write_cache_enabled
+        unsigned int queue_size, unsigned int num_queues,
+        const std::string& target, int fd, bool write_cache_enabled
     );
 
     Device(const Device&) = delete;
@@ -51,18 +80,17 @@ public:
 
     inline int fd() const noexcept { return _fd; }
 
-    inline RawIOQueue* queue() const noexcept { return _queue; }
-
     inline const std::string& target() const noexcept { return _target; }
 
-    inline RawstorObject* object() const noexcept { return _object; }
-
-    uint64_t get_features() const noexcept { return _features; }
+    uint64_t get_features() const noexcept {
+        return _features.load(std::memory_order_relaxed);
+    }
 
     void set_features(uint64_t features);
 
     inline bool event_idx_negotiated() const noexcept {
-        return _features & (1ull << VIRTIO_RING_F_EVENT_IDX);
+        return _features.load(std::memory_order_relaxed) &
+               (1ull << VIRTIO_RING_F_EVENT_IDX);
     }
 
     uint64_t get_protocol_features() const noexcept;
@@ -70,6 +98,17 @@ public:
     void set_protocol_features(uint64_t features) noexcept {
         _protocol_features = features;
     }
+
+    /**
+     * Write a throwaway value to `fd` via the control-plane's own
+     * RawIOQueue -- used only by set_vring_call()'s "in case of I/O hang
+     * after reconnecting" call_fd poke. `fd` is a call_fd, owned by
+     * whichever VirtQueue it was just handed to; this only needs *a*
+     * queue to drive the write, not that VirtQueue's own one, since an
+     * eventfd write is a plain atomic counter add at the kernel level,
+     * safe to issue from more than one io_uring/poll instance.
+     */
+    void notify_reconnect_hint(int fd);
 
     void set_backend_fd(int fd) {
         if (_backend_fd != -1) {
@@ -80,7 +119,10 @@ public:
         _backend_fd = fd;
     }
 
-    inline size_t nregions() const noexcept { return _regions.size(); }
+    inline size_t nregions() const noexcept {
+        std::shared_lock lock(_regions_mutex);
+        return _regions.size();
+    }
 
     inline size_t nqueues() const noexcept { return _vqs.size(); }
 
@@ -109,7 +151,8 @@ public:
      * desc/avail/used addresses of a VHOST_USER_SET_VRING_ADDR message,
      * to a host virtual address in one of our mmap()'d guest memory
      * regions. Returns nullptr if the address does not fall within any
-     * known region.
+     * known region. Safe to call from any VirtQueue's own thread; see
+     * the class comment.
      */
     void* userspace_va_to_va(uint64_t userspace_addr) const noexcept;
 
@@ -118,11 +161,18 @@ public:
      * (populated by the guest driver itself, in its own address space),
      * to a host virtual address in one of our mmap()'d guest memory
      * regions. Returns nullptr if the address does not fall within any
-     * known region.
+     * known region. Safe to call from any VirtQueue's own thread; see
+     * the class comment.
      */
     void* guest_phys_to_va(uint64_t gpa) const noexcept;
 
     const virtio_blk_config& get_config() const noexcept { return _config; }
+
+    /** The data-plane's only per-write read of `_config`; see the class
+     * comment. */
+    inline bool wce_enabled() const noexcept {
+        return _wce_enabled.load(std::memory_order_relaxed);
+    }
 
     void set_config(
         const uint8_t* data, uint32_t offset, uint32_t size, uint32_t flags
@@ -141,20 +191,6 @@ public:
     uint64_t add_mem_reg(const VhostUserMemoryRegion& m, int fd);
 
     void rem_mem_reg(const VhostUserMemoryRegion& m);
-
-    /**
-     * Drain and process every descriptor chain currently available on
-     * virtqueue `index`, dispatching each as a virtio-blk request against
-     * the backing rawstor object. Called from the virtqueue's kick_fd
-     * handler; may leave I/O in flight (it never blocks).
-     */
-    void process_queue(size_t index);
-
-    /**
-     * Publish a completion (used-ring push + notify) for the descriptor
-     * chain identified by `head` on virtqueue `index`.
-     */
-    void complete_request(size_t index, uint16_t head, uint32_t len);
 
     void loop();
 };

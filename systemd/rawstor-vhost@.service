@@ -40,6 +40,11 @@ Environment=RAWSTOR_LOCATION=ost://127.0.0.1:7777
 # and instead relies on the guest issuing an explicit flush when it
 # needs durability, same as any real disk with a volatile write cache;
 # any modern guest kernel does this correctly.
+# One worker thread (and one connection to the backend) per virtqueue;
+# raise for guests with more vCPUs queuing on more virtio-blk queues,
+# lower to shrink the number of connections this instance opens to the
+# backend target.
+Environment=RAWSTOR_NUM_QUEUES=16
 Environment=RAWSTOR_WRITE_CACHE=on
 # librawstor client/server tuning knobs (see README.md's "Environment
 # Variables" section for what each one does); uncomment to override a
@@ -53,7 +58,7 @@ Environment=RAWSTOR_WRITE_CACHE=on
 #Environment=RAWSTOR_OPTS_WRITE_THROTTLE_LIMIT=128
 #Environment=RAWSTOR_OPTS_WRITE_BACKLOG_CAPACITY=256M
 EnvironmentFile=-/etc/rawstor-vhost.conf
-ExecStart=/usr/bin/rawstor-vhost --socket-path=/run/rawstor/%i.sock --write-cache=${RAWSTOR_WRITE_CACHE} ${RAWSTOR_LOCATION}/%i
+ExecStart=/usr/bin/rawstor-vhost --socket-path=/run/rawstor/%i.sock --num-queues=${RAWSTOR_NUM_QUEUES} --write-cache=${RAWSTOR_WRITE_CACHE} ${RAWSTOR_LOCATION}/%i
 Restart=always
 RestartSec=2
 # sysexits.h codes rawstor-vhost exits with when retrying won't help:

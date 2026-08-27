@@ -98,10 +98,11 @@ namespace rawstor {
 namespace vhost {
 
 Server::Server(
-    unsigned int queue_size, const std::string& target,
+    unsigned int queue_size, unsigned int num_queues, const std::string& target,
     const std::string& socket_path, bool write_cache_enabled
 ) :
     _queue_size(queue_size),
+    _num_queues(num_queues),
     _target(target),
     _socket_path(socket_path),
     _write_cache_enabled(write_cache_enabled),
@@ -141,7 +142,7 @@ void Server::loop() {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 
-    Device device(_queue_size, _target, fd, _write_cache_enabled);
+    Device device(_queue_size, _num_queues, _target, fd, _write_cache_enabled);
     device.loop();
 }
 
