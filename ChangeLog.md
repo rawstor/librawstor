@@ -9,7 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - `--write-cache=on|off` for `rawstor-vhost` and `rawstor-vhost-qemu` (default `off`, write-through): advertises `VIRTIO_BLK_F_CONFIG_WCE` and honors the guest live-toggling it via `SET_CONFIG`. With write-cache off, every write is made durable (`sync=true`) since the guest treats a completed write as already durable and won't issue a `FLUSH`.
-- `--num-queues N` for `rawstor-vhost` (default `16`): advertises `N` virtqueues over `VIRTIO_BLK_F_MQ`, each serviced by its own thread and its own connection to `TARGET`, so I/O on different queues now makes progress in parallel instead of funneling through one shared reactor.
 
 ### Changed
 - The packaged `rawstor-vhost@.service` systemd unit now defaults `RAWSTOR_WRITE_CACHE` to `on` instead of `off`: forcing a journal commit on every write (write-cache off) was measured to stall write round-trip times into the tens of seconds under concurrent load on a host whose backing filesystem commits slowly, while any modern guest kernel already issues an explicit flush when it needs durability.
@@ -25,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - `-w`/`--workers N` for `rawstor-ost`: runs `N` worker threads (default `12`), each with its own I/O queue and client connections, all accepting on the same listening socket.
+- `--num-queues N` for `rawstor-vhost` (default `16`): advertises `N` virtqueues over `VIRTIO_BLK_F_MQ`, each serviced by its own thread and its own connection to `TARGET`, so I/O on different queues now makes progress in parallel instead of funneling through one shared reactor.
 
 ### Fixed
 - `file://`'s `Session::create()` only `ftruncate()`d a new object to its full size, leaving it sparse; a write into never-touched territory then depends on the filesystem's own delayed allocation, which under `data=ordered` journaling must land before the next journal commit -- on an ext4 mount with an unusually long `commit=` interval, many concurrent writes into a still-sparse object could each back up behind that interval, measured as tens of seconds of `rawstor-vhost`/OST session round-trip latency under sustained load. `create()` now preallocates the object's real blocks up front (`fallocate()` on Linux, `fcntl(F_PREALLOCATE)` on macOS), removing that dependency entirely.
