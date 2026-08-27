@@ -32,6 +32,13 @@ RuntimeDirectory=rawstor
 # the socket path without being root or in the "rawstor" group; connect(2)
 # is still blocked for them by the socket file's own 0660 mode.
 Environment=RAWSTOR_LOCATION=ost://127.0.0.1:7777
+# rawstor-vhost's own --num-queues (see its --help); override in
+# /etc/rawstor-vhost.conf below rather than editing this file. One
+# worker thread (and one connection to the backend) per virtqueue;
+# raise for guests with more vCPUs queuing on more virtio-blk queues,
+# lower it to shrink the number of connections this instance opens to
+# the backend target.
+Environment=NUM_QUEUES=16
 # librawstor client/server tuning knobs (see README.md's "Environment
 # Variables" section for what each one does); uncomment to override a
 # default, or set them in /etc/rawstor-vhost.conf below instead.
@@ -44,7 +51,7 @@ Environment=RAWSTOR_LOCATION=ost://127.0.0.1:7777
 #Environment=RAWSTOR_OPTS_WRITE_THROTTLE_LIMIT=128
 #Environment=RAWSTOR_OPTS_WRITE_BACKLOG_CAPACITY=256M
 EnvironmentFile=-/etc/rawstor-vhost.conf
-ExecStart=/usr/bin/rawstor-vhost --socket-path=/run/rawstor/%i.sock ${RAWSTOR_LOCATION}/%i
+ExecStart=/usr/bin/rawstor-vhost --socket-path=/run/rawstor/%i.sock --num-queues=${NUM_QUEUES} ${RAWSTOR_LOCATION}/%i
 Restart=always
 RestartSec=2
 # sysexits.h codes rawstor-vhost exits with when retrying won't help:
