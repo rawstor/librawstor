@@ -274,13 +274,12 @@ vhost-user.
 ### Example
 
 ```
-PREFIX=${HOME}/local
 OST_ADDR=192.168.0.1:7777
 OBJECT_ID=...
 
 sudo modprobe vduse
 
-sudo ${PREFIX}/bin/rawstor-vduse \
+sudo rawstor-vduse \
     --num-queues=8 \
     --write-cache=off \
     ost://${OST_ADDR}/${OBJECT_ID} &
