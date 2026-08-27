@@ -237,7 +237,7 @@ TEST(BlkSessionTest, write_zeroes_zeroes_the_range) {
     );
 
     EXPECT_EQ(
-        run(*queue, session->write_zeroes(payload.size(), 0, false)),
+        run(*queue, session->write_zeroes(payload.size(), 0, false, false)),
         payload.size()
     );
 
@@ -274,7 +274,44 @@ TEST(BlkSessionTest, write_zeroes_unmap_zeroes_the_range) {
     );
 
     EXPECT_EQ(
-        run(*queue, session->write_zeroes(payload.size(), 0, true)),
+        run(*queue, session->write_zeroes(payload.size(), 0, true, false)),
+        payload.size()
+    );
+
+    std::vector<unsigned char> readback(payload.size());
+    EXPECT_EQ(
+        run(*queue, session->pread(readback.data(), readback.size(), 0)),
+        readback.size()
+    );
+    EXPECT_TRUE(
+        std::all_of(readback.begin(), readback.end(), [](unsigned char c) {
+            return c == 0;
+        })
+    );
+}
+
+// sync=true must exercise write_zeroes()'s own fdatasync() path (neither
+// fallocate() nor the portable zero-fill loop has a per-call durability
+// flag the way pwrite()'s sync does -- see blk_session.cpp's own comment)
+// without changing the result or the zero-readback guarantee.
+TEST(BlkSessionTest, write_zeroes_sync_zeroes_the_range) {
+    rawstor::tests::TmpDir dir;
+    rawstd::URI location(dir.uri());
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(256);
+
+    std::unique_ptr<rawstor::Object> object;
+    std::unique_ptr<rawstor::Connection> cn;
+    rawstor::blk::Session* session =
+        open_blk_session(*queue, location, object, cn);
+
+    const std::string payload(64, 'x');
+    EXPECT_EQ(
+        run(*queue, session->pwrite(payload.data(), payload.size(), 0, false)),
+        payload.size()
+    );
+
+    EXPECT_EQ(
+        run(*queue, session->write_zeroes(payload.size(), 0, false, true)),
         payload.size()
     );
 

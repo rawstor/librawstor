@@ -1072,9 +1072,10 @@ Device::Device(
         _config.num_queues = nqueues(); // VIRTIO_BLK_F_MQ
 
         // VIRTIO_BLK_F_DISCARD -- one segment per request (matches
-        // discard_task()'s own per-segment dispatch loop, device.cpp,
-        // which handles more than one only defensively); capped to
-        // UINT32_MAX sectors since the field itself is 32 bits.
+        // discard_task()'s own per-segment dispatch loop,
+        // virtqueue_worker.cpp, which handles more than one only
+        // defensively); capped to UINT32_MAX sectors since the field
+        // itself is 32 bits.
         _config.max_discard_sectors = static_cast<uint32_t>(
             std::min<uint64_t>(_config.capacity, UINT32_MAX)
         );

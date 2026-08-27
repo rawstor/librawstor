@@ -140,8 +140,14 @@ uint16_t Client::send_discard(uint64_t offset, uint32_t size) {
     return cid;
 }
 
-uint16_t Client::send_write_zeroes(uint64_t offset, uint32_t size, bool unmap) {
+uint16_t Client::send_write_zeroes(
+    uint64_t offset, uint32_t size, bool unmap, bool sync
+) {
     uint16_t cid = _next_cid++;
+    uint8_t flags = static_cast<uint8_t>(
+        (unmap ? RAWSTOR_WRITE_ZEROES_FLAG_UNMAP : 0) |
+        (sync ? RAWSTOR_WRITE_ZEROES_FLAG_SYNC : 0)
+    );
     RawstorOSTFrameIO frame = {
         .head =
             {
@@ -153,7 +159,7 @@ uint16_t Client::send_write_zeroes(uint64_t offset, uint32_t size, bool unmap) {
             .offset = offset,
             .len = size,
             .hash = 0,
-            .sync = static_cast<uint8_t>(unmap ? 1 : 0),
+            .sync = flags,
         },
     };
     send_all(_fd, &frame, sizeof(frame));

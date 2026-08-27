@@ -207,10 +207,10 @@ rawstd::Task<size_t> Session::discard(size_t size, off_t offset) {
 }
 
 rawstd::Task<size_t>
-Session::write_zeroes(size_t size, off_t offset, bool unmap) {
+Session::write_zeroes(size_t size, off_t offset, bool unmap, bool sync) {
     rawstd_debug(
-        "%s(): fd = %d, size = %zu, offset = %jd, unmap = %d\n", __FUNCTION__,
-        fd(), size, (intmax_t)offset, unmap
+        "%s(): fd = %d, size = %zu, offset = %jd, unmap = %d, sync = %d\n",
+        __FUNCTION__, fd(), size, (intmax_t)offset, unmap, sync
     );
 
     co_await _throttle_acquire(size);
@@ -252,6 +252,17 @@ Session::write_zeroes(size_t size, off_t offset, bool unmap) {
                 remaining -= chunk;
                 at += static_cast<off_t>(chunk);
             }
+        }
+
+        // Neither fallocate() (metadata + any data it touches) nor the
+        // zero-fill loop above (each individual pwrite() issued with
+        // sync=false, since there's no point paying for a durable write
+        // per chunk when one fsync() covers the whole range at the end)
+        // has a per-call durability flag the way pwrite()'s own RWF_DSYNC
+        // does -- a single fdatasync() after the fact is this function's
+        // only way to honor `sync`.
+        if (sync) {
+            co_await _queue.fsync(fd(), /*datasync=*/true);
         }
     } catch (...) {
         _throttle_release();

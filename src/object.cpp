@@ -351,10 +351,11 @@ rawstd::Task<size_t> Object::discard(size_t size, off_t offset) {
 }
 
 rawstd::Task<size_t>
-Object::write_zeroes(size_t size, off_t offset, bool unmap) {
+Object::write_zeroes(size_t size, off_t offset, bool unmap, bool sync) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
-        'o', "write_zeroes(): size = %zu, offset = %jd, unmap = %d\n", size,
-        (intmax_t)offset, unmap
+        'o',
+        "write_zeroes(): size = %zu, offset = %jd, unmap = %d, sync = %d\n",
+        size, (intmax_t)offset, unmap, sync
     );
 
     ++_writes_issued;
@@ -362,7 +363,7 @@ Object::write_zeroes(size_t size, off_t offset, bool unmap) {
     std::vector<rawstd::Task<size_t>> tasks;
     tasks.reserve(_cns.size());
     for (auto& cn : _cns) {
-        tasks.push_back(cn->write_zeroes(size, offset, unmap));
+        tasks.push_back(cn->write_zeroes(size, offset, unmap, sync));
     }
 
     try {
@@ -621,13 +622,13 @@ int rawstor_object_discard(
 }
 
 int rawstor_object_write_zeroes(
-    RawstorObject* object, size_t size, off_t offset, bool unmap,
+    RawstorObject* object, size_t size, off_t offset, bool unmap, bool sync,
     int (*cb)(size_t result, int error, void* data), void* data
 ) noexcept {
     try {
         launch_io_op(
             static_cast<rawstor::Object*>(object)->write_zeroes(
-                size, offset, unmap
+                size, offset, unmap, sync
             ),
             cb, data
         );

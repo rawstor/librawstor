@@ -156,11 +156,11 @@ co_object_discard(RawstorObject* object, size_t size, off_t offset) {
 }
 
 rawstd::Task<size_t> co_object_write_zeroes(
-    RawstorObject* object, size_t size, off_t offset, bool unmap
+    RawstorObject* object, size_t size, off_t offset, bool unmap, bool sync
 ) {
     rawstd::CallbackAwaitable<size_t> awaiter;
     int res = rawstor_object_write_zeroes(
-        object, size, offset, unmap, io_trampoline, &awaiter
+        object, size, offset, unmap, sync, io_trampoline, &awaiter
     );
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
@@ -1579,15 +1579,17 @@ rawstd::DetachedTask Client::_write_zeroes_task(
         object = client->_object;
     }
 
-    // `sync` doubles as the unmap flag for WRITE_ZEROES -- see
-    // RawstorOSTFrameIOBody's own doc comment (include/rawstor/protocol.h).
-    bool unmap = body.sync != 0;
+    // `sync` doubles as a RAWSTOR_WRITE_ZEROES_FLAG_* bitmask for
+    // WRITE_ZEROES -- see RawstorOSTFrameIOBody's own doc comment
+    // (include/rawstor/protocol.h).
+    bool unmap = (body.sync & RAWSTOR_WRITE_ZEROES_FLAG_UNMAP) != 0;
+    bool sync = (body.sync & RAWSTOR_WRITE_ZEROES_FLAG_SYNC) != 0;
 
     size_t result = 0;
     int error = 0;
     try {
         result = co_await co_object_write_zeroes(
-            object, body.len, body.offset, unmap
+            object, body.len, body.offset, unmap, sync
         );
     } catch (const std::system_error& e) {
         error = e.code().value();

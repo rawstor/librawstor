@@ -614,17 +614,18 @@ rawstd::Task<size_t> Connection::discard(size_t size, off_t offset) {
 }
 
 rawstd::Task<size_t>
-Connection::write_zeroes(size_t size, off_t offset, bool unmap) {
+Connection::write_zeroes(size_t size, off_t offset, bool unmap, bool sync) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
-        'c', "%s(): size = %zu, offset = %jd, unmap = %d\n", func_name, size,
-        (intmax_t)offset, unmap
+        'c', "%s(): size = %zu, offset = %jd, unmap = %d, sync = %d\n",
+        func_name, size, (intmax_t)offset, unmap, sync
     );
     rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
 
     try {
         size_t result = co_await _with_retry(
-            func_name, trace_event, &Session::write_zeroes, size, offset, unmap
+            func_name, trace_event, &Session::write_zeroes, size, offset, unmap,
+            sync
         );
         _finish(t_call);
         co_return result;

@@ -229,9 +229,10 @@ TEST(OstSessionTest, discard_and_write_zeroes) {
     EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_WRITE);
     EXPECT_EQ(response.body.res, static_cast<int32_t>(payload.size()));
 
-    // ...WRITE_ZEROES half of it...
+    // ...WRITE_ZEROES half of it, durably...
     client.send_write_zeroes(
-        0, static_cast<uint32_t>(payload.size() / 2), /*unmap=*/false
+        0, static_cast<uint32_t>(payload.size() / 2), /*unmap=*/false,
+        /*sync=*/true
     );
     ASSERT_TRUE(pump_until(queue, [&] {
         return client.bytes_available() >= sizeof(RawstorOSTFrameResponse);

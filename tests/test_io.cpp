@@ -266,7 +266,7 @@ public:
         }
     }
 
-    void write_zeroes(size_t size, bool unmap) {
+    void write_zeroes(size_t size, bool unmap, bool sync) {
         bool completed = false;
         auto cb = std::make_unique<std::function<void(size_t, int)>>(
             [&completed, &size](size_t result, int error) {
@@ -280,7 +280,7 @@ public:
             }
         );
         int res = rawstor_object_write_zeroes(
-            _object, size, 0, unmap, callback, cb.get()
+            _object, size, 0, unmap, sync, callback, cb.get()
         );
         if (res < 0) {
             RAWSTD_THROW_SYSTEM_ERROR(-res);
@@ -404,7 +404,7 @@ TEST(OstIOTest, discard_and_write_zeroes) {
     Object object(queue, target, 1ull << 20);
 
     EXPECT_NO_THROW(object.discard(4));
-    EXPECT_NO_THROW(object.write_zeroes(4, /*unmap=*/false));
+    EXPECT_NO_THROW(object.write_zeroes(4, /*unmap=*/false, /*sync=*/false));
 }
 
 TEST(OstIOTest, flush) {

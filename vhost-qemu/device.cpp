@@ -350,11 +350,11 @@ co_object_discard(RawstorObject* object, size_t size, off_t offset) {
 }
 
 rawstd::Task<size_t> co_object_write_zeroes(
-    RawstorObject* object, size_t size, off_t offset, bool unmap
+    RawstorObject* object, size_t size, off_t offset, bool unmap, bool sync
 ) {
     rawstd::CallbackAwaitable<size_t> awaiter;
     int res = rawstor_object_write_zeroes(
-        object, size, offset, unmap, io_trampoline, &awaiter
+        object, size, offset, unmap, sync, io_trampoline, &awaiter
     );
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
@@ -526,6 +526,10 @@ void discard(std::unique_ptr<Request> req) {
 }
 
 rawstd::DetachedTask write_zeroes_task(std::unique_ptr<Request> req) {
+    // Same write-cache-driven durability policy as pwritev_task() above --
+    // WRITE_ZEROES is a write as far as the guest's write-cache contract
+    // goes, so it must honor it the same way.
+    bool sync = !req->device().write_cache_enabled();
     int error = 0;
     try {
         std::vector<virtio_blk_discard_write_zeroes> segs =
@@ -538,7 +542,7 @@ rawstd::DetachedTask write_zeroes_task(std::unique_ptr<Request> req) {
             bool unmap = (RAWSTD_LE32TOH(seg.flags) &
                           VIRTIO_BLK_WRITE_ZEROES_FLAG_UNMAP) != 0;
             co_await co_object_write_zeroes(
-                req->device().object(), size, offset, unmap
+                req->device().object(), size, offset, unmap, sync
             );
         }
     } catch (const std::system_error& e) {

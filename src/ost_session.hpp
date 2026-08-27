@@ -109,7 +109,7 @@ public:
     rawstd::Task<size_t> discard(size_t size, off_t offset) override;
 
     rawstd::Task<size_t>
-    write_zeroes(size_t size, off_t offset, bool unmap) override;
+    write_zeroes(size_t size, off_t offset, bool unmap, bool sync) override;
 
     rawstd::Task<void> flush() override;
 };

@@ -664,12 +664,15 @@ class SessionOpWriteZeroes final : public SessionOpNoPayloadIO {
 public:
     SessionOpWriteZeroes(
         const std::shared_ptr<rawstor::ost::Session>& session, uint16_t cid,
-        size_t size, off_t offset, bool unmap,
+        size_t size, off_t offset, bool unmap, bool sync,
         const rawstd::TraceEvent& trace_event
     ) :
         SessionOpNoPayloadIO(
             session, cid, RAWSTOR_CMD_WRITE_ZEROES, "write_zeroes", size,
-            offset, unmap ? 1 : 0, trace_event
+            offset,
+            (unmap ? RAWSTOR_WRITE_ZEROES_FLAG_UNMAP : 0) |
+                (sync ? RAWSTOR_WRITE_ZEROES_FLAG_SYNC : 0),
+            trace_event
         ) {}
 };
 
@@ -1420,16 +1423,16 @@ rawstd::Task<size_t> Session::discard(size_t size, off_t offset) {
 }
 
 rawstd::Task<size_t>
-Session::write_zeroes(size_t size, off_t offset, bool unmap) {
+Session::write_zeroes(size_t size, off_t offset, bool unmap, bool sync) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
-        's', "fd = %d, size = %zu, offset = %jd, unmap = %d\n", fd(), size,
-        (intmax_t)offset, unmap
+        's', "fd = %d, size = %zu, offset = %jd, unmap = %d, sync = %d\n", fd(),
+        size, (intmax_t)offset, unmap, sync
     );
 
     std::shared_ptr<SessionOpWriteZeroes> op =
         std::make_shared<SessionOpWriteZeroes>(
             std::static_pointer_cast<Session>(shared_from_this()),
-            _cid_counter++, size, offset, unmap, trace_event
+            _cid_counter++, size, offset, unmap, sync, trace_event
         );
     _add_op(op);
 

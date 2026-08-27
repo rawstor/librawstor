@@ -250,6 +250,11 @@ int rawstor_object_discard(
  *                same meaning as virtio-blk's
  *                VIRTIO_BLK_WRITE_ZEROES_FLAG_UNMAP. If false, the backend
  *                must still leave the range allocated.
+ * @param sync    If true, the zeroed range is durable on stable storage by
+ *                the time @p cb reports success (equivalent to O_DSYNC
+ *                per-call). If false, durability is only guaranteed after a
+ *                subsequent rawstor_object_flush() -- same meaning as
+ *                rawstor_object_pwrite()'s own @p sync.
  * @param cb      Callback invoked on completion.
  * @param data    User-defined context pointer passed unchanged to @p cb.
  *
@@ -261,7 +266,7 @@ int rawstor_object_discard(
  * @see rawstor_object_pwrite
  */
 int rawstor_object_write_zeroes(
-    RawstorObject* object, size_t size, off_t offset, bool unmap,
+    RawstorObject* object, size_t size, off_t offset, bool unmap, bool sync,
     int (*cb)(size_t result, int error, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 

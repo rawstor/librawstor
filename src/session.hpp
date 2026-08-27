@@ -105,9 +105,10 @@ public:
     // is guaranteed to read back as zero once this completes. `unmap`
     // hints that the backend may (not must) deallocate the underlying
     // storage for the zeroed range, same as virtio-blk's
-    // VIRTIO_BLK_WRITE_ZEROES_FLAG_UNMAP.
+    // VIRTIO_BLK_WRITE_ZEROES_FLAG_UNMAP. `sync` has the same meaning as
+    // pwrite()/pwritev()'s own `sync`.
     virtual rawstd::Task<size_t>
-    write_zeroes(size_t size, off_t offset, bool unmap) = 0;
+    write_zeroes(size_t size, off_t offset, bool unmap, bool sync) = 0;
 
     virtual rawstd::Task<void> flush() = 0;
 };

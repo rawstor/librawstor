@@ -104,7 +104,8 @@ public:
 
     rawstd::Task<size_t> discard(size_t size, off_t offset);
 
-    rawstd::Task<size_t> write_zeroes(size_t size, off_t offset, bool unmap);
+    rawstd::Task<size_t>
+    write_zeroes(size_t size, off_t offset, bool unmap, bool sync);
 
     // Waits for every pwrite()/pwritev() issued before this call to
     // complete (see _flush_waiters above), then flushes every connection
