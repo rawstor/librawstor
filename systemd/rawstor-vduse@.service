@@ -41,9 +41,9 @@ Group=rawstor
 # actually does.
 Environment=RAWSTOR_LOCATION=ost://127.0.0.1:7777
 Environment=NUM_QUEUES=16
-Environment=RAWSTOR_WRITE_CACHE=off
+Environment=WRITE_CACHE=off
 EnvironmentFile=-/etc/rawstor-vduse.conf
-ExecStart=/usr/bin/rawstor-vduse --num-queues=${NUM_QUEUES} --write-cache=${RAWSTOR_WRITE_CACHE} ${RAWSTOR_LOCATION}/%i
+ExecStart=/usr/bin/rawstor-vduse --num-queues=${NUM_QUEUES} --write-cache=${WRITE_CACHE} ${RAWSTOR_LOCATION}/%i
 Restart=always
 RestartSec=2
 # sysexits.h codes rawstor-vduse exits with when retrying won't help:
