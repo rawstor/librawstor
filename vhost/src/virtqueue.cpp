@@ -6,10 +6,10 @@
 #include <rawstd/endian.h>
 #include <rawstd/gpp.hpp>
 #include <rawstd/logging.h>
+#include <rawstd/socket.h>
 
 #include <rawstor/rawio.h>
 
-#include <fcntl.h>
 #include <pthread.h>
 #include <signal.h>
 #include <unistd.h>
@@ -226,9 +226,12 @@ void VirtQueue::start(const std::string& target, unsigned int queue_size) {
     _wake_read_fd = pipefd[0];
     _wake_write_fd = pipefd[1];
 
-    if (fcntl(_wake_read_fd, F_SETFL, O_NONBLOCK) == -1 ||
-        fcntl(_wake_write_fd, F_SETFL, O_NONBLOCK) == -1) {
-        RAWSTD_THROW_ERRNO();
+    int nonblock_res = rawstd_socket_set_nonblock(_wake_read_fd);
+    if (!nonblock_res) {
+        nonblock_res = rawstd_socket_set_nonblock(_wake_write_fd);
+    }
+    if (nonblock_res) {
+        RAWSTD_THROW_SYSTEM_ERROR(-nonblock_res);
     }
 
     std::promise<void> ready;
