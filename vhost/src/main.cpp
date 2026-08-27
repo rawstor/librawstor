@@ -3,7 +3,7 @@
 #include "config.h"
 
 #include <rawstd/exitcode.h>
-#include <rawstd/socket.h>
+#include <rawstd/pipe.hpp>
 
 #include <getopt.h>
 #include <signal.h>
@@ -16,6 +16,7 @@
 #include <sysexits.h>
 
 #include <iostream>
+#include <optional>
 #include <sstream>
 #include <system_error>
 
@@ -222,28 +223,14 @@ int main(int argc, char** argv) {
         }
     }
 
-    int wake_fds[2] = {-1, -1};
-    if (pipe(wake_fds) == -1) {
-        int errsv = errno;
-        errno = 0;
-        std::cerr << "Failed to create wake pipe: " << strerror(errsv)
-                  << std::endl;
-        return rawstd_exitcode_for_errno(errsv);
+    std::optional<rawstd::Pipe> wake_pipe;
+    try {
+        wake_pipe.emplace();
+    } catch (const std::system_error& e) {
+        std::cerr << "Failed to create wake pipe: " << e.what() << std::endl;
+        return rawstd_exitcode_for_errno(e.code().value());
     }
-    int wake_read_fd = wake_fds[0];
-    wake_write_fd = wake_fds[1];
-
-    int nonblock_res = rawstd_socket_set_nonblock(wake_read_fd);
-    if (!nonblock_res) {
-        nonblock_res = rawstd_socket_set_nonblock(wake_write_fd);
-    }
-    if (nonblock_res) {
-        std::cerr << "Failed to set wake pipe non-blocking: "
-                  << strerror(-nonblock_res) << std::endl;
-        close(wake_read_fd);
-        close(wake_write_fd);
-        return rawstd_exitcode_for_errno(-nonblock_res);
-    }
+    wake_write_fd = wake_pipe->write_fd();
 
     sact.sa_handler = sact_handler;
     sigemptyset(&sact.sa_mask);
@@ -265,7 +252,7 @@ int main(int argc, char** argv) {
     try {
         server(
             queue_size, num_queues, target_arg, socket_path_arg,
-            write_cache_enabled, wake_read_fd
+            write_cache_enabled, wake_pipe->release_read()
         );
     } catch (const std::system_error& e) {
         std::cerr << e.what() << std::endl;

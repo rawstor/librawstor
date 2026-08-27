@@ -4,6 +4,8 @@
 #include <vhost/ring.hpp>
 #include <vhost/user_protocol.h>
 
+#include <rawstd/pipe.hpp>
+
 #include <rawstor/object.h>
 #include <rawstor/rawio.h>
 
@@ -14,6 +16,7 @@
 #include <future>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <variant>
@@ -165,11 +168,13 @@ private:
     RawstorObject* _object;
     std::thread _thread;
 
-    /* Cross-thread command inbox; see virtqueue.cpp. */
+    /* Cross-thread command inbox; see virtqueue.cpp. Empty until start()
+     * creates it (never before, never again after); the whole point of a
+     * separate rawstd::Pipe from _kick_fd et al. is that it needs no -1
+     * sentinel of its own to track "not yet created". */
     std::mutex _cmd_mutex;
     std::deque<Command> _cmds;
-    int _wake_read_fd;
-    int _wake_write_fd;
+    std::optional<rawstd::Pipe> _wake_pipe;
 
     /* Worker-thread-only state (never touched from the control-plane
      * thread): whether kick-driven descriptor popping is currently
@@ -234,8 +239,6 @@ public:
         _index(0),
         _queue(nullptr),
         _object(nullptr),
-        _wake_read_fd(-1),
-        _wake_write_fd(-1),
         _paused(false),
         _inflight(0),
         _stop_requested(false) {}

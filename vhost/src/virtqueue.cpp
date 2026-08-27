@@ -6,7 +6,6 @@
 #include <rawstd/endian.h>
 #include <rawstd/gpp.hpp>
 #include <rawstd/logging.h>
-#include <rawstd/socket.h>
 
 #include <rawstor/rawio.h>
 
@@ -30,8 +29,8 @@
 //   - post_*()/get_vring_base()/pause()/resume(), called only from the
 //     control-plane thread on a running() VirtQueue, enqueue a Command
 //     into `_cmds` (guarded by `_cmd_mutex`) and wake the owning
-//     thread's reactor via a self-pipe (`_wake_read_fd`/`_wake_write_fd`
-//     -- a plain pipe rather than eventfd(), matching CLAUDE.md's
+//     thread's reactor via a self-pipe (`_wake_pipe`, a rawstd::Pipe --
+//     a plain pipe rather than eventfd(), matching CLAUDE.md's
 //     portability guidance outside librawio's io_uring backend).
 //     get_vring_base()/pause() additionally block on a std::promise/
 //     future pair (Reply<T>) until the owning thread has actually
@@ -39,8 +38,8 @@
 //     off-the-hot-path control-plane operations (see their own doc
 //     comments in virtqueue.hpp).
 //   - The owning thread's reactor (run(), in virtqueue_worker.cpp) keeps
-//     a read armed on `_wake_read_fd` via this same VirtQueue's own
-//     `_queue`, mirroring kick_fd's arm_kick()/kick_cb rearm pattern
+//     a read armed on `_wake_pipe`'s read end via this same VirtQueue's
+//     own `_queue`, mirroring kick_fd's arm_kick()/kick_cb rearm pattern
 //     below. Each wakeup drains and applies every queued Command in
 //     order (drain_commands()/apply()), then rearms.
 //
@@ -210,29 +209,12 @@ VirtQueue::~VirtQueue() {
     if (_err_fd != -1) {
         close_fd(_err_fd, "err_fd");
     }
-    if (_wake_read_fd != -1) {
-        close_fd(_wake_read_fd, "wake_read_fd");
-    }
-    if (_wake_write_fd != -1) {
-        close_fd(_wake_write_fd, "wake_write_fd");
-    }
+    // _wake_pipe closes both its own ends itself (rawstd::Pipe's
+    // destructor) if start() ever created it.
 }
 
 void VirtQueue::start(const std::string& target, unsigned int queue_size) {
-    int pipefd[2];
-    if (pipe(pipefd) == -1) {
-        RAWSTD_THROW_ERRNO();
-    }
-    _wake_read_fd = pipefd[0];
-    _wake_write_fd = pipefd[1];
-
-    int nonblock_res = rawstd_socket_set_nonblock(_wake_read_fd);
-    if (!nonblock_res) {
-        nonblock_res = rawstd_socket_set_nonblock(_wake_write_fd);
-    }
-    if (nonblock_res) {
-        RAWSTD_THROW_SYSTEM_ERROR(-nonblock_res);
-    }
+    _wake_pipe.emplace();
 
     std::promise<void> ready;
     std::future<void> ready_future = ready.get_future();
@@ -293,7 +275,7 @@ void VirtQueue::post(Command cmd) {
     // post() is already pending -- the command we just enqueued will
     // still be drained by the wakeup that byte causes, so it's not an
     // error, merely redundant.
-    ssize_t res = write(_wake_write_fd, &b, 1);
+    ssize_t res = write(_wake_pipe->write_fd(), &b, 1);
     if (res == -1 && errno != EAGAIN) {
         rawstd_error(
             "vhost: failed to wake virtqueue worker: %s\n", strerror(errno)
@@ -455,8 +437,9 @@ void VirtQueue::arm_wake() {
     ctx->vq = this;
     ctx->byte = 0;
 
-    int res =
-        rawio_read(_queue, _wake_read_fd, &ctx->byte, 1, wake_cb, ctx.get());
+    int res = rawio_read(
+        _queue, _wake_pipe->read_fd(), &ctx->byte, 1, wake_cb, ctx.get()
+    );
     if (res) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
