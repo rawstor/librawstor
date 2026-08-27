@@ -18,6 +18,7 @@
 #include <system_error>
 
 #define DEFAULT_QUEUE_SIZE 256
+#define DEFAULT_NUM_QUEUES 16
 
 namespace {
 
@@ -35,6 +36,10 @@ void usage() {
               << "  --queue-size SIZE     "
                  "RawIO queue size (default: "
               << DEFAULT_QUEUE_SIZE << ")" << std::endl
+              << "  --num-queues N        "
+                 "Number of virtqueues, each served by its own thread "
+                 "(default: "
+              << DEFAULT_NUM_QUEUES << ")" << std::endl
               << "  -v, --version         Rawstor version" << std::endl
               << std::endl
               << "required arguments:" << std::endl
@@ -58,10 +63,10 @@ void sact_handler(int) {
 }
 
 void server(
-    unsigned int queue_size, const std::string& target,
+    unsigned int queue_size, unsigned int num_queues, const std::string& target,
     const std::string& socket_path
 ) {
-    rawstor::vhost::Server s(queue_size, target, socket_path);
+    rawstor::vhost::Server s(queue_size, num_queues, target, socket_path);
     s.loop();
 }
 
@@ -71,6 +76,7 @@ int main(int argc, char** argv) {
     const char* optstring = "hs:t:v";
     struct option longopts[] = {
         {"help", no_argument, nullptr, 'h'},
+        {"num-queues", required_argument, nullptr, 'n'},
         {"queue-size", required_argument, nullptr, 'q'},
         {"socket-path", required_argument, nullptr, 's'},
         {"target", required_argument, nullptr, 't'},
@@ -78,6 +84,7 @@ int main(int argc, char** argv) {
         {},
     };
 
+    const char* num_queues_arg = nullptr;
     const char* queue_size_arg = nullptr;
     const char* socket_path_arg = nullptr;
     const char* target_arg = nullptr;
@@ -91,6 +98,10 @@ int main(int argc, char** argv) {
         case 'h':
             usage();
             return EXIT_SUCCESS;
+
+        case 'n':
+            num_queues_arg = optarg;
+            break;
 
         case 'q':
             queue_size_arg = optarg;
@@ -133,6 +144,20 @@ int main(int argc, char** argv) {
         }
     }
 
+    unsigned int num_queues = DEFAULT_NUM_QUEUES;
+    if (num_queues_arg != nullptr) {
+        std::istringstream iss(num_queues_arg);
+        if (iss.peek() < '0' || iss.peek() > '9' || !(iss >> num_queues) ||
+            !iss.eof()) {
+            std::cerr << "num-queues must be unsigned integer" << std::endl;
+            return EX_USAGE;
+        }
+    }
+    if (num_queues == 0) {
+        std::cerr << "num-queues must be at least 1" << std::endl;
+        return EX_USAGE;
+    }
+
     if (socket_path_arg == nullptr) {
         std::cerr << "socket-path argument required" << std::endl;
         return EX_USAGE;
@@ -161,7 +186,7 @@ int main(int argc, char** argv) {
     }
 
     try {
-        server(queue_size, target_arg, socket_path_arg);
+        server(queue_size, num_queues, target_arg, socket_path_arg);
     } catch (const std::system_error& e) {
         std::cerr << e.what() << std::endl;
         return rawstd_exitcode_for_errno(e.code().value());

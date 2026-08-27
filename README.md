@@ -128,7 +128,7 @@ multiple in-flight requests on a virtqueue may complete out of order.
 
 ### Usage
 
-`rawstor-vhost [-h] -s SOCKET_PATH TARGET [--queue-size SIZE] [-v]`
+`rawstor-vhost [-h] -s SOCKET_PATH TARGET [--queue-size SIZE] [--num-queues N] [-v]`
 
 ### Options
 
@@ -137,7 +137,8 @@ multiple in-flight requests on a virtqueue may complete out of order.
 | `-h, --help` | Show help message and exit. |
 | `-s, --socket-path PATH` | Location of the vhost-user Unix domain socket. |
 | `TARGET` | Comma‑separated list of rawstor backend targets (see [Locations and Targets](https://github.com/rawstor/librawstor/blob/main/docs/locations_and_targets.md)). |
-| `--queue-size SIZE` | RawIO queue (`io_uring`) depth. Default: `256`. |
+| `--queue-size SIZE` | RawIO queue (`io_uring`) depth of each virtqueue's own queue. Default: `256`. |
+| `--num-queues N` | Number of virtqueues advertised to the guest, each serviced by its own thread and its own connection to `TARGET`. The guest picks how many of these it actually uses (typically up to its vCPU count) via QEMU's own `num-queues=`. Default: `16`. |
 | `-v, --version` | Print version and exit. |
 
 ### Example
@@ -167,13 +168,18 @@ qemu-system-x86_64 \
 
 `rawstor-vhost` negotiates `VIRTIO_BLK_F_SIZE_MAX`, `VIRTIO_BLK_F_SEG_MAX`,
 `VIRTIO_BLK_F_BLK_SIZE`, `VIRTIO_BLK_F_TOPOLOGY`, `VIRTIO_BLK_F_MQ`,
-`VIRTIO_RING_F_INDIRECT_DESC` and `VIRTIO_RING_F_EVENT_IDX`, and services
-read (`VIRTIO_BLK_T_IN`), write (`VIRTIO_BLK_T_OUT`) and identify
-(`VIRTIO_BLK_T_GET_ID`) requests. `VIRTIO_BLK_T_FLUSH`, `_DISCARD` and
+`VIRTIO_BLK_F_FLUSH`, `VIRTIO_BLK_F_CONFIG_WCE`, `VIRTIO_RING_F_INDIRECT_DESC`
+and `VIRTIO_RING_F_EVENT_IDX`, and services read (`VIRTIO_BLK_T_IN`), write
+(`VIRTIO_BLK_T_OUT`), flush (`VIRTIO_BLK_T_FLUSH`) and identify
+(`VIRTIO_BLK_T_GET_ID`) requests. A flush is device-wide: since each
+virtqueue has its own connection to `TARGET` (see below), a
+`VIRTIO_BLK_T_FLUSH` arriving on one makes durable every write issued
+through *any* of them, not just its own. `VIRTIO_BLK_T_DISCARD` and
 `_WRITE_ZEROES` are not implemented and are answered with
-`VIRTIO_BLK_S_UNSUPP`. Although `VIRTIO_BLK_F_MQ` is negotiated (so a
-front-end may query the queue count via `VHOST_USER_GET_QUEUE_NUM`), only a
-single virtqueue is actually serviced per device.
+`VIRTIO_BLK_S_UNSUPP`. `VIRTIO_BLK_F_MQ` is negotiated and genuinely
+serviced: `rawstor-vhost` advertises up to `--num-queues` virtqueues (a
+front-end learns the count via `VHOST_USER_GET_QUEUE_NUM`), each processed
+on its own thread and its own connection to `TARGET` in parallel.
 
 ### Notes
 

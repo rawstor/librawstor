@@ -325,6 +325,26 @@ Connection::invalidate_session(const std::shared_ptr<Session>& s) {
                     e.what()
                 );
             }
+        } else {
+            // s's slot was already replaced by another invalidate_session()
+            // cycle for the same session (see the comment above this
+            // re-find) while this one was off reconnecting -- new_session
+            // is fully connected but redundant; nothing will ever install
+            // it. Same rationale as old_session above: close() it
+            // explicitly here, or its recv-multishot registration leaks --
+            // ~Session()'s own cancel is fire-and-forget (only actually
+            // processed on this Queue's next wait()/wait_timeout(), which
+            // nothing guarantees will happen once the last reference to
+            // new_session drops).
+            try {
+                co_await new_session->close();
+            } catch (const std::exception& e) {
+                rawstd_warning(
+                    "Connection::invalidate_session(): close on redundant "
+                    "replacement session: %s\n",
+                    e.what()
+                );
+            }
         }
     } catch (...) {
         _reconnecting.erase(s.get());
