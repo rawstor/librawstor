@@ -29,6 +29,7 @@ extern "C" {
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include <cassert>
 #include <cstdio>
@@ -337,6 +338,30 @@ rawstd::Task<size_t> co_object_pwritev(
     co_return co_await awaiter;
 }
 
+rawstd::Task<size_t>
+co_object_discard(RawstorObject* object, size_t size, off_t offset) {
+    rawstd::CallbackAwaitable<size_t> awaiter;
+    int res =
+        rawstor_object_discard(object, size, offset, io_trampoline, &awaiter);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+    co_return co_await awaiter;
+}
+
+rawstd::Task<size_t> co_object_write_zeroes(
+    RawstorObject* object, size_t size, off_t offset, bool unmap, bool sync
+) {
+    rawstd::CallbackAwaitable<size_t> awaiter;
+    int res = rawstor_object_write_zeroes(
+        object, size, offset, unmap, sync, io_trampoline, &awaiter
+    );
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+    co_return co_await awaiter;
+}
+
 // rawstor_object_flush()'s own callback shape (ssize_t result) -- there's
 // nothing else to report, unlike io_trampoline()'s preadv/pwritev group
 // above.
@@ -446,6 +471,96 @@ void flush(std::unique_ptr<Request> req) {
     rawstd::DetachedTask::rethrow_if_pending();
 }
 
+// Shared by discard_task()/write_zeroes_task() below: both requests carry
+// the same payload shape, a device-readable array of
+// virtio_blk_discard_write_zeroes segments (one range each) in place of
+// the IN/OUT group's data buffer -- pulls that array out of `req`'s
+// out_iov(), or throws EINVAL if it isn't a whole number of segments.
+std::vector<virtio_blk_discard_write_zeroes> parse_dwz_segments(Request& req) {
+    size_t out_size = rawstd_iovec_size(req.out_iov(), req.out_niov());
+    if (out_size == 0 ||
+        out_size % sizeof(virtio_blk_discard_write_zeroes) != 0) {
+        rawstd_error(
+            "virtio-blk discard/write-zeroes: malformed segment payload "
+            "(%zu bytes)\n",
+            out_size
+        );
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+
+    std::vector<virtio_blk_discard_write_zeroes> segs(
+        out_size / sizeof(virtio_blk_discard_write_zeroes)
+    );
+    rawstd_iovec_to_buf(
+        req.out_iov(), req.out_niov(), 0, segs.data(), out_size
+    );
+    return segs;
+}
+
+rawstd::DetachedTask discard_task(std::unique_ptr<Request> req) {
+    int error = 0;
+    try {
+        std::vector<virtio_blk_discard_write_zeroes> segs =
+            parse_dwz_segments(*req);
+        for (const virtio_blk_discard_write_zeroes& seg : segs) {
+            size_t size = static_cast<size_t>(RAWSTD_LE32TOH(seg.num_sectors))
+                          << VIRTIO_BLK_SECTOR_BITS;
+            off_t offset = static_cast<off_t>(RAWSTD_LE64TOH(seg.sector))
+                           << VIRTIO_BLK_SECTOR_BITS;
+            co_await co_object_discard(req->device().object(), size, offset);
+        }
+    } catch (const std::system_error& e) {
+        error = e.code().value();
+    }
+    if (error != 0) {
+        rawstd_error("%s\n", strerror(error));
+        req->push(VIRTIO_BLK_S_IOERR, 0);
+        co_return;
+    }
+    req->push(VIRTIO_BLK_S_OK, 0);
+}
+
+void discard(std::unique_ptr<Request> req) {
+    discard_task(std::move(req));
+    rawstd::DetachedTask::rethrow_if_pending();
+}
+
+rawstd::DetachedTask write_zeroes_task(std::unique_ptr<Request> req) {
+    // Same write-cache-driven durability policy as pwritev_task() above --
+    // WRITE_ZEROES is a write as far as the guest's write-cache contract
+    // goes, so it must honor it the same way.
+    bool sync = !req->device().write_cache_enabled();
+    int error = 0;
+    try {
+        std::vector<virtio_blk_discard_write_zeroes> segs =
+            parse_dwz_segments(*req);
+        for (const virtio_blk_discard_write_zeroes& seg : segs) {
+            size_t size = static_cast<size_t>(RAWSTD_LE32TOH(seg.num_sectors))
+                          << VIRTIO_BLK_SECTOR_BITS;
+            off_t offset = static_cast<off_t>(RAWSTD_LE64TOH(seg.sector))
+                           << VIRTIO_BLK_SECTOR_BITS;
+            bool unmap = (RAWSTD_LE32TOH(seg.flags) &
+                          VIRTIO_BLK_WRITE_ZEROES_FLAG_UNMAP) != 0;
+            co_await co_object_write_zeroes(
+                req->device().object(), size, offset, unmap, sync
+            );
+        }
+    } catch (const std::system_error& e) {
+        error = e.code().value();
+    }
+    if (error != 0) {
+        rawstd_error("%s\n", strerror(error));
+        req->push(VIRTIO_BLK_S_IOERR, 0);
+        co_return;
+    }
+    req->push(VIRTIO_BLK_S_OK, 0);
+}
+
+void write_zeroes(std::unique_ptr<Request> req) {
+    write_zeroes_task(std::move(req));
+    rawstd::DetachedTask::rethrow_if_pending();
+}
+
 void panic(VuDev*, const char* err) {
     rawstd_error("libvhost-user: %s\n", err);
 }
@@ -536,7 +651,13 @@ void process_request(std::unique_ptr<Request> req) {
         break;
 
     case VIRTIO_BLK_T_DISCARD:
+        discard(std::move(req));
+        break;
+
     case VIRTIO_BLK_T_WRITE_ZEROES:
+        write_zeroes(std::move(req));
+        break;
+
     default:
         req->push(VIRTIO_BLK_S_UNSUPP, in_size);
         break;
@@ -737,11 +858,10 @@ Device::Device(
         1ull << VIRTIO_BLK_F_SIZE_MAX | 1ull << VIRTIO_BLK_F_SEG_MAX |
         1ull << VIRTIO_BLK_F_BLK_SIZE | 1ull << VIRTIO_BLK_F_TOPOLOGY |
         1ull << VIRTIO_BLK_F_MQ | 1ull << VIRTIO_BLK_F_FLUSH |
-        1ull << VIRTIO_BLK_F_CONFIG_WCE | 1ull << VIRTIO_F_VERSION_1 |
+        1ull << VIRTIO_BLK_F_CONFIG_WCE | 1ull << VIRTIO_BLK_F_DISCARD |
+        1ull << VIRTIO_BLK_F_WRITE_ZEROES | 1ull << VIRTIO_F_VERSION_1 |
         1ull << VIRTIO_RING_F_INDIRECT_DESC | 1ull << VIRTIO_RING_F_EVENT_IDX |
         1ull << VHOST_USER_F_PROTOCOL_FEATURES
-        // 1ull << VIRTIO_BLK_F_DISCARD |
-        // 1ull << VIRTIO_BLK_F_WRITE_ZEROES |
     ),
     _protocol_features(0),
     _blk_config(std::make_unique<virtio_blk_config>()) {
@@ -780,15 +900,26 @@ Device::Device(
 
         _blk_config->num_queues = 1; // VIRTIO_BLK_F_MQ
 
-        _blk_config->max_discard_sectors = 0; // VIRTIO_BLK_F_DISCARD
-        _blk_config->max_discard_seg = 0;     // VIRTIO_BLK_F_DISCARD
-                                              // VIRTIO_BLK_F_DISCARD
+        // VIRTIO_BLK_F_DISCARD -- one segment per request (matches
+        // discard_task()'s own per-segment dispatch loop above, which
+        // handles more than one only defensively); capped to UINT32_MAX
+        // sectors since the field itself is 32 bits.
+        _blk_config->max_discard_sectors = static_cast<uint32_t>(
+            std::min<uint64_t>(_blk_config->capacity, UINT32_MAX)
+        );
+        _blk_config->max_discard_seg = 1;
         _blk_config->discard_sector_alignment =
             _blk_config->blk_size >> VIRTIO_BLK_SECTOR_BITS;
 
-        _blk_config->max_write_zeroes_sectors = 0; // VIRTIO_BLK_F_WRITE_ZEROES
-        _blk_config->max_write_zeroes_seg = 0;     // VIRTIO_BLK_F_WRITE_ZEROES
-        _blk_config->write_zeroes_may_unmap = 0;   // VIRTIO_BLK_F_WRITE_ZEROES
+        // VIRTIO_BLK_F_WRITE_ZEROES -- same one-segment-per-request shape
+        // as discard above; write_zeroes_may_unmap advertises that this
+        // device may deallocate storage for a range the guest flags
+        // UNMAP (see write_zeroes_task()'s own use of the flag).
+        _blk_config->max_write_zeroes_sectors = static_cast<uint32_t>(
+            std::min<uint64_t>(_blk_config->capacity, UINT32_MAX)
+        );
+        _blk_config->max_write_zeroes_seg = 1;
+        _blk_config->write_zeroes_may_unmap = 1;
 
         _blk_config->max_secure_erase_sectors = 0; // VIRTIO_BLK_F_SECURE_ERASE
         _blk_config->max_secure_erase_seg = 0;     // VIRTIO_BLK_F_SECURE_ERASE

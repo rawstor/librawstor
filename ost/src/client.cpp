@@ -144,6 +144,30 @@ rawstd::Task<size_t> co_object_pwrite(
     co_return co_await awaiter;
 }
 
+rawstd::Task<size_t>
+co_object_discard(RawstorObject* object, size_t size, off_t offset) {
+    rawstd::CallbackAwaitable<size_t> awaiter;
+    int res =
+        rawstor_object_discard(object, size, offset, io_trampoline, &awaiter);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+    co_return co_await awaiter;
+}
+
+rawstd::Task<size_t> co_object_write_zeroes(
+    RawstorObject* object, size_t size, off_t offset, bool unmap, bool sync
+) {
+    rawstd::CallbackAwaitable<size_t> awaiter;
+    int res = rawstor_object_write_zeroes(
+        object, size, offset, unmap, sync, io_trampoline, &awaiter
+    );
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+    co_return co_await awaiter;
+}
+
 // rawstor_object_flush()'s own callback shape (ssize_t result) -- there's
 // nothing else to report, unlike io_trampoline()'s pread/pwrite group
 // above.
@@ -738,6 +762,20 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
                 client->_discard(head, io);
                 break;
             }
+            case RAWSTOR_CMD_WRITE_ZEROES: {
+                std::vector<unsigned char> body_data = co_await recv_frame_part(
+                    stream, sizeof(RawstorOSTFrameIOBody), fd, "request body",
+                    &stream_failed
+                );
+                client = weak.lock();
+                if (client == nullptr) {
+                    co_return;
+                }
+                RawstorOSTFrameIOBody io;
+                memcpy(&io, body_data.data(), sizeof(io));
+                client->_write_zeroes(head, io);
+                break;
+            }
             case RAWSTOR_CMD_WRITE: {
                 std::vector<unsigned char> body_data = co_await recv_frame_part(
                     stream, sizeof(RawstorOSTFrameIOBody), fd, "request body",
@@ -1322,7 +1360,9 @@ rawstd::DetachedTask Client::_write_task(
         co_return;
     }
 
-    client->_dispatch_write(head, body.offset, body.sync != 0, data);
+    client->_dispatch_write(
+        head, body.offset, (body.flags & RAWSTOR_FLAG_SYNC) != 0, data
+    );
 }
 
 void Client::_write(
@@ -1448,17 +1488,54 @@ void Client::_flush(
     rawstd::DetachedTask::rethrow_if_pending();
 }
 
-rawstd::DetachedTask
-Client::_discard_task(std::weak_ptr<Client> weak, RawstorOSTFrameHead head) {
+rawstd::DetachedTask Client::_discard_task(
+    std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
+    RawstorOSTFrameIOBody body
+) {
+    RawstorObject* object;
+    {
+        std::shared_ptr<Client> client = weak.lock();
+        if (client == nullptr) {
+            co_return;
+        }
+        if (client->_object == nullptr) {
+            bool send_failed = false;
+            try {
+                co_await client->_send_response(
+                    RAWSTOR_CMD_DISCARD, head.cid, -EBADF, 0
+                );
+            } catch (const std::exception& e) {
+                rawstd_error("%s\n", e.what());
+                send_failed = true;
+            }
+            if (send_failed) {
+                co_await client->_server.del_client(client->_fd);
+            }
+            co_return;
+        }
+        object = client->_object;
+    }
+
+    size_t result = 0;
+    int error = 0;
+    try {
+        result = co_await co_object_discard(object, body.len, body.offset);
+    } catch (const std::system_error& e) {
+        error = e.code().value();
+    }
+    if (error) {
+        rawstd_warning("%s\n", strerror(error));
+    }
+
     std::shared_ptr<Client> client = weak.lock();
     if (client == nullptr) {
         co_return;
     }
-
     bool send_failed = false;
     try {
         co_await client->_send_response(
-            RAWSTOR_CMD_DISCARD, head.cid, -ENOSYS, 0
+            RAWSTOR_CMD_DISCARD, head.cid,
+            error ? -error : static_cast<int32_t>(result), 0
         );
     } catch (const std::exception& e) {
         rawstd_error("%s\n", e.what());
@@ -1470,9 +1547,79 @@ Client::_discard_task(std::weak_ptr<Client> weak, RawstorOSTFrameHead head) {
 }
 
 void Client::_discard(
-    const RawstorOSTFrameHead& head, const RawstorOSTFrameIOBody&
+    const RawstorOSTFrameHead& head, const RawstorOSTFrameIOBody& body
 ) {
-    _discard_task(weak_from_this(), head);
+    _discard_task(weak_from_this(), head, body);
+    rawstd::DetachedTask::rethrow_if_pending();
+}
+
+rawstd::DetachedTask Client::_write_zeroes_task(
+    std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
+    RawstorOSTFrameIOBody body
+) {
+    RawstorObject* object;
+    {
+        std::shared_ptr<Client> client = weak.lock();
+        if (client == nullptr) {
+            co_return;
+        }
+        if (client->_object == nullptr) {
+            bool send_failed = false;
+            try {
+                co_await client->_send_response(
+                    RAWSTOR_CMD_WRITE_ZEROES, head.cid, -EBADF, 0
+                );
+            } catch (const std::exception& e) {
+                rawstd_error("%s\n", e.what());
+                send_failed = true;
+            }
+            if (send_failed) {
+                co_await client->_server.del_client(client->_fd);
+            }
+            co_return;
+        }
+        object = client->_object;
+    }
+
+    bool unmap = (body.flags & RAWSTOR_FLAG_UNMAP) != 0;
+    bool sync = (body.flags & RAWSTOR_FLAG_SYNC) != 0;
+
+    size_t result = 0;
+    int error = 0;
+    try {
+        result = co_await co_object_write_zeroes(
+            object, body.len, body.offset, unmap, sync
+        );
+    } catch (const std::system_error& e) {
+        error = e.code().value();
+    }
+    if (error) {
+        rawstd_warning("%s\n", strerror(error));
+    }
+
+    std::shared_ptr<Client> client = weak.lock();
+    if (client == nullptr) {
+        co_return;
+    }
+    bool send_failed = false;
+    try {
+        co_await client->_send_response(
+            RAWSTOR_CMD_WRITE_ZEROES, head.cid,
+            error ? -error : static_cast<int32_t>(result), 0
+        );
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        send_failed = true;
+    }
+    if (send_failed) {
+        co_await client->_server.del_client(client->_fd);
+    }
+}
+
+void Client::_write_zeroes(
+    const RawstorOSTFrameHead& head, const RawstorOSTFrameIOBody& body
+) {
+    _write_zeroes_task(weak_from_this(), head, body);
     rawstd::DetachedTask::rethrow_if_pending();
 }
 

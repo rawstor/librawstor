@@ -68,6 +68,19 @@ struct virtio_blk_outhdr {
     __virtio64 sector;
 };
 
+/* Discard/write zeroes range for each request. */
+struct virtio_blk_discard_write_zeroes {
+    /* discard/write zeroes start sector */
+    __virtio64 sector;
+    /* number of discard/write zeroes sectors */
+    __virtio32 num_sectors;
+    /* flags for this range */
+    __virtio32 flags;
+};
+
+/* Set if a WRITE_ZEROES range may result in deallocation of the range. */
+#define VIRTIO_BLK_WRITE_ZEROES_FLAG_UNMAP (1 << 0)
+
 /* And this is the final byte of the write scatter-gather list. */
 #define VIRTIO_BLK_S_OK     0
 #define VIRTIO_BLK_S_IOERR  1
