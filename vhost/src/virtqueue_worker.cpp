@@ -23,9 +23,11 @@
 #include <rawstor/target.h>
 
 #include <algorithm>
+#include <future>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include <cerrno>
 #include <cstring>
@@ -237,6 +239,21 @@ rawstd::Task<void> co_object_flush(RawstorObject* object) {
     co_await awaiter;
 }
 
+// VirtQueue::apply(FlushObject&&)'s actual work: flush this VirtQueue's
+// own object and settle `reply` with the outcome. A DetachedTask (not
+// awaited by apply() itself) since rawstor_object_flush() is async and
+// apply() -- like every other apply() overload -- must return promptly
+// so drain_commands() can move on to the next queued command.
+rawstd::DetachedTask
+flush_object_task(RawstorObject* object, VirtQueue::Reply<void> reply) {
+    try {
+        co_await co_object_flush(object);
+        reply.promise.set_value();
+    } catch (...) {
+        reply.promise.set_exception(std::current_exception());
+    }
+}
+
 // Both process_queue() (the only caller of process_request(), below) and
 // this file's own launch_*()-style wrappers already log-and-continue on
 // any exception escaping here, so none of these *_task() coroutines need
@@ -314,7 +331,18 @@ void pwritev(std::unique_ptr<Request> req) {
 rawstd::DetachedTask flush_task(std::unique_ptr<Request> req) {
     int error = 0;
     try {
+        // VIRTIO_BLK_T_FLUSH must make durable every write issued
+        // through *any* VirtQueue, not just this one -- each has its
+        // own independent RawstorObject (see Device's class comment).
+        // post_flush_others() only submits (it doesn't wait), so those
+        // run concurrently with this VirtQueue's own flush below rather
+        // than serialized after it.
+        std::vector<std::future<void>> others =
+            req->vq().device().post_flush_others(req->vq());
         co_await co_object_flush(req->vq().object());
+        for (std::future<void>& f : others) {
+            f.get();
+        }
     } catch (const std::system_error& e) {
         error = e.code().value();
     }
@@ -526,6 +554,11 @@ void VirtQueue::complete_request(uint16_t head, uint32_t len) {
         }
         _pending_pauses.clear();
     }
+}
+
+void VirtQueue::apply(FlushObject&& cmd) {
+    flush_object_task(_object, std::move(cmd.reply));
+    rawstd::DetachedTask::rethrow_if_pending();
 }
 
 } // namespace vhost

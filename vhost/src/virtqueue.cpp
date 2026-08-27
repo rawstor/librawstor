@@ -345,6 +345,13 @@ void VirtQueue::resume() {
     post(Resume{});
 }
 
+std::future<void> VirtQueue::post_flush() {
+    FlushObject cmd;
+    std::future<void> f = cmd.reply.promise.get_future();
+    post(std::move(cmd));
+    return f;
+}
+
 void VirtQueue::drain_commands() {
     std::deque<Command> local;
     {

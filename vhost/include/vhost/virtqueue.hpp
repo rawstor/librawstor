@@ -108,11 +108,15 @@ private:
         Reply<void> reply;
     };
     struct Resume {};
+    struct FlushObject {
+        Reply<void> reply;
+    };
     struct Shutdown {};
 
     using Command = std::variant<
         SetVringSize, SetVringBase, SetKickFd, SetCallFd, SetErrFd,
-        SetVringAddr, SetEnabled, GetVringBase, Pause, Resume, Shutdown>;
+        SetVringAddr, SetEnabled, GetVringBase, Pause, Resume, FlushObject,
+        Shutdown>;
 
     Ring _ring;
 
@@ -201,6 +205,10 @@ private:
     void apply(GetVringBase&& cmd);
     void apply(Pause&& cmd);
     void apply(Resume&& cmd);
+    // Defined in virtqueue_worker.cpp, not virtqueue.cpp: needs
+    // co_object_flush(), which lives there alongside the rest of the
+    // data-plane's rawstor_object_*() bridging.
+    void apply(FlushObject&& cmd);
     void apply(Shutdown&& cmd);
 
     void post(Command cmd);
@@ -305,8 +313,9 @@ public:
      */
     void stop() noexcept;
 
-    // --- cross-thread policy: callable only from the control-plane
-    // thread, only once this VirtQueue is running(). ---
+    // --- cross-thread policy: callable only once this VirtQueue is
+    // running(), and (except for post_flush(), see its own doc comment)
+    // only from the control-plane thread. ---
 
     void post_set_vring_size(unsigned int size);
     void post_set_vring_base(uint16_t idx);
@@ -343,6 +352,22 @@ public:
      * guaranteed to arrive to trigger that on its own).
      */
     void resume();
+
+    /**
+     * Flush this VirtQueue's own backing object and return a future
+     * that becomes ready once that completes (or holds the exception
+     * should it fail) -- see Device::post_flush_others(), the only
+     * caller: a VIRTIO_BLK_T_FLUSH request handled on one VirtQueue must
+     * make durable every write issued through *any* VirtQueue, since
+     * each has its own independent RawstorObject (see the class
+     * comment). Unlike everything else in this section, safe to call
+     * from another VirtQueue's own worker thread too -- just never from
+     * this same VirtQueue's own thread (it would be posting a command to
+     * itself and then blocking the very thread that would apply it).
+     * Posting is non-blocking; only the returned future's get()/wait()
+     * blocks.
+     */
+    std::future<void> post_flush();
 
     // --- worker-thread-only: public only because they're called from
     // free-function completion callbacks in virtqueue.cpp (kick_cb/

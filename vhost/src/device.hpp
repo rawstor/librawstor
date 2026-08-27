@@ -14,6 +14,7 @@
 #include <unistd.h>
 
 #include <atomic>
+#include <future>
 #include <memory>
 #include <shared_mutex>
 #include <string>
@@ -46,9 +47,18 @@ namespace vhost {
  *  - `_config.wce`: mirrored into `_wce_enabled`, a `std::atomic<bool>`
  *    (the only field of `_config` read from a VirtQueue thread, once
  *    per write request).
- *  - `_object`/`_backend_fd`/`_config` (everything else) are either
- *    read-only after construction or touched only from the control-plane
- *    thread, same as before VirtQueue owned its own threads.
+ *  - `_backend_fd`/`_config` (everything else) are either read-only
+ *    after construction or touched only from the control-plane thread,
+ *    same as before VirtQueue owned its own threads.
+ *
+ * One more cross-VirtQueue-thread need doesn't fit the "Device holds the
+ * shared state" shape above: VIRTIO_BLK_T_FLUSH must make durable every
+ * write issued through *any* VirtQueue, not just the one it arrived on,
+ * since each VirtQueue now has its own independent RawstorObject (see
+ * VirtQueue's class comment) instead of the one Device-wide object every
+ * queue used to share. post_flush_others() is what a VirtQueue's own
+ * flush handling (virtqueue_worker.cpp) uses to reach every other
+ * VirtQueue's object.
  */
 class Device final {
 private:
@@ -191,6 +201,17 @@ public:
     uint64_t add_mem_reg(const VhostUserMemoryRegion& m, int fd);
 
     void rem_mem_reg(const VhostUserMemoryRegion& m);
+
+    /**
+     * Kick off (non-blocking) a flush of every VirtQueue's own backing
+     * object except `requester`'s, and return one future per queue so
+     * flushed -- see the class comment. `requester` must be flushed by
+     * the caller separately (typically concurrently, via its own
+     * co_object_flush()): asking a VirtQueue to flush itself through
+     * this same command-queue mechanism would have it block waiting on
+     * a command only its own (busy-blocking) thread could ever apply.
+     */
+    std::vector<std::future<void>> post_flush_others(VirtQueue& requester);
 
     void loop();
 };
