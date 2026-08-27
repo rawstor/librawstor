@@ -128,7 +128,7 @@ multiple in-flight requests on a virtqueue may complete out of order.
 
 ### Usage
 
-`rawstor-vhost [-h] -s SOCKET_PATH TARGET [--queue-size SIZE] [--num-queues N] [-v]`
+`rawstor-vhost [-h] -s SOCKET_PATH TARGET [--queue-size SIZE] [--num-queues N] [--write-cache on|off] [-v]`
 
 ### Options
 
@@ -139,6 +139,7 @@ multiple in-flight requests on a virtqueue may complete out of order.
 | `TARGET` | Comma‑separated list of rawstor backend targets (see [Locations and Targets](https://github.com/rawstor/librawstor/blob/main/docs/locations_and_targets.md)). |
 | `--queue-size SIZE` | RawIO queue (`io_uring`) depth of each virtqueue's own queue. Default: `256`. |
 | `--num-queues N` | Number of virtqueues advertised to the guest, each serviced by its own thread and its own connection to `TARGET`. The guest picks how many of these it actually uses (typically up to its vCPU count) via QEMU's own `num-queues=`. Default: `16`. |
+| `--write-cache on\|off` | Advertise a writeback (`on`) or write-through (`off`, default) cache to the guest; write-through makes every write durable on completion, writeback relies on the guest issuing an explicit flush. |
 | `-v, --version` | Print version and exit. |
 
 ### Example
