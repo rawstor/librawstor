@@ -102,7 +102,7 @@ Client::send_write(uint64_t offset, const void* buf, size_t size, bool sync) {
             .offset = offset,
             .len = static_cast<uint32_t>(size),
             .hash = rawstd_hash_scalar(buf, size),
-            .sync = static_cast<uint8_t>(sync ? 1 : 0),
+            .flags = static_cast<uint8_t>(sync ? RAWSTOR_FLAG_SYNC : 0),
         },
     };
     send_all(_fd, &frame, sizeof(frame));
@@ -119,7 +119,7 @@ uint16_t Client::send_read(uint64_t offset, uint32_t size) {
                 .cmd = RAWSTOR_CMD_READ,
                 .cid = cid,
             },
-        .body = {.offset = offset, .len = size, .hash = 0, .sync = 0},
+        .body = {.offset = offset, .len = size, .hash = 0, .flags = 0},
     };
     send_all(_fd, &frame, sizeof(frame));
     return cid;
@@ -134,7 +134,7 @@ uint16_t Client::send_discard(uint64_t offset, uint32_t size) {
                 .cmd = RAWSTOR_CMD_DISCARD,
                 .cid = cid,
             },
-        .body = {.offset = offset, .len = size, .hash = 0, .sync = 0},
+        .body = {.offset = offset, .len = size, .hash = 0, .flags = 0},
     };
     send_all(_fd, &frame, sizeof(frame));
     return cid;
@@ -145,8 +145,7 @@ uint16_t Client::send_write_zeroes(
 ) {
     uint16_t cid = _next_cid++;
     uint8_t flags = static_cast<uint8_t>(
-        (unmap ? RAWSTOR_WRITE_ZEROES_FLAG_UNMAP : 0) |
-        (sync ? RAWSTOR_WRITE_ZEROES_FLAG_SYNC : 0)
+        (unmap ? RAWSTOR_FLAG_UNMAP : 0) | (sync ? RAWSTOR_FLAG_SYNC : 0)
     );
     RawstorOSTFrameIO frame = {
         .head =
@@ -159,7 +158,7 @@ uint16_t Client::send_write_zeroes(
             .offset = offset,
             .len = size,
             .hash = 0,
-            .sync = flags,
+            .flags = flags,
         },
     };
     send_all(_fd, &frame, sizeof(frame));

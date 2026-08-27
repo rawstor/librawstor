@@ -304,7 +304,7 @@ public:
                     .offset = (uint64_t)offset,
                     .len = (uint32_t)_size,
                     .hash = 0,
-                    .sync = 0,
+                    .flags = 0,
                 },
         }),
         _hash(0) {}
@@ -387,7 +387,7 @@ public:
                     .offset = (uint64_t)offset,
                     .len = (uint32_t)_size,
                     .hash = 0,
-                    .sync = 0,
+                    .flags = 0,
                 },
         }),
         _hash(0) {}
@@ -463,7 +463,7 @@ public:
                 .offset = (uint64_t)offset,
                 .len = (uint32_t)size,
                 .hash = hash(buf, size),
-                .sync = sync,
+                .flags = static_cast<uint8_t>(sync ? RAWSTOR_FLAG_SYNC : 0),
             },
         }) {
         _iov.reserve(2);
@@ -538,7 +538,7 @@ public:
                 .offset = (uint64_t)offset,
                 .len = (uint32_t)size,
                 .hash = hash(iov, niov),
-                .sync = sync,
+                .flags = static_cast<uint8_t>(sync ? RAWSTOR_FLAG_SYNC : 0),
             },
         }) {
         _iov.reserve(1 + niov);
@@ -601,8 +601,7 @@ public:
     SessionOpNoPayloadIO(
         const std::shared_ptr<rawstor::ost::Session>& session, uint16_t cid,
         RawstorOSTCommandType cmd, const char* op_name, size_t size,
-        off_t offset, uint8_t sync_or_flags,
-        const rawstd::TraceEvent& trace_event
+        off_t offset, uint8_t flags, const rawstd::TraceEvent& trace_event
     ) :
         SessionOp(session, cid, trace_event, op_name, size, offset),
         _cmd(cmd),
@@ -617,7 +616,7 @@ public:
                 .offset = (uint64_t)offset,
                 .len = (uint32_t)size,
                 .hash = 0,
-                .sync = sync_or_flags,
+                .flags = flags,
             },
         }) {}
 
@@ -670,8 +669,7 @@ public:
         SessionOpNoPayloadIO(
             session, cid, RAWSTOR_CMD_WRITE_ZEROES, "write_zeroes", size,
             offset,
-            (unmap ? RAWSTOR_WRITE_ZEROES_FLAG_UNMAP : 0) |
-                (sync ? RAWSTOR_WRITE_ZEROES_FLAG_SYNC : 0),
+            (unmap ? RAWSTOR_FLAG_UNMAP : 0) | (sync ? RAWSTOR_FLAG_SYNC : 0),
             trace_event
         ) {}
 };

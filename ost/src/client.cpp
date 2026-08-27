@@ -1360,7 +1360,9 @@ rawstd::DetachedTask Client::_write_task(
         co_return;
     }
 
-    client->_dispatch_write(head, body.offset, body.sync != 0, data);
+    client->_dispatch_write(
+        head, body.offset, (body.flags & RAWSTOR_FLAG_SYNC) != 0, data
+    );
 }
 
 void Client::_write(
@@ -1579,11 +1581,8 @@ rawstd::DetachedTask Client::_write_zeroes_task(
         object = client->_object;
     }
 
-    // `sync` doubles as a RAWSTOR_WRITE_ZEROES_FLAG_* bitmask for
-    // WRITE_ZEROES -- see RawstorOSTFrameIOBody's own doc comment
-    // (include/rawstor/protocol.h).
-    bool unmap = (body.sync & RAWSTOR_WRITE_ZEROES_FLAG_UNMAP) != 0;
-    bool sync = (body.sync & RAWSTOR_WRITE_ZEROES_FLAG_SYNC) != 0;
+    bool unmap = (body.flags & RAWSTOR_FLAG_UNMAP) != 0;
+    bool sync = (body.flags & RAWSTOR_FLAG_SYNC) != 0;
 
     size_t result = 0;
     int error = 0;

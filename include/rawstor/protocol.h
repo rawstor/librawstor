@@ -55,24 +55,25 @@ struct RawstorOSTFrameBasic {
 // Shared by READ/WRITE/DISCARD/WRITE_ZEROES: `hash` is only meaningful for
 // WRITE (payload integrity check) and READ (of its response body) --
 // DISCARD/WRITE_ZEROES carry no payload, so it's unused there (send as 0,
-// ignore on receipt). For WRITE, `sync` is the single durability flag (0
-// or 1). WRITE_ZEROES instead reads the same byte as a bitmask of
-// RAWSTOR_WRITE_ZEROES_FLAG_*, since it needs both an unmap hint and its
-// own durability flag; DISCARD leaves the byte unused (0).
+// ignore on receipt). `flags` is a RAWSTOR_FLAG_* bitmask, shared across
+// every command that uses it: WRITE sets only RAWSTOR_FLAG_SYNC,
+// WRITE_ZEROES sets RAWSTOR_FLAG_SYNC and/or RAWSTOR_FLAG_UNMAP, and
+// DISCARD leaves the byte unused (0).
 struct RawstorOSTFrameIOBody {
     uint64_t offset;
     uint32_t len;
     uint64_t hash;
-    uint8_t sync;
+    uint8_t flags;
 } RAWSTOR_PACKED;
 
-// WRITE_ZEROES's flags, packed into RawstorOSTFrameIOBody::sync above: may
-// the backend deallocate the zeroed range's storage (same meaning as
-// virtio-blk's VIRTIO_BLK_WRITE_ZEROES_FLAG_UNMAP), and whether the range
-// must be durable before the response is sent (same meaning as WRITE's own
-// `sync`).
-#define RAWSTOR_WRITE_ZEROES_FLAG_UNMAP (1u << 0)
-#define RAWSTOR_WRITE_ZEROES_FLAG_SYNC (1u << 1)
+// RawstorOSTFrameIOBody::flags bits above: whether the affected range must
+// be durable before the response is sent (same meaning as
+// rawstor_object_pwrite()'s own `sync`; meaningful for WRITE and
+// WRITE_ZEROES), and, for WRITE_ZEROES only, whether the backend may
+// deallocate the zeroed range's storage (same meaning as virtio-blk's
+// VIRTIO_BLK_WRITE_ZEROES_FLAG_UNMAP).
+#define RAWSTOR_FLAG_SYNC (1u << 0)
+#define RAWSTOR_FLAG_UNMAP (1u << 1)
 
 struct RawstorOSTFrameIO {
     struct RawstorOSTFrameHead head;
