@@ -168,18 +168,19 @@ qemu-system-x86_64 \
 
 `rawstor-vhost` negotiates `VIRTIO_BLK_F_SIZE_MAX`, `VIRTIO_BLK_F_SEG_MAX`,
 `VIRTIO_BLK_F_BLK_SIZE`, `VIRTIO_BLK_F_TOPOLOGY`, `VIRTIO_BLK_F_MQ`,
-`VIRTIO_BLK_F_FLUSH`, `VIRTIO_BLK_F_CONFIG_WCE`, `VIRTIO_RING_F_INDIRECT_DESC`
-and `VIRTIO_RING_F_EVENT_IDX`, and services read (`VIRTIO_BLK_T_IN`), write
-(`VIRTIO_BLK_T_OUT`), flush (`VIRTIO_BLK_T_FLUSH`) and identify
-(`VIRTIO_BLK_T_GET_ID`) requests. A flush is device-wide: since each
-virtqueue has its own connection to `TARGET` (see below), a
+`VIRTIO_BLK_F_FLUSH`, `VIRTIO_BLK_F_CONFIG_WCE`, `VIRTIO_BLK_F_DISCARD`,
+`VIRTIO_BLK_F_WRITE_ZEROES`, `VIRTIO_RING_F_INDIRECT_DESC` and
+`VIRTIO_RING_F_EVENT_IDX`, and services read (`VIRTIO_BLK_T_IN`), write
+(`VIRTIO_BLK_T_OUT`), flush (`VIRTIO_BLK_T_FLUSH`), discard
+(`VIRTIO_BLK_T_DISCARD`), write-zeroes (`VIRTIO_BLK_T_WRITE_ZEROES`) and
+identify (`VIRTIO_BLK_T_GET_ID`) requests. A flush is device-wide: since
+each virtqueue has its own connection to `TARGET` (see below), a
 `VIRTIO_BLK_T_FLUSH` arriving on one makes durable every write issued
-through *any* of them, not just its own. `VIRTIO_BLK_T_DISCARD` and
-`_WRITE_ZEROES` are not implemented and are answered with
-`VIRTIO_BLK_S_UNSUPP`. `VIRTIO_BLK_F_MQ` is negotiated and genuinely
-serviced: `rawstor-vhost` advertises up to `--num-queues` virtqueues (a
-front-end learns the count via `VHOST_USER_GET_QUEUE_NUM`), each processed
-on its own thread and its own connection to `TARGET` in parallel.
+through *any* of them, not just its own. `VIRTIO_BLK_F_MQ` is negotiated
+and genuinely serviced: `rawstor-vhost` advertises up to `--num-queues`
+virtqueues (a front-end learns the count via `VHOST_USER_GET_QUEUE_NUM`),
+each processed on its own thread and its own connection to `TARGET` in
+parallel.
 
 ### Notes
 
@@ -280,6 +281,8 @@ OBJECT_ID=...
 sudo modprobe vduse
 
 sudo ${PREFIX}/bin/rawstor-vduse \
+    --num-queues=8 \
+    --write-cache=off \
     ost://${OST_ADDR}/${OBJECT_ID} &
 
 # Attach the device to the vDPA bus once rawstor-vduse has created it
