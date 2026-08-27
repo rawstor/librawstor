@@ -168,9 +168,13 @@ qemu-system-x86_64 \
 
 `rawstor-vhost` negotiates `VIRTIO_BLK_F_SIZE_MAX`, `VIRTIO_BLK_F_SEG_MAX`,
 `VIRTIO_BLK_F_BLK_SIZE`, `VIRTIO_BLK_F_TOPOLOGY`, `VIRTIO_BLK_F_MQ`,
-`VIRTIO_RING_F_INDIRECT_DESC` and `VIRTIO_RING_F_EVENT_IDX`, and services
-read (`VIRTIO_BLK_T_IN`), write (`VIRTIO_BLK_T_OUT`) and identify
-(`VIRTIO_BLK_T_GET_ID`) requests. `VIRTIO_BLK_T_FLUSH`, `_DISCARD` and
+`VIRTIO_BLK_F_FLUSH`, `VIRTIO_BLK_F_CONFIG_WCE`, `VIRTIO_RING_F_INDIRECT_DESC`
+and `VIRTIO_RING_F_EVENT_IDX`, and services read (`VIRTIO_BLK_T_IN`), write
+(`VIRTIO_BLK_T_OUT`), flush (`VIRTIO_BLK_T_FLUSH`) and identify
+(`VIRTIO_BLK_T_GET_ID`) requests. A flush is device-wide: since each
+virtqueue has its own connection to `TARGET` (see below), a
+`VIRTIO_BLK_T_FLUSH` arriving on one makes durable every write issued
+through *any* of them, not just its own. `VIRTIO_BLK_T_DISCARD` and
 `_WRITE_ZEROES` are not implemented and are answered with
 `VIRTIO_BLK_S_UNSUPP`. `VIRTIO_BLK_F_MQ` is negotiated and genuinely
 serviced: `rawstor-vhost` advertises up to `--num-queues` virtqueues (a
