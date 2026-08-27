@@ -281,8 +281,6 @@ OBJECT_ID=...
 sudo modprobe vduse
 
 sudo rawstor-vduse \
-    --num-queues=8 \
-    --write-cache=off \
     ost://${OST_ADDR}/${OBJECT_ID} &
 
 # Attach the device to the vDPA bus once rawstor-vduse has created it
