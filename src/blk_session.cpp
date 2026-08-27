@@ -6,10 +6,20 @@
 
 #include <rawio/awaitable.hpp>
 
+#include <rawstd/gcc.h>
 #include <rawstd/gpp.hpp>
 #include <rawstd/logging.h>
 
+#include <algorithm>
 #include <stdexcept>
+#include <vector>
+
+#include <cerrno>
+#include <cstddef>
+
+#if defined(RAWSTD_ON_LINUX)
+#include <linux/falloc.h>
+#endif
 
 namespace {
 
@@ -30,6 +40,17 @@ public:
 
     void await_resume() const noexcept {}
 };
+
+// Either errno a fallocate() mode can fail with when the underlying
+// filesystem/backing store just doesn't implement it -- distinct from a
+// real failure (e.g. EIO, EINVAL for an out-of-range request), which
+// callers below still propagate. ENOSYS is what rawio::poll::Queue's own
+// fallocate() (librawio/src/poll_queue.cpp) reports on macOS, which has no
+// equivalent syscall at all; EOPNOTSUPP is what Linux itself reports for a
+// mode a given filesystem doesn't support.
+bool fallocate_not_supported(int error) noexcept {
+    return error == EOPNOTSUPP || error == ENOSYS;
+}
 
 } // namespace
 
@@ -157,6 +178,99 @@ rawstd::Task<size_t> Session::pwritev(
     _throttle_release();
 
     co_return result;
+}
+
+rawstd::Task<size_t> Session::discard(size_t size, off_t offset) {
+    rawstd_debug(
+        "%s(): fd = %d, size = %zu, offset = %jd\n", __FUNCTION__, fd(), size,
+        (intmax_t)offset
+    );
+
+#if defined(RAWSTD_ON_LINUX)
+    try {
+        co_await _queue.fallocate(
+            fd(), FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE, offset,
+            static_cast<off_t>(size)
+        );
+    } catch (const std::system_error& e) {
+        // discard() is purely advisory (see its own doc comment on
+        // rawstor::Session) -- a backing store that can't reclaim the
+        // range just means nothing was reclaimed, not that the call
+        // failed.
+        if (!fallocate_not_supported(e.code().value())) {
+            throw;
+        }
+    }
+#endif
+
+    co_return size;
+}
+
+rawstd::Task<size_t>
+Session::write_zeroes(size_t size, off_t offset, bool unmap, bool sync) {
+    rawstd_debug(
+        "%s(): fd = %d, size = %zu, offset = %jd, unmap = %d, sync = %d\n",
+        __FUNCTION__, fd(), size, (intmax_t)offset, unmap, sync
+    );
+
+    co_await _throttle_acquire(size);
+    try {
+        bool zeroed = false;
+
+#if defined(RAWSTD_ON_LINUX)
+        // FALLOC_FL_PUNCH_HOLE additionally deallocates the range (what
+        // `unmap` asks for) while still guaranteeing zero readback, same
+        // as FALLOC_FL_ZERO_RANGE alone -- see fallocate(2).
+        int mode = unmap ? (FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE)
+                         : FALLOC_FL_ZERO_RANGE;
+        try {
+            co_await _queue.fallocate(
+                fd(), mode, offset, static_cast<off_t>(size)
+            );
+            zeroed = true;
+        } catch (const std::system_error& e) {
+            if (!fallocate_not_supported(e.code().value())) {
+                throw;
+            }
+            // Falls through to the portable zero-fill path below --
+            // unlike discard() above, write_zeroes() must still guarantee
+            // a zeroed range even when the backing store can't do it for
+            // free.
+        }
+#else
+        (void)unmap;
+#endif
+
+        if (!zeroed) {
+            static constexpr size_t chunk_size = 1u << 20; // 1MB
+            std::vector<unsigned char> zeros(std::min(size, chunk_size), 0);
+            size_t remaining = size;
+            off_t at = offset;
+            while (remaining > 0) {
+                size_t chunk = std::min(remaining, zeros.size());
+                co_await _queue.pwrite(fd(), zeros.data(), chunk, at, false);
+                remaining -= chunk;
+                at += static_cast<off_t>(chunk);
+            }
+        }
+
+        // Neither fallocate() (metadata + any data it touches) nor the
+        // zero-fill loop above (each individual pwrite() issued with
+        // sync=false, since there's no point paying for a durable write
+        // per chunk when one fsync() covers the whole range at the end)
+        // has a per-call durability flag the way pwrite()'s own RWF_DSYNC
+        // does -- a single fdatasync() after the fact is this function's
+        // only way to honor `sync`.
+        if (sync) {
+            co_await _queue.fsync(fd(), /*datasync=*/true);
+        }
+    } catch (...) {
+        _throttle_release();
+        throw;
+    }
+    _throttle_release();
+
+    co_return size;
 }
 
 rawstd::Task<void> Session::flush() {

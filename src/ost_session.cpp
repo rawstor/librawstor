@@ -304,7 +304,7 @@ public:
                     .offset = (uint64_t)offset,
                     .len = (uint32_t)_size,
                     .hash = 0,
-                    .sync = 0,
+                    .flags = 0,
                 },
         }),
         _hash(0) {}
@@ -387,7 +387,7 @@ public:
                     .offset = (uint64_t)offset,
                     .len = (uint32_t)_size,
                     .hash = 0,
-                    .sync = 0,
+                    .flags = 0,
                 },
         }),
         _hash(0) {}
@@ -463,7 +463,7 @@ public:
                 .offset = (uint64_t)offset,
                 .len = (uint32_t)size,
                 .hash = hash(buf, size),
-                .sync = sync,
+                .flags = static_cast<uint8_t>(sync ? RAWSTOR_FLAG_SYNC : 0),
             },
         }) {
         _iov.reserve(2);
@@ -538,7 +538,7 @@ public:
                 .offset = (uint64_t)offset,
                 .len = (uint32_t)size,
                 .hash = hash(iov, niov),
-                .sync = sync,
+                .flags = static_cast<uint8_t>(sync ? RAWSTOR_FLAG_SYNC : 0),
             },
         }) {
         _iov.reserve(1 + niov);
@@ -586,6 +586,92 @@ public:
         // A write response never carries a body, regardless of error.
         return 0;
     }
+};
+
+// Shared by SessionOpDiscard/SessionOpWriteZeroes below: both carry an
+// offset+len request (RawstorOSTFrameIO, same shape as SessionOpRead's,
+// minus any payload) and a response that never carries a body -- same
+// terminal shape as SessionOpWrite's own response_head_cb().
+class SessionOpNoPayloadIO : public SessionOp {
+protected:
+    RawstorOSTCommandType _cmd;
+    RawstorOSTFrameIO _request;
+
+public:
+    SessionOpNoPayloadIO(
+        const std::shared_ptr<rawstor::ost::Session>& session, uint16_t cid,
+        RawstorOSTCommandType cmd, const char* op_name, size_t size,
+        off_t offset, uint8_t flags, const rawstd::TraceEvent& trace_event
+    ) :
+        SessionOp(session, cid, trace_event, op_name, size, offset),
+        _cmd(cmd),
+        _request({
+            .head =
+                {
+                    .magic = RAWSTOR_MAGIC,
+                    .cmd = cmd,
+                    .cid = cid,
+                },
+            .body = {
+                .offset = (uint64_t)offset,
+                .len = (uint32_t)size,
+                .hash = 0,
+                .flags = flags,
+            },
+        }) {}
+
+    const void* request_data() const noexcept { return &_request; }
+
+    size_t request_size() const noexcept override { return sizeof(_request); }
+
+    size_t response_head_cb(
+        const RawstorOSTFrameResponse* response, int error
+    ) override {
+        RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
+
+        if (!error) {
+            error = validate_response(response);
+        }
+
+        if (!error) {
+            error = validate_cmd(response->head.cmd, _cmd);
+        }
+
+        _dispatch(
+            !error && response != nullptr ? response->body.res : 0, error
+        );
+
+        // Neither a discard nor a write-zeroes response ever carries a
+        // body, regardless of error.
+        return 0;
+    }
+};
+
+class SessionOpDiscard final : public SessionOpNoPayloadIO {
+public:
+    SessionOpDiscard(
+        const std::shared_ptr<rawstor::ost::Session>& session, uint16_t cid,
+        size_t size, off_t offset, const rawstd::TraceEvent& trace_event
+    ) :
+        SessionOpNoPayloadIO(
+            session, cid, RAWSTOR_CMD_DISCARD, "discard", size, offset, 0,
+            trace_event
+        ) {}
+};
+
+class SessionOpWriteZeroes final : public SessionOpNoPayloadIO {
+public:
+    SessionOpWriteZeroes(
+        const std::shared_ptr<rawstor::ost::Session>& session, uint16_t cid,
+        size_t size, off_t offset, bool unmap, bool sync,
+        const rawstd::TraceEvent& trace_event
+    ) :
+        SessionOpNoPayloadIO(
+            session, cid, RAWSTOR_CMD_WRITE_ZEROES, "write_zeroes", size,
+            offset,
+            (unmap ? RAWSTOR_FLAG_UNMAP : 0) | (sync ? RAWSTOR_FLAG_SYNC : 0),
+            trace_event
+        ) {}
 };
 
 class SessionOpFlush final : public SessionOp {
@@ -1296,6 +1382,61 @@ rawstd::Task<size_t> Session::pwritev(
     try {
         size_t result = co_await _queue.sendmsg(
             fd(), op->request_msg(), RAWSTD_MSG_NOSIGNAL
+        );
+        RAWSTD_TRACE_EVENT_MESSAGE(
+            trace_event, "%zu of %zu\n", result, op->request_size()
+        );
+        op->request_cb(validate_result(op->request_size(), result));
+    } catch (const std::system_error& e) {
+        op->request_cb(e.code().value());
+    }
+
+    co_return co_await *op;
+}
+
+rawstd::Task<size_t> Session::discard(size_t size, off_t offset) {
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
+        's', "fd = %d, size = %zu, offset = %jd\n", fd(), size, (intmax_t)offset
+    );
+
+    std::shared_ptr<SessionOpDiscard> op = std::make_shared<SessionOpDiscard>(
+        std::static_pointer_cast<Session>(shared_from_this()), _cid_counter++,
+        size, offset, trace_event
+    );
+    _add_op(op);
+
+    try {
+        size_t result = co_await _queue.send(
+            fd(), op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
+        );
+        RAWSTD_TRACE_EVENT_MESSAGE(
+            trace_event, "%zu of %zu\n", result, op->request_size()
+        );
+        op->request_cb(validate_result(op->request_size(), result));
+    } catch (const std::system_error& e) {
+        op->request_cb(e.code().value());
+    }
+
+    co_return co_await *op;
+}
+
+rawstd::Task<size_t>
+Session::write_zeroes(size_t size, off_t offset, bool unmap, bool sync) {
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
+        's', "fd = %d, size = %zu, offset = %jd, unmap = %d, sync = %d\n", fd(),
+        size, (intmax_t)offset, unmap, sync
+    );
+
+    std::shared_ptr<SessionOpWriteZeroes> op =
+        std::make_shared<SessionOpWriteZeroes>(
+            std::static_pointer_cast<Session>(shared_from_this()),
+            _cid_counter++, size, offset, unmap, sync, trace_event
+        );
+    _add_op(op);
+
+    try {
+        size_t result = co_await _queue.send(
+            fd(), op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
         );
         RAWSTD_TRACE_EVENT_MESSAGE(
             trace_event, "%zu of %zu\n", result, op->request_size()

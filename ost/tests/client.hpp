@@ -40,6 +40,9 @@ public:
     uint16_t
     send_write(uint64_t offset, const void* buf, size_t size, bool sync);
     uint16_t send_read(uint64_t offset, uint32_t size);
+    uint16_t send_discard(uint64_t offset, uint32_t size);
+    uint16_t
+    send_write_zeroes(uint64_t offset, uint32_t size, bool unmap, bool sync);
 
     // Blocking: reads exactly one response frame, then -- if payload_size
     // is nonzero (a READ response) -- that many bytes of payload after

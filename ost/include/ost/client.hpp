@@ -139,8 +139,17 @@ private:
     void _discard(
         const RawstorOSTFrameHead& head, const RawstorOSTFrameIOBody& body
     );
-    static rawstd::DetachedTask
-    _discard_task(std::weak_ptr<Client> weak, RawstorOSTFrameHead head);
+    static rawstd::DetachedTask _discard_task(
+        std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
+        RawstorOSTFrameIOBody body
+    );
+    void _write_zeroes(
+        const RawstorOSTFrameHead& head, const RawstorOSTFrameIOBody& body
+    );
+    static rawstd::DetachedTask _write_zeroes_task(
+        std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
+        RawstorOSTFrameIOBody body
+    );
     void _flush(
         const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
     );
