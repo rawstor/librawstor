@@ -235,6 +235,68 @@ public:
             RAWSTD_THROW_SYSTEM_ERROR((int)-res);
         }
     }
+
+    void discard(size_t size) {
+        bool completed = false;
+        auto cb = std::make_unique<std::function<void(size_t, int)>>(
+            [&completed, &size](size_t result, int error) {
+                if (error) {
+                    RAWSTD_THROW_SYSTEM_ERROR(error);
+                }
+                if (result != size) {
+                    RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+                }
+                completed = true;
+            }
+        );
+        int res = rawstor_object_discard(_object, size, 0, callback, cb.get());
+        if (res < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
+        }
+        cb.release();
+
+        while (!completed) {
+            try {
+                _queue.wait();
+            } catch (...) {
+                if (!completed) {
+                    throw;
+                }
+            }
+        }
+    }
+
+    void write_zeroes(size_t size, bool unmap, bool sync) {
+        bool completed = false;
+        auto cb = std::make_unique<std::function<void(size_t, int)>>(
+            [&completed, &size](size_t result, int error) {
+                if (error) {
+                    RAWSTD_THROW_SYSTEM_ERROR(error);
+                }
+                if (result != size) {
+                    RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+                }
+                completed = true;
+            }
+        );
+        int res = rawstor_object_write_zeroes(
+            _object, size, 0, unmap, sync, callback, cb.get()
+        );
+        if (res < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
+        }
+        cb.release();
+
+        while (!completed) {
+            try {
+                _queue.wait();
+            } catch (...) {
+                if (!completed) {
+                    throw;
+                }
+            }
+        }
+    }
 };
 
 TEST(FileIOTest, basics) {
@@ -310,6 +372,39 @@ TEST(OstIOTest, basics) {
     std::string pong(4, '\0');
     EXPECT_NO_THROW(object.read(pong.data(), pong.length()));
     EXPECT_EQ(pong, "pong");
+}
+
+TEST(OstIOTest, discard_and_write_zeroes) {
+    Queue queue(16);
+    rawstor::tests::Server server(8753, 256);
+    std::string target =
+        "ost://127.0.0.1:8753/00000000-0000-7000-8000-000000000000";
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
+    }
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_discard(RAWSTOR_MAGIC, 1, 4);
+        s.cmd_write_zeroes(RAWSTOR_MAGIC, 2, 4);
+        // Object's destructor closes -- close() now flushes first (see
+        // Object::close()'s own doc comment); write_zeroes() left it dirty
+        // the same way pwrite() does.
+        s.cmd_flush(RAWSTOR_MAGIC, 3, 0);
+    }
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_release(RAWSTOR_MAGIC, 0, 0);
+    }
+
+    Object object(queue, target, 1ull << 20);
+
+    EXPECT_NO_THROW(object.discard(4));
+    EXPECT_NO_THROW(object.write_zeroes(4, /*unmap=*/false, /*sync=*/false));
 }
 
 TEST(OstIOTest, flush) {

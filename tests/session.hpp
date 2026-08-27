@@ -67,6 +67,14 @@ public:
     void cmd_write_response(uint32_t magic, uint16_t cid, int32_t res);
     void cmd_write(uint32_t magic, uint16_t cid, int32_t res);
 
+    void cmd_discard_request();
+    void cmd_discard_response(uint32_t magic, uint16_t cid, int32_t res);
+    void cmd_discard(uint32_t magic, uint16_t cid, int32_t res);
+
+    void cmd_write_zeroes_request();
+    void cmd_write_zeroes_response(uint32_t magic, uint16_t cid, int32_t res);
+    void cmd_write_zeroes(uint32_t magic, uint16_t cid, int32_t res);
+
     void cmd_flush_request();
     void cmd_flush_response(uint32_t magic, uint16_t cid, int32_t res);
     void cmd_flush(uint32_t magic, uint16_t cid, int32_t res);

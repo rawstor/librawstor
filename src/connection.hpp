@@ -143,6 +143,11 @@ public:
         bool sync
     );
 
+    rawstd::Task<size_t> discard(size_t size, off_t offset);
+
+    rawstd::Task<size_t>
+    write_zeroes(size_t size, off_t offset, bool unmap, bool sync);
+
     rawstd::Task<void> flush();
 };
 

@@ -317,6 +317,74 @@ rawstd::Task<size_t> Object::pwritev(
     }
 }
 
+rawstd::Task<size_t> Object::discard(size_t size, off_t offset) {
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
+        'o', "discard(): size = %zu, offset = %jd\n", size, (intmax_t)offset
+    );
+
+    // discard() is purely advisory (see rawstor::Session::discard()'s own
+    // doc comment) -- it doesn't dirty the object the way pwrite()/
+    // write_zeroes() do, so unlike those it doesn't bump _writes_issued/
+    // set _dirty: flush() has nothing to wait for or durability-cover on
+    // its account. Still fanned out to every mirror in _cns, same as a
+    // write, so every replica's space accounting stays consistent.
+    std::vector<rawstd::Task<size_t>> tasks;
+    tasks.reserve(_cns.size());
+    for (auto& cn : _cns) {
+        tasks.push_back(cn->discard(size, offset));
+    }
+
+    try {
+        std::vector<size_t> results = co_await rawstd::gather(std::move(tasks));
+        size_t result = *std::min_element(results.begin(), results.end());
+        RAWSTD_TRACE_EVENT_MESSAGE(
+            trace_event, "result = %zu, error = 0\n", result
+        );
+        co_return result;
+    } catch (const std::system_error& e) {
+        rawstd_error("%s\n", strerror(e.code().value()));
+        RAWSTD_TRACE_EVENT_MESSAGE(
+            trace_event, "result = 0, error = %d\n", EIO
+        );
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
+    }
+}
+
+rawstd::Task<size_t>
+Object::write_zeroes(size_t size, off_t offset, bool unmap, bool sync) {
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
+        'o',
+        "write_zeroes(): size = %zu, offset = %jd, unmap = %d, sync = %d\n",
+        size, (intmax_t)offset, unmap, sync
+    );
+
+    ++_writes_issued;
+
+    std::vector<rawstd::Task<size_t>> tasks;
+    tasks.reserve(_cns.size());
+    for (auto& cn : _cns) {
+        tasks.push_back(cn->write_zeroes(size, offset, unmap, sync));
+    }
+
+    try {
+        std::vector<size_t> results = co_await rawstd::gather(std::move(tasks));
+        _write_finished();
+        _dirty = true;
+        size_t result = *std::min_element(results.begin(), results.end());
+        RAWSTD_TRACE_EVENT_MESSAGE(
+            trace_event, "result = %zu, error = 0\n", result
+        );
+        co_return result;
+    } catch (const std::system_error& e) {
+        _write_finished();
+        rawstd_error("%s\n", strerror(e.code().value()));
+        RAWSTD_TRACE_EVENT_MESSAGE(
+            trace_event, "result = 0, error = %d\n", EIO
+        );
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
+    }
+}
+
 rawstd::Task<void> Object::flush() {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('o', "%s\n", "flush()");
 
@@ -513,6 +581,54 @@ int rawstor_object_pwritev2(
         launch_io_op(
             static_cast<rawstor::Object*>(object)->pwritev(
                 iov, niov, size, offset, sync
+            ),
+            cb, data
+        );
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+int rawstor_object_discard(
+    RawstorObject* object, size_t size, off_t offset,
+    int (*cb)(size_t result, int error, void* data), void* data
+) noexcept {
+    try {
+        launch_io_op(
+            static_cast<rawstor::Object*>(object)->discard(size, offset), cb,
+            data
+        );
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+int rawstor_object_write_zeroes(
+    RawstorObject* object, size_t size, off_t offset, bool unmap, bool sync,
+    int (*cb)(size_t result, int error, void* data), void* data
+) noexcept {
+    try {
+        launch_io_op(
+            static_cast<rawstor::Object*>(object)->write_zeroes(
+                size, offset, unmap, sync
             ),
             cb, data
         );

@@ -270,6 +270,61 @@ void Session::cmd_write(uint32_t magic, uint16_t cid, int32_t res) {
     cmd_write_response(magic, cid, res);
 }
 
+void Session::cmd_discard_request() {
+    _server.read(
+        "RAWSTOR_CMD_DISCARD <<<", sizeof(RawstorOSTFrameIO), [](const void*) {}
+    );
+}
+
+void Session::cmd_discard_response(uint32_t magic, uint16_t cid, int32_t res) {
+    RawstorOSTFrameResponse response = {
+        .head{
+            .magic = magic,
+            .cmd = RAWSTOR_CMD_DISCARD,
+            .cid = cid,
+        },
+        .body = {
+            .res = res,
+            .hash = 0,
+        },
+    };
+    _server.write("RAWSTOR_CMD_DISCARD >>>", &response, sizeof(response));
+}
+
+void Session::cmd_discard(uint32_t magic, uint16_t cid, int32_t res) {
+    cmd_discard_request();
+    cmd_discard_response(magic, cid, res);
+}
+
+void Session::cmd_write_zeroes_request() {
+    _server.read(
+        "RAWSTOR_CMD_WRITE_ZEROES <<<", sizeof(RawstorOSTFrameIO),
+        [](const void*) {}
+    );
+}
+
+void Session::cmd_write_zeroes_response(
+    uint32_t magic, uint16_t cid, int32_t res
+) {
+    RawstorOSTFrameResponse response = {
+        .head{
+            .magic = magic,
+            .cmd = RAWSTOR_CMD_WRITE_ZEROES,
+            .cid = cid,
+        },
+        .body = {
+            .res = res,
+            .hash = 0,
+        },
+    };
+    _server.write("RAWSTOR_CMD_WRITE_ZEROES >>>", &response, sizeof(response));
+}
+
+void Session::cmd_write_zeroes(uint32_t magic, uint16_t cid, int32_t res) {
+    cmd_write_zeroes_request();
+    cmd_write_zeroes_response(magic, cid, res);
+}
+
 void Session::cmd_flush_request() {
     _server.read(
         "RAWSTOR_CMD_FLUSH <<<", sizeof(RawstorOSTFrameBasic),

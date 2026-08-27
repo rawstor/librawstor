@@ -28,6 +28,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include <cassert>
 #include <cstdio>
@@ -1028,6 +1029,7 @@ Device::Device(
         1ull << VIRTIO_BLK_F_SIZE_MAX | 1ull << VIRTIO_BLK_F_SEG_MAX |
         1ull << VIRTIO_BLK_F_BLK_SIZE | 1ull << VIRTIO_BLK_F_TOPOLOGY |
         1ull << VIRTIO_BLK_F_MQ | 1ull << VIRTIO_BLK_F_FLUSH |
+        1ull << VIRTIO_BLK_F_DISCARD | 1ull << VIRTIO_BLK_F_WRITE_ZEROES |
         1ull << VIRTIO_F_VERSION_1 | 1ull << VIRTIO_RING_F_INDIRECT_DESC |
         1ull << VIRTIO_RING_F_EVENT_IDX | 1ull << VHOST_USER_F_PROTOCOL_FEATURES
     ),
@@ -1081,15 +1083,27 @@ Device::Device(
 
         _config.num_queues = nqueues(); // VIRTIO_BLK_F_MQ
 
-        _config.max_discard_sectors = 0; // VIRTIO_BLK_F_DISCARD (unsupported)
-        _config.max_discard_seg = 0;
+        // VIRTIO_BLK_F_DISCARD -- one segment per request (matches
+        // discard_task()'s own per-segment dispatch loop,
+        // virtqueue_worker.cpp, which handles more than one only
+        // defensively); capped to UINT32_MAX sectors since the field
+        // itself is 32 bits.
+        _config.max_discard_sectors = static_cast<uint32_t>(
+            std::min<uint64_t>(_config.capacity, UINT32_MAX)
+        );
+        _config.max_discard_seg = 1;
         _config.discard_sector_alignment =
             _config.blk_size >> VIRTIO_BLK_SECTOR_BITS;
 
-        _config.max_write_zeroes_sectors =
-            0; // VIRTIO_BLK_F_WRITE_ZEROES (unsupported)
-        _config.max_write_zeroes_seg = 0;
-        _config.write_zeroes_may_unmap = 0;
+        // VIRTIO_BLK_F_WRITE_ZEROES -- same one-segment-per-request shape
+        // as discard above; write_zeroes_may_unmap advertises that this
+        // device may deallocate storage for a range the guest flags
+        // UNMAP (see write_zeroes_task()'s own use of the flag).
+        _config.max_write_zeroes_sectors = static_cast<uint32_t>(
+            std::min<uint64_t>(_config.capacity, UINT32_MAX)
+        );
+        _config.max_write_zeroes_seg = 1;
+        _config.write_zeroes_may_unmap = 1;
 
         _config.max_secure_erase_sectors =
             0; // VIRTIO_BLK_F_SECURE_ERASE (unsupported)
