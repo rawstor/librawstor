@@ -29,6 +29,7 @@ extern "C" {
 #define RAWSTOR_CMD_SPEC 7
 #define RAWSTOR_CMD_LOCATION_INFO 8
 #define RAWSTOR_CMD_FLUSH 9
+#define RAWSTOR_CMD_WRITE_ZEROES 10
 typedef uint16_t RawstorOSTCommandType;
 
 struct RawstorOSTFrameHead {
@@ -51,6 +52,13 @@ struct RawstorOSTFrameBasic {
     struct RawstorOSTFrameBasicBody body;
 } RAWSTOR_PACKED;
 
+// Shared by READ/WRITE/DISCARD/WRITE_ZEROES: `hash` is only meaningful for
+// WRITE (payload integrity check) and READ (of its response body) --
+// DISCARD/WRITE_ZEROES carry no payload, so it's unused there (send as 0,
+// ignore on receipt). `sync` is only meaningful for WRITE; WRITE_ZEROES
+// reuses the same byte to carry its own, unrelated "unmap" flag (may the
+// backend deallocate the zeroed range's storage), and DISCARD leaves it
+// unused (0) too.
 struct RawstorOSTFrameIOBody {
     uint64_t offset;
     uint32_t len;

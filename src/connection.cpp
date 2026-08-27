@@ -593,6 +593,47 @@ rawstd::Task<size_t> Connection::pwritev(
     }
 }
 
+rawstd::Task<size_t> Connection::discard(size_t size, off_t offset) {
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
+        'c', "%s(): size = %zu, offset = %jd\n", func_name, size,
+        (intmax_t)offset
+    );
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        size_t result = co_await _with_retry(
+            func_name, trace_event, &Session::discard, size, offset
+        );
+        _finish(t_call);
+        co_return result;
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
+rawstd::Task<size_t>
+Connection::write_zeroes(size_t size, off_t offset, bool unmap) {
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
+        'c', "%s(): size = %zu, offset = %jd, unmap = %d\n", func_name, size,
+        (intmax_t)offset, unmap
+    );
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        size_t result = co_await _with_retry(
+            func_name, trace_event, &Session::write_zeroes, size, offset, unmap
+        );
+        _finish(t_call);
+        co_return result;
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
 rawstd::Task<void> Connection::flush() {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =

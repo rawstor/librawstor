@@ -864,6 +864,23 @@ rawio::Awaitable<int> Queue::fsync(int fd, bool datasync) {
     return rawio::Awaitable<int>(this, static_cast<rawio::Event*>(c.release()));
 }
 
+rawio::Awaitable<int>
+Queue::fallocate(int fd, int mode, off_t offset, off_t len) {
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
+        '|', "fd = %d, mode = %d, offset = %jd, len = %jd\n", fd, mode,
+        (intmax_t)offset, (intmax_t)len
+    );
+    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
+    if (sqe == nullptr) {
+        RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
+    }
+    auto c = std::make_unique<Completion>(std::move(trace_event));
+    io_uring_prep_fallocate(sqe, fd, mode, offset, len);
+    io_uring_sqe_set_data(sqe, c.get());
+
+    return rawio::Awaitable<int>(this, static_cast<rawio::Event*>(c.release()));
+}
+
 rawio::Awaitable<size_t>
 Queue::send(int fd, const void* buf, size_t size, unsigned int flags) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(

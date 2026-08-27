@@ -187,6 +187,89 @@ TEST(OstSessionTest, simple_success) {
     EXPECT_EQ(read_back, payload);
 }
 
+TEST(OstSessionTest, discard_and_write_zeroes) {
+    rawstor::ostbackend::tests::TmpDir dir;
+    int listen_fd = rawstor::ostbackend::Server::bind_listen("127.0.0.1", 0);
+    rawstor::ostbackend::Server server(256, listen_fd, dir.uri().c_str());
+
+    rawstor::ostbackend::tests::Queue queue;
+    auto [raw_session, client_fd] = connect_session(server, queue);
+    SessionCleanup session(std::move(raw_session), queue);
+    rawstor::ostbackend::tests::Client client(client_fd);
+
+    RawstdUUID id;
+    ASSERT_EQ(rawstd_uuid7_init(&id), 0);
+
+    // ALLOCATE: creates the object file:// will open next.
+    client.send_allocate(id, 4096);
+    ASSERT_TRUE(pump_until(queue, [&] {
+        return client.bytes_available() >= sizeof(RawstorOSTFrameResponse);
+    }));
+    RawstorOSTFrameResponse response = client.recv_response();
+    EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_ALLOCATE);
+    EXPECT_EQ(response.body.res, 0);
+
+    // SET_OBJECT: opens it for this session's subsequent WRITE/DISCARD/
+    // WRITE_ZEROES/READ.
+    client.send_set_object(id);
+    ASSERT_TRUE(pump_until(queue, [&] {
+        return client.bytes_available() >= sizeof(RawstorOSTFrameResponse);
+    }));
+    response = client.recv_response();
+    EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_SET_OBJECT);
+    EXPECT_EQ(response.body.res, 0);
+
+    // WRITE some non-zero bytes...
+    std::string payload(64, 'x');
+    client.send_write(0, payload.data(), payload.size(), false);
+    ASSERT_TRUE(pump_until(queue, [&] {
+        return client.bytes_available() >= sizeof(RawstorOSTFrameResponse);
+    }));
+    response = client.recv_response();
+    EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_WRITE);
+    EXPECT_EQ(response.body.res, static_cast<int32_t>(payload.size()));
+
+    // ...WRITE_ZEROES half of it...
+    client.send_write_zeroes(
+        0, static_cast<uint32_t>(payload.size() / 2), /*unmap=*/false
+    );
+    ASSERT_TRUE(pump_until(queue, [&] {
+        return client.bytes_available() >= sizeof(RawstorOSTFrameResponse);
+    }));
+    response = client.recv_response();
+    EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_WRITE_ZEROES);
+    EXPECT_EQ(response.body.res, static_cast<int32_t>(payload.size() / 2));
+
+    // ...and READ it back to confirm the first half reads as zero while
+    // the second half still holds the original payload.
+    client.send_read(0, static_cast<uint32_t>(payload.size()));
+    ASSERT_TRUE(pump_until(queue, [&] {
+        return client.bytes_available() >=
+               sizeof(RawstorOSTFrameResponse) + payload.size();
+    }));
+    std::string read_back(payload.size(), '\xff');
+    response = client.recv_response(read_back.data(), read_back.size());
+    EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_READ);
+    EXPECT_EQ(response.body.res, static_cast<int32_t>(payload.size()));
+    EXPECT_EQ(
+        read_back.substr(0, payload.size() / 2),
+        std::string(payload.size() / 2, '\0')
+    );
+    EXPECT_EQ(
+        read_back.substr(payload.size() / 2), payload.substr(payload.size() / 2)
+    );
+
+    // DISCARD is purely advisory -- just confirm it completes successfully
+    // and reports the requested size back.
+    client.send_discard(0, static_cast<uint32_t>(payload.size()));
+    ASSERT_TRUE(pump_until(queue, [&] {
+        return client.bytes_available() >= sizeof(RawstorOSTFrameResponse);
+    }));
+    response = client.recv_response();
+    EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_DISCARD);
+    EXPECT_EQ(response.body.res, static_cast<int32_t>(payload.size()));
+}
+
 TEST(OstSessionTest, set_object_twice_does_not_crash) {
     rawstor::ostbackend::tests::TmpDir dir;
     int listen_fd = rawstor::ostbackend::Server::bind_listen("127.0.0.1", 0);

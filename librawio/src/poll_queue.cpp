@@ -642,6 +642,45 @@ rawio::Awaitable<int> Queue::fsync(int fd, bool datasync) {
     return rawio::Awaitable<int>(this, ret);
 }
 
+rawio::Awaitable<int>
+Queue::fallocate(int fd, int mode, off_t offset, off_t len) {
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
+        '|', "fd = %d, mode = %d, offset = %jd, len = %jd\n", fd, mode,
+        (intmax_t)offset, (intmax_t)len
+    );
+
+    std::unique_ptr<EventEval> event = std::make_unique<EventEval>(
+        *this, trace_event, [fd, mode, offset, len]() -> int {
+            int res;
+#if defined(RAWSTD_ON_LINUX)
+            res = ::fallocate(fd, mode, offset, len);
+            if (res == -1) {
+                res = -errno;
+                errno = 0;
+            }
+#elif defined(RAWSTD_ON_MACOS)
+            // No macOS equivalent of Linux's mode-flagged fallocate() (hole
+            // punch/zero-range/...) -- every caller of this op already
+            // treats ENOSYS as "fall back to a portable path" (see
+            // blk::Session::discard()/write_zeroes(), src/blk_session.cpp),
+            // so this platform just always takes that fallback.
+            (void)fd;
+            (void)mode;
+            (void)offset;
+            (void)len;
+            res = -ENOSYS;
+#else
+#error "Unexpected platform"
+#endif
+            return res;
+        }
+    );
+
+    rawio::Event* ret = static_cast<rawio::Event*>(event.get());
+    _eval(std::move(event));
+    return rawio::Awaitable<int>(this, ret);
+}
+
 rawio::Awaitable<size_t>
 Queue::send(int fd, const void* buf, size_t size, unsigned int flags) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(

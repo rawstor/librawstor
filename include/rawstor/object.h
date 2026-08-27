@@ -206,6 +206,66 @@ int rawstor_object_pwritev(
 ) RAWSTOR_NOEXCEPT;
 
 /**
+ * @brief Hint that a byte range is no longer in use.
+ *
+ * Advisory only: lets the backend reclaim the underlying storage for
+ * [@p offset, @p offset + @p size) if it can, but never guarantees the
+ * range reads back as zero afterward, or that anything was reclaimed at
+ * all -- unlike rawstor_object_write_zeroes() below. This function returns
+ * immediately; the actual result is reported via @p cb once the operation
+ * completes.
+ *
+ * @param object  Open object handle obtained from rawstor_target_open().
+ * @param size    Number of bytes to discard.
+ * @param offset  Byte offset within the object to discard from.
+ * @param cb      Callback invoked on completion.
+ * @param data    User-defined context pointer passed unchanged to @p cb.
+ *
+ * @return 0 if the discard was successfully queued; negative errno on
+ *         immediate failure (in which case @p cb is never invoked). The
+ *         actual discard result (success or failure) is delivered via
+ *         @p cb.
+ *
+ * @see rawstor_object_write_zeroes
+ * @see rawstor_object_pwrite
+ */
+int rawstor_object_discard(
+    RawstorObject* object, size_t size, off_t offset,
+    int (*cb)(size_t result, int error, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Zero a byte range without transferring zero bytes over the wire.
+ *
+ * Queues zeroing of [@p offset, @p offset + @p size). Unlike
+ * rawstor_object_discard() above, the range is guaranteed to read back as
+ * zero once @p cb reports success. This function returns immediately; the
+ * actual result is reported via @p cb once the operation completes.
+ *
+ * @param object  Open object handle obtained from rawstor_target_open().
+ * @param size    Number of bytes to zero.
+ * @param offset  Byte offset within the object to zero from.
+ * @param unmap   If true, hints that the backend may (not must) also
+ *                deallocate the underlying storage for the zeroed range --
+ *                same meaning as virtio-blk's
+ *                VIRTIO_BLK_WRITE_ZEROES_FLAG_UNMAP. If false, the backend
+ *                must still leave the range allocated.
+ * @param cb      Callback invoked on completion.
+ * @param data    User-defined context pointer passed unchanged to @p cb.
+ *
+ * @return 0 if the write-zeroes was successfully queued; negative errno on
+ *         immediate failure (in which case @p cb is never invoked). The
+ *         actual result (success or failure) is delivered via @p cb.
+ *
+ * @see rawstor_object_discard
+ * @see rawstor_object_pwrite
+ */
+int rawstor_object_write_zeroes(
+    RawstorObject* object, size_t size, off_t offset, bool unmap,
+    int (*cb)(size_t result, int error, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
  * @brief Flush an object's previously written data to stable storage.
  *
  * A durability barrier: once @p cb reports success, every

@@ -125,6 +125,41 @@ uint16_t Client::send_read(uint64_t offset, uint32_t size) {
     return cid;
 }
 
+uint16_t Client::send_discard(uint64_t offset, uint32_t size) {
+    uint16_t cid = _next_cid++;
+    RawstorOSTFrameIO frame = {
+        .head =
+            {
+                .magic = RAWSTOR_MAGIC,
+                .cmd = RAWSTOR_CMD_DISCARD,
+                .cid = cid,
+            },
+        .body = {.offset = offset, .len = size, .hash = 0, .sync = 0},
+    };
+    send_all(_fd, &frame, sizeof(frame));
+    return cid;
+}
+
+uint16_t Client::send_write_zeroes(uint64_t offset, uint32_t size, bool unmap) {
+    uint16_t cid = _next_cid++;
+    RawstorOSTFrameIO frame = {
+        .head =
+            {
+                .magic = RAWSTOR_MAGIC,
+                .cmd = RAWSTOR_CMD_WRITE_ZEROES,
+                .cid = cid,
+            },
+        .body = {
+            .offset = offset,
+            .len = size,
+            .hash = 0,
+            .sync = static_cast<uint8_t>(unmap ? 1 : 0),
+        },
+    };
+    send_all(_fd, &frame, sizeof(frame));
+    return cid;
+}
+
 RawstorOSTFrameResponse
 Client::recv_response(void* payload, size_t payload_size) {
     RawstorOSTFrameResponse response;

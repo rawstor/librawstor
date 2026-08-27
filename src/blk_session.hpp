@@ -82,6 +82,11 @@ public:
         bool sync
     ) override final;
 
+    rawstd::Task<size_t> discard(size_t size, off_t offset) override final;
+
+    rawstd::Task<size_t>
+    write_zeroes(size_t size, off_t offset, bool unmap) override final;
+
     rawstd::Task<void> flush() override final;
 
     // For tests/ to verify write-throttling (see pwrite()/pwritev() and

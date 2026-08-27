@@ -118,6 +118,14 @@ public:
 
     virtual Awaitable<int> fsync(int fd, bool datasync) = 0;
 
+    // fd-local space-management hint/op (hole-punch, zero-range, plain
+    // preallocation, ...) -- `mode` is the raw fallocate(2) FALLOC_FL_*
+    // bitmask, passed through unmodified so callers stay in charge of
+    // which specific operation this is; see blk::Session::discard()/
+    // write_zeroes() (src/blk_session.cpp) for the only caller today.
+    virtual Awaitable<int>
+    fallocate(int fd, int mode, off_t offset, off_t len) = 0;
+
     virtual Awaitable<size_t>
     send(int fd, const void* buf, size_t size, unsigned int flags) = 0;
 

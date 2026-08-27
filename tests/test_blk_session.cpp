@@ -16,6 +16,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <system_error>
@@ -213,4 +214,101 @@ TEST(BlkSessionTest, write_backlog_capacity) {
     EXPECT_GT(accepted, 0u);
     EXPECT_GT(rejected, 0u);
     EXPECT_EQ(accepted + rejected, writes);
+}
+
+// write_zeroes() must guarantee a zeroed range reads back as zero,
+// regardless of whether the backing filesystem actually supports
+// FALLOC_FL_ZERO_RANGE/FALLOC_FL_PUNCH_HOLE (see blk_session.cpp's own
+// fallocate_not_supported() fallback to a portable zero-fill).
+TEST(BlkSessionTest, write_zeroes_zeroes_the_range) {
+    rawstor::tests::TmpDir dir;
+    rawstd::URI location(dir.uri());
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(256);
+
+    std::unique_ptr<rawstor::Object> object;
+    std::unique_ptr<rawstor::Connection> cn;
+    rawstor::blk::Session* session =
+        open_blk_session(*queue, location, object, cn);
+
+    const std::string payload(64, 'x');
+    EXPECT_EQ(
+        run(*queue, session->pwrite(payload.data(), payload.size(), 0, false)),
+        payload.size()
+    );
+
+    EXPECT_EQ(
+        run(*queue, session->write_zeroes(payload.size(), 0, false)),
+        payload.size()
+    );
+
+    std::vector<unsigned char> readback(payload.size());
+    EXPECT_EQ(
+        run(*queue, session->pread(readback.data(), readback.size(), 0)),
+        readback.size()
+    );
+    EXPECT_TRUE(
+        std::all_of(readback.begin(), readback.end(), [](unsigned char c) {
+            return c == 0;
+        })
+    );
+}
+
+// unmap=true additionally hints the backend may deallocate the zeroed
+// range's storage -- same zero-readback guarantee as unmap=false above,
+// just via FALLOC_FL_PUNCH_HOLE instead of FALLOC_FL_ZERO_RANGE (see
+// blk_session.cpp's write_zeroes()).
+TEST(BlkSessionTest, write_zeroes_unmap_zeroes_the_range) {
+    rawstor::tests::TmpDir dir;
+    rawstd::URI location(dir.uri());
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(256);
+
+    std::unique_ptr<rawstor::Object> object;
+    std::unique_ptr<rawstor::Connection> cn;
+    rawstor::blk::Session* session =
+        open_blk_session(*queue, location, object, cn);
+
+    const std::string payload(64, 'x');
+    EXPECT_EQ(
+        run(*queue, session->pwrite(payload.data(), payload.size(), 0, false)),
+        payload.size()
+    );
+
+    EXPECT_EQ(
+        run(*queue, session->write_zeroes(payload.size(), 0, true)),
+        payload.size()
+    );
+
+    std::vector<unsigned char> readback(payload.size());
+    EXPECT_EQ(
+        run(*queue, session->pread(readback.data(), readback.size(), 0)),
+        readback.size()
+    );
+    EXPECT_TRUE(
+        std::all_of(readback.begin(), readback.end(), [](unsigned char c) {
+            return c == 0;
+        })
+    );
+}
+
+// discard() is purely advisory -- see rawstor::Session::discard()'s own
+// doc comment -- so this only checks it completes successfully and
+// reports the requested size back, not that anything specific happened to
+// the underlying storage.
+TEST(BlkSessionTest, discard_reports_requested_size) {
+    rawstor::tests::TmpDir dir;
+    rawstd::URI location(dir.uri());
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(256);
+
+    std::unique_ptr<rawstor::Object> object;
+    std::unique_ptr<rawstor::Connection> cn;
+    rawstor::blk::Session* session =
+        open_blk_session(*queue, location, object, cn);
+
+    const std::string payload(64, 'x');
+    EXPECT_EQ(
+        run(*queue, session->pwrite(payload.data(), payload.size(), 0, false)),
+        payload.size()
+    );
+
+    EXPECT_EQ(run(*queue, session->discard(payload.size(), 0)), payload.size());
 }
