@@ -3,10 +3,12 @@
 #ifdef RAWSTOR_TELEMETRY
 
 #include <rawstd/stats.hpp>
+#include <rawstd/units.h>
 
 #include <algorithm>
 #include <atomic>
 #include <mutex>
+#include <string>
 #include <vector>
 
 #include <cstdint>
@@ -91,14 +93,46 @@ double usec(TimePoint ns) {
     return static_cast<double>(ns) / 1000.0;
 }
 
+// "'"-grouped rendering of a non-negative value (see rawstd_uint64_grouped()
+// -- every value dump() prints is a latency, size, offset, or count, never
+// negative), rounded to `decimals` fractional digits.
+std::string grouped(double value, int decimals) {
+    uint64_t scale = 1;
+    for (int i = 0; i < decimals; ++i) {
+        scale *= 10;
+    }
+    uint64_t scaled =
+        static_cast<uint64_t>(value * static_cast<double>(scale) + 0.5);
+
+    char int_buf[32];
+    rawstd_uint64_grouped(scaled / scale, int_buf, sizeof(int_buf));
+    if (decimals == 0) {
+        return int_buf;
+    }
+
+    char out[48];
+    std::snprintf(
+        out, sizeof(out), "%s.%0*llu", int_buf, decimals,
+        (unsigned long long)(scaled % scale)
+    );
+    return out;
+}
+
+std::string grouped(uint64_t value) {
+    char buf[32];
+    rawstd_uint64_grouped(value, buf, sizeof(buf));
+    return buf;
+}
+
 void print_stat(const char* label, const rawstd::Stats& s) {
     if (s.count() == 0) {
         std::fprintf(stderr, "  %s: N/A\n", label);
         return;
     }
     std::fprintf(
-        stderr, "  %s: min=%.2f, max=%.2f, avg=%.2f, stdev=%.2f\n", label,
-        s.min(), s.max(), s.mean(), s.stddev()
+        stderr, "  %s: min=%s, max=%s, avg=%s, stdev=%s\n", label,
+        grouped(s.min(), 2).c_str(), grouped(s.max(), 2).c_str(),
+        grouped(s.mean(), 2).c_str(), grouped(s.stddev(), 2).c_str()
     );
 }
 
@@ -158,10 +192,14 @@ void dump() {
         for (const Op& op : slow) {
             std::fprintf(
                 stderr,
-                "    %2u. %-7s size=%-8zu offset=%-10jd "
-                "slat=%.0f rtt=%.0f clat=%.0f lat=%.0f usec\n",
-                i++, op.op, op.size, static_cast<intmax_t>(op.offset),
-                usec(op.slat), usec(op.rtt), usec(op.clat), usec(op.lat)
+                "    %2u. %-7s size=%-10s offset=%-12s "
+                "slat=%s rtt=%s clat=%s lat=%s usec\n",
+                i++, op.op, grouped(static_cast<uint64_t>(op.size)).c_str(),
+                grouped(static_cast<uint64_t>(op.offset)).c_str(),
+                grouped(usec(op.slat), 0).c_str(),
+                grouped(usec(op.rtt), 0).c_str(),
+                grouped(usec(op.clat), 0).c_str(),
+                grouped(usec(op.lat), 0).c_str()
             );
         }
     }

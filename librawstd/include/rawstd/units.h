@@ -31,6 +31,13 @@ int rawstd_bytes_to_size_unit(
     uint64_t value, char unit, char* buf, size_t size
 );
 
+/**
+ * Format value with a "'" every 3 digits (e.g. 1000000 -> "1'000'000"), for
+ * readability in printed output. Locale-independent -- always "'", never a
+ * locale's own thousands separator.
+ */
+int rawstd_uint64_grouped(uint64_t value, char* buf, size_t size);
+
 #ifdef __cplusplus
 }
 #endif
