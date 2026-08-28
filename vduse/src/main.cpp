@@ -19,7 +19,6 @@
 #include <sysexits.h>
 
 #include <iostream>
-#include <optional>
 #include <sstream>
 #include <system_error>
 
@@ -250,36 +249,39 @@ int main(int argc, char** argv) {
         }
     }
 
-    std::optional<rawstd::Pipe> wake_pipe;
+    // wake_pipe is constructed unconditionally right here, so it needs no
+    // std::optional to hold an "empty" state -- unlike VirtQueue's own
+    // _wake_pipe (virtqueue.cpp), which is a class member that must exist
+    // in a not-yet-created state between construction and start(). Its
+    // constructor throwing, sigaction() failing and server() throwing all
+    // share one try/catch, since wake_pipe needs to outlive all three
+    // (write_fd() must stay valid for as long as sact_handler might fire,
+    // i.e. until server() returns) and there is nothing useful left to do
+    // with any of them individually on failure beyond reporting it.
     try {
-        wake_pipe.emplace();
-    } catch (const std::system_error& e) {
-        std::cerr << "Failed to create wake pipe: " << e.what() << std::endl;
-        return rawstd_exitcode_for_errno(e.code().value());
-    }
-    wake_write_fd = wake_pipe->write_fd();
+        rawstd::Pipe wake_pipe;
+        wake_write_fd = wake_pipe.write_fd();
 
-    sact.sa_handler = sact_handler;
-    sigemptyset(&sact.sa_mask);
-    if (sigaction(SIGINT, &sact, nullptr) == -1) {
-        int errsv = errno;
-        errno = 0;
-        std::cerr << "Failed to register SIGINT handler: " << strerror(errsv)
-                  << std::endl;
-        return rawstd_exitcode_for_errno(errsv);
-    }
-    if (sigaction(SIGTERM, &sact, nullptr) == -1) {
-        int errsv = errno;
-        errno = 0;
-        std::cerr << "Failed to register SIGTERM handler: " << strerror(errsv)
-                  << std::endl;
-        return rawstd_exitcode_for_errno(errsv);
-    }
+        sact.sa_handler = sact_handler;
+        sigemptyset(&sact.sa_mask);
+        if (sigaction(SIGINT, &sact, nullptr) == -1) {
+            int errsv = errno;
+            errno = 0;
+            std::cerr << "Failed to register SIGINT handler: "
+                      << strerror(errsv) << std::endl;
+            return rawstd_exitcode_for_errno(errsv);
+        }
+        if (sigaction(SIGTERM, &sact, nullptr) == -1) {
+            int errsv = errno;
+            errno = 0;
+            std::cerr << "Failed to register SIGTERM handler: "
+                      << strerror(errsv) << std::endl;
+            return rawstd_exitcode_for_errno(errsv);
+        }
 
-    try {
         server(
             queue_size, num_queues, target_arg, write_cache_enabled,
-            wake_pipe->release_read()
+            wake_pipe.release_read()
         );
     } catch (const std::system_error& e) {
         std::cerr << e.what() << std::endl;
