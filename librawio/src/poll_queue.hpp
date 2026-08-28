@@ -25,6 +25,12 @@ private:
     rawstd::RingBuf<Event> _cqes;
     Event* _current_event;
 
+    // timeout()'s pending timers, kept sorted ascending by deadline (see
+    // EventTimer's own comment) -- deliberately not routed through _cqes,
+    // which is sized for `depth` real I/O ops in flight and would ENOBUFS
+    // under a caller keeping more timeout()s in flight than that.
+    std::list<std::unique_ptr<EventTimer>> _timers;
+
     /*
      * Bumped once per ::poll() readiness batch. Mirrors the uring
      * backend's _dispatch_generation: lets multishot poll events collapse
@@ -38,6 +44,14 @@ private:
     Session& _get_session(int fd);
 
     void _wait_timeout(int timeout);
+
+    // Dispatches every EventTimer in _timers whose deadline has already
+    // passed (as of one now() read at entry) and returns whether it
+    // dispatched anything -- called both ahead of _eval_sqes/before ever
+    // blocking in ::poll() (so a timer that's already due resolves without
+    // blocking, exactly like an EventEval) and right after every ::poll()
+    // return inside _wait_timeout()'s loop.
+    bool _reap_timers();
 
     void _eval(std::unique_ptr<EventEval> event);
 
@@ -126,6 +140,8 @@ public:
 
     rawio::Awaitable<size_t>
     sendmsg(int fd, const msghdr* msg, unsigned int flags) override;
+
+    rawio::Awaitable<void> timeout(unsigned int usec) override;
 
     rawio::Awaitable<void> cancel(rawio::Event* e) override;
 

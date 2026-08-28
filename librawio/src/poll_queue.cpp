@@ -15,6 +15,7 @@
 #include <poll.h>
 
 #include <algorithm>
+#include <chrono>
 #include <vector>
 
 #include <cassert>
@@ -65,6 +66,26 @@ Queue::~Queue() {
                 }
             }
         }
+
+        // _timers never goes through _cqes (see its own doc comment), so
+        // there's nothing to drain via wait_timeout(0) here -- dispatching
+        // (resolve_one_shot(), via set_error()+dispatch()) is itself the
+        // whole cancellation, same as EventEval's synchronous dispatch.
+        while (!_timers.empty()) {
+            std::unique_ptr<EventTimer> t = std::move(_timers.front());
+            _timers.pop_front();
+
+            t->set_error(ECANCELED);
+            _current_event = t.get();
+            try {
+                t->dispatch();
+                rawstd::DetachedTask::rethrow_if_pending();
+            } catch (...) {
+                _current_event = nullptr;
+                throw;
+            }
+            _current_event = nullptr;
+        }
     } catch (const std::exception& e) {
         rawstd_error("Failed to cancel sessions: %s\n", e.what());
     }
@@ -81,6 +102,30 @@ Session& Queue::_get_session(int fd) {
     _sessions[fd] = session;
 
     return *session;
+}
+
+bool Queue::_reap_timers() {
+    bool any = false;
+    std::chrono::steady_clock::time_point now =
+        std::chrono::steady_clock::now();
+
+    while (!_timers.empty() && _timers.front()->deadline() <= now) {
+        std::unique_ptr<EventTimer> event = std::move(_timers.front());
+        _timers.pop_front();
+
+        any = true;
+        _current_event = event.get();
+        try {
+            event->dispatch();
+            rawstd::DetachedTask::rethrow_if_pending();
+        } catch (...) {
+            _current_event = nullptr;
+            throw;
+        }
+        _current_event = nullptr;
+    }
+
+    return any;
 }
 
 void Queue::_wait_timeout(int timeout) {
@@ -129,7 +174,39 @@ void Queue::_wait_timeout(int timeout) {
         _current_event = nullptr;
     }
 
+    // A timer already due (e.g. a caller spinning wait_timeout(0), or
+    // several timeout()s queued back-to-back before the next
+    // wait()/wait_timeout() call) counts as progress exactly like a
+    // drained eval above -- resolves without ever entering ::poll() below.
+    if (_reap_timers()) {
+        evaluated = true;
+    }
+
     while (_cqes.empty() && !evaluated) {
+        // The timeout ::poll() itself gets is `timeout`, clamped down to
+        // whatever's left until the soonest pending timer's deadline (if
+        // that's sooner) -- rounded up so ::poll() never returns a hair
+        // before that deadline. `clamped` records whether this round's
+        // budget is genuinely the caller's own or just this timer's --
+        // needed below to tell a caller's real ETIME apart from ::poll()
+        // simply returning 0 because we cut its own timeout short.
+        int poll_timeout = timeout;
+        bool clamped = false;
+        if (!_timers.empty()) {
+            std::chrono::milliseconds remaining_ms = std::max(
+                std::chrono::ceil<std::chrono::milliseconds>(
+                    _timers.front()->deadline() -
+                    std::chrono::steady_clock::now()
+                ),
+                std::chrono::milliseconds(0)
+            );
+            int timer_timeout = static_cast<int>(remaining_ms.count());
+            if (timeout < 0 || timer_timeout < timeout) {
+                poll_timeout = timer_timeout;
+                clamped = true;
+            }
+        }
+
         std::vector<pollfd> fds;
         fds.reserve(_sessions.size());
 
@@ -153,12 +230,24 @@ void Queue::_wait_timeout(int timeout) {
         }
 
         rawstd_trace("poll()\n");
-        int res = ::poll(fds.data(), fds.size(), timeout);
+        int res = ::poll(fds.data(), fds.size(), poll_timeout);
         rawstd_trace("poll(): res = %d\n", res);
         if (res == -1) {
             RAWSTD_THROW_ERRNO();
         }
+
+        if (_reap_timers()) {
+            evaluated = true;
+        }
+
         if (res == 0) {
+            // Nothing ready. If evaluated by now (a timer just fired) or
+            // this round's budget was our own clamp rather than the
+            // caller's, this isn't the caller's timeout expiring -- loop
+            // back around and recompute against whatever's left.
+            if (evaluated || clamped) {
+                continue;
+            }
             RAWSTD_THROW_SYSTEM_ERROR(ETIME);
         }
 
@@ -714,6 +803,30 @@ Queue::sendmsg(int fd, const msghdr* msg, unsigned int flags) {
     return rawio::Awaitable<size_t>(this, ret);
 }
 
+// Submission (i.e. starting the clock) already happens before this
+// returns, exactly like every op above -- the deadline is computed now,
+// not whenever _timers is next actually consulted.
+rawio::Awaitable<void> Queue::timeout(unsigned int usec) {
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('|', "usec = %u\n", usec);
+
+    std::chrono::steady_clock::time_point deadline =
+        std::chrono::steady_clock::now() + std::chrono::microseconds(usec);
+
+    std::unique_ptr<EventTimer> event =
+        std::make_unique<EventTimer>(*this, deadline, trace_event);
+
+    rawio::Event* ret = static_cast<rawio::Event*>(event.get());
+
+    std::list<std::unique_ptr<EventTimer>>::iterator it = _timers.begin();
+    while (it != _timers.end() && (*it)->deadline() <= deadline) {
+        ++it;
+    }
+    _timers.insert(it, std::move(event));
+
+    return rawio::Awaitable<void>(this, ret);
+}
+
 void Queue::_attach(
     rawio::Event* event, std::coroutine_handle<> h, size_t* value, int* error
 ) noexcept {
@@ -735,6 +848,29 @@ rawio::Awaitable<void> Queue::cancel(rawio::Event* e) {
         std::make_unique<EventEval>(*this, trace_event, [this, e]() -> int {
             for (auto& it : _sessions) {
                 if (it.second->cancel(e, _cqes)) {
+                    return 0;
+                }
+            }
+            for (std::list<std::unique_ptr<EventTimer>>::iterator it =
+                     _timers.begin();
+                 it != _timers.end(); ++it) {
+                if (e == static_cast<rawio::Event*>(it->get())) {
+                    // Marked cancelled and re-sorted to the front (its
+                    // deadline moved to now(), which -- steady_clock being
+                    // monotonic -- always sorts no later than every other
+                    // pending timer's still-future deadline) rather than
+                    // dispatched inline here: an eval callback's process()
+                    // isn't itself exception-safe the way the try/catch
+                    // around _reap_timers()'s own dispatch() call is, so
+                    // handing this off to the _reap_timers() call right
+                    // after this eval-drain loop (see _wait_timeout()) is
+                    // what actually resolves it.
+                    std::unique_ptr<EventTimer> t = std::move(*it);
+                    _timers.erase(it);
+
+                    t->set_error(ECANCELED);
+                    t->set_deadline(std::chrono::steady_clock::now());
+                    _timers.push_front(std::move(t));
                     return 0;
                 }
             }

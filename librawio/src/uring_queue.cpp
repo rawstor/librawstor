@@ -165,6 +165,27 @@ public:
     }
 };
 
+// timeout()'s own completion token: a plain -ETIME (the CQE result a
+// timeout naturally completes with once it fires, absent
+// IORING_TIMEOUT_ETIME_SUCCESS -- which is set at submission, but gets
+// translated here too rather than relied on alone; observed to not
+// actually suppress -ETIME on at least one real kernel/liburing pair this
+// was tested against, despite being documented to since 5.15) is this
+// op's ordinary successful completion, not a failure -- a caller
+// co_await-ing timeout() shouldn't have to special-case ETIME the way
+// every other op's caller has to treat it as a real error. ECANCELED
+// (from cancel(Event*)) is untouched and still surfaces as a thrown
+// exception, exactly like every other op.
+class TimeoutCompletion final : public Completion {
+public:
+    explicit TimeoutCompletion(rawstd::TraceEvent trace_event) :
+        Completion(std::move(trace_event)) {}
+
+    void complete(int raw_result, unsigned int flags) override {
+        Completion::complete(raw_result == -ETIME ? 0 : raw_result, flags);
+    }
+};
+
 /*
  * Shared single-slot "pull" backend for poll_multishot()/
  * accept_multishot(): both just deliver a plain int (revents mask, or an
@@ -913,6 +934,48 @@ Queue::sendmsg(int fd, const msghdr* msg, unsigned int flags) {
     io_uring_sqe_set_data(sqe, c.get());
 
     return rawio::Awaitable<size_t>(
+        this, static_cast<rawio::Event*>(c.release())
+    );
+}
+
+// Unlike every op above, this one's timer has to start counting the moment
+// timeout() is called, not whenever the caller next happens to enter
+// wait()/wait_timeout() -- so, like cancel() below (see its own comment),
+// this submits the SQE immediately instead of leaving it for the next
+// io_uring_submit_and_wait() to flush. `count = 0` -- the batching count
+// that lets a plain IORING_OP_TIMEOUT double as "wait for N *other*
+// completions or this timeout, whichever first" (what wait_timeout()'s
+// io_uring_submit_and_wait_timeout() call uses under the hood) doesn't
+// apply here: this is a standalone timer, indifferent to whatever else
+// completes on the ring meanwhile. IORING_TIMEOUT_ETIME_SUCCESS documents
+// that natural expiry completes with res=0 instead of -ETIME, but
+// TimeoutCompletion (above) does that translation itself too rather than
+// relying on the flag alone -- so awaiting this resolves without throwing
+// either way; ECANCELED, from cancel(), remains the only way it ever
+// throws. No IORING_TIMEOUT_ABS/BOOTTIME/REALTIME flag -- `ts` is a plain
+// relative duration against CLOCK_MONOTONIC, exactly what a wait timeout
+// needs.
+rawio::Awaitable<void> Queue::timeout(unsigned int usec) {
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('|', "usec = %u\n", usec);
+    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
+    if (sqe == nullptr) {
+        RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
+    }
+    __kernel_timespec ts = {
+        .tv_sec = usec / 1'000'000u,
+        .tv_nsec = 1000ll * static_cast<long long>(usec % 1'000'000u),
+    };
+    auto c = std::make_unique<TimeoutCompletion>(std::move(trace_event));
+    io_uring_prep_timeout(sqe, &ts, /*count=*/0, IORING_TIMEOUT_ETIME_SUCCESS);
+    io_uring_sqe_set_data(sqe, c.get());
+
+    int res = io_uring_submit(&_ring);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+
+    return rawio::Awaitable<void>(
         this, static_cast<rawio::Event*>(c.release())
     );
 }
