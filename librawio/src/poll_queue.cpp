@@ -128,7 +128,7 @@ bool Queue::_reap_timers() {
     return any;
 }
 
-void Queue::_wait_timeout(int timeout) {
+void Queue::_wait_timeout(int msec) {
     /*
      * One generation per _wait_timeout() call, covering however this
      * particular batch of _cqes got filled -- a fresh ::poll() readiness
@@ -183,14 +183,14 @@ void Queue::_wait_timeout(int timeout) {
     }
 
     while (_cqes.empty() && !evaluated) {
-        // The timeout ::poll() itself gets is `timeout`, clamped down to
+        // The timeout ::poll() itself gets is `msec`, clamped down to
         // whatever's left until the soonest pending timer's deadline (if
         // that's sooner) -- rounded up so ::poll() never returns a hair
         // before that deadline. `clamped` records whether this round's
         // budget is genuinely the caller's own or just this timer's --
         // needed below to tell a caller's real ETIME apart from ::poll()
         // simply returning 0 because we cut its own timeout short.
-        int poll_timeout = timeout;
+        int poll_msec = msec;
         bool clamped = false;
         if (!_timers.empty()) {
             std::chrono::milliseconds remaining_ms = std::max(
@@ -200,9 +200,9 @@ void Queue::_wait_timeout(int timeout) {
                 ),
                 std::chrono::milliseconds(0)
             );
-            int timer_timeout = static_cast<int>(remaining_ms.count());
-            if (timeout < 0 || timer_timeout < timeout) {
-                poll_timeout = timer_timeout;
+            int timer_msec = static_cast<int>(remaining_ms.count());
+            if (msec < 0 || timer_msec < msec) {
+                poll_msec = timer_msec;
                 clamped = true;
             }
         }
@@ -230,7 +230,7 @@ void Queue::_wait_timeout(int timeout) {
         }
 
         rawstd_trace("poll()\n");
-        int res = ::poll(fds.data(), fds.size(), poll_timeout);
+        int res = ::poll(fds.data(), fds.size(), poll_msec);
         rawstd_trace("poll(): res = %d\n", res);
         if (res == -1) {
             RAWSTD_THROW_ERRNO();
@@ -907,8 +907,8 @@ void Queue::wait() {
     _wait_timeout(-1);
 }
 
-void Queue::wait_timeout(unsigned int timeout) {
-    _wait_timeout(timeout);
+void Queue::wait_timeout(unsigned int msec) {
+    _wait_timeout(msec);
 }
 
 } // namespace poll

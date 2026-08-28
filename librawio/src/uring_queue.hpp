@@ -123,7 +123,7 @@ public:
 
     void wait() override;
 
-    void wait_timeout(unsigned int timeout) override;
+    void wait_timeout(unsigned int msec) override;
 };
 
 } // namespace uring

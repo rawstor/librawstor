@@ -617,9 +617,7 @@ int rawio_sendmsg(
 
 int rawio_wait(RawIOQueue* queue) RAWSTOR_NOEXCEPT;
 
-int rawio_wait_timeout(
-    RawIOQueue* queue, unsigned int timeout
-) RAWSTOR_NOEXCEPT;
+int rawio_wait_timeout(RawIOQueue* queue, unsigned int msec) RAWSTOR_NOEXCEPT;
 
 /**
  * @brief Cancels an ongoing I/O operation and releases associated resources if

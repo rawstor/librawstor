@@ -713,9 +713,9 @@ int rawio_wait(RawIOQueue* queue) noexcept {
     }
 }
 
-int rawio_wait_timeout(RawIOQueue* queue, unsigned int timeout) noexcept {
+int rawio_wait_timeout(RawIOQueue* queue, unsigned int msec) noexcept {
     try {
-        static_cast<rawio::Queue*>(queue)->wait_timeout(timeout);
+        static_cast<rawio::Queue*>(queue)->wait_timeout(msec);
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();

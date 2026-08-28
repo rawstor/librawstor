@@ -159,7 +159,7 @@ public:
 
     virtual void wait() = 0;
 
-    virtual void wait_timeout(unsigned int timeout) = 0;
+    virtual void wait_timeout(unsigned int msec) = 0;
 };
 
 } // namespace rawio

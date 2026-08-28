@@ -1049,10 +1049,10 @@ void Queue::wait() {
     _dispatch();
 }
 
-void Queue::wait_timeout(unsigned int timeout) {
+void Queue::wait_timeout(unsigned int msec) {
     io_uring_cqe* cqe;
     __kernel_timespec ts = {
-        .tv_sec = timeout / 1000, .tv_nsec = 1000000u * (timeout % 1000)
+        .tv_sec = msec / 1000, .tv_nsec = 1000000u * (msec % 1000)
     };
     rawstd_trace("io_uring_submit_and_wait_timeout()\n");
     int res = io_uring_submit_and_wait_timeout(&_ring, &cqe, 1, &ts, nullptr);

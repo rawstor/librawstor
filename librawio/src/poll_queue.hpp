@@ -43,7 +43,7 @@ private:
 
     Session& _get_session(int fd);
 
-    void _wait_timeout(int timeout);
+    void _wait_timeout(int msec);
 
     // Dispatches every EventTimer in _timers whose deadline has already
     // passed (as of one now() read at entry) and returns whether it
@@ -149,7 +149,7 @@ public:
 
     void wait() override;
 
-    void wait_timeout(unsigned int timeout) override;
+    void wait_timeout(unsigned int msec) override;
 };
 
 } // namespace poll
