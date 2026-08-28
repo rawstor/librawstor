@@ -125,4 +125,45 @@ TEST_F(RawioCApiTest, poll_multishot_basic) {
     EXPECT_EQ(count, 2);
 }
 
+int timeout_count_cb(ssize_t result, void* data) {
+    int* count = static_cast<int*>(data);
+    EXPECT_EQ(result, 0);
+    ++(*count);
+    return 0;
+}
+
+TEST_F(RawioCApiTest, timeout_basic) {
+    int count = 0;
+    int res =
+        rawio_timeout(_queue.get(), 20'000, timeout_count_cb, &count, nullptr);
+    ASSERT_EQ(res, 0);
+
+    EXPECT_EQ(rawio_wait_timeout(_queue.get(), 1000), 0);
+    EXPECT_EQ(count, 1);
+}
+
+int timeout_canceled_cb(ssize_t result, void* data) {
+    int* count = static_cast<int*>(data);
+    EXPECT_EQ(result, -ECANCELED);
+    ++(*count);
+    return 0;
+}
+
+TEST_F(RawioCApiTest, timeout_cancel) {
+    int count = 0;
+    RawIOEvent* event = nullptr;
+    int res = rawio_timeout(
+        _queue.get(), 1'000'000, timeout_canceled_cb, &count, &event
+    );
+    ASSERT_EQ(res, 0);
+    ASSERT_NE(event, nullptr);
+
+    // Not due yet, nothing else pending: an ordinary ETIME.
+    EXPECT_EQ(rawio_wait_timeout(_queue.get(), 0), -ETIME);
+
+    EXPECT_EQ(rawio_cancel(_queue.get(), event), 0);
+    EXPECT_EQ(rawio_wait_timeout(_queue.get(), 1000), 0);
+    EXPECT_EQ(count, 1);
+}
+
 } // unnamed namespace
