@@ -102,6 +102,31 @@ TEST(UnitsTest, bytes_to_size_unit_invalid_unit) {
     EXPECT_EQ(rawstd_bytes_to_size_unit(100, 'X', buf, sizeof(buf)), -EINVAL);
 }
 
+TEST(UnitsTest, uint64_grouped_basics) {
+    char buf[32];
+
+    ASSERT_GT(rawstd_uint64_grouped(0, buf, sizeof(buf)), 0);
+    EXPECT_STREQ(buf, "0");
+
+    ASSERT_GT(rawstd_uint64_grouped(7, buf, sizeof(buf)), 0);
+    EXPECT_STREQ(buf, "7");
+
+    ASSERT_GT(rawstd_uint64_grouped(999, buf, sizeof(buf)), 0);
+    EXPECT_STREQ(buf, "999");
+
+    ASSERT_GT(rawstd_uint64_grouped(1000, buf, sizeof(buf)), 0);
+    EXPECT_STREQ(buf, "1'000");
+
+    ASSERT_GT(rawstd_uint64_grouped(1000000, buf, sizeof(buf)), 0);
+    EXPECT_STREQ(buf, "1'000'000");
+
+    ASSERT_GT(rawstd_uint64_grouped(1234567, buf, sizeof(buf)), 0);
+    EXPECT_STREQ(buf, "1'234'567");
+
+    ASSERT_GT(rawstd_uint64_grouped(UINT64_MAX, buf, sizeof(buf)), 0);
+    EXPECT_STREQ(buf, "18'446'744'073'709'551'615");
+}
+
 TEST(UnitsTest, round_trip) {
     uint64_t out = 0;
     ASSERT_EQ(rawstd_size_to_bytes("42G", &out), 0);

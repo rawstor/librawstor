@@ -132,6 +132,16 @@ public:
     virtual Awaitable<size_t>
     sendmsg(int fd, const msghdr* msg, unsigned int flags) = 0;
 
+    // A standalone timer, not tied to any fd: resolves successfully once
+    // `usec` microseconds have elapsed. Submission already happens before
+    // this returns, exactly like every op above -- the clock starts now,
+    // not whenever the caller next gets around to co_await-ing the
+    // returned Awaitable<void> (or calling wait()/wait_timeout() at all).
+    // Cancelling it via cancel(Event*) is the only way it surfaces an
+    // exception, exactly like every other op: ECANCELED if cancelled
+    // before firing.
+    virtual Awaitable<void> timeout(unsigned int usec) = 0;
+
     // Requests cancellation; submission already happens before this
     // returns, exactly like every op above -- awaiting the result is
     // optional. Discarding the returned Awaitable<void> (the common case,
@@ -149,7 +159,7 @@ public:
 
     virtual void wait() = 0;
 
-    virtual void wait_timeout(unsigned int timeout) = 0;
+    virtual void wait_timeout(unsigned int msec) = 0;
 };
 
 } // namespace rawio
