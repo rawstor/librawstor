@@ -90,7 +90,7 @@ private:
      * one. Sets _stop_requested and returns once the read completes;
      * loop() checks it after every rawio_wait().
      */
-    rawstd::DetachedTask _wake_task();
+    rawstd::DetachedTask wake_task();
 
 public:
     /**
@@ -100,7 +100,7 @@ public:
      * not something the caller picks, since it already uniquely and
      * stably identifies the device this process is exporting. `wake_fd`,
      * if not -1, is treated as a stop request the moment it becomes
-     * readable -- see _wake_task(). Device only ever reads it, never
+     * readable -- see wake_task(). Device only ever reads it, never
      * closes it -- the caller (main.cpp, via its own rawstd::Pipe) must
      * keep it open for at least as long as this Device runs.
      */

@@ -108,7 +108,7 @@ co_write(RawIOQueue* queue, int fd, const void* buf, size_t size) {
 
 // rawio_read()'s own collapsed ssize_t result callback shape, matching
 // rawstd::CallbackAwaitable<void>::complete()'s own -- see Device::
-// _wake_task(), the only caller.
+// wake_task(), the only caller.
 int wake_read_trampoline(ssize_t result, void* data) {
     static_cast<rawstd::CallbackAwaitable<void>*>(data)->complete(result);
     return 0;
@@ -678,7 +678,7 @@ std::vector<std::future<void>> Device::post_flush_others(VirtQueue& requester) {
     return futures;
 }
 
-rawstd::DetachedTask Device::_wake_task() {
+rawstd::DetachedTask Device::wake_task() {
     char buf[1];
     rawstd::CallbackAwaitable<void> awaiter;
     int res = rawio_read(
@@ -694,7 +694,7 @@ rawstd::DetachedTask Device::_wake_task() {
 void Device::loop() {
     dispatch_loop(_queue, _fd, *this);
     if (_wake_fd != -1) {
-        _wake_task();
+        wake_task();
     }
     rawstd::DetachedTask::rethrow_if_pending();
 
