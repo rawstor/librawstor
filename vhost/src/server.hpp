@@ -18,12 +18,11 @@ private:
 
 public:
     /**
-     * `wake_fd`, if not -1, is handed off to the Device built for each
-     * accepted connection (see loop()) -- see Device's own constructor
-     * doc comment for what it's for. Unlike `_fd` (the listening socket,
-     * reused across every accept()), a fresh Device takes ownership of
-     * it the first time loop() runs, so it must not be passed to more
-     * than one Server.
+     * `wake_fd`, if not -1, is passed through to the Device built for
+     * each accepted connection (see loop()) -- see Device's own
+     * constructor doc comment for what it's for. Neither Server nor
+     * Device ever closes it; the caller (main.cpp) owns it for as long
+     * as this Server runs.
      */
     Server(
         unsigned int queue_size, unsigned int num_queues,

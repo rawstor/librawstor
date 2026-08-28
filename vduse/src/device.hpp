@@ -99,9 +99,10 @@ public:
      * the VDUSE device name is that object's UUID (rawstor_target_id()),
      * not something the caller picks, since it already uniquely and
      * stably identifies the device this process is exporting. `wake_fd`,
-     * if not -1, is instead taken over by this Device (closed in
-     * ~Device()) and treated as a stop request the moment it becomes
-     * readable -- see _wake_task().
+     * if not -1, is treated as a stop request the moment it becomes
+     * readable -- see _wake_task(). Device only ever reads it, never
+     * closes it -- the caller (main.cpp, via its own rawstd::Pipe) must
+     * keep it open for at least as long as this Device runs.
      */
     Device(
         unsigned int queue_size, unsigned int num_queues,

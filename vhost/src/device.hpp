@@ -78,14 +78,15 @@ private:
 
 public:
     /**
-     * `wake_fd`, if not -1, is taken over by this Device (closed in
-     * ~Device()) and treated as a stop request the moment it becomes
-     * readable -- written to by main.cpp's SIGINT/SIGTERM handler, and
-     * read back via loop()'s own wake_task() (device.cpp). Needed
-     * because rawio_wait()'s own -EINTR isn't reliable enough to depend
-     * on alone: io_uring_enter() has been observed to swallow a single
-     * interrupting signal and only actually surface -EINTR to
-     * Queue::wait() on a second one.
+     * `wake_fd`, if not -1, is treated as a stop request the moment it
+     * becomes readable -- written to by main.cpp's SIGINT/SIGTERM
+     * handler, and read back via loop()'s own wake_task() (device.cpp).
+     * Needed because rawio_wait()'s own -EINTR isn't reliable enough to
+     * depend on alone: io_uring_enter() has been observed to swallow a
+     * single interrupting signal and only actually surface -EINTR to
+     * Queue::wait() on a second one. Device only ever reads it, never
+     * closes it -- the caller (main.cpp, via its own rawstd::Pipe) must
+     * keep it open for at least as long as this Device runs.
      */
     Device(
         unsigned int queue_size, unsigned int num_queues,

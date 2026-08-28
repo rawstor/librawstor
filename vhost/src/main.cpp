@@ -225,12 +225,14 @@ int main(int argc, char** argv) {
     // wake_pipe is constructed unconditionally right here, so it needs no
     // std::optional to hold an "empty" state -- unlike VirtQueue's own
     // _wake_pipe (virtqueue.cpp), which is a class member that must exist
-    // in a not-yet-created state between construction and start(). Its
-    // constructor throwing, sigaction() failing and server() throwing all
-    // share one try/catch, since wake_pipe needs to outlive all three
-    // (write_fd() must stay valid for as long as sact_handler might fire,
-    // i.e. until server() returns) and there is nothing useful left to do
-    // with any of them individually on failure beyond reporting it.
+    // in a not-yet-created state between construction and start(). It
+    // stays owned right here for this whole try block (server()/Device
+    // only ever borrow read_fd(), never close it -- see Device's own
+    // constructor doc comment), so it closes both ends on its own once
+    // server() returns or throws. Its constructor throwing, sigaction()
+    // failing and server() throwing all share one try/catch since there
+    // is nothing useful left to do with any of them individually on
+    // failure beyond reporting it.
     try {
         rawstd::Pipe wake_pipe;
         wake_write_fd = wake_pipe.write_fd();
@@ -254,7 +256,7 @@ int main(int argc, char** argv) {
 
         server(
             queue_size, num_queues, target_arg, socket_path_arg,
-            write_cache_enabled, wake_pipe.release_read()
+            write_cache_enabled, wake_pipe.read_fd()
         );
     } catch (const std::system_error& e) {
         std::cerr << e.what() << std::endl;

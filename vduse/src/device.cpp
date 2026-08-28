@@ -371,9 +371,10 @@ Device::Device(
             ioctl(_ctrl_fd, VDUSE_DESTROY_DEV, _name_buf);
             close(_ctrl_fd);
         }
-        if (_wake_fd != -1) {
-            close(_wake_fd);
-        }
+        // _wake_fd itself needs no cleanup here: wake_task() (which is
+        // what would ever arm a read on it) is only ever launched from
+        // loop(), never reached during construction, and Device doesn't
+        // own the fd anyway -- see its own doc comment.
         rawio_queue_delete(_queue);
         throw;
     }
@@ -432,16 +433,16 @@ Device::~Device() {
         }
     }
 
+    // Only cancels whatever wake_task() read may still be outstanding on
+    // _wake_fd (needed before rawio_queue_delete() below regardless of
+    // ownership) -- Device never owns this fd, so there is nothing to
+    // close() here; see its own doc comment.
     if (_wake_fd != -1) {
         int cres = rawio_cancel_all(_queue, _wake_fd);
         if (cres && cres != -ENOENT) {
             rawstd_error(
                 "Failed to cancel pending wake fd ops: %s\n", strerror(-cres)
             );
-        }
-        if (close(_wake_fd)) {
-            rawstd_error("Failed to close wake fd: %s\n", strerror(errno));
-            errno = 0;
         }
     }
 
