@@ -32,6 +32,7 @@ namespace tests {
 enum CommandType {
     CT_ACCEPT,
     CT_CLOSE,
+    CT_FORGET,
     CT_READ,
     CT_STOP,
     CT_WRITE,
@@ -66,6 +67,13 @@ public:
     CommandClose(const char* name) : Command(name) {}
 
     CommandType type() const noexcept override { return CT_CLOSE; }
+};
+
+class CommandForget final : public Command {
+public:
+    CommandForget(const char* name) : Command(name) {}
+
+    CommandType type() const noexcept override { return CT_FORGET; }
 };
 
 class CommandRead final : public Command {
@@ -274,6 +282,9 @@ rawstd::Task<void> Server::_run(rawio::Queue& queue) {
         case CT_CLOSE:
             _do_close(queue, command);
             break;
+        case CT_FORGET:
+            _do_forget(queue, command);
+            break;
         case CT_READ:
             co_await _do_read(queue, command);
             break;
@@ -309,6 +320,13 @@ void Server::_do_close(rawio::Queue&, std::shared_ptr<Command> command) {
     }
     RAWSTD_TRACE_EVENT_MESSAGE(
         command->trace_event, "closed: %d\n", _client_fd
+    );
+    _client_fd = -1;
+}
+
+void Server::_do_forget(rawio::Queue&, std::shared_ptr<Command> command) {
+    RAWSTD_TRACE_EVENT_MESSAGE(
+        command->trace_event, "forgotten: %d\n", _client_fd
     );
     _client_fd = -1;
 }
@@ -388,6 +406,14 @@ void Server::accept(const char* name) {
 void Server::close(const char* name) {
     std::unique_lock lock(_mutex);
     _commands.push_back(std::make_shared<CommandClose>(name));
+    if (_commands.size() == 1) {
+        _notify();
+    }
+}
+
+void Server::forget(const char* name) {
+    std::unique_lock lock(_mutex);
+    _commands.push_back(std::make_shared<CommandForget>(name));
     if (_commands.size() == 1) {
         _notify();
     }
