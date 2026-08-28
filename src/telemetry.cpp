@@ -130,9 +130,9 @@ void print_stat(const char* label, const rawstd::Stats& s) {
         return;
     }
     std::fprintf(
-        stderr, "  %s: min=%s, max=%s, avg=%s, stdev=%s\n", label,
-        grouped(s.min(), 2).c_str(), grouped(s.max(), 2).c_str(),
-        grouped(s.mean(), 2).c_str(), grouped(s.stddev(), 2).c_str()
+        stderr, "  %s: avg=%s, min=%s, max=%s, stdev=%s\n", label,
+        grouped(s.mean(), 2).c_str(), grouped(s.min(), 2).c_str(),
+        grouped(s.max(), 2).c_str(), grouped(s.stddev(), 2).c_str()
     );
 }
 
