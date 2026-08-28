@@ -1,0 +1,6 @@
+# Grant the "rawstor" system group (created by the rawstor-ost/
+# rawstor-vhost/rawstor-vduse packages, see systemd/rawstor-vduse@.service)
+# access to the VDUSE control device (/dev/vduse/control, used to create
+# devices) and every VDUSE device node it creates (/dev/vduse/$NAME).
+# Without this, only root can run rawstor-vduse.
+SUBSYSTEM=="vduse", MODE="0660", GROUP="rawstor"

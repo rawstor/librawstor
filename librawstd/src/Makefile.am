@@ -27,6 +27,7 @@ librawstd_la_SOURCES = $(top_srcdir)/librawstd/include/rawstd/coro.hpp \
                        $(top_srcdir)/librawstd/include/rawstd/logging_config.h \
                        $(top_srcdir)/librawstd/include/rawstd/mempool.h \
                        $(top_srcdir)/librawstd/include/rawstd/mempool.hpp \
+                       $(top_srcdir)/librawstd/include/rawstd/pipe.hpp \
                        $(top_srcdir)/librawstd/include/rawstd/ringbuf.hpp \
                        $(top_srcdir)/librawstd/include/rawstd/socket.h \
                        $(top_srcdir)/librawstd/include/rawstd/stats.hpp \
@@ -40,6 +41,7 @@ librawstd_la_SOURCES = $(top_srcdir)/librawstd/include/rawstd/coro.hpp \
                        list.c \
                        logging.cpp \
                        mempool.c \
+                       pipe.cpp \
                        socket.c \
                        stats.cpp \
                        threading.c \

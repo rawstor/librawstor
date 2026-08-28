@@ -17,6 +17,7 @@ test_all_SOURCES = test_coro.cpp \
                    test_iovec.cpp \
                    test_list.cpp \
                    test_mempool.cpp \
+                   test_pipe.cpp \
                    test_ringbuf.cpp \
                    test_threading.cpp \
                    test_units.cpp \

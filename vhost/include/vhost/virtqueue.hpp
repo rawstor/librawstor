@@ -4,6 +4,8 @@
 #include <vhost/ring.hpp>
 #include <vhost/user_protocol.h>
 
+#include <rawstd/pipe.hpp>
+
 #include <rawstor/object.h>
 #include <rawstor/rawio.h>
 
@@ -14,6 +16,7 @@
 #include <future>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <variant>
@@ -159,17 +162,19 @@ private:
     size_t _index;
 
     /* Owned for this VirtQueue's whole running lifetime, created in
-     * run() (on the worker thread itself) and torn down there too --
+     * _run() (on the worker thread itself) and torn down there too --
      * never touched from any other thread once start() returns. */
     RawIOQueue* _queue;
     RawstorObject* _object;
     std::thread _thread;
 
-    /* Cross-thread command inbox; see virtqueue.cpp. */
+    /* Cross-thread command inbox; see virtqueue.cpp. Empty until start()
+     * creates it (never before, never again after); the whole point of a
+     * separate rawstd::Pipe from _kick_fd et al. is that it needs no -1
+     * sentinel of its own to track "not yet created". */
     std::mutex _cmd_mutex;
     std::deque<Command> _cmds;
-    int _wake_read_fd;
-    int _wake_write_fd;
+    std::optional<rawstd::Pipe> _wake_pipe;
 
     /* Worker-thread-only state (never touched from the control-plane
      * thread): whether kick-driven descriptor popping is currently
@@ -188,37 +193,37 @@ private:
      * on it -- see the .cpp for the full rationale. A no-op if there
      * is no call_fd.
      */
-    void prime_call_fd() noexcept;
+    void _prime_call_fd() noexcept;
 
-    void set_kick_fd(int fd);
-    void set_call_fd(int fd);
-    void set_err_fd(int fd);
-    void set_enabled(bool enabled);
+    void _set_kick_fd(int fd);
+    void _set_call_fd(int fd);
+    void _set_err_fd(int fd);
+    void _set_enabled(bool enabled);
 
-    void apply(SetVringSize&& cmd);
-    void apply(SetVringBase&& cmd);
-    void apply(SetKickFd&& cmd);
-    void apply(SetCallFd&& cmd);
-    void apply(SetErrFd&& cmd);
-    void apply(SetVringAddr&& cmd);
-    void apply(SetEnabled&& cmd);
-    void apply(GetVringBase&& cmd);
-    void apply(Pause&& cmd);
-    void apply(Resume&& cmd);
+    void _apply(SetVringSize&& cmd);
+    void _apply(SetVringBase&& cmd);
+    void _apply(SetKickFd&& cmd);
+    void _apply(SetCallFd&& cmd);
+    void _apply(SetErrFd&& cmd);
+    void _apply(SetVringAddr&& cmd);
+    void _apply(SetEnabled&& cmd);
+    void _apply(GetVringBase&& cmd);
+    void _apply(Pause&& cmd);
+    void _apply(Resume&& cmd);
     // Defined in virtqueue_worker.cpp, not virtqueue.cpp: needs
     // co_object_flush(), which lives there alongside the rest of the
     // data-plane's rawstor_object_*() bridging.
-    void apply(FlushObject&& cmd);
-    void apply(Shutdown&& cmd);
+    void _apply(FlushObject&& cmd);
+    void _apply(Shutdown&& cmd);
 
-    void post(Command cmd);
+    void _post(Command cmd);
 
     /* The worker thread's entry point: creates _queue/_object, runs the
      * reactor loop until a Shutdown command lands, then tears both back
      * down. `ready` is fulfilled (or given the startup exception) once
      * _queue/_object are usable, before the reactor loop is entered. */
     void
-    run(std::string target, unsigned int queue_size, std::promise<void> ready);
+    _run(std::string target, unsigned int queue_size, std::promise<void> ready);
 
 public:
     VirtQueue() :
@@ -234,8 +239,6 @@ public:
         _index(0),
         _queue(nullptr),
         _object(nullptr),
-        _wake_read_fd(-1),
-        _wake_write_fd(-1),
         _paused(false),
         _inflight(0),
         _stop_requested(false) {}
@@ -385,7 +388,7 @@ public:
 
     void clear_kick_armed() noexcept { _kick_armed = false; }
 
-    /* Arms the wake-fd read that lets post() interrupt this VirtQueue's
+    /* Arms the wake-fd read that lets _post() interrupt this VirtQueue's
      * own rawio_wait() from another thread; see virtqueue.cpp. */
     void arm_wake();
 

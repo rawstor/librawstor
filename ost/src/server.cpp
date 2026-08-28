@@ -123,25 +123,17 @@ Server::Server(
     _locations(rawstd::URI::uriv(location)),
     _accept_event(nullptr) {
 
-    try {
-        int res = rawio_queue_create(queue_size, &_queue);
-        if (res < 0) {
-            RAWSTD_THROW_SYSTEM_ERROR(-res);
-        }
-    } catch (...) {
-        if (_wake_fd != -1) {
-            close(_wake_fd);
-        }
-        throw;
+    int res = rawio_queue_create(queue_size, &_queue);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 }
 
 Server::~Server() {
     _clients.clear();
 
-    if (_wake_fd != -1) {
-        close(_wake_fd);
-    }
+    // _wake_fd itself needs no cleanup here: Server never owns it, see
+    // its own constructor doc comment.
 
     if (_accept_event != nullptr) {
         int res = rawio_cancel(_queue, _accept_event);
