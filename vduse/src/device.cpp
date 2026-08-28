@@ -108,7 +108,7 @@ co_write(RawIOQueue* queue, int fd, const void* buf, size_t size) {
 
 // rawio_read()'s own collapsed ssize_t result callback shape, matching
 // rawstd::CallbackAwaitable<void>::complete()'s own -- see Device::
-// wake_task(), the only caller.
+// _wake_task(), the only caller.
 int wake_read_trampoline(ssize_t result, void* data) {
     static_cast<rawstd::CallbackAwaitable<void>*>(data)->complete(result);
     return 0;
@@ -371,7 +371,7 @@ Device::Device(
             ioctl(_ctrl_fd, VDUSE_DESTROY_DEV, _name_buf);
             close(_ctrl_fd);
         }
-        // _wake_fd itself needs no cleanup here: wake_task() (which is
+        // _wake_fd itself needs no cleanup here: _wake_task() (which is
         // what would ever arm a read on it) is only ever launched from
         // loop(), never reached during construction, and Device doesn't
         // own the fd anyway -- see its own doc comment.
@@ -388,7 +388,7 @@ Device::~Device() {
     // thread, which drains it (along with the Shutdown that follows) in
     // order before exiting -- see virtqueue.cpp's top-of-file comment.
     for (size_t i = 0; i < _vqs.size(); ++i) {
-        disable_queue(i);
+        _disable_queue(i);
     }
 
     // Each VirtQueue tears down its own kick_fd read, RawstorObject and
@@ -433,7 +433,7 @@ Device::~Device() {
         }
     }
 
-    // Only cancels whatever wake_task() read may still be outstanding on
+    // Only cancels whatever _wake_task() read may still be outstanding on
     // _wake_fd (needed before rawio_queue_delete() below regardless of
     // ownership) -- Device never owns this fd, so there is nothing to
     // close() here; see its own doc comment.
@@ -507,9 +507,9 @@ void Device::dispatch_control(
 
     case VDUSE_SET_STATUS:
         if (req.s.status & VIRTIO_CONFIG_S_DRIVER_OK) {
-            start_dataplane();
+            _start_dataplane();
         } else if (req.s.status == 0) {
-            stop_dataplane();
+            _stop_dataplane();
         }
         resp.result = VDUSE_REQ_RESULT_OK;
         break;
@@ -528,10 +528,10 @@ void Device::dispatch_control(
         for (auto& vq : _vqs) {
             vq.pause();
         }
-        remove_iova_regions(req.iova.start, req.iova.last);
+        _remove_iova_regions(req.iova.start, req.iova.last);
         for (auto& vq : _vqs) {
             // Re-resolve any virtqueue whose ring is currently mapped --
-            // a no-op (see VirtQueue::apply(Retranslate&&)) for one
+            // a no-op (see VirtQueue::_apply(Retranslate&&)) for one
             // that's disabled/never enabled.
             vq.post_retranslate();
         }
@@ -548,7 +548,7 @@ void Device::dispatch_control(
     }
 }
 
-void Device::enable_queue(size_t index) {
+void Device::_enable_queue(size_t index) {
     VirtQueue& vq = _vqs.at(index);
 
     vduse_vq_info info = {};
@@ -597,7 +597,7 @@ void Device::enable_queue(size_t index) {
     vq.post_set_enabled(true);
 }
 
-void Device::disable_queue(size_t index) {
+void Device::_disable_queue(size_t index) {
     VirtQueue& vq = _vqs.at(index);
 
     vq.post_set_enabled(false);
@@ -611,7 +611,7 @@ void Device::disable_queue(size_t index) {
     errno = 0;
 }
 
-void Device::start_dataplane() {
+void Device::_start_dataplane() {
     uint64_t features = 0;
     if (ioctl(_fd, VDUSE_DEV_GET_FEATURES, &features)) {
         RAWSTD_THROW_ERRNO();
@@ -619,13 +619,13 @@ void Device::start_dataplane() {
     _features.store(features, std::memory_order_relaxed);
 
     for (size_t i = 0; i < _vqs.size(); ++i) {
-        enable_queue(i);
+        _enable_queue(i);
     }
 }
 
-void Device::stop_dataplane() {
+void Device::_stop_dataplane() {
     for (size_t i = 0; i < _vqs.size(); ++i) {
-        disable_queue(i);
+        _disable_queue(i);
     }
 
     // Same pause/mutate/resume protection as VDUSE_UPDATE_IOTLB above --
@@ -649,7 +649,7 @@ void Device::stop_dataplane() {
     }
 }
 
-void Device::remove_iova_regions(uint64_t start, uint64_t last) {
+void Device::_remove_iova_regions(uint64_t start, uint64_t last) {
     if (last == start) {
         return;
     }
@@ -678,7 +678,7 @@ std::vector<std::future<void>> Device::post_flush_others(VirtQueue& requester) {
     return futures;
 }
 
-rawstd::DetachedTask Device::wake_task() {
+rawstd::DetachedTask Device::_wake_task() {
     char buf[1];
     rawstd::CallbackAwaitable<void> awaiter;
     int res = rawio_read(
@@ -694,7 +694,7 @@ rawstd::DetachedTask Device::wake_task() {
 void Device::loop() {
     dispatch_loop(_queue, _fd, *this);
     if (_wake_fd != -1) {
-        wake_task();
+        _wake_task();
     }
     rawstd::DetachedTask::rethrow_if_pending();
 

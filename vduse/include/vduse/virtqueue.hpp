@@ -64,7 +64,7 @@ struct DescChain {
  * we create it ourselves (eventfd(2)) on the control-plane thread (a
  * plain syscall, safe from any thread) and register it with the kernel
  * via VDUSE_VQ_SETUP_KICKFD there too, then post it over to this
- * VirtQueue's own thread the same way vhost::VirtQueue::apply(SetKickFd&&)
+ * VirtQueue's own thread the same way vhost::VirtQueue::_apply(SetKickFd&&)
  * does. Likewise there is no per-virtqueue call_fd/err_fd: completions are
  * signalled via VDUSE_VQ_INJECT_IRQ, an ioctl on the shared device fd
  * (Device::inject_irq()) -- safe to call concurrently from every
@@ -145,7 +145,7 @@ private:
     Device* _device;
     size_t _index;
 
-    /* Owned for this VirtQueue's whole running lifetime, created in run()
+    /* Owned for this VirtQueue's whole running lifetime, created in _run()
      * (on the worker thread itself) and torn down there too -- never
      * touched from any other thread once start() returns. */
     RawIOQueue* _queue;
@@ -170,31 +170,31 @@ private:
     std::vector<Reply<void>> _pending_pauses;
     bool _stop_requested;
 
-    void set_kick_fd(int fd);
-    void set_enabled(bool enabled);
+    void _set_kick_fd(int fd);
+    void _set_enabled(bool enabled);
 
-    void apply(SetVringSize&& cmd);
-    void apply(SetVringAddr&& cmd);
-    void apply(SetKickFd&& cmd);
-    void apply(SetEnabled&& cmd);
-    void apply(Retranslate&& cmd);
-    void apply(GetVqState&& cmd);
-    void apply(Pause&& cmd);
-    void apply(Resume&& cmd);
+    void _apply(SetVringSize&& cmd);
+    void _apply(SetVringAddr&& cmd);
+    void _apply(SetKickFd&& cmd);
+    void _apply(SetEnabled&& cmd);
+    void _apply(Retranslate&& cmd);
+    void _apply(GetVqState&& cmd);
+    void _apply(Pause&& cmd);
+    void _apply(Resume&& cmd);
     // Defined in virtqueue_worker.cpp, not virtqueue.cpp: needs
     // co_object_flush(), which lives there alongside the rest of the
     // data-plane's rawstor_object_*() bridging.
-    void apply(FlushObject&& cmd);
-    void apply(Shutdown&& cmd);
+    void _apply(FlushObject&& cmd);
+    void _apply(Shutdown&& cmd);
 
-    void post(Command cmd);
+    void _post(Command cmd);
 
     /* The worker thread's entry point: creates _queue/_object, runs the
      * reactor loop until a Shutdown command lands, then tears both back
      * down. `ready` is fulfilled (or given the startup exception) once
      * _queue/_object are usable, before the reactor loop is entered. */
     void
-    run(std::string target, unsigned int queue_size, std::promise<void> ready);
+    _run(std::string target, unsigned int queue_size, std::promise<void> ready);
 
 public:
     VirtQueue() :
@@ -333,7 +333,7 @@ public:
      * Stop popping new descriptors and block the calling (control-plane)
      * thread until every already in-flight request on this VirtQueue has
      * completed. Must be paired with a later resume() -- used by
-     * Device::remove_iova_regions() callers to make it safe to munmap()
+     * Device::_remove_iova_regions() callers to make it safe to munmap()
      * an IOVA region no in-flight request can still be translating
      * addresses into.
      */
@@ -376,7 +376,7 @@ public:
 
     void clear_kick_armed() noexcept { _kick_armed = false; }
 
-    /* Arms the wake-fd read that lets post() interrupt this VirtQueue's
+    /* Arms the wake-fd read that lets _post() interrupt this VirtQueue's
      * own rawio_wait() from another thread; see virtqueue.cpp. */
     void arm_wake();
 

@@ -35,7 +35,7 @@ namespace {
 struct sigaction sact = {};
 
 // Write end of the wake pipe sact_handler() below signals through --
-// vduse's own Device::wake_task() reads the other end. Filled once by
+// vduse's own Device::_wake_task() reads the other end. Filled once by
 // main() before SIGINT/SIGTERM get registered, then never reassigned
 // again, so sact_handler() (which may run on any thread) needs no
 // synchronization to read it; write() to a pipe is async-signal-safe.

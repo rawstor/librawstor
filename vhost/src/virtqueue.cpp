@@ -37,13 +37,13 @@
 //     applied the command -- acceptable only because both are rare,
 //     off-the-hot-path control-plane operations (see their own doc
 //     comments in virtqueue.hpp).
-//   - The owning thread's reactor (run(), in virtqueue_worker.cpp) keeps
+//   - The owning thread's reactor (_run(), in virtqueue_worker.cpp) keeps
 //     a read armed on `_wake_pipe`'s read end via this same VirtQueue's
 //     own `_queue`, mirroring kick_fd's arm_kick()/kick_cb rearm pattern
 //     below. Each wakeup drains and applies every queued Command in
-//     order (drain_commands()/apply()), then rearms.
+//     order (drain_commands()/_apply()), then rearms.
 //
-// Every apply() overload runs exclusively on the owning thread, so it's
+// Every _apply() overload runs exclusively on the owning thread, so it's
 // free to touch `_kick_fd`/`_queue` et al. directly with no locking of
 // its own -- the whole point of routing through the command queue is
 // that nothing else ever does.
@@ -166,7 +166,7 @@ int wake_cb(ssize_t result, void* data) {
 namespace rawstor {
 namespace vhost {
 
-void VirtQueue::prime_call_fd() noexcept {
+void VirtQueue::_prime_call_fd() noexcept {
     if (_call_fd == -1) {
         return;
     }
@@ -225,7 +225,7 @@ void VirtQueue::start(const std::string& target, unsigned int queue_size) {
     // that actually knows how to act on them (Device::loop()'s EINTR
     // handling). A signal landing on a worker thread would just make
     // that one rawio_wait() return EINTR -- harmlessly retried, see
-    // run() -- while the rest of the process never learns the signal
+    // _run() -- while the rest of the process never learns the signal
     // arrived at all, so shutdown would hang instead of happening. Block
     // every signal on this (control-plane) thread before spawning, so
     // the child inherits an all-blocked mask, then restore this
@@ -236,13 +236,13 @@ void VirtQueue::start(const std::string& target, unsigned int queue_size) {
     pthread_sigmask(SIG_BLOCK, &all_signals, &old_mask);
 
     _thread = std::thread(
-        &VirtQueue::run, this, target, queue_size, std::move(ready)
+        &VirtQueue::_run, this, target, queue_size, std::move(ready)
     );
 
     pthread_sigmask(SIG_SETMASK, &old_mask, nullptr);
 
-    // Propagates whatever exception run() hit trying to create
-    // _queue/_object -- in which case run() has already returned (the
+    // Propagates whatever exception _run() hit trying to create
+    // _queue/_object -- in which case _run() has already returned (the
     // thread function exits without entering its reactor loop), so
     // join() right after rethrowing below leaves this VirtQueue back in
     // its not-started state (running() false) rather than leaking a
@@ -259,11 +259,11 @@ void VirtQueue::stop() noexcept {
     if (!running()) {
         return;
     }
-    post(Shutdown{});
+    _post(Shutdown{});
     _thread.join();
 }
 
-void VirtQueue::post(Command cmd) {
+void VirtQueue::_post(Command cmd) {
     {
         std::lock_guard<std::mutex> lock(_cmd_mutex);
         _cmds.push_back(std::move(cmd));
@@ -272,7 +272,7 @@ void VirtQueue::post(Command cmd) {
     // Best effort: the pipe is non-blocking and its buffer is many
     // orders of magnitude larger than the command traffic this ever
     // sees, so EAGAIN here just means a wakeup byte from an earlier
-    // post() is already pending -- the command we just enqueued will
+    // _post() is already pending -- the command we just enqueued will
     // still be drained by the wakeup that byte causes, so it's not an
     // error, merely redundant.
     ssize_t res = write(_wake_pipe->write_fd(), &b, 1);
@@ -285,55 +285,55 @@ void VirtQueue::post(Command cmd) {
 }
 
 void VirtQueue::post_set_vring_size(unsigned int size) {
-    post(SetVringSize{size});
+    _post(SetVringSize{size});
 }
 
 void VirtQueue::post_set_vring_base(uint16_t idx) {
-    post(SetVringBase{idx});
+    _post(SetVringBase{idx});
 }
 
 void VirtQueue::post_set_kick_fd(int fd) {
-    post(SetKickFd{fd});
+    _post(SetKickFd{fd});
 }
 
 void VirtQueue::post_set_call_fd(int fd) {
-    post(SetCallFd{fd});
+    _post(SetCallFd{fd});
 }
 
 void VirtQueue::post_set_err_fd(int fd) {
-    post(SetErrFd{fd});
+    _post(SetErrFd{fd});
 }
 
 void VirtQueue::post_set_vring_addr(const vhost_vring_addr& vra) {
-    post(SetVringAddr{vra});
+    _post(SetVringAddr{vra});
 }
 
 void VirtQueue::post_set_enabled(bool enabled) {
-    post(SetEnabled{enabled});
+    _post(SetEnabled{enabled});
 }
 
 uint16_t VirtQueue::get_vring_base() {
     GetVringBase cmd;
     std::future<uint16_t> f = cmd.reply.promise.get_future();
-    post(std::move(cmd));
+    _post(std::move(cmd));
     return f.get();
 }
 
 void VirtQueue::pause() {
     Pause cmd;
     std::future<void> f = cmd.reply.promise.get_future();
-    post(std::move(cmd));
+    _post(std::move(cmd));
     f.get();
 }
 
 void VirtQueue::resume() {
-    post(Resume{});
+    _post(Resume{});
 }
 
 std::future<void> VirtQueue::post_flush() {
     FlushObject cmd;
     std::future<void> f = cmd.reply.promise.get_future();
-    post(std::move(cmd));
+    _post(std::move(cmd));
     return f;
 }
 
@@ -344,31 +344,31 @@ void VirtQueue::drain_commands() {
         local.swap(_cmds);
     }
     for (Command& cmd : local) {
-        std::visit([this](auto&& c) { apply(std::move(c)); }, std::move(cmd));
+        std::visit([this](auto&& c) { _apply(std::move(c)); }, std::move(cmd));
     }
 }
 
-void VirtQueue::apply(SetVringSize&& cmd) {
+void VirtQueue::_apply(SetVringSize&& cmd) {
     set_vring_size(cmd.size);
 }
 
-void VirtQueue::apply(SetVringBase&& cmd) {
+void VirtQueue::_apply(SetVringBase&& cmd) {
     set_vring_base(cmd.idx);
 }
 
-void VirtQueue::apply(SetKickFd&& cmd) {
-    set_kick_fd(cmd.fd);
+void VirtQueue::_apply(SetKickFd&& cmd) {
+    _set_kick_fd(cmd.fd);
 }
 
-void VirtQueue::apply(SetCallFd&& cmd) {
-    set_call_fd(cmd.fd);
+void VirtQueue::_apply(SetCallFd&& cmd) {
+    _set_call_fd(cmd.fd);
 }
 
-void VirtQueue::apply(SetErrFd&& cmd) {
-    set_err_fd(cmd.fd);
+void VirtQueue::_apply(SetErrFd&& cmd) {
+    _set_err_fd(cmd.fd);
 }
 
-void VirtQueue::apply(SetVringAddr&& cmd) {
+void VirtQueue::_apply(SetVringAddr&& cmd) {
     Device& device = *_device;
     set_vring_addr(
         [&device](uint64_t addr) { return device.userspace_va_to_va(addr); },
@@ -376,16 +376,16 @@ void VirtQueue::apply(SetVringAddr&& cmd) {
     );
 }
 
-void VirtQueue::apply(SetEnabled&& cmd) {
-    set_enabled(cmd.enabled);
+void VirtQueue::_apply(SetEnabled&& cmd) {
+    _set_enabled(cmd.enabled);
 }
 
-void VirtQueue::apply(GetVringBase&& cmd) {
-    set_enabled(false);
+void VirtQueue::_apply(GetVringBase&& cmd) {
+    _set_enabled(false);
     cmd.reply.promise.set_value(_last_avail_idx);
 }
 
-void VirtQueue::apply(Pause&& cmd) {
+void VirtQueue::_apply(Pause&& cmd) {
     _paused = true;
     if (_inflight == 0) {
         cmd.reply.promise.set_value();
@@ -394,7 +394,7 @@ void VirtQueue::apply(Pause&& cmd) {
     }
 }
 
-void VirtQueue::apply(Resume&& /*cmd*/) {
+void VirtQueue::_apply(Resume&& /*cmd*/) {
     _paused = false;
     try {
         process_queue();
@@ -403,7 +403,7 @@ void VirtQueue::apply(Resume&& /*cmd*/) {
     }
 }
 
-void VirtQueue::apply(Shutdown&& /*cmd*/) {
+void VirtQueue::_apply(Shutdown&& /*cmd*/) {
     _stop_requested = true;
 }
 
@@ -447,7 +447,7 @@ void VirtQueue::arm_wake() {
     ctx.release();
 }
 
-void VirtQueue::set_kick_fd(int fd) {
+void VirtQueue::_set_kick_fd(int fd) {
     if (_kick_fd != -1) {
         int res = rawio_cancel_all(_queue, _kick_fd);
         if (res && res != -ENOENT) {
@@ -467,15 +467,15 @@ void VirtQueue::set_kick_fd(int fd) {
     }
 }
 
-void VirtQueue::set_call_fd(int fd) {
+void VirtQueue::_set_call_fd(int fd) {
     if (_call_fd != -1) {
         close_fd(_call_fd, "call_fd");
     }
     _call_fd = fd;
-    prime_call_fd();
+    _prime_call_fd();
 }
 
-void VirtQueue::set_err_fd(int fd) {
+void VirtQueue::_set_err_fd(int fd) {
     if (_err_fd != -1) {
         close_fd(_err_fd, "err_fd");
     }
@@ -504,13 +504,13 @@ void VirtQueue::set_vring_addr(
     _signalled_used_valid = false;
 }
 
-void VirtQueue::set_enabled(bool enabled) {
+void VirtQueue::_set_enabled(bool enabled) {
     if (enabled) {
         if (_enable_count++ > 0) {
             return;
         }
 
-        prime_call_fd();
+        _prime_call_fd();
         arm_kick();
         return;
     }

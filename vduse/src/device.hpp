@@ -74,11 +74,11 @@ private:
     int _wake_fd;
     bool _stop_requested;
 
-    void enable_queue(size_t index);
-    void disable_queue(size_t index);
-    void start_dataplane();
-    void stop_dataplane();
-    void remove_iova_regions(uint64_t start, uint64_t last);
+    void _enable_queue(size_t index);
+    void _disable_queue(size_t index);
+    void _start_dataplane();
+    void _stop_dataplane();
+    void _remove_iova_regions(uint64_t start, uint64_t last);
 
     /**
      * Only launched from loop() when `_wake_fd` holds a real fd (see the
@@ -90,7 +90,7 @@ private:
      * one. Sets _stop_requested and returns once the read completes;
      * loop() checks it after every rawio_wait().
      */
-    rawstd::DetachedTask wake_task();
+    rawstd::DetachedTask _wake_task();
 
 public:
     /**
@@ -100,7 +100,7 @@ public:
      * not something the caller picks, since it already uniquely and
      * stably identifies the device this process is exporting. `wake_fd`,
      * if not -1, is treated as a stop request the moment it becomes
-     * readable -- see wake_task(). Device only ever reads it, never
+     * readable -- see _wake_task(). Device only ever reads it, never
      * closes it -- the caller (main.cpp, via its own rawstd::Pipe) must
      * keep it open for at least as long as this Device runs.
      */

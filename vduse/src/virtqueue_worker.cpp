@@ -1,6 +1,6 @@
 // Everything that runs on a VirtQueue's own worker thread once it's
-// alive: creating/tearing down its RawIOQueue+RawstorObject pair (run(),
-// VirtQueue::run()'s body), and turning popped descriptor chains into
+// alive: creating/tearing down its RawIOQueue+RawstorObject pair (_run(),
+// VirtQueue::_run()'s body), and turning popped descriptor chains into
 // virtio-blk requests against that VirtQueue's own object (Request,
 // preadv_task/pwritev_task/flush_task/discard_task/write_zeroes_task/
 // process_request, VirtQueue::process_queue()/complete_request()). See
@@ -41,7 +41,7 @@ namespace {
 using rawstor::vduse::Device;
 using rawstor::vduse::VirtQueue;
 
-// Synchronous open()/close() shims for VirtQueue::run(): both run before
+// Synchronous open()/close() shims for VirtQueue::_run(): both run before
 // the reactor loop starts or after it returns, i.e. never from inside
 // this VirtQueue's own dispatch of `queue` -- spinning `queue` here to
 // wait for the callback is therefore safe. Mirrors vhost/'s own (and
@@ -222,10 +222,10 @@ rawstd::Task<void> co_object_flush(RawstorObject* object) {
     co_await awaiter;
 }
 
-// VirtQueue::apply(FlushObject&&)'s actual work: flush this VirtQueue's
+// VirtQueue::_apply(FlushObject&&)'s actual work: flush this VirtQueue's
 // own object and settle `reply` with the outcome. A DetachedTask (not
-// awaited by apply() itself) since rawstor_object_flush() is async and
-// apply() -- like every other apply() overload -- must return promptly
+// awaited by _apply() itself) since rawstor_object_flush() is async and
+// _apply() -- like every other _apply() overload -- must return promptly
 // so drain_commands() can move on to the next queued command.
 rawstd::DetachedTask
 flush_object_task(RawstorObject* object, VirtQueue::Reply<void> reply) {
@@ -507,7 +507,7 @@ void process_request(std::unique_ptr<Request> req) {
 namespace rawstor {
 namespace vduse {
 
-void VirtQueue::run(
+void VirtQueue::_run(
     std::string target, unsigned int queue_size, std::promise<void> ready
 ) {
     RawIOQueue* queue = nullptr;
@@ -630,7 +630,7 @@ void VirtQueue::complete_request(uint16_t head, uint32_t len) {
     }
 }
 
-void VirtQueue::apply(FlushObject&& cmd) {
+void VirtQueue::_apply(FlushObject&& cmd) {
     flush_object_task(_object, std::move(cmd.reply));
     rawstd::DetachedTask::rethrow_if_pending();
 }

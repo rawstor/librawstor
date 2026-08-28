@@ -1146,7 +1146,7 @@ Device::Device(
 Device::~Device() {
     // Each VirtQueue tears down its own kick_fd/call_fd ops, its own
     // RawstorObject and its own RawIOQueue on its own thread as part of
-    // stop() -- see VirtQueue::run(). A no-op for any VirtQueue that
+    // stop() -- see VirtQueue::_run(). A no-op for any VirtQueue that
     // never started.
     for (auto& vq : _vqs) {
         vq.stop();
