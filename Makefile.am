@@ -5,6 +5,10 @@ SUBDIRS = librawstd \
           vhost \
           vhost-qemu
 
+if ENABLE_VDUSE_BACKEND
+    SUBDIRS += vduse
+endif
+
 if ENABLE_TESTS
     SUBDIRS += tests
 endif
@@ -52,12 +56,17 @@ EXTRA_DIST = deb/librawstor/compat \
              deb/librawstor/rawstor-vhost.install \
              deb/librawstor/rawstor-vhost.postinst \
              deb/librawstor/rawstor-vhost.prerm \
+             deb/librawstor/rawstor-vduse.install \
+             deb/librawstor/rawstor-vduse.postinst \
+             deb/librawstor/rawstor-vduse.prerm \
              deb/librawstor/rules \
              deb/python3-rawstor/compat \
              deb/python3-rawstor/format \
              deb/python3-rawstor/rules \
              systemd/rawstor-ost.service \
              systemd/rawstor-vhost@.service \
+             systemd/rawstor-vduse@.service \
+             udev/60-rawstor-vduse.rules \
              .github/tools/deb-changelog.sh \
              ChangeLog.md \
              README.md \
@@ -74,10 +83,19 @@ CLEANFILES = ChangeLog \
 
 if ENABLE_TESTS
 
+if ENABLE_VDUSE_BACKEND
+ENABLE_VDUSE_BACKEND = yes
+else
+ENABLE_VDUSE_BACKEND = no
+endif
+
 test: all
 	make -C librawstd test
 	make -C librawio test
 	make -C vhost test
+	@if [ "x$(ENABLE_VDUSE_BACKEND)" = "xyes" ]; then \
+	  make -C vduse test; \
+	fi
 	make -C tests test
 	@if [ "x$(ENABLE_OST_BACKEND)" = "xyes" ]; then \
 	  make -C ost test; \

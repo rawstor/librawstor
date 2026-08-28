@@ -1,16 +1,18 @@
 // Everything that runs on a VirtQueue's own worker thread once it's
-// alive: creating/tearing down its RawIOQueue+RawstorObject pair
-// (_run(), VirtQueue::_run()'s body), and turning popped descriptor chains
-// into virtio-blk requests against that VirtQueue's own object
-// (Request, process_request(), VirtQueue::process_queue()/
-// complete_request()). See virtqueue.cpp's top-of-file comment for how
-// the rest of VirtQueue (ring mechanics, the cross-thread command queue)
-// fits together with this.
+// alive: creating/tearing down its RawIOQueue+RawstorObject pair (_run(),
+// VirtQueue::_run()'s body), and turning popped descriptor chains into
+// virtio-blk requests against that VirtQueue's own object (Request,
+// preadv_task/pwritev_task/flush_task/discard_task/write_zeroes_task/
+// process_request, VirtQueue::process_queue()/complete_request()). See
+// virtqueue.cpp's top-of-file comment for how the rest of VirtQueue (ring
+// mechanics, the cross-thread command queue) fits together with this.
+// Mirrors vhost/src/virtqueue_worker.cpp almost verbatim.
 
-#include <vhost/virtqueue.hpp>
+#include <vduse/virtqueue.hpp>
 
 #include "device.hpp"
 #include <stdheaders/linux/virtio_blk.h>
+#include <vduse/request.hpp>
 
 #include <rawstd/coro.hpp>
 #include <rawstd/endian.h>
@@ -36,22 +38,14 @@
 
 namespace {
 
-using rawstor::vhost::Device;
-using rawstor::vhost::VirtQueue;
+using rawstor::vduse::Device;
+using rawstor::vduse::VirtQueue;
 
-// Synchronous open()/close() shims for VirtQueue::_run(): both run
-// before the reactor loop starts or after it returns, i.e. never from
-// inside this VirtQueue's own dispatch of `queue` -- spinning `queue`
-// here to wait for the callback is therefore safe, unlike doing so from
-// a context that's itself already being dispatched by the same queue
-// (see ost::Session's own async close()/open() handling for that
-// hazard). rawstor_target_open()'s opened object is written directly
-// into the caller's own `object` out-param, not routed through this
-// struct, so there's nothing left for close's own Result to carry
-// beyond what open's already needs -- the two share one trampoline
-// (rawstor_target_open()/rawstor_object_close2() share the same ssize_t
-// result callback shape -- negative -> -errno, zero -> success -- see
-// rawstor/target.h's own doc comment for the general convention).
+// Synchronous open()/close() shims for VirtQueue::_run(): both run before
+// the reactor loop starts or after it returns, i.e. never from inside
+// this VirtQueue's own dispatch of `queue` -- spinning `queue` here to
+// wait for the callback is therefore safe. Mirrors vhost/'s own (and
+// device.cpp's former) Result/result_cb/open_object/close_object.
 struct Result {
     int error = 0;
     bool done = false;
@@ -104,87 +98,52 @@ void close_object(RawIOQueue* queue, RawstorObject* object) {
 //
 // virtio-blk data plane: turns descriptor chains popped off a virtqueue
 // into asynchronous rawstor object I/O against that same virtqueue's own
-// RawstorObject.
+// RawstorObject. Transport-independent BlkRequest, mirrors vhost/'s own
+// Request/preadv_task/pwritev_task/flush_task/process_request almost
+// verbatim.
 //
-
-struct virtio_blk_inhdr {
-    unsigned char status;
-};
 
 class Request final {
 private:
     VirtQueue& _vq;
-    std::unique_ptr<rawstor::vhost::DescChain> _chain;
-    virtio_blk_inhdr* _in;
-    iovec* _in_iov;
-    unsigned int _in_niov;
-    virtio_blk_outhdr _out;
-    iovec* _out_iov;
-    unsigned int _out_niov;
+    std::unique_ptr<rawstor::vduse::DescChain> _chain;
+    rawstor::vduse::BlkRequest _blk;
 
 public:
-    Request(VirtQueue& vq, std::unique_ptr<rawstor::vhost::DescChain> chain) :
+    Request(VirtQueue& vq, std::unique_ptr<rawstor::vduse::DescChain> chain) :
         _vq(vq),
         _chain(std::move(chain)),
-        _in_iov(_chain->writable.data()),
-        _in_niov(_chain->writable.size()),
-        _out_iov(_chain->readable.data()),
-        _out_niov(_chain->readable.size()) {
-        if (_out_niov == 0 ||
-            rawstd_iovec_to_buf(_out_iov, _out_niov, 0, &_out, sizeof(_out)) !=
-                sizeof(_out)) {
-            rawstd_error("virtio-blk request outhdr too short\n");
-            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-        }
-
-        rawstd_iovec_discard_front(&_out_iov, &_out_niov, sizeof(_out));
-
-        if (_in_niov == 0 ||
-            _in_iov[_in_niov - 1].iov_len < sizeof(virtio_blk_inhdr)) {
-            rawstd_error("virtio-blk request inhdr too short\n");
-            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-        }
-
-        _in = reinterpret_cast<virtio_blk_inhdr*>(
-            static_cast<char*>(_in_iov[_in_niov - 1].iov_base) +
-            _in_iov[_in_niov - 1].iov_len - sizeof(virtio_blk_inhdr)
-        );
-
-        rawstd_iovec_discard_back(
-            &_in_iov, &_in_niov, sizeof(virtio_blk_inhdr)
-        );
-    }
+        _blk(
+            _chain->readable.data(), _chain->readable.size(),
+            _chain->writable.data(), _chain->writable.size()
+        ) {}
 
     inline VirtQueue& vq() noexcept { return _vq; }
 
-    inline iovec* in_iov() noexcept { return _in_iov; }
+    inline iovec* in_iov() noexcept { return _blk.in_iov(); }
 
-    inline unsigned int in_niov() noexcept { return _in_niov; }
+    inline unsigned int in_niov() noexcept { return _blk.in_niov(); }
 
-    inline iovec* out_iov() noexcept { return _out_iov; }
+    inline iovec* out_iov() noexcept { return _blk.out_iov(); }
 
-    inline unsigned int out_niov() noexcept { return _out_niov; }
+    inline unsigned int out_niov() noexcept { return _blk.out_niov(); }
 
-    inline uint32_t type() noexcept {
-        return RAWSTD_LE32TOH(_out.type) & ~(uint32_t)VIRTIO_BLK_T_BARRIER;
-    }
+    inline uint32_t type() noexcept { return _blk.type(); }
 
-    inline uint64_t offset() noexcept {
-        return RAWSTD_LE64TOH(_out.sector) << VIRTIO_BLK_SECTOR_BITS;
-    }
+    inline uint64_t offset() noexcept { return _blk.offset(); }
 
     void push(unsigned char status, size_t size) {
-        _in->status = status;
+        _blk.set_status(status);
         _vq.complete_request(
-            _chain->head, static_cast<uint32_t>(size + sizeof(virtio_blk_inhdr))
+            _chain->head, static_cast<uint32_t>(size + sizeof(unsigned char))
         );
     }
 };
 
 // ---------------------------------------------------------------------
 // rawstd::CallbackAwaitable<T> bridge over the async rawstor/object.h C
-// API. See rawstd::CallbackAwaitable<T>'s own doc comment for the
-// general shape this follows.
+// API. See rawstd::CallbackAwaitable<T>'s own doc comment for the general
+// shape this follows.
 // ---------------------------------------------------------------------
 
 int io_trampoline(size_t result, int error, void* data) {
@@ -278,13 +237,13 @@ flush_object_task(RawstorObject* object, VirtQueue::Reply<void> reply) {
     }
 }
 
-// Both process_queue() (the only caller of process_request(), below) and
-// this file's own launch_*()-style wrappers already log-and-continue on
-// any exception escaping here, so none of these *_task() coroutines need
-// their own top-level try/catch beyond the one around each async op
-// itself -- an immediate submission failure and a later-reported one
-// both surface identically via CallbackAwaitable<T> (see its own doc
-// comment), so there's only one error path to handle either way.
+// process_queue() (the only caller of process_request(), a few frames
+// up) already logs and continues on any exception escaping here, so none
+// of these *_task() coroutines need their own top-level try/catch beyond
+// the one around each async op itself -- an immediate submission failure
+// and a later-reported one both surface identically via
+// CallbackAwaitable<T> (see its own doc comment), so there's only one
+// error path to handle either way.
 
 rawstd::DetachedTask preadv_task(std::unique_ptr<Request> req) {
     size_t size = rawstd_iovec_size(req->in_iov(), req->in_niov());
@@ -308,7 +267,7 @@ rawstd::DetachedTask preadv_task(std::unique_ptr<Request> req) {
         req->push(VIRTIO_BLK_S_IOERR, result);
         co_return;
     }
-    rawstd_debug("vhost: object operation completed, %zu bytes\n", result);
+    rawstd_debug("vduse: object operation completed, %zu bytes\n", result);
     req->push(VIRTIO_BLK_S_OK, result);
 }
 
@@ -321,7 +280,7 @@ rawstd::DetachedTask pwritev_task(std::unique_ptr<Request> req) {
     // Writeback caching (wce) means the guest is expected to issue an
     // explicit FLUSH when it needs durability; without it (write-through),
     // every write must already be durable by the time it completes.
-    bool sync = !req->vq().device().wce_enabled();
+    bool sync = !req->vq().device().write_cache_enabled();
     size_t size = rawstd_iovec_size(req->out_iov(), req->out_niov());
     size_t result = 0;
     int error = 0;
@@ -343,7 +302,7 @@ rawstd::DetachedTask pwritev_task(std::unique_ptr<Request> req) {
         req->push(VIRTIO_BLK_S_IOERR, result);
         co_return;
     }
-    rawstd_debug("vhost: object operation completed, %zu bytes\n", result);
+    rawstd_debug("vduse: object operation completed, %zu bytes\n", result);
     req->push(VIRTIO_BLK_S_OK, result);
 }
 
@@ -375,7 +334,7 @@ rawstd::DetachedTask flush_task(std::unique_ptr<Request> req) {
         req->push(VIRTIO_BLK_S_IOERR, 0);
         co_return;
     }
-    rawstd_debug("vhost: flush completed\n");
+    rawstd_debug("vduse: flush completed\n");
     req->push(VIRTIO_BLK_S_OK, 0);
 }
 
@@ -432,7 +391,7 @@ rawstd::DetachedTask discard_task(std::unique_ptr<Request> req) {
         req->push(VIRTIO_BLK_S_IOERR, 0);
         co_return;
     }
-    rawstd_debug("vhost: discard completed, %zu bytes\n", total);
+    rawstd_debug("vduse: discard completed, %zu bytes\n", total);
     req->push(VIRTIO_BLK_S_OK, 0);
 }
 
@@ -445,7 +404,7 @@ rawstd::DetachedTask write_zeroes_task(std::unique_ptr<Request> req) {
     // Same write-cache-driven durability policy as pwritev_task() above --
     // WRITE_ZEROES is a write as far as the guest's write-cache contract
     // goes, so it must honor it the same way.
-    bool sync = !req->vq().device().wce_enabled();
+    bool sync = !req->vq().device().write_cache_enabled();
     size_t total = 0;
     int error = 0;
     try {
@@ -470,7 +429,7 @@ rawstd::DetachedTask write_zeroes_task(std::unique_ptr<Request> req) {
         req->push(VIRTIO_BLK_S_IOERR, 0);
         co_return;
     }
-    rawstd_debug("vhost: write-zeroes completed, %zu bytes\n", total);
+    rawstd_debug("vduse: write-zeroes completed, %zu bytes\n", total);
     req->push(VIRTIO_BLK_S_OK, 0);
 }
 
@@ -481,11 +440,10 @@ void write_zeroes(std::unique_ptr<Request> req) {
 
 void process_request(std::unique_ptr<Request> req) {
     size_t in_size = rawstd_iovec_size(req->in_iov(), req->in_niov());
-    size_t out_size = rawstd_iovec_size(req->out_iov(), req->out_niov());
 
     rawstd_debug(
-        "vhost: request type %u offset %llu in_size %zu out_size %zu\n",
-        req->type(), (unsigned long long)req->offset(), in_size, out_size
+        "vduse: request type %u offset %llu\n", req->type(),
+        (unsigned long long)req->offset()
     );
 
     switch (req->type()) {
@@ -547,7 +505,7 @@ void process_request(std::unique_ptr<Request> req) {
 } // namespace
 
 namespace rawstor {
-namespace vhost {
+namespace vduse {
 
 void VirtQueue::_run(
     std::string target, unsigned int queue_size, std::promise<void> ready
@@ -599,7 +557,7 @@ void VirtQueue::_run(
         }
         if (res < 0) {
             rawstd_error(
-                "vhost: vq %zu: rawio_wait failed: %s\n", _index, strerror(-res)
+                "vduse: vq %zu: rawio_wait failed: %s\n", _index, strerror(-res)
             );
             break;
         }
@@ -609,16 +567,7 @@ void VirtQueue::_run(
         int res = rawio_cancel_all(_queue, _kick_fd);
         if (res && res != -ENOENT) {
             rawstd_error(
-                "vhost: vq %zu: failed to cancel pending kick_fd ops: %s\n",
-                _index, strerror(-res)
-            );
-        }
-    }
-    if (_call_fd != -1) {
-        int res = rawio_cancel_all(_queue, _call_fd);
-        if (res && res != -ENOENT) {
-            rawstd_error(
-                "vhost: vq %zu: failed to cancel pending call_fd ops: %s\n",
+                "vduse: vq %zu: failed to cancel pending kick_fd ops: %s\n",
                 _index, strerror(-res)
             );
         }
@@ -628,7 +577,7 @@ void VirtQueue::_run(
         close_object(_queue, _object);
     } catch (const std::exception& e) {
         rawstd_error(
-            "vhost: vq %zu: failed to close object: %s\n", _index, e.what()
+            "vduse: vq %zu: failed to close object: %s\n", _index, e.what()
         );
     }
 
@@ -662,16 +611,16 @@ void VirtQueue::process_queue() {
     }
 
     rawstd_debug(
-        "vhost: process_queue(%zu): popped %u chain(s)\n", _index, npopped
+        "vduse: process_queue(%zu): popped %u chain(s)\n", _index, npopped
     );
 }
 
 void VirtQueue::complete_request(uint16_t head, uint32_t len) {
     rawstd_debug(
-        "vhost: complete_request(%zu): head %u len %u\n", _index, head, len
+        "vduse: complete_request(%zu): head %u len %u\n", _index, head, len
     );
     push(head, len);
-    notify(_device->event_idx_negotiated());
+    notify(*_device, _device->event_idx_negotiated());
 
     if (--_inflight == 0 && !_pending_pauses.empty()) {
         for (Reply<void>& reply : _pending_pauses) {
@@ -686,5 +635,5 @@ void VirtQueue::_apply(FlushObject&& cmd) {
     rawstd::DetachedTask::rethrow_if_pending();
 }
 
-} // namespace vhost
+} // namespace vduse
 } // namespace rawstor

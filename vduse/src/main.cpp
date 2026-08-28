@@ -1,9 +1,12 @@
-#include "server.hpp"
+#include "device.hpp"
 
 #include "config.h"
 
 #include <rawstd/exitcode.h>
+#include <rawstd/gpp.hpp>
 #include <rawstd/pipe.hpp>
+
+#include <rawstor.h>
 
 #include <getopt.h>
 #include <signal.h>
@@ -20,6 +23,11 @@
 #include <system_error>
 
 #define DEFAULT_QUEUE_SIZE 256
+// The kernel's vduse_vq_config.max_size is a plain __u16 (no fixed cap),
+// but virtqueue sizes are conventionally powers of two and this is a
+// generous upper bound in practice (matches e.g. qemu's own vduse-blk
+// export default limit).
+#define MAX_QUEUE_SIZE 1024
 #define DEFAULT_NUM_QUEUES 16
 
 namespace {
@@ -27,29 +35,34 @@ namespace {
 struct sigaction sact = {};
 
 // Write end of the wake pipe sact_handler() below signals through --
-// Device::loop()'s own wake_task() (device.cpp) reads the other end, via
-// Server. Filled once by main() before SIGINT/SIGTERM get registered,
-// then never reassigned again, so sact_handler() needs no
+// vduse's own Device::_wake_task() reads the other end. Filled once by
+// main() before SIGINT/SIGTERM get registered, then never reassigned
+// again, so sact_handler() (which may run on any thread) needs no
 // synchronization to read it; write() to a pipe is async-signal-safe.
-// See vduse/src/main.cpp's own (near-identical) wake_write_fd for the
-// fuller rationale -- vhost only ever has one control-plane thread of
-// its own too (each VirtQueue's worker thread blocks every signal before
-// it's spawned, see VirtQueue::start()), so this is the only thread a
-// signal can ever land on.
+// See ost/src/main.cpp's own (near-identical) wake_write_fds for the
+// fuller rationale -- vduse only ever needs one, since every VirtQueue
+// worker thread blocks every signal before it's spawned (see
+// VirtQueue::start()), leaving the control-plane thread running loop()
+// as the only one a signal can ever land on.
 int wake_write_fd = -1;
 
+bool is_power_of_2(unsigned int n) {
+    return n != 0 && (n & (n - 1)) == 0;
+}
+
 void usage() {
-    std::cout << "Rawstor VHOST " << PACKAGE_VERSION << std::endl
+    std::cout << "Rawstor VDUSE " << PACKAGE_VERSION << std::endl
               << std::endl
-              << "usage: rawstor-vhost [options] -s PATH TARGET" << std::endl
+              << "usage: rawstor-vduse [options] TARGET" << std::endl
               << std::endl
               << "options:" << std::endl
               << "  -h, --help            "
                  "Show this help message and exit"
               << std::endl
               << "  --queue-size SIZE     "
-                 "RawIO queue size (default: "
-              << DEFAULT_QUEUE_SIZE << ")" << std::endl
+                 "Virtqueue size, a power of two (default: "
+              << DEFAULT_QUEUE_SIZE << ", max: " << MAX_QUEUE_SIZE << ")"
+              << std::endl
               << "  --num-queues N        "
                  "Number of virtqueues, each served by its own thread "
                  "(default: "
@@ -69,20 +82,28 @@ void usage() {
               << "  -v, --version         Rawstor version" << std::endl
               << std::endl
               << "required arguments:" << std::endl
-              << "  -s, --socket-path PATH" << std::endl
-              << "                        "
-                 "This option specify the location of the"
-              << std::endl
-              << "                        "
-                 "vhost-user Unix domain socket."
-              << std::endl
               << "  TARGET                Comma separated list of rawstor "
                  "backend targets"
+              << std::endl
+              << "                        "
+                 "Creates /dev/vduse/UUID, where UUID is the target"
+              << std::endl
+              << "                        "
+                 "object's own UUID -- there is no separate name to"
+              << std::endl
+              << "                        "
+                 "pick. Attaching it to the vDPA bus (e.g. `vdpa dev"
+              << std::endl
+              << "                        "
+                 "add name UUID mgmtdev vduse`) is a separate,"
+              << std::endl
+              << "                        "
+                 "external step."
               << std::endl;
 }
 
 void version() {
-    std::cout << "Rawstor VHOST " << PACKAGE_VERSION << std::endl;
+    std::cout << "Rawstor VDUSE " << PACKAGE_VERSION << std::endl;
 }
 
 // Async-signal-safe (write(2) is on the short list, see signal-safety(7)):
@@ -101,25 +122,33 @@ void sact_handler(int) {
 
 void server(
     unsigned int queue_size, unsigned int num_queues, const std::string& target,
-    const std::string& socket_path, bool write_cache_enabled, int wake_fd
+    bool write_cache_enabled, int wake_fd
 ) {
-    rawstor::vhost::Server s(
-        queue_size, num_queues, target, socket_path, write_cache_enabled,
-        wake_fd
-    );
-    s.loop();
+    int res = rawstor_initialize(NULL);
+    if (res) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+
+    try {
+        rawstor::vduse::Device d(
+            queue_size, num_queues, target, write_cache_enabled, wake_fd
+        );
+        d.loop();
+    } catch (...) {
+        rawstor_terminate();
+        throw;
+    }
+    rawstor_terminate();
 }
 
 } // namespace
 
 int main(int argc, char** argv) {
-    const char* optstring = "hs:t:v";
+    const char* optstring = "hv";
     struct option longopts[] = {
         {"help", no_argument, nullptr, 'h'},
         {"num-queues", required_argument, nullptr, 'n'},
         {"queue-size", required_argument, nullptr, 'q'},
-        {"socket-path", required_argument, nullptr, 's'},
-        {"target", required_argument, nullptr, 't'},
         {"version", no_argument, nullptr, 'v'},
         {"write-cache", required_argument, nullptr, 'w'},
         {},
@@ -127,7 +156,6 @@ int main(int argc, char** argv) {
 
     const char* num_queues_arg = nullptr;
     const char* queue_size_arg = nullptr;
-    const char* socket_path_arg = nullptr;
     const char* target_arg = nullptr;
     const char* write_cache_arg = nullptr;
     while (1) {
@@ -149,14 +177,6 @@ int main(int argc, char** argv) {
             queue_size_arg = optarg;
             break;
 
-        case 's':
-            socket_path_arg = optarg;
-            break;
-
-        case 't':
-            target_arg = optarg;
-            break;
-
         case 'v':
             version();
             return EXIT_SUCCESS;
@@ -170,7 +190,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    if (target_arg == nullptr && optind < argc) {
+    if (optind < argc) {
         target_arg = argv[optind];
         optind++;
     }
@@ -188,6 +208,18 @@ int main(int argc, char** argv) {
             std::cerr << "queue-size must be unsigned integer" << std::endl;
             return EX_USAGE;
         }
+        if (queue_size <= 2 || !is_power_of_2(queue_size) ||
+            queue_size > MAX_QUEUE_SIZE) {
+            std::cerr << "queue-size must be a power of two greater than 2 "
+                         "and at most "
+                      << MAX_QUEUE_SIZE << std::endl;
+            return EX_USAGE;
+        }
+    }
+
+    if (target_arg == nullptr) {
+        std::cerr << "target argument required" << std::endl;
+        return EX_USAGE;
     }
 
     unsigned int num_queues = DEFAULT_NUM_QUEUES;
@@ -201,16 +233,6 @@ int main(int argc, char** argv) {
     }
     if (num_queues == 0) {
         std::cerr << "num-queues must be at least 1" << std::endl;
-        return EX_USAGE;
-    }
-
-    if (socket_path_arg == nullptr) {
-        std::cerr << "socket-path argument required" << std::endl;
-        return EX_USAGE;
-    }
-
-    if (target_arg == nullptr) {
-        std::cerr << "target argument required" << std::endl;
         return EX_USAGE;
     }
 
@@ -260,8 +282,8 @@ int main(int argc, char** argv) {
         }
 
         server(
-            queue_size, num_queues, target_arg, socket_path_arg,
-            write_cache_enabled, wake_pipe.read_fd()
+            queue_size, num_queues, target_arg, write_cache_enabled,
+            wake_pipe.read_fd()
         );
     } catch (const std::system_error& e) {
         std::cerr << e.what() << std::endl;

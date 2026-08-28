@@ -126,6 +126,19 @@ co_sendmsg(RawIOQueue* queue, int fd, msghdr* msg, unsigned int flags) {
     co_return co_await awaiter;
 }
 
+// Wakes Device::loop() out of a blocking rawio_wait() reliably on the
+// first SIGINT/SIGTERM, the same way dispatch_loop() below wakes it on a
+// clean disconnect: written to by main.cpp's sact_handler (via Server's
+// own wake_fd), read back here and folded into the very `done` flag
+// dispatch_loop() itself sets, so loop()'s pump doesn't need to
+// distinguish why it's stopping. See Device's own constructor doc
+// comment for why relying on rawio_wait()'s -EINTR alone isn't enough.
+rawstd::DetachedTask wake_task(RawIOQueue* queue, int wake_fd, bool& done) {
+    char buf[1];
+    co_await co_read(queue, wake_fd, buf, sizeof(buf));
+    done = true;
+}
+
 // Fire-and-forget notification -- unlike every reply above, nothing
 // awaits this (it's a best-effort "in case of I/O hang after
 // reconnecting" poke, not part of the request/response flow itself), so
@@ -1018,7 +1031,7 @@ namespace vhost {
 
 Device::Device(
     unsigned int queue_size, unsigned int num_queues, const std::string& target,
-    int fd
+    int fd, bool write_cache_enabled, int wake_fd
 ) :
     _fd(fd),
     _queue(nullptr),
@@ -1029,17 +1042,16 @@ Device::Device(
         1ull << VIRTIO_BLK_F_SIZE_MAX | 1ull << VIRTIO_BLK_F_SEG_MAX |
         1ull << VIRTIO_BLK_F_BLK_SIZE | 1ull << VIRTIO_BLK_F_TOPOLOGY |
         1ull << VIRTIO_BLK_F_MQ | 1ull << VIRTIO_BLK_F_FLUSH |
-        1ull << VIRTIO_BLK_F_DISCARD | 1ull << VIRTIO_BLK_F_WRITE_ZEROES |
-        1ull << VIRTIO_F_VERSION_1 | 1ull << VIRTIO_RING_F_INDIRECT_DESC |
-        1ull << VIRTIO_RING_F_EVENT_IDX | 1ull << VHOST_USER_F_PROTOCOL_FEATURES
+        1ull << VIRTIO_BLK_F_CONFIG_WCE | 1ull << VIRTIO_BLK_F_DISCARD |
+        1ull << VIRTIO_BLK_F_WRITE_ZEROES | 1ull << VIRTIO_F_VERSION_1 |
+        1ull << VIRTIO_RING_F_INDIRECT_DESC | 1ull << VIRTIO_RING_F_EVENT_IDX |
+        1ull << VHOST_USER_F_PROTOCOL_FEATURES
     ),
     _protocol_features(0),
     _config{},
-    // Mirrors the _config.wce = 1 hardcoded below -- see set_config()'s
-    // own doc comment for why this needs a live copy of its own instead
-    // of every VirtQueue thread just reading _config.wce directly.
-    _wce_enabled(true),
-    _postcopy_listening(false) {
+    _wce_enabled(write_cache_enabled),
+    _postcopy_listening(false),
+    _wake_fd(wake_fd) {
     _regions.reserve(VHOST_USER_MAX_RAM_SLOTS);
 
     int res = rawio_queue_create(queue_size, &_queue);
@@ -1069,17 +1081,7 @@ Device::Device(
         _config.min_io_size = 1;
         _config.opt_io_size = 1;
 
-        // Write-through (wce=0) forces sync=true on every write (see
-        // _dispatch_write() below), which requires a journal commit to
-        // land before the write completes -- on a host whose backing
-        // filesystem commits slowly, concurrent writes under load were
-        // measured stalling round-trip times into the tens of seconds.
-        // Writeback (wce=1) relies on the guest issuing an explicit flush
-        // for durability instead, same as any real disk with a volatile
-        // write cache; any modern guest kernel does this correctly. This
-        // branch has no --write-cache CLI flag to make it configurable
-        // (see main's 65fbf34/#584), so it's hardcoded on instead.
-        _config.wce = 1; // VIRTIO_BLK_F_CONFIG_WCE
+        _config.wce = write_cache_enabled; // VIRTIO_BLK_F_CONFIG_WCE
 
         _config.num_queues = nqueues(); // VIRTIO_BLK_F_MQ
 
@@ -1132,6 +1134,10 @@ Device::Device(
                 vq.stop();
             }
         }
+        // _wake_fd itself needs no cleanup here: wake_task() (which is
+        // what would ever arm a read on it) is only ever launched from
+        // loop(), never reached during construction, and Device doesn't
+        // own the fd anyway -- see its own doc comment.
         rawio_queue_delete(_queue);
         throw;
     }
@@ -1140,7 +1146,7 @@ Device::Device(
 Device::~Device() {
     // Each VirtQueue tears down its own kick_fd/call_fd ops, its own
     // RawstorObject and its own RawIOQueue on its own thread as part of
-    // stop() -- see VirtQueue::run(). A no-op for any VirtQueue that
+    // stop() -- see VirtQueue::_run(). A no-op for any VirtQueue that
     // never started.
     for (auto& vq : _vqs) {
         vq.stop();
@@ -1151,6 +1157,19 @@ Device::~Device() {
         rawstd_error(
             "Failed to cancel pending control socket ops: %s\n", strerror(-cres)
         );
+    }
+
+    // Only cancels whatever wake_task() read may still be outstanding on
+    // _wake_fd (needed before rawio_queue_delete() below regardless of
+    // ownership) -- Device never owns this fd, so there is nothing to
+    // close() here; see its own doc comment.
+    if (_wake_fd != -1) {
+        int wcres = rawio_cancel_all(_queue, _wake_fd);
+        if (wcres && wcres != -ENOENT) {
+            rawstd_error(
+                "Failed to cancel pending wake fd ops: %s\n", strerror(-wcres)
+            );
+        }
     }
 
     rawio_queue_delete(_queue);
@@ -1393,6 +1412,9 @@ std::vector<std::future<void>> Device::post_flush_others(VirtQueue& requester) {
 void Device::loop() {
     bool done = false;
     dispatch_loop(_queue, _fd, *this, done);
+    if (_wake_fd != -1) {
+        wake_task(_queue, _wake_fd, done);
+    }
     rawstd::DetachedTask::rethrow_if_pending();
 
     while (!done) {
