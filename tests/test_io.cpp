@@ -722,4 +722,283 @@ TEST(OstIOTest, write_disconnect_concurrent) {
     EXPECT_NE(err2, 0);
 }
 
+// Answers whatever WRITE frames actually arrive next on `server` (echoing
+// each one's own cid, since a retried write's cid isn't something a test
+// can predict up front). This reacts to each frame's own header instead
+// of pre-committing to a fixed count of reads: a fixed script of N
+// pre-queued Server::read() calls leaves their N-1'th response enqueued
+// only from inside the (N-1)'th read's own callback, which lands *behind*
+// whichever of the other N-1 pre-queued reads are still sitting
+// unconsumed in front of it -- and Server::read() has no timeout, so a
+// read nothing ever satisfies (because fewer than N writes actually
+// showed up) blocks the fake server's command thread forever, along with
+// everything scripted after it.
+//
+// Every write left dirty (rawstor_object_pwrite2() is called with
+// sync=false below) makes Object::close() issue one real FLUSH over this
+// same connection before closing it -- answered here once it arrives.
+// Object::close() itself never sends a wire-level RELEASE (Session::close()
+// is a local socket close, not a protocol op); that only happens
+// afterwards, when ~Object() calls rawstor_target_remove(), which opens
+// its own brand new single-session Connection to send it -- so once the
+// object's connection is closed from this side too (mirroring the real
+// client, which does the same right after flush() returns), this scripts
+// a fresh accept() and answers that RELEASE on the new connection.
+void auto_respond_writes_then_flush_and_release(
+    rawstor::tests::Server& server, size_t write_payload_size,
+    int32_t write_res, int32_t flush_res, int32_t release_res
+) {
+    server.read(
+        "OST frame head <<<", sizeof(RawstorOSTFrameHead),
+        [&server, write_payload_size, write_res, flush_res,
+         release_res](const void* buf) {
+            RawstorOSTFrameHead head =
+                *static_cast<const RawstorOSTFrameHead*>(buf);
+            if (head.cmd == RAWSTOR_CMD_WRITE) {
+                size_t rest_size = sizeof(RawstorOSTFrameIO) -
+                                   sizeof(RawstorOSTFrameHead) +
+                                   write_payload_size;
+                server.read(
+                    "RAWSTOR_CMD_WRITE (rest) <<<", rest_size,
+                    [&server, head, write_res, write_payload_size, flush_res,
+                     release_res](const void*) {
+                        RawstorOSTFrameResponse response = {
+                            .head{
+                                .magic = RAWSTOR_MAGIC,
+                                .cmd = RAWSTOR_CMD_WRITE,
+                                .cid = head.cid,
+                            },
+                            .body = {.res = write_res, .hash = 0},
+                        };
+                        server.write(
+                            "RAWSTOR_CMD_WRITE >>>", &response, sizeof(response)
+                        );
+                        auto_respond_writes_then_flush_and_release(
+                            server, write_payload_size, write_res, flush_res,
+                            release_res
+                        );
+                    }
+                );
+            } else if (head.cmd == RAWSTOR_CMD_FLUSH) {
+                size_t rest_size =
+                    sizeof(RawstorOSTFrameBasic) - sizeof(RawstorOSTFrameHead);
+                server.read(
+                    "RAWSTOR_CMD_FLUSH (rest) <<<", rest_size,
+                    [&server, head, flush_res, release_res](const void*) {
+                        RawstorOSTFrameResponse response = {
+                            .head{
+                                .magic = RAWSTOR_MAGIC,
+                                .cmd = RAWSTOR_CMD_FLUSH,
+                                .cid = head.cid,
+                            },
+                            .body = {.res = flush_res, .hash = 0},
+                        };
+                        server.write(
+                            "RAWSTOR_CMD_FLUSH >>>", &response, sizeof(response)
+                        );
+                        server.close("SESSION >>> (after flush)");
+                        server.accept("SESSION <<< (target remove)");
+                        server.read(
+                            "RAWSTOR_CMD_RELEASE <<<",
+                            sizeof(RawstorOSTFrameBasic), [](const void*) {}
+                        );
+                        RawstorOSTFrameResponse release_response = {
+                            .head{
+                                .magic = RAWSTOR_MAGIC,
+                                .cmd = RAWSTOR_CMD_RELEASE,
+                                .cid = 0,
+                            },
+                            .body = {.res = release_res, .hash = 0},
+                        };
+                        server.write(
+                            "RAWSTOR_CMD_RELEASE >>>", &release_response,
+                            sizeof(release_response)
+                        );
+                    }
+                );
+            } else {
+                throw std::runtime_error(
+                    "auto_respond_writes_then_flush_and_release: unexpected "
+                    "command magic=" +
+                    std::to_string(head.magic) +
+                    " cmd=" + std::to_string(head.cmd) +
+                    " cid=" + std::to_string(head.cid)
+                );
+            }
+        }
+    );
+}
+
+// Regression: two writes share one session. The first gets a genuine,
+// well-formed *error* response (not a dropped connection -- nothing
+// about the wire ever looks broken, no FIN/RST at any point), which
+// Connection::_with_retry() reacts to by calling invalidate_session():
+// swap in a fresh session, then Session::close() the old one. The second
+// write is already sitting in that same old session's _ops, purely
+// waiting on a response of its own, when this happens -- _recv_pump has
+// nothing of its own to ever notice here (the connection was never
+// actually broken), so it can't be what rescues it. Session::close()
+// must fail whatever is still in _ops itself, or the second write has
+// nothing left watching it and hangs forever.
+//
+// This is deliberately built around a same-session *error response*
+// rather than a dropped connection: on a real loopback socket, closing
+// the connection also sends the second write's own recv_pump a FIN it
+// can (and, empirically, reliably does) notice on its own first, via the
+// *pre-existing* correct handling of a genuine transport error --
+// resolving the second write correctly regardless of the fix under test
+// and making that version of this scenario nondeterministic. Answering
+// with a normal, valid response instead means nothing on the wire ever
+// looks wrong, so there's nothing for recv_pump to independently detect;
+// the only thing that can ever tear this session down is the explicit
+// invalidate_session() -> Session::close() path this test exists to
+// cover.
+TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
+    Queue queue(16);
+    rawstor::tests::Server server(8753, 256);
+    std::string target =
+        "ost://127.0.0.1:8753/00000000-0000-7000-8000-000000000000";
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
+    }
+
+    // Scripted with the raw Server API instead of Session: Session's
+    // destructor unconditionally queues an actual close() of the
+    // connection, which would send a FIN -- exactly what this test needs
+    // to avoid (see the TEST's own doc comment above). This session is
+    // instead left to the client's own invalidate_session() to tear
+    // down; the server side only ever forget()s its bookkeeping of it
+    // (see forget()'s own doc comment in server.hpp).
+    server.accept("SESSION <<<");
+    server.read(
+        "RAWSTOR_CMD_SET_OBJECT <<<", sizeof(RawstorOSTFrameBasic),
+        [](const void*) {}
+    );
+    RawstorOSTFrameResponse set_object_response = {
+        .head{
+            .magic = RAWSTOR_MAGIC,
+            .cmd = RAWSTOR_CMD_SET_OBJECT,
+            .cid = 0,
+        },
+        .body = {.res = 0, .hash = 0},
+    };
+    server.write(
+        "RAWSTOR_CMD_SET_OBJECT >>>", &set_object_response,
+        sizeof(set_object_response)
+    );
+    server.read(
+        "RAWSTOR_CMD_WRITE <<<", sizeof(RawstorOSTFrameIO) + 4,
+        [&server](const void* buf) {
+            uint16_t cid = static_cast<const RawstorOSTFrameIO*>(buf)->head.cid;
+            RawstorOSTFrameResponse error_response = {
+                .head{
+                    .magic = RAWSTOR_MAGIC,
+                    .cmd = RAWSTOR_CMD_WRITE,
+                    .cid = cid,
+                },
+                .body = {.res = -EIO, .hash = 0},
+            };
+            server.write(
+                "RAWSTOR_CMD_WRITE >>> (error)", &error_response,
+                sizeof(error_response)
+            );
+
+            // Only scripted now, from inside this callback, instead of
+            // up front alongside the session above: queued upfront,
+            // this would already be sitting in the fake server's command
+            // queue *before* the write-request read callback here ever
+            // runs, so the server would work through this retry
+            // session's accept()/etc. commands first and never actually
+            // reach the error response above at all. Scripted here,
+            // after that response is already queued to go out, it's
+            // guaranteed to sit behind it.
+            server.forget("SESSION (forgotten, connection left for the OS)");
+            server.accept("SESSION <<< (retry target)");
+            server.read(
+                "RAWSTOR_CMD_SET_OBJECT <<<", sizeof(RawstorOSTFrameBasic),
+                [](const void*) {}
+            );
+            RawstorOSTFrameResponse retry_set_object_response = {
+                .head{
+                    .magic = RAWSTOR_MAGIC,
+                    .cmd = RAWSTOR_CMD_SET_OBJECT,
+                    .cid = 0,
+                },
+                .body = {.res = 0, .hash = 0},
+            };
+            server.write(
+                "RAWSTOR_CMD_SET_OBJECT >>>", &retry_set_object_response,
+                sizeof(retry_set_object_response)
+            );
+            // Answers every WRITE that actually arrives (the retried
+            // first write and the second write, in whatever order they
+            // land) with its own cid echoed back, then the one FLUSH and
+            // RELEASE the Object destructor and rawstor_target_remove()
+            // send at the very end of this test, the latter on its own
+            // fresh connection.
+            auto_respond_writes_then_flush_and_release(server, 4, 4, 0, 0);
+        }
+    );
+
+    Object object(queue, target, 1ull << 20);
+
+    bool done1 = false;
+    int err1 = 0;
+    auto cb1 = std::make_unique<std::function<void(size_t, int)>>(
+        [&done1, &err1](size_t, int error) {
+            done1 = true;
+            err1 = error;
+        }
+    );
+    bool done2 = false;
+    int err2 = 0;
+    auto cb2 = std::make_unique<std::function<void(size_t, int)>>(
+        [&done2, &err2](size_t, int error) {
+            done2 = true;
+            err2 = error;
+        }
+    );
+
+    std::string ping = "ping";
+    std::string pong = "pong";
+
+    // Issued back to back, with no rawio_wait_timeout() in between:
+    // Session::_add_op() registers both into _ops before either's own
+    // send is even submitted (io_uring only actually submits inside
+    // Queue::wait()), so the second write is guaranteed to already be
+    // sitting in _ops, on the one session both share, well before the
+    // first write's own round trip -- send, the server's error response,
+    // Connection::_with_retry() reacting to it -- can possibly run.
+    int res = rawstor_object_pwrite2(
+        object.raw(), ping.data(), ping.length(), 0, false, callback, cb1.get()
+    );
+    ASSERT_GE(res, 0);
+    cb1.release();
+
+    res = rawstor_object_pwrite2(
+        object.raw(), pong.data(), pong.length(), 4, false, callback, cb2.get()
+    );
+    ASSERT_GE(res, 0);
+    cb2.release();
+
+    // Bounded pump, same reasoning as write_disconnect_concurrent above:
+    // an orphaned write would otherwise hang this loop -- and the whole
+    // test binary -- forever.
+    unsigned int budget_ms = rawstor_opts_tcp_user_timeout() + 5000;
+    for (unsigned int elapsed_ms = 0;
+         elapsed_ms < budget_ms && !(done1 && done2); elapsed_ms += 100) {
+        int wres = rawio_wait_timeout(queue, 100);
+        if (wres < 0 && wres != -ETIME) {
+            break;
+        }
+    }
+
+    EXPECT_TRUE(done1) << "first write orphaned (never completed)";
+    EXPECT_TRUE(done2) << "second write orphaned (never completed)";
+    EXPECT_EQ(err1, 0);
+    EXPECT_EQ(err2, 0);
+}
+
 } // unnamed namespace

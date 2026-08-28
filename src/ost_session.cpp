@@ -984,6 +984,26 @@ rawstd::Task<void> Session::_connect() {
 }
 
 rawstd::Task<void> Session::close() {
+    // Anything still in _ops at this point was never told this session
+    // is going away otherwise. _recv_pump()'s own catch block below only
+    // reaches _fail_in_flight() for a genuine framing/transport error it
+    // detected itself; the _queue.cancel() a couple lines down resumes
+    // that same pump with ECANCELED instead, which it treats as "nothing
+    // left to clean up" and returns without touching _ops -- true when
+    // close() is called once every op has already finished, but not when
+    // a *sibling* op's own failure is what triggered this close() (e.g.
+    // via Connection::invalidate_session(), reacting to any
+    // std::system_error one op's own Connection::_with_retry() caught --
+    // a dropped connection, but just as easily a well-formed error
+    // response for one op on an otherwise perfectly healthy connection,
+    // which _recv_pump has no way to notice on its own since nothing
+    // about the wire ever looked wrong): this session's other, already-
+    // sent ops are still sitting in _ops purely waiting on a response
+    // that will now never come. Fail them now instead of leaving their
+    // coroutines suspended forever; a no-op if _ops is already empty
+    // (the common case).
+    _fail_in_flight(ECONNABORTED);
+
     if (_read_event != nullptr) {
         co_await _queue.cancel(_read_event);
         _read_event = nullptr;

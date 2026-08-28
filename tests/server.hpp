@@ -49,6 +49,7 @@ private:
     rawstd::Task<void>
     _do_accept(rawio::Queue& queue, std::shared_ptr<Command> command);
     void _do_close(rawio::Queue& queue, std::shared_ptr<Command> command);
+    void _do_forget(rawio::Queue& queue, std::shared_ptr<Command> command);
     rawstd::Task<void>
     _do_read(rawio::Queue& queue, std::shared_ptr<Command> command);
     rawstd::Task<void>
@@ -65,6 +66,14 @@ public:
     void accept(const char* name);
 
     void close(const char* name);
+    // Like close(), but drops this end's own bookkeeping of the
+    // connection (so a later accept() is free to track a new one)
+    // without actually closing the fd or sending anything on the wire --
+    // for a test that needs the client to be the *only* side that ever
+    // notices this connection going away (a server-initiated close would
+    // send a FIN the client's own recv side could race to notice first).
+    // The fd itself is left for the OS to reclaim at process exit.
+    void forget(const char* name);
     void read(
         const char* name, size_t size, std::function<void(const void* buf)>&& cb
     );
