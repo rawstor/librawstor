@@ -805,11 +805,46 @@ int rawio_sendmsg2(
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
+/**
+ * @brief Standalone async timer, not tied to any file descriptor.
+ *
+ * Unlike rawio_wait_timeout() (which bounds a single wait()/pump call),
+ * this arms an ordinary cancelable operation that can be raced against
+ * other pending ops (e.g. rawio_read()) -- cancel whichever one loses via
+ * rawio_cancel() once the other's callback fires.
+ *
+ * @param queue  Queue previously created by rawio_queue_create().
+ * @param usec   How long to wait, in microseconds, before @p cb fires.
+ * @param cb     Callback invoked once the timer fires or is canceled.
+ *               - @p result is zero once @p usec microseconds have
+ *                 elapsed, or a negative errno (-ECANCELED) if
+ *                 rawio_cancel() canceled it first. There's nothing else
+ *                 to report -- like rawio_fsync(), this has always used
+ *                 this combined result on its own.
+ *               - @p data is the same pointer passed as @p data below.
+ *               - Return zero on success. A negative errno value signals
+ *                 an error back into the I/O completion machinery.
+ * @param data   User-defined context pointer passed unchanged to @p cb.
+ * @param event  Optional (may be NULL) output parameter that receives an
+ *               opaque event handle for canceling the timer early via
+ *               rawio_cancel(). The handle must not be used after @p cb
+ *               has been invoked.
+ *
+ * @return 0 if the timer was successfully armed; negative errno on
+ *         immediate failure (in which case @p cb is never invoked).
+ *
+ * @see rawio_wait_timeout() for bounding an entire wait()/pump call
+ *      instead of a single operation.
+ * @see rawio_cancel() for canceling the timer early.
+ */
+int rawio_timeout(
+    RawIOQueue* queue, unsigned int usec, int (*cb)(ssize_t result, void* data),
+    void* data, RawIOEvent** event
+) RAWSTOR_NOEXCEPT;
+
 int rawio_wait(RawIOQueue* queue) RAWSTOR_NOEXCEPT;
 
-int rawio_wait_timeout(
-    RawIOQueue* queue, unsigned int timeout
-) RAWSTOR_NOEXCEPT;
+int rawio_wait_timeout(RawIOQueue* queue, unsigned int msec) RAWSTOR_NOEXCEPT;
 
 /**
  * @brief Cancels an ongoing I/O operation and releases associated resources if
