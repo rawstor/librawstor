@@ -115,13 +115,15 @@ public:
     rawio::Awaitable<size_t>
     sendmsg(int fd, const msghdr* msg, unsigned int flags) override;
 
+    rawio::Awaitable<void> timeout(unsigned int usec) override;
+
     rawio::Awaitable<void> cancel(rawio::Event* event) override;
 
     rawio::Awaitable<void> cancel(int fd) override;
 
     void wait() override;
 
-    void wait_timeout(unsigned int timeout) override;
+    void wait_timeout(unsigned int msec) override;
 };
 
 } // namespace uring

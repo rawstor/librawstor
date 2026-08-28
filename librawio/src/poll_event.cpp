@@ -41,6 +41,10 @@ void EventSimplex::dispatch() {
     }
 }
 
+void EventTimer::dispatch() {
+    resolve_one_shot();
+}
+
 void EventMultiplex::dispatch() {
     if (_on_dispatch) {
         _on_dispatch(*this);

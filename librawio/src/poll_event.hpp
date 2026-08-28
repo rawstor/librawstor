@@ -13,6 +13,7 @@
 
 #include <unistd.h>
 
+#include <chrono>
 #include <coroutine>
 #include <functional>
 #include <list>
@@ -357,6 +358,47 @@ public:
     bool is_write() const noexcept override { return false; }
 
     ssize_t process() noexcept override;
+};
+
+// Queue::timeout()'s Event: not tied to any fd/Session, so it never goes
+// through poll() at all -- Queue keeps pending ones in a deadline-sorted
+// list of its own (`_timers`) and dispatches (resolve_one_shot()) whichever
+// are due directly from _wait_timeout()/_reap_timers(), clamping the next
+// ::poll() call's own timeout to whatever's soonest in that list. _result
+// stays 0 and _error unset on natural expiry, so resolve_one_shot() resumes
+// the awaiter successfully; cancel(Event*) is the only path that ever sets
+// _error (ECANCELED) here.
+class EventTimer final : public Event {
+private:
+    std::chrono::steady_clock::time_point _deadline;
+
+public:
+    EventTimer(
+        Queue& q, std::chrono::steady_clock::time_point deadline,
+        const rawstd::TraceEvent& trace_event
+    ) :
+        Event(q, -1, trace_event),
+        _deadline(deadline) {}
+
+    inline std::chrono::steady_clock::time_point deadline() const noexcept {
+        return _deadline;
+    }
+
+    inline void
+    set_deadline(std::chrono::steady_clock::time_point deadline) noexcept {
+        _deadline = deadline;
+    }
+
+    void dispatch() override;
+
+    bool is_completed() const noexcept override { return true; }
+    bool is_multiplex() const noexcept override { return false; }
+    bool is_poll() const noexcept override { return false; }
+    bool is_accept() const noexcept override { return false; }
+    bool is_read() const noexcept override { return false; }
+    bool is_write() const noexcept override { return false; }
+
+    ssize_t process() noexcept override { return 0; }
 };
 
 class EventSimplex : public Event {

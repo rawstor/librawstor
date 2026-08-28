@@ -57,6 +57,35 @@ void launch_int_op2(
 }
 
 /*
+ * Same as launch_int_op2_coro(), for timeout()'s Awaitable<void> -- there's
+ * no value to report, only whether it threw (ECANCELED, from
+ * rawio_cancel()), so `result` is always 0 on success, matching every
+ * other adapter's "negative errno on failure" convention.
+ */
+rawstd::DetachedTask launch_void_op_coro(
+    rawio::Awaitable<void> aw, int (*cb)(ssize_t result, void* data), void* data
+) {
+    ssize_t result = 0;
+    try {
+        co_await aw;
+    } catch (const std::system_error& e) {
+        result = -e.code().value();
+    }
+    int res = cb(result, data);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+}
+
+// See launch_int_op2()'s comment.
+void launch_void_op(
+    rawio::Awaitable<void> aw, int (*cb)(ssize_t result, void* data), void* data
+) {
+    launch_void_op_coro(std::move(aw), cb, data);
+    rawstd::DetachedTask::rethrow_if_pending();
+}
+
+/*
  * Same as launch_int_op2_coro(), for the read/write family's size_t-result
  * Awaitable<size_t>, folded into the single signed ssize_t result the C
  * callback now takes (negative on error, matching launch_int_op2_coro()'s
@@ -695,6 +724,32 @@ int rawio_sendmsg2(
     }
 }
 
+int rawio_timeout(
+    RawIOQueue* queue, unsigned int usec, int (*cb)(ssize_t result, void* data),
+    void* data, RawIOEvent** event
+) noexcept {
+    try {
+        rawio::Awaitable<void> aw =
+            static_cast<rawio::Queue*>(queue)->timeout(usec);
+        RawIOEvent* e = aw.event();
+        launch_void_op(std::move(aw), cb, data);
+        if (event != nullptr) {
+            *event = e;
+        }
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
 int rawio_wait(RawIOQueue* queue) noexcept {
     try {
         static_cast<rawio::Queue*>(queue)->wait();
@@ -712,9 +767,9 @@ int rawio_wait(RawIOQueue* queue) noexcept {
     }
 }
 
-int rawio_wait_timeout(RawIOQueue* queue, unsigned int timeout) noexcept {
+int rawio_wait_timeout(RawIOQueue* queue, unsigned int msec) noexcept {
     try {
-        static_cast<rawio::Queue*>(queue)->wait_timeout(timeout);
+        static_cast<rawio::Queue*>(queue)->wait_timeout(msec);
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();

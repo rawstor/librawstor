@@ -98,3 +98,23 @@ int rawstd_bytes_to_size_unit(
     }
     return bytes_to_size_shift(value, shift, UNITS[shift / 10], buf, size);
 }
+
+int rawstd_uint64_grouped(uint64_t value, char* buf, size_t size) {
+    /* UINT64_MAX is 20 digits. */
+    char digits[21];
+    int len =
+        snprintf(digits, sizeof(digits), "%llu", (unsigned long long)value);
+
+    /* Up to 20 digits + a "'" before every group of 3 but the first. */
+    char grouped[27];
+    int gi = 0;
+    for (int i = 0; i < len; ++i) {
+        if (i > 0 && (len - i) % 3 == 0) {
+            grouped[gi++] = '\'';
+        }
+        grouped[gi++] = digits[i];
+    }
+    grouped[gi] = '\0';
+
+    return snprintf(buf, size, "%s", grouped);
+}

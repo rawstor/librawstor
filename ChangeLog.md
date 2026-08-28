@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.2.10] - Unreleased
 
 ### Added
+- `rawio::Queue::timeout()` (and its `rawio_timeout()` C API counterpart): a standalone async timer op, co_await-able and cancellable exactly like every other `rawio::Queue` operation, resolving successfully once a given number of microseconds have elapsed.
 - `-w`/`--workers N` for `rawstor-ost`: runs `N` worker threads (default `12`), each with its own I/O queue and client connections, all accepting on the same listening socket.
 - `--num-queues N` for `rawstor-vhost` (default `16`): advertises `N` virtqueues over `VIRTIO_BLK_F_MQ`, each serviced by its own thread and its own connection to `TARGET`, so I/O on different queues now makes progress in parallel instead of funneling through one shared reactor.
 - Discard and write-zeroes support end to end: new `rawstor_object_discard()`/`rawstor_object_write_zeroes()` client API, a `WRITE_ZEROES` OST wire command (`DISCARD` already existed but was unimplemented), `file://`'s backend now actually punches holes/zeroes ranges via `fallocate()`, and `rawstor-vhost`/`rawstor-vhost-qemu` advertise `VIRTIO_BLK_F_DISCARD`/`VIRTIO_BLK_F_WRITE_ZEROES` to the guest.
