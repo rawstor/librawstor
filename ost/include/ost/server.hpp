@@ -50,9 +50,10 @@ public:
     // alone or shared by several worker threads' worth of Server, each
     // registering its own accept_multishot on it via its own RawIOQueue;
     // the caller must keep it open for as long as any Server built from it
-    // is alive. `wake_fd`, if not -1, is instead taken over by this Server
-    // (closed in ~Server()) and treated as a stop request the moment it
-    // becomes readable -- see _wake_task().
+    // is alive. `wake_fd`, if not -1, is likewise only ever read from --
+    // never closed -- and treated as a stop request the moment it becomes
+    // readable (see _wake_task()); the caller must keep it open for at
+    // least as long as this Server runs.
     Server(
         unsigned int queue_size, int listen_fd, const char* location,
         int wake_fd = -1

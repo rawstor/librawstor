@@ -4,7 +4,7 @@
 
 #include <rawstd/exitcode.h>
 #include <rawstd/logging.hpp>
-#include <rawstd/socket.h>
+#include <rawstd/pipe.hpp>
 
 #include <rawstor/rawstor.h>
 
@@ -126,37 +126,6 @@ void sact_handler(int) {
     }
 }
 
-// Opens a pipe and sets O_NONBLOCK on both ends -- non-blocking regardless
-// of what it ends up used for; the wake pipe specifically wants this so a
-// spurious extra wakeup byte (e.g. two shutdown signals racing) never
-// makes Server::_wake_task()'s rawio_read() actually block waiting for a
-// second byte that isn't coming, or sact_handler()'s write() block at all.
-// Both ends are wrapped in ScopedFd immediately, so a failure partway
-// through (the O_NONBLOCK calls) closes whichever end(s) were already
-// opened via plain stack unwinding, no explicit cleanup needed.
-std::pair<ScopedFd, ScopedFd> open_pipe() {
-    int fds[2];
-    if (pipe(fds) == -1) {
-        int errsv = errno;
-        errno = 0;
-        throw std::system_error(errsv, std::generic_category(), "pipe");
-    }
-    ScopedFd read_fd(fds[0]);
-    ScopedFd write_fd(fds[1]);
-
-    int res = rawstd_socket_set_nonblock(read_fd.get());
-    if (res == 0) {
-        res = rawstd_socket_set_nonblock(write_fd.get());
-    }
-    if (res < 0) {
-        throw std::system_error(
-            -res, std::generic_category(), "rawstd_socket_set_nonblock"
-        );
-    }
-
-    return {std::move(read_fd), std::move(write_fd)};
-}
-
 // Each worker is a thread with its own rawstor::ostbackend::Server (own
 // RawIOQueue -- the reactor stays single-threaded per queue, see
 // CLAUDE.md), all sharing the one listening socket bind_listen() opens
@@ -164,8 +133,11 @@ std::pair<ScopedFd, ScopedFd> open_pipe() {
 // and the kernel wakes exactly one of them per incoming connection, so
 // each ends up handing itself its own Client the same way the
 // single-worker case always has (Server::_add_client()). Each worker also
-// gets its own wake pipe (see open_pipe()/sact_handler()) so SIGINT/SIGTERM
-// can ask it to stop.
+// gets its own wake pipe (a non-blocking rawstd::Pipe -- non-blocking so a
+// spurious extra wakeup byte, e.g. two shutdown signals racing, never
+// makes Server::_wake_task()'s rawio_read() actually block waiting for a
+// second byte that isn't coming, or sact_handler()'s write() block at
+// all) so SIGINT/SIGTERM can ask it to stop.
 void ost(
     unsigned int queue_size, unsigned int workers, const std::string& addr,
     unsigned int port, const char* location
@@ -181,9 +153,9 @@ void ost(
     wake_write_fds.reserve(workers);
     try {
         for (unsigned int i = 0; i < workers; i++) {
-            auto [read_fd, write_fd] = open_pipe();
-            wake_read_fds.push_back(std::move(read_fd));
-            wake_write_fds.push_back(std::move(write_fd));
+            rawstd::Pipe p;
+            wake_read_fds.emplace_back(p.release_read());
+            wake_write_fds.emplace_back(p.release_write());
         }
     } catch (...) {
         // wake_read_fds and listen_fd are locals -- stack unwinding closes
@@ -213,12 +185,16 @@ void ost(
     std::vector<std::thread> threads;
     threads.reserve(workers);
     for (unsigned int i = 0; i < workers; i++) {
+        // wake_fd is only borrowed here: wake_read_fds stays alive (and
+        // owns it) in this function's own scope for as long as any
+        // thread might still be running, since the loop below joins
+        // every one of them before this function returns -- Server never
+        // closes it, see its own constructor doc comment.
         threads.emplace_back([&errors, i, queue_size, fd = listen_fd.get(),
-                              location,
-                              wake_fd = std::move(wake_read_fds[i])]() mutable {
+                              location, wake_fd = wake_read_fds[i].get()]() {
             try {
                 rawstor::ostbackend::Server s(
-                    queue_size, fd, location, wake_fd.release()
+                    queue_size, fd, location, wake_fd
                 );
                 s.loop();
             } catch (...) {

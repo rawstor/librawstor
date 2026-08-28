@@ -40,3 +40,12 @@ Depends: ${misc:Depends},
          @PACKAGE_NAME@ (= ${binary:Version})
 Description: Rawstor vhost-user-blk backend for QEMU
 Homepage: https://github.com/rawstor/librawstor
+
+Package: rawstor-vduse
+Architecture: any
+Depends: ${misc:Depends},
+         ${shlibs:Depends},
+         adduser,
+         @PACKAGE_NAME@ (= ${binary:Version})
+Description: Rawstor VDUSE virtio-blk backend
+Homepage: https://github.com/rawstor/librawstor

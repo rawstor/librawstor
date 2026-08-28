@@ -41,6 +41,7 @@ public:
     void await_resume() const noexcept {}
 };
 
+#if defined(RAWSTD_ON_LINUX)
 // Either errno a fallocate() mode can fail with when the underlying
 // filesystem/backing store just doesn't implement it -- distinct from a
 // real failure (e.g. EIO, EINVAL for an out-of-range request), which
@@ -51,6 +52,7 @@ public:
 bool fallocate_not_supported(int error) noexcept {
     return error == EOPNOTSUPP || error == ENOSYS;
 }
+#endif
 
 } // namespace
 
