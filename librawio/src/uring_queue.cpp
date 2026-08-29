@@ -442,10 +442,21 @@ Queue::~Queue() {
                 try {
                     wait_timeout(0);
                 } catch (const std::system_error& e) {
-                    if (e.code().value() != ETIME) {
-                        rawstd_error("Failed to wait: %s\n", e.what());
+                    if (e.code().value() == ETIME) {
+                        // Nothing left to reap -- the drain below is done.
+                        break;
                     }
-                    break;
+                    if (e.code().value() != ECANCELED) {
+                        rawstd_error("Failed to wait: %s\n", e.what());
+                        break;
+                    }
+                    // ECANCELED: one of the ops io_uring_register_sync_
+                    // cancel() above asked to cancel just got dispatched --
+                    // exactly what was asked for, not a failure. _dispatch()
+                    // stops at the first completion that throws (see its
+                    // own doc comment), so there may be more still-pending
+                    // cancellations left in the ring; keep draining instead
+                    // of stopping here.
                 } catch (const std::exception& e) {
                     rawstd_error("Failed to wait: %s\n", e.what());
                     break;
