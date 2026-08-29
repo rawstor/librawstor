@@ -1073,6 +1073,21 @@ rawstd::Task<void> Session::close() {
     int f = fd();
     if (f != -1) {
         set_fd(-1);
+        // _fail_in_flight() above only pre-resolves each op's eventual
+        // `co_await *op` (the response half) -- it does nothing for an
+        // op whose coroutine hasn't reached that yet because it's still
+        // suspended earlier, in its own co_await _queue.sendmsg()/send()
+        // (registered into _ops via _add_op(), but its request hasn't
+        // finished sending). Queue::close() below is a plain
+        // IORING_OP_CLOSE with no cancel-first step of its own (unlike
+        // ~Queue()'s io_uring_register_sync_cancel() sweep at shutdown),
+        // so without this, that still-pending send's own completion can
+        // go undelivered forever once the fd is closed out from under
+        // it -- its coroutine left suspended with nothing left to ever
+        // resume it. Cancel everything else still outstanding on this fd
+        // first; a no-op (ENOENT) in the common case where there's
+        // nothing left in flight by now.
+        co_await _queue.cancel(f);
         co_await _queue.close(f);
     }
 }
