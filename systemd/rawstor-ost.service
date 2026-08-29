@@ -18,6 +18,14 @@ Environment=WORKERS=12
 # Variables" section for what each one does); uncomment to override a
 # default, or set them in /etc/rawstor-ost.conf below instead.
 #Environment=RAWSTOR_OPTS_IO_ATTEMPTS=3
+# Governs reconnect+retry against an upstream ost:// backend when this
+# instance is itself configured to proxy/mirror to one (see LOCATION in
+# README.md) -- irrelevant for the default file:// LOCATION below. Unlike
+# rawstor-vhost/-vduse, left at the library default here rather than
+# raised to "-1" (effectively unlimited): uncomment if this instance
+# does proxy to an ost:// backend and you want it to outlast that
+# backend's own outages the same way rawstor-vhost/-vduse do.
+#Environment=RAWSTOR_OPTS_IO_WIRE_RETRY_ATTEMPTS=3
 #Environment=RAWSTOR_OPTS_IO_RETRY_BACKOFF_BASE=100
 #Environment=RAWSTOR_OPTS_IO_RETRY_BACKOFF_MAX=2000
 #Environment=RAWSTOR_OPTS_IO_RETRY_BACKOFF_JITTER=50

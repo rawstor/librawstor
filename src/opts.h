@@ -20,6 +20,7 @@ extern "C" {
 //     unsigned int io_retry_backoff_base;
 //     unsigned int io_retry_backoff_max;
 //     unsigned int io_retry_backoff_jitter;
+//     unsigned int io_wire_retry_attempts;
 // };
 
 int rawstor_opts_initialize(const struct RawstorOpts* opts);
@@ -57,6 +58,17 @@ unsigned int rawstor_opts_io_retry_backoff_max(void);
 // (computed / 2 + random(0, computed / 2)) -- see
 // https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/.
 unsigned int rawstor_opts_io_retry_backoff_jitter(void);
+
+// Number of reconnect+retry attempts Connection::_with_retry() makes for
+// a "wire" failure -- couldn't even talk to the backend (connect
+// failure, broken connection, corrupt/unexpected frame on the wire) --
+// as opposed to a well-formed rejection *from* a live backend, which
+// rawstor_opts_io_attempts() governs instead. Same default as
+// io_attempts (3): only deployments that explicitly want QEMU
+// `reconnect=N`-style unbounded retry (rawstor-vhost/-vduse's own
+// packaged systemd units do, via RAWSTOR_OPTS_IO_WIRE_RETRY_ATTEMPTS=-1,
+// which this reads as UINT_MAX) get it.
+unsigned int rawstor_opts_io_wire_retry_attempts(void);
 
 #ifdef __cplusplus
 }

@@ -55,6 +55,30 @@ int result_cb(ssize_t result, void* data) {
     return 0;
 }
 
+// Overrides rawstor_opts_io_attempts()/io_wire_retry_attempts() for the
+// lifetime of one test, to prove they're independent budgets -- see
+// Connection::_with_retry(). Restores the library's normal opts (env
+// vars/compiled-in defaults) on scope exit, same as
+// ThrottleOptsOverride in test_blk_session.cpp/test_object.cpp.
+class WireRetryOptsOverride final {
+public:
+    WireRetryOptsOverride(
+        unsigned int io_attempts, unsigned int io_wire_retry_attempts
+    ) {
+        RawstorOpts opts{};
+        opts.io_attempts = io_attempts;
+        opts.io_wire_retry_attempts = io_wire_retry_attempts;
+        rawstor_opts_initialize(&opts);
+    }
+    WireRetryOptsOverride(const WireRetryOptsOverride&) = delete;
+    WireRetryOptsOverride(WireRetryOptsOverride&&) = delete;
+
+    ~WireRetryOptsOverride() { rawstor_opts_initialize(nullptr); }
+
+    WireRetryOptsOverride& operator=(const WireRetryOptsOverride&) = delete;
+    WireRetryOptsOverride& operator=(WireRetryOptsOverride&&) = delete;
+};
+
 class Queue {
 private:
     RawIOQueue* _queue;
@@ -546,7 +570,12 @@ TEST(OstIOTest, write_error) {
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
-    for (unsigned int i = 0; i < 3; ++i) {
+    // ENOENT is a permanent backend rejection (see Connection::_with_retry()'s
+    // is_permanent_backend_error()): the connection is fine, so this
+    // never reconnects, and retrying can never turn ENOENT into success,
+    // so it doesn't retry at all -- exactly one session handles both
+    // SET_OBJECT and the WRITE.
+    {
         rawstor::tests::Session s(server);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
         s.cmd_write_request(4);
@@ -591,6 +620,90 @@ TEST(OstIOTest, write_busy_retries_without_reconnect) {
         // Object's destructor closes -- close() now flushes first since
         // the write above left it dirty.
         s.cmd_flush(RAWSTOR_MAGIC, 3, 0);
+    }
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_release(RAWSTOR_MAGIC, 0, 0);
+    }
+
+    Object object(queue, target, 1ull << 20);
+
+    std::string ping = "ping";
+    EXPECT_NO_THROW(object.write(ping.data(), ping.length()));
+}
+
+// Same shape as write_busy_retries_without_reconnect above, but with a
+// generic (non-EBUSY) backend rejection -- ENOSPC here, retryable since
+// it's not in Connection::_with_retry()'s is_permanent_backend_error()
+// list. Confirms that same-session, no-reconnect retry is BackendError's
+// general behavior now, not something special-cased to EBUSY alone.
+TEST(OstIOTest, write_backend_error_retries_without_reconnect) {
+    Queue queue(16);
+    rawstor::tests::Server server(8753, 256);
+    std::string target =
+        "ost://127.0.0.1:8753/00000000-0000-7000-8000-000000000000";
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
+    }
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_write_request(4);
+        s.cmd_write_response(RAWSTOR_MAGIC, 1, -ENOSPC);
+        s.cmd_write_request(4);
+        s.cmd_write_response(RAWSTOR_MAGIC, 2, 4);
+        s.cmd_flush(RAWSTOR_MAGIC, 3, 0);
+    }
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_release(RAWSTOR_MAGIC, 0, 0);
+    }
+
+    Object object(queue, target, 1ull << 20);
+
+    std::string ping = "ping";
+    EXPECT_NO_THROW(object.write(ping.data(), ping.length()));
+}
+
+// Proves io_attempts and io_wire_retry_attempts are independent budgets:
+// io_attempts is set well below the number of wire failures scripted
+// here, so a TransportError retry that were (still) bounded by it would
+// fail well before the write below actually succeeds.
+TEST(OstIOTest, write_wire_retries_exceed_io_attempts) {
+    Queue queue(16);
+    rawstor::tests::Server server(8753, 256);
+    std::string target =
+        "ost://127.0.0.1:8753/00000000-0000-7000-8000-000000000000";
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
+    }
+
+    WireRetryOptsOverride opts_guard(
+        /*io_attempts=*/1, /*io_wire_retry_attempts=*/3
+    );
+
+    // The first two sessions each die right after accepting the WRITE
+    // request (no response), forcing a reconnect (and thus a fresh
+    // SET_OBJECT) each time before the third finally answers.
+    for (unsigned int i = 0; i < 2; ++i) {
+        rawstor::tests::Session s(server);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_write_request(4);
+    }
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_write_request(4);
+        s.cmd_write_response(RAWSTOR_MAGIC, 1, 4);
+        s.cmd_flush(RAWSTOR_MAGIC, 2, 0);
     }
 
     {
@@ -829,9 +942,10 @@ void auto_respond_writes_then_flush_and_release(
     );
 }
 
-// Regression: two writes share one session. The first gets a genuine,
-// well-formed *error* response (not a dropped connection -- nothing
-// about the wire ever looks broken, no FIN/RST at any point), which
+// Regression: two writes share one session. The first gets a well-formed
+// response carrying an unexpected cmd (a TransportError -- see
+// session_error.hpp -- not a dropped connection: nothing about the wire
+// ever looks broken, no FIN/RST at any point), which
 // Connection::_with_retry() reacts to by calling invalidate_session():
 // swap in a fresh session, then Session::close() the old one. The second
 // write is already sitting in that same old session's _ops, purely
@@ -841,18 +955,22 @@ void auto_respond_writes_then_flush_and_release(
 // must fail whatever is still in _ops itself, or the second write has
 // nothing left watching it and hangs forever.
 //
-// This is deliberately built around a same-session *error response*
+// This is deliberately built around a same-session *framing* error
 // rather than a dropped connection: on a real loopback socket, closing
 // the connection also sends the second write's own recv_pump a FIN it
 // can (and, empirically, reliably does) notice on its own first, via the
 // *pre-existing* correct handling of a genuine transport error --
 // resolving the second write correctly regardless of the fix under test
 // and making that version of this scenario nondeterministic. Answering
-// with a normal, valid response instead means nothing on the wire ever
-// looks wrong, so there's nothing for recv_pump to independently detect;
-// the only thing that can ever tear this session down is the explicit
-// invalidate_session() -> Session::close() path this test exists to
-// cover.
+// with a well-formed-but-wrong-cmd response instead means nothing on the
+// wire ever looks wrong at the socket level, so there's nothing for
+// recv_pump to independently detect; the only thing that can ever tear
+// this session down is the explicit invalidate_session() -> Session::
+// close() path this test exists to cover. (A genuine backend rejection,
+// e.g. res = -EIO, no longer reconnects at all since the wire/backend
+// split -- see Connection::_with_retry() -- so it can't drive this
+// scenario anymore; only a wire-classified failure like this one still
+// does.)
 TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
     Queue queue(16);
     rawstor::tests::Server server(8753, 256);
@@ -892,17 +1010,21 @@ TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
         "RAWSTOR_CMD_WRITE <<<", sizeof(RawstorOSTFrameIO) + 4,
         [&server](const void* buf) {
             uint16_t cid = static_cast<const RawstorOSTFrameIO*>(buf)->head.cid;
-            RawstorOSTFrameResponse error_response = {
+            // A well-formed response with the wrong cmd -- validate_cmd()
+            // rejects it as EPROTO, a TransportError, not a real backend
+            // rejection (see this TEST's own doc comment for why that
+            // distinction matters here).
+            RawstorOSTFrameResponse wrong_cmd_response = {
                 .head{
                     .magic = RAWSTOR_MAGIC,
-                    .cmd = RAWSTOR_CMD_WRITE,
+                    .cmd = RAWSTOR_CMD_FLUSH,
                     .cid = cid,
                 },
-                .body = {.res = -EIO, .hash = 0},
+                .body = {.res = 0, .hash = 0},
             };
             server.write(
-                "RAWSTOR_CMD_WRITE >>> (error)", &error_response,
-                sizeof(error_response)
+                "RAWSTOR_CMD_WRITE >>> (wrong cmd)", &wrong_cmd_response,
+                sizeof(wrong_cmd_response)
             );
 
             // Only scripted now, from inside this callback, instead of

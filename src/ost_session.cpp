@@ -2,6 +2,7 @@
 
 #include "object.hpp"
 #include "opts.h"
+#include "session_error.hpp"
 #include "target.hpp"
 #include "telemetry.hpp"
 
@@ -29,6 +30,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <utility>
 
 #include <cassert>
@@ -56,8 +58,18 @@ int validate_result(size_t size, size_t result) noexcept {
     return EAGAIN;
 }
 
-int validate_response(const RawstorOSTFrameResponse* response) noexcept {
+// `from_backend` is set true only when the returned error came from the
+// server's own `response->body.res` -- a complete, well-formed response
+// that just happens to carry a rejection, as opposed to a magic mismatch
+// (the frame itself is suspect). Callers pass it on to SessionOp::
+// _dispatch() so Connection::_with_retry() can tell "the backend said no"
+// (retry the same session) apart from "something about the wire is
+// broken" (reconnect) -- see session_error.hpp.
+int validate_response(
+    const RawstorOSTFrameResponse* response, bool& from_backend
+) noexcept {
     assert(response != nullptr);
+    from_backend = false;
 
     if (response->head.magic != RAWSTOR_MAGIC) {
         rawstd_error(
@@ -69,6 +81,7 @@ int validate_response(const RawstorOSTFrameResponse* response) noexcept {
 
     if (response->body.res < 0) {
         rawstd_error("Server error: %s\n", strerror(-response->body.res));
+        from_backend = true;
         return -response->body.res;
     }
 
@@ -143,6 +156,11 @@ private:
     std::coroutine_handle<> _handle;
     size_t _result;
     int _error;
+    // See session_error.hpp -- true only for a well-formed rejection from
+    // the backend itself (validate_response()'s response->body.res<0
+    // branch); false (the default) covers every transport-level failure,
+    // including everything Session::_fail_in_flight() forces through here.
+    bool _from_backend;
 
 protected:
     rawstor::telemetry::TimePoint _t_created;
@@ -165,7 +183,7 @@ protected:
     std::shared_ptr<rawstor::ost::Session> _session;
     RawstorOSTFrameResponse _response;
 
-    inline void _dispatch(size_t result, int error) {
+    inline void _dispatch(size_t result, int error, bool from_backend = false) {
         if (_dispatched) {
             // Already delivered -- e.g. Session::_fail_in_flight() forced
             // this op's completion while its own request send was still
@@ -195,6 +213,7 @@ protected:
 
         _result = result;
         _error = error;
+        _from_backend = from_backend;
         _session->_remove_op(_cid);
 
         // clat/lat and the top-10 sample are only meaningful alongside
@@ -226,6 +245,7 @@ public:
         _handle(),
         _result(0),
         _error(0),
+        _from_backend(false),
         _t_created(rawstor::telemetry::now()),
         _op_name(op_name),
         _op_size(op_size),
@@ -269,7 +289,10 @@ public:
     void await_suspend(std::coroutine_handle<> h) noexcept { _handle = h; }
     size_t await_resume() {
         if (_error) {
-            RAWSTD_THROW_SYSTEM_ERROR(_error);
+            if (_from_backend) {
+                throw rawstor::BackendError(_error, std::generic_category());
+            }
+            throw rawstor::TransportError(_error, std::generic_category());
         }
         return _result;
     }
@@ -318,8 +341,9 @@ public:
     ) override {
         RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
 
+        bool from_backend = false;
         if (!error) {
-            error = validate_response(response);
+            error = validate_response(response, from_backend);
         }
 
         if (!error) {
@@ -335,7 +359,7 @@ public:
 
         // No body follows either way: a real error, or a genuine
         // zero-byte read (response->body.res == 0, nothing to send).
-        _dispatch(0, error);
+        _dispatch(0, error, from_backend);
         return 0;
     }
 
@@ -401,8 +425,9 @@ public:
     ) override {
         RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
 
+        bool from_backend = false;
         if (!error) {
-            error = validate_response(response);
+            error = validate_response(response, from_backend);
         }
 
         if (!error) {
@@ -418,7 +443,7 @@ public:
 
         // No body follows either way: a real error, or a genuine
         // zero-byte read (response->body.res == 0, nothing to send).
-        _dispatch(0, error);
+        _dispatch(0, error, from_backend);
         return 0;
     }
 
@@ -497,8 +522,9 @@ public:
     ) override {
         RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
 
+        bool from_backend = false;
         if (!error) {
-            error = validate_response(response);
+            error = validate_response(response, from_backend);
         }
 
         if (!error) {
@@ -506,7 +532,8 @@ public:
         }
 
         _dispatch(
-            !error && response != nullptr ? response->body.res : 0, error
+            !error && response != nullptr ? response->body.res : 0, error,
+            from_backend
         );
 
         // A write response never carries a body, regardless of error.
@@ -571,8 +598,9 @@ public:
     ) override {
         RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
 
+        bool from_backend = false;
         if (!error) {
-            error = validate_response(response);
+            error = validate_response(response, from_backend);
         }
 
         if (!error) {
@@ -580,7 +608,8 @@ public:
         }
 
         _dispatch(
-            !error && response != nullptr ? response->body.res : 0, error
+            !error && response != nullptr ? response->body.res : 0, error,
+            from_backend
         );
 
         // A write response never carries a body, regardless of error.
@@ -629,8 +658,9 @@ public:
     ) override {
         RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
 
+        bool from_backend = false;
         if (!error) {
-            error = validate_response(response);
+            error = validate_response(response, from_backend);
         }
 
         if (!error) {
@@ -638,7 +668,8 @@ public:
         }
 
         _dispatch(
-            !error && response != nullptr ? response->body.res : 0, error
+            !error && response != nullptr ? response->body.res : 0, error,
+            from_backend
         );
 
         // Neither a discard nor a write-zeroes response ever carries a
@@ -707,15 +738,16 @@ public:
     ) override {
         RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
 
+        bool from_backend = false;
         if (!error) {
-            error = validate_response(response);
+            error = validate_response(response, from_backend);
         }
 
         if (!error) {
             error = validate_cmd(response->head.cmd, RAWSTOR_CMD_FLUSH);
         }
 
-        _dispatch(0, error);
+        _dispatch(0, error, from_backend);
 
         // A flush response never carries a body, regardless of error.
         return 0;
@@ -769,8 +801,9 @@ public:
     ) override {
         RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
 
+        bool from_backend = false;
         if (!error) {
-            error = validate_response(response);
+            error = validate_response(response, from_backend);
         }
 
         if (!error) {
@@ -789,7 +822,7 @@ public:
             return static_cast<size_t>(response->body.res);
         }
 
-        _dispatch(0, error);
+        _dispatch(0, error, from_backend);
         return 0;
     }
 
@@ -892,16 +925,24 @@ Session::~Session() {
 }
 
 rawstd::Task<void> Session::_connect() {
+    // Every failure below -- including a malformed location, which can't
+    // be fixed by retrying but is otherwise indistinguishable here from a
+    // transient one -- means "couldn't establish this session", so all of
+    // them are TransportError: see session_error.hpp for why that's what
+    // drives Connection::_with_retry()'s unbounded reconnect-and-retry
+    // path rather than the bounded, same-session one.
     if (!location().path().str().empty() && location().path().str() != "/") {
         rawstd_error("Empty path expected: %s\n", location().str().c_str());
-        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        throw TransportError(EINVAL, std::generic_category());
     }
 
     int res;
 
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd == -1) {
-        RAWSTD_THROW_ERRNO();
+        int err = errno;
+        errno = 0;
+        throw TransportError(err, std::generic_category());
     }
 
     try {
@@ -914,7 +955,7 @@ rawstd::Task<void> Session::_connect() {
         if (so_sndtimeo != 0) {
             res = rawstd_socket_set_snd_timeout(fd, so_sndtimeo);
             if (res < 0) {
-                RAWSTD_THROW_SYSTEM_ERROR(-res);
+                throw TransportError(-res, std::generic_category());
             }
         }
 
@@ -922,7 +963,7 @@ rawstd::Task<void> Session::_connect() {
         if (so_rcvtimeo != 0) {
             res = rawstd_socket_set_rcv_timeout(fd, so_rcvtimeo);
             if (res < 0) {
-                RAWSTD_THROW_SYSTEM_ERROR(-res);
+                throw TransportError(-res, std::generic_category());
             }
         }
 
@@ -930,7 +971,7 @@ rawstd::Task<void> Session::_connect() {
         if (tcp_user_timeo != 0) {
             res = rawstd_socket_set_user_timeout(fd, tcp_user_timeo);
             if (res < 0) {
-                RAWSTD_THROW_SYSTEM_ERROR(-res);
+                throw TransportError(-res, std::generic_category());
             }
         }
 
@@ -942,9 +983,11 @@ rawstd::Task<void> Session::_connect() {
             AF_INET, location().hostname().c_str(), &servaddr.sin_addr
         );
         if (res == 0) {
-            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+            throw TransportError(EINVAL, std::generic_category());
         } else if (res == -1) {
-            RAWSTD_THROW_ERRNO();
+            int err = errno;
+            errno = 0;
+            throw TransportError(err, std::generic_category());
         }
 
         rawstd_info(
@@ -952,6 +995,14 @@ rawstd::Task<void> Session::_connect() {
         );
         co_await _queue.connect(fd, (sockaddr*)&servaddr, sizeof(servaddr));
         rawstd_info("fd %d: Connected\n", fd);
+    } catch (const std::system_error& e) {
+        // Covers _queue.connect() itself throwing a plain std::system_error
+        // (e.g. ECONNREFUSED) -- rawio has no notion of TransportError, so
+        // re-wrap here. Re-wrapping one of this function's own already-
+        // TransportError throws is a harmless no-op (same code).
+        ::close(fd);
+        rawstd_info("fd %d: Closed\n", fd);
+        throw TransportError(e.code().value(), std::generic_category());
     } catch (...) {
         ::close(fd);
         rawstd_info("fd %d: Closed\n", fd);
@@ -1099,7 +1150,7 @@ rawstd::Task<RawstorObjectSpec> Session::spec(const RawstdUUID& id) {
         std::vector<char> response =
             co_await _basic_request(RAWSTOR_CMD_SPEC, "spec", id, 0);
         if (response.size() != sizeof(ret)) {
-            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+            throw TransportError(EPROTO, std::generic_category());
         }
         ret = *static_cast<RawstorObjectSpec*>(
             static_cast<void*>(response.data())
@@ -1127,7 +1178,7 @@ rawstd::Task<RawstorLocationInfo> Session::info() {
             RAWSTOR_CMD_LOCATION_INFO, "info", unused_id, 0
         );
         if (response.size() != sizeof(ret)) {
-            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+            throw TransportError(EPROTO, std::generic_category());
         }
         ret = *static_cast<RawstorLocationInfo*>(
             static_cast<void*>(response.data())
