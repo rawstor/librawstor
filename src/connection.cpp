@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <exception>
+#include <limits>
 #include <random>
 #include <system_error>
 #include <type_traits>
@@ -91,7 +92,8 @@ bool is_permanent_backend_error(int error) {
 // extra EBUSY-vs-reconnect policy and no set-up/tear-down step, so
 // sharing this one wouldn't fit them without a callback out for it.
 template <typename F>
-auto retry_n_async(const char* func_name, F&& attempt) -> decltype(attempt()) {
+auto retry_n_async(const char* func_name, rawio::Queue& queue, F&& attempt)
+    -> decltype(attempt()) {
     for (unsigned int i = 1; i <= rawstor_opts_io_attempts(); ++i) {
         try {
             co_return co_await attempt();
@@ -107,6 +109,21 @@ auto retry_n_async(const char* func_name, F&& attempt) -> decltype(attempt()) {
                 "%s: error: %s; attempt: %u of %u; retrying...\n", func_name,
                 e.what(), i, rawstor_opts_io_attempts()
             );
+        }
+
+        // Same backoff _with_retry() waits between its own retries (see
+        // backoff_delay_ms() above) -- without it, a transient failure
+        // that clears within a fraction of a second (e.g. the brief
+        // ECONNREFUSED window while the remote OST is mid-restart) can
+        // still burn through every attempt here, all within the same
+        // instant, before it has a chance to clear.
+        unsigned int delay_ms = backoff_delay_ms(
+            i, rawstor_opts_io_retry_backoff_base(),
+            rawstor_opts_io_retry_backoff_max(),
+            rawstor_opts_io_retry_backoff_jitter()
+        );
+        if (delay_ms != 0) {
+            co_await queue.timeout(delay_ms * 1000u);
         }
     }
     // Only reachable if rawstor_opts_io_attempts() == 0.
@@ -266,22 +283,39 @@ rawstd::Task<T> Connection::_with_retry(
             }
 
             ++wire_attempt;
-            if (wire_attempt >= rawstor_opts_io_wire_retry_attempts()) {
+            unsigned int wire_retry_attempts =
+                rawstor_opts_io_wire_retry_attempts();
+            if (wire_attempt >= wire_retry_attempts) {
                 rawstd_error(
                     "IO %s: wire error on %s: %s; attempt %u of %u; "
                     "failing...\n",
                     func_name, s->str().c_str(), std::strerror(error),
-                    wire_attempt, rawstor_opts_io_wire_retry_attempts()
+                    wire_attempt, wire_retry_attempts
                 );
                 throw;
             }
 
-            rawstd_warning(
-                "IO %s: wire error on %s: %s; attempt: %u of %u; "
-                "reconnecting...\n",
-                func_name, s->str().c_str(), std::strerror(error), wire_attempt,
-                rawstor_opts_io_wire_retry_attempts()
-            );
+            // RAWSTOR_OPTS_IO_WIRE_RETRY_ATTEMPTS=-1 (the rawstor-vhost/
+            // -vduse systemd units' "retry forever" setting) parses as
+            // UINT_MAX -- printing that as "of 4294967295" is noise, not
+            // information, so the bound is only logged when it's an
+            // actual bound.
+            if (wire_retry_attempts ==
+                std::numeric_limits<unsigned int>::max()) {
+                rawstd_warning(
+                    "IO %s: wire error on %s: %s; attempt: %u; "
+                    "reconnecting...\n",
+                    func_name, s->str().c_str(), std::strerror(error),
+                    wire_attempt
+                );
+            } else {
+                rawstd_warning(
+                    "IO %s: wire error on %s: %s; attempt: %u of %u; "
+                    "reconnecting...\n",
+                    func_name, s->str().c_str(), std::strerror(error),
+                    wire_attempt, wire_retry_attempts
+                );
+            }
         } catch (const std::system_error& e) {
             error = e.code().value();
             retry = Retry::kFallback;
@@ -442,7 +476,7 @@ Connection::invalidate_session(const std::shared_ptr<Session>& s) {
         // leaving the stale entry just means the next op that picks it up
         // retries invalidate_session() again instead of failing forever.
         std::shared_ptr<Session> new_session = co_await retry_n_async(
-            "Connection::invalidate_session",
+            "Connection::invalidate_session", _queue,
             [&]() -> rawstd::Task<std::shared_ptr<Session>> {
                 std::shared_ptr<Session> session =
                     co_await Session::create(_queue, s->location());
