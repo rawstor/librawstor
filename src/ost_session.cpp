@@ -65,6 +65,15 @@ int validate_result(size_t size, size_t result) noexcept {
 // _dispatch() so Connection::_with_retry() can tell "the backend said no"
 // (retry the same session) apart from "something about the wire is
 // broken" (reconnect) -- see session_error.hpp.
+//
+// EBADMSG is the one body.res value that stays `from_backend = false`
+// despite arriving as a well-formed response: the OST server sends it
+// (see ost/src/client.cpp) only when the payload it just received doesn't
+// hash to what the client declared. That means the client and server
+// have lost agreement on where in the byte stream the current frame
+// even ends, so the same session can't be trusted to still be aligned on
+// the next frame header -- this has to reconnect, not retry in place,
+// same as a magic mismatch above.
 int validate_response(
     const RawstorOSTFrameResponse* response, bool& from_backend
 ) noexcept {
@@ -80,9 +89,10 @@ int validate_response(
     }
 
     if (response->body.res < 0) {
-        rawstd_error("Server error: %s\n", strerror(-response->body.res));
-        from_backend = true;
-        return -response->body.res;
+        int error = -response->body.res;
+        rawstd_error("Server error: %s\n", strerror(error));
+        from_backend = (error != EBADMSG);
+        return error;
     }
 
     return 0;

@@ -670,6 +670,51 @@ TEST(OstIOTest, write_backend_error_retries_without_reconnect) {
     EXPECT_NO_THROW(object.write(ping.data(), ping.length()));
 }
 
+// A hash mismatch is a well-formed response (EBADMSG in body.res, see
+// ost/src/client.cpp), but unlike the EBUSY/ENOSPC cases above it must
+// NOT retry on the same session: it means the client and server disagree
+// about the payload just sent, so neither side can trust it still knows
+// where the next frame header begins. The first session only ever sees
+// ONE WRITE -- if the retry reused it instead of reconnecting, this
+// session would see a second WRITE next and the real (never-scripted)
+// one would hang waiting for a connection nothing accepts.
+TEST(OstIOTest, write_hash_mismatch_reconnects) {
+    Queue queue(16);
+    rawstor::tests::Server server(8753, 256);
+    std::string target =
+        "ost://127.0.0.1:8753/00000000-0000-7000-8000-000000000000";
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
+    }
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_write_request(4);
+        s.cmd_write_response(RAWSTOR_MAGIC, 1, -EBADMSG);
+    }
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_write_request(4);
+        s.cmd_write_response(RAWSTOR_MAGIC, 1, 4);
+        s.cmd_flush(RAWSTOR_MAGIC, 2, 0);
+    }
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_release(RAWSTOR_MAGIC, 0, 0);
+    }
+
+    Object object(queue, target, 1ull << 20);
+
+    std::string ping = "ping";
+    EXPECT_NO_THROW(object.write(ping.data(), ping.length()));
+}
+
 // Proves io_attempts and io_wire_retry_attempts are independent budgets:
 // io_attempts is set well below the number of wire failures scripted
 // here, so a TransportError retry that were (still) bounded by it would
