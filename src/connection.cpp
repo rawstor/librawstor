@@ -98,13 +98,13 @@ auto retry_n_async(const char* func_name, F&& attempt) -> decltype(attempt()) {
         } catch (const std::exception& e) {
             if (i == rawstor_opts_io_attempts()) {
                 rawstd_error(
-                    "%s: error: %s; attempt: %d of %d; failing...\n", func_name,
+                    "%s: error: %s; attempt: %u of %u; failing...\n", func_name,
                     e.what(), i, rawstor_opts_io_attempts()
                 );
                 throw;
             }
             rawstd_warning(
-                "%s: error: %s; attempt: %d of %d; retrying...\n", func_name,
+                "%s: error: %s; attempt: %u of %u; retrying...\n", func_name,
                 e.what(), i, rawstor_opts_io_attempts()
             );
         }
@@ -199,7 +199,7 @@ rawstd::Task<T> Connection::_with_retry(
 
                 if (total_attempts > 1) {
                     rawstd_warning(
-                        "IO %s: success on %s; attempt: %d\n", func_name,
+                        "IO %s: success on %s; attempt: %u\n", func_name,
                         s->str().c_str(), total_attempts
                     );
                 }
@@ -212,7 +212,7 @@ rawstd::Task<T> Connection::_with_retry(
 
                 if (total_attempts > 1) {
                     rawstd_warning(
-                        "IO %s: success on %s; attempt: %d\n", func_name,
+                        "IO %s: success on %s; attempt: %u\n", func_name,
                         s->str().c_str(), total_attempts
                     );
                 }
@@ -241,7 +241,7 @@ rawstd::Task<T> Connection::_with_retry(
             ++backend_attempt;
             if (backend_attempt >= rawstor_opts_io_attempts()) {
                 rawstd_error(
-                    "IO %s: error on %s: %s; attempt %d of %d; failing...\n",
+                    "IO %s: error on %s: %s; attempt %u of %u; failing...\n",
                     func_name, s->str().c_str(), std::strerror(error),
                     backend_attempt, rawstor_opts_io_attempts()
                 );
@@ -249,7 +249,7 @@ rawstd::Task<T> Connection::_with_retry(
             }
 
             rawstd_warning(
-                "IO %s: error on %s: %s; attempt: %d of %d; retrying...\n",
+                "IO %s: error on %s: %s; attempt: %u of %u; retrying...\n",
                 func_name, s->str().c_str(), std::strerror(error),
                 backend_attempt, rawstor_opts_io_attempts()
             );
@@ -268,7 +268,7 @@ rawstd::Task<T> Connection::_with_retry(
             ++wire_attempt;
             if (wire_attempt >= rawstor_opts_io_wire_retry_attempts()) {
                 rawstd_error(
-                    "IO %s: wire error on %s: %s; attempt %d of %d; "
+                    "IO %s: wire error on %s: %s; attempt %u of %u; "
                     "failing...\n",
                     func_name, s->str().c_str(), std::strerror(error),
                     wire_attempt, rawstor_opts_io_wire_retry_attempts()
@@ -277,7 +277,7 @@ rawstd::Task<T> Connection::_with_retry(
             }
 
             rawstd_warning(
-                "IO %s: wire error on %s: %s; attempt: %d of %d; "
+                "IO %s: wire error on %s: %s; attempt: %u of %u; "
                 "reconnecting...\n",
                 func_name, s->str().c_str(), std::strerror(error), wire_attempt,
                 rawstor_opts_io_wire_retry_attempts()
@@ -297,7 +297,7 @@ rawstd::Task<T> Connection::_with_retry(
             ++backend_attempt;
             if (backend_attempt >= rawstor_opts_io_attempts()) {
                 rawstd_error(
-                    "IO %s: error on %s: %s; attempt %d of %d; failing...\n",
+                    "IO %s: error on %s: %s; attempt %u of %u; failing...\n",
                     func_name, s->str().c_str(), std::strerror(error),
                     backend_attempt, rawstor_opts_io_attempts()
                 );
@@ -305,7 +305,7 @@ rawstd::Task<T> Connection::_with_retry(
             }
 
             rawstd_warning(
-                "IO %s: error on %s: %s; attempt: %d of %d; retrying...\n",
+                "IO %s: error on %s: %s; attempt: %u of %u; retrying...\n",
                 func_name, s->str().c_str(), std::strerror(error),
                 backend_attempt, rawstor_opts_io_attempts()
             );
@@ -326,7 +326,7 @@ rawstd::Task<T> Connection::_with_retry(
                 throw;
             } catch (const std::exception& e2) {
                 rawstd_error(
-                    "IO %s: exception on %s: %s; attempt %d of %d; "
+                    "IO %s: exception on %s: %s; attempt %u of %u; "
                     "failing...\n",
                     func_name, s->str().c_str(), e2.what(), wire_attempt,
                     rawstor_opts_io_wire_retry_attempts()
@@ -368,7 +368,7 @@ rawstd::Task<T> Connection::_with_retry(
                     throw;
                 } catch (const std::exception& e2) {
                     rawstd_error(
-                        "IO %s: exception on %s: %s; attempt %d of %d; "
+                        "IO %s: exception on %s: %s; attempt %u of %u; "
                         "failing...\n",
                         func_name, s->str().c_str(), e2.what(), backend_attempt,
                         rawstor_opts_io_attempts()
