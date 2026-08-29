@@ -476,7 +476,7 @@ TEST(OstIOTest, set_object_fail) {
     // create() already connected) plus invalidate_session()'s own
     // internal retry (rawstor_opts_io_attempts() attempts) -- one more
     // than io_attempts total.
-    for (unsigned int i = 0; i < 4; ++i) {
+    for (unsigned int i = 0; i < rawstor_opts_io_attempts() + 1; ++i) {
         rawstor::tests::Session s(server);
         s.cmd_set_object(0, 0, 0);
     }
@@ -499,7 +499,7 @@ TEST(OstIOTest, set_object_error) {
 
     // See set_object_fail above for why this is one more than
     // rawstor_opts_io_attempts().
-    for (unsigned int i = 0; i < 4; ++i) {
+    for (unsigned int i = 0; i < rawstor_opts_io_attempts() + 1; ++i) {
         rawstor::tests::Session s(server);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, -ENOENT);
     }
@@ -522,7 +522,7 @@ TEST(OstIOTest, set_object_disconnect) {
 
     // See set_object_fail above for why this is one more than
     // rawstor_opts_io_attempts().
-    for (unsigned int i = 0; i < 4; ++i) {
+    for (unsigned int i = 0; i < rawstor_opts_io_attempts() + 1; ++i) {
         rawstor::tests::Session s(server);
     }
 
@@ -542,7 +542,7 @@ TEST(OstIOTest, write_fail) {
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
-    for (unsigned int i = 0; i < 3; ++i) {
+    for (unsigned int i = 0; i < rawstor_opts_io_wire_retry_attempts(); ++i) {
         rawstor::tests::Session s(server);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
         s.cmd_write(0, 1, 4);
@@ -773,7 +773,7 @@ TEST(OstIOTest, write_disconnect) {
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
-    for (unsigned int i = 0; i < 3; ++i) {
+    for (unsigned int i = 0; i < rawstor_opts_io_wire_retry_attempts(); ++i) {
         rawstor::tests::Session s(server);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
         s.cmd_write_request(4);
@@ -810,7 +810,7 @@ TEST(OstIOTest, write_disconnect_concurrent) {
     // send completion. This is the window a stranded op used to fall
     // into: registered in Session::_ops, but not yet "in flight" by
     // SessionOp::in_flight()'s old (now removed) definition.
-    for (unsigned int i = 0; i < 3; ++i) {
+    for (unsigned int i = 0; i < rawstor_opts_io_wire_retry_attempts(); ++i) {
         rawstor::tests::Session s(server);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
     }
