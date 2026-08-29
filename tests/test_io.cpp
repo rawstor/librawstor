@@ -1123,4 +1123,164 @@ TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
     EXPECT_EQ(err2, 0);
 }
 
+// Regression: many writes share one session, all lose it at once (a
+// genuine close, matching a real dropped connection). Session::
+// _fail_in_flight() force-fails every one of them synchronously, in a
+// single loop, so their Connection::_with_retry() coroutines all resume
+// in a tight burst -- each one's own invalidate_session(s) call races
+// the very same `s`: exactly one wins Connection::_reconnecting's dedup
+// and actually reconnects, the rest return immediately and fall straight
+// into their own backoff wait (Queue::timeout()), submitted back to back
+// against the same io_uring ring before any of them has had a chance to
+// pump a completion. This is the exact concurrency shape a real host
+// under load produces (many in-flight guest writes, one dropped OST
+// connection) -- and the shape this test exists to stress, since nothing
+// above exercises more than two concurrent ops at once.
+//
+// Genuinely requires RAWSTOR_OPTS_IO_RETRY_BACKOFF_BASE to be nonzero,
+// not just to "mean more" -- at the harness default (0, see tests/
+// main.cpp's own doc comment for why) every deduped op's retry is
+// immediate, so most of them race back to get_next_session() before the
+// winning reconnect above has actually installed the replacement,
+// collide with the still-stale session again, and burn through
+// io_wire_retry_attempts on a single scripted reconnect this test never
+// meant to need more than once. Skipped rather than run meaninglessly
+// (or flakily) at 0 -- run with e.g.
+// `RAWSTOR_OPTS_IO_RETRY_BACKOFF_BASE=20` to actually exercise it.
+TEST(OstIOTest, write_many_concurrent_wire_errors_with_backoff) {
+    if (rawstor_opts_io_retry_backoff_base() == 0) {
+        GTEST_SKIP() << "needs a nonzero RAWSTOR_OPTS_IO_RETRY_BACKOFF_BASE "
+                        "-- see this TEST's own doc comment";
+    }
+
+    constexpr int kWrites = 15;
+
+    Queue queue(16);
+    rawstor::tests::Server server(8753, 256);
+    std::string target =
+        "ost://127.0.0.1:8753/00000000-0000-7000-8000-000000000000";
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
+    }
+
+    // Raw Server API, same reasoning as write_orphaned_by_sibling_error_
+    // response above: this session's own close() is scripted explicitly,
+    // from inside the last write's own read callback, instead of via
+    // Session's destructor (which would queue it too early, before any
+    // of these kWrites requests has actually arrived).
+    server.accept("SESSION <<<");
+    server.read(
+        "RAWSTOR_CMD_SET_OBJECT <<<", sizeof(RawstorOSTFrameBasic),
+        [](const void*) {}
+    );
+    RawstorOSTFrameResponse set_object_response = {
+        .head{
+            .magic = RAWSTOR_MAGIC,
+            .cmd = RAWSTOR_CMD_SET_OBJECT,
+            .cid = 0,
+        },
+        .body = {.res = 0, .hash = 0},
+    };
+    server.write(
+        "RAWSTOR_CMD_SET_OBJECT >>>", &set_object_response,
+        sizeof(set_object_response)
+    );
+    // Reads every one of the kWrites requests -- none of them ever gets
+    // a response -- then closes on the last one, guaranteeing all
+    // kWrites were fully sent (and are sitting in _ops) before the
+    // connection dies out from under all of them at once.
+    auto remaining = std::make_shared<int>(kWrites);
+    for (int i = 0; i < kWrites; ++i) {
+        server.read(
+            "RAWSTOR_CMD_WRITE <<<", sizeof(RawstorOSTFrameIO) + 4,
+            [&server, remaining](const void*) {
+                if (--*remaining == 0) {
+                    server.close("SESSION >>> (after all writes, unanswered)");
+
+                    server.accept("SESSION <<< (retry target)");
+                    server.read(
+                        "RAWSTOR_CMD_SET_OBJECT <<<",
+                        sizeof(RawstorOSTFrameBasic), [](const void*) {}
+                    );
+                    RawstorOSTFrameResponse retry_set_object_response = {
+                        .head{
+                            .magic = RAWSTOR_MAGIC,
+                            .cmd = RAWSTOR_CMD_SET_OBJECT,
+                            .cid = 0,
+                        },
+                        .body = {.res = 0, .hash = 0},
+                    };
+                    server.write(
+                        "RAWSTOR_CMD_SET_OBJECT >>>",
+                        &retry_set_object_response,
+                        sizeof(retry_set_object_response)
+                    );
+                    // Answers every retried WRITE (in whatever order they
+                    // land) with its own cid echoed back, then the one
+                    // FLUSH and RELEASE the Object destructor and
+                    // rawstor_target_remove() send at the very end of
+                    // this test, the latter on its own fresh connection.
+                    auto_respond_writes_then_flush_and_release(
+                        server, 4, 4, 0, 0
+                    );
+                }
+            }
+        );
+    }
+
+    Object object(queue, target, 1ull << 20);
+
+    bool done[kWrites] = {};
+    int err[kWrites] = {};
+    std::string payload = "ping";
+
+    // Issued back to back, with no rawio_wait_timeout() in between --
+    // same reasoning as write_orphaned_by_sibling_error_response above,
+    // just kWrites-wide instead of two: every one of them is sitting in
+    // _ops, on the one session they all share, before any of their sends
+    // -- let alone the connection dying -- has had a chance to run.
+    for (int i = 0; i < kWrites; ++i) {
+        auto cb = std::make_unique<std::function<void(size_t, int)>>(
+            [&done, &err, i](size_t, int error) {
+                done[i] = true;
+                err[i] = error;
+            }
+        );
+        int res = rawstor_object_pwrite(
+            object.raw(), payload.data(), payload.length(), i * 4, false,
+            callback, cb.get()
+        );
+        ASSERT_GE(res, 0);
+        cb.release();
+    }
+
+    // Bounded pump, same reasoning as every other test above: an
+    // orphaned write -- or a lost Queue::timeout() completion stranding
+    // a backoff wait forever -- would otherwise hang this loop, and the
+    // whole test binary, forever.
+    unsigned int budget_ms = rawstor_opts_tcp_user_timeout() + 5000;
+    auto all_done = [&done] {
+        for (bool d : done) {
+            if (!d) {
+                return false;
+            }
+        }
+        return true;
+    };
+    for (unsigned int elapsed_ms = 0; elapsed_ms < budget_ms && !all_done();
+         elapsed_ms += 100) {
+        int wres = rawio_wait_timeout(queue, 100);
+        if (wres < 0 && wres != -ETIME) {
+            break;
+        }
+    }
+
+    for (int i = 0; i < kWrites; ++i) {
+        EXPECT_TRUE(done[i]) << "write " << i << " orphaned (never completed)";
+        EXPECT_EQ(err[i], 0) << "write " << i;
+    }
+}
+
 } // unnamed namespace
