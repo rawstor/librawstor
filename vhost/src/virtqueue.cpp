@@ -3,6 +3,7 @@
 #include "device.hpp"
 #include <stdheaders/linux/virtio_ring.h>
 
+#include <rawstd/coro.hpp>
 #include <rawstd/endian.h>
 #include <rawstd/gpp.hpp>
 #include <rawstd/logging.h>
@@ -330,11 +331,8 @@ void VirtQueue::resume() {
     _post(Resume{});
 }
 
-std::future<void> VirtQueue::post_flush() {
-    FlushObject cmd;
-    std::future<void> f = cmd.reply.promise.get_future();
-    _post(std::move(cmd));
-    return f;
+void VirtQueue::post_run(std::function<void()> fn) {
+    _post(RunTask{std::move(fn)});
 }
 
 void VirtQueue::drain_commands() {
@@ -401,6 +399,15 @@ void VirtQueue::_apply(Resume&& /*cmd*/) {
     } catch (const std::exception& e) {
         rawstd_error("vhost: error processing virtqueue: %s\n", e.what());
     }
+}
+
+void VirtQueue::_apply(RunTask&& cmd) {
+    // `fn` may itself launch a DetachedTask (e.g. flush_object_task()
+    // via post_run(), see virtqueue_worker.cpp's flush_task()) --
+    // rethrow whatever it left pending, same as every other _apply()
+    // overload that can.
+    cmd.fn();
+    rawstd::DetachedTask::rethrow_if_pending();
 }
 
 void VirtQueue::_apply(Shutdown&& /*cmd*/) {

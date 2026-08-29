@@ -1398,15 +1398,15 @@ void Device::rem_mem_reg(const VhostUserMemoryRegion& m) {
     }
 }
 
-std::vector<std::future<void>> Device::post_flush_others(VirtQueue& requester) {
-    std::vector<std::future<void>> futures;
-    futures.reserve(_vqs.empty() ? 0 : _vqs.size() - 1);
+std::vector<VirtQueue*> Device::other_vqs(VirtQueue& requester) {
+    std::vector<VirtQueue*> others;
+    others.reserve(_vqs.empty() ? 0 : _vqs.size() - 1);
     for (VirtQueue& vq : _vqs) {
         if (&vq != &requester) {
-            futures.push_back(vq.post_flush());
+            others.push_back(&vq);
         }
     }
-    return futures;
+    return others;
 }
 
 void Device::loop() {
