@@ -28,6 +28,9 @@ struct RawstorOpts {
     unsigned int list_limit;
     unsigned int write_throttle_limit;
     unsigned int write_backlog_capacity;
+    unsigned int io_retry_backoff_base;
+    unsigned int io_retry_backoff_max;
+    unsigned int io_retry_backoff_jitter;
 };
 
 typedef struct {

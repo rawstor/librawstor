@@ -4,7 +4,15 @@
 
 #include <rawstor/rawstor.h>
 
+#include <cstdlib>
+
 int main(int argc, char** argv) {
+    // See tests/main.cpp for why: some regression tests here script a
+    // fake OST server around the exact, backoff-free timing of
+    // Connection::_with_retry()'s reconnect attempts. `overwrite = 0` so
+    // an explicit environment override still wins.
+    setenv("RAWSTOR_OPTS_IO_RETRY_BACKOFF_BASE", "0", 0);
+
     int res = rawstor_initialize(nullptr);
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
