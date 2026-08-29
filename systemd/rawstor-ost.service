@@ -18,6 +18,9 @@ Environment=WORKERS=12
 # Variables" section for what each one does); uncomment to override a
 # default, or set them in /etc/rawstor-ost.conf below instead.
 #Environment=RAWSTOR_OPTS_IO_ATTEMPTS=3
+#Environment=RAWSTOR_OPTS_IO_RETRY_BACKOFF_BASE=100
+#Environment=RAWSTOR_OPTS_IO_RETRY_BACKOFF_MAX=2000
+#Environment=RAWSTOR_OPTS_IO_RETRY_BACKOFF_JITTER=50
 #Environment=RAWSTOR_OPTS_SESSIONS=1
 #Environment=RAWSTOR_OPTS_SO_SNDTIMEO=5000
 #Environment=RAWSTOR_OPTS_SO_RCVTIMEO=5000

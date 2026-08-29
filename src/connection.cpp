@@ -8,6 +8,7 @@
 #include <rawstor/location.h>
 #include <rawstor/object.h>
 
+#include <rawio/awaitable.hpp>
 #include <rawio/queue.hpp>
 
 #include <rawstd/gpp.hpp>
@@ -17,13 +18,50 @@
 
 #include <algorithm>
 #include <exception>
+#include <random>
 #include <system_error>
 #include <type_traits>
 
 #include <cerrno>
+#include <cstdint>
 #include <cstring>
 
 namespace {
+
+// Delay (ms) Connection::_with_retry() waits before its `attempt`'th
+// retry (1-based: `attempt` is the attempt that just failed) -- `base`
+// doubles once per already-failed attempt, capped at `max_delay`, then
+// `jitter_pct` percent of that value is randomized: 0 is a plain,
+// deterministic exponential backoff; 100 is AWS's "Full Jitter" (delay =
+// random(0, computed)); 50 (the default) is "Equal Jitter" (computed / 2
+// + random(0, computed / 2)) -- a compromise between the herd-avoidance
+// of Full Jitter and the more predictable delay of no jitter at all. See
+// https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/.
+unsigned int backoff_delay_ms(
+    unsigned int attempt, unsigned int base, unsigned int max_delay,
+    unsigned int jitter_pct
+) {
+    unsigned int delay = base;
+    for (unsigned int i = 1; i < attempt && delay < max_delay; ++i) {
+        if (delay > max_delay / 2) {
+            delay = max_delay;
+            break;
+        }
+        delay *= 2;
+    }
+    delay = std::min(delay, max_delay);
+
+    unsigned int jitter_span = static_cast<unsigned int>(
+        (static_cast<uint64_t>(delay) * std::min(jitter_pct, 100u)) / 100
+    );
+    if (jitter_span == 0) {
+        return delay;
+    }
+
+    static thread_local std::mt19937 rng{std::random_device{}()};
+    std::uniform_int_distribution<unsigned int> dist(0, jitter_span);
+    return (delay - jitter_span) + dist(rng);
+}
 
 // Retries `attempt()` up to rawstor_opts_io_attempts() times, sharing the
 // same "log and retry, or log and rethrow on the last one" shape across
@@ -196,6 +234,19 @@ rawstd::Task<T> Connection::_with_retry(
                     );
                     RAWSTD_THROW_SYSTEM_ERROR(EIO);
                 }
+            }
+
+            // Backs off before the next attempt -- on the EBUSY path
+            // above just as much as a genuine reconnect, since hammering
+            // an already-busy server immediately again is exactly what
+            // backoff exists to avoid.
+            unsigned int delay_ms = backoff_delay_ms(
+                attempt, rawstor_opts_io_retry_backoff_base(),
+                rawstor_opts_io_retry_backoff_max(),
+                rawstor_opts_io_retry_backoff_jitter()
+            );
+            if (delay_ms != 0) {
+                co_await _queue.timeout(delay_ms * 1000u);
             }
         }
     }

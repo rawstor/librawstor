@@ -16,6 +16,9 @@
 #define RAWSTOR_OPTS_LIST_LIMIT 1000
 #define RAWSTOR_OPTS_WRITE_THROTTLE_LIMIT 128
 #define RAWSTOR_OPTS_WRITE_BACKLOG_CAPACITY (256u * 1024 * 1024)
+#define RAWSTOR_OPTS_IO_RETRY_BACKOFF_BASE 100
+#define RAWSTOR_OPTS_IO_RETRY_BACKOFF_MAX 2000
+#define RAWSTOR_OPTS_IO_RETRY_BACKOFF_JITTER 50
 
 static struct RawstorOpts _rawstor_opts = {};
 
@@ -110,6 +113,30 @@ int rawstor_opts_initialize(const struct RawstorOpts* opts) {
                   RAWSTOR_OPTS_WRITE_BACKLOG_CAPACITY
               );
 
+    _rawstor_opts.io_retry_backoff_base =
+        (opts != NULL && opts->io_retry_backoff_base != 0)
+            ? opts->io_retry_backoff_base
+            : get_env_uint(
+                  "RAWSTOR_OPTS_IO_RETRY_BACKOFF_BASE",
+                  RAWSTOR_OPTS_IO_RETRY_BACKOFF_BASE
+              );
+
+    _rawstor_opts.io_retry_backoff_max =
+        (opts != NULL && opts->io_retry_backoff_max != 0)
+            ? opts->io_retry_backoff_max
+            : get_env_uint(
+                  "RAWSTOR_OPTS_IO_RETRY_BACKOFF_MAX",
+                  RAWSTOR_OPTS_IO_RETRY_BACKOFF_MAX
+              );
+
+    _rawstor_opts.io_retry_backoff_jitter =
+        (opts != NULL && opts->io_retry_backoff_jitter != 0)
+            ? opts->io_retry_backoff_jitter
+            : get_env_uint(
+                  "RAWSTOR_OPTS_IO_RETRY_BACKOFF_JITTER",
+                  RAWSTOR_OPTS_IO_RETRY_BACKOFF_JITTER
+              );
+
     return 0;
 }
 
@@ -149,4 +176,16 @@ unsigned int rawstor_opts_write_throttle_limit(void) {
 
 unsigned int rawstor_opts_write_backlog_capacity(void) {
     return _rawstor_opts.write_backlog_capacity;
+}
+
+unsigned int rawstor_opts_io_retry_backoff_base(void) {
+    return _rawstor_opts.io_retry_backoff_base;
+}
+
+unsigned int rawstor_opts_io_retry_backoff_max(void) {
+    return _rawstor_opts.io_retry_backoff_max;
+}
+
+unsigned int rawstor_opts_io_retry_backoff_jitter(void) {
+    return _rawstor_opts.io_retry_backoff_jitter;
 }
