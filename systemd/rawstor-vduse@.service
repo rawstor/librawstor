@@ -48,20 +48,12 @@ Group=rawstor
 Environment=LOCATION=ost://127.0.0.1:7777
 Environment=NUM_QUEUES=16
 Environment=WRITE_CACHE=on
-# Retry a lost backend connection forever (rather than the library's own
-# default of giving up after 3 attempts): same rationale as rawstor-vhost
-# -- the vDPA consumer just sees I/O stall while this reconnects, rather
-# than a burst of errors for what may be a brief backend blip. "-1"
-# parses as UINT_MAX via the usual unsigned env-var parsing (see
-# README.md) -- not a literal "unlimited" sentinel, just a very large
-# number of attempts.
-Environment=RAWSTOR_OPTS_IO_WIRE_RETRY_ATTEMPTS=-1
 # librawstor client/server tuning knobs (see README.md's "Environment
 # Variables" section for what each one does); uncomment to override a
 # default, or set them in /etc/rawstor-vduse.conf below instead.
-#Environment=RAWSTOR_OPTS_IO_ATTEMPTS=3
+#Environment=RAWSTOR_OPTS_IO_ATTEMPTS=10
 #Environment=RAWSTOR_OPTS_IO_RETRY_BACKOFF_BASE=100
-#Environment=RAWSTOR_OPTS_IO_RETRY_BACKOFF_MAX=2000
+#Environment=RAWSTOR_OPTS_IO_RETRY_BACKOFF_MAX=30000
 #Environment=RAWSTOR_OPTS_IO_RETRY_BACKOFF_JITTER=50
 #Environment=RAWSTOR_OPTS_SESSIONS=1
 #Environment=RAWSTOR_OPTS_SO_SNDTIMEO=5000

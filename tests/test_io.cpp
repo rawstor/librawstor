@@ -55,30 +55,6 @@ int result_cb(ssize_t result, void* data) {
     return 0;
 }
 
-// Overrides rawstor_opts_io_attempts()/io_wire_retry_attempts() for the
-// lifetime of one test, to prove they're independent budgets -- see
-// Connection::_with_retry(). Restores the library's normal opts (env
-// vars/compiled-in defaults) on scope exit, same as
-// ThrottleOptsOverride in test_blk_session.cpp/test_object.cpp.
-class WireRetryOptsOverride final {
-public:
-    WireRetryOptsOverride(
-        unsigned int io_attempts, unsigned int io_wire_retry_attempts
-    ) {
-        RawstorOpts opts{};
-        opts.io_attempts = io_attempts;
-        opts.io_wire_retry_attempts = io_wire_retry_attempts;
-        rawstor_opts_initialize(&opts);
-    }
-    WireRetryOptsOverride(const WireRetryOptsOverride&) = delete;
-    WireRetryOptsOverride(WireRetryOptsOverride&&) = delete;
-
-    ~WireRetryOptsOverride() { rawstor_opts_initialize(nullptr); }
-
-    WireRetryOptsOverride& operator=(const WireRetryOptsOverride&) = delete;
-    WireRetryOptsOverride& operator=(WireRetryOptsOverride&&) = delete;
-};
-
 class Queue {
 private:
     RawIOQueue* _queue;
@@ -542,7 +518,7 @@ TEST(OstIOTest, write_fail) {
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
-    for (unsigned int i = 0; i < rawstor_opts_io_wire_retry_attempts(); ++i) {
+    for (unsigned int i = 0; i < rawstor_opts_io_attempts(); ++i) {
         rawstor::tests::Session s(server);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
         s.cmd_write(0, 1, 4);
@@ -633,12 +609,16 @@ TEST(OstIOTest, write_busy_retries_without_reconnect) {
     EXPECT_NO_THROW(object.write(ping.data(), ping.length()));
 }
 
-// Same shape as write_busy_retries_without_reconnect above, but with a
-// generic (non-EBUSY) backend rejection -- ENOSPC here, retryable since
-// it's not in Connection::_with_retry()'s is_permanent_backend_error()
-// list. Confirms that same-session, no-reconnect retry is BackendError's
-// general behavior now, not something special-cased to EBUSY alone.
-TEST(OstIOTest, write_backend_error_retries_without_reconnect) {
+// Same shape as write_hash_mismatch_reconnects below, but with a generic
+// (non-EBUSY) backend rejection -- ENOSPC here, retryable since it's not
+// in Connection::_with_retry()'s is_permanent_backend_error() list.
+// Confirms reconnect-before-every-retry is the general behavior now, not
+// something special-cased to a hash mismatch/dropped connection alone:
+// the first session only ever sees ONE WRITE -- if the retry reused it
+// instead of reconnecting, this session would see a second WRITE next
+// and the real (never-scripted) one would hang waiting for a connection
+// nothing accepts.
+TEST(OstIOTest, write_backend_error_retries_with_reconnect) {
     Queue queue(16);
     rawstor::tests::Server server(8753, 256);
     std::string target =
@@ -654,9 +634,14 @@ TEST(OstIOTest, write_backend_error_retries_without_reconnect) {
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
         s.cmd_write_request(4);
         s.cmd_write_response(RAWSTOR_MAGIC, 1, -ENOSPC);
+    }
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
         s.cmd_write_request(4);
-        s.cmd_write_response(RAWSTOR_MAGIC, 2, 4);
-        s.cmd_flush(RAWSTOR_MAGIC, 3, 0);
+        s.cmd_write_response(RAWSTOR_MAGIC, 1, 4);
+        s.cmd_flush(RAWSTOR_MAGIC, 2, 0);
     }
 
     {
@@ -671,10 +656,10 @@ TEST(OstIOTest, write_backend_error_retries_without_reconnect) {
 }
 
 // A hash mismatch is a well-formed response (EBADMSG in body.res, see
-// ost/src/client.cpp), but unlike the EBUSY/ENOSPC cases above it must
-// NOT retry on the same session: it means the client and server disagree
-// about the payload just sent, so neither side can trust it still knows
-// where the next frame header begins. The first session only ever sees
+// ost/src/client.cpp), but unlike the EBUSY case above it must NOT retry
+// on the same session: it means the client and server disagree about the
+// payload just sent, so neither side can trust it still knows where the
+// next frame header begins. The first session only ever sees
 // ONE WRITE -- if the retry reused it instead of reconnecting, this
 // session would see a second WRITE next and the real (never-scripted)
 // one would hang waiting for a connection nothing accepts.
@@ -715,53 +700,6 @@ TEST(OstIOTest, write_hash_mismatch_reconnects) {
     EXPECT_NO_THROW(object.write(ping.data(), ping.length()));
 }
 
-// Proves io_attempts and io_wire_retry_attempts are independent budgets:
-// io_attempts is set well below the number of wire failures scripted
-// here, so a TransportError retry that were (still) bounded by it would
-// fail well before the write below actually succeeds.
-TEST(OstIOTest, write_wire_retries_exceed_io_attempts) {
-    Queue queue(16);
-    rawstor::tests::Server server(8753, 256);
-    std::string target =
-        "ost://127.0.0.1:8753/00000000-0000-7000-8000-000000000000";
-
-    {
-        rawstor::tests::Session s(server);
-        s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
-    }
-
-    WireRetryOptsOverride opts_guard(
-        /*io_attempts=*/1, /*io_wire_retry_attempts=*/3
-    );
-
-    // The first two sessions each die right after accepting the WRITE
-    // request (no response), forcing a reconnect (and thus a fresh
-    // SET_OBJECT) each time before the third finally answers.
-    for (unsigned int i = 0; i < 2; ++i) {
-        rawstor::tests::Session s(server);
-        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
-        s.cmd_write_request(4);
-    }
-
-    {
-        rawstor::tests::Session s(server);
-        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
-        s.cmd_write_request(4);
-        s.cmd_write_response(RAWSTOR_MAGIC, 1, 4);
-        s.cmd_flush(RAWSTOR_MAGIC, 2, 0);
-    }
-
-    {
-        rawstor::tests::Session s(server);
-        s.cmd_release(RAWSTOR_MAGIC, 0, 0);
-    }
-
-    Object object(queue, target, 1ull << 20);
-
-    std::string ping = "ping";
-    EXPECT_NO_THROW(object.write(ping.data(), ping.length()));
-}
-
 TEST(OstIOTest, write_disconnect) {
     Queue queue(16);
     rawstor::tests::Server server(8753, 256);
@@ -773,7 +711,7 @@ TEST(OstIOTest, write_disconnect) {
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
-    for (unsigned int i = 0; i < rawstor_opts_io_wire_retry_attempts(); ++i) {
+    for (unsigned int i = 0; i < rawstor_opts_io_attempts(); ++i) {
         rawstor::tests::Session s(server);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
         s.cmd_write_request(4);
@@ -810,7 +748,7 @@ TEST(OstIOTest, write_disconnect_concurrent) {
     // send completion. This is the window a stranded op used to fall
     // into: registered in Session::_ops, but not yet "in flight" by
     // SessionOp::in_flight()'s old (now removed) definition.
-    for (unsigned int i = 0; i < rawstor_opts_io_wire_retry_attempts(); ++i) {
+    for (unsigned int i = 0; i < rawstor_opts_io_attempts(); ++i) {
         rawstor::tests::Session s(server);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
     }
@@ -988,17 +926,17 @@ void auto_respond_writes_then_flush_and_release(
 }
 
 // Regression: two writes share one session. The first gets a well-formed
-// response carrying an unexpected cmd (a TransportError -- see
-// session_error.hpp -- not a dropped connection: nothing about the wire
-// ever looks broken, no FIN/RST at any point), which
-// Connection::_with_retry() reacts to by calling invalidate_session():
-// swap in a fresh session, then Session::close() the old one. The second
-// write is already sitting in that same old session's _ops, purely
-// waiting on a response of its own, when this happens -- _recv_pump has
-// nothing of its own to ever notice here (the connection was never
-// actually broken), so it can't be what rescues it. Session::close()
-// must fail whatever is still in _ops itself, or the second write has
-// nothing left watching it and hangs forever.
+// response carrying an unexpected cmd (a plain std::system_error, not a
+// dropped connection: nothing about the wire ever looks broken, no
+// FIN/RST at any point), which Connection::_with_retry() reacts to by
+// calling invalidate_session(): swap in a fresh session, then
+// Session::close() the old one. The second write is already sitting in
+// that same old session's _ops, purely waiting on a response of its own,
+// when this happens -- _recv_pump has nothing of its own to ever notice
+// here (the connection was never actually broken), so it can't be what
+// rescues it. Session::close() must fail whatever is still in _ops
+// itself, or the second write has nothing left watching it and hangs
+// forever.
 //
 // This is deliberately built around a same-session *framing* error
 // rather than a dropped connection: on a real loopback socket, closing
@@ -1011,11 +949,7 @@ void auto_respond_writes_then_flush_and_release(
 // wire ever looks wrong at the socket level, so there's nothing for
 // recv_pump to independently detect; the only thing that can ever tear
 // this session down is the explicit invalidate_session() -> Session::
-// close() path this test exists to cover. (A genuine backend rejection,
-// e.g. res = -EIO, no longer reconnects at all since the wire/backend
-// split -- see Connection::_with_retry() -- so it can't drive this
-// scenario anymore; only a wire-classified failure like this one still
-// does.)
+// close() path this test exists to cover.
 TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
     Queue queue(16);
     rawstor::tests::Server server(8753, 256);
@@ -1056,9 +990,9 @@ TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
         [&server](const void* buf) {
             uint16_t cid = static_cast<const RawstorOSTFrameIO*>(buf)->head.cid;
             // A well-formed response with the wrong cmd -- validate_cmd()
-            // rejects it as EPROTO, a TransportError, not a real backend
-            // rejection (see this TEST's own doc comment for why that
-            // distinction matters here).
+            // rejects it as EPROTO, a same-session *framing* error rather
+            // than a dropped connection (see this TEST's own doc comment
+            // for why that distinction matters here).
             RawstorOSTFrameResponse wrong_cmd_response = {
                 .head{
                     .magic = RAWSTOR_MAGIC,
@@ -1188,8 +1122,8 @@ TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
 // immediate, so most of them race back to get_next_session() before the
 // winning reconnect above has actually installed the replacement,
 // collide with the still-stale session again, and burn through
-// io_wire_retry_attempts on a single scripted reconnect this test never
-// meant to need more than once. Skipped rather than run meaninglessly
+// io_attempts on a single scripted reconnect this test never meant to
+// need more than once. Skipped rather than run meaninglessly
 // (or flakily) at 0 -- run with e.g.
 // `RAWSTOR_OPTS_IO_RETRY_BACKOFF_BASE=20` to actually exercise it.
 TEST(OstIOTest, write_many_concurrent_wire_errors_with_backoff) {

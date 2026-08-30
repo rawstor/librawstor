@@ -31,7 +31,6 @@ struct RawstorOpts {
     unsigned int io_retry_backoff_base;
     unsigned int io_retry_backoff_max;
     unsigned int io_retry_backoff_jitter;
-    unsigned int io_wire_retry_attempts;
 };
 
 typedef struct {

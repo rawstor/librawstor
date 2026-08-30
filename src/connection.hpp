@@ -48,22 +48,20 @@ private:
     void _finish(rawstor::telemetry::TimePoint t_call);
 
     // Shared retry-loop body for every data-path/metadata method: tries
-    // `method` against successive sessions from the pool. Two separate,
-    // differently-bounded retry budgets, keyed off how the Session itself
-    // classified the failure (see session_error.hpp): a BackendError (the
-    // connection is fine, the backend rejected the request -- EBUSY
-    // included) retries on the *same* session, up to
-    // rawstor_opts_io_attempts() times, unless it's a rejection retrying
-    // can never fix (e.g. ENOENT); a TransportError (couldn't talk to the
-    // backend at all) reconnects via invalidate_session() first, up to
-    // rawstor_opts_io_wire_retry_attempts() times -- deployments that
-    // want that effectively unbounded (rawstor-vhost/-vduse's packaged
-    // systemd units do) raise it, matching how a QEMU vhost-user
-    // chardev's own `reconnect=N` never gives up either. Anything else
-    // (untagged, e.g. blk::Session's plain std::system_error) keeps the
-    // older single-budget, EBUSY-vs-reconnect behavior, still governed by
-    // io_attempts. Every retry also waits out an exponential backoff
-    // first -- see backoff_delay_ms() in connection.cpp and the
+    // `method` against successive sessions from the pool. Every failure
+    // (a Session throws a plain std::system_error for anything from a
+    // malformed response to a dropped connection to a live backend's own
+    // well-formed rejection -- Session no longer classifies which) is
+    // handled the same way: reconnect via invalidate_session() and retry,
+    // up to rawstor_opts_io_attempts() times total, unless it's a
+    // rejection retrying can never fix (e.g. ENOENT -- see
+    // is_permanent_backend_error() in connection.cpp), which fails
+    // immediately without retrying at all. The one exception to
+    // "reconnect before every retry" is a plain EBUSY: the session itself
+    // is fine, just backed up against the remote server's own write-
+    // throttling, so reconnecting would only cost a round trip for no
+    // benefit. Every retry also waits out an exponential backoff first --
+    // see backoff_delay_ms() in connection.cpp and the
     // rawstor_opts_io_retry_backoff_*() knobs it reads. `T`/`Args...` are
     // deduced straight from `method`'s own pointer-to-member-function
     // type (e.g. &Session::pread), so the wrapped operation's natural

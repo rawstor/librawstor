@@ -3,7 +3,6 @@
 #include "object.hpp"
 #include "opts.h"
 #include "session.hpp"
-#include "session_error.hpp"
 #include "telemetry.hpp"
 
 #include <rawstor/location.h>
@@ -19,7 +18,6 @@
 
 #include <algorithm>
 #include <exception>
-#include <limits>
 #include <random>
 #include <system_error>
 #include <type_traits>
@@ -65,10 +63,9 @@ unsigned int backoff_delay_ms(
     return (delay - jitter_span) + dist(rng);
 }
 
-// A rejection from a live backend (rawstor::BackendError -- see
-// session_error.hpp) that retrying can never turn into success: the
-// target object doesn't exist (ENOENT), already exists where create()
-// needs it not to (EEXIST), or the request itself is malformed (EINVAL).
+// A rejection retrying can never turn into success: the target object
+// doesn't exist (ENOENT), already exists where create() needs it not to
+// (EEXIST), or the request itself is malformed (EINVAL).
 // Anything else defaults to retryable -- safer to spend a few pointless
 // retries on a genuinely transient rejection we don't recognize than to
 // silently give up on one that would have gone away on its own (e.g.
@@ -177,36 +174,25 @@ rawstd::Task<T> Connection::_with_retry(
     rawstd::Task<T> (Session::*method)(Args...),
     std::type_identity_t<Args>... args
 ) {
-    // Two independent, differently-bounded retry budgets -- see
-    // session_error.hpp: a BackendError (the connection is fine, the
-    // backend itself rejected this request) retries against the *same*
-    // session, bounded by rawstor_opts_io_attempts(); a TransportError
-    // (couldn't even talk to the backend) reconnects and retries instead,
-    // bounded by rawstor_opts_io_wire_retry_attempts() -- deployments
-    // that want that to be effectively unbounded (rawstor-vhost/-vduse's
-    // packaged systemd units do) raise it, the same way a QEMU vhost-user
-    // chardev's own `reconnect=N` never gives up either. Anything else
-    // (untagged -- e.g. blk::Session's plain std::system_error, including
-    // its own EBUSY) keeps today's single-budget, EBUSY-vs-reconnect
-    // behavior verbatim, still governed by io_attempts.
-    unsigned int backend_attempt = 0;
-    unsigned int wire_attempt = 0;
-    unsigned int total_attempts = 0;
+    // One retry budget, one behavior, regardless of what went wrong:
+    // reconnect via invalidate_session() and retry, up to
+    // rawstor_opts_io_attempts() attempts total, unless the failure is
+    // one is_permanent_backend_error() already knows retrying can never
+    // fix (e.g. ENOENT), which fails immediately instead. The one
+    // exception to "reconnect before every retry" is a plain EBUSY: the
+    // session itself is fine, just backed up against the remote server's
+    // own write-throttling (see blk_session.hpp's _throttle_acquire()),
+    // so reconnecting would only cost a round trip for no benefit.
+    unsigned int attempt = 0;
 
     for (;;) {
         std::shared_ptr<Session> s = get_next_session();
-        ++total_attempts;
 
         // co_await is not permitted inside a catch handler, so the catch
-        // blocks below only record what happened; every co_await this
+        // block below only records what happened; every co_await this
         // needs (invalidate_session(), the backoff wait) happens after
-        // execution has left them entirely, keyed off `retry`.
-        enum class Retry {
-            kNone,
-            kBackend,
-            kWire,
-            kFallback
-        } retry = Retry::kNone;
+        // execution has left it entirely, keyed off `retry`.
+        bool retry = false;
         int error = 0;
 
         try {
@@ -214,10 +200,10 @@ rawstd::Task<T> Connection::_with_retry(
                 co_await (s.get()->*method)(args...);
                 RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "error = 0");
 
-                if (total_attempts > 1) {
+                if (attempt > 0) {
                     rawstd_warning(
                         "IO %s: success on %s; attempt: %u\n", func_name,
-                        s->str().c_str(), total_attempts
+                        s->str().c_str(), attempt + 1
                     );
                 }
                 co_return;
@@ -227,17 +213,17 @@ rawstd::Task<T> Connection::_with_retry(
                     trace_event, "result = %zu, error = 0\n", result
                 );
 
-                if (total_attempts > 1) {
+                if (attempt > 0) {
                     rawstd_warning(
                         "IO %s: success on %s; attempt: %u\n", func_name,
-                        s->str().c_str(), total_attempts
+                        s->str().c_str(), attempt + 1
                     );
                 }
                 co_return result;
             }
-        } catch (const BackendError& e) {
+        } catch (const std::system_error& e) {
             error = e.code().value();
-            retry = Retry::kBackend;
+            retry = true;
 
             if constexpr (std::is_void_v<T>) {
                 RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "error = %d\n", error);
@@ -255,156 +241,41 @@ rawstd::Task<T> Connection::_with_retry(
                 throw;
             }
 
-            ++backend_attempt;
-            if (backend_attempt >= rawstor_opts_io_attempts()) {
+            ++attempt;
+            if (attempt >= rawstor_opts_io_attempts()) {
                 rawstd_error(
                     "IO %s: error on %s: %s; attempt %u of %u; failing...\n",
-                    func_name, s->str().c_str(), std::strerror(error),
-                    backend_attempt, rawstor_opts_io_attempts()
+                    func_name, s->str().c_str(), std::strerror(error), attempt,
+                    rawstor_opts_io_attempts()
                 );
                 throw;
             }
 
             rawstd_warning(
                 "IO %s: error on %s: %s; attempt: %u of %u; retrying...\n",
-                func_name, s->str().c_str(), std::strerror(error),
-                backend_attempt, rawstor_opts_io_attempts()
-            );
-        } catch (const TransportError& e) {
-            error = e.code().value();
-            retry = Retry::kWire;
-
-            if constexpr (std::is_void_v<T>) {
-                RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "error = %d\n", error);
-            } else {
-                RAWSTD_TRACE_EVENT_MESSAGE(
-                    trace_event, "result = 0, error = %d\n", error
-                );
-            }
-
-            ++wire_attempt;
-            unsigned int wire_retry_attempts =
-                rawstor_opts_io_wire_retry_attempts();
-            if (wire_attempt >= wire_retry_attempts) {
-                rawstd_error(
-                    "IO %s: wire error on %s: %s; attempt %u of %u; "
-                    "failing...\n",
-                    func_name, s->str().c_str(), std::strerror(error),
-                    wire_attempt, wire_retry_attempts
-                );
-                throw;
-            }
-
-            // RAWSTOR_OPTS_IO_WIRE_RETRY_ATTEMPTS=-1 (the rawstor-vhost/
-            // -vduse systemd units' "retry forever" setting) parses as
-            // UINT_MAX -- printing that as "of 4294967295" is noise, not
-            // information, so the bound is only logged when it's an
-            // actual bound.
-            if (wire_retry_attempts ==
-                std::numeric_limits<unsigned int>::max()) {
-                rawstd_warning(
-                    "IO %s: wire error on %s: %s; attempt: %u; "
-                    "reconnecting...\n",
-                    func_name, s->str().c_str(), std::strerror(error),
-                    wire_attempt
-                );
-            } else {
-                rawstd_warning(
-                    "IO %s: wire error on %s: %s; attempt: %u of %u; "
-                    "reconnecting...\n",
-                    func_name, s->str().c_str(), std::strerror(error),
-                    wire_attempt, wire_retry_attempts
-                );
-            }
-        } catch (const std::system_error& e) {
-            error = e.code().value();
-            retry = Retry::kFallback;
-
-            if constexpr (std::is_void_v<T>) {
-                RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "error = %d\n", error);
-            } else {
-                RAWSTD_TRACE_EVENT_MESSAGE(
-                    trace_event, "result = 0, error = %d\n", error
-                );
-            }
-
-            ++backend_attempt;
-            if (backend_attempt >= rawstor_opts_io_attempts()) {
-                rawstd_error(
-                    "IO %s: error on %s: %s; attempt %u of %u; failing...\n",
-                    func_name, s->str().c_str(), std::strerror(error),
-                    backend_attempt, rawstor_opts_io_attempts()
-                );
-                throw;
-            }
-
-            rawstd_warning(
-                "IO %s: error on %s: %s; attempt: %u of %u; retrying...\n",
-                func_name, s->str().c_str(), std::strerror(error),
-                backend_attempt, rawstor_opts_io_attempts()
+                func_name, s->str().c_str(), std::strerror(error), attempt,
+                rawstor_opts_io_attempts()
             );
         }
 
-        if (retry == Retry::kWire) {
-            try {
-                co_await invalidate_session(s);
-            } catch (const TransportError&) {
-                // Reconnecting itself hit another wire failure -- exactly
-                // what unbounded wire retry exists to ride out, so stay
-                // in the loop instead of escaping immediately.
-            } catch (const std::system_error&) {
-                // Anything else (e.g. a BackendError -- set_object()
-                // during reconnect got a real rejection, meaning the
-                // object itself is gone) isn't a wire problem retrying
-                // the reconnect can fix -- surface it instead of looping.
-                throw;
-            } catch (const std::exception& e2) {
-                rawstd_error(
-                    "IO %s: exception on %s: %s; attempt %u of %u; "
-                    "failing...\n",
-                    func_name, s->str().c_str(), e2.what(), wire_attempt,
-                    rawstor_opts_io_wire_retry_attempts()
-                );
-                RAWSTD_THROW_SYSTEM_ERROR(EIO);
-            }
-
-            unsigned int delay_ms = backoff_delay_ms(
-                wire_attempt, rawstor_opts_io_retry_backoff_base(),
-                rawstor_opts_io_retry_backoff_max(),
-                rawstor_opts_io_retry_backoff_jitter()
-            );
-            if (delay_ms != 0) {
-                co_await _queue.timeout(delay_ms * 1000u);
-            }
-        } else if (retry == Retry::kBackend) {
-            // Same session -- nothing wrong with the connection, so
-            // reconnecting would only cost a round trip for nothing.
-            unsigned int delay_ms = backoff_delay_ms(
-                backend_attempt, rawstor_opts_io_retry_backoff_base(),
-                rawstor_opts_io_retry_backoff_max(),
-                rawstor_opts_io_retry_backoff_jitter()
-            );
-            if (delay_ms != 0) {
-                co_await _queue.timeout(delay_ms * 1000u);
-            }
-        } else if (retry == Retry::kFallback) {
-            // EBUSY means the session itself is fine, just backed up
-            // against the remote server's own write-throttling (see
-            // blk_session.hpp's _throttle_acquire()) -- invalidate_session()
-            // would just reconnect and re-SET_OBJECT for no benefit (the
-            // server is still just as busy) at the cost of a needless
-            // round-trip, so only a genuine transport/session error pays
-            // for it here.
+        if (retry) {
             if (error != EBUSY) {
                 try {
                     co_await invalidate_session(s);
-                } catch (const std::system_error&) {
-                    throw;
+                } catch (const std::system_error& e2) {
+                    // A reconnect that hits another retryable failure is
+                    // exactly what this loop's own budget exists to ride
+                    // out; only a permanent rejection (e.g. set_object()
+                    // during reconnect got ENOENT, meaning the object
+                    // itself is gone) is worth escaping immediately for.
+                    if (is_permanent_backend_error(e2.code().value())) {
+                        throw;
+                    }
                 } catch (const std::exception& e2) {
                     rawstd_error(
                         "IO %s: exception on %s: %s; attempt %u of %u; "
                         "failing...\n",
-                        func_name, s->str().c_str(), e2.what(), backend_attempt,
+                        func_name, s->str().c_str(), e2.what(), attempt,
                         rawstor_opts_io_attempts()
                     );
                     RAWSTD_THROW_SYSTEM_ERROR(EIO);
@@ -412,7 +283,7 @@ rawstd::Task<T> Connection::_with_retry(
             }
 
             unsigned int delay_ms = backoff_delay_ms(
-                backend_attempt, rawstor_opts_io_retry_backoff_base(),
+                attempt, rawstor_opts_io_retry_backoff_base(),
                 rawstor_opts_io_retry_backoff_max(),
                 rawstor_opts_io_retry_backoff_jitter()
             );

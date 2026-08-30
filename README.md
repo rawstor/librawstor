@@ -56,10 +56,9 @@ Default values are shown below.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `RAWSTOR_LOCATION` | *(none)* | Fallback `LOCATION` for `rawstor create`/`list`/`info` when it's omitted from the command line. |
-| `RAWSTOR_OPTS_IO_ATTEMPTS` | `3` | Number of retry attempts for an I/O operation the backend itself rejected (a well-formed response reporting a failure, e.g. `EBUSY`/`ENOSPC`) -- the connection is fine, so these retry against the same session. A backend rejection known to never succeed on retry (e.g. `ENOENT`) isn't retried at all, regardless of this value. Doesn't govern reconnects after a broken connection -- see `RAWSTOR_OPTS_IO_WIRE_RETRY_ATTEMPTS`. |
-| `RAWSTOR_OPTS_IO_WIRE_RETRY_ATTEMPTS` | `3` | Number of reconnect+retry attempts after losing the connection to the backend entirely (couldn't connect, connection reset, corrupt/unexpected data on the wire) -- as opposed to `RAWSTOR_OPTS_IO_ATTEMPTS` above, which governs a rejection *from* a live connection instead. `rawstor-vhost`/`rawstor-vduse`'s packaged systemd units raise this to effectively unlimited (`-1`, parsed as a very large number), matching how a QEMU vhost-user chardev's own `reconnect=N` keeps retrying forever -- the network can come back at any time, and the guest should stall rather than see a stream of spurious I/O errors for a blip. |
-| `RAWSTOR_OPTS_IO_RETRY_BACKOFF_BASE` | `100` | Base delay, in milliseconds (ms), before the first retry of an I/O operation; doubles with each further attempt, capped at `RAWSTOR_OPTS_IO_RETRY_BACKOFF_MAX`. Applies to both kinds of retry above. |
-| `RAWSTOR_OPTS_IO_RETRY_BACKOFF_MAX` | `2000` | Upper bound, in milliseconds (ms), on the exponential retry backoff delay above. |
+| `RAWSTOR_OPTS_IO_ATTEMPTS` | `10` | Number of attempts for an I/O operation before giving up, covering any failure from a broken connection to a well-formed rejection from a live backend (e.g. `EBUSY`/`ENOSPC`) -- every retry reconnects first (except a plain `EBUSY`, where the session is fine and just backed up against the remote server's own write-throttling). A rejection known to never succeed on retry (e.g. `ENOENT`) isn't retried at all, regardless of this value. |
+| `RAWSTOR_OPTS_IO_RETRY_BACKOFF_BASE` | `100` | Base delay, in milliseconds (ms), before the first retry of an I/O operation; doubles with each further attempt, capped at `RAWSTOR_OPTS_IO_RETRY_BACKOFF_MAX`. |
+| `RAWSTOR_OPTS_IO_RETRY_BACKOFF_MAX` | `30000` | Upper bound, in milliseconds (ms), on the exponential retry backoff delay above. |
 | `RAWSTOR_OPTS_IO_RETRY_BACKOFF_JITTER` | `50` | Percentage (0-100, not a time value) of the computed retry backoff delay that is randomized, to avoid many clients retrying in lockstep. `0` disables jitter (a plain exponential backoff); `100` is "Full Jitter" (the whole delay is randomized); `50` is "Equal Jitter" (half the delay is fixed, half is randomized). |
 | `RAWSTOR_OPTS_SESSIONS` | `1` | Number of concurrent sessions that Rawstor client will open for each object. |
 | `RAWSTOR_OPTS_SO_SNDTIMEO` | `5000` | Socket send timeout, in milliseconds (ms). Sets `SO_SNDTIMEO` for network sockets. |
@@ -142,7 +141,7 @@ multiple in-flight requests on a virtqueue may complete out of order.
 | `-s, --socket-path PATH` | Location of the vhost-user Unix domain socket. |
 | `TARGET` | Comma‑separated list of rawstor backend targets (see [Locations and Targets](https://github.com/rawstor/librawstor/blob/main/docs/locations_and_targets.md)). |
 | `--queue-size SIZE` | RawIO queue (`io_uring`) depth of each virtqueue's own queue. Default: `256`. |
-| `--num-queues N` | Number of virtqueues advertised to the guest, each serviced by its own thread and its own connection to `TARGET`. The guest picks how many of these it actually uses (typically up to its vCPU count) via QEMU's own `num-queues=`. Default: `16`. |
+| `--num-queues N` | Number of virtqueues advertised to the guest, each serviced by its own thread and its own connection to `TARGET`. The guest picks how many of these it actually uses (typically up to its vCPU count) via QEMU's own `num-queues=`. Default: `4`. |
 | `--write-cache on\|off` | Advertise a writeback (`on`) or write-through (`off`, default) cache to the guest; write-through makes every write durable on completion, writeback relies on the guest issuing an explicit flush. |
 | `-v, --version` | Print version and exit. |
 
