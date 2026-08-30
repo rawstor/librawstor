@@ -29,6 +29,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <utility>
 
 #include <cassert>
@@ -56,6 +57,17 @@ int validate_result(size_t size, size_t result) noexcept {
     return EAGAIN;
 }
 
+// Connection::_with_retry() no longer distinguishes a well-formed
+// rejection from the backend (response->body.res < 0) from a broken/
+// malformed wire -- every failure here just reconnects and retries, up
+// to the same rawstor_opts_io_attempts() budget, unless it's one
+// is_permanent_backend_error() (see connection.cpp) already knows can
+// never succeed on retry. EBADMSG is one such body.res value: the OST
+// server sends it (see ost/src/client.cpp) only when the payload it just
+// received doesn't hash to what the client declared, meaning the client
+// and server have lost agreement on where in the byte stream the current
+// frame even ends -- reconnecting is what recovers alignment on the next
+// frame header, same as for a magic mismatch below.
 int validate_response(const RawstorOSTFrameResponse* response) noexcept {
     assert(response != nullptr);
 
@@ -68,8 +80,9 @@ int validate_response(const RawstorOSTFrameResponse* response) noexcept {
     }
 
     if (response->body.res < 0) {
-        rawstd_error("Server error: %s\n", strerror(-response->body.res));
-        return -response->body.res;
+        int error = -response->body.res;
+        rawstd_error("Server error: %s\n", strerror(error));
+        return error;
     }
 
     return 0;
@@ -892,6 +905,12 @@ Session::~Session() {
 }
 
 rawstd::Task<void> Session::_connect() {
+    // Every failure below -- including a malformed location, which can't
+    // be fixed by retrying but is otherwise indistinguishable here from a
+    // transient one -- means "couldn't establish this session"; all of
+    // them surface as a plain std::system_error, which
+    // Connection::_with_retry() reacts to by reconnecting and retrying
+    // (see connection.cpp).
     if (!location().path().str().empty() && location().path().str() != "/") {
         rawstd_error("Empty path expected: %s\n", location().str().c_str());
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
@@ -1012,6 +1031,21 @@ rawstd::Task<void> Session::close() {
     int f = fd();
     if (f != -1) {
         set_fd(-1);
+        // _fail_in_flight() above only pre-resolves each op's eventual
+        // `co_await *op` (the response half) -- it does nothing for an
+        // op whose coroutine hasn't reached that yet because it's still
+        // suspended earlier, in its own co_await _queue.sendmsg()/send()
+        // (registered into _ops via _add_op(), but its request hasn't
+        // finished sending). Queue::close() below is a plain
+        // IORING_OP_CLOSE with no cancel-first step of its own (unlike
+        // ~Queue()'s io_uring_register_sync_cancel() sweep at shutdown),
+        // so without this, that still-pending send's own completion can
+        // go undelivered forever once the fd is closed out from under
+        // it -- its coroutine left suspended with nothing left to ever
+        // resume it. Cancel everything else still outstanding on this fd
+        // first; a no-op (ENOENT) in the common case where there's
+        // nothing left in flight by now.
+        co_await _queue.cancel(f);
         co_await _queue.close(f);
     }
 }

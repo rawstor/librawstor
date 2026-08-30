@@ -14,7 +14,6 @@
 #include <unistd.h>
 
 #include <atomic>
-#include <future>
 #include <memory>
 #include <shared_mutex>
 #include <string>
@@ -56,9 +55,12 @@ namespace vhost {
  * write issued through *any* VirtQueue, not just the one it arrived on,
  * since each VirtQueue now has its own independent RawstorObject (see
  * VirtQueue's class comment) instead of the one Device-wide object every
- * queue used to share. post_flush_others() is what a VirtQueue's own
- * flush handling (virtqueue_worker.cpp) uses to reach every other
- * VirtQueue's object.
+ * queue used to share. other_vqs() is what a VirtQueue's own flush
+ * handling (virtqueue_worker.cpp's flush_task()) uses to reach every
+ * other VirtQueue, fanning the actual flush + completion-counting out
+ * via VirtQueue::post_run() (see its own doc comment for why this can't
+ * be a caller blocking on a future per queue instead: two VirtQueues
+ * each flushing at once would deadlock waiting on each other).
  */
 class Device final {
 private:
@@ -216,15 +218,12 @@ public:
     void rem_mem_reg(const VhostUserMemoryRegion& m);
 
     /**
-     * Kick off (non-blocking) a flush of every VirtQueue's own backing
-     * object except `requester`'s, and return one future per queue so
-     * flushed -- see the class comment. `requester` must be flushed by
-     * the caller separately (typically concurrently, via its own
-     * co_object_flush()): asking a VirtQueue to flush itself through
-     * this same command-queue mechanism would have it block waiting on
-     * a command only its own (busy-blocking) thread could ever apply.
+     * Every VirtQueue except `requester` -- see the class comment on
+     * VIRTIO_BLK_T_FLUSH fan-out, flush_task()'s only caller. Pointers
+     * into `_vqs`, stable for the Device's whole lifetime (never resized
+     * once constructed).
      */
-    std::vector<std::future<void>> post_flush_others(VirtQueue& requester);
+    std::vector<VirtQueue*> other_vqs(VirtQueue& requester);
 
     void loop();
 };

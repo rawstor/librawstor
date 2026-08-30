@@ -8,7 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#define RAWSTOR_OPTS_IO_ATTEMPTS 3
+#define RAWSTOR_OPTS_IO_ATTEMPTS 10
 #define RAWSTOR_OPTS_SESSIONS 1
 #define RAWSTOR_OPTS_SO_SNDTIMEO 5000
 #define RAWSTOR_OPTS_SO_RCVTIMEO 5000
@@ -16,8 +16,18 @@
 #define RAWSTOR_OPTS_LIST_LIMIT 1000
 #define RAWSTOR_OPTS_WRITE_THROTTLE_LIMIT 128
 #define RAWSTOR_OPTS_WRITE_BACKLOG_CAPACITY (256u * 1024 * 1024)
+// base*(1+2+4+...+256) -- 9 waits before the 10th, final attempt, none
+// of them hitting the max cap -- sums to a 51.1s worst-case time-to-
+// final-failure (~38s average once RAWSTOR_OPTS_IO_RETRY_BACKOFF_JITTER
+// shaves its usual amount off), comfortably inside a 30-120s target for
+// a client that should stall through a backend blip rather than give up
+// too eagerly. Keeping the base itself small (100ms) matters just as
+// much as the total: the first retry, by far the most likely one to
+// actually matter (most blips clear in well under a second), should
+// fire almost immediately, not sit through a multi-second delay meant
+// for the failures deep enough into the budget to actually need it.
 #define RAWSTOR_OPTS_IO_RETRY_BACKOFF_BASE 100
-#define RAWSTOR_OPTS_IO_RETRY_BACKOFF_MAX 2000
+#define RAWSTOR_OPTS_IO_RETRY_BACKOFF_MAX 30000
 #define RAWSTOR_OPTS_IO_RETRY_BACKOFF_JITTER 50
 
 static struct RawstorOpts _rawstor_opts = {};
