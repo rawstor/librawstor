@@ -135,9 +135,30 @@ TEST_F(CancelTest, read_completed) {
 }
 
 TEST_F(CancelTest, write) {
-#ifdef RAWIO_WITH_LIBURING
-    GTEST_SKIP() << "Async write cancelation is hard to test";
-#endif
+    // A short write is an entirely ordinary outcome for Queue::write(),
+    // not a "still pending" one -- under io_uring in particular, a
+    // handful of bytes into a fresh socket send buffer completes
+    // synchronously as soon as it's polled, leaving cancel() nothing
+    // still in flight to actually cancel. Filling the socket to
+    // genuinely zero spare capacity first (synchronously, via a
+    // temporarily non-blocking _fd) is the only way to guarantee the
+    // write below has no room to make any progress and has to actually
+    // suspend -- same technique as
+    // cancel_fd_resolves_pending_write_before_close further down.
+    int flags = fcntl(_fd, F_GETFL, 0);
+    ASSERT_NE(flags, -1);
+    ASSERT_EQ(fcntl(_fd, F_SETFL, flags | O_NONBLOCK), 0);
+
+    std::vector<char> filler(1u << 20, 'f');
+    while (true) {
+        ssize_t n = ::write(_fd, filler.data(), filler.size());
+        if (n < 0) {
+            ASSERT_EQ(errno, EAGAIN) << strerror(errno);
+            break;
+        }
+    }
+
+    ASSERT_EQ(fcntl(_fd, F_SETFL, flags), 0);
 
     char client_buf[] = "data";
     size_t result = 0;
@@ -147,6 +168,8 @@ TEST_F(CancelTest, write) {
     rawio::Event* event = aw.event();
     rawstd::Task<void> t =
         rawio::tests::await_into(std::move(aw), &result, &error);
+
+    EXPECT_THROW(_queue->wait_timeout(0), std::system_error);
 
     _queue->cancel(event);
 

@@ -447,7 +447,11 @@ Queue::~Queue() {
                         break;
                     }
                     if (e.code().value() != ECANCELED) {
-                        rawstd_error("Failed to wait: %s\n", e.what());
+                        // Logged, not thrown further -- the loop below
+                        // just stops draining and control returns to the
+                        // destructor's own caller normally either way, so
+                        // this doesn't rise to the level of an error.
+                        rawstd_warning("Failed to wait: %s\n", e.what());
                         break;
                     }
                     // ECANCELED: one of the ops io_uring_register_sync_
@@ -458,7 +462,7 @@ Queue::~Queue() {
                     // cancellations left in the ring; keep draining instead
                     // of stopping here.
                 } catch (const std::exception& e) {
-                    rawstd_error("Failed to wait: %s\n", e.what());
+                    rawstd_warning("Failed to wait: %s\n", e.what());
                     break;
                 }
             }
