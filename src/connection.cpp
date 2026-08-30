@@ -63,6 +63,17 @@ unsigned int backoff_delay_ms(
     return (delay - jitter_span) + dist(rng);
 }
 
+// A rejection retrying can never turn into success: the target object
+// doesn't exist (ENOENT), already exists where create() needs it not to
+// (EEXIST), or the request itself is malformed (EINVAL).
+// Anything else defaults to retryable -- safer to spend a few pointless
+// retries on a genuinely transient rejection we don't recognize than to
+// silently give up on one that would have gone away on its own (e.g.
+// EBUSY, ENOSPC, EIO).
+bool is_permanent_backend_error(int error) {
+    return error == ENOENT || error == EEXIST || error == EINVAL;
+}
+
 // Retries `attempt()` up to rawstor_opts_io_attempts() times, sharing the
 // same "log and retry, or log and rethrow on the last one" shape across
 // every bounded-retry loop in this file that doesn't need the
@@ -78,22 +89,38 @@ unsigned int backoff_delay_ms(
 // extra EBUSY-vs-reconnect policy and no set-up/tear-down step, so
 // sharing this one wouldn't fit them without a callback out for it.
 template <typename F>
-auto retry_n_async(const char* func_name, F&& attempt) -> decltype(attempt()) {
+auto retry_n_async(const char* func_name, rawio::Queue& queue, F&& attempt)
+    -> decltype(attempt()) {
     for (unsigned int i = 1; i <= rawstor_opts_io_attempts(); ++i) {
         try {
             co_return co_await attempt();
         } catch (const std::exception& e) {
             if (i == rawstor_opts_io_attempts()) {
                 rawstd_error(
-                    "%s: error: %s; attempt: %d of %d; failing...\n", func_name,
+                    "%s: error: %s; attempt: %u of %u; failing...\n", func_name,
                     e.what(), i, rawstor_opts_io_attempts()
                 );
                 throw;
             }
             rawstd_warning(
-                "%s: error: %s; attempt: %d of %d; retrying...\n", func_name,
+                "%s: error: %s; attempt: %u of %u; retrying...\n", func_name,
                 e.what(), i, rawstor_opts_io_attempts()
             );
+        }
+
+        // Same backoff _with_retry() waits between its own retries (see
+        // backoff_delay_ms() above) -- without it, a transient failure
+        // that clears within a fraction of a second (e.g. the brief
+        // ECONNREFUSED window while the remote OST is mid-restart) can
+        // still burn through every attempt here, all within the same
+        // instant, before it has a chance to clear.
+        unsigned int delay_ms = backoff_delay_ms(
+            i, rawstor_opts_io_retry_backoff_base(),
+            rawstor_opts_io_retry_backoff_max(),
+            rawstor_opts_io_retry_backoff_jitter()
+        );
+        if (delay_ms != 0) {
+            co_await queue.timeout(delay_ms * 1000u);
         }
     }
     // Only reachable if rawstor_opts_io_attempts() == 0.
@@ -147,15 +174,25 @@ rawstd::Task<T> Connection::_with_retry(
     rawstd::Task<T> (Session::*method)(Args...),
     std::type_identity_t<Args>... args
 ) {
-    for (unsigned int attempt = 1; attempt <= rawstor_opts_io_attempts();
-         ++attempt) {
+    // One retry budget, one behavior, regardless of what went wrong:
+    // reconnect via invalidate_session() and retry, up to
+    // rawstor_opts_io_attempts() attempts total, unless the failure is
+    // one is_permanent_backend_error() already knows retrying can never
+    // fix (e.g. ENOENT), which fails immediately instead. The one
+    // exception to "reconnect before every retry" is a plain EBUSY: the
+    // session itself is fine, just backed up against the remote server's
+    // own write-throttling (see blk_session.hpp's _throttle_acquire()),
+    // so reconnecting would only cost a round trip for no benefit.
+    unsigned int attempt = 0;
+
+    for (;;) {
         std::shared_ptr<Session> s = get_next_session();
 
-        // co_await is not permitted inside a catch handler, so this only
-        // records what happened; invalidate_session() itself is co_await
-        // -ed below, outside any handler, once execution has left the
-        // catch block below entirely.
-        bool caught = false;
+        // co_await is not permitted inside a catch handler, so the catch
+        // block below only records what happened; every co_await this
+        // needs (invalidate_session(), the backoff wait) happens after
+        // execution has left it entirely, keyed off `retry`.
+        bool retry = false;
         int error = 0;
 
         try {
@@ -163,10 +200,10 @@ rawstd::Task<T> Connection::_with_retry(
                 co_await (s.get()->*method)(args...);
                 RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "error = 0");
 
-                if (attempt > 1) {
+                if (attempt > 0) {
                     rawstd_warning(
-                        "IO %s: success on %s; attempt: %d of %d\n", func_name,
-                        s->str().c_str(), attempt, rawstor_opts_io_attempts()
+                        "IO %s: success on %s; attempt: %u\n", func_name,
+                        s->str().c_str(), attempt + 1
                     );
                 }
                 co_return;
@@ -176,17 +213,17 @@ rawstd::Task<T> Connection::_with_retry(
                     trace_event, "result = %zu, error = 0\n", result
                 );
 
-                if (attempt > 1) {
+                if (attempt > 0) {
                     rawstd_warning(
-                        "IO %s: success on %s; attempt: %d of %d\n", func_name,
-                        s->str().c_str(), attempt, rawstor_opts_io_attempts()
+                        "IO %s: success on %s; attempt: %u\n", func_name,
+                        s->str().c_str(), attempt + 1
                     );
                 }
                 co_return result;
             }
         } catch (const std::system_error& e) {
-            caught = true;
             error = e.code().value();
+            retry = true;
 
             if constexpr (std::is_void_v<T>) {
                 RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "error = %d\n", error);
@@ -196,9 +233,18 @@ rawstd::Task<T> Connection::_with_retry(
                 );
             }
 
+            if (is_permanent_backend_error(error)) {
+                rawstd_error(
+                    "IO %s: error on %s: %s; not retryable; failing...\n",
+                    func_name, s->str().c_str(), std::strerror(error)
+                );
+                throw;
+            }
+
+            ++attempt;
             if (attempt >= rawstor_opts_io_attempts()) {
                 rawstd_error(
-                    "IO %s: error on %s: %s; attempt %d of %d; failing...\n",
+                    "IO %s: error on %s: %s; attempt %u of %u; failing...\n",
                     func_name, s->str().c_str(), std::strerror(error), attempt,
                     rawstor_opts_io_attempts()
                 );
@@ -206,28 +252,28 @@ rawstd::Task<T> Connection::_with_retry(
             }
 
             rawstd_warning(
-                "IO %s: error on %s: %s; attempt: %d of %d; retrying...\n",
+                "IO %s: error on %s: %s; attempt: %u of %u; retrying...\n",
                 func_name, s->str().c_str(), std::strerror(error), attempt,
                 rawstor_opts_io_attempts()
             );
         }
 
-        if (caught) {
-            // EBUSY means the session itself is fine, just backed up
-            // against the remote server's own write-throttling (see
-            // blk_session.hpp's _throttle_acquire()) -- invalidate_session()
-            // would just reconnect and re-SET_OBJECT for no benefit (the
-            // server is still just as busy) at the cost of a needless
-            // round-trip, so only a genuine transport/session error pays
-            // for it here.
+        if (retry) {
             if (error != EBUSY) {
                 try {
                     co_await invalidate_session(s);
-                } catch (const std::system_error&) {
-                    throw;
+                } catch (const std::system_error& e2) {
+                    // A reconnect that hits another retryable failure is
+                    // exactly what this loop's own budget exists to ride
+                    // out; only a permanent rejection (e.g. set_object()
+                    // during reconnect got ENOENT, meaning the object
+                    // itself is gone) is worth escaping immediately for.
+                    if (is_permanent_backend_error(e2.code().value())) {
+                        throw;
+                    }
                 } catch (const std::exception& e2) {
                     rawstd_error(
-                        "IO %s: exception on %s: %s; attempt %d of %d; "
+                        "IO %s: exception on %s: %s; attempt %u of %u; "
                         "failing...\n",
                         func_name, s->str().c_str(), e2.what(), attempt,
                         rawstor_opts_io_attempts()
@@ -236,10 +282,6 @@ rawstd::Task<T> Connection::_with_retry(
                 }
             }
 
-            // Backs off before the next attempt -- on the EBUSY path
-            // above just as much as a genuine reconnect, since hammering
-            // an already-busy server immediately again is exactly what
-            // backoff exists to avoid.
             unsigned int delay_ms = backoff_delay_ms(
                 attempt, rawstor_opts_io_retry_backoff_base(),
                 rawstor_opts_io_retry_backoff_max(),
@@ -250,8 +292,6 @@ rawstd::Task<T> Connection::_with_retry(
             }
         }
     }
-    // Only reachable if rawstor_opts_io_attempts() == 0.
-    RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
 }
 
 std::shared_ptr<Session> Connection::get_next_session() {
@@ -307,7 +347,7 @@ Connection::invalidate_session(const std::shared_ptr<Session>& s) {
         // leaving the stale entry just means the next op that picks it up
         // retries invalidate_session() again instead of failing forever.
         std::shared_ptr<Session> new_session = co_await retry_n_async(
-            "Connection::invalidate_session",
+            "Connection::invalidate_session", _queue,
             [&]() -> rawstd::Task<std::shared_ptr<Session>> {
                 std::shared_ptr<Session> session =
                     co_await Session::create(_queue, s->location());

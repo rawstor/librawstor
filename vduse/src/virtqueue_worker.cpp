@@ -25,6 +25,7 @@
 #include <rawstor/target.h>
 
 #include <algorithm>
+#include <atomic>
 #include <future>
 #include <memory>
 #include <stdexcept>
@@ -222,19 +223,69 @@ rawstd::Task<void> co_object_flush(RawstorObject* object) {
     co_await awaiter;
 }
 
-// VirtQueue::_apply(FlushObject&&)'s actual work: flush this VirtQueue's
-// own object and settle `reply` with the outcome. A DetachedTask (not
-// awaited by _apply() itself) since rawstor_object_flush2() is async and
-// _apply() -- like every other _apply() overload -- must return promptly
-// so drain_commands() can move on to the next queued command.
-rawstd::DetachedTask
-flush_object_task(RawstorObject* object, VirtQueue::Reply<void> reply) {
+// A VIRTIO_BLK_T_FLUSH request must make durable every write issued
+// through *any* VirtQueue, not just the one it arrived on, since each
+// has its own independent RawstorObject (see Device's class comment).
+// FlushBarrier is the completion-counting state shared by the
+// requesting queue's own flush and every other queue's flush of its own
+// object, fanned out via VirtQueue::post_run() -- see that method's own
+// doc comment for why the requester can't instead just collect one
+// std::future per queue and block on each in turn: a second VirtQueue
+// flushing at the same moment would need *this* queue to drain its own
+// command queue to service *that* flush, which can never happen while
+// this queue's own thread is parked in a blocking wait on the first
+// one's future.
+struct FlushBarrier {
+    std::atomic<unsigned int> remaining;
+    std::atomic<int> error{0};
+    VirtQueue* requester;
+    std::unique_ptr<Request> req;
+};
+
+// Runs once one queue's own flush (self or foreign) reports in -- counts
+// down `barrier`, and once every queue has, finishes `barrier->req` back
+// on the requesting queue's own thread via post_run(), so Request/
+// VirtQueue state (push()/complete_request()) is never touched from
+// whichever thread happened to be last.
+void flush_barrier_finish_one(
+    std::shared_ptr<FlushBarrier> barrier, int error
+) {
+    if (error != 0) {
+        int expected = 0;
+        barrier->error.compare_exchange_strong(expected, error);
+    }
+    if (barrier->remaining.fetch_sub(1, std::memory_order_acq_rel) != 1) {
+        return;
+    }
+
+    VirtQueue* requester = barrier->requester;
+    requester->post_run([barrier]() {
+        int error = barrier->error.load(std::memory_order_relaxed);
+        if (error != 0) {
+            rawstd_error("%s\n", strerror(error));
+            barrier->req->push(VIRTIO_BLK_S_IOERR, 0);
+            return;
+        }
+        rawstd_debug("vduse: flush completed\n");
+        barrier->req->push(VIRTIO_BLK_S_OK, 0);
+    });
+}
+
+// A foreign queue's own share of the fan-out: flush *its* object, then
+// report in. A DetachedTask since rawstor_object_flush() is async and
+// this runs from inside a RunTask -- like every VirtQueue::_apply()
+// overload, that must return promptly so drain_commands() can move on
+// to the next queued command.
+rawstd::DetachedTask flush_object_task(
+    std::shared_ptr<FlushBarrier> barrier, RawstorObject* object
+) {
+    int error = 0;
     try {
         co_await co_object_flush(object);
-        reply.promise.set_value();
-    } catch (...) {
-        reply.promise.set_exception(std::current_exception());
+    } catch (const std::system_error& e) {
+        error = e.code().value();
     }
+    flush_barrier_finish_one(std::move(barrier), error);
 }
 
 // process_queue() (the only caller of process_request(), a few frames
@@ -312,30 +363,34 @@ void pwritev(std::unique_ptr<Request> req) {
 }
 
 rawstd::DetachedTask flush_task(std::unique_ptr<Request> req) {
+    VirtQueue& requester = req->vq();
+    std::vector<VirtQueue*> others = requester.device().other_vqs(requester);
+
+    auto barrier = std::make_shared<FlushBarrier>();
+    barrier->remaining.store(
+        static_cast<unsigned int>(others.size()) + 1, std::memory_order_relaxed
+    );
+    barrier->requester = &requester;
+    barrier->req = std::move(req);
+
+    // Fan out to every other queue first, so their flushes run
+    // concurrently with this queue's own below rather than serialized
+    // after it; each runs on its own owning thread via post_run() --
+    // never posts to `requester` itself (see post_run()'s own doc
+    // comment for why that would deadlock this very call).
+    for (VirtQueue* vq : others) {
+        vq->post_run([vq, barrier]() {
+            flush_object_task(barrier, vq->object());
+        });
+    }
+
     int error = 0;
     try {
-        // VIRTIO_BLK_T_FLUSH must make durable every write issued
-        // through *any* VirtQueue, not just this one -- each has its
-        // own independent RawstorObject (see Device's class comment).
-        // post_flush_others() only submits (it doesn't wait), so those
-        // run concurrently with this VirtQueue's own flush below rather
-        // than serialized after it.
-        std::vector<std::future<void>> others =
-            req->vq().device().post_flush_others(req->vq());
-        co_await co_object_flush(req->vq().object());
-        for (std::future<void>& f : others) {
-            f.get();
-        }
+        co_await co_object_flush(requester.object());
     } catch (const std::system_error& e) {
         error = e.code().value();
     }
-    if (error != 0) {
-        rawstd_error("%s\n", strerror(error));
-        req->push(VIRTIO_BLK_S_IOERR, 0);
-        co_return;
-    }
-    rawstd_debug("vduse: flush completed\n");
-    req->push(VIRTIO_BLK_S_OK, 0);
+    flush_barrier_finish_one(std::move(barrier), error);
 }
 
 void flush(std::unique_ptr<Request> req) {
@@ -628,11 +683,6 @@ void VirtQueue::complete_request(uint16_t head, uint32_t len) {
         }
         _pending_pauses.clear();
     }
-}
-
-void VirtQueue::_apply(FlushObject&& cmd) {
-    flush_object_task(_object, std::move(cmd.reply));
-    rawstd::DetachedTask::rethrow_if_pending();
 }
 
 } // namespace vduse

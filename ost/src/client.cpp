@@ -1345,10 +1345,16 @@ rawstd::DetachedTask Client::_write_task(
             static_cast<unsigned long long>(hash),
             static_cast<unsigned long long>(body.hash)
         );
+        // EBADMSG rather than the generic EIO used below for genuine
+        // backend write failures: a hash mismatch means the payload this
+        // client just sent doesn't match what it declared, which the
+        // client-side reads as "the wire may be desynced" (see
+        // validate_response() in ost_session.cpp) and reconnects on,
+        // instead of retrying the same, possibly-desynced session.
         bool send_failed = false;
         try {
             co_await client->_send_response(
-                RAWSTOR_CMD_WRITE, head.cid, -EIO, 0
+                RAWSTOR_CMD_WRITE, head.cid, -EBADMSG, 0
             );
         } catch (const std::exception& e) {
             rawstd_error("%s\n", e.what());
