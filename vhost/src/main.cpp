@@ -20,7 +20,7 @@
 #include <system_error>
 
 #define DEFAULT_QUEUE_SIZE 256
-#define DEFAULT_NUM_QUEUES 16
+#define DEFAULT_NUM_QUEUES 4
 
 namespace {
 
