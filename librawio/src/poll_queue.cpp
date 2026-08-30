@@ -56,12 +56,29 @@ Queue::~Queue() {
                 try {
                     wait_timeout(0);
                 } catch (const std::system_error& e) {
-                    if (e.code().value() != ETIME) {
-                        rawstd_error("Failed to wait: %s\n", e.what());
+                    if (e.code().value() == ETIME) {
+                        // Nothing left to reap -- the drain above is done.
+                        break;
                     }
-                    break;
+                    if (e.code().value() != ECANCELED) {
+                        // Logged, not thrown further -- the loop below
+                        // just stops draining this session and control
+                        // moves on to the next one (or returns from the
+                        // destructor) normally either way, so this
+                        // doesn't rise to the level of an error.
+                        rawstd_warning("Failed to wait: %s\n", e.what());
+                        break;
+                    }
+                    // ECANCELED: one of the events this session's own
+                    // cancel(_cqes) call above pushed just got dispatched --
+                    // exactly what was asked for, not a failure. Dispatch
+                    // stops at the first completion that throws, so there
+                    // may be more of this same session's cancelled events
+                    // still sitting in _cqes; keep draining instead of
+                    // stopping here (see this destructor's own doc comment
+                    // for why more than one is expected).
                 } catch (const std::exception& e) {
-                    rawstd_error("Failed to wait: %s\n", e.what());
+                    rawstd_warning("Failed to wait: %s\n", e.what());
                     break;
                 }
             }
