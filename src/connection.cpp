@@ -193,7 +193,9 @@ rawstd::Task<T> Connection::_with_retry(
         // needs (invalidate_session(), the backoff wait) happens after
         // execution has left it entirely, keyed off `retry`.
         bool retry = false;
+        bool give_up = false;
         int error = 0;
+        std::exception_ptr eptr;
 
         try {
             if constexpr (std::is_void_v<T>) {
@@ -248,14 +250,42 @@ rawstd::Task<T> Connection::_with_retry(
                     func_name, s->str().c_str(), std::strerror(error), attempt,
                     rawstor_opts_io_attempts()
                 );
-                throw;
+                // Not thrown here: `s` is presumed broken exactly like any
+                // other retryable failure and still needs closing below,
+                // or it leaks its recv-multishot registration -- but
+                // unlike a normal retry cycle, reconnecting via
+                // invalidate_session() would be a new, unbudgeted
+                // connection attempt nothing asked for (this op is done
+                // retrying), so this only closes `s` in place, leaving it
+                // in `_sessions` exactly as before -- the next op to pick
+                // it up via get_next_session() sees a plain dead-fd
+                // failure and reconnects through its own normal retry
+                // cycle instead. `eptr` carries the original failure past
+                // that close(), since it's what actually gets reported.
+                give_up = true;
+                eptr = std::current_exception();
+            } else {
+                rawstd_warning(
+                    "IO %s: error on %s: %s; attempt: %u of %u; "
+                    "retrying...\n",
+                    func_name, s->str().c_str(), std::strerror(error), attempt,
+                    rawstor_opts_io_attempts()
+                );
             }
+        }
 
-            rawstd_warning(
-                "IO %s: error on %s: %s; attempt: %u of %u; retrying...\n",
-                func_name, s->str().c_str(), std::strerror(error), attempt,
-                rawstor_opts_io_attempts()
-            );
+        if (give_up) {
+            if (error != EBUSY) {
+                try {
+                    co_await s->close();
+                } catch (const std::exception& e2) {
+                    rawstd_warning(
+                        "IO %s: close on %s while failing: %s\n", func_name,
+                        s->str().c_str(), e2.what()
+                    );
+                }
+            }
+            std::rethrow_exception(eptr);
         }
 
         if (retry) {

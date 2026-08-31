@@ -6,6 +6,7 @@
 #include <string>
 
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/uio.h>
 
@@ -117,6 +118,9 @@ public:
     ) = 0;
 
     virtual Awaitable<int> fsync(int fd, bool datasync) = 0;
+
+    // Thin async wrapper over stat(2).
+    virtual Awaitable<int> stat(const char* path, struct stat* buf) = 0;
 
     // fd-local space-management hint/op (hole-punch, zero-range, plain
     // preallocation, ...) -- `mode` is the raw fallocate(2) FALLOC_FL_*
