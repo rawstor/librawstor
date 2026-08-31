@@ -6,6 +6,7 @@
 #include <gtest/gtest.h>
 
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/un.h>
 
 #include <poll.h>
@@ -209,6 +210,46 @@ TEST(FsyncTest, basics) {
     );
     queue->wait();
     EXPECT_EQ(fsync_result, 0);
+
+    // Fire-and-forget: nothing left in this test cares about close()'s
+    // outcome.
+    queue->close(fd);
+    queue->wait();
+}
+
+TEST(StatTest, basics) {
+    std::filesystem::path path =
+        std::filesystem::temp_directory_path() / "rawio_tests";
+    std::ostringstream oss;
+    std::filesystem::create_directory(path);
+    oss << path.string() << "/stat.test";
+    std::string filename = oss.str();
+
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(1);
+
+    int fd = -1;
+    rawstd::Task<void> open_task = rawio::tests::await_into(
+        queue->open(filename.c_str(), O_CREAT | O_RDWR, S_IRUSR | S_IWUSR), &fd
+    );
+    queue->wait();
+    ASSERT_GT(fd, 0);
+
+    char buf[] = "data";
+    size_t pwrite_result = 0;
+    rawstd::Task<void> pwrite_task = rawio::tests::await_into(
+        queue->pwrite(fd, buf, sizeof(buf), 0, /*sync=*/true), &pwrite_result
+    );
+    queue->wait();
+    ASSERT_EQ(pwrite_result, sizeof(buf));
+
+    struct stat st = {};
+    int stat_result = -1;
+    rawstd::Task<void> stat_task = rawio::tests::await_into(
+        queue->stat(filename.c_str(), &st), &stat_result
+    );
+    queue->wait();
+    EXPECT_EQ(stat_result, 0);
+    EXPECT_EQ(st.st_size, static_cast<off_t>(sizeof(buf)));
 
     // Fire-and-forget: nothing left in this test cares about close()'s
     // outcome.
