@@ -217,12 +217,12 @@ TEST(FsyncTest, basics) {
     queue->wait();
 }
 
-TEST(StatxTest, basics) {
+TEST(StatTest, basics) {
     std::filesystem::path path =
         std::filesystem::temp_directory_path() / "rawio_tests";
     std::ostringstream oss;
     std::filesystem::create_directory(path);
-    oss << path.string() << "/statx.test";
+    oss << path.string() << "/stat.test";
     std::string filename = oss.str();
 
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(1);
@@ -242,15 +242,14 @@ TEST(StatxTest, basics) {
     queue->wait();
     ASSERT_EQ(pwrite_result, sizeof(buf));
 
-    struct statx stx = {};
-    int statx_result = -1;
-    rawstd::Task<void> statx_task = rawio::tests::await_into(
-        queue->statx(fd, "", AT_EMPTY_PATH, STATX_SIZE | STATX_MODE, &stx),
-        &statx_result
+    struct stat st = {};
+    int stat_result = -1;
+    rawstd::Task<void> stat_task = rawio::tests::await_into(
+        queue->stat(filename.c_str(), &st), &stat_result
     );
     queue->wait();
-    EXPECT_EQ(statx_result, 0);
-    EXPECT_EQ(stx.stx_size, sizeof(buf));
+    EXPECT_EQ(stat_result, 0);
+    EXPECT_EQ(st.st_size, static_cast<off_t>(sizeof(buf)));
 
     // Fire-and-forget: nothing left in this test cares about close()'s
     // outcome.

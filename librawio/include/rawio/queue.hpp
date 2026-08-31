@@ -6,6 +6,7 @@
 #include <string>
 
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/uio.h>
 
@@ -13,13 +14,6 @@
 #include <unistd.h>
 
 struct RawIOQueue {};
-
-// Forward-declared rather than pulled in via <sys/stat.h>: this header
-// stays buildable on platforms (e.g. macOS) that don't define struct
-// statx at all -- only a pointer to it appears below, never dereferenced
-// here. Backends that actually implement statx() include <sys/stat.h>
-// themselves.
-struct statx;
 
 namespace rawio {
 
@@ -125,14 +119,8 @@ public:
 
     virtual Awaitable<int> fsync(int fd, bool datasync) = 0;
 
-    // Thin async wrapper over statx(2); `dirfd`/`path`/`flags`/`mask`/`buf`
-    // are passed through unmodified, so callers stay in charge of e.g.
-    // AT_EMPTY_PATH-style fstat-by-fd vs. path-relative lookups and of
-    // which STATX_* fields they actually need.
-    virtual Awaitable<int> statx(
-        int dirfd, const char* path, int flags, unsigned int mask,
-        struct statx* buf
-    ) = 0;
+    // Thin async wrapper over stat(2).
+    virtual Awaitable<int> stat(const char* path, struct stat* buf) = 0;
 
     // fd-local space-management hint/op (hole-punch, zero-range, plain
     // preallocation, ...) -- `mode` is the raw fallocate(2) FALLOC_FL_*

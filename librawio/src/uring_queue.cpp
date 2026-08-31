@@ -10,6 +10,7 @@
 #include <rawstd/socket.h>
 
 #include <sys/stat.h>
+#include <sys/sysmacros.h>
 
 #include <cstring>
 #include <ctime>
@@ -135,6 +136,51 @@ public:
 
     void complete(int raw_result, unsigned int flags) override {
         Completion::complete(setup_accepted_fd(raw_result), flags);
+    }
+};
+
+// io_uring has no IORING_OP_STAT -- only IORING_OP_STATX -- so stat()'s
+// Completion submits a statx(2) call into a scratch struct statx and, on
+// success, downconverts it into the caller's struct stat, which stat()'s
+// ABI (see <rawio/queue.hpp>) commits to instead of exposing struct statx
+// (and its dirfd/flags/mask parameters) to callers.
+void statx_to_stat(const struct statx& stx, struct stat& st) {
+    st.st_dev = makedev(stx.stx_dev_major, stx.stx_dev_minor);
+    st.st_ino = stx.stx_ino;
+    st.st_mode = stx.stx_mode;
+    st.st_nlink = stx.stx_nlink;
+    st.st_uid = stx.stx_uid;
+    st.st_gid = stx.stx_gid;
+    st.st_rdev = makedev(stx.stx_rdev_major, stx.stx_rdev_minor);
+    st.st_size = static_cast<off_t>(stx.stx_size);
+    st.st_blksize = stx.stx_blksize;
+    st.st_blocks = static_cast<blkcnt_t>(stx.stx_blocks);
+    st.st_atim.tv_sec = stx.stx_atime.tv_sec;
+    st.st_atim.tv_nsec = stx.stx_atime.tv_nsec;
+    st.st_mtim.tv_sec = stx.stx_mtime.tv_sec;
+    st.st_mtim.tv_nsec = stx.stx_mtime.tv_nsec;
+    st.st_ctim.tv_sec = stx.stx_ctime.tv_sec;
+    st.st_ctim.tv_nsec = stx.stx_ctime.tv_nsec;
+}
+
+class StatCompletion final : public Completion {
+private:
+    struct statx _stx;
+    struct stat* _buf;
+
+public:
+    StatCompletion(rawstd::TraceEvent trace_event, struct stat* buf) :
+        Completion(std::move(trace_event)),
+        _stx(),
+        _buf(buf) {}
+
+    inline struct statx* stx() noexcept { return &_stx; }
+
+    void complete(int raw_result, unsigned int flags) override {
+        if (raw_result >= 0) {
+            statx_to_stat(_stx, *_buf);
+        }
+        Completion::complete(raw_result, flags);
     }
 };
 
@@ -902,18 +948,14 @@ rawio::Awaitable<int> Queue::fsync(int fd, bool datasync) {
     return rawio::Awaitable<int>(this, static_cast<rawio::Event*>(c.release()));
 }
 
-rawio::Awaitable<int> Queue::statx(
-    int dirfd, const char* path, int flags, unsigned int mask, struct statx* buf
-) {
-    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
-        '|', "dirfd = %d, flags = %d, mask = %u\n", dirfd, flags, mask
-    );
+rawio::Awaitable<int> Queue::stat(const char* path, struct stat* buf) {
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('|', "%s\n", "");
     io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
     if (sqe == nullptr) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
     }
-    auto c = std::make_unique<Completion>(std::move(trace_event));
-    io_uring_prep_statx(sqe, dirfd, path, flags, mask, buf);
+    auto c = std::make_unique<StatCompletion>(std::move(trace_event), buf);
+    io_uring_prep_statx(sqe, AT_FDCWD, path, 0, STATX_BASIC_STATS, c->stx());
     io_uring_sqe_set_data(sqe, c.get());
 
     return rawio::Awaitable<int>(this, static_cast<rawio::Event*>(c.release()));

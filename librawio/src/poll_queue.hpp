@@ -132,10 +132,7 @@ public:
 
     rawio::Awaitable<int> fsync(int fd, bool datasync) override;
 
-    rawio::Awaitable<int> statx(
-        int dirfd, const char* path, int flags, unsigned int mask,
-        struct statx* buf
-    ) override;
+    rawio::Awaitable<int> stat(const char* path, struct stat* buf) override;
 
     rawio::Awaitable<int>
     fallocate(int fd, int mode, off_t offset, off_t len) override;
