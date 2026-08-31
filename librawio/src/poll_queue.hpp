@@ -10,6 +10,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace rawio {
 namespace poll {
@@ -23,7 +24,21 @@ private:
     std::list<std::unique_ptr<EventEval>> _eval_sqes;
     std::unordered_map<int, std::shared_ptr<Session>> _sessions;
     rawstd::RingBuf<Event> _cqes;
-    Event* _current_event;
+
+    // Every Event currently inside one of _wait_timeout()/_reap_timers()/
+    // ~Queue()'s own dispatch() calls, outermost first -- a stack rather
+    // than a single Event*, since dispatch()ing one Event can synchronously
+    // resume a coroutine whose own control flow (e.g. a destructor running
+    // as a direct consequence, itself calling back into this same Queue)
+    // reenters _wait_timeout() before the outer dispatch() call has
+    // returned. cancel()'s own fallback (see below) needs every level of
+    // that nesting, not just the innermost one, to still recognize an
+    // Event that's mid-dispatch: one whose completion has been popped off
+    // _cqes/_eval_sqes for processing but not yet requeued in whatever
+    // structure normally makes it findable (e.g. a multishot read's own
+    // Session::read() re-registration, which only happens once its
+    // dispatch() call returns).
+    std::vector<Event*> _current_events;
 
     // timeout()'s pending timers, kept sorted ascending by deadline (see
     // EventTimer's own comment) -- deliberately not routed through _cqes,
@@ -68,7 +83,6 @@ public:
     explicit Queue(unsigned int depth) :
         rawio::Queue(depth),
         _cqes(depth),
-        _current_event(nullptr),
         _dispatch_generation(0) {}
 
     ~Queue() override;

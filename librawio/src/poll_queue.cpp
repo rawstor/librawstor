@@ -93,15 +93,15 @@ Queue::~Queue() {
             _timers.pop_front();
 
             t->set_error(ECANCELED);
-            _current_event = t.get();
+            _current_events.push_back(t.get());
             try {
                 t->dispatch();
                 rawstd::DetachedTask::rethrow_if_pending();
             } catch (...) {
-                _current_event = nullptr;
+                _current_events.pop_back();
                 throw;
             }
-            _current_event = nullptr;
+            _current_events.pop_back();
         }
     } catch (const std::exception& e) {
         rawstd_error("Failed to cancel sessions: %s\n", e.what());
@@ -131,15 +131,15 @@ bool Queue::_reap_timers() {
         _timers.pop_front();
 
         any = true;
-        _current_event = event.get();
+        _current_events.push_back(event.get());
         try {
             event->dispatch();
             rawstd::DetachedTask::rethrow_if_pending();
         } catch (...) {
-            _current_event = nullptr;
+            _current_events.pop_back();
             throw;
         }
-        _current_event = nullptr;
+        _current_events.pop_back();
     }
 
     return any;
@@ -180,15 +180,15 @@ void Queue::_wait_timeout(int msec) {
         _eval_sqes.pop_front();
 
         event->process();
-        _current_event = event.get();
+        _current_events.push_back(event.get());
         try {
             event->dispatch();
             rawstd::DetachedTask::rethrow_if_pending();
         } catch (...) {
-            _current_event = nullptr;
+            _current_events.pop_back();
             throw;
         }
-        _current_event = nullptr;
+        _current_events.pop_back();
     }
 
     // A timer already due (e.g. a caller spinning wait_timeout(0), or
@@ -277,20 +277,27 @@ void Queue::_wait_timeout(int msec) {
 
     while (!_cqes.empty()) {
         std::unique_ptr<Event> event(_cqes.pop());
-        _current_event = event.get();
+        _current_events.push_back(event.get());
         try {
             event->dispatch();
-            // dispatch() may have resumed a rawstd::DetachedTask that
-            // threw -- see DetachedTask's own doc comment for why that
-            // can't be delivered by rethrowing directly out of
-            // dispatch()/resume() itself, and rethrow_if_pending()'s for
-            // why this is one of only two places that need to check.
-            rawstd::DetachedTask::rethrow_if_pending();
         } catch (...) {
-            _current_event = nullptr;
+            _current_events.pop_back();
             throw;
         }
-        _current_event = nullptr;
+        _current_events.pop_back();
+
+        // Re-arm a still-live multishot registration before checking
+        // rethrow_if_pending() below, not after: the pending exception it
+        // may rethrow can belong to *any* rawstd::DetachedTask in the
+        // process (e.g. a C-ABI launch_*_op_coro() callback in
+        // object.cpp, unrelated to this event entirely -- see
+        // DetachedTask's own doc comment), not just whatever this
+        // dispatch() call happened to resume. Checking it first would
+        // skip this re-arm on every such coincidence, silently dropping
+        // the registration -- e.g. an OST session's recv_multishot
+        // stream, whose only owner from then on is a `RecvMultishotBackend`
+        // nothing can reach anymore, leaking it and the `_recv_pump`
+        // coroutine still suspended on it.
         if (event->is_multishot() && !event->error()) {
             if (event->is_poll()) {
                 std::unique_ptr<EventSimplexPoll> poll_event(
@@ -317,6 +324,13 @@ void Queue::_wait_timeout(int msec) {
                 throw std::runtime_error("Unexpected multishot event");
             }
         }
+
+        // dispatch() may have resumed a rawstd::DetachedTask that threw --
+        // see DetachedTask's own doc comment for why that can't be
+        // delivered by rethrowing directly out of dispatch()/resume()
+        // itself, and rethrow_if_pending()'s for why this is one of only
+        // two places that need to check.
+        rawstd::DetachedTask::rethrow_if_pending();
     }
 }
 
@@ -909,8 +923,23 @@ rawio::Awaitable<void> Queue::cancel(rawio::Event* e) {
                     return 0;
                 }
             }
-            if (_current_event != nullptr && e == _current_event) {
-                _current_event->set_error(ECANCELED);
+            // Not found in any of the above: possibly because it's
+            // currently mid-dispatch() somewhere up this same call stack
+            // (see _current_events' own doc comment in poll_queue.hpp) --
+            // e.g. a multishot read whose completion was just popped off
+            // _cqes for processing and hasn't been requeued into its
+            // Session yet, because *this* cancel() call is itself running
+            // reentrantly from within that same dispatch() (a coroutine it
+            // resumed synchronously did something -- e.g. a destructor --
+            // that reached back into this Queue). Marking it here still
+            // reaches the same Event object the outer dispatch() call is
+            // holding, so the requeue that follows sees the error and
+            // skips re-arming it.
+            for (Event* current : _current_events) {
+                if (current == e) {
+                    current->set_error(ECANCELED);
+                    break;
+                }
             }
             return 0;
         });
