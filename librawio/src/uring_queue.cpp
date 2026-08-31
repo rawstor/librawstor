@@ -9,6 +9,8 @@
 #include <rawstd/logging.hpp>
 #include <rawstd/socket.h>
 
+#include <sys/stat.h>
+
 #include <cstring>
 #include <ctime>
 
@@ -895,6 +897,23 @@ rawio::Awaitable<int> Queue::fsync(int fd, bool datasync) {
     }
     auto c = std::make_unique<Completion>(std::move(trace_event));
     io_uring_prep_fsync(sqe, fd, datasync ? IORING_FSYNC_DATASYNC : 0);
+    io_uring_sqe_set_data(sqe, c.get());
+
+    return rawio::Awaitable<int>(this, static_cast<rawio::Event*>(c.release()));
+}
+
+rawio::Awaitable<int> Queue::statx(
+    int dirfd, const char* path, int flags, unsigned int mask, struct statx* buf
+) {
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
+        '|', "dirfd = %d, flags = %d, mask = %u\n", dirfd, flags, mask
+    );
+    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
+    if (sqe == nullptr) {
+        RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
+    }
+    auto c = std::make_unique<Completion>(std::move(trace_event));
+    io_uring_prep_statx(sqe, dirfd, path, flags, mask, buf);
     io_uring_sqe_set_data(sqe, c.get());
 
     return rawio::Awaitable<int>(this, static_cast<rawio::Event*>(c.release()));

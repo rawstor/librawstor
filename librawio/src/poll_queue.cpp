@@ -12,6 +12,8 @@
 #include <rawstd/logging.h>
 #include <rawstd/socket.h>
 
+#include <sys/stat.h>
+
 #include <poll.h>
 
 #include <algorithm>
@@ -739,6 +741,45 @@ rawio::Awaitable<int> Queue::fsync(int fd, bool datasync) {
                 res = -errno;
                 errno = 0;
             }
+            return res;
+        }
+    );
+
+    rawio::Event* ret = static_cast<rawio::Event*>(event.get());
+    _eval(std::move(event));
+    return rawio::Awaitable<int>(this, ret);
+}
+
+rawio::Awaitable<int> Queue::statx(
+    int dirfd, const char* path, int flags, unsigned int mask, struct statx* buf
+) {
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
+        '|', "dirfd = %d, flags = %d, mask = %u\n", dirfd, flags, mask
+    );
+
+    std::unique_ptr<EventEval> event = std::make_unique<EventEval>(
+        *this, trace_event, [dirfd, path, flags, mask, buf]() -> int {
+            int res;
+#if defined(RAWSTD_ON_LINUX)
+            res = ::statx(dirfd, path, flags, mask, buf);
+            if (res == -1) {
+                res = -errno;
+                errno = 0;
+            }
+#elif defined(RAWSTD_ON_MACOS)
+            // No macOS equivalent of Linux's statx(2) -- callers needing
+            // portable stat info should use std::filesystem/::stat()
+            // directly instead, exactly as file::Session::info() already
+            // does (src/file_session.cpp).
+            (void)dirfd;
+            (void)path;
+            (void)flags;
+            (void)mask;
+            (void)buf;
+            res = -ENOSYS;
+#else
+#error "Unexpected platform"
+#endif
             return res;
         }
     );
