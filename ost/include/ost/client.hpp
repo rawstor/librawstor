@@ -1,5 +1,5 @@
-#ifndef RAWSTOR_OSTBACKEND_CLIENT_HPP
-#define RAWSTOR_OSTBACKEND_CLIENT_HPP
+#ifndef RAWSTOR_OSTSERVER_CLIENT_HPP
+#define RAWSTOR_OSTSERVER_CLIENT_HPP
 
 #include <rawstor/location.h>
 #include <rawstor/object.h>
@@ -15,7 +15,7 @@
 #include <vector>
 
 namespace rawstor {
-namespace ostbackend {
+namespace ostserver {
 
 class Server;
 
@@ -43,7 +43,7 @@ private:
     // lock()` at the top, so registration doesn't need a live Client at
     // all -- only actually reaching into one, via `weak`, once dispatch
     // begins. See the .cpp for why this can't just be a coroutine-local
-    // recv stream the way ost/src/ost_session.cpp's rawio::RecvStream is.
+    // recv stream the way ost/src/ost_backend.cpp's rawio::RecvStream is.
     static rawstd::DetachedTask
     _recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd);
 
@@ -126,8 +126,8 @@ private:
         std::shared_ptr<std::vector<unsigned char>> data
     );
     // Issues a validated WRITE to storage -- rawstor_object_pwrite()'s
-    // underlying blk::Session applies write-throttling itself (see
-    // blk_session.hpp's _throttle_acquire()), so this just dispatches.
+    // underlying blk::Backend applies write-throttling itself (see
+    // blk_backend.hpp's _throttle_acquire()), so this just dispatches.
     void _dispatch_write(
         const RawstorOSTFrameHead& head, uint64_t offset, bool sync,
         const std::shared_ptr<std::vector<unsigned char>>& data
@@ -196,7 +196,7 @@ public:
     rawstd::Task<void> close();
 };
 
-} // namespace ostbackend
+} // namespace ostserver
 } // namespace rawstor
 
-#endif // RAWSTOR_OSTBACKEND_CLIENT_HPP
+#endif // RAWSTOR_OSTSERVER_CLIENT_HPP

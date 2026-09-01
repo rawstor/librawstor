@@ -2,6 +2,7 @@
 #include "session.hpp"
 #include "tmp_dir.hpp"
 
+#include "opts.h"
 #include "rawio_sync.hpp"
 
 #include <rawio/queue.hpp>
@@ -17,9 +18,11 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <cstring>
 #include <memory>
+#include <vector>
 
 namespace {
 
@@ -44,6 +47,57 @@ ssize_t target_remove(rawio::Queue& queue, const std::string& target) {
     return rawstor::tests::sync_run(&queue, [&](auto cb, void* data) {
         return rawstor_target_remove(&queue, target.c_str(), cb, data);
     });
+}
+
+ssize_t target_open(
+    rawio::Queue& queue, const std::string& target, RawstorObject** object
+) {
+    return rawstor::tests::sync_run(&queue, [&](auto cb, void* data) {
+        return rawstor_target_open(&queue, target.c_str(), object, cb, data);
+    });
+}
+
+ssize_t object_close(rawio::Queue& queue, RawstorObject* object) {
+    return rawstor::tests::sync_run(&queue, [&](auto cb, void* data) {
+        return rawstor_object_close(object, cb, data);
+    });
+}
+
+// rawstor_object_pread()'s own callback shape (size_t result, int error)
+// doesn't fit rawstor::tests::sync_run()'s (ssize_t result) convention --
+// shared by every other rawstor_target_*()/rawstor_object_close() call
+// above -- so this pumps `queue` itself instead, the same way
+// tests/test_object.cpp's own ObjectTest cases do.
+ssize_t object_pread(
+    rawio::Queue& queue, RawstorObject* object, void* buf, size_t size,
+    off_t offset
+) {
+    struct Result {
+        size_t result = 0;
+        int error = 0;
+        bool done = false;
+    };
+    Result r;
+
+    int (*cb)(size_t, int, void*) = [](size_t result, int error,
+                                       void* data) -> int {
+        Result* r = static_cast<Result*>(data);
+        r->result = result;
+        r->error = error;
+        r->done = true;
+        return 0;
+    };
+
+    int res = rawstor_object_pread(object, buf, size, offset, cb, &r);
+    if (res < 0) {
+        return res;
+    }
+
+    while (!r.done) {
+        queue.wait_timeout(rawstor_opts_tcp_user_timeout());
+    }
+
+    return r.error != 0 ? -r.error : static_cast<ssize_t>(r.result);
 }
 
 ssize_t location_list(
@@ -132,6 +186,70 @@ TEST(FileLifecycleTest, create_twice_preserves_existing) {
     res = target_spec(*queue, target, &read_spec);
     EXPECT_EQ(res, 0);
     EXPECT_EQ(read_spec.size, (size_t)(1ull << 20));
+
+    res = target_remove(*queue, target);
+    EXPECT_EQ(res, 0);
+}
+
+// remove() on an already-removed target must fail with ENOENT, same as on
+// a target that was never created at all (see file::Backend::remove()'s
+// own doc comment) -- matches pyrawstor/tests/test_target.py's own
+// test_remove_not_found expectation (FileNotFoundError), which this
+// mirrors at the C++ level for the "removed, then removed again" shape
+// specifically.
+TEST(FileLifecycleTest, remove_already_removed_target_fails_with_enoent) {
+    rawstor::tests::TmpDir dir;
+    rawstd::URI location_uri(dir.uri());
+    std::string uuid = "00000000-0000-7000-8000-000000000005";
+    std::string target = rawstd::URI(location_uri, uuid).str();
+
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
+
+    RawstorObjectSpec spec{.size = 1ull << 20};
+    ssize_t res = target_create(*queue, target, spec);
+    ASSERT_EQ(res, 0);
+
+    res = target_remove(*queue, target);
+    ASSERT_EQ(res, 0);
+
+    res = target_remove(*queue, target);
+    EXPECT_EQ(res, -ENOENT);
+}
+
+// A freshly created object must read back as all zeros, even though
+// nothing has ever been written to it -- file::Backend relies on a sparse
+// regular file's own guarantee that an unwritten byte range always reads
+// as zero, regardless of whether fallocate() actually ran (see create()'s
+// own doc comment on why it preallocates at all -- performance, not
+// zero-fill correctness). Poisons the buffer with a non-zero byte first so
+// a bug that left it untouched can't accidentally read back as "already
+// zero".
+TEST(FileLifecycleTest, create_is_zero_filled) {
+    rawstor::tests::TmpDir dir;
+    rawstd::URI location_uri(dir.uri());
+    std::string uuid = "00000000-0000-7000-8000-000000000006";
+    std::string target = rawstd::URI(location_uri, uuid).str();
+
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
+
+    constexpr size_t size = 1u << 20;
+    RawstorObjectSpec spec{.size = size};
+    ssize_t res = target_create(*queue, target, spec);
+    ASSERT_EQ(res, 0);
+
+    RawstorObject* object = nullptr;
+    res = target_open(*queue, target, &object);
+    ASSERT_EQ(res, 0);
+
+    std::vector<unsigned char> buf(size, 0xff);
+    ssize_t rres = object_pread(*queue, object, buf.data(), buf.size(), 0);
+    EXPECT_EQ(rres, static_cast<ssize_t>(size));
+    EXPECT_TRUE(std::all_of(buf.begin(), buf.end(), [](unsigned char c) {
+        return c == 0;
+    }));
+
+    res = object_close(*queue, object);
+    EXPECT_EQ(res, 0);
 
     res = target_remove(*queue, target);
     EXPECT_EQ(res, 0);

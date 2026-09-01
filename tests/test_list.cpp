@@ -256,24 +256,24 @@ TEST(ListTest, pagination) {
 // Location::list()/create() and Target::create()/remove()/spec() all use
 // a Connection::create()-only, never-open()-ed Connection for their
 // metadata work -- unlike a data-path Connection, _object stays null on
-// one of these for its whole lifetime. invalidate_session()'s reconnect
-// path used to call the replacement session's set_object(_object)
+// one of these for its whole lifetime. invalidate_backend()'s reconnect
+// path used to call the replacement backend's set_object(_object)
 // unconditionally regardless, and every backend's set_object()
-// dereferences its Object* argument (e.g. blk::Session::set_object()
+// dereferences its Object* argument (e.g. blk::Backend::set_object()
 // reading object->target()) -- a null-pointer crash the very first time
-// a metadata op actually needed to reconnect a session, not something
+// a metadata op actually needed to reconnect a backend, not something
 // any of ListTest's other cases above exercise (they never fail an op
 // in the first place).
-TEST(ListTest, invalidate_session_on_metadata_only_connection) {
+TEST(ListTest, invalidate_backend_on_metadata_only_connection) {
     rawstor::tests::TmpDir dir;
     rawstd::URI location(dir.uri());
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
 
     std::unique_ptr<rawstor::Connection> cn =
         run(*queue, rawstor::Connection::create(*queue, location, 1));
-    std::shared_ptr<rawstor::Session> s = cn->get_next_session();
+    std::shared_ptr<rawstor::Backend> be = cn->get_next_backend();
 
-    EXPECT_NO_THROW(run(*queue, cn->invalidate_session(s)));
+    EXPECT_NO_THROW(run(*queue, cn->invalidate_backend(be)));
 }
 
 } // unnamed namespace

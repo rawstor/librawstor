@@ -1,4 +1,4 @@
-#include "blk_session.hpp"
+#include "blk_backend.hpp"
 #include "connection.hpp"
 #include "object.hpp"
 #include "opts.h"
@@ -82,11 +82,11 @@ public:
     ThrottleOptsOverride& operator=(ThrottleOptsOverride&&) = delete;
 };
 
-// Stands up a real file:// object and a spare Connection/Session against
+// Stands up a real file:// object and a spare Connection/Backend against
 // it (independent of the Object's own internal one, same as
 // Target::open()'s own _open_one() sets one up) so the test can drive
-// blk::Session::pwrite() -- and inspect its throttle state -- directly.
-rawstor::blk::Session* open_blk_session(
+// blk::Backend::pwrite() -- and inspect its throttle state -- directly.
+rawstor::blk::Backend* open_blk_backend(
     rawio::Queue& queue, const rawstd::URI& location,
     std::unique_ptr<rawstor::Object>& object,
     std::unique_ptr<rawstor::Connection>& cn
@@ -108,19 +108,19 @@ rawstor::blk::Session* open_blk_session(
     cn = run(queue, rawstor::Connection::create(queue, location, 1));
     run(queue, cn->open(object.get()));
 
-    return static_cast<rawstor::blk::Session*>(cn->get_next_session().get());
+    return static_cast<rawstor::blk::Backend*>(cn->get_next_backend().get());
 }
 
 } // namespace
 
 // A backing store slower than the incoming write rate must not let
 // rawstor_object_pwrite() dispatch an unbounded number of concurrent
-// writes to it -- see blk_session.hpp's _throttle_acquire(). Firing every
+// writes to it -- see blk_backend.hpp's _throttle_acquire(). Firing every
 // write back to back, with nothing pumping the queue in between, means
 // none of them can have completed yet by the time writes_in_flight() is
 // read below: whatever it reports is exactly how many of these writes
 // _throttle_acquire() let straight through before making the rest wait.
-TEST(BlkSessionTest, write_throttle_limit) {
+TEST(BlkBackendTest, write_throttle_limit) {
     constexpr unsigned int limit = 4;
     constexpr unsigned int writes = 20;
     ThrottleOptsOverride opts_override(limit, 1u << 20);
@@ -131,14 +131,14 @@ TEST(BlkSessionTest, write_throttle_limit) {
 
     std::unique_ptr<rawstor::Object> object;
     std::unique_ptr<rawstor::Connection> cn;
-    rawstor::blk::Session* session =
-        open_blk_session(*queue, location, object, cn);
+    rawstor::blk::Backend* backend =
+        open_blk_backend(*queue, location, object, cn);
 
     std::string payload = "throttle-me";
     std::vector<rawstd::Task<size_t>> tasks;
     tasks.reserve(writes);
     for (unsigned int i = 0; i < writes; ++i) {
-        tasks.push_back(session->pwrite(
+        tasks.push_back(backend->pwrite(
             payload.data(), payload.size(), i * payload.size(), false
         ));
     }
@@ -146,7 +146,7 @@ TEST(BlkSessionTest, write_throttle_limit) {
     // The invariant write-throttle-limit exists for: no matter how many
     // writes came in at once, no more than the configured cap were ever
     // dispatched to storage concurrently.
-    EXPECT_EQ(session->writes_in_flight(), limit);
+    EXPECT_EQ(backend->writes_in_flight(), limit);
 
     run_all(*queue, tasks);
 
@@ -157,13 +157,13 @@ TEST(BlkSessionTest, write_throttle_limit) {
 
 // Even with write-throttle-limit in place, a backing store slower than the
 // incoming write rate must not let an unbounded number of already-received
-// writes queue up waiting for a dispatch slot -- see blk_session.hpp's
+// writes queue up waiting for a dispatch slot -- see blk_backend.hpp's
 // _throttle_acquire(). A throttle-limit of 1 puts every write from the
 // second one onward on the backlog-check path immediately; same as
 // write_throttle_limit above, firing every write with nothing pumping the
 // queue in between means pending_writes_bytes() below reflects exactly
 // what _throttle_acquire() queued before starting to reject outright.
-TEST(BlkSessionTest, write_backlog_capacity) {
+TEST(BlkBackendTest, write_backlog_capacity) {
     constexpr unsigned int throttle_limit = 1;
     const std::string payload(16, 'x');
     constexpr size_t backlog_capacity_multiple = 3;
@@ -179,20 +179,20 @@ TEST(BlkSessionTest, write_backlog_capacity) {
 
     std::unique_ptr<rawstor::Object> object;
     std::unique_ptr<rawstor::Connection> cn;
-    rawstor::blk::Session* session =
-        open_blk_session(*queue, location, object, cn);
+    rawstor::blk::Backend* backend =
+        open_blk_backend(*queue, location, object, cn);
 
     std::vector<rawstd::Task<size_t>> tasks;
     tasks.reserve(writes);
     for (unsigned int i = 0; i < writes; ++i) {
-        tasks.push_back(session->pwrite(
+        tasks.push_back(backend->pwrite(
             payload.data(), payload.size(), i * payload.size(), false
         ));
     }
 
     // The invariant write-backlog-capacity exists for: the backlog never
     // grows past the configured cap.
-    EXPECT_EQ(session->pending_writes_bytes(), backlog_capacity);
+    EXPECT_EQ(backend->pending_writes_bytes(), backlog_capacity);
 
     run_all(*queue, tasks);
 
@@ -218,32 +218,32 @@ TEST(BlkSessionTest, write_backlog_capacity) {
 
 // write_zeroes() must guarantee a zeroed range reads back as zero,
 // regardless of whether the backing filesystem actually supports
-// FALLOC_FL_ZERO_RANGE/FALLOC_FL_PUNCH_HOLE (see blk_session.cpp's own
+// FALLOC_FL_ZERO_RANGE/FALLOC_FL_PUNCH_HOLE (see blk_backend.cpp's own
 // fallocate_not_supported() fallback to a portable zero-fill).
-TEST(BlkSessionTest, write_zeroes_zeroes_the_range) {
+TEST(BlkBackendTest, write_zeroes_zeroes_the_range) {
     rawstor::tests::TmpDir dir;
     rawstd::URI location(dir.uri());
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(256);
 
     std::unique_ptr<rawstor::Object> object;
     std::unique_ptr<rawstor::Connection> cn;
-    rawstor::blk::Session* session =
-        open_blk_session(*queue, location, object, cn);
+    rawstor::blk::Backend* backend =
+        open_blk_backend(*queue, location, object, cn);
 
     const std::string payload(64, 'x');
     EXPECT_EQ(
-        run(*queue, session->pwrite(payload.data(), payload.size(), 0, false)),
+        run(*queue, backend->pwrite(payload.data(), payload.size(), 0, false)),
         payload.size()
     );
 
     EXPECT_EQ(
-        run(*queue, session->write_zeroes(payload.size(), 0, false, false)),
+        run(*queue, backend->write_zeroes(payload.size(), 0, false, false)),
         payload.size()
     );
 
     std::vector<unsigned char> readback(payload.size());
     EXPECT_EQ(
-        run(*queue, session->pread(readback.data(), readback.size(), 0)),
+        run(*queue, backend->pread(readback.data(), readback.size(), 0)),
         readback.size()
     );
     EXPECT_TRUE(
@@ -256,31 +256,31 @@ TEST(BlkSessionTest, write_zeroes_zeroes_the_range) {
 // unmap=true additionally hints the backend may deallocate the zeroed
 // range's storage -- same zero-readback guarantee as unmap=false above,
 // just via FALLOC_FL_PUNCH_HOLE instead of FALLOC_FL_ZERO_RANGE (see
-// blk_session.cpp's write_zeroes()).
-TEST(BlkSessionTest, write_zeroes_unmap_zeroes_the_range) {
+// blk_backend.cpp's write_zeroes()).
+TEST(BlkBackendTest, write_zeroes_unmap_zeroes_the_range) {
     rawstor::tests::TmpDir dir;
     rawstd::URI location(dir.uri());
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(256);
 
     std::unique_ptr<rawstor::Object> object;
     std::unique_ptr<rawstor::Connection> cn;
-    rawstor::blk::Session* session =
-        open_blk_session(*queue, location, object, cn);
+    rawstor::blk::Backend* backend =
+        open_blk_backend(*queue, location, object, cn);
 
     const std::string payload(64, 'x');
     EXPECT_EQ(
-        run(*queue, session->pwrite(payload.data(), payload.size(), 0, false)),
+        run(*queue, backend->pwrite(payload.data(), payload.size(), 0, false)),
         payload.size()
     );
 
     EXPECT_EQ(
-        run(*queue, session->write_zeroes(payload.size(), 0, true, false)),
+        run(*queue, backend->write_zeroes(payload.size(), 0, true, false)),
         payload.size()
     );
 
     std::vector<unsigned char> readback(payload.size());
     EXPECT_EQ(
-        run(*queue, session->pread(readback.data(), readback.size(), 0)),
+        run(*queue, backend->pread(readback.data(), readback.size(), 0)),
         readback.size()
     );
     EXPECT_TRUE(
@@ -292,32 +292,32 @@ TEST(BlkSessionTest, write_zeroes_unmap_zeroes_the_range) {
 
 // sync=true must exercise write_zeroes()'s own fdatasync() path (neither
 // fallocate() nor the portable zero-fill loop has a per-call durability
-// flag the way pwrite()'s sync does -- see blk_session.cpp's own comment)
+// flag the way pwrite()'s sync does -- see blk_backend.cpp's own comment)
 // without changing the result or the zero-readback guarantee.
-TEST(BlkSessionTest, write_zeroes_sync_zeroes_the_range) {
+TEST(BlkBackendTest, write_zeroes_sync_zeroes_the_range) {
     rawstor::tests::TmpDir dir;
     rawstd::URI location(dir.uri());
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(256);
 
     std::unique_ptr<rawstor::Object> object;
     std::unique_ptr<rawstor::Connection> cn;
-    rawstor::blk::Session* session =
-        open_blk_session(*queue, location, object, cn);
+    rawstor::blk::Backend* backend =
+        open_blk_backend(*queue, location, object, cn);
 
     const std::string payload(64, 'x');
     EXPECT_EQ(
-        run(*queue, session->pwrite(payload.data(), payload.size(), 0, false)),
+        run(*queue, backend->pwrite(payload.data(), payload.size(), 0, false)),
         payload.size()
     );
 
     EXPECT_EQ(
-        run(*queue, session->write_zeroes(payload.size(), 0, false, true)),
+        run(*queue, backend->write_zeroes(payload.size(), 0, false, true)),
         payload.size()
     );
 
     std::vector<unsigned char> readback(payload.size());
     EXPECT_EQ(
-        run(*queue, session->pread(readback.data(), readback.size(), 0)),
+        run(*queue, backend->pread(readback.data(), readback.size(), 0)),
         readback.size()
     );
     EXPECT_TRUE(
@@ -327,25 +327,25 @@ TEST(BlkSessionTest, write_zeroes_sync_zeroes_the_range) {
     );
 }
 
-// discard() is purely advisory -- see rawstor::Session::discard()'s own
+// discard() is purely advisory -- see rawstor::Backend::discard()'s own
 // doc comment -- so this only checks it completes successfully and
 // reports the requested size back, not that anything specific happened to
 // the underlying storage.
-TEST(BlkSessionTest, discard_reports_requested_size) {
+TEST(BlkBackendTest, discard_reports_requested_size) {
     rawstor::tests::TmpDir dir;
     rawstd::URI location(dir.uri());
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(256);
 
     std::unique_ptr<rawstor::Object> object;
     std::unique_ptr<rawstor::Connection> cn;
-    rawstor::blk::Session* session =
-        open_blk_session(*queue, location, object, cn);
+    rawstor::blk::Backend* backend =
+        open_blk_backend(*queue, location, object, cn);
 
     const std::string payload(64, 'x');
     EXPECT_EQ(
-        run(*queue, session->pwrite(payload.data(), payload.size(), 0, false)),
+        run(*queue, backend->pwrite(payload.data(), payload.size(), 0, false)),
         payload.size()
     );
 
-    EXPECT_EQ(run(*queue, session->discard(payload.size(), 0)), payload.size());
+    EXPECT_EQ(run(*queue, backend->discard(payload.size(), 0)), payload.size());
 }

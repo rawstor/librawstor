@@ -23,64 +23,64 @@
 
 namespace rawstor {
 
-class Session;
+class Backend;
 
 class Connection final {
 private:
     rawio::Queue& _queue;
     Object* _object;
 
-    std::vector<std::shared_ptr<Session>> _sessions;
-    size_t _session_index;
+    std::vector<std::shared_ptr<Backend>> _backends;
+    size_t _backend_index;
 
-    // Sessions currently being replaced by an in-flight
-    // invalidate_session() call -- see that method's own doc comment for
+    // Backends currently being replaced by an in-flight
+    // invalidate_backend() call -- see that method's own doc comment for
     // why this is needed now that it's a real coroutine instead of a
     // fully-blocking call.
-    std::unordered_set<Session*> _reconnecting;
+    std::unordered_set<Backend*> _reconnecting;
 
     // Every data-path/metadata method's terminal path -- success or final
     // failure -- runs through here exactly once; records the cross-retry
     // call-to-completion latency. Per-attempt telemetry, including the
-    // top-N slowest-requests sample, lives in ost::SessionOp::_dispatch()
+    // top-N slowest-requests sample, lives in ost::BackendOp::_dispatch()
     // instead -- Connection is transport-agnostic and has nothing else to
     // report here.
     void _finish(rawstor::telemetry::TimePoint t_call);
 
     // Shared retry-loop body for every data-path/metadata method: tries
-    // `method` against successive sessions from the pool. Every failure
-    // (a Session throws a plain std::system_error for anything from a
+    // `method` against successive backends from the pool. Every failure
+    // (a Backend throws a plain std::system_error for anything from a
     // malformed response to a dropped connection to a live backend's own
-    // well-formed rejection -- Session no longer classifies which) is
-    // handled the same way: reconnect via invalidate_session() and retry,
+    // well-formed rejection -- Backend no longer classifies which) is
+    // handled the same way: reconnect via invalidate_backend() and retry,
     // up to rawstor_opts_io_attempts() times total, unless it's a
     // rejection retrying can never fix (e.g. ENOENT -- see
     // is_permanent_backend_error() in connection.cpp), which fails
     // immediately without retrying at all. The one exception to
-    // "reconnect before every retry" is a plain EBUSY: the session itself
+    // "reconnect before every retry" is a plain EBUSY: the backend itself
     // is fine, just backed up against the remote server's own write-
     // throttling, so reconnecting would only cost a round trip for no
     // benefit. Every retry also waits out an exponential backoff first --
     // see backoff_delay_ms() in connection.cpp and the
     // rawstor_opts_io_retry_backoff_*() knobs it reads. `T`/`Args...` are
     // deduced straight from `method`'s own pointer-to-member-function
-    // type (e.g. &Session::pread), so the wrapped operation's natural
+    // type (e.g. &Backend::pread), so the wrapped operation's natural
     // result -- size_t for the four byte-count ops, nothing for flush --
     // flows straight through with no caller-supplied template argument
     // and no faked value for the void case. The trailing pack is wrapped
     // in std::type_identity_t to keep it a non-deduced context: some
-    // wrapped methods (e.g. Session::list()'s out-params) take
+    // wrapped methods (e.g. Backend::list()'s out-params) take
     // references, and without this, deducing Args a second time from
     // the call arguments themselves (plain by-value here) would conflict
     // with what `method`'s own type already fixed them to.
     template <typename T, typename... Args>
     rawstd::Task<T> _with_retry(
         const char* func_name, rawstd::TraceEvent& trace_event,
-        rawstd::Task<T> (Session::*method)(Args...),
+        rawstd::Task<T> (Backend::*method)(Args...),
         std::type_identity_t<Args>... args
     );
 
-    // Connection is final -- unlike Session::Private (which every
+    // Connection is final -- unlike Backend::Private (which every
     // backend subclass's own constructor also needs to name), nothing
     // but create() itself ever needs this, so it stays private rather
     // than protected.
@@ -89,29 +89,29 @@ private:
     };
 
 public:
-    // Creates and connects `nsessions` Sessions against `location`
-    // concurrently -- the returned Connection's session pool is ready for
-    // get_next_session()-based use (metadata methods, or open() to
+    // Creates and connects `nbackends` Backends against `location`
+    // concurrently -- the returned Connection's backend pool is ready for
+    // get_next_backend()-based use (metadata methods, or open() to
     // additionally set_object() the whole pool for the data-path
     // methods) but nothing has been set_object()ed yet.
     static rawstd::Task<std::unique_ptr<Connection>>
-    create(rawio::Queue& queue, const rawstd::URI& location, size_t nsessions);
+    create(rawio::Queue& queue, const rawstd::URI& location, size_t nbackends);
 
     Connection(Private, rawio::Queue& queue);
     Connection(const Connection&) = delete;
 
     Connection& operator=(const Connection&) = delete;
 
-    std::shared_ptr<Session> get_next_session();
-    rawstd::Task<void> invalidate_session(const std::shared_ptr<Session>& s);
+    std::shared_ptr<Backend> get_next_backend();
+    rawstd::Task<void> invalidate_backend(const std::shared_ptr<Backend>& be);
 
     const rawstd::URI* location() const noexcept;
 
-    // Metadata operations, routed through the same session pool and
-    // retry-with-invalidate-session machinery (_with_retry()) as the
-    // data-path methods below -- same shape as the matching Session
+    // Metadata operations, routed through the same backend pool and
+    // retry-with-invalidate-backend machinery (_with_retry()) as the
+    // data-path methods below -- same shape as the matching Backend
     // methods they wrap, since a connect()ed Connection is (like a
-    // Session) already bound to one location.
+    // Backend) already bound to one location.
     rawstd::Task<void>
     list(unsigned int limit, std::vector<RawstdUUID>& uuids, RawstdUUID& token);
 
@@ -124,19 +124,19 @@ public:
 
     rawstd::Task<RawstorLocationInfo> info();
 
-    // set_object()s every session in the pool create() populated --
+    // set_object()s every backend in the pool create() populated --
     // must be called (at most once) after create(), before any data-path
-    // method below. A session that fails is fixed up via
-    // invalidate_session(), same recovery as the data-path/metadata
+    // method below. A backend that fails is fixed up via
+    // invalidate_backend(), same recovery as the data-path/metadata
     // methods get from _with_retry() -- not literally _with_retry()
-    // itself, since that picks one session from the pool per call
+    // itself, since that picks one backend from the pool per call
     // (retrying against another on failure) rather than target every
-    // session the way this needs to.
+    // backend the way this needs to.
     rawstd::Task<void> open(Object* object);
 
     // Not called implicitly by ~Connection() (a coroutine can't run in a
     // destructor, and there's no other synchronous fallback here beyond
-    // each Session's own -- see Session::close()'s doc comment) --
+    // each Backend's own -- see Backend::close()'s doc comment) --
     // callers that want a graceful async teardown must co_await this
     // themselves.
     rawstd::Task<void> close();

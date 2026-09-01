@@ -338,7 +338,7 @@ inline thread_local std::exception_ptr detached_task_pending_exception;
  * `rethrow_if_pending()` itself, immediately after:
  *
  * - Each `launch_*()` wrapper in rawio.cpp/object.cpp, and
- *   `ost::Session::set_object()` for `_recv_pump()` -- the *initial,
+ *   `ost::Backend::set_object()` for `_recv_pump()` -- the *initial,
  *   synchronous* launch case. Since call sites can't be relied on to
  *   remember this (and there are dozens of them), each underlying
  *   DetachedTask-returning coroutine is itself wrapped in a small
@@ -424,7 +424,7 @@ public:
  * rawio_send()'s single signed result/data, ...). Each call site supplies
  * its own small trampoline matching the C function it's adapting, whose
  * only job is extracting `data` back to `CallbackAwaitable<T>*` and calling
- * complete() -- see ost::Session/rawstor::vhost::Device's own
+ * complete() -- see ost::Backend/rawstor::vhost::Device's own
  * co_object_*() wrappers for the pattern.
  *
  * Every error surfaces uniformly as a thrown std::system_error from

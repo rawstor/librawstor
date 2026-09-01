@@ -3,7 +3,7 @@
 #include <rawstd/gpp.hpp>
 
 namespace rawstor {
-namespace ostbackend {
+namespace ostserver {
 namespace tests {
 
 Queue::Queue() : _queue(nullptr) {
@@ -18,5 +18,5 @@ Queue::~Queue() {
 }
 
 } // namespace tests
-} // namespace ostbackend
+} // namespace ostserver
 } // namespace rawstor

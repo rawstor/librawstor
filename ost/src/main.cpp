@@ -126,7 +126,7 @@ void sact_handler(int) {
     }
 }
 
-// Each worker is a thread with its own rawstor::ostbackend::Server (own
+// Each worker is a thread with its own rawstor::ostserver::Server (own
 // RawIOQueue -- the reactor stays single-threaded per queue, see
 // CLAUDE.md), all sharing the one listening socket bind_listen() opens
 // here: every worker registers its own accept_multishot on that same fd,
@@ -142,7 +142,7 @@ void ost(
     unsigned int queue_size, unsigned int workers, const std::string& addr,
     unsigned int port, const char* location
 ) {
-    ScopedFd listen_fd(rawstor::ostbackend::Server::bind_listen(addr, port));
+    ScopedFd listen_fd(rawstor::ostserver::Server::bind_listen(addr, port));
     rawstd_info(
         "Waiting for connections on %s:%u with %u worker(s)\n", addr.c_str(),
         port, workers
@@ -153,7 +153,7 @@ void ost(
     wake_write_fds.reserve(workers);
     try {
         for (unsigned int i = 0; i < workers; i++) {
-            rawstd::Pipe p;
+            rawstd::Pipe p(rawstd::Pipe::Mode::NonBlocking);
             wake_read_fds.emplace_back(p.release_read());
             wake_write_fds.emplace_back(p.release_write());
         }
@@ -193,9 +193,7 @@ void ost(
         threads.emplace_back([&errors, i, queue_size, fd = listen_fd.get(),
                               location, wake_fd = wake_read_fds[i].get()]() {
             try {
-                rawstor::ostbackend::Server s(
-                    queue_size, fd, location, wake_fd
-                );
+                rawstor::ostserver::Server s(queue_size, fd, location, wake_fd);
                 s.loop();
             } catch (...) {
                 errors[i] = std::current_exception();
