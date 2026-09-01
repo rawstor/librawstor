@@ -7,7 +7,7 @@
 #include <unistd.h>
 
 namespace rawstor {
-namespace ostbackend {
+namespace ostserver {
 namespace tests {
 
 TmpDir::TmpDir() {
@@ -32,5 +32,5 @@ std::string TmpDir::uri() const {
 }
 
 } // namespace tests
-} // namespace ostbackend
+} // namespace ostserver
 } // namespace rawstor

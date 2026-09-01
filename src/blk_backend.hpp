@@ -1,7 +1,7 @@
-#ifndef RAWSTOR_BLK_SESSION_HPP
-#define RAWSTOR_BLK_SESSION_HPP
+#ifndef RAWSTOR_BLK_BACKEND_HPP
+#define RAWSTOR_BLK_BACKEND_HPP
 
-#include "session.hpp"
+#include "backend.hpp"
 
 #include <rawio/queue.hpp>
 
@@ -10,27 +10,52 @@
 #include <rawstd/uuid.h>
 
 #include <rawstor/object.h>
+#include <rawstor/target.h>
 
 #include <coroutine>
 #include <cstddef>
 #include <deque>
+#include <string>
 
 namespace rawstor {
 namespace blk {
 
-// Base for any Session backed by a plain fd read/written via the io queue
+// Base for any Backend backed by a plain fd read/written via the io queue
 // (rawio::Queue::pread()/pwrite()/...). Concrete backends only need to
-// implement how to get from an object id to an open fd (_connect()) plus
-// the metadata operations (list()/create()/remove()/spec()/info()), which
-// stay backend-specific.
-class Session : public rawstor::Session {
+// implement how to get from an object id to an open fd (_open()) plus
+// the metadata operations (list()/create()/remove()/info()) that stay
+// backend-specific; spec() has a default (BLKGETSIZE64) for backends whose
+// objects are real block devices, overridden by file::Backend since its
+// objects are plain regular files instead.
+class Backend : public rawstor::Backend {
 protected:
-    virtual rawstd::Task<int> _connect(const RawstdUUID& id) = 0;
+    virtual rawstd::Task<int> _open(const RawstdUUID& id) = 0;
 
-    // A blk-backed session has no upfront connection step: the fd is
-    // opened lazily, by _connect(const RawstdUUID&) above, once
+    // A blk-backed backend has no upfront connection step: the fd is
+    // opened lazily, by _open(const RawstdUUID&) above, once
     // set_object() knows which object id to open.
     rawstd::Task<void> _connect() override final;
+
+    // Zeroes [offset, offset + size) of `target_fd` -- shared by
+    // write_zeroes() below (target_fd = fd(), this instance's own open
+    // object) and a subclass's own create-time zero-fill of a freshly
+    // allocated object, before it's revealed under its real name (e.g.
+    // lvm::Backend::create()), where target_fd is unrelated to this
+    // instance's own fd()/set_fd() state. Tries FALLOC_FL_ZERO_RANGE
+    // (unmap=false) or FALLOC_FL_PUNCH_HOLE (unmap=true) first --
+    // typically hardware-accelerated (WRITE_ZEROES/discard) -- and logs
+    // a warning before falling back to an explicit zero-fill write loop
+    // if the backing store doesn't support fallocate() at all.
+    rawstd::Task<void>
+    _zero_fill(int target_fd, off_t offset, size_t size, bool unmap);
+
+    // True if `path` currently names something (any type) in the
+    // backing store; false only for ENOENT. Shared by lvm::Backend/
+    // zfs::Backend's create()/remove() to make retrying either one
+    // against the same id idempotent, instead of a shell-out command
+    // rejecting an already-there/already-gone object with a generic,
+    // retryable EIO.
+    rawstd::Task<bool> _exists(const std::string& path);
 
 private:
     // Writes dispatched to the io queue whose completion hasn't arrived
@@ -60,11 +85,16 @@ private:
     void _throttle_release() noexcept;
 
 public:
-    Session(Private p, rawio::Queue& queue, const rawstd::URI& location);
+    Backend(Private p, rawio::Queue& queue, const rawstd::URI& location);
 
     rawstd::Task<void> close() override final;
 
     rawstd::Task<void> set_object(Object* object) override final;
+
+    // Default spec() for a backend whose object id maps to a real block
+    // device (BLKGETSIZE64) -- file::Backend overrides this instead, since
+    // its objects are plain regular files.
+    rawstd::Task<RawstorObjectSpec> spec(const RawstdUUID& id) override;
 
     rawstd::Task<size_t>
     pread(void* buf, size_t size, off_t offset) override final;
@@ -106,4 +136,4 @@ public:
 } // namespace blk
 } // namespace rawstor
 
-#endif // RAWSTOR_BLK_SESSION_HPP
+#endif // RAWSTOR_BLK_BACKEND_HPP

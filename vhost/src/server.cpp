@@ -30,10 +30,18 @@ int open_unix_socket(const std::string& socket_path) {
     }
 
     try {
+        // So this listen socket doesn't leak into a child forked by the
+        // LVM/ZFS storage backends to shell out to lvcreate/zfs/etc.
+        // (src/subprocess.cpp).
+        int res = rawstd_socket_set_cloexec(server_socket);
+        if (res < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
+        }
+
         sockaddr_un addr = {};
         addr.sun_family = AF_UNIX;
 
-        int res = snprintf(
+        res = snprintf(
             addr.sun_path, sizeof(addr.sun_path), "%s", socket_path.c_str()
         );
         if (res < 0) {
@@ -138,7 +146,15 @@ void Server::loop() {
         RAWSTD_THROW_ERRNO();
     }
 
-    int res = rawstd_socket_set_nosigpipe(fd);
+    // So this connection's fd doesn't leak into a child forked by the
+    // LVM/ZFS storage backends to shell out to lvcreate/zfs/etc.
+    // (src/subprocess.cpp).
+    int res = rawstd_socket_set_cloexec(fd);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+
+    res = rawstd_socket_set_nosigpipe(fd);
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }

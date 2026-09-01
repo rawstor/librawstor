@@ -45,7 +45,7 @@ using rawstor::vhost::VirtQueue;
 // inside this VirtQueue's own dispatch of `queue` -- spinning `queue`
 // here to wait for the callback is therefore safe, unlike doing so from
 // a context that's itself already being dispatched by the same queue
-// (see ost::Session's own async close()/open() handling for that
+// (see ost::Backend's own async close()/open() handling for that
 // hazard). rawstor_target_open()'s opened object is written directly
 // into the caller's own `object` out-param, not routed through this
 // struct, so there's nothing left for close's own Result to carry

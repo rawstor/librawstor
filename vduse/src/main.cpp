@@ -261,7 +261,7 @@ int main(int argc, char** argv) {
     // is nothing useful left to do with any of them individually on
     // failure beyond reporting it.
     try {
-        rawstd::Pipe wake_pipe;
+        rawstd::Pipe wake_pipe(rawstd::Pipe::Mode::NonBlocking);
         wake_write_fd = wake_pipe.write_fd();
 
         sact.sa_handler = sact_handler;

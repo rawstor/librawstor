@@ -1,4 +1,4 @@
-#include "file_session.hpp"
+#include "file_backend.hpp"
 
 #include "opts.h"
 
@@ -135,11 +135,11 @@ void migrate_legacy(
 namespace rawstor {
 namespace file {
 
-Session::Session(Private p, rawio::Queue& queue, const rawstd::URI& location) :
-    rawstor::blk::Session(p, queue, location) {
+Backend::Backend(Private p, rawio::Queue& queue, const rawstd::URI& location) :
+    rawstor::blk::Backend(p, queue, location) {
 }
 
-rawstd::Task<int> Session::_connect(const RawstdUUID& id) {
+rawstd::Task<int> Backend::_open(const RawstdUUID& id) {
     std::string location_path = get_location_path(location());
 
     RawstdUUIDString id_string;
@@ -149,13 +149,18 @@ rawstd::Task<int> Session::_connect(const RawstdUUID& id) {
 
     std::string target_path = get_target_path(location_path, id_string);
 
-    rawstd_info("Connecting to %s...\n", location().str().c_str());
-    int fd = co_await _queue.open(target_path.c_str(), O_RDWR | O_NONBLOCK, 0);
-    rawstd_info("fd %d: Connected\n", fd);
+    // O_CLOEXEC: a file:// backend can be live in the same process as an
+    // lvm:// or zfs:// one (Target::open() fans out across every URI of a
+    // target concurrently, src/target.cpp), whose create()/remove() shell
+    // out via fork()+exec() (src/subprocess.cpp) -- without it, this fd
+    // would leak into those children.
+    int fd = co_await _queue.open(
+        target_path.c_str(), O_RDWR | O_NONBLOCK | O_CLOEXEC, 0
+    );
     co_return fd;
 }
 
-rawstd::Task<void> Session::list(
+rawstd::Task<void> Backend::list(
     unsigned int limit, std::vector<RawstdUUID>& targets, RawstdUUID& token
 ) {
     RawstdUUID input_token = token;
@@ -232,7 +237,7 @@ rawstd::Task<void> Session::list(
 }
 
 rawstd::Task<void>
-Session::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
+Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
     std::string location_path = get_location_path(location());
     if (mkdir(location_path.c_str(), 0755) == -1) {
         if (errno == EEXIST) {
@@ -248,7 +253,8 @@ Session::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
     std::string target_path = get_target_path(location_path, uuid_string);
 
     int fd = ::open(
-        target_path.c_str(), O_EXCL | O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR
+        target_path.c_str(), O_EXCL | O_CREAT | O_WRONLY | O_CLOEXEC,
+        S_IRUSR | S_IWUSR
     );
     if (fd == -1) {
         RAWSTD_THROW_ERRNO();
@@ -317,7 +323,7 @@ Session::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
     co_return;
 }
 
-rawstd::Task<void> Session::remove(const RawstdUUID& id) {
+rawstd::Task<void> Backend::remove(const RawstdUUID& id) {
     std::string location_path = get_location_path(location());
 
     RawstdUUIDString uuid_string;
@@ -337,7 +343,7 @@ rawstd::Task<void> Session::remove(const RawstdUUID& id) {
     co_return;
 }
 
-rawstd::Task<RawstorObjectSpec> Session::spec(const RawstdUUID& id) {
+rawstd::Task<RawstorObjectSpec> Backend::spec(const RawstdUUID& id) {
     std::string location_path = get_location_path(location());
 
     RawstdUUIDString uuid_string;
@@ -354,7 +360,7 @@ rawstd::Task<RawstorObjectSpec> Session::spec(const RawstdUUID& id) {
     co_return ret;
 }
 
-rawstd::Task<RawstorLocationInfo> Session::info() {
+rawstd::Task<RawstorLocationInfo> Backend::info() {
     RawstorLocationInfo ret = {};
     try {
         std::string location_path = get_location_path(location());

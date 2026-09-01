@@ -73,7 +73,7 @@ void validate_different_uris(const std::vector<rawstd::URI>& uris) {
 }
 
 // A connect()ed Connection's metadata methods take a bare id (like the
-// Session methods they wrap) rather than a full target -- extract it once
+// Backend methods they wrap) rather than a full target -- extract it once
 // here instead of in every one of this file's own call sites.
 RawstdUUID uuid_from_target(const rawstd::URI& target) {
     RawstdUUID id;
@@ -85,7 +85,7 @@ RawstdUUID uuid_from_target(const rawstd::URI& target) {
 }
 
 // One URI's worth of Target::create()/remove() work: connect a
-// single-session Connection just for this call, do the one metadata op,
+// single-backend Connection just for this call, do the one metadata op,
 // close it again. Factored out so create()/remove() can fan these out
 // across every URI via rawstd::gather() instead of awaiting them one at a
 // time.
@@ -120,10 +120,10 @@ remove_many(rawio::Queue& queue, const std::vector<rawstd::URI>& targets) {
 }
 
 // One URI's worth of Target::open() work: stand up a Connection (its own
-// session pool) against it and open() it against `object`. Factored out
+// backend pool) against it and open() it against `object`. Factored out
 // so open() can fan these out across every URI via gather()-like
 // concurrency instead of awaiting them one at a time, by analogy with
-// Connection::create()'s own session pool.
+// Connection::create()'s own backend pool.
 rawstd::Task<std::unique_ptr<rawstor::Connection>>
 open_one(rawio::Queue& queue, const rawstd::URI& uri, rawstor::Object* object) {
     std::unique_ptr<rawstor::Connection> cn =
@@ -442,10 +442,10 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
         // co_await right here, rather than leaving it for ~Object()'s
         // own run()-pumped synchronous cleanup: this coroutine can
         // itself be driven by an outer synchronous run() pump (e.g.
-        // tests/test_blk_session.cpp's own direct run()-pumped call
+        // tests/test_blk_backend.cpp's own direct run()-pumped call
         // into us), and ~Object() reentering that same dispatch loop
         // via a *nested* run() is undefined behavior (same hazard
-        // blk::Session::close()'s own doc comment describes) --
+        // blk::Backend::close()'s own doc comment describes) --
         // obj->_cns never gets populated in this path, so ~Object()
         // has nothing left to do anyway.
         for (auto& cn : cns) {

@@ -215,7 +215,7 @@ VirtQueue::~VirtQueue() {
 }
 
 void VirtQueue::start(const std::string& target, unsigned int queue_size) {
-    _wake_pipe.emplace();
+    _wake_pipe.emplace(rawstd::Pipe::Mode::NonBlocking);
 
     std::promise<void> ready;
     std::future<void> ready_future = ready.get_future();

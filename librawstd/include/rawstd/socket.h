@@ -21,6 +21,8 @@ extern "C" {
 
 int rawstd_socket_set_nonblock(int fd);
 
+int rawstd_socket_set_cloexec(int fd);
+
 int rawstd_socket_set_nodelay(int fd);
 
 int rawstd_socket_set_reuse(int fd);

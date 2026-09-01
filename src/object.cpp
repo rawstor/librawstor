@@ -3,10 +3,10 @@
 
 #include "config.h"
 #include "connection.hpp"
-#include "file_session.hpp"
+#include "file_backend.hpp"
 #include "location.hpp"
 #include "opts.h"
-#include "ost_session.hpp"
+#include "ost_backend.hpp"
 #include "target.hpp"
 
 #include <rawstd/gpp.hpp>
@@ -322,7 +322,7 @@ rawstd::Task<size_t> Object::discard(size_t size, off_t offset) {
         'o', "discard(): size = %zu, offset = %jd\n", size, (intmax_t)offset
     );
 
-    // discard() is purely advisory (see rawstor::Session::discard()'s own
+    // discard() is purely advisory (see rawstor::Backend::discard()'s own
     // doc comment) -- it doesn't dirty the object the way pwrite()/
     // write_zeroes() do, so unlike those it doesn't bump _writes_issued/
     // set _dirty: flush() has nothing to wait for or durability-cover on

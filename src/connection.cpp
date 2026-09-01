@@ -1,8 +1,8 @@
 #include "connection.hpp"
 
+#include "backend.hpp"
 #include "object.hpp"
 #include "opts.h"
-#include "session.hpp"
 #include "telemetry.hpp"
 
 #include <rawstor/location.h>
@@ -77,8 +77,8 @@ bool is_permanent_backend_error(int error) {
 // Retries `attempt()` up to rawstor_opts_io_attempts() times, sharing the
 // same "log and retry, or log and rethrow on the last one" shape across
 // every bounded-retry loop in this file that doesn't need the
-// EBUSY-vs-reconnect policy: Connection::create()'s session-pool
-// (re-)connect and invalidate_session()'s single-session replacement.
+// EBUSY-vs-reconnect policy: Connection::create()'s backend-pool
+// (re-)connect and invalidate_backend()'s single-backend replacement.
 // `attempt()` returns a Task<T> that this coroutine itself co_await's, so
 // retrying composes as an ordinary suspension/resumption instead of a
 // nested synchronous pump -- unlike the old callback-based retry_n() this
@@ -134,32 +134,32 @@ namespace rawstor {
 Connection::Connection(Private, rawio::Queue& queue) :
     _queue(queue),
     _object(nullptr),
-    _session_index(0) {
+    _backend_index(0) {
 }
 
 rawstd::Task<std::unique_ptr<Connection>> Connection::create(
-    rawio::Queue& queue, const rawstd::URI& location, size_t nsessions
+    rawio::Queue& queue, const rawstd::URI& location, size_t nbackends
 ) {
-    // A single attempt, same as Session::create() -- retrying a broken
+    // A single attempt, same as Backend::create() -- retrying a broken
     // connect (or a set_object() done afterwards by a caller, e.g.
     // Object's constructor) is each caller's own job, not this one's.
     //
     // Task<T> starts eagerly, right up to its first real suspension
     // point -- building the whole vector before handing it to gather()
-    // submits every session's connect up front, so they run concurrently
+    // submits every backend's connect up front, so they run concurrently
     // instead of one full round-trip at a time.
-    std::vector<rawstd::Task<std::shared_ptr<Session>>> creates;
-    creates.reserve(nsessions);
-    for (size_t i = 0; i < nsessions; ++i) {
-        creates.push_back(Session::create(queue, location));
+    std::vector<rawstd::Task<std::shared_ptr<Backend>>> creates;
+    creates.reserve(nbackends);
+    for (size_t i = 0; i < nbackends; ++i) {
+        creates.push_back(Backend::create(queue, location));
     }
 
-    std::vector<std::shared_ptr<Session>> sessions =
+    std::vector<std::shared_ptr<Backend>> backends =
         co_await rawstd::gather(std::move(creates));
 
     std::unique_ptr<Connection> cn =
         std::make_unique<Connection>(Private(), queue);
-    cn->_sessions = std::move(sessions);
+    cn->_backends = std::move(backends);
     co_return cn;
 }
 
@@ -171,26 +171,26 @@ void Connection::_finish(rawstor::telemetry::TimePoint t_call) {
 template <typename T, typename... Args>
 rawstd::Task<T> Connection::_with_retry(
     const char* func_name, rawstd::TraceEvent& trace_event,
-    rawstd::Task<T> (Session::*method)(Args...),
+    rawstd::Task<T> (Backend::*method)(Args...),
     std::type_identity_t<Args>... args
 ) {
     // One retry budget, one behavior, regardless of what went wrong:
-    // reconnect via invalidate_session() and retry, up to
+    // reconnect via invalidate_backend() and retry, up to
     // rawstor_opts_io_attempts() attempts total, unless the failure is
     // one is_permanent_backend_error() already knows retrying can never
     // fix (e.g. ENOENT), which fails immediately instead. The one
     // exception to "reconnect before every retry" is a plain EBUSY: the
-    // session itself is fine, just backed up against the remote server's
-    // own write-throttling (see blk_session.hpp's _throttle_acquire()),
+    // backend itself is fine, just backed up against the remote server's
+    // own write-throttling (see blk_backend.hpp's _throttle_acquire()),
     // so reconnecting would only cost a round trip for no benefit.
     unsigned int attempt = 0;
 
     for (;;) {
-        std::shared_ptr<Session> s = get_next_session();
+        std::shared_ptr<Backend> be = get_next_backend();
 
         // co_await is not permitted inside a catch handler, so the catch
         // block below only records what happened; every co_await this
-        // needs (invalidate_session(), the backoff wait) happens after
+        // needs (invalidate_backend(), the backoff wait) happens after
         // execution has left it entirely, keyed off `retry`.
         bool retry = false;
         bool give_up = false;
@@ -199,18 +199,18 @@ rawstd::Task<T> Connection::_with_retry(
 
         try {
             if constexpr (std::is_void_v<T>) {
-                co_await (s.get()->*method)(args...);
+                co_await (be.get()->*method)(args...);
                 RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "error = 0");
 
                 if (attempt > 0) {
                     rawstd_warning(
                         "IO %s: success on %s; attempt: %u\n", func_name,
-                        s->str().c_str(), attempt + 1
+                        be->str().c_str(), attempt + 1
                     );
                 }
                 co_return;
             } else {
-                T result = co_await (s.get()->*method)(args...);
+                T result = co_await (be.get()->*method)(args...);
                 RAWSTD_TRACE_EVENT_MESSAGE(
                     trace_event, "result = %zu, error = 0\n", result
                 );
@@ -218,7 +218,7 @@ rawstd::Task<T> Connection::_with_retry(
                 if (attempt > 0) {
                     rawstd_warning(
                         "IO %s: success on %s; attempt: %u\n", func_name,
-                        s->str().c_str(), attempt + 1
+                        be->str().c_str(), attempt + 1
                     );
                 }
                 co_return result;
@@ -238,7 +238,7 @@ rawstd::Task<T> Connection::_with_retry(
             if (is_permanent_backend_error(error)) {
                 rawstd_error(
                     "IO %s: error on %s: %s; not retryable; failing...\n",
-                    func_name, s->str().c_str(), std::strerror(error)
+                    func_name, be->str().c_str(), std::strerror(error)
                 );
                 throw;
             }
@@ -247,18 +247,18 @@ rawstd::Task<T> Connection::_with_retry(
             if (attempt >= rawstor_opts_io_attempts()) {
                 rawstd_error(
                     "IO %s: error on %s: %s; attempt %u of %u; failing...\n",
-                    func_name, s->str().c_str(), std::strerror(error), attempt,
+                    func_name, be->str().c_str(), std::strerror(error), attempt,
                     rawstor_opts_io_attempts()
                 );
-                // Not thrown here: `s` is presumed broken exactly like any
+                // Not thrown here: `be` is presumed broken exactly like any
                 // other retryable failure and still needs closing below,
                 // or it leaks its recv-multishot registration -- but
                 // unlike a normal retry cycle, reconnecting via
-                // invalidate_session() would be a new, unbudgeted
+                // invalidate_backend() would be a new, unbudgeted
                 // connection attempt nothing asked for (this op is done
-                // retrying), so this only closes `s` in place, leaving it
-                // in `_sessions` exactly as before -- the next op to pick
-                // it up via get_next_session() sees a plain dead-fd
+                // retrying), so this only closes `be` in place, leaving it
+                // in `_backends` exactly as before -- the next op to pick
+                // it up via get_next_backend() sees a plain dead-fd
                 // failure and reconnects through its own normal retry
                 // cycle instead. `eptr` carries the original failure past
                 // that close(), since it's what actually gets reported.
@@ -268,7 +268,7 @@ rawstd::Task<T> Connection::_with_retry(
                 rawstd_warning(
                     "IO %s: error on %s: %s; attempt: %u of %u; "
                     "retrying...\n",
-                    func_name, s->str().c_str(), std::strerror(error), attempt,
+                    func_name, be->str().c_str(), std::strerror(error), attempt,
                     rawstor_opts_io_attempts()
                 );
             }
@@ -277,11 +277,11 @@ rawstd::Task<T> Connection::_with_retry(
         if (give_up) {
             if (error != EBUSY) {
                 try {
-                    co_await s->close();
+                    co_await be->close();
                 } catch (const std::exception& e2) {
                     rawstd_warning(
                         "IO %s: close on %s while failing: %s\n", func_name,
-                        s->str().c_str(), e2.what()
+                        be->str().c_str(), e2.what()
                     );
                 }
             }
@@ -291,7 +291,7 @@ rawstd::Task<T> Connection::_with_retry(
         if (retry) {
             if (error != EBUSY) {
                 try {
-                    co_await invalidate_session(s);
+                    co_await invalidate_backend(be);
                 } catch (const std::system_error& e2) {
                     // A reconnect that hits another retryable failure is
                     // exactly what this loop's own budget exists to ride
@@ -305,7 +305,7 @@ rawstd::Task<T> Connection::_with_retry(
                     rawstd_error(
                         "IO %s: exception on %s: %s; attempt %u of %u; "
                         "failing...\n",
-                        func_name, s->str().c_str(), e2.what(), attempt,
+                        func_name, be->str().c_str(), e2.what(), attempt,
                         rawstor_opts_io_attempts()
                     );
                     RAWSTD_THROW_SYSTEM_ERROR(EIO);
@@ -324,75 +324,75 @@ rawstd::Task<T> Connection::_with_retry(
     }
 }
 
-std::shared_ptr<Session> Connection::get_next_session() {
-    if (_sessions.empty()) {
-        throw std::runtime_error("Empty sessions list");
+std::shared_ptr<Backend> Connection::get_next_backend() {
+    if (_backends.empty()) {
+        throw std::runtime_error("Empty backends list");
     }
 
-    std::shared_ptr<Session> s = _sessions[_session_index++];
-    if (_session_index >= _sessions.size()) {
-        _session_index = 0;
+    std::shared_ptr<Backend> be = _backends[_backend_index++];
+    if (_backend_index >= _backends.size()) {
+        _backend_index = 0;
     }
 
-    return s;
+    return be;
 }
 
 rawstd::Task<void>
-Connection::invalidate_session(const std::shared_ptr<Session>& s) {
-    typename std::vector<std::shared_ptr<Session>>::iterator it =
-        std::find(_sessions.begin(), _sessions.end(), s);
+Connection::invalidate_backend(const std::shared_ptr<Backend>& be) {
+    typename std::vector<std::shared_ptr<Backend>>::iterator it =
+        std::find(_backends.begin(), _backends.end(), be);
 
-    if (it == _sessions.end()) {
+    if (it == _backends.end()) {
         // Already replaced (or removed) by someone else -- nothing to do.
         co_return;
     }
 
     // Two concurrent callers can both observe the exact same broken
-    // session here: e.g. two pwrite()s in flight against the sole session
-    // of a single-session Connection both fail once it drops, and both
+    // backend here: e.g. two pwrite()s in flight against the sole backend
+    // of a single-backend Connection both fail once it drops, and both
     // reach this same point before either has had a chance to replace it
     // (this is now a real suspension point, not the old fully-blocking
     // call that accidentally serialized these). Without deduplication
     // both would open their own independent replacement connection for
     // the *same* failure -- wasteful, and observably wrong for a caller
-    // that expects at most one reconnect per broken session (e.g. a
+    // that expects at most one reconnect per broken backend (e.g. a
     // scripted test server good for exactly N connections). Only the
-    // first caller for a given session actually reconnects; a second,
+    // first caller for a given backend actually reconnects; a second,
     // concurrent caller just returns immediately and lets its own next
-    // attempt pick up whatever ends up installed via get_next_session()
-    // -- the still-stale session if the winner hasn't finished yet (that
+    // attempt pick up whatever ends up installed via get_next_backend()
+    // -- the still-stale backend if the winner hasn't finished yet (that
     // attempt simply fails fast and retries again, same as before this
     // dedup existed), or the fresh replacement if it has.
-    if (!_reconnecting.insert(s.get()).second) {
+    if (!_reconnecting.insert(be.get()).second) {
         co_return;
     }
 
     try {
-        // Open the replacement before touching _sessions: if this itself
+        // Open the replacement before touching _backends: if this itself
         // fails (e.g. the server is unreachable under load, exhausting
-        // its own retries below), leave the broken-but-present session
+        // its own retries below), leave the broken-but-present backend
         // in place rather than erasing it first and never getting a
-        // replacement -- an empty _sessions permanently breaks every
-        // future op on this Connection (get_next_session() throws), while
+        // replacement -- an empty _backends permanently breaks every
+        // future op on this Connection (get_next_backend() throws), while
         // leaving the stale entry just means the next op that picks it up
-        // retries invalidate_session() again instead of failing forever.
-        std::shared_ptr<Session> new_session = co_await retry_n_async(
-            "Connection::invalidate_session", _queue,
-            [&]() -> rawstd::Task<std::shared_ptr<Session>> {
-                std::shared_ptr<Session> session =
-                    co_await Session::create(_queue, s->location());
+        // retries invalidate_backend() again instead of failing forever.
+        std::shared_ptr<Backend> new_backend = co_await retry_n_async(
+            "Connection::invalidate_backend", _queue,
+            [&]() -> rawstd::Task<std::shared_ptr<Backend>> {
+                std::shared_ptr<Backend> backend =
+                    co_await Backend::create(_queue, be->location());
                 // _object is only set once open() has run (see its own
                 // doc comment) -- a Connection used purely for metadata
                 // (list/create/remove/spec/info) never calls open(), so
-                // _object stays null and every Session::set_object()
+                // _object stays null and every Backend::set_object()
                 // implementation would dereference it unconditionally
-                // (e.g. blk::Session::set_object() reading
+                // (e.g. blk::Backend::set_object() reading
                 // object->target()).
                 // Metadata ops don't need SET_OBJECT first, so just skip
                 // it here.
                 if (_object != nullptr) {
-                    // A session that fails set_object() never makes it
-                    // into _sessions, so nothing else will ever close()
+                    // A backend that fails set_object() never makes it
+                    // into _backends, so nothing else will ever close()
                     // it -- do that here before rethrowing, or it leaks
                     // its recv-multishot registration. co_await isn't
                     // allowed inside a catch block, so the failure is
@@ -400,16 +400,16 @@ Connection::invalidate_session(const std::shared_ptr<Session>& s) {
                     // outside the handler.
                     std::exception_ptr eptr;
                     try {
-                        co_await session->set_object(_object);
+                        co_await backend->set_object(_object);
                     } catch (...) {
                         eptr = std::current_exception();
                     }
                     if (eptr) {
                         try {
-                            co_await session->close();
+                            co_await backend->close();
                         } catch (const std::exception& e) {
                             rawstd_warning(
-                                "Connection::invalidate_session(): close "
+                                "Connection::invalidate_backend(): close "
                                 "after failed set_object(): %s\n",
                                 e.what()
                             );
@@ -417,68 +417,68 @@ Connection::invalidate_session(const std::shared_ptr<Session>& s) {
                         std::rethrow_exception(eptr);
                     }
                 }
-                co_return session;
+                co_return backend;
             }
         );
-        _reconnecting.erase(s.get());
+        _reconnecting.erase(be.get());
 
-        // Re-locate s's slot instead of trusting `it` across the co_await
-        // above: close() or another, unrelated invalidate_session() cycle
-        // for this same session (started after this one released it from
-        // _reconnecting) could have altered _sessions while this one was
+        // Re-locate be's slot instead of trusting `it` across the co_await
+        // above: close() or another, unrelated invalidate_backend() cycle
+        // for this same backend (started after this one released it from
+        // _reconnecting) could have altered _backends while this one was
         // suspended.
-        it = std::find(_sessions.begin(), _sessions.end(), s);
-        if (it != _sessions.end()) {
-            std::shared_ptr<Session> old_session = *it;
-            *it = new_session;
+        it = std::find(_backends.begin(), _backends.end(), be);
+        if (it != _backends.end()) {
+            std::shared_ptr<Backend> old_backend = *it;
+            *it = new_backend;
 
-            // The slot no longer references it, but old_session (the very
-            // session that got broken in the first place) is still
+            // The slot no longer references it, but old_backend (the very
+            // backend that got broken in the first place) is still
             // connected -- close() it gracefully rather than letting this
             // local go out of scope and destruct it, or it leaks its
             // recv-multishot registration.
             try {
-                co_await old_session->close();
+                co_await old_backend->close();
             } catch (const std::exception& e) {
                 rawstd_warning(
-                    "Connection::invalidate_session(): close on replaced "
-                    "session: %s\n",
+                    "Connection::invalidate_backend(): close on replaced "
+                    "backend: %s\n",
                     e.what()
                 );
             }
         } else {
-            // s's slot was already replaced by another invalidate_session()
-            // cycle for the same session (see the comment above this
-            // re-find) while this one was off reconnecting -- new_session
+            // be's slot was already replaced by another invalidate_backend()
+            // cycle for the same backend (see the comment above this
+            // re-find) while this one was off reconnecting -- new_backend
             // is fully connected but redundant; nothing will ever install
-            // it. Same rationale as old_session above: close() it
+            // it. Same rationale as old_backend above: close() it
             // explicitly here, or its recv-multishot registration leaks --
-            // ~Session()'s own cancel is fire-and-forget (only actually
+            // ~Backend()'s own cancel is fire-and-forget (only actually
             // processed on this Queue's next wait()/wait_timeout(), which
             // nothing guarantees will happen once the last reference to
-            // new_session drops).
+            // new_backend drops).
             try {
-                co_await new_session->close();
+                co_await new_backend->close();
             } catch (const std::exception& e) {
                 rawstd_warning(
-                    "Connection::invalidate_session(): close on redundant "
-                    "replacement session: %s\n",
+                    "Connection::invalidate_backend(): close on redundant "
+                    "replacement backend: %s\n",
                     e.what()
                 );
             }
         }
     } catch (...) {
-        _reconnecting.erase(s.get());
+        _reconnecting.erase(be.get());
         throw;
     }
 }
 
 const rawstd::URI* Connection::location() const noexcept {
-    if (_sessions.empty()) {
+    if (_backends.empty()) {
         return nullptr;
     }
 
-    return &_sessions.front()->location();
+    return &_backends.front()->location();
 }
 
 rawstd::Task<void> Connection::list(
@@ -491,7 +491,7 @@ rawstd::Task<void> Connection::list(
 
     try {
         co_await _with_retry(
-            func_name, trace_event, &Session::list, limit, targets, token
+            func_name, trace_event, &Backend::list, limit, targets, token
         );
         _finish(t_call);
     } catch (...) {
@@ -508,7 +508,7 @@ Connection::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
     rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
 
     try {
-        co_await _with_retry(func_name, trace_event, &Session::create, id, sp);
+        co_await _with_retry(func_name, trace_event, &Backend::create, id, sp);
         _finish(t_call);
     } catch (...) {
         _finish(t_call);
@@ -523,7 +523,7 @@ rawstd::Task<void> Connection::remove(const RawstdUUID& id) {
     rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
 
     try {
-        co_await _with_retry(func_name, trace_event, &Session::remove, id);
+        co_await _with_retry(func_name, trace_event, &Backend::remove, id);
         _finish(t_call);
     } catch (...) {
         _finish(t_call);
@@ -539,7 +539,7 @@ rawstd::Task<RawstorObjectSpec> Connection::spec(const RawstdUUID& id) {
 
     try {
         RawstorObjectSpec result =
-            co_await _with_retry(func_name, trace_event, &Session::spec, id);
+            co_await _with_retry(func_name, trace_event, &Backend::spec, id);
         _finish(t_call);
         co_return result;
     } catch (...) {
@@ -556,7 +556,7 @@ rawstd::Task<RawstorLocationInfo> Connection::info() {
 
     try {
         RawstorLocationInfo result =
-            co_await _with_retry(func_name, trace_event, &Session::info);
+            co_await _with_retry(func_name, trace_event, &Backend::info);
         _finish(t_call);
         co_return result;
     } catch (...) {
@@ -567,16 +567,16 @@ rawstd::Task<RawstorLocationInfo> Connection::info() {
 
 rawstd::Task<void> Connection::open(Object* object) {
     // Set before any of the set_object() calls below: on failure,
-    // invalidate_session() reconnects and set_object()s the replacement
+    // invalidate_backend() reconnects and set_object()s the replacement
     // itself, using this same member.
     _object = object;
 
-    // Every session's SET_OBJECT goes out up front, so they run
+    // Every backend's SET_OBJECT goes out up front, so they run
     // concurrently.
     std::vector<rawstd::Task<void>> set_objects;
-    set_objects.reserve(_sessions.size());
-    for (std::shared_ptr<Session>& s : _sessions) {
-        set_objects.push_back(s->set_object(object));
+    set_objects.reserve(_backends.size());
+    for (std::shared_ptr<Backend>& be : _backends) {
+        set_objects.push_back(be->set_object(object));
     }
 
     // co_await isn't allowed inside a catch block, so the failure is only
@@ -588,44 +588,44 @@ rawstd::Task<void> Connection::open(Object* object) {
     } catch (const std::system_error& e) {
         failed = true;
         rawstd_warning(
-            "Connection::open(): %s; reconnecting every session\n", e.what()
+            "Connection::open(): %s; reconnecting every backend\n", e.what()
         );
     }
 
     if (failed) {
-        // gather() only says *that* at least one session failed, not
-        // which -- so every session in the pool gets reconnected, not
-        // just the failed one(s). invalidate_session() has its own retry
+        // gather() only says *that* at least one backend failed, not
+        // which -- so every backend in the pool gets reconnected, not
+        // just the failed one(s). invalidate_backend() has its own retry
         // (rawstor_opts_io_attempts() attempts each); if any of those
         // still fails, that exception propagates straight out.
         std::vector<rawstd::Task<void>> invalidates;
-        invalidates.reserve(_sessions.size());
-        for (std::shared_ptr<Session>& s : _sessions) {
-            invalidates.push_back(invalidate_session(s));
+        invalidates.reserve(_backends.size());
+        for (std::shared_ptr<Backend>& be : _backends) {
+            invalidates.push_back(invalidate_backend(be));
         }
         co_await rawstd::gather(std::move(invalidates));
     }
 }
 
 rawstd::Task<void> Connection::close() {
-    // Every session's close goes out up front, so they run concurrently
+    // Every backend's close goes out up front, so they run concurrently
     // instead of one at a time.
     std::vector<rawstd::Task<void>> closes;
-    closes.reserve(_sessions.size());
-    for (std::shared_ptr<Session>& s : _sessions) {
-        closes.push_back(s->close());
+    closes.reserve(_backends.size());
+    for (std::shared_ptr<Backend>& be : _backends) {
+        closes.push_back(be->close());
     }
 
     try {
         co_await rawstd::gather(std::move(closes));
     } catch (const std::exception& e) {
         // Best-effort teardown -- gather() only surfaces the first
-        // session's failure, not which one, but that's fine here: this
+        // backend's failure, not which one, but that's fine here: this
         // is diagnostic only, nothing a caller could retry on.
         rawstd_error("Connection::close(): %s\n", e.what());
     }
 
-    _sessions.clear();
+    _backends.clear();
     _object = nullptr;
 }
 
@@ -639,7 +639,7 @@ rawstd::Task<size_t> Connection::pread(void* buf, size_t size, off_t offset) {
 
     try {
         size_t result = co_await _with_retry(
-            func_name, trace_event, &Session::pread, buf, size, offset
+            func_name, trace_event, &Backend::pread, buf, size, offset
         );
         _finish(t_call);
         co_return result;
@@ -660,7 +660,7 @@ Connection::preadv(iovec* iov, unsigned int niov, size_t size, off_t offset) {
 
     try {
         size_t result = co_await _with_retry(
-            func_name, trace_event, &Session::preadv, iov, niov, size, offset
+            func_name, trace_event, &Backend::preadv, iov, niov, size, offset
         );
         _finish(t_call);
         co_return result;
@@ -681,7 +681,7 @@ Connection::pwrite(const void* buf, size_t size, off_t offset, bool sync) {
 
     try {
         size_t result = co_await _with_retry(
-            func_name, trace_event, &Session::pwrite, buf, size, offset, sync
+            func_name, trace_event, &Backend::pwrite, buf, size, offset, sync
         );
         _finish(t_call);
         co_return result;
@@ -703,7 +703,7 @@ rawstd::Task<size_t> Connection::pwritev(
 
     try {
         size_t result = co_await _with_retry(
-            func_name, trace_event, &Session::pwritev, iov, niov, size, offset,
+            func_name, trace_event, &Backend::pwritev, iov, niov, size, offset,
             sync
         );
         _finish(t_call);
@@ -724,7 +724,7 @@ rawstd::Task<size_t> Connection::discard(size_t size, off_t offset) {
 
     try {
         size_t result = co_await _with_retry(
-            func_name, trace_event, &Session::discard, size, offset
+            func_name, trace_event, &Backend::discard, size, offset
         );
         _finish(t_call);
         co_return result;
@@ -745,7 +745,7 @@ Connection::write_zeroes(size_t size, off_t offset, bool unmap, bool sync) {
 
     try {
         size_t result = co_await _with_retry(
-            func_name, trace_event, &Session::write_zeroes, size, offset, unmap,
+            func_name, trace_event, &Backend::write_zeroes, size, offset, unmap,
             sync
         );
         _finish(t_call);
@@ -763,7 +763,7 @@ rawstd::Task<void> Connection::flush() {
     rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
 
     try {
-        co_await _with_retry(func_name, trace_event, &Session::flush);
+        co_await _with_retry(func_name, trace_event, &Backend::flush);
         _finish(t_call);
         co_return;
     } catch (...) {

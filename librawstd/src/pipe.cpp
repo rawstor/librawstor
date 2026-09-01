@@ -1,8 +1,10 @@
 #include "rawstd/pipe.hpp"
 
+#include <rawstd/gcc.h>
 #include <rawstd/gpp.hpp>
 #include <rawstd/socket.h>
 
+#include <fcntl.h>
 #include <unistd.h>
 
 #include <utility>
@@ -19,7 +21,28 @@ void close_if_owned(int fd) noexcept {
 
 namespace rawstd {
 
-Pipe::Pipe() : _read_fd(-1), _write_fd(-1) {
+Pipe::Pipe(Mode mode) : _read_fd(-1), _write_fd(-1) {
+#if defined(RAWSTD_ON_LINUX)
+    // pipe2() sets O_CLOEXEC (and O_NONBLOCK, if asked) atomically at
+    // creation -- unlike the fallback below, there's no window in which a
+    // concurrent fork() elsewhere in the process (e.g. the LVM/ZFS
+    // storage backends shelling out to lvcreate/zfs/etc. via
+    // src/subprocess.cpp) could still inherit either end.
+    int flags = O_CLOEXEC;
+    if (mode == Mode::NonBlocking) {
+        flags |= O_NONBLOCK;
+    }
+
+    int fds[2];
+    if (pipe2(fds, flags) == -1) {
+        RAWSTD_THROW_ERRNO();
+    }
+    _read_fd = fds[0];
+    _write_fd = fds[1];
+#else
+    // No macOS equivalent of pipe2() -- fcntl() after the fact is the
+    // only option, which leaves the same fork() race the comment above
+    // describes unavoidably open on this platform.
     int fds[2];
     if (pipe(fds) == -1) {
         RAWSTD_THROW_ERRNO();
@@ -28,9 +51,15 @@ Pipe::Pipe() : _read_fd(-1), _write_fd(-1) {
     _write_fd = fds[1];
 
     try {
-        int res = rawstd_socket_set_nonblock(_read_fd);
+        int res = rawstd_socket_set_cloexec(_read_fd);
         if (!res) {
-            res = rawstd_socket_set_nonblock(_write_fd);
+            res = rawstd_socket_set_cloexec(_write_fd);
+        }
+        if (!res && mode == Mode::NonBlocking) {
+            res = rawstd_socket_set_nonblock(_read_fd);
+            if (!res) {
+                res = rawstd_socket_set_nonblock(_write_fd);
+            }
         }
         if (res) {
             RAWSTD_THROW_SYSTEM_ERROR(-res);
@@ -40,6 +69,7 @@ Pipe::Pipe() : _read_fd(-1), _write_fd(-1) {
         close_if_owned(_write_fd);
         throw;
     }
+#endif
 }
 
 Pipe::Pipe(Pipe&& other) noexcept :

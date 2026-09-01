@@ -247,7 +247,7 @@ TEST_F(CancelTest, cancel_all) {
 // write stuck forever) live-reproduced under fio load against a real OST
 // reconnect on 2026-08-29 -- root-caused down to this fd here.
 //
-// rawstor::Session::close() (src/ost_session.cpp) works around it by
+// rawstor::Backend::close() (src/ost_backend.cpp) works around it by
 // explicitly `co_await`ing `_queue.cancel(f)` -- cancelling everything
 // else still outstanding on the fd -- before `_queue.close(f)`, in
 // addition to its pre-existing `_queue.cancel(_read_event)` for its own

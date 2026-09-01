@@ -584,6 +584,17 @@ void Queue::setup_fd(int fd) {
     int res;
     static unsigned int bufsize = 16 * 1024 * 1024;
 
+    // Belt-and-suspenders: accept()/accept_multishot() above already
+    // request SOCK_CLOEXEC atomically, but this also covers fds handed to
+    // setup_fd() from a plain socket() call (e.g. the ost backend's
+    // outgoing connection, src/ost_backend.cpp) -- without it, such a
+    // socket stays open across the fork()+exec() the LVM/ZFS backends use
+    // to shell out to lvcreate/zfs/etc. (src/subprocess.cpp).
+    res = rawstd_socket_set_cloexec(fd);
+    if (res) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+
     // No-op on Linux (send()/sendmsg() suppress SIGPIPE per-call via
     // MSG_NOSIGNAL instead); kept for parity with the poll backend, which
     // also runs on macOS, where this is the only way to suppress it.
@@ -685,7 +696,7 @@ Queue::accept(int fd, sockaddr* addr, socklen_t* addrlen) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
     }
     auto c = std::make_unique<AcceptCompletion>(std::move(trace_event));
-    io_uring_prep_accept(sqe, fd, addr, addrlen, 0);
+    io_uring_prep_accept(sqe, fd, addr, addrlen, SOCK_CLOEXEC);
     io_uring_sqe_set_data(sqe, c.get());
 
     return rawio::Awaitable<int>(this, static_cast<rawio::Event*>(c.release()));
@@ -697,7 +708,7 @@ rawio::AcceptStream Queue::accept_multishot(int fd) {
     if (sqe == nullptr) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
     }
-    io_uring_prep_multishot_accept(sqe, fd, nullptr, nullptr, 0);
+    io_uring_prep_multishot_accept(sqe, fd, nullptr, nullptr, SOCK_CLOEXEC);
 
     auto backend =
         std::make_shared<AcceptMultishotBackend>(*this, _dispatch_generation);

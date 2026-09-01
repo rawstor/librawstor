@@ -723,7 +723,7 @@ int set_config(
 // never from inside dispatch()'s own processing of `queue` -- spinning
 // `queue` here to wait for the callback is therefore safe, unlike doing
 // so from a context that's itself already being dispatched by the same
-// queue (see ost::Session's own async close()/open() handling for that
+// queue (see ost::Backend's own async close()/open() handling for that
 // hazard).
 // Shared by open_object()/close_object()/spec_object() below:
 // rawstor_target_open()'s opened object is written directly into the
