@@ -1,5 +1,5 @@
-#ifndef RAWSTOR_OSTBACKEND_SERVER_HPP
-#define RAWSTOR_OSTBACKEND_SERVER_HPP
+#ifndef RAWSTOR_OSTSERVER_SERVER_HPP
+#define RAWSTOR_OSTSERVER_SERVER_HPP
 
 #include <rawstd/coro.hpp>
 #include <rawstd/uri.hpp>
@@ -12,7 +12,7 @@
 #include <vector>
 
 namespace rawstor {
-namespace ostbackend {
+namespace ostserver {
 
 class Client;
 
@@ -95,7 +95,7 @@ public:
     void loop();
 };
 
-} // namespace ostbackend
+} // namespace ostserver
 } // namespace rawstor
 
-#endif // RAWSTOR_OSTBACKEND_SERVER_HPP
+#endif // RAWSTOR_OSTSERVER_SERVER_HPP

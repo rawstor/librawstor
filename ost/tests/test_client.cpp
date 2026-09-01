@@ -53,8 +53,8 @@ bool pump_until(
 // either). The other half of the
 // pair, wired directly into Client::create() below, stands in for what
 // Server::_add_client() would otherwise do with a real accept()ed fd.
-std::pair<std::shared_ptr<rawstor::ostbackend::Client>, int>
-connect_session(rawstor::ostbackend::Server& server, RawIOQueue* queue) {
+std::pair<std::shared_ptr<rawstor::ostserver::Client>, int>
+connect_client(rawstor::ostserver::Server& server, RawIOQueue* queue) {
     int fds[2];
     if (::socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == -1) {
         RAWSTD_THROW_ERRNO();
@@ -79,12 +79,12 @@ connect_session(rawstor::ostbackend::Server& server, RawIOQueue* queue) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 
-    std::shared_ptr<rawstor::ostbackend::Client> session =
-        rawstor::ostbackend::Client::create(queue, server, fds[0]).get();
-    return {session, fds[1]};
+    std::shared_ptr<rawstor::ostserver::Client> client =
+        rawstor::ostserver::Client::create(queue, server, fds[0]).get();
+    return {client, fds[1]};
 }
 
-// RAII wrapper around the Client connect_session() returns: drops it and
+// RAII wrapper around the Client connect_client() returns: drops it and
 // drains `queue` until idle before letting the destructor run, rather than
 // just letting the shared_ptr go out of scope on its own. Client::_arm_recv()
 // hands its multishot recv registration a heap-allocated weak_ptr<Client>
@@ -94,22 +94,22 @@ connect_session(rawstor::ostbackend::Server& server, RawIOQueue* queue) {
 // is exactly what LeakSanitizer reports as a leak. Runs via RAII, not
 // "cleanup code at the end of the test", so it still happens even if an
 // ASSERT_* returns from the test body early.
-class SessionCleanup final {
+class ClientCleanup final {
 private:
-    std::shared_ptr<rawstor::ostbackend::Client> _session;
+    std::shared_ptr<rawstor::ostserver::Client> _client;
     RawIOQueue* _queue;
 
 public:
-    SessionCleanup(
-        std::shared_ptr<rawstor::ostbackend::Client> session, RawIOQueue* queue
+    ClientCleanup(
+        std::shared_ptr<rawstor::ostserver::Client> client, RawIOQueue* queue
     ) :
-        _session(std::move(session)),
+        _client(std::move(client)),
         _queue(queue) {}
-    SessionCleanup(const SessionCleanup&) = delete;
-    SessionCleanup(SessionCleanup&&) = delete;
+    ClientCleanup(const ClientCleanup&) = delete;
+    ClientCleanup(ClientCleanup&&) = delete;
 
-    ~SessionCleanup() {
-        _session.reset();
+    ~ClientCleanup() {
+        _client.reset();
         unsigned int idle = 0;
         for (unsigned int elapsed_ms = 0; elapsed_ms < 2000 && idle < 5;
              elapsed_ms += 20) {
@@ -121,25 +121,25 @@ public:
         }
     }
 
-    SessionCleanup& operator=(const SessionCleanup&) = delete;
-    SessionCleanup& operator=(SessionCleanup&&) = delete;
+    ClientCleanup& operator=(const ClientCleanup&) = delete;
+    ClientCleanup& operator=(ClientCleanup&&) = delete;
 
-    rawstor::ostbackend::Client* operator->() const noexcept {
-        return _session.get();
+    rawstor::ostserver::Client* operator->() const noexcept {
+        return _client.get();
     }
 };
 
 } // namespace
 
-TEST(OstSessionTest, simple_success) {
-    rawstor::ostbackend::tests::TmpDir dir;
-    int listen_fd = rawstor::ostbackend::Server::bind_listen("127.0.0.1", 0);
-    rawstor::ostbackend::Server server(256, listen_fd, dir.uri().c_str());
+TEST(OstClientTest, simple_success) {
+    rawstor::ostserver::tests::TmpDir dir;
+    int listen_fd = rawstor::ostserver::Server::bind_listen("127.0.0.1", 0);
+    rawstor::ostserver::Server server(256, listen_fd, dir.uri().c_str());
 
-    rawstor::ostbackend::tests::Queue queue;
-    auto [raw_session, client_fd] = connect_session(server, queue);
-    SessionCleanup session(std::move(raw_session), queue);
-    rawstor::ostbackend::tests::Client client(client_fd);
+    rawstor::ostserver::tests::Queue queue;
+    auto [raw_client, client_fd] = connect_client(server, queue);
+    ClientCleanup server_client(std::move(raw_client), queue);
+    rawstor::ostserver::tests::Client client(client_fd);
 
     RawstdUUID id;
     ASSERT_EQ(rawstd_uuid7_init(&id), 0);
@@ -153,7 +153,7 @@ TEST(OstSessionTest, simple_success) {
     EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_ALLOCATE);
     EXPECT_EQ(response.body.res, 0);
 
-    // SET_OBJECT: opens it for this session's subsequent READ/WRITE.
+    // SET_OBJECT: opens it for this client's subsequent READ/WRITE.
     client.send_set_object(id);
     ASSERT_TRUE(pump_until(queue, [&] {
         return client.bytes_available() >= sizeof(RawstorOSTFrameResponse);
@@ -187,15 +187,15 @@ TEST(OstSessionTest, simple_success) {
     EXPECT_EQ(read_back, payload);
 }
 
-TEST(OstSessionTest, discard_and_write_zeroes) {
-    rawstor::ostbackend::tests::TmpDir dir;
-    int listen_fd = rawstor::ostbackend::Server::bind_listen("127.0.0.1", 0);
-    rawstor::ostbackend::Server server(256, listen_fd, dir.uri().c_str());
+TEST(OstClientTest, discard_and_write_zeroes) {
+    rawstor::ostserver::tests::TmpDir dir;
+    int listen_fd = rawstor::ostserver::Server::bind_listen("127.0.0.1", 0);
+    rawstor::ostserver::Server server(256, listen_fd, dir.uri().c_str());
 
-    rawstor::ostbackend::tests::Queue queue;
-    auto [raw_session, client_fd] = connect_session(server, queue);
-    SessionCleanup session(std::move(raw_session), queue);
-    rawstor::ostbackend::tests::Client client(client_fd);
+    rawstor::ostserver::tests::Queue queue;
+    auto [raw_client, client_fd] = connect_client(server, queue);
+    ClientCleanup server_client(std::move(raw_client), queue);
+    rawstor::ostserver::tests::Client client(client_fd);
 
     RawstdUUID id;
     ASSERT_EQ(rawstd_uuid7_init(&id), 0);
@@ -209,7 +209,7 @@ TEST(OstSessionTest, discard_and_write_zeroes) {
     EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_ALLOCATE);
     EXPECT_EQ(response.body.res, 0);
 
-    // SET_OBJECT: opens it for this session's subsequent WRITE/DISCARD/
+    // SET_OBJECT: opens it for this client's subsequent WRITE/DISCARD/
     // WRITE_ZEROES/READ.
     client.send_set_object(id);
     ASSERT_TRUE(pump_until(queue, [&] {
@@ -271,15 +271,15 @@ TEST(OstSessionTest, discard_and_write_zeroes) {
     EXPECT_EQ(response.body.res, static_cast<int32_t>(payload.size()));
 }
 
-TEST(OstSessionTest, set_object_twice_does_not_crash) {
-    rawstor::ostbackend::tests::TmpDir dir;
-    int listen_fd = rawstor::ostbackend::Server::bind_listen("127.0.0.1", 0);
-    rawstor::ostbackend::Server server(256, listen_fd, dir.uri().c_str());
+TEST(OstClientTest, set_object_twice_does_not_crash) {
+    rawstor::ostserver::tests::TmpDir dir;
+    int listen_fd = rawstor::ostserver::Server::bind_listen("127.0.0.1", 0);
+    rawstor::ostserver::Server server(256, listen_fd, dir.uri().c_str());
 
-    rawstor::ostbackend::tests::Queue queue;
-    auto [raw_session, client_fd] = connect_session(server, queue);
-    SessionCleanup session(std::move(raw_session), queue);
-    rawstor::ostbackend::tests::Client client(client_fd);
+    rawstor::ostserver::tests::Queue queue;
+    auto [raw_client, client_fd] = connect_client(server, queue);
+    ClientCleanup server_client(std::move(raw_client), queue);
+    rawstor::ostserver::tests::Client client(client_fd);
 
     RawstdUUID id;
     ASSERT_EQ(rawstd_uuid7_init(&id), 0);
@@ -293,7 +293,7 @@ TEST(OstSessionTest, set_object_twice_does_not_crash) {
     EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_ALLOCATE);
     EXPECT_EQ(response.body.res, 0);
 
-    // First SET_OBJECT: the session's _object starts null, so this only
+    // First SET_OBJECT: the client's _object starts null, so this only
     // exercises rawstor_target_open() (same as simple_success above).
     client.send_set_object(id);
     ASSERT_TRUE(pump_until(queue, [&] {
@@ -303,7 +303,7 @@ TEST(OstSessionTest, set_object_twice_does_not_crash) {
     EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_SET_OBJECT);
     EXPECT_EQ(response.body.res, 0);
 
-    // Second SET_OBJECT on the same session: _object is already set, so
+    // Second SET_OBJECT on the same client: _object is already set, so
     // the server's Client::_set_object() first closes it (via
     // Client::_close_current_object(), asynchronously --
     // rawstor_object_close2() queues the close and returns immediately,
@@ -327,7 +327,7 @@ TEST(OstSessionTest, set_object_twice_does_not_crash) {
 
 // Regression test for the heap-use-after-free ASan caught in CI (built off
 // commit d023d65, ost/src/session.cpp:154, fixed by 1c260e1): a peer
-// disconnect terminates the session's already-armed multishot recv with
+// disconnect terminates the client's already-armed multishot recv with
 // EPIPE (BufferRing::operator(), librawio/src/uring_buffer.cpp synthesizes
 // it for a 0-byte/EOF recv) -- same as any other terminal error, not just
 // ECANCELED. If that terminal completion is already sitting in the
@@ -336,44 +336,46 @@ TEST(OstSessionTest, set_object_twice_does_not_crash) {
 // completion still fires later, into what used to be a raw `this` pointer.
 //
 // Whether the kernel has actually posted that completion by the time
-// session.reset() below runs is real scheduling timing, not something this
-// test controls directly -- the short sleep after disconnect just biases
-// the odds toward "already posted", and looping raises the odds of hitting
-// that window at least once per run; neither guarantees it (600 ASan
-// repeats of the pre-fix suite never reproduced this locally either, per
-// 1c260e1's commit message). This test's teeth are under --enable-asan (as
-// CI's asan job builds), same as how the original bug was only ever caught
-// there: on the pre-fix code, enough iterations reliably abort the process;
-// on the fixed code, weak_ptr::lock() just no-ops and the loop completes.
+// server_client.reset() below runs is real scheduling timing, not something
+// this test controls directly -- the short sleep after disconnect just
+// biases the odds toward "already posted", and looping raises the odds of
+// hitting that window at least once per run; neither guarantees it (600
+// ASan repeats of the pre-fix suite never reproduced this locally either,
+// per 1c260e1's commit message). This test's teeth are under --enable-asan
+// (as CI's asan job builds), same as how the original bug was only ever
+// caught there: on the pre-fix code, enough iterations reliably abort the
+// process; on the fixed code, weak_ptr::lock() just no-ops and the loop
+// completes.
 //
-// Each iteration drains right after session.reset() -- not just for
+// Each iteration drains right after server_client.reset() -- not just for
 // timing, but because skipping it entirely (an earlier version of this
 // test did, to give draining a single generous pass at the end instead)
 // starved the poll backend's completion queue (librawio/src/poll_queue.hpp's
 // _cqes, a fixed-capacity rawstd::RingBuf sized to the Queue's `depth`) of
 // ever being serviced across all 100 iterations. Once _cqes fills up,
 // RingBuf::push() throws ENOBUFS from inside rawio_cancel() itself, so the
-// cancel never completes and that session's registration -- and the
+// cancel never completes and that client's registration -- and the
 // weak_ptr<Client> its callback data owns (_arm_recv()) -- is orphaned
 // for good; no amount of draining afterwards recovers from a cancel that
 // already failed. CI's asan job (--without-liburing) caught exactly this,
 // twice, as a LeakSanitizer failure even after the drain-more-at-the-end
 // attempt.
-TEST(OstSessionTest, disconnect_races_session_destruction) {
+TEST(OstClientTest, disconnect_races_client_destruction) {
     constexpr unsigned int iterations = 100;
 
-    rawstor::ostbackend::tests::TmpDir dir;
-    int listen_fd = rawstor::ostbackend::Server::bind_listen("127.0.0.1", 0);
-    rawstor::ostbackend::Server server(256, listen_fd, dir.uri().c_str());
-    rawstor::ostbackend::tests::Queue queue;
+    rawstor::ostserver::tests::TmpDir dir;
+    int listen_fd = rawstor::ostserver::Server::bind_listen("127.0.0.1", 0);
+    rawstor::ostserver::Server server(256, listen_fd, dir.uri().c_str());
+    rawstor::ostserver::tests::Queue queue;
 
     for (unsigned int i = 0; i < iterations; ++i) {
-        auto [session, client_fd] = connect_session(server, queue);
+        auto [server_client, client_fd] = connect_client(server, queue);
 
-        // Disconnect: closing the client's end terminates the session's
-        // already-armed recv with EPIPE once the kernel gets to it.
+        // Disconnect: closing the client's end terminates the server-side
+        // client's already-armed recv with EPIPE once the kernel gets to
+        // it.
         {
-            rawstor::ostbackend::tests::Client client(client_fd);
+            rawstor::ostserver::tests::Client client(client_fd);
         }
 
         // Give the kernel a chance to actually post that terminal
@@ -385,11 +387,11 @@ TEST(OstSessionTest, disconnect_races_session_destruction) {
         // Drop the only owning shared_ptr: ~Client() runs here,
         // synchronously, calling rawio_cancel() on a registration that
         // may have already self-terminated (-ENOENT, "too late").
-        session.reset();
+        server_client.reset();
 
         // Service whatever's ready so far. If the terminal completion was
-        // already queued before session.reset() ran above, this is where
-        // the old code dereferenced freed memory; the fixed code's
+        // already queued before server_client.reset() ran above, this is
+        // where the old code dereferenced freed memory; the fixed code's
         // weak_ptr::lock() just no-ops. Just as importantly, this keeps
         // the poll backend's completion queue from filling up over 100
         // iterations -- see the comment above the test for what happens

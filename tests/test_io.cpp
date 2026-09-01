@@ -448,8 +448,8 @@ TEST(OstIOTest, set_object_fail) {
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
-    // Connection::open()'s own first attempt (against the session
-    // create() already connected) plus invalidate_session()'s own
+    // Connection::open()'s own first attempt (against the backend
+    // create() already connected) plus invalidate_backend()'s own
     // internal retry (rawstor_opts_io_attempts() attempts) -- one more
     // than io_attempts total.
     for (unsigned int i = 0; i < rawstor_opts_io_attempts() + 1; ++i) {
@@ -739,15 +739,15 @@ TEST(OstIOTest, write_disconnect_concurrent) {
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
-    // The object-open session, and each of its retries below, disconnects
+    // The object-open backend, and each of its retries below, disconnects
     // right after SET_OBJECT succeeds -- before either concurrent write
     // further down is even attempted on it. Both rawstor_object_pwrite2()
     // calls below are issued back to back with no rawio_wait_timeout() in
-    // between, so Session::_add_op() runs for both before the client's
+    // between, so Backend::_add_op() runs for both before the client's
     // event loop has had any chance to deliver either op's own request
     // send completion. This is the window a stranded op used to fall
-    // into: registered in Session::_ops, but not yet "in flight" by
-    // SessionOp::in_flight()'s old (now removed) definition.
+    // into: registered in Backend::_ops, but not yet "in flight" by
+    // BackendOp::in_flight()'s old (now removed) definition.
     for (unsigned int i = 0; i < rawstor_opts_io_attempts(); ++i) {
         rawstor::tests::Session s(server);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
@@ -833,10 +833,10 @@ TEST(OstIOTest, write_disconnect_concurrent) {
 // Every write left dirty (rawstor_object_pwrite2() is called with
 // sync=false below) makes Object::close() issue one real FLUSH over this
 // same connection before closing it -- answered here once it arrives.
-// Object::close() itself never sends a wire-level RELEASE (Session::close()
+// Object::close() itself never sends a wire-level RELEASE (Backend::close()
 // is a local socket close, not a protocol op); that only happens
 // afterwards, when ~Object() calls rawstor_target_remove(), which opens
-// its own brand new single-session Connection to send it -- so once the
+// its own brand new single-backend Connection to send it -- so once the
 // object's connection is closed from this side too (mirroring the real
 // client, which does the same right after flush() returns), this scripts
 // a fresh accept() and answers that RELEASE on the new connection.
@@ -925,20 +925,20 @@ void auto_respond_writes_then_flush_and_release(
     );
 }
 
-// Regression: two writes share one session. The first gets a well-formed
+// Regression: two writes share one backend. The first gets a well-formed
 // response carrying an unexpected cmd (a plain std::system_error, not a
 // dropped connection: nothing about the wire ever looks broken, no
 // FIN/RST at any point), which Connection::_with_retry() reacts to by
-// calling invalidate_session(): swap in a fresh session, then
-// Session::close() the old one. The second write is already sitting in
-// that same old session's _ops, purely waiting on a response of its own,
+// calling invalidate_backend(): swap in a fresh backend, then
+// Backend::close() the old one. The second write is already sitting in
+// that same old backend's _ops, purely waiting on a response of its own,
 // when this happens -- _recv_pump has nothing of its own to ever notice
 // here (the connection was never actually broken), so it can't be what
-// rescues it. Session::close() must fail whatever is still in _ops
+// rescues it. Backend::close() must fail whatever is still in _ops
 // itself, or the second write has nothing left watching it and hangs
 // forever.
 //
-// This is deliberately built around a same-session *framing* error
+// This is deliberately built around a same-backend *framing* error
 // rather than a dropped connection: on a real loopback socket, closing
 // the connection also sends the second write's own recv_pump a FIN it
 // can (and, empirically, reliably does) notice on its own first, via the
@@ -948,7 +948,7 @@ void auto_respond_writes_then_flush_and_release(
 // with a well-formed-but-wrong-cmd response instead means nothing on the
 // wire ever looks wrong at the socket level, so there's nothing for
 // recv_pump to independently detect; the only thing that can ever tear
-// this session down is the explicit invalidate_session() -> Session::
+// this backend down is the explicit invalidate_backend() -> Backend::
 // close() path this test exists to cover.
 TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
     Queue queue(16);
@@ -964,8 +964,8 @@ TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
     // Scripted with the raw Server API instead of Session: Session's
     // destructor unconditionally queues an actual close() of the
     // connection, which would send a FIN -- exactly what this test needs
-    // to avoid (see the TEST's own doc comment above). This session is
-    // instead left to the client's own invalidate_session() to tear
+    // to avoid (see the TEST's own doc comment above). This backend is
+    // instead left to the client's own invalidate_backend() to tear
     // down; the server side only ever forget()s its bookkeeping of it
     // (see forget()'s own doc comment in server.hpp).
     server.accept("SESSION <<<");
@@ -990,7 +990,7 @@ TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
         [&server](const void* buf) {
             uint16_t cid = static_cast<const RawstorOSTFrameIO*>(buf)->head.cid;
             // A well-formed response with the wrong cmd -- validate_cmd()
-            // rejects it as EPROTO, a same-session *framing* error rather
+            // rejects it as EPROTO, a same-backend *framing* error rather
             // than a dropped connection (see this TEST's own doc comment
             // for why that distinction matters here).
             RawstorOSTFrameResponse wrong_cmd_response = {
@@ -1066,10 +1066,10 @@ TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
     std::string pong = "pong";
 
     // Issued back to back, with no rawio_wait_timeout() in between:
-    // Session::_add_op() registers both into _ops before either's own
+    // Backend::_add_op() registers both into _ops before either's own
     // send is even submitted (io_uring only actually submits inside
     // Queue::wait()), so the second write is guaranteed to already be
-    // sitting in _ops, on the one session both share, well before the
+    // sitting in _ops, on the one backend both share, well before the
     // first write's own round trip -- send, the server's error response,
     // Connection::_with_retry() reacting to it -- can possibly run.
     int res = rawstor_object_pwrite2(
@@ -1102,12 +1102,12 @@ TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
     EXPECT_EQ(err2, 0);
 }
 
-// Regression: many writes share one session, all lose it at once (a
-// genuine close, matching a real dropped connection). Session::
+// Regression: many writes share one backend, all lose it at once (a
+// genuine close, matching a real dropped connection). Backend::
 // _fail_in_flight() force-fails every one of them synchronously, in a
 // single loop, so their Connection::_with_retry() coroutines all resume
-// in a tight burst -- each one's own invalidate_session(s) call races
-// the very same `s`: exactly one wins Connection::_reconnecting's dedup
+// in a tight burst -- each one's own invalidate_backend(be) call races
+// the very same `be`: exactly one wins Connection::_reconnecting's dedup
 // and actually reconnects, the rest return immediately and fall straight
 // into their own backoff wait (Queue::timeout()), submitted back to back
 // against the same io_uring ring before any of them has had a chance to
@@ -1119,9 +1119,9 @@ TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
 // Genuinely requires RAWSTOR_OPTS_IO_RETRY_BACKOFF_BASE to be nonzero,
 // not just to "mean more" -- at the harness default (0, see tests/
 // main.cpp's own doc comment for why) every deduped op's retry is
-// immediate, so most of them race back to get_next_session() before the
+// immediate, so most of them race back to get_next_backend() before the
 // winning reconnect above has actually installed the replacement,
-// collide with the still-stale session again, and burn through
+// collide with the still-stale backend again, and burn through
 // io_attempts on a single scripted reconnect this test never meant to
 // need more than once. Skipped rather than run meaninglessly
 // (or flakily) at 0 -- run with e.g.
@@ -1218,7 +1218,7 @@ TEST(OstIOTest, write_many_concurrent_wire_errors_with_backoff) {
     // Issued back to back, with no rawio_wait_timeout() in between --
     // same reasoning as write_orphaned_by_sibling_error_response above,
     // just kWrites-wide instead of two: every one of them is sitting in
-    // _ops, on the one session they all share, before any of their sends
+    // _ops, on the one backend they all share, before any of their sends
     // -- let alone the connection dying -- has had a chance to run.
     for (int i = 0; i < kWrites; ++i) {
         auto cb = std::make_unique<std::function<void(size_t, int)>>(

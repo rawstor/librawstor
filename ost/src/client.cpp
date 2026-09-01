@@ -329,7 +329,7 @@ co_sendmsg(RawIOQueue* queue, int fd, const msghdr* msg, unsigned int flags) {
 // size of the next buffer): wraps CallbackStream<vector<unsigned char>>
 // (an owned copy of each delivery, since the ring buffer's iovecs are
 // only valid for the duration of the C callback -- unlike
-// ost/src/ost_session.cpp's rawio::RecvStream, which extends the
+// ost/src/ost_backend.cpp's rawio::RecvStream, which extends the
 // buffer's own lifetime via a shared_ptr internally, this can't offer
 // zero-copy over the C ABI) with the extra bookkeeping recv_multishot's
 // callback shape needs that accept_multishot's plain int result doesn't:
@@ -439,7 +439,7 @@ rawstd::Task<std::vector<unsigned char>> recv_frame_part(
 } // namespace
 
 namespace rawstor {
-namespace ostbackend {
+namespace ostserver {
 
 rawstd::Task<std::shared_ptr<Client>>
 Client::create(RawIOQueue* queue, Server& server, int fd) {
@@ -800,8 +800,8 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
                 }
 
                 // Always keeps reading -- rawstor_object_pwrite2()'s
-                // underlying blk::Session applies write-throttling
-                // itself (see blk_session.hpp's _throttle_acquire()), so
+                // underlying blk::Backend applies write-throttling
+                // itself (see blk_backend.hpp's _throttle_acquire()), so
                 // nothing here needs to pause the recv while a write
                 // waits for a dispatch slot: _write() below only
                 // dispatches, never awaits.
@@ -1349,7 +1349,7 @@ rawstd::DetachedTask Client::_write_task(
         // backend write failures: a hash mismatch means the payload this
         // client just sent doesn't match what it declared, which the
         // client-side reads as "the wire may be desynced" (see
-        // validate_response() in ost_session.cpp) and reconnects on,
+        // validate_response() in ost_backend.cpp) and reconnects on,
         // instead of retrying the same, possibly-desynced session.
         bool send_failed = false;
         try {
@@ -1715,5 +1715,5 @@ rawstd::Task<void> Client::_send_response(
     }
 }
 
-} // namespace ostbackend
+} // namespace ostserver
 } // namespace rawstor
