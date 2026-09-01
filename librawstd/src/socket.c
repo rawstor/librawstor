@@ -47,6 +47,20 @@ int rawstd_socket_set_nonblock(int fd) {
     return 0;
 }
 
+int rawstd_socket_set_cloexec(int fd) {
+    int error;
+
+    if (fcntl(fd, F_SETFD, FD_CLOEXEC) == -1) {
+        error = errno;
+        errno = 0;
+        return -error;
+    }
+
+    rawstd_debug("fd %d: FD_CLOEXEC\n", fd);
+
+    return 0;
+}
+
 int rawstd_socket_set_nodelay(int fd) {
     int error;
 

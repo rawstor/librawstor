@@ -883,6 +883,20 @@ rawstd::DetachedTask dispatch_loop(
                 fds.fd_num = fd_size / sizeof(int);
                 assert(fds.fd_num <= VHOST_MEMORY_BASELINE_NREGIONS);
                 memcpy(fds.fds, CMSG_DATA(cmsg), fd_size);
+                // A fd received via SCM_RIGHTS has no CLOEXEC of its own
+                // (recvmsg() has no portable equivalent of Linux's
+                // MSG_CMSG_CLOEXEC that also works on macOS) -- these
+                // become kick_fd/call_fd/err_fd/backend_fd, all held for
+                // the connection's lifetime, so without this a fork()
+                // concurrent with this dispatch loop (e.g. the LVM/ZFS
+                // storage backends shelling out to lvcreate/zfs/etc. via
+                // src/subprocess.cpp) would leak them into that child.
+                for (unsigned int i = 0; i < fds.fd_num; ++i) {
+                    int res = rawstd_socket_set_cloexec(fds.fds[i]);
+                    if (res < 0) {
+                        RAWSTD_THROW_SYSTEM_ERROR(-res);
+                    }
+                }
                 break;
             }
         }
@@ -984,7 +998,7 @@ size_t find_mem_region_pos(
 // i.e. never from inside dispatch_loop()'s own dispatch of `queue` --
 // spinning `queue` here to wait for the callback is therefore safe,
 // unlike doing so from a context that's itself already being dispatched
-// by the same queue (see ost::Session's own async close()/open()
+// by the same queue (see ost::Backend's own async close()/open()
 // handling for that hazard, and virtqueue_worker.cpp's open_object()/
 // close_object() for the equivalent shims each VirtQueue's own thread
 // uses around its own RawstorObject). rawstor_target_spec() shares its

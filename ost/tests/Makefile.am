@@ -17,7 +17,7 @@ test_all_SOURCES = client.cpp \
                    main.cpp \
                    queue.cpp \
                    queue.hpp \
-                   test_session.cpp \
+                   test_client.cpp \
                    tmp_dir.cpp \
                    tmp_dir.hpp
 test_all_LDADD = $(top_builddir)/ost/src/libost.la \

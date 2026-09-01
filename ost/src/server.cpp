@@ -72,7 +72,7 @@ int wake_read_trampoline(ssize_t result, void* data) {
 } // namespace
 
 namespace rawstor {
-namespace ostbackend {
+namespace ostserver {
 
 int Server::bind_listen(const std::string& addr, unsigned int port) {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -81,7 +81,15 @@ int Server::bind_listen(const std::string& addr, unsigned int port) {
     }
 
     try {
-        int res = rawstd_socket_set_reuse(fd);
+        // So this listen socket doesn't leak into a child forked by the
+        // LVM/ZFS storage backends to shell out to lvcreate/zfs/etc.
+        // (src/subprocess.cpp).
+        int res = rawstd_socket_set_cloexec(fd);
+        if (res < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
+        }
+
+        res = rawstd_socket_set_reuse(fd);
         if (res < 0) {
             RAWSTD_THROW_SYSTEM_ERROR(-res);
         }
@@ -259,5 +267,5 @@ void Server::loop() {
     }
 }
 
-} // namespace ostbackend
+} // namespace ostserver
 } // namespace rawstor

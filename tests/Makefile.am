@@ -21,7 +21,7 @@ test_all_SOURCES = main.cpp \
                    session.hpp \
                    tmp_dir.cpp \
                    tmp_dir.hpp \
-                   test_blk_session.cpp \
+                   test_blk_backend.cpp \
                    test_io.cpp \
                    test_legacy_api.cpp \
                    test_lifecycle.cpp \

@@ -1,11 +1,11 @@
-#ifndef RAWSTOR_OSTBACKEND_TESTS_TMP_DIR_HPP
-#define RAWSTOR_OSTBACKEND_TESTS_TMP_DIR_HPP
+#ifndef RAWSTOR_OSTSERVER_TESTS_TMP_DIR_HPP
+#define RAWSTOR_OSTSERVER_TESTS_TMP_DIR_HPP
 
 #include <filesystem>
 #include <string>
 
 namespace rawstor {
-namespace ostbackend {
+namespace ostserver {
 namespace tests {
 
 // A fresh, uniquely-named temporary directory, removed (recursively) when
@@ -32,7 +32,7 @@ public:
 };
 
 } // namespace tests
-} // namespace ostbackend
+} // namespace ostserver
 } // namespace rawstor
 
-#endif // RAWSTOR_OSTBACKEND_TESTS_TMP_DIR_HPP
+#endif // RAWSTOR_OSTSERVER_TESTS_TMP_DIR_HPP

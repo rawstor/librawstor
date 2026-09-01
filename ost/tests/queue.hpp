@@ -1,10 +1,10 @@
-#ifndef RAWSTOR_OSTBACKEND_TESTS_QUEUE_HPP
-#define RAWSTOR_OSTBACKEND_TESTS_QUEUE_HPP
+#ifndef RAWSTOR_OSTSERVER_TESTS_QUEUE_HPP
+#define RAWSTOR_OSTSERVER_TESTS_QUEUE_HPP
 
 #include <rawstor/rawio.h>
 
 namespace rawstor {
-namespace ostbackend {
+namespace ostserver {
 namespace tests {
 
 // Owns a rawio queue for the lifetime of a test, and drives it.
@@ -25,7 +25,7 @@ public:
 };
 
 } // namespace tests
-} // namespace ostbackend
+} // namespace ostserver
 } // namespace rawstor
 
-#endif // RAWSTOR_OSTBACKEND_TESTS_QUEUE_HPP
+#endif // RAWSTOR_OSTSERVER_TESTS_QUEUE_HPP
