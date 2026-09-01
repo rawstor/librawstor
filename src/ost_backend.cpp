@@ -1,4 +1,4 @@
-#include "ost_session.hpp"
+#include "ost_backend.hpp"
 
 #include "object.hpp"
 #include "opts.h"
@@ -45,7 +45,7 @@
 
 namespace {
 
-class SessionOp;
+class BackendOp;
 
 int validate_result(size_t size, size_t result) noexcept {
     if (result == size) {
@@ -133,7 +133,7 @@ uint64_t hash(const iovec* iov, unsigned int niov) {
 namespace rawstor {
 namespace ost {
 
-class SessionOp {
+class BackendOp {
 private:
     uint16_t _cid;
     bool _dispatched;
@@ -168,24 +168,24 @@ protected:
     off_t _op_offset;
 
     rawstd::TraceEvent _trace_event;
-    // A strong reference, not just a back-pointer: a SessionOp can outlive
-    // Session::_ops's own copy of it (e.g. a still-pending send/sendmsg
-    // completion keeps a SessionOp alive independently, via its own
-    // captured shared_ptr, even after the owning Session is gone from
-    // Connection::_sessions and its _ops member has been destroyed). This
-    // keeps the Session itself alive for as long as any SessionOp -- in
+    // A strong reference, not just a back-pointer: a BackendOp can outlive
+    // Backend::_ops's own copy of it (e.g. a still-pending send/sendmsg
+    // completion keeps a BackendOp alive independently, via its own
+    // captured shared_ptr, even after the owning Backend is gone from
+    // Connection::_backends and its _ops member has been destroyed). This
+    // keeps the Backend itself alive for as long as any BackendOp -- in
     // _ops or floating in a pending completion closure -- still needs it.
-    std::shared_ptr<rawstor::ost::Session> _session;
+    std::shared_ptr<rawstor::ost::Backend> _backend;
     RawstorOSTFrameResponse _response;
 
     inline void _dispatch(size_t result, int error) {
         if (_dispatched) {
-            // Already delivered -- e.g. Session::_fail_in_flight() forced
+            // Already delivered -- e.g. Backend::_fail_in_flight() forced
             // this op's completion while its own request send was still
             // pending, and that send has now independently completed (with
             // its own success or error). The caller has already been
             // notified once; do not notify it again, and do not touch
-            // _session (already removed from its _ops, possibly gone).
+            // _backend (already removed from its _ops, possibly gone).
             return;
         }
         _dispatched = true;
@@ -193,7 +193,7 @@ protected:
 
         // rtt/clat only mean something for a request that actually made
         // it onto the wire and got a real response back -- a failed
-        // send, a stray cid, or a torn-down session all reach here with
+        // send, a stray cid, or a torn-down backend all reach here with
         // an error and nothing useful to measure.
         bool timed = !error && _t_send_done != 0;
         rawstor::telemetry::TimePoint t_response_ready = 0;
@@ -208,7 +208,7 @@ protected:
 
         _result = result;
         _error = error;
-        _session->_remove_op(_cid);
+        _backend->_remove_op(_cid);
 
         // clat/lat and the top-10 sample are only meaningful alongside
         // rtt, so this shares the same `timed` gate.
@@ -228,8 +228,8 @@ protected:
     }
 
 public:
-    SessionOp(
-        const std::shared_ptr<rawstor::ost::Session>& session, uint16_t cid,
+    BackendOp(
+        const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
         const rawstd::TraceEvent& trace_event, const char* op_name,
         size_t op_size, off_t op_offset
     ) :
@@ -244,14 +244,14 @@ public:
         _op_size(op_size),
         _op_offset(op_offset),
         _trace_event(trace_event),
-        _session(session) {}
+        _backend(backend) {}
 
-    SessionOp(const SessionOp&) = delete;
-    SessionOp(SessionOp&&) = delete;
-    virtual ~SessionOp() = default;
+    BackendOp(const BackendOp&) = delete;
+    BackendOp(BackendOp&&) = delete;
+    virtual ~BackendOp() = default;
 
-    SessionOp& operator=(const SessionOp&) = delete;
-    SessionOp& operator=(SessionOp&&) = delete;
+    BackendOp& operator=(const BackendOp&) = delete;
+    BackendOp& operator=(BackendOp&&) = delete;
 
     inline uint16_t cid() const noexcept { return _cid; }
 
@@ -288,7 +288,7 @@ public:
     }
 };
 
-class SessionOpRead final : public SessionOp {
+class BackendOpRead final : public BackendOp {
 private:
     void* _buf;
     size_t _size;
@@ -297,12 +297,12 @@ private:
     uint64_t _hash;
 
 public:
-    SessionOpRead(
-        const std::shared_ptr<rawstor::ost::Session>& session, uint16_t cid,
+    BackendOpRead(
+        const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
         void* buf, size_t size, off_t offset,
         const rawstd::TraceEvent& trace_event
     ) :
-        SessionOp(session, cid, trace_event, "pread", size, offset),
+        BackendOp(backend, cid, trace_event, "pread", size, offset),
         _buf(buf),
         _size(size),
         _request({
@@ -369,7 +369,7 @@ public:
     }
 };
 
-class SessionOpReadV final : public SessionOp {
+class BackendOpReadV final : public BackendOp {
 private:
     iovec* _iov;
     unsigned int _niov;
@@ -379,12 +379,12 @@ private:
     uint64_t _hash;
 
 public:
-    SessionOpReadV(
-        const std::shared_ptr<rawstor::ost::Session>& session, uint16_t cid,
+    BackendOpReadV(
+        const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
         iovec* iov, unsigned int niov, size_t size, off_t offset,
         const rawstd::TraceEvent& trace_event
     ) :
-        SessionOp(session, cid, trace_event, "preadv", size, offset),
+        BackendOp(backend, cid, trace_event, "preadv", size, offset),
         _iov(iov),
         _niov(niov),
         _size(size),
@@ -452,19 +452,19 @@ public:
     }
 };
 
-class SessionOpWrite final : public SessionOp {
+class BackendOpWrite final : public BackendOp {
 private:
     std::vector<iovec> _iov;
     RawstorOSTFrameIO _request;
     msghdr _msg;
 
 public:
-    SessionOpWrite(
-        const std::shared_ptr<rawstor::ost::Session>& session, uint16_t cid,
+    BackendOpWrite(
+        const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
         const void* buf, size_t size, off_t offset, bool sync,
         const rawstd::TraceEvent& trace_event
     ) :
-        SessionOp(session, cid, trace_event, "pwrite", size, offset),
+        BackendOp(backend, cid, trace_event, "pwrite", size, offset),
         _request({
             .head =
                 {
@@ -527,19 +527,19 @@ public:
     }
 };
 
-class SessionOpWriteV final : public SessionOp {
+class BackendOpWriteV final : public BackendOp {
 private:
     RawstorOSTFrameIO _request;
     std::vector<iovec> _iov;
     msghdr _msg;
 
 public:
-    SessionOpWriteV(
-        const std::shared_ptr<rawstor::ost::Session>& session, uint16_t cid,
+    BackendOpWriteV(
+        const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
         const iovec* iov, unsigned int niov, size_t size, off_t offset,
         bool sync, const rawstd::TraceEvent& trace_event
     ) :
-        SessionOp(session, cid, trace_event, "pwritev", size, offset),
+        BackendOp(backend, cid, trace_event, "pwritev", size, offset),
         _request({
             .head =
                 {
@@ -601,22 +601,22 @@ public:
     }
 };
 
-// Shared by SessionOpDiscard/SessionOpWriteZeroes below: both carry an
-// offset+len request (RawstorOSTFrameIO, same shape as SessionOpRead's,
+// Shared by BackendOpDiscard/BackendOpWriteZeroes below: both carry an
+// offset+len request (RawstorOSTFrameIO, same shape as BackendOpRead's,
 // minus any payload) and a response that never carries a body -- same
-// terminal shape as SessionOpWrite's own response_head_cb().
-class SessionOpNoPayloadIO : public SessionOp {
+// terminal shape as BackendOpWrite's own response_head_cb().
+class BackendOpNoPayloadIO : public BackendOp {
 protected:
     RawstorOSTCommandType _cmd;
     RawstorOSTFrameIO _request;
 
 public:
-    SessionOpNoPayloadIO(
-        const std::shared_ptr<rawstor::ost::Session>& session, uint16_t cid,
+    BackendOpNoPayloadIO(
+        const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
         RawstorOSTCommandType cmd, const char* op_name, size_t size,
         off_t offset, uint8_t flags, const rawstd::TraceEvent& trace_event
     ) :
-        SessionOp(session, cid, trace_event, op_name, size, offset),
+        BackendOp(backend, cid, trace_event, op_name, size, offset),
         _cmd(cmd),
         _request({
             .head =
@@ -660,43 +660,43 @@ public:
     }
 };
 
-class SessionOpDiscard final : public SessionOpNoPayloadIO {
+class BackendOpDiscard final : public BackendOpNoPayloadIO {
 public:
-    SessionOpDiscard(
-        const std::shared_ptr<rawstor::ost::Session>& session, uint16_t cid,
+    BackendOpDiscard(
+        const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
         size_t size, off_t offset, const rawstd::TraceEvent& trace_event
     ) :
-        SessionOpNoPayloadIO(
-            session, cid, RAWSTOR_CMD_DISCARD, "discard", size, offset, 0,
+        BackendOpNoPayloadIO(
+            backend, cid, RAWSTOR_CMD_DISCARD, "discard", size, offset, 0,
             trace_event
         ) {}
 };
 
-class SessionOpWriteZeroes final : public SessionOpNoPayloadIO {
+class BackendOpWriteZeroes final : public BackendOpNoPayloadIO {
 public:
-    SessionOpWriteZeroes(
-        const std::shared_ptr<rawstor::ost::Session>& session, uint16_t cid,
+    BackendOpWriteZeroes(
+        const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
         size_t size, off_t offset, bool unmap, bool sync,
         const rawstd::TraceEvent& trace_event
     ) :
-        SessionOpNoPayloadIO(
-            session, cid, RAWSTOR_CMD_WRITE_ZEROES, "write_zeroes", size,
+        BackendOpNoPayloadIO(
+            backend, cid, RAWSTOR_CMD_WRITE_ZEROES, "write_zeroes", size,
             offset,
             (unmap ? RAWSTOR_FLAG_UNMAP : 0) | (sync ? RAWSTOR_FLAG_SYNC : 0),
             trace_event
         ) {}
 };
 
-class SessionOpFlush final : public SessionOp {
+class BackendOpFlush final : public BackendOp {
 private:
     RawstorOSTFrameBasic _request;
 
 public:
-    SessionOpFlush(
-        const std::shared_ptr<rawstor::ost::Session>& session, uint16_t cid,
+    BackendOpFlush(
+        const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
         const rawstd::TraceEvent& trace_event
     ) :
-        SessionOp(session, cid, trace_event, "flush", 0, 0),
+        BackendOp(backend, cid, trace_event, "flush", 0, 0),
         _request({
             .head =
                 {
@@ -735,27 +735,27 @@ public:
     }
 };
 
-// The cid-dispatched counterpart of SessionOpRead/SessionOpWrite/
-// SessionOpFlush above, for the RawstorOSTFrameBasic-shaped commands
+// The cid-dispatched counterpart of BackendOpRead/BackendOpWrite/
+// BackendOpFlush above, for the RawstorOSTFrameBasic-shaped commands
 // (list/create/remove/spec/info/set_object) -- these carry no hash and
 // have either no response body or a body of some number of T's, per
 // response.body.res. Routed through the same _recv_pump demultiplex
 // mechanism as every other op, now that the pump starts in
-// Session::_connect() instead of after the first request round-trips.
+// Backend::_connect() instead of after the first request round-trips.
 template <typename T = char>
-class SessionOpBasic final : public SessionOp {
+class BackendOpBasic final : public BackendOp {
 private:
     RawstorOSTCommandType _cmd;
     RawstorOSTFrameBasic _request;
     std::vector<T> _response_data;
 
 public:
-    SessionOpBasic(
-        const std::shared_ptr<rawstor::ost::Session>& session, uint16_t cid,
+    BackendOpBasic(
+        const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
         RawstorOSTCommandType cmd, const char* op_name, const RawstdUUID& id,
         uint64_t val, const rawstd::TraceEvent& trace_event
     ) :
-        SessionOp(session, cid, trace_event, op_name, 0, 0),
+        BackendOp(backend, cid, trace_event, op_name, 0, 0),
         _cmd(cmd),
         _request({
             .head =
@@ -794,7 +794,7 @@ public:
             // A malformed body size means we can no longer trust where
             // the next frame starts either -- letting this throw (per
             // response_head_cb()'s documented contract) fails every op
-            // still in flight on this session instead of silently
+            // still in flight on this backend instead of silently
             // desyncing the stream.
             if (response->body.res % sizeof(T) != 0) {
                 RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
@@ -817,21 +817,21 @@ public:
     std::vector<T> take_response_data() { return std::move(_response_data); }
 };
 
-void Session::_fail_in_flight(int error) {
+void Backend::_fail_in_flight(int error) {
     if (_ops.empty()) {
         return;
     }
 
     // Every op still in _ops needs this, not just the ones whose
     // request has already finished sending: an op between _add_op() and
-    // its own request_cb() firing is just as stranded by this session
+    // its own request_cb() firing is just as stranded by this backend
     // going away, and its pending send is not guaranteed to itself
     // complete with an error (e.g. if the socket is never explicitly
-    // closed/cancelled once this session is replaced) -- skipping it
-    // here left it waiting forever. SessionOp guards against the
+    // closed/cancelled once this backend is replaced) -- skipping it
+    // here left it waiting forever. BackendOp guards against the
     // resulting double dispatch if that pending send does independently
     // complete afterwards.
-    std::vector<std::shared_ptr<SessionOp>> ops;
+    std::vector<std::shared_ptr<BackendOp>> ops;
     ops.reserve(_ops.size());
     for (const auto& i : _ops) {
         ops.push_back(i.second);
@@ -845,7 +845,7 @@ void Session::_fail_in_flight(int error) {
     }
 }
 
-SessionOp* Session::_find_op(uint16_t cid) {
+BackendOp* Backend::_find_op(uint16_t cid) {
     auto it = _ops.find(cid);
     if (it == _ops.end()) {
         return nullptr;
@@ -854,7 +854,7 @@ SessionOp* Session::_find_op(uint16_t cid) {
     return it->second.get();
 }
 
-void Session::_add_op(const std::shared_ptr<SessionOp>& op) {
+void Backend::_add_op(const std::shared_ptr<BackendOp>& op) {
     if (_read_event == nullptr) {
         // _recv_pump has already exited (e.g. the connection died right
         // after a previous op's response, before this one was ever
@@ -870,7 +870,7 @@ void Session::_add_op(const std::shared_ptr<SessionOp>& op) {
         // point.
         //
         // response_head_cb() below still runs this op through
-        // SessionOp::_dispatch(), which unconditionally calls
+        // BackendOp::_dispatch(), which unconditionally calls
         // _remove_op() -> telemetry::op_finished() -- so this op needs a
         // matching op_started() here despite never reaching _ops, or
         // in-flight goes negative for every op forced through this path.
@@ -882,18 +882,18 @@ void Session::_add_op(const std::shared_ptr<SessionOp>& op) {
     rawstor::telemetry::op_started();
 }
 
-void Session::_remove_op(uint16_t cid) {
+void Backend::_remove_op(uint16_t cid) {
     _ops.erase(cid);
     rawstor::telemetry::op_finished();
 }
 
-Session::Session(Private p, rawio::Queue& queue, const rawstd::URI& location) :
-    rawstor::Session(p, queue, location),
+Backend::Backend(Private p, rawio::Queue& queue, const rawstd::URI& location) :
+    rawstor::Backend(p, queue, location),
     _cid_counter(0),
     _read_event(nullptr) {
 }
 
-Session::~Session() {
+Backend::~Backend() {
     if (_read_event != nullptr) {
         try {
             _queue.cancel(_read_event);
@@ -904,10 +904,10 @@ Session::~Session() {
     }
 }
 
-rawstd::Task<void> Session::_connect() {
+rawstd::Task<void> Backend::_connect() {
     // Every failure below -- including a malformed location, which can't
     // be fixed by retrying but is otherwise indistinguishable here from a
-    // transient one -- means "couldn't establish this session"; all of
+    // transient one -- means "couldn't establish this backend"; all of
     // them surface as a plain std::system_error, which
     // Connection::_with_retry() reacts to by reconnecting and retrying
     // (see connection.cpp).
@@ -966,11 +966,7 @@ rawstd::Task<void> Session::_connect() {
             RAWSTD_THROW_ERRNO();
         }
 
-        rawstd_info(
-            "fd %d: Connecting to %s...\n", fd, location().str().c_str()
-        );
         co_await _queue.connect(fd, (sockaddr*)&servaddr, sizeof(servaddr));
-        rawstd_info("fd %d: Connected\n", fd);
     } catch (...) {
         ::close(fd);
         rawstd_info("fd %d: Closed\n", fd);
@@ -993,7 +989,7 @@ rawstd::Task<void> Session::_connect() {
     );
     _read_event = stream.event();
     _recv_pump(
-        std::static_pointer_cast<Session>(shared_from_this()),
+        std::static_pointer_cast<Backend>(shared_from_this()),
         std::move(stream), trace_event
     );
     // _recv_pump() may have stored a pending exception instead of
@@ -1002,8 +998,8 @@ rawstd::Task<void> Session::_connect() {
     rawstd::DetachedTask::rethrow_if_pending();
 }
 
-rawstd::Task<void> Session::close() {
-    // Anything still in _ops at this point was never told this session
+rawstd::Task<void> Backend::close() {
+    // Anything still in _ops at this point was never told this backend
     // is going away otherwise. _recv_pump()'s own catch block below only
     // reaches _fail_in_flight() for a genuine framing/transport error it
     // detected itself; the _queue.cancel() a couple lines down resumes
@@ -1011,12 +1007,12 @@ rawstd::Task<void> Session::close() {
     // left to clean up" and returns without touching _ops -- true when
     // close() is called once every op has already finished, but not when
     // a *sibling* op's own failure is what triggered this close() (e.g.
-    // via Connection::invalidate_session(), reacting to any
+    // via Connection::invalidate_backend(), reacting to any
     // std::system_error one op's own Connection::_with_retry() caught --
     // a dropped connection, but just as easily a well-formed error
     // response for one op on an otherwise perfectly healthy connection,
     // which _recv_pump has no way to notice on its own since nothing
-    // about the wire ever looked wrong): this session's other, already-
+    // about the wire ever looked wrong): this backend's other, already-
     // sent ops are still sitting in _ops purely waiting on a response
     // that will now never come. Fail them now instead of leaving their
     // coroutines suspended forever; a no-op if _ops is already empty
@@ -1051,14 +1047,14 @@ rawstd::Task<void> Session::close() {
 }
 
 template <typename T>
-rawstd::Task<std::vector<T>> Session::_basic_request(
+rawstd::Task<std::vector<T>> Backend::_basic_request(
     RawstorOSTCommandType cmd, const char* op_name, const RawstdUUID& id,
     uint64_t val
 ) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('s', "%s\n", op_name);
 
-    std::shared_ptr<SessionOpBasic<T>> op = std::make_shared<SessionOpBasic<T>>(
-        std::static_pointer_cast<Session>(shared_from_this()), _cid_counter++,
+    std::shared_ptr<BackendOpBasic<T>> op = std::make_shared<BackendOpBasic<T>>(
+        std::static_pointer_cast<Backend>(shared_from_this()), _cid_counter++,
         cmd, op_name, id, val, trace_event
     );
     _add_op(op);
@@ -1079,7 +1075,7 @@ rawstd::Task<std::vector<T>> Session::_basic_request(
     co_return op->take_response_data();
 }
 
-rawstd::Task<void> Session::list(
+rawstd::Task<void> Backend::list(
     unsigned int limit, std::vector<RawstdUUID>& targets, RawstdUUID& token
 ) {
     RawstdUUID input_token = token;
@@ -1103,7 +1099,7 @@ rawstd::Task<void> Session::list(
 }
 
 rawstd::Task<void>
-Session::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
+Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
     try {
         co_await _basic_request(RAWSTOR_CMD_ALLOCATE, "create", id, sp.size);
     } catch (const std::system_error&) {
@@ -1114,7 +1110,7 @@ Session::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
     co_return;
 }
 
-rawstd::Task<void> Session::remove(const RawstdUUID& id) {
+rawstd::Task<void> Backend::remove(const RawstdUUID& id) {
     try {
         co_await _basic_request(RAWSTOR_CMD_RELEASE, "remove", id, 0);
     } catch (const std::system_error&) {
@@ -1125,7 +1121,7 @@ rawstd::Task<void> Session::remove(const RawstdUUID& id) {
     co_return;
 }
 
-rawstd::Task<RawstorObjectSpec> Session::spec(const RawstdUUID& id) {
+rawstd::Task<RawstorObjectSpec> Backend::spec(const RawstdUUID& id) {
     rawstd_info("%s: Reading object specification...\n", str().c_str());
 
     RawstorObjectSpec ret = {};
@@ -1151,7 +1147,7 @@ rawstd::Task<RawstorObjectSpec> Session::spec(const RawstdUUID& id) {
     co_return ret;
 }
 
-rawstd::Task<RawstorLocationInfo> Session::info() {
+rawstd::Task<RawstorLocationInfo> Backend::info() {
     rawstd_info("%s: Reading location info...\n", str().c_str());
 
     RawstorLocationInfo ret = {};
@@ -1177,7 +1173,7 @@ rawstd::Task<RawstorLocationInfo> Session::info() {
     co_return ret;
 }
 
-rawstd::Task<void> Session::set_object(Object* object) {
+rawstd::Task<void> Backend::set_object(Object* object) {
     // The demultiplex pump is already running by now -- _connect() starts it
     // before this is ever reachable -- so this is just another
     // cid-dispatched request like list()/create()/....
@@ -1188,10 +1184,10 @@ rawstd::Task<void> Session::set_object(Object* object) {
     );
 }
 
-// See ost_session.hpp's doc comment on why `weak`, not a strong
+// See ost_backend.hpp's doc comment on why `weak`, not a strong
 // shared_ptr/`this`-capturing member coroutine.
-rawstd::DetachedTask Session::_recv_pump(
-    std::weak_ptr<Session> weak, rawio::RecvStream stream,
+rawstd::DetachedTask Backend::_recv_pump(
+    std::weak_ptr<Backend> weak, rawio::RecvStream stream,
     rawstd::TraceEvent trace_event
 ) {
     try {
@@ -1201,8 +1197,8 @@ rawstd::DetachedTask Session::_recv_pump(
             rawio::RecvStream::Item head_item =
                 co_await stream.next(sizeof(response));
 
-            std::shared_ptr<Session> session = weak.lock();
-            if (session == nullptr) {
+            std::shared_ptr<Backend> backend = weak.lock();
+            if (backend == nullptr) {
                 co_return;
             }
 
@@ -1225,11 +1221,11 @@ rawstd::DetachedTask Session::_recv_pump(
             );
             uint16_t cid = response.head.cid;
 
-            SessionOp* op = session->_find_op(cid);
+            BackendOp* op = backend->_find_op(cid);
             if (op == nullptr) {
                 // A stray/late response for an op this connection
                 // already failed and that Connection::_op() has since
-                // retried on a different session. We have no op to ask
+                // retried on a different backend. We have no op to ask
                 // whether this response carries a body, so we can no
                 // longer trust where the next message starts either --
                 // treat it exactly like a real framing error, not
@@ -1260,8 +1256,8 @@ rawstd::DetachedTask Session::_recv_pump(
             // moving on to the next message's head ---
             rawio::RecvStream::Item body_item = co_await stream.next(body_size);
 
-            session = weak.lock();
-            if (session == nullptr) {
+            backend = weak.lock();
+            if (backend == nullptr) {
                 co_return;
             }
 
@@ -1278,7 +1274,7 @@ rawstd::DetachedTask Session::_recv_pump(
             // across this co_await: it may have been failed and removed
             // from _ops (e.g. by an unrelated "unexpected cid" desync)
             // while this body read was in flight.
-            op = session->_find_op(cid);
+            op = backend->_find_op(cid);
             if (op == nullptr) {
                 rawstd_error("Unexpected cid: %u\n", cid);
                 RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
@@ -1297,27 +1293,27 @@ rawstd::DetachedTask Session::_recv_pump(
         }
 
         // A strong self-reference here (instead of weak_ptr::lock())
-        // would keep this Session alive purely because its own recv
+        // would keep this Backend alive purely because its own recv
         // registration exists -- including while this very pump's
         // captured shared_ptr is what's being torn down as part of the
         // *owning* rawio::Queue's own destruction (e.g. process
         // shutdown), which would then call back into that same,
-        // still-destructing Queue via ~Session()'s _queue.cancel(), a
-        // reentrant heap-use-after-free. A missing session here means it
+        // still-destructing Queue via ~Backend()'s _queue.cancel(), a
+        // reentrant heap-use-after-free. A missing backend here means it
         // was already destroyed via some other, unrelated reference
         // dropping -- nothing to do.
-        std::shared_ptr<Session> session = weak.lock();
-        if (session == nullptr) {
+        std::shared_ptr<Backend> backend = weak.lock();
+        if (backend == nullptr) {
             co_return;
         }
 
         // The stream is no longer trustworthy (either a real
         // transport-level/framing error, or a cid we can't resync past):
         // fail everything still in flight and stop the pump for good.
-        // _read_event must not outlive it -- ~Session() would otherwise
+        // _read_event must not outlive it -- ~Backend() would otherwise
         // try to cancel() an Event that's already gone.
-        session->_fail_in_flight(e.code().value());
-        session->_read_event = nullptr;
+        backend->_fail_in_flight(e.code().value());
+        backend->_read_event = nullptr;
         co_return;
     } catch (const std::exception& e) {
         // Not a system_error: only reachable from
@@ -1327,24 +1323,24 @@ rawstd::DetachedTask Session::_recv_pump(
         // everything in flight and stop.
         rawstd_error("_recv_pump: %s\n", e.what());
 
-        std::shared_ptr<Session> session = weak.lock();
-        if (session == nullptr) {
+        std::shared_ptr<Backend> backend = weak.lock();
+        if (backend == nullptr) {
             co_return;
         }
 
-        session->_fail_in_flight(EIO);
-        session->_read_event = nullptr;
+        backend->_fail_in_flight(EIO);
+        backend->_read_event = nullptr;
         co_return;
     }
 }
 
-rawstd::Task<size_t> Session::pread(void* buf, size_t size, off_t offset) {
+rawstd::Task<size_t> Backend::pread(void* buf, size_t size, off_t offset) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         's', "fd = %d, size = %zu, offset = %jd\n", fd(), size, (intmax_t)offset
     );
 
-    std::shared_ptr<SessionOpRead> op = std::make_shared<SessionOpRead>(
-        std::static_pointer_cast<Session>(shared_from_this()), _cid_counter++,
+    std::shared_ptr<BackendOpRead> op = std::make_shared<BackendOpRead>(
+        std::static_pointer_cast<Backend>(shared_from_this()), _cid_counter++,
         buf, size, offset, trace_event
     );
     _add_op(op);
@@ -1365,13 +1361,13 @@ rawstd::Task<size_t> Session::pread(void* buf, size_t size, off_t offset) {
 }
 
 rawstd::Task<size_t>
-Session::preadv(iovec* iov, unsigned int niov, size_t size, off_t offset) {
+Backend::preadv(iovec* iov, unsigned int niov, size_t size, off_t offset) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         's', "fd = %d, size = %zu, offset = %jd\n", fd(), size, (intmax_t)offset
     );
 
-    std::shared_ptr<SessionOpReadV> op = std::make_shared<SessionOpReadV>(
-        std::static_pointer_cast<Session>(shared_from_this()), _cid_counter++,
+    std::shared_ptr<BackendOpReadV> op = std::make_shared<BackendOpReadV>(
+        std::static_pointer_cast<Backend>(shared_from_this()), _cid_counter++,
         iov, niov, size, offset, trace_event
     );
     _add_op(op);
@@ -1392,14 +1388,14 @@ Session::preadv(iovec* iov, unsigned int niov, size_t size, off_t offset) {
 }
 
 rawstd::Task<size_t>
-Session::pwrite(const void* buf, size_t size, off_t offset, bool sync) {
+Backend::pwrite(const void* buf, size_t size, off_t offset, bool sync) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         's', "fd = %d, size = %zu, offset = %jd, sync = %d\n", fd(), size,
         (intmax_t)offset, sync
     );
 
-    std::shared_ptr<SessionOpWrite> op = std::make_shared<SessionOpWrite>(
-        std::static_pointer_cast<Session>(shared_from_this()), _cid_counter++,
+    std::shared_ptr<BackendOpWrite> op = std::make_shared<BackendOpWrite>(
+        std::static_pointer_cast<Backend>(shared_from_this()), _cid_counter++,
         buf, size, offset, sync, trace_event
     );
     _add_op(op);
@@ -1419,7 +1415,7 @@ Session::pwrite(const void* buf, size_t size, off_t offset, bool sync) {
     co_return co_await *op;
 }
 
-rawstd::Task<size_t> Session::pwritev(
+rawstd::Task<size_t> Backend::pwritev(
     const iovec* iov, unsigned int niov, size_t size, off_t offset, bool sync
 ) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
@@ -1427,8 +1423,8 @@ rawstd::Task<size_t> Session::pwritev(
         (intmax_t)offset, sync
     );
 
-    std::shared_ptr<SessionOpWriteV> op = std::make_shared<SessionOpWriteV>(
-        std::static_pointer_cast<Session>(shared_from_this()), _cid_counter++,
+    std::shared_ptr<BackendOpWriteV> op = std::make_shared<BackendOpWriteV>(
+        std::static_pointer_cast<Backend>(shared_from_this()), _cid_counter++,
         iov, niov, size, offset, sync, trace_event
     );
     _add_op(op);
@@ -1448,13 +1444,13 @@ rawstd::Task<size_t> Session::pwritev(
     co_return co_await *op;
 }
 
-rawstd::Task<size_t> Session::discard(size_t size, off_t offset) {
+rawstd::Task<size_t> Backend::discard(size_t size, off_t offset) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         's', "fd = %d, size = %zu, offset = %jd\n", fd(), size, (intmax_t)offset
     );
 
-    std::shared_ptr<SessionOpDiscard> op = std::make_shared<SessionOpDiscard>(
-        std::static_pointer_cast<Session>(shared_from_this()), _cid_counter++,
+    std::shared_ptr<BackendOpDiscard> op = std::make_shared<BackendOpDiscard>(
+        std::static_pointer_cast<Backend>(shared_from_this()), _cid_counter++,
         size, offset, trace_event
     );
     _add_op(op);
@@ -1475,15 +1471,15 @@ rawstd::Task<size_t> Session::discard(size_t size, off_t offset) {
 }
 
 rawstd::Task<size_t>
-Session::write_zeroes(size_t size, off_t offset, bool unmap, bool sync) {
+Backend::write_zeroes(size_t size, off_t offset, bool unmap, bool sync) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         's', "fd = %d, size = %zu, offset = %jd, unmap = %d, sync = %d\n", fd(),
         size, (intmax_t)offset, unmap, sync
     );
 
-    std::shared_ptr<SessionOpWriteZeroes> op =
-        std::make_shared<SessionOpWriteZeroes>(
-            std::static_pointer_cast<Session>(shared_from_this()),
+    std::shared_ptr<BackendOpWriteZeroes> op =
+        std::make_shared<BackendOpWriteZeroes>(
+            std::static_pointer_cast<Backend>(shared_from_this()),
             _cid_counter++, size, offset, unmap, sync, trace_event
         );
     _add_op(op);
@@ -1503,11 +1499,11 @@ Session::write_zeroes(size_t size, off_t offset, bool unmap, bool sync) {
     co_return co_await *op;
 }
 
-rawstd::Task<void> Session::flush() {
+rawstd::Task<void> Backend::flush() {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('s', "fd = %d\n", fd());
 
-    std::shared_ptr<SessionOpFlush> op = std::make_shared<SessionOpFlush>(
-        std::static_pointer_cast<Session>(shared_from_this()), _cid_counter++,
+    std::shared_ptr<BackendOpFlush> op = std::make_shared<BackendOpFlush>(
+        std::static_pointer_cast<Backend>(shared_from_this()), _cid_counter++,
         trace_event
     );
     _add_op(op);

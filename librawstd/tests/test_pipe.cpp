@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include <fcntl.h>
 #include <unistd.h>
 
 #include <cerrno>
@@ -10,7 +11,7 @@
 namespace {
 
 TEST(PipeTest, constructs_valid_distinct_fds) {
-    rawstd::Pipe p;
+    rawstd::Pipe p(rawstd::Pipe::Mode::Blocking);
 
     EXPECT_GE(p.read_fd(), 0);
     EXPECT_GE(p.write_fd(), 0);
@@ -18,7 +19,7 @@ TEST(PipeTest, constructs_valid_distinct_fds) {
 }
 
 TEST(PipeTest, write_read_round_trip) {
-    rawstd::Pipe p;
+    rawstd::Pipe p(rawstd::Pipe::Mode::Blocking);
 
     char out = 'x';
     ASSERT_EQ(write(p.write_fd(), &out, 1), 1);
@@ -28,8 +29,15 @@ TEST(PipeTest, write_read_round_trip) {
     EXPECT_EQ(in, 'x');
 }
 
-TEST(PipeTest, is_non_blocking) {
-    rawstd::Pipe p;
+TEST(PipeTest, blocking_mode_has_no_nonblock_flag) {
+    rawstd::Pipe p(rawstd::Pipe::Mode::Blocking);
+
+    EXPECT_EQ(fcntl(p.read_fd(), F_GETFL) & O_NONBLOCK, 0);
+    EXPECT_EQ(fcntl(p.write_fd(), F_GETFL) & O_NONBLOCK, 0);
+}
+
+TEST(PipeTest, nonblocking_mode_reports_eagain_with_nothing_to_read) {
+    rawstd::Pipe p(rawstd::Pipe::Mode::NonBlocking);
 
     char buf;
     errno = 0;
@@ -41,7 +49,7 @@ TEST(PipeTest, is_non_blocking) {
 }
 
 TEST(PipeTest, move_construct_transfers_ownership) {
-    rawstd::Pipe p;
+    rawstd::Pipe p(rawstd::Pipe::Mode::Blocking);
     int read_fd = p.read_fd();
     int write_fd = p.write_fd();
 
@@ -57,8 +65,8 @@ TEST(PipeTest, move_construct_transfers_ownership) {
 }
 
 TEST(PipeTest, move_assign_closes_previous_and_takes_over) {
-    rawstd::Pipe a;
-    rawstd::Pipe b;
+    rawstd::Pipe a(rawstd::Pipe::Mode::Blocking);
+    rawstd::Pipe b(rawstd::Pipe::Mode::Blocking);
     int b_read_fd = b.read_fd();
     int b_write_fd = b.write_fd();
 
@@ -74,7 +82,7 @@ TEST(PipeTest, release_gives_up_ownership_without_closing) {
     int released_read_fd;
     int released_write_fd;
     {
-        rawstd::Pipe p;
+        rawstd::Pipe p(rawstd::Pipe::Mode::Blocking);
         released_read_fd = p.release_read();
         released_write_fd = p.release_write();
 

@@ -163,6 +163,11 @@ backends and the io_uring/poll RawIO backends.
 - `namespace rawstor { namespace vhost { ... } }`-style nested namespaces
   (not the C++17 `rawstor::vhost` single-line form) are the existing
   convention in `vhost/`.
+- Plain `snake_case` for every variable, including file-scope/namespace-
+  level constants (e.g. `const uint64_t volblocksize = ...`,
+  `const char* const udev_sync_config = ...`) — no Hungarian-notation-style
+  prefix (no `k` for constants, no `m_`/`_` for members beyond the
+  existing leading-underscore convention already covered above).
 
 ## Git conventions
 

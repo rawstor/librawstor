@@ -1,7 +1,7 @@
-#ifndef RAWSTOR_OST_SESSION_HPP
-#define RAWSTOR_OST_SESSION_HPP
+#ifndef RAWSTOR_OST_BACKEND_HPP
+#define RAWSTOR_OST_BACKEND_HPP
 
-#include "session.hpp"
+#include "backend.hpp"
 
 #include <rawio/queue.hpp>
 #include <rawio/stream.hpp>
@@ -25,16 +25,16 @@
 namespace rawstor {
 namespace ost {
 
-class SessionOp;
+class BackendOp;
 
-class Session final : public rawstor::Session {
-    friend class SessionOp;
+class Backend final : public rawstor::Backend {
+    friend class BackendOp;
 
 private:
     uint16_t _cid_counter;
 
     rawio::Event* _read_event;
-    std::unordered_map<uint16_t, std::shared_ptr<SessionOp>> _ops;
+    std::unordered_map<uint16_t, std::shared_ptr<BackendOp>> _ops;
 
     rawstd::Task<void> _connect() override;
     // The cid-dispatched counterpart of the old basic_request_async():
@@ -51,30 +51,30 @@ private:
     void _fail_in_flight(int error);
     // Returns nullptr, rather than throwing, for an unregistered cid: a
     // response can legitimately race with Connection::_op() already having
-    // failed and retried that same op on a different session (e.g. after a
+    // failed and retried that same op on a different backend (e.g. after a
     // send-side error on this connection), in which case the cid was
     // already unregistered and the response is stale, not a corrupted
     // stream.
-    SessionOp* _find_op(uint16_t cid);
-    void _add_op(const std::shared_ptr<SessionOp>& op);
+    BackendOp* _find_op(uint16_t cid);
+    void _add_op(const std::shared_ptr<BackendOp>& op);
     void _remove_op(uint16_t cid);
 
     // Pulls the shared response stream forever, demultiplexing each
-    // delivery by cid into whichever SessionOp is waiting for it -- the
+    // delivery by cid into whichever BackendOp is waiting for it -- the
     // coroutine-era replacement for set_object()'s old recv_multishot
     // callback. A free-standing detached loop keyed off a weak_ptr, not a
     // member coroutine capturing `this`/a strong shared_ptr, for the same
     // reason the old callback captured a weak_ptr: it must not keep this
-    // Session alive purely because its own recv registration exists (see
+    // Backend alive purely because its own recv registration exists (see
     // the .cpp for the full reentrant-teardown reasoning).
     static rawstd::DetachedTask _recv_pump(
-        std::weak_ptr<Session> weak, rawio::RecvStream stream,
+        std::weak_ptr<Backend> weak, rawio::RecvStream stream,
         rawstd::TraceEvent trace_event
     );
 
 public:
-    Session(Private p, rawio::Queue& queue, const rawstd::URI& location);
-    ~Session();
+    Backend(Private p, rawio::Queue& queue, const rawstd::URI& location);
+    ~Backend();
 
     rawstd::Task<void> close() override;
 
@@ -117,4 +117,4 @@ public:
 } // namespace ost
 } // namespace rawstor
 
-#endif // RAWSTOR_OST_SESSION_HPP
+#endif // RAWSTOR_OST_BACKEND_HPP

@@ -39,7 +39,7 @@ namespace poll {
 // pending-event count across sessions exceeds depth. Draining via
 // wait_timeout(0) after each session's cancel() keeps at most one
 // session's worth of cancelled events in _cqes at a time. Safe to do now
-// that Object/Connection/Session's internals are genuinely
+// that Object/Connection/Backend's internals are genuinely
 // co_await-composed on the shared Queue instead of nesting a private,
 // throwaway one's own synchronous pump inside this Queue's own dispatch
 // (the reentrancy hazard that made an earlier version of this destructor
@@ -345,6 +345,16 @@ const std::string& Queue::engine_name() {
 void Queue::setup_fd(int fd) {
     int res;
     static unsigned int bufsize = 16 * 1024 * 1024;
+
+    // accept() has no portable equivalent of Linux's accept4(SOCK_CLOEXEC)
+    // that also works on macOS, so this is the only way to close the fd's
+    // post-accept()/socket() window here -- without it, such a socket
+    // stays open across the fork()+exec() the LVM/ZFS backends use to
+    // shell out to lvcreate/zfs/etc. (src/subprocess.cpp).
+    res = rawstd_socket_set_cloexec(fd);
+    if (res) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
 
     res = rawstd_socket_set_nonblock(fd);
     if (res) {
@@ -800,7 +810,7 @@ Queue::fallocate(int fd, int mode, off_t offset, off_t len) {
             // No macOS equivalent of Linux's mode-flagged fallocate() (hole
             // punch/zero-range/...) -- every caller of this op already
             // treats ENOSYS as "fall back to a portable path" (see
-            // blk::Session::discard()/write_zeroes(), src/blk_session.cpp),
+            // blk::Backend::discard()/write_zeroes(), src/blk_backend.cpp),
             // so this platform just always takes that fallback.
             (void)fd;
             (void)mode;

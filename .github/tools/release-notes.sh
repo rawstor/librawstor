@@ -1,12 +1,19 @@
 #!/bin/bash
 #
 # Builds the GitHub release body: this version's ChangeLog.md section (via
-# changelog-section.sh), then the release's assets grouped by kind.
+# changelog-section.sh), the commit authors since the previous release
+# (via previous-tag.sh), then the release's assets grouped by kind.
 #
 # GitHub Releases has no folder/grouping support for the assets list
 # itself -- it's always one flat, alphabetically-sorted list. This is the
 # workaround: a curated, categorized index in the release body, on top of
 # (not instead of) that flat list.
+#
+# The contributors list is built from `git log`, not GitHub's own
+# generated-release-notes feature: that feature credits whoever opened
+# the merged PR, not the actual commit author, so a squashed/rebased
+# commit authored by someone else than whoever merged it would go
+# uncredited. `git log --format='%an <%ae>'` doesn't have that problem.
 #
 # Usage: release-notes.sh TAG ARTIFACTS_DIR REPO CHANGELOG_FILE
 #   TAG            git tag being released, e.g. v0.2.7
@@ -52,6 +59,22 @@ category_for() {
 changelog="$("$SCRIPT_DIR/changelog-section.sh" "$TAG" "$CHANGELOG_FILE")"
 if [ -n "$changelog" ]; then
     printf '## Changelog\n\n%s\n\n' "$changelog"
+fi
+
+# CHANGELOG_FILE lives at the repo root (e.g. "librawstor/ChangeLog.md"
+# from dist.yml's release job, whose cwd is the workspace root, one level
+# above the checkout) -- its directory doubles as the git repo to query.
+repo_dir="$(dirname "$CHANGELOG_FILE")"
+
+previous_tag="$("$SCRIPT_DIR/previous-tag.sh" "$TAG" "$repo_dir")"
+range="${previous_tag:+$previous_tag..}$TAG"
+contributors="$(git -C "$repo_dir" log --format='%an <%ae>' "$range" | sort -u -f)"
+if [ -n "$contributors" ]; then
+    printf '## Contributors\n\n'
+    while IFS= read -r contributor; do
+        printf -- '- %s\n' "$contributor"
+    done <<< "$contributors"
+    printf '\n'
 fi
 
 echo "## Assets"

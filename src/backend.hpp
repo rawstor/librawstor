@@ -1,5 +1,5 @@
-#ifndef RAWSTOR_SESSION_HPP
-#define RAWSTOR_SESSION_HPP
+#ifndef RAWSTOR_BACKEND_HPP
+#define RAWSTOR_BACKEND_HPP
 
 #include "object.hpp"
 
@@ -18,7 +18,7 @@
 
 namespace rawstor {
 
-class Session : public std::enable_shared_from_this<Session> {
+class Backend : public std::enable_shared_from_this<Backend> {
 private:
     rawstd::URI _location;
     int _fd;
@@ -35,21 +35,21 @@ protected:
     // Establishes whatever this backend needs before any other call
     // below is usable (e.g. the OST backend's TCP connect + the start of
     // its response demultiplex pump). Called exactly once by create(),
-    // before it hands the Session back.
+    // before it hands the Backend back.
     virtual rawstd::Task<void> _connect() = 0;
 
 public:
     // Constructs the right backend for `location`'s scheme and
-    // _connect()s it -- the returned Session is immediately usable.
-    static rawstd::Task<std::shared_ptr<Session>>
+    // _connect()s it -- the returned Backend is immediately usable.
+    static rawstd::Task<std::shared_ptr<Backend>>
     create(rawio::Queue& queue, const rawstd::URI& location);
 
-    Session(Private, rawio::Queue& queue, const rawstd::URI& location);
-    Session(const Session&) = delete;
-    Session(Session&&) noexcept = delete;
-    virtual ~Session();
-    Session& operator=(const Session&) = delete;
-    Session& operator=(Session&&) = delete;
+    Backend(Private, rawio::Queue& queue, const rawstd::URI& location);
+    Backend(const Backend&) = delete;
+    Backend(Backend&&) noexcept = delete;
+    virtual ~Backend();
+    Backend& operator=(const Backend&) = delete;
+    Backend& operator=(Backend&&) = delete;
 
     std::string str() const;
 
@@ -58,7 +58,7 @@ public:
     inline int fd() const noexcept { return _fd; }
 
     // Tears down what _connect() set up. Not called implicitly by
-    // ~Session() (a coroutine can't run in a destructor) -- callers that
+    // ~Backend() (a coroutine can't run in a destructor) -- callers that
     // want a graceful async teardown must co_await this themselves.
     virtual rawstd::Task<void> close() = 0;
 
@@ -115,4 +115,4 @@ public:
 
 } // namespace rawstor
 
-#endif // RAWSTOR_SESSION_HPP
+#endif // RAWSTOR_BACKEND_HPP

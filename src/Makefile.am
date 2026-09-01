@@ -13,7 +13,8 @@ AM_CXXFLAGS = $(GENERIC_CXXFLAGS) \
               $(ASAN_CFLAGS) \
               -I$(top_srcdir)/librawstd/include \
               -I$(top_srcdir)/librawio/include \
-              -I$(top_srcdir)/include
+              -I$(top_srcdir)/include \
+              -I$(top_srcdir)/src/3rdparty
 
 AM_LDFLAGS = $(ASAN_LDFLAGS)
 
@@ -33,25 +34,26 @@ librawstor_la_HEADERS = $(top_srcdir)/include/rawstor/list.h \
                         $(top_srcdir)/include/rawstor/target.h \
                         $(top_builddir)/include/rawstor/version.h
 
-librawstor_la_SOURCES = blk_session.cpp \
-                        blk_session.hpp \
+librawstor_la_SOURCES = 3rdparty/nlohmann/json.hpp \
+                        backend.cpp \
+                        backend.hpp \
+                        blk_backend.cpp \
+                        blk_backend.hpp \
                         connection.cpp \
                         connection.hpp \
-                        file_session.cpp \
-                        file_session.hpp \
+                        file_backend.cpp \
+                        file_backend.hpp \
                         list.c \
                         location.cpp \
                         location.hpp \
-                        lvm_session.cpp \
-                        lvm_session.hpp \
+                        lvm_backend.cpp \
+                        lvm_backend.hpp \
                         object.cpp \
                         object.hpp \
-                        ost_session.cpp \
-                        ost_session.hpp \
+                        ost_backend.cpp \
+                        ost_backend.hpp \
                         opts.c \
                         opts.h \
-                        session.cpp \
-                        session.hpp \
                         subprocess.cpp \
                         subprocess.hpp \
                         rawstor.cpp \
@@ -59,8 +61,8 @@ librawstor_la_SOURCES = blk_session.cpp \
                         target.hpp \
                         telemetry.cpp \
                         telemetry.hpp \
-                        zfs_session.cpp \
-                        zfs_session.hpp
+                        zfs_backend.cpp \
+                        zfs_backend.hpp
 
 librawstor_la_LDFLAGS = -version-info $(LIBRARY_VERSION)
 

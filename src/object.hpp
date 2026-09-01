@@ -43,7 +43,7 @@ private:
     // backpressure mechanism -- pwrite()/pwritev() never suspend because
     // of it -- concurrency limiting
     // (rawstor_opts_write_throttle_limit()/write_backlog_capacity()) stays
-    // blk::Session's own job (see blk_session.hpp's _throttle_acquire()),
+    // blk::Backend's own job (see blk_backend.hpp's _throttle_acquire()),
     // one level down; these are a separate, simpler pair of counts that
     // exist purely for flush()'s barrier.
     unsigned int _writes_issued;
@@ -68,7 +68,7 @@ private:
     // has now been reached (see flush()).
     void _write_finished() noexcept;
 
-    // Object is final -- unlike Session::Private (which every backend
+    // Object is final -- unlike Backend::Private (which every backend
     // subclass's own constructor also needs to name), only Target::open()
     // (a friend, since it's the one place that actually builds an Object)
     // ever needs this, so it stays private rather than protected.

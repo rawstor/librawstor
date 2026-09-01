@@ -30,7 +30,7 @@ T run(rawio::Queue& q, rawstd::Task<T> t) {
     return t.get();
 }
 
-// Duplicate of test_blk_session.cpp's own ThrottleOptsOverride -- see that
+// Duplicate of test_blk_backend.cpp's own ThrottleOptsOverride -- see that
 // one's doc comment for why it isn't shared.
 class ThrottleOptsOverride final {
 public:
@@ -121,7 +121,7 @@ TEST(ObjectTest, flush_waits_for_writes_issued_before_it) {
 //
 // A throttle limit of 1 is what keeps this deterministic rather than a
 // timing race: with it, write #2 onward cannot even be *dispatched* until
-// its predecessor completes (see blk_session.hpp's _throttle_acquire()),
+// its predecessor completes (see blk_backend.hpp's _throttle_acquire()),
 // so draining all of them takes extra_writes strictly sequential round
 // trips -- while flush() only ever needs write_task's single completion
 // plus its own durability op, a handful at most. Without the throttle, a

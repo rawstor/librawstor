@@ -7,6 +7,7 @@
 #include <rawstd/coro.hpp>
 #include <rawstd/gpp.hpp>
 #include <rawstd/logging.h>
+#include <rawstd/socket.h>
 
 #include <rawstor/target.h>
 
@@ -293,7 +294,10 @@ Device::Device(
         // own write_cache_enabled() still controls whether *we*
         // additionally fsync every write or rely solely on that FLUSH.
 
-        _ctrl_fd = open("/dev/vduse/control", O_RDWR);
+        // O_CLOEXEC so this fd doesn't leak into a child forked by the
+        // LVM/ZFS storage backends to shell out to lvcreate/zfs/etc.
+        // (src/subprocess.cpp).
+        _ctrl_fd = open("/dev/vduse/control", O_RDWR | O_CLOEXEC);
         if (_ctrl_fd == -1) {
             RAWSTD_THROW_ERRNO();
         }
@@ -330,7 +334,7 @@ Device::Device(
         errno = 0;
 
         std::string dev_path = std::string("/dev/vduse/") + _name_buf;
-        _fd = open(dev_path.c_str(), O_RDWR);
+        _fd = open(dev_path.c_str(), O_RDWR | O_CLOEXEC);
         if (_fd == -1) {
             RAWSTD_THROW_ERRNO();
         }
@@ -465,6 +469,18 @@ void* Device::iova_to_va(uint64_t iova) {
     entry.last = iova + 1;
     int fd = ioctl(_fd, VDUSE_IOTLB_GET_FD, &entry);
     if (fd < 0) {
+        return nullptr;
+    }
+
+    // The kernel hands this fd back without CLOEXEC -- IovaRegion below
+    // only holds it long enough to mmap() it and closes it immediately
+    // after, but a fork() concurrent with this call (e.g. the LVM/ZFS
+    // storage backends shelling out to lvcreate/zfs/etc. via
+    // src/subprocess.cpp) could still inherit it during that brief
+    // window.
+    int res = rawstd_socket_set_cloexec(fd);
+    if (res < 0) {
+        close(fd);
         return nullptr;
     }
 

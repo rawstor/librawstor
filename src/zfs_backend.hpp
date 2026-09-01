@@ -1,7 +1,7 @@
-#ifndef RAWSTOR_ZFS_SESSION_HPP
-#define RAWSTOR_ZFS_SESSION_HPP
+#ifndef RAWSTOR_ZFS_BACKEND_HPP
+#define RAWSTOR_ZFS_BACKEND_HPP
 
-#include "blk_session.hpp"
+#include "blk_backend.hpp"
 
 #include <rawio/queue.hpp>
 
@@ -21,8 +21,8 @@ namespace zfs {
 /*
  * ZFS zvol storage backend.
  *
- * Location URI: zfs:///<pool>[/<dataset>]
- *   Example:    zfs:///tank/rawstor
+ * Location URI: zfs://<pool>[/<dataset>]
+ *   Example:    zfs://tank/rawstor
  *
  * Each object is a zvol created under the parent dataset, named after its
  * UUID. Zvol dataset: <parent_dataset>/<uuid>. Device path:
@@ -31,16 +31,28 @@ namespace zfs {
  * Requires the 'zfs' CLI to be available in PATH and sufficient privileges
  * (typically root or CAP_SYS_ADMIN + ZFS delegation).
  */
-class Session final : public rawstor::blk::Session {
+class Backend final : public rawstor::blk::Backend {
 private:
     std::string _parent_dataset;
 
     std::string _device_path(const RawstdUUID& id) const;
 
-    rawstd::Task<int> _connect(const RawstdUUID& id) override;
+    rawstd::Task<int> _open(const RawstdUUID& id) override;
+
+    // Polls for `path`'s existence-as-a-block-device to match
+    // `want_present`, for up to `timeout_ms`, via _queue.stat()/
+    // _queue.timeout(). Throws std::system_error(ETIMEDOUT) if it doesn't
+    // in time. Unlike LVM (see lvm::Backend's own create()/remove(),
+    // which force `activation/udev_sync` via --config instead), ZFS has
+    // no equivalent knob to make zfs-create(8)/zfs-destroy(8) themselves
+    // wait for the zvol's /dev/zvol/... device node to appear/disappear,
+    // so create()/remove() below poll for it explicitly.
+    rawstd::Task<void> _wait_for_blockdev(
+        const std::string& path, bool want_present, int timeout_ms = 5000
+    );
 
 public:
-    Session(Private p, rawio::Queue& queue, const rawstd::URI& location);
+    Backend(Private p, rawio::Queue& queue, const rawstd::URI& location);
 
     rawstd::Task<void> list(
         unsigned int limit, std::vector<RawstdUUID>& targets, RawstdUUID& token
@@ -51,12 +63,10 @@ public:
 
     rawstd::Task<void> remove(const RawstdUUID& id) override;
 
-    rawstd::Task<RawstorObjectSpec> spec(const RawstdUUID& id) override;
-
     rawstd::Task<RawstorLocationInfo> info() override;
 };
 
 } // namespace zfs
 } // namespace rawstor
 
-#endif // RAWSTOR_ZFS_SESSION_HPP
+#endif // RAWSTOR_ZFS_BACKEND_HPP

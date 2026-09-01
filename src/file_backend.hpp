@@ -1,7 +1,7 @@
-#ifndef RAWSTOR_FILE_SESSION_HPP
-#define RAWSTOR_FILE_SESSION_HPP
+#ifndef RAWSTOR_FILE_BACKEND_HPP
+#define RAWSTOR_FILE_BACKEND_HPP
 
-#include "blk_session.hpp"
+#include "blk_backend.hpp"
 
 #include <rawio/queue.hpp>
 
@@ -18,12 +18,12 @@
 namespace rawstor {
 namespace file {
 
-class Session final : public rawstor::blk::Session {
+class Backend final : public rawstor::blk::Backend {
 private:
-    rawstd::Task<int> _connect(const RawstdUUID& id) override;
+    rawstd::Task<int> _open(const RawstdUUID& id) override;
 
 public:
-    Session(Private p, rawio::Queue& queue, const rawstd::URI& location);
+    Backend(Private p, rawio::Queue& queue, const rawstd::URI& location);
 
     rawstd::Task<void> list(
         unsigned int limit, std::vector<RawstdUUID>& targets, RawstdUUID& token
@@ -42,4 +42,4 @@ public:
 } // namespace file
 } // namespace rawstor
 
-#endif // RAWSTOR_FILE_SESSION_HPP
+#endif // RAWSTOR_FILE_BACKEND_HPP

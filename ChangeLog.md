@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - `--write-cache=on|off` for `rawstor-vhost` and `rawstor-vhost-qemu` (default `off`, write-through): advertises `VIRTIO_BLK_F_CONFIG_WCE` and honors the guest live-toggling it via `SET_CONFIG`. With write-cache off, every write is made durable (`sync=true`) since the guest treats a completed write as already durable and won't issue a `FLUSH`.
+- Vendored [nlohmann/json](https://github.com/nlohmann/json) (single-header, MIT) for parsing command output in the new storage backends below.
+- New `lvm://` storage backend: objects are LVM Logical Volumes, provisioned via `lvcreate`/`lvremove`. A new object is fully zeroed before it becomes visible (LVM itself only zeroes the first 4KiB of a new LV), so it never exposes another object's leftover data; any staging LV left behind by a process that crashed mid-create is swept and removed on the next `create()` against that VG.
+- New `zfs://` storage backend: objects are ZFS zvols, provisioned via `zfs create`/`zfs destroy`.
 
 ### Changed
 - The packaged `rawstor-vhost@.service` systemd unit now defaults `RAWSTOR_WRITE_CACHE` to `on` instead of `off`: forcing a journal commit on every write (write-cache off) was measured to stall write round-trip times into the tens of seconds under concurrent load on a host whose backing filesystem commits slowly, while any modern guest kernel already issues an explicit flush when it needs durability.
