@@ -223,10 +223,23 @@ int result_trampoline(ssize_t result, void* data) {
 }
 
 rawstd::Task<void>
-co_target_spec(RawIOQueue* queue, std::string target, RawstorObjectSpec* spec) {
+co_target_meta(RawIOQueue* queue, std::string target, RawstorObjectMeta* meta) {
     rawstd::CallbackAwaitable<void> awaiter;
-    int res = rawstor_target_spec(
-        queue, target.c_str(), spec, result_trampoline, &awaiter
+    int res = rawstor_target_meta(
+        queue, target.c_str(), meta, result_trampoline, &awaiter
+    );
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+    co_await awaiter;
+}
+
+rawstd::Task<void> co_target_set_state(
+    RawIOQueue* queue, std::string target, RawstorObjectMeta meta
+) {
+    rawstd::CallbackAwaitable<void> awaiter;
+    int res = rawstor_target_set_state(
+        queue, target.c_str(), &meta, result_trampoline, &awaiter
     );
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
@@ -734,6 +747,20 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
                 client->_flush(head, basic);
                 break;
             }
+            case RAWSTOR_CMD_SET_STATE: {
+                std::vector<unsigned char> body_data = co_await recv_frame_part(
+                    stream, sizeof(RawstorOSTFrameMetaBody), fd,
+                    "request body", &stream_failed
+                );
+                client = weak.lock();
+                if (client == nullptr) {
+                    co_return;
+                }
+                RawstorOSTFrameMetaBody meta_body;
+                memcpy(&meta_body, body_data.data(), sizeof(meta_body));
+                client->_set_state(head, meta_body);
+                break;
+            }
             case RAWSTOR_CMD_READ: {
                 std::vector<unsigned char> body_data = co_await recv_frame_part(
                     stream, sizeof(RawstorOSTFrameIOBody), fd, "request body",
@@ -1077,11 +1104,11 @@ rawstd::DetachedTask Client::_spec_task(
 
     std::vector<rawstd::URI> targets = client->_targets(uuid);
 
-    RawstorObjectSpec spec{};
+    RawstorObjectMeta meta{};
     int result = 0;
     try {
-        co_await co_target_spec(
-            client->_queue, rawstd::URI::uris(targets), &spec
+        co_await co_target_meta(
+            client->_queue, rawstd::URI::uris(targets), &meta
         );
     } catch (const std::system_error& e) {
         result = -e.code().value();
@@ -1094,8 +1121,21 @@ rawstd::DetachedTask Client::_spec_task(
                 RAWSTOR_CMD_SPEC, head.cid, result, 0
             );
         } else {
-            std::vector<unsigned char> data(sizeof(spec));
-            memcpy(data.data(), &spec, sizeof(spec));
+            RawstorOSTFrameMetaBody body_out{
+                .obj_id = {},
+                .size = meta.size,
+                .epoch = meta.epoch,
+                .sync_id = meta.sync_id,
+                .sync_id_history = {},
+                .state = meta.state,
+            };
+            memcpy(body_out.obj_id, uuid.bytes, sizeof(body_out.obj_id));
+            memcpy(
+                body_out.sync_id_history, meta.sync_id_history,
+                sizeof(body_out.sync_id_history)
+            );
+            std::vector<unsigned char> data(sizeof(body_out));
+            memcpy(data.data(), &body_out, sizeof(body_out));
             co_await client->_send_response(
                 RAWSTOR_CMD_SPEC, head.cid, data.size(), 0, data
             );
@@ -1113,6 +1153,59 @@ void Client::_spec(
     const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
 ) {
     _spec_task(weak_from_this(), head, body);
+    rawstd::DetachedTask::rethrow_if_pending();
+}
+
+rawstd::DetachedTask Client::_set_state_task(
+    std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
+    RawstorOSTFrameMetaBody body
+) {
+    std::shared_ptr<Client> client = weak.lock();
+    if (client == nullptr) {
+        co_return;
+    }
+
+    RawstdUUID uuid;
+    memcpy(uuid.bytes, body.obj_id, sizeof(body.obj_id));
+
+    std::vector<rawstd::URI> targets = client->_targets(uuid);
+
+    RawstorObjectMeta meta{};
+    meta.epoch = body.epoch;
+    meta.sync_id = body.sync_id;
+    memcpy(
+        meta.sync_id_history, body.sync_id_history,
+        sizeof(meta.sync_id_history)
+    );
+    meta.state = body.state;
+
+    int result = 0;
+    try {
+        co_await co_target_set_state(
+            client->_queue, rawstd::URI::uris(targets), meta
+        );
+    } catch (const std::system_error& e) {
+        result = -e.code().value();
+    }
+
+    bool send_failed = false;
+    try {
+        co_await client->_send_response(
+            RAWSTOR_CMD_SET_STATE, head.cid, result, 0
+        );
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        send_failed = true;
+    }
+    if (send_failed) {
+        co_await client->_server.del_client(client->_fd);
+    }
+}
+
+void Client::_set_state(
+    const RawstorOSTFrameHead& head, const RawstorOSTFrameMetaBody& body
+) {
+    _set_state_task(weak_from_this(), head, body);
     rawstd::DetachedTask::rethrow_if_pending();
 }
 

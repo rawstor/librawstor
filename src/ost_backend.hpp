@@ -89,6 +89,12 @@ public:
 
     rawstd::Task<RawstorObjectSpec> spec(const RawstdUUID& id) override;
 
+    rawstd::Task<RawstorObjectMeta> meta(const RawstdUUID& id) override;
+
+    rawstd::Task<void> set_state(
+        const RawstdUUID& id, const RawstorObjectMeta& meta
+    ) override;
+
     rawstd::Task<RawstorLocationInfo> info() override;
 
     rawstd::Task<void> set_object(Object* object) override;

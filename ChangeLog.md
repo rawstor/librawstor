@@ -12,6 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Vendored [nlohmann/json](https://github.com/nlohmann/json) (single-header, MIT) for parsing command output in the new storage backends below.
 - New `lvm://` storage backend: objects are LVM Logical Volumes, provisioned via `lvcreate`/`lvremove`. A new object is fully zeroed before it becomes visible (LVM itself only zeroes the first 4KiB of a new LV), so it never exposes another object's leftover data; any staging LV left behind by a process that crashed mid-create is swept and removed on the next `create()` against that VG.
 - New `zfs://` storage backend: objects are ZFS zvols, provisioned via `zfs create`/`zfs destroy`.
+- [Mirroring design](docs/mirroring.md): failure model, quorum rules and
+  online resync for N-way mirrors.
+- Per-copy object metadata (state/epoch/sync_id/history): a companion
+  `.meta` file for `file://`, with `SPEC`/`SET_STATE`/`FLUSH` OST protocol
+  commands and `rawstor_target_meta`/`rawstor_target_set_state`
+  (`<rawstor/target.h>`) public API. Durable: metadata updates are fsynced
+  by the backend before the call completes.
 
 ### Changed
 - The packaged `rawstor-vhost@.service` systemd unit now defaults `RAWSTOR_WRITE_CACHE` to `on` instead of `off`: forcing a journal commit on every write (write-cache off) was measured to stall write round-trip times into the tens of seconds under concurrent load on a host whose backing filesystem commits slowly, while any modern guest kernel already issues an explicit flush when it needs durability.

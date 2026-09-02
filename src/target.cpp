@@ -107,6 +107,16 @@ rawstd::Task<void> remove_one(rawio::Queue& queue, const rawstd::URI& target) {
     co_await cn->close();
 }
 
+rawstd::Task<void> set_state_one(
+    rawio::Queue& queue, const rawstd::URI& target, const RawstorObjectMeta& meta
+) {
+    RawstdUUID id = uuid_from_target(target);
+    std::unique_ptr<rawstor::Connection> cn =
+        co_await rawstor::Connection::create(queue, target.parent(), 1);
+    co_await cn->set_state(id, meta);
+    co_await cn->close();
+}
+
 // Shared by Target::remove() and the rollback path in Target::create():
 // REMOVE every URI in `targets` concurrently.
 rawstd::Task<void>
@@ -297,6 +307,73 @@ void launch_spec_op(
     rawstd::DetachedTask::rethrow_if_pending();
 }
 
+// Same shape as launch_spec_op_coro() above, for Target::meta().
+rawstd::DetachedTask launch_meta_op_coro(
+    rawstor::Target t, rawio::Queue* queue, RawstorObjectMeta* meta,
+    int (*cb)(ssize_t result, void* data), void* data
+) {
+    ssize_t result = 0;
+    try {
+        *meta = co_await t.meta(*queue);
+    } catch (const std::system_error& e) {
+        result = -e.code().value();
+    } catch (const std::bad_alloc&) {
+        result = -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        result = -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        result = -EINVAL;
+    }
+    int res = cb(result, data);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+}
+
+void launch_meta_op(
+    rawstor::Target t, rawio::Queue* queue, RawstorObjectMeta* meta,
+    int (*cb)(ssize_t result, void* data), void* data
+) {
+    launch_meta_op_coro(std::move(t), queue, meta, cb, data);
+    rawstd::DetachedTask::rethrow_if_pending();
+}
+
+// Same shape as launch_remove_op_coro() above, for Target::set_state():
+// no out-parameter, just a result.
+rawstd::DetachedTask launch_set_state_op_coro(
+    rawstor::Target t, rawio::Queue* queue, RawstorObjectMeta meta,
+    int (*cb)(ssize_t result, void* data), void* data
+) {
+    ssize_t result = 0;
+    try {
+        co_await t.set_state(*queue, meta);
+    } catch (const std::system_error& e) {
+        result = -e.code().value();
+    } catch (const std::bad_alloc&) {
+        result = -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        result = -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        result = -EINVAL;
+    }
+    int res = cb(result, data);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+}
+
+void launch_set_state_op(
+    rawstor::Target t, rawio::Queue* queue, const RawstorObjectMeta& meta,
+    int (*cb)(ssize_t result, void* data), void* data
+) {
+    launch_set_state_op_coro(std::move(t), queue, meta, cb, data);
+    rawstd::DetachedTask::rethrow_if_pending();
+}
+
 } // namespace
 
 namespace rawstor {
@@ -385,6 +462,43 @@ rawstd::Task<RawstorObjectSpec> Target::spec(rawio::Queue& queue) {
     RawstorObjectSpec ret = co_await cn->spec(id);
     co_await cn->close();
     co_return ret;
+}
+
+// First URI only, same as spec() above -- see its own TODO. Unlike spec(),
+// deliberately does not fail over to the next URI: a caller inspecting
+// mirror consistency state wants THIS copy's state, not whichever copy
+// happens to answer first.
+rawstd::Task<RawstorObjectMeta> Target::meta(rawio::Queue& queue) {
+    validate_not_empty(_uris);
+    validate_different_uris(_uris);
+    validate_same_uuid(_uris);
+
+    RawstdUUID id = uuid_from_target(_uris.front());
+    std::unique_ptr<rawstor::Connection> cn =
+        co_await rawstor::Connection::create(queue, _uris.front().parent(), 1);
+    RawstorObjectMeta ret = co_await cn->meta(id);
+    co_await cn->close();
+    co_return ret;
+}
+
+// Unlike meta() above, every URI is updated concurrently -- a mirror
+// consistency state change must land on every copy, not just the first
+// one (docs/mirroring.md). Every URI is still attempted even if an
+// earlier one fails (gather() never abandons a task still in flight, same
+// as remove() below), so a partial failure leaves as many copies updated
+// as possible rather than none.
+rawstd::Task<void>
+Target::set_state(rawio::Queue& queue, const RawstorObjectMeta& meta) {
+    validate_not_empty(_uris);
+    validate_different_uris(_uris);
+    validate_same_uuid(_uris);
+
+    std::vector<rawstd::Task<void>> tasks;
+    tasks.reserve(_uris.size());
+    for (const auto& uri : _uris) {
+        tasks.push_back(set_state_one(queue, uri, meta));
+    }
+    co_await rawstd::gather(std::move(tasks));
 }
 
 rawstd::Task<void> Target::remove(rawio::Queue& queue) {
@@ -518,6 +632,52 @@ int rawstor_target_spec(
         rawstor::Target t(rawstd::URI::uriv(target));
         launch_spec_op(
             std::move(t), static_cast<rawio::Queue*>(queue), sp, cb, data
+        );
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+int rawstor_target_meta(
+    RawIOQueue* queue, const char* target, RawstorObjectMeta* meta,
+    int (*cb)(ssize_t result, void* data), void* data
+) noexcept {
+    try {
+        rawstor::Target t(rawstd::URI::uriv(target));
+        launch_meta_op(
+            std::move(t), static_cast<rawio::Queue*>(queue), meta, cb, data
+        );
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+int rawstor_target_set_state(
+    RawIOQueue* queue, const char* target, const RawstorObjectMeta* meta,
+    int (*cb)(ssize_t result, void* data), void* data
+) noexcept {
+    try {
+        rawstor::Target t(rawstd::URI::uriv(target));
+        launch_set_state_op(
+            std::move(t), static_cast<rawio::Queue*>(queue), *meta, cb, data
         );
         return 0;
     } catch (const std::system_error& e) {

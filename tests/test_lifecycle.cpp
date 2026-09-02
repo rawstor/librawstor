@@ -21,6 +21,8 @@
 #include <algorithm>
 #include <cerrno>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <vector>
 
@@ -46,6 +48,23 @@ ssize_t target_spec(
 ssize_t target_remove(rawio::Queue& queue, const std::string& target) {
     return rawstor::tests::sync_run(&queue, [&](auto cb, void* data) {
         return rawstor_target_remove(&queue, target.c_str(), cb, data);
+    });
+}
+
+ssize_t target_meta(
+    rawio::Queue& queue, const std::string& target, RawstorObjectMeta* meta
+) {
+    return rawstor::tests::sync_run(&queue, [&](auto cb, void* data) {
+        return rawstor_target_meta(&queue, target.c_str(), meta, cb, data);
+    });
+}
+
+ssize_t target_set_state(
+    rawio::Queue& queue, const std::string& target,
+    const RawstorObjectMeta& meta
+) {
+    return rawstor::tests::sync_run(&queue, [&](auto cb, void* data) {
+        return rawstor_target_set_state(&queue, target.c_str(), &meta, cb, data);
     });
 }
 
@@ -347,12 +366,66 @@ TEST(FileLifecycleTest, create_at_spec_list_remove) {
     EXPECT_EQ(res, 0);
 }
 
-TEST(OstLifecycleTest, create_spec_list_remove) {
+TEST(FileLifecycleTest, meta_set_state) {
+    rawstor::tests::TmpDir dir;
+    rawstd::URI location_uri(dir.uri());
+    std::string uuid = "00000000-0000-7000-8000-000000000001";
+    std::string target = rawstd::URI(location_uri, uuid).str();
+
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
+
+    RawstorObjectSpec spec{.size = 1ull << 20};
+    ssize_t res = target_create(*queue, target, spec);
+    EXPECT_EQ(res, 0);
+
+    RawstorObjectMeta meta{};
+    res = target_meta(*queue, target, &meta);
+    EXPECT_EQ(res, 0);
+    EXPECT_EQ(meta.size, 1ull << 20);
+    EXPECT_EQ(meta.state, RAWSTOR_OBJECT_STATE_CLEAN);
+    EXPECT_EQ(meta.epoch, 0u);
+    EXPECT_EQ(meta.sync_id, 0u);
+    for (size_t i = 0; i < RAWSTOR_OBJECT_SYNC_ID_HISTORY; ++i) {
+        EXPECT_EQ(meta.sync_id_history[i], 0u);
+    }
+
+    RawstorObjectMeta next{};
+    next.size = 42; /* must be ignored */
+    next.epoch = 3;
+    next.sync_id = 0x1122334455667788ull;
+    next.sync_id_history[0] = 0xaabbccddeeff0011ull;
+    next.state = RAWSTOR_OBJECT_STATE_DIRTY;
+    res = target_set_state(*queue, target, next);
+    EXPECT_EQ(res, 0);
+
+    res = target_meta(*queue, target, &meta);
+    EXPECT_EQ(res, 0);
+    EXPECT_EQ(meta.size, 1ull << 20);
+    EXPECT_EQ(meta.state, RAWSTOR_OBJECT_STATE_DIRTY);
+    EXPECT_EQ(meta.epoch, 3u);
+    EXPECT_EQ(meta.sync_id, 0x1122334455667788ull);
+    EXPECT_EQ(meta.sync_id_history[0], 0xaabbccddeeff0011ull);
+    EXPECT_EQ(meta.sync_id_history[1], 0u);
+
+    res = target_remove(*queue, target);
+    EXPECT_EQ(res, 0);
+}
+
+TEST(OstLifecycleTest, create_spec_remove) {
     rawstor::tests::Server server(8753, 256);
 
     rawstd::URI location_uri("ost://127.0.0.1:8753");
     std::string uuid = "00000000-0000-7000-8000-000000000003";
     std::string target = rawstd::URI(location_uri, uuid).str();
+
+    RawstorOSTFrameMetaBody meta_body = {
+        .obj_id = {},
+        .size = 1ull << 20,
+        .epoch = 7,
+        .sync_id = 0x1122334455667788ull,
+        .sync_id_history = {0xaabbccddeeff0011ull, 0, 0, 0},
+        .state = RAWSTOR_OBJECT_STATE_DIRTY,
+    };
 
     {
         rawstor::tests::Session s(server);
@@ -361,7 +434,17 @@ TEST(OstLifecycleTest, create_spec_list_remove) {
 
     {
         rawstor::tests::Session s(server);
-        s.cmd_spec(RAWSTOR_MAGIC, 0, RawstorObjectSpec{.size = 1ull << 20});
+        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, meta_body);
+    }
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, meta_body);
+    }
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_set_state(RAWSTOR_MAGIC, 0, 0);
     }
 
     {
@@ -386,6 +469,26 @@ TEST(OstLifecycleTest, create_spec_list_remove) {
     }
 
     {
+        RawstorObjectMeta meta{};
+        ssize_t res = target_meta(*queue, target, &meta);
+        EXPECT_EQ(res, 0);
+        EXPECT_EQ(meta.size, 1ull << 20);
+        EXPECT_EQ(meta.epoch, 7u);
+        EXPECT_EQ(meta.sync_id, 0x1122334455667788ull);
+        EXPECT_EQ(meta.sync_id_history[0], 0xaabbccddeeff0011ull);
+        EXPECT_EQ(meta.state, RAWSTOR_OBJECT_STATE_DIRTY);
+    }
+
+    {
+        RawstorObjectMeta meta{};
+        meta.epoch = 8;
+        meta.sync_id = 0x99ull;
+        meta.state = RAWSTOR_OBJECT_STATE_CLEAN;
+        ssize_t res = target_set_state(*queue, target, meta);
+        EXPECT_EQ(res, 0);
+    }
+
+    {
         ssize_t res = target_remove(*queue, target);
         EXPECT_EQ(res, 0);
     }
@@ -405,7 +508,17 @@ TEST(OstLifecycleTest, create_at_default_spec_remove) {
 
     {
         rawstor::tests::Session s(server);
-        s.cmd_spec(RAWSTOR_MAGIC, 0, RawstorObjectSpec{.size = 1ull << 20});
+        s.cmd_spec(
+            RAWSTOR_MAGIC, 0, 0,
+            RawstorOSTFrameMetaBody{
+                .obj_id = {},
+                .size = 1ull << 20,
+                .epoch = 0,
+                .sync_id = 0,
+                .sync_id_history = {},
+                .state = RAWSTOR_OBJECT_STATE_CLEAN,
+            }
+        );
     }
 
     {
@@ -454,7 +567,17 @@ TEST(OstLifecycleTest, create_at_spec_remove) {
 
     {
         rawstor::tests::Session s(server);
-        s.cmd_spec(RAWSTOR_MAGIC, 0, RawstorObjectSpec{.size = 1ull << 20});
+        s.cmd_spec(
+            RAWSTOR_MAGIC, 0, 0,
+            RawstorOSTFrameMetaBody{
+                .obj_id = {},
+                .size = 1ull << 20,
+                .epoch = 0,
+                .sync_id = 0,
+                .sync_id_history = {},
+                .state = RAWSTOR_OBJECT_STATE_CLEAN,
+            }
+        );
     }
 
     {

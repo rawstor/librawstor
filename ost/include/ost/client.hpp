@@ -155,6 +155,13 @@ private:
     );
     static rawstd::DetachedTask
     _flush_task(std::weak_ptr<Client> weak, RawstorOSTFrameHead head);
+    void _set_state(
+        const RawstorOSTFrameHead& head, const RawstorOSTFrameMetaBody& body
+    );
+    static rawstd::DetachedTask _set_state_task(
+        std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
+        RawstorOSTFrameMetaBody body
+    );
     std::vector<rawstd::URI> _targets(const RawstdUUID& uuid);
 
     // Sends a response frame and awaits its actual completion (not just
