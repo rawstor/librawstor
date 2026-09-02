@@ -40,6 +40,42 @@ struct RawstorObjectSpec {
 };
 
 /**
+ * Mirror consistency states of an object copy (see docs/mirroring.md).
+ *
+ * CLEAN   - the copy was closed correctly; all acknowledged writes are on it.
+ * DIRTY   - the copy is open for writing; it may diverge from its mirrors in
+ *           regions covered by unacknowledged writes.
+ * SYNCING - a resync onto this copy was started and has not completed; the
+ *           copy content must not be trusted.
+ */
+#define RAWSTOR_OBJECT_STATE_CLEAN 0u
+#define RAWSTOR_OBJECT_STATE_DIRTY 1u
+#define RAWSTOR_OBJECT_STATE_SYNCING 2u
+
+/** Number of ancestor sync ids kept in RawstorObjectMeta. */
+#define RAWSTOR_OBJECT_SYNC_ID_HISTORY 4
+
+/**
+ * @brief Object copy metadata.
+ *
+ * Extends RawstorObjectSpec with the mirror consistency state of a single
+ * object copy (see docs/mirroring.md). A sync_id of 0 marks a legacy copy
+ * that has never been part of an established sync set; such copies are
+ * treated as CLEAN and identical right after creation.
+ *
+ * @see rawstor_target_meta
+ * @see rawstor_target_set_state
+ */
+struct RawstorObjectMeta {
+    uint64_t size;    /**< Size of the object in bytes. */
+    uint64_t epoch;   /**< Bumped on every mirror-set health change. */
+    uint64_t sync_id; /**< Id of the sync set this copy belongs to. */
+    /** Ancestor sync ids, newest first; 0 marks unused entries. */
+    uint64_t sync_id_history[RAWSTOR_OBJECT_SYNC_ID_HISTORY];
+    uint32_t state; /**< One of RAWSTOR_OBJECT_STATE_*. */
+};
+
+/**
  * @brief Asynchronously retrieve metadata about a stored object.
  *
  * Given a target string (as defined in the Rawstor location/target syntax),
@@ -86,6 +122,79 @@ struct RawstorObjectSpec {
  */
 int rawstor_target_spec(
     RawIOQueue* queue, const char* target, struct RawstorObjectSpec* spec,
+    int (*cb)(ssize_t result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Asynchronously retrieve the full mirror consistency metadata of a
+ *        target's first copy.
+ *
+ * Like rawstor_target_spec(), but fills the full per-copy metadata record
+ * (RawstorObjectMeta) including the mirror consistency state, and only
+ * ever queries the first URI of @p target -- unlike rawstor_target_spec(),
+ * it does not fail over to the next one.
+ *
+ * Legacy copies created before metadata support report size only, with
+ * state CLEAN, epoch 0 and sync_id 0.
+ *
+ * This function returns immediately; the actual result is reported via
+ * @p cb once the operation completes.
+ *
+ * @param queue   Queue used to drive the asynchronous lookup.
+ * @param target  Target string, see rawstor_target_spec().
+ * @param meta    Out-parameter written exactly once, immediately before
+ *                @p cb is invoked: the copy's metadata on success. Left
+ *                untouched on error, and never written at all if the
+ *                lookup is never queued (see the return value below).
+ * @param cb      Callback invoked on completion, see rawstor_target_spec().
+ * @param data    User-defined context pointer passed unchanged to @p cb.
+ *
+ * @return 0 if the lookup was successfully queued; negative errno on
+ *         immediate failure (in which case neither @p meta nor @p cb is
+ *         ever touched).
+ *
+ * @see RawstorObjectMeta
+ * @see rawstor_target_spec
+ * @see rawstor_target_set_state
+ */
+int rawstor_target_meta(
+    RawIOQueue* queue, const char* target, struct RawstorObjectMeta* meta,
+    int (*cb)(ssize_t result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Asynchronously update the mirror consistency state of every copy
+ *        of a target.
+ *
+ * Persists the state, epoch, sync_id and sync_id_history fields of @p meta
+ * on every backend listed in @p target -- unlike rawstor_target_meta()
+ * (first copy only), every URI is updated, and every one is attempted even
+ * if an earlier one fails; @p cb reports the first error encountered, if
+ * any. The object size cannot be changed through this call: the size field
+ * of @p meta is ignored and the stored size is preserved.
+ *
+ * The update is durable: it is synced to stable storage on each backend
+ * before that backend's write is considered complete.
+ *
+ * This function returns immediately; the actual result is reported via
+ * @p cb once the operation completes.
+ *
+ * @param queue   Queue used to drive the asynchronous update.
+ * @param target  Target string, see rawstor_target_spec().
+ * @param meta    Metadata record to persist (size field ignored). Only
+ *                read while this call is being queued -- need not stay
+ *                valid until @p cb runs.
+ * @param cb      Callback invoked on completion, see rawstor_target_spec().
+ * @param data    User-defined context pointer passed unchanged to @p cb.
+ *
+ * @return 0 if the update was successfully queued; negative errno on
+ *         immediate failure (in which case @p cb is never invoked).
+ *
+ * @see RawstorObjectMeta
+ * @see rawstor_target_meta
+ */
+int rawstor_target_set_state(
+    RawIOQueue* queue, const char* target, const struct RawstorObjectMeta* meta,
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 

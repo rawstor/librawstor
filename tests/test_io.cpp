@@ -297,6 +297,7 @@ public:
             }
         }
     }
+
 };
 
 TEST(FileIOTest, basics) {
@@ -313,6 +314,8 @@ TEST(FileIOTest, basics) {
 
     std::string write_data = "ping";
     EXPECT_NO_THROW(object.write(write_data.data(), write_data.length()));
+
+    EXPECT_NO_THROW(object.flush());
 
     std::string read_data(4, '\0');
     EXPECT_NO_THROW(object.read(read_data.data(), read_data.length()));
@@ -368,6 +371,8 @@ TEST(OstIOTest, basics) {
 
     std::string ping = "ping";
     EXPECT_NO_THROW(object.write(ping.data(), ping.length()));
+
+    EXPECT_NO_THROW(object.flush());
 
     std::string pong(4, '\0');
     EXPECT_NO_THROW(object.read(pong.data(), pong.length()));

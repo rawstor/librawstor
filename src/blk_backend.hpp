@@ -96,6 +96,16 @@ public:
     // its objects are plain regular files.
     rawstd::Task<RawstorObjectSpec> spec(const RawstdUUID& id) override;
 
+    // No native per-copy metadata storage yet -- lvm::Backend/zfs::Backend
+    // fail both with ENOSYS until they grow one (docs/mirroring.md's
+    // "native per-copy mirror metadata" stage); file::Backend overrides
+    // both with a real implementation.
+    rawstd::Task<RawstorObjectMeta> meta(const RawstdUUID& id) override;
+
+    rawstd::Task<void> set_state(
+        const RawstdUUID& id, const RawstorObjectMeta& meta
+    ) override;
+
     rawstd::Task<size_t>
     pread(void* buf, size_t size, off_t offset) override final;
 

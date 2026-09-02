@@ -3,6 +3,7 @@
 
 #include <rawstor/location.h>
 #include <rawstor/object.h>
+#include <rawstor/protocol.h>
 #include <rawstor/target.h>
 
 #include <unistd.h>
@@ -37,9 +38,17 @@ public:
 
     void cmd_spec_request();
     void cmd_spec_response(
-        uint32_t magic, uint16_t cid, const RawstorObjectSpec& spec
+        uint32_t magic, uint16_t cid, int32_t res,
+        const RawstorOSTFrameMetaBody& meta
     );
-    void cmd_spec(uint32_t magic, uint16_t cid, const RawstorObjectSpec& spec);
+    void cmd_spec(
+        uint32_t magic, uint16_t cid, int32_t res,
+        const RawstorOSTFrameMetaBody& meta
+    );
+
+    void cmd_set_state_request();
+    void cmd_set_state_response(uint32_t magic, uint16_t cid, int32_t res);
+    void cmd_set_state(uint32_t magic, uint16_t cid, int32_t res);
 
     void cmd_location_info_request();
     void cmd_location_info_response(

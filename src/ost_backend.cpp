@@ -735,6 +735,68 @@ public:
     }
 };
 
+// SET_STATE's request carries the full RawstorOSTFrameMetaBody (not just
+// obj_id/offset/val like BackendOpBasic below), so it needs its own
+// request shape -- the response is otherwise the same no-payload
+// acknowledgement as BackendOpFlush above.
+class BackendOpSetState final : public BackendOp {
+private:
+    RawstorOSTFrameMeta _request;
+
+public:
+    BackendOpSetState(
+        const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
+        const RawstdUUID& id, const RawstorObjectMeta& meta,
+        const rawstd::TraceEvent& trace_event
+    ) :
+        BackendOp(backend, cid, trace_event, "set_state", 0, 0),
+        _request({
+            .head =
+                {
+                    .magic = RAWSTOR_MAGIC,
+                    .cmd = RAWSTOR_CMD_SET_STATE,
+                    .cid = cid,
+                },
+            .body = {
+                .obj_id = {},
+                .size = meta.size,
+                .epoch = meta.epoch,
+                .sync_id = meta.sync_id,
+                .sync_id_history = {},
+                .state = meta.state,
+            },
+        }) {
+        memcpy(_request.body.obj_id, id.bytes, sizeof(_request.body.obj_id));
+        memcpy(
+            _request.body.sync_id_history, meta.sync_id_history,
+            sizeof(_request.body.sync_id_history)
+        );
+    }
+
+    const void* request_data() const noexcept { return &_request; }
+
+    size_t request_size() const noexcept override { return sizeof(_request); }
+
+    size_t response_head_cb(
+        const RawstorOSTFrameResponse* response, int error
+    ) override {
+        RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
+
+        if (!error) {
+            error = validate_response(response);
+        }
+
+        if (!error) {
+            error = validate_cmd(response->head.cmd, RAWSTOR_CMD_SET_STATE);
+        }
+
+        _dispatch(0, error);
+
+        // A set_state response never carries a body, regardless of error.
+        return 0;
+    }
+};
+
 // The cid-dispatched counterpart of BackendOpRead/BackendOpWrite/
 // BackendOpFlush above, for the RawstorOSTFrameBasic-shaped commands
 // (list/create/remove/spec/info/set_object) -- these carry no hash and
@@ -1122,29 +1184,66 @@ rawstd::Task<void> Backend::remove(const RawstdUUID& id) {
 }
 
 rawstd::Task<RawstorObjectSpec> Backend::spec(const RawstdUUID& id) {
-    rawstd_info("%s: Reading object specification...\n", str().c_str());
+    RawstorObjectMeta m = co_await meta(id);
+    co_return RawstorObjectSpec{m.size};
+}
 
-    RawstorObjectSpec ret = {};
+rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
+    rawstd_info("%s: Reading object metadata...\n", str().c_str());
+
+    RawstorObjectMeta ret = {};
     try {
         std::vector<char> response =
-            co_await _basic_request(RAWSTOR_CMD_SPEC, "spec", id, 0);
-        if (response.size() != sizeof(ret)) {
+            co_await _basic_request(RAWSTOR_CMD_SPEC, "meta", id, 0);
+        if (response.size() != sizeof(RawstorOSTFrameMetaBody)) {
             RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
         }
-        ret = *static_cast<RawstorObjectSpec*>(
-            static_cast<void*>(response.data())
+        const RawstorOSTFrameMetaBody& body =
+            *static_cast<const RawstorOSTFrameMetaBody*>(
+                static_cast<const void*>(response.data())
+            );
+        ret.size = body.size;
+        ret.epoch = body.epoch;
+        ret.sync_id = body.sync_id;
+        memcpy(
+            ret.sync_id_history, body.sync_id_history,
+            sizeof(ret.sync_id_history)
         );
+        ret.state = body.state;
     } catch (const std::system_error&) {
         throw;
     } catch (...) {
         RAWSTD_THROW_SYSTEM_ERROR(EIO);
     }
 
-    rawstd_info(
-        "%s: Object specification successfully received\n", str().c_str()
-    );
+    rawstd_info("%s: Object metadata successfully received\n", str().c_str());
 
     co_return ret;
+}
+
+rawstd::Task<void>
+Backend::set_state(const RawstdUUID& id, const RawstorObjectMeta& meta) {
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('s', "fd = %d\n", fd());
+
+    std::shared_ptr<BackendOpSetState> op = std::make_shared<BackendOpSetState>(
+        std::static_pointer_cast<Backend>(shared_from_this()), _cid_counter++,
+        id, meta, trace_event
+    );
+    _add_op(op);
+
+    try {
+        size_t result = co_await _queue.send(
+            fd(), op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
+        );
+        RAWSTD_TRACE_EVENT_MESSAGE(
+            trace_event, "%zu of %zu\n", result, op->request_size()
+        );
+        op->request_cb(validate_result(op->request_size(), result));
+    } catch (const std::system_error& e) {
+        op->request_cb(e.code().value());
+    }
+
+    co_await *op;
 }
 
 rawstd::Task<RawstorLocationInfo> Backend::info() {

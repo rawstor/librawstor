@@ -756,6 +756,41 @@ Connection::write_zeroes(size_t size, off_t offset, bool unmap, bool sync) {
     }
 }
 
+rawstd::Task<RawstorObjectMeta> Connection::meta(const RawstdUUID& id) {
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        RawstorObjectMeta result =
+            co_await _with_retry(func_name, trace_event, &Backend::meta, id);
+        _finish(t_call);
+        co_return result;
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
+rawstd::Task<void>
+Connection::set_state(const RawstdUUID& id, const RawstorObjectMeta& meta) {
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        co_await _with_retry(
+            func_name, trace_event, &Backend::set_state, id, meta
+        );
+        _finish(t_call);
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
 rawstd::Task<void> Connection::flush() {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =

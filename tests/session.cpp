@@ -106,46 +106,6 @@ void Session::cmd_release(uint32_t magic, uint16_t cid, int32_t res) {
     cmd_release_response(magic, cid, res);
 }
 
-void Session::cmd_spec_request() {
-    _server.read(
-        "RAWSTOR_CMD_SPEC <<<", sizeof(RawstorOSTFrameBasic), [](const void*) {}
-    );
-}
-
-void Session::cmd_spec_response(
-    uint32_t magic, uint16_t cid, const RawstorObjectSpec& spec
-) {
-    RawstorOSTFrameResponse response = {
-        .head{
-            .magic = magic,
-            .cmd = RAWSTOR_CMD_SPEC,
-            .cid = cid,
-        },
-        .body = {
-            .res = static_cast<int32_t>(sizeof(spec)),
-            .hash = 0,
-        },
-    };
-    iovec iov[2] = {
-        {
-            .iov_base = &response,
-            .iov_len = sizeof(response),
-        },
-        {
-            .iov_base = const_cast<RawstorObjectSpec*>(&spec),
-            .iov_len = sizeof(spec),
-        },
-    };
-    _server.writev("RAWSTOR_CMD_SPEC >>>", iov, sizeof(iov) / sizeof(iov[0]));
-}
-
-void Session::cmd_spec(
-    uint32_t magic, uint16_t cid, const RawstorObjectSpec& spec
-) {
-    cmd_spec_request();
-    cmd_spec_response(magic, cid, spec);
-}
-
 void Session::cmd_location_info_request() {
     _server.read(
         "RAWSTOR_CMD_LOCATION_INFO <<<", sizeof(RawstorOSTFrameBasic),
@@ -268,6 +228,69 @@ void Session::cmd_write(uint32_t magic, uint16_t cid, int32_t res) {
     assert(res > 0);
     cmd_write_request(static_cast<size_t>(res));
     cmd_write_response(magic, cid, res);
+}
+
+void Session::cmd_spec_request() {
+    _server.read(
+        "RAWSTOR_CMD_SPEC <<<", sizeof(RawstorOSTFrameBasic), [](const void*) {}
+    );
+}
+
+void Session::cmd_spec_response(
+    uint32_t magic, uint16_t cid, int32_t res,
+    const RawstorOSTFrameMetaBody& meta
+) {
+    RawstorOSTFrameSpecResponse response = {
+        .head{
+            .magic = magic,
+            .cmd = RAWSTOR_CMD_SPEC,
+            .cid = cid,
+        },
+        .body =
+            {
+                .res = res,
+                .hash = rawstd_hash_scalar(&meta, sizeof(meta)),
+            },
+        .meta = meta,
+    };
+    _server.write("RAWSTOR_CMD_SPEC >>>", &response, sizeof(response));
+}
+
+void Session::cmd_spec(
+    uint32_t magic, uint16_t cid, int32_t res,
+    const RawstorOSTFrameMetaBody& meta
+) {
+    cmd_spec_request();
+    cmd_spec_response(magic, cid, res, meta);
+}
+
+void Session::cmd_set_state_request() {
+    _server.read(
+        "RAWSTOR_CMD_SET_STATE <<<", sizeof(RawstorOSTFrameMeta),
+        [](const void*) {}
+    );
+}
+
+void Session::cmd_set_state_response(
+    uint32_t magic, uint16_t cid, int32_t res
+) {
+    RawstorOSTFrameResponse response = {
+        .head{
+            .magic = magic,
+            .cmd = RAWSTOR_CMD_SET_STATE,
+            .cid = cid,
+        },
+        .body = {
+            .res = res,
+            .hash = 0,
+        },
+    };
+    _server.write("RAWSTOR_CMD_SET_STATE >>>", &response, sizeof(response));
+}
+
+void Session::cmd_set_state(uint32_t magic, uint16_t cid, int32_t res) {
+    cmd_set_state_request();
+    cmd_set_state_response(magic, cid, res);
 }
 
 void Session::cmd_discard_request() {

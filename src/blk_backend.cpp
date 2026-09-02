@@ -204,6 +204,20 @@ rawstd::Task<RawstorObjectSpec> Backend::spec(const RawstdUUID& id) {
 #endif
 }
 
+rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
+    (void)id;
+    RAWSTD_THROW_SYSTEM_ERROR(ENOSYS);
+    co_return RawstorObjectMeta{};
+}
+
+rawstd::Task<void>
+Backend::set_state(const RawstdUUID& id, const RawstorObjectMeta& meta) {
+    (void)id;
+    (void)meta;
+    RAWSTD_THROW_SYSTEM_ERROR(ENOSYS);
+    co_return;
+}
+
 rawstd::Task<size_t> Backend::pread(void* buf, size_t size, off_t offset) {
     rawstd_debug(
         "%s(): fd = %d, size = %zu, offset = %jd\n", __FUNCTION__, fd(), size,

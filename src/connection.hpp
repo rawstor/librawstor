@@ -122,6 +122,11 @@ public:
 
     rawstd::Task<RawstorObjectSpec> spec(const RawstdUUID& id);
 
+    rawstd::Task<RawstorObjectMeta> meta(const RawstdUUID& id);
+
+    rawstd::Task<void>
+    set_state(const RawstdUUID& id, const RawstorObjectMeta& meta);
+
     rawstd::Task<RawstorLocationInfo> info();
 
     // set_object()s every backend in the pool create() populated --
