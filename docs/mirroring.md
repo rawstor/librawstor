@@ -4,7 +4,9 @@
 
 A comma-separated target list (see [Locations and Targets](locations_and_targets.md)) makes the client keep N identical copies of an object on different backends. This document defines the failure model for N-way mirroring: what can fail, how the client reacts, and how byte-for-byte identity of the copies is restored afterwards. Erasure coding is out of scope.
 
-Status: design. The current implementation covers only part of this document (write fan-out, create/remove rollback); everything else is the specification to implement.
+Status: stages 1-3 are implemented (per-copy metadata, quorum open, degrade & continue, read failover/repair, clean close, online resync with automatic rejoin through a periodic reconnect probe) for all backends, including `lvm://`/`zfs://` (native ZFS user properties / LVM tags — see below). Not yet implemented: a persistent write-intent bitmap (a crashed resync restarts from scratch and an unclean shutdown costs a full resync), stored checksums/scrub, the MDS witness.
+
+Error codes: open without quorum fails with `-ENOTCONN`; split brain (or no trusted member) fails with `-ENOTRECOVERABLE`; writes below the write quorum or with no member left fail with `-EIO`.
 
 ---
 
@@ -82,7 +84,7 @@ Key invariant: **every acknowledged write exists on a set of copies that interse
 | F8 | Client/OST crash during resync | the copy is left `SYNCING` / with an old `sync_id` | Copy is untrusted | Resync from scratch (v1; resumable with the persistent bitmap in v2) |
 | F9 | Split brain (disjoint write histories) | different `sync_id`s, neither in the other's history | **Excluded in automatic paths by the quorum rules.** Can only arise from a wrong manual force-open, an OST restored from backup, or a bug → then: open refused with a clear error, no automatic winner | Operator: `rawstor-cli resolve --winner=<uri>` → winner gets a new `sync_id`, the loser gets a full resync |
 | F10 | Object missing on one OST (disk lost, OST reprovisioned) | ENOENT when opening the copy | Treat as stale: create the object (ALLOCATE) | Full online resync (F7) |
-| F11 | Copy size mismatch (mixed file/blkdev backends round up to extent/volblocksize — see `src/blkdev_session.hpp`) | spec comparison at open | The logical object size lives in metadata and is the same everywhere; physical ≥ logical is fine. Physical < logical → the copy is invalid (treat as F10) | — |
+| F11 | Copy size mismatch (mixed file/blkdev backends round up to extent/volblocksize — see `src/blk_backend.hpp`) | spec comparison at open | The logical object size lives in metadata and is the same everywhere; physical ≥ logical is fine. Physical < logical → the copy is invalid (treat as F10) | — |
 | F12 | Silent on-disk corruption (bit rot) | the transport hash does **not** catch it (the server hashes already-rotten data). `zfs://` catches it by itself; `file://` has nothing | v1: documented limitation; a scrub tool (chunk-wise comparison of copies) detects divergence under `CLEAN` metadata but cannot tell which copy is right | v1: operator decision. Long term (v3): stored per-chunk checksums |
 
 ---
@@ -108,7 +110,8 @@ If the client or the target OST crashes mid-resync, the copy remains `SYNCING` a
   - `SET_STATE` — write metadata (fsynced on the server);
   - `FLUSH` — fdatasync of object data; needed for clean close and so that `rawstor-vhost`/QEMU can forward guest flushes.
   - An old server receiving an unknown opcode must answer `-ENOSYS`. There is no wire version field — acceptable before 1.0.
-- **`src/file_session.cpp`** (+ blkdev backends) — versioned `.spec` format; fsync of metadata; decide where metadata lives for `lvm://`/`zfs://` (no `.spec` file: a sidecar file, or a reserved header region — to be settled at implementation time).
+- **`src/file_backend.cpp`** — versioned `.spec` format; fsync of metadata.
+- **`src/lvm_backend.cpp`/`src/zfs_backend.cpp`** — a raw block device has no `.spec` file and a reserved header/footer region is incompatible with objects already created (data occupies the device from byte 0). Metadata instead uses each backend's own native, transactional storage: a ZFS user property (`rawstor:meta`, set/read via `zfs set`/`zfs get`) or an LVM tag (`rawstor.meta=...`, via `lvchange --addtag`/`--deltag` and `lvs -o lv_tags`), encoded as a compact colon-separated hex string (`src/blkdev_meta.{hpp,cpp}`). Both mechanisms share the device/dataset's own failure domain and are set in the same command as creation, so there is never a window where the volume exists without one. A volume with no recorded value (created before this existed, or by something else) is **not** trusted as legacy-CLEAN the way an old `.spec` record is — it fails `meta()`, which the caller already treats as case F10 (untrusted member, needs a resync).
 - **`ost/session.cpp`** — handlers for the new opcodes.
 - **`src/object.cpp`** — per-mirror state machine (IN-SYNC/STALE/SYNCING per `Connection`), quorum checks at open, degraded open, the degradation procedure (F1: suspend acks → bump survivors' metadata → resume), read failover + read-repair, the resync engine (bitmap + sweeper + per-chunk locks), reconnect probes for STALE mirrors. Cross-mirror logic lives in `Object`; `Connection` keeps only per-location retry/reopen.
 - **`cli/`** — `rawstor-cli status` (mirror states), `rawstor-cli force-open` / an opts flag (below-quorum start, explicit manual approval), `rawstor-cli resolve` (split brain after force-open/backup restore).

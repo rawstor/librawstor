@@ -42,6 +42,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unreachable, and an open mirrored object probes such members periodically
   (`mirror_probe_interval` option, `RAWSTOR_OPTS_MIRROR_PROBE_INTERVAL`,
   default 5000 ms), reconnecting and resyncing them on success.
+- `lvm://`/`zfs://` mirror members now track real per-copy mirror state
+  (state/epoch/sync_id/history) instead of always reporting a fabricated
+  CLEAN copy: ZFS uses a `rawstor:meta` user property, LVM an
+  `rawstor.meta=...` tag, both set in the same command as object creation
+  and read/replaced natively (`zfs get`/`set`, `lvs`/`lvchange`). A volume
+  with no recorded state (created before this, or by something else) is
+  treated as untrusted and resynced, never assumed CLEAN.
 
 ### Changed
 - The packaged `rawstor-vhost@.service` systemd unit now defaults `RAWSTOR_WRITE_CACHE` to `on` instead of `off`: forcing a journal commit on every write (write-cache off) was measured to stall write round-trip times into the tens of seconds under concurrent load on a host whose backing filesystem commits slowly, while any modern guest kernel already issues an explicit flush when it needs durability.
