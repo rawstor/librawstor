@@ -270,6 +270,7 @@ Object::Object(Private, rawio::Queue& queue, const Target& target) :
     _sync_id_history{},
     _alive(std::make_shared<int>(0)),
     _writes_in_flight(0),
+    _resync_generation(0),
     _probe_fd(-1),
     _probe_pending(false),
     _probe_expirations(std::make_shared<uint64_t>(0)),
@@ -506,6 +507,15 @@ rawstd::Task<void> Object::_run_dirty_barrier() {
     _meta_op_running = true;
 
     try {
+        // A degrade can race this barrier while the object is still not
+        // _dirty (e.g. a concurrent read-repair on another member): it
+        // takes _degrade()'s "nothing acked yet" fast path and bumps
+        // _unrecorded_stale without queuing, since that fast path only
+        // waits on this barrier once _dirty is true. Snapshot the count so
+        // the completion below only subtracts what this fan-out actually
+        // recorded, instead of discarding a concurrent increment.
+        size_t recorded_stale = _unrecorded_stale;
+
         bool bump = _in_sync_count() != _nmirrors || _sync_id == 0 ||
                     _unrecorded_stale > 0;
 
@@ -554,7 +564,7 @@ rawstd::Task<void> Object::_run_dirty_barrier() {
         _epoch = m.epoch;
         _sync_id = m.sync_id;
         memcpy(_sync_id_history, m.sync_id_history, sizeof(_sync_id_history));
-        _unrecorded_stale = 0;
+        _unrecorded_stale -= recorded_stale;
         for (Member& mirror : _members) {
             if (mirror.state == MemberState::IN_SYNC) {
                 mirror.meta.state = m.state;
@@ -582,6 +592,13 @@ rawstd::Task<void> Object::_run_dirty_barrier() {
     }
 
     _finish_meta_op();
+
+    // A degrade that raced this barrier (see recorded_stale above) left
+    // its exclusion unrecorded on the survivors: now that _dirty is set,
+    // _degrade()'s own barrier path picks it up.
+    if (_unrecorded_stale > 0) {
+        co_await _degrade({});
+    }
 }
 
 /*
@@ -615,6 +632,14 @@ rawstd::Task<void> Object::_run_degrade_barrier() {
     if (_unrecorded_stale == 0) {
         co_return;
     }
+
+    // A concurrent degrade arriving while this barrier's own fan-out below
+    // is in flight queues through _meta_waiters (_settle_meta(), reached
+    // via _degrade()) rather than racing _unrecorded_stale directly, so it
+    // is safe to subtract exactly what this fan-out recorded once it
+    // lands, instead of zeroing the counter outright and discarding a
+    // member that went stale too late to be included in it.
+    size_t recorded_stale = _unrecorded_stale;
 
     size_t survivors = _in_sync_count();
 
@@ -662,7 +687,7 @@ rawstd::Task<void> Object::_run_degrade_barrier() {
         _epoch = m.epoch;
         _sync_id = m.sync_id;
         memcpy(_sync_id_history, m.sync_id_history, sizeof(_sync_id_history));
-        _unrecorded_stale = 0;
+        _unrecorded_stale -= recorded_stale;
         for (Member& mirror : _members) {
             if (mirror.state == MemberState::IN_SYNC) {
                 mirror.meta.epoch = m.epoch;
@@ -735,6 +760,9 @@ rawstd::Task<void> Object::_set_state_one(size_t idx, RawstorObjectMeta meta) {
 struct Object::ResyncState {
     enum class Phase { START_DRAIN, SWEEP, FINISH_DRAIN };
 
+    // Captured by every chunk-copy completion so it can tell whether it
+    // still belongs to the current resync (see Object::_resync_generation).
+    size_t generation;
     Phase phase;
     size_t idx;
     size_t chunk;
@@ -1012,7 +1040,9 @@ rawstd::DetachedTask Object::_resync_maybe_start() {
 
     size_t chunk = RESYNC_CHUNK;
     size_t nbits = (size_t)((_size + chunk - 1) / chunk);
+    ++_resync_generation;
     _resync = std::make_unique<ResyncState>(ResyncState{
+        _resync_generation,
         ResyncState::Phase::START_DRAIN,
         idx,
         chunk,
@@ -1093,6 +1123,11 @@ rawstd::DetachedTask Object::_resync_sweep() {
     // _resync_abort() (e.g. from _fan_out_write()) resetting _resync while
     // the kernel still owns this buffer.
     std::shared_ptr<std::vector<char>> buf = _resync->buf;
+    // This resync may be aborted and replaced by a new one (for a
+    // different member) while this read is in flight: _resync itself is
+    // non-null again once that happens, but it is not the ResyncState this
+    // completion was issued for, and must not be touched.
+    size_t generation = _resync->generation;
 
     size_t result = 0;
     int error = 0;
@@ -1102,7 +1137,8 @@ rawstd::DetachedTask Object::_resync_sweep() {
         error = e.code().value();
     }
 
-    if (alive.expired() || _resync == nullptr) {
+    if (alive.expired() || _resync == nullptr ||
+        _resync->generation != generation) {
         co_return;
     }
 
@@ -1135,7 +1171,8 @@ rawstd::DetachedTask Object::_resync_sweep() {
         werror = e.code().value();
     }
 
-    if (alive.expired() || _resync == nullptr) {
+    if (alive.expired() || _resync == nullptr ||
+        _resync->generation != generation) {
         co_return;
     }
 
@@ -1174,6 +1211,10 @@ rawstd::DetachedTask Object::_resync_finish() {
     m.epoch = _epoch;
     m.sync_id = _sync_id;
     memcpy(m.sync_id_history, _sync_id_history, sizeof(m.sync_id_history));
+    // See _resync_sweep(): this resync may be aborted (a concurrent write
+    // duplicated onto the still-SYNCING target can fail right up until the
+    // state flips below) and replaced by a new one for a different member.
+    size_t generation = _resync->generation;
 
     int error = 0;
     try {
@@ -1182,7 +1223,8 @@ rawstd::DetachedTask Object::_resync_finish() {
         error = e.code().value();
     }
 
-    if (alive.expired() || _resync == nullptr) {
+    if (alive.expired() || _resync == nullptr ||
+        _resync->generation != generation) {
         co_return;
     }
 
