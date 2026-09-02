@@ -287,7 +287,8 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
     // its data file; set_state()/meta() failing ENOENT on the reverse
     // (data file present, no .meta yet) is exactly case F10.
     try {
-        std::string meta_path = get_target_meta_path(location_path, uuid_string);
+        std::string meta_path =
+            get_target_meta_path(location_path, uuid_string);
 
         int meta_fd = co_await _queue.open(
             meta_path.c_str(), O_EXCL | O_CREAT | O_WRONLY | O_CLOEXEC,
@@ -371,9 +372,7 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
             RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
         }
         if (disk.version != META_FORMAT_VERSION) {
-            rawstd_error(
-                "Unsupported object meta version: %u\n", disk.version
-            );
+            rawstd_error("Unsupported object meta version: %u\n", disk.version);
             RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
         }
 

@@ -64,7 +64,9 @@ ssize_t target_set_state(
     const RawstorObjectMeta& meta
 ) {
     return rawstor::tests::sync_run(&queue, [&](auto cb, void* data) {
-        return rawstor_target_set_state(&queue, target.c_str(), &meta, cb, data);
+        return rawstor_target_set_state(
+            &queue, target.c_str(), &meta, cb, data
+        );
     });
 }
 

@@ -108,7 +108,8 @@ rawstd::Task<void> remove_one(rawio::Queue& queue, const rawstd::URI& target) {
 }
 
 rawstd::Task<void> set_state_one(
-    rawio::Queue& queue, const rawstd::URI& target, const RawstorObjectMeta& meta
+    rawio::Queue& queue, const rawstd::URI& target,
+    const RawstorObjectMeta& meta
 ) {
     RawstdUUID id = uuid_from_target(target);
     std::unique_ptr<rawstor::Connection> cn =
@@ -597,8 +598,9 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
         }
 
         obj->_members.push_back(
-            Object::Member{std::move(cn), uris[i], Object::MemberState::STALE,
-                            {}, ok}
+            Object::Member{
+                std::move(cn), uris[i], Object::MemberState::STALE, {}, ok
+            }
         );
         if (ok) {
             ++reachable;
@@ -660,7 +662,9 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
         try {
             mirror.meta = co_await mirror.cn->meta(id);
         } catch (const std::system_error& e) {
-            rawstd_warning("Mirror member metadata unavailable: %s\n", e.what());
+            rawstd_warning(
+                "Mirror member metadata unavailable: %s\n", e.what()
+            );
             unavailable = true;
         }
 
@@ -711,9 +715,9 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
     }
 
     // Both are no-ops for a single-target object; a mirrored one starts
-    // probing its unreachable members (docs/mirroring.md, mirror_probe_interval)
-    // and, if one is already reachable but STALE, starts resyncing it --
-    // detached, driven by their own continuations from here on.
+    // probing its unreachable members (docs/mirroring.md,
+    // mirror_probe_interval) and, if one is already reachable but STALE, starts
+    // resyncing it -- detached, driven by their own continuations from here on.
     obj->_probe_setup();
     obj->_resync_maybe_start();
 

@@ -749,8 +749,8 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
             }
             case RAWSTOR_CMD_SET_STATE: {
                 std::vector<unsigned char> body_data = co_await recv_frame_part(
-                    stream, sizeof(RawstorOSTFrameMetaBody), fd,
-                    "request body", &stream_failed
+                    stream, sizeof(RawstorOSTFrameMetaBody), fd, "request body",
+                    &stream_failed
                 );
                 client = weak.lock();
                 if (client == nullptr) {
@@ -1174,8 +1174,7 @@ rawstd::DetachedTask Client::_set_state_task(
     meta.epoch = body.epoch;
     meta.sync_id = body.sync_id;
     memcpy(
-        meta.sync_id_history, body.sync_id_history,
-        sizeof(meta.sync_id_history)
+        meta.sync_id_history, body.sync_id_history, sizeof(meta.sync_id_history)
     );
     meta.state = body.state;
 

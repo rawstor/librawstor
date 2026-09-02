@@ -96,7 +96,8 @@ private:
 
 public:
     MetaBarrierAwaiter(
-        const bool& meta_op_running, std::vector<std::coroutine_handle<>>& waiters
+        const bool& meta_op_running,
+        std::vector<std::coroutine_handle<>>& waiters
     ) :
         _meta_op_running(meta_op_running),
         _waiters(waiters) {}
@@ -246,7 +247,9 @@ T run(rawio::Queue& q, rawstd::Task<T> t) {
 // Adapts rawio::Queue::cancel(int)'s own Awaitable<void> to run() above,
 // which only knows rawstd::Task<T> -- used by ~Object() to cancel the
 // probe timerfd from a plain (non-coroutine) destructor.
-rawstd::Task<void> cancel_fd(rawio::Queue& q, int fd) { co_await q.cancel(fd); }
+rawstd::Task<void> cancel_fd(rawio::Queue& q, int fd) {
+    co_await q.cancel(fd);
+}
 
 } // namespace
 
@@ -707,8 +710,8 @@ rawstd::Task<void> Object::_run_degrade_barrier() {
 }
 
 /*
- * Persists meta on every in-sync member. Members that fail the update are marked
- * STALE (their exclusion is recorded by the very sync_id they now lack);
+ * Persists meta on every in-sync member. Members that fail the update are
+ * marked STALE (their exclusion is recorded by the very sync_id they now lack);
  * ENOSYS is tolerated: block-device members have no metadata storage yet.
  * Never throws itself -- the caller re-checks _in_sync_count()/
  * _below_write_quorum() afterward.
@@ -745,7 +748,9 @@ rawstd::Task<void> Object::_set_state_one(size_t idx, RawstorObjectMeta meta) {
             );
             co_return;
         }
-        rawstd_error("Mirror member state update failed: %s\n", strerror(error));
+        rawstd_error(
+            "Mirror member state update failed: %s\n", strerror(error)
+        );
         _members[idx].state = MemberState::STALE;
     }
 }
@@ -868,7 +873,8 @@ rawstd::Task<size_t> Object::_fan_out_write(
     ++_writes_in_flight;
     if (_resync != nullptr && size > 0) {
         size_t first = (size_t)(offset / (off_t)_resync->chunk);
-        size_t last = (size_t)((offset + (off_t)size - 1) / (off_t)_resync->chunk);
+        size_t last =
+            (size_t)((offset + (off_t)size - 1) / (off_t)_resync->chunk);
         for (size_t c = first; c <= last; ++c) {
             ++_resync->inflight[c];
         }
@@ -893,7 +899,8 @@ rawstd::Task<size_t> Object::_fan_out_write(
 
     if (_resync != nullptr && size > 0) {
         size_t first = (size_t)(offset / (off_t)_resync->chunk);
-        size_t last = (size_t)((offset + (off_t)size - 1) / (off_t)_resync->chunk);
+        size_t last =
+            (size_t)((offset + (off_t)size - 1) / (off_t)_resync->chunk);
         for (size_t c = first; c <= last; ++c) {
             auto it = _resync->inflight.find(c);
             if (it != _resync->inflight.end() && --it->second == 0) {
@@ -904,12 +911,11 @@ rawstd::Task<size_t> Object::_fan_out_write(
         // A chunk fully covered by a write that reached the SYNCING member
         // no longer needs to be copied.
         if (st->syncing_ok) {
-            for (size_t c = first; c <= last && c < _resync->bits.size();
-                 ++c) {
+            for (size_t c = first; c <= last && c < _resync->bits.size(); ++c) {
                 uint64_t lo = (uint64_t)c * _resync->chunk;
                 uint64_t hi = std::min<uint64_t>(lo + _resync->chunk, _size);
-                if ((uint64_t)offset <= lo &&
-                    (uint64_t)offset + size >= hi && _resync->bits[c]) {
+                if ((uint64_t)offset <= lo && (uint64_t)offset + size >= hi &&
+                    _resync->bits[c]) {
                     _resync->bits[c] = false;
                     --_resync->remaining;
                 }
@@ -1323,9 +1329,7 @@ rawstd::DetachedTask Object::_probe_watch(std::weak_ptr<int> alive) {
                     co_return;
                 }
                 if (e.code().value() != ECANCELED) {
-                    rawstd_warning(
-                        "Mirror probe timer failed: %s\n", e.what()
-                    );
+                    rawstd_warning("Mirror probe timer failed: %s\n", e.what());
                 }
                 co_return;
             }
@@ -1412,9 +1416,12 @@ rawstd::Task<size_t> Object::_read(
 
     for (size_t idx : order) {
         try {
-            size_t result = buf != nullptr
-                ? co_await _members[idx].cn->pread(buf, size, offset)
-                : co_await _members[idx].cn->preadv(iov, niov, size, offset);
+            size_t result =
+                buf != nullptr
+                    ? co_await _members[idx].cn->pread(buf, size, offset)
+                    : co_await _members[idx].cn->preadv(
+                          iov, niov, size, offset
+                      );
 
             for (const auto& failure : failures) {
                 size_t fidx = failure.first;
@@ -1642,8 +1649,7 @@ rawstd::Task<size_t> Object::discard(size_t size, off_t offset) {
     // other in-sync member, purely for its own space-accounting consistency.
     try {
         size_t result = co_await _fan_out_write(
-            0, 0,
-            [size, offset](Connection& cn) -> rawstd::Task<size_t> {
+            0, 0, [size, offset](Connection& cn) -> rawstd::Task<size_t> {
                 return cn.discard(size, offset);
             }
         );
@@ -1721,8 +1727,7 @@ rawstd::Task<void> Object::flush() {
 
     try {
         co_await _fan_out_write(
-            0, 0,
-            [this](Connection& cn) -> rawstd::Task<size_t> {
+            0, 0, [this](Connection& cn) -> rawstd::Task<size_t> {
                 return _flush_one(cn);
             }
         );
@@ -1804,7 +1809,9 @@ rawstd::Task<void> Object::close() {
         try {
             co_await _queue.cancel(_probe_fd);
         } catch (const std::exception& e) {
-            rawstd_warning("Object::close(): probe cancel failed: %s\n", e.what());
+            rawstd_warning(
+                "Object::close(): probe cancel failed: %s\n", e.what()
+            );
         }
         ::close(_probe_fd);
         _probe_fd = -1;
@@ -2032,4 +2039,3 @@ int rawstor_object_flush(
         return -EINVAL;
     }
 }
-

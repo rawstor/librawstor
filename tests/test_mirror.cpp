@@ -183,8 +183,9 @@ void object_write(
             completed = true;
         }
     );
-    int res =
-        rawstor_object_pwrite(object, buf, size, offset, false, callback, cb.get());
+    int res = rawstor_object_pwrite(
+        object, buf, size, offset, false, callback, cb.get()
+    );
     ASSERT_EQ(res, 0);
     cb.release();
 
@@ -346,7 +347,9 @@ TEST(MirrorQuorumTest, stale_arm_resynced) {
     ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
 
     /* The stale member is resynced online while the object is open. */
-    EXPECT_TRUE(wait_member_synced(queue, members.target(0), members.target(1)));
+    EXPECT_TRUE(
+        wait_member_synced(queue, members.target(0), members.target(1))
+    );
 
     object_close_clean(queue, object);
 
@@ -454,7 +457,9 @@ TEST(MirrorQuorumTest, syncing_arm_resynced) {
     ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
 
     /* The untrusted member is resynced from scratch. */
-    EXPECT_TRUE(wait_member_synced(queue, members.target(0), members.target(1)));
+    EXPECT_TRUE(
+        wait_member_synced(queue, members.target(0), members.target(1))
+    );
 
     object_close_clean(queue, object);
 
@@ -514,7 +519,9 @@ TEST(MirrorResyncTest, resync_under_concurrent_writes) {
         );
     }
 
-    EXPECT_TRUE(wait_member_synced(queue, members.target(0), members.target(1)));
+    EXPECT_TRUE(
+        wait_member_synced(queue, members.target(0), members.target(1))
+    );
 
     object_close_clean(queue, object);
 
@@ -549,7 +556,9 @@ TEST(MirrorResyncTest, probe_rejoins_recreated_arm) {
     /* The member is reprovisioned empty; the probe picks it up and resyncs. */
     ASSERT_EQ(target_create(queue, members.target(2), spec), 0);
 
-    EXPECT_TRUE(wait_member_synced(queue, members.target(0), members.target(2)));
+    EXPECT_TRUE(
+        wait_member_synced(queue, members.target(0), members.target(2))
+    );
 
     object_close_clean(queue, object);
 
