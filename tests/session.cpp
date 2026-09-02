@@ -202,6 +202,23 @@ void Session::cmd_read(
     cmd_read_response(magic, cid, buf, size);
 }
 
+void Session::cmd_read_error(uint32_t magic, uint16_t cid, int32_t res) {
+    cmd_read_request();
+
+    RawstorOSTFrameResponse response = {
+        .head{
+            .magic = magic,
+            .cmd = RAWSTOR_CMD_READ,
+            .cid = cid,
+        },
+        .body = {
+            .res = res,
+            .hash = 0,
+        },
+    };
+    _server.write("RAWSTOR_CMD_READ >>>", &response, sizeof(response));
+}
+
 void Session::cmd_write_request(size_t size) {
     _server.read(
         "RAWSTOR_CMD_WRITE <<<", sizeof(RawstorOSTFrameIO) + size,
@@ -240,6 +257,30 @@ void Session::cmd_spec_response(
     uint32_t magic, uint16_t cid, int32_t res,
     const RawstorOSTFrameMetaBody& meta
 ) {
+    // Unlike the no-payload commands (WRITE/DISCARD/FLUSH/SET_STATE),
+    // where body.res is a plain 0-on-success/-errno-on-failure result,
+    // SPEC's response carries a payload: body.res is instead the payload
+    // byte count on success (what the client's generic _basic_request()
+    // reads next), and only negative on failure -- `res` here is only
+    // ever meaningful as a caller-supplied negative errno; 0 (every
+    // current test caller's "success") is not a valid payload size and
+    // is replaced with sizeof(meta).
+    if (res < 0) {
+        RawstorOSTFrameResponse response = {
+            .head{
+                .magic = magic,
+                .cmd = RAWSTOR_CMD_SPEC,
+                .cid = cid,
+            },
+            .body = {
+                .res = res,
+                .hash = 0,
+            },
+        };
+        _server.write("RAWSTOR_CMD_SPEC >>>", &response, sizeof(response));
+        return;
+    }
+
     RawstorOSTFrameSpecResponse response = {
         .head{
             .magic = magic,
@@ -248,7 +289,7 @@ void Session::cmd_spec_response(
         },
         .body =
             {
-                .res = res,
+                .res = static_cast<int32_t>(sizeof(meta)),
                 .hash = rawstd_hash_scalar(&meta, sizeof(meta)),
             },
         .meta = meta,

@@ -355,11 +355,12 @@ TEST(OstIOTest, basics) {
         rawstor::tests::Session s(server);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
         s.cmd_write(RAWSTOR_MAGIC, 1, 4);
-        s.cmd_read(RAWSTOR_MAGIC, 2, "pong", 4);
-        // Object's destructor closes -- close() now flushes first (see
-        // Object::close()'s own doc comment) since the write above left it
-        // dirty.
-        s.cmd_flush(RAWSTOR_MAGIC, 3, 0);
+        // Explicit flush() below, then read() -- Object's destructor
+        // closes afterward with nothing left unflushed, so close() itself
+        // doesn't dispatch another flush (see Object::close()'s own doc
+        // comment).
+        s.cmd_flush(RAWSTOR_MAGIC, 2, 0);
+        s.cmd_read(RAWSTOR_MAGIC, 3, "pong", 4);
     }
 
     {

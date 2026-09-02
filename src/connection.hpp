@@ -39,6 +39,15 @@ private:
     // fully-blocking call.
     std::unordered_set<Backend*> _reconnecting;
 
+    // When false, a retryable failure is not retried through
+    // invalidate_backend(): it surfaces to the caller immediately, same as
+    // a permanent rejection. A mirrored Object disables this once it is
+    // DIRTY -- a reconnected backend may be talking to a restarted server
+    // that lost acknowledged writes, so the caller must degrade the mirror
+    // arm instead of silently retrying through it (docs/mirroring.md, case
+    // F6).
+    bool _transparent_retry;
+
     // Every data-path/metadata method's terminal path -- success or final
     // failure -- runs through here exactly once; records the cross-retry
     // call-to-completion latency. Per-attempt telemetry, including the
@@ -104,6 +113,8 @@ public:
 
     std::shared_ptr<Backend> get_next_backend();
     rawstd::Task<void> invalidate_backend(const std::shared_ptr<Backend>& be);
+
+    void set_transparent_retry(bool enabled) noexcept;
 
     const rawstd::URI* location() const noexcept;
 

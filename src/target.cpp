@@ -518,32 +518,56 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
     validate_different_uris(_uris);
     validate_same_uuid(_uris);
 
+    // Copied out up front: this coroutine suspends (co_await) below, and
+    // *this may be a temporary the caller only kept alive up to the point
+    // it launched us (e.g. rawstor_target_open()'s own local Target) --
+    // touching _uris (or any other member) through `this` past the first
+    // suspension point would be a use-after-free.
+    std::vector<rawstd::URI> uris = _uris;
+    size_t nmirrors = uris.size();
+
     // Object's constructor is Private-gated -- Target is a friend (see
     // object.hpp's own doc comment on why), so this is the one place
     // that actually builds one, by analogy with Connection::create():
-    // the heavy async work (standing up a Connection per URI and
-    // open()ing it) lives here, not in the constructor itself.
+    // the heavy async work (standing up a Connection per URI, comparing
+    // their metadata) lives here, not in the constructor itself.
     std::unique_ptr<Object> obj =
         std::make_unique<Object>(Object::Private(), queue, *this);
+    obj->_nmirrors = nmirrors;
 
     // Every URI's Connection goes out concurrently instead of one at a
     // time.
     std::vector<rawstd::Task<std::unique_ptr<Connection>>> tasks;
-    tasks.reserve(_uris.size());
-    for (const auto& uri : _uris) {
+    tasks.reserve(nmirrors);
+    for (const auto& uri : uris) {
         tasks.push_back(open_one(queue, uri, obj.get()));
     }
 
-    // co_await isn't allowed inside a catch block, so each task's own
-    // failure is only recorded here; rolling back the ones that DID
-    // succeed happens just below, outside the handler -- same shape as
-    // create()'s own rollback above.
+    // With a single target any failure fails the open outright (unchanged
+    // behavior). With N >= 2, an individual arm's failure is tolerated as
+    // long as a strict majority ends up reachable (docs/mirroring.md,
+    // case F4) -- co_await isn't allowed inside a catch block, so each
+    // task's own failure is only recorded here; rolling back the arms
+    // that DID succeed happens just below, outside the handler, same
+    // shape as create()'s own rollback above.
     std::vector<std::unique_ptr<Connection>> cns;
-    cns.reserve(_uris.size());
+    cns.reserve(nmirrors);
     std::exception_ptr eptr;
+    int first_error = 0;
     for (auto& task : tasks) {
         try {
             cns.push_back(co_await task);
+        } catch (const std::system_error& e) {
+            if (nmirrors == 1) {
+                if (!eptr) {
+                    eptr = std::current_exception();
+                }
+                continue;
+            }
+            rawstd_warning("Mirror arm unreachable: %s\n", e.what());
+            if (first_error == 0) {
+                first_error = e.code().value();
+            }
         } catch (...) {
             if (!eptr) {
                 eptr = std::current_exception();
@@ -552,16 +576,6 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
     }
 
     if (eptr) {
-        // Close every Connection that DID succeed gracefully via
-        // co_await right here, rather than leaving it for ~Object()'s
-        // own run()-pumped synchronous cleanup: this coroutine can
-        // itself be driven by an outer synchronous run() pump (e.g.
-        // tests/test_blk_backend.cpp's own direct run()-pumped call
-        // into us), and ~Object() reentering that same dispatch loop
-        // via a *nested* run() is undefined behavior (same hazard
-        // blk::Backend::close()'s own doc comment describes) --
-        // obj->_cns never gets populated in this path, so ~Object()
-        // has nothing left to do anyway.
         for (auto& cn : cns) {
             try {
                 co_await cn->close();
@@ -572,7 +586,90 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
         std::rethrow_exception(eptr);
     }
 
-    obj->_cns = std::move(cns);
+    if (cns.empty()) {
+        RAWSTD_THROW_SYSTEM_ERROR(first_error ? first_error : ENOTCONN);
+    }
+
+    if (nmirrors >= 2 && cns.size() * 2 <= nmirrors) {
+        rawstd_error(
+            "Mirror quorum not met: %zu of %zu arms reachable\n", cns.size(),
+            nmirrors
+        );
+        for (auto& cn : cns) {
+            try {
+                co_await cn->close();
+            } catch (const std::exception& e) {
+                rawstd_warning("Target::open(): %s\n", e.what());
+            }
+        }
+        RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
+    }
+
+    for (auto& cn : cns) {
+        obj->_mirrors.push_back(
+            Object::Mirror{std::move(cn), Object::MirrorState::IN_SYNC, {}}
+        );
+    }
+
+    if (nmirrors == 1) {
+        co_return obj;
+    }
+
+    // Per-arm metadata is read sequentially (small N, simplicity over
+    // concurrency); an arm whose metadata can't be read is excluded the
+    // same way an unreachable one is.
+    RawstdUUID id = obj->_target.id();
+    for (size_t i = 0; i < obj->_mirrors.size();) {
+        bool unavailable = false;
+        try {
+            obj->_mirrors[i].meta = co_await obj->_mirrors[i].cn->meta(id);
+        } catch (const std::system_error& e) {
+            rawstd_warning("Mirror arm metadata unavailable: %s\n", e.what());
+            unavailable = true;
+        }
+
+        if (!unavailable) {
+            ++i;
+            continue;
+        }
+
+        try {
+            co_await obj->_mirrors[i].cn->close();
+        } catch (const std::exception& e2) {
+            rawstd_warning("Target::open(): %s\n", e2.what());
+        }
+        obj->_mirrors.erase(obj->_mirrors.begin() + i);
+    }
+
+    // _open_analyze() refusing the open (split brain, no trusted arm)
+    // leaves obj->_mirrors populated with real, open Connections -- NOT
+    // left to ~Object()'s own RAII cleanup: that runs its close()es
+    // through a synchronous run() pump, and this coroutine can itself be
+    // driven by an outer synchronous run() (e.g. tests/test_blk_backend.cpp's
+    // own direct run()-pumped call into us); ~Object() reentering that same
+    // dispatch loop via a *nested* run() is undefined behavior (same hazard
+    // the eptr branch above avoids). Close every arm gracefully via
+    // co_await here instead, then clear _mirrors so ~Object() has nothing
+    // left to do.
+    std::exception_ptr analyze_eptr;
+    try {
+        obj->_open_analyze();
+    } catch (...) {
+        analyze_eptr = std::current_exception();
+    }
+
+    if (analyze_eptr) {
+        for (auto& mirror : obj->_mirrors) {
+            try {
+                co_await mirror.cn->close();
+            } catch (const std::exception& e) {
+                rawstd_warning("Target::open(): %s\n", e.what());
+            }
+        }
+        obj->_mirrors.clear();
+        std::rethrow_exception(analyze_eptr);
+    }
+
     co_return obj;
 }
 

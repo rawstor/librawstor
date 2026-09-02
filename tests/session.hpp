@@ -71,6 +71,7 @@ public:
         uint64_t hash
     );
     void cmd_read(uint32_t magic, uint16_t cid, const void* buf, size_t size);
+    void cmd_read_error(uint32_t magic, uint16_t cid, int32_t res);
 
     void cmd_write_request(size_t size);
     void cmd_write_response(uint32_t magic, uint16_t cid, int32_t res);

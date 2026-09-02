@@ -21,6 +21,11 @@ int main(int argc, char** argv) {
     // override (e.g. to test backoff itself) still wins.
     setenv("RAWSTOR_OPTS_IO_RETRY_BACKOFF_BASE", "0", 0);
 
+    // test_mirror.cpp's read_failover_and_repair scripts exactly 3 mock
+    // server sessions to match this default; pin it so the test does not
+    // silently desync from a future default change or a user override.
+    setenv("RAWSTOR_OPTS_IO_ATTEMPTS", "3", 0);
+
     int res = rawstor_initialize(nullptr);
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
