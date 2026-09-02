@@ -33,7 +33,7 @@ struct RawstorOpts {
     unsigned int io_retry_backoff_jitter;
     /**
      * How often, in milliseconds, an open mirrored object probes its
-     * unreachable arms for reconnection (and resyncs them on success).
+     * unreachable members for reconnection (and resyncs them on success).
      */
     unsigned int mirror_probe_interval;
 };

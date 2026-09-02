@@ -112,15 +112,15 @@ ssize_t object_close(Queue& queue, RawstorObject* object) {
 }
 
 /*
- * File-backed mirror arms in per-arm temp directories, sharing one UUID.
+ * File-backed mirror members in per-member temp directories, sharing one UUID.
  */
-class Arms {
+class Members {
 private:
     std::vector<fs::path> _dirs;
     std::string _uuid;
 
 public:
-    Arms(size_t n, const std::string& uuid) : _uuid(uuid) {
+    Members(size_t n, const std::string& uuid) : _uuid(uuid) {
         for (size_t i = 0; i < n; ++i) {
             std::ostringstream oss;
             oss << "test_mirror_arm" << i;
@@ -130,7 +130,7 @@ public:
         }
     }
 
-    ~Arms() {
+    ~Members() {
         for (const fs::path& dir : _dirs) {
             std::error_code ec;
             fs::remove_all(dir, ec);
@@ -223,7 +223,7 @@ void object_close_clean(Queue& queue, RawstorObject* object) {
     EXPECT_EQ(res, 0);
 }
 
-// A single-arm write, opened and closed via the same queue-driven
+// A single-member write, opened and closed via the same queue-driven
 // rawstor_target_*() path as every other control-plane call here -- unlike
 // the original commit, there's no synchronous rawstor_object_open() left to
 // reach for.
@@ -231,17 +231,17 @@ void object_write_single(
     Queue& queue, const std::string& target, const void* buf, size_t size,
     off_t offset
 ) {
-    RawstorObject* arm = nullptr;
-    ASSERT_EQ(target_open(queue, target, &arm), 0);
-    object_write(queue, arm, buf, size, offset, 0);
-    EXPECT_EQ(object_close(queue, arm), 0);
+    RawstorObject* member = nullptr;
+    ASSERT_EQ(target_open(queue, target, &member), 0);
+    object_write(queue, member, buf, size, offset, 0);
+    EXPECT_EQ(object_close(queue, member), 0);
 }
 
 /*
- * Drives the queue until the arm at `behind` reports the same established
- * sync set as the arm at `fresh` (and is not mid-resync anymore).
+ * Drives the queue until the member at `behind` reports the same established
+ * sync set as the member at `fresh` (and is not mid-resync anymore).
  */
-bool wait_arm_synced(
+bool wait_member_synced(
     Queue& queue, const std::string& fresh, const std::string& behind
 ) {
     for (int i = 0; i < 3000; ++i) {
@@ -265,30 +265,30 @@ bool wait_arm_synced(
 
 TEST(MirrorQuorumTest, open_refused_without_quorum_n2) {
     Queue queue(16);
-    Arms arms(2, "00000000-0000-7000-8000-0000000000a0");
+    Members members(2, "00000000-0000-7000-8000-0000000000a0");
 
     RawstorObjectSpec spec{.size = 1ull << 20};
-    ASSERT_EQ(target_create(queue, arms.target_all(), spec), 0);
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
-    arms.drop(1);
+    members.drop(1);
 
     RawstorObject* object = nullptr;
-    ssize_t res = target_open(queue, arms.target_all(), &object);
+    ssize_t res = target_open(queue, members.target_all(), &object);
     EXPECT_EQ(res, -ENOTCONN);
     EXPECT_EQ(object, nullptr);
 }
 
 TEST(MirrorQuorumTest, degraded_open_with_quorum_n3) {
     Queue queue(16);
-    Arms arms(3, "00000000-0000-7000-8000-0000000000a1");
+    Members members(3, "00000000-0000-7000-8000-0000000000a1");
 
     RawstorObjectSpec spec{.size = 1ull << 20};
-    ASSERT_EQ(target_create(queue, arms.target_all(), spec), 0);
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
-    arms.drop(2);
+    members.drop(2);
 
     RawstorObject* object = nullptr;
-    ASSERT_EQ(target_open(queue, arms.target_all(), &object), 0);
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
 
     std::string ping = "ping";
     object_write(queue, object, ping.data(), ping.size(), 0, 0);
@@ -297,8 +297,8 @@ TEST(MirrorQuorumTest, degraded_open_with_quorum_n3) {
     /* The survivors got a fresh sync set; both are CLEAN and identical. */
     RawstorObjectMeta a{};
     RawstorObjectMeta b{};
-    ASSERT_EQ(target_meta(queue, arms.target(0), &a), 0);
-    ASSERT_EQ(target_meta(queue, arms.target(1), &b), 0);
+    ASSERT_EQ(target_meta(queue, members.target(0), &a), 0);
+    ASSERT_EQ(target_meta(queue, members.target(1), &b), 0);
     EXPECT_EQ(a.state, RAWSTOR_OBJECT_STATE_CLEAN);
     EXPECT_EQ(b.state, RAWSTOR_OBJECT_STATE_CLEAN);
     EXPECT_NE(a.sync_id, 0u);
@@ -308,71 +308,71 @@ TEST(MirrorQuorumTest, degraded_open_with_quorum_n3) {
 
     /* Both survivors carry the data. */
     for (size_t i = 0; i < 2; ++i) {
-        RawstorObject* arm = nullptr;
-        ASSERT_EQ(target_open(queue, arms.target(i), &arm), 0);
+        RawstorObject* member = nullptr;
+        ASSERT_EQ(target_open(queue, members.target(i), &member), 0);
         std::string data(4, '\0');
-        object_read(queue, arm, data.data(), data.size(), 0);
+        object_read(queue, member, data.data(), data.size(), 0);
         EXPECT_EQ(data, "ping");
-        EXPECT_EQ(object_close(queue, arm), 0);
+        EXPECT_EQ(object_close(queue, member), 0);
     }
 }
 
 TEST(MirrorQuorumTest, stale_arm_resynced) {
     Queue queue(16);
-    Arms arms(2, "00000000-0000-7000-8000-0000000000a2");
+    Members members(2, "00000000-0000-7000-8000-0000000000a2");
 
     RawstorObjectSpec spec{.size = 1ull << 20};
-    ASSERT_EQ(target_create(queue, arms.target_all(), spec), 0);
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
-    /* Arm 0 is one sync set ahead of arm 1. */
+    /* Member 0 is one sync set ahead of member 1. */
     RawstorObjectMeta fresh{};
     fresh.epoch = 2;
     fresh.sync_id = 0x1111111111111111ull;
     fresh.sync_id_history[0] = 0x2222222222222222ull;
     fresh.state = RAWSTOR_OBJECT_STATE_CLEAN;
-    ASSERT_EQ(target_set_state(queue, arms.target(0), fresh), 0);
+    ASSERT_EQ(target_set_state(queue, members.target(0), fresh), 0);
 
     RawstorObjectMeta stale{};
     stale.epoch = 1;
     stale.sync_id = 0x2222222222222222ull;
     stale.state = RAWSTOR_OBJECT_STATE_CLEAN;
-    ASSERT_EQ(target_set_state(queue, arms.target(1), stale), 0);
+    ASSERT_EQ(target_set_state(queue, members.target(1), stale), 0);
 
-    /* Distinct content on the fresh arm only. */
+    /* Distinct content on the fresh member only. */
     std::string ping = "ping";
-    object_write_single(queue, arms.target(0), ping.data(), ping.size(), 0);
+    object_write_single(queue, members.target(0), ping.data(), ping.size(), 0);
 
     RawstorObject* object = nullptr;
-    ASSERT_EQ(target_open(queue, arms.target_all(), &object), 0);
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
 
-    /* The stale arm is resynced online while the object is open. */
-    EXPECT_TRUE(wait_arm_synced(queue, arms.target(0), arms.target(1)));
+    /* The stale member is resynced online while the object is open. */
+    EXPECT_TRUE(wait_member_synced(queue, members.target(0), members.target(1)));
 
     object_close_clean(queue, object);
 
     RawstorObjectMeta a{};
     RawstorObjectMeta b{};
-    ASSERT_EQ(target_meta(queue, arms.target(0), &a), 0);
-    ASSERT_EQ(target_meta(queue, arms.target(1), &b), 0);
+    ASSERT_EQ(target_meta(queue, members.target(0), &a), 0);
+    ASSERT_EQ(target_meta(queue, members.target(1), &b), 0);
     EXPECT_EQ(a.sync_id, b.sync_id);
     EXPECT_EQ(a.state, RAWSTOR_OBJECT_STATE_CLEAN);
     EXPECT_EQ(b.state, RAWSTOR_OBJECT_STATE_CLEAN);
 
-    /* The rejoined arm carries the fresh arm's data now. */
-    RawstorObject* arm = nullptr;
-    ASSERT_EQ(target_open(queue, arms.target(1), &arm), 0);
+    /* The rejoined member carries the fresh member's data now. */
+    RawstorObject* member = nullptr;
+    ASSERT_EQ(target_open(queue, members.target(1), &member), 0);
     std::string data(4, '\0');
-    object_read(queue, arm, data.data(), data.size(), 0);
+    object_read(queue, member, data.data(), data.size(), 0);
     EXPECT_EQ(data, "ping");
-    EXPECT_EQ(object_close(queue, arm), 0);
+    EXPECT_EQ(object_close(queue, member), 0);
 }
 
 TEST(MirrorQuorumTest, split_brain_refused) {
     Queue queue(16);
-    Arms arms(2, "00000000-0000-7000-8000-0000000000a3");
+    Members members(2, "00000000-0000-7000-8000-0000000000a3");
 
     RawstorObjectSpec spec{.size = 1ull << 20};
-    ASSERT_EQ(target_create(queue, arms.target_all(), spec), 0);
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
     /* Disjoint histories sharing only a common ancestor. */
     RawstorObjectMeta a{};
@@ -380,38 +380,38 @@ TEST(MirrorQuorumTest, split_brain_refused) {
     a.sync_id = 0x1111111111111111ull;
     a.sync_id_history[0] = 0x3333333333333333ull;
     a.state = RAWSTOR_OBJECT_STATE_CLEAN;
-    ASSERT_EQ(target_set_state(queue, arms.target(0), a), 0);
+    ASSERT_EQ(target_set_state(queue, members.target(0), a), 0);
 
     RawstorObjectMeta b{};
     b.epoch = 2;
     b.sync_id = 0x2222222222222222ull;
     b.sync_id_history[0] = 0x3333333333333333ull;
     b.state = RAWSTOR_OBJECT_STATE_CLEAN;
-    ASSERT_EQ(target_set_state(queue, arms.target(1), b), 0);
+    ASSERT_EQ(target_set_state(queue, members.target(1), b), 0);
 
     RawstorObject* object = nullptr;
-    ssize_t res = target_open(queue, arms.target_all(), &object);
+    ssize_t res = target_open(queue, members.target_all(), &object);
     EXPECT_EQ(res, -ENOTRECOVERABLE);
     EXPECT_EQ(object, nullptr);
 }
 
 TEST(MirrorQuorumTest, all_dirty_same_sync_id_opens) {
     Queue queue(16);
-    Arms arms(2, "00000000-0000-7000-8000-0000000000a4");
+    Members members(2, "00000000-0000-7000-8000-0000000000a4");
 
     RawstorObjectSpec spec{.size = 1ull << 20};
-    ASSERT_EQ(target_create(queue, arms.target_all(), spec), 0);
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
     /* Unclean shutdown: every copy DIRTY within the same sync set. */
     RawstorObjectMeta dirty{};
     dirty.epoch = 1;
     dirty.sync_id = 0x4444444444444444ull;
     dirty.state = RAWSTOR_OBJECT_STATE_DIRTY;
-    ASSERT_EQ(target_set_state(queue, arms.target(0), dirty), 0);
-    ASSERT_EQ(target_set_state(queue, arms.target(1), dirty), 0);
+    ASSERT_EQ(target_set_state(queue, members.target(0), dirty), 0);
+    ASSERT_EQ(target_set_state(queue, members.target(1), dirty), 0);
 
     RawstorObject* object = nullptr;
-    ASSERT_EQ(target_open(queue, arms.target_all(), &object), 0);
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
 
     std::string ping = "ping";
     object_write(queue, object, ping.data(), ping.size(), 0, 0);
@@ -420,8 +420,8 @@ TEST(MirrorQuorumTest, all_dirty_same_sync_id_opens) {
     /* Full membership, established sync set: no identity churn. */
     RawstorObjectMeta a{};
     RawstorObjectMeta b{};
-    ASSERT_EQ(target_meta(queue, arms.target(0), &a), 0);
-    ASSERT_EQ(target_meta(queue, arms.target(1), &b), 0);
+    ASSERT_EQ(target_meta(queue, members.target(0), &a), 0);
+    ASSERT_EQ(target_meta(queue, members.target(1), &b), 0);
     EXPECT_EQ(a.sync_id, dirty.sync_id);
     EXPECT_EQ(b.sync_id, dirty.sync_id);
     EXPECT_EQ(a.state, RAWSTOR_OBJECT_STATE_CLEAN);
@@ -430,80 +430,80 @@ TEST(MirrorQuorumTest, all_dirty_same_sync_id_opens) {
 
 TEST(MirrorQuorumTest, syncing_arm_resynced) {
     Queue queue(16);
-    Arms arms(2, "00000000-0000-7000-8000-0000000000a5");
+    Members members(2, "00000000-0000-7000-8000-0000000000a5");
 
     RawstorObjectSpec spec{.size = 1ull << 20};
-    ASSERT_EQ(target_create(queue, arms.target_all(), spec), 0);
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
     RawstorObjectMeta established{};
     established.epoch = 1;
     established.sync_id = 0x5555555555555555ull;
     established.state = RAWSTOR_OBJECT_STATE_CLEAN;
-    ASSERT_EQ(target_set_state(queue, arms.target(0), established), 0);
-    ASSERT_EQ(target_set_state(queue, arms.target(1), established), 0);
+    ASSERT_EQ(target_set_state(queue, members.target(0), established), 0);
+    ASSERT_EQ(target_set_state(queue, members.target(1), established), 0);
 
-    /* An interrupted resync left the arm marked SYNCING: untrusted. */
+    /* An interrupted resync left the member marked SYNCING: untrusted. */
     RawstorObjectMeta syncing = established;
     syncing.state = RAWSTOR_OBJECT_STATE_SYNCING;
-    ASSERT_EQ(target_set_state(queue, arms.target(1), syncing), 0);
+    ASSERT_EQ(target_set_state(queue, members.target(1), syncing), 0);
 
     std::string ping = "ping";
-    object_write_single(queue, arms.target(0), ping.data(), ping.size(), 0);
+    object_write_single(queue, members.target(0), ping.data(), ping.size(), 0);
 
     RawstorObject* object = nullptr;
-    ASSERT_EQ(target_open(queue, arms.target_all(), &object), 0);
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
 
-    /* The untrusted arm is resynced from scratch. */
-    EXPECT_TRUE(wait_arm_synced(queue, arms.target(0), arms.target(1)));
+    /* The untrusted member is resynced from scratch. */
+    EXPECT_TRUE(wait_member_synced(queue, members.target(0), members.target(1)));
 
     object_close_clean(queue, object);
 
     RawstorObjectMeta a{};
     RawstorObjectMeta b{};
-    ASSERT_EQ(target_meta(queue, arms.target(0), &a), 0);
-    ASSERT_EQ(target_meta(queue, arms.target(1), &b), 0);
+    ASSERT_EQ(target_meta(queue, members.target(0), &a), 0);
+    ASSERT_EQ(target_meta(queue, members.target(1), &b), 0);
     EXPECT_EQ(a.sync_id, b.sync_id);
     EXPECT_EQ(b.state, RAWSTOR_OBJECT_STATE_CLEAN);
 
-    RawstorObject* arm = nullptr;
-    ASSERT_EQ(target_open(queue, arms.target(1), &arm), 0);
+    RawstorObject* member = nullptr;
+    ASSERT_EQ(target_open(queue, members.target(1), &member), 0);
     std::string data(4, '\0');
-    object_read(queue, arm, data.data(), data.size(), 0);
+    object_read(queue, member, data.data(), data.size(), 0);
     EXPECT_EQ(data, "ping");
-    EXPECT_EQ(object_close(queue, arm), 0);
+    EXPECT_EQ(object_close(queue, member), 0);
 }
 
 TEST(MirrorResyncTest, resync_under_concurrent_writes) {
     Queue queue(16);
-    Arms arms(2, "00000000-0000-7000-8000-0000000000a7");
+    Members members(2, "00000000-0000-7000-8000-0000000000a7");
 
     const uint64_t size = 8ull << 20;
     RawstorObjectSpec spec{.size = size};
-    ASSERT_EQ(target_create(queue, arms.target_all(), spec), 0);
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
     RawstorObjectMeta fresh{};
     fresh.epoch = 2;
     fresh.sync_id = 0x1111111111111111ull;
     fresh.sync_id_history[0] = 0x2222222222222222ull;
     fresh.state = RAWSTOR_OBJECT_STATE_CLEAN;
-    ASSERT_EQ(target_set_state(queue, arms.target(0), fresh), 0);
+    ASSERT_EQ(target_set_state(queue, members.target(0), fresh), 0);
 
     RawstorObjectMeta stale{};
     stale.epoch = 1;
     stale.sync_id = 0x2222222222222222ull;
     stale.state = RAWSTOR_OBJECT_STATE_CLEAN;
-    ASSERT_EQ(target_set_state(queue, arms.target(1), stale), 0);
+    ASSERT_EQ(target_set_state(queue, members.target(1), stale), 0);
 
-    /* Pre-existing content on the fresh arm across every chunk. */
+    /* Pre-existing content on the fresh member across every chunk. */
     for (uint64_t off = 0; off < size; off += 1ull << 20) {
         std::string block(4096, 'S');
         object_write_single(
-            queue, arms.target(0), block.data(), block.size(), (off_t)off
+            queue, members.target(0), block.data(), block.size(), (off_t)off
         );
     }
 
     RawstorObject* object = nullptr;
-    ASSERT_EQ(target_open(queue, arms.target_all(), &object), 0);
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
 
     /* Client writes race the sweeper across the whole object. */
     for (int k = 0; k < 16; ++k) {
@@ -514,17 +514,17 @@ TEST(MirrorResyncTest, resync_under_concurrent_writes) {
         );
     }
 
-    EXPECT_TRUE(wait_arm_synced(queue, arms.target(0), arms.target(1)));
+    EXPECT_TRUE(wait_member_synced(queue, members.target(0), members.target(1)));
 
     object_close_clean(queue, object);
 
     /* Byte-for-byte identity after the rejoin. */
-    EXPECT_EQ(read_file(arms.dat(0)), read_file(arms.dat(1)));
+    EXPECT_EQ(read_file(members.dat(0)), read_file(members.dat(1)));
 
     RawstorObjectMeta a{};
     RawstorObjectMeta b{};
-    ASSERT_EQ(target_meta(queue, arms.target(0), &a), 0);
-    ASSERT_EQ(target_meta(queue, arms.target(1), &b), 0);
+    ASSERT_EQ(target_meta(queue, members.target(0), &a), 0);
+    ASSERT_EQ(target_meta(queue, members.target(1), &b), 0);
     EXPECT_EQ(a.sync_id, b.sync_id);
     EXPECT_EQ(a.state, RAWSTOR_OBJECT_STATE_CLEAN);
     EXPECT_EQ(b.state, RAWSTOR_OBJECT_STATE_CLEAN);
@@ -532,77 +532,77 @@ TEST(MirrorResyncTest, resync_under_concurrent_writes) {
 
 TEST(MirrorResyncTest, probe_rejoins_recreated_arm) {
     Queue queue(16);
-    Arms arms(3, "00000000-0000-7000-8000-0000000000a8");
+    Members members(3, "00000000-0000-7000-8000-0000000000a8");
 
     RawstorObjectSpec spec{.size = 1ull << 20};
-    ASSERT_EQ(target_create(queue, arms.target_all(), spec), 0);
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
-    /* The third arm is lost entirely (disk gone). */
-    arms.drop(2);
+    /* The third member is lost entirely (disk gone). */
+    members.drop(2);
 
     RawstorObject* object = nullptr;
-    ASSERT_EQ(target_open(queue, arms.target_all(), &object), 0);
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
 
     std::string ping = "ping";
     object_write(queue, object, ping.data(), ping.size(), 0, 0);
 
-    /* The arm is reprovisioned empty; the probe picks it up and resyncs. */
-    ASSERT_EQ(target_create(queue, arms.target(2), spec), 0);
+    /* The member is reprovisioned empty; the probe picks it up and resyncs. */
+    ASSERT_EQ(target_create(queue, members.target(2), spec), 0);
 
-    EXPECT_TRUE(wait_arm_synced(queue, arms.target(0), arms.target(2)));
+    EXPECT_TRUE(wait_member_synced(queue, members.target(0), members.target(2)));
 
     object_close_clean(queue, object);
 
     RawstorObjectMeta a{};
     RawstorObjectMeta c{};
-    ASSERT_EQ(target_meta(queue, arms.target(0), &a), 0);
-    ASSERT_EQ(target_meta(queue, arms.target(2), &c), 0);
+    ASSERT_EQ(target_meta(queue, members.target(0), &a), 0);
+    ASSERT_EQ(target_meta(queue, members.target(2), &c), 0);
     EXPECT_EQ(a.sync_id, c.sync_id);
     EXPECT_EQ(c.state, RAWSTOR_OBJECT_STATE_CLEAN);
 
-    RawstorObject* arm = nullptr;
-    ASSERT_EQ(target_open(queue, arms.target(2), &arm), 0);
+    RawstorObject* member = nullptr;
+    ASSERT_EQ(target_open(queue, members.target(2), &member), 0);
     std::string data(4, '\0');
-    object_read(queue, arm, data.data(), data.size(), 0);
+    object_read(queue, member, data.data(), data.size(), 0);
     EXPECT_EQ(data, "ping");
-    EXPECT_EQ(object_close(queue, arm), 0);
+    EXPECT_EQ(object_close(queue, member), 0);
 }
 
 TEST(MirrorQuorumTest, clean_close_stable_identity) {
     Queue queue(16);
-    Arms arms(2, "00000000-0000-7000-8000-0000000000a6");
+    Members members(2, "00000000-0000-7000-8000-0000000000a6");
 
     RawstorObjectSpec spec{.size = 1ull << 20};
-    ASSERT_EQ(target_create(queue, arms.target_all(), spec), 0);
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
     /* First session establishes the sync set. */
     RawstorObject* object = nullptr;
-    ASSERT_EQ(target_open(queue, arms.target_all(), &object), 0);
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
     std::string ping = "ping";
     object_write(queue, object, ping.data(), ping.size(), 0, 0);
     object_close_clean(queue, object);
 
     RawstorObjectMeta first{};
-    ASSERT_EQ(target_meta(queue, arms.target(0), &first), 0);
+    ASSERT_EQ(target_meta(queue, members.target(0), &first), 0);
     EXPECT_NE(first.sync_id, 0u);
     EXPECT_EQ(first.state, RAWSTOR_OBJECT_STATE_CLEAN);
 
     /* A healthy second session must not churn the identity. */
-    ASSERT_EQ(target_open(queue, arms.target_all(), &object), 0);
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
     object_write(queue, object, ping.data(), ping.size(), 8, 0);
     object_close_clean(queue, object);
 
     RawstorObjectMeta second{};
-    ASSERT_EQ(target_meta(queue, arms.target(0), &second), 0);
+    ASSERT_EQ(target_meta(queue, members.target(0), &second), 0);
     EXPECT_EQ(second.sync_id, first.sync_id);
     EXPECT_EQ(second.epoch, first.epoch);
     EXPECT_EQ(second.state, RAWSTOR_OBJECT_STATE_CLEAN);
 }
 
 /*
- * OST mirror over two scripted servers: the first arm fails the read with
+ * OST mirror over two scripted servers: the first member fails the read with
  * a payload error, the second serves the data; the client then repairs the
- * region on the first arm (dirty gate on both arms + rewrite).
+ * region on the first member (dirty gate on both members + rewrite).
  */
 TEST(MirrorOstTest, read_failover_and_repair) {
     Queue queue(16);
@@ -623,8 +623,8 @@ TEST(MirrorOstTest, read_failover_and_repair) {
 
     /*
      * The object is CLEAN, so the connection layer still retries reads
-     * transparently: the arm serves the error on the initial session and
-     * on two reopened ones before the read fails over to the second arm.
+     * transparently: the member serves the error on the initial session and
+     * on two reopened ones before the read fails over to the second member.
      * The repair then lands on the last reopened session.
      */
     {
@@ -670,7 +670,7 @@ TEST(MirrorOstTest, read_failover_and_repair) {
 }
 
 /*
- * Degrade & continue: a write fails on one arm, the survivor durably
+ * Degrade & continue: a write fails on one member, the survivor durably
  * records the exclusion (SET_STATE) and the write is acknowledged; the
  * next write goes to the survivor only.
  */

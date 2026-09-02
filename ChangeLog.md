@@ -20,26 +20,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`<rawstor/target.h>`) public API. Durable: metadata updates are fsynced
   by the backend before the call completes.
 - Mirror quorum, degrade & continue, read failover: opening a mirrored
-  object now tolerates unreachable arms as long as a strict majority is
-  reachable (`-ENOTCONN` otherwise; two arms need both), comparing each
-  arm's metadata to exclude stale/`SYNCING` copies and refuse a split
+  object now tolerates unreachable members as long as a strict majority is
+  reachable (`-ENOTCONN` otherwise; two members need both), comparing each
+  member's metadata to exclude stale/`SYNCING` copies and refuse a split
   brain (`-ENOTRECOVERABLE`). The first write passes a dirty gate (DIRTY
-  durably recorded on the in-sync arms first); a write that fails on some
-  arms is acknowledged once the survivors durably record the exclusion,
-  with writes freezing below a 3+-arm majority. Reads fail over across
-  in-sync arms; a payload error triggers a detached read-repair through
+  durably recorded on the in-sync members first); a write that fails on some
+  members is acknowledged once the survivors durably record the exclusion,
+  with writes freezing below a 3+-member majority. Reads fail over across
+  in-sync members; a payload error triggers a detached read-repair through
   the dirty gate. `rawstor_object_close()` performs a clean close for a
   mirrored object (flush + durable CLEAN mark) before tearing down.
-- Online mirror resync with automatic rejoin: a stale or `SYNCING` arm is
+- Online mirror resync with automatic rejoin: a stale or `SYNCING` member is
   brought back into the set while the object keeps serving I/O, instead of
-  staying excluded until manually repaired. The arm is durably marked
+  staying excluded until manually repaired. The member is durably marked
   `SYNCING` first, then a sweeper copies the object chunk by chunk from an
-  in-sync source while client writes are duplicated onto the joining arm
+  in-sync source while client writes are duplicated onto the joining member
   (mutually exclusive with the sweeper per chunk); once every chunk is
-  copied and in-flight writes drain, the arm durably adopts the current
+  copied and in-flight writes drain, the member durably adopts the current
   sync set and resumes serving reads, unfreezing any write held back below
-  quorum. Every configured arm keeps its mirror slot even while
-  unreachable, and an open mirrored object probes such arms periodically
+  quorum. Every configured member keeps its mirror slot even while
+  unreachable, and an open mirrored object probes such members periodically
   (`mirror_probe_interval` option, `RAWSTOR_OPTS_MIRROR_PROBE_INTERVAL`,
   default 5000 ms), reconnecting and resyncing them on success.
 

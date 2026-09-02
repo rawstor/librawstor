@@ -30,20 +30,20 @@ class Object final : public RawstorObject {
 private:
     struct ResyncState;
 
-    // IN_SYNC - the arm carries every acknowledged write; serves I/O.
-    // STALE   - the arm is excluded (unreachable, degraded or behind).
-    // SYNCING - an online resync onto the arm is in progress: it receives
+    // IN_SYNC - the member carries every acknowledged write; serves I/O.
+    // STALE   - the member is excluded (unreachable, degraded or behind).
+    // SYNCING - an online resync onto the member is in progress: it receives
     //           client writes but serves no reads yet.
-    enum class MirrorState { IN_SYNC, STALE, SYNCING };
+    enum class MemberState { IN_SYNC, STALE, SYNCING };
 
-    // One slot per configured arm, in target-list order, kept even while
+    // One slot per configured member, in target-list order, kept even while
     // unreachable (reachable == false) so the reconnect probe can bring it
-    // back -- unlike before online resync, where an unreachable arm had
+    // back -- unlike before online resync, where an unreachable member had
     // no slot at all.
-    struct Mirror {
+    struct Member {
         std::unique_ptr<rawstor::Connection> cn;
         rawstd::URI target;
-        MirrorState state;
+        MemberState state;
         RawstorObjectMeta meta;
         bool reachable;
     };
@@ -53,13 +53,13 @@ private:
 
     // Configured mirror width N (the target's own URI count).
     size_t _nmirrors;
-    std::vector<Mirror> _mirrors;
+    std::vector<Member> _members;
 
     // Logical object size, adopted from the in-sync metadata at open --
     // the resync chunk bitmap is sized off this.
     uint64_t _size;
 
-    // DIRTY has been durably recorded on the in-sync arms.
+    // DIRTY has been durably recorded on the in-sync members.
     bool _dirty;
 
     // Survivors dropped to <= N/2 (N >= 3): writes fail until recovery.
@@ -72,7 +72,7 @@ private:
     bool _meta_op_running;
     std::vector<std::coroutine_handle<>> _meta_waiters;
 
-    // Arms marked STALE whose exclusion is not yet durably recorded.
+    // Members marked STALE whose exclusion is not yet durably recorded.
     size_t _unrecorded_stale;
 
     // Current sync-set identity adopted at open / last barrier.
@@ -92,11 +92,11 @@ private:
     // _writes_completed's own flush-barrier accounting.
     size_t _writes_in_flight;
 
-    // Active online resync, one arm at a time (nullptr when none is in
+    // Active online resync, one member at a time (nullptr when none is in
     // progress).
     std::unique_ptr<ResyncState> _resync;
 
-    // Periodic reconnect probe for unreachable arms (mirror_probe_interval,
+    // Periodic reconnect probe for unreachable members (mirror_probe_interval,
     // a timerfd read through _queue). _probe_fd stays -1 for a
     // single-target object (_probe_setup() is a no-op there) and if the
     // timerfd itself couldn't be created.
@@ -105,7 +105,7 @@ private:
     uint64_t _probe_expirations;
 
     // Monotonically increasing count of pwrite()/pwritev() calls dispatched
-    // to every in-sync arm so far (_writes_issued) and of how many
+    // to every in-sync member so far (_writes_issued) and of how many
     // of those have since completed, success or failure (_writes_completed).
     // flush() (see _flush_waiters below) snapshots _writes_issued as its
     // own target and waits for _writes_completed to reach it -- neither
@@ -150,15 +150,15 @@ private:
     size_t _in_sync_count() const noexcept;
 
     // Below-quorum writes freeze for N >= 3 only: with N = 2 a single
-    // survivor may continue, because auto-open requires both arms, so the
+    // survivor may continue, because auto-open requires both members, so the
     // abandoned peer can never auto-start alone (docs/mirroring.md,
     // quorum rules).
     bool _below_write_quorum(size_t survivors) const noexcept;
 
     // Metadata comparison at open (docs/mirroring.md, comparison rules):
-    // excludes SYNCING/stale arms, picks the newest sync_id, refuses a
+    // excludes SYNCING/stale members, picks the newest sync_id, refuses a
     // split brain. Called by Target::open() (a friend) once every
-    // reachable arm's Mirror::meta has been filled in.
+    // reachable member's Member::meta has been filled in.
     void _open_analyze();
 
     // Suspends the caller while a metadata barrier (_run_dirty_barrier()/
@@ -166,17 +166,17 @@ private:
     rawstd::Task<void> _settle_meta();
     void _finish_meta_op() noexcept;
 
-    // Runs cont(0) once DIRTY is durably recorded on the in-sync arms; the
+    // Runs cont(0) once DIRTY is durably recorded on the in-sync members; the
     // first write (or read-repair) of a mirrored object passes through
     // here before anything is acknowledged.
     rawstd::Task<void> _with_dirty();
     rawstd::Task<void> _run_dirty_barrier();
 
-    // Excludes arms from the mirror set (docs/mirroring.md, case F1/F6).
+    // Excludes members from the mirror set (docs/mirroring.md, case F1/F6).
     rawstd::Task<void> _degrade(std::vector<size_t> idxs);
     rawstd::Task<void> _run_degrade_barrier();
 
-    // Persists `meta` on every in-sync arm; arms that fail the update are
+    // Persists `meta` on every in-sync member; members that fail the update are
     // marked STALE. Never throws -- the caller re-checks
     // _in_sync_count()/_below_write_quorum() itself afterward.
     rawstd::Task<void> _run_meta_fan_out(RawstorObjectMeta meta);
@@ -184,14 +184,14 @@ private:
 
     // Mirrored write fan-out shared by pwrite()/pwritev()/discard()/
     // write_zeroes()/flush(): `issue` is co_await-ed against every
-    // in-sync arm concurrently; the result is acknowledged only after it
+    // in-sync member concurrently; the result is acknowledged only after it
     // completed on every one of them, or after the failed ones were
     // durably excluded (_degrade()) and it completed on all survivors.
     // `offset`/`size` (0/0 for flush(), which has no chunk semantics)
     // drive the online-resync interaction below: a write overlapping the
     // chunk the sweeper is copying right now parks until the copy
     // completes (the copy would otherwise overwrite the fresher client
-    // data), and one that reaches the SYNCING arm's chunk clears its
+    // data), and one that reaches the SYNCING member's chunk clears its
     // needs-copy bit.
     struct FanOutWriteState;
     rawstd::Task<size_t> _fan_out_write(
@@ -209,19 +209,19 @@ private:
     );
 
     // Called once a mirrored write's fan-out (_fan_out_write() above) has
-    // fully settled (every arm's own completion, including the SYNCING
+    // fully settled (every member's own completion, including the SYNCING
     // one if any, has been accounted for) -- advances whichever resync
     // phase is waiting on the in-flight count reaching zero, or the
     // sweeper's own per-chunk block.
     void _write_settled() noexcept;
 
-    // Online resync of one arm (docs/mirroring.md, resync algorithm): a
+    // Online resync of one member (docs/mirroring.md, resync algorithm): a
     // needs-copy bitmap over RESYNC_CHUNK-sized chunks, client writes
-    // duplicated onto the SYNCING arm (_fan_out_write() above), and a
+    // duplicated onto the SYNCING member (_fan_out_write() above), and a
     // sweeper copying one chunk at a time from an in-sync source, mutually
     // exclusive with client writes to that chunk. Picks the first STALE,
-    // reachable arm with no resync already running; a no-op otherwise
-    // (single target, no stale-but-reachable arm, or already resyncing).
+    // reachable member with no resync already running; a no-op otherwise
+    // (single target, no stale-but-reachable member, or already resyncing).
     // Detached: driven entirely by its own continuations (the SYNCING
     // mark's completion, _write_settled() above, each sweep step), not by
     // a caller awaiting it.
@@ -232,9 +232,9 @@ private:
     // moves on to FINISH_DRAIN once every chunk is copied.
     rawstd::DetachedTask _resync_sweep();
     // Every chunk copied and no client write in flight: durably adopts
-    // the current sync-set identity on the arm, then lets it serve reads.
+    // the current sync-set identity on the member, then lets it serve reads.
     rawstd::DetachedTask _resync_finish();
-    // Marks the resync's arm STALE (unreachable, so the probe retries
+    // Marks the resync's member STALE (unreachable, so the probe retries
     // later) and wakes every writer parked on a chunk overlap. Synchronous
     // -- safe to call from anywhere already holding _resync, including
     // mid-fan-out bookkeeping.
@@ -245,16 +245,16 @@ private:
     // detached loop that reads the timerfd expiration count and calls
     // _probe_tick() on every wakeup, for as long as the object (and the
     // timerfd) is alive; _probe_tick() reconnects the first STALE,
-    // unreachable arm found and kicks off its resync on success.
+    // unreachable member found and kicks off its resync on success.
     void _probe_setup();
     void _probe_arm();
     rawstd::DetachedTask _probe_watch(std::weak_ptr<int> alive);
     rawstd::DetachedTask _probe_tick();
 
-    // Read failover across in-sync arms, in target-list order; a payload
+    // Read failover across in-sync members, in target-list order; a payload
     // error (EPROTO) triggers a detached read-repair of the region
-    // through the dirty gate once another arm served the data, a
-    // transport error durably excludes the arm if the object is DIRTY.
+    // through the dirty gate once another member served the data, a
+    // transport error durably excludes the member if the object is DIRTY.
     rawstd::Task<size_t> _read(
         void* buf, iovec* iov, unsigned int niov, size_t size, off_t offset
     );
@@ -312,16 +312,16 @@ public:
     write_zeroes(size_t size, off_t offset, bool unmap, bool sync);
 
     // Waits for every pwrite()/pwritev() issued before this call to
-    // complete (see _flush_waiters above), then flushes every in-sync arm
+    // complete (see _flush_waiters above), then flushes every in-sync member
     // -- without the wait, a flush() racing an in-flight write could
     // report success before that write's data is actually durable.
     rawstd::Task<void> flush();
 
     // flush()es (see above); for a mirrored object that is DIRTY, also
-    // durably marks the in-sync arms CLEAN with the current epoch/sync_id
+    // durably marks the in-sync members CLEAN with the current epoch/sync_id
     // before co_awaiting every Connection's close() concurrently -- a
     // clean close, so the next open() doesn't pay for a spurious dirty
-    // gate. Clears _mirrors so ~Object() (which still runs once the
+    // gate. Clears _members so ~Object() (which still runs once the
     // caller deletes this Object after the returned Task completes) has
     // nothing left to close -- the async counterpart to ~Object()'s own
     // run()-pumped connection cleanup.
