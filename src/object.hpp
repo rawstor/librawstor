@@ -99,10 +99,14 @@ private:
     // Periodic reconnect probe for unreachable members (mirror_probe_interval,
     // a timerfd read through _queue). _probe_fd stays -1 for a
     // single-target object (_probe_setup() is a no-op there) and if the
-    // timerfd itself couldn't be created.
+    // timerfd itself couldn't be created. _probe_expirations is
+    // shared_ptr-owned: Queue::cancel(fd) only guarantees the cancel
+    // request itself was submitted, not that the target read has actually
+    // retired, so the object (and this member) may be destroyed before the
+    // kernel is done writing into it.
     int _probe_fd;
     bool _probe_pending;
-    uint64_t _probe_expirations;
+    std::shared_ptr<uint64_t> _probe_expirations;
 
     // Monotonically increasing count of pwrite()/pwritev() calls dispatched
     // to every in-sync member so far (_writes_issued) and of how many

@@ -39,7 +39,11 @@ namespace {
 uint64_t random_sync_id() {
     uint64_t ret = 0;
     do {
-        if (getrandom(&ret, sizeof(ret), 0) != sizeof(ret)) {
+        ssize_t res;
+        do {
+            res = getrandom(&ret, sizeof(ret), 0);
+        } while (res == -1 && errno == EINTR);
+        if (res != sizeof(ret)) {
             RAWSTD_THROW_ERRNO();
         }
     } while (ret == 0);
@@ -268,7 +272,7 @@ Object::Object(Private, rawio::Queue& queue, const Target& target) :
     _writes_in_flight(0),
     _probe_fd(-1),
     _probe_pending(false),
-    _probe_expirations(0),
+    _probe_expirations(std::make_shared<uint64_t>(0)),
     _writes_issued(0),
     _writes_completed(0),
     _unflushed(false) {
@@ -439,7 +443,11 @@ void Object::_open_analyze() {
         if (m.meta.epoch > _epoch) {
             _epoch = m.meta.epoch;
         }
-        if (_size == 0) {
+        /*
+         * The minimum across the set is the logical size: block-device
+         * members round the physical size up to their extent size.
+         */
+        if (_size == 0 || m.meta.size < _size) {
             _size = m.meta.size;
         }
         if (_sync_id == 0) {
@@ -735,7 +743,9 @@ struct Object::ResyncState {
     size_t cursor;
     ssize_t copying;
     bool sweep_blocked;
-    std::vector<char> buf;
+    // Shared with the in-flight chunk copy: the resync may be aborted (or
+    // the object destroyed) while the kernel still owns the buffer.
+    std::shared_ptr<std::vector<char>> buf;
     std::unordered_map<size_t, size_t> inflight;
     std::vector<std::coroutine_handle<>> chunk_waiters;
 };
@@ -1011,7 +1021,7 @@ rawstd::DetachedTask Object::_resync_maybe_start() {
         0,
         -1,
         false,
-        std::vector<char>(chunk),
+        std::make_shared<std::vector<char>>(chunk),
         {},
         {}
     });
@@ -1079,11 +1089,15 @@ rawstd::DetachedTask Object::_resync_sweep() {
     uint64_t off = (uint64_t)c * _resync->chunk;
     size_t len = (size_t)std::min<uint64_t>(_resync->chunk, _size - off);
 
+    // Kept alive across the co_await regardless of a concurrent
+    // _resync_abort() (e.g. from _fan_out_write()) resetting _resync while
+    // the kernel still owns this buffer.
+    std::shared_ptr<std::vector<char>> buf = _resync->buf;
+
     size_t result = 0;
     int error = 0;
     try {
-        result =
-            co_await _members[src].cn->pread(_resync->buf.data(), len, (off_t)off);
+        result = co_await _members[src].cn->pread(buf->data(), len, (off_t)off);
     } catch (const std::system_error& e) {
         error = e.code().value();
     }
@@ -1115,7 +1129,7 @@ rawstd::DetachedTask Object::_resync_sweep() {
     int werror = 0;
     try {
         wresult = co_await _members[_resync->idx].cn->pwrite(
-            _resync->buf.data(), len, (off_t)off, false
+            buf->data(), len, (off_t)off, false
         );
     } catch (const std::system_error& e) {
         werror = e.code().value();
@@ -1252,11 +1266,15 @@ void Object::_probe_arm() {
 }
 
 rawstd::DetachedTask Object::_probe_watch(std::weak_ptr<int> alive) {
+    // Kept alive by this coroutine frame regardless of the object (and
+    // _probe_expirations) being destroyed before a cancelled read actually
+    // retires -- see the member's own doc comment in object.hpp.
+    std::shared_ptr<uint64_t> expirations = _probe_expirations;
     try {
         for (;;) {
             try {
                 co_await _queue.read(
-                    _probe_fd, &_probe_expirations, sizeof(_probe_expirations)
+                    _probe_fd, expirations.get(), sizeof(*expirations)
                 );
             } catch (const std::system_error& e) {
                 if (alive.expired()) {
@@ -1697,14 +1715,17 @@ rawstd::Task<void> Object::close() {
         );
     }
 
+    // A metadata barrier may be in flight even before _dirty is set (e.g.
+    // one triggered by a detached read-repair): settled first, or tearing
+    // the connections down below would race it out from under itself.
+    co_await _settle_meta();
+
     // A mirrored, DIRTY object gets a durable CLEAN mark before teardown --
     // a clean close, so the next open() doesn't pay for a spurious dirty
     // gate (docs/mirroring.md). Left DIRTY (the safe direction) on any
     // error here; the object is destroyed anyway.
     if (_nmirrors > 1 && _dirty && !flush_failed) {
-        co_await _settle_meta();
-
-        if (_dirty && _in_sync_count() > 0) {
+        if (_in_sync_count() > 0) {
             _meta_op_running = true;
             try {
                 RawstorObjectMeta m{};
