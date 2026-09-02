@@ -535,8 +535,8 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
         std::make_unique<Object>(Object::Private(), queue, *this);
     obj->_nmirrors = nmirrors;
     // Slot indices must stay stable (the reconnect probe below addresses
-    // arms by index): no reallocation after this.
-    obj->_mirrors.reserve(nmirrors);
+    // members by index): no reallocation after this.
+    obj->_members.reserve(nmirrors);
 
     // Every URI's Connection goes out concurrently instead of one at a
     // time.
@@ -547,15 +547,15 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
     }
 
     // With a single target any failure fails the open outright (unchanged
-    // behavior). With N >= 2, an individual arm's failure is tolerated as
+    // behavior). With N >= 2, an individual member's failure is tolerated as
     // long as a strict majority ends up reachable (docs/mirroring.md,
     // case F4) -- co_await isn't allowed inside a catch block, so each
-    // task's own failure is only recorded here; rolling back the arms
+    // task's own failure is only recorded here; rolling back the members
     // that DID succeed happens just below, outside the handler, same
     // shape as create()'s own rollback above. Every URI keeps its slot in
-    // obj->_mirrors regardless of outcome (Mirror::reachable false, cn
+    // obj->_members regardless of outcome (Member::reachable false, cn
     // null, on failure) so the reconnect probe can bring an unreachable
-    // one back later -- unlike before online resync, where a failed arm
+    // one back later -- unlike before online resync, where a failed member
     // had no slot at all.
     std::exception_ptr eptr;
     int first_error = 0;
@@ -572,7 +572,7 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
                     eptr = std::current_exception();
                 }
             } else {
-                rawstd_warning("Mirror arm unreachable: %s\n", e.what());
+                rawstd_warning("Mirror member unreachable: %s\n", e.what());
                 if (first_error == 0) {
                     first_error = e.code().value();
                 }
@@ -583,8 +583,8 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
             }
         }
 
-        obj->_mirrors.push_back(
-            Object::Mirror{std::move(cn), uris[i], Object::MirrorState::STALE,
+        obj->_members.push_back(
+            Object::Member{std::move(cn), uris[i], Object::MemberState::STALE,
                             {}, ok}
         );
         if (ok) {
@@ -593,7 +593,7 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
     }
 
     if (eptr) {
-        for (auto& mirror : obj->_mirrors) {
+        for (auto& mirror : obj->_members) {
             if (!mirror.cn) {
                 continue;
             }
@@ -612,10 +612,10 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
 
     if (nmirrors >= 2 && reachable * 2 <= nmirrors) {
         rawstd_error(
-            "Mirror quorum not met: %zu of %zu arms reachable\n", reachable,
+            "Mirror quorum not met: %zu of %zu members reachable\n", reachable,
             nmirrors
         );
-        for (auto& mirror : obj->_mirrors) {
+        for (auto& mirror : obj->_members) {
             if (!mirror.cn) {
                 continue;
             }
@@ -629,16 +629,16 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
     }
 
     if (nmirrors == 1) {
-        obj->_mirrors.front().state = Object::MirrorState::IN_SYNC;
+        obj->_members.front().state = Object::MemberState::IN_SYNC;
         co_return obj;
     }
 
-    // Per-arm metadata is read sequentially (small N, simplicity over
-    // concurrency); an arm whose metadata can't be read is excluded the
+    // Per-member metadata is read sequentially (small N, simplicity over
+    // concurrency); an member whose metadata can't be read is excluded the
     // same way an unreachable one is, but -- like an unreachable one --
     // keeps its slot for the reconnect probe.
     RawstdUUID id = obj->_target.id();
-    for (Object::Mirror& mirror : obj->_mirrors) {
+    for (Object::Member& mirror : obj->_members) {
         if (!mirror.reachable) {
             continue;
         }
@@ -647,12 +647,12 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
         try {
             mirror.meta = co_await mirror.cn->meta(id);
         } catch (const std::system_error& e) {
-            rawstd_warning("Mirror arm metadata unavailable: %s\n", e.what());
+            rawstd_warning("Mirror member metadata unavailable: %s\n", e.what());
             unavailable = true;
         }
 
         if (!unavailable) {
-            mirror.state = Object::MirrorState::IN_SYNC;
+            mirror.state = Object::MemberState::IN_SYNC;
             continue;
         }
 
@@ -665,15 +665,15 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
         mirror.reachable = false;
     }
 
-    // _open_analyze() refusing the open (split brain, no trusted arm)
-    // leaves obj->_mirrors populated with real, open Connections -- NOT
+    // _open_analyze() refusing the open (split brain, no trusted member)
+    // leaves obj->_members populated with real, open Connections -- NOT
     // left to ~Object()'s own RAII cleanup: that runs its close()es
     // through a synchronous run() pump, and this coroutine can itself be
     // driven by an outer synchronous run() (e.g. tests/test_blk_backend.cpp's
     // own direct run()-pumped call into us); ~Object() reentering that same
     // dispatch loop via a *nested* run() is undefined behavior (same hazard
-    // the eptr branch above avoids). Close every arm gracefully via
-    // co_await here instead, then clear _mirrors so ~Object() has nothing
+    // the eptr branch above avoids). Close every member gracefully via
+    // co_await here instead, then clear _members so ~Object() has nothing
     // left to do.
     std::exception_ptr analyze_eptr;
     try {
@@ -683,7 +683,7 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
     }
 
     if (analyze_eptr) {
-        for (auto& mirror : obj->_mirrors) {
+        for (auto& mirror : obj->_members) {
             if (!mirror.cn) {
                 continue;
             }
@@ -693,12 +693,12 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
                 rawstd_warning("Target::open(): %s\n", e.what());
             }
         }
-        obj->_mirrors.clear();
+        obj->_members.clear();
         std::rethrow_exception(analyze_eptr);
     }
 
     // Both are no-ops for a single-target object; a mirrored one starts
-    // probing its unreachable arms (docs/mirroring.md, mirror_probe_interval)
+    // probing its unreachable members (docs/mirroring.md, mirror_probe_interval)
     // and, if one is already reachable but STALE, starts resyncing it --
     // detached, driven by their own continuations from here on.
     obj->_probe_setup();

@@ -56,7 +56,7 @@ Key invariant: **every acknowledged write exists on a set of copies that interse
   - N ≥ 3: degrade & continue while more than N/2 mirrors survive; at ≤ N/2 survivors **writes freeze** (policy: error to the caller or block until quorum returns). Otherwise "wrote on minority {A}, later auto-started on majority {B,C}" would orphan acknowledged data.
   - N = 2: **continuing on a single survivor is allowed.** This is safe because auto-start requires both mirrors, and the abandoned peer remains `DIRTY`/ancestor and can never auto-start alone.
 - **`sync_id_history` stays as defense in depth**: it catches consequences of a wrong manual force-open, an OST restored from backup, or bugs.
-- **Roadmap — MDS as witness.** A future MDS participates in quorum as a metadata-only arm (stores `sync_id`/`epoch`, no data). This restores auto-start for 2 data mirrors with one OST down (2 of 3 votes). Not part of v1, but quorum rules and the metadata format are designed so a witness arm fits without schema changes (quorum counts all arms, including metadata-only ones).
+- **Roadmap — MDS as witness.** A future MDS participates in quorum as a metadata-only member (stores `sync_id`/`epoch`, no data). This restores auto-start for 2 data mirrors with one OST down (2 of 3 votes). Not part of v1, but quorum rules and the metadata format are designed so a witness member fits without schema changes (quorum counts all members, including metadata-only ones).
 
 ---
 
