@@ -8,11 +8,13 @@
 #include <rawio/queue.hpp>
 
 #include <rawstd/coro.hpp>
+#include <rawstd/uri.hpp>
 
 #include <coroutine>
 #include <deque>
 #include <functional>
 #include <memory>
+#include <unordered_map>
 #include <vector>
 
 #include <cstddef>
@@ -26,16 +28,24 @@ class Connection;
 
 class Object final : public RawstorObject {
 private:
-    enum class MirrorState { IN_SYNC, STALE };
+    struct ResyncState;
 
-    // A reachable arm of the mirror set. Arms that could not be opened, or
-    // whose metadata couldn't be read at open, are not represented: the
-    // difference between _nmirrors and _mirrors.size() is the number of
-    // unreachable arms.
+    // IN_SYNC - the arm carries every acknowledged write; serves I/O.
+    // STALE   - the arm is excluded (unreachable, degraded or behind).
+    // SYNCING - an online resync onto the arm is in progress: it receives
+    //           client writes but serves no reads yet.
+    enum class MirrorState { IN_SYNC, STALE, SYNCING };
+
+    // One slot per configured arm, in target-list order, kept even while
+    // unreachable (reachable == false) so the reconnect probe can bring it
+    // back -- unlike before online resync, where an unreachable arm had
+    // no slot at all.
     struct Mirror {
         std::unique_ptr<rawstor::Connection> cn;
+        rawstd::URI target;
         MirrorState state;
         RawstorObjectMeta meta;
+        bool reachable;
     };
 
     rawio::Queue& _queue;
@@ -44,6 +54,10 @@ private:
     // Configured mirror width N (the target's own URI count).
     size_t _nmirrors;
     std::vector<Mirror> _mirrors;
+
+    // Logical object size, adopted from the in-sync metadata at open --
+    // the resync chunk bitmap is sized off this.
+    uint64_t _size;
 
     // DIRTY has been durably recorded on the in-sync arms.
     bool _dirty;
@@ -66,12 +80,29 @@ private:
     uint64_t _sync_id;
     uint64_t _sync_id_history[RAWSTOR_OBJECT_SYNC_ID_HISTORY];
 
-    // Expires on destruction. Detached background work (read-repair, the
-    // degrade barriers it may trigger) checks it before touching the
-    // object: unlike caller I/O (covered by the _writes_issued/
-    // _writes_completed drain below), such work is not waited for at
-    // close.
+    // Expires on destruction. Detached background work (read-repair,
+    // resync, the reconnect probe, the degrade barriers they may trigger)
+    // checks it before touching the object: unlike caller I/O (covered by
+    // the _writes_issued/_writes_completed drain below), such work is not
+    // waited for at close.
     std::shared_ptr<int> _alive;
+
+    // Mirrored writes currently in flight -- resync drain bookkeeping
+    // (_write_settled() below), separate from _writes_issued/
+    // _writes_completed's own flush-barrier accounting.
+    size_t _writes_in_flight;
+
+    // Active online resync, one arm at a time (nullptr when none is in
+    // progress).
+    std::unique_ptr<ResyncState> _resync;
+
+    // Periodic reconnect probe for unreachable arms (mirror_probe_interval,
+    // a timerfd read through _queue). _probe_fd stays -1 for a
+    // single-target object (_probe_setup() is a no-op there) and if the
+    // timerfd itself couldn't be created.
+    int _probe_fd;
+    bool _probe_pending;
+    uint64_t _probe_expirations;
 
     // Monotonically increasing count of pwrite()/pwritev() calls dispatched
     // to every in-sync arm so far (_writes_issued) and of how many
@@ -156,13 +187,69 @@ private:
     // in-sync arm concurrently; the result is acknowledged only after it
     // completed on every one of them, or after the failed ones were
     // durably excluded (_degrade()) and it completed on all survivors.
+    // `offset`/`size` (0/0 for flush(), which has no chunk semantics)
+    // drive the online-resync interaction below: a write overlapping the
+    // chunk the sweeper is copying right now parks until the copy
+    // completes (the copy would otherwise overwrite the fresher client
+    // data), and one that reaches the SYNCING arm's chunk clears its
+    // needs-copy bit.
     struct FanOutWriteState;
-    rawstd::Task<size_t>
-    _fan_out_write(std::function<rawstd::Task<size_t>(Connection&)> issue);
+    rawstd::Task<size_t> _fan_out_write(
+        off_t offset, size_t size,
+        std::function<rawstd::Task<size_t>(Connection&)> issue
+    );
     rawstd::Task<void> _fan_out_write_one(
         size_t idx, std::function<rawstd::Task<size_t>(Connection&)> issue,
         std::shared_ptr<FanOutWriteState> st
     );
+    rawstd::Task<void> _fan_out_write_syncing_one(
+        size_t idx, size_t expected_size,
+        std::function<rawstd::Task<size_t>(Connection&)> issue,
+        std::shared_ptr<FanOutWriteState> st
+    );
+
+    // Called once a mirrored write's fan-out (_fan_out_write() above) has
+    // fully settled (every arm's own completion, including the SYNCING
+    // one if any, has been accounted for) -- advances whichever resync
+    // phase is waiting on the in-flight count reaching zero, or the
+    // sweeper's own per-chunk block.
+    void _write_settled() noexcept;
+
+    // Online resync of one arm (docs/mirroring.md, resync algorithm): a
+    // needs-copy bitmap over RESYNC_CHUNK-sized chunks, client writes
+    // duplicated onto the SYNCING arm (_fan_out_write() above), and a
+    // sweeper copying one chunk at a time from an in-sync source, mutually
+    // exclusive with client writes to that chunk. Picks the first STALE,
+    // reachable arm with no resync already running; a no-op otherwise
+    // (single target, no stale-but-reachable arm, or already resyncing).
+    // Detached: driven entirely by its own continuations (the SYNCING
+    // mark's completion, _write_settled() above, each sweep step), not by
+    // a caller awaiting it.
+    rawstd::DetachedTask _resync_maybe_start();
+    // One sweep step: copies the next needs-copy chunk with no client
+    // write in flight on it (parking as _resync->sweep_blocked if every
+    // dirty chunk currently has one; _write_settled() resumes it), or
+    // moves on to FINISH_DRAIN once every chunk is copied.
+    rawstd::DetachedTask _resync_sweep();
+    // Every chunk copied and no client write in flight: durably adopts
+    // the current sync-set identity on the arm, then lets it serve reads.
+    rawstd::DetachedTask _resync_finish();
+    // Marks the resync's arm STALE (unreachable, so the probe retries
+    // later) and wakes every writer parked on a chunk overlap. Synchronous
+    // -- safe to call from anywhere already holding _resync, including
+    // mid-fan-out bookkeeping.
+    void _resync_abort(const char* reason) noexcept;
+
+    // Arms and reads the mirror_probe_interval timerfd (a no-op for a
+    // single-target object). _probe_arm() launches _probe_watch() as a
+    // detached loop that reads the timerfd expiration count and calls
+    // _probe_tick() on every wakeup, for as long as the object (and the
+    // timerfd) is alive; _probe_tick() reconnects the first STALE,
+    // unreachable arm found and kicks off its resync on success.
+    void _probe_setup();
+    void _probe_arm();
+    rawstd::DetachedTask _probe_watch(std::weak_ptr<int> alive);
+    rawstd::DetachedTask _probe_tick();
 
     // Read failover across in-sync arms, in target-list order; a payload
     // error (EPROTO) triggers a detached read-repair of the region

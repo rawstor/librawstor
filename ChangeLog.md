@@ -30,6 +30,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in-sync arms; a payload error triggers a detached read-repair through
   the dirty gate. `rawstor_object_close()` performs a clean close for a
   mirrored object (flush + durable CLEAN mark) before tearing down.
+- Online mirror resync with automatic rejoin: a stale or `SYNCING` arm is
+  brought back into the set while the object keeps serving I/O, instead of
+  staying excluded until manually repaired. The arm is durably marked
+  `SYNCING` first, then a sweeper copies the object chunk by chunk from an
+  in-sync source while client writes are duplicated onto the joining arm
+  (mutually exclusive with the sweeper per chunk); once every chunk is
+  copied and in-flight writes drain, the arm durably adopts the current
+  sync set and resumes serving reads, unfreezing any write held back below
+  quorum. Every configured arm keeps its mirror slot even while
+  unreachable, and an open mirrored object probes such arms periodically
+  (`mirror_probe_interval` option, `RAWSTOR_OPTS_MIRROR_PROBE_INTERVAL`,
+  default 5000 ms), reconnecting and resyncing them on success.
 
 ### Changed
 - The packaged `rawstor-vhost@.service` systemd unit now defaults `RAWSTOR_WRITE_CACHE` to `on` instead of `off`: forcing a journal commit on every write (write-cache off) was measured to stall write round-trip times into the tens of seconds under concurrent load on a host whose backing filesystem commits slowly, while any modern guest kernel already issues an explicit flush when it needs durability.

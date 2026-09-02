@@ -26,6 +26,11 @@ int main(int argc, char** argv) {
     // silently desync from a future default change or a user override.
     setenv("RAWSTOR_OPTS_IO_ATTEMPTS", "3", 0);
 
+    // test_mirror.cpp's MirrorResyncTest.probe_rejoins_recreated_arm waits
+    // on the periodic reconnect probe to pick up a reprovisioned arm; the
+    // 5000 ms production default would make that wait needlessly slow.
+    setenv("RAWSTOR_OPTS_MIRROR_PROBE_INTERVAL", "200", 0);
+
     int res = rawstor_initialize(nullptr);
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
