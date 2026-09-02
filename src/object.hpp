@@ -96,6 +96,14 @@ private:
     // progress).
     std::unique_ptr<ResyncState> _resync;
 
+    // Bumped every time a new ResyncState is created. Chunk-copy
+    // completions capture the generation they were issued under: a
+    // completion whose generation no longer matches _resync's (the resync
+    // it belonged to was aborted and possibly replaced by a new one) must
+    // not touch the current _resync, even though _resync itself is
+    // non-null again.
+    size_t _resync_generation;
+
     // Periodic reconnect probe for unreachable members (mirror_probe_interval,
     // a timerfd read through _queue). _probe_fd stays -1 for a
     // single-target object (_probe_setup() is a no-op there) and if the

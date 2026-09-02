@@ -448,20 +448,33 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) {
     }
 }
 
+// Tried in target-list order, first answer wins: this is the only lookup
+// available before the object is open (rawstor_target_spec() queries size
+// without opening anything at all), so it must tolerate the same degraded
+// membership an open would rather than failing outright when _uris.front()
+// happens to be down.
 rawstd::Task<RawstorObjectSpec> Target::spec(rawio::Queue& queue) {
-    /**
-     * TODO: Should we read all specs and compare them here?
-     */
     validate_not_empty(_uris);
     validate_different_uris(_uris);
     validate_same_uuid(_uris);
 
-    RawstdUUID id = uuid_from_target(_uris.front());
-    std::unique_ptr<rawstor::Connection> cn =
-        co_await rawstor::Connection::create(queue, _uris.front().parent(), 1);
-    RawstorObjectSpec ret = co_await cn->spec(id);
-    co_await cn->close();
-    co_return ret;
+    int first_error = 0;
+    for (const auto& uri : _uris) {
+        RawstdUUID id = uuid_from_target(uri);
+        try {
+            std::unique_ptr<rawstor::Connection> cn =
+                co_await rawstor::Connection::create(queue, uri.parent(), 1);
+            RawstorObjectSpec ret = co_await cn->spec(id);
+            co_await cn->close();
+            co_return ret;
+        } catch (const std::system_error& e) {
+            rawstd_error("%s\n", e.what());
+            if (first_error == 0) {
+                first_error = e.code().value();
+            }
+        }
+    }
+    RAWSTD_THROW_SYSTEM_ERROR(first_error ? first_error : ENOTCONN);
 }
 
 // First URI only, same as spec() above -- see its own TODO. Unlike spec(),

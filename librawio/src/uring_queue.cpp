@@ -15,6 +15,7 @@
 #include <cstring>
 #include <ctime>
 
+#include <exception>
 #include <system_error>
 
 namespace {
@@ -522,57 +523,59 @@ Queue::~Queue() {
 
 void Queue::_dispatch() {
     unsigned int nr = 0;
+    std::exception_ptr pending;
 
     ++_dispatch_generation;
 
-    try {
-        unsigned int head;
-        io_uring_cqe* cqe;
-        io_uring_for_each_cqe(&_ring, head, cqe) {
-            rawstd_trace("cqe->res = %d\n", cqe->res);
+    unsigned int head;
+    io_uring_cqe* cqe;
+    io_uring_for_each_cqe(&_ring, head, cqe) {
+        rawstd_trace("cqe->res = %d\n", cqe->res);
 
-            ++nr;
+        ++nr;
 
-            std::unique_ptr<Completion> c(
-                static_cast<Completion*>(io_uring_cqe_get_data(cqe))
-            );
+        std::unique_ptr<Completion> c(
+            static_cast<Completion*>(io_uring_cqe_get_data(cqe))
+        );
 
-            RAWSTD_TRACE_EVENT_MESSAGE(
-                c->trace_event, "result = %d, flags = %u\n", cqe->res,
-                cqe->flags
-            );
+        RAWSTD_TRACE_EVENT_MESSAGE(
+            c->trace_event, "result = %d, flags = %u\n", cqe->res, cqe->flags
+        );
 
-            try {
-                c->complete(cqe->res, cqe->flags);
-                // complete() may have resumed a rawstd::DetachedTask that
-                // threw -- see DetachedTask's own doc comment for why
-                // that can't be delivered by rethrowing directly out of
-                // complete()/resume() itself, and rethrow_if_pending()'s
-                // for why this is one of only two places that need to
-                // check.
-                rawstd::DetachedTask::rethrow_if_pending();
-            } catch (...) {
-                rawstd_trace("complete error\n");
-                if (cqe->flags & IORING_CQE_F_MORE) {
-                    c.release();
-                }
-                throw;
-            }
-
-            if (cqe->flags & IORING_CQE_F_MORE) {
-                c.release();
+        try {
+            c->complete(cqe->res, cqe->flags);
+            // complete() may have resumed a rawstd::DetachedTask that
+            // threw -- see DetachedTask's own doc comment for why
+            // that can't be delivered by rethrowing directly out of
+            // complete()/resume() itself, and rethrow_if_pending()'s
+            // for why this is one of only two places that need to
+            // check.
+            rawstd::DetachedTask::rethrow_if_pending();
+        } catch (...) {
+            rawstd_trace("complete error\n");
+            // A callback throwing must not abandon the rest of this
+            // completion batch: every other cqe still in it owns a
+            // heap-allocated Completion (or, for a multishot op, needs its
+            // ownership released below) that would otherwise leak and
+            // never reach io_uring_cq_advance. Run the whole batch and
+            // re-raise the first exception once it is fully drained.
+            if (!pending) {
+                pending = std::current_exception();
             }
         }
-    } catch (...) {
-        if (nr) {
-            io_uring_cq_advance(&_ring, nr);
+
+        if (cqe->flags & IORING_CQE_F_MORE) {
+            c.release();
         }
-        throw;
     }
 
     if (nr) {
         // TODO: use __io_uring_buf_ring_cq_advance here
         io_uring_cq_advance(&_ring, nr);
+    }
+
+    if (pending) {
+        std::rethrow_exception(pending);
     }
 }
 
