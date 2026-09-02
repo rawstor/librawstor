@@ -134,7 +134,12 @@ namespace rawstor {
 Connection::Connection(Private, rawio::Queue& queue) :
     _queue(queue),
     _object(nullptr),
-    _backend_index(0) {
+    _backend_index(0),
+    _transparent_retry(true) {
+}
+
+void Connection::set_transparent_retry(bool enabled) noexcept {
+    _transparent_retry = enabled;
 }
 
 rawstd::Task<std::unique_ptr<Connection>> Connection::create(
@@ -244,7 +249,7 @@ rawstd::Task<T> Connection::_with_retry(
             }
 
             ++attempt;
-            if (attempt >= rawstor_opts_io_attempts()) {
+            if (!_transparent_retry || attempt >= rawstor_opts_io_attempts()) {
                 rawstd_error(
                     "IO %s: error on %s: %s; attempt %u of %u; failing...\n",
                     func_name, be->str().c_str(), std::strerror(error), attempt,

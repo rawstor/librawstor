@@ -19,6 +19,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   commands and `rawstor_target_meta`/`rawstor_target_set_state`
   (`<rawstor/target.h>`) public API. Durable: metadata updates are fsynced
   by the backend before the call completes.
+- Mirror quorum, degrade & continue, read failover: opening a mirrored
+  object now tolerates unreachable arms as long as a strict majority is
+  reachable (`-ENOTCONN` otherwise; two arms need both), comparing each
+  arm's metadata to exclude stale/`SYNCING` copies and refuse a split
+  brain (`-ENOTRECOVERABLE`). The first write passes a dirty gate (DIRTY
+  durably recorded on the in-sync arms first); a write that fails on some
+  arms is acknowledged once the survivors durably record the exclusion,
+  with writes freezing below a 3+-arm majority. Reads fail over across
+  in-sync arms; a payload error triggers a detached read-repair through
+  the dirty gate. `rawstor_object_close()` performs a clean close for a
+  mirrored object (flush + durable CLEAN mark) before tearing down.
 
 ### Changed
 - The packaged `rawstor-vhost@.service` systemd unit now defaults `RAWSTOR_WRITE_CACHE` to `on` instead of `off`: forcing a journal commit on every write (write-cache off) was measured to stall write round-trip times into the tens of seconds under concurrent load on a host whose backing filesystem commits slowly, while any modern guest kernel already issues an explicit flush when it needs durability.
