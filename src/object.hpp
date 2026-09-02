@@ -267,9 +267,8 @@ private:
     // error (EPROTO) triggers a detached read-repair of the region
     // through the dirty gate once another member served the data, a
     // transport error durably excludes the member if the object is DIRTY.
-    rawstd::Task<size_t> _read(
-        void* buf, iovec* iov, unsigned int niov, size_t size, off_t offset
-    );
+    rawstd::Task<size_t>
+    _read(void* buf, iovec* iov, unsigned int niov, size_t size, off_t offset);
     rawstd::DetachedTask _read_repair(
         size_t idx, off_t offset, std::vector<char> data,
         std::weak_ptr<int> alive

@@ -51,7 +51,8 @@ public:
     rawstd::Task<void> create(rawio::Queue& queue, const RawstorObjectSpec& sp);
     rawstd::Task<RawstorObjectSpec> spec(rawio::Queue& queue);
     rawstd::Task<RawstorObjectMeta> meta(rawio::Queue& queue);
-    rawstd::Task<void> set_state(rawio::Queue& queue, const RawstorObjectMeta& meta);
+    rawstd::Task<void>
+    set_state(rawio::Queue& queue, const RawstorObjectMeta& meta);
     rawstd::Task<void> remove(rawio::Queue& queue);
     rawstd::Task<std::unique_ptr<Object>> open(rawio::Queue& queue);
 };

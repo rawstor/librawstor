@@ -297,7 +297,6 @@ public:
             }
         }
     }
-
 };
 
 TEST(FileIOTest, basics) {
