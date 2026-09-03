@@ -15,12 +15,12 @@
 #include <rawstd/iovec.h>
 #include <rawstd/logging.hpp>
 
-#include <sys/random.h>
-
 #include <algorithm>
 #include <exception>
+#include <limits>
 #include <memory>
 #include <new>
+#include <random>
 #include <system_error>
 #include <utility>
 
@@ -34,17 +34,15 @@ namespace {
 
 // A nonzero random sync-set id; zero is reserved for legacy copies.
 uint64_t random_sync_id() {
-    uint64_t ret = 0;
-    do {
-        ssize_t res;
-        do {
-            res = getrandom(&ret, sizeof(ret), 0);
-        } while (res == -1 && errno == EINTR);
-        if (res != sizeof(ret)) {
-            RAWSTD_THROW_ERRNO();
-        }
-    } while (ret == 0);
-    return ret;
+    static thread_local std::mt19937_64 rng{std::random_device{}()};
+    // [1, max]: never zero, matching getrandom()'s own retry-until-nonzero
+    // this replaces -- see connection.cpp's backoff_delay_ms() for the same
+    // std::random_device-seeded std::mt19937 pattern, used there for retry
+    // jitter.
+    std::uniform_int_distribution<uint64_t> dist(
+        1, std::numeric_limits<uint64_t>::max()
+    );
+    return dist(rng);
 }
 
 bool in_history(const RawstorObjectMeta& meta, uint64_t sync_id) {
