@@ -116,7 +116,7 @@ public:
         _queue(queue),
         _target(target),
         _object(nullptr) {
-        RawstorObjectSpec spec{.size = size};
+        RawstorObjectSpec spec{.size = size, .mirror_count = 0};
         ssize_t res =
             rawstor::tests::sync_run(_queue, [&](auto cb, void* data) {
                 return rawstor_target_create(

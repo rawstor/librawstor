@@ -254,8 +254,7 @@ void Session::cmd_spec_request() {
 }
 
 void Session::cmd_spec_response(
-    uint32_t magic, uint16_t cid, int32_t res,
-    const RawstorOSTFrameMetaBody& meta
+    uint32_t magic, uint16_t cid, int32_t res, uint64_t size
 ) {
     // Unlike the no-payload commands (WRITE/DISCARD/FLUSH/SET_STATE),
     // where body.res is a plain 0-on-success/-errno-on-failure result,
@@ -264,7 +263,7 @@ void Session::cmd_spec_response(
     // reads next), and only negative on failure -- `res` here is only
     // ever meaningful as a caller-supplied negative errno; 0 (every
     // current test caller's "success") is not a valid payload size and
-    // is replaced with sizeof(meta).
+    // is replaced with sizeof(spec).
     if (res < 0) {
         RawstorOSTFrameResponse response = {
             .head{
@@ -281,10 +280,64 @@ void Session::cmd_spec_response(
         return;
     }
 
+    RawstorOSTFrameSpecBody spec = {
+        .obj_id = {},
+        .size = size,
+    };
     RawstorOSTFrameSpecResponse response = {
         .head{
             .magic = magic,
             .cmd = RAWSTOR_CMD_SPEC,
+            .cid = cid,
+        },
+        .body =
+            {
+                .res = static_cast<int32_t>(sizeof(spec)),
+                .hash = rawstd_hash_scalar(&spec, sizeof(spec)),
+            },
+        .spec = spec,
+    };
+    _server.write("RAWSTOR_CMD_SPEC >>>", &response, sizeof(response));
+}
+
+void Session::cmd_spec(
+    uint32_t magic, uint16_t cid, int32_t res, uint64_t size
+) {
+    cmd_spec_request();
+    cmd_spec_response(magic, cid, res, size);
+}
+
+void Session::cmd_meta_request() {
+    _server.read(
+        "RAWSTOR_CMD_META <<<", sizeof(RawstorOSTFrameBasic), [](const void*) {}
+    );
+}
+
+void Session::cmd_meta_response(
+    uint32_t magic, uint16_t cid, int32_t res,
+    const RawstorOSTFrameMetaBody& meta
+) {
+    // Same res/payload-size convention as cmd_spec_response() above.
+    if (res < 0) {
+        RawstorOSTFrameResponse response = {
+            .head{
+                .magic = magic,
+                .cmd = RAWSTOR_CMD_META,
+                .cid = cid,
+            },
+            .body = {
+                .res = res,
+                .hash = 0,
+            },
+        };
+        _server.write("RAWSTOR_CMD_META >>>", &response, sizeof(response));
+        return;
+    }
+
+    RawstorOSTFrameMetaResponse response = {
+        .head{
+            .magic = magic,
+            .cmd = RAWSTOR_CMD_META,
             .cid = cid,
         },
         .body =
@@ -294,20 +347,20 @@ void Session::cmd_spec_response(
             },
         .meta = meta,
     };
-    _server.write("RAWSTOR_CMD_SPEC >>>", &response, sizeof(response));
+    _server.write("RAWSTOR_CMD_META >>>", &response, sizeof(response));
 }
 
-void Session::cmd_spec(
+void Session::cmd_meta(
     uint32_t magic, uint16_t cid, int32_t res,
     const RawstorOSTFrameMetaBody& meta
 ) {
-    cmd_spec_request();
-    cmd_spec_response(magic, cid, res, meta);
+    cmd_meta_request();
+    cmd_meta_response(magic, cid, res, meta);
 }
 
 void Session::cmd_set_state_request() {
     _server.read(
-        "RAWSTOR_CMD_SET_STATE <<<", sizeof(RawstorOSTFrameMeta),
+        "RAWSTOR_CMD_SET_STATE <<<", sizeof(RawstorOSTFrameSyncState),
         [](const void*) {}
     );
 }

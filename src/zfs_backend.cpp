@@ -230,7 +230,7 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
     // established sync set (docs/mirroring.md). Setting the property in
     // the same command as creation means there is never a window where
     // the zvol exists without one.
-    RawstorObjectMeta initial{};
+    RawstorObjectSyncState initial{};
     initial.state = RAWSTOR_OBJECT_STATE_CLEAN;
     std::string prop =
         std::string(rawstor_property) + "=" + blkdev_meta_encode(initial);
@@ -352,8 +352,9 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
     // feature, or by something else. Must not be trusted as CLEAN -- the
     // caller treats any error here as "member stale, needs a resync"
     // (docs/mirroring.md, case F10).
-    RawstorObjectMeta meta{};
-    if (output.empty() || output == "-" || !blkdev_meta_decode(output, &meta)) {
+    RawstorObjectSyncState sync_state{};
+    if (output.empty() || output == "-" ||
+        !blkdev_meta_decode(output, &sync_state)) {
         rawstd_error("zfs: no recorded mirror state on %s\n", dataset.c_str());
         RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
     }
@@ -362,17 +363,19 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
     // the zvol's real, current size the same way spec() reports it, rather
     // than trust a value that could go stale if the zvol were ever resized
     // outside rawstor.
-    RawstorObjectSpec sp = co_await spec(id);
-    meta.size = sp.size;
+    RawstorObjectMeta ret{};
+    ret.spec = co_await spec(id);
+    ret.sync_state = sync_state;
 
-    co_return meta;
+    co_return ret;
 }
 
-rawstd::Task<void>
-Backend::set_state(const RawstdUUID& id, const RawstorObjectMeta& meta) {
+rawstd::Task<void> Backend::set_sync_state(
+    const RawstdUUID& id, const RawstorObjectSyncState& sync_state
+) {
     std::string dataset = _dataset(id);
     std::string prop =
-        std::string(rawstor_property) + "=" + blkdev_meta_encode(meta);
+        std::string(rawstor_property) + "=" + blkdev_meta_encode(sync_state);
 
     std::vector<std::string> argv = {"zfs", "set", prop, dataset};
     try {

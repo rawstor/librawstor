@@ -18,37 +18,37 @@ std::string trim(const std::string& s) {
 
 namespace rawstor {
 
-std::string blkdev_meta_encode(const RawstorObjectMeta& meta) {
+std::string blkdev_meta_encode(const RawstorObjectSyncState& sync_state) {
     char buf[256];
     snprintf(
         buf, sizeof(buf),
         "state=%u:epoch=%" PRIx64 ":sync_id=%" PRIx64 ":h0=%" PRIx64
         ":h1=%" PRIx64 ":h2=%" PRIx64 ":h3=%" PRIx64,
-        meta.state, meta.epoch, meta.sync_id, meta.sync_id_history[0],
-        meta.sync_id_history[1], meta.sync_id_history[2],
-        meta.sync_id_history[3]
+        sync_state.state, sync_state.epoch, sync_state.sync_id,
+        sync_state.sync_id_history[0], sync_state.sync_id_history[1],
+        sync_state.sync_id_history[2], sync_state.sync_id_history[3]
     );
     return std::string(buf);
 }
 
-bool blkdev_meta_decode(const std::string& value, RawstorObjectMeta* out) {
-    RawstorObjectMeta meta{};
+bool blkdev_meta_decode(const std::string& value, RawstorObjectSyncState* out) {
+    RawstorObjectSyncState sync_state{};
     unsigned int state = 0;
 
     int n = sscanf(
         trim(value).c_str(),
         "state=%u:epoch=%" SCNx64 ":sync_id=%" SCNx64 ":h0=%" SCNx64
         ":h1=%" SCNx64 ":h2=%" SCNx64 ":h3=%" SCNx64,
-        &state, &meta.epoch, &meta.sync_id, &meta.sync_id_history[0],
-        &meta.sync_id_history[1], &meta.sync_id_history[2],
-        &meta.sync_id_history[3]
+        &state, &sync_state.epoch, &sync_state.sync_id,
+        &sync_state.sync_id_history[0], &sync_state.sync_id_history[1],
+        &sync_state.sync_id_history[2], &sync_state.sync_id_history[3]
     );
     if (n != 7) {
         return false;
     }
 
-    meta.state = state;
-    *out = meta;
+    sync_state.state = state;
+    *out = sync_state;
     return true;
 }
 

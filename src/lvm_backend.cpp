@@ -350,7 +350,7 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
     // established sync set (docs/mirroring.md). Set on the staging LV
     // itself, carried across by lvrename() below, so there is never a
     // window -- staged or revealed -- where the LV exists without one.
-    RawstorObjectMeta initial{};
+    RawstorObjectSyncState initial{};
     initial.state = RAWSTOR_OBJECT_STATE_CLEAN;
     std::string tag =
         std::string(rawstor_tag_prefix) + blkdev_meta_encode(initial);
@@ -529,8 +529,8 @@ rawstd::Task<RawstorLocationInfo> Backend::info() {
     co_return ret;
 }
 
-// Shared by meta()/set_state() below: the current comma-separated tag list
-// on the LV at `path`, as reported by `lvs -o lv_tags`.
+// Shared by meta()/set_sync_state() below: the current comma-separated tag
+// list on the LV at `path`, as reported by `lvs -o lv_tags`.
 rawstd::Task<std::string> Backend::_lv_tags(const std::string& path) {
     std::vector<std::string> argv = {"lvs",      "--config",
                                      lvm_config, "--reportformat",
@@ -572,8 +572,8 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
     // this feature, or by something else. Must not be trusted as CLEAN --
     // the caller treats any error here as "member stale, needs a resync"
     // (docs/mirroring.md, case F10).
-    RawstorObjectMeta meta{};
-    if (tag.empty() || !blkdev_meta_decode(tag, &meta)) {
+    RawstorObjectSyncState sync_state{};
+    if (tag.empty() || !blkdev_meta_decode(tag, &sync_state)) {
         rawstd_error("lvm: no recorded mirror state on %s\n", path.c_str());
         RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
     }
@@ -582,17 +582,19 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
     // LV's real, current size the same way spec() reports it, rather than
     // trust a value that could go stale if the LV were ever resized
     // outside rawstor.
-    RawstorObjectSpec sp = co_await spec(id);
-    meta.size = sp.size;
+    RawstorObjectMeta ret{};
+    ret.spec = co_await spec(id);
+    ret.sync_state = sync_state;
 
-    co_return meta;
+    co_return ret;
 }
 
-rawstd::Task<void>
-Backend::set_state(const RawstdUUID& id, const RawstorObjectMeta& meta) {
+rawstd::Task<void> Backend::set_sync_state(
+    const RawstdUUID& id, const RawstorObjectSyncState& sync_state
+) {
     std::string path = _device_path(id);
     std::string new_tag =
-        std::string(rawstor_tag_prefix) + blkdev_meta_encode(meta);
+        std::string(rawstor_tag_prefix) + blkdev_meta_encode(sync_state);
 
     std::string tags = co_await _lv_tags(path);
     std::string old_tag = blkdev_find_tag(tags, rawstor_tag_prefix);

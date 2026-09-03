@@ -45,8 +45,9 @@ public:
     // fails ENOENT rather than fabricating a state.
     rawstd::Task<RawstorObjectMeta> meta(const RawstdUUID& id) override;
 
-    rawstd::Task<void>
-    set_state(const RawstdUUID& id, const RawstorObjectMeta& meta) override;
+    rawstd::Task<void> set_sync_state(
+        const RawstdUUID& id, const RawstorObjectSyncState& sync_state
+    ) override;
 
     rawstd::Task<RawstorLocationInfo> info() override;
 };

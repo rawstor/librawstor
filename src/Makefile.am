@@ -61,6 +61,7 @@ librawstor_la_SOURCES = 3rdparty/nlohmann/json.hpp \
                         rawstor.cpp \
                         target.cpp \
                         target.hpp \
+                        target_internal.h \
                         telemetry.cpp \
                         telemetry.hpp \
                         zfs_backend.cpp \

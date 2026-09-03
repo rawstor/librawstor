@@ -33,6 +33,8 @@ Each backend stores, next to the object data, a metadata record (an extension of
 
 `STALE` is not stored — it is derived by comparing copies.
 
+At the API level (`include/rawstor/target.h`) this record is split by cost and mutability: `RawstorObjectSpec` (`size`, `mirror_count`) is the cheap, always-fail-over-safe half read by `rawstor_target_spec()`; `RawstorObjectSyncState` (`state`/`epoch`/`sync_id`/`sync_id_history`) is the mirror consistency half, read via `rawstor_target_meta()` (which returns both, composed as `RawstorObjectMeta{spec, sync_state}`, from the first reachable copy only — see its own doc comment). The writer, `rawstor_target_set_sync_state()`, is not part of the installed public API: it lives in `src/target_internal.h`, used only by `rawstor-ost` (to relay an incoming `SET_STATE` wire command to its own locally configured locations) and by this project's own tests — setting mirror consistency state from outside the library is unsafe for an application to do.
+
 ### Comparison rules (at open)
 
 | Observation | Verdict |
@@ -106,8 +108,9 @@ If the client or the target OST crashes mid-resync, the copy remains `SYNCING` a
 ## Protocol and code changes
 
 - **`include/rawstor/protocol.h`** — new opcodes:
-  - `SPEC` — read metadata (size + state/epoch/sync_id/history); replaces the hardcoded stub in `rawstor::ost::Session::spec`;
-  - `SET_STATE` — write metadata (fsynced on the server);
+  - `SPEC` — read just the object's size; the cheap, always-fail-over-safe path;
+  - `META` — read full per-copy metadata (size + state/epoch/sync_id/history); a separate, more expensive opcode so a plain `spec()` over `ost://` doesn't pay for the server's mirror-consistency-state lookup (which can shell out, e.g. `zfs get`/`lvs`, if the server itself sits on `lvm://`/`zfs://`);
+  - `SET_STATE` — write mirror consistency state only (no `size` — nothing on this path ever changes it), fsynced on the server;
   - `FLUSH` — fdatasync of object data; needed for clean close and so that `rawstor-vhost`/QEMU can forward guest flushes.
   - An old server receiving an unknown opcode must answer `-ENOSYS`. There is no wire version field — acceptable before 1.0.
 - **`src/file_backend.cpp`** — versioned `.spec` format; fsync of metadata.

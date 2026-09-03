@@ -795,8 +795,9 @@ rawstd::Task<RawstorObjectMeta> Connection::meta(const RawstdUUID& id) {
     }
 }
 
-rawstd::Task<void>
-Connection::set_state(const RawstdUUID& id, const RawstorObjectMeta& meta) {
+rawstd::Task<void> Connection::set_sync_state(
+    const RawstdUUID& id, const RawstorObjectSyncState& sync_state
+) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
@@ -804,7 +805,7 @@ Connection::set_state(const RawstdUUID& id, const RawstorObjectMeta& meta) {
 
     try {
         co_await _with_retry(
-            func_name, trace_event, &Backend::set_state, id, meta
+            func_name, trace_event, &Backend::set_sync_state, id, sync_state
         );
         _finish(t_call);
     } catch (...) {

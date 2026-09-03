@@ -135,8 +135,9 @@ public:
 
     rawstd::Task<RawstorObjectMeta> meta(const RawstdUUID& id);
 
-    rawstd::Task<void>
-    set_state(const RawstdUUID& id, const RawstorObjectMeta& meta);
+    rawstd::Task<void> set_sync_state(
+        const RawstdUUID& id, const RawstorObjectSyncState& sync_state
+    );
 
     rawstd::Task<RawstorLocationInfo> info();
 

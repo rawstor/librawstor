@@ -183,11 +183,12 @@ private:
     rawstd::Task<void> _degrade(std::vector<size_t> idxs);
     rawstd::Task<void> _run_degrade_barrier();
 
-    // Persists `meta` on every in-sync member; members that fail the update are
-    // marked STALE. Never throws -- the caller re-checks
+    // Persists `sync_state` on every in-sync member; members that fail the
+    // update are marked STALE. Never throws -- the caller re-checks
     // _in_sync_count()/_below_write_quorum() itself afterward.
-    rawstd::Task<void> _run_meta_fan_out(RawstorObjectMeta meta);
-    rawstd::Task<void> _set_state_one(size_t idx, RawstorObjectMeta meta);
+    rawstd::Task<void> _run_meta_fan_out(RawstorObjectSyncState sync_state);
+    rawstd::Task<void>
+    _set_sync_state_one(size_t idx, RawstorObjectSyncState sync_state);
 
     // Mirrored write fan-out shared by pwrite()/pwritev()/discard()/
     // write_zeroes()/flush(): `issue` is co_await-ed against every

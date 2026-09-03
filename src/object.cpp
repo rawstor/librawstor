@@ -45,9 +45,9 @@ uint64_t random_sync_id() {
     return dist(rng);
 }
 
-bool in_history(const RawstorObjectMeta& meta, uint64_t sync_id) {
+bool in_history(const RawstorObjectSyncState& sync_state, uint64_t sync_id) {
     for (size_t i = 0; i < RAWSTOR_OBJECT_SYNC_ID_HISTORY; ++i) {
-        if (meta.sync_id_history[i] == sync_id) {
+        if (sync_state.sync_id_history[i] == sync_id) {
             return true;
         }
     }
@@ -345,17 +345,18 @@ void Object::_open_analyze() {
         }
         if (ref == nullptr) {
             ref = &m;
-        } else if (m.meta.size != ref->meta.size) {
+        } else if (m.meta.spec.size != ref->meta.spec.size) {
             rawstd_warning(
                 "Mirror member sizes disagree: %llu != %llu\n",
-                (unsigned long long)m.meta.size,
-                (unsigned long long)ref->meta.size
+                (unsigned long long)m.meta.spec.size,
+                (unsigned long long)ref->meta.spec.size
             );
         }
     }
 
     for (Member& m : _members) {
-        if (m.reachable && m.meta.state == RAWSTOR_OBJECT_STATE_SYNCING) {
+        if (m.reachable &&
+            m.meta.sync_state.state == RAWSTOR_OBJECT_STATE_SYNCING) {
             rawstd_warning("Mirror member with interrupted resync is stale\n");
             m.state = MemberState::STALE;
         }
@@ -363,11 +364,12 @@ void Object::_open_analyze() {
 
     std::vector<uint64_t> ids;
     for (const Member& m : _members) {
-        if (m.state != MemberState::IN_SYNC || m.meta.sync_id == 0) {
+        if (m.state != MemberState::IN_SYNC || m.meta.sync_state.sync_id == 0) {
             continue;
         }
-        if (std::find(ids.begin(), ids.end(), m.meta.sync_id) == ids.end()) {
-            ids.push_back(m.meta.sync_id);
+        if (std::find(ids.begin(), ids.end(), m.meta.sync_state.sync_id) ==
+            ids.end()) {
+            ids.push_back(m.meta.sync_state.sync_id);
         }
     }
 
@@ -383,7 +385,8 @@ void Object::_open_analyze() {
                 }
                 bool found = false;
                 for (const Member& m : _members) {
-                    if (m.meta.sync_id == x && in_history(m.meta, y)) {
+                    if (m.meta.sync_state.sync_id == x &&
+                        in_history(m.meta.sync_state, y)) {
                         found = true;
                         break;
                     }
@@ -408,7 +411,8 @@ void Object::_open_analyze() {
         }
 
         for (Member& m : _members) {
-            if (m.state == MemberState::IN_SYNC && m.meta.sync_id != newest) {
+            if (m.state == MemberState::IN_SYNC &&
+                m.meta.sync_state.sync_id != newest) {
                 rawstd_warning("Stale mirror member excluded from the set\n");
                 m.state = MemberState::STALE;
             }
@@ -421,20 +425,20 @@ void Object::_open_analyze() {
             continue;
         }
         ++in_sync;
-        if (m.meta.epoch > _epoch) {
-            _epoch = m.meta.epoch;
+        if (m.meta.sync_state.epoch > _epoch) {
+            _epoch = m.meta.sync_state.epoch;
         }
         /*
          * The minimum across the set is the logical size: block-device
          * members round the physical size up to their extent size.
          */
-        if (_size == 0 || m.meta.size < _size) {
-            _size = m.meta.size;
+        if (_size == 0 || m.meta.spec.size < _size) {
+            _size = m.meta.spec.size;
         }
         if (_sync_id == 0) {
-            _sync_id = m.meta.sync_id;
+            _sync_id = m.meta.sync_state.sync_id;
             memcpy(
-                _sync_id_history, m.meta.sync_id_history,
+                _sync_id_history, m.meta.sync_state.sync_id_history,
                 sizeof(_sync_id_history)
             );
         }
@@ -499,7 +503,7 @@ rawstd::Task<void> Object::_run_dirty_barrier() {
         bool bump = _in_sync_count() != _nmirrors || _sync_id == 0 ||
                     _unrecorded_stale > 0;
 
-        RawstorObjectMeta m{};
+        RawstorObjectSyncState m{};
         m.state = RAWSTOR_OBJECT_STATE_DIRTY;
         if (bump) {
             m.epoch = _epoch + 1;
@@ -547,12 +551,12 @@ rawstd::Task<void> Object::_run_dirty_barrier() {
         _unrecorded_stale -= recorded_stale;
         for (Member& mirror : _members) {
             if (mirror.state == MemberState::IN_SYNC) {
-                mirror.meta.state = m.state;
-                mirror.meta.epoch = m.epoch;
-                mirror.meta.sync_id = m.sync_id;
+                mirror.meta.sync_state.state = m.state;
+                mirror.meta.sync_state.epoch = m.epoch;
+                mirror.meta.sync_state.sync_id = m.sync_id;
                 memcpy(
-                    mirror.meta.sync_id_history, m.sync_id_history,
-                    sizeof(mirror.meta.sync_id_history)
+                    mirror.meta.sync_state.sync_id_history, m.sync_id_history,
+                    sizeof(mirror.meta.sync_state.sync_id_history)
                 );
             }
             // A reopened session may talk to a restarted backend that lost
@@ -636,7 +640,7 @@ rawstd::Task<void> Object::_run_degrade_barrier() {
     _meta_op_running = true;
 
     try {
-        RawstorObjectMeta m{};
+        RawstorObjectSyncState m{};
         m.state = RAWSTOR_OBJECT_STATE_DIRTY;
         m.epoch = _epoch + 1;
         m.sync_id = random_sync_id();
@@ -670,11 +674,11 @@ rawstd::Task<void> Object::_run_degrade_barrier() {
         _unrecorded_stale -= recorded_stale;
         for (Member& mirror : _members) {
             if (mirror.state == MemberState::IN_SYNC) {
-                mirror.meta.epoch = m.epoch;
-                mirror.meta.sync_id = m.sync_id;
+                mirror.meta.sync_state.epoch = m.epoch;
+                mirror.meta.sync_state.sync_id = m.sync_id;
                 memcpy(
-                    mirror.meta.sync_id_history, m.sync_id_history,
-                    sizeof(mirror.meta.sync_id_history)
+                    mirror.meta.sync_state.sync_id_history, m.sync_id_history,
+                    sizeof(mirror.meta.sync_state.sync_id_history)
                 );
             }
         }
@@ -687,13 +691,14 @@ rawstd::Task<void> Object::_run_degrade_barrier() {
 }
 
 /*
- * Persists meta on every in-sync member. Members that fail the update are
- * marked STALE (their exclusion is recorded by the very sync_id they now lack);
- * ENOSYS is tolerated: block-device members have no metadata storage yet.
- * Never throws itself -- the caller re-checks _in_sync_count()/
- * _below_write_quorum() afterward.
+ * Persists sync_state on every in-sync member. Members that fail the update
+ * are marked STALE (their exclusion is recorded by the very sync_id they
+ * now lack); ENOSYS is tolerated for a hypothetical backend that chooses
+ * not to support this. Never throws itself -- the caller re-checks
+ * _in_sync_count()/_below_write_quorum() afterward.
  */
-rawstd::Task<void> Object::_run_meta_fan_out(RawstorObjectMeta meta) {
+rawstd::Task<void>
+Object::_run_meta_fan_out(RawstorObjectSyncState sync_state) {
     std::vector<size_t> idxs;
     for (size_t i = 0; i < _members.size(); ++i) {
         if (_members[i].state == MemberState::IN_SYNC) {
@@ -708,14 +713,15 @@ rawstd::Task<void> Object::_run_meta_fan_out(RawstorObjectMeta meta) {
     std::vector<rawstd::Task<void>> tasks;
     tasks.reserve(idxs.size());
     for (size_t idx : idxs) {
-        tasks.push_back(_set_state_one(idx, meta));
+        tasks.push_back(_set_sync_state_one(idx, sync_state));
     }
     co_await rawstd::gather(std::move(tasks));
 }
 
-rawstd::Task<void> Object::_set_state_one(size_t idx, RawstorObjectMeta meta) {
+rawstd::Task<void>
+Object::_set_sync_state_one(size_t idx, RawstorObjectSyncState sync_state) {
     try {
-        co_await _members[idx].cn->set_state(_target.id(), meta);
+        co_await _members[idx].cn->set_sync_state(_target.id(), sync_state);
     } catch (const std::system_error& e) {
         int error = e.code().value();
         if (error == ENOSYS) {
@@ -989,14 +995,14 @@ rawstd::DetachedTask Object::_resync_maybe_start() {
     // The SYNCING mark must be durable before the copy starts: a crash
     // mid-resync must leave the member recognizably untrusted
     // (docs/mirroring.md, case F8).
-    RawstorObjectMeta m = _members[idx].meta;
+    RawstorObjectSyncState m = _members[idx].meta.sync_state;
     m.state = RAWSTOR_OBJECT_STATE_SYNCING;
 
     _members[idx].state = MemberState::SYNCING;
 
     int error = 0;
     try {
-        co_await _members[idx].cn->set_state(_target.id(), m);
+        co_await _members[idx].cn->set_sync_state(_target.id(), m);
     } catch (const std::system_error& e) {
         error = e.code().value();
     }
@@ -1189,7 +1195,7 @@ rawstd::DetachedTask Object::_resync_finish() {
     // durably, then let the member serve reads.
     size_t idx = _resync->idx;
 
-    RawstorObjectMeta m{};
+    RawstorObjectSyncState m{};
     m.state = _dirty ? RAWSTOR_OBJECT_STATE_DIRTY : RAWSTOR_OBJECT_STATE_CLEAN;
     m.epoch = _epoch;
     m.sync_id = _sync_id;
@@ -1201,7 +1207,7 @@ rawstd::DetachedTask Object::_resync_finish() {
 
     int error = 0;
     try {
-        co_await _members[idx].cn->set_state(_target.id(), m);
+        co_await _members[idx].cn->set_sync_state(_target.id(), m);
     } catch (const std::system_error& e) {
         error = e.code().value();
     }
@@ -1221,8 +1227,8 @@ rawstd::DetachedTask Object::_resync_finish() {
     }
 
     _members[idx].state = MemberState::IN_SYNC;
-    _members[idx].meta = m;
-    _members[idx].meta.size = _size;
+    _members[idx].meta.sync_state = m;
+    _members[idx].meta.spec.size = _size;
     _resync.reset();
 
     rawstd_info("Mirror resync: the member rejoined the set\n");
@@ -1722,7 +1728,7 @@ rawstd::Task<void> Object::close() {
         if (_in_sync_count() > 0) {
             _meta_op_running = true;
             try {
-                RawstorObjectMeta m{};
+                RawstorObjectSyncState m{};
                 m.state = RAWSTOR_OBJECT_STATE_CLEAN;
                 m.epoch = _epoch;
                 m.sync_id = _sync_id;

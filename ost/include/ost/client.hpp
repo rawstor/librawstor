@@ -98,6 +98,13 @@ private:
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
         RawstorOSTFrameBasicBody body
     );
+    void _meta(
+        const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+    );
+    static rawstd::DetachedTask _meta_task(
+        std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
+        RawstorOSTFrameBasicBody body
+    );
     void _info(
         const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
     );
@@ -156,11 +163,12 @@ private:
     static rawstd::DetachedTask
     _flush_task(std::weak_ptr<Client> weak, RawstorOSTFrameHead head);
     void _set_state(
-        const RawstorOSTFrameHead& head, const RawstorOSTFrameMetaBody& body
+        const RawstorOSTFrameHead& head,
+        const RawstorOSTFrameSyncStateBody& body
     );
     static rawstd::DetachedTask _set_state_task(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-        RawstorOSTFrameMetaBody body
+        RawstorOSTFrameSyncStateBody body
     );
     std::vector<rawstd::URI> _targets(const RawstdUUID& uuid);
 

@@ -76,17 +76,19 @@ public:
 
     virtual rawstd::Task<RawstorObjectSpec> spec(const RawstdUUID& id) = 0;
 
-    // Mirror consistency metadata for one copy (state/epoch/sync_id and its
+    // Mirror consistency identity for one copy (state/epoch/sync_id and its
     // ancestry, see docs/mirroring.md) -- independent of spec() above,
-    // which only ever reports size. meta() reads it, set_state() persists
-    // a caller-supplied one (durably, before returning); the size field of
-    // the argument is ignored, the stored size is preserved. Backends
-    // without native support for this (blk::Backend's own default, used
-    // by lvm/zfs until they grow one) fail both with ENOSYS.
+    // which only ever reports size. meta() reads it (returned alongside the
+    // copy's own current size); set_sync_state() persists a
+    // caller-supplied one durably before returning. Every concrete Backend
+    // must implement both -- no universal default exists (see
+    // blk::Backend's own doc comment on why this stays pure virtual there
+    // too).
     virtual rawstd::Task<RawstorObjectMeta> meta(const RawstdUUID& id) = 0;
 
-    virtual rawstd::Task<void>
-    set_state(const RawstdUUID& id, const RawstorObjectMeta& meta) = 0;
+    virtual rawstd::Task<void> set_sync_state(
+        const RawstdUUID& id, const RawstorObjectSyncState& sync_state
+    ) = 0;
 
     virtual rawstd::Task<RawstorLocationInfo> info() = 0;
 
