@@ -358,6 +358,13 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
     }
 
+    // The property never carries size (see blkdev_meta_encode()): merge in
+    // the zvol's real, current size the same way spec() reports it, rather
+    // than trust a value that could go stale if the zvol were ever resized
+    // outside rawstor.
+    RawstorObjectSpec sp = co_await spec(id);
+    meta.size = sp.size;
+
     co_return meta;
 }
 
