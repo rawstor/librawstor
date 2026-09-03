@@ -1045,7 +1045,7 @@ rawstd::Task<void> Backend::_connect() {
             co_await _queue.close(fd);
         } catch (...) {
         }
-        rawstd_info("fd %d: Closed\n", fd);
+        rawstd_debug("fd %d: Closed\n", fd);
         std::rethrow_exception(connect_error);
     }
 
