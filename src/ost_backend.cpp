@@ -1031,7 +1031,7 @@ rawstd::Task<void> Backend::_connect() {
         co_await _queue.connect(fd, (sockaddr*)&servaddr, sizeof(servaddr));
     } catch (...) {
         ::close(fd);
-        rawstd_info("fd %d: Closed\n", fd);
+        rawstd_debug("fd %d: Closed\n", fd);
         throw;
     }
 
