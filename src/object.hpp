@@ -104,17 +104,12 @@ private:
     // non-null again.
     size_t _resync_generation;
 
-    // Periodic reconnect probe for unreachable members (mirror_probe_interval,
-    // a timerfd read through _queue). _probe_fd stays -1 for a
-    // single-target object (_probe_setup() is a no-op there) and if the
-    // timerfd itself couldn't be created. _probe_expirations is
-    // shared_ptr-owned: Queue::cancel(fd) only guarantees the cancel
-    // request itself was submitted, not that the target read has actually
-    // retired, so the object (and this member) may be destroyed before the
-    // kernel is done writing into it.
-    int _probe_fd;
+    // Periodic reconnect probe for unreachable members
+    // (mirror_probe_interval), driven by a plain _queue.timeout() loop in
+    // _probe_watch() -- a no-op for a single-target object.
+    // _probe_pending guards against a second _probe_tick() firing while a
+    // reconnect attempt it started is still in flight.
     bool _probe_pending;
-    std::shared_ptr<uint64_t> _probe_expirations;
 
     // Monotonically increasing count of pwrite()/pwritev() calls dispatched
     // to every in-sync member so far (_writes_issued) and of how many
@@ -252,14 +247,13 @@ private:
     // mid-fan-out bookkeeping.
     void _resync_abort(const char* reason) noexcept;
 
-    // Arms and reads the mirror_probe_interval timerfd (a no-op for a
-    // single-target object). _probe_arm() launches _probe_watch() as a
-    // detached loop that reads the timerfd expiration count and calls
-    // _probe_tick() on every wakeup, for as long as the object (and the
-    // timerfd) is alive; _probe_tick() reconnects the first STALE,
-    // unreachable member found and kicks off its resync on success.
+    // Launches _probe_watch() as a detached loop, for as long as the
+    // object is alive (a no-op for a single-target object). _probe_watch()
+    // sleeps mirror_probe_interval at a time via _queue.timeout() and
+    // calls _probe_tick() on every wakeup; _probe_tick() reconnects the
+    // first STALE, unreachable member found and kicks off its resync on
+    // success.
     void _probe_setup();
-    void _probe_arm();
     rawstd::DetachedTask _probe_watch(std::weak_ptr<int> alive);
     rawstd::DetachedTask _probe_tick();
 
