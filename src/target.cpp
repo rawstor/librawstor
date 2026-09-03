@@ -4,6 +4,7 @@
 #include "location.hpp"
 #include "object.hpp"
 #include "opts.h"
+#include "target_internal.h"
 
 #include <rawstor/target.h>
 
@@ -107,14 +108,14 @@ rawstd::Task<void> remove_one(rawio::Queue& queue, const rawstd::URI& target) {
     co_await cn->close();
 }
 
-rawstd::Task<void> set_state_one(
+rawstd::Task<void> set_sync_state_one(
     rawio::Queue& queue, const rawstd::URI& target,
-    const RawstorObjectMeta& meta
+    const RawstorObjectSyncState& sync_state
 ) {
     RawstdUUID id = uuid_from_target(target);
     std::unique_ptr<rawstor::Connection> cn =
         co_await rawstor::Connection::create(queue, target.parent(), 1);
-    co_await cn->set_state(id, meta);
+    co_await cn->set_sync_state(id, sync_state);
     co_await cn->close();
 }
 
@@ -341,15 +342,15 @@ void launch_meta_op(
     rawstd::DetachedTask::rethrow_if_pending();
 }
 
-// Same shape as launch_remove_op_coro() above, for Target::set_state():
+// Same shape as launch_remove_op_coro() above, for Target::set_sync_state():
 // no out-parameter, just a result.
-rawstd::DetachedTask launch_set_state_op_coro(
-    rawstor::Target t, rawio::Queue* queue, RawstorObjectMeta meta,
+rawstd::DetachedTask launch_set_sync_state_op_coro(
+    rawstor::Target t, rawio::Queue* queue, RawstorObjectSyncState sync_state,
     int (*cb)(ssize_t result, void* data), void* data
 ) {
     ssize_t result = 0;
     try {
-        co_await t.set_state(*queue, meta);
+        co_await t.set_sync_state(*queue, sync_state);
     } catch (const std::system_error& e) {
         result = -e.code().value();
     } catch (const std::bad_alloc&) {
@@ -367,11 +368,12 @@ rawstd::DetachedTask launch_set_state_op_coro(
     }
 }
 
-void launch_set_state_op(
-    rawstor::Target t, rawio::Queue* queue, const RawstorObjectMeta& meta,
+void launch_set_sync_state_op(
+    rawstor::Target t, rawio::Queue* queue,
+    const RawstorObjectSyncState& sync_state,
     int (*cb)(ssize_t result, void* data), void* data
 ) {
-    launch_set_state_op_coro(std::move(t), queue, meta, cb, data);
+    launch_set_sync_state_op_coro(std::move(t), queue, sync_state, cb, data);
     rawstd::DetachedTask::rethrow_if_pending();
 }
 
@@ -401,6 +403,20 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) {
     validate_not_empty(_uris);
     validate_different_uris(_uris);
     validate_same_uuid(_uris);
+
+    // 0 means "caller doesn't know/care" and is not checked; a nonzero
+    // value that disagrees with the target's own URI count is a caller
+    // bug (e.g. reusing a Spec read from a different target) worth
+    // catching here rather than silently creating something narrower or
+    // wider than intended.
+    if (sp.mirror_count != 0 && sp.mirror_count != _uris.size()) {
+        rawstd_error(
+            "Spec mirror_count (%u) does not match target's URI count "
+            "(%zu)\n",
+            sp.mirror_count, _uris.size()
+        );
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
 
     // Every URI's CREATE goes out concurrently instead of one at a time.
     // This can't just gather() them, though: on failure, only the URIs
@@ -467,6 +483,11 @@ rawstd::Task<RawstorObjectSpec> Target::spec(rawio::Queue& queue) {
                 co_await rawstor::Connection::create(queue, uri.parent(), 1);
             RawstorObjectSpec ret = co_await cn->spec(id);
             co_await cn->close();
+            // A single Connection/Backend only knows about the one URI it
+            // talks to -- mirror_count is a property of this Target as a
+            // whole, filled in here rather than by whichever copy happened
+            // to answer.
+            ret.mirror_count = (uint32_t)_uris.size();
             co_return ret;
         } catch (const std::system_error& e) {
             rawstd_error("%s\n", e.what());
@@ -478,10 +499,9 @@ rawstd::Task<RawstorObjectSpec> Target::spec(rawio::Queue& queue) {
     RAWSTD_THROW_SYSTEM_ERROR(first_error ? first_error : ENOTCONN);
 }
 
-// First URI only, same as spec() above -- see its own TODO. Unlike spec(),
-// deliberately does not fail over to the next URI: a caller inspecting
-// mirror consistency state wants THIS copy's state, not whichever copy
-// happens to answer first.
+// First URI only. Unlike spec() above, deliberately does not fail over to
+// the next URI: a caller inspecting mirror consistency state wants THIS
+// copy's state, not whichever copy happens to answer first.
 rawstd::Task<RawstorObjectMeta> Target::meta(rawio::Queue& queue) {
     validate_not_empty(_uris);
     validate_different_uris(_uris);
@@ -492,6 +512,9 @@ rawstd::Task<RawstorObjectMeta> Target::meta(rawio::Queue& queue) {
         co_await rawstor::Connection::create(queue, _uris.front().parent(), 1);
     RawstorObjectMeta ret = co_await cn->meta(id);
     co_await cn->close();
+    // See Target::spec()'s own comment: a single Connection/Backend
+    // doesn't know the target's own URI count.
+    ret.spec.mirror_count = (uint32_t)_uris.size();
     co_return ret;
 }
 
@@ -501,8 +524,9 @@ rawstd::Task<RawstorObjectMeta> Target::meta(rawio::Queue& queue) {
 // earlier one fails (gather() never abandons a task still in flight, same
 // as remove() below), so a partial failure leaves as many copies updated
 // as possible rather than none.
-rawstd::Task<void>
-Target::set_state(rawio::Queue& queue, const RawstorObjectMeta& meta) {
+rawstd::Task<void> Target::set_sync_state(
+    rawio::Queue& queue, const RawstorObjectSyncState& sync_state
+) {
     validate_not_empty(_uris);
     validate_different_uris(_uris);
     validate_same_uuid(_uris);
@@ -510,7 +534,7 @@ Target::set_state(rawio::Queue& queue, const RawstorObjectMeta& meta) {
     std::vector<rawstd::Task<void>> tasks;
     tasks.reserve(_uris.size());
     for (const auto& uri : _uris) {
-        tasks.push_back(set_state_one(queue, uri, meta));
+        tasks.push_back(set_sync_state_one(queue, uri, sync_state));
     }
     co_await rawstd::gather(std::move(tasks));
 }
@@ -818,14 +842,16 @@ int rawstor_target_meta(
     }
 }
 
-int rawstor_target_set_state(
-    RawIOQueue* queue, const char* target, const RawstorObjectMeta* meta,
+int rawstor_target_set_sync_state(
+    RawIOQueue* queue, const char* target,
+    const RawstorObjectSyncState* sync_state,
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
         rawstor::Target t(rawstd::URI::uriv(target));
-        launch_set_state_op(
-            std::move(t), static_cast<rawio::Queue*>(queue), *meta, cb, data
+        launch_set_sync_state_op(
+            std::move(t), static_cast<rawio::Queue*>(queue), *sync_state, cb,
+            data
         );
         return 0;
     } catch (const std::system_error& e) {

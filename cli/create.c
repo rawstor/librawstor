@@ -23,6 +23,7 @@ static void log_spec(FILE* output, const struct RawstorObjectSpec* spec) {
 int rawstor_cli_create(const char* target, uint64_t size) {
     struct RawstorObjectSpec spec = {
         .size = size,
+        .mirror_count = 0,
     };
 
     fprintf(stderr, "Creating object with specification:\n");
@@ -58,6 +59,7 @@ int rawstor_cli_create_at(
 ) {
     struct RawstorObjectSpec spec = {
         .size = size,
+        .mirror_count = 0,
     };
 
     fprintf(stderr, "Creating object with specification:\n");

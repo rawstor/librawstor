@@ -88,7 +88,7 @@ TEST(ListTest, merge) {
     };
 
     ssize_t res;
-    RawstorObjectSpec spec{.size = 1ull << 20};
+    RawstorObjectSpec spec{.size = 1ull << 20, .mirror_count = 0};
     res = create(target11, spec);
     ASSERT_EQ(res, 0);
     res = create(target12, spec);
@@ -180,7 +180,7 @@ TEST(ListTest, pagination) {
     std::vector<std::string> targets;
     targets.reserve(total);
     for (unsigned int i = 0; i < total; ++i) {
-        RawstorObjectSpec spec{.size = 1ull << 10};
+        RawstorObjectSpec spec{.size = 1ull << 10, .mirror_count = 0};
 
         char target[65536];
         ssize_t res =

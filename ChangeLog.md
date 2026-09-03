@@ -15,10 +15,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - [Mirroring design](docs/mirroring.md): failure model, quorum rules and
   online resync for N-way mirrors.
 - Per-copy object metadata (state/epoch/sync_id/history): a companion
-  `.meta` file for `file://`, with `SPEC`/`SET_STATE`/`FLUSH` OST protocol
-  commands and `rawstor_target_meta`/`rawstor_target_set_state`
-  (`<rawstor/target.h>`) public API. Durable: metadata updates are fsynced
-  by the backend before the call completes.
+  `.meta` file for `file://`, with `SPEC`/`META`/`SET_STATE`/`FLUSH` OST
+  protocol commands and `rawstor_target_spec`/`rawstor_target_meta`
+  (`<rawstor/target.h>`) public API — `RawstorObjectMeta` composes the
+  cheap `RawstorObjectSpec` (`size`, `mirror_count`) with
+  `RawstorObjectSyncState` (`state`/`epoch`/`sync_id`/`sync_id_history`);
+  the writer is internal (`rawstor_target_set_sync_state`,
+  `src/target_internal.h`), not part of the installed API. Durable:
+  metadata updates are fsynced by the backend before the call completes.
+- `rawstor_target_create()` rejects `-EINVAL` when `RawstorObjectSpec`'s
+  new `mirror_count` is nonzero and doesn't match the target's actual URI
+  count (0 means "don't care").
 - Mirror quorum, degrade & continue, read failover: opening a mirrored
   object now tolerates unreachable members as long as a strict majority is
   reachable (`-ENOTCONN` otherwise; two members need both), comparing each

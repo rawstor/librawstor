@@ -741,15 +741,15 @@ public:
 // acknowledgement as BackendOpFlush above.
 class BackendOpSetState final : public BackendOp {
 private:
-    RawstorOSTFrameMeta _request;
+    RawstorOSTFrameSyncState _request;
 
 public:
     BackendOpSetState(
         const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
-        const RawstdUUID& id, const RawstorObjectMeta& meta,
+        const RawstdUUID& id, const RawstorObjectSyncState& sync_state,
         const rawstd::TraceEvent& trace_event
     ) :
-        BackendOp(backend, cid, trace_event, "set_state", 0, 0),
+        BackendOp(backend, cid, trace_event, "set_sync_state", 0, 0),
         _request({
             .head =
                 {
@@ -759,16 +759,15 @@ public:
                 },
             .body = {
                 .obj_id = {},
-                .size = meta.size,
-                .epoch = meta.epoch,
-                .sync_id = meta.sync_id,
+                .epoch = sync_state.epoch,
+                .sync_id = sync_state.sync_id,
                 .sync_id_history = {},
-                .state = meta.state,
+                .state = sync_state.state,
             },
         }) {
         memcpy(_request.body.obj_id, id.bytes, sizeof(_request.body.obj_id));
         memcpy(
-            _request.body.sync_id_history, meta.sync_id_history,
+            _request.body.sync_id_history, sync_state.sync_id_history,
             sizeof(_request.body.sync_id_history)
         );
     }
@@ -792,7 +791,8 @@ public:
 
         _dispatch(0, error);
 
-        // A set_state response never carries a body, regardless of error.
+        // A set_sync_state response never carries a body, regardless of
+        // error.
         return 0;
     }
 };
@@ -1184,8 +1184,28 @@ rawstd::Task<void> Backend::remove(const RawstdUUID& id) {
 }
 
 rawstd::Task<RawstorObjectSpec> Backend::spec(const RawstdUUID& id) {
-    RawstorObjectMeta m = co_await meta(id);
-    co_return RawstorObjectSpec{m.size};
+    // A dedicated, cheaper wire round trip than meta() below -- doesn't
+    // touch the server's own mirror consistency state lookup at all (see
+    // RAWSTOR_CMD_META's own doc comment in protocol.h).
+    RawstorObjectSpec ret = {};
+    try {
+        std::vector<char> response =
+            co_await _basic_request(RAWSTOR_CMD_SPEC, "spec", id, 0);
+        if (response.size() != sizeof(RawstorOSTFrameSpecBody)) {
+            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+        }
+        const RawstorOSTFrameSpecBody& body =
+            *static_cast<const RawstorOSTFrameSpecBody*>(
+                static_cast<const void*>(response.data())
+            );
+        ret.size = body.size;
+    } catch (const std::system_error&) {
+        throw;
+    } catch (...) {
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
+    }
+
+    co_return ret;
 }
 
 rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
@@ -1194,7 +1214,7 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
     RawstorObjectMeta ret = {};
     try {
         std::vector<char> response =
-            co_await _basic_request(RAWSTOR_CMD_SPEC, "meta", id, 0);
+            co_await _basic_request(RAWSTOR_CMD_META, "meta", id, 0);
         if (response.size() != sizeof(RawstorOSTFrameMetaBody)) {
             RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
         }
@@ -1202,14 +1222,14 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
             *static_cast<const RawstorOSTFrameMetaBody*>(
                 static_cast<const void*>(response.data())
             );
-        ret.size = body.size;
-        ret.epoch = body.epoch;
-        ret.sync_id = body.sync_id;
+        ret.spec.size = body.size;
+        ret.sync_state.epoch = body.epoch;
+        ret.sync_state.sync_id = body.sync_id;
         memcpy(
-            ret.sync_id_history, body.sync_id_history,
-            sizeof(ret.sync_id_history)
+            ret.sync_state.sync_id_history, body.sync_id_history,
+            sizeof(ret.sync_state.sync_id_history)
         );
-        ret.state = body.state;
+        ret.sync_state.state = body.state;
     } catch (const std::system_error&) {
         throw;
     } catch (...) {
@@ -1221,13 +1241,14 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
     co_return ret;
 }
 
-rawstd::Task<void>
-Backend::set_state(const RawstdUUID& id, const RawstorObjectMeta& meta) {
+rawstd::Task<void> Backend::set_sync_state(
+    const RawstdUUID& id, const RawstorObjectSyncState& sync_state
+) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('s', "fd = %d\n", fd());
 
     std::shared_ptr<BackendOpSetState> op = std::make_shared<BackendOpSetState>(
         std::static_pointer_cast<Backend>(shared_from_this()), _cid_counter++,
-        id, meta, trace_event
+        id, sync_state, trace_event
     );
     _add_op(op);
 

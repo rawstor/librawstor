@@ -50,8 +50,8 @@ private:
     // pool slot, plus reconnects).
     rawstd::Task<void> _cleanup_staging_lvs();
 
-    // Shared by meta()/set_state(): the current comma-separated tag list
-    // on the LV at `path`, as reported by `lvs -o lv_tags`.
+    // Shared by meta()/set_sync_state(): the current comma-separated tag
+    // list on the LV at `path`, as reported by `lvs -o lv_tags`.
     rawstd::Task<std::string> _lv_tags(const std::string& path);
 
 public:
@@ -72,8 +72,9 @@ public:
     // "rawstor.meta=..." tag -- see src/blkdev_meta.hpp.
     rawstd::Task<RawstorObjectMeta> meta(const RawstdUUID& id) override;
 
-    rawstd::Task<void>
-    set_state(const RawstdUUID& id, const RawstorObjectMeta& meta) override;
+    rawstd::Task<void> set_sync_state(
+        const RawstdUUID& id, const RawstorObjectSyncState& sync_state
+    ) override;
 };
 
 } // namespace lvm

@@ -19,24 +19,30 @@ extern "C" {
 #endif
 
 /**
- * @brief Object metadata structure.
+ * @brief Object specification structure.
  *
- * Contains information about a stored object. This structure is used both for
- * retrieving existing object metadata (via rawstor_target_spec()) and for
- * specifying parameters when creating a new object (via
- * rawstor_target_create()).
+ * Contains information about a stored object's own shape -- independent of
+ * any single copy's consistency state (see RawstorObjectMeta for that).
+ * This structure is used both for retrieving an existing object's
+ * specification (via rawstor_target_spec()) and for specifying parameters
+ * when creating a new object (via rawstor_target_create()).
  *
  * When used with rawstor_target_create(), the size field must be set to the
- * desired size of the object to be created.
+ * desired size of the object to be created. mirror_count, if nonzero, must
+ * match the number of URIs in the target string being created (mismatch
+ * fails the create with -EINVAL); left 0, it is not checked -- a convenience
+ * for a caller that doesn't already know or care about mirror width.
  *
- * When used with rawstor_target_spec(), the size field is filled with the
- * actual size of the existing object in bytes.
+ * When used with rawstor_target_spec(), both fields are filled with the
+ * actual shape of the existing object: its size in bytes and the number of
+ * URIs configured for it.
  *
  * @see rawstor_target_spec
  * @see rawstor_target_create
  */
 struct RawstorObjectSpec {
-    uint64_t size; /**< Size of the object in bytes. */
+    uint64_t size;         /**< Size of the object in bytes. */
+    uint32_t mirror_count; /**< Number of URIs configured for the target. */
 };
 
 /**
@@ -56,18 +62,18 @@ struct RawstorObjectSpec {
 #define RAWSTOR_OBJECT_SYNC_ID_HISTORY 4
 
 /**
- * @brief Object copy metadata.
+ * @brief Settable mirror consistency identity of a single object copy.
  *
- * Extends RawstorObjectSpec with the mirror consistency state of a single
- * object copy (see docs/mirroring.md). A sync_id of 0 marks a legacy copy
- * that has never been part of an established sync set; such copies are
- * treated as CLEAN and identical right after creation.
+ * Everything about a copy's consistency state that can actually be changed
+ * (see docs/mirroring.md) -- the fields rawstor_target_set_sync_state()
+ * persists. A sync_id of 0 marks a legacy copy that has never been part of
+ * an established sync set; such copies are treated as CLEAN and identical
+ * right after creation.
  *
+ * @see RawstorObjectMeta
  * @see rawstor_target_meta
- * @see rawstor_target_set_state
  */
-struct RawstorObjectMeta {
-    uint64_t size;    /**< Size of the object in bytes. */
+struct RawstorObjectSyncState {
     uint64_t epoch;   /**< Bumped on every mirror-set health change. */
     uint64_t sync_id; /**< Id of the sync set this copy belongs to. */
     /** Ancestor sync ids, newest first; 0 marks unused entries. */
@@ -76,16 +82,33 @@ struct RawstorObjectMeta {
 };
 
 /**
+ * @brief Object copy metadata.
+ *
+ * The full per-copy record: what the object is (spec, read-only here --
+ * always the copy's own current size, not settable through this record)
+ * plus this one copy's mirror consistency identity (sync_state, the part
+ * rawstor_target_set_sync_state() can actually change).
+ *
+ * @see rawstor_target_meta
+ * @see rawstor_target_set_sync_state
+ */
+struct RawstorObjectMeta {
+    struct RawstorObjectSpec spec;
+    struct RawstorObjectSyncState sync_state;
+};
+
+/**
  * @brief Asynchronously retrieve metadata about a stored object.
  *
  * Given a target string (as defined in the Rawstor location/target syntax),
- * this function fills a RawstorObjectSpec structure with information about the
- * object, such as its size.
+ * this function fills a RawstorObjectSpec structure with information about
+ * the object: its size, and the number of URIs configured for it
+ * (mirror_count -- computed locally from @p target, no backend involved).
  *
  * The target may be a single location‑UUID pair or a comma‑separated list of
  * such pairs (mirroring / data locality). All UUIDs in a list must be
  * identical. The function queries backends in the order they appear until one
- * successfully returns the metadata.
+ * successfully returns the size.
  *
  * This function returns immediately; the actual result is reported via
  * @p cb once the operation completes.
@@ -155,46 +178,9 @@ int rawstor_target_spec(
  *
  * @see RawstorObjectMeta
  * @see rawstor_target_spec
- * @see rawstor_target_set_state
  */
 int rawstor_target_meta(
     RawIOQueue* queue, const char* target, struct RawstorObjectMeta* meta,
-    int (*cb)(ssize_t result, void* data), void* data
-) RAWSTOR_NOEXCEPT;
-
-/**
- * @brief Asynchronously update the mirror consistency state of every copy
- *        of a target.
- *
- * Persists the state, epoch, sync_id and sync_id_history fields of @p meta
- * on every backend listed in @p target -- unlike rawstor_target_meta()
- * (first copy only), every URI is updated, and every one is attempted even
- * if an earlier one fails; @p cb reports the first error encountered, if
- * any. The object size cannot be changed through this call: the size field
- * of @p meta is ignored and the stored size is preserved.
- *
- * The update is durable: it is synced to stable storage on each backend
- * before that backend's write is considered complete.
- *
- * This function returns immediately; the actual result is reported via
- * @p cb once the operation completes.
- *
- * @param queue   Queue used to drive the asynchronous update.
- * @param target  Target string, see rawstor_target_spec().
- * @param meta    Metadata record to persist (size field ignored). Only
- *                read while this call is being queued -- need not stay
- *                valid until @p cb runs.
- * @param cb      Callback invoked on completion, see rawstor_target_spec().
- * @param data    User-defined context pointer passed unchanged to @p cb.
- *
- * @return 0 if the update was successfully queued; negative errno on
- *         immediate failure (in which case @p cb is never invoked).
- *
- * @see RawstorObjectMeta
- * @see rawstor_target_meta
- */
-int rawstor_target_set_state(
-    RawIOQueue* queue, const char* target, const struct RawstorObjectMeta* meta,
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
@@ -218,15 +204,18 @@ int rawstor_target_set_state(
  *                  to be created (e.g., "ost://host:port/<uuid>"). Must not be
  *                  NULL and must be a valid target as per the library's format.
  * @param spec      Pointer to a RawstorObjectSpec structure containing the
- *                  desired object metadata (e.g., size in bytes). The size
- *                  field must be set to the expected size of the object. Only
- *                  read while this call is being queued -- need not stay
- *                  valid until @p cb runs.
+ *                  desired object shape. The size field must be set to the
+ *                  expected size of the object. mirror_count, if nonzero,
+ *                  must match the number of URIs in @p target (@c -EINVAL
+ *                  otherwise); left 0, it is not checked. Only read while
+ *                  this call is being queued -- need not stay valid until
+ *                  @p cb runs.
  * @param cb        Callback invoked on completion.
  *                  - @p result is zero on success, or a negative errno on
  *                    failure (e.g. @c -EINVAL for invalid target or spec,
- *                    @c -ENOMEM, @c -EIO, etc; implementation‑defined beyond
- *                    that).
+ *                    or a mirror_count that doesn't match @p target's own
+ *                    URI count; @c -ENOMEM, @c -EIO, etc; implementation‑
+ *                    defined beyond that).
  *                  - @p data is the same pointer passed as @p data below.
  *                  - Return zero on success. A negative errno value signals
  *                    an error back into the I/O completion machinery.

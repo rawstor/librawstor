@@ -37,11 +37,16 @@ public:
     void cmd_release(uint32_t magic, uint16_t cid, int32_t res);
 
     void cmd_spec_request();
-    void cmd_spec_response(
+    void
+    cmd_spec_response(uint32_t magic, uint16_t cid, int32_t res, uint64_t size);
+    void cmd_spec(uint32_t magic, uint16_t cid, int32_t res, uint64_t size);
+
+    void cmd_meta_request();
+    void cmd_meta_response(
         uint32_t magic, uint16_t cid, int32_t res,
         const RawstorOSTFrameMetaBody& meta
     );
-    void cmd_spec(
+    void cmd_meta(
         uint32_t magic, uint16_t cid, int32_t res,
         const RawstorOSTFrameMetaBody& meta
     );

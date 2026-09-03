@@ -45,28 +45,30 @@ struct OnDiskMeta {
     uint32_t state;
 };
 
-OnDiskMeta meta_to_disk(const RawstorObjectMeta& meta) {
+OnDiskMeta meta_to_disk(const RawstorObjectSyncState& sync_state) {
     OnDiskMeta disk{};
     disk.magic = RAWSTOR_MAGIC;
     disk.version = META_FORMAT_VERSION;
-    disk.epoch = meta.epoch;
-    disk.sync_id = meta.sync_id;
+    disk.epoch = sync_state.epoch;
+    disk.sync_id = sync_state.sync_id;
     memcpy(
-        disk.sync_id_history, meta.sync_id_history, sizeof(disk.sync_id_history)
+        disk.sync_id_history, sync_state.sync_id_history,
+        sizeof(disk.sync_id_history)
     );
-    disk.state = meta.state;
+    disk.state = sync_state.state;
     return disk;
 }
 
-RawstorObjectMeta disk_to_meta(const OnDiskMeta& disk) {
-    RawstorObjectMeta meta{};
-    meta.epoch = disk.epoch;
-    meta.sync_id = disk.sync_id;
+RawstorObjectSyncState disk_to_sync_state(const OnDiskMeta& disk) {
+    RawstorObjectSyncState sync_state{};
+    sync_state.epoch = disk.epoch;
+    sync_state.sync_id = disk.sync_id;
     memcpy(
-        meta.sync_id_history, disk.sync_id_history, sizeof(meta.sync_id_history)
+        sync_state.sync_id_history, disk.sync_id_history,
+        sizeof(sync_state.sync_id_history)
     );
-    meta.state = disk.state;
-    return meta;
+    sync_state.state = disk.state;
+    return sync_state;
 }
 
 std::string get_target_meta_path(
@@ -284,7 +286,7 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
     // A fresh copy starts with sync_id 0: it has never been part of an
     // established sync set (see docs/mirroring.md). Written after the data
     // file so a crash between the two never leaves a .meta file without
-    // its data file; set_state()/meta() failing ENOENT on the reverse
+    // its data file; set_sync_state()/meta() failing ENOENT on the reverse
     // (data file present, no .meta yet) is exactly case F10.
     try {
         std::string meta_path =
@@ -297,9 +299,9 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
 
         std::exception_ptr eptr;
         try {
-            RawstorObjectMeta meta{};
-            meta.state = RAWSTOR_OBJECT_STATE_CLEAN;
-            OnDiskMeta disk = meta_to_disk(meta);
+            RawstorObjectSyncState sync_state{};
+            sync_state.state = RAWSTOR_OBJECT_STATE_CLEAN;
+            OnDiskMeta disk = meta_to_disk(sync_state);
 
             co_await _queue.pwrite(meta_fd, &disk, sizeof(disk), 0, true);
         } catch (...) {
@@ -347,6 +349,7 @@ rawstd::Task<RawstorObjectSpec> Backend::spec(const RawstdUUID& id) {
 
     RawstorObjectSpec ret{
         .size = std::filesystem::file_size(target_path),
+        .mirror_count = 0,
     };
 
     co_return ret;
@@ -362,7 +365,7 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
 
     int fd = co_await _queue.open(meta_path.c_str(), O_RDONLY | O_CLOEXEC, 0);
 
-    RawstorObjectMeta ret{};
+    RawstorObjectSyncState sync_state{};
     std::exception_ptr eptr;
     try {
         OnDiskMeta disk{};
@@ -376,7 +379,7 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
             RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
         }
 
-        ret = disk_to_meta(disk);
+        sync_state = disk_to_sync_state(disk);
     } catch (...) {
         eptr = std::current_exception();
     }
@@ -386,13 +389,17 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
     }
 
     std::string target_path = get_target_path(location_path, uuid_string);
-    ret.size = std::filesystem::file_size(target_path);
+
+    RawstorObjectMeta ret{};
+    ret.spec.size = std::filesystem::file_size(target_path);
+    ret.sync_state = sync_state;
 
     co_return ret;
 }
 
-rawstd::Task<void>
-Backend::set_state(const RawstdUUID& id, const RawstorObjectMeta& meta) {
+rawstd::Task<void> Backend::set_sync_state(
+    const RawstdUUID& id, const RawstorObjectSyncState& sync_state
+) {
     std::string location_path = get_location_path(location());
 
     RawstdUUIDString uuid_string;
@@ -400,15 +407,14 @@ Backend::set_state(const RawstdUUID& id, const RawstorObjectMeta& meta) {
 
     std::string meta_path = get_target_meta_path(location_path, uuid_string);
 
-    // meta's own size field is ignored (the stored size always comes from
-    // the data file itself, see spec()/meta() above) -- O_TRUNC would be
-    // wrong here regardless: this file is fixed-size, and a short write
-    // must not leave a truncated, unparseable record behind.
+    // O_TRUNC would be wrong here regardless of sync_state carrying no
+    // size of its own: this file is fixed-size, and a short write must
+    // not leave a truncated, unparseable record behind.
     int fd = co_await _queue.open(meta_path.c_str(), O_WRONLY | O_CLOEXEC, 0);
 
     std::exception_ptr eptr;
     try {
-        OnDiskMeta disk = meta_to_disk(meta);
+        OnDiskMeta disk = meta_to_disk(sync_state);
         size_t rval = co_await _queue.pwrite(fd, &disk, sizeof(disk), 0, true);
         if (rval != sizeof(disk)) {
             RAWSTD_THROW_SYSTEM_ERROR(EIO);

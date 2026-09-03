@@ -17,6 +17,7 @@ static void set_os_error(int error) {
 
 typedef struct {
     PyObject_HEAD unsigned long long size;
+    unsigned int mirror_count;
 } PyObjectSpec;
 
 // ObjectSpec is Py_TPFLAGS_BASETYPE (subclassable from Python), and a
@@ -40,6 +41,7 @@ static PyObject* PyObjectSpec_new(
     PyObjectSpec* self = (PyObjectSpec*)alloc_func(type, 0);
     if (self != NULL) {
         self->size = 0;
+        self->mirror_count = 0;
     }
     return (PyObject*)self;
 }
@@ -47,8 +49,11 @@ static PyObject* PyObjectSpec_new(
 static int
 PyObjectSpec_init(PyObjectSpec* self, PyObject* args, PyObject* kwargs) {
     long long size = 0;
-    static char* kwlist[] = {"size", NULL};
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|L", kwlist, &size)) {
+    unsigned int mirror_count = 0;
+    static char* kwlist[] = {"size", "mirror_count", NULL};
+    if (!PyArg_ParseTupleAndKeywords(
+            args, kwargs, "|LI", kwlist, &size, &mirror_count
+        )) {
         return -1;
     }
     if (size < 0) {
@@ -56,11 +61,14 @@ PyObjectSpec_init(PyObjectSpec* self, PyObject* args, PyObject* kwargs) {
         return -1;
     }
     self->size = (unsigned long long)size;
+    self->mirror_count = mirror_count;
     return 0;
 }
 
 static PyObject* PyObjectSpec_repr(PyObjectSpec* self) {
-    return PyUnicode_FromFormat("ObjectSpec(size=%llu)", self->size);
+    return PyUnicode_FromFormat(
+        "ObjectSpec(size=%llu, mirror_count=%u)", self->size, self->mirror_count
+    );
 }
 
 static PyObject*
@@ -84,9 +92,34 @@ static int PyObjectSpec_set_size(
     return 0;
 }
 
+static PyObject*
+PyObjectSpec_get_mirror_count(PyObjectSpec* self, void* Py_UNUSED(closure)) {
+    return PyLong_FromUnsignedLong(self->mirror_count);
+}
+
+static int PyObjectSpec_set_mirror_count(
+    PyObjectSpec* self, PyObject* value, void* Py_UNUSED(closure)
+) {
+    if (value == NULL) {
+        PyErr_SetString(
+            PyExc_TypeError, "Cannot delete mirror_count attribute"
+        );
+        return -1;
+    }
+
+    unsigned long new_mirror_count = PyLong_AsUnsignedLong(value);
+    if (PyErr_Occurred()) {
+        return -1;
+    }
+    self->mirror_count = (unsigned int)new_mirror_count;
+    return 0;
+}
+
 static PyGetSetDef PyObjectSpec_getset[] = {
     {"size", (getter)PyObjectSpec_get_size, (setter)PyObjectSpec_set_size, NULL,
      NULL},
+    {"mirror_count", (getter)PyObjectSpec_get_mirror_count,
+     (setter)PyObjectSpec_set_mirror_count, NULL, NULL},
     {NULL, NULL, NULL, NULL, NULL}
 };
 
@@ -315,6 +348,7 @@ PyObject* py_rawstor_object_create(PyObject* Py_UNUSED(self), PyObject* args) {
 
     PyObjectSpec* py_spec = (PyObjectSpec*)spec_obj;
     spec.size = py_spec->size;
+    spec.mirror_count = py_spec->mirror_count;
 
     RawstorSyncOp op;
     int ires = rawstor_sync_op_init(&op);
@@ -350,6 +384,7 @@ py_rawstor_object_create_at(PyObject* Py_UNUSED(self), PyObject* args) {
     PyObjectSpec* py_spec = (PyObjectSpec*)py_spec_obj;
     struct RawstorObjectSpec spec = {
         .size = py_spec->size,
+        .mirror_count = py_spec->mirror_count,
     };
 
     char target[65536];
@@ -412,6 +447,7 @@ PyObject* py_rawstor_object_spec(PyObject* Py_UNUSED(self), PyObject* args) {
         return NULL;
     }
     py_spec->size = spec.size;
+    py_spec->mirror_count = spec.mirror_count;
 
     return (PyObject*)py_spec;
 }
