@@ -16,9 +16,6 @@
 #include <rawstd/logging.hpp>
 
 #include <sys/random.h>
-#include <sys/timerfd.h>
-
-#include <unistd.h>
 
 #include <algorithm>
 #include <exception>
@@ -244,13 +241,6 @@ T run(rawio::Queue& q, rawstd::Task<T> t) {
     return t.get();
 }
 
-// Adapts rawio::Queue::cancel(int)'s own Awaitable<void> to run() above,
-// which only knows rawstd::Task<T> -- used by ~Object() to cancel the
-// probe timerfd from a plain (non-coroutine) destructor.
-rawstd::Task<void> cancel_fd(rawio::Queue& q, int fd) {
-    co_await q.cancel(fd);
-}
-
 } // namespace
 
 namespace rawstor {
@@ -274,9 +264,7 @@ Object::Object(Private, rawio::Queue& queue, const Target& target) :
     _alive(std::make_shared<int>(0)),
     _writes_in_flight(0),
     _resync_generation(0),
-    _probe_fd(-1),
     _probe_pending(false),
-    _probe_expirations(std::make_shared<uint64_t>(0)),
     _writes_issued(0),
     _writes_completed(0),
     _unflushed(false) {
@@ -294,15 +282,6 @@ void Object::_write_finished() noexcept {
 }
 
 Object::~Object() {
-    if (_probe_fd != -1) {
-        try {
-            run(_queue, cancel_fd(_queue, _probe_fd));
-        } catch (const std::exception& e) {
-            rawstd_warning("Failed to cancel probe timer: %s\n", e.what());
-        }
-        ::close(_probe_fd);
-    }
-
     for (auto& m : _members) {
         // An unreachable member's slot has no Connection to close (see
         // Member's own doc comment) -- unlike before online resync, where
@@ -1273,57 +1252,27 @@ void Object::_resync_abort(const char* reason) noexcept {
     }
 }
 
-// Arms the mirror_probe_interval timerfd (a no-op for a single-target
-// object, or if the timerfd itself couldn't be created/armed -- an
-// unreachable member then just never gets probed, no different from the
-// probe being unavailable altogether).
+// Launches _probe_watch() (a no-op for a single-target object).
 void Object::_probe_setup() {
     if (_nmirrors == 1) {
         return;
     }
 
-    _probe_fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
-    if (_probe_fd == -1) {
-        rawstd_warning(
-            "Failed to create the mirror probe timer: %s\n", strerror(errno)
-        );
-        errno = 0;
-        return;
-    }
-
-    unsigned int ms = rawstor_opts_mirror_probe_interval();
-    itimerspec its{};
-    its.it_value.tv_sec = ms / 1000;
-    its.it_value.tv_nsec = (long)(ms % 1000) * 1000000L;
-    its.it_interval = its.it_value;
-    if (timerfd_settime(_probe_fd, 0, &its, nullptr) == -1) {
-        rawstd_warning(
-            "Failed to member the mirror probe timer: %s\n", strerror(errno)
-        );
-        errno = 0;
-        ::close(_probe_fd);
-        _probe_fd = -1;
-        return;
-    }
-
-    _probe_arm();
-}
-
-void Object::_probe_arm() {
     _probe_watch(_alive);
 }
 
+// Sleeps mirror_probe_interval at a time via the queue's own timeout() op
+// -- no fd/buffer of this object's own to manage, unlike a raw timerfd:
+// the Awaitable is entirely self-contained. Nothing actively cancels it on
+// teardown; this coroutine frame just outlives the Object by up to one
+// more interval, notices alive.expired() and returns -- the same trade-off
+// every other alive-guarded DetachedTask in this file already makes.
 rawstd::DetachedTask Object::_probe_watch(std::weak_ptr<int> alive) {
-    // Kept alive by this coroutine frame regardless of the object (and
-    // _probe_expirations) being destroyed before a cancelled read actually
-    // retires -- see the member's own doc comment in object.hpp.
-    std::shared_ptr<uint64_t> expirations = _probe_expirations;
     try {
         for (;;) {
+            unsigned int ms = rawstor_opts_mirror_probe_interval();
             try {
-                co_await _queue.read(
-                    _probe_fd, expirations.get(), sizeof(*expirations)
-                );
+                co_await _queue.timeout(ms * 1000u);
             } catch (const std::system_error& e) {
                 if (alive.expired()) {
                     co_return;
@@ -1796,25 +1745,6 @@ rawstd::Task<void> Object::close() {
             }
             _finish_meta_op();
         }
-    }
-
-    // Cancelled here, via co_await, rather than left for ~Object() -- that
-    // destructor's own cancellation runs a nested, synchronous pump of this
-    // same Queue, which is unsafe once close() (and therefore this
-    // destructor) is reached from inside a completion callback already
-    // running on that Queue's dispatch loop (e.g. as part of closing this
-    // Object's own last Connection). By the time ~Object() runs, _probe_fd
-    // is already -1, so its own cancellation block is a no-op.
-    if (_probe_fd != -1) {
-        try {
-            co_await _queue.cancel(_probe_fd);
-        } catch (const std::exception& e) {
-            rawstd_warning(
-                "Object::close(): probe cancel failed: %s\n", e.what()
-            );
-        }
-        ::close(_probe_fd);
-        _probe_fd = -1;
     }
 
     std::vector<rawstd::Task<void>> tasks;
