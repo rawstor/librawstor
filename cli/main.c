@@ -15,6 +15,7 @@
 
 #include <errno.h>
 #include <getopt.h>
+#include <limits.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -196,7 +197,7 @@ static int command_create(int argc, char** argv) {
         return EX_USAGE;
     }
 
-    uint32_t mirror_count = 1;
+    unsigned int mirror_count = 1;
     if (replicas_arg != NULL) {
         char* endptr = NULL;
         errno = 0;
@@ -209,11 +210,11 @@ static int command_create(int argc, char** argv) {
             fprintf(stderr, "replicas must be greater than 0\n");
             return EX_USAGE;
         }
-        if (replicas > UINT32_MAX) {
+        if (replicas > UINT_MAX) {
             fprintf(stderr, "replicas value too large: %s\n", replicas_arg);
             return EX_USAGE;
         }
-        mirror_count = (uint32_t)replicas;
+        mirror_count = (unsigned int)replicas;
     }
 
     if (target_arg != NULL) {

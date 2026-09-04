@@ -488,7 +488,7 @@ rawstd::Task<RawstorObjectSpec> Target::spec(rawio::Queue& queue) {
             // talks to -- mirror_count is a property of this Target as a
             // whole, filled in here rather than by whichever copy happened
             // to answer.
-            ret.mirror_count = (uint32_t)_uris.size();
+            ret.mirror_count = (unsigned int)_uris.size();
             co_return ret;
         } catch (const std::system_error& e) {
             rawstd_error("%s\n", e.what());
@@ -515,7 +515,7 @@ rawstd::Task<RawstorObjectMeta> Target::meta(rawio::Queue& queue) {
     co_await cn->close();
     // See Target::spec()'s own comment: a single Connection/Backend
     // doesn't know the target's own URI count.
-    ret.spec.mirror_count = (uint32_t)_uris.size();
+    ret.spec.mirror_count = (unsigned int)_uris.size();
     co_return ret;
 }
 
