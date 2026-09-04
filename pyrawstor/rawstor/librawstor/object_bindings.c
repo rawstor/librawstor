@@ -41,7 +41,7 @@ static PyObject* PyObjectSpec_new(
     PyObjectSpec* self = (PyObjectSpec*)alloc_func(type, 0);
     if (self != NULL) {
         self->size = 0;
-        self->mirror_count = 1;
+        self->mirror_count = 0;
     }
     return (PyObject*)self;
 }
