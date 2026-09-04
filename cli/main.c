@@ -15,7 +15,9 @@
 
 #include <errno.h>
 #include <getopt.h>
+#include <limits.h>
 #include <signal.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -83,6 +85,14 @@ static void command_create_usage(void) {
         "\n"
         "command options:\n"
         "  -h, --help            Show this help message and exit\n"
+        "  -m, --mirrors N       Expected number of mirrors (total copy "
+        "count, N > 0).\n"
+        "                        Default 1. Creation fails unless this "
+        "matches the\n"
+        "                        number of comma-separated LOCATION/TARGET "
+        "entries --\n"
+        "                        pass it explicitly when creating a "
+        "mirrored object.\n"
         "  -s, --size SIZE       Object size with unit suffix (B, K, M, G, "
         "T, P, E).\n"
         "                        Examples: 10G, 5M, 2T.\n"
@@ -90,9 +100,10 @@ static void command_create_usage(void) {
 };
 
 static int command_create(int argc, char** argv) {
-    const char* optstring = "hs:t:u:";
+    const char* optstring = "hm:s:t:u:";
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
+        {"mirrors", required_argument, NULL, 'm'},
         {"size", required_argument, NULL, 's'},
         {"target", required_argument, NULL, 't'},
         {"uuid", required_argument, NULL, 'u'},
@@ -100,6 +111,7 @@ static int command_create(int argc, char** argv) {
     };
 
     const char* location_arg = NULL;
+    const char* mirrors_arg = NULL;
     const char* size_arg = NULL;
     const char* target_arg = NULL;
     const char* uuid_arg = NULL;
@@ -114,6 +126,10 @@ static int command_create(int argc, char** argv) {
         case 'h':
             command_create_usage();
             return EXIT_SUCCESS;
+
+        case 'm':
+            mirrors_arg = optarg;
+            break;
 
         case 's':
             size_arg = optarg;
@@ -181,10 +197,30 @@ static int command_create(int argc, char** argv) {
         return EX_USAGE;
     }
 
+    unsigned int mirrors = 1;
+    if (mirrors_arg != NULL) {
+        char* endptr = NULL;
+        errno = 0;
+        unsigned long parsed_mirrors = strtoul(mirrors_arg, &endptr, 10);
+        if (errno != 0 || endptr == mirrors_arg || *endptr != '\0') {
+            fprintf(stderr, "Invalid mirrors value: %s\n", mirrors_arg);
+            return EX_USAGE;
+        }
+        if (parsed_mirrors == 0) {
+            fprintf(stderr, "mirrors must be greater than 0\n");
+            return EX_USAGE;
+        }
+        if (parsed_mirrors > UINT_MAX) {
+            fprintf(stderr, "mirrors value too large: %s\n", mirrors_arg);
+            return EX_USAGE;
+        }
+        mirrors = (unsigned int)parsed_mirrors;
+    }
+
     if (target_arg != NULL) {
-        return rawstor_cli_create(target_arg, size);
+        return rawstor_cli_create(target_arg, size, mirrors);
     } else {
-        return rawstor_cli_create_at(location_arg, uuid_arg, size);
+        return rawstor_cli_create_at(location_arg, uuid_arg, size, mirrors);
     }
 }
 

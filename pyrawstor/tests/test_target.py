@@ -10,7 +10,7 @@ class TestTarget(unittest.TestCase):
             target = rawstor.Target(
                 f"file://{temp_dir}/00000000-0000-0000-0000-000000000001")
 
-            target.create(size=1 << 20)
+            target.create(size=1 << 20, mirrors=1)
 
             read_spec = target.spec()
             self.assertEqual(read_spec.size, 1 << 20)
@@ -36,8 +36,9 @@ class TestTarget(unittest.TestCase):
             target = rawstor.Target(
                 f"file://{temp_dir}/00000000-0000-0000-0000-000000000004")
 
-            target.create(size=1 << 20)
+            target.create(size=1 << 20, mirrors=1)
 
-            self.assertRaises(FileExistsError, target.create, size=1 << 20)
+            self.assertRaises(
+                FileExistsError, target.create, size=1 << 20, mirrors=1)
 
             target.remove()

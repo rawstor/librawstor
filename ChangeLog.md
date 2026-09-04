@@ -12,6 +12,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Vendored [nlohmann/json](https://github.com/nlohmann/json) (single-header, MIT) for parsing command output in the new storage backends below.
 - New `lvm://` storage backend: objects are LVM Logical Volumes, provisioned via `lvcreate`/`lvremove`. A new object is fully zeroed before it becomes visible (LVM itself only zeroes the first 4KiB of a new LV), so it never exposes another object's leftover data; any staging LV left behind by a process that crashed mid-create is swept and removed on the next `create()` against that VG.
 - New `zfs://` storage backend: objects are ZFS zvols, provisioned via `zfs create`/`zfs destroy`.
+- [Mirroring design](docs/mirroring.md): failure model, quorum rules and
+  online resync for N-way mirrors.
+- Per-copy object metadata (state/epoch/sync_id/history): a companion
+  `.meta` file for `file://`, with `SPEC`/`META`/`SET_SYNC_STATE`/`FLUSH` OST
+  protocol commands and `rawstor_target_spec`/`rawstor_target_meta`
+  (`<rawstor/target.h>`) public API — `RawstorObjectMeta` composes the
+  cheap `RawstorObjectSpec` (`size`, `mirrors`) with
+  `RawstorObjectSyncState` (`state`/`epoch`/`sync_id`/`sync_id_history`);
+  the writer is internal (`rawstor_target_set_sync_state`,
+  `src/target_internal.h`), not part of the installed API. Durable:
+  metadata updates are fsynced by the backend before the call completes.
+- `rawstor_target_create()`/`rawstor_location_create()` now mandatorily
+  reject `-EINVAL` unless `RawstorObjectSpec`'s new `mirrors` exactly
+  equals the number of URIs in the target/location string being created
+  (no "0 means don't check" opt-out) -- `pyrawstor`'s `ObjectSpec`
+  constructor and `rawstor create`'s `-m`/`--mirrors` both default
+  `mirrors` to 1, and `rawstor-ost`'s own ALLOCATE relay derives it from
+  the target list it's already fanning out to; creating a mirrored
+  object now always requires stating the intended copy count
+  explicitly, catching a miscounted or misconfigured mirror list at
+  create time instead of silently creating fewer (or more) copies than
+  intended. `pyrawstor`'s `Target.create()`/`Location.create()` go
+  further and require `mirrors` explicitly (no default at all), since
+  they're the layer a caller is expected to actually know that count
+  at.
+- `-m`/`--mirrors N` for `rawstor create`: lets the caller state its
+  intended total copy count (N > 0) explicitly for the check above;
+  defaults to 1 when omitted, so creating a mirrored object always
+  requires stating the mirror count explicitly (the mismatch fails at
+  `rawstor_target_create()`, not silently).
+- Mirror quorum, degrade & continue, read failover: opening a mirrored
+  object now tolerates unreachable members as long as a strict majority is
+  reachable (`-ENOTCONN` otherwise; two members need both), comparing each
+  member's metadata to exclude stale/`SYNCING` copies and refuse a split
+  brain (`-ENOTRECOVERABLE`). The first write passes a dirty gate (DIRTY
+  durably recorded on the in-sync members first); a write that fails on some
+  members is acknowledged once the survivors durably record the exclusion,
+  with writes freezing below a 3+-member majority. Reads fail over across
+  in-sync members; a payload error triggers a detached read-repair through
+  the dirty gate. `rawstor_object_close()` performs a clean close for a
+  mirrored object (flush + durable CLEAN mark) before tearing down.
+- Online mirror resync with automatic rejoin: a stale or `SYNCING` member is
+  brought back into the set while the object keeps serving I/O, instead of
+  staying excluded until manually repaired. The member is durably marked
+  `SYNCING` first, then a sweeper copies the object chunk by chunk from an
+  in-sync source while client writes are duplicated onto the joining member
+  (mutually exclusive with the sweeper per chunk); once every chunk is
+  copied and in-flight writes drain, the member durably adopts the current
+  sync set and resumes serving reads, unfreezing any write held back below
+  quorum. Every configured member keeps its mirror slot even while
+  unreachable, and an open mirrored object probes such members periodically
+  (`mirror_probe_interval` option, `RAWSTOR_OPTS_MIRROR_PROBE_INTERVAL`,
+  default 5000 ms), reconnecting and resyncing them on success.
+- `lvm://`/`zfs://` mirror members now track real per-copy mirror state
+  (state/epoch/sync_id/history) instead of always reporting a fabricated
+  CLEAN copy: ZFS uses a `rawstor:meta` user property, LVM an
+  `rawstor.meta=...` tag, both set in the same command as object creation
+  and read/replaced natively (`zfs get`/`set`, `lvs`/`lvchange`). A volume
+  with no recorded state (created before this, or by something else) is
+  treated as untrusted and resynced, never assumed CLEAN.
 
 ### Changed
 - The packaged `rawstor-vhost@.service` systemd unit now defaults `RAWSTOR_WRITE_CACHE` to `on` instead of `off`: forcing a journal commit on every write (write-cache off) was measured to stall write round-trip times into the tens of seconds under concurrent load on a host whose backing filesystem commits slowly, while any modern guest kernel already issues an explicit flush when it needs durability.

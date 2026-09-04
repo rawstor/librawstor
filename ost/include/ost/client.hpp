@@ -71,58 +71,74 @@ private:
     _close_current_object(std::weak_ptr<Client> weak);
 
     void _list(
-        const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+        const RawstorOSTFrameHead& head,
+        const RawstorOSTFrameBasicPayload& payload
     );
     static rawstd::DetachedTask _list_task(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-        RawstorOSTFrameBasicBody body
+        RawstorOSTFrameBasicPayload payload
     );
     void _allocate(
-        const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+        const RawstorOSTFrameHead& head,
+        const RawstorOSTFrameSpecPayload& payload
     );
     static rawstd::DetachedTask _allocate_task(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-        RawstorOSTFrameBasicBody body
+        RawstorOSTFrameSpecPayload payload
     );
     void _release(
-        const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+        const RawstorOSTFrameHead& head,
+        const RawstorOSTFrameBasicPayload& payload
     );
     static rawstd::DetachedTask _release_task(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-        RawstorOSTFrameBasicBody body
+        RawstorOSTFrameBasicPayload payload
     );
     void _spec(
-        const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+        const RawstorOSTFrameHead& head,
+        const RawstorOSTFrameBasicPayload& payload
     );
     static rawstd::DetachedTask _spec_task(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-        RawstorOSTFrameBasicBody body
+        RawstorOSTFrameBasicPayload payload
+    );
+    void _meta(
+        const RawstorOSTFrameHead& head,
+        const RawstorOSTFrameBasicPayload& payload
+    );
+    static rawstd::DetachedTask _meta_task(
+        std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
+        RawstorOSTFrameBasicPayload payload
     );
     void _info(
-        const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+        const RawstorOSTFrameHead& head,
+        const RawstorOSTFrameBasicPayload& payload
     );
     static rawstd::DetachedTask
     _info_task(std::weak_ptr<Client> weak, RawstorOSTFrameHead head);
     void _set_object(
-        const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+        const RawstorOSTFrameHead& head,
+        const RawstorOSTFrameBasicPayload& payload
     );
     static rawstd::DetachedTask _set_object_task(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-        RawstorOSTFrameBasicBody body
+        RawstorOSTFrameBasicPayload payload
     );
-    void
-    _read(const RawstorOSTFrameHead& head, const RawstorOSTFrameIOBody& body);
+    void _read(
+        const RawstorOSTFrameHead& head, const RawstorOSTFrameIOPayload& payload
+    );
     static rawstd::DetachedTask _read_task(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-        RawstorOSTFrameIOBody body
+        RawstorOSTFrameIOPayload payload
     );
     void _write(
-        const RawstorOSTFrameHead& head, const RawstorOSTFrameIOBody& body,
+        const RawstorOSTFrameHead& head,
+        const RawstorOSTFrameIOPayload& payload,
         const std::shared_ptr<std::vector<unsigned char>>& data
     );
     static rawstd::DetachedTask _write_task(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-        RawstorOSTFrameIOBody body,
+        RawstorOSTFrameIOPayload payload,
         std::shared_ptr<std::vector<unsigned char>> data
     );
     // Issues a validated WRITE to storage -- rawstor_object_pwrite()'s
@@ -137,24 +153,33 @@ private:
         bool sync, std::shared_ptr<std::vector<unsigned char>> data
     );
     void _discard(
-        const RawstorOSTFrameHead& head, const RawstorOSTFrameIOBody& body
+        const RawstorOSTFrameHead& head, const RawstorOSTFrameIOPayload& payload
     );
     static rawstd::DetachedTask _discard_task(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-        RawstorOSTFrameIOBody body
+        RawstorOSTFrameIOPayload payload
     );
     void _write_zeroes(
-        const RawstorOSTFrameHead& head, const RawstorOSTFrameIOBody& body
+        const RawstorOSTFrameHead& head, const RawstorOSTFrameIOPayload& payload
     );
     static rawstd::DetachedTask _write_zeroes_task(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-        RawstorOSTFrameIOBody body
+        RawstorOSTFrameIOPayload payload
     );
     void _flush(
-        const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+        const RawstorOSTFrameHead& head,
+        const RawstorOSTFrameBasicPayload& payload
     );
     static rawstd::DetachedTask
     _flush_task(std::weak_ptr<Client> weak, RawstorOSTFrameHead head);
+    void _set_state(
+        const RawstorOSTFrameHead& head,
+        const RawstorOSTFrameSyncStatePayload& payload
+    );
+    static rawstd::DetachedTask _set_state_task(
+        std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
+        RawstorOSTFrameSyncStatePayload payload
+    );
     std::vector<rawstd::URI> _targets(const RawstdUUID& uuid);
 
     // Sends a response frame and awaits its actual completion (not just

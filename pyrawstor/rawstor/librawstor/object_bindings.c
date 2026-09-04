@@ -17,6 +17,7 @@ static void set_os_error(int error) {
 
 typedef struct {
     PyObject_HEAD unsigned long long size;
+    unsigned int mirrors;
 } PyObjectSpec;
 
 // ObjectSpec is Py_TPFLAGS_BASETYPE (subclassable from Python), and a
@@ -40,6 +41,7 @@ static PyObject* PyObjectSpec_new(
     PyObjectSpec* self = (PyObjectSpec*)alloc_func(type, 0);
     if (self != NULL) {
         self->size = 0;
+        self->mirrors = 0;
     }
     return (PyObject*)self;
 }
@@ -47,8 +49,11 @@ static PyObject* PyObjectSpec_new(
 static int
 PyObjectSpec_init(PyObjectSpec* self, PyObject* args, PyObject* kwargs) {
     long long size = 0;
-    static char* kwlist[] = {"size", NULL};
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|L", kwlist, &size)) {
+    unsigned int mirrors = 1;
+    static char* kwlist[] = {"size", "mirrors", NULL};
+    if (!PyArg_ParseTupleAndKeywords(
+            args, kwargs, "|LI", kwlist, &size, &mirrors
+        )) {
         return -1;
     }
     if (size < 0) {
@@ -56,11 +61,14 @@ PyObjectSpec_init(PyObjectSpec* self, PyObject* args, PyObject* kwargs) {
         return -1;
     }
     self->size = (unsigned long long)size;
+    self->mirrors = mirrors;
     return 0;
 }
 
 static PyObject* PyObjectSpec_repr(PyObjectSpec* self) {
-    return PyUnicode_FromFormat("ObjectSpec(size=%llu)", self->size);
+    return PyUnicode_FromFormat(
+        "ObjectSpec(size=%llu, mirrors=%u)", self->size, self->mirrors
+    );
 }
 
 static PyObject*
@@ -84,9 +92,32 @@ static int PyObjectSpec_set_size(
     return 0;
 }
 
+static PyObject*
+PyObjectSpec_get_mirrors(PyObjectSpec* self, void* Py_UNUSED(closure)) {
+    return PyLong_FromUnsignedLong(self->mirrors);
+}
+
+static int PyObjectSpec_set_mirrors(
+    PyObjectSpec* self, PyObject* value, void* Py_UNUSED(closure)
+) {
+    if (value == NULL) {
+        PyErr_SetString(PyExc_TypeError, "Cannot delete mirrors attribute");
+        return -1;
+    }
+
+    unsigned long new_mirrors = PyLong_AsUnsignedLong(value);
+    if (PyErr_Occurred()) {
+        return -1;
+    }
+    self->mirrors = (unsigned int)new_mirrors;
+    return 0;
+}
+
 static PyGetSetDef PyObjectSpec_getset[] = {
     {"size", (getter)PyObjectSpec_get_size, (setter)PyObjectSpec_set_size, NULL,
      NULL},
+    {"mirrors", (getter)PyObjectSpec_get_mirrors,
+     (setter)PyObjectSpec_set_mirrors, NULL, NULL},
     {NULL, NULL, NULL, NULL, NULL}
 };
 
@@ -315,6 +346,7 @@ PyObject* py_rawstor_object_create(PyObject* Py_UNUSED(self), PyObject* args) {
 
     PyObjectSpec* py_spec = (PyObjectSpec*)spec_obj;
     spec.size = py_spec->size;
+    spec.mirrors = py_spec->mirrors;
 
     RawstorSyncOp op;
     int ires = rawstor_sync_op_init(&op);
@@ -350,6 +382,7 @@ py_rawstor_object_create_at(PyObject* Py_UNUSED(self), PyObject* args) {
     PyObjectSpec* py_spec = (PyObjectSpec*)py_spec_obj;
     struct RawstorObjectSpec spec = {
         .size = py_spec->size,
+        .mirrors = py_spec->mirrors,
     };
 
     char target[65536];
@@ -412,6 +445,7 @@ PyObject* py_rawstor_object_spec(PyObject* Py_UNUSED(self), PyObject* args) {
         return NULL;
     }
     py_spec->size = spec.size;
+    py_spec->mirrors = spec.mirrors;
 
     return (PyObject*)py_spec;
 }

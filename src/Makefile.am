@@ -39,6 +39,8 @@ librawstor_la_SOURCES = 3rdparty/nlohmann/json.hpp \
                         backend.hpp \
                         blk_backend.cpp \
                         blk_backend.hpp \
+                        blkdev_meta.cpp \
+                        blkdev_meta.hpp \
                         connection.cpp \
                         connection.hpp \
                         file_backend.cpp \
@@ -59,6 +61,7 @@ librawstor_la_SOURCES = 3rdparty/nlohmann/json.hpp \
                         rawstor.cpp \
                         target.cpp \
                         target.hpp \
+                        target_internal.h \
                         telemetry.cpp \
                         telemetry.hpp \
                         zfs_backend.cpp \

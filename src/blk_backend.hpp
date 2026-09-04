@@ -96,6 +96,14 @@ public:
     // its objects are plain regular files.
     rawstd::Task<RawstorObjectSpec> spec(const RawstdUUID& id) override;
 
+    // No universal answer for a raw block device -- left pure virtual
+    // (inherited from rawstor::Backend) rather than given a default here,
+    // so a new blk::Backend subclass that forgets to implement native
+    // per-copy metadata (docs/mirroring.md's "native per-copy mirror
+    // metadata" stage) fails to compile instead of silently bypassing the
+    // mirror's split-brain-exclusion mechanism at runtime. file::Backend/
+    // lvm::Backend/zfs::Backend each provide their own real implementation.
+
     rawstd::Task<size_t>
     pread(void* buf, size_t size, off_t offset) override final;
 

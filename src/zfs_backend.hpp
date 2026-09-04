@@ -36,6 +36,7 @@ private:
     std::string _parent_dataset;
 
     std::string _device_path(const RawstdUUID& id) const;
+    std::string _dataset(const RawstdUUID& id) const;
 
     rawstd::Task<int> _open(const RawstdUUID& id) override;
 
@@ -64,6 +65,14 @@ public:
     rawstd::Task<void> remove(const RawstdUUID& id) override;
 
     rawstd::Task<RawstorLocationInfo> info() override;
+
+    // Native per-copy mirror metadata, stored in the zvol's own
+    // "rawstor:meta" user property -- see src/blkdev_meta.hpp.
+    rawstd::Task<RawstorObjectMeta> meta(const RawstdUUID& id) override;
+
+    rawstd::Task<void> set_sync_state(
+        const RawstdUUID& id, const RawstorObjectSyncState& sync_state
+    ) override;
 };
 
 } // namespace zfs

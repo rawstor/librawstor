@@ -10,6 +10,8 @@
 #include <rawstd/logging.h>
 #include <rawstd/uuid.h>
 
+#include <rawstor/protocol.h>
+
 #include <sys/stat.h>
 #include <sys/statvfs.h>
 #include <sys/types.h>
@@ -21,12 +23,63 @@
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <filesystem>
 #include <memory>
 #include <sstream>
 #include <string>
 
 namespace {
+
+// Mirror consistency metadata for one copy (docs/mirroring.md) lives in a
+// companion "<uuid>.meta" file, versioned so the format can grow later
+// without breaking copies written by an older release.
+constexpr uint32_t META_FORMAT_VERSION = 1;
+
+struct OnDiskMeta {
+    uint32_t magic;
+    uint32_t version;
+    uint64_t epoch;
+    uint64_t sync_id;
+    uint64_t sync_id_history[RAWSTOR_OBJECT_SYNC_ID_HISTORY];
+    uint32_t state;
+};
+
+OnDiskMeta meta_to_disk(const RawstorObjectSyncState& sync_state) {
+    OnDiskMeta disk{};
+    disk.magic = RAWSTOR_MAGIC;
+    disk.version = META_FORMAT_VERSION;
+    disk.epoch = sync_state.epoch;
+    disk.sync_id = sync_state.sync_id;
+    memcpy(
+        disk.sync_id_history, sync_state.sync_id_history,
+        sizeof(disk.sync_id_history)
+    );
+    disk.state = sync_state.state;
+    return disk;
+}
+
+RawstorObjectSyncState disk_to_sync_state(const OnDiskMeta& disk) {
+    RawstorObjectSyncState sync_state{};
+    sync_state.epoch = disk.epoch;
+    sync_state.sync_id = disk.sync_id;
+    memcpy(
+        sync_state.sync_id_history, disk.sync_id_history,
+        sizeof(sync_state.sync_id_history)
+    );
+    sync_state.state = static_cast<RawstorObjectSyncStateValue>(disk.state);
+    return sync_state;
+}
+
+std::string get_target_meta_path(
+    const std::string& location_path, const RawstdUUIDString& uuid
+) {
+    std::ostringstream oss;
+
+    oss << location_path << "/" << uuid << ".meta";
+
+    return oss.str();
+}
 
 std::string get_location_path(const rawstd::URI& location) {
     if (location.scheme() != "file") {
@@ -230,6 +283,40 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
         throw;
     }
 
+    // A fresh copy starts with sync_id 0: it has never been part of an
+    // established sync set (see docs/mirroring.md). Written after the data
+    // file so a crash between the two never leaves a .meta file without
+    // its data file; set_sync_state()/meta() failing ENOENT on the reverse
+    // (data file present, no .meta yet) is exactly case F10.
+    try {
+        std::string meta_path =
+            get_target_meta_path(location_path, uuid_string);
+
+        int meta_fd = co_await _queue.open(
+            meta_path.c_str(), O_EXCL | O_CREAT | O_WRONLY | O_CLOEXEC,
+            S_IRUSR | S_IWUSR
+        );
+
+        std::exception_ptr eptr;
+        try {
+            RawstorObjectSyncState sync_state{};
+            sync_state.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
+            OnDiskMeta disk = meta_to_disk(sync_state);
+
+            co_await _queue.pwrite(meta_fd, &disk, sizeof(disk), 0, true);
+        } catch (...) {
+            eptr = std::current_exception();
+        }
+        co_await _queue.close(meta_fd);
+        if (eptr) {
+            unlink(meta_path.c_str());
+            std::rethrow_exception(eptr);
+        }
+    } catch (...) {
+        unlink(target_path.c_str());
+        throw;
+    }
+
     co_return;
 }
 
@@ -241,6 +328,11 @@ rawstd::Task<void> Backend::remove(const RawstdUUID& id) {
 
     std::string target_path = get_target_path(location_path, uuid_string);
     if (unlink(target_path.c_str()) == -1) {
+        RAWSTD_THROW_ERRNO();
+    }
+
+    std::string meta_path = get_target_meta_path(location_path, uuid_string);
+    if (unlink(meta_path.c_str()) == -1 && errno != ENOENT) {
         RAWSTD_THROW_ERRNO();
     }
 
@@ -257,9 +349,83 @@ rawstd::Task<RawstorObjectSpec> Backend::spec(const RawstdUUID& id) {
 
     RawstorObjectSpec ret{
         .size = std::filesystem::file_size(target_path),
+        .mirrors = 0,
     };
 
     co_return ret;
+}
+
+rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
+    std::string location_path = get_location_path(location());
+
+    RawstdUUIDString uuid_string;
+    rawstd_uuid_to_string(&id, &uuid_string);
+
+    std::string meta_path = get_target_meta_path(location_path, uuid_string);
+
+    int fd = co_await _queue.open(meta_path.c_str(), O_RDONLY | O_CLOEXEC, 0);
+
+    RawstorObjectSyncState sync_state{};
+    std::exception_ptr eptr;
+    try {
+        OnDiskMeta disk{};
+        size_t rval = co_await _queue.pread(fd, &disk, sizeof(disk), 0);
+        if (rval != sizeof(disk) || disk.magic != RAWSTOR_MAGIC) {
+            rawstd_error("Malformed object meta: %s\n", meta_path.c_str());
+            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+        }
+        if (disk.version != META_FORMAT_VERSION) {
+            rawstd_error("Unsupported object meta version: %u\n", disk.version);
+            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+        }
+
+        sync_state = disk_to_sync_state(disk);
+    } catch (...) {
+        eptr = std::current_exception();
+    }
+    co_await _queue.close(fd);
+    if (eptr) {
+        std::rethrow_exception(eptr);
+    }
+
+    std::string target_path = get_target_path(location_path, uuid_string);
+
+    RawstorObjectMeta ret{};
+    ret.spec.size = std::filesystem::file_size(target_path);
+    ret.sync_state = sync_state;
+
+    co_return ret;
+}
+
+rawstd::Task<void> Backend::set_sync_state(
+    const RawstdUUID& id, const RawstorObjectSyncState& sync_state
+) {
+    std::string location_path = get_location_path(location());
+
+    RawstdUUIDString uuid_string;
+    rawstd_uuid_to_string(&id, &uuid_string);
+
+    std::string meta_path = get_target_meta_path(location_path, uuid_string);
+
+    // O_TRUNC would be wrong here regardless of sync_state carrying no
+    // size of its own: this file is fixed-size, and a short write must
+    // not leave a truncated, unparseable record behind.
+    int fd = co_await _queue.open(meta_path.c_str(), O_WRONLY | O_CLOEXEC, 0);
+
+    std::exception_ptr eptr;
+    try {
+        OnDiskMeta disk = meta_to_disk(sync_state);
+        size_t rval = co_await _queue.pwrite(fd, &disk, sizeof(disk), 0, true);
+        if (rval != sizeof(disk)) {
+            RAWSTD_THROW_SYSTEM_ERROR(EIO);
+        }
+    } catch (...) {
+        eptr = std::current_exception();
+    }
+    co_await _queue.close(fd);
+    if (eptr) {
+        std::rethrow_exception(eptr);
+    }
 }
 
 rawstd::Task<RawstorLocationInfo> Backend::info() {

@@ -134,7 +134,12 @@ namespace rawstor {
 Connection::Connection(Private, rawio::Queue& queue) :
     _queue(queue),
     _object(nullptr),
-    _backend_index(0) {
+    _backend_index(0),
+    _transparent_retry(true) {
+}
+
+void Connection::set_transparent_retry(bool enabled) noexcept {
+    _transparent_retry = enabled;
 }
 
 rawstd::Task<std::unique_ptr<Connection>> Connection::create(
@@ -244,7 +249,7 @@ rawstd::Task<T> Connection::_with_retry(
             }
 
             ++attempt;
-            if (attempt >= rawstor_opts_io_attempts()) {
+            if (!_transparent_retry || attempt >= rawstor_opts_io_attempts()) {
                 rawstd_error(
                     "IO %s: error on %s: %s; attempt %u of %u; failing...\n",
                     func_name, be->str().c_str(), std::strerror(error), attempt,
@@ -750,6 +755,42 @@ Connection::write_zeroes(size_t size, off_t offset, bool unmap, bool sync) {
         );
         _finish(t_call);
         co_return result;
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
+rawstd::Task<RawstorObjectMeta> Connection::meta(const RawstdUUID& id) {
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        RawstorObjectMeta result =
+            co_await _with_retry(func_name, trace_event, &Backend::meta, id);
+        _finish(t_call);
+        co_return result;
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
+rawstd::Task<void> Connection::set_sync_state(
+    const RawstdUUID& id, const RawstorObjectSyncState& sync_state
+) {
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        co_await _with_retry(
+            func_name, trace_event, &Backend::set_sync_state, id, sync_state
+        );
+        _finish(t_call);
     } catch (...) {
         _finish(t_call);
         throw;

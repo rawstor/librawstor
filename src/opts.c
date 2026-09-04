@@ -29,6 +29,7 @@
 #define RAWSTOR_OPTS_IO_RETRY_BACKOFF_BASE 100
 #define RAWSTOR_OPTS_IO_RETRY_BACKOFF_MAX 30000
 #define RAWSTOR_OPTS_IO_RETRY_BACKOFF_JITTER 50
+#define RAWSTOR_OPTS_MIRROR_PROBE_INTERVAL 5000
 
 static struct RawstorOpts _rawstor_opts = {};
 
@@ -147,6 +148,14 @@ int rawstor_opts_initialize(const struct RawstorOpts* opts) {
                   RAWSTOR_OPTS_IO_RETRY_BACKOFF_JITTER
               );
 
+    _rawstor_opts.mirror_probe_interval =
+        (opts != NULL && opts->mirror_probe_interval != 0)
+            ? opts->mirror_probe_interval
+            : get_env_uint(
+                  "RAWSTOR_OPTS_MIRROR_PROBE_INTERVAL",
+                  RAWSTOR_OPTS_MIRROR_PROBE_INTERVAL
+              );
+
     return 0;
 }
 
@@ -198,4 +207,8 @@ unsigned int rawstor_opts_io_retry_backoff_max(void) {
 
 unsigned int rawstor_opts_io_retry_backoff_jitter(void) {
     return _rawstor_opts.io_retry_backoff_jitter;
+}
+
+unsigned int rawstor_opts_mirror_probe_interval(void) {
+    return _rawstor_opts.mirror_probe_interval;
 }

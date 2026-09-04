@@ -37,6 +37,7 @@ int rawstor_cli_show(const char* target) {
 
     printf("target: %s\n", target);
     printf("size: %s\n", buf);
+    printf("mirrors: %u\n", spec.mirrors);
 
     return EXIT_SUCCESS;
 }
