@@ -1046,7 +1046,7 @@ rawstd::DetachedTask Client::_allocate_task(
 
     RawstorObjectSpec spec{
         .size = body.val,
-        .mirror_count = (uint32_t)targets.size(),
+        .mirror_count = (unsigned int)targets.size(),
     };
 
     int result = 0;

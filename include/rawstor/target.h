@@ -43,8 +43,8 @@ extern "C" {
  * @see rawstor_target_create
  */
 struct RawstorObjectSpec {
-    uint64_t size;         /**< Size of the object in bytes. */
-    uint32_t mirror_count; /**< Number of URIs configured for the target. */
+    uint64_t size;             /**< Size of the object in bytes. */
+    unsigned int mirror_count; /**< Number of URIs configured for the target. */
 };
 
 /**
