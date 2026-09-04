@@ -1284,7 +1284,7 @@ rawstd::DetachedTask Client::_set_state_task(
         sync_state.sync_id_history, payload.sync_id_history,
         sizeof(sync_state.sync_id_history)
     );
-    sync_state.state = payload.state;
+    sync_state.state = static_cast<RawstorObjectSyncStateValue>(payload.state);
 
     int result = 0;
     try {

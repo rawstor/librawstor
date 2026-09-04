@@ -67,7 +67,7 @@ RawstorObjectSyncState disk_to_sync_state(const OnDiskMeta& disk) {
         sync_state.sync_id_history, disk.sync_id_history,
         sizeof(sync_state.sync_id_history)
     );
-    sync_state.state = disk.state;
+    sync_state.state = static_cast<RawstorObjectSyncStateValue>(disk.state);
     return sync_state;
 }
 

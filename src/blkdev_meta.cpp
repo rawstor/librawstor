@@ -24,7 +24,7 @@ std::string blkdev_meta_encode(const RawstorObjectSyncState& sync_state) {
         buf, sizeof(buf),
         "state=%u:epoch=%" PRIx64 ":sync_id=%" PRIx64 ":h0=%" PRIx64
         ":h1=%" PRIx64 ":h2=%" PRIx64 ":h3=%" PRIx64,
-        sync_state.state, sync_state.epoch, sync_state.sync_id,
+        (unsigned int)sync_state.state, sync_state.epoch, sync_state.sync_id,
         sync_state.sync_id_history[0], sync_state.sync_id_history[1],
         sync_state.sync_id_history[2], sync_state.sync_id_history[3]
     );
@@ -47,7 +47,7 @@ bool blkdev_meta_decode(const std::string& value, RawstorObjectSyncState* out) {
         return false;
     }
 
-    sync_state.state = state;
+    sync_state.state = static_cast<RawstorObjectSyncStateValue>(state);
     *out = sync_state;
     return true;
 }
