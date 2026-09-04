@@ -65,9 +65,9 @@ uint16_t Client::send_allocate(const RawstdUUID& id, uint64_t size) {
                 .cmd = RAWSTOR_CMD_ALLOCATE,
                 .cid = cid,
             },
-        .body = {.obj_id = {}, .offset = 0, .val = size},
+        .payload = {.obj_id = {}, .offset = 0, .val = size},
     };
-    std::memcpy(frame.body.obj_id, id.bytes, sizeof(id.bytes));
+    std::memcpy(frame.payload.obj_id, id.bytes, sizeof(id.bytes));
     send_all(_fd, &frame, sizeof(frame));
     return cid;
 }
@@ -81,9 +81,9 @@ uint16_t Client::send_set_object(const RawstdUUID& id) {
                 .cmd = RAWSTOR_CMD_SET_OBJECT,
                 .cid = cid,
             },
-        .body = {.obj_id = {}, .offset = 0, .val = 0},
+        .payload = {.obj_id = {}, .offset = 0, .val = 0},
     };
-    std::memcpy(frame.body.obj_id, id.bytes, sizeof(id.bytes));
+    std::memcpy(frame.payload.obj_id, id.bytes, sizeof(id.bytes));
     send_all(_fd, &frame, sizeof(frame));
     return cid;
 }
@@ -98,7 +98,7 @@ Client::send_write(uint64_t offset, const void* buf, size_t size, bool sync) {
                 .cmd = RAWSTOR_CMD_WRITE,
                 .cid = cid,
             },
-        .body = {
+        .payload = {
             .offset = offset,
             .len = static_cast<uint32_t>(size),
             .hash = rawstd_hash_scalar(buf, size),
@@ -119,7 +119,7 @@ uint16_t Client::send_read(uint64_t offset, uint32_t size) {
                 .cmd = RAWSTOR_CMD_READ,
                 .cid = cid,
             },
-        .body = {.offset = offset, .len = size, .hash = 0, .flags = 0},
+        .payload = {.offset = offset, .len = size, .hash = 0, .flags = 0},
     };
     send_all(_fd, &frame, sizeof(frame));
     return cid;
@@ -134,7 +134,7 @@ uint16_t Client::send_discard(uint64_t offset, uint32_t size) {
                 .cmd = RAWSTOR_CMD_DISCARD,
                 .cid = cid,
             },
-        .body = {.offset = offset, .len = size, .hash = 0, .flags = 0},
+        .payload = {.offset = offset, .len = size, .hash = 0, .flags = 0},
     };
     send_all(_fd, &frame, sizeof(frame));
     return cid;
@@ -154,7 +154,7 @@ uint16_t Client::send_write_zeroes(
                 .cmd = RAWSTOR_CMD_WRITE_ZEROES,
                 .cid = cid,
             },
-        .body = {
+        .payload = {
             .offset = offset,
             .len = size,
             .hash = 0,

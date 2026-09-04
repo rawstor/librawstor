@@ -41,7 +41,7 @@ struct RawstorOSTFrameHead {
 } RAWSTOR_PACKED;
 
 /* Minimalistic protocol frame */
-struct RawstorOSTFrameBasicBody {
+struct RawstorOSTFrameBasicPayload {
     // var is for minimal commands only,
     // will be overridden in other command structs
     uint8_t obj_id[16];
@@ -51,7 +51,7 @@ struct RawstorOSTFrameBasicBody {
 
 struct RawstorOSTFrameBasic {
     struct RawstorOSTFrameHead head;
-    struct RawstorOSTFrameBasicBody body;
+    struct RawstorOSTFrameBasicPayload payload;
 } RAWSTOR_PACKED;
 
 // Shared by READ/WRITE/DISCARD/WRITE_ZEROES: `hash` is only meaningful for
@@ -61,15 +61,15 @@ struct RawstorOSTFrameBasic {
 // every command that uses it: WRITE sets only RAWSTOR_FLAG_SYNC,
 // WRITE_ZEROES sets RAWSTOR_FLAG_SYNC and/or RAWSTOR_FLAG_UNMAP, and
 // DISCARD leaves the byte unused (0).
-struct RawstorOSTFrameIOBody {
+struct RawstorOSTFrameIOPayload {
     uint64_t offset;
     uint32_t len;
     uint64_t hash;
     uint8_t flags;
 } RAWSTOR_PACKED;
 
-// RawstorOSTFrameIOBody::flags bits above: whether the affected range must
-// be durable before the response is sent (same meaning as
+// RawstorOSTFrameIOPayload::flags bits above: whether the affected range
+// must be durable before the response is sent (same meaning as
 // rawstor_object_pwrite()'s own `sync`; meaningful for WRITE and
 // WRITE_ZEROES), and, for WRITE_ZEROES only, whether the backend may
 // deallocate the zeroed range's storage (same meaning as virtio-blk's
@@ -79,7 +79,7 @@ struct RawstorOSTFrameIOBody {
 
 struct RawstorOSTFrameIO {
     struct RawstorOSTFrameHead head;
-    struct RawstorOSTFrameIOBody body;
+    struct RawstorOSTFrameIOPayload payload;
 } RAWSTOR_PACKED;
 
 /*
@@ -87,8 +87,8 @@ struct RawstorOSTFrameIO {
  * docs/mirroring.md). sync_id_history length must match
  * RAWSTOR_OBJECT_SYNC_ID_HISTORY. META response payload only -- SPEC's is
  * RawstorOSTFrameSpecPayload (size only, cheaper), SET_SYNC_STATE's request is
- * RawstorOSTFrameSyncStateBody (settable fields only, no size). No obj_id:
- * unlike RawstorOSTFrameSyncStateBody below, this is only ever a response,
+ * RawstorOSTFrameSyncStatePayload (settable fields only, no size). No obj_id:
+ * unlike RawstorOSTFrameSyncStatePayload below, this is only ever a response,
  * correlated to its request via RawstorOSTFrameHead::cid -- the caller
  * already knows which object it asked about. Sent as a RawstorOSTFrameResponse
  * (body.res = sizeof(this), body.hash covering it) immediately followed by
@@ -108,10 +108,10 @@ struct RawstorOSTFrameMetaPayload {
 /*
  * Settable mirror consistency state only -- no size, nothing here changes
  * it. SET_SYNC_STATE's request: unlike SPEC/META, it isn't wrapped in a
- * RawstorOSTFrameBasicBody of its own, so obj_id here is the only way the
+ * RawstorOSTFrameBasicPayload of its own, so obj_id here is the only way the
  * server learns which object this applies to.
  */
-struct RawstorOSTFrameSyncStateBody {
+struct RawstorOSTFrameSyncStatePayload {
     uint8_t obj_id[16];
     uint64_t epoch;
     uint64_t sync_id;
@@ -122,7 +122,7 @@ struct RawstorOSTFrameSyncStateBody {
 /* SET_SYNC_STATE request */
 struct RawstorOSTFrameSyncState {
     struct RawstorOSTFrameHead head;
-    struct RawstorOSTFrameSyncStateBody body;
+    struct RawstorOSTFrameSyncStatePayload payload;
 } RAWSTOR_PACKED;
 
 /* response frames */
