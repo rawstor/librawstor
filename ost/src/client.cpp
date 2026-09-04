@@ -1058,15 +1058,9 @@ rawstd::DetachedTask Client::_allocate_task(
 
     std::vector<rawstd::URI> targets = client->_targets(uuid);
 
-    // payload.mirrors is the requesting client's own mirrors count for
-    // *its* target string, not this server's -- this relay's own
-    // Target::create() (via co_target_create() below) needs the count
-    // for *this server's own* locally configured target list instead,
-    // which is targets.size() here, same as every other relay op
-    // (_spec_task()/_meta_task()/etc.) already derives it.
     RawstorObjectSpec spec{
         .size = payload.size,
-        .mirrors = (unsigned int)targets.size(),
+        .mirrors = payload.mirrors,
     };
 
     int result = 0;
