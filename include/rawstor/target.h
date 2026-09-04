@@ -28,10 +28,12 @@ extern "C" {
  * when creating a new object (via rawstor_target_create()).
  *
  * When used with rawstor_target_create(), the size field must be set to the
- * desired size of the object to be created. mirror_count, if nonzero, must
- * match the number of URIs in the target string being created (mismatch
- * fails the create with -EINVAL); left 0, it is not checked -- a convenience
- * for a caller that doesn't already know or care about mirror width.
+ * desired size of the object to be created, and mirror_count must equal the
+ * number of URIs in the target string being created -- mandatory, not a
+ * convenience the caller can opt out of (mismatch, including leaving it 0,
+ * fails the create with -EINVAL): a caller that doesn't already know the
+ * count can derive it by counting the ','-separated entries in its own
+ * target/location string.
  *
  * When used with rawstor_target_spec(), both fields are filled with the
  * actual shape of the existing object: its size in bytes and the number of
@@ -205,11 +207,11 @@ int rawstor_target_meta(
  *                  NULL and must be a valid target as per the library's format.
  * @param spec      Pointer to a RawstorObjectSpec structure containing the
  *                  desired object shape. The size field must be set to the
- *                  expected size of the object. mirror_count, if nonzero,
- *                  must match the number of URIs in @p target (@c -EINVAL
- *                  otherwise); left 0, it is not checked. Only read while
- *                  this call is being queued -- need not stay valid until
- *                  @p cb runs.
+ *                  expected size of the object. mirror_count is mandatory
+ *                  and must equal the number of URIs in @p target (@c
+ *                  -EINVAL otherwise, including when left 0). Only read
+ *                  while this call is being queued -- need not stay valid
+ *                  until @p cb runs.
  * @param cb        Callback invoked on completion.
  *                  - @p result is zero on success, or a negative errno on
  *                    failure (e.g. @c -EINVAL for invalid target or spec,

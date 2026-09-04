@@ -1042,12 +1042,12 @@ rawstd::DetachedTask Client::_allocate_task(
     RawstdUUID uuid;
     memcpy(uuid.bytes, body.obj_id, sizeof(body.obj_id));
 
+    std::vector<rawstd::URI> targets = client->_targets(uuid);
+
     RawstorObjectSpec spec{
         .size = body.val,
-        .mirror_count = 0,
+        .mirror_count = (uint32_t)targets.size(),
     };
-
-    std::vector<rawstd::URI> targets = client->_targets(uuid);
 
     int result = 0;
     try {

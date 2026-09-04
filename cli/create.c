@@ -18,9 +18,7 @@ static void log_spec(FILE* output, const struct RawstorObjectSpec* spec) {
     rawstd_bytes_to_size(spec->size, buf, sizeof(buf));
 
     fprintf(output, "  size: %s\n", buf);
-    if (spec->mirror_count != 0) {
-        fprintf(output, "  replicas: %u\n", spec->mirror_count);
-    }
+    fprintf(output, "  replicas: %u\n", spec->mirror_count);
 }
 
 int rawstor_cli_create(
