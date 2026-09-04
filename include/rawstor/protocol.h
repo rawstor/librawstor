@@ -30,7 +30,7 @@ extern "C" {
 #define RAWSTOR_CMD_LOCATION_INFO 8
 #define RAWSTOR_CMD_FLUSH 9
 #define RAWSTOR_CMD_WRITE_ZEROES 10
-#define RAWSTOR_CMD_SET_STATE 11
+#define RAWSTOR_CMD_SET_SYNC_STATE 11
 #define RAWSTOR_CMD_META 12
 typedef uint16_t RawstorOSTCommandType;
 
@@ -86,7 +86,7 @@ struct RawstorOSTFrameIO {
  * Full per-copy metadata: size plus the mirror consistency state (see
  * docs/mirroring.md). sync_id_history length must match
  * RAWSTOR_OBJECT_SYNC_ID_HISTORY. META response payload only -- SPEC's is
- * RawstorOSTFrameSpecBody (size only, cheaper), SET_STATE's request is
+ * RawstorOSTFrameSpecBody (size only, cheaper), SET_SYNC_STATE's request is
  * RawstorOSTFrameSyncStateBody (settable fields only, no size).
  */
 struct RawstorOSTFrameMetaBody {
@@ -108,7 +108,7 @@ struct RawstorOSTFrameSyncStateBody {
     uint32_t state;
 } RAWSTOR_PACKED;
 
-/* SET_STATE request */
+/* SET_SYNC_STATE request */
 struct RawstorOSTFrameSyncState {
     struct RawstorOSTFrameHead head;
     struct RawstorOSTFrameSyncStateBody body;

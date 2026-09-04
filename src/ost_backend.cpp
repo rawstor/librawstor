@@ -735,7 +735,7 @@ public:
     }
 };
 
-// SET_STATE's request carries the full RawstorOSTFrameMetaBody (not just
+// SET_SYNC_STATE's request carries the full RawstorOSTFrameMetaBody (not just
 // obj_id/offset/val like BackendOpBasic below), so it needs its own
 // request shape -- the response is otherwise the same no-payload
 // acknowledgement as BackendOpFlush above.
@@ -754,7 +754,7 @@ public:
             .head =
                 {
                     .magic = RAWSTOR_MAGIC,
-                    .cmd = RAWSTOR_CMD_SET_STATE,
+                    .cmd = RAWSTOR_CMD_SET_SYNC_STATE,
                     .cid = cid,
                 },
             .body = {
@@ -786,7 +786,8 @@ public:
         }
 
         if (!error) {
-            error = validate_cmd(response->head.cmd, RAWSTOR_CMD_SET_STATE);
+            error =
+                validate_cmd(response->head.cmd, RAWSTOR_CMD_SET_SYNC_STATE);
         }
 
         _dispatch(0, error);

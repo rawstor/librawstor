@@ -16,6 +16,7 @@
 #include <errno.h>
 #include <getopt.h>
 #include <signal.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -83,6 +84,12 @@ static void command_create_usage(void) {
         "\n"
         "command options:\n"
         "  -h, --help            Show this help message and exit\n"
+        "  -r, --replicas N      Expected number of replicas (total copy "
+        "count, N > 0).\n"
+        "                        Creation fails if this doesn't match the "
+        "number of\n"
+        "                        comma-separated LOCATION/TARGET entries. "
+        "Optional.\n"
         "  -s, --size SIZE       Object size with unit suffix (B, K, M, G, "
         "T, P, E).\n"
         "                        Examples: 10G, 5M, 2T.\n"
@@ -90,9 +97,10 @@ static void command_create_usage(void) {
 };
 
 static int command_create(int argc, char** argv) {
-    const char* optstring = "hs:t:u:";
+    const char* optstring = "hr:s:t:u:";
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
+        {"replicas", required_argument, NULL, 'r'},
         {"size", required_argument, NULL, 's'},
         {"target", required_argument, NULL, 't'},
         {"uuid", required_argument, NULL, 'u'},
@@ -100,6 +108,7 @@ static int command_create(int argc, char** argv) {
     };
 
     const char* location_arg = NULL;
+    const char* replicas_arg = NULL;
     const char* size_arg = NULL;
     const char* target_arg = NULL;
     const char* uuid_arg = NULL;
@@ -114,6 +123,10 @@ static int command_create(int argc, char** argv) {
         case 'h':
             command_create_usage();
             return EXIT_SUCCESS;
+
+        case 'r':
+            replicas_arg = optarg;
+            break;
 
         case 's':
             size_arg = optarg;
@@ -181,10 +194,32 @@ static int command_create(int argc, char** argv) {
         return EX_USAGE;
     }
 
+    uint32_t mirror_count = 0;
+    if (replicas_arg != NULL) {
+        char* endptr = NULL;
+        errno = 0;
+        unsigned long replicas = strtoul(replicas_arg, &endptr, 10);
+        if (errno != 0 || endptr == replicas_arg || *endptr != '\0') {
+            fprintf(stderr, "Invalid replicas value: %s\n", replicas_arg);
+            return EX_USAGE;
+        }
+        if (replicas == 0) {
+            fprintf(stderr, "replicas must be greater than 0\n");
+            return EX_USAGE;
+        }
+        if (replicas > UINT32_MAX) {
+            fprintf(stderr, "replicas value too large: %s\n", replicas_arg);
+            return EX_USAGE;
+        }
+        mirror_count = (uint32_t)replicas;
+    }
+
     if (target_arg != NULL) {
-        return rawstor_cli_create(target_arg, size);
+        return rawstor_cli_create(target_arg, size, mirror_count);
     } else {
-        return rawstor_cli_create_at(location_arg, uuid_arg, size);
+        return rawstor_cli_create_at(
+            location_arg, uuid_arg, size, mirror_count
+        );
     }
 }
 

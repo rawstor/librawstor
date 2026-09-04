@@ -10,7 +10,7 @@ extern "C" {
 // Internal to this repository: not part of the installed public API (not
 // listed in src/Makefile.am's librawstor_la_HEADERS, so `make install`
 // never ships this header). Used by rawstor-ost (ost/src/client.cpp) to
-// relay an incoming wire SET_STATE command to every location it locally
+// relay an incoming wire SET_SYNC_STATE command to every location it locally
 // serves for a UUID, and by this project's own tests to set up mirror
 // consistency scenarios. Manually driving mirror consistency state from
 // outside the library is unsafe for an application to do -- there is no
