@@ -44,11 +44,11 @@ public:
     void cmd_meta_request();
     void cmd_meta_response(
         uint32_t magic, uint16_t cid, int32_t res,
-        const RawstorOSTFrameMetaBody& meta
+        const RawstorOSTFrameMetaPayload& meta
     );
     void cmd_meta(
         uint32_t magic, uint16_t cid, int32_t res,
-        const RawstorOSTFrameMetaBody& meta
+        const RawstorOSTFrameMetaPayload& meta
     );
 
     void cmd_set_state_request();

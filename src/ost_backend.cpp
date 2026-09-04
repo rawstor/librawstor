@@ -735,8 +735,8 @@ public:
     }
 };
 
-// SET_SYNC_STATE's request carries the full RawstorOSTFrameMetaBody (not just
-// obj_id/offset/val like BackendOpBasic below), so it needs its own
+// SET_SYNC_STATE's request carries the full RawstorOSTFrameMetaPayload (not
+// just obj_id/offset/val like BackendOpBasic below), so it needs its own
 // request shape -- the response is otherwise the same no-payload
 // acknowledgement as BackendOpFlush above.
 class BackendOpSetState final : public BackendOp {
@@ -1192,11 +1192,11 @@ rawstd::Task<RawstorObjectSpec> Backend::spec(const RawstdUUID& id) {
     try {
         std::vector<char> response =
             co_await _basic_request(RAWSTOR_CMD_SPEC, "spec", id, 0);
-        if (response.size() != sizeof(RawstorOSTFrameSpecBody)) {
+        if (response.size() != sizeof(RawstorOSTFrameSpecPayload)) {
             RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
         }
-        const RawstorOSTFrameSpecBody& body =
-            *static_cast<const RawstorOSTFrameSpecBody*>(
+        const RawstorOSTFrameSpecPayload& body =
+            *static_cast<const RawstorOSTFrameSpecPayload*>(
                 static_cast<const void*>(response.data())
             );
         ret.size = body.size;
@@ -1216,11 +1216,11 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
     try {
         std::vector<char> response =
             co_await _basic_request(RAWSTOR_CMD_META, "meta", id, 0);
-        if (response.size() != sizeof(RawstorOSTFrameMetaBody)) {
+        if (response.size() != sizeof(RawstorOSTFrameMetaPayload)) {
             RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
         }
-        const RawstorOSTFrameMetaBody& body =
-            *static_cast<const RawstorOSTFrameMetaBody*>(
+        const RawstorOSTFrameMetaPayload& body =
+            *static_cast<const RawstorOSTFrameMetaPayload*>(
                 static_cast<const void*>(response.data())
             );
         ret.spec.size = body.size;

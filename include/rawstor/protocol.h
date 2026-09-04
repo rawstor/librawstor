@@ -86,13 +86,18 @@ struct RawstorOSTFrameIO {
  * Full per-copy metadata: size plus the mirror consistency state (see
  * docs/mirroring.md). sync_id_history length must match
  * RAWSTOR_OBJECT_SYNC_ID_HISTORY. META response payload only -- SPEC's is
- * RawstorOSTFrameSpecBody (size only, cheaper), SET_SYNC_STATE's request is
+ * RawstorOSTFrameSpecPayload (size only, cheaper), SET_SYNC_STATE's request is
  * RawstorOSTFrameSyncStateBody (settable fields only, no size). No obj_id:
  * unlike RawstorOSTFrameSyncStateBody below, this is only ever a response,
  * correlated to its request via RawstorOSTFrameHead::cid -- the caller
- * already knows which object it asked about.
+ * already knows which object it asked about. Sent as a RawstorOSTFrameResponse
+ * (body.res = sizeof(this), body.hash covering it) immediately followed by
+ * this payload -- no combined frame struct, since every actual sender/
+ * receiver already handles header and payload as two separate pieces (a
+ * fixed-size header read, then a body.res-sized payload read, or a two-part
+ * iovec write).
  */
-struct RawstorOSTFrameMetaBody {
+struct RawstorOSTFrameMetaPayload {
     uint64_t size;
     uint64_t epoch;
     uint64_t sync_id;
@@ -135,30 +140,15 @@ struct RawstorOSTFrameResponse {
 
 /*
  * Just the object's size -- SPEC response payload, cheaper than META's. No
- * obj_id, same reasoning as RawstorOSTFrameMetaBody above.
+ * obj_id, same reasoning as RawstorOSTFrameMetaPayload above. Sent as a
+ * RawstorOSTFrameResponse (body.res = sizeof(this), body.hash covering it)
+ * immediately followed by this payload -- no combined frame struct, since
+ * every actual sender/receiver already handles header and payload as two
+ * separate pieces (a fixed-size header read, then a body.res-sized payload
+ * read, or a two-part iovec write).
  */
-struct RawstorOSTFrameSpecBody {
+struct RawstorOSTFrameSpecPayload {
     uint64_t size;
-} RAWSTOR_PACKED;
-
-/*
- * SPEC response: standard response followed by the object's size.
- * body.hash covers the spec payload.
- */
-struct RawstorOSTFrameSpecResponse {
-    struct RawstorOSTFrameHead head;
-    struct RawstorOSTFrameResponseBody body;
-    struct RawstorOSTFrameSpecBody spec;
-} RAWSTOR_PACKED;
-
-/*
- * META response: standard response followed by the object's full per-copy
- * metadata. body.hash covers the meta payload.
- */
-struct RawstorOSTFrameMetaResponse {
-    struct RawstorOSTFrameHead head;
-    struct RawstorOSTFrameResponseBody body;
-    struct RawstorOSTFrameMetaBody meta;
 } RAWSTOR_PACKED;
 
 #ifdef __cplusplus

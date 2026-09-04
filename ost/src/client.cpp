@@ -1157,7 +1157,7 @@ rawstd::DetachedTask Client::_spec_task(
                 RAWSTOR_CMD_SPEC, head.cid, result, 0
             );
         } else {
-            RawstorOSTFrameSpecBody body_out{
+            RawstorOSTFrameSpecPayload body_out{
                 .size = spec.size,
             };
             std::vector<unsigned char> data(sizeof(body_out));
@@ -1215,7 +1215,7 @@ rawstd::DetachedTask Client::_meta_task(
                 RAWSTOR_CMD_META, head.cid, result, 0
             );
         } else {
-            RawstorOSTFrameMetaBody body_out{
+            RawstorOSTFrameMetaPayload body_out{
                 .size = meta.spec.size,
                 .epoch = meta.sync_state.epoch,
                 .sync_id = meta.sync_state.sync_id,
