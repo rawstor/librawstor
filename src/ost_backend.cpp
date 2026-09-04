@@ -313,7 +313,7 @@ public:
                     .cmd = RAWSTOR_CMD_READ,
                     .cid = cid,
                 },
-            .body =
+            .payload =
                 {
                     .offset = (uint64_t)offset,
                     .len = (uint32_t)_size,
@@ -396,7 +396,7 @@ public:
                     .cmd = RAWSTOR_CMD_READ,
                     .cid = cid,
                 },
-            .body =
+            .payload =
                 {
                     .offset = (uint64_t)offset,
                     .len = (uint32_t)_size,
@@ -473,7 +473,7 @@ public:
                     .cmd = RAWSTOR_CMD_WRITE,
                     .cid = cid,
                 },
-            .body = {
+            .payload = {
                 .offset = (uint64_t)offset,
                 .len = (uint32_t)size,
                 .hash = hash(buf, size),
@@ -503,7 +503,7 @@ public:
     const msghdr* request_msg() const noexcept { return &_msg; }
 
     size_t request_size() const noexcept override {
-        return sizeof(_request) + _request.body.len;
+        return sizeof(_request) + _request.payload.len;
     }
 
     size_t response_head_cb(
@@ -548,7 +548,7 @@ public:
                     .cmd = RAWSTOR_CMD_WRITE,
                     .cid = cid,
                 },
-            .body = {
+            .payload = {
                 .offset = (uint64_t)offset,
                 .len = (uint32_t)size,
                 .hash = hash(iov, niov),
@@ -577,7 +577,7 @@ public:
     const msghdr* request_msg() const noexcept { return &_msg; }
 
     size_t request_size() const noexcept override {
-        return sizeof(_request) + _request.body.len;
+        return sizeof(_request) + _request.payload.len;
     }
 
     size_t response_head_cb(
@@ -626,7 +626,7 @@ public:
                     .cmd = cmd,
                     .cid = cid,
                 },
-            .body = {
+            .payload = {
                 .offset = (uint64_t)offset,
                 .len = (uint32_t)size,
                 .hash = 0,
@@ -705,7 +705,7 @@ public:
                     .cmd = RAWSTOR_CMD_FLUSH,
                     .cid = cid,
                 },
-            .body = {
+            .payload = {
                 .obj_id = {},
                 .offset = 0,
                 .val = 0,
@@ -758,7 +758,7 @@ public:
                     .cmd = RAWSTOR_CMD_SET_SYNC_STATE,
                     .cid = cid,
                 },
-            .body = {
+            .payload = {
                 .obj_id = {},
                 .epoch = sync_state.epoch,
                 .sync_id = sync_state.sync_id,
@@ -766,10 +766,12 @@ public:
                 .state = sync_state.state,
             },
         }) {
-        memcpy(_request.body.obj_id, id.bytes, sizeof(_request.body.obj_id));
         memcpy(
-            _request.body.sync_id_history, sync_state.sync_id_history,
-            sizeof(_request.body.sync_id_history)
+            _request.payload.obj_id, id.bytes, sizeof(_request.payload.obj_id)
+        );
+        memcpy(
+            _request.payload.sync_id_history, sync_state.sync_id_history,
+            sizeof(_request.payload.sync_id_history)
         );
     }
 
@@ -828,13 +830,15 @@ public:
                     .cmd = cmd,
                     .cid = cid,
                 },
-            .body = {
+            .payload = {
                 .obj_id = {},
                 .offset = 0,
                 .val = val,
             },
         }) {
-        memcpy(_request.body.obj_id, id.bytes, sizeof(_request.body.obj_id));
+        memcpy(
+            _request.payload.obj_id, id.bytes, sizeof(_request.payload.obj_id)
+        );
     }
 
     const void* request_data() const noexcept { return &_request; }

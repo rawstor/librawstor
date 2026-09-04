@@ -437,7 +437,7 @@ ssize_t recv_trampoline(
 }
 
 // Reads exactly `size` bytes of the next part of a request frame (its
-// body, or WRITE's trailing payload) and validates the length, letting
+// payload, or WRITE's trailing payload) and validates the length, letting
 // _recv_pump()'s single switch (head.cmd) read each command's frame
 // without repeating the "co_await, then check the size" boilerplate in
 // every case. `*stream_failed` is set for exactly the duration of the
@@ -661,189 +661,203 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
 
             rawstd_trace("head received: %d\n", head.cmd);
 
-            // --- read this request's frame body and dispatch it ---
+            // --- read this request's frame payload and dispatch it ---
             switch (head.cmd) {
             case RAWSTOR_CMD_SET_OBJECT: {
-                std::vector<unsigned char> body_data = co_await recv_frame_part(
-                    stream, sizeof(RawstorOSTFrameBasicBody), fd,
-                    "request body", &stream_failed
-                );
+                std::vector<unsigned char> payload_data =
+                    co_await recv_frame_part(
+                        stream, sizeof(RawstorOSTFrameBasicPayload), fd,
+                        "request payload", &stream_failed
+                    );
                 client = weak.lock();
                 if (client == nullptr) {
                     co_return;
                 }
-                RawstorOSTFrameBasicBody basic;
-                memcpy(&basic, body_data.data(), sizeof(basic));
+                RawstorOSTFrameBasicPayload basic;
+                memcpy(&basic, payload_data.data(), sizeof(basic));
                 client->_set_object(head, basic);
                 break;
             }
             case RAWSTOR_CMD_ALLOCATE: {
-                std::vector<unsigned char> body_data = co_await recv_frame_part(
-                    stream, sizeof(RawstorOSTFrameBasicBody), fd,
-                    "request body", &stream_failed
-                );
+                std::vector<unsigned char> payload_data =
+                    co_await recv_frame_part(
+                        stream, sizeof(RawstorOSTFrameBasicPayload), fd,
+                        "request payload", &stream_failed
+                    );
                 client = weak.lock();
                 if (client == nullptr) {
                     co_return;
                 }
-                RawstorOSTFrameBasicBody basic;
-                memcpy(&basic, body_data.data(), sizeof(basic));
+                RawstorOSTFrameBasicPayload basic;
+                memcpy(&basic, payload_data.data(), sizeof(basic));
                 client->_allocate(head, basic);
                 break;
             }
             case RAWSTOR_CMD_RELEASE: {
-                std::vector<unsigned char> body_data = co_await recv_frame_part(
-                    stream, sizeof(RawstorOSTFrameBasicBody), fd,
-                    "request body", &stream_failed
-                );
+                std::vector<unsigned char> payload_data =
+                    co_await recv_frame_part(
+                        stream, sizeof(RawstorOSTFrameBasicPayload), fd,
+                        "request payload", &stream_failed
+                    );
                 client = weak.lock();
                 if (client == nullptr) {
                     co_return;
                 }
-                RawstorOSTFrameBasicBody basic;
-                memcpy(&basic, body_data.data(), sizeof(basic));
+                RawstorOSTFrameBasicPayload basic;
+                memcpy(&basic, payload_data.data(), sizeof(basic));
                 client->_release(head, basic);
                 break;
             }
             case RAWSTOR_CMD_LIST: {
-                std::vector<unsigned char> body_data = co_await recv_frame_part(
-                    stream, sizeof(RawstorOSTFrameBasicBody), fd,
-                    "request body", &stream_failed
-                );
+                std::vector<unsigned char> payload_data =
+                    co_await recv_frame_part(
+                        stream, sizeof(RawstorOSTFrameBasicPayload), fd,
+                        "request payload", &stream_failed
+                    );
                 client = weak.lock();
                 if (client == nullptr) {
                     co_return;
                 }
-                RawstorOSTFrameBasicBody basic;
-                memcpy(&basic, body_data.data(), sizeof(basic));
+                RawstorOSTFrameBasicPayload basic;
+                memcpy(&basic, payload_data.data(), sizeof(basic));
                 client->_list(head, basic);
                 break;
             }
             case RAWSTOR_CMD_SPEC: {
-                std::vector<unsigned char> body_data = co_await recv_frame_part(
-                    stream, sizeof(RawstorOSTFrameBasicBody), fd,
-                    "request body", &stream_failed
-                );
+                std::vector<unsigned char> payload_data =
+                    co_await recv_frame_part(
+                        stream, sizeof(RawstorOSTFrameBasicPayload), fd,
+                        "request payload", &stream_failed
+                    );
                 client = weak.lock();
                 if (client == nullptr) {
                     co_return;
                 }
-                RawstorOSTFrameBasicBody basic;
-                memcpy(&basic, body_data.data(), sizeof(basic));
+                RawstorOSTFrameBasicPayload basic;
+                memcpy(&basic, payload_data.data(), sizeof(basic));
                 client->_spec(head, basic);
                 break;
             }
             case RAWSTOR_CMD_META: {
-                std::vector<unsigned char> body_data = co_await recv_frame_part(
-                    stream, sizeof(RawstorOSTFrameBasicBody), fd,
-                    "request body", &stream_failed
-                );
+                std::vector<unsigned char> payload_data =
+                    co_await recv_frame_part(
+                        stream, sizeof(RawstorOSTFrameBasicPayload), fd,
+                        "request payload", &stream_failed
+                    );
                 client = weak.lock();
                 if (client == nullptr) {
                     co_return;
                 }
-                RawstorOSTFrameBasicBody basic;
-                memcpy(&basic, body_data.data(), sizeof(basic));
+                RawstorOSTFrameBasicPayload basic;
+                memcpy(&basic, payload_data.data(), sizeof(basic));
                 client->_meta(head, basic);
                 break;
             }
             case RAWSTOR_CMD_LOCATION_INFO: {
-                std::vector<unsigned char> body_data = co_await recv_frame_part(
-                    stream, sizeof(RawstorOSTFrameBasicBody), fd,
-                    "request body", &stream_failed
-                );
+                std::vector<unsigned char> payload_data =
+                    co_await recv_frame_part(
+                        stream, sizeof(RawstorOSTFrameBasicPayload), fd,
+                        "request payload", &stream_failed
+                    );
                 client = weak.lock();
                 if (client == nullptr) {
                     co_return;
                 }
-                RawstorOSTFrameBasicBody basic;
-                memcpy(&basic, body_data.data(), sizeof(basic));
+                RawstorOSTFrameBasicPayload basic;
+                memcpy(&basic, payload_data.data(), sizeof(basic));
                 client->_info(head, basic);
                 break;
             }
             case RAWSTOR_CMD_FLUSH: {
-                std::vector<unsigned char> body_data = co_await recv_frame_part(
-                    stream, sizeof(RawstorOSTFrameBasicBody), fd,
-                    "request body", &stream_failed
-                );
+                std::vector<unsigned char> payload_data =
+                    co_await recv_frame_part(
+                        stream, sizeof(RawstorOSTFrameBasicPayload), fd,
+                        "request payload", &stream_failed
+                    );
                 client = weak.lock();
                 if (client == nullptr) {
                     co_return;
                 }
-                RawstorOSTFrameBasicBody basic;
-                memcpy(&basic, body_data.data(), sizeof(basic));
+                RawstorOSTFrameBasicPayload basic;
+                memcpy(&basic, payload_data.data(), sizeof(basic));
                 client->_flush(head, basic);
                 break;
             }
             case RAWSTOR_CMD_SET_SYNC_STATE: {
-                std::vector<unsigned char> body_data = co_await recv_frame_part(
-                    stream, sizeof(RawstorOSTFrameSyncStateBody), fd,
-                    "request body", &stream_failed
-                );
+                std::vector<unsigned char> payload_data =
+                    co_await recv_frame_part(
+                        stream, sizeof(RawstorOSTFrameSyncStatePayload), fd,
+                        "request payload", &stream_failed
+                    );
                 client = weak.lock();
                 if (client == nullptr) {
                     co_return;
                 }
-                RawstorOSTFrameSyncStateBody sync_state_body;
+                RawstorOSTFrameSyncStatePayload sync_state_payload;
                 memcpy(
-                    &sync_state_body, body_data.data(), sizeof(sync_state_body)
+                    &sync_state_payload, payload_data.data(),
+                    sizeof(sync_state_payload)
                 );
-                client->_set_state(head, sync_state_body);
+                client->_set_state(head, sync_state_payload);
                 break;
             }
             case RAWSTOR_CMD_READ: {
-                std::vector<unsigned char> body_data = co_await recv_frame_part(
-                    stream, sizeof(RawstorOSTFrameIOBody), fd, "request body",
-                    &stream_failed
-                );
+                std::vector<unsigned char> payload_data =
+                    co_await recv_frame_part(
+                        stream, sizeof(RawstorOSTFrameIOPayload), fd,
+                        "request payload", &stream_failed
+                    );
                 client = weak.lock();
                 if (client == nullptr) {
                     co_return;
                 }
-                RawstorOSTFrameIOBody io;
-                memcpy(&io, body_data.data(), sizeof(io));
+                RawstorOSTFrameIOPayload io;
+                memcpy(&io, payload_data.data(), sizeof(io));
                 client->_read(head, io);
                 break;
             }
             case RAWSTOR_CMD_DISCARD: {
-                std::vector<unsigned char> body_data = co_await recv_frame_part(
-                    stream, sizeof(RawstorOSTFrameIOBody), fd, "request body",
-                    &stream_failed
-                );
+                std::vector<unsigned char> payload_data =
+                    co_await recv_frame_part(
+                        stream, sizeof(RawstorOSTFrameIOPayload), fd,
+                        "request payload", &stream_failed
+                    );
                 client = weak.lock();
                 if (client == nullptr) {
                     co_return;
                 }
-                RawstorOSTFrameIOBody io;
-                memcpy(&io, body_data.data(), sizeof(io));
+                RawstorOSTFrameIOPayload io;
+                memcpy(&io, payload_data.data(), sizeof(io));
                 client->_discard(head, io);
                 break;
             }
             case RAWSTOR_CMD_WRITE_ZEROES: {
-                std::vector<unsigned char> body_data = co_await recv_frame_part(
-                    stream, sizeof(RawstorOSTFrameIOBody), fd, "request body",
-                    &stream_failed
-                );
+                std::vector<unsigned char> payload_data =
+                    co_await recv_frame_part(
+                        stream, sizeof(RawstorOSTFrameIOPayload), fd,
+                        "request payload", &stream_failed
+                    );
                 client = weak.lock();
                 if (client == nullptr) {
                     co_return;
                 }
-                RawstorOSTFrameIOBody io;
-                memcpy(&io, body_data.data(), sizeof(io));
+                RawstorOSTFrameIOPayload io;
+                memcpy(&io, payload_data.data(), sizeof(io));
                 client->_write_zeroes(head, io);
                 break;
             }
             case RAWSTOR_CMD_WRITE: {
-                std::vector<unsigned char> body_data = co_await recv_frame_part(
-                    stream, sizeof(RawstorOSTFrameIOBody), fd, "request body",
-                    &stream_failed
-                );
+                std::vector<unsigned char> payload_data =
+                    co_await recv_frame_part(
+                        stream, sizeof(RawstorOSTFrameIOPayload), fd,
+                        "request payload", &stream_failed
+                    );
                 client = weak.lock();
                 if (client == nullptr) {
                     co_return;
                 }
-                RawstorOSTFrameIOBody io;
-                memcpy(&io, body_data.data(), sizeof(io));
+                RawstorOSTFrameIOPayload io;
+                memcpy(&io, payload_data.data(), sizeof(io));
 
                 // 64MB limit -- reject before committing to receive this
                 // many bytes of payload off the wire at all, rather than
@@ -953,7 +967,7 @@ Client::_close_current_object(std::weak_ptr<Client> weak) {
 
 rawstd::DetachedTask Client::_list_task(
     std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-    RawstorOSTFrameBasicBody body
+    RawstorOSTFrameBasicPayload payload
 ) {
     std::shared_ptr<Client> client = co_await _close_current_object(weak);
     if (client == nullptr) {
@@ -961,14 +975,14 @@ rawstd::DetachedTask Client::_list_task(
     }
 
     RawstorPaginationToken token;
-    memcpy(token.bytes, body.obj_id, sizeof(body.obj_id));
+    memcpy(token.bytes, payload.obj_id, sizeof(payload.obj_id));
 
     RawstorStringList* targets;
     int result = 0;
     try {
         co_await co_location_list(
             client->_queue, rawstd::URI::uris(client->_server.locations()),
-            body.val, &targets, &token
+            payload.val, &targets, &token
         );
     } catch (const std::system_error& e) {
         result = -e.code().value();
@@ -1024,15 +1038,15 @@ rawstd::DetachedTask Client::_list_task(
 }
 
 void Client::_list(
-    const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+    const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicPayload& payload
 ) {
-    _list_task(weak_from_this(), head, body);
+    _list_task(weak_from_this(), head, payload);
     rawstd::DetachedTask::rethrow_if_pending();
 }
 
 rawstd::DetachedTask Client::_allocate_task(
     std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-    RawstorOSTFrameBasicBody body
+    RawstorOSTFrameBasicPayload payload
 ) {
     std::shared_ptr<Client> client = co_await _close_current_object(weak);
     if (client == nullptr) {
@@ -1040,12 +1054,12 @@ rawstd::DetachedTask Client::_allocate_task(
     }
 
     RawstdUUID uuid;
-    memcpy(uuid.bytes, body.obj_id, sizeof(body.obj_id));
+    memcpy(uuid.bytes, payload.obj_id, sizeof(payload.obj_id));
 
     std::vector<rawstd::URI> targets = client->_targets(uuid);
 
     RawstorObjectSpec spec{
-        .size = body.val,
+        .size = payload.val,
         .mirror_count = (unsigned int)targets.size(),
     };
 
@@ -1073,15 +1087,15 @@ rawstd::DetachedTask Client::_allocate_task(
 }
 
 void Client::_allocate(
-    const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+    const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicPayload& payload
 ) {
-    _allocate_task(weak_from_this(), head, body);
+    _allocate_task(weak_from_this(), head, payload);
     rawstd::DetachedTask::rethrow_if_pending();
 }
 
 rawstd::DetachedTask Client::_release_task(
     std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-    RawstorOSTFrameBasicBody body
+    RawstorOSTFrameBasicPayload payload
 ) {
     std::shared_ptr<Client> client = weak.lock();
     if (client == nullptr) {
@@ -1089,7 +1103,7 @@ rawstd::DetachedTask Client::_release_task(
     }
 
     RawstdUUID uuid;
-    memcpy(uuid.bytes, body.obj_id, sizeof(body.obj_id));
+    memcpy(uuid.bytes, payload.obj_id, sizeof(payload.obj_id));
 
     std::vector<rawstd::URI> targets = client->_targets(uuid);
 
@@ -1115,9 +1129,9 @@ rawstd::DetachedTask Client::_release_task(
 }
 
 void Client::_release(
-    const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+    const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicPayload& payload
 ) {
-    _release_task(weak_from_this(), head, body);
+    _release_task(weak_from_this(), head, payload);
     rawstd::DetachedTask::rethrow_if_pending();
 }
 
@@ -1128,7 +1142,7 @@ void Client::_release(
 // are separate wire commands instead of one shared one.
 rawstd::DetachedTask Client::_spec_task(
     std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-    RawstorOSTFrameBasicBody body
+    RawstorOSTFrameBasicPayload payload
 ) {
     std::shared_ptr<Client> client = weak.lock();
     if (client == nullptr) {
@@ -1136,7 +1150,7 @@ rawstd::DetachedTask Client::_spec_task(
     }
 
     RawstdUUID uuid;
-    memcpy(uuid.bytes, body.obj_id, sizeof(body.obj_id));
+    memcpy(uuid.bytes, payload.obj_id, sizeof(payload.obj_id));
 
     std::vector<rawstd::URI> targets = client->_targets(uuid);
 
@@ -1176,9 +1190,9 @@ rawstd::DetachedTask Client::_spec_task(
 }
 
 void Client::_spec(
-    const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+    const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicPayload& payload
 ) {
-    _spec_task(weak_from_this(), head, body);
+    _spec_task(weak_from_this(), head, payload);
     rawstd::DetachedTask::rethrow_if_pending();
 }
 
@@ -1186,7 +1200,7 @@ void Client::_spec(
 // as _spec_task() above, one command number over.
 rawstd::DetachedTask Client::_meta_task(
     std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-    RawstorOSTFrameBasicBody body
+    RawstorOSTFrameBasicPayload payload
 ) {
     std::shared_ptr<Client> client = weak.lock();
     if (client == nullptr) {
@@ -1194,7 +1208,7 @@ rawstd::DetachedTask Client::_meta_task(
     }
 
     RawstdUUID uuid;
-    memcpy(uuid.bytes, body.obj_id, sizeof(body.obj_id));
+    memcpy(uuid.bytes, payload.obj_id, sizeof(payload.obj_id));
 
     std::vector<rawstd::URI> targets = client->_targets(uuid);
 
@@ -1242,15 +1256,15 @@ rawstd::DetachedTask Client::_meta_task(
 }
 
 void Client::_meta(
-    const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+    const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicPayload& payload
 ) {
-    _meta_task(weak_from_this(), head, body);
+    _meta_task(weak_from_this(), head, payload);
     rawstd::DetachedTask::rethrow_if_pending();
 }
 
 rawstd::DetachedTask Client::_set_state_task(
     std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-    RawstorOSTFrameSyncStateBody body
+    RawstorOSTFrameSyncStatePayload payload
 ) {
     std::shared_ptr<Client> client = weak.lock();
     if (client == nullptr) {
@@ -1258,18 +1272,18 @@ rawstd::DetachedTask Client::_set_state_task(
     }
 
     RawstdUUID uuid;
-    memcpy(uuid.bytes, body.obj_id, sizeof(body.obj_id));
+    memcpy(uuid.bytes, payload.obj_id, sizeof(payload.obj_id));
 
     std::vector<rawstd::URI> targets = client->_targets(uuid);
 
     RawstorObjectSyncState sync_state{};
-    sync_state.epoch = body.epoch;
-    sync_state.sync_id = body.sync_id;
+    sync_state.epoch = payload.epoch;
+    sync_state.sync_id = payload.sync_id;
     memcpy(
-        sync_state.sync_id_history, body.sync_id_history,
+        sync_state.sync_id_history, payload.sync_id_history,
         sizeof(sync_state.sync_id_history)
     );
-    sync_state.state = body.state;
+    sync_state.state = payload.state;
 
     int result = 0;
     try {
@@ -1295,9 +1309,10 @@ rawstd::DetachedTask Client::_set_state_task(
 }
 
 void Client::_set_state(
-    const RawstorOSTFrameHead& head, const RawstorOSTFrameSyncStateBody& body
+    const RawstorOSTFrameHead& head,
+    const RawstorOSTFrameSyncStatePayload& payload
 ) {
-    _set_state_task(weak_from_this(), head, body);
+    _set_state_task(weak_from_this(), head, payload);
     rawstd::DetachedTask::rethrow_if_pending();
 }
 
@@ -1342,7 +1357,7 @@ Client::_info_task(std::weak_ptr<Client> weak, RawstorOSTFrameHead head) {
 }
 
 void Client::_info(
-    const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody&
+    const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicPayload&
 ) {
     _info_task(weak_from_this(), head);
     rawstd::DetachedTask::rethrow_if_pending();
@@ -1350,7 +1365,7 @@ void Client::_info(
 
 rawstd::DetachedTask Client::_set_object_task(
     std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-    RawstorOSTFrameBasicBody body
+    RawstorOSTFrameBasicPayload payload
 ) {
     RawIOQueue* queue;
     std::string target;
@@ -1362,7 +1377,7 @@ rawstd::DetachedTask Client::_set_object_task(
         queue = client->_queue;
 
         RawstdUUID uuid;
-        memcpy(uuid.bytes, body.obj_id, sizeof(body.obj_id));
+        memcpy(uuid.bytes, payload.obj_id, sizeof(payload.obj_id));
         target = rawstd::URI::uris(client->_targets(uuid));
     }
 
@@ -1401,15 +1416,15 @@ rawstd::DetachedTask Client::_set_object_task(
 }
 
 void Client::_set_object(
-    const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody& body
+    const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicPayload& payload
 ) {
-    _set_object_task(weak_from_this(), head, body);
+    _set_object_task(weak_from_this(), head, payload);
     rawstd::DetachedTask::rethrow_if_pending();
 }
 
 rawstd::DetachedTask Client::_read_task(
     std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-    RawstorOSTFrameIOBody body
+    RawstorOSTFrameIOPayload payload
 ) {
     RawstorObject* object;
     {
@@ -1433,7 +1448,7 @@ rawstd::DetachedTask Client::_read_task(
             co_return;
         }
         // 64MB limit
-        if (body.len > (1ULL << 26)) {
+        if (payload.len > (1ULL << 26)) {
             bool send_failed = false;
             try {
                 co_await client->_send_response(
@@ -1451,14 +1466,14 @@ rawstd::DetachedTask Client::_read_task(
         object = client->_object;
     }
 
-    size_t len = body.len;
+    size_t len = payload.len;
     std::vector<unsigned char> data(len);
 
     size_t result = 0;
     int error = 0;
     try {
         result = co_await co_object_pread(
-            object, data.data(), data.size(), body.offset
+            object, data.data(), data.size(), payload.offset
         );
     } catch (const std::system_error& e) {
         error = e.code().value();
@@ -1488,15 +1503,16 @@ rawstd::DetachedTask Client::_read_task(
 }
 
 void Client::_read(
-    const RawstorOSTFrameHead& head, const RawstorOSTFrameIOBody& body
+    const RawstorOSTFrameHead& head, const RawstorOSTFrameIOPayload& payload
 ) {
-    _read_task(weak_from_this(), head, body);
+    _read_task(weak_from_this(), head, payload);
     rawstd::DetachedTask::rethrow_if_pending();
 }
 
 rawstd::DetachedTask Client::_write_task(
     std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-    RawstorOSTFrameIOBody body, std::shared_ptr<std::vector<unsigned char>> data
+    RawstorOSTFrameIOPayload payload,
+    std::shared_ptr<std::vector<unsigned char>> data
 ) {
     std::shared_ptr<Client> client = weak.lock();
     if (client == nullptr) {
@@ -1524,11 +1540,11 @@ rawstd::DetachedTask Client::_write_task(
     // a single C callback -- see its doc comment), so this hashes it
     // directly instead of copying it out again first.
     uint64_t hash = rawstd_hash_scalar(data->data(), data->size());
-    if (hash != body.hash) {
+    if (hash != payload.hash) {
         rawstd_error(
             "Hash mismatch: %llx != %llx\n",
             static_cast<unsigned long long>(hash),
-            static_cast<unsigned long long>(body.hash)
+            static_cast<unsigned long long>(payload.hash)
         );
         // EBADMSG rather than the generic EIO used below for genuine
         // backend write failures: a hash mismatch means the payload this
@@ -1552,15 +1568,15 @@ rawstd::DetachedTask Client::_write_task(
     }
 
     client->_dispatch_write(
-        head, body.offset, (body.flags & RAWSTOR_FLAG_SYNC) != 0, data
+        head, payload.offset, (payload.flags & RAWSTOR_FLAG_SYNC) != 0, data
     );
 }
 
 void Client::_write(
-    const RawstorOSTFrameHead& head, const RawstorOSTFrameIOBody& body,
+    const RawstorOSTFrameHead& head, const RawstorOSTFrameIOPayload& payload,
     const std::shared_ptr<std::vector<unsigned char>>& data
 ) {
-    _write_task(weak_from_this(), head, body, data);
+    _write_task(weak_from_this(), head, payload, data);
     rawstd::DetachedTask::rethrow_if_pending();
 }
 
@@ -1673,7 +1689,7 @@ Client::_flush_task(std::weak_ptr<Client> weak, RawstorOSTFrameHead head) {
 }
 
 void Client::_flush(
-    const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicBody&
+    const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicPayload&
 ) {
     _flush_task(weak_from_this(), head);
     rawstd::DetachedTask::rethrow_if_pending();
@@ -1681,7 +1697,7 @@ void Client::_flush(
 
 rawstd::DetachedTask Client::_discard_task(
     std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-    RawstorOSTFrameIOBody body
+    RawstorOSTFrameIOPayload payload
 ) {
     RawstorObject* object;
     {
@@ -1710,7 +1726,8 @@ rawstd::DetachedTask Client::_discard_task(
     size_t result = 0;
     int error = 0;
     try {
-        result = co_await co_object_discard(object, body.len, body.offset);
+        result =
+            co_await co_object_discard(object, payload.len, payload.offset);
     } catch (const std::system_error& e) {
         error = e.code().value();
     }
@@ -1738,15 +1755,15 @@ rawstd::DetachedTask Client::_discard_task(
 }
 
 void Client::_discard(
-    const RawstorOSTFrameHead& head, const RawstorOSTFrameIOBody& body
+    const RawstorOSTFrameHead& head, const RawstorOSTFrameIOPayload& payload
 ) {
-    _discard_task(weak_from_this(), head, body);
+    _discard_task(weak_from_this(), head, payload);
     rawstd::DetachedTask::rethrow_if_pending();
 }
 
 rawstd::DetachedTask Client::_write_zeroes_task(
     std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-    RawstorOSTFrameIOBody body
+    RawstorOSTFrameIOPayload payload
 ) {
     RawstorObject* object;
     {
@@ -1772,14 +1789,14 @@ rawstd::DetachedTask Client::_write_zeroes_task(
         object = client->_object;
     }
 
-    bool unmap = (body.flags & RAWSTOR_FLAG_UNMAP) != 0;
-    bool sync = (body.flags & RAWSTOR_FLAG_SYNC) != 0;
+    bool unmap = (payload.flags & RAWSTOR_FLAG_UNMAP) != 0;
+    bool sync = (payload.flags & RAWSTOR_FLAG_SYNC) != 0;
 
     size_t result = 0;
     int error = 0;
     try {
         result = co_await co_object_write_zeroes(
-            object, body.len, body.offset, unmap, sync
+            object, payload.len, payload.offset, unmap, sync
         );
     } catch (const std::system_error& e) {
         error = e.code().value();
@@ -1808,9 +1825,9 @@ rawstd::DetachedTask Client::_write_zeroes_task(
 }
 
 void Client::_write_zeroes(
-    const RawstorOSTFrameHead& head, const RawstorOSTFrameIOBody& body
+    const RawstorOSTFrameHead& head, const RawstorOSTFrameIOPayload& payload
 ) {
-    _write_zeroes_task(weak_from_this(), head, body);
+    _write_zeroes_task(weak_from_this(), head, payload);
     rawstd::DetachedTask::rethrow_if_pending();
 }
 
