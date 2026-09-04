@@ -57,22 +57,6 @@ static void version(void) {
 static void sact_handler(int RAWSTD_UNUSED s) {
 }
 
-// rawstor_target_create()/rawstor_location_create() now require
-// RawstorObjectSpec::mirror_count to exactly equal the number of
-// ','-separated URIs in the target/location string -- when the caller
-// doesn't pass -r/--replicas to state (and have checked) that count
-// explicitly, this derives it directly from the same string so the create
-// still succeeds by construction.
-static uint32_t count_uris(const char* s) {
-    uint32_t count = 1;
-    for (const char* p = s; *p != '\0'; p++) {
-        if (*p == ',') {
-            count++;
-        }
-    }
-    return count;
-}
-
 static void command_create_usage(void) {
     fprintf(
         stdout,
@@ -102,10 +86,12 @@ static void command_create_usage(void) {
         "  -h, --help            Show this help message and exit\n"
         "  -r, --replicas N      Expected number of replicas (total copy "
         "count, N > 0).\n"
-        "                        Creation fails if this doesn't match the "
-        "number of\n"
-        "                        comma-separated LOCATION/TARGET entries. "
-        "Optional.\n"
+        "                        Default 1. Creation fails unless this "
+        "matches the\n"
+        "                        number of comma-separated LOCATION/TARGET "
+        "entries --\n"
+        "                        pass it explicitly when creating a "
+        "mirrored object.\n"
         "  -s, --size SIZE       Object size with unit suffix (B, K, M, G, "
         "T, P, E).\n"
         "                        Examples: 10G, 5M, 2T.\n"
@@ -210,7 +196,7 @@ static int command_create(int argc, char** argv) {
         return EX_USAGE;
     }
 
-    uint32_t mirror_count;
+    uint32_t mirror_count = 1;
     if (replicas_arg != NULL) {
         char* endptr = NULL;
         errno = 0;
@@ -228,9 +214,6 @@ static int command_create(int argc, char** argv) {
             return EX_USAGE;
         }
         mirror_count = (uint32_t)replicas;
-    } else {
-        mirror_count =
-            count_uris(target_arg != NULL ? target_arg : location_arg);
     }
 
     if (target_arg != NULL) {

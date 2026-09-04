@@ -15,22 +15,6 @@ static void set_os_error(int error) {
     PyErr_SetFromErrno(PyExc_OSError);
 }
 
-// rawstor_target_create()/rawstor_location_create() require
-// RawstorObjectSpec::mirror_count to exactly equal the number of
-// ','-separated URIs in the target/location string -- when the caller
-// didn't set it explicitly on the Python ObjectSpec (still 0, the
-// default), derive it from that same string so the create still succeeds
-// by construction.
-static unsigned int count_uris(const char* s) {
-    unsigned int count = 1;
-    for (const char* p = s; *p != '\0'; p++) {
-        if (*p == ',') {
-            count++;
-        }
-    }
-    return count;
-}
-
 typedef struct {
     PyObject_HEAD unsigned long long size;
     unsigned int mirror_count;
@@ -57,7 +41,7 @@ static PyObject* PyObjectSpec_new(
     PyObjectSpec* self = (PyObjectSpec*)alloc_func(type, 0);
     if (self != NULL) {
         self->size = 0;
-        self->mirror_count = 0;
+        self->mirror_count = 1;
     }
     return (PyObject*)self;
 }
@@ -65,7 +49,7 @@ static PyObject* PyObjectSpec_new(
 static int
 PyObjectSpec_init(PyObjectSpec* self, PyObject* args, PyObject* kwargs) {
     long long size = 0;
-    unsigned int mirror_count = 0;
+    unsigned int mirror_count = 1;
     static char* kwlist[] = {"size", "mirror_count", NULL};
     if (!PyArg_ParseTupleAndKeywords(
             args, kwargs, "|LI", kwlist, &size, &mirror_count
@@ -364,8 +348,7 @@ PyObject* py_rawstor_object_create(PyObject* Py_UNUSED(self), PyObject* args) {
 
     PyObjectSpec* py_spec = (PyObjectSpec*)spec_obj;
     spec.size = py_spec->size;
-    spec.mirror_count =
-        py_spec->mirror_count != 0 ? py_spec->mirror_count : count_uris(target);
+    spec.mirror_count = py_spec->mirror_count;
 
     RawstorSyncOp op;
     int ires = rawstor_sync_op_init(&op);
@@ -401,8 +384,7 @@ py_rawstor_object_create_at(PyObject* Py_UNUSED(self), PyObject* args) {
     PyObjectSpec* py_spec = (PyObjectSpec*)py_spec_obj;
     struct RawstorObjectSpec spec = {
         .size = py_spec->size,
-        .mirror_count = py_spec->mirror_count != 0 ? py_spec->mirror_count
-                                                   : count_uris(location),
+        .mirror_count = py_spec->mirror_count,
     };
 
     char target[65536];
