@@ -28,7 +28,7 @@ extern "C" {
  * when creating a new object (via rawstor_target_create()).
  *
  * When used with rawstor_target_create(), the size field must be set to the
- * desired size of the object to be created, and mirror_count must equal the
+ * desired size of the object to be created, and mirrors must equal the
  * number of URIs in the target string being created -- mandatory, not a
  * convenience the caller can opt out of (mismatch, including leaving it 0,
  * fails the create with -EINVAL): a caller that doesn't already know the
@@ -43,8 +43,8 @@ extern "C" {
  * @see rawstor_target_create
  */
 struct RawstorObjectSpec {
-    uint64_t size;             /**< Size of the object in bytes. */
-    unsigned int mirror_count; /**< Number of URIs configured for the target. */
+    uint64_t size;        /**< Size of the object in bytes. */
+    unsigned int mirrors; /**< Number of URIs configured for the target. */
 };
 
 /**
@@ -107,7 +107,7 @@ struct RawstorObjectMeta {
  * Given a target string (as defined in the Rawstor location/target syntax),
  * this function fills a RawstorObjectSpec structure with information about
  * the object: its size, and the number of URIs configured for it
- * (mirror_count -- computed locally from @p target, no backend involved).
+ * (mirrors -- computed locally from @p target, no backend involved).
  *
  * The target may be a single location‑UUID pair or a comma‑separated list of
  * such pairs (mirroring / data locality). All UUIDs in a list must be
@@ -209,7 +209,7 @@ int rawstor_target_meta(
  *                  NULL and must be a valid target as per the library's format.
  * @param spec      Pointer to a RawstorObjectSpec structure containing the
  *                  desired object shape. The size field must be set to the
- *                  expected size of the object. mirror_count is mandatory
+ *                  expected size of the object. mirrors is mandatory
  *                  and must equal the number of URIs in @p target (@c
  *                  -EINVAL otherwise, including when left 0). Only read
  *                  while this call is being queued -- need not stay valid
@@ -217,7 +217,7 @@ int rawstor_target_meta(
  * @param cb        Callback invoked on completion.
  *                  - @p result is zero on success, or a negative errno on
  *                    failure (e.g. @c -EINVAL for invalid target or spec,
- *                    or a mirror_count that doesn't match @p target's own
+ *                    or a mirrors value that doesn't match @p target's own
  *                    URI count; @c -ENOMEM, @c -EIO, etc; implementation‑
  *                    defined beyond that).
  *                  - @p data is the same pointer passed as @p data below.
