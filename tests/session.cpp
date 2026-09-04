@@ -256,7 +256,7 @@ void Session::cmd_spec_request() {
 void Session::cmd_spec_response(
     uint32_t magic, uint16_t cid, int32_t res, uint64_t size
 ) {
-    // Unlike the no-payload commands (WRITE/DISCARD/FLUSH/SET_STATE),
+    // Unlike the no-payload commands (WRITE/DISCARD/FLUSH/SET_SYNC_STATE),
     // where body.res is a plain 0-on-success/-errno-on-failure result,
     // SPEC's response carries a payload: body.res is instead the payload
     // byte count on success (what the client's generic _basic_request()
@@ -360,7 +360,7 @@ void Session::cmd_meta(
 
 void Session::cmd_set_state_request() {
     _server.read(
-        "RAWSTOR_CMD_SET_STATE <<<", sizeof(RawstorOSTFrameSyncState),
+        "RAWSTOR_CMD_SET_SYNC_STATE <<<", sizeof(RawstorOSTFrameSyncState),
         [](const void*) {}
     );
 }
@@ -371,7 +371,7 @@ void Session::cmd_set_state_response(
     RawstorOSTFrameResponse response = {
         .head{
             .magic = magic,
-            .cmd = RAWSTOR_CMD_SET_STATE,
+            .cmd = RAWSTOR_CMD_SET_SYNC_STATE,
             .cid = cid,
         },
         .body = {
@@ -379,7 +379,9 @@ void Session::cmd_set_state_response(
             .hash = 0,
         },
     };
-    _server.write("RAWSTOR_CMD_SET_STATE >>>", &response, sizeof(response));
+    _server.write(
+        "RAWSTOR_CMD_SET_SYNC_STATE >>>", &response, sizeof(response)
+    );
 }
 
 void Session::cmd_set_state(uint32_t magic, uint16_t cid, int32_t res) {

@@ -685,7 +685,7 @@ TEST(MirrorOstTest, read_failover_and_repair) {
 
 /*
  * Degrade & continue: a write fails on one member, the survivor durably
- * records the exclusion (SET_STATE) and the write is acknowledged; the
+ * records the exclusion (SET_SYNC_STATE) and the write is acknowledged; the
  * next write goes to the survivor only.
  */
 TEST(MirrorOstTest, degrade_and_continue) {

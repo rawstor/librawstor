@@ -775,7 +775,7 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
                 client->_flush(head, basic);
                 break;
             }
-            case RAWSTOR_CMD_SET_STATE: {
+            case RAWSTOR_CMD_SET_SYNC_STATE: {
                 std::vector<unsigned char> body_data = co_await recv_frame_part(
                     stream, sizeof(RawstorOSTFrameSyncStateBody), fd,
                     "request body", &stream_failed
@@ -1287,7 +1287,7 @@ rawstd::DetachedTask Client::_set_state_task(
     bool send_failed = false;
     try {
         co_await client->_send_response(
-            RAWSTOR_CMD_SET_STATE, head.cid, result, 0
+            RAWSTOR_CMD_SET_SYNC_STATE, head.cid, result, 0
         );
     } catch (const std::exception& e) {
         rawstd_error("%s\n", e.what());
