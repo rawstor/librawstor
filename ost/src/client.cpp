@@ -1173,6 +1173,7 @@ rawstd::DetachedTask Client::_spec_task(
         } else {
             RawstorOSTFrameSpecPayload body_out{
                 .size = spec.size,
+                .mirror_count = (uint32_t)spec.mirror_count,
             };
             std::vector<unsigned char> data(sizeof(body_out));
             memcpy(data.data(), &body_out, sizeof(body_out));

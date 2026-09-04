@@ -435,7 +435,7 @@ TEST(OstLifecycleTest, create_spec_remove) {
 
     {
         rawstor::tests::Session s(server);
-        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, meta_body.size);
+        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, meta_body.size, 1);
     }
 
     {
@@ -509,7 +509,7 @@ TEST(OstLifecycleTest, create_at_default_spec_remove) {
 
     {
         rawstor::tests::Session s(server);
-        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20);
+        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 1);
     }
 
     {
@@ -558,7 +558,7 @@ TEST(OstLifecycleTest, create_at_spec_remove) {
 
     {
         rawstor::tests::Session s(server);
-        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20);
+        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 1);
     }
 
     {
