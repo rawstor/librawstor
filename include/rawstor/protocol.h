@@ -139,16 +139,18 @@ struct RawstorOSTFrameResponse {
 } RAWSTOR_PACKED;
 
 /*
- * Just the object's size -- SPEC response payload, cheaper than META's. No
- * obj_id, same reasoning as RawstorOSTFrameMetaPayload above. Sent as a
- * RawstorOSTFrameResponse (body.res = sizeof(this), body.hash covering it)
- * immediately followed by this payload -- no combined frame struct, since
- * every actual sender/receiver already handles header and payload as two
- * separate pieces (a fixed-size header read, then a body.res-sized payload
- * read, or a two-part iovec write).
+ * The object's size and mirror_count -- SPEC response payload, cheaper than
+ * META's (no consistency state). No obj_id, same reasoning as
+ * RawstorOSTFrameMetaPayload above. Sent as a RawstorOSTFrameResponse
+ * (body.res = sizeof(this), body.hash covering it) immediately followed by
+ * this payload -- no combined frame struct, since every actual sender/
+ * receiver already handles header and payload as two separate pieces (a
+ * fixed-size header read, then a body.res-sized payload read, or a two-part
+ * iovec write).
  */
 struct RawstorOSTFrameSpecPayload {
     uint64_t size;
+    uint32_t mirror_count;
 } RAWSTOR_PACKED;
 
 #ifdef __cplusplus

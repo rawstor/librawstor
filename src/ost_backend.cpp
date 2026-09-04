@@ -1218,6 +1218,7 @@ rawstd::Task<RawstorObjectSpec> Backend::spec(const RawstdUUID& id) {
                 static_cast<const void*>(response.data())
             );
         ret.size = body.size;
+        ret.mirror_count = body.mirror_count;
     } catch (const std::system_error&) {
         throw;
     } catch (...) {
