@@ -57,6 +57,22 @@ static void version(void) {
 static void sact_handler(int RAWSTD_UNUSED s) {
 }
 
+// rawstor_target_create()/rawstor_location_create() now require
+// RawstorObjectSpec::mirror_count to exactly equal the number of
+// ','-separated URIs in the target/location string -- when the caller
+// doesn't pass -r/--replicas to state (and have checked) that count
+// explicitly, this derives it directly from the same string so the create
+// still succeeds by construction.
+static uint32_t count_uris(const char* s) {
+    uint32_t count = 1;
+    for (const char* p = s; *p != '\0'; p++) {
+        if (*p == ',') {
+            count++;
+        }
+    }
+    return count;
+}
+
 static void command_create_usage(void) {
     fprintf(
         stdout,
@@ -194,7 +210,7 @@ static int command_create(int argc, char** argv) {
         return EX_USAGE;
     }
 
-    uint32_t mirror_count = 0;
+    uint32_t mirror_count;
     if (replicas_arg != NULL) {
         char* endptr = NULL;
         errno = 0;
@@ -212,6 +228,9 @@ static int command_create(int argc, char** argv) {
             return EX_USAGE;
         }
         mirror_count = (uint32_t)replicas;
+    } else {
+        mirror_count =
+            count_uris(target_arg != NULL ? target_arg : location_arg);
     }
 
     if (target_arg != NULL) {

@@ -100,7 +100,7 @@ rawstor::blk::Backend* open_blk_backend(
 
     rawstor::Target target({rawstd::URI(location, uuid_string)});
 
-    RawstorObjectSpec spec{.size = 1u << 20, .mirror_count = 0};
+    RawstorObjectSpec spec{.size = 1u << 20, .mirror_count = 1};
     run(queue, target.create(queue, spec));
 
     object = run(queue, target.open(queue));

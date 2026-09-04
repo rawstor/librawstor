@@ -273,7 +273,7 @@ TEST(MirrorQuorumTest, open_refused_without_quorum_n2) {
     Queue queue(16);
     Members members(2, "00000000-0000-7000-8000-0000000000a0");
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .mirror_count = 0};
+    RawstorObjectSpec spec{.size = 1ull << 20, .mirror_count = 2};
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
     members.drop(1);
@@ -288,7 +288,7 @@ TEST(MirrorQuorumTest, degraded_open_with_quorum_n3) {
     Queue queue(16);
     Members members(3, "00000000-0000-7000-8000-0000000000a1");
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .mirror_count = 0};
+    RawstorObjectSpec spec{.size = 1ull << 20, .mirror_count = 3};
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
     members.drop(2);
@@ -327,7 +327,7 @@ TEST(MirrorQuorumTest, stale_arm_resynced) {
     Queue queue(16);
     Members members(2, "00000000-0000-7000-8000-0000000000a2");
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .mirror_count = 0};
+    RawstorObjectSpec spec{.size = 1ull << 20, .mirror_count = 2};
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
     /* Member 0 is one sync set ahead of member 1. */
@@ -379,7 +379,7 @@ TEST(MirrorQuorumTest, split_brain_refused) {
     Queue queue(16);
     Members members(2, "00000000-0000-7000-8000-0000000000a3");
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .mirror_count = 0};
+    RawstorObjectSpec spec{.size = 1ull << 20, .mirror_count = 2};
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
     /* Disjoint histories sharing only a common ancestor. */
@@ -407,7 +407,7 @@ TEST(MirrorQuorumTest, all_dirty_same_sync_id_opens) {
     Queue queue(16);
     Members members(2, "00000000-0000-7000-8000-0000000000a4");
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .mirror_count = 0};
+    RawstorObjectSpec spec{.size = 1ull << 20, .mirror_count = 2};
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
     /* Unclean shutdown: every copy DIRTY within the same sync set. */
@@ -440,7 +440,7 @@ TEST(MirrorQuorumTest, syncing_arm_resynced) {
     Queue queue(16);
     Members members(2, "00000000-0000-7000-8000-0000000000a5");
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .mirror_count = 0};
+    RawstorObjectSpec spec{.size = 1ull << 20, .mirror_count = 2};
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
     RawstorObjectSyncState established{};
@@ -488,7 +488,7 @@ TEST(MirrorResyncTest, resync_under_concurrent_writes) {
     Members members(2, "00000000-0000-7000-8000-0000000000a7");
 
     const uint64_t size = 8ull << 20;
-    RawstorObjectSpec spec{.size = size, .mirror_count = 0};
+    RawstorObjectSpec spec{.size = size, .mirror_count = 2};
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
     RawstorObjectSyncState fresh{};
@@ -546,7 +546,7 @@ TEST(MirrorResyncTest, probe_rejoins_recreated_arm) {
     Queue queue(16);
     Members members(3, "00000000-0000-7000-8000-0000000000a8");
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .mirror_count = 0};
+    RawstorObjectSpec spec{.size = 1ull << 20, .mirror_count = 3};
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
     /* The third member is lost entirely (disk gone). */
@@ -559,7 +559,8 @@ TEST(MirrorResyncTest, probe_rejoins_recreated_arm) {
     object_write(queue, object, ping.data(), ping.size(), 0, 0);
 
     /* The member is reprovisioned empty; the probe picks it up and resyncs. */
-    ASSERT_EQ(target_create(queue, members.target(2), spec), 0);
+    RawstorObjectSpec member_spec{.size = 1ull << 20, .mirror_count = 1};
+    ASSERT_EQ(target_create(queue, members.target(2), member_spec), 0);
 
     EXPECT_TRUE(
         wait_member_synced(queue, members.target(0), members.target(2))
@@ -586,7 +587,7 @@ TEST(MirrorQuorumTest, clean_close_stable_identity) {
     Queue queue(16);
     Members members(2, "00000000-0000-7000-8000-0000000000a6");
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .mirror_count = 0};
+    RawstorObjectSpec spec{.size = 1ull << 20, .mirror_count = 2};
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
     /* First session establishes the sync set. */

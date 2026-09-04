@@ -404,12 +404,13 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) {
     validate_different_uris(_uris);
     validate_same_uuid(_uris);
 
-    // 0 means "caller doesn't know/care" and is not checked; a nonzero
-    // value that disagrees with the target's own URI count is a caller
-    // bug (e.g. reusing a Spec read from a different target) worth
+    // Mandatory: the caller must always state how many copies it thinks
+    // it's creating, and it must agree with the target's own URI count --
+    // a disagreement is a caller bug (e.g. reusing a Spec read from a
+    // different target, or a miscounted/misconfigured URI list) worth
     // catching here rather than silently creating something narrower or
     // wider than intended.
-    if (sp.mirror_count != 0 && sp.mirror_count != _uris.size()) {
+    if (sp.mirror_count != _uris.size()) {
         rawstd_error(
             "Spec mirror_count (%u) does not match target's URI count "
             "(%zu)\n",
