@@ -26,15 +26,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `rawstor_target_create()`/`rawstor_location_create()` now mandatorily
   reject `-EINVAL` unless `RawstorObjectSpec`'s new `mirror_count` exactly
   equals the number of URIs in the target/location string being created
-  (no "0 means don't check" opt-out) -- every caller (`rawstor create`,
-  `pyrawstor`, `rawstor-ost`'s own ALLOCATE relay) now states its
-  intended copy count explicitly, catching a miscounted or misconfigured
-  mirror list at create time instead of silently creating fewer (or
-  more) copies than intended.
+  (no "0 means don't check" opt-out) -- `pyrawstor`'s `ObjectSpec` and
+  `rawstor create`'s `-r`/`--replicas` both default `mirror_count` to 1,
+  and `rawstor-ost`'s own ALLOCATE relay derives it from the target list
+  it's already fanning out to; creating a mirrored object now always
+  requires stating the intended copy count explicitly, catching a
+  miscounted or misconfigured mirror list at create time instead of
+  silently creating fewer (or more) copies than intended.
 - `-r`/`--replicas N` for `rawstor create`: lets the caller state its
   intended total copy count (N > 0) explicitly for the check above;
-  omitted, it's derived from the number of comma-separated
-  `LOCATION`/`TARGET` entries instead.
+  defaults to 1 when omitted, so creating a mirrored object always
+  requires stating the replica count explicitly (the mismatch fails at
+  `rawstor_target_create()`, not silently).
 - Mirror quorum, degrade & continue, read failover: opening a mirrored
   object now tolerates unreachable members as long as a strict majority is
   reachable (`-ENOTCONN` otherwise; two members need both), comparing each
