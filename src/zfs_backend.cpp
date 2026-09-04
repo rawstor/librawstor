@@ -231,7 +231,7 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
     // the same command as creation means there is never a window where
     // the zvol exists without one.
     RawstorObjectSyncState initial{};
-    initial.state = RAWSTOR_OBJECT_STATE_CLEAN;
+    initial.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
     std::string prop =
         std::string(rawstor_property) + "=" + blkdev_meta_encode(initial);
 

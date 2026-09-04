@@ -300,7 +300,7 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
         std::exception_ptr eptr;
         try {
             RawstorObjectSyncState sync_state{};
-            sync_state.state = RAWSTOR_OBJECT_STATE_CLEAN;
+            sync_state.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
             OnDiskMeta disk = meta_to_disk(sync_state);
 
             co_await _queue.pwrite(meta_fd, &disk, sizeof(disk), 0, true);

@@ -56,9 +56,9 @@ struct RawstorObjectSpec {
  * SYNCING - a resync onto this copy was started and has not completed; the
  *           copy content must not be trusted.
  */
-#define RAWSTOR_OBJECT_STATE_CLEAN 0u
-#define RAWSTOR_OBJECT_STATE_DIRTY 1u
-#define RAWSTOR_OBJECT_STATE_SYNCING 2u
+#define RAWSTOR_OBJECT_SYNC_STATE_CLEAN 0u
+#define RAWSTOR_OBJECT_SYNC_STATE_DIRTY 1u
+#define RAWSTOR_OBJECT_SYNC_STATE_SYNCING 2u
 
 /** Number of ancestor sync ids kept in RawstorObjectMeta. */
 #define RAWSTOR_OBJECT_SYNC_ID_HISTORY 4
@@ -80,7 +80,7 @@ struct RawstorObjectSyncState {
     uint64_t sync_id; /**< Id of the sync set this copy belongs to. */
     /** Ancestor sync ids, newest first; 0 marks unused entries. */
     uint64_t sync_id_history[RAWSTOR_OBJECT_SYNC_ID_HISTORY];
-    uint32_t state; /**< One of RAWSTOR_OBJECT_STATE_*. */
+    unsigned int state; /**< One of RAWSTOR_OBJECT_SYNC_STATE_*. */
 };
 
 /**

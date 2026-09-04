@@ -385,7 +385,7 @@ TEST(FileLifecycleTest, meta_set_state) {
     res = target_meta(*queue, target, &meta);
     EXPECT_EQ(res, 0);
     EXPECT_EQ(meta.spec.size, 1ull << 20);
-    EXPECT_EQ(meta.sync_state.state, RAWSTOR_OBJECT_STATE_CLEAN);
+    EXPECT_EQ(meta.sync_state.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
     EXPECT_EQ(meta.sync_state.epoch, 0u);
     EXPECT_EQ(meta.sync_state.sync_id, 0u);
     for (size_t i = 0; i < RAWSTOR_OBJECT_SYNC_ID_HISTORY; ++i) {
@@ -396,14 +396,14 @@ TEST(FileLifecycleTest, meta_set_state) {
     next.epoch = 3;
     next.sync_id = 0x1122334455667788ull;
     next.sync_id_history[0] = 0xaabbccddeeff0011ull;
-    next.state = RAWSTOR_OBJECT_STATE_DIRTY;
+    next.state = RAWSTOR_OBJECT_SYNC_STATE_DIRTY;
     res = target_set_sync_state(*queue, target, next);
     EXPECT_EQ(res, 0);
 
     res = target_meta(*queue, target, &meta);
     EXPECT_EQ(res, 0);
     EXPECT_EQ(meta.spec.size, 1ull << 20);
-    EXPECT_EQ(meta.sync_state.state, RAWSTOR_OBJECT_STATE_DIRTY);
+    EXPECT_EQ(meta.sync_state.state, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
     EXPECT_EQ(meta.sync_state.epoch, 3u);
     EXPECT_EQ(meta.sync_state.sync_id, 0x1122334455667788ull);
     EXPECT_EQ(meta.sync_state.sync_id_history[0], 0xaabbccddeeff0011ull);
@@ -426,7 +426,7 @@ TEST(OstLifecycleTest, create_spec_remove) {
         .epoch = 7,
         .sync_id = 0x1122334455667788ull,
         .sync_id_history = {0xaabbccddeeff0011ull, 0, 0, 0},
-        .state = RAWSTOR_OBJECT_STATE_DIRTY,
+        .state = RAWSTOR_OBJECT_SYNC_STATE_DIRTY,
     };
 
     {
@@ -478,14 +478,14 @@ TEST(OstLifecycleTest, create_spec_remove) {
         EXPECT_EQ(meta.sync_state.epoch, 7u);
         EXPECT_EQ(meta.sync_state.sync_id, 0x1122334455667788ull);
         EXPECT_EQ(meta.sync_state.sync_id_history[0], 0xaabbccddeeff0011ull);
-        EXPECT_EQ(meta.sync_state.state, RAWSTOR_OBJECT_STATE_DIRTY);
+        EXPECT_EQ(meta.sync_state.state, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
     }
 
     {
         RawstorObjectSyncState sync_state{};
         sync_state.epoch = 8;
         sync_state.sync_id = 0x99ull;
-        sync_state.state = RAWSTOR_OBJECT_STATE_CLEAN;
+        sync_state.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
         ssize_t res = target_set_sync_state(*queue, target, sync_state);
         EXPECT_EQ(res, 0);
     }

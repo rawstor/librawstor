@@ -10,7 +10,7 @@ namespace {
 
 TEST(BlkdevMetaTest, encode_decode_round_trip) {
     RawstorObjectSyncState sync_state{};
-    sync_state.state = RAWSTOR_OBJECT_STATE_DIRTY;
+    sync_state.state = RAWSTOR_OBJECT_SYNC_STATE_DIRTY;
     sync_state.epoch = 7;
     sync_state.sync_id = 0x1122334455667788ull;
     sync_state.sync_id_history[0] = 0xaabbccddeeff0011ull;
