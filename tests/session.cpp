@@ -280,23 +280,31 @@ void Session::cmd_spec_response(
         return;
     }
 
-    RawstorOSTFrameSpecBody spec = {
+    RawstorOSTFrameSpecPayload spec = {
         .size = size,
     };
-    RawstorOSTFrameSpecResponse response = {
+    RawstorOSTFrameResponse response = {
         .head{
             .magic = magic,
             .cmd = RAWSTOR_CMD_SPEC,
             .cid = cid,
         },
-        .body =
-            {
-                .hash = rawstd_hash_scalar(&spec, sizeof(spec)),
-                .res = static_cast<int32_t>(sizeof(spec)),
-            },
-        .spec = spec,
+        .body = {
+            .hash = rawstd_hash_scalar(&spec, sizeof(spec)),
+            .res = static_cast<int32_t>(sizeof(spec)),
+        },
     };
-    _server.write("RAWSTOR_CMD_SPEC >>>", &response, sizeof(response));
+    iovec iov[2] = {
+        {
+            .iov_base = &response,
+            .iov_len = sizeof(response),
+        },
+        {
+            .iov_base = &spec,
+            .iov_len = sizeof(spec),
+        },
+    };
+    _server.writev("RAWSTOR_CMD_SPEC >>>", iov, sizeof(iov) / sizeof(iov[0]));
 }
 
 void Session::cmd_spec(
@@ -314,7 +322,7 @@ void Session::cmd_meta_request() {
 
 void Session::cmd_meta_response(
     uint32_t magic, uint16_t cid, int32_t res,
-    const RawstorOSTFrameMetaBody& meta
+    const RawstorOSTFrameMetaPayload& meta
 ) {
     // Same res/payload-size convention as cmd_spec_response() above.
     if (res < 0) {
@@ -333,25 +341,33 @@ void Session::cmd_meta_response(
         return;
     }
 
-    RawstorOSTFrameMetaResponse response = {
+    RawstorOSTFrameResponse response = {
         .head{
             .magic = magic,
             .cmd = RAWSTOR_CMD_META,
             .cid = cid,
         },
-        .body =
-            {
-                .hash = rawstd_hash_scalar(&meta, sizeof(meta)),
-                .res = static_cast<int32_t>(sizeof(meta)),
-            },
-        .meta = meta,
+        .body = {
+            .hash = rawstd_hash_scalar(&meta, sizeof(meta)),
+            .res = static_cast<int32_t>(sizeof(meta)),
+        },
     };
-    _server.write("RAWSTOR_CMD_META >>>", &response, sizeof(response));
+    iovec iov[2] = {
+        {
+            .iov_base = &response,
+            .iov_len = sizeof(response),
+        },
+        {
+            .iov_base = const_cast<RawstorOSTFrameMetaPayload*>(&meta),
+            .iov_len = sizeof(meta),
+        },
+    };
+    _server.writev("RAWSTOR_CMD_META >>>", iov, sizeof(iov) / sizeof(iov[0]));
 }
 
 void Session::cmd_meta(
     uint32_t magic, uint16_t cid, int32_t res,
-    const RawstorOSTFrameMetaBody& meta
+    const RawstorOSTFrameMetaPayload& meta
 ) {
     cmd_meta_request();
     cmd_meta_response(magic, cid, res, meta);

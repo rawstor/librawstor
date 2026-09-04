@@ -420,7 +420,7 @@ TEST(OstLifecycleTest, create_spec_remove) {
     std::string uuid = "00000000-0000-7000-8000-000000000003";
     std::string target = rawstd::URI(location_uri, uuid).str();
 
-    RawstorOSTFrameMetaBody meta_body = {
+    RawstorOSTFrameMetaPayload meta_body = {
         .size = 1ull << 20,
         .epoch = 7,
         .sync_id = 0x1122334455667788ull,
