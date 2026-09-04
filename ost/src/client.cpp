@@ -681,16 +681,16 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
             case RAWSTOR_CMD_ALLOCATE: {
                 std::vector<unsigned char> payload_data =
                     co_await recv_frame_part(
-                        stream, sizeof(RawstorOSTFrameBasicPayload), fd,
+                        stream, sizeof(RawstorOSTFrameSpecPayload), fd,
                         "request payload", &stream_failed
                     );
                 client = weak.lock();
                 if (client == nullptr) {
                     co_return;
                 }
-                RawstorOSTFrameBasicPayload basic;
-                memcpy(&basic, payload_data.data(), sizeof(basic));
-                client->_allocate(head, basic);
+                RawstorOSTFrameSpecPayload spec;
+                memcpy(&spec, payload_data.data(), sizeof(spec));
+                client->_allocate(head, spec);
                 break;
             }
             case RAWSTOR_CMD_RELEASE: {
@@ -975,7 +975,7 @@ rawstd::DetachedTask Client::_list_task(
     }
 
     RawstorPaginationToken token;
-    memcpy(token.bytes, payload.obj_id, sizeof(payload.obj_id));
+    memcpy(token.bytes, payload.object_id, sizeof(payload.object_id));
 
     RawstorStringList* targets;
     int result = 0;
@@ -1046,7 +1046,7 @@ void Client::_list(
 
 rawstd::DetachedTask Client::_allocate_task(
     std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-    RawstorOSTFrameBasicPayload payload
+    RawstorOSTFrameSpecPayload payload
 ) {
     std::shared_ptr<Client> client = co_await _close_current_object(weak);
     if (client == nullptr) {
@@ -1054,13 +1054,19 @@ rawstd::DetachedTask Client::_allocate_task(
     }
 
     RawstdUUID uuid;
-    memcpy(uuid.bytes, payload.obj_id, sizeof(payload.obj_id));
+    memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
 
     std::vector<rawstd::URI> targets = client->_targets(uuid);
 
+    // payload.mirrors is the requesting client's own mirrors count for
+    // *its* target string, not this server's -- this relay's own
+    // Target::create() (via co_target_create() below) needs the count
+    // for *this server's own* locally configured target list instead,
+    // which is targets.size() here, same as every other relay op
+    // (_spec_task()/_meta_task()/etc.) already derives it.
     RawstorObjectSpec spec{
-        .size = payload.val,
-        .mirror_count = (unsigned int)targets.size(),
+        .size = payload.size,
+        .mirrors = (unsigned int)targets.size(),
     };
 
     int result = 0;
@@ -1087,7 +1093,7 @@ rawstd::DetachedTask Client::_allocate_task(
 }
 
 void Client::_allocate(
-    const RawstorOSTFrameHead& head, const RawstorOSTFrameBasicPayload& payload
+    const RawstorOSTFrameHead& head, const RawstorOSTFrameSpecPayload& payload
 ) {
     _allocate_task(weak_from_this(), head, payload);
     rawstd::DetachedTask::rethrow_if_pending();
@@ -1103,7 +1109,7 @@ rawstd::DetachedTask Client::_release_task(
     }
 
     RawstdUUID uuid;
-    memcpy(uuid.bytes, payload.obj_id, sizeof(payload.obj_id));
+    memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
 
     std::vector<rawstd::URI> targets = client->_targets(uuid);
 
@@ -1150,7 +1156,7 @@ rawstd::DetachedTask Client::_spec_task(
     }
 
     RawstdUUID uuid;
-    memcpy(uuid.bytes, payload.obj_id, sizeof(payload.obj_id));
+    memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
 
     std::vector<rawstd::URI> targets = client->_targets(uuid);
 
@@ -1172,8 +1178,9 @@ rawstd::DetachedTask Client::_spec_task(
             );
         } else {
             RawstorOSTFrameSpecPayload body_out{
+                .object_id = {},
                 .size = spec.size,
-                .mirror_count = (uint32_t)spec.mirror_count,
+                .mirrors = (uint32_t)spec.mirrors,
             };
             std::vector<unsigned char> data(sizeof(body_out));
             memcpy(data.data(), &body_out, sizeof(body_out));
@@ -1209,7 +1216,7 @@ rawstd::DetachedTask Client::_meta_task(
     }
 
     RawstdUUID uuid;
-    memcpy(uuid.bytes, payload.obj_id, sizeof(payload.obj_id));
+    memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
 
     std::vector<rawstd::URI> targets = client->_targets(uuid);
 
@@ -1273,7 +1280,7 @@ rawstd::DetachedTask Client::_set_state_task(
     }
 
     RawstdUUID uuid;
-    memcpy(uuid.bytes, payload.obj_id, sizeof(payload.obj_id));
+    memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
 
     std::vector<rawstd::URI> targets = client->_targets(uuid);
 
@@ -1378,7 +1385,7 @@ rawstd::DetachedTask Client::_set_object_task(
         queue = client->_queue;
 
         RawstdUUID uuid;
-        memcpy(uuid.bytes, payload.obj_id, sizeof(payload.obj_id));
+        memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
         target = rawstd::URI::uris(client->_targets(uuid));
     }
 
@@ -1856,7 +1863,7 @@ rawstd::Task<void> Client::_send_response(
                 .cmd = type,
                 .cid = cid,
             },
-        .body = {
+        .payload = {
             .hash = hash,
             .res = result,
         },
@@ -1882,7 +1889,7 @@ rawstd::Task<void> Client::_send_response(
                 .cmd = type,
                 .cid = cid,
             },
-        .body = {
+        .payload = {
             .hash = hash,
             .res = result,
         },

@@ -869,7 +869,7 @@ void auto_respond_writes_then_flush_and_release(
                                 .cmd = RAWSTOR_CMD_WRITE,
                                 .cid = head.cid,
                             },
-                            .body = {.hash = 0, .res = write_res},
+                            .payload = {.hash = 0, .res = write_res},
                         };
                         server.write(
                             "RAWSTOR_CMD_WRITE >>>", &response, sizeof(response)
@@ -892,7 +892,7 @@ void auto_respond_writes_then_flush_and_release(
                                 .cmd = RAWSTOR_CMD_FLUSH,
                                 .cid = head.cid,
                             },
-                            .body = {.hash = 0, .res = flush_res},
+                            .payload = {.hash = 0, .res = flush_res},
                         };
                         server.write(
                             "RAWSTOR_CMD_FLUSH >>>", &response, sizeof(response)
@@ -909,7 +909,7 @@ void auto_respond_writes_then_flush_and_release(
                                 .cmd = RAWSTOR_CMD_RELEASE,
                                 .cid = 0,
                             },
-                            .body = {.hash = 0, .res = release_res},
+                            .payload = {.hash = 0, .res = release_res},
                         };
                         server.write(
                             "RAWSTOR_CMD_RELEASE >>>", &release_response,
@@ -984,7 +984,7 @@ TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
             .cmd = RAWSTOR_CMD_SET_OBJECT,
             .cid = 0,
         },
-        .body = {.hash = 0, .res = 0},
+        .payload = {.hash = 0, .res = 0},
     };
     server.write(
         "RAWSTOR_CMD_SET_OBJECT >>>", &set_object_response,
@@ -1004,7 +1004,7 @@ TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
                     .cmd = RAWSTOR_CMD_FLUSH,
                     .cid = cid,
                 },
-                .body = {.hash = 0, .res = 0},
+                .payload = {.hash = 0, .res = 0},
             };
             server.write(
                 "RAWSTOR_CMD_WRITE >>> (wrong cmd)", &wrong_cmd_response,
@@ -1032,7 +1032,7 @@ TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
                     .cmd = RAWSTOR_CMD_SET_OBJECT,
                     .cid = 0,
                 },
-                .body = {.hash = 0, .res = 0},
+                .payload = {.hash = 0, .res = 0},
             };
             server.write(
                 "RAWSTOR_CMD_SET_OBJECT >>>", &retry_set_object_response,
@@ -1165,7 +1165,7 @@ TEST(OstIOTest, write_many_concurrent_wire_errors_with_backoff) {
             .cmd = RAWSTOR_CMD_SET_OBJECT,
             .cid = 0,
         },
-        .body = {.hash = 0, .res = 0},
+        .payload = {.hash = 0, .res = 0},
     };
     server.write(
         "RAWSTOR_CMD_SET_OBJECT >>>", &set_object_response,
@@ -1194,7 +1194,7 @@ TEST(OstIOTest, write_many_concurrent_wire_errors_with_backoff) {
                             .cmd = RAWSTOR_CMD_SET_OBJECT,
                             .cid = 0,
                         },
-                        .body = {.hash = 0, .res = 0},
+                        .payload = {.hash = 0, .res = 0},
                     };
                     server.write(
                         "RAWSTOR_CMD_SET_OBJECT >>>",

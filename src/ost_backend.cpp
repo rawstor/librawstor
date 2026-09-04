@@ -58,11 +58,11 @@ int validate_result(size_t size, size_t result) noexcept {
 }
 
 // Connection::_with_retry() no longer distinguishes a well-formed
-// rejection from the backend (response->body.res < 0) from a broken/
+// rejection from the backend (response->payload.res < 0) from a broken/
 // malformed wire -- every failure here just reconnects and retries, up
 // to the same rawstor_opts_io_attempts() budget, unless it's one
 // is_permanent_backend_error() (see connection.cpp) already knows can
-// never succeed on retry. EBADMSG is one such body.res value: the OST
+// never succeed on retry. EBADMSG is one such payload.res value: the OST
 // server sends it (see ost/src/client.cpp) only when the payload it just
 // received doesn't hash to what the client declared, meaning the client
 // and server have lost agreement on where in the byte stream the current
@@ -79,8 +79,8 @@ int validate_response(const RawstorOSTFrameResponse* response) noexcept {
         return EPROTO;
     }
 
-    if (response->body.res < 0) {
-        int error = -response->body.res;
+    if (response->payload.res < 0) {
+        int error = -response->payload.res;
         rawstd_error("Server error: %s\n", strerror(error));
         return error;
     }
@@ -339,15 +339,15 @@ public:
             error = validate_cmd(response->head.cmd, RAWSTOR_CMD_READ);
         }
 
-        if (!error && response->body.res > 0) {
+        if (!error && response->payload.res > 0) {
             // Trust the server's own reported byte count for how much
             // body follows, not our own originally-requested _size.
-            _hash = response->body.hash;
-            return static_cast<size_t>(response->body.res);
+            _hash = response->payload.hash;
+            return static_cast<size_t>(response->payload.res);
         }
 
         // No body follows either way: a real error, or a genuine
-        // zero-byte read (response->body.res == 0, nothing to send).
+        // zero-byte read (response->payload.res == 0, nothing to send).
         _dispatch(0, error);
         return 0;
     }
@@ -422,15 +422,15 @@ public:
             error = validate_cmd(response->head.cmd, RAWSTOR_CMD_READ);
         }
 
-        if (!error && response->body.res > 0) {
+        if (!error && response->payload.res > 0) {
             // Trust the server's own reported byte count for how much
             // body follows, not our own originally-requested _size.
-            _hash = response->body.hash;
-            return static_cast<size_t>(response->body.res);
+            _hash = response->payload.hash;
+            return static_cast<size_t>(response->payload.res);
         }
 
         // No body follows either way: a real error, or a genuine
-        // zero-byte read (response->body.res == 0, nothing to send).
+        // zero-byte read (response->payload.res == 0, nothing to send).
         _dispatch(0, error);
         return 0;
     }
@@ -519,7 +519,7 @@ public:
         }
 
         _dispatch(
-            !error && response != nullptr ? response->body.res : 0, error
+            !error && response != nullptr ? response->payload.res : 0, error
         );
 
         // A write response never carries a body, regardless of error.
@@ -593,7 +593,7 @@ public:
         }
 
         _dispatch(
-            !error && response != nullptr ? response->body.res : 0, error
+            !error && response != nullptr ? response->payload.res : 0, error
         );
 
         // A write response never carries a body, regardless of error.
@@ -651,7 +651,7 @@ public:
         }
 
         _dispatch(
-            !error && response != nullptr ? response->body.res : 0, error
+            !error && response != nullptr ? response->payload.res : 0, error
         );
 
         // Neither a discard nor a write-zeroes response ever carries a
@@ -705,7 +705,7 @@ public:
                     .cid = cid,
                 },
             .payload = {
-                .obj_id = {},
+                .object_id = {},
                 .offset = 0,
                 .val = 0,
             },
@@ -736,7 +736,7 @@ public:
 };
 
 // SET_SYNC_STATE's request carries the full RawstorOSTFrameMetaPayload (not
-// just obj_id/offset/val like BackendOpBasic below), so it needs its own
+// just object_id/offset/val like BackendOpBasic below), so it needs its own
 // request shape -- the response is otherwise the same no-payload
 // acknowledgement as BackendOpFlush above.
 class BackendOpSetState final : public BackendOp {
@@ -758,7 +758,7 @@ public:
                     .cid = cid,
                 },
             .payload = {
-                .obj_id = {},
+                .object_id = {},
                 .epoch = sync_state.epoch,
                 .sync_id = sync_state.sync_id,
                 .sync_id_history = {},
@@ -766,7 +766,8 @@ public:
             },
         }) {
         memcpy(
-            _request.payload.obj_id, id.bytes, sizeof(_request.payload.obj_id)
+            _request.payload.object_id, id.bytes,
+            sizeof(_request.payload.object_id)
         );
         memcpy(
             _request.payload.sync_id_history, sync_state.sync_id_history,
@@ -800,11 +801,70 @@ public:
     }
 };
 
+// ALLOCATE's request carries the object's own size and its caller's
+// mirrors intent as a RawstorOSTFrameSpecPayload (not just object_id/offset/
+// val like BackendOpBasic below), so it needs its own request shape --
+// the response is otherwise the same no-payload acknowledgement as
+// BackendOpFlush above.
+class BackendOpAllocate final : public BackendOp {
+private:
+    RawstorOSTFrameSpec _request;
+
+public:
+    BackendOpAllocate(
+        const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
+        const RawstdUUID& id, const RawstorObjectSpec& sp,
+        const rawstd::TraceEvent& trace_event
+    ) :
+        BackendOp(backend, cid, trace_event, "create", 0, 0),
+        _request({
+            .head =
+                {
+                    .magic = RAWSTOR_MAGIC,
+                    .cmd = RAWSTOR_CMD_ALLOCATE,
+                    .cid = cid,
+                },
+            .payload = {
+                .object_id = {},
+                .size = sp.size,
+                .mirrors = (uint32_t)sp.mirrors,
+            },
+        }) {
+        memcpy(
+            _request.payload.object_id, id.bytes,
+            sizeof(_request.payload.object_id)
+        );
+    }
+
+    const void* request_data() const noexcept { return &_request; }
+
+    size_t request_size() const noexcept override { return sizeof(_request); }
+
+    size_t response_head_cb(
+        const RawstorOSTFrameResponse* response, int error
+    ) override {
+        RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
+
+        if (!error) {
+            error = validate_response(response);
+        }
+
+        if (!error) {
+            error = validate_cmd(response->head.cmd, RAWSTOR_CMD_ALLOCATE);
+        }
+
+        _dispatch(0, error);
+
+        // A create response never carries a body, regardless of error.
+        return 0;
+    }
+};
+
 // The cid-dispatched counterpart of BackendOpRead/BackendOpWrite/
 // BackendOpFlush above, for the RawstorOSTFrameBasic-shaped commands
-// (list/create/remove/spec/info/set_object) -- these carry no hash and
-// have either no response body or a body of some number of T's, per
-// response.body.res. Routed through the same _recv_pump demultiplex
+// (list/remove/spec/info/set_object) -- these carry no hash and have
+// either no response body or a body of some number of T's, per
+// response.payload.res. Routed through the same _recv_pump demultiplex
 // mechanism as every other op, now that the pump starts in
 // Backend::_connect() instead of after the first request round-trips.
 template <typename T = char>
@@ -830,13 +890,14 @@ public:
                     .cid = cid,
                 },
             .payload = {
-                .obj_id = {},
+                .object_id = {},
                 .offset = 0,
                 .val = val,
             },
         }) {
         memcpy(
-            _request.payload.obj_id, id.bytes, sizeof(_request.payload.obj_id)
+            _request.payload.object_id, id.bytes,
+            sizeof(_request.payload.object_id)
         );
     }
 
@@ -857,16 +918,16 @@ public:
             error = validate_cmd(response->head.cmd, _cmd);
         }
 
-        if (!error && response->body.res > 0) {
+        if (!error && response->payload.res > 0) {
             // A malformed body size means we can no longer trust where
             // the next frame starts either -- letting this throw (per
             // response_head_cb()'s documented contract) fails every op
             // still in flight on this backend instead of silently
             // desyncing the stream.
-            if (response->body.res % sizeof(T) != 0) {
+            if (response->payload.res % sizeof(T) != 0) {
                 RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
             }
-            return static_cast<size_t>(response->body.res);
+            return static_cast<size_t>(response->payload.res);
         }
 
         _dispatch(0, error);
@@ -1167,14 +1228,27 @@ rawstd::Task<void> Backend::list(
 
 rawstd::Task<void>
 Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('c', "fd = %d\n", fd());
+
+    std::shared_ptr<BackendOpAllocate> op = std::make_shared<BackendOpAllocate>(
+        std::static_pointer_cast<Backend>(shared_from_this()), _cid_counter++,
+        id, sp, trace_event
+    );
+    _add_op(op);
+
     try {
-        co_await _basic_request(RAWSTOR_CMD_ALLOCATE, "create", id, sp.size);
-    } catch (const std::system_error&) {
-        throw;
-    } catch (...) {
-        RAWSTD_THROW_SYSTEM_ERROR(EIO);
+        size_t result = co_await _queue.send(
+            fd(), op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
+        );
+        RAWSTD_TRACE_EVENT_MESSAGE(
+            trace_event, "%zu of %zu\n", result, op->request_size()
+        );
+        op->request_cb(validate_result(op->request_size(), result));
+    } catch (const std::system_error& e) {
+        op->request_cb(e.code().value());
     }
-    co_return;
+
+    co_await *op;
 }
 
 rawstd::Task<void> Backend::remove(const RawstdUUID& id) {
@@ -1199,12 +1273,12 @@ rawstd::Task<RawstorObjectSpec> Backend::spec(const RawstdUUID& id) {
         if (response.size() != sizeof(RawstorOSTFrameSpecPayload)) {
             RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
         }
-        const RawstorOSTFrameSpecPayload& body =
+        const RawstorOSTFrameSpecPayload& payload =
             *static_cast<const RawstorOSTFrameSpecPayload*>(
                 static_cast<const void*>(response.data())
             );
-        ret.size = body.size;
-        ret.mirror_count = body.mirror_count;
+        ret.size = payload.size;
+        ret.mirrors = payload.mirrors;
     } catch (const std::system_error&) {
         throw;
     } catch (...) {
@@ -1224,19 +1298,19 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
         if (response.size() != sizeof(RawstorOSTFrameMetaPayload)) {
             RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
         }
-        const RawstorOSTFrameMetaPayload& body =
+        const RawstorOSTFrameMetaPayload& payload =
             *static_cast<const RawstorOSTFrameMetaPayload*>(
                 static_cast<const void*>(response.data())
             );
-        ret.spec.size = body.size;
-        ret.sync_state.epoch = body.epoch;
-        ret.sync_state.sync_id = body.sync_id;
+        ret.spec.size = payload.size;
+        ret.sync_state.epoch = payload.epoch;
+        ret.sync_state.sync_id = payload.sync_id;
         memcpy(
-            ret.sync_state.sync_id_history, body.sync_id_history,
+            ret.sync_state.sync_id_history, payload.sync_id_history,
             sizeof(ret.sync_state.sync_id_history)
         );
         ret.sync_state.state =
-            static_cast<RawstorObjectSyncStateValue>(body.state);
+            static_cast<RawstorObjectSyncStateValue>(payload.state);
     } catch (const std::system_error&) {
         throw;
     } catch (...) {

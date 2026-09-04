@@ -39,11 +39,11 @@ public:
     void cmd_spec_request();
     void cmd_spec_response(
         uint32_t magic, uint16_t cid, int32_t res, uint64_t size,
-        unsigned int mirror_count
+        unsigned int mirrors
     );
     void cmd_spec(
         uint32_t magic, uint16_t cid, int32_t res, uint64_t size,
-        unsigned int mirror_count
+        unsigned int mirrors
     );
 
     void cmd_meta_request();

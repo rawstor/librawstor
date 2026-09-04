@@ -53,7 +53,7 @@ struct RawstorOSTFrameHead {
 struct RawstorOSTFrameBasicPayload {
     // var is for minimal commands only,
     // will be overridden in other command structs
-    uint8_t obj_id[16];
+    uint8_t object_id[16];
     uint64_t offset;
     uint64_t val;
 } RAWSTOR_PACKED;
@@ -95,16 +95,16 @@ struct RawstorOSTFrameIO {
  * Full per-copy metadata: size plus the mirror consistency state (see
  * docs/mirroring.md). sync_id_history length must match
  * RAWSTOR_OBJECT_SYNC_ID_HISTORY. META response payload only -- SPEC's is
- * RawstorOSTFrameSpecPayload (size only, cheaper), SET_SYNC_STATE's request is
- * RawstorOSTFrameSyncStatePayload (settable fields only, no size). No obj_id:
- * unlike RawstorOSTFrameSyncStatePayload below, this is only ever a response,
- * correlated to its request via RawstorOSTFrameHead::cid -- the caller
- * already knows which object it asked about. Sent as a RawstorOSTFrameResponse
- * (body.res = sizeof(this), body.hash covering it) immediately followed by
- * this payload -- no combined frame struct, since every actual sender/
- * receiver already handles header and payload as two separate pieces (a
- * fixed-size header read, then a body.res-sized payload read, or a two-part
- * iovec write).
+ * RawstorOSTFrameSpecPayload (size + mirrors, cheaper), SET_SYNC_STATE's
+ * request is RawstorOSTFrameSyncStatePayload (settable fields only, no
+ * size). No object_id: this is only ever a response, correlated to its
+ * request via RawstorOSTFrameHead::cid -- the caller already knows which
+ * object it asked about. Sent as a RawstorOSTFrameResponse (payload.res =
+ * sizeof(this), payload.hash covering it) immediately followed by this
+ * payload -- no combined frame struct, since every actual sender/receiver
+ * already handles header and payload as two separate pieces (a fixed-size
+ * header read, then a payload.res-sized payload read, or a two-part iovec
+ * write).
  */
 struct RawstorOSTFrameMetaPayload {
     uint64_t size;
@@ -117,11 +117,11 @@ struct RawstorOSTFrameMetaPayload {
 /*
  * Settable mirror consistency state only -- no size, nothing here changes
  * it. SET_SYNC_STATE's request: unlike SPEC/META, it isn't wrapped in a
- * RawstorOSTFrameBasicPayload of its own, so obj_id here is the only way the
+ * RawstorOSTFrameBasicPayload of its own, so object_id here is the only way the
  * server learns which object this applies to.
  */
 struct RawstorOSTFrameSyncStatePayload {
-    uint8_t obj_id[16];
+    uint8_t object_id[16];
     uint64_t epoch;
     uint64_t sync_id;
     uint64_t sync_id_history[4];
@@ -135,7 +135,7 @@ struct RawstorOSTFrameSyncState {
 } RAWSTOR_PACKED;
 
 /* response frames */
-struct RawstorOSTFrameResponseBody {
+struct RawstorOSTFrameResponsePayload {
     uint64_t hash;
     // TODO: if we send length in res - it should be the same type
     // (signed-unsigned too)
@@ -144,22 +144,36 @@ struct RawstorOSTFrameResponseBody {
 
 struct RawstorOSTFrameResponse {
     struct RawstorOSTFrameHead head;
-    struct RawstorOSTFrameResponseBody body;
+    struct RawstorOSTFrameResponsePayload payload;
 } RAWSTOR_PACKED;
 
 /*
- * The object's size and mirror_count -- SPEC response payload, cheaper than
- * META's (no consistency state). No obj_id, same reasoning as
- * RawstorOSTFrameMetaPayload above. Sent as a RawstorOSTFrameResponse
- * (body.res = sizeof(this), body.hash covering it) immediately followed by
- * this payload -- no combined frame struct, since every actual sender/
- * receiver already handles header and payload as two separate pieces (a
- * fixed-size header read, then a body.res-sized payload read, or a two-part
- * iovec write).
+ * An object's size and mirrors -- both ALLOCATE's request (what to create)
+ * and SPEC's response (what a copy actually is, cheaper than META's since
+ * it carries no consistency state), the same shape either way. Unlike
+ * RawstorOSTFrameMetaPayload above, this one does need object_id: as
+ * ALLOCATE's request it isn't wrapped in a RawstorOSTFrameBasicPayload of
+ * its own, so object_id here is the only way the server learns which object
+ * to create; as SPEC's response, that field just isn't read back (same
+ * reasoning as RawstorOSTFrameMetaPayload's own -- correlated via
+ * RawstorOSTFrameHead::cid, the caller already knows which object it asked
+ * about). A response is sent as a RawstorOSTFrameResponse (payload.res =
+ * sizeof(this), payload.hash covering it) immediately followed by this
+ * payload -- no combined response frame struct, since every actual
+ * sender/receiver already handles header and payload as two separate
+ * pieces (a fixed-size header read, then a payload.res-sized payload read, or
+ * a two-part iovec write).
  */
 struct RawstorOSTFrameSpecPayload {
+    uint8_t object_id[16];
     uint64_t size;
-    uint32_t mirror_count;
+    uint32_t mirrors;
+} RAWSTOR_PACKED;
+
+/* ALLOCATE request */
+struct RawstorOSTFrameSpec {
+    struct RawstorOSTFrameHead head;
+    struct RawstorOSTFrameSpecPayload payload;
 } RAWSTOR_PACKED;
 
 #ifdef __cplusplus
