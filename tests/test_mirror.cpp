@@ -260,7 +260,7 @@ bool wait_member_synced(
         if (target_meta(queue, behind, &b) != 0) {
             continue;
         }
-        if (b.sync_state.state != RAWSTOR_OBJECT_STATE_SYNCING &&
+        if (b.sync_state.state != RAWSTOR_OBJECT_SYNC_STATE_SYNCING &&
             a.sync_state.sync_id != 0 &&
             b.sync_state.sync_id == a.sync_state.sync_id) {
             return true;
@@ -305,8 +305,8 @@ TEST(MirrorQuorumTest, degraded_open_with_quorum_n3) {
     RawstorObjectMeta b{};
     ASSERT_EQ(target_meta(queue, members.target(0), &a), 0);
     ASSERT_EQ(target_meta(queue, members.target(1), &b), 0);
-    EXPECT_EQ(a.sync_state.state, RAWSTOR_OBJECT_STATE_CLEAN);
-    EXPECT_EQ(b.sync_state.state, RAWSTOR_OBJECT_STATE_CLEAN);
+    EXPECT_EQ(a.sync_state.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
+    EXPECT_EQ(b.sync_state.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
     EXPECT_NE(a.sync_state.sync_id, 0u);
     EXPECT_EQ(a.sync_state.sync_id, b.sync_state.sync_id);
     EXPECT_EQ(a.sync_state.epoch, 1u);
@@ -335,13 +335,13 @@ TEST(MirrorQuorumTest, stale_arm_resynced) {
     fresh.epoch = 2;
     fresh.sync_id = 0x1111111111111111ull;
     fresh.sync_id_history[0] = 0x2222222222222222ull;
-    fresh.state = RAWSTOR_OBJECT_STATE_CLEAN;
+    fresh.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
     ASSERT_EQ(target_set_sync_state(queue, members.target(0), fresh), 0);
 
     RawstorObjectSyncState stale{};
     stale.epoch = 1;
     stale.sync_id = 0x2222222222222222ull;
-    stale.state = RAWSTOR_OBJECT_STATE_CLEAN;
+    stale.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
     ASSERT_EQ(target_set_sync_state(queue, members.target(1), stale), 0);
 
     /* Distinct content on the fresh member only. */
@@ -363,8 +363,8 @@ TEST(MirrorQuorumTest, stale_arm_resynced) {
     ASSERT_EQ(target_meta(queue, members.target(0), &a), 0);
     ASSERT_EQ(target_meta(queue, members.target(1), &b), 0);
     EXPECT_EQ(a.sync_state.sync_id, b.sync_state.sync_id);
-    EXPECT_EQ(a.sync_state.state, RAWSTOR_OBJECT_STATE_CLEAN);
-    EXPECT_EQ(b.sync_state.state, RAWSTOR_OBJECT_STATE_CLEAN);
+    EXPECT_EQ(a.sync_state.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
+    EXPECT_EQ(b.sync_state.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
 
     /* The rejoined member carries the fresh member's data now. */
     RawstorObject* member = nullptr;
@@ -387,14 +387,14 @@ TEST(MirrorQuorumTest, split_brain_refused) {
     a.epoch = 2;
     a.sync_id = 0x1111111111111111ull;
     a.sync_id_history[0] = 0x3333333333333333ull;
-    a.state = RAWSTOR_OBJECT_STATE_CLEAN;
+    a.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
     ASSERT_EQ(target_set_sync_state(queue, members.target(0), a), 0);
 
     RawstorObjectSyncState b{};
     b.epoch = 2;
     b.sync_id = 0x2222222222222222ull;
     b.sync_id_history[0] = 0x3333333333333333ull;
-    b.state = RAWSTOR_OBJECT_STATE_CLEAN;
+    b.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
     ASSERT_EQ(target_set_sync_state(queue, members.target(1), b), 0);
 
     RawstorObject* object = nullptr;
@@ -414,7 +414,7 @@ TEST(MirrorQuorumTest, all_dirty_same_sync_id_opens) {
     RawstorObjectSyncState dirty{};
     dirty.epoch = 1;
     dirty.sync_id = 0x4444444444444444ull;
-    dirty.state = RAWSTOR_OBJECT_STATE_DIRTY;
+    dirty.state = RAWSTOR_OBJECT_SYNC_STATE_DIRTY;
     ASSERT_EQ(target_set_sync_state(queue, members.target(0), dirty), 0);
     ASSERT_EQ(target_set_sync_state(queue, members.target(1), dirty), 0);
 
@@ -432,8 +432,8 @@ TEST(MirrorQuorumTest, all_dirty_same_sync_id_opens) {
     ASSERT_EQ(target_meta(queue, members.target(1), &b), 0);
     EXPECT_EQ(a.sync_state.sync_id, dirty.sync_id);
     EXPECT_EQ(b.sync_state.sync_id, dirty.sync_id);
-    EXPECT_EQ(a.sync_state.state, RAWSTOR_OBJECT_STATE_CLEAN);
-    EXPECT_EQ(b.sync_state.state, RAWSTOR_OBJECT_STATE_CLEAN);
+    EXPECT_EQ(a.sync_state.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
+    EXPECT_EQ(b.sync_state.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
 }
 
 TEST(MirrorQuorumTest, syncing_arm_resynced) {
@@ -446,13 +446,13 @@ TEST(MirrorQuorumTest, syncing_arm_resynced) {
     RawstorObjectSyncState established{};
     established.epoch = 1;
     established.sync_id = 0x5555555555555555ull;
-    established.state = RAWSTOR_OBJECT_STATE_CLEAN;
+    established.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
     ASSERT_EQ(target_set_sync_state(queue, members.target(0), established), 0);
     ASSERT_EQ(target_set_sync_state(queue, members.target(1), established), 0);
 
     /* An interrupted resync left the member marked SYNCING: untrusted. */
     RawstorObjectSyncState syncing = established;
-    syncing.state = RAWSTOR_OBJECT_STATE_SYNCING;
+    syncing.state = RAWSTOR_OBJECT_SYNC_STATE_SYNCING;
     ASSERT_EQ(target_set_sync_state(queue, members.target(1), syncing), 0);
 
     std::string ping = "ping";
@@ -473,7 +473,7 @@ TEST(MirrorQuorumTest, syncing_arm_resynced) {
     ASSERT_EQ(target_meta(queue, members.target(0), &a), 0);
     ASSERT_EQ(target_meta(queue, members.target(1), &b), 0);
     EXPECT_EQ(a.sync_state.sync_id, b.sync_state.sync_id);
-    EXPECT_EQ(b.sync_state.state, RAWSTOR_OBJECT_STATE_CLEAN);
+    EXPECT_EQ(b.sync_state.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
 
     RawstorObject* member = nullptr;
     ASSERT_EQ(target_open(queue, members.target(1), &member), 0);
@@ -495,13 +495,13 @@ TEST(MirrorResyncTest, resync_under_concurrent_writes) {
     fresh.epoch = 2;
     fresh.sync_id = 0x1111111111111111ull;
     fresh.sync_id_history[0] = 0x2222222222222222ull;
-    fresh.state = RAWSTOR_OBJECT_STATE_CLEAN;
+    fresh.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
     ASSERT_EQ(target_set_sync_state(queue, members.target(0), fresh), 0);
 
     RawstorObjectSyncState stale{};
     stale.epoch = 1;
     stale.sync_id = 0x2222222222222222ull;
-    stale.state = RAWSTOR_OBJECT_STATE_CLEAN;
+    stale.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
     ASSERT_EQ(target_set_sync_state(queue, members.target(1), stale), 0);
 
     /* Pre-existing content on the fresh member across every chunk. */
@@ -538,8 +538,8 @@ TEST(MirrorResyncTest, resync_under_concurrent_writes) {
     ASSERT_EQ(target_meta(queue, members.target(0), &a), 0);
     ASSERT_EQ(target_meta(queue, members.target(1), &b), 0);
     EXPECT_EQ(a.sync_state.sync_id, b.sync_state.sync_id);
-    EXPECT_EQ(a.sync_state.state, RAWSTOR_OBJECT_STATE_CLEAN);
-    EXPECT_EQ(b.sync_state.state, RAWSTOR_OBJECT_STATE_CLEAN);
+    EXPECT_EQ(a.sync_state.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
+    EXPECT_EQ(b.sync_state.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
 }
 
 TEST(MirrorResyncTest, probe_rejoins_recreated_arm) {
@@ -573,7 +573,7 @@ TEST(MirrorResyncTest, probe_rejoins_recreated_arm) {
     ASSERT_EQ(target_meta(queue, members.target(0), &a), 0);
     ASSERT_EQ(target_meta(queue, members.target(2), &c), 0);
     EXPECT_EQ(a.sync_state.sync_id, c.sync_state.sync_id);
-    EXPECT_EQ(c.sync_state.state, RAWSTOR_OBJECT_STATE_CLEAN);
+    EXPECT_EQ(c.sync_state.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
 
     RawstorObject* member = nullptr;
     ASSERT_EQ(target_open(queue, members.target(2), &member), 0);
@@ -600,7 +600,7 @@ TEST(MirrorQuorumTest, clean_close_stable_identity) {
     RawstorObjectMeta first{};
     ASSERT_EQ(target_meta(queue, members.target(0), &first), 0);
     EXPECT_NE(first.sync_state.sync_id, 0u);
-    EXPECT_EQ(first.sync_state.state, RAWSTOR_OBJECT_STATE_CLEAN);
+    EXPECT_EQ(first.sync_state.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
 
     /* A healthy second session must not churn the identity. */
     ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
@@ -611,7 +611,7 @@ TEST(MirrorQuorumTest, clean_close_stable_identity) {
     ASSERT_EQ(target_meta(queue, members.target(0), &second), 0);
     EXPECT_EQ(second.sync_state.sync_id, first.sync_state.sync_id);
     EXPECT_EQ(second.sync_state.epoch, first.sync_state.epoch);
-    EXPECT_EQ(second.sync_state.state, RAWSTOR_OBJECT_STATE_CLEAN);
+    EXPECT_EQ(second.sync_state.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
 }
 
 /*
@@ -633,7 +633,7 @@ TEST(MirrorOstTest, read_failover_and_repair) {
         .epoch = 0,
         .sync_id = 0,
         .sync_id_history = {},
-        .state = RAWSTOR_OBJECT_STATE_CLEAN,
+        .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
     };
 
     /*
@@ -703,7 +703,7 @@ TEST(MirrorOstTest, degrade_and_continue) {
         .epoch = 0,
         .sync_id = 0,
         .sync_id_history = {},
-        .state = RAWSTOR_OBJECT_STATE_CLEAN,
+        .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
     };
 
     {

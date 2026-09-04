@@ -356,7 +356,7 @@ void Object::_open_analyze() {
 
     for (Member& m : _members) {
         if (m.reachable &&
-            m.meta.sync_state.state == RAWSTOR_OBJECT_STATE_SYNCING) {
+            m.meta.sync_state.state == RAWSTOR_OBJECT_SYNC_STATE_SYNCING) {
             rawstd_warning("Mirror member with interrupted resync is stale\n");
             m.state = MemberState::STALE;
         }
@@ -504,7 +504,7 @@ rawstd::Task<void> Object::_run_dirty_barrier() {
                     _unrecorded_stale > 0;
 
         RawstorObjectSyncState m{};
-        m.state = RAWSTOR_OBJECT_STATE_DIRTY;
+        m.state = RAWSTOR_OBJECT_SYNC_STATE_DIRTY;
         if (bump) {
             m.epoch = _epoch + 1;
             m.sync_id = random_sync_id();
@@ -641,7 +641,7 @@ rawstd::Task<void> Object::_run_degrade_barrier() {
 
     try {
         RawstorObjectSyncState m{};
-        m.state = RAWSTOR_OBJECT_STATE_DIRTY;
+        m.state = RAWSTOR_OBJECT_SYNC_STATE_DIRTY;
         m.epoch = _epoch + 1;
         m.sync_id = random_sync_id();
         if (_sync_id != 0) {
@@ -996,7 +996,7 @@ rawstd::DetachedTask Object::_resync_maybe_start() {
     // mid-resync must leave the member recognizably untrusted
     // (docs/mirroring.md, case F8).
     RawstorObjectSyncState m = _members[idx].meta.sync_state;
-    m.state = RAWSTOR_OBJECT_STATE_SYNCING;
+    m.state = RAWSTOR_OBJECT_SYNC_STATE_SYNCING;
 
     _members[idx].state = MemberState::SYNCING;
 
@@ -1196,7 +1196,8 @@ rawstd::DetachedTask Object::_resync_finish() {
     size_t idx = _resync->idx;
 
     RawstorObjectSyncState m{};
-    m.state = _dirty ? RAWSTOR_OBJECT_STATE_DIRTY : RAWSTOR_OBJECT_STATE_CLEAN;
+    m.state = _dirty ? RAWSTOR_OBJECT_SYNC_STATE_DIRTY
+                     : RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
     m.epoch = _epoch;
     m.sync_id = _sync_id;
     memcpy(m.sync_id_history, _sync_id_history, sizeof(m.sync_id_history));
@@ -1729,7 +1730,7 @@ rawstd::Task<void> Object::close() {
             _meta_op_running = true;
             try {
                 RawstorObjectSyncState m{};
-                m.state = RAWSTOR_OBJECT_STATE_CLEAN;
+                m.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
                 m.epoch = _epoch;
                 m.sync_id = _sync_id;
                 memcpy(

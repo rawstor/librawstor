@@ -351,7 +351,7 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
     // itself, carried across by lvrename() below, so there is never a
     // window -- staged or revealed -- where the LV exists without one.
     RawstorObjectSyncState initial{};
-    initial.state = RAWSTOR_OBJECT_STATE_CLEAN;
+    initial.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
     std::string tag =
         std::string(rawstor_tag_prefix) + blkdev_meta_encode(initial);
 
