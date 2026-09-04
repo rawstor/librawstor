@@ -25,7 +25,7 @@ Session::~Session() {
 
 void Session::cmd_allocate_request() {
     _server.read(
-        "RAWSTOR_CMD_ALLOCATE <<<", sizeof(RawstorOSTFrameBasic),
+        "RAWSTOR_CMD_ALLOCATE <<<", sizeof(RawstorOSTFrameSpec),
         [](const void*) {}
     );
 }
@@ -37,7 +37,7 @@ void Session::cmd_allocate_response(uint32_t magic, uint16_t cid, int32_t res) {
             .cmd = RAWSTOR_CMD_ALLOCATE,
             .cid = cid,
         },
-        .body = {
+        .payload = {
             .hash = 0,
             .res = res,
         },
@@ -66,7 +66,7 @@ void Session::cmd_set_object_response(
             .cmd = RAWSTOR_CMD_SET_OBJECT,
             .cid = cid,
         },
-        .body = {
+        .payload = {
             .hash = 0,
             .res = res,
         },
@@ -93,7 +93,7 @@ void Session::cmd_release_response(uint32_t magic, uint16_t cid, int32_t res) {
             .cmd = RAWSTOR_CMD_RELEASE,
             .cid = cid,
         },
-        .body = {
+        .payload = {
             .hash = 0,
             .res = res,
         },
@@ -122,7 +122,7 @@ void Session::cmd_location_info_response(
             .cmd = RAWSTOR_CMD_LOCATION_INFO,
             .cid = cid,
         },
-        .body = {
+        .payload = {
             .hash = 0,
             .res = static_cast<int32_t>(sizeof(info)),
         },
@@ -164,7 +164,7 @@ void Session::cmd_read_response(
             .cmd = RAWSTOR_CMD_READ,
             .cid = cid,
         },
-        .body = {
+        .payload = {
             .hash = hash,
             .res = static_cast<int32_t>(size),
         },
@@ -211,7 +211,7 @@ void Session::cmd_read_error(uint32_t magic, uint16_t cid, int32_t res) {
             .cmd = RAWSTOR_CMD_READ,
             .cid = cid,
         },
-        .body = {
+        .payload = {
             .hash = 0,
             .res = res,
         },
@@ -233,7 +233,7 @@ void Session::cmd_write_response(uint32_t magic, uint16_t cid, int32_t res) {
             .cmd = RAWSTOR_CMD_WRITE,
             .cid = cid,
         },
-        .body = {
+        .payload = {
             .hash = 0,
             .res = res,
         },
@@ -255,7 +255,7 @@ void Session::cmd_spec_request() {
 
 void Session::cmd_spec_response(
     uint32_t magic, uint16_t cid, int32_t res, uint64_t size,
-    unsigned int mirror_count
+    unsigned int mirrors
 ) {
     // Unlike the no-payload commands (WRITE/DISCARD/FLUSH/SET_SYNC_STATE),
     // where body.res is a plain 0-on-success/-errno-on-failure result,
@@ -272,7 +272,7 @@ void Session::cmd_spec_response(
                 .cmd = RAWSTOR_CMD_SPEC,
                 .cid = cid,
             },
-            .body = {
+            .payload = {
                 .hash = 0,
                 .res = res,
             },
@@ -282,8 +282,9 @@ void Session::cmd_spec_response(
     }
 
     RawstorOSTFrameSpecPayload spec = {
+        .object_id = {},
         .size = size,
-        .mirror_count = static_cast<uint32_t>(mirror_count),
+        .mirrors = static_cast<uint32_t>(mirrors),
     };
     RawstorOSTFrameResponse response = {
         .head{
@@ -291,7 +292,7 @@ void Session::cmd_spec_response(
             .cmd = RAWSTOR_CMD_SPEC,
             .cid = cid,
         },
-        .body = {
+        .payload = {
             .hash = rawstd_hash_scalar(&spec, sizeof(spec)),
             .res = static_cast<int32_t>(sizeof(spec)),
         },
@@ -311,10 +312,10 @@ void Session::cmd_spec_response(
 
 void Session::cmd_spec(
     uint32_t magic, uint16_t cid, int32_t res, uint64_t size,
-    unsigned int mirror_count
+    unsigned int mirrors
 ) {
     cmd_spec_request();
-    cmd_spec_response(magic, cid, res, size, mirror_count);
+    cmd_spec_response(magic, cid, res, size, mirrors);
 }
 
 void Session::cmd_meta_request() {
@@ -335,7 +336,7 @@ void Session::cmd_meta_response(
                 .cmd = RAWSTOR_CMD_META,
                 .cid = cid,
             },
-            .body = {
+            .payload = {
                 .hash = 0,
                 .res = res,
             },
@@ -350,7 +351,7 @@ void Session::cmd_meta_response(
             .cmd = RAWSTOR_CMD_META,
             .cid = cid,
         },
-        .body = {
+        .payload = {
             .hash = rawstd_hash_scalar(&meta, sizeof(meta)),
             .res = static_cast<int32_t>(sizeof(meta)),
         },
@@ -392,7 +393,7 @@ void Session::cmd_set_state_response(
             .cmd = RAWSTOR_CMD_SET_SYNC_STATE,
             .cid = cid,
         },
-        .body = {
+        .payload = {
             .hash = 0,
             .res = res,
         },
@@ -420,7 +421,7 @@ void Session::cmd_discard_response(uint32_t magic, uint16_t cid, int32_t res) {
             .cmd = RAWSTOR_CMD_DISCARD,
             .cid = cid,
         },
-        .body = {
+        .payload = {
             .hash = 0,
             .res = res,
         },
@@ -449,7 +450,7 @@ void Session::cmd_write_zeroes_response(
             .cmd = RAWSTOR_CMD_WRITE_ZEROES,
             .cid = cid,
         },
-        .body = {
+        .payload = {
             .hash = 0,
             .res = res,
         },
@@ -476,7 +477,7 @@ void Session::cmd_flush_response(uint32_t magic, uint16_t cid, int32_t res) {
             .cmd = RAWSTOR_CMD_FLUSH,
             .cid = cid,
         },
-        .body = {
+        .payload = {
             .hash = 0,
             .res = res,
         },

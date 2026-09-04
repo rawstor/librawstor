@@ -35,7 +35,8 @@ public:
 
     // Each send_*() returns the cid it used, for matching against the
     // eventual recv_response().
-    uint16_t send_allocate(const RawstdUUID& id, uint64_t size);
+    uint16_t
+    send_allocate(const RawstdUUID& id, uint64_t size, uint32_t mirrors);
     uint16_t send_set_object(const RawstdUUID& id);
     uint16_t
     send_write(uint64_t offset, const void* buf, size_t size, bool sync);
