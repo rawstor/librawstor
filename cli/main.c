@@ -85,7 +85,7 @@ static void command_create_usage(void) {
         "\n"
         "command options:\n"
         "  -h, --help            Show this help message and exit\n"
-        "  -r, --replicas N      Expected number of replicas (total copy "
+        "  -m, --mirrors N       Expected number of mirrors (total copy "
         "count, N > 0).\n"
         "                        Default 1. Creation fails unless this "
         "matches the\n"
@@ -100,10 +100,10 @@ static void command_create_usage(void) {
 };
 
 static int command_create(int argc, char** argv) {
-    const char* optstring = "hr:s:t:u:";
+    const char* optstring = "hm:s:t:u:";
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
-        {"replicas", required_argument, NULL, 'r'},
+        {"mirrors", required_argument, NULL, 'm'},
         {"size", required_argument, NULL, 's'},
         {"target", required_argument, NULL, 't'},
         {"uuid", required_argument, NULL, 'u'},
@@ -111,7 +111,7 @@ static int command_create(int argc, char** argv) {
     };
 
     const char* location_arg = NULL;
-    const char* replicas_arg = NULL;
+    const char* mirrors_arg = NULL;
     const char* size_arg = NULL;
     const char* target_arg = NULL;
     const char* uuid_arg = NULL;
@@ -127,8 +127,8 @@ static int command_create(int argc, char** argv) {
             command_create_usage();
             return EXIT_SUCCESS;
 
-        case 'r':
-            replicas_arg = optarg;
+        case 'm':
+            mirrors_arg = optarg;
             break;
 
         case 's':
@@ -197,32 +197,30 @@ static int command_create(int argc, char** argv) {
         return EX_USAGE;
     }
 
-    unsigned int mirror_count = 1;
-    if (replicas_arg != NULL) {
+    unsigned int mirrors = 1;
+    if (mirrors_arg != NULL) {
         char* endptr = NULL;
         errno = 0;
-        unsigned long replicas = strtoul(replicas_arg, &endptr, 10);
-        if (errno != 0 || endptr == replicas_arg || *endptr != '\0') {
-            fprintf(stderr, "Invalid replicas value: %s\n", replicas_arg);
+        unsigned long parsed_mirrors = strtoul(mirrors_arg, &endptr, 10);
+        if (errno != 0 || endptr == mirrors_arg || *endptr != '\0') {
+            fprintf(stderr, "Invalid mirrors value: %s\n", mirrors_arg);
             return EX_USAGE;
         }
-        if (replicas == 0) {
-            fprintf(stderr, "replicas must be greater than 0\n");
+        if (parsed_mirrors == 0) {
+            fprintf(stderr, "mirrors must be greater than 0\n");
             return EX_USAGE;
         }
-        if (replicas > UINT_MAX) {
-            fprintf(stderr, "replicas value too large: %s\n", replicas_arg);
+        if (parsed_mirrors > UINT_MAX) {
+            fprintf(stderr, "mirrors value too large: %s\n", mirrors_arg);
             return EX_USAGE;
         }
-        mirror_count = (unsigned int)replicas;
+        mirrors = (unsigned int)parsed_mirrors;
     }
 
     if (target_arg != NULL) {
-        return rawstor_cli_create(target_arg, size, mirror_count);
+        return rawstor_cli_create(target_arg, size, mirrors);
     } else {
-        return rawstor_cli_create_at(
-            location_arg, uuid_arg, size, mirror_count
-        );
+        return rawstor_cli_create_at(location_arg, uuid_arg, size, mirrors);
     }
 }
 

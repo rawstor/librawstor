@@ -9,13 +9,10 @@
 extern "C" {
 #endif
 
-int rawstor_cli_create(
-    const char* target, uint64_t size, unsigned int mirror_count
-);
+int rawstor_cli_create(const char* target, uint64_t size, unsigned int mirrors);
 
 int rawstor_cli_create_at(
-    const char* location, const char* uuid, uint64_t size,
-    unsigned int mirror_count
+    const char* location, const char* uuid, uint64_t size, unsigned int mirrors
 );
 
 #ifdef __cplusplus

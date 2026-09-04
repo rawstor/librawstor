@@ -410,11 +410,11 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) {
     // different target, or a miscounted/misconfigured URI list) worth
     // catching here rather than silently creating something narrower or
     // wider than intended.
-    if (sp.mirror_count != _uris.size()) {
+    if (sp.mirrors != _uris.size()) {
         rawstd_error(
-            "Spec mirror_count (%u) does not match target's URI count "
+            "Spec mirrors (%u) does not match target's URI count "
             "(%zu)\n",
-            sp.mirror_count, _uris.size()
+            sp.mirrors, _uris.size()
         );
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
@@ -485,10 +485,10 @@ rawstd::Task<RawstorObjectSpec> Target::spec(rawio::Queue& queue) {
             RawstorObjectSpec ret = co_await cn->spec(id);
             co_await cn->close();
             // A single Connection/Backend only knows about the one URI it
-            // talks to -- mirror_count is a property of this Target as a
+            // talks to -- mirrors is a property of this Target as a
             // whole, filled in here rather than by whichever copy happened
             // to answer.
-            ret.mirror_count = (unsigned int)_uris.size();
+            ret.mirrors = (unsigned int)_uris.size();
             co_return ret;
         } catch (const std::system_error& e) {
             rawstd_error("%s\n", e.what());
@@ -515,7 +515,7 @@ rawstd::Task<RawstorObjectMeta> Target::meta(rawio::Queue& queue) {
     co_await cn->close();
     // See Target::spec()'s own comment: a single Connection/Backend
     // doesn't know the target's own URI count.
-    ret.spec.mirror_count = (unsigned int)_uris.size();
+    ret.spec.mirrors = (unsigned int)_uris.size();
     co_return ret;
 }
 

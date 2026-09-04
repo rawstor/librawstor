@@ -18,25 +18,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `.meta` file for `file://`, with `SPEC`/`META`/`SET_SYNC_STATE`/`FLUSH` OST
   protocol commands and `rawstor_target_spec`/`rawstor_target_meta`
   (`<rawstor/target.h>`) public API — `RawstorObjectMeta` composes the
-  cheap `RawstorObjectSpec` (`size`, `mirror_count`) with
+  cheap `RawstorObjectSpec` (`size`, `mirrors`) with
   `RawstorObjectSyncState` (`state`/`epoch`/`sync_id`/`sync_id_history`);
   the writer is internal (`rawstor_target_set_sync_state`,
   `src/target_internal.h`), not part of the installed API. Durable:
   metadata updates are fsynced by the backend before the call completes.
 - `rawstor_target_create()`/`rawstor_location_create()` now mandatorily
-  reject `-EINVAL` unless `RawstorObjectSpec`'s new `mirror_count` exactly
+  reject `-EINVAL` unless `RawstorObjectSpec`'s new `mirrors` exactly
   equals the number of URIs in the target/location string being created
-  (no "0 means don't check" opt-out) -- `pyrawstor`'s `ObjectSpec` and
-  `rawstor create`'s `-r`/`--replicas` both default `mirror_count` to 1,
-  and `rawstor-ost`'s own ALLOCATE relay derives it from the target list
-  it's already fanning out to; creating a mirrored object now always
-  requires stating the intended copy count explicitly, catching a
-  miscounted or misconfigured mirror list at create time instead of
-  silently creating fewer (or more) copies than intended.
-- `-r`/`--replicas N` for `rawstor create`: lets the caller state its
+  (no "0 means don't check" opt-out) -- `pyrawstor`'s `ObjectSpec`
+  constructor and `rawstor create`'s `-m`/`--mirrors` both default
+  `mirrors` to 1, and `rawstor-ost`'s own ALLOCATE relay derives it from
+  the target list it's already fanning out to; creating a mirrored
+  object now always requires stating the intended copy count
+  explicitly, catching a miscounted or misconfigured mirror list at
+  create time instead of silently creating fewer (or more) copies than
+  intended. `pyrawstor`'s `Target.create()`/`Location.create()` go
+  further and require `mirrors` explicitly (no default at all), since
+  they're the layer a caller is expected to actually know that count
+  at.
+- `-m`/`--mirrors N` for `rawstor create`: lets the caller state its
   intended total copy count (N > 0) explicitly for the check above;
   defaults to 1 when omitted, so creating a mirrored object always
-  requires stating the replica count explicitly (the mismatch fails at
+  requires stating the mirror count explicitly (the mismatch fails at
   `rawstor_target_create()`, not silently).
 - Mirror quorum, degrade & continue, read failover: opening a mirrored
   object now tolerates unreachable members as long as a strict majority is

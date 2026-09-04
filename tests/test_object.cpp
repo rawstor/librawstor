@@ -64,7 +64,7 @@ open_object(rawio::Queue& queue, const rawstd::URI& location) {
 
     rawstor::Target target({rawstd::URI(location, uuid_string)});
 
-    RawstorObjectSpec spec{.size = 1u << 20, .mirror_count = 1};
+    RawstorObjectSpec spec{.size = 1u << 20, .mirrors = 1};
     run(queue, target.create(queue, spec));
 
     return run(queue, target.open(queue));

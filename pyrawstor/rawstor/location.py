@@ -46,12 +46,12 @@ class Location:
         return self._uri == other._uri
 
     def create(
-        self, *, size: int, mirror_count: int = 1, uuid: str | None = None
+        self, *, size: int, mirrors: int, uuid: str | None = None
     ) -> Target:
         return Target(
             librawstor.object_create_at(
                 self._uri, uuid,
-                librawstor.ObjectSpec(size=size, mirror_count=mirror_count)))
+                librawstor.ObjectSpec(size=size, mirrors=mirrors)))
 
     def info(self) -> librawstor.LocationInfo:
         return librawstor.location_info(self._uri)
