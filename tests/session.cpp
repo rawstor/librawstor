@@ -38,8 +38,8 @@ void Session::cmd_allocate_response(uint32_t magic, uint16_t cid, int32_t res) {
             .cid = cid,
         },
         .body = {
-            .res = res,
             .hash = 0,
+            .res = res,
         },
     };
     _server.write("RAWSTOR_CMD_ALLOCATE >>>", &response, sizeof(response));
@@ -67,8 +67,8 @@ void Session::cmd_set_object_response(
             .cid = cid,
         },
         .body = {
-            .res = res,
             .hash = 0,
+            .res = res,
         },
     };
     _server.write("RAWSTOR_CMD_SET_OBJECT >>>", &response, sizeof(response));
@@ -94,8 +94,8 @@ void Session::cmd_release_response(uint32_t magic, uint16_t cid, int32_t res) {
             .cid = cid,
         },
         .body = {
-            .res = res,
             .hash = 0,
+            .res = res,
         },
     };
     _server.write("RAWSTOR_CMD_RELEASE >>>", &response, sizeof(response));
@@ -123,8 +123,8 @@ void Session::cmd_location_info_response(
             .cid = cid,
         },
         .body = {
-            .res = static_cast<int32_t>(sizeof(info)),
             .hash = 0,
+            .res = static_cast<int32_t>(sizeof(info)),
         },
     };
     iovec iov[2] = {
@@ -165,8 +165,8 @@ void Session::cmd_read_response(
             .cid = cid,
         },
         .body = {
-            .res = static_cast<int32_t>(size),
             .hash = hash,
+            .res = static_cast<int32_t>(size),
         },
     };
     iovec iov[2] = {
@@ -212,8 +212,8 @@ void Session::cmd_read_error(uint32_t magic, uint16_t cid, int32_t res) {
             .cid = cid,
         },
         .body = {
-            .res = res,
             .hash = 0,
+            .res = res,
         },
     };
     _server.write("RAWSTOR_CMD_READ >>>", &response, sizeof(response));
@@ -234,8 +234,8 @@ void Session::cmd_write_response(uint32_t magic, uint16_t cid, int32_t res) {
             .cid = cid,
         },
         .body = {
-            .res = res,
             .hash = 0,
+            .res = res,
         },
     };
     _server.write("RAWSTOR_CMD_WRITE >>>", &response, sizeof(response));
@@ -272,8 +272,8 @@ void Session::cmd_spec_response(
                 .cid = cid,
             },
             .body = {
-                .res = res,
                 .hash = 0,
+                .res = res,
             },
         };
         _server.write("RAWSTOR_CMD_SPEC >>>", &response, sizeof(response));
@@ -291,8 +291,8 @@ void Session::cmd_spec_response(
         },
         .body =
             {
-                .res = static_cast<int32_t>(sizeof(spec)),
                 .hash = rawstd_hash_scalar(&spec, sizeof(spec)),
+                .res = static_cast<int32_t>(sizeof(spec)),
             },
         .spec = spec,
     };
@@ -325,8 +325,8 @@ void Session::cmd_meta_response(
                 .cid = cid,
             },
             .body = {
-                .res = res,
                 .hash = 0,
+                .res = res,
             },
         };
         _server.write("RAWSTOR_CMD_META >>>", &response, sizeof(response));
@@ -341,8 +341,8 @@ void Session::cmd_meta_response(
         },
         .body =
             {
-                .res = static_cast<int32_t>(sizeof(meta)),
                 .hash = rawstd_hash_scalar(&meta, sizeof(meta)),
+                .res = static_cast<int32_t>(sizeof(meta)),
             },
         .meta = meta,
     };
@@ -374,8 +374,8 @@ void Session::cmd_set_state_response(
             .cid = cid,
         },
         .body = {
-            .res = res,
             .hash = 0,
+            .res = res,
         },
     };
     _server.write(
@@ -402,8 +402,8 @@ void Session::cmd_discard_response(uint32_t magic, uint16_t cid, int32_t res) {
             .cid = cid,
         },
         .body = {
-            .res = res,
             .hash = 0,
+            .res = res,
         },
     };
     _server.write("RAWSTOR_CMD_DISCARD >>>", &response, sizeof(response));
@@ -431,8 +431,8 @@ void Session::cmd_write_zeroes_response(
             .cid = cid,
         },
         .body = {
-            .res = res,
             .hash = 0,
+            .res = res,
         },
     };
     _server.write("RAWSTOR_CMD_WRITE_ZEROES >>>", &response, sizeof(response));
@@ -458,8 +458,8 @@ void Session::cmd_flush_response(uint32_t magic, uint16_t cid, int32_t res) {
             .cid = cid,
         },
         .body = {
-            .res = res,
             .hash = 0,
+            .res = res,
         },
     };
     _server.write("RAWSTOR_CMD_FLUSH >>>", &response, sizeof(response));

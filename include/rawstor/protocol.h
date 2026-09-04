@@ -122,10 +122,10 @@ struct RawstorOSTFrameSyncState {
 
 /* response frames */
 struct RawstorOSTFrameResponseBody {
+    uint64_t hash;
     // TODO: if we send length in res - it should be the same type
     // (signed-unsigned too)
     int32_t res;
-    uint64_t hash;
 } RAWSTOR_PACKED;
 
 struct RawstorOSTFrameResponse {

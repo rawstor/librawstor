@@ -1839,8 +1839,8 @@ rawstd::Task<void> Client::_send_response(
                 .cid = cid,
             },
         .body = {
-            .res = result,
             .hash = hash,
+            .res = result,
         },
     };
 
@@ -1865,8 +1865,8 @@ rawstd::Task<void> Client::_send_response(
                 .cid = cid,
             },
         .body = {
-            .res = result,
             .hash = hash,
+            .res = result,
         },
     };
 
