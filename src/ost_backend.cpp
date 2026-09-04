@@ -1235,7 +1235,8 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
             ret.sync_state.sync_id_history, body.sync_id_history,
             sizeof(ret.sync_state.sync_id_history)
         );
-        ret.sync_state.state = body.state;
+        ret.sync_state.state =
+            static_cast<RawstorObjectSyncStateValue>(body.state);
     } catch (const std::system_error&) {
         throw;
     } catch (...) {

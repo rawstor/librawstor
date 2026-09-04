@@ -34,6 +34,15 @@ extern "C" {
 #define RAWSTOR_CMD_META 12
 typedef uint16_t RawstorOSTCommandType;
 
+// Wire representation of enum RawstorObjectSyncStateValue
+// (<rawstor/target.h>, values RAWSTOR_OBJECT_SYNC_STATE_*) -- a fixed-width
+// typedef rather than the enum itself, same reasoning as
+// RawstorOSTCommandType above: an enum's underlying type isn't guaranteed
+// portable across compilers, which a RAWSTOR_PACKED wire struct can't risk.
+// uint8_t is plenty for a 3-value state (same size class as
+// RawstorOSTFrameIOPayload::flags below).
+typedef uint8_t RawstorOSTSyncStateType;
+
 struct RawstorOSTFrameHead {
     uint32_t magic;
     RawstorOSTCommandType cmd;
@@ -102,7 +111,7 @@ struct RawstorOSTFrameMetaPayload {
     uint64_t epoch;
     uint64_t sync_id;
     uint64_t sync_id_history[4];
-    uint32_t state;
+    RawstorOSTSyncStateType state;
 } RAWSTOR_PACKED;
 
 /*
@@ -116,7 +125,7 @@ struct RawstorOSTFrameSyncStatePayload {
     uint64_t epoch;
     uint64_t sync_id;
     uint64_t sync_id_history[4];
-    uint32_t state;
+    RawstorOSTSyncStateType state;
 } RAWSTOR_PACKED;
 
 /* SET_SYNC_STATE request */
