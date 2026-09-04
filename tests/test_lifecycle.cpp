@@ -421,7 +421,6 @@ TEST(OstLifecycleTest, create_spec_remove) {
     std::string target = rawstd::URI(location_uri, uuid).str();
 
     RawstorOSTFrameMetaBody meta_body = {
-        .obj_id = {},
         .size = 1ull << 20,
         .epoch = 7,
         .sync_id = 0x1122334455667788ull,

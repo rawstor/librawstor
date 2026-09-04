@@ -87,10 +87,12 @@ struct RawstorOSTFrameIO {
  * docs/mirroring.md). sync_id_history length must match
  * RAWSTOR_OBJECT_SYNC_ID_HISTORY. META response payload only -- SPEC's is
  * RawstorOSTFrameSpecBody (size only, cheaper), SET_SYNC_STATE's request is
- * RawstorOSTFrameSyncStateBody (settable fields only, no size).
+ * RawstorOSTFrameSyncStateBody (settable fields only, no size). No obj_id:
+ * unlike RawstorOSTFrameSyncStateBody below, this is only ever a response,
+ * correlated to its request via RawstorOSTFrameHead::cid -- the caller
+ * already knows which object it asked about.
  */
 struct RawstorOSTFrameMetaBody {
-    uint8_t obj_id[16];
     uint64_t size;
     uint64_t epoch;
     uint64_t sync_id;
@@ -98,8 +100,12 @@ struct RawstorOSTFrameMetaBody {
     uint32_t state;
 } RAWSTOR_PACKED;
 
-/* Settable mirror consistency state only -- no size, nothing here changes
- * it. */
+/*
+ * Settable mirror consistency state only -- no size, nothing here changes
+ * it. SET_SYNC_STATE's request: unlike SPEC/META, it isn't wrapped in a
+ * RawstorOSTFrameBasicBody of its own, so obj_id here is the only way the
+ * server learns which object this applies to.
+ */
 struct RawstorOSTFrameSyncStateBody {
     uint8_t obj_id[16];
     uint64_t epoch;
@@ -127,9 +133,11 @@ struct RawstorOSTFrameResponse {
     struct RawstorOSTFrameResponseBody body;
 } RAWSTOR_PACKED;
 
-/* Just the object's size -- SPEC response payload, cheaper than META's. */
+/*
+ * Just the object's size -- SPEC response payload, cheaper than META's. No
+ * obj_id, same reasoning as RawstorOSTFrameMetaBody above.
+ */
 struct RawstorOSTFrameSpecBody {
-    uint8_t obj_id[16];
     uint64_t size;
 } RAWSTOR_PACKED;
 
