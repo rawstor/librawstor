@@ -1158,10 +1158,8 @@ rawstd::DetachedTask Client::_spec_task(
             );
         } else {
             RawstorOSTFrameSpecBody body_out{
-                .obj_id = {},
                 .size = spec.size,
             };
-            memcpy(body_out.obj_id, uuid.bytes, sizeof(body_out.obj_id));
             std::vector<unsigned char> data(sizeof(body_out));
             memcpy(data.data(), &body_out, sizeof(body_out));
             co_await client->_send_response(
@@ -1218,14 +1216,12 @@ rawstd::DetachedTask Client::_meta_task(
             );
         } else {
             RawstorOSTFrameMetaBody body_out{
-                .obj_id = {},
                 .size = meta.spec.size,
                 .epoch = meta.sync_state.epoch,
                 .sync_id = meta.sync_state.sync_id,
                 .sync_id_history = {},
                 .state = meta.sync_state.state,
             };
-            memcpy(body_out.obj_id, uuid.bytes, sizeof(body_out.obj_id));
             memcpy(
                 body_out.sync_id_history, meta.sync_state.sync_id_history,
                 sizeof(body_out.sync_id_history)

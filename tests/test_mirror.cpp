@@ -628,7 +628,6 @@ TEST(MirrorOstTest, read_failover_and_repair) {
         "ost://127.0.0.1:8754/00000000-0000-7000-8000-0000000000b0";
 
     RawstorOSTFrameMetaBody legacy = {
-        .obj_id = {},
         .size = 1ull << 20,
         .epoch = 0,
         .sync_id = 0,
@@ -698,7 +697,6 @@ TEST(MirrorOstTest, degrade_and_continue) {
         "ost://127.0.0.1:8754/00000000-0000-7000-8000-0000000000b1";
 
     RawstorOSTFrameMetaBody legacy = {
-        .obj_id = {},
         .size = 1ull << 20,
         .epoch = 0,
         .sync_id = 0,

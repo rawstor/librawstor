@@ -281,7 +281,6 @@ void Session::cmd_spec_response(
     }
 
     RawstorOSTFrameSpecBody spec = {
-        .obj_id = {},
         .size = size,
     };
     RawstorOSTFrameSpecResponse response = {
