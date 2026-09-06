@@ -47,7 +47,7 @@ private:
     static rawstd::DetachedTask
     _recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd);
 
-    // Every _*_task() below is `static` (no implicit `this`) and takes a
+    // Every _*() below is `static` (no implicit `this`) and takes a
     // `weak_ptr<Client>` explicitly: each is a coroutine that may co_await
     // across a suspension the Client itself might not survive (e.g. the
     // peer disconnects and something else tears the client down while an
@@ -58,85 +58,57 @@ private:
     // only way to reach a Client at all, rather than relying on nobody
     // reaching for an implicit `this` by mistake.
     //
-    // Closes `client->_object` (if any) before the rest of a `_*_task()`
-    // runs -- shared by _list_task()/_allocate_task()/_set_object_task().
-    // Returns the still-live Client to continue with, or nullptr if the
-    // caller should co_return immediately (either the Client was already
-    // gone, or the close failed and this already tore the client down via
-    // Server::del_client(), matching how a thrown exception elsewhere in
-    // the recv dispatch loop is handled by _recv_pump()'s own catch blocks
-    // -- there's no such enclosing catch by the time an async close's
-    // completion resumes this, so it's handled directly instead).
+    // Each returns rawstd::DetachedTask (a fire-and-forget launch, not
+    // something a caller holds/awaits) -- every call site must call
+    // rawstd::DetachedTask::rethrow_if_pending() immediately after, per its
+    // own doc comment (librawstd/include/rawstd/coro.hpp): _recv_pump()'s
+    // dispatch switch is the only caller for most of these, with _write()
+    // additionally launching _dispatch_write() itself once it validates the
+    // incoming WRITE's hash.
+    //
+    // Closes `client->_object` (if any) before the rest of a `_*()` runs --
+    // shared by _list()/_allocate()/_set_object(). Returns the still-live
+    // Client to continue with, or nullptr if the caller should co_return
+    // immediately (either the Client was already gone, or the close failed
+    // and this already tore the client down via Server::del_client(),
+    // matching how a thrown exception elsewhere in the recv dispatch loop
+    // is handled by _recv_pump()'s own catch blocks -- there's no such
+    // enclosing catch by the time an async close's completion resumes
+    // this, so it's handled directly instead).
     static rawstd::Task<std::shared_ptr<Client>>
     _close_current_object(std::weak_ptr<Client> weak);
 
-    void _list(
-        const RawstorOSTFrameHead& head,
-        const RawstorOSTFrameBasicPayload& payload
-    );
-    static rawstd::DetachedTask _list_task(
+    static rawstd::DetachedTask _list(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
         RawstorOSTFrameBasicPayload payload
     );
-    void _allocate(
-        const RawstorOSTFrameHead& head,
-        const RawstorOSTFrameAllocatePayload& payload
-    );
-    static rawstd::DetachedTask _allocate_task(
+    static rawstd::DetachedTask _allocate(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
         RawstorOSTFrameAllocatePayload payload
     );
-    void _release(
-        const RawstorOSTFrameHead& head,
-        const RawstorOSTFrameBasicPayload& payload
-    );
-    static rawstd::DetachedTask _release_task(
+    static rawstd::DetachedTask _release(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
         RawstorOSTFrameBasicPayload payload
     );
-    void _spec(
-        const RawstorOSTFrameHead& head,
-        const RawstorOSTFrameBasicPayload& payload
-    );
-    static rawstd::DetachedTask _spec_task(
+    static rawstd::DetachedTask _spec(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
         RawstorOSTFrameBasicPayload payload
     );
-    void _meta(
-        const RawstorOSTFrameHead& head,
-        const RawstorOSTFrameBasicPayload& payload
-    );
-    static rawstd::DetachedTask _meta_task(
+    static rawstd::DetachedTask _meta(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
         RawstorOSTFrameBasicPayload payload
-    );
-    void _info(
-        const RawstorOSTFrameHead& head,
-        const RawstorOSTFrameBasicPayload& payload
     );
     static rawstd::DetachedTask
-    _info_task(std::weak_ptr<Client> weak, RawstorOSTFrameHead head);
-    void _set_object(
-        const RawstorOSTFrameHead& head,
-        const RawstorOSTFrameBasicPayload& payload
-    );
-    static rawstd::DetachedTask _set_object_task(
+    _info(std::weak_ptr<Client> weak, RawstorOSTFrameHead head);
+    static rawstd::DetachedTask _set_object(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
         RawstorOSTFrameBasicPayload payload
     );
-    void _read(
-        const RawstorOSTFrameHead& head, const RawstorOSTFrameIOPayload& payload
-    );
-    static rawstd::DetachedTask _read_task(
+    static rawstd::DetachedTask _read(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
         RawstorOSTFrameIOPayload payload
     );
-    void _write(
-        const RawstorOSTFrameHead& head,
-        const RawstorOSTFrameIOPayload& payload,
-        const std::shared_ptr<std::vector<unsigned char>>& data
-    );
-    static rawstd::DetachedTask _write_task(
+    static rawstd::DetachedTask _write(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
         RawstorOSTFrameIOPayload payload,
         std::shared_ptr<std::vector<unsigned char>> data
@@ -144,39 +116,21 @@ private:
     // Issues a validated WRITE to storage -- rawstor_object_pwrite()'s
     // underlying blk::Backend applies write-throttling itself (see
     // blk_backend.hpp's _throttle_acquire()), so this just dispatches.
-    void _dispatch_write(
-        const RawstorOSTFrameHead& head, uint64_t offset, bool sync,
-        const std::shared_ptr<std::vector<unsigned char>>& data
-    );
-    static rawstd::DetachedTask _dispatch_write_task(
+    static rawstd::DetachedTask _dispatch_write(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head, uint64_t offset,
         bool sync, std::shared_ptr<std::vector<unsigned char>> data
     );
-    void _discard(
-        const RawstorOSTFrameHead& head, const RawstorOSTFrameIOPayload& payload
-    );
-    static rawstd::DetachedTask _discard_task(
+    static rawstd::DetachedTask _discard(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
         RawstorOSTFrameIOPayload payload
     );
-    void _write_zeroes(
-        const RawstorOSTFrameHead& head, const RawstorOSTFrameIOPayload& payload
-    );
-    static rawstd::DetachedTask _write_zeroes_task(
+    static rawstd::DetachedTask _write_zeroes(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
         RawstorOSTFrameIOPayload payload
-    );
-    void _flush(
-        const RawstorOSTFrameHead& head,
-        const RawstorOSTFrameBasicPayload& payload
     );
     static rawstd::DetachedTask
-    _flush_task(std::weak_ptr<Client> weak, RawstorOSTFrameHead head);
-    void _set_state(
-        const RawstorOSTFrameHead& head,
-        const RawstorOSTFrameSyncStatePayload& payload
-    );
-    static rawstd::DetachedTask _set_state_task(
+    _flush(std::weak_ptr<Client> weak, RawstorOSTFrameHead head);
+    static rawstd::DetachedTask _set_state(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
         RawstorOSTFrameSyncStatePayload payload
     );
@@ -186,7 +140,7 @@ private:
     // submission) -- unlike every other rawio_*() bridge in the .cpp,
     // there's no separate fire-and-forget IOCallback anymore: a failure
     // here (submission *or* completion) throws uniformly, for the caller
-    // (always one of the _*_task()s above) to tear the client down via
+    // (always one of the _*()s above) to tear the client down via
     // Server::del_client(), the same way it already handles any other
     // failure.
     rawstd::Task<void> _send_response(
