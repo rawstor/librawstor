@@ -681,14 +681,14 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
             case RAWSTOR_CMD_ALLOCATE: {
                 std::vector<unsigned char> payload_data =
                     co_await recv_frame_part(
-                        stream, sizeof(RawstorOSTFrameSpecPayload), fd,
+                        stream, sizeof(RawstorOSTFrameAllocatePayload), fd,
                         "request payload", &stream_failed
                     );
                 client = weak.lock();
                 if (client == nullptr) {
                     co_return;
                 }
-                RawstorOSTFrameSpecPayload spec;
+                RawstorOSTFrameAllocatePayload spec;
                 memcpy(&spec, payload_data.data(), sizeof(spec));
                 client->_allocate(head, spec);
                 break;
@@ -1046,7 +1046,7 @@ void Client::_list(
 
 rawstd::DetachedTask Client::_allocate_task(
     std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-    RawstorOSTFrameSpecPayload payload
+    RawstorOSTFrameAllocatePayload payload
 ) {
     std::shared_ptr<Client> client = co_await _close_current_object(weak);
     if (client == nullptr) {
@@ -1087,7 +1087,8 @@ rawstd::DetachedTask Client::_allocate_task(
 }
 
 void Client::_allocate(
-    const RawstorOSTFrameHead& head, const RawstorOSTFrameSpecPayload& payload
+    const RawstorOSTFrameHead& head,
+    const RawstorOSTFrameAllocatePayload& payload
 ) {
     _allocate_task(weak_from_this(), head, payload);
     rawstd::DetachedTask::rethrow_if_pending();
@@ -1172,7 +1173,6 @@ rawstd::DetachedTask Client::_spec_task(
             );
         } else {
             RawstorOSTFrameSpecPayload body_out{
-                .object_id = {},
                 .size = spec.size,
                 .mirrors = (uint32_t)spec.mirrors,
             };

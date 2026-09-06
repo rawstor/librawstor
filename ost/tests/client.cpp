@@ -59,7 +59,7 @@ Client::~Client() {
 uint16_t
 Client::send_allocate(const RawstdUUID& id, uint64_t size, uint32_t mirrors) {
     uint16_t cid = _next_cid++;
-    RawstorOSTFrameSpec frame = {
+    RawstorOSTFrameAllocate frame = {
         .head =
             {
                 .magic = RAWSTOR_MAGIC,

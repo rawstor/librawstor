@@ -80,11 +80,11 @@ private:
     );
     void _allocate(
         const RawstorOSTFrameHead& head,
-        const RawstorOSTFrameSpecPayload& payload
+        const RawstorOSTFrameAllocatePayload& payload
     );
     static rawstd::DetachedTask _allocate_task(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-        RawstorOSTFrameSpecPayload payload
+        RawstorOSTFrameAllocatePayload payload
     );
     void _release(
         const RawstorOSTFrameHead& head,

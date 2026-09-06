@@ -25,7 +25,7 @@ Session::~Session() {
 
 void Session::cmd_allocate_request() {
     _server.read(
-        "RAWSTOR_CMD_ALLOCATE <<<", sizeof(RawstorOSTFrameSpec),
+        "RAWSTOR_CMD_ALLOCATE <<<", sizeof(RawstorOSTFrameAllocate),
         [](const void*) {}
     );
 }
@@ -282,7 +282,6 @@ void Session::cmd_spec_response(
     }
 
     RawstorOSTFrameSpecPayload spec = {
-        .object_id = {},
         .size = size,
         .mirrors = static_cast<uint32_t>(mirrors),
     };
