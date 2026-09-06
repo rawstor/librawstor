@@ -1857,7 +1857,7 @@ rawstd::Task<void> Client::_send_response(
                 .cmd = type,
                 .cid = cid,
             },
-        .payload = {
+        .body = {
             .hash = hash,
             .res = result,
         },
@@ -1883,7 +1883,7 @@ rawstd::Task<void> Client::_send_response(
                 .cmd = type,
                 .cid = cid,
             },
-        .payload = {
+        .body = {
             .hash = hash,
             .res = result,
         },

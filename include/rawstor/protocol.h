@@ -133,7 +133,7 @@ struct RawstorOSTFrameAllocate {
 } RAWSTOR_PACKED;
 
 /* response frames */
-struct RawstorOSTFrameResponsePayload {
+struct RawstorOSTFrameResponseBody {
     uint64_t hash;
     // TODO: if we send length in res - it should be the same type
     // (signed-unsigned too)
@@ -142,7 +142,7 @@ struct RawstorOSTFrameResponsePayload {
 
 struct RawstorOSTFrameResponse {
     struct RawstorOSTFrameHead head;
-    struct RawstorOSTFrameResponsePayload payload;
+    struct RawstorOSTFrameResponseBody body;
 } RAWSTOR_PACKED;
 
 /*
@@ -153,11 +153,11 @@ struct RawstorOSTFrameResponse {
  * request is RawstorOSTFrameSyncStatePayload (settable fields only, no
  * size). No object_id: this is only ever a response, correlated to its
  * request via RawstorOSTFrameHead::cid -- the caller already knows which
- * object it asked about. Sent as a RawstorOSTFrameResponse (payload.res =
- * sizeof(this), payload.hash covering it) immediately followed by this
+ * object it asked about. Sent as a RawstorOSTFrameResponse (body.res =
+ * sizeof(this), body.hash covering it) immediately followed by this
  * payload -- no combined frame struct, since every actual sender/receiver
  * already handles header and payload as two separate pieces (a fixed-size
- * header read, then a payload.res-sized payload read, or a two-part iovec
+ * header read, then a body.res-sized payload read, or a two-part iovec
  * write).
  */
 struct RawstorOSTFrameMetaPayload {
@@ -173,11 +173,11 @@ struct RawstorOSTFrameMetaPayload {
  * it carries no consistency state. No object_id, same reasoning as
  * RawstorOSTFrameMetaPayload above -- correlated via
  * RawstorOSTFrameHead::cid, the caller already knows which object it asked
- * about. Sent as a RawstorOSTFrameResponse (payload.res = sizeof(this),
- * payload.hash covering it) immediately followed by this payload -- no
+ * about. Sent as a RawstorOSTFrameResponse (body.res = sizeof(this),
+ * body.hash covering it) immediately followed by this payload -- no
  * combined response frame struct, since every actual sender/receiver
  * already handles header and payload as two separate pieces (a fixed-size
- * header read, then a payload.res-sized payload read, or a two-part iovec
+ * header read, then a body.res-sized payload read, or a two-part iovec
  * write).
  */
 struct RawstorOSTFrameSpecPayload {

@@ -151,7 +151,7 @@ TEST(OstClientTest, simple_success) {
     }));
     RawstorOSTFrameResponse response = client.recv_response();
     EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_ALLOCATE);
-    EXPECT_EQ(response.payload.res, 0);
+    EXPECT_EQ(response.body.res, 0);
 
     // SET_OBJECT: opens it for this client's subsequent READ/WRITE.
     client.send_set_object(id);
@@ -160,7 +160,7 @@ TEST(OstClientTest, simple_success) {
     }));
     response = client.recv_response();
     EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_SET_OBJECT);
-    EXPECT_EQ(response.payload.res, 0);
+    EXPECT_EQ(response.body.res, 0);
 
     // WRITE, then READ the same bytes back.
     std::string payload = "ping";
@@ -170,10 +170,9 @@ TEST(OstClientTest, simple_success) {
     }));
     response = client.recv_response();
     EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_WRITE);
-    EXPECT_EQ(response.payload.res, static_cast<int32_t>(payload.size()));
+    EXPECT_EQ(response.body.res, static_cast<int32_t>(payload.size()));
     EXPECT_EQ(
-        response.payload.hash,
-        rawstd_hash_scalar(payload.data(), payload.size())
+        response.body.hash, rawstd_hash_scalar(payload.data(), payload.size())
     );
 
     client.send_read(0, static_cast<uint32_t>(payload.size()));
@@ -184,7 +183,7 @@ TEST(OstClientTest, simple_success) {
     std::string read_back(payload.size(), '\0');
     response = client.recv_response(read_back.data(), read_back.size());
     EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_READ);
-    EXPECT_EQ(response.payload.res, static_cast<int32_t>(payload.size()));
+    EXPECT_EQ(response.body.res, static_cast<int32_t>(payload.size()));
     EXPECT_EQ(read_back, payload);
 }
 
@@ -208,7 +207,7 @@ TEST(OstClientTest, discard_and_write_zeroes) {
     }));
     RawstorOSTFrameResponse response = client.recv_response();
     EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_ALLOCATE);
-    EXPECT_EQ(response.payload.res, 0);
+    EXPECT_EQ(response.body.res, 0);
 
     // SET_OBJECT: opens it for this client's subsequent WRITE/DISCARD/
     // WRITE_ZEROES/READ.
@@ -218,7 +217,7 @@ TEST(OstClientTest, discard_and_write_zeroes) {
     }));
     response = client.recv_response();
     EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_SET_OBJECT);
-    EXPECT_EQ(response.payload.res, 0);
+    EXPECT_EQ(response.body.res, 0);
 
     // WRITE some non-zero bytes...
     std::string payload(64, 'x');
@@ -228,7 +227,7 @@ TEST(OstClientTest, discard_and_write_zeroes) {
     }));
     response = client.recv_response();
     EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_WRITE);
-    EXPECT_EQ(response.payload.res, static_cast<int32_t>(payload.size()));
+    EXPECT_EQ(response.body.res, static_cast<int32_t>(payload.size()));
 
     // ...WRITE_ZEROES half of it, durably...
     client.send_write_zeroes(
@@ -240,7 +239,7 @@ TEST(OstClientTest, discard_and_write_zeroes) {
     }));
     response = client.recv_response();
     EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_WRITE_ZEROES);
-    EXPECT_EQ(response.payload.res, static_cast<int32_t>(payload.size() / 2));
+    EXPECT_EQ(response.body.res, static_cast<int32_t>(payload.size() / 2));
 
     // ...and READ it back to confirm the first half reads as zero while
     // the second half still holds the original payload.
@@ -252,7 +251,7 @@ TEST(OstClientTest, discard_and_write_zeroes) {
     std::string read_back(payload.size(), '\xff');
     response = client.recv_response(read_back.data(), read_back.size());
     EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_READ);
-    EXPECT_EQ(response.payload.res, static_cast<int32_t>(payload.size()));
+    EXPECT_EQ(response.body.res, static_cast<int32_t>(payload.size()));
     EXPECT_EQ(
         read_back.substr(0, payload.size() / 2),
         std::string(payload.size() / 2, '\0')
@@ -269,7 +268,7 @@ TEST(OstClientTest, discard_and_write_zeroes) {
     }));
     response = client.recv_response();
     EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_DISCARD);
-    EXPECT_EQ(response.payload.res, static_cast<int32_t>(payload.size()));
+    EXPECT_EQ(response.body.res, static_cast<int32_t>(payload.size()));
 }
 
 TEST(OstClientTest, set_object_twice_does_not_crash) {
@@ -292,7 +291,7 @@ TEST(OstClientTest, set_object_twice_does_not_crash) {
     }));
     RawstorOSTFrameResponse response = client.recv_response();
     EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_ALLOCATE);
-    EXPECT_EQ(response.payload.res, 0);
+    EXPECT_EQ(response.body.res, 0);
 
     // First SET_OBJECT: the client's _object starts null, so this only
     // exercises rawstor_target_open() (same as simple_success above).
@@ -302,7 +301,7 @@ TEST(OstClientTest, set_object_twice_does_not_crash) {
     }));
     response = client.recv_response();
     EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_SET_OBJECT);
-    EXPECT_EQ(response.payload.res, 0);
+    EXPECT_EQ(response.body.res, 0);
 
     // Second SET_OBJECT on the same client: _object is already set, so
     // the server's Client::_set_object() first closes it (via
@@ -323,7 +322,7 @@ TEST(OstClientTest, set_object_twice_does_not_crash) {
     }));
     response = client.recv_response();
     EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_SET_OBJECT);
-    EXPECT_EQ(response.payload.res, 0);
+    EXPECT_EQ(response.body.res, 0);
 }
 
 // Regression test for the heap-use-after-free ASan caught in CI (built off

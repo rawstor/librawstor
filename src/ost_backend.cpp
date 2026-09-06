@@ -59,11 +59,11 @@ int validate_result(size_t size, size_t result) noexcept {
 }
 
 // Connection::_with_retry() no longer distinguishes a well-formed
-// rejection from the backend (response->payload.res < 0) from a broken/
+// rejection from the backend (response->body.res < 0) from a broken/
 // malformed wire -- every failure here just reconnects and retries, up
 // to the same rawstor_opts_io_attempts() budget, unless it's one
 // is_permanent_backend_error() (see connection.cpp) already knows can
-// never succeed on retry. EBADMSG is one such payload.res value: the OST
+// never succeed on retry. EBADMSG is one such body.res value: the OST
 // server sends it (see ost/src/client.cpp) only when the payload it just
 // received doesn't hash to what the client declared, meaning the client
 // and server have lost agreement on where in the byte stream the current
@@ -80,8 +80,8 @@ int validate_response(const RawstorOSTFrameResponse* response) noexcept {
         return EPROTO;
     }
 
-    if (response->payload.res < 0) {
-        int error = -response->payload.res;
+    if (response->body.res < 0) {
+        int error = -response->body.res;
         rawstd_error("Server error: %s\n", strerror(error));
         return error;
     }
@@ -340,15 +340,15 @@ public:
             error = validate_cmd(response->head.cmd, RAWSTOR_CMD_READ);
         }
 
-        if (!error && response->payload.res > 0) {
+        if (!error && response->body.res > 0) {
             // Trust the server's own reported byte count for how much
             // body follows, not our own originally-requested _size.
-            _hash = response->payload.hash;
-            return static_cast<size_t>(response->payload.res);
+            _hash = response->body.hash;
+            return static_cast<size_t>(response->body.res);
         }
 
         // No body follows either way: a real error, or a genuine
-        // zero-byte read (response->payload.res == 0, nothing to send).
+        // zero-byte read (response->body.res == 0, nothing to send).
         _dispatch(0, error);
         return 0;
     }
@@ -423,15 +423,15 @@ public:
             error = validate_cmd(response->head.cmd, RAWSTOR_CMD_READ);
         }
 
-        if (!error && response->payload.res > 0) {
+        if (!error && response->body.res > 0) {
             // Trust the server's own reported byte count for how much
             // body follows, not our own originally-requested _size.
-            _hash = response->payload.hash;
-            return static_cast<size_t>(response->payload.res);
+            _hash = response->body.hash;
+            return static_cast<size_t>(response->body.res);
         }
 
         // No body follows either way: a real error, or a genuine
-        // zero-byte read (response->payload.res == 0, nothing to send).
+        // zero-byte read (response->body.res == 0, nothing to send).
         _dispatch(0, error);
         return 0;
     }
@@ -520,7 +520,7 @@ public:
         }
 
         _dispatch(
-            !error && response != nullptr ? response->payload.res : 0, error
+            !error && response != nullptr ? response->body.res : 0, error
         );
 
         // A write response never carries a body, regardless of error.
@@ -594,7 +594,7 @@ public:
         }
 
         _dispatch(
-            !error && response != nullptr ? response->payload.res : 0, error
+            !error && response != nullptr ? response->body.res : 0, error
         );
 
         // A write response never carries a body, regardless of error.
@@ -652,7 +652,7 @@ public:
         }
 
         _dispatch(
-            !error && response != nullptr ? response->payload.res : 0, error
+            !error && response != nullptr ? response->body.res : 0, error
         );
 
         // Neither a discard nor a write-zeroes response ever carries a
@@ -865,7 +865,7 @@ public:
 // BackendOpFlush above, for the RawstorOSTFrameBasic-shaped commands
 // (list/remove/spec/info/set_object) -- these carry no hash and have
 // either no response body or a body of some number of T's, per
-// response.payload.res. Routed through the same _recv_pump demultiplex
+// response.body.res. Routed through the same _recv_pump demultiplex
 // mechanism as every other op, now that the pump starts in
 // Backend::_connect() instead of after the first request round-trips.
 template <typename T = char>
@@ -919,16 +919,16 @@ public:
             error = validate_cmd(response->head.cmd, _cmd);
         }
 
-        if (!error && response->payload.res > 0) {
+        if (!error && response->body.res > 0) {
             // A malformed body size means we can no longer trust where
             // the next frame starts either -- letting this throw (per
             // response_head_cb()'s documented contract) fails every op
             // still in flight on this backend instead of silently
             // desyncing the stream.
-            if (response->payload.res % sizeof(T) != 0) {
+            if (response->body.res % sizeof(T) != 0) {
                 RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
             }
-            return static_cast<size_t>(response->payload.res);
+            return static_cast<size_t>(response->body.res);
         }
 
         _dispatch(0, error);
