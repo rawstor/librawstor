@@ -57,6 +57,17 @@ protected:
     // retryable EIO.
     rawstd::Task<bool> _exists(const std::string& path);
 
+    // Every blk-backed backend maps one URI to exactly one local
+    // file/block device -- it can't itself fan out to further copies, so
+    // create() only ever accepts mirrors == 1. Any further mirroring
+    // happens above this Backend (Target::create() splitting sp.mirrors
+    // across multiple URIs) or in a relay backend that isn't blk-backed
+    // (ost::Backend, which forwards its caller's mirrors on unvalidated
+    // -- see ost::Backend::create()'s own comment). Throws EINVAL
+    // otherwise. Shared by file::Backend/lvm::Backend/zfs::Backend's own
+    // create().
+    static void _validate_mirrors_one(const RawstorObjectSpec& sp);
+
 private:
     // Writes dispatched to the io queue whose completion hasn't arrived
     // yet -- see pwrite()/pwritev()'s use of it against

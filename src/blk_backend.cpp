@@ -151,6 +151,17 @@ Backend::_zero_fill(int target_fd, off_t offset, size_t size, bool unmap) {
     }
 }
 
+void Backend::_validate_mirrors_one(const RawstorObjectSpec& sp) {
+    if (sp.mirrors != 1) {
+        rawstd_error(
+            "blk backend can only create objects with mirrors == 1, got "
+            "%u\n",
+            sp.mirrors
+        );
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+}
+
 rawstd::Task<bool> Backend::_exists(const std::string& path) {
     struct stat st;
     try {

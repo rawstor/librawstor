@@ -201,6 +201,8 @@ rawstd::Task<void> Backend::list(
 
 rawstd::Task<void>
 Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
+    _validate_mirrors_one(sp);
+
     std::string location_path = get_location_path(location());
     if (mkdir(location_path.c_str(), 0755) == -1) {
         if (errno == EEXIST) {

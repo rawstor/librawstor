@@ -405,19 +405,33 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) {
     validate_same_uuid(_uris);
 
     // Mandatory: the caller must always state how many copies it thinks
-    // it's creating, and it must agree with the target's own URI count --
-    // a disagreement is a caller bug (e.g. reusing a Spec read from a
-    // different target, or a miscounted/misconfigured URI list) worth
-    // catching here rather than silently creating something narrower or
-    // wider than intended.
-    if (sp.mirrors != _uris.size()) {
+    // it's creating, and it must divide evenly across the target's own
+    // URI count -- a leftover is a caller bug (e.g. reusing a Spec read
+    // from a different target, or a miscounted/misconfigured URI list)
+    // worth catching here rather than silently creating something
+    // narrower or wider than intended. The quotient is each URI's own
+    // share (see below): 1 for a plain flat mirror (mirrors == URI
+    // count), or more when a URI is itself a relay that fans out
+    // further (e.g. ost:// forwarding to a remote rawstor-ost with its
+    // own multi-URI location).
+    if (sp.mirrors == 0 || sp.mirrors % _uris.size() != 0) {
         rawstd_error(
-            "Spec mirrors (%u) does not match target's URI count "
-            "(%zu)\n",
+            "Spec mirrors (%u) does not divide evenly across target's URI "
+            "count (%zu)\n",
             sp.mirrors, _uris.size()
         );
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
+
+    // Every URI gets an equal share of the total -- a plain (non-relay)
+    // blk backend only ever accepts 1 (see blk::Backend::
+    // _validate_mirrors_one()); a relay backend like ost:// forwards its
+    // own share on unvalidated, letting the remote server subdivide it
+    // again across its own URI list.
+    RawstorObjectSpec uri_sp{
+        .size = sp.size,
+        .mirrors = sp.mirrors / (unsigned int)_uris.size(),
+    };
 
     // Every URI's CREATE goes out concurrently instead of one at a time.
     // This can't just gather() them, though: on failure, only the URIs
@@ -431,7 +445,7 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) {
     std::vector<rawstd::Task<void>> tasks;
     tasks.reserve(_uris.size());
     for (const auto& target : _uris) {
-        tasks.push_back(create_one(queue, target, sp));
+        tasks.push_back(create_one(queue, target, uri_sp));
     }
 
     std::vector<rawstd::URI> created;

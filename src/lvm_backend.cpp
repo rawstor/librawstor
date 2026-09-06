@@ -290,6 +290,8 @@ rawstd::Task<void> Backend::_cleanup_staging_lvs() {
 
 rawstd::Task<void>
 Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
+    _validate_mirrors_one(sp);
+
     if (sp.size == 0) {
         rawstd_error("lvm: object size must be positive\n");
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);

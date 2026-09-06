@@ -186,6 +186,8 @@ rawstd::Task<void> Backend::list(
 
 rawstd::Task<void>
 Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
+    _validate_mirrors_one(sp);
+
     // zfs-create(8) rejects volume sizes that are not a multiple of
     // volblocksize (16 KiB by default, 8 KiB on older OpenZFS), so round
     // the requested size up front.

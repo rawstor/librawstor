@@ -803,13 +803,13 @@ public:
 };
 
 // ALLOCATE's request carries the object's own size and its caller's
-// mirrors intent as a RawstorOSTFrameSpecPayload (not just object_id/offset/
-// val like BackendOpBasic below), so it needs its own request shape --
-// the response is otherwise the same no-payload acknowledgement as
+// mirrors intent as a RawstorOSTFrameAllocatePayload (not just object_id/
+// offset/val like BackendOpBasic below), so it needs its own request shape
+// -- the response is otherwise the same no-payload acknowledgement as
 // BackendOpFlush above.
 class BackendOpAllocate final : public BackendOp {
 private:
-    RawstorOSTFrameSpec _request;
+    RawstorOSTFrameAllocate _request;
 
 public:
     BackendOpAllocate(
@@ -1240,6 +1240,11 @@ rawstd::Task<void> Backend::list(
     co_return;
 }
 
+// Unlike blk::Backend (see its own _validate_mirrors_one()), this Backend
+// doesn't validate sp.mirrors at all -- it's a relay, not a terminal
+// store: it just forwards whatever the caller asked for on the wire (see
+// BackendOpAllocate), and it's the remote rawstor-ost's own Target::create()
+// that validates and, if it fans out to further URIs itself, subdivides it.
 rawstd::Task<void>
 Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('c', "fd = %d\n", fd());
