@@ -45,6 +45,15 @@ void EventTimer::dispatch() {
     resolve_one_shot();
 }
 
+void EventTimerMultishot::dispatch() {
+    if (_error) {
+        _backend->on_completion(0, _error);
+    } else {
+        _backend->on_completion(0, 0);
+    }
+    _result = 0;
+}
+
 void EventMultiplex::dispatch() {
     if (_on_dispatch) {
         _on_dispatch(*this);

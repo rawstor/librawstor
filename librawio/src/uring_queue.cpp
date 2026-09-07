@@ -394,6 +394,11 @@ using PollMultishotBackend =
     SingleSlotStreamBackend<rawio::PollStream::Backend, /*dedup=*/true>;
 using AcceptMultishotBackend =
     SingleSlotStreamBackend<rawio::AcceptStream::Backend, /*dedup=*/false>;
+// timeout_multishot()'s backend: every tick is a genuinely new occurrence
+// (never a same-batch duplicate of a prior one the way a coalescing fd's
+// poll readiness can be), so no dedup, matching accept_multishot().
+using TimeoutMultishotBackend =
+    SingleSlotStreamBackend<rawio::TimeoutStream::Backend, /*dedup=*/false>;
 
 // poll_multishot()'s Completion: each CQE just carries a plain revents
 // mask (or an error) into the shared single-slot backend.
@@ -437,6 +442,34 @@ public:
         raw_result = setup_accepted_fd(raw_result);
         if (raw_result >= 0) {
             _backend->on_completion(raw_result, 0);
+        } else {
+            _backend->on_completion(0, -raw_result);
+        }
+    }
+};
+
+// timeout_multishot()'s Completion: each CQE is either a natural tick
+// (-ETIME, or 0 if IORING_TIMEOUT_ETIME_SUCCESS suppressed it -- see
+// TimeoutCompletion's own comment above for why both are translated here
+// rather than relied on the flag alone) or a genuine error (ECANCELED from
+// cancel(), the only expected one), fed into the shared single-slot
+// backend as a plain "tick" value of 0 -- unlike a poll/accept completion,
+// a tick carries no meaningful payload of its own.
+class TimeoutMultishotCompletion final : public Completion {
+private:
+    std::shared_ptr<TimeoutMultishotBackend> _backend;
+
+public:
+    TimeoutMultishotCompletion(
+        rawstd::TraceEvent trace_event,
+        std::shared_ptr<TimeoutMultishotBackend> backend
+    ) :
+        Completion(std::move(trace_event)),
+        _backend(std::move(backend)) {}
+
+    void complete(int raw_result, unsigned int /*flags*/) override {
+        if (raw_result == -ETIME || raw_result >= 0) {
+            _backend->on_completion(0, 0);
         } else {
             _backend->on_completion(0, -raw_result);
         }
@@ -1065,6 +1098,47 @@ rawio::Awaitable<void> Queue::timeout(unsigned int usec) {
     return rawio::Awaitable<void>(
         this, static_cast<rawio::Event*>(c.release())
     );
+}
+
+// Multishot counterpart of timeout() above: IORING_TIMEOUT_MULTISHOT keeps
+// the kernel re-arming the same registration at the same relative interval
+// after each tick (IORING_CQE_F_MORE-driven, exactly like poll_multishot()/
+// accept_multishot()/recv_multishot() -- see _dispatch()'s generic F_MORE
+// handling), rather than a fresh io_uring_prep_timeout() call per tick.
+// Submits immediately for the same reason timeout() does: the clock for
+// the first tick starts now, not whenever the caller gets around to
+// co_await-ing it.
+rawio::TimeoutStream Queue::timeout_multishot(unsigned int usec) {
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('|', "usec = %u\n", usec);
+    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
+    if (sqe == nullptr) {
+        RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
+    }
+    __kernel_timespec ts = {
+        .tv_sec = usec / 1'000'000u,
+        .tv_nsec = 1000ll * static_cast<long long>(usec % 1'000'000u),
+    };
+    io_uring_prep_timeout(
+        sqe, &ts, /*count=*/0,
+        IORING_TIMEOUT_MULTISHOT | IORING_TIMEOUT_ETIME_SUCCESS
+    );
+
+    auto backend =
+        std::make_shared<TimeoutMultishotBackend>(*this, _dispatch_generation);
+    auto c = std::make_unique<TimeoutMultishotCompletion>(
+        std::move(trace_event), backend
+    );
+    io_uring_sqe_set_data(sqe, c.get());
+
+    int res = io_uring_submit(&_ring);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+
+    backend->set_event(static_cast<rawio::Event*>(c.release()));
+
+    return rawio::TimeoutStream(std::move(backend));
 }
 
 // Both overloads below submit an IORING_OP_ASYNC_CANCEL request and return

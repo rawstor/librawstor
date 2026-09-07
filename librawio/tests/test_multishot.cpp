@@ -231,6 +231,27 @@ TEST_F(MultishotTest, accept) {
     }
 }
 
+TEST_F(MultishotTest, timeout) {
+    rawio::TimeoutStream stream = _queue->timeout_multishot(10'000);
+
+    EXPECT_NO_THROW(
+        rawio::tests::run(*_queue, rawio::tests::wrap<int>(stream.next()))
+    );
+    EXPECT_NO_THROW(
+        rawio::tests::run(*_queue, rawio::tests::wrap<int>(stream.next()))
+    );
+
+    rawio::Event* event = stream.event();
+    EXPECT_NO_THROW(_queue->cancel(event));
+
+    try {
+        rawio::tests::run(*_queue, rawio::tests::wrap<int>(stream.next()));
+        FAIL() << "expected ECANCELED";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), ECANCELED);
+    }
+}
+
 TEST_F(MultishotTest, recv) {
     const char server_buf[] = "dat1dat2";
     _server.write(server_buf, sizeof(server_buf) - 1);
