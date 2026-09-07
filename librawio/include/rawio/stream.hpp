@@ -178,6 +178,90 @@ public:
 };
 
 /**
+ * co_await-able handle for timeout_multishot(): same shape as PollStream/
+ * AcceptStream, except the delivered value carries no meaning -- every
+ * tick looks the same, so `while (true) { co_await stream.next(); ... }`
+ * is the whole loop. next() throws std::system_error on any error,
+ * including ECANCELED once cancel()-ed.
+ */
+class TimeoutStream final {
+public:
+    // Must stay public: implemented by backend-specific classes outside
+    // this header (e.g. rawio::TimeoutStream::Backend is a base class
+    // named from uring_queue.cpp/poll_event.hpp).
+    class Backend {
+    public:
+        virtual ~Backend() = default;
+
+        // Non-blocking attempt to produce the next item from an
+        // already-arrived batch of data: returns true with `out`/`error`
+        // filled in (`error == 0` means `out` holds a real item; nonzero
+        // means the awaiting co_await should throw it), or false --
+        // nothing ready yet, the caller must suspend and wait to be
+        // resumed via set_waiter() below.
+        virtual bool try_produce(int& out, int& error) noexcept = 0;
+        virtual void set_waiter(
+            std::coroutine_handle<> h, int* out, int* error
+        ) noexcept = 0;
+        virtual void close() noexcept = 0;
+        virtual rawio::Event* event() const noexcept = 0;
+    };
+
+    class Next {
+    private:
+        Backend* _backend;
+        int _value;
+        int _error;
+
+    public:
+        explicit Next(Backend* backend) noexcept :
+            _backend(backend),
+            _value(0),
+            _error(0) {}
+
+        bool await_ready() noexcept {
+            return _backend->try_produce(_value, _error);
+        }
+
+        void await_suspend(std::coroutine_handle<> h) noexcept {
+            _backend->set_waiter(h, &_value, &_error);
+        }
+
+        int await_resume() {
+            if (_error) {
+                RAWSTD_THROW_SYSTEM_ERROR(_error);
+            }
+            return _value;
+        }
+    };
+
+private:
+    std::shared_ptr<Backend> _backend;
+
+public:
+    TimeoutStream() noexcept = default;
+    explicit TimeoutStream(std::shared_ptr<Backend> backend) noexcept :
+        _backend(std::move(backend)) {}
+    TimeoutStream(const TimeoutStream&) = delete;
+    TimeoutStream& operator=(const TimeoutStream&) = delete;
+    TimeoutStream(TimeoutStream&&) noexcept = default;
+    TimeoutStream& operator=(TimeoutStream&&) noexcept = default;
+    ~TimeoutStream() { close(); }
+
+    Next next() noexcept { return Next(_backend.get()); }
+
+    void close() noexcept {
+        if (_backend) {
+            _backend->close();
+        }
+    }
+
+    Event* event() const noexcept {
+        return _backend ? _backend->event() : nullptr;
+    }
+};
+
+/**
  * co_await-able handle for recv_multishot(): `Item i = co_await
  * stream.next(want);` -- `want` is a "how many bytes am I ready to accept
  * next" flow-control value, throws std::system_error once the stream
