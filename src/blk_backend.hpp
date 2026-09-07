@@ -28,6 +28,41 @@ namespace blk {
 // objects are real block devices, overridden by file::Backend since its
 // objects are plain regular files instead.
 class Backend : public rawstor::Backend {
+private:
+    // Bumped whenever meta_encode()'s own field set changes -- carried as
+    // this format's own leading field (see meta_encode()'s own doc
+    // comment below) rather than left for a caller to track separately,
+    // so every subclass rejects a record from an incompatible version
+    // the same way. Private: only meta_encode()/meta_decode()'s own
+    // implementation ever needs it.
+    static constexpr unsigned int META_FORMAT_VERSION = 1;
+
+    // Writes dispatched to the io queue whose completion hasn't arrived
+    // yet -- see pwrite()/pwritev()'s use of it against
+    // rawstor_opts_write_throttle_limit() to decide whether a write is
+    // dispatched now or suspended until a slot frees up.
+    unsigned int _writes_in_flight;
+    // Coroutines suspended in _throttle_acquire(), oldest first -- woken
+    // one at a time, in order, as _throttle_release() frees up a slot.
+    std::deque<std::coroutine_handle<>> _write_waiters;
+    // Sum of the sizes of writes currently suspended in
+    // _write_waiters -- see _throttle_acquire()'s use of it against
+    // rawstor_opts_write_backlog_capacity() to reject a write outright
+    // rather than let it suspend without bound.
+    size_t _pending_writes_bytes;
+
+    // Suspends the calling coroutine until a write-dispatch slot is free
+    // (see rawstor_opts_write_throttle_limit()), or throws EBUSY
+    // immediately, without suspending, if queuing behind the throttle
+    // would push the backlog over rawstor_opts_write_backlog_capacity().
+    // Every successful return must be matched by exactly one
+    // _throttle_release() call, regardless of how the dispatched write
+    // itself turns out.
+    rawstd::Task<void> _throttle_acquire(size_t size);
+    // Releases the slot acquired by a matching _throttle_acquire(),
+    // handing it directly to the oldest queued waiter, if any.
+    void _throttle_release() noexcept;
+
 protected:
     virtual rawstd::Task<int> _open(const RawstdUUID& id) = 0;
 
@@ -76,41 +111,6 @@ protected:
     // class hierarchy needs it, unlike meta_encode()/meta_decode()
     // themselves (public further down, for tests/).
     static constexpr size_t META_MAX_SIZE = 256;
-
-private:
-    // Bumped whenever meta_encode()'s own field set changes -- carried as
-    // this format's own leading field (see meta_encode()'s own doc
-    // comment below) rather than left for a caller to track separately,
-    // so every subclass rejects a record from an incompatible version
-    // the same way. Private: only meta_encode()/meta_decode()'s own
-    // implementation ever needs it.
-    static constexpr unsigned int META_FORMAT_VERSION = 1;
-
-    // Writes dispatched to the io queue whose completion hasn't arrived
-    // yet -- see pwrite()/pwritev()'s use of it against
-    // rawstor_opts_write_throttle_limit() to decide whether a write is
-    // dispatched now or suspended until a slot frees up.
-    unsigned int _writes_in_flight;
-    // Coroutines suspended in _throttle_acquire(), oldest first -- woken
-    // one at a time, in order, as _throttle_release() frees up a slot.
-    std::deque<std::coroutine_handle<>> _write_waiters;
-    // Sum of the sizes of writes currently suspended in
-    // _write_waiters -- see _throttle_acquire()'s use of it against
-    // rawstor_opts_write_backlog_capacity() to reject a write outright
-    // rather than let it suspend without bound.
-    size_t _pending_writes_bytes;
-
-    // Suspends the calling coroutine until a write-dispatch slot is free
-    // (see rawstor_opts_write_throttle_limit()), or throws EBUSY
-    // immediately, without suspending, if queuing behind the throttle
-    // would push the backlog over rawstor_opts_write_backlog_capacity().
-    // Every successful return must be matched by exactly one
-    // _throttle_release() call, regardless of how the dispatched write
-    // itself turns out.
-    rawstd::Task<void> _throttle_acquire(size_t size);
-    // Releases the slot acquired by a matching _throttle_acquire(),
-    // handing it directly to the oldest queued waiter, if any.
-    void _throttle_release() noexcept;
 
 public:
     Backend(Private p, rawio::Queue& queue, const rawstd::URI& location);
