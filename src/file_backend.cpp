@@ -1,5 +1,6 @@
 #include "file_backend.hpp"
 
+#include "blkdev_meta.hpp"
 #include "opts.h"
 
 #include <rawio/awaitable.hpp>
@@ -10,8 +11,6 @@
 #include <rawstd/logging.h>
 #include <rawstd/uuid.h>
 
-#include <rawstor/protocol.h>
-
 #include <sys/stat.h>
 #include <sys/statvfs.h>
 #include <sys/types.h>
@@ -20,6 +19,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <array>
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
@@ -32,43 +32,18 @@
 namespace {
 
 // Mirror consistency metadata for one copy (docs/mirroring.md) lives in a
-// companion "<uuid>.meta" file, versioned so the format can grow later
-// without breaking copies written by an older release.
-constexpr uint32_t META_FORMAT_VERSION = 1;
-
-struct OnDiskMeta {
-    uint32_t magic;
-    uint32_t version;
-    uint64_t epoch;
-    uint64_t sync_id;
-    uint64_t sync_id_history[RAWSTOR_OBJECT_SYNC_ID_HISTORY];
-    uint32_t state;
-};
-
-OnDiskMeta meta_to_disk(const RawstorObjectSyncState& sync_state) {
-    OnDiskMeta disk{};
-    disk.magic = RAWSTOR_MAGIC;
-    disk.version = META_FORMAT_VERSION;
-    disk.epoch = sync_state.epoch;
-    disk.sync_id = sync_state.sync_id;
-    memcpy(
-        disk.sync_id_history, sync_state.sync_id_history,
-        sizeof(disk.sync_id_history)
-    );
-    disk.state = sync_state.state;
-    return disk;
-}
-
-RawstorObjectSyncState disk_to_sync_state(const OnDiskMeta& disk) {
-    RawstorObjectSyncState sync_state{};
-    sync_state.epoch = disk.epoch;
-    sync_state.sync_id = disk.sync_id;
-    memcpy(
-        sync_state.sync_id_history, disk.sync_id_history,
-        sizeof(sync_state.sync_id_history)
-    );
-    sync_state.state = static_cast<RawstorObjectSyncStateValue>(disk.state);
-    return sync_state;
+// companion "<uuid>.meta" file, encoded the same way as the lvm:///zfs://
+// backends' own native metadata (see src/blkdev_meta.hpp) instead of a
+// bespoke binary format -- NUL-padded out to BLKDEV_META_MAX_SIZE bytes
+// so this file's own byte length stays fixed across every rewrite (see
+// Backend::set_sync_state() below for why that matters), rather than
+// written at its own (shorter, variable) encoded length.
+std::array<char, rawstor::BLKDEV_META_MAX_SIZE>
+meta_to_disk(const RawstorObjectSyncState& sync_state) {
+    std::array<char, rawstor::BLKDEV_META_MAX_SIZE> buf{};
+    std::string encoded = rawstor::blkdev_meta_encode(sync_state);
+    memcpy(buf.data(), encoded.data(), encoded.size());
+    return buf;
 }
 
 std::string get_target_meta_path(
@@ -318,9 +293,10 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
         try {
             RawstorObjectSyncState sync_state{};
             sync_state.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
-            OnDiskMeta disk = meta_to_disk(sync_state);
+            std::array<char, BLKDEV_META_MAX_SIZE> disk =
+                meta_to_disk(sync_state);
 
-            co_await _queue.pwrite(meta_fd, &disk, sizeof(disk), 0, true);
+            co_await _queue.pwrite(meta_fd, disk.data(), disk.size(), 0, true);
         } catch (...) {
             eptr = std::current_exception();
         }
@@ -403,18 +379,13 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
     RawstorObjectSyncState sync_state{};
     std::exception_ptr eptr;
     try {
-        OnDiskMeta disk{};
-        size_t rval = co_await _queue.pread(fd, &disk, sizeof(disk), 0);
-        if (rval != sizeof(disk) || disk.magic != RAWSTOR_MAGIC) {
+        std::array<char, BLKDEV_META_MAX_SIZE> disk{};
+        size_t rval = co_await _queue.pread(fd, disk.data(), disk.size(), 0);
+        if (rval != disk.size() ||
+            !blkdev_meta_decode(std::string(disk.data()), &sync_state)) {
             rawstd_error("Malformed object meta: %s\n", meta_path.c_str());
             RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
         }
-        if (disk.version != META_FORMAT_VERSION) {
-            rawstd_error("Unsupported object meta version: %u\n", disk.version);
-            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
-        }
-
-        sync_state = disk_to_sync_state(disk);
     } catch (...) {
         eptr = std::current_exception();
     }
@@ -447,9 +418,10 @@ rawstd::Task<void> Backend::set_sync_state(
 
     std::exception_ptr eptr;
     try {
-        OnDiskMeta disk = meta_to_disk(sync_state);
-        size_t rval = co_await _queue.pwrite(fd, &disk, sizeof(disk), 0, true);
-        if (rval != sizeof(disk)) {
+        std::array<char, BLKDEV_META_MAX_SIZE> disk = meta_to_disk(sync_state);
+        size_t rval =
+            co_await _queue.pwrite(fd, disk.data(), disk.size(), 0, true);
+        if (rval != disk.size()) {
             RAWSTD_THROW_SYSTEM_ERROR(EIO);
         }
     } catch (...) {

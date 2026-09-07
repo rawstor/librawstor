@@ -47,4 +47,16 @@ TEST(BlkdevMetaTest, decode_rejects_malformed_string) {
     EXPECT_FALSE(rawstor::blkdev_meta_decode("not the right format", &decoded));
 }
 
+TEST(BlkdevMetaTest, decode_rejects_wrong_version) {
+    /* A record from a format version this build no longer understands
+     * (or ever wrote) must not be mistaken for a valid one. */
+    RawstorObjectSyncState decoded{};
+    EXPECT_FALSE(
+        rawstor::blkdev_meta_decode(
+            "version=999:state=0:epoch=0:sync_id=0:h0=0:h1=0:h2=0:h3=0",
+            &decoded
+        )
+    );
+}
+
 } // namespace
