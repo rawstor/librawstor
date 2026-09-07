@@ -204,47 +204,21 @@ rawstd::Task<void> co_close_fd(RawIOQueue* queue, int fd) {
     co_await awaiter;
 }
 
-// ---------------------------------------------------------------------
-// rawstd::CallbackAwaitable<void> bridge over the async rawstor/{target,
-// location}.h C API shared by rawstor_target_spec()/_meta()/
-// _set_sync_state()/_create()/_remove() and rawstor_location_info()/
-// _list(): all seven report their own result via a single ssize_t (0 or
-// a snprintf()-style positive value for success, negative errno for
-// failure) rather than object.h's split error/data, but none of these
-// seven ever produce a positive value -- only rawstor_location_create()
-// does, and co_call()'s own callers below never call that one -- so a
-// shared trampoline collapsing it to CallbackAwaitable<void>'s plain
-// error convention covers every one of them; whatever else each call
-// delivers (spec/meta/info/targets/token) is written to its own
-// out-parameter before this fires, same convention as co_target_open()'s
-// `object` above.
-//
-// All seven also share the exact same leading/trailing shape --
-// (RawIOQueue*, const char* target_or_location, ...middle args...,
-// cb, data) -- so co_call() below takes the C function itself as its
-// first argument instead of each getting its own hand-written wrapper.
-// `target` is by value for the same reason as co_target_open()'s own
-// `target` above; each middle argument is forwarded exactly as the
-// caller passes it, so an out-parameter (spec/meta/info/targets/token)
-// is a raw pointer into the *awaiting* coroutine's own frame -- safe
-// because that frame stays alive for this whole co_await, same
-// reasoning co_target_open()'s `object` above already relies on.
-// ---------------------------------------------------------------------
-
+// rawstor_target_spec()/_meta()/_set_sync_state()/_create()/_remove() and
+// rawstor_location_info()/_list() all report their own result via a
+// single ssize_t (0 or a snprintf()-style positive value for success,
+// negative errno for failure) rather than object.h's split error/data,
+// but none of _list()/etc. below ever hits the positive-value case
+// (only rawstor_location_create() produces one, and nothing here calls
+// it) -- so this one trampoline, collapsing straight to
+// CallbackAwaitable<void>'s plain error convention, covers every one of
+// their call sites below; whatever else a given call delivers
+// (spec/meta/info/targets/token) is written to its own out-parameter
+// before this fires, same convention as co_target_open()'s `object`
+// above.
 int result_trampoline(ssize_t result, void* data) {
     static_cast<rawstd::CallbackAwaitable<void>*>(data)->complete(result);
     return 0;
-}
-
-template <typename F, typename... Args>
-rawstd::Task<void>
-co_call(F fn, RawIOQueue* queue, std::string target, Args... args) {
-    rawstd::CallbackAwaitable<void> awaiter;
-    int res = fn(queue, target.c_str(), args..., result_trampoline, &awaiter);
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-    co_await awaiter;
 }
 
 // rawio_send()/rawio_sendmsg() share this callback shape (ssize_t
@@ -915,11 +889,16 @@ rawstd::DetachedTask Client::_list(
     RawstorStringList* targets;
     int result = 0;
     try {
-        co_await co_call(
-            rawstor_location_list, client->_queue,
-            rawstd::URI::uris(client->_server.locations()), payload.val,
-            &targets, &token
+        std::string location = rawstd::URI::uris(client->_server.locations());
+        rawstd::CallbackAwaitable<void> awaiter;
+        int res = rawstor_location_list(
+            client->_queue, location.c_str(), payload.val, &targets, &token,
+            result_trampoline, &awaiter
         );
+        if (res < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
+        }
+        co_await awaiter;
     } catch (const std::system_error& e) {
         result = -e.code().value();
     }
@@ -994,10 +973,15 @@ rawstd::DetachedTask Client::_allocate(
 
     int result = 0;
     try {
-        co_await co_call(
-            rawstor_target_create, client->_queue, rawstd::URI::uris(targets),
-            &spec
+        std::string target = rawstd::URI::uris(targets);
+        rawstd::CallbackAwaitable<void> awaiter;
+        int res = rawstor_target_create(
+            client->_queue, target.c_str(), &spec, result_trampoline, &awaiter
         );
+        if (res < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
+        }
+        co_await awaiter;
     } catch (const std::system_error& e) {
         result = -e.code().value();
     }
@@ -1032,9 +1016,15 @@ rawstd::DetachedTask Client::_release(
 
     int result = 0;
     try {
-        co_await co_call(
-            rawstor_target_remove, client->_queue, rawstd::URI::uris(targets)
+        std::string target = rawstd::URI::uris(targets);
+        rawstd::CallbackAwaitable<void> awaiter;
+        int res = rawstor_target_remove(
+            client->_queue, target.c_str(), result_trampoline, &awaiter
         );
+        if (res < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
+        }
+        co_await awaiter;
     } catch (const std::system_error& e) {
         result = -e.code().value();
     }
@@ -1075,10 +1065,15 @@ rawstd::DetachedTask Client::_spec(
     RawstorObjectSpec spec{};
     int result = 0;
     try {
-        co_await co_call(
-            rawstor_target_spec, client->_queue, rawstd::URI::uris(targets),
-            &spec
+        std::string target = rawstd::URI::uris(targets);
+        rawstd::CallbackAwaitable<void> awaiter;
+        int res = rawstor_target_spec(
+            client->_queue, target.c_str(), &spec, result_trampoline, &awaiter
         );
+        if (res < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
+        }
+        co_await awaiter;
     } catch (const std::system_error& e) {
         result = -e.code().value();
     }
@@ -1128,10 +1123,15 @@ rawstd::DetachedTask Client::_meta(
     RawstorObjectMeta meta{};
     int result = 0;
     try {
-        co_await co_call(
-            rawstor_target_meta, client->_queue, rawstd::URI::uris(targets),
-            &meta
+        std::string target = rawstd::URI::uris(targets);
+        rawstd::CallbackAwaitable<void> awaiter;
+        int res = rawstor_target_meta(
+            client->_queue, target.c_str(), &meta, result_trampoline, &awaiter
         );
+        if (res < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
+        }
+        co_await awaiter;
     } catch (const std::system_error& e) {
         result = -e.code().value();
     }
@@ -1194,10 +1194,16 @@ rawstd::DetachedTask Client::_set_state(
 
     int result = 0;
     try {
-        co_await co_call(
-            rawstor_target_set_sync_state, client->_queue,
-            rawstd::URI::uris(targets), &sync_state
+        std::string target = rawstd::URI::uris(targets);
+        rawstd::CallbackAwaitable<void> awaiter;
+        int res = rawstor_target_set_sync_state(
+            client->_queue, target.c_str(), &sync_state, result_trampoline,
+            &awaiter
         );
+        if (res < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
+        }
+        co_await awaiter;
     } catch (const std::system_error& e) {
         result = -e.code().value();
     }
@@ -1226,10 +1232,15 @@ Client::_info(std::weak_ptr<Client> weak, RawstorOSTFrameHead head) {
     RawstorLocationInfo info{};
     int result = 0;
     try {
-        co_await co_call(
-            rawstor_location_info, client->_queue,
-            rawstd::URI::uris(client->_server.locations()), &info
+        std::string location = rawstd::URI::uris(client->_server.locations());
+        rawstd::CallbackAwaitable<void> awaiter;
+        int res = rawstor_location_info(
+            client->_queue, location.c_str(), &info, result_trampoline, &awaiter
         );
+        if (res < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
+        }
+        co_await awaiter;
     } catch (const std::system_error& e) {
         result = -e.code().value();
     }
