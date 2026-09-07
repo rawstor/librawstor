@@ -365,7 +365,7 @@ rawstd::Task<RawstorObjectSpec> Backend::spec(const RawstdUUID& id) {
 
     RawstorObjectSpec ret{
         .size = std::filesystem::file_size(target_path),
-        .mirrors = 0,
+        .mirrors = 1,
     };
 
     co_return ret;

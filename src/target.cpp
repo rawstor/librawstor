@@ -100,6 +100,16 @@ rawstd::Task<void> create_one(
     co_await cn->close();
 }
 
+rawstd::Task<RawstorObjectSpec>
+spec_one(rawio::Queue& queue, const rawstd::URI& target) {
+    RawstdUUID id = uuid_from_target(target);
+    std::unique_ptr<rawstor::Connection> cn =
+        co_await rawstor::Connection::create(queue, target.parent(), 1);
+    RawstorObjectSpec ret = co_await cn->spec(id);
+    co_await cn->close();
+    co_return ret;
+}
+
 rawstd::Task<void> remove_one(rawio::Queue& queue, const rawstd::URI& target) {
     RawstdUUID id = uuid_from_target(target);
     std::unique_ptr<rawstor::Connection> cn =
@@ -480,38 +490,31 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) {
     }
 }
 
-// Tried in target-list order, first answer wins: this is the only lookup
-// available before the object is open (rawstor_target_spec() queries size
-// without opening anything at all), so it must tolerate the same degraded
-// membership an open would rather than failing outright when _uris.front()
-// happens to be down.
+// Every URI is queried concurrently and must answer: mirrors is now each
+// URI's own share of the target's total (see Target::create()'s own
+// comment on why a relay URI can report more than 1), so recovering the
+// real total means summing every URI's own answer -- unlike `size`
+// (identical everywhere, so any one answer does), a degraded/unreachable
+// URI can no longer be silently skipped without undercounting the total,
+// the way the old first-answer-wins design could tolerate one being down.
 rawstd::Task<RawstorObjectSpec> Target::spec(rawio::Queue& queue) {
     validate_not_empty(_uris);
     validate_different_uris(_uris);
     validate_same_uuid(_uris);
 
-    int first_error = 0;
+    std::vector<rawstd::Task<RawstorObjectSpec>> tasks;
+    tasks.reserve(_uris.size());
     for (const auto& uri : _uris) {
-        RawstdUUID id = uuid_from_target(uri);
-        try {
-            std::unique_ptr<rawstor::Connection> cn =
-                co_await rawstor::Connection::create(queue, uri.parent(), 1);
-            RawstorObjectSpec ret = co_await cn->spec(id);
-            co_await cn->close();
-            // A single Connection/Backend only knows about the one URI it
-            // talks to -- mirrors is a property of this Target as a
-            // whole, filled in here rather than by whichever copy happened
-            // to answer.
-            ret.mirrors = (unsigned int)_uris.size();
-            co_return ret;
-        } catch (const std::system_error& e) {
-            rawstd_error("%s\n", e.what());
-            if (first_error == 0) {
-                first_error = e.code().value();
-            }
-        }
+        tasks.push_back(spec_one(queue, uri));
     }
-    RAWSTD_THROW_SYSTEM_ERROR(first_error ? first_error : ENOTCONN);
+    std::vector<RawstorObjectSpec> specs =
+        co_await rawstd::gather(std::move(tasks));
+
+    RawstorObjectSpec ret{.size = specs.front().size, .mirrors = 0};
+    for (const RawstorObjectSpec& s : specs) {
+        ret.mirrors += s.mirrors;
+    }
+    co_return ret;
 }
 
 // First URI only. Unlike spec() above, deliberately does not fail over to
