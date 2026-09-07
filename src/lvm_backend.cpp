@@ -604,12 +604,14 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
     std::string tags = co_await _lv_tags(path);
     std::string tag = find_tag(tags, rawstor_tag_prefix);
 
-    // An empty tag means one was never recorded: an LV created before
-    // this feature, or by something else. Must not be trusted as CLEAN --
-    // the caller treats any error here as "member stale, needs a resync"
-    // (docs/mirroring.md, case F10).
-    RawstorObjectSyncState sync_state{};
-    if (tag.empty() || !meta_decode(tag, &sync_state)) {
+    // An empty/unrecorded tag means one was never recorded: an LV created
+    // before this feature, or by something else. Must not be trusted as
+    // CLEAN -- the caller treats any error here as "member stale, needs a
+    // resync" (docs/mirroring.md, case F10).
+    RawstorObjectSyncState sync_state;
+    try {
+        sync_state = meta_decode(tag);
+    } catch (const std::system_error&) {
         rawstd_error("lvm: no recorded mirror state on %s\n", path.c_str());
         RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
     }

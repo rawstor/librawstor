@@ -30,22 +30,6 @@
 
 namespace {
 
-// Mirror consistency metadata for one copy (docs/mirroring.md) lives in a
-// companion "<uuid>.meta" file, encoded the same way as the lvm:///zfs://
-// backends' own native metadata (see blk::Backend::meta_encode()) instead
-// of a bespoke binary format -- NUL-padded out to
-// blk::Backend::META_MAX_SIZE bytes so this file's own byte length stays
-// fixed across every rewrite (see Backend::set_sync_state() below for why
-// that matters), rather than written at its own (shorter, variable)
-// encoded length.
-std::array<char, rawstor::blk::Backend::META_MAX_SIZE>
-meta_to_disk(const RawstorObjectSyncState& sync_state) {
-    std::array<char, rawstor::blk::Backend::META_MAX_SIZE> buf{};
-    std::string encoded = rawstor::blk::Backend::meta_encode(sync_state);
-    memcpy(buf.data(), encoded.data(), encoded.size());
-    return buf;
-}
-
 std::string get_target_meta_path(
     const std::string& location_path, const RawstdUUIDString& uuid
 ) {
@@ -293,7 +277,15 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
         try {
             RawstorObjectSyncState sync_state{};
             sync_state.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
-            std::array<char, META_MAX_SIZE> disk = meta_to_disk(sync_state);
+
+            // meta_encode()'s own (shorter, variable-length) return value
+            // is NUL-padded out to a fixed META_MAX_SIZE bytes here,
+            // rather than written at its own length, so this file's own
+            // byte length stays fixed across every rewrite -- see
+            // set_sync_state() below for why that matters.
+            std::string encoded = meta_encode(sync_state);
+            std::array<char, META_MAX_SIZE> disk{};
+            memcpy(disk.data(), encoded.data(), encoded.size());
 
             co_await _queue.pwrite(meta_fd, disk.data(), disk.size(), 0, true);
         } catch (...) {
@@ -380,10 +372,15 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
     try {
         std::array<char, META_MAX_SIZE> disk{};
         size_t rval = co_await _queue.pread(fd, disk.data(), disk.size(), 0);
-        if (rval != disk.size() ||
-            !meta_decode(std::string(disk.data()), &sync_state)) {
+        if (rval != disk.size()) {
             rawstd_error("Malformed object meta: %s\n", meta_path.c_str());
             RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+        }
+        try {
+            sync_state = meta_decode(std::string(disk.data()));
+        } catch (const std::system_error&) {
+            rawstd_error("Malformed object meta: %s\n", meta_path.c_str());
+            throw;
         }
     } catch (...) {
         eptr = std::current_exception();
@@ -417,7 +414,14 @@ rawstd::Task<void> Backend::set_sync_state(
 
     std::exception_ptr eptr;
     try {
-        std::array<char, META_MAX_SIZE> disk = meta_to_disk(sync_state);
+        // See create()'s own comment: NUL-padded out to a fixed
+        // META_MAX_SIZE bytes so this file's own byte length stays fixed
+        // across every rewrite -- required here specifically, since this
+        // is an in-place overwrite without O_TRUNC (see above).
+        std::string encoded = meta_encode(sync_state);
+        std::array<char, META_MAX_SIZE> disk{};
+        memcpy(disk.data(), encoded.data(), encoded.size());
+
         size_t rval =
             co_await _queue.pwrite(fd, disk.data(), disk.size(), 0, true);
         if (rval != disk.size()) {

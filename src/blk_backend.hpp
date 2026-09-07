@@ -131,15 +131,14 @@ public:
     // Public (not protected) so tests/ can exercise them directly
     // without a real lvm/zfs/file backend of their own.
     //
-    // meta_decode() reverses meta_encode(), returning false and leaving
-    // *out untouched if value is not a well-formed encoding of the
-    // current META_FORMAT_VERSION (including an empty string: the
-    // caller must not mistake "no value was ever recorded" for a valid
-    // record, and a record from a different format version, which this
-    // repo will never write again once it's bumped).
+    // meta_decode() reverses meta_encode(), throwing EPROTO if value is
+    // not a well-formed encoding of the current META_FORMAT_VERSION
+    // (including an empty string: the caller must not mistake "no value
+    // was ever recorded" for a valid record, and a record from a
+    // different format version, which this repo will never write again
+    // once it's bumped).
     static std::string meta_encode(const RawstorObjectSyncState& sync_state);
-    static bool
-    meta_decode(const std::string& value, RawstorObjectSyncState* out);
+    static RawstorObjectSyncState meta_decode(const std::string& value);
 
     // No universal answer for a raw block device -- left pure virtual
     // (inherited from rawstor::Backend) rather than given a default here,

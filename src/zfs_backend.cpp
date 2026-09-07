@@ -349,12 +349,14 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
         output.pop_back();
     }
 
-    // "-" means the property was never set: a zvol created before this
-    // feature, or by something else. Must not be trusted as CLEAN -- the
-    // caller treats any error here as "member stale, needs a resync"
-    // (docs/mirroring.md, case F10).
-    RawstorObjectSyncState sync_state{};
-    if (output.empty() || output == "-" || !meta_decode(output, &sync_state)) {
+    // "-" (or an empty value) means the property was never set: a zvol
+    // created before this feature, or by something else. Must not be
+    // trusted as CLEAN -- the caller treats any error here as "member
+    // stale, needs a resync" (docs/mirroring.md, case F10).
+    RawstorObjectSyncState sync_state;
+    try {
+        sync_state = meta_decode(output);
+    } catch (const std::system_error&) {
         rawstd_error("zfs: no recorded mirror state on %s\n", dataset.c_str());
         RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
     }

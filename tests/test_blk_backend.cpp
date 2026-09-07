@@ -366,8 +366,8 @@ TEST(BlkBackendTest, meta_encode_decode_round_trip) {
 
     std::string encoded = rawstor::blk::Backend::meta_encode(sync_state);
 
-    RawstorObjectSyncState decoded{};
-    ASSERT_TRUE(rawstor::blk::Backend::meta_decode(encoded, &decoded));
+    RawstorObjectSyncState decoded =
+        rawstor::blk::Backend::meta_decode(encoded);
     EXPECT_EQ(decoded.state, sync_state.state);
     EXPECT_EQ(decoded.epoch, sync_state.epoch);
     EXPECT_EQ(decoded.sync_id, sync_state.sync_id);
@@ -380,32 +380,29 @@ TEST(BlkBackendTest, meta_encode_decode_round_trip) {
 TEST(BlkBackendTest, meta_decode_rejects_empty_string) {
     /* A missing property/tag/record must never be mistaken for a valid
      * one. */
-    RawstorObjectSyncState decoded{};
-    EXPECT_FALSE(rawstor::blk::Backend::meta_decode("", &decoded));
+    EXPECT_THROW(rawstor::blk::Backend::meta_decode(""), std::system_error);
 }
 
 TEST(BlkBackendTest, meta_decode_rejects_dash) {
     /* ZFS's own "property never set" marker -- must not be mistaken for a
      * valid record either. */
-    RawstorObjectSyncState decoded{};
-    EXPECT_FALSE(rawstor::blk::Backend::meta_decode("-", &decoded));
+    EXPECT_THROW(rawstor::blk::Backend::meta_decode("-"), std::system_error);
 }
 
 TEST(BlkBackendTest, meta_decode_rejects_malformed_string) {
-    RawstorObjectSyncState decoded{};
-    EXPECT_FALSE(
-        rawstor::blk::Backend::meta_decode("not the right format", &decoded)
+    EXPECT_THROW(
+        rawstor::blk::Backend::meta_decode("not the right format"),
+        std::system_error
     );
 }
 
 TEST(BlkBackendTest, meta_decode_rejects_wrong_version) {
     /* A record from a format version this build no longer understands (or
      * ever wrote) must not be mistaken for a valid one. */
-    RawstorObjectSyncState decoded{};
-    EXPECT_FALSE(
+    EXPECT_THROW(
         rawstor::blk::Backend::meta_decode(
-            "version=999:state=0:epoch=0:sync_id=0:h0=0:h1=0:h2=0:h3=0",
-            &decoded
-        )
+            "version=999:state=0:epoch=0:sync_id=0:h0=0:h1=0:h2=0:h3=0"
+        ),
+        std::system_error
     );
 }

@@ -240,9 +240,7 @@ std::string Backend::meta_encode(const RawstorObjectSyncState& sync_state) {
     return std::string(buf);
 }
 
-bool Backend::meta_decode(
-    const std::string& value, RawstorObjectSyncState* out
-) {
+RawstorObjectSyncState Backend::meta_decode(const std::string& value) {
     RawstorObjectSyncState sync_state{};
     unsigned int version = 0;
     unsigned int state = 0;
@@ -256,12 +254,11 @@ bool Backend::meta_decode(
         &sync_state.sync_id_history[2], &sync_state.sync_id_history[3]
     );
     if (n != 8 || version != META_FORMAT_VERSION) {
-        return false;
+        RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
     }
 
     sync_state.state = static_cast<RawstorObjectSyncStateValue>(state);
-    *out = sync_state;
-    return true;
+    return sync_state;
 }
 
 rawstd::Task<size_t> Backend::pread(void* buf, size_t size, off_t offset) {
