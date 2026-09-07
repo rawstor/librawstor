@@ -121,6 +121,16 @@ Session& Queue::_get_session(int fd) {
     return *session;
 }
 
+void Queue::_insert_timer(std::unique_ptr<EventTimer> event) {
+    std::chrono::steady_clock::time_point deadline = event->deadline();
+
+    std::list<std::unique_ptr<EventTimer>>::iterator it = _timers.begin();
+    while (it != _timers.end() && (*it)->deadline() <= deadline) {
+        ++it;
+    }
+    _timers.insert(it, std::move(event));
+}
+
 bool Queue::_reap_timers() {
     bool any = false;
     std::chrono::steady_clock::time_point now =
@@ -134,12 +144,34 @@ bool Queue::_reap_timers() {
         _current_events.push_back(event.get());
         try {
             event->dispatch();
-            rawstd::DetachedTask::rethrow_if_pending();
         } catch (...) {
             _current_events.pop_back();
             throw;
         }
         _current_events.pop_back();
+
+        // Re-arm a still-live multishot timer before checking
+        // rethrow_if_pending() below, not after -- see
+        // Queue::_wait_timeout()'s own _cqes-loop comment for why: the
+        // pending exception it may rethrow can belong to any
+        // rawstd::DetachedTask in the process, unrelated to this timer
+        // entirely, and checking it first would skip this re-arm on every
+        // such coincidence, silently dropping the registration.
+        if (event->is_multishot() && !event->error()) {
+            EventTimerMultishot* multishot =
+                static_cast<EventTimerMultishot*>(event.get());
+            multishot->set_deadline(
+                std::chrono::steady_clock::now() + multishot->interval()
+            );
+            _insert_timer(std::move(event));
+        }
+
+        // dispatch() may have resumed a rawstd::DetachedTask that threw --
+        // see DetachedTask's own doc comment for why that can't be
+        // delivered by rethrowing directly out of dispatch()/resume()
+        // itself, and rethrow_if_pending()'s for why this is one of only
+        // two places that need to check.
+        rawstd::DetachedTask::rethrow_if_pending();
     }
 
     return any;
@@ -876,14 +908,35 @@ rawio::Awaitable<void> Queue::timeout(unsigned int usec) {
         std::make_unique<EventTimer>(*this, deadline, trace_event);
 
     rawio::Event* ret = static_cast<rawio::Event*>(event.get());
-
-    std::list<std::unique_ptr<EventTimer>>::iterator it = _timers.begin();
-    while (it != _timers.end() && (*it)->deadline() <= deadline) {
-        ++it;
-    }
-    _timers.insert(it, std::move(event));
+    _insert_timer(std::move(event));
 
     return rawio::Awaitable<void>(this, ret);
+}
+
+// Multishot counterpart of timeout() above: each tick recomputes its own
+// fresh deadline and reinserts itself into `_timers` (see
+// _reap_timers()'s re-arm branch) instead of resolving a single co_await
+// once. Submission (the first tick's clock starting) already happens
+// before this returns, same as timeout().
+rawio::TimeoutStream Queue::timeout_multishot(unsigned int usec) {
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('|', "usec = %u\n", usec);
+
+    std::chrono::microseconds interval(usec);
+    std::chrono::steady_clock::time_point deadline =
+        std::chrono::steady_clock::now() + interval;
+
+    auto backend =
+        std::make_shared<TimeoutMultishotBackend>(*this, _dispatch_generation);
+    std::unique_ptr<EventTimerMultishot> event =
+        std::make_unique<EventTimerMultishot>(
+            *this, deadline, interval, trace_event, backend
+        );
+
+    backend->set_event(event.get());
+    _insert_timer(std::move(event));
+
+    return rawio::TimeoutStream(std::move(backend));
 }
 
 void Queue::_attach(

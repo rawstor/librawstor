@@ -25,6 +25,7 @@ class Awaitable;
 class PollStream;
 class AcceptStream;
 class RecvStream;
+class TimeoutStream;
 
 class Queue : public RawIOQueue {
     // Awaitable<T>::await_suspend() is the only caller of the protected
@@ -145,6 +146,15 @@ public:
     // exception, exactly like every other op: ECANCELED if cancelled
     // before firing.
     virtual Awaitable<void> timeout(unsigned int usec) = 0;
+
+    // Multishot counterpart of timeout() above: instead of resolving once,
+    // delivers one tick every `usec` microseconds until cancel()-ed --
+    // `while (true) { co_await stream.next(); ... }`, same shape as
+    // poll_multishot()/accept_multishot(). Submission (the clock for the
+    // first tick starting) already happens before this returns, exactly
+    // like timeout() above. The delivered value carries no meaning; only
+    // its arrival (or the terminal ECANCELED) matters.
+    virtual TimeoutStream timeout_multishot(unsigned int usec) = 0;
 
     // Requests cancellation; submission already happens before this
     // returns, exactly like every op above -- awaiting the result is

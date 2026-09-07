@@ -217,4 +217,37 @@ TEST_F(RawioCApiTest, timeout_cancel) {
     EXPECT_EQ(count, 1);
 }
 
+int timeout_multishot_count_cb(ssize_t result, void* data) {
+    int* count = static_cast<int*>(data);
+    // First two deliveries: ordinary ticks (0). Third (post-cancel): the
+    // terminal ECANCELED notification.
+    if (*count < 2) {
+        EXPECT_EQ(result, 0);
+    } else {
+        EXPECT_EQ(result, -ECANCELED);
+    }
+    ++(*count);
+    return 0;
+}
+
+TEST_F(RawioCApiTest, timeout_multishot_basic) {
+    int count = 0;
+    RawIOEvent* event = nullptr;
+    int res = rawio_timeout_multishot(
+        _queue.get(), 20'000, timeout_multishot_count_cb, &count, &event
+    );
+    ASSERT_EQ(res, 0);
+    ASSERT_NE(event, nullptr);
+
+    EXPECT_EQ(rawio_wait_timeout(_queue.get(), 1000), 0);
+    EXPECT_EQ(count, 1);
+
+    EXPECT_EQ(rawio_wait_timeout(_queue.get(), 1000), 0);
+    EXPECT_EQ(count, 2);
+
+    EXPECT_EQ(rawio_cancel(_queue.get(), event), 0);
+    EXPECT_EQ(rawio_wait_timeout(_queue.get(), 1000), 0);
+    EXPECT_EQ(count, 3);
+}
+
 } // unnamed namespace

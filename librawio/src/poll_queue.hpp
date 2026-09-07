@@ -68,6 +68,12 @@ private:
     // return inside _wait_timeout()'s loop.
     bool _reap_timers();
 
+    // Inserts `event` into `_timers`, kept sorted ascending by deadline --
+    // shared by timeout()/timeout_multishot() (arming a fresh timer) and
+    // _reap_timers() (re-arming a still-live multishot timer after it
+    // ticks).
+    void _insert_timer(std::unique_ptr<EventTimer> event);
+
     void _eval(std::unique_ptr<EventEval> event);
 
 protected:
@@ -158,6 +164,8 @@ public:
     sendmsg(int fd, const msghdr* msg, unsigned int flags) override;
 
     rawio::Awaitable<void> timeout(unsigned int usec) override;
+
+    rawio::TimeoutStream timeout_multishot(unsigned int usec) override;
 
     rawio::Awaitable<void> cancel(rawio::Event* e) override;
 
