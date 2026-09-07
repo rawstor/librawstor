@@ -67,7 +67,7 @@ public:
     rawstd::Task<RawstorLocationInfo> info() override;
 
     // Native per-copy mirror metadata, stored in the zvol's own
-    // "rawstor:meta" user property -- see src/blkdev_meta.hpp.
+    // "rawstor:meta" user property -- see blk::Backend::meta_encode().
     rawstd::Task<RawstorObjectMeta> meta(const RawstdUUID& id) override;
 
     rawstd::Task<void> set_sync_state(

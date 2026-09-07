@@ -1,6 +1,5 @@
 #include "zfs_backend.hpp"
 
-#include "blkdev_meta.hpp"
 #include "opts.h"
 #include "subprocess.hpp"
 
@@ -235,7 +234,7 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
     RawstorObjectSyncState initial{};
     initial.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
     std::string prop =
-        std::string(rawstor_property) + "=" + blkdev_meta_encode(initial);
+        std::string(rawstor_property) + "=" + meta_encode(initial);
 
     rawstd_info(
         "zfs: creating zvol %s, size %s bytes\n", dataset.c_str(), size_buf
@@ -355,13 +354,12 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
     // caller treats any error here as "member stale, needs a resync"
     // (docs/mirroring.md, case F10).
     RawstorObjectSyncState sync_state{};
-    if (output.empty() || output == "-" ||
-        !blkdev_meta_decode(output, &sync_state)) {
+    if (output.empty() || output == "-" || !meta_decode(output, &sync_state)) {
         rawstd_error("zfs: no recorded mirror state on %s\n", dataset.c_str());
         RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
     }
 
-    // The property never carries size (see blkdev_meta_encode()): merge in
+    // The property never carries size (see meta_encode()): merge in
     // the zvol's real, current size the same way spec() reports it, rather
     // than trust a value that could go stale if the zvol were ever resized
     // outside rawstor.
@@ -377,7 +375,7 @@ rawstd::Task<void> Backend::set_sync_state(
 ) {
     std::string dataset = _dataset(id);
     std::string prop =
-        std::string(rawstor_property) + "=" + blkdev_meta_encode(sync_state);
+        std::string(rawstor_property) + "=" + meta_encode(sync_state);
 
     std::vector<std::string> argv = {"zfs", "set", prop, dataset};
     try {

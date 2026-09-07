@@ -1,6 +1,5 @@
 #include "file_backend.hpp"
 
-#include "blkdev_meta.hpp"
 #include "opts.h"
 
 #include <rawio/awaitable.hpp>
@@ -33,15 +32,16 @@ namespace {
 
 // Mirror consistency metadata for one copy (docs/mirroring.md) lives in a
 // companion "<uuid>.meta" file, encoded the same way as the lvm:///zfs://
-// backends' own native metadata (see src/blkdev_meta.hpp) instead of a
-// bespoke binary format -- NUL-padded out to BLKDEV_META_MAX_SIZE bytes
-// so this file's own byte length stays fixed across every rewrite (see
-// Backend::set_sync_state() below for why that matters), rather than
-// written at its own (shorter, variable) encoded length.
-std::array<char, rawstor::BLKDEV_META_MAX_SIZE>
+// backends' own native metadata (see blk::Backend::meta_encode()) instead
+// of a bespoke binary format -- NUL-padded out to
+// blk::Backend::META_MAX_SIZE bytes so this file's own byte length stays
+// fixed across every rewrite (see Backend::set_sync_state() below for why
+// that matters), rather than written at its own (shorter, variable)
+// encoded length.
+std::array<char, rawstor::blk::Backend::META_MAX_SIZE>
 meta_to_disk(const RawstorObjectSyncState& sync_state) {
-    std::array<char, rawstor::BLKDEV_META_MAX_SIZE> buf{};
-    std::string encoded = rawstor::blkdev_meta_encode(sync_state);
+    std::array<char, rawstor::blk::Backend::META_MAX_SIZE> buf{};
+    std::string encoded = rawstor::blk::Backend::meta_encode(sync_state);
     memcpy(buf.data(), encoded.data(), encoded.size());
     return buf;
 }
@@ -293,8 +293,7 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
         try {
             RawstorObjectSyncState sync_state{};
             sync_state.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
-            std::array<char, BLKDEV_META_MAX_SIZE> disk =
-                meta_to_disk(sync_state);
+            std::array<char, META_MAX_SIZE> disk = meta_to_disk(sync_state);
 
             co_await _queue.pwrite(meta_fd, disk.data(), disk.size(), 0, true);
         } catch (...) {
@@ -379,10 +378,10 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
     RawstorObjectSyncState sync_state{};
     std::exception_ptr eptr;
     try {
-        std::array<char, BLKDEV_META_MAX_SIZE> disk{};
+        std::array<char, META_MAX_SIZE> disk{};
         size_t rval = co_await _queue.pread(fd, disk.data(), disk.size(), 0);
         if (rval != disk.size() ||
-            !blkdev_meta_decode(std::string(disk.data()), &sync_state)) {
+            !meta_decode(std::string(disk.data()), &sync_state)) {
             rawstd_error("Malformed object meta: %s\n", meta_path.c_str());
             RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
         }
@@ -418,7 +417,7 @@ rawstd::Task<void> Backend::set_sync_state(
 
     std::exception_ptr eptr;
     try {
-        std::array<char, BLKDEV_META_MAX_SIZE> disk = meta_to_disk(sync_state);
+        std::array<char, META_MAX_SIZE> disk = meta_to_disk(sync_state);
         size_t rval =
             co_await _queue.pwrite(fd, disk.data(), disk.size(), 0, true);
         if (rval != disk.size()) {

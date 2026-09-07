@@ -1,6 +1,5 @@
 #include "lvm_backend.hpp"
 
-#include "blkdev_meta.hpp"
 #include "opts.h"
 #include "subprocess.hpp"
 
@@ -55,8 +54,8 @@ const char* const lvm_config =
     "report{time_format=\"%s\"}";
 
 // Prefix of the LVM tag this backend stores native per-copy mirror
-// metadata under (see src/blkdev_meta.hpp) -- e.g.
-// "rawstor.meta=state=0:epoch=0:...".
+// metadata under (see blk::Backend::meta_encode()) -- e.g.
+// "rawstor.meta=version=1:state=0:epoch=0:...".
 const char* const rawstor_tag_prefix = "rawstor.meta=";
 
 // Suffix a staging LV carries between lvcreate and the lvrename that
@@ -390,8 +389,7 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
     // window -- staged or revealed -- where the LV exists without one.
     RawstorObjectSyncState initial{};
     initial.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
-    std::string tag =
-        std::string(rawstor_tag_prefix) + blkdev_meta_encode(initial);
+    std::string tag = std::string(rawstor_tag_prefix) + meta_encode(initial);
 
     rawstd_info(
         "lvm: creating LV %s in VG %s, size %s\n", uuid_str, _vg_name.c_str(),
@@ -611,12 +609,12 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
     // the caller treats any error here as "member stale, needs a resync"
     // (docs/mirroring.md, case F10).
     RawstorObjectSyncState sync_state{};
-    if (tag.empty() || !blkdev_meta_decode(tag, &sync_state)) {
+    if (tag.empty() || !meta_decode(tag, &sync_state)) {
         rawstd_error("lvm: no recorded mirror state on %s\n", path.c_str());
         RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
     }
 
-    // The tag never carries size (see blkdev_meta_encode()): merge in the
+    // The tag never carries size (see meta_encode()): merge in the
     // LV's real, current size the same way spec() reports it, rather than
     // trust a value that could go stale if the LV were ever resized
     // outside rawstor.
@@ -632,7 +630,7 @@ rawstd::Task<void> Backend::set_sync_state(
 ) {
     std::string path = _device_path(id);
     std::string new_tag =
-        std::string(rawstor_tag_prefix) + blkdev_meta_encode(sync_state);
+        std::string(rawstor_tag_prefix) + meta_encode(sync_state);
 
     std::string tags = co_await _lv_tags(path);
     std::string old_tag = find_tag(tags, rawstor_tag_prefix);

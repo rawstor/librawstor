@@ -107,6 +107,40 @@ public:
     // its objects are plain regular files.
     rawstd::Task<RawstorObjectSpec> spec(const RawstdUUID& id) override;
 
+    // Bumped whenever meta_encode()'s own field set changes -- carried as
+    // this format's own leading field (see meta_encode()'s own doc
+    // comment below) rather than left for a caller to track separately,
+    // so every subclass rejects a record from an incompatible version
+    // the same way.
+    static constexpr unsigned int META_FORMAT_VERSION = 1;
+
+    // Upper bound on meta_encode()'s own return value, comfortably
+    // covering every field at its widest (a full 16 hex digits for each
+    // uint64_t one). file::Backend sizes its own fixed-length on-disk
+    // .meta record to this constant instead of guessing.
+    static constexpr size_t META_MAX_SIZE = 256;
+
+    // Encodes/decodes a RawstorObjectSyncState as a compact
+    // colon-separated string of hex fields, e.g.
+    // "version=1:state=0:epoch=0:sync_id=0:h0=0:h1=0:h2=0:h3=0" -- shared
+    // by every blk-backed subclass's own native per-copy metadata
+    // storage: lvm::Backend's LVM tag, zfs::Backend's ZFS user property,
+    // and file::Backend's own on-disk .meta file (NUL-padded out to
+    // META_MAX_SIZE bytes -- see its own doc comment for why). Only
+    // characters valid in all three are used (no comma, no whitespace).
+    // Public (not protected) so tests/ can exercise them directly
+    // without a real lvm/zfs/file backend of their own.
+    //
+    // meta_decode() reverses meta_encode(), returning false and leaving
+    // *out untouched if value is not a well-formed encoding of the
+    // current META_FORMAT_VERSION (including an empty string: the
+    // caller must not mistake "no value was ever recorded" for a valid
+    // record, and a record from a different format version, which this
+    // repo will never write again once it's bumped).
+    static std::string meta_encode(const RawstorObjectSyncState& sync_state);
+    static bool
+    meta_decode(const std::string& value, RawstorObjectSyncState* out);
+
     // No universal answer for a raw block device -- left pure virtual
     // (inherited from rawstor::Backend) rather than given a default here,
     // so a new blk::Backend subclass that forgets to implement native

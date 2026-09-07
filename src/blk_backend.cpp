@@ -20,8 +20,10 @@
 #include <vector>
 
 #include <cerrno>
+#include <cinttypes>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 
 #if defined(RAWSTD_ON_LINUX)
 #include <linux/falloc.h>
@@ -29,6 +31,15 @@
 #endif
 
 namespace {
+
+std::string trim(const std::string& s) {
+    size_t begin = s.find_first_not_of(" \t\r\n");
+    if (begin == std::string::npos) {
+        return "";
+    }
+    size_t end = s.find_last_not_of(" \t\r\n");
+    return s.substr(begin, end - begin + 1);
+}
 
 // Suspends the awaiting coroutine unconditionally, queuing its handle onto
 // `waiters` for rawstor::blk::Backend::_throttle_release() to resume once a
@@ -213,6 +224,44 @@ rawstd::Task<RawstorObjectSpec> Backend::spec(const RawstdUUID& id) {
     (void)id;
     RAWSTD_THROW_SYSTEM_ERROR(ENOSYS);
 #endif
+}
+
+std::string Backend::meta_encode(const RawstorObjectSyncState& sync_state) {
+    char buf[META_MAX_SIZE];
+    snprintf(
+        buf, sizeof(buf),
+        "version=%u:state=%u:epoch=%" PRIx64 ":sync_id=%" PRIx64 ":h0=%" PRIx64
+        ":h1=%" PRIx64 ":h2=%" PRIx64 ":h3=%" PRIx64,
+        META_FORMAT_VERSION, (unsigned int)sync_state.state, sync_state.epoch,
+        sync_state.sync_id, sync_state.sync_id_history[0],
+        sync_state.sync_id_history[1], sync_state.sync_id_history[2],
+        sync_state.sync_id_history[3]
+    );
+    return std::string(buf);
+}
+
+bool Backend::meta_decode(
+    const std::string& value, RawstorObjectSyncState* out
+) {
+    RawstorObjectSyncState sync_state{};
+    unsigned int version = 0;
+    unsigned int state = 0;
+
+    int n = sscanf(
+        trim(value).c_str(),
+        "version=%u:state=%u:epoch=%" SCNx64 ":sync_id=%" SCNx64 ":h0=%" SCNx64
+        ":h1=%" SCNx64 ":h2=%" SCNx64 ":h3=%" SCNx64,
+        &version, &state, &sync_state.epoch, &sync_state.sync_id,
+        &sync_state.sync_id_history[0], &sync_state.sync_id_history[1],
+        &sync_state.sync_id_history[2], &sync_state.sync_id_history[3]
+    );
+    if (n != 8 || version != META_FORMAT_VERSION) {
+        return false;
+    }
+
+    sync_state.state = static_cast<RawstorObjectSyncStateValue>(state);
+    *out = sync_state;
+    return true;
 }
 
 rawstd::Task<size_t> Backend::pread(void* buf, size_t size, off_t offset) {
