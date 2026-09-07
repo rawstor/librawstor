@@ -68,7 +68,24 @@ protected:
     // create().
     static void _validate_mirrors_one(const RawstorObjectSpec& sp);
 
+    // Upper bound on meta_encode()'s own return value, comfortably
+    // covering every field at its widest (a full 16 hex digits for each
+    // uint64_t one). Protected (not private): file::Backend, the only
+    // subclass that needs it, sizes its own fixed-length on-disk .meta
+    // record to this constant instead of guessing; nothing outside the
+    // class hierarchy needs it, unlike meta_encode()/meta_decode()
+    // themselves (public further down, for tests/).
+    static constexpr size_t META_MAX_SIZE = 256;
+
 private:
+    // Bumped whenever meta_encode()'s own field set changes -- carried as
+    // this format's own leading field (see meta_encode()'s own doc
+    // comment below) rather than left for a caller to track separately,
+    // so every subclass rejects a record from an incompatible version
+    // the same way. Private: only meta_encode()/meta_decode()'s own
+    // implementation ever needs it.
+    static constexpr unsigned int META_FORMAT_VERSION = 1;
+
     // Writes dispatched to the io queue whose completion hasn't arrived
     // yet -- see pwrite()/pwritev()'s use of it against
     // rawstor_opts_write_throttle_limit() to decide whether a write is
@@ -106,19 +123,6 @@ public:
     // device (BLKGETSIZE64) -- file::Backend overrides this instead, since
     // its objects are plain regular files.
     rawstd::Task<RawstorObjectSpec> spec(const RawstdUUID& id) override;
-
-    // Bumped whenever meta_encode()'s own field set changes -- carried as
-    // this format's own leading field (see meta_encode()'s own doc
-    // comment below) rather than left for a caller to track separately,
-    // so every subclass rejects a record from an incompatible version
-    // the same way.
-    static constexpr unsigned int META_FORMAT_VERSION = 1;
-
-    // Upper bound on meta_encode()'s own return value, comfortably
-    // covering every field at its widest (a full 16 hex digits for each
-    // uint64_t one). file::Backend sizes its own fixed-length on-disk
-    // .meta record to this constant instead of guessing.
-    static constexpr size_t META_MAX_SIZE = 256;
 
     // Encodes/decodes a RawstorObjectSyncState as a compact
     // colon-separated string of hex fields, e.g.
