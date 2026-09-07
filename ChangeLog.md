@@ -27,8 +27,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - `rawio::Queue::timeout_multishot()` (and its `rawio_timeout_multishot()` C API counterpart): the multishot counterpart of `timeout()`, firing once every given number of microseconds until canceled instead of resolving once.
-- `rawio::Queue::unlink()` (and its `rawio_unlink()` C API counterpart): a standalone async wrapper over `unlink(2)`, removing a file by path.
-- `rawio_stat()`/`rawio_fallocate()` C API counterparts of the existing `rawio::Queue::stat()`/`fallocate()`, which until now were only reachable from C++.
 
 ## [0.2.10] - 2026-08-31
 
