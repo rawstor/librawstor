@@ -822,6 +822,24 @@ rawio::Awaitable<int> Queue::stat(const char* path, struct stat* buf) {
     return rawio::Awaitable<int>(this, ret);
 }
 
+rawio::Awaitable<int> Queue::unlink(const char* path) {
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('|', "%s\n", "");
+
+    std::unique_ptr<EventEval> event =
+        std::make_unique<EventEval>(*this, trace_event, [path]() -> int {
+            int res = ::unlink(path);
+            if (res == -1) {
+                res = -errno;
+                errno = 0;
+            }
+            return res;
+        });
+
+    rawio::Event* ret = static_cast<rawio::Event*>(event.get());
+    _eval(std::move(event));
+    return rawio::Awaitable<int>(this, ret);
+}
+
 rawio::Awaitable<int>
 Queue::fallocate(int fd, int mode, off_t offset, off_t len) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(

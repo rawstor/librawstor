@@ -6,7 +6,10 @@
 
 #include <poll.h>
 
+#include <filesystem>
+
 #include <cerrno>
+#include <cstdio>
 #include <cstring>
 
 namespace {
@@ -197,6 +200,49 @@ TEST_F(RawioCApiTest, timeout_multishot_basic) {
     EXPECT_EQ(rawio_cancel(_queue.get(), event), 0);
     EXPECT_EQ(rawio_wait_timeout(_queue.get(), 1000), 0);
     EXPECT_EQ(count, 3);
+}
+
+int unlink_result_cb(ssize_t result, void* data) {
+    ssize_t* out = static_cast<ssize_t*>(data);
+    *out = result;
+    return 0;
+}
+
+TEST_F(RawioCApiTest, unlink_basic) {
+    std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / "rawio_tests";
+    std::filesystem::create_directory(dir);
+    std::string filename = (dir / "rawio_unlink_c_api.test").string();
+
+    FILE* f = fopen(filename.c_str(), "w");
+    ASSERT_NE(f, nullptr);
+    fclose(f);
+    ASSERT_TRUE(std::filesystem::exists(filename));
+
+    ssize_t result = 1;
+    int res =
+        rawio_unlink(_queue.get(), filename.c_str(), unlink_result_cb, &result);
+    ASSERT_EQ(res, 0);
+
+    EXPECT_EQ(rawio_wait_timeout(_queue.get(), 1000), 0);
+    EXPECT_EQ(result, 0);
+    EXPECT_FALSE(std::filesystem::exists(filename));
+}
+
+TEST_F(RawioCApiTest, unlink_enoent) {
+    std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / "rawio_tests";
+    std::filesystem::create_directory(dir);
+    std::string filename = (dir / "rawio_unlink_c_api_missing.test").string();
+    ASSERT_FALSE(std::filesystem::exists(filename));
+
+    ssize_t result = 0;
+    int res =
+        rawio_unlink(_queue.get(), filename.c_str(), unlink_result_cb, &result);
+    ASSERT_EQ(res, 0);
+
+    EXPECT_EQ(rawio_wait_timeout(_queue.get(), 1000), 0);
+    EXPECT_EQ(result, -ENOENT);
 }
 
 } // unnamed namespace

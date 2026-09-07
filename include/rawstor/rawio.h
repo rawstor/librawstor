@@ -605,6 +605,33 @@ int rawio_fsync(
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
+/**
+ * @brief Asynchronously removes a file (unlink(2)).
+ *
+ * @param queue Queue previously created by rawio_queue_create().
+ * @param path  Path of the file to remove. Must remain valid until @p cb
+ *              is invoked. Names a plain file, never a directory -- there
+ *              is no rmdir(2)-equivalent counterpart.
+ * @param cb    Callback invoked on completion.
+ *              - @p result is zero on success, or a negative errno on
+ *                failure (e.g. -ENOENT, -EISDIR). There's nothing else to
+ *                report -- like rawio_fsync(), this uses a single combined
+ *                result rather than the read/write family's shared shape.
+ *              - @p data is the same pointer passed as @p data below.
+ *              - Return zero on success. A negative errno value signals
+ *                an error back into the I/O completion machinery.
+ * @param data  User-defined context pointer passed unchanged to @p cb.
+ *
+ * @return 0 if the removal was successfully queued; negative errno on
+ *         immediate failure (in which case @p cb is never invoked). The
+ *         actual removal result (success or failure) is delivered via
+ *         @p cb.
+ */
+int rawio_unlink(
+    RawIOQueue* queue, const char* path, int (*cb)(ssize_t result, void* data),
+    void* data
+) RAWSTOR_NOEXCEPT;
+
 int rawio_send(
     RawIOQueue* queue, int fd, const void* buf, size_t size, unsigned int flags,
     int (*cb)(ssize_t result, void* data), void* data
