@@ -325,7 +325,10 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
         }
         co_await _queue.close(meta_fd);
         if (eptr) {
-            unlink(meta_path.c_str());
+            try {
+                co_await _queue.unlink(meta_path.c_str());
+            } catch (const std::system_error&) {
+            }
             std::rethrow_exception(eptr);
         }
     } catch (...) {
