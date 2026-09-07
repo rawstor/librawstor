@@ -680,6 +680,73 @@ int rawio_fsync(
     }
 }
 
+int rawio_unlink(
+    RawIOQueue* queue, const char* path, int (*cb)(ssize_t result, void* data),
+    void* data
+) noexcept {
+    try {
+        launch_int_op(
+            static_cast<rawio::Queue*>(queue)->unlink(path), cb, data
+        );
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+int rawio_stat(
+    RawIOQueue* queue, const char* path, struct stat* buf,
+    int (*cb)(ssize_t result, void* data), void* data
+) noexcept {
+    try {
+        launch_int_op(
+            static_cast<rawio::Queue*>(queue)->stat(path, buf), cb, data
+        );
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+int rawio_fallocate(
+    RawIOQueue* queue, int fd, int mode, off_t offset, off_t len,
+    int (*cb)(ssize_t result, void* data), void* data
+) noexcept {
+    try {
+        launch_int_op(
+            static_cast<rawio::Queue*>(queue)->fallocate(fd, mode, offset, len),
+            cb, data
+        );
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
 int rawio_send(
     RawIOQueue* queue, int fd, const void* buf, size_t size, unsigned int flags,
     int (*cb)(ssize_t result, void* data), void* data
