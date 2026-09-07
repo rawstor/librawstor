@@ -304,6 +304,7 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
     // file so a crash between the two never leaves a .meta file without
     // its data file; set_sync_state()/meta() failing ENOENT on the reverse
     // (data file present, no .meta yet) is exactly case F10.
+    std::exception_ptr meta_error;
     try {
         std::string meta_path =
             get_target_meta_path(location_path, uuid_string);
@@ -332,8 +333,20 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
             std::rethrow_exception(eptr);
         }
     } catch (...) {
-        unlink(target_path.c_str());
-        throw;
+        // co_await is not permitted inside a catch handler -- stash the
+        // exception and rethrow it once out of the handler, below, after
+        // the cleanup co_await.
+        meta_error = std::current_exception();
+    }
+
+    if (meta_error) {
+        // Best-effort: unlink() failing here must not replace meta_error
+        // with one of its own.
+        try {
+            co_await _queue.unlink(target_path.c_str());
+        } catch (...) {
+        }
+        std::rethrow_exception(meta_error);
     }
 
     co_return;
