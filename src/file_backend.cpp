@@ -223,24 +223,25 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
 #endif
         }
 
-        if (::close(fd) == -1) {
-            RAWSTD_THROW_ERRNO();
-        }
+        co_await _queue.close(fd);
     } catch (...) {
         // co_await is not permitted inside a catch handler -- stash the
         // exception and rethrow it once out of the handler, below, after
-        // the cleanup co_await.
+        // the cleanup co_awaits.
         create_error = std::current_exception();
     }
 
     if (create_error) {
-        // Best-effort: unlink() failing here must not replace
+        // Best-effort: unlink()/close() failing here must not replace
         // create_error with one of its own.
         try {
             co_await _queue.unlink(target_path.c_str());
         } catch (...) {
         }
-        ::close(fd);
+        try {
+            co_await _queue.close(fd);
+        } catch (...) {
+        }
         std::rethrow_exception(create_error);
     }
 
