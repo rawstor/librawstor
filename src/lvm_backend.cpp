@@ -387,9 +387,9 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
     // established sync set (docs/mirroring.md). Set on the staging LV
     // itself, carried across by lvrename() below, so there is never a
     // window -- staged or revealed -- where the LV exists without one.
-    RawstorObjectSyncState initial{};
-    initial.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
-    std::string tag = std::string(rawstor_tag_prefix) + meta_encode(initial);
+    RawstorObjectSyncState sync_state{};
+    sync_state.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
+    std::string tag = std::string(rawstor_tag_prefix) + meta_encode(sync_state);
 
     rawstd_info(
         "lvm: creating LV %s in VG %s, size %s\n", uuid_str, _vg_name.c_str(),

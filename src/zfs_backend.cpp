@@ -231,10 +231,10 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
     // established sync set (docs/mirroring.md). Setting the property in
     // the same command as creation means there is never a window where
     // the zvol exists without one.
-    RawstorObjectSyncState initial{};
-    initial.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
+    RawstorObjectSyncState sync_state{};
+    sync_state.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
     std::string prop =
-        std::string(rawstor_property) + "=" + meta_encode(initial);
+        std::string(rawstor_property) + "=" + meta_encode(sync_state);
 
     rawstd_info(
         "zfs: creating zvol %s, size %s bytes\n", dataset.c_str(), size_buf
