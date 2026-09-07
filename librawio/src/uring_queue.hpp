@@ -119,6 +119,8 @@ public:
 
     rawio::Awaitable<void> timeout(unsigned int usec) override;
 
+    rawio::TimeoutStream timeout_multishot(unsigned int usec) override;
+
     rawio::Awaitable<void> cancel(rawio::Event* event) override;
 
     rawio::Awaitable<void> cancel(int fd) override;

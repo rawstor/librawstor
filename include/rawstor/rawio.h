@@ -652,6 +652,50 @@ int rawio_timeout(
     void* data, RawIOEvent** event
 ) RAWSTOR_NOEXCEPT;
 
+/**
+ * @brief Standalone, persistent multishot timer -- the periodic counterpart
+ *        of rawio_timeout().
+ *
+ * Fires @p cb once every @p usec microseconds, indefinitely, until
+ * explicitly canceled via rawio_cancel() or an error occurs. Unlike
+ * rawio_timeout(), which resolves once and is done, this stays armed and
+ * keeps re-arming itself for as long as the caller keeps it alive.
+ *
+ * @param queue  Queue previously created by rawio_queue_create().
+ * @param usec   The fixed interval, in microseconds, between ticks. Each
+ *               tick's deadline is computed relative to when it fired
+ *               (or, for the first one, when this function was called),
+ *               not against a single fixed origin.
+ * @param cb     Callback invoked once per tick, and once more (terminally)
+ *               on cancellation or error.
+ *               - @p result is zero for every ordinary tick. It is a
+ *                 negative errno (-ECANCELED after rawio_cancel()) for the
+ *                 final, terminal invocation, after which no further
+ *                 callbacks are made. The delivered value itself carries
+ *                 no other meaning -- only a tick's arrival matters.
+ *               - @p data is the same pointer passed as @p data below.
+ *               - Return zero on success. A negative errno value signals
+ *                 an error back into the I/O completion machinery and
+ *                 terminates the registration.
+ * @param data   User-defined context pointer passed unchanged to @p cb.
+ * @param event  Output parameter that receives an opaque event handle for
+ *               canceling the timer via rawio_cancel(). The handle
+ *               remains valid until the registration terminates.
+ *
+ * @return 0 if the timer was successfully armed; negative errno on
+ *         immediate failure (in which case @p cb is never invoked).
+ *
+ * @warning The callback may be invoked from an I/O completion context.
+ *          Avoid blocking operations in the callback.
+ *
+ * @see rawio_timeout() for a one-shot version.
+ * @see rawio_cancel() for canceling the timer.
+ */
+int rawio_timeout_multishot(
+    RawIOQueue* queue, unsigned int usec, int (*cb)(ssize_t result, void* data),
+    void* data, RawIOEvent** event
+) RAWSTOR_NOEXCEPT;
+
 int rawio_wait(RawIOQueue* queue) RAWSTOR_NOEXCEPT;
 
 int rawio_wait_timeout(RawIOQueue* queue, unsigned int msec) RAWSTOR_NOEXCEPT;

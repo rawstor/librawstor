@@ -751,6 +751,32 @@ int rawio_timeout(
     }
 }
 
+int rawio_timeout_multishot(
+    RawIOQueue* queue, unsigned int usec, int (*cb)(ssize_t result, void* data),
+    void* data, RawIOEvent** event
+) noexcept {
+    try {
+        rawio::TimeoutStream stream =
+            static_cast<rawio::Queue*>(queue)->timeout_multishot(usec);
+        RawIOEvent* e = stream.event();
+        launch_stream_op(std::move(stream), cb, data);
+        if (event != nullptr) {
+            *event = e;
+        }
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
 int rawio_wait(RawIOQueue* queue) noexcept {
     try {
         static_cast<rawio::Queue*>(queue)->wait();
