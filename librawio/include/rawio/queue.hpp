@@ -123,6 +123,10 @@ public:
     // Thin async wrapper over stat(2).
     virtual Awaitable<int> stat(const char* path, struct stat* buf) = 0;
 
+    // Thin async wrapper over unlink(2) -- removes a plain file, never a
+    // directory (no rmdir(2)-equivalent flag is exposed).
+    virtual Awaitable<int> unlink(const char* path) = 0;
+
     // fd-local space-management hint/op (hole-punch, zero-range, plain
     // preallocation, ...) -- `mode` is the raw fallocate(2) FALLOC_FL_*
     // bitmask, passed through unmodified so callers stay in charge of

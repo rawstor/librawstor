@@ -14,6 +14,8 @@
 #include <filesystem>
 #include <sstream>
 
+#include <cerrno>
+
 namespace {
 
 class BasicsTest : public rawio::tests::QueueTest {
@@ -255,6 +257,58 @@ TEST(StatTest, basics) {
     // outcome.
     queue->close(fd);
     queue->wait();
+}
+
+TEST(UnlinkTest, basics) {
+    std::filesystem::path path =
+        std::filesystem::temp_directory_path() / "rawio_tests";
+    std::ostringstream oss;
+    std::filesystem::create_directory(path);
+    oss << path.string() << "/unlink.test";
+    std::string filename = oss.str();
+
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(1);
+
+    int fd = -1;
+    rawstd::Task<void> open_task = rawio::tests::await_into(
+        queue->open(filename.c_str(), O_CREAT | O_RDWR, S_IRUSR | S_IWUSR), &fd
+    );
+    queue->wait();
+    ASSERT_GT(fd, 0);
+
+    // Fire-and-forget: unlink() removing a still-open file is ordinary
+    // POSIX semantics (the fd stays valid until closed), so close()'s own
+    // outcome doesn't matter to this test either way.
+    queue->close(fd);
+    queue->wait();
+
+    ASSERT_TRUE(std::filesystem::exists(filename));
+
+    int unlink_result = -1;
+    rawstd::Task<void> unlink_task = rawio::tests::await_into(
+        queue->unlink(filename.c_str()), &unlink_result
+    );
+    queue->wait();
+    EXPECT_EQ(unlink_result, 0);
+    EXPECT_FALSE(std::filesystem::exists(filename));
+}
+
+TEST(UnlinkTest, enoent) {
+    std::filesystem::path path =
+        std::filesystem::temp_directory_path() / "rawio_tests";
+    std::filesystem::create_directory(path);
+    std::string filename = (path / "unlink-missing.test").string();
+    ASSERT_FALSE(std::filesystem::exists(filename));
+
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(1);
+
+    int unlink_result = 0;
+    int error = 0;
+    rawstd::Task<void> unlink_task = rawio::tests::await_into(
+        queue->unlink(filename.c_str()), &unlink_result, &error
+    );
+    queue->wait();
+    EXPECT_EQ(error, ENOENT);
 }
 
 TEST(ConnectTest, basics) {

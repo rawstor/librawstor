@@ -154,6 +154,8 @@ public:
 
     rawio::Awaitable<int> stat(const char* path, struct stat* buf) override;
 
+    rawio::Awaitable<int> unlink(const char* path) override;
+
     rawio::Awaitable<int>
     fallocate(int fd, int mode, off_t offset, off_t len) override;
 
