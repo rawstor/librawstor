@@ -105,7 +105,7 @@ private:
     size_t _resync_generation;
 
     // Periodic reconnect probe for unreachable members
-    // (mirror_probe_interval), driven by a plain _queue.timeout() loop in
+    // (mirror_probe_interval), driven by _queue.timeout_multishot() in
     // _probe_watch() -- a no-op for a single-target object.
     // _probe_pending guards against a second _probe_tick() firing while a
     // reconnect attempt it started is still in flight.
@@ -250,7 +250,7 @@ private:
 
     // Launches _probe_watch() as a detached loop, for as long as the
     // object is alive (a no-op for a single-target object). _probe_watch()
-    // sleeps mirror_probe_interval at a time via _queue.timeout() and
+    // ticks every mirror_probe_interval via _queue.timeout_multishot() and
     // calls _probe_tick() on every wakeup; _probe_tick() reconnects the
     // first STALE, unreachable member found and kicks off its resync on
     // success.

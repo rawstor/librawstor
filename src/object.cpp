@@ -10,6 +10,7 @@
 #include "target.hpp"
 
 #include <rawio/awaitable.hpp>
+#include <rawio/stream.hpp>
 
 #include <rawstd/gpp.hpp>
 #include <rawstd/iovec.h>
@@ -1266,18 +1267,24 @@ void Object::_probe_setup() {
     _probe_watch(_alive);
 }
 
-// Sleeps mirror_probe_interval at a time via the queue's own timeout() op
-// -- no fd/buffer of this object's own to manage, unlike a raw timerfd:
-// the Awaitable is entirely self-contained. Nothing actively cancels it on
-// teardown; this coroutine frame just outlives the Object by up to one
-// more interval, notices alive.expired() and returns -- the same trade-off
-// every other alive-guarded DetachedTask in this file already makes.
+// Ticks every mirror_probe_interval via the queue's own timeout_multishot()
+// -- no fd/buffer of this object's own to manage, unlike a raw timerfd: the
+// stream is entirely self-contained, and its own destructor cancels the
+// registration, so nothing here has to. mirror_probe_interval is read once,
+// at registration (it's a process-wide value fixed by rawstor_initialize(),
+// never changed afterward, so there's nothing to notice by re-reading it
+// every tick the way a single-shot timeout()-based loop would have to).
+// Nothing actively tears this stream down before then, though: this
+// coroutine frame just outlives the Object by up to one more interval,
+// notices alive.expired() and returns -- the same trade-off every other
+// alive-guarded DetachedTask in this file already makes.
 rawstd::DetachedTask Object::_probe_watch(std::weak_ptr<int> alive) {
     try {
+        unsigned int ms = rawstor_opts_mirror_probe_interval();
+        rawio::TimeoutStream stream = _queue.timeout_multishot(ms * 1000u);
         for (;;) {
-            unsigned int ms = rawstor_opts_mirror_probe_interval();
             try {
-                co_await _queue.timeout(ms * 1000u);
+                co_await stream.next();
             } catch (const std::system_error& e) {
                 if (alive.expired()) {
                     co_return;
