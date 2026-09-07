@@ -19,13 +19,6 @@ std::string blkdev_meta_encode(const RawstorObjectSyncState& sync_state);
 // record).
 bool blkdev_meta_decode(const std::string& value, RawstorObjectSyncState* out);
 
-// Finds a tag with the given prefix among a comma-separated LVM tag list
-// (as returned by `lvs -o lv_tags`) and returns the substring after the
-// prefix, up to the next comma or the end of the list. Returns an empty
-// string if no tag with that prefix is present.
-std::string
-blkdev_find_tag(const std::string& tag_list, const std::string& prefix);
-
 } // namespace rawstor
 
 #endif // RAWSTOR_BLKDEV_META_HPP

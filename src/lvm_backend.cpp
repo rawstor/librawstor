@@ -84,6 +84,42 @@ constexpr long staging_min_age_seconds = 300;
 std::mutex swept_vgs_mutex;
 std::unordered_set<std::string> swept_vgs;
 
+std::string trim(const std::string& s) {
+    size_t begin = s.find_first_not_of(" \t\r\n");
+    if (begin == std::string::npos) {
+        return "";
+    }
+    size_t end = s.find_last_not_of(" \t\r\n");
+    return s.substr(begin, end - begin + 1);
+}
+
+// Finds a tag with the given prefix among a comma-separated LVM tag list
+// (as returned by `lvs -o lv_tags`) and returns the substring after the
+// prefix, up to the next comma or the end of the list. Returns an empty
+// string if no tag with that prefix is present.
+std::string find_tag(const std::string& tag_list, const std::string& prefix) {
+    std::string trimmed = trim(tag_list);
+
+    size_t pos = 0;
+    while (pos <= trimmed.size()) {
+        size_t comma = trimmed.find(',', pos);
+        size_t len =
+            comma == std::string::npos ? std::string::npos : comma - pos;
+        std::string tag = trim(trimmed.substr(pos, len));
+
+        if (tag.compare(0, prefix.size(), prefix) == 0) {
+            return tag.substr(prefix.size());
+        }
+
+        if (comma == std::string::npos) {
+            break;
+        }
+        pos = comma + 1;
+    }
+
+    return "";
+}
+
 std::string parse_vg_name(const rawstd::URI& location) {
     if (location.scheme() != "lvm") {
         rawstd_error("Unexpected URI scheme: %s\n", location.str().c_str());
@@ -568,7 +604,7 @@ rawstd::Task<std::string> Backend::_lv_tags(const std::string& path) {
 rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
     std::string path = _device_path(id);
     std::string tags = co_await _lv_tags(path);
-    std::string tag = blkdev_find_tag(tags, rawstor_tag_prefix);
+    std::string tag = find_tag(tags, rawstor_tag_prefix);
 
     // An empty tag means one was never recorded: an LV created before
     // this feature, or by something else. Must not be trusted as CLEAN --
@@ -599,7 +635,7 @@ rawstd::Task<void> Backend::set_sync_state(
         std::string(rawstor_tag_prefix) + blkdev_meta_encode(sync_state);
 
     std::string tags = co_await _lv_tags(path);
-    std::string old_tag = blkdev_find_tag(tags, rawstor_tag_prefix);
+    std::string old_tag = find_tag(tags, rawstor_tag_prefix);
 
     std::vector<std::string> argv = {"lvchange", "--config", lvm_config};
     if (!old_tag.empty()) {

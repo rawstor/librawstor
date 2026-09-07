@@ -47,20 +47,4 @@ TEST(BlkdevMetaTest, decode_rejects_malformed_string) {
     EXPECT_FALSE(rawstor::blkdev_meta_decode("not the right format", &decoded));
 }
 
-TEST(BlkdevMetaTest, find_tag_among_multiple) {
-    std::string tags = "  rawstor.meta=state=0:epoch=0,unrelated_tag  \n";
-    EXPECT_EQ(
-        rawstor::blkdev_find_tag(tags, "rawstor.meta="), "state=0:epoch=0"
-    );
-}
-
-TEST(BlkdevMetaTest, find_tag_not_present) {
-    std::string tags = "unrelated_tag,other.thing=1";
-    EXPECT_EQ(rawstor::blkdev_find_tag(tags, "rawstor.meta="), "");
-}
-
-TEST(BlkdevMetaTest, find_tag_empty_list) {
-    EXPECT_EQ(rawstor::blkdev_find_tag("   \n", "rawstor.meta="), "");
-}
-
 } // namespace

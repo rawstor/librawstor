@@ -52,28 +52,4 @@ bool blkdev_meta_decode(const std::string& value, RawstorObjectSyncState* out) {
     return true;
 }
 
-std::string
-blkdev_find_tag(const std::string& tag_list, const std::string& prefix) {
-    std::string trimmed = trim(tag_list);
-
-    size_t pos = 0;
-    while (pos <= trimmed.size()) {
-        size_t comma = trimmed.find(',', pos);
-        size_t len =
-            comma == std::string::npos ? std::string::npos : comma - pos;
-        std::string tag = trim(trimmed.substr(pos, len));
-
-        if (tag.compare(0, prefix.size(), prefix) == 0) {
-            return tag.substr(prefix.size());
-        }
-
-        if (comma == std::string::npos) {
-            break;
-        }
-        pos = comma + 1;
-    }
-
-    return "";
-}
-
 } // namespace rawstor
