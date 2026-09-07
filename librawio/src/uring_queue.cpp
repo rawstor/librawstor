@@ -1005,6 +1005,19 @@ rawio::Awaitable<int> Queue::stat(const char* path, struct stat* buf) {
     return rawio::Awaitable<int>(this, static_cast<rawio::Event*>(c.release()));
 }
 
+rawio::Awaitable<int> Queue::unlink(const char* path) {
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('|', "%s\n", "");
+    io_uring_sqe* sqe = io_uring_get_sqe(&_ring);
+    if (sqe == nullptr) {
+        RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
+    }
+    auto c = std::make_unique<Completion>(std::move(trace_event));
+    io_uring_prep_unlink(sqe, path, 0);
+    io_uring_sqe_set_data(sqe, c.get());
+
+    return rawio::Awaitable<int>(this, static_cast<rawio::Event*>(c.release()));
+}
+
 rawio::Awaitable<int>
 Queue::fallocate(int fd, int mode, off_t offset, off_t len) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(

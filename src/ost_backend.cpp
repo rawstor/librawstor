@@ -25,6 +25,7 @@
 #include <sys/socket.h>
 
 #include <algorithm>
+#include <exception>
 #include <iterator>
 #include <memory>
 #include <stdexcept>
@@ -923,6 +924,7 @@ rawstd::Task<void> Backend::_connect() {
         RAWSTD_THROW_ERRNO();
     }
 
+    std::exception_ptr connect_error;
     try {
         // Also puts fd in non-blocking mode, which the async connect()
         // below relies on (the poll backend needs a non-blocking
@@ -968,9 +970,21 @@ rawstd::Task<void> Backend::_connect() {
 
         co_await _queue.connect(fd, (sockaddr*)&servaddr, sizeof(servaddr));
     } catch (...) {
-        ::close(fd);
+        // co_await is not permitted inside a catch handler -- stash the
+        // exception and rethrow it once out of the handler, below, after
+        // the cleanup co_await.
+        connect_error = std::current_exception();
+    }
+
+    if (connect_error) {
+        // Best-effort: close() failing here must not replace
+        // connect_error with one of its own.
+        try {
+            co_await _queue.close(fd);
+        } catch (...) {
+        }
         rawstd_info("fd %d: Closed\n", fd);
-        throw;
+        std::rethrow_exception(connect_error);
     }
 
     set_fd(fd);
