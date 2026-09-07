@@ -353,14 +353,18 @@ co_sendmsg(RawIOQueue* queue, int fd, const msghdr* msg, unsigned int flags) {
 // ---------------------------------------------------------------------
 // rawstd::CallbackStream<T> bridge over rawio_recv_multishot()'s "want N
 // bytes next" flow control (the callback's return value specifies the
-// size of the next buffer): wraps CallbackStream<vector<unsigned char>>
-// (an owned copy of each delivery, since the ring buffer's iovecs are
-// only valid for the duration of the C callback -- unlike
-// ost/src/ost_backend.cpp's rawio::RecvStream, which extends the
-// buffer's own lifetime via a shared_ptr internally, this can't offer
-// zero-copy over the C ABI) with the extra bookkeeping recv_multishot's
-// callback shape needs that accept_multishot's plain int result doesn't:
-// the size to request next has to come FROM the awaiting coroutine
+// size of the next buffer): wraps CallbackStream<size_t> (just the byte
+// count actually delivered -- unlike ost/src/ost_backend.cpp's
+// rawio::RecvStream, which extends the ring buffer's own lifetime via a
+// shared_ptr internally, this can't offer that over the C ABI, but it
+// doesn't need to either: recv_trampoline() below copies straight into
+// whatever destination the awaiting coroutine already owns -- a stack
+// wire struct for recv_frame_part<T>(), a pre-sized vector for
+// recv_frame_bytes() -- instead of handing back a fresh buffer of its
+// own for the caller to then copy out of again) with the extra
+// bookkeeping recv_multishot's callback shape needs that
+// accept_multishot's plain int result doesn't: the size (and now
+// destination) to request next has to come FROM the awaiting coroutine
 // (via next()), not just echo a fixed value the way accept_trampoline()
 // does.
 //
@@ -382,33 +386,42 @@ co_sendmsg(RawIOQueue* queue, int fd, const msghdr* msg, unsigned int flags) {
 // delivery pauses.
 class RecvCallbackStream {
 private:
-    rawstd::CallbackStream<std::vector<unsigned char>> _stream;
+    rawstd::CallbackStream<size_t> _stream;
+    void* _dest;
     size_t _want;
 
 public:
-    RecvCallbackStream() noexcept : _stream(), _want(0) {}
+    RecvCallbackStream() noexcept : _stream(), _dest(nullptr), _want(0) {}
     RecvCallbackStream(const RecvCallbackStream&) = delete;
     RecvCallbackStream& operator=(const RecvCallbackStream&) = delete;
     RecvCallbackStream(RecvCallbackStream&&) = delete;
     RecvCallbackStream& operator=(RecvCallbackStream&&) = delete;
 
-    auto next(size_t want) noexcept {
+    // `dest` must stay valid (and have room for at least `want` bytes)
+    // until this resumes -- typically a stack local or a vector already
+    // sized to `want` in the awaiting coroutine's own frame, which is
+    // exactly what stays alive across a suspension.
+    auto next(void* dest, size_t want) noexcept {
+        _dest = dest;
         _want = want;
         return _stream.next();
     }
 
-    // Called by recv_trampoline(): resets `_want` to 0 *before* resuming
-    // whatever's awaiting the previous delivery, then returns whatever
-    // `_want` holds once that's done. The synchronous ping-pong every
-    // CallbackStream<T> in this codebase relies on (complete() resumes
-    // the awaiter inline, running it to its next suspension point before
-    // complete() itself returns) means that if the resumed coroutine
-    // calls next() again (asking for more), `_want` reflects that fresh
-    // value by the time this returns; if it doesn't -- the pump is
-    // pausing or stopping -- `_want` stays 0.
-    size_t complete(std::vector<unsigned char> data, int error) noexcept {
+    void* dest() const noexcept { return _dest; }
+
+    // Called by recv_trampoline(): resets `_dest`/`_want` *before*
+    // resuming whatever's awaiting the previous delivery, then returns
+    // whatever `_want` holds once that's done. The synchronous ping-pong
+    // every CallbackStream<T> in this codebase relies on (complete()
+    // resumes the awaiter inline, running it to its next suspension point
+    // before complete() itself returns) means that if the resumed
+    // coroutine calls next() again (asking for more), `_want` reflects
+    // that fresh value by the time this returns; if it doesn't -- the
+    // pump is pausing or stopping -- `_want` stays 0.
+    size_t complete(size_t nbytes, int error) noexcept {
+        _dest = nullptr;
         _want = 0;
-        _stream.complete(std::move(data), error);
+        _stream.complete(nbytes, error);
         return _want;
     }
 };
@@ -427,58 +440,75 @@ ssize_t recv_trampoline(
     int error = result < 0 ? static_cast<int>(-result) : 0;
     std::unique_ptr<RecvCallbackStream> owner(error ? stream : nullptr);
 
-    std::vector<unsigned char> buf;
+    size_t nbytes = 0;
     if (!error) {
-        buf.resize(result);
-        rawstd_iovec_to_buf(iov, niov, 0, buf.data(), result);
+        nbytes = static_cast<size_t>(result);
+        // The ring buffer's iovecs are only valid for the duration of
+        // this callback, so this is the one unavoidable copy: straight
+        // into the awaiting coroutine's own destination (never a
+        // freshly-allocated buffer of this trampoline's own, which the
+        // caller would then have to copy out of again).
+        rawstd_iovec_to_buf(iov, niov, 0, stream->dest(), nbytes);
     }
 
-    return static_cast<ssize_t>(stream->complete(std::move(buf), error));
+    return static_cast<ssize_t>(stream->complete(nbytes, error));
 }
 
 // Reads exactly `size` bytes of the next part of a request frame (its
-// payload, or WRITE's trailing payload) and validates the length, letting
-// _recv_pump()'s single switch (head.cmd) read each command's frame
-// without repeating the "co_await, then check the size" boilerplate in
-// every case. `*stream_failed` is set for exactly the duration of the
-// underlying stream->next() call -- see _recv_pump()'s own doc comment on
-// why that matters -- and a length mismatch throws EPROTO for
-// _recv_pump()'s shared catch block to handle, same as if stream->next()
-// itself had thrown.
+// payload, or WRITE's trailing payload) directly into `*dest` and
+// validates the length, letting _recv_pump()'s single switch (head.cmd)
+// read each command's frame without repeating the "co_await, then check
+// the size" boilerplate in every case. `*stream_failed` is set for
+// exactly the duration of the underlying stream->next() call -- see
+// _recv_pump()'s own doc comment on why that matters -- and a length
+// mismatch throws EPROTO for _recv_pump()'s shared catch block to handle,
+// same as if stream->next() itself had thrown.
+rawstd::Task<void> recv_frame_into(
+    RecvCallbackStream* stream, void* dest, size_t size, int fd,
+    const char* what, bool* stream_failed
+) {
+    *stream_failed = true;
+    size_t got = co_await stream->next(dest, size);
+    *stream_failed = false;
+
+    if (got != size) {
+        rawstd_error(
+            "fd %d: Unexpected %s size: %zu != %zu\n", fd, what, got, size
+        );
+        RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+    }
+}
+
+// Same as recv_frame_into() above, for the case of WRITE's trailing
+// payload: size is a runtime value, so the destination is a
+// freshly-sized vector rather than a stack local.
 rawstd::Task<std::vector<unsigned char>> recv_frame_bytes(
     RecvCallbackStream* stream, size_t size, int fd, const char* what,
     bool* stream_failed
 ) {
-    *stream_failed = true;
-    std::vector<unsigned char> data = co_await stream->next(size);
-    *stream_failed = false;
-
-    if (data.size() != size) {
-        rawstd_error(
-            "fd %d: Unexpected %s size: %zu != %zu\n", fd, what, data.size(),
-            size
-        );
-        RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
-    }
+    std::vector<unsigned char> data(size);
+    co_await recv_frame_into(
+        stream, data.data(), size, fd, what, stream_failed
+    );
     co_return data;
 }
 
-// Same as recv_frame_bytes() above, for the common case of a fixed-size,
+// Same as recv_frame_into() above, for the common case of a fixed-size,
 // trivially-copyable wire struct -- every frame part but WRITE's trailing
-// payload, which stays raw bytes (see its own call site in _recv_pump()).
-// Reads exactly sizeof(T) bytes and hands them back already decoded, so a
-// _recv_pump() case doesn't need its own "declare T, memcpy into it"
-// boilerplate either. T is only ever the return type, nothing to deduce
-// it from, so every call site names it explicitly -- same idiom as
-// std::make_shared<T>()/static_cast<T>().
+// payload, which stays raw bytes (see recv_frame_bytes() above). Reads
+// exactly sizeof(T) bytes straight into a stack-local T and hands it
+// back already decoded, so a _recv_pump() case doesn't need its own
+// "declare T, read into it" boilerplate either. T is only ever the
+// return type, nothing to deduce it from, so every call site names it
+// explicitly -- same idiom as std::make_shared<T>()/static_cast<T>().
 template <typename T>
 rawstd::Task<T> recv_frame_part(
     RecvCallbackStream* stream, int fd, const char* what, bool* stream_failed
 ) {
-    std::vector<unsigned char> data =
-        co_await recv_frame_bytes(stream, sizeof(T), fd, what, stream_failed);
     T value;
-    memcpy(&value, data.data(), sizeof(value));
+    co_await recv_frame_into(
+        stream, &value, sizeof(T), fd, what, stream_failed
+    );
     co_return value;
 }
 
