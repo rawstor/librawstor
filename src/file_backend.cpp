@@ -379,8 +379,11 @@ rawstd::Task<RawstorObjectSpec> Backend::spec(const RawstdUUID& id) {
 
     std::string target_path = get_target_path(location_path, uuid_string);
 
+    struct stat st;
+    co_await _queue.stat(target_path.c_str(), &st);
+
     RawstorObjectSpec ret{
-        .size = std::filesystem::file_size(target_path),
+        .size = static_cast<uint64_t>(st.st_size),
         .mirrors = 1,
     };
 
@@ -420,10 +423,8 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
         std::rethrow_exception(eptr);
     }
 
-    std::string target_path = get_target_path(location_path, uuid_string);
-
     RawstorObjectMeta ret{};
-    ret.size = std::filesystem::file_size(target_path);
+    ret.size = (co_await spec(id)).size;
     ret.sync_state = sync_state;
 
     co_return ret;
