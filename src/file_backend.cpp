@@ -407,7 +407,7 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
     std::string target_path = get_target_path(location_path, uuid_string);
 
     RawstorObjectMeta ret{};
-    ret.spec.size = std::filesystem::file_size(target_path);
+    ret.size = std::filesystem::file_size(target_path);
     ret.sync_state = sync_state;
 
     co_return ret;

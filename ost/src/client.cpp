@@ -1144,7 +1144,7 @@ rawstd::DetachedTask Client::_meta(
             );
         } else {
             RawstorOSTFrameMetaPayload body_out{
-                .size = meta.spec.size,
+                .size = meta.size,
                 .epoch = meta.sync_state.epoch,
                 .sync_id = meta.sync_state.sync_id,
                 .sync_id_history = {},

@@ -1321,7 +1321,7 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
             *static_cast<const RawstorOSTFrameMetaPayload*>(
                 static_cast<const void*>(response.data())
             );
-        ret.spec.size = payload.size;
+        ret.size = payload.size;
         ret.sync_state.epoch = payload.epoch;
         ret.sync_state.sync_id = payload.sync_id;
         memcpy(

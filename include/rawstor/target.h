@@ -88,16 +88,21 @@ struct RawstorObjectSyncState {
 /**
  * @brief Object copy metadata.
  *
- * The full per-copy record: what the object is (spec, read-only here --
- * always the copy's own current size, not settable through this record)
- * plus this one copy's mirror consistency identity (sync_state, the part
- * rawstor_target_set_sync_state() can actually change).
+ * The full per-copy record: this one copy's own current size (read-only
+ * here, not settable through this record -- unlike RawstorObjectSpec's own
+ * size field, which is used both ways) plus its mirror consistency identity
+ * (sync_state, the part rawstor_target_set_sync_state() can actually
+ * change). No mirrors field: unlike size, it isn't a property of any single
+ * copy, and RawstorObjectSpec's own mirrors is only ever meaningful in a
+ * RawstorObjectSpec obtained through rawstor_target_spec()/_create() --
+ * see rawstor_target_meta() below for where the target-wide mirrors count
+ * actually comes from.
  *
  * @see rawstor_target_meta
  * @see rawstor_target_set_sync_state
  */
 struct RawstorObjectMeta {
-    struct RawstorObjectSpec spec;
+    uint64_t size; /**< This copy's own current size, in bytes. */
     struct RawstorObjectSyncState sync_state;
 };
 

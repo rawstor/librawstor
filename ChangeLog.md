@@ -17,26 +17,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Per-copy object metadata (state/epoch/sync_id/history): a companion
   `.meta` file for `file://`, with `SPEC`/`META`/`SET_SYNC_STATE`/`FLUSH` OST
   protocol commands and `rawstor_target_spec`/`rawstor_target_meta`
-  (`<rawstor/target.h>`) public API — `RawstorObjectMeta` composes the
-  cheap `RawstorObjectSpec` (`size`, `mirrors`) with
-  `RawstorObjectSyncState` (`state`/`epoch`/`sync_id`/`sync_id_history`);
-  the writer is internal (`rawstor_target_set_sync_state`,
-  `src/target_internal.h`), not part of the installed API. Durable:
-  metadata updates are fsynced by the backend before the call completes.
+  (`<rawstor/target.h>`) public API — `RawstorObjectMeta` pairs its own
+  `size` (this one copy's current size) with `RawstorObjectSyncState`
+  (`state`/`epoch`/`sync_id`/`sync_id_history`); `mirrors` (a target-wide
+  count, not a single copy's own property) stays in `RawstorObjectSpec`
+  only, returned by `rawstor_target_spec()` as the sum of every URI's own
+  share (see `rawstor_target_create()`'s own entry below) rather than
+  just the URI count. The writer is internal
+  (`rawstor_target_set_sync_state`, `src/target_internal.h`), not part
+  of the installed API. Durable: metadata updates are fsynced by the
+  backend before the call completes.
 - `rawstor_target_create()`/`rawstor_location_create()` now mandatorily
-  reject `-EINVAL` unless `RawstorObjectSpec`'s new `mirrors` exactly
-  equals the number of URIs in the target/location string being created
-  (no "0 means don't check" opt-out) -- `pyrawstor`'s `ObjectSpec`
+  reject `-EINVAL` unless `RawstorObjectSpec`'s new `mirrors` divides
+  evenly across the number of URIs in the target/location string being
+  created (no "0 means don't check" opt-out) -- each URI gets an equal
+  share of the total (`mirrors / URI count`), forwarded to it instead of
+  the original total; a plain flat mirror (`mirrors` == URI count) still
+  gets a share of 1 per URI (the only value a terminal `file://`/`lvm://`/
+  `zfs://` store ever accepts), while a relay URI (`ost://`) can be asked
+  for more, to subdivide again on its own end. `pyrawstor`'s `ObjectSpec`
   constructor and `rawstor create`'s `-m`/`--mirrors` both default
-  `mirrors` to 1, and `rawstor-ost`'s own ALLOCATE relay derives it from
-  the target list it's already fanning out to; creating a mirrored
-  object now always requires stating the intended copy count
-  explicitly, catching a miscounted or misconfigured mirror list at
-  create time instead of silently creating fewer (or more) copies than
-  intended. `pyrawstor`'s `Target.create()`/`Location.create()` go
-  further and require `mirrors` explicitly (no default at all), since
-  they're the layer a caller is expected to actually know that count
-  at.
+  `mirrors` to 1; creating a mirrored object now always requires stating
+  the intended copy count explicitly, catching a miscounted or
+  misconfigured mirror list at create time instead of silently creating
+  fewer (or more) copies than intended. `pyrawstor`'s
+  `Target.create()`/`Location.create()` go further and require `mirrors`
+  explicitly (no default at all), since they're the layer a caller is
+  expected to actually know that count at.
 - `-m`/`--mirrors N` for `rawstor create`: lets the caller state its
   intended total copy count (N > 0) explicitly for the check above;
   defaults to 1 when omitted, so creating a mirrored object always

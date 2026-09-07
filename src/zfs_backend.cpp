@@ -366,7 +366,7 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
     // than trust a value that could go stale if the zvol were ever resized
     // outside rawstor.
     RawstorObjectMeta ret{};
-    ret.spec = co_await spec(id);
+    ret.size = (co_await spec(id)).size;
     ret.sync_state = sync_state;
 
     co_return ret;

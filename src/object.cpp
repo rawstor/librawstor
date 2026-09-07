@@ -346,11 +346,11 @@ void Object::_open_analyze() {
         }
         if (ref == nullptr) {
             ref = &m;
-        } else if (m.meta.spec.size != ref->meta.spec.size) {
+        } else if (m.meta.size != ref->meta.size) {
             rawstd_warning(
                 "Mirror member sizes disagree: %llu != %llu\n",
-                (unsigned long long)m.meta.spec.size,
-                (unsigned long long)ref->meta.spec.size
+                (unsigned long long)m.meta.size,
+                (unsigned long long)ref->meta.size
             );
         }
     }
@@ -433,8 +433,8 @@ void Object::_open_analyze() {
          * The minimum across the set is the logical size: block-device
          * members round the physical size up to their extent size.
          */
-        if (_size == 0 || m.meta.spec.size < _size) {
-            _size = m.meta.spec.size;
+        if (_size == 0 || m.meta.size < _size) {
+            _size = m.meta.size;
         }
         if (_sync_id == 0) {
             _sync_id = m.meta.sync_state.sync_id;
@@ -1230,7 +1230,7 @@ rawstd::DetachedTask Object::_resync_finish() {
 
     _members[idx].state = MemberState::IN_SYNC;
     _members[idx].meta.sync_state = m;
-    _members[idx].meta.spec.size = _size;
+    _members[idx].meta.size = _size;
     _resync.reset();
 
     rawstd_info("Mirror resync: the member rejoined the set\n");

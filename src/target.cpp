@@ -530,9 +530,6 @@ rawstd::Task<RawstorObjectMeta> Target::meta(rawio::Queue& queue) {
         co_await rawstor::Connection::create(queue, _uris.front().parent(), 1);
     RawstorObjectMeta ret = co_await cn->meta(id);
     co_await cn->close();
-    // See Target::spec()'s own comment: a single Connection/Backend
-    // doesn't know the target's own URI count.
-    ret.spec.mirrors = (unsigned int)_uris.size();
     co_return ret;
 }
 
