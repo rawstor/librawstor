@@ -266,6 +266,11 @@ using PollMultishotBackend =
     SingleSlotStreamBackend<rawio::PollStream::Backend, /*dedup=*/true>;
 using AcceptMultishotBackend =
     SingleSlotStreamBackend<rawio::AcceptStream::Backend, /*dedup=*/false>;
+// timeout_multishot()'s backend: every tick is a genuinely new occurrence,
+// never a same-batch duplicate of a prior one, so no dedup -- matching
+// accept_multishot() rather than poll_multishot().
+using TimeoutMultishotBackend =
+    SingleSlotStreamBackend<rawio::TimeoutStream::Backend, /*dedup=*/false>;
 
 /**
  * RecvStream::Backend for the poll backend's recv_multishot(): owns the
@@ -368,7 +373,11 @@ public:
 // stays 0 and _error unset on natural expiry, so resolve_one_shot() resumes
 // the awaiter successfully; cancel(Event*) is the only path that ever sets
 // _error (ECANCELED) here.
-class EventTimer final : public Event {
+//
+// Not `final`: EventTimerMultishot below (timeout_multishot()'s Event)
+// derives from it to share `_deadline` and `_timers` list membership,
+// overriding only dispatch()/is_multishot().
+class EventTimer : public Event {
 private:
     std::chrono::steady_clock::time_point _deadline;
 
@@ -399,6 +408,41 @@ public:
     bool is_write() const noexcept override { return false; }
 
     ssize_t process() noexcept override { return 0; }
+};
+
+// Multishot counterpart of EventTimer: instead of resolve_one_shot()-ing a
+// single co_await-er once, dispatch() feeds each tick into the shared
+// `_backend` (a TimeoutStream::Backend, same single-slot pull shape as
+// PollMultishotBackend/AcceptMultishotBackend). is_multishot() tells
+// Queue::_reap_timers() to recompute a fresh deadline (now() + `_interval`,
+// mirroring the uring backend's IORING_TIMEOUT_MULTISHOT semantics -- an
+// *interval* timer, not evenly spaced against the very first tick) and
+// reinsert this same Event back into `_timers`, exactly like a still-live
+// poll_multishot()/accept_multishot() registration re-arms itself into its
+// Session after a successful _cqes dispatch.
+class EventTimerMultishot final : public EventTimer {
+private:
+    std::chrono::microseconds _interval;
+    std::shared_ptr<TimeoutMultishotBackend> _backend;
+
+public:
+    EventTimerMultishot(
+        Queue& q, std::chrono::steady_clock::time_point deadline,
+        std::chrono::microseconds interval,
+        const rawstd::TraceEvent& trace_event,
+        std::shared_ptr<TimeoutMultishotBackend> backend
+    ) :
+        EventTimer(q, deadline, trace_event),
+        _interval(interval),
+        _backend(std::move(backend)) {}
+
+    inline std::chrono::microseconds interval() const noexcept {
+        return _interval;
+    }
+
+    void dispatch() override;
+
+    bool is_multishot() const noexcept override { return true; }
 };
 
 class EventSimplex : public Event {
