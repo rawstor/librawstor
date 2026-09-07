@@ -4,7 +4,11 @@
 
 #include <gtest/gtest.h>
 
+#include <sys/stat.h>
+
+#include <fcntl.h>
 #include <poll.h>
+#include <unistd.h>
 
 #include <filesystem>
 
@@ -202,10 +206,76 @@ TEST_F(RawioCApiTest, timeout_multishot_basic) {
     EXPECT_EQ(count, 3);
 }
 
-int unlink_result_cb(ssize_t result, void* data) {
+int result_cb(ssize_t result, void* data) {
     ssize_t* out = static_cast<ssize_t*>(data);
     *out = result;
     return 0;
+}
+
+TEST_F(RawioCApiTest, stat_basic) {
+    std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / "rawio_tests";
+    std::filesystem::create_directory(dir);
+    std::string filename = (dir / "rawio_stat_c_api.test").string();
+
+    const char buf[] = "data";
+    FILE* f = fopen(filename.c_str(), "w");
+    ASSERT_NE(f, nullptr);
+    ASSERT_EQ(fwrite(buf, 1, sizeof(buf), f), sizeof(buf));
+    fclose(f);
+
+    struct stat st = {};
+    ssize_t result = -1;
+    int res =
+        rawio_stat(_queue.get(), filename.c_str(), &st, result_cb, &result);
+    ASSERT_EQ(res, 0);
+
+    EXPECT_EQ(rawio_wait_timeout(_queue.get(), 1000), 0);
+    EXPECT_EQ(result, 0);
+    EXPECT_EQ(st.st_size, static_cast<off_t>(sizeof(buf)));
+
+    unlink(filename.c_str());
+}
+
+TEST_F(RawioCApiTest, stat_enoent) {
+    std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / "rawio_tests";
+    std::filesystem::create_directory(dir);
+    std::string filename = (dir / "rawio_stat_c_api_missing.test").string();
+    ASSERT_FALSE(std::filesystem::exists(filename));
+
+    struct stat st = {};
+    ssize_t result = 0;
+    int res =
+        rawio_stat(_queue.get(), filename.c_str(), &st, result_cb, &result);
+    ASSERT_EQ(res, 0);
+
+    EXPECT_EQ(rawio_wait_timeout(_queue.get(), 1000), 0);
+    EXPECT_EQ(result, -ENOENT);
+}
+
+TEST_F(RawioCApiTest, fallocate_basic) {
+    std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / "rawio_tests";
+    std::filesystem::create_directory(dir);
+    std::string filename = (dir / "rawio_fallocate_c_api.test").string();
+
+    int fd = ::open(filename.c_str(), O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
+    ASSERT_GT(fd, 0);
+
+    ssize_t result = -1;
+    int res = rawio_fallocate(_queue.get(), fd, 0, 0, 4096, result_cb, &result);
+    ASSERT_EQ(res, 0);
+
+    EXPECT_EQ(rawio_wait_timeout(_queue.get(), 1000), 0);
+    EXPECT_EQ(result, 0);
+
+    struct stat st = {};
+    ASSERT_EQ(fstat(fd, &st), 0);
+    EXPECT_EQ(st.st_size, 4096);
+
+    ::close(fd);
+    unlink(filename.c_str());
 }
 
 TEST_F(RawioCApiTest, unlink_basic) {
@@ -220,8 +290,7 @@ TEST_F(RawioCApiTest, unlink_basic) {
     ASSERT_TRUE(std::filesystem::exists(filename));
 
     ssize_t result = 1;
-    int res =
-        rawio_unlink(_queue.get(), filename.c_str(), unlink_result_cb, &result);
+    int res = rawio_unlink(_queue.get(), filename.c_str(), result_cb, &result);
     ASSERT_EQ(res, 0);
 
     EXPECT_EQ(rawio_wait_timeout(_queue.get(), 1000), 0);
@@ -237,8 +306,7 @@ TEST_F(RawioCApiTest, unlink_enoent) {
     ASSERT_FALSE(std::filesystem::exists(filename));
 
     ssize_t result = 0;
-    int res =
-        rawio_unlink(_queue.get(), filename.c_str(), unlink_result_cb, &result);
+    int res = rawio_unlink(_queue.get(), filename.c_str(), result_cb, &result);
     ASSERT_EQ(res, 0);
 
     EXPECT_EQ(rawio_wait_timeout(_queue.get(), 1000), 0);

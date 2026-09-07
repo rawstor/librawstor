@@ -10,6 +10,7 @@
 #include <rawstor/rawstor.h>
 
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/uio.h>
 
@@ -630,6 +631,65 @@ int rawio_fsync(
 int rawio_unlink(
     RawIOQueue* queue, const char* path, int (*cb)(ssize_t result, void* data),
     void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Asynchronously retrieves file status (stat(2)).
+ *
+ * @param queue Queue previously created by rawio_queue_create().
+ * @param path  Path to stat. Must remain valid until @p cb is invoked.
+ * @param buf   Output buffer for the file status. Must remain valid until
+ *              @p cb is invoked; only populated on success.
+ * @param cb    Callback invoked on completion.
+ *              - @p result is zero on success (with @p buf populated), or
+ *                a negative errno on failure (e.g. -ENOENT). There's
+ *                nothing else to report -- like rawio_fsync(), this uses
+ *                a single combined result rather than the read/write
+ *                family's shared shape.
+ *              - @p data is the same pointer passed as @p data below.
+ *              - Return zero on success. A negative errno value signals
+ *                an error back into the I/O completion machinery.
+ * @param data  User-defined context pointer passed unchanged to @p cb.
+ *
+ * @return 0 if the stat was successfully queued; negative errno on
+ *         immediate failure (in which case @p cb is never invoked). The
+ *         actual stat result (success or failure) is delivered via @p cb.
+ */
+int rawio_stat(
+    RawIOQueue* queue, const char* path, struct stat* buf,
+    int (*cb)(ssize_t result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Asynchronously manages fd-local space allocation (fallocate(2)).
+ *
+ * @param queue  Queue previously created by rawio_queue_create().
+ * @param fd     File descriptor to operate on.
+ * @param mode   The raw fallocate(2) FALLOC_FL_* bitmask (e.g. 0 for plain
+ *               preallocation, FALLOC_FL_PUNCH_HOLE|FALLOC_FL_KEEP_SIZE
+ *               for hole-punching, FALLOC_FL_ZERO_RANGE for zeroing),
+ *               passed through unmodified so the caller stays in charge
+ *               of which specific operation this is.
+ * @param offset Starting offset of the range to operate on.
+ * @param len    Length of the range to operate on.
+ * @param cb     Callback invoked on completion.
+ *               - @p result is zero on success, or a negative errno on
+ *                 failure (e.g. -ENOSYS if @p mode isn't supported).
+ *                 There's nothing else to report -- like rawio_fsync(),
+ *                 this uses a single combined result rather than the
+ *                 read/write family's shared shape.
+ *               - @p data is the same pointer passed as @p data below.
+ *               - Return zero on success. A negative errno value signals
+ *                 an error back into the I/O completion machinery.
+ * @param data   User-defined context pointer passed unchanged to @p cb.
+ *
+ * @return 0 if the operation was successfully queued; negative errno on
+ *         immediate failure (in which case @p cb is never invoked). The
+ *         actual result (success or failure) is delivered via @p cb.
+ */
+int rawio_fallocate(
+    RawIOQueue* queue, int fd, int mode, off_t offset, off_t len,
+    int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
 int rawio_send(
