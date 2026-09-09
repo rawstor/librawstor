@@ -173,9 +173,9 @@ open_one(rawio::Queue& queue, const rawstd::URI& uri, rawstor::Object* object) {
 // out-parameter written here immediately before `cb` runs) -- co_await's
 // the already-submitted Task, catches std::system_error, and writes the
 // newly opened object (or NULL on failure) to `*object`. A negative return
-// from the C callback throws -- see the non-coroutine launch_open_op()
-// wrapper below (not this function) for how that's actually delivered back
-// out.
+// from the C callback throws -- rawstor_target_open() below is the one
+// that ends up rethrowing it, via rawstd::DetachedTask::rethrow_if_pending()
+// right after launching this.
 rawstd::DetachedTask launch_open_op_coro(
     rawstd::Task<std::unique_ptr<rawstor::Object>> t, RawstorObject** object,
     int (*cb)(ssize_t result, void* data), void* data
@@ -197,14 +197,6 @@ rawstd::DetachedTask launch_open_op_coro(
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
-}
-
-void launch_open_op(
-    rawstd::Task<std::unique_ptr<rawstor::Object>> t, RawstorObject** object,
-    int (*cb)(ssize_t result, void* data), void* data
-) {
-    launch_open_op_coro(std::move(t), object, cb, data);
-    rawstd::DetachedTask::rethrow_if_pending();
 }
 
 // C ABI adapters for rawstor_target_create()/_remove()/_spec(): `t` is
@@ -253,14 +245,6 @@ rawstd::DetachedTask launch_create_op_coro(
     }
 }
 
-void launch_create_op(
-    rawstor::Target t, rawio::Queue* queue, const RawstorObjectSpec& spec,
-    int (*cb)(ssize_t result, void* data), void* data
-) {
-    launch_create_op_coro(std::move(t), queue, spec, cb, data);
-    rawstd::DetachedTask::rethrow_if_pending();
-}
-
 rawstd::DetachedTask launch_remove_op_coro(
     rawstor::Target t, rawio::Queue* queue,
     int (*cb)(ssize_t result, void* data), void* data
@@ -283,14 +267,6 @@ rawstd::DetachedTask launch_remove_op_coro(
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
-}
-
-void launch_remove_op(
-    rawstor::Target t, rawio::Queue* queue,
-    int (*cb)(ssize_t result, void* data), void* data
-) {
-    launch_remove_op_coro(std::move(t), queue, cb, data);
-    rawstd::DetachedTask::rethrow_if_pending();
 }
 
 // Same shape as launch_create_op_coro()/launch_remove_op_coro() above,
@@ -321,14 +297,6 @@ rawstd::DetachedTask launch_spec_op_coro(
     }
 }
 
-void launch_spec_op(
-    rawstor::Target t, rawio::Queue* queue, RawstorObjectSpec* spec,
-    int (*cb)(ssize_t result, void* data), void* data
-) {
-    launch_spec_op_coro(std::move(t), queue, spec, cb, data);
-    rawstd::DetachedTask::rethrow_if_pending();
-}
-
 // Same shape as launch_spec_op_coro() above, for Target::meta().
 rawstd::DetachedTask launch_meta_op_coro(
     rawstor::Target t, rawio::Queue* queue, RawstorObjectMeta* meta,
@@ -352,14 +320,6 @@ rawstd::DetachedTask launch_meta_op_coro(
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
-}
-
-void launch_meta_op(
-    rawstor::Target t, rawio::Queue* queue, RawstorObjectMeta* meta,
-    int (*cb)(ssize_t result, void* data), void* data
-) {
-    launch_meta_op_coro(std::move(t), queue, meta, cb, data);
-    rawstd::DetachedTask::rethrow_if_pending();
 }
 
 // Same shape as launch_remove_op_coro() above, for Target::set_sync_state():
@@ -386,15 +346,6 @@ rawstd::DetachedTask launch_set_sync_state_op_coro(
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
-}
-
-void launch_set_sync_state_op(
-    rawstor::Target t, rawio::Queue* queue,
-    const RawstorObjectSyncState& sync_state,
-    int (*cb)(ssize_t result, void* data), void* data
-) {
-    launch_set_sync_state_op_coro(std::move(t), queue, sync_state, cb, data);
-    rawstd::DetachedTask::rethrow_if_pending();
 }
 
 } // namespace
@@ -429,8 +380,9 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) {
     // -- a mismatch is a caller bug (e.g. reusing a Spec read from a
     // different target, or a miscounted/misconfigured URI list) worth
     // catching here rather than silently creating something narrower or
-    // wider than intended. This is the only place mirrors is validated --
-    // individual backends no longer check it themselves.
+    // wider than intended. Each URI's own backend separately validates
+    // its own share is exactly 1 (Backend::_validate_spec()) -- this
+    // check is about the caller's stated *total* matching reality.
     if (sp.mirrors != _uris.size()) {
         rawstd_error(
             "Spec mirrors (%u) does not match target's URI count (%zu)\n",
@@ -788,9 +740,10 @@ int rawstor_target_create(
 ) noexcept {
     try {
         rawstor::Target t(rawstd::URI::uriv(target));
-        launch_create_op(
+        launch_create_op_coro(
             std::move(t), static_cast<rawio::Queue*>(queue), *spec, cb, data
         );
+        rawstd::DetachedTask::rethrow_if_pending();
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -811,9 +764,10 @@ int rawstor_target_remove(
 ) noexcept {
     try {
         rawstor::Target t(rawstd::URI::uriv(target));
-        launch_remove_op(
+        launch_remove_op_coro(
             std::move(t), static_cast<rawio::Queue*>(queue), cb, data
         );
+        rawstd::DetachedTask::rethrow_if_pending();
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -834,9 +788,10 @@ int rawstor_target_spec(
 ) noexcept {
     try {
         rawstor::Target t(rawstd::URI::uriv(target));
-        launch_spec_op(
+        launch_spec_op_coro(
             std::move(t), static_cast<rawio::Queue*>(queue), sp, cb, data
         );
+        rawstd::DetachedTask::rethrow_if_pending();
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -857,9 +812,10 @@ int rawstor_target_meta(
 ) noexcept {
     try {
         rawstor::Target t(rawstd::URI::uriv(target));
-        launch_meta_op(
+        launch_meta_op_coro(
             std::move(t), static_cast<rawio::Queue*>(queue), meta, cb, data
         );
+        rawstd::DetachedTask::rethrow_if_pending();
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -881,10 +837,11 @@ int rawstor_target_set_sync_state(
 ) noexcept {
     try {
         rawstor::Target t(rawstd::URI::uriv(target));
-        launch_set_sync_state_op(
+        launch_set_sync_state_op_coro(
             std::move(t), static_cast<rawio::Queue*>(queue), *sync_state, cb,
             data
         );
+        rawstd::DetachedTask::rethrow_if_pending();
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -905,9 +862,10 @@ int rawstor_target_open(
 ) noexcept {
     try {
         rawstor::Target t(rawstd::URI::uriv(target));
-        launch_open_op(
+        launch_open_op_coro(
             t.open(*static_cast<rawio::Queue*>(queue)), object, cb, data
         );
+        rawstd::DetachedTask::rethrow_if_pending();
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
