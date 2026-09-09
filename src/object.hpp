@@ -85,7 +85,7 @@ private:
     // checks it before touching the object: unlike caller I/O (covered by
     // the _writes_issued/_writes_completed drain below), such work is not
     // waited for at close.
-    std::shared_ptr<int> _alive;
+    std::shared_ptr<void> _alive;
 
     // Mirrored writes currently in flight -- resync drain bookkeeping
     // (_write_settled() below), separate from _writes_issued/
@@ -255,7 +255,7 @@ private:
     // first STALE, unreachable member found and kicks off its resync on
     // success.
     void _probe_setup();
-    rawstd::DetachedTask _probe_watch(std::weak_ptr<int> alive);
+    rawstd::DetachedTask _probe_watch(std::weak_ptr<void> alive);
     rawstd::DetachedTask _probe_tick();
 
     // Read failover across in-sync members, in target-list order; a payload
@@ -266,10 +266,10 @@ private:
     _read(void* buf, iovec* iov, unsigned int niov, size_t size, off_t offset);
     rawstd::DetachedTask _read_repair(
         size_t idx, off_t offset, std::vector<char> data,
-        std::weak_ptr<int> alive
+        std::weak_ptr<void> alive
     );
     rawstd::DetachedTask
-    _degrade_detached(std::vector<size_t> idxs, std::weak_ptr<int> alive);
+    _degrade_detached(std::vector<size_t> idxs, std::weak_ptr<void> alive);
 
     // Adapts Connection::flush() (Task<void>) to _fan_out_write()'s own
     // Task<size_t> issue signature -- a named coroutine, not a lambda one:

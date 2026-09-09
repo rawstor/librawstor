@@ -32,6 +32,16 @@ protected:
 
     inline void set_fd(int fd) noexcept { _fd = fd; }
 
+    // Every Backend maps one URI to exactly one copy -- Target::create()
+    // (the only place mirrors is validated against the target's own URI
+    // count, see its own comment) always passes 1 down to each URI's own
+    // create(). Throws EINVAL otherwise. Shared by every concrete
+    // Backend's own create(), including ost::Backend's (a relay
+    // connection is still one copy from its caller's point of view; what
+    // the remote server does with its own locations is a separate
+    // Target::create() on its own end).
+    static void _validate_spec(const RawstorObjectSpec& sp);
+
     // Establishes whatever this backend needs before any other call
     // below is usable (e.g. the OST backend's TCP connect + the start of
     // its response demultiplex pump). Called exactly once by create(),

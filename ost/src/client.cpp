@@ -966,9 +966,14 @@ rawstd::DetachedTask Client::_allocate(
 
     std::vector<rawstd::URI> targets = client->_targets(uuid);
 
+    // Target::create() requires mirrors to exactly match the target's own
+    // URI count -- here, that's this server's own locations(), not
+    // whatever the incoming request's payload.mirrors happens to be (the
+    // caller's target-wide URI count, which has no reason to match this
+    // server's own location count for a relay/multi-location rawstor-ost).
     RawstorObjectSpec spec{
         .size = payload.size,
-        .mirrors = payload.mirrors,
+        .mirrors = static_cast<unsigned int>(targets.size()),
     };
 
     int result = 0;
@@ -1144,11 +1149,12 @@ rawstd::DetachedTask Client::_meta(
             );
         } else {
             RawstorOSTFrameMetaPayload body_out{
-                .size = meta.size,
+                .size = meta.spec.size,
                 .epoch = meta.sync_state.epoch,
                 .sync_id = meta.sync_state.sync_id,
                 .sync_id_history = {},
-                .state = meta.sync_state.state,
+                .state =
+                    static_cast<RawstorOSTSyncStateType>(meta.sync_state.state),
             };
             memcpy(
                 body_out.sync_id_history, meta.sync_state.sync_id_history,

@@ -160,7 +160,7 @@ rawstd::Task<void> Backend::list(
 
 rawstd::Task<void>
 Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
-    _validate_mirrors_one(sp);
+    _validate_spec(sp);
 
     std::string location_path = get_location_path(location());
     if (mkdir(location_path.c_str(), 0755) == -1) {
@@ -391,7 +391,7 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
     }
 
     RawstorObjectMeta ret{};
-    ret.size = (co_await spec(id)).size;
+    ret.spec = co_await spec(id);
     ret.sync_state = sync_state;
 
     co_return ret;

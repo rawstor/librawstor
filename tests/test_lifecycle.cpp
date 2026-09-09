@@ -384,7 +384,7 @@ TEST(FileLifecycleTest, meta_set_state) {
     RawstorObjectMeta meta{};
     res = target_meta(*queue, target, &meta);
     EXPECT_EQ(res, 0);
-    EXPECT_EQ(meta.size, 1ull << 20);
+    EXPECT_EQ(meta.spec.size, 1ull << 20);
     EXPECT_EQ(meta.sync_state.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
     EXPECT_EQ(meta.sync_state.epoch, 0u);
     EXPECT_EQ(meta.sync_state.sync_id, 0u);
@@ -402,7 +402,7 @@ TEST(FileLifecycleTest, meta_set_state) {
 
     res = target_meta(*queue, target, &meta);
     EXPECT_EQ(res, 0);
-    EXPECT_EQ(meta.size, 1ull << 20);
+    EXPECT_EQ(meta.spec.size, 1ull << 20);
     EXPECT_EQ(meta.sync_state.state, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
     EXPECT_EQ(meta.sync_state.epoch, 3u);
     EXPECT_EQ(meta.sync_state.sync_id, 0x1122334455667788ull);
@@ -473,7 +473,7 @@ TEST(OstLifecycleTest, create_spec_remove) {
         RawstorObjectMeta meta{};
         ssize_t res = target_meta(*queue, target, &meta);
         EXPECT_EQ(res, 0);
-        EXPECT_EQ(meta.size, 1ull << 20);
+        EXPECT_EQ(meta.spec.size, 1ull << 20);
         EXPECT_EQ(meta.sync_state.epoch, 7u);
         EXPECT_EQ(meta.sync_state.sync_id, 0x1122334455667788ull);
         EXPECT_EQ(meta.sync_state.sync_id_history[0], 0xaabbccddeeff0011ull);

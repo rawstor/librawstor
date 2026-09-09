@@ -325,7 +325,7 @@ rawstd::Task<void> Backend::_cleanup_staging_lvs() {
 
 rawstd::Task<void>
 Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
-    _validate_mirrors_one(sp);
+    _validate_spec(sp);
 
     if (sp.size == 0) {
         rawstd_error("lvm: object size must be positive\n");
@@ -621,7 +621,7 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
     // trust a value that could go stale if the LV were ever resized
     // outside rawstor.
     RawstorObjectMeta ret{};
-    ret.size = (co_await spec(id)).size;
+    ret.spec = co_await spec(id);
     ret.sync_state = sync_state;
 
     co_return ret;

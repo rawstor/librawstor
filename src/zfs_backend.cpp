@@ -185,7 +185,7 @@ rawstd::Task<void> Backend::list(
 
 rawstd::Task<void>
 Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
-    _validate_mirrors_one(sp);
+    _validate_spec(sp);
 
     // zfs-create(8) rejects volume sizes that are not a multiple of
     // volblocksize (16 KiB by default, 8 KiB on older OpenZFS), so round
@@ -366,7 +366,7 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
     // than trust a value that could go stale if the zvol were ever resized
     // outside rawstor.
     RawstorObjectMeta ret{};
-    ret.size = (co_await spec(id)).size;
+    ret.spec = co_await spec(id);
     ret.sync_state = sync_state;
 
     co_return ret;

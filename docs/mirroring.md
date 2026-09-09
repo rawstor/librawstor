@@ -103,6 +103,17 @@ Requirements: no downtime, and regions already rewritten by the client onto all 
 
 If the client or the target OST crashes mid-resync, the copy remains `SYNCING` and the resync restarts from scratch (F8). A persistent write-intent bitmap (v2) makes it resumable and shrinks the F5 full resync to recently-touched regions.
 
+### Known limitation: the degrade-barrier window
+
+Without per-write fsync there is an irreducible window between an
+acknowledged write and the durable exclusion of a failed member (one metadata
+round trip): if an OST crash (losing acknowledged writes from page cache)
+is followed by a client crash *before* the F1/F6 barrier lands, the next
+open sees all copies `DIRTY` in the same sync set (F5) and the
+deterministic winner may be the member that lost data. Closing this window
+requires synchronous writes or a witness; it is accepted for now and
+bounded by the barrier latency.
+
 ---
 
 ## Protocol and code changes

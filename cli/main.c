@@ -455,18 +455,22 @@ static void command_show_usage(void) {
                 "usage: rawstor [options] show TARGET [command_options]\n"
                 "\n"
                 "command options:\n"
+                "  -v, --verbose         Also show the mirror consistency "
+                "state\n"
                 "  -h, --help            Show this help message and exit\n"
     );
 };
 
 static int command_show(int argc, char** argv) {
-    const char* optstring = "h";
+    const char* optstring = "vh";
     struct option longopts[] = {
+        {"verbose", no_argument, NULL, 'v'},
         {"help", no_argument, NULL, 'h'},
         {},
     };
 
     char* target_arg = NULL;
+    int verbose_arg = 0;
     optind = 0;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
@@ -475,6 +479,10 @@ static int command_show(int argc, char** argv) {
         }
 
         switch (c) {
+        case 'v':
+            verbose_arg = 1;
+            break;
+
         case 'h':
             command_show_usage();
             return EXIT_SUCCESS;
@@ -499,7 +507,7 @@ static int command_show(int argc, char** argv) {
         return EX_USAGE;
     }
 
-    return rawstor_cli_show(target_arg);
+    return rawstor_cli_show(target_arg, verbose_arg);
 }
 
 static void command_testio_usage(void) {

@@ -110,6 +110,16 @@ spec_one(rawio::Queue& queue, const rawstd::URI& target) {
     co_return ret;
 }
 
+rawstd::Task<RawstorObjectMeta>
+meta_one(rawio::Queue& queue, const rawstd::URI& target) {
+    RawstdUUID id = uuid_from_target(target);
+    std::unique_ptr<rawstor::Connection> cn =
+        co_await rawstor::Connection::create(queue, target.parent(), 1);
+    RawstorObjectMeta ret = co_await cn->meta(id);
+    co_await cn->close();
+    co_return ret;
+}
+
 rawstd::Task<void> remove_one(rawio::Queue& queue, const rawstd::URI& target) {
     RawstdUUID id = uuid_from_target(target);
     std::unique_ptr<rawstor::Connection> cn =
@@ -415,33 +425,25 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) {
     validate_same_uuid(_uris);
 
     // Mandatory: the caller must always state how many copies it thinks
-    // it's creating, and it must divide evenly across the target's own
-    // URI count -- a leftover is a caller bug (e.g. reusing a Spec read
-    // from a different target, or a miscounted/misconfigured URI list)
-    // worth catching here rather than silently creating something
-    // narrower or wider than intended. The quotient is each URI's own
-    // share (see below): 1 for a plain flat mirror (mirrors == URI
-    // count), or more when a URI is itself a relay that fans out
-    // further (e.g. ost:// forwarding to a remote rawstor-ost with its
-    // own multi-URI location).
-    if (sp.mirrors == 0 || sp.mirrors % _uris.size() != 0) {
+    // it's creating, and it must match the target's own URI count exactly
+    // -- a mismatch is a caller bug (e.g. reusing a Spec read from a
+    // different target, or a miscounted/misconfigured URI list) worth
+    // catching here rather than silently creating something narrower or
+    // wider than intended. This is the only place mirrors is validated --
+    // individual backends no longer check it themselves.
+    if (sp.mirrors != _uris.size()) {
         rawstd_error(
-            "Spec mirrors (%u) does not divide evenly across target's URI "
-            "count (%zu)\n",
+            "Spec mirrors (%u) does not match target's URI count (%zu)\n",
             sp.mirrors, _uris.size()
         );
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
 
-    // Every URI gets an equal share of the total -- a plain (non-relay)
-    // blk backend only ever accepts 1 (see blk::Backend::
-    // _validate_mirrors_one()); a relay backend like ost:// forwards its
-    // own share on unvalidated, letting the remote server subdivide it
-    // again across its own URI list.
-    RawstorObjectSpec uri_sp{
-        .size = sp.size,
-        .mirrors = sp.mirrors / (unsigned int)_uris.size(),
-    };
+    // Every URI is one copy: each one's own create() gets mirrors == 1
+    // (which every Backend::create() now validates, see
+    // Backend::_validate_spec()), not sp.mirrors itself (the target-wide
+    // URI count just validated above).
+    RawstorObjectSpec uri_sp{.size = sp.size, .mirrors = 1};
 
     // Every URI's CREATE goes out concurrently instead of one at a time.
     // This can't just gather() them, though: on failure, only the URIs
@@ -490,47 +492,62 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) {
     }
 }
 
-// Every URI is queried concurrently and must answer: mirrors is now each
-// URI's own share of the target's total (see Target::create()'s own
-// comment on why a relay URI can report more than 1), so recovering the
-// real total means summing every URI's own answer -- unlike `size`
-// (identical everywhere, so any one answer does), a degraded/unreachable
-// URI can no longer be silently skipped without undercounting the total,
-// the way the old first-answer-wins design could tolerate one being down.
+// mirrors is just the URI count -- computed locally from `target`, no
+// backend involved (a backend's own spec()-reported mirrors, its local
+// share, is not summed here). `size` is identical on every copy, so this
+// only needs one to answer: URIs are tried in order, first reachable
+// wins, same fail-over tolerance as meta() below.
 rawstd::Task<RawstorObjectSpec> Target::spec(rawio::Queue& queue) {
     validate_not_empty(_uris);
     validate_different_uris(_uris);
     validate_same_uuid(_uris);
 
-    std::vector<rawstd::Task<RawstorObjectSpec>> tasks;
-    tasks.reserve(_uris.size());
+    int first_error = 0;
     for (const auto& uri : _uris) {
-        tasks.push_back(spec_one(queue, uri));
+        try {
+            RawstorObjectSpec ret = co_await spec_one(queue, uri);
+            ret.mirrors = static_cast<unsigned int>(_uris.size());
+            co_return ret;
+        } catch (const std::system_error& e) {
+            rawstd_warning("Mirror member unreachable: %s\n", e.what());
+            if (first_error == 0) {
+                first_error = e.code().value();
+            }
+        }
     }
-    std::vector<RawstorObjectSpec> specs =
-        co_await rawstd::gather(std::move(tasks));
 
-    RawstorObjectSpec ret{.size = specs.front().size, .mirrors = 0};
-    for (const RawstorObjectSpec& s : specs) {
-        ret.mirrors += s.mirrors;
-    }
-    co_return ret;
+    RAWSTD_THROW_SYSTEM_ERROR(first_error ? first_error : ENOTCONN);
 }
 
-// First URI only. Unlike spec() above, deliberately does not fail over to
-// the next URI: a caller inspecting mirror consistency state wants THIS
-// copy's state, not whichever copy happens to answer first.
+// URIs are tried in order; the first one that answers wins (docs/
+// mirroring.md's own description of rawstor_target_meta()). This is the
+// only mirror-state lookup available before the object is open, so it
+// must tolerate the same degraded membership an open would, rather than
+// failing outright just because _uris.front() happens to be unreachable.
+// spec.mirrors is overwritten with the local URI count on the way out,
+// same as spec() above -- the answering backend has no idea what the
+// target's own URI count is, so whatever it put there (if anything)
+// isn't meaningful.
 rawstd::Task<RawstorObjectMeta> Target::meta(rawio::Queue& queue) {
     validate_not_empty(_uris);
     validate_different_uris(_uris);
     validate_same_uuid(_uris);
 
-    RawstdUUID id = uuid_from_target(_uris.front());
-    std::unique_ptr<rawstor::Connection> cn =
-        co_await rawstor::Connection::create(queue, _uris.front().parent(), 1);
-    RawstorObjectMeta ret = co_await cn->meta(id);
-    co_await cn->close();
-    co_return ret;
+    int first_error = 0;
+    for (const auto& uri : _uris) {
+        try {
+            RawstorObjectMeta ret = co_await meta_one(queue, uri);
+            ret.spec.mirrors = static_cast<unsigned int>(_uris.size());
+            co_return ret;
+        } catch (const std::system_error& e) {
+            rawstd_warning("Mirror member unreachable: %s\n", e.what());
+            if (first_error == 0) {
+                first_error = e.code().value();
+            }
+        }
+    }
+
+    RAWSTD_THROW_SYSTEM_ERROR(first_error ? first_error : ENOTCONN);
 }
 
 // Unlike meta() above, every URI is updated concurrently -- a mirror

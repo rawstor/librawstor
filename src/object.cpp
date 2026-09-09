@@ -260,7 +260,7 @@ Object::Object(Private, rawio::Queue& queue, const Target& target) :
     _epoch(0),
     _sync_id(0),
     _sync_id_history{},
-    _alive(std::make_shared<int>(0)),
+    _alive(std::make_shared<char>()),
     _writes_in_flight(0),
     _resync_generation(0),
     _probe_pending(false),
@@ -346,11 +346,11 @@ void Object::_open_analyze() {
         }
         if (ref == nullptr) {
             ref = &m;
-        } else if (m.meta.size != ref->meta.size) {
+        } else if (m.meta.spec.size != ref->meta.spec.size) {
             rawstd_warning(
                 "Mirror member sizes disagree: %llu != %llu\n",
-                (unsigned long long)m.meta.size,
-                (unsigned long long)ref->meta.size
+                (unsigned long long)m.meta.spec.size,
+                (unsigned long long)ref->meta.spec.size
             );
         }
     }
@@ -433,8 +433,8 @@ void Object::_open_analyze() {
          * The minimum across the set is the logical size: block-device
          * members round the physical size up to their extent size.
          */
-        if (_size == 0 || m.meta.size < _size) {
-            _size = m.meta.size;
+        if (_size == 0 || m.meta.spec.size < _size) {
+            _size = m.meta.spec.size;
         }
         if (_sync_id == 0) {
             _sync_id = m.meta.sync_state.sync_id;
@@ -963,7 +963,7 @@ void Object::_write_settled() noexcept {
 // starts bringing it back into the set. A no-op for a single-target
 // object, with no such member, or with an empty object.
 rawstd::DetachedTask Object::_resync_maybe_start() {
-    std::weak_ptr<int> alive = _alive;
+    std::weak_ptr<void> alive = _alive;
 
     if (_nmirrors == 1 || _resync != nullptr || _size == 0) {
         co_return;
@@ -1055,7 +1055,7 @@ rawstd::DetachedTask Object::_resync_maybe_start() {
 }
 
 rawstd::DetachedTask Object::_resync_sweep() {
-    std::weak_ptr<int> alive = _alive;
+    std::weak_ptr<void> alive = _alive;
 
     if (_resync == nullptr || _resync->phase != ResyncState::Phase::SWEEP ||
         _resync->copying >= 0) {
@@ -1189,7 +1189,7 @@ rawstd::DetachedTask Object::_resync_sweep() {
 }
 
 rawstd::DetachedTask Object::_resync_finish() {
-    std::weak_ptr<int> alive = _alive;
+    std::weak_ptr<void> alive = _alive;
 
     // All chunks are copied and no client write is in flight: the member is
     // byte-identical to the in-sync set. Adopt the current identity
@@ -1230,7 +1230,7 @@ rawstd::DetachedTask Object::_resync_finish() {
 
     _members[idx].state = MemberState::IN_SYNC;
     _members[idx].meta.sync_state = m;
-    _members[idx].meta.size = _size;
+    _members[idx].meta.spec.size = _size;
     _resync.reset();
 
     rawstd_info("Mirror resync: the member rejoined the set\n");
@@ -1278,7 +1278,7 @@ void Object::_probe_setup() {
 // coroutine frame just outlives the Object by up to one more interval,
 // notices alive.expired() and returns -- the same trade-off every other
 // alive-guarded DetachedTask in this file already makes.
-rawstd::DetachedTask Object::_probe_watch(std::weak_ptr<int> alive) {
+rawstd::DetachedTask Object::_probe_watch(std::weak_ptr<void> alive) {
     try {
         unsigned int ms = rawstor_opts_mirror_probe_interval();
         rawio::TimeoutStream stream = _queue.timeout_multishot(ms * 1000u);
@@ -1305,7 +1305,7 @@ rawstd::DetachedTask Object::_probe_watch(std::weak_ptr<int> alive) {
 }
 
 rawstd::DetachedTask Object::_probe_tick() {
-    std::weak_ptr<int> alive = _alive;
+    std::weak_ptr<void> alive = _alive;
 
     if (_probe_pending || _resync != nullptr) {
         co_return;
@@ -1432,7 +1432,7 @@ rawstd::Task<size_t> Object::_read(
  * from the read that triggered it.
  */
 rawstd::DetachedTask Object::_read_repair(
-    size_t idx, off_t offset, std::vector<char> data, std::weak_ptr<int> alive
+    size_t idx, off_t offset, std::vector<char> data, std::weak_ptr<void> alive
 ) {
     try {
         co_await _with_dirty();
@@ -1472,7 +1472,7 @@ rawstd::DetachedTask Object::_read_repair(
 }
 
 rawstd::DetachedTask
-Object::_degrade_detached(std::vector<size_t> idxs, std::weak_ptr<int> alive) {
+Object::_degrade_detached(std::vector<size_t> idxs, std::weak_ptr<void> alive) {
     if (alive.expired()) {
         co_return;
     }

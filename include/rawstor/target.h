@@ -88,21 +88,21 @@ struct RawstorObjectSyncState {
 /**
  * @brief Object copy metadata.
  *
- * The full per-copy record: this one copy's own current size (read-only
- * here, not settable through this record -- unlike RawstorObjectSpec's own
- * size field, which is used both ways) plus its mirror consistency identity
- * (sync_state, the part rawstor_target_set_sync_state() can actually
- * change). No mirrors field: unlike size, it isn't a property of any single
- * copy, and RawstorObjectSpec's own mirrors is only ever meaningful in a
- * RawstorObjectSpec obtained through rawstor_target_spec()/_create() --
- * see rawstor_target_meta() below for where the target-wide mirrors count
- * actually comes from.
+ * The full per-copy record: `spec` (read-only here, not settable through
+ * this record -- unlike a RawstorObjectSpec obtained through
+ * rawstor_target_spec()/_create(), which is used both ways) plus this
+ * copy's mirror consistency identity (sync_state, the part
+ * rawstor_target_set_sync_state() can actually change). `spec.mirrors`
+ * is filled in by rawstor_target_meta() itself the same way
+ * rawstor_target_spec() fills its own -- the number of URIs in the
+ * target string, computed locally -- not by the backend that answered:
+ * mirrors isn't a property of any single copy.
  *
  * @see rawstor_target_meta
  * @see rawstor_target_set_sync_state
  */
 struct RawstorObjectMeta {
-    uint64_t size; /**< This copy's own current size, in bytes. */
+    struct RawstorObjectSpec spec;
     struct RawstorObjectSyncState sync_state;
 };
 
@@ -159,12 +159,18 @@ int rawstor_target_spec(
 
 /**
  * @brief Asynchronously retrieve the full mirror consistency metadata of a
- *        target's first copy.
+ *        target's first reachable copy.
  *
  * Like rawstor_target_spec(), but fills the full per-copy metadata record
- * (RawstorObjectMeta) including the mirror consistency state, and only
- * ever queries the first URI of @p target -- unlike rawstor_target_spec(),
- * it does not fail over to the next one.
+ * (RawstorObjectMeta) including the mirror consistency state. URIs in
+ * @p target are queried in order; the result comes from the first one
+ * that answers (same fail-over tolerance as rawstor_target_spec()) --
+ * this is the only mirror-state lookup available before the object is
+ * open, so it must tolerate the same degraded membership an open would.
+ * `spec.mirrors` in the result is filled in the same way
+ * rawstor_target_spec() fills its own -- the number of URIs in
+ * @p target, computed locally -- not whatever the answering copy's own
+ * backend happened to report.
  *
  * Legacy copies created before metadata support report size only, with
  * state CLEAN, epoch 0 and sync_id 0.

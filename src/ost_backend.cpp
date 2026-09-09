@@ -763,7 +763,7 @@ public:
                 .epoch = sync_state.epoch,
                 .sync_id = sync_state.sync_id,
                 .sync_id_history = {},
-                .state = sync_state.state,
+                .state = static_cast<RawstorOSTSyncStateType>(sync_state.state),
             },
         }) {
         memcpy(
@@ -1240,13 +1240,15 @@ rawstd::Task<void> Backend::list(
     co_return;
 }
 
-// Unlike blk::Backend (see its own _validate_mirrors_one()), this Backend
-// doesn't validate sp.mirrors at all -- it's a relay, not a terminal
-// store: it just forwards whatever the caller asked for on the wire (see
-// BackendOpAllocate), and it's the remote rawstor-ost's own Target::create()
-// that validates and, if it fans out to further URIs itself, subdivides it.
+// sp is forwarded on the wire unchanged (see BackendOpAllocate); the
+// remote rawstor-ost's own Client::_allocate() ignores payload.mirrors
+// and validates/fills it in against its own locally configured location
+// count instead (see its own comment) -- this connection is still one
+// copy from its caller's point of view, same as every other backend.
 rawstd::Task<void>
 Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
+    _validate_spec(sp);
+
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('c', "fd = %d\n", fd());
 
     std::shared_ptr<BackendOpAllocate> op = std::make_shared<BackendOpAllocate>(
@@ -1297,7 +1299,12 @@ rawstd::Task<RawstorObjectSpec> Backend::spec(const RawstdUUID& id) {
                 static_cast<const void*>(response.data())
             );
         ret.size = payload.size;
-        ret.mirrors = payload.mirrors;
+        // Same as every other backend's own spec() (blk::Backend::spec(),
+        // file::Backend::spec()): this one connection is one copy, always
+        // -- mirrors is a Target-level count of URIs, not a per-backend
+        // property, and whatever the remote server's own payload.mirrors
+        // says is its own target's URI count, not this connection's.
+        ret.mirrors = 1;
     } catch (const std::system_error&) {
         throw;
     } catch (...) {
@@ -1321,7 +1328,7 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
             *static_cast<const RawstorOSTFrameMetaPayload*>(
                 static_cast<const void*>(response.data())
             );
-        ret.size = payload.size;
+        ret.spec.size = payload.size;
         ret.sync_state.epoch = payload.epoch;
         ret.sync_state.sync_id = payload.sync_id;
         memcpy(
