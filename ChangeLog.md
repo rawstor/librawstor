@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New `zfs://` storage backend: objects are ZFS zvols, provisioned via `zfs create`/`zfs destroy`.
 - `rawio::Queue::timeout_multishot()` (and its `rawio_timeout_multishot()` C API counterpart): the multishot counterpart of `timeout()`, firing once every given number of microseconds until canceled instead of resolving once.
 
+### Fixed
+- `rawstor create`/`list`/`remove`/`show`/`info` against a multi-backend `LOCATION`/`TARGET` (comma-separated URIs) could intermittently fail with "No buffer space available": the CLI's internal I/O queue was sized for a single backend at a time.
+
 ## [0.2.10] - 2026-08-31
 
 ### Added
