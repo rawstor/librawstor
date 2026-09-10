@@ -1,7 +1,6 @@
 #include "connection.hpp"
 
 #include "backend.hpp"
-#include "object.hpp"
 #include "opts.h"
 #include "telemetry.hpp"
 
@@ -142,7 +141,7 @@ namespace rawstor {
 
 Connection::Connection(Private, rawio::Queue& queue) :
     _queue(queue),
-    _object(nullptr),
+    _id(std::nullopt),
     _backend_index(0),
     _transparent_retry(true) {
 }
@@ -403,16 +402,13 @@ Connection::invalidate_backend(const std::shared_ptr<Backend>& be) {
             [&]() -> rawstd::Task<std::shared_ptr<Backend>> {
                 std::shared_ptr<Backend> backend =
                     co_await Backend::create(_queue, be->location());
-                // _object is only set once open() has run (see its own
-                // doc comment) -- a Connection used purely for metadata
+                // _id is only set once open() has run (see its own doc
+                // comment) -- a Connection used purely for metadata
                 // (list/create/remove/spec/info) never calls open(), so
-                // _object stays null and every Backend::set_object()
-                // implementation would dereference it unconditionally
-                // (e.g. blk::Backend::set_object() reading
-                // object->target()).
-                // Metadata ops don't need SET_OBJECT first, so just skip
-                // it here.
-                if (_object != nullptr) {
+                // _id stays unset and there's no id to set_object() this
+                // replacement backend to in the first place. Metadata
+                // ops don't need SET_OBJECT first, so just skip it here.
+                if (_id) {
                     // A backend that fails set_object() never makes it
                     // into _backends, so nothing else will ever close()
                     // it -- do that here before rethrowing, or it leaks
@@ -422,7 +418,7 @@ Connection::invalidate_backend(const std::shared_ptr<Backend>& be) {
                     // outside the handler.
                     std::exception_ptr eptr;
                     try {
-                        co_await backend->set_object(_object);
+                        co_await backend->set_object(*_id);
                     } catch (...) {
                         eptr = std::current_exception();
                     }
@@ -587,18 +583,18 @@ rawstd::Task<RawstorLocationInfo> Connection::info() {
     }
 }
 
-rawstd::Task<RawstorObjectMeta> Connection::open(Object* object) {
+rawstd::Task<RawstorObjectMeta> Connection::open(const RawstdUUID& id) {
     // Set before any of the set_object() calls below: on failure,
     // invalidate_backend() reconnects and set_object()s the replacement
     // itself, using this same member.
-    _object = object;
+    _id = id;
 
     // Every backend's SET_OBJECT goes out up front, so they run
     // concurrently.
     std::vector<rawstd::Task<RawstorObjectMeta>> set_objects;
     set_objects.reserve(_backends.size());
     for (std::shared_ptr<Backend>& be : _backends) {
-        set_objects.push_back(be->set_object(object));
+        set_objects.push_back(be->set_object(id));
     }
 
     // co_await isn't allowed inside a catch block, so the failure is only
@@ -632,7 +628,7 @@ rawstd::Task<RawstorObjectMeta> Connection::open(Object* object) {
         // invalidate_backend() (its own meta() result unused there --
         // nothing needed it), so this call's own meta comes from a plain
         // meta() against whichever backend the pool now has.
-        co_return co_await meta(object->target().id());
+        co_return co_await meta(id);
     }
 
     // Every backend in the pool is the same object on the same location,
@@ -659,7 +655,7 @@ rawstd::Task<void> Connection::close() {
     }
 
     _backends.clear();
-    _object = nullptr;
+    _id = std::nullopt;
 }
 
 rawstd::Task<size_t> Connection::pread(void* buf, size_t size, off_t offset) {

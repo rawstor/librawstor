@@ -1,7 +1,6 @@
 #ifndef RAWSTOR_CONNECTION_HPP
 #define RAWSTOR_CONNECTION_HPP
 
-#include "object.hpp"
 #include "telemetry.hpp"
 
 #include <rawstor/location.h>
@@ -15,6 +14,7 @@
 #include <rawstd/uuid.h>
 
 #include <memory>
+#include <optional>
 #include <type_traits>
 #include <unordered_set>
 #include <vector>
@@ -28,7 +28,11 @@ class Backend;
 class Connection final {
 private:
     rawio::Queue& _queue;
-    Object* _object;
+
+    // Set by open() (see its own doc comment) -- unset means this
+    // Connection is only ever used for metadata (list/create/remove/
+    // spec/info), which needs no SET_OBJECT step of its own.
+    std::optional<RawstdUUID> _id;
 
     std::vector<std::shared_ptr<Backend>> _backends;
     size_t _backend_index;
@@ -151,7 +155,7 @@ public:
     // backend the way this needs to. Returns the object's own meta (see
     // Backend::set_object()'s own doc comment on why) -- spec.mirrors on
     // it is this copy's own local share, not the target-wide count.
-    rawstd::Task<RawstorObjectMeta> open(Object* object);
+    rawstd::Task<RawstorObjectMeta> open(const RawstdUUID& id);
 
     // Not called implicitly by ~Connection() (a coroutine can't run in a
     // destructor, and there's no other synchronous fallback here beyond

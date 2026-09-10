@@ -1,8 +1,6 @@
 #include "blk_backend.hpp"
 
-#include "object.hpp"
 #include "opts.h"
-#include "target.hpp"
 
 #include <rawio/awaitable.hpp>
 
@@ -185,12 +183,11 @@ rawstd::Task<void> Backend::close() {
     co_await _queue.close(f);
 }
 
-rawstd::Task<RawstorObjectMeta> Backend::set_object(Object* object) {
+rawstd::Task<RawstorObjectMeta> Backend::set_object(const RawstdUUID& id) {
     if (fd() != -1) {
         throw std::runtime_error("Object already set");
     }
 
-    RawstdUUID id = object->target().id();
     int fd = co_await _open(id);
     set_fd(fd);
     co_return co_await meta(id);

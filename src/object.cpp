@@ -1331,7 +1331,7 @@ rawstd::DetachedTask Object::_probe_tick() {
         cn = co_await Connection::create(
             _queue, _members[idx].target.parent(), rawstor_opts_sessions()
         );
-        co_await cn->open(this);
+        co_await cn->open(_target.id());
     } catch (const std::system_error& e) {
         error = e.code().value();
     } catch (const std::exception& e) {

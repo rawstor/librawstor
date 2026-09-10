@@ -1,8 +1,6 @@
 #include "ost_backend.hpp"
 
-#include "object.hpp"
 #include "opts.h"
-#include "target.hpp"
 #include "telemetry.hpp"
 
 #include <rawio/awaitable.hpp>
@@ -1401,13 +1399,12 @@ rawstd::Task<RawstorLocationInfo> Backend::info() {
     co_return ret;
 }
 
-rawstd::Task<RawstorObjectMeta> Backend::set_object(Object* object) {
+rawstd::Task<RawstorObjectMeta> Backend::set_object(const RawstdUUID& id) {
     // The demultiplex pump is already running by now -- _connect() starts it
     // before this is ever reachable -- so this is just another
     // cid-dispatched request like list()/create()/....
     assert(_read_event != nullptr);
 
-    RawstdUUID id = object->target().id();
     co_await _basic_request(RAWSTOR_CMD_SET_OBJECT, "set_object", id, 0);
     co_return co_await meta(id);
 }

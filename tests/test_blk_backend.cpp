@@ -106,7 +106,7 @@ rawstor::blk::Backend* open_blk_backend(
     object = run(queue, target.open(queue));
 
     cn = run(queue, rawstor::Connection::create(queue, location, 1));
-    run(queue, cn->open(object.get()));
+    run(queue, cn->open(id));
 
     return static_cast<rawstor::blk::Backend*>(cn->get_next_backend().get());
 }

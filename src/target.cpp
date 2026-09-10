@@ -686,7 +686,7 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
     for (size_t i = 0; i < cns.size(); ++i) {
         if (cns[i]) {
             open_indices.push_back(i);
-            open_tasks.push_back(cns[i]->open(obj.get()));
+            open_tasks.push_back(cns[i]->open(id));
         }
     }
 
