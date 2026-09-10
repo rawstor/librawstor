@@ -120,7 +120,16 @@ auto retry_n_async(const char* func_name, rawio::Queue& queue, F&& attempt)
             rawstor_opts_io_retry_backoff_jitter()
         );
         if (delay_ms != 0) {
-            co_await queue.timeout(delay_ms * 1000u);
+            // The backoff wait is itself best-effort: failing to even
+            // submit it (e.g. ENOBUFS from a saturated queue -- the same
+            // kind of transient pressure this retry budget exists to
+            // ride out) must not burn the whole budget in one shot on a
+            // failure that has nothing to do with `attempt()` itself.
+            // Skip the wait and retry immediately instead.
+            try {
+                co_await queue.timeout(delay_ms * 1000u);
+            } catch (const std::exception&) {
+            }
         }
     }
     // Only reachable if rawstor_opts_io_attempts() == 0.
@@ -318,7 +327,15 @@ rawstd::Task<T> Connection::_with_retry(
                 rawstor_opts_io_retry_backoff_jitter()
             );
             if (delay_ms != 0) {
-                co_await _queue.timeout(delay_ms * 1000u);
+                // Same "the wait is best-effort" reasoning as
+                // retry_n_async()'s own backoff wait above: don't let a
+                // failure to submit the timer itself (e.g. ENOBUFS under
+                // the same queue pressure this budget exists to ride
+                // out) cut the retry budget short.
+                try {
+                    co_await _queue.timeout(delay_ms * 1000u);
+                } catch (const std::exception&) {
+                }
             }
         }
     }
