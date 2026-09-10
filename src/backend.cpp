@@ -68,6 +68,14 @@ Backend::create(rawio::Queue& queue, const rawstd::URI& location) {
 }
 
 std::string Backend::str() const {
+    // Only ost::Backend ever calls set_fd() -- file/lvm/zfs backends have
+    // no socket of their own, so _fd stays at its constructor default of
+    // -1 forever. Printing "fd -1" there reads as a failure ("no valid
+    // fd") even on the success path (e.g. "fd -1: Connected"), so those
+    // backends identify themselves by location instead.
+    if (_fd == -1) {
+        return _location.str();
+    }
     std::ostringstream oss;
     oss << "fd " << _fd;
     return oss.str();
