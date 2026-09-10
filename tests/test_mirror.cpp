@@ -641,21 +641,27 @@ TEST(MirrorOstTest, read_failover_and_repair) {
      * on two reopened ones before the read fails over to the second member.
      * The repair then lands on the last reopened session.
      */
-    // Target::open() no longer fetches a separate spec(): every reachable
-    // member's connection (server1 and server2 alike) goes straight
-    // through Connection::open()'s own combined SET_OBJECT+META step (see
-    // its own comment), concurrently -- so both members see SET_OBJECT
-    // (cid 0) then META (cid 1), never a SPEC. mirrors is derived locally
-    // from the number of URIs, not from any member's own answer. Every
-    // later low-level reconnect (invalidate_backend()) also goes through
-    // Backend::set_object(), which always folds its own META fetch in on
-    // success -- so each reopened session below gets its own SET_OBJECT+
-    // META pair too, not just the very first one.
+    // Target::open() fetches a real spec() first, from whichever
+    // connected URI answers first (see its own comment) -- here that's
+    // always server1, the first URI in `target`: its own first session
+    // gets a SPEC ahead of its SET_OBJECT+META, and that's the only SPEC
+    // either server ever sees. mirrors on the wire here is whatever this
+    // mock server happens to answer with -- Target::open() always
+    // overwrites it with uris.size() regardless (see its own comment),
+    // so the value scripted below isn't load-bearing. Both members still
+    // go through Connection::open()'s own combined SET_OBJECT+META step
+    // (see its own comment), concurrently, once spec() has answered.
+    // Every later low-level reconnect (invalidate_backend()) goes
+    // through Backend::set_object() only, no SPEC of its own
+    // (invalidate_backend() only set_object()s -- see its own comment)
+    // -- but it always folds its own META fetch in on success, so each
+    // reopened session below still gets its own SET_OBJECT+META pair.
     {
         rawstor::tests::Session s(server1);
-        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
-        s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
-        s.cmd_read_error(RAWSTOR_MAGIC, 2, -EIO);
+        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 2);
+        s.cmd_set_object(RAWSTOR_MAGIC, 1, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 2, 0, legacy);
+        s.cmd_read_error(RAWSTOR_MAGIC, 3, -EIO);
     }
     {
         rawstor::tests::Session s(server1);
@@ -716,19 +722,24 @@ TEST(MirrorOstTest, degrade_and_continue) {
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
     };
 
-    // Target::open() no longer fetches a separate spec(): every reachable
-    // member's connection (server1 and server2 alike) goes straight
-    // through Connection::open()'s own combined SET_OBJECT+META step (see
-    // its own comment), concurrently -- so both members see SET_OBJECT
-    // (cid 0) then META (cid 1), never a SPEC. mirrors is derived locally
-    // from the number of URIs, not from any member's own answer.
+    // Target::open() fetches a real spec() first, from whichever
+    // connected URI answers first (see its own comment) -- here that's
+    // always server1, the first URI in `target`: its own session gets a
+    // SPEC ahead of its SET_OBJECT+META, and that's the only SPEC either
+    // server ever sees. mirrors on the wire here is whatever this mock
+    // server happens to answer with -- Target::open() always overwrites
+    // it with uris.size() regardless (see its own comment), so the
+    // value scripted below isn't load-bearing. Both members still go
+    // through Connection::open()'s own combined SET_OBJECT+META step
+    // (see its own comment), concurrently, once spec() has answered.
     {
         rawstor::tests::Session s(server1);
-        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
-        s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
-        s.cmd_set_state(RAWSTOR_MAGIC, 2, 0);
+        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 2);
+        s.cmd_set_object(RAWSTOR_MAGIC, 1, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 2, 0, legacy);
+        s.cmd_set_state(RAWSTOR_MAGIC, 3, 0);
         s.cmd_write_request(4);
-        s.cmd_write_response(RAWSTOR_MAGIC, 3, -EIO);
+        s.cmd_write_response(RAWSTOR_MAGIC, 4, -EIO);
     }
 
     {

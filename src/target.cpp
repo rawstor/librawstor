@@ -559,44 +559,38 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
     std::unique_ptr<Object> obj =
         std::make_unique<Object>(Object::Private(), queue, *this);
 
-    // Slot indices must stay stable (the reconnect probe below addresses
-    // members by index): no reallocation after this.
-    obj->_members.reserve(uris.size());
-
     // Every URI's Connection goes out concurrently instead of one at a
-    // time. Just Connection::create() -- SET_OBJECT is a separate, later
-    // step (see connect_one()'s own comment).
-    std::vector<rawstd::Task<std::unique_ptr<Connection>>> tasks;
-    tasks.reserve(uris.size());
+    // time -- just Connection::create(), kept in a plain local vector
+    // (parallel to `uris`, not obj->_members yet: that's assembled only
+    // once spec()/open() below have actually run -- see their own
+    // comments on why member count/identity isn't simply uris.size()).
+    // connect_one()'s own comment on why SET_OBJECT is a separate, later
+    // step.
+    std::vector<rawstd::Task<std::unique_ptr<Connection>>> connect_tasks;
+    connect_tasks.reserve(uris.size());
     for (const auto& uri : uris) {
-        tasks.push_back(connect_one(queue, uri));
+        connect_tasks.push_back(connect_one(queue, uri));
     }
 
     // With a single configured URI any failure fails the open outright
-    // (unchanged behavior) -- uris.size() == 1 alone already decides this,
-    // regardless of what mirrors (derived further down, once every member
-    // has answered) turns out to be: there is only one connection attempt
-    // in flight either way, so its failure is the whole story. With more
-    // than one URI, an individual member's failure is tolerated as long
-    // as a strict majority ends up reachable (docs/mirroring.md, case
-    // F4) --
+    // (unchanged behavior) -- uris.size() == 1 alone already decides
+    // this: there is only one connection attempt in flight either way,
+    // so its failure is the whole story, regardless of what mirrors
+    // (learned from spec() further down) turns out to be. With more than
+    // one URI, an individual member's failure is tolerated as long as a
+    // strict majority ends up reachable (docs/mirroring.md, case F4) --
     // co_await isn't allowed inside a catch block, so each task's own
-    // failure is only recorded here; rolling back the members that DID
-    // succeed happens just below, outside the handler, same shape as
-    // create()'s own rollback above. Every URI keeps its slot in
-    // obj->_members regardless of outcome (Member::reachable false, cn
-    // null, on failure) so the reconnect probe can bring an unreachable
-    // one back later -- unlike before online resync, where a failed member
-    // had no slot at all.
+    // failure is only recorded here; closing the ones that DID connect
+    // happens just below, outside the handler, same shape as create()'s
+    // own rollback above.
     std::exception_ptr eptr;
     int first_error = 0;
+    std::vector<std::unique_ptr<Connection>> cns(uris.size());
     size_t reachable = 0;
-    for (size_t i = 0; i < tasks.size(); ++i) {
-        std::unique_ptr<Connection> cn;
-        bool ok = false;
+    for (size_t i = 0; i < connect_tasks.size(); ++i) {
         try {
-            cn = co_await tasks[i];
-            ok = true;
+            cns[i] = co_await connect_tasks[i];
+            ++reachable;
         } catch (const std::system_error& e) {
             if (uris.size() == 1) {
                 if (!eptr) {
@@ -613,24 +607,15 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
                 eptr = std::current_exception();
             }
         }
-
-        obj->_members.push_back(
-            Object::Member{
-                std::move(cn), uris[i], Object::MemberState::STALE, {}, ok
-            }
-        );
-        if (ok) {
-            ++reachable;
-        }
     }
 
     if (eptr) {
-        for (auto& mirror : obj->_members) {
-            if (!mirror.cn) {
+        for (auto& cn : cns) {
+            if (!cn) {
                 continue;
             }
             try {
-                co_await mirror.cn->close();
+                co_await cn->close();
             } catch (const std::exception& e) {
                 rawstd_warning("Target::open(): %s\n", e.what());
             }
@@ -642,73 +627,120 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
         RAWSTD_THROW_SYSTEM_ERROR(first_error ? first_error : ENOTCONN);
     }
 
+    // A real spec() answer, from whichever connected URI answers first --
+    // reusing that connection, not paying for one of its own. Every
+    // backend's own spec() always answers mirrors = 1, unconditionally
+    // (see e.g. ost::Backend::spec()'s own comment: if this one
+    // connection fails, exactly one replica is lost, regardless of what
+    // might sit behind it) -- so, same as Target::spec() itself, that's
+    // overwritten with uris.size() below: today, the only source of
+    // truth this Target has for its own mirror count is its own URI
+    // list (a future mds:// scheme would change what Target::spec()
+    // itself does here, and this would follow it automatically once it
+    // does, rather than a second, independent copy of that logic).
+    RawstdUUID id = obj->_target.id();
+    bool got_spec = false;
+    for (auto& cn : cns) {
+        if (!cn) {
+            continue;
+        }
+        try {
+            obj->_spec = co_await cn->spec(id);
+            got_spec = true;
+            break;
+        } catch (const std::system_error& e) {
+            rawstd_warning("Mirror member spec unavailable: %s\n", e.what());
+        }
+    }
+
+    if (!got_spec) {
+        rawstd_error("No mirror member answered spec()\n");
+        for (auto& cn : cns) {
+            if (!cn) {
+                continue;
+            }
+            try {
+                co_await cn->close();
+            } catch (const std::exception& e) {
+                rawstd_warning("Target::open(): %s\n", e.what());
+            }
+        }
+        RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
+    }
+
+    obj->_spec.mirrors = static_cast<unsigned int>(uris.size());
+    size_t mirrors = uris.size();
+
     // The combined open (SET_OBJECT + this copy's own meta, see
     // Connection::open()'s own comment) is the one operation guaranteed
     // to actually touch the real store for every backend kind -- a
     // blk-backed one's own _open(const RawstdUUID&) is otherwise lazy
     // (see blk::Backend::_connect()'s own comment), so nothing before
-    // this genuinely proves a "connected" member's object actually
-    // exists. Concurrent across every connected member; a failure here
-    // demotes that one member to unreachable (same F1/F4 tolerance as a
-    // connect failure above), not a whole-open() failure by itself --
-    // reachable is re-derived below from the result.
+    // this genuinely proves a connected member's object actually exists.
+    // Concurrent across every connected member; a failure here demotes
+    // that one member to unreachable (same F1/F4 tolerance as a connect
+    // failure above), not a whole-open() failure by itself.
     std::vector<size_t> open_indices;
     std::vector<rawstd::Task<RawstorObjectMeta>> open_tasks;
     open_indices.reserve(reachable);
     open_tasks.reserve(reachable);
-    for (size_t i = 0; i < obj->_members.size(); ++i) {
-        if (obj->_members[i].cn) {
+    for (size_t i = 0; i < cns.size(); ++i) {
+        if (cns[i]) {
             open_indices.push_back(i);
-            open_tasks.push_back(obj->_members[i].cn->open(obj.get()));
+            open_tasks.push_back(cns[i]->open(obj.get()));
         }
     }
 
-    bool got_spec = false;
+    std::vector<RawstorObjectMeta> metas(uris.size());
+    std::vector<bool> opened(uris.size(), false);
     for (size_t i = 0; i < open_tasks.size(); ++i) {
-        Object::Member& mirror = obj->_members[open_indices[i]];
+        size_t idx = open_indices[i];
 
         // co_await isn't allowed inside a catch block, so the failure is
         // only recorded here; closing the connection happens just below,
         // outside the handler.
         bool unavailable = false;
         try {
-            mirror.meta = co_await open_tasks[i];
-            // _open_analyze() below only ever downgrades a member (e.g.
-            // an interrupted resync makes it STALE) -- it never upgrades
-            // one from the STALE default, so a successful open() sets
-            // this up front.
-            mirror.state = Object::MemberState::IN_SYNC;
+            metas[idx] = co_await open_tasks[i];
         } catch (const std::system_error& e) {
             rawstd_warning("Mirror member unavailable: %s\n", e.what());
             unavailable = true;
         }
 
         if (!unavailable) {
-            if (!got_spec) {
-                // spec.mirrors on any one member's own meta is that
-                // copy's own local share (always 1 -- see
-                // Backend::set_object()'s own doc comment), never the
-                // target-wide count: only Target knows that, the same
-                // way Target::spec()/Target::meta() compute it --
-                // overwritten below, once, rather than trusted from here.
-                obj->_spec = mirror.meta.spec;
-                got_spec = true;
-            }
+            opened[idx] = true;
             continue;
         }
 
         try {
-            co_await mirror.cn->close();
+            co_await cns[idx]->close();
         } catch (const std::exception& e2) {
             rawstd_warning("Target::open(): %s\n", e2.what());
         }
-        mirror.cn.reset();
-        mirror.reachable = false;
+        cns[idx].reset();
     }
 
+    // Members are assembled only now, with connect/spec/open all already
+    // settled -- one slot per URI (the only member identity this
+    // codebase knows today; see the spec() comment above on why that
+    // isn't necessarily the whole story forever). Slot indices must stay
+    // stable from here on (the reconnect probe addresses members by
+    // index): no reallocation after this.
+    obj->_members.reserve(uris.size());
     reachable = 0;
-    for (const auto& mirror : obj->_members) {
-        if (mirror.reachable) {
+    for (size_t i = 0; i < uris.size(); ++i) {
+        // _open_analyze() below only ever downgrades a member (e.g. an
+        // interrupted resync makes it STALE) -- it never upgrades one
+        // from the STALE default, so a successfully opened member is
+        // marked IN_SYNC up front.
+        Object::MemberState state = opened[i] ? Object::MemberState::IN_SYNC
+                                              : Object::MemberState::STALE;
+        obj->_members.push_back(
+            Object::Member{
+                std::move(cns[i]), uris[i], state, metas[i], opened[i]
+            }
+        );
+        if (opened[i]) {
             ++reachable;
         }
     }
@@ -716,9 +748,6 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
     if (reachable == 0) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
     }
-
-    obj->_spec.mirrors = static_cast<unsigned int>(uris.size());
-    size_t mirrors = uris.size();
 
     if (mirrors >= 2 && reachable * 2 <= mirrors) {
         rawstd_error(

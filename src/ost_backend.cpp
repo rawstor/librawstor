@@ -1300,12 +1300,11 @@ rawstd::Task<RawstorObjectSpec> Backend::spec(const RawstdUUID& id) {
             );
         ret.size = payload.size;
         // Same as every other backend's own spec() (blk::Backend::spec(),
-        // file::Backend::spec()): this one connection is one copy, always
-        // -- mirrors is a Target-level count of URIs, not a per-backend
-        // property. Target::spec() overwrites this with the real
-        // target-wide count regardless (its own only caller), so
-        // whatever the remote server's own payload.mirrors says here
-        // never actually reaches anyone.
+        // file::Backend::spec()): always 1, unconditionally -- if this one
+        // connection fails, exactly one replica is lost, regardless of how
+        // many copies might sit behind it on the far end. mirrors is never
+        // a per-backend property; whatever the remote server's own
+        // payload.mirrors says here never actually reaches anyone.
         ret.mirrors = 1;
     } catch (const std::system_error&) {
         throw;
