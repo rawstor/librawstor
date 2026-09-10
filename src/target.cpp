@@ -670,7 +670,6 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
     }
 
     spec.mirrors = static_cast<unsigned int>(uris.size());
-    size_t mirrors = uris.size();
 
     // The combined open (SET_OBJECT + this copy's own meta, see
     // Connection::open()'s own comment) is the one operation guaranteed
@@ -751,36 +750,25 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
         }
     }
 
+    // reachable == 0 (not just below quorum) is the one precondition
+    // Object's own constructor can't check itself: a member with no
+    // Connection at all is meaningless to it even for the trivial
+    // mirrors == 1 case (there's nothing there to trust), unlike a real
+    // quorum shortfall, which _reconcile_sync_set() already checks on
+    // its own -- see it, and the constructor's own comment, for why a
+    // refusal there is safe to let unwind through it rather than
+    // checked redundantly here first.
     if (reachable == 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
-    }
-
-    if (mirrors >= 2 && reachable * 2 <= mirrors) {
-        rawstd_error(
-            "Mirror quorum not met: %zu of %zu members reachable\n", reachable,
-            mirrors
-        );
-        for (auto& mirror : members) {
-            if (!mirror.cn) {
-                continue;
-            }
-            try {
-                co_await mirror.cn->close();
-            } catch (const std::exception& e) {
-                rawstd_warning("Target::open(): %s\n", e.what());
-            }
-        }
         RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
     }
 
     // Everything Object needs to exist is gathered -- deciding whether
     // it's actually trustworthy enough to open from (the mirrors == 1
-    // shortcut, or _reconcile_sync_set()'s own split-brain/no-trusted-
-    // member analysis) is the constructor's own job from here (see its
-    // own comment on why a refusal there is safe to let unwind through
-    // it) -- Target::open()'s only remaining friend access to Object is
-    // this one constructor call, not a stream of direct edits to an
-    // already-constructed Object's own internals.
+    // shortcut, or _reconcile_sync_set()'s own quorum/split-brain/no-
+    // trusted-member analysis) is the constructor's own job from here --
+    // Target::open()'s only remaining friend access to Object is this
+    // one constructor call, not a stream of direct edits to an already-
+    // constructed Object's own internals.
     co_return std::make_unique<Object>(
         Object::Private(), queue, target, std::move(spec), std::move(members)
     );
