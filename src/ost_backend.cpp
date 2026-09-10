@@ -1399,14 +1399,13 @@ rawstd::Task<RawstorLocationInfo> Backend::info() {
     co_return ret;
 }
 
-rawstd::Task<RawstorObjectMeta> Backend::set_object(const RawstdUUID& id) {
+rawstd::Task<void> Backend::set_object(const RawstdUUID& id) {
     // The demultiplex pump is already running by now -- _connect() starts it
     // before this is ever reachable -- so this is just another
     // cid-dispatched request like list()/create()/....
     assert(_read_event != nullptr);
 
     co_await _basic_request(RAWSTOR_CMD_SET_OBJECT, "set_object", id, 0);
-    co_return co_await meta(id);
 }
 
 // See ost_backend.hpp's doc comment on why `weak`, not a strong

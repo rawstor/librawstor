@@ -591,7 +591,7 @@ rawstd::Task<RawstorObjectMeta> Connection::open(const RawstdUUID& id) {
 
     // Every backend's SET_OBJECT goes out up front, so they run
     // concurrently.
-    std::vector<rawstd::Task<RawstorObjectMeta>> set_objects;
+    std::vector<rawstd::Task<void>> set_objects;
     set_objects.reserve(_backends.size());
     for (std::shared_ptr<Backend>& be : _backends) {
         set_objects.push_back(be->set_object(id));
@@ -601,9 +601,8 @@ rawstd::Task<RawstorObjectMeta> Connection::open(const RawstdUUID& id) {
     // recorded here; acting on it happens just below, outside the
     // handler.
     bool failed = false;
-    std::vector<RawstorObjectMeta> metas;
     try {
-        metas = co_await rawstd::gather(std::move(set_objects));
+        co_await rawstd::gather(std::move(set_objects));
     } catch (const std::system_error& e) {
         failed = true;
         rawstd_warning(
@@ -623,17 +622,13 @@ rawstd::Task<RawstorObjectMeta> Connection::open(const RawstdUUID& id) {
             invalidates.push_back(invalidate_backend(be));
         }
         co_await rawstd::gather(std::move(invalidates));
-
-        // Every backend just got a fresh set_object() of its own inside
-        // invalidate_backend() (its own meta() result unused there --
-        // nothing needed it), so this call's own meta comes from a plain
-        // meta() against whichever backend the pool now has.
-        co_return co_await meta(id);
     }
 
-    // Every backend in the pool is the same object on the same location,
-    // so any one of them answers the same as the rest.
-    co_return metas.front();
+    // Every backend in the pool is the same object on the same
+    // location, so any one of them answers the same as the rest --
+    // set_object() itself doesn't return it (see its own doc comment),
+    // so this is always its own separate call, win or lose above.
+    co_return co_await meta(id);
 }
 
 rawstd::Task<void> Connection::close() {

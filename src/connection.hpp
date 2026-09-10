@@ -152,9 +152,10 @@ public:
     // methods get from _with_retry() -- not literally _with_retry()
     // itself, since that picks one backend from the pool per call
     // (retrying against another on failure) rather than target every
-    // backend the way this needs to. Returns the object's own meta (see
-    // Backend::set_object()'s own doc comment on why) -- spec.mirrors on
-    // it is this copy's own local share, not the target-wide count.
+    // backend the way this needs to. Returns a separate meta() read
+    // against whichever backend the pool now has (set_object() itself
+    // doesn't return it, see its own doc comment) -- spec.mirrors on it
+    // is this copy's own local share, not the target-wide count.
     rawstd::Task<RawstorObjectMeta> open(const RawstdUUID& id);
 
     // Not called implicitly by ~Connection() (a coroutine can't run in a

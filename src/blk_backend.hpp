@@ -106,8 +106,7 @@ public:
 
     rawstd::Task<void> close() override final;
 
-    rawstd::Task<RawstorObjectMeta>
-    set_object(const RawstdUUID& id) override final;
+    rawstd::Task<void> set_object(const RawstdUUID& id) override final;
 
     // Default spec() for a backend whose object id maps to a real block
     // device (BLKGETSIZE64) -- file::Backend overrides this instead, since

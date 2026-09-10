@@ -183,14 +183,13 @@ rawstd::Task<void> Backend::close() {
     co_await _queue.close(f);
 }
 
-rawstd::Task<RawstorObjectMeta> Backend::set_object(const RawstdUUID& id) {
+rawstd::Task<void> Backend::set_object(const RawstdUUID& id) {
     if (fd() != -1) {
         throw std::runtime_error("Object already set");
     }
 
     int fd = co_await _open(id);
     set_fd(fd);
-    co_return co_await meta(id);
 }
 
 rawstd::Task<RawstorObjectSpec> Backend::spec(const RawstdUUID& id) {

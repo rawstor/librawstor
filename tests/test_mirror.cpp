@@ -641,21 +641,20 @@ TEST(MirrorOstTest, read_failover_and_repair) {
      * on two reopened ones before the read fails over to the second member.
      * The repair then lands on the last reopened session.
      */
-    // Target::open() fetches a real spec() first, from whichever
-    // connected URI answers first (see its own comment) -- here that's
-    // always server1, the first URI in `target`: its own first session
-    // gets a SPEC ahead of its SET_OBJECT+META, and that's the only SPEC
-    // either server ever sees. mirrors on the wire here is whatever this
-    // mock server happens to answer with -- Target::open() always
-    // overwrites it with uris.size() regardless (see its own comment),
-    // so the value scripted below isn't load-bearing. Both members still
-    // go through Connection::open()'s own combined SET_OBJECT+META step
-    // (see its own comment), concurrently, once spec() has answered.
-    // Every later low-level reconnect (invalidate_backend()) goes
-    // through Backend::set_object() only, no SPEC of its own
-    // (invalidate_backend() only set_object()s -- see its own comment)
-    // -- but it always folds its own META fetch in on success, so each
-    // reopened session below still gets its own SET_OBJECT+META pair.
+    // Target::open() fetches spec() from every reachable connection
+    // concurrently (see its own comment) -- both server1's and server2's
+    // own first session get their own SPEC ahead of their SET_OBJECT+
+    // META. mirrors on the wire here is whatever this mock server
+    // happens to answer with -- Target::open() always overwrites it
+    // with uris.size() regardless (see its own comment), so the value
+    // scripted below isn't load-bearing. Both members still go through
+    // Connection::open()'s own combined SET_OBJECT+META step (see its
+    // own comment), concurrently, once every spec() has answered. Every
+    // later low-level reconnect (invalidate_backend()) goes through
+    // Backend::set_object() only, no SPEC of its own (invalidate_backend()
+    // only set_object()s -- see its own comment) -- but it always folds
+    // its own META fetch in on success, so each reopened session below
+    // still gets its own SET_OBJECT+META pair.
     {
         rawstor::tests::Session s(server1);
         s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 2);
@@ -680,10 +679,11 @@ TEST(MirrorOstTest, read_failover_and_repair) {
 
     {
         rawstor::tests::Session s(server2);
-        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
-        s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
-        s.cmd_read(RAWSTOR_MAGIC, 2, "pong", 4);
-        s.cmd_set_state(RAWSTOR_MAGIC, 3, 0);
+        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 2);
+        s.cmd_set_object(RAWSTOR_MAGIC, 1, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 2, 0, legacy);
+        s.cmd_read(RAWSTOR_MAGIC, 3, "pong", 4);
+        s.cmd_set_state(RAWSTOR_MAGIC, 4, 0);
     }
 
     RawstorObject* object = nullptr;
@@ -722,16 +722,15 @@ TEST(MirrorOstTest, degrade_and_continue) {
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
     };
 
-    // Target::open() fetches a real spec() first, from whichever
-    // connected URI answers first (see its own comment) -- here that's
-    // always server1, the first URI in `target`: its own session gets a
-    // SPEC ahead of its SET_OBJECT+META, and that's the only SPEC either
-    // server ever sees. mirrors on the wire here is whatever this mock
-    // server happens to answer with -- Target::open() always overwrites
-    // it with uris.size() regardless (see its own comment), so the
-    // value scripted below isn't load-bearing. Both members still go
-    // through Connection::open()'s own combined SET_OBJECT+META step
-    // (see its own comment), concurrently, once spec() has answered.
+    // Target::open() fetches spec() from every reachable connection
+    // concurrently (see its own comment) -- both server1's and server2's
+    // own session get their own SPEC ahead of their SET_OBJECT+META.
+    // mirrors on the wire here is whatever this mock server happens to
+    // answer with -- Target::open() always overwrites it with
+    // uris.size() regardless (see its own comment), so the value
+    // scripted below isn't load-bearing. Both members still go through
+    // Connection::open()'s own combined SET_OBJECT+META step (see its
+    // own comment), concurrently, once every spec() has answered.
     {
         rawstor::tests::Session s(server1);
         s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 2);
@@ -744,21 +743,22 @@ TEST(MirrorOstTest, degrade_and_continue) {
 
     {
         rawstor::tests::Session s(server2);
-        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
-        s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
-        s.cmd_set_state(RAWSTOR_MAGIC, 2, 0);
-        s.cmd_write(RAWSTOR_MAGIC, 3, 4);
+        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 2);
+        s.cmd_set_object(RAWSTOR_MAGIC, 1, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 2, 0, legacy);
+        s.cmd_set_state(RAWSTOR_MAGIC, 3, 0);
+        s.cmd_write(RAWSTOR_MAGIC, 4, 4);
         /* Degrade barrier: the exclusion is recorded on the survivor. */
-        s.cmd_set_state(RAWSTOR_MAGIC, 4, 0);
+        s.cmd_set_state(RAWSTOR_MAGIC, 5, 0);
         /* Subsequent writes go to the survivor only. */
-        s.cmd_write(RAWSTOR_MAGIC, 5, 4);
+        s.cmd_write(RAWSTOR_MAGIC, 6, 4);
         /*
          * object_close() below is a clean close (see Object::close()'s own
          * doc comment): flush, then a durable CLEAN mark on the sole
          * survivor.
          */
-        s.cmd_flush(RAWSTOR_MAGIC, 6, 0);
-        s.cmd_set_state(RAWSTOR_MAGIC, 7, 0);
+        s.cmd_flush(RAWSTOR_MAGIC, 7, 0);
+        s.cmd_set_state(RAWSTOR_MAGIC, 8, 0);
     }
 
     RawstorObject* object = nullptr;
