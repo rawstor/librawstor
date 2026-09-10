@@ -610,26 +610,48 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
     }
 
     // A real spec() answer, from whichever connected URI answers first --
-    // reusing that connection, not paying for one of its own. Every
-    // backend's own spec() always answers mirrors = 1, unconditionally
-    // (see e.g. ost::Backend::spec()'s own comment: if this one
-    // connection fails, exactly one replica is lost, regardless of what
-    // might sit behind it) -- so, same as Target::spec() itself, that's
-    // overwritten with _uris.size() below: today, the only source of
-    // truth this Target has for its own mirror count is its own URI
-    // list (a future mds:// scheme would change what Target::spec()
-    // itself does here, and this would follow it automatically once it
-    // does, rather than a second, independent copy of that logic).
+    // every reachable connection's own spec() goes out concurrently
+    // (submitted here, into a plain vector, same pattern as the connect
+    // phase above), rather than trying connections one at a time until
+    // one answers. Deliberately NOT rawstd::any(): its losing tasks are
+    // driven to completion by a *detached* background watcher (see its
+    // own doc comment), decoupled from this coroutine -- fine when a
+    // loser's resource is discarded afterward, but every connection
+    // here, winner or loser, is reused immediately below for its own
+    // SET_OBJECT+META -- a loser's own retry (e.g. invalidate_backend()
+    // reconnecting after a transient failure) could then still be
+    // running on that same Connection at the same time as the open-phase
+    // call below, a real, confirmed use-after-free once the loser's
+    // watcher and this coroutine's own cleanup raced to tear it down.
+    // Awaiting every task here, in order, sidesteps that entirely: by
+    // the time any connection is reused below, its own spec() task --
+    // win or lose -- has already fully settled. Every backend's own
+    // spec() always answers mirrors = 1, unconditionally (see e.g.
+    // ost::Backend::spec()'s own comment: if this one connection fails,
+    // exactly one replica is lost, regardless of what might sit behind
+    // it) -- so, same as Target::spec() itself, that's overwritten with
+    // _uris.size() below: today, the only source of truth this Target
+    // has for its own mirror count is its own URI list (a future
+    // mds:// scheme would change what Target::spec() itself does here,
+    // and this would follow it automatically once it does, rather than
+    // a second, independent copy of that logic).
+    std::vector<rawstd::Task<RawstorObjectSpec>> spec_tasks;
+    spec_tasks.reserve(reachable);
+    for (auto& cn : cns) {
+        if (cn) {
+            spec_tasks.push_back(cn->spec(id));
+        }
+    }
+
     RawstorObjectSpec spec{};
     bool got_spec = false;
-    for (auto& cn : cns) {
-        if (!cn) {
-            continue;
-        }
+    for (auto& t : spec_tasks) {
         try {
-            spec = co_await cn->spec(id);
-            got_spec = true;
-            break;
+            RawstorObjectSpec sp = co_await t;
+            if (!got_spec) {
+                spec = sp;
+                got_spec = true;
+            }
         } catch (const std::system_error& e) {
             rawstd_warning("Mirror member spec unavailable: %s\n", e.what());
         }
