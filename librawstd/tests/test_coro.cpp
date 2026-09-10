@@ -276,38 +276,38 @@ TEST(GatherTest, void_overload_rethrows) {
 }
 
 // ---------------------------------------------------------------------
-// wait_first()
+// any()
 // ---------------------------------------------------------------------
 
-TEST(WaitFirstTest, returns_first_success_ignoring_earlier_failures) {
+TEST(AnyTest, returns_first_success_ignoring_earlier_failures) {
     std::vector<rawstd::Task<int>> tasks;
     tasks.push_back(gather_throws("first"));
     tasks.push_back(immediate_value(2));
     tasks.push_back(gather_throws("third"));
 
-    rawstd::Task<int> t = rawstd::wait_first(std::move(tasks));
+    rawstd::Task<int> t = rawstd::any(std::move(tasks));
     EXPECT_TRUE(t.done());
     EXPECT_EQ(t.get(), 2);
 }
 
-TEST(WaitFirstTest, rethrows_when_every_task_fails) {
+TEST(AnyTest, rethrows_when_every_task_fails) {
     std::vector<rawstd::Task<int>> tasks;
     tasks.push_back(gather_throws("first"));
     tasks.push_back(gather_throws("second"));
 
-    rawstd::Task<int> t = rawstd::wait_first(std::move(tasks));
+    rawstd::Task<int> t = rawstd::any(std::move(tasks));
     EXPECT_TRUE(t.done());
     try {
         t.get();
-        FAIL() << "expected wait_first() to rethrow";
+        FAIL() << "expected any() to rethrow";
     } catch (const std::runtime_error& e) {
         EXPECT_STREQ(e.what(), "first");
     }
 }
 
-TEST(WaitFirstTest, empty_input_throws) {
+TEST(AnyTest, empty_input_throws) {
     std::vector<rawstd::Task<int>> tasks;
-    rawstd::Task<int> t = rawstd::wait_first(std::move(tasks));
+    rawstd::Task<int> t = rawstd::any(std::move(tasks));
     EXPECT_TRUE(t.done());
     EXPECT_THROW(t.get(), std::invalid_argument);
 }
@@ -318,12 +318,12 @@ suspend_then_return_value(std::coroutine_handle<>* slot, int v) {
     co_return v;
 }
 
-TEST(WaitFirstTest, resumes_once_a_suspended_task_succeeds) {
+TEST(AnyTest, resumes_once_a_suspended_task_succeeds) {
     std::coroutine_handle<> slot;
     std::vector<rawstd::Task<int>> tasks;
     tasks.push_back(suspend_then_return_value(&slot, 5));
 
-    rawstd::Task<int> t = rawstd::wait_first(std::move(tasks));
+    rawstd::Task<int> t = rawstd::any(std::move(tasks));
     EXPECT_FALSE(t.done());
 
     ASSERT_TRUE(slot);
@@ -340,22 +340,22 @@ suspend_then_return_and_flag(std::coroutine_handle<>* slot, bool* drained) {
     co_return 99;
 }
 
-TEST(WaitFirstTest, drains_a_suspended_loser_in_the_background) {
-    // wait_first() must not resolve on the suspended loser (it isn't
-    // done() yet), but it also must not block on it -- the synchronous
-    // winner resolves the whole thing immediately. The loser is only
-    // expected to finish once *its own* suspension point is resumed,
-    // asynchronously, well after wait_first() has already returned --
-    // proving it was kept alive and driven to completion in the
-    // background rather than dropped (which Task<T>'s own precondition
-    // forbids: see coro.hpp).
+TEST(AnyTest, drains_a_suspended_loser_in_the_background) {
+    // any() must not resolve on the suspended loser (it isn't done()
+    // yet), but it also must not block on it -- the synchronous winner
+    // resolves the whole thing immediately. The loser is only expected
+    // to finish once *its own* suspension point is resumed,
+    // asynchronously, well after any() has already returned -- proving
+    // it was kept alive and driven to completion in the background
+    // rather than dropped (which Task<T>'s own precondition forbids: see
+    // coro.hpp).
     std::coroutine_handle<> slot;
     bool drained = false;
     std::vector<rawstd::Task<int>> tasks;
     tasks.push_back(suspend_then_return_and_flag(&slot, &drained));
     tasks.push_back(immediate_value(1));
 
-    rawstd::Task<int> t = rawstd::wait_first(std::move(tasks));
+    rawstd::Task<int> t = rawstd::any(std::move(tasks));
     EXPECT_TRUE(t.done());
     EXPECT_EQ(t.get(), 1);
     EXPECT_FALSE(drained);
@@ -365,22 +365,22 @@ TEST(WaitFirstTest, drains_a_suspended_loser_in_the_background) {
     EXPECT_TRUE(drained);
 }
 
-TEST(WaitFirstTest, void_overload_succeeds) {
+TEST(AnyTest, void_overload_succeeds) {
     std::vector<rawstd::Task<void>> tasks;
     tasks.push_back(void_throws());
     tasks.push_back(void_ok());
 
-    rawstd::Task<void> t = rawstd::wait_first(std::move(tasks));
+    rawstd::Task<void> t = rawstd::any(std::move(tasks));
     EXPECT_TRUE(t.done());
     EXPECT_NO_THROW(t.get());
 }
 
-TEST(WaitFirstTest, void_overload_rethrows_when_every_task_fails) {
+TEST(AnyTest, void_overload_rethrows_when_every_task_fails) {
     std::vector<rawstd::Task<void>> tasks;
     tasks.push_back(void_throws());
     tasks.push_back(void_throws());
 
-    rawstd::Task<void> t = rawstd::wait_first(std::move(tasks));
+    rawstd::Task<void> t = rawstd::any(std::move(tasks));
     EXPECT_TRUE(t.done());
     EXPECT_THROW(t.get(), std::runtime_error);
 }
