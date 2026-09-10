@@ -353,11 +353,17 @@ rawstd::DetachedTask launch_set_sync_state_op_coro(
 
 namespace rawstor {
 
+// Every public method below used to re-run these three checks itself,
+// identically, before touching _uris -- validated once, here, instead:
+// _uris never changes after construction, so nothing past this point
+// can un-validate it.
 Target::Target(const std::vector<rawstd::URI>& uris) : _uris(uris) {
+    validate_not_empty(_uris);
+    validate_different_uris(_uris);
+    validate_same_uuid(_uris);
 }
 
 RawstdUUID Target::id() const {
-    validate_not_empty(_uris);
     return uuid_from_target(_uris.front());
 }
 
@@ -372,10 +378,6 @@ Location Target::location() const {
 
 rawstd::Task<void>
 Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) {
-    validate_not_empty(_uris);
-    validate_different_uris(_uris);
-    validate_same_uuid(_uris);
-
     // Mandatory: the caller must always state how many copies it thinks
     // it's creating, and it must match the target's own URI count exactly
     // -- a mismatch is a caller bug (e.g. reusing a Spec read from a
@@ -451,10 +453,6 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) {
 // only needs one to answer: URIs are tried in order, first reachable
 // wins, same fail-over tolerance as meta() below.
 rawstd::Task<RawstorObjectSpec> Target::spec(rawio::Queue& queue) {
-    validate_not_empty(_uris);
-    validate_different_uris(_uris);
-    validate_same_uuid(_uris);
-
     int first_error = 0;
     for (const auto& uri : _uris) {
         try {
@@ -482,10 +480,6 @@ rawstd::Task<RawstorObjectSpec> Target::spec(rawio::Queue& queue) {
 // target's own URI count is, so whatever it put there (if anything)
 // isn't meaningful.
 rawstd::Task<RawstorObjectMeta> Target::meta(rawio::Queue& queue) {
-    validate_not_empty(_uris);
-    validate_different_uris(_uris);
-    validate_same_uuid(_uris);
-
     int first_error = 0;
     for (const auto& uri : _uris) {
         try {
@@ -512,10 +506,6 @@ rawstd::Task<RawstorObjectMeta> Target::meta(rawio::Queue& queue) {
 rawstd::Task<void> Target::set_sync_state(
     rawio::Queue& queue, const RawstorObjectSyncState& sync_state
 ) {
-    validate_not_empty(_uris);
-    validate_different_uris(_uris);
-    validate_same_uuid(_uris);
-
     std::vector<rawstd::Task<void>> tasks;
     tasks.reserve(_uris.size());
     for (const auto& uri : _uris) {
@@ -525,10 +515,6 @@ rawstd::Task<void> Target::set_sync_state(
 }
 
 rawstd::Task<void> Target::remove(rawio::Queue& queue) {
-    validate_not_empty(_uris);
-    validate_different_uris(_uris);
-    validate_same_uuid(_uris);
-
     // Every URI's REMOVE goes out concurrently instead of one at a time;
     // every one is still attempted regardless of an earlier failure
     // (gather() never abandons a task still in flight). On failure,
@@ -537,17 +523,15 @@ rawstd::Task<void> Target::remove(rawio::Queue& queue) {
 }
 
 rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
-    validate_not_empty(_uris);
-    validate_different_uris(_uris);
-    validate_same_uuid(_uris);
-
     // Copied out up front: this coroutine suspends (co_await) below, and
     // *this may be a temporary the caller only kept alive up to the point
     // it launched us (e.g. rawstor_target_open()'s own local Target) --
     // touching _uris (or any other member) through `this` past the first
-    // suspension point would be a use-after-free. `target`/`id`, built
-    // from this copy rather than through `this`, are what eventually get
-    // handed to Object's own constructor at the very end, once every
+    // suspension point would be a use-after-free. `id`, extracted from
+    // this copy rather than through `this`, is what every connection
+    // below is opened against; `uris` itself is what eventually gets
+    // handed to Object's own constructor at the very end (as a fresh
+    // Target(uris), built from this same safe copy), once every
     // reachable URI has been connected, spec()-ed and SET_OBJECT+meta()-
     // ed -- that constructor call (Private-gated, Target is a friend,
     // see object.hpp's own doc comment on why) is Target's only
@@ -558,7 +542,6 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
     // the result is trustworthy enough to actually open from is the
     // constructor's own job now (see its own comment).
     std::vector<rawstd::URI> uris = _uris;
-    Target target(uris);
     RawstdUUID id = uuid_from_target(uris.front());
 
     // Every URI's Connection goes out concurrently instead of one at a
@@ -770,7 +753,8 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
     // one constructor call, not a stream of direct edits to an already-
     // constructed Object's own internals.
     co_return std::make_unique<Object>(
-        Object::Private(), queue, target, std::move(spec), std::move(members)
+        Object::Private(), queue, Target(uris), std::move(spec),
+        std::move(members)
     );
 }
 
