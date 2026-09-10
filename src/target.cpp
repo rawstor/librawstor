@@ -151,32 +151,6 @@ remove_many(rawio::Queue& queue, const std::vector<rawstd::URI>& targets) {
     co_await rawstd::gather(std::move(tasks));
 }
 
-// Shared by Target::spec() and Target::open() (which needs the target's
-// declared mirror count up front -- see its own comment): URIs are tried
-// in order, first reachable wins. Takes `uris` explicitly instead of
-// reading a Target's own _uris, so a caller past its own first
-// suspension point -- Target::open(), which by then can only safely use
-// its own already-copied-out local (see its own doc comment on why) --
-// doesn't have to touch a `this` that might not have survived that long.
-rawstd::Task<RawstorObjectSpec>
-spec_many(rawio::Queue& queue, const std::vector<rawstd::URI>& uris) {
-    int first_error = 0;
-    for (const auto& uri : uris) {
-        try {
-            RawstorObjectSpec ret = co_await spec_one(queue, uri);
-            ret.mirrors = static_cast<unsigned int>(uris.size());
-            co_return ret;
-        } catch (const std::system_error& e) {
-            rawstd_warning("Mirror member unreachable: %s\n", e.what());
-            if (first_error == 0) {
-                first_error = e.code().value();
-            }
-        }
-    }
-
-    RAWSTD_THROW_SYSTEM_ERROR(first_error ? first_error : ENOTCONN);
-}
-
 // One URI's worth of Target::open() work: stand up a Connection (its own
 // backend pool) against it and open() it against `object`. Factored out
 // so open() can fan these out across every URI via gather()-like
@@ -480,7 +454,21 @@ rawstd::Task<RawstorObjectSpec> Target::spec(rawio::Queue& queue) {
     validate_different_uris(_uris);
     validate_same_uuid(_uris);
 
-    co_return co_await spec_many(queue, _uris);
+    int first_error = 0;
+    for (const auto& uri : _uris) {
+        try {
+            RawstorObjectSpec ret = co_await spec_one(queue, uri);
+            ret.mirrors = static_cast<unsigned int>(_uris.size());
+            co_return ret;
+        } catch (const std::system_error& e) {
+            rawstd_warning("Mirror member unreachable: %s\n", e.what());
+            if (first_error == 0) {
+                first_error = e.code().value();
+            }
+        }
+    }
+
+    RAWSTD_THROW_SYSTEM_ERROR(first_error ? first_error : ENOTCONN);
 }
 
 // URIs are tried in order; the first one that answers wins (docs/
@@ -570,21 +558,21 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
     std::unique_ptr<Object> obj =
         std::make_unique<Object>(Object::Private(), queue, *this);
 
-    // mirrors comes from spec() (spec_many() directly, on this coroutine's
-    // own local `uris` -- not this->spec(), a method call that would
-    // touch `this` again after suspending, the exact hazard the comments
-    // above warn about), the same single source of truth spec()/create()
-    // themselves use, instead of a second, independent uris.size().
-    obj->_spec = co_await spec_many(queue, uris);
-    size_t mirrors = obj->_spec.mirrors;
+    // mirrors is just the URI count -- same as Target::spec()'s own
+    // (a real spec() answer would say exactly this anyway, see its own
+    // comment), purely local, no need to wait on a network round trip
+    // just to learn it. The real spec() fetch below (obj->_spec) reuses
+    // an already-open member connection instead of paying for one of its
+    // own, so it can only happen once at least one member is up.
+    size_t mirrors = uris.size();
     // Slot indices must stay stable (the reconnect probe below addresses
     // members by index): no reallocation after this.
-    obj->_members.reserve(mirrors);
+    obj->_members.reserve(uris.size());
 
     // Every URI's Connection goes out concurrently instead of one at a
     // time.
     std::vector<rawstd::Task<std::unique_ptr<Connection>>> tasks;
-    tasks.reserve(mirrors);
+    tasks.reserve(uris.size());
     for (const auto& uri : uris) {
         tasks.push_back(open_one(queue, uri, obj.get()));
     }
@@ -672,6 +660,32 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
     }
 
+    RawstdUUID id = obj->_target.id();
+
+    // A real spec() answer, reusing whichever member's connection is
+    // already open instead of paying for a separate one of its own (see
+    // Connection::spec()) -- tried in member order, first reachable one
+    // to answer wins, same tolerance as Target::spec() itself. mirrors on
+    // the result is forced to match `mirrors` above (a per-copy backend's
+    // own spec() has no idea what the target's URI count is -- see
+    // blk::Backend::spec()/ost::Backend::spec()'s own doc comments). Not
+    // fatal if every reachable member's own spec() call fails (connected
+    // fine, but this one call didn't): nothing below depends on
+    // obj->_spec, it's kept purely for a future caller's own use, so it's
+    // just left at its zero default.
+    for (Object::Member& mirror : obj->_members) {
+        if (!mirror.reachable) {
+            continue;
+        }
+        try {
+            obj->_spec = co_await mirror.cn->spec(id);
+            obj->_spec.mirrors = static_cast<unsigned int>(mirrors);
+            break;
+        } catch (const std::system_error& e) {
+            rawstd_warning("Mirror member spec unavailable: %s\n", e.what());
+        }
+    }
+
     if (mirrors == 1) {
         obj->_members.front().state = Object::MemberState::IN_SYNC;
         co_return obj;
@@ -681,7 +695,6 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
     // concurrency); an member whose metadata can't be read is excluded the
     // same way an unreachable one is, but -- like an unreachable one --
     // keeps its slot for the reconnect probe.
-    RawstdUUID id = obj->_target.id();
     for (Object::Member& mirror : obj->_members) {
         if (!mirror.reachable) {
             continue;

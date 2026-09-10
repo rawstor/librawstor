@@ -641,15 +641,18 @@ TEST(MirrorOstTest, read_failover_and_repair) {
      * on two reopened ones before the read fails over to the second member.
      * The repair then lands on the last reopened session.
      */
-    {
-        rawstor::tests::Session s(server1);
-        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 2);
-    }
+    // Target::open() fetches spec() from the first reachable member's own
+    // connection (server1, tried first in target order) right after
+    // SET_OBJECT succeeds there -- before the meta() read loop below,
+    // which reads every reachable member's meta in turn (server1 first).
+    // server2 never sees a SPEC request: the loop stops at the first
+    // member that answers it.
     {
         rawstor::tests::Session s(server1);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
-        s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
-        s.cmd_read_error(RAWSTOR_MAGIC, 2, -EIO);
+        s.cmd_spec(RAWSTOR_MAGIC, 1, 0, 1ull << 20, 2);
+        s.cmd_meta(RAWSTOR_MAGIC, 2, 0, legacy);
+        s.cmd_read_error(RAWSTOR_MAGIC, 3, -EIO);
     }
     {
         rawstor::tests::Session s(server1);
@@ -708,17 +711,17 @@ TEST(MirrorOstTest, degrade_and_continue) {
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
     };
 
-    {
-        rawstor::tests::Session s(server1);
-        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 2);
-    }
+    // Target::open() fetches spec() from server1 (first reachable member)
+    // right after SET_OBJECT succeeds there; server2 never sees a SPEC
+    // request (see read_failover_and_repair's own comment above).
     {
         rawstor::tests::Session s(server1);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
-        s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
-        s.cmd_set_state(RAWSTOR_MAGIC, 2, 0);
+        s.cmd_spec(RAWSTOR_MAGIC, 1, 0, 1ull << 20, 2);
+        s.cmd_meta(RAWSTOR_MAGIC, 2, 0, legacy);
+        s.cmd_set_state(RAWSTOR_MAGIC, 3, 0);
         s.cmd_write_request(4);
-        s.cmd_write_response(RAWSTOR_MAGIC, 3, -EIO);
+        s.cmd_write_response(RAWSTOR_MAGIC, 4, -EIO);
     }
 
     {
