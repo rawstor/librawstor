@@ -151,6 +151,32 @@ remove_many(rawio::Queue& queue, const std::vector<rawstd::URI>& targets) {
     co_await rawstd::gather(std::move(tasks));
 }
 
+// Shared by Target::spec() and Target::open() (which needs the target's
+// declared mirror count up front -- see its own comment): URIs are tried
+// in order, first reachable wins. Takes `uris` explicitly instead of
+// reading a Target's own _uris, so a caller past its own first
+// suspension point -- Target::open(), which by then can only safely use
+// its own already-copied-out local (see its own doc comment on why) --
+// doesn't have to touch a `this` that might not have survived that long.
+rawstd::Task<RawstorObjectSpec>
+spec_many(rawio::Queue& queue, const std::vector<rawstd::URI>& uris) {
+    int first_error = 0;
+    for (const auto& uri : uris) {
+        try {
+            RawstorObjectSpec ret = co_await spec_one(queue, uri);
+            ret.mirrors = static_cast<unsigned int>(uris.size());
+            co_return ret;
+        } catch (const std::system_error& e) {
+            rawstd_warning("Mirror member unreachable: %s\n", e.what());
+            if (first_error == 0) {
+                first_error = e.code().value();
+            }
+        }
+    }
+
+    RAWSTD_THROW_SYSTEM_ERROR(first_error ? first_error : ENOTCONN);
+}
+
 // One URI's worth of Target::open() work: stand up a Connection (its own
 // backend pool) against it and open() it against `object`. Factored out
 // so open() can fan these out across every URI via gather()-like
@@ -454,21 +480,7 @@ rawstd::Task<RawstorObjectSpec> Target::spec(rawio::Queue& queue) {
     validate_different_uris(_uris);
     validate_same_uuid(_uris);
 
-    int first_error = 0;
-    for (const auto& uri : _uris) {
-        try {
-            RawstorObjectSpec ret = co_await spec_one(queue, uri);
-            ret.mirrors = static_cast<unsigned int>(_uris.size());
-            co_return ret;
-        } catch (const std::system_error& e) {
-            rawstd_warning("Mirror member unreachable: %s\n", e.what());
-            if (first_error == 0) {
-                first_error = e.code().value();
-            }
-        }
-    }
-
-    RAWSTD_THROW_SYSTEM_ERROR(first_error ? first_error : ENOTCONN);
+    co_return co_await spec_many(queue, _uris);
 }
 
 // URIs are tried in order; the first one that answers wins (docs/
@@ -546,24 +558,33 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
     // touching _uris (or any other member) through `this` past the first
     // suspension point would be a use-after-free.
     std::vector<rawstd::URI> uris = _uris;
-    size_t nmirrors = uris.size();
 
     // Object's constructor is Private-gated -- Target is a friend (see
     // object.hpp's own doc comment on why), so this is the one place
     // that actually builds one, by analogy with Connection::create():
     // the heavy async work (standing up a Connection per URI, comparing
-    // their metadata) lives here, not in the constructor itself.
+    // their metadata) lives here, not in the constructor itself. Built
+    // here, before this coroutine's own first suspension below, since its
+    // constructor copies *this into _target -- same reasoning as the
+    // `uris` copy above.
     std::unique_ptr<Object> obj =
         std::make_unique<Object>(Object::Private(), queue, *this);
-    obj->_nmirrors = nmirrors;
+
+    // mirrors comes from spec() (spec_many() directly, on this coroutine's
+    // own local `uris` -- not this->spec(), a method call that would
+    // touch `this` again after suspending, the exact hazard the comments
+    // above warn about), the same single source of truth spec()/create()
+    // themselves use, instead of a second, independent uris.size().
+    obj->_spec = co_await spec_many(queue, uris);
+    size_t mirrors = obj->_spec.mirrors;
     // Slot indices must stay stable (the reconnect probe below addresses
     // members by index): no reallocation after this.
-    obj->_members.reserve(nmirrors);
+    obj->_members.reserve(mirrors);
 
     // Every URI's Connection goes out concurrently instead of one at a
     // time.
     std::vector<rawstd::Task<std::unique_ptr<Connection>>> tasks;
-    tasks.reserve(nmirrors);
+    tasks.reserve(mirrors);
     for (const auto& uri : uris) {
         tasks.push_back(open_one(queue, uri, obj.get()));
     }
@@ -589,7 +610,7 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
             cn = co_await tasks[i];
             ok = true;
         } catch (const std::system_error& e) {
-            if (nmirrors == 1) {
+            if (mirrors == 1) {
                 if (!eptr) {
                     eptr = std::current_exception();
                 }
@@ -633,10 +654,10 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
         RAWSTD_THROW_SYSTEM_ERROR(first_error ? first_error : ENOTCONN);
     }
 
-    if (nmirrors >= 2 && reachable * 2 <= nmirrors) {
+    if (mirrors >= 2 && reachable * 2 <= mirrors) {
         rawstd_error(
             "Mirror quorum not met: %zu of %zu members reachable\n", reachable,
-            nmirrors
+            mirrors
         );
         for (auto& mirror : obj->_members) {
             if (!mirror.cn) {
@@ -651,7 +672,7 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
     }
 
-    if (nmirrors == 1) {
+    if (mirrors == 1) {
         obj->_members.front().state = Object::MemberState::IN_SYNC;
         co_return obj;
     }

@@ -251,7 +251,7 @@ namespace rawstor {
 Object::Object(Private, rawio::Queue& queue, const Target& target) :
     _queue(queue),
     _target(target),
-    _nmirrors(0),
+    _spec{},
     _size(0),
     _dirty(false),
     _writes_frozen(false),
@@ -307,7 +307,7 @@ size_t Object::_in_sync_count() const noexcept {
 }
 
 bool Object::_below_write_quorum(size_t survivors) const noexcept {
-    return _nmirrors >= 3 && survivors * 2 <= _nmirrors;
+    return _spec.mirrors >= 3 && survivors * 2 <= _spec.mirrors;
 }
 
 /*
@@ -331,10 +331,10 @@ void Object::_open_analyze() {
         }
     }
 
-    if (reachable * 2 <= _nmirrors) {
+    if (reachable * 2 <= _spec.mirrors) {
         rawstd_error(
             "Mirror quorum not met: %zu of %zu members reachable\n", reachable,
-            _nmirrors
+            (size_t)_spec.mirrors
         );
         RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
     }
@@ -465,7 +465,7 @@ void Object::_finish_meta_op() noexcept {
 }
 
 rawstd::Task<void> Object::_with_dirty() {
-    if (_nmirrors == 1) {
+    if (_spec.mirrors == 1) {
         co_return;
     }
 
@@ -501,7 +501,7 @@ rawstd::Task<void> Object::_run_dirty_barrier() {
         // recorded, instead of discarding a concurrent increment.
         size_t recorded_stale = _unrecorded_stale;
 
-        bool bump = _in_sync_count() != _nmirrors || _sync_id == 0 ||
+        bool bump = _in_sync_count() != _spec.mirrors || _sync_id == 0 ||
                     _unrecorded_stale > 0;
 
         RawstorObjectSyncState m{};
@@ -965,7 +965,7 @@ void Object::_write_settled() noexcept {
 rawstd::DetachedTask Object::_resync_maybe_start() {
     std::weak_ptr<void> alive = _alive;
 
-    if (_nmirrors == 1 || _resync != nullptr || _size == 0) {
+    if (_spec.mirrors == 1 || _resync != nullptr || _size == 0) {
         co_return;
     }
 
@@ -1260,7 +1260,7 @@ void Object::_resync_abort(const char* reason) noexcept {
 
 // Launches _probe_watch() (a no-op for a single-target object).
 void Object::_probe_setup() {
-    if (_nmirrors == 1) {
+    if (_spec.mirrors == 1) {
         return;
     }
 
@@ -1732,7 +1732,7 @@ rawstd::Task<void> Object::close() {
     // a clean close, so the next open() doesn't pay for a spurious dirty
     // gate (docs/mirroring.md). Left DIRTY (the safe direction) on any
     // error here; the object is destroyed anyway.
-    if (_nmirrors > 1 && _dirty && !flush_failed) {
+    if (_spec.mirrors > 1 && _dirty && !flush_failed) {
         if (_in_sync_count() > 0) {
             _meta_op_running = true;
             try {

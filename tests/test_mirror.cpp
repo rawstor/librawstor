@@ -643,6 +643,10 @@ TEST(MirrorOstTest, read_failover_and_repair) {
      */
     {
         rawstor::tests::Session s(server1);
+        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 2);
+    }
+    {
+        rawstor::tests::Session s(server1);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
         s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
         s.cmd_read_error(RAWSTOR_MAGIC, 2, -EIO);
@@ -704,6 +708,10 @@ TEST(MirrorOstTest, degrade_and_continue) {
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
     };
 
+    {
+        rawstor::tests::Session s(server1);
+        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 2);
+    }
     {
         rawstor::tests::Session s(server1);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);

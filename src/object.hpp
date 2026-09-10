@@ -51,8 +51,11 @@ private:
     rawio::Queue& _queue;
     Target _target;
 
-    // Configured mirror width N (the target's own URI count).
-    size_t _nmirrors;
+    // The spec() fetched at open() time (see Target::open()'s own
+    // comment) -- kept around for any future caller that needs it.
+    // _spec.mirrors is the configured mirror width N (the target's own
+    // URI count).
+    RawstorObjectSpec _spec;
     std::vector<Member> _members;
 
     // Logical object size, adopted from the in-sync metadata at open --

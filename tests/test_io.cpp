@@ -352,6 +352,11 @@ TEST(OstIOTest, basics) {
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 1);
+    }
+
+    {
+        rawstor::tests::Session s(server);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
         s.cmd_write(RAWSTOR_MAGIC, 1, 4);
         // Explicit flush() below, then read() -- Object's destructor
@@ -392,6 +397,11 @@ TEST(OstIOTest, discard_and_write_zeroes) {
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 1);
+    }
+
+    {
+        rawstor::tests::Session s(server);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
         s.cmd_discard(RAWSTOR_MAGIC, 1, 4);
         s.cmd_write_zeroes(RAWSTOR_MAGIC, 2, 4);
@@ -425,6 +435,11 @@ TEST(OstIOTest, flush) {
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 1);
+    }
+
+    {
+        rawstor::tests::Session s(server);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
         s.cmd_write(RAWSTOR_MAGIC, 1, 4);
         s.cmd_flush(RAWSTOR_MAGIC, 2, 0);
@@ -453,6 +468,11 @@ TEST(OstIOTest, set_object_fail) {
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 1);
+    }
+
     // Connection::open()'s own first attempt (against the backend
     // create() already connected) plus invalidate_backend()'s own
     // internal retry (rawstor_opts_io_attempts() attempts) -- one more
@@ -478,6 +498,11 @@ TEST(OstIOTest, set_object_error) {
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 1);
+    }
+
     // See set_object_fail above for why this is one more than
     // rawstor_opts_io_attempts().
     for (unsigned int i = 0; i < rawstor_opts_io_attempts() + 1; ++i) {
@@ -501,6 +526,11 @@ TEST(OstIOTest, set_object_disconnect) {
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 1);
+    }
+
     // See set_object_fail above for why this is one more than
     // rawstor_opts_io_attempts().
     for (unsigned int i = 0; i < rawstor_opts_io_attempts() + 1; ++i) {
@@ -521,6 +551,11 @@ TEST(OstIOTest, write_fail) {
     {
         rawstor::tests::Session s(server);
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
+    }
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 1);
     }
 
     for (unsigned int i = 0; i < rawstor_opts_io_attempts(); ++i) {
@@ -549,6 +584,11 @@ TEST(OstIOTest, write_error) {
     {
         rawstor::tests::Session s(server);
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
+    }
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 1);
     }
 
     // ENOENT is a permanent backend rejection (see Connection::_with_retry()'s
@@ -583,6 +623,11 @@ TEST(OstIOTest, write_busy_retries_without_reconnect) {
     {
         rawstor::tests::Session s(server);
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
+    }
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 1);
     }
 
     // A single session handles SET_OBJECT, an EBUSY response to the first
@@ -636,6 +681,11 @@ TEST(OstIOTest, write_backend_error_retries_with_reconnect) {
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 1);
+    }
+
+    {
+        rawstor::tests::Session s(server);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
         s.cmd_write_request(4);
         s.cmd_write_response(RAWSTOR_MAGIC, 1, -ENOSPC);
@@ -681,6 +731,11 @@ TEST(OstIOTest, write_hash_mismatch_reconnects) {
 
     {
         rawstor::tests::Session s(server);
+        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 1);
+    }
+
+    {
+        rawstor::tests::Session s(server);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
         s.cmd_write_request(4);
         s.cmd_write_response(RAWSTOR_MAGIC, 1, -EBADMSG);
@@ -716,6 +771,11 @@ TEST(OstIOTest, write_disconnect) {
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 1);
+    }
+
     for (unsigned int i = 0; i < rawstor_opts_io_attempts(); ++i) {
         rawstor::tests::Session s(server);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
@@ -742,6 +802,11 @@ TEST(OstIOTest, write_disconnect_concurrent) {
     {
         rawstor::tests::Session s(server);
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
+    }
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 1);
     }
 
     // The object-open backend, and each of its retries below, disconnects
@@ -966,6 +1031,11 @@ TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 1);
+    }
+
     // Scripted with the raw Server API instead of Session: Session's
     // destructor unconditionally queues an actual close() of the
     // connection, which would send a FIN -- exactly what this test needs
@@ -1147,6 +1217,11 @@ TEST(OstIOTest, write_many_concurrent_wire_errors_with_backoff) {
     {
         rawstor::tests::Session s(server);
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
+    }
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 1);
     }
 
     // Raw Server API, same reasoning as write_orphaned_by_sibling_error_
