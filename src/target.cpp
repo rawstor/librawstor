@@ -572,19 +572,22 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
         connect_tasks.push_back(connect_one(queue, uri));
     }
 
-    // With a single configured URI any failure fails the open outright
-    // (unchanged behavior) -- uris.size() == 1 alone already decides
-    // this: there is only one connection attempt in flight either way,
-    // so its failure is the whole story, regardless of what mirrors
-    // (learned from spec() further down) turns out to be. With more than
-    // one URI, an individual member's failure is tolerated as long as a
-    // strict majority ends up reachable (docs/mirroring.md, case F4) --
-    // co_await isn't allowed inside a catch block, so each task's own
-    // failure is only recorded here; closing the ones that DID connect
-    // happens just below, outside the handler, same shape as create()'s
-    // own rollback above.
+    // A connect failure Connection::create() itself classifies as
+    // ordinary connectivity trouble (std::system_error, per its own
+    // contract) is tolerated: only recorded (the first one, in `eptr`)
+    // and logged, not raised immediately -- with more than one URI, an
+    // individual member's failure is fine as long as a strict majority
+    // ends up reachable (docs/mirroring.md, case F4), and with exactly
+    // one URI this still aborts below regardless, since that single
+    // failure alone already leaves `reachable == 0`. Anything else is
+    // unexpected (not a normal connectivity failure) and aborts
+    // outright, even if every other member succeeded -- `fatal` marks
+    // that. Either way, co_await isn't allowed inside a catch block, so
+    // a failure is only recorded here; closing the connections that DID
+    // succeed happens just below, outside the handler, same shape as
+    // create()'s own rollback above.
     std::exception_ptr eptr;
-    int first_error = 0;
+    bool fatal = false;
     std::vector<std::unique_ptr<Connection>> cns(uris.size());
     size_t reachable = 0;
     for (size_t i = 0; i < connect_tasks.size(); ++i) {
@@ -592,24 +595,24 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
             cns[i] = co_await connect_tasks[i];
             ++reachable;
         } catch (const std::system_error& e) {
-            if (uris.size() == 1) {
-                if (!eptr) {
-                    eptr = std::current_exception();
-                }
-            } else {
-                rawstd_warning("Mirror member unreachable: %s\n", e.what());
-                if (first_error == 0) {
-                    first_error = e.code().value();
-                }
+            rawstd_warning("Mirror member unreachable: %s\n", e.what());
+            if (!eptr) {
+                eptr = std::current_exception();
             }
         } catch (...) {
+            fatal = true;
             if (!eptr) {
                 eptr = std::current_exception();
             }
         }
     }
 
-    if (eptr) {
+    // Something to report: `fatal` always qualifies; a merely tolerated
+    // system_error only does once nothing at all ended up reachable
+    // (the single-URI case included, per the comment above) -- rethrown
+    // as-is, whichever of the two it was, rather than reconstructed from
+    // a bare errno.
+    if (fatal || reachable == 0) {
         for (auto& cn : cns) {
             if (!cn) {
                 continue;
@@ -621,10 +624,6 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
             }
         }
         std::rethrow_exception(eptr);
-    }
-
-    if (reachable == 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(first_error ? first_error : ENOTCONN);
     }
 
     // A real spec() answer, from whichever connected URI answers first --
