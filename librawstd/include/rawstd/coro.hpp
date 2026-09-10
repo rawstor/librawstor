@@ -5,6 +5,9 @@
 
 #include <coroutine>
 #include <exception>
+#include <memory>
+#include <optional>
+#include <stdexcept>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -246,6 +249,9 @@ public:
  * mirrored write) or reacts to the batch as a whole regardless of which
  * member failed (re-set_object()ing every session in the pool, logging
  * one line instead of one per session on teardown).
+ *
+ * See any() below (defined after DetachedTask, which it's built on) for
+ * the opposite policy: only one task needs to succeed.
  */
 template <typename T>
 Task<std::vector<T>> gather(std::vector<Task<T>> tasks) {
@@ -386,6 +392,203 @@ public:
         }
     }
 };
+
+namespace detail {
+
+// Shared race state for any<T>(): outlives any<T>() itself once a winner
+// is found -- see any_watch()'s doc comment for why. Every field is only
+// ever touched from this thread (the whole reactor is single-threaded/
+// pull-based), so plain fields are enough; no atomics.
+template <typename T>
+struct AnyState {
+    std::vector<Task<T>> tasks;
+    size_t pending = 0;
+    std::optional<T> result;
+    std::exception_ptr first_error;
+    std::coroutine_handle<> waiter;
+};
+
+// Drives tasks[i] to completion on any<T>()'s behalf, detached from it:
+// the first watcher to see its task succeed wins the race and (if
+// any<T>() is still suspended waiting for one) resumes it; a
+// losing/failing task is never abandoned mid-flight -- Task<T>'s own
+// precondition forbids destroying one still suspended on something that
+// will resume it later -- so every watcher keeps running, in the
+// background if need be, until its task reaches done(). Once every
+// watcher has finished, the last one's `state` copy drops the final
+// reference and `state->tasks` (by then all done()) is destroyed safely.
+//
+// A losing task's *result* (or exception) is simply discarded here: this
+// is best-effort cancellation only, in the sense of "any<T>() stops
+// waiting on it," not a request to unwind whatever the task is internally
+// doing. A task that wraps I/O and wants to actually stop early has to
+// arrange that itself (e.g. reacting to its own cancellation token, or
+// calling rawio::Queue::cancel() on its own in-flight operation) --
+// any<T>() has no visibility into what a Task<T> is suspended on.
+template <typename T>
+DetachedTask any_watch(std::shared_ptr<AnyState<T>> state, size_t i) {
+    bool ok = false;
+    std::optional<T> value;
+    std::exception_ptr error;
+    try {
+        value.emplace(co_await state->tasks[i]);
+        ok = true;
+    } catch (...) {
+        error = std::current_exception();
+    }
+
+    if (ok) {
+        if (!state->result) {
+            state->result.emplace(std::move(*value));
+        }
+    } else if (!state->first_error) {
+        state->first_error = error;
+    }
+
+    bool last = --state->pending == 0;
+    if (state->waiter && (ok || last)) {
+        std::exchange(state->waiter, {}).resume();
+    }
+}
+
+template <typename T>
+struct AnyAwaiter {
+    std::shared_ptr<AnyState<T>> state;
+
+    bool await_ready() const noexcept {
+        return state->result.has_value() || state->pending == 0;
+    }
+
+    void await_suspend(std::coroutine_handle<> h) noexcept {
+        state->waiter = h;
+    }
+
+    void await_resume() const noexcept {}
+};
+
+} // namespace detail
+
+/**
+ * Runs every Task<T> in `tasks` concurrently and returns the result of
+ * whichever one succeeds first; every other task is treated as cancelled,
+ * in the best-effort sense described on any_watch() above (this function
+ * stops waiting on it, but -- per Task<T>'s own precondition -- still
+ * drives it to completion in the background instead of destroying it
+ * mid-flight, and simply discards whatever it eventually resolves with).
+ * This is `gather()`'s opposite: `gather()` needs every task to succeed
+ * and reports one combined failure; `any()` needs only one to succeed and
+ * only fails if every task does -- the same relationship as JS's
+ * `Promise.any()` to `Promise.all()`.
+ *
+ * If every task fails, the exception belonging to whichever one finished
+ * failing *first* (in completion order -- this is a genuine race, unlike
+ * gather()'s strictly award-order iteration) is rethrown once the last
+ * task has finished.
+ *
+ * `tasks` must not be empty -- there is no "first successful" result to
+ * return otherwise -- and throws std::invalid_argument if it is.
+ */
+template <typename T>
+Task<T> any(std::vector<Task<T>> tasks) {
+    if (tasks.empty()) {
+        throw std::invalid_argument("any(): tasks must not be empty");
+    }
+
+    auto state = std::make_shared<detail::AnyState<T>>();
+    state->tasks = std::move(tasks);
+    state->pending = state->tasks.size();
+
+    for (size_t i = 0; i < state->tasks.size(); ++i) {
+        detail::any_watch<T>(state, i);
+    }
+    // Checked once, after every watcher above has been launched (rather
+    // than after each one individually, as DetachedTask's own discipline
+    // would otherwise call for): the loop must finish spawning a watcher
+    // for every task before this function is allowed to fail and unwind,
+    // or a not-yet-watched task would be left with nothing to ever drive
+    // it to done() -- see AnyState's own comment on why that matters.
+    DetachedTask::rethrow_if_pending();
+
+    co_await detail::AnyAwaiter<T>{state};
+
+    if (state->result.has_value()) {
+        co_return std::move(*state->result);
+    }
+    std::rethrow_exception(state->first_error);
+}
+
+namespace detail {
+
+// void can't live in std::optional<T>/be co_await-ed into a value the way
+// AnyState<T>::result holds one -- same split as Task<T>/Task<void> and
+// gather()'s own two overloads above.
+struct AnyStateVoid {
+    std::vector<Task<void>> tasks;
+    size_t pending = 0;
+    bool succeeded = false;
+    std::exception_ptr first_error;
+    std::coroutine_handle<> waiter;
+};
+
+inline DetachedTask
+any_watch_void(std::shared_ptr<AnyStateVoid> state, size_t i) {
+    bool ok = false;
+    std::exception_ptr error;
+    try {
+        co_await state->tasks[i];
+        ok = true;
+    } catch (...) {
+        error = std::current_exception();
+    }
+
+    if (ok) {
+        state->succeeded = true;
+    } else if (!state->first_error) {
+        state->first_error = error;
+    }
+
+    bool last = --state->pending == 0;
+    if (state->waiter && (ok || last)) {
+        std::exchange(state->waiter, {}).resume();
+    }
+}
+
+struct AnyAwaiterVoid {
+    std::shared_ptr<AnyStateVoid> state;
+
+    bool await_ready() const noexcept {
+        return state->succeeded || state->pending == 0;
+    }
+
+    void await_suspend(std::coroutine_handle<> h) noexcept {
+        state->waiter = h;
+    }
+
+    void await_resume() const noexcept {}
+};
+
+} // namespace detail
+
+inline Task<void> any(std::vector<Task<void>> tasks) {
+    if (tasks.empty()) {
+        throw std::invalid_argument("any(): tasks must not be empty");
+    }
+
+    auto state = std::make_shared<detail::AnyStateVoid>();
+    state->tasks = std::move(tasks);
+    state->pending = state->tasks.size();
+
+    for (size_t i = 0; i < state->tasks.size(); ++i) {
+        detail::any_watch_void(state, i);
+    }
+    DetachedTask::rethrow_if_pending();
+
+    co_await detail::AnyAwaiterVoid{state};
+
+    if (!state->succeeded) {
+        std::rethrow_exception(state->first_error);
+    }
+}
 
 /**
  * The opposite direction from DetachedTask's own C-callback adapter use
