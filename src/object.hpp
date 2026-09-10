@@ -165,11 +165,33 @@ private:
     // quorum rules).
     bool _below_write_quorum(size_t survivors) const noexcept;
 
+    // Everything Object's own constructor needs beyond `spec`/`members`
+    // themselves -- what a successful _open_analyze() derives from
+    // whichever members end up IN_SYNC (or, for the trivial mirrors == 1
+    // case, which skips it entirely -- see Target::open()'s own comment
+    // -- left zeroed, same as before this was split out).
+    struct Identity {
+        uint64_t epoch;
+        uint64_t size;
+        uint64_t sync_id;
+        uint64_t sync_id_history[RAWSTOR_OBJECT_SYNC_ID_HISTORY];
+    };
+
     // Metadata comparison at open (docs/mirroring.md, comparison rules):
     // excludes SYNCING/stale members, picks the newest sync_id, refuses a
-    // split brain. Called by Target::open() (a friend) once every
-    // reachable member's Member::meta has been filled in.
-    void _open_analyze();
+    // split brain -- demoting members of `members` in place as needed,
+    // and deriving the sync-set identity from whichever end up IN_SYNC.
+    // Static, and called by Target::open() (a friend) on its own local
+    // member list, once every reachable member's Member::meta has been
+    // filled in -- before any Object exists yet to construct: on failure
+    // (quorum lost, split brain, no trusted member left), the
+    // Connections still held in `members` need a graceful co_await
+    // close, which only Target::open()'s own coroutine can do (a
+    // constructor can't co_await, and ~Object()'s own synchronous
+    // close() pump can't safely run nested inside an outer run() --
+    // see the constructor's own doc comment).
+    static Identity
+    _open_analyze(const RawstorObjectSpec& spec, std::vector<Member>& members);
 
     // Suspends the caller while a metadata barrier (_run_dirty_barrier()/
     // _run_degrade_barrier()) is in flight; returns immediately otherwise.
@@ -292,7 +314,22 @@ private:
     friend class Target;
 
 public:
-    Object(Private, rawio::Queue& queue, const Target& target);
+    // Built only once Target::open() has already decided every member's
+    // final state and, for a real mirror, derived the sync-set identity
+    // (_open_analyze(), or the mirrors == 1 shortcut -- see its own
+    // comment) -- `spec`/`members`/`identity` are taken already-resolved,
+    // so this constructor itself never fails and needs no rollback of
+    // its own. Starts the object's own background maintenance (the
+    // reconnect probe, an online resync if one is already due) itself,
+    // once everything else is in place -- Target::open()'s only
+    // remaining friend access to Object beyond this one call is
+    // _open_analyze() above, not a stream of direct edits to an
+    // already-constructed Object's own internals.
+    Object(
+        Private, rawio::Queue& queue, const Target& target,
+        RawstorObjectSpec spec, std::vector<Member> members,
+        const Identity& identity
+    );
     Object(const Object&) = delete;
     Object(Object&&) = delete;
     ~Object();

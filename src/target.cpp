@@ -545,27 +545,29 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
     // *this may be a temporary the caller only kept alive up to the point
     // it launched us (e.g. rawstor_target_open()'s own local Target) --
     // touching _uris (or any other member) through `this` past the first
-    // suspension point would be a use-after-free.
+    // suspension point would be a use-after-free. `target`/`id`, built
+    // from this copy rather than through `this`, are what eventually get
+    // handed to Object's own constructor at the very end, once
+    // everything below has decided this open() actually succeeds --
+    // Object's constructor is Private-gated (Target is a friend, see
+    // object.hpp's own doc comment on why), but unlike before, that
+    // constructor call is Target's only remaining direct hand-off to
+    // Object below (plus one call to Object::_open_analyze(), a static
+    // helper): the heavy async work (standing up a Connection per URI,
+    // comparing their metadata) still lives here, same as ever, feeding
+    // plain local variables instead of an already-constructed Object's
+    // own internals.
     std::vector<rawstd::URI> uris = _uris;
-
-    // Object's constructor is Private-gated -- Target is a friend (see
-    // object.hpp's own doc comment on why), so this is the one place
-    // that actually builds one, by analogy with Connection::create():
-    // the heavy async work (standing up a Connection per URI, comparing
-    // their metadata) lives here, not in the constructor itself. Built
-    // here, before this coroutine's own first suspension below, since its
-    // constructor copies *this into _target -- same reasoning as the
-    // `uris` copy above.
-    std::unique_ptr<Object> obj =
-        std::make_unique<Object>(Object::Private(), queue, *this);
+    Target target(uris);
+    RawstdUUID id = uuid_from_target(uris.front());
 
     // Every URI's Connection goes out concurrently instead of one at a
     // time -- just Connection::create(), kept in a plain local vector
-    // (parallel to `uris`, not obj->_members yet: that's assembled only
-    // once spec()/open() below have actually run -- see their own
-    // comments on why member count/identity isn't simply uris.size()).
-    // connect_one()'s own comment on why SET_OBJECT is a separate, later
-    // step.
+    // (parallel to `uris`, not the eventual member list yet: that's
+    // assembled only once spec()/open() below have actually run -- see
+    // their own comments on why member count/identity isn't simply
+    // uris.size()). connect_one()'s own comment on why SET_OBJECT is a
+    // separate, later step.
     std::vector<rawstd::Task<std::unique_ptr<Connection>>> connect_tasks;
     connect_tasks.reserve(uris.size());
     for (const auto& uri : uris) {
@@ -637,14 +639,14 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
     // list (a future mds:// scheme would change what Target::spec()
     // itself does here, and this would follow it automatically once it
     // does, rather than a second, independent copy of that logic).
-    RawstdUUID id = obj->_target.id();
+    RawstorObjectSpec spec{};
     bool got_spec = false;
     for (auto& cn : cns) {
         if (!cn) {
             continue;
         }
         try {
-            obj->_spec = co_await cn->spec(id);
+            spec = co_await cn->spec(id);
             got_spec = true;
             break;
         } catch (const std::system_error& e) {
@@ -667,7 +669,7 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
     }
 
-    obj->_spec.mirrors = static_cast<unsigned int>(uris.size());
+    spec.mirrors = static_cast<unsigned int>(uris.size());
     size_t mirrors = uris.size();
 
     // The combined open (SET_OBJECT + this copy's own meta, see
@@ -722,10 +724,14 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
     // Members are assembled only now, with connect/spec/open all already
     // settled -- one slot per URI (the only member identity this
     // codebase knows today; see the spec() comment above on why that
-    // isn't necessarily the whole story forever). Slot indices must stay
-    // stable from here on (the reconnect probe addresses members by
-    // index): no reallocation after this.
-    obj->_members.reserve(uris.size());
+    // isn't necessarily the whole story forever). A local vector, not
+    // Object's own _members: no Object exists yet to hold it -- see the
+    // constructor's own doc comment on why that's now deferred to the
+    // very end. Slot indices must stay stable from here on (the
+    // reconnect probe addresses members by index): no reallocation after
+    // handing it to Object below.
+    std::vector<Object::Member> members;
+    members.reserve(uris.size());
     reachable = 0;
     for (size_t i = 0; i < uris.size(); ++i) {
         // _open_analyze() below only ever downgrades a member (e.g. an
@@ -734,7 +740,7 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
         // marked IN_SYNC up front.
         Object::MemberState state = opened[i] ? Object::MemberState::IN_SYNC
                                               : Object::MemberState::STALE;
-        obj->_members.push_back(
+        members.push_back(
             Object::Member{
                 std::move(cns[i]), uris[i], state, metas[i], opened[i]
             }
@@ -753,7 +759,7 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
             "Mirror quorum not met: %zu of %zu members reachable\n", reachable,
             mirrors
         );
-        for (auto& mirror : obj->_members) {
+        for (auto& mirror : members) {
             if (!mirror.cn) {
                 continue;
             }
@@ -766,29 +772,32 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
     }
 
+    // Every member's final state (and, for a real mirror, the sync-set
+    // identity Object's own constructor needs) is decided here, before
+    // any Object exists to construct yet: _open_analyze() refusing the
+    // open (split brain, no trusted member) leaves `members` populated
+    // with real, open Connections that still need a graceful co_await
+    // close -- something neither a constructor (can't co_await) nor
+    // ~Object()'s own synchronous run()-pumped close() (this coroutine
+    // can itself be driven by an outer synchronous run(), e.g.
+    // tests/test_blk_backend.cpp's own direct run()-pumped call into us;
+    // reentering that same dispatch loop via a *nested* run() is
+    // undefined behavior, same hazard the eptr branch above avoids)
+    // could ever safely do. Doing this before Object exists, rather than
+    // after, sidesteps that hazard entirely instead of working around it.
+    Object::Identity identity{};
     if (mirrors == 1) {
-        obj->_members.front().state = Object::MemberState::IN_SYNC;
+        members.front().state = Object::MemberState::IN_SYNC;
     } else {
-        // _open_analyze() refusing the open (split brain, no trusted
-        // member) leaves obj->_members populated with real, open
-        // Connections -- NOT left to ~Object()'s own RAII cleanup: that
-        // runs its close()es through a synchronous run() pump, and this
-        // coroutine can itself be driven by an outer synchronous run()
-        // (e.g. tests/test_blk_backend.cpp's own direct run()-pumped call
-        // into us); ~Object() reentering that same dispatch loop via a
-        // *nested* run() is undefined behavior (same hazard the eptr
-        // branch above avoids). Close every member gracefully via
-        // co_await here instead, then clear _members so ~Object() has
-        // nothing left to do.
         std::exception_ptr analyze_eptr;
         try {
-            obj->_open_analyze();
+            identity = Object::_open_analyze(spec, members);
         } catch (...) {
             analyze_eptr = std::current_exception();
         }
 
         if (analyze_eptr) {
-            for (auto& mirror : obj->_members) {
+            for (auto& mirror : members) {
                 if (!mirror.cn) {
                     continue;
                 }
@@ -798,19 +807,18 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
                     rawstd_warning("Target::open(): %s\n", e.what());
                 }
             }
-            obj->_members.clear();
             std::rethrow_exception(analyze_eptr);
         }
     }
 
-    // Both are no-ops for a single-target object; a mirrored one starts
-    // probing its unreachable members (docs/mirroring.md,
-    // mirror_probe_interval) and, if one is already reachable but STALE, starts
-    // resyncing it -- detached, driven by their own continuations from here on.
-    obj->_probe_setup();
-    obj->_resync_maybe_start();
-
-    co_return obj;
+    // Everything Object needs to exist is decided -- constructing it
+    // (which starts its own background maintenance, see its own
+    // constructor's doc comment) is the only remaining hand-off, same
+    // shape as Connection::create()'s own analogous return.
+    co_return std::make_unique<Object>(
+        Object::Private(), queue, target, std::move(spec), std::move(members),
+        identity
+    );
 }
 
 } // namespace rawstor
