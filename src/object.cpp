@@ -245,30 +245,30 @@ T run(rawio::Queue& q, rawstd::Task<T> t) {
 namespace rawstor {
 
 // The heavy async work -- standing up a Connection per URI, fetching
-// spec()/meta() from each, deciding member state via _open_analyze() --
-// still lives in Target::open(), the one place that actually constructs
-// an Object (by analogy with Connection(Private, queue)): a constructor
-// can't co_await, so none of that can live here. What CAN safely live
-// here, now that `spec`/`members`/`identity` already reflect a decided,
-// successful open, is taking ownership of them and starting the
-// object's own background maintenance -- no different in kind from
-// Connection::create()'s own backend pool being ready to use by the
-// time it returns.
+// spec()/meta() from each -- still lives in Target::open(), the one
+// place that actually constructs an Object (by analogy with
+// Connection(Private, queue)): a constructor can't co_await, so none of
+// that can live here. Deciding whether the result is trustworthy enough
+// to open from (_reconcile_sync_set(), or the mirrors == 1 shortcut)
+// CAN safely live here instead, now that `spec`/`members` already
+// reflect a completed connect+spec+open round -- same as
+// _reconcile_sync_set()'s own doc comment on why a refusal here is
+// safe to let unwind through a throwing constructor.
 Object::Object(
     Private, rawio::Queue& queue, const Target& target, RawstorObjectSpec spec,
-    std::vector<Member> members, const Identity& identity
+    std::vector<Member> members
 ) :
     _queue(queue),
     _target(target),
     _spec(spec),
     _members(std::move(members)),
-    _size(identity.size),
+    _size(0),
     _dirty(false),
     _writes_frozen(false),
     _meta_op_running(false),
     _unrecorded_stale(0),
-    _epoch(identity.epoch),
-    _sync_id(identity.sync_id),
+    _epoch(0),
+    _sync_id(0),
     _sync_id_history{},
     _alive(std::make_shared<char>()),
     _writes_in_flight(0),
@@ -277,9 +277,11 @@ Object::Object(
     _writes_issued(0),
     _writes_completed(0),
     _unflushed(false) {
-    memcpy(
-        _sync_id_history, identity.sync_id_history, sizeof(_sync_id_history)
-    );
+    if (_spec.mirrors == 1) {
+        _members.front().state = MemberState::IN_SYNC;
+    } else {
+        _reconcile_sync_set();
+    }
 
     // Both are no-ops for a single-target object; a mirrored one starts
     // probing its unreachable members (docs/mirroring.md,
@@ -344,26 +346,24 @@ bool Object::_below_write_quorum(size_t survivors) const noexcept {
  *   diverge only in unacknowledged regions; the front-most in-sync member
  *   wins because reads are served from it.
  */
-Object::Identity Object::_open_analyze(
-    const RawstorObjectSpec& spec, std::vector<Member>& members
-) {
+void Object::_reconcile_sync_set() {
     size_t reachable = 0;
-    for (const Member& m : members) {
+    for (const Member& m : _members) {
         if (m.reachable) {
             ++reachable;
         }
     }
 
-    if (reachable * 2 <= spec.mirrors) {
+    if (reachable * 2 <= _spec.mirrors) {
         rawstd_error(
             "Mirror quorum not met: %zu of %zu members reachable\n", reachable,
-            (size_t)spec.mirrors
+            (size_t)_spec.mirrors
         );
         RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
     }
 
     const Member* ref = nullptr;
-    for (const Member& m : members) {
+    for (const Member& m : _members) {
         if (!m.reachable) {
             continue;
         }
@@ -378,7 +378,7 @@ Object::Identity Object::_open_analyze(
         }
     }
 
-    for (Member& m : members) {
+    for (Member& m : _members) {
         if (m.reachable &&
             m.meta.sync_state.state == RAWSTOR_OBJECT_SYNC_STATE_SYNCING) {
             rawstd_warning("Mirror member with interrupted resync is stale\n");
@@ -387,7 +387,7 @@ Object::Identity Object::_open_analyze(
     }
 
     std::vector<uint64_t> ids;
-    for (const Member& m : members) {
+    for (const Member& m : _members) {
         if (m.state != MemberState::IN_SYNC || m.meta.sync_state.sync_id == 0) {
             continue;
         }
@@ -408,7 +408,7 @@ Object::Identity Object::_open_analyze(
                     continue;
                 }
                 bool found = false;
-                for (const Member& m : members) {
+                for (const Member& m : _members) {
                     if (m.meta.sync_state.sync_id == x &&
                         in_history(m.meta.sync_state, y)) {
                         found = true;
@@ -434,7 +434,7 @@ Object::Identity Object::_open_analyze(
             RAWSTD_THROW_SYSTEM_ERROR(ENOTRECOVERABLE);
         }
 
-        for (Member& m : members) {
+        for (Member& m : _members) {
             if (m.state == MemberState::IN_SYNC &&
                 m.meta.sync_state.sync_id != newest) {
                 rawstd_warning("Stale mirror member excluded from the set\n");
@@ -443,28 +443,27 @@ Object::Identity Object::_open_analyze(
         }
     }
 
-    Identity identity{};
     size_t in_sync = 0;
-    for (const Member& m : members) {
+    for (const Member& m : _members) {
         if (m.state != MemberState::IN_SYNC) {
             continue;
         }
         ++in_sync;
-        if (m.meta.sync_state.epoch > identity.epoch) {
-            identity.epoch = m.meta.sync_state.epoch;
+        if (m.meta.sync_state.epoch > _epoch) {
+            _epoch = m.meta.sync_state.epoch;
         }
         /*
          * The minimum across the set is the logical size: block-device
          * members round the physical size up to their extent size.
          */
-        if (identity.size == 0 || m.meta.spec.size < identity.size) {
-            identity.size = m.meta.spec.size;
+        if (_size == 0 || m.meta.spec.size < _size) {
+            _size = m.meta.spec.size;
         }
-        if (identity.sync_id == 0) {
-            identity.sync_id = m.meta.sync_state.sync_id;
+        if (_sync_id == 0) {
+            _sync_id = m.meta.sync_state.sync_id;
             memcpy(
-                identity.sync_id_history, m.meta.sync_state.sync_id_history,
-                sizeof(identity.sync_id_history)
+                _sync_id_history, m.meta.sync_state.sync_id_history,
+                sizeof(_sync_id_history)
             );
         }
     }
@@ -473,8 +472,6 @@ Object::Identity Object::_open_analyze(
         rawstd_error("No trusted mirror member to serve from\n");
         RAWSTD_THROW_SYSTEM_ERROR(ENOTRECOVERABLE);
     }
-
-    return identity;
 }
 
 rawstd::Task<void> Object::_settle_meta() {

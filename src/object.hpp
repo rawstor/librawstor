@@ -165,33 +165,22 @@ private:
     // quorum rules).
     bool _below_write_quorum(size_t survivors) const noexcept;
 
-    // Everything Object's own constructor needs beyond `spec`/`members`
-    // themselves -- what a successful _open_analyze() derives from
-    // whichever members end up IN_SYNC (or, for the trivial mirrors == 1
-    // case, which skips it entirely -- see Target::open()'s own comment
-    // -- left zeroed, same as before this was split out).
-    struct Identity {
-        uint64_t epoch;
-        uint64_t size;
-        uint64_t sync_id;
-        uint64_t sync_id_history[RAWSTOR_OBJECT_SYNC_ID_HISTORY];
-    };
-
-    // Metadata comparison at open (docs/mirroring.md, comparison rules):
-    // excludes SYNCING/stale members, picks the newest sync_id, refuses a
-    // split brain -- demoting members of `members` in place as needed,
-    // and deriving the sync-set identity from whichever end up IN_SYNC.
-    // Static, and called by Target::open() (a friend) on its own local
-    // member list, once every reachable member's Member::meta has been
-    // filled in -- before any Object exists yet to construct: on failure
-    // (quorum lost, split brain, no trusted member left), the
-    // Connections still held in `members` need a graceful co_await
-    // close, which only Target::open()'s own coroutine can do (a
-    // constructor can't co_await, and ~Object()'s own synchronous
-    // close() pump can't safely run nested inside an outer run() --
-    // see the constructor's own doc comment).
-    static Identity
-    _open_analyze(const RawstorObjectSpec& spec, std::vector<Member>& members);
+    // Metadata comparison at open (docs/mirroring.md, "Comparison rules"):
+    // excludes SYNCING/stale members from _members, picks the newest
+    // sync_id, refuses a split brain -- demoting members as needed, and
+    // deriving this object's own sync-set identity (_epoch/_size/
+    // _sync_id/_sync_id_history) from whichever end up IN_SYNC. Called
+    // by the constructor below, for every mirrors >= 2 open (mirrors ==
+    // 1 skips it -- see the constructor's own comment) -- a throw here
+    // (quorum lost, split brain, no trusted member left) aborts
+    // construction, same as Connection::create()'s own all-or-nothing
+    // gather() over Backend::create(): whichever Connections _members
+    // already holds by then are simply dropped, not gracefully
+    // co_await-closed (a constructor can't co_await) -- each one's own
+    // destructor still tears down its sockets/registrations safely on
+    // its own, the same safety net Backend's own destructor already is
+    // for a Connection torn down this way instead of via close().
+    void _reconcile_sync_set();
 
     // Suspends the caller while a metadata barrier (_run_dirty_barrier()/
     // _run_degrade_barrier()) is in flight; returns immediately otherwise.
@@ -314,21 +303,22 @@ private:
     friend class Target;
 
 public:
-    // Built only once Target::open() has already decided every member's
-    // final state and, for a real mirror, derived the sync-set identity
-    // (_open_analyze(), or the mirrors == 1 shortcut -- see its own
-    // comment) -- `spec`/`members`/`identity` are taken already-resolved,
-    // so this constructor itself never fails and needs no rollback of
-    // its own. Starts the object's own background maintenance (the
-    // reconnect probe, an online resync if one is already due) itself,
-    // once everything else is in place -- Target::open()'s only
-    // remaining friend access to Object beyond this one call is
-    // _open_analyze() above, not a stream of direct edits to an
-    // already-constructed Object's own internals.
+    // Built once Target::open() has connected every reachable URI,
+    // fetched a real spec(), and SET_OBJECT+meta()-ed every connected
+    // member (`spec`/`members`, taken already at that point -- see
+    // Target::open()'s own comment) -- deciding whether the result is
+    // actually trustworthy enough to serve from is this constructor's
+    // own job from here: mirrors == 1 trusts its one member outright;
+    // mirrors >= 2 runs _reconcile_sync_set() (which may refuse the
+    // open -- see its own comment on why that's safe to let unwind
+    // through here). Only once that succeeds does it start the object's
+    // own background maintenance (the reconnect probe, an online resync
+    // if one is already due) -- Target::open()'s only remaining friend
+    // access to Object is this one constructor call, not a stream of
+    // direct edits to an already-constructed Object's own internals.
     Object(
         Private, rawio::Queue& queue, const Target& target,
-        RawstorObjectSpec spec, std::vector<Member> members,
-        const Identity& identity
+        RawstorObjectSpec spec, std::vector<Member> members
     );
     Object(const Object&) = delete;
     Object(Object&&) = delete;

@@ -547,16 +547,16 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
     // touching _uris (or any other member) through `this` past the first
     // suspension point would be a use-after-free. `target`/`id`, built
     // from this copy rather than through `this`, are what eventually get
-    // handed to Object's own constructor at the very end, once
-    // everything below has decided this open() actually succeeds --
-    // Object's constructor is Private-gated (Target is a friend, see
-    // object.hpp's own doc comment on why), but unlike before, that
-    // constructor call is Target's only remaining direct hand-off to
-    // Object below (plus one call to Object::_open_analyze(), a static
-    // helper): the heavy async work (standing up a Connection per URI,
-    // comparing their metadata) still lives here, same as ever, feeding
-    // plain local variables instead of an already-constructed Object's
-    // own internals.
+    // handed to Object's own constructor at the very end, once every
+    // reachable URI has been connected, spec()-ed and SET_OBJECT+meta()-
+    // ed -- that constructor call (Private-gated, Target is a friend,
+    // see object.hpp's own doc comment on why) is Target's only
+    // remaining direct hand-off to Object below: the heavy async work
+    // (standing up a Connection per URI, comparing their metadata) still
+    // lives here, same as ever, feeding plain local variables instead of
+    // an already-constructed Object's own internals -- deciding whether
+    // the result is trustworthy enough to actually open from is the
+    // constructor's own job now (see its own comment).
     std::vector<rawstd::URI> uris = _uris;
     Target target(uris);
     RawstdUUID id = uuid_from_target(uris.front());
@@ -734,10 +734,11 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
     members.reserve(uris.size());
     reachable = 0;
     for (size_t i = 0; i < uris.size(); ++i) {
-        // _open_analyze() below only ever downgrades a member (e.g. an
-        // interrupted resync makes it STALE) -- it never upgrades one
-        // from the STALE default, so a successfully opened member is
-        // marked IN_SYNC up front.
+        // Object's own constructor (_reconcile_sync_set(), for mirrors
+        // >= 2) only ever downgrades a member (e.g. an interrupted
+        // resync makes it STALE) -- it never upgrades one from the
+        // STALE default, so a successfully opened member is marked
+        // IN_SYNC up front.
         Object::MemberState state = opened[i] ? Object::MemberState::IN_SYNC
                                               : Object::MemberState::STALE;
         members.push_back(
@@ -772,52 +773,16 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
     }
 
-    // Every member's final state (and, for a real mirror, the sync-set
-    // identity Object's own constructor needs) is decided here, before
-    // any Object exists to construct yet: _open_analyze() refusing the
-    // open (split brain, no trusted member) leaves `members` populated
-    // with real, open Connections that still need a graceful co_await
-    // close -- something neither a constructor (can't co_await) nor
-    // ~Object()'s own synchronous run()-pumped close() (this coroutine
-    // can itself be driven by an outer synchronous run(), e.g.
-    // tests/test_blk_backend.cpp's own direct run()-pumped call into us;
-    // reentering that same dispatch loop via a *nested* run() is
-    // undefined behavior, same hazard the eptr branch above avoids)
-    // could ever safely do. Doing this before Object exists, rather than
-    // after, sidesteps that hazard entirely instead of working around it.
-    Object::Identity identity{};
-    if (mirrors == 1) {
-        members.front().state = Object::MemberState::IN_SYNC;
-    } else {
-        std::exception_ptr analyze_eptr;
-        try {
-            identity = Object::_open_analyze(spec, members);
-        } catch (...) {
-            analyze_eptr = std::current_exception();
-        }
-
-        if (analyze_eptr) {
-            for (auto& mirror : members) {
-                if (!mirror.cn) {
-                    continue;
-                }
-                try {
-                    co_await mirror.cn->close();
-                } catch (const std::exception& e) {
-                    rawstd_warning("Target::open(): %s\n", e.what());
-                }
-            }
-            std::rethrow_exception(analyze_eptr);
-        }
-    }
-
-    // Everything Object needs to exist is decided -- constructing it
-    // (which starts its own background maintenance, see its own
-    // constructor's doc comment) is the only remaining hand-off, same
-    // shape as Connection::create()'s own analogous return.
+    // Everything Object needs to exist is gathered -- deciding whether
+    // it's actually trustworthy enough to open from (the mirrors == 1
+    // shortcut, or _reconcile_sync_set()'s own split-brain/no-trusted-
+    // member analysis) is the constructor's own job from here (see its
+    // own comment on why a refusal there is safe to let unwind through
+    // it) -- Target::open()'s only remaining friend access to Object is
+    // this one constructor call, not a stream of direct edits to an
+    // already-constructed Object's own internals.
     co_return std::make_unique<Object>(
-        Object::Private(), queue, target, std::move(spec), std::move(members),
-        identity
+        Object::Private(), queue, target, std::move(spec), std::move(members)
     );
 }
 
