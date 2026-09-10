@@ -641,30 +641,35 @@ TEST(MirrorOstTest, read_failover_and_repair) {
      * on two reopened ones before the read fails over to the second member.
      * The repair then lands on the last reopened session.
      */
-    // Target::open() fetches spec() from the first reachable member's own
-    // connection (server1, tried first in target order) right after
-    // SET_OBJECT succeeds there -- before the meta() read loop below,
-    // which reads every reachable member's meta in turn (server1 first).
-    // server2 never sees a SPEC request: the loop stops at the first
-    // member that answers it.
+    // Target::open() no longer fetches a separate spec(): every reachable
+    // member's connection (server1 and server2 alike) goes straight
+    // through Connection::open()'s own combined SET_OBJECT+META step (see
+    // its own comment), concurrently -- so both members see SET_OBJECT
+    // (cid 0) then META (cid 1), never a SPEC. mirrors is derived locally
+    // from the number of URIs, not from any member's own answer. Every
+    // later low-level reconnect (invalidate_backend()) also goes through
+    // Backend::set_object(), which always folds its own META fetch in on
+    // success -- so each reopened session below gets its own SET_OBJECT+
+    // META pair too, not just the very first one.
     {
         rawstor::tests::Session s(server1);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
-        s.cmd_spec(RAWSTOR_MAGIC, 1, 0, 1ull << 20, 2);
-        s.cmd_meta(RAWSTOR_MAGIC, 2, 0, legacy);
-        s.cmd_read_error(RAWSTOR_MAGIC, 3, -EIO);
+        s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
+        s.cmd_read_error(RAWSTOR_MAGIC, 2, -EIO);
     }
     {
         rawstor::tests::Session s(server1);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
-        s.cmd_read_error(RAWSTOR_MAGIC, 1, -EIO);
+        s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
+        s.cmd_read_error(RAWSTOR_MAGIC, 2, -EIO);
     }
     {
         rawstor::tests::Session s(server1);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
-        s.cmd_read_error(RAWSTOR_MAGIC, 1, -EIO);
-        s.cmd_set_state(RAWSTOR_MAGIC, 2, 0);
-        s.cmd_write(RAWSTOR_MAGIC, 3, 4);
+        s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
+        s.cmd_read_error(RAWSTOR_MAGIC, 2, -EIO);
+        s.cmd_set_state(RAWSTOR_MAGIC, 3, 0);
+        s.cmd_write(RAWSTOR_MAGIC, 4, 4);
     }
 
     {
@@ -711,17 +716,19 @@ TEST(MirrorOstTest, degrade_and_continue) {
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
     };
 
-    // Target::open() fetches spec() from server1 (first reachable member)
-    // right after SET_OBJECT succeeds there; server2 never sees a SPEC
-    // request (see read_failover_and_repair's own comment above).
+    // Target::open() no longer fetches a separate spec(): every reachable
+    // member's connection (server1 and server2 alike) goes straight
+    // through Connection::open()'s own combined SET_OBJECT+META step (see
+    // its own comment), concurrently -- so both members see SET_OBJECT
+    // (cid 0) then META (cid 1), never a SPEC. mirrors is derived locally
+    // from the number of URIs, not from any member's own answer.
     {
         rawstor::tests::Session s(server1);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
-        s.cmd_spec(RAWSTOR_MAGIC, 1, 0, 1ull << 20, 2);
-        s.cmd_meta(RAWSTOR_MAGIC, 2, 0, legacy);
-        s.cmd_set_state(RAWSTOR_MAGIC, 3, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
+        s.cmd_set_state(RAWSTOR_MAGIC, 2, 0);
         s.cmd_write_request(4);
-        s.cmd_write_response(RAWSTOR_MAGIC, 4, -EIO);
+        s.cmd_write_response(RAWSTOR_MAGIC, 3, -EIO);
     }
 
     {

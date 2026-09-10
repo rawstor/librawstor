@@ -1302,8 +1302,10 @@ rawstd::Task<RawstorObjectSpec> Backend::spec(const RawstdUUID& id) {
         // Same as every other backend's own spec() (blk::Backend::spec(),
         // file::Backend::spec()): this one connection is one copy, always
         // -- mirrors is a Target-level count of URIs, not a per-backend
-        // property, and whatever the remote server's own payload.mirrors
-        // says is its own target's URI count, not this connection's.
+        // property. Target::spec() overwrites this with the real
+        // target-wide count regardless (its own only caller), so
+        // whatever the remote server's own payload.mirrors says here
+        // never actually reaches anyone.
         ret.mirrors = 1;
     } catch (const std::system_error&) {
         throw;
@@ -1400,15 +1402,15 @@ rawstd::Task<RawstorLocationInfo> Backend::info() {
     co_return ret;
 }
 
-rawstd::Task<void> Backend::set_object(Object* object) {
+rawstd::Task<RawstorObjectMeta> Backend::set_object(Object* object) {
     // The demultiplex pump is already running by now -- _connect() starts it
     // before this is ever reachable -- so this is just another
     // cid-dispatched request like list()/create()/....
     assert(_read_event != nullptr);
 
-    co_await _basic_request(
-        RAWSTOR_CMD_SET_OBJECT, "set_object", object->target().id(), 0
-    );
+    RawstdUUID id = object->target().id();
+    co_await _basic_request(RAWSTOR_CMD_SET_OBJECT, "set_object", id, 0);
+    co_return co_await meta(id);
 }
 
 // See ost_backend.hpp's doc comment on why `weak`, not a strong

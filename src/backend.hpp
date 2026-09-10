@@ -102,7 +102,19 @@ public:
 
     virtual rawstd::Task<RawstorLocationInfo> info() = 0;
 
-    virtual rawstd::Task<void> set_object(Object* object) = 0;
+    // Binds this Backend to `object` (data-path methods below need this
+    // done first) and, since establishing that binding is the one
+    // operation that actually touches the real store for every backend
+    // kind (a blk-backed one's own _open(const RawstdUUID&) is lazy --
+    // see blk::Backend's own doc comment -- so nothing before this call
+    // genuinely proves the object exists; an ost:// one's is a real wire
+    // round trip either way), returns this copy's own meta() read
+    // alongside it, letting a caller learn both in the one call that's
+    // guaranteed to happen anyway instead of a separate meta() of its
+    // own. spec.mirrors on the result is this copy's own local share
+    // (always 1 -- see blk::Backend::spec()/ost::Backend::spec()'s own
+    // doc comments), never the target-wide count: only Target knows that.
+    virtual rawstd::Task<RawstorObjectMeta> set_object(Object* object) = 0;
 
     virtual rawstd::Task<size_t>
     pread(void* buf, size_t size, off_t offset) = 0;

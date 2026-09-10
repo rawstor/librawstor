@@ -97,7 +97,7 @@ public:
 
     rawstd::Task<RawstorLocationInfo> info() override;
 
-    rawstd::Task<void> set_object(Object* object) override;
+    rawstd::Task<RawstorObjectMeta> set_object(Object* object) override;
 
     rawstd::Task<size_t> pread(void* buf, size_t size, off_t offset) override;
 
