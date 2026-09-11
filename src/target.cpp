@@ -647,9 +647,17 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
     bool got_spec = false;
     for (auto& t : spec_tasks) {
         try {
-            RawstorObjectSpec sp = co_await t;
-            if (!got_spec) {
-                spec = sp;
+            // A compiler ICE ("no suspend point info", see
+            // launch_open_op_coro()'s own comment for the same class of
+            // issue) hits when a fresh named local is direct-initialized
+            // from co_await inside a try block -- assigning into the
+            // already-declared `spec` (or, once it's already set,
+            // discarding the co_await'd temporary outright) sidesteps
+            // it.
+            if (got_spec) {
+                co_await t;
+            } else {
+                spec = co_await t;
                 got_spec = true;
             }
         } catch (const std::system_error& e) {

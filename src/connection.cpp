@@ -212,7 +212,17 @@ rawstd::Task<T> Connection::_with_retry(
 
         try {
             if constexpr (std::is_void_v<T>) {
-                co_await (be.get()->*method)(args...);
+                // GCC 15 (at least 15.2.0) hits an internal compiler
+                // error ("in gimple_add_tmp_var, at gimplify.cc:834")
+                // gimplifying a bare `co_await (obj->*method)(args...);`
+                // statement-expression for the T = void instantiation of
+                // this template -- naming the Task<T> first, then
+                // co_await-ing that named local as its own statement,
+                // sidesteps it (same idea as launch_open_op_coro()'s own
+                // workaround for a different GCC/coroutine ICE, just a
+                // different shape of the fix).
+                rawstd::Task<T> t = (be.get()->*method)(args...);
+                co_await t;
                 RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "error = 0");
 
                 if (attempt > 0) {
@@ -223,7 +233,8 @@ rawstd::Task<T> Connection::_with_retry(
                 }
                 co_return;
             } else {
-                T result = co_await (be.get()->*method)(args...);
+                rawstd::Task<T> t = (be.get()->*method)(args...);
+                T result = co_await t;
                 RAWSTD_TRACE_EVENT_MESSAGE(
                     trace_event, "result = %zu, error = 0\n", result
                 );
@@ -419,6 +430,13 @@ Connection::invalidate_backend(const std::shared_ptr<Backend>& be) {
                     std::exception_ptr eptr;
                     try {
                         co_await backend->set_object(*_id);
+                        // The result is unused -- nothing here needs it
+                        // -- this is purely to keep the same SET_OBJECT+
+                        // META wire round trip every set_object() caller
+                        // gets (see Backend::set_object()'s own doc
+                        // comment on why that's two separate calls now,
+                        // not one that folds meta() in on its own).
+                        co_await backend->meta(*_id);
                     } catch (...) {
                         eptr = std::current_exception();
                     }
