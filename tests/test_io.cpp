@@ -22,6 +22,21 @@
 
 namespace {
 
+// A freshly-created, clean object's META answer -- used by every
+// OstIOTest that opens an object via the local Object class below:
+// Target::open() fetches this from Connection::open()'s own combined
+// SET_OBJECT+META step (see its own comment), for every reachable
+// member. It also fetches a real spec() first, from whichever connected
+// URI answers first (just the one here, since these tests all use a
+// single-URI target) -- see Target::open()'s own comment.
+const RawstorOSTFrameMetaPayload clean_meta_1mb = {
+    .size = 1ull << 20,
+    .epoch = 0,
+    .sync_id = 0,
+    .sync_id_history = {0, 0, 0, 0},
+    .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
+};
+
 int callback(size_t result, int error, void* data) {
     std::unique_ptr<std::function<void(size_t, int)>> cb(
         static_cast<std::function<void(size_t, int)>*>(data)
@@ -116,7 +131,7 @@ public:
         _queue(queue),
         _target(target),
         _object(nullptr) {
-        RawstorObjectSpec spec{.size = size};
+        RawstorObjectSpec spec{.size = size, .mirrors = 1};
         ssize_t res =
             rawstor::tests::sync_run(_queue, [&](auto cb, void* data) {
                 return rawstor_target_create(
@@ -314,6 +329,8 @@ TEST(FileIOTest, basics) {
     std::string write_data = "ping";
     EXPECT_NO_THROW(object.write(write_data.data(), write_data.length()));
 
+    EXPECT_NO_THROW(object.flush());
+
     std::string read_data(4, '\0');
     EXPECT_NO_THROW(object.read(read_data.data(), read_data.length()));
 
@@ -350,13 +367,18 @@ TEST(OstIOTest, basics) {
 
     {
         rawstor::tests::Session s(server);
-        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
-        s.cmd_write(RAWSTOR_MAGIC, 1, 4);
-        s.cmd_read(RAWSTOR_MAGIC, 2, "pong", 4);
-        // Object's destructor closes -- close() now flushes first (see
-        // Object::close()'s own doc comment) since the write above left it
-        // dirty.
-        s.cmd_flush(RAWSTOR_MAGIC, 3, 0);
+        // A real spec() first, from the one (and only) connected URI --
+        // see Target::open()'s own comment.
+        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 1);
+        s.cmd_set_object(RAWSTOR_MAGIC, 1, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 2, 0, clean_meta_1mb);
+        s.cmd_write(RAWSTOR_MAGIC, 3, 4);
+        // Explicit flush() below, then read() -- Object's destructor
+        // closes afterward with nothing left unflushed, so close() itself
+        // doesn't dispatch another flush (see Object::close()'s own doc
+        // comment).
+        s.cmd_flush(RAWSTOR_MAGIC, 4, 0);
+        s.cmd_read(RAWSTOR_MAGIC, 5, "pong", 4);
     }
 
     {
@@ -368,6 +390,8 @@ TEST(OstIOTest, basics) {
 
     std::string ping = "ping";
     EXPECT_NO_THROW(object.write(ping.data(), ping.length()));
+
+    EXPECT_NO_THROW(object.flush());
 
     std::string pong(4, '\0');
     EXPECT_NO_THROW(object.read(pong.data(), pong.length()));
@@ -387,13 +411,17 @@ TEST(OstIOTest, discard_and_write_zeroes) {
 
     {
         rawstor::tests::Session s(server);
-        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
-        s.cmd_discard(RAWSTOR_MAGIC, 1, 4);
-        s.cmd_write_zeroes(RAWSTOR_MAGIC, 2, 4);
+        // A real spec() first, from the one (and only) connected URI --
+        // see Target::open()'s own comment.
+        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 1);
+        s.cmd_set_object(RAWSTOR_MAGIC, 1, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 2, 0, clean_meta_1mb);
+        s.cmd_discard(RAWSTOR_MAGIC, 3, 4);
+        s.cmd_write_zeroes(RAWSTOR_MAGIC, 4, 4);
         // Object's destructor closes -- close() now flushes first (see
         // Object::close()'s own doc comment); write_zeroes() left it dirty
         // the same way pwrite() does.
-        s.cmd_flush(RAWSTOR_MAGIC, 3, 0);
+        s.cmd_flush(RAWSTOR_MAGIC, 5, 0);
     }
 
     {
@@ -420,9 +448,13 @@ TEST(OstIOTest, flush) {
 
     {
         rawstor::tests::Session s(server);
-        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
-        s.cmd_write(RAWSTOR_MAGIC, 1, 4);
-        s.cmd_flush(RAWSTOR_MAGIC, 2, 0);
+        // A real spec() first, from the one (and only) connected URI --
+        // see Target::open()'s own comment.
+        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 1);
+        s.cmd_set_object(RAWSTOR_MAGIC, 1, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 2, 0, clean_meta_1mb);
+        s.cmd_write(RAWSTOR_MAGIC, 3, 4);
+        s.cmd_flush(RAWSTOR_MAGIC, 4, 0);
     }
 
     {
@@ -448,13 +480,26 @@ TEST(OstIOTest, set_object_fail) {
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
-    // Connection::open()'s own first attempt (against the backend
-    // create() already connected) plus invalidate_backend()'s own
-    // internal retry (rawstor_opts_io_attempts() attempts) -- one more
-    // than io_attempts total.
+    // set_object() itself is the combined SET_OBJECT+META step now (see
+    // Backend::set_object()'s own comment) -- META only ever goes out
+    // after a successful SET_OBJECT, so a SET_OBJECT that always fails,
+    // as here, never gets that far. Connection::open()'s own first
+    // attempt (against the backend create() already connected) plus
+    // invalidate_backend()'s own internal retry (rawstor_opts_io_attempts()
+    // attempts) -- one more than io_attempts total sessions. spec() runs
+    // before any of that (Target::open()'s own comment) and, unlike
+    // set_object(), succeeds here -- only the very first session needs
+    // it: every later session is one of Connection::open()'s own
+    // invalidate_backend() reconnects, which skip spec() entirely (its
+    // own Connection is metadata-only until open() has succeeded once).
     for (unsigned int i = 0; i < rawstor_opts_io_attempts() + 1; ++i) {
         rawstor::tests::Session s(server);
-        s.cmd_set_object(0, 0, 0);
+        if (i == 0) {
+            s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 1);
+            s.cmd_set_object(0, 1, 0);
+        } else {
+            s.cmd_set_object(0, 0, 0);
+        }
     }
 
     EXPECT_THROW(
@@ -474,10 +519,16 @@ TEST(OstIOTest, set_object_error) {
     }
 
     // See set_object_fail above for why this is one more than
-    // rawstor_opts_io_attempts().
+    // rawstor_opts_io_attempts(), and why only the first session needs a
+    // preceding spec().
     for (unsigned int i = 0; i < rawstor_opts_io_attempts() + 1; ++i) {
         rawstor::tests::Session s(server);
-        s.cmd_set_object(RAWSTOR_MAGIC, 0, -ENOENT);
+        if (i == 0) {
+            s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 1);
+            s.cmd_set_object(RAWSTOR_MAGIC, 1, -ENOENT);
+        } else {
+            s.cmd_set_object(RAWSTOR_MAGIC, 0, -ENOENT);
+        }
     }
 
     EXPECT_THROW(
@@ -496,9 +547,16 @@ TEST(OstIOTest, set_object_disconnect) {
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
-    // See set_object_fail above for why this is one more than
-    // rawstor_opts_io_attempts().
-    for (unsigned int i = 0; i < rawstor_opts_io_attempts() + 1; ++i) {
+    // Unlike set_object_fail/set_object_error above, nothing here ever
+    // responds at all -- not even to spec(), which Target::open() sends
+    // first (see its own comment). spec() goes through
+    // Connection::_with_retry() (Connection::spec()), whose own budget
+    // is rawstor_opts_io_attempts() attempts *total* -- the first
+    // against the backend create() already connected, the rest each one
+    // more reconnect -- so open() never even reaches SET_OBJECT here:
+    // it fails at spec() after exactly io_attempts() sessions, not one
+    // more.
+    for (unsigned int i = 0; i < rawstor_opts_io_attempts(); ++i) {
         rawstor::tests::Session s(server);
     }
 
@@ -518,10 +576,28 @@ TEST(OstIOTest, write_fail) {
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
-    for (unsigned int i = 0; i < rawstor_opts_io_attempts(); ++i) {
+    // The first session is the one Target::open() itself drives: a real
+    // spec() first (Target::open()'s own comment), then set_object()
+    // succeeds, so its own combined SET_OBJECT+META goes through too
+    // (see Backend::set_object()'s own comment). Every session after it
+    // is a lower-level reconnect from the write retry below, which never
+    // goes through Target::open()/Connection::open() again -- it gets no
+    // spec() of its own (Connection::invalidate_backend() only
+    // set_object()s -- see its own comment), but it does still get a
+    // META round trip, folded into that same set_object().
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 1);
+        s.cmd_set_object(RAWSTOR_MAGIC, 1, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 2, 0, clean_meta_1mb);
+        s.cmd_write(0, 3, 4);
+    }
+
+    for (unsigned int i = 1; i < rawstor_opts_io_attempts(); ++i) {
         rawstor::tests::Session s(server);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
-        s.cmd_write(0, 1, 4);
+        s.cmd_meta(RAWSTOR_MAGIC, 1, 0, clean_meta_1mb);
+        s.cmd_write(0, 2, 4);
     }
 
     {
@@ -549,13 +625,15 @@ TEST(OstIOTest, write_error) {
     // ENOENT is a permanent backend rejection (see Connection::_with_retry()'s
     // is_permanent_backend_error()): the connection is fine, so this
     // never reconnects, and retrying can never turn ENOENT into success,
-    // so it doesn't retry at all -- exactly one session handles both
-    // SET_OBJECT and the WRITE.
+    // so it doesn't retry at all -- exactly one session handles spec(),
+    // SET_OBJECT, and the WRITE.
     {
         rawstor::tests::Session s(server);
-        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 1);
+        s.cmd_set_object(RAWSTOR_MAGIC, 1, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 2, 0, clean_meta_1mb);
         s.cmd_write_request(4);
-        s.cmd_write_response(RAWSTOR_MAGIC, 1, -ENOENT);
+        s.cmd_write_response(RAWSTOR_MAGIC, 3, -ENOENT);
     }
 
     {
@@ -580,22 +658,24 @@ TEST(OstIOTest, write_busy_retries_without_reconnect) {
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
-    // A single session handles SET_OBJECT, an EBUSY response to the first
-    // WRITE, and a second WRITE that succeeds -- all on the SAME
+    // A single session handles spec(), SET_OBJECT, an EBUSY response to
+    // the first WRITE, and a second WRITE that succeeds -- all on the SAME
     // connection. If the retry reconnected instead (like it does for
     // every other error), this session would never see that second WRITE
     // and the test would hang waiting for a connection nothing here
     // accepts.
     {
         rawstor::tests::Session s(server);
-        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 1);
+        s.cmd_set_object(RAWSTOR_MAGIC, 1, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 2, 0, clean_meta_1mb);
         s.cmd_write_request(4);
-        s.cmd_write_response(RAWSTOR_MAGIC, 1, -EBUSY);
+        s.cmd_write_response(RAWSTOR_MAGIC, 3, -EBUSY);
         s.cmd_write_request(4);
-        s.cmd_write_response(RAWSTOR_MAGIC, 2, 4);
+        s.cmd_write_response(RAWSTOR_MAGIC, 4, 4);
         // Object's destructor closes -- close() now flushes first since
         // the write above left it dirty.
-        s.cmd_flush(RAWSTOR_MAGIC, 3, 0);
+        s.cmd_flush(RAWSTOR_MAGIC, 5, 0);
     }
 
     {
@@ -629,19 +709,29 @@ TEST(OstIOTest, write_backend_error_retries_with_reconnect) {
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
+    // The first session is the one Target::open() itself drives: a real
+    // spec() first (Target::open()'s own comment), then its own combined
+    // SET_OBJECT+META (Backend::set_object(), see its own comment). The
+    // reconnect session below goes through invalidate_backend() instead
+    // (Backend::create() + set_object(), just like Target::open() itself
+    // does), so it gets a META round trip too, but no spec() of its own
+    // (invalidate_backend() only set_object()s -- see its own comment).
     {
         rawstor::tests::Session s(server);
-        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 1);
+        s.cmd_set_object(RAWSTOR_MAGIC, 1, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 2, 0, clean_meta_1mb);
         s.cmd_write_request(4);
-        s.cmd_write_response(RAWSTOR_MAGIC, 1, -ENOSPC);
+        s.cmd_write_response(RAWSTOR_MAGIC, 3, -ENOSPC);
     }
 
     {
         rawstor::tests::Session s(server);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 1, 0, clean_meta_1mb);
         s.cmd_write_request(4);
-        s.cmd_write_response(RAWSTOR_MAGIC, 1, 4);
-        s.cmd_flush(RAWSTOR_MAGIC, 2, 0);
+        s.cmd_write_response(RAWSTOR_MAGIC, 2, 4);
+        s.cmd_flush(RAWSTOR_MAGIC, 3, 0);
     }
 
     {
@@ -674,19 +764,29 @@ TEST(OstIOTest, write_hash_mismatch_reconnects) {
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
+    // The first session is the one Target::open() itself drives: a real
+    // spec() first (Target::open()'s own comment), then its own combined
+    // SET_OBJECT+META (Backend::set_object(), see its own comment). The
+    // reconnect session below goes through invalidate_backend() instead
+    // (Backend::create() + set_object(), just like Target::open() itself
+    // does), so it gets a META round trip too, but no spec() of its own
+    // (invalidate_backend() only set_object()s -- see its own comment).
     {
         rawstor::tests::Session s(server);
-        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 1);
+        s.cmd_set_object(RAWSTOR_MAGIC, 1, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 2, 0, clean_meta_1mb);
         s.cmd_write_request(4);
-        s.cmd_write_response(RAWSTOR_MAGIC, 1, -EBADMSG);
+        s.cmd_write_response(RAWSTOR_MAGIC, 3, -EBADMSG);
     }
 
     {
         rawstor::tests::Session s(server);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 1, 0, clean_meta_1mb);
         s.cmd_write_request(4);
-        s.cmd_write_response(RAWSTOR_MAGIC, 1, 4);
-        s.cmd_flush(RAWSTOR_MAGIC, 2, 0);
+        s.cmd_write_response(RAWSTOR_MAGIC, 2, 4);
+        s.cmd_flush(RAWSTOR_MAGIC, 3, 0);
     }
 
     {
@@ -711,9 +811,25 @@ TEST(OstIOTest, write_disconnect) {
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
-    for (unsigned int i = 0; i < rawstor_opts_io_attempts(); ++i) {
+    // The first session is the one Target::open() itself drives: a real
+    // spec() first (Target::open()'s own comment), then its own combined
+    // SET_OBJECT+META (Backend::set_object(), see its own comment).
+    // Every lower-level reconnect from the write retry below goes
+    // through Backend::set_object() too (so it also gets a META round
+    // trip), but no spec() of its own (invalidate_backend() only
+    // set_object()s -- see its own comment).
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 1);
+        s.cmd_set_object(RAWSTOR_MAGIC, 1, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 2, 0, clean_meta_1mb);
+        s.cmd_write_request(4);
+    }
+
+    for (unsigned int i = 1; i < rawstor_opts_io_attempts(); ++i) {
         rawstor::tests::Session s(server);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 1, 0, clean_meta_1mb);
         s.cmd_write_request(4);
     }
 
@@ -739,18 +855,30 @@ TEST(OstIOTest, write_disconnect_concurrent) {
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
-    // The object-open backend, and each of its retries below, disconnects
-    // right after SET_OBJECT succeeds -- before either concurrent write
-    // further down is even attempted on it. Both rawstor_object_pwrite()
-    // calls below are issued back to back with no rawio_wait_timeout() in
-    // between, so Backend::_add_op() runs for both before the client's
-    // event loop has had any chance to deliver either op's own request
-    // send completion. This is the window a stranded op used to fall
-    // into: registered in Backend::_ops, but not yet "in flight" by
-    // BackendOp::in_flight()'s old (now removed) definition.
-    for (unsigned int i = 0; i < rawstor_opts_io_attempts(); ++i) {
+    // The object-open backend answers a real spec() first (Target::
+    // open()'s own comment), then its own combined SET_OBJECT+META
+    // (Backend::set_object(), see its own comment) and *then*
+    // disconnects -- before either concurrent write further down is even
+    // attempted on it -- same as every one of its retries below (minus
+    // the spec(): invalidate_backend() only set_object()s -- see its own
+    // comment).
+    // Both rawstor_object_pwrite() calls below are issued back to back
+    // with no rawio_wait_timeout() in between, so Backend::_add_op() runs
+    // for both before the client's event loop has had any chance to
+    // deliver either op's own request send completion. This is the
+    // window a stranded op used to fall into: registered in
+    // Backend::_ops, but not yet "in flight" by BackendOp::in_flight()'s
+    // old (now removed) definition.
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 1);
+        s.cmd_set_object(RAWSTOR_MAGIC, 1, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 2, 0, clean_meta_1mb);
+    }
+    for (unsigned int i = 1; i < rawstor_opts_io_attempts(); ++i) {
         rawstor::tests::Session s(server);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 1, 0, clean_meta_1mb);
     }
 
     {
@@ -864,7 +992,7 @@ void auto_respond_writes_then_flush_and_release(
                                 .cmd = RAWSTOR_CMD_WRITE,
                                 .cid = head.cid,
                             },
-                            .body = {.res = write_res, .hash = 0},
+                            .body = {.hash = 0, .res = write_res},
                         };
                         server.write(
                             "RAWSTOR_CMD_WRITE >>>", &response, sizeof(response)
@@ -887,7 +1015,7 @@ void auto_respond_writes_then_flush_and_release(
                                 .cmd = RAWSTOR_CMD_FLUSH,
                                 .cid = head.cid,
                             },
-                            .body = {.res = flush_res, .hash = 0},
+                            .body = {.hash = 0, .res = flush_res},
                         };
                         server.write(
                             "RAWSTOR_CMD_FLUSH >>>", &response, sizeof(response)
@@ -904,7 +1032,7 @@ void auto_respond_writes_then_flush_and_release(
                                 .cmd = RAWSTOR_CMD_RELEASE,
                                 .cid = 0,
                             },
-                            .body = {.res = release_res, .hash = 0},
+                            .body = {.hash = 0, .res = release_res},
                         };
                         server.write(
                             "RAWSTOR_CMD_RELEASE >>>", &release_response,
@@ -969,6 +1097,39 @@ TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
     // down; the server side only ever forget()s its bookkeeping of it
     // (see forget()'s own doc comment in server.hpp).
     server.accept("SESSION <<<");
+    // A real spec() first (Target::open()'s own comment), replicated by
+    // hand here since this test can't use Session (see the comment
+    // above), matching Session::cmd_spec_response()'s own wire shape.
+    server.read(
+        "RAWSTOR_CMD_SPEC <<<", sizeof(RawstorOSTFrameBasic), [](const void*) {}
+    );
+    RawstorOSTFrameSpecPayload spec_payload = {
+        .size = 1ull << 20,
+        .mirrors = 1,
+    };
+    RawstorOSTFrameResponse spec_response = {
+        .head{
+            .magic = RAWSTOR_MAGIC,
+            .cmd = RAWSTOR_CMD_SPEC,
+            .cid = 0,
+        },
+        .body = {
+            .hash = rawstd_hash_scalar(&spec_payload, sizeof(spec_payload)),
+            .res = static_cast<int32_t>(sizeof(spec_payload)),
+        },
+    };
+    iovec spec_iov[2] = {
+        {.iov_base = &spec_response, .iov_len = sizeof(spec_response)},
+        {.iov_base = &spec_payload, .iov_len = sizeof(spec_payload)},
+    };
+    server.writev(
+        "RAWSTOR_CMD_SPEC >>>", spec_iov, sizeof(spec_iov) / sizeof(spec_iov[0])
+    );
+    // set_object() is the combined SET_OBJECT+META step now
+    // (Backend::set_object(), see its own comment) -- replicated by hand
+    // here since this test can't use Session (see the comment above),
+    // matching Session::cmd_set_object_response()/cmd_meta_response()'s
+    // own wire shape.
     server.read(
         "RAWSTOR_CMD_SET_OBJECT <<<", sizeof(RawstorOSTFrameBasic),
         [](const void*) {}
@@ -977,13 +1138,38 @@ TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
         .head{
             .magic = RAWSTOR_MAGIC,
             .cmd = RAWSTOR_CMD_SET_OBJECT,
-            .cid = 0,
+            .cid = 1,
         },
-        .body = {.res = 0, .hash = 0},
+        .body = {.hash = 0, .res = 0},
     };
     server.write(
         "RAWSTOR_CMD_SET_OBJECT >>>", &set_object_response,
         sizeof(set_object_response)
+    );
+    server.read(
+        "RAWSTOR_CMD_META <<<", sizeof(RawstorOSTFrameBasic), [](const void*) {}
+    );
+    RawstorOSTFrameResponse meta_response = {
+        .head{
+            .magic = RAWSTOR_MAGIC,
+            .cmd = RAWSTOR_CMD_META,
+            .cid = 2,
+        },
+        .body = {
+            .hash = rawstd_hash_scalar(&clean_meta_1mb, sizeof(clean_meta_1mb)),
+            .res = static_cast<int32_t>(sizeof(clean_meta_1mb)),
+        },
+    };
+    iovec meta_iov[2] = {
+        {.iov_base = &meta_response, .iov_len = sizeof(meta_response)},
+        {
+            .iov_base =
+                const_cast<RawstorOSTFrameMetaPayload*>(&clean_meta_1mb),
+            .iov_len = sizeof(clean_meta_1mb),
+        },
+    };
+    server.writev(
+        "RAWSTOR_CMD_META >>>", meta_iov, sizeof(meta_iov) / sizeof(meta_iov[0])
     );
     server.read(
         "RAWSTOR_CMD_WRITE <<<", sizeof(RawstorOSTFrameIO) + 4,
@@ -999,7 +1185,7 @@ TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
                     .cmd = RAWSTOR_CMD_FLUSH,
                     .cid = cid,
                 },
-                .body = {.res = 0, .hash = 0},
+                .body = {.hash = 0, .res = 0},
             };
             server.write(
                 "RAWSTOR_CMD_WRITE >>> (wrong cmd)", &wrong_cmd_response,
@@ -1027,11 +1213,45 @@ TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
                     .cmd = RAWSTOR_CMD_SET_OBJECT,
                     .cid = 0,
                 },
-                .body = {.res = 0, .hash = 0},
+                .body = {.hash = 0, .res = 0},
             };
             server.write(
                 "RAWSTOR_CMD_SET_OBJECT >>>", &retry_set_object_response,
                 sizeof(retry_set_object_response)
+            );
+            // invalidate_backend() reconnects via Backend::create() +
+            // set_object() same as Target::open() itself, so this retry
+            // target also gets a META round trip.
+            server.read(
+                "RAWSTOR_CMD_META <<<", sizeof(RawstorOSTFrameBasic),
+                [](const void*) {}
+            );
+            RawstorOSTFrameResponse retry_meta_response = {
+                .head{
+                    .magic = RAWSTOR_MAGIC,
+                    .cmd = RAWSTOR_CMD_META,
+                    .cid = 1,
+                },
+                .body = {
+                    .hash = rawstd_hash_scalar(
+                        &clean_meta_1mb, sizeof(clean_meta_1mb)
+                    ),
+                    .res = static_cast<int32_t>(sizeof(clean_meta_1mb)),
+                },
+            };
+            iovec retry_meta_iov[2] = {
+                {.iov_base = &retry_meta_response,
+                 .iov_len = sizeof(retry_meta_response)},
+                {
+                    .iov_base = const_cast<RawstorOSTFrameMetaPayload*>(
+                        &clean_meta_1mb
+                    ),
+                    .iov_len = sizeof(clean_meta_1mb),
+                },
+            };
+            server.writev(
+                "RAWSTOR_CMD_META >>>", retry_meta_iov,
+                sizeof(retry_meta_iov) / sizeof(retry_meta_iov[0])
             );
             // Answers every WRITE that actually arrives (the retried
             // first write and the second write, in whatever order they
@@ -1150,6 +1370,39 @@ TEST(OstIOTest, write_many_concurrent_wire_errors_with_backoff) {
     // Session's destructor (which would queue it too early, before any
     // of these kWrites requests has actually arrived).
     server.accept("SESSION <<<");
+    // A real spec() first (Target::open()'s own comment), replicated by
+    // hand here since this test can't use Session (see the comment
+    // above), matching Session::cmd_spec_response()'s own wire shape.
+    server.read(
+        "RAWSTOR_CMD_SPEC <<<", sizeof(RawstorOSTFrameBasic), [](const void*) {}
+    );
+    RawstorOSTFrameSpecPayload spec_payload = {
+        .size = 1ull << 20,
+        .mirrors = 1,
+    };
+    RawstorOSTFrameResponse spec_response = {
+        .head{
+            .magic = RAWSTOR_MAGIC,
+            .cmd = RAWSTOR_CMD_SPEC,
+            .cid = 0,
+        },
+        .body = {
+            .hash = rawstd_hash_scalar(&spec_payload, sizeof(spec_payload)),
+            .res = static_cast<int32_t>(sizeof(spec_payload)),
+        },
+    };
+    iovec spec_iov[2] = {
+        {.iov_base = &spec_response, .iov_len = sizeof(spec_response)},
+        {.iov_base = &spec_payload, .iov_len = sizeof(spec_payload)},
+    };
+    server.writev(
+        "RAWSTOR_CMD_SPEC >>>", spec_iov, sizeof(spec_iov) / sizeof(spec_iov[0])
+    );
+    // set_object() is the combined SET_OBJECT+META step now
+    // (Backend::set_object(), see its own comment) -- replicated by hand
+    // here since this test can't use Session (see the comment above),
+    // matching Session::cmd_set_object_response()/cmd_meta_response()'s
+    // own wire shape.
     server.read(
         "RAWSTOR_CMD_SET_OBJECT <<<", sizeof(RawstorOSTFrameBasic),
         [](const void*) {}
@@ -1158,13 +1411,38 @@ TEST(OstIOTest, write_many_concurrent_wire_errors_with_backoff) {
         .head{
             .magic = RAWSTOR_MAGIC,
             .cmd = RAWSTOR_CMD_SET_OBJECT,
-            .cid = 0,
+            .cid = 1,
         },
-        .body = {.res = 0, .hash = 0},
+        .body = {.hash = 0, .res = 0},
     };
     server.write(
         "RAWSTOR_CMD_SET_OBJECT >>>", &set_object_response,
         sizeof(set_object_response)
+    );
+    server.read(
+        "RAWSTOR_CMD_META <<<", sizeof(RawstorOSTFrameBasic), [](const void*) {}
+    );
+    RawstorOSTFrameResponse meta_response = {
+        .head{
+            .magic = RAWSTOR_MAGIC,
+            .cmd = RAWSTOR_CMD_META,
+            .cid = 2,
+        },
+        .body = {
+            .hash = rawstd_hash_scalar(&clean_meta_1mb, sizeof(clean_meta_1mb)),
+            .res = static_cast<int32_t>(sizeof(clean_meta_1mb)),
+        },
+    };
+    iovec meta_iov[2] = {
+        {.iov_base = &meta_response, .iov_len = sizeof(meta_response)},
+        {
+            .iov_base =
+                const_cast<RawstorOSTFrameMetaPayload*>(&clean_meta_1mb),
+            .iov_len = sizeof(clean_meta_1mb),
+        },
+    };
+    server.writev(
+        "RAWSTOR_CMD_META >>>", meta_iov, sizeof(meta_iov) / sizeof(meta_iov[0])
     );
     // Reads every one of the kWrites requests -- none of them ever gets
     // a response -- then closes on the last one, guaranteeing all
@@ -1189,12 +1467,46 @@ TEST(OstIOTest, write_many_concurrent_wire_errors_with_backoff) {
                             .cmd = RAWSTOR_CMD_SET_OBJECT,
                             .cid = 0,
                         },
-                        .body = {.res = 0, .hash = 0},
+                        .body = {.hash = 0, .res = 0},
                     };
                     server.write(
                         "RAWSTOR_CMD_SET_OBJECT >>>",
                         &retry_set_object_response,
                         sizeof(retry_set_object_response)
+                    );
+                    // invalidate_backend() reconnects via Backend::create()
+                    // + set_object() same as Target::open() itself, so
+                    // this retry target also gets a META round trip.
+                    server.read(
+                        "RAWSTOR_CMD_META <<<", sizeof(RawstorOSTFrameBasic),
+                        [](const void*) {}
+                    );
+                    RawstorOSTFrameResponse retry_meta_response = {
+                        .head{
+                            .magic = RAWSTOR_MAGIC,
+                            .cmd = RAWSTOR_CMD_META,
+                            .cid = 1,
+                        },
+                        .body = {
+                            .hash = rawstd_hash_scalar(
+                                &clean_meta_1mb, sizeof(clean_meta_1mb)
+                            ),
+                            .res = static_cast<int32_t>(sizeof(clean_meta_1mb)),
+                        },
+                    };
+                    iovec retry_meta_iov[2] = {
+                        {.iov_base = &retry_meta_response,
+                         .iov_len = sizeof(retry_meta_response)},
+                        {
+                            .iov_base = const_cast<RawstorOSTFrameMetaPayload*>(
+                                &clean_meta_1mb
+                            ),
+                            .iov_len = sizeof(clean_meta_1mb),
+                        },
+                    };
+                    server.writev(
+                        "RAWSTOR_CMD_META >>>", retry_meta_iov,
+                        sizeof(retry_meta_iov) / sizeof(retry_meta_iov[0])
                     );
                     // Answers every retried WRITE (in whatever order they
                     // land) with its own cid echoed back, then the one

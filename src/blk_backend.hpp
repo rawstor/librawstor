@@ -28,6 +28,41 @@ namespace blk {
 // objects are real block devices, overridden by file::Backend since its
 // objects are plain regular files instead.
 class Backend : public rawstor::Backend {
+private:
+    // Bumped whenever meta_encode()'s own field set changes -- carried as
+    // this format's own leading field (see meta_encode()'s own doc
+    // comment below) rather than left for a caller to track separately,
+    // so every subclass rejects a record from an incompatible version
+    // the same way. Private: only meta_encode()/meta_decode()'s own
+    // implementation ever needs it.
+    static constexpr unsigned int META_FORMAT_VERSION = 1;
+
+    // Writes dispatched to the io queue whose completion hasn't arrived
+    // yet -- see pwrite()/pwritev()'s use of it against
+    // rawstor_opts_write_throttle_limit() to decide whether a write is
+    // dispatched now or suspended until a slot frees up.
+    unsigned int _writes_in_flight;
+    // Coroutines suspended in _throttle_acquire(), oldest first -- woken
+    // one at a time, in order, as _throttle_release() frees up a slot.
+    std::deque<std::coroutine_handle<>> _write_waiters;
+    // Sum of the sizes of writes currently suspended in
+    // _write_waiters -- see _throttle_acquire()'s use of it against
+    // rawstor_opts_write_backlog_capacity() to reject a write outright
+    // rather than let it suspend without bound.
+    size_t _pending_writes_bytes;
+
+    // Suspends the calling coroutine until a write-dispatch slot is free
+    // (see rawstor_opts_write_throttle_limit()), or throws EBUSY
+    // immediately, without suspending, if queuing behind the throttle
+    // would push the backlog over rawstor_opts_write_backlog_capacity().
+    // Every successful return must be matched by exactly one
+    // _throttle_release() call, regardless of how the dispatched write
+    // itself turns out.
+    rawstd::Task<void> _throttle_acquire(size_t size);
+    // Releases the slot acquired by a matching _throttle_acquire(),
+    // handing it directly to the oldest queued waiter, if any.
+    void _throttle_release() noexcept;
+
 protected:
     virtual rawstd::Task<int> _open(const RawstdUUID& id) = 0;
 
@@ -57,44 +92,54 @@ protected:
     // retryable EIO.
     rawstd::Task<bool> _exists(const std::string& path);
 
-private:
-    // Writes dispatched to the io queue whose completion hasn't arrived
-    // yet -- see pwrite()/pwritev()'s use of it against
-    // rawstor_opts_write_throttle_limit() to decide whether a write is
-    // dispatched now or suspended until a slot frees up.
-    unsigned int _writes_in_flight;
-    // Coroutines suspended in _throttle_acquire(), oldest first -- woken
-    // one at a time, in order, as _throttle_release() frees up a slot.
-    std::deque<std::coroutine_handle<>> _write_waiters;
-    // Sum of the sizes of writes currently suspended in
-    // _write_waiters -- see _throttle_acquire()'s use of it against
-    // rawstor_opts_write_backlog_capacity() to reject a write outright
-    // rather than let it suspend without bound.
-    size_t _pending_writes_bytes;
-
-    // Suspends the calling coroutine until a write-dispatch slot is free
-    // (see rawstor_opts_write_throttle_limit()), or throws EBUSY
-    // immediately, without suspending, if queuing behind the throttle
-    // would push the backlog over rawstor_opts_write_backlog_capacity().
-    // Every successful return must be matched by exactly one
-    // _throttle_release() call, regardless of how the dispatched write
-    // itself turns out.
-    rawstd::Task<void> _throttle_acquire(size_t size);
-    // Releases the slot acquired by a matching _throttle_acquire(),
-    // handing it directly to the oldest queued waiter, if any.
-    void _throttle_release() noexcept;
+    // Upper bound on meta_encode()'s own return value, comfortably
+    // covering every field at its widest (a full 16 hex digits for each
+    // uint64_t one). Protected (not private): file::Backend, the only
+    // subclass that needs it, sizes its own fixed-length on-disk .meta
+    // record to this constant instead of guessing; nothing outside the
+    // class hierarchy needs it, unlike meta_encode()/meta_decode()
+    // themselves (public further down, for tests/).
+    static constexpr size_t META_MAX_SIZE = 256;
 
 public:
     Backend(Private p, rawio::Queue& queue, const rawstd::URI& location);
 
     rawstd::Task<void> close() override final;
 
-    rawstd::Task<void> set_object(Object* object) override final;
+    rawstd::Task<void> set_object(const RawstdUUID& id) override final;
 
     // Default spec() for a backend whose object id maps to a real block
     // device (BLKGETSIZE64) -- file::Backend overrides this instead, since
     // its objects are plain regular files.
     rawstd::Task<RawstorObjectSpec> spec(const RawstdUUID& id) override;
+
+    // Encodes/decodes a RawstorObjectSyncState as a compact
+    // colon-separated string of hex fields, e.g.
+    // "version=1:state=0:epoch=0:sync_id=0:h0=0:h1=0:h2=0:h3=0" -- shared
+    // by every blk-backed subclass's own native per-copy metadata
+    // storage: lvm::Backend's LVM tag, zfs::Backend's ZFS user property,
+    // and file::Backend's own on-disk .meta file (NUL-padded out to
+    // META_MAX_SIZE bytes -- see its own doc comment for why). Only
+    // characters valid in all three are used (no comma, no whitespace).
+    // Public (not protected) so tests/ can exercise them directly
+    // without a real lvm/zfs/file backend of their own.
+    //
+    // meta_decode() reverses meta_encode(), throwing EPROTO if value is
+    // not a well-formed encoding of the current META_FORMAT_VERSION
+    // (including an empty string: the caller must not mistake "no value
+    // was ever recorded" for a valid record, and a record from a
+    // different format version, which this repo will never write again
+    // once it's bumped).
+    static std::string meta_encode(const RawstorObjectSyncState& sync_state);
+    static RawstorObjectSyncState meta_decode(const std::string& value);
+
+    // No universal answer for a raw block device -- left pure virtual
+    // (inherited from rawstor::Backend) rather than given a default here,
+    // so a new blk::Backend subclass that forgets to implement native
+    // per-copy metadata (docs/mirroring.md's "native per-copy mirror
+    // metadata" stage) fails to compile instead of silently bypassing the
+    // mirror's split-brain-exclusion mechanism at runtime. file::Backend/
+    // lvm::Backend/zfs::Backend each provide their own real implementation.
 
     rawstd::Task<size_t>
     pread(void* buf, size_t size, off_t offset) override final;

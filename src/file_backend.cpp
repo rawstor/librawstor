@@ -18,6 +18,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <array>
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
@@ -28,6 +29,16 @@
 #include <string>
 
 namespace {
+
+std::string get_target_meta_path(
+    const std::string& location_path, const RawstdUUIDString& uuid
+) {
+    std::ostringstream oss;
+
+    oss << location_path << "/" << uuid << ".meta";
+
+    return oss.str();
+}
 
 std::string get_location_path(const rawstd::URI& location) {
     if (location.scheme() != "file") {
@@ -149,6 +160,8 @@ rawstd::Task<void> Backend::list(
 
 rawstd::Task<void>
 Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
+    _validate_spec(sp);
+
     std::string location_path = get_location_path(location());
     if (mkdir(location_path.c_str(), 0755) == -1) {
         if (errno == EEXIST) {
@@ -245,6 +258,64 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
         std::rethrow_exception(create_error);
     }
 
+    // A fresh copy starts with sync_id 0: it has never been part of an
+    // established sync set (see docs/mirroring.md). Written after the data
+    // file so a crash between the two never leaves a .meta file without
+    // its data file; set_sync_state()/meta() failing ENOENT on the reverse
+    // (data file present, no .meta yet) is exactly case F10.
+    std::exception_ptr meta_error;
+    try {
+        std::string meta_path =
+            get_target_meta_path(location_path, uuid_string);
+
+        int meta_fd = co_await _queue.open(
+            meta_path.c_str(), O_EXCL | O_CREAT | O_WRONLY | O_CLOEXEC,
+            S_IRUSR | S_IWUSR
+        );
+
+        std::exception_ptr eptr;
+        try {
+            RawstorObjectSyncState sync_state{};
+            sync_state.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
+
+            // meta_encode()'s own (shorter, variable-length) return value
+            // is NUL-padded out to a fixed META_MAX_SIZE bytes here,
+            // rather than written at its own length, so this file's own
+            // byte length stays fixed across every rewrite -- see
+            // set_sync_state() below for why that matters.
+            std::string encoded = meta_encode(sync_state);
+            std::array<char, META_MAX_SIZE> disk{};
+            memcpy(disk.data(), encoded.data(), encoded.size());
+
+            co_await _queue.pwrite(meta_fd, disk.data(), disk.size(), 0, true);
+        } catch (...) {
+            eptr = std::current_exception();
+        }
+        co_await _queue.close(meta_fd);
+        if (eptr) {
+            try {
+                co_await _queue.unlink(meta_path.c_str());
+            } catch (const std::system_error&) {
+            }
+            std::rethrow_exception(eptr);
+        }
+    } catch (...) {
+        // co_await is not permitted inside a catch handler -- stash the
+        // exception and rethrow it once out of the handler, below, after
+        // the cleanup co_await.
+        meta_error = std::current_exception();
+    }
+
+    if (meta_error) {
+        // Best-effort: unlink() failing here must not replace meta_error
+        // with one of its own.
+        try {
+            co_await _queue.unlink(target_path.c_str());
+        } catch (...) {
+        }
+        std::rethrow_exception(meta_error);
+    }
+
     co_return;
 }
 
@@ -256,6 +327,15 @@ rawstd::Task<void> Backend::remove(const RawstdUUID& id) {
 
     std::string target_path = get_target_path(location_path, uuid_string);
     co_await _queue.unlink(target_path.c_str());
+
+    std::string meta_path = get_target_meta_path(location_path, uuid_string);
+    try {
+        co_await _queue.unlink(meta_path.c_str());
+    } catch (const std::system_error& e) {
+        if (e.code().value() != ENOENT) {
+            throw;
+        }
+    }
 }
 
 rawstd::Task<RawstorObjectSpec> Backend::spec(const RawstdUUID& id) {
@@ -266,11 +346,94 @@ rawstd::Task<RawstorObjectSpec> Backend::spec(const RawstdUUID& id) {
 
     std::string target_path = get_target_path(location_path, uuid_string);
 
+    struct stat st;
+    co_await _queue.stat(target_path.c_str(), &st);
+
     RawstorObjectSpec ret{
-        .size = std::filesystem::file_size(target_path),
+        .size = static_cast<uint64_t>(st.st_size),
+        .mirrors = 1,
     };
 
     co_return ret;
+}
+
+rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
+    std::string location_path = get_location_path(location());
+
+    RawstdUUIDString uuid_string;
+    rawstd_uuid_to_string(&id, &uuid_string);
+
+    std::string meta_path = get_target_meta_path(location_path, uuid_string);
+
+    int fd = co_await _queue.open(meta_path.c_str(), O_RDONLY | O_CLOEXEC, 0);
+
+    RawstorObjectSyncState sync_state{};
+    std::exception_ptr eptr;
+    try {
+        std::array<char, META_MAX_SIZE> disk{};
+        size_t rval = co_await _queue.pread(fd, disk.data(), disk.size(), 0);
+        if (rval != disk.size()) {
+            rawstd_error("Malformed object meta: %s\n", meta_path.c_str());
+            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+        }
+        try {
+            sync_state = meta_decode(std::string(disk.data()));
+        } catch (const std::system_error&) {
+            rawstd_error("Malformed object meta: %s\n", meta_path.c_str());
+            throw;
+        }
+    } catch (...) {
+        eptr = std::current_exception();
+    }
+    co_await _queue.close(fd);
+    if (eptr) {
+        std::rethrow_exception(eptr);
+    }
+
+    RawstorObjectMeta ret{};
+    ret.spec = co_await spec(id);
+    ret.sync_state = sync_state;
+
+    co_return ret;
+}
+
+rawstd::Task<void> Backend::set_sync_state(
+    const RawstdUUID& id, const RawstorObjectSyncState& sync_state
+) {
+    std::string location_path = get_location_path(location());
+
+    RawstdUUIDString uuid_string;
+    rawstd_uuid_to_string(&id, &uuid_string);
+
+    std::string meta_path = get_target_meta_path(location_path, uuid_string);
+
+    // O_TRUNC would be wrong here regardless of sync_state carrying no
+    // size of its own: this file is fixed-size, and a short write must
+    // not leave a truncated, unparseable record behind.
+    int fd = co_await _queue.open(meta_path.c_str(), O_WRONLY | O_CLOEXEC, 0);
+
+    std::exception_ptr eptr;
+    try {
+        // See create()'s own comment: NUL-padded out to a fixed
+        // META_MAX_SIZE bytes so this file's own byte length stays fixed
+        // across every rewrite -- required here specifically, since this
+        // is an in-place overwrite without O_TRUNC (see above).
+        std::string encoded = meta_encode(sync_state);
+        std::array<char, META_MAX_SIZE> disk{};
+        memcpy(disk.data(), encoded.data(), encoded.size());
+
+        size_t rval =
+            co_await _queue.pwrite(fd, disk.data(), disk.size(), 0, true);
+        if (rval != disk.size()) {
+            RAWSTD_THROW_SYSTEM_ERROR(EIO);
+        }
+    } catch (...) {
+        eptr = std::current_exception();
+    }
+    co_await _queue.close(fd);
+    if (eptr) {
+        std::rethrow_exception(eptr);
+    }
 }
 
 rawstd::Task<RawstorLocationInfo> Backend::info() {

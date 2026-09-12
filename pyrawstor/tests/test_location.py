@@ -9,7 +9,7 @@ class TestLocation(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             location = rawstor.Location(f"file://{temp_dir}")
 
-            target = location.create(size=1 << 20)
+            target = location.create(size=1 << 20, mirrors=1)
 
             read_targets = list(location)
             self.assertEqual(read_targets, [target])
@@ -28,7 +28,7 @@ class TestLocation(unittest.TestCase):
 
             targets = []
             for _ in range(10):
-                target = location.create(size=1 << 20)
+                target = location.create(size=1 << 20, mirrors=1)
                 targets.append(target)
             targets.sort()
 
@@ -51,7 +51,7 @@ class TestLocation(unittest.TestCase):
             self.assertEqual(info.used, 0)
             self.assertGreater(info.total, 0)
 
-            target = location.create(size=1 << 20)
+            target = location.create(size=1 << 20, mirrors=1)
 
             info = location.info()
             self.assertEqual(info.used, 1 << 20)

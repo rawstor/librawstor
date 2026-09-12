@@ -4,6 +4,7 @@
 #include "location.hpp"
 #include "object.hpp"
 #include "opts.h"
+#include "target_internal.h"
 
 #include <rawstor/target.h>
 
@@ -99,11 +100,42 @@ rawstd::Task<void> create_one(
     co_await cn->close();
 }
 
+rawstd::Task<RawstorObjectSpec>
+spec_one(rawio::Queue& queue, const rawstd::URI& target) {
+    RawstdUUID id = uuid_from_target(target);
+    std::unique_ptr<rawstor::Connection> cn =
+        co_await rawstor::Connection::create(queue, target.parent(), 1);
+    RawstorObjectSpec ret = co_await cn->spec(id);
+    co_await cn->close();
+    co_return ret;
+}
+
+rawstd::Task<RawstorObjectMeta>
+meta_one(rawio::Queue& queue, const rawstd::URI& target) {
+    RawstdUUID id = uuid_from_target(target);
+    std::unique_ptr<rawstor::Connection> cn =
+        co_await rawstor::Connection::create(queue, target.parent(), 1);
+    RawstorObjectMeta ret = co_await cn->meta(id);
+    co_await cn->close();
+    co_return ret;
+}
+
 rawstd::Task<void> remove_one(rawio::Queue& queue, const rawstd::URI& target) {
     RawstdUUID id = uuid_from_target(target);
     std::unique_ptr<rawstor::Connection> cn =
         co_await rawstor::Connection::create(queue, target.parent(), 1);
     co_await cn->remove(id);
+    co_await cn->close();
+}
+
+rawstd::Task<void> set_sync_state_one(
+    rawio::Queue& queue, const rawstd::URI& target,
+    const RawstorObjectSyncState& sync_state
+) {
+    RawstdUUID id = uuid_from_target(target);
+    std::unique_ptr<rawstor::Connection> cn =
+        co_await rawstor::Connection::create(queue, target.parent(), 1);
+    co_await cn->set_sync_state(id, sync_state);
     co_await cn->close();
 }
 
@@ -119,33 +151,35 @@ remove_many(rawio::Queue& queue, const std::vector<rawstd::URI>& targets) {
     co_await rawstd::gather(std::move(tasks));
 }
 
-// One URI's worth of Target::open() work: stand up a Connection (its own
-// backend pool) against it and open() it against `object`. Factored out
-// so open() can fan these out across every URI via gather()-like
-// concurrency instead of awaiting them one at a time, by analogy with
-// Connection::create()'s own backend pool.
+// One URI's worth of Target::open() work: just stand up a Connection (its
+// own backend pool) against it -- SET_OBJECT (Connection::open()) is a
+// separate, later step (Target::open() itself), once quorum/spec/meta/
+// split-brain analysis has actually decided this member is being kept,
+// rather than telling a backend it's now serving this object only to
+// immediately close it again over a quorum or split-brain rejection.
+// Factored out so Target::open() can fan these out across every URI via
+// gather()-like concurrency instead of awaiting them one at a time, by
+// analogy with Connection::create()'s own backend pool.
 rawstd::Task<std::unique_ptr<rawstor::Connection>>
-open_one(rawio::Queue& queue, const rawstd::URI& uri, rawstor::Object* object) {
-    std::unique_ptr<rawstor::Connection> cn =
-        co_await rawstor::Connection::create(
-            queue, uri.parent(), rawstor_opts_sessions()
-        );
-    co_await cn->open(object);
-    co_return cn;
+connect_one(rawio::Queue& queue, const rawstd::URI& uri) {
+    co_return co_await rawstor::Connection::create(
+        queue, uri.parent(), rawstor_opts_sessions()
+    );
 }
 
 // C ABI adapter for rawstor_target_open(): mirrors the rest of the
 // target/location group's ssize_t result/data callback shape (negative on
 // error, zero on success -- there's nothing else to report here, since
 // the opened object itself is delivered through `object` instead, an
-// out-parameter written here immediately before `cb` runs) -- co_await's
-// the already-submitted Task, catches std::system_error, and writes the
-// newly opened object (or NULL on failure) to `*object`. A negative return
-// from the C callback throws -- see the non-coroutine launch_open_op()
-// wrapper below (not this function) for how that's actually delivered back
-// out.
+// out-parameter written here immediately before `cb` runs). Same shape
+// as launch_create_op_coro() and friends below: `t` is taken by value
+// into this coroutine's own frame, for the same reason (Target::open()
+// needs to be called from inside a coroutine that survives its own
+// await -- see the comment below), and the same four exception types
+// are caught for the same reason (preserving what the old synchronous
+// wrapper used to map to -ENOMEM/-EINVAL, now that the call is async).
 rawstd::DetachedTask launch_open_op_coro(
-    rawstd::Task<std::unique_ptr<rawstor::Object>> t, RawstorObject** object,
+    rawstor::Target t, rawio::Queue* queue, RawstorObject** object,
     int (*cb)(ssize_t result, void* data), void* data
 ) {
     ssize_t result = 0;
@@ -157,9 +191,17 @@ rawstd::DetachedTask launch_open_op_coro(
         // DetachedTask coroutine's try block -- chaining .release() on
         // the co_await'd temporary directly, without a named local,
         // sidesteps it.
-        *object = (co_await t).release();
+        *object = (co_await t.open(*queue)).release();
     } catch (const std::system_error& e) {
         result = -e.code().value();
+    } catch (const std::bad_alloc&) {
+        result = -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        result = -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        result = -EINVAL;
     }
     int res = cb(result, data);
     if (res < 0) {
@@ -167,36 +209,26 @@ rawstd::DetachedTask launch_open_op_coro(
     }
 }
 
-void launch_open_op(
-    rawstd::Task<std::unique_ptr<rawstor::Object>> t, RawstorObject** object,
-    int (*cb)(ssize_t result, void* data), void* data
-) {
-    launch_open_op_coro(std::move(t), object, cb, data);
-    rawstd::DetachedTask::rethrow_if_pending();
-}
-
-// C ABI adapters for rawstor_target_create()/_remove()/_spec(): `t` is
-// taken by value into the coroutine's own frame -- unlike
-// launch_open_op_coro() above (which is handed an already-submitted
-// Task<T>), Target::create()/remove()/spec() need to be *called* from
-// inside a coroutine that survives their own await (a coroutine method
-// call's `this` is a plain pointer into whatever object it was called
-// on, not lifetime-extended past that call the way a by-value coroutine
-// *parameter* is -- see co_target_open()'s own doc comment in ost/src/
-// client.cpp for the general hazard this avoids; Target::create()'s own
-// _uris[i] access right after its own `co_await tasks[i]` is a real,
-// confirmed instance of it, not just a theoretical one). Each reports a
-// result code via `cb` -- 0 on success, negative errno on failure
-// (mirroring every other error/result callback in this codebase, e.g.
-// close_trampoline() in ost/src/client.cpp) -- and catches every
-// exception type the old synchronous wrappers used to (not just
-// std::system_error, unlike launch_open_op_coro() above): those wrappers
-// mapped std::bad_alloc/std::exception/... to -ENOMEM/-EINVAL too, and
-// this is the only place left to preserve that once the call is async --
-// an uncaught exception here would instead leak out as an unrelated
-// DetachedTask exception on whatever rawio_wait() happens to resume this
-// next (see DetachedTask's own doc comment), not surface through `cb` at
-// all.
+// C ABI adapters for rawstor_target_create()/_remove()/_spec() (same
+// shape as launch_open_op_coro() above): `t` is taken by value into the
+// coroutine's own frame, since Target::create()/remove()/spec() need to
+// be *called* from inside a coroutine that survives their own await (a
+// coroutine method call's `this` is a plain pointer into whatever
+// object it was called on, not lifetime-extended past that call the way
+// a by-value coroutine *parameter* is -- see co_target_open()'s own doc
+// comment in ost/src/client.cpp for the general hazard this avoids;
+// Target::create()'s own _uris[i] access right after its own `co_await
+// tasks[i]` is a real, confirmed instance of it, not just a theoretical
+// one). Each reports a result code via `cb` -- 0 on success, negative
+// errno on failure (mirroring every other error/result callback in this
+// codebase, e.g. close_trampoline() in ost/src/client.cpp) -- and
+// catches every exception type the old synchronous wrappers used to:
+// those wrappers mapped std::bad_alloc/std::exception/... to
+// -ENOMEM/-EINVAL too, and this is the only place left to preserve that
+// once the call is async -- an uncaught exception here would instead
+// leak out as an unrelated DetachedTask exception on whatever
+// rawio_wait() happens to resume this next (see DetachedTask's own doc
+// comment), not surface through `cb` at all.
 rawstd::DetachedTask launch_create_op_coro(
     rawstor::Target t, rawio::Queue* queue, RawstorObjectSpec spec,
     int (*cb)(ssize_t result, void* data), void* data
@@ -221,14 +253,6 @@ rawstd::DetachedTask launch_create_op_coro(
     }
 }
 
-void launch_create_op(
-    rawstor::Target t, rawio::Queue* queue, const RawstorObjectSpec& spec,
-    int (*cb)(ssize_t result, void* data), void* data
-) {
-    launch_create_op_coro(std::move(t), queue, spec, cb, data);
-    rawstd::DetachedTask::rethrow_if_pending();
-}
-
 rawstd::DetachedTask launch_remove_op_coro(
     rawstor::Target t, rawio::Queue* queue,
     int (*cb)(ssize_t result, void* data), void* data
@@ -251,14 +275,6 @@ rawstd::DetachedTask launch_remove_op_coro(
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
-}
-
-void launch_remove_op(
-    rawstor::Target t, rawio::Queue* queue,
-    int (*cb)(ssize_t result, void* data), void* data
-) {
-    launch_remove_op_coro(std::move(t), queue, cb, data);
-    rawstd::DetachedTask::rethrow_if_pending();
 }
 
 // Same shape as launch_create_op_coro()/launch_remove_op_coro() above,
@@ -289,23 +305,72 @@ rawstd::DetachedTask launch_spec_op_coro(
     }
 }
 
-void launch_spec_op(
-    rawstor::Target t, rawio::Queue* queue, RawstorObjectSpec* spec,
+// Same shape as launch_spec_op_coro() above, for Target::meta().
+rawstd::DetachedTask launch_meta_op_coro(
+    rawstor::Target t, rawio::Queue* queue, RawstorObjectMeta* meta,
     int (*cb)(ssize_t result, void* data), void* data
 ) {
-    launch_spec_op_coro(std::move(t), queue, spec, cb, data);
-    rawstd::DetachedTask::rethrow_if_pending();
+    ssize_t result = 0;
+    try {
+        *meta = co_await t.meta(*queue);
+    } catch (const std::system_error& e) {
+        result = -e.code().value();
+    } catch (const std::bad_alloc&) {
+        result = -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        result = -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        result = -EINVAL;
+    }
+    int res = cb(result, data);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+}
+
+// Same shape as launch_remove_op_coro() above, for Target::set_sync_state():
+// no out-parameter, just a result.
+rawstd::DetachedTask launch_set_sync_state_op_coro(
+    rawstor::Target t, rawio::Queue* queue, RawstorObjectSyncState sync_state,
+    int (*cb)(ssize_t result, void* data), void* data
+) {
+    ssize_t result = 0;
+    try {
+        co_await t.set_sync_state(*queue, sync_state);
+    } catch (const std::system_error& e) {
+        result = -e.code().value();
+    } catch (const std::bad_alloc&) {
+        result = -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        result = -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        result = -EINVAL;
+    }
+    int res = cb(result, data);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
 }
 
 } // namespace
 
 namespace rawstor {
 
+// Every public method below used to re-run these three checks itself,
+// identically, before touching _uris -- validated once, here, instead:
+// _uris never changes after construction, so nothing past this point
+// can un-validate it.
 Target::Target(const std::vector<rawstd::URI>& uris) : _uris(uris) {
+    validate_not_empty(_uris);
+    validate_different_uris(_uris);
+    validate_same_uuid(_uris);
 }
 
 RawstdUUID Target::id() const {
-    validate_not_empty(_uris);
     return uuid_from_target(_uris.front());
 }
 
@@ -320,9 +385,27 @@ Location Target::location() const {
 
 rawstd::Task<void>
 Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) {
-    validate_not_empty(_uris);
-    validate_different_uris(_uris);
-    validate_same_uuid(_uris);
+    // Mandatory: the caller must always state how many copies it thinks
+    // it's creating, and it must match the target's own URI count exactly
+    // -- a mismatch is a caller bug (e.g. reusing a Spec read from a
+    // different target, or a miscounted/misconfigured URI list) worth
+    // catching here rather than silently creating something narrower or
+    // wider than intended. Each URI's own backend separately validates
+    // its own share is exactly 1 (Backend::_validate_spec()) -- this
+    // check is about the caller's stated *total* matching reality.
+    if (sp.mirrors != _uris.size()) {
+        rawstd_error(
+            "Spec mirrors (%u) does not match target's URI count (%zu)\n",
+            sp.mirrors, _uris.size()
+        );
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+
+    // Every URI is one copy: each one's own create() gets mirrors == 1
+    // (which every Backend::create() now validates, see
+    // Backend::_validate_spec()), not sp.mirrors itself (the target-wide
+    // URI count just validated above).
+    RawstorObjectSpec uri_sp{.size = sp.size, .mirrors = 1};
 
     // Every URI's CREATE goes out concurrently instead of one at a time.
     // This can't just gather() them, though: on failure, only the URIs
@@ -336,7 +419,7 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) {
     std::vector<rawstd::Task<void>> tasks;
     tasks.reserve(_uris.size());
     for (const auto& target : _uris) {
-        tasks.push_back(create_one(queue, target, sp));
+        tasks.push_back(create_one(queue, target, uri_sp));
     }
 
     std::vector<rawstd::URI> created;
@@ -371,27 +454,74 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) {
     }
 }
 
+// mirrors is just the URI count -- computed locally from `target`, no
+// backend involved (a backend's own spec()-reported mirrors, its local
+// share, is not summed here). `size` is identical on every copy, so this
+// only needs one to answer: URIs are tried in order, first reachable
+// wins, same fail-over tolerance as meta() below.
 rawstd::Task<RawstorObjectSpec> Target::spec(rawio::Queue& queue) {
-    /**
-     * TODO: Should we read all specs and compare them here?
-     */
-    validate_not_empty(_uris);
-    validate_different_uris(_uris);
-    validate_same_uuid(_uris);
+    int first_error = 0;
+    for (const auto& uri : _uris) {
+        try {
+            RawstorObjectSpec ret = co_await spec_one(queue, uri);
+            ret.mirrors = static_cast<unsigned int>(_uris.size());
+            co_return ret;
+        } catch (const std::system_error& e) {
+            rawstd_warning("Mirror member unreachable: %s\n", e.what());
+            if (first_error == 0) {
+                first_error = e.code().value();
+            }
+        }
+    }
 
-    RawstdUUID id = uuid_from_target(_uris.front());
-    std::unique_ptr<rawstor::Connection> cn =
-        co_await rawstor::Connection::create(queue, _uris.front().parent(), 1);
-    RawstorObjectSpec ret = co_await cn->spec(id);
-    co_await cn->close();
-    co_return ret;
+    RAWSTD_THROW_SYSTEM_ERROR(first_error ? first_error : ENOTCONN);
+}
+
+// URIs are tried in order; the first one that answers wins (docs/
+// mirroring.md's own description of rawstor_target_meta()). This is the
+// only mirror-state lookup available before the object is open, so it
+// must tolerate the same degraded membership an open would, rather than
+// failing outright just because _uris.front() happens to be unreachable.
+// spec.mirrors is overwritten with the local URI count on the way out,
+// same as spec() above -- the answering backend has no idea what the
+// target's own URI count is, so whatever it put there (if anything)
+// isn't meaningful.
+rawstd::Task<RawstorObjectMeta> Target::meta(rawio::Queue& queue) {
+    int first_error = 0;
+    for (const auto& uri : _uris) {
+        try {
+            RawstorObjectMeta ret = co_await meta_one(queue, uri);
+            ret.spec.mirrors = static_cast<unsigned int>(_uris.size());
+            co_return ret;
+        } catch (const std::system_error& e) {
+            rawstd_warning("Mirror member unreachable: %s\n", e.what());
+            if (first_error == 0) {
+                first_error = e.code().value();
+            }
+        }
+    }
+
+    RAWSTD_THROW_SYSTEM_ERROR(first_error ? first_error : ENOTCONN);
+}
+
+// Unlike meta() above, every URI is updated concurrently -- a mirror
+// consistency state change must land on every copy, not just the first
+// one (docs/mirroring.md). Every URI is still attempted even if an
+// earlier one fails (gather() never abandons a task still in flight, same
+// as remove() below), so a partial failure leaves as many copies updated
+// as possible rather than none.
+rawstd::Task<void> Target::set_sync_state(
+    rawio::Queue& queue, const RawstorObjectSyncState& sync_state
+) {
+    std::vector<rawstd::Task<void>> tasks;
+    tasks.reserve(_uris.size());
+    for (const auto& uri : _uris) {
+        tasks.push_back(set_sync_state_one(queue, uri, sync_state));
+    }
+    co_await rawstd::gather(std::move(tasks));
 }
 
 rawstd::Task<void> Target::remove(rawio::Queue& queue) {
-    validate_not_empty(_uris);
-    validate_different_uris(_uris);
-    validate_same_uuid(_uris);
-
     // Every URI's REMOVE goes out concurrently instead of one at a time;
     // every one is still attempted regardless of an earlier failure
     // (gather() never abandons a task still in flight). On failure,
@@ -400,55 +530,76 @@ rawstd::Task<void> Target::remove(rawio::Queue& queue) {
 }
 
 rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
-    validate_not_empty(_uris);
-    validate_different_uris(_uris);
-    validate_same_uuid(_uris);
-
-    // Object's constructor is Private-gated -- Target is a friend (see
-    // object.hpp's own doc comment on why), so this is the one place
-    // that actually builds one, by analogy with Connection::create():
-    // the heavy async work (standing up a Connection per URI and
-    // open()ing it) lives here, not in the constructor itself.
-    std::unique_ptr<Object> obj =
-        std::make_unique<Object>(Object::Private(), queue, *this);
+    // This coroutine suspends (co_await) below, so *this must outlive
+    // that suspension -- same requirement create()/remove()/spec()/
+    // meta()/set_sync_state() above already place on their own callers
+    // (Target::create()'s own _uris[i] access right after its own
+    // `co_await tasks[i]` is the confirmed instance of what going back
+    // on it looks like), not something this method defends against on
+    // its own: every caller already satisfies it by construction (the C
+    // ABI wrappers own their Target by value inside the same coroutine
+    // frame that calls this, launch_open_op_coro()'s own doc comment;
+    // tests/ pump this call to completion synchronously via run()).
+    RawstdUUID id = this->id();
 
     // Every URI's Connection goes out concurrently instead of one at a
-    // time.
-    std::vector<rawstd::Task<std::unique_ptr<Connection>>> tasks;
-    tasks.reserve(_uris.size());
+    // time -- just Connection::create(), kept in a plain local vector
+    // (parallel to `_uris`, not the eventual member list yet: that's
+    // assembled only once spec()/open() below have actually run -- see
+    // their own comments on why member count/identity isn't simply
+    // _uris.size()). connect_one()'s own comment on why SET_OBJECT is a
+    // separate, later step.
+    std::vector<rawstd::Task<std::unique_ptr<Connection>>> connect_tasks;
+    connect_tasks.reserve(_uris.size());
     for (const auto& uri : _uris) {
-        tasks.push_back(open_one(queue, uri, obj.get()));
+        connect_tasks.push_back(connect_one(queue, uri));
     }
 
-    // co_await isn't allowed inside a catch block, so each task's own
-    // failure is only recorded here; rolling back the ones that DID
-    // succeed happens just below, outside the handler -- same shape as
+    // A connect failure Connection::create() itself classifies as
+    // ordinary connectivity trouble (std::system_error, per its own
+    // contract) is tolerated: only recorded (the first one, in `eptr`)
+    // and logged, not raised immediately -- with more than one URI, an
+    // individual member's failure is fine as long as a strict majority
+    // ends up reachable (docs/mirroring.md, case F4), and with exactly
+    // one URI this still aborts below regardless, since that single
+    // failure alone already leaves `reachable == 0`. Anything else is
+    // unexpected (not a normal connectivity failure) and aborts
+    // outright, even if every other member succeeded -- `fatal` marks
+    // that. Either way, co_await isn't allowed inside a catch block, so
+    // a failure is only recorded here; closing the connections that DID
+    // succeed happens just below, outside the handler, same shape as
     // create()'s own rollback above.
-    std::vector<std::unique_ptr<Connection>> cns;
-    cns.reserve(_uris.size());
     std::exception_ptr eptr;
-    for (auto& task : tasks) {
+    bool fatal = false;
+    std::vector<std::unique_ptr<Connection>> cns(_uris.size());
+    size_t reachable = 0;
+    for (size_t i = 0; i < connect_tasks.size(); ++i) {
         try {
-            cns.push_back(co_await task);
+            cns[i] = co_await connect_tasks[i];
+            ++reachable;
+        } catch (const std::system_error& e) {
+            rawstd_warning("Mirror member unreachable: %s\n", e.what());
+            if (!eptr) {
+                eptr = std::current_exception();
+            }
         } catch (...) {
+            fatal = true;
             if (!eptr) {
                 eptr = std::current_exception();
             }
         }
     }
 
-    if (eptr) {
-        // Close every Connection that DID succeed gracefully via
-        // co_await right here, rather than leaving it for ~Object()'s
-        // own run()-pumped synchronous cleanup: this coroutine can
-        // itself be driven by an outer synchronous run() pump (e.g.
-        // tests/test_blk_backend.cpp's own direct run()-pumped call
-        // into us), and ~Object() reentering that same dispatch loop
-        // via a *nested* run() is undefined behavior (same hazard
-        // blk::Backend::close()'s own doc comment describes) --
-        // obj->_cns never gets populated in this path, so ~Object()
-        // has nothing left to do anyway.
+    // Something to report: `fatal` always qualifies; a merely tolerated
+    // system_error only does once nothing at all ended up reachable
+    // (the single-URI case included, per the comment above) -- rethrown
+    // as-is, whichever of the two it was, rather than reconstructed from
+    // a bare errno.
+    if (fatal || reachable == 0) {
         for (auto& cn : cns) {
+            if (!cn) {
+                continue;
+            }
             try {
                 co_await cn->close();
             } catch (const std::exception& e) {
@@ -458,8 +609,180 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
         std::rethrow_exception(eptr);
     }
 
-    obj->_cns = std::move(cns);
-    co_return obj;
+    // A real spec() answer, from whichever connected URI answers first --
+    // every reachable connection's own spec() goes out concurrently
+    // (submitted here, into a plain vector, same pattern as the connect
+    // phase above), rather than trying connections one at a time until
+    // one answers. Deliberately NOT rawstd::any(): its losing tasks are
+    // driven to completion by a *detached* background watcher (see its
+    // own doc comment), decoupled from this coroutine -- fine when a
+    // loser's resource is discarded afterward, but every connection
+    // here, winner or loser, is reused immediately below for its own
+    // SET_OBJECT+META -- a loser's own retry (e.g. invalidate_backend()
+    // reconnecting after a transient failure) could then still be
+    // running on that same Connection at the same time as the open-phase
+    // call below, a real, confirmed use-after-free once the loser's
+    // watcher and this coroutine's own cleanup raced to tear it down.
+    // Awaiting every task here, in order, sidesteps that entirely: by
+    // the time any connection is reused below, its own spec() task --
+    // win or lose -- has already fully settled. Every backend's own
+    // spec() always answers mirrors = 1, unconditionally (see e.g.
+    // ost::Backend::spec()'s own comment: if this one connection fails,
+    // exactly one replica is lost, regardless of what might sit behind
+    // it) -- so, same as Target::spec() itself, that's overwritten with
+    // _uris.size() below: today, the only source of truth this Target
+    // has for its own mirror count is its own URI list (a future
+    // mds:// scheme would change what Target::spec() itself does here,
+    // and this would follow it automatically once it does, rather than
+    // a second, independent copy of that logic).
+    std::vector<rawstd::Task<RawstorObjectSpec>> spec_tasks;
+    spec_tasks.reserve(reachable);
+    for (auto& cn : cns) {
+        if (cn) {
+            spec_tasks.push_back(cn->spec(id));
+        }
+    }
+
+    RawstorObjectSpec spec{};
+    bool got_spec = false;
+    for (auto& t : spec_tasks) {
+        try {
+            // A compiler ICE ("no suspend point info", see
+            // launch_open_op_coro()'s own comment for the same class of
+            // issue) hits when a fresh named local is direct-initialized
+            // from co_await inside a try block -- assigning into the
+            // already-declared `spec` (or, once it's already set,
+            // discarding the co_await'd temporary outright) sidesteps
+            // it.
+            if (got_spec) {
+                co_await t;
+            } else {
+                spec = co_await t;
+                got_spec = true;
+            }
+        } catch (const std::system_error& e) {
+            rawstd_warning("Mirror member spec unavailable: %s\n", e.what());
+        }
+    }
+
+    if (!got_spec) {
+        rawstd_error("No mirror member answered spec()\n");
+        for (auto& cn : cns) {
+            if (!cn) {
+                continue;
+            }
+            try {
+                co_await cn->close();
+            } catch (const std::exception& e) {
+                rawstd_warning("Target::open(): %s\n", e.what());
+            }
+        }
+        RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
+    }
+
+    spec.mirrors = static_cast<unsigned int>(_uris.size());
+
+    // The combined open (SET_OBJECT + this copy's own meta, see
+    // Connection::open()'s own comment) is the one operation guaranteed
+    // to actually touch the real store for every backend kind -- a
+    // blk-backed one's own _open(const RawstdUUID&) is otherwise lazy
+    // (see blk::Backend::_connect()'s own comment), so nothing before
+    // this genuinely proves a connected member's object actually exists.
+    // Concurrent across every connected member; a failure here demotes
+    // that one member to unreachable (same F1/F4 tolerance as a connect
+    // failure above), not a whole-open() failure by itself.
+    std::vector<size_t> open_indices;
+    std::vector<rawstd::Task<RawstorObjectMeta>> open_tasks;
+    open_indices.reserve(reachable);
+    open_tasks.reserve(reachable);
+    for (size_t i = 0; i < cns.size(); ++i) {
+        if (cns[i]) {
+            open_indices.push_back(i);
+            open_tasks.push_back(cns[i]->open(id));
+        }
+    }
+
+    std::vector<RawstorObjectMeta> metas(_uris.size());
+    std::vector<bool> opened(_uris.size(), false);
+    for (size_t i = 0; i < open_tasks.size(); ++i) {
+        size_t idx = open_indices[i];
+
+        // co_await isn't allowed inside a catch block, so the failure is
+        // only recorded here; closing the connection happens just below,
+        // outside the handler.
+        bool unavailable = false;
+        try {
+            metas[idx] = co_await open_tasks[i];
+        } catch (const std::system_error& e) {
+            rawstd_warning("Mirror member unavailable: %s\n", e.what());
+            unavailable = true;
+        }
+
+        if (!unavailable) {
+            opened[idx] = true;
+            continue;
+        }
+
+        try {
+            co_await cns[idx]->close();
+        } catch (const std::exception& e2) {
+            rawstd_warning("Target::open(): %s\n", e2.what());
+        }
+        cns[idx].reset();
+    }
+
+    // Members are assembled only now, with connect/spec/open all already
+    // settled -- one slot per URI (the only member identity this
+    // codebase knows today; see the spec() comment above on why that
+    // isn't necessarily the whole story forever). A local vector, not
+    // Object's own _members: no Object exists yet to hold it -- see the
+    // constructor's own doc comment on why that's now deferred to the
+    // very end. Slot indices must stay stable from here on (the
+    // reconnect probe addresses members by index): no reallocation after
+    // handing it to Object below.
+    std::vector<Object::Member> members;
+    members.reserve(_uris.size());
+    reachable = 0;
+    for (size_t i = 0; i < _uris.size(); ++i) {
+        // Object's own constructor (_reconcile_sync_set(), for mirrors
+        // >= 2) only ever downgrades a member (e.g. an interrupted
+        // resync makes it STALE) -- it never upgrades one from the
+        // STALE default, so a successfully opened member is marked
+        // IN_SYNC up front.
+        Object::MemberState state = opened[i] ? Object::MemberState::IN_SYNC
+                                              : Object::MemberState::STALE;
+        members.push_back(
+            Object::Member{
+                std::move(cns[i]), _uris[i], state, metas[i], opened[i]
+            }
+        );
+        if (opened[i]) {
+            ++reachable;
+        }
+    }
+
+    // reachable == 0 (not just below quorum) is the one precondition
+    // Object's own constructor can't check itself: a member with no
+    // Connection at all is meaningless to it even for the trivial
+    // mirrors == 1 case (there's nothing there to trust), unlike a real
+    // quorum shortfall, which _reconcile_sync_set() already checks on
+    // its own -- see it, and the constructor's own comment, for why a
+    // refusal there is safe to let unwind through it rather than
+    // checked redundantly here first.
+    if (reachable == 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
+    }
+
+    // Everything Object needs to exist is gathered -- deciding whether
+    // it's actually trustworthy enough to open from (the mirrors == 1
+    // shortcut, or _reconcile_sync_set()'s own quorum/split-brain/no-
+    // trusted-member analysis) is the constructor's own job from here --
+    // Target::open()'s only remaining friend access to Object is this
+    // one constructor call, not a stream of direct edits to an already-
+    // constructed Object's own internals.
+    co_return std::make_unique<Object>(
+        Object::Private(), queue, *this, std::move(spec), std::move(members)
+    );
 }
 
 } // namespace rawstor
@@ -470,9 +793,10 @@ int rawstor_target_create(
 ) noexcept {
     try {
         rawstor::Target t(rawstd::URI::uriv(target));
-        launch_create_op(
+        launch_create_op_coro(
             std::move(t), static_cast<rawio::Queue*>(queue), *spec, cb, data
         );
+        rawstd::DetachedTask::rethrow_if_pending();
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -493,9 +817,10 @@ int rawstor_target_remove(
 ) noexcept {
     try {
         rawstor::Target t(rawstd::URI::uriv(target));
-        launch_remove_op(
+        launch_remove_op_coro(
             std::move(t), static_cast<rawio::Queue*>(queue), cb, data
         );
+        rawstd::DetachedTask::rethrow_if_pending();
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -516,9 +841,60 @@ int rawstor_target_spec(
 ) noexcept {
     try {
         rawstor::Target t(rawstd::URI::uriv(target));
-        launch_spec_op(
+        launch_spec_op_coro(
             std::move(t), static_cast<rawio::Queue*>(queue), sp, cb, data
         );
+        rawstd::DetachedTask::rethrow_if_pending();
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+int rawstor_target_meta(
+    RawIOQueue* queue, const char* target, RawstorObjectMeta* meta,
+    int (*cb)(ssize_t result, void* data), void* data
+) noexcept {
+    try {
+        rawstor::Target t(rawstd::URI::uriv(target));
+        launch_meta_op_coro(
+            std::move(t), static_cast<rawio::Queue*>(queue), meta, cb, data
+        );
+        rawstd::DetachedTask::rethrow_if_pending();
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+int rawstor_target_set_sync_state(
+    RawIOQueue* queue, const char* target,
+    const RawstorObjectSyncState* sync_state,
+    int (*cb)(ssize_t result, void* data), void* data
+) noexcept {
+    try {
+        rawstor::Target t(rawstd::URI::uriv(target));
+        launch_set_sync_state_op_coro(
+            std::move(t), static_cast<rawio::Queue*>(queue), *sync_state, cb,
+            data
+        );
+        rawstd::DetachedTask::rethrow_if_pending();
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -539,9 +915,10 @@ int rawstor_target_open(
 ) noexcept {
     try {
         rawstor::Target t(rawstd::URI::uriv(target));
-        launch_open_op(
-            t.open(*static_cast<rawio::Queue*>(queue)), object, cb, data
+        launch_open_op_coro(
+            std::move(t), static_cast<rawio::Queue*>(queue), object, cb, data
         );
+        rawstd::DetachedTask::rethrow_if_pending();
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();

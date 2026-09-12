@@ -1,7 +1,6 @@
 #include "connection.hpp"
 
 #include "backend.hpp"
-#include "object.hpp"
 #include "opts.h"
 #include "telemetry.hpp"
 
@@ -142,8 +141,13 @@ namespace rawstor {
 
 Connection::Connection(Private, rawio::Queue& queue) :
     _queue(queue),
-    _object(nullptr),
-    _backend_index(0) {
+    _id(std::nullopt),
+    _backend_index(0),
+    _transparent_retry(true) {
+}
+
+void Connection::set_transparent_retry(bool enabled) noexcept {
+    _transparent_retry = enabled;
 }
 
 rawstd::Task<std::unique_ptr<Connection>> Connection::create(
@@ -208,7 +212,17 @@ rawstd::Task<T> Connection::_with_retry(
 
         try {
             if constexpr (std::is_void_v<T>) {
-                co_await (be.get()->*method)(args...);
+                // GCC 15 (at least 15.2.0) hits an internal compiler
+                // error ("in gimple_add_tmp_var, at gimplify.cc:834")
+                // gimplifying a bare `co_await (obj->*method)(args...);`
+                // statement-expression for the T = void instantiation of
+                // this template -- naming the Task<T> first, then
+                // co_await-ing that named local as its own statement,
+                // sidesteps it (same idea as launch_open_op_coro()'s own
+                // workaround for a different GCC/coroutine ICE, just a
+                // different shape of the fix).
+                rawstd::Task<T> t = (be.get()->*method)(args...);
+                co_await t;
                 RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "error = 0");
 
                 if (attempt > 0) {
@@ -219,7 +233,17 @@ rawstd::Task<T> Connection::_with_retry(
                 }
                 co_return;
             } else {
-                T result = co_await (be.get()->*method)(args...);
+                // Same GCC 15 coroutine ICE class as the T = void branch
+                // above, different shape: here it's "no suspend point
+                // info ... not supported by dump_decl" (see
+                // Target::open()'s spec-fetch loop for the same
+                // diagnostic) on a fresh named local direct-initialized
+                // from co_await inside a try block -- declaring `result`
+                // separately from the co_await that fills it in sidesteps
+                // it.
+                rawstd::Task<T> t = (be.get()->*method)(args...);
+                T result{};
+                result = co_await t;
                 RAWSTD_TRACE_EVENT_MESSAGE(
                     trace_event, "result = %zu, error = 0\n", result
                 );
@@ -253,7 +277,7 @@ rawstd::Task<T> Connection::_with_retry(
             }
 
             ++attempt;
-            if (attempt >= rawstor_opts_io_attempts()) {
+            if (!_transparent_retry || attempt >= rawstor_opts_io_attempts()) {
                 rawstd_error(
                     "IO %s: error on %s: %s; attempt %u of %u; failing...\n",
                     func_name, be->str().c_str(), std::strerror(error), attempt,
@@ -398,16 +422,13 @@ Connection::invalidate_backend(const std::shared_ptr<Backend>& be) {
             [&]() -> rawstd::Task<std::shared_ptr<Backend>> {
                 std::shared_ptr<Backend> backend =
                     co_await Backend::create(_queue, be->location());
-                // _object is only set once open() has run (see its own
-                // doc comment) -- a Connection used purely for metadata
+                // _id is only set once open() has run (see its own doc
+                // comment) -- a Connection used purely for metadata
                 // (list/create/remove/spec/info) never calls open(), so
-                // _object stays null and every Backend::set_object()
-                // implementation would dereference it unconditionally
-                // (e.g. blk::Backend::set_object() reading
-                // object->target()).
-                // Metadata ops don't need SET_OBJECT first, so just skip
-                // it here.
-                if (_object != nullptr) {
+                // _id stays unset and there's no id to set_object() this
+                // replacement backend to in the first place. Metadata
+                // ops don't need SET_OBJECT first, so just skip it here.
+                if (_id) {
                     // A backend that fails set_object() never makes it
                     // into _backends, so nothing else will ever close()
                     // it -- do that here before rethrowing, or it leaks
@@ -417,7 +438,14 @@ Connection::invalidate_backend(const std::shared_ptr<Backend>& be) {
                     // outside the handler.
                     std::exception_ptr eptr;
                     try {
-                        co_await backend->set_object(_object);
+                        co_await backend->set_object(*_id);
+                        // The result is unused -- nothing here needs it
+                        // -- this is purely to keep the same SET_OBJECT+
+                        // META wire round trip every set_object() caller
+                        // gets (see Backend::set_object()'s own doc
+                        // comment on why that's two separate calls now,
+                        // not one that folds meta() in on its own).
+                        co_await backend->meta(*_id);
                     } catch (...) {
                         eptr = std::current_exception();
                     }
@@ -582,18 +610,18 @@ rawstd::Task<RawstorLocationInfo> Connection::info() {
     }
 }
 
-rawstd::Task<void> Connection::open(Object* object) {
+rawstd::Task<RawstorObjectMeta> Connection::open(const RawstdUUID& id) {
     // Set before any of the set_object() calls below: on failure,
     // invalidate_backend() reconnects and set_object()s the replacement
     // itself, using this same member.
-    _object = object;
+    _id = id;
 
     // Every backend's SET_OBJECT goes out up front, so they run
     // concurrently.
     std::vector<rawstd::Task<void>> set_objects;
     set_objects.reserve(_backends.size());
     for (std::shared_ptr<Backend>& be : _backends) {
-        set_objects.push_back(be->set_object(object));
+        set_objects.push_back(be->set_object(id));
     }
 
     // co_await isn't allowed inside a catch block, so the failure is only
@@ -622,6 +650,12 @@ rawstd::Task<void> Connection::open(Object* object) {
         }
         co_await rawstd::gather(std::move(invalidates));
     }
+
+    // Every backend in the pool is the same object on the same
+    // location, so any one of them answers the same as the rest --
+    // set_object() itself doesn't return it (see its own doc comment),
+    // so this is always its own separate call, win or lose above.
+    co_return co_await meta(id);
 }
 
 rawstd::Task<void> Connection::close() {
@@ -643,7 +677,7 @@ rawstd::Task<void> Connection::close() {
     }
 
     _backends.clear();
-    _object = nullptr;
+    _id = std::nullopt;
 }
 
 rawstd::Task<size_t> Connection::pread(void* buf, size_t size, off_t offset) {
@@ -767,6 +801,42 @@ Connection::write_zeroes(size_t size, off_t offset, bool unmap, bool sync) {
         );
         _finish(t_call);
         co_return result;
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
+rawstd::Task<RawstorObjectMeta> Connection::meta(const RawstdUUID& id) {
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        RawstorObjectMeta result =
+            co_await _with_retry(func_name, trace_event, &Backend::meta, id);
+        _finish(t_call);
+        co_return result;
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
+rawstd::Task<void> Connection::set_sync_state(
+    const RawstdUUID& id, const RawstorObjectSyncState& sync_state
+) {
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        co_await _with_retry(
+            func_name, trace_event, &Backend::set_sync_state, id, sync_state
+        );
+        _finish(t_call);
     } catch (...) {
         _finish(t_call);
         throw;

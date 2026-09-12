@@ -26,9 +26,19 @@ Backend::Backend(Private, rawio::Queue& queue, const rawstd::URI& location) :
     _queue(queue) {
 }
 
+void Backend::_validate_spec(const RawstorObjectSpec& sp) {
+    if (sp.mirrors != 1) {
+        rawstd_error(
+            "Backend can only create objects with mirrors == 1, got %u\n",
+            sp.mirrors
+        );
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+}
+
 Backend::~Backend() {
     if (_fd != -1) {
-        rawstd_info("fd %d: Close\n", _fd);
+        rawstd_debug("fd %d: Close\n", _fd);
         if (::close(_fd) == -1) {
             int error = errno;
             errno = 0;
@@ -60,9 +70,9 @@ Backend::create(rawio::Queue& queue, const rawstd::URI& location) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
 
-    rawstd_info("Connecting to %s...\n", location.str().c_str());
+    rawstd_debug("Connecting to %s...\n", location.str().c_str());
     co_await backend->_connect();
-    rawstd_info("%s: Connected\n", backend->str().c_str());
+    rawstd_debug("%s: Connected\n", backend->str().c_str());
 
     co_return backend;
 }

@@ -36,6 +36,19 @@ public:
 
     rawstd::Task<RawstorObjectSpec> spec(const RawstdUUID& id) override;
 
+    // Mirror consistency metadata lives in a companion "<uuid>.meta" file
+    // next to the object's data file (see docs/mirroring.md) -- unlike
+    // spec(), which is always derived straight from the data file's own
+    // size, there is nowhere on a plain regular file to carve out space
+    // for this without touching object data. A copy with no ".meta" file
+    // (created before this existed) is not trusted as legacy-CLEAN: meta()
+    // fails ENOENT rather than fabricating a state.
+    rawstd::Task<RawstorObjectMeta> meta(const RawstdUUID& id) override;
+
+    rawstd::Task<void> set_sync_state(
+        const RawstdUUID& id, const RawstorObjectSyncState& sync_state
+    ) override;
+
     rawstd::Task<RawstorLocationInfo> info() override;
 };
 

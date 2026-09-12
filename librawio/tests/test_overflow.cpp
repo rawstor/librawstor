@@ -35,10 +35,28 @@ TEST_F(OverflowTest, push_three) {
         )
     );
 
+    /*
+     * The queue holds only two entries. The uring engine flushes the
+     * backlog to the kernel and retries, so the third read succeeds; the
+     * poll engine has a fixed pending list and fails with ENOBUFS.
+     */
     char client_buf3[5];
-    EXPECT_THROW(
-        _queue->read(_fd, client_buf3, sizeof(client_buf3)), std::system_error
-    );
+    size_t result3 = 0;
+    int error3 = 0;
+    rawstd::Task<void> t3;
+    if (rawio::Queue::engine_name() == "uring") {
+        EXPECT_NO_THROW(
+            t3 = rawio::tests::await_into(
+                _queue->read(_fd, client_buf3, sizeof(client_buf3)), &result3,
+                &error3
+            )
+        );
+    } else {
+        EXPECT_THROW(
+            _queue->read(_fd, client_buf3, sizeof(client_buf3)),
+            std::system_error
+        );
+    }
 
     EXPECT_NO_THROW(_wait_all());
 
@@ -47,6 +65,15 @@ TEST_F(OverflowTest, push_three) {
 
     EXPECT_EQ(result2, sizeof(client_buf2));
     EXPECT_EQ(strncmp(client_buf2, "data2", 5), 0);
+
+    if (rawio::Queue::engine_name() == "uring") {
+        EXPECT_EQ(result3, sizeof(client_buf3));
+        EXPECT_EQ(error3, 0);
+        EXPECT_EQ(strncmp(client_buf3, "data3", 5), 0);
+    } else {
+        EXPECT_EQ(result3, (size_t)0);
+        EXPECT_EQ(error3, 0);
+    }
 }
 
 TEST_F(OverflowTest, push_two_pop_one) {

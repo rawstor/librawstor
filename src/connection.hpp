@@ -1,7 +1,6 @@
 #ifndef RAWSTOR_CONNECTION_HPP
 #define RAWSTOR_CONNECTION_HPP
 
-#include "object.hpp"
 #include "telemetry.hpp"
 
 #include <rawstor/location.h>
@@ -15,6 +14,7 @@
 #include <rawstd/uuid.h>
 
 #include <memory>
+#include <optional>
 #include <type_traits>
 #include <unordered_set>
 #include <vector>
@@ -28,7 +28,11 @@ class Backend;
 class Connection final {
 private:
     rawio::Queue& _queue;
-    Object* _object;
+
+    // Set by open() (see its own doc comment) -- unset means this
+    // Connection is only ever used for metadata (list/create/remove/
+    // spec/info), which needs no SET_OBJECT step of its own.
+    std::optional<RawstdUUID> _id;
 
     std::vector<std::shared_ptr<Backend>> _backends;
     size_t _backend_index;
@@ -38,6 +42,15 @@ private:
     // why this is needed now that it's a real coroutine instead of a
     // fully-blocking call.
     std::unordered_set<Backend*> _reconnecting;
+
+    // When false, a retryable failure is not retried through
+    // invalidate_backend(): it surfaces to the caller immediately, same as
+    // a permanent rejection. A mirrored Object disables this once it is
+    // DIRTY -- a reconnected backend may be talking to a restarted server
+    // that lost acknowledged writes, so the caller must degrade the mirror
+    // arm instead of silently retrying through it (docs/mirroring.md, case
+    // F6).
+    bool _transparent_retry;
 
     // Every data-path/metadata method's terminal path -- success or final
     // failure -- runs through here exactly once; records the cross-retry
@@ -105,6 +118,8 @@ public:
     std::shared_ptr<Backend> get_next_backend();
     rawstd::Task<void> invalidate_backend(const std::shared_ptr<Backend>& be);
 
+    void set_transparent_retry(bool enabled) noexcept;
+
     const rawstd::URI* location() const noexcept;
 
     // Metadata operations, routed through the same backend pool and
@@ -122,6 +137,12 @@ public:
 
     rawstd::Task<RawstorObjectSpec> spec(const RawstdUUID& id);
 
+    rawstd::Task<RawstorObjectMeta> meta(const RawstdUUID& id);
+
+    rawstd::Task<void> set_sync_state(
+        const RawstdUUID& id, const RawstorObjectSyncState& sync_state
+    );
+
     rawstd::Task<RawstorLocationInfo> info();
 
     // set_object()s every backend in the pool create() populated --
@@ -131,8 +152,11 @@ public:
     // methods get from _with_retry() -- not literally _with_retry()
     // itself, since that picks one backend from the pool per call
     // (retrying against another on failure) rather than target every
-    // backend the way this needs to.
-    rawstd::Task<void> open(Object* object);
+    // backend the way this needs to. Returns a separate meta() read
+    // against whichever backend the pool now has (set_object() itself
+    // doesn't return it, see its own doc comment) -- spec.mirrors on it
+    // is this copy's own local share, not the target-wide count.
+    rawstd::Task<RawstorObjectMeta> open(const RawstdUUID& id);
 
     // Not called implicitly by ~Connection() (a coroutine can't run in a
     // destructor, and there's no other synchronous fallback here beyond
