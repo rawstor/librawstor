@@ -14,7 +14,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New `zfs://` storage backend: objects are ZFS zvols, provisioned via `zfs create`/`zfs destroy`.
 
 ### Changed
-- The packaged `rawstor-ost.service` systemd unit's backing store is now configurable via a `LOCATION` environment variable (default `file:///var/lib/rawstor`, unchanged) instead of being hardcoded in `ExecStart` — set it in `/etc/rawstor-ost.conf`, same as the unit's other overridable settings.
 - The packaged `rawstor-vhost@.service` systemd unit now defaults `RAWSTOR_WRITE_CACHE` to `on` instead of `off`: forcing a journal commit on every write (write-cache off) was measured to stall write round-trip times into the tens of seconds under concurrent load on a host whose backing filesystem commits slowly, while any modern guest kernel already issues an explicit flush when it needs durability.
 - `rawstor_object_pwrite()`/`rawstor_object_pwritev()` gained a `sync` parameter — when true, the write is durable on stable storage by the time the callback reports success. Breaking C API change; existing callers need to pass a `sync` argument (`false` preserves the old behavior).
 - `rawstor_object_spec()`/`_list()`/`_create()`/`_create_at()`/`_remove()`/`_open()`/`_id()`/`_location()` dropped in favor of the async `rawstor_target_spec()`/`_create()`/`_remove()`/`_open()`/`_id()`/`_location()` (`<rawstor/target.h>`) and `rawstor_location_list()`/`_create()` (`<rawstor/location.h>`) API, and `rawstor_object_close()` is now async too (queues and returns immediately, reporting completion via a new callback parameter that no longer carries the redundant `RawstorObject* object`). Breaking C API change; `<rawstor.h>` still pulls in every header.
@@ -28,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - `rawio::Queue::timeout_multishot()` (and its `rawio_timeout_multishot()` C API counterpart): the multishot counterpart of `timeout()`, firing once every given number of microseconds until canceled instead of resolving once.
+
+### Changed
+- The packaged `rawstor-ost.service` systemd unit's backing store is now configurable via a `LOCATION` environment variable (default `file:///var/lib/rawstor`, unchanged) instead of being hardcoded in `ExecStart` — set it in `/etc/rawstor-ost.conf`, same as the unit's other overridable settings.
 
 ### Fixed
 - `rawstor create`/`list`/`remove`/`show`/`info` against a multi-backend `LOCATION`/`TARGET` (comma-separated URIs) could intermittently fail with "No buffer space available": the CLI's internal I/O queue was sized for a single backend at a time.
