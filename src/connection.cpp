@@ -233,8 +233,17 @@ rawstd::Task<T> Connection::_with_retry(
                 }
                 co_return;
             } else {
+                // Same GCC 15 coroutine ICE class as the T = void branch
+                // above, different shape: here it's "no suspend point
+                // info ... not supported by dump_decl" (see
+                // Target::open()'s spec-fetch loop for the same
+                // diagnostic) on a fresh named local direct-initialized
+                // from co_await inside a try block -- declaring `result`
+                // separately from the co_await that fills it in sidesteps
+                // it.
                 rawstd::Task<T> t = (be.get()->*method)(args...);
-                T result = co_await t;
+                T result{};
+                result = co_await t;
                 RAWSTD_TRACE_EVENT_MESSAGE(
                     trace_event, "result = %zu, error = 0\n", result
                 );
