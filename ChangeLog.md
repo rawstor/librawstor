@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - `rawio::Queue::timeout_multishot()` (and its `rawio_timeout_multishot()` C API counterpart): the multishot counterpart of `timeout()`, firing once every given number of microseconds until canceled instead of resolving once.
 
+### Changed
+- The packaged `rawstor-ost.service` systemd unit's backing store is now configurable via a `LOCATION` environment variable (default `file:///var/lib/rawstor`, unchanged) instead of being hardcoded in `ExecStart` — set it in `/etc/rawstor-ost.conf`, same as the unit's other overridable settings.
+
 ### Fixed
 - `rawstor create`/`list`/`remove`/`show`/`info` against a multi-backend `LOCATION`/`TARGET` (comma-separated URIs) could intermittently fail with "No buffer space available": the CLI's internal I/O queue was sized for a single backend at a time.
 
