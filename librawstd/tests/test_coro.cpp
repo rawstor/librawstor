@@ -5,6 +5,7 @@
 #include <gtest/gtest.h>
 
 #include <coroutine>
+#include <limits>
 #include <stdexcept>
 #include <system_error>
 #include <type_traits>
@@ -631,6 +632,105 @@ TEST(CallbackStreamTest, tolerates_synchronous_completion_before_await) {
     }(&stream);
     EXPECT_TRUE(t.done());
     EXPECT_EQ(t.get(), 41);
+}
+
+rawstd::Task<void>
+wait_at_least(rawstd::Barrier& barrier, unsigned int target) {
+    co_await barrier.at_least(target);
+}
+
+TEST(BarrierTest, at_least_ready_immediately_when_already_reached) {
+    rawstd::Barrier b;
+    rawstd::Task<void> t = wait_at_least(b, 0);
+    EXPECT_TRUE(t.done());
+}
+
+TEST(BarrierTest, at_least_suspends_until_advance_reaches_target) {
+    rawstd::Barrier b;
+    rawstd::Task<void> t = wait_at_least(b, 1);
+    EXPECT_FALSE(t.done());
+    b.advance();
+    EXPECT_TRUE(t.done());
+}
+
+TEST(BarrierTest, advance_wakes_every_waiter_reached_at_once) {
+    rawstd::Barrier b;
+    rawstd::Task<void> t1 = wait_at_least(b, 1);
+    rawstd::Task<void> t2 = wait_at_least(b, 1);
+    EXPECT_FALSE(t1.done());
+    EXPECT_FALSE(t2.done());
+    b.advance();
+    EXPECT_TRUE(t1.done());
+    EXPECT_TRUE(t2.done());
+}
+
+TEST(BarrierTest, wakes_waiters_in_target_order) {
+    rawstd::Barrier b;
+    rawstd::Task<void> t1 = wait_at_least(b, 1);
+    rawstd::Task<void> t2 = wait_at_least(b, 2);
+    b.advance();
+    EXPECT_TRUE(t1.done());
+    EXPECT_FALSE(t2.done());
+    b.advance();
+    EXPECT_TRUE(t2.done());
+}
+
+// Regression test: a plain `value >= target` comparison breaks the
+// instant `value` wraps past UINT_MAX -- e.g. value = UINT_MAX - 1,
+// target = 1 reads as "already reached" under plain unsigned comparison
+// (UINT_MAX - 1 >= 1), even though the counter is nowhere near 1 in the
+// monotonic sense the caller means: it would take two more advance()s,
+// wrapping through 0, to actually get there.
+TEST(BarrierTest, at_least_tolerates_value_wraparound) {
+    rawstd::Barrier b(std::numeric_limits<unsigned int>::max() - 1);
+    rawstd::Task<void> t = wait_at_least(b, 1);
+    EXPECT_FALSE(t.done());
+
+    b.advance(); // value == UINT_MAX
+    EXPECT_FALSE(t.done());
+
+    b.advance(); // value wraps to 0
+    EXPECT_FALSE(t.done());
+
+    b.advance(); // value == 1: genuinely reached
+    EXPECT_TRUE(t.done());
+}
+
+rawstd::Task<void> settle_gate(rawstd::Gate& gate) {
+    co_await gate.settle();
+}
+
+TEST(GateTest, settle_ready_immediately_when_idle) {
+    rawstd::Gate g;
+    rawstd::Task<void> t = settle_gate(g);
+    EXPECT_TRUE(t.done());
+}
+
+TEST(GateTest, settle_suspends_while_running_then_wakes_on_end) {
+    rawstd::Gate g;
+    g.begin();
+    EXPECT_TRUE(g.running());
+
+    rawstd::Task<void> t = settle_gate(g);
+    EXPECT_FALSE(t.done());
+
+    g.end();
+    EXPECT_FALSE(g.running());
+    EXPECT_TRUE(t.done());
+}
+
+TEST(GateTest, wakes_every_settler_at_once) {
+    rawstd::Gate g;
+    g.begin();
+
+    rawstd::Task<void> t1 = settle_gate(g);
+    rawstd::Task<void> t2 = settle_gate(g);
+    EXPECT_FALSE(t1.done());
+    EXPECT_FALSE(t2.done());
+
+    g.end();
+    EXPECT_TRUE(t1.done());
+    EXPECT_TRUE(t2.done());
 }
 
 } // namespace
