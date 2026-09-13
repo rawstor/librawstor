@@ -53,6 +53,11 @@ const char* const lvm_config =
     "allocation{wipe_signatures_when_zeroing_new_lvs=0} "
     "report{time_format=\"%s\"}";
 
+// Prefix of the LVM tag this backend stores native per-copy mirror
+// metadata under (see blk::Backend::meta_encode()) -- e.g.
+// "rawstor.meta=version=1:state=0:epoch=0:...".
+const char* const rawstor_tag_prefix = "rawstor.meta=";
+
 // Suffix a staging LV carries between lvcreate and the lvrename that
 // reveals it under its real (UUID) name -- see Backend::create()'s own
 // doc comment for why. Never a valid UUID string, so list()'s
@@ -77,6 +82,42 @@ constexpr long staging_min_age_seconds = 300;
 // after the first sweep) orphans repeatedly would be pure waste.
 std::mutex swept_vgs_mutex;
 std::unordered_set<std::string> swept_vgs;
+
+std::string trim(const std::string& s) {
+    size_t begin = s.find_first_not_of(" \t\r\n");
+    if (begin == std::string::npos) {
+        return "";
+    }
+    size_t end = s.find_last_not_of(" \t\r\n");
+    return s.substr(begin, end - begin + 1);
+}
+
+// Finds a tag with the given prefix among a comma-separated LVM tag list
+// (as returned by `lvs -o lv_tags`) and returns the substring after the
+// prefix, up to the next comma or the end of the list. Returns an empty
+// string if no tag with that prefix is present.
+std::string find_tag(const std::string& tag_list, const std::string& prefix) {
+    std::string trimmed = trim(tag_list);
+
+    size_t pos = 0;
+    while (pos <= trimmed.size()) {
+        size_t comma = trimmed.find(',', pos);
+        size_t len =
+            comma == std::string::npos ? std::string::npos : comma - pos;
+        std::string tag = trim(trimmed.substr(pos, len));
+
+        if (tag.compare(0, prefix.size(), prefix) == 0) {
+            return tag.substr(prefix.size());
+        }
+
+        if (comma == std::string::npos) {
+            break;
+        }
+        pos = comma + 1;
+    }
+
+    return "";
+}
 
 std::string parse_vg_name(const rawstd::URI& location) {
     if (location.scheme() != "lvm") {
@@ -284,6 +325,8 @@ rawstd::Task<void> Backend::_cleanup_staging_lvs() {
 
 rawstd::Task<void>
 Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
+    _validate_spec(sp);
+
     if (sp.size == 0) {
         rawstd_error("lvm: object size must be positive\n");
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
@@ -340,6 +383,14 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
     char size_buf[32];
     snprintf(size_buf, sizeof(size_buf), "%" PRIu64 "b", sp.size);
 
+    // A fresh copy starts with sync_id 0: it has never been part of an
+    // established sync set (docs/mirroring.md). Set on the staging LV
+    // itself, carried across by lvrename() below, so there is never a
+    // window -- staged or revealed -- where the LV exists without one.
+    RawstorObjectSyncState sync_state{};
+    sync_state.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
+    std::string tag = std::string(rawstor_tag_prefix) + meta_encode(sync_state);
+
     rawstd_info(
         "lvm: creating LV %s in VG %s, size %s\n", uuid_str, _vg_name.c_str(),
         size_buf
@@ -363,8 +414,8 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
     // coroutine that's co_await-ed from within another coroutine -- naming
     // the vector first works around it.
     std::vector<std::string> create_argv = {
-        "lvcreate", "--config", lvm_config,   "--yes", "-L",
-        size_buf,   "-n",       staging_name, _vg_name
+        "lvcreate", "--config",   lvm_config, "--yes", "-L",    size_buf,
+        "-n",       staging_name, "--addtag", tag,     _vg_name
     };
     try {
         co_await rawstor::run_command(_queue, std::move(create_argv));
@@ -512,6 +563,100 @@ rawstd::Task<RawstorLocationInfo> Backend::info() {
     };
 
     co_return ret;
+}
+
+// Shared by meta()/set_sync_state() below: the current comma-separated tag
+// list on the LV at `path`, as reported by `lvs -o lv_tags`.
+rawstd::Task<std::string> Backend::_lv_tags(const std::string& path) {
+    std::vector<std::string> argv = {"lvs",      "--config",
+                                     lvm_config, "--reportformat",
+                                     "json",     "-o",
+                                     "lv_tags",  path};
+    std::string output;
+    try {
+        output = co_await rawstor::run_command_capture(_queue, std::move(argv));
+    } catch (const std::system_error& e) {
+        rawstd_error(
+            "lvm: failed to read tags of %s: %s\n", path.c_str(), e.what()
+        );
+        throw;
+    }
+
+    try {
+        nlohmann::json parsed = nlohmann::json::parse(output);
+        co_return parsed.at("report")
+            .at(0)
+            .at("lv")
+            .at(0)
+            .at("lv_tags")
+            .get<std::string>();
+    } catch (const std::exception& e) {
+        rawstd_error(
+            "lvm: failed to parse lvs JSON output for %s: %s\n", path.c_str(),
+            e.what()
+        );
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
+    }
+}
+
+rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
+    std::string path = _device_path(id);
+    std::string tags = co_await _lv_tags(path);
+    std::string tag = find_tag(tags, rawstor_tag_prefix);
+
+    // An empty/unrecorded tag means one was never recorded: an LV created
+    // before this feature, or by something else. Must not be trusted as
+    // CLEAN -- the caller treats any error here as "member stale, needs a
+    // resync" (docs/mirroring.md, case F10).
+    RawstorObjectSyncState sync_state;
+    try {
+        sync_state = meta_decode(tag);
+    } catch (const std::system_error&) {
+        rawstd_error("lvm: no recorded mirror state on %s\n", path.c_str());
+        RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
+    }
+
+    // The tag never carries size (see meta_encode()): merge in the
+    // LV's real, current size the same way spec() reports it, rather than
+    // trust a value that could go stale if the LV were ever resized
+    // outside rawstor.
+    RawstorObjectMeta ret{};
+    ret.spec = co_await spec(id);
+    ret.sync_state = sync_state;
+
+    co_return ret;
+}
+
+rawstd::Task<void> Backend::set_sync_state(
+    const RawstdUUID& id, const RawstorObjectSyncState& sync_state
+) {
+    std::string path = _device_path(id);
+    std::string new_tag =
+        std::string(rawstor_tag_prefix) + meta_encode(sync_state);
+
+    std::string tags = co_await _lv_tags(path);
+    std::string old_tag = find_tag(tags, rawstor_tag_prefix);
+
+    std::vector<std::string> argv = {"lvchange", "--config", lvm_config};
+    if (!old_tag.empty()) {
+        argv.push_back("--deltag");
+        argv.push_back(std::string(rawstor_tag_prefix) + old_tag);
+    }
+    argv.push_back("--addtag");
+    argv.push_back(new_tag);
+    argv.push_back(path);
+
+    try {
+        co_await rawstor::run_command(_queue, std::move(argv));
+    } catch (const std::system_error& e) {
+        rawstd_error(
+            "lvm: failed to set mirror state on %s: %s\n", path.c_str(),
+            e.what()
+        );
+        throw;
+    }
+
+    co_return;
 }
 
 } // namespace lvm
