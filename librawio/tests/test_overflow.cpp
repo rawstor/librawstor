@@ -40,11 +40,6 @@ TEST_F(OverflowTest, push_three) {
      * backlog to the kernel and retries, so the third read succeeds; the
      * poll engine has a fixed pending list and fails with ENOBUFS.
      */
-    /*
-     * The queue holds only two entries. The uring engine flushes the
-     * backlog to the kernel and retries, so the third read succeeds; the
-     * poll engine has a fixed pending list and fails with ENOBUFS.
-     */
     char client_buf3[5];
     size_t result3 = 0;
     int error3 = 0;
