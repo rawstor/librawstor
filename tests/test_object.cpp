@@ -18,6 +18,7 @@
 #include <gtest/gtest.h>
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -57,6 +58,27 @@ public:
     ThrottleOptsOverride& operator=(ThrottleOptsOverride&&) = delete;
 };
 
+// Waits for a value set on rawstor::tests::Server's own background thread
+// (server.hpp) -- unlike write_task.done()/flush_task.done(), nothing
+// about that thread's progress is itself a completion on `queue`. But
+// `queue` still needs pumping here regardless: Queue::wait_timeout()'s own
+// io_uring_submit_and_wait_timeout() call is what actually flushes a
+// previously-queued op's SQE to the kernel (see uring_queue.cpp) -- without
+// it, a write issued right before this call never leaves the socket for
+// the Server thread to read in the first place. A short timeout, its
+// (expected -- there's nothing of the client's own left to complete while
+// only the Server thread is still working) ETIME swallowed, keeps this
+// from blocking for `value`'s full budget on each spin.
+void wait_for_nonzero(rawio::Queue& queue, const std::atomic<uint16_t>& value) {
+    for (int i = 0; i < 5000 && value.load() == 0; ++i) {
+        try {
+            queue.wait_timeout(1);
+        } catch (const std::exception&) {
+        }
+    }
+    ASSERT_NE(value.load(), 0);
+}
+
 // Stands up a real file:// object for the test to drive Object::pwrite()/
 // flush() directly -- and inspect writes_in_flight()/flush()'s wait for it.
 std::unique_ptr<rawstor::Object>
@@ -70,31 +92,10 @@ open_object(rawio::Queue& queue, const rawstd::URI& location) {
 
     rawstor::Target target({rawstd::URI(location, uuid_string)});
 
-    RawstorObjectSpec spec{.size = 1u << 20};
+    RawstorObjectSpec spec{.size = 1u << 20, .mirrors = 1};
     run(queue, target.create(queue, spec));
 
     return run(queue, target.open(queue));
-}
-
-// Waits for a value set on rawstor::tests::Server's own background thread
-// (server.hpp) -- unlike write_task.done()/flush_task.done(), nothing
-// about that thread's progress is itself a completion on `queue`. But
-// `queue` still needs pumping here regardless: Queue::wait_timeout()'s own
-// io_uring_submit_and_wait_timeout() call is what actually flushes a
-// previously-queued op's SQE to the kernel -- without it, a write issued
-// right before this call never leaves the socket for the Server thread to
-// read in the first place. A short timeout, its (expected -- there's
-// nothing of the client's own left to complete while only the Server
-// thread is still working) ETIME swallowed, keeps this from blocking for
-// `value`'s full budget on each spin.
-void wait_for_nonzero(rawio::Queue& queue, const std::atomic<uint16_t>& value) {
-    for (int i = 0; i < 5000 && value.load() == 0; ++i) {
-        try {
-            queue.wait_timeout(1);
-        } catch (const std::exception&) {
-        }
-    }
-    ASSERT_NE(value.load(), 0);
 }
 
 } // namespace
@@ -301,19 +302,21 @@ TEST(ObjectTest, flush_does_not_resolve_on_write_completing_out_of_order) {
     rawstd::URI location("ost://127.0.0.1:8753");
     rawstor::Target target({rawstd::URI(location, uuid_string)});
 
-    {
-        rawstor::tests::Session s(server);
-        s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
-    }
-
-    RawstorObjectSpec spec{.size = 1ull << 20};
-    run(*queue, target.create(*queue, spec));
+    RawstorOSTFrameMetaPayload clean_meta = {
+        .size = 1ull << 20,
+        .epoch = 0,
+        .sync_id = 0,
+        .sync_id_history = {},
+        .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
+    };
 
     // Left open for the whole test -- see server.hpp's Session::~Session()
     // doc comment; closing it early would drop the connection Object is
     // about to hold onto for its writes/flush below.
     rawstor::tests::Session s(server);
-    s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+    s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 1);
+    s.cmd_set_object(RAWSTOR_MAGIC, 1, 0);
+    s.cmd_meta(RAWSTOR_MAGIC, 2, 0, clean_meta);
 
     std::unique_ptr<rawstor::Object> object = run(*queue, target.open(*queue));
 
@@ -332,9 +335,11 @@ TEST(ObjectTest, flush_does_not_resolve_on_write_completing_out_of_order) {
     ASSERT_FALSE(write_b.done());
 
     // Read each WRITE request's own cid straight off the wire instead of
-    // predicting it -- not something this test needs to (or should)
-    // hardcode. atomic because these are written on the Server's own
-    // background thread (server.hpp) and polled from this one below.
+    // predicting it -- it's whatever Backend::_cid_counter happens to be
+    // at that point (see ost_backend.hpp), not something this test needs
+    // to (or should) hardcode. atomic because these are written on the
+    // Server's own background thread (server.hpp) and polled from this
+    // one below.
     std::atomic<uint16_t> cid_a{0};
     std::atomic<uint16_t> cid_b{0};
     server.read(
@@ -369,7 +374,7 @@ TEST(ObjectTest, flush_does_not_resolve_on_write_completing_out_of_order) {
     // cid-matched OST response could produce on the wire.
     RawstorOSTFrameResponse write_b_response = {
         .head{.magic = RAWSTOR_MAGIC, .cmd = RAWSTOR_CMD_WRITE, .cid = cid_b},
-        .body = {.res = static_cast<int32_t>(payload_b.size()), .hash = 0},
+        .body = {.hash = 0, .res = static_cast<int32_t>(payload_b.size())},
     };
     server.write(
         "RAWSTOR_CMD_WRITE (B) >>>", &write_b_response, sizeof(write_b_response)
@@ -388,7 +393,7 @@ TEST(ObjectTest, flush_does_not_resolve_on_write_completing_out_of_order) {
     wait_for_nonzero(*queue, cid_a);
     RawstorOSTFrameResponse write_a_response = {
         .head{.magic = RAWSTOR_MAGIC, .cmd = RAWSTOR_CMD_WRITE, .cid = cid_a},
-        .body = {.res = static_cast<int32_t>(payload_a.size()), .hash = 0},
+        .body = {.hash = 0, .res = static_cast<int32_t>(payload_a.size())},
     };
     server.write(
         "RAWSTOR_CMD_WRITE (A) >>>", &write_a_response, sizeof(write_a_response)
@@ -420,7 +425,7 @@ TEST(ObjectTest, flush_does_not_resolve_on_write_completing_out_of_order) {
         .head{
             .magic = RAWSTOR_MAGIC, .cmd = RAWSTOR_CMD_FLUSH, .cid = cid_flush
         },
-        .body = {.res = 0, .hash = 0},
+        .body = {.hash = 0, .res = 0},
     };
     server.write(
         "RAWSTOR_CMD_FLUSH >>>", &flush_response, sizeof(flush_response)

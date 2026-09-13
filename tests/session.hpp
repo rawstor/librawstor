@@ -3,6 +3,7 @@
 
 #include <rawstor/location.h>
 #include <rawstor/object.h>
+#include <rawstor/protocol.h>
 #include <rawstor/target.h>
 
 #include <unistd.h>
@@ -37,9 +38,27 @@ public:
 
     void cmd_spec_request();
     void cmd_spec_response(
-        uint32_t magic, uint16_t cid, const RawstorObjectSpec& spec
+        uint32_t magic, uint16_t cid, int32_t res, uint64_t size,
+        unsigned int mirrors
     );
-    void cmd_spec(uint32_t magic, uint16_t cid, const RawstorObjectSpec& spec);
+    void cmd_spec(
+        uint32_t magic, uint16_t cid, int32_t res, uint64_t size,
+        unsigned int mirrors
+    );
+
+    void cmd_meta_request();
+    void cmd_meta_response(
+        uint32_t magic, uint16_t cid, int32_t res,
+        const RawstorOSTFrameMetaPayload& meta
+    );
+    void cmd_meta(
+        uint32_t magic, uint16_t cid, int32_t res,
+        const RawstorOSTFrameMetaPayload& meta
+    );
+
+    void cmd_set_state_request();
+    void cmd_set_state_response(uint32_t magic, uint16_t cid, int32_t res);
+    void cmd_set_state(uint32_t magic, uint16_t cid, int32_t res);
 
     void cmd_location_info_request();
     void cmd_location_info_response(
@@ -62,6 +81,7 @@ public:
         uint64_t hash
     );
     void cmd_read(uint32_t magic, uint16_t cid, const void* buf, size_t size);
+    void cmd_read_error(uint32_t magic, uint16_t cid, int32_t res);
 
     void cmd_write_request(size_t size);
     void cmd_write_response(uint32_t magic, uint16_t cid, int32_t res);
