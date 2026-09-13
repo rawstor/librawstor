@@ -1,8 +1,6 @@
 #ifndef RAWSTOR_BACKEND_HPP
 #define RAWSTOR_BACKEND_HPP
 
-#include "object.hpp"
-
 #include <rawio/queue.hpp>
 
 #include <rawstd/coro.hpp>
@@ -31,6 +29,16 @@ protected:
     rawio::Queue& _queue;
 
     inline void set_fd(int fd) noexcept { _fd = fd; }
+
+    // Every Backend maps one URI to exactly one copy -- Target::create()
+    // (the only place mirrors is validated against the target's own URI
+    // count, see its own comment) always passes 1 down to each URI's own
+    // create(). Throws EINVAL otherwise. Shared by every concrete
+    // Backend's own create(), including ost::Backend's (a relay
+    // connection is still one copy from its caller's point of view; what
+    // the remote server does with its own locations is a separate
+    // Target::create() on its own end).
+    static void _validate_spec(const RawstorObjectSpec& sp);
 
     // Establishes whatever this backend needs before any other call
     // below is usable (e.g. the OST backend's TCP connect + the start of
@@ -76,9 +84,32 @@ public:
 
     virtual rawstd::Task<RawstorObjectSpec> spec(const RawstdUUID& id) = 0;
 
+    // Mirror consistency identity for one copy (state/epoch/sync_id and its
+    // ancestry, see docs/mirroring.md) -- independent of spec() above,
+    // which only ever reports size. meta() reads it (returned alongside the
+    // copy's own current size); set_sync_state() persists a
+    // caller-supplied one durably before returning. Every concrete Backend
+    // must implement both -- no universal default exists (see
+    // blk::Backend's own doc comment on why this stays pure virtual there
+    // too).
+    virtual rawstd::Task<RawstorObjectMeta> meta(const RawstdUUID& id) = 0;
+
+    virtual rawstd::Task<void> set_sync_state(
+        const RawstdUUID& id, const RawstorObjectSyncState& sync_state
+    ) = 0;
+
     virtual rawstd::Task<RawstorLocationInfo> info() = 0;
 
-    virtual rawstd::Task<void> set_object(Object* object) = 0;
+    // Binds this Backend to `id` -- data-path methods below need this
+    // done first. Also the one operation that actually touches the real
+    // store for every backend kind (a blk-backed one's own
+    // _open(const RawstdUUID&) is lazy -- see blk::Backend's own doc
+    // comment -- so nothing before this call genuinely proves the
+    // object exists; an ost:// one's is a real wire round trip either
+    // way), so a caller that also needs this copy's own meta() (e.g.
+    // Connection::open(), see its own doc comment) calls it separately,
+    // afterward.
+    virtual rawstd::Task<void> set_object(const RawstdUUID& id) = 0;
 
     virtual rawstd::Task<size_t>
     pread(void* buf, size_t size, off_t offset) = 0;

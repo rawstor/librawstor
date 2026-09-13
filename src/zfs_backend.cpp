@@ -24,6 +24,8 @@
 
 namespace {
 
+const char* const rawstor_property = "rawstor:meta";
+
 std::string parse_parent_dataset(const rawstd::URI& location) {
     if (location.scheme() != "zfs") {
         rawstd_error("Unexpected URI scheme: %s\n", location.str().c_str());
@@ -56,6 +58,12 @@ std::string Backend::_device_path(const RawstdUUID& id) const {
     std::ostringstream oss;
     oss << "/dev/zvol/" << _parent_dataset << "/" << uuid_str;
     return oss.str();
+}
+
+std::string Backend::_dataset(const RawstdUUID& id) const {
+    RawstdUUIDString uuid_str;
+    rawstd_uuid_to_string(&id, &uuid_str);
+    return _parent_dataset + "/" + uuid_str;
 }
 
 rawstd::Task<void> Backend::_wait_for_blockdev(
@@ -177,6 +185,8 @@ rawstd::Task<void> Backend::list(
 
 rawstd::Task<void>
 Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
+    _validate_spec(sp);
+
     // zfs-create(8) rejects volume sizes that are not a multiple of
     // volblocksize (16 KiB by default, 8 KiB on older OpenZFS), so round
     // the requested size up front.
@@ -217,6 +227,15 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
     char size_buf[32];
     snprintf(size_buf, sizeof(size_buf), "%" PRIu64, size);
 
+    // A fresh copy starts with sync_id 0: it has never been part of an
+    // established sync set (docs/mirroring.md). Setting the property in
+    // the same command as creation means there is never a window where
+    // the zvol exists without one.
+    RawstorObjectSyncState sync_state{};
+    sync_state.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
+    std::string prop =
+        std::string(rawstor_property) + "=" + meta_encode(sync_state);
+
     rawstd_info(
         "zfs: creating zvol %s, size %s bytes\n", dataset.c_str(), size_buf
     );
@@ -225,7 +244,8 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
     // argument is brace-initialized directly at the call site of a nested
     // coroutine that's co_await-ed from within another coroutine -- naming
     // the vector first works around it.
-    std::vector<std::string> argv = {"zfs", "create", "-V", size_buf, dataset};
+    std::vector<std::string> argv = {"zfs", "create", "-V",   size_buf,
+                                     "-o",  prop,     dataset};
     try {
         co_await rawstor::run_command(_queue, std::move(argv));
         co_await _wait_for_blockdev(_device_path(id), /*want_present=*/true);
@@ -305,6 +325,72 @@ rawstd::Task<RawstorLocationInfo> Backend::info() {
     };
 
     co_return ret;
+}
+
+rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
+    std::string dataset = _dataset(id);
+
+    std::vector<std::string> argv = {"zfs",  "get",   "-H",
+                                     "-o",   "value", rawstor_property,
+                                     dataset};
+    std::string output;
+    try {
+        output = co_await rawstor::run_command_capture(_queue, std::move(argv));
+    } catch (const std::system_error& e) {
+        rawstd_error(
+            "zfs: failed to read mirror state of %s: %s\n", dataset.c_str(),
+            e.what()
+        );
+        throw;
+    }
+
+    while (!output.empty() &&
+           (output.back() == '\n' || output.back() == '\r')) {
+        output.pop_back();
+    }
+
+    // "-" (or an empty value) means the property was never set: a zvol
+    // created before this feature, or by something else. Must not be
+    // trusted as CLEAN -- the caller treats any error here as "member
+    // stale, needs a resync" (docs/mirroring.md, case F10).
+    RawstorObjectSyncState sync_state;
+    try {
+        sync_state = meta_decode(output);
+    } catch (const std::system_error&) {
+        rawstd_error("zfs: no recorded mirror state on %s\n", dataset.c_str());
+        RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
+    }
+
+    // The property never carries size (see meta_encode()): merge in
+    // the zvol's real, current size the same way spec() reports it, rather
+    // than trust a value that could go stale if the zvol were ever resized
+    // outside rawstor.
+    RawstorObjectMeta ret{};
+    ret.spec = co_await spec(id);
+    ret.sync_state = sync_state;
+
+    co_return ret;
+}
+
+rawstd::Task<void> Backend::set_sync_state(
+    const RawstdUUID& id, const RawstorObjectSyncState& sync_state
+) {
+    std::string dataset = _dataset(id);
+    std::string prop =
+        std::string(rawstor_property) + "=" + meta_encode(sync_state);
+
+    std::vector<std::string> argv = {"zfs", "set", prop, dataset};
+    try {
+        co_await rawstor::run_command(_queue, std::move(argv));
+    } catch (const std::system_error& e) {
+        rawstd_error(
+            "zfs: failed to set mirror state on %s: %s\n", dataset.c_str(),
+            e.what()
+        );
+        throw;
+    }
+
+    co_return;
 }
 
 } // namespace zfs
