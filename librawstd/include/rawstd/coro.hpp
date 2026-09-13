@@ -4,6 +4,7 @@
 #include <rawstd/gpp.hpp>
 
 #include <coroutine>
+#include <deque>
 #include <exception>
 #include <memory>
 #include <optional>
@@ -807,6 +808,109 @@ public:
         if (_h) {
             std::exchange(_h, {}).resume();
         }
+    }
+};
+
+/**
+ * A monotonically increasing counter coroutines can wait on: `co_await
+ * at_least(target)` suspends unless the counter has already reached
+ * `target`, resumed once `advance()` brings it there. Waiters wake in
+ * target order as `advance()` passes them -- every caller must register a
+ * target no smaller than any earlier, still-pending wait's own target
+ * (true of every current use: a fresh wait's target only ever grows from
+ * wherever the counter is right now), since `advance()`'s drain only ever
+ * looks at the front of the queue.
+ *
+ * `value()`/targets wrap like any other `unsigned int` -- `_reached()`
+ * below tolerates one such wraparound (RFC 1982-style signed-difference
+ * comparison) rather than requiring the counter to somehow never
+ * overflow. This only gives the right answer as long as no two targets
+ * alive at once are ever more than UINT_MAX/2 apart, true of every
+ * current use (the gap is always some bounded "how many are currently
+ * outstanding" count, nowhere near that).
+ */
+class Barrier final {
+private:
+    unsigned int _value;
+    std::deque<std::pair<unsigned int, std::coroutine_handle<>>> _waiters;
+
+    static bool _reached(unsigned int value, unsigned int target) noexcept {
+        return static_cast<int>(value - target) >= 0;
+    }
+
+public:
+    Barrier() noexcept : _value(0) {}
+
+    explicit Barrier(unsigned int initial) noexcept : _value(initial) {}
+
+    unsigned int value() const noexcept { return _value; }
+
+    class Awaiter final {
+    private:
+        unsigned int _target;
+        Barrier& _barrier;
+
+    public:
+        Awaiter(unsigned int target, Barrier& barrier) noexcept :
+            _target(target),
+            _barrier(barrier) {}
+
+        bool await_ready() const noexcept {
+            return Barrier::_reached(_barrier._value, _target);
+        }
+
+        void await_suspend(std::coroutine_handle<> h) {
+            _barrier._waiters.push_back({_target, h});
+        }
+
+        void await_resume() const noexcept {}
+    };
+
+    // Suspends unless the counter has already reached `target`.
+    Awaiter at_least(unsigned int target) noexcept {
+        return Awaiter(target, *this);
+    }
+
+    // Bumps the counter by one and resumes every waiter whose target has
+    // now been reached, in order.
+    void advance() noexcept {
+        ++_value;
+        while (!_waiters.empty() && _reached(_value, _waiters.front().first)) {
+            std::coroutine_handle<> h = _waiters.front().second;
+            _waiters.pop_front();
+            h.resume();
+        }
+    }
+};
+
+/**
+ * A single-flight async gate, built on Barrier's own parity: an even
+ * counter value means idle, odd means a section is in flight. `co_await
+ * settle()` returns immediately once idle, otherwise waits for the
+ * in-flight section to end. `begin()`/`end()` bracket that section --
+ * the caller is responsible for not calling `begin()` while already
+ * `running()` (Gate has no acquire/release queuing of its own; it only
+ * tracks whether one section is running and wakes everyone parked in
+ * settle() once it ends).
+ */
+class Gate final {
+private:
+    Barrier _barrier;
+
+public:
+    bool running() const noexcept { return _barrier.value() & 1u; }
+
+    // Marks the gate as running. The caller must ensure running() is
+    // false first (typically by having just settle()d).
+    void begin() noexcept { _barrier.advance(); }
+
+    // Marks the gate as idle again and resumes everyone parked in
+    // settle().
+    void end() noexcept { _barrier.advance(); }
+
+    Barrier::Awaiter settle() noexcept {
+        unsigned int v = _barrier.value();
+        return _barrier.at_least((v & 1u) ? v + 1 : v);
     }
 };
 
