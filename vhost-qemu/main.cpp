@@ -4,6 +4,8 @@
 
 #include <rawstor.h>
 
+#include <rawstd/logging.hpp>
+
 #include <getopt.h>
 #include <signal.h>
 
@@ -63,6 +65,12 @@ void server(
     const std::string& socket_path
 ) {
     rawstor::vhost::Server s(queue_size, target, socket_path);
+    // Not any earlier: rawstd_info() needs the logging mutex
+    // rawstor_initialize() sets up, and that only happens inside Server's
+    // own constructor above (see server.cpp), not here in main.cpp.
+    rawstd_info(
+        "Rawstor VHOST (qemu libvhost-user backend) %s\n", PACKAGE_VERSION
+    );
     s.loop();
 }
 
