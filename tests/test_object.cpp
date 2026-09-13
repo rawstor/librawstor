@@ -1,5 +1,7 @@
 #include "object.hpp"
 #include "opts.h"
+#include "server.hpp"
+#include "session.hpp"
 #include "target.hpp"
 #include "tmp_dir.hpp"
 
@@ -10,12 +12,16 @@
 #include <rawstd/uuid.h>
 
 #include <rawstor/object.h>
+#include <rawstor/protocol.h>
 #include <rawstor/rawstor.h>
 
 #include <gtest/gtest.h>
 
+#include <atomic>
+#include <cstdint>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -68,6 +74,27 @@ open_object(rawio::Queue& queue, const rawstd::URI& location) {
     run(queue, target.create(queue, spec));
 
     return run(queue, target.open(queue));
+}
+
+// Waits for a value set on rawstor::tests::Server's own background thread
+// (server.hpp) -- unlike write_task.done()/flush_task.done(), nothing
+// about that thread's progress is itself a completion on `queue`. But
+// `queue` still needs pumping here regardless: Queue::wait_timeout()'s own
+// io_uring_submit_and_wait_timeout() call is what actually flushes a
+// previously-queued op's SQE to the kernel -- without it, a write issued
+// right before this call never leaves the socket for the Server thread to
+// read in the first place. A short timeout, its (expected -- there's
+// nothing of the client's own left to complete while only the Server
+// thread is still working) ETIME swallowed, keeps this from blocking for
+// `value`'s full budget on each spin.
+void wait_for_nonzero(rawio::Queue& queue, const std::atomic<uint16_t>& value) {
+    for (int i = 0; i < 5000 && value.load() == 0; ++i) {
+        try {
+            queue.wait_timeout(1);
+        } catch (const std::exception&) {
+        }
+    }
+    ASSERT_NE(value.load(), 0);
 }
 
 } // namespace
@@ -251,4 +278,156 @@ TEST(ObjectTest, close_waits_for_writes_issued_before_it) {
 
     EXPECT_EQ(write_task.get(), payload.size());
     close_task.get();
+}
+
+// Regression for the bug _write_finished()'s own doc comment describes:
+// flush() must keep waiting for the specific write it was promised
+// (write A, issued before it), not resolve just because *some* write
+// completed. A plain completion count can't tell those apart; only a
+// real network connection can produce genuine out-of-order completion
+// deterministically enough to test it (real file:// I/O timing can't be
+// controlled this precisely) -- so this drives an ost:// object over a
+// scripted rawstor::tests::Server connection and answers write B's
+// (issued after flush()) wire request before write A's, exactly as a
+// real OST server answering out of cid order could.
+TEST(ObjectTest, flush_does_not_resolve_on_write_completing_out_of_order) {
+    rawstor::tests::Server server(8753, 256);
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(256);
+
+    RawstdUUID id;
+    ASSERT_EQ(rawstd_uuid7_init(&id), 0);
+    RawstdUUIDString uuid_string;
+    rawstd_uuid_to_string(&id, &uuid_string);
+    rawstd::URI location("ost://127.0.0.1:8753");
+    rawstor::Target target({rawstd::URI(location, uuid_string)});
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
+    }
+
+    RawstorObjectSpec spec{.size = 1ull << 20};
+    run(*queue, target.create(*queue, spec));
+
+    // Left open for the whole test -- see server.hpp's Session::~Session()
+    // doc comment; closing it early would drop the connection Object is
+    // about to hold onto for its writes/flush below.
+    rawstor::tests::Session s(server);
+    s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+
+    std::unique_ptr<rawstor::Object> object = run(*queue, target.open(*queue));
+
+    std::string payload_a = "write-a-";
+    std::string payload_b = "write-b-";
+
+    rawstd::Task<size_t> write_a =
+        object->pwrite(payload_a.data(), payload_a.size(), 0, false);
+    ASSERT_FALSE(write_a.done());
+
+    rawstd::Task<void> flush_task = object->flush();
+
+    rawstd::Task<size_t> write_b = object->pwrite(
+        payload_b.data(), payload_b.size(), payload_a.size(), false
+    );
+    ASSERT_FALSE(write_b.done());
+
+    // Read each WRITE request's own cid straight off the wire instead of
+    // predicting it -- not something this test needs to (or should)
+    // hardcode. atomic because these are written on the Server's own
+    // background thread (server.hpp) and polled from this one below.
+    std::atomic<uint16_t> cid_a{0};
+    std::atomic<uint16_t> cid_b{0};
+    server.read(
+        "WRITE A head <<<", sizeof(RawstorOSTFrameHead),
+        [&cid_a](const void* buf) {
+            cid_a = static_cast<const RawstorOSTFrameHead*>(buf)->cid;
+        }
+    );
+    server.read(
+        "WRITE A rest <<<",
+        sizeof(RawstorOSTFrameIO) - sizeof(RawstorOSTFrameHead) +
+            payload_a.size(),
+        [](const void*) {}
+    );
+    server.read(
+        "WRITE B head <<<", sizeof(RawstorOSTFrameHead),
+        [&cid_b](const void* buf) {
+            cid_b = static_cast<const RawstorOSTFrameHead*>(buf)->cid;
+        }
+    );
+    server.read(
+        "WRITE B rest <<<",
+        sizeof(RawstorOSTFrameIO) - sizeof(RawstorOSTFrameHead) +
+            payload_b.size(),
+        [](const void*) {}
+    );
+
+    wait_for_nonzero(*queue, cid_b);
+
+    // Answer write B -- the one flush() was never promised to wait for --
+    // before write A, forcing the exact out-of-order completion a real
+    // cid-matched OST response could produce on the wire.
+    RawstorOSTFrameResponse write_b_response = {
+        .head{.magic = RAWSTOR_MAGIC, .cmd = RAWSTOR_CMD_WRITE, .cid = cid_b},
+        .body = {.res = static_cast<int32_t>(payload_b.size()), .hash = 0},
+    };
+    server.write(
+        "RAWSTOR_CMD_WRITE (B) >>>", &write_b_response, sizeof(write_b_response)
+    );
+
+    while (!write_b.done()) {
+        queue->wait_timeout(rawstor_opts_tcp_user_timeout());
+    }
+    EXPECT_EQ(write_b.get(), payload_b.size());
+
+    // B completing early must not be mistaken for A's completion: with
+    // the old plain-count tracking, this is exactly where flush() would
+    // have (incorrectly) already resolved.
+    EXPECT_FALSE(flush_task.done());
+
+    wait_for_nonzero(*queue, cid_a);
+    RawstorOSTFrameResponse write_a_response = {
+        .head{.magic = RAWSTOR_MAGIC, .cmd = RAWSTOR_CMD_WRITE, .cid = cid_a},
+        .body = {.res = static_cast<int32_t>(payload_a.size()), .hash = 0},
+    };
+    server.write(
+        "RAWSTOR_CMD_WRITE (A) >>>", &write_a_response, sizeof(write_a_response)
+    );
+
+    while (!write_a.done()) {
+        queue->wait_timeout(rawstor_opts_tcp_user_timeout());
+    }
+    EXPECT_EQ(write_a.get(), payload_a.size());
+
+    // Only now should flush() have moved on to its own wire-level FLUSH
+    // (see Object::flush()'s own comment: it waits for the barrier first).
+    std::atomic<uint16_t> cid_flush{0};
+    server.read(
+        "FLUSH head <<<", sizeof(RawstorOSTFrameHead),
+        [&cid_flush](const void* buf) {
+            cid_flush = static_cast<const RawstorOSTFrameHead*>(buf)->cid;
+        }
+    );
+    server.read(
+        "FLUSH rest <<<",
+        sizeof(RawstorOSTFrameBasic) - sizeof(RawstorOSTFrameHead),
+        [](const void*) {}
+    );
+
+    wait_for_nonzero(*queue, cid_flush);
+
+    RawstorOSTFrameResponse flush_response = {
+        .head{
+            .magic = RAWSTOR_MAGIC, .cmd = RAWSTOR_CMD_FLUSH, .cid = cid_flush
+        },
+        .body = {.res = 0, .hash = 0},
+    };
+    server.write(
+        "RAWSTOR_CMD_FLUSH >>>", &flush_response, sizeof(flush_response)
+    );
+
+    while (!flush_task.done()) {
+        queue->wait_timeout(rawstor_opts_tcp_user_timeout());
+    }
+    flush_task.get();
 }
