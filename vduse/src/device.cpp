@@ -362,6 +362,8 @@ Device::Device(
         for (auto& vq : _vqs) {
             vq.start(target, queue_size);
         }
+
+        rawstd_info("Waiting for connection on %s\n", dev_path.c_str());
     } catch (...) {
         for (auto& vq : _vqs) {
             if (vq.running()) {
@@ -523,8 +525,10 @@ void Device::dispatch_control(
 
     case VDUSE_SET_STATUS:
         if (req.s.status & VIRTIO_CONFIG_S_DRIVER_OK) {
+            rawstd_info("Client connected: %s\n", _name_buf);
             _start_dataplane();
         } else if (req.s.status == 0) {
+            rawstd_info("Client disconnected: %s\n", _name_buf);
             _stop_dataplane();
         }
         resp.result = VDUSE_REQ_RESULT_OK;

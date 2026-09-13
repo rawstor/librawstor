@@ -865,6 +865,7 @@ rawstd::DetachedTask dispatch_loop(
         if (result == 0) {
             // Front-end closed the connection at a message boundary: a
             // normal disconnect, not a malformed request.
+            rawstd_info("Client disconnected: fd=%d\n", fd);
             done = true;
             co_return;
         }

@@ -159,6 +159,8 @@ void Server::loop() {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 
+    rawstd_info("Client connected: fd=%d\n", fd);
+
     Device device(
         _queue_size, _num_queues, _target, fd, _write_cache_enabled, _wake_fd
     );

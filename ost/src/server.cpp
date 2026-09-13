@@ -179,6 +179,7 @@ rawstd::Task<void> Server::_add_client(int fd) {
         std::rethrow_exception(error);
     }
 
+    rawstd_info("Client connected: fd=%d\n", fd);
     _clients.emplace(fd, std::move(client));
 }
 
@@ -187,6 +188,7 @@ rawstd::Task<void> Server::del_client(int fd) {
     if (it == _clients.end()) {
         co_return;
     }
+    rawstd_info("Client disconnected: fd=%d\n", fd);
     std::shared_ptr<Client> client = std::move(it->second);
     _clients.erase(it);
 
