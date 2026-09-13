@@ -145,7 +145,7 @@ TEST(OstClientTest, simple_success) {
     ASSERT_EQ(rawstd_uuid7_init(&id), 0);
 
     // ALLOCATE: creates the object file:// will open next.
-    client.send_allocate(id, 4096);
+    client.send_allocate(id, 4096, 1);
     ASSERT_TRUE(pump_until(queue, [&] {
         return client.bytes_available() >= sizeof(RawstorOSTFrameResponse);
     }));
@@ -201,7 +201,7 @@ TEST(OstClientTest, discard_and_write_zeroes) {
     ASSERT_EQ(rawstd_uuid7_init(&id), 0);
 
     // ALLOCATE: creates the object file:// will open next.
-    client.send_allocate(id, 4096);
+    client.send_allocate(id, 4096, 1);
     ASSERT_TRUE(pump_until(queue, [&] {
         return client.bytes_available() >= sizeof(RawstorOSTFrameResponse);
     }));
@@ -285,7 +285,7 @@ TEST(OstClientTest, set_object_twice_does_not_crash) {
     ASSERT_EQ(rawstd_uuid7_init(&id), 0);
 
     // ALLOCATE: creates the object file:// will open next.
-    client.send_allocate(id, 4096);
+    client.send_allocate(id, 4096, 1);
     ASSERT_TRUE(pump_until(queue, [&] {
         return client.bytes_available() >= sizeof(RawstorOSTFrameResponse);
     }));
