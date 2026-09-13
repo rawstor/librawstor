@@ -208,7 +208,15 @@ rawstd::Task<T> Connection::_with_retry(
 
         try {
             if constexpr (std::is_void_v<T>) {
-                co_await (be.get()->*method)(args...);
+                // GCC 15 (at least 15.2.0) hits an internal compiler
+                // error ("in gimple_add_tmp_var, at gimplify.cc:834")
+                // gimplifying a bare `co_await (obj->*method)(args...);`
+                // statement-expression for the T = void instantiation of
+                // this template -- naming the Task<T> first, then
+                // co_await-ing that named local as its own statement,
+                // sidesteps it.
+                rawstd::Task<T> t = (be.get()->*method)(args...);
+                co_await t;
                 RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "error = 0");
 
                 if (attempt > 0) {
@@ -219,7 +227,15 @@ rawstd::Task<T> Connection::_with_retry(
                 }
                 co_return;
             } else {
-                T result = co_await (be.get()->*method)(args...);
+                // Same GCC 15 coroutine ICE class as the T = void branch
+                // above, different shape: here it's "no suspend point
+                // info ... not supported by dump_decl" on a fresh named
+                // local direct-initialized from co_await inside a try
+                // block -- declaring `result` separately from the
+                // co_await that fills it in sidesteps it.
+                rawstd::Task<T> t = (be.get()->*method)(args...);
+                T result{};
+                result = co_await t;
                 RAWSTD_TRACE_EVENT_MESSAGE(
                     trace_event, "result = %zu, error = 0\n", result
                 );
