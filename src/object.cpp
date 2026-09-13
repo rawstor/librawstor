@@ -26,34 +26,6 @@
 
 namespace {
 
-// Suspends the awaiting coroutine unless `writes_completed` has already
-// reached `target` (a caller-supplied snapshot of _writes_issued taken at
-// flush() call time -- see that function), queuing its handle onto
-// `waiters` for rawstor::Object::_write_finished() to resume once it has.
-class FlushBarrierAwaiter final {
-private:
-    unsigned int _target;
-    const unsigned int& _writes_completed;
-    std::deque<std::pair<unsigned int, std::coroutine_handle<>>>& _waiters;
-
-public:
-    FlushBarrierAwaiter(
-        unsigned int target, const unsigned int& writes_completed,
-        std::deque<std::pair<unsigned int, std::coroutine_handle<>>>& waiters
-    ) :
-        _target(target),
-        _writes_completed(writes_completed),
-        _waiters(waiters) {}
-
-    bool await_ready() const noexcept { return _writes_completed >= _target; }
-
-    void await_suspend(std::coroutine_handle<> h) {
-        _waiters.push_back({_target, h});
-    }
-
-    void await_resume() const noexcept {}
-};
-
 // C ABI adapters for the I/O group (rawstor_object_pread/_preadv/_pwrite/
 // _pwritev): launch a detached coroutine that co_await's the
 // already-submitted rawstd::Task, catches std::system_error, and invokes
@@ -172,18 +144,24 @@ Object::Object(Private, rawio::Queue& queue, const Target& target) :
     _queue(queue),
     _target(target),
     _writes_issued(0),
-    _writes_completed(0),
     _dirty(false) {
 }
 
-void Object::_write_finished() noexcept {
-    ++_writes_completed;
+void Object::_write_finished(unsigned int ticket) noexcept {
+    if (ticket != _flush_barrier.value()) {
+        // Settled ahead of its turn -- some other, still in-flight write
+        // issued before this one hasn't completed yet. Parked here instead
+        // of advancing the barrier: a plain completion count can't tell
+        // flush() apart from a write it was never promised to wait for
+        // (one issued after its own call) finishing early instead of the
+        // one it actually means.
+        _early_write_completions.insert(ticket);
+        return;
+    }
 
-    while (!_flush_waiters.empty() &&
-           _flush_waiters.front().first <= _writes_completed) {
-        std::coroutine_handle<> h = _flush_waiters.front().second;
-        _flush_waiters.pop_front();
-        h.resume();
+    _flush_barrier.advance();
+    while (_early_write_completions.erase(_flush_barrier.value()) > 0) {
+        _flush_barrier.advance();
     }
 }
 
@@ -249,7 +227,7 @@ Object::pwrite(const void* buf, size_t size, off_t offset, bool sync) {
         (intmax_t)offset, sync
     );
 
-    ++_writes_issued;
+    unsigned int ticket = _writes_issued++;
 
     std::vector<rawstd::Task<size_t>> tasks;
     tasks.reserve(_cns.size());
@@ -262,7 +240,7 @@ Object::pwrite(const void* buf, size_t size, off_t offset, bool sync) {
      */
     try {
         std::vector<size_t> results = co_await rawstd::gather(std::move(tasks));
-        _write_finished();
+        _write_finished(ticket);
         _dirty = true;
         size_t result = *std::min_element(results.begin(), results.end());
         RAWSTD_TRACE_EVENT_MESSAGE(
@@ -270,7 +248,7 @@ Object::pwrite(const void* buf, size_t size, off_t offset, bool sync) {
         );
         co_return result;
     } catch (const std::system_error& e) {
-        _write_finished();
+        _write_finished(ticket);
         rawstd_error("%s\n", strerror(e.code().value()));
         RAWSTD_TRACE_EVENT_MESSAGE(
             trace_event, "result = 0, error = %d\n", EIO
@@ -287,7 +265,7 @@ rawstd::Task<size_t> Object::pwritev(
         (intmax_t)offset, sync
     );
 
-    ++_writes_issued;
+    unsigned int ticket = _writes_issued++;
 
     std::vector<rawstd::Task<size_t>> tasks;
     tasks.reserve(_cns.size());
@@ -300,7 +278,7 @@ rawstd::Task<size_t> Object::pwritev(
      */
     try {
         std::vector<size_t> results = co_await rawstd::gather(std::move(tasks));
-        _write_finished();
+        _write_finished(ticket);
         _dirty = true;
         size_t result = *std::min_element(results.begin(), results.end());
         RAWSTD_TRACE_EVENT_MESSAGE(
@@ -308,7 +286,7 @@ rawstd::Task<size_t> Object::pwritev(
         );
         co_return result;
     } catch (const std::system_error& e) {
-        _write_finished();
+        _write_finished(ticket);
         rawstd_error("%s\n", strerror(e.code().value()));
         RAWSTD_TRACE_EVENT_MESSAGE(
             trace_event, "result = 0, error = %d\n", EIO
@@ -358,7 +336,7 @@ Object::write_zeroes(size_t size, off_t offset, bool unmap, bool sync) {
         size, (intmax_t)offset, unmap, sync
     );
 
-    ++_writes_issued;
+    unsigned int ticket = _writes_issued++;
 
     std::vector<rawstd::Task<size_t>> tasks;
     tasks.reserve(_cns.size());
@@ -368,7 +346,7 @@ Object::write_zeroes(size_t size, off_t offset, bool unmap, bool sync) {
 
     try {
         std::vector<size_t> results = co_await rawstd::gather(std::move(tasks));
-        _write_finished();
+        _write_finished(ticket);
         _dirty = true;
         size_t result = *std::min_element(results.begin(), results.end());
         RAWSTD_TRACE_EVENT_MESSAGE(
@@ -376,7 +354,7 @@ Object::write_zeroes(size_t size, off_t offset, bool unmap, bool sync) {
         );
         co_return result;
     } catch (const std::system_error& e) {
-        _write_finished();
+        _write_finished(ticket);
         rawstd_error("%s\n", strerror(e.code().value()));
         RAWSTD_TRACE_EVENT_MESSAGE(
             trace_event, "result = 0, error = %d\n", EIO
@@ -393,12 +371,10 @@ rawstd::Task<void> Object::flush() {
     // continuous write stream: a live in-flight count can hover above zero
     // forever if a new write always fills the slot a completing one just
     // freed, but this target is fixed the moment flush() is called, so
-    // _writes_completed reaching it is only ever a matter of the writes
-    // already issued finishing -- unaffected by anything issued afterward,
-    // same as fsync() never covering a write that hasn't happened yet.
-    co_await FlushBarrierAwaiter(
-        _writes_issued, _writes_completed, _flush_waiters
-    );
+    // the barrier reaching it is only ever a matter of the writes already
+    // issued finishing -- unaffected by anything issued afterward, same as
+    // fsync() never covering a write that hasn't happened yet.
+    co_await _flush_barrier.at_least(_writes_issued);
 
     // Nothing written since the last successful flush (or ever) -- every
     // connection's own flush() below would be a pure no-op round trip, so
