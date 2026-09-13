@@ -2,6 +2,8 @@
 
 #include <rawstor/rawio.h>
 
+#include <rawstd/gcc.h>
+
 #include <gtest/gtest.h>
 
 #include <sys/stat.h>
@@ -319,11 +321,20 @@ TEST_F(RawioCApiTest, fallocate_basic) {
     ASSERT_EQ(res, 0);
 
     EXPECT_EQ(rawio_wait_timeout(_queue.get(), 1000), 0);
-    EXPECT_EQ(result, 0);
 
     struct stat st = {};
+#if defined(RAWSTD_ON_MACOS)
+    // No macOS equivalent of Linux's fallocate() -- poll::Queue::fallocate()
+    // (librawio/src/poll_queue.cpp) always reports ENOSYS there by design,
+    // same as every real caller already expects (see its own comment).
+    EXPECT_EQ(result, -ENOSYS);
+    ASSERT_EQ(fstat(fd, &st), 0);
+    EXPECT_EQ(st.st_size, 0);
+#else
+    EXPECT_EQ(result, 0);
     ASSERT_EQ(fstat(fd, &st), 0);
     EXPECT_EQ(st.st_size, 4096);
+#endif
 
     ::close(fd);
     unlink(filename.c_str());
