@@ -20,6 +20,7 @@ extern "C" {
 //     unsigned int io_retry_backoff_base;
 //     unsigned int io_retry_backoff_max;
 //     unsigned int io_retry_backoff_jitter;
+//     unsigned int mirror_probe_interval;
 // };
 
 int rawstor_opts_initialize(const struct RawstorOpts* opts);
@@ -57,6 +58,10 @@ unsigned int rawstor_opts_io_retry_backoff_max(void);
 // (computed / 2 + random(0, computed / 2)) -- see
 // https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/.
 unsigned int rawstor_opts_io_retry_backoff_jitter(void);
+
+// How often, in milliseconds, an open mirrored object probes its
+// unreachable arms for reconnection (and resyncs them on success).
+unsigned int rawstor_opts_mirror_probe_interval(void);
 
 #ifdef __cplusplus
 }

@@ -50,6 +50,14 @@ public:
 
     rawstd::Task<void> create(rawio::Queue& queue, const RawstorObjectSpec& sp);
     rawstd::Task<RawstorObjectSpec> spec(rawio::Queue& queue);
+    // One RawstorObjectMeta per URI in `_uris`, same order -- every URI is
+    // queried, not just the first reachable one; a URI that doesn't
+    // answer gets a zero-filled entry (see this method's own doc comment
+    // in target.cpp for why).
+    rawstd::Task<std::vector<RawstorObjectMeta>> meta(rawio::Queue& queue);
+    rawstd::Task<void> set_sync_state(
+        rawio::Queue& queue, const RawstorObjectSyncState& sync_state
+    );
     rawstd::Task<void> remove(rawio::Queue& queue);
     rawstd::Task<std::unique_ptr<Object>> open(rawio::Queue& queue);
 };
