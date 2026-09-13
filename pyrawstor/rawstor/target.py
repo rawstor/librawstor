@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from . import librawstor
 
 
@@ -40,11 +42,26 @@ class Target:
             return NotImplemented
         return self._uri == other._uri
 
-    def create(self, *, size: int) -> None:
-        librawstor.object_create(self._uri, librawstor.ObjectSpec(size=size))
+    def create(self, *, size: int, mirrors: int) -> None:
+        librawstor.object_create(
+            self._uri,
+            librawstor.ObjectSpec(size=size, mirrors=mirrors))
 
     def spec(self) -> librawstor.ObjectSpec:
         return librawstor.object_spec(self._uri)
+
+    def meta(self) -> list[librawstor.ObjectMeta | None]:
+        """One entry per mirror in this target, in URI order: an
+        ObjectMeta, or None for a mirror that didn't answer."""
+        return librawstor.object_meta(self._uri)
+
+    def set_sync_state(self, sync_state: librawstor.ObjectSyncState) -> None:
+        """Write mirror consistency state to every mirror in this target.
+        A sharp tool: setting this by hand can desynchronize a target's
+        copies in ways the library's own quorum/reconciliation logic isn't
+        designed to recover from automatically -- not meant for routine
+        use."""
+        librawstor.object_set_sync_state(self._uri, sync_state)
 
     def remove(self) -> None:
         librawstor.object_remove(self._uri)

@@ -17,6 +17,7 @@ static void set_os_error(int error) {
 
 typedef struct {
     PyObject_HEAD unsigned long long size;
+    unsigned int mirrors;
 } PyObjectSpec;
 
 // ObjectSpec is Py_TPFLAGS_BASETYPE (subclassable from Python), and a
@@ -40,6 +41,7 @@ static PyObject* PyObjectSpec_new(
     PyObjectSpec* self = (PyObjectSpec*)alloc_func(type, 0);
     if (self != NULL) {
         self->size = 0;
+        self->mirrors = 0;
     }
     return (PyObject*)self;
 }
@@ -47,8 +49,11 @@ static PyObject* PyObjectSpec_new(
 static int
 PyObjectSpec_init(PyObjectSpec* self, PyObject* args, PyObject* kwargs) {
     long long size = 0;
-    static char* kwlist[] = {"size", NULL};
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|L", kwlist, &size)) {
+    unsigned int mirrors = 1;
+    static char* kwlist[] = {"size", "mirrors", NULL};
+    if (!PyArg_ParseTupleAndKeywords(
+            args, kwargs, "|LI", kwlist, &size, &mirrors
+        )) {
         return -1;
     }
     if (size < 0) {
@@ -56,11 +61,14 @@ PyObjectSpec_init(PyObjectSpec* self, PyObject* args, PyObject* kwargs) {
         return -1;
     }
     self->size = (unsigned long long)size;
+    self->mirrors = mirrors;
     return 0;
 }
 
 static PyObject* PyObjectSpec_repr(PyObjectSpec* self) {
-    return PyUnicode_FromFormat("ObjectSpec(size=%llu)", self->size);
+    return PyUnicode_FromFormat(
+        "ObjectSpec(size=%llu, mirrors=%u)", self->size, self->mirrors
+    );
 }
 
 static PyObject*
@@ -84,9 +92,32 @@ static int PyObjectSpec_set_size(
     return 0;
 }
 
+static PyObject*
+PyObjectSpec_get_mirrors(PyObjectSpec* self, void* Py_UNUSED(closure)) {
+    return PyLong_FromUnsignedLong(self->mirrors);
+}
+
+static int PyObjectSpec_set_mirrors(
+    PyObjectSpec* self, PyObject* value, void* Py_UNUSED(closure)
+) {
+    if (value == NULL) {
+        PyErr_SetString(PyExc_TypeError, "Cannot delete mirrors attribute");
+        return -1;
+    }
+
+    unsigned long new_mirrors = PyLong_AsUnsignedLong(value);
+    if (PyErr_Occurred()) {
+        return -1;
+    }
+    self->mirrors = (unsigned int)new_mirrors;
+    return 0;
+}
+
 static PyGetSetDef PyObjectSpec_getset[] = {
     {"size", (getter)PyObjectSpec_get_size, (setter)PyObjectSpec_set_size, NULL,
      NULL},
+    {"mirrors", (getter)PyObjectSpec_get_mirrors,
+     (setter)PyObjectSpec_set_mirrors, NULL, NULL},
     {NULL, NULL, NULL, NULL, NULL}
 };
 
@@ -160,6 +191,344 @@ static PyType_Spec PyLocationInfo_spec = {
 
 PyTypeObject* PyLocationInfoType = NULL;
 
+// The settable half of a mirror's metadata (see RawstorObjectSyncState) --
+// input to Target.set_sync_state() (object_set_sync_state() below), same
+// shape/pattern as ObjectSpec above (constructible, with setters) since a
+// caller builds one of these and passes it in, unlike ObjectMeta/
+// LocationInfo below which are output-only.
+typedef struct {
+    PyObject_HEAD unsigned long long epoch;
+    unsigned long long sync_id;
+    unsigned long long sync_id_history[RAWSTOR_OBJECT_SYNC_ID_HISTORY];
+    int state;
+} PyObjectSyncState;
+
+static void PyObjectSyncState_dealloc(PyObjectSyncState* self) {
+    PyTypeObject* type = Py_TYPE(self);
+    freefunc free_func = (freefunc)PyType_GetSlot(type, Py_tp_free);
+    free_func(self);
+    Py_DECREF(type);
+}
+
+static PyObject* PyObjectSyncState_new(
+    PyTypeObject* type, PyObject* Py_UNUSED(args), PyObject* Py_UNUSED(kwargs)
+) {
+    allocfunc alloc_func = (allocfunc)PyType_GetSlot(type, Py_tp_alloc);
+    PyObjectSyncState* self = (PyObjectSyncState*)alloc_func(type, 0);
+    if (self != NULL) {
+        self->epoch = 0;
+        self->sync_id = 0;
+        for (int i = 0; i < RAWSTOR_OBJECT_SYNC_ID_HISTORY; i++) {
+            self->sync_id_history[i] = 0;
+        }
+        self->state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
+    }
+    return (PyObject*)self;
+}
+
+// Shared by _init and the sync_id_history setter: `value` must be a
+// sequence of exactly RAWSTOR_OBJECT_SYNC_ID_HISTORY integers. Written via
+// PySequence_Size()/_GetItem() rather than PySequence_Fast()/
+// _Fast_GET_ITEM() -- this module builds against the Limited API, which
+// doesn't expose the _Fast family's macro-only accessors.
+static int parse_sync_id_history(PyObject* value, unsigned long long* out) {
+    Py_ssize_t n = PySequence_Size(value);
+    if (n < 0) {
+        return -1;
+    }
+    if (n != RAWSTOR_OBJECT_SYNC_ID_HISTORY) {
+        PyErr_Format(
+            PyExc_ValueError, "sync_id_history must have exactly %d elements",
+            RAWSTOR_OBJECT_SYNC_ID_HISTORY
+        );
+        return -1;
+    }
+    for (Py_ssize_t i = 0; i < n; i++) {
+        PyObject* item = PySequence_GetItem(value, i);
+        if (item == NULL) {
+            return -1;
+        }
+        unsigned long long v = PyLong_AsUnsignedLongLong(item);
+        Py_DECREF(item);
+        if (PyErr_Occurred()) {
+            return -1;
+        }
+        out[i] = v;
+    }
+    return 0;
+}
+
+static int PyObjectSyncState_init(
+    PyObjectSyncState* self, PyObject* args, PyObject* kwargs
+) {
+    unsigned long long epoch = 0;
+    unsigned long long sync_id = 0;
+    PyObject* sync_id_history_obj = NULL;
+    int state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
+    static char* kwlist[] = {
+        "epoch", "sync_id", "sync_id_history", "state", NULL
+    };
+    if (!PyArg_ParseTupleAndKeywords(
+            args, kwargs, "|KKOi", kwlist, &epoch, &sync_id,
+            &sync_id_history_obj, &state
+        )) {
+        return -1;
+    }
+
+    unsigned long long history[RAWSTOR_OBJECT_SYNC_ID_HISTORY] = {0};
+    if (sync_id_history_obj != NULL) {
+        if (parse_sync_id_history(sync_id_history_obj, history) < 0) {
+            return -1;
+        }
+    }
+
+    self->epoch = epoch;
+    self->sync_id = sync_id;
+    for (int i = 0; i < RAWSTOR_OBJECT_SYNC_ID_HISTORY; i++) {
+        self->sync_id_history[i] = history[i];
+    }
+    self->state = state;
+    return 0;
+}
+
+static PyObject* PyObjectSyncState_repr(PyObjectSyncState* self) {
+    return PyUnicode_FromFormat(
+        "ObjectSyncState(epoch=%llu, sync_id=%llu, state=%d)", self->epoch,
+        self->sync_id, self->state
+    );
+}
+
+static PyObject*
+PyObjectSyncState_get_epoch(PyObjectSyncState* self, void* Py_UNUSED(closure)) {
+    return PyLong_FromUnsignedLongLong(self->epoch);
+}
+
+static int PyObjectSyncState_set_epoch(
+    PyObjectSyncState* self, PyObject* value, void* Py_UNUSED(closure)
+) {
+    if (value == NULL) {
+        PyErr_SetString(PyExc_TypeError, "Cannot delete epoch attribute");
+        return -1;
+    }
+    unsigned long long v = PyLong_AsUnsignedLongLong(value);
+    if (PyErr_Occurred()) {
+        return -1;
+    }
+    self->epoch = v;
+    return 0;
+}
+
+static PyObject* PyObjectSyncState_get_sync_id(
+    PyObjectSyncState* self, void* Py_UNUSED(closure)
+) {
+    return PyLong_FromUnsignedLongLong(self->sync_id);
+}
+
+static int PyObjectSyncState_set_sync_id(
+    PyObjectSyncState* self, PyObject* value, void* Py_UNUSED(closure)
+) {
+    if (value == NULL) {
+        PyErr_SetString(PyExc_TypeError, "Cannot delete sync_id attribute");
+        return -1;
+    }
+    unsigned long long v = PyLong_AsUnsignedLongLong(value);
+    if (PyErr_Occurred()) {
+        return -1;
+    }
+    self->sync_id = v;
+    return 0;
+}
+
+static PyObject* PyObjectSyncState_get_sync_id_history(
+    PyObjectSyncState* self, void* Py_UNUSED(closure)
+) {
+    PyObject* tuple = PyTuple_New(RAWSTOR_OBJECT_SYNC_ID_HISTORY);
+    if (tuple == NULL) {
+        return NULL;
+    }
+    for (int i = 0; i < RAWSTOR_OBJECT_SYNC_ID_HISTORY; i++) {
+        PyObject* v = PyLong_FromUnsignedLongLong(self->sync_id_history[i]);
+        if (v == NULL) {
+            Py_DECREF(tuple);
+            return NULL;
+        }
+        PyTuple_SetItem(tuple, i, v); /* steals ref */
+    }
+    return tuple;
+}
+
+static int PyObjectSyncState_set_sync_id_history(
+    PyObjectSyncState* self, PyObject* value, void* Py_UNUSED(closure)
+) {
+    if (value == NULL) {
+        PyErr_SetString(
+            PyExc_TypeError, "Cannot delete sync_id_history attribute"
+        );
+        return -1;
+    }
+    unsigned long long history[RAWSTOR_OBJECT_SYNC_ID_HISTORY];
+    if (parse_sync_id_history(value, history) < 0) {
+        return -1;
+    }
+    for (int i = 0; i < RAWSTOR_OBJECT_SYNC_ID_HISTORY; i++) {
+        self->sync_id_history[i] = history[i];
+    }
+    return 0;
+}
+
+static PyObject*
+PyObjectSyncState_get_state(PyObjectSyncState* self, void* Py_UNUSED(closure)) {
+    return PyLong_FromLong(self->state);
+}
+
+static int PyObjectSyncState_set_state(
+    PyObjectSyncState* self, PyObject* value, void* Py_UNUSED(closure)
+) {
+    if (value == NULL) {
+        PyErr_SetString(PyExc_TypeError, "Cannot delete state attribute");
+        return -1;
+    }
+    long v = PyLong_AsLong(value);
+    if (PyErr_Occurred()) {
+        return -1;
+    }
+    self->state = (int)v;
+    return 0;
+}
+
+static PyGetSetDef PyObjectSyncState_getset[] = {
+    {"epoch", (getter)PyObjectSyncState_get_epoch,
+     (setter)PyObjectSyncState_set_epoch, NULL, NULL},
+    {"sync_id", (getter)PyObjectSyncState_get_sync_id,
+     (setter)PyObjectSyncState_set_sync_id, NULL, NULL},
+    {"sync_id_history", (getter)PyObjectSyncState_get_sync_id_history,
+     (setter)PyObjectSyncState_set_sync_id_history, NULL, NULL},
+    {"state", (getter)PyObjectSyncState_get_state,
+     (setter)PyObjectSyncState_set_state, NULL, NULL},
+    {NULL, NULL, NULL, NULL, NULL}
+};
+
+static PyType_Slot PyObjectSyncState_slots[] = {
+    {Py_tp_dealloc, (void*)PyObjectSyncState_dealloc},
+    {Py_tp_repr, (void*)PyObjectSyncState_repr},
+    {Py_tp_init, (void*)PyObjectSyncState_init},
+    {Py_tp_new, (void*)PyObjectSyncState_new},
+    {Py_tp_getset, (void*)PyObjectSyncState_getset},
+    {0, NULL},
+};
+
+static PyType_Spec PyObjectSyncState_spec = {
+    .name = "rawstor.ObjectSyncState",
+    .basicsize = sizeof(PyObjectSyncState),
+    .itemsize = 0,
+    .flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
+    .slots = PyObjectSyncState_slots,
+};
+
+PyTypeObject* PyObjectSyncStateType = NULL;
+
+// One mirror's metadata, as returned in the list from Target.meta()
+// (object_meta() below). Output-only, like LocationInfo above -- no
+// Py_tp_new/_init/setters -- there is no legitimate way for a Python
+// caller to construct one and pass it back: the writer, Target.
+// set_sync_state() (object_set_sync_state() below), takes an
+// ObjectSyncState instead, the settable subset of these same fields.
+typedef struct {
+    PyObject_HEAD unsigned long long size;
+    unsigned int mirrors;
+    int state;
+    unsigned long long epoch;
+    unsigned long long sync_id;
+    unsigned long long sync_id_history[RAWSTOR_OBJECT_SYNC_ID_HISTORY];
+} PyObjectMeta;
+
+static void PyObjectMeta_dealloc(PyObjectMeta* self) {
+    PyTypeObject* type = Py_TYPE(self);
+    freefunc free_func = (freefunc)PyType_GetSlot(type, Py_tp_free);
+    free_func(self);
+    Py_DECREF(type);
+}
+
+static PyObject* PyObjectMeta_repr(PyObjectMeta* self) {
+    return PyUnicode_FromFormat(
+        "ObjectMeta(size=%llu, mirrors=%u, state=%d, epoch=%llu, "
+        "sync_id=%llu)",
+        self->size, self->mirrors, self->state, self->epoch, self->sync_id
+    );
+}
+
+static PyObject*
+PyObjectMeta_get_size(PyObjectMeta* self, void* Py_UNUSED(closure)) {
+    return PyLong_FromUnsignedLongLong(self->size);
+}
+
+static PyObject*
+PyObjectMeta_get_mirrors(PyObjectMeta* self, void* Py_UNUSED(closure)) {
+    return PyLong_FromUnsignedLong(self->mirrors);
+}
+
+static PyObject*
+PyObjectMeta_get_state(PyObjectMeta* self, void* Py_UNUSED(closure)) {
+    return PyLong_FromLong(self->state);
+}
+
+static PyObject*
+PyObjectMeta_get_epoch(PyObjectMeta* self, void* Py_UNUSED(closure)) {
+    return PyLong_FromUnsignedLongLong(self->epoch);
+}
+
+static PyObject*
+PyObjectMeta_get_sync_id(PyObjectMeta* self, void* Py_UNUSED(closure)) {
+    return PyLong_FromUnsignedLongLong(self->sync_id);
+}
+
+static PyObject*
+PyObjectMeta_get_sync_id_history(PyObjectMeta* self, void* Py_UNUSED(closure)) {
+    PyObject* tuple = PyTuple_New(RAWSTOR_OBJECT_SYNC_ID_HISTORY);
+    if (tuple == NULL) {
+        return NULL;
+    }
+    for (int i = 0; i < RAWSTOR_OBJECT_SYNC_ID_HISTORY; i++) {
+        PyObject* v = PyLong_FromUnsignedLongLong(self->sync_id_history[i]);
+        if (v == NULL) {
+            Py_DECREF(tuple);
+            return NULL;
+        }
+        /* PyTuple_SetItem(), not the SET_ITEM macro -- this module builds
+         * against the Limited API, which doesn't expose the macro form. */
+        PyTuple_SetItem(tuple, i, v); /* steals ref */
+    }
+    return tuple;
+}
+
+static PyGetSetDef PyObjectMeta_getset[] = {
+    {"size", (getter)PyObjectMeta_get_size, NULL, NULL, NULL},
+    {"mirrors", (getter)PyObjectMeta_get_mirrors, NULL, NULL, NULL},
+    {"state", (getter)PyObjectMeta_get_state, NULL, NULL, NULL},
+    {"epoch", (getter)PyObjectMeta_get_epoch, NULL, NULL, NULL},
+    {"sync_id", (getter)PyObjectMeta_get_sync_id, NULL, NULL, NULL},
+    {"sync_id_history", (getter)PyObjectMeta_get_sync_id_history, NULL, NULL,
+     NULL},
+    {NULL, NULL, NULL, NULL, NULL}
+};
+
+static PyType_Slot PyObjectMeta_slots[] = {
+    {Py_tp_dealloc, (void*)PyObjectMeta_dealloc},
+    {Py_tp_repr, (void*)PyObjectMeta_repr},
+    {Py_tp_getset, (void*)PyObjectMeta_getset},
+    {0, NULL},
+};
+
+static PyType_Spec PyObjectMeta_spec = {
+    .name = "rawstor.ObjectMeta",
+    .basicsize = sizeof(PyObjectMeta),
+    .itemsize = 0,
+    .flags = Py_TPFLAGS_DEFAULT,
+    .slots = PyObjectMeta_slots,
+};
+
+PyTypeObject* PyObjectMetaType = NULL;
+
 int py_rawstor_types_init(PyObject* module) {
     PyObjectSpecType = (PyTypeObject*)PyType_FromModuleAndSpec(
         module, &PyObjectSpec_spec, NULL
@@ -178,6 +547,26 @@ int py_rawstor_types_init(PyObject* module) {
         return -1;
     }
     if (PyModule_AddType(module, PyLocationInfoType) < 0) {
+        return -1;
+    }
+
+    PyObjectMetaType = (PyTypeObject*)PyType_FromModuleAndSpec(
+        module, &PyObjectMeta_spec, NULL
+    );
+    if (PyObjectMetaType == NULL) {
+        return -1;
+    }
+    if (PyModule_AddType(module, PyObjectMetaType) < 0) {
+        return -1;
+    }
+
+    PyObjectSyncStateType = (PyTypeObject*)PyType_FromModuleAndSpec(
+        module, &PyObjectSyncState_spec, NULL
+    );
+    if (PyObjectSyncStateType == NULL) {
+        return -1;
+    }
+    if (PyModule_AddType(module, PyObjectSyncStateType) < 0) {
         return -1;
     }
 
@@ -315,6 +704,7 @@ PyObject* py_rawstor_object_create(PyObject* Py_UNUSED(self), PyObject* args) {
 
     PyObjectSpec* py_spec = (PyObjectSpec*)spec_obj;
     spec.size = py_spec->size;
+    spec.mirrors = py_spec->mirrors;
 
     RawstorSyncOp op;
     int ires = rawstor_sync_op_init(&op);
@@ -350,6 +740,7 @@ py_rawstor_object_create_at(PyObject* Py_UNUSED(self), PyObject* args) {
     PyObjectSpec* py_spec = (PyObjectSpec*)py_spec_obj;
     struct RawstorObjectSpec spec = {
         .size = py_spec->size,
+        .mirrors = py_spec->mirrors,
     };
 
     char target[65536];
@@ -412,8 +803,135 @@ PyObject* py_rawstor_object_spec(PyObject* Py_UNUSED(self), PyObject* args) {
         return NULL;
     }
     py_spec->size = spec.size;
+    py_spec->mirrors = spec.mirrors;
 
     return (PyObject*)py_spec;
+}
+
+// A mirror that didn't answer is None, not an ObjectMeta with some
+// sentinel field -- there is nothing meaningful to put in one, and every
+// caller has to handle None from a list somewhere anyway.
+static PyObject* build_mirror_meta(const struct RawstorObjectMeta* meta) {
+    if (meta->sync_state.state == RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
+        Py_RETURN_NONE;
+    }
+
+    PyObjectMeta* py_meta = PyObject_New(PyObjectMeta, PyObjectMetaType);
+    if (py_meta == NULL) {
+        return NULL;
+    }
+    py_meta->size = meta->spec.size;
+    py_meta->mirrors = meta->spec.mirrors;
+    py_meta->state = (int)meta->sync_state.state;
+    py_meta->epoch = meta->sync_state.epoch;
+    py_meta->sync_id = meta->sync_state.sync_id;
+    for (int i = 0; i < RAWSTOR_OBJECT_SYNC_ID_HISTORY; i++) {
+        py_meta->sync_id_history[i] = meta->sync_state.sync_id_history[i];
+    }
+    return (PyObject*)py_meta;
+}
+
+PyObject* py_rawstor_object_meta(PyObject* Py_UNUSED(self), PyObject* args) {
+    const char* target;
+    if (!PyArg_ParseTuple(args, "s", &target)) {
+        return NULL;
+    }
+
+    /* Same ','-separated URI count rawstor_target_create()'s own doc
+     * comment describes deriving mirrors from -- rawstor_target_meta()
+     * requires its own `count` to equal this exactly. */
+    size_t count = 1;
+    for (const char* p = target; *p != '\0'; p++) {
+        if (*p == ',') {
+            count++;
+        }
+    }
+
+    struct RawstorObjectMeta* metas =
+        PyMem_Malloc(count * sizeof(struct RawstorObjectMeta));
+    if (metas == NULL) {
+        return PyErr_NoMemory();
+    }
+
+    RawstorSyncOp op;
+    int ires = rawstor_sync_op_init(&op);
+    if (ires < 0) {
+        PyMem_Free(metas);
+        set_os_error(-ires);
+        return NULL;
+    }
+    int mres = rawstor_target_meta(
+        op.queue, target, metas, count, rawstor_sync_op_cb, &op
+    );
+    ssize_t res = rawstor_sync_op_wait(&op, mres);
+    rawstor_sync_op_destroy(&op);
+    if (res < 0) {
+        PyMem_Free(metas);
+        set_os_error((int)-res);
+        return NULL;
+    }
+
+    PyObject* list = PyList_New((Py_ssize_t)count);
+    if (list == NULL) {
+        PyMem_Free(metas);
+        return NULL;
+    }
+    for (size_t i = 0; i < count; i++) {
+        PyObject* item = build_mirror_meta(&metas[i]);
+        if (item == NULL) {
+            Py_DECREF(list);
+            PyMem_Free(metas);
+            return NULL;
+        }
+        PyList_SetItem(list, (Py_ssize_t)i, item); /* steals ref */
+    }
+    PyMem_Free(metas);
+    return list;
+}
+
+PyObject*
+py_rawstor_object_set_sync_state(PyObject* Py_UNUSED(self), PyObject* args) {
+    const char* target;
+    PyObject* sync_state_obj;
+    if (!PyArg_ParseTuple(args, "sO", &target, &sync_state_obj)) {
+        return NULL;
+    }
+
+    if (!PyObject_TypeCheck(sync_state_obj, PyObjectSyncStateType)) {
+        PyErr_SetString(
+            PyExc_TypeError, "sync_state must be an ObjectSyncState instance"
+        );
+        return NULL;
+    }
+    PyObjectSyncState* py_sync_state = (PyObjectSyncState*)sync_state_obj;
+
+    struct RawstorObjectSyncState sync_state = {
+        .epoch = py_sync_state->epoch,
+        .sync_id = py_sync_state->sync_id,
+        .sync_id_history = {0},
+        .state = (enum RawstorObjectSyncStateValue)py_sync_state->state,
+    };
+    for (int i = 0; i < RAWSTOR_OBJECT_SYNC_ID_HISTORY; i++) {
+        sync_state.sync_id_history[i] = py_sync_state->sync_id_history[i];
+    }
+
+    RawstorSyncOp op;
+    int ires = rawstor_sync_op_init(&op);
+    if (ires < 0) {
+        set_os_error(-ires);
+        return NULL;
+    }
+    int sres = rawstor_target_set_sync_state(
+        op.queue, target, &sync_state, rawstor_sync_op_cb, &op
+    );
+    ssize_t res = rawstor_sync_op_wait(&op, sres);
+    rawstor_sync_op_destroy(&op);
+    if (res < 0) {
+        set_os_error((int)-res);
+        return NULL;
+    }
+
+    Py_RETURN_NONE;
 }
 
 PyObject* py_rawstor_object_remove(PyObject* Py_UNUSED(self), PyObject* args) {

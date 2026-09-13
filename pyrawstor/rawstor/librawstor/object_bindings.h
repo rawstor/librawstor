@@ -12,6 +12,8 @@ extern "C" {
 // -- NULL until py_rawstor_types_init() creates them at module init time.
 extern PyTypeObject* PyObjectSpecType;
 extern PyTypeObject* PyLocationInfoType;
+extern PyTypeObject* PyObjectMetaType;
+extern PyTypeObject* PyObjectSyncStateType;
 
 int py_rawstor_types_init(PyObject* module);
 
@@ -22,6 +24,10 @@ PyObject* py_rawstor_object_create(PyObject* self, PyObject* args);
 PyObject* py_rawstor_object_create_at(PyObject* self, PyObject* args);
 
 PyObject* py_rawstor_object_spec(PyObject* self, PyObject* args);
+
+PyObject* py_rawstor_object_meta(PyObject* self, PyObject* args);
+
+PyObject* py_rawstor_object_set_sync_state(PyObject* self, PyObject* args);
 
 PyObject* py_rawstor_object_remove(PyObject* self, PyObject* args);
 
