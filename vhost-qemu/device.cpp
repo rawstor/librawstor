@@ -597,9 +597,12 @@ void set_protocol_features(VuDev* dev, uint64_t features) {
     d.set_protocol_features(features);
 }
 
-int process_msg(VuDev*, VhostUserMsg* vmsg, int*) {
+int process_msg(VuDev* dev, VhostUserMsg* vmsg, int*) {
     if (vmsg->request == VHOST_USER_NONE) {
-        rawstd_info("Disconnect\n");
+        rawstor::vhost::Device& d = rawstor::vhost::Device::get(dev->sock);
+        if (d.claim_disconnect_log()) {
+            rawstd_info("Client disconnected: fd=%d\n", dev->sock);
+        }
         return 1;
     }
     return 0;
@@ -864,7 +867,8 @@ Device::Device(
         1ull << VHOST_USER_F_PROTOCOL_FEATURES
     ),
     _protocol_features(0),
-    _blk_config(std::make_unique<virtio_blk_config>()) {
+    _blk_config(std::make_unique<virtio_blk_config>()),
+    _disconnect_logged(false) {
     memset(_blk_config.get(), 0, sizeof(*_blk_config.get()));
 
     int ires = rawio_queue_create(queue_size, &_queue);
@@ -1034,6 +1038,14 @@ void Device::remove_watch(int fd) {
 bool Device::has_watch(int fd) const noexcept {
     const auto& it = _watchers.find(fd);
     return it != _watchers.end();
+}
+
+bool Device::claim_disconnect_log() noexcept {
+    if (_disconnect_logged) {
+        return false;
+    }
+    _disconnect_logged = true;
+    return true;
 }
 
 void Device::loop() {
