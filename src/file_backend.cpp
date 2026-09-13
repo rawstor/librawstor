@@ -266,8 +266,11 @@ rawstd::Task<RawstorObjectSpec> Backend::spec(const RawstdUUID& id) {
 
     std::string target_path = get_target_path(location_path, uuid_string);
 
+    struct stat st;
+    co_await _queue.stat(target_path.c_str(), &st);
+
     RawstorObjectSpec ret{
-        .size = std::filesystem::file_size(target_path),
+        .size = static_cast<uint64_t>(st.st_size),
     };
 
     co_return ret;
