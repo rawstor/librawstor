@@ -3,6 +3,7 @@
 #include "config.h"
 
 #include <rawstd/exitcode.h>
+#include <rawstd/logging.hpp>
 #include <rawstd/pipe.hpp>
 
 #include <getopt.h>
@@ -107,6 +108,10 @@ void server(
         queue_size, num_queues, target, socket_path, write_cache_enabled,
         wake_fd
     );
+    // Not any earlier: rawstd_info() needs the logging mutex
+    // rawstor_initialize() sets up, and that only happens inside Server's
+    // own constructor above (see server.cpp), not here in main.cpp.
+    rawstd_info("Rawstor VHOST %s\n", PACKAGE_VERSION);
     s.loop();
 }
 
