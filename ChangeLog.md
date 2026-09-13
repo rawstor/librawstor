@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.2.11] - Unreleased
 
 ### Added
+- Consistent startup/connection INFO logging across `rawstor-ost`, `rawstor-vhost`, `rawstor-vhost-qemu` and `rawstor-vduse`: version at startup, waiting for a connection, client connected, client disconnected.
 - `rawio::Queue::timeout_multishot()` (and its `rawio_timeout_multishot()` C API counterpart): the multishot counterpart of `timeout()`, firing once every given number of microseconds until canceled instead of resolving once.
 
 ### Changed

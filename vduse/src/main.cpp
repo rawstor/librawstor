@@ -4,6 +4,7 @@
 
 #include <rawstd/exitcode.h>
 #include <rawstd/gpp.hpp>
+#include <rawstd/logging.hpp>
 #include <rawstd/pipe.hpp>
 
 #include <rawstor.h>
@@ -128,6 +129,8 @@ void server(
     if (res) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
+
+    rawstd_info("Rawstor VDUSE %s\n", PACKAGE_VERSION);
 
     try {
         rawstor::vduse::Device d(

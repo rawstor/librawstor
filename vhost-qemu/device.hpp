@@ -59,6 +59,7 @@ private:
     uint64_t _protocol_features;
     std::unique_ptr<virtio_blk_config> _blk_config;
     std::unordered_map<int, std::unique_ptr<Watcher>> _watchers;
+    bool _disconnect_logged;
 
 public:
     static Device& get(int fd);
@@ -119,6 +120,14 @@ public:
     void remove_watch(int fd);
 
     bool has_watch(int fd) const noexcept;
+
+    // Test-and-set: true the first call, false every call after. libvhost-
+    // user's own poll callback keeps re-dispatching VHOST_USER_NONE for a
+    // closed control socket -- readiness on a hung-up fd doesn't go away
+    // on its own -- until Device::loop() finally sees -EPIPE, so
+    // process_msg() uses this to log a real disconnect exactly once
+    // instead of once per re-dispatch.
+    bool claim_disconnect_log() noexcept;
 
     void loop();
 };

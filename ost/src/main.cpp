@@ -353,6 +353,8 @@ int main(int argc, char** argv) {
         return rawstd_exitcode_for_errno(-res);
     }
 
+    rawstd_info("Rawstor OST backend %s\n", PACKAGE_VERSION);
+
     int exit_code = EXIT_SUCCESS;
     try {
         ost(queue_size, workers, name, port, location_arg);
