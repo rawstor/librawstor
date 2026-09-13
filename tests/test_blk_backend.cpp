@@ -100,13 +100,13 @@ rawstor::blk::Backend* open_blk_backend(
 
     rawstor::Target target({rawstd::URI(location, uuid_string)});
 
-    RawstorObjectSpec spec{.size = 1u << 20};
+    RawstorObjectSpec spec{.size = 1u << 20, .mirrors = 1};
     run(queue, target.create(queue, spec));
 
     object = run(queue, target.open(queue));
 
     cn = run(queue, rawstor::Connection::create(queue, location, 1));
-    run(queue, cn->open(object.get()));
+    run(queue, cn->open(id));
 
     return static_cast<rawstor::blk::Backend*>(cn->get_next_backend().get());
 }
@@ -348,4 +348,61 @@ TEST(BlkBackendTest, discard_reports_requested_size) {
     );
 
     EXPECT_EQ(run(*queue, backend->discard(payload.size(), 0)), payload.size());
+}
+
+// blk::Backend::meta_encode()/meta_decode() are static and public
+// specifically so this can exercise them directly, without a real lvm://,
+// zfs://, or file:// backend of their own (see blk_backend.hpp's own doc
+// comment).
+TEST(BlkBackendTest, meta_encode_decode_round_trip) {
+    RawstorObjectSyncState sync_state{};
+    sync_state.state = RAWSTOR_OBJECT_SYNC_STATE_DIRTY;
+    sync_state.epoch = 7;
+    sync_state.sync_id = 0x1122334455667788ull;
+    sync_state.sync_id_history[0] = 0xaabbccddeeff0011ull;
+    sync_state.sync_id_history[1] = 1;
+    sync_state.sync_id_history[2] = 2;
+    sync_state.sync_id_history[3] = 3;
+
+    std::string encoded = rawstor::blk::Backend::meta_encode(sync_state);
+
+    RawstorObjectSyncState decoded =
+        rawstor::blk::Backend::meta_decode(encoded);
+    EXPECT_EQ(decoded.state, sync_state.state);
+    EXPECT_EQ(decoded.epoch, sync_state.epoch);
+    EXPECT_EQ(decoded.sync_id, sync_state.sync_id);
+    EXPECT_EQ(decoded.sync_id_history[0], sync_state.sync_id_history[0]);
+    EXPECT_EQ(decoded.sync_id_history[1], sync_state.sync_id_history[1]);
+    EXPECT_EQ(decoded.sync_id_history[2], sync_state.sync_id_history[2]);
+    EXPECT_EQ(decoded.sync_id_history[3], sync_state.sync_id_history[3]);
+}
+
+TEST(BlkBackendTest, meta_decode_rejects_empty_string) {
+    /* A missing property/tag/record must never be mistaken for a valid
+     * one. */
+    EXPECT_THROW(rawstor::blk::Backend::meta_decode(""), std::system_error);
+}
+
+TEST(BlkBackendTest, meta_decode_rejects_dash) {
+    /* ZFS's own "property never set" marker -- must not be mistaken for a
+     * valid record either. */
+    EXPECT_THROW(rawstor::blk::Backend::meta_decode("-"), std::system_error);
+}
+
+TEST(BlkBackendTest, meta_decode_rejects_malformed_string) {
+    EXPECT_THROW(
+        rawstor::blk::Backend::meta_decode("not the right format"),
+        std::system_error
+    );
+}
+
+TEST(BlkBackendTest, meta_decode_rejects_wrong_version) {
+    /* A record from a format version this build no longer understands (or
+     * ever wrote) must not be mistaken for a valid one. */
+    EXPECT_THROW(
+        rawstor::blk::Backend::meta_decode(
+            "version=999:state=0:epoch=0:sync_id=0:h0=0:h1=0:h2=0:h3=0"
+        ),
+        std::system_error
+    );
 }

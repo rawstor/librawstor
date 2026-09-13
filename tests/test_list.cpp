@@ -88,7 +88,7 @@ TEST(ListTest, merge) {
     };
 
     ssize_t res;
-    RawstorObjectSpec spec{.size = 1ull << 20};
+    RawstorObjectSpec spec{.size = 1ull << 20, .mirrors = 1};
     res = create(target11, spec);
     ASSERT_EQ(res, 0);
     res = create(target12, spec);
@@ -180,7 +180,7 @@ TEST(ListTest, pagination) {
     std::vector<std::string> targets;
     targets.reserve(total);
     for (unsigned int i = 0; i < total; ++i) {
-        RawstorObjectSpec spec{.size = 1ull << 10};
+        RawstorObjectSpec spec{.size = 1ull << 10, .mirrors = 1};
 
         char target[65536];
         ssize_t res =
@@ -255,15 +255,13 @@ TEST(ListTest, pagination) {
 
 // Location::list()/create() and Target::create()/remove()/spec() all use
 // a Connection::create()-only, never-open()-ed Connection for their
-// metadata work -- unlike a data-path Connection, _object stays null on
+// metadata work -- unlike a data-path Connection, _id stays unset on
 // one of these for its whole lifetime. invalidate_backend()'s reconnect
-// path used to call the replacement backend's set_object(_object)
-// unconditionally regardless, and every backend's set_object()
-// dereferences its Object* argument (e.g. blk::Backend::set_object()
-// reading object->target()) -- a null-pointer crash the very first time
-// a metadata op actually needed to reconnect a backend, not something
-// any of ListTest's other cases above exercise (they never fail an op
-// in the first place).
+// path used to call the replacement backend's set_object(*_id)
+// unconditionally regardless -- dereferencing an unset
+// std::optional<RawstdUUID> the very first time a metadata op actually
+// needed to reconnect a backend, not something any of ListTest's other
+// cases above exercise (they never fail an op in the first place).
 TEST(ListTest, invalidate_backend_on_metadata_only_connection) {
     rawstor::tests::TmpDir dir;
     rawstd::URI location(dir.uri());
