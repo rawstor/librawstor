@@ -12,9 +12,7 @@
 #include <rawstor/object.h>
 #include <rawstor/target.h>
 
-#include <coroutine>
 #include <cstddef>
-#include <deque>
 #include <string>
 
 namespace rawstor {
@@ -63,11 +61,22 @@ private:
     // rawstor_opts_write_throttle_limit() to decide whether a write is
     // dispatched now or suspended until a slot frees up.
     unsigned int _writes_in_flight;
-    // Coroutines suspended in _throttle_acquire(), oldest first -- woken
-    // one at a time, in order, as _throttle_release() frees up a slot.
-    std::deque<std::coroutine_handle<>> _write_waiters;
+    // Ticket dispenser: every _throttle_acquire() call, whether it ends up
+    // suspending or not, takes the next one. A suspending call's target on
+    // _release_barrier below is `ticket - limit + 1` -- since every
+    // acquire (immediate or queued) takes a ticket from the same
+    // sequence, and every release advances the same barrier regardless of
+    // whether anyone is waiting on it, the two stay in lockstep: a ticket
+    // taken while under the limit is never at risk of some later,
+    // unrelated release prematurely satisfying it.
+    unsigned int _next_ticket;
+    // Bumped once per _throttle_release() call; a suspended
+    // _throttle_acquire() wakes once this reaches its own ticket's target
+    // (see _next_ticket above), in ticket order -- i.e. FIFO, same
+    // guarantee the old explicit waiter queue gave.
+    rawstd::Barrier _release_barrier;
     // Sum of the sizes of writes currently suspended in
-    // _write_waiters -- see _throttle_acquire()'s use of it against
+    // _throttle_acquire() -- see its own use of it against
     // rawstor_opts_write_backlog_capacity() to reject a write outright
     // rather than let it suspend without bound.
     size_t _pending_writes_bytes;
@@ -80,8 +89,9 @@ private:
     // _throttle_release() call, regardless of how the dispatched write
     // itself turns out.
     rawstd::Task<void> _throttle_acquire(size_t size);
-    // Releases the slot acquired by a matching _throttle_acquire(),
-    // handing it directly to the oldest queued waiter, if any.
+    // Releases the slot acquired by a matching _throttle_acquire() --
+    // advances _release_barrier, which wakes the oldest queued waiter (by
+    // ticket order), if any.
     void _throttle_release() noexcept;
 
 public:
