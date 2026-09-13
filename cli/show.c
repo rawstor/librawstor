@@ -7,11 +7,109 @@
 #include <rawstd/exitcode.h>
 #include <rawstd/units.h>
 
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-int rawstor_cli_show(const char* target) {
+static const char*
+sync_state_to_string(enum RawstorObjectSyncStateValue state) {
+    switch (state) {
+    case RAWSTOR_OBJECT_SYNC_STATE_CLEAN:
+        return "CLEAN";
+    case RAWSTOR_OBJECT_SYNC_STATE_DIRTY:
+        return "DIRTY";
+    case RAWSTOR_OBJECT_SYNC_STATE_SYNCING:
+        return "SYNCING";
+    default:
+        return "UNKNOWN";
+    }
+}
+
+static void print_sync_id_history(
+    const char* indent, const uint64_t* history, size_t count
+) {
+    printf("%ssync_id_history:", indent);
+    int any = 0;
+    for (size_t i = 0; i < count; i++) {
+        if (history[i] == 0) {
+            continue;
+        }
+        printf(" %" PRIu64, history[i]);
+        any = 1;
+    }
+    if (!any) {
+        printf(" none");
+    }
+    printf("\n");
+}
+
+/* rawstor_target_meta()'s own buffer capacity, not the number of URIs in
+ * `target` -- a `result` greater than this means the CLI itself can't
+ * display that many mirrors, not that the call failed (see its own doc
+ * comment: same truncation convention as rawstor_target_id()/
+ * _location()). */
+enum { MAX_MIRRORS = 256 };
+
+static int show_meta(const char* target) {
+    RawstorCliOp op;
+    int res = rawstor_cli_op_init(&op);
+    if (res < 0) {
+        fprintf(stderr, "Failed to create queue: %s\n", strerror(-res));
+        return rawstd_exitcode_for_errno(-res);
+    }
+
+    struct RawstorObjectMeta metas[MAX_MIRRORS];
+    int mres = rawstor_target_meta(
+        op.queue, target, metas, MAX_MIRRORS, rawstor_cli_op_cb, &op
+    );
+    ssize_t result = rawstor_cli_op_wait(&op, mres);
+    rawstor_cli_op_destroy(&op);
+    if (result < 0) {
+        fprintf(
+            stderr, "rawstor_target_meta() failed: %s\n", strerror((int)-result)
+        );
+        return rawstd_exitcode_for_errno((int)-result);
+    }
+    if (result > MAX_MIRRORS) {
+        fprintf(
+            stderr,
+            "rawstor show -v: %zd mirrors, more than this CLI can display "
+            "(%d)\n",
+            result, MAX_MIRRORS
+        );
+        return EXIT_FAILURE;
+    }
+
+    for (ssize_t i = 0; i < result; i++) {
+        const struct RawstorObjectMeta* meta = &metas[i];
+        /* Index, not the URI itself -- the same index `rawstor resolve`'s
+         * own --winner takes, and target's own comma-separated order, not
+         * a value this command has to re-parse target to print. */
+        printf("mirror[%zd]:\n", i);
+        if (meta->sync_state.state == RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
+            printf("  unreachable\n");
+        } else {
+            char buf[256];
+            rawstd_bytes_to_size(meta->spec.size, buf, sizeof(buf));
+            printf("  size: %s\n", buf);
+            printf("  mirrors: %u\n", meta->spec.mirrors);
+            printf(
+                "  state: %s\n", sync_state_to_string(meta->sync_state.state)
+            );
+            printf("  epoch: %" PRIu64 "\n", meta->sync_state.epoch);
+            printf("  sync_id: %" PRIu64 "\n", meta->sync_state.sync_id);
+            print_sync_id_history(
+                "  ", meta->sync_state.sync_id_history,
+                RAWSTOR_OBJECT_SYNC_ID_HISTORY
+            );
+        }
+    }
+
+    return EXIT_SUCCESS;
+}
+
+int rawstor_cli_show(const char* target, int verbose) {
     struct RawstorObjectSpec spec;
 
     RawstorCliOp op;
@@ -37,6 +135,11 @@ int rawstor_cli_show(const char* target) {
 
     printf("target: %s\n", target);
     printf("size: %s\n", buf);
+    printf("mirrors: %u\n", spec.mirrors);
 
-    return EXIT_SUCCESS;
+    if (!verbose) {
+        return EXIT_SUCCESS;
+    }
+
+    return show_meta(target);
 }

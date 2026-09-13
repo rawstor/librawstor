@@ -30,6 +30,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`-ENOTCONN`/`-ENOTRECOVERABLE` otherwise), degrade-and-continue writes,
   read failover, and automatic online resync of a stale or reconnected
   member while the object stays live.
+- `-m`/`--mirrors N` for `rawstor create` and `pyrawstor`'s `ObjectSpec`/
+  `Target.create()`/`Location.create()`; `-v`/`--verbose` for `rawstor show`
+  (labeling each mirror `mirror[N]`, its position in the target's own
+  comma-separated order) and pyrawstor's new `Target.meta()` (returning one
+  `ObjectMeta`, or `None` for a mirror that didn't answer, per mirror)
+  print every mirror's own consistency state (not just one).
 
 ### Changed
 - The packaged `rawstor-vhost@.service` systemd unit now defaults `RAWSTOR_WRITE_CACHE` to `on` instead of `off`: forcing a journal commit on every write (write-cache off) was measured to stall write round-trip times into the tens of seconds under concurrent load on a host whose backing filesystem commits slowly, while any modern guest kernel already issues an explicit flush when it needs durability.
