@@ -23,6 +23,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Every backend now persists per-copy metadata durably: a companion
   `.meta` file for `file://`, native transactional storage for `lvm://`
   (an LVM tag) and `zfs://` (a ZFS user property).
+- `rawstor_target_create()`/`rawstor_location_create()` reject `-EINVAL`
+  unless `RawstorObjectSpec.mirrors` matches the target/location string's
+  URI count.
+- Mirrored objects now tolerate member loss: quorum-gated open
+  (`-ENOTCONN`/`-ENOTRECOVERABLE` otherwise), degrade-and-continue writes,
+  read failover, and automatic online resync of a stale or reconnected
+  member while the object stays live.
 
 ### Changed
 - The packaged `rawstor-vhost@.service` systemd unit now defaults `RAWSTOR_WRITE_CACHE` to `on` instead of `off`: forcing a journal commit on every write (write-cache off) was measured to stall write round-trip times into the tens of seconds under concurrent load on a host whose backing filesystem commits slowly, while any modern guest kernel already issues an explicit flush when it needs durability.
@@ -30,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `rawstor_object_spec()`/`_list()`/`_create()`/`_create_at()`/`_remove()`/`_open()`/`_id()`/`_location()` dropped in favor of the async `rawstor_target_spec()`/`_create()`/`_remove()`/`_open()`/`_id()`/`_location()` (`<rawstor/target.h>`) and `rawstor_location_list()`/`_create()` (`<rawstor/location.h>`) API, and `rawstor_object_close()` is now async too (queues and returns immediately, reporting completion via a new callback parameter that no longer carries the redundant `RawstorObject* object`). Breaking C API change; `<rawstor.h>` still pulls in every header.
 - `rawio_fsync()`/`_open()`/`_close()`/`_poll()`/`_poll_multishot()`/`_connect()`/`_accept()`/`_accept_multishot()`'s completion callback collapsed to a single `ssize_t result` (0 or negative errno), matching the read/write family's own shape. Breaking C API change.
 - `RawstorObjectSyncStateValue` gained an explicit `RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE = 0`; `CLEAN`/`DIRTY`/`SYNCING` now start at 1, so a zero-filled `RawstorObjectMeta` is never mistaken for a real CLEAN copy. Breaking C API change.
+- `rawstor_target_meta()` now fills one `RawstorObjectMeta` per URI in the target instead of just the first reachable copy's record (a URI that doesn't answer gets a `RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE` entry); `count` is now a buffer capacity, and `result` is the target's own URI count (same truncation convention as `rawstor_target_id()`/`_location()`). Breaking C API change.
 
 ### Removed
 - Dropped the deprecated `-l`/`--location` and `-t`/`--target` flags (`rawstor list`/`create`/`remove`/`show`/`testio`, `rawstor-ost`, `rawstor-vhost`) in favor of the positional `LOCATION`/`TARGET` argument; `rawstor create -t TARGET` (create-by-target) is unaffected. Also dropped the `rawstor-cli` compat symlink from the deb/rpm packages — use `rawstor`.
