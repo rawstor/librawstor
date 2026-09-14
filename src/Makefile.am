@@ -48,6 +48,8 @@ librawstor_la_SOURCES = 3rdparty/nlohmann/json.hpp \
                         location.hpp \
                         lvm_backend.cpp \
                         lvm_backend.hpp \
+                        mds_client.cpp \
+                        mds_client.hpp \
                         object.cpp \
                         object.hpp \
                         ost_backend.cpp \

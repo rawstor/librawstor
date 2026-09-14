@@ -136,7 +136,7 @@ rawstd::DetachedTask launch_close_op_coro(
     } catch (const std::system_error& e) {
         result = -e.code().value();
     }
-    delete static_cast<rawstor::Object*>(object);
+    delete object;
     int res = cb(result, data);
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
@@ -1769,9 +1769,7 @@ int rawstor_object_close(
     RawstorObject* object, int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
-        launch_close_op(
-            object, static_cast<rawstor::Object*>(object)->close(), cb, data
-        );
+        launch_close_op(object, object->close(), cb, data);
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -1791,10 +1789,7 @@ int rawstor_object_pread(
     int (*cb)(size_t result, int error, void* data), void* data
 ) noexcept {
     try {
-        launch_io_op(
-            static_cast<rawstor::Object*>(object)->pread(buf, size, offset), cb,
-            data
-        );
+        launch_io_op(object->pread(buf, size, offset), cb, data);
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -1814,12 +1809,7 @@ int rawstor_object_preadv(
     off_t offset, int (*cb)(size_t result, int error, void* data), void* data
 ) noexcept {
     try {
-        launch_io_op(
-            static_cast<rawstor::Object*>(object)->preadv(
-                iov, niov, size, offset
-            ),
-            cb, data
-        );
+        launch_io_op(object->preadv(iov, niov, size, offset), cb, data);
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -1839,12 +1829,7 @@ int rawstor_object_pwrite(
     bool sync, int (*cb)(size_t result, int error, void* data), void* data
 ) noexcept {
     try {
-        launch_io_op(
-            static_cast<rawstor::Object*>(object)->pwrite(
-                buf, size, offset, sync
-            ),
-            cb, data
-        );
+        launch_io_op(object->pwrite(buf, size, offset, sync), cb, data);
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -1865,12 +1850,7 @@ int rawstor_object_pwritev(
     void* data
 ) noexcept {
     try {
-        launch_io_op(
-            static_cast<rawstor::Object*>(object)->pwritev(
-                iov, niov, size, offset, sync
-            ),
-            cb, data
-        );
+        launch_io_op(object->pwritev(iov, niov, size, offset, sync), cb, data);
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -1890,10 +1870,7 @@ int rawstor_object_discard(
     int (*cb)(size_t result, int error, void* data), void* data
 ) noexcept {
     try {
-        launch_io_op(
-            static_cast<rawstor::Object*>(object)->discard(size, offset), cb,
-            data
-        );
+        launch_io_op(object->discard(size, offset), cb, data);
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -1913,12 +1890,7 @@ int rawstor_object_write_zeroes(
     int (*cb)(size_t result, int error, void* data), void* data
 ) noexcept {
     try {
-        launch_io_op(
-            static_cast<rawstor::Object*>(object)->write_zeroes(
-                size, offset, unmap, sync
-            ),
-            cb, data
-        );
+        launch_io_op(object->write_zeroes(size, offset, unmap, sync), cb, data);
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -1937,9 +1909,7 @@ int rawstor_object_flush(
     RawstorObject* object, int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
-        launch_flush_op(
-            static_cast<rawstor::Object*>(object)->flush(), cb, data
-        );
+        launch_flush_op(object->flush(), cb, data);
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
