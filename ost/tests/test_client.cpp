@@ -17,6 +17,8 @@
 
 #include <gtest/gtest.h>
 
+#include <cerrno>
+
 #include <chrono>
 #include <functional>
 #include <string>
@@ -323,6 +325,62 @@ TEST(OstClientTest, set_object_twice_does_not_crash) {
     response = client.recv_response();
     EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_SET_OBJECT);
     EXPECT_EQ(response.body.res, 0);
+}
+
+// A command code the server doesn't recognize is answered with -ENOSYS
+// instead of a bare disconnect, so a client can tell "unsupported" apart
+// from a transport failure -- but RawstorOSTFrameHead carries no length
+// field, so the server has no way to know how many payload bytes this
+// unrecognized request's body holds, to skip past and resynchronize with
+// whatever request might follow it on the wire. It closes the connection
+// right after answering, so this checks both halves: the -ENOSYS response
+// itself, and that the connection is then actually torn down rather than
+// left open waiting for a request body that will never make sense.
+TEST(OstClientTest, unknown_command_answers_enosys_then_closes) {
+    rawstor::ostserver::tests::TmpDir dir;
+    int listen_fd = rawstor::ostserver::Server::bind_listen("127.0.0.1", 0);
+    rawstor::ostserver::Server server(256, listen_fd, dir.uri().c_str());
+
+    rawstor::ostserver::tests::Queue queue;
+    auto [server_client, client_fd] = connect_client(server, queue);
+    rawstor::ostserver::tests::Client client(client_fd);
+
+    uint16_t cid = client.send_unknown_command();
+    ASSERT_TRUE(pump_until(queue, [&] {
+        return client.bytes_available() >= sizeof(RawstorOSTFrameResponse);
+    }));
+    RawstorOSTFrameResponse response = client.recv_response();
+    EXPECT_EQ(response.head.cid, cid);
+    EXPECT_EQ(response.body.res, -ENOSYS);
+
+    // Server::del_client() only closes the connection right away if the
+    // handler's own reference was the last one outstanding (its own
+    // use_count() == 1 check, server.cpp) -- true in production, where
+    // nothing else keeps a Client alive, but not here as long as this
+    // test also holds `server_client`. Dropping it plays the part the
+    // accept loop's own shared_ptr going out of scope would otherwise
+    // play, so what's left really does exercise the server's close path
+    // rather than this test's own bookkeeping.
+    server_client.reset();
+
+    ASSERT_TRUE(pump_until(queue, [&] {
+        char buf;
+        ssize_t res = ::recv(client_fd, &buf, sizeof(buf), MSG_DONTWAIT);
+        return res == 0 || (res == -1 && errno != EAGAIN);
+    }));
+
+    // Drain anything still in flight before `queue` itself is torn down at
+    // end of scope -- same reason ClientCleanup's destructor does this
+    // elsewhere in this file: an in-flight multishot recv registration
+    // freed out from under a still-pending completion is exactly what
+    // LeakSanitizer would otherwise catch.
+    unsigned int idle = 0;
+    for (unsigned int elapsed_ms = 0; elapsed_ms < 2000 && idle < 5;
+         elapsed_ms += 20) {
+        int res = rawio_wait_timeout(queue, 20);
+        ASSERT_TRUE(res >= 0 || res == -ETIME);
+        idle = (res == -ETIME) ? idle + 1 : 0;
+    }
 }
 
 // Regression test for the heap-use-after-free ASan caught in CI (built off
