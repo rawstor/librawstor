@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - `rawstor create`/`list`/`remove`/`show`/`info` against a multi-backend `LOCATION`/`TARGET` (comma-separated URIs) could intermittently fail with "No buffer space available": the CLI's internal I/O queue was sized for a single backend at a time.
 - The same "No buffer space available" (`ENOBUFS`) failure could also surface under a small enough `--queue-size` (io_uring builds only): the submission ring is now flushed and retried instead of failing outright when it's full of not-yet-submitted entries.
+- `Object::flush()` could report success (and durability) before a write it was still waiting on had actually completed, if a later write happened to finish first -- affects `ost://`, where responses are matched by request id and can legitimately arrive out of order.
 - Building with GCC 15.2.0 could hit an internal compiler error in `Connection::_with_retry()`'s coroutine code.
 
 ## [0.2.10] - 2026-08-31

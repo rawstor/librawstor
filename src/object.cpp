@@ -176,8 +176,22 @@ Object::Object(Private, rawio::Queue& queue, const Target& target) :
     _dirty(false) {
 }
 
-void Object::_write_finished() noexcept {
+void Object::_write_finished(unsigned int ticket) noexcept {
+    if (ticket != _writes_completed) {
+        // Settled ahead of its turn -- some other, still in-flight write
+        // issued before this one hasn't completed yet. Parked here instead
+        // of advancing the watermark: a plain completion count can't tell
+        // flush() apart from a write it was never promised to wait for
+        // (one issued after its own call) finishing early instead of the
+        // one it actually means.
+        _early_write_completions.insert(ticket);
+        return;
+    }
+
     ++_writes_completed;
+    while (_early_write_completions.erase(_writes_completed) > 0) {
+        ++_writes_completed;
+    }
 
     while (!_flush_waiters.empty() &&
            _flush_waiters.front().first <= _writes_completed) {
@@ -249,7 +263,7 @@ Object::pwrite(const void* buf, size_t size, off_t offset, bool sync) {
         (intmax_t)offset, sync
     );
 
-    ++_writes_issued;
+    unsigned int ticket = _writes_issued++;
 
     std::vector<rawstd::Task<size_t>> tasks;
     tasks.reserve(_cns.size());
@@ -262,7 +276,7 @@ Object::pwrite(const void* buf, size_t size, off_t offset, bool sync) {
      */
     try {
         std::vector<size_t> results = co_await rawstd::gather(std::move(tasks));
-        _write_finished();
+        _write_finished(ticket);
         _dirty = true;
         size_t result = *std::min_element(results.begin(), results.end());
         RAWSTD_TRACE_EVENT_MESSAGE(
@@ -270,7 +284,7 @@ Object::pwrite(const void* buf, size_t size, off_t offset, bool sync) {
         );
         co_return result;
     } catch (const std::system_error& e) {
-        _write_finished();
+        _write_finished(ticket);
         rawstd_error("%s\n", strerror(e.code().value()));
         RAWSTD_TRACE_EVENT_MESSAGE(
             trace_event, "result = 0, error = %d\n", EIO
@@ -287,7 +301,7 @@ rawstd::Task<size_t> Object::pwritev(
         (intmax_t)offset, sync
     );
 
-    ++_writes_issued;
+    unsigned int ticket = _writes_issued++;
 
     std::vector<rawstd::Task<size_t>> tasks;
     tasks.reserve(_cns.size());
@@ -300,7 +314,7 @@ rawstd::Task<size_t> Object::pwritev(
      */
     try {
         std::vector<size_t> results = co_await rawstd::gather(std::move(tasks));
-        _write_finished();
+        _write_finished(ticket);
         _dirty = true;
         size_t result = *std::min_element(results.begin(), results.end());
         RAWSTD_TRACE_EVENT_MESSAGE(
@@ -308,7 +322,7 @@ rawstd::Task<size_t> Object::pwritev(
         );
         co_return result;
     } catch (const std::system_error& e) {
-        _write_finished();
+        _write_finished(ticket);
         rawstd_error("%s\n", strerror(e.code().value()));
         RAWSTD_TRACE_EVENT_MESSAGE(
             trace_event, "result = 0, error = %d\n", EIO
@@ -358,7 +372,7 @@ Object::write_zeroes(size_t size, off_t offset, bool unmap, bool sync) {
         size, (intmax_t)offset, unmap, sync
     );
 
-    ++_writes_issued;
+    unsigned int ticket = _writes_issued++;
 
     std::vector<rawstd::Task<size_t>> tasks;
     tasks.reserve(_cns.size());
@@ -368,7 +382,7 @@ Object::write_zeroes(size_t size, off_t offset, bool unmap, bool sync) {
 
     try {
         std::vector<size_t> results = co_await rawstd::gather(std::move(tasks));
-        _write_finished();
+        _write_finished(ticket);
         _dirty = true;
         size_t result = *std::min_element(results.begin(), results.end());
         RAWSTD_TRACE_EVENT_MESSAGE(
@@ -376,7 +390,7 @@ Object::write_zeroes(size_t size, off_t offset, bool unmap, bool sync) {
         );
         co_return result;
     } catch (const std::system_error& e) {
-        _write_finished();
+        _write_finished(ticket);
         rawstd_error("%s\n", strerror(e.code().value()));
         RAWSTD_TRACE_EVENT_MESSAGE(
             trace_event, "result = 0, error = %d\n", EIO
