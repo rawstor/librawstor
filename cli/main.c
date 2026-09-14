@@ -2,6 +2,7 @@
 #include "info.h"
 #include "list.h"
 #include "remove.h"
+#include "resolve.h"
 #include "show.h"
 #include "testio.h"
 
@@ -45,6 +46,7 @@ static void usage(void) {
         "  remove                Remove rawstor object\n"
         "  show                  Show rawstor object\n"
         "  info                  Show rawstor location info\n"
+        "  resolve               Resolve a mirrored object's split brain\n"
         "  testio                Test rawstor IO routines\n"
         "\n"
         "command options:        Run `<command> --help` to show command usage\n"
@@ -510,6 +512,138 @@ static int command_show(int argc, char** argv) {
     return rawstor_cli_show(target_arg, verbose_arg);
 }
 
+static void command_resolve_usage(void) {
+    fprintf(
+        stdout,
+        "Rawstor CLI " PACKAGE_VERSION "\n"
+        "\n"
+        "usage: rawstor [options] resolve TARGET --winner=N[,N...] "
+        "[command_options]\n"
+        "\n"
+        "Declares one or more mirrors authoritative after a split brain "
+        "(docs/\n"
+        "mirroring.md, case F9): every --winner gets the same new sync_id, "
+        "which\n"
+        "supersedes every OTHER reachable mirror's own sync_id, so those "
+        "get a\n"
+        "full online resync from a winner on the next open. Winners "
+        "themselves are\n"
+        "never resynced from each other -- list more than one only when "
+        "you already\n"
+        "know they hold the same data (e.g. a backup manually restored to "
+        "more than\n"
+        "one member). Only use this after confirming every --winner "
+        "actually holds\n"
+        "the data you want to keep -- every other mirror's own unique "
+        "writes are\n"
+        "discarded.\n"
+        "\n"
+        "  TARGET                 Comma-separated list of rawstor backend "
+        "targets.\n"
+        "  --winner N[,N...]      TARGET's N-th mirror(s) (0-based, same "
+        "order\n"
+        "                        `rawstor show -v` labels mirror[N]): the "
+        "copies to\n"
+        "                        keep.\n"
+        "\n"
+        "command options:\n"
+        "  -h, --help            Show this help message and exit\n"
+    );
+};
+
+static int command_resolve(int argc, char** argv) {
+    const char* optstring = "h";
+    struct option longopts[] = {
+        {"help", no_argument, NULL, 'h'},
+        {"winner", required_argument, NULL, 'w'},
+        {},
+    };
+
+    char* target_arg = NULL;
+    const char* winner_arg = NULL;
+    optind = 0;
+    while (1) {
+        int c = getopt_long(argc, argv, optstring, longopts, NULL);
+        if (c == -1) {
+            break;
+        }
+
+        switch (c) {
+        case 'h':
+            command_resolve_usage();
+            return EXIT_SUCCESS;
+
+        case 'w':
+            winner_arg = optarg;
+            break;
+
+        default:
+            return EX_USAGE;
+        }
+    }
+
+    if (optind < argc) {
+        target_arg = argv[optind];
+        optind++;
+    }
+
+    if (optind < argc) {
+        fprintf(stderr, "Unexpected argument: %s\n", argv[optind]);
+        return EX_USAGE;
+    }
+
+    if (target_arg == NULL) {
+        fprintf(stderr, "target required\n");
+        return EX_USAGE;
+    }
+
+    if (winner_arg == NULL) {
+        fprintf(stderr, "--winner required\n");
+        return EX_USAGE;
+    }
+
+    /* Same buffer-capacity convention as cli/resolve.c's own
+     * MAX_MIRRORS. */
+    size_t winners[256];
+    size_t num_winners = 0;
+
+    char* winner_arg_copy = strdup(winner_arg);
+    if (winner_arg_copy == NULL) {
+        fprintf(stderr, "Out of memory\n");
+        return EXIT_FAILURE;
+    }
+    char* saveptr = NULL;
+    char* tok = strtok_r(winner_arg_copy, ",", &saveptr);
+    while (tok != NULL) {
+        if (num_winners >= sizeof(winners) / sizeof(winners[0])) {
+            fprintf(
+                stderr, "--winner: too many mirrors, more than this CLI can "
+                        "handle\n"
+            );
+            free(winner_arg_copy);
+            return EX_USAGE;
+        }
+        char* endptr = NULL;
+        errno = 0;
+        unsigned long idx = strtoul(tok, &endptr, 10);
+        if (errno != 0 || endptr == tok || *endptr != '\0') {
+            fprintf(stderr, "Invalid --winner value: %s\n", tok);
+            free(winner_arg_copy);
+            return EX_USAGE;
+        }
+        winners[num_winners++] = (size_t)idx;
+        tok = strtok_r(NULL, ",", &saveptr);
+    }
+    free(winner_arg_copy);
+
+    if (num_winners == 0) {
+        fprintf(stderr, "--winner required\n");
+        return EX_USAGE;
+    }
+
+    return rawstor_cli_resolve(target_arg, winners, num_winners);
+}
+
 static void command_testio_usage(void) {
     fprintf(
         stdout,
@@ -678,6 +812,8 @@ static int run_command(
         ret = command_show(argc, argv);
     } else if (strcmp(command, "info") == 0) {
         ret = command_info(argc, argv);
+    } else if (strcmp(command, "resolve") == 0) {
+        ret = command_resolve(argc, argv);
     } else if (strcmp(command, "testio") == 0) {
         ret = command_testio(argc, argv);
     } else {

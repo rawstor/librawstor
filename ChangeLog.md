@@ -36,6 +36,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   comma-separated order) and pyrawstor's new `Target.meta()` (returning one
   `ObjectMeta`, or `None` for a mirror that didn't answer, per mirror)
   print every mirror's own consistency state (not just one).
+- `rawstor resolve TARGET --winner=N[,N...]` for manual split-brain
+  recovery (docs/mirroring.md, case F9): declares one or more mirrors
+  (same index `rawstor show -v` labels) jointly authoritative, and every
+  mirror not listed gets a full online resync on the next open.
 
 ### Changed
 - The packaged `rawstor-vhost@.service` systemd unit now defaults `RAWSTOR_WRITE_CACHE` to `on` instead of `off`: forcing a journal commit on every write (write-cache off) was measured to stall write round-trip times into the tens of seconds under concurrent load on a host whose backing filesystem commits slowly, while any modern guest kernel already issues an explicit flush when it needs durability.
