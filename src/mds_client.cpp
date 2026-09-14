@@ -11,6 +11,8 @@
 
 #include <unistd.h>
 
+#include <utility>
+
 #include <cerrno>
 #include <cstring>
 
@@ -106,6 +108,13 @@ Client::Client(rawio::Queue& queue, const rawstd::URI& location) :
     _location(location),
     _fd(-1),
     _cid_counter(0) {
+}
+
+Client::Client(Client&& other) noexcept :
+    _queue(other._queue),
+    _location(other._location),
+    _fd(std::exchange(other._fd, -1)),
+    _cid_counter(other._cid_counter) {
 }
 
 Client::~Client() {

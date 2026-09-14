@@ -57,7 +57,7 @@ private:
 public:
     Client(rawio::Queue& queue, const rawstd::URI& location);
     Client(const Client&) = delete;
-    Client(Client&&) = delete;
+    Client(Client&& other) noexcept;
     ~Client();
 
     Client& operator=(const Client&) = delete;
