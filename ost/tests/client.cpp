@@ -166,6 +166,17 @@ uint16_t Client::send_write_zeroes(
     return cid;
 }
 
+uint16_t Client::send_unknown_command() {
+    uint16_t cid = _next_cid++;
+    RawstorOSTFrameHead head = {
+        .magic = RAWSTOR_MAGIC,
+        .cmd = 9999,
+        .cid = cid,
+    };
+    send_all(_fd, &head, sizeof(head));
+    return cid;
+}
+
 RawstorOSTFrameResponse
 Client::recv_response(void* payload, size_t payload_size) {
     RawstorOSTFrameResponse response;

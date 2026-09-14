@@ -44,6 +44,12 @@ public:
     uint16_t send_discard(uint64_t offset, uint32_t size);
     uint16_t
     send_write_zeroes(uint64_t offset, uint32_t size, bool unmap, bool sync);
+    // Sends just a `RawstorOSTFrameHead` with a command code none of the
+    // send_*() above use -- the server's own default: case answers this
+    // without ever trying to read a payload for it (it can't know the
+    // shape of a command it doesn't recognize), so there's nothing to
+    // follow the head with here either.
+    uint16_t send_unknown_command();
 
     // Blocking: reads exactly one response frame, then -- if payload_size
     // is nonzero (a READ response) -- that many bytes of payload after
