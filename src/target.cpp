@@ -4,6 +4,7 @@
 #include "location.hpp"
 #include "object.hpp"
 #include "opts.h"
+#include "volume.hpp"
 
 #include <rawstor/target.h>
 
@@ -192,6 +193,113 @@ rawstd::DetachedTask launch_open_op_coro(
         // the co_await'd temporary directly, without a named local,
         // sidesteps it.
         *object = (co_await t.open(*queue)).release();
+    } catch (const std::system_error& e) {
+        result = -e.code().value();
+    } catch (const std::bad_alloc&) {
+        result = -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        result = -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        result = -EINVAL;
+    }
+    int res = cb(result, data);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+}
+
+// mds://host:port/<volume_id> targets (rawstor_docs/Mds.md) bypass Target/
+// Object/Backend entirely: a Volume is its own RawstorObject
+// implementation, routing I/O across per-chunk Objects of its own rather
+// than a Target's members directly (see volume.hpp). `target` is taken
+// by value into the coroutine's own frame for the same reason
+// launch_open_op_coro() et al. take their own Target by value.
+bool is_volume_target(const rawstd::URI& uri) {
+    return uri.scheme() == "mds";
+}
+
+rawstd::DetachedTask launch_volume_open_op_coro(
+    rawstd::URI target, rawio::Queue* queue, RawstorObject** object,
+    int (*cb)(ssize_t result, void* data), void* data
+) {
+    ssize_t result = 0;
+    *object = nullptr;
+    try {
+        *object = (co_await rawstor::Volume::open(*queue, target)).release();
+    } catch (const std::system_error& e) {
+        result = -e.code().value();
+    } catch (const std::bad_alloc&) {
+        result = -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        result = -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        result = -EINVAL;
+    }
+    int res = cb(result, data);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+}
+
+rawstd::DetachedTask launch_volume_create_op_coro(
+    rawstd::URI target, rawio::Queue* queue, RawstorObjectSpec spec,
+    int (*cb)(ssize_t result, void* data), void* data
+) {
+    ssize_t result = 0;
+    try {
+        co_await rawstor::Volume::create(*queue, target, spec);
+    } catch (const std::system_error& e) {
+        result = -e.code().value();
+    } catch (const std::bad_alloc&) {
+        result = -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        result = -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        result = -EINVAL;
+    }
+    int res = cb(result, data);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+}
+
+rawstd::DetachedTask launch_volume_remove_op_coro(
+    rawstd::URI target, rawio::Queue* queue,
+    int (*cb)(ssize_t result, void* data), void* data
+) {
+    ssize_t result = 0;
+    try {
+        co_await rawstor::Volume::remove(*queue, target);
+    } catch (const std::system_error& e) {
+        result = -e.code().value();
+    } catch (const std::bad_alloc&) {
+        result = -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        result = -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        result = -EINVAL;
+    }
+    int res = cb(result, data);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+}
+
+rawstd::DetachedTask launch_volume_spec_op_coro(
+    rawstd::URI target, rawio::Queue* queue, RawstorObjectSpec* spec,
+    int (*cb)(ssize_t result, void* data), void* data
+) {
+    ssize_t result = 0;
+    try {
+        *spec = co_await rawstor::Volume::spec(*queue, target);
     } catch (const std::system_error& e) {
         result = -e.code().value();
     } catch (const std::bad_alloc&) {
@@ -815,7 +923,15 @@ int rawstor_target_create(
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
-        rawstor::Target t(rawstd::URI::uriv(target));
+        std::vector<rawstd::URI> uris = rawstd::URI::uriv(target);
+        if (uris.size() == 1 && is_volume_target(uris[0])) {
+            launch_volume_create_op_coro(
+                uris[0], static_cast<rawio::Queue*>(queue), *spec, cb, data
+            );
+            rawstd::DetachedTask::rethrow_if_pending();
+            return 0;
+        }
+        rawstor::Target t(std::move(uris));
         launch_create_op_coro(
             std::move(t), static_cast<rawio::Queue*>(queue), *spec, cb, data
         );
@@ -839,7 +955,15 @@ int rawstor_target_remove(
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
-        rawstor::Target t(rawstd::URI::uriv(target));
+        std::vector<rawstd::URI> uris = rawstd::URI::uriv(target);
+        if (uris.size() == 1 && is_volume_target(uris[0])) {
+            launch_volume_remove_op_coro(
+                uris[0], static_cast<rawio::Queue*>(queue), cb, data
+            );
+            rawstd::DetachedTask::rethrow_if_pending();
+            return 0;
+        }
+        rawstor::Target t(std::move(uris));
         launch_remove_op_coro(
             std::move(t), static_cast<rawio::Queue*>(queue), cb, data
         );
@@ -863,7 +987,15 @@ int rawstor_target_spec(
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
-        rawstor::Target t(rawstd::URI::uriv(target));
+        std::vector<rawstd::URI> uris = rawstd::URI::uriv(target);
+        if (uris.size() == 1 && is_volume_target(uris[0])) {
+            launch_volume_spec_op_coro(
+                uris[0], static_cast<rawio::Queue*>(queue), sp, cb, data
+            );
+            rawstd::DetachedTask::rethrow_if_pending();
+            return 0;
+        }
+        rawstor::Target t(std::move(uris));
         launch_spec_op_coro(
             std::move(t), static_cast<rawio::Queue*>(queue), sp, cb, data
         );
@@ -938,7 +1070,15 @@ int rawstor_target_open(
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
-        rawstor::Target t(rawstd::URI::uriv(target));
+        std::vector<rawstd::URI> uris = rawstd::URI::uriv(target);
+        if (uris.size() == 1 && is_volume_target(uris[0])) {
+            launch_volume_open_op_coro(
+                uris[0], static_cast<rawio::Queue*>(queue), object, cb, data
+            );
+            rawstd::DetachedTask::rethrow_if_pending();
+            return 0;
+        }
+        rawstor::Target t(std::move(uris));
         launch_open_op_coro(
             std::move(t), static_cast<rawio::Queue*>(queue), object, cb, data
         );
