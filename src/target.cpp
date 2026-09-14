@@ -414,7 +414,8 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) {
     // (which every Backend::create() now validates, see
     // Backend::_validate_spec()), not sp.mirrors itself (the target-wide
     // URI count just validated above).
-    RawstorObjectSpec uri_sp{.size = sp.size, .mirrors = 1};
+    RawstorObjectSpec uri_sp = sp;
+    uri_sp.mirrors = 1;
 
     // Every URI's CREATE goes out concurrently instead of one at a time.
     // This can't just gather() them, though: on failure, only the URIs

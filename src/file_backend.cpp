@@ -349,10 +349,9 @@ rawstd::Task<RawstorObjectSpec> Backend::spec(const RawstdUUID& id) {
     struct stat st;
     co_await _queue.stat(target_path.c_str(), &st);
 
-    RawstorObjectSpec ret{
-        .size = static_cast<uint64_t>(st.st_size),
-        .mirrors = 1,
-    };
+    RawstorObjectSpec ret{};
+    ret.size = static_cast<uint64_t>(st.st_size);
+    ret.mirrors = 1;
 
     co_return ret;
 }

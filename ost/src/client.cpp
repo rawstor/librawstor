@@ -982,7 +982,16 @@ rawstd::DetachedTask Client::_allocate(
     RawstorObjectSpec spec{
         .size = payload.size,
         .mirrors = static_cast<unsigned int>(targets.size()),
+        .chunk_size = payload.chunk_size,
+        .stripe_width = payload.stripe_width,
+        .width = 0,
+        .failure_domain = payload.failure_domain,
+        .member_kind = static_cast<RawstorMemberKind>(payload.member_kind),
+        .volume_id = {},
+        .logical_index = payload.logical_index,
+        .snap_version = payload.snap_version,
     };
+    memcpy(spec.volume_id, payload.volume_id, sizeof(spec.volume_id));
 
     int result = 0;
     try {
@@ -1184,10 +1193,21 @@ rawstd::DetachedTask Client::_meta(
                 .sync_id_history = {},
                 .state =
                     static_cast<RawstorOSTSyncStateType>(meta.sync_state.state),
+                .member_kind = (uint8_t)meta.spec.member_kind,
+                .width = (uint8_t)meta.spec.mirrors,
+                .reserved = 0,
+                .volume_id = {},
+                .logical_index = meta.spec.logical_index,
+                .chunk_size = meta.spec.chunk_size,
+                .snap_version = meta.spec.snap_version,
             };
             memcpy(
                 body_out.sync_id_history, meta.sync_state.sync_id_history,
                 sizeof(body_out.sync_id_history)
+            );
+            memcpy(
+                body_out.volume_id, meta.spec.volume_id,
+                sizeof(body_out.volume_id)
             );
             std::vector<unsigned char> data(sizeof(body_out));
             memcpy(data.data(), &body_out, sizeof(body_out));
