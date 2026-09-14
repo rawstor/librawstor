@@ -827,11 +827,23 @@ public:
                 .object_id = {},
                 .size = sp.size,
                 .mirrors = (uint32_t)sp.mirrors,
+                .chunk_size = sp.chunk_size,
+                .stripe_width = sp.stripe_width,
+                .failure_domain = sp.failure_domain,
+                .member_kind = (uint8_t)sp.member_kind,
+                .reserved = 0,
+                .volume_id = {},
+                .logical_index = sp.logical_index,
+                .snap_version = sp.snap_version,
             },
         }) {
         memcpy(
             _request.payload.object_id, id.bytes,
             sizeof(_request.payload.object_id)
+        );
+        memcpy(
+            _request.payload.volume_id, sp.volume_id,
+            sizeof(_request.payload.volume_id)
         );
     }
 
@@ -1336,6 +1348,15 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
         );
         ret.sync_state.state =
             static_cast<RawstorObjectSyncStateValue>(payload.state);
+        ret.spec.member_kind =
+            static_cast<RawstorMemberKind>(payload.member_kind);
+        ret.spec.mirrors = payload.width;
+        memcpy(
+            ret.spec.volume_id, payload.volume_id, sizeof(ret.spec.volume_id)
+        );
+        ret.spec.logical_index = payload.logical_index;
+        ret.spec.chunk_size = payload.chunk_size;
+        ret.spec.snap_version = payload.snap_version;
     } catch (const std::system_error&) {
         throw;
     } catch (...) {

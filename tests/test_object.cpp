@@ -92,7 +92,18 @@ open_object(rawio::Queue& queue, const rawstd::URI& location) {
 
     rawstor::Target target({rawstd::URI(location, uuid_string)});
 
-    RawstorObjectSpec spec{.size = 1u << 20, .mirrors = 1};
+    RawstorObjectSpec spec{
+        .size = 1u << 20,
+        .mirrors = 1,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .width = 0,
+        .failure_domain = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
+        .volume_id = {},
+        .logical_index = 0,
+        .snap_version = 0
+    };
     run(queue, target.create(queue, spec));
 
     return run(queue, target.open(queue));
@@ -308,6 +319,13 @@ TEST(ObjectTest, flush_does_not_resolve_on_write_completing_out_of_order) {
         .sync_id = 0,
         .sync_id_history = {},
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
+        .member_kind = RAWSTOR_MEMBER_DATA,
+        .width = 1,
+        .reserved = 0,
+        .volume_id = {},
+        .logical_index = 0,
+        .chunk_size = 0,
+        .snap_version = 0,
     };
 
     // Left open for the whole test -- see server.hpp's Session::~Session()

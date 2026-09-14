@@ -189,7 +189,10 @@ rawstd::Task<RawstorObjectSpec> Backend::spec(const RawstdUUID& id) {
 
     co_await _queue.close(f);
 
-    co_return RawstorObjectSpec{size, 1};
+    RawstorObjectSpec ret{};
+    ret.size = size;
+    ret.mirrors = 1;
+    co_return ret;
 #else
     (void)id;
     RAWSTD_THROW_SYSTEM_ERROR(ENOSYS);
