@@ -17,6 +17,10 @@ if ENABLE_OST_BACKEND
     SUBDIRS += ost
 endif
 
+if WITH_MDS
+    SUBDIRS += mds
+endif
+
 if WITH_PYTHON3
     SUBDIRS += pyrawstor
 endif

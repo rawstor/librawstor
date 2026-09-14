@@ -130,6 +130,17 @@ AM_CONDITIONAL([ENABLE_OST_BACKEND], [test "x$enable_ost_backend" = "xyes"])
 AC_SUBST([ENABLE_OST_BACKEND], [$enable_ost_backend])
 
 
+AC_ARG_WITH([mds], [AS_HELP_STRING([--without-mds],
+    [do not build the MDS server (needs sqlite3)])],
+    [with_mds=$withval],
+    [with_mds="yes"])
+AM_CONDITIONAL([WITH_MDS], [test "x$with_mds" = "xyes"])
+AC_SUBST([WITH_MDS], [$with_mds])
+AS_IF([test "x$with_mds" = "xyes"], [
+    PKG_CHECK_MODULES([SQLITE3], [sqlite3])
+])
+
+
 AS_CASE([$host_os],
     [linux*], [vduse_backend_default="yes"],
     [vduse_backend_default="no"]
@@ -185,6 +196,7 @@ AC_CONFIG_FILES(
     [ost/Makefile]
     [ost/src/Makefile]
     [ost/tests/Makefile]
+    [mds/Makefile]
     [tests/Makefile]
     [deb/librawstor/control]
     [deb/python3-rawstor/control]
