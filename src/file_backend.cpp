@@ -448,18 +448,24 @@ rawstd::Task<RawstorLocationInfo> Backend::info() {
         uint64_t available = static_cast<uint64_t>(vfs.f_bavail) * vfs.f_frsize;
 
         uint64_t used = 0;
+        // TODO: std::filesystem::directory_iterator itself still blocks
+        // the event loop scanning this directory -- io_uring has no
+        // readdir/getdents opcode to make that part async too, only
+        // IORING_OP_STATX for the per-entry stat() below (already async
+        // via _queue.stat()).
         for (const auto& entry :
              std::filesystem::directory_iterator(location_path)) {
-            if (!entry.path().extension().empty()) {
-                continue;
-            }
-
             struct stat st;
-            if (stat(entry.path().c_str(), &st) == -1) {
-                // Object removed concurrently between the directory read
-                // and this stat(); just skip it rather than failing the
-                // whole aggregate.
-                continue;
+            try {
+                co_await _queue.stat(entry.path().c_str(), &st);
+            } catch (const std::system_error& e) {
+                if (e.code().value() == ENOENT) {
+                    // Object removed concurrently between the directory
+                    // read and this stat(); just skip it rather than
+                    // failing the whole aggregate.
+                    continue;
+                }
+                throw;
             }
             used += static_cast<uint64_t>(st.st_size);
         }

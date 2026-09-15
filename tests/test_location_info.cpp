@@ -20,6 +20,10 @@
 
 namespace {
 
+// file::Backend pairs each object's data file with a fixed-size .meta
+// file (blk_backend.hpp's META_MAX_SIZE) that "used" now accounts for too.
+constexpr uint64_t META_FILE_SIZE = 256;
+
 ssize_t location_info(
     rawio::Queue& queue, const std::string& location, RawstorLocationInfo* info
 ) {
@@ -68,7 +72,7 @@ TEST(FileLocationInfoTest, empty_then_used) {
 
     res = location_info(*queue, location, &info);
     EXPECT_EQ(res, 0);
-    EXPECT_EQ(info.used, (uint64_t)(1ull << 20));
+    EXPECT_EQ(info.used, (uint64_t)(1ull << 20) + META_FILE_SIZE);
     EXPECT_GT(info.total, (uint64_t)0);
 
     res = target_remove(*queue, target);
@@ -110,17 +114,17 @@ TEST(FileLocationInfoTest, multi_location_aggregation) {
     res = location_info(*queue, location, &info);
     EXPECT_EQ(res, 0);
     // used takes the max across backends, not the sum.
-    EXPECT_EQ(info.used, (uint64_t)(3ull << 20));
+    EXPECT_EQ(info.used, (uint64_t)(3ull << 20) + META_FILE_SIZE);
 
     RawstorLocationInfo info_a = {};
     res = location_info(*queue, location_a_uri.str(), &info_a);
     EXPECT_EQ(res, 0);
-    EXPECT_EQ(info_a.used, (uint64_t)(1ull << 20));
+    EXPECT_EQ(info_a.used, (uint64_t)(1ull << 20) + META_FILE_SIZE);
 
     RawstorLocationInfo info_b = {};
     res = location_info(*queue, location_b_uri.str(), &info_b);
     EXPECT_EQ(res, 0);
-    EXPECT_EQ(info_b.used, (uint64_t)(3ull << 20));
+    EXPECT_EQ(info_b.used, (uint64_t)(3ull << 20) + META_FILE_SIZE);
 
     // total is capped by the smallest backend.
     EXPECT_EQ(info.total, std::min(info_a.total, info_b.total));
