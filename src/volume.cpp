@@ -375,7 +375,7 @@ Volume::spec(rawio::Queue& queue, const rawstd::URI& target) {
 }
 
 rawstd::Task<uint64_t>
-Volume::snapshot(rawio::Queue& queue, const rawstd::URI& target) {
+Volume::snapshot_create(rawio::Queue& queue, const rawstd::URI& target) {
     RawstdUUID id = target_uuid(target);
     rawstd::URI location(target_location(target));
 
@@ -399,7 +399,7 @@ Volume::snapshot(rawio::Queue& queue, const rawstd::URI& target) {
             }
             try {
                 Target t({chunk_slot_target(map.volume_id, i, slot)});
-                co_await t.snapshot(queue, snap_id);
+                co_await t.snapshot_create(queue, snap_id);
                 members.push_back(mds::WireSnapMember{i, slot.ost_id});
                 any = true;
             } catch (const std::exception& e) {
@@ -436,7 +436,7 @@ Volume::snapshot(rawio::Queue& queue, const rawstd::URI& target) {
     co_return snap_id;
 }
 
-rawstd::Task<void> Volume::snap_remove(
+rawstd::Task<void> Volume::snapshot_remove(
     rawio::Queue& queue, const rawstd::URI& target, uint64_t snap_id
 ) {
     RawstdUUID id = target_uuid(target);
@@ -480,7 +480,7 @@ rawstd::Task<void> Volume::snap_remove(
         }
         try {
             Target t({chunk_slot_target(map.volume_id, m.logical_index, *it)});
-            co_await t.snap_remove(queue, snap_id);
+            co_await t.snapshot_remove(queue, snap_id);
         } catch (const std::exception& e) {
             rawstd_error("Snapshot remove: %s\n", e.what());
             error = std::current_exception();

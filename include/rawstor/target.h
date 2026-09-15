@@ -567,9 +567,9 @@ int rawstor_target_location(
  * @return 0 if the snapshot was successfully queued; negative errno on
  *         immediate failure (in which case @p cb is never invoked).
  *
- * @see rawstor_target_snap_remove
+ * @see rawstor_target_snapshot_remove
  */
-int rawstor_target_snapshot(
+int rawstor_target_snapshot_create(
     RawIOQueue* queue, const char* target, uint64_t snap_id,
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
@@ -577,15 +577,15 @@ int rawstor_target_snapshot(
 /**
  * @brief Asynchronously destroy snapshot version @p snap_id of a target.
  *
- * Fan-out semantics as rawstor_target_snapshot(): every URI is attempted,
- * the first error is reported.
+ * Fan-out semantics as rawstor_target_snapshot_create(): every URI is
+ * attempted, the first error is reported.
  *
  * @return 0 if the removal was successfully queued; negative errno on
  *         immediate failure (in which case @p cb is never invoked).
  *
- * @see rawstor_target_snapshot
+ * @see rawstor_target_snapshot_create
  */
-int rawstor_target_snap_remove(
+int rawstor_target_snapshot_remove(
     RawIOQueue* queue, const char* target, uint64_t snap_id,
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
@@ -594,7 +594,7 @@ int rawstor_target_snap_remove(
  * @brief Asynchronously take an MDS-orchestrated snapshot of a volume
  *        (docs/mds.md, "Snapshots (stage 2)").
  *
- * Unlike rawstor_target_snapshot() (whose caller already owns a
+ * Unlike rawstor_target_snapshot_create() (whose caller already owns a
  * snap_id), the version taken here is chosen by the volume's MDS:
  * reserves it, backend-CoWs every reachable chunk member, then registers
  * the surviving membership. v1 caveat: assumes no concurrent writer --
@@ -615,17 +615,17 @@ int rawstor_target_snap_remove(
  * @return 0 if the snapshot was successfully queued; negative errno on
  *         immediate failure (in which case @p cb is never invoked).
  *
- * @see rawstor_volume_snap_remove
- * @see rawstor_target_snapshot
+ * @see rawstor_volume_snapshot_remove
+ * @see rawstor_target_snapshot_create
  */
-int rawstor_volume_snapshot(
+int rawstor_volume_snapshot_create(
     RawIOQueue* queue, const char* target, uint64_t* snap_id,
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
 /**
  * @brief Asynchronously destroy a volume snapshot taken by
- *        rawstor_volume_snapshot().
+ *        rawstor_volume_snapshot_create().
  *
  * The MDS unregisters @p snap_id (no new readers) before the per-member
  * fan-out destroy runs; a member that can no longer be resolved (address
@@ -634,9 +634,9 @@ int rawstor_volume_snapshot(
  *
  * @param target  An mds://host:port/<volume_id> target.
  *
- * @see rawstor_volume_snapshot
+ * @see rawstor_volume_snapshot_create
  */
-int rawstor_volume_snap_remove(
+int rawstor_volume_snapshot_remove(
     RawIOQueue* queue, const char* target, uint64_t snap_id,
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;

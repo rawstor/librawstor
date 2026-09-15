@@ -1335,9 +1335,12 @@ rawstd::Task<void> Backend::remove(const RawstdUUID& id) {
     co_return;
 }
 
-rawstd::Task<void> Backend::snapshot(const RawstdUUID& id, uint64_t snap_id) {
+rawstd::Task<void>
+Backend::snapshot_create(const RawstdUUID& id, uint64_t snap_id) {
     try {
-        co_await _basic_request(RAWSTOR_CMD_SNAPSHOT, "snapshot", id, snap_id);
+        co_await _basic_request(
+            RAWSTOR_CMD_SNAPSHOT, "snapshot_create", id, snap_id
+        );
     } catch (const std::system_error&) {
         throw;
     } catch (...) {
@@ -1347,10 +1350,10 @@ rawstd::Task<void> Backend::snapshot(const RawstdUUID& id, uint64_t snap_id) {
 }
 
 rawstd::Task<void>
-Backend::snap_remove(const RawstdUUID& id, uint64_t snap_id) {
+Backend::snapshot_remove(const RawstdUUID& id, uint64_t snap_id) {
     try {
         co_await _basic_request(
-            RAWSTOR_CMD_SNAP_REMOVE, "snap_remove", id, snap_id
+            RAWSTOR_CMD_SNAP_REMOVE, "snapshot_remove", id, snap_id
         );
     } catch (const std::system_error&) {
         throw;

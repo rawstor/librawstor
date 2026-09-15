@@ -138,8 +138,8 @@ public:
 
     rawstd::Task<void> list_chunks(std::vector<RawstorLocationChunk>& chunks);
 
-    rawstd::Task<void> snapshot(const RawstdUUID& id, uint64_t snap_id);
-    rawstd::Task<void> snap_remove(const RawstdUUID& id, uint64_t snap_id);
+    rawstd::Task<void> snapshot_create(const RawstdUUID& id, uint64_t snap_id);
+    rawstd::Task<void> snapshot_remove(const RawstdUUID& id, uint64_t snap_id);
 
     rawstd::Task<void>
     create(const RawstdUUID& id, const RawstorObjectSpec& sp);

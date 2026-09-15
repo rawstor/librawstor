@@ -111,9 +111,9 @@ public:
     // remote rawstor-ost forwards to its own local backend the same way
     // (docs/mds.md, "Snapshots").
     rawstd::Task<void>
-    snapshot(const RawstdUUID& id, uint64_t snap_id) override;
+    snapshot_create(const RawstdUUID& id, uint64_t snap_id) override;
     rawstd::Task<void>
-    snap_remove(const RawstdUUID& id, uint64_t snap_id) override;
+    snapshot_remove(const RawstdUUID& id, uint64_t snap_id) override;
 
     rawstd::Task<size_t> pread(void* buf, size_t size, off_t offset) override;
 

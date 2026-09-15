@@ -625,7 +625,7 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
                 if (client == nullptr) {
                     co_return;
                 }
-                _snapshot(weak, head, basic);
+                _snapshot_create(weak, head, basic);
                 rawstd::DetachedTask::rethrow_if_pending();
                 break;
             }
@@ -639,7 +639,7 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
                 if (client == nullptr) {
                     co_return;
                 }
-                _snap_remove(weak, head, basic);
+                _snapshot_remove(weak, head, basic);
                 rawstd::DetachedTask::rethrow_if_pending();
                 break;
             }
@@ -1198,10 +1198,10 @@ rawstd::DetachedTask Client::_release(
     }
 }
 
-// SNAPSHOT/SNAP_REMOVE (docs/mds.md, "Snapshots"): forwarded to
-// the same rawstor_target_snapshot()/_snap_remove() this server's own
-// local backend(s) implement -- same shape as _release() above.
-rawstd::DetachedTask Client::_snapshot(
+// SNAPSHOT/SNAP_REMOVE (docs/mds.md, "Snapshots"): forwarded to the same
+// rawstor_target_snapshot_create()/_remove() this server's own local
+// backend(s) implement -- same shape as _release() above.
+rawstd::DetachedTask Client::_snapshot_create(
     std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
     RawstorOSTFrameBasicPayload payload
 ) {
@@ -1219,7 +1219,7 @@ rawstd::DetachedTask Client::_snapshot(
     try {
         std::string target = rawstd::URI::uris(targets);
         rawstd::CallbackAwaitable<void> awaiter;
-        int res = rawstor_target_snapshot(
+        int res = rawstor_target_snapshot_create(
             client->_queue, target.c_str(), payload.val, result_trampoline,
             &awaiter
         );
@@ -1245,7 +1245,7 @@ rawstd::DetachedTask Client::_snapshot(
     }
 }
 
-rawstd::DetachedTask Client::_snap_remove(
+rawstd::DetachedTask Client::_snapshot_remove(
     std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
     RawstorOSTFrameBasicPayload payload
 ) {
@@ -1263,7 +1263,7 @@ rawstd::DetachedTask Client::_snap_remove(
     try {
         std::string target = rawstd::URI::uris(targets);
         rawstd::CallbackAwaitable<void> awaiter;
-        int res = rawstor_target_snap_remove(
+        int res = rawstor_target_snapshot_remove(
             client->_queue, target.c_str(), payload.val, result_trampoline,
             &awaiter
         );
