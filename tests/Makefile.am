@@ -32,11 +32,10 @@ test_all_SOURCES = main.cpp \
 test_all_LDADD = $(top_builddir)/src/librawstor.la
 
 # Volume::snapshot()/snap_remove()'s real MDS+OST wire path needs a live
-# rawstor::mds::Server + rawstor::ostserver::Server pair (volume_env.*),
-# both of which only exist when the OST backend and the MDS are built --
-# two independent configure flags (--disable-ost-backend, --without-mds).
-if ENABLE_OST_BACKEND
-if WITH_MDS
+# rawstor::mds::Server + rawstor::ostserver::Server pair (volume_env.*) --
+# the OST side is always built, but mds/ (and its rawstor::mds::Server)
+# only exists with sqlite3 (--without-sqlite3).
+if WITH_SQLITE3
 AM_CXXFLAGS += -pthread \
                -I$(top_srcdir)/ost/include \
                -I$(top_srcdir)/mds/include \
@@ -50,7 +49,6 @@ test_all_LDADD += $(top_builddir)/ost/src/libost.la \
                   $(top_builddir)/mds/libmdsstore.la \
                   $(SQLITE3_LIBS) \
                   -lstdc++
-endif
 endif
 
 
