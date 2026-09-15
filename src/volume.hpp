@@ -108,6 +108,20 @@ public:
     static rawstd::Task<RawstorObjectSpec>
     spec(rawio::Queue& queue, const rawstd::URI& target);
 
+    // Grows a volume to `new_size` (grow-only; the MDS itself rejects a
+    // shrink -- rawstor_docs/Mds.md: shrink interacts with GC and
+    // snapshots, deferred past v1). Reserves placement for whatever new
+    // chunks the larger size needs, then materializes exactly those (not
+    // the whole map) on their OSTs, same two-step shape as create(). A
+    // failure partway rolls back whichever new chunks it already created,
+    // but -- unlike create() -- never removes the volume itself (it may
+    // already hold live data); the MDS's own logical_size is left larger
+    // than what's actually backed on a rollback, the same "reconciled by
+    // the reconstruct scan, not by this call" gap create()/snapshot()
+    // already accept for their own crash windows.
+    static rawstd::Task<void>
+    resize(rawio::Queue& queue, const rawstd::URI& target, uint64_t new_size);
+
     // Two-phase MDS-orchestrated snapshot (rawstor_docs/Mds.md,
     // "Snapshots (stage 2)"): reserves a new snap_id, backend-CoWs every
     // reachable chunk member (descending logical index, so a crash
