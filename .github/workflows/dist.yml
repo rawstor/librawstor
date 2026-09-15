@@ -685,6 +685,7 @@ jobs:
     - uses: actions/checkout@v7
       with:
         path: librawstor
+        fetch-depth: 0
     - name: fetch tags
       run: |
         cd librawstor
