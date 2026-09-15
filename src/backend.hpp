@@ -121,7 +121,7 @@ public:
     // way), so a caller that also needs this copy's own meta() (e.g.
     // Connection::open(), see its own doc comment) calls it separately,
     // afterward. `snap` is 0 for the live version, or a version id
-    // previously registered via snapshot() below (docs/mds.md,
+    // previously registered via snapshot_create() below (docs/mds.md,
     // "Snapshots") -- ENOTSUP on a backend without native CoW (file://,
     // classic LVM).
     virtual rawstd::Task<void>
@@ -133,9 +133,10 @@ public:
     // docs/mds.md's own "Snapshots" section) without each
     // needing its own override; zfs::Backend overrides both with the
     // real thing.
-    virtual rawstd::Task<void> snapshot(const RawstdUUID& id, uint64_t snap_id);
     virtual rawstd::Task<void>
-    snap_remove(const RawstdUUID& id, uint64_t snap_id);
+    snapshot_create(const RawstdUUID& id, uint64_t snap_id);
+    virtual rawstd::Task<void>
+    snapshot_remove(const RawstdUUID& id, uint64_t snap_id);
 
     virtual rawstd::Task<size_t>
     pread(void* buf, size_t size, off_t offset) = 0;

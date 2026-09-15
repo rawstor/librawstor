@@ -458,7 +458,8 @@ rawstd::Task<void> Backend::set_sync_state(
     co_return;
 }
 
-rawstd::Task<void> Backend::snapshot(const RawstdUUID& id, uint64_t snap_id) {
+rawstd::Task<void>
+Backend::snapshot_create(const RawstdUUID& id, uint64_t snap_id) {
     if (snap_id == 0) {
         /* 0 is the live version, never a snapshot. */
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
@@ -504,7 +505,7 @@ rawstd::Task<void> Backend::snapshot(const RawstdUUID& id, uint64_t snap_id) {
 }
 
 rawstd::Task<void>
-Backend::snap_remove(const RawstdUUID& id, uint64_t snap_id) {
+Backend::snapshot_remove(const RawstdUUID& id, uint64_t snap_id) {
     if (snap_id == 0) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }

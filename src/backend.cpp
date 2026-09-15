@@ -78,11 +78,11 @@ Backend::create(rawio::Queue& queue, const rawstd::URI& location) {
     co_return backend;
 }
 
-rawstd::Task<void> Backend::snapshot(const RawstdUUID&, uint64_t) {
+rawstd::Task<void> Backend::snapshot_create(const RawstdUUID&, uint64_t) {
     RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
 }
 
-rawstd::Task<void> Backend::snap_remove(const RawstdUUID&, uint64_t) {
+rawstd::Task<void> Backend::snapshot_remove(const RawstdUUID&, uint64_t) {
     RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
 }
 

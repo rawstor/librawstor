@@ -65,9 +65,10 @@ unsigned int backoff_delay_ms(
 // A rejection retrying can never turn into success: the target object
 // doesn't exist (ENOENT), already exists where create() needs it not to
 // (EEXIST), the request itself is malformed (EINVAL), or the backend
-// permanently lacks a capability (ENOTSUP -- e.g. snapshot()/snap_remove()
-// on file:// or classic LVM, docs/mds.md's "Snapshots": no retry
-// will ever make a backend grow native CoW support it doesn't have).
+// permanently lacks a capability (ENOTSUP -- e.g. snapshot_create()/
+// snapshot_remove() on file:// or classic LVM, docs/mds.md's "Snapshots":
+// no retry will ever make a backend grow native CoW support it doesn't
+// have).
 // Anything else defaults to retryable -- safer to spend a few pointless
 // retries on a genuinely transient rejection we don't recognize than to
 // silently give up on one that would have gone away on its own (e.g.
@@ -568,7 +569,7 @@ Connection::list_chunks(std::vector<RawstorLocationChunk>& chunks) {
 }
 
 rawstd::Task<void>
-Connection::snapshot(const RawstdUUID& id, uint64_t snap_id) {
+Connection::snapshot_create(const RawstdUUID& id, uint64_t snap_id) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
@@ -576,7 +577,7 @@ Connection::snapshot(const RawstdUUID& id, uint64_t snap_id) {
 
     try {
         co_await _with_retry(
-            func_name, trace_event, &Backend::snapshot, id, snap_id
+            func_name, trace_event, &Backend::snapshot_create, id, snap_id
         );
         _finish(t_call);
     } catch (...) {
@@ -586,7 +587,7 @@ Connection::snapshot(const RawstdUUID& id, uint64_t snap_id) {
 }
 
 rawstd::Task<void>
-Connection::snap_remove(const RawstdUUID& id, uint64_t snap_id) {
+Connection::snapshot_remove(const RawstdUUID& id, uint64_t snap_id) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
@@ -594,7 +595,7 @@ Connection::snap_remove(const RawstdUUID& id, uint64_t snap_id) {
 
     try {
         co_await _with_retry(
-            func_name, trace_event, &Backend::snap_remove, id, snap_id
+            func_name, trace_event, &Backend::snapshot_remove, id, snap_id
         );
         _finish(t_call);
     } catch (...) {

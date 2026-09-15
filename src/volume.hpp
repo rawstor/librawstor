@@ -115,8 +115,8 @@ public:
     // but -- unlike create() -- never removes the volume itself (it may
     // already hold live data); the MDS's own logical_size is left larger
     // than what's actually backed on a rollback, the same "reconciled by
-    // the reconstruct scan, not by this call" gap create()/snapshot()
-    // already accept for their own crash windows.
+    // the reconstruct scan, not by this call" gap create()/
+    // snapshot_create() already accept for their own crash windows.
     static rawstd::Task<void>
     resize(rawio::Queue& queue, const rawstd::URI& target, uint64_t new_size);
 
@@ -132,14 +132,14 @@ public:
     // concurrent writer -- draining/flushing an in-flight write session
     // is the writing client's own duty, not this call's.
     static rawstd::Task<uint64_t>
-    snapshot(rawio::Queue& queue, const rawstd::URI& target);
+    snapshot_create(rawio::Queue& queue, const rawstd::URI& target);
 
     // Fan-out destroy of a previously committed snapshot. The MDS
     // unregisters it (no new readers) before this call returns the
     // recorded member set; the per-member destroy below is therefore
     // best-effort cleanup -- a member that can no longer be resolved
     // (address changed, OST replaced) is left for the reconstruct scan.
-    static rawstd::Task<void> snap_remove(
+    static rawstd::Task<void> snapshot_remove(
         rawio::Queue& queue, const rawstd::URI& target, uint64_t snap_id
     );
 

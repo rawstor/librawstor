@@ -23,14 +23,14 @@ int rawstor_cli_snap_remove(const char* target, uint64_t snap_id) {
         return rawstd_exitcode_for_errno(-res);
     }
 
-    int sres = rawstor_volume_snap_remove(
+    int sres = rawstor_volume_snapshot_remove(
         op.queue, target, snap_id, rawstor_cli_op_cb, &op
     );
     ssize_t result = rawstor_cli_op_wait(&op, sres);
     rawstor_cli_op_destroy(&op);
     if (result < 0) {
         fprintf(
-            stderr, "rawstor_volume_snap_remove() failed: %s\n",
+            stderr, "rawstor_volume_snapshot_remove() failed: %s\n",
             strerror((int)-result)
         );
         return rawstd_exitcode_for_errno((int)-result);

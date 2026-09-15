@@ -129,22 +129,23 @@ rawstd::Task<void> remove_one(rawio::Queue& queue, const rawstd::URI& target) {
     co_await cn->close();
 }
 
-rawstd::Task<void>
-snapshot_one(rawio::Queue& queue, const rawstd::URI& target, uint64_t snap_id) {
-    RawstdUUID id = uuid_from_target(target);
-    std::unique_ptr<rawstor::Connection> cn =
-        co_await rawstor::Connection::create(queue, target.parent(), 1);
-    co_await cn->snapshot(id, snap_id);
-    co_await cn->close();
-}
-
-rawstd::Task<void> snap_remove_one(
+rawstd::Task<void> snapshot_create_one(
     rawio::Queue& queue, const rawstd::URI& target, uint64_t snap_id
 ) {
     RawstdUUID id = uuid_from_target(target);
     std::unique_ptr<rawstor::Connection> cn =
         co_await rawstor::Connection::create(queue, target.parent(), 1);
-    co_await cn->snap_remove(id, snap_id);
+    co_await cn->snapshot_create(id, snap_id);
+    co_await cn->close();
+}
+
+rawstd::Task<void> snapshot_remove_one(
+    rawio::Queue& queue, const rawstd::URI& target, uint64_t snap_id
+) {
+    RawstdUUID id = uuid_from_target(target);
+    std::unique_ptr<rawstor::Connection> cn =
+        co_await rawstor::Connection::create(queue, target.parent(), 1);
+    co_await cn->snapshot_remove(id, snap_id);
     co_await cn->close();
 }
 
@@ -360,18 +361,18 @@ rawstd::DetachedTask launch_volume_spec_op_coro(
     }
 }
 
-// Unlike rawstor_target_snapshot() (launch_snapshot_op_coro() above),
-// the snap_id here is chosen by the volume's MDS, not the caller --
-// delivered through `snap_id`, an out-parameter written immediately
+// Unlike rawstor_target_snapshot_create() (launch_snapshot_create_op_coro()
+// above), the snap_id here is chosen by the volume's MDS, not the caller
+// -- delivered through `snap_id`, an out-parameter written immediately
 // before `cb` runs (same convention as launch_volume_spec_op_coro()'s
 // `spec`).
-rawstd::DetachedTask launch_volume_snapshot_op_coro(
+rawstd::DetachedTask launch_volume_snapshot_create_op_coro(
     rawstd::URI target, rawio::Queue* queue, uint64_t* snap_id,
     int (*cb)(ssize_t result, void* data), void* data
 ) {
     ssize_t result = 0;
     try {
-        *snap_id = co_await rawstor::Volume::snapshot(*queue, target);
+        *snap_id = co_await rawstor::Volume::snapshot_create(*queue, target);
     } catch (const std::system_error& e) {
         result = -e.code().value();
     } catch (const std::bad_alloc&) {
@@ -389,13 +390,13 @@ rawstd::DetachedTask launch_volume_snapshot_op_coro(
     }
 }
 
-rawstd::DetachedTask launch_volume_snap_remove_op_coro(
+rawstd::DetachedTask launch_volume_snapshot_remove_op_coro(
     rawstd::URI target, rawio::Queue* queue, uint64_t snap_id,
     int (*cb)(ssize_t result, void* data), void* data
 ) {
     ssize_t result = 0;
     try {
-        co_await rawstor::Volume::snap_remove(*queue, target, snap_id);
+        co_await rawstor::Volume::snapshot_remove(*queue, target, snap_id);
     } catch (const std::system_error& e) {
         result = -e.code().value();
     } catch (const std::bad_alloc&) {
@@ -481,13 +482,13 @@ rawstd::DetachedTask launch_remove_op_coro(
     }
 }
 
-rawstd::DetachedTask launch_snapshot_op_coro(
+rawstd::DetachedTask launch_snapshot_create_op_coro(
     rawstor::Target t, rawio::Queue* queue, uint64_t snap_id,
     int (*cb)(ssize_t result, void* data), void* data
 ) {
     ssize_t result = 0;
     try {
-        co_await t.snapshot(*queue, snap_id);
+        co_await t.snapshot_create(*queue, snap_id);
     } catch (const std::system_error& e) {
         result = -e.code().value();
     } catch (const std::bad_alloc&) {
@@ -505,13 +506,13 @@ rawstd::DetachedTask launch_snapshot_op_coro(
     }
 }
 
-rawstd::DetachedTask launch_snap_remove_op_coro(
+rawstd::DetachedTask launch_snapshot_remove_op_coro(
     rawstor::Target t, rawio::Queue* queue, uint64_t snap_id,
     int (*cb)(ssize_t result, void* data), void* data
 ) {
     ssize_t result = 0;
     try {
-        co_await t.snap_remove(*queue, snap_id);
+        co_await t.snapshot_remove(*queue, snap_id);
     } catch (const std::system_error& e) {
         result = -e.code().value();
     } catch (const std::bad_alloc&) {
@@ -804,22 +805,24 @@ rawstd::Task<void> Target::remove(rawio::Queue& queue) {
     co_await remove_many(queue, _uris);
 }
 
-rawstd::Task<void> Target::snapshot(rawio::Queue& queue, uint64_t snap_id) {
+rawstd::Task<void>
+Target::snapshot_create(rawio::Queue& queue, uint64_t snap_id) {
     // Same fan-out shape as remove() above: every URI is attempted
     // concurrently regardless of an earlier failure.
     std::vector<rawstd::Task<void>> tasks;
     tasks.reserve(_uris.size());
     for (const auto& uri : _uris) {
-        tasks.push_back(snapshot_one(queue, uri, snap_id));
+        tasks.push_back(snapshot_create_one(queue, uri, snap_id));
     }
     co_await rawstd::gather(std::move(tasks));
 }
 
-rawstd::Task<void> Target::snap_remove(rawio::Queue& queue, uint64_t snap_id) {
+rawstd::Task<void>
+Target::snapshot_remove(rawio::Queue& queue, uint64_t snap_id) {
     std::vector<rawstd::Task<void>> tasks;
     tasks.reserve(_uris.size());
     for (const auto& uri : _uris) {
-        tasks.push_back(snap_remove_one(queue, uri, snap_id));
+        tasks.push_back(snapshot_remove_one(queue, uri, snap_id));
     }
     co_await rawstd::gather(std::move(tasks));
 }
@@ -1147,13 +1150,13 @@ int rawstor_target_remove(
     }
 }
 
-int rawstor_target_snapshot(
+int rawstor_target_snapshot_create(
     RawIOQueue* queue, const char* target, uint64_t snap_id,
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
         rawstor::Target t(rawstd::URI::uriv(target));
-        launch_snapshot_op_coro(
+        launch_snapshot_create_op_coro(
             std::move(t), static_cast<rawio::Queue*>(queue), snap_id, cb, data
         );
         rawstd::DetachedTask::rethrow_if_pending();
@@ -1171,13 +1174,13 @@ int rawstor_target_snapshot(
     }
 }
 
-int rawstor_target_snap_remove(
+int rawstor_target_snapshot_remove(
     RawIOQueue* queue, const char* target, uint64_t snap_id,
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
         rawstor::Target t(rawstd::URI::uriv(target));
-        launch_snap_remove_op_coro(
+        launch_snapshot_remove_op_coro(
             std::move(t), static_cast<rawio::Queue*>(queue), snap_id, cb, data
         );
         rawstd::DetachedTask::rethrow_if_pending();
@@ -1195,7 +1198,7 @@ int rawstor_target_snap_remove(
     }
 }
 
-int rawstor_volume_snapshot(
+int rawstor_volume_snapshot_create(
     RawIOQueue* queue, const char* target, uint64_t* snap_id,
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
@@ -1204,7 +1207,7 @@ int rawstor_volume_snapshot(
         if (uris.size() != 1 || !is_volume_target(uris[0])) {
             return -EINVAL;
         }
-        launch_volume_snapshot_op_coro(
+        launch_volume_snapshot_create_op_coro(
             uris[0], static_cast<rawio::Queue*>(queue), snap_id, cb, data
         );
         rawstd::DetachedTask::rethrow_if_pending();
@@ -1222,7 +1225,7 @@ int rawstor_volume_snapshot(
     }
 }
 
-int rawstor_volume_snap_remove(
+int rawstor_volume_snapshot_remove(
     RawIOQueue* queue, const char* target, uint64_t snap_id,
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
@@ -1231,7 +1234,7 @@ int rawstor_volume_snap_remove(
         if (uris.size() != 1 || !is_volume_target(uris[0])) {
             return -EINVAL;
         }
-        launch_volume_snap_remove_op_coro(
+        launch_volume_snapshot_remove_op_coro(
             uris[0], static_cast<rawio::Queue*>(queue), snap_id, cb, data
         );
         rawstd::DetachedTask::rethrow_if_pending();
