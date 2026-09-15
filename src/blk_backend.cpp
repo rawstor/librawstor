@@ -168,18 +168,18 @@ rawstd::Task<void> Backend::close() {
     co_await _queue.close(f);
 }
 
-rawstd::Task<void> Backend::set_object(const RawstdUUID& id) {
+rawstd::Task<void> Backend::set_object(const RawstdUUID& id, uint64_t snap) {
     if (fd() != -1) {
         throw std::runtime_error("Object already set");
     }
 
-    int fd = co_await _open(id);
+    int fd = co_await _open(id, snap);
     set_fd(fd);
 }
 
 rawstd::Task<RawstorObjectSpec> Backend::spec(const RawstdUUID& id) {
 #if defined(RAWSTD_ON_LINUX)
-    int f = co_await _open(id);
+    int f = co_await _open(id, 0);
 
     uint64_t size = 0;
     if (ioctl(f, BLKGETSIZE64, &size) == -1) {

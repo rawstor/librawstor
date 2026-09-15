@@ -77,7 +77,10 @@ private:
     void _throttle_release() noexcept;
 
 protected:
-    virtual rawstd::Task<int> _open(const RawstdUUID& id) = 0;
+    // `snap` is 0 for the live version, or a previously-snapshotted
+    // version id (rawstor_docs/Mds.md, "Snapshots") -- ENOTSUP on a
+    // subclass without native CoW (file::Backend, lvm::Backend).
+    virtual rawstd::Task<int> _open(const RawstdUUID& id, uint64_t snap) = 0;
 
     // A blk-backed backend has no upfront connection step: the fd is
     // opened lazily, by _open(const RawstdUUID&) above, once
@@ -138,7 +141,8 @@ public:
 
     rawstd::Task<void> close() override final;
 
-    rawstd::Task<void> set_object(const RawstdUUID& id) override final;
+    rawstd::Task<void>
+    set_object(const RawstdUUID& id, uint64_t snap = 0) override final;
 
     // Default spec() for a backend whose object id maps to a real block
     // device (BLKGETSIZE64) -- file::Backend overrides this instead, since

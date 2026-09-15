@@ -2,6 +2,11 @@
 
 #include <ost/server.hpp>
 
+#include "object.hpp"
+#include "target.hpp"
+
+#include <rawio/queue.hpp>
+
 #include <rawstd/coro.hpp>
 #include <rawstd/gpp.hpp>
 #include <rawstd/hash.h>
@@ -61,38 +66,21 @@ int validate_result(int fd, size_t size, size_t result) noexcept {
 // comment for the general shape this follows.
 // ---------------------------------------------------------------------
 
-// Same shape as close_trampoline() below -- rawstor_target_open() writes
-// the opened object directly to `*object` (an out-parameter, see
-// co_target_open() below) rather than delivering it as one of the C
-// callback's own arguments, so there's nothing left for this one to hand
-// to complete() beyond the result.
-int open_trampoline(ssize_t result, void* data) {
-    static_cast<rawstd::CallbackAwaitable<void>*>(data)->complete(result);
-    return 0;
-}
-
-// `target` is taken by value (not `const std::string&`): a coroutine
-// parameter declared as a reference is *not* lifetime-extended past the
-// initiating call the way an ordinary function's would be, so a caller
-// passing a temporary (e.g. rawstd::URI::uris(...)) needs this to make its
-// own copy, safely owned by the coroutine frame across suspension.
-rawstd::Task<RawstorObject*>
-co_target_open(RawIOQueue* queue, std::string target) {
-    // rawstor_target_open() writes `object` before open_trampoline() ever
-    // runs (see its own doc comment), and open_trampoline() only fires
-    // once co_await awaiter below resumes -- so `object` is always
-    // already valid, whether it took a real suspension or completed
-    // synchronously, by the time it's read here.
-    RawstorObject* object = nullptr;
-    rawstd::CallbackAwaitable<void> awaiter;
-    int res = rawstor_target_open(
-        queue, target.c_str(), &object, open_trampoline, &awaiter
-    );
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-    co_await awaiter;
-    co_return object;
+// Uses rawstor::Target directly (not the rawstor_target_open() C API):
+// this is the one place in ost/ that needs a snap-bound open (rawstor_
+// docs/Mds.md, "Snapshots" -- the wire's SET_OBJECT `val` already carries
+// it, but the public C API has no way to pass it through). `uris` is
+// taken by value for the same reason a by-value std::string used to be
+// here: a coroutine parameter declared as a reference is not lifetime-
+// extended past the initiating call the way an ordinary function's
+// would be.
+rawstd::Task<RawstorObject*> co_target_open(
+    RawIOQueue* queue, std::vector<rawstd::URI> uris, uint64_t snap
+) {
+    rawstor::Target t(uris);
+    std::unique_ptr<rawstor::Object> object =
+        co_await t.open(*static_cast<rawio::Queue*>(queue), snap);
+    co_return object.release();
 }
 
 int close_trampoline(ssize_t result, void* data) {
@@ -624,6 +612,34 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
                     co_return;
                 }
                 _release(weak, head, basic);
+                rawstd::DetachedTask::rethrow_if_pending();
+                break;
+            }
+            case RAWSTOR_CMD_SNAPSHOT: {
+                RawstorOSTFrameBasicPayload basic;
+                co_await recv_frame(
+                    stream, &basic, sizeof(basic), fd, "request payload",
+                    &stream_failed
+                );
+                client = weak.lock();
+                if (client == nullptr) {
+                    co_return;
+                }
+                _snapshot(weak, head, basic);
+                rawstd::DetachedTask::rethrow_if_pending();
+                break;
+            }
+            case RAWSTOR_CMD_SNAP_REMOVE: {
+                RawstorOSTFrameBasicPayload basic;
+                co_await recv_frame(
+                    stream, &basic, sizeof(basic), fd, "request payload",
+                    &stream_failed
+                );
+                client = weak.lock();
+                if (client == nullptr) {
+                    co_return;
+                }
+                _snap_remove(weak, head, basic);
                 rawstd::DetachedTask::rethrow_if_pending();
                 break;
             }
@@ -1182,6 +1198,97 @@ rawstd::DetachedTask Client::_release(
     }
 }
 
+// SNAPSHOT/SNAP_REMOVE (rawstor_docs/Mds.md, "Snapshots"): forwarded to
+// the same rawstor_target_snapshot()/_snap_remove() this server's own
+// local backend(s) implement -- same shape as _release() above.
+rawstd::DetachedTask Client::_snapshot(
+    std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
+    RawstorOSTFrameBasicPayload payload
+) {
+    std::shared_ptr<Client> client = weak.lock();
+    if (client == nullptr) {
+        co_return;
+    }
+
+    RawstdUUID uuid;
+    memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
+
+    std::vector<rawstd::URI> targets = client->_targets(uuid);
+
+    int result = 0;
+    try {
+        std::string target = rawstd::URI::uris(targets);
+        rawstd::CallbackAwaitable<void> awaiter;
+        int res = rawstor_target_snapshot(
+            client->_queue, target.c_str(), payload.val, result_trampoline,
+            &awaiter
+        );
+        if (res < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
+        }
+        co_await awaiter;
+    } catch (const std::system_error& e) {
+        result = -e.code().value();
+    }
+
+    bool send_failed = false;
+    try {
+        co_await client->_send_response(
+            RAWSTOR_CMD_SNAPSHOT, head.cid, result, 0
+        );
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        send_failed = true;
+    }
+    if (send_failed) {
+        co_await client->_server.del_client(client->_fd);
+    }
+}
+
+rawstd::DetachedTask Client::_snap_remove(
+    std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
+    RawstorOSTFrameBasicPayload payload
+) {
+    std::shared_ptr<Client> client = weak.lock();
+    if (client == nullptr) {
+        co_return;
+    }
+
+    RawstdUUID uuid;
+    memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
+
+    std::vector<rawstd::URI> targets = client->_targets(uuid);
+
+    int result = 0;
+    try {
+        std::string target = rawstd::URI::uris(targets);
+        rawstd::CallbackAwaitable<void> awaiter;
+        int res = rawstor_target_snap_remove(
+            client->_queue, target.c_str(), payload.val, result_trampoline,
+            &awaiter
+        );
+        if (res < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
+        }
+        co_await awaiter;
+    } catch (const std::system_error& e) {
+        result = -e.code().value();
+    }
+
+    bool send_failed = false;
+    try {
+        co_await client->_send_response(
+            RAWSTOR_CMD_SNAP_REMOVE, head.cid, result, 0
+        );
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        send_failed = true;
+    }
+    if (send_failed) {
+        co_await client->_server.del_client(client->_fd);
+    }
+}
+
 // Cheap path: SPEC only ever needs the object's own size, so it goes
 // through rawstor_target_spec() (its own failover, no mirror-
 // consistency-state lookup at all) rather than rawstor_target_meta() --
@@ -1444,7 +1551,7 @@ rawstd::DetachedTask Client::_set_object(
     RawstorOSTFrameBasicPayload payload
 ) {
     RawIOQueue* queue;
-    std::string target;
+    std::vector<rawstd::URI> targets;
     {
         std::shared_ptr<Client> client = co_await _close_current_object(weak);
         if (client == nullptr) {
@@ -1454,13 +1561,15 @@ rawstd::DetachedTask Client::_set_object(
 
         RawstdUUID uuid;
         memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
-        target = rawstd::URI::uris(client->_targets(uuid));
+        targets = client->_targets(uuid);
     }
 
     RawstorObject* object = nullptr;
     int error = 0;
     try {
-        object = co_await co_target_open(queue, target);
+        // `val` is the bound version -- 0 for live, or a previously
+        // snapshotted id (rawstor_docs/Mds.md, "Snapshots").
+        object = co_await co_target_open(queue, targets, payload.val);
     } catch (const std::system_error& e) {
         error = e.code().value();
     }

@@ -80,29 +80,34 @@ RawstorVolPolicy policy_of(const RawstorObjectSpec& sp) {
     return ret;
 }
 
-std::vector<rawstd::URI>
-chunk_targets(const WireMap& map, uint64_t index, uint64_t snap = 0) {
-    RawstdUUID uuid = rawstor::volume_chunk_uuid(map.volume_id, index);
+// One chunk slot's own target URI. Throws if the MDS could not resolve
+// the OST: refuse loudly instead of silently opening under-protected.
+rawstd::URI chunk_slot_target(
+    const RawstdUUID& volume_id, uint64_t index, const WireSlot& slot,
+    uint64_t snap = 0
+) {
+    if (slot.address.empty()) {
+        rawstd_error("Chunk slot without a resolved OST address\n");
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
+    }
+    RawstdUUID uuid = rawstor::volume_chunk_uuid(volume_id, index);
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&uuid, &uuid_string);
 
+    std::ostringstream oss;
+    oss << "ost://" << slot.address << "/" << uuid_string;
+    if (snap != 0) {
+        oss << "@" << snap;
+    }
+    return rawstd::URI(oss.str());
+}
+
+std::vector<rawstd::URI>
+chunk_targets(const WireMap& map, uint64_t index, uint64_t snap = 0) {
     std::vector<rawstd::URI> ret;
     ret.reserve(map.chunks[index].size());
     for (const WireSlot& slot : map.chunks[index]) {
-        if (slot.address.empty()) {
-            /*
-             * The MDS could not resolve the OST: refuse loudly instead of
-             * silently opening under-protected.
-             */
-            rawstd_error("Chunk slot without a resolved OST address\n");
-            RAWSTD_THROW_SYSTEM_ERROR(EIO);
-        }
-        std::ostringstream oss;
-        oss << "ost://" << slot.address << "/" << uuid_string;
-        if (snap != 0) {
-            oss << "@" << snap;
-        }
-        ret.emplace_back(oss.str());
+        ret.push_back(chunk_slot_target(map.volume_id, index, slot, snap));
     }
     return ret;
 }
@@ -316,6 +321,123 @@ Volume::spec(rawio::Queue& queue, const rawstd::URI& target) {
     sp.failure_domain = map.policy.failure_domain;
     sp.stripe_width = map.policy.stripe_width;
     co_return sp;
+}
+
+rawstd::Task<uint64_t>
+Volume::snapshot(rawio::Queue& queue, const rawstd::URI& target) {
+    RawstdUUID id = target_uuid(target);
+    rawstd::URI location(target_location(target));
+
+    mds::Client client = co_await mds_connect(queue, location);
+    uint64_t snap_id = co_await client.vol_snap_begin(id);
+    WireMap map = co_await client.vol_open(id, 0);
+
+    /*
+     * Chunks are CoW'd in descending index order (rawstor_docs/Mds.md):
+     * a crash midway always leaves a hole at the low indices, so the
+     * reconstruct scan can never mistake a partial leftover for a
+     * complete (legitimately shorter, pre-resize) snapshot.
+     */
+    std::vector<mds::WireSnapMember> members;
+    for (uint64_t i = map.chunks.size(); i-- > 0;) {
+        bool any = false;
+        std::exception_ptr last_error;
+        for (const WireSlot& slot : map.chunks[i]) {
+            if (slot.address.empty()) {
+                continue;
+            }
+            try {
+                Target t({chunk_slot_target(map.volume_id, i, slot)});
+                co_await t.snapshot(queue, snap_id);
+                members.push_back(mds::WireSnapMember{i, slot.ost_id});
+                any = true;
+            } catch (const std::exception& e) {
+                rawstd_error(
+                    "Volume snapshot: chunk %llu, %s: %s\n",
+                    static_cast<unsigned long long>(i), slot.address.c_str(),
+                    e.what()
+                );
+                last_error = std::current_exception();
+            }
+        }
+        if (!any) {
+            /*
+             * Nothing survived this chunk -- the snapshot would be
+             * incomplete. Leave whatever native copies already landed on
+             * lower-index chunks unregistered for the reconstruct scan
+             * (rawstor_docs/Mds.md: "the same garbage class as a crashed
+             * deletion") rather than trying to roll them back here.
+             * Surfacing the last member's own error (e.g. -ENOTSUP on a
+             * file://-backed chunk) is more useful than a generic one.
+             */
+            if (last_error) {
+                std::rethrow_exception(last_error);
+            }
+            rawstd_error(
+                "Volume snapshot: chunk %llu has no reachable member\n",
+                static_cast<unsigned long long>(i)
+            );
+            RAWSTD_THROW_SYSTEM_ERROR(EIO);
+        }
+    }
+
+    co_await client.vol_snap_commit(id, snap_id, members);
+    co_return snap_id;
+}
+
+rawstd::Task<void> Volume::snap_remove(
+    rawio::Queue& queue, const rawstd::URI& target, uint64_t snap_id
+) {
+    RawstdUUID id = target_uuid(target);
+    rawstd::URI location(target_location(target));
+
+    if (snap_id == 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+
+    mds::Client client = co_await mds_connect(queue, location);
+    std::vector<mds::WireSnapMember> members =
+        co_await client.vol_snap_remove(id, snap_id);
+
+    /*
+     * The MDS has already unregistered the snapshot above (no new
+     * readers); the destroy below is best-effort cleanup on whichever
+     * members it recorded -- a member that no longer resolves (address
+     * changed, OST replaced) is left for the reconstruct scan.
+     */
+    WireMap map = co_await client.vol_open(id, 0);
+
+    std::exception_ptr error;
+    for (const mds::WireSnapMember& m : members) {
+        if (m.logical_index >= map.chunks.size()) {
+            continue;
+        }
+        const std::vector<WireSlot>& slots = map.chunks[m.logical_index];
+        auto it =
+            std::find_if(slots.begin(), slots.end(), [&m](const WireSlot& s) {
+                return memcmp(
+                           s.ost_id.bytes, m.ost_id.bytes,
+                           sizeof(m.ost_id.bytes)
+                       ) == 0;
+            });
+        if (it == slots.end() || it->address.empty()) {
+            rawstd_error(
+                "Snapshot remove: chunk %llu member no longer resolvable\n",
+                static_cast<unsigned long long>(m.logical_index)
+            );
+            continue;
+        }
+        try {
+            Target t({chunk_slot_target(map.volume_id, m.logical_index, *it)});
+            co_await t.snap_remove(queue, snap_id);
+        } catch (const std::exception& e) {
+            rawstd_error("Snapshot remove: %s\n", e.what());
+            error = std::current_exception();
+        }
+    }
+    if (error) {
+        std::rethrow_exception(error);
+    }
 }
 
 rawstd::Task<Object*> Volume::_chunk(uint32_t index) {

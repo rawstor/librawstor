@@ -104,7 +104,16 @@ public:
 
     rawstd::Task<RawstorLocationInfo> info() override;
 
-    rawstd::Task<void> set_object(const RawstdUUID& id) override;
+    rawstd::Task<void>
+    set_object(const RawstdUUID& id, uint64_t snap = 0) override;
+
+    // Relays RAWSTOR_CMD_SNAPSHOT/_SNAP_REMOVE over the wire -- the
+    // remote rawstor-ost forwards to its own local backend the same way
+    // (rawstor_docs/Mds.md, "Snapshots").
+    rawstd::Task<void>
+    snapshot(const RawstdUUID& id, uint64_t snap_id) override;
+    rawstd::Task<void>
+    snap_remove(const RawstdUUID& id, uint64_t snap_id) override;
 
     rawstd::Task<size_t> pread(void* buf, size_t size, off_t offset) override;
 

@@ -37,7 +37,7 @@ private:
     std::string _device_path(const RawstdUUID& id) const;
     std::string _device_path_for_name(const std::string& name) const;
 
-    rawstd::Task<int> _open(const RawstdUUID& id) override;
+    rawstd::Task<int> _open(const RawstdUUID& id, uint64_t snap) override;
 
     // Removes any leftover "<uuid>.creating" staging LVs in this VG (see
     // create()'s own doc comment for why they can exist). Runs at most
