@@ -64,18 +64,16 @@ private:
     };
 
     rawio::Queue& _queue;
-    RawstdUUID _id;
     /* Bound snapshot version; 0 = live. Snapshot volumes are read-only. */
     uint64_t _snap;
     rawstd::URI _location; /* mds://host:port */
     uint64_t _size;
     uint64_t _chunk_size;
-    uint64_t _map_epoch;
     std::vector<Chunk> _chunks;
 
     Volume(
-        rawio::Queue& queue, const RawstdUUID& id, uint64_t snap,
-        const rawstd::URI& location, const mds::WireMap& map
+        rawio::Queue& queue, uint64_t snap, const rawstd::URI& location,
+        const mds::WireMap& map
     );
 
     // Returns the chunk's already-open (or freshly opened) Object;

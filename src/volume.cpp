@@ -188,16 +188,14 @@ RawstdUUID volume_chunk_uuid(const RawstdUUID& volume_id, uint64_t index) {
 }
 
 Volume::Volume(
-    rawio::Queue& queue, const RawstdUUID& id, uint64_t snap,
-    const rawstd::URI& location, const mds::WireMap& map
+    rawio::Queue& queue, uint64_t snap, const rawstd::URI& location,
+    const mds::WireMap& map
 ) :
     _queue(queue),
-    _id(id),
     _snap(snap),
     _location(location),
     _size(map.logical_size),
-    _chunk_size(map.chunk_size),
-    _map_epoch(map.map_epoch) {
+    _chunk_size(map.chunk_size) {
     _chunks.resize(map.chunks.size());
     for (size_t i = 0; i < map.chunks.size(); ++i) {
         _chunks[i].targets = chunk_targets(map, i, snap);
@@ -216,9 +214,7 @@ Volume::open(rawio::Queue& queue, const rawstd::URI& target) {
     mds::Client client = co_await mds_connect(queue, location);
     WireMap map = co_await client.vol_open(id, snap);
 
-    co_return std::unique_ptr<Volume>(
-        new Volume(queue, id, snap, location, map)
-    );
+    co_return std::unique_ptr<Volume>(new Volume(queue, snap, location, map));
 }
 
 rawstd::Task<void> Volume::create(
