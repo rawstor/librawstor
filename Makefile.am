@@ -9,16 +9,19 @@ if ENABLE_VDUSE_BACKEND
     SUBDIRS += vduse
 endif
 
-if ENABLE_TESTS
-    SUBDIRS += tests
-endif
-
 if ENABLE_OST_BACKEND
     SUBDIRS += ost
 endif
 
 if WITH_MDS
     SUBDIRS += mds
+endif
+
+# After ost/mds: tests/ links against their libost.la/libmds.la/
+# libmdsstore.la when both are enabled (Volume::snapshot()/snap_remove()'s
+# real MDS+OST wire path, tests/volume_env.*).
+if ENABLE_TESTS
+    SUBDIRS += tests
 endif
 
 if WITH_PYTHON3
