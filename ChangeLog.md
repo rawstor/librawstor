@@ -56,7 +56,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - `rawstor-ost` now answers `-ENOSYS` for a command it doesn't recognize instead of just dropping the connection, so a newer client can tell "unsupported" apart from a transport failure.
 
-## [0.2.11] - Unreleased
+## [0.2.11] - 2026-09-15
 
 ### Added
 - Consistent startup/connection INFO logging across `rawstor-ost`, `rawstor-vhost`, `rawstor-vhost-qemu` and `rawstor-vduse`: version at startup, waiting for a connection, client connected, client disconnected.
