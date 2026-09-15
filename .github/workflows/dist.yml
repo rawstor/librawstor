@@ -272,7 +272,7 @@ jobs:
       run: |
         tar -xzf sources/${LIBRAWSTOR_TAR_GZ}
         cd ${LIBRAWSTOR}
-        ./configure
+        ./configure --without-sqlite3
         make deb/python3-rawstor/changelog
     - name: dpkg-buildpackage
       run: |
@@ -469,7 +469,7 @@ jobs:
       run: |
         tar -xzf sources/${LIBRAWSTOR_TAR_GZ}
         cd ${LIBRAWSTOR}
-        ./configure
+        ./configure --without-sqlite3
     - name: setuptree
       run: |
         mkdir -p ~/rpmbuild/SOURCES
@@ -613,7 +613,7 @@ jobs:
       run: |
         tar -xzf sources/${LIBRAWSTOR_TAR_GZ}
         cd ${LIBRAWSTOR}
-        ./configure
+        ./configure --without-sqlite3
     - name: build wheel and sdist
       # a single cp39-abi3 build works unmodified on every Python >= 3.9
       # (see pyrawstor/setup.py), so one wheel covers the whole matrix --
