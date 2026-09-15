@@ -63,6 +63,9 @@ EXTRA_DIST = deb/librawstor/compat \
              deb/librawstor/rawstor-vduse.install \
              deb/librawstor/rawstor-vduse.postinst \
              deb/librawstor/rawstor-vduse.prerm \
+             deb/librawstor/rawstor-mds.install \
+             deb/librawstor/rawstor-mds.postinst \
+             deb/librawstor/rawstor-mds.prerm \
              deb/librawstor/rules \
              deb/python3-rawstor/compat \
              deb/python3-rawstor/format \
@@ -70,6 +73,7 @@ EXTRA_DIST = deb/librawstor/compat \
              systemd/rawstor-ost.service \
              systemd/rawstor-vhost@.service \
              systemd/rawstor-vduse@.service \
+             systemd/rawstor-mds.service \
              udev/60-rawstor-vduse.rules \
              .github/tools/deb-changelog.sh \
              ChangeLog.md \

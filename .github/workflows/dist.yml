@@ -163,7 +163,7 @@ jobs:
     - name: install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libxxhash-dev liburing-dev libgtest-dev debhelper build-essential
+        sudo apt-get install -y libxxhash-dev liburing-dev libgtest-dev libsqlite3-dev debhelper build-essential
     - uses: actions/download-artifact@v8
       with:
         name: sources
@@ -197,8 +197,15 @@ jobs:
         cp deb/librawstor/rawstor-vhost.install debian
         cp deb/librawstor/rawstor-vhost.postinst debian
         cp deb/librawstor/rawstor-vhost.prerm debian
+        cp deb/librawstor/rawstor-vduse.install debian
+        cp deb/librawstor/rawstor-vduse.postinst debian
+        cp deb/librawstor/rawstor-vduse.prerm debian
+        cp deb/librawstor/rawstor-mds.install debian
+        cp deb/librawstor/rawstor-mds.postinst debian
+        cp deb/librawstor/rawstor-mds.prerm debian
         cp deb/librawstor/rules debian
         cp systemd/rawstor-ost.service debian
+        cp systemd/rawstor-mds.service debian
         cp COPYING debian/copyright
         dpkg-buildpackage -us -uc
     - name: changelog
@@ -209,7 +216,7 @@ jobs:
         echo '```' >> $GITHUB_STEP_SUMMARY
     - name: ls
       run: |
-        for i in librawstor_*.deb librawstor-dev_*.deb rawstor-ost_*.deb rawstor-vhost_*.deb *.ddeb; do \
+        for i in librawstor_*.deb librawstor-dev_*.deb rawstor-ost_*.deb rawstor-vhost_*.deb rawstor-vduse_*.deb rawstor-mds_*.deb *.ddeb; do \
           [ -e "$i" ] || continue; \
           echo "# $i" >> $GITHUB_STEP_SUMMARY; \
           echo '```' >> $GITHUB_STEP_SUMMARY
@@ -224,6 +231,8 @@ jobs:
           librawstor-dev_*.deb
           rawstor-ost_*.deb
           rawstor-vhost_*.deb
+          rawstor-vduse_*.deb
+          rawstor-mds_*.deb
           *.ddeb
         if-no-files-found: error
 
@@ -341,6 +350,27 @@ jobs:
         systemctl is-active rawstor-vhost@${UUID}.service
         test -S /run/rawstor/${UUID}.sock
         sudo systemctl disable --now rawstor-vhost@${UUID}.service
+    - name: install-rawstor-vduse
+      # No vduse kernel module on GitHub-hosted runners -- same reasoning
+      # as rawstor-vhost's own confirm-it-runs-only test above, one step
+      # further: not even the module load is guaranteed here, so this
+      # only confirms the package installs and the binary runs.
+      run: sudo apt install -y ./librawstor.deb/rawstor-vduse_*.deb
+    - name: test-rawstor-vduse
+      run: rawstor-vduse --version
+    - name: install-rawstor-mds
+      run: |
+        sudo mkdir -p /etc/rawstor-mds
+        echo "ost 018f4e2a-1111-7000-8000-000000000001 127.0.0.1:7777 100 dc1/rack1/host1" | sudo tee /etc/rawstor-mds/topology.conf
+        sudo apt install -y ./librawstor.deb/rawstor-mds_*.deb
+        sudo systemctl start rawstor-mds.service
+    - name: test-rawstor-mds
+      # rawstor-ost.service (started above) is still running -- reuse it
+      # as the mds:// volume's one chunk member.
+      run: |
+        rawstor-mds --version
+        rawstor create -t mds://127.0.0.1:7778/018f4e2a-2222-7000-8000-000000000001 --size=1M
+        rawstor resize mds://127.0.0.1:7778/018f4e2a-2222-7000-8000-000000000001 --size=2M
     - name: install-python3-rawstor
       run: sudo apt install -y ./python3-rawstor-${{ matrix.os }}.deb/python*-rawstor_*.deb
     - name: test-python3-rawstor
@@ -358,7 +388,7 @@ jobs:
       run: |
         dnf -y install epel-release
         dnf config-manager --set-enabled crb
-        dnf -y install xxhash-devel liburing-devel gtest-devel gcc-c++ make pkgconfig systemd-rpm-macros rpm-build rpmlint
+        dnf -y install xxhash-devel liburing-devel gtest-devel sqlite-devel gcc-c++ make pkgconfig systemd-rpm-macros rpm-build rpmlint
     - uses: actions/download-artifact@v8
       with:
         name: sources
@@ -519,6 +549,30 @@ jobs:
       # containers have no systemd/PID 1, so the @-instance unit cannot be
       # started via systemctl here -- just confirm the binary is installed.
       run: rawstor-vhost --version
+    - name: install-rawstor-vduse
+      run: dnf -y install ./librawstor.rpm/rawstor-vduse-[0-9]*.rpm
+    - name: test-rawstor-vduse
+      # no vduse kernel module in this container either -- same
+      # confirm-it-runs-only reasoning as rawstor-vhost above.
+      run: rawstor-vduse --version
+    - name: install-rawstor-mds
+      run: dnf -y install ./librawstor.rpm/rawstor-mds-[0-9]*.rpm
+    - name: test-rawstor-mds
+      # containers have no systemd/PID 1, so the .service unit cannot be
+      # started via systemctl here -- run the same command it would, by
+      # hand, against a fresh OST (the earlier test-rawstor-ost's own OST
+      # was already killed at the end of that step).
+      run: |
+        rawstor-mds --version
+        rawstor-ost --bind=127.0.0.1:7777 file:///var/lib/rawstor &
+        OST_PID=$!
+        sleep 10
+        echo "ost 018f4e2a-1111-7000-8000-000000000001 127.0.0.1:7777 100 dc1/rack1/host1" > /tmp/topology.conf
+        rawstor-mds --bind=127.0.0.1:7778 --db=/tmp/mds.db --topology=/tmp/topology.conf &
+        MDS_PID=$!
+        sleep 5
+        rawstor create -t mds://127.0.0.1:7778/018f4e2a-2222-7000-8000-000000000001 --size=1M
+        kill ${MDS_PID} ${OST_PID}
     - name: install-python3-rawstor
       run: dnf -y install ./python3-rawstor-${{ matrix.os }}.rpm/python3*-rawstor-[0-9]*.rpm
     - name: test-python3-rawstor
