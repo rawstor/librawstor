@@ -43,7 +43,7 @@ public:
         RawstorPaginationToken& token
     );
 
-    // The reconstruct scan's source (rawstor_docs/Mds.md, "Reconstruct /
+    // The reconstruct scan's source (docs/mds.md, "Reconstruct /
     // DR"): unlike list() above, this is a per-URI physical inventory,
     // not a mirror-aware target listing -- every URI is scanned
     // independently and its own chunks appended as-is (no merge-by-uuid:

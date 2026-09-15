@@ -109,7 +109,7 @@ std::string ost_address(const Topology& topology, const RawstdUUID& ost_id) {
 
 // Serializes a VolumeMap into a VOL_OPEN response payload: descriptor,
 // then one RawstorVolChunkEntry + its width RawstorVolChunkSlot records
-// per chunk (rawstor_docs/Mds.md, "Wire protocol").
+// per chunk (docs/mds.md, "Wire protocol").
 std::vector<unsigned char>
 encode_volume_map(const Topology& topology, const VolumeMap& map) {
     RawstorVolDescriptorPayload descriptor{};
@@ -255,13 +255,13 @@ rawstd::Task<void> Session::_dispatch(
     VolumeStore& store = session->_server.store();
 
     // Every request below is served synchronously against VolumeStore
-    // (rawstor_docs/Mds.md: "Calls are synchronous... a briefly blocked
+    // (docs/mds.md: "Calls are synchronous... a briefly blocked
     // event loop is accepted") -- the only actual awaiting here is the
     // socket read/write around it.
     switch (head.cmd) {
     case RAWSTOR_CMD_SET_OBJECT: {
         // The mandatory handshake; MDS control connections bind no
-        // object (rawstor_docs/Mds.md, "Wire protocol") -- just drain
+        // object (docs/mds.md, "Wire protocol") -- just drain
         // the fixed payload and ack.
         RawstorOSTFrameBasicPayload payload;
         co_await recv_all(queue, fd, &payload, sizeof(payload));
@@ -440,7 +440,7 @@ rawstd::Task<void> Session::_dispatch(
         break;
     }
     default:
-        // Forward-compat and role separation (rawstor_docs/Mds.md, "Wire
+        // Forward-compat and role separation (docs/mds.md, "Wire
         // protocol"): this v1 MDS serves the volume group only, not yet
         // the shared metadata group (SPEC/SET_STATE/LIST_CHUNKS -- stage
         // 3's witness role) -- there's no length field on the request to

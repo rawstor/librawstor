@@ -57,7 +57,7 @@ RawstdUUID uuid_from_bytes(const uint8_t bytes[16]) {
 }
 
 // Deserializes a VOL_OPEN response payload (descriptor + per-chunk entries
-// + slots -- rawstor_docs/Mds.md, "Wire protocol"; the exact inverse of
+// + slots -- docs/mds.md, "Wire protocol"; the exact inverse of
 // mds/session.cpp's encode_volume_map()) into a WireMap.
 WireMap decode_volume_map(const std::vector<unsigned char>& data) {
     WireMap map;
@@ -164,7 +164,7 @@ rawstd::Task<void> Client::connect() {
     _fd = fd;
 
     // SET_OBJECT handshake: null binding (a control connection, per
-    // rawstor_docs/Mds.md).
+    // docs/mds.md).
     RawstorOSTFrameBasic request{
         .head =
             {

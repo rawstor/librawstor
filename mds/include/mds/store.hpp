@@ -45,7 +45,7 @@ struct SnapMember {
 };
 
 /*
- * The explicit volume map, stored in SQLite (rawstor_docs/Mds.md, "MDS
+ * The explicit volume map, stored in SQLite (docs/mds.md, "MDS
  * server, v1"): WAL journal, synchronous=FULL — crash-safety by
  * construction rather than by our own fsync protocol. The map is an index
  * over the OST-side truth and can be rebuilt by scan; single instance,
@@ -129,7 +129,7 @@ public:
 
     /*
      * Rebuilds the whole map from a scan of every OST in the topology
-     * (rawstor_docs/Mds.md, "Reconstruct / DR"): the stored chunk identity
+     * (docs/mds.md, "Reconstruct / DR"): the stored chunk identity
      * is the truth, the map is an index over it. Replaces every stored
      * volume in one transaction.
      *

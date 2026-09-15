@@ -77,7 +77,7 @@ public:
         unsigned int limit, std::vector<RawstdUUID>& targets, RawstdUUID& token
     ) = 0;
 
-    // The reconstruct scan's source (rawstor_docs/Mds.md, "Reconstruct /
+    // The reconstruct scan's source (docs/mds.md, "Reconstruct /
     // DR"): every object this backend physically stores, together with
     // its full metadata (spec + placement identity + sync state).
     // Default implementation, generic over any Backend: paginates list()
@@ -121,7 +121,7 @@ public:
     // way), so a caller that also needs this copy's own meta() (e.g.
     // Connection::open(), see its own doc comment) calls it separately,
     // afterward. `snap` is 0 for the live version, or a version id
-    // previously registered via snapshot() below (rawstor_docs/Mds.md,
+    // previously registered via snapshot() below (docs/mds.md,
     // "Snapshots") -- ENOTSUP on a backend without native CoW (file://,
     // classic LVM).
     virtual rawstd::Task<void>
@@ -130,7 +130,7 @@ public:
     // Native CoW snapshot of the live version as `snap_id` (never 0 -- 0
     // is the live version), and its removal. Default: ENOTSUP, covering
     // file::Backend and lvm::Backend (classic LVM has no thin CoW --
-    // rawstor_docs/Mds.md's own "Snapshots" section) without each
+    // docs/mds.md's own "Snapshots" section) without each
     // needing its own override; zfs::Backend overrides both with the
     // real thing.
     virtual rawstd::Task<void> snapshot(const RawstdUUID& id, uint64_t snap_id);

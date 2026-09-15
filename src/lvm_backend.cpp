@@ -160,7 +160,7 @@ std::string Backend::_device_path(const RawstdUUID& id) const {
 
 rawstd::Task<int> Backend::_open(const RawstdUUID& id, uint64_t snap) {
     if (snap != 0) {
-        /* Classic LVM has no thin CoW: rawstor_docs/Mds.md, "Snapshots". */
+        /* Classic LVM has no thin CoW: docs/mds.md, "Snapshots". */
         RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
     }
 

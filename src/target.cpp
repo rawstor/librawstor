@@ -229,7 +229,7 @@ rawstd::DetachedTask launch_open_op_coro(
     }
 }
 
-// mds://host:port/<volume_id> targets (rawstor_docs/Mds.md) bypass Target/
+// mds://host:port/<volume_id> targets (docs/mds.md) bypass Target/
 // Object/Backend entirely: a Volume is its own RawstorObject
 // implementation, routing I/O across per-chunk Objects of its own rather
 // than a Target's members directly (see volume.hpp). `target` is taken

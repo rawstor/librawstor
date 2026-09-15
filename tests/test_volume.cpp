@@ -1,4 +1,4 @@
-// Volume::snapshot()/snap_remove() (rawstor_docs/Mds.md, "Snapshots
+// Volume::snapshot()/snap_remove() (docs/mds.md, "Snapshots
 // (stage 2)"), exercised against a real rawstor::mds::Server +
 // rawstor::ostserver::Server pair (volume_env.hpp) -- the actual wire
 // path a `mds://` target goes through, not a hand-scripted mock of it.
@@ -143,7 +143,7 @@ TEST(VolumeSnapshotTest, failed_snapshot_leaves_volume_intact) {
 // vol_snap_remove() on an id nothing ever committed fails cleanly with
 // -ENOENT (the MDS's own rejection), not a hang or a crash -- this is
 // the same case a crash between VOL_SNAP_BEGIN and VOL_SNAP_COMMIT
-// leaves behind (rawstor_docs/Mds.md: reconciled by the reconstruct
+// leaves behind (docs/mds.md: reconciled by the reconstruct
 // scan, never by snap_remove()).
 TEST(VolumeSnapshotTest, snap_remove_uncommitted_returns_enoent) {
     rawstor::tests::VolumeEnv env(8774, 8775);
@@ -160,7 +160,7 @@ TEST(VolumeSnapshotTest, snap_remove_uncommitted_returns_enoent) {
     EXPECT_EQ(target_remove(*queue, target), 0);
 }
 
-// snap_id 0 means "live" everywhere on the wire (rawstor_docs/Mds.md,
+// snap_id 0 means "live" everywhere on the wire (docs/mds.md,
 // "version in chunk identity") -- Volume::snap_remove() rejects it
 // before any network round trip.
 TEST(VolumeSnapshotTest, snap_remove_zero_is_einval) {

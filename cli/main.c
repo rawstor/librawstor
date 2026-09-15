@@ -105,7 +105,7 @@ static void command_create_usage(void) {
         "T, P, E).\n"
         "                        Examples: 10G, 5M, 2T.\n"
         "\n"
-        "volume policy (mds:// targets only -- rawstor_docs/Mds.md; "
+        "volume policy (mds:// targets only -- docs/mds.md; "
         "ignored\n"
         "otherwise):\n"
         "  --chunk-size SIZE     Chunk size with unit suffix, power of "

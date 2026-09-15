@@ -40,7 +40,7 @@ struct WireSnapMember {
 
 /*
  * Control-plane client for the volume commands of an MDS
- * (rawstor_docs/Mds.md). One connection, plain request/response
+ * (docs/mds.md). One connection, plain request/response
  * exchanges (no pipelining: volume operations are rare and serialized by
  * the caller).
  */
@@ -79,7 +79,7 @@ public:
 
     rawstd::Task<void> vol_remove(const RawstdUUID& volume_id);
 
-    /* Durably reserves the next snap_id (rawstor_docs/Mds.md, two-phase). */
+    /* Durably reserves the next snap_id (docs/mds.md, two-phase). */
     rawstd::Task<uint64_t> vol_snap_begin(const RawstdUUID& volume_id);
 
     /* Registers the snapshot; returns the bumped map_epoch. */

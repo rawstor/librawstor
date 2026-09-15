@@ -61,7 +61,7 @@ public:
     rawstd::Task<void> remove(rawio::Queue& queue);
 
     // `snap` is 0 for the live version, or a version id previously
-    // registered via snapshot() below (rawstor_docs/Mds.md, "Snapshots").
+    // registered via snapshot() below (docs/mds.md, "Snapshots").
     // Opening a snapshot still goes through the normal mirror
     // reconciliation below -- the doc's own "bypasses the mirror state
     // machine entirely" ideal isn't implemented (a known gap for

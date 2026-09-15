@@ -12,7 +12,7 @@ namespace rawstor {
 namespace mds {
 
 /*
- * Topology tree levels (rawstor_docs/Mds.md, "Placement function"):
+ * Topology tree levels (docs/mds.md, "Placement function"):
  * root -> dc -> rack -> server -> ost(leaf). A failure domain is a subtree
  * at one of these levels; OST is the degenerate per-leaf domain (useful for
  * single-host and test setups).
@@ -37,7 +37,7 @@ struct TopologyOST {
 };
 
 /*
- * The static topology config, v1 of the MGS role of rawstor_docs/Mds.md.
+ * The static topology config, v1 of the MGS role of docs/mds.md.
  * Line-based:
  *
  *   # ost <uuid> <host:port> <weight> <dc>/<rack>/<server>

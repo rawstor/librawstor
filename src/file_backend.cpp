@@ -73,7 +73,7 @@ Backend::Backend(Private p, rawio::Queue& queue, const rawstd::URI& location) :
 
 rawstd::Task<int> Backend::_open(const RawstdUUID& id, uint64_t snap) {
     if (snap != 0) {
-        /* No native CoW: rawstor_docs/Mds.md, "Snapshots". */
+        /* No native CoW: docs/mds.md, "Snapshots". */
         RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
     }
 
@@ -283,7 +283,7 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
             RawstorObjectSyncState sync_state{};
             sync_state.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
 
-            // The placement identity (rawstor_docs/Mds.md, chunk_meta) is
+            // The placement identity (docs/mds.md, chunk_meta) is
             // stamped now, from the caller's own spec, and never touched
             // again -- set_sync_state() below preserves it unchanged.
             ChunkIdentity identity;

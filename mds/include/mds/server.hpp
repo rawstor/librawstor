@@ -16,7 +16,7 @@ namespace mds {
 
 class Session;
 
-// Single-instance MDS server (rawstor_docs/Mds.md, "MDS server, v1"):
+// Single-instance MDS server (docs/mds.md, "MDS server, v1"):
 // owns its own listening socket and VolumeStore, one worker (VolumeStore's
 // calls are synchronous and rare -- a briefly blocked event loop is
 // accepted, see VolumeStore's own doc comment), no accept_multishot

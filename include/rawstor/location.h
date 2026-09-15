@@ -293,7 +293,7 @@ struct RawstorLocationChunk {
  * @brief Asynchronously enumerate every object stored at a location,
  *        together with its metadata.
  *
- * The source of the MDS map reconstruct scan (rawstor_docs/Mds.md,
+ * The source of the MDS map reconstruct scan (docs/mds.md,
  * "Reconstruct / DR", wire opcode @c RAWSTOR_CMD_LIST_CHUNKS): unlike
  * rawstor_location_list(), this is not paginated (bounded by the same
  * 64 MiB frame cap as the data commands) and reports each object's full

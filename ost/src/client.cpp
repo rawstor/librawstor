@@ -912,7 +912,7 @@ Client::_close_current_object(std::weak_ptr<Client> weak) {
     co_return weak.lock();
 }
 
-// The reconstruct scan's server side (rawstor_docs/Mds.md, "Reconstruct /
+// The reconstruct scan's server side (docs/mds.md, "Reconstruct /
 // DR"): every object this server's own location(s) physically store,
 // full metadata included. Unlike _list(), this rides RawstorOSTFrameBasic
 // but ignores every field of it (no pagination token yet -- see
@@ -1198,7 +1198,7 @@ rawstd::DetachedTask Client::_release(
     }
 }
 
-// SNAPSHOT/SNAP_REMOVE (rawstor_docs/Mds.md, "Snapshots"): forwarded to
+// SNAPSHOT/SNAP_REMOVE (docs/mds.md, "Snapshots"): forwarded to
 // the same rawstor_target_snapshot()/_snap_remove() this server's own
 // local backend(s) implement -- same shape as _release() above.
 rawstd::DetachedTask Client::_snapshot(
@@ -1568,7 +1568,7 @@ rawstd::DetachedTask Client::_set_object(
     int error = 0;
     try {
         // `val` is the bound version -- 0 for live, or a previously
-        // snapshotted id (rawstor_docs/Mds.md, "Snapshots").
+        // snapshotted id (docs/mds.md, "Snapshots").
         object = co_await co_target_open(queue, targets, payload.val);
     } catch (const std::system_error& e) {
         error = e.code().value();
