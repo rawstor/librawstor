@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `rawstor create`'s target/location form gained `--chunk-size`/`--width`/`--failure-domain`/`--stripe-width` to set an `mds://` volume's chunk size, copies per chunk, placement failure domain, and striping policy (ignored for a plain object).
 - `rawstor resize TARGET -s SIZE` (`rawstor_volume_resize()`) grows an `mds://` volume, materializing whatever new chunks the larger size needs on their OSTs; shrinking is not supported.
 - `rawstor snapshot TARGET` / `rawstor snap-remove TARGET -s ID` (`rawstor_volume_snapshot()`/`rawstor_volume_snap_remove()`): MDS-orchestrated native CoW snapshots of an `mds://` volume's chunks. `zfs://` chunk members only in this version; `file://`/classic LVM members answer `-ENOTSUP` (no fallback copies made behind the caller's back).
+- `rawstor-mds` now ships as its own deb/rpm package (`rawstor-mds.service` systemd unit included), alongside the existing `rawstor-ost`/`rawstor-vhost`/`rawstor-vduse` packages.
 
 ### Changed
 - The packaged `rawstor-vhost@.service` systemd unit now defaults `RAWSTOR_WRITE_CACHE` to `on` instead of `off`: forcing a journal commit on every write (write-cache off) was measured to stall write round-trip times into the tens of seconds under concurrent load on a host whose backing filesystem commits slowly, while any modern guest kernel already issues an explicit flush when it needs durability.
@@ -35,6 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - `rawstor-ost` now answers `-ENOSYS` for a command it doesn't recognize instead of just dropping the connection, so a newer client can tell "unsupported" apart from a transport failure.
+- The `rawstor-vduse` deb package (present since 0.2.10) was never actually built or published: CI's packaging job never copied its `.install`/`.postinst`/`.prerm` files into place, so its `.deb` was silently absent from every release despite `rawstor-vduse` being a real, working binary.
 
 ## [0.2.12] - Unreleased
 
