@@ -77,6 +77,18 @@ public:
         unsigned int limit, std::vector<RawstdUUID>& targets, RawstdUUID& token
     ) = 0;
 
+    // The reconstruct scan's source (rawstor_docs/Mds.md, "Reconstruct /
+    // DR"): every object this backend physically stores, together with
+    // its full metadata (spec + placement identity + sync state).
+    // Default implementation, generic over any Backend: paginates list()
+    // and calls meta() per uuid -- correct but O(n) round trips, which
+    // only matters for a Backend actually reached over the network.
+    // ost::Backend overrides this with the dedicated LIST_CHUNKS wire
+    // command instead (one round trip, the remote OST does its own local
+    // scan the same way, via this same default).
+    virtual rawstd::Task<void>
+    list_chunks(std::vector<RawstorLocationChunk>& chunks);
+
     virtual rawstd::Task<void>
     create(const RawstdUUID& id, const RawstorObjectSpec& sp) = 0;
 

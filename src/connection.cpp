@@ -546,6 +546,24 @@ rawstd::Task<void> Connection::list(
 }
 
 rawstd::Task<void>
+Connection::list_chunks(std::vector<RawstorLocationChunk>& chunks) {
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        co_await _with_retry(
+            func_name, trace_event, &Backend::list_chunks, chunks
+        );
+        _finish(t_call);
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
+rawstd::Task<void>
 Connection::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
