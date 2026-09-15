@@ -392,27 +392,32 @@ rawstd::Task<RawstorLocationInfo> Backend::info() {
         if (statvfs(location_path.c_str(), &vfs) == -1) {
             RAWSTD_THROW_ERRNO();
         }
-        ret.total = static_cast<uint64_t>(vfs.f_blocks) * vfs.f_frsize;
+        uint64_t available = static_cast<uint64_t>(vfs.f_bavail) * vfs.f_frsize;
 
         uint64_t used = 0;
+        // TODO: std::filesystem::directory_iterator itself still blocks
+        // the event loop scanning this directory -- io_uring has no
+        // readdir/getdents opcode to make that part async too, only
+        // IORING_OP_STATX for the per-entry stat() below (already async
+        // via _queue.stat()).
         for (const auto& entry :
              std::filesystem::directory_iterator(location_path)) {
-            std::string extension = entry.path().extension().string();
-            if (!extension.empty() && extension != ".dat") {
-                // ".spec" (legacy) or anything else.
-                continue;
-            }
-
             struct stat st;
-            if (stat(entry.path().c_str(), &st) == -1) {
-                // Object removed concurrently between the directory read
-                // and this stat(); just skip it rather than failing the
-                // whole aggregate.
-                continue;
+            try {
+                co_await _queue.stat(entry.path().c_str(), &st);
+            } catch (const std::system_error& e) {
+                if (e.code().value() == ENOENT) {
+                    // Object removed concurrently between the directory
+                    // read and this stat(); just skip it rather than
+                    // failing the whole aggregate.
+                    continue;
+                }
+                throw;
             }
             used += static_cast<uint64_t>(st.st_size);
         }
         ret.used = used;
+        ret.total = used + available;
     } catch (const std::system_error&) {
         throw;
     } catch (const std::exception& e) {
