@@ -44,6 +44,11 @@ class TestLocation(unittest.TestCase):
             self.assertRaises(FileNotFoundError, lambda: list(location))
 
     def test_info(self):
+        # file:// pairs each object's data file with a fixed-size .meta
+        # file (blk_backend.hpp's META_MAX_SIZE) that "used" accounts for
+        # too.
+        META_FILE_SIZE = 256
+
         with tempfile.TemporaryDirectory() as temp_dir:
             location = rawstor.Location(f"file://{temp_dir}")
 
@@ -54,6 +59,6 @@ class TestLocation(unittest.TestCase):
             target = location.create(size=1 << 20)
 
             info = location.info()
-            self.assertEqual(info.used, 1 << 20)
+            self.assertEqual(info.used, (1 << 20) + META_FILE_SIZE)
 
             target.remove()
