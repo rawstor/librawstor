@@ -33,6 +33,12 @@ private:
     // Connection is only ever used for metadata (list/create/remove/
     // spec/info), which needs no SET_OBJECT step of its own.
     std::optional<RawstdUUID> _id;
+    // The version open() bound _id to -- 0 (live) unless open() was
+    // called with a snapshot id (docs/mds.md, "Snapshots").
+    // Meaningless while _id is unset; carried alongside it so a
+    // reconnected backend's own set_object() (invalidate_backend())
+    // rebinds to the same version, not silently back to live.
+    uint64_t _snap = 0;
 
     std::vector<std::shared_ptr<Backend>> _backends;
     size_t _backend_index;
@@ -130,6 +136,11 @@ public:
     rawstd::Task<void>
     list(unsigned int limit, std::vector<RawstdUUID>& uuids, RawstdUUID& token);
 
+    rawstd::Task<void> list_chunks(std::vector<RawstorLocationChunk>& chunks);
+
+    rawstd::Task<void> snapshot_create(const RawstdUUID& id, uint64_t snap_id);
+    rawstd::Task<void> snapshot_remove(const RawstdUUID& id, uint64_t snap_id);
+
     rawstd::Task<void>
     create(const RawstdUUID& id, const RawstorObjectSpec& sp);
 
@@ -156,7 +167,8 @@ public:
     // against whichever backend the pool now has (set_object() itself
     // doesn't return it, see its own doc comment) -- spec.mirrors on it
     // is this copy's own local share, not the target-wide count.
-    rawstd::Task<RawstorObjectMeta> open(const RawstdUUID& id);
+    rawstd::Task<RawstorObjectMeta>
+    open(const RawstdUUID& id, uint64_t snap = 0);
 
     // Not called implicitly by ~Connection() (a coroutine can't run in a
     // destructor, and there's no other synchronous fallback here beyond

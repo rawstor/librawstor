@@ -64,13 +64,18 @@ unsigned int backoff_delay_ms(
 
 // A rejection retrying can never turn into success: the target object
 // doesn't exist (ENOENT), already exists where create() needs it not to
-// (EEXIST), or the request itself is malformed (EINVAL).
+// (EEXIST), the request itself is malformed (EINVAL), or the backend
+// permanently lacks a capability (ENOTSUP -- e.g. snapshot_create()/
+// snapshot_remove() on file:// or classic LVM, docs/mds.md's "Snapshots":
+// no retry will ever make a backend grow native CoW support it doesn't
+// have).
 // Anything else defaults to retryable -- safer to spend a few pointless
 // retries on a genuinely transient rejection we don't recognize than to
 // silently give up on one that would have gone away on its own (e.g.
 // EBUSY, ENOSPC, EIO).
 bool is_permanent_backend_error(int error) {
-    return error == ENOENT || error == EEXIST || error == EINVAL;
+    return error == ENOENT || error == EEXIST || error == EINVAL ||
+           error == ENOTSUP;
 }
 
 // Retries `attempt()` up to rawstor_opts_io_attempts() times, sharing the
@@ -438,7 +443,7 @@ Connection::invalidate_backend(const std::shared_ptr<Backend>& be) {
                     // outside the handler.
                     std::exception_ptr eptr;
                     try {
-                        co_await backend->set_object(*_id);
+                        co_await backend->set_object(*_id, _snap);
                         // The result is unused -- nothing here needs it
                         // -- this is purely to keep the same SET_OBJECT+
                         // META wire round trip every set_object() caller
@@ -546,6 +551,60 @@ rawstd::Task<void> Connection::list(
 }
 
 rawstd::Task<void>
+Connection::list_chunks(std::vector<RawstorLocationChunk>& chunks) {
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        co_await _with_retry(
+            func_name, trace_event, &Backend::list_chunks, chunks
+        );
+        _finish(t_call);
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
+rawstd::Task<void>
+Connection::snapshot_create(const RawstdUUID& id, uint64_t snap_id) {
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        co_await _with_retry(
+            func_name, trace_event, &Backend::snapshot_create, id, snap_id
+        );
+        _finish(t_call);
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
+rawstd::Task<void>
+Connection::snapshot_remove(const RawstdUUID& id, uint64_t snap_id) {
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        co_await _with_retry(
+            func_name, trace_event, &Backend::snapshot_remove, id, snap_id
+        );
+        _finish(t_call);
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
+rawstd::Task<void>
 Connection::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
@@ -610,18 +669,20 @@ rawstd::Task<RawstorLocationInfo> Connection::info() {
     }
 }
 
-rawstd::Task<RawstorObjectMeta> Connection::open(const RawstdUUID& id) {
+rawstd::Task<RawstorObjectMeta>
+Connection::open(const RawstdUUID& id, uint64_t snap) {
     // Set before any of the set_object() calls below: on failure,
     // invalidate_backend() reconnects and set_object()s the replacement
-    // itself, using this same member.
+    // itself, using these same members.
     _id = id;
+    _snap = snap;
 
     // Every backend's SET_OBJECT goes out up front, so they run
     // concurrently.
     std::vector<rawstd::Task<void>> set_objects;
     set_objects.reserve(_backends.size());
     for (std::shared_ptr<Backend>& be : _backends) {
-        set_objects.push_back(be->set_object(id));
+        set_objects.push_back(be->set_object(id, snap));
     }
 
     // co_await isn't allowed inside a catch block, so the failure is only

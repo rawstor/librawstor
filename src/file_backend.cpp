@@ -71,7 +71,12 @@ Backend::Backend(Private p, rawio::Queue& queue, const rawstd::URI& location) :
     rawstor::blk::Backend(p, queue, location) {
 }
 
-rawstd::Task<int> Backend::_open(const RawstdUUID& id) {
+rawstd::Task<int> Backend::_open(const RawstdUUID& id, uint64_t snap) {
+    if (snap != 0) {
+        /* No native CoW: docs/mds.md, "Snapshots". */
+        RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+    }
+
     std::string location_path = get_location_path(location());
 
     RawstdUUIDString id_string;
@@ -278,12 +283,25 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
             RawstorObjectSyncState sync_state{};
             sync_state.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
 
+            // The placement identity (docs/mds.md, chunk_meta) is
+            // stamped now, from the caller's own spec, and never touched
+            // again -- set_sync_state() below preserves it unchanged.
+            ChunkIdentity identity;
+            identity.member_kind = sp.member_kind;
+            identity.width = static_cast<uint8_t>(sp.width);
+            memcpy(
+                identity.volume_id, sp.volume_id, sizeof(identity.volume_id)
+            );
+            identity.logical_index = sp.logical_index;
+            identity.chunk_size = sp.chunk_size;
+            identity.snap_version = sp.snap_version;
+
             // meta_encode()'s own (shorter, variable-length) return value
             // is NUL-padded out to a fixed META_MAX_SIZE bytes here,
             // rather than written at its own length, so this file's own
             // byte length stays fixed across every rewrite -- see
             // set_sync_state() below for why that matters.
-            std::string encoded = meta_encode(sync_state);
+            std::string encoded = meta_encode(sync_state, identity);
             std::array<char, META_MAX_SIZE> disk{};
             memcpy(disk.data(), encoded.data(), encoded.size());
 
@@ -349,10 +367,9 @@ rawstd::Task<RawstorObjectSpec> Backend::spec(const RawstdUUID& id) {
     struct stat st;
     co_await _queue.stat(target_path.c_str(), &st);
 
-    RawstorObjectSpec ret{
-        .size = static_cast<uint64_t>(st.st_size),
-        .mirrors = 1,
-    };
+    RawstorObjectSpec ret{};
+    ret.size = static_cast<uint64_t>(st.st_size);
+    ret.mirrors = 1;
 
     co_return ret;
 }
@@ -368,6 +385,7 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
     int fd = co_await _queue.open(meta_path.c_str(), O_RDONLY | O_CLOEXEC, 0);
 
     RawstorObjectSyncState sync_state{};
+    ChunkIdentity identity;
     std::exception_ptr eptr;
     try {
         std::array<char, META_MAX_SIZE> disk{};
@@ -377,7 +395,7 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
             RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
         }
         try {
-            sync_state = meta_decode(std::string(disk.data()));
+            meta_decode(std::string(disk.data()), &sync_state, &identity);
         } catch (const std::system_error&) {
             rawstd_error("Malformed object meta: %s\n", meta_path.c_str());
             throw;
@@ -392,6 +410,12 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
 
     RawstorObjectMeta ret{};
     ret.spec = co_await spec(id);
+    ret.spec.member_kind = identity.member_kind;
+    ret.spec.width = identity.width;
+    memcpy(ret.spec.volume_id, identity.volume_id, sizeof(ret.spec.volume_id));
+    ret.spec.logical_index = identity.logical_index;
+    ret.spec.chunk_size = identity.chunk_size;
+    ret.spec.snap_version = identity.snap_version;
     ret.sync_state = sync_state;
 
     co_return ret;
@@ -410,16 +434,29 @@ rawstd::Task<void> Backend::set_sync_state(
     // O_TRUNC would be wrong here regardless of sync_state carrying no
     // size of its own: this file is fixed-size, and a short write must
     // not leave a truncated, unparseable record behind.
-    int fd = co_await _queue.open(meta_path.c_str(), O_WRONLY | O_CLOEXEC, 0);
+    int fd = co_await _queue.open(meta_path.c_str(), O_RDWR | O_CLOEXEC, 0);
 
     std::exception_ptr eptr;
     try {
+        // The placement identity is immutable once stamped at create() --
+        // read the existing record first and carry it through unchanged,
+        // rather than clobbering it with a zeroed one.
+        std::array<char, META_MAX_SIZE> disk{};
+        size_t got = co_await _queue.pread(fd, disk.data(), disk.size(), 0);
+        if (got != disk.size()) {
+            rawstd_error("Malformed object meta: %s\n", meta_path.c_str());
+            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+        }
+        RawstorObjectSyncState old_sync_state{};
+        ChunkIdentity identity;
+        meta_decode(std::string(disk.data()), &old_sync_state, &identity);
+
         // See create()'s own comment: NUL-padded out to a fixed
         // META_MAX_SIZE bytes so this file's own byte length stays fixed
         // across every rewrite -- required here specifically, since this
         // is an in-place overwrite without O_TRUNC (see above).
-        std::string encoded = meta_encode(sync_state);
-        std::array<char, META_MAX_SIZE> disk{};
+        std::string encoded = meta_encode(sync_state, identity);
+        disk.fill('\0');
         memcpy(disk.data(), encoded.data(), encoded.size());
 
         size_t rval =

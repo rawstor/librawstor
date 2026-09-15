@@ -19,7 +19,34 @@
 #include <cstddef>
 #include <cstdint>
 
-struct RawstorObject {};
+// Thin polymorphic base behind the opaque C handle: rawstor::Object (a
+// single, possibly mirrored, plain object) is its only implementation
+// today, but rawstor::Volume (an MDS-backed chunked volume,
+// docs/mds.md) is a second one -- routing I/O across per-chunk
+// Objects of its own rather than a Target's members directly. Every
+// rawstor_object_*() C API function in object.cpp dispatches through
+// this vtable instead of a fixed static_cast<Object*>, so both
+// implementations are indistinguishable to a caller holding a
+// RawstorObject*.
+struct RawstorObject {
+    virtual ~RawstorObject() = default;
+
+    virtual rawstd::Task<size_t>
+    pread(void* buf, size_t size, off_t offset) = 0;
+    virtual rawstd::Task<size_t>
+    preadv(iovec* iov, unsigned int niov, size_t size, off_t offset) = 0;
+    virtual rawstd::Task<size_t>
+    pwrite(const void* buf, size_t size, off_t offset, bool sync) = 0;
+    virtual rawstd::Task<size_t> pwritev(
+        const iovec* iov, unsigned int niov, size_t size, off_t offset,
+        bool sync
+    ) = 0;
+    virtual rawstd::Task<size_t> discard(size_t size, off_t offset) = 0;
+    virtual rawstd::Task<size_t>
+    write_zeroes(size_t size, off_t offset, bool unmap, bool sync) = 0;
+    virtual rawstd::Task<void> flush() = 0;
+    virtual rawstd::Task<void> close() = 0;
+};
 
 namespace rawstor {
 
@@ -338,29 +365,29 @@ public:
     // This Object's own target -- the same Target it was built from.
     inline const Target& target() const noexcept { return _target; }
 
-    rawstd::Task<size_t> pread(void* buf, size_t size, off_t offset);
+    rawstd::Task<size_t> pread(void* buf, size_t size, off_t offset) override;
 
     rawstd::Task<size_t>
-    preadv(iovec* iov, unsigned int niov, size_t size, off_t offset);
+    preadv(iovec* iov, unsigned int niov, size_t size, off_t offset) override;
 
     rawstd::Task<size_t>
-    pwrite(const void* buf, size_t size, off_t offset, bool sync);
+    pwrite(const void* buf, size_t size, off_t offset, bool sync) override;
 
     rawstd::Task<size_t> pwritev(
         const iovec* iov, unsigned int niov, size_t size, off_t offset,
         bool sync
-    );
+    ) override;
 
-    rawstd::Task<size_t> discard(size_t size, off_t offset);
+    rawstd::Task<size_t> discard(size_t size, off_t offset) override;
 
     rawstd::Task<size_t>
-    write_zeroes(size_t size, off_t offset, bool unmap, bool sync);
+    write_zeroes(size_t size, off_t offset, bool unmap, bool sync) override;
 
     // Waits for every pwrite()/pwritev() issued before this call to
     // complete (see _flush_barrier above), then flushes every in-sync
     // member -- without the wait, a flush() racing an in-flight write
     // could report success before that write's data is actually durable.
-    rawstd::Task<void> flush();
+    rawstd::Task<void> flush() override;
 
     // flush()es (see above); for a mirrored object that is DIRTY, also
     // durably marks the in-sync members CLEAN with the current epoch/sync_id
@@ -370,7 +397,7 @@ public:
     // caller deletes this Object after the returned Task completes) has
     // nothing left to close -- the async counterpart to ~Object()'s own
     // run()-pumped connection cleanup.
-    rawstd::Task<void> close();
+    rawstd::Task<void> close() override;
 
     // For tests/ to verify flush()'s wait for in-flight writes (see
     // _writes_issued/_flush_barrier above) without depending on real

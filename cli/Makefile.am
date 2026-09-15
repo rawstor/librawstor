@@ -20,10 +20,16 @@ rawstor_SOURCES = create.c \
                   rawio_sync.h \
                   remove.c \
                   remove.h \
+                  resize.c \
+                  resize.h \
                   resolve.c \
                   resolve.h \
                   show.c \
                   show.h \
+                  snap_remove.c \
+                  snap_remove.h \
+                  snapshot.c \
+                  snapshot.h \
                   testio.c \
                   testio.h
 

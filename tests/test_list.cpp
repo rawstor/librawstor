@@ -88,7 +88,18 @@ TEST(ListTest, merge) {
     };
 
     ssize_t res;
-    RawstorObjectSpec spec{.size = 1ull << 20, .mirrors = 1};
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .mirrors = 1,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .width = 0,
+        .failure_domain = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
+        .volume_id = {},
+        .logical_index = 0,
+        .snap_version = 0
+    };
     res = create(target11, spec);
     ASSERT_EQ(res, 0);
     res = create(target12, spec);
@@ -180,7 +191,18 @@ TEST(ListTest, pagination) {
     std::vector<std::string> targets;
     targets.reserve(total);
     for (unsigned int i = 0; i < total; ++i) {
-        RawstorObjectSpec spec{.size = 1ull << 10, .mirrors = 1};
+        RawstorObjectSpec spec{
+            .size = 1ull << 10,
+            .mirrors = 1,
+            .chunk_size = 0,
+            .stripe_width = 0,
+            .width = 0,
+            .failure_domain = 0,
+            .member_kind = RAWSTOR_MEMBER_DATA,
+            .volume_id = {},
+            .logical_index = 0,
+            .snap_version = 0
+        };
 
         char target[65536];
         ssize_t res =

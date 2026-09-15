@@ -827,11 +827,23 @@ public:
                 .object_id = {},
                 .size = sp.size,
                 .mirrors = (uint32_t)sp.mirrors,
+                .chunk_size = sp.chunk_size,
+                .stripe_width = sp.stripe_width,
+                .failure_domain = sp.failure_domain,
+                .member_kind = (uint8_t)sp.member_kind,
+                .reserved = 0,
+                .volume_id = {},
+                .logical_index = sp.logical_index,
+                .snap_version = sp.snap_version,
             },
         }) {
         memcpy(
             _request.payload.object_id, id.bytes,
             sizeof(_request.payload.object_id)
+        );
+        memcpy(
+            _request.payload.volume_id, sp.volume_id,
+            sizeof(_request.payload.volume_id)
         );
     }
 
@@ -1238,6 +1250,48 @@ rawstd::Task<void> Backend::list(
     co_return;
 }
 
+rawstd::Task<void>
+Backend::list_chunks(std::vector<RawstorLocationChunk>& chunks) {
+    std::vector<RawstorOSTFrameChunkPayload> records;
+    try {
+        records = co_await _basic_request<RawstorOSTFrameChunkPayload>(
+            RAWSTOR_CMD_LIST_CHUNKS, "list_chunks", RawstdUUID{}, 0
+        );
+    } catch (const std::system_error&) {
+        throw;
+    } catch (...) {
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
+    }
+
+    chunks.clear();
+    chunks.reserve(records.size());
+    for (const RawstorOSTFrameChunkPayload& record : records) {
+        RawstorLocationChunk chunk{};
+        memcpy(chunk.object_id, record.object_id, sizeof(chunk.object_id));
+        chunk.meta.spec.size = record.meta.size;
+        chunk.meta.spec.member_kind =
+            static_cast<RawstorMemberKind>(record.meta.member_kind);
+        chunk.meta.spec.width = record.meta.width;
+        chunk.meta.spec.mirrors = 1;
+        memcpy(
+            chunk.meta.spec.volume_id, record.meta.volume_id,
+            sizeof(chunk.meta.spec.volume_id)
+        );
+        chunk.meta.spec.logical_index = record.meta.logical_index;
+        chunk.meta.spec.chunk_size = record.meta.chunk_size;
+        chunk.meta.spec.snap_version = record.meta.snap_version;
+        chunk.meta.sync_state.epoch = record.meta.epoch;
+        chunk.meta.sync_state.sync_id = record.meta.sync_id;
+        memcpy(
+            chunk.meta.sync_state.sync_id_history, record.meta.sync_id_history,
+            sizeof(chunk.meta.sync_state.sync_id_history)
+        );
+        chunk.meta.sync_state.state =
+            static_cast<RawstorObjectSyncStateValue>(record.meta.state);
+        chunks.push_back(chunk);
+    }
+}
+
 // sp is forwarded on the wire unchanged (see BackendOpAllocate); the
 // remote rawstor-ost's own Client::_allocate() ignores payload.mirrors
 // and validates/fills it in against its own locally configured location
@@ -1273,6 +1327,34 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
 rawstd::Task<void> Backend::remove(const RawstdUUID& id) {
     try {
         co_await _basic_request(RAWSTOR_CMD_RELEASE, "remove", id, 0);
+    } catch (const std::system_error&) {
+        throw;
+    } catch (...) {
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
+    }
+    co_return;
+}
+
+rawstd::Task<void>
+Backend::snapshot_create(const RawstdUUID& id, uint64_t snap_id) {
+    try {
+        co_await _basic_request(
+            RAWSTOR_CMD_SNAPSHOT, "snapshot_create", id, snap_id
+        );
+    } catch (const std::system_error&) {
+        throw;
+    } catch (...) {
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
+    }
+    co_return;
+}
+
+rawstd::Task<void>
+Backend::snapshot_remove(const RawstdUUID& id, uint64_t snap_id) {
+    try {
+        co_await _basic_request(
+            RAWSTOR_CMD_SNAP_REMOVE, "snapshot_remove", id, snap_id
+        );
     } catch (const std::system_error&) {
         throw;
     } catch (...) {
@@ -1336,6 +1418,15 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
         );
         ret.sync_state.state =
             static_cast<RawstorObjectSyncStateValue>(payload.state);
+        ret.spec.member_kind =
+            static_cast<RawstorMemberKind>(payload.member_kind);
+        ret.spec.mirrors = payload.width;
+        memcpy(
+            ret.spec.volume_id, payload.volume_id, sizeof(ret.spec.volume_id)
+        );
+        ret.spec.logical_index = payload.logical_index;
+        ret.spec.chunk_size = payload.chunk_size;
+        ret.spec.snap_version = payload.snap_version;
     } catch (const std::system_error&) {
         throw;
     } catch (...) {
@@ -1399,13 +1490,16 @@ rawstd::Task<RawstorLocationInfo> Backend::info() {
     co_return ret;
 }
 
-rawstd::Task<void> Backend::set_object(const RawstdUUID& id) {
+rawstd::Task<void> Backend::set_object(const RawstdUUID& id, uint64_t snap) {
     // The demultiplex pump is already running by now -- _connect() starts it
     // before this is ever reachable -- so this is just another
     // cid-dispatched request like list()/create()/....
     assert(_read_event != nullptr);
 
-    co_await _basic_request(RAWSTOR_CMD_SET_OBJECT, "set_object", id, 0);
+    // `val` carries the bound version -- 0 for live, or a previously
+    // snapshotted id (docs/mds.md, "Snapshots": "the wire carries
+    // the version in the val field SET_OBJECT ... already had").
+    co_await _basic_request(RAWSTOR_CMD_SET_OBJECT, "set_object", id, snap);
 }
 
 // See ost_backend.hpp's doc comment on why `weak`, not a strong

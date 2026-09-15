@@ -77,6 +77,18 @@ public:
         unsigned int limit, std::vector<RawstdUUID>& targets, RawstdUUID& token
     ) = 0;
 
+    // The reconstruct scan's source (docs/mds.md, "Reconstruct /
+    // DR"): every object this backend physically stores, together with
+    // its full metadata (spec + placement identity + sync state).
+    // Default implementation, generic over any Backend: paginates list()
+    // and calls meta() per uuid -- correct but O(n) round trips, which
+    // only matters for a Backend actually reached over the network.
+    // ost::Backend overrides this with the dedicated LIST_CHUNKS wire
+    // command instead (one round trip, the remote OST does its own local
+    // scan the same way, via this same default).
+    virtual rawstd::Task<void>
+    list_chunks(std::vector<RawstorLocationChunk>& chunks);
+
     virtual rawstd::Task<void>
     create(const RawstdUUID& id, const RawstorObjectSpec& sp) = 0;
 
@@ -108,8 +120,23 @@ public:
     // object exists; an ost:// one's is a real wire round trip either
     // way), so a caller that also needs this copy's own meta() (e.g.
     // Connection::open(), see its own doc comment) calls it separately,
-    // afterward.
-    virtual rawstd::Task<void> set_object(const RawstdUUID& id) = 0;
+    // afterward. `snap` is 0 for the live version, or a version id
+    // previously registered via snapshot_create() below (docs/mds.md,
+    // "Snapshots") -- ENOTSUP on a backend without native CoW (file://,
+    // classic LVM).
+    virtual rawstd::Task<void>
+    set_object(const RawstdUUID& id, uint64_t snap = 0) = 0;
+
+    // Native CoW snapshot of the live version as `snap_id` (never 0 -- 0
+    // is the live version), and its removal. Default: ENOTSUP, covering
+    // file::Backend and lvm::Backend (classic LVM has no thin CoW --
+    // docs/mds.md's own "Snapshots" section) without each
+    // needing its own override; zfs::Backend overrides both with the
+    // real thing.
+    virtual rawstd::Task<void>
+    snapshot_create(const RawstdUUID& id, uint64_t snap_id);
+    virtual rawstd::Task<void>
+    snapshot_remove(const RawstdUUID& id, uint64_t snap_id);
 
     virtual rawstd::Task<size_t>
     pread(void* buf, size_t size, off_t offset) = 0;

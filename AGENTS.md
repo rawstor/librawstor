@@ -116,7 +116,6 @@ Notable `configure` flags:
 | `--without-libxxhash` | disable xxhash support |
 | `--without-python3` | skip `pyrawstor` |
 | `--disable-tests` | skip building all `tests/` subdirs |
-| `--disable-ost-backend` | skip building `rawstor-ost` |
 
 liburing must be `>= 2.3` (Ubuntu 22.04's 2.1 is too old and is
 unsupported for that reason).

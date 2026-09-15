@@ -18,6 +18,12 @@
 extern "C" {
 #endif
 
+/** Chunk member kinds (docs/mds.md, chunk_meta.member_kind). */
+enum RawstorMemberKind {
+    RAWSTOR_MEMBER_DATA = 0,
+    RAWSTOR_MEMBER_WITNESS = 1, /**< Metadata-only quorum member; stage 3. */
+};
+
 /**
  * @brief Object specification structure.
  *
@@ -42,9 +48,34 @@ extern "C" {
  * @see rawstor_target_spec
  * @see rawstor_target_create
  */
+
 struct RawstorObjectSpec {
     uint64_t size;        /**< Size of the object in bytes. */
     unsigned int mirrors; /**< Number of URIs configured for the target. */
+
+    /*
+     * Volume policy, mds:// targets only (docs/mds.md). Zeros are
+     * defaults that degenerate to a single-chunk, single-copy volume --
+     * which behaves exactly like a plain object.
+     */
+    uint64_t chunk_size;    /**< Power of two; 0 = one chunk spans the
+                                  volume. */
+    uint64_t stripe_width;  /**< K; 0 = spread every chunk, 1 =
+                                  volume-local. */
+    uint8_t width;          /**< Copies per chunk; 0 = 1. */
+    uint8_t failure_domain; /**< RAWSTOR_VOL_DOMAIN_*; default server. */
+
+    /*
+     * Placement identity of a chunk object (docs/mds.md,
+     * chunk_meta): stamped at create by the volume layer, immutable
+     * afterwards (set_sync_state never touches it), the source for the
+     * LIST_CHUNKS map reconstruct scan. An all-zero volume_id is a
+     * standalone object.
+     */
+    enum RawstorMemberKind member_kind;
+    uint8_t volume_id[16];  /**< Parent volume; all-zero = standalone. */
+    uint64_t logical_index; /**< Chunk position within the volume. */
+    uint64_t snap_version;  /**< snap_id this copy belongs to; 0 = live. */
 };
 
 /**
@@ -511,6 +542,133 @@ int rawstor_target_id(
  */
 int rawstor_target_location(
     const char* target, char* buf, size_t size
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Asynchronously take a native CoW snapshot of a target as version
+ *        @p snap_id.
+ *
+ * The snapshot is taken on every URI in @p target; every URI is still
+ * attempted even if an earlier one fails, and the first error encountered
+ * is reported. The caller owns crash consistency: all acknowledged writes
+ * must be flushed before this call (docs/mds.md, "Snapshots").
+ *
+ * @param queue    Queue used to drive the asynchronous snapshot.
+ * @param target   Target string, see rawstor_target_spec().
+ * @param snap_id  Version id; must not be 0 (0 is the live version).
+ * @param cb       Callback invoked on completion.
+ *                 - @p result is zero on success, or a negative errno on
+ *                   failure (@c -ENOTSUP if a backend has no CoW --
+ *                   file://, classic LVM -- no fallback copies are made
+ *                   behind the caller's back).
+ *                 - @p data is the same pointer passed as @p data below.
+ * @param data     User-defined context pointer passed unchanged to @p cb.
+ *
+ * @return 0 if the snapshot was successfully queued; negative errno on
+ *         immediate failure (in which case @p cb is never invoked).
+ *
+ * @see rawstor_target_snapshot_remove
+ */
+int rawstor_target_snapshot_create(
+    RawIOQueue* queue, const char* target, uint64_t snap_id,
+    int (*cb)(ssize_t result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Asynchronously destroy snapshot version @p snap_id of a target.
+ *
+ * Fan-out semantics as rawstor_target_snapshot_create(): every URI is
+ * attempted, the first error is reported.
+ *
+ * @return 0 if the removal was successfully queued; negative errno on
+ *         immediate failure (in which case @p cb is never invoked).
+ *
+ * @see rawstor_target_snapshot_create
+ */
+int rawstor_target_snapshot_remove(
+    RawIOQueue* queue, const char* target, uint64_t snap_id,
+    int (*cb)(ssize_t result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Asynchronously take an MDS-orchestrated snapshot of a volume
+ *        (docs/mds.md, "Snapshots (stage 2)").
+ *
+ * Unlike rawstor_target_snapshot_create() (whose caller already owns a
+ * snap_id), the version taken here is chosen by the volume's MDS:
+ * reserves it, backend-CoWs every reachable chunk member, then registers
+ * the surviving membership. v1 caveat: assumes no concurrent writer --
+ * draining/flushing an in-flight write session is the writing client's
+ * own duty, not this call's.
+ *
+ * @param queue    Queue used to drive the asynchronous snapshot.
+ * @param target   An mds://host:port/<volume_id> target (no "@snap"
+ *                 suffix); anything else fails with -EINVAL.
+ * @param snap_id  Out-parameter: the newly reserved version id, written
+ *                 immediately before @p cb runs on success.
+ * @param cb       Callback invoked on completion.
+ *                 - @p result is zero on success, or a negative errno on
+ *                   failure (@c -EIO if no chunk member survived).
+ *                 - @p data is the same pointer passed as @p data below.
+ * @param data     User-defined context pointer passed unchanged to @p cb.
+ *
+ * @return 0 if the snapshot was successfully queued; negative errno on
+ *         immediate failure (in which case @p cb is never invoked).
+ *
+ * @see rawstor_volume_snapshot_remove
+ * @see rawstor_target_snapshot_create
+ */
+int rawstor_volume_snapshot_create(
+    RawIOQueue* queue, const char* target, uint64_t* snap_id,
+    int (*cb)(ssize_t result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Asynchronously destroy a volume snapshot taken by
+ *        rawstor_volume_snapshot_create().
+ *
+ * The MDS unregisters @p snap_id (no new readers) before the per-member
+ * fan-out destroy runs; a member that can no longer be resolved (address
+ * changed, OST replaced) is left for the reconstruct scan rather than
+ * failing the call.
+ *
+ * @param target  An mds://host:port/<volume_id> target.
+ *
+ * @see rawstor_volume_snapshot_create
+ */
+int rawstor_volume_snapshot_remove(
+    RawIOQueue* queue, const char* target, uint64_t snap_id,
+    int (*cb)(ssize_t result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Asynchronously grow an mds:// volume to a new logical size.
+ *
+ * Grow-only: a @p new_size smaller than the volume's current size fails
+ * with -EINVAL (docs/mds.md -- shrink interacts with GC and
+ * snapshots, deferred past v1). Reserves placement for whatever new
+ * chunks the larger size needs on the MDS, then materializes exactly
+ * those (not the whole map) on their OSTs -- existing chunks and their
+ * data are untouched.
+ *
+ * @param queue     Queue used to drive the asynchronous resize.
+ * @param target    An mds://host:port/<volume_id> target; anything else
+ *                  fails with -EINVAL.
+ * @param new_size  The volume's new logical size in bytes; must be
+ *                  greater than or equal to its current size.
+ * @param cb        Callback invoked on completion.
+ *                  - @p result is zero on success, or a negative errno on
+ *                    failure.
+ *                  - @p data is the same pointer passed as @p data below.
+ * @param data      User-defined context pointer passed unchanged to
+ *                  @p cb.
+ *
+ * @return 0 if the resize was successfully queued; negative errno on
+ *         immediate failure (in which case @p cb is never invoked).
+ */
+int rawstor_volume_resize(
+    RawIOQueue* queue, const char* target, uint64_t new_size,
+    int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
 #ifdef __cplusplus
