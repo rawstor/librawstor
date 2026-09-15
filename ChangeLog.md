@@ -9,9 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - `--write-cache=on|off` for `rawstor-vhost` and `rawstor-vhost-qemu` (default `off`, write-through): advertises `VIRTIO_BLK_F_CONFIG_WCE` and honors the guest live-toggling it via `SET_CONFIG`. With write-cache off, every write is made durable (`sync=true`) since the guest treats a completed write as already durable and won't issue a `FLUSH`.
-- Vendored [nlohmann/json](https://github.com/nlohmann/json) (single-header, MIT) for parsing command output in the new storage backends below.
-- New `lvm://` storage backend: objects are LVM Logical Volumes, provisioned via `lvcreate`/`lvremove`. A new object is fully zeroed before it becomes visible (LVM itself only zeroes the first 4KiB of a new LV), so it never exposes another object's leftover data; any staging LV left behind by a process that crashed mid-create is swept and removed on the next `create()` against that VG.
-- New `zfs://` storage backend: objects are ZFS zvols, provisioned via `zfs create`/`zfs destroy`.
 - [Mirroring design](docs/mirroring.md): failure model, quorum rules and
   online resync for N-way mirrors.
 - Per-copy object metadata (state/epoch/sync_id/history) via new
@@ -56,9 +53,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - `rawstor-ost` now answers `-ENOSYS` for a command it doesn't recognize instead of just dropping the connection, so a newer client can tell "unsupported" apart from a transport failure.
 
+## [0.2.12] - Unreleased
+
+### Fixed
+- `rawstor info` against a `file://` location reported `total` as the whole filesystem's capacity (`statvfs`'s `f_blocks * f_frsize`) rather than space accounted for by rawstor, so `available` (derived as `total - used`) could include space taken by unrelated data on the same filesystem. `total` is now `used` (rawstor's own files) plus the filesystem's actually-free space (`f_bavail * f_frsize`), matching the `lvm://`/`zfs://` backends' `total = used + available` semantics.
+
 ## [0.2.11] - 2026-09-15
 
 ### Added
+- Vendored [nlohmann/json](https://github.com/nlohmann/json) (single-header, MIT) for parsing command output in the new storage backends below.
+- New `lvm://` storage backend: objects are LVM Logical Volumes, provisioned via `lvcreate`/`lvremove`. A new object is fully zeroed before it becomes visible (LVM itself only zeroes the first 4KiB of a new LV), so it never exposes another object's leftover data; any staging LV left behind by a process that crashed mid-create is swept and removed on the next `create()` against that VG.
+- New `zfs://` storage backend: objects are ZFS zvols, provisioned via `zfs create`/`zfs destroy`.
 - Consistent startup/connection INFO logging across `rawstor-ost`, `rawstor-vhost`, `rawstor-vhost-qemu` and `rawstor-vduse`: version at startup, waiting for a connection, client connected, client disconnected.
 - `rawio::Queue::timeout_multishot()` (and its `rawio_timeout_multishot()` C API counterpart): the multishot counterpart of `timeout()`, firing once every given number of microseconds until canceled instead of resolving once.
 
