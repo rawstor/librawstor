@@ -27,7 +27,7 @@ struct PlacementSlot {
 };
 
 /*
- * Deterministic placement generator (rawstor_docs/Mds.md, "Placement
+ * Deterministic placement generator (docs/mds.md, "Placement
  * function"): weighted rendezvous (HRW) over the topology tree. Used only
  * at create/grow and rebalance/recovery; the MDS map stays authoritative.
  *

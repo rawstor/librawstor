@@ -40,7 +40,7 @@ private:
 
     // `snap != 0` names version snap's own native snapshot:
     // <dataset>@s<snap> / /dev/zvol/.../<uuid>@s<snap> -- the "@s<id>"
-    // name is the version key itself (rawstor_docs/Mds.md, "Snapshots"),
+    // name is the version key itself (docs/mds.md, "Snapshots"),
     // nothing stored twice.
     std::string _device_path(const RawstdUUID& id, uint64_t snap) const;
     std::string _dataset(const RawstdUUID& id, uint64_t snap) const;
@@ -81,7 +81,7 @@ public:
         const RawstdUUID& id, const RawstorObjectSyncState& sync_state
     ) override;
 
-    // The v1 CoW backend (rawstor_docs/Mds.md, "Snapshots"): a native
+    // The v1 CoW backend (docs/mds.md, "Snapshots"): a native
     // "zfs snapshot"/"zfs destroy" of the zvol. snapshot() also sets
     // snapdev=visible on the *origin* dataset so every snapshot's own
     // device node (/dev/zvol/.../<uuid>@s<id>) is openable -- one

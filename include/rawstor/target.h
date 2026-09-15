@@ -18,7 +18,7 @@
 extern "C" {
 #endif
 
-/** Chunk member kinds (rawstor_docs/Mds.md, chunk_meta.member_kind). */
+/** Chunk member kinds (docs/mds.md, chunk_meta.member_kind). */
 enum RawstorMemberKind {
     RAWSTOR_MEMBER_DATA = 0,
     RAWSTOR_MEMBER_WITNESS = 1, /**< Metadata-only quorum member; stage 3. */
@@ -54,7 +54,7 @@ struct RawstorObjectSpec {
     unsigned int mirrors; /**< Number of URIs configured for the target. */
 
     /*
-     * Volume policy, mds:// targets only (rawstor_docs/Mds.md). Zeros are
+     * Volume policy, mds:// targets only (docs/mds.md). Zeros are
      * defaults that degenerate to a single-chunk, single-copy volume --
      * which behaves exactly like a plain object.
      */
@@ -66,7 +66,7 @@ struct RawstorObjectSpec {
     uint8_t failure_domain; /**< RAWSTOR_VOL_DOMAIN_*; default server. */
 
     /*
-     * Placement identity of a chunk object (rawstor_docs/Mds.md,
+     * Placement identity of a chunk object (docs/mds.md,
      * chunk_meta): stamped at create by the volume layer, immutable
      * afterwards (set_sync_state never touches it), the source for the
      * LIST_CHUNKS map reconstruct scan. An all-zero volume_id is a
@@ -551,7 +551,7 @@ int rawstor_target_location(
  * The snapshot is taken on every URI in @p target; every URI is still
  * attempted even if an earlier one fails, and the first error encountered
  * is reported. The caller owns crash consistency: all acknowledged writes
- * must be flushed before this call (rawstor_docs/Mds.md, "Snapshots").
+ * must be flushed before this call (docs/mds.md, "Snapshots").
  *
  * @param queue    Queue used to drive the asynchronous snapshot.
  * @param target   Target string, see rawstor_target_spec().
@@ -592,7 +592,7 @@ int rawstor_target_snap_remove(
 
 /**
  * @brief Asynchronously take an MDS-orchestrated snapshot of a volume
- *        (rawstor_docs/Mds.md, "Snapshots (stage 2)").
+ *        (docs/mds.md, "Snapshots (stage 2)").
  *
  * Unlike rawstor_target_snapshot() (whose caller already owns a
  * snap_id), the version taken here is chosen by the volume's MDS:
@@ -645,7 +645,7 @@ int rawstor_volume_snap_remove(
  * @brief Asynchronously grow an mds:// volume to a new logical size.
  *
  * Grow-only: a @p new_size smaller than the volume's current size fails
- * with -EINVAL (rawstor_docs/Mds.md -- shrink interacts with GC and
+ * with -EINVAL (docs/mds.md -- shrink interacts with GC and
  * snapshots, deferred past v1). Reserves placement for whatever new
  * chunks the larger size needs on the MDS, then materializes exactly
  * those (not the whole map) on their OSTs -- existing chunks and their

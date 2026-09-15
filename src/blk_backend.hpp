@@ -33,7 +33,7 @@ private:
     // so every subclass rejects a record from an incompatible version
     // the same way. Private: only meta_encode()/meta_decode()'s own
     // implementation ever needs it. Bumped 1 -> 2 to add the chunk
-    // placement identity fields (rawstor_docs/Mds.md, chunk_meta) --
+    // placement identity fields (docs/mds.md, chunk_meta) --
     // free to break, per the design's own compatibility stance (no live
     // installations yet).
     static constexpr unsigned int META_FORMAT_VERSION = 2;
@@ -78,7 +78,7 @@ private:
 
 protected:
     // `snap` is 0 for the live version, or a previously-snapshotted
-    // version id (rawstor_docs/Mds.md, "Snapshots") -- ENOTSUP on a
+    // version id (docs/mds.md, "Snapshots") -- ENOTSUP on a
     // subclass without native CoW (file::Backend, lvm::Backend).
     virtual rawstd::Task<int> _open(const RawstdUUID& id, uint64_t snap) = 0;
 
@@ -120,7 +120,7 @@ protected:
 
 public:
     // The chunk placement identity persisted alongside the mirror
-    // consistency state (rawstor_docs/Mds.md, chunk_meta): stamped once
+    // consistency state (docs/mds.md, chunk_meta): stamped once
     // at create(), immutable afterwards -- set_sync_state() must read
     // the existing record and carry this part through unchanged rather
     // than reset it, since it never receives this identity itself (see

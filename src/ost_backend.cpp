@@ -1494,7 +1494,7 @@ rawstd::Task<void> Backend::set_object(const RawstdUUID& id, uint64_t snap) {
     assert(_read_event != nullptr);
 
     // `val` carries the bound version -- 0 for live, or a previously
-    // snapshotted id (rawstor_docs/Mds.md, "Snapshots": "the wire carries
+    // snapshotted id (docs/mds.md, "Snapshots": "the wire carries
     // the version in the val field SET_OBJECT ... already had").
     co_await _basic_request(RAWSTOR_CMD_SET_OBJECT, "set_object", id, snap);
 }

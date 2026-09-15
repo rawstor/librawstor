@@ -337,7 +337,7 @@ Volume::remove(rawio::Queue& queue, const rawstd::URI& target) {
     WireMap map = co_await client.vol_open(id, 0);
 
     /*
-     * Unregister first (rawstor_docs/Mds.md, deletion order): the MDS is
+     * Unregister first (docs/mds.md, deletion order): the MDS is
      * where "the volume still has snapshots" refuses with EBUSY -- before
      * any data is touched, not after -- and an unregistered map means no
      * new opens while the chunks below are destroyed. A crash in between
@@ -388,7 +388,7 @@ Volume::snapshot(rawio::Queue& queue, const rawstd::URI& target) {
     WireMap map = co_await client.vol_open(id, 0);
 
     /*
-     * Chunks are CoW'd in descending index order (rawstor_docs/Mds.md):
+     * Chunks are CoW'd in descending index order (docs/mds.md):
      * a crash midway always leaves a hole at the low indices, so the
      * reconstruct scan can never mistake a partial leftover for a
      * complete (legitimately shorter, pre-resize) snapshot.
@@ -420,7 +420,7 @@ Volume::snapshot(rawio::Queue& queue, const rawstd::URI& target) {
              * Nothing survived this chunk -- the snapshot would be
              * incomplete. Leave whatever native copies already landed on
              * lower-index chunks unregistered for the reconstruct scan
-             * (rawstor_docs/Mds.md: "the same garbage class as a crashed
+             * (docs/mds.md: "the same garbage class as a crashed
              * deletion") rather than trying to roll them back here.
              * Surfacing the last member's own error (e.g. -ENOTSUP on a
              * file://-backed chunk) is more useful than a generic one.

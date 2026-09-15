@@ -34,7 +34,7 @@ private:
     // spec/info), which needs no SET_OBJECT step of its own.
     std::optional<RawstdUUID> _id;
     // The version open() bound _id to -- 0 (live) unless open() was
-    // called with a snapshot id (rawstor_docs/Mds.md, "Snapshots").
+    // called with a snapshot id (docs/mds.md, "Snapshots").
     // Meaningless while _id is unset; carried alongside it so a
     // reconnected backend's own set_object() (invalidate_backend())
     // rebinds to the same version, not silently back to live.

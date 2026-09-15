@@ -22,7 +22,7 @@ namespace rawstor {
  * One I/O segment after splitting a request at chunk boundaries. Offsets
  * are chunk-local: v1 volumes are routed onto per-chunk objects (the
  * "offset stays logical, the OST resolves the slot" model of
- * rawstor_docs/Mds.md needs an OST-side chunk index and comes later).
+ * docs/mds.md needs an OST-side chunk index and comes later).
  */
 struct VolumeSegment {
     uint32_t index;     /* logical chunk */
@@ -109,7 +109,7 @@ public:
     spec(rawio::Queue& queue, const rawstd::URI& target);
 
     // Grows a volume to `new_size` (grow-only; the MDS itself rejects a
-    // shrink -- rawstor_docs/Mds.md: shrink interacts with GC and
+    // shrink -- docs/mds.md: shrink interacts with GC and
     // snapshots, deferred past v1). Reserves placement for whatever new
     // chunks the larger size needs, then materializes exactly those (not
     // the whole map) on their OSTs, same two-step shape as create(). A
@@ -122,7 +122,7 @@ public:
     static rawstd::Task<void>
     resize(rawio::Queue& queue, const rawstd::URI& target, uint64_t new_size);
 
-    // Two-phase MDS-orchestrated snapshot (rawstor_docs/Mds.md,
+    // Two-phase MDS-orchestrated snapshot (docs/mds.md,
     // "Snapshots (stage 2)"): reserves a new snap_id, backend-CoWs every
     // reachable chunk member (descending logical index, so a crash
     // midway always leaves a hole at the low indices -- the reconstruct

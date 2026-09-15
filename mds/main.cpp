@@ -53,7 +53,7 @@ void usage() {
         << std::endl
         << "                        of every OST in the topology before"
         << std::endl
-        << "                        serving (rawstor_docs/Mds.md)" << std::endl
+        << "                        serving (docs/mds.md)" << std::endl
         << "  -v, --version         Rawstor version" << std::endl
         << std::endl
         << "required arguments:" << std::endl
@@ -62,7 +62,7 @@ void usage() {
         << "  -d, --db PATH         SQLite database file (created if missing)"
         << std::endl
         << "  -t, --topology PATH   Static topology config file "
-           "(rawstor_docs/Mds.md)"
+           "(docs/mds.md)"
         << std::endl;
 }
 
@@ -103,7 +103,7 @@ ssize_t sync_op_wait(SyncOp& op, int res) {
     return op.result;
 }
 
-// rawstor-mds --reconstruct (rawstor_docs/Mds.md, "Reconstruct / DR"):
+// rawstor-mds --reconstruct (docs/mds.md, "Reconstruct / DR"):
 // rebuilds the whole map from a LIST_CHUNKS scan of every OST in the
 // topology. No partial scans, by construction (see VolumeStore::
 // reconstruct()'s own doc comment): any OST that doesn't answer aborts

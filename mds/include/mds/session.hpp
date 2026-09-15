@@ -16,7 +16,7 @@ namespace mds {
 class Server;
 
 // One MDS client connection. Same framing as an OST connection (shared
-// `rstr` magic and frame heads, rawstor_docs/Mds.md "Wire protocol") --
+// `rstr` magic and frame heads, docs/mds.md "Wire protocol") --
 // only the volume opcode group (CMD_VOL_*) is actually served here; every
 // other opcode answers -ENOSYS (a plain rawstor-ost, or an OST doubling as
 // partial MDS, serves the session/data/shared-metadata groups instead).
@@ -24,7 +24,7 @@ class Server;
 // synchronous API -- no per-request async I/O beyond the socket read/
 // write itself, so this needs none of ost::Client's ring-buffer multishot
 // recv machinery: MDS traffic is low-rate control-plane only
-// (rawstor_docs/Mds.md, "Principles" -- "MDS is off the hot path"), and a
+// (docs/mds.md, "Principles" -- "MDS is off the hot path"), and a
 // plain sequential single-shot recv loop is simpler and entirely adequate.
 class Session final : public std::enable_shared_from_this<Session> {
 private:

@@ -123,7 +123,7 @@ rawstd::Task<int> Backend::_open(const RawstdUUID& id, uint64_t snap) {
     // io_wq worker threads and does not need the fd to be non-blocking.
     // O_CLOEXEC so this fd doesn't leak into the zfs create/destroy
     // children forked by create()/remove() below. A snapshot device is
-    // read-only at the device level too (rawstor_docs/Mds.md,
+    // read-only at the device level too (docs/mds.md,
     // "Snapshots") -- O_RDONLY here, not O_RDWR, so a write against one
     // fails as soon as the fd itself is wrong, before ever reaching
     // pwrite().

@@ -109,7 +109,7 @@ public:
 
     // Relays RAWSTOR_CMD_SNAPSHOT/_SNAP_REMOVE over the wire -- the
     // remote rawstor-ost forwards to its own local backend the same way
-    // (rawstor_docs/Mds.md, "Snapshots").
+    // (docs/mds.md, "Snapshots").
     rawstd::Task<void>
     snapshot(const RawstdUUID& id, uint64_t snap_id) override;
     rawstd::Task<void>

@@ -22,7 +22,7 @@
 // Thin polymorphic base behind the opaque C handle: rawstor::Object (a
 // single, possibly mirrored, plain object) is its only implementation
 // today, but rawstor::Volume (an MDS-backed chunked volume,
-// rawstor_docs/Mds.md) is a second one -- routing I/O across per-chunk
+// docs/mds.md) is a second one -- routing I/O across per-chunk
 // Objects of its own rather than a Target's members directly. Every
 // rawstor_object_*() C API function in object.cpp dispatches through
 // this vtable instead of a fixed static_cast<Object*>, so both

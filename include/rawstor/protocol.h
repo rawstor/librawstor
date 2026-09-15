@@ -21,7 +21,7 @@ extern "C" {
 
 /*
  * One command space for every server role, grouped into reserved ranges
- * (rawstor_docs/Mds.md, "Wire protocol"):
+ * (docs/mds.md, "Wire protocol"):
  *
  *   0x00        session   -- every role
  *   0x01..0x1f  data      -- OST
@@ -50,7 +50,7 @@ extern "C" {
 #define RAWSTOR_CMD_META 12
 
 /*
- * LIST_CHUNKS (rawstor_docs/Mds.md, "Reconstruct / DR") rides
+ * LIST_CHUNKS (docs/mds.md, "Reconstruct / DR") rides
  * RawstorOSTFrameBasicPayload (object_id/offset/val ignored). The response
  * payload is a run of RawstorOSTFrameChunkPayload records, one per stored
  * object, packing that many records into the same 64 MiB frame cap as the
@@ -59,7 +59,7 @@ extern "C" {
  */
 #define RAWSTOR_CMD_LIST_CHUNKS 0x22
 /*
- * Native CoW snapshot of one stored object version (rawstor_docs/Mds.md,
+ * Native CoW snapshot of one stored object version (docs/mds.md,
  * "Snapshots"): rides RawstorOSTFrameBasicPayload, val = snap_id (never 0
  * -- 0 is the live version). -ENOTSUP on backends without CoW (file://,
  * classic LVM).
@@ -68,7 +68,7 @@ extern "C" {
 #define RAWSTOR_CMD_SNAP_REMOVE 0x24
 
 /*
- * Volume (MDS) commands -- rawstor_docs/Mds.md, "Wire protocol". VOL_OPEN,
+ * Volume (MDS) commands -- docs/mds.md, "Wire protocol". VOL_OPEN,
  * VOL_RESIZE and VOL_REMOVE ride RawstorOSTFrameBasicPayload (object_id =
  * volume_id; val = snap_id for open, the new size for resize).
  */
@@ -77,7 +77,7 @@ extern "C" {
 #define RAWSTOR_CMD_VOL_RESIZE 0x42
 #define RAWSTOR_CMD_VOL_REMOVE 0x43
 /*
- * Volume snapshots are two-phase (rawstor_docs/Mds.md, "Snapshots"): BEGIN
+ * Volume snapshots are two-phase (docs/mds.md, "Snapshots"): BEGIN
  * durably reserves the snap_id (never reused -- leftovers of a crashed
  * attempt must not alias a later snapshot), the client then drains, takes
  * the per-chunk CoW snapshots, and COMMIT registers exactly who holds
@@ -177,7 +177,7 @@ struct RawstorOSTFrameSyncState {
  * to create.
  *
  * The fields below `mirrors` are the chunk placement identity
- * (rawstor_docs/Mds.md, chunk_meta): stamped at create by the volume
+ * (docs/mds.md, chunk_meta): stamped at create by the volume
  * layer, immutable afterwards, the source for the LIST_CHUNKS map
  * reconstruct scan. An all-zero volume_id is a standalone object -- the
  * degenerate case a plain mirrored object already is today, `mirrors`
@@ -238,7 +238,7 @@ struct RawstorOSTFrameMetaPayload {
     uint64_t sync_id_history[4];
     RawstorOSTSyncStateType state;
     /*
-     * Placement identity (rawstor_docs/Mds.md, chunk_meta): reported by
+     * Placement identity (docs/mds.md, chunk_meta): reported by
      * META, ignored by SET_SYNC_STATE (the stored values always win).
      */
     uint8_t member_kind; /* enum RawstorMemberKind, <rawstor/target.h> */
@@ -251,7 +251,7 @@ struct RawstorOSTFrameMetaPayload {
 } RAWSTOR_PACKED;
 
 /*
- * LIST_CHUNKS response entry (rawstor_docs/Mds.md, "Reconstruct / DR"):
+ * LIST_CHUNKS response entry (docs/mds.md, "Reconstruct / DR"):
  * unlike META's own response, this enumerates potentially many objects in
  * one frame, so each record needs its own object_id -- RawstorOSTFrameHead
  * ::cid correlation (every other response's own scheme) only identifies
@@ -280,7 +280,7 @@ struct RawstorOSTFrameSpecPayload {
 } RAWSTOR_PACKED;
 
 /*
- * Volume (MDS) wire structs -- rawstor_docs/Mds.md, "Wire protocol" /
+ * Volume (MDS) wire structs -- docs/mds.md, "Wire protocol" /
  * "MDS data model". VOL_OPEN, VOL_RESIZE and VOL_REMOVE ride
  * RawstorOSTFrameBasicPayload (object_id = volume_id; val = snap_id for
  * open, the new size for resize) and need no struct of their own.
