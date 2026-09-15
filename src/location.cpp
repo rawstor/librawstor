@@ -87,6 +87,16 @@ rawstd::Task<std::pair<std::vector<RawstdUUID>, RawstdUUID>> list_one(
     co_return ret;
 }
 
+rawstd::Task<std::vector<RawstorLocationChunk>>
+list_chunks_one(rawio::Queue& queue, const rawstd::URI& location) {
+    std::vector<RawstorLocationChunk> chunks;
+    std::unique_ptr<rawstor::Connection> cn =
+        co_await rawstor::Connection::create(queue, location, 1);
+    co_await cn->list_chunks(chunks);
+    co_await cn->close();
+    co_return chunks;
+}
+
 // C ABI adapter for rawstor_location_info(): `loc`/`queue` are captured by
 // value/pointer into the coroutine's own frame rather than taken as a
 // pre-built Task<RawstorLocationInfo> -- unlike ost/src/client.cpp's own
@@ -198,6 +208,64 @@ void launch_list_op(
     int (*cb)(ssize_t result, void* data), void* data
 ) {
     launch_list_op_coro(std::move(loc), queue, limit, targets, token, cb, data);
+    rawstd::DetachedTask::rethrow_if_pending();
+}
+
+rawstd::DetachedTask launch_list_chunks_op_coro(
+    rawstor::Location loc, rawio::Queue* queue,
+    struct RawstorLocationChunk** out_chunks, size_t* nchunks,
+    int (*cb)(ssize_t result, void* data), void* data
+) {
+    ssize_t result = 0;
+    struct RawstorLocationChunk* array = nullptr;
+    try {
+        std::vector<RawstorLocationChunk> chunks;
+        co_await loc.list_chunks(*queue, chunks);
+
+        if (!chunks.empty()) {
+            array = static_cast<struct RawstorLocationChunk*>(
+                malloc(chunks.size() * sizeof(struct RawstorLocationChunk))
+            );
+            if (array == nullptr) {
+                throw std::bad_alloc();
+            }
+            memcpy(
+                array, chunks.data(),
+                chunks.size() * sizeof(struct RawstorLocationChunk)
+            );
+        }
+
+        *out_chunks = array;
+        *nchunks = chunks.size();
+    } catch (const std::system_error& e) {
+        free(array);
+        result = -e.code().value();
+    } catch (const std::bad_alloc&) {
+        free(array);
+        result = -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        free(array);
+        result = -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        free(array);
+        result = -EINVAL;
+    }
+    int res = cb(result, data);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+}
+
+void launch_list_chunks_op(
+    rawstor::Location loc, rawio::Queue* queue,
+    struct RawstorLocationChunk** chunks, size_t* nchunks,
+    int (*cb)(ssize_t result, void* data), void* data
+) {
+    launch_list_chunks_op_coro(
+        std::move(loc), queue, chunks, nchunks, cb, data
+    );
     rawstd::DetachedTask::rethrow_if_pending();
 }
 
@@ -347,6 +415,28 @@ rawstd::Task<void> Location::list(
     memcpy(token.bytes, next_token_uuid.bytes, sizeof(next_token_uuid.bytes));
 }
 
+rawstd::Task<void> Location::list_chunks(
+    rawio::Queue& queue, std::vector<RawstorLocationChunk>& chunks
+) {
+    validate_not_empty(_uris);
+
+    // Every URI's scan goes out concurrently; unlike list()'s own
+    // merge-by-uuid, results are simply concatenated (see this method's
+    // own doc comment for why).
+    std::vector<rawstd::Task<std::vector<RawstorLocationChunk>>> tasks;
+    tasks.reserve(_uris.size());
+    for (const auto& location : _uris) {
+        tasks.push_back(list_chunks_one(queue, location));
+    }
+    std::vector<std::vector<RawstorLocationChunk>> per_uri =
+        co_await rawstd::gather(std::move(tasks));
+
+    chunks.clear();
+    for (const auto& found : per_uri) {
+        chunks.insert(chunks.end(), found.begin(), found.end());
+    }
+}
+
 rawstd::Task<Target>
 Location::create(rawio::Queue& queue, const RawstorObjectSpec& sp) {
     RawstdUUID id;
@@ -391,6 +481,31 @@ int rawstor_location_list(
         launch_list_op(
             std::move(loc), static_cast<rawio::Queue*>(queue), limit, targets,
             token, cb, data
+        );
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+int rawstor_location_list_chunks(
+    RawIOQueue* queue, const char* location,
+    struct RawstorLocationChunk** chunks, size_t* nchunks,
+    int (*cb)(ssize_t result, void* data), void* data
+) noexcept {
+    try {
+        rawstor::Location loc(rawstd::URI::uriv(location));
+        launch_list_chunks_op(
+            std::move(loc), static_cast<rawio::Queue*>(queue), chunks, nchunks,
+            cb, data
         );
         return 0;
     } catch (const std::system_error& e) {

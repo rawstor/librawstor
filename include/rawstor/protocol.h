@@ -52,9 +52,10 @@ extern "C" {
 /*
  * LIST_CHUNKS (rawstor_docs/Mds.md, "Reconstruct / DR") rides
  * RawstorOSTFrameBasicPayload (object_id/offset/val ignored). The response
- * payload is `res` RawstorOSTFrameMetaPayload records, one per stored
- * object, each identified by the physical object id (out of band -- see
- * the wire-shape note on RawstorOSTFrameMetaPayload).
+ * payload is a run of RawstorOSTFrameChunkPayload records, one per stored
+ * object, packing that many records into the same 64 MiB frame cap as the
+ * data commands (a large OST may need several LIST_CHUNKS round trips --
+ * left to the caller for v1, no continuation token yet).
  */
 #define RAWSTOR_CMD_LIST_CHUNKS 0x22
 /*
@@ -247,6 +248,18 @@ struct RawstorOSTFrameMetaPayload {
     uint64_t logical_index;
     uint64_t chunk_size;
     uint64_t snap_version;
+} RAWSTOR_PACKED;
+
+/*
+ * LIST_CHUNKS response entry (rawstor_docs/Mds.md, "Reconstruct / DR"):
+ * unlike META's own response, this enumerates potentially many objects in
+ * one frame, so each record needs its own object_id -- RawstorOSTFrameHead
+ * ::cid correlation (every other response's own scheme) only identifies
+ * the LIST_CHUNKS request as a whole, not which object a given record is.
+ */
+struct RawstorOSTFrameChunkPayload {
+    uint8_t object_id[16];
+    struct RawstorOSTFrameMetaPayload meta;
 } RAWSTOR_PACKED;
 
 /*

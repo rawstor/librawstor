@@ -389,7 +389,15 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
     // window -- staged or revealed -- where the LV exists without one.
     RawstorObjectSyncState sync_state{};
     sync_state.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
-    std::string tag = std::string(rawstor_tag_prefix) + meta_encode(sync_state);
+    Backend::ChunkIdentity identity;
+    identity.member_kind = sp.member_kind;
+    identity.width = static_cast<uint8_t>(sp.width);
+    memcpy(identity.volume_id, sp.volume_id, sizeof(identity.volume_id));
+    identity.logical_index = sp.logical_index;
+    identity.chunk_size = sp.chunk_size;
+    identity.snap_version = sp.snap_version;
+    std::string tag =
+        std::string(rawstor_tag_prefix) + meta_encode(sync_state, identity);
 
     rawstd_info(
         "lvm: creating LV %s in VG %s, size %s\n", uuid_str, _vg_name.c_str(),
@@ -609,8 +617,9 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
     // CLEAN -- the caller treats any error here as "member stale, needs a
     // resync" (docs/mirroring.md, case F10).
     RawstorObjectSyncState sync_state;
+    Backend::ChunkIdentity identity;
     try {
-        sync_state = meta_decode(tag);
+        meta_decode(tag, &sync_state, &identity);
     } catch (const std::system_error&) {
         rawstd_error("lvm: no recorded mirror state on %s\n", path.c_str());
         RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
@@ -622,6 +631,12 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
     // outside rawstor.
     RawstorObjectMeta ret{};
     ret.spec = co_await spec(id);
+    ret.spec.member_kind = identity.member_kind;
+    ret.spec.width = identity.width;
+    memcpy(ret.spec.volume_id, identity.volume_id, sizeof(ret.spec.volume_id));
+    ret.spec.logical_index = identity.logical_index;
+    ret.spec.chunk_size = identity.chunk_size;
+    ret.spec.snap_version = identity.snap_version;
     ret.sync_state = sync_state;
 
     co_return ret;
@@ -631,11 +646,26 @@ rawstd::Task<void> Backend::set_sync_state(
     const RawstdUUID& id, const RawstorObjectSyncState& sync_state
 ) {
     std::string path = _device_path(id);
-    std::string new_tag =
-        std::string(rawstor_tag_prefix) + meta_encode(sync_state);
 
     std::string tags = co_await _lv_tags(path);
     std::string old_tag = find_tag(tags, rawstor_tag_prefix);
+
+    // The placement identity is immutable once stamped at create() --
+    // carry the existing tag's through unchanged rather than clobber it
+    // with a zeroed one. An empty/unrecorded old_tag (an LV created
+    // before this feature, or by something else) has no identity to
+    // preserve; the fresh one is a standalone (non-chunk) default.
+    Backend::ChunkIdentity identity;
+    if (!old_tag.empty()) {
+        RawstorObjectSyncState old_sync_state;
+        try {
+            meta_decode(old_tag, &old_sync_state, &identity);
+        } catch (const std::system_error&) {
+            identity = Backend::ChunkIdentity{};
+        }
+    }
+    std::string new_tag =
+        std::string(rawstor_tag_prefix) + meta_encode(sync_state, identity);
 
     std::vector<std::string> argv = {"lvchange", "--config", lvm_config};
     if (!old_tag.empty()) {

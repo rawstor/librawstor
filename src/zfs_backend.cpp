@@ -17,6 +17,7 @@
 #include <cinttypes>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <sstream>
 #include <string>
 
@@ -233,8 +234,15 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
     // the zvol exists without one.
     RawstorObjectSyncState sync_state{};
     sync_state.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
+    Backend::ChunkIdentity identity;
+    identity.member_kind = sp.member_kind;
+    identity.width = static_cast<uint8_t>(sp.width);
+    memcpy(identity.volume_id, sp.volume_id, sizeof(identity.volume_id));
+    identity.logical_index = sp.logical_index;
+    identity.chunk_size = sp.chunk_size;
+    identity.snap_version = sp.snap_version;
     std::string prop =
-        std::string(rawstor_property) + "=" + meta_encode(sync_state);
+        std::string(rawstor_property) + "=" + meta_encode(sync_state, identity);
 
     rawstd_info(
         "zfs: creating zvol %s, size %s bytes\n", dataset.c_str(), size_buf
@@ -354,8 +362,9 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
     // trusted as CLEAN -- the caller treats any error here as "member
     // stale, needs a resync" (docs/mirroring.md, case F10).
     RawstorObjectSyncState sync_state;
+    Backend::ChunkIdentity identity;
     try {
-        sync_state = meta_decode(output);
+        meta_decode(output, &sync_state, &identity);
     } catch (const std::system_error&) {
         rawstd_error("zfs: no recorded mirror state on %s\n", dataset.c_str());
         RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
@@ -367,6 +376,12 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
     // outside rawstor.
     RawstorObjectMeta ret{};
     ret.spec = co_await spec(id);
+    ret.spec.member_kind = identity.member_kind;
+    ret.spec.width = identity.width;
+    memcpy(ret.spec.volume_id, identity.volume_id, sizeof(ret.spec.volume_id));
+    ret.spec.logical_index = identity.logical_index;
+    ret.spec.chunk_size = identity.chunk_size;
+    ret.spec.snap_version = identity.snap_version;
     ret.sync_state = sync_state;
 
     co_return ret;
@@ -376,8 +391,34 @@ rawstd::Task<void> Backend::set_sync_state(
     const RawstdUUID& id, const RawstorObjectSyncState& sync_state
 ) {
     std::string dataset = _dataset(id);
+
+    // The placement identity is immutable once stamped at create() --
+    // read the existing property first and carry it through unchanged
+    // rather than clobber it with a zeroed one. A missing/unrecorded
+    // property (a zvol created before this feature, or by something
+    // else) has no identity to preserve; the fresh one is a standalone
+    // (non-chunk) default.
+    Backend::ChunkIdentity identity;
+    {
+        std::vector<std::string> get_argv = {"zfs",  "get",   "-H",
+                                             "-o",   "value", rawstor_property,
+                                             dataset};
+        try {
+            std::string output = co_await rawstor::run_command_capture(
+                _queue, std::move(get_argv)
+            );
+            while (!output.empty() &&
+                   (output.back() == '\n' || output.back() == '\r')) {
+                output.pop_back();
+            }
+            RawstorObjectSyncState old_sync_state;
+            meta_decode(output, &old_sync_state, &identity);
+        } catch (const std::system_error&) {
+            identity = Backend::ChunkIdentity{};
+        }
+    }
     std::string prop =
-        std::string(rawstor_property) + "=" + meta_encode(sync_state);
+        std::string(rawstor_property) + "=" + meta_encode(sync_state, identity);
 
     std::vector<std::string> argv = {"zfs", "set", prop, dataset};
     try {

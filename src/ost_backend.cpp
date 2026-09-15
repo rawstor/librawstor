@@ -1250,6 +1250,48 @@ rawstd::Task<void> Backend::list(
     co_return;
 }
 
+rawstd::Task<void>
+Backend::list_chunks(std::vector<RawstorLocationChunk>& chunks) {
+    std::vector<RawstorOSTFrameChunkPayload> records;
+    try {
+        records = co_await _basic_request<RawstorOSTFrameChunkPayload>(
+            RAWSTOR_CMD_LIST_CHUNKS, "list_chunks", RawstdUUID{}, 0
+        );
+    } catch (const std::system_error&) {
+        throw;
+    } catch (...) {
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
+    }
+
+    chunks.clear();
+    chunks.reserve(records.size());
+    for (const RawstorOSTFrameChunkPayload& record : records) {
+        RawstorLocationChunk chunk{};
+        memcpy(chunk.object_id, record.object_id, sizeof(chunk.object_id));
+        chunk.meta.spec.size = record.meta.size;
+        chunk.meta.spec.member_kind =
+            static_cast<RawstorMemberKind>(record.meta.member_kind);
+        chunk.meta.spec.width = record.meta.width;
+        chunk.meta.spec.mirrors = 1;
+        memcpy(
+            chunk.meta.spec.volume_id, record.meta.volume_id,
+            sizeof(chunk.meta.spec.volume_id)
+        );
+        chunk.meta.spec.logical_index = record.meta.logical_index;
+        chunk.meta.spec.chunk_size = record.meta.chunk_size;
+        chunk.meta.spec.snap_version = record.meta.snap_version;
+        chunk.meta.sync_state.epoch = record.meta.epoch;
+        chunk.meta.sync_state.sync_id = record.meta.sync_id;
+        memcpy(
+            chunk.meta.sync_state.sync_id_history, record.meta.sync_id_history,
+            sizeof(chunk.meta.sync_state.sync_id_history)
+        );
+        chunk.meta.sync_state.state =
+            static_cast<RawstorObjectSyncStateValue>(record.meta.state);
+        chunks.push_back(chunk);
+    }
+}
+
 // sp is forwarded on the wire unchanged (see BackendOpAllocate); the
 // remote rawstor-ost's own Client::_allocate() ignores payload.mirrors
 // and validates/fills it in against its own locally configured location

@@ -130,6 +130,8 @@ public:
     rawstd::Task<void>
     list(unsigned int limit, std::vector<RawstdUUID>& uuids, RawstdUUID& token);
 
+    rawstd::Task<void> list_chunks(std::vector<RawstorLocationChunk>& chunks);
+
     rawstd::Task<void>
     create(const RawstdUUID& id, const RawstorObjectSpec& sp);
 
