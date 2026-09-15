@@ -4,6 +4,8 @@
 #include "remove.h"
 #include "resolve.h"
 #include "show.h"
+#include "snap_remove.h"
+#include "snapshot.h"
 #include "testio.h"
 
 #include "config.h"
@@ -47,6 +49,8 @@ static void usage(void) {
         "  show                  Show rawstor object\n"
         "  info                  Show rawstor location info\n"
         "  resolve               Resolve a mirrored object's split brain\n"
+        "  snapshot              Snapshot an mds:// volume\n"
+        "  snap-remove           Remove an mds:// volume snapshot\n"
         "  testio                Test rawstor IO routines\n"
         "\n"
         "command options:        Run `<command> --help` to show command usage\n"
@@ -644,6 +648,164 @@ static int command_resolve(int argc, char** argv) {
     return rawstor_cli_resolve(target_arg, winners, num_winners);
 }
 
+static void command_snapshot_usage(void) {
+    fprintf(
+        stdout,
+        "Rawstor CLI " PACKAGE_VERSION "\n"
+        "\n"
+        "usage: rawstor [options] snapshot TARGET [command_options]\n"
+        "\n"
+        "Takes an MDS-orchestrated native CoW snapshot of a volume "
+        "(rawstor_docs/\n"
+        "Mds.md, \"Snapshots (stage 2)\"): the MDS assigns the new snapshot "
+        "id,\n"
+        "which is printed to stdout on success (status messages go to "
+        "stderr). Not\n"
+        "supported on a volume with file:// or classic-LVM chunk members\n"
+        "(-ENOTSUP, no fallback copies).\n"
+        "\n"
+        "  TARGET                An mds://host:port/<volume_id> target.\n"
+        "\n"
+        "command options:\n"
+        "  -h, --help            Show this help message and exit\n"
+    );
+};
+
+static int command_snapshot(int argc, char** argv) {
+    const char* optstring = "h";
+    struct option longopts[] = {
+        {"help", no_argument, NULL, 'h'},
+        {},
+    };
+
+    char* target_arg = NULL;
+    optind = 0;
+    while (1) {
+        int c = getopt_long(argc, argv, optstring, longopts, NULL);
+        if (c == -1) {
+            break;
+        }
+
+        switch (c) {
+        case 'h':
+            command_snapshot_usage();
+            return EXIT_SUCCESS;
+
+        default:
+            return EX_USAGE;
+        }
+    }
+
+    if (optind < argc) {
+        target_arg = argv[optind];
+        optind++;
+    }
+
+    if (optind < argc) {
+        fprintf(stderr, "Unexpected argument: %s\n", argv[optind]);
+        return EX_USAGE;
+    }
+
+    if (target_arg == NULL) {
+        fprintf(stderr, "target required\n");
+        return EX_USAGE;
+    }
+
+    return rawstor_cli_snapshot(target_arg);
+}
+
+static void command_snap_remove_usage(void) {
+    fprintf(
+        stdout,
+        "Rawstor CLI " PACKAGE_VERSION "\n"
+        "\n"
+        "usage: rawstor [options] snap-remove TARGET -s SNAP_ID "
+        "[command_options]\n"
+        "\n"
+        "Destroys a volume snapshot previously created by `rawstor "
+        "snapshot`. The\n"
+        "MDS unregisters it first (no new readers); the per-member destroy "
+        "is\n"
+        "best-effort on whichever members still resolve.\n"
+        "\n"
+        "  TARGET                An mds://host:port/<volume_id> target.\n"
+        "  -s, --snap-id ID      Snapshot id to remove, as printed by "
+        "`rawstor\n"
+        "                        snapshot`.\n"
+        "\n"
+        "command options:\n"
+        "  -h, --help            Show this help message and exit\n"
+    );
+};
+
+static int command_snap_remove(int argc, char** argv) {
+    const char* optstring = "hs:";
+    struct option longopts[] = {
+        {"help", no_argument, NULL, 'h'},
+        {"snap-id", required_argument, NULL, 's'},
+        {},
+    };
+
+    char* target_arg = NULL;
+    const char* snap_id_arg = NULL;
+    optind = 0;
+    while (1) {
+        int c = getopt_long(argc, argv, optstring, longopts, NULL);
+        if (c == -1) {
+            break;
+        }
+
+        switch (c) {
+        case 'h':
+            command_snap_remove_usage();
+            return EXIT_SUCCESS;
+
+        case 's':
+            snap_id_arg = optarg;
+            break;
+
+        default:
+            return EX_USAGE;
+        }
+    }
+
+    if (optind < argc) {
+        target_arg = argv[optind];
+        optind++;
+    }
+
+    if (optind < argc) {
+        fprintf(stderr, "Unexpected argument: %s\n", argv[optind]);
+        return EX_USAGE;
+    }
+
+    if (target_arg == NULL) {
+        fprintf(stderr, "target required\n");
+        return EX_USAGE;
+    }
+
+    if (snap_id_arg == NULL) {
+        fprintf(stderr, "--snap-id required\n");
+        return EX_USAGE;
+    }
+
+    uint64_t snap_id = 0;
+    char* endptr = NULL;
+    errno = 0;
+    unsigned long long parsed_snap_id = strtoull(snap_id_arg, &endptr, 10);
+    if (errno != 0 || endptr == snap_id_arg || *endptr != '\0') {
+        fprintf(stderr, "Invalid --snap-id value: %s\n", snap_id_arg);
+        return EX_USAGE;
+    }
+    if (parsed_snap_id == 0) {
+        fprintf(stderr, "--snap-id must be greater than 0\n");
+        return EX_USAGE;
+    }
+    snap_id = (uint64_t)parsed_snap_id;
+
+    return rawstor_cli_snap_remove(target_arg, snap_id);
+}
+
 static void command_testio_usage(void) {
     fprintf(
         stdout,
@@ -814,6 +976,10 @@ static int run_command(
         ret = command_info(argc, argv);
     } else if (strcmp(command, "resolve") == 0) {
         ret = command_resolve(argc, argv);
+    } else if (strcmp(command, "snapshot") == 0) {
+        ret = command_snapshot(argc, argv);
+    } else if (strcmp(command, "snap-remove") == 0) {
+        ret = command_snap_remove(argc, argv);
     } else if (strcmp(command, "testio") == 0) {
         ret = command_testio(argc, argv);
     } else {
