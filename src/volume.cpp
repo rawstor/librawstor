@@ -273,6 +273,61 @@ rawstd::Task<void> Volume::create(
     }
 }
 
+rawstd::Task<void> Volume::resize(
+    rawio::Queue& queue, const rawstd::URI& target, uint64_t new_size
+) {
+    RawstdUUID id = target_uuid(target);
+    rawstd::URI location(target_location(target));
+
+    if (new_size == 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+
+    mds::Client client = co_await mds_connect(queue, location);
+
+    /* Chunk count before the resize -- everything from here on is new. */
+    WireMap before = co_await client.vol_open(id, 0);
+    uint64_t old_chunks = before.chunks.size();
+
+    co_await client.vol_resize(id, new_size);
+
+    /* Re-fetch: the map now has whatever new chunks the MDS reserved. */
+    WireMap after = co_await client.vol_open(id, 0);
+
+    uint64_t created = old_chunks;
+    std::exception_ptr error;
+    try {
+        for (uint64_t i = old_chunks; i < after.chunks.size(); ++i) {
+            Target chunk_target(chunk_targets(after, i));
+            co_await chunk_target.create(queue, chunk_spec(after, i));
+            created = i + 1;
+        }
+    } catch (...) {
+        error = std::current_exception();
+    }
+
+    if (error) {
+        /*
+         * Roll back whatever new chunks were already created -- unlike
+         * create()'s own rollback, the volume itself is not removed (it
+         * may already hold live data older than this resize) and the
+         * MDS's own logical_size is not reverted either (no such API in
+         * v1): a partial resize leaves the map epoch ahead of what's
+         * actually backed, the reconstruct scan's own garbage class.
+         */
+        while (created > old_chunks) {
+            --created;
+            try {
+                Target chunk_target(chunk_targets(after, created));
+                co_await chunk_target.remove(queue);
+            } catch (const std::exception& e) {
+                rawstd_error("Failed to rollback chunk create: %s\n", e.what());
+            }
+        }
+        std::rethrow_exception(error);
+    }
+}
+
 rawstd::Task<void>
 Volume::remove(rawio::Queue& queue, const rawstd::URI& target) {
     RawstdUUID id = target_uuid(target);

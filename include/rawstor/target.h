@@ -641,6 +641,36 @@ int rawstor_volume_snap_remove(
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
+/**
+ * @brief Asynchronously grow an mds:// volume to a new logical size.
+ *
+ * Grow-only: a @p new_size smaller than the volume's current size fails
+ * with -EINVAL (rawstor_docs/Mds.md -- shrink interacts with GC and
+ * snapshots, deferred past v1). Reserves placement for whatever new
+ * chunks the larger size needs on the MDS, then materializes exactly
+ * those (not the whole map) on their OSTs -- existing chunks and their
+ * data are untouched.
+ *
+ * @param queue     Queue used to drive the asynchronous resize.
+ * @param target    An mds://host:port/<volume_id> target; anything else
+ *                  fails with -EINVAL.
+ * @param new_size  The volume's new logical size in bytes; must be
+ *                  greater than or equal to its current size.
+ * @param cb        Callback invoked on completion.
+ *                  - @p result is zero on success, or a negative errno on
+ *                    failure.
+ *                  - @p data is the same pointer passed as @p data below.
+ * @param data      User-defined context pointer passed unchanged to
+ *                  @p cb.
+ *
+ * @return 0 if the resize was successfully queued; negative errno on
+ *         immediate failure (in which case @p cb is never invoked).
+ */
+int rawstor_volume_resize(
+    RawIOQueue* queue, const char* target, uint64_t new_size,
+    int (*cb)(ssize_t result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
 #ifdef __cplusplus
 }
 #endif

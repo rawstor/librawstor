@@ -312,6 +312,30 @@ rawstd::DetachedTask launch_volume_remove_op_coro(
     }
 }
 
+rawstd::DetachedTask launch_volume_resize_op_coro(
+    rawstd::URI target, rawio::Queue* queue, uint64_t new_size,
+    int (*cb)(ssize_t result, void* data), void* data
+) {
+    ssize_t result = 0;
+    try {
+        co_await rawstor::Volume::resize(*queue, target, new_size);
+    } catch (const std::system_error& e) {
+        result = -e.code().value();
+    } catch (const std::bad_alloc&) {
+        result = -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        result = -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        result = -EINVAL;
+    }
+    int res = cb(result, data);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+}
+
 rawstd::DetachedTask launch_volume_spec_op_coro(
     rawstd::URI target, rawio::Queue* queue, RawstorObjectSpec* spec,
     int (*cb)(ssize_t result, void* data), void* data
@@ -1209,6 +1233,33 @@ int rawstor_volume_snap_remove(
         }
         launch_volume_snap_remove_op_coro(
             uris[0], static_cast<rawio::Queue*>(queue), snap_id, cb, data
+        );
+        rawstd::DetachedTask::rethrow_if_pending();
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+int rawstor_volume_resize(
+    RawIOQueue* queue, const char* target, uint64_t new_size,
+    int (*cb)(ssize_t result, void* data), void* data
+) noexcept {
+    try {
+        std::vector<rawstd::URI> uris = rawstd::URI::uriv(target);
+        if (uris.size() != 1 || !is_volume_target(uris[0])) {
+            return -EINVAL;
+        }
+        launch_volume_resize_op_coro(
+            uris[0], static_cast<rawio::Queue*>(queue), new_size, cb, data
         );
         rawstd::DetachedTask::rethrow_if_pending();
         return 0;

@@ -68,6 +68,16 @@ ssize_t volume_snap_remove(
     });
 }
 
+ssize_t volume_resize(
+    rawio::Queue& queue, const std::string& target, uint64_t new_size
+) {
+    return rawstor::tests::sync_run(&queue, [&](auto cb, void* data) {
+        return rawstor_volume_resize(
+            &queue, target.c_str(), new_size, cb, data
+        );
+    });
+}
+
 std::string
 volume_target(const rawstor::tests::VolumeEnv& env, const char* uuid) {
     rawstd::URI location_uri(env.location());
@@ -181,4 +191,73 @@ TEST(VolumeSnapshotTest, non_volume_target_is_einval) {
     uint64_t snap_id = 0;
     EXPECT_EQ(volume_snapshot(*queue, target, &snap_id), -EINVAL);
     EXPECT_EQ(volume_snap_remove(*queue, target, 1), -EINVAL);
+}
+
+// Growing a multi-chunk volume reserves placement for the new chunks on
+// the MDS and materializes exactly those on the OST -- spec() reflects
+// the new size, and the volume stays fully readable/writable across the
+// old/new chunk boundary afterward.
+TEST(VolumeResizeTest, grows_and_creates_new_chunks) {
+    rawstor::tests::VolumeEnv env(8778, 8779);
+    std::string target =
+        volume_target(env, "018f4e2a-3000-7000-8000-000000000006");
+
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+
+    RawstorObjectSpec spec{};
+    spec.size = 512ull << 10; /* 512 KiB, one chunk */
+    spec.mirrors = 1;
+    spec.chunk_size = 512ull << 10;
+    ASSERT_EQ(target_create(*queue, target, spec), 0);
+
+    ASSERT_EQ(volume_resize(*queue, target, 2ull << 20 /* 2 MiB */), 0);
+
+    RawstorObjectSpec read_spec{};
+    ASSERT_EQ(target_spec(*queue, target, &read_spec), 0);
+    EXPECT_EQ(read_spec.size, 2ull << 20);
+
+    EXPECT_EQ(target_remove(*queue, target), 0);
+}
+
+// Grow-only: the MDS itself rejects a smaller new_size.
+TEST(VolumeResizeTest, shrink_is_einval) {
+    rawstor::tests::VolumeEnv env(8780, 8781);
+    std::string target =
+        volume_target(env, "018f4e2a-3000-7000-8000-000000000007");
+
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+
+    RawstorObjectSpec spec = one_chunk_spec();
+    ASSERT_EQ(target_create(*queue, target, spec), 0);
+
+    EXPECT_EQ(volume_resize(*queue, target, spec.size / 2), -EINVAL);
+
+    EXPECT_EQ(target_remove(*queue, target), 0);
+}
+
+// new_size 0 is rejected client-side before any round trip.
+TEST(VolumeResizeTest, zero_is_einval) {
+    rawstor::tests::VolumeEnv env(8782, 8783);
+    std::string target =
+        volume_target(env, "018f4e2a-3000-7000-8000-000000000008");
+
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+
+    RawstorObjectSpec spec = one_chunk_spec();
+    ASSERT_EQ(target_create(*queue, target, spec), 0);
+
+    EXPECT_EQ(volume_resize(*queue, target, 0), -EINVAL);
+
+    EXPECT_EQ(target_remove(*queue, target), 0);
+}
+
+// resize() makes no sense against a plain (non-"mds://") target -- no
+// MDS to reserve placement with.
+TEST(VolumeResizeTest, non_volume_target_is_einval) {
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+
+    const char* target = "ost://127.0.0.1:1/018f4e2a-3000-7000-8000-"
+                         "000000000009";
+
+    EXPECT_EQ(volume_resize(*queue, target, 1ull << 20), -EINVAL);
 }
