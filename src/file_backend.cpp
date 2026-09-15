@@ -445,7 +445,7 @@ rawstd::Task<RawstorLocationInfo> Backend::info() {
         if (statvfs(location_path.c_str(), &vfs) == -1) {
             RAWSTD_THROW_ERRNO();
         }
-        ret.total = static_cast<uint64_t>(vfs.f_blocks) * vfs.f_frsize;
+        uint64_t available = static_cast<uint64_t>(vfs.f_bavail) * vfs.f_frsize;
 
         uint64_t used = 0;
         for (const auto& entry :
@@ -464,6 +464,7 @@ rawstd::Task<RawstorLocationInfo> Backend::info() {
             used += static_cast<uint64_t>(st.st_size);
         }
         ret.used = used;
+        ret.total = used + available;
     } catch (const std::system_error&) {
         throw;
     } catch (const std::exception& e) {
