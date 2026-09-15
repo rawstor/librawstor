@@ -122,21 +122,13 @@ AS_IF([test "x$with_libxxhash" = "xyes"], [
 ])
 
 
-AC_ARG_ENABLE([ost-backend], [AS_HELP_STRING([--disable-ost-backend],
-    [disable OST backend])],
-    [enable_ost_backend=$enableval],
-    [enable_ost_backend="yes"])
-AM_CONDITIONAL([ENABLE_OST_BACKEND], [test "x$enable_ost_backend" = "xyes"])
-AC_SUBST([ENABLE_OST_BACKEND], [$enable_ost_backend])
-
-
-AC_ARG_WITH([mds], [AS_HELP_STRING([--without-mds],
-    [do not build the MDS server (needs sqlite3)])],
-    [with_mds=$withval],
-    [with_mds="yes"])
-AM_CONDITIONAL([WITH_MDS], [test "x$with_mds" = "xyes"])
-AC_SUBST([WITH_MDS], [$with_mds])
-AS_IF([test "x$with_mds" = "xyes"], [
+AC_ARG_WITH([sqlite3], [AS_HELP_STRING([--without-sqlite3],
+    [disable sqlite3 support (also disables the MDS server, which needs it)])],
+    [with_sqlite3=$withval],
+    [with_sqlite3="yes"])
+AM_CONDITIONAL([WITH_SQLITE3], [test "x$with_sqlite3" = "xyes"])
+AC_SUBST([WITH_SQLITE3], [$with_sqlite3])
+AS_IF([test "x$with_sqlite3" = "xyes"], [
     PKG_CHECK_MODULES([SQLITE3], [sqlite3])
 ])
 

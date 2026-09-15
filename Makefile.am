@@ -3,23 +3,21 @@ SUBDIRS = librawstd \
           src \
           cli \
           vhost \
-          vhost-qemu
+          vhost-qemu \
+          ost
 
 if ENABLE_VDUSE_BACKEND
     SUBDIRS += vduse
 endif
 
-if ENABLE_OST_BACKEND
-    SUBDIRS += ost
-endif
-
-if WITH_MDS
+if WITH_SQLITE3
     SUBDIRS += mds
 endif
 
-# After ost/mds: tests/ links against their libost.la/libmds.la/
-# libmdsstore.la when both are enabled (Volume::snapshot()/snap_remove()'s
-# real MDS+OST wire path, tests/volume_env.*).
+# After ost/mds: tests/ links against ost's libost.la unconditionally,
+# and mds's libmds.la/libmdsstore.la when sqlite3 is enabled
+# (Volume::snapshot()/snap_remove()'s real MDS+OST wire path,
+# tests/volume_env.*).
 if ENABLE_TESTS
     SUBDIRS += tests
 endif
@@ -103,9 +101,7 @@ test: all
 	  make -C vduse test; \
 	fi
 	make -C tests test
-	@if [ "x$(ENABLE_OST_BACKEND)" = "xyes" ]; then \
-	  make -C ost test; \
-	fi
+	make -C ost test
 	@if [ "x$(WITH_PYTHON3)" = "xyes" ]; then \
 	  make -C pyrawstor test; \
 	fi
