@@ -12,34 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Vendored [nlohmann/json](https://github.com/nlohmann/json) (single-header, MIT) for parsing command output in the new storage backends below.
 - New `lvm://` storage backend: objects are LVM Logical Volumes, provisioned via `lvcreate`/`lvremove`. A new object is fully zeroed before it becomes visible (LVM itself only zeroes the first 4KiB of a new LV), so it never exposes another object's leftover data; any staging LV left behind by a process that crashed mid-create is swept and removed on the next `create()` against that VG.
 - New `zfs://` storage backend: objects are ZFS zvols, provisioned via `zfs create`/`zfs destroy`.
-- [Mirroring design](docs/mirroring.md): failure model, quorum rules and
-  online resync for N-way mirrors.
-- Per-copy object metadata (state/epoch/sync_id/history) via new
-  `SPEC`/`META`/`SET_SYNC_STATE`/`FLUSH` OST protocol commands and the
-  public `rawstor_target_spec()`/`rawstor_target_meta()`/
-  `rawstor_target_set_sync_state()` (`<rawstor/target.h>`) API. Setting
-  mirror consistency state by hand is a sharp tool, not meant for routine
-  application use.
-- Every backend now persists per-copy metadata durably: a companion
-  `.meta` file for `file://`, native transactional storage for `lvm://`
-  (an LVM tag) and `zfs://` (a ZFS user property).
-- `rawstor_target_create()`/`rawstor_location_create()` reject `-EINVAL`
-  unless `RawstorObjectSpec.mirrors` matches the target/location string's
-  URI count.
-- Mirrored objects now tolerate member loss: quorum-gated open
-  (`-ENOTCONN`/`-ENOTRECOVERABLE` otherwise), degrade-and-continue writes,
-  read failover, and automatic online resync of a stale or reconnected
-  member while the object stays live.
-- `-m`/`--mirrors N` for `rawstor create` and `pyrawstor`'s `ObjectSpec`/
-  `Target.create()`/`Location.create()`; `-v`/`--verbose` for `rawstor show`
-  (labeling each mirror `mirror[N]`, its position in the target's own
-  comma-separated order) and pyrawstor's new `Target.meta()` (returning one
-  `ObjectMeta`, or `None` for a mirror that didn't answer, per mirror)
-  print every mirror's own consistency state (not just one).
-- `rawstor resolve TARGET --winner=N[,N...]` for manual split-brain
-  recovery (docs/mirroring.md, case F9): declares one or more mirrors
-  (same index `rawstor show -v` labels) jointly authoritative, and every
-  mirror not listed gets a full online resync on the next open.
+- [Mirroring design](docs/mirroring.md): failure model, quorum rules and online resync for N-way mirrors.
+- Per-copy object metadata (state/epoch/sync_id/history) via new `SPEC`/`META`/`SET_SYNC_STATE`/`FLUSH` OST protocol commands and the public `rawstor_target_spec()`/`rawstor_target_meta()`/`rawstor_target_set_sync_state()` (`<rawstor/target.h>`) API. Setting mirror consistency state by hand is a sharp tool, not meant for routine application use.
+- Every backend now persists per-copy metadata durably: a companion `.meta` file for `file://`, native transactional storage for `lvm://` (an LVM tag) and `zfs://` (a ZFS user property).
+- `rawstor_target_create()`/`rawstor_location_create()` reject `-EINVAL` unless `RawstorObjectSpec.mirrors` matches the target/location string's URI count.
+- Mirrored objects now tolerate member loss: quorum-gated open (`-ENOTCONN`/`-ENOTRECOVERABLE` otherwise), degrade-and-continue writes, read failover, and automatic online resync of a stale or reconnected member while the object stays live.
+- `-m`/`--mirrors N` for `rawstor create` and `pyrawstor`'s `ObjectSpec`/`Target.create()`/`Location.create()`; `-v`/`--verbose` for `rawstor show` (labeling each mirror `mirror[N]`, its position in the target's own comma-separated order) and pyrawstor's new `Target.meta()` (returning one `ObjectMeta`, or `None` for a mirror that didn't answer, per mirror) print every mirror's own consistency state (not just one).
+- `rawstor resolve TARGET --winner=N[,N...]` for manual split-brain recovery (docs/mirroring.md, case F9): declares one or more mirrors (same index `rawstor show -v` labels) jointly authoritative, and every mirror not listed gets a full online resync on the next open.
 - [MDS design](docs/mds.md) and a new `rawstor-mds` metadata server (`--without-sqlite3` to skip building it), enabling `mds://host:port/<volume_id>` volumes: a logical object split into fixed-size chunks, each independently placed (and optionally mirrored) across a static OST topology, opened/read/written through the same `rawstor_target_*()`/`rawstor` CLI surface as a plain object -- usable as-is as a `rawstor-vhost`/`rawstor-vhost-qemu`/`rawstor-vduse` `TARGET`. New `VOL_CREATE`/`VOL_OPEN`/`VOL_RESIZE`/`VOL_REMOVE`/`LIST_CHUNKS`/`VOL_SNAP_*` wire commands; `rawstor-mds --reconstruct` rebuilds the chunk map from a `LIST_CHUNKS` scan of every OST in the topology, for recovering from a lost or corrupted MDS database.
 - `rawstor create`'s target/location form gained `--chunk-size`/`--width`/`--failure-domain`/`--stripe-width` to set an `mds://` volume's chunk size, copies per chunk, placement failure domain, and striping policy (ignored for a plain object).
 - `rawstor resize TARGET -s SIZE` (`rawstor_volume_resize()`) grows an `mds://` volume, materializing whatever new chunks the larger size needs on their OSTs; shrinking is not supported.
