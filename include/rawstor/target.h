@@ -590,6 +590,57 @@ int rawstor_target_snap_remove(
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
+/**
+ * @brief Asynchronously take an MDS-orchestrated snapshot of a volume
+ *        (rawstor_docs/Mds.md, "Snapshots (stage 2)").
+ *
+ * Unlike rawstor_target_snapshot() (whose caller already owns a
+ * snap_id), the version taken here is chosen by the volume's MDS:
+ * reserves it, backend-CoWs every reachable chunk member, then registers
+ * the surviving membership. v1 caveat: assumes no concurrent writer --
+ * draining/flushing an in-flight write session is the writing client's
+ * own duty, not this call's.
+ *
+ * @param queue    Queue used to drive the asynchronous snapshot.
+ * @param target   An mds://host:port/<volume_id> target (no "@snap"
+ *                 suffix); anything else fails with -EINVAL.
+ * @param snap_id  Out-parameter: the newly reserved version id, written
+ *                 immediately before @p cb runs on success.
+ * @param cb       Callback invoked on completion.
+ *                 - @p result is zero on success, or a negative errno on
+ *                   failure (@c -EIO if no chunk member survived).
+ *                 - @p data is the same pointer passed as @p data below.
+ * @param data     User-defined context pointer passed unchanged to @p cb.
+ *
+ * @return 0 if the snapshot was successfully queued; negative errno on
+ *         immediate failure (in which case @p cb is never invoked).
+ *
+ * @see rawstor_volume_snap_remove
+ * @see rawstor_target_snapshot
+ */
+int rawstor_volume_snapshot(
+    RawIOQueue* queue, const char* target, uint64_t* snap_id,
+    int (*cb)(ssize_t result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Asynchronously destroy a volume snapshot taken by
+ *        rawstor_volume_snapshot().
+ *
+ * The MDS unregisters @p snap_id (no new readers) before the per-member
+ * fan-out destroy runs; a member that can no longer be resolved (address
+ * changed, OST replaced) is left for the reconstruct scan rather than
+ * failing the call.
+ *
+ * @param target  An mds://host:port/<volume_id> target.
+ *
+ * @see rawstor_volume_snapshot
+ */
+int rawstor_volume_snap_remove(
+    RawIOQueue* queue, const char* target, uint64_t snap_id,
+    int (*cb)(ssize_t result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
 #ifdef __cplusplus
 }
 #endif

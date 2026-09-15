@@ -1335,6 +1335,31 @@ rawstd::Task<void> Backend::remove(const RawstdUUID& id) {
     co_return;
 }
 
+rawstd::Task<void> Backend::snapshot(const RawstdUUID& id, uint64_t snap_id) {
+    try {
+        co_await _basic_request(RAWSTOR_CMD_SNAPSHOT, "snapshot", id, snap_id);
+    } catch (const std::system_error&) {
+        throw;
+    } catch (...) {
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
+    }
+    co_return;
+}
+
+rawstd::Task<void>
+Backend::snap_remove(const RawstdUUID& id, uint64_t snap_id) {
+    try {
+        co_await _basic_request(
+            RAWSTOR_CMD_SNAP_REMOVE, "snap_remove", id, snap_id
+        );
+    } catch (const std::system_error&) {
+        throw;
+    } catch (...) {
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
+    }
+    co_return;
+}
+
 rawstd::Task<RawstorObjectSpec> Backend::spec(const RawstdUUID& id) {
     // A dedicated, cheaper wire round trip than meta() below -- doesn't
     // touch the server's own mirror consistency state lookup at all (see
@@ -1462,13 +1487,16 @@ rawstd::Task<RawstorLocationInfo> Backend::info() {
     co_return ret;
 }
 
-rawstd::Task<void> Backend::set_object(const RawstdUUID& id) {
+rawstd::Task<void> Backend::set_object(const RawstdUUID& id, uint64_t snap) {
     // The demultiplex pump is already running by now -- _connect() starts it
     // before this is ever reachable -- so this is just another
     // cid-dispatched request like list()/create()/....
     assert(_read_event != nullptr);
 
-    co_await _basic_request(RAWSTOR_CMD_SET_OBJECT, "set_object", id, 0);
+    // `val` carries the bound version -- 0 for live, or a previously
+    // snapshotted id (rawstor_docs/Mds.md, "Snapshots": "the wire carries
+    // the version in the val field SET_OBJECT ... already had").
+    co_await _basic_request(RAWSTOR_CMD_SET_OBJECT, "set_object", id, snap);
 }
 
 // See ost_backend.hpp's doc comment on why `weak`, not a strong

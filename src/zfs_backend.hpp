@@ -38,7 +38,14 @@ private:
     std::string _device_path(const RawstdUUID& id) const;
     std::string _dataset(const RawstdUUID& id) const;
 
-    rawstd::Task<int> _open(const RawstdUUID& id) override;
+    // `snap != 0` names version snap's own native snapshot:
+    // <dataset>@s<snap> / /dev/zvol/.../<uuid>@s<snap> -- the "@s<id>"
+    // name is the version key itself (rawstor_docs/Mds.md, "Snapshots"),
+    // nothing stored twice.
+    std::string _device_path(const RawstdUUID& id, uint64_t snap) const;
+    std::string _dataset(const RawstdUUID& id, uint64_t snap) const;
+
+    rawstd::Task<int> _open(const RawstdUUID& id, uint64_t snap) override;
 
     // Polls for `path`'s existence-as-a-block-device to match
     // `want_present`, for up to `timeout_ms`, via _queue.stat()/
@@ -73,6 +80,16 @@ public:
     rawstd::Task<void> set_sync_state(
         const RawstdUUID& id, const RawstorObjectSyncState& sync_state
     ) override;
+
+    // The v1 CoW backend (rawstor_docs/Mds.md, "Snapshots"): a native
+    // "zfs snapshot"/"zfs destroy" of the zvol. snapshot() also sets
+    // snapdev=visible on the *origin* dataset so every snapshot's own
+    // device node (/dev/zvol/.../<uuid>@s<id>) is openable -- one
+    // mechanism, old zvols included, rather than per-snapshot.
+    rawstd::Task<void>
+    snapshot(const RawstdUUID& id, uint64_t snap_id) override;
+    rawstd::Task<void>
+    snap_remove(const RawstdUUID& id, uint64_t snap_id) override;
 };
 
 } // namespace zfs

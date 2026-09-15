@@ -92,6 +92,14 @@ private:
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
         RawstorOSTFrameBasicPayload payload
     );
+    static rawstd::DetachedTask _snapshot(
+        std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
+        RawstorOSTFrameBasicPayload payload
+    );
+    static rawstd::DetachedTask _snap_remove(
+        std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
+        RawstorOSTFrameBasicPayload payload
+    );
     static rawstd::DetachedTask _spec(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
         RawstorOSTFrameBasicPayload payload

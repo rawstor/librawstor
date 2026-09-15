@@ -59,7 +59,23 @@ public:
         rawio::Queue& queue, const RawstorObjectSyncState& sync_state
     );
     rawstd::Task<void> remove(rawio::Queue& queue);
-    rawstd::Task<std::unique_ptr<Object>> open(rawio::Queue& queue);
+
+    // `snap` is 0 for the live version, or a version id previously
+    // registered via snapshot() below (rawstor_docs/Mds.md, "Snapshots").
+    // Opening a snapshot still goes through the normal mirror
+    // reconciliation below -- the doc's own "bypasses the mirror state
+    // machine entirely" ideal isn't implemented (a known gap for
+    // mirrors >= 2; harmless for the common mirrors == 1 case, which
+    // never runs that machinery in the first place).
+    rawstd::Task<std::unique_ptr<Object>>
+    open(rawio::Queue& queue, uint64_t snap = 0);
+
+    // Native CoW snapshot of every URI in this target (rawstor_docs/
+    // Mds.md, "Snapshots"): every URI is attempted even if an earlier one
+    // fails, and the first error encountered is returned. ENOTSUP on a
+    // backend without native CoW (file://, classic LVM).
+    rawstd::Task<void> snapshot(rawio::Queue& queue, uint64_t snap_id);
+    rawstd::Task<void> snap_remove(rawio::Queue& queue, uint64_t snap_id);
 };
 
 } // namespace rawstor
