@@ -15,21 +15,21 @@
 namespace rawstor {
 
 class Location;
-// Only named here as std::unique_ptr<Object>'s pointee (open()'s return
-// type) -- Object itself needs Target's full definition (it holds one as
+// Only named here as std::unique_ptr<Chunk>'s pointee (open()'s return
+// type) -- Chunk itself needs Target's full definition (it holds one as
 // a member), so this stays a forward declaration to avoid a header
-// cycle; target.cpp includes "object.hpp" for the definition.
-class Object;
+// cycle; target.cpp includes "chunk.hpp" for the definition.
+class Chunk;
 
 // A Target addresses one specific object across every URI in `uris` (see
 // docs/locations_and_targets.md). Deliberately lightweight -- unlike
-// Object, it never holds a Slot between calls; create()/spec()/
+// Chunk, it never holds a Slot between calls; create()/spec()/
 // remove() each open a Slot per URI just for that one call and
 // close it again before returning, same as the code they replace used to
 // do. open() is the one exception that needs a Slot to survive past
-// the call -- it builds the returned Object itself (a friend of Object,
+// the call -- it builds the returned Chunk itself (a friend of Chunk,
 // by analogy with Slot::create()), keeping one Slot per URI
-// alive in the Object's own pool.
+// alive in the Chunk's own pool.
 class Target final {
 private:
     std::vector<rawstd::URI> _uris;
@@ -67,7 +67,7 @@ public:
     // machine entirely" ideal isn't implemented (a known gap for
     // mirrors >= 2; harmless for the common mirrors == 1 case, which
     // never runs that machinery in the first place).
-    rawstd::Task<std::unique_ptr<Object>>
+    rawstd::Task<std::unique_ptr<Chunk>>
     open(rawio::Queue& queue, uint64_t snap = 0);
 
     // Native CoW snapshot of every URI in this target (docs/mds.md,

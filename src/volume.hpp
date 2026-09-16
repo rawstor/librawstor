@@ -1,8 +1,8 @@
 #ifndef RAWSTOR_VOLUME_HPP
 #define RAWSTOR_VOLUME_HPP
 
+#include "chunk.hpp"
 #include "mds_client.hpp"
-#include "object.hpp"
 
 #include <rawio/queue.hpp>
 
@@ -45,19 +45,23 @@ RawstdUUID volume_chunk_uuid(const RawstdUUID& volume_id, uint64_t index);
  * An MDS-backed chunked volume (mds://host:port/<volume_id>): fetches the
  * map at open, caches it, and routes I/O onto lazily opened per-chunk
  * (possibly mirrored) Objects. A second RawstorObject implementation
- * alongside the plain rawstor::Object (see object.hpp) -- every chunk is
- * itself an ordinary (Target-addressed, possibly mirrored) Object, opened
+ * alongside the plain rawstor::Chunk (see chunk.hpp) -- every chunk is
+ * itself an ordinary (Target-addressed, possibly mirrored) Chunk, opened
  * lazily on first touch.
  */
 class Volume final : public RawstorObject {
 private:
-    struct Chunk {
+    // Bookkeeping around one logical chunk's lazily opened Chunk --
+    // named apart from the top-level rawstor::Chunk it wraps (`chunk`
+    // below) rather than reusing that name for a nested type, which
+    // would otherwise shadow it within Volume's own scope.
+    struct ChunkEntry {
         std::vector<rawstd::URI> targets;
-        std::unique_ptr<Object> object;
+        std::unique_ptr<Chunk> chunk;
         // Single-flight lazy open: concurrent I/O touching the same
         // not-yet-open chunk must not each open it independently. begin()
         // when the first touch starts opening it, end() once it lands
-        // (object set, or _open_errno on failure); every other touch
+        // (chunk set, or _open_errno on failure); every other touch
         // co_awaits settle() instead of racing its own open.
         rawstd::Gate gate;
         int open_errno = 0;
@@ -69,18 +73,18 @@ private:
     rawstd::URI _location; /* mds://host:port */
     uint64_t _size;
     uint64_t _chunk_size;
-    std::vector<Chunk> _chunks;
+    std::vector<ChunkEntry> _chunks;
 
     Volume(
         rawio::Queue& queue, uint64_t snap, const rawstd::URI& location,
         const mds::WireMap& map
     );
 
-    // Returns the chunk's already-open (or freshly opened) Object;
+    // Returns the chunk's already-open (or freshly opened) Chunk;
     // read-only for a bound snapshot (opens the "@<snap>" target view).
     // A pointer, not a reference: rawstd::Task<T> stores T in a
     // std::variant, which requires an object type.
-    rawstd::Task<Object*> _chunk(uint32_t index);
+    rawstd::Task<Chunk*> _chunk(uint32_t index);
 
     // Runs one coroutine per segment concurrently (rawstd::gather()),
     // each co_awaiting the owning chunk's pread/pwrite -- aggregated into

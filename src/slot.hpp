@@ -51,7 +51,7 @@ private:
 
     // When false, a retryable failure is not retried through
     // invalidate_backend(): it surfaces to the caller immediately, same as
-    // a permanent rejection. A mirrored Object disables this once it is
+    // a permanent rejection. A mirrored Chunk disables this once it is
     // DIRTY -- a reconnected backend may be talking to a restarted server
     // that lost acknowledged writes, so the caller must degrade the mirror
     // arm instead of silently retrying through it (docs/mirroring.md, case

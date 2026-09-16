@@ -98,7 +98,7 @@ ssize_t object_close(rawio::Queue& queue, RawstorObject* object) {
 // doesn't fit rawstor::tests::sync_run()'s (ssize_t result) convention --
 // shared by every other rawstor_target_*()/rawstor_object_close() call
 // above -- so this pumps `queue` itself instead, the same way
-// tests/test_object.cpp's own ObjectTest cases do.
+// tests/test_chunk.cpp's own ChunkTest cases do.
 ssize_t object_pread(
     rawio::Queue& queue, RawstorObject* object, void* buf, size_t size,
     off_t offset

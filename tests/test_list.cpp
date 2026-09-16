@@ -26,7 +26,7 @@
 
 namespace {
 
-// Duplicate of object.cpp's own `run()` -- see that one's doc comment for
+// Duplicate of chunk.cpp's own `run()` -- see that one's doc comment for
 // why it isn't shared.
 template <typename T>
 T run(rawio::Queue& q, rawstd::Task<T> t) {

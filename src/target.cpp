@@ -1,7 +1,7 @@
 #include "target.hpp"
 
+#include "chunk.hpp"
 #include "location.hpp"
-#include "object.hpp"
 #include "opts.h"
 #include "slot.hpp"
 #include "volume.hpp"
@@ -231,7 +231,7 @@ rawstd::DetachedTask launch_open_op_coro(
 }
 
 // mds://host:port/<volume_id> targets (docs/mds.md) bypass Target/
-// Object/Backend entirely: a Volume is its own RawstorObject
+// Chunk/Backend entirely: a Volume is its own RawstorObject
 // implementation, routing I/O across per-chunk Objects of its own rather
 // than a Target's members directly (see volume.hpp). `target` is taken
 // by value into the coroutine's own frame for the same reason
@@ -827,7 +827,7 @@ Target::snapshot_remove(rawio::Queue& queue, uint64_t snap_id) {
     co_await rawstd::gather(std::move(tasks));
 }
 
-rawstd::Task<std::unique_ptr<Object>>
+rawstd::Task<std::unique_ptr<Chunk>>
 Target::open(rawio::Queue& queue, uint64_t snap) {
     // This coroutine suspends (co_await) below, so *this must outlive
     // that suspension -- same requirement create()/remove()/spec()/
@@ -1034,24 +1034,24 @@ Target::open(rawio::Queue& queue, uint64_t snap) {
     // settled -- one slot per URI (the only member identity this
     // codebase knows today; see the spec() comment above on why that
     // isn't necessarily the whole story forever). A local vector, not
-    // Object's own _members: no Object exists yet to hold it -- see the
+    // Chunk's own _members: no Chunk exists yet to hold it -- see the
     // constructor's own doc comment on why that's now deferred to the
     // very end. Slot indices must stay stable from here on (the
     // reconnect probe addresses members by index): no reallocation after
-    // handing it to Object below.
-    std::vector<Object::Member> members;
+    // handing it to Chunk below.
+    std::vector<Chunk::Member> members;
     members.reserve(_uris.size());
     reachable = 0;
     for (size_t i = 0; i < _uris.size(); ++i) {
-        // Object's own constructor (_reconcile_sync_set(), for mirrors
+        // Chunk's own constructor (_reconcile_sync_set(), for mirrors
         // >= 2) only ever downgrades a member (e.g. an interrupted
         // resync makes it STALE) -- it never upgrades one from the
         // STALE default, so a successfully opened member is marked
         // IN_SYNC up front.
-        Object::MemberState state = opened[i] ? Object::MemberState::IN_SYNC
-                                              : Object::MemberState::STALE;
+        Chunk::MemberState state =
+            opened[i] ? Chunk::MemberState::IN_SYNC : Chunk::MemberState::STALE;
         members.push_back(
-            Object::Member{
+            Chunk::Member{
                 std::move(cns[i]), _uris[i], state, metas[i], opened[i]
             }
         );
@@ -1061,7 +1061,7 @@ Target::open(rawio::Queue& queue, uint64_t snap) {
     }
 
     // reachable == 0 (not just below quorum) is the one precondition
-    // Object's own constructor can't check itself: a member with no
+    // Chunk's own constructor can't check itself: a member with no
     // Slot at all is meaningless to it even for the trivial
     // mirrors == 1 case (there's nothing there to trust), unlike a real
     // quorum shortfall, which _reconcile_sync_set() already checks on
@@ -1072,15 +1072,15 @@ Target::open(rawio::Queue& queue, uint64_t snap) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
     }
 
-    // Everything Object needs to exist is gathered -- deciding whether
+    // Everything Chunk needs to exist is gathered -- deciding whether
     // it's actually trustworthy enough to open from (the mirrors == 1
     // shortcut, or _reconcile_sync_set()'s own quorum/split-brain/no-
     // trusted-member analysis) is the constructor's own job from here --
-    // Target::open()'s only remaining friend access to Object is this
+    // Target::open()'s only remaining friend access to Chunk is this
     // one constructor call, not a stream of direct edits to an already-
-    // constructed Object's own internals.
-    co_return std::make_unique<Object>(
-        Object::Private(), queue, *this, std::move(spec), std::move(members)
+    // constructed Chunk's own internals.
+    co_return std::make_unique<Chunk>(
+        Chunk::Private(), queue, *this, std::move(spec), std::move(members)
     );
 }
 

@@ -491,41 +491,41 @@ rawstd::Task<void> Volume::snapshot_remove(
     }
 }
 
-rawstd::Task<Object*> Volume::_chunk(uint32_t index) {
-    Chunk& chunk = _chunks.at(index);
+rawstd::Task<Chunk*> Volume::_chunk(uint32_t index) {
+    ChunkEntry& entry = _chunks.at(index);
 
-    if (chunk.object != nullptr) {
-        co_return chunk.object.get();
+    if (entry.chunk != nullptr) {
+        co_return entry.chunk.get();
     }
 
-    if (chunk.gate.running()) {
-        co_await chunk.gate.settle();
-        if (chunk.object == nullptr) {
+    if (entry.gate.running()) {
+        co_await entry.gate.settle();
+        if (entry.chunk == nullptr) {
             RAWSTD_THROW_SYSTEM_ERROR(
-                chunk.open_errno != 0 ? chunk.open_errno : EIO
+                entry.open_errno != 0 ? entry.open_errno : EIO
             );
         }
-        co_return chunk.object.get();
+        co_return entry.chunk.get();
     }
 
-    chunk.gate.begin();
+    entry.gate.begin();
     std::exception_ptr error;
     try {
-        Target target(chunk.targets);
-        chunk.object = co_await target.open(_queue);
+        Target target(entry.targets);
+        entry.chunk = co_await target.open(_queue);
     } catch (const std::system_error& e) {
-        chunk.open_errno = e.code().value();
+        entry.open_errno = e.code().value();
         error = std::current_exception();
     } catch (...) {
-        chunk.open_errno = EIO;
+        entry.open_errno = EIO;
         error = std::current_exception();
     }
-    chunk.gate.end();
+    entry.gate.end();
 
     if (error) {
         std::rethrow_exception(error);
     }
-    co_return chunk.object.get();
+    co_return entry.chunk.get();
 }
 
 rawstd::Task<size_t> Volume::_rw_segments(
@@ -533,7 +533,7 @@ rawstd::Task<size_t> Volume::_rw_segments(
 ) {
     auto rw_one = [this, write, sync,
                    buf](VolumeSegment segment) -> rawstd::Task<size_t> {
-        Object* object = co_await _chunk(segment.index);
+        Chunk* object = co_await _chunk(segment.index);
         char* at = static_cast<char*>(buf) + segment.buf_offset;
         if (write) {
             co_return co_await object->pwrite(
@@ -592,7 +592,7 @@ Volume::preadv(iovec* iov, unsigned int niov, size_t size, off_t offset) {
 
     if (segments.size() == 1) {
         const VolumeSegment& segment = segments.front();
-        Object* object = co_await _chunk(segment.index);
+        Chunk* object = co_await _chunk(segment.index);
         co_return co_await object->preadv(
             iov, niov, size, segment.chunk_offset
         );
@@ -621,7 +621,7 @@ rawstd::Task<size_t> Volume::pwritev(
 
     if (segments.size() == 1) {
         const VolumeSegment& segment = segments.front();
-        Object* object = co_await _chunk(segment.index);
+        Chunk* object = co_await _chunk(segment.index);
         co_return co_await object->pwritev(
             iov, niov, size, segment.chunk_offset, sync
         );
@@ -643,7 +643,7 @@ rawstd::Task<size_t> Volume::discard(size_t size, off_t offset) {
         volume_segments(offset, size, _chunk_size);
 
     auto discard_one = [this](VolumeSegment s) -> rawstd::Task<size_t> {
-        Object* object = co_await _chunk(s.index);
+        Chunk* object = co_await _chunk(s.index);
         co_return co_await object->discard(s.size, s.chunk_offset);
     };
 
@@ -673,7 +673,7 @@ Volume::write_zeroes(size_t size, off_t offset, bool unmap, bool sync) {
 
     auto write_zeroes_one = [this, unmap,
                              sync](VolumeSegment s) -> rawstd::Task<size_t> {
-        Object* object = co_await _chunk(s.index);
+        Chunk* object = co_await _chunk(s.index);
         co_return co_await object->write_zeroes(
             s.size, s.chunk_offset, unmap, sync
         );
@@ -694,9 +694,9 @@ Volume::write_zeroes(size_t size, off_t offset, bool unmap, bool sync) {
 
 rawstd::Task<void> Volume::flush() {
     std::vector<rawstd::Task<void>> tasks;
-    for (Chunk& chunk : _chunks) {
-        if (chunk.object != nullptr) {
-            tasks.push_back(chunk.object->flush());
+    for (ChunkEntry& entry : _chunks) {
+        if (entry.chunk != nullptr) {
+            tasks.push_back(entry.chunk->flush());
         }
     }
     co_await rawstd::gather(std::move(tasks));
@@ -704,14 +704,14 @@ rawstd::Task<void> Volume::flush() {
 
 rawstd::Task<void> Volume::close() {
     std::vector<rawstd::Task<void>> tasks;
-    for (Chunk& chunk : _chunks) {
-        if (chunk.object != nullptr) {
-            tasks.push_back(chunk.object->close());
+    for (ChunkEntry& entry : _chunks) {
+        if (entry.chunk != nullptr) {
+            tasks.push_back(entry.chunk->close());
         }
     }
     co_await rawstd::gather(std::move(tasks));
-    for (Chunk& chunk : _chunks) {
-        chunk.object.reset();
+    for (ChunkEntry& entry : _chunks) {
+        entry.chunk.reset();
     }
 }
 

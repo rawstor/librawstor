@@ -160,7 +160,7 @@ rawstd::Task<std::unique_ptr<Slot>> Slot::create(
 ) {
     // A single attempt, same as Backend::create() -- retrying a broken
     // connect (or a set_object() done afterwards by a caller, e.g.
-    // Object's constructor) is each caller's own job, not this one's.
+    // Chunk's constructor) is each caller's own job, not this one's.
     //
     // Task<T> starts eagerly, right up to its first real suspension
     // point -- building the whole vector before handing it to gather()

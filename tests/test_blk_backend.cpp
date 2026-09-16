@@ -1,5 +1,5 @@
 #include "blk_backend.hpp"
-#include "object.hpp"
+#include "chunk.hpp"
 #include "opts.h"
 #include "slot.hpp"
 #include "target.hpp"
@@ -26,7 +26,7 @@
 
 namespace {
 
-// Duplicate of object.cpp's own `run()` -- see that one's doc comment for
+// Duplicate of chunk.cpp's own `run()` -- see that one's doc comment for
 // why it isn't shared.
 template <typename T>
 T run(rawio::Queue& q, rawstd::Task<T> t) {
@@ -83,12 +83,12 @@ public:
 };
 
 // Stands up a real file:// object and a spare Slot/Backend against
-// it (independent of the Object's own internal one, same as
+// it (independent of the Chunk's own internal one, same as
 // Target::open()'s own _open_one() sets one up) so the test can drive
 // blk::Backend::pwrite() -- and inspect its throttle state -- directly.
 rawstor::blk::Backend* open_blk_backend(
     rawio::Queue& queue, const rawstd::URI& location,
-    std::unique_ptr<rawstor::Object>& object,
+    std::unique_ptr<rawstor::Chunk>& object,
     std::unique_ptr<rawstor::Slot>& slot
 ) {
     RawstdUUID id;
@@ -140,7 +140,7 @@ TEST(BlkBackendTest, write_throttle_limit) {
     rawstd::URI location(dir.uri());
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(256);
 
-    std::unique_ptr<rawstor::Object> object;
+    std::unique_ptr<rawstor::Chunk> object;
     std::unique_ptr<rawstor::Slot> slot;
     rawstor::blk::Backend* backend =
         open_blk_backend(*queue, location, object, slot);
@@ -188,7 +188,7 @@ TEST(BlkBackendTest, write_backlog_capacity) {
     rawstd::URI location(dir.uri());
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(256);
 
-    std::unique_ptr<rawstor::Object> object;
+    std::unique_ptr<rawstor::Chunk> object;
     std::unique_ptr<rawstor::Slot> slot;
     rawstor::blk::Backend* backend =
         open_blk_backend(*queue, location, object, slot);
@@ -236,7 +236,7 @@ TEST(BlkBackendTest, write_zeroes_zeroes_the_range) {
     rawstd::URI location(dir.uri());
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(256);
 
-    std::unique_ptr<rawstor::Object> object;
+    std::unique_ptr<rawstor::Chunk> object;
     std::unique_ptr<rawstor::Slot> slot;
     rawstor::blk::Backend* backend =
         open_blk_backend(*queue, location, object, slot);
@@ -273,7 +273,7 @@ TEST(BlkBackendTest, write_zeroes_unmap_zeroes_the_range) {
     rawstd::URI location(dir.uri());
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(256);
 
-    std::unique_ptr<rawstor::Object> object;
+    std::unique_ptr<rawstor::Chunk> object;
     std::unique_ptr<rawstor::Slot> slot;
     rawstor::blk::Backend* backend =
         open_blk_backend(*queue, location, object, slot);
@@ -310,7 +310,7 @@ TEST(BlkBackendTest, write_zeroes_sync_zeroes_the_range) {
     rawstd::URI location(dir.uri());
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(256);
 
-    std::unique_ptr<rawstor::Object> object;
+    std::unique_ptr<rawstor::Chunk> object;
     std::unique_ptr<rawstor::Slot> slot;
     rawstor::blk::Backend* backend =
         open_blk_backend(*queue, location, object, slot);
@@ -347,7 +347,7 @@ TEST(BlkBackendTest, discard_reports_requested_size) {
     rawstd::URI location(dir.uri());
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(256);
 
-    std::unique_ptr<rawstor::Object> object;
+    std::unique_ptr<rawstor::Chunk> object;
     std::unique_ptr<rawstor::Slot> slot;
     rawstor::blk::Backend* backend =
         open_blk_backend(*queue, location, object, slot);

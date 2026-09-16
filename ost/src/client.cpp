@@ -2,7 +2,7 @@
 
 #include <ost/server.hpp>
 
-#include "object.hpp"
+#include "chunk.hpp"
 #include "target.hpp"
 
 #include <rawio/queue.hpp>
@@ -78,7 +78,7 @@ rawstd::Task<RawstorObject*> co_target_open(
     RawIOQueue* queue, std::vector<rawstd::URI> uris, uint64_t snap
 ) {
     rawstor::Target t(uris);
-    std::unique_ptr<rawstor::Object> object =
+    std::unique_ptr<rawstor::Chunk> object =
         co_await t.open(*static_cast<rawio::Queue*>(queue), snap);
     co_return object.release();
 }
@@ -427,7 +427,7 @@ Client::~Client() noexcept {
         // Fire-and-forget: the close's own Task<> is driven by `_queue`
         // (owned by Server, outliving every Client), not by this Client,
         // so it completes fine whether or not this destructor's caller
-        // sticks around to see it -- same as ~Object()'s own connection
+        // sticks around to see it -- same as ~Chunk()'s own connection
         // cleanup doesn't need Client to still exist either.
         int res = rawstor_object_close(_object, ignore_close_result, nullptr);
         if (res < 0) {
