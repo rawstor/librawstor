@@ -22,7 +22,7 @@ namespace {
 
 // file::Backend pairs each object's data file with a fixed-size .meta
 // file (blk_backend.hpp's META_MAX_SIZE) that "used" now accounts for too.
-constexpr uint64_t META_FILE_SIZE = 256;
+constexpr uint64_t META_FILE_SIZE = 400;
 
 ssize_t location_info(
     rawio::Queue& queue, const std::string& location, RawstorLocationInfo* info
