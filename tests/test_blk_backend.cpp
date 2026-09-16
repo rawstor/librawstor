@@ -98,7 +98,8 @@ rawstor::blk::Backend* open_blk_backend(
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&id, &uuid_string);
 
-    rawstor::Target target({rawstd::URI(location, uuid_string)});
+    rawstd::URI uri(location, uuid_string);
+    rawstor::Target target(uri.str());
 
     RawstorObjectSpec spec{
         .size = 1u << 20,
@@ -114,7 +115,7 @@ rawstor::blk::Backend* open_blk_backend(
     };
     run(queue, target.create(queue, spec));
 
-    object = run(queue, target.open(queue));
+    object = run(queue, rawstor::Chunk::create(queue, {uri}));
 
     slot = run(queue, rawstor::Slot::create(queue, location, 1));
     run(queue, slot->open(id));

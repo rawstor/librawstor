@@ -402,7 +402,7 @@ rawstd::Task<void> Location::list(
             break;
         }
         last_uuid = &it.first;
-        ret.emplace_back(it.second);
+        ret.emplace_back(rawstd::URI::uris(it.second));
     }
     if (last_uuid != nullptr) {
         if (capped && (rawstd_uuid_cmp(&next_token_uuid, &empty_uuid) == 0 ||
@@ -463,7 +463,7 @@ rawstd::Task<Target> Location::create(
         targets.emplace_back(uri, uuid_string);
     }
 
-    Target t(targets);
+    Target t(rawstd::URI::uris(targets));
     co_await t.create(queue, sp);
 
     co_return t;
@@ -593,8 +593,8 @@ int rawstor_location_create(
         }
 
         launch_create_op(
-            rawstor::Target(ret), static_cast<rawio::Queue*>(queue), *spec, res,
-            cb, data
+            rawstor::Target(rawstd::URI::uris(ret)),
+            static_cast<rawio::Queue*>(queue), *spec, res, cb, data
         );
         return 0;
     } catch (const std::system_error& e) {

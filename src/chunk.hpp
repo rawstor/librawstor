@@ -1,15 +1,14 @@
 #ifndef RAWSTOR_CHUNK_HPP
 #define RAWSTOR_CHUNK_HPP
 
-#include "object.hpp"
-#include "target.hpp"
-
 #include <rawstor/object.h>
+#include <rawstor/target.h>
 
 #include <rawio/queue.hpp>
 
 #include <rawstd/coro.hpp>
 #include <rawstd/uri.hpp>
+#include <rawstd/uuid.h>
 
 #include <functional>
 #include <memory>
@@ -24,7 +23,12 @@ namespace rawstor {
 
 class Slot;
 
-class Chunk final : public RawstorObject {
+// Chunk mirrors a single logical chunk (1..N slots, one per replica) over
+// its own Slot pool -- the sole building block Object routes I/O to. Not a
+// RawstorObject itself: only Object is ever handed out as a top-level
+// handle (see object.hpp); Chunk is built and consumed entirely inside
+// Target::open()/Object, via the create() factory below.
+class Chunk final {
 private:
     struct ResyncState;
 
@@ -47,12 +51,11 @@ private:
     };
 
     rawio::Queue& _queue;
-    Target _target;
+    RawstdUUID _id;
 
-    // The spec() fetched at open() time (see Target::open()'s own
-    // comment) -- kept around for any future caller that needs it.
-    // _spec.mirrors is the configured mirror width N (the target's own
-    // URI count).
+    // The spec() fetched at create() time (see create()'s own comment)
+    // -- kept around for any future caller that needs it. _spec.mirrors
+    // is the configured mirror width N (the chunk's own URI count).
     RawstorObjectSpec _spec;
     std::vector<Member> _members;
 
@@ -301,32 +304,35 @@ private:
     rawstd::Task<size_t> _flush_one(Slot& slot);
 
     // Chunk is final -- unlike Backend::Private (which every backend
-    // subclass's own constructor also needs to name), only Target::open()
-    // (a friend, since it's the one place that actually builds a Chunk)
-    // ever needs this, so it stays private rather than protected.
+    // subclass's own constructor also needs to name), only create()
+    // below (Chunk's own factory, the sole place that actually builds a
+    // Chunk) ever needs this, so it stays private rather than protected.
     struct Private {
         explicit Private() = default;
     };
 
-    friend class Target;
-
 public:
-    // Built once Target::open() has connected every reachable URI,
-    // fetched a real spec(), and SET_OBJECT+meta()-ed every connected
-    // member (`spec`/`members`, taken already at that point -- see
-    // Target::open()'s own comment) -- deciding whether the result is
-    // actually trustworthy enough to serve from is this constructor's
-    // own job from here: mirrors == 1 trusts its one member outright;
-    // mirrors >= 2 runs _reconcile_sync_set() (which may refuse the
-    // open -- see its own comment on why that's safe to let unwind
-    // through here). Only once that succeeds does it start the object's
-    // own background maintenance (the reconnect probe, an online resync
-    // if one is already due) -- Target::open()'s only remaining friend
-    // access to Chunk is this one constructor call, not a stream of
-    // direct edits to an already-constructed Chunk's own internals.
+    // Connects every reachable URI in `uris` into a Slot (Slot::create()),
+    // fetches a real spec() (first reachable answer wins), SET_OBJECT+
+    // meta()-s every connected member, then builds the Chunk itself --
+    // deciding whether the result is actually trustworthy enough to
+    // serve from is the constructor's own job from there: mirrors == 1
+    // trusts its one member outright; mirrors >= 2 runs
+    // _reconcile_sync_set() (which may refuse the open -- see its own
+    // comment on why that's safe to let unwind through here). Only once
+    // that succeeds does it start the object's own background
+    // maintenance (the reconnect probe, an online resync if one is
+    // already due). `snap` is 0 for the live version, or a version id
+    // previously registered via Target::snapshot_create() (docs/mds.md,
+    // "Snapshots").
+    static rawstd::Task<std::unique_ptr<Chunk>> create(
+        rawio::Queue& queue, const std::vector<rawstd::URI>& uris,
+        uint64_t snap = 0
+    );
+
     Chunk(
-        Private, rawio::Queue& queue, const Target& target,
-        RawstorObjectSpec spec, std::vector<Member> members
+        Private, rawio::Queue& queue, RawstdUUID id, RawstorObjectSpec spec,
+        std::vector<Member> members
     );
     Chunk(const Chunk&) = delete;
     Chunk(Chunk&&) = delete;
@@ -334,32 +340,31 @@ public:
     Chunk& operator=(const Chunk&) = delete;
     Chunk& operator=(Chunk&&) = delete;
 
-    // This Chunk's own target -- the same Target it was built from.
-    inline const Target& target() const noexcept { return _target; }
+    inline const RawstorObjectSpec& spec() const noexcept { return _spec; }
 
-    rawstd::Task<size_t> pread(void* buf, size_t size, off_t offset) override;
-
-    rawstd::Task<size_t>
-    preadv(iovec* iov, unsigned int niov, size_t size, off_t offset) override;
+    rawstd::Task<size_t> pread(void* buf, size_t size, off_t offset);
 
     rawstd::Task<size_t>
-    pwrite(const void* buf, size_t size, off_t offset, bool sync) override;
+    preadv(iovec* iov, unsigned int niov, size_t size, off_t offset);
+
+    rawstd::Task<size_t>
+    pwrite(const void* buf, size_t size, off_t offset, bool sync);
 
     rawstd::Task<size_t> pwritev(
         const iovec* iov, unsigned int niov, size_t size, off_t offset,
         bool sync
-    ) override;
+    );
 
-    rawstd::Task<size_t> discard(size_t size, off_t offset) override;
+    rawstd::Task<size_t> discard(size_t size, off_t offset);
 
     rawstd::Task<size_t>
-    write_zeroes(size_t size, off_t offset, bool unmap, bool sync) override;
+    write_zeroes(size_t size, off_t offset, bool unmap, bool sync);
 
     // Waits for every pwrite()/pwritev() issued before this call to
     // complete (see _flush_barrier above), then flushes every in-sync
     // member -- without the wait, a flush() racing an in-flight write
     // could report success before that write's data is actually durable.
-    rawstd::Task<void> flush() override;
+    rawstd::Task<void> flush();
 
     // flush()es (see above); for a mirrored object that is DIRTY, also
     // durably marks the in-sync members CLEAN with the current epoch/sync_id
@@ -369,7 +374,7 @@ public:
     // caller deletes this Chunk after the returned Task completes) has
     // nothing left to close -- the async counterpart to ~Chunk()'s own
     // run()-pumped connection cleanup.
-    rawstd::Task<void> close() override;
+    rawstd::Task<void> close();
 
     // For tests/ to verify flush()'s wait for in-flight writes (see
     // _writes_issued/_flush_barrier above) without depending on real

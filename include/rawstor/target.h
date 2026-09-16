@@ -220,10 +220,13 @@ int rawstor_target_spec(
  * didn't answer at all by `state` alone (`RAWSTOR_OBJECT_SYNC_STATE_CLEAN`
  * vs `_UNREACHABLE`).
  *
- * Not supported for an mds://host:port/<volume_id> @p target -- fails
- * with -EINVAL. An mds:// volume addresses many chunks, each with its
- * own slots, not a flat list of URIs one RawstorObjectMeta per entry
- * could represent.
+ * An mds://host:port/<volume_id> @p target is, from this call's own
+ * point of view, an ordinary single-URI target -- it succeeds with one
+ * synthetic entry: `spec` reflects the volume's own logical size/chunk_size/
+ * policy, `sync_state` a "legacy copy" CLEAN/epoch-0/sync_id-0 answer. The
+ * real per-chunk DIRTY/CLEAN state (many chunks, each with its own slots)
+ * is tracked one level down and not exposed through the volume-level
+ * target at all.
  *
  * This function returns immediately; the actual result is reported via
  * @p cb once the operation completes.
@@ -282,8 +285,10 @@ int rawstor_target_meta(
  * `rawstor-ost` relaying an incoming wire `SET_SYNC_STATE` command), not
  * for routine application use.
  *
- * Not supported for an mds://host:port/<volume_id> @p target -- fails
- * with -EINVAL, same reason as rawstor_target_meta().
+ * An mds://host:port/<volume_id> @p target succeeds as a no-op --
+ * mds::Backend's own consistency state is tracked one level down, per
+ * chunk, not at the volume level this call writes to (same reason
+ * rawstor_target_meta() reports a synthetic answer instead of failing).
  *
  * This function returns immediately; the actual result is reported via
  * @p cb once the operation completes.

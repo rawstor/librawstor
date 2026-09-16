@@ -138,6 +138,23 @@ public:
     virtual rawstd::Task<void>
     snapshot_remove(const RawstdUUID& id, uint64_t snap_id);
 
+    // Grows `id` to `new_size` (grow-only -- docs/mds.md: shrink
+    // interacts with GC and snapshots, deferred past v1). Default:
+    // ENOTSUP, covering every backend a plain (non-mds://) target
+    // addresses directly -- their own size is fixed at create() time,
+    // same as today. mds::Backend overrides this with the real thing
+    // (Object::resize()'s former per-chunk materialization logic).
+    virtual rawstd::Task<void> resize(const RawstdUUID& id, uint64_t new_size);
+
+    // MDS-orchestrated snapshot (docs/mds.md, "Snapshots (stage 2)"):
+    // reserves a new snap_id, backend-CoWs every reachable chunk member,
+    // then registers the surviving membership -- one indivisible
+    // operation from the caller's point of view, unlike
+    // snapshot_create() above (a caller-chosen id against an already
+    // known target). Default: ENOTSUP; mds::Backend overrides it with
+    // the real thing (Object::snapshot_create()'s former logic).
+    virtual rawstd::Task<uint64_t> snapshot_create_assign(const RawstdUUID& id);
+
     virtual rawstd::Task<size_t>
     pread(void* buf, size_t size, off_t offset) = 0;
 

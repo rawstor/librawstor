@@ -603,6 +603,41 @@ Slot::snapshot_remove(const RawstdUUID& id, uint64_t snap_id) {
     }
 }
 
+rawstd::Task<void> Slot::resize(const RawstdUUID& id, uint64_t new_size) {
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        co_await _with_retry(
+            func_name, trace_event, &Backend::resize, id, new_size
+        );
+        _finish(t_call);
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
+rawstd::Task<uint64_t> Slot::snapshot_create_assign(const RawstdUUID& id) {
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        uint64_t result = co_await _with_retry(
+            func_name, trace_event, &Backend::snapshot_create_assign, id
+        );
+        _finish(t_call);
+        co_return result;
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
 rawstd::Task<void>
 Slot::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
     const char* func_name = __FUNCTION__;

@@ -2,7 +2,7 @@
 
 #include <ost/server.hpp>
 
-#include "chunk.hpp"
+#include "object.hpp"
 #include "target.hpp"
 
 #include <rawio/queue.hpp>
@@ -69,17 +69,31 @@ int validate_result(int fd, size_t size, size_t result) noexcept {
 // Uses rawstor::Target directly (not the rawstor_target_open() C API):
 // this is the one place in ost/ that needs a snap-bound open (rawstor_
 // docs/Mds.md, "Snapshots" -- the wire's SET_OBJECT `val` already carries
-// it, but the public C API has no way to pass it through). `uris` is
-// taken by value for the same reason a by-value std::string used to be
-// here: a coroutine parameter declared as a reference is not lifetime-
-// extended past the initiating call the way an ordinary function's
-// would be.
+// it, but the public C API has no way to pass it through). Target::open()
+// takes no `snap` parameter of its own -- the bound version, if any, is
+// part of the target string itself (the "@<snap>" suffix,
+// chunk_slot_target()'s own convention in mds_backend.cpp) -- so `snap`
+// is folded onto every URI's own path here first. `uris` is taken by
+// value for the same reason a by-value std::string used to be here: a
+// coroutine parameter declared as a reference is not lifetime-extended
+// past the initiating call the way an ordinary function's would be.
 rawstd::Task<RawstorObject*> co_target_open(
     RawIOQueue* queue, std::vector<rawstd::URI> uris, uint64_t snap
 ) {
-    rawstor::Target t(uris);
-    std::unique_ptr<rawstor::Chunk> object =
-        co_await t.open(*static_cast<rawio::Queue*>(queue), snap);
+    std::vector<rawstd::URI> snapped;
+    snapped.reserve(uris.size());
+    for (const auto& uri : uris) {
+        std::ostringstream oss;
+        oss << uri.str();
+        if (snap != 0) {
+            oss << '@' << snap;
+        }
+        snapped.emplace_back(oss.str());
+    }
+
+    rawstor::Target t(rawstd::URI::uris(snapped));
+    std::unique_ptr<rawstor::Object> object =
+        co_await t.open(*static_cast<rawio::Queue*>(queue));
     co_return object.release();
 }
 

@@ -3,6 +3,7 @@
 #include "config.h"
 #include "file_backend.hpp"
 #include "lvm_backend.hpp"
+#include "mds_backend.hpp"
 #include "ost_backend.hpp"
 #include "zfs_backend.hpp"
 
@@ -66,6 +67,9 @@ Backend::create(rawio::Queue& queue, const rawstd::URI& location) {
     } else if (location.scheme() == "zfs") {
         backend =
             std::make_shared<rawstor::zfs::Backend>(Private(), queue, location);
+    } else if (location.scheme() == "mds") {
+        backend =
+            std::make_shared<rawstor::mds::Backend>(Private(), queue, location);
     } else {
         rawstd_error("Unexpected URI scheme: %s\n", location.str().c_str());
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
@@ -83,6 +87,14 @@ rawstd::Task<void> Backend::snapshot_create(const RawstdUUID&, uint64_t) {
 }
 
 rawstd::Task<void> Backend::snapshot_remove(const RawstdUUID&, uint64_t) {
+    RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+}
+
+rawstd::Task<void> Backend::resize(const RawstdUUID&, uint64_t) {
+    RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+}
+
+rawstd::Task<uint64_t> Backend::snapshot_create_assign(const RawstdUUID&) {
     RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
 }
 

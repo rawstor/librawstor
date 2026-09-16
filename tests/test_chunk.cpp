@@ -90,7 +90,8 @@ open_object(rawio::Queue& queue, const rawstd::URI& location) {
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&id, &uuid_string);
 
-    rawstor::Target target({rawstd::URI(location, uuid_string)});
+    rawstd::URI uri(location, uuid_string);
+    rawstor::Target target(uri.str());
 
     RawstorObjectSpec spec{
         .size = 1u << 20,
@@ -106,7 +107,7 @@ open_object(rawio::Queue& queue, const rawstd::URI& location) {
     };
     run(queue, target.create(queue, spec));
 
-    return run(queue, target.open(queue));
+    return run(queue, rawstor::Chunk::create(queue, {uri}));
 }
 
 } // namespace
@@ -311,7 +312,7 @@ TEST(ChunkTest, flush_does_not_resolve_on_write_completing_out_of_order) {
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&id, &uuid_string);
     rawstd::URI location("ost://127.0.0.1:8753");
-    rawstor::Target target({rawstd::URI(location, uuid_string)});
+    rawstd::URI uri(location, uuid_string);
 
     RawstorOSTFrameMetaPayload clean_meta = {
         .size = 1ull << 20,
@@ -336,7 +337,8 @@ TEST(ChunkTest, flush_does_not_resolve_on_write_completing_out_of_order) {
     s.cmd_set_object(RAWSTOR_MAGIC, 1, 0);
     s.cmd_meta(RAWSTOR_MAGIC, 2, 0, clean_meta);
 
-    std::unique_ptr<rawstor::Chunk> object = run(*queue, target.open(*queue));
+    std::unique_ptr<rawstor::Chunk> object =
+        run(*queue, rawstor::Chunk::create(*queue, {uri}));
 
     std::string payload_a = "write-a-";
     std::string payload_b = "write-b-";

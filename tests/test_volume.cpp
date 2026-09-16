@@ -18,12 +18,27 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <filesystem>
 #include <memory>
+#include <sstream>
 #include <string>
 
 #include <cerrno>
 
 namespace {
+
+// A plain file:// target -- no MDS, no OST, nothing to connect to except
+// the local filesystem -- for the tests below that verify Backend::
+// resize()/snapshot_create_assign()'s own ENOTSUP default is what a
+// non-mds:// target actually gets, not a scheme-specific rejection.
+std::string file_target(const char* name, const char* uuid) {
+    std::filesystem::path location_path =
+        std::filesystem::temp_directory_path() / name;
+    std::filesystem::create_directories(location_path);
+    std::ostringstream oss;
+    oss << "file://" << location_path.string();
+    return rawstd::URI(rawstd::URI(oss.str()), uuid).str();
+}
 
 ssize_t target_create(
     rawio::Queue& queue, const std::string& target,
@@ -200,67 +215,100 @@ TEST(VolumeSnapshotTest, snapshot_remove_zero_is_einval) {
     EXPECT_EQ(target_remove(*queue, target), 0);
 }
 
-// "Assign one for me" (`snap_id == 0`) makes no sense against a plain
-// (non-"mds://") target -- no MDS to reserve/register one with -- and
-// must reject it immediately rather than falling back to
-// rawstor_target_snapshot_create()'s own caller-supplied-id branch.
-// snapshot_remove() has no such sentinel to reject up front -- unlike
-// create(), removing a specific existing id is exactly as meaningful
-// against a plain target as against a volume, so it genuinely attempts
-// the raw per-URI fan-out here (and fails on the connection itself,
-// since 127.0.0.1:1 refuses it -- not this test's own concern).
-TEST(VolumeSnapshotTest, non_volume_target_is_einval) {
+// "Assign one for me" (`snap_id == 0`) has no meaning against a plain
+// (non-"mds://") target -- no MDS to reserve/register one with.
+// rawstor_target_snapshot_create() no longer special-cases the scheme
+// client-side (target.cpp unifies every target through the same
+// Target::snapshot_create_assign(), mds:// included) -- a plain target's
+// own backend (file::Backend here) simply has no override for it, so
+// Backend::snapshot_create_assign()'s own ENOTSUP default is what
+// actually comes back, the same way snapshot_on_file_backend_returns_
+// enotsup above gets a real -ENOTSUP from a real backend instead of a
+// synthetic client-side rejection.
+TEST(VolumeSnapshotTest, snapshot_create_assign_on_non_mds_returns_enotsup) {
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+    std::string target = file_target(
+        "test_volume_snap_assign_enotsup",
+        "018f4e2a-3000-7000-8000-000000000005"
+    );
 
-    const char* target = "ost://127.0.0.1:1/018f4e2a-3000-7000-8000-"
-                         "000000000005";
+    RawstorObjectSpec spec = one_chunk_spec();
+    ASSERT_EQ(target_create(*queue, target, spec), 0);
 
     uint64_t snap_id = 0;
-    EXPECT_EQ(volume_snapshot_create(*queue, target, &snap_id), -EINVAL);
+    EXPECT_EQ(volume_snapshot_create(*queue, target, &snap_id), -ENOTSUP);
+
+    EXPECT_EQ(target_remove(*queue, target), 0);
 }
 
 // The other direction of the same dispatch: a caller-supplied (nonzero)
 // id makes no sense against an mds:// target either -- a volume has no
 // single physical backend one native CoW call could apply to, and using
-// it would bypass the MDS's own id reservation. Rejected client-side
-// (purely from the target's own scheme), so an unreachable address is
-// fine here -- no live MDS needed.
+// it would bypass the MDS's own id reservation. mds::Backend::
+// snapshot_create() rejects this with -EINVAL itself (unconditionally --
+// see mds_backend.cpp), so this needs a real, reachable MDS to actually
+// reach that check (an unreachable address would fail on the connection
+// itself first, same as the ENOTSUP case above).
 TEST(
     VolumeSnapshotTest, snapshot_create_nonzero_id_on_volume_target_is_einval
 ) {
+    rawstor::tests::VolumeEnv env(8784, 8785);
+    std::string target =
+        volume_target(env, "018f4e2a-3000-7000-8000-00000000000a");
+
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
 
-    const char* target = "mds://127.0.0.1:1/018f4e2a-3000-7000-8000-"
-                         "00000000000a";
+    RawstorObjectSpec spec = one_chunk_spec();
+    ASSERT_EQ(target_create(*queue, target, spec), 0);
 
     uint64_t snap_id = 1;
     EXPECT_EQ(volume_snapshot_create(*queue, target, &snap_id), -EINVAL);
+
+    EXPECT_EQ(target_remove(*queue, target), 0);
 }
 
-// rawstor_target_meta()/_set_sync_state() have no defined meaning for an
-// mds:// target: it addresses a whole volume (many chunks, each with its
-// own slots), not the flat per-URI list these calls report/write one
-// RawstorObjectMeta/RawstorObjectSyncState per entry for. Rejected
-// client-side, same as the snapshot_create()/_remove() scheme checks
-// above -- no live MDS needed.
-TEST(VolumeMetaTest, meta_on_volume_target_is_einval) {
+// rawstor_target_meta()/_set_sync_state() used to reject an mds:// target
+// client-side (docs/mirroring.md doesn't apply to a whole volume, many
+// chunks each with their own slots) -- now that mds:// is an ordinary
+// Backend, both succeed instead, with mds::Backend's own synthetic
+// answer (spec.size = the volume's logical size, sync_state = a "legacy
+// copy" CLEAN/epoch-0/sync_id-0 -- see mds_backend.cpp's own doc
+// comment): the real per-chunk DIRTY/CLEAN state is honestly tracked one
+// level down, by each chunk's own (possibly mirrored) Chunk, not exposed
+// through the volume-level target at all.
+TEST(VolumeMetaTest, meta_on_volume_target_is_synthetic) {
+    rawstor::tests::VolumeEnv env(8786, 8787);
+    std::string target =
+        volume_target(env, "018f4e2a-3000-7000-8000-00000000000b");
+
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
 
-    const char* target = "mds://127.0.0.1:1/018f4e2a-3000-7000-8000-"
-                         "00000000000b";
+    RawstorObjectSpec spec = one_chunk_spec();
+    ASSERT_EQ(target_create(*queue, target, spec), 0);
 
     RawstorObjectMeta meta{};
-    EXPECT_EQ(target_meta(*queue, target, &meta, 1), -EINVAL);
+    ASSERT_EQ(target_meta(*queue, target, &meta, 1), 1);
+    EXPECT_EQ(meta.spec.size, spec.size);
+    EXPECT_EQ(meta.sync_state.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
+    EXPECT_EQ(meta.sync_state.sync_id, 0u);
+
+    EXPECT_EQ(target_remove(*queue, target), 0);
 }
 
-TEST(VolumeMetaTest, set_sync_state_on_volume_target_is_einval) {
+TEST(VolumeMetaTest, set_sync_state_on_volume_target_is_noop) {
+    rawstor::tests::VolumeEnv env(8788, 8789);
+    std::string target =
+        volume_target(env, "018f4e2a-3000-7000-8000-00000000000c");
+
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
 
-    const char* target = "mds://127.0.0.1:1/018f4e2a-3000-7000-8000-"
-                         "00000000000c";
+    RawstorObjectSpec spec = one_chunk_spec();
+    ASSERT_EQ(target_create(*queue, target, spec), 0);
 
     RawstorObjectSyncState sync_state{};
-    EXPECT_EQ(target_set_sync_state(*queue, target, sync_state), -EINVAL);
+    EXPECT_EQ(target_set_sync_state(*queue, target, sync_state), 0);
+
+    EXPECT_EQ(target_remove(*queue, target), 0);
 }
 
 // Growing a multi-chunk volume reserves placement for the new chunks on
@@ -322,12 +370,21 @@ TEST(VolumeResizeTest, zero_is_einval) {
 }
 
 // resize() makes no sense against a plain (non-"mds://") target -- no
-// MDS to reserve placement with.
-TEST(VolumeResizeTest, non_volume_target_is_einval) {
+// MDS to reserve placement with. Unified dispatch (target.cpp) no longer
+// rejects this client-side by scheme -- it reaches the target's own
+// backend (file::Backend here) and gets Backend::resize()'s own ENOTSUP
+// default, the same real-backend-error shape as
+// snapshot_create_assign_on_non_mds_returns_enotsup above.
+TEST(VolumeResizeTest, non_mds_target_returns_enotsup) {
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+    std::string target = file_target(
+        "test_volume_resize_enotsup", "018f4e2a-3000-7000-8000-000000000009"
+    );
 
-    const char* target = "ost://127.0.0.1:1/018f4e2a-3000-7000-8000-"
-                         "000000000009";
+    RawstorObjectSpec spec = one_chunk_spec();
+    ASSERT_EQ(target_create(*queue, target, spec), 0);
 
-    EXPECT_EQ(volume_resize(*queue, target, 1ull << 20), -EINVAL);
+    EXPECT_EQ(volume_resize(*queue, target, 1ull << 20), -ENOTSUP);
+
+    EXPECT_EQ(target_remove(*queue, target), 0);
 }

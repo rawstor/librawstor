@@ -141,6 +141,9 @@ public:
     rawstd::Task<void> snapshot_create(const RawstdUUID& id, uint64_t snap_id);
     rawstd::Task<void> snapshot_remove(const RawstdUUID& id, uint64_t snap_id);
 
+    rawstd::Task<void> resize(const RawstdUUID& id, uint64_t new_size);
+    rawstd::Task<uint64_t> snapshot_create_assign(const RawstdUUID& id);
+
     rawstd::Task<void>
     create(const RawstdUUID& id, const RawstorObjectSpec& sp);
 

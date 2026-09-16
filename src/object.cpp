@@ -2,156 +2,53 @@
 
 #include "chunk.hpp"
 
-#include <rawstor/protocol.h>
-
 #include <rawstd/gpp.hpp>
 #include <rawstd/iovec.h>
 #include <rawstd/logging.hpp>
-#include <rawstd/uuid.h>
 
 #include <algorithm>
 #include <sstream>
+#include <string>
 #include <utility>
 
 #include <cerrno>
 #include <cstddef>
-#include <cstring>
 
 namespace {
 
-using rawstor::mds::WireMap;
-using rawstor::mds::WireSlot;
-namespace mds = rawstor::mds;
-
-/* "<volume_id>" or "<volume_id>@<snap_id>" (an immutable snapshot view). */
-void target_ref(const rawstd::URI& target, RawstdUUID* id, uint64_t* snap) {
-    std::string filename = target.path().filename();
+// The bound snapshot version embedded in a chunk group's own URIs, if
+// any -- "<uuid>" (live, 0) or "<uuid>@<snap>" (chunk_slot_target()'s own
+// convention in mds_backend.cpp). Deliberately a local duplicate of
+// target.cpp's own extract_snap(): Chunk::create() takes `snap` as a
+// plain scalar, so Object::_chunk() below (like Target::open()) extracts
+// it from its own already-validated URI group once here, rather than
+// Chunk::create() re-parsing it out of every URI itself.
+uint64_t extract_snap(const std::vector<rawstd::URI>& uris) {
+    const std::string& filename = uris.front().path().filename();
     size_t at = filename.find('@');
-    std::string uuid_part =
-        at == std::string::npos ? filename : filename.substr(0, at);
-    *snap = 0;
-    if (at != std::string::npos) {
-        std::istringstream iss(filename.substr(at + 1));
-        if (!(iss >> *snap) || !iss.eof()) {
-            rawstd_error("Malformed volume target: %s\n", target.str().c_str());
-            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-        }
+    if (at == std::string::npos) {
+        return 0;
     }
-    int res = rawstd_uuid_from_string(id, uuid_part.c_str());
-    if (res < 0) {
-        rawstd_error("Malformed volume target: %s\n", target.str().c_str());
+    std::istringstream iss(filename.substr(at + 1));
+    uint64_t snap = 0;
+    if (!(iss >> snap) || !iss.eof()) {
+        rawstd_error("Malformed snapshot suffix: %s\n", filename.c_str());
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
-}
-
-RawstdUUID target_uuid(const rawstd::URI& target) {
-    RawstdUUID ret;
-    uint64_t snap;
-    target_ref(target, &ret, &snap);
-    if (snap != 0) {
-        rawstd_error(
-            "A snapshot view is immutable: %s\n", target.str().c_str()
-        );
-        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-    }
-    return ret;
-}
-
-std::string target_location(const rawstd::URI& target) {
-    const std::string& s = target.str();
-    const std::string& path = target.path().str();
-    return s.substr(0, s.size() - path.size());
-}
-
-uint64_t next_pow2(uint64_t v) {
-    uint64_t ret = 1;
-    while (ret < v) {
-        ret <<= 1;
-    }
-    return ret;
-}
-
-/* The wire policy from spec fields; zeros are the documented defaults. */
-RawstorVolPolicy policy_of(const RawstorObjectSpec& sp) {
-    RawstorVolPolicy ret{};
-    ret.redundancy = RAWSTOR_VOL_REDUNDANCY_MIRROR;
-    ret.width = sp.width != 0 ? sp.width : 1;
-    ret.failure_domain =
-        sp.failure_domain != 0 ? sp.failure_domain : RAWSTOR_VOL_DOMAIN_SERVER;
-    ret.stripe_width = sp.stripe_width;
-    ret.placement_seed = 0;
-    return ret;
-}
-
-// One chunk slot's own target URI. Throws if the MDS could not resolve
-// the OST: refuse loudly instead of silently opening under-protected.
-rawstd::URI chunk_slot_target(
-    const RawstdUUID& volume_id, uint64_t index, const WireSlot& slot,
-    uint64_t snap = 0
-) {
-    if (slot.address.empty()) {
-        rawstd_error("Chunk slot without a resolved OST address\n");
-        RAWSTD_THROW_SYSTEM_ERROR(EIO);
-    }
-    RawstdUUID uuid = rawstor::volume_chunk_uuid(volume_id, index);
-    RawstdUUIDString uuid_string;
-    rawstd_uuid_to_string(&uuid, &uuid_string);
-
-    std::ostringstream oss;
-    oss << "ost://" << slot.address << "/" << uuid_string;
-    if (snap != 0) {
-        oss << "@" << snap;
-    }
-    return rawstd::URI(oss.str());
-}
-
-std::vector<rawstd::URI>
-chunk_targets(const WireMap& map, uint64_t index, uint64_t snap = 0) {
-    std::vector<rawstd::URI> ret;
-    ret.reserve(map.chunks[index].size());
-    for (const WireSlot& slot : map.chunks[index]) {
-        ret.push_back(chunk_slot_target(map.volume_id, index, slot, snap));
-    }
-    return ret;
-}
-
-uint64_t
-chunk_logical_size(uint64_t logical_size, uint64_t chunk_size, uint64_t index) {
-    uint64_t begin = index * chunk_size;
-    return std::min(chunk_size, logical_size - begin);
-}
-
-RawstorObjectSpec chunk_spec(const WireMap& map, uint64_t index) {
-    RawstorObjectSpec sp{};
-    sp.size = chunk_logical_size(map.logical_size, map.chunk_size, index);
-    /* The placement identity the chunk carries from now on. */
-    sp.member_kind = RAWSTOR_MEMBER_DATA;
-    memcpy(sp.volume_id, map.volume_id.bytes, sizeof(sp.volume_id));
-    sp.logical_index = index;
-    sp.chunk_size = map.chunk_size;
-    sp.snap_version = 0;
-    sp.width = map.policy.width;
-    sp.mirrors = map.policy.width;
-    sp.failure_domain = map.policy.failure_domain;
-    sp.stripe_width = map.policy.stripe_width;
-    return sp;
-}
-
-// Connects to the volume's MDS and runs `op` against it -- shared setup
-// for every Object::create()/open()/remove()/spec() entry point.
-rawstd::Task<mds::Client>
-mds_connect(rawio::Queue& queue, const rawstd::URI& location) {
-    mds::Client client(queue, location);
-    co_await client.connect();
-    co_return client;
+    return snap;
 }
 
 } // namespace
 
 namespace rawstor {
 
-std::vector<VolumeSegment>
-volume_segments(off_t offset, size_t size, uint64_t chunk_size) {
+std::vector<Object::VolumeSegment>
+Object::SingleChunkMap::segments(off_t offset, size_t size) const {
+    return {VolumeSegment{0, offset, size, 0}};
+}
+
+std::vector<Object::VolumeSegment>
+Object::MultiChunkMap::segments(off_t offset, size_t size) const {
     std::vector<VolumeSegment> ret;
 
     uint64_t at = static_cast<uint64_t>(offset);
@@ -182,317 +79,20 @@ volume_segments(off_t offset, size_t size, uint64_t chunk_size) {
     return ret;
 }
 
-RawstdUUID volume_chunk_uuid(const RawstdUUID& volume_id, uint64_t index) {
-    RawstdUUID ret = volume_id;
-    for (unsigned i = 0; i < 8; ++i) {
-        ret.bytes[8 + i] ^= static_cast<uint8_t>(index >> (8 * i));
-    }
-    return ret;
-}
-
 Object::Object(
-    rawio::Queue& queue, uint64_t snap, const rawstd::URI& location,
-    const mds::WireMap& map
+    rawio::Queue& queue, uint64_t size, std::unique_ptr<ChunkMap> map,
+    std::vector<std::vector<rawstd::URI>> chunk_targets
 ) :
     _queue(queue),
-    _snap(snap),
-    _location(location),
-    _size(map.logical_size),
-    _chunk_size(map.chunk_size) {
-    _chunks.resize(map.chunks.size());
-    for (size_t i = 0; i < map.chunks.size(); ++i) {
-        _chunks[i].targets = chunk_targets(map, i, snap);
+    _size(size),
+    _map(std::move(map)) {
+    _chunks.resize(chunk_targets.size());
+    for (size_t i = 0; i < chunk_targets.size(); ++i) {
+        _chunks[i].targets = std::move(chunk_targets[i]);
     }
 }
 
 Object::~Object() = default;
-
-rawstd::Task<std::unique_ptr<Object>>
-Object::open(rawio::Queue& queue, const rawstd::URI& target) {
-    RawstdUUID id;
-    uint64_t snap;
-    target_ref(target, &id, &snap);
-    rawstd::URI location(target_location(target));
-
-    mds::Client client = co_await mds_connect(queue, location);
-    WireMap map = co_await client.vol_open(id, snap);
-
-    co_return std::unique_ptr<Object>(new Object(queue, snap, location, map));
-}
-
-rawstd::Task<void> Object::create(
-    rawio::Queue& queue, const rawstd::URI& target, const RawstorObjectSpec& sp
-) {
-    RawstdUUID id = target_uuid(target);
-    rawstd::URI location(target_location(target));
-
-    if (sp.size == 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-    }
-
-    uint64_t chunk_size =
-        sp.chunk_size != 0 ? sp.chunk_size : next_pow2(sp.size);
-    RawstorVolPolicy policy = policy_of(sp);
-
-    mds::Client client = co_await mds_connect(queue, location);
-    co_await client.vol_create(id, sp.size, chunk_size, policy);
-
-    /* Materialize every chunk object on its OSTs. */
-    WireMap map = co_await client.vol_open(id, 0);
-
-    uint64_t created = 0;
-    std::exception_ptr error;
-    try {
-        for (uint64_t i = 0; i < map.chunks.size(); ++i) {
-            Target chunk_target(chunk_targets(map, i));
-            co_await chunk_target.create(queue, chunk_spec(map, i));
-            created = i + 1;
-        }
-    } catch (...) {
-        error = std::current_exception();
-    }
-
-    if (error) {
-        /* Roll back whatever chunks were already created, then the map. */
-        while (created > 0) {
-            --created;
-            try {
-                Target chunk_target(chunk_targets(map, created));
-                co_await chunk_target.remove(queue);
-            } catch (const std::exception& e) {
-                rawstd_error("Failed to rollback chunk create: %s\n", e.what());
-            }
-        }
-        try {
-            co_await client.vol_remove(id);
-        } catch (const std::exception& e) {
-            rawstd_error("Failed to rollback volume: %s\n", e.what());
-        }
-        std::rethrow_exception(error);
-    }
-}
-
-rawstd::Task<void> Object::resize(
-    rawio::Queue& queue, const rawstd::URI& target, uint64_t new_size
-) {
-    RawstdUUID id = target_uuid(target);
-    rawstd::URI location(target_location(target));
-
-    if (new_size == 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-    }
-
-    mds::Client client = co_await mds_connect(queue, location);
-
-    /* Chunk count before the resize -- everything from here on is new. */
-    WireMap before = co_await client.vol_open(id, 0);
-    uint64_t old_chunks = before.chunks.size();
-
-    co_await client.vol_resize(id, new_size);
-
-    /* Re-fetch: the map now has whatever new chunks the MDS reserved. */
-    WireMap after = co_await client.vol_open(id, 0);
-
-    uint64_t created = old_chunks;
-    std::exception_ptr error;
-    try {
-        for (uint64_t i = old_chunks; i < after.chunks.size(); ++i) {
-            Target chunk_target(chunk_targets(after, i));
-            co_await chunk_target.create(queue, chunk_spec(after, i));
-            created = i + 1;
-        }
-    } catch (...) {
-        error = std::current_exception();
-    }
-
-    if (error) {
-        /*
-         * Roll back whatever new chunks were already created -- unlike
-         * create()'s own rollback, the volume itself is not removed (it
-         * may already hold live data older than this resize) and the
-         * MDS's own logical_size is not reverted either (no such API in
-         * v1): a partial resize leaves the map epoch ahead of what's
-         * actually backed, the reconstruct scan's own garbage class.
-         */
-        while (created > old_chunks) {
-            --created;
-            try {
-                Target chunk_target(chunk_targets(after, created));
-                co_await chunk_target.remove(queue);
-            } catch (const std::exception& e) {
-                rawstd_error("Failed to rollback chunk create: %s\n", e.what());
-            }
-        }
-        std::rethrow_exception(error);
-    }
-}
-
-rawstd::Task<void>
-Object::remove(rawio::Queue& queue, const rawstd::URI& target) {
-    RawstdUUID id = target_uuid(target);
-    rawstd::URI location(target_location(target));
-
-    mds::Client client = co_await mds_connect(queue, location);
-    WireMap map = co_await client.vol_open(id, 0);
-
-    /*
-     * Unregister first (docs/mds.md, deletion order): the MDS is
-     * where "the volume still has snapshots" refuses with EBUSY -- before
-     * any data is touched, not after -- and an unregistered map means no
-     * new opens while the chunks below are destroyed. A crash in between
-     * leaves unregistered chunk objects: the same garbage class as a
-     * crashed snapshot removal.
-     */
-    co_await client.vol_remove(id);
-
-    for (uint64_t i = 0; i < map.chunks.size(); ++i) {
-        try {
-            Target chunk_target(chunk_targets(map, i));
-            co_await chunk_target.remove(queue);
-        } catch (const std::system_error& e) {
-            if (e.code().value() != ENOENT) {
-                throw;
-            }
-        }
-    }
-}
-
-rawstd::Task<RawstorObjectSpec>
-Object::spec(rawio::Queue& queue, const rawstd::URI& target) {
-    RawstdUUID id;
-    uint64_t snap;
-    target_ref(target, &id, &snap);
-    rawstd::URI location(target_location(target));
-
-    mds::Client client = co_await mds_connect(queue, location);
-    WireMap map = co_await client.vol_open(id, snap);
-
-    RawstorObjectSpec sp{};
-    sp.size = map.logical_size;
-    sp.chunk_size = map.chunk_size;
-    sp.width = map.policy.width;
-    sp.mirrors = map.policy.width;
-    sp.failure_domain = map.policy.failure_domain;
-    sp.stripe_width = map.policy.stripe_width;
-    co_return sp;
-}
-
-rawstd::Task<uint64_t>
-Object::snapshot_create(rawio::Queue& queue, const rawstd::URI& target) {
-    RawstdUUID id = target_uuid(target);
-    rawstd::URI location(target_location(target));
-
-    mds::Client client = co_await mds_connect(queue, location);
-    uint64_t snap_id = co_await client.vol_snap_begin(id);
-    WireMap map = co_await client.vol_open(id, 0);
-
-    /*
-     * Chunks are CoW'd in descending index order (docs/mds.md):
-     * a crash midway always leaves a hole at the low indices, so the
-     * reconstruct scan can never mistake a partial leftover for a
-     * complete (legitimately shorter, pre-resize) snapshot.
-     */
-    std::vector<mds::WireSnapMember> members;
-    for (uint64_t i = map.chunks.size(); i-- > 0;) {
-        bool any = false;
-        std::exception_ptr last_error;
-        for (const WireSlot& slot : map.chunks[i]) {
-            if (slot.address.empty()) {
-                continue;
-            }
-            try {
-                Target t({chunk_slot_target(map.volume_id, i, slot)});
-                co_await t.snapshot_create(queue, snap_id);
-                members.push_back(mds::WireSnapMember{i, slot.ost_id});
-                any = true;
-            } catch (const std::exception& e) {
-                rawstd_error(
-                    "Volume snapshot: chunk %llu, %s: %s\n",
-                    static_cast<unsigned long long>(i), slot.address.c_str(),
-                    e.what()
-                );
-                last_error = std::current_exception();
-            }
-        }
-        if (!any) {
-            /*
-             * Nothing survived this chunk -- the snapshot would be
-             * incomplete. Leave whatever native copies already landed on
-             * lower-index chunks unregistered for the reconstruct scan
-             * (docs/mds.md: "the same garbage class as a crashed
-             * deletion") rather than trying to roll them back here.
-             * Surfacing the last member's own error (e.g. -ENOTSUP on a
-             * file://-backed chunk) is more useful than a generic one.
-             */
-            if (last_error) {
-                std::rethrow_exception(last_error);
-            }
-            rawstd_error(
-                "Volume snapshot: chunk %llu has no reachable member\n",
-                static_cast<unsigned long long>(i)
-            );
-            RAWSTD_THROW_SYSTEM_ERROR(EIO);
-        }
-    }
-
-    co_await client.vol_snap_commit(id, snap_id, members);
-    co_return snap_id;
-}
-
-rawstd::Task<void> Object::snapshot_remove(
-    rawio::Queue& queue, const rawstd::URI& target, uint64_t snap_id
-) {
-    RawstdUUID id = target_uuid(target);
-    rawstd::URI location(target_location(target));
-
-    if (snap_id == 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-    }
-
-    mds::Client client = co_await mds_connect(queue, location);
-    std::vector<mds::WireSnapMember> members =
-        co_await client.vol_snap_remove(id, snap_id);
-
-    /*
-     * The MDS has already unregistered the snapshot above (no new
-     * readers); the destroy below is best-effort cleanup on whichever
-     * members it recorded -- a member that no longer resolves (address
-     * changed, OST replaced) is left for the reconstruct scan.
-     */
-    WireMap map = co_await client.vol_open(id, 0);
-
-    std::exception_ptr error;
-    for (const mds::WireSnapMember& m : members) {
-        if (m.logical_index >= map.chunks.size()) {
-            continue;
-        }
-        const std::vector<WireSlot>& slots = map.chunks[m.logical_index];
-        auto it =
-            std::find_if(slots.begin(), slots.end(), [&m](const WireSlot& s) {
-                return memcmp(
-                           s.ost_id.bytes, m.ost_id.bytes,
-                           sizeof(m.ost_id.bytes)
-                       ) == 0;
-            });
-        if (it == slots.end() || it->address.empty()) {
-            rawstd_error(
-                "Snapshot remove: chunk %llu member no longer resolvable\n",
-                static_cast<unsigned long long>(m.logical_index)
-            );
-            continue;
-        }
-        try {
-            Target t({chunk_slot_target(map.volume_id, m.logical_index, *it)});
-            co_await t.snapshot_remove(queue, snap_id);
-        } catch (const std::exception& e) {
-            rawstd_error("Snapshot remove: %s\n", e.what());
-            error = std::current_exception();
-        }
-    }
-    if (error) {
-        std::rethrow_exception(error);
-    }
-}
 
 rawstd::Task<Chunk*> Object::_chunk(uint32_t index) {
     ChunkEntry& entry = _chunks.at(index);
@@ -514,8 +114,9 @@ rawstd::Task<Chunk*> Object::_chunk(uint32_t index) {
     entry.gate.begin();
     std::exception_ptr error;
     try {
-        Target target(entry.targets);
-        entry.chunk = co_await target.open(_queue);
+        entry.chunk = co_await Chunk::create(
+            _queue, entry.targets, extract_snap(entry.targets)
+        );
     } catch (const std::system_error& e) {
         entry.open_errno = e.code().value();
         error = std::current_exception();
@@ -563,21 +164,16 @@ rawstd::Task<size_t> Object::pread(void* buf, size_t size, off_t offset) {
     if (static_cast<uint64_t>(offset) + size > _size) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
-    std::vector<VolumeSegment> segments =
-        volume_segments(offset, size, _chunk_size);
+    std::vector<VolumeSegment> segments = _map->segments(offset, size);
     co_return co_await _rw_segments(segments, false, /*sync=*/false, buf);
 }
 
 rawstd::Task<size_t>
 Object::pwrite(const void* buf, size_t size, off_t offset, bool sync) {
-    if (_snap != 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(EROFS);
-    }
     if (static_cast<uint64_t>(offset) + size > _size) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
-    std::vector<VolumeSegment> segments =
-        volume_segments(offset, size, _chunk_size);
+    std::vector<VolumeSegment> segments = _map->segments(offset, size);
     co_return co_await _rw_segments(
         segments, true, sync, const_cast<void*>(buf)
     );
@@ -588,8 +184,7 @@ Object::preadv(iovec* iov, unsigned int niov, size_t size, off_t offset) {
     if (static_cast<uint64_t>(offset) + size > _size) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
-    std::vector<VolumeSegment> segments =
-        volume_segments(offset, size, _chunk_size);
+    std::vector<VolumeSegment> segments = _map->segments(offset, size);
 
     if (segments.size() == 1) {
         const VolumeSegment& segment = segments.front();
@@ -609,14 +204,10 @@ Object::preadv(iovec* iov, unsigned int niov, size_t size, off_t offset) {
 rawstd::Task<size_t> Object::pwritev(
     const iovec* iov, unsigned int niov, size_t size, off_t offset, bool sync
 ) {
-    if (_snap != 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(EROFS);
-    }
     if (static_cast<uint64_t>(offset) + size > _size) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
-    std::vector<VolumeSegment> segments =
-        volume_segments(offset, size, _chunk_size);
+    std::vector<VolumeSegment> segments = _map->segments(offset, size);
 
     if (segments.size() == 1) {
         const VolumeSegment& segment = segments.front();
@@ -632,14 +223,10 @@ rawstd::Task<size_t> Object::pwritev(
 }
 
 rawstd::Task<size_t> Object::discard(size_t size, off_t offset) {
-    if (_snap != 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(EROFS);
-    }
     if (static_cast<uint64_t>(offset) + size > _size) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
-    std::vector<VolumeSegment> segments =
-        volume_segments(offset, size, _chunk_size);
+    std::vector<VolumeSegment> segments = _map->segments(offset, size);
 
     auto discard_one = [this](VolumeSegment s) -> rawstd::Task<size_t> {
         Chunk* chunk = co_await _chunk(s.index);
@@ -661,14 +248,10 @@ rawstd::Task<size_t> Object::discard(size_t size, off_t offset) {
 
 rawstd::Task<size_t>
 Object::write_zeroes(size_t size, off_t offset, bool unmap, bool sync) {
-    if (_snap != 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(EROFS);
-    }
     if (static_cast<uint64_t>(offset) + size > _size) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
-    std::vector<VolumeSegment> segments =
-        volume_segments(offset, size, _chunk_size);
+    std::vector<VolumeSegment> segments = _map->segments(offset, size);
 
     auto write_zeroes_one = [this, unmap,
                              sync](VolumeSegment s) -> rawstd::Task<size_t> {

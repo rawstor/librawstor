@@ -7,7 +7,6 @@
 #include "opts.h"
 #include "ost_backend.hpp"
 #include "slot.hpp"
-#include "target.hpp"
 
 #include <rawio/awaitable.hpp>
 #include <rawio/stream.hpp>
@@ -15,16 +14,21 @@
 #include <rawstd/gpp.hpp>
 #include <rawstd/iovec.h>
 #include <rawstd/logging.hpp>
+#include <rawstd/uri.hpp>
 
 #include <algorithm>
 #include <exception>
 #include <limits>
 #include <memory>
 #include <new>
+#include <optional>
 #include <random>
+#include <set>
+#include <string>
 #include <system_error>
 #include <utility>
 
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -32,6 +36,84 @@
 #include <unordered_map>
 
 namespace {
+
+void validate_not_empty(const std::vector<rawstd::URI>& uris) {
+    if (!uris.empty()) {
+        return;
+    }
+
+    rawstd_error("Empty uri list\n");
+    RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+}
+
+void validate_same_uuid(const std::vector<rawstd::URI>& uris) {
+    if (uris.empty()) {
+        return;
+    }
+
+    std::string uuid_string = uris.front().path().filename();
+    RawstdUUID uuid;
+    int res = rawstd_uuid_from_string(&uuid, uuid_string.c_str());
+    if (res < 0) {
+        rawstd_error("Valid UUID expected\n");
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+
+    for (const auto& uri : uris) {
+        if (uri.path().filename() != uuid_string) {
+            rawstd_error("Equal UUID expected\n");
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
+    }
+}
+
+void validate_different_uris(const std::vector<rawstd::URI>& uris) {
+    if (uris.empty()) {
+        return;
+    }
+
+    std::set<rawstd::URI> seen;
+    for (const auto& uri : uris) {
+        if (seen.find(uri) != seen.end()) {
+            rawstd_error("Different uris expected\n");
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
+        seen.insert(uri);
+    }
+}
+
+// A connect()ed Slot's metadata methods take a bare id (like the Backend
+// methods they wrap) rather than a full URI -- extract it once here
+// instead of in every one of this file's own call sites. Deliberately a
+// local duplicate of target.cpp's own uuid_from_target(): Chunk::create()
+// below must be able to validate/derive an id from a raw URI list on its
+// own, without relying on a Target having done it first (see chunk.hpp's
+// own doc comment on why Chunk is no longer built exclusively via
+// Target).
+RawstdUUID uuid_from_target(const rawstd::URI& uri) {
+    RawstdUUID id;
+    int res = rawstd_uuid_from_string(&id, uri.path().filename().c_str());
+    if (res) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+    return id;
+}
+
+// One URI's worth of create()'s own connect step: just stand up a Slot
+// (its own backend pool) against it -- SET_OBJECT (Slot::open()) is a
+// separate, later step (below), once quorum/spec/meta/split-brain
+// analysis has actually decided this member is being kept, rather than
+// telling a backend it's now serving this object only to immediately
+// close it again over a quorum or split-brain rejection. Factored out so
+// create() can fan these out across every URI via gather()-like
+// concurrency instead of awaiting them one at a time, by analogy with
+// Slot::create()'s own backend pool.
+rawstd::Task<std::unique_ptr<rawstor::Slot>>
+connect_one(rawio::Queue& queue, const rawstd::URI& uri) {
+    co_return co_await rawstor::Slot::create(
+        queue, uri.parent(), rawstor_opts_sessions()
+    );
+}
 
 // A nonzero random sync-set id; zero is reserved for legacy copies.
 uint64_t random_sync_id() {
@@ -77,7 +159,7 @@ T run(rawio::Queue& q, rawstd::Task<T> t) {
 namespace rawstor {
 
 // The heavy async work -- standing up a Slot per URI, fetching
-// spec()/meta() from each -- still lives in Target::open(), the one
+// spec()/meta() from each -- still lives in create() below, the one
 // place that actually constructs a Chunk (by analogy with
 // Slot(Private, queue)): a constructor can't co_await, so none of
 // that can live here. Deciding whether the result is trustworthy enough
@@ -87,11 +169,11 @@ namespace rawstor {
 // _reconcile_sync_set()'s own doc comment on why a refusal here is
 // safe to let unwind through a throwing constructor.
 Chunk::Chunk(
-    Private, rawio::Queue& queue, const Target& target, RawstorObjectSpec spec,
+    Private, rawio::Queue& queue, RawstdUUID id, RawstorObjectSpec spec,
     std::vector<Member> members
 ) :
     _queue(queue),
-    _target(target),
+    _id(id),
     _spec(spec),
     _members(std::move(members)),
     _size(0),
@@ -136,6 +218,254 @@ Chunk::~Chunk() {
             rawstd_error("Chunk::~Chunk(): %s\n", e.what());
         }
     }
+}
+
+rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
+    rawio::Queue& queue, const std::vector<rawstd::URI>& uris, uint64_t snap
+) {
+    // Same three checks a Target's own constructor used to run on `uris`
+    // on this factory's behalf -- now run here instead, since Object's
+    // own lazy per-chunk opening (and tests/) call this directly, without
+    // a Target in between to have validated the list already.
+    validate_not_empty(uris);
+    validate_different_uris(uris);
+    validate_same_uuid(uris);
+
+    // This coroutine suspends (co_await) below, so `uris` must outlive
+    // that suspension -- satisfied by every caller today: Target::open()
+    // and Object::_chunk() both own their own URI vector for the
+    // duration of this call, and tests/ pump this call to completion
+    // synchronously via run().
+    RawstdUUID id = uuid_from_target(uris.front());
+
+    // Every URI's Slot goes out concurrently instead of one at a
+    // time -- just Slot::create(), kept in a plain local vector
+    // (parallel to `uris`, not the eventual member list yet: that's
+    // assembled only once spec()/open() below have actually run -- see
+    // their own comments on why member count/identity isn't simply
+    // uris.size()). connect_one()'s own comment on why SET_OBJECT is a
+    // separate, later step.
+    std::vector<rawstd::Task<std::unique_ptr<Slot>>> connect_tasks;
+    connect_tasks.reserve(uris.size());
+    for (const auto& uri : uris) {
+        connect_tasks.push_back(connect_one(queue, uri));
+    }
+
+    // A connect failure Slot::create() itself classifies as
+    // ordinary connectivity trouble (std::system_error, per its own
+    // contract) is tolerated: only recorded (the first one, in `eptr`)
+    // and logged, not raised immediately -- with more than one URI, an
+    // individual member's failure is fine as long as a strict majority
+    // ends up reachable (docs/mirroring.md, case F4), and with exactly
+    // one URI this still aborts below regardless, since that single
+    // failure alone already leaves `reachable == 0`. Anything else is
+    // unexpected (not a normal connectivity failure) and aborts
+    // outright, even if every other member succeeded -- `fatal` marks
+    // that. Either way, co_await isn't allowed inside a catch block, so
+    // a failure is only recorded here; closing the connections that DID
+    // succeed happens just below, outside the handler, same shape as
+    // Target::create()'s own rollback.
+    std::exception_ptr eptr;
+    bool fatal = false;
+    std::vector<std::unique_ptr<Slot>> cns(uris.size());
+    size_t reachable = 0;
+    for (size_t i = 0; i < connect_tasks.size(); ++i) {
+        try {
+            cns[i] = co_await connect_tasks[i];
+            ++reachable;
+        } catch (const std::system_error& e) {
+            rawstd_warning("Mirror member unreachable: %s\n", e.what());
+            if (!eptr) {
+                eptr = std::current_exception();
+            }
+        } catch (...) {
+            fatal = true;
+            if (!eptr) {
+                eptr = std::current_exception();
+            }
+        }
+    }
+
+    // Something to report: `fatal` always qualifies; a merely tolerated
+    // system_error only does once nothing at all ended up reachable
+    // (the single-URI case included, per the comment above) -- rethrown
+    // as-is, whichever of the two it was, rather than reconstructed from
+    // a bare errno.
+    if (fatal || reachable == 0) {
+        for (auto& slot : cns) {
+            if (!slot) {
+                continue;
+            }
+            try {
+                co_await slot->close();
+            } catch (const std::exception& e) {
+                rawstd_warning("Chunk::create(): %s\n", e.what());
+            }
+        }
+        std::rethrow_exception(eptr);
+    }
+
+    // A real spec() answer, from whichever connected URI answers first --
+    // every reachable connection's own spec() goes out concurrently
+    // (submitted here, into a plain vector, same pattern as the connect
+    // phase above), rather than trying connections one at a time until
+    // one answers. Deliberately NOT rawstd::any(): its losing tasks are
+    // driven to completion by a *detached* background watcher (see its
+    // own doc comment), decoupled from this coroutine -- fine when a
+    // loser's resource is discarded afterward, but every connection
+    // here, winner or loser, is reused immediately below for its own
+    // SET_OBJECT+META -- a loser's own retry (e.g. invalidate_backend()
+    // reconnecting after a transient failure) could then still be
+    // running on that same Slot at the same time as the open-phase
+    // call below, a real, confirmed use-after-free once the loser's
+    // watcher and this coroutine's own cleanup raced to tear it down.
+    // Awaiting every task here, in order, sidesteps that entirely: by
+    // the time any connection is reused below, its own spec() task --
+    // win or lose -- has already fully settled. Every backend's own
+    // spec() always answers mirrors = 1, unconditionally (see e.g.
+    // ost::Backend::spec()'s own comment: if this one connection fails,
+    // exactly one replica is lost, regardless of what might sit behind
+    // it) -- so that's overwritten with uris.size() below: today, the
+    // only source of truth this factory has for its own mirror count is
+    // its own URI list.
+    std::vector<rawstd::Task<RawstorObjectSpec>> spec_tasks;
+    spec_tasks.reserve(reachable);
+    for (auto& slot : cns) {
+        if (slot) {
+            spec_tasks.push_back(slot->spec(id));
+        }
+    }
+
+    RawstorObjectSpec spec{};
+    bool got_spec = false;
+    for (auto& t : spec_tasks) {
+        try {
+            // A compiler ICE ("no suspend point info") hits when a
+            // fresh named local is direct-initialized from co_await
+            // inside a try block -- assigning into the already-declared
+            // `spec` (or, once it's already set, discarding the
+            // co_await'd temporary outright) sidesteps it.
+            if (got_spec) {
+                co_await t;
+            } else {
+                spec = co_await t;
+                got_spec = true;
+            }
+        } catch (const std::system_error& e) {
+            rawstd_warning("Mirror member spec unavailable: %s\n", e.what());
+        }
+    }
+
+    if (!got_spec) {
+        rawstd_error("No mirror member answered spec()\n");
+        for (auto& slot : cns) {
+            if (!slot) {
+                continue;
+            }
+            try {
+                co_await slot->close();
+            } catch (const std::exception& e) {
+                rawstd_warning("Chunk::create(): %s\n", e.what());
+            }
+        }
+        RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
+    }
+
+    spec.mirrors = static_cast<unsigned int>(uris.size());
+
+    // The combined open (SET_OBJECT + this copy's own meta, see
+    // Slot::open()'s own comment) is the one operation guaranteed
+    // to actually touch the real store for every backend kind -- a
+    // blk-backed one's own _open(const RawstdUUID&) is otherwise lazy
+    // (see blk::Backend::_connect()'s own comment), so nothing before
+    // this genuinely proves a connected member's object actually exists.
+    // Concurrent across every connected member; a failure here demotes
+    // that one member to unreachable (same F1/F4 tolerance as a connect
+    // failure above), not a whole-create() failure by itself.
+    std::vector<std::optional<rawstd::Task<RawstorObjectMeta>>> open_tasks(
+        cns.size()
+    );
+    for (size_t i = 0; i < cns.size(); ++i) {
+        if (cns[i]) {
+            open_tasks[i] = cns[i]->open(id, snap);
+        }
+    }
+
+    std::vector<RawstorObjectMeta> metas(uris.size());
+    std::vector<bool> opened(uris.size(), false);
+    for (size_t i = 0; i < open_tasks.size(); ++i) {
+        if (!open_tasks[i]) {
+            continue;
+        }
+
+        // co_await isn't allowed inside a catch block, so the failure is
+        // only recorded here; closing the connection happens just below,
+        // outside the handler.
+        bool unavailable = false;
+        try {
+            metas[i] = co_await *open_tasks[i];
+        } catch (const std::system_error& e) {
+            rawstd_warning("Mirror member unavailable: %s\n", e.what());
+            unavailable = true;
+        }
+
+        if (!unavailable) {
+            opened[i] = true;
+            continue;
+        }
+
+        try {
+            co_await cns[i]->close();
+        } catch (const std::exception& e2) {
+            rawstd_warning("Chunk::create(): %s\n", e2.what());
+        }
+        cns[i].reset();
+    }
+
+    // Members are assembled only now, with connect/spec/open all already
+    // settled -- one slot per URI (the only member identity this
+    // codebase knows today; see the spec() comment above on why that
+    // isn't necessarily the whole story forever). Slot indices must stay
+    // stable from here on (the reconnect probe addresses members by
+    // index): no reallocation after handing it to Chunk below.
+    std::vector<Member> members;
+    members.reserve(uris.size());
+    reachable = 0;
+    for (size_t i = 0; i < uris.size(); ++i) {
+        // Chunk's own constructor (_reconcile_sync_set(), for mirrors
+        // >= 2) only ever downgrades a member (e.g. an interrupted
+        // resync makes it STALE) -- it never upgrades one from the
+        // STALE default, so a successfully opened member is marked
+        // IN_SYNC up front.
+        MemberState state =
+            opened[i] ? MemberState::IN_SYNC : MemberState::STALE;
+        members.push_back(
+            Member{std::move(cns[i]), uris[i], state, metas[i], opened[i]}
+        );
+        if (opened[i]) {
+            ++reachable;
+        }
+    }
+
+    // reachable == 0 (not just below quorum) is the one precondition
+    // Chunk's own constructor can't check itself: a member with no
+    // Slot at all is meaningless to it even for the trivial
+    // mirrors == 1 case (there's nothing there to trust), unlike a real
+    // quorum shortfall, which _reconcile_sync_set() already checks on
+    // its own -- see it, and the constructor's own comment, for why a
+    // refusal there is safe to let unwind through it rather than
+    // checked redundantly here first.
+    if (reachable == 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
+    }
+
+    // Everything Chunk needs to exist is gathered -- deciding whether
+    // it's actually trustworthy enough to open from (the mirrors == 1
+    // shortcut, or _reconcile_sync_set()'s own quorum/split-brain/no-
+    // trusted-member analysis) is the constructor's own job from here.
+    co_return std::make_unique<Chunk>(
+        Private(), queue, id, std::move(spec), std::move(members)
+    );
 }
 
 void Chunk::_write_finished(unsigned int ticket) noexcept {
@@ -581,7 +911,7 @@ rawstd::Task<void> Chunk::_run_meta_fan_out(RawstorObjectSyncState sync_state) {
 rawstd::Task<void>
 Chunk::_set_sync_state_one(size_t idx, RawstorObjectSyncState sync_state) {
     try {
-        co_await _members[idx].slot->set_sync_state(_target.id(), sync_state);
+        co_await _members[idx].slot->set_sync_state(_id, sync_state);
     } catch (const std::system_error& e) {
         int error = e.code().value();
         if (error == ENOSYS) {
@@ -878,7 +1208,7 @@ rawstd::DetachedTask Chunk::_resync_maybe_start() {
 
         int error = 0;
         try {
-            co_await _members[idx].slot->set_sync_state(_target.id(), m);
+            co_await _members[idx].slot->set_sync_state(_id, m);
         } catch (const std::system_error& e) {
             error = e.code().value();
         }
@@ -1079,7 +1409,7 @@ rawstd::DetachedTask Chunk::_resync_finish() {
 
     int error = 0;
     try {
-        co_await _members[idx].slot->set_sync_state(_target.id(), m);
+        co_await _members[idx].slot->set_sync_state(_id, m);
     } catch (const std::system_error& e) {
         error = e.code().value();
     }
@@ -1201,7 +1531,7 @@ rawstd::DetachedTask Chunk::_probe_tick() {
         slot = co_await Slot::create(
             _queue, _members[idx].target.parent(), rawstor_opts_sessions()
         );
-        co_await slot->open(_target.id());
+        co_await slot->open(_id);
     } catch (const std::system_error& e) {
         error = e.code().value();
     } catch (const std::exception& e) {
