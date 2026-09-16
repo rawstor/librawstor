@@ -31,10 +31,10 @@ test_all_SOURCES = main.cpp \
                    test_pagination_token.cpp
 test_all_LDADD = $(top_builddir)/src/librawstor.la
 
-# Volume::snapshot()/snap_remove()'s real MDS+OST wire path needs a live
-# rawstor::mds::Server + rawstor::ostserver::Server pair (volume_env.*) --
-# the OST side is always built, but mds/ (and its rawstor::mds::Server)
-# only exists with sqlite3 (--without-sqlite3).
+# Object::snapshot_create()/snapshot_remove()'s real MDS+OST wire path
+# needs a live rawstor::mds::Server + rawstor::ostserver::Server pair
+# (volume_env.*) -- the OST side is always built, but mds/ (and its
+# rawstor::mds::Server) only exists with sqlite3 (--without-sqlite3).
 if WITH_SQLITE3
 AM_CXXFLAGS += -pthread \
                -I$(top_srcdir)/ost/include \

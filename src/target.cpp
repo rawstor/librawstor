@@ -2,9 +2,9 @@
 
 #include "chunk.hpp"
 #include "location.hpp"
+#include "object.hpp"
 #include "opts.h"
 #include "slot.hpp"
-#include "volume.hpp"
 
 #include <rawstor/target.h>
 
@@ -231,9 +231,9 @@ rawstd::DetachedTask launch_open_op_coro(
 }
 
 // mds://host:port/<volume_id> targets (docs/mds.md) bypass Target/
-// Chunk/Backend entirely: a Volume is its own RawstorObject
-// implementation, routing I/O across per-chunk Objects of its own rather
-// than a Target's members directly (see volume.hpp). `target` is taken
+// Chunk/Backend entirely: an Object is its own RawstorObject
+// implementation, routing I/O across per-chunk Chunks of its own rather
+// than a Target's members directly (see object.hpp). `target` is taken
 // by value into the coroutine's own frame for the same reason
 // launch_open_op_coro() et al. take their own Target by value.
 bool is_volume_target(const rawstd::URI& uri) {
@@ -247,7 +247,7 @@ rawstd::DetachedTask launch_volume_open_op_coro(
     ssize_t result = 0;
     *object = nullptr;
     try {
-        *object = (co_await rawstor::Volume::open(*queue, target)).release();
+        *object = (co_await rawstor::Object::open(*queue, target)).release();
     } catch (const std::system_error& e) {
         result = -e.code().value();
     } catch (const std::bad_alloc&) {
@@ -271,7 +271,7 @@ rawstd::DetachedTask launch_volume_create_op_coro(
 ) {
     ssize_t result = 0;
     try {
-        co_await rawstor::Volume::create(*queue, target, spec);
+        co_await rawstor::Object::create(*queue, target, spec);
     } catch (const std::system_error& e) {
         result = -e.code().value();
     } catch (const std::bad_alloc&) {
@@ -295,7 +295,7 @@ rawstd::DetachedTask launch_volume_remove_op_coro(
 ) {
     ssize_t result = 0;
     try {
-        co_await rawstor::Volume::remove(*queue, target);
+        co_await rawstor::Object::remove(*queue, target);
     } catch (const std::system_error& e) {
         result = -e.code().value();
     } catch (const std::bad_alloc&) {
@@ -319,7 +319,7 @@ rawstd::DetachedTask launch_volume_resize_op_coro(
 ) {
     ssize_t result = 0;
     try {
-        co_await rawstor::Volume::resize(*queue, target, new_size);
+        co_await rawstor::Object::resize(*queue, target, new_size);
     } catch (const std::system_error& e) {
         result = -e.code().value();
     } catch (const std::bad_alloc&) {
@@ -343,7 +343,7 @@ rawstd::DetachedTask launch_volume_spec_op_coro(
 ) {
     ssize_t result = 0;
     try {
-        *spec = co_await rawstor::Volume::spec(*queue, target);
+        *spec = co_await rawstor::Object::spec(*queue, target);
     } catch (const std::system_error& e) {
         result = -e.code().value();
     } catch (const std::bad_alloc&) {
@@ -372,7 +372,7 @@ rawstd::DetachedTask launch_volume_snapshot_create_op_coro(
 ) {
     ssize_t result = 0;
     try {
-        *snap_id = co_await rawstor::Volume::snapshot_create(*queue, target);
+        *snap_id = co_await rawstor::Object::snapshot_create(*queue, target);
     } catch (const std::system_error& e) {
         result = -e.code().value();
     } catch (const std::bad_alloc&) {
@@ -396,7 +396,7 @@ rawstd::DetachedTask launch_volume_snapshot_remove_op_coro(
 ) {
     ssize_t result = 0;
     try {
-        co_await rawstor::Volume::snapshot_remove(*queue, target, snap_id);
+        co_await rawstor::Object::snapshot_remove(*queue, target, snap_id);
     } catch (const std::system_error& e) {
         result = -e.code().value();
     } catch (const std::bad_alloc&) {

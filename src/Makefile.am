@@ -69,8 +69,6 @@ librawstor_la_SOURCES = 3rdparty/nlohmann/json.hpp \
                         telemetry.hpp \
                         topology.cpp \
                         topology.hpp \
-                        volume.cpp \
-                        volume.hpp \
                         zfs_backend.cpp \
                         zfs_backend.hpp
 

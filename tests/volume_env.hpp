@@ -12,10 +12,10 @@ namespace tests {
 // A live rawstor-mds + rawstor-ost pair, each driven on its own
 // background thread with its own RawIOQueue -- mirroring how the real
 // binaries run them (mds/main.cpp's single Server::loop(), ost/src/
-// main.cpp's per-worker one) -- so a test can exercise rawstor::Volume's
+// main.cpp's per-worker one) -- so a test can exercise rawstor::Object's
 // real MDS/OST wire path (mds_client.cpp, ost_backend.cpp) end to end,
 // the same way tests/test_mirror.cpp's tests::Server exercises the OST
-// wire protocol for plain Objects. The OST's one backend is a fresh
+// wire protocol for plain Chunks. The OST's one backend is a fresh
 // TmpDir's file:// -- the only backend guaranteed available in a build/
 // test environment, which means every chunk's Backend::snapshot_create()/
 // snapshot_remove() always answers -ENOTSUP (docs/mds.md: "file://

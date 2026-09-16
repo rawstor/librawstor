@@ -1,4 +1,4 @@
-// Volume::snapshot_create()/snapshot_remove() (docs/mds.md, "Snapshots
+// Object::snapshot_create()/snapshot_remove() (docs/mds.md, "Snapshots
 // (stage 2)"), exercised against a real rawstor::mds::Server +
 // rawstor::ostserver::Server pair (volume_env.hpp) -- the actual wire
 // path a `mds://` target goes through, not a hand-scripted mock of it.
@@ -95,7 +95,7 @@ RawstorObjectSpec one_chunk_spec() {
 
 // A volume backed by a file:// chunk member has no native CoW -- the
 // snapshot attempt reaches the real OST, gets a real -ENOTSUP from
-// file::Backend::snapshot_create(), and Volume::snapshot_create()
+// file::Backend::snapshot_create(), and Object::snapshot_create()
 // surfaces that specific error (not a generic failure) since the chunk
 // had exactly one member and it's the one that failed.
 TEST(VolumeSnapshotTest, snapshot_on_file_backend_returns_enotsup) {
@@ -161,7 +161,7 @@ TEST(VolumeSnapshotTest, snapshot_remove_uncommitted_returns_enoent) {
 }
 
 // snap_id 0 means "live" everywhere on the wire (docs/mds.md,
-// "version in chunk identity") -- Volume::snapshot_remove() rejects it
+// "version in chunk identity") -- Object::snapshot_remove() rejects it
 // before any network round trip.
 TEST(VolumeSnapshotTest, snapshot_remove_zero_is_einval) {
     rawstor::tests::VolumeEnv env(8776, 8777);
