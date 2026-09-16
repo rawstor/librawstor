@@ -1219,8 +1219,14 @@ rawstd::DetachedTask Client::_snapshot_create(
     try {
         std::string target = rawstd::URI::uris(targets);
         rawstd::CallbackAwaitable<void> awaiter;
+        // payload.val is always a concrete, already-chosen id off the
+        // wire (never 0 -- the "assign one" sentinel only applies to an
+        // mds:// target, which a plain OST-local snapshot never is), so
+        // the "MDS assigns a version" branch of
+        // rawstor_target_snapshot_create() never triggers here.
+        uint64_t snap_id = payload.val;
         int res = rawstor_target_snapshot_create(
-            client->_queue, target.c_str(), payload.val, result_trampoline,
+            client->_queue, target.c_str(), &snap_id, result_trampoline,
             &awaiter
         );
         if (res < 0) {

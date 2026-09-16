@@ -361,11 +361,11 @@ rawstd::DetachedTask launch_volume_spec_op_coro(
     }
 }
 
-// Unlike rawstor_target_snapshot_create() (launch_snapshot_create_op_coro()
-// above), the snap_id here is chosen by the volume's MDS, not the caller
-// -- delivered through `snap_id`, an out-parameter written immediately
-// before `cb` runs (same convention as launch_volume_spec_op_coro()'s
-// `spec`).
+// Unlike the caller-chosen-id branch of rawstor_target_snapshot_create()
+// (launch_snapshot_create_op_coro() above), the snap_id here is chosen
+// by the volume's MDS -- delivered through `snap_id`, an out-parameter
+// written immediately before `cb` runs (same convention as
+// launch_volume_spec_op_coro()'s `spec`).
 rawstd::DetachedTask launch_volume_snapshot_create_op_coro(
     rawstd::URI target, rawio::Queue* queue, uint64_t* snap_id,
     int (*cb)(ssize_t result, void* data), void* data
@@ -1150,66 +1150,39 @@ int rawstor_target_remove(
     }
 }
 
+// snap_id's input value picks the branch: 0 asks the volume's own MDS to
+// assign one (mds:// only -- launch_volume_snapshot_create_op_coro(),
+// today's rawstor_volume_snapshot_create()), a nonzero value is the
+// caller's own chosen id for a plain native CoW fan-out (any other
+// target -- launch_snapshot_create_op_coro(), today's
+// rawstor_target_snapshot_create()). Each is the only sensible
+// interpretation for its own target kind, so the other combination
+// (0 on a non-mds:// target, nonzero on an mds:// one) fails with
+// -EINVAL rather than guessing.
 int rawstor_target_snapshot_create(
-    RawIOQueue* queue, const char* target, uint64_t snap_id,
-    int (*cb)(ssize_t result, void* data), void* data
-) noexcept {
-    try {
-        rawstor::Target t(rawstd::URI::uriv(target));
-        launch_snapshot_create_op_coro(
-            std::move(t), static_cast<rawio::Queue*>(queue), snap_id, cb, data
-        );
-        rawstd::DetachedTask::rethrow_if_pending();
-        return 0;
-    } catch (const std::system_error& e) {
-        return -e.code().value();
-    } catch (const std::bad_alloc& e) {
-        return -ENOMEM;
-    } catch (const std::exception& e) {
-        rawstd_error("%s\n", e.what());
-        return -EINVAL;
-    } catch (...) {
-        rawstd_error("Unexpected error\n");
-        return -EINVAL;
-    }
-}
-
-int rawstor_target_snapshot_remove(
-    RawIOQueue* queue, const char* target, uint64_t snap_id,
-    int (*cb)(ssize_t result, void* data), void* data
-) noexcept {
-    try {
-        rawstor::Target t(rawstd::URI::uriv(target));
-        launch_snapshot_remove_op_coro(
-            std::move(t), static_cast<rawio::Queue*>(queue), snap_id, cb, data
-        );
-        rawstd::DetachedTask::rethrow_if_pending();
-        return 0;
-    } catch (const std::system_error& e) {
-        return -e.code().value();
-    } catch (const std::bad_alloc& e) {
-        return -ENOMEM;
-    } catch (const std::exception& e) {
-        rawstd_error("%s\n", e.what());
-        return -EINVAL;
-    } catch (...) {
-        rawstd_error("Unexpected error\n");
-        return -EINVAL;
-    }
-}
-
-int rawstor_volume_snapshot_create(
     RawIOQueue* queue, const char* target, uint64_t* snap_id,
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
         std::vector<rawstd::URI> uris = rawstd::URI::uriv(target);
-        if (uris.size() != 1 || !is_volume_target(uris[0])) {
-            return -EINVAL;
+        bool is_volume = uris.size() == 1 && is_volume_target(uris[0]);
+        if (*snap_id == 0) {
+            if (!is_volume) {
+                return -EINVAL;
+            }
+            launch_volume_snapshot_create_op_coro(
+                uris[0], static_cast<rawio::Queue*>(queue), snap_id, cb, data
+            );
+        } else {
+            if (is_volume) {
+                return -EINVAL;
+            }
+            rawstor::Target t(uris);
+            launch_snapshot_create_op_coro(
+                std::move(t), static_cast<rawio::Queue*>(queue), *snap_id, cb,
+                data
+            );
         }
-        launch_volume_snapshot_create_op_coro(
-            uris[0], static_cast<rawio::Queue*>(queue), snap_id, cb, data
-        );
         rawstd::DetachedTask::rethrow_if_pending();
         return 0;
     } catch (const std::system_error& e) {
@@ -1225,18 +1198,26 @@ int rawstor_volume_snapshot_create(
     }
 }
 
-int rawstor_volume_snapshot_remove(
+// Dispatches on target scheme alone -- unlike snapshot_create() above,
+// snap_id is always a concrete existing version either way, so there's
+// no sentinel to pick the branch with.
+int rawstor_target_snapshot_remove(
     RawIOQueue* queue, const char* target, uint64_t snap_id,
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
         std::vector<rawstd::URI> uris = rawstd::URI::uriv(target);
-        if (uris.size() != 1 || !is_volume_target(uris[0])) {
-            return -EINVAL;
+        if (uris.size() == 1 && is_volume_target(uris[0])) {
+            launch_volume_snapshot_remove_op_coro(
+                uris[0], static_cast<rawio::Queue*>(queue), snap_id, cb, data
+            );
+        } else {
+            rawstor::Target t(uris);
+            launch_snapshot_remove_op_coro(
+                std::move(t), static_cast<rawio::Queue*>(queue), snap_id, cb,
+                data
+            );
         }
-        launch_volume_snapshot_remove_op_coro(
-            uris[0], static_cast<rawio::Queue*>(queue), snap_id, cb, data
-        );
         rawstd::DetachedTask::rethrow_if_pending();
         return 0;
     } catch (const std::system_error& e) {
@@ -1252,7 +1233,7 @@ int rawstor_volume_snapshot_remove(
     }
 }
 
-int rawstor_volume_resize(
+int rawstor_target_resize(
     RawIOQueue* queue, const char* target, uint64_t new_size,
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
@@ -1311,12 +1292,20 @@ int rawstor_target_spec(
     }
 }
 
+// Not supported on an mds:// target -- a volume addresses many chunks,
+// each with its own slots, not a flat URI list one RawstorObjectMeta
+// per entry could represent (see rawstor_target_meta()'s own doc
+// comment in target.h).
 int rawstor_target_meta(
     RawIOQueue* queue, const char* target, RawstorObjectMeta* metas,
     size_t count, int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
-        rawstor::Target t(rawstd::URI::uriv(target));
+        std::vector<rawstd::URI> uris = rawstd::URI::uriv(target);
+        if (uris.size() == 1 && is_volume_target(uris[0])) {
+            return -EINVAL;
+        }
+        rawstor::Target t(std::move(uris));
         launch_meta_op_coro(
             std::move(t), static_cast<rawio::Queue*>(queue), metas, count, cb,
             data
@@ -1336,13 +1325,19 @@ int rawstor_target_meta(
     }
 }
 
+// Not supported on an mds:// target, same reason as rawstor_target_meta()
+// above.
 int rawstor_target_set_sync_state(
     RawIOQueue* queue, const char* target,
     const RawstorObjectSyncState* sync_state,
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
-        rawstor::Target t(rawstd::URI::uriv(target));
+        std::vector<rawstd::URI> uris = rawstd::URI::uriv(target);
+        if (uris.size() == 1 && is_volume_target(uris[0])) {
+            return -EINVAL;
+        }
+        rawstor::Target t(std::move(uris));
         launch_set_sync_state_op_coro(
             std::move(t), static_cast<rawio::Queue*>(queue), *sync_state, cb,
             data

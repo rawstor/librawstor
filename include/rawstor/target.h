@@ -220,6 +220,11 @@ int rawstor_target_spec(
  * didn't answer at all by `state` alone (`RAWSTOR_OBJECT_SYNC_STATE_CLEAN`
  * vs `_UNREACHABLE`).
  *
+ * Not supported for an mds://host:port/<volume_id> @p target -- fails
+ * with -EINVAL. An mds:// volume addresses many chunks, each with its
+ * own slots, not a flat list of URIs one RawstorObjectMeta per entry
+ * could represent.
+ *
  * This function returns immediately; the actual result is reported via
  * @p cb once the operation completes.
  *
@@ -276,6 +281,9 @@ int rawstor_target_meta(
  * `rawstor-cli resolve`-style split-brain recovery flow, or
  * `rawstor-ost` relaying an incoming wire `SET_SYNC_STATE` command), not
  * for routine application use.
+ *
+ * Not supported for an mds://host:port/<volume_id> @p target -- fails
+ * with -EINVAL, same reason as rawstor_target_meta().
  *
  * This function returns immediately; the actual result is reported via
  * @p cb once the operation completes.
@@ -545,22 +553,42 @@ int rawstor_target_location(
 ) RAWSTOR_NOEXCEPT;
 
 /**
- * @brief Asynchronously take a native CoW snapshot of a target as version
- *        @p snap_id.
+ * @brief Asynchronously take a snapshot of a target -- either a caller-
+ *        chosen native CoW version, or an MDS-assigned volume version.
  *
- * The snapshot is taken on every URI in @p target; every URI is still
- * attempted even if an earlier one fails, and the first error encountered
- * is reported. The caller owns crash consistency: all acknowledged writes
- * must be flushed before this call (docs/mds.md, "Snapshots").
+ * The two are picked apart by @p snap_id's input value:
+ *
+ * - `*snap_id != 0`: a native CoW snapshot as that exact version, taken
+ *   on every URI in @p target (every URI is still attempted even if an
+ *   earlier one fails, and the first error encountered is reported). The
+ *   caller owns crash consistency: all acknowledged writes must be
+ *   flushed before this call (docs/mds.md, "Snapshots"). Only valid for
+ *   a non-mds:// @p target -- an mds:// volume has no single physical
+ *   backend a caller-chosen id could apply to; fails with -EINVAL.
+ * - `*snap_id == 0`: an MDS-orchestrated snapshot (docs/mds.md,
+ *   "Snapshots (stage 2)") of an mds://host:port/<volume_id> @p target
+ *   (no "@snap" suffix) -- the version is chosen by the volume's MDS
+ *   instead: reserves it, backend-CoWs every reachable chunk member,
+ *   then registers the surviving membership, and writes the reserved id
+ *   into `*snap_id` immediately before @p cb runs on success. v1 caveat:
+ *   assumes no concurrent writer -- draining/flushing an in-flight write
+ *   session is the writing client's own duty, not this call's. Only
+ *   valid for an mds:// @p target (0 is otherwise reserved for "live",
+ *   never a valid caller-supplied id); anything else fails with -EINVAL.
  *
  * @param queue    Queue used to drive the asynchronous snapshot.
  * @param target   Target string, see rawstor_target_spec().
- * @param snap_id  Version id; must not be 0 (0 is the live version).
+ * @param snap_id  Input: 0 to have the volume's MDS assign a version (
+ *                 mds:// only), or the caller's own chosen version id
+ *                 (any other target). Output: on success, the version
+ *                 actually taken -- unchanged from the input value
+ *                 outside the MDS-assigned case.
  * @param cb       Callback invoked on completion.
  *                 - @p result is zero on success, or a negative errno on
  *                   failure (@c -ENOTSUP if a backend has no CoW --
  *                   file://, classic LVM -- no fallback copies are made
- *                   behind the caller's back).
+ *                   behind the caller's back; @c -EIO if no chunk member
+ *                   survived, MDS-assigned case only).
  *                 - @p data is the same pointer passed as @p data below.
  * @param data     User-defined context pointer passed unchanged to @p cb.
  *
@@ -570,15 +598,21 @@ int rawstor_target_location(
  * @see rawstor_target_snapshot_remove
  */
 int rawstor_target_snapshot_create(
-    RawIOQueue* queue, const char* target, uint64_t snap_id,
+    RawIOQueue* queue, const char* target, uint64_t* snap_id,
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
 /**
  * @brief Asynchronously destroy snapshot version @p snap_id of a target.
  *
- * Fan-out semantics as rawstor_target_snapshot_create(): every URI is
- * attempted, the first error is reported.
+ * For an mds://host:port/<volume_id> @p target, the MDS unregisters
+ * @p snap_id (no new readers) before a best-effort per-member fan-out
+ * destroy runs -- a member that can no longer be resolved (address
+ * changed, OST replaced) is left for the reconstruct scan rather than
+ * failing the call. For any other @p target, this is instead a plain
+ * fan-out over every URI (same semantics as the native CoW branch of
+ * rawstor_target_snapshot_create()): every URI is attempted, the first
+ * error is reported.
  *
  * @return 0 if the removal was successfully queued; negative errno on
  *         immediate failure (in which case @p cb is never invoked).
@@ -586,57 +620,6 @@ int rawstor_target_snapshot_create(
  * @see rawstor_target_snapshot_create
  */
 int rawstor_target_snapshot_remove(
-    RawIOQueue* queue, const char* target, uint64_t snap_id,
-    int (*cb)(ssize_t result, void* data), void* data
-) RAWSTOR_NOEXCEPT;
-
-/**
- * @brief Asynchronously take an MDS-orchestrated snapshot of a volume
- *        (docs/mds.md, "Snapshots (stage 2)").
- *
- * Unlike rawstor_target_snapshot_create() (whose caller already owns a
- * snap_id), the version taken here is chosen by the volume's MDS:
- * reserves it, backend-CoWs every reachable chunk member, then registers
- * the surviving membership. v1 caveat: assumes no concurrent writer --
- * draining/flushing an in-flight write session is the writing client's
- * own duty, not this call's.
- *
- * @param queue    Queue used to drive the asynchronous snapshot.
- * @param target   An mds://host:port/<volume_id> target (no "@snap"
- *                 suffix); anything else fails with -EINVAL.
- * @param snap_id  Out-parameter: the newly reserved version id, written
- *                 immediately before @p cb runs on success.
- * @param cb       Callback invoked on completion.
- *                 - @p result is zero on success, or a negative errno on
- *                   failure (@c -EIO if no chunk member survived).
- *                 - @p data is the same pointer passed as @p data below.
- * @param data     User-defined context pointer passed unchanged to @p cb.
- *
- * @return 0 if the snapshot was successfully queued; negative errno on
- *         immediate failure (in which case @p cb is never invoked).
- *
- * @see rawstor_volume_snapshot_remove
- * @see rawstor_target_snapshot_create
- */
-int rawstor_volume_snapshot_create(
-    RawIOQueue* queue, const char* target, uint64_t* snap_id,
-    int (*cb)(ssize_t result, void* data), void* data
-) RAWSTOR_NOEXCEPT;
-
-/**
- * @brief Asynchronously destroy a volume snapshot taken by
- *        rawstor_volume_snapshot_create().
- *
- * The MDS unregisters @p snap_id (no new readers) before the per-member
- * fan-out destroy runs; a member that can no longer be resolved (address
- * changed, OST replaced) is left for the reconstruct scan rather than
- * failing the call.
- *
- * @param target  An mds://host:port/<volume_id> target.
- *
- * @see rawstor_volume_snapshot_create
- */
-int rawstor_volume_snapshot_remove(
     RawIOQueue* queue, const char* target, uint64_t snap_id,
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
@@ -653,7 +636,8 @@ int rawstor_volume_snapshot_remove(
  *
  * @param queue     Queue used to drive the asynchronous resize.
  * @param target    An mds://host:port/<volume_id> target; anything else
- *                  fails with -EINVAL.
+ *                  fails with -EINVAL (a plain target has no notion of
+ *                  growing -- its size is fixed at create()).
  * @param new_size  The volume's new logical size in bytes; must be
  *                  greater than or equal to its current size.
  * @param cb        Callback invoked on completion.
@@ -666,7 +650,7 @@ int rawstor_volume_snapshot_remove(
  * @return 0 if the resize was successfully queued; negative errno on
  *         immediate failure (in which case @p cb is never invoked).
  */
-int rawstor_volume_resize(
+int rawstor_target_resize(
     RawIOQueue* queue, const char* target, uint64_t new_size,
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;

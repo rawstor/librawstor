@@ -22,14 +22,14 @@ int rawstor_cli_snapshot(const char* target) {
     }
 
     uint64_t snap_id = 0;
-    int sres = rawstor_volume_snapshot_create(
+    int sres = rawstor_target_snapshot_create(
         op.queue, target, &snap_id, rawstor_cli_op_cb, &op
     );
     ssize_t result = rawstor_cli_op_wait(&op, sres);
     rawstor_cli_op_destroy(&op);
     if (result < 0) {
         fprintf(
-            stderr, "rawstor_volume_snapshot_create() failed: %s\n",
+            stderr, "rawstor_target_snapshot_create() failed: %s\n",
             strerror((int)-result)
         );
         return rawstd_exitcode_for_errno((int)-result);

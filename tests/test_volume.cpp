@@ -52,7 +52,7 @@ ssize_t volume_snapshot_create(
     rawio::Queue& queue, const std::string& target, uint64_t* snap_id
 ) {
     return rawstor::tests::sync_run(&queue, [&](auto cb, void* data) {
-        return rawstor_volume_snapshot_create(
+        return rawstor_target_snapshot_create(
             &queue, target.c_str(), snap_id, cb, data
         );
     });
@@ -62,7 +62,7 @@ ssize_t volume_snapshot_remove(
     rawio::Queue& queue, const std::string& target, uint64_t snap_id
 ) {
     return rawstor::tests::sync_run(&queue, [&](auto cb, void* data) {
-        return rawstor_volume_snapshot_remove(
+        return rawstor_target_snapshot_remove(
             &queue, target.c_str(), snap_id, cb, data
         );
     });
@@ -72,8 +72,30 @@ ssize_t volume_resize(
     rawio::Queue& queue, const std::string& target, uint64_t new_size
 ) {
     return rawstor::tests::sync_run(&queue, [&](auto cb, void* data) {
-        return rawstor_volume_resize(
+        return rawstor_target_resize(
             &queue, target.c_str(), new_size, cb, data
+        );
+    });
+}
+
+ssize_t target_meta(
+    rawio::Queue& queue, const std::string& target, RawstorObjectMeta* metas,
+    size_t count
+) {
+    return rawstor::tests::sync_run(&queue, [&](auto cb, void* data) {
+        return rawstor_target_meta(
+            &queue, target.c_str(), metas, count, cb, data
+        );
+    });
+}
+
+ssize_t target_set_sync_state(
+    rawio::Queue& queue, const std::string& target,
+    const RawstorObjectSyncState& sync_state
+) {
+    return rawstor::tests::sync_run(&queue, [&](auto cb, void* data) {
+        return rawstor_target_set_sync_state(
+            &queue, target.c_str(), &sync_state, cb, data
         );
     });
 }
@@ -178,10 +200,15 @@ TEST(VolumeSnapshotTest, snapshot_remove_zero_is_einval) {
     EXPECT_EQ(target_remove(*queue, target), 0);
 }
 
-// Neither call makes sense against a plain (non-"mds://") target -- no
-// MDS to reserve/register a snap_id with -- and both must reject it
-// immediately rather than trying rawstor_target_snapshot_create()'s own
-// caller-supplied-id semantics.
+// "Assign one for me" (`snap_id == 0`) makes no sense against a plain
+// (non-"mds://") target -- no MDS to reserve/register one with -- and
+// must reject it immediately rather than falling back to
+// rawstor_target_snapshot_create()'s own caller-supplied-id branch.
+// snapshot_remove() has no such sentinel to reject up front -- unlike
+// create(), removing a specific existing id is exactly as meaningful
+// against a plain target as against a volume, so it genuinely attempts
+// the raw per-URI fan-out here (and fails on the connection itself,
+// since 127.0.0.1:1 refuses it -- not this test's own concern).
 TEST(VolumeSnapshotTest, non_volume_target_is_einval) {
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
 
@@ -190,7 +217,50 @@ TEST(VolumeSnapshotTest, non_volume_target_is_einval) {
 
     uint64_t snap_id = 0;
     EXPECT_EQ(volume_snapshot_create(*queue, target, &snap_id), -EINVAL);
-    EXPECT_EQ(volume_snapshot_remove(*queue, target, 1), -EINVAL);
+}
+
+// The other direction of the same dispatch: a caller-supplied (nonzero)
+// id makes no sense against an mds:// target either -- a volume has no
+// single physical backend one native CoW call could apply to, and using
+// it would bypass the MDS's own id reservation. Rejected client-side
+// (purely from the target's own scheme), so an unreachable address is
+// fine here -- no live MDS needed.
+TEST(
+    VolumeSnapshotTest, snapshot_create_nonzero_id_on_volume_target_is_einval
+) {
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+
+    const char* target = "mds://127.0.0.1:1/018f4e2a-3000-7000-8000-"
+                         "00000000000a";
+
+    uint64_t snap_id = 1;
+    EXPECT_EQ(volume_snapshot_create(*queue, target, &snap_id), -EINVAL);
+}
+
+// rawstor_target_meta()/_set_sync_state() have no defined meaning for an
+// mds:// target: it addresses a whole volume (many chunks, each with its
+// own slots), not the flat per-URI list these calls report/write one
+// RawstorObjectMeta/RawstorObjectSyncState per entry for. Rejected
+// client-side, same as the snapshot_create()/_remove() scheme checks
+// above -- no live MDS needed.
+TEST(VolumeMetaTest, meta_on_volume_target_is_einval) {
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+
+    const char* target = "mds://127.0.0.1:1/018f4e2a-3000-7000-8000-"
+                         "00000000000b";
+
+    RawstorObjectMeta meta{};
+    EXPECT_EQ(target_meta(*queue, target, &meta, 1), -EINVAL);
+}
+
+TEST(VolumeMetaTest, set_sync_state_on_volume_target_is_einval) {
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+
+    const char* target = "mds://127.0.0.1:1/018f4e2a-3000-7000-8000-"
+                         "00000000000c";
+
+    RawstorObjectSyncState sync_state{};
+    EXPECT_EQ(target_set_sync_state(*queue, target, sync_state), -EINVAL);
 }
 
 // Growing a multi-chunk volume reserves placement for the new chunks on
