@@ -1,7 +1,7 @@
 #include "blk_backend.hpp"
-#include "connection.hpp"
 #include "object.hpp"
 #include "opts.h"
+#include "slot.hpp"
 #include "target.hpp"
 #include "tmp_dir.hpp"
 
@@ -82,14 +82,14 @@ public:
     ThrottleOptsOverride& operator=(ThrottleOptsOverride&&) = delete;
 };
 
-// Stands up a real file:// object and a spare Connection/Backend against
+// Stands up a real file:// object and a spare Slot/Backend against
 // it (independent of the Object's own internal one, same as
 // Target::open()'s own _open_one() sets one up) so the test can drive
 // blk::Backend::pwrite() -- and inspect its throttle state -- directly.
 rawstor::blk::Backend* open_blk_backend(
     rawio::Queue& queue, const rawstd::URI& location,
     std::unique_ptr<rawstor::Object>& object,
-    std::unique_ptr<rawstor::Connection>& cn
+    std::unique_ptr<rawstor::Slot>& slot
 ) {
     RawstdUUID id;
     if (rawstd_uuid7_init(&id) != 0) {
@@ -116,10 +116,10 @@ rawstor::blk::Backend* open_blk_backend(
 
     object = run(queue, target.open(queue));
 
-    cn = run(queue, rawstor::Connection::create(queue, location, 1));
-    run(queue, cn->open(id));
+    slot = run(queue, rawstor::Slot::create(queue, location, 1));
+    run(queue, slot->open(id));
 
-    return static_cast<rawstor::blk::Backend*>(cn->get_next_backend().get());
+    return static_cast<rawstor::blk::Backend*>(slot->get_next_backend().get());
 }
 
 } // namespace
@@ -141,9 +141,9 @@ TEST(BlkBackendTest, write_throttle_limit) {
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(256);
 
     std::unique_ptr<rawstor::Object> object;
-    std::unique_ptr<rawstor::Connection> cn;
+    std::unique_ptr<rawstor::Slot> slot;
     rawstor::blk::Backend* backend =
-        open_blk_backend(*queue, location, object, cn);
+        open_blk_backend(*queue, location, object, slot);
 
     std::string payload = "throttle-me";
     std::vector<rawstd::Task<size_t>> tasks;
@@ -189,9 +189,9 @@ TEST(BlkBackendTest, write_backlog_capacity) {
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(256);
 
     std::unique_ptr<rawstor::Object> object;
-    std::unique_ptr<rawstor::Connection> cn;
+    std::unique_ptr<rawstor::Slot> slot;
     rawstor::blk::Backend* backend =
-        open_blk_backend(*queue, location, object, cn);
+        open_blk_backend(*queue, location, object, slot);
 
     std::vector<rawstd::Task<size_t>> tasks;
     tasks.reserve(writes);
@@ -237,9 +237,9 @@ TEST(BlkBackendTest, write_zeroes_zeroes_the_range) {
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(256);
 
     std::unique_ptr<rawstor::Object> object;
-    std::unique_ptr<rawstor::Connection> cn;
+    std::unique_ptr<rawstor::Slot> slot;
     rawstor::blk::Backend* backend =
-        open_blk_backend(*queue, location, object, cn);
+        open_blk_backend(*queue, location, object, slot);
 
     const std::string payload(64, 'x');
     EXPECT_EQ(
@@ -274,9 +274,9 @@ TEST(BlkBackendTest, write_zeroes_unmap_zeroes_the_range) {
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(256);
 
     std::unique_ptr<rawstor::Object> object;
-    std::unique_ptr<rawstor::Connection> cn;
+    std::unique_ptr<rawstor::Slot> slot;
     rawstor::blk::Backend* backend =
-        open_blk_backend(*queue, location, object, cn);
+        open_blk_backend(*queue, location, object, slot);
 
     const std::string payload(64, 'x');
     EXPECT_EQ(
@@ -311,9 +311,9 @@ TEST(BlkBackendTest, write_zeroes_sync_zeroes_the_range) {
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(256);
 
     std::unique_ptr<rawstor::Object> object;
-    std::unique_ptr<rawstor::Connection> cn;
+    std::unique_ptr<rawstor::Slot> slot;
     rawstor::blk::Backend* backend =
-        open_blk_backend(*queue, location, object, cn);
+        open_blk_backend(*queue, location, object, slot);
 
     const std::string payload(64, 'x');
     EXPECT_EQ(
@@ -348,9 +348,9 @@ TEST(BlkBackendTest, discard_reports_requested_size) {
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(256);
 
     std::unique_ptr<rawstor::Object> object;
-    std::unique_ptr<rawstor::Connection> cn;
+    std::unique_ptr<rawstor::Slot> slot;
     rawstor::blk::Backend* backend =
-        open_blk_backend(*queue, location, object, cn);
+        open_blk_backend(*queue, location, object, slot);
 
     const std::string payload(64, 'x');
     EXPECT_EQ(

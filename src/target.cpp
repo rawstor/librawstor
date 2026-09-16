@@ -1,9 +1,9 @@
 #include "target.hpp"
 
-#include "connection.hpp"
 #include "location.hpp"
 #include "object.hpp"
 #include "opts.h"
+#include "slot.hpp"
 #include "volume.hpp"
 
 #include <rawstor/target.h>
@@ -74,7 +74,7 @@ void validate_different_uris(const std::vector<rawstd::URI>& uris) {
     }
 }
 
-// A connect()ed Connection's metadata methods take a bare id (like the
+// A connect()ed Slot's metadata methods take a bare id (like the
 // Backend methods they wrap) rather than a full target -- extract it once
 // here instead of in every one of this file's own call sites.
 RawstdUUID uuid_from_target(const rawstd::URI& target) {
@@ -87,7 +87,7 @@ RawstdUUID uuid_from_target(const rawstd::URI& target) {
 }
 
 // One URI's worth of Target::create()/remove() work: connect a
-// single-backend Connection just for this call, do the one metadata op,
+// single-backend Slot just for this call, do the one metadata op,
 // close it again. Factored out so create()/remove() can fan these out
 // across every URI via rawstd::gather() instead of awaiting them one at a
 // time.
@@ -95,58 +95,58 @@ rawstd::Task<void> create_one(
     rawio::Queue& queue, const rawstd::URI& target, const RawstorObjectSpec& sp
 ) {
     RawstdUUID id = uuid_from_target(target);
-    std::unique_ptr<rawstor::Connection> cn =
-        co_await rawstor::Connection::create(queue, target.parent(), 1);
-    co_await cn->create(id, sp);
-    co_await cn->close();
+    std::unique_ptr<rawstor::Slot> slot =
+        co_await rawstor::Slot::create(queue, target.parent(), 1);
+    co_await slot->create(id, sp);
+    co_await slot->close();
 }
 
 rawstd::Task<RawstorObjectSpec>
 spec_one(rawio::Queue& queue, const rawstd::URI& target) {
     RawstdUUID id = uuid_from_target(target);
-    std::unique_ptr<rawstor::Connection> cn =
-        co_await rawstor::Connection::create(queue, target.parent(), 1);
-    RawstorObjectSpec ret = co_await cn->spec(id);
-    co_await cn->close();
+    std::unique_ptr<rawstor::Slot> slot =
+        co_await rawstor::Slot::create(queue, target.parent(), 1);
+    RawstorObjectSpec ret = co_await slot->spec(id);
+    co_await slot->close();
     co_return ret;
 }
 
 rawstd::Task<RawstorObjectMeta>
 meta_one(rawio::Queue& queue, const rawstd::URI& target) {
     RawstdUUID id = uuid_from_target(target);
-    std::unique_ptr<rawstor::Connection> cn =
-        co_await rawstor::Connection::create(queue, target.parent(), 1);
-    RawstorObjectMeta ret = co_await cn->meta(id);
-    co_await cn->close();
+    std::unique_ptr<rawstor::Slot> slot =
+        co_await rawstor::Slot::create(queue, target.parent(), 1);
+    RawstorObjectMeta ret = co_await slot->meta(id);
+    co_await slot->close();
     co_return ret;
 }
 
 rawstd::Task<void> remove_one(rawio::Queue& queue, const rawstd::URI& target) {
     RawstdUUID id = uuid_from_target(target);
-    std::unique_ptr<rawstor::Connection> cn =
-        co_await rawstor::Connection::create(queue, target.parent(), 1);
-    co_await cn->remove(id);
-    co_await cn->close();
+    std::unique_ptr<rawstor::Slot> slot =
+        co_await rawstor::Slot::create(queue, target.parent(), 1);
+    co_await slot->remove(id);
+    co_await slot->close();
 }
 
 rawstd::Task<void> snapshot_create_one(
     rawio::Queue& queue, const rawstd::URI& target, uint64_t snap_id
 ) {
     RawstdUUID id = uuid_from_target(target);
-    std::unique_ptr<rawstor::Connection> cn =
-        co_await rawstor::Connection::create(queue, target.parent(), 1);
-    co_await cn->snapshot_create(id, snap_id);
-    co_await cn->close();
+    std::unique_ptr<rawstor::Slot> slot =
+        co_await rawstor::Slot::create(queue, target.parent(), 1);
+    co_await slot->snapshot_create(id, snap_id);
+    co_await slot->close();
 }
 
 rawstd::Task<void> snapshot_remove_one(
     rawio::Queue& queue, const rawstd::URI& target, uint64_t snap_id
 ) {
     RawstdUUID id = uuid_from_target(target);
-    std::unique_ptr<rawstor::Connection> cn =
-        co_await rawstor::Connection::create(queue, target.parent(), 1);
-    co_await cn->snapshot_remove(id, snap_id);
-    co_await cn->close();
+    std::unique_ptr<rawstor::Slot> slot =
+        co_await rawstor::Slot::create(queue, target.parent(), 1);
+    co_await slot->snapshot_remove(id, snap_id);
+    co_await slot->close();
 }
 
 rawstd::Task<void> set_sync_state_one(
@@ -154,10 +154,10 @@ rawstd::Task<void> set_sync_state_one(
     const RawstorObjectSyncState& sync_state
 ) {
     RawstdUUID id = uuid_from_target(target);
-    std::unique_ptr<rawstor::Connection> cn =
-        co_await rawstor::Connection::create(queue, target.parent(), 1);
-    co_await cn->set_sync_state(id, sync_state);
-    co_await cn->close();
+    std::unique_ptr<rawstor::Slot> slot =
+        co_await rawstor::Slot::create(queue, target.parent(), 1);
+    co_await slot->set_sync_state(id, sync_state);
+    co_await slot->close();
 }
 
 // Shared by Target::remove() and the rollback path in Target::create():
@@ -172,18 +172,18 @@ remove_many(rawio::Queue& queue, const std::vector<rawstd::URI>& targets) {
     co_await rawstd::gather(std::move(tasks));
 }
 
-// One URI's worth of Target::open() work: just stand up a Connection (its
-// own backend pool) against it -- SET_OBJECT (Connection::open()) is a
+// One URI's worth of Target::open() work: just stand up a Slot (its
+// own backend pool) against it -- SET_OBJECT (Slot::open()) is a
 // separate, later step (Target::open() itself), once quorum/spec/meta/
 // split-brain analysis has actually decided this member is being kept,
 // rather than telling a backend it's now serving this object only to
 // immediately close it again over a quorum or split-brain rejection.
 // Factored out so Target::open() can fan these out across every URI via
 // gather()-like concurrency instead of awaiting them one at a time, by
-// analogy with Connection::create()'s own backend pool.
-rawstd::Task<std::unique_ptr<rawstor::Connection>>
+// analogy with Slot::create()'s own backend pool.
+rawstd::Task<std::unique_ptr<rawstor::Slot>>
 connect_one(rawio::Queue& queue, const rawstd::URI& uri) {
-    co_return co_await rawstor::Connection::create(
+    co_return co_await rawstor::Slot::create(
         queue, uri.parent(), rawstor_opts_sessions()
     );
 }
@@ -841,20 +841,20 @@ Target::open(rawio::Queue& queue, uint64_t snap) {
     // tests/ pump this call to completion synchronously via run()).
     RawstdUUID id = this->id();
 
-    // Every URI's Connection goes out concurrently instead of one at a
-    // time -- just Connection::create(), kept in a plain local vector
+    // Every URI's Slot goes out concurrently instead of one at a
+    // time -- just Slot::create(), kept in a plain local vector
     // (parallel to `_uris`, not the eventual member list yet: that's
     // assembled only once spec()/open() below have actually run -- see
     // their own comments on why member count/identity isn't simply
     // _uris.size()). connect_one()'s own comment on why SET_OBJECT is a
     // separate, later step.
-    std::vector<rawstd::Task<std::unique_ptr<Connection>>> connect_tasks;
+    std::vector<rawstd::Task<std::unique_ptr<Slot>>> connect_tasks;
     connect_tasks.reserve(_uris.size());
     for (const auto& uri : _uris) {
         connect_tasks.push_back(connect_one(queue, uri));
     }
 
-    // A connect failure Connection::create() itself classifies as
+    // A connect failure Slot::create() itself classifies as
     // ordinary connectivity trouble (std::system_error, per its own
     // contract) is tolerated: only recorded (the first one, in `eptr`)
     // and logged, not raised immediately -- with more than one URI, an
@@ -870,7 +870,7 @@ Target::open(rawio::Queue& queue, uint64_t snap) {
     // create()'s own rollback above.
     std::exception_ptr eptr;
     bool fatal = false;
-    std::vector<std::unique_ptr<Connection>> cns(_uris.size());
+    std::vector<std::unique_ptr<Slot>> cns(_uris.size());
     size_t reachable = 0;
     for (size_t i = 0; i < connect_tasks.size(); ++i) {
         try {
@@ -895,12 +895,12 @@ Target::open(rawio::Queue& queue, uint64_t snap) {
     // as-is, whichever of the two it was, rather than reconstructed from
     // a bare errno.
     if (fatal || reachable == 0) {
-        for (auto& cn : cns) {
-            if (!cn) {
+        for (auto& slot : cns) {
+            if (!slot) {
                 continue;
             }
             try {
-                co_await cn->close();
+                co_await slot->close();
             } catch (const std::exception& e) {
                 rawstd_warning("Target::open(): %s\n", e.what());
             }
@@ -919,7 +919,7 @@ Target::open(rawio::Queue& queue, uint64_t snap) {
     // here, winner or loser, is reused immediately below for its own
     // SET_OBJECT+META -- a loser's own retry (e.g. invalidate_backend()
     // reconnecting after a transient failure) could then still be
-    // running on that same Connection at the same time as the open-phase
+    // running on that same Slot at the same time as the open-phase
     // call below, a real, confirmed use-after-free once the loser's
     // watcher and this coroutine's own cleanup raced to tear it down.
     // Awaiting every task here, in order, sidesteps that entirely: by
@@ -936,9 +936,9 @@ Target::open(rawio::Queue& queue, uint64_t snap) {
     // a second, independent copy of that logic).
     std::vector<rawstd::Task<RawstorObjectSpec>> spec_tasks;
     spec_tasks.reserve(reachable);
-    for (auto& cn : cns) {
-        if (cn) {
-            spec_tasks.push_back(cn->spec(id));
+    for (auto& slot : cns) {
+        if (slot) {
+            spec_tasks.push_back(slot->spec(id));
         }
     }
 
@@ -966,12 +966,12 @@ Target::open(rawio::Queue& queue, uint64_t snap) {
 
     if (!got_spec) {
         rawstd_error("No mirror member answered spec()\n");
-        for (auto& cn : cns) {
-            if (!cn) {
+        for (auto& slot : cns) {
+            if (!slot) {
                 continue;
             }
             try {
-                co_await cn->close();
+                co_await slot->close();
             } catch (const std::exception& e) {
                 rawstd_warning("Target::open(): %s\n", e.what());
             }
@@ -982,7 +982,7 @@ Target::open(rawio::Queue& queue, uint64_t snap) {
     spec.mirrors = static_cast<unsigned int>(_uris.size());
 
     // The combined open (SET_OBJECT + this copy's own meta, see
-    // Connection::open()'s own comment) is the one operation guaranteed
+    // Slot::open()'s own comment) is the one operation guaranteed
     // to actually touch the real store for every backend kind -- a
     // blk-backed one's own _open(const RawstdUUID&) is otherwise lazy
     // (see blk::Backend::_connect()'s own comment), so nothing before
@@ -1062,7 +1062,7 @@ Target::open(rawio::Queue& queue, uint64_t snap) {
 
     // reachable == 0 (not just below quorum) is the one precondition
     // Object's own constructor can't check itself: a member with no
-    // Connection at all is meaningless to it even for the trivial
+    // Slot at all is meaningless to it even for the trivial
     // mirrors == 1 case (there's nothing there to trust), unlike a real
     // quorum shortfall, which _reconcile_sync_set() already checks on
     // its own -- see it, and the constructor's own comment, for why a

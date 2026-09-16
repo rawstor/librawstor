@@ -50,7 +50,7 @@ struct RawstorObject {
 
 namespace rawstor {
 
-class Connection;
+class Slot;
 
 class Object final : public RawstorObject {
 private:
@@ -67,7 +67,7 @@ private:
     // back -- unlike before online resync, where an unreachable member had
     // no slot at all.
     struct Member {
-        std::unique_ptr<rawstor::Connection> cn;
+        std::unique_ptr<rawstor::Slot> slot;
         rawstd::URI target;
         MemberState state;
         RawstorObjectMeta meta;
@@ -209,13 +209,13 @@ private:
     // by the constructor below, for every mirrors >= 2 open (mirrors ==
     // 1 skips it -- see the constructor's own comment) -- a throw here
     // (quorum lost, split brain, no trusted member left) aborts
-    // construction, same as Connection::create()'s own all-or-nothing
+    // construction, same as Slot::create()'s own all-or-nothing
     // gather() over Backend::create(): whichever Connections _members
     // already holds by then are simply dropped, not gracefully
     // co_await-closed (a constructor can't co_await) -- each one's own
     // destructor still tears down its sockets/registrations safely on
     // its own, the same safety net Backend's own destructor already is
-    // for a Connection torn down this way instead of via close().
+    // for a Slot torn down this way instead of via close().
     void _reconcile_sync_set();
 
     // Runs cont(0) once DIRTY is durably recorded on the in-sync members; the
@@ -249,15 +249,15 @@ private:
     struct FanOutWriteState;
     rawstd::Task<size_t> _fan_out_write(
         off_t offset, size_t size,
-        std::function<rawstd::Task<size_t>(Connection&)> issue
+        std::function<rawstd::Task<size_t>(Slot&)> issue
     );
     rawstd::Task<void> _fan_out_write_one(
-        size_t idx, std::function<rawstd::Task<size_t>(Connection&)> issue,
+        size_t idx, std::function<rawstd::Task<size_t>(Slot&)> issue,
         std::shared_ptr<FanOutWriteState> st
     );
     rawstd::Task<void> _fan_out_write_syncing_one(
         size_t idx, size_t expected_size,
-        std::function<rawstd::Task<size_t>(Connection&)> issue,
+        std::function<rawstd::Task<size_t>(Slot&)> issue,
         std::shared_ptr<FanOutWriteState> st
     );
 
@@ -311,7 +311,7 @@ private:
     // call sites -- so this function itself never needs to know whether
     // it's serving a flat buffer or an iovec array.
     rawstd::Task<size_t> _read(
-        off_t offset, std::function<rawstd::Task<size_t>(Connection&)> issue,
+        off_t offset, std::function<rawstd::Task<size_t>(Slot&)> issue,
         std::function<void(std::vector<char>&, size_t)> copy_to
     );
     rawstd::DetachedTask _read_repair(
@@ -321,12 +321,12 @@ private:
     rawstd::DetachedTask
     _degrade_detached(std::vector<size_t> idxs, std::weak_ptr<void> alive);
 
-    // Adapts Connection::flush() (Task<void>) to _fan_out_write()'s own
+    // Adapts Slot::flush() (Task<void>) to _fan_out_write()'s own
     // Task<size_t> issue signature -- a named coroutine, not a lambda one:
     // an immediately-invoked lambda coroutine would dangle its own
     // closure (see co_target_open()'s doc comment in ost/src/client.cpp
     // for the general hazard).
-    rawstd::Task<size_t> _flush_one(Connection& cn);
+    rawstd::Task<size_t> _flush_one(Slot& slot);
 
     // Object is final -- unlike Backend::Private (which every backend
     // subclass's own constructor also needs to name), only Target::open()
@@ -391,7 +391,7 @@ public:
 
     // flush()es (see above); for a mirrored object that is DIRTY, also
     // durably marks the in-sync members CLEAN with the current epoch/sync_id
-    // before co_awaiting every Connection's close() concurrently -- a
+    // before co_awaiting every Slot's close() concurrently -- a
     // clean close, so the next open() doesn't pay for a spurious dirty
     // gate. Clears _members so ~Object() (which still runs once the
     // caller deletes this Object after the returned Task completes) has

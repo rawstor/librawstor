@@ -23,12 +23,12 @@ class Object;
 
 // A Target addresses one specific object across every URI in `uris` (see
 // docs/locations_and_targets.md). Deliberately lightweight -- unlike
-// Object, it never holds a Connection between calls; create()/spec()/
-// remove() each open a Connection per URI just for that one call and
+// Object, it never holds a Slot between calls; create()/spec()/
+// remove() each open a Slot per URI just for that one call and
 // close it again before returning, same as the code they replace used to
-// do. open() is the one exception that needs a Connection to survive past
+// do. open() is the one exception that needs a Slot to survive past
 // the call -- it builds the returned Object itself (a friend of Object,
-// by analogy with Connection::create()), keeping one Connection per URI
+// by analogy with Slot::create()), keeping one Slot per URI
 // alive in the Object's own pool.
 class Target final {
 private:

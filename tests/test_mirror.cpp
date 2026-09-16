@@ -881,7 +881,7 @@ TEST(MirrorOstTest, read_failover_and_repair) {
     // happens to answer with -- Target::open() always overwrites it
     // with uris.size() regardless (see its own comment), so the value
     // scripted below isn't load-bearing. Both members still go through
-    // Connection::open()'s own combined SET_OBJECT+META step (see its
+    // Slot::open()'s own combined SET_OBJECT+META step (see its
     // own comment), concurrently, once every spec() has answered. Every
     // later low-level reconnect (invalidate_backend()) goes through
     // Backend::set_object() only, no SPEC of its own (invalidate_backend()
@@ -969,7 +969,7 @@ TEST(MirrorOstTest, degrade_and_continue) {
     // answer with -- Target::open() always overwrites it with
     // uris.size() regardless (see its own comment), so the value
     // scripted below isn't load-bearing. Both members still go through
-    // Connection::open()'s own combined SET_OBJECT+META step (see its
+    // Slot::open()'s own combined SET_OBJECT+META step (see its
     // own comment), concurrently, once every spec() has answered.
     {
         rawstor::tests::Session s(server1);
@@ -1024,7 +1024,7 @@ TEST(MirrorOstTest, degrade_and_continue) {
  * -EIO immediately once it finds no IN_SYNC member to fan out to at all.
  *
  * The dirty-barrier failure is scripted as -EINVAL rather than -EIO:
- * Connection::_with_retry() treats -EIO as a transient, retryable failure
+ * Slot::_with_retry() treats -EIO as a transient, retryable failure
  * (reconnect + up to rawstor_opts_io_attempts() attempts, 3 under this
  * suite's own test override -- see tests/main.cpp), which would need 3
  * scripted reconnect sessions per member just to reach the same end
@@ -1098,7 +1098,7 @@ TEST(MirrorOstTest, all_mirrors_stale_write_reports_eio) {
  * A single scripted failure is enough here, unlike
  * MirrorOstTest.read_failover_and_repair's own (CLEAN-object) member0
  * script, which needs 3 reconnect rounds to exhaust
- * Connection::_with_retry()'s transparent-retry budget:
+ * Slot::_with_retry()'s transparent-retry budget:
  * Object::_run_dirty_barrier() turns transparent retry off for every
  * member the moment the object goes DIRTY (src/object.cpp, case F6's own
  * comment there), specifically so a transport failure surfaces

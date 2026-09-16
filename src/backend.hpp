@@ -119,7 +119,7 @@ public:
     // comment -- so nothing before this call genuinely proves the
     // object exists; an ost:// one's is a real wire round trip either
     // way), so a caller that also needs this copy's own meta() (e.g.
-    // Connection::open(), see its own doc comment) calls it separately,
+    // Slot::open(), see its own doc comment) calls it separately,
     // afterward. `snap` is 0 for the live version, or a version id
     // previously registered via snapshot_create() below (docs/mds.md,
     // "Snapshots") -- ENOTSUP on a backend without native CoW (file://,

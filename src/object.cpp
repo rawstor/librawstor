@@ -2,11 +2,11 @@
 #include <rawstor/object.h>
 
 #include "config.h"
-#include "connection.hpp"
 #include "file_backend.hpp"
 #include "location.hpp"
 #include "opts.h"
 #include "ost_backend.hpp"
+#include "slot.hpp"
 #include "target.hpp"
 
 #include <rawio/awaitable.hpp>
@@ -152,7 +152,7 @@ void launch_close_op(
 }
 
 // Synchronously pumps `t` to completion by driving `q` -- used by
-// ~Object() to co_await each Connection's close() from a plain (non-
+// ~Object() to co_await each Slot's close() from a plain (non-
 // coroutine) destructor. Deliberately a local duplicate of connection.cpp/
 // target.cpp/location.cpp's own `run()`, rather than a shared dependency,
 // since it's four lines and object.cpp has no other reason to know about
@@ -169,10 +169,10 @@ T run(rawio::Queue& q, rawstd::Task<T> t) {
 
 namespace rawstor {
 
-// The heavy async work -- standing up a Connection per URI, fetching
+// The heavy async work -- standing up a Slot per URI, fetching
 // spec()/meta() from each -- still lives in Target::open(), the one
 // place that actually constructs an Object (by analogy with
-// Connection(Private, queue)): a constructor can't co_await, so none of
+// Slot(Private, queue)): a constructor can't co_await, so none of
 // that can live here. Deciding whether the result is trustworthy enough
 // to open from (_reconcile_sync_set(), or the mirrors == 1 shortcut)
 // CAN safely live here instead, now that `spec`/`members` already
@@ -217,14 +217,14 @@ Object::Object(
 
 Object::~Object() {
     for (auto& m : _members) {
-        // An unreachable member's slot has no Connection to close (see
+        // An unreachable member's slot has no Slot to close (see
         // Member's own doc comment) -- unlike before online resync, where
         // every slot in _members was, by construction, a reachable one.
-        if (!m.cn) {
+        if (!m.slot) {
             continue;
         }
         try {
-            run(_queue, m.cn->close());
+            run(_queue, m.slot->close());
         } catch (const std::exception& e) {
             rawstd_error("Object::~Object(): %s\n", e.what());
         }
@@ -516,11 +516,11 @@ rawstd::Task<void> Object::_run_dirty_barrier() {
             // acknowledged writes: once DIRTY, failures must surface here
             // and degrade the member instead of being retried transparently
             // (docs/mirroring.md, case F6). An unreachable member has no
-            // Connection to set this on yet -- the reconnect probe/resync
+            // Slot to set this on yet -- the reconnect probe/resync
             // that eventually brings it back finds the object already
             // DIRTY and goes through the same dirty gate itself.
-            if (mirror.cn) {
-                mirror.cn->set_transparent_retry(false);
+            if (mirror.slot) {
+                mirror.slot->set_transparent_retry(false);
             }
         }
     } catch (...) {
@@ -675,7 +675,7 @@ Object::_run_meta_fan_out(RawstorObjectSyncState sync_state) {
 rawstd::Task<void>
 Object::_set_sync_state_one(size_t idx, RawstorObjectSyncState sync_state) {
     try {
-        co_await _members[idx].cn->set_sync_state(_target.id(), sync_state);
+        co_await _members[idx].slot->set_sync_state(_target.id(), sync_state);
     } catch (const std::system_error& e) {
         int error = e.code().value();
         if (error == ENOSYS) {
@@ -734,11 +734,11 @@ struct Object::FanOutWriteState {
 };
 
 rawstd::Task<void> Object::_fan_out_write_one(
-    size_t idx, std::function<rawstd::Task<size_t>(Connection&)> issue,
+    size_t idx, std::function<rawstd::Task<size_t>(Slot&)> issue,
     std::shared_ptr<FanOutWriteState> st
 ) {
     try {
-        size_t result = co_await issue(*_members[idx].cn);
+        size_t result = co_await issue(*_members[idx].slot);
         st->any_success = true;
         st->result = std::min(st->result, result);
     } catch (const std::system_error& e) {
@@ -754,11 +754,11 @@ rawstd::Task<void> Object::_fan_out_write_one(
 // every member (this one included) has settled.
 rawstd::Task<void> Object::_fan_out_write_syncing_one(
     size_t idx, size_t expected_size,
-    std::function<rawstd::Task<size_t>(Connection&)> issue,
+    std::function<rawstd::Task<size_t>(Slot&)> issue,
     std::shared_ptr<FanOutWriteState> st
 ) {
     try {
-        size_t result = co_await issue(*_members[idx].cn);
+        size_t result = co_await issue(*_members[idx].slot);
         st->syncing_ok = result == expected_size;
     } catch (const std::system_error& e) {
         rawstd_error("%s\n", strerror(e.code().value()));
@@ -774,8 +774,7 @@ rawstd::Task<void> Object::_fan_out_write_syncing_one(
  * acknowledgement, but a failure aborts the resync.
  */
 rawstd::Task<size_t> Object::_fan_out_write(
-    off_t offset, size_t size,
-    std::function<rawstd::Task<size_t>(Connection&)> issue
+    off_t offset, size_t size, std::function<rawstd::Task<size_t>(Slot&)> issue
 ) {
     // A write overlapping the chunk the sweeper is copying right now
     // parks until the copy completes: the copy would otherwise overwrite
@@ -885,8 +884,8 @@ rawstd::Task<size_t> Object::_fan_out_write(
     co_return st->result;
 }
 
-rawstd::Task<size_t> Object::_flush_one(Connection& cn) {
-    co_await cn.flush();
+rawstd::Task<size_t> Object::_flush_one(Slot& slot) {
+    co_await slot.flush();
     co_return 0;
 }
 
@@ -973,7 +972,7 @@ rawstd::DetachedTask Object::_resync_maybe_start() {
 
         int error = 0;
         try {
-            co_await _members[idx].cn->set_sync_state(_target.id(), m);
+            co_await _members[idx].slot->set_sync_state(_target.id(), m);
         } catch (const std::system_error& e) {
             error = e.code().value();
         }
@@ -1096,7 +1095,8 @@ rawstd::DetachedTask Object::_resync_sweep() {
     size_t result = 0;
     int error = 0;
     try {
-        result = co_await _members[src].cn->pread(buf->data(), len, (off_t)off);
+        result =
+            co_await _members[src].slot->pread(buf->data(), len, (off_t)off);
     } catch (const std::system_error& e) {
         error = e.code().value();
     }
@@ -1123,7 +1123,7 @@ rawstd::DetachedTask Object::_resync_sweep() {
     size_t wresult = 0;
     int werror = 0;
     try {
-        wresult = co_await _members[_resync->idx].cn->pwrite(
+        wresult = co_await _members[_resync->idx].slot->pwrite(
             buf->data(), len, (off_t)off, false
         );
     } catch (const std::system_error& e) {
@@ -1173,7 +1173,7 @@ rawstd::DetachedTask Object::_resync_finish() {
 
     int error = 0;
     try {
-        co_await _members[idx].cn->set_sync_state(_target.id(), m);
+        co_await _members[idx].slot->set_sync_state(_target.id(), m);
     } catch (const std::system_error& e) {
         error = e.code().value();
     }
@@ -1289,13 +1289,13 @@ rawstd::DetachedTask Object::_probe_tick() {
     rawstd_info("Mirror probe: reconnecting a stale member...\n");
     _probe_pending = true;
 
-    std::unique_ptr<Connection> cn;
+    std::unique_ptr<Slot> slot;
     int error = 0;
     try {
-        cn = co_await Connection::create(
+        slot = co_await Slot::create(
             _queue, _members[idx].target.parent(), rawstor_opts_sessions()
         );
-        co_await cn->open(_target.id());
+        co_await slot->open(_target.id());
     } catch (const std::system_error& e) {
         error = e.code().value();
     } catch (const std::exception& e) {
@@ -1314,7 +1314,7 @@ rawstd::DetachedTask Object::_probe_tick() {
         co_return;
     }
 
-    _members[idx].cn = std::move(cn);
+    _members[idx].slot = std::move(slot);
     _members[idx].reachable = true;
     _resync_maybe_start();
 }
@@ -1327,7 +1327,7 @@ rawstd::DetachedTask Object::_probe_tick() {
  * If every member fails, the error is reported without touching the states.
  */
 rawstd::Task<size_t> Object::_read(
-    off_t offset, std::function<rawstd::Task<size_t>(Connection&)> issue,
+    off_t offset, std::function<rawstd::Task<size_t>(Slot&)> issue,
     std::function<void(std::vector<char>&, size_t)> copy_to
 ) {
     std::vector<size_t> order;
@@ -1344,7 +1344,7 @@ rawstd::Task<size_t> Object::_read(
 
     for (size_t idx : order) {
         try {
-            size_t result = co_await issue(*_members[idx].cn);
+            size_t result = co_await issue(*_members[idx].slot);
 
             for (const auto& failure : failures) {
                 size_t fidx = failure.first;
@@ -1410,7 +1410,7 @@ rawstd::DetachedTask Object::_read_repair(
     rawstd_warning("Read repair: rewriting a corrupted region\n");
 
     try {
-        size_t result = co_await _members[idx].cn->pwrite(
+        size_t result = co_await _members[idx].slot->pwrite(
             data.data(), data.size(), offset, false
         );
         if (alive.expired()) {
@@ -1449,8 +1449,8 @@ rawstd::Task<size_t> Object::pread(void* buf, size_t size, off_t offset) {
     try {
         size_t result = co_await _read(
             offset,
-            [buf, size, offset](Connection& cn) {
-                return cn.pread(buf, size, offset);
+            [buf, size, offset](Slot& slot) {
+                return slot.pread(buf, size, offset);
             },
             [buf](std::vector<char>& dst, size_t n) {
                 memcpy(dst.data(), buf, n);
@@ -1477,8 +1477,8 @@ Object::preadv(iovec* iov, unsigned int niov, size_t size, off_t offset) {
     try {
         size_t result = co_await _read(
             offset,
-            [iov, niov, size, offset](Connection& cn) {
-                return cn.preadv(iov, niov, size, offset);
+            [iov, niov, size, offset](Slot& slot) {
+                return slot.preadv(iov, niov, size, offset);
             },
             [iov, niov](std::vector<char>& dst, size_t n) {
                 rawstd_iovec_to_buf(iov, niov, 0, dst.data(), n);
@@ -1509,8 +1509,8 @@ Object::pwrite(const void* buf, size_t size, off_t offset, bool sync) {
         co_await _with_dirty();
         size_t result = co_await _fan_out_write(
             offset, size,
-            [buf, size, offset, sync](Connection& cn) -> rawstd::Task<size_t> {
-                return cn.pwrite(buf, size, offset, sync);
+            [buf, size, offset, sync](Slot& slot) -> rawstd::Task<size_t> {
+                return slot.pwrite(buf, size, offset, sync);
             }
         );
         _write_finished(ticket);
@@ -1544,8 +1544,8 @@ rawstd::Task<size_t> Object::pwritev(
         size_t result = co_await _fan_out_write(
             offset, size,
             [iov, niov, size, offset,
-             sync](Connection& cn) -> rawstd::Task<size_t> {
-                return cn.pwritev(iov, niov, size, offset, sync);
+             sync](Slot& slot) -> rawstd::Task<size_t> {
+                return slot.pwritev(iov, niov, size, offset, sync);
             }
         );
         _write_finished(ticket);
@@ -1584,8 +1584,8 @@ rawstd::Task<size_t> Object::discard(size_t size, off_t offset) {
     // other in-sync member, purely for its own space-accounting consistency.
     try {
         size_t result = co_await _fan_out_write(
-            0, 0, [size, offset](Connection& cn) -> rawstd::Task<size_t> {
-                return cn.discard(size, offset);
+            0, 0, [size, offset](Slot& slot) -> rawstd::Task<size_t> {
+                return slot.discard(size, offset);
             }
         );
         RAWSTD_TRACE_EVENT_MESSAGE(
@@ -1615,9 +1615,8 @@ Object::write_zeroes(size_t size, off_t offset, bool unmap, bool sync) {
         co_await _with_dirty();
         size_t result = co_await _fan_out_write(
             offset, size,
-            [size, offset, unmap,
-             sync](Connection& cn) -> rawstd::Task<size_t> {
-                return cn.write_zeroes(size, offset, unmap, sync);
+            [size, offset, unmap, sync](Slot& slot) -> rawstd::Task<size_t> {
+                return slot.write_zeroes(size, offset, unmap, sync);
             }
         );
         _write_finished(ticket);
@@ -1660,8 +1659,8 @@ rawstd::Task<void> Object::flush() {
 
     try {
         co_await _fan_out_write(
-            0, 0, [this](Connection& cn) -> rawstd::Task<size_t> {
-                return _flush_one(cn);
+            0, 0, [this](Slot& slot) -> rawstd::Task<size_t> {
+                return _flush_one(slot);
             }
         );
         _unflushed = false;
@@ -1734,14 +1733,14 @@ rawstd::Task<void> Object::close() {
     std::vector<rawstd::Task<void>> tasks;
     tasks.reserve(_members.size());
     for (auto& m : _members) {
-        // An unreachable member's slot has no Connection to close.
-        if (!m.cn) {
+        // An unreachable member's slot has no Slot to close.
+        if (!m.slot) {
             continue;
         }
-        tasks.push_back(m.cn->close());
+        tasks.push_back(m.slot->close());
     }
 
-    // Every Connection is closed concurrently; every one is still attempted
+    // Every Slot is closed concurrently; every one is still attempted
     // regardless of an earlier failure (gather() never abandons a task
     // still in flight). _members is cleared either way once gather()
     // returns -- by then every close() has actually been attempted, so

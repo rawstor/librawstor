@@ -50,7 +50,7 @@ private:
     );
     void _fail_in_flight(int error);
     // Returns nullptr, rather than throwing, for an unregistered cid: a
-    // response can legitimately race with Connection::_op() already having
+    // response can legitimately race with Slot::_op() already having
     // failed and retried that same op on a different backend (e.g. after a
     // send-side error on this connection), in which case the cid was
     // already unregistered and the response is stale, not a corrupted

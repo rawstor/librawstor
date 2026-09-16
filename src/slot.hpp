@@ -1,5 +1,5 @@
-#ifndef RAWSTOR_CONNECTION_HPP
-#define RAWSTOR_CONNECTION_HPP
+#ifndef RAWSTOR_SLOT_HPP
+#define RAWSTOR_SLOT_HPP
 
 #include "telemetry.hpp"
 
@@ -25,12 +25,12 @@ namespace rawstor {
 
 class Backend;
 
-class Connection final {
+class Slot final {
 private:
     rawio::Queue& _queue;
 
     // Set by open() (see its own doc comment) -- unset means this
-    // Connection is only ever used for metadata (list/create/remove/
+    // Slot is only ever used for metadata (list/create/remove/
     // spec/info), which needs no SET_OBJECT step of its own.
     std::optional<RawstdUUID> _id;
     // The version open() bound _id to -- 0 (live) unless open() was
@@ -62,7 +62,7 @@ private:
     // failure -- runs through here exactly once; records the cross-retry
     // call-to-completion latency. Per-attempt telemetry, including the
     // top-N slowest-requests sample, lives in ost::BackendOp::_dispatch()
-    // instead -- Connection is transport-agnostic and has nothing else to
+    // instead -- Slot is transport-agnostic and has nothing else to
     // report here.
     void _finish(rawstor::telemetry::TimePoint t_call);
 
@@ -99,7 +99,7 @@ private:
         std::type_identity_t<Args>... args
     );
 
-    // Connection is final -- unlike Backend::Private (which every
+    // Slot is final -- unlike Backend::Private (which every
     // backend subclass's own constructor also needs to name), nothing
     // but create() itself ever needs this, so it stays private rather
     // than protected.
@@ -109,17 +109,17 @@ private:
 
 public:
     // Creates and connects `nbackends` Backends against `location`
-    // concurrently -- the returned Connection's backend pool is ready for
+    // concurrently -- the returned Slot's backend pool is ready for
     // get_next_backend()-based use (metadata methods, or open() to
     // additionally set_object() the whole pool for the data-path
     // methods) but nothing has been set_object()ed yet.
-    static rawstd::Task<std::unique_ptr<Connection>>
+    static rawstd::Task<std::unique_ptr<Slot>>
     create(rawio::Queue& queue, const rawstd::URI& location, size_t nbackends);
 
-    Connection(Private, rawio::Queue& queue);
-    Connection(const Connection&) = delete;
+    Slot(Private, rawio::Queue& queue);
+    Slot(const Slot&) = delete;
 
-    Connection& operator=(const Connection&) = delete;
+    Slot& operator=(const Slot&) = delete;
 
     std::shared_ptr<Backend> get_next_backend();
     rawstd::Task<void> invalidate_backend(const std::shared_ptr<Backend>& be);
@@ -131,7 +131,7 @@ public:
     // Metadata operations, routed through the same backend pool and
     // retry-with-invalidate-backend machinery (_with_retry()) as the
     // data-path methods below -- same shape as the matching Backend
-    // methods they wrap, since a connect()ed Connection is (like a
+    // methods they wrap, since a connect()ed Slot is (like a
     // Backend) already bound to one location.
     rawstd::Task<void>
     list(unsigned int limit, std::vector<RawstdUUID>& uuids, RawstdUUID& token);
@@ -170,7 +170,7 @@ public:
     rawstd::Task<RawstorObjectMeta>
     open(const RawstdUUID& id, uint64_t snap = 0);
 
-    // Not called implicitly by ~Connection() (a coroutine can't run in a
+    // Not called implicitly by ~Slot() (a coroutine can't run in a
     // destructor, and there's no other synchronous fallback here beyond
     // each Backend's own -- see Backend::close()'s doc comment) --
     // callers that want a graceful async teardown must co_await this
@@ -200,4 +200,4 @@ public:
 
 } // namespace rawstor
 
-#endif // RAWSTOR_CONNECTION_HPP
+#endif // RAWSTOR_SLOT_HPP
