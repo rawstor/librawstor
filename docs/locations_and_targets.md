@@ -10,12 +10,13 @@ Rawstor client library and OST backend use two core concepts to address and acce
 
 A **location** specifies the address of a backend data store (or a list of backends). It is expressed as a comma-separated list of URIs. The URI format follows the standard scheme `<scheme>://<endpoint>`.
 
-Currently, two URI schemes are supported:
+Currently, three URI schemes are supported:
 
 | Scheme | Description |
 |--------|-------------|
 | `ost`  | Backend server speaking the OST protocol (see [Protocol.md](https://github.com/rawstor/rawstor_docs/blob/main/Protocol.md)) |
 | `file` | Local filesystem backend (a folder path) |
+| `mds`  | Metadata server addressing a whole chunked, possibly multi-copy volume rather than a single physical store (see [mds.md](mds.md)) |
 
 ### Single backend examples
 
@@ -51,6 +52,7 @@ Where:
 
 - `ost://<host>:<port>/<uuid>` – an object stored on a single OST server.
 - `file://<path_to_folder>/<uuid>` – an object stored as a file in a local folder.
+- `mds://<host>:<port>/<uuid>` – a whole volume addressed through its MDS; always a single URI (no comma list — mirroring/locality here happen per chunk, inside the volume, not at this level). See [mds.md](mds.md).
 
 ### Multiple backend target (mirroring / locality)
 
@@ -77,3 +79,4 @@ This target references the same object (UUID `019cbfad-a389-7d42-a0f6-c29993ac8c
 
 - When using the `file://` scheme, the path must be absolute. Relative paths are not allowed.
 - The OST protocol details, including authentication, error handling, and streaming, are defined in the [protocol specification](https://github.com/rawstor/rawstor_docs/blob/main/Protocol.md).
+- An `ost://`/`file://` target (this document) is what the client library internally calls a **chunk**: one logical piece of data, backed by one **slot** per URI in the target. An `mds://` target is the client-facing **object** those chunks compose (`rawstor_docs/Architecture.md`: "Object = group of chunks") — a plain, non-`mds://` target is simply the degenerate case of an object made of exactly one chunk. See [mds.md](mds.md) for the full model.

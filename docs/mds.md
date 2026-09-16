@@ -81,8 +81,9 @@ in four places and spent on one addition:
 - **Opcode space**: regrouped into reserved ranges per role (session / data /
   shared metadata / volume) instead of appending to one enum — free today, a
   breaking change after the first install.
-- The degenerate-object unification (below) is kept as *design* — one schema,
-  one code path — not as a migration bridge; there is nothing to migrate.
+- The degenerate single-chunk unification (below) is kept as *design* — one
+  schema, one code path — not as a migration bridge; there is nothing to
+  migrate.
 - **Spent on: a version handshake.** This freedom ends at the first live
   install, so the mechanism for future breaks is added now, while it costs
   nothing: protocol version + feature bits in the connection handshake
@@ -158,8 +159,9 @@ chunk_meta {
 }
 ```
 
-A present-day mirrored object is the degenerate case: one chunk
-(`logical_index = 0`, `chunk_size = volume size`, `version = 0`), `width = N`.
+A present-day plain (non-`mds://`) target is the degenerate case: a
+single chunk (`logical_index = 0`, `chunk_size = volume size`,
+`version = 0`), `width = N`.
 One schema and one code path for both worlds — kept as design, not as a
 migration bridge (no live installations, nothing to migrate; see
 *Compatibility stance*).
@@ -498,7 +500,7 @@ reconstruct scan (below).
 
 ## Witness (stage 3)
 
-A witness is a **metadata-only member** of a mirrored object's quorum: it
+A witness is a **metadata-only member** of a chunk's quorum: it
 stores the consistency tuple (`state`-like record, `sync_id`,
 `sync_id_history`, `mirror_epoch`) and holds no data. For N=2 data mirrors it
 is the third vote that restores auto-start with one OST down. Implementation:
