@@ -136,7 +136,7 @@ encode_volume_map(const Topology& topology, const VolumeMap& map) {
 
     for (const std::vector<PlacementSlot>& slots : map.chunks) {
         RawstorVolChunkEntry entry{
-            .version = 0, // v1 always opens the live view here
+            .snap_id = 0, // v1 always opens the live view here
             .width = static_cast<uint8_t>(slots.size()),
         };
         size_t off = data.size();

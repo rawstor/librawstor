@@ -105,11 +105,11 @@ public:
 
     // Fetches the volume's current WireMap and opens the nested
     // multi-chunk Object it describes (see this class's own doc
-    // comment) -- `snap` is folded into every chunk slot's own URI
-    // ("@<snap>", chunk_slot_target()'s own convention in
+    // comment) -- `snap_id` is folded into every chunk slot's own URI
+    // ("@<snap_id>", chunk_slot_target()'s own convention in
     // mds_backend.cpp), not passed down any other way.
     rawstd::Task<void>
-    set_object(const RawstdUUID& id, uint64_t snap = 0) override;
+    set_object(const RawstdUUID& id, uint64_t snap_id = 0) override;
 
     rawstd::Task<void> close() override;
 

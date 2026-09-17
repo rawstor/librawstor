@@ -834,7 +834,7 @@ public:
                 .reserved = 0,
                 .volume_id = {},
                 .logical_index = sp.logical_index,
-                .snap_version = sp.snap_version,
+                .snap_id = sp.snap_id,
             },
         }) {
         memcpy(
@@ -1384,7 +1384,7 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
         );
         ret.spec.logical_index = payload.logical_index;
         ret.spec.chunk_size = payload.chunk_size;
-        ret.spec.snap_version = payload.snap_version;
+        ret.spec.snap_id = payload.snap_id;
     } catch (const std::system_error&) {
         throw;
     } catch (...) {
@@ -1448,7 +1448,7 @@ rawstd::Task<RawstorLocationInfo> Backend::info() {
     co_return ret;
 }
 
-rawstd::Task<void> Backend::set_object(const RawstdUUID& id, uint64_t snap) {
+rawstd::Task<void> Backend::set_object(const RawstdUUID& id, uint64_t snap_id) {
     // The demultiplex pump is already running by now -- _connect() starts it
     // before this is ever reachable -- so this is just another
     // cid-dispatched request like list()/create()/....
@@ -1457,7 +1457,7 @@ rawstd::Task<void> Backend::set_object(const RawstdUUID& id, uint64_t snap) {
     // `val` carries the bound version -- 0 for live, or a previously
     // snapshotted id (docs/mds.md, "Snapshots": "the wire carries
     // the version in the val field SET_OBJECT ... already had").
-    co_await _basic_request(RAWSTOR_CMD_SET_OBJECT, "set_object", id, snap);
+    co_await _basic_request(RAWSTOR_CMD_SET_OBJECT, "set_object", id, snap_id);
 }
 
 // See ost_backend.hpp's doc comment on why `weak`, not a strong

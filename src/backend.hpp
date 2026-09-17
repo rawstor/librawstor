@@ -108,12 +108,12 @@ public:
     // object exists; an ost:// one's is a real wire round trip either
     // way), so a caller that also needs this copy's own meta() (e.g.
     // Slot::open(), see its own doc comment) calls it separately,
-    // afterward. `snap` is 0 for the live version, or a version id
+    // afterward. `snap_id` is 0 for the live version, or a version id
     // previously registered via snapshot_create() below (docs/mds.md,
     // "Snapshots") -- ENOTSUP on a backend without native CoW (file://,
     // classic LVM).
     virtual rawstd::Task<void>
-    set_object(const RawstdUUID& id, uint64_t snap = 0) = 0;
+    set_object(const RawstdUUID& id, uint64_t snap_id = 0) = 0;
 
     // Native CoW snapshot of the live version as `snap_id` (never 0 -- 0
     // is the live version), and its removal. Default: ENOTSUP, covering

@@ -67,21 +67,22 @@ std::string Backend::_dataset(const RawstdUUID& id) const {
     return _parent_dataset + "/" + uuid_str;
 }
 
-std::string Backend::_device_path(const RawstdUUID& id, uint64_t snap) const {
-    if (snap == 0) {
+std::string
+Backend::_device_path(const RawstdUUID& id, uint64_t snap_id) const {
+    if (snap_id == 0) {
         return _device_path(id);
     }
     std::ostringstream oss;
-    oss << _device_path(id) << "@s" << snap;
+    oss << _device_path(id) << "@s" << snap_id;
     return oss.str();
 }
 
-std::string Backend::_dataset(const RawstdUUID& id, uint64_t snap) const {
-    if (snap == 0) {
+std::string Backend::_dataset(const RawstdUUID& id, uint64_t snap_id) const {
+    if (snap_id == 0) {
         return _dataset(id);
     }
     std::ostringstream oss;
-    oss << _dataset(id) << "@s" << snap;
+    oss << _dataset(id) << "@s" << snap_id;
     return oss.str();
 }
 
@@ -113,8 +114,8 @@ rawstd::Task<void> Backend::_wait_for_blockdev(
     RAWSTD_THROW_SYSTEM_ERROR(ETIMEDOUT);
 }
 
-rawstd::Task<int> Backend::_open(const RawstdUUID& id, uint64_t snap) {
-    std::string path = _device_path(id, snap);
+rawstd::Task<int> Backend::_open(const RawstdUUID& id, uint64_t snap_id) {
+    std::string path = _device_path(id, snap_id);
 
     // No O_NONBLOCK: opening a ZFS zvol with it caused cache-miss reads to
     // return -EAGAIN, which io_uring could not properly handle for
@@ -128,7 +129,7 @@ rawstd::Task<int> Backend::_open(const RawstdUUID& id, uint64_t snap) {
     // fails as soon as the fd itself is wrong, before ever reaching
     // pwrite().
     int fd = co_await _queue.open(
-        path.c_str(), (snap == 0 ? O_RDWR : O_RDONLY) | O_CLOEXEC, 0
+        path.c_str(), (snap_id == 0 ? O_RDWR : O_RDONLY) | O_CLOEXEC, 0
     );
     co_return fd;
 }
@@ -264,7 +265,7 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
     memcpy(identity.volume_id, sp.volume_id, sizeof(identity.volume_id));
     identity.logical_index = sp.logical_index;
     identity.chunk_size = sp.chunk_size;
-    identity.snap_version = sp.snap_version;
+    identity.snap_id = sp.snap_id;
     std::string prop =
         std::string(rawstor_property) + "=" + meta_encode(sync_state, identity);
 
@@ -405,7 +406,7 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
     memcpy(ret.spec.volume_id, identity.volume_id, sizeof(ret.spec.volume_id));
     ret.spec.logical_index = identity.logical_index;
     ret.spec.chunk_size = identity.chunk_size;
-    ret.spec.snap_version = identity.snap_version;
+    ret.spec.snap_id = identity.snap_id;
     ret.sync_state = sync_state;
 
     co_return ret;

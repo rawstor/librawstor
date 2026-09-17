@@ -86,9 +86,9 @@ public:
     // non-URI syntax for them (see this method's own comment in
     // target.cpp) -- every other chunk stays lazily opened, same as
     // before (Object::_chunk()). A snapshot view, if any, is already
-    // part of each URI (the "@<snap>" suffix, same convention as
+    // part of each URI (the "@<snap_id>" suffix, same convention as
     // chunk_slot_target() in mds_backend.cpp) -- there's no separate
-    // `snap` parameter here.
+    // `snap_id` parameter here.
     rawstd::Task<std::unique_ptr<Object>> open(rawio::Queue& queue);
 
     // Native CoW snapshot of every URI in the first chunk group

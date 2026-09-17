@@ -35,7 +35,9 @@ private:
     // implementation ever needs it. Bumped 1 -> 2 to add the chunk
     // placement identity fields (docs/mds.md, chunk_meta) --
     // free to break, per the design's own compatibility stance (no live
-    // installations yet).
+    // installations yet). Not bumped again for the `snap_version` ->
+    // `snap_id` key rename (terminology pass only, same unreleased line
+    // as version 2 itself -- nothing to stay compatible with).
     static constexpr unsigned int META_FORMAT_VERSION = 2;
 
     // Writes dispatched to the io queue whose completion hasn't arrived
@@ -77,10 +79,10 @@ private:
     void _throttle_release() noexcept;
 
 protected:
-    // `snap` is 0 for the live version, or a previously-snapshotted
+    // `snap_id` is 0 for the live version, or a previously-snapshotted
     // version id (docs/mds.md, "Snapshots") -- ENOTSUP on a
     // subclass without native CoW (file::Backend, lvm::Backend).
-    virtual rawstd::Task<int> _open(const RawstdUUID& id, uint64_t snap) = 0;
+    virtual rawstd::Task<int> _open(const RawstdUUID& id, uint64_t snap_id) = 0;
 
     // A blk-backed backend has no upfront connection step: the fd is
     // opened lazily, by _open(const RawstdUUID&) above, once
@@ -134,7 +136,7 @@ public:
         uint8_t volume_id[16] = {};
         uint64_t logical_index = 0;
         uint64_t chunk_size = 0;
-        uint64_t snap_version = 0;
+        uint64_t snap_id = 0;
     };
 
     Backend(Private p, rawio::Queue& queue, const rawstd::URI& location);
@@ -142,7 +144,7 @@ public:
     rawstd::Task<void> close() override final;
 
     rawstd::Task<void>
-    set_object(const RawstdUUID& id, uint64_t snap = 0) override final;
+    set_object(const RawstdUUID& id, uint64_t snap_id = 0) override final;
 
     // Default spec() for a backend whose object id maps to a real block
     // device (BLKGETSIZE64) -- file::Backend overrides this instead, since
@@ -153,7 +155,7 @@ public:
     // a compact colon-separated string of hex fields, e.g.
     // "version=2:state=0:epoch=0:sync_id=0:h0=0:h1=0:h2=0:h3=0:
     // member_kind=0:width=0:volume_id=00000000-0000-0000-0000-000000000000:
-    // logical_index=0:chunk_size=0:snap_version=0" -- shared by every
+    // logical_index=0:chunk_size=0:snap_id=0" -- shared by every
     // blk-backed subclass's own native per-copy metadata storage:
     // lvm::Backend's LVM tag, zfs::Backend's ZFS user property, and
     // file::Backend's own on-disk .meta file (NUL-padded out to

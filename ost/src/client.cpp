@@ -67,26 +67,26 @@ int validate_result(int fd, size_t size, size_t result) noexcept {
 // ---------------------------------------------------------------------
 
 // Uses rawstor::Target directly (not the rawstor_target_open() C API):
-// this is the one place in ost/ that needs a snap-bound open (rawstor_
+// this is the one place in ost/ that needs a snap_id-bound open (rawstor_
 // docs/Mds.md, "Snapshots" -- the wire's SET_OBJECT `val` already carries
 // it, but the public C API has no way to pass it through). Target::open()
-// takes no `snap` parameter of its own -- the bound version, if any, is
-// part of the target string itself (the "@<snap>" suffix,
-// chunk_slot_target()'s own convention in mds_backend.cpp) -- so `snap`
+// takes no `snap_id` parameter of its own -- the bound version, if any, is
+// part of the target string itself (the "@<snap_id>" suffix,
+// chunk_slot_target()'s own convention in mds_backend.cpp) -- so `snap_id`
 // is folded onto every URI's own path here first. `uris` is taken by
 // value for the same reason a by-value std::string used to be here: a
 // coroutine parameter declared as a reference is not lifetime-extended
 // past the initiating call the way an ordinary function's would be.
 rawstd::Task<RawstorObject*> co_target_open(
-    RawIOQueue* queue, std::vector<rawstd::URI> uris, uint64_t snap
+    RawIOQueue* queue, std::vector<rawstd::URI> uris, uint64_t snap_id
 ) {
     std::vector<rawstd::URI> snapped;
     snapped.reserve(uris.size());
     for (const auto& uri : uris) {
         std::ostringstream oss;
         oss << uri.str();
-        if (snap != 0) {
-            oss << '@' << snap;
+        if (snap_id != 0) {
+            oss << '@' << snap_id;
         }
         snapped.emplace_back(oss.str());
     }
@@ -1019,7 +1019,7 @@ rawstd::DetachedTask Client::_allocate(
         .member_kind = static_cast<RawstorMemberKind>(payload.member_kind),
         .volume_id = {},
         .logical_index = payload.logical_index,
-        .snap_version = payload.snap_version,
+        .snap_id = payload.snap_id,
     };
     memcpy(spec.volume_id, payload.volume_id, sizeof(spec.volume_id));
 
@@ -1326,7 +1326,7 @@ rawstd::DetachedTask Client::_meta(
                 .volume_id = {},
                 .logical_index = meta.spec.logical_index,
                 .chunk_size = meta.spec.chunk_size,
-                .snap_version = meta.spec.snap_version,
+                .snap_id = meta.spec.snap_id,
             };
             memcpy(
                 body_out.sync_id_history, meta.sync_state.sync_id_history,

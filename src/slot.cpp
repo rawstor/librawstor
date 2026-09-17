@@ -442,7 +442,7 @@ Slot::invalidate_backend(const std::shared_ptr<Backend>& be) {
                     // outside the handler.
                     std::exception_ptr eptr;
                     try {
-                        co_await backend->set_object(*_id, _snap);
+                        co_await backend->set_object(*_id, _snap_id);
                         // The result is unused -- nothing here needs it
                         // -- this is purely to keep the same SET_OBJECT+
                         // META wire round trip every set_object() caller
@@ -686,19 +686,19 @@ rawstd::Task<RawstorLocationInfo> Slot::info() {
 }
 
 rawstd::Task<RawstorObjectMeta>
-Slot::open(const RawstdUUID& id, uint64_t snap) {
+Slot::open(const RawstdUUID& id, uint64_t snap_id) {
     // Set before any of the set_object() calls below: on failure,
     // invalidate_backend() reconnects and set_object()s the replacement
     // itself, using these same members.
     _id = id;
-    _snap = snap;
+    _snap_id = snap_id;
 
     // Every backend's SET_OBJECT goes out up front, so they run
     // concurrently.
     std::vector<rawstd::Task<void>> set_objects;
     set_objects.reserve(_backends.size());
     for (std::shared_ptr<Backend>& be : _backends) {
-        set_objects.push_back(be->set_object(id, snap));
+        set_objects.push_back(be->set_object(id, snap_id));
     }
 
     // co_await isn't allowed inside a catch block, so the failure is only

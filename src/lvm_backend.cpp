@@ -158,8 +158,8 @@ std::string Backend::_device_path(const RawstdUUID& id) const {
     return _device_path_for_name(uuid_str);
 }
 
-rawstd::Task<int> Backend::_open(const RawstdUUID& id, uint64_t snap) {
-    if (snap != 0) {
+rawstd::Task<int> Backend::_open(const RawstdUUID& id, uint64_t snap_id) {
+    if (snap_id != 0) {
         /* Classic LVM has no thin CoW: docs/mds.md, "Snapshots". */
         RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
     }
@@ -400,7 +400,7 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
     memcpy(identity.volume_id, sp.volume_id, sizeof(identity.volume_id));
     identity.logical_index = sp.logical_index;
     identity.chunk_size = sp.chunk_size;
-    identity.snap_version = sp.snap_version;
+    identity.snap_id = sp.snap_id;
     std::string tag =
         std::string(rawstor_tag_prefix) + meta_encode(sync_state, identity);
 
@@ -641,7 +641,7 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
     memcpy(ret.spec.volume_id, identity.volume_id, sizeof(ret.spec.volume_id));
     ret.spec.logical_index = identity.logical_index;
     ret.spec.chunk_size = identity.chunk_size;
-    ret.spec.snap_version = identity.snap_version;
+    ret.spec.snap_id = identity.snap_id;
     ret.sync_state = sync_state;
 
     co_return ret;

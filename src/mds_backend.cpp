@@ -57,13 +57,13 @@ RawstdUUID volume_chunk_uuid(const RawstdUUID& volume_id, uint64_t index) {
     return ret;
 }
 
-// One chunk slot's own target URI, "@<snap>"-suffixed the same way a
+// One chunk slot's own target URI, "@<snap_id>"-suffixed the same way a
 // plain target addresses a snapshot view (Target's own doc comment).
 // Throws if the MDS could not resolve the OST: refuse loudly instead of
 // silently opening under-protected.
 rawstd::URI chunk_slot_target(
     const RawstdUUID& volume_id, uint64_t index, const WireSlot& slot,
-    uint64_t snap = 0
+    uint64_t snap_id = 0
 ) {
     if (slot.address.empty()) {
         rawstd_error("Chunk slot without a resolved OST address\n");
@@ -75,18 +75,18 @@ rawstd::URI chunk_slot_target(
 
     std::ostringstream oss;
     oss << "ost://" << slot.address << "/" << uuid_string;
-    if (snap != 0) {
-        oss << "@" << snap;
+    if (snap_id != 0) {
+        oss << "@" << snap_id;
     }
     return rawstd::URI(oss.str());
 }
 
 std::vector<rawstd::URI>
-chunk_targets(const WireMap& map, uint64_t index, uint64_t snap = 0) {
+chunk_targets(const WireMap& map, uint64_t index, uint64_t snap_id = 0) {
     std::vector<rawstd::URI> ret;
     ret.reserve(map.chunks[index].size());
     for (const WireSlot& slot : map.chunks[index]) {
-        ret.push_back(chunk_slot_target(map.volume_id, index, slot, snap));
+        ret.push_back(chunk_slot_target(map.volume_id, index, slot, snap_id));
     }
     return ret;
 }
@@ -96,8 +96,8 @@ chunk_targets(const WireMap& map, uint64_t index, uint64_t snap = 0) {
 // groups Target::open() joins these into for the whole volume (see
 // build_target_string() below).
 std::string
-chunk_target_string(const WireMap& map, uint64_t index, uint64_t snap = 0) {
-    return rawstd::URI::uris(chunk_targets(map, index, snap));
+chunk_target_string(const WireMap& map, uint64_t index, uint64_t snap_id = 0) {
+    return rawstd::URI::uris(chunk_targets(map, index, snap_id));
 }
 
 uint64_t
@@ -114,7 +114,7 @@ RawstorObjectSpec chunk_spec(const WireMap& map, uint64_t index) {
     memcpy(sp.volume_id, map.volume_id.bytes, sizeof(sp.volume_id));
     sp.logical_index = index;
     sp.chunk_size = map.chunk_size;
-    sp.snap_version = 0;
+    sp.snap_id = 0;
     sp.width = map.policy.width;
     sp.mirrors = map.policy.width;
     sp.failure_domain = map.policy.failure_domain;
@@ -125,13 +125,13 @@ RawstorObjectSpec chunk_spec(const WireMap& map, uint64_t index) {
 // The internal multi-chunk Target string (target.hpp's own doc comment)
 // describing the whole volume: every chunk's own comma-joined group,
 // joined in turn by ';'.
-std::string build_target_string(const WireMap& map, uint64_t snap) {
+std::string build_target_string(const WireMap& map, uint64_t snap_id) {
     std::ostringstream oss;
     for (uint64_t i = 0; i < map.chunks.size(); ++i) {
         if (i != 0) {
             oss << ';';
         }
-        oss << chunk_target_string(map, i, snap);
+        oss << chunk_target_string(map, i, snap_id);
     }
     return oss.str();
 }
@@ -433,9 +433,9 @@ rawstd::Task<RawstorLocationInfo> Backend::info() {
     RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
 }
 
-rawstd::Task<void> Backend::set_object(const RawstdUUID& id, uint64_t snap) {
-    WireMap map = co_await _client.vol_open(id, snap);
-    std::string target_string = build_target_string(map, snap);
+rawstd::Task<void> Backend::set_object(const RawstdUUID& id, uint64_t snap_id) {
+    WireMap map = co_await _client.vol_open(id, snap_id);
+    std::string target_string = build_target_string(map, snap_id);
 
     if (_volume) {
         co_await _volume->close();

@@ -322,12 +322,12 @@ public:
     // comment on why that's safe to let unwind through here). Only once
     // that succeeds does it start the object's own background
     // maintenance (the reconnect probe, an online resync if one is
-    // already due). `snap` is 0 for the live version, or a version id
+    // already due). `snap_id` is 0 for the live version, or a version id
     // previously registered via Target::snapshot_create() (docs/mds.md,
     // "Snapshots").
     static rawstd::Task<std::unique_ptr<Chunk>> create(
         rawio::Queue& queue, const std::vector<rawstd::URI>& uris,
-        uint64_t snap = 0
+        uint64_t snap_id = 0
     );
 
     Chunk(

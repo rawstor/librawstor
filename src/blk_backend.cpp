@@ -168,12 +168,12 @@ rawstd::Task<void> Backend::close() {
     co_await _queue.close(f);
 }
 
-rawstd::Task<void> Backend::set_object(const RawstdUUID& id, uint64_t snap) {
+rawstd::Task<void> Backend::set_object(const RawstdUUID& id, uint64_t snap_id) {
     if (fd() != -1) {
         throw std::runtime_error("Object already set");
     }
 
-    int fd = co_await _open(id, snap);
+    int fd = co_await _open(id, snap_id);
     set_fd(fd);
 }
 
@@ -215,13 +215,13 @@ std::string Backend::meta_encode(
         "version=%u:state=%u:epoch=%" PRIx64 ":sync_id=%" PRIx64 ":h0=%" PRIx64
         ":h1=%" PRIx64 ":h2=%" PRIx64 ":h3=%" PRIx64
         ":member_kind=%u:width=%u:volume_id=%s:logical_index=%" PRIx64
-        ":chunk_size=%" PRIx64 ":snap_version=%" PRIx64,
+        ":chunk_size=%" PRIx64 ":snap_id=%" PRIx64,
         META_FORMAT_VERSION, (unsigned int)sync_state.state, sync_state.epoch,
         sync_state.sync_id, sync_state.sync_id_history[0],
         sync_state.sync_id_history[1], sync_state.sync_id_history[2],
         sync_state.sync_id_history[3], (unsigned int)identity.member_kind,
         (unsigned int)identity.width, volume_id_string, identity.logical_index,
-        identity.chunk_size, identity.snap_version
+        identity.chunk_size, identity.snap_id
     );
     return std::string(buf);
 }
@@ -243,12 +243,12 @@ void Backend::meta_decode(
         "version=%u:state=%u:epoch=%" SCNx64 ":sync_id=%" SCNx64 ":h0=%" SCNx64
         ":h1=%" SCNx64 ":h2=%" SCNx64 ":h3=%" SCNx64
         ":member_kind=%u:width=%u:volume_id=%63[^:]:logical_index=%" SCNx64
-        ":chunk_size=%" SCNx64 ":snap_version=%" SCNx64,
+        ":chunk_size=%" SCNx64 ":snap_id=%" SCNx64,
         &version, &state, &sync_state->epoch, &sync_state->sync_id,
         &sync_state->sync_id_history[0], &sync_state->sync_id_history[1],
         &sync_state->sync_id_history[2], &sync_state->sync_id_history[3],
         &member_kind, &width, volume_id_string, &identity->logical_index,
-        &identity->chunk_size, &identity->snap_version
+        &identity->chunk_size, &identity->snap_id
     );
     if (n != 14 || version != META_FORMAT_VERSION) {
         RAWSTD_THROW_SYSTEM_ERROR(EPROTO);

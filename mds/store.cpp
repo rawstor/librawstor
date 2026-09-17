@@ -485,9 +485,9 @@ void VolumeStore::reconstruct(const std::vector<ScanRecord>& records) {
         }
 
         auto [cit, chunk_fresh] =
-            r.meta.spec.snap_version == 0
+            r.meta.spec.snap_id == 0
                 ? v.chunks.try_emplace(r.meta.spec.logical_index)
-                : v.snaps[r.meta.spec.snap_version].try_emplace(
+                : v.snaps[r.meta.spec.snap_id].try_emplace(
                       r.meta.spec.logical_index
                   );
         Chunk& c = cit->second;

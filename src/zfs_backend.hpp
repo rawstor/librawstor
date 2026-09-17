@@ -38,14 +38,14 @@ private:
     std::string _device_path(const RawstdUUID& id) const;
     std::string _dataset(const RawstdUUID& id) const;
 
-    // `snap != 0` names version snap's own native snapshot:
-    // <dataset>@s<snap> / /dev/zvol/.../<uuid>@s<snap> -- the "@s<id>"
+    // `snap_id != 0` names that version's own native snapshot:
+    // <dataset>@s<snap_id> / /dev/zvol/.../<uuid>@s<snap_id> -- the "@s<id>"
     // name is the version key itself (docs/mds.md, "Snapshots"),
     // nothing stored twice.
-    std::string _device_path(const RawstdUUID& id, uint64_t snap) const;
-    std::string _dataset(const RawstdUUID& id, uint64_t snap) const;
+    std::string _device_path(const RawstdUUID& id, uint64_t snap_id) const;
+    std::string _dataset(const RawstdUUID& id, uint64_t snap_id) const;
 
-    rawstd::Task<int> _open(const RawstdUUID& id, uint64_t snap) override;
+    rawstd::Task<int> _open(const RawstdUUID& id, uint64_t snap_id) override;
 
     // Polls for `path`'s existence-as-a-block-device to match
     // `want_present`, for up to `timeout_ms`, via _queue.stat()/

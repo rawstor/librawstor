@@ -221,7 +221,7 @@ Chunk::~Chunk() {
 }
 
 rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
-    rawio::Queue& queue, const std::vector<rawstd::URI>& uris, uint64_t snap
+    rawio::Queue& queue, const std::vector<rawstd::URI>& uris, uint64_t snap_id
 ) {
     // Same three checks a Target's own constructor used to run on `uris`
     // on this factory's behalf -- now run here instead, since Object's
@@ -387,7 +387,7 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     );
     for (size_t i = 0; i < cns.size(); ++i) {
         if (cns[i]) {
-            open_tasks[i] = cns[i]->open(id, snap);
+            open_tasks[i] = cns[i]->open(id, snap_id);
         }
     }
 

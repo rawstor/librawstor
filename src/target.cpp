@@ -79,7 +79,7 @@ void validate_different_uris(const std::vector<rawstd::URI>& uris) {
 // Backend methods they wrap) rather than a full target -- extract it once
 // here instead of in every one of this file's own call sites.
 // rawstd_uuid_from_string() only ever reads the first 36 characters (see
-// its own implementation), so a "@<snap>" suffix (see extract_snap()
+// its own implementation), so a "@<snap_id>" suffix (see extract_snap_id()
 // below) never trips this up.
 RawstdUUID uuid_from_target(const rawstd::URI& target) {
     RawstdUUID id;
@@ -91,28 +91,28 @@ RawstdUUID uuid_from_target(const rawstd::URI& target) {
 }
 
 // The bound snapshot version embedded in a chunk group's own URIs, if
-// any -- "<uuid>" (live, 0) or "<uuid>@<snap>", the same convention
+// any -- "<uuid>" (live, 0) or "<uuid>@<snap_id>", the same convention
 // chunk_slot_target() in mds_backend.cpp already uses for a single slot.
 // validate_same_uuid() above already guarantees every URI in the group
-// carries the identical filename (uuid *and* "@<snap>" suffix alike), so
+// carries the identical filename (uuid *and* "@<snap_id>" suffix alike), so
 // this only ever needs to look at the first one. Chunk::create() takes
-// `snap` as a plain scalar (by analogy with Slot::open()'s own `snap`),
+// `snap_id` as a plain scalar (by analogy with Slot::open()'s own `snap_id`),
 // so whoever builds its call -- Target::open() below, or
 // Object::_chunk() -- extracts it from the group's own URIs once here,
 // rather than Chunk::create() re-parsing it out of every URI itself.
-uint64_t extract_snap(const std::vector<rawstd::URI>& uris) {
+uint64_t extract_snap_id(const std::vector<rawstd::URI>& uris) {
     const std::string& filename = uris.front().path().filename();
     size_t at = filename.find('@');
     if (at == std::string::npos) {
         return 0;
     }
     std::istringstream iss(filename.substr(at + 1));
-    uint64_t snap = 0;
-    if (!(iss >> snap) || !iss.eof()) {
+    uint64_t snap_id = 0;
+    if (!(iss >> snap_id) || !iss.eof()) {
         rawstd_error("Malformed snapshot suffix: %s\n", filename.c_str());
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
-    return snap;
+    return snap_id;
 }
 
 // Splits `target` on ';' into its chunk groups, tolerating empty segments
@@ -812,7 +812,7 @@ rawstd::Task<uint64_t> Target::snapshot_create_assign(rawio::Queue& queue) {
 rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
     if (_chunks.size() == 1) {
         std::unique_ptr<Chunk> chunk = co_await Chunk::create(
-            queue, _chunks.front(), extract_snap(_chunks.front())
+            queue, _chunks.front(), extract_snap_id(_chunks.front())
         );
         uint64_t size = chunk->spec().size;
         std::unique_ptr<Object> obj(new Object(
@@ -823,10 +823,10 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
     }
 
     std::unique_ptr<Chunk> first = co_await Chunk::create(
-        queue, _chunks.front(), extract_snap(_chunks.front())
+        queue, _chunks.front(), extract_snap_id(_chunks.front())
     );
     std::unique_ptr<Chunk> last = co_await Chunk::create(
-        queue, _chunks.back(), extract_snap(_chunks.back())
+        queue, _chunks.back(), extract_snap_id(_chunks.back())
     );
 
     uint64_t chunk_size = first->spec().size;

@@ -17,25 +17,25 @@
 namespace {
 
 // The bound snapshot version embedded in a chunk group's own URIs, if
-// any -- "<uuid>" (live, 0) or "<uuid>@<snap>" (chunk_slot_target()'s own
+// any -- "<uuid>" (live, 0) or "<uuid>@<snap_id>" (chunk_slot_target()'s own
 // convention in mds_backend.cpp). Deliberately a local duplicate of
-// target.cpp's own extract_snap(): Chunk::create() takes `snap` as a
+// target.cpp's own extract_snap_id(): Chunk::create() takes `snap_id` as a
 // plain scalar, so Object::_chunk() below (like Target::open()) extracts
 // it from its own already-validated URI group once here, rather than
 // Chunk::create() re-parsing it out of every URI itself.
-uint64_t extract_snap(const std::vector<rawstd::URI>& uris) {
+uint64_t extract_snap_id(const std::vector<rawstd::URI>& uris) {
     const std::string& filename = uris.front().path().filename();
     size_t at = filename.find('@');
     if (at == std::string::npos) {
         return 0;
     }
     std::istringstream iss(filename.substr(at + 1));
-    uint64_t snap = 0;
-    if (!(iss >> snap) || !iss.eof()) {
+    uint64_t snap_id = 0;
+    if (!(iss >> snap_id) || !iss.eof()) {
         rawstd_error("Malformed snapshot suffix: %s\n", filename.c_str());
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
-    return snap;
+    return snap_id;
 }
 
 } // namespace
@@ -115,7 +115,7 @@ rawstd::Task<Chunk*> Object::_chunk(uint32_t index) {
     std::exception_ptr error;
     try {
         entry.chunk = co_await Chunk::create(
-            _queue, entry.targets, extract_snap(entry.targets)
+            _queue, entry.targets, extract_snap_id(entry.targets)
         );
     } catch (const std::system_error& e) {
         entry.open_errno = e.code().value();

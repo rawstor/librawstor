@@ -196,7 +196,7 @@ struct RawstorOSTFrameAllocatePayload {
     uint16_t reserved;
     uint8_t volume_id[16];  /* parent volume; all-zero = standalone */
     uint64_t logical_index; /* chunk position within the volume */
-    uint64_t snap_version;  /* snap_id this copy belongs to; 0 = live */
+    uint64_t snap_id; /* snapshot version this copy belongs to; 0 = live */
 } RAWSTOR_PACKED;
 
 /* ALLOCATE request */
@@ -249,7 +249,7 @@ struct RawstorOSTFrameMetaPayload {
     uint8_t volume_id[16];
     uint64_t logical_index;
     uint64_t chunk_size;
-    uint64_t snap_version;
+    uint64_t snap_id;
 } RAWSTOR_PACKED;
 
 /*
@@ -334,7 +334,7 @@ struct RawstorVolDescriptorPayload {
 } RAWSTOR_PACKED;
 
 struct RawstorVolChunkEntry {
-    uint64_t version; /* snap_id; 0 = live */
+    uint64_t snap_id; /* 0 = live */
     uint8_t width;    /* slots that follow */
 } RAWSTOR_PACKED;
 

@@ -111,7 +111,7 @@ rawstor::blk::Backend* open_blk_backend(
         .member_kind = RAWSTOR_MEMBER_DATA,
         .volume_id = {},
         .logical_index = 0,
-        .snap_version = 0
+        .snap_id = 0
     };
     run(queue, target.create(queue, spec));
 
@@ -389,7 +389,7 @@ TEST(BlkBackendTest, meta_encode_decode_round_trip) {
     memcpy(identity.volume_id, volume_id.bytes, sizeof(identity.volume_id));
     identity.logical_index = 42;
     identity.chunk_size = 1ull << 20;
-    identity.snap_version = 5;
+    identity.snap_id = 5;
 
     std::string encoded =
         rawstor::blk::Backend::meta_encode(sync_state, identity);
@@ -425,7 +425,7 @@ TEST(BlkBackendTest, meta_encode_decode_round_trip) {
     );
     EXPECT_EQ(decoded_identity.logical_index, identity.logical_index);
     EXPECT_EQ(decoded_identity.chunk_size, identity.chunk_size);
-    EXPECT_EQ(decoded_identity.snap_version, identity.snap_version);
+    EXPECT_EQ(decoded_identity.snap_id, identity.snap_id);
 }
 
 TEST(BlkBackendTest, meta_decode_rejects_empty_string) {
@@ -470,7 +470,7 @@ TEST(BlkBackendTest, meta_decode_rejects_wrong_version) {
         rawstor::blk::Backend::meta_decode(
             "version=999:state=0:epoch=0:sync_id=0:h0=0:h1=0:h2=0:h3=0:"
             "member_kind=0:width=0:volume_id=00000000-0000-0000-0000-"
-            "000000000000:logical_index=0:chunk_size=0:snap_version=0",
+            "000000000000:logical_index=0:chunk_size=0:snap_id=0",
             &sync_state, &identity
         ),
         std::system_error

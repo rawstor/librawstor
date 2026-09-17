@@ -38,7 +38,7 @@ private:
     // Meaningless while _id is unset; carried alongside it so a
     // reconnected backend's own set_object() (invalidate_backend())
     // rebinds to the same version, not silently back to live.
-    uint64_t _snap = 0;
+    uint64_t _snap_id = 0;
 
     std::vector<std::shared_ptr<Backend>> _backends;
     size_t _backend_index;
@@ -169,7 +169,7 @@ public:
     // doesn't return it, see its own doc comment) -- spec.mirrors on it
     // is this copy's own local share, not the target-wide count.
     rawstd::Task<RawstorObjectMeta>
-    open(const RawstdUUID& id, uint64_t snap = 0);
+    open(const RawstdUUID& id, uint64_t snap_id = 0);
 
     // Not called implicitly by ~Slot() (a coroutine can't run in a
     // destructor, and there's no other synchronous fallback here beyond

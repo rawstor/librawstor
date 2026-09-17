@@ -77,7 +77,7 @@ Client::send_allocate(const RawstdUUID& id, uint64_t size, uint32_t mirrors) {
             .reserved = 0,
             .volume_id = {},
             .logical_index = 0,
-            .snap_version = 0,
+            .snap_id = 0,
         },
     };
     std::memcpy(frame.payload.object_id, id.bytes, sizeof(id.bytes));

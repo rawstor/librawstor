@@ -71,8 +71,8 @@ Backend::Backend(Private p, rawio::Queue& queue, const rawstd::URI& location) :
     rawstor::blk::Backend(p, queue, location) {
 }
 
-rawstd::Task<int> Backend::_open(const RawstdUUID& id, uint64_t snap) {
-    if (snap != 0) {
+rawstd::Task<int> Backend::_open(const RawstdUUID& id, uint64_t snap_id) {
+    if (snap_id != 0) {
         /* No native CoW: docs/mds.md, "Snapshots". */
         RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
     }
@@ -294,7 +294,7 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
             );
             identity.logical_index = sp.logical_index;
             identity.chunk_size = sp.chunk_size;
-            identity.snap_version = sp.snap_version;
+            identity.snap_id = sp.snap_id;
 
             // meta_encode()'s own (shorter, variable-length) return value
             // is NUL-padded out to a fixed META_MAX_SIZE bytes here,
@@ -415,7 +415,7 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
     memcpy(ret.spec.volume_id, identity.volume_id, sizeof(ret.spec.volume_id));
     ret.spec.logical_index = identity.logical_index;
     ret.spec.chunk_size = identity.chunk_size;
-    ret.spec.snap_version = identity.snap_version;
+    ret.spec.snap_id = identity.snap_id;
     ret.sync_state = sync_state;
 
     co_return ret;

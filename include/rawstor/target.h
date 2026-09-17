@@ -75,7 +75,7 @@ struct RawstorObjectSpec {
     enum RawstorMemberKind member_kind;
     uint8_t volume_id[16];  /**< Parent volume; all-zero = standalone. */
     uint64_t logical_index; /**< Chunk position within the volume. */
-    uint64_t snap_version;  /**< snap_id this copy belongs to; 0 = live. */
+    uint64_t snap_id; /**< Snapshot version this copy belongs to; 0 = live. */
 };
 
 /**
@@ -572,7 +572,7 @@ int rawstor_target_location(
  *   backend a caller-chosen id could apply to; fails with -EINVAL.
  * - `*snap_id == 0`: an MDS-orchestrated snapshot (docs/mds.md,
  *   "Snapshots (stage 2)") of an mds://host:port/<volume_id> @p target
- *   (no "@snap" suffix) -- the version is chosen by the volume's MDS
+ *   (no "@snap_id" suffix) -- the version is chosen by the volume's MDS
  *   instead: reserves it, backend-CoWs every reachable chunk member,
  *   then registers the surviving membership, and writes the reserved id
  *   into `*snap_id` immediately before @p cb runs on success. v1 caveat:

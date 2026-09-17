@@ -98,7 +98,7 @@ TEST(ListTest, merge) {
         .member_kind = RAWSTOR_MEMBER_DATA,
         .volume_id = {},
         .logical_index = 0,
-        .snap_version = 0
+        .snap_id = 0
     };
     res = create(target11, spec);
     ASSERT_EQ(res, 0);
@@ -201,7 +201,7 @@ TEST(ListTest, pagination) {
             .member_kind = RAWSTOR_MEMBER_DATA,
             .volume_id = {},
             .logical_index = 0,
-            .snap_version = 0
+            .snap_id = 0
         };
 
         char target[65536];
