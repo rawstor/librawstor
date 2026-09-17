@@ -66,6 +66,21 @@ public:
     // Location::create()).
     Location location() const;
 
+    // The bound snapshot version, if any -- the "@<snap_id>" suffix on
+    // the first chunk group's own URIs (chunk_slot_target()'s own
+    // convention in mds_backend.cpp), or 0 (live) if absent. No I/O:
+    // parsed from the target string itself, same as id()/location()
+    // above.
+    uint64_t snap_id() const;
+
+    // This target's own byte offset within its parent mds:// volume, if
+    // any -- the ":<offset>" suffix mds::Backend stamps onto each chunk
+    // group's own URIs when it builds the internal multi-chunk string
+    // (chunk_slot_target()'s own convention in mds_backend.cpp: `index *
+    // chunk_size`), or 0 if absent (a plain, non-mds:// target has no
+    // such parent to be an offset into). No I/O, same as snap_id() above.
+    uint64_t offset() const;
+
     rawstd::Task<void> create(rawio::Queue& queue, const RawstorObjectSpec& sp);
     rawstd::Task<RawstorObjectSpec> spec(rawio::Queue& queue);
     // One RawstorObjectMeta per URI in the first chunk group, same order

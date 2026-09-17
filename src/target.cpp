@@ -115,6 +115,32 @@ uint64_t extract_snap_id(const std::vector<rawstd::URI>& uris) {
     return snap_id;
 }
 
+// This chunk group's own byte offset within its parent mds:// volume, if
+// any -- "<uuid>" (0) or "<uuid>:<offset>[@<snap_id>]", the same ':'
+// convention chunk_slot_target() in mds_backend.cpp stamps onto every
+// slot of a chunk it builds (index * chunk_size). Same reasoning as
+// extract_snap_id() above for reading only the first URI: validate_
+// same_uuid() already guarantees every URI in the group shares the
+// identical filename, offset included.
+uint64_t extract_offset(const std::vector<rawstd::URI>& uris) {
+    const std::string& filename = uris.front().path().filename();
+    size_t colon = filename.find(':');
+    if (colon == std::string::npos) {
+        return 0;
+    }
+    size_t at = filename.find('@', colon);
+    std::string offset_str = filename.substr(
+        colon + 1, at == std::string::npos ? std::string::npos : at - colon - 1
+    );
+    std::istringstream iss(offset_str);
+    uint64_t offset = 0;
+    if (!(iss >> offset) || !iss.eof()) {
+        rawstd_error("Malformed offset suffix: %s\n", filename.c_str());
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+    return offset;
+}
+
 // Splits `target` on ';' into its chunk groups, tolerating empty segments
 // from repeated/trailing separators -- "a;b;c", "a;b;c;" and "a;;b;;c;;"
 // all yield the same three groups (docs/locations_and_targets.md: the
@@ -573,6 +599,14 @@ Location Target::location() const {
         uris.push_back(uri.parent());
     }
     return Location(uris);
+}
+
+uint64_t Target::snap_id() const {
+    return extract_snap_id(_chunks.front());
+}
+
+uint64_t Target::offset() const {
+    return extract_offset(_chunks.front());
 }
 
 rawstd::Task<void>
@@ -1110,6 +1144,42 @@ int rawstor_target_location(
             RAWSTD_THROW_ERRNO();
         }
         return res;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+int rawstor_target_snap_id(const char* target, uint64_t* snap_id) noexcept {
+    try {
+        rawstor::Target t(target);
+        *snap_id = t.snap_id();
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+int rawstor_target_offset(const char* target, uint64_t* offset) noexcept {
+    try {
+        rawstor::Target t(target);
+        *offset = t.offset();
+        return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
     } catch (const std::bad_alloc& e) {

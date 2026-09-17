@@ -558,6 +558,58 @@ int rawstor_target_location(
 ) RAWSTOR_NOEXCEPT;
 
 /**
+ * @brief Retrieve the snapshot version bound to a target string.
+ *
+ * Given a target string (as defined in the Rawstor location/target syntax),
+ * this function reads the "@<snap_id>" suffix (if any) off @p target's own
+ * UUID path segment. This is purely a syntactic operation on @p target -- no
+ * backend is contacted, and the target need not exist.
+ *
+ * @param target   Target string, e.g.:
+ *                 - "ost://127.0.0.1:9090/019cbfad-a389-7d42-a0f6-c29993ac8c00"
+ *                 -
+ * "ost://127.0.0.1:9090/019cbfad-a389-7d42-a0f6-c29993ac8c00@5"
+ * @param snap_id  Out-parameter written on success: the bound version, or 0
+ *                 if @p target carries no "@<snap_id>" suffix (the live
+ *                 version). Left untouched on error.
+ *
+ * @return 0 on success; a negative errno if @p target is not valid target
+ *         syntax.
+ *
+ * @see rawstor_target_offset
+ */
+int rawstor_target_snap_id(
+    const char* target, uint64_t* snap_id
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Retrieve a target string's own byte offset within its parent
+ *        mds:// volume.
+ *
+ * Given a target string (as defined in the Rawstor location/target syntax),
+ * this function reads the ":<offset>" suffix (if any) off @p target's own
+ * UUID path segment -- present only on a chunk of an mds:// volume opened
+ * internally by the library (mds::Backend's own internal target strings; a
+ * plain, user-facing target never carries one). This is purely a syntactic
+ * operation on @p target -- no backend is contacted, and the target need
+ * not exist.
+ *
+ * @param target  Target string, e.g.:
+ *                - "ost://127.0.0.1:9090/019cbfad-a389-7d42-a0f6-c29993ac8c00"
+ * @param offset  Out-parameter written on success: the target's own byte
+ *                offset within its parent volume, or 0 if @p target carries
+ *                no ":<offset>" suffix. Left untouched on error.
+ *
+ * @return 0 on success; a negative errno if @p target is not valid target
+ *         syntax.
+ *
+ * @see rawstor_target_snap_id
+ */
+int rawstor_target_offset(
+    const char* target, uint64_t* offset
+) RAWSTOR_NOEXCEPT;
+
+/**
  * @brief Asynchronously take a snapshot of a target -- either a caller-
  *        chosen native CoW version, or an MDS-assigned volume version.
  *

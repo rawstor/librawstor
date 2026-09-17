@@ -57,13 +57,15 @@ RawstdUUID volume_chunk_uuid(const RawstdUUID& volume_id, uint64_t index) {
     return ret;
 }
 
-// One chunk slot's own target URI, "@<snap_id>"-suffixed the same way a
-// plain target addresses a snapshot view (Target's own doc comment).
-// Throws if the MDS could not resolve the OST: refuse loudly instead of
-// silently opening under-protected.
+// One chunk slot's own target URI: "<uuid>[:<offset>][@<snap_id>]"
+// (Target's own doc comment) -- `offset` (index * chunk_size, the same
+// formula docs/mds.md's own "chunk_offset" uses) is what
+// Target::offset() reads back on the far end, `snap_id` what
+// Target::snap_id() does. Throws if the MDS could not resolve the OST:
+// refuse loudly instead of silently opening under-protected.
 rawstd::URI chunk_slot_target(
     const RawstdUUID& volume_id, uint64_t index, const WireSlot& slot,
-    uint64_t snap_id = 0
+    uint64_t chunk_size, uint64_t snap_id = 0
 ) {
     if (slot.address.empty()) {
         rawstd_error("Chunk slot without a resolved OST address\n");
@@ -75,6 +77,7 @@ rawstd::URI chunk_slot_target(
 
     std::ostringstream oss;
     oss << "ost://" << slot.address << "/" << uuid_string;
+    oss << ":" << (index * chunk_size);
     if (snap_id != 0) {
         oss << "@" << snap_id;
     }
@@ -86,7 +89,9 @@ chunk_targets(const WireMap& map, uint64_t index, uint64_t snap_id = 0) {
     std::vector<rawstd::URI> ret;
     ret.reserve(map.chunks[index].size());
     for (const WireSlot& slot : map.chunks[index]) {
-        ret.push_back(chunk_slot_target(map.volume_id, index, slot, snap_id));
+        ret.push_back(chunk_slot_target(
+            map.volume_id, index, slot, map.chunk_size, snap_id
+        ));
     }
     return ret;
 }
@@ -307,7 +312,10 @@ rawstd::Task<uint64_t> Backend::snapshot_create_assign(const RawstdUUID& id) {
                 continue;
             }
             try {
-                Target t(chunk_slot_target(map.volume_id, i, slot).str());
+                Target t(
+                    chunk_slot_target(map.volume_id, i, slot, map.chunk_size)
+                        .str()
+                );
                 co_await t.snapshot_create(_queue, snap_id);
                 members.push_back(mds::WireSnapMember{i, slot.ost_id});
                 any = true;
@@ -390,9 +398,10 @@ Backend::snapshot_remove(const RawstdUUID& id, uint64_t snap_id) {
             continue;
         }
         try {
-            Target t(
-                chunk_slot_target(map.volume_id, m.logical_index, *it).str()
-            );
+            Target t(chunk_slot_target(
+                         map.volume_id, m.logical_index, *it, map.chunk_size
+            )
+                         .str());
             co_await t.snapshot_remove(_queue, snap_id);
         } catch (const std::exception& e) {
             rawstd_error("Snapshot remove: %s\n", e.what());
